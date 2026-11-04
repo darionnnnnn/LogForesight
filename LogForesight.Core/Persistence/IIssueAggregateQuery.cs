@@ -339,6 +339,10 @@ public sealed class HostRiskAggregate
     public string LatestRiskLevel { get; init; } = string.Empty;
     /// <summary>最新一天的風險日標題</summary>
     public string LatestHeadline { get; init; } = string.Empty;
+    /// <summary>最新一天是否待補 AI（徽章判定用，與降級次數一起看）</summary>
+    public bool LatestAiPending { get; init; }
+    /// <summary>最新一天的 AI 格式異常降級次數</summary>
+    public int LatestAiDegradedAttempts { get; init; }
 }
 
 /// <summary>單一（存活主機, 完整簽章）在期間內最近一次出現的快照</summary>

@@ -64,12 +64,14 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 每日擷取是夜間批次（`AnalysisOrchestrator.RunAsync`）內與本機分析、NetIQ 並行的第三條路徑；PRTG 失敗不讓整趟分析失敗，只有取消訊號穿透。
 
+**早退 `disabled`**：管線開頭先過 `PrtgDailyPipeline.DisabledReason`，前置條件不成立就不建連線、不送任何請求，趟次結局為 `disabled`（`BatchRun.PrtgOutcome`），原因寫在趟次層 `BatchRun.PrtgOutcomeNote`（早退沒有逐日統計，不放 `PrtgDays`）：未啟用→「PRTG 未啟用」；已啟用但位址空白或目前認證模式的憑證沒填完整→「尚未設定認證資訊」；憑證密文存在但用目前金鑰解不開（金鑰檔與資料庫不相符）→「憑證無法解密，請到 PRTG 維護頁重新輸入」。判定讀 `PrtgClientFactory.CredentialState`（`ok`／`not_configured`／`undecryptable`），與回填、結構同步、探測、快照、資源守門的閘門同一個出口；`undecryptable` 先於帳號缺漏判斷。畫面呈現見 docs/WEB-SPEC.md §9.10。
+
 **順序**：裝置結構同步 → 主機對應（§4）與取數範圍（§3c）→ 範圍內感測器結構與狀態變更同步 → 狀態規則評估（§9）→
 數值就緒度與數值規則（§9a、§9b）→ 跨日標註、抑制 → 發佈 finding 登錄簿並補追加已落地主機日 → 觸發式數值取數（§3a）。
 
 **同日多窗口**：排程趟（Full 範圍）若本趟每一天在同日最新的 `PrtgDayStat.SourceSynced` 都為真，跳過 `FetchDayAsync`（結構同步、狀態變更、主機對應重算、範圍清除、夜間同步狀態），規則評估、發佈、補追加與觸發式取數照跑，全部讀本地鏡像，所以這一趟新落地的主機日仍拿得到 finding。`SourceSynced` 只在 Full 範圍、同步未失敗、沒有影響歷史的失敗且主機對應完成時為真；個別 sensor 取數失敗不影響它。手動與指定主機更新一律重做。白天改的主機對應要到下次重算（隔天排程或手動同步）才生效。觸發式取數排除該日已有 24 列 `ok` 小時值的 sensor；`sampled` 不算，不足 24 列整日重取，只回 nodata 的 sensor 每個窗口重取。
 
-**排程補評估**：逐日統計（`PrtgDayStat.NeedsReevaluation`）記下「該日未完整評估並發佈、結構同步失敗，結構（裝置／感測器鏡像）或狀態變更沒有取齊（`PrtgFetchResult.HistoryAffectingFailure`）」——單一裝置的感測器查詢失敗、分類填入、數值階段的失敗不影響已落地資料，不標重評；排程觸發且範圍為全部主機時，`PrtgReevaluationPlanner.Select` 從最近 7 天的執行紀錄挑出這些日子（同一日以最晚一趟為準；當機而沒留下逐日統計的排程執行，以其處理的資料日入選），與昨天聯集一起評估。手動立即執行不自動併入。已知限制：同一日之後若有「指定主機更新」的成功紀錄，會蓋過先前全範圍的失敗。
+**排程補評估**：排程趟被中斷、或因憑證沒設定／解不開而早退（沒有逐日統計）的那一晚，其對應日子也入選，憑證修好後自然補回（「PRTG 未啟用」的早退不算）。逐日統計（`PrtgDayStat.NeedsReevaluation`）記下「該日未完整評估並發佈、結構同步失敗，結構（裝置／感測器鏡像）或狀態變更沒有取齊（`PrtgFetchResult.HistoryAffectingFailure`）」——單一裝置的感測器查詢失敗、分類填入、數值階段的失敗不影響已落地資料，不標重評；排程觸發且範圍為全部主機時，`PrtgReevaluationPlanner.Select` 從最近 7 天的執行紀錄挑出這些日子（同一日以最晚一趟為準；當機而沒留下逐日統計的排程執行，以其處理的資料日入選），與昨天聯集一起評估。手動立即執行不自動併入。已知限制：同一日之後若有「指定主機更新」的成功紀錄，會蓋過先前全範圍的失敗。
 
 **回望多日**（「立即執行」回望 N 天且範圍為全部主機；其餘只處理昨天）：結構同步與狀態變更只做一次；對應只重算最新一天，較舊日期沿用該日或之前最近一日
 （往回 31 天，`PrtgTriggeredValueFetcher.HostMapLookbackDays`；找不到時沿用之後最早一份，§4）。規則評估兩段：先逐日評估並映射，再逐日跨日標註、抑制、發佈、補追加。
@@ -94,6 +96,8 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   **形狀與筆數檢查**：第一頁回應不是物件或缺少該 content 的陣列，視為未收斂（不當成 0 筆成功）；後續頁形狀異常視為結尾。
   結束時比對 `treesize`：讀到筆數少於它（非「依時間提早停止」）擲 `PrtgPagingNotConvergedException`，已寫出的資料保留但該階段記為失敗，沒讀到的不能當成已刪除；
   `messages` 搭配 `filter_drel` 時 `treesize` 是否為過濾後筆數尚未證實，只印警告、不擲例外。
+- **分頁等待重試**（`PrtgTablePager.FetchAsync` 單點，由 `PrtgFetchService` 的 `retryTransientPaging` 開啟）：只包「單次請求本身」，每次 pager 執行（整個 devices／sensors／messages 讀取）**共最多 2 次**重試，不是每頁各 2 次；第 1 次重試前等 15 秒、第 2 次前等 60 秒（`RetryDelays`，暫定值），等待函式可注入，等待期間取消令牌生效。只對 `PrtgClientException.Kind` 為 `Timeout`、`Transport`，或 `HttpStatus` 且狀態碼為 5xx／429 者重試（`IsRetryable`，不比對訊息字串）；401／403／其他 4xx、`Credential`（含已黏住的憑證失敗）與 `Other` 立即擲出，不重試也不等待。重試只寫 Info（PRTG 慢的夜晚不讓趟次變「有警告」），用盡後的最終失敗照舊由呼叫端記錄。開啟的路徑只有夜間管線、結構同步與歷史回填；探測、快照與資源守門維持單次失敗即回報；逐顆 `historicdata` 不重試。
+- **數值取數的暫停與補抓**（`PrtgFetchService.FetchValuesAsync` 單點，夜間階段 4、觸發式取數、回填共用；常數在 `PrtgValueFetchRetryPolicy`，不開放設定）：逾時、連線失敗、5xx、429 與 PRTG 空白「OK」頁（`PrtgFailureKind.EmptyPage`：HTTP 200 但內文只有 `<B class="no-content">OK</B>`，PRTG 在伺服器端放棄處理時這樣回，不是認證錯誤）時全部工作共用一個暫停閘，依序等 15、60、180 秒（之後維持 180，加 0～20% 誤差，`Retry-After` 較長時取它），成功一顆就歸零；閘已拉起時其他顆的失敗不讓序列前進。失敗的顆在全部送完後逐顆補抓一次，補抓不推進進度。實際總暫停將達 15 分鐘就停損（另有「連續 10 次可重試失敗」的保險，同一個閘內只算一次，正常時鐘下總暫停上限一定先到，它只防時鐘不走的情況）：剩餘的顆計失敗、不送請求，同一個服務實例冷卻 10 分鐘（期間呼叫直接回全部失敗），避免觸發式輪詢與逐日回填反覆打停機的 PRTG；觸發式輪詢在冷卻期內碰到的新問題主機不算已抓，冷卻結束的下一輪再抓。401、403、其他 4xx、解析與寫入失敗不暫停也不補抓。暫停與補抓寫 Info，停損寫 Warn。PRTG 完全不回時，約 20 分鐘內由總暫停上限停損，與併發數無關。
 - **去重鍵是該 content 真正的唯一鍵**：預設 objid；messages 的 objid 是發出訊息的 sensor，列鍵為「objid＋時間」。
 - **狀態變更逐裝置查**（`PrtgFetchService.FetchStateChangesRangeAsync`）：區間＝最早目標日前一天到今天；不對 `id=0` 查（實機 treesize 封頂 100 萬、
   `count=5` 也逾時）。要查哪些物件集中在 `StateChangeQueryObjects`。`filter_drel` 取涵蓋區間起點的最小級距（7days／30days／12months），
@@ -321,8 +325,10 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `password` | `username=&passhash=` | 舊版；系統保存密碼，第一次請求前呼叫 `getpasshash.htm` 換取 passhash（同實例只換一次） |
 | `passhash` | `username=&passhash=` | 使用者自行提供 passhash；系統不保存密碼、不呼叫 `getpasshash.htm` |
 
-- passhash 比照密碼加密、write-only。**憑證錯誤會黏住**（防帳號鎖定）：換取 passhash 遇 401/403／HTML 登入頁黏住；資料請求只在帳號類模式的 401 黏住。
+- passhash 比照密碼加密、write-only。**憑證錯誤會黏住**（防帳號鎖定）：換取 passhash 遇 401/403／HTML 登入頁黏住；資料請求只在帳號類模式的 401 黏住（token 模式不黏）。黏住後同一個 client 的後續請求直接擲 `PrtgFailureKind.Credential` 例外、不再送出，分頁重試也不重試它；傳輸類失敗（連不上、逾時）與單一物件的 403 不黏。憑證密文解不開時連 client 都不建（見 §3 早退 `disabled`），所以不會用空憑證登入。
+- 目前模式以外的舊密文（`SecretEntry.Retired`）用不到、畫面也清不掉，不計入金鑰探測與指紋修復；切回該模式時 `CredentialState` 才回報解不開。
 - 憑證寫入依當前模式隔離。例外訊息不含 token、密碼、passhash（含 URL 編碼形式）。
+- 回應判定：HTTP 200 但內文是空白「OK」頁 → `EmptyPage`（可重試，訊息說明是伺服器端放棄、請稍後再試）；其他 HTML（登入頁）→ `Other`，訊息指向位址或認證。回填、探測、結構同步的憑證不可用訊息由 `PrtgClientFactory.CredentialProblem` 單點產生，解不開與沒設定分開講。
 
 ## 7. 設定
 
@@ -335,7 +341,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `PrtgAuthMode` | `token` | `token`／`password`／`passhash`（§6a） |
 | `PrtgApiTokenEnc`／`PrtgPasswordEnc`／`PrtgPasshashEnc` | — | 密文（AES-256-CBC），write-only |
 | `PrtgUsername` | — | password 與 passhash 共用 |
-| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 WARN |
+| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 Info（刻意設定的提醒，不計入趟次警告） |
 | `PrtgTimeoutSeconds`／`PrtgFetchConcurrency`／`PrtgBackfillDays` | 60／2／30 | 單次逾時（5–600）、併發上限（1–8）、回填天數（1–365） |
 | `PrtgRetentionDays` | 180 | 鏡像保留天數（規則見 DB-SPEC 保留策略） |
 | `PrtgSensorTypeWhitelist` | 7 種 type | 要擷取數值的 type（留空＝不限）。出廠：`Ping`、`SNMP Disk Free`、`SNMP CPU Load`、`SNMP Memory` 與網卡、多碟可用空間等分析型 type；Traffic 不列入。只管數值取數與快照，不影響規則母體 |
@@ -382,7 +388,7 @@ blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「
 | `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a） |
 | `GET／PUT／DELETE prtg-manual-map`、`prtg-ip-excludes` | 人工對應（§4a）、IP 排除（§4b） |
 | `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁（只接受 `conflict`）；衝突列帶 `conflictKind`（`multi-host`／`hostname-multi`） |
-| `GET prtg-unmapped-hosts?page=&pageSize=` | 未對應到 PRTG 的清單主機與原因（`no-ip`／`ip-excluded`／`conflict`／`not-in-prtg`，§4a）；全站可見者限定 |
+| `GET prtg-unmapped-hosts?page=&pageSize=&pinHostId=` | 未對應到 PRTG 的清單主機與原因（`no-ip`／`ip-excluded`／`conflict`／`not-in-prtg`，§4a）；全站可見者限定。`pinHostId`（選用）：該台在未對應集合內就排在整份清單最前面（第一頁第一筆），其餘順序與總數不變，不在集合內當沒給；主機頁「無 PRTG 對應」徽章的跳轉用 |
 | `GET prtg-name-mismatch` | IP 已對上但 PRTG 名稱與主機清單不同的主機（§4）；全站可見者限定 |
 | `GET prtg-devices/search?q=` | 人工指派用的裝置搜尋（至少 2 字、最多 20 筆＋`hasMore`，§4a）；全站可見者限定 |
 | `GET prtg-estimate?days=&segment=` | 立即執行「一併補齊」的估算：`hosts`／`sensors`／`queries`／`minutes`／`large`／`blockedReason`（§5） |

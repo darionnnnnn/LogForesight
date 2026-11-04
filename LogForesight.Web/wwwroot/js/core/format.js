@@ -143,18 +143,62 @@ const HANDLING_STATUS = {
 };
 
 /**
+ * 同一主機日連續幾次 AI 回覆格式異常後放棄補跑。與後端 AiDegradation.MaxAttempts 同值，
+ * 由 AiStateUiTests 比對兩邊，改一邊忘了另一邊會紅。
+ */
+export const AI_DEGRADED_MAX_ATTEMPTS = 3;
+
+/**
  * 泛用淡色徽章工廠（§8.2「顏色＋文字」）——各頁面自訂狀態徽章（啟用/停用/IP衝突…）
  * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應 site.css 的 lf-badge--*：
  * success | danger | warning | info | primary | neutral | dark。
  * icon（選填）為 sprite symbol id，會以 SVG 前置於文字（取代原本用 emoji 當圖示的做法）。
  */
+
 /**
- * AI 主機日是「排隊中」還是「失敗待補」（回饋二十輪 N）：兩者的 aiPending 都是 true，
- * 後端以 headline 帶「AI 待補」區分。前端據此決定徽章——「分析中」暗示稍後重整就有，
- * 「待補」才會告訴使用者要靠排程補跑。與 LogAnalysisService 失敗分支的 headline 文字對齊。
+ * AI 摘要的狀態（清單與詳情共用的單一判定，只看欄位、不比對標題文字）：
+ * - 'degraded'：AI 回覆格式異常、目前顯示規則層結論，aiPending 仍為 true 會再補跑（aiDegradedAttempts > 0）
+ * - 'abandoned'：連續格式異常達上限，不再補跑（不待補且次數達上限）
+ * - 'pending'：統計已完成、AI 還在排隊或執行中（沒降級過）
+ * - 'done'：其餘（含降級後已補成功的主機日——次數保留但不待補、未達上限）
  */
-export function isAiRetryPending(headline) {
-    return typeof headline === 'string' && headline.includes('AI 待補');
+export function aiStateOf(record) {
+    const attempts = Number(record?.aiDegradedAttempts) || 0;
+    // 詳情已被保留期清除的列不會再補跑（AI 輸入無法重建），不論旗標怎麼留都不能再說「會再試」
+    if (record?.aiPending && !record?.detailPruned) return attempts > 0 ? 'degraded' : 'pending';
+    return attempts >= AI_DEGRADED_MAX_ATTEMPTS ? 'abandoned' : 'done';
+}
+
+/**
+ * 降級／放棄的徽章元素；其他狀態回 null（排隊中與完成沿用各頁既有的徽章）。
+ * 顏色用既有語意色：待補＝warning、已放棄＝danger；文字一律 textContent。
+ */
+export function aiDegradedBadge(record, extraClass = '') {
+    const state = aiStateOf(record);
+    if (state !== 'degraded' && state !== 'abandoned') return null;
+
+    const badge = document.createElement('span');
+    const extra = extraClass ? ` ${extraClass}` : '';
+    if (state === 'degraded') {
+        badge.className = `lf-badge lf-badge--warning${extra}`;
+        badge.textContent = `AI 摘要待補（第 ${Number(record.aiDegradedAttempts)} 次格式異常）`;
+        badge.title = `AI 回覆的格式不合格，目前顯示的是規則判定的結論；系統會在下一次 AI 排程自動再試，連續 ${AI_DEGRADED_MAX_ATTEMPTS} 次不合格就會放棄。`;
+    } else {
+        badge.className = `lf-badge lf-badge--danger${extra}`;
+        badge.textContent = 'AI 摘要已放棄';
+        badge.title = `AI 連續 ${AI_DEGRADED_MAX_ATTEMPTS} 次回覆格式不合格，已不再自動補跑；規則判定的結論與處置建議照常可用。想再試一次，可到排程作業頁選「重新分析」類的執行模式。`;
+    }
+    return badge;
+}
+
+/** 主機彙總表「最新狀況」一格：最新一天降級或放棄時，文字前加同一顆徽章；其他狀態只回文字 */
+export function latestStatusCell(host, text) {
+    const badge = aiDegradedBadge({ aiPending: host.latestAiPending, aiDegradedAttempts: host.latestAiDegradedAttempts }, 'me-1');
+    if (!badge) return text;
+    const wrap = document.createElement('span');
+    wrap.appendChild(badge);
+    wrap.appendChild(document.createTextNode(text));
+    return wrap;
 }
 
 const WORK_ORDER_CLOSED_REASON_TEXT = {

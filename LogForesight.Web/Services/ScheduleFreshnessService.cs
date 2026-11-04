@@ -27,16 +27,23 @@ public class ScheduleFreshnessService
         var options = _scheduleOptions.Get();
         var scheduleEnabled = options.Enabled;
 
-        // 近 14 天的執行紀錄中，JobType != BatchRun.JobTypeAi、Trigger == schedule（IsScheduledFetch）、FinishedAt != null、BatchRunStatus.UpdatedData(...) 為 true 的最新一筆之 FinishedAt。
+        // 近 14 天的執行紀錄中，CountsForFreshness（排程取數趟或完整範圍的手動取數趟）、FinishedAt != null、BatchRunStatus.UpdatedData(...) 為 true 的最新一筆之 FinishedAt。
         var runs = _runs.GetRecentRuns(14, hostNames: null);
         var latestSuccess = runs
-            .Where(r => r.IsScheduledFetch() &&
+            .Where(r => r.CountsForFreshness() &&
                         r.FinishedAt != null &&
                         BatchRunStatus.UpdatedData(BatchRunStatus.Compute(r, now, RunMonitorService.StuckThreshold)))
             .OrderByDescending(r => r.FinishedAt)
             .FirstOrDefault();
 
         var lastSuccessAt = latestSuccess?.FinishedAt;
+
+        // 告示要講的是「排程那條路」的狀況，所以只看排程取數趟，手動趟不影響它；
+        // 沒結束的趟也算（進行中或卡住），否則卡住的那趟會被更早的成功趟蓋掉，告示反而說排程沒在跑
+        var lastScheduled = runs
+            .Where(r => r.IsScheduledFetch())
+            .OrderByDescending(r => r.StartedAt)
+            .FirstOrDefault();
 
         // Stale：ScheduleEnabled 且（LastSuccessAt 為 null 或 now - LastSuccessAt > 48 小時），
         // 且 排程啟用時間（ScheduleOptions.EnabledAt，null＝很久以前）早於 now - 48 小時（剛啟用排程的站台不算過期）。
@@ -54,7 +61,10 @@ public class ScheduleFreshnessService
             LastSuccessAt = lastSuccessAt,
             Stale = stale,
             AckedUntil = ackedUntil,
-            Acked = acked
+            Acked = acked,
+            LastRunStatus = lastScheduled == null ? null : BatchRunStatus.Compute(lastScheduled, now, RunMonitorService.StuckThreshold),
+            // 只看解密失敗：重新輸入全部憑證後金鑰不符要等重啟才解除，那段時間憑證其實都解得開，不能叫人再輸入一次
+            CredentialIssue = CryptoHelper.DecryptFailureSeen
         };
     }
 }

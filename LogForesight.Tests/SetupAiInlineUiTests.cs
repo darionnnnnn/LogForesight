@@ -148,7 +148,7 @@ function createMockForm() {
     const ids = [
         'setup-ai-provider-hint', 'setup-ai-base-url-wrap', 'setup-ai-base-url-label',
         'setup-ai-base-url', 'setup-ai-base-url-hint', 'setup-ai-model-wrap',
-        'setup-ai-model-label', 'setup-ai-model', 'setup-ai-model-hint',
+        'setup-ai-model-label', 'setup-ai-model',
         'setup-ai-azure-deployment-wrap', 'setup-ai-azure-api-version-wrap',
         'setup-ai-api-key-label', 'setup-ai-api-key-hint'
     ];

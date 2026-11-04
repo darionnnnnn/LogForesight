@@ -40,6 +40,16 @@ internal sealed class PrtgPagingNotConvergedException : Exception
 internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages, bool StoppedEarly = false);
 
 /// <summary>
+/// 分頁讀取的等待重試選項（傳入即開啟；<c>null</c>＝不重試，維持單次失敗即擲出的既有行為）。
+/// 次數與延遲是 <see cref="PrtgTablePager.RetryDelays"/> 的固定常數，這裡只放可注入的「等待」動作。
+/// </summary>
+/// <param name="Delay">等待函式，預設 <see cref="Task.Delay(TimeSpan, CancellationToken)"/>；測試注入零等待並記錄收到的時間長度。</param>
+internal sealed record PrtgPagerRetry(Func<TimeSpan, CancellationToken, Task>? Delay = null)
+{
+    internal Task WaitAsync(TimeSpan span, CancellationToken ct) => Delay != null ? Delay(span, ct) : PrtgTablePager.DefaultWait(span, ct);
+}
+
+/// <summary>
 /// PRTG table.json 的唯一分頁實作。所有需要翻頁讀取 PRTG 表格的路徑都走這裡，
 /// 避免同一套停止條件在多處各寫一份而只修到一半。
 /// </summary>
@@ -56,6 +66,18 @@ internal static class PrtgTablePager
     /// 否則會把合法的長同步誤判成未收斂。
     /// </summary>
     internal const int DefaultMaxPages = 400;
+
+    /// <summary>
+    /// 等待重試的延遲序列（暫定值）：第 1 次重試前等 15 秒、第 2 次前等 60 秒，長度即「每個 pager 執行」的重試總次數上限。
+    /// 次數是整個 pager 執行共用，不是每頁各 2 次——頁數可達數百，每頁各算會讓一個壞掉的 PRTG 把同步拖成數小時。
+    /// </summary>
+    internal static readonly IReadOnlyList<TimeSpan> RetryDelays = [TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60)];
+
+    /// <summary>
+    /// 沒有注入等待函式時的預設等待（真的等）。唯一用途是讓測試組件在載入時換成零等待：
+    /// 夜間管線、結構同步與回填的整合測試會連到不可達的位址，真的等 15＋60 秒會讓每個案例慢數分鐘。正式碼不替換它。
+    /// </summary>
+    internal static Func<TimeSpan, CancellationToken, Task> DefaultWait { get; set; } = Task.Delay;
 
     /// <summary>每翻這麼多頁寫一行執行輸出：大型環境要翻數百頁，沒有輸出時「慢」與「卡死」看起來一樣。</summary>
     private const int ConsoleEveryPages = 5;
@@ -97,9 +119,11 @@ internal static class PrtgTablePager
         int maxPagesWhenTreeSizeUnknown = DefaultMaxPages,
         Func<JsonElement, string?>? rowKey = null,
         int batchSize = DefaultBatchSize,
-        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null,
+        PrtgPagerRetry? retry = null)
     {
         rowKey ??= DefaultRowKey;
+        var retriesUsed = 0;
 
         var offset = 0;
         var totalMapped = 0;
@@ -122,7 +146,27 @@ internal static class PrtgTablePager
             var query = $"api/table.json?content={content}&columns={columns}&start={offset}&count={pageSize}&sortby=objid";
             if (!string.IsNullOrEmpty(extraQuery)) query += $"&{extraQuery}";
 
-            var json = await client.GetJsonAsync(query, ct);
+            // 重試只包「請求本身」：回應尚未解析、也沒有任何狀態被改動，重送一次與第一次等價；
+            // 計數用的觀察者（PrtgClient.TableRequestSent）在每次真的送出時各觸發一次，重送本來就是一次新請求。
+            string json;
+            while (true)
+            {
+                try
+                {
+                    json = await client.GetJsonAsync(query, ct);
+                    break;
+                }
+                catch (PrtgClientException ex) when (retry != null && retriesUsed < RetryDelays.Count &&
+                                                      !ct.IsCancellationRequested && IsRetryable(ex))
+                {
+                    var delay = RetryDelays[retriesUsed];
+                    retriesUsed++;
+                    // 只寫 Info：PRTG 慢的夜晚不該讓趟次變成「有警告」；重試用盡後的最終失敗照舊由呼叫端記錄。
+                    Log.Info("[PRTG] {Content} 讀取失敗（{Reason}），{Seconds} 秒後進行第 {Attempt}/{Max} 次重試",
+                        content, ex.Message, (int)delay.TotalSeconds, retriesUsed, RetryDelays.Count);
+                    await retry.WaitAsync(delay, ct);
+                }
+            }
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -257,6 +301,18 @@ internal static class PrtgTablePager
 
         return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly);
     }
+
+    /// <summary>
+    /// 重試有意義的失敗：逾時、連線層失敗，或伺服器暫時性狀態碼（5xx、429）。
+    /// 只看 <see cref="PrtgClientException.Kind"/> 與 <see cref="PrtgClientException.StatusCode"/>，不比對訊息字串；
+    /// 401／403／其他 4xx 與憑證失敗重試只會累加帳號鎖定計數或徒然等待，一律立即擲出。
+    /// </summary>
+    internal static bool IsRetryable(PrtgClientException ex) => ex.Kind switch
+    {
+        PrtgFailureKind.Timeout or PrtgFailureKind.Transport or PrtgFailureKind.EmptyPage => true,
+        PrtgFailureKind.HttpStatus => ex.StatusCode is 429 or (>= 500 and <= 599),
+        _ => false
+    };
 
     /// <summary>預設列鍵：objid。devices 與 sensors 的 objid 是主鍵，這對它們成立。</summary>
     private static string? DefaultRowKey(JsonElement el) => GetLongProperty(el, "objid")?.ToString();

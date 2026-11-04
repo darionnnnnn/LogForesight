@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using NLog;
@@ -14,11 +15,57 @@ public sealed class PrtgPreSendFenceException(string reason) : Exception(reason)
 }
 
 /// <summary>
+/// <see cref="PrtgClientException"/> 的失敗類型。呼叫端要判斷「重試有沒有意義」只能讀它與
+/// <see cref="PrtgClientException.StatusCode"/>，不得比對訊息字串（訊息會隨在地化與措辭改動）。
+/// </summary>
+public enum PrtgFailureKind
+{
+    /// <summary>未分類（設定錯誤、回應格式不符、超過大小上限等）；重試不會改變結果。</summary>
+    Other = 0,
+
+    /// <summary>HTTP 請求逾時（HttpClient 逾時或讀取回應時逾時）。</summary>
+    Timeout,
+
+    /// <summary>連線層失敗（連不上、連線被重設、讀取中斷）。</summary>
+    Transport,
+
+    /// <summary>伺服器回了非成功的 HTTP 狀態碼，碼在 <see cref="PrtgClientException.StatusCode"/>。</summary>
+    HttpStatus,
+
+    /// <summary>憑證本身不被接受（登入失敗、passhash 取得失敗，或同一個 client 已黏住的憑證失敗）。</summary>
+    Credential,
+
+    /// <summary>
+    /// HTTP 200 但內容是 PRTG 的空白「OK」頁（<c>&lt;B class="no-content"&gt;OK&lt;/B&gt;</c>）：PRTG 在伺服器端放棄處理
+    /// （忙碌、處理逾時、核心服務異常）時這樣回，昨天同一查詢可以成功；不是認證錯誤（那會是 401 或登入頁），值得等一下再試。
+    /// </summary>
+    EmptyPage
+}
+
+/// <summary>
 /// PRTG 連線／存取例外。訊息保證不含敏感的 token、密碼或 passhash 資訊，可直接顯示給操作者或寫入 log。
 /// </summary>
 public class PrtgClientException : Exception
 {
-    public PrtgClientException(string message, Exception? inner = null) : base(message, inner) { }
+    public PrtgClientException(string message, Exception? inner = null,
+        PrtgFailureKind kind = PrtgFailureKind.Other, int? statusCode = null, TimeSpan? retryAfter = null) : base(message, inner)
+    {
+        Kind = kind;
+        StatusCode = statusCode;
+        RetryAfter = retryAfter;
+    }
+
+    /// <summary>失敗類型；未分類為 <see cref="PrtgFailureKind.Other"/>。</summary>
+    public PrtgFailureKind Kind { get; }
+
+    /// <summary>HTTP 狀態碼（只有伺服器真的回了狀態碼的失敗才有值）。</summary>
+    public int? StatusCode { get; }
+
+    /// <summary>
+    /// 伺服器以 <c>Retry-After</c> 標頭要求的等待時間（秒數或日期格式皆已換算成從現在起的長度）；
+    /// 沒有標頭、無法解析或已經過期（零或負值）時為 null。呼叫端不自己解析標頭字串。
+    /// </summary>
+    public TimeSpan? RetryAfter { get; }
 }
 
 /// <summary>Transport metadata is retained separately from the sensor's measurement clock.</summary>
@@ -28,7 +75,7 @@ public sealed record PrtgSourceResponse(string Content, DateTimeOffset? HttpDate
 /// <summary>
 /// PRTG 監控系統 HTTP 存取客戶端（PRTG 第 1 輪批次B、第 2 輪批次A）。
 /// 負責與 PRTG API 進行 HTTP 通訊，自動在 Query String 附加 API Token 或帳號與 passhash。
-/// 不抽介面、不加重試、不加節流、不加分頁。
+/// 不抽介面、不加重試、不加節流、不加分頁（等待重試在 <c>PrtgTablePager</c>，依 <see cref="PrtgClientException.Kind"/> 判斷）。
 /// </summary>
 public sealed class PrtgClient : IDisposable
 {
@@ -135,7 +182,7 @@ public sealed class PrtgClient : IDisposable
 
         if (ownsHandler && ignoreSslErrors)
         {
-            Log.Warn("[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）");
+            Log.Info("[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）");
         }
     }
 
@@ -201,7 +248,7 @@ public sealed class PrtgClient : IDisposable
         // 憑證錯誤要黏住：每個 sensor 的數值擷取各自呼叫一次 GetJsonAsync，密碼打錯時
         // 若讓每次都重打 getpasshash，三千個 sensor 就是三千次登入失敗——足以觸發
         // PRTG 端的帳號鎖定。傳輸類失敗（連不上、逾時）不黏，那種重試是有意義的。
-        if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure);
+        if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure, kind: PrtgFailureKind.Credential);
 
         // 併發保護：FetchValuesAsync 會併發呼叫 GetJsonAsync，
         // 用 SemaphoreSlim(1,1) 確保多個併發請求同時到達時只向 PRTG 請求一次 passhash
@@ -209,7 +256,7 @@ public sealed class PrtgClient : IDisposable
         try
         {
             if (_cachedPasshash != null) return _cachedPasshash;
-            if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure);
+            if (_credentialFailure != null) throw new PrtgClientException(_credentialFailure, kind: PrtgFailureKind.Credential);
 
             // 這是唯一會帶 password 的請求
             var query = $"username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}";
@@ -240,7 +287,7 @@ public sealed class PrtgClient : IDisposable
                 var sanitized = StripSecrets(ex.Message);
                 // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
                 // 訊息字串是在地化的，比對它遲早會錯。
-                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
+                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
             }
 
             using (resp)
@@ -248,12 +295,13 @@ public sealed class PrtgClient : IDisposable
                 Checkpoint(ct);
                 if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
-                    throw FailCredentials("PRTG 帳號或密碼錯誤。");
+                    throw FailCredentials("PRTG 帳號或密碼錯誤。", (int)resp.StatusCode);
                 }
 
                 if (!resp.IsSuccessStatusCode)
                 {
-                    throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
+                    throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}",
+                        kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode);
                 }
 
                 string text;
@@ -272,10 +320,13 @@ public sealed class PrtgClient : IDisposable
                 catch (Exception ex)
                 {
                     var sanitized = StripSecrets(ex.Message);
-                    throw new PrtgClientException($"讀取 PRTG passhash 回應失敗：{sanitized}", ex);
+                    throw new PrtgClientException($"讀取 PRTG passhash 回應失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
                 }
 
                 var trimmed = text.Trim();
+
+                // 空白 OK 頁是 PRTG 放棄處理，不黏住：黏住會讓這個 client 之後都不再送請求，還把人引去改本來對的密碼
+                if (IsEmptyOkPage(trimmed)) throw EmptyPageException();
 
                 if (trimmed.StartsWith('<'))
                 {
@@ -308,6 +359,29 @@ public sealed class PrtgClient : IDisposable
         ex.InnerException == null &&
         ex.Message.Contains(MaxResponseBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
 
+    /// <summary>
+    /// 讀 <c>Retry-After</c>：秒數格式直接取，日期格式用 <see cref="_timeProvider"/> 換算成從現在起的長度。
+    /// 解析交給 <see cref="HttpResponseMessage.Headers"/>，零或負值（已過期的日期）當作沒有。
+    /// </summary>
+    private TimeSpan? ReadRetryAfter(HttpResponseMessage resp)
+    {
+        var header = resp.Headers.RetryAfter;
+        if (header == null) return null;
+        var span = header.Delta ?? (header.Date is { } date ? date - _timeProvider.GetUtcNow() : (TimeSpan?)null);
+        return span is { } s && s > TimeSpan.Zero ? s : null;
+    }
+
+    private static PrtgClientException EmptyPageException() => new(
+        "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
+        "不是認證錯誤（認證錯誤會回 HTTP 401）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
+        kind: PrtgFailureKind.EmptyPage);
+
+    /// <summary>PRTG 的空白「OK」頁：73 bytes、<c>class="no-content"</c>、內文只有 OK。登入頁與其他 HTML 不算。</summary>
+    internal static bool IsEmptyOkPage(string trimmedBody) =>
+        trimmedBody.StartsWith('<') &&
+        trimmedBody.Contains("class=\"no-content\"", StringComparison.OrdinalIgnoreCase) &&
+        Regex.IsMatch(trimmedBody, @">\s*OK\s*</B>", RegexOptions.IgnoreCase);
+
     private static PrtgClientException OversizeException(HttpRequestException ex) =>
         new("PRTG 回應超過 256 MB 上限，請縮小取數範圍或降低單次筆數", ex);
 
@@ -316,11 +390,19 @@ public sealed class PrtgClient : IDisposable
     /// （換 passhash 與資料請求都算）。只用於「憑證本身不被接受」這類重試也不會成功的失敗；
     /// 傳輸類失敗與 403 不記，那些重試有意義或屬於單一物件的權限問題。
     /// </summary>
-    private PrtgClientException FailCredentials(string message)
+    private PrtgClientException FailCredentials(string message, int? statusCode = null)
     {
         _credentialFailure = message;
-        return new PrtgClientException(message);
+        return new PrtgClientException(message, kind: PrtgFailureKind.Credential, statusCode: statusCode);
     }
+
+    /// <summary>
+    /// 傳輸層例外的類型：逾時（HttpClient 逾時是 TaskCanceledException，呼叫端取消已在上游以 ct 判斷排除）為
+    /// <see cref="PrtgFailureKind.Timeout"/>，其餘（連不上、連線中斷）為 <see cref="PrtgFailureKind.Transport"/>。
+    /// 只看例外型別，不比對訊息字串。
+    /// </summary>
+    private static PrtgFailureKind ClassifyTransportFailure(Exception ex) =>
+        ex is OperationCanceledException or TimeoutException ? PrtgFailureKind.Timeout : PrtgFailureKind.Transport;
 
     /// <summary>
     /// 呼叫 PRTG API GET 端點並取得原始 JSON 字串。
@@ -360,7 +442,7 @@ public sealed class PrtgClient : IDisposable
         // 足以觸發 PRTG 端的帳號鎖定。token 模式不黏——token 失效不會鎖任何帳號。
         if (_usesUsernameAuth && _credentialFailure != null)
         {
-            throw new PrtgClientException(_credentialFailure);
+            throw new PrtgClientException(_credentialFailure, kind: PrtgFailureKind.Credential);
         }
 
         var passhash = await EnsurePasshashAsync(ct);
@@ -424,7 +506,7 @@ public sealed class PrtgClient : IDisposable
             var sanitized = StripSecrets(ex.Message);
             // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
             // 訊息字串是在地化的，比對它遲早會錯。
-            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex);
+            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
         }
 
         using (resp)
@@ -441,15 +523,16 @@ public sealed class PrtgClient : IDisposable
                 // 黏住會讓一個沒權限的 sensor 拖垮整趟擷取。
                 if (_usesUsernameAuth && resp.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    throw FailCredentials(message);
+                    throw FailCredentials(message, (int)resp.StatusCode);
                 }
 
-                throw new PrtgClientException(message);
+                throw new PrtgClientException(message, kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode);
             }
 
             if (!resp.IsSuccessStatusCode)
             {
-                throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}");
+                throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}",
+                    kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode, retryAfter: ReadRetryAfter(resp));
             }
 
             string text;
@@ -483,10 +566,12 @@ public sealed class PrtgClient : IDisposable
             catch (Exception ex)
             {
                 var sanitized = StripSecrets(ex.Message);
-                throw new PrtgClientException($"讀取 PRTG 回應內容失敗：{sanitized}", ex);
+                throw new PrtgClientException($"讀取 PRTG 回應內容失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
             }
 
             var trimmed = text.Trim();
+            if (expectJson && IsEmptyOkPage(trimmed)) throw EmptyPageException();
+
             if (expectJson && trimmed.StartsWith('<'))
             {
                 var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;

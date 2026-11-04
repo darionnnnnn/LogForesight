@@ -379,7 +379,9 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         // 全部重做：昨天這次失敗。水位若沒有在開始時清掉，昨天仍會被當成已完成
         _failHistoric = (id, _) => id == 1001;
         var redo = await RunFullAsync(resume: false);
-        Assert.Equal(3, redo.Count);
+        // 兩天共 3 顆：全部重取一次，加上失敗那顆（HTTP 500 可重試）的補抓一次
+        Assert.Equal(4, redo.Count);
+        Assert.Equal(2, redo.Count(r => r.SensorId == 1001));
         var after = _service.PreviewFull();
         Assert.Equal(1, after.CompletedDays);
         Assert.False(after.Days.Single(d => d.Day == DateTime.Today.AddDays(-1)).AlreadyCompleted);

@@ -115,7 +115,27 @@ public class RunDayTimingDto
 {
     public DateTime? FirstStartedAt { get; set; }
     public DateTime? LastFinishedAt { get; set; }
+    /// <summary>取數趟與跟隨取數 AI 趟的聯集秒數（異常中斷不計）；沒有可計算的趟為 null</summary>
     public int? TotalSeconds { get; set; }
+
+    /// <summary>只有取數趟的聯集秒數（null＝當天沒有已完成的取數趟）</summary>
+    public int? FetchSeconds { get; set; }
+
+    /// <summary>只有跟隨取數 AI 趟的聯集秒數（null＝當天沒有已完成的跟隨趟）</summary>
+    public int? FollowUpAiSeconds { get; set; }
+
+    /// <summary>非跟隨的 AI 趟（排程補跑、手動）趟數；不進起訖與總計</summary>
+    public int OtherAiRuns { get; set; }
+
+    /// <summary>非跟隨 AI 趟的聯集秒數（OtherAiRuns 為 0 時為 null）</summary>
+    public int? OtherAiSeconds { get; set; }
+
+    /// <summary>已完成（非異常中斷）的取數趟數；用來判斷「全部沒有階段資料」</summary>
+    public int FetchRuns { get; set; }
+
+    /// <summary>已完成（非異常中斷）的取數趟中，沒有 Phases 的趟數（升級前紀錄）</summary>
+    public int FetchRunsWithoutPhases { get; set; }
+
     public int InterruptedCount { get; set; }
     public DateTime? LastInterruptedActivityAt { get; set; }
     public List<RunBranchTimingDto> Branches { get; set; } = new();
@@ -168,8 +188,14 @@ public class RunDetailDto
     /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqHostsSkipped { get; set; }
 
+    /// <summary>取數範圍（full | local | netiq-hosts，null＝舊紀錄或 AI 趟）</summary>
+    public string? Scope { get; set; }
+
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 結局原因（disabled 早退時：未啟用／尚未設定認證資訊／憑證無法解密；舊紀錄或無原因為 null）</summary>
+    public string? PrtgOutcomeNote { get; set; }
 
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }
@@ -283,8 +309,14 @@ public class RunListItemDto
     /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqHostsSkipped { get; set; }
 
+    /// <summary>取數範圍（full | local | netiq-hosts，null＝舊紀錄或 AI 趟）</summary>
+    public string? Scope { get; set; }
+
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 結局原因（disabled 早退時：未啟用／尚未設定認證資訊／憑證無法解密；舊紀錄或無原因為 null）</summary>
+    public string? PrtgOutcomeNote { get; set; }
 
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }

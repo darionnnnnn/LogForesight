@@ -161,6 +161,140 @@ public class ScheduleFreshnessTests
         };
     }
 
+    private static string FindRepoRootForScope()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        return dir!.FullName;
+    }
+
+    /// <summary>排程已啟用 100 小時、依序寫入指定的趟次後算一次新鮮度</summary>
+    private static ScheduleFreshnessDto Freshness(params BatchRun[] finished)
+    {
+        using var fx = new EfSqliteFixture();
+        var optionsBlob = fx.Blob("schedule_options");
+        var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));
+        var now = DateTime.Now;
+        var options = new ScheduleOptions { Enabled = true, EnabledAt = now.AddHours(-100) };
+        optionsBlob.Mutate(_ => (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options));
+        foreach (var run in finished)
+        {
+            runs.StartRun(run);
+            runs.FinishRun(run);
+        }
+        return new ScheduleFreshnessService(runs, new ScheduleOptionsStore(optionsBlob)).GetScheduleFreshness(now);
+    }
+
+    private static BatchRun Run(string trigger, string? scope, double hoursAgo, int exitCode = 0, string? jobType = null) => new()
+    {
+        Trigger = trigger,
+        Scope = scope,
+        JobType = jobType,
+        StartedAt = DateTime.Now.AddHours(-hoursAgo - 1),
+        FinishedAt = DateTime.Now.AddHours(-hoursAgo),
+        ExitCode = exitCode
+    };
+
+    [Theory]
+    [InlineData("manual:admin", "full", 0, null, false)]    // 完整手動成功：資料是新的
+    [InlineData("manual:admin", "local", 0, null, true)]    // 範圍縮小不算
+    [InlineData("manual:admin", "netiq-hosts", 0, null, true)]
+    [InlineData("manual:admin", null, 0, null, true)]       // 舊紀錄沒有範圍
+    [InlineData("manual:admin", "full", 1, null, true)]     // 完整手動但失敗
+    [InlineData("console", "full", 0, null, true)]
+    [InlineData("manual:admin", "full", 0, "ai", true)]     // AI 趟不算
+    public void 手動趟只有完整範圍且成功才算資料更新(string trigger, string? scope, int exitCode, string? jobType, bool expectedStale)
+    {
+        var result = Freshness(Run(trigger, scope, 1, exitCode, jobType));
+
+        Assert.Equal(expectedStale, result.Stale);
+    }
+
+    [Fact]
+    public void 最近排程趟狀態只看排程取數趟_手動趟不影響()
+    {
+        var result = Freshness(Run("schedule", "full", 60, exitCode: 1), Run("manual:admin", "local", 1));
+
+        Assert.Equal(BatchRunStatus.Failed, result.LastRunStatus);
+    }
+
+    [Fact]
+    public void 憑證問題旗標跟著解密狀態()
+    {
+        CryptoHelper.ResetForTests();
+        try
+        {
+            Assert.False(Freshness().CredentialIssue);
+
+            // 金鑰不符但憑證都解得開（重新輸入後、重啟前）：不能再叫人輸入一次
+            CryptoKeyBootstrapper.KeyMismatch = true;
+            Assert.False(Freshness().CredentialIssue);
+            CryptoKeyBootstrapper.KeyMismatch = false;
+
+            Assert.False(CryptoHelper.TryDecrypt("enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", out _));
+            Assert.True(Freshness().CredentialIssue);
+        }
+        finally
+        {
+            CryptoHelper.ResetForTests();
+        }
+    }
+
+    [Fact]
+    public void 卡住沒結束的排程趟不會被更早的成功趟蓋掉()
+    {
+        var stuck = new BatchRun { Trigger = "schedule", StartedAt = DateTime.Now.AddHours(-10) };
+        using var fx = new EfSqliteFixture();
+        var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));
+        var done = Run("schedule", "full", 60);
+        runs.StartRun(done);
+        runs.FinishRun(done);
+        runs.StartRun(stuck);
+        var optionsBlob = fx.Blob("schedule_options");
+        var options = new ScheduleOptions { Enabled = true, EnabledAt = DateTime.Now.AddHours(-100) };
+        optionsBlob.Mutate(_ => (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options));
+
+        var result = new ScheduleFreshnessService(runs, new ScheduleOptionsStore(optionsBlob)).GetScheduleFreshness(DateTime.Now);
+
+        Assert.True(result.Stale);
+        Assert.Equal(BatchRunStatus.Stuck, result.LastRunStatus);
+    }
+
+    [Fact]
+    public void 沒有任何排程趟_最近排程趟狀態為null()
+    {
+        Assert.Null(Freshness().LastRunStatus);
+    }
+
+    [Theory]
+    [InlineData(LogForesight.Core.Service.RunScope.Full, "full")]
+    [InlineData(LogForesight.Core.Service.RunScope.LocalOnly, "local")]
+    [InlineData(LogForesight.Core.Service.RunScope.NetiqHosts, "netiq-hosts")]
+    public void 範圍落地字串(LogForesight.Core.Service.RunScope scope, string expected)
+    {
+        Assert.Equal(expected, BatchRunScopes.Of(scope));
+    }
+
+    [Fact]
+    public void 範圍經Recorder寫入並可讀回_執行入口有帶()
+    {
+        using var fx = new EfSqliteFixture();
+        var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));
+        using (var recorder = new LogForesight.Core.Service.BatchRunRecorder(runs, "host", Array.Empty<string>(), "manual:admin", scope: BatchRunScopes.Local))
+        {
+            recorder.Finish(0);
+        }
+
+        Assert.Equal(BatchRunScopes.Local, runs.GetRecentRuns(1, null).Single().Scope);
+
+        // AI 趟不帶範圍：它不是取數，範圍對它沒有意義
+        var aiRecorderSource = File.ReadAllText(Path.Combine(FindRepoRootForScope(), "LogForesight.Web", "Services", "AiAnalysisHostedService.cs"));
+        Assert.DoesNotContain("scope:", aiRecorderSource);
+
+        var orchestrator = File.ReadAllText(Path.Combine(FindRepoRootForScope(), "LogForesight.Core", "Service", "AnalysisOrchestrator.cs"));
+        Assert.Contains("scope: BatchRunScopes.Of(request.Scope)", orchestrator);
+    }
+
     [Theory]
     [MemberData(nameof(FreshnessTestData))]
     public void CalculateFreshness_Theory_MatchesExpected(

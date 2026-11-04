@@ -10,6 +10,7 @@ PRTG 維護頁（系統管理 > PRTG 維護，權限 Maintain）有「連線」�
 
 ## 設定重點
 
+- 數值取數失敗時全部工作一起暫停（15、60、180 秒），第一輪結束後逐顆補抓；連續 10 顆失敗或總暫停將達 15 分鐘就停止本次取數，同一服務實例冷卻 10 分鐘。未取到的數值可由下一趟或回填補上。
 - 取數策略：保守（預設，15 分鐘快照、夜間不逐顆查歷史值）／激進（5 分鐘快照，夜間對觸發主機查 historicdata）。
 - 預設 sensor type 白名單含 Ping、SNMP CPU Load、SNMP Memory、SNMP Disk Free 與網卡、多碟可用空間等，不含 Traffic；既有站台保留原清單。白名單只管數值取數與快照，不影響狀態規則母體。
 - 分類補充對照一行一筆 `type=分類[:語意]`；語意代碼 `cpu-percent-used`、`memory-percent-free`、`disk-percent-free`、`ping-ms`。對照外的 type 在數值規則中為「單位未知」。

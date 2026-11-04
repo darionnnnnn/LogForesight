@@ -46,9 +46,13 @@ export function prtgScopeInapplicableText(isRunsCard = false) {
         : '保守策略下不適用';
 }
 
-/** 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效的數值取數對象一起說出來（保守策略時顯示不適用）。 */
-export function prtgModuleStateText(prtgEnabled, prtgValueFetchScope, prtgFetchStrategy = null) {
+/**
+ * 模組狀態的顯示文字：關閉時只說未啟用，啟用時把生效的數值取數對象一起說出來（保守策略時顯示不適用）。
+ * 認證密文解不開（credentialState === 'undecryptable'）時，取數會整段略過，不再說數值取數對象。
+ */
+export function prtgModuleStateText(prtgEnabled, prtgValueFetchScope, prtgFetchStrategy = null, credentialState = null) {
     if (!prtgEnabled) return '未啟用';
+    if (credentialState === 'undecryptable') return '已啟用（憑證無法解密）';
     const scopeText = prtgFetchStrategy && prtgFetchStrategy !== 'aggressive'
         ? prtgScopeInapplicableText(true)
         : PRTG_SCOPE_LABEL[toScopeSelectValue(true, prtgValueFetchScope)];

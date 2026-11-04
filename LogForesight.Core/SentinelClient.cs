@@ -190,7 +190,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         if (ownsHandler && settings.AllowInvalidCertificates)
         {
             if (_readLimits is null)
-                Log.Warn("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
+                Log.Info("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
             else
                 Log.Warn("Bounded metadata probe uses the configured certificate-validation policy.");
         }

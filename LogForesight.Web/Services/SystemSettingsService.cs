@@ -95,13 +95,16 @@ public class SystemSettingsService : ISystemSettingsService
     private readonly IUserStore _users;
     private readonly MailNotificationService _mail;
     private readonly IReportUsageQuery _reportUsage;
+    private readonly ISentinelStore? _sentinels;
 
     internal PrtgRequestBudget PrtgBudget { get; set; } = PrtgRequestBudget.Shared;
     internal Func<HttpMessageHandler>? PrtgHandlerFactory { get; set; }
 
     public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit,
-        IUserStore users, MailNotificationService mail, IReportUsageQuery reportUsage)
+        IUserStore users, MailNotificationService mail, IReportUsageQuery reportUsage,
+        ISentinelStore sentinels)
     {
+        _sentinels = sentinels;
         _store = store;
         _currentUser = currentUser;
         _audit = audit;
@@ -479,6 +482,9 @@ public class SystemSettingsService : ISystemSettingsService
             s.UpdatedByAccount = _currentUser.Account;
         });
 
+        // 密文欄位可能剛被重新輸入：全部解得開就清掉「部分憑證無法解密」旗標（儲存已成功，失敗只記 Warn）
+        CryptoRecovery.Reevaluate(_store, _sentinels);
+
         // 收件人清單可能剛被改正（回饋十七輪批次B-1）：舊的連續失敗計數不該繼續卡著，
         // 讓改正後的地址從零開始重新累計，而不是沿用改動前的失敗歷史繼續排除它。
         _mail.ResetRecipientFailureStreaks();
@@ -619,6 +625,9 @@ public class SystemSettingsService : ISystemSettingsService
 
             s.UpdatedByAccount = _currentUser.Account;
         });
+
+        // PRTG 憑證可能剛被重新輸入（見 Update 內同一呼叫）
+        CryptoRecovery.Reevaluate(_store, _sentinels);
 
         _audit.Record(
             action: AuditActions.PrtgSettingsUpdate,
@@ -1356,6 +1365,7 @@ public class SystemSettingsService : ISystemSettingsService
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         // PRTG 監控系統設定
         PrtgEnabled = s.PrtgEnabled,
+        PrtgCredentialState = PrtgClientFactory.CredentialState(s).ToWire(),
         PrtgUrl = s.PrtgUrl,
         PrtgHasApiToken = !string.IsNullOrEmpty(s.PrtgApiTokenEnc),
         PrtgAuthMode = s.PrtgAuthMode,

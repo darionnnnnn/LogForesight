@@ -14,7 +14,16 @@ namespace LogForesight.Tests;
 internal static class NLogTestConfigurationInitializer
 {
     [ModuleInitializer]
-    internal static void Initialize() => LogManager.Configuration ??= new LoggingConfiguration();
+    internal static void Initialize()
+    {
+        LogManager.Configuration ??= new LoggingConfiguration();
+        // PRTG 分頁等待重試（15 秒、60 秒）在整合測試連到不可達位址時會讓案例慢數分鐘；測試組件一律零等待
+        LogForesight.Core.Service.PrtgTablePager.DefaultWait = (_, ct) =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+    }
 }
 
 /// <summary>
@@ -383,5 +392,73 @@ public class BatchRunRecorderScopeTests
         Assert.Single(logs);
         Assert.Equal("SqlPerformanceMonitor", logs[0].Logger);
         Assert.Equal("Error", logs[0].Level);
+    }
+
+    private sealed class FixedContentHandler(string content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"},\"finish_reason\":\"stop\"}]}",
+                    System.Text.Encoding.UTF8, "application/json")
+            });
+    }
+
+    [Fact]
+    public async Task ChatJsonAsync最終失敗是Warn_進執行紀錄_ErrorCount不增()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        var ai = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", Model = "m", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 1
+        }, new FixedContentHandler("這不是 JSON"), NullAiRequestGate.Instance);
+
+        long runId;
+        AiJsonResult<AiAnalysisResult> result;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            result = await ai.ChatJsonAsync<AiAnalysisResult>("請分析", label: "daily-20261101-h1");
+            recorder.Finish(0);
+        }
+
+        Assert.False(result.Success);
+        var run = store.GetRun(runId)!;
+        Assert.Equal(0, run.ErrorCount);
+        var logs = store.GetLogs(runId);
+        var final = Assert.Single(logs, l => l.Message.Contains("ChatJsonAsync 最終失敗"));
+        Assert.Equal("Warn", final.Level);
+        Assert.DoesNotContain(logs, l => l.Level is "Error" or "Fatal");
+        // 每次嘗試的解析失敗 2 筆＋最終失敗 1 筆；診斷行不計
+        Assert.Equal(3, run.WarnCount);
+    }
+
+    [Fact]
+    public async Task 略過憑證驗證的兩則提醒是Info_趟次不會因此變成有警告()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            // 不注入 handler：由 client 自己建 handler，各寫出一則「略過憑證驗證」的提醒
+            using var prtg = new PrtgClient("https://prtg.example.com", "token", 30, ignoreSslErrors: true, handler: null,
+                PrtgAuthModes.Token, "", "", "");
+            var sentinelSettings = new NetiqOptions { AllowInvalidCertificates = true };
+            await using var sentinel = new SentinelClient(
+                new SentinelServer { Name = "SENTINEL-A", BaseUrl = "https://sentinel.local:8443", Username = "u", Password = "p" },
+                sentinelSettings);
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId)!;
+        Assert.Equal(0, run.WarnCount);
+        Assert.Equal(0, run.ErrorCount);
+        Assert.Empty(store.GetLogs(runId));
+        Assert.Equal(BatchRunStatus.Success, BatchRunStatus.Compute(run, DateTime.Now, TimeSpan.FromHours(6)));
     }
 }

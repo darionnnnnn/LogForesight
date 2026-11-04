@@ -85,7 +85,6 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
     const modelWrap = form.querySelector('#setup-ai-model-wrap');
     const modelLabel = form.querySelector('#setup-ai-model-label');
     const modelInput = form.querySelector('#setup-ai-model');
-    const modelHint = form.querySelector('#setup-ai-model-hint');
     const azureDepWrap = form.querySelector('#setup-ai-azure-deployment-wrap');
     const azureVerWrap = form.querySelector('#setup-ai-azure-api-version-wrap');
     const apiKeyLabel = form.querySelector('#setup-ai-api-key-label');
@@ -97,12 +96,11 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
         if (providerHint) providerHint.textContent = textDeclaration;
         baseUrlWrap?.classList.remove('d-none');
         if (baseUrlLabel) baseUrlLabel.textContent = 'API 位址（選填）';
-        if (baseUrlInput) baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
+        if (baseUrlInput) baseUrlInput.placeholder = 'https://api.openai.com';
         if (baseUrlHint) baseUrlHint.textContent = '留空使用官方端點，要走 proxy 才填。';
         modelWrap?.classList.remove('d-none');
         if (modelLabel) modelLabel.textContent = '模型名稱（必填）';
         if (modelInput) modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
-        if (modelHint) modelHint.textContent = '';
         azureDepWrap?.classList.add('d-none');
         azureVerWrap?.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
@@ -125,16 +123,18 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
         modelWrap?.classList.remove('d-none');
         if (modelLabel) modelLabel.textContent = '模型名稱';
         if (modelInput) modelInput.placeholder = 'local-model';
-        if (modelHint) modelHint.textContent = '選填，預設 local-model。';
         azureDepWrap?.classList.add('d-none');
         azureVerWrap?.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（選填）';
     }
 
     if (apiKeyHint) {
-        apiKeyHint.textContent = hasApiKey
-            ? '已設定金鑰；留空儲存＝沿用既有金鑰，輸入新值才會覆蓋。'
-            : '尚未設定金鑰；地端無驗證的端點可留空。';
+        apiKeyHint.textContent = hasApiKey ? '已設定金鑰' : '';
+        if (hasApiKey) apiKeyHint.classList.remove('d-none'); else apiKeyHint.classList.add('d-none');
+    }
+    const apiKeyInput = form.querySelector('#setup-ai-api-key');
+    if (apiKeyInput) {
+        apiKeyInput.placeholder = hasApiKey ? '留空＝沿用既有' : (provider === 'Local' ? '選填' : '');
     }
 }
 
@@ -689,9 +689,8 @@ function renderAiInlineForm(step) {
                 feedback.className = 'small text-danger';
                 feedback.textContent = `儲存成功但探活失敗：${detail}`;
                 if (apiKeyHint) {
-                    apiKeyHint.textContent = settingsSnapshot?.aiHasApiKey
-                        ? '已設定金鑰；留空儲存＝沿用既有金鑰，輸入新值才會覆蓋。'
-                        : '尚未設定金鑰；地端無驗證的端點可留空。';
+                    apiKeyHint.textContent = settingsSnapshot?.aiHasApiKey ? '已設定金鑰' : '';
+                    if (settingsSnapshot?.aiHasApiKey) apiKeyHint.classList.remove('d-none'); else apiKeyHint.classList.add('d-none');
                 }
             }
         } catch (err) {

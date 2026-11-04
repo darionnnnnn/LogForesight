@@ -178,15 +178,19 @@ public class AnalysisOrchestrator
     private readonly Action? _permissionVersionBump;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
     private readonly IAiRequestGate _aiGate;
+    private readonly Func<SystemSettings, IEnumerable<Sentinel>, IReadOnlySet<string>?, IReadOnlyList<SecretEntry>> _secretInventory;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
     /// <param name="aiGate">全站 AI 閘道；本趟的 AI 呼叫（週檢等）走背景車道</param>
+    /// <param name="secretInventory">取數前憑證檢查用的密文清單來源；null＝<see cref="SecretInventory.Build"/>（測試可注入會擲例外的版本）</param>
     public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, IAiRequestGate aiGate,
-        Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null)
+        Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null,
+        Func<SystemSettings, IEnumerable<Sentinel>, IReadOnlySet<string>?, IReadOnlyList<SecretEntry>>? secretInventory = null)
     {
         _candidateSource = candidateSource;
         _permissionVersionBump = permissionVersionBump;
         _hostDayTiming = hostDayTiming;
+        _secretInventory = secretInventory ?? SecretInventory.Build;
         _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
     }
 
@@ -309,7 +313,7 @@ public class AnalysisOrchestrator
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
-                catchUp: request.CatchUpNote != null, startedAt: runStartedAt);
+                catchUp: request.CatchUpNote != null, startedAt: runStartedAt, scope: BatchRunScopes.Of(request.Scope));
             result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
@@ -589,6 +593,22 @@ public class AnalysisOrchestrator
                 // 夜間派工：一趟一份派工脈絡與 NightlyDispatch，三路共用（互斥由脈絡的 Gate 負責）。
                 // 系統設定在這裡讀一次，下方資源守門沿用同一個變數
                 var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+
+                // 憑證前置檢查：三路分析之前，對這趟會用到的密文先試解一次，解不開的在執行紀錄留一行 Warn
+                // （不是 Error：失敗的那一路由該路自己表達，不另外把整趟判成 failed；檢查本身失敗只記 Warn、不中斷）
+                CredentialPreflight.Run(runConsole, () =>
+                {
+                    // 只列這趟真的會查的 Sentinel：指定主機的趟只有那些主機所屬的 Sentinel，其他台解不開也與這趟無關
+                    var selection = request.Scope == RunScope.LocalOnly ? null : HostListSelection.FromStore(hostStore, sentinelStore);
+                    var namesWithHosts = selection == null
+                        ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        : selection.ByServer
+                            .Where(kv => request.Scope != RunScope.NetiqHosts || request.HostIds == null
+                                         || kv.Value.Any(h => request.HostIds.Contains(h.HostId)))
+                            .Select(kv => kv.Key)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    return _secretInventory(systemSettings, sentinelStore.GetAll(), namesWithHosts);
+                });
                 DispatchCandidatePool candidatePool;
                 try
                 {

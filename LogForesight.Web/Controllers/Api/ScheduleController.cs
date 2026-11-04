@@ -186,6 +186,7 @@ public class ScheduleController : ControllerBase
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
             PrtgEnabled = systemSettings.PrtgEnabled,
+            PrtgCredentialState = PrtgClientFactory.CredentialState(systemSettings).ToWire(),
             PrtgValueFetchScope = PrtgValueFetchScope.Normalize(systemSettings.PrtgValueFetchScope),
             PrtgFetchStrategy = PrtgFetchStrategy.Normalize(systemSettings.PrtgFetchStrategy),
             PrtgBackfillDays = Math.Clamp(systemSettings.PrtgBackfillDays, 1, 365),

@@ -105,7 +105,9 @@ public class HealthController : ControllerBase
             Stale = cached.Stale,
             AckedUntil = cached.AckedUntil,
             Acked = cached.Acked,
-            AdminContacts = new List<string>(cached.AdminContacts)
+            AdminContacts = new List<string>(cached.AdminContacts),
+            LastRunStatus = cached.LastRunStatus,
+            CredentialIssue = cached.CredentialIssue
         };
         if (freshness.Stale && !freshness.Acked && !_currentUser.Has(Capability.Maintain))
         {

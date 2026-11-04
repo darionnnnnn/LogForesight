@@ -49,15 +49,25 @@ public class PrtgHostMappingAdminController : ControllerBase
     /// <summary>
     /// 未對應到 PRTG 的清單主機（啟用、未合併、沒有 ok 對應），附原因；維護頁「未對應主機」清單用。
     /// 只列主機清單內的主機（docs/PRTG-SPEC.md §1），判定與主機頁篩選同一份（<see cref="PrtgHostCoverage"/>）。
+    /// <para><paramref name="pinHostId"/>（選用）：該台在未對應集合內時排在整份清單最前面（第一頁第一筆），
+    /// 其餘順序與總數不變；不在集合內就當沒給。純查詢參數，不進路由快照。</para>
     /// </summary>
     [RequireViewAll]
     [HttpGet("prtg-unmapped-hosts")]
-    public ApiResponse<PrtgUnmappedHostPageDto> GetPrtgUnmappedHosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public ApiResponse<PrtgUnmappedHostPageDto> GetPrtgUnmappedHosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] long? pinHostId = null)
     {
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
         var store = _backend.PrtgStore();
         var (mapDate, rows) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
         var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), _addressResolver);
+        if (pinHostId is long pinId)
+        {
+            var pinned = unmapped.FirstOrDefault(h => h.HostId == pinId);
+            if (pinned != null)
+            {
+                unmapped = unmapped.Where(h => h.HostId != pinId).Prepend(pinned).ToList();
+            }
+        }
         return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
         {
             MapDate = mapDate,

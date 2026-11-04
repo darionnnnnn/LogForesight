@@ -73,7 +73,7 @@ public class BatchRunRecorder : IDisposable
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
         CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null,
-        bool catchUp = false, DateTime? startedAt = null)
+        bool catchUp = false, DateTime? startedAt = null, string? scope = null)
     {
         _store = store;
         _ct = ct;
@@ -85,6 +85,7 @@ public class BatchRunRecorder : IDisposable
             Args = string.Join(" ", args),
             Trigger = trigger,
             JobType = jobType,
+            Scope = scope,
             CatchUp = catchUp ? true : null
         };
 
@@ -363,12 +364,14 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts, string? strategy = null)
+    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts, string? strategy = null,
+        string? note = null)
     {
         if (_store == null) return;
         lock (_countLock)
         {
             _run.PrtgOutcome = outcome;
+            _run.PrtgOutcomeNote = note;
             _run.PrtgStrategy = strategy;
             _run.PrtgSensorsFetched = sensorsFetched;
             _run.PrtgSensorsFailed = sensorsFailed;

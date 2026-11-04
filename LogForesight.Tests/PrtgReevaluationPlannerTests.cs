@@ -196,6 +196,22 @@ public class PrtgReevaluationPlannerTests
         Assert.Contains(today.AddDays(-3), selected);
     }
 
+    [Theory]
+    [InlineData(BatchRun.PrtgNoteUndecryptable, true)]
+    [InlineData(BatchRun.PrtgNoteNotConfigured, true)]
+    [InlineData(BatchRun.PrtgNoteNotEnabled, false)]
+    public void Select_憑證問題早退的排程夜晚_其前一日入選_未啟用不算(string note, bool expected)
+    {
+        var today = new DateTime(2026, 10, 20);
+        var run = CreateRun(today.AddDays(-2));
+        run.PrtgOutcome = BatchRun.PrtgOutcomeDisabled;
+        run.PrtgOutcomeNote = note;
+
+        var selected = PrtgReevaluationPlanner.Select(new[] { run }, today, 180);
+
+        Assert.Equal(expected, selected.Contains(today.AddDays(-3)));
+    }
+
     [Fact]
     public void Select_AI排程的Interrupted_不當成排程日()
     {

@@ -157,6 +157,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 WarningCount = shaped.WarningCount,
                 AiAnalyzed = shaped.AiAnalyzed,
                 AiPending = shaped.AiPending,
+                AiDegradedAttempts = 0,
                 LogSource = (short)shaped.LogSource,
                 ExtractVersion = DailyRecordBackfiller.CurrentVersion
             };
@@ -220,6 +221,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         row.WarningCount = shaped.WarningCount;
         row.AiAnalyzed = shaped.AiAnalyzed;
         row.AiPending = shaped.AiPending;
+        row.AiDegradedAttempts = 0;   // 統計段重寫＝重標待補，降級次數歸零
         row.LogSource = (short)shaped.LogSource;
         row.ExtractVersion = DailyRecordBackfiller.CurrentVersion;
     }
@@ -519,6 +521,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         string? committedRiskLevel = null;
         bool? committedAiPending = null;
         bool? committedAiAnalyzed = null;
+        int? committedDegradedAttempts = null;
         var attached = strategy.Execute(() =>
         {
             var attemptNumber = Interlocked.Increment(ref attempts);
@@ -554,7 +557,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 StringComparer.Ordinal.Equals(row.ContentJson, committedContentJson) &&
                 StringComparer.Ordinal.Equals(row.Headline, committedHeadline) &&
                 StringComparer.Ordinal.Equals(row.RiskLevel, committedRiskLevel) &&
-                row.AiPending == committedAiPending && row.AiAnalyzed == committedAiAnalyzed)
+                row.AiPending == committedAiPending && row.AiAnalyzed == committedAiAnalyzed &&
+                // 降級會推進次數：次數也要是這個委派自己寫下的值，重放才不會再 +1
+                row.AiDegradedAttempts == committedDegradedAttempts)
             {
                 tx.Commit();
                 return true;
@@ -580,6 +585,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 record.RiskBasis = attemptOutcome.RiskBasis;
             }
             record.AiAnalyzed = attemptOutcome.AiAnalyzed;
+            // 先以「定案視角」驗證報告草稿指紋（草稿是以結論標題、非待補組出來的），
+            // 降級的次數、後綴與是否仍待補在報告驗證之後才套用。
             record.AiPending = false;
             record.ScreenedTailCount = attemptOutcome.ScreenedTailCount;
             record.ScreeningNotes = attemptOutcome.ScreeningNotes;
@@ -616,6 +623,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 // Repeated successful AI work must not change the parent again for an identical note.
             }
+            // 降級（格式異常）：次數 +1 與是否仍待補、標題後綴在同一個 Serializable 交易內決定。
+            // 成功的結果不動次數（保留歷史）、AiPending 維持 false。
+            var degradedAttempts = row.AiDegradedAttempts;
+            if (attemptOutcome.AiDegraded)
+            {
+                degradedAttempts = Math.Min(row.AiDegradedAttempts + 1, AiDegradation.MaxAttempts);
+                record.Headline = AiDegradation.ComposeHeadline(attemptOutcome.Headline, degradedAttempts);
+                record.AiPending = !AiDegradation.IsAbandoned(degradedAttempts);
+            }
+            record.AiDegradedAttempts = degradedAttempts;
             row.ContentJson = JsonSerializer.Serialize(record);
 
             // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
@@ -623,14 +640,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
             row.Headline = record.Headline;
             row.RiskLevel = record.RiskLevel;
-            row.AiPending = false;
+            row.AiPending = record.AiPending;
             row.AiAnalyzed = attemptOutcome.AiAnalyzed;
+            row.AiDegradedAttempts = degradedAttempts;
             committedRecordId = row.RecordId;
             committedContentJson = row.ContentJson;
             committedHeadline = row.Headline;
             committedRiskLevel = row.RiskLevel;
             committedAiPending = row.AiPending;
             committedAiAnalyzed = row.AiAnalyzed;
+            committedDegradedAttempts = row.AiDegradedAttempts;
             ctx.SaveChanges();
             tx.Commit();
             return true;
@@ -742,6 +761,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 {
                     record.AiPending = true;
                     row.AiPending = true;
+                    row.AiDegradedAttempts = 0;
+                    record.AiDegradedAttempts = 0;
+                    ResetDegradedHeadline(row, record);
                 }
             }
 
@@ -760,6 +782,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     {
                         record.AiPending = true;
                         row.AiPending = true;
+                        row.AiDegradedAttempts = 0;
+                        record.AiDegradedAttempts = 0;
+                        ResetDegradedHeadline(row, record);
                     }
                 }
             }
@@ -772,6 +797,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 record.AiAnalyzed = false;
                 row.AiPending = true;
                 row.AiAnalyzed = false;
+                row.AiDegradedAttempts = 0;
+                record.AiDegradedAttempts = 0;
+                ResetDegradedHeadline(row, record);
             }
             if (!RiskLevels.IsActionable(record.RiskLevel)) record.RiskReportPending = false;
             else if (record.ReportFile == null ||
@@ -1029,6 +1057,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     .SetProperty(p => p.ContentJson, string.Empty)
                     .SetProperty(p => p.OriginalRiskContentJson, (string?)null)
                     .SetProperty(p => p.WriteRevision, p => p.WriteRevision + 1)
+                    // 詳情清掉後 AI 輸入無法重建，補跑端本來就排除這些列：待補旗標一起清，
+                    // 否則降級待補的列會永遠掛著「系統會自動再試」
+                    .SetProperty(p => p.AiPending, false)
                     .SetProperty(p => p.DetailPruned, true));
             total += updated;
         }
@@ -1296,7 +1327,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
                 r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
-                r.AiAnalyzed, r.AiPending, r.DetailPruned, r.LogSource
+                r.AiAnalyzed, r.AiPending, r.AiDegradedAttempts, r.DetailPruned, r.LogSource
             })
             .ToList();
 
@@ -1317,6 +1348,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             SecurityLogAvailable = r.SecurityLogAvailable,
             AiAnalyzed = r.AiAnalyzed,
             AiPending = r.AiPending,
+            AiDegradedAttempts = r.AiDegradedAttempts,   // 清單徽章（降級待補／已放棄）讀這個，輕量列也要帶
             DetailPruned = r.DetailPruned,
             LogSource = (AnalysisLogSource)r.LogSource,
             // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
@@ -1640,34 +1672,37 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     }
 
     /// <summary>
-    /// 標題精確查詢的 SQL 形狀（獨立出來讓 provider 翻譯測試能對 SQL Server 做 <c>ToQueryString</c>）。
-    /// headline 欄位是抽出欄（與 ContentJson 內的 Headline 同步寫入），等於比較整欄、可下推。
-    /// 相等比較沿用資料庫的字串比對語意（SQL Server 預設不分大小寫），標題是固定常數、不會有近似變體。
+    /// AI 格式異常降級案例的 SQL 形狀（獨立出來讓 provider 翻譯測試能對 SQL Server 做 <c>ToQueryString</c>）。
+    /// 全部讀抽出欄（<c>ai_degraded_attempts</c>、<c>ai_pending</c>、<c>headline</c>），不碰 ContentJson 就能篩：
+    /// 次數 &gt; 0 且（仍待補，或已達放棄上限），或標題精確等於歷史資料的舊標題。
+    /// 標題相等沿用資料庫的字串比對語意（SQL Server 預設不分大小寫），舊標題是固定常數、不會有近似變體。
     /// </summary>
-    internal static IQueryable<DailyRecordRow> BuildHeadlineQuery(
-        LfDbContext ctx, DateTime fromDate, DateTime toDate, string headline, int take) =>
+    internal static IQueryable<DailyRecordRow> BuildAiDegradedCaseQuery(
+        LfDbContext ctx, DateTime fromDate, DateTime toDate, int take) =>
         ctx.DailyRecords.AsNoTracking()
-            .Where(r => r.RecordDate >= fromDate && r.RecordDate <= toDate && r.Headline == headline)
+            .Where(r => r.RecordDate >= fromDate && r.RecordDate <= toDate
+                && ((r.AiDegradedAttempts > 0 && (r.AiPending || r.AiDegradedAttempts >= AiDegradation.MaxAttempts))
+                    || r.Headline == LogAnalysisService.AiFormatAnomalyHeadline))
             .OrderByDescending(r => r.RecordDate)
             .ThenBy(r => r.HostId)
             .ThenBy(r => r.RecordId)
             .Take(take);
 
-    public List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take)
+    public List<DailyAnalysisRecord> QueryAiDegradedCases(DateTime from, DateTime to, int take)
     {
-        if (take <= 0 || string.IsNullOrEmpty(headline) || from.Date > to.Date) return new List<DailyAnalysisRecord>();
+        if (take <= 0 || from.Date > to.Date) return new List<DailyAnalysisRecord>();
 
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
         using var ctx = _contextFactory();
 
-        var rows = BuildHeadlineQuery(ctx, f, t, headline, take).ToList();
+        var rows = BuildAiDegradedCaseQuery(ctx, f, t, take).ToList();
 
         var result = rows.Select(Deserialize).ToList();
-        Log.Debug("[SQL] QueryByHeadline（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} take={Take}）→ {Count} 筆、{Ms}ms",
+        Log.Debug("[SQL] QueryAiDegradedCases（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} take={Take}）→ {Count} 筆、{Ms}ms",
             f, t, take, result.Count, sw.ElapsedMilliseconds);
-        _performance?.Record("records:QueryByHeadline", sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryAiDegradedCases", sw.ElapsedMilliseconds);
         return result;
     }
 
@@ -1734,6 +1769,13 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 強制重新分析：整批重標待補（契約與判準見 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>）。
     /// 全庫範圍（不限本 store 的主機），與 <see cref="QueryPendingAi"/>／<see cref="CountPendingAi"/> 同層。
     /// </summary>
+    /// <summary>重標待補時同步剝掉降級後綴：資料列與記憶體物件一起改（ContentJson 內的標題由同一個 record 序列化）。</summary>
+    private static void ResetDegradedHeadline(DailyRecordRow row, DailyAnalysisRecord record)
+    {
+        record.Headline = AiDegradation.StripSuffix(record.Headline);
+        row.Headline = record.Headline;
+    }
+
     public int MarkAllForAiRerun()
     {
         var sw = Stopwatch.StartNew();
@@ -1743,9 +1785,19 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 的判準同源（AiPending = 非低風險）。已有 AI 白話的低風險列若被標回待補，補跑時
         // RetryAiAsync 會回 Skipped，並以低風險通用字樣覆寫、清空深入分析——等於白白蓋掉既有內容。
         // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
+        // 降級過的列先剝掉標題後綴（SQL 端不好做字串處理，這種列很少，逐列改）：次數歸零後標題不能還寫「已放棄」
+        var degraded = ctx.DailyRecords
+            .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned && r.AiDegradedAttempts > 0)
+            .ToList();
+        foreach (var row in degraded) row.Headline = AiDegradation.StripSuffix(row.Headline);
+        if (degraded.Count > 0) ctx.SaveChanges();
+
         var affected = ctx.DailyRecords
             .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned)
-            .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, true));
+            .ExecuteUpdate(s => s
+                .SetProperty(r => r.AiPending, true)
+                // 重標待補＝重新開始：降級次數一併歸零（同一句 UPDATE，不留中間狀態）
+                .SetProperty(r => r.AiDegradedAttempts, 0));
 
         Log.Info("[SQL] 強制重新分析：整批重標 ai_pending = true，共 {Count} 列、{Ms}ms",
             affected, sw.ElapsedMilliseconds);
@@ -1918,6 +1970,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Date = row.RecordDate,
                 RiskLevel = row.RiskLevel,
                 AiPending = row.AiPending,
+                AiDegradedAttempts = row.AiDegradedAttempts,
                 // 詳情已清的列沒有 ContentJson，來源只剩抽出欄（涵蓋類統計要靠它排除 PRTG 獨立主機日）
                 LogSource = (AnalysisLogSource)row.LogSource,
                 RiskReview = row.RiskReviewStatus is "pending" or "unavailable" ? new HistoricalRiskReview
@@ -1931,6 +1984,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         record.RecordId = row.RecordId;
         // 事實來源單點化（批次C）：以 DB 欄位 ai_pending 為準，不得改讀 ContentJson 內序列化的同名值
         record.AiPending = row.AiPending;
+        // 降級次數只存資料列欄位（ContentJson 不含），由這裡單點帶入
+        record.AiDegradedAttempts = row.AiDegradedAttempts;
         return record;
     }
 }

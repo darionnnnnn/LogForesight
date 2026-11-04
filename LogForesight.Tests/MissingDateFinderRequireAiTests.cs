@@ -177,7 +177,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         Assert.False(failed.AiAnalyzed);
         Assert.False(failed.Skipped);
         Assert.Equal("高", failed.RiskLevel);
-        Assert.Contains("今日分析摘要暫缺", failed.Headline);
+        Assert.EndsWith("（AI 服務未回應，AI 待補）", failed.Headline);
 
         // 3. 待補的辨識者是 AI 分析排程（QueryPendingAi），不是取數的 MissingDateFinder
         //    ——取數重抓待補會與 AI 排程打架（體檢輪語意變更）

@@ -194,4 +194,49 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
             PrtgBackfillRunner.RunValuesForHostsAsync(fetch, day, day, new long[] { 11 }, 1,
                 new[] { "diskfree" }, store, new ConsoleStub(), cts.Token));
     }
+
+    // ───────── 第 63-2 輪 H-1：有目標卻全部失敗不記數值新鮮度 ─────────
+
+    private PrtgFreshnessStore.Entry ValuesFreshness() =>
+        new PrtgFreshnessStore(new EfJsonBlobStore(_fixture.NewContext, PrtgFreshnessStore.BlobKey)).GetAll()[PrtgFreshnessStore.Values];
+
+    [Fact]
+    public async Task 局部回填目標全部失敗不記新鮮度_一顆成功才記()
+    {
+        var store = Store();
+        var day = DateTime.Today.AddDays(-2);
+        AddMap(store, day, (1001, 11));
+        AddSensor(store, 2001, 1001);
+        AddSensor(store, 2002, 1001);
+        new PrtgFreshnessStore(new EfJsonBlobStore(_fixture.NewContext, PrtgFreshnessStore.BlobKey)).Record(PrtgFreshnessStore.Values, 5);
+
+        // 全部失敗（含補抓）：新鮮度維持原樣，ZeroStreak 不累
+        var (allFail, _) = Fetch(store, (_, _) => Task.FromResult(Json("failure", HttpStatusCode.InternalServerError)));
+        var ok = await PrtgBackfillRunner.RunValuesForHostsAsync(allFail, day, day, new long[] { 11 }, 1,
+            new[] { "diskfree" }, store, new ConsoleStub(), CancellationToken.None);
+        Assert.False(ok);
+        Assert.Equal(5, ValuesFreshness().LastCount);
+        Assert.Equal(0, ValuesFreshness().ZeroStreak);
+
+        // 停損使全部失敗也一樣：12 顆全逾時，連續 10 顆後停止
+        for (var i = 3; i <= 12; i++) AddSensor(store, 2000 + i, 1001);
+        var (stopLoss, stopHandler) = Fetch(store, (_, _) => throw new TaskCanceledException("逾時", new TimeoutException()));
+        ok = await PrtgBackfillRunner.RunValuesForHostsAsync(stopLoss, day, day, new long[] { 11 }, 1,
+            new[] { "diskfree" }, store, new ConsoleStub(), CancellationToken.None);
+        Assert.False(ok);
+        Assert.Equal(10, stopHandler.Urls.Count(u => u.Contains("historicdata.json")));
+        Assert.Equal(5, ValuesFreshness().LastCount);
+        Assert.Equal(0, ValuesFreshness().ZeroStreak);
+
+        // 一顆成功就記（成功那顆寫入 1 筆）
+        var (partial, _) = Fetch(store, (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            return Task.FromResult(url.Contains("id=2001") ? Json(HourFor(url)) : Json("failure", HttpStatusCode.InternalServerError));
+        });
+        await PrtgBackfillRunner.RunValuesForHostsAsync(partial, day, day, new long[] { 11 }, 1,
+            new[] { "diskfree" }, store, new ConsoleStub(), CancellationToken.None);
+        Assert.Equal(1, ValuesFreshness().LastCount);
+        Assert.Equal(0, ValuesFreshness().ZeroStreak);
+    }
 }

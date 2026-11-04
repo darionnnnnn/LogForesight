@@ -55,6 +55,80 @@ public class RunExportDeidentifierTests
 
     private static RunExportDeidentifier MakeWithHosts(params DeidentifierHost[] hosts) => Make(Src(hosts: hosts));
 
+    // ===== 63-2 批次F：短詞、登錄機碼、DC 標籤、Basic 與表單編碼 =====
+
+    [Fact]
+    public void F1_群組與角色的短詞不進字典_長名稱照遮()
+    {
+        var m = Make(Src(groups: new[] { "成功", "成功廠區", "IT" }, hosts: new[] { H(1, "WEB01", role: "DB"), H(2, "WEB02", role: "DBA 組") }));
+
+        Assert.Equal("診斷成功，IT 部門", m.Mask("診斷成功，IT 部門"));
+        var generic = Make(Src(groups: new[] { "Core", "Linux" }, hosts: new[] { H(1, "WEB01", role: "Web") }));
+        const string frame = "at LogForesight.Core.Service.Run() in builtin-linux-ssh-accept Web";
+        Assert.Equal(frame, generic.Mask(frame));
+        // 只放過描述性名稱：主機真的叫 Core 時仍要遮
+        Assert.Equal("host-001", Make(Src(hosts: new[] { H(1, "Core") })).Mask("Core"));
+        Assert.Equal("group-001", m.Mask("成功廠區"));
+        Assert.Equal("DB 連線", m.Mask("DB 連線"));
+        Assert.Equal("role-001", m.Mask("DBA 組"));
+    }
+
+    [Fact]
+    public void F1_兩字的主機名與使用者顯示名稱仍要遮()
+    {
+        var m = Make(Src(hosts: new[] { H(1, "資料") }, users: new[] { new DeidentifierUser(1, "wang", "王明", null) }));
+
+        Assert.Equal("host-001", m.Mask("資料"));
+        Assert.Equal("user-001 登入", m.Mask("王明 登入"));
+    }
+
+    [Theory]
+    [InlineData("HKLM\\Software\\Microsoft\\EventSystem")]
+    [InlineData("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet")]
+    [InlineData("HKLM\\Software")]
+    [InlineData("hkcu\\Environment")]
+    [InlineData("SOFTWARE\\Microsoft\\Windows")]
+    public void F2_登錄機碼路徑原樣(string path)
+    {
+        Assert.Equal(path, Make().Mask(path));
+    }
+
+    [Fact]
+    public void F2_一般的網域帳號仍要遮()
+    {
+        Assert.Equal("domain-001\\user-001 登入", Make().Mask("CORP\\alice 登入"));
+    }
+
+    [Fact]
+    public void F3_AD搜尋基準的網域名進字典_頂級網域不單獨收()
+    {
+        var settings = DeidentifierSettings.From(new SystemSettings { AdSearchBase = "OU=Users,DC=brk,DC=local" });
+        var m = Make(Src(settings: settings));
+
+        Assert.DoesNotContain("BRK", m.Mask("無法在網域 BRK 上設定工作階段"));
+        Assert.DoesNotContain("brk.local", m.Mask("連線 brk.local 失敗"));
+        Assert.Equal("local 模式", m.Mask("local 模式"));
+    }
+
+    [Theory]
+    [InlineData("Authorization: Basic dXNlcjpwYXNz", "Authorization: Basic secret")]
+    [InlineData("Basic YWRtaW46MTIzNA==", "Basic secret")]
+    [InlineData("Basic configuration loaded", "Basic configuration loaded")]
+    [InlineData("Basic Authentication failed", "Basic Authentication failed")]
+    public void F5_Basic憑證判定(string text, string expected)
+    {
+        Assert.Equal(expected, Make().Mask(text));
+    }
+
+    [Fact]
+    public void F5_密鑰的表單編碼形式也要遮()
+    {
+        var m = Make(Src(secrets: new[] { "p@ss w0rd" }));
+
+        Assert.DoesNotContain("w0rd", m.Mask("body=p%40ss+w0rd&x=1"));
+        Assert.DoesNotContain("w0rd", m.Mask("body=p%40ss%20w0rd&x=1"));
+    }
+
     // ===== 體檢輪：邊界、IP 前綴、代號字彙密鑰、國碼網域 =====
 
     [Theory]

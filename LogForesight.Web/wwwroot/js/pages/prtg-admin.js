@@ -105,10 +105,10 @@ function renderSetupSummary() {
         renderAcceptance(false);
         return;
     }
-    const credential = settings.prtgAuthMode === 'password' ? settings.prtgHasPassword && settings.prtgUsername
-        : settings.prtgAuthMode === 'passhash' ? settings.prtgHasPasshash && settings.prtgUsername : settings.prtgHasApiToken;
+    // 憑證狀態以後端為準：密文存在但解不開時，這裡不能寫「已確認」，告示正是把人導來這一頁重新輸入
+    const undecryptable = settings.prtgCredentialState === 'undecryptable';
     const checks = [
-        { ok: Boolean(settings.prtgUrl && credential), label: '已儲存的連線位址與認證', next: '設定連線並儲存', tab: 'connection' },
+        { ok: Boolean(settings.prtgUrl) && settings.prtgCredentialState === 'ok', label: '已儲存的連線位址與認證', next: undecryptable ? '憑證無法解密，請重新輸入並儲存' : '設定連線並儲存', tab: 'connection' },
         { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
         { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
         { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
@@ -292,6 +292,13 @@ function bindPrtgEffectiveness() {
 let prtgEnabled = false;
 /** 已儲存的位址與認證是否足以啟動結構同步。 */
 let prtgStructureConfigured = false;
+
+/** 目前認證方式的憑證解不開時的欄位提示（其他情況回 null）：這時寫「已設定、留空沿用」會讓人以為不用重新輸入 */
+function undecryptableSecretHint(settings, mode, label) {
+    return settings.prtgCredentialState === 'undecryptable' && (settings.prtgAuthMode || 'token') === mode
+        ? `已儲存的 ${label} 無法解密，請重新輸入並儲存。`
+        : null;
+}
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
 let selectedBackfillTimer = null;
@@ -670,9 +677,9 @@ function renderPrtgFields(settings) {
     document.getElementById('prtg-clear-token').checked = false;
 
     const tokenHint = document.getElementById('prtg-api-token-hint');
-    tokenHint.textContent = settings.prtgHasApiToken
+    tokenHint.textContent = undecryptableSecretHint(settings, 'token', 'API token') ?? (settings.prtgHasApiToken
         ? '已設定 API token；留空儲存＝沿用既有 API token，輸入新值才會覆蓋。'
-        : '尚未設定 API token。';
+        : '尚未設定 API token。');
 
     const usernameInput = document.getElementById('prtg-username');
     if (usernameInput) {
@@ -691,9 +698,9 @@ function renderPrtgFields(settings) {
 
     const passwordHint = document.getElementById('prtg-password-hint');
     if (passwordHint) {
-        passwordHint.textContent = settings.prtgHasPassword
+        passwordHint.textContent = undecryptableSecretHint(settings, 'password', '密碼') ?? (settings.prtgHasPassword
             ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
-            : '尚未設定密碼。';
+            : '尚未設定密碼。');
     }
 
     const passhashInput = document.getElementById('prtg-passhash');
@@ -708,9 +715,9 @@ function renderPrtgFields(settings) {
 
     const passhashHint = document.getElementById('prtg-passhash-hint');
     if (passhashHint) {
-        passhashHint.textContent = settings.prtgHasPasshash
+        passhashHint.textContent = undecryptableSecretHint(settings, 'passhash', 'passhash') ?? (settings.prtgHasPasshash
             ? '已設定 passhash；留空儲存＝沿用既有 passhash，輸入新值才會覆蓋。'
-            : '尚未設定 passhash。';
+            : '尚未設定 passhash。');
     }
 
     syncPrtgAuthFields();
@@ -727,13 +734,7 @@ function renderPrtgFields(settings) {
 
 
     prtgEnabled = Boolean(settings.prtgEnabled);
-    const authMode = settings.prtgAuthMode || 'token';
-    const hasCredential = authMode === 'password'
-        ? Boolean(settings.prtgHasPassword && settings.prtgUsername)
-        : authMode === 'passhash'
-            ? Boolean(settings.prtgHasPasshash && settings.prtgUsername)
-            : Boolean(settings.prtgHasApiToken);
-    prtgStructureConfigured = Boolean(settings.prtgUrl?.trim() && hasCredential);
+    prtgStructureConfigured = Boolean(settings.prtgUrl?.trim()) && settings.prtgCredentialState === 'ok';
     document.getElementById('prtg-enabled').checked = prtgEnabled;
     const scopeSelect = document.getElementById('prtg-value-fetch-scope');
     if (scopeSelect) {
@@ -1449,6 +1450,55 @@ function renderConflictPagination(totalPages) {
 let unmappedPage = 1;
 let unmappedPageSize = loadPageSize('prtg-unmatched');
 
+// 主機頁「無 PRTG 對應」徽章帶來的定位（?focus=unmatched&hostId=N）。一次性：
+// 只有進頁後第一次載入清單會帶 pinHostId，之後翻頁、重新整理都不再釘住
+let unmatchedPinHostId = readUnmatchedFocusHostId();
+let unmatchedPinApplied = false;   // 第一頁已跳轉高亮過；之後的翻頁只帶 pin 維持順序，不再捲動
+// 由 bindUnmatchedControls 設定：展開未對應區塊並捲到定位（沿用徽章按鈕同一套，不另做捲動）
+let jumpToUnmatchedSection = null;
+
+function readUnmatchedFocusHostId() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('focus') !== 'unmatched') return null;
+    const hostId = Number(params.get('hostId'));
+    return Number.isSafeInteger(hostId) && hostId > 0 ? hostId : null;
+}
+
+/** 移除 focus、hostId 參數但保留 hash（頁籤靠 #mirror），重新整理不再定位 */
+function clearUnmatchedFocusParams() {
+    const params = new URLSearchParams(location.search);
+    params.delete('focus');
+    params.delete('hostId');
+    const query = params.toString();
+    history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+}
+
+/** 清單載入成功後：跳到未對應區塊；該台確實排在第一筆才高亮那一列 1.5 秒 */
+// 初次載入的區塊各自非同步回來，上方區塊長高會把已捲到的位置往下推：
+// 從別頁跳過來要等全部載入結束才捲，否則畫面停在錯的地方。
+let initialLoadSettled = false;
+let afterInitialLoad = null;
+
+function whenInitialLoadSettled(action) {
+    if (initialLoadSettled) action();
+    else afterInitialLoad = action;
+}
+
+function markInitialLoadSettled() {
+    initialLoadSettled = true;
+    afterInitialLoad?.();
+    afterInitialLoad = null;
+}
+
+function revealPinnedUnmatchedHost(hostId, items) {
+    jumpToUnmatchedSection?.();
+    if (items.length === 0 || items[0].hostId !== hostId) return;
+    const row = document.getElementById('prtg-unmatched-table')?.querySelector('tbody tr');
+    if (!row) return;
+    row.classList.add('lf-focus-flash');
+    setTimeout(() => row.classList.remove('lf-focus-flash'), 1500);
+}
+
 /** 鏡像清單表格的載入中佔位：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
 function renderMirrorTableLoading(container) {
     renderSpinner(container);
@@ -1531,9 +1581,15 @@ function renderUnmappedHostsLoading() {
 
 async function refreshUnmappedHosts(page = unmappedPage) {
     unmappedPage = page;
+    // 釘住：網址參數只讀一次（成功後清掉網址），但同一次停留的每一頁都帶同一個 pin——
+    // 後端是「釘住那台＋其餘原順序」的整份排序，第 2 頁起不帶會變回原順序，漏一台、重複一台。載入失敗就放棄 pin。
+    const pinHostId = unmatchedPinHostId;
+    const firstPinnedLoad = pinHostId !== null && page === 1 && !unmatchedPinApplied;
     renderUnmappedHostsLoading();
+    let loadedItems = null;
     try {
-        const res = await api.get(`/api/admin/settings/prtg-unmapped-hosts?page=${unmappedPage}&pageSize=${unmappedPageSize}`, { silent: true });
+        const pinQuery = pinHostId !== null ? `&pinHostId=${pinHostId}` : '';
+        const res = await api.get(`/api/admin/settings/prtg-unmapped-hosts?page=${unmappedPage}&pageSize=${unmappedPageSize}${pinQuery}`, { silent: true });
         const total = (res && res.total) ? res.total : 0;
         const totalPages = Math.ceil(total / unmappedPageSize);
 
@@ -1541,10 +1597,19 @@ async function refreshUnmappedHosts(page = unmappedPage) {
             return refreshUnmappedHosts(totalPages);
         }
 
-        renderUnmappedHosts((res && res.items) ? res.items : []);
+        loadedItems = (res && res.items) ? res.items : [];
+        renderUnmappedHosts(loadedItems);
         renderUnmappedHostsPagination(totalPages);
     } catch (error) {
+        loadedItems = null;
+        unmatchedPinHostId = null;
         renderUnmappedHostsError(error && error.message ? error.message : '載入未對應主機清單失敗');
+    }
+    if (firstPinnedLoad) {
+        unmatchedPinApplied = true;
+        clearUnmatchedFocusParams();
+        // 載入失敗（含 403）不跳轉，錯誤態照常顯示
+        if (loadedItems !== null) whenInitialLoadSettled(() => revealPinnedUnmatchedHost(pinHostId, loadedItems));
     }
 }
 
@@ -2995,13 +3060,14 @@ function bindUnmatchedControls() {
         });
     }
 
-    if (badge && section) {
-        const jumpToUnmatched = () => {
-            ensureExpanded();
-            section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            section.focus();
-        };
+    const jumpToUnmatched = () => {
+        ensureExpanded();
+        section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        section.focus();
+    };
+    if (section) jumpToUnmatchedSection = jumpToUnmatched;
 
+    if (badge && section) {
         badge.addEventListener('click', jumpToUnmatched);
         badge.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -3043,18 +3109,20 @@ function init() {
         document.getElementById('prtg-name-mismatch-toggle-btn'), 'prtg-name-mismatch');
     initCalibration();
     initValueReadiness();
-    loadSettings();
-    ensureBatchHostsLoaded();
-    refreshPrtgMirror();
-    loadSnapshotDiagnostics();
-    refreshAcceptanceAi();
-    refreshConflicts(1);
-    refreshUnmappedHosts(1);
-    refreshNameMismatch();
-    refreshPrtgProbeStatus();
-    refreshStructureSyncStatus();
-    refreshPrtgRuleBanner();
-    refreshScheduleWarning();
+    Promise.allSettled([
+        loadSettings(),
+        ensureBatchHostsLoaded(),
+        refreshPrtgMirror(),
+        loadSnapshotDiagnostics(),
+        refreshAcceptanceAi(),
+        refreshConflicts(1),
+        refreshUnmappedHosts(1),
+        refreshNameMismatch(),
+        refreshPrtgProbeStatus(),
+        refreshStructureSyncStatus(),
+        refreshPrtgRuleBanner(),
+        refreshScheduleWarning()
+    ]).then(markInitialLoadSettled);
 }
 
 init();

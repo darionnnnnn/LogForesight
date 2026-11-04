@@ -84,6 +84,26 @@ public sealed record DeidentifierSettings
     private const string DefaultBrandSubtitle = "事件日誌預警";
 
     /// <summary>
+    /// AD 搜尋基準的網域名：<c>DC=brk,DC=local</c> → <c>brk.local</c>、<c>brk</c>。事件訊息常只印 NetBIOS 短名，
+    /// 設定裡沒有獨立欄位，這是唯一來源。最後一段是頂級網域（local、com）不單獨收，短於 3 字的標籤也不收，避免遮掉一般用語。
+    /// </summary>
+    private static IEnumerable<string?> AdDomainNames(string? searchBase)
+    {
+        if (string.IsNullOrWhiteSpace(searchBase)) yield break;
+
+        var labels = searchBase.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => part.StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
+            .Select(part => part[3..].Trim())
+            .Where(label => label.Length > 0)
+            .ToList();
+        if (labels.Count == 0) yield break;
+
+        yield return string.Join('.', labels);
+        foreach (var label in labels.Take(labels.Count - 1))
+            if (label.Length >= 3) yield return label;
+    }
+
+    /// <summary>
     /// 由系統設定投影。預設的產品名稱與副標題不是站台識別，不放進字典
     /// （否則「LogForesight」這個詞在每一則訊息都被遮掉，分析價值歸零）；改過的才算。
     /// </summary>
@@ -96,6 +116,7 @@ public sealed record DeidentifierSettings
 
         var domains = new List<string?> { s.SmtpServer, s.AdSearchBase };
         domains.AddRange(s.AdServers ?? new List<string>());
+        domains.AddRange(AdDomainNames(s.AdSearchBase));
 
         var emails = new List<string?> { s.MailFrom };
         emails.AddRange(s.MailRecipients ?? new List<string>());
@@ -199,15 +220,11 @@ public sealed class RunExportDeidentifierFactory
             throw new RunExportDeidentificationException("PRTG 裝置鏡像", ex);
         }
 
+        // 密文欄位清單只有 SecretInventory 一份（啟動探測與取數前置檢查共用）；這裡不看「這趟用不用得到」，全部都要比對
         var secrets = new List<string>();
         var undecryptable = new List<string>();
-        Secret(secrets, undecryptable, "AI 金鑰", settings.AiApiKeyEnc);
-        Secret(secrets, undecryptable, "SMTP 密碼", settings.SmtpPasswordEnc);
-        Secret(secrets, undecryptable, "PRTG API token", settings.PrtgApiTokenEnc);
-        Secret(secrets, undecryptable, "PRTG 密碼", settings.PrtgPasswordEnc);
-        Secret(secrets, undecryptable, "PRTG passhash", settings.PrtgPasshashEnc);
-        foreach (var sentinel in sentinels)
-            Secret(secrets, undecryptable, "Sentinel 密碼", sentinel.PasswordEnc);
+        foreach (var entry in SecretInventory.Build(settings, sentinels))
+            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext, entry.Retired);
 
         return new RunExportDeidentifierSource
         {
@@ -252,11 +269,12 @@ public sealed class RunExportDeidentifierFactory
     /// 目前的行程讀不出這個值，也無法用它連線，因此不會把它寫進之後的紀錄；只有換金鑰前寫入的舊紀錄有理論風險，
     /// 由 <c>password=</c>、<c>passhash=</c>、<c>Bearer</c> 等樣式比對接手，並把欄位名稱寫進檔案的 meta 交代。
     /// </summary>
-    private static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored)
+    internal static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored, bool retired = false)
     {
         if (string.IsNullOrEmpty(stored)) return;
 
-        if (!CryptoHelper.TryDecrypt(stored, out var plain))
+        var decrypted = retired ? CryptoHelper.TryDecryptQuietly(stored, out var plain) : CryptoHelper.TryDecrypt(stored, out plain);
+        if (!decrypted)
         {
             undecryptable.Add(name);
             Log.Warn("診斷匯出：「{0}」用目前金鑰解不開，略過實際值比對；請重新設定該憑證。", name);

@@ -25,7 +25,7 @@ function makeGrid(count, alertAt = []) {
     return grid;
 }
 
-function setup({ grids, columns, stored = null, failOnSet = false }) {
+function setup({ grids, columns, stored = null, failOnSet = false, onCollapsedChange }) {
     const state = { columns, disconnected: 0 };
     const data = { 'lf.collapse.k': stored };
     const storage = {
@@ -45,6 +45,7 @@ function setup({ grids, columns, stored = null, failOnSet = false }) {
         key: 'k',
         noun: '項指標',
         isAlert: child => child.alert,
+        onCollapsedChange,
         measure: grid => state.columns.get(grid),
         createObserver: callback => {
             observerCallback = callback;
@@ -170,6 +171,87 @@ const cases = {
         assert.equal(countGridColumns({}), 2);
         styleFor('400px 400px 0px 0px');
         assert.equal(countGridColumns({}), 4);
+    },
+
+    onCollapsedChange初始與切換都呼叫且只傳展開狀態() {
+        const grid = makeGrid(4);
+        const seen = [];
+        const { toggle } = setup({ grids: [grid], columns: new Map([[grid, 2]]), onCollapsedChange: expanded => seen.push(expanded) });
+        assert.deepEqual(seen, [false], '初始（記憶為收合）要呼叫一次');
+        toggle.dispatch('click');
+        toggle.dispatch('click');
+        assert.deepEqual(seen, [false, true, false]);
+    },
+
+    onCollapsedChange記憶為展開時初始傳true() {
+        const grid = makeGrid(4);
+        const seen = [];
+        setup({ grids: [grid], columns: new Map([[grid, 2]]), stored: 'open', onCollapsedChange: expanded => seen.push(expanded) });
+        assert.deepEqual(seen, [true]);
+    },
+
+    onCollapsedChange不受量測與字級事件影響() {
+        const grid = makeGrid(4);
+        const seen = [];
+        const ctx = setup({ grids: [grid], columns: new Map([[grid, 2]]), onCollapsedChange: expanded => seen.push(expanded) });
+        ctx.state.columns.set(grid, 1);
+        ctx.resize();
+        ctx.fontScale();
+        ctx.state.columns.set(grid, 4);
+        ctx.resize();
+        ctx.fontScale();
+        assert.deepEqual(seen, [false], '量測／字級事件只決定藏哪些卡，不通知收合狀態');
+    },
+
+    沒給onCollapsedChange照常運作() {
+        const grid = makeGrid(4);
+        const { toggle } = setup({ grids: [grid], columns: new Map([[grid, 2]]) });
+        toggle.dispatch('click');
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    },
+
+    dashboard收合時strip有collapsed類別且展開移除() {
+        const source = fs.readFileSync(path.join(jsRoot, 'pages', 'dashboard.js'), 'utf8').replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
+        const body = source.slice(source.indexOf('function mountKpiReveal('), source.indexOf('function renderCategories('));
+        const grid = makeGrid(4);
+        const columns = new Map([[grid, 2]]);
+        const data = {};
+        const classes = new Set();
+        const strip = {
+            querySelectorAll: selector => { assert.equal(selector, '.lf-kpi-grid'); return [grid]; },
+            classList: {
+                toggle(name, force) { if (force) classes.add(name); else classes.delete(name); return force; },
+                contains: name => classes.has(name)
+            }
+        };
+        let observerCallback = null;
+        const handlers = new Set();
+        const mountReveal = (name, options) => {
+            assert.equal(name, 'kpi');
+            return revealFirstRow({
+                key: 'k', ...options,
+                measure: g => columns.get(g),
+                createObserver: callback => { observerCallback = callback; return { observe() {}, disconnect() {} }; },
+                storage: { get: key => data[key] ?? null, set: (key, value) => { data[key] = value; } },
+                eventTarget: { addEventListener: (_t, h) => handlers.add(h), removeEventListener: (_t, h) => handlers.delete(h) }
+            });
+        };
+        const host = dom.newElement('div');
+        new Function('mountReveal', `${body}\nmountKpiReveal(strip, host);`.replace('strip, host', 'arguments[1], arguments[2]'))(mountReveal, strip, host);
+        assert.equal(classes.has('lf-kpi-strip--collapsed'), true, '預設收合');
+        const toggle = host.find(node => node.tagName === 'BUTTON');
+        toggle.dispatch('click');
+        assert.equal(classes.has('lf-kpi-strip--collapsed'), false, '展開要移除');
+        // 字級／量測改變不動它
+        columns.set(grid, 1);
+        observerCallback();
+        [...handlers].forEach(handler => handler());
+        assert.equal(classes.has('lf-kpi-strip--collapsed'), false);
+        toggle.dispatch('click');
+        assert.equal(classes.has('lf-kpi-strip--collapsed'), true);
+        columns.set(grid, 3);
+        [...handlers].forEach(handler => handler());
+        assert.equal(classes.has('lf-kpi-strip--collapsed'), true);
     },
 
     todoGroupOrder() {

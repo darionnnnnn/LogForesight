@@ -91,7 +91,12 @@ export function renderPhaseTimeline(run, now = new Date().toISOString()) {
     return wrap;
 }
 
-/** 總表一格：起訖與總耗時；沒有任何趟「—」；只有 AI 趟或中斷趟時說清楚 */
+const otherAiText = timing => `AI 補跑 ${timing.otherAiRuns} 趟（${formatDuration(timing.otherAiSeconds ?? 0)}）`;
+
+/**
+ * 總表一格第一行：取數與跟隨取數 AI 的起訖與總耗時；沒有任何趟「—」；
+ * 只有中斷趟時寫中斷；當天只有非跟隨 AI 趟時寫「AI 補跑 N 趟（M）」，不留空白。
+ */
 export function dayTimingText(timing) {
     if (!timing) return '—';
     const parts = [];
@@ -101,13 +106,45 @@ export function dayTimingText(timing) {
     if (timing.interruptedCount > 0) {
         parts.push(`異常中斷 ${timing.interruptedCount} 趟（最後活動 ${minuteOf(timing.lastInterruptedActivityAt)}）`);
     }
+    if (parts.length === 0 && timing.otherAiRuns > 0) parts.push(otherAiText(timing));
     return parts.length > 0 ? parts.join('　') : '—';
+}
+
+/** 總表一格第二行小字：「取數 44 秒 · AI 1 分 27 秒」，另有非跟隨 AI 趟時加「另有 AI 補跑 N 趟（M）」；沒有內容回空字串 */
+export function dayTimingDetailText(timing) {
+    if (!timing) return '';
+    const parts = [];
+    if (timing.totalSeconds != null) {
+        if (timing.fetchSeconds != null) parts.push(`取數 ${formatDuration(timing.fetchSeconds)}`);
+        if (timing.followUpAiSeconds != null) parts.push(`AI ${formatDuration(timing.followUpAiSeconds)}`);
+    }
+    // 第一行已經是「AI 補跑」時不重複
+    const firstLineIsOtherAi = timing.totalSeconds == null && !(timing.interruptedCount > 0);
+    if (timing.otherAiRuns > 0 && !firstLineIsOtherAi) parts.push(`另有 ${otherAiText(timing)}`);
+    return parts.join(' · ');
+}
+
+/** 總表一格：第一行文字＋第二行小字（比照 runs.js 的 withPhaseDuration，textContent 組字） */
+export function renderDayTimingCell(timing) {
+    const detail = dayTimingDetailText(timing);
+    const first = dayTimingText(timing);
+    if (!detail) return first;
+    const wrap = document.createElement('div');
+    const line = document.createElement('div');
+    line.textContent = first;
+    const small = document.createElement('div');
+    small.className = 'small text-muted';
+    small.textContent = detail;
+    wrap.append(line, small);
+    return wrap;
 }
 
 /** 總表展開時的逐路明細：本機、NetIQ、PRTG、AI 各自的區間與耗時 */
 export function renderDayTiming(timing) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-day-timing';
+    // 取數趟全部是升級前紀錄（沒有 Phases）：三條取數路說清楚，不是「沒跑」
+    const allLegacy = (timing?.fetchRuns ?? 0) > 0 && (timing?.fetchRunsWithoutPhases ?? 0) >= timing.fetchRuns;
     for (const key of ['local', 'netiq', 'prtg', 'ai']) {
         const branch = timing?.branches?.find(b => b.key === key);
         const item = document.createElement('div');
@@ -117,7 +154,17 @@ export function renderDayTiming(timing) {
         const value = document.createElement('span');
         value.textContent = branch
             ? `${minuteOf(branch.from)}～${minuteOf(branch.to)}（${formatDuration(branch.seconds)}）`
-            : '—';
+            : (allLegacy && key !== 'ai' ? '無階段資料（升級前紀錄）' : '—');
+        item.append(name, value);
+        wrap.appendChild(item);
+    }
+    if (timing?.totalSeconds != null) {
+        const item = document.createElement('div');
+        const name = document.createElement('span');
+        name.className = 'lf-stat__label';
+        name.textContent = '總計　';
+        const value = document.createElement('span');
+        value.textContent = `${minuteOf(timing.firstStartedAt)}～${minuteOf(timing.lastFinishedAt)}（${formatDuration(timing.totalSeconds)}）`;
         item.append(name, value);
         wrap.appendChild(item);
     }

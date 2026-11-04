@@ -183,6 +183,14 @@ public class FrontendMiscUiTests
     }
 
     [Fact]
+    public void PRTG維護頁檢查清單的認證項讀後端憑證狀態()
+    {
+        var source = ReadPage("prtg-admin.js");
+        Assert.Contains("Boolean(settings.prtgUrl) && settings.prtgCredentialState === 'ok'", source);
+        Assert.Contains("憑證無法解密，請重新輸入並儲存", source);
+    }
+
+    [Fact]
     public void 說明書只有首次載入關閉捲動且報表起訖日與範圍chip守門()
     {
         var help = ReadPage("help-manual.js");
@@ -253,6 +261,29 @@ public class FrontendMiscBehaviorTests
     [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
     [InlineData("郵件帳本提示_顯示五個佔用分項且各有白話說明")]
     [InlineData("郵件帳本提示_達九成但無滿載紀錄時顯示接近上限")]
+    [InlineData("runs清單PRTG未啟用有原因時徽章旁顯示文字")]
+    [InlineData("runs清單PRTG未啟用沒有原因時只有徽章")]
+    [InlineData("runs清單PRTG原因一律走textContent不當HTML")]
+    [InlineData("runs清單PRTG有成果時不顯示趟次原因")]
+    [InlineData("runs卡片憑證無法解密時顯示已啟用但憑證無法解密並露出連結提示")]
+    [InlineData("runs卡片憑證正常或未啟用時不顯示憑證提示")]
+    [InlineData("hosts徽章有ViewAll時無PRTG對應是連結")]
+    [InlineData("hosts徽章沒有ViewAll時無PRTG對應維持span")]
+    [InlineData("hosts徽章其他prtgHint不因ViewAll變連結")]
+    [InlineData("hosts載入時依ViewAll能力決定徽章連結")]
+    [InlineData("prtg未對應帶參數載入用pin跳轉高亮並清網址")]
+    [InlineData("prtg未對應跳轉等初次載入全部結束才做")]
+    [InlineData("過期告示的連結與聯絡人依權限")]
+    [InlineData("排程清單的觸發來源只標範圍縮小的趟次")]
+    [InlineData("PRTG憑證欄位提示只在目前模式解不開時改寫")]
+    [InlineData("過期告示的原因句依憑證與最近一趟狀態")]
+    [InlineData("prtg未對應沒有參數時不pin不跳轉不改網址")]
+    [InlineData("prtg未對應載入失敗不跳轉但錯誤態顯示且之後不再pin")]
+    [InlineData("prtg未對應清單第一筆不是該台時跳轉但不高亮")]
+    [InlineData("prtg未對應focus參數不合法視為沒給")]
+    [InlineData("prtg未對應翻頁仍帶同一個pin_只有第一頁第一次跳轉")]
+    [InlineData("prtg未對應清網址保留其他參數與hash")]
+    [InlineData("prtg未對應跳轉共用既有區塊展開與捲動")]
     public void 小項行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

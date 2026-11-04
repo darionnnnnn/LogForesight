@@ -85,7 +85,8 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         Assert.Equal(2, handler.Requests);
         Assert.False(outcome.AiAnalyzed);
         Assert.False(outcome.Skipped);
-        Assert.Contains("AI 待補", outcome.Headline);
+        Assert.False(outcome.AiDegraded);   // 完全失敗不是降級：標題同用規則層結論，待補語意不變
+        Assert.Equal("disk EventId 153 今日出現 3 次（AI 服務未回應，AI 待補）", outcome.Headline);
     }
 
     private sealed class SequenceHandler : HttpMessageHandler
@@ -147,7 +148,9 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
 
         var outcome = await service.RetryAiAsync(pending, historyDays: 14);
 
-        Assert.Equal("AI 回覆格式異常，以下為原始內容", outcome.Headline);
+        // 降級標題改為規則層結論（不含次數後綴，後綴由寫入端依次數補），並標記 AiDegraded
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.True(outcome.AiDegraded);
         Assert.Equal("中", outcome.RiskLevel);
         Assert.NotEqual("ai_raise", outcome.RiskBasis);
     }
@@ -161,7 +164,10 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         var outcome = await service.RetryAiAsync(
             PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
 
-        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.NotEqual(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.True(outcome.AiDegraded);
+        // 常數保留給歷史資料（匯出仍用它辨認存量案例）
         Assert.Equal("AI 回覆格式異常，以下為原始內容", LogAnalysisService.AiFormatAnomalyHeadline);
         Assert.Equal("（AI 回覆經 1 次嘗試仍未通過 JSON 檢查，保留原文供參考）這是一段不合格的回覆", outcome.Summary);
         Assert.Equal("中", outcome.RiskLevel);
@@ -208,7 +214,8 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
             recorder.Finish(0);
         }
 
-        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.True(outcome.AiDegraded);
         var logs = store.GetLogs(runId);
         var degraded = Assert.Single(logs, l => l.Logger == nameof(LogAnalysisService) && l.Message.Contains("降級為原文保留"));
         Assert.Contains("1 次嘗試仍未通過 JSON 檢查）：", degraded.Message);
@@ -216,6 +223,68 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         var diagnostics = AiJsonDiagnostics.TryRead(Assert.Single(logs, l => l.Logger == AiJsonDiagnostics.LoggerName).Message);
         Assert.Equal("daily-20260731-h5", diagnostics!.Label);
         Assert.Equal(AiJsonDiagnostics.CategoryNoJson, Assert.Single(diagnostics.AttemptDetails).Category);
+    }
+
+    [Fact]
+    public async Task AI服務不通時主分析完全失敗仍是Error_且格式異常的最終失敗是Warn_經真實AIService()
+    {
+        var down = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 0
+        }, new StatusHandler(System.Net.HttpStatusCode.InternalServerError), NullAiRequestGate.Instance);
+        var service = new LogAnalysisService(new EventLogService(), down, new EfAnalysisRecordStore(_fx.NewContext, "test"),
+            new FakeSuppressionStore(), reportService: new RiskReportService(down, _reportSink), hostId: 5, riskyEventStore: null);
+        var store = new BatchRunStore(_fx.LogStore("runs"), _fx.LogStore("run_logs"));
+
+        long runId;
+        AiOutcome outcome;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            outcome = await service.RetryAiAsync(
+                PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+            recorder.Finish(0);
+        }
+
+        Assert.Equal("disk EventId 153 今日出現 3 次（AI 服務未回應，AI 待補）", outcome.Headline);
+        var logs = store.GetLogs(runId);
+        var failed = Assert.Single(logs, l => l.Logger == nameof(LogAnalysisService) && l.Message.Contains("主分析完全失敗"));
+        Assert.Equal("Error", failed.Level);
+        Assert.Equal(1, store.GetRun(runId)!.ErrorCount);
+    }
+
+    private sealed class StatusHandler(System.Net.HttpStatusCode status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status));
+    }
+
+    [Fact]
+    public async Task 回覆含孤立代理字元的信封_主分析拿到結果而非例外()
+    {
+        // 信封裡的 \ud800 是孤立代理字元跳脫；不論在哪一層被擋下，呼叫端都只會拿到降級結果，不會是例外
+        var handler = new RawEnvelopeHandler("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"壞\\ud800字 {x}\"},\"finish_reason\":\"stop\"}]}");
+        var realAi = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 1
+        }, handler, NullAiRequestGate.Instance);
+        var service = new LogAnalysisService(new EventLogService(), realAi, new EfAnalysisRecordStore(_fx.NewContext, "test"),
+            new FakeSuppressionStore(), reportService: new RiskReportService(realAi, _reportSink), hostId: 5, riskyEventStore: null);
+
+        var outcome = await service.RetryAiAsync(
+            PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+
+        Assert.NotNull(outcome);
+        Assert.False(string.IsNullOrEmpty(outcome.Headline));
+    }
+
+    private sealed class RawEnvelopeHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            });
     }
 
     private sealed class AlwaysContentHandler(string content) : HttpMessageHandler

@@ -63,9 +63,17 @@ public static class NetiqProbeRunner
         {
             ct.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrWhiteSpace(sentinel.Username) || string.IsNullOrWhiteSpace(sentinel.PasswordEnc))
+            // 與管線同一個判定出口：解不開不能當成「有設定」去登入
+            var credentialState = SentinelConnectionFactory.CredentialStateOf(sentinel);
+            if (credentialState == CredentialState.Undecryptable)
             {
-                console.WriteLine($"── {sentinel.Name}：帳密未設定（CanDiscover=false），略過 ──\n");
+                console.WriteLine($"── {sentinel.Name}：密碼無法解密（金鑰檔與資料庫不相符），略過；請到 NetIQ 維護頁重新輸入密碼 ──\n");
+                allOk = false;
+                continue;
+            }
+            if (credentialState != CredentialState.Ok)
+            {
+                console.WriteLine($"── {sentinel.Name}：帳密未設定，略過 ──\n");
                 continue;
             }
 

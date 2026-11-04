@@ -765,4 +765,40 @@ public class SchemaUpgraderTests : IDisposable
         SchemaUpgrader.Upgrade(ctx);
         SchemaUpgrader.Upgrade(ctx);
     }
+
+    /// <summary>舊 schema 缺 ai_degraded_attempts 欄——升級後補上、既存列為 0，可讀寫且重複升級冪等</summary>
+    [Fact]
+    public void 舊schema缺ai_degraded_attempts欄_升級後補上且既存列為0()
+    {
+        CreateOldSchema();
+        using (var raw = _connection.CreateCommand())
+        {
+            raw.CommandText = "INSERT INTO lf_daily_records (host_id, host_name, record_date, risk_level, content_json, created_at) " +
+                               "VALUES (1, 'HOST-A', '2026-01-01', '高', '{}', '2026-01-01')";
+            raw.ExecuteNonQuery();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+            SchemaUpgrader.Upgrade(ctx);   // 冪等
+        }
+
+        using (var ctx = NewContext())
+        {
+            var columns = ctx.Database.SqlQueryRaw<string>(
+                "SELECT name AS Value FROM pragma_table_info('lf_daily_records')").ToList();
+            Assert.Contains("ai_degraded_attempts", columns);
+            Assert.Equal(0, ctx.DailyRecords.Single().AiDegradedAttempts);
+
+            var row = ctx.DailyRecords.Single();
+            row.AiDegradedAttempts = 2;
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            Assert.Equal(2, ctx.DailyRecords.Single().AiDegradedAttempts);
+        }
+    }
 }

@@ -149,6 +149,8 @@ public class RunMonitorService
                 else if (run.StartedAt.Date == date.Date.AddDays(1))
                 {
                     prtgOutcome = run.PrtgOutcome;
+                    // 早退（未啟用／憑證不可用）沒有逐日統計，原因在趟次層
+                    prtgNote = run.PrtgOutcomeNote;
                     break;
                 }
             }
@@ -398,7 +400,9 @@ public class RunMonitorService
             NetiqDaysAnalyzed = run.NetiqDaysAnalyzed,
             NetiqDaysFailed = run.NetiqDaysFailed,
             NetiqHostsSkipped = run.NetiqHostsSkipped,
+            Scope = run.Scope,
             PrtgOutcome = run.PrtgOutcome,
+            PrtgOutcomeNote = run.PrtgOutcomeNote,
             PrtgSensorsFetched = run.PrtgSensorsFetched,
             PrtgStrategy = run.PrtgStrategy,
             PrtgSensorsFailed = run.PrtgSensorsFailed,
@@ -462,7 +466,9 @@ public class RunMonitorService
                 NetiqDaysAnalyzed = run.NetiqDaysAnalyzed,
                 NetiqDaysFailed = run.NetiqDaysFailed,
                 NetiqHostsSkipped = run.NetiqHostsSkipped,
+                Scope = run.Scope,
                 PrtgOutcome = run.PrtgOutcome,
+                PrtgOutcomeNote = run.PrtgOutcomeNote,
                 PrtgSensorsFetched = run.PrtgSensorsFetched,
                 PrtgStrategy = run.PrtgStrategy,
                 PrtgSensorsFailed = run.PrtgSensorsFailed,

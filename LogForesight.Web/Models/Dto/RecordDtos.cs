@@ -45,6 +45,10 @@ public class RecordListItemDto
     /// 前端顯示「AI 分析中」而非「統計模式」，避免看起來像失敗。</summary>
     public bool AiPending { get; set; }
 
+    /// <summary>AI 回覆格式異常而降級的次數（0＝沒降級過）。前端以 <c>aiStateOf</c> 搭配 <see cref="AiPending"/> 判定
+    /// 「降級待補（第 N 次）」「已放棄」；已恢復成功的主機日次數仍保留，但不待補、未達上限，畫面視為一般完成。</summary>
+    public int AiDegradedAttempts { get; set; }
+
     /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
@@ -92,6 +96,8 @@ public class RecordHostGroupDto
     public string LatestDate { get; set; } = string.Empty;
     public string LatestRiskLevel { get; set; } = string.Empty;
     public string LatestHeadline { get; set; } = string.Empty;
+    public bool LatestAiPending { get; set; }
+    public int LatestAiDegradedAttempts { get; set; }
 }
 
 /// <summary>
@@ -257,6 +263,9 @@ public class RecordDetailDto
     /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5），
     /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
     public bool AiPending { get; set; }
+
+    /// <summary>AI 回覆格式異常而降級的次數，見 <see cref="RecordListItemDto.AiDegradedAttempts"/> 的說明。</summary>
+    public int AiDegradedAttempts { get; set; }
 
     /// <summary>原始樣本訊息與詳情已超過保留期並清除（整列與統計欄、問題清單仍保留）</summary>
     public bool DetailPruned { get; set; }

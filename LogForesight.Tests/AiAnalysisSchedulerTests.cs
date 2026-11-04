@@ -12,6 +12,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -1707,5 +1708,206 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(1, service.ResolveCalls);
         // 分片各自一個實例：共用一個會讓 AIService 的逐實例佇列把全輪串成單線（體檢輪）
         Assert.Equal(2, service.FactoryCalls);
+    }
+
+    // ── AI 回覆格式異常降級（第 63-2 輪批次B-b）──────────────────────────────
+
+    private const string DegradedReply = "[\n]";
+
+    private DailyRecordRow ReadRow(long hostId, DateTime date)
+    {
+        using var ctx = _contextFactory();
+        return ctx.DailyRecords.AsNoTracking().Single(r => r.HostId == hostId && r.RecordDate == date.Date);
+    }
+
+    private async Task RunAiOnceAsync(AiAnalysisHostedService service, AiAnalysisRunState runState)
+    {
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+    }
+
+    private BatchRun LatestAiRun() =>
+        BatchRuns().GetRecentRuns(7, null).Where(r => r.JobType == BatchRun.JobTypeAi).OrderByDescending(r => r.StartedAt).First();
+
+    [Fact]
+    public async Task 降級整合_三趟後放棄_期間不被當缺漏也不卡Waiting_第四趟不再選到()
+    {
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        var (service, runState, _, _) = CreateTestHarness(workflow: workflow);
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        var key = new[] { new HostKey { HostId = 1, HostName = "HOST-DEG" } };
+        store.Append(CreateRecord(1, "HOST-DEG", date, pending: true));
+        _ai.NextContent = DegradedReply;
+        const string conclusion = "disk-HOST-DEG EventId 153 今日出現 1 次";
+
+        for (var n = 1; n <= 2; n++)
+        {
+            await RunAiOnceAsync(service, runState);
+
+            // 從 SQLite 讀回：降級日維持 AiAnalyzed=true（寫回閘門、NeedsBackfill、工作流都靠它），仍待補，次數 +1
+            var row = ReadRow(1, date);
+            Assert.True(row.AiAnalyzed);
+            Assert.True(row.AiPending);
+            Assert.Equal(n, row.AiDegradedAttempts);
+            Assert.Equal($"{conclusion}（AI 摘要待補，第 {n} 次）", row.Headline);
+            var record = store.GetOne(key, date)!;
+            Assert.Equal(n, record.AiDegradedAttempts);
+            Assert.StartsWith($"（AI 回覆經 1 次嘗試仍未通過 JSON 檢查，保留原文供參考）", record.Summary);
+            Assert.Contains("[", record.Summary);
+            Assert.False(HostDayPostProcessor.NeedsBackfill(record, useAi: true));
+            Assert.Equal(WorkflowLegState.Succeeded, workflow.Get(1, date)!.Ai);
+
+            // 趟次計數：降級算 AI 失敗與 AI 呼叫、不算完成；階段為 Partial、趟次為「有警告」
+            var run = LatestAiRun();
+            Assert.Equal(1, run.AiFailures);
+            Assert.Equal(1, run.AiCalls);
+            Assert.Equal(0, run.DaysAnalyzed);
+            Assert.Equal(BatchRunStatus.Warning, BatchRunStatus.Compute(run, DateTime.Now, TimeSpan.FromHours(6)));
+            var phase = Assert.Single(run.Phases!, p => p.Key == RunTimingPhases.Ai);
+            Assert.Equal(RunPhaseOutcomes.Partial, phase.Outcome);
+            Assert.Contains("降級 1 筆", phase.Note);
+        }
+
+        await RunAiOnceAsync(service, runState);
+        var abandoned = ReadRow(1, date);
+        Assert.True(abandoned.AiAnalyzed);
+        Assert.False(abandoned.AiPending);
+        Assert.Equal(3, abandoned.AiDegradedAttempts);
+        Assert.Equal($"{conclusion}（AI 摘要已放棄：連續 3 次格式異常）", abandoned.Headline);
+        var abandonedRecord = store.GetOne(key, date)!;
+        Assert.False(HostDayPostProcessor.NeedsBackfill(abandonedRecord, useAi: true));
+        Assert.Equal(WorkflowLegState.Succeeded, workflow.Get(1, date)!.Ai);
+        Assert.Equal(3, _ai.Calls);
+
+        // 第四趟：不再被選到、不再呼叫 AI，次數保持 3
+        Assert.Null(service.SelectNextBatch(new HashSet<(long, string, DateTime)>()));
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+        Assert.Equal(3, _ai.Calls);
+        Assert.Equal(0, counters.Degraded + counters.Done + counters.Failed);
+        Assert.Equal(3, ReadRow(1, date).AiDegradedAttempts);
+        Assert.Equal(0, store.CountPendingAi());
+    }
+
+    [Fact]
+    public async Task 降級後下一趟AI回正常JSON_換成AI標題且不再待補_次數保留歷史()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        var key = new[] { new HostKey { HostId = 1, HostName = "HOST-RECOVER" } };
+        store.Append(CreateRecord(1, "HOST-RECOVER", date, pending: true));
+
+        _ai.NextContent = DegradedReply;
+        await RunAiOnceAsync(service, runState);
+        Assert.Equal(1, ReadRow(1, date).AiDegradedAttempts);
+        Assert.True(ReadRow(1, date).AiPending);
+
+        _ai.NextContent = """{"risk_level":"中","headline":"AI分析完成標題","story":"AI分析完成摘要","trend_story":"趨勢正常","action":"持續觀察"}""";
+        await RunAiOnceAsync(service, runState);
+
+        var row = ReadRow(1, date);
+        Assert.True(row.AiAnalyzed);
+        Assert.False(row.AiPending);
+        Assert.Equal("AI分析完成標題", row.Headline);
+        Assert.Equal(1, row.AiDegradedAttempts);   // 成功不動次數：保留歷史，供匯出判斷「曾降級但已恢復」
+        Assert.Equal("AI分析完成摘要", store.GetOne(key, date)!.Summary);
+        var run = LatestAiRun();
+        Assert.Equal(0, run.AiFailures);
+        Assert.Equal(1, run.DaysAnalyzed);
+    }
+
+    [Fact]
+    public async Task 降級同批三個_AiFailures與AiCalls各3_趟次有警告_同輪不重複嘗試()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        for (var h = 1; h <= 3; h++) store.Append(CreateRecord(h, $"HOST-D{h}", date, pending: true));
+        _ai.NextContent = DegradedReply;
+
+        await RunAiOnceAsync(service, runState);
+
+        var run = LatestAiRun();
+        Assert.Equal(3, run.AiFailures);
+        Assert.Equal(3, run.AiCalls);
+        Assert.Equal(0, run.DaysAnalyzed);
+        Assert.Equal(BatchRunStatus.Warning, BatchRunStatus.Compute(run, DateTime.Now, TimeSpan.FromHours(6)));
+        // 同輪每個主機日只嘗試一次：降級後仍待補，但本輪不會再被選到
+        Assert.Equal(3, _ai.Calls);
+        for (var h = 1; h <= 3; h++)
+        {
+            var row = ReadRow(h, date);
+            Assert.Equal(1, row.AiDegradedAttempts);
+            Assert.True(row.AiPending);
+        }
+    }
+
+    [Fact]
+    public async Task 降級同批全降級且有積壓_不觸發全滅防線_下一批照常選積壓()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        const int total = 55;   // 超過一批 50 筆：第一批全降級後，第二批的 5 筆還要被選到
+        for (var h = 1; h <= total; h++) store.Append(CreateRecord(h, $"HOST-B{h:D2}", date, pending: true));
+        _ai.NextContent = DegradedReply;
+
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+
+        Assert.Equal(total, counters.Degraded);
+        Assert.Equal(0, counters.Done);
+        Assert.Equal(0, counters.Failed);
+        Assert.Equal(total, _ai.Calls);
+        Assert.Equal(total, store.CountPendingAi());   // 都還在待補（下一輪再試），但本輪每筆只嘗試一次
+        for (var h = 1; h <= total; h++) Assert.Equal(1, ReadRow(h, date).AiDegradedAttempts);
+    }
+
+    [Fact]
+    public async Task 降級次數歸零_強制重新分析與統計段重寫與PRTG證據變動重標()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        var rec = CreateRecord(1, "HOST-RESET", date, pending: true);
+        rec.LogSource = AnalysisLogSource.Netiq;
+        store.Append(rec);
+        _ai.NextContent = DegradedReply;
+
+        // ① 強制重新分析（MarkAllForAiRerun）
+        await RunAiOnceAsync(service, runState);
+        Assert.Equal(1, ReadRow(1, date).AiDegradedAttempts);
+        Assert.Equal(1, ((IAnalysisRecordQuery)store).MarkAllForAiRerun());
+        var afterRerun = ReadRow(1, date);
+        Assert.Equal(0, afterRerun.AiDegradedAttempts);
+        Assert.True(afterRerun.AiPending);
+        Assert.DoesNotContain("AI 摘要待補", afterRerun.Headline);   // 次數歸零，標題不能還掛著後綴與徽章矛盾
+
+        // ② PRTG 證據變動重標（同風險、指紋變動 → AiAnalyzed=false、AiPending=true）
+        await RunAiOnceAsync(service, runState);
+        Assert.Equal(1, ReadRow(1, date).AiDegradedAttempts);
+        var prtgRule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-warning-hardware");
+        var evidence = PrtgFindingMapper.ToSignature(new PrtgFinding(11, 1101, "warning", "new evidence", 100, prtgRule), date);
+        Assert.True(store.AttachPrtgFindings(1, date, [evidence], new HashSet<string>(), out _, aiConfigured: true));
+        var afterPrtg = ReadRow(1, date);
+        Assert.Equal(0, afterPrtg.AiDegradedAttempts);
+        Assert.True(afterPrtg.AiPending);
+        Assert.False(afterPrtg.AiAnalyzed);
+        Assert.DoesNotContain("AI 摘要待補", afterPrtg.Headline);
+
+        // ③ 統計段 Append 重寫同一列（PRTG 獨立主機日被日誌分析晚到取代）：歸零。
+        // AI 未設定（兩邊都不待補）時 PRTG 重標路徑不會介入，歸零只能靠 Append 本身。
+        var prtgOnlyDate = date.AddDays(-1);
+        Assert.True(store.AppendPrtgOnlyIfAbsent(2, "HOST-PRTGONLY", prtgOnlyDate, [evidence], aiConfigured: false));
+        using (var ctx = _contextFactory())
+            ctx.DailyRecords.Where(r => r.HostId == 2).ExecuteUpdate(s => s.SetProperty(r => r.AiDegradedAttempts, 2));
+        Assert.Equal(2, ReadRow(2, prtgOnlyDate).AiDegradedAttempts);
+        var late = CreateRecord(2, "HOST-PRTGONLY", prtgOnlyDate, pending: false);
+        late.LogSource = AnalysisLogSource.Netiq;
+        store.Append(late);
+        Assert.Equal(0, ReadRow(2, prtgOnlyDate).AiDegradedAttempts);
+        Assert.False(ReadRow(2, prtgOnlyDate).AiPending);
     }
 }

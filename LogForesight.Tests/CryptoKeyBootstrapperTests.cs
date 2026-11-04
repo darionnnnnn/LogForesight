@@ -1,5 +1,8 @@
 using System.Text.Json;
 using LogForesight.Web.Services;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -97,16 +100,326 @@ public class CryptoKeyBootstrapperTests : IDisposable
     {
         Run();   // 先寫入指紋
         _backend.Blob("crypto_key_fingerprint").Mutate<bool>(_ => ("{\"Fingerprint\":\"0000000000000000\"}", true));
+        // 有一筆用目前金鑰解不開的密文：不覆寫指紋、不 rewrap，所有欄位維持原樣
         var legacy = LegacyV1("secret");
-        _settings.Update(s => s.PrtgApiTokenEnc = legacy);
+        _settings.Update(s => s.PrtgApiTokenEnc = Undecryptable);
         _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = legacy });
 
         CryptoHelper.ResetForTests();
         Run();
 
         Assert.True(CryptoKeyBootstrapper.KeyMismatch);
-        Assert.Equal(legacy, _settings.Get().PrtgApiTokenEnc);
+        Assert.Equal(Undecryptable, _settings.Get().PrtgApiTokenEnc);
         Assert.Equal(legacy, _sentinels.FindByName("S1")!.PasswordEnc);
+        Assert.Contains("0000000000000000", _backend.Blob("crypto_key_fingerprint").Read());
+    }
+
+    // ── 第 63-2 輪批次H-2：指紋不符時的自動修復與金鑰檔遺失辨識 ──
+
+    private const string FakeFingerprint = "0000000000000000";
+
+    private string? ReadFingerprintBlob() => _backend.Blob("crypto_key_fingerprint").Read();
+
+    /// <summary>先跑一次建立金鑰檔與指紋（之後 CryptoHelper 仍用這把金鑰），再把 DB 指紋改成別把金鑰的</summary>
+    private void PrepareMismatch()
+    {
+        Run();
+        _backend.Blob("crypto_key_fingerprint").Mutate<bool>(_ => ("{\"Fingerprint\":\"" + FakeFingerprint + "\"}", true));
+    }
+
+    private static List<string> CaptureLogs(Action action)
+    {
+        var target = new MemoryTarget("lf-crypto-boot-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = LogManager.Configuration ??= new LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(CryptoKeyBootstrapper).FullName);
+        LogManager.ReconfigExistingLoggers();
+        try
+        {
+            action();
+            return target.Logs.ToList();
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            LogManager.ReconfigExistingLoggers();
+        }
+    }
+
+    [Fact]
+    public void 指紋不符_只剩PRTG其他模式的殘留解不開_仍覆寫指紋()
+    {
+        // 使用者站台的實際情況：改用 passhash 後舊密碼還在資料庫，畫面上沒有欄位能處理它
+        PrepareMismatch();
+        _settings.Update(s =>
+        {
+            s.PrtgAuthMode = PrtgAuthModes.Passhash;
+            s.PrtgPasshashEnc = CryptoHelper.Encrypt("new-hash");
+            s.PrtgPasswordEnc = Undecryptable;
+            s.PrtgApiTokenEnc = Undecryptable;
+        });
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        Assert.DoesNotContain(FakeFingerprint + "\",\"CreatedAt", ReadFingerprintBlob()!);
+        Assert.Equal(Undecryptable, _settings.Get().PrtgPasswordEnc);   // 殘留不動，切回該模式時照實回報解不開
+    }
+
+    [Fact]
+    public void 指紋不符_目前模式的憑證解不開_不覆寫()
+    {
+        PrepareMismatch();
+        _settings.Update(s =>
+        {
+            s.PrtgAuthMode = PrtgAuthModes.Passhash;
+            s.PrtgPasshashEnc = Undecryptable;
+            s.PrtgPasswordEnc = CryptoHelper.Encrypt("old");
+        });
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 指紋不符_全部憑證解得開_覆寫指紋並留下痕跡_密文不變且rewrap有跑()
+    {
+        PrepareMismatch();
+        var v2 = CryptoHelper.Encrypt("ai-key");                    // 用目前金鑰檔加密＝已重新輸入
+        var sentinelV2 = CryptoHelper.Encrypt("pw");
+        _settings.Update(s =>
+        {
+            s.AiApiKeyEnc = v2;
+            s.SmtpPasswordEnc = LegacyV1("smtp");                  // 之後 rewrap 要跑到
+        });
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = sentinelV2, Active = false });
+        CryptoHelper.ResetForTests();
+
+        var logs = CaptureLogs(Run);
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        using var doc = JsonDocument.Parse(ReadFingerprintBlob()!);
+        Assert.Equal(CryptoHelper.KeyFingerprint, doc.RootElement.GetProperty("Fingerprint").GetString());
+        Assert.Equal(FakeFingerprint, doc.RootElement.GetProperty("ReplacedFingerprint").GetString());
+        Assert.NotEqual(JsonValueKind.Null, doc.RootElement.GetProperty("UpdatedAt").ValueKind);
+        // 密文逐欄不變（v2 不重寫），v1 舊密文被 rewrap 成 v2
+        Assert.Equal(v2, _settings.Get().AiApiKeyEnc);
+        Assert.Equal(sentinelV2, _sentinels.FindByName("S1")!.PasswordEnc);
+        Assert.StartsWith("enc:v2:", _settings.Get().SmtpPasswordEnc);
+        Assert.True(CryptoHelper.TryDecrypt(_settings.Get().SmtpPasswordEnc, out var smtp));
+        Assert.Equal("smtp", smtp);
+        // Warn 帶原指紋、不帶任何值；沒有 Error
+        var warn = Assert.Single(logs, l => l.Contains("金鑰指紋已更新"));
+        Assert.StartsWith("Warn|", warn);
+        Assert.Contains(FakeFingerprint, warn);
+        Assert.DoesNotContain(logs, l => l.StartsWith("Error|"));
+        Assert.DoesNotContain(logs, l => l.Contains("ai-key") || l.Contains("smtp"));
+    }
+
+    [Fact]
+    public void 指紋不符_有一筆停用Sentinel解不開_不覆寫且KeyMismatch為真_Warn列名稱()
+    {
+        PrepareMismatch();
+        _settings.Update(s => s.AiApiKeyEnc = CryptoHelper.Encrypt("ai-key"));
+        _sentinels.Upsert(new Sentinel { Name = "S-OFF", BaseUrl = "https://s", Username = "u", PasswordEnc = Undecryptable, Active = false });
+        var before = ReadFingerprintBlob();
+        CryptoHelper.ResetForTests();
+
+        var logs = CaptureLogs(Run);
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.Equal(before, ReadFingerprintBlob());
+        Assert.Contains(logs, l => l.StartsWith("Warn|") && l.Contains("S-OFF"));
+        Assert.Contains(logs, l => l.StartsWith("Error|") && l.Contains(FakeFingerprint));
+        Assert.DoesNotContain(logs, l => l.Contains("金鑰指紋已更新"));
+    }
+
+    [Fact]
+    public void 指紋不符_SMTP密文解不開_不覆寫()
+    {
+        PrepareMismatch();
+        _settings.Update(s => s.SmtpPasswordEnc = Undecryptable);
+        var before = ReadFingerprintBlob();
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.Equal(before, ReadFingerprintBlob());
+    }
+
+    [Fact]
+    public void 指紋不符_inventory為空_覆寫指紋()
+    {
+        PrepareMismatch();
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        using var doc = JsonDocument.Parse(ReadFingerprintBlob()!);
+        Assert.Equal(CryptoHelper.KeyFingerprint, doc.RootElement.GetProperty("Fingerprint").GetString());
+        Assert.Equal(FakeFingerprint, doc.RootElement.GetProperty("ReplacedFingerprint").GetString());
+    }
+
+    [Fact]
+    public void 指紋不符_探測沒能完整跑完_不當成全部解得開而覆寫()
+    {
+        PrepareMismatch();
+        var before = ReadFingerprintBlob();
+        var throwing = System.Reflection.DispatchProxy.Create<ISystemSettingsStore, RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>>();
+        ((RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>)(object)throwing).ThrowOn = "Get";
+        CryptoHelper.ResetForTests();
+
+        CryptoKeyBootstrapper.Run(_backend, _dataRoot, throwing, _sentinels);
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.Equal(before, ReadFingerprintBlob());
+    }
+
+    [Fact]
+    public void 覆寫指紋_記錄在比對後被別人改掉_不寫入()
+    {
+        PrepareMismatch();
+        var blob = _backend.Blob("crypto_key_fingerprint");
+
+        // 預期的原指紋與目前記錄不同（另一個行程剛改過）→ 不覆寫
+        var ok = CryptoKeyBootstrapper.OverwriteFingerprint(blob, "ffffffffffffffff", CryptoHelper.KeyFingerprint);
+
+        Assert.False(ok);
+        Assert.Contains(FakeFingerprint, blob.Read());
+    }
+
+    [Fact]
+    public void 指紋不符_兩條路徑探測各恰好一次()
+    {
+        // 不符且有解不開的：探測 Warn 只一行
+        PrepareMismatch();
+        _settings.Update(s => s.AiApiKeyEnc = Undecryptable);
+        CryptoHelper.ResetForTests();
+        var mismatchLogs = CaptureLogs(Run);
+        Assert.Single(mismatchLogs, l => l.Contains("啟動探測"));
+
+        // 相符且有解不開的：探測 Warn 同樣只一行
+        CryptoHelper.ResetForTests();
+        _backend.Blob("crypto_key_fingerprint").Mutate<bool>(_ => ("{\"Fingerprint\":\"" + CryptoKeyFingerprintOfFile() + "\"}", true));
+        CryptoHelper.ResetForTests();
+        var matchLogs = CaptureLogs(Run);
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.Single(matchLogs, l => l.Contains("啟動探測"));
+    }
+
+    private string CryptoKeyFingerprintOfFile()
+    {
+        CryptoHelper.UseKeyFile(KeyPath);
+        return CryptoHelper.KeyFingerprint;
+    }
+
+    [Fact]
+    public void 金鑰檔遺失而新產生_Error訊息寫明金鑰檔遺失與常見原因()
+    {
+        Run();                                                     // 建立金鑰檔與指紋
+        _settings.Update(s => s.AiApiKeyEnc = CryptoHelper.Encrypt("ai-key"));
+        File.Delete(KeyPath);                                      // 模擬重新部署清掉 keys
+        CryptoHelper.ResetForTests();
+
+        var logs = CaptureLogs(Run);
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        var error = Assert.Single(logs, l => l.StartsWith("Error|"));
+        Assert.Contains("金鑰檔遺失", error);
+        Assert.Contains("重新部署", error);
+        Assert.Contains("DataRoot", error);
+    }
+
+    [Fact]
+    public void 金鑰檔存在而指紋不符_Error訊息不含金鑰檔遺失()
+    {
+        PrepareMismatch();
+        _settings.Update(s => s.AiApiKeyEnc = Undecryptable);
+        CryptoHelper.ResetForTests();
+
+        var logs = CaptureLogs(Run);
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        var error = Assert.Single(logs, l => l.StartsWith("Error|"));
+        Assert.DoesNotContain("金鑰檔遺失", error);
+    }
+
+    [Fact]
+    public void 首次啟動_blob為空_不是金鑰檔遺失()
+    {
+        var logs = CaptureLogs(Run);
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.DoesNotContain(logs, l => l.Contains("金鑰檔遺失"));
+    }
+
+    // ── 第 63-2 輪批次A：啟動探測 ──
+
+    private const string Undecryptable = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    [Fact]
+    public void 啟動探測_有解不開的密文_旗標為真且資料不變()
+    {
+        _settings.Update(s => s.PrtgPasswordEnc = Undecryptable);
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = Undecryptable });
+        var updatedAt = _settings.Get().UpdatedAt;
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+
+        Run();
+
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+        Assert.Equal(Undecryptable, _settings.Get().PrtgPasswordEnc);
+        Assert.Equal(Undecryptable, _sentinels.FindByName("S1")!.PasswordEnc);
+        Assert.Equal(updatedAt, _settings.Get().UpdatedAt);
+    }
+
+    [Fact]
+    public void 啟動探測_全部正常_旗標維持為假()
+    {
+        _settings.Update(s =>
+        {
+            s.SmtpPasswordEnc = LegacyV1("smtp");
+            s.PrtgApiTokenEnc = "plain-old-token";
+        });
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = LegacyV1("pw") });
+
+        Run();
+
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 啟動探測_金鑰指紋不符提早返回時仍會探測()
+    {
+        Run();
+        _backend.Blob("crypto_key_fingerprint").Mutate<bool>(_ => ("{\"Fingerprint\":\"0000000000000000\"}", true));
+        _settings.Update(s => s.AiApiKeyEnc = Undecryptable);
+
+        CryptoHelper.ResetForTests();
+        Run();
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 啟動探測_讀設定失敗只記警告_不擲例外()
+    {
+        var throwing = System.Reflection.DispatchProxy.Create<ISystemSettingsStore, RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>>();
+        ((RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>)(object)throwing).ThrowOn = "Get";
+
+        var bad = CryptoKeyBootstrapper.ProbeSecrets(throwing, _sentinels);
+
+        Assert.Empty(bad);
     }
 
     [Fact]

@@ -160,7 +160,7 @@ public class SecurityHardeningTests
                 new ScheduleFreshnessService(new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
                     new ScheduleOptionsStore(fx.Blob("schedule_options"))),
                 new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()),
-            new FakeReportUsageQuery());
+            new FakeReportUsageQuery(), new FakeSentinelStore());
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {

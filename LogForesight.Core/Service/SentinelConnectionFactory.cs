@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Service;
 
 /// <summary>
@@ -7,15 +9,38 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public static class SentinelConnectionFactory
 {
-    public static SentinelServer ToConnectable(Sentinel s) => new()
+    public static SentinelServer ToConnectable(Sentinel s)
     {
-        Id = s.SentinelId,
-        Name = s.Name,
-        BaseUrl = s.BaseUrl,
-        Username = s.Username,
-        // 明文原樣回傳；解不開（金鑰不符）當成未設定，不讓取數整趟失敗
-        Password = CryptoHelper.TryDecrypt(s.PasswordEnc, out var password) ? password : "",
-        UseEsmDirectory = s.UseEsmDirectory,
-        Os = s.Os
-    };
+        var (password, state) = Resolve(s);
+        return new SentinelServer
+        {
+            Id = s.SentinelId,
+            Name = s.Name,
+            BaseUrl = s.BaseUrl,
+            Username = s.Username,
+            // 明文原樣回傳；解不開（金鑰不符）給空字串並標 Undecryptable，由呼叫端決定不送請求
+            Password = password,
+            UseEsmDirectory = s.UseEsmDirectory,
+            Os = s.Os,
+            CredentialState = state
+        };
+    }
+
+    /// <summary>
+    /// Sentinel 查詢帳密的可用狀態——全站唯一判定。管線、probe、探索精靈與管理頁清單都讀這裡，
+    /// 不要再用 <see cref="Sentinel.CanDiscover"/>（只看密文欄位非空，解不開時仍是 true，會拿空密碼登入）。
+    /// 不放在 POCO 的屬性上：屬性會在序列化時被呼叫，等於每次存檔都去解密。
+    /// </summary>
+    public static CredentialState CredentialStateOf(Sentinel s) => Resolve(s).State;
+
+    private static (string Password, CredentialState State) Resolve(Sentinel s)
+    {
+        if (string.IsNullOrWhiteSpace(s.PasswordEnc)) return ("", CredentialState.NotConfigured);
+
+        if (!CryptoHelper.TryDecrypt(s.PasswordEnc, out var password))
+            return ("", CredentialState.Undecryptable);
+
+        var usable = !string.IsNullOrWhiteSpace(s.Username) && !string.IsNullOrWhiteSpace(password);
+        return (password, usable ? CredentialState.Ok : CredentialState.NotConfigured);
+    }
 }

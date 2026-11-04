@@ -131,14 +131,16 @@ public interface IAnalysisRecordQuery
     HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false);
 
     /// <summary>
-    /// 依日期範圍與標題查**完整**紀錄（非輕量投影），日期新到舊、同日依主機 id、紀錄 id；最多 <paramref name="take"/> 筆。
-    /// <paramref name="from"/>、<paramref name="to"/> 皆含界（以日期比較）；<paramref name="headline"/> 是
-    /// **精確相等**（不是包含、不是前綴），比對下推到 SQL 的 headline 欄位，不載入不相關列。
-    /// 用途：撈「AI 回覆格式異常」案例（標題為 <see cref="LogForesight.Core.Service.LogAnalysisService.AiFormatAnomalyHeadline"/>）。
+    /// 依日期範圍查「AI 格式異常降級」案例的**完整**紀錄（非輕量投影），日期新到舊、同日依主機 id、紀錄 id；
+    /// 最多 <paramref name="take"/> 筆。<paramref name="from"/>、<paramref name="to"/> 皆含界（以日期比較）。
+    /// 案例判定只有這一處（條件全部下推到 SQL，不載入不相關列）：
+    /// 降級次數 &gt; 0 且仍未成功（<c>AiPending</c>，或次數已達 <see cref="LogForesight.Core.Service.AiDegradation.MaxAttempts"/> 放棄）；
+    /// 或標題精確等於歷史資料的 <see cref="LogForesight.Core.Service.LogAnalysisService.AiFormatAnomalyHeadline"/>。
+    /// 已恢復成功（次數 &gt; 0、不待補、未達上限）不是案例。
     /// 不套用主機授權——呼叫端自行處理；詳情已清除的列照回（<see cref="DailyAnalysisRecord.DetailPruned"/>＝true）。
-    /// take ≤ 0、headline 為空或日期區間顛倒回空清單。
+    /// take ≤ 0 或日期區間顛倒回空清單。
     /// </summary>
-    List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take);
+    List<DailyAnalysisRecord> QueryAiDegradedCases(DateTime from, DateTime to, int take);
 
     /// <summary>
     /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，日期範圍與方向由 <paramref name="query"/> 決定

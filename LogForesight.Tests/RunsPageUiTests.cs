@@ -117,8 +117,8 @@ public class RunsPageUiTests
         var sensorIdx = cell.IndexOf("`sensor ${fetched ?? 0}`", StringComparison.Ordinal);
         Assert.True(conservativeIdx >= 0 && conservativeIdx < sensorIdx, "保守策略必須在組 sensor 文字之前就返回");
         Assert.Contains("保守策略（數值由快照供應）", cell);
-        // 兩個呼叫點都要帶策略，漏一個就有一邊照舊顯示「sensor 0」
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"renderPrtgCell\([^)]*prtgStrategy\)").Count);
+        // 兩個呼叫點（清單與詳情）都要帶策略與趟次原因，漏一個就有一邊照舊顯示「sensor 0」或看不到早退原因
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"renderPrtgCell\([^)]*prtgStrategy, \w+\.prtgOutcomeNote\)").Count);
 
         var detail = ExtractBlock(js, "async function showDetail(");
         Assert.Contains("const triggerCount = value => (conservative ? '—' : formatNumber(value));", detail);
@@ -520,7 +520,9 @@ public class RunsPageUiTests
 
         // 立即執行前的提醒：只在「連線已設定但未啟用」時問，沒設定 PRTG 的站台不該每次被問
         Assert.Contains("prtgModuleEnabled !== true && prtgConnectionConfigured", js);
-        Assert.Contains("hasPrtgConnection", js);
+        // 「連線已設定」只讀後端單一出口的憑證狀態，前端不再自己用 prtgHas* 布林湊第二份判定
+        Assert.DoesNotContain("hasPrtgConnection", js);
+        Assert.Contains("settings.prtgCredentialState === 'ok'", js);
     }
 
     [Fact]
@@ -810,9 +812,9 @@ const context = {
   renderPrtgModuleState: (...args) => calls.push(args),
   document: { getElementById: id => id === 'prtg-backfill-days-hint' ? hint : null }
 };
-vm.runInNewContext(`${helper}; applyPrtgOperationalStatus({ prtgEnabled: false, prtgValueFetchScope: 'Triggered', prtgFetchStrategy: 'Conservative', prtgBackfillDays: 7 });`, context);
-vm.runInNewContext(`applyPrtgOperationalStatus({ prtgEnabled: true, prtgValueFetchScope: 'All', prtgFetchStrategy: 'Aggressive', prtgBackfillDays: 30 });`, context);
-assert.deepEqual(calls, [[false, 'Triggered', 'Conservative'], [true, 'All', 'Aggressive']]);
+vm.runInNewContext(`${helper}; applyPrtgOperationalStatus({ prtgEnabled: false, prtgCredentialState: 'undecryptable', prtgValueFetchScope: 'Triggered', prtgFetchStrategy: 'Conservative', prtgBackfillDays: 7 });`, context);
+vm.runInNewContext(`applyPrtgOperationalStatus({ prtgEnabled: true, prtgCredentialState: 'ok', prtgValueFetchScope: 'All', prtgFetchStrategy: 'Aggressive', prtgBackfillDays: 30 });`, context);
+assert.deepEqual(calls, [[false, 'Triggered', 'Conservative', 'undecryptable'], [true, 'All', 'Aggressive', 'ok']]);
 assert.equal(context.prtgFetchStrategy, 'Aggressive');
 assert.equal(hint.textContent, '往前 30 天');
 console.log('PASS operational status refresh');

@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using State = LogForesight.Core.Models.CredentialState;
 
 namespace LogForesight.Core.Service;
 
@@ -77,35 +78,54 @@ public static class PrtgClientFactory
     }
 
     /// <summary>
-    /// 檢查 SystemSettings 是否已具備可發動請求的有效認證資訊。
-    /// token 模式：PrtgApiTokenEnc 非空。
-    /// password 模式：PrtgUsername 與 PrtgPasswordEnc 皆非空。
-    /// passhash 模式：PrtgUsername 與 PrtgPasshashEnc 皆非空。
+    /// 檢查 SystemSettings 是否已具備可發動請求的有效認證資訊，等同 <see cref="CredentialState"/> 為 Ok。
+    /// token 模式：PrtgApiTokenEnc 非空且解得開。
+    /// password 模式：PrtgUsername 非空，且 PrtgPasswordEnc 非空且解得開。
+    /// passhash 模式：PrtgUsername 非空，且 PrtgPasshashEnc 非空且解得開。
+    /// 解不開（金鑰不符）時回 false——否則各取數路徑會拿空憑證去打 PRTG，而不是在閘門處就停下。
+    /// 要分辨「沒填」和「解不開」請讀 <see cref="CredentialState"/>。
     /// </summary>
-    public static bool HasUsableCredentials(SystemSettings settings)
+    public static bool HasUsableCredentials(SystemSettings settings) => CredentialState(settings) == State.Ok;
+
+    /// <summary>
+    /// 憑證不可用時給人看的原因（可用時 null）。回填、探測、結構同步三個手動入口共用這一句，
+    /// 不再各自寫「尚未設定」而把「解不開」也說成沒設定——那會讓人回頭去檢查根本沒問題的設定欄。
+    /// </summary>
+    public static string? CredentialProblem(SystemSettings settings) => CredentialState(settings) switch
     {
-        if (settings == null) return false;
+        State.Undecryptable => "PRTG 認證資訊無法解密（金鑰檔與資料庫不相符），請到 PRTG 維護頁「連線」重新輸入並儲存",
+        State.NotConfigured => "尚未設定 PRTG 認證資訊（API token 或帳號密碼）",
+        _ => null
+    };
+
+    /// <summary>
+    /// 目前認證模式的憑證狀態——PRTG 憑證可用性的唯一判定出口。
+    /// 只看目前認證模式用到的欄位；其他模式殘留的舊密文不影響結果。
+    /// 密文欄有值但解不開＝<see cref="State.Undecryptable"/>（需重新輸入）；欄位空白或缺帳號＝<see cref="State.NotConfigured"/>。
+    /// </summary>
+    public static State CredentialState(SystemSettings settings)
+    {
+        if (settings == null) return State.NotConfigured;
 
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Passhash, StringComparison.Ordinal))
-        {
-            return !string.IsNullOrWhiteSpace(settings.PrtgUsername) &&
-                   IsUsableSecret(settings.PrtgPasshashEnc);
-        }
+            return SecretState(settings.PrtgPasshashEnc, requireUsername: true, settings.PrtgUsername);
 
         if (string.Equals(settings.PrtgAuthMode, PrtgAuthModes.Password, StringComparison.Ordinal))
-        {
-            return !string.IsNullOrWhiteSpace(settings.PrtgUsername) &&
-                   IsUsableSecret(settings.PrtgPasswordEnc);
-        }
+            return SecretState(settings.PrtgPasswordEnc, requireUsername: true, settings.PrtgUsername);
 
-        return IsUsableSecret(settings.PrtgApiTokenEnc);
+        return SecretState(settings.PrtgApiTokenEnc, requireUsername: false, null);
     }
 
     /// <summary>
-    /// 憑證欄非空且解得開（明文原樣視為可用）。解不開（金鑰不符）等同未設定——否則各取數路徑會拿空憑證去打 PRTG，
-    /// 而不是在閘門處就回「認證未設定」。
+    /// 密文欄的狀態：空白＝未設定；解不開＝Undecryptable（先於帳號判斷，使用者重填時才會一併補帳號）；
+    /// 明文原樣視為可用。
     /// </summary>
-    private static bool IsUsableSecret(string? value) =>
-        !string.IsNullOrWhiteSpace(value) &&
-        CryptoHelper.TryDecrypt(value, out var plain) && !string.IsNullOrWhiteSpace(plain);
+    private static State SecretState(string? value, bool requireUsername, string? username)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return State.NotConfigured;
+        if (!CryptoHelper.TryDecrypt(value, out var plain)) return State.Undecryptable;
+        if (string.IsNullOrWhiteSpace(plain)) return State.NotConfigured;
+        if (requireUsername && string.IsNullOrWhiteSpace(username)) return State.NotConfigured;
+        return State.Ok;
+    }
 }

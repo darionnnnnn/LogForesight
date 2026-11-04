@@ -91,6 +91,34 @@ public class DailyRecordBackfillerTests : IDisposable
     /// 新寫入的列必須帶當前版本，否則會永遠落在待回填集合裡被反覆處理
     /// （Append 與回填器共用同一個常數，就是為了防這件事）。
     /// </summary>
+    /// <summary>升級前已清除詳情、版本已是最新的列不會再進批次迴圈：掛著的待補旗標要靠開頭那句 UPDATE 清掉。</summary>
+    [Fact]
+    public void 回填_詳情已清除且版本最新的舊列_待補旗標仍會被清()
+    {
+        var date = new DateTime(2026, 8, 3);
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.DailyRecords.Add(new DailyRecordRow
+            {
+                HostId = 3, HostName = "C", RecordDate = date, RiskLevel = "高", ContentJson = string.Empty,
+                DetailPruned = true, AiPending = true, AiAnalyzed = true, AiDegradedAttempts = 1,
+                ExtractVersion = DailyRecordBackfiller.CurrentVersion, CreatedAt = DateTime.Now
+            });
+            ctx.DailyRecords.Add(new DailyRecordRow
+            {
+                HostId = 4, HostName = "D", RecordDate = date, RiskLevel = "高", ContentJson = "{}",
+                DetailPruned = false, AiPending = true, ExtractVersion = DailyRecordBackfiller.CurrentVersion, CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+
+        new DailyRecordBackfiller(_fx.NewContext).Run(CancellationToken.None);
+
+        using var check = _fx.NewContext();
+        Assert.False(check.DailyRecords.Single(r => r.HostId == 3).AiPending);
+        Assert.True(check.DailyRecords.Single(r => r.HostId == 4).AiPending);   // 沒被清詳情的待補列不動
+    }
+
     [Fact]
     public void 新寫入的列_帶當前版本且不落入待回填集合()
     {

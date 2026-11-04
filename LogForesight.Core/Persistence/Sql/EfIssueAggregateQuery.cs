@@ -1629,7 +1629,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 2. 每台主機最新一天的風險等級與標題：以相關子查詢取 MAX(RecordDate) 那列，同樣是主機數量級
         var latestRaw = recordsQuery
             .Where(r => r.RecordDate == recordsQuery.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
-            .Select(r => new { r.HostId, r.RiskLevel, r.Headline })
+            .Select(r => new { r.HostId, r.RiskLevel, r.Headline, r.AiPending, r.AiDegradedAttempts })
             .ToList()
             .GroupBy(r => r.HostId)
             .ToDictionary(g => g.Key, g => g.First());
@@ -1687,7 +1687,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
                     LatestDate = newest.MaxDate,
                     LatestRiskLevel = head?.RiskLevel ?? string.Empty,
-                    LatestHeadline = head?.Headline ?? string.Empty
+                    LatestHeadline = head?.Headline ?? string.Empty,
+                    LatestAiPending = head?.AiPending ?? false,
+                    LatestAiDegradedAttempts = head?.AiDegradedAttempts ?? 0
                 };
             })
             .ToList();

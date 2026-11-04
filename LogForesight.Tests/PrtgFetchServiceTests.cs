@@ -1129,7 +1129,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
-        Assert.Contains(console.Lines, l => l.Contains("1 個感測器的數值擷取失敗"));
+        Assert.Contains(console.Lines, l => l.Contains("數值擷取失敗 1 顆（其中逾時 0、補抓後仍失敗 1）"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count());
@@ -1164,7 +1164,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
-        Assert.Contains(console.Lines, l => l.Contains("其中 1 個是請求逾時"));
+        Assert.Contains(console.Lines, l => l.Contains("數值擷取失敗 1 顆（其中逾時 1、補抓後仍失敗 1）"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count());
@@ -2978,5 +2978,72 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(new long[] { 103 }, result.EmptyDevices);
         Assert.Equal(new long[] { 102 }, result.FailedDevices);
         Assert.Equal(1, result.SensorsWritten);
+    }
+
+    // ───────── 第 63-2 輪 A-4：分頁等待重試由建構旗標開啟，預設關 ─────────
+
+    private async Task<(PrtgStateChangeRangeResult Result, List<TimeSpan> Delays)> RunTimeoutOnceMessagesAsync(bool retryTransientPaging)
+    {
+        var today = DateTime.Today;
+        var calls = 0;
+        var (client, _) = CreateClient(req =>
+        {
+            if (!req.RequestUri!.ToString().Contains("content=messages")) return JsonResponse("{}", HttpStatusCode.NotFound);
+            if (Interlocked.Increment(ref calls) == 1) throw new TaskCanceledException("逾時", new TimeoutException());
+            return JsonResponse(MessagesJson((201, today.AddHours(1))));
+        });
+        var delays = new List<TimeSpan>();
+        var service = new PrtgFetchService(client, CreateStore(),
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>(), guard: null, retryTransientPaging: retryTransientPaging)
+        {
+            RetryDelay = (span, _) => { delays.Add(span); return Task.CompletedTask; }
+        };
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1], 1, CancellationToken.None);
+        return (result, delays);
+    }
+
+    [Fact]
+    public async Task 狀態變更_開啟分頁重試時暫時逾時等待後重試而收斂()
+    {
+        var (result, delays) = await RunTimeoutOnceMessagesAsync(retryTransientPaging: true);
+
+        Assert.True(result.Converged);
+        Assert.Equal(0, result.FailedObjects);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15) }, delays);
+        using var db = _fx.NewContext();
+        Assert.Single(await db.PrtgStateChanges.ToListAsync());
+    }
+
+    [Fact]
+    public async Task 狀態變更_預設不重試_暫時逾時直接記為失敗()
+    {
+        var (result, delays) = await RunTimeoutOnceMessagesAsync(retryTransientPaging: false);
+
+        Assert.False(result.Converged);
+        Assert.Equal(1, result.FailedObjects);
+        Assert.Empty(delays);
+    }
+
+    [Fact]
+    public void 探測與快照的組裝點不開分頁重試_夜間管線結構同步回填開()
+    {
+        // 靜態守門：Create 的 retryTransientPaging 預設關；只有無人值守、慢一點沒關係的呼叫端明確開啟
+        var root = FindRepoRoot();
+        string Src(params string[] parts) => File.ReadAllText(Path.Combine(new[] { root }.Concat(parts).ToArray()));
+        Assert.Contains("retryTransientPaging: true", Src("LogForesight.Core", "Service", "PrtgDailyPipeline.cs"));
+        Assert.Contains("retryTransientPaging: true", Src("LogForesight.Web", "Services", "PrtgStructureSyncService.cs"));
+        Assert.Contains("retryTransientPaging: true", Src("LogForesight.Web", "Services", "PrtgBackfillService.cs"));
+        Assert.DoesNotContain("retryTransientPaging", Src("LogForesight.Core", "Service", "PrtgProbeDataFlowRunner.cs"));
+        Assert.DoesNotContain("retryTransientPaging", Src("LogForesight.Web", "Services", "PrtgSnapshotHostedService.cs"));
+        Assert.DoesNotContain("PrtgTablePager", Src("LogForesight.Core", "Service", "PrtgResourceGuardSource.cs"));
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new InvalidOperationException("找不到 LogForesight.sln");
     }
 }

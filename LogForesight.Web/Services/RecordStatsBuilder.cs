@@ -60,7 +60,9 @@ public static class RecordStatsBuilder
                 MediumRiskDays = group.Count(r => r.RiskLevel == RiskLevels.Medium),
                 CorrelationDays = group.Count(r => r.CorrelationAlerts.Count > 0),
                 LatestRiskLevel = group.OrderByDescending(r => r.Date).First().RiskLevel,
-                LatestHeadline = group.OrderByDescending(r => r.Date).First().Headline
+                LatestHeadline = group.OrderByDescending(r => r.Date).First().Headline,
+                LatestAiPending = group.OrderByDescending(r => r.Date).First().AiPending,
+                LatestAiDegradedAttempts = group.OrderByDescending(r => r.Date).First().AiDegradedAttempts
             })
             .Where(h => h.HighRiskDays > 0 || h.MediumRiskDays > 0)
             .OrderByDescending(h => h.HighRiskDays)
@@ -82,7 +84,9 @@ public static class RecordStatsBuilder
                 MediumRiskDays = h.MediumRiskDays,
                 CorrelationDays = h.CorrelationDays,
                 LatestRiskLevel = h.LatestRiskLevel,
-                LatestHeadline = h.LatestHeadline
+                LatestHeadline = h.LatestHeadline,
+                LatestAiPending = h.LatestAiPending,
+                LatestAiDegradedAttempts = h.LatestAiDegradedAttempts
             })
             .OrderByDescending(h => h.HighRiskDays)
             .ThenByDescending(h => h.CorrelationDays)

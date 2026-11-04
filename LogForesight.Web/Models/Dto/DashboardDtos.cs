@@ -245,6 +245,8 @@ public class DashboardHostDto
     public int CorrelationDays { get; set; }
     public string LatestRiskLevel { get; set; } = string.Empty;
     public string LatestHeadline { get; set; } = string.Empty;
+    public bool LatestAiPending { get; set; }
+    public int LatestAiDegradedAttempts { get; set; }
 }
 
 /// <summary>依主機群組的風險概況（§5.4 D-4）</summary>

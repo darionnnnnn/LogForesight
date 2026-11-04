@@ -46,9 +46,11 @@ public static class PrtgReevaluationPlanner
             }
             else
             {
+                // 排程趟被中斷，或因憑證沒設定／解不開而早退（沒有逐日統計）：那一晚該評估的日子沒有任何紀錄，
+                // 憑證修好後要補回來；「PRTG 未啟用」的早退不算，那是刻意關掉
                 var hasInterruptedSchedule = nonAiRuns.Any(r =>
                     r.IsScheduledFetch() &&
-                    r.Interrupted &&
+                    (r.Interrupted || SkippedForCredentials(r)) &&
                     r.StartedAt.Date.AddDays(-1) == date);
 
                 if (hasInterruptedSchedule)
@@ -60,6 +62,11 @@ public static class PrtgReevaluationPlanner
 
         return selected;
     }
+
+    /// <summary>PRTG 因憑證沒設定或解不開而早退的趟（<see cref="BatchRun.PrtgOutcomeDisabled"/> 且原因不是未啟用）。</summary>
+    internal static bool SkippedForCredentials(BatchRun run) =>
+        run.PrtgOutcome == BatchRun.PrtgOutcomeDisabled &&
+        run.PrtgOutcomeNote is BatchRun.PrtgNoteNotConfigured or BatchRun.PrtgNoteUndecryptable;
 
     /// <summary>
     /// 最近一趟已結束的取數執行（JobType 不是 ai、FinishedAt 非空，取 StartedAt 最晚者）中，第一個 Outcome 不是 success 的逐日統計；

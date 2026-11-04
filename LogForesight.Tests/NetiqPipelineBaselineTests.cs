@@ -15,9 +15,13 @@ namespace LogForesight.Tests;
 /// 幾個關鍵斷言，改造時才有安全網接得住。刻意選最小可行的固定裝置：
 /// 一台 Sentinel、一至兩台 Windows 主機、假搜尋用戶端、假 AI，全程走真正的
 /// <see cref="StorageBackend"/>（SQLite 檔案）驗證寫入端到端可讀回。
+/// 其中「Sentinel 密碼解不開」案會設 <see cref="CryptoHelper"/> 的全域解密失敗旗標，整個類別放 CryptoKeyState 集合序列化。
 /// </summary>
+[Collection("CryptoKeyState")]
 public sealed class NetiqPipelineBaselineTests : IDisposable
 {
+    private const string UndecryptableCipher = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-netiq-pipeline-" + Guid.NewGuid().ToString("N"));
     private readonly StorageBackend _backend;
     private readonly FakeHostStore _hosts = new();
@@ -29,6 +33,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
     public NetiqPipelineBaselineTests()
     {
+        CryptoHelper.ResetForTests();
         Directory.CreateDirectory(_dir);
         _backend = new StorageBackend(
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "p.db")}" }, _dir);
@@ -36,6 +41,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
     public void Dispose()
     {
+        CryptoHelper.ResetForTests();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { /* 暫存目錄刪不掉不影響結論 */ }
         GC.SuppressFinalize(this);
@@ -86,7 +92,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     });
 
     private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null,
-        INetiqHostDayTimingCollector? hostDayTiming = null, bool onlyMissingOrFailed = false)
+        INetiqHostDayTimingCollector? hostDayTiming = null, bool onlyMissingOrFailed = false,
+        Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var hosts = overrideHosts ?? _hosts;
@@ -107,7 +114,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             _backend, netiqOptions, _sentinels, hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
-            clientFactory: FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming,
+            clientFactory: clientFactory ?? FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming,
             onlyMissingOrFailed: onlyMissingOrFailed);
     }
 
@@ -728,6 +735,85 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var request = Assert.Single(_client.Requests);
         Assert.Contains("10.0.0.1", request.Filter);
         Assert.DoesNotContain("db8", request.Filter);
+    }
+
+    // ── 第 63-2 輪批次A：Sentinel 密碼解不開不可拿空密碼登入 ──────────────────────
+
+    /// <summary>
+    /// 密碼密文解不開：不建 client、不送任何請求（每晚拿空密碼登入會累積 401、有鎖帳號風險），
+    /// 轄下每台計一個失敗主機日（與整台失敗路徑一致，下次重試），輸出與警告講「無法解密」而不是「未設定」。
+    /// </summary>
+    [Fact]
+    public async Task Sentinel密碼解不開_不建client不送請求_失敗主機日等於轄下台數()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel
+        {
+            Name = "S-BAD", BaseUrl = "https://x", Username = "u", PasswordEnc = UndecryptableCipher, Active = true
+        });
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+        var clientsCreated = 0;
+        var pipeline = MakePipeline(useAi: false, clientFactory: s =>
+        {
+            clientsCreated++;
+            return _client;
+        });
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(0, clientsCreated);
+        Assert.Empty(_client.Requests);
+        Assert.Equal(2, result.HostsFailed);
+        Assert.Equal(0, result.HostDaysAnalyzed);
+        Assert.Contains(result.Warnings, w => w.Contains("S-BAD") && w.Contains("無法解密") && w.Contains("2 台"));
+        Assert.Contains(_console, l => l.Contains("S-BAD") && l.Contains("密碼無法解密") && l.Contains("轄下 2 台主機本次不查詢"));
+        Assert.DoesNotContain(_console, l => l.Contains("查詢帳密未設定"));
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    /// <summary>一台解不開不連累其他 Sentinel：另一台照常查詢與分析。</summary>
+    [Fact]
+    public async Task 一台Sentinel密碼解不開_另一台照常查詢()
+    {
+        var bad = _sentinels.Upsert(new Sentinel
+        {
+            Name = "S-BAD", BaseUrl = "https://x", Username = "u", PasswordEnc = UndecryptableCipher, Active = true
+        });
+        var good = AddSentinel("S-OK");
+        AddWindowsHost(bad, "10.0.0.1", "HOST-BAD");
+        AddWindowsHost(good, "10.0.0.2", "HOST-OK");
+        var clientsCreatedFor = new List<string>();
+        var pipeline = MakePipeline(useAi: false, clientFactory: s =>
+        {
+            clientsCreatedFor.Add(s.Name);
+            return _client;
+        });
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(new[] { "S-OK" }, clientsCreatedFor.Distinct());
+        Assert.Equal(1, result.HostsFailed);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+    }
+
+    /// <summary>密碼欄位空白仍是既有的「查詢帳密未設定」路徑：只警告、不計失敗（行為不變）。</summary>
+    [Fact]
+    public async Task Sentinel密碼未填_維持既有的帳密未設定路徑()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel
+        {
+            Name = "S-EMPTY", BaseUrl = "https://x", Username = "u", PasswordEnc = "", Active = true
+        });
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Empty(_client.Requests);
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Contains(result.Warnings, w => w.Contains("查詢帳密未設定"));
+        Assert.Contains(_console, l => l.Contains("查詢帳密未設定"));
+        Assert.DoesNotContain(_console, l => l.Contains("無法解密"));
     }
 
     /// <summary>作業系統標記不是 windows／linux 的主機沒有對應查詢形狀：逐台警告、完全不查詢。</summary>

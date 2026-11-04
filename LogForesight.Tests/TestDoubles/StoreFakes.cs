@@ -528,9 +528,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
 
-    public List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take) =>
+    public List<DailyAnalysisRecord> QueryAiDegradedCases(DateTime from, DateTime to, int take) =>
         _records.Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date
-                && string.Equals(r.Headline, headline, StringComparison.Ordinal))
+                && ((r.AiDegradedAttempts > 0 && (r.AiPending || r.AiDegradedAttempts >= AiDegradation.MaxAttempts))
+                    || string.Equals(r.Headline, LogAnalysisService.AiFormatAnomalyHeadline, StringComparison.Ordinal)))
             .OrderByDescending(r => r.Date.Date).ThenBy(r => r.HostId).ThenBy(r => r.RecordId)
             .Take(Math.Max(take, 0)).ToList();
 

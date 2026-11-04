@@ -124,6 +124,56 @@ public static class CryptoHelper
         }
     }
 
+    /// <summary>
+    /// 與 <see cref="TryDecrypt"/> 相同，但解不開時不設旗標、不記 Error：給「解不開也不代表憑證有問題」的呼叫端
+    /// （診斷匯出試解 PRTG 目前模式以外的殘留，只是想把明文收進遮罩字典）。
+    /// </summary>
+    public static bool TryDecryptQuietly(string? value, out string plaintext)
+    {
+        if (!IsEncrypted(value))
+        {
+            plaintext = value ?? "";
+            return true;
+        }
+
+        try
+        {
+            plaintext = Decrypt(value!);
+            return true;
+        }
+        catch (Exception)
+        {
+            plaintext = "";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 重新評估解密失敗旗標：<paramref name="ciphertexts"/> 每一筆非空值都 <see cref="TryDecrypt"/> 成功，
+    /// 才清除 <see cref="DecryptFailureSeen"/> 與已回報清單（之後再失敗會重新記一次 Error）；任何一筆失敗則旗標維持為真。
+    /// 重新輸入憑證後由 Web 端 CryptoRecovery 呼叫，讓健康頁不必重啟就恢復。
+    /// 注意 <see cref="TryDecrypt"/> 失敗本身會記 Error（逐密文去重）並設旗標，這是預期行為。
+    /// </summary>
+    /// <returns>全部解得開（旗標已清）時為 true</returns>
+    public static bool ReevaluateDecryptFailure(IEnumerable<string?> ciphertexts)
+    {
+        ArgumentNullException.ThrowIfNull(ciphertexts);
+        var allOk = true;
+        foreach (var value in ciphertexts)
+        {
+            if (string.IsNullOrEmpty(value)) continue;
+            if (!TryDecrypt(value, out _)) allOk = false;
+        }
+
+        if (!allOk) return false;
+        lock (StateLock)
+        {
+            ReportedFailures.Clear();
+            _decryptFailureSeen = false;
+        }
+        return true;
+    }
+
     /// <summary>值是否已是本 Helper 產生的密文格式（v1 或 v2）</summary>
     public static bool IsEncrypted(string? value) =>
         !string.IsNullOrEmpty(value) &&

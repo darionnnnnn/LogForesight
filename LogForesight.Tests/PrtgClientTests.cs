@@ -181,6 +181,50 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task 換passhash時回空白OK頁_不黏住_下一次還會再試()
+    {
+        var calls = 0;
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(Interlocked.Increment(ref calls) == 1
+                ? HtmlResponse(HttpStatusCode.OK, "<HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML>")
+                : JsonResponse(HttpStatusCode.OK, "{}"))
+        };
+        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "admin", "pw", "");
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        await Record.ExceptionAsync(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+        Assert.True(calls >= 2, "不該黏住：第二次呼叫要再送請求");
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_回傳登入頁時擲例外_訊息講位址或認證_不是空白頁()
+    {
+        const string loginPage = "<!DOCTYPE html><html><head><title>PRTG Network Monitor - Login</title></head><body class=\"login\">Your login has failed.</body></html>";
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, loginPage)) };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+
+        Assert.Contains("HTML 而非 JSON", ex.Message);
+        Assert.DoesNotContain("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.Other, ex.Kind);
+    }
+
+    [Theory]
+    [InlineData("<HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML>", true)]
+    [InlineData("<html><body class=\"no-content\"><b class=\"no-content\"> ok </b></body></html>", true)]
+    [InlineData("<html><body class=\"login\">OK</body></html>", false)]
+    [InlineData("{\"sensors\":[]}", false)]
+    [InlineData("", false)]
+    public void 空白OK頁的判定(string body, bool expected)
+    {
+        Assert.Equal(expected, PrtgClient.IsEmptyOkPage(body.Trim()));
+    }
+
+    [Fact]
     public async Task GetJsonAsync_回傳HTML時擲例外且訊息可辨識()
     {
         const string html73Bytes = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
@@ -193,8 +237,9 @@ public class PrtgClientTests
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
-        Assert.Contains("HTML 而非 JSON", ex.Message);
-        Assert.Contains("no-content", ex.Message);
+        Assert.Contains("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        Assert.DoesNotContain("登入頁", ex.Message);   // 這一頁不是認證問題，訊息不能把人引去改帳密
     }
 
     [Fact]
@@ -210,8 +255,9 @@ public class PrtgClientTests
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
-        Assert.Contains("HTML 而非 JSON", ex.Message);
-        Assert.Contains("no-content", ex.Message);
+        Assert.Contains("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        Assert.DoesNotContain("登入頁", ex.Message);   // 這一頁不是認證問題，訊息不能把人引去改帳密
     }
 
     [Fact]
@@ -994,5 +1040,247 @@ public class PrtgClientTests
 
             return await OnSend(request, cancellationToken);
         }
+    }
+
+    // ───────── 失敗類型（第 63-2 輪批次 A-4）：重試判斷只能讀 Kind／StatusCode，不比對訊息 ─────────
+
+    private static PrtgClient KindClient(StubHandler stub, string authMode = PrtgAuthModes.Token) =>
+        authMode == PrtgAuthModes.Passhash
+            ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "operator", "", "1234567890", new LogForesight.Core.Service.PrtgRequestBudget())
+            : authMode == PrtgAuthModes.Password
+                ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "operator", "pw", "", new LogForesight.Core.Service.PrtgRequestBudget())
+                : new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+
+    [Fact]
+    public async Task 失敗類型_HttpClient逾時為Timeout且沒有狀態碼()
+    {
+        var stub = new StubHandler { OnSend = (_, _) => throw new TaskCanceledException("逾時", new TimeoutException()) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.Timeout, ex.Kind);
+        Assert.Null(ex.StatusCode);
+        Assert.StartsWith("連線 PRTG 伺服器失敗：", ex.Message);
+    }
+
+    [Fact]
+    public async Task 失敗類型_連不上為Transport()
+    {
+        var stub = new StubHandler { OnSend = (_, _) => throw new HttpRequestException("連線被拒", new System.Net.Sockets.SocketException()) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.Transport, ex.Kind);
+        Assert.Null(ex.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData((HttpStatusCode)429)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task 失敗類型_其他狀態碼為HttpStatus且帶狀態碼(HttpStatusCode code)
+    {
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(code)) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+        Assert.Equal((int)code, ex.StatusCode);
+        if (code != HttpStatusCode.Forbidden)
+            Assert.Equal($"PRTG 伺服器回應錯誤：HTTP {(int)code}", ex.Message);
+    }
+
+    [Fact]
+    public async Task 失敗類型_token模式401為HttpStatus_帳號模式401為Credential並黏住()
+    {
+        var tokenStub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using var tokenClient = KindClient(tokenStub);
+        var tokenEx = await Assert.ThrowsAsync<PrtgClientException>(() => tokenClient.GetJsonAsync("/api/x"));
+        Assert.Equal(PrtgFailureKind.HttpStatus, tokenEx.Kind);
+        Assert.Equal(401, tokenEx.StatusCode);
+
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using var client = KindClient(stub, PrtgAuthModes.Passhash);
+        var first = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        Assert.Equal(PrtgFailureKind.Credential, first.Kind);
+        Assert.Equal(401, first.StatusCode);
+        // 黏住後的快取失敗仍是 Credential（沒有新的 HTTP 回應，所以沒有狀態碼）
+        var second = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/y"));
+        Assert.Equal(PrtgFailureKind.Credential, second.Kind);
+        Assert.Null(second.StatusCode);
+    }
+
+    [Fact]
+    public async Task 失敗類型_換取passhash時401與HTML登入頁都是Credential()
+    {
+        var unauthorized = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using (var client = KindClient(unauthorized, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Credential, ex.Kind);
+            Assert.Equal(401, ex.StatusCode);
+        }
+
+        var html = new StubHandler { OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "<html>login</html>")) };
+        using (var client = KindClient(html, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Credential, ex.Kind);
+            Assert.Null(ex.StatusCode);
+        }
+
+        var serverError = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)) };
+        using (var client = KindClient(serverError, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+            Assert.Equal(503, ex.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task 失敗類型_讀取回應中斷為Transport_回傳HTML與設定錯誤為Other()
+    {
+        var broken = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ThrowingContent(new IOException("連線中斷")) })
+        };
+        using (var client = KindClient(broken))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Transport, ex.Kind);
+            Assert.Null(ex.StatusCode);
+        }
+
+        var html = new StubHandler { OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "<html>maintenance</html>")) };
+        using (var client = KindClient(html))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Other, ex.Kind);
+        }
+
+        var badUrl = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient("not a url", SampleToken, 30, false, new StubHandler(), PrtgAuthModes.Token, "", "", ""));
+        Assert.Equal(PrtgFailureKind.Other, badUrl.Kind);
+        Assert.Null(badUrl.StatusCode);
+    }
+
+    private sealed class ThrowingContent(Exception error) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => Task.FromException(error);
+        protected override bool TryComputeLength(out long length) { length = -1; return false; }
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromException<Stream>(error);
+    }
+
+    // ───────── A-5：略過憑證驗證的提醒是設定事實，不是警告 ─────────
+
+    [Fact]
+    public void 略過憑證驗證的提醒寫Info且訊息逐字不變()
+    {
+        var target = new NLog.Targets.MemoryTarget("lf-prtg-ssl-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(PrtgClient).FullName!);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            // 不注入 handler：由 client 自己建 handler，才會走到「略過憑證驗證」的提醒
+            using var client = new PrtgClient(ValidUrl, SampleToken, 30, ignoreSslErrors: true, handler: null, PrtgAuthModes.Token, "", "", "");
+
+            // 其他測試類也可能同時建立同類 client，只看這則提醒；每一則都必須是 Info
+            var lines = target.Logs.Where(l => l.Contains("PrtgIgnoreSslErrors")).ToList();
+            Assert.NotEmpty(lines);
+            Assert.All(lines, l => Assert.StartsWith("Info|", l));
+            Assert.Contains(
+                "Info|[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）",
+                lines);
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
+
+    // ───────── Retry-After（第 63-2 輪批次 H-1）：標頭交給 HttpResponseMessage.Headers 解析，例外帶出從現在起的長度 ─────────
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private static async Task<PrtgClientException> FailWithAsync(HttpStatusCode code, Action<HttpResponseMessage>? decorate,
+        TimeProvider? clock = null)
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) =>
+            {
+                var resp = new HttpResponseMessage(code);
+                decorate?.Invoke(resp);
+                return Task.FromResult(resp);
+            }
+        };
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "",
+            new LogForesight.Core.Service.PrtgRequestBudget(), clock);
+        return await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("api/historicdata.json?id=1"));
+    }
+
+    [Fact]
+    public async Task RetryAfter_秒數格式帶出等待長度()
+    {
+        var ex = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(120)));
+
+        Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+        Assert.Equal(429, ex.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(120), ex.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_日期格式用時鐘換算成從現在起的長度()
+    {
+        var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+        var ex = await FailWithAsync(HttpStatusCode.ServiceUnavailable,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(90)),
+            new FixedClock(now));
+
+        Assert.Equal(TimeSpan.FromSeconds(90), ex.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_已過期的日期與零秒當作沒有()
+    {
+        var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+        var past = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(-30)),
+            new FixedClock(now));
+        var zero = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero));
+
+        Assert.Null(past.RetryAfter);
+        Assert.Null(zero.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_沒有標頭或標頭無法解析時為null且其他欄位不變()
+    {
+        var none = await FailWithAsync(HttpStatusCode.InternalServerError, null);
+        var garbage = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.TryAddWithoutValidation("Retry-After", "稍後再試"));
+        var negative = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.TryAddWithoutValidation("Retry-After", "-5"));
+
+        Assert.Null(none.RetryAfter);
+        Assert.Equal(500, none.StatusCode);
+        Assert.Null(garbage.RetryAfter);
+        Assert.Null(negative.RetryAfter);
+        Assert.Equal(PrtgFailureKind.HttpStatus, garbage.Kind);
     }
 }

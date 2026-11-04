@@ -703,9 +703,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
-        if (!PrtgClientFactory.HasUsableCredentials(s))
+        if (PrtgClientFactory.CredentialProblem(s) is { } credentialProblem)
         {
-            error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法執行回填。";
+            error = $"{credentialProblem}，無法執行回填。";
             return false;
         }
 
@@ -850,7 +850,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     console.WriteLine("結構同步完成，開始回填。");
                 }
 
-                var fetchService = PrtgFetchService.Create(run.Client, _backend, prtgStore, s, console, guard: null);
+                var fetchService = PrtgFetchService.Create(run.Client, _backend, prtgStore, s, console, guard: null, retryTransientPaging: true);
 
                 // 數值取數對象與排程取數共用同一份設定與判定（docs/PRTG-SPEC.md §3a）
                 var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(

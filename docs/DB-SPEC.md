@@ -101,6 +101,8 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   ai_pending       bool NOT NULL DEFAULT 0        -- NetIQ 搜尋與 AI 判讀
                                                   -- 脫鉤的第三態（統計已寫入、AI 段排隊中），
                                                   -- 與 ai_analyzed=false 是不同語意
+  ai_degraded_attempts int NOT NULL DEFAULT 0     -- AI 回覆連續格式異常的次數（只存此欄，不進 content_json）；
+                                                  -- 任何重標待補歸零，達 3 次放棄（ai_pending 轉 false、次數保持）
   log_source       smallint NOT NULL DEFAULT 0       -- 主機日來源：0 Unknown／1 Local／2 Netiq／3 Prtg（PRTG 獨立主機日，
                                                      -- 見 PRTG-SPEC §9）；缺日、重跑、趨勢歷史等日誌分析查詢排除 3
   extract_version  int NOT NULL DEFAULT 0            -- 抽出欄（headline/
@@ -158,6 +160,15 @@ ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 U
 完成時清 false；複合索引 `IX_lf_daily_records_ai_pending_record_date (ai_pending, record_date)`
 支援全域待補查詢（`QueryPendingAi`／`CountPendingAi`，`PendingAiQuery` 指定日期範圍與方向、排除 `detail_pruned`）。
 
+**`ai_degraded_attempts`（`lf_daily_records` 真實欄位）**：AI 重試耗盡仍是格式異常（降級）的次數，
+`DailyAnalysisRecord.AiDegradedAttempts` 標 `[JsonIgnore]`、由讀列時單點帶入。降級的主機日維持
+`ai_analyzed=true`（AI 段跑過），`AttachAiResult` 在同一個交易內次數 +1、`ai_pending = 次數 < 3`，
+標題寫「規則層結論＋（AI 摘要待補，第 N 次）」，達 3 次改寫「（AI 摘要已放棄：連續 3 次格式異常）」且不再列入待補；
+摘要欄保留回覆原文。成功的 AI 結果不改次數。`MarkAllForAiRerun`（同一句 UPDATE）、PRTG 證據變動重標待補與
+統計段 `Append` 重寫都把次數歸零。
+
+欄位型別 `int NOT NULL DEFAULT 0`（SQLite 為 `INTEGER NOT NULL DEFAULT 0`），由 `SchemaUpgrader` 以 `AddColumnIfMissing` 補欄、既有列為 0，新建的 DB 由 `EnsureCreated` 直接建好；沒有索引（待補查詢走 `ai_pending` 複合索引，次數只在寫回與案例查詢時讀）。**只存資料列欄位**：`DailyAnalysisRecord.AiDegradedAttempts` 標 `[JsonIgnore]`，不進 `content_json`，讀列時由 `Deserialize(row)` 單點帶入，輕量清單投影也帶（前端徽章讀它）。診斷匯出的降級案例查詢（`QueryAiDegradedCases`）只讀抽出欄 `ai_degraded_attempts`、`ai_pending`、`headline`。
+
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
 - `LogIssueSignature.EventKey`：問題簽章的第五個分組鍵欄位（Linux 事件命中規則時的規則 Id，
@@ -187,7 +198,7 @@ docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
   需要時走詳情頁路徑。
 
 **`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
-內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`、`ai_pending`（清 false）、`ai_analyzed`**
+內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`、`ai_pending`（成功時清 false；格式異常降級見 `ai_degraded_attempts`）、`ai_analyzed`**
 （AI 有可能把程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level`
 篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——只寫進 JSON、抽出欄
 停在舊值就是「抽出欄漂移」這類缺陷的典型形狀，寫入路徑因此固定放在同一處一起做。
@@ -514,7 +525,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 （實測平均 5.3 KB/筆），而年度同期比較需要的 KPI 與趨勢**沒有一項讀它**——
 那些全部來自抽出欄與 `lf_top_issues`。3000 台若把分析紀錄留兩年（`RetentionDays` 760），
 連 `content_json` 一起留約 12 GB；原始事件內容只留 120 天則約 1.9 GB。
-清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`，**不刪列**，
+清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`、同時清掉 `ai_pending`（AI 輸入無法重建，不能再說會補跑），**不刪列**，
 統計、風險等級、問題清單一律不受影響。驗證 `RawEventRetentionDays <= RetentionDays`——
 原始內容活得比它所屬的紀錄久沒有意義。
 

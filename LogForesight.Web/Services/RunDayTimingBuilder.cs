@@ -6,6 +6,7 @@ namespace LogForesight.Web.Services;
 
 /// <summary>
 /// 執行總表「當天開跑」的執行時間：同一天多趟的同一路取聯集，重疊不重複算（三路並行，相加會超過實際經過時間）。
+/// 總耗時＝取數趟與「跟隨取數」的 AI 趟（Trigger=fetch-followup）的聯集；其他 AI 趟（排程補跑、手動）另列，不進起訖與總計。
 /// 異常中斷的趟不計入聯集——它的結束時刻是站台重啟時刻，含整段停機；只留開始與最後活動。
 /// </summary>
 internal static class RunDayTimingBuilder
@@ -21,30 +22,54 @@ internal static class RunDayTimingBuilder
         if (dayRuns.Count == 0) return null;
 
         var fetchRuns = dayRuns.Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
-        var finished = fetchRuns.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
-        var interrupted = fetchRuns.Where(r => r.Interrupted).ToList();
+        var aiRuns = dayRuns.Where(r => r.JobType == BatchRun.JobTypeAi).ToList();
+        var followUps = aiRuns.Where(r => r.Trigger == BatchRunTriggers.FetchFollowUp).ToList();
+        var otherAi = aiRuns.Where(r => r.Trigger != BatchRunTriggers.FetchFollowUp && !r.Interrupted && r.FinishedAt.HasValue).ToList();
+
+        var counted = fetchRuns.Concat(followUps).ToList();
+        var finished = counted.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
+        var interrupted = counted.Where(r => r.Interrupted).ToList();
+        var finishedFetch = fetchRuns.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
+        var finishedFollowUps = followUps.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
+        var settledFetch = fetchRuns.Where(r => !r.Interrupted).ToList();
 
         return new RunDayTimingDto
         {
-            FirstStartedAt = fetchRuns.Count > 0 ? fetchRuns.Min(r => r.StartedAt) : null,
+            FirstStartedAt = counted.Count > 0 ? counted.Min(r => r.StartedAt) : null,
             LastFinishedAt = finished.Count > 0 ? finished.Max(r => r.FinishedAt) : null,
-            TotalSeconds = finished.Count > 0
-                ? UnionSeconds(finished.Select(r => (r.StartedAt, r.FinishedAt!.Value)))
-                : null,
+            TotalSeconds = SpanSeconds(finished),
+            FetchSeconds = SpanSeconds(finishedFetch),
+            FollowUpAiSeconds = SpanSeconds(finishedFollowUps),
+            OtherAiRuns = otherAi.Count,
+            OtherAiSeconds = SpanSeconds(otherAi),
+            FetchRuns = settledFetch.Count,
+            FetchRunsWithoutPhases = settledFetch.Count(r => r.Phases == null || r.Phases.Count == 0),
             InterruptedCount = interrupted.Count,
             LastInterruptedActivityAt = interrupted.Count > 0 ? interrupted.Max(LastActivity) : null,
-            Branches = BranchKeys.Select(key => BuildBranch(key, dayRuns)).OfType<RunBranchTimingDto>().ToList()
+            // 有跟隨趟時補跑不進明細，否則展開列的 AI 時間會比總計長、對不上第二行；當天只有補跑時才顯示補跑
+            Branches = BranchKeys.Select(key => BuildBranch(key, followUps.Count > 0 ? dayRuns.Except(otherAi) : dayRuns))
+                .OfType<RunBranchTimingDto>().ToList()
         };
     }
+
+    private static int? SpanSeconds(IReadOnlyCollection<BatchRun> runs) =>
+        runs.Count > 0 ? UnionSeconds(runs.Select(r => (r.StartedAt, r.FinishedAt!.Value))) : null;
 
     private static RunBranchTimingDto? BuildBranch(string key, IEnumerable<BatchRun> runs)
     {
         // 跳過的階段沒有花到時間，沒結束的沒有訖可算；全部被濾掉（含沒有階段資料的舊紀錄）時畫面顯示「—」
-        var spans = runs.Where(r => !r.Interrupted && r.Phases != null)
+        var settled = runs.Where(r => !r.Interrupted).ToList();
+        var spans = settled.Where(r => r.Phases != null)
             .SelectMany(r => r.Phases!)
             .Where(p => p.Key == key && p.FinishedAt.HasValue && p.Outcome != RunPhaseOutcomes.Skipped)
             .Select(p => (p.StartedAt, p.FinishedAt!.Value))
             .ToList();
+        // AI 趟本身就是 AI 路：沒有階段資料時用整趟起訖
+        if (key == RunTimingPhases.Ai)
+        {
+            spans.AddRange(settled.Where(r => r.JobType == BatchRun.JobTypeAi && (r.Phases == null || r.Phases.Count == 0) && r.FinishedAt.HasValue)
+                .Select(r => (r.StartedAt, r.FinishedAt!.Value)));
+        }
         if (spans.Count == 0) return null;
 
         return new RunBranchTimingDto

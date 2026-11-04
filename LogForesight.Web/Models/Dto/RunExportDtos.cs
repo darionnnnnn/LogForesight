@@ -306,6 +306,9 @@ public sealed record ExportAbnormalRunDto
     public int? NetiqDaysFailed { get; init; }
     public int? NetiqHostsSkipped { get; init; }
     public string? PrtgOutcome { get; init; }
+
+    /// <summary>趟次層的 PRTG 結局原因（disabled 早退：未啟用／尚未設定認證資訊／憑證無法解密）；經 Text 遮罩，沒有原因為 null</summary>
+    public string? PrtgOutcomeNote { get; init; }
     public IReadOnlyList<ExportUnsuccessfulPhaseDto> UnsuccessfulPhases { get; init; } = Array.Empty<ExportUnsuccessfulPhaseDto>();
     public IReadOnlyList<ExportPrtgDayDto> UnsuccessfulPrtgDays { get; init; } = Array.Empty<ExportPrtgDayDto>();
     public IReadOnlyList<string> SignalCodes { get; init; } = Array.Empty<string>();
@@ -364,8 +367,14 @@ public sealed record ExportAiCaseDto
     public string DataSource { get; init; } = string.Empty;
     public string Risk { get; init; } = string.Empty;
 
-    /// <summary>從降級摘要的說明前綴解析；解析不到為 null</summary>
+    /// <summary>從降級摘要的說明前綴解析（單次呼叫內的嘗試次數）；解析不到為 null</summary>
     public int? Attempts { get; init; }
+
+    /// <summary>AI 排程對這個主機日降級的排程次數（歷史舊標題資料為 0）</summary>
+    public int DegradedAttempts { get; init; }
+
+    /// <summary>true：已達連續格式異常上限、不再補跑</summary>
+    public bool Abandoned { get; init; }
 
     /// <summary>object／fence／array／text／blank；詳情已清除（摘要沒留下）為 null</summary>
     public string? ReplyShape { get; init; }
@@ -438,6 +447,21 @@ public sealed record ExportAttemptDto
     public IReadOnlyList<ExportFieldLengthDto>? FieldLengths { get; init; }
     public string Head { get; init; } = string.Empty;
     public string? Tail { get; init; }
+
+    /// <summary>空回覆的細分：array（只有 []）或 object（只有 {}）；其他為 null</summary>
+    public string? EmptyShape { get; init; }
+
+    /// <summary>清洗前原文字元數；與清洗後完全相同或舊診斷沒有這欄時為 null</summary>
+    public int? RawChars { get; init; }
+
+    /// <summary>清洗前原文的開頭（走文字遮罩）；缺值同 <see cref="RawChars"/></summary>
+    public string? RawHead { get; init; }
+
+    /// <summary>清洗前原文的結尾（走文字遮罩）；缺值同 <see cref="RawChars"/>，總長不超過 2,000 字時也為 null</summary>
+    public string? RawTail { get; init; }
+
+    /// <summary>伺服器另放的思考欄位（reasoning_content／reasoning）字元數；只有長度；沒有該欄位為 null</summary>
+    public int? ReasoningChars { get; init; }
 }
 
 /// <summary>解析得出時的一個欄位：字串記長度，非字串記型別名</summary>

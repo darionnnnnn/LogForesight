@@ -31,6 +31,10 @@ public static class AiJsonDiagnostics
     public const string CategoryParseOther = "parse_other";
     public const string CategoryValidation = "validation";
 
+    // 空形狀（category=empty 的細分，第 63-2 輪 B-a-2）：回覆去空白後只剩括號——文法擋下思考時最短的合法輸出
+    public const string EmptyShapeArray = "array";
+    public const string EmptyShapeObject = "object";
+
     /// <summary>整次呼叫的結束方式：所有嘗試都是內容層失敗</summary>
     public const string EndedExhausted = "exhausted";
     /// <summary>以空回覆結束（空回覆已由 Polly 層重試過，不進 JSON 重試）</summary>
@@ -70,20 +74,51 @@ public static class AiJsonDiagnostics
     }
 
     /// <summary>
-    /// 判定一次內容層失敗的類別。優先序：空白回覆 → 解析得出（內容檢查沒過）→ 完全沒有 '{' →
-    /// 括號未閉合或 finish_reason=length（截斷）→ 語法合法卻無法繫結到型別 → 其他解析失敗。
+    /// 判定一次內容層失敗的類別。優先序：空白回覆與空形狀（<c>[]</c>、<c>{}</c>）→ 解析得出（內容檢查沒過）→
+    /// 完全沒有 '{' → 括號未閉合或 finish_reason=length（截斷）→ 語法合法卻無法繫結到型別 → 其他解析失敗。
     /// </summary>
     /// <param name="parsed">解析是否得出物件（得出卻失敗＝<c>validate</c> 回 false）</param>
     /// <param name="bindFailedOnValidSyntax">有候選語法合法、卻無法繫結到型別（<see cref="JsonException"/>）</param>
     internal static string Classify(string? content, string? finishReason, bool parsed, bool bindFailedOnValidSyntax)
     {
         if (string.IsNullOrWhiteSpace(content)) return CategoryEmpty;
+        if (DetectEmptyShape(content) != null) return CategoryEmpty;
         if (parsed) return CategoryValidation;
         if (!content.Contains('{')) return CategoryNoJson;
         if (AiJson.HasUnclosedBrackets(content)
             || string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
             return CategoryTruncated;
         return bindFailedOnValidSyntax ? CategoryTypeMismatch : CategoryParseOther;
+    }
+
+    /// <summary>
+    /// 回覆是不是「空形狀」：去空白後只剩成對的 <c>[</c>、<c>]</c>、<c>{</c>、<c>}</c>（<c>[]</c>、<c>{}</c>、<c>[\n]</c>、
+    /// <c>[{}]</c>…），且括號平衡。回傳 <see cref="EmptyShapeArray"/>（第一個括號是 [ ）或
+    /// <see cref="EmptyShapeObject"/>（第一個括號是 { ）；不是空形狀回 null。空白回覆不在此列（由空回覆判定處理）。
+    /// 括號不平衡的（例如只有 <c>{</c>）是被截斷，不算空形狀。
+    /// </summary>
+    internal static string? DetectEmptyShape(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+
+        string? shape = null;
+        var stack = new Stack<char>();
+        foreach (var c in content)
+        {
+            if (char.IsWhiteSpace(c)) continue;
+            switch (c)
+            {
+                case '[': stack.Push(']'); shape ??= EmptyShapeArray; break;
+                case '{': stack.Push('}'); shape ??= EmptyShapeObject; break;
+                case ']' or '}':
+                    if (stack.Count == 0 || stack.Pop() != c) return null;
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return stack.Count == 0 ? shape : null;
     }
 
     /// <summary>
@@ -141,7 +176,10 @@ public static class AiJsonDiagnostics
             var parsed = outcome?.Value;
             var category = Classify(content, response.FinishReason, parsed != null,
                 outcome?.LastSyntaxValidException != null);
-            var (head, tail) = SplitHeadTail(content);
+            // 孤立代理字元換成 U+FFFD：否則序列化診斷 JSON 會擲例外，整行證據就丟了
+            var (head, tail) = SplitHeadTail(AiJson.ReplaceLoneSurrogates(content));
+            // 清洗前原文：與清洗後完全相同時不重複記（省日誌容量；讀者以 rawChars 為 null 與否判斷有沒有差別）
+            var rawSame = response.RawChars == content.Length && response.RawHead == head && response.RawTail == tail;
             // 型別不符優先報語法合法候選的 Path（指到不符的欄位）；否則報最後一個例外的 Path
             var path = outcome?.LastSyntaxValidException?.Path ?? outcome?.LastException?.Path;
             return new AiJsonAttemptDiagnostics
@@ -157,7 +195,12 @@ public static class AiJsonDiagnostics
                 ParseErrorPath = path,
                 FieldLengths = MeasureFields(parsed),
                 Head = head,
-                Tail = tail
+                Tail = tail,
+                EmptyShape = DetectEmptyShape(content),
+                RawChars = rawSame ? null : response.RawChars,
+                RawHead = rawSame ? null : response.RawHead,
+                RawTail = rawSame ? null : response.RawTail,
+                ReasoningChars = response.ReasoningChars
             };
         }
         catch (Exception ex)
@@ -245,4 +288,21 @@ public sealed class AiJsonAttemptDiagnostics
 
     /// <summary>回覆結尾；總長不超過 2,000 字時為 null（全文已在 head）</summary>
     [JsonPropertyName("tail")] public string? Tail { get; set; }
+
+    // 以下為第 63-2 輪 B-a-1／B-a-2 新增；舊版診斷行沒有這些欄位，讀回來一律是 null（相容）
+
+    /// <summary>category=empty 且回覆是空形狀時：array（[]）或 object（{}）；其他為 null</summary>
+    [JsonPropertyName("emptyShape")] public string? EmptyShape { get; set; }
+
+    /// <summary>清洗前原文字元數（清洗去掉 channel 標記、思考段、簡轉繁之前）；與清洗後完全相同時為 null</summary>
+    [JsonPropertyName("rawChars")] public int? RawChars { get; set; }
+
+    /// <summary>清洗前原文的開頭（1,500 字）；與清洗後完全相同時為 null</summary>
+    [JsonPropertyName("rawHead")] public string? RawHead { get; set; }
+
+    /// <summary>清洗前原文的結尾（500 字）；總長不超過 2,000 字或與清洗後相同時為 null</summary>
+    [JsonPropertyName("rawTail")] public string? RawTail { get; set; }
+
+    /// <summary>伺服器另放的思考欄位（reasoning_content／reasoning）字元數；只記長度。沒有該欄位為 null</summary>
+    [JsonPropertyName("reasoningChars")] public int? ReasoningChars { get; set; }
 }

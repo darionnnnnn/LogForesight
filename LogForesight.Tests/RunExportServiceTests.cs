@@ -122,6 +122,16 @@ internal sealed class RunExportHarness : IDisposable
         string? display = null, string? role = null) =>
         Hosts.Upsert(new WebHost { HostName = name, IpAddress = ip, Os = os, Active = true, DisplayName = display, RoleDesc = role ?? string.Empty });
 
+    /// <summary>寫入一筆並把抽出欄設成指定的降級狀態（<c>Append</c> 一律把次數歸零，所以事後直接改欄位）</summary>
+    public DailyAnalysisRecord AddDegraded(WebHost host, DateTime date, string headline, string summary, int attempts, bool pending)
+    {
+        var rec = AddRecord(host, date, headline, summary);
+        using var ctx = Fx.NewContext();
+        ctx.DailyRecords.Where(r => r.RecordId == rec.RecordId)
+            .ExecuteUpdate(s => s.SetProperty(p => p.AiDegradedAttempts, attempts).SetProperty(p => p.AiPending, pending));
+        return rec;
+    }
+
     public DailyAnalysisRecord AddRecord(WebHost host, DateTime date, string headline, string summary = "摘要",
         bool aiAnalyzed = true, List<LogIssueSignature>? issues = null, string risk = "中")
     {
@@ -812,6 +822,20 @@ public class RunExportServiceTests
     }
 
     [Fact]
+    public void F4_notice說明短名稱不遮()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun();
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            Assert.Contains("群組與角色名稱若在兩字以內不會被遮",
+                root.GetProperty("meta").GetProperty("deidentification").GetProperty("notice").GetString());
+        }
+    }
+
+    [Fact]
     public void 解不開的憑證仍可匯出_名稱寫進meta且不含值()
     {
         using var h = new RunExportHarness();
@@ -1073,12 +1097,107 @@ public class RunExportServiceTests
         using (doc)
         {
             var cases = root.G("aiFormatAnomalies").G("cases").L();
-            Assert.Equal(new[] { "text", "fence", "array", "blank", "text" }, cases.Select(c => c.S("replyShape")).ToArray());
+            Assert.Equal(new[] { "text", "fence", "array", "blank" }, cases.Take(4).Select(c => c.S("replyShape")).ToArray());
             Assert.Equal(new[] { true, true, false, false, false }, cases.Select(c => c.G("cutOff").GetBoolean()).ToArray());
             Assert.Equal(JsonValueKind.Null, cases[4].G("attempts").ValueKind);
-            Assert.Equal("沒有前綴的舊格式摘要", cases[4].S("reply"));
+            // 解不出說明前綴的摘要不是保留的 AI 回覆：回覆與形狀都是 null，不把整段摘要當回覆分類
+            Assert.Equal(JsonValueKind.Null, cases[4].G("reply").ValueKind);
+            Assert.Equal(JsonValueKind.Null, cases[4].G("replyShape").ValueKind);
             Assert.Equal(603, cases[1].S("reply").Length);
             Assert.Equal(2, root.G("aiFormatAnomalies").G("summary").G("cutOffCount").GetInt32());
+        }
+    }
+
+    [Fact]
+    public void AI案例_兩種來源都進_已恢復與從未降級不進_並帶出降級次數與是否放棄()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var host = h.AddHost("SRV-AI-D");
+        var summary = LogAnalysisService.BuildAiFormatAnomalySummary(3, "[\n]");
+        h.AddDegraded(host, y.AddDays(-1), AiDegradation.ComposeHeadline("磁碟錯誤偏多", 2), summary, attempts: 2, pending: true);       // 降級中
+        h.AddDegraded(host, y.AddDays(-2), AiDegradation.ComposeHeadline("磁碟錯誤偏多", 3), summary, attempts: 3, pending: false);      // 已放棄
+        h.AddRecord(host, y.AddDays(-3), Anomaly, summary);                                                                             // 歷史舊標題（次數 0）
+        h.AddDegraded(host, y.AddDays(-4), "磁碟錯誤偏多，建議檢查陣列", "AI 補跑成功的白話摘要", attempts: 1, pending: false);               // 已恢復
+        h.AddRecord(host, y.AddDays(-5), "從未降級的正常標題");
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var section = root.G("aiFormatAnomalies");
+            Assert.Equal(3, section.G("caseCount").GetInt32());
+            var cases = section.G("cases").L();
+            Assert.Equal(new[] { y.AddDays(-1), y.AddDays(-2), y.AddDays(-3) }.Select(d => d.ToString("yyyy-MM-dd")).ToArray(),
+                cases.Select(c => c.S("date")).ToArray());
+            Assert.Equal(new[] { 2, 3, 0 }, cases.Select(c => c.G("degradedAttempts").GetInt32()).ToArray());
+            Assert.Equal(new[] { false, true, false }, cases.Select(c => c.G("abandoned").GetBoolean()).ToArray());
+            // 新降級紀錄的摘要仍有說明前綴，能解出單次呼叫內的嘗試次數與回覆
+            Assert.Equal(new[] { 3, 3, 3 }, cases.Select(c => c.G("attempts").GetInt32()).ToArray());
+            Assert.Equal(new[] { "array", "array", "array" }, cases.Select(c => c.S("replyShape")).ToArray());
+        }
+    }
+
+    [Fact]
+    public void AI案例_對照組不選降級過的紀錄_即使已恢復成功且日期更近()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var host = h.AddHost("SRV-AI-C");
+        h.AddDegraded(host, y.AddDays(-10), AiDegradation.ComposeHeadline("磁碟錯誤偏多", 1),
+            LogAnalysisService.BuildAiFormatAnomalySummary(3, "{"), attempts: 1, pending: true);
+        h.AddDegraded(host, y.AddDays(-9), "已恢復成功的正常標題", "補跑成功", attempts: 2, pending: false);    // 距離 1，但降級過
+        h.AddRecord(host, y.AddDays(-7), "從未降級的正常標題");                                               // 距離 3
+
+        var (root, _, doc) = h.Export(45);
+        using (doc)
+        {
+            var only = Assert.Single(root.G("aiFormatAnomalies").G("cases").L());
+            var control = only.G("control");
+            Assert.Equal(y.AddDays(-7).ToString("yyyy-MM-dd"), control.S("date"));
+            Assert.Equal(3, control.G("daysApart").GetInt32());
+        }
+    }
+
+    [Fact]
+    public void AI案例_降級紀錄的摘要沒有說明前綴時_次數與回覆與形狀都是null()
+    {
+        using var h = new RunExportHarness();
+        var host = h.AddHost("SRV-AI-N");
+        h.AddDegraded(host, RunExportHarness.Y.AddDays(-1), AiDegradation.ComposeHeadline("磁碟錯誤偏多", 1),
+            "偵測與處置建議仍完整的規則層摘要", attempts: 1, pending: true);
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var only = Assert.Single(root.G("aiFormatAnomalies").G("cases").L());
+            Assert.Equal(1, only.G("degradedAttempts").GetInt32());
+            Assert.Equal(JsonValueKind.Null, only.G("attempts").ValueKind);
+            Assert.Equal(JsonValueKind.Null, only.G("reply").ValueKind);
+            Assert.Equal(JsonValueKind.Null, only.G("replyShape").ValueKind);
+            Assert.False(only.G("cutOff").GetBoolean());
+            Assert.Equal("unknown", Assert.Single(root.G("aiFormatAnomalies").G("summary").G("byReplyShape").L()).S("name"));
+        }
+    }
+
+    [Fact]
+    public void AI案例_guide寫明兩種來源_已恢復不算_以及兩種失敗率()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun();
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var guide = string.Join("\n", root.G("guide").L().Select(x => x.GetString()));
+            var section = guide.Split('\n').Single(l => l.StartsWith("【aiFormatAnomalies】", StringComparison.Ordinal));
+            Assert.Contains("degradedAttempts 大於 0 且仍未成功", section);
+            Assert.Contains("歷史資料", section);
+            Assert.Contains("已恢復的不算案例", section);
+            Assert.Contains("abandoned", section);
+            var rates = guide.Split('\n').Single(l => l.StartsWith("【兩種 AI 失敗率】", StringComparison.Ordinal));
+            Assert.Contains("主機日層", rates);
+            Assert.Contains("呼叫層", rates);
+            Assert.Contains("aiFailures", rates);
         }
     }
 
@@ -1275,6 +1394,58 @@ public class RunExportServiceTests
         }
     }
 
+    [Fact]
+    public void AI案例_診斷的空形狀_清洗前原文_思考長度_原文走遮罩_長度放行_舊格式缺欄為null()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var host = h.AddHost("SRV-RAW-1");
+        var date = y.AddDays(-2);
+        h.AddRecord(host, date, Anomaly, LogAnalysisService.BuildAiFormatAnomalySummary(3, "[]"));
+        var run = h.AddRun();
+        var label = $"daily-{date:yyyyMMdd}-h{host.HostId}";
+        h.AddLog(run, "Warn", AiJsonDiagnostics.LoggerName, RunExportHarness.DiagnosticMessage(label, attempts: new[]
+        {
+            new AiJsonAttemptDiagnostics
+            {
+                Attempt = 1, Category = "empty", Head = "[]", EmptyShape = "array",
+                RawChars = 1234, RawHead = "<|channel>thought 主機 SRV-RAW-1 從 10.8.8.8 連線<|channel>final<|message>[]",
+                RawTail = "結尾 10.8.8.9", ReasoningChars = 77
+            },
+            // 不在封閉集合內的 emptyShape 當資料處理（遮罩）；沒有新欄位的舊格式嘗試，匯出缺欄為 null
+            new AiJsonAttemptDiagnostics { Attempt = 2, Category = "empty", Head = "{}", EmptyShape = "形狀 10.8.8.7" },
+            new AiJsonAttemptDiagnostics { Attempt = 3, Category = "no_json", Head = "文字" }
+        }), y.AddHours(2));
+
+        var (root, bytes, doc) = h.Export();
+        using (doc)
+        {
+            var text = Encoding.UTF8.GetString(bytes);
+            foreach (var original in new[] { "SRV-RAW-1", "10.8.8.8", "10.8.8.9", "10.8.8.7" })
+                Assert.DoesNotContain(original, text, StringComparison.OrdinalIgnoreCase);
+
+            var attempts = root.G("aiFormatAnomalies").G("cases")[0].G("diagnostics")[0].G("attemptDetails").L();
+            Assert.Equal(3, attempts.Count);
+
+            var first = attempts[0];
+            Assert.Equal("array", first.S("emptyShape"));
+            Assert.Equal(1234, first.G("rawChars").GetInt32());
+            Assert.Equal(77, first.G("reasoningChars").GetInt32());
+            Assert.Contains("<|channel>thought", first.S("rawHead")); // 內容保留，只遮識別資料
+            Assert.Contains("host-", first.S("rawHead"));
+            Assert.Contains("ip-", first.S("rawHead"));
+            Assert.Contains("ip-", first.S("rawTail"));
+
+            Assert.DoesNotContain("形狀 10.8.8.7", text);
+
+            foreach (var key in new[] { "emptyShape", "rawChars", "rawHead", "rawTail", "reasoningChars" })
+            {
+                var present = attempts[2].TryGetProperty(key, out var value);
+                Assert.True(!present || value.ValueKind == JsonValueKind.Null, key);
+            }
+        }
+    }
+
     // ===== 純函式 =====
 
     [Fact]
@@ -1309,4 +1480,40 @@ public class RunExportServiceTests
     [InlineData("api:xyz", "other")]
     public void 觸發類別只輸出類別不輸出帳號(string? trigger, string expected) =>
         Assert.Equal(expected, RunExportService.TriggerCategory(trigger));
+
+    [Fact]
+    public void 異常趟帶PRTG早退原因_走Text遮罩()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var plain = h.AddRun("SRV-N1", y.AddHours(1), r =>
+        {
+            r.WarnCount = 1;
+            r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled;
+            r.PrtgOutcomeNote = BatchRun.PrtgNoteUndecryptable;
+        });
+        // 原因字串萬一帶了位址之類的身分資訊，也必須和其他自由文字一樣被遮罩
+        var leaky = h.AddRun("SRV-N2", y.AddHours(2), r =>
+        {
+            r.WarnCount = 1;
+            r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled;
+            r.PrtgOutcomeNote = "憑證無法解密，來源 10.7.7.7";
+        });
+        var legacy = h.AddRun("SRV-N3", y.AddHours(3), r => { r.WarnCount = 1; r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled; });
+
+        var (root, bytes, doc) = h.Export();
+        using (doc)
+        {
+            var byId = root.G("abnormalRuns").L().ToDictionary(a => a.G("runId").GetInt64());
+            Assert.Equal(BatchRun.PrtgNoteUndecryptable, byId[plain.RunId].S("prtgOutcomeNote"));
+            Assert.Equal("disabled", byId[plain.RunId].S("prtgOutcome"));
+
+            var masked = byId[leaky.RunId].S("prtgOutcomeNote");
+            Assert.StartsWith("憑證無法解密", masked);
+            Assert.DoesNotContain("10.7.7.7", masked);
+            Assert.DoesNotContain("10.7.7.7", Encoding.UTF8.GetString(bytes));
+
+            Assert.Equal(JsonValueKind.Null, byId[legacy.RunId].G("prtgOutcomeNote").ValueKind);
+        }
+    }
 }
