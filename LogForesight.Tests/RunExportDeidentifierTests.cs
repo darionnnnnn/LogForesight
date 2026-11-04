@@ -82,6 +82,7 @@ public class RunExportDeidentifierTests
     [InlineData("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet")]
     [InlineData("HKLM\\Software")]
     [InlineData("hkcu\\Environment")]
+    [InlineData("SOFTWARE\\Microsoft\\Windows")]
     public void F2_登錄機碼路徑原樣(string path)
     {
         Assert.Equal(path, Make().Mask(path));
