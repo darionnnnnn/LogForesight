@@ -63,6 +63,11 @@ public class RunExportDeidentifierTests
         var m = Make(Src(groups: new[] { "成功", "成功廠區", "IT" }, hosts: new[] { H(1, "WEB01", role: "DB"), H(2, "WEB02", role: "DBA 組") }));
 
         Assert.Equal("診斷成功，IT 部門", m.Mask("診斷成功，IT 部門"));
+        var generic = Make(Src(groups: new[] { "Core", "Linux" }, hosts: new[] { H(1, "WEB01", role: "Web") }));
+        const string frame = "at LogForesight.Core.Service.Run() in builtin-linux-ssh-accept Web";
+        Assert.Equal(frame, generic.Mask(frame));
+        // 只放過描述性名稱：主機真的叫 Core 時仍要遮
+        Assert.Equal("host-001", Make(Src(hosts: new[] { H(1, "Core") })).Mask("Core"));
         Assert.Equal("group-001", m.Mask("成功廠區"));
         Assert.Equal("DB 連線", m.Mask("DB 連線"));
         Assert.Equal("role-001", m.Mask("DBA 組"));

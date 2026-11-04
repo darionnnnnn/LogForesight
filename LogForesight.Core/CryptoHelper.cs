@@ -125,6 +125,30 @@ public static class CryptoHelper
     }
 
     /// <summary>
+    /// 與 <see cref="TryDecrypt"/> 相同，但解不開時不設旗標、不記 Error：給「解不開也不代表憑證有問題」的呼叫端
+    /// （診斷匯出試解 PRTG 目前模式以外的殘留，只是想把明文收進遮罩字典）。
+    /// </summary>
+    public static bool TryDecryptQuietly(string? value, out string plaintext)
+    {
+        if (!IsEncrypted(value))
+        {
+            plaintext = value ?? "";
+            return true;
+        }
+
+        try
+        {
+            plaintext = Decrypt(value!);
+            return true;
+        }
+        catch (Exception)
+        {
+            plaintext = "";
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 重新評估解密失敗旗標：<paramref name="ciphertexts"/> 每一筆非空值都 <see cref="TryDecrypt"/> 成功，
     /// 才清除 <see cref="DecryptFailureSeen"/> 與已回報清單（之後再失敗會重新記一次 Error）；任何一筆失敗則旗標維持為真。
     /// 重新輸入憑證後由 Web 端 CryptoRecovery 呼叫，讓健康頁不必重啟就恢復。

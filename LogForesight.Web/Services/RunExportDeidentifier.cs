@@ -32,6 +32,14 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     public static readonly IReadOnlySet<string> KeepWords =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "AI", "PRTG", "NetIQ", "Sentinel" };
 
+    /// <summary>
+    /// 群組與角色名稱剛好是這些通用詞時不遮：它們同時是本專案的命名空間與內建規則代號的一部分，
+    /// 遮了會把 <c>LogForesight.Core.Service</c> 變成 <c>LogForesight.group-001.Service</c>，堆疊與規則都讀不出來。
+    /// 只套用描述性名稱；主機、帳號與網域名剛好叫這些字時仍要遮。
+    /// </summary>
+    private static readonly IReadOnlySet<string> GenericDescriptiveWords =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "LogForesight", "Core", "Web", "Tests", "Linux", "Windows" };
+
     /// <summary>代號類別（代號格式為 <c>{類別}-{三位數}</c>，密鑰固定為 <c>secret</c>）</summary>
     public static class Kinds
     {
@@ -241,7 +249,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         var sentinelEntry = (string? n) => new Entry(Kinds.Sentinel, $"s:{Lower(n!.Trim())}");
         if (!string.IsNullOrWhiteSpace(h.NetiqServer)) AddText(h.NetiqServer, sentinelEntry(h.NetiqServer));
         if (!string.IsNullOrWhiteSpace(h.OrphanedFromSentinel)) AddText(h.OrphanedFromSentinel, sentinelEntry(h.OrphanedFromSentinel));
-        if (!string.IsNullOrWhiteSpace(h.RoleDesc)) AddText(h.RoleDesc, new Entry(Kinds.Role, $"r:{Lower(h.RoleDesc.Trim())}"), MinDescriptiveLength);
+        if (!string.IsNullOrWhiteSpace(h.RoleDesc) && !GenericDescriptiveWords.Contains(h.RoleDesc.Trim())) AddText(h.RoleDesc, new Entry(Kinds.Role, $"r:{Lower(h.RoleDesc.Trim())}"), MinDescriptiveLength);
     }
 
     private void AddUser(DeidentifierUser u)
@@ -263,7 +271,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
 
     private void AddGroupName(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return;
+        if (string.IsNullOrWhiteSpace(name) || GenericDescriptiveWords.Contains(name.Trim())) return;
         AddText(name, new Entry(Kinds.Group, $"g:{Lower(name.Trim())}"), MinDescriptiveLength);
     }
 

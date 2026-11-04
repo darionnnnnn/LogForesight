@@ -492,5 +492,6 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 | G 文件段 | Sonnet＋主代理 | `6d74925a` | 文件守門綠 | Security 警告改寫為「群組＋登錄機碼」，因匯出堆疊是登錄存取被拒；**權限做法未實機驗證** |
 | H-1 | Sonnet＋主代理 | `7d707012` | PRTG 定向 339 綠；突變四項紅 | 總暫停改量實際長度；回填兩處本來就不記全部失敗，只補測試；主代理補「閘內失敗不疊加」案；最壞時間由約 12 分鐘更正為併發 2 約 17 分鐘 |
 | H-2 | Sonnet＋主代理 | `9bff9ded` | 定向 591 綠；突變兩項紅 | DI 走選用建構子參數；真實站台的金鑰替換未實測 |
+| H-5（Fable 複查追加） | Fable 5.1 主代理 | 見本列後 commit | 定向綠；全量見交接 | 逐條複查抓到 H-2 的死結：`SecretInventory` 含 PRTG 其他模式的殘留，站台改用 passhash 後舊密碼解不開、畫面沒有欄位能清，重新輸入全部也永遠解除不了金鑰警示與告示。新增 `SecretEntry.Retired`，探測與重新評估略過它，匯出試解不舉旗標。第三份匯出另見 `LogForesight.Core` 被遮成 `group-001`（群組剛好叫 Core），描述性名稱加通用詞例外，主機與網域仍遮 |
 | H-4（實測追加） | 主代理 | `143a202d`（含 3 個紅燈被誤推）、後續修正 commit | 定向 146 綠 | 使用者實測：重新輸入 passhash 後測試連線回「HTML 而非 JSON」，內文是 PRTG 的空白 OK 頁——第 43 輪已量到這是 PRTG 伺服器端放棄處理，不是認證錯誤，但訊息說成登入頁；改為獨立的 `EmptyPage` 類別、可重試、訊息講明；回填／探測／同步把「解不開」說成「尚未設定」改由 `CredentialProblem` 單點產生 |
 | H-3 | 主代理 | `7518d3e8`、`c679d4ad` | 定向 281 綠；突變兩項紅；本機站台實測告示與手動執行解除過期 | 規劃寫 `freshnessBannerText(freshness, isMaintainer)`，實作為 `freshnessReason(freshness)`，權限分支留在 `loadHealthBanner`；告示只給 Maintain／DevMonitor，連結指向 NetIQ、PRTG 維護而非設定頁；清單只標範圍縮小的趟次，完整範圍只在詳情顯示 |

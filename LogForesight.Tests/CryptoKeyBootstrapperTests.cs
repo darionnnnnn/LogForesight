@@ -148,6 +148,46 @@ public class CryptoKeyBootstrapperTests : IDisposable
     }
 
     [Fact]
+    public void 指紋不符_只剩PRTG其他模式的殘留解不開_仍覆寫指紋()
+    {
+        // 使用者站台的實際情況：改用 passhash 後舊密碼還在資料庫，畫面上沒有欄位能處理它
+        PrepareMismatch();
+        _settings.Update(s =>
+        {
+            s.PrtgAuthMode = PrtgAuthModes.Passhash;
+            s.PrtgPasshashEnc = CryptoHelper.Encrypt("new-hash");
+            s.PrtgPasswordEnc = Undecryptable;
+            s.PrtgApiTokenEnc = Undecryptable;
+        });
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        Assert.DoesNotContain(FakeFingerprint + "\",\"CreatedAt", ReadFingerprintBlob()!);
+        Assert.Equal(Undecryptable, _settings.Get().PrtgPasswordEnc);   // 殘留不動，切回該模式時照實回報解不開
+    }
+
+    [Fact]
+    public void 指紋不符_目前模式的憑證解不開_不覆寫()
+    {
+        PrepareMismatch();
+        _settings.Update(s =>
+        {
+            s.PrtgAuthMode = PrtgAuthModes.Passhash;
+            s.PrtgPasshashEnc = Undecryptable;
+            s.PrtgPasswordEnc = CryptoHelper.Encrypt("old");
+        });
+        CryptoHelper.ResetForTests();
+
+        Run();
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
     public void 指紋不符_全部憑證解得開_覆寫指紋並留下痕跡_密文不變且rewrap有跑()
     {
         PrepareMismatch();

@@ -224,7 +224,7 @@ public sealed class RunExportDeidentifierFactory
         var secrets = new List<string>();
         var undecryptable = new List<string>();
         foreach (var entry in SecretInventory.Build(settings, sentinels))
-            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext);
+            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext, entry.Retired);
 
         return new RunExportDeidentifierSource
         {
@@ -269,11 +269,12 @@ public sealed class RunExportDeidentifierFactory
     /// 目前的行程讀不出這個值，也無法用它連線，因此不會把它寫進之後的紀錄；只有換金鑰前寫入的舊紀錄有理論風險，
     /// 由 <c>password=</c>、<c>passhash=</c>、<c>Bearer</c> 等樣式比對接手，並把欄位名稱寫進檔案的 meta 交代。
     /// </summary>
-    private static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored)
+    internal static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored, bool retired = false)
     {
         if (string.IsNullOrEmpty(stored)) return;
 
-        if (!CryptoHelper.TryDecrypt(stored, out var plain))
+        var decrypted = retired ? CryptoHelper.TryDecryptQuietly(stored, out var plain) : CryptoHelper.TryDecrypt(stored, out plain);
+        if (!decrypted)
         {
             undecryptable.Add(name);
             Log.Warn("診斷匯出：「{0}」用目前金鑰解不開，略過實際值比對；請重新設定該憑證。", name);

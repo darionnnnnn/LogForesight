@@ -96,7 +96,7 @@ public static class CryptoKeyBootstrapper
             var bad = new List<string>();
             foreach (var entry in SecretInventory.Build(settingsStore.Get(), sentinelStore.GetAll()))
             {
-                if (string.IsNullOrEmpty(entry.Ciphertext)) continue;
+                if (entry.Retired || string.IsNullOrEmpty(entry.Ciphertext)) continue;
                 if (!CryptoHelper.TryDecrypt(entry.Ciphertext, out _)) bad.Add(entry.DisplayName);
             }
 

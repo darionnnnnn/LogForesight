@@ -22,7 +22,7 @@ public static class CryptoRecovery
         try
         {
             var entries = SecretInventory.Build(settingsStore.Get(), sentinelStore.GetAll());
-            CryptoHelper.ReevaluateDecryptFailure(entries.Select(e => e.Ciphertext));
+            CryptoHelper.ReevaluateDecryptFailure(entries.Where(e => !e.Retired).Select(e => e.Ciphertext));
         }
         catch (Exception ex)
         {

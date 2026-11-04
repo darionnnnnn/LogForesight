@@ -66,6 +66,37 @@ public class CryptoRecoveryTests : IDisposable
     }
 
     [Fact]
+    public void Reevaluate_只剩PRTG其他模式的殘留解不開_清旗標()
+    {
+        RaiseFailureFlag();
+        _store.Update(s =>
+        {
+            s.PrtgAuthMode = PrtgAuthModes.Passhash;
+            s.PrtgPasshashEnc = CryptoHelper.Encrypt("h");
+            s.PrtgPasswordEnc = Undecryptable;
+        });
+
+        CryptoRecovery.Reevaluate(_store, _sentinels);
+
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 診斷匯出試解殘留_不舉旗標也還是列出解不開()
+    {
+        var secrets = new List<string>();
+        var undecryptable = new List<string>();
+
+        RunExportDeidentifierFactory.Secret(secrets, undecryptable, "PRTG 密碼", Undecryptable, retired: true);
+
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        Assert.Equal(new[] { "PRTG 密碼" }, undecryptable);
+
+        RunExportDeidentifierFactory.Secret(secrets, undecryptable, "PRTG passhash", Undecryptable);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
     public void Reevaluate_仍有一筆停用Sentinel解不開_旗標維持()
     {
         RaiseFailureFlag();

@@ -94,6 +94,19 @@ public class SentinelConnectionFactoryTests : IDisposable
 /// <summary>密文清單：名稱與順序固定、「這趟用不用得到」的判定。</summary>
 public class SecretInventoryTests
 {
+    [Theory]
+    [InlineData(PrtgAuthModes.Token, SecretInventory.PrtgTokenName)]
+    [InlineData(PrtgAuthModes.Password, SecretInventory.PrtgPasswordName)]
+    [InlineData(PrtgAuthModes.Passhash, SecretInventory.PrtgPasshashName)]
+    public void 只有PRTG目前模式以外的項目標為殘留(string mode, string current)
+    {
+        var list = SecretInventory.Build(new SystemSettings { PrtgAuthMode = mode }, Array.Empty<Sentinel>());
+
+        Assert.Equal(
+            new[] { SecretInventory.PrtgTokenName, SecretInventory.PrtgPasswordName, SecretInventory.PrtgPasshashName }.Where(n => n != current).OrderBy(n => n),
+            list.Where(e => e.Retired).Select(e => e.Name).OrderBy(n => n));
+    }
+
     private static Sentinel MakeSentinel(string name, bool active = true) =>
         new() { SentinelId = 1, Name = name, Username = "u", PasswordEnc = "enc:v2:x", Active = active };
 
