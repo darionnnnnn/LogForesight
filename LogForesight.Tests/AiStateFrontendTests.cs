@@ -34,6 +34,14 @@ public class AiStateUiTests
         Assert.DoesNotContain("isAiRetryPending", source);
     }
 
+    [Theory]
+    [InlineData("dashboard.js")]
+    [InlineData("records.js")]
+    public void 主機彙總的最新狀況都走latestStatusCell(string file)
+    {
+        Assert.Matches(new Regex(@"title: '最新狀況', render: h => latestStatusCell\(h, "), Read("pages", file));
+    }
+
     [Fact]
     public void 清單與詳情共用format的aiStateOf()
     {
@@ -83,6 +91,7 @@ public class AiStateBehaviorTests
     [InlineData("降級徽章文字與用色")]
     [InlineData("清單徽章文字對照")]
     [InlineData("清單降級時標題文字照常顯示")]
+    [InlineData("最新狀況一格只有降級或放棄才加徽章")]
     [InlineData("詳情徽章文字對照")]
     [InlineData("詳情案件授與檢視不顯示AI狀態")]
     public void AI狀態行為案例(string caseName)

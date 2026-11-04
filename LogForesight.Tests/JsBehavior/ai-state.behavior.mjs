@@ -40,11 +40,12 @@ function extractLine(source, prefix) {
 installDom();
 
 const formatSource = sourceOf('core', 'format.js');
-const { aiStateOf, aiDegradedBadge, maxAttempts } = new Function(`
+const { aiStateOf, aiDegradedBadge, latestStatusCell, maxAttempts } = new Function(`
     ${extractLine(formatSource, 'export const AI_DEGRADED_MAX_ATTEMPTS')}
     ${extractFunction(formatSource, 'function aiStateOf(')}
     ${extractFunction(formatSource, 'function aiDegradedBadge(')}
-    return { aiStateOf, aiDegradedBadge, maxAttempts: AI_DEGRADED_MAX_ATTEMPTS };
+    ${extractFunction(formatSource, 'function latestStatusCell(')}
+    return { aiStateOf, aiDegradedBadge, latestStatusCell, maxAttempts: AI_DEGRADED_MAX_ATTEMPTS };
 `)();
 
 const { headlineCell } = new Function('aiStateOf', 'aiDegradedBadge', 'statusBadge', `
@@ -162,6 +163,18 @@ const cases = {
     清單降級時標題文字照常顯示() {
         const wrap = headlineCell(rec(true, true, 1, `${RULE}（AI 摘要待補，第 1 次）`));
         assert(wrap.textContent.includes(`${RULE}（AI 摘要待補，第 1 次）`), wrap.textContent);
+    },
+    最新狀況一格只有降級或放棄才加徽章() {
+        const text = `${RULE}（AI 摘要待補，第 2 次）`;
+        const degraded = latestStatusCell({ latestAiPending: true, latestAiDegradedAttempts: 2 }, text);
+        assert.deepEqual(badgeTexts(degraded), ['AI 摘要待補（第 2 次格式異常）']);
+        assert(degraded.textContent.includes(text), degraded.textContent);
+        const abandoned = latestStatusCell({ latestAiPending: false, latestAiDegradedAttempts: 3 }, RULE);
+        assert.deepEqual(badgeTexts(abandoned), ['AI 摘要已放棄']);
+        // 排隊中、完成、降級後已恢復：維持純文字，表格欄位不多一顆徽章
+        assert.equal(latestStatusCell({ latestAiPending: true, latestAiDegradedAttempts: 0 }, RULE), RULE);
+        assert.equal(latestStatusCell({ latestAiPending: false, latestAiDegradedAttempts: 0 }, RULE), RULE);
+        assert.equal(latestStatusCell({ latestAiPending: false, latestAiDegradedAttempts: 1 }, RULE), RULE);
     },
     詳情徽章文字對照() {
         for (const [label, record, expected] of DETAIL_TABLE) {

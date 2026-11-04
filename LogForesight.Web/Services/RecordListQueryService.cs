@@ -323,7 +323,9 @@ public class RecordListQueryService
                 Categories = a.Categories.ToList(),
                 LatestDate = a.LatestDate.ToString("yyyy-MM-dd"),
                 LatestRiskLevel = a.LatestRiskLevel,
-                LatestHeadline = a.LatestHeadline
+                LatestHeadline = a.LatestHeadline,
+                LatestAiPending = a.LatestAiPending,
+                LatestAiDegradedAttempts = a.LatestAiDegradedAttempts
             })
             .ToList();
 

@@ -528,6 +528,30 @@ public class IssueAggregateQueryTests : IDisposable
     }
 
     [Fact]
+    public void AggregateByHost_帶出最新一天的AI降級狀態_排行DTO也帶到()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        Add(1, "H1", d0, "高", Issue("A", 1));
+        Add(1, "H1", d0.AddDays(1), "高", Issue("A", 1));
+        using (var ctx = _fx.NewContext())
+        {
+            // 較舊一天放棄、最新一天降級第 2 次：必須取最新那天
+            ctx.DailyRecords.Where(r => r.RecordDate == d0.Date)
+                .ExecuteUpdate(s => s.SetProperty(r => r.AiDegradedAttempts, 3).SetProperty(r => r.AiPending, false));
+            ctx.DailyRecords.Where(r => r.RecordDate == d0.AddDays(1).Date)
+                .ExecuteUpdate(s => s.SetProperty(r => r.AiDegradedAttempts, 2).SetProperty(r => r.AiPending, true));
+        }
+
+        var agg = Query().AggregateByHost(IssueExclusion.None, d0, d0.AddDays(2), null).Single();
+        Assert.True(agg.LatestAiPending);
+        Assert.Equal(2, agg.LatestAiDegradedAttempts);
+
+        var row = LogForesight.Web.Services.RecordStatsBuilder.BuildHostRanking(new List<HostRiskAggregate> { agg }, new Dictionary<long, WebHost>()).Single();
+        Assert.True(row.LatestAiPending);
+        Assert.Equal(2, row.LatestAiDegradedAttempts);
+    }
+
+    [Fact]
     public void AggregateByHost_Categories_排序對照()
     {
         var d0 = new DateTime(2026, 8, 1);

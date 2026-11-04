@@ -85,8 +85,8 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         Assert.Equal(2, handler.Requests);
         Assert.False(outcome.AiAnalyzed);
         Assert.False(outcome.Skipped);
-        Assert.False(outcome.AiDegraded);   // 完全失敗不是降級：文字與待補語意不變
-        Assert.Equal("今日分析摘要暫缺（AI 服務未回應，AI 待補）", outcome.Headline);
+        Assert.False(outcome.AiDegraded);   // 完全失敗不是降級：標題同用規則層結論，待補語意不變
+        Assert.Equal("disk EventId 153 今日出現 3 次（AI 服務未回應，AI 待補）", outcome.Headline);
     }
 
     private sealed class SequenceHandler : HttpMessageHandler
@@ -246,8 +246,7 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
             recorder.Finish(0);
         }
 
-        // 降級既有行為不變（標題等 B-b 才改）
-        Assert.Equal("今日分析摘要暫缺（AI 服務未回應，AI 待補）", outcome.Headline);
+        Assert.Equal("disk EventId 153 今日出現 3 次（AI 服務未回應，AI 待補）", outcome.Headline);
         var logs = store.GetLogs(runId);
         var failed = Assert.Single(logs, l => l.Logger == nameof(LogAnalysisService) && l.Message.Contains("主分析完全失敗"));
         Assert.Equal("Error", failed.Level);

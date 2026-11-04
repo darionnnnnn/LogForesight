@@ -189,6 +189,16 @@ export function aiDegradedBadge(record, extraClass = '') {
     return badge;
 }
 
+/** 主機彙總表「最新狀況」一格：最新一天降級或放棄時，文字前加同一顆徽章；其他狀態只回文字 */
+export function latestStatusCell(host, text) {
+    const badge = aiDegradedBadge({ aiPending: host.latestAiPending, aiDegradedAttempts: host.latestAiDegradedAttempts }, 'me-1');
+    if (!badge) return text;
+    const wrap = document.createElement('span');
+    wrap.appendChild(badge);
+    wrap.appendChild(document.createTextNode(text));
+    return wrap;
+}
+
 const WORK_ORDER_CLOSED_REASON_TEXT = {
     all_closed: '成員全部結案',
     moved: '已併入或改派到另一張單',

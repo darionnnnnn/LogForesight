@@ -21,7 +21,7 @@ import {
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
-    formatUserName, toLocalDateString, analysisAnchorLocal, aiStateOf, aiDegradedBadge, issueBaselineCell, severityCell, issueDensityCell
+    formatUserName, toLocalDateString, analysisAnchorLocal, aiStateOf, aiDegradedBadge, latestStatusCell, issueBaselineCell, severityCell, issueDensityCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -730,7 +730,7 @@ function renderHostView() {
             { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => String(h.lowRiskDays) },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: h => correlationCell(h.correlationDays) },
             { title: '類型', render: h => categoryBadges(h.categories) },
-            { title: '最新狀況', render: h => `${h.latestDate}　${h.latestHeadline}` }
+            { title: '最新狀況', render: h => latestStatusCell(h, `${h.latestDate}　${h.latestHeadline}`) }
         ],
         rows: lastResult.items,
         sort,

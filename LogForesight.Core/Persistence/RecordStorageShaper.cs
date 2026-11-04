@@ -59,6 +59,7 @@ internal static class RecordStorageShaper
             UncoveredChecks = record.UncoveredChecks,
             ChannelsRead = record.ChannelsRead,  // 趨勢基準的頻道覆蓋判斷（ChannelCoverage.WasRead）依賴它，
                                                  // 漏掉會讓低風險日被當成舊紀錄、新頻道的暖身永遠結束不了
+            AiDegradedAttempts = record.AiDegradedAttempts,  // 不進 ContentJson，但精簡後的物件要與原物件一致
             HiddenIssueCount = record.HiddenIssueCount,  // 批次寫入時恆為 0（只有 Web 的 RecordRepository
                                                           // 讀取當下會設定），複製只是維持欄位完整性
             WeeklyCheckup = record.WeeklyCheckup,

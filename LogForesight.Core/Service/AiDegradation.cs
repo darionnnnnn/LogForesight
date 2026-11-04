@@ -22,6 +22,9 @@ public static class AiDegradation
     /// <summary>放棄後綴（已達上限不再重試）</summary>
     public static readonly string AbandonedSuffix = $"（AI 摘要已放棄：連續 {MaxAttempts} 次格式異常）";
 
+    /// <summary>AI 服務完全沒回應時的後綴：這種主機日維持待補，前端徽章是「AI 分析中」，失敗要靠標題講清楚</summary>
+    public const string ServiceFailedSuffix = "（AI 服務未回應，AI 待補）";
+
     /// <summary>次數是否已達放棄上限</summary>
     public static bool IsAbandoned(int attempts) => attempts >= MaxAttempts;
 
@@ -50,6 +53,10 @@ public static class AiDegradation
             ? $"今日偵測到 {issues.Count} 個問題"
             : $"{label} 今日出現 {worst.Count} 次");
     }
+
+    /// <summary>AI 服務完全失敗的標題：有問題時與降級同一份規則層結論；沒有問題時沒有結論可講，只說摘要暫缺。</summary>
+    public static string BuildServiceFailedHeadline(IReadOnlyList<LogIssueSignature> issues) =>
+        (issues.Count == 0 ? "今日分析摘要暫缺" : BuildRuleLayerHeadline(issues)) + ServiceFailedSuffix;
 
     /// <summary>結論加後綴：未達上限為「第 N 次」、達上限為放棄字樣。結論先截斷，後綴一定完整保留。</summary>
     public static string ComposeHeadline(string conclusion, int attempts)

@@ -81,6 +81,23 @@ public sealed class SchemaUpgraderModelParityTests
             $"{table} DDL 與模型不一致。只在 DDL：[{string.Join(", ", onlyInDdl)}]；只在模型：[{string.Join(", ", onlyInModel)}]；NULL 性不同：[{string.Join("; ", nullDiff)}]");
     }
 
+    /// <summary>lf_daily_records 是 EnsureCreated 基表、不在上面的案例內；舊庫靠 AddColumnIfMissing 補欄，模型與補欄要對得上。</summary>
+    [Fact]
+    public void 基表lf_daily_records的ai_degraded_attempts_模型與補欄一致()
+    {
+        using var ctx = NewContext();
+        var entity = ctx.Model.GetEntityTypes().Single(e => e.GetTableName() == "lf_daily_records");
+        var id = StoreObjectIdentifier.Table("lf_daily_records", entity.GetSchema());
+        var property = entity.GetProperties().Single(p => p.GetColumnName(id) == "ai_degraded_attempts");
+        Assert.False(property.IsNullable);
+
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.True(dir != null, "找不到 LogForesight.sln");
+        var upgrader = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Core", "Persistence", "Sql", "SchemaUpgrader.cs"));
+        Assert.Matches(new Regex(@"AddColumnIfMissing\(ctx, isSqlite, ""lf_daily_records"", ""ai_degraded_attempts"",[^\n]*NOT NULL DEFAULT 0"), upgrader);
+    }
+
     [Fact]
     public void 解析器能處理行內多欄_具名約束_括號內逗號()
     {

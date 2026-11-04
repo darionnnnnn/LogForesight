@@ -10,7 +10,7 @@ import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability 
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad, helpIcon } from '../core/ui.js';
 import { revealFirstRow } from '../core/reveal.js';
-import { categoryName, formatNumber, formatDateTime, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
+import { categoryName, formatNumber, formatDateTime, latestStatusCell, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
@@ -774,7 +774,7 @@ function renderHosts(data) {
             { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
             { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h) },
-            { title: '最新狀況', render: h => h.latestHeadline }
+            { title: '最新狀況', render: h => latestStatusCell(h, h.latestHeadline) }
         ],
         rows: data.hostRanking,
         empty: { title: '本期沒有風險主機', hint: EMPTY_SCOPE_HINT }

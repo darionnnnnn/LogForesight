@@ -26,6 +26,14 @@ public class AiDegradationTests
         };
 
         Assert.Equal("儲存控制器逾時重置", AiDegradation.BuildRuleLayerHeadline(issues));
+        Assert.Equal("儲存控制器逾時重置（AI 服務未回應，AI 待補）", AiDegradation.BuildServiceFailedHeadline(issues));
+    }
+
+    [Fact]
+    public void AI服務完全失敗且沒有問題_標題只說摘要暫缺()
+    {
+        Assert.Equal("今日分析摘要暫缺（AI 服務未回應，AI 待補）",
+            AiDegradation.BuildServiceFailedHeadline(new List<LogIssueSignature>()));
     }
 
     [Fact]

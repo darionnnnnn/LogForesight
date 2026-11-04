@@ -96,6 +96,8 @@ public class RecordHostGroupDto
     public string LatestDate { get; set; } = string.Empty;
     public string LatestRiskLevel { get; set; } = string.Empty;
     public string LatestHeadline { get; set; } = string.Empty;
+    public bool LatestAiPending { get; set; }
+    public int LatestAiDegradedAttempts { get; set; }
 }
 
 /// <summary>
