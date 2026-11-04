@@ -1,6 +1,6 @@
 # LogForesight 第 63-2 輪規劃：第一份診斷匯出的回饋（AI 格式異常、憑證解不開、執行時間、儀表板與設定頁）
 
-> 狀態：實作中（`feature/feedback-63-2`）
+> 狀態：實作完成，待體檢（`feature/feedback-63-2`）
 > 基準：dev@0bf12e40（7,956 通過／11 略過，Windows）
 > 來源：使用者 2026-11-03 五項重點，加上第一份診斷匯出檔（14 天、站台 1.0.53.2、13 台主機、18 趟）的分析
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度選 Sonnet 5.5 或 Haiku 5.5；同一 checkout 一次一個改檔代理；主代理獨立重驗
@@ -300,7 +300,7 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 
 ### 定案
 
-- **D-1 不量測、不新增變數族**：`revealFirstRow` 加選用回呼 `onCollapsedChange(expanded)`；`dashboard.js` 用它在 strip 上切換 `lf-kpi-strip--collapsed`，CSS `.lf-kpi-strip--row.lf-kpi-strip--collapsed .lf-kpi-group { flex: 1 1 0 }`（三組等寬），展開後移除、回到依卡數分寬。狀態只取決於展開與否，沒有回授迴圈；`revealFirstRow` 本身仍不認得 KPI 群組。
+- **D-1 不量測、不新增變數族**：`revealFirstRow` 加選用回呼 `onCollapsedChange(expanded)`；`dashboard.js` 用它在 strip 上切換 `lf-kpi-strip--collapsed`，CSS `.lf-kpi-strip--row.lf-kpi-strip--collapsed .lf-kpi-group { flex: 1 1 0 }`（三組等寬，只在 `(min-width:576px) and (max-width:1799.98px)`：更寬的畫面全部卡片都放得下，等寬反而讓卡多的組藏卡），展開後移除、回到依卡數分寬。狀態只取決於展開與否，沒有回授迴圈；`revealFirstRow` 本身仍不認得 KPI 群組。
 - **D-2／D-3 沿用既有跳轉**：徽章只在使用者有 `ViewAll` 時做成連結，`href = /admin/prtg?focus=unmatched&hostId=N#mirror`；`prtg-admin.js` 讀參數後呼叫既有 `jumpToUnmatched()`，未對應清單 API 加 `pinHostId`（該台釘在第一頁最上面並高亮 1.5 秒，`lf-focus-flash` 用 `--lf-focus-ring`），`replaceState` 移除參數；清單載入失敗不捲動、顯示既有錯誤態。
 
 ### 測試 / 驗收（`FullyQualifiedName~DashboardReveal|FullyQualifiedName~FrontendMisc|FullyQualifiedName~PrtgAdminPage|FullyQualifiedName~PrtgHostMapping|FullyQualifiedName~UiTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~BehaviorTests|FullyQualifiedName~ApiTimeout`）

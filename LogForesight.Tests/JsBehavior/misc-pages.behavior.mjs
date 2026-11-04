@@ -823,6 +823,46 @@ const cases = {
         inst.whenInitialLoadSettled(() => log.push('later'));
         assert.deepEqual(log, ['reveal', 'later'], '載入結束後的呼叫立即執行');
     },
+    async 過期告示的連結與聯絡人依權限() {
+        const render = async (freshness, capabilities) => {
+            let bar = null;
+            const node = (tag) => ({ tag, className: '', textContent: '', children: [],
+                setAttribute() {}, append(...n) { this.children.push(...n); }, appendChild(n) { this.children.push(n); } });
+            const { loadHealthBanner } = build('../core/layout.js',
+                ['function freshnessReason(', 'async function loadHealthBanner('], '', '{ loadHealthBanner }', {
+                    api: { get: async () => freshness },
+                    hasCapability: (_, c) => capabilities.includes(c),
+                    formatDateTime: (v) => v,
+                    appUrl: (p) => p,
+                    registerAlert: (_, b) => { bar = b; },
+                    document: { createElement: node }
+                });
+            await loadHealthBanner({});
+            return bar;
+        };
+        const stale = { stale: true, acked: false, lastSuccessAt: 'x', credentialIssue: true, adminContacts: ['甲', '乙'] };
+        const hrefs = (bar) => bar.children.filter((c) => c.tag === 'a').map((c) => c.href);
+
+        const maintainer = await render({ ...stale, adminContacts: [] }, ['Maintain']);
+        assert.deepEqual(hrefs(maintainer), ['/runs', '/admin/netiq', '/admin/prtg#connection', '/admin/settings#health']);
+
+        const devMonitor = await render(stale, ['DevMonitor']);
+        assert.deepEqual(hrefs(devMonitor), ['/runs'], '進不去的維護頁不給連結');
+        assert(devMonitor.children[0].textContent.includes('請聯絡：甲、乙'), devMonitor.children[0].textContent);
+
+        const noCredential = await render({ ...stale, credentialIssue: false, lastRunStatus: 'failed', adminContacts: [] }, ['Maintain']);
+        assert.deepEqual(hrefs(noCredential), ['/runs', '/admin/settings#health']);
+
+        assert.equal(await render({ ...stale, acked: true }, ['Maintain']), null);
+    },
+    排程清單的觸發來源只標範圍縮小的趟次() {
+        const { runTriggerText } = build('runs.js', ['function runTriggerText('],
+            "const RUN_SCOPE_TEXT = { full: '完整', local: '僅本機', 'netiq-hosts': '指定主機' };", '{ runTriggerText }');
+        assert.equal(runTriggerText({ triggerText: '手動', scope: 'full' }), '手動');
+        assert.equal(runTriggerText({ triggerText: '排程', scope: null }), '排程');
+        assert.equal(runTriggerText({ triggerText: '手動', scope: 'local' }), '手動・僅本機');
+        assert.equal(runTriggerText({ triggerText: '手動', scope: 'netiq-hosts' }), '手動・指定主機');
+    },
     過期告示的原因句依憑證與最近一趟狀態() {
         const { freshnessReason } = build('../core/layout.js', ['function freshnessReason('], '', '{ freshnessReason }');
         const credential = freshnessReason({ credentialIssue: true, lastRunStatus: 'failed' });

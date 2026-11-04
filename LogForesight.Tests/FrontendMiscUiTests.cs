@@ -265,6 +265,8 @@ public class FrontendMiscBehaviorTests
     [InlineData("hosts載入時依ViewAll能力決定徽章連結")]
     [InlineData("prtg未對應帶參數載入用pin跳轉高亮並清網址")]
     [InlineData("prtg未對應跳轉等初次載入全部結束才做")]
+    [InlineData("過期告示的連結與聯絡人依權限")]
+    [InlineData("排程清單的觸發來源只標範圍縮小的趟次")]
     [InlineData("過期告示的原因句依憑證與最近一趟狀態")]
     [InlineData("prtg未對應沒有參數時不pin不跳轉不改網址")]
     [InlineData("prtg未對應載入失敗不跳轉但錯誤態顯示且之後不再pin")]

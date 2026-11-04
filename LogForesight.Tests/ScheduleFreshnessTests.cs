@@ -161,6 +161,13 @@ public class ScheduleFreshnessTests
         };
     }
 
+    private static string FindRepoRootForScope()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        return dir!.FullName;
+    }
+
     /// <summary>排程已啟用 100 小時、依序寫入指定的趟次後算一次新鮮度</summary>
     private static ScheduleFreshnessDto Freshness(params BatchRun[] finished)
     {
@@ -212,6 +219,23 @@ public class ScheduleFreshnessTests
     }
 
     [Fact]
+    public void 憑證問題旗標跟著解密狀態()
+    {
+        CryptoHelper.ResetForTests();
+        try
+        {
+            Assert.False(Freshness().CredentialIssue);
+
+            Assert.False(CryptoHelper.TryDecrypt("enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", out _));
+            Assert.True(Freshness().CredentialIssue);
+        }
+        finally
+        {
+            CryptoHelper.ResetForTests();
+        }
+    }
+
+    [Fact]
     public void 沒有任何排程趟_最近排程趟狀態為null()
     {
         Assert.Null(Freshness().LastRunStatus);
@@ -238,9 +262,11 @@ public class ScheduleFreshnessTests
 
         Assert.Equal(BatchRunScopes.Local, runs.GetRecentRuns(1, null).Single().Scope);
 
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
-        var orchestrator = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Core", "Service", "AnalysisOrchestrator.cs"));
+        // AI 趟不帶範圍：它不是取數，範圍對它沒有意義
+        var aiRecorderSource = File.ReadAllText(Path.Combine(FindRepoRootForScope(), "LogForesight.Web", "Services", "AiAnalysisHostedService.cs"));
+        Assert.DoesNotContain("scope:", aiRecorderSource);
+
+        var orchestrator = File.ReadAllText(Path.Combine(FindRepoRootForScope(), "LogForesight.Core", "Service", "AnalysisOrchestrator.cs"));
         Assert.Contains("scope: BatchRunScopes.Of(request.Scope)", orchestrator);
     }
 

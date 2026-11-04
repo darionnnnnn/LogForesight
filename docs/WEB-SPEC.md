@@ -2264,7 +2264,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
 - **系統健康頁籤**：顯示「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
-  新鮮度只把排程觸發的取數執行算入成功判定，排除 `BatchRun.JobType == ai`；過期狀態可按
+  新鮮度的成功判定走 `BatchRunExtensions.CountsForFreshness`：排程取數趟，或完整範圍（`BatchRun.Scope == full`）的手動取數趟，狀態為成功或有警告；AI 趟、範圍縮小的手動趟與 console 舊趟不算。全站告示（只給 Maintain／DevMonitor）在過期時多一句原因（`freshnessReason`）：`credentialIssue`（金鑰不符或有憑證解不開）優先，Maintain 附 NetIQ 維護與 PRTG 維護連結，只有 DevMonitor 時附管理者聯絡人；其次是 `lastRunStatus`（最近一趟排程取數失敗、已停止、異常中斷）；其餘視為排程沒在跑，提示確認站台常駐。摘要信文字不變。過期狀態可按
   「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
   正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
   「排程作業」與「PRTG 維護 > 環境探測」確認。`/api/health/freshness` 有 30 秒全站快取（內容與使用者無關，管理員聯絡名單在快取外依檢視者另填），確認靜音與排程設定儲存後立即失效。
@@ -2843,6 +2843,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   （各為「分析 n（失敗 m）」與 PRTG 狀態徽章＋sensor 數＋觸發主機數），
   執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 五值：`disabled` 未啟用或憑證不可用／`success`／`no_output` 無產出／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
+  取數趟的範圍放 `BatchRun.Scope`（`full`／`local`／`netiq-hosts`，舊紀錄與 AI 趟為 null）：執行詳情都顯示，清單的觸發來源只標範圍縮小的趟次。
   `disabled` 的原因放趟次層 `BatchRun.PrtgOutcomeNote`（`PrtgDailyPipeline.DisabledReason`，早退沒有逐日統計，所以不放 `PrtgDays`）：「PRTG 未啟用」、「尚未設定認證資訊」（位址或目前認證模式的憑證沒填完整）、「憑證無法解密，請到 PRTG 維護頁重新輸入」（金鑰檔與資料庫不相符）。執行紀錄列表與執行詳情的 PRTG 欄在徽章旁直接顯示原因文字，總表日期列的徽章提示與診斷匯出（`abnormalRuns[].prtgOutcomeNote`，經文字遮罩）也帶；舊紀錄為 null。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數；**保守策略**（`BatchRun.PrtgStrategy`＝`conservative`）夜間不逐顆取數，改顯示「保守策略（數值由快照供應）」，
   執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。

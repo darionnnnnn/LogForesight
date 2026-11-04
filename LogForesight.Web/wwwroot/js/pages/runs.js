@@ -569,6 +569,13 @@ let runListSort = { key: 'startedAt', dir: 'desc' };
 
 const RUN_SCOPE_TEXT = { full: '完整', local: '僅本機', 'netiq-hosts': '指定主機' };
 
+/** 清單的觸發來源：範圍縮小的趟次要一眼看得出來（它不算資料更新）；完整範圍是常態，不多寫 */
+function runTriggerText(run) {
+    return run.scope && run.scope !== 'full' && RUN_SCOPE_TEXT[run.scope]
+        ? `${run.triggerText}・${RUN_SCOPE_TEXT[run.scope]}`
+        : run.triggerText;
+}
+
 const RUN_LIST_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, truncate: true, render: r => r.hostName },
     // 作業類型（批次D）：取數分析與 AI 分析的執行同列在這張表，一眼分得出來
@@ -580,7 +587,7 @@ const RUN_LIST_COLUMNS = [
         sortValue: r => r.durationSeconds ?? -1,
         render: r => r.interrupted ? '—（異常中斷）' : (r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中')
     },
-    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.triggerText },
+    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => runTriggerText(r) },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
     {
         title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
