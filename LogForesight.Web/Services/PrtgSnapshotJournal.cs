@@ -8,6 +8,10 @@ using LogForesight.Core.Service;
 
 namespace LogForesight.Web.Services;
 
+/// <summary>取不到復原佇列鎖定檔。IOException 也可能是磁碟或路徑問題，所以訊息不斷言一定是另一個工作者。</summary>
+internal sealed class PrtgSnapshotJournalLockedException(Exception inner)
+    : IOException("無法取得復原佇列鎖定檔：可能有另一個快照工作者正在執行，也請檢查磁碟空間與服務帳號權限；下一輪會再試，勿刪除鎖定檔。", inner);
+
 /// <summary>單一快照工作者的復原檔。先落盤再提交 SQL；SQL 批次鍵處理提交後當機的重播。</summary>
 internal sealed class PrtgSnapshotJournal : IDisposable
 {
@@ -77,8 +81,9 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     private FileStream OpenWriterLock()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        try { return new FileStream(FilePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read); }
-        catch (IOException ex) { throw new IOException("已有快照工作者持有復原佇列；本工作者停止採集，勿刪除鎖定檔。", ex); }
+        // 只有 FileShare.None 在 Unix 是獨佔鎖（.NET 以 flock 模擬共用模式），其他值兩個持有者都會成功
+        try { return new FileStream(FilePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException ex) { throw new PrtgSnapshotJournalLockedException(ex); }
     }
     public void Dispose() { lock (_gate) { _ownership?.Dispose(); _ownership = null; } }
     private static string Digest(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));

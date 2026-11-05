@@ -645,6 +645,30 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(original, after);
     }
 
+    [Fact]
+    public async Task 另一工作者持有復原佇列鎖時_該輪不取數並說明原因_釋放後下一輪恢復()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
+        var hour = DateTime.Today.AddHours(10);
+        var service = CreateService();
+        service.Now = () => hour;
+        var other = new PrtgSnapshotJournal(_backend);
+        other.AcquireOwnership();
+
+        await service.TickAsync();
+
+        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.Contains("另一個快照工作者", service.GetStatus().LastSkipReason);
+
+        other.Dispose();
+        service.Now = () => hour.AddMinutes(10);
+        await service.TickAsync();
+
+        Assert.Single(_stubHandler.RequestedUrls);
+        Assert.DoesNotContain("另一個快照工作者", service.GetStatus().LastSkipReason ?? "");
+    }
+
     private void SetupTargetSensors(
         IEnumerable<(long Objid, string SensorType)> targets,
         IEnumerable<(long Objid, string SensorType)>? nonTargets = null)

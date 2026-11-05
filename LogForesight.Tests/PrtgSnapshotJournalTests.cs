@@ -134,7 +134,7 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
         Assert.Throws<InvalidDataException>(() => second.Save("source", [..stale.Accumulator, new(now, 3, 30, 1, 30, 30)], [], now));
         Assert.Contains(first.Load("source", now)!.Accumulator, r => r.SensorObjid == 2);
         first.AcquireOwnership();
-        Assert.Throws<IOException>(() => second.AcquireOwnership());
+        Assert.Throws<PrtgSnapshotJournalLockedException>(() => second.AcquireOwnership());
         first.Dispose();
         second.AcquireOwnership();
         second.Load("source", now);

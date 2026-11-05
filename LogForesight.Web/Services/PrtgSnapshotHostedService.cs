@@ -1264,7 +1264,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             JsonException => "復原檔格式不完整或已損壞；請維護管理者先備份並檢查，勿直接刪除。",
             UnauthorizedAccessException => "服務帳號無法存取復原目錄；請檢查資料目錄的讀寫與替換權限。",
-            InvalidDataException => ex.Message,
+            InvalidDataException or PrtgSnapshotJournalLockedException => ex.Message,
             _ => "本機待寫檔案無法讀寫；請檢查磁碟空間、檔案鎖定與服務帳號權限。"
         };
         var reason = $"快照待寫復原檔無法使用，已停止採集並保留資料：{detail}";
