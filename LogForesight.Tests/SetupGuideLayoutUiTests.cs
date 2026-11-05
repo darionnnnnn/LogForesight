@@ -57,7 +57,7 @@ public class SetupGuideLayoutUiTests
     private static string RunNode(string jsCode)
     {
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", "--input-type=module" },
+            new[] { "--input-type=module" },
             FindRepoRoot(), stdin: jsCode + "\n", timeout: TimeSpan.FromSeconds(60), label: "RunNode");
         var stdout = r.Stdout;
         var stderr = r.Stderr;

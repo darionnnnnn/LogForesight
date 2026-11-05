@@ -28,7 +28,7 @@ public sealed class HelpManualLayoutTests
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", Path.Combine(scriptDir, "markdown-doc.behavior.mjs"), caseName }, scriptDir,
+            new[] { Path.Combine(scriptDir, "markdown-doc.behavior.mjs"), caseName }, scriptDir,
             timeout: TimeSpan.FromSeconds(60), label: caseName);
         var stdout = r.Stdout;
         var stderr = r.Stderr;

@@ -62,7 +62,7 @@ public class SetupMailInlineUiTests
         var script = $"function parseRecipients(raw) {match.Groups[1].Value}\n" +
             "const a = parseRecipients(' a@x.test \\n b@x.test\\n a@x.test\\n '); if (a.length !== 2 || a[0] !== 'a@x.test' || a[1] !== 'b@x.test' || parseRecipients(null).length) throw new Error('invalid recipients');\n";
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", "--input-type=module" },
+            new[] { "--input-type=module" },
             Root(), stdin: script, timeout: TimeSpan.FromSeconds(60), label: "parseRecipients");
         Assert.True(r.ExitCode == 0, r.Stderr);
     }

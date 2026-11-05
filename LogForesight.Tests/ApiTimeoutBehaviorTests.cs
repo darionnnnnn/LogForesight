@@ -12,7 +12,7 @@ namespace LogForesight.Tests;
 /// 這裡逐案啟動 node 執行並把輸出原樣帶回失敗訊息。
 ///
 /// 前端頁面檔是 ESM 但副檔名為 .js（瀏覽器靠 &lt;script type="module"&gt; 載入，
-/// 專案沒有 package.json），因此以 --experimental-default-type=module 執行。
+/// 專案沒有 package.json），靠 node 預設的 ESM 語法偵測執行（版本下限見 NodeRuntime）。
 ///
 /// 標 <see cref="NodeTheoryAttribute"/>：本專案沒有 node 依賴，部署機上不一定裝得到——
 /// 偵測不到 node 時顯示為略過而不是紅（環境造成的假警報會讓「全綠」失去意義）；
@@ -68,7 +68,7 @@ public class ApiTimeoutBehaviorTests
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
 
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            new[] { script, caseName }, scriptDir,
             timeout: TimeSpan.FromSeconds(15), label: caseName);
         var stdout = r.Stdout;
         var stderr = r.Stderr;
