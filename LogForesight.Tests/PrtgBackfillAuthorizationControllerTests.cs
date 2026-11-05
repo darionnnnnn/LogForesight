@@ -268,7 +268,7 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
     }
 
     private static PrtgClient CreateClient(SystemSettings settings, BlockingHandler handler) =>
-        new(settings.PrtgUrl, "test-token", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        new(settings.PrtgUrl, "test-token", 30, true, handler, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
     private static async Task WaitForIdle(PrtgBackfillRunState state)
     {

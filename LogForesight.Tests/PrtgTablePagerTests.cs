@@ -441,14 +441,15 @@ public class PrtgTablePagerTests
     }
 
     [Fact]
-    public async Task messages讀到筆數少於treesize_不擲但寫警告()
+    public async Task messages讀到筆數少於treesize_不擲_回報旗標由呼叫端彙總()
     {
         var (result, written, _, console) = await RunAsync(
             _ => Page("messages", new long[] { 1, 2, 3 }, treesize: 10), pageSize: 5, content: "messages");
 
         Assert.Equal(3, result.Mapped);
         Assert.Equal(new long[] { 1, 2, 3 }, written);
-        Assert.Contains(console.Lines, l => l.Contains("messages") && l.Contains("treesize"));
+        Assert.True(result.TreeSizeShort);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("treesize"));
     }
 
     [Fact]

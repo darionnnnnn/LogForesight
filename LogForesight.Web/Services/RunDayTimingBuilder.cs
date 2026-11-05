@@ -16,6 +16,15 @@ internal static class RunDayTimingBuilder
         RunTimingPhases.Local, RunTimingPhases.Netiq, RunTimingPhases.Prtg, RunTimingPhases.Ai
     };
 
+    /// <summary>
+    /// PRTG 這一路的子階段。補數值（<c>prtg-value-fill</c>）是頂層階段、結構同步與觸發式取數是 <c>prtg</c> 的子階段，
+    /// 都算 PRTG 的時間；只認 <c>prtg</c> 會讓跑了半小時的補數值在 PRTG 欄顯示「—」。
+    /// </summary>
+    private static readonly string[] PrtgSubKeys =
+    {
+        RunTimingPhases.PrtgSync, RunTimingPhases.PrtgTriggered, RunTimingPhases.PrtgValueFill
+    };
+
     /// <param name="dayRuns">該日開跑的取數與 AI 趟；沒有任何趟回 null</param>
     public static RunDayTimingDto? Build(IReadOnlyCollection<BatchRun> dayRuns)
     {
@@ -29,8 +38,6 @@ internal static class RunDayTimingBuilder
         var counted = fetchRuns.Concat(followUps).ToList();
         var finished = counted.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
         var interrupted = counted.Where(r => r.Interrupted).ToList();
-        var finishedFetch = fetchRuns.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
-        var finishedFollowUps = followUps.Where(r => !r.Interrupted && r.FinishedAt.HasValue).ToList();
         var settledFetch = fetchRuns.Where(r => !r.Interrupted).ToList();
 
         return new RunDayTimingDto
@@ -38,8 +45,6 @@ internal static class RunDayTimingBuilder
             FirstStartedAt = counted.Count > 0 ? counted.Min(r => r.StartedAt) : null,
             LastFinishedAt = finished.Count > 0 ? finished.Max(r => r.FinishedAt) : null,
             TotalSeconds = SpanSeconds(finished),
-            FetchSeconds = SpanSeconds(finishedFetch),
-            FollowUpAiSeconds = SpanSeconds(finishedFollowUps),
             OtherAiRuns = otherAi.Count,
             OtherAiSeconds = SpanSeconds(otherAi),
             FetchRuns = settledFetch.Count,
@@ -59,11 +64,8 @@ internal static class RunDayTimingBuilder
     {
         // 跳過的階段沒有花到時間，沒結束的沒有訖可算；全部被濾掉（含沒有階段資料的舊紀錄）時畫面顯示「—」
         var settled = runs.Where(r => !r.Interrupted).ToList();
-        var spans = settled.Where(r => r.Phases != null)
-            .SelectMany(r => r.Phases!)
-            .Where(p => p.Key == key && p.FinishedAt.HasValue && p.Outcome != RunPhaseOutcomes.Skipped)
-            .Select(p => (p.StartedAt, p.FinishedAt!.Value))
-            .ToList();
+        var keys = key == RunTimingPhases.Prtg ? PrtgSubKeys.Append(key).ToArray() : new[] { key };
+        var spans = SpansOf(settled, keys);
         // AI 趟本身就是 AI 路：沒有階段資料時用整趟起訖
         if (key == RunTimingPhases.Ai)
         {
@@ -77,9 +79,27 @@ internal static class RunDayTimingBuilder
             Key = key,
             From = spans.Min(s => s.StartedAt),
             To = spans.Max(s => s.Value),
-            Seconds = UnionSeconds(spans)
+            Seconds = UnionSeconds(spans),
+            SubPhases = key != RunTimingPhases.Prtg ? new() : PrtgSubKeys.Select(sub =>
+            {
+                var subSpans = SpansOf(settled, new[] { sub });
+                return subSpans.Count == 0 ? null : new RunBranchTimingDto
+                {
+                    Key = sub,
+                    From = subSpans.Min(s => s.StartedAt),
+                    To = subSpans.Max(s => s.Value),
+                    Seconds = UnionSeconds(subSpans)
+                };
+            }).OfType<RunBranchTimingDto>().ToList()
         };
     }
+
+    private static List<(DateTime StartedAt, DateTime Value)> SpansOf(IEnumerable<BatchRun> runs, string[] keys) =>
+        runs.Where(r => r.Phases != null)
+            .SelectMany(r => r.Phases!)
+            .Where(p => keys.Contains(p.Key) && p.FinishedAt.HasValue && p.Outcome != RunPhaseOutcomes.Skipped)
+            .Select(p => (p.StartedAt, p.FinishedAt!.Value))
+            .ToList();
 
     private static DateTime LastActivity(BatchRun run)
     {

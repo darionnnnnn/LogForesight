@@ -376,4 +376,40 @@ public class PrtgReevaluationPlannerTests
         Assert.Equal(nonAiIssue.Date, issue!.Date);
         Assert.Equal(BatchRun.PrtgOutcomePartial, issue.Outcome);
     }
+
+    [Fact]
+    public void PendingDeviceCount_取最新一趟的聯集_舊紀錄為null()
+    {
+        var old = new BatchRun { RunId = 1, StartedAt = DateTime.Today.AddDays(-1), PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-2), "success", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 9 }) } };
+        var latest = new BatchRun { RunId = 2, StartedAt = DateTime.Today, PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 1, 2 }, PendingMessageDevices: new long[] { 2, 3 }) } };
+        var legacy = new BatchRun { RunId = 3, StartedAt = DateTime.Today, PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-1), "success", 0, 0, true, 0, 0, 0) } };
+
+        Assert.Equal(3, PrtgReevaluationPlanner.PendingDeviceCount(new[] { old, latest }));
+        // 多天各有待補時是跨天聯集，與執行紀錄「仍待補」同一個數字
+        var twoDays = new BatchRun { RunId = 4, StartedAt = DateTime.Today, PrtgDays = new()
+        {
+            new PrtgDayStat(DateTime.Today.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 1, 2 }),
+            new PrtgDayStat(DateTime.Today.AddDays(-2), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 2, 3 }, PendingMessageDevices: new long[] { 4 })
+        } };
+        Assert.Equal(4, PrtgReevaluationPlanner.PendingDeviceCount(new[] { twoDays }));
+        Assert.Equal(4, RunResume.Of(twoDays).PrtgDevices);
+        Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(new[] { legacy }));
+        Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(Array.Empty<BatchRun>()));
+    }
+
+    [Fact]
+    public void PendingDevices_取各日最新統計的聯集_成功的那趟蓋過舊待補()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var first = new BatchRun { RunId = 1, StartedAt = DateTime.Today.AddHours(1), PrtgDays = new() { new PrtgDayStat(day, "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 1, 2 }, PendingMessageDevices: new long[] { 3 }) } };
+        var second = new BatchRun { RunId = 2, StartedAt = DateTime.Today.AddHours(2), PrtgDays = new() { new PrtgDayStat(day, "success", 0, 0, true, 0, 0, 0, PendingSensorDevices: Array.Empty<long>(), PendingMessageDevices: Array.Empty<long>()) } };
+
+        var pending = PrtgReevaluationPlanner.PendingDevices(new[] { first }, new[] { day });
+        Assert.Equal(new long[] { 1, 2 }, pending.Sensors);
+        Assert.Equal(new long[] { 3 }, pending.Messages);
+
+        var done = PrtgReevaluationPlanner.PendingDevices(new[] { first, second }, new[] { day });
+        Assert.Empty(done.Sensors);
+        Assert.Empty(done.Messages);
+    }
 }

@@ -134,11 +134,13 @@ public class ScheduleController : ControllerBase
         string? prtgLastIssueOutcome = null;
         string? prtgLastIssueNote = null;
         PrtgLastScheduledDayDto? prtgLastScheduledDay = null;
+        int? prtgPendingDevices = null;
 
         // 單元測試以 scheduler: null! 建控制器（只測狀態欄位），與本控制器其他可省略相依同一慣例；正式 DI 一定有值
         if (!s.IsRunning && _scheduler is not null)
         {
-            var (healthPending, healthLastIssue, healthLastScheduled) = _scheduler.PrtgRunHealth();
+            var (healthPending, healthLastIssue, healthLastScheduled, healthPendingDevices) = _scheduler.PrtgRunHealth();
+            prtgPendingDevices = healthPendingDevices;
             if (healthLastScheduled is { } scheduled)
             {
                 prtgLastScheduledDay = new PrtgLastScheduledDayDto
@@ -165,6 +167,8 @@ public class ScheduleController : ControllerBase
             TriggerText = TriggerText(s.Trigger),
             StartedAt = s.StartedAt,
             CatchUpDeadline = s.CatchUpDeadline,
+            WindowEnd = s.WindowEnd,
+            WindowNote = s.WindowNote,
             LatestMessage = s.LatestMessage,
             ProgressPhase = s.ProgressPhase,
             ProgressDone = s.ProgressDone,
@@ -182,6 +186,10 @@ public class ScheduleController : ControllerBase
             NetiqCompleted = s.NetiqCompleted,
             PrtgCompleted = s.PrtgCompleted,
             PausedReason = s.PausedReason,
+            PrtgPausedCount = s.PrtgPausedCount,
+            PrtgResumeAt = s.PrtgResumeAt,
+            PrtgHaltedPending = s.PrtgHaltedPending,
+            PrtgPendingDevices = prtgPendingDevices,
             CanStop = s.IsRunning,
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
@@ -247,7 +255,7 @@ public class ScheduleController : ControllerBase
                         "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
 
                 retryAttemptHostIds = latestAttempts.Values
-                    .Where(attempt => attempt.Status is "failed" or "running" or "partial" or "retained-incomplete" or "stopped")
+                    .Where(attempt => NetiqAttemptStatus.LedgerNeedsRetry(attempt.Status))
                     .Select(attempt => attempt.HostId)
                     .ToHashSet();
             }
@@ -411,7 +419,8 @@ public class ScheduleController : ControllerBase
                 var allFlat = allTargets.ByServer.Values.SelectMany(v => v).ToList();
                 // 本機分析停用時（回饋十八輪批次D），全部主機的範圍不再涵蓋本機——預覽台數與
                 // 執行監控要如實反映，不能讓使用者以為本機也在這次執行內
-                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), _optionsStore.Get().LocalAnalysisEnabled);
+                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(),
+                    _optionsStore.Get().LocalAnalysisEnabled && !LocalHostPolicy.IsDisabled(_hosts.GetAll(), Environment.MachineName));
 
             case "segment":
                 return (RunScope.NetiqHosts, ResolveSegmentHostIds(segment, _hosts, _sentinels), false);
@@ -423,6 +432,8 @@ public class ScheduleController : ControllerBase
                 {
                     if (!_optionsStore.Get().LocalAnalysisEnabled)
                         throw DomainException.Validation("本機分析已停用，請先於排程作業頁啟用「分析本機主機」。");
+                    if (!host.Active)
+                        throw DomainException.Validation("這台本機主機已在主機清單停用，不會分析本機日誌。");
                     return (RunScope.LocalOnly, null, true);
                 }
 

@@ -253,7 +253,7 @@ public class ExternalCallLimitTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "Sensor-101", SensorType = "Ping", Status = "Up", Paused = false }
         }, DateTime.Now);
-        var budget = new PrtgRequestBudget();
+        var budget = new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock());
 
         var handler = new CountingHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {

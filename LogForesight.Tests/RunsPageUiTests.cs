@@ -137,11 +137,16 @@ public class RunsPageUiTests
         Assert.Contains("0 件（本次分析尚未結束）", aiBody);
         Assert.Contains("0 件（已全部完成）", aiBody);
 
-        // 今日的執行紀錄使用 List API；每日彙總維持昨天為錨點，並在 UI 明確指向紀錄頁籤。
+        // 今日的執行紀錄使用 List API；每日彙總今天有趟時多一列，畫面講明「尚未處理」不是漏跑。
         Assert.Contains("api.get(`/api/runs/list?days=${currentDays}`)", js);
         var cshtml = ReadRunsCshtml();
-        Assert.Contains("總表不含今天", cshtml);
-        Assert.Contains("今天的手動或排程執行請看上方狀態卡與「執行紀錄」頁籤", cshtml);
+        Assert.Contains("今天有執行時最上方多一列「今日」", cshtml);
+        Assert.Contains("「尚未處理」不是漏跑", cshtml);
+        // 狀態卡講得出這趟到幾點停、為什麼又跑一趟；執行紀錄列講得出還留著什麼
+        Assert.Contains("本趟到", js);
+        Assert.Contains("status.windowNote", js);
+        Assert.Contains("仍待補：", js);
+        Assert.Contains("台裝置待補，下一次排程自動補", js);
     }
 
     [Fact]

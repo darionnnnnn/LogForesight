@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **8,403 通過／11 略過**（Windows；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`；環境變數由 `LogForesight.Tests/test.runsettings` 帶入；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **8,496 通過／11 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）（Windows；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`；環境變數由 `LogForesight.Tests/test.runsettings` 帶入；
   歷次基線見 `docs/archive/README.md`）；略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -111,6 +111,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   建構點都要帶 `gate:`（`AiRequestGateTests` 掃 `new AIService(`）。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
   `AIService` 內有逐實例的請求佇列，共用一個等於把全輪串成單線、`AiConcurrency` 形同失效（設定一輪只解析一次即可，實例每分片一個）。
   AI 待補順序與閒置原因各只有一份判定（`SelectNextBatch`、`BlockingIdleReason`），不要在控制器或畫面再算一次。
+- 不要在測試 `new PrtgRequestBudget()`：真時鐘的配額會讓全量並行的測試彼此排隊到逾時，一律 `new PrtgRequestBudget(new AcceleratedPrtgClock())`（`PrtgRequestBudget.Shared` 在測試組件載入時已換成加速時鐘）。也不要讓並行寫入共用 `EfSqliteFixture` 那一條記憶體連線，並行案例用檔案型 DB。
+- 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
+- 不要拿版本號判斷站台部署了哪一版：`Directory.Build.props` 的版本號不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.53.2+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。

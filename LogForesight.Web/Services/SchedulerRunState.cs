@@ -57,7 +57,12 @@ public sealed record SchedulerRunSnapshot(
     RunOutcome? LastOutcome,
     string? ActivityPhase,
     int ActivityDone,
-    int ActivityTotal);
+    int ActivityTotal,
+    int PrtgPausedCount = 0,
+    DateTime? PrtgResumeAt = null,
+    int PrtgHaltedPending = 0,
+    DateTime? WindowEnd = null,
+    string? WindowNote = null);
 
 /// <summary>
 /// 排程執行的行程內狀態（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：單例，供
@@ -78,6 +83,12 @@ public class SchedulerRunState
 
     /// <summary>自動補跑的停止時刻；其餘趟為 null（見 <see cref="LogForesight.Core.Service.ScheduleCalculator.ShouldStopScheduledRun"/>）</summary>
     public DateTime? CatchUpDeadline { get; private set; }
+
+    /// <summary>排程趟所屬窗口實例的結束時刻（到點優雅停止）；手動與補跑為 null。</summary>
+    public DateTime? WindowEnd { get; private set; }
+
+    /// <summary>這趟是第幾個窗口、要接上一趟的什麼（狀態卡看得到為什麼又跑一趟）。</summary>
+    public string? WindowNote { get; private set; }
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
@@ -239,6 +250,15 @@ public class SchedulerRunState
     /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
     public string? PausedReason { get; private set; }
 
+    /// <summary>PRTG 暫停閘第幾次拉起（訊號值）；<see cref="PrtgResumeAt"/> 過了就不再算暫停中。</summary>
+    public int PrtgPausedCount { get; private set; }
+
+    /// <summary>PRTG 暫停閘預計放行的時刻（絕對時間，前端倒數；狀態每 3 秒輪詢，送秒數會凍結）。</summary>
+    public DateTime? PrtgResumeAt { get; private set; }
+
+    /// <summary>PRTG 停損後本趟待補的台數；0＝沒有停損。</summary>
+    public int PrtgHaltedPending { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -268,7 +288,7 @@ public class SchedulerRunState
     }
 
     /// <summary>已在執行中時回 false（呼叫端據此直接拒絕，不排隊）；成功開始時回 true 並給出可用於停止的 CancellationTokenSource</summary>
-    public bool TryBeginRun(string trigger, out CancellationTokenSource cts, DateTime? catchUpDeadline = null)
+    public bool TryBeginRun(string trigger, out CancellationTokenSource cts, DateTime? catchUpDeadline = null, DateTime? windowEnd = null, string? windowNote = null)
     {
         lock (_lock)
         {
@@ -281,6 +301,8 @@ public class SchedulerRunState
             IsRunning = true;
             Trigger = trigger;
             CatchUpDeadline = catchUpDeadline;
+            WindowEnd = windowEnd;
+            WindowNote = windowNote;
             StartedAt = DateTime.Now;
             if (trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule)
             {
@@ -294,6 +316,9 @@ public class SchedulerRunState
             PrtgDayIndex = 0;
             SkippedScheduleAt = null;
             PausedReason = null;
+            PrtgPausedCount = 0;
+            PrtgResumeAt = null;
+            PrtgHaltedPending = 0;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -374,7 +399,8 @@ public class SchedulerRunState
                 PrtgDayCount, PrtgDayIndex, SkippedScheduleAt,
                 _local.Completed, _netiq.Completed, _prtg.Completed,
                 PausedReason, LastOutcome,
-                aPhase, aDone, aTotal);
+                aPhase, aDone, aTotal,
+                PrtgPausedCount, PrtgResumeAt, PrtgHaltedPending, WindowEnd, WindowNote);
         }
     }
 
@@ -430,6 +456,16 @@ public class SchedulerRunState
             else if (phase == RunPhases.GuardResumed)
             {
                 PausedReason = null;
+            }
+            else if (phase == RunPhases.PrtgPaused)
+            {
+                // 訊號不是進度：必須排在下面的 "prtg-" 前綴分支之前，否則會把 PRTG 進度軌蓋成第 N 次／秒數
+                PrtgPausedCount = done;
+                PrtgResumeAt = DateTime.Now.AddSeconds(total);
+            }
+            else if (phase == RunPhases.PrtgHalted)
+            {
+                PrtgHaltedPending = Math.Max(PrtgHaltedPending, done);
             }
             else if (phase == RunPhases.PrtgFindingsReady)
             {
@@ -498,6 +534,8 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             CatchUpDeadline = null;
+            WindowEnd = null;
+            WindowNote = null;
             StartedAt = null;
             ResetTracks();
             PrtgFindingsReady = false;
@@ -506,6 +544,9 @@ public class SchedulerRunState
             PrtgDayIndex = 0;
             SkippedScheduleAt = null;
             PausedReason = null;
+            PrtgPausedCount = 0;
+            PrtgResumeAt = null;
+            PrtgHaltedPending = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null)

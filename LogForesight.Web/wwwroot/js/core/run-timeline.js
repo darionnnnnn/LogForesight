@@ -91,6 +91,24 @@ export function renderPhaseTimeline(run, now = new Date().toISOString()) {
     return wrap;
 }
 
+const SUB_PHASE_LABEL = {
+    'prtg-sync': '結構同步',
+    'prtg-triggered': '觸發式取數',
+    'prtg-value-fill': '補 PRTG 數值'
+};
+
+/**
+ * PRTG 進度軌的暫停與停損文字；沒有就回 null。暫停以絕對時間算剩餘秒數：
+ * 狀態每 3 秒輪詢，後端送秒數的話畫面會凍結。過了放行時刻就不再顯示。
+ */
+export function prtgPauseLabel(status, now = new Date()) {
+    if (status.prtgHaltedPending > 0) return `PRTG 已停止本趟取數，${status.prtgHaltedPending} 台待補`;
+    if (!status.prtgResumeAt) return null;
+    const seconds = Math.ceil((new Date(status.prtgResumeAt) - now) / 1000);
+    if (seconds <= 0) return null;
+    return `PRTG 回應異常，暫停中（第 ${status.prtgPausedCount} 次，約 ${seconds} 秒後重試）`;
+}
+
 const otherAiText = timing => `AI 補跑 ${timing.otherAiRuns} 趟（${formatDuration(timing.otherAiSeconds ?? 0)}）`;
 
 /**
@@ -101,7 +119,9 @@ export function dayTimingText(timing) {
     if (!timing) return '—';
     const parts = [];
     if (timing.totalSeconds != null) {
-        parts.push(`${minuteOf(timing.firstStartedAt)}～${minuteOf(timing.lastFinishedAt)}（${formatDuration(timing.totalSeconds)}）`);
+        // 同日多趟時起訖差會大於總耗時（中間有空檔），寫出趟數才對得起來
+        const runs = timing.fetchRuns > 1 ? `，共 ${timing.fetchRuns} 趟` : '';
+        parts.push(`${minuteOf(timing.firstStartedAt)}～${minuteOf(timing.lastFinishedAt)}（${formatDuration(timing.totalSeconds)}${runs}）`);
     }
     if (timing.interruptedCount > 0) {
         parts.push(`異常中斷 ${timing.interruptedCount} 趟（最後活動 ${minuteOf(timing.lastInterruptedActivityAt)}）`);
@@ -110,14 +130,19 @@ export function dayTimingText(timing) {
     return parts.length > 0 ? parts.join('　') : '—';
 }
 
-/** 總表一格第二行小字：「取數 44 秒 · AI 1 分 27 秒」，另有非跟隨 AI 趟時加「另有 AI 補跑 N 趟（M）」；沒有內容回空字串 */
+/** 總表一格第二行小字：「本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 · AI 1 分 27 秒」，另有非跟隨 AI 趟時加「另有 AI 補跑 N 趟（M）」；沒有內容回空字串 */
 export function dayTimingDetailText(timing) {
     if (!timing) return '';
     const parts = [];
     if (timing.totalSeconds != null) {
-        if (timing.fetchSeconds != null) parts.push(`取數 ${formatDuration(timing.fetchSeconds)}`);
-        if (timing.followUpAiSeconds != null) parts.push(`AI ${formatDuration(timing.followUpAiSeconds)}`);
+        for (const [key, label] of [['local', '本機'], ['netiq', 'NetIQ'], ['prtg', 'PRTG'], ['ai', 'AI']]) {
+            const branch = timing.branches?.find(b => b.key === key);
+            if (branch) parts.push(`${label} ${formatDuration(branch.seconds)}`);
+        }
     }
+    // 與展開列同一個判定：當天取數趟全是舊紀錄就講明，不管第一行算不算得出總耗時
+    const allLegacy = (timing.fetchRuns ?? 0) > 0 && (timing.fetchRunsWithoutPhases ?? 0) >= timing.fetchRuns;
+    if (allLegacy) parts.unshift('無階段資料（升級前紀錄）');
     // 第一行已經是「AI 補跑」時不重複
     const firstLineIsOtherAi = timing.totalSeconds == null && !(timing.interruptedCount > 0);
     if (timing.otherAiRuns > 0 && !firstLineIsOtherAi) parts.push(`另有 ${otherAiText(timing)}`);
@@ -157,6 +182,12 @@ export function renderDayTiming(timing) {
             : (allLegacy && key !== 'ai' ? '無階段資料（升級前紀錄）' : '—');
         item.append(name, value);
         wrap.appendChild(item);
+        for (const sub of branch?.subPhases ?? []) {
+            const subItem = document.createElement('div');
+            subItem.className = 'small text-muted';
+            subItem.textContent = `　${SUB_PHASE_LABEL[sub.key] ?? sub.key}　${minuteOf(sub.from)}～${minuteOf(sub.to)}（${formatDuration(sub.seconds)}）`;
+            wrap.appendChild(subItem);
+        }
     }
     if (timing?.totalSeconds != null) {
         const item = document.createElement('div');

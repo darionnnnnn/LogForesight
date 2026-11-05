@@ -52,8 +52,14 @@ public class RunMonitorService
     /// 判斷要走哪一套狀態邏輯。</summary>
     private List<HostRef> AllHosts(List<BatchRun> runs)
     {
-        var activeHosts = _hosts.GetAll().Where(h => h.Active).ToList();
+        var allHosts = _hosts.GetAll().ToList();
+        var activeHosts = allHosts.Where(h => h.Active).ToList();
         var byName = activeHosts
+            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        // 停用的主機：每趟 BatchRun 都以站台機器名登記，只靠聯集會讓它一直回到總表、還被算成失敗。
+        // 留下參照，只在它當天真的跑過本機分析時才算入（見 CountsOnDate）。
+        var disabledByName = allHosts.Where(h => !h.Active)
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
@@ -62,7 +68,9 @@ public class RunMonitorService
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .Select(name => byName.TryGetValue(name, out var host)
                 ? new HostRef(name, host.HostId, host.Source)
-                : new HostRef(name, 0, "local"))
+                : disabledByName.TryGetValue(name, out var disabled)
+                    ? new HostRef(name, disabled.HostId, disabled.Source, Disabled: true)
+                    : new HostRef(name, 0, "local"))
             .ToList();
     }
 
@@ -78,7 +86,8 @@ public class RunMonitorService
     {
         // 分頁邊界計算（新→舊切割）：第 1 頁 = 最近的日期，最後一頁 = 最舊的日期。
         // 日期範圍：[錨點日-days+1, 錨點日]，共 days 天。錨點日＝DateTime.Today.AddDays(-1)（昨天），
-        // 不含今天，因今天的夜間批次尚未執行，整列必為未執行。
+        // 今天不佔 days：今天已有取數趟時，第 1 頁多附一列（IsToday），否則使用者看不到今天手動或排程跑了多久；
+        // 還沒有任何趟就不出現（整列都是未執行，沒有資訊）。
         // 第 page 頁涵蓋：跳過前 (page-1)*pageSize 個「最新」天後，取 pageSize 天。
         // 以索引換算：索引 0 = 錨點日（昨天），索引 days-1 = 錨點日-days+1（舊到新）。
         var anchor = DateTime.Today.AddDays(-1);
@@ -98,8 +107,11 @@ public class RunMonitorService
         var runs = allRuns.Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
 
         // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
+        var today = DateTime.Today;
+        var includeToday = page == 1 && runs.Any(r => r.StartedAt.Date == today);
+        var lastDate = includeToday ? today : pageEnd;
         var recordFrom = pageFrom.AddDays(-1);
-        var recordTo = pageEnd.AddDays(-1);
+        var recordTo = lastDate.AddDays(-1);
         var recordDates = _records.ListHostDates(recordFrom, recordTo, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordFrom, recordTo, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
@@ -108,13 +120,15 @@ public class RunMonitorService
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
 
         var summaries = new List<RunDaySummaryDto>();
-        for (var date = pageFrom; date <= pageEnd; date = date.AddDays(1))
+        for (var date = pageFrom; date <= lastDate; date = date.AddDays(1))
         {
             var dateStr = date.ToString("yyyy-MM-dd");
+            var isToday = date == today;
             var summary = new RunDaySummaryDto
             {
                 Date = dateStr,
-                TotalHosts = hosts.Count,
+                IsToday = isToday,
+                InProgress = isToday && runs.Any(r => r.StartedAt.Date == today && !r.FinishedAt.HasValue && _isHeld(r)),
                 // 與主機格同一個鍵（當天開跑）；AI 趟只進這裡，不進主機×日
                 Timing = RunDayTimingBuilder.Build(allRuns.Where(r => r.StartedAt.Date == date.Date).ToList())
             };
@@ -162,6 +176,8 @@ public class RunMonitorService
             foreach (var host in hosts)
             {
                 var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
+                if (!CountsOnDate(host, dayRuns)) continue;
+                summary.TotalHosts++;
                 var status = StatusOf(host, dayRuns, date, recordDates, localEnabled, attempts, attemptsAvailable, runsById);
 
                 switch (status)
@@ -201,8 +217,9 @@ public class RunMonitorService
         var recordDates = _records.ListHostDates(recordDate, recordDate, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
+        var histories = ReadHistories(recordDate);
 
-        return hosts.Select(host =>
+        return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runs, host.HostName, dateStr))).Select(host =>
         {
             var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
             var cell = host.Source == "netiq"
@@ -221,6 +238,8 @@ public class RunMonitorService
                 ErrorCount = cell.ErrorCount,
                 AiFailures = cell.AiFailures,
                 RunCount = cell.RunCount,
+                Legacy = cell.Legacy,
+                StatusNote = NetiqStatusNote(host, recordDate, histories),
                 DecisionVersion = workflow?.DecisionVersion,
                 ParentWorkflowState = workflow?.Parent.ToString().ToLowerInvariant(),
                 PrtgWorkflowState = workflow?.Prtg.ToString().ToLowerInvariant(),
@@ -254,6 +273,24 @@ public class RunMonitorService
         catch (InvalidDataException) { available = false; return new Dictionary<(long, DateTime), NetiqSourceAttempt.Receipt>(); }
     }
 
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> ReadHistories(DateTime date)
+    {
+        if (_backend == null) return new Dictionary<(long, DateTime), NetiqSourceAttempt.AttemptHistory>();
+        try { return NetiqSourceAttempt.ReadHistory(_backend, date, date, DateTime.Today); }
+        catch (InvalidDataException) { return new Dictionary<(long, DateTime), NetiqSourceAttempt.AttemptHistory>(); }
+    }
+
+    /// <summary>格子上要讓人看得懂的那句話：空資料等複查、自動重查已放棄（否則是一個永遠的黃燈，看不出該手動補跑）。</summary>
+    private static string? NetiqStatusNote(HostRef host, DateTime date,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories)
+    {
+        if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
+        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce) return "空資料，下一窗口複查一次";
+        if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
+        // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
+        return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";
+    }
+
     private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
         HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
@@ -278,6 +315,8 @@ public class RunMonitorService
                 "running" when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
                 "running" => BatchRunStatus.Running,
                 "partial" or "retained-incomplete" => BatchRunStatus.Warning,
+                // 沒有分析紀錄、等下一趟複查：還沒定案，不算失敗也不算警告（說明在 StatusNote）
+                NetiqAttemptStatus.EmptyOnce => "none",
                 "success" when recordDates.Contains(key) => BatchRunStatus.Success,
                 "success" => BatchRunStatus.Warning,
                 _ => BatchRunStatus.Warning
@@ -300,7 +339,8 @@ public class RunMonitorService
     /// </summary>
     private string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
     {
-        if (dayRuns.Count > 0) return StatusOf(dayRuns);
+        var localRuns = LocalRuns(dayRuns);
+        if (localRuns.Count > 0) return StatusOf(localRuns);
         if (HasBackfilledRecord(host, date, recordDates)) return "backfilled";
         // 本機分析已停用（回饋十八輪批次D）：停用後本機主機格顯示停用狀態、不冒充「未執行」——
         // 「設定行為」與「漏跑」是完全不同的事，混在同一格會讓人每天誤判排程壞了。
@@ -314,7 +354,8 @@ public class RunMonitorService
     {
         // 有 BatchRun：完整 cell（含 runId／計數，供「檢視執行」）。沒有：回補 fallback 只有狀態，
         // 沒有可連到的單次執行紀錄（回補的執行紀錄掛在觸發當天那台，不是這個日期格）
-        if (dayRuns.Count > 0) return BuildCell(dateStr, dayRuns);
+        var localRuns = LocalRuns(dayRuns);
+        if (localRuns.Count > 0) return BuildCell(dateStr, localRuns);
         return new RunDayHostStatusDto
         {
             Status = LocalStatus(host, dayRuns, date, recordDates, localEnabled)
@@ -327,7 +368,42 @@ public class RunMonitorService
     private static bool HasBackfilledRecord(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
         host.HostId > 0 && recordDates.Contains((host.HostId, date.AddDays(-1).Date));
 
-    private sealed record HostRef(string HostName, long HostId, string Source);
+    private sealed record HostRef(string HostName, long HostId, string Source, bool Disabled = false);
+
+    /// <summary>停用的主機只在當天真的跑過本機分析時才算入總表；其他主機每天都算（「從來沒跑過」正是要被看到的）。</summary>
+    private static bool CountsOnDate(HostRef host, List<BatchRun> dayRuns) =>
+        !host.Disabled || dayRuns.Any(r => !HasPhases(r) || LocalPhase(r) != null);
+
+    private static bool HasPhases(BatchRun run) => run.Phases is { Count: > 0 };
+
+    private static RunPhaseRecord? LocalPhase(BatchRun run) =>
+        run.Phases?.LastOrDefault(p => p.Key == RunTimingPhases.Local);
+
+    /// <summary>
+    /// 算入本機格的趟：有本機階段的、升級前沒有階段資料的、還沒結束或中斷的（階段可能還沒開始）。
+    /// 只跑 NetIQ、本機被略過的趟與這台主機的本機狀態無關，不得拿它的結果蓋掉本機格。
+    /// </summary>
+    private static List<BatchRun> LocalRuns(List<BatchRun> dayRuns) =>
+        dayRuns.Where(r => !HasPhases(r) || LocalPhase(r) != null || !r.FinishedAt.HasValue || r.Interrupted).ToList();
+
+    /// <summary>
+    /// 本機格的狀態看本機階段，不看整趟：整趟狀態含 NetIQ 與 PRTG 的錯誤（憑證解不開、Sentinel 401），
+    /// 拿它當本機狀態會把沒出問題的本機算成失敗。執行中與異常中斷仍以整趟為準；升級前沒有階段資料也是。
+    /// </summary>
+    private string LocalRunStatus(BatchRun run)
+    {
+        var whole = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run));
+        if (whole is BatchRunStatus.Running or BatchRunStatus.Stuck) return whole;
+        return LocalPhase(run)?.Outcome switch
+        {
+            RunPhaseOutcomes.Success or RunPhaseOutcomes.Skipped =>
+                run.LocalDaysFailed > 0 ? BatchRunStatus.Warning : BatchRunStatus.Success,
+            RunPhaseOutcomes.Partial => BatchRunStatus.Warning,
+            RunPhaseOutcomes.Failed => BatchRunStatus.Failed,
+            RunPhaseOutcomes.Stopped => BatchRunStatus.Stopped,
+            _ => whole
+        };
+    }
 
     private static List<BatchRun> RunsForHostOnDate(List<BatchRun> runs, string hostName, string dateStr) =>
         runs.Where(r => string.Equals(r.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
@@ -357,7 +433,8 @@ public class RunMonitorService
 
         return new RunDayHostStatusDto
         {
-            Status = BatchRunStatus.Compute(latest, DateTime.Now, StuckThreshold, _isHeld(latest)),
+            Status = LocalRunStatus(latest),
+            Legacy = !HasPhases(latest),
             RunId = latest.RunId,
             StartedAt = latest.StartedAt,
             FinishedAt = latest.FinishedAt,
@@ -445,6 +522,8 @@ public class RunMonitorService
         _runs.GetRecentRuns(days, hostNames: null)
             .Select(run => new RunListItemDto
             {
+                ResumeSummary = run.JobType != BatchRun.JobTypeAi && run.FinishedAt.HasValue && RunResume.Of(run) is { HasWork: true } left
+                    ? left.Describe() : null,
                 RunId = run.RunId,
                 HostName = run.HostName,
                 StartedAt = run.StartedAt,

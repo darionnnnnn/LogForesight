@@ -487,7 +487,7 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
 
     private static PrtgClient CreateOfflinePrtgClient(List<(long SensorId, DateTime Day)> historicRequests,
         Func<long, DateTime, bool> failHistoric) => new("http://prtg.test", "token", 5, true,
-        new OfflinePrtgHandler(historicRequests, failHistoric), PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        new OfflinePrtgHandler(historicRequests, failHistoric), PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
     private sealed class OfflinePrtgHandler(List<(long SensorId, DateTime Day)> historicRequests,
         Func<long, DateTime, bool> failHistoric) : HttpMessageHandler

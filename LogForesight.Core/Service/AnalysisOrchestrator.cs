@@ -32,6 +32,10 @@ public class RunRequest
     /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
     public DateTime? CatchUpDeadline { get; init; }
 
+    /// <summary>排程趟所屬窗口實例的起訖；排程趟到 End 優雅停止，起點進執行紀錄供續跑計數。其餘趟為 null。</summary>
+    public DateTime? WindowInstanceStart { get; init; }
+    public DateTime? WindowEnd { get; init; }
+
     public bool DebugDump { get; init; }
 
     /// <summary>
@@ -313,11 +317,12 @@ public class AnalysisOrchestrator
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
-                catchUp: request.CatchUpNote != null, startedAt: runStartedAt, scope: BatchRunScopes.Of(request.Scope));
+                catchUp: request.CatchUpNote != null, startedAt: runStartedAt, scope: BatchRunScopes.Of(request.Scope),
+                windowInstanceStart: request.WindowInstanceStart);
             result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
-            runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
+            runRecorder.Milestone($"批次啟動（版本 {BuildVersion.Current.Label}）");
             if (request.WindowNote != null)
             {
                 runRecorder.Milestone(request.WindowNote);
@@ -397,11 +402,13 @@ public class AnalysisOrchestrator
 
                 long currentHostId = 0;
                 List<long> currentHostGroupIds = new();
+                var localHostDisabled = false;
                 try
                 {
                     var touched = hostStore.Touch(currentHost, DateTime.Now);
                     currentHostId = touched.HostId;
                     currentHostGroupIds = touched.GroupIds;
+                    localHostDisabled = !touched.Active;
                 }
                 catch (Exception ex)
                 {
@@ -677,6 +684,13 @@ public class AnalysisOrchestrator
                     runRecorder.Milestone("本機分析已停用（排程設定），本次僅執行 NetIQ 機房分析");
                     localTask = Task.CompletedTask;
                 }
+                else if (localHostDisabled)
+                {
+                    // 只跳過本機日誌分析：權限檢查、保留清除、派工與體檢是站台的工作，與這台主機要不要被分析無關
+                    runConsole.WriteLine("\n本機主機已停用（主機清單），略過本機日誌分析。");
+                    runRecorder.Milestone("本機主機已停用，略過本機日誌分析");
+                    localTask = Task.CompletedTask;
+                }
                 else
                 {
                     localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
@@ -719,7 +733,8 @@ public class AnalysisOrchestrator
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
                 var reuseSyncFrom = PrtgReevaluationPlanner.ReusableSyncFrom(request.Trigger, request.Scope, recentRuns, prtgDays, runToday);
                 var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate,
-                    reuseSyncFrom: reuseSyncFrom);
+                    reuseSyncFrom: reuseSyncFrom,
+                    reusePending: reuseSyncFrom != null ? PrtgReevaluationPlanner.PendingDevices(recentRuns, prtgDays) : null);
 
                 // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
                 // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -803,6 +818,10 @@ public class AnalysisOrchestrator
                 runConsole.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
                 runConsole.WriteLine("--- 執行結束 ---");
                 Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
+                if (runRecorder.CurrentResume() is { HasWork: true } left)
+                {
+                    runRecorder.Milestone($"本趟結束仍待補：{left.Describe()}");
+                }
                 runRecorder.Milestone("執行結束");
                 runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
@@ -870,6 +889,9 @@ public class AnalysisOrchestrator
         return Task.CompletedTask;
     }
 
+
+    /// <summary>排程續跑時，NetIQ 失敗或未完成的主機日往回補幾天（暫定）；不受常態回望天數限制。</summary>
+    internal const int NetiqResumeRetryDays = 7;
 
     /// <summary>
     /// 本機與 NetIQ 的回望天數：沒指定用該路常態值；手動指定就照指定（受保留期上限夾制）。
@@ -1241,7 +1263,11 @@ public class AnalysisOrchestrator
                 workflow: workflow,
                 prtgEnabled: prtgEnabled,
                 hostDayTiming: _hostDayTiming,
-                runToday: ctx.Today);
+                runToday: ctx.Today,
+                // 排程才走續跑；手動是有人看著選模式。往回最多 7 天，不超過保留期
+                resumeRetryDays: request.Trigger == BatchRunTriggers.Schedule && request.Scope == RunScope.Full
+                    ? Math.Min(NetiqResumeRetryDays, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+                    : 0);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
@@ -1250,18 +1276,19 @@ public class AnalysisOrchestrator
                 result.Success = false;
                 result.FailureMessage ??= $"NetIQ 分析有 {netiqResult.HostsFailed} 個主機日失敗";
             }
-            runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
+            runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate} 台主機、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
-                    : ""));
+                    : "") +
+                (netiqResult.EmptyDeferred > 0 ? $"、回 0 筆待複查 {netiqResult.EmptyDeferred} 個主機日" : ""));
             runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
             netiqPhase.Complete(
                 netiqResult.HostsFailed > 0 ? RunPhaseOutcomes.Partial
                     : netiqResult.HostDaysAnalyzed == 0 ? RunPhaseOutcomes.Skipped
                     : RunPhaseOutcomes.Success,
                 netiqResult.HostDaysAnalyzed == 0 && netiqResult.HostsFailed == 0
-                    ? "無待補"
+                    ? (netiqResult.EmptyDeferred > 0 ? $"回 0 筆待複查 {netiqResult.EmptyDeferred} 主機日" : "無待補")
                     : $"分析 {netiqResult.HostDaysAnalyzed} 主機日、已完成跳過 {netiqResult.HostsSkippedUpToDate}、失敗 {netiqResult.HostsFailed}");
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的

@@ -39,6 +39,19 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
     }
 
     [Fact]
+    public void Missing_only_preview_counts_empty_once_receipts()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        SeedParentRows(new long[] { 1, 2 }, day);
+        NetiqSourceAttempt.RecordBatch(_backend, new long[] { 1 }, day, 12, NetiqAttemptStatus.EmptyOnce);
+        NetiqSourceAttempt.RecordBatch(_backend, new long[] { 2 }, day, 12, NetiqAttemptStatus.Success);
+
+        var response = Controller(new long[] { 1, 2 }).RunPreview("all", null, null, onlyMissingOrFailed: true, backfillDays: 1);
+
+        Assert.Equal(1, response.Data!.HostCount);
+    }
+
+    [Fact]
     public void Missing_only_preview_counts_all_pipeline_failure_receipt_states()
     {
         var day = DateTime.Today.AddDays(-1);
@@ -118,9 +131,31 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
         }
     }
 
-    private ScheduleController Controller(IEnumerable<long> ids)
+    [Fact]
+    public void 站台主機已停用_全部範圍不含本機_指定它時擋下()
+    {
+        var site = new WebHost { HostId = 90, HostName = Environment.MachineName, Source = "local", Active = false };
+
+        var preview = Controller(new long[] { 1 }, site).RunPreview("all", null, null, onlyMissingOrFailed: false, backfillDays: 1);
+        Assert.Equal(1, preview.Data!.HostCount); // 只有那 1 台 NetIQ，不含停用的本機
+
+        // FakeHostStore 新增時自行配發 HostId，要等 Controller 建好（Upsert 之後）才讀得到實際的 id
+        var controller = Controller(new long[] { 1 }, site);
+        var siteId = controller.RunPreview("all", null, null, onlyMissingOrFailed: false, backfillDays: 1).Data!.HostCount > 0
+            ? _lastHosts!.GetAll().Single(h => h.HostName == Environment.MachineName).HostId
+            : 0;
+        var ex = Assert.Throws<DomainException>(() =>
+            controller.RunPreview("host", null, siteId, onlyMissingOrFailed: false, backfillDays: 1));
+        Assert.Contains("停用", ex.Message);
+    }
+
+    private FakeHostStore? _lastHosts;
+
+    private ScheduleController Controller(IEnumerable<long> ids, WebHost? extra = null)
     {
         var hosts = new FakeHostStore();
+        _lastHosts = hosts;
+        if (extra != null) hosts.Upsert(extra);
         foreach (var id in ids)
             hosts.Upsert(new WebHost
             {

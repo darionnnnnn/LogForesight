@@ -5,6 +5,7 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Tests.TestDoubles;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -134,22 +135,10 @@ public class PrtgFetchServiceTests : IDisposable
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "",
-            new PrtgRequestBudget(new AcceleratedClock()));
+            new PrtgRequestBudget(new AcceleratedPrtgClock()));
         return (client, handler);
     }
 
-    /// <summary>
-    /// 時間加速 1000 倍的配額時鐘：共享配額（table 2 次／秒）照常生效，但逐裝置查詢數百台的測試不必真的等幾分鐘。
-    /// </summary>
-    private sealed class AcceleratedClock : IPrtgClock
-    {
-        private const int Factor = 1000;
-        private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
-        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
-        public TimeSpan Elapsed => TimeSpan.FromTicks(_watch.Elapsed.Ticks * Factor);
-        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
-            Task.Delay(TimeSpan.FromTicks(Math.Max(1, delay.Ticks / Factor)), cancellationToken);
-    }
 
     [Fact]
     public async Task FetchDayAsync_device與sensor結構寫入鏡像表()
@@ -484,7 +473,7 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchDayAsync_狀態變更階段失敗時標HistoryAffectingFailure()
+    public async Task FetchDayAsync_狀態變更單台失敗_記待補不標HistoryAffectingFailure()
     {
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"paused\":false}]}";
         var (client, _) = CreateClient(req =>
@@ -503,7 +492,9 @@ public class PrtgFetchServiceTests : IDisposable
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(101));
 
-        Assert.True(result.HistoryAffectingFailure);
+        // 已取到的裝置是完整的，下一個窗口只補失敗的這台，不必整段重做
+        Assert.False(result.HistoryAffectingFailure);
+        Assert.Equal(new long[] { 101 }, result.PendingMessageDevices);
         Assert.Contains(result.StageFailures, f => f.StartsWith("[階段 3/4]"));
     }
 
@@ -582,7 +573,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(new AcceleratedPrtgClock()));
         var store = CreateStore();
         var console = new TestConsole();
         var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -630,13 +621,14 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(new AcceleratedPrtgClock()));
         var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None, ScopeOf(0));
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, handler.MaxConcurrentRequests);
+        Assert.True(((AcceleratedPrtgClock)client.Budget.Clock).TotalRequestedDelay > TimeSpan.Zero, "配額限速必須真的走過，不是被繞過");
     }
 
     [Fact]
@@ -2047,6 +2039,35 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 狀態變更_多台少於treesize_只彙總一行且不計警告()
+    {
+        var today = DateTime.Today;
+        var json = "{\"treesize\":1000000,\"messages\":[]}";
+        var (client, _) = CreateMessagesClient(Enumerable.Range(1, 11).ToDictionary(i => (long)i, _ => json));
+        var console = new TestConsole();
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var logger = new NLog.Targets.MemoryTarget("treesize-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ?? new NLog.Config.LoggingConfiguration();
+        config.AddRule(NLog.LogLevel.Warn, NLog.LogLevel.Fatal, logger, "*PrtgTablePager*");
+        NLog.LogManager.Configuration = config;
+        try
+        {
+            await service.FetchStateChangesRangeAsync(today, today, Enumerable.Range(1, 11).Select(i => (long)i).ToList(), 2, CancellationToken.None);
+        }
+        finally
+        {
+            config.RemoveTarget(logger.Name);
+            NLog.LogManager.Configuration = config;
+        }
+
+        var lines = console.Lines.Where(l => l.Contains("treesize")).ToList();
+        Assert.Contains("11 台裝置", Assert.Single(lines));
+        Assert.DoesNotContain("⚠", lines[0]);
+        Assert.Empty(logger.Logs);
+    }
+
+    [Fact]
     public async Task 狀態變更_範圍為空_不發messages請求且不計失敗()
     {
         var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());
@@ -2982,6 +3003,270 @@ public class PrtgFetchServiceTests : IDisposable
 
     // ───────── 第 63-2 輪 A-4：分頁等待重試由建構旗標開啟，預設關 ─────────
 
+    // ── 逐台階段的暫停閘、停損與待補（第 64 輪 B-1、B-2、B-4）──────────
+
+    private PrtgFetchService RetryingService(PrtgClient client, EfPrtgStore store, Func<TimeSpan, CancellationToken, Task> delay, IRunConsole? console = null) =>
+        new(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            console ?? new TestConsole(), new Dictionary<string, string>(), guard: null, retryTransientPaging: true)
+        {
+            RetryDelay = delay,
+            ValueFetchJitter = () => 0
+        };
+
+    private static HttpResponseMessage ServerDown() => JsonResponse("{\"error\":\"boom\"}", HttpStatusCode.ServiceUnavailable);
+
+    [Fact]
+    public async Task 逐台_連續10台失敗停損_剩餘不送請求且全部記待補()
+    {
+        var today = DateTime.Today;
+        var (client, handler) = CreateClient(req => IdQuery(req.RequestUri!.ToString()) >= 5 ? ServerDown() : JsonResponse("{\"messages\":[]}"));
+        var delays = new List<TimeSpan>();
+        var service = RetryingService(client, CreateStore(), (span, _) => { lock (delays) delays.Add(span); return Task.CompletedTask; });
+        var ids = Enumerable.Range(1, 30).Select(i => (long)i).ToList();
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, ids, 1, CancellationToken.None);
+
+        // 前 4 台成功＋第 5～14 台各失敗一次後停損；剩下的一個請求都不送
+        Assert.Equal(14, handler.RequestedUrls.Count);
+        Assert.Equal(Enumerable.Range(5, 26).Select(i => (long)i), result.PendingDevices.OrderBy(i => i));
+        Assert.False(result.Converged);
+        Assert.Equal(9, delays.Count); // 第 10 台失敗直接停損，不再暫停
+        Assert.Equal(new[] { 15d, 60d, 180d }, delays.Take(3).Select(d => d.TotalSeconds));
+        Assert.True(service.ValueFetchCoolingDown);
+    }
+
+    [Fact]
+    public async Task 逐台_暫停期間不送新請求()
+    {
+        var today = DateTime.Today;
+        var fail = 1;
+        var (client, handler) = CreateClient(_ => Interlocked.Exchange(ref fail, 0) == 1 ? ServerDown() : JsonResponse("{\"messages\":[]}"));
+        var during = new List<int>();
+        var service = RetryingService(client, CreateStore(), async (_, ct) =>
+        {
+            await Task.Delay(100, ct); // 讓已在途的請求先結束
+            lock (handler.RequestedUrls) during.Add(handler.RequestedUrls.Count);
+            await Task.Delay(200, ct);
+            lock (handler.RequestedUrls) during.Add(handler.RequestedUrls.Count);
+        });
+        var ids = Enumerable.Range(1, 20).Select(i => (long)i).ToList();
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, ids, 4, CancellationToken.None);
+
+        Assert.Equal(2, during.Count);
+        Assert.Equal(during[0], during[1]);
+        Assert.True(during[0] < 20, "暫停當下還有裝置沒送出，這個案例才有意義");
+        Assert.Empty(result.PendingDevices);
+    }
+
+    [Fact]
+    public async Task 逐台_單台暫時失敗_只送一次就交給閘_重排後成功()
+    {
+        var today = DateTime.Today;
+        var failed = 0;
+        var (client, handler) = CreateClient(req =>
+            IdQuery(req.RequestUri!.ToString()) == 3 && Interlocked.Increment(ref failed) == 1 ? ServerDown() : JsonResponse("{\"messages\":[]}"));
+        var delays = new List<TimeSpan>();
+        var service = RetryingService(client, CreateStore(), (span, _) => { lock (delays) delays.Add(span); return Task.CompletedTask; });
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1, 2, 3, 4], 1, CancellationToken.None);
+
+        Assert.True(result.Converged);
+        Assert.Empty(result.PendingDevices);
+        Assert.Single(delays); // pager 內建重試已關，不會再疊一層 15＋60 秒
+        Assert.Equal(2, handler.RequestedUrls.Count(u => IdQuery(u) == 3));
+        Assert.Equal(5, handler.RequestedUrls.Count);
+    }
+
+    [Fact]
+    public async Task 逐台_閘等待中取消_一秒內返回()
+    {
+        var today = DateTime.Today;
+        var (client, _) = CreateClient(_ => ServerDown());
+        using var cts = new CancellationTokenSource();
+        var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = RetryingService(client, CreateStore(), async (_, ct) =>
+        {
+            paused.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        });
+
+        var run = service.FetchStateChangesRangeAsync(today, today, [1, 2, 3], 1, cts.Token);
+        await paused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"取消後 {watch.Elapsed} 才返回");
+    }
+
+    [Fact]
+    public async Task 逐台感測器_第二頁失敗重排_名單與寫入數不重複累計()
+    {
+        var firstPage = "{\"treesize\":5001,\"sensors\":[" + string.Join(",", Enumerable.Range(1, 5000).Select(i =>
+            $"{{\"objid\":{1000 + i},\"parentid\":1,\"sensor\":\"S{i}\",\"type\":\"ping\",\"paused\":false}}")) + "]}";
+        var lastPage = "{\"treesize\":5001,\"sensors\":[{\"objid\":9999,\"parentid\":1,\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}";
+        var failedOnce = 0;
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse(url.Contains("start=0") ? "{\"treesize\":1,\"devices\":[{\"objid\":1,\"device\":\"D\",\"paused\":false}]}" : "{\"devices\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            if (!url.Contains("content=sensors")) return JsonResponse("{}", HttpStatusCode.NotFound);
+            if (url.Contains("start=5000"))
+                return Interlocked.Increment(ref failedOnce) == 1 ? ServerDown() : JsonResponse(lastPage);
+            return JsonResponse(firstPage);
+        });
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1), fetchValues: false);
+
+        Assert.Empty(result.PendingSensorDevices);
+        Assert.Equal(5001, result.Sensors);
+    }
+
+    [Fact]
+    public async Task 逐台感測器_有待補裝置_只清已完成裝置的過期感測器()
+    {
+        var store = CreateStore();
+        store.ScopeBaseline().Update(b => { b.DeviceCount = 2; b.At = DateTime.Now.AddDays(-1); });
+        var old = DateTime.Now.AddDays(-3);
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 11, DeviceObjid = 1, Name = "保留到本趟", SyncedAt = old },
+            new PrtgSensorRow { Objid = 12, DeviceObjid = 1, Name = "PRTG 已刪", SyncedAt = old },
+            new PrtgSensorRow { Objid = 21, DeviceObjid = 2, Name = "待補裝置的", SyncedAt = old },
+        }, old);
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse(url.Contains("start=0") ? "{\"treesize\":2,\"devices\":[{\"objid\":1,\"device\":\"A\",\"paused\":false},{\"objid\":2,\"device\":\"B\",\"paused\":false}]}" : "{\"devices\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            if (IdQuery(url) == 2) return ServerDown();
+            return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":11,\"parentid\":1,\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}");
+        });
+        var console = new TestConsole();
+        var service = RetryingService(client, store, (_, _) => Task.CompletedTask, console);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
+
+        Assert.Equal(new long[] { 2 }, result.PendingSensorDevices);
+        Assert.False(result.HistoryAffectingFailure);
+        using var db = _fx.NewContext();
+        var remaining = await db.PrtgSensors.Select(s => s.Objid).OrderBy(i => i).ToListAsync();
+        Assert.Equal(new long[] { 11, 21 }, remaining);
+    }
+
+    [Fact]
+    public async Task 感測器停損後_同趟狀態變更階段不再打PRTG_全部記待補()
+    {
+        var ids = Enumerable.Range(1, 12).Select(i => (long)i).ToArray();
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            return ServerDown();
+        });
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(ids), fetchValues: false);
+
+        Assert.Equal(ids, result.PendingSensorDevices.OrderBy(i => i));
+        Assert.Equal(ids, result.PendingMessageDevices.OrderBy(i => i));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=messages"));
+    }
+
+    [Fact]
+    public async Task 同日續補_只對待補裝置發請求_不重查已完成的也不清除()
+    {
+        var today = DateTime.Today;
+        var store = CreateStore();
+        var old = DateTime.Now.AddDays(-3);
+        store.UpsertSensors(new[] { new PrtgSensorRow { Objid = 99, DeviceObjid = 9, Name = "已完成裝置的舊感測器", SyncedAt = old } }, old);
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":" + (100 + IdQuery(url)) + ",\"parentid\":" + IdQuery(url) + ",\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}");
+        });
+        var service = RetryingService(client, store, (_, _) => Task.CompletedTask);
+
+        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None);
+
+        Assert.Empty(left.Sensors);
+        Assert.Empty(left.Messages);
+        Assert.Equal(new long[] { 1, 2 }, handler.RequestedUrls.Where(u => u.Contains("content=sensors")).Select(u => IdQuery(u)!.Value).OrderBy(i => i));
+        Assert.Equal(new long[] { 2, 3 }, handler.RequestedUrls.Where(u => u.Contains("content=messages")).Select(u => IdQuery(u)!.Value).OrderBy(i => i));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
+        using var db = _fx.NewContext();
+        Assert.Contains(await db.PrtgSensors.Select(s => s.Objid).ToListAsync(), id => id == 99);
+    }
+
+    [Fact]
+    public async Task 暫停與停損走訊號通道_不混進進度回呼()
+    {
+        // 回填與結構同步把進度回呼的數字直接當進度條，訊號混進去畫面會跳成「1/15」
+        var (client, _) = CreateClient(_ => ServerDown());
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+        var signals = new List<string>();
+        service.Signal = (phase, _, _) => { lock (signals) signals.Add(phase); };
+        var progress = new List<string>();
+
+        await service.FetchStateChangesRangeAsync(DateTime.Today, DateTime.Today, Enumerable.Range(1, 12).Select(i => (long)i).ToList(), 1,
+            CancellationToken.None, (phase, _, _) => { lock (progress) progress.Add(phase); });
+
+        Assert.Contains(PrtgFetchService.PrtgPausedPhase, signals);
+        Assert.Contains(PrtgFetchService.PrtgHaltedPhase, signals);
+        Assert.DoesNotContain(PrtgFetchService.PrtgPausedPhase, progress);
+        Assert.DoesNotContain(PrtgFetchService.PrtgHaltedPhase, progress);
+    }
+
+    [Fact]
+    public async Task 逐台_永久失敗的裝置不進待補_但仍計失敗且不暫停()
+    {
+        // 裝置已刪除的 404：再試也一樣。進待補會讓這幾天每晚重評、「待補評估」永遠掛著
+        var today = DateTime.Today;
+        var (client, handler) = CreateClient(req => IdQuery(req.RequestUri!.ToString()) == 2
+            ? JsonResponse("{}", HttpStatusCode.NotFound)
+            : IdQuery(req.RequestUri!.ToString()) == 3 ? ServerDown() : JsonResponse("{\"messages\":[]}"));
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1, 2, 3], 1, CancellationToken.None);
+
+        Assert.Equal(2, result.FailedObjects);
+        Assert.False(result.Converged);
+        Assert.Equal(new long[] { 3 }, result.PendingDevices);
+        Assert.Single(handler.RequestedUrls, u => IdQuery(u) == 2); // 不重排
+    }
+
+    [Fact]
+    public async Task 逐台_分頁確定性不收斂的裝置不進待補_仍計失敗()
+    {
+        // 回應形狀不對屬確定性失敗：進待補會讓每個窗口多跑一趟、那幾天每晚重評
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            if (IdQuery(url) == 2) return JsonResponse("{\"error\":\"weird\"}");
+            return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":" + (100 + IdQuery(url)) + ",\"parentid\":" + IdQuery(url) + ",\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\"}]}");
+        });
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1, 2, 3), fetchValues: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.DoesNotContain(2L, result.PendingSensorDevices);
+    }
+
+    [Fact]
+    public void 逐日統計_舊JSON缺待補欄位_為null代表未知()
+    {
+        var stat = System.Text.Json.JsonSerializer.Deserialize<PrtgDayStat>(
+            "{\"Date\":\"2026-08-30T00:00:00\",\"Outcome\":\"success\",\"Findings\":0,\"AttributedHosts\":0,\"MapAvailable\":true,\"TriggerHosts\":0,\"TargetSensors\":0,\"FailedSensors\":0}")!;
+        Assert.Null(stat.PendingSensorDevices);
+        Assert.Null(stat.PendingMessageDevices);
+    }
+
     private async Task<(PrtgStateChangeRangeResult Result, List<TimeSpan> Delays)> RunTimeoutOnceMessagesAsync(bool retryTransientPaging)
     {
         var today = DateTime.Today;
@@ -3011,7 +3296,9 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.True(result.Converged);
         Assert.Equal(0, result.FailedObjects);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(15) }, delays);
+        // 第一次暫停 15 秒加 0～20% 誤差（逐台階段走共用暫停閘，不再是 pager 的固定 15 秒）
+        var delay = Assert.Single(delays);
+        Assert.InRange(delay, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(18));
         using var db = _fx.NewContext();
         Assert.Single(await db.PrtgStateChanges.ToListAsync());
     }

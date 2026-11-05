@@ -93,6 +93,40 @@ public static class PrtgReevaluationPlanner
         return lastFinishedRun.PrtgDays.FirstOrDefault(s => s.Outcome != BatchRun.PrtgOutcomeSuccess);
     }
     /// <summary>
+    /// 沿用同步時要補的裝置：這幾天最新統計留下的待補聯集（缺欄的舊紀錄當沒有）。
+    /// 已完成的裝置不重查，只補這些。
+    /// </summary>
+    public static (IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages) PendingDevices(
+        IReadOnlyList<BatchRun>? recentRuns, IReadOnlyList<DateTime> days)
+    {
+        var sensors = new HashSet<long>();
+        var messages = new HashSet<long>();
+        if (recentRuns != null)
+        {
+            foreach (var day in days)
+            {
+                if (BatchRunQueries.LatestPrtgDayStat(recentRuns, day) is not { } latest) continue;
+                sensors.UnionWith(latest.Stat.PendingSensorDevices ?? Array.Empty<long>());
+                messages.UnionWith(latest.Stat.PendingMessageDevices ?? Array.Empty<long>());
+            }
+        }
+        return (sensors.OrderBy(id => id).ToList(), messages.OrderBy(id => id).ToList());
+    }
+
+    /// <summary>最新一趟取數留下的待補裝置數（各天、感測器與狀態變更的聯集，與 <see cref="RunResume"/> 同一口徑）；舊紀錄缺欄位時回 null（未知，不顯示）。</summary>
+    public static int? PendingDeviceCount(IReadOnlyList<BatchRun> runs)
+    {
+        var latest = runs.Where(r => r.JobType != BatchRun.JobTypeAi && r.PrtgDays is { Count: > 0 })
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId).FirstOrDefault();
+        if (latest == null || latest.PrtgDays!.All(d => d.PendingSensorDevices == null && d.PendingMessageDevices == null)) return null;
+        return PendingDeviceUnion(latest.PrtgDays!).Count();
+    }
+
+    /// <summary>一趟逐日統計裡沒完成的裝置（缺欄的舊紀錄當沒有）：狀態卡台數與執行紀錄「仍待補」都讀這一份。</summary>
+    public static IEnumerable<long> PendingDeviceUnion(IEnumerable<PrtgDayStat> days) =>
+        days.SelectMany(d => (d.PendingSensorDevices ?? Array.Empty<long>()).Concat(d.PendingMessageDevices ?? Array.Empty<long>())).Distinct();
+
+    /// <summary>
     /// 本趟能否沿用同日另一趟的來源同步（docs/PRTG-SPEC.md §3）：只有排程趟、Full 範圍，而且本趟每一天
     /// 最新的那筆統計都是今天開跑、來源同步完整。手動執行一律重做——按下去就是要重跑。
     /// 回傳來源同步實際發生的時刻（沿用趟會一路傳下去，不會變成沿用趟自己的時間）；不能沿用回 null。「最新」刻意不跳過失敗趟：同步失敗之後的下一個窗口要重試。

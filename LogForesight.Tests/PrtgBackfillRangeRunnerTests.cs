@@ -4,6 +4,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Tests.TestDoubles;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -43,12 +44,14 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
 
+    private readonly AcceleratedPrtgClock _clock = new();
+
     private (PrtgFetchService Fetch, Handler Handler) Fetch(EfPrtgStore store, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? respond = null)
     {
         var handler = new Handler();
         if (respond != null) handler.Respond = respond;
         var client = new PrtgClient("https://prtg.example.com", "token", 30, true, handler,
-            PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+            PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(_clock));
         var console = new ConsoleStub();
         var fetch = new PrtgFetchService(client, store,
             new PrtgFreshnessStore(new EfJsonBlobStore(_fixture.NewContext, PrtgFreshnessStore.BlobKey)),
@@ -225,6 +228,7 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
             new[] { "diskfree" }, store, new ConsoleStub(), CancellationToken.None);
         Assert.False(ok);
         Assert.Equal(10, stopHandler.Urls.Count(u => u.Contains("historicdata.json")));
+        Assert.True(_clock.TotalRequestedDelay > TimeSpan.Zero, "historicdata 配額限速必須真的走過，不是被繞過");
         Assert.Equal(5, ValuesFreshness().LastCount);
         Assert.Equal(0, ValuesFreshness().ZeroStreak);
 

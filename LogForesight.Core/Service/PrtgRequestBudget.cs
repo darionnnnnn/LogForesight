@@ -126,9 +126,10 @@ public class PrtgRequestBudget
 
     /// <summary>
     /// 全程序共享的預算實例。正式 client 建立入口（PrtgClientFactory 與 SystemSettingsService）皆使用此實例。
-    /// 不提供 public setter，避免測試污染全域實例。
+    /// 不提供 public setter；internal setter 只給測試組件載入時換成加速時鐘（與 <see cref="PrtgTablePager.DefaultWait"/> 同形狀）：
+    /// 全量測試並行時所有經工廠的測試共用這個配額池，真時鐘的「每秒 2 次」會讓彼此排隊到逾時。正式碼不替換它。
     /// </summary>
-    public static PrtgRequestBudget Shared { get; } = new();
+    public static PrtgRequestBudget Shared { get; internal set; } = new();
 
     public IPrtgClock Clock { get; }
 

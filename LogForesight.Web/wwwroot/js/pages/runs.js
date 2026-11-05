@@ -12,7 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
-import { formatDuration, phaseSeconds, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
+import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
@@ -297,7 +297,7 @@ function renderSummary(summaryPage) {
 
     renderTable(container, {
         columns: [
-            { title: '日期', render: s => s.date },
+            { title: '日期', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
             { title: '執行時間', render: s => renderDayTimingCell(s.timing) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
@@ -306,7 +306,7 @@ function renderSummary(summaryPage) {
             { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
-            { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
+            { title: '未執行', className: 'text-end', render: s => s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
@@ -365,7 +365,7 @@ function failedHostsCell(summary) {
 
 const DAY_DETAIL_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, truncate: true, render: h => h.hostName },
-    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status) },
+    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
     {
         title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
         render: h => workflowSummaryCell(h)
@@ -458,10 +458,11 @@ async function renderDayDetailInto(cell, date) {
     render();
 }
 
-function statusBadgeCell(status) {
+function statusBadgeCell(status, note = null) {
     const meta = STATUS_META[status] ?? STATUS_META.none;
     const span = document.createElement('span');
     span.className = 'd-inline-flex align-items-center gap-2';
+    if (note) span.title = note;
 
     const swatch = document.createElement('span');
     swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--sm';
@@ -587,7 +588,7 @@ const RUN_LIST_COLUMNS = [
         sortValue: r => r.durationSeconds ?? -1,
         render: r => r.interrupted ? '—（異常中斷）' : (r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中')
     },
-    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => runTriggerText(r) },
+    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.resumeSummary ? `${runTriggerText(r)}　仍待補：${r.resumeSummary}` : runTriggerText(r) },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
     {
         title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
@@ -1259,7 +1260,12 @@ function applyPrtgOperationalStatus(status) {
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const diffDays = Math.max(1, Math.round((today - earliestDate) / (1000 * 60 * 60 * 24)));
-            pendingVal.textContent = `${pendingDays.length} 天（最早 ${earliest}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
+            const devices = status.prtgPendingDevices > 0 ? `，含 ${status.prtgPendingDevices} 台裝置` : '';
+            pendingVal.textContent = `${pendingDays.length} 天待補（最早 ${earliest}${devices}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
+            pendingRow.classList.remove('d-none');
+        } else if (status.prtgPendingDevices > 0) {
+            // 待補評估日不含昨天，但昨天的裝置也可能還沒補完
+            pendingVal.textContent = `${status.prtgPendingDevices} 台裝置待補，下一次排程自動補`;
             pendingRow.classList.remove('d-none');
         } else {
             pendingRow.classList.add('d-none');
@@ -1346,7 +1352,7 @@ function applyScheduleStatus(status) {
     }
 
     document.getElementById('schedule-run-state').textContent = status.isRunning
-        ? `執行中（${status.triggerText}${status.catchUpDeadline ? `，補跑到 ${formatDateTime(status.catchUpDeadline)} 停止` : ''}）`
+        ? `執行中（${status.triggerText}${status.catchUpDeadline ? `，補跑到 ${formatDateTime(status.catchUpDeadline)} 停止` : status.windowEnd ? `，本趟到 ${formatDateTime(status.windowEnd)} 停止` : ''}）${status.windowNote ? `　${status.windowNote}` : ''}`
         : '閒置';
 
     if (status.isRunning && status.startedAt) {
@@ -1688,8 +1694,10 @@ function renderScheduleProgress(status) {
         prtgPhaseLabel += `（第 ${status.prtgDayIndex}／${status.prtgDayCount} 天）`;
     }
 
-    let prtgCustomLabel = null;
-    if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
+    let prtgCustomLabel = status.isRunning ? prtgPauseLabel(status) : null;
+    if (prtgCustomLabel) {
+        // 暫停或停損優先：這時進度數字不動，使用者要知道的是「為什麼不動」
+    } else if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
         prtgCustomLabel = `${prtgPhaseLabel}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
     } else if (status.prtgCompleted) {
         // prtg-done(0,0) 會保留前一階段的進度；那可能是「同步 20 台中的 20 台」，

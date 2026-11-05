@@ -106,6 +106,14 @@ public class HealthServiceTests : IDisposable
         new MailNotifyStateStore(_backend.Blob("mail_notify_state")), NewFreshnessService(), new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
 
     [Fact]
+    public void 匿名Liveness只給版本號_不帶commit()
+    {
+        var dto = NewService().GetLiveness();
+        Assert.Equal(BuildVersion.Current.Number, dto.Version);
+        Assert.DoesNotContain("+", dto.Version);
+    }
+
+    [Fact]
     public void 存活檢查_資料庫可達時回ok()
     {
         var dto = NewService().GetLiveness();

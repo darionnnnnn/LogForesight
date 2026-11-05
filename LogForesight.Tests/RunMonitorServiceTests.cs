@@ -457,6 +457,194 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
     }
 
+    // ── NetIQ 格的說明（第 64 輪 C-4、C-5）──────────
+
+    [Fact]
+    public void NetIQ空資料待複查與放棄自動重查_格子講得出來()
+    {
+        var waiting = _hosts.Upsert(new WebHost { HostName = "10.0.8.1", Source = "netiq" });
+        var givenUp = _hosts.Upsert(new WebHost { HostName = "10.0.8.2", Source = "netiq" });
+        var runDate = DateTime.Today.AddDays(-1);
+        var dataDate = runDate.AddDays(-1);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { waiting.HostId }, dataDate, 1, NetiqAttemptStatus.EmptyOnce);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { givenUp.HostId }, dataDate, 1, NetiqAttemptStatus.Partial);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { givenUp.HostId }, dataDate, 2, NetiqAttemptStatus.Partial);
+
+        var rows = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDayDetail(runDate);
+
+        var waitingRow = Assert.Single(rows, r => r.HostName == waiting.HostName);
+        Assert.Equal("none", waitingRow.Status);
+        Assert.Contains("複查", waitingRow.StatusNote);
+        var givenUpRow = Assert.Single(rows, r => r.HostName == givenUp.HostName);
+        Assert.Equal(BatchRunStatus.Warning, givenUpRow.Status);
+        Assert.Contains("已放棄自動重查", givenUpRow.StatusNote);
+    }
+
+    [Fact]
+    public void NetIQ失敗類今天重查用完_格子講明天會再試_不說已放棄()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.3", Source = "netiq" });
+        var runDate = DateTime.Today.AddDays(-1);
+        var dataDate = runDate.AddDays(-1);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 1, NetiqAttemptStatus.Failed);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 2, NetiqAttemptStatus.Failed);
+
+        var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDayDetail(runDate), r => r.HostName == host.HostName);
+
+        Assert.Contains("明天會再試", row.StatusNote);
+    }
+
+    [Fact]
+    public void 執行紀錄列_帶結束時仍待補的摘要()
+    {
+        var runs = Runs();
+        var start = DateTime.Today.AddHours(1);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE", StartedAt = start });
+        runs.FinishRun(new BatchRun { RunId = id, HostName = "SITE", StartedAt = start, FinishedAt = start.AddMinutes(5), NetiqDaysFailed = 4 });
+
+        var row = Assert.Single(Create().GetRunList(1));
+
+        Assert.Equal("NetIQ 4 主機日", row.ResumeSummary);
+    }
+
+    // ── 今天列（第 64 輪 E-3）──────────
+
+    [Fact]
+    public void 今天有趟_第一頁多一列且不佔天數_第二頁沒有()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-TODAY", Source = "local" });
+        var other = _hosts.Upsert(new WebHost { HostName = "10.0.9.1", Source = "netiq" });
+        AddRun("SITE-TODAY", DateTime.Today.AddHours(0).AddMinutes(1), exitCode: 0, errorCount: 0, (RunTimingPhases.Local, RunPhaseOutcomes.Success));
+
+        var service = Create();
+        var first = service.GetDaySummaries(3, 1, 2);
+        var second = service.GetDaySummaries(3, 2, 2);
+
+        Assert.Equal(3, first.Count); // 2 天＋今天
+        var today = first[^1];
+        Assert.True(today.IsToday);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), today.Date);
+        Assert.False(today.InProgress);
+        // 今天還沒處理到的 NetIQ 主機是未執行，不是失敗
+        Assert.Equal(1, today.NotRunCount);
+        Assert.Equal(0, today.FailedCount);
+        Assert.DoesNotContain(second, s => s.IsToday);
+        Assert.All(first.Take(2), s => Assert.False(s.IsToday));
+        Assert.NotNull(other);
+    }
+
+    [Fact]
+    public void 今天沒有趟_不出現今天列()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-NONE", Source = "local" });
+        var rows = Create().GetDaySummaries(3, 1, 3);
+        Assert.Equal(3, rows.Count);
+        Assert.DoesNotContain(rows, s => s.IsToday);
+    }
+
+    // ── 停用主機與本機格（第 64 輪 E-2）──────────
+
+    private void AddRun(string host, DateTime startedAt, int exitCode, int errorCount, params (string Key, string Outcome)[] phases)
+    {
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = host, StartedAt = startedAt });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = runId, HostName = host, StartedAt = startedAt, FinishedAt = startedAt.AddMinutes(1),
+            ExitCode = exitCode, ErrorCount = errorCount,
+            Phases = phases.Length == 0 ? null : phases.Select(p => new RunPhaseRecord(p.Key, startedAt) { FinishedAt = startedAt.AddMinutes(1), Outcome = p.Outcome }).ToList()
+        });
+    }
+
+    [Fact]
+    public void 停用主機_本機被略過的趟全失敗_不出現在總表也不算失敗()
+    {
+        // 站台實況：12 台 NetIQ＋1 台停用的站台主機；當天 NetIQ 全部 401 讓整趟 failed
+        const string site = "SITE-DISABLED";
+        _hosts.Upsert(new WebHost { HostName = site, Source = "local", Active = false });
+        var netiq = Enumerable.Range(1, 12)
+            .Select(i => _hosts.Upsert(new WebHost { HostName = $"10.0.1.{i}", Source = "netiq" })).ToList();
+        var runDate = DateTime.Today.AddDays(-1);
+        AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3, (RunTimingPhases.Netiq, RunPhaseOutcomes.Partial));
+        var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
+            backend: _attemptBackend);
+        foreach (var host in netiq)
+            NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, runDate.AddDays(-1), 1, "failed");
+
+        var summary = Assert.Single(service.GetDaySummaries(1, 1, 30));
+
+        Assert.Equal(12, summary.TotalHosts);
+        Assert.Equal(12, summary.FailedCount);
+        Assert.DoesNotContain(site, summary.FailedHostNames);
+        Assert.DoesNotContain(service.GetDayDetail(runDate), row => row.HostName == site);
+    }
+
+    [Fact]
+    public void 停用主機_當天有跑過本機分析_保留歷史且狀態看本機階段()
+    {
+        const string site = "SITE-HIST";
+        _hosts.Upsert(new WebHost { HostName = site, Source = "local", Active = false });
+        var runDate = DateTime.Today.AddDays(-1);
+        AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3,
+            (RunTimingPhases.Local, RunPhaseOutcomes.Success), (RunTimingPhases.Netiq, RunPhaseOutcomes.Partial));
+
+        var service = Create();
+        var summary = Assert.Single(service.GetDaySummaries(1, 1, 30));
+        var row = Assert.Single(service.GetDayDetail(runDate), r => r.HostName == site);
+
+        Assert.Equal(1, summary.TotalHosts);
+        Assert.Equal(0, summary.FailedCount);
+        Assert.Equal(BatchRunStatus.Success, row.Status);
+        Assert.False(row.Legacy);
+    }
+
+    [Theory]
+    [InlineData(RunPhaseOutcomes.Success, BatchRunStatus.Success)]
+    [InlineData(RunPhaseOutcomes.Skipped, BatchRunStatus.Success)]
+    [InlineData(RunPhaseOutcomes.Partial, BatchRunStatus.Warning)]
+    [InlineData(RunPhaseOutcomes.Failed, BatchRunStatus.Failed)]
+    [InlineData(RunPhaseOutcomes.Stopped, BatchRunStatus.Stopped)]
+    public void 啟用的本機主機_格子狀態看本機階段不看整趟(string outcome, string expected)
+    {
+        const string site = "SITE-ACTIVE";
+        _hosts.Upsert(new WebHost { HostName = site, Source = "local" });
+        var runDate = DateTime.Today.AddDays(-1);
+        AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3, (RunTimingPhases.Local, outcome));
+
+        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+
+        Assert.Equal(expected, row.Status);
+    }
+
+    [Fact]
+    public void 本機主機_該日只有不含本機階段的趟_不拿它的結果當本機狀態()
+    {
+        const string site = "SITE-NETIQ-ONLY-RUN";
+        _hosts.Upsert(new WebHost { HostName = site, Source = "local" });
+        var runDate = DateTime.Today.AddDays(-1);
+        AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3, (RunTimingPhases.Netiq, RunPhaseOutcomes.Failed));
+
+        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+
+        Assert.Equal("none", row.Status);
+    }
+
+    [Fact]
+    public void 升級前紀錄沒有階段資料_以整趟狀態代表並標示()
+    {
+        const string site = "SITE-LEGACY";
+        _hosts.Upsert(new WebHost { HostName = site, Source = "local" });
+        var runDate = DateTime.Today.AddDays(-1);
+        AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3);
+
+        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+
+        Assert.Equal(BatchRunStatus.Failed, row.Status);
+        Assert.True(row.Legacy);
+    }
+
     // ── 本機分析停用（回饋十八輪批次D，終檢輪補上規劃表列的執行監控顯示）──────────
 
     /// <summary>停用「分析本機主機」後，本機主機的空白日顯示「本機分析已停用」而非「未執行」——

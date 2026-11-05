@@ -109,6 +109,7 @@ public class StorageBackend
             if (commandInterceptor is not null) sqliteOptions.AddInterceptors(commandInterceptor);
             options = sqliteOptions.Options;
             _dbDesc = $"Sqlite（{cs}）";
+            _schemaMutexName = BuildSchemaMutexName(isSqlite: true, cs);
         }
         else
         {
@@ -127,6 +128,7 @@ public class StorageBackend
             if (commandInterceptor is not null) sqlServerOptions.AddInterceptors(commandInterceptor);
             options = sqlServerOptions.Options;
             _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
+            _schemaMutexName = BuildSchemaMutexName(isSqlite: false, cs);
         }
 
         _dataRoot = fallbackDir;
@@ -141,7 +143,7 @@ public class StorageBackend
             //
             // 用**獨立的** mutex 名稱（不是排程那把 Global\LogForesight）：schema 確認不該排在
             // 一場正在跑的夜間分析後面等，那會讓站台啟動被分析時間綁架。
-            var gate = new NamedMutexGate(SchemaMutexName);
+            var gate = new NamedMutexGate(_schemaMutexName);
             var exclusive = gate.RunExclusive(() =>
             {
                 using var ctx = _dbFactory();
@@ -181,6 +183,39 @@ public class StorageBackend
 
     /// <summary>schema 建立/升級的跨行程互斥名稱——刻意與排程的 <c>Global\LogForesight</c> 分開</summary>
     private const string SchemaMutexName = @"Global\LogForesight-Schema";
+
+    private readonly string _schemaMutexName;
+
+    /// <summary>
+    /// schema 互斥的實際名稱。SQL Server 維持原常數（滾動升級期間新舊行程必須拿同一把鎖，
+    /// 連線字串寫法差異也不能讓互斥失效）；SQLite 依資料檔絕對路徑分名——不同檔案本來就沒有互斥的必要，
+    /// 共用一把會讓各自開暫存 DB 的測試整批排成單線。雜湊只用來組名稱，不寫 log。
+    /// </summary>
+    internal static string BuildSchemaMutexName(bool isSqlite, string connectionString)
+    {
+        if (!isSqlite) return SchemaMutexName;
+        try
+        {
+            var builder = new SqliteConnectionStringBuilder(connectionString);
+            var dataSource = builder.DataSource;
+            string identity;
+            if (builder.Mode == SqliteOpenMode.Memory || dataSource == ":memory:")
+                identity = connectionString;
+            else if (string.IsNullOrWhiteSpace(dataSource) || dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+                return SchemaMutexName; // URI 形式沒有可靠的路徑正規化，寧可多互斥也不能失去互斥
+            else
+                identity = Path.GetFullPath(dataSource);
+
+            // Windows 路徑不分大小寫：同一個檔案的不同寫法必須拿到同一把鎖
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(identity.ToUpperInvariant())));
+            return SchemaMutexName + "-" + hash[..16];
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or FormatException or IOException)
+        {
+            return SchemaMutexName;
+        }
+    }
 
     /// <summary>
     /// schema 互斥的等待上限。取不到不會跳過（見 <see cref="NamedMutexGate.RunExclusive"/>），

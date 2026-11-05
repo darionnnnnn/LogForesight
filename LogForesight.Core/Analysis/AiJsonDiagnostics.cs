@@ -18,6 +18,13 @@ namespace LogForesight.Core.Analysis;
 public static class AiJsonDiagnostics
 {
     /// <summary>
+    /// 額外欄位裡會強制結構化輸出的鍵（暫定）。關掉文法重試時只拿掉 response_format 不夠：
+    /// 站台若在 ExtraRequestFields 設了這些鍵，模型仍被文法擋成 []，那次重試就白費。
+    /// </summary>
+    internal static readonly IReadOnlySet<string> StructuredOutputKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "response_format", "grammar", "json_schema", "guided_json" };
+
+    /// <summary>
     /// 診斷專用 logger 名稱。**不含句點**，所以 NLog 完整名稱與執行紀錄裡的短名稱（取最後一段）一致；
     /// 判定一律比對這個名稱，不比對訊息內容。
     /// </summary>

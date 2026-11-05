@@ -73,7 +73,7 @@ public class BatchRunRecorder : IDisposable
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
         CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null,
-        bool catchUp = false, DateTime? startedAt = null, string? scope = null)
+        bool catchUp = false, DateTime? startedAt = null, string? scope = null, DateTime? windowInstanceStart = null)
     {
         _store = store;
         _ct = ct;
@@ -81,12 +81,13 @@ public class BatchRunRecorder : IDisposable
         {
             HostName = hostName,
             StartedAt = startedAt ?? DateTime.Now,
-            AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
+            AppVersion = BuildVersion.Current.Label,
             Args = string.Join(" ", args),
             Trigger = trigger,
             JobType = jobType,
             Scope = scope,
-            CatchUp = catchUp ? true : null
+            CatchUp = catchUp ? true : null,
+            WindowInstanceStart = windowInstanceStart
         };
 
         if (_store == null) return;
@@ -327,6 +328,12 @@ public class BatchRunRecorder : IDisposable
                 Append("Info", OutputLogger, message, null, loggedAt);
             }
         }
+    }
+
+    /// <summary>這一趟目前還剩多少失敗與待補（趟末里程碑用；判定本身在 <see cref="RunResume"/>）。</summary>
+    public RunResume CurrentResume()
+    {
+        lock (_countLock) return RunResume.Of(_run);
     }
 
     public void RecordDayAnalyzed()

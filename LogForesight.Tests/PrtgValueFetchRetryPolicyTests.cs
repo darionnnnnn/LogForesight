@@ -7,6 +7,7 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Service;
 using Xunit;
 
@@ -364,6 +365,30 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
         return rig;
     }
 
+    /// <summary>並行寫入不能共用 EfSqliteFixture 那一條記憶體連線（SqliteConnection 不是執行緒安全，偶發寫入例外會被算成失敗）。</summary>
+    private sealed class FileDb : IDisposable
+    {
+        private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-retry-" + Guid.NewGuid().ToString("N"));
+        private readonly DbContextOptions<LfDbContext> _options;
+
+        public FileDb()
+        {
+            Directory.CreateDirectory(_dir);
+            _options = new DbContextOptionsBuilder<LfDbContext>()
+                .UseSqlite($"Data Source={Path.Combine(_dir, "values.db")};Pooling=False").Options;
+            using var seed = NewContext();
+            seed.Database.EnsureCreated();
+        }
+
+        public LfDbContext NewContext() => new(_options);
+
+        public void Dispose()
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(_dir, true); } catch (IOException) { }
+        }
+    }
+
     private static long[] Ids(int count, int first = 1) => Enumerable.Range(first, count).Select(i => (long)i).ToArray();
 
     private static async Task<(int Written, int Failed)> RunAsync(Rig rig, long[] ids, int concurrency = 1,
@@ -581,14 +606,64 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
     public async Task 併發8時整波失敗只算一次_PRTG短暫中斷不會整趟放棄()
     {
         // 前 16 個請求失敗（兩波），之後 PRTG 恢復：每顆各算一次的話第二波就數到 10 而停損
+        using var db = new FileDb();
         var sent = 0;
         var rig = NewRig((_, _) => Interlocked.Increment(ref sent) <= 16 ? TimedOut() : Ok(),
-            pauseBody: (_, ct) => Task.Delay(30, ct));
+            pauseBody: (_, ct) => Task.Delay(30, ct), contextFactory: db.NewContext);
 
         var (written, failed) = await RunAsync(rig, Ids(40), concurrency: 8);
 
         Assert.Equal(0, failed);
         Assert.Equal(40, written);
+    }
+
+    [Fact]
+    public async Task 暫停拉起前送出的慢回應成功_不把序列歸零()
+    {
+        // 第 1、2 顆同時在途：第 2 顆先失敗拉閘；第 1 顆的慢回應在暫停之後才成功，它不能證明 PRTG 已恢復。
+        // 第 3 顆再失敗時序列要前進到 60 秒；被慢回應歸零的話會退回 15 秒。
+        var secondFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rig = NewRig((id, attempt) => id == 1 || (id > 3) || attempt > 1 ? Ok() : TimedOut(),
+            pauseBody: async (span, _) =>
+            {
+                paused.TrySetResult();
+                await Task.Delay(100);
+            });
+        rig.BeforeRespond = async (id, attempt) =>
+        {
+            if (attempt > 1) return;
+            if (id == 1) { await secondFailed.Task.WaitAsync(TimeSpan.FromSeconds(10)); await paused.Task.WaitAsync(TimeSpan.FromSeconds(10)); }
+            if (id == 2) secondFailed.TrySetResult();
+        };
+
+        var (written, failed) = await RunAsync(rig, Ids(3), concurrency: 2);
+
+        Assert.Equal((3, 0), (written, failed));
+        Assert.Equal(new[] { S(15), S(60) }, rig.Delays);
+    }
+
+    [Fact]
+    public async Task 暫停結束後才回來的舊請求失敗_算同一波不讓序列前進()
+    {
+        // 確定性重現：第一波 4 顆（在途上限）同時在途；第 1 顆失敗拉閘、暫停「立刻結束」後，其餘 3 顆才失敗。
+        // 只看 IsRaised 會把這 3 顆當成新的 3 波，序列多跳 3 次。
+        var allInFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sent = 0;
+        using var db = new FileDb();
+        var rig = NewRig((id, attempt) => id <= 4 && attempt == 1 ? TimedOut() : Ok(), contextFactory: db.NewContext);
+        rig.BeforeRespond = async (id, attempt) =>
+        {
+            if (attempt > 1 || id > 4) return;
+            if (Interlocked.Increment(ref sent) == 4) allInFlight.TrySetResult();
+            await allInFlight.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (id > 1) await Task.Delay(200);
+        };
+
+        var (written, failed) = await RunAsync(rig, Ids(20), concurrency: 4);
+
+        Assert.Equal((20, 0), (written, failed));
+        Assert.Single(rig.Delays);
     }
 
     // ───────── 停損與冷卻 ─────────

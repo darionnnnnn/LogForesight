@@ -86,7 +86,7 @@ public sealed class RunExportService : IRunExportService
 
     private static readonly string[] TriggerOrder = { "schedule", "manual", "fetch-followup", "console", "other" };
 
-    private static readonly Regex VersionPattern = new(@"^[0-9]+(\.[0-9]+){1,3}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VersionPattern = new(@"^[0-9]+(\.[0-9]+){1,3}(\+[0-9a-f]{4,40})?$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex IdentPattern = new(@"^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex TimePattern = new(@"^[0-9]{1,2}:[0-9]{2}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex DailyLabelPattern = new(@"^daily-[0-9]{8}-h[0-9]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -501,7 +501,7 @@ public sealed class RunExportService : IRunExportService
                 SchemaVersion = SchemaVersion,
                 ExportedAt = Ts(_now),
                 UtcOffset = Lit(FormatOffset(TimeZoneInfo.Local.GetUtcOffset(_now))),
-                AppVersion = VersionLabel(typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString()),
+                AppVersion = VersionLabel(BuildVersion.Current.Label),
                 Period = new ExportPeriodDto { From = Day(_cutoff), To = Day(_now) },
                 Days = _days,
                 RetentionDays = settings.RunLogRetentionDays,
@@ -865,11 +865,13 @@ public sealed class RunExportService : IRunExportService
         private List<ExportDailyHealthDto> BuildDailyHealth()
         {
             _ct.ThrowIfCancellationRequested();
-            // 服務層一次取完整天數（分頁上限 90 只在控制器）；總表不含今天
+            // 服務層一次取完整天數（分頁上限 90 只在控制器）；今天有取數趟時多一列（IsToday）
             var summaries = _s._monitor.GetDaySummaries(_days, 1, _days);
             return summaries.Select(s => new ExportDailyHealthDto
             {
                 Date = Lit(s.Date),
+                IsToday = s.IsToday,
+                InProgress = s.InProgress,
                 TotalHosts = s.TotalHosts,
                 Success = s.SuccessCount,
                 Backfilled = s.BackfilledCount,
@@ -1023,7 +1025,9 @@ public sealed class RunExportService : IRunExportService
                     .OrderBy(d => d.Date)
                     .Take(_l.UnsuccessfulItems)
                     .Select(d => new ExportPrtgDayDto(Day(d.Date), Closed(d.Outcome, KnownPrtgOutcomes),
-                        string.IsNullOrWhiteSpace(d.Note) ? null : TextCut(d.Note, _l.AiInputTextChars), d.NeedsReevaluation))
+                        string.IsNullOrWhiteSpace(d.Note) ? null : TextCut(d.Note, _l.AiInputTextChars), d.NeedsReevaluation,
+                        d.PendingSensorDevices == null && d.PendingMessageDevices == null ? null
+                            : (d.PendingSensorDevices ?? Array.Empty<long>()).Union(d.PendingMessageDevices ?? Array.Empty<long>()).Count()))
                     .ToList(),
                 SignalCodes = runCodes.TryGetValue(r.RunId, out var codes)
                     ? codes.OrderBy(c => c, StringComparer.Ordinal).Take(_l.RunSignalCodes).ToList()
@@ -1358,7 +1362,7 @@ public sealed class RunExportService : IRunExportService
             "【用途】本檔是 LogForesight 排程作業頁匯出的診斷資料，請協助找出這個專案「尚未完善的細節」：反覆出現的錯誤、沒跑完的趟次、效能瓶頸、AI 回覆格式異常的成因。",
             "【去識別化】主機、帳號、IP、網址、路徑、SID 與密鑰已換成 host-001、user-001、ip-001、secret 之類代號；代號只在本檔內有效，檔案內沒有對照表。自由文字（樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除。看到代號請當成「某一台／某一位」，不要試圖還原。",
             "【解不開的憑證】meta.deidentification.undecryptableSecrets 列出站台存著、但用目前金鑰解不開的憑證名稱，這些值只靠 password=、passhash= 等樣式遮罩。它也是可回報的設定問題：代表憑證需要重新設定。",
-            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 不含今天，但 signalGroups 與 abnormalRuns 含今天。",
+            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 可能多一列今天（isToday），它的 notRun 代表尚未處理、不是失敗；signalGroups 與 abnormalRuns 含今天。",
             "【狀態】success＝完成且無警告；warning＝完成但有警告或 AI 失敗；failed＝結束代碼非 0 或有 Error；stopped＝使用者或執行窗口到點停止，不算失敗；stuck＝站台重啟時還沒結束，或逾 6 小時沒有人持有；running＝匯出當下仍在跑的快照，只計入 runStats，不進 abnormalRuns。",
             "【null 與 0】null 代表沒有資料或無法計算（舊紀錄缺欄位、樣本數為 0 的中位數與 P95、AI 呼叫數為 0 的失敗率）；0 才是真的零。請不要把 null 當成 0 解讀。",
             "【執行站台不等於被分析主機】abnormalRuns.host 是跑這一趟的主機（站台），不是被分析的對象。同一個錯誤在幾個「執行站台」出現，不代表它影響了幾台被分析主機；要判斷個案或通案，請看 affectedRuns 與 versions。",

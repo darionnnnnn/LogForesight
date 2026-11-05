@@ -175,7 +175,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         var handler = new StructureSyncHandler();
         var service = Create();
         service.ClientFactoryForTests = settings => PrtgClientFactory.Create(
-            settings, handler, new PrtgRequestBudget());
+            settings, handler, new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
         Assert.True(service.TryStart(out var error, out _), error);
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -500,7 +500,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
     {
         EnablePrtg();
         var service = Create();
-        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new PrtgRequestBudget());
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
         Assert.True(service.TryStart(out var error, out _), error);
         await WaitIdleAsync(service);
@@ -522,7 +522,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         var service = new PrtgStructureSyncService(_settingsStore, _backend, state, new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")), StatusStore(), new PrtgBackfillRunState(),
             new ThrowingSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
-        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new PrtgRequestBudget());
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
         Assert.True(service.TryStart(out var error, out _), error);
         await WaitIdleAsync(service);
@@ -551,7 +551,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         new HostStore(_backend.Blob("hosts")).MutateBatch(hosts =>
             hosts.Add(new WebHost { HostId = 9, HostName = "sync-fixture", IpAddress = "10.50.0.9", Active = true }));
         var service = Create();
-        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new RulesBumpingHandler(_backend), new PrtgRequestBudget());
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new RulesBumpingHandler(_backend), new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
         Assert.True(service.TryStart(out var error, out _), error);
         await WaitIdleAsync(service);

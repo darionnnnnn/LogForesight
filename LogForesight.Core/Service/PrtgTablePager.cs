@@ -37,7 +37,11 @@ internal sealed class PrtgPagingNotConvergedException : Exception
 }
 
 /// <summary>分頁結果統計。ReadRows 含重複列，Mapped 是實際交給 onBatch 的筆數。</summary>
-internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages, bool StoppedEarly = false);
+internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages, bool StoppedEarly = false)
+{
+    /// <summary>messages 讀到的筆數少於 treesize（帶時間篩選時語意未證實，只提醒）；逐台查詢由呼叫端彙總成一行，不逐台出聲。</summary>
+    public bool TreeSizeShort { get; init; }
+}
 
 /// <summary>
 /// 分頁讀取的等待重試選項（傳入即開啟；<c>null</c>＝不重試，維持單次失敗即擲出的既有行為）。
@@ -282,15 +286,16 @@ internal static class PrtgTablePager
 
         // treesize 比對：單發大查詢取不齊是靜默少一塊資料的典型來源（CLAUDE.md 紅線）。
         // 已寫出的資料保留（冪等 upsert），但呼叫端必須把這階段記為失敗。
+        var treeSizeShort = false;
         if (treeSize > 0 && readRows < treeSize && !stoppedEarly)
         {
             var shortMessage = $"{content} 只讀到 {readRows} 筆，少於 PRTG 回報的 treesize {treeSize} 筆";
             if (string.Equals(content, "messages", StringComparison.Ordinal))
             {
-                // messages 搭配 filter_drel 時 treesize 是否為過濾後筆數尚未證實，只出聲、不擲例外
-                var warn = $"  ⚠ {shortMessage}（treesize 在帶時間篩選時語意未證實，僅提醒）。";
-                console.WriteLine(warn);
-                Log.Warn("{Message}", warn);
+                // messages 搭配 filter_drel 時 treesize 是否為過濾後筆數尚未證實，不擲例外；
+                // 也不逐台寫 Warn：實機 treesize 固定 100 萬，每台都中，趟次會因此永遠「有警告」
+                treeSizeShort = true;
+                Log.Debug("{Message}", shortMessage);
             }
             else
             {
@@ -299,7 +304,7 @@ internal static class PrtgTablePager
             }
         }
 
-        return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly);
+        return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly) { TreeSizeShort = treeSizeShort };
     }
 
     /// <summary>

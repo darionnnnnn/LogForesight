@@ -34,6 +34,12 @@ public class SlowOperationDto
 /// <summary>維運診斷用的完整健康資訊（需 <c>Maintain</c>）</summary>
 public class HealthDetailDto : HealthDto
 {
+    /// <summary>建置時有沒有取得 commit；false 時無法從版本判斷站台部署了哪一版</summary>
+    public bool BuildShaKnown { get; set; }
+
+    /// <summary>站台主機在主機清單已停用，本機日誌不再分析</summary>
+    public bool LocalHostDisabled { get; set; }
+
     /// <summary>資料庫不可達時的錯誤訊息（正常為 null）</summary>
     public string? StorageError { get; set; }
 

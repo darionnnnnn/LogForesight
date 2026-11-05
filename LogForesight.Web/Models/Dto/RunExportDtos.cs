@@ -149,6 +149,9 @@ public sealed record ExportHostSourceDto(string Source, int Total, int Active);
 /// <summary>執行總表的一天（<see cref="Date"/> 是執行日，分析的資料日期是前一天）。不含主機名單</summary>
 public sealed record ExportDailyHealthDto
 {
+    public bool IsToday { get; init; }
+    public bool InProgress { get; init; }
+
     public string Date { get; init; } = string.Empty;
     public int TotalHosts { get; init; }
     public int Success { get; init; }
@@ -316,7 +319,7 @@ public sealed record ExportAbnormalRunDto
 
 public sealed record ExportUnsuccessfulPhaseDto(string Phase, string? Outcome, string? Note);
 
-public sealed record ExportPrtgDayDto(string Date, string Outcome, string? Note, bool NeedsReevaluation);
+public sealed record ExportPrtgDayDto(string Date, string Outcome, string? Note, bool NeedsReevaluation, int? PendingDevices = null);
 
 // ===== aiFormatAnomalies =====
 

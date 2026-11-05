@@ -494,6 +494,34 @@ public class SchedulerRunStateTests
     /// 且兩者都不影響三軌的 phase／done／total（釘住「不落入 catch-all」）。
     /// </summary>
     [Fact]
+    public void ReportProgress_PRTG暫停與停損訊號_不污染進度軌且下一趟歸零()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress(RunPhases.PrtgSyncDevices, 3, 10);
+
+        var before = DateTime.Now;
+        state.ReportProgress(RunPhases.PrtgPaused, 2, 60);
+        state.ReportProgress(RunPhases.PrtgHalted, 30, 0);
+        state.ReportProgress(RunPhases.PrtgHalted, 12, 0);
+
+        var snapshot = state.Snapshot();
+        Assert.Equal(RunPhases.PrtgSyncDevices, snapshot.PrtgProgressPhase);
+        Assert.Equal(3, snapshot.PrtgProgressDone);
+        Assert.Equal(10, snapshot.PrtgProgressTotal);
+        Assert.Equal(2, snapshot.PrtgPausedCount);
+        Assert.InRange(snapshot.PrtgResumeAt!.Value, before.AddSeconds(59), DateTime.Now.AddSeconds(61));
+        Assert.Equal(30, snapshot.PrtgHaltedPending);
+
+        state.EndRun();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        var next = state.Snapshot();
+        Assert.Equal(0, next.PrtgPausedCount);
+        Assert.Null(next.PrtgResumeAt);
+        Assert.Equal(0, next.PrtgHaltedPending);
+    }
+
+    [Fact]
     public void ReportProgress_GuardPaused與Resumed設定與清空PausedReason且不影響三軌進度()
     {
         var state = new SchedulerRunState();

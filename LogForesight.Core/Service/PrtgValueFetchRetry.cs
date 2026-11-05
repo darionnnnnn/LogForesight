@@ -83,6 +83,86 @@ internal sealed class PrtgValueFetchRetryPolicy
 }
 
 /// <summary>
+/// 一次「並行逐項取數」的退避狀態：數值取數（逐顆）與逐台 sensors／messages 共用同一份判定。
+/// 同一波在途請求只算一次（世代比對），成功才歸零，連續失敗或總暫停達上限就停損。
+/// </summary>
+internal sealed class PauseSession
+{
+    internal PauseSession(PrtgValueFetchRetryPolicy policy, PauseGate gate)
+    {
+        Policy = policy;
+        Gate = gate;
+    }
+
+    internal PrtgValueFetchRetryPolicy Policy { get; }
+    internal PauseGate Gate { get; }
+    internal object Sync { get; } = new();
+    private volatile bool _stopped;
+    internal bool Stopped => _stopped;
+    internal string? StopReason { get; private set; }
+
+    /// <summary>送出前讀到的世代與現在相同才算：暫停拉起之前送出的慢回應不能證明 PRTG 已恢復。</summary>
+    internal void RecordSuccess(long sentGeneration)
+    {
+        lock (Sync)
+        {
+            if (Gate.Generation == sentGeneration) Policy.RecordSuccess();
+        }
+    }
+
+    /// <summary>
+    /// 可重試失敗：同一波不算新的一次；連續失敗或總暫停達上限就停損，否則依序列拉起一次暫停。
+    /// </summary>
+    /// <param name="unit">停損原因裡的單位（顆、台）</param>
+    internal PauseDecision OnRetryableFailure(TimeSpan? retryAfter, long sentGeneration, string unit, CancellationToken ct)
+    {
+        lock (Sync)
+        {
+            // 這次拉起之前送出的請求（含暫停結束後才回來的）是同一波在途請求，不算新的一次：
+            // 否則併發 8 第一波就數到 8，PRTG 重啟一分鐘就整趟放棄
+            if (_stopped || Gate.IsRaised || Gate.Generation != sentGeneration) return PauseDecision.None;
+            Policy.RecordRetryableFailure();
+            var consecutive = Policy.ConsecutiveFailures;
+
+            string? stopReason = null;
+            var pause = TimeSpan.Zero;
+            if (Policy.ConsecutiveLimitReached)
+            {
+                stopReason = $"連續 {PrtgValueFetchRetryPolicy.MaxConsecutiveFailures} {unit}可重試失敗";
+            }
+            else
+            {
+                var delay = Policy.NextDelay(retryAfter);
+                if (Policy.WouldReachTotalPauseLimit(Gate.TotalPaused, delay))
+                {
+                    stopReason = $"總暫停時間將達 {(int)PrtgValueFetchRetryPolicy.MaxTotalPause.TotalMinutes} 分鐘";
+                }
+                else
+                {
+                    pause = delay;
+                    // 不等它：下一個工作送出前的 Gate.WaitAsync 會等，自己這一個也不例外
+                    _ = Gate.RaiseAsync(delay, ct);
+                }
+            }
+
+            if (stopReason != null)
+            {
+                _stopped = true;
+                StopReason = stopReason;
+                Gate.Reset(); // 等在閘前的工作不必再睡完剩下的時間，醒來看到停損旗標就收工
+            }
+            return new PauseDecision(pause, stopReason, consecutive);
+        }
+    }
+}
+
+/// <summary>一次可重試失敗的處置：要暫停多久（0＝不暫停）、是否因此停損。</summary>
+internal readonly record struct PauseDecision(TimeSpan Pause, string? StopReason, int Consecutive)
+{
+    internal static readonly PauseDecision None = new(TimeSpan.Zero, null, 0);
+}
+
+/// <summary>
 /// 共用暫停閘：任何一顆碰到可重試失敗就拉起，所有工作在下一顆送出前都要等它放行。
 /// 閘已拉起時再拉起不會疊加（回傳進行中的那一個），所以多條並行工作同時失敗只會暫停一次。
 /// 等待用注入的延遲函式——測試注入零等待或可控的等待，不必真的等 15 秒。
@@ -95,6 +175,7 @@ internal sealed class PauseGate
     private TaskCompletionSource? _open;
     private CancellationTokenSource? _cts;
     private TimeSpan _totalPaused;
+    private long _generation;
 
     /// <param name="delay">等待函式；測試注入零等待或可控的等待。</param>
     /// <param name="clock">量測實際暫停長度的時鐘（總暫停停損用）；測試注入的等待函式若要模擬時間流逝，就推進這個時鐘。</param>
@@ -111,6 +192,16 @@ internal sealed class PauseGate
     internal TimeSpan TotalPaused
     {
         get { lock (_sync) return _totalPaused; }
+    }
+
+    /// <summary>
+    /// 第幾次拉起。請求送出前記下、回來時比對：不一致代表它是拉起之前就送出的舊請求，
+    /// 它的失敗屬於同一波（不讓序列前進），它的成功也不能證明 PRTG 已恢復（不歸零）。
+    /// 只看 <see cref="IsRaised"/> 不夠：暫停結束後才回來的舊請求會被當成新一波。
+    /// </summary>
+    internal long Generation
+    {
+        get { lock (_sync) return _generation; }
     }
 
     /// <summary>閘目前是否拉起（暫停進行中）。</summary>
@@ -145,6 +236,7 @@ internal sealed class PauseGate
         {
             if (_open is { Task.IsCompleted: false }) return _open.Task;
 
+            _generation++;
             var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _open = open;

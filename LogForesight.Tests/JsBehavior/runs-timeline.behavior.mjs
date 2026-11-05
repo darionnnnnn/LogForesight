@@ -9,7 +9,7 @@ import { installDom } from './mini-dom.mjs';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 installDom();
-const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration } =
+const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration, prtgPauseLabel } =
     await import(pathToFileURL(path.join(jsRoot, 'core', 'run-timeline.js')).href);
 
 const at = (h, m = 0) => `2026-11-02T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
@@ -125,17 +125,45 @@ const cases = {
     },
 
     dayTimingTwoLines() {
-        const timing = { firstStartedAt: at(1), lastFinishedAt: at(1, 3), totalSeconds: 131, fetchSeconds: 44, followUpAiSeconds: 87, otherAiRuns: 0, interruptedCount: 0 };
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(1, 3), totalSeconds: 131, otherAiRuns: 0, interruptedCount: 0, branches: [{ key: 'netiq', seconds: 44 }, { key: 'ai', seconds: 87 }] };
         const cell = renderDayTimingCell(timing);
         assert.equal(cell.children.length, 2);
         assert.equal(cell.children[0].textContent, '01:00～01:03（2 分 11 秒）');
-        assert.equal(cell.children[1].textContent, '取數 44 秒 · AI 1 分 27 秒');
+        assert.equal(cell.children[1].textContent, 'NetIQ 44 秒 · AI 1 分 27 秒');
         assert.ok(cell.children[1].classList.contains('small'));
         assert.ok(cell.children[1].classList.contains('text-muted'));
         const withOther = renderDayTimingCell({ ...timing, otherAiRuns: 2, otherAiSeconds: 2400 });
         assert.ok(withOther.children[1].textContent.includes('另有 AI 補跑 2 趟（'));
         // 沒有第二行內容時維持純文字
         assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }), '01:00～02:00（1 時 0 分）');
+    },
+
+    dayTimingFourPathsAndSubPhases() {
+        const timing = {
+            firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, fetchRuns: 3, fetchRunsWithoutPhases: 0, otherAiRuns: 0, interruptedCount: 0,
+            branches: [
+                { key: 'local', from: at(1), to: at(1), seconds: 2 },
+                { key: 'netiq', from: at(1), to: at(1), seconds: 44 },
+                { key: 'prtg', from: at(1), to: at(2), seconds: 1808, subPhases: [{ key: 'prtg-value-fill', from: at(1), to: at(2), seconds: 1748 }] },
+                { key: 'ai', from: at(1), to: at(1), seconds: 87 }
+            ]
+        };
+        const cell = renderDayTimingCell(timing);
+        assert.ok(cell.children[0].textContent.includes('共 3 趟'));
+        assert.equal(cell.children[1].textContent, '本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 8 秒 · AI 1 分 27 秒');
+        const wrap = renderDayTiming(timing);
+        assert.ok(wrap.textContent.includes('補 PRTG 數值'));
+        // 舊趟沒有階段資料：講清楚不是沒跑
+        const legacy = renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, fetchRuns: 1, fetchRunsWithoutPhases: 1, otherAiRuns: 0, interruptedCount: 0, branches: [] });
+        assert.equal(legacy.children[1].textContent, '無階段資料（升級前紀錄）');
+    },
+
+    prtgPauseLabelText() {
+        const now = new Date('2026-11-05T01:00:00');
+        assert.equal(prtgPauseLabel({}, now), null);
+        assert.equal(prtgPauseLabel({ prtgResumeAt: '2026-11-05T01:00:15', prtgPausedCount: 2 }, now), 'PRTG 回應異常，暫停中（第 2 次，約 15 秒後重試）');
+        assert.equal(prtgPauseLabel({ prtgResumeAt: '2026-11-05T00:59:00', prtgPausedCount: 2 }, now), null);
+        assert.equal(prtgPauseLabel({ prtgHaltedPending: 30, prtgResumeAt: '2026-11-05T01:00:15' }, now), 'PRTG 已停止本趟取數，30 台待補');
     },
 
     dayTimingOtherAiOnlyDay() {

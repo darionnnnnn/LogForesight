@@ -7,6 +7,12 @@ namespace LogForesight.Web.Models.Dto;
 /// </summary>
 public class RunDaySummaryDto
 {
+    /// <summary>今天的附加列（不佔 days）：未執行數代表尚未處理，不是漏跑</summary>
+    public bool IsToday { get; set; }
+
+    /// <summary>今天的取數趟還在跑</summary>
+    public bool InProgress { get; set; }
+
     public string Date { get; set; } = string.Empty;
 
     public int TotalHosts { get; set; }
@@ -56,6 +62,12 @@ public class RunDayHostStatusDto
 
     /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none | local_disabled</summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>狀態的補充說明（等複查、已放棄自動重查）；null＝沒有</summary>
+    public string? StatusNote { get; set; }
+
+    /// <summary>這一格的狀態來自升級前沒有階段資料的紀錄（以整趟狀態代表）</summary>
+    public bool Legacy { get; set; }
 
     public long? RunId { get; set; }
     public DateTime? StartedAt { get; set; }
@@ -108,6 +120,9 @@ public class RunBranchTimingDto
     public DateTime From { get; set; }
     public DateTime To { get; set; }
     public int Seconds { get; set; }
+
+    /// <summary>這一路底下的子階段（目前只有 PRTG：結構同步、觸發式取數、補數值）；沒有則為空</summary>
+    public List<RunBranchTimingDto> SubPhases { get; set; } = new();
 }
 
 /// <summary>執行總表的當天執行時間：取數趟的起訖與總耗時，加上本機／NetIQ／PRTG／AI 各路明細</summary>
@@ -117,12 +132,6 @@ public class RunDayTimingDto
     public DateTime? LastFinishedAt { get; set; }
     /// <summary>取數趟與跟隨取數 AI 趟的聯集秒數（異常中斷不計）；沒有可計算的趟為 null</summary>
     public int? TotalSeconds { get; set; }
-
-    /// <summary>只有取數趟的聯集秒數（null＝當天沒有已完成的取數趟）</summary>
-    public int? FetchSeconds { get; set; }
-
-    /// <summary>只有跟隨取數 AI 趟的聯集秒數（null＝當天沒有已完成的跟隨趟）</summary>
-    public int? FollowUpAiSeconds { get; set; }
 
     /// <summary>非跟隨的 AI 趟（排程補跑、手動）趟數；不進起訖與總計</summary>
     public int OtherAiRuns { get; set; }
@@ -269,6 +278,9 @@ public class RunErrorSummaryDto
 /// 回答的是「每一次執行本身跑了多久、觸發方式、有沒有問題」，供「執行紀錄」分頁逐筆檢視。</summary>
 public class RunListItemDto
 {
+    /// <summary>這一趟結束時還留著的失敗與待補（單位統一）；沒有或 AI 趟為 null</summary>
+    public string? ResumeSummary { get; set; }
+
     public long RunId { get; set; }
     public string HostName { get; set; } = string.Empty;
     public DateTime StartedAt { get; set; }

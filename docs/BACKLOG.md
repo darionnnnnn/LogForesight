@@ -70,6 +70,37 @@
 多窗口時更早錯過的窗口不補，由下一個窗口的缺漏日機制吸收。
 **觸發時機**：實際出現連續錯過多個窗口、缺漏日吸收不了的情況。
 
+### 窗口到點時 PRTG 還在結構同步，下一窗口整段重做
+
+取消會穿透逐台取數，這時沒有逐日統計也沒有待補清單，下一窗口從頭同步。寫入是冪等的，資料不會壞，只多花時間。停損與單台失敗不受影響（只補待補裝置）。
+**觸發時機**：實機看到 PRTG 同步撐不過一個窗口，或每個窗口都在重做同一段。
+
+### 跨午夜窗口午夜後的趟不沿用 PRTG 同步
+
+`ReusableSyncFrom` 以日曆日為界，23:00～01:00 窗口在 00:10 開跑的第二趟 `runToday` 已是隔天，整段結構同步重做、待補清單也不用。行為正確，只多花時間。改法是以窗口實例起點為界。
+**觸發時機**：實際採用跨午夜窗口且第二趟常落在午夜後。
+
+### 同日續補不更新同步狀態、新鮮度與取數範圍
+
+沿用同步只補待補裝置時不重寫夜間同步狀態與新鮮度（維護頁停在上一趟的值直到隔天），也不重新過濾取數範圍（兩趟之間移出範圍的裝置仍會被補、要到隔天整段同步才清）。續跑決策只看上一趟排程趟，中間手動補完的話下一趟仍會多跑一次（多半無事可做）。
+**觸發時機**：維護頁的同步時刻被誤讀，或範圍變動頻繁。
+
+### 還沒輪到的 Sentinel 與異常中斷不留 NetIQ 回執
+
+窗口到點時，平行度外還沒開始的 Sentinel 沒有逐台計畫；站台異常中斷時也來不及寫回執。同日下一窗口照補，跨日且回望只有 1 天時才會漏。
+**觸發時機**：Sentinel 台數超過 `MaxParallelServers` 且常被窗口切斷，或站台常在夜間重啟。
+
+### 本機資料不完整的日子不會自動重跑
+
+本機紀錄沒有 NetIQ 那樣的取數狀態欄，缺漏判定只看有無紀錄：事件被滾掉或頻道讀取被拒的本機日，排程不會重跑，要用「立即執行」的重新分析。
+**觸發時機**：本機來源主機變多、需要自動補回時，比照 NetIQ 加狀態欄。
+
+### 全量測試耗時觀察
+
+`dotnet test --logger "trx;LogFileName=full.trx" --results-directory <dir>` 後跑 `python LogForesight.Tests/tools/test-timing.py <dir>/full.trx`，列出最慢類別與單案、依集合彙總、使用 `StorageBackend` 的類別占比。牆鐘受機器負載影響，只當觀察值。
+PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `PrtgRequestBudget.Shared`），新增測試不要 `new PrtgRequestBudget()`。`EfSqliteFixture` 共用一條記憶體連線，並行寫入的案例要用檔案型 DB。
+**剩餘最慢的**：`PrtgMonitoringPagingTests`（3 萬列規模）、`CalibrationServiceTests` 殘留判定、`BulkScaleGateTests`。要再縮短時從這幾個的資料量下手。
+
 ### 測試的時鐘與時區抽象
 
 約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。
@@ -83,7 +114,7 @@
   依 `Os` 分流查詢與映射，見 docs/archive/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
-  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已有分析紀錄的主機日不重查）。
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已成功的主機日不重查；失敗、截斷與待定案依取數狀態補查，規則見 NETIQ-API-REFERENCE.md〈主機日取數狀態〉）。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
   （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證**：不用自適應時間窗
   （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），採窄化 filter
