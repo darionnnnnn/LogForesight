@@ -1,7 +1,7 @@
 name: CI
 
 # 最低限度：每次提交測試必跑（docs/OPS-HARDENING-PLAN.md P1-4）。單人開發，
-# 先求建置與測試不紅字即可，不上完整 pipeline（linting/覆蓋率/多環境矩陣等留待有需要再加）。
+# 先求建置與測試不紅字即可，不上完整 pipeline（linting/覆蓋率等留待有需要再加）。
 on:
   push:
     branches: ["**"]
@@ -9,8 +9,13 @@ on:
 
 jobs:
   build-and-test:
-    # 正式環境是 Windows（讀 Event Log、AD 驗證），這裡跑得到那些 Windows 專屬路徑
-    runs-on: windows-latest
+    # 正式環境是 Windows（讀 Event Log、AD 驗證），這裡跑得到那些 Windows 專屬路徑；
+    # macOS 守 Unix 語意差異（檔案鎖、路徑、時區），Windows 專屬案例在那邊顯示為略過
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +24,11 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # 釘大版本，不跟 runner image 漂移；下限見 LogForesight.Tests/NodeRuntime.cs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - run: dotnet build --configuration Release
 
       - run: dotnet test --configuration Release --no-build
-
