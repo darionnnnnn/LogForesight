@@ -3239,6 +3239,26 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 逐台_分頁確定性不收斂的裝置不進待補_仍計失敗()
+    {
+        // 回應形狀不對屬確定性失敗：進待補會讓每個窗口多跑一趟、那幾天每晚重評
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            if (IdQuery(url) == 2) return JsonResponse("{\"error\":\"weird\"}");
+            return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":" + (100 + IdQuery(url)) + ",\"parentid\":" + IdQuery(url) + ",\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\"}]}");
+        });
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1, 2, 3), fetchValues: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.DoesNotContain(2L, result.PendingSensorDevices);
+    }
+
+    [Fact]
     public void 逐日統計_舊JSON缺待補欄位_為null代表未知()
     {
         var stat = System.Text.Json.JsonSerializer.Deserialize<PrtgDayStat>(

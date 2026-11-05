@@ -148,7 +148,8 @@ public static class ScheduleCalculator
     /// <summary>
     /// 同一窗口該不該再跑一趟：上一趟在窗口內提早結束、還留著失敗或待補。回傳那一趟（null＝不續跑）。
     /// 計數讀執行紀錄，站台重啟不歸零。被窗口結束或手動停掉的不續跑（等下一個窗口）；補跑與手動趟沒有窗口實例，不算在內。
-    /// PRTG 停損的趟另外從結束時刻起算間隔：冷卻只在那一趟的實例內，馬上再跑等於又打一次剛停損的 PRTG。
+    /// 留有 PRTG 待補裝置或失敗數值的趟（停損、重排後仍失敗、數值停損）另外從結束時刻起算間隔：
+    /// 執行紀錄分不出「停損」與「一般失敗」，一律等；冷卻只在那一趟的實例內，馬上再跑等於又打一次剛出問題的 PRTG。
     /// </summary>
     public static BatchRun? RunToContinue(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
@@ -167,7 +168,7 @@ public static class ScheduleCalculator
 
         var resume = RunResume.Of(last);
         if (!resume.HasWork) return null;
-        if (resume.PrtgHalted && now - finishedAt < WindowContinueGap) return null;
+        if ((resume.PrtgDevices > 0 || resume.PrtgSensors > 0) && now - finishedAt < WindowContinueGap) return null;
         return last;
     }
 

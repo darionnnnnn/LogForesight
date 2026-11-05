@@ -490,11 +490,12 @@ public class ScheduleCalculatorTests
     }
 
     private static BatchRun FetchRun(DateTime start, DateTime? instance, int netiqFailed = 0, bool stopped = false, bool interrupted = false,
-        string trigger = BatchRunTriggers.Schedule, int minutes = 30, IReadOnlyList<long>? pendingSensors = null) => new()
+        string trigger = BatchRunTriggers.Schedule, int minutes = 30, IReadOnlyList<long>? pendingSensors = null, int failedSensors = 0) => new()
     {
         RunId = start.Ticks, StartedAt = start, FinishedAt = start.AddMinutes(minutes), Trigger = trigger,
         WindowInstanceStart = instance, NetiqDaysFailed = netiqFailed, Stopped = stopped, Interrupted = interrupted,
-        PrtgDays = pendingSensors == null ? null : new() { new PrtgDayStat(start.Date.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: pendingSensors) }
+        PrtgDays = pendingSensors == null && failedSensors == 0 ? null
+            : new() { new PrtgDayStat(start.Date.AddDays(-1), "partial", 0, 0, true, 0, 0, failedSensors, PendingSensorDevices: pendingSensors) }
     };
 
     [Fact]
@@ -525,6 +526,23 @@ public class ScheduleCalculatorTests
         var start = Today.AddHours(1);
         var run = FetchRun(start, start, netiqFailed: 4);
         Assert.Same(run, ScheduleCalculator.RunToContinue(start.AddMinutes(40), w, new[] { run }));
+    }
+
+    [Fact]
+    public void 續跑_間隔從上一趟開跑算_不是從結束算()
+    {
+        var w = Windows(("01:00", "05:00"));
+        var start = Today.AddHours(1);
+        // 上一趟跑了 11 分、12 分時看：距開跑滿 10 分就續跑，不必等它結束後再過 10 分
+        var run = FetchRun(start, start, netiqFailed: 4, minutes: 11);
+        Assert.Same(run, ScheduleCalculator.RunToContinue(start.AddMinutes(12), w, new[] { run }));
+        // 有 PRTG 待補裝置或失敗數值（數值停損只留下失敗顆數）的趟例外：從結束算，剛出問題的 PRTG 不馬上再打
+        var halted = FetchRun(start, start, minutes: 11, pendingSensors: new long[] { 1 });
+        Assert.Null(ScheduleCalculator.RunToContinue(start.AddMinutes(12), w, new[] { halted }));
+        Assert.Same(halted, ScheduleCalculator.RunToContinue(start.AddMinutes(22), w, new[] { halted }));
+        var valuesHalted = FetchRun(start, start, minutes: 11, failedSensors: 200);
+        Assert.Null(ScheduleCalculator.RunToContinue(start.AddMinutes(12), w, new[] { valuesHalted }));
+        Assert.Same(valuesHalted, ScheduleCalculator.RunToContinue(start.AddMinutes(22), w, new[] { valuesHalted }));
     }
 
     [Fact]

@@ -1280,14 +1280,15 @@ public class AnalysisOrchestrator
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
-                    : ""));
+                    : "") +
+                (netiqResult.EmptyDeferred > 0 ? $"、回 0 筆待複查 {netiqResult.EmptyDeferred} 個主機日" : ""));
             runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
             netiqPhase.Complete(
                 netiqResult.HostsFailed > 0 ? RunPhaseOutcomes.Partial
                     : netiqResult.HostDaysAnalyzed == 0 ? RunPhaseOutcomes.Skipped
                     : RunPhaseOutcomes.Success,
                 netiqResult.HostDaysAnalyzed == 0 && netiqResult.HostsFailed == 0
-                    ? "無待補"
+                    ? (netiqResult.EmptyDeferred > 0 ? $"回 0 筆待複查 {netiqResult.EmptyDeferred} 主機日" : "無待補")
                     : $"分析 {netiqResult.HostDaysAnalyzed} 主機日、已完成跳過 {netiqResult.HostsSkippedUpToDate}、失敗 {netiqResult.HostsFailed}");
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的

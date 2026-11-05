@@ -6,20 +6,18 @@ namespace LogForesight.Core.Service;
 /// 一趟取數結束時還剩多少事沒做：直接從該趟已持久化的結果算，不另存一份（重啟後照樣成立）。
 /// 只看失敗與待補；被窗口結束停掉的部分等下一個窗口（帳本記「停止」，跨日也補得回來），不算在這裡。
 /// </summary>
-public sealed record RunResume(bool LocalFailed, int NetiqHostDays, int PrtgDevices, int PrtgSensors, bool PrtgHalted, bool PrtgFailed = false)
+public sealed record RunResume(bool LocalFailed, int NetiqHostDays, int PrtgDevices, int PrtgSensors, bool PrtgFailed = false)
 {
     public bool HasWork => LocalFailed || NetiqHostDays > 0 || PrtgDevices > 0 || PrtgSensors > 0 || PrtgFailed;
 
     public static RunResume Of(BatchRun run)
     {
         var localFailed = run.Phases?.Any(p => p.Key == RunTimingPhases.Local && p.Outcome == RunPhaseOutcomes.Failed) == true;
-        var pending = run.PrtgDays?
-            .SelectMany(d => (d.PendingSensorDevices ?? Array.Empty<long>()).Concat(d.PendingMessageDevices ?? Array.Empty<long>()))
-            .Distinct().Count() ?? 0;
+        var pending = run.PrtgDays == null ? 0 : PrtgReevaluationPlanner.PendingDeviceUnion(run.PrtgDays).Count();
         var sensors = run.PrtgDays?.Sum(d => d.FailedSensors) ?? 0;
         // 整段同步或登入失敗沒有「待補裝置」，但下一趟會整段重做，一樣算還有事沒做
         var prtgFailed = run.PrtgOutcome == BatchRun.PrtgOutcomeFailed || run.PrtgDays?.Any(d => d.Outcome == BatchRun.PrtgOutcomeFailed) == true;
-        return new RunResume(localFailed, run.NetiqDaysFailed ?? 0, pending, sensors, PrtgHalted: pending > 0, PrtgFailed: prtgFailed);
+        return new RunResume(localFailed, run.NetiqDaysFailed ?? 0, pending, sensors, PrtgFailed: prtgFailed);
     }
 
     /// <summary>給里程碑與狀態卡看的摘要：只列有的項目，單位統一（NetIQ 是主機日）。</summary>

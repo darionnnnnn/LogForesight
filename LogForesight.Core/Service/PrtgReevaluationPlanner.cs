@@ -113,15 +113,18 @@ public static class PrtgReevaluationPlanner
         return (sensors.OrderBy(id => id).ToList(), messages.OrderBy(id => id).ToList());
     }
 
-    /// <summary>最新一趟取數留下的待補裝置數（感測器與狀態變更聯集）；舊紀錄缺欄位時回 null（未知，不顯示）。</summary>
+    /// <summary>最新一趟取數留下的待補裝置數（各天、感測器與狀態變更的聯集，與 <see cref="RunResume"/> 同一口徑）；舊紀錄缺欄位時回 null（未知，不顯示）。</summary>
     public static int? PendingDeviceCount(IReadOnlyList<BatchRun> runs)
     {
         var latest = runs.Where(r => r.JobType != BatchRun.JobTypeAi && r.PrtgDays is { Count: > 0 })
             .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId).FirstOrDefault();
-        var stat = latest?.PrtgDays!.FirstOrDefault(d => d.PendingSensorDevices != null || d.PendingMessageDevices != null);
-        if (stat == null) return null;
-        return (stat.PendingSensorDevices ?? Array.Empty<long>()).Union(stat.PendingMessageDevices ?? Array.Empty<long>()).Count();
+        if (latest == null || latest.PrtgDays!.All(d => d.PendingSensorDevices == null && d.PendingMessageDevices == null)) return null;
+        return PendingDeviceUnion(latest.PrtgDays!).Count();
     }
+
+    /// <summary>一趟逐日統計裡沒完成的裝置（缺欄的舊紀錄當沒有）：狀態卡台數與執行紀錄「仍待補」都讀這一份。</summary>
+    public static IEnumerable<long> PendingDeviceUnion(IEnumerable<PrtgDayStat> days) =>
+        days.SelectMany(d => (d.PendingSensorDevices ?? Array.Empty<long>()).Concat(d.PendingMessageDevices ?? Array.Empty<long>())).Distinct();
 
     /// <summary>
     /// 本趟能否沿用同日另一趟的來源同步（docs/PRTG-SPEC.md §3）：只有排程趟、Full 範圍，而且本趟每一天

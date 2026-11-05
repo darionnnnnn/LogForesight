@@ -139,9 +139,10 @@ export function dayTimingDetailText(timing) {
             const branch = timing.branches?.find(b => b.key === key);
             if (branch) parts.push(`${label} ${formatDuration(branch.seconds)}`);
         }
-        const allLegacy = (timing.fetchRuns ?? 0) > 0 && (timing.fetchRunsWithoutPhases ?? 0) >= timing.fetchRuns;
-        if (allLegacy) parts.unshift('無階段資料（升級前紀錄）');
     }
+    // 與展開列同一個判定：當天取數趟全是舊紀錄就講明，不管第一行算不算得出總耗時
+    const allLegacy = (timing.fetchRuns ?? 0) > 0 && (timing.fetchRunsWithoutPhases ?? 0) >= timing.fetchRuns;
+    if (allLegacy) parts.unshift('無階段資料（升級前紀錄）');
     // 第一行已經是「AI 補跑」時不重複
     const firstLineIsOtherAi = timing.totalSeconds == null && !(timing.interruptedCount > 0);
     if (timing.otherAiRuns > 0 && !firstLineIsOtherAi) parts.push(`另有 ${otherAiText(timing)}`);

@@ -1011,9 +1011,14 @@ internal static class PrtgDailyPipeline
             if (interruptedDayReason is not null)
             {
                 dayStats ??= [];
+                // 沿用同步的趟被取消：同步本身沒壞，下一窗口照樣沿用、只補原本的待補清單；寫成未同步會整段重做
                 dayStats.AddRange(days.Where(day => !dayStates.ContainsKey(day))
                     .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, interruptedDayReason,
-                        NeedsReevaluation: true)));
+                        NeedsReevaluation: true,
+                        SourceSynced: reuseSyncFrom != null,
+                        SourceSyncedAt: reuseSyncFrom,
+                        PendingSensorDevices: reuseSyncFrom != null ? refillDevices?.Sensors ?? reusePending?.Sensors : null,
+                        PendingMessageDevices: reuseSyncFrom != null ? refillDevices?.Messages ?? reusePending?.Messages : null)));
                 var statsByDay = dayStats.ToDictionary(stat => stat.Date.Date);
                 dayStats = days.Select(day => statsByDay[day.Date]).ToList();
             }

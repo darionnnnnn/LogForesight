@@ -385,6 +385,14 @@ public class PrtgReevaluationPlannerTests
         var legacy = new BatchRun { RunId = 3, StartedAt = DateTime.Today, PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-1), "success", 0, 0, true, 0, 0, 0) } };
 
         Assert.Equal(3, PrtgReevaluationPlanner.PendingDeviceCount(new[] { old, latest }));
+        // 多天各有待補時是跨天聯集，與執行紀錄「仍待補」同一個數字
+        var twoDays = new BatchRun { RunId = 4, StartedAt = DateTime.Today, PrtgDays = new()
+        {
+            new PrtgDayStat(DateTime.Today.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 1, 2 }),
+            new PrtgDayStat(DateTime.Today.AddDays(-2), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 2, 3 }, PendingMessageDevices: new long[] { 4 })
+        } };
+        Assert.Equal(4, PrtgReevaluationPlanner.PendingDeviceCount(new[] { twoDays }));
+        Assert.Equal(4, RunResume.Of(twoDays).PrtgDevices);
         Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(new[] { legacy }));
         Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(Array.Empty<BatchRun>()));
     }

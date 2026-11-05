@@ -223,6 +223,12 @@ public class SchedulerTriggerQueryTests
         Assert.Contains("上一趟 #7 被停止", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, true) }));
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, false) }));
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, Array.Empty<BatchRun>()));
+
+        // 跨午夜窗口：00:30 觸發時，前一晚 23:00 那趟留下的也要說出來
+        var crossing = new List<ScheduleWindow> { new() { Start = "23:00", End = "01:00" } };
+        var afterMidnight = now.Date.AddMinutes(30);
+        var lastNight = new BatchRun { RunId = 8, StartedAt = now.Date.AddHours(-1), FinishedAt = now.Date.AddMinutes(-20), Trigger = BatchRunTriggers.Schedule, NetiqDaysFailed = 2 };
+        Assert.Contains("上一趟 #8 留下 NetIQ 2 主機日", SchedulerHostedService.DescribeWindowRun(afterMidnight, crossing, new[] { lastNight }));
     }
 
     [Fact]

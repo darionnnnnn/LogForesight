@@ -435,8 +435,10 @@ public class SchedulerHostedService : BackgroundService
     internal static string? DescribeWindowRun(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
         var note = ScheduleCalculator.DescribeCurrentWindow(now, windows);
+        // 跨午夜窗口（23:00～01:00）00:30 才觸發的趟也要看得到 23:00 那趟留下什麼：下界取今天 0 點與本實例起點較早者
+        var since = ScheduleCalculator.CurrentWindowInstance(now, windows) is { } instance && instance.Start < now.Date ? instance.Start : now.Date;
         var previous = recentRuns
-            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.StartedAt.Date == now.Date && r.FinishedAt.HasValue)
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.StartedAt >= since && r.FinishedAt.HasValue)
             .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
             .FirstOrDefault();
         if (note == null || previous == null) return note;

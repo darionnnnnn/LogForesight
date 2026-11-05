@@ -5,7 +5,8 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 第 64 輪 C-4：「哪些狀態要重查」只能有一份。清單散在多處時新增一個狀態就會漏：
-/// 帳本拒寫、補跑預覽回 409、排程永遠不補。只守判定（`is "failed" or ...`），寫入點用字面值不在此限。
+/// 帳本拒寫、補跑預覽回 409、排程永遠不補。只守「字面值寫成的 `is "failed" or ...` 清單」這一種形狀；
+/// 寫入點的單一字面值、顯示用的 switch 分支（狀態對顏色）與用常數組的清單都不在此限——後兩者改動時請順手確認仍讀 NetiqAttemptStatus。
 /// </summary>
 public class NetiqAttemptStatusGuardTests
 {

@@ -263,6 +263,7 @@ public class NetiqPipelineService
                     _hostDayTiming?.MarkIncomplete(timingRunId);
                     _console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");
                     result.AddWarning($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
+                    RecordUnattempted(() => MissingHostDays(targets), NetiqAttemptStatus.Failed);
                     return;
                 }
 
@@ -311,7 +312,8 @@ public class NetiqPipelineService
         if (_resumeRetryDays <= 0 || lookbackDays <= 0) return null;
         try
         {
-            return NetiqSourceAttempt.ReadHistory(_backend, _today.AddDays(-_resumeRetryDays), _today.AddDays(-1), _today);
+            // 範圍要蓋過常態回望：回望設 10 天時，第 8～10 天的 empty-once 若讀不到，每趟都當第一次、永遠不定案
+            return NetiqSourceAttempt.ReadHistory(_backend, _today.AddDays(-Math.Max(lookbackDays, _resumeRetryDays)), _today.AddDays(-1), _today);
         }
         catch (InvalidDataException ex)
         {

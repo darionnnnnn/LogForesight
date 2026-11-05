@@ -296,7 +296,7 @@
 ## 升級／回退注意事項
 
 - **升級**：批次 A 不改任何資料與 schema 語意；SQL Server 無變化。舊 `NeedsReevaluation=true` 的 PRTG 日第一趟仍整段重做。本機主機若已停用，升級後首趟起不再分析本機日誌（健康頁提示）。`AiFailures` 新舊口徑不同，趨勢在升級日有斷層（不回溯）。
-- **回退**：新 JSON 欄位（`PendingSensorDevices`、`PendingMessageDevices`、`ResumeSummary`、`WindowInstanceStart`、`StopAt`）對舊版無害；`BatchRun` 不移除任何舊欄位、`CatchUp` 語意不變、續跑趟 `CatchUp=false`。**`empty-once`** 只在帳本：舊版讀到當「無前次回執」（`NetiqSourceAttempt.cs:66`），管線不壞，但 run-preview 對含該狀態的日子回 409 `netiq_attempt_ledger_invalid` 直到那些日的帳本過保留期（帳本是 log blob，無法用 SQL 改）。回退後停止點回到「不在任何窗口內」。
+- **回退**：新 JSON 欄位（`PendingSensorDevices`、`PendingMessageDevices`、`ResumeSummary`、`WindowInstanceStart`、`StopAt`）對舊版無害；`BatchRun` 不移除任何舊欄位、`CatchUp` 語意不變、續跑趟 `CatchUp=false`。**`empty-once`** 只在帳本，但舊版對未知狀態是擲例外（體檢實測，原「當無前次回執」的描述錯誤）：回退後含該狀態的主機日 `RecordBatch` 擲例外→該 Sentinel 整台失敗、轄下剩餘批次不查；`ReadLatest` 擲例外→執行總表該頁 NetIQ 格全 Warning、run-preview 回 409，直到那些日的帳本過保留期（帳本是 log blob，無法用 SQL 改）。**要回退請先清掉含 `empty-once` 的帳本行，或不要回退。**回退後停止點回到「不在任何窗口內」。
 
 ## 明確不做（本輪定案）
 
@@ -355,6 +355,28 @@ A-2 雜湊短路整套移除（根因＝每個檢查重開連線）；A-4 不拆
   4. 本機格改看本機階段後，本機 Security log 讀取失敗的 Warn 不再讓格子變黃（只留在執行詳情），是否可接受。
   5. E-3 的 `InProgress` 用 `_isHeld` 判定，異常中斷的趟不算執行中。
 - **升級提醒**：站台版本要看 `版本+sha`（設定 > 系統健康），舊版本號分不出來；11-03 起的憑證問題已於 11-05 重新輸入。
+
+## 體檢輪修正（Fable 5.1，2026-11-05）
+
+實作與自查：Opus 5.5。體檢：三個唯讀 Sonnet 代理依角色分區（整趟排程流程／資料生命週期／架構並行前端測試）各附探針，共回報 25 條；主代理逐條讀路徑後修 13 條、文件 4 處、BACKLOG 3 項，其餘為可接受或不成立。每條修正附迴歸測試，B-1、B-4、A-1、A-2、C-2 另做突變驗證。
+
+| 編號 | 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|---|
+| B-1（高） | `NetiqPipelineService.ReadAttemptHistoryForResume` | 回望天數設超過 7 天時，第 8 天以前的主機日回 0 筆寫 `empty-once` 後，下一趟讀不到帳本、再寫一次 `empty-once`，每晚重查、永不定案也永不寫父紀錄（代理探針連跑三趟重現） | 帳本讀取範圍改為 `max(常態回望, 7)` | `NetiqPipelineBaselineTests.排程續跑_回望超過7天_窗外的回空複查也會定案` |
+| B-4／A-4（中） | `PrtgDailyPipeline` 取消時的補位統計 | 沿用同步＋續補進行中被窗口到點取消，補位統計寫 `SourceSynced=false`、待補 null，下一窗口整段重同步、待補清單也丟 | 補位統計沿用 `reuseSyncFrom` 與原待補清單（續補已回傳剩餘時用剩餘） | `PrtgDailyPipelineTests.沿用同步的續補被窗口結束取消_統計仍標已同步並保留待補清單` |
+| A-1（中） | `PrtgFetchService.IsPermanentFailure` | 分頁確定性不收斂（回應形狀不對、頁數或鏡像保護上限）的裝置既不可重試也不算永久失敗，永遠留在待補：每個窗口多跑一趟、那幾天每晚重評 | 不收斂與鏡像保護上限也算永久失敗（仍計失敗、不進待補） | `PrtgFetchServiceTests.逐台_分頁確定性不收斂的裝置不進待補_仍計失敗` |
+| A-2（中） | `ScheduleCalculator.RunToContinue` | 數值取數停損只留下失敗顆數、沒有待補裝置，續跑不套用「距結束 10 分」，剛停損的 PRTG 下個 Tick 就被再打 | 待補裝置或失敗數值任一非零都從結束起算；`RunResume.PrtgHalted` 別名移除（C-6） | `ScheduleCalculatorTests.續跑_間隔從上一趟開跑算_不是從結束算` |
+| C-1（中） | `PrtgReevaluationPlanner.PendingDeviceCount` | 狀態卡只取第一個有欄位的那一天、執行紀錄「仍待補」取跨天聯集，兩個數字對不上 | 兩處共用 `PendingDeviceUnion` | `PrtgReevaluationPlannerTests.PendingDeviceCount_取最新一趟的聯集_舊紀錄為null` |
+| C-2（中） | `ScheduleCalculatorTests` | 「距上一趟開跑滿 10 分」改成「距結束」沒有案例會紅 | 補能區分兩種算法的案例 | 同 A-2 |
+| B-5（中） | `AnalysisOrchestrator` NetIQ 階段說明與里程碑 | 一趟只有回 0 筆待複查時寫「無待補」，里程碑與匯出看不到這些主機日 | 階段說明與里程碑補「回 0 筆待複查 N」 | 既有 `NetiqPipelineBaselineTests` 回空案（`EmptyDeferred`） |
+| B-2（中） | PLAN 回退注意事項 | 寫「舊版讀到 `empty-once` 當無前次回執、管線不壞」，實測舊版是擲例外：該 Sentinel 整台失敗、總表該頁全 Warning、run-preview 409 | 改寫回退段，要回退先清帳本行 | — |
+| B-3（低） | `NetiqSourceAttempt.Receipt.AfterPrevious` | 同一趟跨午夜時計數被歸零；同趟先失敗後二分重查成截斷時截斷漏計 | 計數日跟著該趟第一筆；同趟由非截斷轉截斷補計一次 | `NetiqPipelineBaselineTests.同一趟的回執_跨午夜不歸零_先失敗後截斷補計截斷` |
+| B-6（低） | `NetiqPipelineService` 帳密未設定路徑 | 與「密碼解不開」同類卻沒補記回執 | 同路徑補 `RecordUnattempted` | `NetiqPipelineBaselineTests.排程續跑_Sentinel帳密未設定_主機日留失敗回執` |
+| A-9（低） | `SchedulerHostedService.DescribeWindowRun` | 跨午夜窗口 00:30 觸發看不到前一晚那趟留下什麼 | 下界取今天 0 點與本窗口實例起點較早者 | `SchedulerTriggerQueryTests` 跨午夜案 |
+| C-5（低） | `run-timeline.js dayTimingDetailText` | 全是舊紀錄且算不出總耗時時，展開列寫「無階段資料」、第二行卻空白 | 判定移出 `totalSeconds` 條件 | 既有行為測試 |
+| C-3／C-7／B-7（低） | 守門註解、`SchemaUpgrader.cs` BOM | 守門只守 `is "x" or` 一種形狀但註解沒講；檔案被加上 BOM | 註解寫明範圍；還原無 BOM | — |
+
+**可接受、不修**：A-5 續跑只看上一趟排程趟（規劃定案）；A-8 停止點在觸發當下凍結（文件已註明）；A-10 停損文字蓋住後續進度（數字正確）；B-7／C-8 守門範圍窄（註解已寫明）。**進 BACKLOG**：A-3 跨午夜不沿用、A-6／A-7 續補不更新同步狀態與範圍。**代理主張不成立**：區 B 問題 6（續補 messages 區間）前提不成立；A-6 的「SyncedAt 誤清」經代理自己查無此路徑。
 
 ## 執行紀錄
 

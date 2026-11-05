@@ -163,6 +163,37 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     }
 
     [Fact]
+    public async Task 排程續跑_回望超過7天_窗外的回空複查也會定案()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var options = new NetiqOptions { BackfillDays = 9 };
+        var nineDaysAgo = DateTime.Today.AddDays(-9);
+
+        await MakePipeline(options: options, resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(NetiqAttemptStatus.EmptyOnce, History(nineDaysAgo)[(host.HostId, nineDaysAgo)].LatestStatus);
+
+        var second = await MakePipeline(options: options, resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        // 第二趟讀得到 9 天前的 empty-once，照常定案；讀不到的話會再寫一次 empty-once，每晚空轉
+        Assert.Equal(0, second.EmptyDeferred);
+        Assert.Equal(NetiqAttemptStatus.Success, History(nineDaysAgo)[(host.HostId, nineDaysAgo)].LatestStatus);
+    }
+
+    [Fact]
+    public async Task 排程續跑_Sentinel帳密未設定_主機日留失敗回執()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel { Name = "S-EMPTY", BaseUrl = "https://x", Username = "u", PasswordEnc = null, Active = true });
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var yesterday = DateTime.Today.AddDays(-1);
+
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(NetiqAttemptStatus.Failed, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+        Assert.Empty(_client.Requests);
+    }
+
+    [Fact]
     public async Task 排程續跑_窗外只補帳本記著失敗的日子_從沒嘗試過的不補()
     {
         var sentinel = AddSentinel();
@@ -313,6 +344,24 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         history = History(day)[(host.HostId, day)];
         Assert.Equal(2, history.TruncatedRuns);
         Assert.Equal(2, history.RetryRunsToday);
+    }
+
+    [Fact]
+    public void 同一趟的回執_跨午夜不歸零_先失敗後截斷補計截斷()
+    {
+        var date = new DateTime(2026, 11, 1);
+        var beforeMidnight = new DateTime(2026, 11, 2, 23, 59, 0, DateTimeKind.Local).ToUniversalTime();
+        var afterMidnight = new DateTime(2026, 11, 3, 0, 1, 0, DateTimeKind.Local).ToUniversalTime();
+
+        var failed = new NetiqSourceAttempt.Receipt(7, 1, date, NetiqAttemptStatus.Failed, beforeMidnight).AfterPrevious(null);
+        var partial = new NetiqSourceAttempt.Receipt(7, 1, date, NetiqAttemptStatus.Partial, afterMidnight).AfterPrevious(failed);
+
+        Assert.Equal(1, failed.RetryRuns);
+        Assert.Equal(1, partial.RetryRuns);                       // 同一趟只算一次，也不因跨午夜歸零
+        Assert.Equal(failed.RetryDay, partial.RetryDay);           // 計數日跟著那趟第一筆
+        Assert.Equal(1, partial.TruncatedRuns);                    // 二分重查後才知道是截斷，要補計
+        var again = new NetiqSourceAttempt.Receipt(7, 1, date, NetiqAttemptStatus.Partial, afterMidnight.AddMinutes(1)).AfterPrevious(partial);
+        Assert.Equal(1, again.TruncatedRuns);                      // 同趟連續兩筆截斷不重複計
     }
 
     [Fact]

@@ -860,9 +860,18 @@ public sealed class PrtgFetchService
         return (pending, pending.Where(id => !permanent.Contains(id)).ToList());
     }
 
-    /// <summary>PRTG 明確回「這個請求不成立」的 4xx（如裝置已刪除的 404）：再試也一樣。401／403 是憑證問題，修好就能補；429 是限流。</summary>
-    private static bool IsPermanentFailure(Exception failure) =>
-        failure is PrtgClientException { Kind: PrtgFailureKind.HttpStatus, StatusCode: >= 400 and < 500 and not (401 or 403 or 429) };
+    /// <summary>
+    /// 再試結果也一樣的失敗，不進待補（進了會讓那幾天每晚重評、每個窗口多跑一趟、「待補評估」永遠掛著）：
+    /// PRTG 明確回「這個請求不成立」的 4xx（如裝置已刪除的 404；401／403 是憑證問題、429 是限流，修好就能補），
+    /// 以及這台的分頁確定性不收斂（回應形狀不對、頁數或鏡像保護上限）。逾時、傳輸、5xx、憑證與未知失敗都還值得下個窗口再試。
+    /// </summary>
+    private static bool IsPermanentFailure(Exception failure) => failure switch
+    {
+        PrtgClientException { Kind: PrtgFailureKind.HttpStatus, StatusCode: >= 400 and < 500 and not (401 or 403 or 429) } => true,
+        PrtgClientException => false,
+        PrtgPagingNotConvergedException or InvalidOperationException => true,
+        _ => false
+    };
 
     private void OnRetryableDeviceFailure(PauseSession session, PrtgClientException ex, long sentGeneration, string stageName, CancellationToken ct)
     {

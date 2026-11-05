@@ -29,14 +29,17 @@ public static class NetiqSourceAttempt
         /// <summary>接在上一筆之後：需要重查的趟各算一次，隔天歸零。</summary>
         internal Receipt AfterPrevious(Receipt? previous)
         {
-            var today = AttemptAtUtc.ToLocalTime().Date;
+            var counted = previous?.CountedRunId ?? 0;
+            var sameRun = previous != null && counted == RunId;
+            // 同一趟跨午夜：計數日跟著那趟第一筆走，否則 23:59 計的那次到 00:01 就被歸零
+            var today = sameRun && previous!.RetryDay is { } firstDay ? firstDay : AttemptAtUtc.ToLocalTime().Date;
             var truncated = previous?.TruncatedRuns ?? 0;
             var retries = previous?.RetryDay == today ? previous.RetryRuns : 0;
-            var counted = previous?.CountedRunId ?? 0;
-            if (NetiqAttemptStatus.CountsAsAttempt(Status) && counted != RunId)
+            if (NetiqAttemptStatus.CountsAsAttempt(Status))
             {
-                retries++;
-                if (NetiqAttemptStatus.CountsAsTruncated(Status)) truncated++;
+                if (!sameRun) retries++;
+                // 同一趟先記失敗、二分重查後才知道是截斷：截斷要補計一次，但同趟連續兩筆截斷只算一次
+                if (NetiqAttemptStatus.CountsAsTruncated(Status) && !(sameRun && NetiqAttemptStatus.CountsAsTruncated(previous!.Status))) truncated++;
                 counted = RunId;
             }
             return this with { TruncatedRuns = truncated, RetryRuns = retries, RetryDay = today, CountedRunId = counted };

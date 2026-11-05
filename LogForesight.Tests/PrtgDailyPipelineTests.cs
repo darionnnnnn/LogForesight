@@ -465,6 +465,32 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task 沿用同步的續補被窗口結束取消_統計仍標已同步並保留待補清單()
+    {
+        var (_, day, hostStore) = SeedDownSensorForYesterday();
+        using var cancellation = new CancellationTokenSource();
+        var (ctx, _, progress, _) = CreateContext(cancellation.Token);
+        // 續補第一台一回報就取消：模擬窗口到點
+        progress.OnReport = (phase, _, _) =>
+        {
+            if (phase == PrtgFetchService.PrtgSyncSensorsPhase) cancellation.Cancel();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
+            reusePending: (new long[] { 501 }, new long[] { 502 })));
+
+        ctx.RunRecorder.Finish(1);
+        var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
+        // 同步沒壞：下一窗口照樣沿用、只補這兩台；寫成未同步會整段重做
+        Assert.True(stat.SourceSynced);
+        Assert.Equal(DateTime.Today.AddHours(1), stat.SourceSyncedAt);
+        Assert.Equal(new long[] { 501 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 502 }, stat.PendingMessageDevices);
+        Assert.Contains("作業已取消", stat.Note);
+    }
+
+    [Fact]
     public async Task 來源同步失敗_統計標示未同步_下一窗口不會沿用()
     {
         var (_, day, hostStore) = SeedDownSensorForYesterday();
