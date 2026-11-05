@@ -1,28 +1,29 @@
 # LogForesight 第 64 輪規劃
 
-> 狀態：規劃中（第二版：經使用者／管理者視角與架構視角兩輪獨立審查後修訂，待使用者確認後開分支）
+> 狀態：規劃中（第四版：第三版經第二輪雙視角獨立審查後修訂；分支 `feature/feedback-64` 已開並提交 PLAN，程式未動）
 > 基準：dev@6e056648（8,403 綠／11 略過；全量牆鐘 28 分 13 秒，每案加總 8,540 秒，8 核）
 > 來源：使用者回饋三項——全量測試耗時、PRTG 取值重試不夠且不能打爆 PRTG、多排程窗口續跑未完成與失敗部分；追加三項——停用主機被列為失敗、執行時間顯示、站台診斷匯出（2026-11-05）檢視結果
 > 實作方式：主代理寫階段規格，實作派內建 Agent（Sonnet 5.5，effort 由主代理依段評估；小型測試段可用 Haiku 5.5）；一個 checkout 一次只派一個改檔代理；每段主代理獨立重跑驗收
 
 ## 批次總覽
 
-| 批次 | 內容 | 規模 | 相依 | 建議順序 |
+| 批次 | 內容 | 規模 | 相依 | 順序 |
 |---|---|---|---|---|
-| A | 全量測試提速（不刪、不略過任何測試） | 中 | 無 | 1 |
-| E | 排程頁與紀錄修正（停用主機、今天列與四路耗時、AI 失敗計數、噪音警告、建置識別） | 中 | 無 | 2（E-5 與 B-1 同一實作段） |
+| A | 全量測試提速（不刪、不略過任何測試） | 小 | 無 | 1 |
+| E | 排程頁與紀錄修正（停用主機、今天列與四路耗時、AI 失敗計數、噪音警告、建置識別） | 中 | 無 | 2 |
 | B | PRTG 取數重試：逐台階段共用暫停閘、停損、待補裝置清單 | 中 | 無 | 3 |
-| C | 多窗口續跑：只補失敗與未處理、停止點、單窗口續跑、里程碑 | 大 | B-2 欄位 | 4 |
-| D | 文件與說明同步 | 小 | 各批次收尾時逐批做，不累積 | 隨批次 |
+| C | 多窗口續跑：三路回報剩餘量、停止點、單窗口續跑、里程碑 | 大 | B-2 欄位 | 4 |
+| D | 文件與說明同步 | 小 | 隨各批次收尾 | 隨批次 |
 
 跨批次共同規則：
 - 所有新增等待一律可注入時鐘／等待函式並接受 `CancellationToken`；測試不得真等。
-- **停止鈕回應時限**：任何新增的等待（暫停閘、冷卻、續跑等待）在取消後 1 秒內返回，趟次標 `Stopped`；每批驗收都含「等待中按停止」的案例。
+- **停止鈕回應時限**：任何新增的等待在取消後 1 秒內返回，趟次標 `Stopped`；每批驗收都含「等待中按停止」的案例。
 - 失敗後「下一次再試」的時機寫進執行輸出與狀態卡。
 - 不新增沒有消費端的設定；新常數先寫在程式常數（暫定），不開設定頁。
-- 新增 JSON 欄位一律加在 record 尾端並給預設值，舊 JSON 缺欄＝`null`（代表「舊紀錄，資訊未知」），消費端不得把 `null` 當空集合或 0。
-- 每批次收尾同步更新 `CLAUDE.md` 測試基線與對應現況文件（不留到 D）。
-- 驗收一律指定測試類別；斷言比對結構化欄位（數字、集合），不比整段文字；里程碑類只比關鍵片語。
+- 新增 JSON 欄位一律加在 record 尾端並給預設值，舊 JSON 缺欄＝`null`（「舊紀錄，資訊未知」），消費端不得把 `null` 當空集合或 0；前端遇 `null` 顯示既有字樣「無階段資料（升級前紀錄）」。
+- 每批次收尾同步更新對應現況文件並在執行紀錄寫「本批新增 N 案」；`CLAUDE.md` 測試基線數字只在最後一批收尾時改一次。
+- 驗收一律指定測試類別（不存在的標「（新）」）；斷言比對結構化欄位，不比整段文字；里程碑與畫面文字只比關鍵片語。
+- 每批次「改動」節附「畫面文字清單」，供 `RunsPageUiTests` 等比對關鍵片語。
 
 ---
 
@@ -35,52 +36,103 @@
 | 牆鐘 | 28 分 13 秒（測試本體 27 分 20 秒） | trx |
 | 每案加總 | 8,540 秒；等效並行 5.2 倍 | trx |
 | `new StorageBackend(` 的測試類 | 82 類、1,342 案、加總 6,445 秒＝**75%** | trx × 原始碼比對 |
-| `StorageBackend` 建構成本 | 新 SQLite 檔 2,740 ms；**既有且已升級的 DB 仍 1,100～1,340 ms**；`EfSqliteFixture`（記憶體）34 ms | 臨時探針，量完已刪 |
-| 建構子互斥 | `StorageBackend.cs:144` 取 `Global\LogForesight-Schema`（SQLite 與 SQL Server 共用常數，`:144,168,183`）再 `EnsureCreated`＋`SchemaUpgrader.Upgrade`；**所有測試即使各用自己的暫存 DB 也排成單線**；同一類別單獨跑 97 秒、全量裡 682 秒 | `StorageBackend.cs:139-161`；`NamedMutexGate.cs:19` |
-| 序列集合尾段 | `KnownIssueCatalogState` 14 類 536 案 281 秒、`PrtgSnapshotSharedBudget` 205 秒、`CryptoKeyState` 107 秒；最後約 10 分鐘幾乎只剩它們（`PrtgDailyPipelineTests` 72 案單獨佔約 4～5 分鐘） | trx 逐分鐘類別序列 |
-| 真時鐘配額 | `PrtgBackfillRangeRunnerTests.局部回填目標全部失敗不記新鮮度_一顆成功才記` 180 秒、`PrtgBackfillRunnerTests` 兩案各 60 秒、`PrtgFetchServiceTests.FetchDayAsync_併發設定值真的被採用而非寫死` 61 秒——都 `new PrtgRequestBudget()` 用 `RealPrtgClock` | 各測試檔；`PrtgFetchServiceTests.cs:144` 已有 `AcceleratedClock` |
-| `SchemaUpgrader` 結構 | 單一靜態方法 1,853 行，`isSqlite` 旗標與 DDL 交錯；含資料步驟：seed 列（`:45-58`、`:1701`）、`UPDATE lf_work_orders`（`:356`）、`lf_issue_first_seen` 初次回補（`:1016-1075`） | `SchemaUpgrader.cs` |
+| `StorageBackend` 建構成本（修正前） | 新 SQLite 檔 2,740 ms；既有且已升級的 DB 仍 1,100～1,340 ms；`EfSqliteFixture`（記憶體）34 ms | 臨時探針 |
+| **根因（已確認）** | SQLite 連線池被刻意關閉（`StorageBackend.cs:103` `DisableSqlitePoolingIfUnset`），`SchemaUpgrader.Upgrade` 上百個「檢查缺什麼」的 `SqlQueryRaw`／`ExecuteSqlRaw` **每個都重開一條連線**，每次開啟又經 `SqlitePragmaInterceptor` 重跑 PRAGMA（`cache_size`、`mmap_size=1 GB`、`journal_mode`…）。`Upgrade` 本體沒有交易（`:817` 的 `BeginTransaction` 在背景方法 `RekeyIssueFirstSeenToSourceKeys`），所有 `SqlQueryRaw` 都 `.ToList()` 實體化。 | `StorageBackend.cs:103,351`；`SqlitePragmaInterceptor.cs:13,28,35`；`SchemaUpgrader.cs:797-817` |
+| **修正後（探針實測）** | `Upgrade` 期間維持一條開啟的連線：既有 DB 建構 **1,100 ms → 55～110 ms**，新 DB **2,740 ms → 150～200 ms**；`NetiqPermissionChangePostProcessorTests`（80 案）單獨跑 **97 秒 → 17 秒**；相關定向 247 案全綠。修正只涵蓋 `Upgrade`，`EnsureCreated` 自己開關一次連線不在範圍內（數字已含它）。 | 探針程式已收回，diff 存 scratchpad `feedback-64-batchA-probe.patch` |
+| 建構子互斥 | `StorageBackend.cs:144` 取 `Global\LogForesight-Schema`（SQLite 與 SQL Server 共用常數）；所有測試即使各用自己的暫存 DB 也排成單線；取不到鎖 20 秒後仍執行（`:152-157`） | `StorageBackend.cs:139-161,183` |
+| 序列集合 | `KnownIssueCatalogState` 14 類（8 類呼叫 `Initialize`、6 類純讀）；**集合的存在理由就是保護讀者不被寫者干擾**，讀者移出會把干擾帶回來；7 個含 `Initialize(` 呼叫的檔目前都已掛集合 | `KnownIssueCatalogStateCollection.cs:5-11`；grep |
+| 真時鐘配額 | 四案 `new PrtgRequestBudget()` 用 `RealPrtgClock`，各等 60～180 秒；改注入加速時鐘後皆 < 2 秒（探針實測） | `PrtgFetchServiceTests.cs:144`、`PrtgBackfillRunnerTests.cs:88`、`PrtgBackfillRangeRunnerTests.cs:51` |
 | 其他 | 無 `xunit.runner.json`；node 子行程約 300 次、真實 Kestrel／HttpListener 約 80 案——都在分鐘級以下 | 結構掃描 |
 
 ### 定案
 
-評估過不選的方案：只在測試端複製模板 DB（建構子仍跑 1.1 秒的 `Upgrade`，互斥鎖還在）；以升級步驟清單指紋短路（對不到 DB 實際狀態）；SQL Server 一起短路（`INFORMATION_SCHEMA` 雜湊保真度未證實）。
+第二版的「schema 雜湊短路」整套移除（根因不是升級器做太多事，而是每個檢查重開連線）。
 
-1. **A-1 互斥鎖只在 SQLite 分名**：SQLite 連線的鎖名加上資料檔**絕對路徑**（相對路徑先轉絕對、`:memory:` 用連線字串本身）的雜湊；**SQL Server 鎖名維持原常數不變**（避免滾動升級期間新舊行程鎖名不同、以及連線字串寫法差異讓互斥失效）。雜湊只用於組名稱，不寫 log。
-2. **A-2 SQLite schema 雜湊短路**：
-   - 位置：`SchemaUpgrader.Upgrade` 開頭，`isSqlite == false` 時**整段程式路徑與現在逐行相同**（守門測試見驗收）。
-   - 短路鍵：`sqlite_master` 全部列的 `type`＋`name`＋`sql`（依名稱排序）的 SHA-256，加上升級器版本常數 `SchemaUpgrader.Version`。與 `lf_blobs` 鍵 `schema_fingerprint` 的記錄一致→跳過 schema 段；不一致、缺、或環境變數 `LF_SCHEMA_FORCE_UPGRADE=1`→走完整路徑，**全部成功後**重算並寫回；寫回失敗只記 Warn、不影響啟動。
-   - 拆段：實作前先交「步驟歸屬表」（每個 `AddColumnIfMissing`／`AddIndexIfMissing`／`CreateTableIfMissing`／seed／UPDATE 一列，標 schema 段或資料段，資料段內若依賴某欄位存在要註明）；資料段每次照跑，順序維持原本相對順序。
-   - 版本常數守門：測試掃 `SchemaUpgrader.cs` 的 schema 段呼叫簽章（呼叫次數與表／欄／索引名稱清單）算雜湊，與測試內記錄的雜湊比對；改了步驟沒遞增 `Version` 就紅，錯誤訊息講明要遞增。
-3. **A-3 測試端**：四個真時鐘配額測試改注入 `AcceleratedClock`（抽到共用 helper）。接受「配額真時鐘行為失去直接覆蓋」：配額邏輯以 `IPrtgClock` 抽象，`PrtgRequestBudgetTests` 已用假時鐘覆蓋窗口規則。不新增 `xunit.runner.json`、不調執行緒數。
-4. **A-4 拆序列集合**：`KnownIssueCatalogState` 只保留呼叫 `KnownIssueCatalog.Initialize`／`SecurityAuditWatchlist` 覆寫的類別；其餘移出，清單寫進執行紀錄。加守門測試：原始碼含 `KnownIssueCatalog.Initialize(` 的測試類別必須帶該 `[Collection]`。`CryptoKeyState`、`PrtgSnapshotSharedBudget` 不動。
-5. **A-5 計時工具**：trx 解析腳本進 `LogForesight.Tests/tools/test-timing.py`；牆鐘數字只做執行紀錄的觀察值（同機、無負載、連跑 2 次取中位數），**不當驗收門檻**。
-6. **明確不做**：不刪、不合併、不 `Skip` 測試；不直接拿掉 `DisableParallelization`；SQL Server 短路（進 BACKLOG）。
+1. **A-1 互斥鎖只在 SQLite 分名**：SQLite 連線的鎖名＝原常數＋資料檔**絕對路徑大小寫折疊後**（`ToUpperInvariant`，Windows 路徑不分大小寫）的 SHA-256 前 16 碼；記憶體 DB（`:memory:` 或 `Mode=Memory`）以連線字串本身雜湊；解析或正規化擲任何例外→**退回原常數**（寧可多互斥，不可失去互斥）。**SQL Server 鎖名維持原常數不變**。雜湊只用於組名稱，不寫 log。
+2. **A-2 `SchemaUpgrader.Upgrade` 期間維持單一連線**（SQLite 專屬）：進入時連線未開啟才 `OpenConnection`，`finally` 只關自己開的；呼叫端已開啟（含 `:memory:` 由呼叫端持有連線的情境）不另開也不關。PRAGMA 只在這一次開啟套用一次即可（`journal_mode` 持久於檔案，其餘為逐連線狀態，升級器沒有任何步驟依賴「每次新連線」）。升級語意、步驟順序、資料步驟完全不變；SQL Server 路徑不動。跨行程殘餘風險（取不到鎖 20 秒後仍執行、另一行程等 `busy_timeout` 5 秒）與修正前相同，由 A-2-4 補測。
+3. **A-3 測試端**：四個真時鐘配額測試改注入共用 `TestDoubles/AcceleratedPrtgClock`（取代 `PrtgFetchServiceTests` 內的私有類別），它累加 `TotalRequestedDelay`；驗收改結構斷言不守牆鐘。接受「配額真時鐘失去直接覆蓋」：配額邏輯以 `IPrtgClock` 抽象，`PrtgRequestBudgetTests` 已用假時鐘覆蓋窗口規則。不新增 `xunit.runner.json`、不調執行緒數。
+4. **A-4 序列集合：不拆，只加守門**：`KnownIssueCatalogState` 成員不動；守門測試掃原始碼含 `KnownIssueCatalog.Initialize(`／`SecurityAuditWatchlist.Initialize(` 的測試檔必須帶該 `[Collection]`（只抓直接呼叫，經 `RuleBootstrapper` 間接的不在內，註解承認）。守門新建即綠，突變才是驗證。
+5. **A-5 計時工具**：trx 解析腳本進 `LogForesight.Tests/tools/test-timing.py`（只讀本機 trx）；牆鐘數字只做觀察值（同機、無負載、連跑 2 次取中位數），**不當驗收門檻**。
+6. **明確不做**：不刪、不合併、不 `Skip` 測試；不拆 `DisableParallelization` 集合；schema 雜湊短路（任一 provider）；SQL Server 鎖名變更。
 
 ### 改動
 
-1. `StorageBackend.cs`：鎖名組法（SQLite 分名、SQL Server 原名）。
-2. `SchemaUpgrader.cs`：拆段、雜湊、`schema_fingerprint` 讀寫、`Version` 常數、強制旗標。
-3. 測試：見驗收。
-4. `LogForesight.Tests/tools/test-timing.py`。
+1. `StorageBackend.cs`：`BuildSchemaMutexName(isSqlite, connectionString)`（internal static）、建構子兩個分支各算一次、gate 改用它。
+2. `SchemaUpgrader.cs`：`Upgrade` 拆成「開連線／try／finally 關」外殼＋`UpgradeCore`（原內容原封搬入）。
+3. 測試：`StorageBackendMutexNameTests`（新）、`SchemaUpgraderConnectionTests`（新）、`TestCollectionGuardTests`（新）、`TestDoubles/AcceleratedPrtgClock.cs`（新）、四處 `new PrtgRequestBudget()` 改注入。
+4. `LogForesight.Tests/tools/test-timing.py`（新）。
+5. 畫面文字：無。
 
-### 驗收（每條可由 `dotnet test` 判定）
+### 驗收
 
 | 編號 | 驗收 | 測試類別 |
 |---|---|---|
-| A-1-1 | 同一 SQLite 檔以相對與絕對路徑建構，鎖名相同；兩個不同檔鎖名不同；SQL Server 連線字串鎖名等於原常數 | `StorageBackendMutexNameTests`（新） |
-| A-1-2 | 兩個不同 SQLite 檔同時建構，不互相等待（以可注入的 mutex 觀察器斷言兩者重疊持有） | 同上 |
-| A-2-1 | 全新 DB 建構兩次：第一次走完整路徑並寫入 `schema_fingerprint`；第二次 schema 段零呼叫（以呼叫計數替身斷言），資料段呼叫次數與第一次相同 | `SchemaUpgraderFingerprintTests`（新） |
-| A-2-2 | 已短路的 DB 手動 `DROP INDEX` 一個索引後建構→走完整路徑並補回索引 | 同上 |
-| A-2-3 | `LF_SCHEMA_FORCE_UPGRADE=1`→走完整路徑 | 同上 |
-| A-2-4 | `IsSqlite()==false` 的替身 context：`schema_fingerprint` 零讀零寫，且 schema 段與資料段呼叫序列與基準版（測試內記錄）逐項相同 | 同上 |
-| A-2-5 | 寫回 `schema_fingerprint` 擲例外→建構成功、Warn 一則 | 同上 |
-| A-2-6 | 版本常數守門：步驟簽章雜湊與記錄一致；突變（多加一個 `AddColumnIfMissing` 不改 `Version`）必紅 | `SchemaUpgraderVersionGuardTests`（新） |
-| A-2-7 | 既有 `SchemaUpgrader*Tests`、`SchemaUpgraderModelParityTests` 全綠（77 案） | 既有 |
-| A-3-1 | 四個案例單案 < 2 秒（測試內以 Stopwatch 守 5 秒上限） | 各原類別 |
-| A-4-1 | 守門測試：含 `KnownIssueCatalog.Initialize(` 的測試類別皆帶 `[Collection("KnownIssueCatalogState")]`；突變（移出一個有呼叫的類）必紅 | `TestCollectionGuardTests`（新） |
-| A-4-2 | 被移出的類別在全量連跑 2 次皆綠 | 執行紀錄 |
-| A-觀察 | 全量牆鐘與加總（A-1 後、A-2 後、A-4 後各一次）寫進執行紀錄；8,403 綠／11 略過不變 | 執行紀錄 |
+| A-1-1 | 同一 SQLite 檔以相對／絕對／大小寫異寫三種路徑建構，鎖名相同、以原常數為前綴、不含路徑明文；兩個不同檔鎖名不同；`:memory:` 與 `Mode=Memory;Cache=Shared` 鎖名不同；`file:` URI 與無法解析的字串退回原常數；SQL Server 兩種寫法都等於原常數 | `StorageBackendMutexNameTests`（新） |
+| A-2-1 | 既有且已升級的 SQLite DB 再 `Upgrade` 一次：`DbConnectionInterceptor` 計數恰 1，結束後連線 Closed；**突變**（拿掉 `OpenConnection`）→次數變上百 | `SchemaUpgraderConnectionTests`（新） |
+| A-2-2 | 經 `new StorageBackend(settings, dir, commandInterceptor)` 真路徑：`PRAGMA cache_size` 命令次數＝`EnsureCreated` 1 次＋`Upgrade` 1 次（修正前為上百次） | `SchemaUpgraderConnectionTests` |
+| A-2-3 | 呼叫端已開啟連線時 `Upgrade` 不另開、不關閉；`Upgrade` 中途擲例外時仍關閉自己開的連線 | `SchemaUpgraderConnectionTests` |
+| A-2-4 | 兩個 `StorageBackend` 對同一檔並行建構（WAL 與 DELETE 各一案）皆成功、無 `SQLITE_BUSY` | `SchemaUpgraderConnectionTests` |
+| A-2-5 | 既有 `SchemaUpgrader*Tests`、`SchemaUpgraderModelParityTests`、`EfPermissionChangeStoreTests` 冪等案全綠 | 既有（77＋） |
+| A-3-1 | 四案：`AcceleratedPrtgClock.TotalRequestedDelay ≥ 60 秒`（配額邏輯真的走過），`PrtgFetchServiceTests` 不再有私有 `AcceleratedClock` | 各原類別 |
+| A-4-1 | 守門測試；突變（拿掉一個檔的集合屬性）必紅 | `TestCollectionGuardTests`（新） |
+| A-觀察 | 全量牆鐘與加總寫進執行紀錄；8,403 綠／11 略過＋新增案數 | 執行紀錄 |
+
+---
+
+## 批次 E：排程頁與紀錄修正
+
+### 現況與核對結果
+
+| 項目 | 結果 | 證據 |
+|---|---|---|
+| 站台版本辨識 | 匯出 `appVersion` 1.0.53.2 與 dev 相同，但 log 行為是 63-2 併入前的；版本號寫死在 `Directory.Build.props:8`；repo **沒有任何發佈腳本**，只有 `README.md:780` 的 `dotnet publish -c Release`；`HealthService.cs:50-52` 註解寫「Version＋commit」但沒有 commit；`/api/health` liveness 是 `[AllowAnonymous]`（`HealthController.cs:71`） | 同左 |
+| 停用主機列為失敗 | `AllHosts` 先濾 `Active` 再與近期趟 HostName 聯集（同一份名單用於所有日期）；本機格狀態＝該日最新一趟**整趟**狀態；本機分析一律跑 `Environment.MachineName`，`Touch` 不改 `Active`；`ScheduleController.cs:414-425` 的 scope 判斷只擋 `LocalAnalysisEnabled` 不看 `Active`；`HostAdminService.cs:291` 「本機」篩選只列 `Active` | `RunMonitorService.cs:53-69,172,301-369`；`AnalysisOrchestrator.cs:292,402-404,672-682`；`BatchRunStore.cs:586-600` |
+| 執行時間 | 第二行是整趟起訖聯集（含 value-fill）；展開列只認四個階段鍵；`fetchSeconds`／`followUpAiSeconds` 消費端只有 `run-timeline.js:118-119`；總表錨點寫死昨天、`TotalDays`／`TotalPages` 以 `days` 計（`RunsController.cs:50-62`）；「不含今天」寫在 `WEB-SPEC.md:2863,3031`、`Runs.cshtml:221`、`RunMonitorService.cs:81`、說明書兩處、匯出 guide `RunExportService.cs:1361` | `RunDayTimingBuilder.cs:14-17,36-82`；`run-timeline.js:114-169`；`RunMonitorService.cs:80-96` |
+| AI 失敗計數 | `AiFailures` 只在 finally 覆寫；`RecordAiCall` 無呼叫者；消費端 `RunMonitorService`、`RunExportService`、`RunExportDtos`、`RunDtos` | `AiAnalysisHostedService.cs:277-305`；`BatchRunRecorder.cs:337-344` |
+| treesize 提醒 | 每台一行 console＋一筆 Warn；`PrtgPagerResult` 是 record，加欄位不影響呼叫端 | `PrtgTablePager.cs:40,283-299` |
+| 主機格 DTO | `RunDayHostStatusDto` 只有 `Status` 等欄，沒有備註 | `RunDtos.cs:53-65` |
+
+### 定案
+
+1. **E-1 建置識別**：`Directory.Build.props` 加 MSBuild target：`Exec git rev-parse --short HEAD`（`ContinueOnError`），成功→`InformationalVersion = <Version>+<sha>.<yyyyMMddTHHmm>`，失敗→`<Version>+local`。不依賴發佈腳本；README 部署章節補一行說明。顯示：健康頁（已登入）的版本列、匯出 `meta.build`（`{ "sha": "abc1234"|null, "builtAt": ..., "unknown": bool }`）；**匿名 liveness 不帶 sha**。`meta.build` 加進 `RunExportDeidentifier` 的允許字面清單。
+2. **E-2 停用主機**：
+   - 總表主機清單＝`Active` 主機 ∪ **本頁日期窗口內有趟或有分析紀錄的主機**（停用前的歷史列保留，停用後沒有新趟就自然消失）。`TotalHosts`、失敗計數、失敗主機欄同口徑。
+   - 本機格狀態看本機階段（`Phases.local` 結果與 `LocalDaysFailed`）；舊紀錄無 `Phases`→退回整趟狀態，`RunDayHostStatusDto` 加 `Legacy` 旗標，前端 tooltip 沿用「無階段資料（升級前紀錄）」。匯出 `dailyHealth` 同口徑。
+   - 本機**日誌分析**尊重站台主機 `Active`：已登記且停用→跳過並寫里程碑「本機主機已停用，略過本機日誌分析」；未登記→照跑；`LocalAnalysisEnabled` 優先。**體檢、權限檢查、保留清除、派工照跑**（它們不是主機日誌分析）。`ScheduleController` 的 scope／run-preview 判斷對齊同一條規則（停用時 `IncludesLocal=false`，`scope=host` 指到停用的本機回既有「本機分析已停用」類錯誤碼）。升級後首趟若因此跳過，健康頁版本列旁顯示一次性提示「站台主機已停用，不再分析本機日誌」（以最近一趟里程碑判定，無需關閉狀態）。
+3. **E-3 今天列與四路耗時**：
+   - 今天列是**額外附加列**：只在今天已有取數趟、且 `page==1` 時出現在最上方，`isToday=true`，**不佔 `days`、`TotalDays` 不含它**；`GetRecentRuns` 窗口多取一天。今天列的「未執行」顯示灰字「尚未處理」且不計入失敗、`inProgress=true` 時列首「今日（執行中）」。匯出 `dailyHealth` 最後附今天列（`isToday`、`inProgress`），guide 改為「dailyHealth 可能含今天（isToday），其 notRun 代表尚未處理不是失敗」。
+   - DTO **替換**：移除 `fetchSeconds`／`followUpAiSeconds`，新增 `localSeconds`／`netiqSeconds`／`prtgSeconds`／`aiSeconds`／`aiRunCount`／`runCount`（舊趟無 `Phases` 時四路為 `null`）；前端第二行「本機 X · NetIQ Y · PRTG Z · AI W（N 趟）」，任一為 `null` 顯示「無階段資料（升級前紀錄）」；PRTG 含 `prtg`、`prtg-sync`、`prtg-value-fill`、`prtg-triggered` 子階段聯集，展開列 PRTG 下列子階段；總計後加「共 N 趟」。
+4. **E-4 AI 失敗計數**：每個主機日結束由 recorder 累加（`RecordAiCall` 有呼叫者），外層例外與中斷保留已累計值；週檢 AI 呼叫計入。舊紀錄不回溯；`aiFailureRate` 新舊混合測試。
+5. **E-5 噪音警告**：`PrtgPagerResult` 加 `TreeSizeShort` 旗標（預設 false），messages 那段改回傳旗標、移除逐台 console 與 `Log.Warn`；`PrtgFetchService` messages 階段結束印一行彙總「N 台裝置的 messages 讀取少於 treesize（僅提醒，帶時間篩選時語意未證實）」，只進 console、不計 Warn。`SentinelClient.cs:188-189` 註解校正。**不依賴批次 B**。
+6. **E-6 AI 關文法的額外欄位**：關閉結構化輸出的那次嘗試，不送 `_extraRequestFields` 中與結構化輸出同類的鍵（清單集中在 `AiJsonDiagnostics` 一處：`response_format`、`grammar`、`json_schema`、`guided_json`，暫定），診斷行記下移除的鍵。
+7. **明確不做**：提示詞調整；多趟合併規則；liveness 帶 sha。
+
+### 改動
+
+1. `Directory.Build.props`、`README.md` 部署章節、`HealthService.cs`／健康頁 view、`RunExportService.cs`（`meta.build`）、`RunExportDeidentifier.cs`。
+2. `RunMonitorService.cs`（名單、本機格、今天列）、`RunsController.cs`（`TotalDays` 不含今天）、`RunDayTimingBuilder.cs`、`RunDtos.cs`、`run-timeline.js`、`runs.js`、`Views/Pages/Runs.cshtml:221` popover、`RunExportService.cs`（`dailyHealth`、guide）。
+3. `AnalysisOrchestrator.cs`（本機 Active 判定與里程碑）、`ScheduleController.cs:414-425`（scope 對齊）、`HealthService.cs`（一次性提示）。
+4. `AiAnalysisHostedService.cs`、`BatchRunRecorder.cs`、`WeeklyCheckupService`、`RunMonitorService`／`RunExportService`／`RunExportDtos`／`RunDtos`（口徑）。
+5. `PrtgTablePager.cs`、`PrtgFetchService.cs`（彙總行）、`SentinelClient.cs` 註解。
+6. `AIService.cs`、`AiJsonDiagnostics.cs`。
+7. 畫面文字：「本機主機已停用，略過本機日誌分析」、「站台主機已停用，不再分析本機日誌」、「今日」、「今日（執行中）」、「尚未處理」、「本機 X · NetIQ Y · PRTG Z · AI W（N 趟）」、「共 N 趟」、「無階段資料（升級前紀錄）」、「建置時未取得版本識別」。
+
+### 驗收
+
+| 編號 | 驗收 | 測試類別 |
+|---|---|---|
+| E-1-1 | `InformationalVersion` 解析：有 sha、`local`、格式異常三案；健康 DTO 與匯出 `meta.build` 一致；liveness 回應不含 sha；`meta.build` 不被去識別化改寫 | `HealthAndPerformanceTests`、`RunExportServiceTests`、`RunExportDeidentifierTests` |
+| E-2-1 | 13 台（12 NetIQ 啟用＋1 本機停用、窗口內無趟）：唯一一趟 NetIQ 全 401、本機成功→成功 0／失敗 12、`TotalHosts` 12、失敗主機欄不含本機、總表無本機格 | `RunMonitorServiceTests` |
+| E-2-2 | 停用主機在窗口內有歷史趟→仍有格、狀態依本機階段；本機主機啟用、同趟→本機格 Success；舊紀錄無 `Phases`→整趟狀態＋`Legacy=true` | `RunMonitorServiceTests`、`RunsTimelineBehaviorTests` |
+| E-2-3 | 已登記且停用→本機日誌分析零掃描、里程碑含「已停用」、體檢與權限檢查仍執行；未登記→照跑；`scope=host` 指停用本機→既有錯誤碼 | `AnalysisOrchestrator` 本機測試（既有類＋新案）、`ScheduleController` 測試 |
+| E-3-1 | `days=14`、今天有趟、`page=1`→`items=15`、首列 `isToday`、`TotalDays=14`；`page=2` 無今天列；今天無趟→14 列；今天列 `notRun` 不計 `FailedCount`；匯出 `dailyHealth` 同 | `RunMonitorServiceTests`、`RunsControllerTests`（既有或新）、`RunExportServiceTests` |
+| E-3-2 | 含 1,748 秒 `prtg-value-fill` 的趟→`prtgSeconds ≥ 1748`、`localSeconds`／`netiqSeconds`／`aiSeconds` 各等於階段聯集、`runCount` 正確；舊趟無 `Phases`→四路 `null`、前端顯示「無階段資料」 | `RunDayTimingBuilderTests`、`RunsTimelineBehaviorTests` |
+| E-4-1 | 3 主機日、第 2 個降級、第 3 個擲例外→`AiCalls=3`、`AiFailures=2`；中斷趟保留已累計值；新舊混合 `aiFailureRate` 分母分子同源 | `AiAnalysisSchedulerTests`、`BatchRunRecorder*Tests`、`RunExportServiceTests` |
+| E-5-1 | 11 台 messages 皆少於 treesize→`TreeSizeShort` 11 次、console 恰 1 行、`WarnCount` 不變 | `PrtgTablePagerTests`、`PrtgFetchServiceTests` |
+| E-6-1 | 關文法那次請求不含清單內鍵、其他額外欄位保留；診斷行列出移除鍵 | `AIServiceExtraRequestFieldsTests`、`AIServiceJsonDiagnosticsTests` |
+| 突變 | 拿掉 Active 過濾→E-2-1 紅；子階段鍵退回只有 `prtg`→E-3-2 紅；E-4 改回 finally 覆寫→E-4-1 紅；今天列計入 `TotalDays`→E-3-1 紅 | — |
+
+定向：`--filter "FullyQualifiedName~RunMonitorServiceTests|FullyQualifiedName~RunsController|FullyQualifiedName~RunDayTimingBuilderTests|FullyQualifiedName~RunsTimeline|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~RunExport|FullyQualifiedName~AiAnalysisSchedulerTests|FullyQualifiedName~BatchRunRecorder|FullyQualifiedName~PrtgTablePagerTests|FullyQualifiedName~PrtgFetchServiceTests|FullyQualifiedName~AIService|FullyQualifiedName~HealthAndPerformance|FullyQualifiedName~ScheduleController|FullyQualifiedName~LocalAnalysis|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
 
 ---
 
@@ -90,64 +142,73 @@
 
 | 項目 | 結果 | 證據 |
 |---|---|---|
-| 分頁重試 | 每次 `PrtgTablePager.FetchAsync` 各 2 次（15／60 秒）；逐台 sensors／messages 每台各自重試、台與台之間沒有共用閘 | `PrtgTablePager.cs:126,159-168`；`PrtgFetchService.cs:624-690,826-940` |
-| 數值取數 | 已有共用 `PauseGate`（15／60／180 秒＋jitter、`Retry-After`）、補抓輪、連續 10 顆停損、總暫停 15 分停損、冷卻 10 分；`PauseGate.WaitAsync(ct)` 吃取消 | `PrtgValueFetchRetry.cs:16-32,123-135`；`PrtgFetchService.cs:1025-1303` |
-| 配額 | 只限速；失敗照計、無退避 | `PrtgRequestBudget.cs:84,113-116` |
-| 逐台 sensors 失敗 | 只計數、不標 `HistoryAffectingFailure`、`sensorsRefreshed=false` 不清過期；同日其餘窗口沿用同步不補 | `PrtgFetchService.cs:318-339`；`PrtgDailyPipeline.cs:306-307` |
-| 逐台 messages 失敗 | `Converged=false`→`HistoryAffectingFailure`→下個窗口整段重做 | `PrtgFetchService.cs:459-462,959` |
-| 快照 | 一輪須在一個採樣間隔內完成，整輪失敗才退避、連續 3 次加倍 | `PrtgSnapshotHostedService.cs:657-691,1481-1496` |
-| `PrtgFetchService` 生命週期 | 每趟 `Create` 一個實例；冷卻旗標是實例層 | `PrtgDailyPipeline.cs:165` |
+| 分頁重試 | retry 只在 `FetchTablePagedAsync`（`:1743-1746`）由 `_retryTransientPaging` 決定；`RunPagedStageAsync`（`:1707`）是 static、只包未收斂例外，不知道 retry；正式只有夜間管線、回填、結構同步傳 true，快照與探測逐台路徑本來就無重試 | `PrtgFetchService.cs:1707,1743-1746`；`PrtgDailyPipeline.cs:166`；`PrtgBackfillService.cs:853`；`PrtgStructureSyncService.cs:397` |
+| 逐台派發結構 | `semaphore.WaitAsync` 在派發迴圈（spawn 前）；sensors 非 staged 路徑在 `onBatch` 內逐頁 `UpsertSensors` 並 `targets.AddRange`（整台成功前就累計） | `PrtgFetchService.cs:616-628,640-655,825-828` |
+| 數值取數 | 共用 `PauseGate`（15／60／180 秒＋jitter、`Retry-After`）、補抓輪、連續 10 顆停損、總暫停 15 分停損、冷卻 10 分；`RecordSuccess` 由 `PrtgFetchService.cs:1204` 在 `lock(run.Sync)` 內呼叫，政策看不到閘 | `PrtgValueFetchRetry.cs:16-32,90-160`；`PrtgFetchService.cs:1025-1303` |
+| 逐台 sensors／messages 失敗 | 同第三版 | `PrtgFetchService.cs:318-339,459-462,959` |
+| 進度訊號 | `IRunProgress.Report(phase, done, total)` 只有三個整數，訊號類 done／total 恆 0；`SchedulerRunState.ReportProgress` 靠名稱顯式分派（`GuardPaused` `:426`、`PrtgFindingsReady` `:434`），`prtg-` 前綴分支在後；暫停顯示是取數卡的 `PausedReason` 單一字串 | `RunPhases.cs:12`；`SchedulerRunState.cs:240,395-440`；`runs.js:1337-1346` |
+| PRTG 卡閒置列 | 已有「待補評估 N 天」與「上一趟」兩列（`#prtg-pending-reeval-row`、`#prtg-last-issue-row`） | `Runs.cshtml:144-148` |
 
 ### 定案
 
-1. **B-1 逐台階段共用暫停閘（唯一退避層）**：sensors 逐台與 messages 逐台階段各建一個 `PauseGate`，**該階段的 pager 內建重試關閉**（`retry:null`），避免兩層等待疊加。任一台可重試失敗（`PrtgTablePager.IsRetryable`）→拉閘；worker 在**取得 semaphore 名額之前**等閘（不持有名額空等）；閘放行後該失敗裝置重排一次，第二次仍失敗→記入待補。暫停序列、jitter、`Retry-After`、連續失敗與總暫停停損全部**複用** `PrtgValueFetchRetryPolicy` 與 `PauseGate`（不複製判定）；`PauseGate` 補一個世代號：歸零只認閘放行後才發出的請求的成功（數值取數同時受惠）。
-2. **B-2 停損與待補清單**：階段總暫停達 15 分或連續 10 台失敗→停損：剩餘裝置不送請求、全部記入待補。`PrtgDayStat` 加 `IReadOnlyList<long>? PendingSensorDevices = null, IReadOnlyList<long>? PendingMessageDevices = null`（`null`＝舊紀錄）。待補非空時：`SourceSynced` 仍為真（已完成的裝置完整）、**`NeedsReevaluation = true`**（補齊後該日要重評）、當日 `Outcome = partial`、`Note`「N 台待補（下一個窗口續補）」。停損寫 Warn（趟次「有警告」，不是 Error、不是 Failed）。停損拉起**實例層**冷卻（與數值取數同一旗標，刻意）：同一趟後面的逐台階段與觸發式取數看到冷卻直接略過並全部記待補，不再打 PRTG；下一趟（含手動立即執行）是新實例，不受影響。**過期感測器清除只針對本趟完成同步的裝置**（中途取消時完成集合只含已結束的裝置）。
-3. **B-3 配額壓力冷卻：不做**。理由：與 B-1 閘、快照自己的退避形成三層疊加；全 purpose 共等會讓快照一輪超過採樣間隔，再觸發快照自己的加倍退避，形成連鎖。快照、守門、探測維持既有行為。
-4. **B-4 messages 單台失敗語意與 sensors 一致**：記入 `PendingMessageDevices`，不標 `HistoryAffectingFailure`；全站分頁未收斂、裝置階段失敗、範圍計算失敗仍算歷史受影響。
+1. **B-1 逐台階段共用暫停閘（唯一退避層）**：
+   - `FetchTablePagedAsync` 加參數 `allowPagerRetry`（預設 true）；逐台 sensors（`:732`）與逐台 messages（`:836`）傳 false，全站 devices／全站 sensors 維持。`RunPagedStageAsync` 不動、不複製。
+   - 每個逐台階段一個 `PauseGate`；**`await gate.WaitAsync(ct)` 放在派發迴圈內、`semaphore.WaitAsync` 之前**（不持有名額空等）。任一台可重試失敗（`PrtgTablePager.IsRetryable`）→拉閘；失敗台進「重排佇列」，派發迴圈跑完第一遍後再跑第二遍佇列（不在 worker 內遞迴）；第二遍仍失敗→待補。
+   - **每台結果整台成功才合併**：sensors 逐台改為每台先收進區域結果，整台成功才 `UpsertSensors`＋`targets.AddRange`，重排不會重複累計。
+   - 暫停序列、jitter、`Retry-After`、連續失敗與總暫停停損**複用** `PrtgValueFetchRetryPolicy`；「連續」以完成順序計（與數值路徑同一函式）。
+   - **世代號只加在 `PauseGate`**（放行時遞增），呼叫點「送出前讀世代、成功後比對一致才 `RecordSuccess`」，政策不動。數值路徑 `:1204` 同樣加比對——**這是刻意的行為變更**（慢成功不再歸零），B-5 表同步標註。
+2. **B-2 停損與待補清單**：同第三版（`PendingSensorDevices`／`PendingMessageDevices` 兩個 `IReadOnlyList<long>?`、待補非空⇒`SourceSynced=true`＋`NeedsReevaluation=true`＋`Outcome=partial`＋Note、Warn 不 Error、實例層冷卻讓同趟後續階段略過、清除只針對完成同步的裝置）。
+3. **B-3 配額壓力冷卻：不做**（理由同第三版）。
+4. **B-4 messages 單台失敗語意與 sensors 一致**（同第三版）。
 5. **B-5 既有入口影響表**：
 
 | 入口 | 影響 |
 |---|---|
 | 夜間管線 `FetchDayAsync` | 變（B-1／B-2／B-4） |
-| 手動立即執行的 PRTG 路徑 | 同管線，變 |
-| 手動「同步結構與對應」 | 同 `FetchDayAsync`，變 |
-| 歷史回填：數值路徑 | 不變；狀態變更區間走逐台 messages，變（同 B-1） |
-| 觸發式數值取數 | 不變（只多「冷卻中略過」既有行為） |
-| 快照／守門／探測／估算／連線測試 | 不變 |
-| run-preview 補跑預覽 | 不變（PRTG 預覽讀 `NeedsReevaluation`，待補日已標真） |
+| 手動立即執行的 PRTG 路徑、手動「同步結構與對應」 | 同管線，變 |
+| 歷史回填：狀態變更區間（逐台 messages） | 變（同 B-1） |
+| 歷史回填與觸發式的數值路徑 | **只變一處**：慢成功不再把暫停序列歸零（世代比對） |
+| 快照／守門／探測／估算／連線測試 | 不變（本來就無 pager 重試、不經閘） |
+| run-preview 補跑預覽 | 不變 |
 
-6. **B-6 可見性**：拉閘／放行經 `IRunProgress` 送 `prtg-paused`／`prtg-resumed`（沿用 `guard-paused` 的形狀），PRTG 卡顯示「PRTG 回應異常，暫停中（第 N 次，約 X 秒）」；每次拉閘在執行輸出寫一行 Info（原因、第 N 次、等幾秒）；閒置時 PRTG 卡多一列「待補裝置 N 台（下一個窗口續補）」（讀最新逐日統計）。
-7. **升級說明**：舊紀錄 `NeedsReevaluation=true` 的日子升級後第一趟仍整段重做（一次性）；升級前逐台 sensors 失敗的裝置沒有紀錄，不會被補（已知限制，隔天全量同步自然修正）。
+6. **B-6 可見性**：
+   - `RunPhases` 加 `PrtgPaused`／`PrtgResumed` 常數並列入 `All`；`SchedulerRunState.ReportProgress` 加**顯式分支且排在 `prtg-` 前綴分支之前**；狀態新增 `PrtgPausedCount`（int）與 `PrtgResumeAt`（絕對時間，前端自行倒數，避免 3 秒輪詢凍結），放行時清空。DTO 加 `prtgPausedCount`、`prtgResumeAt`（`null`＝未暫停）。
+   - 落點：PRTG 卡進度軌文字 `#schedule-prtg-progress-text`——暫停時「PRTG 回應異常，暫停中（第 N 次，約 X 秒後重試）」，放行後回到原進度文字；停損後本趟顯示「PRTG 已停止本趟取數，N 台待補」。**不新增列**。
+   - 閒置時把待補裝置併進既有「待補評估」列文字：「N 天待補（含 M 台裝置）」；DTO `prtgPendingDays` 旁加 `prtgPendingDevices`（`null`＝未知不顯示）。「立即執行回望 N 天」提示沿用（手動趟走同一個 `ReusableSyncFrom`，會只補待補裝置）。
+   - 每次拉閘在執行輸出寫一行 Info（原因、第 N 次、等幾秒）。
+7. **升級說明**：同第三版。
 
 ### 改動
 
-1. `PrtgFetchService.cs`：逐台兩階段接閘、重排、停損、待補清單、清除範圍；`PrtgTablePager` 回傳「少於 treesize 的裝置數」供 E-5 彙總（介面變更）。
-2. `PrtgValueFetchRetry.cs`：`PauseGate` 世代號；政策命名中性化（保留舊名別名）。
+1. `PrtgFetchService.cs`：`FetchTablePagedAsync(allowPagerRetry)`、逐台兩階段的閘與重排佇列、整台成功才合併、停損、待補清單、清除範圍、世代比對（含 `:1204`）。
+2. `PrtgValueFetchRetry.cs`：`PauseGate.Generation`；政策命名中性化（保留舊名別名）。
 3. `BatchRunStore.cs`：`PrtgDayStat` 兩個待補欄位。
-4. `PrtgDailyPipeline.cs`：統計寫入、`NeedsReevaluation`、Note、進度事件。
-5. `runs.js`／`SchedulerHostedService.PrtgRunHealth`／`ScheduleDtos`：PRTG 卡兩列（DTO 新增欄位，不改舊欄位）。
+4. `PrtgDailyPipeline.cs`：統計寫入、`NeedsReevaluation`、Note、`PrtgPaused`／`PrtgResumed` 進度事件。
+5. `RunPhases.cs`、`SchedulerRunState.cs`、`ScheduleDtos.cs`、`SchedulerHostedService.PrtgRunHealth`、`runs.js`、`Runs.cshtml`（待補評估列文字）。
 6. `RunExportService.cs`：`unsuccessfulPrtgDays` 帶待補數。
+7. 畫面文字：「PRTG 回應異常，暫停中（第 N 次，約 X 秒後重試）」、「PRTG 已停止本趟取數，N 台待補」、「N 天待補（含 M 台裝置）」、逐日 Note「N 台待補（下一個窗口續補）」。
 
 ### 驗收
 
 | 編號 | 驗收 | 測試類別 |
 |---|---|---|
-| B-1-1 | 300 台、第 5 台起全回 503、併發 4、假時鐘：閘拉起後直到放行，HTTP 請求數不增加；放行後失敗台重排；請求總數有上界（＝已送台數＋重排台數，測試算出精確值） | `PrtgFetchServiceTests`（新案） |
-| B-1-2 | 慢成功晚於新失敗：閘拉起前發出的請求在閘拉起後才成功→序列不歸零；閘放行後發出的成功→歸零 | `PrtgValueFetchRetryPolicyTests`（新案，數值路徑同測） |
+| B-1-1 | 300 台、第 5 台起全回 503、併發 4、假時鐘：閘拉起後直到放行 HTTP 請求數不增加；第二遍重排失敗台；請求總數＝第一遍送出數＋重排數（精確值） | `PrtgFetchServiceTests` |
+| B-1-2 | 世代比對：閘拉起前發出、拉起後才成功的請求不歸零；放行後發出的成功歸零（逐台與數值路徑各一案） | `PrtgValueFetchRetryPolicyTests`、`PrtgFetchServiceTests` |
 | B-1-3 | 閘等待期間 semaphore 名額為空（替身斷言） | `PrtgFetchServiceTests` |
 | B-1-4 | 閘等待中取消：1 秒內返回、趟次 `Stopped`、已完成裝置的鏡像保留 | `PrtgFetchServiceTests`、`PrtgDailyPipelineTests` |
-| B-1-5 | 逐台階段的 pager 不再有內建重試（替身計數：單台 503 只送 1 次後交給閘） | `PrtgFetchServiceTests` |
-| B-2-1 | 連續 10 台失敗→停損：剩餘裝置零請求；`PendingSensorDevices`＝失敗＋未送出集合（精確比對） | `PrtgFetchServiceTests` |
+| B-1-5 | 逐台階段單台 503 只送 1 次後交給閘（pager 內建重試關閉）；全站 devices 仍有 2 次 | `PrtgFetchServiceTests` |
+| B-1-6 | 某台第 3 頁失敗、重排後成功→該台 `targets` 無重複、`written` 精確 | `PrtgFetchServiceTests` |
+| B-2-1 | 連續 10 台失敗→停損：剩餘裝置零請求；`PendingSensorDevices`＝失敗＋未送出集合 | `PrtgFetchServiceTests` |
 | B-2-2 | 停損後同趟 messages 階段與觸發式取數零請求、全部記待補 | `PrtgDailyPipelineTests` |
-| B-2-3 | 待補非空→`SourceSynced=true`、`NeedsReevaluation=true`、`Outcome=partial`、趟次狀態 Warning | `PrtgDailyPipelineTests`、`PrtgReevaluationPlannerTests` |
+| B-2-3 | 待補非空→`SourceSynced=true`、`NeedsReevaluation=true`、`Outcome=partial`、趟次 Warning | `PrtgDailyPipelineTests`、`PrtgReevaluationPlannerTests` |
 | B-2-4 | 清除只刪已完成裝置的過期感測器；中途取消時待補裝置一顆不刪 | `PrtgFetchServiceTests` |
-| B-2-5 | 舊 JSON 缺欄反序列化→兩個欄位為 `null`；消費端把 `null` 當「未知」不當空 | `BatchRunStoreTests`／`PrtgReevaluationPlannerTests` |
+| B-2-5 | 舊 JSON 缺欄→兩欄位 `null`；消費端把 `null` 當未知 | `PrtgDayStatSerializationTests`（新）、`PrtgReevaluationPlannerTests` |
 | B-4-1 | messages 單台失敗→不標 `HistoryAffectingFailure`、記 `PendingMessageDevices` | `PrtgFetchServiceTests` |
-| B-5-1 | 快照、守門、探測測試類別全綠且無行為改變 | `PrtgSnapshotHostedServiceTests`、`PrtgResourceGuard*`、`PrtgProbe*` |
-| B-6-1 | 進度事件 `prtg-paused`／`prtg-resumed` 送達；PRTG 卡文字與待補列由 DTO 欄位驅動 | `PrtgDailyPipelineTests`、`RunsPageUiTests`、`RunsTimelineBehaviorTests` |
-| 突變 | 拿掉閘 `WaitAsync`→B-1-1 紅；待補只記失敗不記未送出→B-2-1 紅；清除退回全有全無→B-2-4 紅 | — |
+| B-5-1 | 快照、守門、探測測試類別全綠 | `PrtgSnapshotHostedServiceTests`、`PrtgResourceGuard*`、`PrtgProbe*` |
+| B-6-1 | `PrtgPaused` 事件進顯式分支不污染 PRTG 進度軌；DTO `prtgPausedCount`／`prtgResumeAt` 隨拉閘／放行變化；進度文字與待補評估列文字由 DTO 驅動 | `SchedulerRunSnapshotTests`／`SchedulerRunStateTests`、`RunsPageUiTests`、`RunsTimelineBehaviorTests` |
+| 突變 | 拿掉閘 `WaitAsync`→B-1-1 紅；待補只記失敗不記未送出→B-2-1 紅；清除退回全有全無→B-2-4 紅；世代比對拿掉→B-1-2 紅 | — |
 
-定向：`--filter "FullyQualifiedName~PrtgFetchServiceTests|FullyQualifiedName~PrtgValueFetchRetry|FullyQualifiedName~PrtgTablePagerTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~PrtgReevaluationPlannerTests|FullyQualifiedName~PrtgSnapshotHostedServiceTests|FullyQualifiedName~PrtgBackfillRunnerTests|FullyQualifiedName~PrtgStructureSync|FullyQualifiedName~PrtgResourceGuard|FullyQualifiedName~PrtgProbe|FullyQualifiedName~BatchRunStore|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
+定向：`--filter "FullyQualifiedName~PrtgFetchServiceTests|FullyQualifiedName~PrtgValueFetchRetry|FullyQualifiedName~PrtgTablePagerTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~PrtgDayStat|FullyQualifiedName~PrtgReevaluationPlannerTests|FullyQualifiedName~PrtgSnapshotHostedServiceTests|FullyQualifiedName~PrtgBackfillRunnerTests|FullyQualifiedName~PrtgStructureSync|FullyQualifiedName~PrtgResourceGuard|FullyQualifiedName~PrtgProbe|FullyQualifiedName~SchedulerRun|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
 
 ---
 
@@ -158,168 +219,126 @@
 | 項目 | 結果 | 證據 |
 |---|---|---|
 | 觸發 | 每窗口實例一次、不看成敗；`EvaluateScheduleAsync` 在 `IsRunning` 時整個 return | `ScheduleCalculator.cs:176-196`；`SchedulerHostedService.cs:218-244` |
-| 停止 | 「不在任何窗口內」才停；相鄰窗口時前一趟跑進下一窗口；被停的趟是 `Stopped`、算已觸發；補跑趟看 `CatchUpDeadline`（`SchedulerRunState.cs:80`，唯一呼叫端 `SchedulerHostedService.cs:229`） | `ScheduleCalculator.cs:85,122-123` |
-| AutoCatchUp | 只補「完全沒觸發」的窗口 | `ScheduleCalculator.cs:327-347` |
-| NetIQ 續跑 | 排程走 `MissingDateFinder`：沒紀錄、或父紀錄狀態為 failed／running／partial／retained-incomplete 才重查；常態回望 1 天；空資料未截斷寫 success 後不再查；partial 無上限重查 | `HostDayPostProcessor.cs:30-39,147`；`NetiqOptions.cs:54`；`NetiqPipelineService.cs:697-740` |
-| NetIQ 帳本 | 逐日 log blob（`netiq_hostday_attempt_<日期>`，append-only 列），不是資料表；狀態字串白名單 `KnownStatuses`，寫入未登錄值擲例外，讀到未登錄值當「無前次」 | `NetiqSourceAttempt.cs:7-9,19-20,30,66` |
-| 本機續跑 | 回望 14 天、只看有無紀錄 | `AnalysisOrchestrator.cs:904-910` |
-| PRTG 續跑 | 昨天每窗口重做規則評估（讀本地鏡像）；同步 `SourceSynced` 沿用 | `PrtgReevaluationPlanner.cs:20-123` |
-| 里程碑 | 「第 n 個執行窗口」只在正常觸發帶；NetIQ 的「跳過 X」是主機數 | `SchedulerHostedService.cs:255-257`；`AnalysisOrchestrator.cs:1253` |
+| 停止 | 「不在任何窗口內」才停；`CatchUpDeadline` 散在 `SchedulerRunState`、`SchedulerHostedService`、`RunRequest`（`AnalysisOrchestrator.cs:33`）、`ScheduleDtos.cs:92`、`runs.js:1349` 共 22 處；`IsWithinAnyWindow` 另被 AI 排程使用（`AiAnalysisHostedService.cs:158,200`）；`BatchRun` 只持久化 `CatchUp` 旗標，`CatchUpDeadline`／`CatchUpNote` 只在記憶體 | `ScheduleCalculator.cs:85,122-123`；`BatchRunStore.cs:103` |
+| 補跑與中斷 | `AutoCatchUp` 只補「完全沒觸發」的窗口；`isCatchUp = CatchUpNote != null` 會擴大回望（`AnalysisOrchestrator.cs:316,907,1223`）並令 `BatchRun.CatchUp=true`（匯出 `CatchUpRuns`）；異常中斷的第一趟不計入已觸發、再補一次帶 `CatchUpNote` | `ScheduleCalculator.cs:253,327-347`；`RunExportService.cs:913,990` |
+| NetIQ 續跑 | 排程走 `MissingDateFinder(lookbackDays)`：沒紀錄、或父紀錄狀態在重查集合才重查；`ReadRecent` 以同一個 lookback 為範圍；常態回望 1 天；批次查詢失敗不寫紀錄→隔天就落在回望外永遠不補；空資料未截斷寫 success；partial 無上限 | `HostDayPostProcessor.cs:21-39,147`；`NetiqOptions.cs:54`；`NetiqPipelineService.cs:497-541,697-740` |
+| NetIQ 帳本 | 逐日 log blob（`netiq_hostday_attempt_<日期>`），寫入未登錄狀態擲例外、讀到未登錄當「無前次」；狀態字面值散在 `NetiqPipelineService`（10 處）、`HostDayWorkflowState`（3 處）、`HostDayPostProcessor`（2）、`ScheduleController:250`、`RunMonitorService:266-286`；父紀錄狀態下游還有 `RecordStorageShaper`、`RecordDetailQueryService`、`RecordDtos`、郵件 | `NetiqSourceAttempt.cs:19-20,30,66,105` |
+| 三路目標判定 | NetIQ 每台主機各呼叫一次 `MissingDateFinder`（`NetiqPipelineService.cs:362-370`）、PRTG 在 `ResolvePrtgDays`（`AnalysisOrchestrator.cs:1423-1445`）、本機在 `:904-910`——趟內本來就各自算 | 同左 |
+| 總表 NetIQ 格 | `NetiqStatus` 把 partial／retained-incomplete 一律回 Warning，`_ => Warning`；`NetiqCell` 只填 `Status`，無備註 | `RunMonitorService.cs:266-292` |
 
-### 定案
+### 定案（第四版）
 
-1. **C-1 `ResumeWorkPlanner` 是組合器，不是第三套判定**：它只呼叫既有 `MissingDateFinder`（本機、NetIQ）與 `PrtgReevaluationPlanner`，彙整成 `ResumePlan { LocalDays, NetiqHostDays, PrtgDays, PrtgPendingDevices, HasWork }`，判定邏輯留在原處。改動只有三處既有判定的參數：
-   - NetIQ：重查狀態（`NeedsRetry` 集合）的回望改為 `min(7, GetEffectiveBackfillDaysLimit(retention))` 天，**不受 `BackfillDays` 限制**；「沒紀錄的日」維持 `BackfillDays`（新主機不會第一天補 7 天）；主機 `EnabledAt` 之前的日子不補。
-   - PRTG：`ReusableSyncFrom` 改為「全部 `SourceSynced` 為真且兩個待補清單皆為空或 `null`→整段沿用；有待補→沿用同步、只補待補裝置的 sensors／messages，再重評（`NeedsReevaluation` 已為真）」。
-   - 本機：不變。
-   - 手動立即執行不走清單（維持模式選單）。
-2. **C-2 統一停止點 `StopAt`**：`SchedulerRunState.CatchUpDeadline` 改名 `StopAt`，排程趟填**觸發時窗口實例的 End**（跨午夜：Start>End 時 End 落在隔天），補跑趟填開跑＋窗口長度，手動趟 `null`；`ShouldStopScheduledRun(now, stopAt)` 收斂為 `stopAt is {} t && now >= t`，拿掉 `IsWithinAnyWindow` 分支。`BatchRun` 加 `WindowInstanceStart`（識別窗口實例，供 C-3 計數）與 `StopAt`。DTO 保留 `catchUpDeadline`（只在補跑趟有值）並新增 `stopAt`。`OccupiesScheduleWindow` 規則不變（補跑、手動佔住；排程趟不佔）。
-3. **C-3 同窗口續跑決策表**（計數從既有排程觸發查詢點讀 `BatchRun.WindowInstanceStart`，重啟不歸零；不新增第二個查詢點）：
+第三版的 `ResumeWorkPlanner` 組合器與「趟末 Tick 再算一次」**刪除**：三路在趟內本來就各自算目標，再算一次是重複，且在 Tick 執行緒對全部主機重讀。
+
+1. **C-1 三路回報剩餘量，`ResumeSummary` 持久化**：各路結束時把「本路剩餘／失敗／未處理」交給 `BatchRunRecorder`（本機：失敗日數；NetIQ：失敗＋未查主機日數；PRTG：待補裝置數與待補日數），`BatchRun.ResumeSummary { LocalDays, NetiqHostDays, PrtgDays, PrtgDevices, HasWork }` 隨趟次持久化；趟首里程碑寫各路「本趟要補」（既有 by-product：缺漏日數、`ResolvePrtgDays` 結果、NetIQ 目標主機日數），趟末寫實際完成與剩餘。續跑決策只讀上一趟的 `ResumeSummary.HasWork`（DB），不重算。
+   - NetIQ 重查範圍：`NeedsRetry` 判定的主機日回望 `min(7, GetEffectiveBackfillDaysLimit(retention))` 天，來源＝父紀錄狀態 ∪ **帳本回執**（7 天份逐日 blob 各讀一次，不逐主機）；`ReadRecent` 範圍取 `max(7, BackfillDays)` 只在有重查狀態時放大；「從未嘗試過的日子」維持 `BackfillDays`；主機 `EnabledAt` 之前不補。手動立即執行不走這條。
+   - PRTG：`ReusableSyncFrom` 改為「全部 `SourceSynced` 且兩個待補清單皆為空或 `null`→整段沿用；有待補→沿用同步、只補待補裝置再重評」。本機不變。
+2. **C-2 統一停止點 `StopAt`**：`CatchUpDeadline` 全部改名 `StopAt`（`SchedulerRunState`、`SchedulerHostedService`、`RunRequest`、`ScheduleDtos`、`runs.js`，22 處一次到位，DTO 不保留舊名）；排程趟填觸發時窗口實例的 End（跨午夜落隔天）、補跑趟填開跑＋窗口長度、手動 `null`；`ShouldStopScheduledRun(now, stopAt)` 收斂為 `now >= stopAt`；`IsWithinAnyWindow` 保留給 AI 排程；`ScheduleCatchUpTests.cs:47-50` 四案改寫。`BatchRun` 加 `WindowInstanceStart`、`StopAt`；`CatchUp` 語意不變（只有 AutoCatchUp 趟為 true）。狀態卡文字改「本趟到 HH:mm 停止」（補跑趟前綴「補跑：」）。
+3. **C-3 同窗口續跑決策表**（計數＝既有排程觸發查詢點讀 `BatchRun.WindowInstanceStart` 的趟數，重啟不歸零）：
 
 | 趟型別 | 結束原因 | 同窗口再觸發？ |
 |---|---|---|
-| 排程 | 完成或失敗（非被停）、`HasWork`、距 `StopAt` ≥ 10 分、該實例已跑趟數 < 2、距該實例上一趟 **開跑** ≥ 10 分 | 是（`Trigger=schedule`，里程碑「本趟為窗口內續跑（第 2 趟）」） |
-| 排程 | 被 `StopAt` 停 | 否（等下一窗口） |
+| 排程 | 完成或失敗（非被停）、上一趟 `ResumeSummary.HasWork`、距 `StopAt` ≥ 10 分、該實例已跑趟數 < 2、距上一趟**開跑** ≥ 10 分 | 是：`Trigger=schedule`、**`WindowNote`**「本趟為窗口內續跑（第 2 趟，上一趟 #runId：結束原因）」、**`CatchUpNote=null`、`CatchUp=false`**（不擴大回望） |
+| 排程 | 上一趟有 PRTG 停損 | 另加「距上一趟結束 ≥ 10 分」（避開實例層冷卻剛失效就重打） |
+| 排程 | 被 `StopAt` 停 | 否 |
 | 排程 | 第 2 趟任何結束 | 否 |
-| 補跑 | 任何 | 否（窗口實例為 `null`） |
-| 手動 | 任何 | 否；手動趟結束不觸發續跑計算 |
+| 異常中斷 | 既有規則補一次（帶 `CatchUpNote`） | 該補跑趟計入實例趟數；之後仍受 < 2 上限 |
+| 補跑（AutoCatchUp） | 任何 | 否 |
+| 手動 | 任何 | 否 |
 
-   - 計算時機：只在排程趟結束的狀態轉換那一個 Tick 算 `ResumePlan`（`SchedulerRunState` 加 `PendingResumeCheck` 旗標），不快取、不每 Tick 算。
-   - 相鄰窗口：第一趟在 03:00 優雅停止期間 `IsRunning` 為真，第二窗口在它真正結束後的下一個 Tick 觸發（`WindowAlreadyTriggered` 對新實例為假），里程碑照寫「第 2 個執行窗口」。
-4. **C-4 Sentinel 回空**：沒有舊紀錄、事件 0 筆、未截斷→寫入並標 `empty-once`，進重查清單一次；第二次仍空→`success`。狀態值與「要不要重查」收斂成單一來源 `NetiqAttemptStatus`（常數＋`NeedsRetry(status, attempts)`），`KnownStatuses`、`HostDayPostProcessor` 兩處、run-preview、`RunMonitorService` 五個呼叫點改讀它，守門測試掃字面值。畫面：`empty-once` 在總表與狀態卡顯示為「成功」色（不製造新噪音），tooltip「空資料，下一窗口複查一次」；run-preview 算入補跑。
-5. **C-5 截斷重查上限**：`NeedsRetry` 的 `attempts` 參數＝該主機日在帳本的重查類回執數（既有 log 列計數，**不加欄位**）；partial／retained-incomplete 累計 ≥ 2 次→不再進排程清單（狀態不變，run-preview 手動補跑仍可選）。上限是「每個資料日總計 2 次」，不按執行日重置。
-6. **C-6 里程碑與狀態卡**：趟首寫 `ResumeSummary`（結構化欄位：本機 N 日／NetIQ N 主機日／PRTG N 日、N 裝置）；趟末追加實際完成數；NetIQ 結束里程碑單位統一為主機日；執行紀錄列顯示摘要（`textContent`）。
-7. **明確不做**：`AutoCatchUp` 語意不變；跨程序租約；本機資料不完整日不重跑（BACKLOG）。
+   - 判定時機：Tick 在 `!IsRunning` 時走既有觸發查詢，多讀最近一趟的 `ResumeSummary` 與 `WindowInstanceStart`；沒有旗標、沒有快取。
+   - 相鄰窗口：第一趟優雅停止期間 `IsRunning` 為真，第二窗口在它結束後的下一 Tick 觸發。
+   - 狀態卡 `triggerText` 附「（窗口內續跑第 2 趟，上一趟：被窗口結束停止／失敗／PRTG 停損）」。
+4. **C-4 Sentinel 回空（只動帳本）**：沒有舊紀錄、事件 0 筆、未截斷→**不寫父紀錄**，只寫帳本回執 `empty-once`；下一窗口因「沒紀錄＋帳本有重查狀態」再查一次；第二次仍空→寫 success 父紀錄；第二次有資料→正常寫入。`empty-once` 只進 `NetiqSourceAttempt.KnownStatuses`、`NeedsRetry`、run-preview 清單與 `RunMonitorService` 狀態對照——**不進 `LatestNetiqAttemptStatus`，不波及記錄頁與郵件**。狀態值與「要不要重查」收斂成 `NetiqAttemptStatus`（常數＋`NeedsRetry(status, attempts)`），守門只守判定處（`KnownStatuses` 與 `NeedsRetry` 唯一）。
+5. **C-5 自動重查上限（所有重查狀態一致）**：`failed`／`stopped`／`partial`／`retained-incomplete`／`empty-once` 的主機日，**自動重查最多 2 次**（以帳本該主機日的重查類回執數計，不加欄位），達上限→不再進排程清單、狀態不變；run-preview 手動補跑不受限。
+6. **C-6 畫面**：`RunDayHostStatusDto` 加 `StatusNote`（`null`＝無）：`empty-once`→「空資料，下一窗口複查一次」（狀態顯示「未執行」色）；達上限→「已放棄自動重查，請手動補跑」（維持 Warning 色）；`NetiqStatus` 補明確 case、不再靠 `_ => Warning`。執行紀錄列顯示 `ResumeSummary` 摘要（`textContent`）；NetIQ 結束里程碑單位統一為主機日。
+7. **明確不做**：`AutoCatchUp` 語意不變；跨程序租約；本機資料不完整日不重跑（BACKLOG）；`empty-once` 進父紀錄。
 
 ### 改動
 
-1. `ResumeWorkPlanner.cs`（新，Core）、`AnalysisOrchestrator.cs` 接點、`HostDayPostProcessor.cs`／`NetiqPipelineService.cs`（參數）、`NetiqAttemptStatus.cs`（新）、`NetiqSourceAttempt.cs`（讀計數、白名單改讀常數）。
-2. `ScheduleCalculator.cs`、`SchedulerHostedService.cs`、`SchedulerRunState.cs`、`BatchRunStore.cs`（`StopAt`、`WindowInstanceStart`、`ResumeSummary`）。
-3. `ScheduleController.cs`（status DTO `stopAt`、run-preview 對照）、`RunMonitorService.cs`、`runs.js`、`core/format.js`。
-4. `PrtgReevaluationPlanner.cs`（`ReusableSyncFrom`）、`PrtgDailyPipeline.cs`（只補待補裝置）。
+1. `BatchRunRecorder.cs`／`BatchRunStore.cs`（`ResumeSummary`、`WindowInstanceStart`、`StopAt`）、`AnalysisOrchestrator.cs`（三路回報、里程碑、`RunRequest.StopAt`）、`NetiqPipelineService.cs`（回報、回空路徑）、`HostDayPostProcessor.cs`（`NeedsRetry` 參數、帳本來源）、`NetiqAttemptStatus.cs`（新）、`NetiqSourceAttempt.cs`（白名單改讀常數、回執計數）。
+2. `ScheduleCalculator.cs`、`SchedulerHostedService.cs`、`SchedulerRunState.cs`、`ScheduleDtos.cs`、`ScheduleController.cs`（run-preview 清單、`stopAt`）、`runs.js`。
+3. `RunMonitorService.cs`（`NetiqStatus`、`StatusNote`）、`RunDtos.cs`、`runs.js:368` 徽章 tooltip、`core/format.js`。
+4. `PrtgReevaluationPlanner.cs`、`PrtgDailyPipeline.cs`。
+5. 畫面文字：「本趟到 HH:mm 停止」、「補跑：本趟到 HH:mm 停止」、「本趟為窗口內續跑（第 2 趟，上一趟 #N：…）」、「續跑：本機 N 日／NetIQ N 主機日／PRTG N 日、N 裝置」、「空資料，下一窗口複查一次」、「已放棄自動重查，請手動補跑」。
 
 ### 驗收
 
 | 編號 | 驗收 | 測試類別 |
 |---|---|---|
-| C-1-1 | 父紀錄 failed／partial／retained-incomplete／empty-once 在 **預設模式**（`requireAi=false`）進清單；success 不進；7 天外不進；`EnabledAt` 前不進；沒紀錄的日仍受 `BackfillDays` | `MissingDateFinderRequireAiTests`（新案）、`ResumeWorkPlannerTests`（新） |
-| C-1-2 | `ResumeWorkPlanner` 不含判定：以替身注入三個既有判定器，斷言輸出只是彙整 | `ResumeWorkPlannerTests` |
-| C-1-3 | 待補裝置非空時沿用同步＋只對待補裝置發 sensors／messages 請求（URL 集合精確比對）＋重評；待補為空整段沿用 | `PrtgReevaluationPlannerTests`、`PrtgDailyPipelineTests` |
-| C-2-1 | `ShouldStopScheduledRun(now, stopAt)`：排程趟到 End 停、相鄰窗口 03:00 停、跨午夜 End 落隔天、補跑照 deadline、手動不停 | `ScheduleCalculatorTests`、`ScheduleCatchUpTests` |
-| C-2-2 | status DTO 同時帶 `catchUpDeadline`（補跑才有）與 `stopAt`；前端顯示讀 `stopAt` | `ScheduleGuardStatusCodeTests`、`RunsPageUiTests` |
-| C-3-1 | 決策表每列一案（5 案）：「第 2 趟後不再觸發」「被停不觸發」「補跑不觸發」「手動不觸發」「距上一趟開跑 < 10 分不觸發」 | `SchedulerTickOrderTests`（新案） |
-| C-3-2 | 站台重啟後計數沿用 DB（第 1 趟已跑→重啟→仍只允許 1 次續跑） | `SchedulerTriggerQueryTests` |
-| C-3-3 | `ResumePlan` 只在趟結束的 Tick 算一次（替身計數） | `SchedulerTickOrderTests` |
-| C-4-1 | 回空第一次→`empty-once`、第二次仍空→`success`、第二次有資料→正常寫入；帳本可寫入 `empty-once` | `NetiqPipelineBaselineTests`、`NetiqSourceAttemptPayloadTests` |
-| C-4-2 | 五個呼叫點都讀 `NetiqAttemptStatus`：守門測試掃 `"partial"` 等字面值只出現在該檔 | `NetiqAttemptStatusGuardTests`（新） |
-| C-4-3 | run-preview 把 `empty-once` 算入補跑；`RunMonitorService` 顯示為成功色 | `ScheduleRunPreviewNetiqAttemptTests`、`RunMonitorServiceTests` |
-| C-5-1 | 同一資料日 partial 回執 2 次後不進清單；run-preview 仍列出 | `MissingDateFinderRequireAiTests`、`ScheduleRunPreviewNetiqAttemptTests` |
-| C-6-1 | `ResumeSummary` 數字欄位與劇本一致；趟末完成數追加 | `ResumeRunIntegrationTests`（新） |
-| C-整合 | 窗口 01:00–03:00／04:00–06:00；第一趟 NetIQ 10 台完成 6 台被停、PRTG sensors 停損剩 30 台→第二趟 NetIQ 只查 4 台主機日、PRTG 只對 30 台發請求、已同步裝置零請求；`ResumeSummary.NetiqHostDays==4`、`PrtgPendingDevices==30` | `ResumeRunIntegrationTests` |
-| 停止 | 續跑等待／閘等待中按停止 1 秒內返回 | `SchedulerTickOrderTests`、B-1-4 |
-| 突變 | NetIQ 清單改回受 `BackfillDays` 限制→C-整合紅；`empty-once` 移出 `NeedsRetry`→C-4-1 紅；停止點改回「不在任何窗口內」→C-2-1 相鄰案紅 | — |
+| C-1-1 | 預設模式下 failed／stopped／partial／retained-incomplete（父紀錄）與帳本 `empty-once`／`failed`（無父紀錄）在 7 天內進清單；success 不進；7 天外不進；`EnabledAt` 前不進；`BackfillDays=1` 時 7 天內沒嘗試過的日子不進 | `MissingDateFinderRequireAiTests`（新案） |
+| C-1-2 | 三路回報：本機 2 日失敗、NetIQ 4 主機日剩餘、PRTG 30 台待補→`ResumeSummary` 各欄精確、`HasWork=true`；全部完成→`HasWork=false` | `BatchRunRecorderPhaseTests`、`NetiqPipelineBaselineTests`、`PrtgDailyPipelineTests` |
+| C-1-3 | 待補裝置非空→沿用同步、只對待補裝置發請求（URL 集合精確比對）、重評；待補空→整段沿用 | `PrtgReevaluationPlannerTests`、`PrtgDailyPipelineTests` |
+| C-2-1 | `ShouldStopScheduledRun(now, stopAt)`：到 End 停、相鄰窗口 03:00 停、跨午夜 End 落隔天、補跑照 deadline、手動不停；AI 排程 `IsWithinAnyWindow` 不受影響 | `ScheduleCalculatorTests`、`ScheduleCatchUpTests`、`AiAnalysisSchedulerTests` |
+| C-2-2 | DTO 只有 `stopAt`（無 `catchUpDeadline`）；前端兩種文字 | `ScheduleGuardStatusCodeTests`、`RunsPageUiTests` |
+| C-3-1 | 決策表每列一案（7 案），含「異常中斷補跑計入趟數」「PRTG 停損後距結束 < 10 分不觸發」 | `SchedulerTickOrderTests`（新案） |
+| C-3-2 | 續跑趟 `CatchUp=false`、`CatchUpNote=null`、回望不擴大；站台重啟後計數沿用 DB | `SchedulerTriggerQueryTests`、`AnalysisOrchestrator` 測試 |
+| C-4-1 | 回空第一次→無父紀錄、帳本 `empty-once`；第二次仍空→success 父紀錄；第二次有資料→正常；父紀錄 `LatestNetiqAttemptStatus` 永不為 `empty-once` | `NetiqPipelineBaselineTests`、`NetiqSourceAttemptPayloadTests` |
+| C-4-2 | 守門：`"partial"` 等字面值的**重查判定**只在 `NetiqAttemptStatus`；`KnownStatuses` 讀常數 | `NetiqAttemptStatusGuardTests`（新） |
+| C-4-3 | run-preview 把 `empty-once` 算入補跑；總表該格「未執行」色＋`StatusNote` | `ScheduleRunPreviewNetiqAttemptTests`、`RunMonitorServiceTests` |
+| C-5-1 | 同一主機日重查類回執 2 次後不進清單；格子 `StatusNote`「已放棄自動重查」；run-preview 仍列出 | `MissingDateFinderRequireAiTests`、`RunMonitorServiceTests`、`ScheduleRunPreviewNetiqAttemptTests` |
+| C-整合 | 窗口 01:00–03:00／04:00–06:00；第一趟 NetIQ 10 台完成 6 台被停、PRTG sensors 停損剩 30 台→上一趟 `ResumeSummary.HasWork`；第二趟 NetIQ 只查 4 台主機日、PRTG 只對 30 台發請求、已同步裝置零請求；里程碑含「續跑」 | `ResumeRunIntegrationTests`（新） |
+| 停止 | 閘等待中與續跑趟中按停止 1 秒內返回 | `SchedulerTickOrderTests`、B-1-4 |
+| 突變 | NetIQ 重查改回受 `BackfillDays` 限制→C-1-1 紅；`empty-once` 移出 `NeedsRetry`→C-4-1 紅；停止點改回「不在任何窗口內」→C-2-1 相鄰案紅；續跑帶 `CatchUpNote`→C-3-2 紅 | — |
 
-定向：`--filter "FullyQualifiedName~ResumeWorkPlanner|FullyQualifiedName~ResumeRun|FullyQualifiedName~MissingDateFinder|FullyQualifiedName~NetiqPipelineBaselineTests|FullyQualifiedName~NetiqSourceAttempt|FullyQualifiedName~NetiqAttemptStatus|FullyQualifiedName~ScheduleCalculatorTests|FullyQualifiedName~ScheduleCatchUpTests|FullyQualifiedName~SchedulerTickOrderTests|FullyQualifiedName~SchedulerTriggerQueryTests|FullyQualifiedName~ScheduleRunPreview|FullyQualifiedName~ScheduleGuardStatusCodeTests|FullyQualifiedName~PrtgReevaluationPlannerTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~RunMonitorServiceTests|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
-
----
-
-## 批次 E：排程頁與紀錄修正
-
-### 現況與核對結果
-
-| 項目 | 結果 | 證據 |
-|---|---|---|
-| 站台版本辨識 | 匯出 `appVersion` 1.0.53.2 與 dev 相同，但 log 行為是 63-2 併入前的；版本號寫死在 `Directory.Build.props` | `SentinelClient.cs:193`／`PrtgClient.cs:185` 現為 Info；`AIService.cs:455,631`；`AiJsonDiagnostics.cs:216` |
-| 停用主機列為失敗 | `AllHosts` 先濾 `Active` 再與近期趟 HostName 聯集；本機格狀態＝該日最新一趟**整趟**狀態；本機分析不看 `Active` | `RunMonitorService.cs:53-69,172,301-369`；`AnalysisOrchestrator.cs:292,672-682`；`BatchRunStore.cs:586-600` |
-| 執行時間 | 第二行是整趟起訖聯集（含 value-fill）；展開列只認四個階段鍵；總表錨點寫死昨天 | `RunDayTimingBuilder.cs:14-17,36-82`；`run-timeline.js:114-169`；`RunMonitorService.cs:80-96` |
-| AI 失敗計數 | `AiFailures` 只在 finally 覆寫；`RecordAiCall` 無呼叫者 | `AiAnalysisHostedService.cs:277-305`；`BatchRunRecorder.cs:337-344` |
-| treesize 提醒 | 每台一行 console＋一筆 Warn | `PrtgTablePager.cs:283-299` |
-
-### 定案
-
-1. **E-1 建置識別**：`InformationalVersion` 帶 git 短 sha 與建置時間；發佈腳本以 `-p:SourceRevisionId` 傳入，建置環境無 git 且未傳入時寫 `local`，健康頁顯示「建置時未取得版本識別」。健康頁、`/api/health`、匯出 `meta.build` 顯示。
-2. **E-2 停用主機**：
-   - 總表只含 `Active` 主機；「未登記」的趟主機名才聯集。`TotalHosts`、失敗計數、失敗主機欄同步。停用主機不出現在總表（沒有格）。
-   - 本機格狀態看本機階段（`Phases.local` 結果與 `LocalDaysFailed`）；舊紀錄無 `Phases`→退回整趟狀態並在格內 tooltip 標「升級前紀錄」（沿用 `run-timeline.js:155` 既有字樣）。匯出 `dailyHealth` 同口徑。
-   - 本機分析尊重站台主機 `Active`：已登記且停用→跳過並寫里程碑；未登記→照跑；`LocalAnalysisEnabled` 優先。升級後首趟若因此跳過，健康頁提示一次（讀最近一趟里程碑）。
-3. **E-3 今天列與四路耗時**：
-   - 總表加今天列：今天已有取數趟才出現，列首「今日」，主機狀態欄規則與其他列相同（執行日 D 的趟、狀態對應 D-1 資料）；進行中的趟顯示「執行中」。匯出 `dailyHealth` 含今天、guide 文字同步。
-   - DTO **新增**欄位 `localSeconds`／`netiqSeconds`／`prtgSeconds`／`aiSeconds`／`aiRunCount`／`runCount`，舊欄位 `fetchSeconds`／`followUpAiSeconds` 保留不改；前端第二行改讀新欄位「本機 X · NetIQ Y · PRTG Z · AI W（N 趟）」；PRTG 含 `prtg`、`prtg-sync`、`prtg-value-fill`、`prtg-triggered` 子階段聯集，展開列 PRTG 下列子階段。總計後加「共 N 趟」。
-4. **E-4 AI 失敗計數**：每個主機日結束由 recorder 累加（`RecordAiCall` 有呼叫者），外層例外與中斷保留已累計值；週檢 AI 呼叫計入。舊紀錄不回溯；`aiFailureRate` 新舊混合時分母分子同源（測試含混合）。
-5. **E-5 噪音警告**：treesize 提醒改為階段結束一行彙總（只進 console、不計 Warn）；`SentinelClient.cs:188-189` 註解校正。
-6. **E-6 AI 關文法的額外欄位**：關閉結構化輸出的那次嘗試，不送 `_extraRequestFields` 中與結構化輸出同類的鍵（清單集中在 `AiJsonDiagnostics` 一處：`response_format`、`grammar`、`json_schema`、`guided_json`，暫定），診斷行記下移除的鍵。
-7. **明確不做**：提示詞調整；多趟合併規則。
-
-### 驗收
-
-| 編號 | 驗收 | 測試類別 |
-|---|---|---|
-| E-1-1 | 健康 DTO 與匯出 `meta.build` 帶 sha＋時間；`local` 時旗標 `buildUnknown=true` | `HealthServiceTests`、`RunExportServiceTests` |
-| E-2-1 | 13 台（12 NetIQ 啟用＋1 本機停用），唯一一趟 NetIQ 全 401、本機成功→成功 0／失敗 12、`TotalHosts` 12、失敗主機欄不含本機主機、總表無本機格 | `RunMonitorServiceTests` |
-| E-2-2 | 本機主機啟用、同趟→本機格 Success；舊紀錄無 `Phases`→整趟狀態＋`legacy` 旗標 | `RunMonitorServiceTests`、`RunsTimelineBehaviorTests` |
-| E-2-3 | 已登記且停用→本機分析零掃描、里程碑含「已停用」；未登記→照跑 | `AnalysisOrchestrator` 相關測試（`LocalAnalysis*`／新案） |
-| E-3-1 | 今天有趟→今天列存在且 `isToday=true`；沒趟→不存在；匯出 `dailyHealth` 同 | `RunMonitorServiceTests`、`RunExportServiceTests` |
-| E-3-2 | 含 1,748 秒 `prtg-value-fill` 的趟→`prtgSeconds ≥ 1748`、展開列子階段含 `prtg-value-fill`；舊欄位值不變 | `RunDayTimingBuilderTests`、`RunsTimelineBehaviorTests` |
-| E-4-1 | 3 主機日、第 2 個降級、第 3 個擲例外→`AiCalls=3`、`AiFailures=2`；中斷趟保留已累計值 | `AiAnalysisSchedulerTests`、`BatchRunRecorder*Tests` |
-| E-5-1 | 11 台 messages 皆少於 treesize→console 恰 1 行、`WarnCount` 不變 | `PrtgTablePagerTests`、`PrtgFetchServiceTests` |
-| E-6-1 | 第二次嘗試關文法時請求 JSON 不含清單內鍵，其他額外欄位保留；診斷行列出移除鍵 | `AIServiceExtraRequestFieldsTests`、`AIServiceJsonDiagnosticsTests` |
-| 突變 | 拿掉 Active 過濾→E-2-1 紅；子階段鍵退回只有 `prtg`→E-3-2 紅；E-4 改回 finally 覆寫→E-4-1 紅 | — |
-
-定向：`--filter "FullyQualifiedName~RunMonitorServiceTests|FullyQualifiedName~RunDayTimingBuilderTests|FullyQualifiedName~RunsTimeline|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~RunExport|FullyQualifiedName~AiAnalysisSchedulerTests|FullyQualifiedName~BatchRunRecorder|FullyQualifiedName~PrtgTablePagerTests|FullyQualifiedName~AIService|FullyQualifiedName~HealthService|FullyQualifiedName~LocalAnalysis|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
+定向：`--filter "FullyQualifiedName~ResumeRun|FullyQualifiedName~MissingDateFinder|FullyQualifiedName~NetiqPipelineBaselineTests|FullyQualifiedName~NetiqSourceAttempt|FullyQualifiedName~NetiqAttemptStatus|FullyQualifiedName~ScheduleCalculatorTests|FullyQualifiedName~ScheduleCatchUpTests|FullyQualifiedName~SchedulerTickOrderTests|FullyQualifiedName~SchedulerTriggerQueryTests|FullyQualifiedName~ScheduleRunPreview|FullyQualifiedName~ScheduleGuardStatusCodeTests|FullyQualifiedName~AiAnalysisSchedulerTests|FullyQualifiedName~BatchRunRecorder|FullyQualifiedName~PrtgReevaluationPlannerTests|FullyQualifiedName~PrtgDailyPipelineTests|FullyQualifiedName~RunMonitorServiceTests|FullyQualifiedName~RunsPageUiTests|FullyQualifiedName~BehaviorTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~ApiTimeout"`。
 
 ---
 
 ## 批次 D：文件同步（隨各批次收尾）
 
-- A：`docs/DB-SPEC.md`（`schema_fingerprint`、`LF_SCHEMA_FORCE_UPGRADE` 排障說明）、`docs/BACKLOG.md`（SQL Server 短路、計時工具用法）、`CLAUDE.md` 基線。
-- B：`docs/PRTG-SPEC.md` §3（逐台階段閘與停損、待補裝置、messages 語意、pager 重試只在非逐台路徑）、WEB-SPEC §9.10 PRTG 卡兩列、`DB-SPEC` JSON 欄。
-- C：WEB-SPEC §9.10「多窗口續跑」改寫（清單、`StopAt`、決策表、里程碑）、「NetIQ 取數嘗試與補跑」補 `empty-once` 與上限、`NETIQ-API-REFERENCE.md` 狀態表、說明書排程頁「多個時段怎麼接續」。
-- E：WEB-SPEC §9.10 執行總表（今天列、四路、本機格來源、停用主機）、說明書兩處「不含今天」、`CLAUDE.md`「不要做」補「部署版本看建置 sha」。
-- 每批次收尾：`CLAUDE.md` 測試基線數字。
+- A：`docs/DB-SPEC.md`（升級器單一連線一行）、`docs/BACKLOG.md`（計時工具用法）。
+- E：WEB-SPEC §9.10 執行總表（今天列、四路、本機格、停用主機名單規則）；`WEB-SPEC.md:2863,3031`、`Runs.cshtml:221`、`RunMonitorService.cs:81`、說明書兩處、匯出 guide 的「不含今天」改寫；`README.md` 部署章節（建置識別）；`CLAUDE.md`「不要做」補「部署版本看建置識別，`local` 代表未取得」。
+- B：`docs/PRTG-SPEC.md` §3（逐台階段閘與停損、待補裝置、messages 語意、pager 重試只在非逐台路徑、數值路徑世代比對）、WEB-SPEC §9.10 PRTG 卡文字、`DB-SPEC` JSON 欄。
+- C：WEB-SPEC §9.10「多窗口續跑」改寫（三路回報、`StopAt`、決策表、里程碑、`StatusNote`）、「NetIQ 取數嘗試與補跑」補 `empty-once` 與上限、`NETIQ-API-REFERENCE.md` 狀態表、說明書排程頁「多個時段怎麼接續」。
+- 最後一批收尾：`CLAUDE.md` 測試基線與牆鐘。
 
 ## 升級／回退注意事項
 
-- **升級**：SQLite 第一次啟動走完整升級並寫 `schema_fingerprint`；SQL Server 無變化。舊 `NeedsReevaluation=true` 的 PRTG 日第一趟仍整段重做。本機主機若已停用，升級後首趟起不再分析本機（健康頁提示一次）。`AiFailures` 新舊口徑不同，趨勢在升級日有斷層（不回溯）。
-- **回退**：新 JSON 欄位對舊版無害（忽略）。`schema_fingerprint` blob 鍵對舊版無害（無全表枚舉，已 grep）。**`empty-once`**：舊版讀到會當「無前次回執」（`NetiqSourceAttempt.cs:66`），管線不會壞，但 run-preview 對含該狀態的日子回 409 `netiq_attempt_ledger_invalid` 直到那些日的帳本過保留期；回退前無法用 SQL 改（帳本是 log blob），文件寫明此影響。`StopAt`／`WindowInstanceStart` 舊版忽略，回退後回到「不在任何窗口內才停」。
+- **升級**：批次 A 不改任何資料與 schema 語意；SQL Server 無變化。舊 `NeedsReevaluation=true` 的 PRTG 日第一趟仍整段重做。本機主機若已停用，升級後首趟起不再分析本機日誌（健康頁提示）。`AiFailures` 新舊口徑不同，趨勢在升級日有斷層（不回溯）。
+- **回退**：新 JSON 欄位（`PendingSensorDevices`、`PendingMessageDevices`、`ResumeSummary`、`WindowInstanceStart`、`StopAt`）對舊版無害；`BatchRun` 不移除任何舊欄位、`CatchUp` 語意不變、續跑趟 `CatchUp=false`。**`empty-once`** 只在帳本：舊版讀到當「無前次回執」（`NetiqSourceAttempt.cs:66`），管線不壞，但 run-preview 對含該狀態的日子回 409 `netiq_attempt_ledger_invalid` 直到那些日的帳本過保留期（帳本是 log blob，無法用 SQL 改）。回退後停止點回到「不在任何窗口內」。
 
 ## 明確不做（本輪定案）
 
-- 不刪、不合併、不略過任何測試；不調整 xUnit 執行緒數。
-- SQL Server 的 schema 短路；SQL Server 鎖名變更。
+- 不刪、不合併、不略過任何測試；不調整 xUnit 執行緒數；不拆 `DisableParallelization` 集合。
+- schema 雜湊短路（任一 provider）；SQL Server 鎖名變更。
 - `PrtgRequestBudget` 壓力冷卻（B-3）。
+- `ResumeWorkPlanner` 組合器與趟末重算。
 - `AutoCatchUp` 擴大成補「被停一半的窗口」。
-- PRTG 重試參數開放設定頁。
-- 跨程序排程租約。
+- PRTG 重試參數開放設定頁；跨程序排程租約；`empty-once` 進父紀錄；liveness 帶 sha。
 
-## 複檢（第二版）
+## 複檢
 
-第一版複檢九條與兩輪獨立審查（使用者／管理者視角 25 條、架構視角 25 條）的處置摘要：
+### 第二版處置（摘要，保留供追溯）
+
+A-1 只對 SQLite 分名；A 牆鐘改觀察值；B-3 刪除、閘為唯一退避；B-4 待補⇒`NeedsReevaluation`；欄位型別兩個 `IReadOnlyList<long>?`；停止鈕回應時限；C-2 `StopAt`；C-5 帳本列計數；E-3 DTO；E-4 不回溯；E-1 無 git 環境；E-5 pager 回傳。
+
+### 第三版處置
+
+A-2 雜湊短路整套移除（根因＝每個檢查重開連線）；A-4 不拆集合只守門。
+
+### 第四版處置（第二輪雙視角審查 37 條）
 
 | 審查發現 | 處置 |
 |---|---|
-| A-1 鎖名變更波及 SQL Server、滾動升級互斥失效 | 只對 SQLite 分名，SQL Server 原名 |
-| A-2 短路層級、拆段正確性、版本常數無守門 | 定案寫明位置；步驟歸屬表為前置交付；A-2-4／A-2-6 守門 |
-| A 牆鐘不可客觀判定 | 改觀察值；驗收改代理指標 |
-| A-4 移出集合無守門 | A-4-1 |
-| B-1／pager／B-3 三層疊加；B-3 拖垮快照 | 刪 B-3；逐台階段關 pager 內建重試；閘是唯一退避 |
-| 閘的併發語意（世代、名額） | B-1 定案與 B-1-2／B-1-3 |
-| 停損冷卻旗標語意 | 寫明實例層、同趟後續階段略過、下一趟不受影響 |
-| B-4 不標重評會讓該日「已評估」卻缺資料 | 待補非空⇒`NeedsReevaluation=true`、`partial`＋Note |
-| 清除輸入集合 | B-2 完成集合＋B-2-4 |
-| 欄位型別、`PendingStage` 放不下兩階段 | 兩個 `IReadOnlyList<long>?` |
-| 停止鈕回應時限 | 共同規則＋B-1-4／C 停止案 |
-| 既有入口影響表、可見性 | B-5、B-6 |
-| C-1 第三套判定 | 退成組合器；C-1-2 守 |
-| C-2 新狀態來源 | `StopAt` 統一 |
-| C-3 狀態機、重啟、計數鍵、5 情境 | 決策表＋DB 計數＋C-3-1～3 |
-| C-1 7 天與保留期、新主機負載 | `min(7, limit)`；沒紀錄日仍受 `BackfillDays`；`EnabledAt` 前不補 |
-| C-5 計數鍵與帳本欄位 | 帳本列計數、不加欄位、每資料日總計 2 次 |
-| C-4 UI、回退 | 成功色＋tooltip；回退影響寫明 |
-| E-3 DTO 相容、「D-1」引用 | 新增欄位不改舊；文字改為「執行日 D 對應 D-1 資料」 |
-| E-4 口徑斷層 | 不回溯，混合測試 |
-| E-1 無 git 環境 | `SourceRevisionId`＋`local` 提示 |
-| E-5 需要 pager 回傳計數 | 列入 B 改動 1 |
-| D 基線累積 | 隨批次更新 |
+| A-1 大小寫未折疊、`file:` URI、fallback 不該退成連線字串雜湊 | 折疊、例外退回原常數、三案補測 |
+| A-2 `:memory:` 關連線、中途例外、跨行程鎖、真路徑計數、PRAGMA 理由 | 只關自己開的；A-2-2～A-2-4 |
+| A-3-1 Stopwatch 偶發紅 | 改 `TotalRequestedDelay` 結構斷言 |
+| B-1 重排重複累計、閘位置、`allowPagerRetry`、世代落點、數值路徑行為變更 | 整台成功才合併；派發迴圈內；單一參數；世代只在 `PauseGate`；B-5 標註 |
+| B-6 進度訊號只有三個整數、分派順序、落點、秒數凍結、與待補評估列重複 | 新常數＋顯式分支＋`PrtgPausedCount`／`PrtgResumeAt`；進度軌文字；併進既有列 |
+| C-1／C-3 組合器與趟末重算重複、Tick 全主機重讀 | 刪除，改三路回報＋持久化 `HasWork` |
+| C-1 7 天 `ReadRecent` 放大、失敗無紀錄日落在回望外 | 範圍取 max 只在有重查狀態時；帳本回執納入來源 |
+| C-4 字面值十幾處、`empty-once` 波及父紀錄下游 | 只進帳本；守門只守判定處 |
+| C-5 `failed` 無上限 | 所有重查狀態一致 2 次 |
+| C-3 續跑誤走 `CatchUpNote`、異常中斷疊加、PRTG 停損後立即重打 | `WindowNote`、決策表加兩列 |
+| C-2 消費端漏列、`IsWithinAnyWindow` 不可刪 | 22 處一次到位；AI 排程保留 |
+| C 續跑原因看不見、放棄重查靜默、`empty-once` tooltip 無落點 | `triggerText` 附原因；`StatusNote` |
+| E-1 發佈腳本不存在、匿名 liveness、去識別化 | MSBuild target；liveness 不帶；允許清單 |
+| E-2 歷史格消失、消費端表、體檢等是否跳過、scope 不一致 | 名單＝Active ∪ 窗口內有趟；只跳過日誌分析；`ScheduleController` 對齊 |
+| E-3 分頁數學、今天列 notRun 誤讀、guide、四處「不含今天」、舊欄位可刪 | 附加列不佔 days；「尚未處理」；替換欄位 |
+| E 缺改動清單；E-5 與 B-1 綁定矛盾 | 補；解綁 |
+| 測試類別不存在（`BatchRunStoreTests`、`HealthServiceTests`） | 改為 `PrtgDayStatSerializationTests`（新）、`HealthAndPerformanceTests` |
+| D 基線每批改同一行 | 只在最後一批改 |
 
 複檢完成，無其他新增事項。
 
@@ -327,4 +346,4 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| | | | | |
+| A 探針（2026-11-05） | 主代理 | 單一連線修正、鎖名分名、加速時鐘、三個新測試類已試作並跑過定向 247 案全綠；依使用者指示未提交、已還原，diff 存 scratchpad `feedback-64-batchA-probe.patch` | A-1-1 部分、A-2-1、A-2-3 前半、A-4-1 已寫成測試並通過 | 開工時套用 patch 後補第四版新增的 A-1 fallback、A-2-2～A-2-4、A-3-1 結構斷言 |
