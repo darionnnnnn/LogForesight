@@ -1,6 +1,6 @@
 # 回饋第 65 輪規劃：macOS／Windows 雙平台開發測試一致
 
-> 狀態：體檢完成，待終檢併 dev
+> 狀態：全案完成已併 dev
 > 基準：dev@e0ef0e1f（macOS 實測 8,498 通過／14 略過／1 失敗；Windows 基線 8,502 通過／11 略過）
 > 來源：在 macOS 首次跑全量，檔案鎖案例失敗；另發現行為測試對 Node 版本敏感
 > 實作方式：主代理自己做（改動小、機械；不派 subagent）
@@ -119,4 +119,11 @@
 - 守門測試用「`HttpListener` 且 `listener.Stop()`」雙條件，`TcpListener` 同名變數會誤報；目前無此情形，接受。
 - `FindRepoRoot` 在 `PlatformGuardTests` 再複製一份，與測試專案既有 71 份同款，不另抽共用。
 
-無新增修正。測試以實作輪 CI 為準：run 42031599553 兩平台結果見終檢節。
+無新增修正。測試以實作輪 CI 為準：run 42031599553 Windows 8,515 通過／11 略過、macOS 8,512 通過／14 略過，皆 0 失敗，與 CLAUDE.md 新基線一致。
+
+## 終檢輪（Fable 5.1）
+
+- 併入時 dev 自分叉點未移動，`git diff --quiet feature/platform-65 dev` 成立，併入後的樹與 CI 跑過的樹逐位元組相同，全量不重跑。
+- 體檢修正 commit 只有文件（PLAN、BACKLOG），無程式碼。
+- 現行文件（README、CLAUDE.md、DB-SPEC、BACKLOG）新增內容無輪次敘事字眼。
+- 終檢無新發現。
