@@ -1,6 +1,6 @@
 # 回饋第 65 輪規劃：macOS／Windows 雙平台開發測試一致
 
-> 狀態：實作完成，待換模型體檢與併 dev
+> 狀態：體檢完成，待終檢併 dev
 > 基準：dev@e0ef0e1f（macOS 實測 8,498 通過／14 略過／1 失敗；Windows 基線 8,502 通過／11 略過）
 > 來源：在 macOS 首次跑全量，檔案鎖案例失敗；另發現行為測試對 Node 版本敏感
 > 實作方式：主代理自己做（改動小、機械；不派 subagent）
@@ -92,8 +92,8 @@
 | B-1 | `86ce3027` | B-1 22 筆綠；B-3 突變下限 99，訊息含 `v22.23.4` 與 `99.0`，還原後綠 | B-3 突變只跑 `StorageBehaviorTests`（5 筆）：判定點只有一處，不必跑整批 |
 | B-2 | `88ecdb04` | B-2 568 筆綠；B-4 突變守門紅；B-5 Node 26.13 下 271 筆綠 | 篩選詞漏 `HelpManualLayoutTests`、`AiStateFrontendTests` 這類會啟動 node 的類別，B-2／B-5 另以「實際呼叫 `NodeRuntime.Run` 的 24 個類別」跑 271 筆補上 |
 | B-3 | `fa32c90a` | B-6 CI run 42025829809 兩個 job 皆綠 | |
-| C | 待提交 | C-1 敘事字眼 0 筆；文件相關測試 17 筆綠；C-2 macOS 全量 8,511 通過／14 略過／0 失敗；CI Windows 8,514 通過／11 略過、CI macOS 8,511 通過／14 略過 | 待確認：使用者的 Windows 開發機 Node 版本是否達 22.7；下限未以真實 22.7 驗證 |
-| 自檢 D | 待提交 | 見下節 | 見下節 |
+| C | `0c75cb6f` | C-1 敘事字眼 0 筆；文件相關測試 17 筆綠；C-2 macOS 全量 8,511 通過／14 略過／0 失敗；CI Windows 8,514 通過／11 略過、CI macOS 8,511 通過／14 略過 | 待確認：使用者的 Windows 開發機 Node 版本是否達 22.7；下限未以真實 22.7 驗證 |
+| 自檢 D | `932a44c9` | 受影響 158 筆綠；守門突變紅 | 見下節 |
 
 ## 自檢補修（批次 D）
 
@@ -103,3 +103,20 @@
 - 實測：`Stop` 後占用 port 再 `Dispose` 必擲例外；改 `Close` 正常。全專案 3 處都在 `PrtgProbeSiteCheckTests`。
 - 定案：3 處改 `Close`，加守門測試（`PlatformGuardTests`）。不做共用包裝：只有一個檔案。
 - 順帶修正：`CLAUDE.md` 基線句的括號與略過說明；新測試的 journal 改 `using`，斷言失敗時才不會留著鎖；`SkipReason` 多餘的 `$`。
+
+## 體檢交接
+
+- 實作與自檢：Claude Opus 5.5（commit `97a8e1fc`～`932a44c9`）。體檢：Claude Fable 5.1。
+- 實作方最沒把握處：22.7 下限未以真實 22.7 驗證；`GetFreePort` 先取 port 再綁定仍有極小競爭空間；CLAUDE.md 新基線數字是推算。
+
+## 體檢輪修正（Fable 5.1）
+
+以 `dev..feature/platform-65` 全 diff 對照 PLAN 逐條比對：A 定案 1～3、B 定案 1～4、C 三項、D 三處改 `Close`＋守門，diff 都有對應；「明確不做」三項沒有混進來；沒有計畫外改動。
+
+獵 bug 與架構：
+- `SkipReason` 由 `const` 改為屬性——沒有任何 `[Fact(Skip = …)]` 以常數引用它，編譯與 Node 類別測試都證實。
+- `PrtgSnapshotJournalLockedException` 走 `JournalFailed` 既有的 `ex is IOException` 篩選，呼叫端不需改；`Dispose` 可重入，新測試先 `Dispose` 再由 `using` 收尾不會重複釋放。
+- 守門測試用「`HttpListener` 且 `listener.Stop()`」雙條件，`TcpListener` 同名變數會誤報；目前無此情形，接受。
+- `FindRepoRoot` 在 `PlatformGuardTests` 再複製一份，與測試專案既有 71 份同款，不另抽共用。
+
+無新增修正。測試以實作輪 CI 為準：run 42031599553 兩平台結果見終檢節。
