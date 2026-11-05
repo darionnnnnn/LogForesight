@@ -9,7 +9,7 @@ import { installDom } from './mini-dom.mjs';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 installDom();
-const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration } =
+const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration, prtgPauseLabel } =
     await import(pathToFileURL(path.join(jsRoot, 'core', 'run-timeline.js')).href);
 
 const at = (h, m = 0) => `2026-11-02T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
@@ -156,6 +156,14 @@ const cases = {
         // 舊趟沒有階段資料：講清楚不是沒跑
         const legacy = renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, fetchRuns: 1, fetchRunsWithoutPhases: 1, otherAiRuns: 0, interruptedCount: 0, branches: [] });
         assert.equal(legacy.children[1].textContent, '無階段資料（升級前紀錄）');
+    },
+
+    prtgPauseLabelText() {
+        const now = new Date('2026-11-05T01:00:00');
+        assert.equal(prtgPauseLabel({}, now), null);
+        assert.equal(prtgPauseLabel({ prtgResumeAt: '2026-11-05T01:00:15', prtgPausedCount: 2 }, now), 'PRTG 回應異常，暫停中（第 2 次，約 15 秒後重試）');
+        assert.equal(prtgPauseLabel({ prtgResumeAt: '2026-11-05T00:59:00', prtgPausedCount: 2 }, now), null);
+        assert.equal(prtgPauseLabel({ prtgHaltedPending: 30, prtgResumeAt: '2026-11-05T01:00:15' }, now), 'PRTG 已停止本趟取數，30 台待補');
     },
 
     dayTimingOtherAiOnlyDay() {

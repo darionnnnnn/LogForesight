@@ -651,6 +651,21 @@ public class SchedulerHostedService : BackgroundService
         }
     }
 
+    /// <summary>上一趟留下的 PRTG 待補裝置數（執行中不顯示：這一趟正在補）。讀不到就不顯示，不該讓狀態 API 失敗。</summary>
+    public int? PrtgPendingDeviceCount(bool isRunning)
+    {
+        if (isRunning || !_systemSettingsStore.Get().PrtgEnabled) return null;
+        try
+        {
+            return PrtgReevaluationPlanner.PendingDeviceCount(_batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "讀取 PRTG 待補裝置數失敗");
+            return null;
+        }
+    }
+
     /// <summary>只寫 NLog 的 console：單獨保留清除的訊息不進執行狀態卡</summary>
     private sealed class NLogRunConsole : IRunConsole
     {

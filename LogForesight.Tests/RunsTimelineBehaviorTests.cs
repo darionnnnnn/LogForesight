@@ -30,6 +30,7 @@ public class RunsTimelineBehaviorTests
     [InlineData("dayTimingBranchesShowEveryPath")]
     [InlineData("dayTimingTwoLines")]
     [InlineData("dayTimingFourPathsAndSubPhases")]
+    [InlineData("prtgPauseLabelText")]
     [InlineData("dayTimingOtherAiOnlyDay")]
     [InlineData("dayTimingLegacyNoPhases")]
     [InlineData("dayTimingTotalRow")]

@@ -64,6 +64,10 @@ public sealed class PrtgFetchService
 {
     // 進度回報的 phase 字面值。Web 端 SchedulerRunState 依 "prtg-" 前綴歸入 PRTG 進度軌，
     // 前端 runs.js 另有一份標籤對照表——新增 phase 必須同步該表，否則畫面會印出裸 phase 字串。
+    /// <summary>訊號：PRTG 回應異常、全部暫停（done＝第幾次、total＝暫停秒數）</summary>
+    public const string PrtgPausedPhase = "prtg-paused";
+    /// <summary>訊號：PRTG 停損、本趟不再取（done＝待補台數）</summary>
+    public const string PrtgHaltedPhase = "prtg-halted";
     /// <summary>階段 1：device 結構同步</summary>
     public const string PrtgSyncDevicesPhase = "prtg-sync-devices";
     /// <summary>階段 2：sensor 結構同步</summary>
@@ -639,7 +643,7 @@ public sealed class PrtgFetchService
         var empty = new List<long>();
         var completed = 0;
 
-        var failed = await RunDevicesWithPauseAsync(deviceObjids, maxConcurrency, "感測器同步", async deviceObjid =>
+        var failed = await RunDevicesWithPauseAsync(deviceObjids, maxConcurrency, "感測器同步", progress, async deviceObjid =>
         {
             // 本台取回（通過範圍過濾）的列數：查詢成功且為 0 才算「PRTG 端確實沒有感測器」
             var deviceRows = 0;
@@ -721,13 +725,14 @@ public sealed class PrtgFetchService
     /// <param name="fetchOne">取一台；回傳 null＝成功，其他＝失敗原因（取消穿透）</param>
     /// <returns>沒完成的裝置（失敗或沒送出）</returns>
     private async Task<IReadOnlyList<long>> RunDevicesWithPauseAsync(
-        IReadOnlyList<long> devices, int maxConcurrency, string stageName,
+        IReadOnlyList<long> devices, int maxConcurrency, string stageName, Action<string, int, int>? progress,
         Func<long, Task<Exception?>> fetchOne, Action onSettled, CancellationToken ct)
     {
         // 停損後的冷卻：同一趟後面的階段不再打剛停損的 PRTG，全部記待補；下一趟是新實例，不受影響
         if (_retryTransientPaging && ValueFetchCoolingDown)
         {
             _console.WriteLine($"  PRTG 仍在停損後的冷卻期，本趟{stageName} {devices.Count} 台不送請求、留待下一個窗口。");
+            progress?.Invoke(PrtgHaltedPhase, devices.Count, 0);
             foreach (var _ in devices) onSettled();
             return devices.ToList();
         }
@@ -783,7 +788,7 @@ public sealed class PrtgFetchService
 
                     var retryable = _retryTransientPaging && failure is PrtgClientException client && session.Policy.ShouldRetry(client);
                     lock (sync) (retryable && !lastPass ? requeue : pending).Add(id);
-                    if (retryable) OnRetryableDeviceFailure(session, (PrtgClientException)failure, sentGeneration, stageName, ct);
+                    if (retryable) OnRetryableDeviceFailure(session, (PrtgClientException)failure, sentGeneration, stageName, progress, ct);
                 }
                 finally
                 {
@@ -811,16 +816,19 @@ public sealed class PrtgFetchService
         {
             _console.WriteLine($"  ⚠ PRTG {stageName}停損（{session.StopReason}）：{pending.Count} 台待補，下一個窗口續補。");
             Log.Warn("[PRTG] {Stage}停損（{Reason}）：{Count} 台待補", stageName, session.StopReason, pending.Count);
+            progress?.Invoke(PrtgHaltedPhase, pending.Count, 0);
         }
         return pending;
     }
 
-    private void OnRetryableDeviceFailure(PauseSession session, PrtgClientException ex, long sentGeneration, string stageName, CancellationToken ct)
+    private void OnRetryableDeviceFailure(PauseSession session, PrtgClientException ex, long sentGeneration, string stageName,
+        Action<string, int, int>? progress, CancellationToken ct)
     {
         var decision = session.OnRetryableFailure(ex.RetryAfter, sentGeneration, "台", ct);
         if (decision.Pause > TimeSpan.Zero)
         {
             var seconds = (int)Math.Ceiling(decision.Pause.TotalSeconds);
+            progress?.Invoke(PrtgPausedPhase, decision.Consecutive, seconds);
             // 只寫 Info：PRTG 慢的夜晚不該讓趟次變成「有警告」，停損才出聲
             _console.WriteLine($"  PRTG {stageName}回應異常（{ex.Message}），全部暫停 {seconds} 秒後繼續（連續失敗 {decision.Consecutive} 台）。");
             Log.Info("[PRTG] {Stage}失敗（{Reason}），全部暫停 {Seconds} 秒後繼續（連續失敗 {Consecutive} 台）",
@@ -953,7 +961,7 @@ public sealed class PrtgFetchService
         progress?.Invoke(PrtgSyncMessagesPhase, 0, totalObjects);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        var failed = await RunDevicesWithPauseAsync(objects, maxConcurrency, "狀態變更同步", async objid =>
+        var failed = await RunDevicesWithPauseAsync(objects, maxConcurrency, "狀態變更同步", progress, async objid =>
         {
             if (_guard != null) await _guard.WaitIfBusyAsync(ct);
 
@@ -1172,7 +1180,7 @@ public sealed class PrtgFetchService
 
         var run = new ValueFetchRun(day, activeSensors, new PauseSession(
             new PrtgValueFetchRetryPolicy(ValueFetchJitter),
-            new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource)));
+            new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource)), progress);
 
         try
         {
@@ -1192,8 +1200,10 @@ public sealed class PrtgFetchService
     /// </summary>
     private sealed class ValueFetchRun
     {
-        internal ValueFetchRun(DateTime day, IReadOnlyList<(long Objid, bool Paused)> sensors, PauseSession session)
+        internal ValueFetchRun(DateTime day, IReadOnlyList<(long Objid, bool Paused)> sensors, PauseSession session,
+            Action<string, int, int>? progress)
         {
+            Progress = progress;
             Day = day;
             Sensors = sensors;
             Session = session;
@@ -1208,6 +1218,7 @@ public sealed class PrtgFetchService
         internal DateTime Day { get; }
         internal IReadOnlyList<(long Objid, bool Paused)> Sensors { get; }
         internal PauseSession Session { get; }
+        internal Action<string, int, int>? Progress { get; }
         internal PrtgValueFetchRetryPolicy Policy => Session.Policy;
         internal PauseGate Gate => Session.Gate;
         internal string Sdate { get; }
@@ -1366,6 +1377,7 @@ public sealed class PrtgFetchService
         var decision = run.Session.OnRetryableFailure(ex.RetryAfter, sentGeneration, "顆", ct);
         if (decision.Pause > TimeSpan.Zero)
         {
+            run.Progress?.Invoke(PrtgPausedPhase, decision.Consecutive, (int)Math.Ceiling(decision.Pause.TotalSeconds));
             Log.Info("[PRTG] {Day:yyyy-MM-dd} 數值取數失敗（{Reason}），全部工作暫停 {Seconds} 秒後繼續（連續失敗 {Consecutive} 顆）",
                 run.Day, ex.Message, (int)Math.Ceiling(decision.Pause.TotalSeconds), decision.Consecutive);
         }

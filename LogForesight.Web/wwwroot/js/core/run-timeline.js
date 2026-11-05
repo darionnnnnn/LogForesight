@@ -97,6 +97,18 @@ const SUB_PHASE_LABEL = {
     'prtg-value-fill': '補 PRTG 數值'
 };
 
+/**
+ * PRTG 進度軌的暫停與停損文字；沒有就回 null。暫停以絕對時間算剩餘秒數：
+ * 狀態每 3 秒輪詢，後端送秒數的話畫面會凍結。過了放行時刻就不再顯示。
+ */
+export function prtgPauseLabel(status, now = new Date()) {
+    if (status.prtgHaltedPending > 0) return `PRTG 已停止本趟取數，${status.prtgHaltedPending} 台待補`;
+    if (!status.prtgResumeAt) return null;
+    const seconds = Math.ceil((new Date(status.prtgResumeAt) - now) / 1000);
+    if (seconds <= 0) return null;
+    return `PRTG 回應異常，暫停中（第 ${status.prtgPausedCount} 次，約 ${seconds} 秒後重試）`;
+}
+
 const otherAiText = timing => `AI 補跑 ${timing.otherAiRuns} 趟（${formatDuration(timing.otherAiSeconds ?? 0)}）`;
 
 /**

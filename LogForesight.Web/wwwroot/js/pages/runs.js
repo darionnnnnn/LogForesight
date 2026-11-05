@@ -12,7 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
-import { formatDuration, phaseSeconds, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
+import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
@@ -1260,7 +1260,8 @@ function applyPrtgOperationalStatus(status) {
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const diffDays = Math.max(1, Math.round((today - earliestDate) / (1000 * 60 * 60 * 24)));
-            pendingVal.textContent = `${pendingDays.length} 天（最早 ${earliest}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
+            const devices = status.prtgPendingDevices > 0 ? `，含 ${status.prtgPendingDevices} 台裝置` : '';
+            pendingVal.textContent = `${pendingDays.length} 天待補（最早 ${earliest}${devices}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
             pendingRow.classList.remove('d-none');
         } else {
             pendingRow.classList.add('d-none');
@@ -1689,8 +1690,10 @@ function renderScheduleProgress(status) {
         prtgPhaseLabel += `（第 ${status.prtgDayIndex}／${status.prtgDayCount} 天）`;
     }
 
-    let prtgCustomLabel = null;
-    if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
+    let prtgCustomLabel = status.isRunning ? prtgPauseLabel(status) : null;
+    if (prtgCustomLabel) {
+        // 暫停或停損優先：這時進度數字不動，使用者要知道的是「為什麼不動」
+    } else if (!status.prtgCompleted && status.prtgProgressPhase === 'prtg-triggered' && status.prtgProgressTotal === 0 && status.prtgProgressDone > 0) {
         prtgCustomLabel = `${prtgPhaseLabel}　已取 ${status.prtgProgressDone} 個 sensor（等待分析結果）`;
     } else if (status.prtgCompleted) {
         // prtg-done(0,0) 會保留前一階段的進度；那可能是「同步 20 台中的 20 台」，

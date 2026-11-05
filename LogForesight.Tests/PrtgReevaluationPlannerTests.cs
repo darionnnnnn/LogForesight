@@ -376,4 +376,16 @@ public class PrtgReevaluationPlannerTests
         Assert.Equal(nonAiIssue.Date, issue!.Date);
         Assert.Equal(BatchRun.PrtgOutcomePartial, issue.Outcome);
     }
+
+    [Fact]
+    public void PendingDeviceCount_取最新一趟的聯集_舊紀錄為null()
+    {
+        var old = new BatchRun { RunId = 1, StartedAt = DateTime.Today.AddDays(-1), PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-2), "success", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 9 }) } };
+        var latest = new BatchRun { RunId = 2, StartedAt = DateTime.Today, PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: new long[] { 1, 2 }, PendingMessageDevices: new long[] { 2, 3 }) } };
+        var legacy = new BatchRun { RunId = 3, StartedAt = DateTime.Today, PrtgDays = new() { new PrtgDayStat(DateTime.Today.AddDays(-1), "success", 0, 0, true, 0, 0, 0) } };
+
+        Assert.Equal(3, PrtgReevaluationPlanner.PendingDeviceCount(new[] { old, latest }));
+        Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(new[] { legacy }));
+        Assert.Null(PrtgReevaluationPlanner.PendingDeviceCount(Array.Empty<BatchRun>()));
+    }
 }

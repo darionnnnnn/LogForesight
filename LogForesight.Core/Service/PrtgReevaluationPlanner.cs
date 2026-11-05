@@ -92,6 +92,16 @@ public static class PrtgReevaluationPlanner
 
         return lastFinishedRun.PrtgDays.FirstOrDefault(s => s.Outcome != BatchRun.PrtgOutcomeSuccess);
     }
+    /// <summary>最新一趟取數留下的待補裝置數（感測器與狀態變更聯集）；舊紀錄缺欄位時回 null（未知，不顯示）。</summary>
+    public static int? PendingDeviceCount(IReadOnlyList<BatchRun> runs)
+    {
+        var latest = runs.Where(r => r.JobType != BatchRun.JobTypeAi && r.PrtgDays is { Count: > 0 })
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId).FirstOrDefault();
+        var stat = latest?.PrtgDays!.FirstOrDefault(d => d.PendingSensorDevices != null || d.PendingMessageDevices != null);
+        if (stat == null) return null;
+        return (stat.PendingSensorDevices ?? Array.Empty<long>()).Union(stat.PendingMessageDevices ?? Array.Empty<long>()).Count();
+    }
+
     /// <summary>
     /// 本趟能否沿用同日另一趟的來源同步（docs/PRTG-SPEC.md §3）：只有排程趟、Full 範圍，而且本趟每一天
     /// 最新的那筆統計都是今天開跑、來源同步完整。手動執行一律重做——按下去就是要重跑。

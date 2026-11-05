@@ -68,6 +68,12 @@ public static class RunPhases
     /// <summary>資源守門進入暫停</summary>
     public const string GuardPaused = "guard-paused";
 
+    /// <summary>PRTG 回應異常、全部暫停：done＝第幾次、total＝暫停秒數（訊號，不是進度）</summary>
+    public const string PrtgPaused = PrtgFetchService.PrtgPausedPhase;
+
+    /// <summary>PRTG 停損、本趟不再取：done＝待補台數（訊號，不是進度）</summary>
+    public const string PrtgHalted = PrtgFetchService.PrtgHaltedPhase;
+
     /// <summary>資源守門離開暫停</summary>
     public const string GuardResumed = "guard-resumed";
 
@@ -90,7 +96,7 @@ public static class RunPhases
         PrtgSync, PrtgSyncDevices, PrtgSyncSensors, PrtgSyncMessages, PrtgValues, PrtgTriggered,
         PrtgWaitSync,
         LocalDone, NetiqDone, PrtgDone,
-        GuardPaused, GuardResumed, PrtgFindingsReady, PrtgDateRange
+        GuardPaused, GuardResumed, PrtgPaused, PrtgHalted, PrtgFindingsReady, PrtgDateRange
     };
 
     /// <summary>會畫進度條的 phase（需要前端標籤與單位）。訊號類不在內。</summary>

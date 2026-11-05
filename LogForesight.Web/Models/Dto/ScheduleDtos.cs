@@ -121,6 +121,18 @@ public class ScheduleStatusDto
     /// <summary>資源守門暫停原因（null 代表未暫停）。</summary>
     public string? PausedReason { get; set; }
 
+    /// <summary>PRTG 暫停閘第幾次拉起；搭配 <see cref="PrtgResumeAt"/>。</summary>
+    public int PrtgPausedCount { get; set; }
+
+    /// <summary>PRTG 暫停預計放行的時刻（null＝未暫停）。</summary>
+    public DateTime? PrtgResumeAt { get; set; }
+
+    /// <summary>PRTG 停損後本趟待補的台數（0＝沒有停損）。</summary>
+    public int PrtgHaltedPending { get; set; }
+
+    /// <summary>上一趟留下的 PRTG 待補裝置數（null＝未知，不顯示）。</summary>
+    public int? PrtgPendingDevices { get; set; }
+
     /// <summary>
     /// 被進行中的手動執行佔用掉的排程窗口起始時刻（null＝沒有）。
     /// 手動觸發不受窗口 End 停止，一趟大回填可以吃掉整段窗口——畫面上原本只看得到
