@@ -477,6 +477,18 @@ public class ScheduleCalculatorTests
     private static List<ScheduleWindow> Windows(params (string Start, string End)[] w) =>
         w.Select(x => new ScheduleWindow { Start = x.Start, End = x.End }).ToList();
 
+    [Fact]
+    public void RunResume_PRTG整段失敗沒有待補裝置_仍算還有事()
+    {
+        var byRun = new BatchRun { PrtgOutcome = BatchRun.PrtgOutcomeFailed };
+        var byDay = new BatchRun { PrtgDays = new List<PrtgDayStat> { new(DateTime.Today.AddDays(-1), BatchRun.PrtgOutcomeFailed, 0, 0, false, 0, 0, 0, null) } };
+
+        Assert.True(RunResume.Of(byRun).HasWork);
+        Assert.Contains("PRTG 同步失敗", RunResume.Of(byDay).Describe());
+        Assert.False(RunResume.Of(new BatchRun { PrtgOutcome = BatchRun.PrtgOutcomeSuccess }).HasWork);
+        Assert.False(RunResume.Of(new BatchRun { PrtgOutcome = BatchRun.PrtgOutcomeDisabled }).HasWork);
+    }
+
     private static BatchRun FetchRun(DateTime start, DateTime? instance, int netiqFailed = 0, bool stopped = false, bool interrupted = false,
         string trigger = BatchRunTriggers.Schedule, int minutes = 30, IReadOnlyList<long>? pendingSensors = null) => new()
     {

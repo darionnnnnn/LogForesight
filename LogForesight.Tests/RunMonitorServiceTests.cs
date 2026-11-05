@@ -482,6 +482,21 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void NetIQ失敗類今天重查用完_格子講明天會再試_不說已放棄()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.3", Source = "netiq" });
+        var runDate = DateTime.Today.AddDays(-1);
+        var dataDate = runDate.AddDays(-1);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 1, NetiqAttemptStatus.Failed);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 2, NetiqAttemptStatus.Failed);
+
+        var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDayDetail(runDate), r => r.HostName == host.HostName);
+
+        Assert.Contains("明天會再試", row.StatusNote);
+    }
+
+    [Fact]
     public void 執行紀錄列_帶結束時仍待補的摘要()
     {
         var runs = Runs();

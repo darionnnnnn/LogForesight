@@ -286,9 +286,9 @@ public class RunMonitorService
     {
         if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
         if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce) return "空資料，下一窗口複查一次";
-        return NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) && NetiqAttemptStatus.AutoRetryExhausted(history)
-            ? "已放棄自動重查，請手動補跑"
-            : null;
+        if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
+        // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
+        return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";
     }
 
     private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,

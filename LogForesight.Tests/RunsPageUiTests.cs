@@ -146,6 +146,7 @@ public class RunsPageUiTests
         Assert.Contains("本趟到", js);
         Assert.Contains("status.windowNote", js);
         Assert.Contains("仍待補：", js);
+        Assert.Contains("台裝置待補，下一次排程自動補", js);
     }
 
     [Fact]

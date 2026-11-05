@@ -1263,6 +1263,10 @@ function applyPrtgOperationalStatus(status) {
             const devices = status.prtgPendingDevices > 0 ? `，含 ${status.prtgPendingDevices} 台裝置` : '';
             pendingVal.textContent = `${pendingDays.length} 天待補（最早 ${earliest}${devices}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
             pendingRow.classList.remove('d-none');
+        } else if (status.prtgPendingDevices > 0) {
+            // 待補評估日不含昨天，但昨天的裝置也可能還沒補完
+            pendingVal.textContent = `${status.prtgPendingDevices} 台裝置待補，下一次排程自動補`;
+            pendingRow.classList.remove('d-none');
         } else {
             pendingRow.classList.add('d-none');
         }

@@ -31,7 +31,7 @@ public static class NetiqAttemptStatus
     /// <summary>帳本最新狀態值得重查（補跑預覽與排程續跑共用）。</summary>
     public static bool LedgerNeedsRetry(string? status) => status is Failed or Running or Partial or RetainedIncomplete or Stopped or EmptyOnce;
 
-    private static bool IsTruncated(string status) => status is Partial or RetainedIncomplete;
+    public static bool IsTruncated(string status) => status is Partial or RetainedIncomplete;
 
     /// <summary>
     /// 自動重查是否已達上限（只限制排程；手動補跑不受限）。

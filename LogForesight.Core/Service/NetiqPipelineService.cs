@@ -72,6 +72,10 @@ public class NetiqPipelineService
     private readonly int _resumeRetryDays;
     /// <summary>排程續跑開跑時讀一次的嘗試摘要；null＝關閉或帳本讀不到（退回原本只看回望窗的判定）。</summary>
     private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory>? _attemptHistory;
+    /// <summary>帳本有重查狀態的主機：只有它們要讀到 7 天前的紀錄，其餘維持常態回望（每台每趟都多讀一週不划算）。</summary>
+    private HashSet<long> _hostsWithRetry = new();
+    /// <summary>本趟已送出查詢的主機日：它們的回執由查詢路徑寫，沒開始的才由 <see cref="RecordUnattempted"/> 補記。</summary>
+    private readonly ConcurrentDictionary<(long HostId, DateTime Date), byte> _startedHostDays = new();
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
     private readonly PermissionChangeStore? _permissionChangeStore;
     private readonly PermissionFieldMappings? _permissionMappings;
@@ -183,6 +187,9 @@ public class NetiqPipelineService
         _permissionHostDayClaims = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
         _attemptHistory = ReadAttemptHistoryForResume(lookbackDays);
+        _hostsWithRetry = _attemptHistory?
+            .Where(pair => NetiqAttemptStatus.LedgerNeedsRetry(pair.Value.LatestStatus))
+            .Select(pair => pair.Key.HostId).ToHashSet() ?? new HashSet<long>();
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -248,6 +255,7 @@ public class NetiqPipelineService
                     _console.WriteLine($"  ⚠ Sentinel「{serverName}」密碼無法解密，略過（轄下 {targets.Count} 台主機本次不查詢）");
                     result.AddWarning($"Sentinel「{serverName}」密碼無法解密，轄下 {targets.Count} 台主機本次不查詢");
                     result.AddFailed(targets.Count);
+                    RecordUnattempted(() => MissingHostDays(targets), NetiqAttemptStatus.Failed);
                     return;
                 }
                 if (credentialState != CredentialState.Ok)
@@ -271,6 +279,7 @@ public class NetiqPipelineService
                     _console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {targets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
                     result.AddWarning($"Sentinel「{serverName}」整體失敗：{ex.Message}");
                     result.AddFailed(targets.Count);
+                    RecordUnattempted(() => MissingHostDays(targets), NetiqAttemptStatus.Failed);
                 }
             });
         }
@@ -281,6 +290,7 @@ public class NetiqPipelineService
 
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
                           $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日" +
+                          (result.EmptyDeferred > 0 ? $"、回 0 筆待複查 {result.EmptyDeferred} 個主機日" : "") +
                           (result.RerunDaysAnalyzed > 0 || result.RerunDaysRetained > 0
                               ? "、" + HostDayPostProcessor.RerunSummary(result.RerunDaysAnalyzed, result.RerunDaysRetained)
                               : "") +
@@ -308,6 +318,40 @@ public class NetiqPipelineService
             Log.Warn(ex, "NetIQ 嘗試帳本讀取失敗，本趟只依回望窗判定待補");
             return null;
         }
+    }
+
+    /// <summary>
+    /// 排程續跑：這些主機日本趟一個查詢都沒送出（窗口到點、Sentinel 憑證解不開或整台失敗）也要留回執。
+    /// 沒有回執就是「從沒嘗試過」，隔天落在常態回望外就再也不會補。已有回執的不動（重查計數與狀態都在），
+    /// 本趟已開始的由查詢路徑自己寫（覆寫會把成功蓋成停止）。寫不進去不該蓋掉原本的停止或失敗，只記 log。
+    /// </summary>
+    private void RecordUnattempted(Func<IEnumerable<(long HostId, DateTime Date)>> hostDays, string status)
+    {
+        if (_attemptHistory == null) return;
+        try
+        {
+            foreach (var group in hostDays()
+                .Select(hostDay => (hostDay.HostId, Date: hostDay.Date.Date))
+                .Where(hostDay => !_attemptHistory.ContainsKey(hostDay) && !_startedHostDays.ContainsKey(hostDay))
+                .GroupBy(hostDay => hostDay.Date))
+            {
+                NetiqSourceAttempt.RecordBatch(_backend, group.Select(hostDay => hostDay.HostId).Distinct().ToArray(), group.Key, _runRecorder.RunId, status);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn(ex, "NetIQ 未開始主機日的回執寫入失敗，這些主機日隔天可能不會自動補回");
+        }
+    }
+
+    /// <summary>這些主機在常態回望內還沒完成的日子（整台 Sentinel 沒查時用；這時還沒有逐台計畫）。</summary>
+    private IEnumerable<(long HostId, DateTime Date)> MissingHostDays(IEnumerable<NetiqTarget> targets)
+    {
+        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays);
+        return targets.SelectMany(target => MissingDateFinder.FindWithExistingDates(
+                _backend.RecordStore(new HostKey { HostId = target.HostId, HostName = target.HostName }),
+                _today, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi)
+            .MissingDates.Select(date => (target.HostId, date)));
     }
 
     /// <summary>
@@ -402,7 +446,7 @@ public class NetiqPipelineService
             var store = _backend.RecordStore(hostKey);
             var missingScan = MissingDateFinder.FindWithExistingDates(
                 // 第二個參數是本趟的今天（見 runToday）
-                store, _today, _attemptHistory != null ? Math.Max(lookback, _resumeRetryDays) : lookback,
+                store, _today, _hostsWithRetry.Contains(target.HostId) ? Math.Max(lookback, _resumeRetryDays) : lookback,
                 requireAi: _onlyMissingOrFailed, useAi: _useAi);
             var missingDates = ApplyResumePolicy(target.HostId, missingScan.MissingDates, lookback);
 
@@ -500,6 +544,11 @@ public class NetiqPipelineService
                     });
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                RecordUnattempted(() => plans.SelectMany(p => p.MissingDates.Select(date => (p.Target.HostId, date))), NetiqAttemptStatus.Stopped);
+                throw;
+            }
             finally
             {
                 foreach (var client in clientPool)
@@ -515,6 +564,7 @@ public class NetiqPipelineService
         int trendWindowDays, NetiqPipelineResult result,
         List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
+        foreach (var plan in batch) _startedHostDays[(plan.Target.HostId, date.Date)] = 0;
         var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
         var ips = batch.Select(p => p.Target.IpAddress).ToList();
         // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient；用 DateTimeOffset 建構子
@@ -1009,11 +1059,7 @@ public sealed class NetiqPipelineResult
     public int EmptyDeferred => _emptyDeferred;
 
     /// <summary>算進度：這個主機日本趟已處理完，只是還沒定案。</summary>
-    public void AddEmptyDeferred()
-    {
-        Interlocked.Increment(ref _emptyDeferred);
-        AddRerunRetained();
-    }
+    public void AddEmptyDeferred() => Interlocked.Increment(ref _emptyDeferred);
 
     /// <summary>
     /// 本次需要分析的「主機×日」總數（docs/archive/FEEDBACK-8-PLAN.md #2，進度條分母）：
@@ -1023,7 +1069,7 @@ public sealed class NetiqPipelineResult
     public int HostDaysTotal => _hostDaysTotal;
 
     /// <summary>已處理（含成功、失敗與保留原結果）的「主機×日」次數——進度條分子</summary>
-    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed + _rerunDaysRetained;
+    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed + _rerunDaysRetained + _emptyDeferred;
 
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
     public IReadOnlyList<string> Warnings => _warnings;

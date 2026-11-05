@@ -134,11 +134,13 @@ public class ScheduleController : ControllerBase
         string? prtgLastIssueOutcome = null;
         string? prtgLastIssueNote = null;
         PrtgLastScheduledDayDto? prtgLastScheduledDay = null;
+        int? prtgPendingDevices = null;
 
         // 單元測試以 scheduler: null! 建控制器（只測狀態欄位），與本控制器其他可省略相依同一慣例；正式 DI 一定有值
         if (!s.IsRunning && _scheduler is not null)
         {
-            var (healthPending, healthLastIssue, healthLastScheduled) = _scheduler.PrtgRunHealth();
+            var (healthPending, healthLastIssue, healthLastScheduled, healthPendingDevices) = _scheduler.PrtgRunHealth();
+            prtgPendingDevices = healthPendingDevices;
             if (healthLastScheduled is { } scheduled)
             {
                 prtgLastScheduledDay = new PrtgLastScheduledDayDto
@@ -187,7 +189,7 @@ public class ScheduleController : ControllerBase
             PrtgPausedCount = s.PrtgPausedCount,
             PrtgResumeAt = s.PrtgResumeAt,
             PrtgHaltedPending = s.PrtgHaltedPending,
-            PrtgPendingDevices = _scheduler?.PrtgPendingDeviceCount(s.IsRunning),
+            PrtgPendingDevices = prtgPendingDevices,
             CanStop = s.IsRunning,
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,

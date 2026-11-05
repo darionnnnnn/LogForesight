@@ -220,7 +220,7 @@ public class SchedulerTriggerQueryTests
         };
 
         Assert.Contains("上一趟 #7 留下 NetIQ 4 主機日", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(4, false) }));
-        Assert.Contains("上一趟 #7 被窗口結束停止", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, true) }));
+        Assert.Contains("上一趟 #7 被停止", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, true) }));
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, false) }));
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, Array.Empty<BatchRun>()));
     }

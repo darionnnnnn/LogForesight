@@ -442,7 +442,7 @@ public class SchedulerHostedService : BackgroundService
         if (note == null || previous == null) return note;
         var resume = RunResume.Of(previous);
         if (resume.HasWork) return $"{note}；續跑：上一趟 #{previous.RunId} 留下 {resume.Describe()}";
-        return previous.Stopped ? $"{note}；續跑：上一趟 #{previous.RunId} 被窗口結束停止，接著處理未完成的部分" : note;
+        return previous.Stopped ? $"{note}；續跑：上一趟 #{previous.RunId} 被停止，接著處理未完成的部分" : note;
     }
 
     /// <summary>
@@ -667,12 +667,12 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>
     /// PRTG 運作健全度摘要（供 DevMonitor 檢視待補評估日與上一趟異常）。
     /// </summary>
-    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue, (long RunId, PrtgDayStat Day)? LastScheduled) PrtgRunHealth()
+    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue, (long RunId, PrtgDayStat Day)? LastScheduled, int? PendingDevices) PrtgRunHealth()
     {
         var settings = _systemSettingsStore.Get();
         if (!settings.PrtgEnabled)
         {
-            return (Array.Empty<DateTime>(), null, null);
+            return (Array.Empty<DateTime>(), null, null, null);
         }
 
         try
@@ -680,27 +680,12 @@ public class SchedulerHostedService : BackgroundService
             var runs = _batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null);
             var pending = PrtgReevaluationPlanner.Select(runs, DateTime.Today, settings.RetentionDays);
             var lastIssue = PrtgReevaluationPlanner.LastRunIssue(runs);
-            return (pending, lastIssue, LastScheduledPrtgDay(runs));
+            return (pending, lastIssue, LastScheduledPrtgDay(runs), PrtgReevaluationPlanner.PendingDeviceCount(runs));
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "讀取 PRTG 運作健全度失敗");
-            return (Array.Empty<DateTime>(), null, null);
-        }
-    }
-
-    /// <summary>上一趟留下的 PRTG 待補裝置數（執行中不顯示：這一趟正在補）。讀不到就不顯示，不該讓狀態 API 失敗。</summary>
-    public int? PrtgPendingDeviceCount(bool isRunning)
-    {
-        if (isRunning || !_systemSettingsStore.Get().PrtgEnabled) return null;
-        try
-        {
-            return PrtgReevaluationPlanner.PendingDeviceCount(_batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "讀取 PRTG 待補裝置數失敗");
-            return null;
+            return (Array.Empty<DateTime>(), null, null, null);
         }
     }
 

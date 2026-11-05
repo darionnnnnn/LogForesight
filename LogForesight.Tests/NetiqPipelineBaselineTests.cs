@@ -135,6 +135,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var first = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
 
         Assert.Equal(1, first.EmptyDeferred);
+        Assert.Equal(0, first.RerunDaysRetained); // 沒有舊結果可保留，不該出現在「保留原結果」統計
+        Assert.Equal(1, first.HostDaysDone);      // 進度條仍要走完
         Assert.Equal(0, first.HostDaysAnalyzed);
         Assert.Empty(store.ReadRecent(yesterday, 1));
         Assert.Equal(NetiqAttemptStatus.EmptyOnce, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
@@ -175,6 +177,74 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(new[] { threeDaysAgo, DateTime.Today.AddDays(-1) },
             ledger.Keys.Where(k => k.HostId == host.HostId).Select(k => k.Date).OrderBy(d => d));
         Assert.NotEqual(NetiqAttemptStatus.Failed, ledger[(host.HostId, threeDaysAgo)].Status);
+    }
+
+    [Fact]
+    public async Task 排程續跑_窗口到點_沒開始的主機日也留回執_已開始的不被蓋掉()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var options = new NetiqOptions { BackfillDays = 3 };
+        using var cts = new CancellationTokenSource();
+        var calls = 0;
+        // 由舊到新逐日查：第 1 天回空（empty-once）、第 2 天查到一半窗口到點、第 3 天根本沒開始
+        _client.Responder = _ =>
+        {
+            if (++calls == 1) return new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            MakePipeline(options: options, resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token));
+
+        var ledger = NetiqSourceAttempt.ReadLatest(_backend, DateTime.Today.AddDays(-3), DateTime.Today.AddDays(-1));
+        Assert.Equal(NetiqAttemptStatus.EmptyOnce, ledger[(host.HostId, DateTime.Today.AddDays(-3))].Status);
+        Assert.Equal(NetiqAttemptStatus.Stopped, ledger[(host.HostId, DateTime.Today.AddDays(-2))].Status);
+        Assert.Equal(NetiqAttemptStatus.Stopped, ledger[(host.HostId, DateTime.Today.AddDays(-1))].Status);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task 排程續跑_整台Sentinel失敗_主機日留失敗回執_隔天補得回來()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var yesterday = DateTime.Today.AddDays(-1);
+
+        var result = await MakePipeline(resumeRetryDays: 7, clientFactory: _ => throw new InvalidOperationException("連不上"))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, result.HostsFailed);
+        Assert.Equal(NetiqAttemptStatus.Failed, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+    }
+
+    [Fact]
+    public async Task 排程續跑_Sentinel密碼解不開_主機日留失敗回執_憑證修好後補得回來()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel
+        {
+            Name = "S-BAD", BaseUrl = "https://x", Username = "u", PasswordEnc = UndecryptableCipher, Active = true
+        });
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var yesterday = DateTime.Today.AddDays(-1);
+
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(NetiqAttemptStatus.Failed, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+        Assert.Empty(_client.Requests);
+    }
+
+    [Fact]
+    public async Task 手動趟_整台Sentinel失敗_不寫帳本()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+
+        await MakePipeline(clientFactory: _ => throw new InvalidOperationException("連不上"))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Empty(History(DateTime.Today.AddDays(-1)));
     }
 
     [Fact]
