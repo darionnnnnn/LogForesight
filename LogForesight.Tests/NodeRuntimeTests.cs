@@ -95,6 +95,30 @@ public sealed class NodeRuntimeTests
         Assert.Equal(expected, NodeRuntime.ShouldFailWhenMissing(envValue, available));
     }
 
+    [Theory]
+    [InlineData("v22.7.0", true)]
+    [InlineData("v22.23.4\n", true)]
+    [InlineData("v26.13.0", true)]
+    [InlineData("v23.0.0-nightly20240101", true)]
+    [InlineData("v22.6.9", false)]
+    [InlineData("v20.19.0", false)]
+    [InlineData("", false)]
+    [InlineData("not a version", false)]
+    [InlineData(null, false)]
+    public void 版本下限判定_不封頂_解析不了不算(string? output, bool expected)
+    {
+        Assert.Equal(expected, NodeRuntime.IsSupportedVersion(output));
+    }
+
+    [Fact]
+    public void 不可用原因區分沒有node與版本太舊()
+    {
+        Assert.Contains("偵測不到", NodeRuntime.DescribeUnavailable(null));
+        var tooOld = NodeRuntime.DescribeUnavailable("v20.19.0");
+        Assert.Contains("v20.19.0", tooOld);
+        Assert.Contains(NodeRuntime.MinimumVersion.ToString(), tooOld);
+    }
+
     [Fact]
     public void 找node先看PATH_找不到才探固定位置_都沒有回node()
     {

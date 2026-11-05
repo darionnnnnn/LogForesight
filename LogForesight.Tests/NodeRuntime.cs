@@ -25,7 +25,8 @@ public sealed record NodeRunResult(int ExitCode, string Stdout, string Stderr, b
 /// </summary>
 public static class NodeRuntime
 {
-    private static readonly Lazy<bool> Detected = new(Probe, isThreadSafe: true);
+    /// <summary>偵測到的版本字串（如 <c>v22.23.4</c>）；跑不起來時為 null。</summary>
+    private static readonly Lazy<string?> DetectedVersion = new(Probe, isThreadSafe: true);
 
     private static readonly Lazy<string> Executable = new(
         () => ResolveExecutable(Environment.GetEnvironmentVariable("PATH"), File.Exists), isThreadSafe: true);
@@ -55,13 +56,32 @@ public static class NodeRuntime
         return "node";
     }
 
-    public static bool IsAvailable => Detected.Value;
+    /// <summary>
+    /// 行為腳本不帶旗標直接以 ES Modules 執行，靠 22.7 起預設開啟的 ESM 語法偵測（專案沒有 package.json）。
+    /// 全專案只在這裡判定版本；低於下限視同不可用，分流同「沒有 node」。
+    /// </summary>
+    internal static readonly Version MinimumVersion = new(22, 7);
+
+    public static bool IsAvailable => IsSupportedVersion(DetectedVersion.Value);
+
+    /// <summary><c>node --version</c> 的輸出是否達到 <see cref="MinimumVersion"/>；解析不了一律不算。</summary>
+    internal static bool IsSupportedVersion(string? versionOutput)
+    {
+        var text = (versionOutput ?? "").Trim().TrimStart('v').Split('-')[0];
+        return Version.TryParse(text, out var version) && version >= MinimumVersion;
+    }
+
+    /// <summary>不可用的原因：區分「沒有 node」與「版本太舊」，訊息才對得到要做的事。</summary>
+    internal static string DescribeUnavailable(string? detectedVersion) =>
+        detectedVersion == null
+            ? $"偵測不到可執行的 node（需要 {MinimumVersion} 以上）"
+            : $"偵測到 node {detectedVersion}，低於最低需求 {MinimumVersion}";
 
     public const string RequireNodeVariable = "LF_REQUIRE_NODE";
 
-    public const string SkipReason =
-        "這題需要 Node.js 執行前端行為測試腳本（LogForesight.Tests/JsBehavior/），" +
-        "本機偵測不到可執行的 node 因此略過。要執行請安裝 Node.js（https://nodejs.org）並確認 node 在 PATH 上。";
+    public static string SkipReason =>
+        $"這題需要 Node.js 執行前端行為測試腳本（LogForesight.Tests/JsBehavior/），" +
+        $"{DescribeUnavailable(DetectedVersion.Value)}，因此略過。要執行請安裝 Node.js（https://nodejs.org）並確認 node 在 PATH 上。";
 
     /// <summary>已設定 LF_REQUIRE_NODE=1 但偵測不到 node 時要讓測試失敗（而不是略過）。</summary>
     public static bool ShouldFailWhenMissing(string? envValue, bool available) =>
@@ -74,7 +94,7 @@ public static class NodeRuntime
     public static void EnsureAvailableOrFail()
     {
         if (ShouldFailWhenMissing(Environment.GetEnvironmentVariable(RequireNodeVariable), IsAvailable))
-            Assert.Fail("已設定 LF_REQUIRE_NODE=1 但偵測不到 node：前端行為測試無法執行。請安裝 Node.js 並確認 node 在 PATH 上。");
+            Assert.Fail($"已設定 LF_REQUIRE_NODE=1 但{DescribeUnavailable(DetectedVersion.Value)}：前端行為測試無法執行。請安裝 Node.js 並確認 node 在 PATH 上。");
     }
 
     /// <summary>
@@ -157,17 +177,17 @@ public static class NodeRuntime
         return new NodeRunResult(exited ? process.ExitCode : -1, stdout, stderr, TimedOut: !exited);
     }
 
-    private static bool Probe()
+    private static string? Probe()
     {
         try
         {
             var result = RunCore(new[] { "--version" }, null, null, TimeSpan.FromSeconds(15));
-            return !result.TimedOut && result.ExitCode == 0;
+            return !result.TimedOut && result.ExitCode == 0 ? result.Stdout.Trim() : null;
         }
         catch
         {
             // 找不到執行檔、被政策擋下、權限不足——一律視為「這台機器沒有 node」
-            return false;
+            return null;
         }
     }
 }
