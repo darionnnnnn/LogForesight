@@ -126,14 +126,22 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
         var preview = Controller(new long[] { 1 }, site).RunPreview("all", null, null, onlyMissingOrFailed: false, backfillDays: 1);
         Assert.Equal(1, preview.Data!.HostCount); // 只有那 1 台 NetIQ，不含停用的本機
 
+        // FakeHostStore 新增時自行配發 HostId，要等 Controller 建好（Upsert 之後）才讀得到實際的 id
+        var controller = Controller(new long[] { 1 }, site);
+        var siteId = controller.RunPreview("all", null, null, onlyMissingOrFailed: false, backfillDays: 1).Data!.HostCount > 0
+            ? _lastHosts!.GetAll().Single(h => h.HostName == Environment.MachineName).HostId
+            : 0;
         var ex = Assert.Throws<DomainException>(() =>
-            Controller(new long[] { 1 }, site).RunPreview("host", null, 90, onlyMissingOrFailed: false, backfillDays: 1));
+            controller.RunPreview("host", null, siteId, onlyMissingOrFailed: false, backfillDays: 1));
         Assert.Contains("停用", ex.Message);
     }
+
+    private FakeHostStore? _lastHosts;
 
     private ScheduleController Controller(IEnumerable<long> ids, WebHost? extra = null)
     {
         var hosts = new FakeHostStore();
+        _lastHosts = hosts;
         if (extra != null) hosts.Upsert(extra);
         foreach (var id in ids)
             hosts.Upsert(new WebHost
