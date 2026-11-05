@@ -94,7 +94,7 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
   依 `Os` 分流查詢與映射，見 docs/archive/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
-  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已有分析紀錄的主機日不重查）。
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已成功的主機日不重查；失敗、截斷與待定案依取數狀態補查，規則見 NETIQ-API-REFERENCE.md〈主機日取數狀態〉）。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
   （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證**：不用自適應時間窗
   （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），採窄化 filter
