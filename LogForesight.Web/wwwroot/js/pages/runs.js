@@ -297,7 +297,7 @@ function renderSummary(summaryPage) {
 
     renderTable(container, {
         columns: [
-            { title: '日期', render: s => s.date },
+            { title: '日期', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
             { title: '執行時間', render: s => renderDayTimingCell(s.timing) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
@@ -306,7 +306,7 @@ function renderSummary(summaryPage) {
             { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
-            { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
+            { title: '未執行', className: 'text-end', render: s => s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none') },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }

@@ -138,8 +138,6 @@ public class RunDayTimingBuilderTests
         Assert.Equal(7200, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
         Assert.Equal(1, timing.OtherAiRuns);
         Assert.Equal(7200, timing.OtherAiSeconds);
-        Assert.Null(timing.FollowUpAiSeconds);
-        Assert.Equal(3600, timing.FetchSeconds);
     }
 
     [Fact]
@@ -152,8 +150,8 @@ public class RunDayTimingBuilderTests
         var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
 
         Assert.Equal(131, timing.TotalSeconds);
-        Assert.Equal(44, timing.FetchSeconds);
-        Assert.Equal(87, timing.FollowUpAiSeconds);
+        Assert.Equal(44, timing.Branches.Single(b => b.Key == RunTimingPhases.Local).Seconds);
+        Assert.Equal(87, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
         Assert.Equal(At(1), timing.FirstStartedAt);
         Assert.Equal(At(1).AddSeconds(147), timing.LastFinishedAt);
         Assert.Equal(0, timing.OtherAiRuns);
@@ -169,8 +167,8 @@ public class RunDayTimingBuilderTests
         var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
 
         Assert.Equal(20 * 60, timing.TotalSeconds);
-        Assert.Equal(10 * 60, timing.FetchSeconds);
-        Assert.Equal(15 * 60, timing.FollowUpAiSeconds);
+        Assert.Equal(10 * 60, timing.Branches.Single(b => b.Key == RunTimingPhases.Local).Seconds);
+        Assert.Equal(15 * 60, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
     }
 
     [Fact]
@@ -186,7 +184,6 @@ public class RunDayTimingBuilderTests
         Assert.Equal(At(2), timing.LastFinishedAt);
         Assert.Equal(2, timing.OtherAiRuns);
         Assert.Equal(2400, timing.OtherAiSeconds);
-        Assert.Null(timing.FollowUpAiSeconds);
     }
 
     [Fact]
@@ -241,7 +238,28 @@ public class RunDayTimingBuilderTests
         Assert.Equal(3600, timing.TotalSeconds);
         Assert.Equal(At(2), timing.LastFinishedAt);
         Assert.Equal(1, timing.InterruptedCount);
-        Assert.Null(timing.FollowUpAiSeconds);
+    }
+
+    [Fact]
+    public void PRTG含補數值與子階段_聯集且逐項列出()
+    {
+        // 站台實況：手動趟的補數值跑了 1,748 秒，只認 prtg 階段會在 PRTG 欄顯示「—」
+        var run = Run(At(8), At(8, 30),
+            Phase(RunTimingPhases.Local, At(8), At(8).AddSeconds(5)),
+            Phase(RunTimingPhases.Netiq, At(8), At(8).AddSeconds(28)),
+            Phase(RunTimingPhases.Prtg, At(8), At(8, 1)),
+            Phase(RunTimingPhases.PrtgSync, At(8), At(8).AddSeconds(36)),
+            Phase(RunTimingPhases.PrtgValueFill, At(8, 1), At(8, 1).AddSeconds(1748)));
+
+        var timing = RunDayTimingBuilder.Build(new[] { run })!;
+
+        var prtg = timing.Branches.Single(b => b.Key == RunTimingPhases.Prtg);
+        Assert.Equal(60 + 1748, prtg.Seconds);
+        Assert.Equal(new[] { RunTimingPhases.PrtgSync, RunTimingPhases.PrtgValueFill }, prtg.SubPhases.Select(p => p.Key));
+        Assert.Equal(1748, prtg.SubPhases.Single(p => p.Key == RunTimingPhases.PrtgValueFill).Seconds);
+        Assert.Equal(5, timing.Branches.Single(b => b.Key == RunTimingPhases.Local).Seconds);
+        Assert.Equal(28, timing.Branches.Single(b => b.Key == RunTimingPhases.Netiq).Seconds);
+        Assert.Empty(timing.Branches.Single(b => b.Key == RunTimingPhases.Local).SubPhases);
     }
 
     [Fact]
@@ -253,7 +271,6 @@ public class RunDayTimingBuilderTests
 
         Assert.Null(timing.FirstStartedAt);
         Assert.Null(timing.TotalSeconds);
-        Assert.Null(timing.FetchSeconds);
         Assert.Equal(1, timing.OtherAiRuns);
         Assert.Equal(1800, timing.OtherAiSeconds);
         Assert.Equal(0, timing.FetchRuns);

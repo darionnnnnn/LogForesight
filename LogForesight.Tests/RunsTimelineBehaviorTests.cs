@@ -29,6 +29,7 @@ public class RunsTimelineBehaviorTests
     [InlineData("dayTimingCellTexts")]
     [InlineData("dayTimingBranchesShowEveryPath")]
     [InlineData("dayTimingTwoLines")]
+    [InlineData("dayTimingFourPathsAndSubPhases")]
     [InlineData("dayTimingOtherAiOnlyDay")]
     [InlineData("dayTimingLegacyNoPhases")]
     [InlineData("dayTimingTotalRow")]

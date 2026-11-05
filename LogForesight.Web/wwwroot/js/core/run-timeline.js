@@ -91,6 +91,12 @@ export function renderPhaseTimeline(run, now = new Date().toISOString()) {
     return wrap;
 }
 
+const SUB_PHASE_LABEL = {
+    'prtg-sync': '結構同步',
+    'prtg-triggered': '觸發式取數',
+    'prtg-value-fill': '補 PRTG 數值'
+};
+
 const otherAiText = timing => `AI 補跑 ${timing.otherAiRuns} 趟（${formatDuration(timing.otherAiSeconds ?? 0)}）`;
 
 /**
@@ -101,7 +107,9 @@ export function dayTimingText(timing) {
     if (!timing) return '—';
     const parts = [];
     if (timing.totalSeconds != null) {
-        parts.push(`${minuteOf(timing.firstStartedAt)}～${minuteOf(timing.lastFinishedAt)}（${formatDuration(timing.totalSeconds)}）`);
+        // 同日多趟時起訖差會大於總耗時（中間有空檔），寫出趟數才對得起來
+        const runs = timing.fetchRuns > 1 ? `，共 ${timing.fetchRuns} 趟` : '';
+        parts.push(`${minuteOf(timing.firstStartedAt)}～${minuteOf(timing.lastFinishedAt)}（${formatDuration(timing.totalSeconds)}${runs}）`);
     }
     if (timing.interruptedCount > 0) {
         parts.push(`異常中斷 ${timing.interruptedCount} 趟（最後活動 ${minuteOf(timing.lastInterruptedActivityAt)}）`);
@@ -110,13 +118,17 @@ export function dayTimingText(timing) {
     return parts.length > 0 ? parts.join('　') : '—';
 }
 
-/** 總表一格第二行小字：「取數 44 秒 · AI 1 分 27 秒」，另有非跟隨 AI 趟時加「另有 AI 補跑 N 趟（M）」；沒有內容回空字串 */
+/** 總表一格第二行小字：「本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 · AI 1 分 27 秒」，另有非跟隨 AI 趟時加「另有 AI 補跑 N 趟（M）」；沒有內容回空字串 */
 export function dayTimingDetailText(timing) {
     if (!timing) return '';
     const parts = [];
     if (timing.totalSeconds != null) {
-        if (timing.fetchSeconds != null) parts.push(`取數 ${formatDuration(timing.fetchSeconds)}`);
-        if (timing.followUpAiSeconds != null) parts.push(`AI ${formatDuration(timing.followUpAiSeconds)}`);
+        for (const [key, label] of [['local', '本機'], ['netiq', 'NetIQ'], ['prtg', 'PRTG'], ['ai', 'AI']]) {
+            const branch = timing.branches?.find(b => b.key === key);
+            if (branch) parts.push(`${label} ${formatDuration(branch.seconds)}`);
+        }
+        const allLegacy = (timing.fetchRuns ?? 0) > 0 && (timing.fetchRunsWithoutPhases ?? 0) >= timing.fetchRuns;
+        if (allLegacy) parts.unshift('無階段資料（升級前紀錄）');
     }
     // 第一行已經是「AI 補跑」時不重複
     const firstLineIsOtherAi = timing.totalSeconds == null && !(timing.interruptedCount > 0);
@@ -157,6 +169,12 @@ export function renderDayTiming(timing) {
             : (allLegacy && key !== 'ai' ? '無階段資料（升級前紀錄）' : '—');
         item.append(name, value);
         wrap.appendChild(item);
+        for (const sub of branch?.subPhases ?? []) {
+            const subItem = document.createElement('div');
+            subItem.className = 'small text-muted';
+            subItem.textContent = `　${SUB_PHASE_LABEL[sub.key] ?? sub.key}　${minuteOf(sub.from)}～${minuteOf(sub.to)}（${formatDuration(sub.seconds)}）`;
+            wrap.appendChild(subItem);
+        }
     }
     if (timing?.totalSeconds != null) {
         const item = document.createElement('div');

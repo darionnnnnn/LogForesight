@@ -457,6 +457,41 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
     }
 
+    // ── 今天列（第 64 輪 E-3）──────────
+
+    [Fact]
+    public void 今天有趟_第一頁多一列且不佔天數_第二頁沒有()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-TODAY", Source = "local" });
+        var other = _hosts.Upsert(new WebHost { HostName = "10.0.9.1", Source = "netiq" });
+        AddRun("SITE-TODAY", DateTime.Today.AddHours(0).AddMinutes(1), exitCode: 0, errorCount: 0, (RunTimingPhases.Local, RunPhaseOutcomes.Success));
+
+        var service = Create();
+        var first = service.GetDaySummaries(3, 1, 2);
+        var second = service.GetDaySummaries(3, 2, 2);
+
+        Assert.Equal(3, first.Count); // 2 天＋今天
+        var today = first[^1];
+        Assert.True(today.IsToday);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), today.Date);
+        Assert.False(today.InProgress);
+        // 今天還沒處理到的 NetIQ 主機是未執行，不是失敗
+        Assert.Equal(1, today.NotRunCount);
+        Assert.Equal(0, today.FailedCount);
+        Assert.DoesNotContain(second, s => s.IsToday);
+        Assert.All(first.Take(2), s => Assert.False(s.IsToday));
+        Assert.NotNull(other);
+    }
+
+    [Fact]
+    public void 今天沒有趟_不出現今天列()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-NONE", Source = "local" });
+        var rows = Create().GetDaySummaries(3, 1, 3);
+        Assert.Equal(3, rows.Count);
+        Assert.DoesNotContain(rows, s => s.IsToday);
+    }
+
     // ── 停用主機與本機格（第 64 輪 E-2）──────────
 
     private void AddRun(string host, DateTime startedAt, int exitCode, int errorCount, params (string Key, string Outcome)[] phases)

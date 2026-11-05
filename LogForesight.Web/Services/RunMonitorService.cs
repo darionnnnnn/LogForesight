@@ -86,7 +86,8 @@ public class RunMonitorService
     {
         // 分頁邊界計算（新→舊切割）：第 1 頁 = 最近的日期，最後一頁 = 最舊的日期。
         // 日期範圍：[錨點日-days+1, 錨點日]，共 days 天。錨點日＝DateTime.Today.AddDays(-1)（昨天），
-        // 不含今天，因今天的夜間批次尚未執行，整列必為未執行。
+        // 今天不佔 days：今天已有取數趟時，第 1 頁多附一列（IsToday），否則使用者看不到今天手動或排程跑了多久；
+        // 還沒有任何趟就不出現（整列都是未執行，沒有資訊）。
         // 第 page 頁涵蓋：跳過前 (page-1)*pageSize 個「最新」天後，取 pageSize 天。
         // 以索引換算：索引 0 = 錨點日（昨天），索引 days-1 = 錨點日-days+1（舊到新）。
         var anchor = DateTime.Today.AddDays(-1);
@@ -106,8 +107,11 @@ public class RunMonitorService
         var runs = allRuns.Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
 
         // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
+        var today = DateTime.Today;
+        var includeToday = page == 1 && runs.Any(r => r.StartedAt.Date == today);
+        var lastDate = includeToday ? today : pageEnd;
         var recordFrom = pageFrom.AddDays(-1);
-        var recordTo = pageEnd.AddDays(-1);
+        var recordTo = lastDate.AddDays(-1);
         var recordDates = _records.ListHostDates(recordFrom, recordTo, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordFrom, recordTo, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
@@ -116,12 +120,15 @@ public class RunMonitorService
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
 
         var summaries = new List<RunDaySummaryDto>();
-        for (var date = pageFrom; date <= pageEnd; date = date.AddDays(1))
+        for (var date = pageFrom; date <= lastDate; date = date.AddDays(1))
         {
             var dateStr = date.ToString("yyyy-MM-dd");
+            var isToday = date == today;
             var summary = new RunDaySummaryDto
             {
                 Date = dateStr,
+                IsToday = isToday,
+                InProgress = isToday && runs.Any(r => r.StartedAt.Date == today && !r.FinishedAt.HasValue && _isHeld(r)),
                 // 與主機格同一個鍵（當天開跑）；AI 趟只進這裡，不進主機×日
                 Timing = RunDayTimingBuilder.Build(allRuns.Where(r => r.StartedAt.Date == date.Date).ToList())
             };
