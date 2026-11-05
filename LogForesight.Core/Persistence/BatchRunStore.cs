@@ -219,7 +219,11 @@ public sealed record PrtgDayStat(
     /// <summary>該趟對這一天有完整的來源同步（Full 範圍、同步與主機對應都成立，或沿用同日另一趟）；同日下一個窗口據此不再同步（舊 JSON 缺欄為 false）。</summary>
     bool SourceSynced = false,
     /// <summary>來源同步實際發生的時刻；沿用趟沿用來源的值，不寫自己的開跑時間（舊 JSON 缺欄為 null）。</summary>
-    DateTime? SourceSyncedAt = null);
+    DateTime? SourceSyncedAt = null,
+    /// <summary>感測器沒同步到的裝置，下一個窗口只補這些（null＝舊紀錄，資訊未知；空＝全部完成）。</summary>
+    IReadOnlyList<long>? PendingSensorDevices = null,
+    /// <summary>狀態變更沒取到的裝置，下一個窗口只補這些（null＝舊紀錄，資訊未知；空＝全部完成）。</summary>
+    IReadOnlyList<long>? PendingMessageDevices = null);
 
 /// <summary>執行紀錄的共用查詢：同一份「最新一筆」判定，不各寫一份。</summary>
 public static class BatchRunQueries

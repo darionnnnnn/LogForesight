@@ -945,6 +945,10 @@ internal static class PrtgDailyPipeline
             {
                 var stageFailed = fetchResult != null && fetchResult.Failures > 0;
                 var historyAffectingFailure = fetchResult?.HistoryAffectingFailure ?? false;
+                var pendingSensors = fetchResult?.PendingSensorDevices ?? Array.Empty<long>();
+                var pendingMessages = fetchResult?.PendingMessageDevices ?? Array.Empty<long>();
+                var hasPending = pendingSensors.Count > 0 || pendingMessages.Count > 0;
+                var pendingDeviceCount = pendingSensors.Union(pendingMessages).Count();
                 dayStats = days
                     .Where(dayStates.ContainsKey)
                     .Select(day =>
@@ -955,7 +959,9 @@ internal static class PrtgDailyPipeline
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         if (s.TrendFailedLabels.Count > 0 && outcome == BatchRun.PrtgOutcomePartial)
                             note = $"{string.Join("、", s.TrendFailedLabels)}趨勢證據未完整；尚未完成風險判定。";
-                        if (stageFailed && note is null && outcome == BatchRun.PrtgOutcomePartial)
+                        if (hasPending)
+                            note = (note is null ? "" : note + "；") + $"{pendingDeviceCount} 台待補（下一個窗口續補）";
+                        else if (stageFailed && note is null && outcome == BatchRun.PrtgOutcomePartial)
                             note = StageFailureNote(fetchResult!.StageFailures);
                         if (s.MapBorrowedFrom is { } borrowedFrom)
                             note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
@@ -965,10 +971,13 @@ internal static class PrtgDailyPipeline
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
                             // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更沒取齊（下一趟成功即收斂）。
                             // 單一裝置的感測器查詢固定失敗這類不影響已落地資料的失敗，重評治不好，標了只會讓「待補評估」永遠掛著
-                            NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day),
+                            // 有待補裝置時這天的評估少了那幾台的資料，補齊後要重評，否則畫面會是「已評估」卻缺資料
+                            NeedsReevaluation: syncFailed || historyAffectingFailure || hasPending || !prtgFindings.IsEvaluated(day),
                             SourceSynced: sourceSynced,
                             // 沿用趟記的是來源那趟實際同步的時刻，第三個窗口才不會把「沿用的時間」當成同步時間
-                            SourceSyncedAt: sourceSynced ? reuseSyncFrom ?? syncStartedAt : null);
+                            SourceSyncedAt: sourceSynced ? reuseSyncFrom ?? syncStartedAt : null,
+                            PendingSensorDevices: pendingSensors,
+                            PendingMessageDevices: pendingMessages);
                     })
                     .ToList();
 
