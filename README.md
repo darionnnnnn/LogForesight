@@ -827,7 +827,13 @@ SQLite 使用 WAL 日誌模式（`Storage:SqliteWal`，預設 true）：資料�
 
 正式環境是 Windows；macOS 可以開發、建置、跑測試與啟動站台。
 
-需要 .NET 8 SDK 與 Node.js（前端行為測試用，Homebrew 安裝即可）。
+需要 .NET 8 SDK 與 Node.js 22.7 以上（前端行為測試用，Homebrew 安裝即可）。Windows 開發機的 Node 下限相同。
+
+SDK 用 `dotnet-install` 裝在 `~/.dotnet` 時，要自己把它加進 PATH：
+
+```bash
+echo 'export DOTNET_ROOT=$HOME/.dotnet; export PATH=$HOME/.dotnet:$PATH' >> ~/.zprofile
+```
 
 ```bash
 dotnet build
@@ -844,6 +850,7 @@ dotnet run --project LogForesight.Web --launch-profile http
 - 要用 HTTPS 時先執行 `dotnet dev-certs https --trust`。
 - `dotnet test` 已透過 `LogForesight.Tests/test.runsettings` 帶入 `LF_REQUIRE_NODE=1` 與 `TZ=Asia/Taipei`，IDE 測試總管也會讀到；需要 Windows API 的測試標 `[WindowsFact]`／`[WindowsTheory]`，在 macOS 顯示為略過。
 - 開發設定用 `Auth:Provider=Stub`，帳號 `demo-admin` 不驗密碼；AD 驗證與 AD 連線測試只在 Windows 可用。
+- macOS 沒有 `python` 指令，文件寫 `python` 的工具（如 `LogForesight.Tests/tools/test-timing.py`）改用 `python3`。
 - 立即執行時本機主機分析與權限監控在 macOS 不適用，執行輸出會各記一行「此平台不支援…」。要看真實資料請接 NetIQ／PRTG。
 
 ## 開發測試與驗收準則
