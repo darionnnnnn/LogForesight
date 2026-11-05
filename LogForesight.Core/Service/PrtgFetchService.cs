@@ -817,6 +817,7 @@ public sealed class PrtgFetchService
         var failed = new List<long>();
         var completed = 0;
         var stringFallback = 0;
+        var treeSizeShortDevices = 0;
 
         _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{from:yyyy-MM-dd} ～ {to:yyyy-MM-dd}，逐裝置查詢 {totalObjects} 台，併發 {maxConcurrency}）...");
         progress?.Invoke(PrtgSyncMessagesPhase, 0, totalObjects);
@@ -924,6 +925,7 @@ public sealed class PrtgFetchService
                     pages += paged.Result?.Pages ?? paged.Exception?.Pages ?? 0;
                     readRows += paged.Result?.ReadRows ?? paged.Exception?.ReadRows ?? 0;
                     if (paged.Result?.StoppedEarly == true) stoppedEarly = true;
+                    if (paged.Result?.TreeSizeShort == true) treeSizeShortDevices++;
                     if (paged.Error != null) failed.Add(objid);
                     else if (inRangeRows == 0) emptyObjects++;
                 }
@@ -954,6 +956,12 @@ public sealed class PrtgFetchService
         if (stringFallback > 0)
         {
             _console.WriteLine($"  ⚠ 狀態變更中有 {stringFallback} 筆缺 datetime_raw，改以顯示字串依服務主機地區設定解析；若 PRTG 帳號時區與服務主機不同，這些列的時間會偏移。");
+        }
+
+        if (treeSizeShortDevices > 0)
+        {
+            // 只進執行輸出、行首不放警告符號：這不是問題，不該讓趟次變「有警告」，但要查得到
+            _console.WriteLine($"[階段 3/4] {treeSizeShortDevices} 台裝置的 messages 讀取少於 treesize（僅提醒，帶時間篩選時語意未證實）。");
         }
 
         var converged = failed.Count == 0;

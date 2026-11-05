@@ -2036,6 +2036,35 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 狀態變更_多台少於treesize_只彙總一行且不計警告()
+    {
+        var today = DateTime.Today;
+        var json = "{\"treesize\":1000000,\"messages\":[]}";
+        var (client, _) = CreateMessagesClient(Enumerable.Range(1, 11).ToDictionary(i => (long)i, _ => json));
+        var console = new TestConsole();
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var logger = new NLog.Targets.MemoryTarget("treesize-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ?? new NLog.Config.LoggingConfiguration();
+        config.AddRule(NLog.LogLevel.Warn, NLog.LogLevel.Fatal, logger, "*PrtgTablePager*");
+        NLog.LogManager.Configuration = config;
+        try
+        {
+            await service.FetchStateChangesRangeAsync(today, today, Enumerable.Range(1, 11).Select(i => (long)i).ToList(), 2, CancellationToken.None);
+        }
+        finally
+        {
+            config.RemoveTarget(logger.Name);
+            NLog.LogManager.Configuration = config;
+        }
+
+        var lines = console.Lines.Where(l => l.Contains("treesize")).ToList();
+        Assert.Contains("11 台裝置", Assert.Single(lines));
+        Assert.DoesNotContain("⚠", lines[0]);
+        Assert.Empty(logger.Logs);
+    }
+
+    [Fact]
     public async Task 狀態變更_範圍為空_不發messages請求且不計失敗()
     {
         var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());

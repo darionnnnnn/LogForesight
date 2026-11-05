@@ -834,6 +834,31 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
 
     // ── B-a-2：空形狀、無文法重試 ────────────────────────────────
 
+    [Fact]
+    public async Task 關文法重試_連額外欄位裡的文法鍵也不送_其他額外欄位保留()
+    {
+        var replies = new Queue<string>(new[] { "[\n]", "{\"ok\":true}" });
+        var handler = new ScriptedHandler(_ => new Reply { Content = replies.Dequeue() });
+        var service = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", Model = "m", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 1,
+            ExtraRequestFields = new Dictionary<string, JsonElement>
+            {
+                ["grammar"] = JsonDocument.Parse("\"root ::= x\"").RootElement.Clone(),
+                ["rep_pen"] = JsonDocument.Parse("1.3").RootElement.Clone()
+            }
+        }, handler, NullAiRequestGate.Instance);
+
+        await service.ChatJsonAsync<Dictionary<string, JsonElement>>("提示", null);
+
+        Assert.Equal(2, handler.RequestBodies.Count);
+        using var first = JsonDocument.Parse(handler.RequestBodies[0]);
+        using var second = JsonDocument.Parse(handler.RequestBodies[1]);
+        Assert.True(first.RootElement.TryGetProperty("grammar", out _));
+        Assert.False(second.RootElement.TryGetProperty("grammar", out _));
+        Assert.True(second.RootElement.TryGetProperty("rep_pen", out _));
+    }
+
     [Theory]
     [InlineData("[\n]", "array")]
     [InlineData("[]", "array")]

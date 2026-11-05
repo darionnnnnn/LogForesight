@@ -279,6 +279,11 @@ public class AIService : IAiService
         {
             foreach (var (key, value) in _extraRequestFields)
             {
+                if (!jsonMode && AiJsonDiagnostics.StructuredOutputKeys.Contains(key))
+                {
+                    Log.Info("本次不使用結構化輸出，略過額外欄位 {Key}", key);
+                    continue;
+                }
                 requestNode[key] = value?.DeepClone();
             }
         }

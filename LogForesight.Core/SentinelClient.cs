@@ -186,7 +186,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         };
 
         // AllowInvalidCertificates 是顯式逃生門而非靜默放行（AppSettings 註解的承諾）：
-        // 每個 client 建立時記一筆 WARN（不是每次連線——那會洗版），讓 log 看得出這台是誰在裸奔
+        // 每個 client 建立時記一筆 Info（不是每次連線——那會洗版），讓 log 看得出這台是誰在裸奔
         if (ownsHandler && settings.AllowInvalidCertificates)
         {
             if (_readLimits is null)

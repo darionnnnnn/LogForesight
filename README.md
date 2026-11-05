@@ -777,7 +777,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 站台可以掛在 IIS 網站底下的 Application，網址帶前綴（`http://host/LogForesight/...`）：
 
 1. 主機安裝 **ASP.NET Core Hosting Bundle**（IIS 要靠它託管 .NET 8 應用程式）。
-2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。
+2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。在 git 工作目錄內建置才會帶 commit，部署後到「設定 > 系統健康」核對版本（顯示「建置時未取得版本識別」就分不出部署了哪一版）。
 3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
 4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
    （含其下的 `keys\` 金鑰目錄）與 `logs\` 有讀寫權限。

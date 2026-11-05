@@ -95,7 +95,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   頁數上限 `max(⌈treesize ÷ 頁大小⌉ + 2, 400)`，未收斂擲 `PrtgPagingNotConvergedException`。一律帶 `sortby=objid`。
   **形狀與筆數檢查**：第一頁回應不是物件或缺少該 content 的陣列，視為未收斂（不當成 0 筆成功）；後續頁形狀異常視為結尾。
   結束時比對 `treesize`：讀到筆數少於它（非「依時間提早停止」）擲 `PrtgPagingNotConvergedException`，已寫出的資料保留但該階段記為失敗，沒讀到的不能當成已刪除；
-  `messages` 搭配 `filter_drel` 時 `treesize` 是否為過濾後筆數尚未證實，只印警告、不擲例外。
+  `messages` 搭配 `filter_drel` 時 `treesize` 是否為過濾後筆數尚未證實（實機固定 100 萬），不擲例外、不寫警告，階段結束印一行彙總台數。
 - **分頁等待重試**（`PrtgTablePager.FetchAsync` 單點，由 `PrtgFetchService` 的 `retryTransientPaging` 開啟）：只包「單次請求本身」，每次 pager 執行（整個 devices／sensors／messages 讀取）**共最多 2 次**重試，不是每頁各 2 次；第 1 次重試前等 15 秒、第 2 次前等 60 秒（`RetryDelays`，暫定值），等待函式可注入，等待期間取消令牌生效。只對 `PrtgClientException.Kind` 為 `Timeout`、`Transport`，或 `HttpStatus` 且狀態碼為 5xx／429 者重試（`IsRetryable`，不比對訊息字串）；401／403／其他 4xx、`Credential`（含已黏住的憑證失敗）與 `Other` 立即擲出，不重試也不等待。重試只寫 Info（PRTG 慢的夜晚不讓趟次變「有警告」），用盡後的最終失敗照舊由呼叫端記錄。開啟的路徑只有夜間管線、結構同步與歷史回填；探測、快照與資源守門維持單次失敗即回報；逐顆 `historicdata` 不重試。
 - **數值取數的暫停與補抓**（`PrtgFetchService.FetchValuesAsync` 單點，夜間階段 4、觸發式取數、回填共用；常數在 `PrtgValueFetchRetryPolicy`，不開放設定）：逾時、連線失敗、5xx、429 與 PRTG 空白「OK」頁（`PrtgFailureKind.EmptyPage`：HTTP 200 但內文只有 `<B class="no-content">OK</B>`，PRTG 在伺服器端放棄處理時這樣回，不是認證錯誤）時全部工作共用一個暫停閘，依序等 15、60、180 秒（之後維持 180，加 0～20% 誤差，`Retry-After` 較長時取它），成功一顆就歸零；閘已拉起時其他顆的失敗不讓序列前進。失敗的顆在全部送完後逐顆補抓一次，補抓不推進進度。實際總暫停將達 15 分鐘就停損（另有「連續 10 次可重試失敗」的保險，同一個閘內只算一次，正常時鐘下總暫停上限一定先到，它只防時鐘不走的情況）：剩餘的顆計失敗、不送請求，同一個服務實例冷卻 10 分鐘（期間呼叫直接回全部失敗），避免觸發式輪詢與逐日回填反覆打停機的 PRTG；觸發式輪詢在冷卻期內碰到的新問題主機不算已抓，冷卻結束的下一輪再抓。401、403、其他 4xx、解析與寫入失敗不暫停也不補抓。暫停與補抓寫 Info，停損寫 Warn。PRTG 完全不回時，約 20 分鐘內由總暫停上限停損，與併發數無關。
 - **去重鍵是該 content 真正的唯一鍵**：預設 objid；messages 的 objid 是發出訊息的 sensor，列鍵為「objid＋時間」。
