@@ -7,6 +7,7 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Service;
 using Xunit;
 
@@ -581,14 +582,50 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
     public async Task 併發8時整波失敗只算一次_PRTG短暫中斷不會整趟放棄()
     {
         // 前 16 個請求失敗（兩波），之後 PRTG 恢復：每顆各算一次的話第二波就數到 10 而停損
+        // 並行寫入不能共用 EfSqliteFixture 那一條記憶體連線（SqliteConnection 不是執行緒安全，偶發寫入例外會被算成失敗）
+        var dir = Path.Combine(Path.GetTempPath(), "lf-retry-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(dir, "values.db")};Pooling=False").Options;
+        using (var seed = new LfDbContext(options)) seed.Database.EnsureCreated();
+        try
+        {
+            var sent = 0;
+            var rig = NewRig((_, _) => Interlocked.Increment(ref sent) <= 16 ? TimedOut() : Ok(),
+                pauseBody: (_, ct) => Task.Delay(30, ct), contextFactory: () => new LfDbContext(options));
+
+            var (written, failed) = await RunAsync(rig, Ids(40), concurrency: 8);
+
+            Assert.Equal(0, failed);
+            Assert.Equal(40, written);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task 暫停結束後才回來的舊請求失敗_算同一波不讓序列前進()
+    {
+        // 確定性重現：第一波 4 顆（在途上限）同時在途；第 1 顆失敗拉閘、暫停「立刻結束」後，其餘 3 顆才失敗。
+        // 只看 IsRaised 會把這 3 顆當成新的 3 波，序列多跳 3 次。
+        var allInFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sent = 0;
-        var rig = NewRig((_, _) => Interlocked.Increment(ref sent) <= 16 ? TimedOut() : Ok(),
-            pauseBody: (_, ct) => Task.Delay(30, ct));
+        var rig = NewRig((id, attempt) => id <= 4 && attempt == 1 ? TimedOut() : Ok());
+        rig.BeforeRespond = async (id, attempt) =>
+        {
+            if (attempt > 1 || id > 4) return;
+            if (Interlocked.Increment(ref sent) == 4) allInFlight.TrySetResult();
+            await allInFlight.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (id > 1) await Task.Delay(200);
+        };
 
-        var (written, failed) = await RunAsync(rig, Ids(40), concurrency: 8);
+        var (written, failed) = await RunAsync(rig, Ids(20), concurrency: 4);
 
-        Assert.Equal(0, failed);
-        Assert.Equal(40, written);
+        Assert.Equal((20, 0), (written, failed));
+        Assert.Single(rig.Delays);
     }
 
     // ───────── 停損與冷卻 ─────────

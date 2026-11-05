@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -30,6 +30,23 @@ internal static class SchemaUpgrader
     public static void Upgrade(LfDbContext ctx)
     {
         var isSqlite = ctx.Database.IsSqlite();
+        // SQLite 關閉連線池（StorageBackend.DisableSqlitePoolingIfUnset），每個「檢查缺什麼」查詢都會重新開一條連線並重跑
+        // PRAGMA 調校；升級器有上百個檢查，既有 DB 的升級因此要 1 秒以上。整段期間維持一條連線，實測降到數十毫秒。
+        // 只對 SQLite 做：SQL Server 走連線池，開關成本本來就低，維持原路徑。
+        var openedHere = isSqlite && ctx.Database.GetDbConnection().State != System.Data.ConnectionState.Open;
+        if (openedHere) ctx.Database.OpenConnection();
+        try
+        {
+            UpgradeCore(ctx, isSqlite);
+        }
+        finally
+        {
+            if (openedHere) ctx.Database.CloseConnection();
+        }
+    }
+
+    private static void UpgradeCore(LfDbContext ctx, bool isSqlite)
+    {
 
         AddColumnIfMissing(ctx, isSqlite, "lf_log_lines", "created_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_log_lines", "IX_lf_log_lines_log_key_created_at", "log_key, created_at");

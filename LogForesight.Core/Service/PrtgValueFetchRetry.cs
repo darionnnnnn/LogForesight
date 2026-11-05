@@ -95,6 +95,7 @@ internal sealed class PauseGate
     private TaskCompletionSource? _open;
     private CancellationTokenSource? _cts;
     private TimeSpan _totalPaused;
+    private long _generation;
 
     /// <param name="delay">等待函式；測試注入零等待或可控的等待。</param>
     /// <param name="clock">量測實際暫停長度的時鐘（總暫停停損用）；測試注入的等待函式若要模擬時間流逝，就推進這個時鐘。</param>
@@ -111,6 +112,16 @@ internal sealed class PauseGate
     internal TimeSpan TotalPaused
     {
         get { lock (_sync) return _totalPaused; }
+    }
+
+    /// <summary>
+    /// 第幾次拉起。請求送出前記下、回來時比對：不一致代表它是拉起之前就送出的舊請求，
+    /// 它的失敗屬於同一波（不讓序列前進），它的成功也不能證明 PRTG 已恢復（不歸零）。
+    /// 只看 <see cref="IsRaised"/> 不夠：暫停結束後才回來的舊請求會被當成新一波。
+    /// </summary>
+    internal long Generation
+    {
+        get { lock (_sync) return _generation; }
     }
 
     /// <summary>閘目前是否拉起（暫停進行中）。</summary>
@@ -145,6 +156,7 @@ internal sealed class PauseGate
         {
             if (_open is { Task.IsCompleted: false }) return _open.Task;
 
+            _generation++;
             var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _open = open;

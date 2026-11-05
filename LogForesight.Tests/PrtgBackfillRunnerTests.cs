@@ -8,6 +8,7 @@ using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using LogForesight.Tests.TestDoubles;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -79,13 +80,13 @@ public class PrtgBackfillRunnerTests : IDisposable
         }
     }
 
-    private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder)
+    private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder, AcceleratedPrtgClock? clock = null)
     {
         var handler = new StubHandler
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(clock ?? new AcceleratedPrtgClock()));
         return (client, handler);
     }
 

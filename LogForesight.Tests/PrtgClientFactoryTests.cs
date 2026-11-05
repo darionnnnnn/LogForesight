@@ -313,7 +313,7 @@ public class PrtgClientFactoryTests
             PrtgAuthMode = PrtgAuthModes.Token,
             PrtgApiTokenEnc = CryptoHelper.Encrypt("token-abc")
         };
-        var customBudget = new PrtgRequestBudget();
+        var customBudget = new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock());
 
         using var client = PrtgClientFactory.Create(settings, budget: customBudget);
         Assert.Same(customBudget, client.Budget);

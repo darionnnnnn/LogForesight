@@ -522,17 +522,28 @@ public sealed class PrtgTransferControllerTests
             using (var verify = fixture.Backend.CreateContext()) Assert.False(verify.PrtgTransferSessions.Any(row => row.TransferId == id));
             client.DefaultRequestHeaders.Add(CsrfHeaderMiddleware.HeaderName, CsrfHeaderMiddleware.HeaderValue);
             using (var created = await client.PostAsJsonAsync(route, request)) Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-            using (var tooLarge = new TrackedOversizedContent(bytes))
+            // 伺服器依標頭拒絕後關連線：高負載下用戶端可能先讀到連線重設而不是 400（傳輸層競態）。
+            // 測試的主張是「拒絕且內文沒送出」，重設時內文同樣不得送出，再送一次取得回應。
+            for (var attempt = 1; ; attempt++)
             {
+                using var tooLarge = new TrackedOversizedContent(bytes);
                 tooLarge.Headers.ContentType = new("application/octet-stream");
                 // This rejection is decided from headers. Wait for that decision before sending
                 // an oversized body, which Kestrel may otherwise abort while draining it.
                 using var oversizedRequest = new HttpRequestMessage(HttpMethod.Put, $"{route}/{id}/chunks/0") { Content = tooLarge };
                 oversizedRequest.Headers.ExpectContinue = true;
-                using var response = await client.SendAsync(oversizedRequest);
-                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-                Assert.False(tooLarge.BodyWasSent);
-                Assert.Equal(0, fixture.TransferRow(id).ReceivedBytes);
+                try
+                {
+                    using var response = await client.SendAsync(oversizedRequest);
+                    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                    Assert.False(tooLarge.BodyWasSent);
+                    Assert.Equal(0, fixture.TransferRow(id).ReceivedBytes);
+                    break;
+                }
+                catch (HttpRequestException) when (attempt < 3)
+                {
+                    Assert.False(tooLarge.BodyWasSent);
+                }
             }
             for (var ordinal = 0; ordinal < 2; ordinal++)
             {

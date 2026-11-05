@@ -70,6 +70,12 @@
 多窗口時更早錯過的窗口不補，由下一個窗口的缺漏日機制吸收。
 **觸發時機**：實際出現連續錯過多個窗口、缺漏日吸收不了的情況。
 
+### 全量測試耗時觀察
+
+`dotnet test --logger "trx;LogFileName=full.trx" --results-directory <dir>` 後跑 `python LogForesight.Tests/tools/test-timing.py <dir>/full.trx`，列出最慢類別與單案、依集合彙總、使用 `StorageBackend` 的類別占比。牆鐘受機器負載影響，只當觀察值。
+PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `PrtgRequestBudget.Shared`），新增測試不要 `new PrtgRequestBudget()`。`EfSqliteFixture` 共用一條記憶體連線，並行寫入的案例要用檔案型 DB。
+**剩餘最慢的**：`PrtgMonitoringPagingTests`（3 萬列規模）、`CalibrationServiceTests` 殘留判定、`BulkScaleGateTests`。要再縮短時從這幾個的資料量下手。
+
 ### 測試的時鐘與時區抽象
 
 約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。

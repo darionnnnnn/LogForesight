@@ -31,6 +31,8 @@
 
 ## 資料表設計（欄位級）
 
+**升級器連線**：SQLite 關閉連線池，`SchemaUpgrader.Upgrade` 整段維持一條開啟的連線（上百個「缺什麼補什麼」的檢查若各開一條連線，既有 DB 的啟動要 1 秒以上）；SQL Server 走連線池不受影響。schema 互斥鎖 SQL Server 用固定名稱，SQLite 依資料檔絕對路徑分名（`StorageBackend.BuildSchemaMutexName`），無法可靠正規化時退回固定名稱。
+
 現況原則：本節只列目前 `LfDbContext`／`SchemaUpgrader` 實際建立或使用的實體表；整份 JSON
 文件仍以 `lf_blobs` 一列保存，append-only JSONL 則以 `lf_log_lines` 逐行保存。早期設計中曾
 預留的主機、使用者、類別彙總、深析、週體檢、完整問答與風險日處理歷程表，均不視為現行實體表。

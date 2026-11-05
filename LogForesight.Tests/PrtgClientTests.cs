@@ -27,13 +27,13 @@ public class PrtgClientTests
             calls++;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
         } };
-        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "reader", "", "passhash-secret", new LogForesight.Core.Service.PrtgRequestBudget());
+        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "reader", "", "passhash-secret", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
         await Assert.ThrowsAsync<PrtgClientException>(() => client.GetBoundedXmlAsync("api/historicdata.xml?id=78", 64));
         Assert.Equal(1, calls);
         var large = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StreamContent(new NonSeekableReadStream(Encoding.UTF8.GetBytes(new string('x', 65)))) }) };
-        using var bounded = new PrtgClient(ValidUrl, SampleToken, 30, false, large, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+        using var bounded = new PrtgClient(ValidUrl, SampleToken, 30, false, large, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
         await Assert.ThrowsAsync<PrtgClientException>(() => bounded.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64));
     }
 
@@ -1007,7 +1007,7 @@ public class PrtgClientTests
         };
 
         var checkpointCount = 0;
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
         client.OperationCheckpoint = () => Interlocked.Increment(ref checkpointCount);
 
         await client.GetJsonAsync("/api/table.json?content=sensors");
@@ -1046,10 +1046,10 @@ public class PrtgClientTests
 
     private static PrtgClient KindClient(StubHandler stub, string authMode = PrtgAuthModes.Token) =>
         authMode == PrtgAuthModes.Passhash
-            ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "operator", "", "1234567890", new LogForesight.Core.Service.PrtgRequestBudget())
+            ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "operator", "", "1234567890", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()))
             : authMode == PrtgAuthModes.Password
-                ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "operator", "pw", "", new LogForesight.Core.Service.PrtgRequestBudget())
-                : new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+                ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "operator", "pw", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()))
+                : new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
 
     [Fact]
     public async Task 失敗類型_HttpClient逾時為Timeout且沒有狀態碼()
@@ -1228,7 +1228,7 @@ public class PrtgClientTests
             }
         };
         using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "",
-            new LogForesight.Core.Service.PrtgRequestBudget(), clock);
+            new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()), clock);
         return await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("api/historicdata.json?id=1"));
     }
 

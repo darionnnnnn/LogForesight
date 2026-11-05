@@ -1177,6 +1177,7 @@ public sealed class PrtgFetchService
     {
         var target = run.Sensors[index];
         var requestPhase = false;
+        var sentGeneration = 0L;
         try
         {
             // 閘放行之後才呼叫守門；守門可能等很久，等完再看一次閘（等的期間別顆可能已經拉起暫停）
@@ -1198,10 +1199,15 @@ public sealed class PrtgFetchService
             if (supplement) run.Supplemented[index] = true;
             var query = $"api/historicdata.json?id={target.Objid}&avg={HistoricAverageSeconds}&sdate={run.Sdate}&edate={run.Edate}";
             requestPhase = true;
+            sentGeneration = run.Gate.Generation;
             var json = await _client.GetJsonAsync(query, ct);
             requestPhase = false;
-            // PRTG 有回應就代表它活著：序列與連續失敗數歸零（後續的解析或寫入失敗是本機的事，與 PRTG 無關）
-            lock (run.Sync) run.Policy.RecordSuccess();
+            // PRTG 有回應就代表它活著：序列與連續失敗數歸零（後續的解析或寫入失敗是本機的事，與 PRTG 無關）。
+            // 暫停拉起之前就送出的慢回應不算：它不能證明 PRTG 在這次暫停之後恢復了
+            lock (run.Sync)
+            {
+                if (run.Gate.Generation == sentGeneration) run.Policy.RecordSuccess();
+            }
 
             var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var stringFallback, out var zoneDrift);
             // 有些 PRTG 版本可能忽略 sdate/edate；不能因為 API 回了更多列就寫入請求日以外的資料。
@@ -1231,7 +1237,7 @@ public sealed class PrtgFetchService
             run.Failures[index] = ex;
             run.Retryable[index] = retryable;
             Interlocked.CompareExchange(ref run.FirstFailureMessage, ex.Message, null);
-            if (retryable) OnRetryableValueFailure(run, (PrtgClientException)ex, ct);
+            if (retryable) OnRetryableValueFailure(run, (PrtgClientException)ex, sentGeneration, ct);
         }
     }
 
@@ -1239,15 +1245,16 @@ public sealed class PrtgFetchService
     /// 可重試失敗的處理（同一把鎖內決定）：連續失敗達門檻或總暫停將達上限就停損；
     /// 否則閘還沒拉起就依序列拉起一次暫停，閘已拉起時不疊加（序列不前進、總暫停不累加）。
     /// </summary>
-    private void OnRetryableValueFailure(ValueFetchRun run, PrtgClientException ex, CancellationToken ct)
+    private void OnRetryableValueFailure(ValueFetchRun run, PrtgClientException ex, long sentGeneration, CancellationToken ct)
     {
         string? stopReason = null;
         var pause = TimeSpan.Zero;
         var consecutive = 0;
         lock (run.Sync)
         {
-            // 閘已拉起時失敗的是同一波在途請求，不算新的一次：否則併發 8 第一波就數到 8，PRTG 重啟一分鐘就整趟放棄
-            if (run.Stopped || run.Gate.IsRaised) return;
+            // 這次拉起之前送出的請求（含暫停結束後才回來的）是同一波在途請求，不算新的一次：
+            // 否則併發 8 第一波就數到 8，PRTG 重啟一分鐘就整趟放棄
+            if (run.Stopped || run.Gate.IsRaised || run.Gate.Generation != sentGeneration) return;
             run.Policy.RecordRetryableFailure();
             consecutive = run.Policy.ConsecutiveFailures;
 

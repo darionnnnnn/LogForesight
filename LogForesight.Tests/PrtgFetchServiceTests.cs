@@ -5,6 +5,7 @@ using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Tests.TestDoubles;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -134,22 +135,10 @@ public class PrtgFetchServiceTests : IDisposable
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "",
-            new PrtgRequestBudget(new AcceleratedClock()));
+            new PrtgRequestBudget(new AcceleratedPrtgClock()));
         return (client, handler);
     }
 
-    /// <summary>
-    /// 時間加速 1000 倍的配額時鐘：共享配額（table 2 次／秒）照常生效，但逐裝置查詢數百台的測試不必真的等幾分鐘。
-    /// </summary>
-    private sealed class AcceleratedClock : IPrtgClock
-    {
-        private const int Factor = 1000;
-        private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
-        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
-        public TimeSpan Elapsed => TimeSpan.FromTicks(_watch.Elapsed.Ticks * Factor);
-        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
-            Task.Delay(TimeSpan.FromTicks(Math.Max(1, delay.Ticks / Factor)), cancellationToken);
-    }
 
     [Fact]
     public async Task FetchDayAsync_device與sensor結構寫入鏡像表()
@@ -582,7 +571,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(new AcceleratedPrtgClock()));
         var store = CreateStore();
         var console = new TestConsole();
         var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
@@ -630,7 +619,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         };
 
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(new AcceleratedPrtgClock()));
         var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None, ScopeOf(0));
