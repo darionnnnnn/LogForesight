@@ -46,10 +46,23 @@ public class HealthService
         _snapshotService = snapshotService;
     }
 
-    /// <summary>組建版本（Directory.Build.props 的 Version＋commit）</summary>
-    private static string Version =>
-        Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? "unknown";
+    /// <summary>已登入者看的組建版本（含 commit）</summary>
+    private static string Version => BuildVersion.Current.Label;
+
+    /// <summary>
+    /// 從主機清單判定站台主機是否已停用（健康頁提示用）。讀不到清單時不提示：這只是提示，不該讓健康頁失敗。
+    /// </summary>
+    private bool IsLocalHostDisabled()
+    {
+        try
+        {
+            return new HostStore(_backend.Blob("hosts")).GetAll() is var hosts && LocalHostPolicy.IsDisabled(hosts, Environment.MachineName);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or Microsoft.EntityFrameworkCore.DbUpdateException or System.Data.Common.DbException)
+        {
+            return false;
+        }
+    }
 
     public HealthDto GetLiveness()
     {
@@ -57,7 +70,8 @@ public class HealthService
         return new HealthDto
         {
             Status = storageOk ? HealthStatuses.Ok : HealthStatuses.Down,
-            Version = Version,
+            // 匿名端點：只給版本號，commit 不對外（已登入者看 detail）
+            Version = BuildVersion.Current.Number,
             StorageOk = storageOk
         };
     }
@@ -131,6 +145,8 @@ public class HealthService
         {
             Status = degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
             Version = Version,
+            BuildShaKnown = BuildVersion.Current.ShaKnown,
+            LocalHostDisabled = IsLocalHostDisabled(),
             StorageOk = storageOk,
             StorageError = storageError,
             ScheduleFreshness = freshness,

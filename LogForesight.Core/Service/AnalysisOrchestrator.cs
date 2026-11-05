@@ -397,11 +397,13 @@ public class AnalysisOrchestrator
 
                 long currentHostId = 0;
                 List<long> currentHostGroupIds = new();
+                var localHostDisabled = false;
                 try
                 {
                     var touched = hostStore.Touch(currentHost, DateTime.Now);
                     currentHostId = touched.HostId;
                     currentHostGroupIds = touched.GroupIds;
+                    localHostDisabled = !touched.Active;
                 }
                 catch (Exception ex)
                 {
@@ -675,6 +677,13 @@ public class AnalysisOrchestrator
                 {
                     runConsole.WriteLine("\n本機分析已停用（排程設定「分析本機主機」關閉），本次僅執行 NetIQ 機房分析。");
                     runRecorder.Milestone("本機分析已停用（排程設定），本次僅執行 NetIQ 機房分析");
+                    localTask = Task.CompletedTask;
+                }
+                else if (localHostDisabled)
+                {
+                    // 只跳過本機日誌分析：權限檢查、保留清除、派工與體檢是站台的工作，與這台主機要不要被分析無關
+                    runConsole.WriteLine("\n本機主機已停用（主機清單），略過本機日誌分析。");
+                    runRecorder.Milestone("本機主機已停用，略過本機日誌分析");
                     localTask = Task.CompletedTask;
                 }
                 else

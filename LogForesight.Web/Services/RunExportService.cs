@@ -86,7 +86,7 @@ public sealed class RunExportService : IRunExportService
 
     private static readonly string[] TriggerOrder = { "schedule", "manual", "fetch-followup", "console", "other" };
 
-    private static readonly Regex VersionPattern = new(@"^[0-9]+(\.[0-9]+){1,3}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VersionPattern = new(@"^[0-9]+(\.[0-9]+){1,3}(\+[0-9a-f]{4,40})?$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex IdentPattern = new(@"^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex TimePattern = new(@"^[0-9]{1,2}:[0-9]{2}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex DailyLabelPattern = new(@"^daily-[0-9]{8}-h[0-9]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -501,7 +501,7 @@ public sealed class RunExportService : IRunExportService
                 SchemaVersion = SchemaVersion,
                 ExportedAt = Ts(_now),
                 UtcOffset = Lit(FormatOffset(TimeZoneInfo.Local.GetUtcOffset(_now))),
-                AppVersion = VersionLabel(typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString()),
+                AppVersion = VersionLabel(BuildVersion.Current.Label),
                 Period = new ExportPeriodDto { From = Day(_cutoff), To = Day(_now) },
                 Days = _days,
                 RetentionDays = settings.RunLogRetentionDays,

@@ -81,7 +81,7 @@ public class BatchRunRecorder : IDisposable
         {
             HostName = hostName,
             StartedAt = startedAt ?? DateTime.Now,
-            AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
+            AppVersion = BuildVersion.Current.Label,
             Args = string.Join(" ", args),
             Trigger = trigger,
             JobType = jobType,

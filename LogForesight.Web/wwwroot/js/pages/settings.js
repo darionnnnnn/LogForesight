@@ -664,11 +664,22 @@ async function loadHealthTab({ refresh = false } = {}) {
         await setupGuideTask;
         return;
     }
+    renderBuildInfo(detail);
     renderFreshness(detail.scheduleFreshness);
     renderPrtgSnapshotHealth(detail.prtgSnapshot);
     renderSlowQueries(detail.topSlowOperations);
     renderBackgroundJobs(detail);
     await Promise.all([loadLoginThrottle(), setupGuideTask]);
+}
+
+/** 版本與站台主機狀態：判斷「站台到底部署了哪一版」只看這一行 */
+function renderBuildInfo(detail) {
+    const host = document.getElementById('health-build');
+    if (!host) return;
+    const parts = [`版本 ${detail.version}`];
+    if (!detail.buildShaKnown) parts.push('建置時未取得版本識別');
+    if (detail.localHostDisabled) parts.push('站台主機已停用，不再分析本機日誌');
+    host.textContent = parts.join('　');
 }
 
 /** PRTG 快照健康摘要：使用 textContent，診斷文字視為不可信資料。 */

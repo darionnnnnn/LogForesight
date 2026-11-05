@@ -118,9 +118,23 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
         }
     }
 
-    private ScheduleController Controller(IEnumerable<long> ids)
+    [Fact]
+    public void 站台主機已停用_全部範圍不含本機_指定它時擋下()
+    {
+        var site = new WebHost { HostId = 90, HostName = Environment.MachineName, Source = "local", Active = false };
+
+        var preview = Controller(new long[] { 1 }, site).RunPreview("all", null, null, onlyMissingOrFailed: false, backfillDays: 1);
+        Assert.Equal(1, preview.Data!.HostCount); // 只有那 1 台 NetIQ，不含停用的本機
+
+        var ex = Assert.Throws<DomainException>(() =>
+            Controller(new long[] { 1 }, site).RunPreview("host", null, 90, onlyMissingOrFailed: false, backfillDays: 1));
+        Assert.Contains("停用", ex.Message);
+    }
+
+    private ScheduleController Controller(IEnumerable<long> ids, WebHost? extra = null)
     {
         var hosts = new FakeHostStore();
+        if (extra != null) hosts.Upsert(extra);
         foreach (var id in ids)
             hosts.Upsert(new WebHost
             {

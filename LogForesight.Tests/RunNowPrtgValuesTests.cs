@@ -164,6 +164,44 @@ public class RunNowPrtgValuesTests
     }
 
     [Fact]
+    public async Task 站台主機已停用_略過本機日誌分析_其他工作照跑()
+    {
+        var log = new EventLog();
+        var dir = Path.Combine(Path.GetTempPath(), "lf-local-off-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var settings = new AppSettings
+            {
+                Ai = new AiSettings { BaseUrl = "" },
+                Storage = new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "t.db")};Pooling=False" }
+            };
+            var seed = new StorageBackend(settings.Storage, dir, 1);
+            var hosts = new HostStore(seed.Blob("hosts"));
+            hosts.Upsert(new WebHost { HostName = Environment.MachineName, Source = "local", Active = false });
+
+            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource(), NullAiRequestGate.Instance);
+            var result = await orchestrator.RunAsync(
+                new RunRequest { Scope = RunScope.Full, IncludeLocal = true },
+                settings, dir, new RetentionOptions(), new LoggingConsole(log), CancellationToken.None,
+                new RecordingProgress(log), manualWorkGate: null, prtgBackfillTail: null);
+            Assert.True(result.Success, result.FailureMessage);
+
+            var store = new BatchRunStore(seed.LogStore("batch_runs"), seed.LogStore("batch_run_logs"));
+            var run = store.GetRun(result.BatchRunId!.Value)!;
+            Assert.DoesNotContain(run.Phases!, p => p.Key == RunTimingPhases.Local);
+            Assert.Contains(run.Phases!, p => p.Key == RunTimingPhases.PermissionCheck);
+            Assert.Contains(run.Phases!, p => p.Key == RunTimingPhases.Retention);
+            Assert.Contains(store.GetLogs(run.RunId), l => l.Message.Contains("本機主機已停用"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task 階段紀錄_頂層階段都有結果_排程說明與本機無待補可見()
     {
         var log = new EventLog();

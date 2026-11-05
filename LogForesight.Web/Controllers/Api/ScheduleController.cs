@@ -411,7 +411,8 @@ public class ScheduleController : ControllerBase
                 var allFlat = allTargets.ByServer.Values.SelectMany(v => v).ToList();
                 // 本機分析停用時（回饋十八輪批次D），全部主機的範圍不再涵蓋本機——預覽台數與
                 // 執行監控要如實反映，不能讓使用者以為本機也在這次執行內
-                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), _optionsStore.Get().LocalAnalysisEnabled);
+                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(),
+                    _optionsStore.Get().LocalAnalysisEnabled && !LocalHostPolicy.IsDisabled(_hosts.GetAll(), Environment.MachineName));
 
             case "segment":
                 return (RunScope.NetiqHosts, ResolveSegmentHostIds(segment, _hosts, _sentinels), false);
@@ -423,6 +424,8 @@ public class ScheduleController : ControllerBase
                 {
                     if (!_optionsStore.Get().LocalAnalysisEnabled)
                         throw DomainException.Validation("本機分析已停用，請先於排程作業頁啟用「分析本機主機」。");
+                    if (!host.Active)
+                        throw DomainException.Validation("這台本機主機已在主機清單停用，不會分析本機日誌。");
                     return (RunScope.LocalOnly, null, true);
                 }
 
