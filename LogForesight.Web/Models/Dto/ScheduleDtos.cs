@@ -90,6 +90,9 @@ public class ScheduleStatusDto
 
     /// <summary>自動補跑的停止時刻（其餘趟為 null）</summary>
     public DateTime? CatchUpDeadline { get; set; }
+
+    /// <summary>排程趟的停止時刻（所屬窗口實例的結束）；手動與補跑為 null。</summary>
+    public DateTime? WindowEnd { get; set; }
     public string? LatestMessage { get; set; }
 
     /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq 專屬（回饋十七輪批次E 起，

@@ -60,7 +60,8 @@ public sealed record SchedulerRunSnapshot(
     int ActivityTotal,
     int PrtgPausedCount = 0,
     DateTime? PrtgResumeAt = null,
-    int PrtgHaltedPending = 0);
+    int PrtgHaltedPending = 0,
+    DateTime? WindowEnd = null);
 
 /// <summary>
 /// 排程執行的行程內狀態（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：單例，供
@@ -81,6 +82,9 @@ public class SchedulerRunState
 
     /// <summary>自動補跑的停止時刻；其餘趟為 null（見 <see cref="LogForesight.Core.Service.ScheduleCalculator.ShouldStopScheduledRun"/>）</summary>
     public DateTime? CatchUpDeadline { get; private set; }
+
+    /// <summary>排程趟所屬窗口實例的結束時刻（到點優雅停止）；手動與補跑為 null。</summary>
+    public DateTime? WindowEnd { get; private set; }
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
@@ -280,7 +284,7 @@ public class SchedulerRunState
     }
 
     /// <summary>已在執行中時回 false（呼叫端據此直接拒絕，不排隊）；成功開始時回 true 並給出可用於停止的 CancellationTokenSource</summary>
-    public bool TryBeginRun(string trigger, out CancellationTokenSource cts, DateTime? catchUpDeadline = null)
+    public bool TryBeginRun(string trigger, out CancellationTokenSource cts, DateTime? catchUpDeadline = null, DateTime? windowEnd = null)
     {
         lock (_lock)
         {
@@ -293,6 +297,7 @@ public class SchedulerRunState
             IsRunning = true;
             Trigger = trigger;
             CatchUpDeadline = catchUpDeadline;
+            WindowEnd = windowEnd;
             StartedAt = DateTime.Now;
             if (trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule)
             {
@@ -390,7 +395,7 @@ public class SchedulerRunState
                 _local.Completed, _netiq.Completed, _prtg.Completed,
                 PausedReason, LastOutcome,
                 aPhase, aDone, aTotal,
-                PrtgPausedCount, PrtgResumeAt, PrtgHaltedPending);
+                PrtgPausedCount, PrtgResumeAt, PrtgHaltedPending, WindowEnd);
         }
     }
 
@@ -524,6 +529,7 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             CatchUpDeadline = null;
+            WindowEnd = null;
             StartedAt = null;
             ResetTracks();
             PrtgFindingsReady = false;

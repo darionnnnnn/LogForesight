@@ -192,4 +192,36 @@ public class SchedulerTriggerQueryTests
 
         Assert.Equal(expected, run.IsScheduledFetch());
     }
+
+    // ── 窗口實例帶進實際請求（第 64 輪 C-2、C-3）──────────
+
+    [Fact]
+    public void 排程請求_窗口實例要帶進實際執行的請求_漏抄會靜默失效()
+    {
+        var start = new DateTime(2026, 11, 5, 1, 0, 0);
+        var request = SchedulerHostedService.ComposeScheduledRequest(null, "note", (start, start.AddHours(2)));
+
+        var effective = SchedulerHostedService.ComposeEffectiveRequest(request, new ScheduleOptions());
+
+        Assert.Equal(start, effective.WindowInstanceStart);
+        Assert.Equal(start.AddHours(2), effective.WindowEnd);
+        Assert.Null(effective.CatchUpNote); // 續跑不走補跑：CatchUpNote 會放大回望並被統計成補跑
+    }
+
+    [Fact]
+    public void 趟首說明_上一趟留下待補或被窗口停止時講清楚要接什麼()
+    {
+        var now = new DateTime(2026, 11, 5, 4, 0, 0);
+        var windows = new List<ScheduleWindow> { new() { Start = "01:00", End = "03:00" }, new() { Start = "04:00", End = "06:00" } };
+        BatchRun Previous(int netiqFailed, bool stopped) => new()
+        {
+            RunId = 7, StartedAt = now.AddHours(-3), FinishedAt = now.AddHours(-1), Trigger = BatchRunTriggers.Schedule,
+            NetiqDaysFailed = netiqFailed, Stopped = stopped
+        };
+
+        Assert.Contains("上一趟 #7 留下 NetIQ 4 主機日", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(4, false) }));
+        Assert.Contains("上一趟 #7 被窗口結束停止", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, true) }));
+        Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, false) }));
+        Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, Array.Empty<BatchRun>()));
+    }
 }

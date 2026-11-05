@@ -469,4 +469,97 @@ public class ScheduleCalculatorTests
         Assert.Equal(new DateTime(2026, 10, 20, 22, 0, 0), missed.Value.Start);
         Assert.Equal(new DateTime(2026, 10, 21, 2, 0, 0), missed.Value.End);
     }
+
+    // ── 窗口實例與同窗口續跑（第 64 輪 C-2、C-3）──────────
+
+    private static readonly DateTime Today = new(2026, 11, 5);
+
+    private static List<ScheduleWindow> Windows(params (string Start, string End)[] w) =>
+        w.Select(x => new ScheduleWindow { Start = x.Start, End = x.End }).ToList();
+
+    private static BatchRun FetchRun(DateTime start, DateTime? instance, int netiqFailed = 0, bool stopped = false, bool interrupted = false,
+        string trigger = BatchRunTriggers.Schedule, int minutes = 30, IReadOnlyList<long>? pendingSensors = null) => new()
+    {
+        RunId = start.Ticks, StartedAt = start, FinishedAt = start.AddMinutes(minutes), Trigger = trigger,
+        WindowInstanceStart = instance, NetiqDaysFailed = netiqFailed, Stopped = stopped, Interrupted = interrupted,
+        PrtgDays = pendingSensors == null ? null : new() { new PrtgDayStat(start.Date.AddDays(-1), "partial", 0, 0, true, 0, 0, 0, PendingSensorDevices: pendingSensors) }
+    };
+
+    [Fact]
+    public void 窗口實例_跨午夜End落在隔天_不在窗口回null()
+    {
+        var w = Windows(("22:00", "06:00"));
+        Assert.Equal((Today.AddHours(22), Today.AddDays(1).AddHours(6)), ScheduleCalculator.CurrentWindowInstance(Today.AddHours(23), w));
+        Assert.Equal((Today.AddDays(-1).AddHours(22), Today.AddHours(6)), ScheduleCalculator.CurrentWindowInstance(Today.AddHours(5), w));
+        Assert.Null(ScheduleCalculator.CurrentWindowInstance(Today.AddHours(12), w));
+    }
+
+    [Fact]
+    public void 相鄰窗口_排程趟在自己的End停_手動與舊趟行為不變()
+    {
+        var w = Windows(("01:00", "03:00"), ("03:00", "05:00"));
+        var instance = ScheduleCalculator.CurrentWindowInstance(Today.AddHours(2), w)!.Value;
+        Assert.Equal(Today.AddHours(3), instance.End);
+        Assert.False(ScheduleCalculator.ShouldStopScheduledRun(Today.AddHours(2).AddMinutes(59), w, instance.End));
+        Assert.True(ScheduleCalculator.ShouldStopScheduledRun(Today.AddHours(3), w, instance.End));
+        // 沒有停止點（舊趟）仍退回「不在任何窗口內」：相鄰窗口內不會停
+        Assert.False(ScheduleCalculator.ShouldStopScheduledRun(Today.AddHours(3), w, null));
+    }
+
+    [Fact]
+    public void 續跑_提早結束有失敗_距上一趟開跑滿10分_窗口還夠_續跑()
+    {
+        var w = Windows(("01:00", "05:00"));
+        var start = Today.AddHours(1);
+        var run = FetchRun(start, start, netiqFailed: 4);
+        Assert.Same(run, ScheduleCalculator.RunToContinue(start.AddMinutes(40), w, new[] { run }));
+    }
+
+    [Fact]
+    public void 續跑_決策表的不續跑案例()
+    {
+        var w = Windows(("01:00", "05:00"));
+        var start = Today.AddHours(1);
+        var at = start.AddMinutes(40);
+
+        // 沒有失敗或待補
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[] { FetchRun(start, start) }));
+        // 被窗口結束或手動停掉
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[] { FetchRun(start, start, netiqFailed: 1, stopped: true) }));
+        // 異常中斷走既有補跑規則
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[] { FetchRun(start, start, netiqFailed: 1, interrupted: true) }));
+        // 這個實例已跑滿 2 趟（續跑或中斷後的補跑都算）
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[]
+        {
+            FetchRun(start, start, netiqFailed: 1), FetchRun(start.AddMinutes(10), start, netiqFailed: 1, minutes: 5)
+        }));
+        // 距上一趟開跑不到 10 分
+        Assert.Null(ScheduleCalculator.RunToContinue(start.AddMinutes(9), w, new[] { FetchRun(start, start, netiqFailed: 1, minutes: 1) }));
+        // 窗口剩不到 10 分
+        Assert.Null(ScheduleCalculator.RunToContinue(Today.AddHours(5).AddMinutes(-5), w, new[] { FetchRun(start, start, netiqFailed: 1) }));
+        // 補跑（沒有窗口實例）與手動
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[] { FetchRun(start, null, netiqFailed: 1) }));
+        Assert.Null(ScheduleCalculator.RunToContinue(at, w, new[] { FetchRun(start, start, netiqFailed: 1, trigger: "manual") }));
+    }
+
+    [Fact]
+    public void 續跑_PRTG停損的趟_要從結束時刻再隔10分()
+    {
+        var w = Windows(("01:00", "05:00"));
+        var start = Today.AddHours(1);
+        var run = FetchRun(start, start, pendingSensors: new long[] { 7 }, minutes: 20); // 01:20 結束
+
+        Assert.Null(ScheduleCalculator.RunToContinue(start.AddMinutes(25), w, new[] { run }));
+        Assert.Same(run, ScheduleCalculator.RunToContinue(start.AddMinutes(30), w, new[] { run }));
+    }
+
+    [Fact]
+    public void 續跑剩餘量_單位統一_舊紀錄缺欄位不算有事()
+    {
+        var run = FetchRun(Today, Today, netiqFailed: 4, pendingSensors: new long[] { 1, 2 });
+        var resume = RunResume.Of(run);
+        Assert.True(resume.HasWork);
+        Assert.Equal("NetIQ 4 主機日／PRTG 2 裝置", resume.Describe());
+        Assert.False(RunResume.Of(new BatchRun { StartedAt = Today }).HasWork);
+    }
 }

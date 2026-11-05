@@ -102,6 +102,9 @@ public class BatchRun
     /// </summary>
     public bool? CatchUp { get; set; }
 
+    /// <summary>排程趟所屬窗口實例的開始時刻（null＝手動、補跑或舊紀錄）；同一窗口續跑的趟數計數讀它。</summary>
+    public DateTime? WindowInstanceStart { get; set; }
+
     /// <summary>
     /// 作業類型（回饋三十五輪批次D）：null＝取數／分析執行（含舊紀錄，缺欄反序列化為 null）、
     /// <see cref="JobTypeAi"/>＝AI 分析排程的執行。執行總表（主機×日視角）只統計取數執行，

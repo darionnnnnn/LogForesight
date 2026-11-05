@@ -165,6 +165,7 @@ public class ScheduleController : ControllerBase
             TriggerText = TriggerText(s.Trigger),
             StartedAt = s.StartedAt,
             CatchUpDeadline = s.CatchUpDeadline,
+            WindowEnd = s.WindowEnd,
             LatestMessage = s.LatestMessage,
             ProgressPhase = s.ProgressPhase,
             ProgressDone = s.ProgressDone,

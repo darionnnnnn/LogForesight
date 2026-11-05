@@ -32,6 +32,10 @@ public class RunRequest
     /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
     public DateTime? CatchUpDeadline { get; init; }
 
+    /// <summary>排程趟所屬窗口實例的起訖；排程趟到 End 優雅停止，起點進執行紀錄供續跑計數。其餘趟為 null。</summary>
+    public DateTime? WindowInstanceStart { get; init; }
+    public DateTime? WindowEnd { get; init; }
+
     public bool DebugDump { get; init; }
 
     /// <summary>
@@ -313,7 +317,8 @@ public class AnalysisOrchestrator
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
-                catchUp: request.CatchUpNote != null, startedAt: runStartedAt, scope: BatchRunScopes.Of(request.Scope));
+                catchUp: request.CatchUpNote != null, startedAt: runStartedAt, scope: BatchRunScopes.Of(request.Scope),
+                windowInstanceStart: request.WindowInstanceStart);
             result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
@@ -1259,7 +1264,7 @@ public class AnalysisOrchestrator
                 result.Success = false;
                 result.FailureMessage ??= $"NetIQ 分析有 {netiqResult.HostsFailed} 個主機日失敗";
             }
-            runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
+            runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate} 台主機、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)

@@ -226,7 +226,7 @@ public class SchedulerHostedService : BackgroundService
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
             var running = _runState.Snapshot();
             if (running.Trigger == BatchRunTriggers.Schedule &&
-                ScheduleCalculator.ShouldStopScheduledRun(DateTime.Now, options.Windows, running.CatchUpDeadline) &&
+                ScheduleCalculator.ShouldStopScheduledRun(DateTime.Now, options.Windows, running.CatchUpDeadline ?? running.WindowEnd) &&
                 _runState.TryCancel())
             {
                 Log.Info("執行窗口或補跑停止點已到，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
@@ -254,7 +254,19 @@ public class SchedulerHostedService : BackgroundService
             var interruptedAt = ScheduleCalculator.InterruptedRunAllowingCatchUp(now, ScheduledRunTimes(recentRuns), options.Windows);
             await TriggerRunAsync(ComposeScheduledRequest(
                 interruptedAt is { } at ? $"補跑：上一趟排程執行（{at:HH:mm} 開始）異常中斷" : null,
-                ScheduleCalculator.DescribeCurrentWindow(now, options.Windows)));
+                DescribeWindowRun(now, options.Windows, recentRuns),
+                ScheduleCalculator.CurrentWindowInstance(now, options.Windows)));
+            return;
+        }
+
+        // 同一窗口續跑：上一趟提早結束、還留著失敗或待補。不帶 CatchUpNote：那會放大回望並被統計成補跑
+        if (ScheduleCalculator.RunToContinue(now, options.Windows, recentRuns) is { } previous)
+        {
+            var left = RunResume.Of(previous).Describe();
+            var note = $"本趟為窗口內續跑（第 2 趟，上一趟 #{previous.RunId} 留下：{left}）";
+            Log.Info(note);
+            _runState.ReportMessage(note);
+            await TriggerRunAsync(ComposeScheduledRequest(null, note, ScheduleCalculator.CurrentWindowInstance(now, options.Windows)));
             return;
         }
 
@@ -406,8 +418,27 @@ public class SchedulerHostedService : BackgroundService
     /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
-    internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null, string? windowNote = null) =>
-        new() { Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote, WindowNote = windowNote };
+    internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null, string? windowNote = null,
+        (DateTime Start, DateTime End)? window = null) =>
+        new()
+        {
+            Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote, WindowNote = windowNote,
+            WindowInstanceStart = window?.Start, WindowEnd = window?.End
+        };
+
+    /// <summary>趟首里程碑：第幾個窗口，加上今天上一趟排程留下的失敗或待補（看得出這趟要接什麼）。</summary>
+    internal static string? DescribeWindowRun(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
+    {
+        var note = ScheduleCalculator.DescribeCurrentWindow(now, windows);
+        var previous = recentRuns
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.StartedAt.Date == now.Date && r.FinishedAt.HasValue)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
+            .FirstOrDefault();
+        if (note == null || previous == null) return note;
+        var resume = RunResume.Of(previous);
+        if (resume.HasWork) return $"{note}；續跑：上一趟 #{previous.RunId} 留下 {resume.Describe()}";
+        return previous.Stopped ? $"{note}；續跑：上一趟 #{previous.RunId} 被窗口結束停止，接著處理未完成的部分" : note;
+    }
 
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。
@@ -429,6 +460,8 @@ public class SchedulerHostedService : BackgroundService
         CatchUpNote = request.CatchUpNote,
         WindowNote = request.WindowNote,
         CatchUpDeadline = request.CatchUpDeadline,
+        WindowInstanceStart = request.WindowInstanceStart,
+        WindowEnd = request.WindowEnd,
         PrtgBackfillDays = request.PrtgBackfillDays
     };
 
@@ -451,7 +484,7 @@ public class SchedulerHostedService : BackgroundService
         var scheduleOptions = _scheduleOptionsStore.Get();
         var effectiveRequest = ComposeEffectiveRequest(request, scheduleOptions);
 
-        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts, effectiveRequest.CatchUpDeadline))
+        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts, effectiveRequest.CatchUpDeadline, effectiveRequest.WindowEnd))
         {
             return false;
         }

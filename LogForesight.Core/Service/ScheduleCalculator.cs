@@ -122,6 +122,55 @@ public static class ScheduleCalculator
     public static bool ShouldStopScheduledRun(DateTime now, IEnumerable<ScheduleWindow> windows, DateTime? catchUpDeadline) =>
         catchUpDeadline is { } deadline ? now >= deadline : !IsWithinAnyWindow(now, windows);
 
+    /// <summary>
+    /// now 所在窗口實例的起訖（跨午夜時 End 落在隔天）；不在任何窗口內回 null。
+    /// 排程趟的停止點是自己這個實例的 End：只看「還在不在任何窗口內」的話，相鄰窗口（01:00～03:00、03:00～05:00）
+    /// 前一趟會一路跑進下一個窗口，第二個窗口的觸發就被吃掉了。
+    /// </summary>
+    public static (DateTime Start, DateTime End)? CurrentWindowInstance(DateTime now, IEnumerable<ScheduleWindow> windows)
+    {
+        foreach (var w in windows)
+        {
+            if (CurrentWindowInstanceStart(now, w) is not { } start) continue;
+            if (!TryParseMinutes(w.Start, out var startMinutes) || !TryParseMinutes(w.End, out var endMinutes)) continue;
+            var length = endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
+            return (start, start.AddMinutes(length));
+        }
+        return null;
+    }
+
+    /// <summary>同一窗口續跑：距窗口結束與距上一趟開跑都要留這麼久（暫定），避免反覆失敗時空轉。</summary>
+    public static readonly TimeSpan WindowContinueGap = TimeSpan.FromMinutes(10);
+
+    /// <summary>同一窗口實例最多跑幾趟（含續跑與異常中斷後的補跑）。</summary>
+    public const int MaxRunsPerWindowInstance = 2;
+
+    /// <summary>
+    /// 同一窗口該不該再跑一趟：上一趟在窗口內提早結束、還留著失敗或待補。回傳那一趟（null＝不續跑）。
+    /// 計數讀執行紀錄，站台重啟不歸零。被窗口結束或手動停掉的不續跑（等下一個窗口）；補跑與手動趟沒有窗口實例，不算在內。
+    /// PRTG 停損的趟另外從結束時刻起算間隔：冷卻只在那一趟的實例內，馬上再跑等於又打一次剛停損的 PRTG。
+    /// </summary>
+    public static BatchRun? RunToContinue(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
+    {
+        if (CurrentWindowInstance(now, windows) is not { } instance) return null;
+        if (instance.End - now < WindowContinueGap) return null;
+
+        var inInstance = recentRuns
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instance.Start)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
+            .ToList();
+        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsPerWindowInstance) return null;
+
+        var last = inInstance[0];
+        if (last.FinishedAt is not { } finishedAt || last.Stopped || last.Interrupted) return null;
+        if (now - last.StartedAt < WindowContinueGap) return null;
+
+        var resume = RunResume.Of(last);
+        if (!resume.HasWork) return null;
+        if (resume.PrtgHalted && now - finishedAt < WindowContinueGap) return null;
+        return last;
+    }
+
     /// <summary>單一窗口是否涵蓋 now（環狀比較，天生處理跨午夜：Start &gt; End 時判斷「晚於 Start 或早於 End」）</summary>
     public static bool IsWithinWindow(DateTime now, ScheduleWindow window)
     {
