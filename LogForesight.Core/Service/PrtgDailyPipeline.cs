@@ -167,6 +167,7 @@ internal static class PrtgDailyPipeline
 
             var fetchService = PrtgFetchService.Create(client, backend, backend.PrtgStore(), systemSettings, prtgConsole, guard,
                 retryTransientPaging: true);
+            fetchService.Signal = (phase, done, total) => progress?.Report(phase, done, total);
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";

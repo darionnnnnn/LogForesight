@@ -41,6 +41,8 @@
 執行紀錄（`lf_log_lines` 的 `log_key='batch_runs'`）每列是一筆 `BatchRun` JSON，同一個 RunId 取最後一列。`Phases` 記各階段起訖：
 `Key`（`RunTimingPhases`）、`StartedAt`、`FinishedAt`、`Outcome`（success／partial／failed／stopped／skipped）、`Note`；
 頂層階段結束時追加一列，PRTG 子階段只隨結束列寫出。舊紀錄缺此欄（null），不從舊 log 推算。
+`PrtgDays[].PendingSensorDevices`／`PendingMessageDevices`：該趟沒完成的裝置，同日下一趟只補這些（`null`＝舊紀錄未知）。`WindowInstanceStart`：排程趟所屬窗口實例的開始時刻，同一窗口續跑的趟數計數讀它。NetIQ 帳本（`netiq_hostday_attempt_*`）每個主機日只留最新一列，回執另帶 `TruncatedRuns`、`RetryRuns`、`RetryDay`、`CountedRunId` 累計自動重查次數（舊資料缺欄為 0）。
+
 `PrtgDays[].SourceSynced`：該趟對這一天有完整的來源同步（或沿用同日另一趟），同日下一個窗口據此不重新同步；`SourceSyncedAt` 是來源同步實際發生的時刻，沿用趟沿用來源的值。舊紀錄缺欄為 false／null（docs/PRTG-SPEC.md §3）。
 
 目前實體表清單：`lf_blobs`、`lf_log_lines`、`lf_daily_records`、`lf_top_issues`、

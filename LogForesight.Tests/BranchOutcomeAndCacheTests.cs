@@ -184,7 +184,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
     }
 
     [Fact]
-    public void RunsEndpoints_執行紀錄包含今天但每日總表錨定昨天()
+    public void RunsEndpoints_執行紀錄包含今天_每日總表今天是不佔天數的附加列()
     {
         var runs = Runs();
         foreach (var startedAt in new[] { DateTime.Today.AddDays(-1).AddHours(9), DateTime.Today.AddHours(9) })
@@ -208,11 +208,14 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var listed = Assert.Single(list);
         Assert.Equal(DateTime.Today, listed.StartedAt.Date);
 
-        // /api/runs/summary is a completed-day view; today is intentionally absent.
-        var summary = Assert.IsType<ApiResponse<RunDaySummaryPageDto>>(
-            controller.Summary(days: 1, page: 1, pageSize: 30)).Data!;
-        var day = Assert.Single(summary.Items);
-        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), day.Date);
+        // /api/runs/summary：days 仍只算到昨天；今天有趟時第 1 頁多一列，不佔天數
+        var summaryPage = Assert.IsType<ApiResponse<RunDaySummaryPageDto>>(controller.Summary(days: 1, page: 1, pageSize: 1)).Data!;
+        Assert.Equal(1, summaryPage.TotalDays);
+        Assert.Equal(2, summaryPage.Items.Count);
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), summaryPage.Items[0].Date);
+        Assert.False(summaryPage.Items[0].IsToday);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), summaryPage.Items[1].Date);
+        Assert.True(summaryPage.Items[1].IsToday);
     }
 
     [Fact]

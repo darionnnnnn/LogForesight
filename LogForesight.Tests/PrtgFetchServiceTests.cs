@@ -3201,6 +3201,25 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 暫停與停損走訊號通道_不混進進度回呼()
+    {
+        // 回填與結構同步把進度回呼的數字直接當進度條，訊號混進去畫面會跳成「1/15」
+        var (client, _) = CreateClient(_ => ServerDown());
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+        var signals = new List<string>();
+        service.Signal = (phase, _, _) => { lock (signals) signals.Add(phase); };
+        var progress = new List<string>();
+
+        await service.FetchStateChangesRangeAsync(DateTime.Today, DateTime.Today, Enumerable.Range(1, 12).Select(i => (long)i).ToList(), 1,
+            CancellationToken.None, (phase, _, _) => { lock (progress) progress.Add(phase); });
+
+        Assert.Contains(PrtgFetchService.PrtgPausedPhase, signals);
+        Assert.Contains(PrtgFetchService.PrtgHaltedPhase, signals);
+        Assert.DoesNotContain(PrtgFetchService.PrtgPausedPhase, progress);
+        Assert.DoesNotContain(PrtgFetchService.PrtgHaltedPhase, progress);
+    }
+
+    [Fact]
     public void 逐日統計_舊JSON缺待補欄位_為null代表未知()
     {
         var stat = System.Text.Json.JsonSerializer.Deserialize<PrtgDayStat>(
