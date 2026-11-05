@@ -330,6 +330,12 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    /// <summary>這一趟目前還剩多少失敗與待補（趟末里程碑用；判定本身在 <see cref="RunResume"/>）。</summary>
+    public RunResume CurrentResume()
+    {
+        lock (_countLock) return RunResume.Of(_run);
+    }
+
     public void RecordDayAnalyzed()
     {
         lock (_countLock) _run.DaysAnalyzed++;

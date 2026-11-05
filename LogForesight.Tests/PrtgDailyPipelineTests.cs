@@ -441,6 +441,26 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task 沿用同步有待補裝置_補不到仍記待補並標重評()
+    {
+        var (_, day, hostStore) = SeedDownSensorForYesterday();
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
+            reusePending: (new long[] { 501 }, new long[] { 502 }));
+
+        Assert.DoesNotContain(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+        Assert.Contains(console.Lines, l => l.Contains("續補上一趟的待補裝置"));
+        ctx.RunRecorder.Finish(0);
+        var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
+        Assert.Equal(new long[] { 501 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 502 }, stat.PendingMessageDevices);
+        Assert.True(stat.NeedsReevaluation);
+        Assert.True(stat.SourceSynced);
+    }
+
+    [Fact]
     public async Task 來源同步失敗_統計標示未同步_下一窗口不會沿用()
     {
         var (_, day, hostStore) = SeedDownSensorForYesterday();

@@ -543,6 +543,33 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>
+    /// 同日續跑：只補上一趟沒完成的裝置（感測器與狀態變更），已完成的不重查。不做過期清除：
+    /// 只刷新了這幾台，其餘裝置「沒刷新到」不代表已刪除。回傳仍沒完成的裝置。
+    /// </summary>
+    internal async Task<(IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages)> FetchPendingDevicesAsync(
+        IReadOnlyList<long> sensorDevices, IReadOnlyList<long> messageDevices, DateTime stateChangesFrom,
+        int concurrency, CancellationToken ct, Action<string, int, int>? progress = null)
+    {
+        IReadOnlyList<long> leftSensors = Array.Empty<long>();
+        if (sensorDevices.Count > 0)
+        {
+            var (written, _, failed, _) = await FetchSensorsForDevicesAsync(sensorDevices, concurrency, DateTime.Now, ct, progress);
+            leftSensors = failed;
+            _console.WriteLine($"[續補] 感測器：{sensorDevices.Count} 台待補，寫入／更新 {written} 個，仍待補 {failed.Count} 台。");
+            if (written > 0) _store.ApplyAutoCategories(_categoryOverrides);
+        }
+
+        IReadOnlyList<long> leftMessages = Array.Empty<long>();
+        if (messageDevices.Count > 0)
+        {
+            var range = await FetchStateChangesRangeAsync(stateChangesFrom, DateTime.Today, messageDevices, concurrency, ct, progress);
+            leftMessages = range.PendingDevices;
+            _console.WriteLine($"[續補] 狀態變更：{messageDevices.Count} 台待補，新增 {range.TotalWritten} 筆，仍待補 {leftMessages.Count} 台。");
+        }
+        return (leftSensors, leftMessages);
+    }
+
+    /// <summary>
     /// 只擷取指定 sensor 的當日 hourly 數值（觸發式取數用）。
     /// 回傳實際寫入筆數與失敗的 sensor 數；併發與單 sensor 失敗隔離沿用階段 4 的既有機制。
     /// </summary>

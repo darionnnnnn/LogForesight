@@ -733,7 +733,8 @@ public class AnalysisOrchestrator
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
                 var reuseSyncFrom = PrtgReevaluationPlanner.ReusableSyncFrom(request.Trigger, request.Scope, recentRuns, prtgDays, runToday);
                 var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate,
-                    reuseSyncFrom: reuseSyncFrom);
+                    reuseSyncFrom: reuseSyncFrom,
+                    reusePending: reuseSyncFrom != null ? PrtgReevaluationPlanner.PendingDevices(recentRuns, prtgDays) : null);
 
                 // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
                 // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
@@ -817,6 +818,10 @@ public class AnalysisOrchestrator
                 runConsole.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
                 runConsole.WriteLine("--- 執行結束 ---");
                 Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
+                if (runRecorder.CurrentResume() is { HasWork: true } left)
+                {
+                    runRecorder.Milestone($"本趟結束仍待補：{left.Describe()}");
+                }
                 runRecorder.Milestone("執行結束");
                 runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);

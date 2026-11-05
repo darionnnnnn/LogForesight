@@ -3175,6 +3175,32 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 同日續補_只對待補裝置發請求_不重查已完成的也不清除()
+    {
+        var today = DateTime.Today;
+        var store = CreateStore();
+        var old = DateTime.Now.AddDays(-3);
+        store.UpsertSensors(new[] { new PrtgSensorRow { Objid = 99, DeviceObjid = 9, Name = "已完成裝置的舊感測器", SyncedAt = old } }, old);
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages")) return JsonResponse("{\"messages\":[]}");
+            return JsonResponse("{\"treesize\":1,\"sensors\":[{\"objid\":" + (100 + IdQuery(url)) + ",\"parentid\":" + IdQuery(url) + ",\"sensor\":\"S\",\"type\":\"ping\",\"paused\":false}]}");
+        });
+        var service = RetryingService(client, store, (_, _) => Task.CompletedTask);
+
+        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None);
+
+        Assert.Empty(left.Sensors);
+        Assert.Empty(left.Messages);
+        Assert.Equal(new long[] { 1, 2 }, handler.RequestedUrls.Where(u => u.Contains("content=sensors")).Select(u => IdQuery(u)!.Value).OrderBy(i => i));
+        Assert.Equal(new long[] { 2, 3 }, handler.RequestedUrls.Where(u => u.Contains("content=messages")).Select(u => IdQuery(u)!.Value).OrderBy(i => i));
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
+        using var db = _fx.NewContext();
+        Assert.Contains(await db.PrtgSensors.Select(s => s.Objid).ToListAsync(), id => id == 99);
+    }
+
+    [Fact]
     public void 逐日統計_舊JSON缺待補欄位_為null代表未知()
     {
         var stat = System.Text.Json.JsonSerializer.Deserialize<PrtgDayStat>(

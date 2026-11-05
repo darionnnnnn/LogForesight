@@ -196,6 +196,25 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     }
 
     [Fact]
+    public async Task 續跑整合_第一趟失敗的下一趟才查_已完成的不再發查詢()
+    {
+        var sentinel = AddSentinel();
+        var done = AddWindowsHost(sentinel, "10.0.0.1", "HOST-DONE");
+        var failed = AddWindowsHost(sentinel, "10.0.0.2", "HOST-FAILED");
+        var yesterday = DateTime.Today.AddDays(-1);
+        var doneRecord = new DailyAnalysisRecord { HostId = done.HostId, Host = done.HostName, Date = yesterday, RiskLevel = RiskLevels.Low, LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = NetiqAttemptStatus.Success };
+        _backend.RecordStore(new HostKey { HostId = done.HostId, HostName = done.HostName }).Append(doneRecord);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { done.HostId }, yesterday, 1, NetiqAttemptStatus.Success);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { failed.HostId }, yesterday, 1, NetiqAttemptStatus.Failed);
+
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        var request = Assert.Single(_client.Requests);
+        Assert.Contains("10.0.0.2", request.Filter);
+        Assert.DoesNotContain("10.0.0.1", request.Filter);
+    }
+
+    [Fact]
     public void 截斷類重查上限累計_不隨日期歸零()
     {
         var exhausted = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Partial, TruncatedRuns: 2, RetryRunsToday: 0);

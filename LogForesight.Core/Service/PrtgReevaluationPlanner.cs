@@ -92,6 +92,27 @@ public static class PrtgReevaluationPlanner
 
         return lastFinishedRun.PrtgDays.FirstOrDefault(s => s.Outcome != BatchRun.PrtgOutcomeSuccess);
     }
+    /// <summary>
+    /// 沿用同步時要補的裝置：這幾天最新統計留下的待補聯集（缺欄的舊紀錄當沒有）。
+    /// 已完成的裝置不重查，只補這些。
+    /// </summary>
+    public static (IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages) PendingDevices(
+        IReadOnlyList<BatchRun>? recentRuns, IReadOnlyList<DateTime> days)
+    {
+        var sensors = new HashSet<long>();
+        var messages = new HashSet<long>();
+        if (recentRuns != null)
+        {
+            foreach (var day in days)
+            {
+                if (BatchRunQueries.LatestPrtgDayStat(recentRuns, day) is not { } latest) continue;
+                sensors.UnionWith(latest.Stat.PendingSensorDevices ?? Array.Empty<long>());
+                messages.UnionWith(latest.Stat.PendingMessageDevices ?? Array.Empty<long>());
+            }
+        }
+        return (sensors.OrderBy(id => id).ToList(), messages.OrderBy(id => id).ToList());
+    }
+
     /// <summary>最新一趟取數留下的待補裝置數（感測器與狀態變更聯集）；舊紀錄缺欄位時回 null（未知，不顯示）。</summary>
     public static int? PendingDeviceCount(IReadOnlyList<BatchRun> runs)
     {

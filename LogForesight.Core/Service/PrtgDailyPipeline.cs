@@ -37,7 +37,8 @@ internal static class PrtgDailyPipeline
         PrtgResourceGuard? guard = null,
         IPrtgManualWorkGate? manualWorkGate = null,
         PrtgRequestBudget? requestBudget = null,
-        DateTime? reuseSyncFrom = null)
+        DateTime? reuseSyncFrom = null,
+        (IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages)? reusePending = null)
     {
         if (days == null || days.Count == 0)
         {
@@ -76,6 +77,8 @@ internal static class PrtgDailyPipeline
         // 中途被停止或擲例外時，已經評估完的日子也要留下逐日結果，執行總表才不會整排「—」。
         var dayStates = new Dictionary<DateTime, PrtgDayState>();
         PrtgFetchResult? fetchResult = null;
+        // 沿用同步時續補後仍沒完成的裝置；null＝這趟沒有續補
+        (IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages)? refillDevices = null;
 
         // 趨勢評估的失敗外殼：取消穿透；其他例外記 Log 與主控台，並把類別記到整趟與最新日（任一類失敗＝Partial）。
         // 評估本體各類自行保留（閾值型別、finding 建構與規則選取不同）；規則缺失或沒有候選 sensor 不是失敗，不會進到這裡。
@@ -223,6 +226,16 @@ internal static class PrtgDailyPipeline
                 var reuseMessage = $"PRTG 沿用本日 {reusedAt:HH:mm} 的結構同步與狀態變更，本趟不重新同步。";
                 prtgConsole.WriteLine(reuseMessage);
                 runRecorder.Milestone(reuseMessage);
+
+                // 上一趟停損或失敗留下的裝置：只補這些，已完成的不重查；補完才重評，規則評估本來就照跑
+                if (reusePending is { } toRefill && (toRefill.Sensors.Count > 0 || toRefill.Messages.Count > 0))
+                {
+                    var refillMessage = $"PRTG 續補上一趟的待補裝置：感測器 {toRefill.Sensors.Count} 台、狀態變更 {toRefill.Messages.Count} 台。";
+                    prtgConsole.WriteLine(refillMessage);
+                    runRecorder.Milestone(refillMessage);
+                    refillDevices = await fetchService.FetchPendingDevicesAsync(toRefill.Sensors, toRefill.Messages,
+                        days.Min().AddDays(-1), systemSettings.PrtgFetchConcurrency, ct, (stage, done, total) => progress?.Report(stage, done, total));
+                }
             }
             else
             {
@@ -298,7 +311,8 @@ internal static class PrtgDailyPipeline
 
             syncStopwatch.Stop();
             syncPhase.Complete(
-                reuseSyncFrom != null ? RunPhaseOutcomes.Skipped
+                refillDevices is { } left ? (left.Sensors.Count + left.Messages.Count > 0 ? RunPhaseOutcomes.Partial : RunPhaseOutcomes.Success)
+                    : reuseSyncFrom != null ? RunPhaseOutcomes.Skipped
                     : syncFailed ? RunPhaseOutcomes.Failed
                     : fetchResult is { Failures: > 0 } ? RunPhaseOutcomes.Partial
                     : RunPhaseOutcomes.Success,
@@ -945,8 +959,8 @@ internal static class PrtgDailyPipeline
             {
                 var stageFailed = fetchResult != null && fetchResult.Failures > 0;
                 var historyAffectingFailure = fetchResult?.HistoryAffectingFailure ?? false;
-                var pendingSensors = fetchResult?.PendingSensorDevices ?? Array.Empty<long>();
-                var pendingMessages = fetchResult?.PendingMessageDevices ?? Array.Empty<long>();
+                var pendingSensors = refillDevices?.Sensors ?? fetchResult?.PendingSensorDevices ?? Array.Empty<long>();
+                var pendingMessages = refillDevices?.Messages ?? fetchResult?.PendingMessageDevices ?? Array.Empty<long>();
                 var hasPending = pendingSensors.Count > 0 || pendingMessages.Count > 0;
                 var pendingDeviceCount = pendingSensors.Union(pendingMessages).Count();
                 dayStats = days

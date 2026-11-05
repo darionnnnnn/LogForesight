@@ -39,6 +39,19 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
     }
 
     [Fact]
+    public void Missing_only_preview_counts_empty_once_receipts()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        SeedParentRows(new long[] { 1, 2 }, day);
+        NetiqSourceAttempt.RecordBatch(_backend, new long[] { 1 }, day, 12, NetiqAttemptStatus.EmptyOnce);
+        NetiqSourceAttempt.RecordBatch(_backend, new long[] { 2 }, day, 12, NetiqAttemptStatus.Success);
+
+        var response = Controller(new long[] { 1, 2 }).RunPreview("all", null, null, onlyMissingOrFailed: true, backfillDays: 1);
+
+        Assert.Equal(1, response.Data!.HostCount);
+    }
+
+    [Fact]
     public void Missing_only_preview_counts_all_pipeline_failure_receipt_states()
     {
         var day = DateTime.Today.AddDays(-1);
