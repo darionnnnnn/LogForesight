@@ -93,7 +93,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
     private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null,
         INetiqHostDayTimingCollector? hostDayTiming = null, bool onlyMissingOrFailed = false,
-        Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
+        Func<Sentinel, ISentinelSearchClient>? clientFactory = null, int resumeRetryDays = 0, long runSeed = 0)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var hosts = overrideHosts ?? _hosts;
@@ -115,10 +115,128 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: clientFactory ?? FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming,
-            onlyMissingOrFailed: onlyMissingOrFailed);
+            onlyMissingOrFailed: onlyMissingOrFailed, resumeRetryDays: resumeRetryDays);
     }
 
     /// <summary>基準 1：全程零事件的乾淨主機——統計模式寫入一筆低風險紀錄，AI 完全不被呼叫。</summary>
+    // ── 排程續跑：回空複查、重查上限、舊日補回（第 64 輪 C-1、C-4、C-5）──────────
+
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> History(DateTime date) =>
+        NetiqSourceAttempt.ReadHistory(_backend, date, date, DateTime.Today);
+
+    [Fact]
+    public async Task 排程續跑_回空第一次不寫父紀錄_第二次仍空才定案()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = "HOST-A" });
+
+        var first = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, first.EmptyDeferred);
+        Assert.Equal(0, first.HostDaysAnalyzed);
+        Assert.Empty(store.ReadRecent(yesterday, 1));
+        Assert.Equal(NetiqAttemptStatus.EmptyOnce, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+
+        var second = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(0, second.EmptyDeferred);
+        Assert.Equal(1, second.HostDaysAnalyzed);
+        var record = Assert.Single(store.ReadRecent(yesterday, 1));
+        Assert.NotEqual(NetiqAttemptStatus.EmptyOnce, record.LatestNetiqAttemptStatus);
+        Assert.Equal(NetiqAttemptStatus.Success, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+    }
+
+    [Fact]
+    public async Task 非排程_回空照舊立刻定案()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+
+        var result = await MakePipeline().RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(0, result.EmptyDeferred);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+    }
+
+    [Fact]
+    public async Task 排程續跑_窗外只補帳本記著失敗的日子_從沒嘗試過的不補()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var threeDaysAgo = DateTime.Today.AddDays(-3);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, threeDaysAgo, 1, NetiqAttemptStatus.Failed, DateTime.UtcNow.AddDays(-2));
+
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        var ledger = NetiqSourceAttempt.ReadLatest(_backend, DateTime.Today.AddDays(-7), DateTime.Today.AddDays(-1));
+        // 昨天（常態回望）與三天前（帳本記著失敗）都查了；其他日子從沒嘗試過，一筆都不該有
+        Assert.Equal(new[] { threeDaysAgo, DateTime.Today.AddDays(-1) },
+            ledger.Keys.Where(k => k.HostId == host.HostId).Select(k => k.Date).OrderBy(d => d));
+        Assert.NotEqual(NetiqAttemptStatus.Failed, ledger[(host.HostId, threeDaysAgo)].Status);
+    }
+
+    [Fact]
+    public async Task 排程續跑_今天已重查兩趟失敗_不再查_隔天歸零()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var threeDaysAgo = DateTime.Today.AddDays(-3);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, threeDaysAgo, 1, NetiqAttemptStatus.Failed);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, threeDaysAgo, 2, NetiqAttemptStatus.Failed);
+        var before = NetiqSourceAttempt.ReadLatest(_backend, threeDaysAgo, threeDaysAgo)[(host.HostId, threeDaysAgo)];
+
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(before, NetiqSourceAttempt.ReadLatest(_backend, threeDaysAgo, threeDaysAgo)[(host.HostId, threeDaysAgo)]);
+        // 同一份回執換個「今天」來看：隔天計數歸零，可以再試
+        var tomorrow = NetiqSourceAttempt.ReadHistory(_backend, threeDaysAgo, threeDaysAgo, DateTime.Today.AddDays(1))[(host.HostId, threeDaysAgo)];
+        Assert.False(NetiqAttemptStatus.AutoRetryExhausted(tomorrow));
+    }
+
+    [Fact]
+    public void 截斷類重查上限累計_不隨日期歸零()
+    {
+        var exhausted = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Partial, TruncatedRuns: 2, RetryRunsToday: 0);
+        var notYet = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.RetainedIncomplete, TruncatedRuns: 1, RetryRunsToday: 0);
+        Assert.True(NetiqAttemptStatus.AutoRetryExhausted(exhausted));
+        Assert.False(NetiqAttemptStatus.AutoRetryExhausted(notYet));
+    }
+
+    [Fact]
+    public void 同一趟多筆回執_只算一趟()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var day = DateTime.Today.AddDays(-2);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, day, 5, NetiqAttemptStatus.RetainedIncomplete);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, day, 5, NetiqAttemptStatus.RetainedIncomplete);
+
+        var history = History(day)[(host.HostId, day)];
+
+        Assert.Equal(1, history.TruncatedRuns);
+        Assert.Equal(1, history.RetryRunsToday);
+
+        // 帳本每個主機日只留一列，累計要跟著回執走；不同趟才加
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, day, 6, NetiqAttemptStatus.Running);
+        NetiqSourceAttempt.RecordBatch(_backend, new[] { host.HostId }, day, 6, NetiqAttemptStatus.Partial);
+        history = History(day)[(host.HostId, day)];
+        Assert.Equal(2, history.TruncatedRuns);
+        Assert.Equal(2, history.RetryRunsToday);
+    }
+
+    [Fact]
+    public void 舊回執缺累計欄位_從零開始算不擲例外()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<NetiqSourceAttempt.Receipt>(
+            "{\"RunId\":3,\"HostId\":1,\"Date\":\"2026-11-01T00:00:00\",\"Status\":\"failed\",\"AttemptAtUtc\":\"2026-11-01T00:00:00Z\"}")!;
+        Assert.Equal(0, old.RetryRuns);
+        Assert.Equal(0, old.TruncatedRuns);
+        var next = new NetiqSourceAttempt.Receipt(4, 1, old.Date, NetiqAttemptStatus.Failed, DateTime.UtcNow).AfterPrevious(old);
+        Assert.Equal(1, next.RetryRuns);
+    }
+
     [Fact]
     public async Task 零事件的新主機寫入低風險統計紀錄且不呼叫AI()
     {

@@ -252,7 +252,7 @@ public class ScheduleController : ControllerBase
                         "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
 
                 retryAttemptHostIds = latestAttempts.Values
-                    .Where(attempt => attempt.Status is "failed" or "running" or "partial" or "retained-incomplete" or "stopped")
+                    .Where(attempt => NetiqAttemptStatus.LedgerNeedsRetry(attempt.Status))
                     .Select(attempt => attempt.HostId)
                     .ToHashSet();
             }

@@ -217,6 +217,7 @@ public class RunMonitorService
         var recordDates = _records.ListHostDates(recordDate, recordDate, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
+        var histories = ReadHistories(recordDate);
 
         return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runs, host.HostName, dateStr))).Select(host =>
         {
@@ -238,6 +239,7 @@ public class RunMonitorService
                 AiFailures = cell.AiFailures,
                 RunCount = cell.RunCount,
                 Legacy = cell.Legacy,
+                StatusNote = NetiqStatusNote(host, recordDate, histories),
                 DecisionVersion = workflow?.DecisionVersion,
                 ParentWorkflowState = workflow?.Parent.ToString().ToLowerInvariant(),
                 PrtgWorkflowState = workflow?.Prtg.ToString().ToLowerInvariant(),
@@ -271,6 +273,24 @@ public class RunMonitorService
         catch (InvalidDataException) { available = false; return new Dictionary<(long, DateTime), NetiqSourceAttempt.Receipt>(); }
     }
 
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> ReadHistories(DateTime date)
+    {
+        if (_backend == null) return new Dictionary<(long, DateTime), NetiqSourceAttempt.AttemptHistory>();
+        try { return NetiqSourceAttempt.ReadHistory(_backend, date, date, DateTime.Today); }
+        catch (InvalidDataException) { return new Dictionary<(long, DateTime), NetiqSourceAttempt.AttemptHistory>(); }
+    }
+
+    /// <summary>格子上要讓人看得懂的那句話：空資料等複查、自動重查已放棄（否則是一個永遠的黃燈，看不出該手動補跑）。</summary>
+    private static string? NetiqStatusNote(HostRef host, DateTime date,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories)
+    {
+        if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
+        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce) return "空資料，下一窗口複查一次";
+        return NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) && NetiqAttemptStatus.AutoRetryExhausted(history)
+            ? "已放棄自動重查，請手動補跑"
+            : null;
+    }
+
     private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
         HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
@@ -295,6 +315,8 @@ public class RunMonitorService
                 "running" when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
                 "running" => BatchRunStatus.Running,
                 "partial" or "retained-incomplete" => BatchRunStatus.Warning,
+                // 沒有分析紀錄、等下一趟複查：還沒定案，不算失敗也不算警告（說明在 StatusNote）
+                NetiqAttemptStatus.EmptyOnce => "none",
                 "success" when recordDates.Contains(key) => BatchRunStatus.Success,
                 "success" => BatchRunStatus.Warning,
                 _ => BatchRunStatus.Warning

@@ -68,6 +68,10 @@ public class NetiqPipelineService
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
     private readonly bool _onlyMissingOrFailed;
+    /// <summary>排程續跑：失敗或未完成的主機日往回補幾天（0＝關閉：手動走模式選單，不走這條）。</summary>
+    private readonly int _resumeRetryDays;
+    /// <summary>排程續跑開跑時讀一次的嘗試摘要；null＝關閉或帳本讀不到（退回原本只看回望窗的判定）。</summary>
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory>? _attemptHistory;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
     private readonly PermissionChangeStore? _permissionChangeStore;
     private readonly PermissionFieldMappings? _permissionMappings;
@@ -124,7 +128,7 @@ public class NetiqPipelineService
         PrtgFindingsRegistry? prtgFindings = null,
         HostDayWorkflowService? workflow = null,
         bool prtgEnabled = true,
-        INetiqHostDayTimingCollector? hostDayTiming = null, DateTime? runToday = null)
+        INetiqHostDayTimingCollector? hostDayTiming = null, DateTime? runToday = null, int resumeRetryDays = 0)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -146,6 +150,7 @@ public class NetiqPipelineService
         _useAi = useAi;
         _progress = progress;
         _onlyMissingOrFailed = onlyMissingOrFailed;
+        _resumeRetryDays = onlyMissingOrFailed || rerunMode != RerunMode.None ? 0 : Math.Max(resumeRetryDays, 0);
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
@@ -177,6 +182,7 @@ public class NetiqPipelineService
         // 一次全載，正式環境每日近十萬筆、回望天數一拉大就是數 GB 且整趟不釋放。
         _permissionHostDayClaims = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
+        _attemptHistory = ReadAttemptHistoryForResume(lookbackDays);
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -290,6 +296,37 @@ public class NetiqPipelineService
     /// 回望窗口與趨勢基線窗口是兩件不同的事，上限夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（或指定的有效上限），
     /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory>? ReadAttemptHistoryForResume(int lookbackDays)
+    {
+        if (_resumeRetryDays <= 0 || lookbackDays <= 0) return null;
+        try
+        {
+            return NetiqSourceAttempt.ReadHistory(_backend, _today.AddDays(-_resumeRetryDays), _today.AddDays(-1), _today);
+        }
+        catch (InvalidDataException ex)
+        {
+            Log.Warn(ex, "NetIQ 嘗試帳本讀取失敗，本趟只依回望窗判定待補");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 排程續跑的待補日：回望窗內照舊（沒紀錄或狀態要重查），窗外只補帳本記著失敗或未完成的日子；
+    /// 從沒嘗試過的舊日子不算（否則新主機第一天就補一週）；已達自動重查上限的不再重查。成功的不動。
+    /// </summary>
+    private List<DateTime> ApplyResumePolicy(long hostId, List<DateTime> scanned, int lookback)
+    {
+        if (_attemptHistory == null) return scanned;
+        var windowStart = _today.AddDays(-lookback);
+        return scanned.Where(date =>
+        {
+            _attemptHistory.TryGetValue((hostId, date.Date), out var history);
+            if (history != null && NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) && NetiqAttemptStatus.AutoRetryExhausted(history))
+                return false;
+            return date >= windowStart || (history != null && NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus));
+        }).ToList();
+    }
+
     internal static int ResolveLookbackDays(int backfillDays) =>
         Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）；有效上限由呼叫端先夾（AnalysisOrchestrator）
 
@@ -365,8 +402,9 @@ public class NetiqPipelineService
             var store = _backend.RecordStore(hostKey);
             var missingScan = MissingDateFinder.FindWithExistingDates(
                 // 第二個參數是本趟的今天（見 runToday）
-                store, _today, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
-            var missingDates = missingScan.MissingDates;
+                store, _today, _attemptHistory != null ? Math.Max(lookback, _resumeRetryDays) : lookback,
+                requireAi: _onlyMissingOrFailed, useAi: _useAi);
+            var missingDates = ApplyResumePolicy(target.HostId, missingScan.MissingDates, lookback);
 
             // 缺漏日與重跑日共用同一個回望窗口（回饋三十四輪 C）：兩者找的是同一條時間軸上
             // 互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），沒有任何模式需要兩個不同的天數。
@@ -705,6 +743,18 @@ public class NetiqPipelineService
             return "retained-incomplete";
         }
 
+        // 沒有舊紀錄又回 0 筆：第一次不定案（可能是 Sentinel 暫時沒資料），只記帳本、下一趟再查一次。只有排程續跑才等，手動是要立刻看到結果
+        if (_attemptHistory != null && !replacesExistingRecord && events.Count == 0 && !dataIncomplete &&
+            !(_attemptHistory.TryGetValue((target.HostId, date.Date), out var earlier) && earlier.LatestStatus == NetiqAttemptStatus.EmptyOnce))
+        {
+            _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
+            timingRecorded = true;
+            result.AddEmptyDeferred();
+            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源回 0 筆，下一趟再查一次才定案");
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
+            return NetiqAttemptStatus.EmptyOnce;
+        }
+
         // 每台主機各自一個 LogAnalysisService 實例：historyService（owner-host 隔離）與
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
         // 全部共用既有實例，不重複建構。
@@ -952,6 +1002,18 @@ public sealed class NetiqPipelineResult
 
     /// <summary>重跑但來源無資料而保留原結果的「主機×日」天數</summary>
     public int RerunDaysRetained => _rerunDaysRetained;
+
+    private int _emptyDeferred;
+
+    /// <summary>來源回 0 筆、等下一趟複查的主機日數。</summary>
+    public int EmptyDeferred => _emptyDeferred;
+
+    /// <summary>算進度：這個主機日本趟已處理完，只是還沒定案。</summary>
+    public void AddEmptyDeferred()
+    {
+        Interlocked.Increment(ref _emptyDeferred);
+        AddRerunRetained();
+    }
 
     /// <summary>
     /// 本次需要分析的「主機×日」總數（docs/archive/FEEDBACK-8-PLAN.md #2，進度條分母）：

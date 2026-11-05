@@ -29,7 +29,7 @@ internal static class MissingDateFinder
         if (!requireAi)
         {
             var retryDates = recent
-                .Where(r => r.LogSource == AnalysisLogSource.Netiq && r.LatestNetiqAttemptStatus is "failed" or "running" or "partial" or "retained-incomplete")
+                .Where(r => r.LogSource == AnalysisLogSource.Netiq && NetiqAttemptStatus.ParentNeedsRetry(r.LatestNetiqAttemptStatus))
                 .Select(r => r.Date.Date).ToHashSet();
             var missingDates = Enumerable.Range(1, lookbackDays)
                 .Select(offset => today.AddDays(-offset))
@@ -144,7 +144,7 @@ public static class HostDayPostProcessor
     public static bool NeedsBackfill(DailyAnalysisRecord? record, bool useAi)
     {
         if (record == null) return true;
-        if (record.LogSource == AnalysisLogSource.Netiq && record.LatestNetiqAttemptStatus is "failed" or "running" or "partial" or "retained-incomplete") return true;
+        if (record.LogSource == AnalysisLogSource.Netiq && NetiqAttemptStatus.ParentNeedsRetry(record.LatestNetiqAttemptStatus)) return true;
         if (useAi && !record.AiPending && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
         return false;
     }

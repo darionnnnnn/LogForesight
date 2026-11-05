@@ -16,11 +16,44 @@ public static class NetiqSourceAttempt
     private const string LogPrefix = "netiq_hostday_attempt_";
     private const int MaxHostsPerDayRead = 10_000;
     private const int MaxLineChars = 4096;
-    private static readonly HashSet<string> KnownStatuses = new(StringComparer.Ordinal)
-        { "running", "success", "partial", "retained-incomplete", "failed", "stopped" };
+    private static IReadOnlySet<string> KnownStatuses => NetiqAttemptStatus.Known;
     private static readonly object WriteLock = new();
 
-    public sealed record Receipt(long RunId, long HostId, DateTime Date, string Status, DateTime AttemptAtUtc);
+    /// <param name="TruncatedRuns">累計幾趟結果為截斷類（帳本每個主機日只留最新一列，累計要跟著回執走；舊資料缺欄為 0）</param>
+    /// <param name="RetryRuns"><paramref name="RetryDay"/> 那天有幾趟需要重查</param>
+    /// <param name="RetryDay">重查計數所屬的本地日</param>
+    /// <param name="CountedRunId">最後計過數的趟：同一趟會寫多筆回執（執行中、終態、保留），只算一次</param>
+    public sealed record Receipt(long RunId, long HostId, DateTime Date, string Status, DateTime AttemptAtUtc,
+        int TruncatedRuns = 0, int RetryRuns = 0, DateTime? RetryDay = null, long CountedRunId = 0)
+    {
+        /// <summary>接在上一筆之後：需要重查的趟各算一次，隔天歸零。</summary>
+        internal Receipt AfterPrevious(Receipt? previous)
+        {
+            var today = AttemptAtUtc.ToLocalTime().Date;
+            var truncated = previous?.TruncatedRuns ?? 0;
+            var retries = previous?.RetryDay == today ? previous.RetryRuns : 0;
+            var counted = previous?.CountedRunId ?? 0;
+            if (NetiqAttemptStatus.CountsAsAttempt(Status) && counted != RunId)
+            {
+                retries++;
+                if (NetiqAttemptStatus.CountsAsTruncated(Status)) truncated++;
+                counted = RunId;
+            }
+            return this with { TruncatedRuns = truncated, RetryRuns = retries, RetryDay = today, CountedRunId = counted };
+        }
+    }
+
+    /// <summary>一個主機日的嘗試摘要：最新狀態、累計截斷趟數、今天需要重查的趟數（同一趟多筆回執算一趟）。</summary>
+    public sealed record AttemptHistory(string LatestStatus, int TruncatedRuns, int RetryRunsToday);
+
+    /// <summary>
+    /// 讀多天的嘗試摘要（查詢數依天數，不依主機數）。排程續跑開跑時讀一次，不逐主機查。
+    /// 資料損毀擲 <see cref="InvalidDataException"/>，呼叫端決定怎麼降級。
+    /// </summary>
+    public static IReadOnlyDictionary<(long HostId, DateTime Date), AttemptHistory> ReadHistory(
+        StorageBackend backend, DateTime from, DateTime to, DateTime today) =>
+        ReadLatest(backend, from, to).ToDictionary(pair => pair.Key, pair => new AttemptHistory(
+            pair.Value.Status, pair.Value.TruncatedRuns, pair.Value.RetryDay == today.Date ? pair.Value.RetryRuns : 0));
 
     /// <summary>Atomically records attempts and disqualifies existing NetIQ parents for non-success attempts.
     /// A success receipt never qualifies an old parent; qualification requires a successfully saved replacement.</summary>
@@ -56,7 +89,7 @@ public static class NetiqSourceAttempt
                     var acceptedHostIds = new List<long>(idChunk.Length);
                     foreach (var (key, receipt) in keyToReceipt)
                     {
-                        var line = JsonSerializer.Serialize(receipt);
+                        var line = JsonSerializer.Serialize(receipt.AfterPrevious(null));
                         if (existing.TryGetValue(key, out var row))
                         {
                             if (row.Length > MaxLineChars) throw new InvalidDataException("NetIQ attempt ledger receipt is oversized.");
@@ -66,6 +99,7 @@ public static class NetiqSourceAttempt
                             if (previous == null || !KnownStatuses.Contains(previous.Status) || previous.HostId != receipt.HostId || previous.Date.Date != date)
                                 throw new InvalidDataException("NetIQ attempt ledger contains an invalid or unknown receipt.");
                             if (previous.RunId > receipt.RunId || (previous.RunId == receipt.RunId && previous.AttemptAtUtc > receipt.AttemptAtUtc)) continue;
+                            line = JsonSerializer.Serialize(receipt.AfterPrevious(previous));
                             var update = new LogLineRow { Seq = row.Seq, LogKey = key, Line = line, CreatedAt = DateTime.Now };
                             ctx.Attach(update);
                             ctx.Entry(update).Property(entity => entity.Line).IsModified = true;

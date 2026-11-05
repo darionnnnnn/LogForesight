@@ -365,7 +365,7 @@ function failedHostsCell(summary) {
 
 const DAY_DETAIL_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, truncate: true, render: h => h.hostName },
-    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status, h.legacy ? '無階段資料（升級前紀錄）' : null) },
+    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
     {
         title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
         render: h => workflowSummaryCell(h)

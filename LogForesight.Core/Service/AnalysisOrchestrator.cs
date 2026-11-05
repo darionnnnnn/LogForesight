@@ -885,6 +885,9 @@ public class AnalysisOrchestrator
     }
 
 
+    /// <summary>排程續跑時，NetIQ 失敗或未完成的主機日往回補幾天（暫定）；不受常態回望天數限制。</summary>
+    internal const int NetiqResumeRetryDays = 7;
+
     /// <summary>
     /// 本機與 NetIQ 的回望天數：沒指定用該路常態值；手動指定就照指定（受保留期上限夾制）。
     /// 自動補跑帶的是「缺口天數」，只該放大不該縮小——缺口 1 天不能把常態回望 14 天縮成 1 天。
@@ -1255,7 +1258,11 @@ public class AnalysisOrchestrator
                 workflow: workflow,
                 prtgEnabled: prtgEnabled,
                 hostDayTiming: _hostDayTiming,
-                runToday: ctx.Today);
+                runToday: ctx.Today,
+                // 排程才走續跑；手動是有人看著選模式。往回最多 7 天，不超過保留期
+                resumeRetryDays: request.Trigger == BatchRunTriggers.Schedule && request.Scope == RunScope.Full
+                    ? Math.Min(NetiqResumeRetryDays, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+                    : 0);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

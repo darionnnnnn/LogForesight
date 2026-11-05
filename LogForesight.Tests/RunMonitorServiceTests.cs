@@ -457,6 +457,30 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
     }
 
+    // ── NetIQ 格的說明（第 64 輪 C-4、C-5）──────────
+
+    [Fact]
+    public void NetIQ空資料待複查與放棄自動重查_格子講得出來()
+    {
+        var waiting = _hosts.Upsert(new WebHost { HostName = "10.0.8.1", Source = "netiq" });
+        var givenUp = _hosts.Upsert(new WebHost { HostName = "10.0.8.2", Source = "netiq" });
+        var runDate = DateTime.Today.AddDays(-1);
+        var dataDate = runDate.AddDays(-1);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { waiting.HostId }, dataDate, 1, NetiqAttemptStatus.EmptyOnce);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { givenUp.HostId }, dataDate, 1, NetiqAttemptStatus.Partial);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { givenUp.HostId }, dataDate, 2, NetiqAttemptStatus.Partial);
+
+        var rows = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDayDetail(runDate);
+
+        var waitingRow = Assert.Single(rows, r => r.HostName == waiting.HostName);
+        Assert.Equal("none", waitingRow.Status);
+        Assert.Contains("複查", waitingRow.StatusNote);
+        var givenUpRow = Assert.Single(rows, r => r.HostName == givenUp.HostName);
+        Assert.Equal(BatchRunStatus.Warning, givenUpRow.Status);
+        Assert.Contains("已放棄自動重查", givenUpRow.StatusNote);
+    }
+
     // ── 今天列（第 64 輪 E-3）──────────
 
     [Fact]

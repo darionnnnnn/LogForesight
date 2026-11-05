@@ -63,6 +63,9 @@ public class RunDayHostStatusDto
     /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none | local_disabled</summary>
     public string Status { get; set; } = string.Empty;
 
+    /// <summary>狀態的補充說明（等複查、已放棄自動重查）；null＝沒有</summary>
+    public string? StatusNote { get; set; }
+
     /// <summary>這一格的狀態來自升級前沒有階段資料的紀錄（以整趟狀態代表）</summary>
     public bool Legacy { get; set; }
 
