@@ -80,7 +80,7 @@ public static class NodeRuntime
     public const string RequireNodeVariable = "LF_REQUIRE_NODE";
 
     public static string SkipReason =>
-        $"這題需要 Node.js 執行前端行為測試腳本（LogForesight.Tests/JsBehavior/），" +
+        "這題需要 Node.js 執行前端行為測試腳本（LogForesight.Tests/JsBehavior/），" +
         $"{DescribeUnavailable(DetectedVersion.Value)}，因此略過。要執行請安裝 Node.js（https://nodejs.org）並確認 node 在 PATH 上。";
 
     /// <summary>已設定 LF_REQUIRE_NODE=1 但偵測不到 node 時要讓測試失敗（而不是略過）。</summary>

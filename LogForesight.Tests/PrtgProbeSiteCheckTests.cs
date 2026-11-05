@@ -673,7 +673,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.True(h.Service.GetStatus().Cancelled);
         Assert.False(h.Service.GetStatus().Success);
         request.Response.Abort();
-        listener.Stop();
+        listener.Close();
     }
 
     [Fact]
@@ -748,8 +748,8 @@ public class PrtgProbeSiteCheckTests : IDisposable
         finally
         {
             stopServer.Cancel();
-            listener.Stop();
-            try { await server; } catch (HttpListenerException) { }
+            listener.Close();
+            try { await server; } catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException) { }
         }
     }
 
@@ -780,7 +780,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
 
         h.PointTo(port);
         var result = await h.RunToEndAsync();
-        listener.Stop();
+        listener.Close();
         await server;
 
         Assert.True(result.Success);

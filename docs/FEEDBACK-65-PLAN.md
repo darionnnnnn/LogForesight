@@ -93,3 +93,13 @@
 | B-2 | `88ecdb04` | B-2 568 筆綠；B-4 突變守門紅；B-5 Node 26.13 下 271 筆綠 | 篩選詞漏 `HelpManualLayoutTests`、`AiStateFrontendTests` 這類會啟動 node 的類別，B-2／B-5 另以「實際呼叫 `NodeRuntime.Run` 的 24 個類別」跑 271 筆補上 |
 | B-3 | `fa32c90a` | B-6 CI run 42025829809 兩個 job 皆綠 | |
 | C | 待提交 | C-1 敘事字眼 0 筆；文件相關測試 17 筆綠；C-2 macOS 全量 8,511 通過／14 略過／0 失敗；CI Windows 8,514 通過／11 略過、CI macOS 8,511 通過／14 略過 | 待確認：使用者的 Windows 開發機 Node 版本是否達 22.7；下限未以真實 22.7 驗證 |
+| 自檢 D | 待提交 | 見下節 | 見下節 |
+
+## 自檢補修（批次 D）
+
+自檢時發現 `0c75cb6f` 的 CI macOS 失敗 1 筆（純文件 commit，非本輪程式造成）：`PrtgProbeSiteCheckTests` 的 `HttpListener` 在 `Dispose` 擲 `Address already in use`。
+
+- 根因：Unix 的 `HttpListener` 是 .NET 自己實作，`Stop` 後 `Dispose` 會再綁一次 port；該 port 已被平行測試拿走就擲例外。Windows 走 http.sys 不會發生。盤點時只看檔案與 Node，漏了測試用的網路資源。
+- 實測：`Stop` 後占用 port 再 `Dispose` 必擲例外；改 `Close` 正常。全專案 3 處都在 `PrtgProbeSiteCheckTests`。
+- 定案：3 處改 `Close`，加守門測試（`PlatformGuardTests`）。不做共用包裝：只有一個檔案。
+- 順帶修正：`CLAUDE.md` 基線句的括號與略過說明；新測試的 journal 改 `using`，斷言失敗時才不會留著鎖；`SkipReason` 多餘的 `$`。

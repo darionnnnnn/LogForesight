@@ -88,6 +88,32 @@ public class PlatformGuardTests : IDisposable
     }
 
     [Fact]
+    public void 測試的HttpListener不得先Stop再Dispose()
+    {
+        // Unix 的 HttpListener 是 .NET 自己實作：Stop 後 Dispose 會再綁一次 port，
+        // 該 port 已被平行測試拿走就擲 Address already in use。Windows 走 http.sys 測不出來，一律用 Close。
+        var root = Path.Combine(FindRepoRoot(), "LogForesight.Tests");
+        var stopCall = "listener." + "Stop()";
+        var sep = Path.DirectorySeparatorChar;
+
+        var offenders = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{sep}bin{sep}") && !f.Contains($"{sep}obj{sep}"))
+            .Where(f => File.ReadAllText(f) is var text && text.Contains("HttpListener", StringComparison.Ordinal)
+                && text.Contains(stopCall, StringComparison.Ordinal))
+            .Select(f => Path.GetRelativePath(root, f))
+            .ToList();
+
+        Assert.True(offenders.Count == 0, "下列測試檔對 HttpListener 呼叫 Stop，請改用 Close：" + string.Join("、", offenders));
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "global.json"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new DirectoryNotFoundException("找不到專案根目錄");
+    }
+
+    [Fact]
     public void LogEntryType整數值與既有序列化契約一致()
     {
         Assert.Equal(1, (int)LogEntryType.Error);

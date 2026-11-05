@@ -653,7 +653,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var hour = DateTime.Today.AddHours(10);
         var service = CreateService();
         service.Now = () => hour;
-        var other = new PrtgSnapshotJournal(_backend);
+        using var other = new PrtgSnapshotJournal(_backend);
         other.AcquireOwnership();
 
         await service.TickAsync();
