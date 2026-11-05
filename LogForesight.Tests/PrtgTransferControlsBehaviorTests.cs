@@ -27,7 +27,7 @@ public sealed class PrtgTransferControlsBehaviorTests
         var script = Path.Combine(scriptDir, "prtg-transfer-controls.behavior.mjs");
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            new[] { script, caseName }, scriptDir,
             timeout: TimeSpan.FromSeconds(60), label: caseName);
         var stdout = r.Stdout;
         var stderr = r.Stderr;

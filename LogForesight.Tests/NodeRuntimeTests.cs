@@ -162,6 +162,24 @@ public sealed class NodeRuntimeTests
             "下列測試檔自己啟動 node，請改用 NodeRuntime.Run／RunOrFail：" + string.Join("、", offenders));
     }
 
+    [Fact]
+    public void 測試不得依賴node實驗旗標()
+    {
+        // 實驗旗標會隨 node 大版本移除，一移除就是整批行為測試同時紅。以串接組字，避免本檔自己觸發守門
+        var needle = "--experimental" + "-";
+        var root = Path.Combine(FindRepoRoot(), "LogForesight.Tests");
+        var sep = Path.DirectorySeparatorChar;
+
+        var offenders = Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories)
+            .Where(f => f.EndsWith(".cs", StringComparison.Ordinal) || f.EndsWith(".mjs", StringComparison.Ordinal))
+            .Where(f => !f.Contains($"{sep}bin{sep}") && !f.Contains($"{sep}obj{sep}"))
+            .Where(f => File.ReadAllText(f).Contains(needle, StringComparison.Ordinal))
+            .Select(f => Path.GetRelativePath(root, f))
+            .ToList();
+
+        Assert.True(offenders.Count == 0, "下列測試檔仍依賴 node 實驗旗標：" + string.Join("、", offenders));
+    }
+
     private static readonly Regex InlineDataPattern = new(
         "\\[InlineData\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"(?:\\s*,\\s*\"((?:[^\"\\\\]|\\\\.)*)\")?\\s*\\)\\]",
         RegexOptions.Compiled);
@@ -181,7 +199,7 @@ public sealed class NodeRuntimeTests
 
             // 不帶案例名：各腳本慣例是印出所有案例名
             var run = NodeRuntime.RunOrFail(
-                new[] { "--experimental-default-type=module", script }, scriptDir,
+                new[] { script }, scriptDir,
                 timeout: TimeSpan.FromSeconds(15), label: scriptName);
             Assert.True(run.ExitCode == 0, $"{scriptName} 不帶參數應列出案例名並正常結束：{run.Stdout}{run.Stderr}");
             var actual = run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)

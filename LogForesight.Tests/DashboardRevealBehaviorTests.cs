@@ -46,7 +46,7 @@ public class DashboardRevealBehaviorTests
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
 
         var r = NodeRuntime.RunOrFail(
-            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            new[] { script, caseName }, scriptDir,
             timeout: TimeSpan.FromSeconds(60), label: caseName);
 
         Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{r.Stdout}{r.Stderr}");
