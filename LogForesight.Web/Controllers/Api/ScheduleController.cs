@@ -166,6 +166,7 @@ public class ScheduleController : ControllerBase
             StartedAt = s.StartedAt,
             CatchUpDeadline = s.CatchUpDeadline,
             WindowEnd = s.WindowEnd,
+            WindowNote = s.WindowNote,
             LatestMessage = s.LatestMessage,
             ProgressPhase = s.ProgressPhase,
             ProgressDone = s.ProgressDone,

@@ -93,6 +93,9 @@ public class ScheduleStatusDto
 
     /// <summary>排程趟的停止時刻（所屬窗口實例的結束）；手動與補跑為 null。</summary>
     public DateTime? WindowEnd { get; set; }
+
+    /// <summary>這趟是第幾個窗口、要接上一趟的什麼；只在執行中有值。</summary>
+    public string? WindowNote { get; set; }
     public string? LatestMessage { get; set; }
 
     /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq 專屬（回饋十七輪批次E 起，

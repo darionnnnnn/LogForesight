@@ -444,6 +444,8 @@ public class PrtgDailyPipelineTests : IDisposable
     public async Task 沿用同步有待補裝置_補不到仍記待補並標重評()
     {
         var (_, day, hostStore) = SeedDownSensorForYesterday();
+        // 保守策略不做夜間逐顆取數：否則連不到 PRTG 的失敗顆數也會讓 Outcome 變 partial，這案就驗不到「待補本身」
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(x => x.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
         var (ctx, console, _, _) = CreateContext();
 
         await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
@@ -456,6 +458,8 @@ public class PrtgDailyPipelineTests : IDisposable
         var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
         Assert.Equal(new long[] { 501 }, stat.PendingSensorDevices);
         Assert.Equal(new long[] { 502 }, stat.PendingMessageDevices);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
+        Assert.Contains("台待補", stat.Note);
         Assert.True(stat.NeedsReevaluation);
         Assert.True(stat.SourceSynced);
     }

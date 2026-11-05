@@ -628,6 +628,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(3, handler.MaxConcurrentRequests);
+        Assert.True(((AcceleratedPrtgClock)client.Budget.Clock).TotalRequestedDelay > TimeSpan.Zero, "配額限速必須真的走過，不是被繞過");
     }
 
     [Fact]
@@ -3217,6 +3218,24 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Contains(PrtgFetchService.PrtgHaltedPhase, signals);
         Assert.DoesNotContain(PrtgFetchService.PrtgPausedPhase, progress);
         Assert.DoesNotContain(PrtgFetchService.PrtgHaltedPhase, progress);
+    }
+
+    [Fact]
+    public async Task 逐台_永久失敗的裝置不進待補_但仍計失敗且不暫停()
+    {
+        // 裝置已刪除的 404：再試也一樣。進待補會讓這幾天每晚重評、「待補評估」永遠掛著
+        var today = DateTime.Today;
+        var (client, handler) = CreateClient(req => IdQuery(req.RequestUri!.ToString()) == 2
+            ? JsonResponse("{}", HttpStatusCode.NotFound)
+            : IdQuery(req.RequestUri!.ToString()) == 3 ? ServerDown() : JsonResponse("{\"messages\":[]}"));
+        var service = RetryingService(client, CreateStore(), (_, _) => Task.CompletedTask);
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1, 2, 3], 1, CancellationToken.None);
+
+        Assert.Equal(2, result.FailedObjects);
+        Assert.False(result.Converged);
+        Assert.Equal(new long[] { 3 }, result.PendingDevices);
+        Assert.Single(handler.RequestedUrls, u => IdQuery(u) == 2); // 不重排
     }
 
     [Fact]

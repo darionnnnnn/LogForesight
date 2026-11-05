@@ -164,6 +164,32 @@ public class RunExportServiceTests
     // ===== C-1：訊號收集 =====
 
     [Fact]
+    public void 第64輪_今天有趟時dailyHealth多一列isToday_趟次帶待補裝置數()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun("SRV-TODAY", DateTime.Today.AddHours(1), r =>
+        {
+            r.WarnCount = 1;
+            r.PrtgDays = new List<PrtgDayStat>
+            {
+                new(DateTime.Today.AddDays(-1), BatchRun.PrtgOutcomePartial, 0, 0, true, 0, 0, 0, "1 台待補", NeedsReevaluation: true,
+                    PendingSensorDevices: new long[] { 1, 2 }, PendingMessageDevices: new long[] { 2, 3 })
+            };
+        });
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var rows = root.G("dailyHealth").EnumerateArray().ToList();
+            Assert.True(rows[^1].G("isToday").GetBoolean());
+            Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), rows[^1].G("date").GetString());
+            Assert.Single(rows, r => r.G("isToday").GetBoolean());
+            var pending = root.G("abnormalRuns").EnumerateArray().SelectMany(r => r.G("unsuccessfulPrtgDays").EnumerateArray()).Single();
+            Assert.Equal(3, pending.G("pendingDevices").GetInt32());
+        }
+    }
+
+    [Fact]
     public void 重複錯誤100則收成1組_次數100_樣本不超過3且互不相同()
     {
         using var h = new RunExportHarness();

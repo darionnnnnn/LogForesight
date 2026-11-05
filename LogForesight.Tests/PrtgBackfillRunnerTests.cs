@@ -80,13 +80,13 @@ public class PrtgBackfillRunnerTests : IDisposable
         }
     }
 
-    private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder, AcceleratedPrtgClock? clock = null)
+    private static (PrtgClient Client, StubHandler Handler) CreateClient(Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
         var handler = new StubHandler
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(clock ?? new AcceleratedPrtgClock()));
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget(new AcceleratedPrtgClock()));
         return (client, handler);
     }
 
@@ -568,6 +568,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         // 第二天最終完成時為 4/4
         var day2Last = day2Events.Last();
         Assert.Equal((4, 4), (day2Last.SensorDone, day2Last.SensorTotal));
+        Assert.True(((AcceleratedPrtgClock)client.Budget.Clock).TotalRequestedDelay > TimeSpan.Zero, "配額限速必須真的走過，不是被繞過");
     }
 
     [Fact]
@@ -945,6 +946,7 @@ public class PrtgBackfillRunnerTests : IDisposable
         var entry = ValuesFreshness();
         Assert.Equal(5, entry.LastCount);
         Assert.Equal(0, entry.ZeroStreak);
+        Assert.True(((AcceleratedPrtgClock)client.Budget.Clock).TotalRequestedDelay > TimeSpan.Zero, "配額限速必須真的走過，不是被繞過");
     }
 
     [Fact]

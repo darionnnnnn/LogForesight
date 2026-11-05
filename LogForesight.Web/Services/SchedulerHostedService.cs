@@ -262,11 +262,9 @@ public class SchedulerHostedService : BackgroundService
         // 同一窗口續跑：上一趟提早結束、還留著失敗或待補。不帶 CatchUpNote：那會放大回望並被統計成補跑
         if (ScheduleCalculator.RunToContinue(now, options.Windows, recentRuns) is { } previous)
         {
-            var left = RunResume.Of(previous).Describe();
-            var note = $"本趟為窗口內續跑（第 2 趟，上一趟 #{previous.RunId} 留下：{left}）";
-            Log.Info(note);
-            _runState.ReportMessage(note);
-            await TriggerRunAsync(ComposeScheduledRequest(null, note, ScheduleCalculator.CurrentWindowInstance(now, options.Windows)));
+            var request = ComposeContinueRequest(previous, ScheduleCalculator.CurrentWindowInstance(now, options.Windows));
+            Log.Info(request.WindowNote);
+            await TriggerRunAsync(request);
             return;
         }
 
@@ -426,6 +424,13 @@ public class SchedulerHostedService : BackgroundService
             WindowInstanceStart = window?.Start, WindowEnd = window?.End
         };
 
+    /// <summary>
+    /// 同窗口續跑的請求。不帶 CatchUpNote：那會放大回望並被統計成補跑（<c>BatchRun.CatchUp</c>）。
+    /// </summary>
+    internal static RunRequest ComposeContinueRequest(BatchRun previous, (DateTime Start, DateTime End)? window) =>
+        ComposeScheduledRequest(null,
+            $"本趟為窗口內續跑（第 2 趟，上一趟 #{previous.RunId} 留下：{RunResume.Of(previous).Describe()}）", window);
+
     /// <summary>趟首里程碑：第幾個窗口，加上今天上一趟排程留下的失敗或待補（看得出這趟要接什麼）。</summary>
     internal static string? DescribeWindowRun(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
@@ -484,7 +489,7 @@ public class SchedulerHostedService : BackgroundService
         var scheduleOptions = _scheduleOptionsStore.Get();
         var effectiveRequest = ComposeEffectiveRequest(request, scheduleOptions);
 
-        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts, effectiveRequest.CatchUpDeadline, effectiveRequest.WindowEnd))
+        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts, effectiveRequest.CatchUpDeadline, effectiveRequest.WindowEnd, effectiveRequest.WindowNote))
         {
             return false;
         }

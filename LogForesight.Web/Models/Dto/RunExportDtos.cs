@@ -319,7 +319,7 @@ public sealed record ExportAbnormalRunDto
 
 public sealed record ExportUnsuccessfulPhaseDto(string Phase, string? Outcome, string? Note);
 
-public sealed record ExportPrtgDayDto(string Date, string Outcome, string? Note, bool NeedsReevaluation);
+public sealed record ExportPrtgDayDto(string Date, string Outcome, string? Note, bool NeedsReevaluation, int? PendingDevices = null);
 
 // ===== aiFormatAnomalies =====
 

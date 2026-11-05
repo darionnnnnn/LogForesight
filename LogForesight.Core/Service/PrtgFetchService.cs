@@ -20,8 +20,8 @@ public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges,
     public IReadOnlyList<string> StageFailures { get; init; } = Array.Empty<string>();
 
     /// <summary>
-    /// 影響過去日評估資料的失敗：裝置或感測器鏡像沒取齊（未收斂、擲例外、範圍算不出來）、狀態變更沒取齊。
-    /// 隔晚要重評；單一裝置的感測器查詢失敗、分類填入失敗、數值階段失敗不影響已落地的結構與狀態變更，不標。
+    /// 影響過去日評估資料、且要整段重做的失敗：裝置或感測器鏡像沒取齊（未收斂、擲例外、範圍算不出來）、狀態變更階段擲例外。
+    /// 單台裝置的失敗不算（已取到的裝置是完整的，只補那幾台，見 <see cref="PendingSensorDevices"/>）；分類填入與數值階段的失敗也不算。
     /// </summary>
     public bool HistoryAffectingFailure { get; init; }
 
@@ -341,7 +341,7 @@ public sealed class PrtgFetchService
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     if (scopeDevices.Count <= PerDeviceSensorFetchLimit)
                     {
-                        var (written, targets, failedDevices, empties) = await FetchSensorsForDevicesAsync(
+                        var (written, targets, failedDevices, empties, pendingDevices) = await FetchSensorsForDevicesAsync(
                             scopeDevices.OrderBy(id => id).ToList(), concurrency, sensorsSyncStartedAt, ct, progress);
                         stopwatch.Stop();
                         sensorsCount = written;
@@ -358,7 +358,7 @@ public sealed class PrtgFetchService
                             _freshness.Record(PrtgFreshnessStore.Sensors, sensorsCount);
                         }
                         emptyDevices = empties;
-                        pendingSensorDevices = failedDevices;
+                        pendingSensorDevices = pendingDevices;
                         sensorPendingForPurge = failedDevices;
                         // 沒同步到的裝置在清除時保留（見下方 preserve），其餘裝置的過期感測器照清
                         sensorsRefreshed = sensorsCount > 0;
@@ -559,9 +559,9 @@ public sealed class PrtgFetchService
         IReadOnlyList<long> leftSensors = Array.Empty<long>();
         if (sensorDevices.Count > 0)
         {
-            var (written, _, failed, _) = await FetchSensorsForDevicesAsync(sensorDevices, concurrency, DateTime.Now, ct, progress);
-            leftSensors = failed;
-            _console.WriteLine($"[續補] 感測器：{sensorDevices.Count} 台待補，寫入／更新 {written} 個，仍待補 {failed.Count} 台。");
+            var (written, _, _, _, pending) = await FetchSensorsForDevicesAsync(sensorDevices, concurrency, DateTime.Now, ct, progress);
+            leftSensors = pending;
+            _console.WriteLine($"[續補] 感測器：{sensorDevices.Count} 台待補，寫入／更新 {written} 個，仍待補 {pending.Count} 台。");
             if (written > 0) _store.ApplyAutoCategories(_categoryOverrides);
         }
 
@@ -603,7 +603,7 @@ public sealed class PrtgFetchService
         IReadOnlyList<long> deviceObjids, int concurrency, CancellationToken ct, bool requireCompleteDevice = false,
         IReadOnlyDictionary<long, PrtgRecentStateChangeQueueItem>? recentStateQueueItems = null)
     {
-        var (written, _, failedDevices, emptyDevices) = await FetchSensorsForDevicesAsync(
+        var (written, _, failedDevices, emptyDevices, _) = await FetchSensorsForDevicesAsync(
             deviceObjids, concurrency, DateTime.Now, ct, progress: null, requireCompleteDevice: requireCompleteDevice,
             recentStateQueueItems: recentStateQueueItems);
         _store.ApplyAutoCategories(_categoryOverrides);
@@ -659,7 +659,7 @@ public sealed class PrtgFetchService
     /// 單台失敗（例外或分頁未收斂）只記入失敗清單、不影響其他台；取消照舊往外擲。
     /// </summary>
     /// <returns>寫入數、感測器名單（objid、是否暫停）、失敗的裝置 objid 清單、查詢成功但取回 0 顆的裝置 objid 清單</returns>
-    private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices, List<long> EmptyDevices)> FetchSensorsForDevicesAsync(
+    private async Task<(int Written, List<(long Objid, bool Paused)> Targets, List<long> FailedDevices, List<long> EmptyDevices, IReadOnlyList<long> PendingDevices)> FetchSensorsForDevicesAsync(
         IReadOnlyList<long> deviceObjids, int concurrency, DateTime syncedAt, CancellationToken ct,
         Action<string, int, int>? progress, bool requireCompleteDevice = false,
         IReadOnlyDictionary<long, PrtgRecentStateChangeQueueItem>? recentStateQueueItems = null)
@@ -676,7 +676,7 @@ public sealed class PrtgFetchService
         var empty = new List<long>();
         var completed = 0;
 
-        var failed = await RunDevicesWithPauseAsync(deviceObjids, maxConcurrency, "感測器同步", async deviceObjid =>
+        var (failed, pendingDevices) = await RunDevicesWithPauseAsync(deviceObjids, maxConcurrency, "感測器同步", async deviceObjid =>
         {
             // 本台取回（通過範圍過濾）的列數：查詢成功且為 0 才算「PRTG 端確實沒有感測器」
             var deviceRows = 0;
@@ -747,7 +747,7 @@ public sealed class PrtgFetchService
             progress?.Invoke(PrtgSyncSensorsPhase, done, totalDevices);
         }, ct);
 
-        return (totalWritten, targets, failed.ToList(), empty);
+        return (totalWritten, targets, failed.ToList(), empty, pendingDevices);
     }
 
     /// <summary>
@@ -756,8 +756,8 @@ public sealed class PrtgFetchService
     /// 沒開重試的路徑（快照、探測）維持單次失敗即記失敗、不等待。
     /// </summary>
     /// <param name="fetchOne">取一台；回傳 null＝成功，其他＝失敗原因（取消穿透）</param>
-    /// <returns>沒完成的裝置（失敗或沒送出）</returns>
-    private async Task<IReadOnlyList<long>> RunDevicesWithPauseAsync(
+    /// <returns>沒完成的裝置（失敗或沒送出），與其中值得再試的（永久失敗如 404 不算：重試治不好，留在待補會讓「待補評估」永遠掛著）</returns>
+    private async Task<(IReadOnlyList<long> Failed, IReadOnlyList<long> Pending)> RunDevicesWithPauseAsync(
         IReadOnlyList<long> devices, int maxConcurrency, string stageName,
         Func<long, Task<Exception?>> fetchOne, Action onSettled, CancellationToken ct)
     {
@@ -767,7 +767,8 @@ public sealed class PrtgFetchService
             _console.WriteLine($"  PRTG 仍在停損後的冷卻期，本趟{stageName} {devices.Count} 台不送請求、留待下一個窗口。");
             Signal?.Invoke(PrtgHaltedPhase, devices.Count, 0);
             foreach (var _ in devices) onSettled();
-            return devices.ToList();
+            var all = devices.ToList();
+            return (all, all);
         }
 
         var session = new PauseSession(new PrtgValueFetchRetryPolicy(ValueFetchJitter),
@@ -775,6 +776,7 @@ public sealed class PrtgFetchService
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var sync = new object();
         var pending = new List<long>();
+        var permanent = new HashSet<long>();
         var requeue = new List<long>();
 
         async Task RunPassAsync(IReadOnlyList<long> ids, bool lastPass)
@@ -820,7 +822,11 @@ public sealed class PrtgFetchService
                     }
 
                     var retryable = _retryTransientPaging && failure is PrtgClientException client && session.Policy.ShouldRetry(client);
-                    lock (sync) (retryable && !lastPass ? requeue : pending).Add(id);
+                    lock (sync)
+                    {
+                        (retryable && !lastPass ? requeue : pending).Add(id);
+                        if (IsPermanentFailure(failure)) permanent.Add(id);
+                    }
                     if (retryable) OnRetryableDeviceFailure(session, (PrtgClientException)failure, sentGeneration, stageName, ct);
                 }
                 finally
@@ -851,8 +857,12 @@ public sealed class PrtgFetchService
             Log.Warn("[PRTG] {Stage}停損（{Reason}）：{Count} 台待補", stageName, session.StopReason, pending.Count);
             Signal?.Invoke(PrtgHaltedPhase, pending.Count, 0);
         }
-        return pending;
+        return (pending, pending.Where(id => !permanent.Contains(id)).ToList());
     }
+
+    /// <summary>PRTG 明確回「這個請求不成立」的 4xx（如裝置已刪除的 404）：再試也一樣。401／403 是憑證問題，修好就能補；429 是限流。</summary>
+    private static bool IsPermanentFailure(Exception failure) =>
+        failure is PrtgClientException { Kind: PrtgFailureKind.HttpStatus, StatusCode: >= 400 and < 500 and not (401 or 403 or 429) };
 
     private void OnRetryableDeviceFailure(PauseSession session, PrtgClientException ex, long sentGeneration, string stageName, CancellationToken ct)
     {
@@ -993,7 +1003,7 @@ public sealed class PrtgFetchService
         progress?.Invoke(PrtgSyncMessagesPhase, 0, totalObjects);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        var failed = await RunDevicesWithPauseAsync(objects, maxConcurrency, "狀態變更同步", async objid =>
+        var (failed, pendingDevices) = await RunDevicesWithPauseAsync(objects, maxConcurrency, "狀態變更同步", async objid =>
         {
             if (_guard != null) await _guard.WaitIfBusyAsync(ct);
 
@@ -1168,7 +1178,7 @@ public sealed class PrtgFetchService
             FailedObjects: failed.Count,
             EmptyObjects: emptyObjects)
         {
-            PendingDevices = failed
+            PendingDevices = pendingDevices
         };
     }
 

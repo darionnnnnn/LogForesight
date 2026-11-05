@@ -481,6 +481,19 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Contains("已放棄自動重查", givenUpRow.StatusNote);
     }
 
+    [Fact]
+    public void 執行紀錄列_帶結束時仍待補的摘要()
+    {
+        var runs = Runs();
+        var start = DateTime.Today.AddHours(1);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE", StartedAt = start });
+        runs.FinishRun(new BatchRun { RunId = id, HostName = "SITE", StartedAt = start, FinishedAt = start.AddMinutes(5), NetiqDaysFailed = 4 });
+
+        var row = Assert.Single(Create().GetRunList(1));
+
+        Assert.Equal("NetIQ 4 主機日", row.ResumeSummary);
+    }
+
     // ── 今天列（第 64 輪 E-3）──────────
 
     [Fact]

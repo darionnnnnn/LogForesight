@@ -1025,7 +1025,9 @@ public sealed class RunExportService : IRunExportService
                     .OrderBy(d => d.Date)
                     .Take(_l.UnsuccessfulItems)
                     .Select(d => new ExportPrtgDayDto(Day(d.Date), Closed(d.Outcome, KnownPrtgOutcomes),
-                        string.IsNullOrWhiteSpace(d.Note) ? null : TextCut(d.Note, _l.AiInputTextChars), d.NeedsReevaluation))
+                        string.IsNullOrWhiteSpace(d.Note) ? null : TextCut(d.Note, _l.AiInputTextChars), d.NeedsReevaluation,
+                        d.PendingSensorDevices == null && d.PendingMessageDevices == null ? null
+                            : (d.PendingSensorDevices ?? Array.Empty<long>()).Union(d.PendingMessageDevices ?? Array.Empty<long>()).Count()))
                     .ToList(),
                 SignalCodes = runCodes.TryGetValue(r.RunId, out var codes)
                     ? codes.OrderBy(c => c, StringComparer.Ordinal).Take(_l.RunSignalCodes).ToList()

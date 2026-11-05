@@ -278,6 +278,9 @@ public class RunErrorSummaryDto
 /// 回答的是「每一次執行本身跑了多久、觸發方式、有沒有問題」，供「執行紀錄」分頁逐筆檢視。</summary>
 public class RunListItemDto
 {
+    /// <summary>這一趟結束時還留著的失敗與待補（單位統一）；沒有或 AI 趟為 null</summary>
+    public string? ResumeSummary { get; set; }
+
     public long RunId { get; set; }
     public string HostName { get; set; } = string.Empty;
     public DateTime StartedAt { get; set; }

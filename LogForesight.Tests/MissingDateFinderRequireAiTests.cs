@@ -106,6 +106,27 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         Assert.DoesNotContain(targetDate, missing);
     }
 
+    [Theory]
+    [InlineData(NetiqAttemptStatus.Failed, true)]
+    [InlineData(NetiqAttemptStatus.Running, true)]
+    [InlineData(NetiqAttemptStatus.Partial, true)]
+    [InlineData(NetiqAttemptStatus.RetainedIncomplete, true)]
+    [InlineData(NetiqAttemptStatus.Success, false)]
+    public void 預設模式_NetIQ父紀錄的狀態決定要不要重查(string status, bool expected)
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "test-host");
+        var date = DateTime.Today.AddDays(-1);
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = 1, Host = "test-host", Date = date, RiskLevel = RiskLevels.Low,
+            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = status
+        });
+
+        var missing = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 1);
+
+        Assert.Equal(expected, missing.Contains(date));
+    }
+
     [Fact]
     public void 預設模式_旗標關閉的判定行為與改動前完全相同()
     {

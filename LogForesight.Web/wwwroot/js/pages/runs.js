@@ -588,7 +588,7 @@ const RUN_LIST_COLUMNS = [
         sortValue: r => r.durationSeconds ?? -1,
         render: r => r.interrupted ? '—（異常中斷）' : (r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中')
     },
-    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => runTriggerText(r) },
+    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.resumeSummary ? `${runTriggerText(r)}　仍待補：${r.resumeSummary}` : runTriggerText(r) },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
     {
         title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
@@ -1348,7 +1348,7 @@ function applyScheduleStatus(status) {
     }
 
     document.getElementById('schedule-run-state').textContent = status.isRunning
-        ? `執行中（${status.triggerText}${status.catchUpDeadline ? `，補跑到 ${formatDateTime(status.catchUpDeadline)} 停止` : status.windowEnd ? `，本趟到 ${formatDateTime(status.windowEnd)} 停止` : ''}）`
+        ? `執行中（${status.triggerText}${status.catchUpDeadline ? `，補跑到 ${formatDateTime(status.catchUpDeadline)} 停止` : status.windowEnd ? `，本趟到 ${formatDateTime(status.windowEnd)} 停止` : ''}）${status.windowNote ? `　${status.windowNote}` : ''}`
         : '閒置';
 
     if (status.isRunning && status.startedAt) {

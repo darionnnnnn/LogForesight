@@ -522,6 +522,8 @@ public class RunMonitorService
         _runs.GetRecentRuns(days, hostNames: null)
             .Select(run => new RunListItemDto
             {
+                ResumeSummary = run.JobType != BatchRun.JobTypeAi && run.FinishedAt.HasValue && RunResume.Of(run) is { HasWork: true } left
+                    ? left.Describe() : null,
                 RunId = run.RunId,
                 HostName = run.HostName,
                 StartedAt = run.StartedAt,

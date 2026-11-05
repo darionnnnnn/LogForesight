@@ -70,6 +70,11 @@
 多窗口時更早錯過的窗口不補，由下一個窗口的缺漏日機制吸收。
 **觸發時機**：實際出現連續錯過多個窗口、缺漏日吸收不了的情況。
 
+### 本機資料不完整的日子不會自動重跑
+
+本機紀錄沒有 NetIQ 那樣的取數狀態欄，缺漏判定只看有無紀錄：事件被滾掉或頻道讀取被拒的本機日，排程不會重跑，要用「立即執行」的重新分析。
+**觸發時機**：本機來源主機變多、需要自動補回時，比照 NetIQ 加狀態欄。
+
 ### 全量測試耗時觀察
 
 `dotnet test --logger "trx;LogFileName=full.trx" --results-directory <dir>` 後跑 `python LogForesight.Tests/tools/test-timing.py <dir>/full.trx`，列出最慢類別與單案、依集合彙總、使用 `StorageBackend` 的類別占比。牆鐘受機器負載影響，只當觀察值。

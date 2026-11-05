@@ -224,4 +224,23 @@ public class SchedulerTriggerQueryTests
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, new[] { Previous(0, false) }));
         Assert.DoesNotContain("續跑", SchedulerHostedService.DescribeWindowRun(now, windows, Array.Empty<BatchRun>()));
     }
+
+    [Fact]
+    public void 續跑請求_不走補跑_帶窗口與上一趟留下的內容()
+    {
+        var start = new DateTime(2026, 11, 5, 1, 0, 0);
+        var previous = new BatchRun { RunId = 42, StartedAt = start, FinishedAt = start.AddMinutes(30), NetiqDaysFailed = 4 };
+
+        var request = SchedulerHostedService.ComposeContinueRequest(previous, (start, start.AddHours(4)));
+
+        Assert.Null(request.CatchUpNote);
+        Assert.Null(request.CatchUpDeadline);
+        Assert.Null(request.BackfillOverride);
+        Assert.Equal(BatchRunTriggers.Schedule, request.Trigger);
+        Assert.Equal(start, request.WindowInstanceStart);
+        Assert.Equal(start.AddHours(4), request.WindowEnd);
+        Assert.Contains("第 2 趟", request.WindowNote);
+        Assert.Contains("#42", request.WindowNote);
+        Assert.Contains("NetIQ 4 主機日", request.WindowNote);
+    }
 }

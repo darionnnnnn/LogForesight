@@ -142,6 +142,10 @@ public class RunsPageUiTests
         var cshtml = ReadRunsCshtml();
         Assert.Contains("今天有執行時最上方多一列「今日」", cshtml);
         Assert.Contains("「尚未處理」不是漏跑", cshtml);
+        // 狀態卡講得出這趟到幾點停、為什麼又跑一趟；執行紀錄列講得出還留著什麼
+        Assert.Contains("本趟到", js);
+        Assert.Contains("status.windowNote", js);
+        Assert.Contains("仍待補：", js);
     }
 
     [Fact]

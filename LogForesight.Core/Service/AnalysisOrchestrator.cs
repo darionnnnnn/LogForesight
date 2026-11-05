@@ -322,7 +322,7 @@ public class AnalysisOrchestrator
             result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
-            runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
+            runRecorder.Milestone($"批次啟動（版本 {BuildVersion.Current.Label}）");
             if (request.WindowNote != null)
             {
                 runRecorder.Milestone(request.WindowNote);
