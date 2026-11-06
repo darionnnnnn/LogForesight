@@ -909,7 +909,8 @@ async function renderIssueOccurrences(cell, group) {
             { title: '', className: 'text-end', render: r => goHandleLink(r) }
         ],
         rows: result.items,
-        rowHref: r => `/records/${r.hostId}/${r.date}`,
+        // 展開列整列點擊與列尾「去處理」同一個意圖：帶 handle 讓詳情頁展開處理狀態
+        rowHref: r => recordDetailUrl(r.hostId, r.date, { handle: true }),
         empty: { title: '沒有資料', hint: '請調整篩選條件或日期區間。' }
     });
 

@@ -107,6 +107,14 @@ messages 帶時間篩選時 treesize 是否為篩選後筆數尚未證實，讀�
 PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `PrtgRequestBudget.Shared`），新增測試不要 `new PrtgRequestBudget()`。`EfSqliteFixture` 共用一條記憶體連線，並行寫入的案例要用檔案型 DB。
 **剩餘最慢的**：`PrtgMonitoringPagingTests`（3 萬列規模）、`CalibrationServiceTests` 殘留判定、`BulkScaleGateTests`。要再縮短時從這幾個的資料量下手。
 
+### 前端小幅收斂（不影響正確性）
+
+- 複製到剪貼簿的寫法有 7 處各自實作（報告卡、給主管的說明、問題查詢、NetIQ、PRTG 維護、交辦單詳情），可抽成 `core/ui.js` 的共用函式。
+- 連到風險日詳情的「查看」連結（主機時間軸、PRTG 維護、使用者頁、處理人頁已結案列）仍各自組 `/records/{hostId}/{date}`，可全面改用 `recordDetailUrl`。
+- `recordDetailUrl` 與報告卡的行為案例目前放在側軌相關的測試類別，可搬到各自主題的類別。
+- 處理面板儲存、指派或衝突重載後整個面板重繪，鍵盤焦點會回到頁首；可在重繪後把焦點設到面板標題。
+**觸發時機**：下次動到這些頁面時順手處理。
+
 ### 測試的時鐘與時區抽象
 
 約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。

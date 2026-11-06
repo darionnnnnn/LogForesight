@@ -1071,6 +1071,8 @@ export function renderChips(container, { items, attr, activeValues, multi = true
         btn.className = 'lf-chip';
         btn.dataset[attr] = item.value;
         if (active.has(item.value)) btn.classList.add('active');
+        btn.setAttribute('aria-pressed', active.has(item.value) ? 'true' : 'false');
+        if (item.ariaLabel) btn.setAttribute('aria-label', item.ariaLabel);
         if (item.disabled) btn.disabled = true;
         if (item.title) btn.title = item.title;
 
@@ -1087,13 +1089,18 @@ export function renderChips(container, { items, attr, activeValues, multi = true
 
         btn.addEventListener('click', () => {
             if (!multi) {
-                for (const other of container.querySelectorAll('.lf-chip')) other.classList.remove('active');
+                for (const other of container.querySelectorAll('.lf-chip')) {
+                    other.classList.remove('active');
+                    other.setAttribute('aria-pressed', 'false');
+                }
                 btn.classList.add('active');
+                btn.setAttribute('aria-pressed', 'true');
                 onToggle(item.value, true);
                 return;
             }
             const nowActive = !btn.classList.contains('active');
             btn.classList.toggle('active', nowActive);
+            btn.setAttribute('aria-pressed', nowActive ? 'true' : 'false');
             onToggle(item.value, nowActive);
         });
 
@@ -1852,17 +1859,6 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
 /** 長文字收合的字數門檻：超過才收合並出現「顯示全文」。 */
 const COLLAPSE_LIMIT = 300;
 
-/**
- * 長文字收合（共用元件）：傳入「已填好內容」的容器，回傳要放進 DOM 的元素。
- * 判準只看字數（textContent.length > limit），不量測版面，所以容器還沒接上文件、
- * 或藏在 d-none 區塊裡也一樣判得準。
- * - 純文字模式（容器沒有子元素）：收合時只留前 limit 字內最後一個分隔符之前的內容加「…」，
- *   展開時寫回全文。
- * - 區塊模式（容器有子元素，如 markdown 渲染結果）：不動內容，以 CSS 高度＋漸層遮罩收合
- *   （.lf-collapsible--clamped）。
- * 列印時一律看得到全文：區塊模式由 @media print 解除，純文字模式在 beforeprint 寫回全文。
- * 按鈕放在可點擊展開的表格列裡，click 必須 stopPropagation，避免連帶觸發列展開。
- */
 // 純文字收合元件的列印處理：全站只掛一組 beforeprint／afterprint 監聽。
 // 每個元件各掛一組的話，清單每次重繪都會留下一組指向已卸下節點的監聽，越積越多。
 const printableCollapsibles = new Set();
@@ -1889,6 +1885,17 @@ function hookCollapsiblePrint() {
     window.addEventListener('afterprint', () => each(item => item.afterPrint()));
 }
 
+/**
+ * 長文字收合（共用元件）：傳入「已填好內容」的容器，回傳要放進 DOM 的元素。
+ * 判準只看字數（textContent.length > limit），不量測版面，所以容器還沒接上文件、
+ * 或藏在 d-none 區塊裡也一樣判得準。
+ * - 純文字模式（容器沒有子元素）：收合時只留前 limit 字內最後一個分隔符之前的內容加「…」，
+ *   展開時寫回全文。
+ * - 區塊模式（容器有子元素，如 markdown 渲染結果）：不動內容，以 CSS 高度＋漸層遮罩收合
+ *   （.lf-collapsible--clamped）。
+ * 列印時一律看得到全文：區塊模式由 @media print 解除，純文字模式在 beforeprint 寫回全文。
+ * 按鈕放在可點擊展開的表格列裡，click 必須 stopPropagation，避免連帶觸發列展開。
+ */
 export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
     const fullText = container.textContent || '';
     const total = fullText.length;
@@ -1901,12 +1908,16 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
 
     let shortText = '';
     if (!blockMode) {
-        const head = fullText.slice(0, limit);
+        let head = fullText.slice(0, limit);
+        // 切點落在代理對（emoji 等）的前半後面時往前退一格，不留孤立的半個字
+        const lastCode = head.charCodeAt(head.length - 1);
+        if (lastCode >= 0xD800 && lastCode <= 0xDBFF) head = head.slice(0, -1);
         let cut = -1;
         for (const sep of [' ', '\n', '\r', '\t', '、', '；', ';', ',', '，', '。']) {
             cut = Math.max(cut, head.lastIndexOf(sep));
         }
-        shortText = `${cut > 0 ? head.slice(0, cut) : head}…`;
+        // 最後一個分隔符太靠前（不到 limit 的一半）就不採用，直接在 limit 截斷，避免只剩開頭幾個字
+        shortText = `${cut > 0 && cut >= limit / 2 ? head.slice(0, cut) : head}…`;
     }
 
     const wrap = document.createElement('div');

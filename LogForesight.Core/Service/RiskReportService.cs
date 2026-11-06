@@ -355,7 +355,8 @@ public class RiskReportService
         {
             sb.AppendLine($"  {record.Headline}");
         }
-        if (record.Brief.Length > 0)
+        // AI 結果失效（AiAnalyzed=false）後 Brief 是舊的，不印
+        if (record.AiAnalyzed && record.Brief.Length > 0)
         {
             sb.AppendLine($"  給主管的說明：{record.Brief}");
         }

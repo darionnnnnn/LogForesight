@@ -129,6 +129,23 @@ const cases = {
         rail.expand('handling', { focus: false, scroll: false });
         assert.equal(scrolled.length, 0);
     },
+    // 斷點只在側軌模組一處：與 site.css 的 lg 斷點同值（992px），頁面層一律問 rail.isRailMode()
+    isRailModeFollowsLgBreakpoint() {
+        const queries = [];
+        const original = globalThis.window.matchMedia;
+        try {
+            globalThis.window.matchMedia = q => { queries.push(q); return { matches: true }; };
+            const { rail } = build();
+            assert.equal(rail.isRailMode(), true);
+            assert.deepEqual(queries, ['(min-width: 992px)']);
+            globalThis.window.matchMedia = () => ({ matches: false });
+            assert.equal(rail.isRailMode(), false);
+            globalThis.window.matchMedia = undefined;
+            assert.equal(rail.isRailMode(), false);
+        } finally {
+            globalThis.window.matchMedia = original;
+        }
+    },
     recordDetailUrlHandle() {
         assert.equal(recordDetailUrl(1, '2026-11-05', { handle: true }), '/records/1/2026-11-05#handling');
         assert.equal(recordDetailUrl(1, '2026-11-05'), '/records/1/2026-11-05');

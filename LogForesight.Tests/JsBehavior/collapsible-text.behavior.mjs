@@ -74,6 +74,24 @@ const cases = {
         collapsibleText(container);
         assert.equal(container.textContent, 'x'.repeat(300) + '…');
     },
+    // 切點落在代理對中間時往前退一格，不留孤立的 high surrogate
+    surrogatePairNotSplit() {
+        const container = textContainer('x'.repeat(299) + '😀' + 'y'.repeat(20)); // 第 300 個碼元是 😀 的前半
+        collapsibleText(container);
+        const shown = container.textContent;
+        assert.equal(shown, 'x'.repeat(299) + '…');
+        assert(!/[\uD800-\uDBFF]…$/.test(shown), '不得以孤立的 high surrogate 結尾');
+    },
+    // 最後一個分隔符在 limit 一半之前：不採用，直接在 limit 截斷
+    earlySeparatorNotUsed() {
+        const container = textContainer('Error:' + 'z'.repeat(400)); // 唯一的分隔符在第 6 個字
+        collapsibleText(container);
+        assert.equal(container.textContent, ('Error:' + 'z'.repeat(400)).slice(0, 300) + '…');
+        // 分隔符剛好在一半（150）以後仍採用
+        const late = textContainer('a'.repeat(150) + '、' + 'b'.repeat(300));
+        collapsibleText(late);
+        assert.equal(late.textContent, 'a'.repeat(150) + '…');
+    },
     blockModeTogglesClass() {
         const container = dom.newElement('div');
         const p1 = dom.newElement('p'); p1.textContent = 'a'.repeat(200);

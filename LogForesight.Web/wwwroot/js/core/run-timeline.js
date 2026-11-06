@@ -153,7 +153,9 @@ export function dayTimingDetailText(timing) {
 export function renderDayTimingCell(timing, options = {}) {
     const detail = dayTimingDetailText(timing);
     // 今天還在跑且算不出總耗時：第一行寫「進行中」，不要顯示「—」
-    const first = options.inProgress === true && timing?.totalSeconds == null ? '進行中' : dayTimingText(timing);
+    // 只在沒有任何可顯示內容（'—'）時才換成「進行中」；已有異常中斷或 AI 補跑文字就保留，不蓋掉
+    const timingText = dayTimingText(timing);
+    const first = options.inProgress === true && timingText === '—' ? '進行中' : timingText;
     const pending = options.pendingText;
     if (!detail && !pending) return first;
     const wrap = document.createElement('div');

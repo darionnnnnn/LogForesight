@@ -2918,6 +2918,7 @@ a.lf-calendar__cell:focus-visible {
     display: none;
 }
 
+/* 992px 與 core/side-rail.js 的 RAIL_MEDIA_QUERY 是同一個斷點，兩處要一起改 */
 @media (min-width: 992px) {
     .lf-detail-layout {
         display: grid;
@@ -3014,7 +3015,7 @@ a.lf-calendar__cell:focus-visible {
     padding: var(--lf-space-1) var(--lf-space-2);
     border: 1px solid var(--bs-border-color);
     border-top: 0;
-    border-radius: 0 0 var(--bs-border-radius-sm, .25rem) var(--bs-border-radius-sm, .25rem);
+    border-radius: 0 0 var(--lf-radius-sm) var(--lf-radius-sm);
     background: var(--lf-gray-50);
     min-width: 0;
 }
@@ -3025,7 +3026,7 @@ a.lf-calendar__cell:focus-visible {
 }
 
 .lf-note-editor__field.is-invalid + .lf-note-editor__tail {
-    border-color: var(--bs-form-invalid-border-color, #dc3545);
+    border-color: var(--bs-form-invalid-border-color, var(--lf-danger));
 }
 
 .lf-note-editor__row {
@@ -3087,10 +3088,6 @@ a.lf-calendar__cell:focus-visible {
     overflow-wrap: anywhere;
 }
 
-.lf-handling__updated {
-    white-space: normal;
-}
-
 /* 人員列：容器寬時標籤在左（固定寬），窄時 flex 自動換行成標籤在上（不用 JS 量寬） */
 .lf-handling__row {
     display: flex;
@@ -3121,7 +3118,7 @@ a.lf-calendar__cell:focus-visible {
 /* 狀態 chips：自動排格，窄到放不下兩欄時自然變單欄；文字可換行，不截字 */
 .lf-handling__chips {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(5.25rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
     gap: var(--lf-space-1);
 }
 

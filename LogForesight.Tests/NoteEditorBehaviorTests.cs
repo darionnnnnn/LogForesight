@@ -24,6 +24,7 @@ public sealed class NoteEditorBehaviorTests
     [InlineData("note-editor.behavior.mjs", "批次八顆chip點選不重建節點")]
     [InlineData("note-editor.behavior.mjs", "動作區只含送出鈕且說明欄結構正確")]
     [InlineData("note-editor.behavior.mjs", "chips公開函式只建立一次節點")]
+    [InlineData("note-editor.behavior.mjs", "處理面板以renderChips單選帶短標籤與完整名稱")]
     public void 說明欄編輯器與處理面板的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

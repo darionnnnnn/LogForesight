@@ -210,6 +210,8 @@ public class RunMonitorService
     /// 沒有符合的趟、或最後一趟沒有待補事項時回 null。</summary>
     private static string? BuildPendingSummary(List<BatchRun> runs, DateTime today)
     {
+        // 今天有新一趟還在跑（未結束也未判定異常中斷）：上一趟的「尚有」已過時，先不顯示
+        if (runs.Any(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt.Date == today && !r.FinishedAt.HasValue && !r.Interrupted)) return null;
         var last = runs
             .Where(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt.Date == today && (r.FinishedAt.HasValue || r.Interrupted))
             .OrderByDescending(r => r.StartedAt)
@@ -302,12 +304,9 @@ public class RunMonitorService
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories)
     {
         if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
-        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce)
-        {
-            // date 是紀錄日，列日期＝紀錄日＋1；列日期是今天或昨天才還有下一窗口複查，更早的已無自動複查
-            var rowDate = date.Date.AddDays(1);
-            return rowDate >= DateTime.Today.AddDays(-1) ? "空資料，下一窗口複查一次" : "空資料，已無自動複查；要補請用立即執行回望";
-        }
+        // 空資料的續跑與其他需重查狀態同一套規則（看自動重查是否用完，不看列日期）；用完就走下面的「已用完」說明
+        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce && !NetiqAttemptStatus.AutoRetryExhausted(history))
+            return "空資料，下一窗口複查一次";
         if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
         // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
         return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";

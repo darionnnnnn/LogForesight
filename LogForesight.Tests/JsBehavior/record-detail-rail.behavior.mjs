@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { installDom } from './mini-dom.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -27,6 +28,7 @@ function extractFunction(source, declaration) {
 }
 
 const updateSideRailSrc = extractFunction(recordDetail, 'function updateSideRail');
+const refreshRailSelectionSummarySrc = extractFunction(recordDetail, 'function refreshRailSelectionSummary');
 const expandForSelectionSrc = extractFunction(recordDetail, 'function expandSideRailForSelection');
 
 /** 組一個頁面層環境：模組變數 sideRail／pendingHandlingHash 以 let 前置宣告，函式本體取自 production */
@@ -34,13 +36,15 @@ function pageEnv({ rail, hash, wide = true }) {
     const calls = { replaceState: 0 };
     const history = { replaceState: () => { calls.replaceState++; } };
     const location = { pathname: '/records/1/2026-11-01', search: '?a=1', hash };
-    const window = { matchMedia: () => ({ matches: wide }) };
+    // 斷點由側軌自己回答（isRailMode），頁面層不再直接問 matchMedia
+    if (rail) rail.isRailMode = () => wide;
     const derivedStatusLabel = h => h.label;
-    const factory = new Function('history', 'location', 'window', 'derivedStatusLabel', 'initialRail', 'initialHash',
-        `let sideRail = initialRail; let pendingHandlingHash = initialHash;\n${updateSideRailSrc}\n${expandForSelectionSrc}\n` +
-        'return { updateSideRail, expandSideRailForSelection, pending: () => pendingHandlingHash };');
-    const env = factory(history, location, window, derivedStatusLabel, rail, hash === '#handling');
-    return { ...env, calls };
+    const selectedIssueKeys = new Set();
+    const factory = new Function('history', 'location', 'derivedStatusLabel', 'initialRail', 'initialHash', 'selectedIssueKeys',
+        `let sideRail = initialRail; let pendingHandlingHash = initialHash; let railHandlingSummary = '';\n${updateSideRailSrc}\n${expandForSelectionSrc}\n${refreshRailSelectionSummarySrc}\n` +
+        'return { updateSideRail, expandSideRailForSelection, refreshRailSelectionSummary, pending: () => pendingHandlingHash };');
+    const env = factory(history, location, derivedStatusLabel, rail, hash === '#handling', selectedIssueKeys);
+    return { ...env, calls, selectedIssueKeys };
 }
 
 function fakeRail({ userChoice = false, expanded = false } = {}) {
@@ -93,12 +97,70 @@ const cases = {
         env.updateSideRail({ handling: { label: '處理中（1/4 已結案）', isOverdue: true }, logCount: 7 });
         const handling = rail.summaries.find(s => s.key === 'handling');
         const log = rail.summaries.find(s => s.key === 'log');
-        assert(handling.text.endsWith('・逾期'), handling.text);
+        // 逾期放最前面：側軌窄、摘要會被截斷，逾期不能被截掉
+        assert.equal(handling.text, '逾期・處理中（1/4 已結案）');
+        assert(!handling.text.endsWith('・逾期'), handling.text);
         assert.equal(log.text, '7 筆');
         env.updateSideRail({ handling: { label: '已結案', isOverdue: false }, logCount: undefined });
         const last = rail.summaries.filter(s => s.key === 'handling').at(-1);
-        assert(!last.text.endsWith('・逾期'));
+        assert.equal(last.text, '已結案');
         assert.equal(rail.summaries.filter(s => s.key === 'log').at(-1).text, '0 筆');
+    },
+    // 手動收合後勾選也要有回饋：摘要前綴「已勾選 N 個・」，取消到 0 回到原摘要
+    selectionCountShownInSummary() {
+        const rail = fakeRail();
+        const env = pageEnv({ rail, hash: '' });
+        env.updateSideRail({ handling: { label: '處理中', isOverdue: true }, logCount: 1 });
+        const lastHandling = () => rail.summaries.filter(s => s.key === 'handling').at(-1).text;
+        assert.equal(lastHandling(), '逾期・處理中');
+        env.selectedIssueKeys.add('a');
+        env.refreshRailSelectionSummary();
+        assert.equal(lastHandling(), '已勾選 1 個・逾期・處理中');
+        env.selectedIssueKeys.add('b');
+        env.selectedIssueKeys.add('c');
+        env.refreshRailSelectionSummary();
+        assert.equal(lastHandling(), '已勾選 3 個・逾期・處理中');
+        env.selectedIssueKeys.clear();
+        env.refreshRailSelectionSummary();
+        assert.equal(lastHandling(), '逾期・處理中');
+        // 面板重載（onRefreshed）時若仍有勾選，摘要也要帶勾選數
+        env.selectedIssueKeys.add('a');
+        env.updateSideRail({ handling: { label: '未處理', isOverdue: false }, logCount: 1 });
+        assert.equal(lastHandling(), '已勾選 1 個・未處理');
+        // 案件授與沒有側軌：不得拋錯
+        pageEnv({ rail: null, hash: '' }).refreshRailSelectionSummary();
+    },
+    // 單列勾選與表頭全選兩條路徑都要更新摘要
+    selectionPathsBothRefreshSummary() {
+        const calls = recordDetail.match(/refreshRailSelectionSummary\(\);/g) || [];
+        assert(calls.length >= 2, `勾選路徑應至少兩處呼叫 refreshRailSelectionSummary，實際 ${calls.length}`);
+        const single = extractFunction(recordDetail, 'function selectCheckbox');
+        const all = extractFunction(recordDetail, 'function selectAllCheckbox');
+        assert(single.includes('refreshRailSelectionSummary()'), '單列勾選');
+        assert(all.includes('refreshRailSelectionSummary()'), '全選');
+        // 取消勾選同樣走 change 事件：呼叫不能被包在 if (check.checked) 之內
+        assert(!/if \(check\.checked\) refreshRailSelectionSummary/.test(single + all));
+    },
+    // 複製鈕：有可讀名稱，複製的是畫面上渲染後的文字（不帶 markdown 符號）
+    async briefCopyUsesRenderedText() {
+        const dom = installDom();
+        const copied = [];
+        const toasts = [];
+        const { renderAiInline } = await import(pathToFileURL(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'markdown-lite.js')).href);
+        const navigator = { clipboard: { writeText: async t => { copied.push(t); } } };
+        const src = extractFunction(recordDetail, 'function briefBlock');
+        const briefBlock = new Function('document', 'renderAiInline', 'navigator', 'toast', `${src}\nreturn briefBlock;`)(
+            document, renderAiInline, navigator, (m, k) => toasts.push([m, k]));
+        const wrap = briefBlock('一台主機**磁碟異常**，請採購備品。');
+        const copyBtn = wrap.find(n => n.tagName === 'BUTTON');
+        assert.equal(copyBtn.getAttribute('aria-label'), '複製給主管的說明');
+        const shown = wrap.find(n => n.tagName === 'P').textContent;
+        assert(!shown.includes('*'), shown);
+        await Promise.all((copyBtn.listeners.click || []).map(h => h()));
+        assert.deepEqual(copied, [shown]);
+        assert(!copied[0].includes('*'));
+        assert.deepEqual(toasts, [['已複製', 'success']]);
+        void dom;
     },
     expandForSelectionRules() {
         const fresh = fakeRail();

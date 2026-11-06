@@ -37,6 +37,35 @@ public class AiBriefPromptAndNormalizeTests
     }
 
     [Fact]
+    public void NormalizeBrief_含換行_壓成單一空白()
+    {
+        var result = LogAnalysisService.NormalizeBrief("第一句。\r\n\r\n  第二句。\n第三句。", out var reason);
+        Assert.Null(reason);
+        Assert.DoesNotContain("\n", result);
+        Assert.DoesNotContain("\r", result);
+        Assert.Equal("第一句。 第二句。 第三句。", result);
+    }
+
+    [Fact]
+    public void NormalizeBrief_超長且只有半形句點_截到半形句點()
+    {
+        var raw = new string('a', 99) + ". " + new string('b', 100);
+        var result = LogAnalysisService.NormalizeBrief(raw, out var reason);
+        Assert.Null(reason);
+        Assert.Equal(100, result.Length);
+        Assert.EndsWith(".", result);
+    }
+
+    [Fact]
+    public void NormalizeBrief_超長時版本號或小數的半形句點不算句尾()
+    {
+        // 「1.2.3」「3.5」裡的半形句點後面接數字，不是句尾；超長又沒有真正的句末就整段丟棄，不能截成「…1.」
+        var raw = "代理程式版本 1.2.3 與 3.5 版不相容" + new string('字', 160);
+        Assert.Equal(string.Empty, LogAnalysisService.NormalizeBrief(raw, out var reason));
+        Assert.NotNull(reason);
+    }
+
+    [Fact]
     public void NormalizeBrief_超長且無句末標點_丟棄()
     {
         var result = LogAnalysisService.NormalizeBrief(new string('甲', 200), out var reason);
@@ -207,6 +236,32 @@ public class AiBriefFlowTests
 
         if (expected) Assert.Contains($"給主管的說明：{brief}", draft.Content);
         else Assert.DoesNotContain("給主管的說明：", draft.Content);
+    }
+
+    [Fact]
+    public async Task 報告白話總覽_AI結果失效後不印舊的給主管的說明()
+    {
+        var sink = new FakeReportSink();
+        var ai = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance);
+        var service = new RiskReportService(ai, sink);
+        var record = new DailyAnalysisRecord
+        {
+            Date = DateTime.Today, Host = "test-host", RiskLevel = "高", AiAnalyzed = false,
+            Headline = "標題", Summary = "測試摘要", Brief = "舊的給主管說明",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error, Count = 47,
+                    Category = IssueCategory.Storage, Severity = IssueSeverity.Critical,
+                    KnownIssue = "磁碟 I/O 錯誤或壞軌前兆"
+                }
+            }
+        };
+
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
+
+        Assert.DoesNotContain("給主管的說明：", draft.Content);
     }
 
     [Fact]

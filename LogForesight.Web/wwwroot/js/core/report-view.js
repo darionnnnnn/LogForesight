@@ -142,6 +142,8 @@ export function reportCard({ storageKey, title } = {}) {
 
     section.append(header, body);
 
+    // 沒給 storageKey 時只有第一次 setReport 收合；頁內重載（再次 setReport）保留使用者目前的展開狀態
+    let rendered = false;
     const bodyId = `lf-report-body-${Math.random().toString(36).slice(2, 10)}`;
     body.id = bodyId;
     header.setAttribute('aria-controls', bodyId);
@@ -179,7 +181,9 @@ export function reportCard({ storageKey, title } = {}) {
             body.replaceChildren(...[evidenceVersionNotice(report), pre(report)].filter(Boolean));
             section.classList.remove('d-none');
 
-            applyExpanded(storageKey ? safeStorage.get(storageKey) === 'true' : false);
+            if (storageKey) applyExpanded(safeStorage.get(storageKey) === 'true');
+            else if (!rendered) applyExpanded(false);
+            rendered = true;
         }
     };
 }

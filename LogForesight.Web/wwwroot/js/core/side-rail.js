@@ -10,6 +10,14 @@
 
 const OPEN_CLASS = 'lf-detail-layout--side-open';
 
+/** 側軌模式的斷點（>= lg）。與 site.css 的 `@media (min-width: 992px)` 側軌規則是同一個值，兩處要一起改。 */
+const RAIL_MEDIA_QUERY = '(min-width: 992px)';
+
+/** 目前視窗是否在側軌模式（寬螢幕）；< lg 時右欄堆疊在下、內容一律展開，側軌不顯示。 */
+function isRailMode() {
+    try { return !!window.matchMedia?.(RAIL_MEDIA_QUERY).matches; } catch { return false; }
+}
+
 /**
  * @param {{ layout: HTMLElement, side: HTMLElement, items: {key: string, label: string, target: HTMLElement}[] }} options
  */
@@ -109,6 +117,7 @@ export function createSideRail({ layout, side, items }) {
         collapse,
         isExpanded: () => open,
         setSummary,
-        hasUserChoice: () => userChoice
+        hasUserChoice: () => userChoice,
+        isRailMode
     };
 }

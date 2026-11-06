@@ -1266,11 +1266,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
   OS 則決定這台套哪個平台的規則面，判讀問題時需要知道。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
-- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(5.25rem, 1fr))` 格線、顯示短標籤、`title`／`aria-label` 為完整名稱，`buildStatusChips` 只建一次節點、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
+- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
   0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
      其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
-     兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期加「・逾期」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
+     兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
      欄頂「收合 ›」收回並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
@@ -3048,11 +3048,11 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天）。
     **今天的附加列**：今天已有取數趟時，第 1 頁多一列（`IsToday`，執行中再帶 `InProgress`），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
     **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
-    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」。主機明細說明依列日期分齡：
-    今天與昨天的列「空資料，下一窗口複查一次」，更早「空資料，已無自動複查；要補請用立即執行回望」。
-    **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
+    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」。主機明細說明與續跑規則同一判定：
+    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時寫「空資料，下一窗口複查一次」，用完時沿用一般的已用完文字。
+    **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
     異常中斷寫「最後一趟異常中斷」，否則 `RunResume.HasWork` 時寫「最後一趟結束時尚有：」＋`Describe()`；顯示在「執行時間」格第二行之後。
-    過去日期不顯示（那是當時的快照）。今天執行中且沒有已結束趟時，「執行時間」第一行寫「進行中」。
+    過去日期不顯示（那是當時的快照）。今天執行中且第一行原本會是「—」時，改寫「進行中」（有異常中斷或 AI 補跑文字時保留原文字）。
     **日期錨點是昨天**：D 日的列＝D 日夜間執行的批次，分析的是 D-1 的資料
     （NetIQ 主機的狀態判定就是「D-1 有無分析紀錄」），今天的批次白天尚未執行，列進來必然
     整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數

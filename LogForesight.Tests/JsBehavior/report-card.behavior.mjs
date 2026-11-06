@@ -41,6 +41,7 @@ const click = header => (header.listeners.click || []).forEach(h => h());
 
 const cases = {
     withoutStorageKeyAlwaysCollapsedAndNeverStores() {
+        // 第一次 setReport 收合；之後 setReport 保留展開狀態；任何時候都不寫 safeStorage
         stored.length = 0;
         const card = reportCard({});
         card.setReport(report);
@@ -50,7 +51,13 @@ const cases = {
         click(header);
         assert.equal(header.getAttribute('aria-expanded'), 'true');
         assert.equal(stored.length, 0);
-        // 再次 setReport 回到收合：不記憶展開狀態
+        // 頁內重載（再次 setReport）保留目前的展開狀態，也不寫儲存
+        card.setReport(report);
+        assert.equal(header.getAttribute('aria-expanded'), 'true');
+        assert(!card.el.children[1].classList.contains('d-none'));
+        assert.equal(stored.length, 0);
+        // 使用者收合後再重載仍維持收合
+        click(header);
         card.setReport(report);
         assert.equal(header.getAttribute('aria-expanded'), 'false');
         assert.equal(stored.length, 0);

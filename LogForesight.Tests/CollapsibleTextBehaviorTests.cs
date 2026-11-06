@@ -18,6 +18,8 @@ public sealed class CollapsibleTextBehaviorTests
     [InlineData("collapsible-text.behavior.mjs", "plainTextCollapsesAtSeparator")]
     [InlineData("collapsible-text.behavior.mjs", "exactLimitReturnsContainer")]
     [InlineData("collapsible-text.behavior.mjs", "noSeparatorCutsAtLimit")]
+    [InlineData("collapsible-text.behavior.mjs", "surrogatePairNotSplit")]
+    [InlineData("collapsible-text.behavior.mjs", "earlySeparatorNotUsed")]
     [InlineData("collapsible-text.behavior.mjs", "blockModeTogglesClass")]
     [InlineData("collapsible-text.behavior.mjs", "clickStopsPropagation")]
     [InlineData("collapsible-text.behavior.mjs", "printRestoresFullText")]

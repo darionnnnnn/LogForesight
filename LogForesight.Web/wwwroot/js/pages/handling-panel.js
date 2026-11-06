@@ -11,7 +11,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
+import { renderLoading, renderEmpty, renderChips, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant } from '../core/handling-statuses.js';
@@ -27,44 +27,10 @@ function operatorLabel(actorDisplayName, actorAccount) {
 // 「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API 回一個看不懂的驗證錯誤
 // text＝完整名稱（title／aria-label／驗證訊息用），short＝chip 上顯示的短名稱
 const toChip = s => ({ value: s.value, text: s.label, short: s.shortLabel ?? s.label });
-export const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
-export const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
-
-/**
- * 在 container 內建立狀態 chips：節點只建一次，選取只切換 .active 與 aria-pressed，
- * 不重建節點（鍵盤焦點不會因為點擊而掉回頁面開頭）。
- * @returns {{select: (value: (string|null)) => void, buttons: Map<string, HTMLElement>}}
- */
-export function buildStatusChips(container, chips, selected, onSelect) {
-    const buttons = new Map();
-
-    function mark(value) {
-        for (const [chipValue, btn] of buttons) {
-            const on = chipValue === value;
-            if (on) btn.classList.add('active');
-            else btn.classList.remove('active');
-            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        }
-    }
-
-    for (const chip of chips) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'lf-chip';
-        btn.textContent = chip.short;
-        btn.title = chip.text;
-        btn.setAttribute('aria-label', chip.text);
-        btn.addEventListener('click', () => {
-            mark(chip.value);
-            onSelect(chip.value);
-        });
-        buttons.set(chip.value, btn);
-        container.appendChild(btn);
-    }
-    mark(selected);
-
-    return { select: mark, buttons };
-}
+const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
+const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
+// 轉成共用 renderChips 的項目：chip 上顯示短標籤，title 與 aria-label 用完整名稱（短標籤單看會失去語意）
+const toChipItem = chip => ({ value: chip.value, label: chip.short, title: chip.text, ariaLabel: chip.text });
 
 /** 說明欄標籤與必填規則：由目錄衍生 */
 function noteFieldOf(status) {
@@ -641,10 +607,17 @@ function handlingForm() {
         noteInput.classList.remove('is-invalid');
     }
 
-    buildStatusChips(chipGroup, availableChips, selectedStatus, value => {
-        selectedStatus = value;
-        updateFieldsForStatus();
-        saveFormDraft();
+    // 共用 renderChips（單選）：節點只建一次，點選只切換 .active 與 aria-pressed，鍵盤焦點不會掉
+    renderChips(chipGroup, {
+        items: availableChips.map(toChipItem),
+        attr: 'status',
+        activeValues: [selectedStatus],
+        multi: false,
+        onToggle: value => {
+            selectedStatus = value;
+            updateFieldsForStatus();
+            saveFormDraft();
+        }
     });
     updateFieldsForStatus();
 

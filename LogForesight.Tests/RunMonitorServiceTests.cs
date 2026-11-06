@@ -499,18 +499,22 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(1, "空資料，下一窗口複查一次")]
-    [InlineData(3, "已無自動複查")]
-    public void NetIQ空資料待複查_說明依列日期分齡(int daysAgo, string expected)
+    [InlineData(1, 1, "空資料，下一窗口複查一次")]
+    [InlineData(3, 1, "空資料，下一窗口複查一次")]
+    [InlineData(1, 2, "今天的自動重查已用完，明天會再試")]
+    [InlineData(3, 2, "今天的自動重查已用完，明天會再試")]
+    public void NetIQ空資料待複查_說明依自動重查是否用完_不看列日期(int daysAgo, int attemptRuns, string expected)
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.12", Source = "netiq" });
         var rowDate = DateTime.Today.AddDays(-daysAgo);
-        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        for (var run = 1; run <= attemptRuns; run++)
+            NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), run, NetiqAttemptStatus.EmptyOnce);
 
         var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
             .GetDayDetail(rowDate), r => r.HostName == host.HostName);
 
         Assert.Contains(expected, row.StatusNote);
+        Assert.DoesNotContain("已無自動複查", row.StatusNote);
     }
 
     private long AddTodayRun(int minuteOffset, int? netiqDaysFailed = null, bool interrupted = false)
@@ -562,6 +566,18 @@ public class RunMonitorServiceTests : IDisposable
         var today = Create().GetDaySummaries(1, 1, 1)[^1];
 
         Assert.Equal("最後一趟異常中斷", today.PendingSummary);
+    }
+
+    [Fact]
+    public void 今天列_有新一趟還在跑_PendingSummary為null_不沿用上一趟的尚有()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-P", Source = "local" });
+        AddTodayRun(1, netiqDaysFailed: 2);
+        Runs().StartRun(new BatchRun { HostName = "SITE-P", StartedAt = DateTime.Today.AddMinutes(5) });   // 新一趟尚未結束
+
+        var today = Create().GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.Null(today.PendingSummary);
     }
 
     [Fact]

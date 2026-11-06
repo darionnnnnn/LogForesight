@@ -36,6 +36,7 @@ class FakeNode {
         this.className = '';
         this._text = '';
         this.listeners = {};
+        this.dataset = {};
         this.classList = new FakeClassList(this);
     }
 
@@ -119,6 +120,16 @@ class FakeNode {
             return body;
         }
         return null;
+    }
+
+    /** 只支援單一 class 選擇器（.lf-chip 之類），深度優先、不含自己；renderChips 的單選清除會用到 */
+    querySelectorAll(selector) {
+        const name = selector.replace(/^\./, '');
+        if (!selector.startsWith('.') || /[\s,>\[:]/.test(name)) throw new Error(`mini-dom：querySelectorAll 只支援單一 class 選擇器：${selector}`);
+        const hits = [];
+        const walk = node => { for (const child of node.children) { if (child.classList?.contains(name)) hits.push(child); walk(child); } };
+        walk(this);
+        return hits;
     }
 
     /** 測試輔助：深度優先找出第一個符合條件的節點 */

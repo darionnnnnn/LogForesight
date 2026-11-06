@@ -217,6 +217,18 @@ const cases = {
         // 已有總耗時就不取代；沒進行中時維持原樣
         assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }, { inProgress: true }), '01:00～02:00（1 時 0 分）');
         assert.equal(renderDayTimingCell(null), dayTimingText(null));
+    },
+
+    // 今天有新一趟在跑、但前面有異常中斷：第一行不可被「進行中」蓋掉
+    dayTimingCellInProgressKeepsInterrupted() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: null, totalSeconds: null, interruptedCount: 1, lastInterruptedActivityAt: at(2) };
+        const cell = renderDayTimingCell(timing, { inProgress: true });
+        const first = typeof cell === 'string' ? cell : cell.children[0].textContent;
+        assert.ok(first.includes('異常中斷'), first);
+        assert.ok(!first.includes('進行中'), first);
+        // AI 補跑文字同理
+        const ai = { firstStartedAt: at(1), totalSeconds: null, interruptedCount: 0, otherAiRuns: 1, otherAiSeconds: 60 };
+        assert.equal(renderDayTimingCell(ai, { inProgress: true }), dayTimingText(ai));
     }
 };
 

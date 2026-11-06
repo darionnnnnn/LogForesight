@@ -1006,8 +1006,8 @@ function renderCases(cases) {
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
         ],
         rows: cases,
-        // 點列 → 最近掛接日的風險日詳情（該頁有完整處理動線）；主機名稱另有連結可到主機頁
-        rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`,
+        // 點列 → 最近掛接日的風險日詳情（該頁有完整處理動線，帶 handle 直接展開處理狀態）；主機名稱另有連結可到主機頁
+        rowHref: c => recordDetailUrl(c.hostId, c.lastLinkedDate, { handle: true }),
         empty: { title: '目前沒有進行中的交辦', hint: '被指派問題並建立交辦後，會顯示在這裡。' }
     });
 }

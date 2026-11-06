@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+﻿﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -664,7 +664,9 @@ public class LogAnalysisService
             Brief: brief);
     }
 
-    private static readonly char[] BriefSentenceEnds = { '。', '！', '？', '；' };
+    // 句末：全形。！？；，或後面接空白／結尾的半形 .!?（半形句點夾在數字之間是版本號或小數，不是句尾）
+    private static readonly System.Text.RegularExpressions.Regex BriefSentenceEnd = new(
+        @"[。！？；]|[.!?](?=\s|$)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static readonly System.Text.RegularExpressions.Regex BriefForbiddenPattern = new(
         @"(?<!\d)\d{1,3}(\.\d{1,3}){3}(?!\d)|Event ?ID|EventId|事件 ?ID|事件編號",
@@ -672,18 +674,21 @@ public class LogAnalysisService
 
     /// <summary>
     /// 「給主管的說明」後處理（只在 AI 成功路徑套用）：trim；超過 <see cref="MaxBriefChars"/> 時在前 150 字內最後一個
-    /// 句末標點（。！？；）截斷，找不到就丟棄；截斷後含 IPv4／Event ID／事件編號字樣一律丟棄。
+    /// 句末標點（。！？；與半形 . ! ?）截斷，找不到就丟棄；截斷後含 IPv4／Event ID／事件編號字樣一律丟棄。
     /// 丟棄＝回空字串並以 <paramref name="droppedReason"/> 說明原因（呼叫端記 Debug）；不影響 AI 判讀本身。
     /// </summary>
     internal static string NormalizeBrief(string? raw, out string? droppedReason)
     {
         droppedReason = null;
-        var text = (raw ?? string.Empty).Trim();
+        // 換行一律壓成單一空白（brief 是一段可照念的話，不留段落結構）
+        var text = System.Text.RegularExpressions.Regex.Replace((raw ?? string.Empty).Trim(), @"\s*[\r\n]+\s*", " ");
         if (text.Length == 0) return string.Empty;
 
         if (text.Length > MaxBriefChars)
         {
-            var cut = text.AsSpan(0, MaxBriefChars).LastIndexOfAny(BriefSentenceEnds);
+            var head = text[..MaxBriefChars];
+            var ends = BriefSentenceEnd.Matches(head);
+            var cut = ends.Count > 0 ? ends[^1].Index : -1;
             if (cut < 0)
             {
                 droppedReason = $"超過 {MaxBriefChars} 字且前 {MaxBriefChars} 字內沒有句末標點";

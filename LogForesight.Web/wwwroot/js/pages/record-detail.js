@@ -220,10 +220,22 @@ function setupSideRail() {
     });
 }
 
+// 處理狀態按鈕的原摘要（不含勾選數）；勾選數量變動時以它為底重組
+let railHandlingSummary = '';
+
+/** 側軌「處理狀態」摘要：有勾選時前綴「已勾選 N 個・」，讓右欄收合時勾選也有回饋；沒有勾選就是原摘要 */
+function refreshRailSelectionSummary() {
+    if (!sideRail) return;
+    const count = selectedIssueKeys.size;
+    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary);
+}
+
 function updateSideRail(panelInfo) {
     if (sideRail && panelInfo) {
         const { handling, logCount } = panelInfo;
-        sideRail.setSummary('handling', derivedStatusLabel(handling) + (handling.isOverdue ? '・逾期' : ''));
+        // 逾期放最前面：側軌空間窄、摘要會被截斷，最該先看到的是逾期
+        railHandlingSummary = (handling.isOverdue ? '逾期・' : '') + derivedStatusLabel(handling);
+        refreshRailSelectionSummary();
         sideRail.setSummary('log', `${logCount ?? 0} 筆`);
     }
 
@@ -231,7 +243,7 @@ function updateSideRail(panelInfo) {
     if (pendingHandlingHash) {
         pendingHandlingHash = false;
         // < lg 右欄本來就展開，什麼都不做；只清 hash
-        if (sideRail && window.matchMedia?.('(min-width: 992px)').matches) {
+        if (sideRail && sideRail.isRailMode()) {
             sideRail.expand('handling', { focus: false, scroll: true });
         }
         try { history.replaceState(null, '', location.pathname + location.search); } catch { /* 清不掉 hash 不影響使用 */ }
@@ -372,9 +384,12 @@ function briefBlock(text) {
     copy.type = 'button';
     copy.className = 'btn btn-link btn-sm p-0 lf-no-print';
     copy.textContent = '複製';
+    copy.setAttribute('aria-label', '複製給主管的說明');
+    // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
+    const p = document.createElement('p');
     copy.addEventListener('click', async () => {
         try {
-            await navigator.clipboard.writeText(text);
+            await navigator.clipboard.writeText(p.textContent);
             toast('已複製', 'success');
         } catch {
             toast('無法複製，請手動選取文字', 'warning');
@@ -382,7 +397,6 @@ function briefBlock(text) {
     });
     head.appendChild(copy);
     wrap.appendChild(head);
-    const p = document.createElement('p');
     p.className = 'lf-ai-brief__text';
     renderAiInline(p, text);
     wrap.appendChild(p);
@@ -733,6 +747,7 @@ function selectCheckbox(issue, sectionIssues) {
         if (check.checked) selectedIssueKeys.add(issue.issueKey);
         else selectedIssueKeys.delete(issue.issueKey);
         if (check.checked) expandSideRailForSelection();
+        refreshRailSelectionSummary();
         refreshSelection();
 
         const headerCheck = check.closest('table')?.querySelector('thead input[type="checkbox"]');
@@ -765,6 +780,7 @@ function selectAllCheckbox(sectionIssues) {
                 rowCheck.checked = check.checked;
             }
         }
+        refreshRailSelectionSummary();
         refreshSelection();
         if (check.checked) expandSideRailForSelection();
     });

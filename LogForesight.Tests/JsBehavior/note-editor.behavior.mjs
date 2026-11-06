@@ -5,6 +5,7 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
@@ -50,7 +51,13 @@ globalThis.fetch = async url => {
 
 const { attachNoteEditor } = await import(pathToFileURL(path.join(jsRoot, 'core', 'note-editor.js')).href);
 const panelModule = await import(pathToFileURL(path.join(jsRoot, 'pages', 'handling-panel.js')).href);
-const { initHandlingPanel, DAY_CHIPS, BATCH_CHIPS, buildStatusChips } = panelModule;
+const { initHandlingPanel } = panelModule;
+const { renderChips } = await import(pathToFileURL(path.join(jsRoot, 'core', 'ui.js')).href);
+const { statusesWhere } = await import(pathToFileURL(path.join(jsRoot, 'core', 'handling-statuses.js')).href);
+// 期望的 chip 清單直接由狀態目錄推導（處理面板不再 export 自己的清單）
+const toChip = s => ({ value: s.value, text: s.label, short: s.shortLabel ?? s.label });
+const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
+const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
 
 const wait = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
 const has = (node, name) => node.classList.contains(name);
@@ -108,6 +115,10 @@ async function chipCase(selection, expected) {
     assert.equal(before[0].getAttribute('aria-pressed'), 'false');
     assert(has(before[1], 'active'));
     assert.equal(before[1].getAttribute('aria-pressed'), 'true');
+    // 單選：再點第三顆後，只有第三顆是選取狀態
+    before[2].dispatch('click');
+    assert.deepEqual(before.map(b => has(b, 'active')), before.map((_, i) => i === 2));
+    assert.deepEqual(before.map(b => b.getAttribute('aria-pressed')), before.map((_, i) => i === 2 ? 'true' : 'false'));
 }
 
 const cases = {
@@ -169,13 +180,46 @@ const cases = {
     async chips公開函式只建立一次節點() {
         const container = document.createElement('div');
         const picked = [];
-        const control = buildStatusChips(container, DAY_CHIPS, null, value => picked.push(value));
-        const first = container.children[0];
-        container.children[2].dispatch('click');
-        assert.deepEqual(picked, [DAY_CHIPS[2].value]);
-        assert.equal(container.children[0], first);
-        control.select(DAY_CHIPS[0].value);
-        assert(has(first, 'active'));
+        const items = DAY_CHIPS.map(c => ({ value: c.value, label: c.short, title: c.text, ariaLabel: c.text }));
+        renderChips(container, { items, attr: 'status', activeValues: [DAY_CHIPS[0].value], multi: false, onToggle: (value, on) => picked.push([value, on]) });
+        const nodes = [...container.children];
+        // 初始：第一顆選取，aria-pressed 與 .active 一致；有 ariaLabel 的才設 aria-label
+        assert(has(nodes[0], 'active'));
+        assert.deepEqual(nodes.map(n => n.getAttribute('aria-pressed')), nodes.map((_, i) => i === 0 ? 'true' : 'false'));
+        assert.deepEqual(nodes.map(n => n.getAttribute('aria-label')), DAY_CHIPS.map(c => c.text));
+        nodes[1].dispatch('click');
+        nodes[2].dispatch('click');
+        assert.deepEqual(picked, [[DAY_CHIPS[1].value, true], [DAY_CHIPS[2].value, true]]);
+        // 點第二顆之後第一顆節點仍在容器內（沒被重建），且只剩被點的那顆選取
+        container.children.forEach((child, i) => assert.equal(child, nodes[i], `第 ${i} 顆被重建了`));
+        assert(!has(nodes[0], 'active'));
+        assert.equal(nodes[0].getAttribute('aria-pressed'), 'false');
+        assert.equal(nodes[1].getAttribute('aria-pressed'), 'false');
+        assert(has(nodes[2], 'active'));
+        assert.equal(nodes[2].getAttribute('aria-pressed'), 'true');
+
+        // 沒給 ariaLabel 的項目不設 aria-label；複選模式點兩下會切回未選取並同步 aria-pressed
+        const multiBox = document.createElement('div');
+        renderChips(multiBox, { items: [{ value: 'a', label: 'A' }], attr: 'k', activeValues: [], onToggle: () => { } });
+        const multi = multiBox.children[0];
+        assert.equal(multi.getAttribute('aria-label'), null);
+        assert.equal(multi.getAttribute('aria-pressed'), 'false');
+        multi.dispatch('click');
+        assert.equal(multi.getAttribute('aria-pressed'), 'true');
+        multi.dispatch('click');
+        assert.equal(multi.getAttribute('aria-pressed'), 'false');
+    },
+    async 處理面板以renderChips單選帶短標籤與完整名稱() {
+        const panel = await buildPanel(new Set());
+        const group = chipButtons(panel);
+        const labelled = group.children.filter(b => b.getAttribute('aria-label') !== b.textContent);
+        assert(labelled.length > 0, '至少一顆 chip 的短標籤應與完整名稱不同');
+        // 資料屬性由共用 renderChips 以 attr=status 寫入
+        assert.deepEqual(group.children.map(b => b.dataset.status), DAY_CHIPS.map(c => c.value));
+        const src = fs.readFileSync(path.join(jsRoot, 'pages', 'handling-panel.js'), 'utf8').replaceAll('\r\n', '\n');
+        assert(/renderChips\(chipGroup, \{[\s\S]*?multi: false/.test(src), '處理面板應呼叫 renderChips 並帶 multi: false');
+        assert(!src.includes('buildStatusChips'), '不應再有自己的 buildStatusChips');
+        assert(!/export const (DAY|BATCH)_CHIPS/.test(src), '不應為了測試 export chip 清單');
     }
 };
 

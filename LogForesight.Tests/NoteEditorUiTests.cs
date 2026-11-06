@@ -174,5 +174,19 @@ public class NoteEditorUiTests
         Assert.True(chips >= 0, "找不到 .lf-handling__chips 規則");
         var block = css.Substring(chips, css.IndexOf('}', chips) - chips);
         Assert.Contains("grid-template-columns", block);
+        // 1024 寬、字級「中」時右欄面板約 300px：最小格寬要小到能排兩欄，不能退回 5.25rem
+        Assert.Contains("minmax(4.75rem, 1fr)", block);
+
+        // 說明欄尾區改用設計 token，不寫死色碼／圓角；沒有作用的 .lf-handling__updated 規則已刪
+        var tail = css.IndexOf(".lf-note-editor__tail {", StringComparison.Ordinal);
+        var tailBlock = css.Substring(tail, css.IndexOf('}', tail) - tail);
+        Assert.Contains("var(--lf-radius-sm)", tailBlock);
+        Assert.DoesNotContain(".25rem", tailBlock);
+        var invalid = css.IndexOf(".lf-note-editor__field.is-invalid + .lf-note-editor__tail {", StringComparison.Ordinal);
+        var invalidBlock = css.Substring(invalid, css.IndexOf('}', invalid) - invalid);
+        Assert.Contains("var(--lf-danger)", invalidBlock);
+        Assert.DoesNotContain("#dc3545", invalidBlock);
+        Assert.DoesNotContain(".lf-handling__updated", css);
+        Assert.DoesNotContain("minmax(5.25rem", block);
     }
 }

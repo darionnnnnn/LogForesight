@@ -36,6 +36,7 @@ public class RunsTimelineBehaviorTests
     [InlineData("dayTimingTotalRow")]
     [InlineData("dayTimingCellPendingText")]
     [InlineData("dayTimingCellInProgress")]
+    [InlineData("dayTimingCellInProgressKeepsInterrupted")]
     public void 時間軸與執行時間(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
