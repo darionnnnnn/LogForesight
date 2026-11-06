@@ -113,6 +113,29 @@ public class TableConsistencyUiTests
     }
 
     [Fact]
+    public void 固定動作欄只套直接包的那張表_不滲進展開列與巢狀表()
+    {
+        // 後代選擇器會命中展開列的 colspan 格（它也是 :last-child）與展開格裡巢狀表格的最後一欄：
+        // hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄變成 sticky。每個選擇器都要以 "> table >" 子代鏈限定、排除展開列。
+        var rawCss = File.ReadAllText(Path.Combine(WebDir(), "wwwroot", "css", "site.css"));
+        var css = Regex.Replace(rawCss, @"/\*.*?\*/", "", RegexOptions.Singleline);   // 註解裡的逗號不能拿來切選擇器
+        var selectors = Regex.Matches(css, @"(?<sel>[^{}]*lf-table-wrap--sticky-action[^{}]*)\{")
+            .SelectMany(m => Regex.Split(m.Groups["sel"].Value, @",(?![^()]*\))"))   // 只切括號外的逗號，:where(thead, tbody) 不能被切開
+            .Select(sel => sel.Trim())
+            .Where(sel => sel.Contains("lf-table-wrap--sticky-action", StringComparison.Ordinal) && sel.Contains(":last-child", StringComparison.Ordinal))
+            .ToList();
+        Assert.True(selectors.Count >= 3, "找不到固定動作欄的基本／hover／列印三組規則：" + string.Join(" | ", selectors));
+
+        var leaking = selectors.Where(sel =>
+            !Regex.IsMatch(sel, @"\.lf-table-wrap--sticky-action\s*>\s*table\s*>") || !sel.Contains("not(.lf-row-detail)", StringComparison.Ordinal))
+            .ToList();
+        Assert.True(leaking.Count == 0, "固定動作欄的選擇器要以 \"> table >\" 子代鏈限定並排除 .lf-row-detail：\n" + string.Join("\n", leaking));
+
+        // 展開格不吃 Bootstrap 列 hover 的 inset 陰影
+        Assert.Matches(@"\.lf-row-detail\s*>\s*td\s*\{[^}]*box-shadow:\s*none", css);
+    }
+
+    [Fact]
     public void 單行純文字的主機與問題欄都設truncate()
     {
         // 主機名、問題標籤是全站最長的字串；只顯示純文字（或主機連結）的欄位一律截斷並以 title 看全文。

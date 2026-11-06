@@ -1990,6 +1990,9 @@ a.lf-badge:hover { text-decoration: underline; }
 .table > tbody > tr.lf-row--highlight > td { background-color: var(--lf-primary-soft); }
 .lf-row-detail > td {
     background: var(--lf-gray-50);
+    /* 展開格不參與列 hover：Bootstrap 的 hover 色是 .table > :not(caption) > * > * 的 inset 陰影，
+       同特異度、本檔後載入即可拿掉；只重設 --bs-table-bg-state 會輸給 .table-hover 的 (0,2,2) */
+    box-shadow: none;
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
@@ -2288,9 +2291,11 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
-   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。 */
-.lf-table-wrap--sticky-action th:last-child,
-.lf-table-wrap--sticky-action td:last-child {
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。
+   只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
+   與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
+   :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
+.lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child {
     position: sticky;
     right: 0;
     z-index: 1;
@@ -2300,15 +2305,14 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
-.lf-table-wrap--sticky-action tbody tr:hover td:last-child {
+.lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)):hover > td:last-child {
     background: var(--bs-table-hover-bg, var(--lf-gray-50));
 }
 
 /* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
 @media print {
     .lf-table-wrap--scrollable::after { display: none; }
-    .lf-table-wrap--sticky-action th:last-child,
-    .lf-table-wrap--sticky-action td:last-child { position: static; box-shadow: none; }
+    .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child { position: static; box-shadow: none; }
 }
 
 /* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────
