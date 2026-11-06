@@ -1850,7 +1850,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
 }
 
 /** 長文字收合的字數門檻：超過才收合並出現「顯示全文」。 */
-export const COLLAPSE_LIMIT = 300;
+const COLLAPSE_LIMIT = 300;
 
 /**
  * 長文字收合（共用元件）：傳入「已填好內容」的容器，回傳要放進 DOM 的元素。
@@ -1867,6 +1867,14 @@ export const COLLAPSE_LIMIT = 300;
 // 每個元件各掛一組的話，清單每次重繪都會留下一組指向已卸下節點的監聽，越積越多。
 const printableCollapsibles = new Set();
 let collapsiblePrintHooked = false;
+
+// 登記前先清理：曾接上文件、後來被卸下的節點（清單重繪）才刪；從未接上的新元件不刪（呼叫端是先建立再接上）
+function prunePrintableCollapsibles() {
+    for (const item of printableCollapsibles) {
+        if (item.container.isConnected === true) item.seen = true;
+        else if (item.container.isConnected === false && item.seen) printableCollapsibles.delete(item);
+    }
+}
 
 function hookCollapsiblePrint() {
     if (collapsiblePrintHooked || typeof window === 'undefined' || !window.addEventListener) return;
@@ -1930,8 +1938,10 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
 
     // 純文字模式的列印：收合中的文字在列印前寫回全文、列印後還原（監聽由 hookCollapsiblePrint 統一掛）
     if (!blockMode) {
+        prunePrintableCollapsibles();
         printableCollapsibles.add({
             container,
+            seen: false,
             beforePrint: () => { if (collapsed) container.textContent = fullText; },
             afterPrint: () => { if (collapsed) container.textContent = shortText; }
         });

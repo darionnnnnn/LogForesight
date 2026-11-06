@@ -22,6 +22,8 @@ public sealed class CollapsibleTextBehaviorTests
     [InlineData("collapsible-text.behavior.mjs", "clickStopsPropagation")]
     [InlineData("collapsible-text.behavior.mjs", "printRestoresFullText")]
     [InlineData("collapsible-text.behavior.mjs", "printListenerRegisteredOnce")]
+    [InlineData("collapsible-text.behavior.mjs", "detachedNodesPrunedOnNextRegistration")]
+    [InlineData("collapsible-text.behavior.mjs", "neverConnectedNodeIsKept")]
     public void 長文字收合元件的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

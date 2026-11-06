@@ -107,7 +107,7 @@ function evidenceVersionNotice(report) {
  * 頁面內的可收合報告卡片。
  *
  * @param {object} options
- * @param {string} options.storageKey 展開狀態的 localStorage 鍵——常看全文的人不必每次進來重新展開
+ * @param {string} [options.storageKey] 展開狀態的 localStorage 鍵；省略時每次 setReport 都回到收合、不記憶展開狀態
  * @param {string} [options.title] 標題；省略時用報告種類的中文名稱
  * @returns {{ el: HTMLElement, setReport: (report: object|null) => void }}
  */

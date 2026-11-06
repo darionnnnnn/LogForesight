@@ -109,7 +109,6 @@ export function createSideRail({ layout, side, items }) {
         collapse,
         isExpanded: () => open,
         setSummary,
-        markUserChoice: () => { userChoice = true; },
         hasUserChoice: () => userChoice
     };
 }

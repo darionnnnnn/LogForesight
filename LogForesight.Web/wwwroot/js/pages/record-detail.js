@@ -191,12 +191,13 @@ async function load() {
         else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');
     }
 
-    const panelInfo = await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
+    await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
+        // 側軌摘要的唯一更新路徑：面板每次載完（含自行重載）都會回呼
+        onRefreshed: updateSideRail,
         // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」
         caseGrantOnly: currentDetail.caseGrantOnly
     });
-    updateSideRail(panelInfo);
 
     await loadReports();
 
@@ -220,15 +221,17 @@ function setupSideRail() {
 }
 
 function updateSideRail(panelInfo) {
-    if (!sideRail || !panelInfo) return;
-    const { handling, logCount } = panelInfo;
-    sideRail.setSummary('handling', derivedStatusLabel(handling) + (handling.isOverdue ? '・逾期' : ''));
-    sideRail.setSummary('log', `${logCount ?? 0} 筆`);
+    if (sideRail && panelInfo) {
+        const { handling, logCount } = panelInfo;
+        sideRail.setSummary('handling', derivedStatusLabel(handling) + (handling.isOverdue ? '・逾期' : ''));
+        sideRail.setSummary('log', `${logCount ?? 0} 筆`);
+    }
 
+    // hash 的讀取與清除不看側軌在不在：案件授與檢視沒有側軌，#handling 一樣要清掉
     if (pendingHandlingHash) {
         pendingHandlingHash = false;
         // < lg 右欄本來就展開，什麼都不做；只清 hash
-        if (window.matchMedia?.('(min-width: 992px)').matches) {
+        if (sideRail && window.matchMedia?.('(min-width: 992px)').matches) {
             sideRail.expand('handling', { focus: false, scroll: true });
         }
         try { history.replaceState(null, '', location.pathname + location.search); } catch { /* 清不掉 hash 不影響使用 */ }

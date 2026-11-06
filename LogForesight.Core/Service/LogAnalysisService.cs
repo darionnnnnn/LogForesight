@@ -667,7 +667,7 @@ public class LogAnalysisService
     private static readonly char[] BriefSentenceEnds = { '。', '！', '？', '；' };
 
     private static readonly System.Text.RegularExpressions.Regex BriefForbiddenPattern = new(
-        @"\b\d{1,3}(\.\d{1,3}){3}\b|Event ?ID|EventId|事件 ?ID|事件編號",
+        @"(?<!\d)\d{1,3}(\.\d{1,3}){3}(?!\d)|Event ?ID|EventId|事件 ?ID|事件編號",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>

@@ -2216,7 +2216,9 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 展開列的灰底內，漸層要漸變到同一個底色才不會出現白帶 */
-.lf-row-detail .lf-collapsible--clamped {
+.lf-row-detail .lf-collapsible--clamped,
+.lf-issue-group__ai .lf-collapsible--clamped,
+.lf-ai-block .lf-collapsible--clamped {
     --lf-collapsible-fade: var(--lf-gray-50);
 }
 
@@ -2987,7 +2989,7 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-side-rail__summary {
     font-size: 0.8125rem;
-    opacity: 0.8;
+    color: var(--lf-text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

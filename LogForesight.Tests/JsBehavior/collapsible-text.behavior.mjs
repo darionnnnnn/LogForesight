@@ -27,7 +27,8 @@ globalThis.window = { addEventListener: (type, handler) => { (windowListeners[ty
 const printSetup = source.slice(source.indexOf('const printableCollapsibles'), source.indexOf('function hookCollapsiblePrint'));
 const hookPrint = extractFunction('function hookCollapsiblePrint');
 const body = extractFunction('export function collapsibleText').replace(/^export /, '');
-const collapsibleText = new Function('COLLAPSE_LIMIT', `${printSetup}\n${hookPrint}\n${body}\nreturn collapsibleText;`)(300);
+const prune = extractFunction('function prunePrintableCollapsibles');
+const { collapsibleText, printableCollapsibles } = new Function('COLLAPSE_LIMIT', `${printSetup}\n${prune}\n${hookPrint}\n${body}\nreturn { collapsibleText, printableCollapsibles };`)(300);
 
 function textContainer(text) {
     const el = dom.newElement('div');
@@ -121,6 +122,31 @@ const cases = {
         windowListeners.beforeprint.forEach(h => h());
         assert.equal(a.textContent, 'a'.repeat(400));
         assert.equal(b.textContent, 'b'.repeat(400));
+    },
+
+    // 登記集合不得累積已卸下的節點：曾接上文件、後來卸下的在下一次登記時清掉
+    detachedNodesPrunedOnNextRegistration() {
+        printableCollapsibles.clear();
+        const a = textContainer('a'.repeat(400)); a.isConnected = true;
+        collapsibleText(a);
+        const b = textContainer('b'.repeat(400)); b.isConnected = true;
+        collapsibleText(b); // 此次登記前 a 已被標記為曾接上
+        assert.equal(printableCollapsibles.size, 2);
+        a.isConnected = false;
+        const c = textContainer('c'.repeat(400)); c.isConnected = true;
+        collapsibleText(c);
+        const containers = [...printableCollapsibles].map(i => i.container);
+        assert(!containers.includes(a));
+        assert(containers.includes(b) && containers.includes(c));
+    },
+    // 從未接上文件的新元件不能被刪（呼叫端是先建立再接上）
+    neverConnectedNodeIsKept() {
+        printableCollapsibles.clear();
+        const a = textContainer('a'.repeat(400)); a.isConnected = false;
+        collapsibleText(a);
+        const b = textContainer('b'.repeat(400)); b.isConnected = false;
+        collapsibleText(b);
+        assert.equal(printableCollapsibles.size, 2);
     }
 };
 

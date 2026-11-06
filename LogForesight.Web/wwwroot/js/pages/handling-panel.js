@@ -97,7 +97,9 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     state = { hostId, date, handling, users, getSelection, onBatchSaved, options, formDraft };
     render();
     const logCount = await loadLogs(hostId, date);
-    // 回傳給頁面層組側軌摘要（處理狀態一行字、歷程筆數），面板本身的排版不受影響
+    // 通知頁面層組側軌摘要（處理狀態一行字、歷程筆數）：面板自行重載（日層級儲存、指派、409）也會走到這裡，
+    // 所以不能只靠回傳值——內部重載的回傳值沒人接
+    options.onRefreshed?.({ handling, logCount });
     return { handling, logCount };
 }
 

@@ -54,6 +54,8 @@ public class AiBriefPromptAndNormalizeTests
 
     [Theory]
     [InlineData("伺服器 10.216.19.43 磁碟異常。")]
+    [InlineData("主機10.1.2.3磁碟異常。")]
+    [InlineData("IP10.1.2.3。")]
     [InlineData("磁碟異常（Event ID 4625）。")]
     [InlineData("磁碟異常 eventid 7。")]
     [InlineData("磁碟異常 EventId 7。")]
@@ -64,6 +66,13 @@ public class AiBriefPromptAndNormalizeTests
     {
         Assert.Equal(string.Empty, LogAnalysisService.NormalizeBrief(raw, out var reason));
         Assert.NotNull(reason);
+    }
+
+    [Fact]
+    public void NormalizeBrief_三段數字不是IP_保留()
+    {
+        Assert.Equal("版本 1.2.3 已更新。", LogAnalysisService.NormalizeBrief("版本 1.2.3 已更新。", out var reason));
+        Assert.Null(reason);
     }
 
     [Fact]
