@@ -8,7 +8,7 @@
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader, collapsibleText } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
@@ -1397,14 +1397,6 @@ function collapsedRestSection(rest) {
     toggle.addEventListener('click', () => {
         const nowOpen = body.classList.toggle('d-none') === false;
         caret.classList.toggle('lf-collapse-caret--open', nowOpen);
-
-        // keyDetails 的「顯示全部」按鈕靠量測裁切狀態決定要不要出現，但這批列是在 d-none
-        // 容器裡建構的、當時量不到——展開（列第一次現身）時補量（見 keyDetailsBlock）
-        if (nowOpen) {
-            for (const details of body.querySelectorAll('.lf-issue-details--clamped')) {
-                details.dispatchEvent(new Event('lf-remeasure'));
-            }
-        }
     });
 
     wrap.append(toggle, body);
@@ -1470,11 +1462,11 @@ function issueCell(issue) {
         const text = document.createElement('div');
         text.className = 'mt-1';
         text.textContent = issue.knownIssue;
-        wrap.appendChild(text);
+        wrap.appendChild(collapsibleText(text));
     }
 
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
-    // 超長時只是視覺上先收合（keyDetailsBlock），有明確的「顯示全部」可以展開，
+    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「顯示全文」可以展開，
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
@@ -1585,7 +1577,7 @@ function residualCredentialBlock(issue) {
     const basis = document.createElement('div');
     basis.className = 'mt-1';
     basis.textContent = issue.residualCredentialBasis;
-    wrap.appendChild(basis);
+    wrap.appendChild(collapsibleText(basis));
 
     return wrap;
 }
@@ -1680,50 +1672,18 @@ function workOrderBadge(workOrderId) {
 
 /**
  * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
- * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，先用 CSS line-clamp
- * 收 3 行，超過才出現「顯示全部」——沒被裁切的短內容不多一次點擊。
- * scrollHeight 是否大於 clientHeight 是判斷有沒有被裁切的標準手法，line-clamp
- * 要等這一輪繪製完成才量得準，故延到 requestAnimationFrame。
- * 列印時 @media print 解除裁切（site.css）：紙本一律看得到完整內容。
+ * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，交給共用的 collapsibleText：
+ * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「顯示全文」，不量測版面、
+ * 藏在 d-none 區塊裡的列也判得準。列印時一律看得到全文（見 ui.js／site.css）。
  */
 function keyDetailsBlock(keyDetails) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-1';
 
-    const clampedClass = 'lf-issue-details--clamped';
     const details = document.createElement('div');
-    details.className = `small text-danger ${clampedClass}`;
+    details.className = 'small text-danger';
     details.textContent = keyDetails;
-    wrap.appendChild(details);
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 small lf-no-print d-none';
-    toggle.textContent = '顯示全部';
-    wrap.appendChild(toggle);
-
-    // 呼叫當下這個節點還沒接上文件（renderTable 會在整列組好後才一次性 replaceChildren），
-    // scrollHeight/clientHeight 量到的都是 0——延到下一輪事件迴圈（setTimeout 0）才量得準。
-    // 用 setTimeout 而非 requestAnimationFrame：後者綁在合成/繪製管線上，分頁不在前景時
-    // 可能整批延後或不觸發（ResizeObserver 的回呼派發同樣綁在繪製步驟，一樣不可靠）。
-    //
-    // 「已處理／已有結論」收合區的列在 d-none 容器裡建構，setTimeout 量測時兩個高度都是 0
-    // （看起來像「沒被裁切」），按鈕會永遠不出現——收合區展開是這些列唯一的現身路徑，
-    // 由 collapsedRestSection 在展開時對區塊內的 keyDetails 派發 lf-remeasure 事件補量，
-    // 確定性觸發、不依賴任何繪製時機。evaluate 冪等：量得到就定案，重複呼叫無副作用。
-    const evaluate = () => {
-        if (details.clientHeight === 0) return;   // 仍隱藏中，等下一次 lf-remeasure
-        if (details.scrollHeight > details.clientHeight + 1) toggle.classList.remove('d-none');
-    };
-
-    details.addEventListener('lf-remeasure', evaluate);
-    setTimeout(evaluate, 0);
-
-    toggle.addEventListener('click', event => {
-        event.stopPropagation();
-        const nowClamped = details.classList.toggle(clampedClass);
-        toggle.textContent = nowClamped ? '顯示全部' : '收合';
-    });
+    wrap.appendChild(collapsibleText(details));
 
     return wrap;
 }
@@ -2204,7 +2164,7 @@ function guidancePanel(issue) {
         const text = document.createElement('div');
         text.className = 'small';
         text.textContent = g.explanation;
-        wrap.append(label, text);
+        wrap.append(label, collapsibleText(text));
     }
 
     if (g.impact) {
@@ -2214,7 +2174,7 @@ function guidancePanel(issue) {
         const text = document.createElement('div');
         text.className = 'small';
         text.textContent = g.impact;
-        wrap.append(label, text);
+        wrap.append(label, collapsibleText(text));
     }
 
     appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
@@ -2250,6 +2210,9 @@ function aiInterpretPanel(issue) {
                 output.classList.add('text-muted');
             } else {
                 renderAiText(output, result.text, { badge: 'AI 判讀', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
+                // 內容寫好才判斷要不要收合；collapsibleText 會把 output 搬進包裝元素，所以把包裝接回 wrap
+                const block = collapsibleText(output);
+                if (block !== output) wrap.appendChild(block);
                 // 只有真的拿到判讀結果才鎖：逾時或回空時鎖死，使用者只能重整整頁才能再試一次
                 button.disabled = true;
             }
@@ -2302,7 +2265,7 @@ function otherAnalysis(detail) {
         appendList(item, '可能原因', finding.likelyCauses);
         appendList(item, '處置步驟', finding.nextSteps);
 
-        box.appendChild(item);
+        box.appendChild(collapsibleText(item));
     }
 
     return box;
@@ -2331,11 +2294,10 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
  * 版面、鍵盤開合與複製/下載/列印行為完全一致。
  *
  * 預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的重點問題，
- * 全文留給少數需要逐字核對的場合。展開狀態各自記 localStorage——
- * 常看某一種全文的人不必每次進來都重新展開。
+ * 全文留給少數需要逐字核對的場合。每次進頁面都收合，不記展開狀態。
  */
-const riskReportCard = reportCard({ storageKey: 'lf.recordDetail.reportExpanded' });
-const checkupReportCard = reportCard({ storageKey: 'lf.recordDetail.checkupReportExpanded' });
+const riskReportCard = reportCard();
+const checkupReportCard = reportCard();
 const reportCards = document.getElementById('report-cards');
 const riskReportPendingNotice = document.createElement('p');
 riskReportPendingNotice.className = 'small text-warning-emphasis mb-0';

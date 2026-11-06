@@ -2199,7 +2199,7 @@ a.lf-calendar__cell:focus-visible {
 /* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
    取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
    （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
-   先以 line-clamp 收 3 行，超過才出現「顯示全部」（record-detail.js keyDetailsBlock）。 */
+   超過 300 字才收合並出現「顯示全文」（core/ui.js collapsibleText，區塊模式用 .lf-collapsible--clamped）。 */
 .lf-issue-cell {
     min-width: 20rem;
 }
@@ -2208,19 +2208,38 @@ a.lf-calendar__cell:focus-visible {
     row-gap: .25rem;
 }
 
-.lf-issue-details--clamped {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
+.lf-collapsible--clamped {
+    max-height: 9rem;
     overflow: hidden;
+    position: relative;
+    --lf-collapsible-fade: var(--lf-card-bg);
+}
+
+/* 展開列的灰底內，漸層要漸變到同一個底色才不會出現白帶 */
+.lf-row-detail .lf-collapsible--clamped {
+    --lf-collapsible-fade: var(--lf-gray-50);
+}
+
+.lf-collapsible--clamped::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.5rem;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--lf-collapsible-fade));
 }
 
 /* 列印時一律看得到完整內容，紙本沒有「點擊展開」這回事 */
 @media print {
-    .lf-issue-details--clamped {
-        display: block;
-        -webkit-line-clamp: unset;
+    .lf-collapsible--clamped {
+        max-height: none;
         overflow: visible;
+    }
+
+    .lf-collapsible--clamped::after {
+        display: none;
     }
 }
 
