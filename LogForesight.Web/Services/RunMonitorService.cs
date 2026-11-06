@@ -191,16 +191,33 @@ public class RunMonitorService
                     // 已停止不列失敗主機清單——那是使用者的明確操作，缺漏日下次執行自動回補
                     case BatchRunStatus.Stopped: summary.StoppedCount++; break;
                     case "local_disabled": summary.LocalDisabledCount++; break;
+                    // 空資料等複查：不是漏跑，不進「未執行」
+                    case "recheck": summary.RecheckCount++; break;
                     default: summary.NotRunCount++; break;
                 }
             }
 
+            if (isToday) summary.PendingSummary = BuildPendingSummary(runs, today);
             summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
             summary.OtherFailedCount = Math.Max(0, failedHosts.Count - MaxFailedHostNames);
             summaries.Add(summary);
         }
 
         return summaries;
+    }
+
+    /// <summary>今天列的「最後一趟結束時尚有」：取今天開跑、已結束或已判定異常中斷的最後一趟；
+    /// 沒有符合的趟、或最後一趟沒有待補事項時回 null。</summary>
+    private static string? BuildPendingSummary(List<BatchRun> runs, DateTime today)
+    {
+        var last = runs
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt.Date == today && (r.FinishedAt.HasValue || r.Interrupted))
+            .OrderByDescending(r => r.StartedAt)
+            .FirstOrDefault();
+        if (last == null) return null;
+        if (last.Interrupted) return "最後一趟異常中斷";
+        var resume = RunResume.Of(last);
+        return resume.HasWork ? "最後一趟結束時尚有：" + resume.Describe() : null;
     }
 
     public List<RunDayHostStatusDto> GetDayDetail(DateTime date)
@@ -285,7 +302,12 @@ public class RunMonitorService
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories)
     {
         if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
-        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce) return "空資料，下一窗口複查一次";
+        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce)
+        {
+            // date 是紀錄日，列日期＝紀錄日＋1；列日期是今天或昨天才還有下一窗口複查，更早的已無自動複查
+            var rowDate = date.Date.AddDays(1);
+            return rowDate >= DateTime.Today.AddDays(-1) ? "空資料，下一窗口複查一次" : "空資料，已無自動複查；要補請用立即執行回望";
+        }
         if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
         // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
         return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";
@@ -316,7 +338,7 @@ public class RunMonitorService
                 "running" => BatchRunStatus.Running,
                 "partial" or "retained-incomplete" => BatchRunStatus.Warning,
                 // 沒有分析紀錄、等下一趟複查：還沒定案，不算失敗也不算警告（說明在 StatusNote）
-                NetiqAttemptStatus.EmptyOnce => "none",
+                NetiqAttemptStatus.EmptyOnce => "recheck",
                 "success" when recordDates.Contains(key) => BatchRunStatus.Success,
                 "success" => BatchRunStatus.Warning,
                 _ => BatchRunStatus.Warning

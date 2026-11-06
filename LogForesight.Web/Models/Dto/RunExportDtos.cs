@@ -161,6 +161,8 @@ public sealed record ExportDailyHealthDto
     public int Stuck { get; init; }
     public int Running { get; init; }
     public int NotRun { get; init; }
+    public int RecheckCount { get; init; }
+    public string? PendingSummary { get; init; }
     public int LocalDisabled { get; init; }
     public int Stopped { get; init; }
     public string? PrtgOutcome { get; init; }

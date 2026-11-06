@@ -150,17 +150,28 @@ export function dayTimingDetailText(timing) {
 }
 
 /** 總表一格：第一行文字＋第二行小字（比照 runs.js 的 withPhaseDuration，textContent 組字） */
-export function renderDayTimingCell(timing) {
+export function renderDayTimingCell(timing, options = {}) {
     const detail = dayTimingDetailText(timing);
-    const first = dayTimingText(timing);
-    if (!detail) return first;
+    // 今天還在跑且算不出總耗時：第一行寫「進行中」，不要顯示「—」
+    const first = options.inProgress === true && timing?.totalSeconds == null ? '進行中' : dayTimingText(timing);
+    const pending = options.pendingText;
+    if (!detail && !pending) return first;
     const wrap = document.createElement('div');
     const line = document.createElement('div');
     line.textContent = first;
-    const small = document.createElement('div');
-    small.className = 'small text-muted';
-    small.textContent = detail;
-    wrap.append(line, small);
+    wrap.append(line);
+    if (detail) {
+        const small = document.createElement('div');
+        small.className = 'small text-muted';
+        small.textContent = detail;
+        wrap.append(small);
+    }
+    if (pending) {
+        const pendingLine = document.createElement('div');
+        pendingLine.className = 'small text-muted';
+        pendingLine.textContent = pending;
+        wrap.append(pendingLine);
+    }
     return wrap;
 }
 

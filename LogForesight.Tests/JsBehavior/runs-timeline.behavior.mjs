@@ -191,6 +191,32 @@ const cases = {
         assert.equal(wrap.children.length, 5);
         assert.equal(wrap.children[4].textContent, '總計　01:00～01:03（2 分 11 秒）');
         assert.equal(renderDayTiming({ branches: [] }).children.length, 4);
+    },
+
+    dayTimingCellPendingText() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 };
+        // 沒有第二行也要加一行待補小字
+        const cell = renderDayTimingCell(timing, { pendingText: 'X' });
+        assert.ok(cell.textContent.includes('X'));
+        assert.equal(cell.children[cell.children.length - 1].textContent, 'X');
+        assert.ok(cell.children[cell.children.length - 1].classList.contains('small'));
+        assert.ok(cell.children[cell.children.length - 1].classList.contains('text-muted'));
+        // 有第二行時待補排在它之後
+        const two = renderDayTimingCell({ ...timing, branches: [{ key: 'netiq', seconds: 44 }] }, { pendingText: 'X' });
+        assert.equal(two.children.length, 3);
+        assert.equal(two.children[1].textContent, 'NetIQ 44 秒');
+        assert.equal(two.children[2].textContent, 'X');
+        // 不帶第二參數或空字串：與原本相同
+        assert.equal(renderDayTimingCell(timing), '01:00～02:00（1 時 0 分）');
+        assert.equal(renderDayTimingCell(timing, { pendingText: '' }), '01:00～02:00（1 時 0 分）');
+    },
+
+    dayTimingCellInProgress() {
+        assert.equal(renderDayTimingCell(null, { inProgress: true }), '進行中');
+        assert.equal(renderDayTimingCell({ firstStartedAt: at(1), totalSeconds: null, interruptedCount: 0 }, { inProgress: true }), '進行中');
+        // 已有總耗時就不取代；沒進行中時維持原樣
+        assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }, { inProgress: true }), '01:00～02:00（1 時 0 分）');
+        assert.equal(renderDayTimingCell(null), dayTimingText(null));
     }
 };
 

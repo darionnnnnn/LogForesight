@@ -474,11 +474,109 @@ public class RunMonitorServiceTests : IDisposable
             .GetDayDetail(runDate);
 
         var waitingRow = Assert.Single(rows, r => r.HostName == waiting.HostName);
-        Assert.Equal("none", waitingRow.Status);
+        // 第 66 輪：空資料待複查是獨立狀態（recheck），不再與「沒排到」混在 none
+        Assert.Equal("recheck", waitingRow.Status);
         Assert.Contains("複查", waitingRow.StatusNote);
         var givenUpRow = Assert.Single(rows, r => r.HostName == givenUp.HostName);
         Assert.Equal(BatchRunStatus.Warning, givenUpRow.Status);
         Assert.Contains("已放棄自動重查", givenUpRow.StatusNote);
+    }
+
+    [Fact]
+    public void NetIQ空資料待複查_總表計入RecheckCount不計未執行_明細為recheck()
+    {
+        var waiting = _hosts.Upsert(new WebHost { HostName = "10.0.8.11", Source = "netiq" });
+        var runDate = DateTime.Today.AddDays(-1);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { waiting.HostId }, runDate.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend);
+
+        var row = Assert.Single(service.GetDaySummaries(1, 1, 1));
+        var detail = Assert.Single(service.GetDayDetail(runDate), r => r.HostName == waiting.HostName);
+
+        Assert.Equal(1, row.RecheckCount);
+        Assert.Equal(0, row.NotRunCount);
+        Assert.Equal("recheck", detail.Status);
+    }
+
+    [Theory]
+    [InlineData(1, "空資料，下一窗口複查一次")]
+    [InlineData(3, "已無自動複查")]
+    public void NetIQ空資料待複查_說明依列日期分齡(int daysAgo, string expected)
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.12", Source = "netiq" });
+        var rowDate = DateTime.Today.AddDays(-daysAgo);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+
+        var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDayDetail(rowDate), r => r.HostName == host.HostName);
+
+        Assert.Contains(expected, row.StatusNote);
+    }
+
+    private long AddTodayRun(int minuteOffset, int? netiqDaysFailed = null, bool interrupted = false)
+    {
+        var runs = Runs();
+        var start = DateTime.Today.AddMinutes(minuteOffset);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE-P", StartedAt = start });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = id, HostName = "SITE-P", StartedAt = start, FinishedAt = start.AddMinutes(1),
+            NetiqDaysFailed = netiqDaysFailed, Interrupted = interrupted, ExitCode = interrupted ? BatchRun.ExitCodeInterrupted : 0
+        });
+        return id;
+    }
+
+    [Fact]
+    public void 今天列_最後一趟全成功_PendingSummary為null()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-P", Source = "local" });
+        AddTodayRun(1, netiqDaysFailed: 3);
+        AddTodayRun(5);
+
+        var today = Create().GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.True(today.IsToday);
+        Assert.Null(today.PendingSummary);
+    }
+
+    [Fact]
+    public void 今天列_最後一趟有待補_PendingSummary列出項目()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-P", Source = "local" });
+        AddTodayRun(1);
+        AddTodayRun(5, netiqDaysFailed: 2);
+
+        var today = Create().GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.StartsWith("最後一趟結束時尚有：", today.PendingSummary);
+        Assert.Contains("NetIQ 2 主機日", today.PendingSummary);
+    }
+
+    [Fact]
+    public void 今天列_最後一趟異常中斷_PendingSummary講異常中斷()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-P", Source = "local" });
+        AddTodayRun(1, netiqDaysFailed: 2);
+        AddTodayRun(5, interrupted: true);
+
+        var today = Create().GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.Equal("最後一趟異常中斷", today.PendingSummary);
+    }
+
+    [Fact]
+    public void 非今天的列_PendingSummary一律為null()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SITE-P", Source = "local" });
+        var runs = Runs();
+        var start = DateTime.Today.AddDays(-1).AddHours(2);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE-P", StartedAt = start });
+        runs.FinishRun(new BatchRun { RunId = id, HostName = "SITE-P", StartedAt = start, FinishedAt = start.AddMinutes(1), NetiqDaysFailed = 5 });
+
+        var rows = Create().GetDaySummaries(2, 1, 2);
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, s => Assert.Null(s.PendingSummary));
     }
 
     [Fact]

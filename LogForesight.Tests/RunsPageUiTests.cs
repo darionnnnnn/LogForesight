@@ -32,6 +32,16 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 執行總表_空資料待複查與今日待補摘要接上畫面()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("recheck: statusMeta('空資料待複查'", js);
+        Assert.Contains("recheckCount", js);
+        Assert.Contains("renderDayTimingCell(s.timing, { pendingText: s.pendingSummary", js);
+    }
+
+    [Fact]
     public void Ai未設定提示只描述預設缺漏模式並隨選擇變化更新()
     {
         var root = FindRepoRoot();

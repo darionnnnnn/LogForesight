@@ -190,6 +190,23 @@ public class RunExportServiceTests
     }
 
     [Fact]
+    public void 第66輪_dailyHealth帶recheckCount與pendingSummary_guide說明不含空資料待複查()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun("SRV-TODAY", DateTime.Today.AddHours(1), r => r.NetiqDaysFailed = 2);
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var today = root.G("dailyHealth").EnumerateArray().Single(r => r.G("isToday").GetBoolean());
+            Assert.Equal(0, today.G("recheckCount").GetInt32());
+            Assert.Contains("NetIQ 2 主機日", today.G("pendingSummary").GetString());
+            var guide = string.Join("\n", root.G("guide").L().Select(x => x.GetString()));
+            Assert.Contains("recheckCount", guide);
+        }
+    }
+
+    [Fact]
     public void 重複錯誤100則收成1組_次數100_樣本不超過3且互不相同()
     {
         using var h = new RunExportHarness();
