@@ -155,7 +155,7 @@ function renderQueues() {
             key: 'ungrouped',
             count: overview.ungroupedCount,
             title: '未分組',
-            hint: '依授權模型只有 admin 看得到，請補上主機群組'
+            hint: '一般使用者看不到未分組的主機（Admin、Manager、Dev 仍看得到），請補上主機群組'
         }
     ];
 
@@ -369,7 +369,7 @@ function render() {
             { title: 'OS', sortKey: 'os', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
             { title: '分級', render: tierCell },
             { title: '角色描述', sortKey: 'roleDesc', render: h => h.roleDesc },
-            { title: '主機群組', render: h => badges(h.groupNames, '未分組（只有 admin 看得到）') },
+            { title: '主機群組', render: h => badges(h.groupNames, '未分組（一般使用者看不到）') },
             { title: '負責人', render: h => badges(h.ownerNames, '未指定') },
             { title: '最近回報', sortKey: 'lastReport', sortDefaultDir: 'desc', render: lastReportCell },
             { title: '', className: 'text-end', render: actionsCell }
@@ -846,7 +846,7 @@ function updateReplaceWarning() {
         return;
     }
 
-    warning.textContent = `${selectedHosts.size} 台將變成未分組，只有 admin 看得到。`;
+    warning.textContent = `${selectedHosts.size} 台將變成未分組，一般使用者會看不到。`;
     warning.classList.remove('d-none');
 }
 

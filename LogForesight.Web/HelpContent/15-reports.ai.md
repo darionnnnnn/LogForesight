@@ -69,7 +69,7 @@
   - 中風險（`mediumRisk`）：黃色線條。若系統設定中未勾選顯示中風險日（`!visibleDayRisk.has('中')`），則中風險系列完全不繪製，避免貼底 0 線誤導使用者。
 - **下鑽機制**：點擊資料點呼叫 `drillTo`，導向 `/records?riskLevels={高|中}&from={date}&to={date}`。
 - **工具列（Table 檢視）**：欄位為「日期」、「高風險」、「中風險」、「錯誤數」。
-- **無資料狀態**：呼叫 `charts.renderNoData` 顯示「此期間沒有告警資料」。
+- **無資料狀態**：呼叫 `charts.renderNoData` 顯示「此期間沒有資料」（風險類型分布相同）；排行圖主機模式顯示「此期間沒有風險主機」、問題模式顯示「此期間沒有問題事件」。
 
 ### 2. 風險類型分布（`category-section` / `#category-chart`）
 - **圖表類型**：水平堆疊長條圖（Chart.js horizontal bar，`indexAxis: 'y'`）。
