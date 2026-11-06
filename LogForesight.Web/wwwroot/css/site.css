@@ -1602,6 +1602,29 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius);
 }
 
+/* 「給主管的說明」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
+.lf-ai-brief {
+    background: var(--lf-primary-soft);
+    border: 1px solid var(--lf-primary-soft-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+    margin: var(--lf-space-2) 0;
+}
+
+.lf-ai-brief__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-ai-brief__text {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    margin: 0;
+    color: var(--lf-primary-text);
+}
+
 /* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，
    不疊加 .lf-ai-block 的 padding（避免雙重留白） */
 .lf-issue-group__ai {
@@ -1990,6 +2013,9 @@ a.lf-badge:hover { text-decoration: underline; }
 .table > tbody > tr.lf-row--highlight > td { background-color: var(--lf-primary-soft); }
 .lf-row-detail > td {
     background: var(--lf-gray-50);
+    /* 展開格不參與列 hover：Bootstrap 的 hover 色是 .table > :not(caption) > * > * 的 inset 陰影，
+       同特異度、本檔後載入即可拿掉；只重設 --bs-table-bg-state 會輸給 .table-hover 的 (0,2,2) */
+    box-shadow: none;
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
@@ -2173,7 +2199,7 @@ a.lf-calendar__cell:focus-visible {
 /* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
    取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
    （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
-   先以 line-clamp 收 3 行，超過才出現「顯示全部」（record-detail.js keyDetailsBlock）。 */
+   超過 300 字才收合並出現「顯示全文」（core/ui.js collapsibleText，區塊模式用 .lf-collapsible--clamped）。 */
 .lf-issue-cell {
     min-width: 20rem;
 }
@@ -2182,19 +2208,40 @@ a.lf-calendar__cell:focus-visible {
     row-gap: .25rem;
 }
 
-.lf-issue-details--clamped {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
+.lf-collapsible--clamped {
+    max-height: 9rem;
     overflow: hidden;
+    position: relative;
+    --lf-collapsible-fade: var(--lf-card-bg);
+}
+
+/* 展開列的灰底內，漸層要漸變到同一個底色才不會出現白帶 */
+.lf-row-detail .lf-collapsible--clamped,
+.lf-issue-group__ai .lf-collapsible--clamped,
+.lf-ai-block .lf-collapsible--clamped {
+    --lf-collapsible-fade: var(--lf-gray-50);
+}
+
+.lf-collapsible--clamped::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.5rem;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--lf-collapsible-fade));
 }
 
 /* 列印時一律看得到完整內容，紙本沒有「點擊展開」這回事 */
 @media print {
-    .lf-issue-details--clamped {
-        display: block;
-        -webkit-line-clamp: unset;
+    .lf-collapsible--clamped {
+        max-height: none;
         overflow: visible;
+    }
+
+    .lf-collapsible--clamped::after {
+        display: none;
     }
 }
 
@@ -2288,9 +2335,11 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
-   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。 */
-.lf-table-wrap--sticky-action th:last-child,
-.lf-table-wrap--sticky-action td:last-child {
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。
+   只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
+   與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
+   :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
+.lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child {
     position: sticky;
     right: 0;
     z-index: 1;
@@ -2300,15 +2349,14 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
-.lf-table-wrap--sticky-action tbody tr:hover td:last-child {
+.lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)):hover > td:last-child {
     background: var(--bs-table-hover-bg, var(--lf-gray-50));
 }
 
 /* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
 @media print {
     .lf-table-wrap--scrollable::after { display: none; }
-    .lf-table-wrap--sticky-action th:last-child,
-    .lf-table-wrap--sticky-action td:last-child { position: static; box-shadow: none; }
+    .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child { position: static; box-shadow: none; }
 }
 
 /* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────
@@ -2849,3 +2897,261 @@ a.lf-calendar__cell:focus-visible {
 .lf-progress-fill { width: var(--lf-progress, 0); }
 .lf-status-count { color: var(--lf-status-color); font-weight: 600; }
 .lf-timeline-cell { background-color: var(--lf-swatch); }
+
+/* ── 風險日詳情兩欄版面與右側側軌（第 66 輪 D2）───────────────────────────
+   < lg：左右欄上下堆疊、側軌不顯示、右欄內容一律展開（等同改版前）。
+   ≥ lg：grid 兩欄；右欄收合時是 3rem 的直式側軌，展開（layout 加 --side-open）時取 20rem 與內容區 34% 的較小者。
+   不做寬度動畫，因此天然符合 prefers-reduced-motion。 */
+.lf-detail-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-4);
+}
+
+.lf-detail-main,
+.lf-detail-side {
+    min-width: 0;
+}
+
+.lf-side-rail,
+.lf-side-rail__collapse {
+    display: none;
+}
+
+/* 992px 與 core/side-rail.js 的 RAIL_MEDIA_QUERY 是同一個斷點，兩處要一起改 */
+@media (min-width: 992px) {
+    .lf-detail-layout {
+        display: grid;
+        /* 展開寬度取 20rem 與內容區 34% 的較小者：rem 會隨使用者字級放大，1024 寬時只給 20rem 會把主欄擠到 300px 上下；
+           34% 約等於改版前 col-lg-4 的寬度 */
+        grid-template-columns: minmax(0, 1fr) min(20rem, 34%);
+        align-items: start;
+    }
+
+    /* 收合狀態（JS 建立了側軌才有 nav；案件授與檢視沒有側軌，由 --side-open 直接展開） */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) {
+        grid-template-columns: minmax(0, 1fr) 3rem;
+    }
+
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side__body {
+        display: none;
+    }
+
+    /* 收合時右欄只剩側軌的高度，grid 的 align-items: start 讓它停在列頂、sticky 沒有可移動的空間；
+       拉到與主欄等高，長頁面捲動時側軌才會跟著停在視窗頂端 */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side {
+        align-self: stretch;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail {
+        display: none;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail__collapse {
+        display: inline-flex;
+        margin-bottom: var(--lf-space-3);
+    }
+
+    .lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--lf-space-2);
+        position: sticky;
+        top: var(--lf-space-4);
+    }
+}
+
+.lf-side-rail__btn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--lf-space-2);
+    width: 100%;
+    max-height: 14rem;
+    padding: var(--lf-space-3) var(--lf-space-1);
+    writing-mode: vertical-rl;
+    text-align: start;
+    background: var(--lf-card-bg);
+    color: inherit;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.lf-side-rail__btn:hover {
+    border-color: var(--lf-border-strong);
+}
+
+.lf-side-rail__btn:focus-visible,
+.lf-side-rail__collapse:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+.lf-side-rail__label {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.lf-side-rail__summary {
+    font-size: 0.8125rem;
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 0;
+}
+
+/* 側軌標題可被程式聚焦（tabindex=-1）：不畫焦點框以外的雜訊，但保留可見焦點 */
+.lf-detail-side .lf-card__title:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+/* ===== 說明欄編輯器（core/note-editor.js）：尾區緊貼 textarea 下緣，視覺上同一個外框 =====
+   DOM 順序固定為 [textarea.lf-note-editor__field, .lf-note-editor__tail, 呼叫端的錯誤訊息]，
+   不包裹 textarea（保住 .is-invalid ~ .invalid-feedback 的兄弟選擇器）。 */
+.lf-note-editor__field {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.lf-note-editor__tail {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    border: 1px solid var(--bs-border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--lf-radius-sm) var(--lf-radius-sm);
+    background: var(--lf-gray-50);
+    min-width: 0;
+}
+
+/* 狀態不只靠顏色：焦點與錯誤時尾區邊框同步跟著 textarea 變色 */
+.lf-note-editor__field:focus + .lf-note-editor__tail {
+    border-color: var(--lf-primary);
+}
+
+.lf-note-editor__field.is-invalid + .lf-note-editor__tail {
+    border-color: var(--bs-form-invalid-border-color, var(--lf-danger));
+}
+
+.lf-note-editor__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-note-editor__tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-1) var(--lf-space-3);
+    min-width: 0;
+}
+
+.lf-note-editor__tail .form-text {
+    margin-top: 0;
+}
+
+.lf-note-editor__ai {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--lf-space-1) var(--lf-space-2);
+    min-width: 0;
+    margin-left: auto;
+}
+
+.lf-note-editor__message:not(:empty) {
+    margin-top: var(--lf-space-1);
+    overflow-wrap: anywhere;
+}
+
+/* ===== 風險日處理面板（pages/handling-panel.js）：狀態摘要／人員／表單／動作四區 ===== */
+.lf-handling__section + .lf-handling__section {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+.lf-handling__summary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__current {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--lf-space-2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* 人員列：容器寬時標籤在左（固定寬），窄時 flex 自動換行成標籤在上（不用 JS 量寬） */
+.lf-handling__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__row + .lf-handling__row {
+    margin-top: var(--lf-space-2);
+}
+
+.lf-handling__row-label {
+    flex: 0 0 6rem;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value {
+    flex: 1 1 11.5rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value > .flex-grow-1 {
+    min-width: 0;
+}
+
+/* 狀態 chips：自動排格，窄到放不下兩欄時自然變單欄；文字可換行，不截字 */
+.lf-handling__chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
+    gap: var(--lf-space-1);
+}
+
+.lf-handling__chips .lf-chip {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+}
+
+.lf-form-actions {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+@media print {
+    .lf-side-rail,
+    .lf-side-rail__collapse {
+        display: none !important;
+    }
+
+    .lf-detail-layout {
+        display: block !important;
+    }
+
+    .lf-detail-layout .lf-detail-side__body {
+        display: block !important;
+    }
+}

@@ -14,7 +14,16 @@ class FakeClassList {
         names.forEach(n => set.add(n));
         this.el.className = [...set].join(' ');
     }
+    remove(...names) {
+        const drop = new Set(names);
+        this.el.className = String(this.el.className || '').split(' ').filter(n => n && !drop.has(n)).join(' ');
+    }
     contains(name) { return String(this.el.className || '').split(' ').includes(name); }
+    toggle(name, force) {
+        const on = force === undefined ? !this.contains(name) : Boolean(force);
+        if (on) this.add(name); else this.remove(name);
+        return on;
+    }
 }
 
 class FakeNode {
@@ -27,6 +36,7 @@ class FakeNode {
         this.className = '';
         this._text = '';
         this.listeners = {};
+        this.dataset = {};
         this.classList = new FakeClassList(this);
     }
 
@@ -38,10 +48,57 @@ class FakeNode {
     set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
 
-    appendChild(child) { this.children.push(child); if (child) child._parent = this; return child; }
-    append(...nodes) { nodes.forEach(n => { this.children.push(n); if (n) n._parent = this; }); }
+    // 真瀏覽器的 appendChild／append 是「搬移」：節點已在別的父節點下時先移除，否則同一節點會在兩處出現
+    appendChild(child) { this._detach(child); this.children.push(child); if (child) child._parent = this; return child; }
+    prepend(...nodes) { nodes = nodes.map(n => this._asNode(n)); nodes.forEach(n => this._detach(n)); this.children.unshift(...nodes); nodes.forEach(n => { if (n) n._parent = this; }); }
+    // append／prepend 收到字串時，真瀏覽器會轉成文字節點（runs.js 的 notRunCell 以 append(span, '＋…') 組字）
+    _asNode(n) { if (typeof n !== 'string') return n; const t = new FakeNode('#text'); t.textContent = n; return t; }
+    append(...nodes) { nodes.map(n => this._asNode(n)).forEach(n => { this._detach(n); this.children.push(n); if (n) n._parent = this; }); }
     replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
     remove() { if (this._parent) this._parent.children = this._parent.children.filter(c => c !== this); this._parent = null; }
+    // 兄弟節點操作（D2／E 段的就地重繪與插入會用到）：依 _parent.children 順序定位
+    _detach(node) { if (node && node._parent && node._parent !== undefined) node._parent.children = node._parent.children.filter(c => c !== node); }
+    _insertAt(offset, nodes) {
+        const parent = this._parent;
+        if (!parent) throw new Error('mini-dom：節點尚未掛到父節點，無法插入兄弟節點');
+        nodes.forEach(n => this._detach(n));
+        const index = parent.children.indexOf(this) + offset;
+        parent.children.splice(index, 0, ...nodes);
+        nodes.forEach(n => { n._parent = parent; });
+    }
+    after(...nodes) { this._insertAt(1, nodes); }
+    before(...nodes) { this._insertAt(0, nodes); }
+    // 既有行為測試會直接指定 nextElementSibling（手工搭出展開列），所以保留可寫；沒指定時才依父節點順序推導
+    set nextElementSibling(value) { this._nextOverride = value; }
+    set previousElementSibling(value) { this._previousOverride = value; }
+    get nextElementSibling() {
+        if (this._nextOverride !== undefined) return this._nextOverride;
+        const siblings = this._parent ? this._parent.children : [];
+        return siblings[siblings.indexOf(this) + 1] ?? null;
+    }
+    get previousElementSibling() {
+        if (this._previousOverride !== undefined) return this._previousOverride;
+        const siblings = this._parent ? this._parent.children : [];
+        const index = siblings.indexOf(this);
+        return index > 0 ? siblings[index - 1] : null;
+    }
+    insertAdjacentElement(position, el) {
+        if (position === 'afterend') this.after(el);
+        else if (position === 'beforebegin') this.before(el);
+        else if (position === 'beforeend') this.appendChild(el);
+        else if (position === 'afterbegin') { this._detach(el); this.children.unshift(el); el._parent = this; }
+        else throw new Error(`mini-dom：不支援的 insertAdjacentElement 位置 ${position}`);
+        return el;
+    }
+    replaceWith(...nodes) {
+        const parent = this._parent;
+        if (!parent) throw new Error('mini-dom：節點尚未掛到父節點，無法 replaceWith');
+        nodes.forEach(n => this._detach(n));
+        const index = parent.children.indexOf(this);
+        parent.children.splice(index, 1, ...nodes);
+        nodes.forEach(n => { n._parent = parent; });
+        this._parent = null;
+    }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     setAttributeNS(_ns, name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name] ?? null; }
@@ -66,6 +123,16 @@ class FakeNode {
             return body;
         }
         return null;
+    }
+
+    /** 只支援單一 class 選擇器（.lf-chip 之類），深度優先、不含自己；renderChips 的單選清除會用到 */
+    querySelectorAll(selector) {
+        const name = selector.replace(/^\./, '');
+        if (!selector.startsWith('.') || /[\s,>\[:]/.test(name)) throw new Error(`mini-dom：querySelectorAll 只支援單一 class 選擇器：${selector}`);
+        const hits = [];
+        const walk = node => { for (const child of node.children) { if (child.classList?.contains(name)) hits.push(child); walk(child); } };
+        walk(this);
+        return hits;
     }
 
     /** 測試輔助：深度優先找出第一個符合條件的節點 */

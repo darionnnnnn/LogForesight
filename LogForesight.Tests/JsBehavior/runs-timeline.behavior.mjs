@@ -2,6 +2,7 @@
  * core/run-timeline.js：階段時間軸與總表執行時間的文字與定位。
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
@@ -191,6 +192,69 @@ const cases = {
         assert.equal(wrap.children.length, 5);
         assert.equal(wrap.children[4].textContent, '總計　01:00～01:03（2 分 11 秒）');
         assert.equal(renderDayTiming({ branches: [] }).children.length, 4);
+    },
+
+    dayTimingCellPendingText() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 };
+        // 沒有第二行也要加一行待補小字
+        const cell = renderDayTimingCell(timing, { pendingText: 'X' });
+        assert.ok(cell.textContent.includes('X'));
+        assert.equal(cell.children[cell.children.length - 1].textContent, 'X');
+        assert.ok(cell.children[cell.children.length - 1].classList.contains('small'));
+        assert.ok(cell.children[cell.children.length - 1].classList.contains('text-muted'));
+        // 有第二行時待補排在它之後
+        const two = renderDayTimingCell({ ...timing, branches: [{ key: 'netiq', seconds: 44 }] }, { pendingText: 'X' });
+        assert.equal(two.children.length, 3);
+        assert.equal(two.children[1].textContent, 'NetIQ 44 秒');
+        assert.equal(two.children[2].textContent, 'X');
+        // 不帶第二參數或空字串：與原本相同
+        assert.equal(renderDayTimingCell(timing), '01:00～02:00（1 時 0 分）');
+        assert.equal(renderDayTimingCell(timing, { pendingText: '' }), '01:00～02:00（1 時 0 分）');
+    },
+
+    dayTimingCellInProgress() {
+        assert.equal(renderDayTimingCell(null, { inProgress: true }), '進行中');
+        assert.equal(renderDayTimingCell({ firstStartedAt: at(1), totalSeconds: null, interruptedCount: 0 }, { inProgress: true }), '進行中');
+        // 已有總耗時就不取代；沒進行中時維持原樣
+        assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }, { inProgress: true }), '01:00～02:00（1 時 0 分）');
+        assert.equal(renderDayTimingCell(null), dayTimingText(null));
+    },
+
+    // 今天有新一趟在跑、但前面有異常中斷：第一行不可被「進行中」蓋掉
+    dayTimingCellInProgressKeepsInterrupted() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: null, totalSeconds: null, interruptedCount: 1, lastInterruptedActivityAt: at(2) };
+        const cell = renderDayTimingCell(timing, { inProgress: true });
+        const first = typeof cell === 'string' ? cell : cell.children[0].textContent;
+        assert.ok(first.includes('異常中斷'), first);
+        assert.ok(!first.includes('進行中'), first);
+        // AI 補跑文字同理
+        const ai = { firstStartedAt: at(1), totalSeconds: null, interruptedCount: 0, otherAiRuns: 1, otherAiSeconds: 60 };
+        assert.equal(renderDayTimingCell(ai, { inProgress: true }), dayTimingText(ai));
+    },
+
+    // 總表「未執行」格：未執行與空資料待複查並列的四種組合（切出 runs.js 的 notRunCell／countCell 本體執行）
+    notRunCellCombos() {
+        const src = fs.readFileSync(path.join(jsRoot, 'pages', 'runs.js'), 'utf8');
+        const extract = decl => {
+            const start = src.indexOf(decl);
+            assert(start >= 0, `找不到 ${decl}`);
+            const open = src.indexOf('{', src.indexOf(')', start));
+            let depth = 0;
+            for (let i = open; i < src.length; i++) {
+                if (src[i] === '{') depth++;
+                else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+            }
+            throw new Error(`未閉合 ${decl}`);
+        };
+        const STATUS_META = { none: { color: '--lf-gray-200' } };
+        const notRunCell = new Function('document', 'STATUS_META',
+            `${extract('function notRunCell')}\n${extract('function countCell')}\nreturn notRunCell;`)(document, STATUS_META);
+        const text = cell => typeof cell === 'string' ? cell : cell.textContent;
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 0 })), '3（尚未處理）');
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2 })), '3（尚未處理）＋空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 1, recheckCount: 2 })), '1＋空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 2 })), '空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 0 })), '');
     }
 };
 

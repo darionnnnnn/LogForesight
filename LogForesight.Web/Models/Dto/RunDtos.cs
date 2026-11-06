@@ -28,6 +28,12 @@ public class RunDaySummaryDto
     public int RunningCount { get; set; }
     public int NotRunCount { get; set; }
 
+    /// <summary>NetIQ 回空資料、等下一窗口複查一次的主機數：不是漏跑，不計入 <see cref="NotRunCount"/></summary>
+    public int RecheckCount { get; set; }
+
+    /// <summary>今天列限定：最後一趟取數結束時尚有的待補事項（或「最後一趟異常中斷」）；其他列與無待補時為 null</summary>
+    public string? PendingSummary { get; set; }
+
     /// <summary>本機分析已停用（回饋十八輪批次D）：排程設定「分析本機主機」關閉時，本機主機的
     /// 空白日不算進「未執行」——那是設定行為不是漏跑，混計會讓人誤判排程壞了。</summary>
     public int LocalDisabledCount { get; set; }
@@ -60,7 +66,7 @@ public class RunDayHostStatusDto
 {
     public string HostName { get; set; } = string.Empty;
 
-    /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none | local_disabled</summary>
+    /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none | local_disabled | recheck（空資料待複查）</summary>
     public string Status { get; set; } = string.Empty;
 
     /// <summary>狀態的補充說明（等複查、已放棄自動重查）；null＝沒有</summary>

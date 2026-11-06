@@ -885,6 +885,10 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     若一次要比對多列細節，表格上方給一個全展／全收控制項（`ui.js` 的 `toggleAllTableDetails`，
     作用範圍為當頁，按鈕文字隨狀態切換）。**只適用於 `rowDetail`（eager，進頁就建好 DOM）的表格**
     ——它直接操作 DOM，會繞過 `onRowExpand` 的 lazy 填充，lazy 模式的頁面用了會展出空白詳情列。
+14. **固定動作欄只套直接包的那張表**：`stickyLastColumn` 的 sticky 規則以 `.lf-table-wrap--sticky-action > table > …` 子代鏈
+    限定到表頭與資料列最後一欄，排除展開列 `tr.lf-row-detail` 與展開格內的巢狀表格，並以 `:where()` 把特異度壓在 (0,2,1)，
+    讓 `.lf-row--highlight` 等列狀態仍蓋得過 sticky 欄白底；展開格 `.lf-row-detail > td` 拿掉 Bootstrap 列 hover 的 inset 陰影，
+    hover 巢狀列時只有該巢狀列變色（`TableConsistencyUiTests` 守門）。
 
 - **載入失敗的收斂**：骨架列（`renderLoading`）是
   「等一下就會有東西」的承諾；各頁的 `load()`／`init()` 若沒有頂層 catch，中途任何一支 API
@@ -1262,8 +1266,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
   OS 則決定這台套哪個平台的規則面，判讀問題時需要知道。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
+- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
-  1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合，展開狀態記 `localStorage`（常看全文的人不必每次重點）；
+  0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
+     其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
+     兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
+     欄頂「收合 ›」收回並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
+     狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
+     第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
+     < lg 與列印回到上下堆疊、側軌隱藏。「去處理」意圖的連結帶 `#handling`（`core/paths.js` `recordDetailUrl(…, { handle: true })`）：
+     問題查詢展開列「去處理」、「下一筆未處理」、處理人頁的交辦單列與「被指派的風險日」、使用者頁的「未結案風險日」；列表整列、主機時間軸、PRTG 維護、交辦單 PRTG 佐證是查看，不帶。
+  1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合；本頁每次進頁都收合，不記展開狀態（`reportCard` 不傳 `storageKey`）；
      複製/列印鈕 `stopPropagation` 不被 header 攔截，header 補 `role=button`/`aria-expanded`/鍵盤支援。
   2. **未處理等級預設不處理**：`IssueDto.IsDefaultUnhandled`（未列入「系統管理 > 設定」頁
      `UnhandledSeverities` 的嚴重度、且從未標記時後端算出）→ 顯示
@@ -1321,9 +1334,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題行＋
      嚴重度/次數/時段 meta 行＋說明＋keyDetails＋原始訊息連結），趨勢與處理狀態維持獨立欄
      （補 `min-width` 防擠壓）——keyDetails（4703 這類事件動輒數百字的帳號/IP 彙總）
-     否則會把其餘欄壓成逐字直排。keyDetails 超過 3 行以 line-clamp 收合＋「顯示全部」展開
-     （初次量測隱藏中的列——收合區——由 ResizeObserver 於展開時補量）；列印時
-     `@media print` 解除收合。
+     否則會把其餘欄壓成逐字直排。長文字一律走 `ui.js` 的 `collapsibleText`：容器文字超過 300 字（`COLLAPSE_LIMIT`）才收合，
+     純文字顯示到前 300 字內最後一個分隔符（空白、換行、Tab、頓號、全形與半形的逗號和分號、句號）＋「…」，300 字內沒有分隔符時取前 300 字＋「…」，不從帳號或 IP 中間切；
+     有子元素的區塊（AI 判讀、AI 深入分析每一條）以 `max-height`＋底部漸層收合；按鈕「顯示全文（共 N 字）」／「收合」，
+     判準只看字數不量版面（收合區在 `d-none` 內建構也成立）。套用於 keyDetails、說明、殘留憑證說明、處置參考的說明與影響、
+     AI 判讀結果、AI 深入分析；PRTG 趨勢證據（固定欄位）不套用。列印一律全文（全站單一 beforeprint／afterprint 監聽）。
   12a. **殘留憑證徽章與登入失敗明細表**（`issueCell` 內，依此順序排在 keyDetails 之前）：
      - `ResidualCredentialBasis` 有值時顯示 info-soft 區塊，徽章文字依
        `ResidualCredentialRetry` 為「疑似殘留憑證重試」或「可能由殘留憑證觸發」
@@ -1458,11 +1473,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
-  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽四段（headline／狀況／趨勢／建議處置，
+  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／給主管的說明／狀況／趨勢／建議處置；「給主管的說明」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
   僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
-  依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
+  依 `AiAnalyzed` 旗標；「給主管的說明：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
 - **「AI 分析中」徽章**：取數與 AI 判讀脫鉤後
   （見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節），統計已寫入、
@@ -2263,7 +2278,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
-- **系統健康頁籤**：顯示「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+- **系統健康頁籤**：顯示「PRTG 快照」、「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+  「背景工作」表的「密碼欄位加密」列在金鑰來源後接金鑰檔位置提示（`HealthDetailDto.CryptoKeyLocationWarning`，由 `CryptoKeyBootstrapper.EvaluateKeyLocationWarning` 啟動時算一次）：來源 `env` 不提示；`embedded` 提示金鑰檔無法建立；`file` 且金鑰檔路徑（`GetFullPath`、補分隔符比到目錄邊界、Windows 不分大小寫）位於 `AppContext.BaseDirectory` 之下時，提示重新部署會清掉金鑰檔。此提示**不併入** `degraded`／整體狀態（預設安裝 DataRoot 留空即此情境）。
   新鮮度的成功判定走 `BatchRunExtensions.CountsForFreshness`：排程取數趟，或完整範圍（`BatchRun.Scope == full`）的手動取數趟，狀態為成功或有警告；AI 趟、範圍縮小的手動趟與 console 舊趟不算。全站告示（只給 Maintain／DevMonitor）在過期時多一句原因（`freshnessReason`）：`credentialIssue`（有憑證解不開；金鑰不符但全部解得開時不算）優先，Maintain 附 NetIQ 維護與 PRTG 維護連結，只有 DevMonitor 時附管理者聯絡人；其次是 `lastRunStatus`（最近一趟排程取數失敗、已停止、異常中斷）；其餘視為排程沒在跑，提示確認站台常駐。摘要信文字不變。過期狀態可按
   「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
   正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
@@ -3029,8 +3045,14 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
   `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
-    未執行計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天）。
+    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天）。
     **今天的附加列**：今天已有取數趟時，第 1 頁多一列（`IsToday`，執行中再帶 `InProgress`），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
+    **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
+    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」。主機明細說明與續跑規則同一判定：
+    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時寫「空資料，下一窗口複查一次」，用完時沿用一般的已用完文字。
+    **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
+    異常中斷寫「最後一趟異常中斷」，否則 `RunResume.HasWork` 時寫「最後一趟結束時尚有：」＋`Describe()`；顯示在「執行時間」格第二行之後。
+    過去日期不顯示（那是當時的快照）。今天執行中且第一行原本會是「—」時，改寫「進行中」（有異常中斷或 AI 補跑文字時保留原文字）。
     **日期錨點是昨天**：D 日的列＝D 日夜間執行的批次，分析的是 D-1 的資料
     （NetIQ 主機的狀態判定就是「D-1 有無分析紀錄」），今天的批次白天尚未執行，列進來必然
     整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
@@ -3040,7 +3062,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     第一行是取數趟與跟隨取數 AI 趟（`Trigger=fetch-followup`）的最早開始～最晚結束與總耗時（聯集，重疊不重複算）；
     同日多趟時第一行加「共 N 趟」（起訖差會大於總耗時）。第二行小字「本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 · AI 1 分 27 秒」（`Branches`，舊趟沒有階段資料時寫「無階段資料（升級前紀錄）」），PRTG 是 `prtg`、`prtg-sync`、`prtg-triggered`、`prtg-value-fill` 的聯集，展開列再列子階段（`SubPhases`）；當天另有非跟隨的 AI 趟（排程補跑、手動）時加「另有 AI 補跑 N 趟（M）」
     （`OtherAiRuns`、`OtherAiSeconds`），這些趟不進第一行的起訖與總計；當天只有這類 AI 趟時第一行就寫「AI 補跑 N 趟（M）」。
-    `dailyHealth.totalSeconds`（診斷匯出）即第一行的總耗時，含跟隨取數 AI 趟。
+    `dailyHealth.recheckCount`／`pendingSummary`（診斷匯出）同上；`notRun` 不含空資料待複查。`dailyHealth.totalSeconds`（診斷匯出）即第一行的總耗時，含跟隨取數 AI 趟。
     展開列列本機／NetIQ／PRTG／AI 各路區間與耗時，最後一列「總計」（`RunDayTimingBuilder`）；AI 路在趟沒有階段資料時用整趟起訖。
     異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；
     當天已完成的取數趟全部沒有階段資料（升級前紀錄，`FetchRunsWithoutPhases` 等於 `FetchRuns`）時，本機／NetIQ／PRTG 顯示「無階段資料（升級前紀錄）」，新舊混合時只用有階段資料的趟計算；當天完全沒有趟次才是「—」。AI 趟不進主機×日。

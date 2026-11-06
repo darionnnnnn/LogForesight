@@ -93,4 +93,15 @@ public class HealthTabUiTests
         Assert.Contains("hash: true", js);
         Assert.Single(Regex.Matches(js, "api/health/detail'"));
     }
+
+    [Fact]
+    public void 健康頁金鑰狀態引用金鑰檔位置提示()
+    {
+        var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "settings.js");
+        var start = js.IndexOf("function cryptoStatus", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到 cryptoStatus");
+        var end = js.IndexOf("\nfunction ", start + 10, StringComparison.Ordinal);
+        var body = end > 0 ? js[start..end] : js[start..];
+        Assert.Contains("cryptoKeyLocationWarning", body);
+    }
 }

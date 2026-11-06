@@ -620,4 +620,53 @@ public class CryptoKeyBootstrapperTests : IDisposable
             await holderTask;
         }
     }
+
+    // ── 金鑰檔位置提示（純函式）──────────────────────────────────────────
+
+    [Fact]
+    public void 位置提示_env與未知來源為null_embedded提示內嵌金鑰()
+    {
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("env", "x", "y", true));
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("other", "x", "y", true));
+        Assert.Contains("內嵌金鑰", CryptoKeyBootstrapper.EvaluateKeyLocationWarning("embedded", "x", "y", true));
+    }
+
+    [WindowsFact]
+    public void 位置提示_Windows路徑_金鑰檔在部署目錄內命中()
+    {
+        var w = CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", @"C:\site\keys\lf-crypto.key", @"C:\site\", true);
+        Assert.Contains("部署目錄", w);
+    }
+
+    [WindowsFact]
+    public void 位置提示_Windows路徑_相鄰同前綴目錄不命中()
+    {
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", @"C:\site-data\keys\lf-crypto.key", @"C:\site", true));
+    }
+
+    [WindowsFact]
+    public void 位置提示_Windows路徑_大小寫旗標決定是否命中()
+    {
+        Assert.NotNull(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", @"c:\site\keys\x.key", @"C:\Site\", true));
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", @"c:\site\keys\x.key", @"C:\Site\", false));
+    }
+
+    [WindowsFact]
+    public void 位置提示_Windows路徑_不同磁碟不命中()
+    {
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", @"D:\data\keys\x.key", @"C:\site\", true));
+    }
+
+    [Fact]
+    public void 位置提示_跨平台_在部署目錄內命中_相鄰同前綴不命中()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lf-loc-" + Guid.NewGuid().ToString("N"));
+        var site = Path.Combine(root, "site");
+        var inside = Path.Combine(site, "keys", "lf-crypto.key");
+        var sibling = Path.Combine(root, "site-data", "keys", "lf-crypto.key");
+
+        Assert.Contains("部署目錄", CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", inside, site, false));
+        Assert.Contains("部署目錄", CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", inside, site + Path.DirectorySeparatorChar, false));
+        Assert.Null(CryptoKeyBootstrapper.EvaluateKeyLocationWarning("file", sibling, site, false));
+    }
 }

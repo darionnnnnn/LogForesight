@@ -584,7 +584,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     [Fact]
     public async Task 情境7_強制重新分析_重標後全部重跑且舊AI文字保留顯示直到覆蓋()
     {
-        var (service, _, _, _) = CreateTestHarness();
+        var (service, runState, _, _) = CreateTestHarness();
         var store = _backend.RecordStore();
 
         var date1 = DateTime.Today.AddDays(-3);
@@ -596,9 +596,9 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         // 未勾選強制重新分析時，已完成者不受影響
         int initialCalls = _ai.Calls;
-        await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test");
-        // 等待執行結束
-        await Task.Delay(100);
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        // 等背景執行真正結束：固定延遲在機器忙時等不到，背景迴圈會撿走下面剛重標的紀錄
+        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(initialCalls, _ai.Calls);
 
         // 驗證重標動作：SQL 整批 UPDATE

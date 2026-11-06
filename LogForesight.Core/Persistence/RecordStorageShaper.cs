@@ -40,6 +40,7 @@ internal static class RecordStorageShaper
             RiskReview = record.RiskReview,
             RiskBasis = record.RiskBasis,
             Headline = record.Headline,
+            Brief = record.Brief,
             Summary = record.Summary,
             TrendAssessment = record.TrendAssessment,
             Action = record.Action,

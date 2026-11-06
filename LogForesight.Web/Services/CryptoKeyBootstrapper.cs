@@ -35,6 +35,43 @@ public static class CryptoKeyBootstrapper
         internal set => _keyMismatch = value;
     }
 
+    private static volatile string? _keyLocationWarning;
+
+    /// <summary>
+    /// 啟動時算出的金鑰檔位置風險提示（金鑰檔與部署目錄在一起、或退回內嵌金鑰）；null＝無風險。
+    /// 僅供健康頁顯示，不影響整體狀態。
+    /// </summary>
+    public static string? KeyLocationWarning
+    {
+        get => _keyLocationWarning;
+        internal set => _keyLocationWarning = value;
+    }
+
+    /// <summary>
+    /// 依金鑰來源與路徑判斷位置風險（純函式）。env 無金鑰檔；embedded 代表建檔失敗；
+    /// file 且金鑰檔位於部署目錄之內時，重新部署清掉執行目錄會連金鑰檔一起清掉。
+    /// （與靜態屬性 <see cref="KeyLocationWarning"/> 同名會衝突，故函式叫 EvaluateKeyLocationWarning。）
+    /// </summary>
+    internal static string? EvaluateKeyLocationWarning(string keySource, string keyFilePath, string baseDirectory, bool caseInsensitive)
+    {
+        switch (keySource)
+        {
+            case "embedded":
+                return "金鑰檔無法建立，目前以內嵌金鑰運作；請檢查資料目錄的寫入權限。";
+            case "file":
+                var sep = Path.DirectorySeparatorChar;
+                var key = Path.GetFullPath(keyFilePath);
+                var prefix = Path.GetFullPath(baseDirectory);
+                if (!prefix.EndsWith(sep)) prefix += sep;
+                var comparison = caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                return key.StartsWith(prefix, comparison)
+                    ? "金鑰檔與部署目錄在一起，重新部署會清掉它並讓所有已存憑證失效；請把 DataRoot 設到部署目錄之外，或把 keys 資料夾排除在部署清除範圍（已排除者可忽略）。"
+                    : null;
+            default:
+                return null;
+        }
+    }
+
     /// <summary>金鑰檔路徑（DataRoot\keys\lf-crypto.key）</summary>
     public static string KeyFilePath(string dataRoot) => Path.Combine(dataRoot, "keys", "lf-crypto.key");
 
@@ -64,6 +101,23 @@ public static class CryptoKeyBootstrapper
         var acquired = new NamedMutexGate(MutexName).RunExclusive(
             () => probed = RunCore(backend, path, settingsStore, sentinelStore), mutexTimeout,
             runActionWhenNotAcquired: false);
+        if (acquired)
+        {
+            // 金鑰來源已在 RunCore 內確定；只算一次，供健康頁顯示。純顯示用的提示算不出來只記 log，不能讓站台啟動失敗
+            string? warning = null;
+            try
+            {
+                warning = EvaluateKeyLocationWarning(
+                    CryptoHelper.KeySource, path, AppContext.BaseDirectory, OperatingSystem.IsWindows());
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[Crypto] 金鑰檔位置提示無法判定，略過提示");
+            }
+            KeyLocationWarning = warning;
+            if (warning != null) Log.Warn("[Crypto] {0}", warning);
+        }
+
         if (!acquired)
             throw new InvalidOperationException(
                 $"無法在 {mutexTimeout.TotalSeconds:0.###} 秒內取得金鑰準備互斥；未執行任何金鑰或資料庫寫入，啟動已停止。" +

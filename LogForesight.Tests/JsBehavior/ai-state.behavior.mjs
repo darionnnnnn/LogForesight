@@ -64,6 +64,16 @@ const { aiStatusBadge } = new Function('aiStateOf', 'aiDegradedBadge', `
     return { aiStatusBadge };
 `)(aiStateOf, aiDegradedBadge);
 
+// 第 66 輪 C：AI 摘要區塊（含給主管的說明）；renderAiInline 以 textContent 附加，等同 production 對純文字的行為
+const briefToasts = [];
+const { aiSummaryBlock } = new Function('renderAiInline', 'toast', `
+    ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function aiSummaryBlock(')}
+    ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function briefBlock(')}
+    return { aiSummaryBlock };
+`)((el, text) => { el.appendChild(document.createTextNode(text)); }, (message, kind) => briefToasts.push([message, kind]));
+
+const briefDetail = (over) => ({ aiAnalyzed: true, headline: 'H', brief: 'X', summary: 'S', trendAssessment: '', action: 'A', ...over });
+
 /** 只收「徽章」節點（class 含 lf-badge）的文字 */
 function badgeTexts(node) {
     const found = [];
@@ -186,6 +196,46 @@ const cases = {
             const badge = aiStatusBadge(record);
             assert.deepEqual(badge ? [badge.textContent] : [], expected, `詳情：${label}`);
         }
+    },
+    摘要區塊給主管的說明位置與複製鈕() {
+        const block = aiSummaryBlock(briefDetail());
+        const text = block.textContent;
+        assert(text.includes('給主管的說明'), text);
+        assert(text.includes('複製'), text);
+        const headlineAt = text.indexOf('H');
+        const briefAt = text.indexOf('給主管的說明');
+        const summaryAt = text.indexOf('狀況：');
+        assert(headlineAt < briefAt && briefAt < summaryAt, `順序錯誤：${text}`);
+        const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
+        assert(brief, '找不到 lf-ai-brief');
+        const button = brief.find((n) => n.tagName === 'BUTTON');
+        assert.equal(button.textContent, '複製');
+        assert(String(button.className).includes('lf-no-print'));
+        const textNode = brief.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief__text'));
+        assert.equal(textNode.textContent, 'X');
+    },
+    摘要區塊沒有brief或未分析時不建節點() {
+        for (const detail of [briefDetail({ brief: '' }), briefDetail({ aiAnalyzed: false }), briefDetail({ brief: undefined })]) {
+            const block = aiSummaryBlock(detail);
+            assert(!block.textContent.includes('給主管的說明'), block.textContent);
+            assert.equal(block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief')), null);
+        }
+        assert.equal(aiSummaryBlock({ aiAnalyzed: true }), null);
+    },
+    摘要區塊複製鈕成功與失敗提示() {
+        const brief = aiSummaryBlock(briefDetail()).find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
+        const button = brief.find((n) => n.tagName === 'BUTTON');
+        const wait = () => new Promise((r) => setTimeout(r, 0));
+        return (async () => {
+            const written = [];
+            Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async (t) => written.push(t) } }, configurable: true });
+            button.dispatch('click'); await wait();
+            assert.deepEqual(written, ['X']);
+            assert.deepEqual(briefToasts.at(-1), ['已複製', 'success']);
+            Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async () => { throw new Error('denied'); } } }, configurable: true });
+            button.dispatch('click'); await wait();
+            assert.deepEqual(briefToasts.at(-1), ['無法複製，請手動選取文字', 'warning']);
+        })();
     },
     詳情案件授與檢視不顯示AI狀態() {
         assert.equal(aiStatusBadge({ ...rec(true, true, 2, 'x'), caseGrantOnly: true }), null);

@@ -150,6 +150,9 @@ public class HealthDetailDto : HealthDto
     /// <summary>本行程曾有密文解不開（該欄被當成未設定）</summary>
     public bool CryptoDecryptFailure { get; set; }
 
+    /// <summary>金鑰檔位置風險提示（與部署目錄在一起、或退回內嵌金鑰）；null＝無風險。僅供顯示，不影響整體狀態。</summary>
+    public string? CryptoKeyLocationWarning { get; set; }
+
     /// <summary>排程資料新鮮度（任務 A-3）</summary>
     public ScheduleFreshnessDto ScheduleFreshness { get; set; } = new();
 

@@ -1098,7 +1098,7 @@ public static class HostDayWorkflowFingerprint
     public static string ForReportInput(LogForesight.Core.Models.DailyAnalysisRecord record) =>
         HashParts([ForRecordWithIdentity(record, 0), JsonSerializer.Serialize(new[]
         {
-            record.Headline, record.Summary, record.TrendAssessment, record.Action
+            record.Headline, record.Summary, record.TrendAssessment, record.Action, record.Brief
         })]);
 
     private static string ForRecordWithIdentity(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId)

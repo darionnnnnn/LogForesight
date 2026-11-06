@@ -73,7 +73,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     noteLabel.htmlFor = 'wo-reply-note';
     const noteInput = document.createElement('textarea');
     noteInput.id = 'wo-reply-note';
-    noteInput.className = 'form-control form-control-sm mb-3';
+    noteInput.className = 'form-control form-control-sm';
     noteInput.rows = 3;
     form.append(noteLabel);
     // 下一張：說明預設清空，上一張的說明改成一鍵帶入（不同單的說明不一定能照抄）
@@ -86,17 +86,18 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         form.appendChild(previousNoteLink);
     }
     form.appendChild(noteInput);
+    // 必填說明欄的即時錯誤（狀態切換時一併更新標示）；aria-live 讓讀屏軟體念出錯誤。
+    // 交給編輯器放在尾區之後（[說明欄, 尾區, 錯誤訊息]）
+    const noteError = document.createElement('div');
+    noteError.className = 'invalid-feedback d-block mb-3';
+    noteError.setAttribute('aria-live', 'polite');
     const noteEditor = attachNoteEditor(noteInput, {
         draftKey: `wo-reply:${draftKey}`,
         ai: { context: () => aiContext },
         reuse: { issueKey: () => reuseIssueKey },
-        phrases: true
+        phrases: true,
+        errorEl: noteError
     });
-    // 必填說明欄的即時錯誤（狀態切換時一併更新標示）；aria-live 讓讀屏軟體念出錯誤
-    const noteError = document.createElement('div');
-    noteError.className = 'invalid-feedback d-block';
-    noteError.setAttribute('aria-live', 'polite');
-    noteInput.insertAdjacentElement('afterend', noteError);
     noteInput.addEventListener('input', () => {
         if (noteInput.value.trim()) {
             noteInput.classList.remove('is-invalid');

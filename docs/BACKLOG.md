@@ -51,7 +51,13 @@
 ### AI 回覆格式異常的成因尚未處理
 
 「AI 回覆格式異常」涵蓋解析失敗與內容檢查失敗，可能原因有欄位超長、欄位型別不符、`AiJson.TryParse` 取到第一個解析得出但不相關的物件、被 `max_tokens` 截斷。降級的主機日會自動補跑（上限與歸零見 WEB-SPEC §9.10）。目前只蒐集證據，不改提示詞與判定。
+已知證據：一批診斷匯出中 23 個主機日三次嘗試都回空陣列 `[]`；第二次起已關掉文法、重試提示也明講不要輸出空陣列，仍是同樣回覆，且這批案例沒有詳細診斷，成因無法判定。
 **觸發時機**：使用者交回第一份匯出的分析結果時，依主因選修法。
+
+### PRTG messages 讀數少於 treesize 只是提醒
+
+messages 帶時間篩選時 treesize 是否為篩選後筆數尚未證實，讀數少於 treesize 只寫 Debug 並彙總成執行輸出一行（不讓趟次變「有警告」）。代價是 messages 真被截斷時與這個提醒分不開。
+**觸發時機**：實機證實 treesize 在帶時間篩選時的語意後，決定要不要把 messages 也改成取不齊即失敗。
 
 ### 持續出現的提示：System 記錄保留不足、sensor 逾時
 
@@ -100,6 +106,28 @@
 `dotnet test --logger "trx;LogFileName=full.trx" --results-directory <dir>` 後跑 `python LogForesight.Tests/tools/test-timing.py <dir>/full.trx`，列出最慢類別與單案、依集合彙總、使用 `StorageBackend` 的類別占比。牆鐘受機器負載影響，只當觀察值。
 PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `PrtgRequestBudget.Shared`），新增測試不要 `new PrtgRequestBudget()`。`EfSqliteFixture` 共用一條記憶體連線，並行寫入的案例要用檔案型 DB。
 **剩餘最慢的**：`PrtgMonitoringPagingTests`（3 萬列規模）、`CalibrationServiceTests` 殘留判定、`BulkScaleGateTests`。要再縮短時從這幾個的資料量下手。
+
+### 處理面板的草稿與選取集合（既有行為，體檢探針已重現）
+
+- 日層級與批次模式共用同一份 `formDraft` 與同一個本機草稿鍵（`record:{host}:{date}`）：本機有草稿時自動還原會把推導出的預選狀態寫進草稿，接著勾選問題進批次模式就會被預選（違反「批次不預選」）；反向，批次選的狀態與說明會帶回日層級，日層級「儲存」會把針對某個問題的結論寫成整天狀態。修法：草稿加 `mode`（day／batch），模式不同不套用 status／dueDate／note，`saveFormDraft` 只在使用者實際操作後寫入；草稿鍵加模式後綴。
+- 「AI 整理」等待回應期間勾選或取消勾選會整張重建表單，回應寫進已卸下的舊 textarea 與本機草稿，眼前的新表單看不到，下次進頁才冒出草稿提示。修法：回應到達時檢查 `textarea.isConnected`，已卸下就丟棄；或編輯器提供 `destroy()`，重建時作廢進行中的請求與防抖計時器。
+- 切換嚴重度篩選或顯示範圍只重繪清單，不修剪 `selectedIssueKeys`：勾了 3 個再把篩選切到只剩 1 個可見，面板與側軌仍寫「已勾選 3 個」，「套用到 3 個問題」會送出看不到的問題。修法：篩選變更後移除不在 `visibleTopIssues()` 內的 key，再呼叫 `refreshRailSelectionSummary()` 與 `refreshSelection()`。
+**觸發時機**：下一輪動到處理面板時一併處理；三條都有可直接改成行為測試的探針步驟。
+
+### 長文字收合的已知取捨
+
+- 區塊模式只看字數：超過 300 字但排版後不到 9rem 高（寬欄、短行）的內容，仍會蓋上底部漸層與「顯示全文」鈕，按下去沒有更多內容。
+- 漸層終點色只有卡片底與 `--lf-gray-50` 兩種，放進其他底色的容器（如 `.lf-row--highlight`）會出現白帶；目前沒有這種組合。
+- 「給主管的說明」的丟棄規則只擋 IPv4 與 Event ID／事件編號，不擋 IPv6 與主機名稱（prompt 只禁 IP 與 Event ID）。
+**觸發時機**：使用者回報漸層蓋住可見內容時，改成在內容第一次現身時量一次 `scrollHeight`，量不到再退回字數判準；brief 出現 IPv6 時補規則。
+
+### 前端小幅收斂（不影響正確性）
+
+- 複製到剪貼簿的寫法有 7 處各自實作（報告卡、給主管的說明、問題查詢、NetIQ、PRTG 維護、交辦單詳情），可抽成 `core/ui.js` 的共用函式。
+- 連到風險日詳情的「查看」連結（主機時間軸、PRTG 維護、使用者頁、處理人頁已結案列）仍各自組 `/records/{hostId}/{date}`，可全面改用 `recordDetailUrl`。
+- `recordDetailUrl` 與報告卡的行為案例目前放在側軌相關的測試類別，可搬到各自主題的類別。
+- 處理面板儲存、指派或衝突重載後整個面板重繪，鍵盤焦點會回到頁首；可在重繪後把焦點設到面板標題。
+**觸發時機**：下次動到這些頁面時順手處理。
 
 ### 測試的時鐘與時區抽象
 

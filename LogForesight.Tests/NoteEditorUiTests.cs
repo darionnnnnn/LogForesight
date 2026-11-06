@@ -144,4 +144,49 @@ public class NoteEditorUiTests
         var clear = logout.IndexOf("clearAllDraftsForUser(", StringComparison.Ordinal);
         Assert.True(post >= 0 && clear > post, "草稿要在登出 API 成功之後才清");
     }
+
+    [Fact]
+    public void 處理面板與回覆彈窗_改用四區版面且錯誤訊息交給編輯器()
+    {
+        var panel = ReadJs("pages", "handling-panel.js");
+        Assert.DoesNotContain("createElement('hr')", panel);
+        Assert.Contains("lf-form-actions", panel);
+        Assert.Contains("lf-handling__chips", panel);
+        Assert.Contains("errorEl: noteFeedback", panel);
+        Assert.DoesNotContain("form.appendChild(noteFeedback)", panel);
+
+        var reply = ReadJs("pages", "issue-status-reply.js");
+        Assert.DoesNotContain("insertAdjacentElement('afterend', noteError)", reply);
+        Assert.Contains("errorEl: noteError", reply);
+
+        var editor = ReadJs("core", "note-editor.js");
+        Assert.Contains("lf-note-editor__tail", editor);
+        Assert.Contains("errorEl", editor);
+    }
+
+    [Fact]
+    public void 版面樣式_含說明欄尾區與處理面板chips格線與動作區()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        Assert.Contains(".lf-note-editor__tail", css);
+        Assert.Contains(".lf-form-actions", css);
+        var chips = css.IndexOf(".lf-handling__chips {", StringComparison.Ordinal);
+        Assert.True(chips >= 0, "找不到 .lf-handling__chips 規則");
+        var block = css.Substring(chips, css.IndexOf('}', chips) - chips);
+        Assert.Contains("grid-template-columns", block);
+        // 1024 寬、字級「中」時右欄面板約 300px：最小格寬要小到能排兩欄，不能退回 5.25rem
+        Assert.Contains("minmax(4.75rem, 1fr)", block);
+
+        // 說明欄尾區改用設計 token，不寫死色碼／圓角；沒有作用的 .lf-handling__updated 規則已刪
+        var tail = css.IndexOf(".lf-note-editor__tail {", StringComparison.Ordinal);
+        var tailBlock = css.Substring(tail, css.IndexOf('}', tail) - tail);
+        Assert.Contains("var(--lf-radius-sm)", tailBlock);
+        Assert.DoesNotContain(".25rem", tailBlock);
+        var invalid = css.IndexOf(".lf-note-editor__field.is-invalid + .lf-note-editor__tail {", StringComparison.Ordinal);
+        var invalidBlock = css.Substring(invalid, css.IndexOf('}', invalid) - invalid);
+        Assert.Contains("var(--lf-danger)", invalidBlock);
+        Assert.DoesNotContain("#dc3545", invalidBlock);
+        Assert.DoesNotContain(".lf-handling__updated", css);
+        Assert.DoesNotContain("minmax(5.25rem", block);
+    }
 }

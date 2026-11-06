@@ -406,6 +406,10 @@ internal class AiAnalysisResult
     [JsonPropertyName("headline")]
     public string Headline { get; set; } = string.Empty;
 
+    /// <summary>給主管的說明：2～3 句、可直接照念；選填，不進 validate，由 LogAnalysisService.NormalizeBrief 後處理</summary>
+    [JsonPropertyName("brief")]
+    public string Brief { get; set; } = string.Empty;
+
     /// <summary>今天發生什麼的白話敘述，禁用 Event ID 與程式碼層級術語</summary>
     [JsonPropertyName("story")]
     public string Story { get; set; } = string.Empty;

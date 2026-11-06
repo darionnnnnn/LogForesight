@@ -7,10 +7,11 @@
  */
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
-import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
+import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader, collapsibleText } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell } from '../core/format.js';
-import { initHandlingPanel, refreshSelection } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
+import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { reportCard } from '../core/report-view.js';
@@ -183,8 +184,17 @@ async function load() {
     // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）
     initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
+    // 側軌只建立一次：load() 因批次儲存重繪時不得重建、也不得重置展開狀態與手動選擇旗標
+    if (!sideRail) {
+        if (!currentDetail.caseGrantOnly) sideRail = setupSideRail();
+        // 案件授與檢視沒有側軌：右欄直接展開，維持原本的堆疊內容
+        else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');
+    }
+
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
+        // 側軌摘要的唯一更新路徑：面板每次載完（含自行重載）都會回呼
+        onRefreshed: updateSideRail,
         // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」
         caseGrantOnly: currentDetail.caseGrantOnly
     });
@@ -192,6 +202,59 @@ async function load() {
     await loadReports();
 
     setupNextUnhandled();
+}
+
+/** 側軌（第 66 輪 D2）：由 load() 建立一次；案件授與檢視不建立 */
+let sideRail = null;
+// 進頁面時讀一次 hash：「去處理」連結帶 #handling，處理面板載入完成後展開一次、用完即清
+let pendingHandlingHash = location.hash === '#handling';
+
+function setupSideRail() {
+    return createSideRail({
+        layout: document.getElementById('record-layout'),
+        side: document.getElementById('record-side'),
+        items: [
+            { key: 'handling', label: '處理狀態', target: document.getElementById('handling-panel').closest('section') },
+            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') }
+        ]
+    });
+}
+
+// 處理狀態按鈕的原摘要（不含勾選數）；勾選數量變動時以它為底重組
+let railHandlingSummary = '';
+
+/** 側軌「處理狀態」摘要：有勾選時前綴「已勾選 N 個・」，讓右欄收合時勾選也有回饋；沒有勾選就是原摘要 */
+function refreshRailSelectionSummary() {
+    if (!sideRail) return;
+    const count = selectedIssueKeys.size;
+    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary);
+}
+
+function updateSideRail(panelInfo) {
+    if (sideRail && panelInfo) {
+        const { handling, logCount } = panelInfo;
+        // 逾期放最前面：側軌空間窄、摘要會被截斷，最該先看到的是逾期
+        railHandlingSummary = (handling.isOverdue ? '逾期・' : '') + derivedStatusLabel(handling);
+        refreshRailSelectionSummary();
+        sideRail.setSummary('log', `${logCount ?? 0} 筆`);
+    }
+
+    // hash 的讀取與清除不看側軌在不在：案件授與檢視沒有側軌，#handling 一樣要清掉
+    if (pendingHandlingHash) {
+        pendingHandlingHash = false;
+        // < lg 右欄本來就展開，什麼都不做；只清 hash
+        if (sideRail && sideRail.isRailMode()) {
+            sideRail.expand('handling', { focus: false, scroll: true });
+        }
+        try { history.replaceState(null, '', location.pathname + location.search); } catch { /* 清不掉 hash 不影響使用 */ }
+    }
+}
+
+/** 勾選問題時右欄自動展開（使用者沒手動操作過側軌才做；勾選清空不自動收合） */
+function expandSideRailForSelection() {
+    if (sideRail && !sideRail.hasUserChoice() && !sideRail.isExpanded()) {
+        sideRail.expand('handling', { focus: false, scroll: false });
+    }
 }
 
 /** 批次套用成功後：重載頁面，已知雜訊另接治本提議（建立抑制規則） */
@@ -225,7 +288,7 @@ async function setupNextUnhandled() {
 
     if (!next) return;   // 這是最後一筆未處理
 
-    button.href = appUrl(`/records/${next.hostId}/${next.date}`);
+    button.href = appUrl(recordDetailUrl(next.hostId, next.date, { handle: true }));
     button.classList.remove('d-none');
 }
 
@@ -256,6 +319,88 @@ function aiStatusBadge(detail) {
         return badge;
     }
     return null;
+}
+
+/**
+ * 風險日詳情頁的 AI 摘要區塊（標題、給主管的說明、狀況／趨勢／建議處置）；沒有任何文字時回 null。
+ * 從 renderHeader 抽出，行為測試可單獨執行。
+ */
+function aiSummaryBlock(detail) {
+    // headline/brief/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
+    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
+    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
+    const textParts = [];
+    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
+    if (detail.aiAnalyzed && detail.brief) textParts.push({ brief: true, text: detail.brief });
+    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
+        if (text) textParts.push({ label, text });
+    }
+    if (textParts.length === 0) return null;
+
+    const target = document.createElement('div');
+    if (detail.aiAnalyzed) {
+        target.className = 'lf-ai-block mb-2';
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary mb-2';
+        badge.textContent = 'AI 摘要';
+        target.appendChild(badge);
+    }
+
+    for (const part of textParts) {
+        if (part.headline) {
+            const headline = document.createElement('div');
+            headline.className = 'fs-5 mb-2';
+            renderAiInline(headline, part.text);
+            target.appendChild(headline);
+            continue;
+        }
+        if (part.brief) {
+            target.appendChild(briefBlock(part.text));
+            continue;
+        }
+        const p = document.createElement('p');
+        p.className = 'mb-2';
+        const strong = document.createElement('strong');
+        strong.textContent = `${part.label}：`;
+        p.appendChild(strong);
+        renderAiInline(p, part.text);
+        target.appendChild(p);
+    }
+    return target;
+}
+
+/** 「給主管的說明」：可直接照念的 2～3 句，附一鍵複製（列印時不顯示按鈕） */
+function briefBlock(text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-ai-brief';
+    const head = document.createElement('div');
+    head.className = 'lf-ai-brief__head';
+    const badge = document.createElement('span');
+    badge.className = 'lf-badge lf-badge--secondary';
+    badge.textContent = '給主管的說明';
+    head.appendChild(badge);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn btn-link btn-sm p-0 lf-no-print';
+    copy.textContent = '複製';
+    copy.setAttribute('aria-label', '複製給主管的說明');
+    // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
+    const p = document.createElement('p');
+    copy.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(p.textContent);
+            toast('已複製', 'success');
+        } catch {
+            toast('無法複製，請手動選取文字', 'warning');
+        }
+    });
+    head.appendChild(copy);
+    wrap.appendChild(head);
+    p.className = 'lf-ai-brief__text';
+    renderAiInline(p, text);
+    wrap.appendChild(p);
+    return wrap;
 }
 
 function renderHeader(detail) {
@@ -343,46 +488,8 @@ function renderHeader(detail) {
         body.appendChild(history);
     }
 
-
-    // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
-    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
-    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
-    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
-    const textParts = [];
-    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
-    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
-        if (text) textParts.push({ label, text });
-    }
-
-    if (textParts.length > 0) {
-        const target = document.createElement('div');
-        if (detail.aiAnalyzed) {
-            target.className = 'lf-ai-block mb-2';
-            const badge = document.createElement('span');
-            badge.className = 'lf-badge lf-badge--secondary mb-2';
-            badge.textContent = 'AI 摘要';
-            target.appendChild(badge);
-        }
-
-        for (const part of textParts) {
-            if (part.headline) {
-                const headline = document.createElement('div');
-                headline.className = 'fs-5 mb-2';
-                renderAiInline(headline, part.text);
-                target.appendChild(headline);
-                continue;
-            }
-            const p = document.createElement('p');
-            p.className = 'mb-2';
-            const strong = document.createElement('strong');
-            strong.textContent = `${part.label}：`;
-            p.appendChild(strong);
-            renderAiInline(p, part.text);
-            target.appendChild(p);
-        }
-
-        body.appendChild(target);
-    }
+    const aiBlock = aiSummaryBlock(detail);
+    if (aiBlock) body.appendChild(aiBlock);
 
     const stats = document.createElement('div');
     stats.className = 'd-flex gap-4 mt-3 pt-3 border-top small text-muted';
@@ -639,6 +746,8 @@ function selectCheckbox(issue, sectionIssues) {
     check.addEventListener('change', () => {
         if (check.checked) selectedIssueKeys.add(issue.issueKey);
         else selectedIssueKeys.delete(issue.issueKey);
+        if (check.checked) expandSideRailForSelection();
+        refreshRailSelectionSummary();
         refreshSelection();
 
         const headerCheck = check.closest('table')?.querySelector('thead input[type="checkbox"]');
@@ -671,7 +780,9 @@ function selectAllCheckbox(sectionIssues) {
                 rowCheck.checked = check.checked;
             }
         }
+        refreshRailSelectionSummary();
         refreshSelection();
+        if (check.checked) expandSideRailForSelection();
     });
 
     return check;
@@ -1355,14 +1466,6 @@ function collapsedRestSection(rest) {
     toggle.addEventListener('click', () => {
         const nowOpen = body.classList.toggle('d-none') === false;
         caret.classList.toggle('lf-collapse-caret--open', nowOpen);
-
-        // keyDetails 的「顯示全部」按鈕靠量測裁切狀態決定要不要出現，但這批列是在 d-none
-        // 容器裡建構的、當時量不到——展開（列第一次現身）時補量（見 keyDetailsBlock）
-        if (nowOpen) {
-            for (const details of body.querySelectorAll('.lf-issue-details--clamped')) {
-                details.dispatchEvent(new Event('lf-remeasure'));
-            }
-        }
     });
 
     wrap.append(toggle, body);
@@ -1428,11 +1531,11 @@ function issueCell(issue) {
         const text = document.createElement('div');
         text.className = 'mt-1';
         text.textContent = issue.knownIssue;
-        wrap.appendChild(text);
+        wrap.appendChild(collapsibleText(text));
     }
 
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
-    // 超長時只是視覺上先收合（keyDetailsBlock），有明確的「顯示全部」可以展開，
+    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「顯示全文」可以展開，
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
@@ -1543,7 +1646,7 @@ function residualCredentialBlock(issue) {
     const basis = document.createElement('div');
     basis.className = 'mt-1';
     basis.textContent = issue.residualCredentialBasis;
-    wrap.appendChild(basis);
+    wrap.appendChild(collapsibleText(basis));
 
     return wrap;
 }
@@ -1638,50 +1741,18 @@ function workOrderBadge(workOrderId) {
 
 /**
  * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
- * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，先用 CSS line-clamp
- * 收 3 行，超過才出現「顯示全部」——沒被裁切的短內容不多一次點擊。
- * scrollHeight 是否大於 clientHeight 是判斷有沒有被裁切的標準手法，line-clamp
- * 要等這一輪繪製完成才量得準，故延到 requestAnimationFrame。
- * 列印時 @media print 解除裁切（site.css）：紙本一律看得到完整內容。
+ * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，交給共用的 collapsibleText：
+ * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「顯示全文」，不量測版面、
+ * 藏在 d-none 區塊裡的列也判得準。列印時一律看得到全文（見 ui.js／site.css）。
  */
 function keyDetailsBlock(keyDetails) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-1';
 
-    const clampedClass = 'lf-issue-details--clamped';
     const details = document.createElement('div');
-    details.className = `small text-danger ${clampedClass}`;
+    details.className = 'small text-danger';
     details.textContent = keyDetails;
-    wrap.appendChild(details);
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 small lf-no-print d-none';
-    toggle.textContent = '顯示全部';
-    wrap.appendChild(toggle);
-
-    // 呼叫當下這個節點還沒接上文件（renderTable 會在整列組好後才一次性 replaceChildren），
-    // scrollHeight/clientHeight 量到的都是 0——延到下一輪事件迴圈（setTimeout 0）才量得準。
-    // 用 setTimeout 而非 requestAnimationFrame：後者綁在合成/繪製管線上，分頁不在前景時
-    // 可能整批延後或不觸發（ResizeObserver 的回呼派發同樣綁在繪製步驟，一樣不可靠）。
-    //
-    // 「已處理／已有結論」收合區的列在 d-none 容器裡建構，setTimeout 量測時兩個高度都是 0
-    // （看起來像「沒被裁切」），按鈕會永遠不出現——收合區展開是這些列唯一的現身路徑，
-    // 由 collapsedRestSection 在展開時對區塊內的 keyDetails 派發 lf-remeasure 事件補量，
-    // 確定性觸發、不依賴任何繪製時機。evaluate 冪等：量得到就定案，重複呼叫無副作用。
-    const evaluate = () => {
-        if (details.clientHeight === 0) return;   // 仍隱藏中，等下一次 lf-remeasure
-        if (details.scrollHeight > details.clientHeight + 1) toggle.classList.remove('d-none');
-    };
-
-    details.addEventListener('lf-remeasure', evaluate);
-    setTimeout(evaluate, 0);
-
-    toggle.addEventListener('click', event => {
-        event.stopPropagation();
-        const nowClamped = details.classList.toggle(clampedClass);
-        toggle.textContent = nowClamped ? '顯示全部' : '收合';
-    });
+    wrap.appendChild(collapsibleText(details));
 
     return wrap;
 }
@@ -2162,7 +2233,7 @@ function guidancePanel(issue) {
         const text = document.createElement('div');
         text.className = 'small';
         text.textContent = g.explanation;
-        wrap.append(label, text);
+        wrap.append(label, collapsibleText(text));
     }
 
     if (g.impact) {
@@ -2172,7 +2243,7 @@ function guidancePanel(issue) {
         const text = document.createElement('div');
         text.className = 'small';
         text.textContent = g.impact;
-        wrap.append(label, text);
+        wrap.append(label, collapsibleText(text));
     }
 
     appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
@@ -2208,6 +2279,9 @@ function aiInterpretPanel(issue) {
                 output.classList.add('text-muted');
             } else {
                 renderAiText(output, result.text, { badge: 'AI 判讀', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
+                // 內容寫好才判斷要不要收合；collapsibleText 會把 output 搬進包裝元素，所以把包裝接回 wrap
+                const block = collapsibleText(output);
+                if (block !== output) wrap.appendChild(block);
                 // 只有真的拿到判讀結果才鎖：逾時或回空時鎖死，使用者只能重整整頁才能再試一次
                 button.disabled = true;
             }
@@ -2260,7 +2334,7 @@ function otherAnalysis(detail) {
         appendList(item, '可能原因', finding.likelyCauses);
         appendList(item, '處置步驟', finding.nextSteps);
 
-        box.appendChild(item);
+        box.appendChild(collapsibleText(item));
     }
 
     return box;
@@ -2289,11 +2363,10 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
  * 版面、鍵盤開合與複製/下載/列印行為完全一致。
  *
  * 預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的重點問題，
- * 全文留給少數需要逐字核對的場合。展開狀態各自記 localStorage——
- * 常看某一種全文的人不必每次進來都重新展開。
+ * 全文留給少數需要逐字核對的場合。每次進頁面都收合，不記展開狀態。
  */
-const riskReportCard = reportCard({ storageKey: 'lf.recordDetail.reportExpanded' });
-const checkupReportCard = reportCard({ storageKey: 'lf.recordDetail.checkupReportExpanded' });
+const riskReportCard = reportCard();
+const checkupReportCard = reportCard();
 const reportCards = document.getElementById('report-cards');
 const riskReportPendingNotice = document.createElement('p');
 riskReportPendingNotice.className = 'small text-warning-emphasis mb-0';

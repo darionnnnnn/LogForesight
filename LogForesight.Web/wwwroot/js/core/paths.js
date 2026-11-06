@@ -34,6 +34,14 @@ export function recordsUrl(filters = {}) {
 }
 
 /**
+ * 風險日詳情路徑。`handle: true` 是「去處理」意圖（帶 `#handling`，詳情頁會展開右側處理面板）；
+ * 一般「查看」不帶 hash。回傳 app 內路徑，呼叫端寫入 href 時才套 appUrl（或交給 rowHref）。
+ */
+export function recordDetailUrl(hostId, date, { handle = false } = {}) {
+    return `/records/${hostId}/${date}${handle ? '#handling' : ''}`;
+}
+
+/**
  * 目前頁面在 app 內的路徑（已去掉掛載前綴），供路由比對用。
  * 直接比對 `location.pathname` 在子 Application 下會失準，而且是**靜默失效**不是 404：
  * 選單不會高亮、登入頁判斷會失敗，畫面卻看起來正常。

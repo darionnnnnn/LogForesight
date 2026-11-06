@@ -11,7 +11,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
+import { renderLoading, renderEmpty, renderChips, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant } from '../core/handling-statuses.js';
@@ -25,9 +25,12 @@ function operatorLabel(actorDisplayName, actorAccount) {
 // core/handling-statuses.js 定義。「觀察中」只在問題層級（批次模式）提供
 // （docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses 沒有這個值域，觀察的對象是
 // 「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API 回一個看不懂的驗證錯誤
-const toChip = s => ({ value: s.value, text: s.label });
+// text＝完整名稱（title／aria-label／驗證訊息用），short＝chip 上顯示的短名稱
+const toChip = s => ({ value: s.value, text: s.label, short: s.shortLabel ?? s.label });
 const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
 const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
+// 轉成共用 renderChips 的項目：chip 上顯示短標籤，title 與 aria-label 用完整名稱（短標籤單看會失去語意）
+const toChipItem = chip => ({ value: chip.value, label: chip.short, title: chip.text, ariaLabel: chip.text });
 
 /** 說明欄標籤與必填規則：由目錄衍生 */
 function noteFieldOf(status) {
@@ -59,7 +62,11 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     const formDraft = state?.hostId === hostId && state?.date === date ? state.formDraft : null;
     state = { hostId, date, handling, users, getSelection, onBatchSaved, options, formDraft };
     render();
-    await loadLogs(hostId, date);
+    const logCount = await loadLogs(hostId, date);
+    // 通知頁面層組側軌摘要（處理狀態一行字、歷程筆數）：面板自行重載（日層級儲存、指派、409）也會走到這裡，
+    // 所以不能只靠回傳值——內部重載的回傳值沒人接
+    options.onRefreshed?.({ handling, logCount });
+    return { handling, logCount };
 }
 
 /** 勾選狀態改變時呼叫：只重繪「處理狀態」表單，不重新打 API（負責人／處理人／歷程不受影響） */
@@ -104,7 +111,7 @@ function hintText(text) {
     return el;
 }
 
-function derivedStatusLabel(handling) {
+export function derivedStatusLabel(handling) {
     const text = handling.derivedStatusText ?? handling.statusText;
     return handling.totalIssues > 0 ? `${text}（${handling.closedIssues}/${handling.totalIssues} 已結案）` : text;
 }
@@ -113,6 +120,7 @@ function render() {
     const panel = document.getElementById('handling-panel');
     const { handling, users, hostId, date, options } = state;
     panel.replaceChildren();
+    panel.classList.add('lf-handling');   // 四區（狀態摘要／人員／表單／動作）的版面容器
 
     // 案件授與檢視（docs/archive/FEEDBACK-10-PLAN.md §7）：這個人被交辦的是「這台主機的某個問題」，
     // 不是這一天。日層級的一切（整天的推導狀態、主機負責人、處理人、日狀態表單）
@@ -120,7 +128,7 @@ function render() {
     // 的批次套用區（後端 DayHandlingCommandService 對日層級寫入另有一道拒絕）
     if (options?.caseGrantOnly) {
         const notice = document.createElement('div');
-        notice.className = 'lf-hint mb-3';
+        notice.className = 'lf-hint lf-handling__section';
         notice.textContent = '您以交辦單處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
         panel.appendChild(notice);
 
@@ -135,44 +143,40 @@ function render() {
         return;
     }
 
-    panel.appendChild(readonlyField(
-        '目前狀態',
-        derivedStatusLabel(handling),
-        '由問題標記推導；與下方表單要儲存的日層級狀態是兩件事——沒有勾選問題逐項標記時兩者相同'
-    ));
+    // ── (1) 狀態摘要區 ──
+    panel.appendChild(statusSummary(handling));
 
-    // 案件連動提示（docs/archive/FEEDBACK-4-PLAN.md §2）：本日有幾個問題屬進行中案件，
-    // 讓使用者知道為什麼那幾列的狀態會「自己動」（案件同步的結果，不是自己標的）
-    if (handling.openCaseCount > 0) {
-        const hint = document.createElement('div');
-        hint.className = 'lf-hint mb-3';
-        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中交辦單，狀態會跟著交辦單涵蓋的其他日子連動。`;
-        panel.appendChild(hint);
-    }
+    // ── (2) 人員區 ──
+    const people = document.createElement('div');
+    people.className = 'lf-handling__section';
 
-    // ── 負責人（唯讀）：主機的長期屬性，改派處理人不會動到它 ──
-    panel.appendChild(readonlyField(
+    // 負責人（唯讀）：主機的長期屬性，改派處理人不會動到它
+    people.appendChild(readonlyField(
         '主機負責人',
         handling.ownerNames.length ? handling.ownerNames.join('、') : '未指定',
         '主機的長期屬性，於「主機」維護頁調整',
         true
     ));
 
-    // ── 處理人：事件層級，只有 admin 能改 ──
+    // 處理人：事件層級，只有 admin 能改
     if (handling.canAssign) {
-        panel.appendChild(assignField(handling, users, hostId, date));
+        people.appendChild(assignField(handling, users, hostId, date));
     } else {
-        panel.appendChild(readonlyField(
+        people.appendChild(readonlyField(
             '處理人',
             handling.handlerName ? formatUserName(handling.handlerName, handling.handlerAccount) : '未指派',
             '僅系統管理員可指派或改派'
         ));
     }
-
-    panel.appendChild(document.createElement('hr'));
+    panel.appendChild(people);
 
     if (!handling.canHandle) {
-        if (handling.note) panel.appendChild(readonlyField('處理說明', handling.note));
+        if (handling.note) {
+            const noteSection = document.createElement('div');
+            noteSection.className = 'lf-handling__section';
+            noteSection.appendChild(readonlyField('處理說明', handling.note));
+            panel.appendChild(noteSection);
+        }
         return;
     }
 
@@ -180,26 +184,84 @@ function render() {
 }
 
 /**
- * hintAsIcon（docs/archive/FEEDBACK-5-PLAN.md §6）：預設 false 沿用常駐 form-text——三個呼叫端裡
- * 只有「主機負責人」的說明屬純描述性質（看過一次就記得），改收進 icon；其餘兩個
- * （目前狀態的雙軌語意、處理人唯讀原因）填錯/看漏代價較高，維持常駐。
+ * 狀態摘要區：一列放「目前狀態」值（逾期時加文字標示，不只靠顏色）與右側「最後更新」，
+ * 下方一行常駐說明（目前狀態是推導值，與下方表單要儲存的日層級狀態是兩件事，看漏代價較高，維持常駐）。
+ * 案件連動提示（docs/archive/FEEDBACK-4-PLAN.md §2）也放在這區：本日有幾個問題屬進行中案件，
+ * 讓使用者知道為什麼那幾列的狀態會「自己動」。
+ */
+function statusSummary(handling) {
+    const section = document.createElement('div');
+    section.className = 'lf-handling__section lf-handling__summary';
+
+    const row = document.createElement('div');
+    row.className = 'lf-handling__summary-row';
+
+    const current = document.createElement('div');
+    current.className = 'lf-handling__current';
+    const label = document.createElement('span');
+    label.className = 'small text-muted';
+    label.textContent = '目前狀態';
+    const value = document.createElement('strong');
+    value.textContent = derivedStatusLabel(handling);
+    current.append(label, value);
+    if (handling.isOverdue) {
+        const overdue = document.createElement('span');
+        overdue.className = 'text-danger fw-semibold';
+        overdue.textContent = '・逾期';
+        current.appendChild(overdue);
+    }
+    row.appendChild(current);
+
+    if (handling.updatedAt) {
+        const updated = document.createElement('span');
+        updated.className = 'small text-muted lf-handling__updated';
+        updated.textContent = `最後更新 ${formatDateTime(handling.updatedAt)}`;
+        row.appendChild(updated);
+    }
+    section.appendChild(row);
+
+    const hint = document.createElement('div');
+    hint.className = 'form-text';
+    hint.textContent = '依問題標記推導；未勾選問題時，下方表單改的是這一天的整體狀態';
+    section.appendChild(hint);
+
+    if (handling.openCaseCount > 0) {
+        const caseHint = document.createElement('div');
+        caseHint.className = 'lf-hint mt-2';
+        caseHint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中交辦單，狀態會跟著交辦單涵蓋的其他日子連動。`;
+        section.appendChild(caseHint);
+    }
+    return section;
+}
+
+/**
+ * 人員區的一列（標籤＋值）：容器夠寬時標籤在左，窄時自動換成標籤在上（純 CSS 換行，不量寬）。
+ * hintAsIcon（docs/archive/FEEDBACK-5-PLAN.md §6）：預設 false 沿用常駐 form-text——
+ * 只有「主機負責人」的說明屬純描述性質（看過一次就記得），改收進 icon；
+ * 處理人唯讀原因填錯/看漏代價較高，維持常駐。
  */
 function readonlyField(label, value, hint, hintAsIcon = false) {
     const wrap = document.createElement('div');
-    wrap.className = 'mb-3';
-    const [labelEl, valueEl] = labelValue(label, value, { labelClass: 'form-label small mb-1 text-muted' });
+    wrap.className = 'lf-handling__row';
 
+    const labelEl = document.createElement('div');
+    labelEl.className = 'lf-handling__row-label small text-muted';
+    labelEl.textContent = label;
     if (hint && hintAsIcon) {
         labelEl.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
         labelEl.appendChild(helpIcon(hint));
     }
+
+    const valueEl = document.createElement('div');
+    valueEl.className = 'lf-handling__row-value fw-semibold';
+    valueEl.textContent = value;
     wrap.append(labelEl, valueEl);
 
     if (hint && !hintAsIcon) {
         const hintEl = document.createElement('div');
-        hintEl.className = 'form-text';
+        hintEl.className = 'form-text fw-normal';
         hintEl.textContent = hint;
-        wrap.appendChild(hintEl);
+        valueEl.appendChild(hintEl);
     }
 
     return wrap;
@@ -207,10 +269,10 @@ function readonlyField(label, value, hint, hintAsIcon = false) {
 
 function assignField(handling, users, hostId, date) {
     const wrap = document.createElement('div');
-    wrap.className = 'mb-3';
+    wrap.className = 'lf-handling__row';
 
     const label = document.createElement('label');
-    label.className = 'form-label small mb-1 text-muted';
+    label.className = 'lf-handling__row-label form-label small mb-0 text-muted';
     label.textContent = '處理人';
     label.htmlFor = 'handler-select';
 
@@ -331,7 +393,7 @@ function assignField(handling, users, hostId, date) {
     label.appendChild(helpIcon('可指派給負責人以外的人；主機負責人不會因此改變。'));
 
     const row = document.createElement('div');
-    row.className = 'd-flex align-items-start gap-2';
+    row.className = 'lf-handling__row-value d-flex align-items-start gap-2';
     selectWrap.classList.add('flex-grow-1');
     row.append(selectWrap, assignBtn);
 
@@ -351,19 +413,23 @@ function handlingForm() {
     const draft = state.formDraft;
 
     const form = document.createElement('form');
+    form.className = 'lf-handling__section lf-handling__form';
     form.noValidate = true;   // 驗證只走下方手動一套（說明欄超過字數的 customValidity 不可觸發原生泡泡）
 
-    const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label small mb-1 text-muted';
-    statusLabel.textContent = '處理狀態';
-    form.appendChild(statusLabel);
-
+    // 批次提示留在表單區最上方
     if (batchMode) {
         const info = document.createElement('div');
         info.className = 'lf-hint mb-2';
         info.textContent = `已勾選 ${selection.size} 個問題，套用後會覆蓋這些問題目前的處理狀態。`;
         form.appendChild(info);
     }
+
+    // chips 是一組按鈕不是單一控制項：用 role=group＋aria-labelledby 指到這個標題（不用沒有對象的 label）
+    const statusLabel = document.createElement('div');
+    statusLabel.className = 'form-label small mb-1 text-muted';
+    statusLabel.id = 'handling-status-label';
+    statusLabel.textContent = '處理狀態';
+    form.appendChild(statusLabel);
 
     // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選推導出的
     // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
@@ -374,7 +440,9 @@ function handlingForm() {
         : (batchMode ? null : (handling.derivedStatus ?? handling.status));
 
     const chipGroup = document.createElement('div');
-    chipGroup.className = 'lf-toolbar__chips mb-3';
+    chipGroup.className = 'lf-handling__chips mb-3';
+    chipGroup.setAttribute('role', 'group');
+    chipGroup.setAttribute('aria-labelledby', 'handling-status-label');
     form.appendChild(chipGroup);
 
     // 預計完成日（只有「處理中」才顯示，§6）
@@ -460,31 +528,43 @@ function handlingForm() {
     forgetNoiseWrap.append(forgetNoiseCheck, forgetNoiseLabel);
     if (batchMode) form.appendChild(forgetNoiseWrap);
 
-    // 說明
+    // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）——
+    // 沿用舊逐列面板的提示，批次模式下無法指向單一規則，改連到規則維護頁
+    const ruleHint = document.createElement('div');
+    ruleHint.className = 'lf-hint mb-3 d-none';
+    const ruleLink = document.createElement('a');
+    ruleLink.href = appUrl('/admin/rules');
+    ruleLink.target = '_blank';
+    ruleLink.textContent = '如果規則常常誤判，可以到規則維護調整判定條件';
+    ruleHint.appendChild(ruleLink);
+    form.appendChild(ruleHint);
+
+    // 說明：label 單獨一列（updateFieldsForStatus 會改它的文字，工具列不可放進 label 節點）
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small mb-1 text-muted';
     noteLabel.htmlFor = 'handling-note';
     form.appendChild(noteLabel);
 
     const noteInput = document.createElement('textarea');
-    noteInput.className = 'form-control form-control-sm mb-3';
+    noteInput.className = 'form-control form-control-sm';
     noteInput.id = 'handling-note';
     noteInput.rows = 3;
     noteInput.value = draft ? draft.note : (batchMode ? '' : (handling.note ?? ''));
     noteInput.placeholder = '例如：已確認為每週維護重開機，屬正常現象';
     form.appendChild(noteInput);
 
+    // 錯誤訊息交給編輯器放在尾區之後（[說明欄, 尾區, 錯誤訊息]，維持 .is-invalid ~ .invalid-feedback 的兄弟關係）
     const noteFeedback = document.createElement('div');
     noteFeedback.className = 'invalid-feedback';
     noteFeedback.setAttribute('role', 'alert');
-    form.appendChild(noteFeedback);
 
     const noteEditor = attachNoteEditor(noteInput, {
         draftKey: `record:${hostId}:${date}`,
         ai: { context: () => aiNoteContext(getSelection()) },
         // 沿用上次的說明：只在恰好勾一個問題時有明確的問題簽章
         reuse: { issueKey: () => { const selection = getSelection(); return selection.size === 1 ? [...selection][0] : null; } },
-        phrases: true
+        phrases: true,
+        errorEl: noteFeedback
     });
 
     /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */
@@ -516,34 +596,6 @@ function handlingForm() {
         noteEditor.clearDraft();
     }
 
-    // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）——
-    // 沿用舊逐列面板的提示，批次模式下無法指向單一規則，改連到規則維護頁
-    const ruleHint = document.createElement('div');
-    ruleHint.className = 'lf-hint mb-3 d-none';
-    const ruleLink = document.createElement('a');
-    ruleLink.href = appUrl('/admin/rules');
-    ruleLink.target = '_blank';
-    ruleLink.textContent = '如果規則常常誤判，可以到規則維護調整判定條件';
-    ruleHint.appendChild(ruleLink);
-    form.appendChild(ruleHint);
-
-    function renderChips() {
-        chipGroup.replaceChildren();
-        for (const chip of availableChips) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'lf-chip' + (selectedStatus === chip.value ? ' active' : '');
-            btn.textContent = chip.text;
-            btn.addEventListener('click', () => {
-                selectedStatus = chip.value;
-                renderChips();
-                updateFieldsForStatus();
-                saveFormDraft();
-            });
-            chipGroup.appendChild(btn);
-        }
-    }
-
     function updateFieldsForStatus() {
         dueWrap.classList.toggle('d-none', selectedStatus !== 'in_progress');
         observeWrap.classList.toggle('d-none', selectedStatus !== 'observing');
@@ -555,14 +607,29 @@ function handlingForm() {
         noteInput.classList.remove('is-invalid');
     }
 
-    renderChips();
+    // 共用 renderChips（單選）：節點只建一次，點選只切換 .active 與 aria-pressed，鍵盤焦點不會掉
+    renderChips(chipGroup, {
+        items: availableChips.map(toChipItem),
+        attr: 'status',
+        activeValues: [selectedStatus],
+        multi: false,
+        onToggle: value => {
+            selectedStatus = value;
+            updateFieldsForStatus();
+            saveFormDraft();
+        }
+    });
     updateFieldsForStatus();
 
+    // ── (4) 動作區：只放主鈕 ──
+    const actions = document.createElement('div');
+    actions.className = 'lf-form-actions';
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary w-100';
     submit.textContent = batchMode ? `套用到 ${selection.size} 個問題` : '儲存';
-    form.appendChild(submit);
+    actions.appendChild(submit);
+    form.appendChild(actions);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -624,13 +691,6 @@ function handlingForm() {
         }
     });
 
-    if (!batchMode && handling.updatedAt) {
-        const updated = document.createElement('div');
-        updated.className = 'form-text mt-2';
-        updated.textContent = `最後更新：${formatDateTime(handling.updatedAt)}`;
-        form.appendChild(updated);
-    }
-
     return form;
 }
 
@@ -661,6 +721,7 @@ async function loadLogs(hostId, date) {
             showDetailModal({ title: '處理歷程（完整明細）', body, size: 'modal-lg' });
         };
     }
+    return logs.length;
 }
 
 function renderTimeline(container, logs, { expanded }) {

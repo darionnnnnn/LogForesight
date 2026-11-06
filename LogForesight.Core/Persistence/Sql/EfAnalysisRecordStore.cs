@@ -573,6 +573,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             if (record.TopIssues.Any(PrtgFindingMapper.IsPrtg) && !canCarryPrtgParent)
             { record.PrtgBaselineRiskLevel = null; record.PrtgBaselineRiskBasis = null; }
             record.Headline = attemptOutcome.Headline;
+            record.Brief = attemptOutcome.Brief;
             record.Summary = attemptOutcome.Summary;
             record.TrendAssessment = attemptOutcome.TrendAssessment;
             record.Action = attemptOutcome.Action;

@@ -107,7 +107,7 @@ function evidenceVersionNotice(report) {
  * 頁面內的可收合報告卡片。
  *
  * @param {object} options
- * @param {string} options.storageKey 展開狀態的 localStorage 鍵——常看全文的人不必每次進來重新展開
+ * @param {string} [options.storageKey] 展開狀態的 localStorage 鍵；省略時每次 setReport 都回到收合、不記憶展開狀態
  * @param {string} [options.title] 標題；省略時用報告種類的中文名稱
  * @returns {{ el: HTMLElement, setReport: (report: object|null) => void }}
  */
@@ -142,6 +142,8 @@ export function reportCard({ storageKey, title } = {}) {
 
     section.append(header, body);
 
+    // 沒給 storageKey 時只有第一次 setReport 收合；頁內重載（再次 setReport）保留使用者目前的展開狀態
+    let rendered = false;
     const bodyId = `lf-report-body-${Math.random().toString(36).slice(2, 10)}`;
     body.id = bodyId;
     header.setAttribute('aria-controls', bodyId);
@@ -179,7 +181,9 @@ export function reportCard({ storageKey, title } = {}) {
             body.replaceChildren(...[evidenceVersionNotice(report), pre(report)].filter(Boolean));
             section.classList.remove('d-none');
 
-            applyExpanded(storageKey ? safeStorage.get(storageKey) === 'true' : false);
+            if (storageKey) applyExpanded(safeStorage.get(storageKey) === 'true');
+            else if (!rendered) applyExpanded(false);
+            rendered = true;
         }
     };
 }

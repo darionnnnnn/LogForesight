@@ -37,6 +37,8 @@ const STATUS_META = {
     running: statusMeta('執行中', '--lf-primary'),
     stuck: statusMeta('異常中斷', '--lf-cat-hardware'),
     none: statusMeta('未執行', '--lf-gray-200'),
+    // NetIQ 回空資料、等下一窗口複查：不是漏跑，所以不併進「未執行」
+    recheck: statusMeta('空資料待複查', '--lf-info'),
     // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
     local_disabled: statusMeta('本機分析已停用', '--lf-gray-400')
 };
@@ -298,7 +300,7 @@ function renderSummary(summaryPage) {
     renderTable(container, {
         columns: [
             { title: '日期', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
-            { title: '執行時間', render: s => renderDayTimingCell(s.timing) },
+            { title: '執行時間', render: s => renderDayTimingCell(s.timing, { pendingText: s.pendingSummary, inProgress: s.inProgress }) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
@@ -306,7 +308,7 @@ function renderSummary(summaryPage) {
             { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
-            { title: '未執行', className: 'text-end', render: s => s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none') },
+            { title: '未執行', className: 'text-end', render: s => notRunCell(s) },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
@@ -335,6 +337,16 @@ function renderSummary(summaryPage) {
 function setBarProgress(barEl, percent) {
     barEl.classList.add('lf-progress-fill');
     barEl.style.setProperty('--lf-progress', `${percent}%`);
+}
+
+function notRunCell(s) {
+    const base = s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
+    if (!(s.recheckCount > 0)) return base;
+    const recheck = `空資料待複查 ${s.recheckCount}`;
+    if (s.notRunCount === 0) return document.createTextNode(recheck);
+    const wrap = document.createElement('span');
+    wrap.append(base, `＋${recheck}`);
+    return wrap;
 }
 
 function countCell(count, status) {

@@ -41,6 +41,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
         var final = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
             System.Text.Json.JsonSerializer.Serialize(parent))!;
         final.Headline = outcome.Headline;
+        final.Brief = outcome.Brief;
         final.Summary = outcome.Summary;
         final.TrendAssessment = outcome.TrendAssessment;
         final.Action = outcome.Action;
@@ -1135,6 +1136,33 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Equal(attached.ReportFile, unchanged.ReportFile);
         Assert.Equal(fingerprint, unchanged.PrtgReportEvidenceFingerprint);
         Assert.Equal("ai-report-content-A", reports.Read(host, date, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void TryAttachAiResult_含Brief與報告草稿_指紋一致且Brief落庫()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var date = DateTime.Today.AddDays(-2);
+        var host = new HostKey { HostId = 102, HostName = "SRV-BRIEF" };
+        store.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = RiskLevels.High, AiPending = true, TopIssues = []
+        });
+        var parent = Assert.Single(store.ReadRecent(date, 1));
+        var fingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(parent);
+        var outcome = new AiOutcome("標題", "摘要", "趨勢", "處置", RiskLevels.High, null,
+            true, 0, [], null, [], InputPrtgFingerprint: fingerprint,
+            ReportPrtgEvidenceFingerprint: fingerprint, Brief: "給主管的兩句說明。");
+        var draft = new PreparedRiskReport(date, host, $"{date:yyyy-MM-dd}_高風險_儲存裝置.txt",
+            "brief-report-content", new ReportMeta(RiskLevels.High, "儲存裝置"), fingerprint,
+            ExpectedAttachedAiReportInput(parent, outcome));
+        outcome = outcome with { ReportDraft = draft };
+
+        Assert.True(store.TryAttachAiResult(date, outcome, parent.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(parent), fingerprint));
+
+        var attached = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal("給主管的兩句說明。", attached.Brief);
     }
 
     [Fact]
