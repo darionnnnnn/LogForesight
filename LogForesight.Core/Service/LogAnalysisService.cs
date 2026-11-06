@@ -1,4 +1,4 @@
-﻿﻿using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -668,8 +668,9 @@ public class LogAnalysisService
     private static readonly System.Text.RegularExpressions.Regex BriefSentenceEnd = new(
         @"[。！？；]|[.!?](?=\s|$)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
+    // Event ID 的寫法容許空白、底線、連字號（Event-ID、Event_ID、EventId）；IPv6 與主機名稱不擋，prompt 只禁 IP 與 Event ID
     private static readonly System.Text.RegularExpressions.Regex BriefForbiddenPattern = new(
-        @"(?<!\d)\d{1,3}(\.\d{1,3}){3}(?!\d)|Event ?ID|EventId|事件 ?ID|事件編號",
+        @"(?<!\d)\d{1,3}(\.\d{1,3}){3}(?!\d)|Event[\s_\-]*ID|事件[\s_\-]*ID|事件編號",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -686,9 +687,14 @@ public class LogAnalysisService
 
         if (text.Length > MaxBriefChars)
         {
-            var head = text[..MaxBriefChars];
-            var ends = BriefSentenceEnd.Matches(head);
-            var cut = ends.Count > 0 ? ends[^1].Index : -1;
+            // 句末要在完整字串上判定：對截出的前 150 字判定時，正則的 $ 會在第 150 字成立，
+            // 「…v1.」後面接著數字也會被當句尾而截成半截版本號
+            var cut = -1;
+            foreach (System.Text.RegularExpressions.Match m in BriefSentenceEnd.Matches(text))
+            {
+                if (m.Index >= MaxBriefChars) break;
+                cut = m.Index;
+            }
             if (cut < 0)
             {
                 droppedReason = $"超過 {MaxBriefChars} 字且前 {MaxBriefChars} 字內沒有句末標點";
@@ -700,6 +706,12 @@ public class LogAnalysisService
         if (BriefForbiddenPattern.IsMatch(text))
         {
             droppedReason = "含 IP 位址或 Event ID／事件編號字樣";
+            return string.Empty;
+        }
+        // 只剩標點或符號（例如「。。。」）不是一句話，不顯示
+        if (!text.Any(char.IsLetterOrDigit))
+        {
+            droppedReason = "沒有任何文字，只有標點或符號";
             return string.Empty;
         }
         return text;

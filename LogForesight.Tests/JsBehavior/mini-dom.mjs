@@ -48,9 +48,12 @@ class FakeNode {
     set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
 
-    appendChild(child) { this.children.push(child); if (child) child._parent = this; return child; }
-    prepend(...nodes) { nodes.forEach(n => this._detach(n)); this.children.unshift(...nodes); nodes.forEach(n => { if (n) n._parent = this; }); }
-    append(...nodes) { nodes.forEach(n => { this.children.push(n); if (n) n._parent = this; }); }
+    // 真瀏覽器的 appendChild／append 是「搬移」：節點已在別的父節點下時先移除，否則同一節點會在兩處出現
+    appendChild(child) { this._detach(child); this.children.push(child); if (child) child._parent = this; return child; }
+    prepend(...nodes) { nodes = nodes.map(n => this._asNode(n)); nodes.forEach(n => this._detach(n)); this.children.unshift(...nodes); nodes.forEach(n => { if (n) n._parent = this; }); }
+    // append／prepend 收到字串時，真瀏覽器會轉成文字節點（runs.js 的 notRunCell 以 append(span, '＋…') 組字）
+    _asNode(n) { if (typeof n !== 'string') return n; const t = new FakeNode('#text'); t.textContent = n; return t; }
+    append(...nodes) { nodes.map(n => this._asNode(n)).forEach(n => { this._detach(n); this.children.push(n); if (n) n._parent = this; }); }
     replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
     remove() { if (this._parent) this._parent.children = this._parent.children.filter(c => c !== this); this._parent = null; }
     // 兄弟節點操作（D2／E 段的就地重繪與插入會用到）：依 _parent.children 順序定位

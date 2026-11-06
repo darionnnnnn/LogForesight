@@ -1275,7 +1275,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
      < lg 與列印回到上下堆疊、側軌隱藏。「去處理」意圖的連結帶 `#handling`（`core/paths.js` `recordDetailUrl(…, { handle: true })`）：
-     問題查詢展開列「去處理」、「下一筆未處理」、處理人頁與使用者頁的「待處理風險日」；列表整列、主機時間軸、PRTG 維護、交辦單 PRTG 佐證是查看，不帶。
+     問題查詢展開列「去處理」、「下一筆未處理」、處理人頁的交辦單列與「被指派的風險日」、使用者頁的「未結案風險日」；列表整列、主機時間軸、PRTG 維護、交辦單 PRTG 佐證是查看，不帶。
   1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合；本頁每次進頁都收合，不記展開狀態（`reportCard` 不傳 `storageKey`）；
      複製/列印鈕 `stopPropagation` 不被 header 攔截，header 補 `role=button`/`aria-expanded`/鍵盤支援。
   2. **未處理等級預設不處理**：`IssueDto.IsDefaultUnhandled`（未列入「系統管理 > 設定」頁

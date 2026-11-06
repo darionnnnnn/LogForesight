@@ -2937,6 +2937,12 @@ a.lf-calendar__cell:focus-visible {
         display: none;
     }
 
+    /* 收合時右欄只剩側軌的高度，grid 的 align-items: start 讓它停在列頂、sticky 沒有可移動的空間；
+       拉到與主欄等高，長頁面捲動時側軌才會跟著停在視窗頂端 */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side {
+        align-self: stretch;
+    }
+
     .lf-detail-layout--side-open .lf-side-rail {
         display: none;
     }

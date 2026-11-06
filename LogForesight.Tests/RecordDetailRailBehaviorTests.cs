@@ -46,4 +46,18 @@ public sealed class RecordDetailRailBehaviorTests
         Assert.Contains("onRefreshed: updateSideRail", js);
         Assert.DoesNotContain("    updateSideRail(panelInfo);", js);
     }
+
+    /// <summary>行為測試只切出函式本體，頁面層的接線沒被執行過：這裡以原始碼守住六個接線點（任一條拿掉，側軌整個失效卻沒有測試會紅）。</summary>
+    [Fact]
+    public void 側軌在頁面層的接線點齊全()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "record-detail.js"));
+        Assert.Contains("let pendingHandlingHash = location.hash === '#handling';", js);
+        Assert.Contains("if (!sideRail) {", js);
+        Assert.Contains("if (!currentDetail.caseGrantOnly) sideRail = setupSideRail();", js);
+        Assert.Contains("else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');", js);
+        // 單列與表頭全選兩條勾選路徑都要自動展開並更新摘要
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"if \(check\.checked\) expandSideRailForSelection\(\);").Count);
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(js, @"^\s+refreshRailSelectionSummary\(\);", System.Text.RegularExpressions.RegexOptions.Multiline).Count);
+    }
 }

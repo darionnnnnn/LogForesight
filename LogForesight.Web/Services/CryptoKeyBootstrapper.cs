@@ -103,9 +103,17 @@ public static class CryptoKeyBootstrapper
             runActionWhenNotAcquired: false);
         if (acquired)
         {
-            // 金鑰來源已在 RunCore 內確定；只算一次，供健康頁顯示
-            var warning = EvaluateKeyLocationWarning(
-                CryptoHelper.KeySource, path, AppContext.BaseDirectory, OperatingSystem.IsWindows());
+            // 金鑰來源已在 RunCore 內確定；只算一次，供健康頁顯示。純顯示用的提示算不出來只記 log，不能讓站台啟動失敗
+            string? warning = null;
+            try
+            {
+                warning = EvaluateKeyLocationWarning(
+                    CryptoHelper.KeySource, path, AppContext.BaseDirectory, OperatingSystem.IsWindows());
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[Crypto] 金鑰檔位置提示無法判定，略過提示");
+            }
             KeyLocationWarning = warning;
             if (warning != null) Log.Warn("[Crypto] {0}", warning);
         }

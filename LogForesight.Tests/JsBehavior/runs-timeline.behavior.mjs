@@ -2,6 +2,7 @@
  * core/run-timeline.js：階段時間軸與總表執行時間的文字與定位。
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
@@ -229,6 +230,31 @@ const cases = {
         // AI 補跑文字同理
         const ai = { firstStartedAt: at(1), totalSeconds: null, interruptedCount: 0, otherAiRuns: 1, otherAiSeconds: 60 };
         assert.equal(renderDayTimingCell(ai, { inProgress: true }), dayTimingText(ai));
+    },
+
+    // 總表「未執行」格：未執行與空資料待複查並列的四種組合（切出 runs.js 的 notRunCell／countCell 本體執行）
+    notRunCellCombos() {
+        const src = fs.readFileSync(path.join(jsRoot, 'pages', 'runs.js'), 'utf8');
+        const extract = decl => {
+            const start = src.indexOf(decl);
+            assert(start >= 0, `找不到 ${decl}`);
+            const open = src.indexOf('{', src.indexOf(')', start));
+            let depth = 0;
+            for (let i = open; i < src.length; i++) {
+                if (src[i] === '{') depth++;
+                else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+            }
+            throw new Error(`未閉合 ${decl}`);
+        };
+        const STATUS_META = { none: { color: '--lf-gray-200' } };
+        const notRunCell = new Function('document', 'STATUS_META',
+            `${extract('function notRunCell')}\n${extract('function countCell')}\nreturn notRunCell;`)(document, STATUS_META);
+        const text = cell => typeof cell === 'string' ? cell : cell.textContent;
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 0 })), '3（尚未處理）');
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2 })), '3（尚未處理）＋空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 1, recheckCount: 2 })), '1＋空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 2 })), '空資料待複查 2');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 0 })), '');
     }
 };
 

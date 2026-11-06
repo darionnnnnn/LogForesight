@@ -66,6 +66,36 @@ public class AiBriefPromptAndNormalizeTests
     }
 
     [Fact]
+    public void NormalizeBrief_第150字恰好是版本號的句點時不當句尾()
+    {
+        // 句末要在完整字串上看：第 150 字是「v1.」的句點、第 151 字是數字，不能因為截出來的前 150 字到此結束就當成句尾
+        var raw = new string('甲', 147) + "v1.2.3 版本不相容" + new string('字', 160);
+        Assert.Equal('.', raw[LogAnalysisService.MaxBriefChars - 1]);
+        Assert.Equal(string.Empty, LogAnalysisService.NormalizeBrief(raw, out var reason));
+        Assert.NotNull(reason);
+    }
+
+    [Theory]
+    [InlineData("請留意 Event-ID 4625 的登入失敗。")]
+    [InlineData("請留意 Event_ID 4625 的登入失敗。")]
+    [InlineData("請留意 Event\tID 41 的重開機。")]
+    [InlineData("請留意事件ID 41 的重開機。")]
+    public void NormalizeBrief_EventID的連字號底線與Tab寫法一律丟棄(string raw)
+    {
+        Assert.Equal(string.Empty, LogAnalysisService.NormalizeBrief(raw, out var reason));
+        Assert.Contains("Event ID", reason);
+    }
+
+    [Theory]
+    [InlineData("。。。")]
+    [InlineData("…！？")]
+    public void NormalizeBrief_只有標點符號時丟棄(string raw)
+    {
+        Assert.Equal(string.Empty, LogAnalysisService.NormalizeBrief(raw, out var reason));
+        Assert.NotNull(reason);
+    }
+
+    [Fact]
     public void NormalizeBrief_超長且無句末標點_丟棄()
     {
         var result = LogAnalysisService.NormalizeBrief(new string('甲', 200), out var reason);
