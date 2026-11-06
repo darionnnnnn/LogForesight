@@ -1421,6 +1421,10 @@ public class AnalysisOrchestrator
         if (record.AiAnalyzed && (verbose || record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
         {
             console.WriteLine($"\n  白話說明：{record.Summary}");
+            if (record.Brief.Length > 0)
+            {
+                console.WriteLine($"  給主管的說明：{record.Brief}");
+            }
             if (record.TrendAssessment.Length > 0)
             {
                 console.WriteLine($"  趨勢：{record.TrendAssessment}");

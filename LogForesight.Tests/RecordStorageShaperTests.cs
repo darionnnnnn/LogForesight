@@ -169,6 +169,7 @@ public class RecordStorageShaperTests
             RiskBasis = "rule:disk EventId 153",
             HiddenIssueCount = 2,
             Headline = "headline",
+            Brief = "brief",
             Summary = "summary",
             TrendAssessment = "assessment",
             Action = "action",

@@ -355,6 +355,10 @@ public class RiskReportService
         {
             sb.AppendLine($"  {record.Headline}");
         }
+        if (record.Brief.Length > 0)
+        {
+            sb.AppendLine($"  給主管的說明：{record.Brief}");
+        }
         sb.AppendLine($"  {record.Summary}");
         if (record.Action.Length > 0)
         {

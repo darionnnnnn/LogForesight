@@ -95,6 +95,9 @@ public class AiStateBehaviorTests
     [InlineData("最新狀況一格只有降級或放棄才加徽章")]
     [InlineData("詳情徽章文字對照")]
     [InlineData("詳情案件授與檢視不顯示AI狀態")]
+    [InlineData("摘要區塊給主管的說明位置與複製鈕")]
+    [InlineData("摘要區塊沒有brief或未分析時不建節點")]
+    [InlineData("摘要區塊複製鈕成功與失敗提示")]
     public void AI狀態行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

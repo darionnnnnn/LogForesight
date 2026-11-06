@@ -181,6 +181,7 @@ public class RecordDetailQueryService
             HiddenIssueCount = record.HiddenIssueCount,
             // 以下整日敘事在案件授與模式下一律清空（§7）——見上方裁剪處的說明
             Headline = caseGrantOnly ? "" : record.Headline,
+            Brief = caseGrantOnly ? "" : record.Brief,
             Summary = caseGrantOnly ? "" : record.Summary,
             TrendAssessment = caseGrantOnly ? "" : record.TrendAssessment,
             Action = caseGrantOnly ? "" : record.Action,

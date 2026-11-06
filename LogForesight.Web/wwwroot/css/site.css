@@ -1602,6 +1602,29 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius);
 }
 
+/* 「給主管的說明」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
+.lf-ai-brief {
+    background: var(--lf-primary-soft);
+    border: 1px solid var(--lf-primary-soft-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+    margin: var(--lf-space-2) 0;
+}
+
+.lf-ai-brief__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-ai-brief__text {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    margin: 0;
+    color: var(--lf-primary-text);
+}
+
 /* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，
    不疊加 .lf-ai-block 的 padding（避免雙重留白） */
 .lf-issue-group__ai {

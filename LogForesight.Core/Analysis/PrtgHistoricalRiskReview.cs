@@ -70,6 +70,7 @@ public static class PrtgHistoricalRiskReview
         }
         // 舊敘事保存在修訂區；現行 AI／郵件不可繼續把原文當有效佐證。
         record.Headline = original.Status == "pending" ? "歷史風險待重評" : "歷史佐證已修訂";
+        record.Brief = string.Empty;
         record.Summary = original.Reason;
         record.TrendAssessment = "請依保存的規則、趨勢與來源證據查證。";
         record.Action = "同日訊號不代表同一故障；請核對資源與時間，必要時重新分析。";

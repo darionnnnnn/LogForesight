@@ -100,6 +100,10 @@ public class DailyAnalysisRecord
     /// <summary>一句話標題，讓不懂 Event Log 的人一眼看懂今天的狀況</summary>
     public string Headline { get; set; } = string.Empty;
 
+    /// <summary>給主管的說明（2～3 句、可直接照念；AI 選填產出，經 LogAnalysisService.NormalizeBrief 後處理）。
+    /// 存在 content_json，不是抽出欄；空字串＝沒有（舊紀錄、降級、被丟棄）</summary>
+    public string Brief { get; set; } = string.Empty;
+
     /// <summary>今天發生什麼的白話敘述（沿用既有欄位名，序列化格式不變）</summary>
     public string Summary { get; set; } = string.Empty;
 
@@ -247,7 +251,8 @@ public sealed record AiOutcome(
     string? ReportPrtgEvidenceFingerprint = null,
     LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null,
     bool Skipped = false,
-    bool AiDegraded = false);
+    bool AiDegraded = false,
+    string Brief = "");
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

@@ -24,6 +24,10 @@ public class LogAnalysisService
     /// <summary>標題欄位（headline）的長度上限——比敘事欄位更短，一句話而非一段話</summary>
     public const int MaxHeadlineChars = 60;
 
+    /// <summary>「給主管的說明」（brief）的長度上限。brief 是選填欄位，不進 validate（不合格不重試、不降級），
+    /// 超長時由 <see cref="NormalizeBrief"/> 截到句末或丟棄</summary>
+    public const int MaxBriefChars = 150;
+
     /// <summary>格式異常降級摘要的說明前綴（嘗試次數前段）；產生處（<see cref="BuildAiFormatAnomalySummary"/>）與
     /// 診斷匯出的解析（<see cref="TryParseAiFormatAnomalySummary"/>）共用，不各寫一份字面值</summary>
     public const string AiFormatAnomalySummaryPrefixHead = "（AI 回覆經 ";
@@ -597,8 +601,8 @@ public class LogAnalysisService
             pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations,
             pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel,
             _hostId != 0 ? _hostId : pendingRecord.HostId, ct);
-        var (headline, summary, trendAssessment, action, riskLevel, aiAnalyzed) =
-            (main.Headline, main.Summary, main.TrendAssessment, main.Action, main.RiskLevel, main.AiAnalyzed);
+        var (headline, summary, trendAssessment, action, riskLevel, aiAnalyzed, brief) =
+            (main.Headline, main.Summary, main.TrendAssessment, main.Action, main.RiskLevel, main.AiAnalyzed, main.Brief);
         var riskBasis = main.RiskBasisOverride ?? pendingRecord.RiskBasis;
 
         PreparedRiskReport? reportDraft = null;
@@ -623,6 +627,7 @@ public class LogAnalysisService
                 scratch.RiskLevel = riskLevel;
                 scratch.RiskBasis = riskBasis;
                 scratch.Headline = headline;
+                scratch.Brief = brief;
                 scratch.Summary = summary;
                 scratch.TrendAssessment = trendAssessment;
                 scratch.Action = action;
@@ -655,7 +660,44 @@ public class LogAnalysisService
             null, deepDives, uncoveredChecksAddendum, inputPrtgFingerprint,
             ReportPrtgEvidenceFingerprint: reportDraft?.PrtgEvidenceFingerprint,
             ReportDraft: reportDraft,
-            AiDegraded: main.Degraded);
+            AiDegraded: main.Degraded,
+            Brief: brief);
+    }
+
+    private static readonly char[] BriefSentenceEnds = { '。', '！', '？', '；' };
+
+    private static readonly System.Text.RegularExpressions.Regex BriefForbiddenPattern = new(
+        @"\b\d{1,3}(\.\d{1,3}){3}\b|Event ?ID|EventId|事件 ?ID|事件編號",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 「給主管的說明」後處理（只在 AI 成功路徑套用）：trim；超過 <see cref="MaxBriefChars"/> 時在前 150 字內最後一個
+    /// 句末標點（。！？；）截斷，找不到就丟棄；截斷後含 IPv4／Event ID／事件編號字樣一律丟棄。
+    /// 丟棄＝回空字串並以 <paramref name="droppedReason"/> 說明原因（呼叫端記 Debug）；不影響 AI 判讀本身。
+    /// </summary>
+    internal static string NormalizeBrief(string? raw, out string? droppedReason)
+    {
+        droppedReason = null;
+        var text = (raw ?? string.Empty).Trim();
+        if (text.Length == 0) return string.Empty;
+
+        if (text.Length > MaxBriefChars)
+        {
+            var cut = text.AsSpan(0, MaxBriefChars).LastIndexOfAny(BriefSentenceEnds);
+            if (cut < 0)
+            {
+                droppedReason = $"超過 {MaxBriefChars} 字且前 {MaxBriefChars} 字內沒有句末標點";
+                return string.Empty;
+            }
+            text = text[..(cut + 1)];
+        }
+
+        if (BriefForbiddenPattern.IsMatch(text))
+        {
+            droppedReason = "含 IP 位址或 Event ID／事件編號字樣";
+            return string.Empty;
+        }
+        return text;
     }
 
     /// <summary>
@@ -665,7 +707,7 @@ public class LogAnalysisService
     /// </summary>
     private sealed record MainAnalysisResult(
         string Headline, string Summary, string TrendAssessment, string Action, string RiskLevel,
-        string? RiskBasisOverride, bool AiAnalyzed, bool Degraded = false);
+        string? RiskBasisOverride, bool AiAnalyzed, bool Degraded = false, string Brief = "");
 
     /// <summary>
     /// 風險事件暫存 → 原始 log（回饋十三輪 C）：欄位形狀足以餵報告產生器
@@ -729,8 +771,11 @@ public class LogAnalysisService
                 Log.Warn("{Date:yyyy-MM-dd} AI 回覆的風險等級無法歸一化（原字串：{Raw}），風險維持規則層判定", date, result.Value.RiskLevel);
             }
             var riskLevel = RiskLevels.MoreSevere(normalized, ruleRisk);
+            var brief = NormalizeBrief(result.Value.Brief, out var droppedReason);
+            if (droppedReason != null)
+                Log.Debug("{Date:yyyy-MM-dd} 主機日 {Label} 的 brief 已丟棄：{Reason}", date, $"daily-{date:yyyyMMdd}-h{hostId}", droppedReason);
             return new MainAnalysisResult(result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
-                riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
+                riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true, Brief: brief);
         }
 
         if (result.RawContent.Length > 0)

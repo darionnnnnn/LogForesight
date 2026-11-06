@@ -258,6 +258,86 @@ function aiStatusBadge(detail) {
     return null;
 }
 
+/**
+ * 風險日詳情頁的 AI 摘要區塊（標題、給主管的說明、狀況／趨勢／建議處置）；沒有任何文字時回 null。
+ * 從 renderHeader 抽出，行為測試可單獨執行。
+ */
+function aiSummaryBlock(detail) {
+    // headline/brief/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
+    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
+    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
+    const textParts = [];
+    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
+    if (detail.aiAnalyzed && detail.brief) textParts.push({ brief: true, text: detail.brief });
+    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
+        if (text) textParts.push({ label, text });
+    }
+    if (textParts.length === 0) return null;
+
+    const target = document.createElement('div');
+    if (detail.aiAnalyzed) {
+        target.className = 'lf-ai-block mb-2';
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary mb-2';
+        badge.textContent = 'AI 摘要';
+        target.appendChild(badge);
+    }
+
+    for (const part of textParts) {
+        if (part.headline) {
+            const headline = document.createElement('div');
+            headline.className = 'fs-5 mb-2';
+            renderAiInline(headline, part.text);
+            target.appendChild(headline);
+            continue;
+        }
+        if (part.brief) {
+            target.appendChild(briefBlock(part.text));
+            continue;
+        }
+        const p = document.createElement('p');
+        p.className = 'mb-2';
+        const strong = document.createElement('strong');
+        strong.textContent = `${part.label}：`;
+        p.appendChild(strong);
+        renderAiInline(p, part.text);
+        target.appendChild(p);
+    }
+    return target;
+}
+
+/** 「給主管的說明」：可直接照念的 2～3 句，附一鍵複製（列印時不顯示按鈕） */
+function briefBlock(text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-ai-brief';
+    const head = document.createElement('div');
+    head.className = 'lf-ai-brief__head';
+    const badge = document.createElement('span');
+    badge.className = 'lf-badge lf-badge--secondary';
+    badge.textContent = '給主管的說明';
+    head.appendChild(badge);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn btn-link btn-sm p-0 lf-no-print';
+    copy.textContent = '複製';
+    copy.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(text);
+            toast('已複製', 'success');
+        } catch {
+            toast('無法複製，請手動選取文字', 'warning');
+        }
+    });
+    head.appendChild(copy);
+    wrap.appendChild(head);
+    const p = document.createElement('p');
+    p.className = 'lf-ai-brief__text';
+    renderAiInline(p, text);
+    wrap.appendChild(p);
+    return wrap;
+}
+
 function renderHeader(detail) {
     const container = document.getElementById('detail-header');
 
@@ -343,46 +423,8 @@ function renderHeader(detail) {
         body.appendChild(history);
     }
 
-
-    // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
-    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
-    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
-    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
-    const textParts = [];
-    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
-    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
-        if (text) textParts.push({ label, text });
-    }
-
-    if (textParts.length > 0) {
-        const target = document.createElement('div');
-        if (detail.aiAnalyzed) {
-            target.className = 'lf-ai-block mb-2';
-            const badge = document.createElement('span');
-            badge.className = 'lf-badge lf-badge--secondary mb-2';
-            badge.textContent = 'AI 摘要';
-            target.appendChild(badge);
-        }
-
-        for (const part of textParts) {
-            if (part.headline) {
-                const headline = document.createElement('div');
-                headline.className = 'fs-5 mb-2';
-                renderAiInline(headline, part.text);
-                target.appendChild(headline);
-                continue;
-            }
-            const p = document.createElement('p');
-            p.className = 'mb-2';
-            const strong = document.createElement('strong');
-            strong.textContent = `${part.label}：`;
-            p.appendChild(strong);
-            renderAiInline(p, part.text);
-            target.appendChild(p);
-        }
-
-        body.appendChild(target);
-    }
+    const aiBlock = aiSummaryBlock(detail);
+    if (aiBlock) body.appendChild(aiBlock);
 
     const stats = document.createElement('div');
     stats.className = 'd-flex gap-4 mt-3 pt-3 border-top small text-muted';
