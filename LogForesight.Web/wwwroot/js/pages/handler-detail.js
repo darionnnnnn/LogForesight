@@ -13,7 +13,7 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl } from '../core/paths.js';
 import { safeStorage } from '../core/storage.js';
 import {
     renderLoading,
@@ -1022,7 +1022,7 @@ function renderDays(days) {
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
         ],
         rows: days,
-        rowHref: d => `/records/${d.hostId}/${d.date}`,
+        rowHref: d => recordDetailUrl(d.hostId, d.date, { handle: true }),
         empty: {
             title: includeResolvedDays ? '沒有被指派的風險日' : '目前沒有未結案的風險日',
             hint: includeResolvedDays ? '目前無任何指派至此處理人的風險日紀錄。' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'

@@ -9,7 +9,7 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, kpiStrip, guardLoad, renderPageHeader } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge, statusText, dueCell } from '../core/format.js';
 
@@ -252,7 +252,7 @@ function renderOpenWork(workload) {
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
         ],
         rows: openDays,
-        rowHref: d => `/records/${d.hostId}/${d.date}`,
+        rowHref: d => recordDetailUrl(d.hostId, d.date, { handle: true }),
         empty: { title: '目前沒有未結案的風險日', hint: '所有指派的風險日皆已結案，或尚未被指派任何風險日。' }
     });
 }

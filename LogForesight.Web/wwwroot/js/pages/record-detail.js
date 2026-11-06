@@ -7,10 +7,11 @@
  */
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
-import { appUrl, recordsUrl } from '../core/paths.js';
+import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader, collapsibleText } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell } from '../core/format.js';
-import { initHandlingPanel, refreshSelection } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
+import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { reportCard } from '../core/report-view.js';
@@ -183,15 +184,62 @@ async function load() {
     // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）
     initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
-    await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
+    // 側軌只建立一次：load() 因批次儲存重繪時不得重建、也不得重置展開狀態與手動選擇旗標
+    if (!sideRail) {
+        if (!currentDetail.caseGrantOnly) sideRail = setupSideRail();
+        // 案件授與檢視沒有側軌：右欄直接展開，維持原本的堆疊內容
+        else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');
+    }
+
+    const panelInfo = await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
         // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」
         caseGrantOnly: currentDetail.caseGrantOnly
     });
+    updateSideRail(panelInfo);
 
     await loadReports();
 
     setupNextUnhandled();
+}
+
+/** 側軌（第 66 輪 D2）：由 load() 建立一次；案件授與檢視不建立 */
+let sideRail = null;
+// 進頁面時讀一次 hash：「去處理」連結帶 #handling，處理面板載入完成後展開一次、用完即清
+let pendingHandlingHash = location.hash === '#handling';
+
+function setupSideRail() {
+    return createSideRail({
+        layout: document.getElementById('record-layout'),
+        side: document.getElementById('record-side'),
+        items: [
+            { key: 'handling', label: '處理狀態', target: document.getElementById('handling-panel').closest('section') },
+            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') }
+        ]
+    });
+}
+
+function updateSideRail(panelInfo) {
+    if (!sideRail || !panelInfo) return;
+    const { handling, logCount } = panelInfo;
+    sideRail.setSummary('handling', derivedStatusLabel(handling) + (handling.isOverdue ? '・逾期' : ''));
+    sideRail.setSummary('log', `${logCount ?? 0} 筆`);
+
+    if (pendingHandlingHash) {
+        pendingHandlingHash = false;
+        // < lg 右欄本來就展開，什麼都不做；只清 hash
+        if (window.matchMedia?.('(min-width: 992px)').matches) {
+            sideRail.expand('handling', { focus: false, scroll: true });
+        }
+        try { history.replaceState(null, '', location.pathname + location.search); } catch { /* 清不掉 hash 不影響使用 */ }
+    }
+}
+
+/** 勾選問題時右欄自動展開（使用者沒手動操作過側軌才做；勾選清空不自動收合） */
+function expandSideRailForSelection() {
+    if (sideRail && !sideRail.hasUserChoice() && !sideRail.isExpanded()) {
+        sideRail.expand('handling', { focus: false, scroll: false });
+    }
 }
 
 /** 批次套用成功後：重載頁面，已知雜訊另接治本提議（建立抑制規則） */
@@ -225,7 +273,7 @@ async function setupNextUnhandled() {
 
     if (!next) return;   // 這是最後一筆未處理
 
-    button.href = appUrl(`/records/${next.hostId}/${next.date}`);
+    button.href = appUrl(recordDetailUrl(next.hostId, next.date, { handle: true }));
     button.classList.remove('d-none');
 }
 
@@ -681,6 +729,7 @@ function selectCheckbox(issue, sectionIssues) {
     check.addEventListener('change', () => {
         if (check.checked) selectedIssueKeys.add(issue.issueKey);
         else selectedIssueKeys.delete(issue.issueKey);
+        if (check.checked) expandSideRailForSelection();
         refreshSelection();
 
         const headerCheck = check.closest('table')?.querySelector('thead input[type="checkbox"]');
@@ -714,6 +763,7 @@ function selectAllCheckbox(sectionIssues) {
             }
         }
         refreshSelection();
+        if (check.checked) expandSideRailForSelection();
     });
 
     return check;

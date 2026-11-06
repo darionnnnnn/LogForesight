@@ -59,7 +59,9 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     const formDraft = state?.hostId === hostId && state?.date === date ? state.formDraft : null;
     state = { hostId, date, handling, users, getSelection, onBatchSaved, options, formDraft };
     render();
-    await loadLogs(hostId, date);
+    const logCount = await loadLogs(hostId, date);
+    // 回傳給頁面層組側軌摘要（處理狀態一行字、歷程筆數），面板本身的排版不受影響
+    return { handling, logCount };
 }
 
 /** 勾選狀態改變時呼叫：只重繪「處理狀態」表單，不重新打 API（負責人／處理人／歷程不受影響） */
@@ -104,7 +106,7 @@ function hintText(text) {
     return el;
 }
 
-function derivedStatusLabel(handling) {
+export function derivedStatusLabel(handling) {
     const text = handling.derivedStatusText ?? handling.statusText;
     return handling.totalIssues > 0 ? `${text}（${handling.closedIssues}/${handling.totalIssues} 已結案）` : text;
 }
@@ -661,6 +663,7 @@ async function loadLogs(hostId, date) {
             showDetailModal({ title: '處理歷程（完整明細）', body, size: 'modal-lg' });
         };
     }
+    return logs.length;
 }
 
 function renderTimeline(container, logs, { expanded }) {

@@ -2895,3 +2895,122 @@ a.lf-calendar__cell:focus-visible {
 .lf-progress-fill { width: var(--lf-progress, 0); }
 .lf-status-count { color: var(--lf-status-color); font-weight: 600; }
 .lf-timeline-cell { background-color: var(--lf-swatch); }
+
+/* ── 風險日詳情兩欄版面與右側側軌（第 66 輪 D2）───────────────────────────
+   < lg：左右欄上下堆疊、側軌不顯示、右欄內容一律展開（等同改版前）。
+   ≥ lg：grid 兩欄；右欄收合時是 3rem 的直式側軌，展開（layout 加 --side-open）時取 20rem 與內容區 34% 的較小者。
+   不做寬度動畫，因此天然符合 prefers-reduced-motion。 */
+.lf-detail-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-4);
+}
+
+.lf-detail-main,
+.lf-detail-side {
+    min-width: 0;
+}
+
+.lf-side-rail,
+.lf-side-rail__collapse {
+    display: none;
+}
+
+@media (min-width: 992px) {
+    .lf-detail-layout {
+        display: grid;
+        /* 展開寬度取 20rem 與內容區 34% 的較小者：rem 會隨使用者字級放大，1024 寬時只給 20rem 會把主欄擠到 300px 上下；
+           34% 約等於改版前 col-lg-4 的寬度 */
+        grid-template-columns: minmax(0, 1fr) min(20rem, 34%);
+        align-items: start;
+    }
+
+    /* 收合狀態（JS 建立了側軌才有 nav；案件授與檢視沒有側軌，由 --side-open 直接展開） */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) {
+        grid-template-columns: minmax(0, 1fr) 3rem;
+    }
+
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side__body {
+        display: none;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail {
+        display: none;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail__collapse {
+        display: inline-flex;
+        margin-bottom: var(--lf-space-3);
+    }
+
+    .lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--lf-space-2);
+        position: sticky;
+        top: var(--lf-space-4);
+    }
+}
+
+.lf-side-rail__btn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--lf-space-2);
+    width: 100%;
+    max-height: 14rem;
+    padding: var(--lf-space-3) var(--lf-space-1);
+    writing-mode: vertical-rl;
+    text-align: start;
+    background: var(--lf-card-bg);
+    color: inherit;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.lf-side-rail__btn:hover {
+    border-color: var(--lf-border-strong);
+}
+
+.lf-side-rail__btn:focus-visible,
+.lf-side-rail__collapse:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+.lf-side-rail__label {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.lf-side-rail__summary {
+    font-size: 0.8125rem;
+    opacity: 0.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 0;
+}
+
+/* 側軌標題可被程式聚焦（tabindex=-1）：不畫焦點框以外的雜訊，但保留可見焦點 */
+.lf-detail-side .lf-card__title:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+@media print {
+    .lf-side-rail,
+    .lf-side-rail__collapse {
+        display: none !important;
+    }
+
+    .lf-detail-layout {
+        display: block !important;
+    }
+
+    .lf-detail-layout .lf-detail-side__body {
+        display: block !important;
+    }
+}

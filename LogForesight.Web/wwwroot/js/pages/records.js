@@ -12,7 +12,7 @@
  */
 
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, renderPager, withBusy, renderChips,
     loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
@@ -933,7 +933,7 @@ async function renderIssueOccurrences(cell, group) {
 /** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
 function goHandleLink(record) {
     const link = document.createElement('a');
-    link.href = appUrl(`/records/${record.hostId}/${record.date}`);
+    link.href = appUrl(recordDetailUrl(record.hostId, record.date, { handle: true }));
     link.className = 'btn btn-sm btn-outline-primary';
     link.textContent = '去處理';
     return link;
