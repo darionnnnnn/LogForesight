@@ -1266,6 +1266,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
   OS 則決定這台套哪個平台的規則面，判讀問題時需要知道。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
+- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(5.25rem, 1fr))` 格線、顯示短標籤、`title`／`aria-label` 為完整名稱，`buildStatusChips` 只建一次節點、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
   0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
      其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
