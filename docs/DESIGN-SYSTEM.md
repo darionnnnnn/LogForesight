@@ -207,6 +207,9 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 字型 | `wwwroot/fonts/` + site.css `@font-face` | Fira Sans ×4、Fira Code ×2（latin woff2） |
 | 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + site.css 元件區 | 列高/內距/動效/mono 套用 |
 | 頁首 | `ui.js` `renderPageHeader` + site.css `.lf-page-header` | topbar 為唯一標題；頁首只放一句副標與頁面層級動作，每頁至多一個 `btn-primary`（§6b） |
+| 詳情頁右欄側軌 | `core/side-rail.js` + site.css `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
+| 長文字收合 | `ui.js` `collapsibleText` + site.css `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；按鈕為連結樣式、列印全文 |
+| AI 給主管的說明 | `record-detail.js` `briefBlock` + site.css `.lf-ai-brief` | `.lf-ai-block` 內的子卡：`--lf-primary-soft` 底、`--lf-primary-soft-border` 邊框、不另加左色條；徽章「給主管的說明」＋複製鈕；字級介於標題與狀況段之間 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + site.css 版面區 | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + site.css `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |

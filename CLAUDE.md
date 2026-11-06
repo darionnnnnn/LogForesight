@@ -47,6 +47,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
+- **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md` v2 為既有基準，不必再問。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
   `appsettings.json` 只留啟動與安全前提（Storage/Jwt/Auth）。**新增設定必須有消費端**——
   「有設定無行為」是本專案紅線。

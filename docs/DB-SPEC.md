@@ -87,7 +87,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   risk_level       nvarchar(10) NOT NULL          -- 高/中/低
   has_correlation  bool NOT NULL DEFAULT 0
   weekly_checkup_date date NULL
-  content_json     text NOT NULL                      -- 整筆 DailyAnalysisRecord 的 JSON（摘要、趨勢評估、行動建議、
+  content_json     text NOT NULL                      -- 整筆 DailyAnalysisRecord 的 JSON（摘要、給主管的說明 Brief、趨勢評估、行動建議、
                                                      -- 未檢查項目申報等都只在這裡）；詳情被精簡後為空字串
   original_risk_content_json text NULL               -- 歷史弱佐證重評前的原始判定 JSON（PrtgRiskProjectionStore 首次改寫時留存）
   write_revision   bigint NOT NULL DEFAULT 0          -- 併發權杖：SaveChanges 以原修訂比對並遞增
