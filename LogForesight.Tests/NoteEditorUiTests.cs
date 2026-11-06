@@ -144,4 +144,35 @@ public class NoteEditorUiTests
         var clear = logout.IndexOf("clearAllDraftsForUser(", StringComparison.Ordinal);
         Assert.True(post >= 0 && clear > post, "草稿要在登出 API 成功之後才清");
     }
+
+    [Fact]
+    public void 處理面板與回覆彈窗_改用四區版面且錯誤訊息交給編輯器()
+    {
+        var panel = ReadJs("pages", "handling-panel.js");
+        Assert.DoesNotContain("createElement('hr')", panel);
+        Assert.Contains("lf-form-actions", panel);
+        Assert.Contains("lf-handling__chips", panel);
+        Assert.Contains("errorEl: noteFeedback", panel);
+        Assert.DoesNotContain("form.appendChild(noteFeedback)", panel);
+
+        var reply = ReadJs("pages", "issue-status-reply.js");
+        Assert.DoesNotContain("insertAdjacentElement('afterend', noteError)", reply);
+        Assert.Contains("errorEl: noteError", reply);
+
+        var editor = ReadJs("core", "note-editor.js");
+        Assert.Contains("lf-note-editor__tail", editor);
+        Assert.Contains("errorEl", editor);
+    }
+
+    [Fact]
+    public void 版面樣式_含說明欄尾區與處理面板chips格線與動作區()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        Assert.Contains(".lf-note-editor__tail", css);
+        Assert.Contains(".lf-form-actions", css);
+        var chips = css.IndexOf(".lf-handling__chips {", StringComparison.Ordinal);
+        Assert.True(chips >= 0, "找不到 .lf-handling__chips 規則");
+        var block = css.Substring(chips, css.IndexOf('}', chips) - chips);
+        Assert.Contains("grid-template-columns", block);
+    }
 }

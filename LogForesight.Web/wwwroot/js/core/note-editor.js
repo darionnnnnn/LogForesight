@@ -76,7 +76,7 @@ const AI_TOO_SHORT_TEXT = 'AI 整理是把你已經寫下的內容整理成條�
 
 function mutedHint(text) {
     const el = document.createElement('span');
-    el.className = 'small text-muted ms-2';
+    el.className = 'small text-muted';
     el.textContent = text;
     return el;
 }
@@ -91,30 +91,36 @@ function linkButton(text, onClick) {
 }
 
 /**
- * @param {HTMLTextAreaElement} textarea 已放進 DOM 的說明欄（計數列插在它之後）
+ * @param {HTMLTextAreaElement} textarea 已放進 DOM 的說明欄（尾區插在它之後）
  * @param {{draftKey?: string, maxLength?: number, ai?: {context: () => ({issueLabel?: string, hostCount?: number})},
- *          reuse?: {issueKey: () => (string|null)}, phrases?: boolean}} options
+ *          reuse?: {issueKey: () => (string|null)}, phrases?: boolean, errorEl?: HTMLElement}} options
  *        draftKey 空＝不存草稿；ai 有值才顯示「AI 整理」按鈕（AI 不可用時按鈕整個不出現）；
- *        reuse 有值且 issueKey() 非 null 時顯示「沿用此問題上次的說明」；phrases 為 true 時顯示「常用語」選單
+ *        reuse 有值且 issueKey() 非 null 時顯示「沿用此問題上次的說明」；phrases 為 true 時顯示「常用語」選單；
+ *        errorEl 為呼叫端自己的錯誤訊息元素，會放在尾區之後
  * @returns {{clearDraft: () => void, setValue: (text: string) => void}}
+ *
+ * 版面：DOM 順序固定為 [textarea, 尾區(.lf-note-editor__tail), errorEl]。不包裹 textarea——
+ * Bootstrap 的 `.is-invalid ~ .invalid-feedback` 靠兄弟關係顯示；尾區緊貼 textarea 下緣、視覺上同一個外框。
+ * 尾區由上而下：草稿提示（有才出現）→ 主列（左：字數、常用語、沿用上次；右：AI 整理）→ AI 結果訊息。
  */
-export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reuse, phrases } = {}) {
+export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reuse, phrases, errorEl } = {}) {
     const counter = document.createElement('div');
     counter.className = 'form-text';
     counter.setAttribute('aria-live', 'polite');
 
-    // 計數列：有附加工具時是「計數＋沿用／常用語（左）＋AI 整理按鈕（右）」一列，否則就是計數本身
-    let counterRow = counter;
-    let leftTools = null;
-    if (ai || reuse || phrases) {
-        counterRow = document.createElement('div');
-        counterRow.className = 'd-flex justify-content-between align-items-center gap-2';
-        leftTools = document.createElement('div');
-        leftTools.className = 'd-flex align-items-center flex-wrap gap-2';
-        leftTools.appendChild(counter);
-        counterRow.appendChild(leftTools);
-    }
-    textarea.after(counterRow);
+    const tail = document.createElement('div');
+    tail.className = 'lf-note-editor__tail';
+    const mainRow = document.createElement('div');
+    mainRow.className = 'lf-note-editor__row';
+    const leftTools = document.createElement('div');
+    leftTools.className = 'lf-note-editor__tools';
+    leftTools.appendChild(counter);
+    mainRow.appendChild(leftTools);
+    tail.appendChild(mainRow);
+
+    textarea.classList.add('lf-note-editor__field');
+    textarea.after(tail);
+    if (errorEl) tail.after(errorEl);
 
     let storageKey = null;
     let timer = null;
@@ -161,9 +167,9 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
     function showNotice(parts) {
         removeNotice();
         notice = document.createElement('div');
-        notice.className = 'text-muted small';
+        notice.className = 'text-muted small mb-1';
         notice.append(...parts);
-        counterRow.before(notice);
+        mainRow.before(notice);
     }
 
     function restoreDraft() {
@@ -231,12 +237,12 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
     if (ai) {
         loadAiStatus().then(status => {
             if (!status || !status.available) return;   // 不可用：按鈕整個不出現（不是灰色停用）
-            aiControls = attachAiTidy(textarea, counterRow, status, ai.context, setValue);
+            aiControls = attachAiTidy(textarea, tail, mainRow, status, ai.context, setValue);
         });
     }
 
-    if (reuse) attachReuseLink(textarea, leftTools, reuse.issueKey, setValue);
     if (phrases) attachPhraseMenu(textarea, leftTools, setValue);
+    if (reuse) attachReuseLink(textarea, leftTools, reuse.issueKey, setValue);
 
     return { clearDraft, setValue };
 }
@@ -450,9 +456,9 @@ function openPhraseManager(data) {
  * 「AI 整理」按鈕（回饋第 50 輪批次C-3）：把說明欄目前的內容整理成四段條列、填回說明欄，
  * 使用者檢查修改後再送出。輸出只當文字框內容（setValue），不以 HTML 呈現。
  */
-function attachAiTidy(textarea, counterRow, status, context, setValue) {
+function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
     const box = document.createElement('div');
-    box.className = 'd-flex align-items-center flex-shrink-0';
+    box.className = 'lf-note-editor__ai';
 
     const emptyHint = document.createElement('span');
     emptyHint.className = 'small text-danger me-2';
@@ -462,7 +468,7 @@ function attachAiTidy(textarea, counterRow, status, context, setValue) {
 
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-secondary ms-2';
+    button.className = 'btn btn-sm btn-outline-secondary';
     button.textContent = 'AI 整理';
 
     let requestSeq = 0;
@@ -474,13 +480,13 @@ function attachAiTidy(textarea, counterRow, status, context, setValue) {
 
     box.prepend(emptyHint);
     box.append(button, abandon);
-    counterRow.appendChild(box);
+    mainRow.appendChild(box);
 
-    // 結果訊息列：放在計數列下方
+    // 結果訊息列：放在尾區最下方
     const message = document.createElement('div');
-    message.className = 'small text-muted';
+    message.className = 'small text-muted lf-note-editor__message';
     message.setAttribute('aria-live', 'polite');
-    counterRow.after(message);
+    tail.appendChild(message);
 
     let undoText = null;
 

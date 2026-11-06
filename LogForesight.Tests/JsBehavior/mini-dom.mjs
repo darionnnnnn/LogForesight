@@ -19,6 +19,11 @@ class FakeClassList {
         this.el.className = String(this.el.className || '').split(' ').filter(n => n && !drop.has(n)).join(' ');
     }
     contains(name) { return String(this.el.className || '').split(' ').includes(name); }
+    toggle(name, force) {
+        const on = force === undefined ? !this.contains(name) : Boolean(force);
+        if (on) this.add(name); else this.remove(name);
+        return on;
+    }
 }
 
 class FakeNode {
@@ -43,6 +48,7 @@ class FakeNode {
     get innerHTML() { return this._html || ''; }
 
     appendChild(child) { this.children.push(child); if (child) child._parent = this; return child; }
+    prepend(...nodes) { nodes.forEach(n => this._detach(n)); this.children.unshift(...nodes); nodes.forEach(n => { if (n) n._parent = this; }); }
     append(...nodes) { nodes.forEach(n => { this.children.push(n); if (n) n._parent = this; }); }
     replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
     remove() { if (this._parent) this._parent.children = this._parent.children.filter(c => c !== this); this._parent = null; }

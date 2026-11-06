@@ -3000,6 +3000,142 @@ a.lf-calendar__cell:focus-visible {
     outline: none;
 }
 
+/* ===== 說明欄編輯器（core/note-editor.js）：尾區緊貼 textarea 下緣，視覺上同一個外框 =====
+   DOM 順序固定為 [textarea.lf-note-editor__field, .lf-note-editor__tail, 呼叫端的錯誤訊息]，
+   不包裹 textarea（保住 .is-invalid ~ .invalid-feedback 的兄弟選擇器）。 */
+.lf-note-editor__field {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.lf-note-editor__tail {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    border: 1px solid var(--bs-border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--bs-border-radius-sm, .25rem) var(--bs-border-radius-sm, .25rem);
+    background: var(--lf-gray-50);
+    min-width: 0;
+}
+
+/* 狀態不只靠顏色：焦點與錯誤時尾區邊框同步跟著 textarea 變色 */
+.lf-note-editor__field:focus + .lf-note-editor__tail {
+    border-color: var(--lf-primary);
+}
+
+.lf-note-editor__field.is-invalid + .lf-note-editor__tail {
+    border-color: var(--bs-form-invalid-border-color, #dc3545);
+}
+
+.lf-note-editor__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-note-editor__tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-1) var(--lf-space-3);
+    min-width: 0;
+}
+
+.lf-note-editor__tail .form-text {
+    margin-top: 0;
+}
+
+.lf-note-editor__ai {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--lf-space-1) var(--lf-space-2);
+    min-width: 0;
+    margin-left: auto;
+}
+
+.lf-note-editor__message:not(:empty) {
+    margin-top: var(--lf-space-1);
+    overflow-wrap: anywhere;
+}
+
+/* ===== 風險日處理面板（pages/handling-panel.js）：狀態摘要／人員／表單／動作四區 ===== */
+.lf-handling__section + .lf-handling__section {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+.lf-handling__summary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__current {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--lf-space-2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__updated {
+    white-space: normal;
+}
+
+/* 人員列：容器寬時標籤在左（固定寬），窄時 flex 自動換行成標籤在上（不用 JS 量寬） */
+.lf-handling__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__row + .lf-handling__row {
+    margin-top: var(--lf-space-2);
+}
+
+.lf-handling__row-label {
+    flex: 0 0 6rem;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value {
+    flex: 1 1 11.5rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value > .flex-grow-1 {
+    min-width: 0;
+}
+
+/* 狀態 chips：自動排格，窄到放不下兩欄時自然變單欄；文字可換行，不截字 */
+.lf-handling__chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(5.25rem, 1fr));
+    gap: var(--lf-space-1);
+}
+
+.lf-handling__chips .lf-chip {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+}
+
+.lf-form-actions {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
 @media print {
     .lf-side-rail,
     .lf-side-rail__collapse {
