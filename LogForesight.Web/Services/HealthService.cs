@@ -220,7 +220,8 @@ public class HealthService
 
             CryptoKeySource = CryptoHelper.KeySource,
             CryptoKeyMismatch = cryptoKeyMismatch,
-            CryptoDecryptFailure = cryptoDecryptFailure
+            CryptoDecryptFailure = cryptoDecryptFailure,
+            CryptoKeyLocationWarning = CryptoKeyBootstrapper.KeyLocationWarning
         };
     }
 

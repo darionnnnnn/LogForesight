@@ -2278,7 +2278,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
-- **系統健康頁籤**：顯示「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+- **系統健康頁籤**：顯示「PRTG 快照」、「排程資料新鮮度」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+  「背景工作」表的「密碼欄位加密」列在金鑰來源後接金鑰檔位置提示（`HealthDetailDto.CryptoKeyLocationWarning`，由 `CryptoKeyBootstrapper.EvaluateKeyLocationWarning` 啟動時算一次）：來源 `env` 不提示；`embedded` 提示金鑰檔無法建立；`file` 且金鑰檔路徑（`GetFullPath`、補分隔符比到目錄邊界、Windows 不分大小寫）位於 `AppContext.BaseDirectory` 之下時，提示重新部署會清掉金鑰檔。此提示**不併入** `degraded`／整體狀態（預設安裝 DataRoot 留空即此情境）。
   新鮮度的成功判定走 `BatchRunExtensions.CountsForFreshness`：排程取數趟，或完整範圍（`BatchRun.Scope == full`）的手動取數趟，狀態為成功或有警告；AI 趟、範圍縮小的手動趟與 console 舊趟不算。全站告示（只給 Maintain／DevMonitor）在過期時多一句原因（`freshnessReason`）：`credentialIssue`（有憑證解不開；金鑰不符但全部解得開時不算）優先，Maintain 附 NetIQ 維護與 PRTG 維護連結，只有 DevMonitor 時附管理者聯絡人；其次是 `lastRunStatus`（最近一趟排程取數失敗、已停止、異常中斷）；其餘視為排程沒在跑，提示確認站台常駐。摘要信文字不變。過期狀態可按
   「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
   正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
