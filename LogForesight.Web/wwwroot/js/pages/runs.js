@@ -1469,8 +1469,19 @@ const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
     'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
-    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
+    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。',
+    'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'
 };
+
+// 閒置提示文案：退避中且後端給了 nextRetryAt 時，句尾補「，約 HH:mm 再試」；其餘原樣取對照表
+function aiIdleHintText(status) {
+    const base = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
+    if (status.idleReason === 'backoff' && status.nextRetryAt) {
+        const clock = formatDateTime(status.nextRetryAt).slice(-5);
+        if (clock) return `${base}，約 ${clock} 再試`;
+    }
+    return base;
+}
 
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
@@ -1514,8 +1525,8 @@ function applyAiScheduleStatus(status) {
         let hint = '';
         // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
         // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
-        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
-            hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'backoff'].includes(status.idleReason))) {
+            hint = aiIdleHintText(status);
         }
 
         hintEl.textContent = hint;

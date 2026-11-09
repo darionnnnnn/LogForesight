@@ -1,4 +1,5 @@
 using NLog;
+using NLog.Config;
 using NLog.Targets;
 
 namespace LogForesight.Core.Service;
@@ -543,7 +544,7 @@ public class BatchRunRecorder : IDisposable
     /// 用 target 而不是在各處加呼叫：既有程式碼已經在該記的地方記了 log，
     /// 逐處改呼叫既繁瑣又一定會漏。
     /// </summary>
-    private class BatchRunNLogTarget : TargetWithLayout
+    internal class BatchRunNLogTarget : TargetWithLayout
     {
         /// <summary>保護 <see cref="LogManager.Configuration"/> 這份全域設定的讀改寫（見 <see cref="Attach"/>）</summary>
         private static readonly object ConfigLock = new();
@@ -552,6 +553,13 @@ public class BatchRunRecorder : IDisposable
         private readonly long _runId;
         private readonly string _scopeToken;
         private readonly Action<string, string> _onRecorded;
+
+        /// <summary>
+        /// 附掛時自建的那一條規則；卸除時以同一個物件移除。
+        /// 不用 <c>config.AddRule(...)</c>：它不回傳規則物件，卸除端只能留下 Targets.Count==0 的空殼
+        /// （nlog.config 內 <c>Microsoft.*</c>／<c>System.Net.Http.*</c> 的 final 規則同樣沒有 target，不能憑此判斷刪除）。
+        /// </summary>
+        private LoggingRule? _rule;
 
         public BatchRunNLogTarget(BatchRunStore store, long runId, string scopeToken, Action<string, string> onRecorded)
         {
@@ -564,7 +572,8 @@ public class BatchRunRecorder : IDisposable
             Name = $"batchrun_{runId}_{scopeToken}";
         }
 
-        public void Attach()
+        /// <param name="configOverride">測試用：改掛在指定設定上而不動全域 <see cref="LogManager.Configuration"/></param>
+        public void Attach(LoggingConfiguration? configOverride = null)
         {
             // 全域設定的讀改寫要互斥：取數排程與 AI 排程可以並行（AI 跟隨取數），
             // 兩趟執行各有自己的 recorder，附掛與卸除動的都是 LogManager.Configuration
@@ -573,25 +582,51 @@ public class BatchRunRecorder : IDisposable
             // 而那個失敗是靜默的：執行紀錄只會顯示「這趟沒有任何警告」。
             lock (ConfigLock)
             {
-                var config = LogManager.Configuration;
+                var config = configOverride ?? LogManager.Configuration;
                 if (config == null) return;
 
+                PurgeLeakedEmptyRules(config);
+
                 config.AddTarget(this);
-                config.AddRule(LogLevel.Warn, LogLevel.Fatal, this);
+                _rule = new LoggingRule("*", LogLevel.Warn, LogLevel.Fatal, this);
+                config.LoggingRules.Add(_rule);
                 LogManager.ReconfigExistingLoggers();
             }
         }
 
-        public void Detach()
+        public void Detach(LoggingConfiguration? configOverride = null)
         {
             lock (ConfigLock)
             {
-                var config = LogManager.Configuration;
+                var config = configOverride ?? LogManager.Configuration;
                 if (config == null) return;
 
+                if (_rule != null)
+                {
+                    config.LoggingRules.Remove(_rule);
+                    _rule = null;
+                }
                 config.RemoveTarget(Name);
                 LogManager.ReconfigExistingLoggers();
             }
+        }
+
+        /// <summary>
+        /// 清掉舊版卸除時殘留的空殼規則：<c>*</c>、Warn～Fatal、沒有 target、非 final、無規則名稱。
+        /// 判準必須全部成立才刪，nlog.config 內有意為之的 final 規則（沒有 writeTo）不會符合。
+        /// </summary>
+        private static void PurgeLeakedEmptyRules(LoggingConfiguration config)
+        {
+            var leaked = config.LoggingRules.Where(r =>
+                r.LoggerNamePattern == "*"
+                && r.Targets.Count == 0
+                && !r.Final
+                && string.IsNullOrEmpty(r.RuleName)
+                && r.Levels.Count == 3
+                && r.Levels.Contains(LogLevel.Warn)
+                && r.Levels.Contains(LogLevel.Error)
+                && r.Levels.Contains(LogLevel.Fatal)).ToList();
+            foreach (var r in leaked) config.LoggingRules.Remove(r);
         }
 
         protected override void Write(LogEventInfo logEvent)

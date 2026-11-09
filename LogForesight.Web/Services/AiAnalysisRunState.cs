@@ -32,6 +32,8 @@ public static class AiIdleReasons
     public const string NoPending = "no-pending";
     /// <summary>取數執行中且當日 PRTG finding 尚未算完，最近兩天的待補要等它到齊才判讀</summary>
     public const string WaitingFetch = "waiting-fetch";
+    /// <summary>上一輪自動觸發沒有任何進度，暫停自動重試中（退避；手動觸發、設定儲存、取數完成即解除）</summary>
+    public const string Backoff = "backoff";
 }
 
 /// <summary>
@@ -50,6 +52,14 @@ public class AiAnalysisRunState
     // 寫回時必須發現世代已變、丟棄這次結果，否則「執行前的舊件數」會連同全新 30 秒有效期被寫回。
     private int _pendingCacheGeneration;
     private static readonly TimeSpan PendingCacheDuration = TimeSpan.FromSeconds(30);
+
+    // 無進度退避的間隔（暫定值，待實機觀察後再調整）：5 → 10 → 15 分，封頂 15 分；
+    // 跟隨取數期間資料持續落地，退避上限壓到 5 分。
+    public static readonly TimeSpan BackoffBase = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan BackoffMax = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan FollowUpBackoffMax = TimeSpan.FromMinutes(5);
+
+    private DateTime? _backoffStartedAt;
 
     public bool IsRunning { get; private set; }
     public string? Trigger { get; private set; }
@@ -95,6 +105,100 @@ public class AiAnalysisRunState
         lock (_lock)
         {
             if (!IsRunning) IdleReason = reason;
+        }
+    }
+
+    /// <summary>連續「沒有進度」的自動觸發輪數；有進度或提前解除時歸零。僅存於記憶體，站台重啟歸零。</summary>
+    public int NoProgressStreak { get; private set; }
+
+    /// <summary>退避到何時（不含跟隨取數的上限，實際生效值見 <c>IsBackingOff</c>）</summary>
+    public DateTime? BackoffUntil { get; private set; }
+
+    /// <summary>進入退避時的 <c>ScheduleOptions.UpdatedAt</c>；之後被改過就代表排程設定被儲存，退避提前解除</summary>
+    public DateTime? BackoffScheduleStamp { get; private set; }
+
+    /// <summary>進入退避時的 <c>SystemSettings.UpdatedAt</c>（AI 等系統設定）</summary>
+    public DateTime? BackoffSettingsStamp { get; private set; }
+
+    /// <summary>
+    /// 記錄一輪自動觸發的結果（停止的一輪不要呼叫）。有進度即解除退避；無進度則連續次數加一，
+    /// 退避 <c>min(5 分 × 2^(次數-1), 15 分)</c>。<paramref name="scheduleUpdatedAt"/> 與
+    /// <paramref name="settingsUpdatedAt"/> 是本輪開始時的設定時間戳，供提前解除比對。
+    /// </summary>
+    public void RecordRoundOutcome(bool progressed, DateTime now, DateTime? scheduleUpdatedAt, DateTime? settingsUpdatedAt)
+    {
+        lock (_lock)
+        {
+            if (progressed)
+            {
+                ResetBackoffLocked();
+                return;
+            }
+
+            NoProgressStreak = Math.Min(NoProgressStreak + 1, 30);
+            var factor = Math.Pow(2, NoProgressStreak - 1);
+            var interval = TimeSpan.FromTicks((long)Math.Min(BackoffBase.Ticks * factor, BackoffMax.Ticks));
+            _backoffStartedAt = now;
+            BackoffUntil = now + interval;
+            BackoffScheduleStamp = scheduleUpdatedAt;
+            BackoffSettingsStamp = settingsUpdatedAt;
+        }
+    }
+
+    /// <summary>解除退避並把連續無進度次數歸零</summary>
+    public void ResetBackoff()
+    {
+        lock (_lock) ResetBackoffLocked();
+    }
+
+    private void ResetBackoffLocked()
+    {
+        NoProgressStreak = 0;
+        BackoffUntil = null;
+        _backoffStartedAt = null;
+        BackoffScheduleStamp = null;
+        BackoffSettingsStamp = null;
+    }
+
+    /// <summary>現在是否在退避中；<paramref name="until"/> 為退避結束時間</summary>
+    public bool IsBackingOff(DateTime now, out DateTime until) => IsBackingOff(now, false, out until);
+
+    /// <summary>
+    /// 同上；<paramref name="followingFetch"/> 為真（跟隨取數）時退避上限改為「進入退避起算 5 分鐘」。
+    /// </summary>
+    public bool IsBackingOff(DateTime now, bool followingFetch, out DateTime until)
+    {
+        lock (_lock)
+        {
+            if (BackoffUntil is not DateTime end)
+            {
+                until = default;
+                return false;
+            }
+
+            if (followingFetch && _backoffStartedAt is DateTime started)
+            {
+                var cap = started + FollowUpBackoffMax;
+                if (cap < end) end = cap;
+            }
+
+            until = end;
+            return now < end;
+        }
+    }
+
+    /// <summary>
+    /// 排程設定或系統設定被儲存過（時間戳與進入退避時不同）就解除退避；
+    /// 回傳是否因此解除。沒有在退避時不動作。
+    /// </summary>
+    public bool ReleaseBackoffIfSettingsChanged(DateTime? scheduleUpdatedAt, DateTime? settingsUpdatedAt)
+    {
+        lock (_lock)
+        {
+            if (BackoffUntil == null) return false;
+            if (scheduleUpdatedAt == BackoffScheduleStamp && settingsUpdatedAt == BackoffSettingsStamp) return false;
+            ResetBackoffLocked();
+            return true;
         }
     }
 

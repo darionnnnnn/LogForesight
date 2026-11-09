@@ -344,7 +344,7 @@ public class AnalysisOrchestrator
             {
                 var eventLogService = new EventLogService();
                 IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-                var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
+                using var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
                     usageMeter: new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
                 var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 

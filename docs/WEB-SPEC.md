@@ -2910,9 +2910,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **前端**：記錄 DTO 帶 `aiDegradedAttempts`（含輕量清單列），`core/format.js` 的 `aiStateOf(record)` 是清單、詳情共用的唯一判定（`detailPruned` 的列不會是 pending／degraded：詳情已清就不再補跑），回 `pending`／`degraded`／`abandoned`／`done`，不比對標題；`degraded` 徽章「AI 摘要待補（第 N 次格式異常）」（warning）、`abandoned` 徽章「AI 摘要已放棄」（danger），`pending` 仍是「AI 分析中」。`AI_DEGRADED_MAX_ATTEMPTS` 與後端 `AiDegradation.MaxAttempts` 同為 3，`AiStateUiTests` 比對。AI 服務完全不通而標題含「AI 待補」的存量列，徽章顯示「AI 分析中」。
   成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
-  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每輪共用的一個實例、工作流恢復；取數路徑的深析關閉）
+  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每個主機分片各一個實例、工作流恢復；取數路徑的深析關閉）
   上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
-  AI 排程一輪開始時解析一次 AI 設定並建一個 `AIService`，該輪所有主機分片共用；輪中改設定下一輪才生效。
+  AI 排程一輪開始時解析一次 AI 設定，每個主機分片各建一個 `AIService`（逐實例佇列不跨分片共用，跨分片的併發上限由閘道負責），分片結束即釋放；輪中改設定下一輪才生效。
   例外：設定頁「測試連線」的 `AiProbeService` 以自己的 `HttpClient` 送一次 `max_tokens=1` 的請求，不經閘道（單次、使用者手動觸發）。
   閘道參數在 `AIService`、`AnalysisOrchestrator`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`WebAiService` 皆為必填（傳 null 擲例外）；
   `AiRequestGateTests` 以正式 DI 解析三個 AI 消費端、斷言拿到的是全站閘道，並以反射守住各建構式的閘道參數非 nullable、無預設值。
@@ -2920,9 +2920,14 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
-  `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
+  `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`／`backoff`＝無進度退避），
   判定只有一份：`AiAnalysisHostedService.BlockingIdleReason`，輪詢、跟隨取數的即時觸發（不看窗口）與 `GET ai-status`（`CurrentIdleReason`，**讀取時即時判定**，不用上一輪輪詢留下的值）共用；AI 卡的「AI 服務未設定」判斷跟著 `idleReason` 走；
   `waiting-fetch` 不擋開跑，只在其他條件都成立時才報。閒置時 `progressPhase` 為 null。
+  `backoff`：自動觸發（排程、跟隨取數）的一輪沒有任何進度（完成加降級為 0，停止的一輪不算）就暫停自動重試，
+  間隔依連續次數 5→10→15 分（上限 15 分），跟隨取數期間上限 5 分；判定排在窗口檢查之後、待補件數查詢之前，退避中不查待補。
+  儲存排程設定或系統設定、取數完成（`OnFetchFollowUp`）、任一輪有進度即解除；手動觸發（立即補跑、強制重新分析）不經此判定、不受退避影響，
+  手動那一輪有進度也會解除。狀態存在 `AiAnalysisRunState`（行程內，站台重啟歸零）。
+  `GET ai-status` 在 `idleReason == "backoff"` 時帶 `nextRetryAt`（套用跟隨取數上限後的實際重試時間），其餘為 null；前端提示「暫停自動重試中」並補「，約 HH:mm 再試」。
   待補 0 件且原因為 `disabled`／`backfill-pending` 時，待補列寫「0 件（AI 服務未設定）」／「0 件（資料校正中，稍後再看）」而非「已全部完成」，提示列照顯示。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
   `disabled`＝AI 服務未設定，閒置說明列出該原因並指路到設定頁、不帶件數（「背景補跑窗口」列同時顯示「AI 服務未設定」），

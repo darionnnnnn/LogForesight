@@ -1020,7 +1020,7 @@ console.log('PASS operational status refresh');
         var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
         Assert.Contains(": status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'", js);
         Assert.Contains(": status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'", js);
-        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {", js);
+        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'backoff'].includes(status.idleReason))) {", js);
         Assert.DoesNotContain("存量校正回填尚未完成", js);
     }
 
@@ -1090,5 +1090,21 @@ console.log('PASS operational status refresh');
         Assert.Contains("new URLSearchParams(location.search).get('run')", js);
         Assert.Contains("showDetail(Number(linkedRunId))", js);
         Assert.Contains("aiAvailable = status.idleReason !== 'disabled';", js);
+    }
+
+    [Fact]
+    public void AI閒置原因backoff有文案且提示顯示條件涵蓋它並可帶重試時間()
+    {
+        var js = ReadRunsJs();
+        Assert.Contains("'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'", js);
+
+        // 退避中待補件數可能是舊快取值，條件陣列要含 backoff 才不會被 pendingTotal 擋掉
+        var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.Contains("['disabled', 'backfill-pending', 'backoff'].includes(status.idleReason)", aiBody);
+        Assert.Contains("aiIdleHintText(status)", aiBody);
+
+        var hintBody = ExtractBlock(js, "function aiIdleHintText(");
+        Assert.Contains("status.nextRetryAt", hintBody);
+        Assert.Contains("再試", hintBody);
     }
 }
