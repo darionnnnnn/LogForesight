@@ -77,7 +77,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 4. OOM 可辨識：`AnalysisOrchestrator.RunAsync` 與 AI 排程的最外層 catch 遇到 `OutOfMemoryException` 時，失敗原因固定帶「記憶體上限」字樣（常數集中一處），健康頁「上次執行」與執行紀錄都看得到。硬上限只管 .NET 堆，README 寫明堆外（SQLite）不受約束。
 5. 健康頁詳情（需 Maintain）顯示快照，含「硬上限使用率」（`GC.GetTotalMemory(false)` ÷ `TotalAvailableMemoryBytes`）；**既有 `degraded` 判定加一條**：使用率 ≥ 85%（常數，不開設定）→ `degraded`，原因字串寫明「記憶體接近硬上限」。不另設「實體記憶體」條件：.NET 沒有乾淨的實體記憶體 API，而 OOM 的邊界就是硬上限。儲存探測失敗的早退分支也帶記憶體區段（記憶體讀取不碰資料庫）。
 6. 診斷匯出 meta 加 `Memory`（匯出當下快照）與 `GcSettings`；runs 區每趟帶 `MemoryStart`／`MemoryEnd`。`SchemaVersion` **定案不升版**（純加鍵，舊讀取端忽略未知鍵）。去識別化不處理（純數字）。
-7. 啟動時 `web.log` 記一行 GC 生效值（Server GC 與否、ConserveMemory、HeapHardLimitPercent、TotalAvailableMemoryBytes）與 EF `ManyServiceProvidersCreatedWarning` 的出現與否；格式化抽成純函式。
+7. 啟動時 `web.log` 記一行 GC 生效值（Server GC 與否、ConserveMemory、HeapHardLimitPercent、TotalAvailableMemoryBytes）；格式化抽成純函式。EF `ManyServiceProvidersCreatedWarning` 不另記：EF Core 8 預設對它擲例外，發生即該趟失敗並留下訊息；改由測試守住提供者不隨 backend 成長（見執行紀錄）。
 8. 前端：健康頁籤加「記憶體」卡（數字單位 MB、null 顯示「—」、硬上限使用率一條進度文字），套 `ui-ux-pro-max`、DESIGN-SYSTEM v2；不做趨勢圖（趨勢靠執行紀錄）。
 9. 量測劇本：A＋B 併入後跑一晚，隔天診斷匯出就有四筆里程碑與當下快照，使用者貼匯出檔即可；本文「量測結果」表由主代理從匯出檔填。
 
@@ -162,7 +162,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
   4. 退避判斷放在 `BlockingIdleReason` 內 **`CountPendingAi` 之前**，退避中不查待補（省每分鐘 7～15 秒的查詢）。
   5. 新原因碼 `AiIdleReasons.Backoff = "backoff"`；`GET ai-status` 的 `idleReason` 帶它，另帶 `nextRetryAt`；`runs.js` 文案「上一輪沒有進度，暫停重試中（約 N 分後再試；可按『立即補跑』）」；WEB-SPEC §9.10 閒置原因清單同步。
   6. 站台重啟退避歸零（記憶體狀態，刻意不持久化）。
-- 驗收（假時鐘）：無進度 → 1 分鐘後 tick 不觸發且不呼叫 `CountPendingAi`、5 分鐘後觸發；連續兩次無進度 → 10 分鐘、三次 → 15 分鐘封頂；有進度後下一分鐘即觸發；待補數上升立即解除；設定儲存立即解除；跟隨取數期間固定 5 分鐘；手動觸發不受影響；`BlockingIdleReason` 回 `backoff` 且 `nextRetryAt` 正確。突變：把加倍改成固定，第二次間隔測試必須紅。前端：`runs.behavior.mjs` 新增「`backoff` 原因碼有文案」案例並登錄 `InlineData`。文件：grep WEB-SPEC §9.10 含 `backoff`。
+- 驗收（假時鐘）：無進度 → 1 分鐘後 tick 不觸發且不呼叫 `CountPendingAi`、5 分鐘後觸發；連續兩次無進度 → 10 分鐘、三次 → 15 分鐘封頂；有進度後下一分鐘即觸發；取數完成的跟隨觸發立即解除；排程設定與系統設定儲存立即解除；停止的一輪不增加連續次數；跟隨取數期間固定 5 分鐘；手動觸發不受影響；`BlockingIdleReason` 回 `backoff` 且 `nextRetryAt` 正確。突變：把加倍改成固定，第二次間隔測試必須紅。前端：`runs.js` 沒有對應的行為測試檔，以 `RunsPageUiTests` 靜態斷言 `backoff` 文案存在、提示顯示條件涵蓋它並可帶重試時間；實際畫面已於瀏覽器實測確認。文件：grep WEB-SPEC §9.10 含 `backoff`。
 - 篩選詞：`AiAnalysisSchedulerTests|RunsPageUiTests|UiTests|JsModuleImport|BehaviorTests|ApiTimeout`（已確認存在）。
 
 ### C-2 PRTG 快照目標每 tick 整表重載（P2、P3）
@@ -337,7 +337,8 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | D 兩個大結果快取 | Sonnet 5.5＋主代理微修 | `acbaf5a2` | 主代理重跑定向 210 通過；代理突變拿掉「清非當前版本」→ 3 案紅 | ①命中不複製後兩個既有「回傳副本」測試改為斷言同一參考，主代理順手改名（名稱已與行為不符）；②代理版單筆超限時保留同鍵舊條目，主代理改為一併移除並加案例，避免之後命中與本次查詢不一致的舊結果；③呼叫端只有 `DashboardService.BuildGroupRisk`、`ReportService.BuildIssueOthers` 兩個參數型別改唯讀，沒有任何呼叫端需要 `.ToList()` |
 | E 低風險峰值路徑 | Sonnet 5.5 | `e23a855b` | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
 | 瀏覽器實測（本機 Development 站台） | 主代理 | — | 見下方「實測紀錄」 | 無 |
-| 全量測試 | 主代理 | 見最後提交 | 第一次 8,733 通過／1 失敗：`SlowQueryCoverageTests` 以字串 `renderTable(tableHost` 定位慢查詢建表位置，A-3 新增的記憶體卡函式同名變數排在前面而誤判；記憶體卡變數改名 `metricsHost` 後第二次 8,734 通過／11 略過 | A-3 定向篩選（UiTests／JsModuleImport／BehaviorTests／ApiTimeout）不含此類，全量才抓到 |
+| 全量測試 | 主代理 | `3263c0a3` | 第一次 8,733 通過／1 失敗：`SlowQueryCoverageTests` 以字串 `renderTable(tableHost` 定位慢查詢建表位置，A-3 新增的記憶體卡函式同名變數排在前面而誤判；記憶體卡變數改名 `metricsHost` 後第二次 8,734 通過／11 略過 | A-3 定向篩選（UiTests／JsModuleImport／BehaviorTests／ApiTimeout）不含此類，全量才抓到 |
+| 規劃逐條比對（收官後） | 主代理 | 見下一個提交 | 以檢查腳本把 70 條定案／改動對到程式碼與文件，69 條有證據；漏的是 A 定案 7「EF `ManyServiceProvidersCreatedWarning` 的出現與否要看得到」 | 實作時發現 EF Core 8 對此警告**預設擲例外**（突變每次給新 `MemoryCache` 時第 21 個 backend 即擲），發生時那趟會明確失敗、不會靜默累積，另導進 NLog 的程式碼永遠不會被呼叫，依 KISS 不加；改以 `StorageBackendEfProviderTests` 守住「連續建 25 個 backend 提供者不成長」，突變驗證會紅 |
 
 
 ### 實測紀錄（2026-11-09，本機 `dotnet run` Development、Sqlite）
@@ -354,7 +355,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 
 ## 體檢交接
 
-- 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案），耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
+- 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案）；收官後逐條比對補 1 案（`StorageBackendEfProviderTests`，定向綠，基線記為 8,735），耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
 - 規劃項目逐條對照：A～G 全部完成；與規劃不同之處都記在執行紀錄的「落差與處置」欄；「明確不做」項目已登錄 BACKLOG「記憶體用量（遞延）」。
 - 實作方最沒把握、請優先看：
   1. **硬上限 60% 尚未經正式資料驗證**：P6／P8／P9 的峰值路徑本輪沒動，正式站台若單趟峰值本來就超過 60%，會從「吃光記憶體」變成「該趟中止並顯示記憶體上限」。請以第一晚的 `runMemory` 決定門檻（README 有環境變數覆寫方式）。
