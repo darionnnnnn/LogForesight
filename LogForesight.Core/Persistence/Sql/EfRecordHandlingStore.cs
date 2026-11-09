@@ -163,9 +163,9 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     /// </summary>
     public List<RecordHandlingLog> GetLogs(string hostName, DateTime date)
     {
-        var lines = _logStore.ReadLines(from: date.Date, to: null);
+        var lines = _logStore.EnumerateLines(from: date.Date, to: null);
 
-        return JsonLogParser.Parse<RecordHandlingLog>(lines, LfJsonOptions.Compact)
+        return JsonLogParser.ParseStream<RecordHandlingLog>(lines, LfJsonOptions.Compact)
             .Where(l => string.Equals(l.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
                         l.Date.Date == date.Date)
             .OrderBy(l => l.CreatedAt)
@@ -174,7 +174,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     }
 
     public List<RecordHandlingLog> GetReassignments(long previousHandlerId, DateTime from) =>
-        JsonLogParser.Parse<RecordHandlingLog>(_logStore.ReadLines(from, null), LfJsonOptions.Compact)
+        JsonLogParser.ParseStream<RecordHandlingLog>(_logStore.EnumerateLines(from, null), LfJsonOptions.Compact)
             .Where(l => l.Action == HandlingActions.CaseReassign && l.PreviousHandlerId == previousHandlerId &&
                         l.CaseId != null && l.CreatedAt >= from)
             .OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.LogId).ToList();

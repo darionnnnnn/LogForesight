@@ -10,22 +10,29 @@ namespace LogForesight.Core.Persistence;
 /// </summary>
 internal static class JsonLogParser
 {
-    public static List<T> Parse<T>(IEnumerable<string> lines, JsonSerializerOptions options) where T : class
+    public static List<T> Parse<T>(IEnumerable<string> lines, JsonSerializerOptions options) where T : class =>
+        ParseStream<T>(lines, options).ToList();
+
+    /// <summary>
+    /// 惰性逐行反序列化（容錯規則同 <see cref="Parse{T}"/>）：只在列舉到才解析那一行，
+    /// 呼叫端邊讀邊篩選時不必先把整批解析結果放進記憶體。
+    /// </summary>
+    public static IEnumerable<T> ParseStream<T>(IEnumerable<string> lines, JsonSerializerOptions options) where T : class
     {
-        var result = new List<T>();
         foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
+            T? item;
             try
             {
-                var item = JsonSerializer.Deserialize<T>(line, options);
-                if (item != null) result.Add(item);
+                item = JsonSerializer.Deserialize<T>(line, options);
             }
             catch (JsonException)
             {
                 // 逐行獨立：單行損毀只跳過該行
+                continue;
             }
+            if (item != null) yield return item;
         }
-        return result;
     }
 }

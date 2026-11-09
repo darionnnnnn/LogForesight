@@ -334,7 +334,8 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | F SQLite 連線層可設定 | 主代理 | `2f974646` | `SqlitePragmaInterceptorTests` 以真實檔案連線讀回 PRAGMA（預設值、設定值、第二條連線）、不合法值點名鍵、軟上限生效；`AppSettingsKeyGuardTests` 綠 | ①鍵守門要求強型別鍵都列在 appsettings.json 範例檔，三鍵改列實際 `null` 值（綁定為留空用預設），原本只寫成註解會紅；②驗證集中在 `SqlitePragmaInterceptor.ResolveMemorySettings` 單一入口 |
 | G 附帶 bug | 主代理 | `2f974646` | 新增 `PrtgSnapshotJournalSegmentLimitTests` 4 案；換回修正前 journal → 3 案紅（第 4 案「單一組成超限仍擲」兩版皆綠）；G-2 grep 該檔已無「預設 7 天」 | ①實作時一度把載入時的 snapshot 檢查也放寬到整體上限，突變顯示壓縮會先以 `SnapshotChunks` 切成每段 ≤ 100,000，原檢查本來就正確，已還原，只保留 segment 各組成分別比對的修正 |
 | 文件同步（PRTG-SPEC、BACKLOG） | 主代理 | `d10d90f3` | grep 無敘事字眼 | 無 |
-| D 兩個大結果快取 | Sonnet 5.5＋主代理微修 | 見下一個提交 | 主代理重跑定向 210 通過；代理突變拿掉「清非當前版本」→ 3 案紅 | ①命中不複製後兩個既有「回傳副本」測試改為斷言同一參考，主代理順手改名（名稱已與行為不符）；②代理版單筆超限時保留同鍵舊條目，主代理改為一併移除並加案例，避免之後命中與本次查詢不一致的舊結果；③呼叫端只有 `DashboardService.BuildGroupRisk`、`ReportService.BuildIssueOthers` 兩個參數型別改唯讀，沒有任何呼叫端需要 `.ToList()` |
+| D 兩個大結果快取 | Sonnet 5.5＋主代理微修 | `acbaf5a2` | 主代理重跑定向 210 通過；代理突變拿掉「清非當前版本」→ 3 案紅 | ①命中不複製後兩個既有「回傳副本」測試改為斷言同一參考，主代理順手改名（名稱已與行為不符）；②代理版單筆超限時保留同鍵舊條目，主代理改為一併移除並加案例，避免之後命中與本次查詢不一致的舊結果；③呼叫端只有 `DashboardService.BuildGroupRisk`、`ReportService.BuildIssueOthers` 兩個參數型別改唯讀，沒有任何呼叫端需要 `.ToList()` |
+| E 低風險峰值路徑 | Sonnet 5.5 | 見下一個提交 | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
 
 
 ## 體檢交接

@@ -35,7 +35,7 @@ public sealed class SuccessfulLogonEvidenceSourceTests : IDisposable
                 "User: alice\nClient Address: 198.51.100.42"));
         }
 
-        var remote = NewService(AnalysisLogSource.Netiq, date =>
+        var remote = NewService(AnalysisLogSource.Netiq, (date, _) =>
         {
             localScanCalls++;
             return new EventLogScanResult
@@ -59,7 +59,7 @@ public sealed class SuccessfulLogonEvidenceSourceTests : IDisposable
     {
         var localScanCalls = 0;
         var day = new DateTime(2026, 10, 10);
-        var remote = NewService(AnalysisLogSource.Netiq, date =>
+        var remote = NewService(AnalysisLogSource.Netiq, (date, _) =>
         {
             localScanCalls++;
             return new EventLogScanResult
@@ -82,7 +82,7 @@ public sealed class SuccessfulLogonEvidenceSourceTests : IDisposable
     {
         var localScanCalls = 0;
         var day = new DateTime(2026, 10, 9);
-        var local = NewService(AnalysisLogSource.Local, date =>
+        var local = NewService(AnalysisLogSource.Local, (date, _) =>
         {
             localScanCalls++;
             return new EventLogScanResult
@@ -99,7 +99,8 @@ public sealed class SuccessfulLogonEvidenceSourceTests : IDisposable
         Assert.Contains(record.CorrelationAlertRefs, finding => finding.PatternId == CorrelationPatternIds.BruteSuccess);
     }
 
-    private LogAnalysisService NewService(AnalysisLogSource source, Func<DateTime, EventLogScanResult> localScanner) =>
+    private LogAnalysisService NewService(AnalysisLogSource source,
+        Func<DateTime, Func<EventLogEntryData, bool>, EventLogScanResult> localScanner) =>
         new(new EventLogService(), new FakeAiService(),
             new EfAnalysisRecordStore(_fixture.NewContext, $"source-boundary-{Guid.NewGuid():N}"),
             new FakeSuppressionStore(), host: "FIXTURE-REMOTE-HOST", hostId: 97531,
