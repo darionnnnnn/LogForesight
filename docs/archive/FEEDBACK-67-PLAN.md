@@ -321,6 +321,13 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 
 就緒結論：A～G 每個子項的現況、定案、改動、驗收都已核實，沒有留給實作端的待查事項；「暫定」只剩四個可調數值（硬上限 60、元素總數上限 200,000、退避 5～15 分鐘、SQLite 三個預設值），調整不改契約形狀。可開分支實作。
 
+## 終檢輪（併 dev 後，Fable 5.1）
+
+- 併入後 `git diff --quiet feature/feedback-67 dev` 成立、dev 自分支起點未移動、終檢未改程式碼：全量不重跑，以 feature 上的 8,748 通過／11 略過為準。
+- 體檢修正 commit `24fb94da` 再掃一次：`InvalidateTargets()` 讓原本只清小時的兩個重設點也清 `_targetObjids`／`_sensorTypes`，`ResolveTargets` 在小時為 null 時必先重算再使用，無空參照路徑；世代比對只在重算結束時讀一次，`RequestScopeRefresh` 的請求執行緒寫入以 `Interlocked` 遞增，無撕裂。`HostDayWorkflowRecoveryHostedService` 的 try 區塊內文未重新縮排（避免 30 行純縮排 diff），行為與編譯正確，可讀性留待下次動到該檔時整理。
+- 文件稽核：README、WEB-SPEC、DB-SPEC、PRTG-SPEC、DETECTION-SPEC、BACKLOG、HELP 新增段落 grep 無「原本／後來／改為／取代／第 N 輪／體檢輪」（README 升級注意事項段落允許描述變更）；CLAUDE.md 基線 8,748、新增 GC 鍵名白名單地雷；docs/archive/README.md 已加第 67 輪索引列。
+- 終檢無其他新發現。
+
 ## 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
