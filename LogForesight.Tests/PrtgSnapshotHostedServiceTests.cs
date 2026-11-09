@@ -726,6 +726,46 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 快照後沒有補到新sensor_同小時連續三次tick只重算一次目標()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
+        var hour = DateTime.Today.AddHours(10);
+        var service = CreateService();
+
+        service.Now = () => hour;
+        await service.TickAsync();
+        service.Now = () => hour.AddMinutes(20);
+        await service.TickAsync();
+        service.Now = () => hour.AddMinutes(40);
+        await service.TickAsync();
+
+        // 快照後的範圍補抓沒有補到任何 sensor，不得清掉目標快取；三個 tick 走真實路徑只整表重算一次
+        Assert.Equal(1, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標重算期間被請求重設_不標本小時已算過_下一次仍重算()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var requested = false;
+        _sqlDiagnostics.OnSensorSelect = () =>
+        {
+            if (requested) return;
+            requested = true;
+            service.RequestScopeRefresh(); // 模擬請求執行緒在重算進行中要求重設
+        };
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        Assert.True(requested);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(10));
+
+        // 沒有世代防護的話，重算收尾會把「本小時已算過」蓋回去，第二次就不會重算
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
     public async Task 有舊來源待寫樣本時改網址_不重播不取數且保留原檔()
     {
         SetupTargetSensors(new[] { (501L, "Ping") });
@@ -1033,6 +1073,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         public long SensorSelectCount => Interlocked.Read(ref _sensorSelectCount);
 
+        /// <summary>每次 sensor 表 SELECT 開始時呼叫（測試用：在整表重算途中插入其他動作）</summary>
+        public Action? OnSensorSelect { get; set; }
+
         public IReadOnlyList<string> BlobSelectCommands
         {
             get { lock (_commandsGate) return _blobSelectCommands.ToArray(); }
@@ -1135,7 +1178,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             var kind = Classify(sql);
             switch (kind)
             {
-                case CommandKind.SensorSelect: Interlocked.Increment(ref _sensorSelectCount); break;
+                case CommandKind.SensorSelect: Interlocked.Increment(ref _sensorSelectCount); OnSensorSelect?.Invoke(); break;
                 case CommandKind.IdentityBatchSelect: Interlocked.Increment(ref _identityBatchSelectCount); break;
                 case CommandKind.SensorWrite: Interlocked.Increment(ref _sensorWriteCount); break;
                 case CommandKind.BlobWrite: Interlocked.Increment(ref _blobWriteCount); break;

@@ -1,6 +1,6 @@
 # LogForesight 第 67 輪規劃：記憶體用量體檢
 
-> 狀態：實作完成，待換模型體檢（分支 feature/feedback-67）
+> 狀態：全案完成已併 dev（實作 Opus 5.5；換模型體檢 Fable 5.1）
 > 基準：dev@03a2a992（Windows 8,634 綠／11 略過；macOS 8,512 綠／14 略過；全量約 8 分鐘）
 > 來源：使用者回報「排程連續執行三天，整台 24 GB 記憶體被 `LogForesight.Web` 吃光」（後端 Sqlite）；本輪為全專案記憶體體檢
 > 實作方式：主代理寫階段規格，實作派內建 Agent（Sonnet 5.5，effort 由主代理依段評估；純測試小段可用 Haiku 5.5）；同一 checkout 一次只派一個改檔代理；每段主代理獨立重跑驗收，不採信代理摘要；收尾換模型體檢
@@ -327,7 +327,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 |---|---|---|---|---|
 | A-1 快照讀取點＋快取統計＋健康頁 | Sonnet 5.5 | `7404313a` | 主代理重跑定向 186 通過（含 DI 組裝 `HostDayWorkflowRegistrationTests`、`HealthTabUiTests`）；突變拿掉記憶體 degraded 條件 → 1 案紅 | 無 |
 | A-2 執行紀錄里程碑＋OOM＋匯出＋啟動 log | Sonnet 5.5＋主代理微修 | `6db60010` | 主代理重跑定向 427 通過／1 略過；突變拿掉結束標記寫入 → 2 案紅 | ①匯出沒有逐趟清單，記憶體改放新頂層區段 `runMemory`（最多 200 趟，超過寫進 `meta.omitted`）；②`GcSettings` 不另做 DTO，三欄併進 `meta.memory`；③代理版匯出拿不到 SQLite 值，主代理補 `RunExportService` 可選 `sqliteHeap` 委派並由 DI 傳 `StorageBackend.TryReadSqliteHeap`，加測試；④既有 `RunExportServiceTests.Strip` 改為略過 `meta.memory`（即時值每次不同）；⑤取數路徑 OOM 只有 `RunFailureReasons.Describe` 單元測試，`RunAsync` 無替身可擲例外 |
-| A-3 前端記憶體卡＋執行詳情＋文件 | Sonnet 5.5 | `49e2f2ec` | 主代理重跑前端定向（UiTests／JsModuleImport／BehaviorTests／ApiTimeout／Help／CspPolicyGuard）692 通過；文件無敘事字眼；說明書按鈕名稱與 Runs.cshtml 一致；瀏覽器實測併入 C-4 後一次做 | 設計判準套 `ui-ux-pro-max` 檢索：表格溢出由既有 `lf-table-wrap` 處理、兩表帶隱藏 caption、警示 badge 帶文字 |
+| A-3 前端記憶體卡＋執行詳情＋文件 | Sonnet 5.5 | `49e2f2ec` | 主代理重跑前端定向（UiTests／JsModuleImport／BehaviorTests／ApiTimeout／Help／CspPolicyGuard）692 通過；文件無敘事字眼；說明書按鈕名稱與 Runs.cshtml 一致；瀏覽器實測併入 C-4 後一次做 | 設計判準套 `ui-ux-pro-max` 檢索：表格溢出由既有 `lf-table-wrap` 處理、兩表帶隱藏 caption、警示 badge 帶文字。與規劃字面不同、實作取可用形狀：①A 定案 2「0 時顯示『尚未回收』」未做，第一次 GC 前欄位為 null、畫面顯示「—」（與同定案 8「null 顯示 —」一致）；②A 定案 5「degraded 原因字串」實作為 `MemoryWarning` 布林＋畫面警示徽章文字；③A 定案 8「使用率一條進度文字」實作為表格列括號內「（已用 N%）」；④C-4 定案 5 文案「約 N 分後再試」實作為「約 HH:mm 再試」 |
 | B GC 設定 | 主代理 | `9eb41d66` | `RuntimeConfigGuardTests` 2 案綠；突變回 `System.GC.Conserve` → 2 案紅；`dotnet build` 後 `bin/Debug/net8.0/LogForesight.Web.runtimeconfig.json` 含四鍵（`net8.0-windows` 目錄是舊目標框架殘留，不更新屬正常）；啟動 log 實測併入 C-4 後的瀏覽器驗證 | README 覆寫說明補「環境變數值為十六進位」 |
 | C-1／C-3／C-4 NLog rule、AIService 釋放、AI 退避 | Sonnet 5.5＋主代理微修 | `d6bcb5e8` | 主代理重跑定向 1120 通過；代理突變 C-1（拿掉 rule 移除 → 3 案紅）、C-4（倍增改固定 → 2 案紅）；主代理獨立突變 C-4（退避判定恆假 → 4 案紅） | ①C-1 為了用獨立設定測試，`BatchRunNLogTarget` 改 internal、`Attach`／`Detach` 加可選 `configOverride`；②C-3 只釋放本輪新建的實例（注入的測試替身不釋放）；③`RunsPageUiTests` 既有逐字比對條件陣列的案例改為含 `backoff`；④代理指出 WEB-SPEC AI 閘道段仍寫「整輪共用一個 AIService」（與 CLAUDE.md 定案不符的舊敘述），主代理改為每分片一個、分片結束釋放 |
 | C-2 PRTG 快照目標快取 | Sonnet 5.5 | `be5889d2` | 主代理重跑 PRTG 定向（快照、範圍、守門、監控頁、store、每日管線、校準、數值評估）全綠；代理突變「恆刷新＋改回整表讀」→ 9 個新案全紅 | ①`ResolveTargets`、`BackfillScopeSensorsAsync`、`RecentStateChangeScopeContext` 改 internal 供測試；②守門實際只讀 `PrtgResourceGuardEnabled`／`PrtgResourceGuardSensorObjids`／`PrtgUrl` 三欄，指紋即此三欄＋白名單＋hosts／sentinels blob 版本；③補抓後的 `GetAllSensors` 因中間有寫入刻意保留；④主機對應變動仍最慢一小時生效（與原設計「每小時重算」一致） |
@@ -335,7 +335,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | G 附帶 bug | 主代理 | `2f974646` | 新增 `PrtgSnapshotJournalSegmentLimitTests` 4 案；換回修正前 journal → 3 案紅（第 4 案「單一組成超限仍擲」兩版皆綠）；G-2 grep 該檔已無「預設 7 天」 | ①實作時一度把載入時的 snapshot 檢查也放寬到整體上限，突變顯示壓縮會先以 `SnapshotChunks` 切成每段 ≤ 100,000，原檢查本來就正確，已還原，只保留 segment 各組成分別比對的修正 |
 | 文件同步（PRTG-SPEC、BACKLOG） | 主代理 | `d10d90f3` | grep 無敘事字眼 | 無 |
 | D 兩個大結果快取 | Sonnet 5.5＋主代理微修 | `acbaf5a2` | 主代理重跑定向 210 通過；代理突變拿掉「清非當前版本」→ 3 案紅 | ①命中不複製後兩個既有「回傳副本」測試改為斷言同一參考，主代理順手改名（名稱已與行為不符）；②代理版單筆超限時保留同鍵舊條目，主代理改為一併移除並加案例，避免之後命中與本次查詢不一致的舊結果；③呼叫端只有 `DashboardService.BuildGroupRisk`、`ReportService.BuildIssueOthers` 兩個參數型別改唯讀，沒有任何呼叫端需要 `.ToList()` |
-| E 低風險峰值路徑 | Sonnet 5.5 | `e23a855b` | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
+| E 低風險峰值路徑 | Sonnet 5.5 | `e23a855b` | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過；④E-1 實作以 `ScanRange(..., keep)` 述詞在建立 `EventLogEntryData` 後立即丟棄不相關事件，而非規劃的「輕量記錄＋`ExtractAccountsAndIpsWithTimes` 多載」——判定等價（同一條 `ExtractAccountsAndIps` 解析、同比較器），保留者仍帶 Message，記憶體量級與失敗集合成正比相同，只是每筆常數較大；規劃「`Map` 呼叫為 0」的驗收因此不適用，改以「失敗集合外的 4624 不產生記錄」守住 |
 | 瀏覽器實測（本機 Development 站台） | 主代理 | — | 見下方「實測紀錄」 | 無 |
 | 全量測試 | 主代理 | `3263c0a3` | 第一次 8,733 通過／1 失敗：`SlowQueryCoverageTests` 以字串 `renderTable(tableHost` 定位慢查詢建表位置，A-3 新增的記憶體卡函式同名變數排在前面而誤判；記憶體卡變數改名 `metricsHost` 後第二次 8,734 通過／11 略過 | A-3 定向篩選（UiTests／JsModuleImport／BehaviorTests／ApiTimeout）不含此類，全量才抓到 |
 | 規劃逐條比對（收官後） | 主代理 | `09c2474b` | 以檢查腳本把 70 條定案／改動對到程式碼與文件，69 條有證據；漏的是 A 定案 7「EF `ManyServiceProvidersCreatedWarning` 的出現與否要看得到」 | 實作時發現 EF Core 8 對此警告**預設擲例外**（突變每次給新 `MemoryCache` 時第 21 個 backend 即擲），發生時那趟會明確失敗、不會靜默累積，另導進 NLog 的程式碼永遠不會被呼叫，依 KISS 不加；改以 `StorageBackendEfProviderTests` 守住「連續建 25 個 backend 提供者不成長」，突變驗證會紅 |
@@ -374,7 +374,33 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 
 評估後不改：C-1 空殼規則判準只比對「`*`、無 target、非 final、無規則名、等級恰為 Warn～Fatal」，本專案 nlog.config 五條都不符；含子規則的自訂結構屬極端情境，不另加判準。C-2 的 sensor 鏡像變動與主機對應一樣最慢一小時反映，結構同步與範圍補抓後既有重設點會立即重算。`ReadSettingStamps` 開頭讀設定失敗時可能多試一次，影響僅一次重試。
 
+## 體檢輪修正（體檢方：Fable 5.1）
+
+三個 Sonnet 唯讀代理依角色分區（維運者整趟流程／資料生命週期與狀態機／程式稽核、架構契合與文件），附共同規則（唯讀、探針放 %TEMP%、前三條附探針、已查過清單），主代理逐條以 diff 與探針重驗後處置。
+
+| # | 區 | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|---|
+| 1 | 1（已實測） | `MemorySnapshot`、`GcStartupInfo`、健康頁記憶體卡 | runtime 未設 `HeapHardLimitPercent` 時 `GC.GetConfigurationVariables()` 仍回該鍵、值為 0（規劃階段的小程式只測了有設定的情況）；畫面把 24 GB 實體記憶體標成「.NET 硬上限…設定 0%」、啟動 log 永遠印 `GCHeapHardLimit=`，自我體檢 #4 的修正在真實 runtime 失效 | `MemorySnapshot.ReadPositiveLong` 把 0 當 null；啟動 log 以「值 > 0」判定有無硬上限，0 印「未設定」 | `RunMemoryMarkTests.GC硬上限百分比_runtime未設時值為0_視為未設定` |
+| 2 | 1（已實測） | `BatchRunRecorder.RecordMemory` | 開始標記只改記憶體內的 `_run`，要等第一個頂層階段結束的快照才落地；行程中途被殺（吃光記憶體最常見的結局）時 AI 趟與死在第一階段的取數趟連開始標記都沒有，與 README、匯出說明寫的「只少結束標記」不符 | `RecordMemory(start:true)` 後立刻 `WriteSnapshot()` | `RunMemoryMarkTests.Recorder_開始標記在任何階段結束前就已落地`（突變拿掉落地 → 紅） |
+| 3 | 1（已實測） | `BatchRunRecorder.Fatal`、`AiAnalysisHostedService` 最外層 catch | 「記憶體上限」固定字樣只在排程狀態卡的 `RunOutcome.Message`，執行詳情的 Fatal／Error 診斷行是英文原文，README 寫兩處都看得到 | `Fatal` 與 AI 最外層 `Log.Error` 都改用 `RunFailureReasons.Describe` | AI 與取數兩個 OOM 測試補「診斷行含記憶體上限」斷言 |
+| 4 | 2（已實測） | `PrtgSnapshotHostedService.TickAsync` 快照後補抓區塊 | 每次快照成功後無條件把 `_targetRefreshHour`／`_targetObjids`／`_sensorTypes` 設 null，下一次 tick 必整表重算；C-2「同小時只重算一次」只在直接呼叫 `ResolveTargets` 的測試成立，真實路徑三個 tick 重算三次 | 補抓真的補到 sensor（`BackfillScopeSensorsAsync` 回傳非空）才重設 | `快照後沒有補到新sensor_同小時連續三次tick只重算一次目標`（突變無條件重設 → 紅） |
+| 5 | 2（推論，本輪引入） | 同上 `RefreshTargets` 與 `RequestScopeRefresh` | 請求執行緒在重算進行中重設，收尾的 `_targetRefreshHour = currentHour` 會蓋掉重設、帶舊目標撐到下一個整點（dev 版每 tick 重算沒有這個窗口；#4 修好後窗口變成最長一小時） | 重設世代計數：五個重設點走 `InvalidateTargets()` 累加世代，`RefreshTargets` 收尾時世代已變就不標本小時已算過 | `目標重算期間被請求重設_不標本小時已算過_下一次仍重算`（以 SQL 攔截器在 sensor 整表讀取時插入 `RequestScopeRefresh`；突變拿掉世代防護 → 紅） |
+| 6 | 3（靜態） | `HostDayWorkflowRecoveryHostedService.RetryPendingReports` | 每 15 分鐘一輪、有待補報告就 `new AIService`（含 `HttpClient`）用完不釋放；BACKLOG 寫「換設定極少」與事實不符（DI 沒傳 `reportAiService`，正式環境每輪都 new） | 只釋放自己建的實例（try/finally，沿用 C-3 寫法）；BACKLOG 改為只剩 `WebAiService` | 既有 `HostDayWorkflow*` 測試 |
+| 7 | 3（靜態） | 規劃 E-2 驗收 | 處理歷程 `GetLogs`／`GetReassignments` 串流化沒有任何守門測試，改回 `ReadLines` 全綠 | — | 新檔 `HandlingStoreStreamingTests`：log 行查詢每一道都帶 `LIMIT` |
+| 8 | 3（靜態） | 規劃 C-2 驗收 | `PrtgMonitoringController` 改用 `GetSensorTypes` 沒有控制器層測試，改回整表讀全綠 | — | 新檔 `PrtgMonitoringSensorTypesProjectionTests`：`Preview` 不得發出六欄整表 SELECT、必須發出帶 `json_each` 範圍的投影（突變改回 `GetSensorStatuses` → 紅） |
+| 9 | 3（靜態） | `PrtgSnapshotHostedService._targetWhitelistFingerprint` | 只寫不讀，已被 `_targetFingerprint` 涵蓋 | 刪除 | 建置 |
+| 10 | 3（靜態） | 兩個大結果快取 | 版本清除、元素上限、單筆超限與統計計數逐行相同（94／121 行），規劃「只為兩行 Where 不值抽基底」的前提已不成立 | 體檢不重構：兩檔頂端互相註明「改一邊要改另一邊」，BACKLOG 記觸發時機（第三個同型快取出現時抽泛型核心） | — |
+| 11 | 3（靜態） | WEB-SPEC、README、BACKLOG | 退避提示條件寫在健康頁段、OOM 固定字樣沒進 WEB-SPEC、峰值是行程累計沒寫、`Storage__Sqlite*` 環境變數覆寫沒寫、軟上限改回 0 需重啟沒寫 | 文件修正 | grep |
+| 12 | 3（靜態） | PLAN 執行紀錄 | E-1 以 `keep` 述詞取代規劃的輕量記錄、A 定案 2／5／8 與 C-4 文案的字面偏離沒記 | 落差欄補記 | — |
+
+評估後不改：`CurrentIdleReason`（狀態 API）在退避中會因設定時間戳變了而解除退避（與 tick 同一份判定，區 2 實測行為合理）；`OnFetchFollowUp` 先重設再檢查前置條件（字面實作、低風險）；`ReadSettingStamps` 讀失敗時可能多試一次；`ParseStream`／`LatestPerRunStream` 與 `Prune`、分頁邊界交錯（區 2 探針 2,100 列跨頁取最後一列正確）；兩個大快取 `_elements` 不變式（區 2 隨機 2,000 步 0 偏差）；NLog 空殼規則判準對 `final` 與有 target 的自訂規則都保留（區 2 探針）；MB 格式化在 settings.js／runs.js 各一份（三行，不抽共用）；`MemorySnapshotDto` 部分欄位前端未用（規劃明文「可補不可少」）；SqlServer 後端 `TryReadSqliteHeap` 回 null 的分支無測試（需真 SqlServer 連線才能建 backend，以程式碼審視代替）。
+
+
+修正後全量：8,748 通過／11 略過。
+
 ## 體檢交接
+
+- 實作主代理：Opus 5.5（規劃階段為 Fable 5.1）；實作 subagent：Sonnet 5.5；換模型體檢：Fable 5.1。
 
 - 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案）；收官後逐條比對補 1 案（`StorageBackendEfProviderTests`）；自我體檢修正後全量 8,741 通過／11 略過，再補 1 案，基線 8,742，耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
 - 規劃項目逐條對照：A～G 全部完成；與規劃不同之處都記在執行紀錄的「落差與處置」欄；「明確不做」項目已登錄 BACKLOG「記憶體用量（遞延）」。

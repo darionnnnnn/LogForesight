@@ -306,6 +306,10 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         // a dependency for report composition and never sends an AI request.
         var aiService = _reportAiService ?? new AIService(appSettings.Ai,
             usageMeter: new AiUsageStore(_backend.Blob(AiUsageStore.BlobKey)), gate: _aiGate);
+        // 每輪恢復都會新建一個 AIService（含 HttpClient）：只釋放自己建的，注入的替身不動
+        var ownsAiService = _reportAiService is null;
+        try
+        {
         var reportStore = _backend.ReportStore();
         var suppressionStore = new MuteAwareSuppressionStore(
             new SuppressionStore(_backend.Blob("suppressions")),
@@ -339,6 +343,11 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             }
         }
         return completed;
+        }
+        finally
+        {
+            if (ownsAiService) (aiService as IDisposable)?.Dispose();
+        }
     }
 
     internal static DailyAnalysisRecord[] SelectPendingReports(IReadOnlyList<DailyAnalysisRecord> records,

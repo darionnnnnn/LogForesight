@@ -92,7 +92,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal TimeSpan ScopeWorkBudget { get; set; } = TimeSpan.FromSeconds(30);
 
     private DateTime? _targetRefreshHour;
-    private string? _targetWhitelistFingerprint;
+    /// <summary>
+    /// 目標快取被重設的世代：每個重設點 +1。<see cref="RefreshTargets"/> 開始時記下世代，結束時若世代已變
+    /// （請求執行緒在重算期間呼叫了 <see cref="RequestScopeRefresh"/>）就不標本小時已算過，下一個 tick 再算一次；
+    /// 否則重算中途的重設會被收尾的 <c>_targetRefreshHour = currentHour</c> 蓋掉，帶著舊目標撐到下一個整點。
+    /// </summary>
+    private int _targetResetGeneration;
 
     /// <summary>
     /// 上次刷新目標時的整體指紋（型別白名單、守門設定、主機與 Sentinel 清單版本）。
@@ -213,10 +218,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     public virtual void RequestScopeRefresh()
     {
         _scopeRefreshRequested = true;
-        _targetRefreshHour = null;
-        _targetWhitelistFingerprint = null;
-        _targetObjids = null;
-        _sensorTypes = null;
+        InvalidateTargets();
         try
         {
             _wakeSignal.Release();
@@ -409,7 +411,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         catch (OperationCanceledException) when (slice.IsCancellationRequested && !parent.IsCancellationRequested)
         {
             _scopeRefreshRequested = true;
-            _targetRefreshHour = null;
+            InvalidateTargets();
             WriteOutput("[PRTG快照] 本輪範圍補抓已達期限，未完成項留待下一輪；繼續日常採樣。", LogLevel.Warn);
         }
     }
@@ -427,7 +429,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         catch (OperationCanceledException) when (!parent.IsCancellationRequested && operation.SettingsChanged)
         {
-            _targetRefreshHour = null;
+            InvalidateTargets();
             _lastSkipReason = "PRTG 設定已變更，本輪快照停止；已取得的樣本保留";
             WriteOutput(_lastSkipReason, LogLevel.Info);
         }
@@ -536,12 +538,10 @@ public class PrtgSnapshotHostedService : BackgroundService
             {
                 await RunBoundedScopeWorkAsync(token, async slice =>
                 {
-                    // 補抓進來的 sensor 下一輪才進快照範圍：先清掉目標快取，下一輪重算。
-                    _targetRefreshHour = null;
-                    _targetWhitelistFingerprint = null;
-                    _targetObjids = null;
-                    _sensorTypes = null;
-                    await BackfillScopeSensorsAsync(settings, queueContext, slice);
+                    // 補抓進來的 sensor 下一輪才進快照範圍：真的補到東西才清目標快取，下一輪重算。
+                    // 無條件清會讓「同小時只重算一次」在每次快照之後失效，等於每個 tick 都整表重讀。
+                    var backfilled = await BackfillScopeSensorsAsync(settings, queueContext, slice);
+                    if (backfilled.Count > 0) InvalidateTargets();
                     _operationCheckpoint?.Invoke();
                     await FetchRecentStateChangesAsync(settings, slice);
                 });
@@ -1379,9 +1379,19 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
     }
 
+    /// <summary>讓下一個 tick 重算快照目標（五個重設點共用）。</summary>
+    private void InvalidateTargets()
+    {
+        _targetRefreshHour = null;
+        _targetObjids = null;
+        _sensorTypes = null;
+        Interlocked.Increment(ref _targetResetGeneration);
+    }
+
     private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour, string fingerprint)
     {
         TargetRefreshCount++;
+        var generation = Volatile.Read(ref _targetResetGeneration);
         var store = _backend.PrtgStore();
         var today = now.Date;
         // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
@@ -1404,8 +1414,8 @@ public class PrtgSnapshotHostedService : BackgroundService
                 _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids
             : Array.Empty<long>();
 
-        _targetRefreshHour = currentHour;
-        _targetWhitelistFingerprint = WhitelistFingerprint(settings.PrtgSensorTypeWhitelist);
+        // 重算期間有人重設過（世代變了）就不標本小時已算過，下一個 tick 再算；否則舊目標會撐到下一個整點
+        _targetRefreshHour = Volatile.Read(ref _targetResetGeneration) == generation ? currentHour : null;
         _targetFingerprint = fingerprint;
         return okDeviceIds.Count;
     }

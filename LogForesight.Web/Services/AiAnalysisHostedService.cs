@@ -313,8 +313,9 @@ public class AiAnalysisHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "AI 分析排程執行時發生未預期錯誤：{Msg}", ex.Message);
                 failureMessage = RunFailureReasons.Describe(ex);
+                // 這行會經 recorder 進執行詳情的診斷行：記憶體不足要帶固定字樣，不只在排程狀態卡
+                Log.Error(ex, "AI 分析排程執行時發生未預期錯誤：{Msg}", failureMessage);
                 success = false;
             }
             finally

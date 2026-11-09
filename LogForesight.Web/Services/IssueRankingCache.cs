@@ -16,6 +16,10 @@ namespace LogForesight.Web.Services;
 ///
 /// 鍵含**可見主機集合**：不同授權範圍的使用者各自一份，不得串味。
 /// </summary>
+/// <remarks>
+/// 版本清除、元素總數上限、單筆超限與統計計數的邏輯與 <see cref="ActionableSnapshotCache"/> 逐行相同、只差條目型別——
+/// 改這裡的逐出規則要同步改那邊（兩個 tuple 型別各異，暫不抽共用基底，見 BACKLOG）。
+/// </remarks>
 public class IssueRankingCache : ICacheStatistics
 {
     /// <summary>存活秒數（暫定 30）：長到涵蓋「儀表板→報表」的頁面切換，短到處理狀態

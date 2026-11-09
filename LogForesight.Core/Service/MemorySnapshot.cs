@@ -95,7 +95,7 @@ public sealed record MemorySnapshot
         {
             var vars = GC.GetConfigurationVariables();
             conserve = ReadLong(vars, "GCConserveMem");
-            hardPercent = ReadLong(vars, "GCHeapHardLimitPercent");
+            hardPercent = ReadPositiveLong(vars, "GCHeapHardLimitPercent");
         }
         catch { }
 
@@ -143,7 +143,14 @@ public sealed record MemorySnapshot
 
     private static long? NullIfZero(long v) => v == 0 ? null : v;
 
-    private static long? ReadLong(IReadOnlyDictionary<string, object> vars, string key)
+    /// <summary>
+    /// 「沒設定就是 0」的 GC 設定：runtime 未設 HeapHardLimitPercent 時 <c>GC.GetConfigurationVariables()</c>
+    /// 仍回這個鍵、值為 0（實測 .NET 8），不是缺鍵；0 要當 null，否則畫面會把實體記憶體標成「硬上限 0%」。
+    /// </summary>
+    internal static long? ReadPositiveLong(IReadOnlyDictionary<string, object> vars, string key) =>
+        ReadLong(vars, key) is { } value && value > 0 ? value : null;
+
+    internal static long? ReadLong(IReadOnlyDictionary<string, object> vars, string key)
     {
         if (!vars.TryGetValue(key, out var raw) || raw == null) return null;
         try { return Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture); }

@@ -2279,7 +2279,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
 - **系統健康頁籤**：顯示「PRTG 快照」、「排程資料新鮮度」、「記憶體」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
-  「記憶體」卡（`#health-memory`、`#health-memory-caches`）以兩欄表列出工作集（目前／峰值）、私有記憶體、.NET 堆、.NET 硬上限（附已用百分比與設定百分比；沒設 `HeapHardLimitPercent` 時改稱「.NET 可用記憶體」並標「未設硬上限」，數值為 GC 可用總量＝實體記憶體或容器上限）、GC 已提交、大型物件堆（LOH）、GC 模式（Server／Workstation，有值時附保守回收設定）、Gen2 回收次數、SQLite 堆（非 Sqlite 顯示「不適用」）與 NLog 規則數，數字一律以 MB 整數顯示、讀不到顯示「—」；下方另有快取統計表（快取、條目、元素、命中率，分母為 0 顯示「—」）。.NET 堆占 GC 可用總量（有設定時即硬上限）的比例達 85% 時整體狀態為 `degraded`，同時 `memoryWarning` 為真，卡片上方顯示黃色「警示」徽章與「.NET 記憶體已接近上限（硬上限），排程可能因記憶體不足中止」（未設硬上限時括號內為「本機可用記憶體」）。AI 卡的退避提示只在仍有待補時顯示。
+  「記憶體」卡（`#health-memory`、`#health-memory-caches`）以兩欄表列出工作集（目前／峰值）、私有記憶體、.NET 堆、.NET 硬上限（附已用百分比與設定百分比；沒設 `HeapHardLimitPercent` 時改稱「.NET 可用記憶體」並標「未設硬上限」，數值為 GC 可用總量＝實體記憶體或容器上限）、GC 已提交、大型物件堆（LOH）、GC 模式（Server／Workstation，有值時附保守回收設定）、Gen2 回收次數、SQLite 堆（非 Sqlite 顯示「不適用」）與 NLog 規則數，數字一律以 MB 整數顯示、讀不到顯示「—」；下方另有快取統計表（快取、條目、元素、命中率，分母為 0 顯示「—」）。.NET 堆占 GC 可用總量（有設定時即硬上限）的比例達 85% 時整體狀態為 `degraded`，同時 `memoryWarning` 為真，卡片上方顯示黃色「警示」徽章與「.NET 記憶體已接近上限（硬上限），排程可能因記憶體不足中止」（未設硬上限時括號內為「本機可用記憶體」；runtime 未設 `HeapHardLimitPercent` 時讀回的值是 0，一律視為未設定）。
   「背景工作」表的「密碼欄位加密」列在金鑰來源後接金鑰檔位置提示（`HealthDetailDto.CryptoKeyLocationWarning`，由 `CryptoKeyBootstrapper.EvaluateKeyLocationWarning` 啟動時算一次）：來源 `env` 不提示；`embedded` 提示金鑰檔無法建立；`file` 且金鑰檔路徑（`GetFullPath`、補分隔符比到目錄邊界、Windows 不分大小寫）位於 `AppContext.BaseDirectory` 之下時，提示重新部署會清掉金鑰檔。此提示**不併入** `degraded`／整體狀態（預設安裝 DataRoot 留空即此情境）。
   新鮮度的成功判定走 `BatchRunExtensions.CountsForFreshness`：排程取數趟，或完整範圍（`BatchRun.Scope == full`）的手動取數趟，狀態為成功或有警告；AI 趟、範圍縮小的手動趟與 console 舊趟不算。全站告示（只給 Maintain／DevMonitor）在過期時多一句原因（`freshnessReason`）：`credentialIssue`（有憑證解不開；金鑰不符但全部解得開時不算）優先，Maintain 附 NetIQ 維護與 PRTG 維護連結，只有 DevMonitor 時附管理者聯絡人；其次是 `lastRunStatus`（最近一趟排程取數失敗、已停止、異常中斷）；其餘視為排程沒在跑，提示確認站台常駐。摘要信文字不變。過期狀態可按
   「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
@@ -2880,7 +2880,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   判斷個案或通案看「影響趟數」（去重 RunId）。`GET errors` 回 `{ groups, failedWithoutErrorRuns }`；`minLevel` 為 `error`（預設）或 `warn`，其他值 400。
   `failedWithoutErrorRuns` 是狀態為 `failed`／`stuck` 且 `ErrorCount == 0` 的趟數：這種趟次沒有 Error 行，不會出現在分組裡，大於 0 時畫面顯示提示並連到執行紀錄。
   站台解析涵蓋開始時間早於期間起點的長跑趟次，只有趟次已被保留期清除才顯示「（未知）」。診斷行以不緩衝的 `BatchRunStore.ForEachLog` 逐行讀取。
-- **執行詳情的記憶體標記**：每趟開始與結束各記一次記憶體（`RunDetailDto.memoryStart`／`memoryEnd`，`RunMemoryMarkDto`：`at`、工作集、工作集峰值、.NET 堆、GC 已提交、LOH、硬上限、SQLite 峰值、NLog 規則數，單位 bytes，可為 null；舊紀錄為 null），同時寫一行「里程碑」診斷。執行詳情在時間軸之後、「PRTG 逐日」之前顯示一行「記憶體」摘要（開始：工作集、.NET 堆；結束：工作集、.NET 堆、峰值、SQLite 峰值；MB 整數，null 項目省略，只有一邊有值就只顯示那一邊）。
+- **執行詳情的記憶體標記**：每趟開始與結束各記一次記憶體（`RunDetailDto.memoryStart`／`memoryEnd`，`RunMemoryMarkDto`：`at`、工作集、工作集峰值、.NET 堆、GC 已提交、LOH、硬上限、SQLite 峰值、NLog 規則數，單位 bytes，可為 null；舊紀錄為 null），同時寫一行「里程碑」診斷；開始標記寫入時立刻落地一列，行程中途被殺、站台重啟補成「異常中斷」的那趟仍有開始標記、沒有結束標記。工作集峰值與 SQLite 峰值是行程啟動以來的累計值。因記憶體不足中止的趟，失敗原因（排程狀態卡、`ai-status`）與執行詳情的 Fatal／Error 診斷行都帶固定字樣「記憶體上限」（`RunFailureReasons.MemoryLimit`，內層或彙總例外裡的 `OutOfMemoryException` 也算）。執行詳情在時間軸之後、「PRTG 逐日」之前顯示一行「記憶體」摘要（開始：工作集、.NET 堆；結束：工作集、.NET 堆、峰值、SQLite 峰值；MB 整數，null 項目省略，只有一邊有值就只顯示那一邊）。
 - **診斷資料匯出**（`GET /api/runs/export?days=N`，工具列「匯出分析資料」）：給 AI 分析用的單一 JSON，只有一種格式。
   - **權限與資源**：類別層 `DevMonitor|Maintain` 加 `[RequireViewAll]`，serverAdmin 回 403。單一併發（搶不到回 503 `capture_busy`）；檔案上限 16 MiB，超過回 413 `capacity_exceeded`，不截斷。寫稽核 `run_diagnostics_export`，只記天數、組數、趟數、位元組數與代號數，不記內容。沒有設定鍵，上限是 `RunExportLimits` 常數。
   - **內容**：`meta`（期間、省略項目 `omitted`、去識別化摘要）、`guide`（給 AI 的名詞解釋）、`context`（排程與模組設定白名單）、`dailyHealth`（逐日狀態台數，今天有取數趟時多一列 `isToday`、不含主機名單）、`runStats`（依作業與觸發類別、階段耗時、版本）、`signalGroups`＋`stacks`、`slowSql`、`abnormalRuns`、`aiFormatAnomalies`、`runMemory`。`meta.memory` 帶匯出當下的記憶體快照與 GC 生效設定（`isServerGc`、`gcConserveMemory`、`gcHeapHardLimitPercent`、`gen2Collections`，bytes）；`runMemory[]` 是期間內有記憶體標記的趟（`runId`、`jobType`、`startedAt`、`start`、`end`），由舊到新、最多 200 筆（超過取最新並記入 `omitted`）。`schemaVersion` 仍為 1。
@@ -2927,7 +2927,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   間隔依連續次數 5→10→15 分（上限 15 分），跟隨取數期間上限 5 分；判定排在窗口檢查之後、待補件數查詢之前，退避中不查待補。
   儲存排程設定或系統設定、取數完成（`OnFetchFollowUp`）、任一輪有進度即解除；手動觸發（立即補跑、強制重新分析）不經此判定、不受退避影響，
   手動那一輪有進度也會解除。狀態存在 `AiAnalysisRunState`（行程內，站台重啟歸零）。
-  `GET ai-status` 在 `idleReason == "backoff"` 時帶 `nextRetryAt`（套用跟隨取數上限後的實際重試時間），其餘為 null；前端提示「暫停自動重試中」並補「，約 HH:mm 再試」。
+  `GET ai-status` 在 `idleReason == "backoff"` 時帶 `nextRetryAt`（套用跟隨取數上限後的實際重試時間），其餘為 null；前端提示「暫停自動重試中」並補「，約 HH:mm 再試」，只在仍有待補件數時顯示（待補 0 件沒有東西可補跑）。
   待補 0 件且原因為 `disabled`／`backfill-pending` 時，待補列寫「0 件（AI 服務未設定）」／「0 件（資料校正中，稍後再看）」而非「已全部完成」，提示列照顯示。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
   `disabled`＝AI 服務未設定，閒置說明列出該原因並指路到設定頁、不帶件數（「背景補跑窗口」列同時顯示「AI 服務未設定」），

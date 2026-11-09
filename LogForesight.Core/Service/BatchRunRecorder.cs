@@ -329,6 +329,10 @@ public class BatchRunRecorder : IDisposable
                 if (start) _run.MemoryStart = mark;
                 else _run.MemoryEnd = mark;
             }
+            // 開始標記要立刻寫成一列：行程中途被殺（吃光記憶體最常見的結局）時沒有任何階段會結束，
+            // 等第一個階段快照才落地的話，站台重啟補上的「異常中斷」列連開始標記都沒有。
+            // 結束標記由呼叫端接著的 Finish 寫出，不必多一列。
+            if (start) WriteSnapshot();
 
             var parts = new List<string>();
             if (mark.WorkingSetBytes is { } ws) parts.Add($"工作集 {ToMb(ws)} MB");
@@ -350,7 +354,8 @@ public class BatchRunRecorder : IDisposable
     {
         if (_store == null) return;
         lock (_countLock) _run.ErrorCount++;
-        Append("Fatal", "Orchestrator", ex.Message, ex.ToString());
+        // 記憶體不足要在執行詳情的診斷行也看得到固定字樣，不只在排程狀態卡
+        Append("Fatal", "Orchestrator", RunFailureReasons.Describe(ex), ex.ToString());
     }
 
     /// <summary>寫出超過上限後保留的最新輸出（任何結束路徑都經 Finish 呼叫；只寫一次）</summary>

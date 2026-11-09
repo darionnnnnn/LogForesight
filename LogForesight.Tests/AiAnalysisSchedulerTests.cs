@@ -717,6 +717,8 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(1, aiRun.ExitCode);
         Assert.NotNull(aiRun.MemoryStart);
         Assert.NotNull(aiRun.MemoryEnd);
+        // 執行詳情的診斷行（不只排程狀態卡）也要看得到固定字樣
+        Assert.Contains(BatchRuns().GetLogs(aiRun.RunId), l => (l.Message ?? "").Contains("記憶體上限"));
     }
 
     [Fact]

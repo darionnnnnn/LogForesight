@@ -147,7 +147,9 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
 - **PRTG 狀態變更兩天整批載入**：`PrtgDailyPipeline` 每天讀全站兩天份 `GetStateChanges`（含訊息、無筆數上限）再交給規則評估。改法是依 sensor 範圍分批，要動 `PrtgRuleEvaluator` 的輸入形狀。**觸發時機**：flapping 嚴重的站台取數趟記憶體偏高。
 - **PRTG 每個請求的範圍檢查點重讀監看政策**：`PrtgOperationScope.Checkpoint` 每次反序列化整份政策並計算雜湊，回填時次數以百萬計；是短暫配置不是累積。**觸發時機**：回填期間 GC 次數或 CPU 偏高。
 - **PRTG 取數仍為每顆 sensor 建一個非同步工作再限流**：`FetchValuesFirstRoundAsync` 對全部 sensor 一次展開，排隊中的工作約數十 MB（失敗記錄只存種類、訊息與是否逾時）。改成固定數量 worker 要重寫進度、暫停閘與配額的並行骨架。**觸發時機**：取數範圍成長到十萬顆以上。
-- **互動 AI 與工作流恢復的 `AIService` 不釋放**：AI 排程與取數路徑已在用完時釋放；`WebAiService` 換設定時直接換新實例（在飛的互動請求可能還在用舊的），`HostDayWorkflowRecoveryHostedService` 換設定極少，兩處仍靠 GC 回收。**觸發時機**：記憶體卡顯示長時間未重啟的站台 .NET 堆持續上升且 dump 指向 `HttpClient`。
+- **互動 AI 的 `AIService` 不釋放**：AI 排程、取數與工作流恢復路徑都在用完時釋放；`WebAiService` 換設定時直接換新實例（在飛的互動請求可能還在用舊的），仍靠 GC 回收。**觸發時機**：記憶體卡顯示長時間未重啟的站台 .NET 堆持續上升且 dump 指向 `HttpClient`。
+- **兩個大結果快取的逐出邏輯各一份**：`IssueRankingCache` 與 `ActionableSnapshotCache` 的版本清除、元素總數上限、單筆超限與統計計數逐行相同，只差條目型別（兩檔頂端互相註明）。改任一邊的規則要同步另一邊。**觸發時機**：第三個需要同樣規則的快取出現時，抽成泛型核心。
+- **記憶體標記的峰值是行程累計、沒有行程識別**：`RunMemoryMark` 的工作集峰值與 SQLite 峰值都是行程啟動以來的最高值，一次尖峰後每趟相同；標記沒有行程啟動時間，跨站台重啟比對多趟 .NET 堆時會把重啟誤判成釋放。**觸發時機**：第一晚的 `runMemory` 數據不足以定位哪一趟是尖峰時，加入 `ProcessStartedAt` 與每趟重設的峰值（`GC.GetGCMemoryInfo` 的 `Gen2` 次數或自算的趟內最大工作集）。
 - **稽核查詢有篩選時讀整段日期範圍再篩**：`AuditLogStore.Query`／`Count` 結果依 `OccurredAt` 排序，改串流只省原始字串，要 top-K 才有實質效益。**觸發時機**：稽核頁自選長區間查詢明顯變慢或記憶體尖峰。
 
 ## NetIQ 整合：試點驗證與遞延項目

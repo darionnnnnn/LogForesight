@@ -98,6 +98,37 @@ public class RunMemoryMarkTests
     }
 
     [Fact]
+    public void GC硬上限百分比_runtime未設時值為0_視為未設定()
+    {
+        // 實測 .NET 8：未設 HeapHardLimitPercent 時 GC.GetConfigurationVariables() 仍回這個鍵、值為 0
+        var unset = new Dictionary<string, object> { ["GCHeapHardLimitPercent"] = 0L, ["GCConserveMem"] = 0L };
+        Assert.Null(MemorySnapshot.ReadPositiveLong(unset, "GCHeapHardLimitPercent"));
+        Assert.Equal(60L, MemorySnapshot.ReadPositiveLong(new Dictionary<string, object> { ["GCHeapHardLimitPercent"] = 60L }, "GCHeapHardLimitPercent"));
+
+        var text = GcStartupInfo.DescribeGcStartup(unset, 24_000L * 1048576);
+        Assert.Contains("GCHeapHardLimitPercent=未設定", text);
+        Assert.Contains("未設硬上限", text);
+        Assert.DoesNotContain("GCHeapHardLimit=", text);
+    }
+
+    [Fact]
+    public void Recorder_開始標記在任何階段結束前就已落地()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new BatchRunStore(fx.LogStore("runs2"), fx.LogStore("run_logs2"));
+        using var recorder = new BatchRunRecorder(store, "H", Array.Empty<string>());
+        var phase = recorder.Phase(RunTimingPhases.Local); // 開著不結束：模擬第一個階段途中行程被殺
+
+        recorder.RecordMemory(true, Snapshot());
+
+        // 站台重啟補「異常中斷」列時沿用最後一列：開始標記必須已經在資料列上
+        var run = Assert.Single(store.GetRecentRuns(1, null));
+        Assert.NotNull(run.MemoryStart);
+        Assert.Null(run.MemoryEnd);
+        phase.Complete(RunPhaseOutcomes.Success);
+    }
+
+    [Fact]
     public void DescribeGcStartup_有值與未設定()
     {
         var dict = new Dictionary<string, object> { ["GCConserveMem"] = 5, ["GCHeapHardLimitPercent"] = 60L };

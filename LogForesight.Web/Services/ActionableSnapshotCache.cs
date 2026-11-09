@@ -12,6 +12,10 @@ namespace LogForesight.Web.Services;
 /// 機制與取捨完全比照 <see cref="IssueRankingCache"/>：背景寫入執行中版本不推進，
 /// 故保留 TTL 作為上限。鍵含可見主機集合不得串味。
 /// </summary>
+/// <remarks>
+/// 版本清除、元素總數上限、單筆超限與統計計數的邏輯與 <see cref="IssueRankingCache"/> 逐行相同、只差條目型別——
+/// 改這裡的逐出規則要同步改那邊（兩個 tuple 型別各異，暫不抽共用基底，見 BACKLOG）。
+/// </remarks>
 public class ActionableSnapshotCache : ICacheStatistics
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由。</summary>

@@ -226,10 +226,11 @@ public sealed class CancellationSemanticsTests : IDisposable
 
             // 失敗正是最需要結束標記的情境：開始與結束標記都要寫進這一趟
             var backend = new StorageBackend(settings.Storage, dir);
-            var run = Assert.Single(new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"))
-                .GetRecentRuns(1, null));
+            var runs = new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
+            var run = Assert.Single(runs.GetRecentRuns(1, null));
             Assert.NotNull(run.MemoryStart);
             Assert.NotNull(run.MemoryEnd);
+            Assert.Contains(runs.GetLogs(run.RunId), l => l.Level == "Fatal" && (l.Message ?? "").Contains("記憶體上限"));
         }
         finally
         {
