@@ -85,7 +85,9 @@ public class ActionableSnapshotCache : ICacheStatistics
         }
     }
 
-    public void Set(string key, List<ResolvedOccurrence> items)
+    /// <param name="version">組鍵時用的資料版本（<see cref="KeyOf"/> 的第一個參數）；條目以它標記版本，
+    /// 計算期間版本若已前進就不寫入（舊版本的結果不會再被命中）。省略時視為目前版本。</param>
+    public void Set(string key, List<ResolvedOccurrence> items, long? version = null)
     {
         lock (_lock)
         {
@@ -99,7 +101,9 @@ public class ActionableSnapshotCache : ICacheStatistics
             }
 
             var now = _now();
-            var version = _versionStamp.Current;
+            var current = _versionStamp.Current;
+            // 計算期間資料版本已前進：這份結果屬於舊版本，鍵也是舊版本，之後不會再被命中，不必佔位
+            if (version is { } keyVersion && keyVersion != current) return;
             if (_entries.TryGetValue(key, out var existing))
             {
                 _elements -= existing.Items.Count;
@@ -107,12 +111,12 @@ public class ActionableSnapshotCache : ICacheStatistics
             else
             {
                 // 版本一變舊版整批釋放（不等滿了才清），再走既有的過期／LRU 騰位
-                EvictStaleVersions(version);
+                EvictStaleVersions(current);
                 EvictForInsert(now);
             }
 
             var copy = new List<ResolvedOccurrence>(items);
-            _entries[key] = (copy, now, now, version);
+            _entries[key] = (copy, now, now, current);
             _elements += copy.Count;
             EvictForElements(key);
         }

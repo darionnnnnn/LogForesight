@@ -1450,7 +1450,8 @@ public sealed class RunExportService : IRunExportService
             "【失敗歷史統計】summary.failureHistory 是從執行紀錄 Warn 訊息比對出的解析失敗與內容檢查失敗次數（依回覆型別）。比對靠固定的訊息字首，找不到就是 0，0 不代表沒發生過。",
             "【對照組】每個案例最多一筆 control：同一台主機、日期最接近（前後 7 天內，同距離取較新）、AI 正常分析完成的紀錄，只放輸入特徵；找不到是 null，不會換別台主機。comparison 是案例與對照各特徵的中位數與樣本數，任一組樣本為 0 時 features 為 null。請用它判斷是輸入內容造成的，還是模型本來就不穩。",
             "【輸入】input 只給最新的 50 個案例（問題清單與趨勢、關聯提示，已遮罩並限制字數）；詳情已被保留期清除的案例 detailPruned 為 true，沒有回覆與輸入。",
-            "【數字】小數一律四捨五入到第 4 位；陣列順序固定，同一份資料重複匯出內容相同（exportedAt 除外）。"
+"【記憶體】meta.memory 是匯出當下站台行程的即時記憶體（每次匯出都不同）；runMemory 是期間內每趟執行開始（start）與結束（end）的記憶體標記，最多 200 趟、由舊到新。數值單位一律 bytes；null 代表讀不到（例如非 Sqlite 沒有 SQLite 堆、舊紀錄沒有標記、行程崩潰的那一趟沒有結束標記）。hardLimitBytes 是 .NET 可用的記憶體總量：有設 gcHeapHardLimitPercent 時就是硬上限，沒設時等於本機實體記憶體。判斷是否有東西沒釋放，看多趟之間 start 的 managedHeapBytes 是否一路上升。",
+            "【數字】小數一律四捨五入到第 4 位；陣列順序固定，同一份資料重複匯出內容相同（exportedAt 與 meta.memory 除外）。"
         };
     }
 }

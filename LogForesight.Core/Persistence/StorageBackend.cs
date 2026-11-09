@@ -24,6 +24,10 @@ public class StorageBackend
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    // 每趟分析都會 new 一個 StorageBackend：設定類提示整個行程只記一次，不每趟洗版
+    private static int _sqliteKeysIgnoredWarned;
+    private static int _softHeapLimitLogged;
+
     private readonly Func<LfDbContext> _dbFactory;
     private readonly string _dbDesc;
 
@@ -138,7 +142,8 @@ public class StorageBackend
         }
         else
         {
-            if (settings.SqliteCacheSizeKb != null || settings.SqliteMmapSizeBytes != null || settings.SqliteSoftHeapLimitBytes != null)
+            if ((settings.SqliteCacheSizeKb != null || settings.SqliteMmapSizeBytes != null || settings.SqliteSoftHeapLimitBytes != null)
+                && Interlocked.Exchange(ref _sqliteKeysIgnoredWarned, 1) == 0)
                 Log.Warn("[SQL] Storage:SqliteCacheSizeKb／SqliteMmapSizeBytes／SqliteSoftHeapLimitBytes 僅 Sqlite 適用，SqlServer 後端已忽略");
             var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
             // 依用途分流逾時長度：
@@ -204,7 +209,8 @@ public class StorageBackend
             if (softHeapLimit > 0)
             {
                 SQLitePCL.raw.sqlite3_soft_heap_limit64(softHeapLimit);
-                Log.Info("[SQL] SQLite 原生堆軟上限 {Mb} MB（Storage:SqliteSoftHeapLimitBytes）", softHeapLimit / 1048576);
+                if (Interlocked.Exchange(ref _softHeapLimitLogged, 1) == 0)
+                    Log.Info("[SQL] SQLite 原生堆軟上限 {Mb} MB（Storage:SqliteSoftHeapLimitBytes）", softHeapLimit / 1048576);
             }
         }
         catch (Exception ex)

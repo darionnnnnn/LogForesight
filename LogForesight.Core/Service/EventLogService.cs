@@ -206,8 +206,8 @@ public class EventLogService
             }
 
             // 只記筆數，不記事件內容——完整訊息本來就會存進歷史/報告，這裡的 log 只是流程追蹤
-            Log.Info("{LogName} 掃描完成：{Count} 筆事件（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
-                logName, logs.Count, startDate, endDateExclusive, complete);
+            Log.Info("{LogName} 掃描完成：{Count} 筆事件{Filtered}（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
+                logName, logs.Count, keep == null ? "" : "（已依條件過濾）", startDate, endDateExclusive, complete);
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }
@@ -323,8 +323,8 @@ public class EventLogService
                     logName, earliestAvailable, startDate);
             }
 
-            Log.Info("{LogName} 掃描完成：{Count} 筆事件（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
-                logName, logs.Count, startDate, endDateExclusive, complete);
+            Log.Info("{LogName} 掃描完成：{Count} 筆事件{Filtered}（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
+                logName, logs.Count, keep == null ? "" : "（已依條件過濾）", startDate, endDateExclusive, complete);
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }

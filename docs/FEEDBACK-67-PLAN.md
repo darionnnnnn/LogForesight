@@ -338,7 +338,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | E 低風險峰值路徑 | Sonnet 5.5 | `e23a855b` | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
 | 瀏覽器實測（本機 Development 站台） | 主代理 | — | 見下方「實測紀錄」 | 無 |
 | 全量測試 | 主代理 | `3263c0a3` | 第一次 8,733 通過／1 失敗：`SlowQueryCoverageTests` 以字串 `renderTable(tableHost` 定位慢查詢建表位置，A-3 新增的記憶體卡函式同名變數排在前面而誤判；記憶體卡變數改名 `metricsHost` 後第二次 8,734 通過／11 略過 | A-3 定向篩選（UiTests／JsModuleImport／BehaviorTests／ApiTimeout）不含此類，全量才抓到 |
-| 規劃逐條比對（收官後） | 主代理 | 見下一個提交 | 以檢查腳本把 70 條定案／改動對到程式碼與文件，69 條有證據；漏的是 A 定案 7「EF `ManyServiceProvidersCreatedWarning` 的出現與否要看得到」 | 實作時發現 EF Core 8 對此警告**預設擲例外**（突變每次給新 `MemoryCache` 時第 21 個 backend 即擲），發生時那趟會明確失敗、不會靜默累積，另導進 NLog 的程式碼永遠不會被呼叫，依 KISS 不加；改以 `StorageBackendEfProviderTests` 守住「連續建 25 個 backend 提供者不成長」，突變驗證會紅 |
+| 規劃逐條比對（收官後） | 主代理 | `09c2474b` | 以檢查腳本把 70 條定案／改動對到程式碼與文件，69 條有證據；漏的是 A 定案 7「EF `ManyServiceProvidersCreatedWarning` 的出現與否要看得到」 | 實作時發現 EF Core 8 對此警告**預設擲例外**（突變每次給新 `MemoryCache` 時第 21 個 backend 即擲），發生時那趟會明確失敗、不會靜默累積，另導進 NLog 的程式碼永遠不會被呼叫，依 KISS 不加；改以 `StorageBackendEfProviderTests` 守住「連續建 25 個 backend 提供者不成長」，突變驗證會紅 |
 
 
 ### 實測紀錄（2026-11-09，本機 `dotnet run` Development、Sqlite）
@@ -353,9 +353,30 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | C-4 退避 | 上述無進度一輪後 `ai-status` 回 `idleReason=backoff`、`nextRetryAt` 為結束後 5 分鐘；排程頁 AI 卡顯示「上一輪沒有進度，暫停自動重試中（可按「立即補跑」），約 11:55 再試」 |
 | 已知細節 | AI 趟執行中 `memoryStart` 尚未落地（recorder 在結束寫最終列時才帶出）；行程整個崩潰時這一趟沒有起訖，被接住的 OOM 會正常寫入 |
 
+### 自我體檢（換模型前，2026-11-09）
+
+兩個未參與實作的 Sonnet 代理分區唯讀審查（Core＋背景服務；Web 快取＋前端＋文件），主代理逐條核對後處置。修正後全量 **8,741 通過／11 略過**，再加 1 案取數 OOM 測試（定向綠，突變拿掉失敗路徑結束標記會紅），基線 8,742。
+
+| # | 發現 | 處置 |
+|---|---|---|
+| 1 | 取數趟中途失敗或停止時沒寫 `memoryEnd`——撞硬上限正是最需要結束標記的情境 | 內層失敗 catch 與取消 catch 都補寫結束標記；新增 `Orchestrator記憶體不足_失敗原因為記憶體上限_執行紀錄仍有結束標記` |
+| 2 | AI 逐筆 catch 吞掉 `OutOfMemoryException`，「記憶體上限」幾乎不會出現，撞牆後仍一筆一筆繼續 | 逐筆遇記憶體不足即中止本輪，交給最外層記成「記憶體上限」；新增案例 |
+| 3 | `RunFailureReasons` 只認最外層型別，且措辭斷言一定是硬上限 | 展開內層與 `AggregateException`；措辭改「.NET 記憶體不足（多半是已達硬上限）」 |
+| 4 | 沒設硬上限時，`TotalAvailableMemoryBytes` 是實體記憶體，畫面與啟動 log 卻標「硬上限」 | 依 `gcHeapHardLimitPercent` 有無切換為「.NET 硬上限（設定 N%）」或「.NET 可用記憶體（未設硬上限）」，警示括號註明是哪一種；啟動 log 同步 |
+| 5 | 退避中待補已是 0 件仍提示「可按立即補跑」 | 退避提示只在仍有待補時顯示 |
+| 6 | 兩個大快取在 `Set` 時才讀版本，計算期間版本前進會把舊結果標成新版本 | `Set` 收組鍵時的版本，已前進就不寫入；新增案例 |
+| 7 | 狀態 API 與每次輪詢都反序列化系統設定，即使沒在退避 | 沒在退避直接略過 |
+| 8 | 診斷匯出的給 AI 說明沒提 `meta.memory`／`runMemory`，且「重複匯出內容相同」已不成立 | 說明補一條記憶體欄位意義；該句改為排除 `meta.memory` |
+| 9 | PRTG 取數失敗記錄的 `Kind`／`Message` 沒有消費端（「有欄位無行為」） | 只留 `IsTimeout` |
+| 10 | SqlServer 誤填 Sqlite 鍵的警示與軟上限 Info 每趟分析都記一次 | 整個行程只記一次 |
+| 11 | 補掃加 keep 後，掃描 log 的筆數是過濾後的數字 | log 標註「（已依條件過濾）」 |
+| 12 | 說明書叫維護者「交給維護人員」、`.NET` 沒白話 | 改成具體下一步（看執行詳情記憶體一行，持續上升就匯出交系統廠商），`.NET` 補「站台程式」 |
+
+評估後不改：C-1 空殼規則判準只比對「`*`、無 target、非 final、無規則名、等級恰為 Warn～Fatal」，本專案 nlog.config 五條都不符；含子規則的自訂結構屬極端情境，不另加判準。C-2 的 sensor 鏡像變動與主機對應一樣最慢一小時反映，結構同步與範圍補抓後既有重設點會立即重算。`ReadSettingStamps` 開頭讀設定失敗時可能多試一次，影響僅一次重試。
+
 ## 體檢交接
 
-- 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案）；收官後逐條比對補 1 案（`StorageBackendEfProviderTests`，定向綠，基線記為 8,735），耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
+- 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案）；收官後逐條比對補 1 案（`StorageBackendEfProviderTests`）；自我體檢修正後全量 8,741 通過／11 略過，再補 1 案，基線 8,742，耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
 - 規劃項目逐條對照：A～G 全部完成；與規劃不同之處都記在執行紀錄的「落差與處置」欄；「明確不做」項目已登錄 BACKLOG「記憶體用量（遞延）」。
 - 實作方最沒把握、請優先看：
   1. **硬上限 60% 尚未經正式資料驗證**：P6／P8／P9 的峰值路徑本輪沒動，正式站台若單趟峰值本來就超過 60%，會從「吃光記憶體」變成「該趟中止並顯示記憶體上限」。請以第一晚的 `runMemory` 決定門檻（README 有環境變數覆寫方式）。

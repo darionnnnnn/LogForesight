@@ -1080,8 +1080,24 @@ const cases = {
         assert.equal(hosts['health-memory'].children.length, 1, '沒有警示時只有表格');
         assert.equal(tables[0].rows.find((r) => r.item === '工作集').status, '—（峰值 —）');
         assert.equal(tables[0].rows.find((r) => r.item === 'SQLite 堆').status, '不適用');
-        assert.equal(tables[0].rows.find((r) => r.item === '.NET 硬上限').status, '未設定');
+        assert.equal(tables[0].rows.find((r) => r.item === '.NET 可用記憶體').status, '未設定');
         assert.deepEqual(tables[1].rows, []);
+    },
+    記憶體卡_有設硬上限時標硬上限與設定百分比() {
+        const { inst, tables } = makeMemoryCard();
+        inst.renderMemoryHealth({ hardLimitBytes: 1048576 * 1000, hardLimitUsagePercent: 12.5, gcHeapHardLimitPercent: 60, caches: [] }, false);
+        const row = tables[0].rows.find((r) => r.item === '.NET 硬上限');
+        assert(row, '有設定時列名是「.NET 硬上限」');
+        assert(row.status.includes('已用 12.5%') && row.status.includes('設定 60%'), row.status);
+    },
+    記憶體卡_沒設硬上限時改稱可用記憶體且警示文字不說硬上限() {
+        const { inst, hosts, tables } = makeMemoryCard();
+        inst.renderMemoryHealth({ hardLimitBytes: 1048576 * 24000, hardLimitUsagePercent: 90, gcHeapHardLimitPercent: null, caches: [] }, true);
+        const row = tables[0].rows.find((r) => r.item === '.NET 可用記憶體');
+        assert(row && row.status.includes('未設硬上限'), '沒設定時要標「未設硬上限」');
+        assert(!tables[0].rows.some((r) => r.item === '.NET 硬上限'), '不可把實體記憶體標成硬上限');
+        const text = hosts['health-memory'].children[0].children.map((c) => c.textContent).join('');
+        assert(text.includes('本機可用記憶體') && !text.includes('硬上限'), text);
     },
 };
 

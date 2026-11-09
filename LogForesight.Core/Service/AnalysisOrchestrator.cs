@@ -833,7 +833,14 @@ public class AnalysisOrchestrator
             }
             catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
+                // 失敗（含撞到記憶體硬上限）正是最需要記憶體結束標記的情境；Capture 本身不擲例外
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 runRecorder.Fatal(ex);
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 throw;
             }
         }

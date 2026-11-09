@@ -2037,6 +2037,17 @@ public class AiAnalysisSchedulerTests : IDisposable
     }
 
     [Fact]
+    public async Task 逐筆遇到記憶體不足_中止本輪不再一筆一筆撞()
+    {
+        var service = CreateDisposeCountingService(3);
+        _ai.Behavior = (_, _) => throw new OutOfMemoryException("模擬撞到硬上限");
+
+        // 逐筆 catch 遇記憶體不足要往外擲（交給 TriggerRunAsync 最外層記成「記憶體上限」），不是記一筆失敗繼續
+        await Assert.ThrowsAnyAsync<Exception>(() => service.ExecuteProcessingLoopAsync(CancellationToken.None));
+        Assert.Equal(service.Counter.Created, service.Counter.Disposed);
+    }
+
+    [Fact]
     public async Task 分片執行中被取消_AI服務仍釋放_次數等於建立次數()
     {
         var service = CreateDisposeCountingService(2);

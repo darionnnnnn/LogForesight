@@ -227,6 +227,7 @@ public class AiAnalysisHostedService : BackgroundService
 
     private void ReleaseBackoffIfSettingsChanged(ScheduleOptions options)
     {
+        if (_runState.BackoffUntil == null) return; // 沒在退避：不必每次輪詢都反序列化系統設定
         var (schedule, settings) = ReadSettingStamps(options);
         if (_runState.ReleaseBackoffIfSettingsChanged(schedule, settings))
             Log.Info("AI 排程設定或系統設定已儲存，提前解除無進度退避。");
@@ -649,6 +650,13 @@ public class AiAnalysisHostedService : BackgroundService
                             {
                                 CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, "cancelled");
                                 break;
+                            }
+                            catch (Exception ex) when (RunFailureReasons.IsOutOfMemory(ex))
+                            {
+                                // 記憶體不足時繼續逐筆只會一筆一筆撞牆：該筆維持待補，中止本輪，交給最外層記成「記憶體上限」
+                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, RunFailureReasons.MemoryLimit);
+                                Interlocked.Increment(ref counters.Failed);
+                                throw;
                             }
                             catch (Exception ex)
                             {

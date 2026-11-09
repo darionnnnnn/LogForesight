@@ -1525,7 +1525,7 @@ function applyAiScheduleStatus(status) {
         let hint = '';
         // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
         // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
-        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'backoff'].includes(status.idleReason))) {
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
             hint = aiIdleHintText(status);
         }
 

@@ -82,6 +82,22 @@ public class RunMemoryMarkTests
     }
 
     [Fact]
+    public void RunFailureReasons_內層或彙總例外裡的記憶體不足也辨識()
+    {
+        Assert.Contains("記憶體上限", RunFailureReasons.Describe(new InvalidOperationException("外層", new OutOfMemoryException())));
+        Assert.Contains("記憶體上限", RunFailureReasons.Describe(new AggregateException(new TimeoutException(), new OutOfMemoryException())));
+        Assert.Equal("一般", RunFailureReasons.Describe(new InvalidOperationException("一般", new TimeoutException())));
+    }
+
+    [Fact]
+    public void DescribeGcStartup_沒設硬上限時不把實體記憶體標成硬上限()
+    {
+        var text = GcStartupInfo.DescribeGcStartup(new Dictionary<string, object> { ["GCConserveMem"] = 5 }, 1048576000);
+        Assert.DoesNotContain("GCHeapHardLimit=", text);
+        Assert.Contains("未設硬上限", text);
+    }
+
+    [Fact]
     public void DescribeGcStartup_有值與未設定()
     {
         var dict = new Dictionary<string, object> { ["GCConserveMem"] = 5, ["GCHeapHardLimitPercent"] = 60L };

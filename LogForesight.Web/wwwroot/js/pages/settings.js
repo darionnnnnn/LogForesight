@@ -941,11 +941,15 @@ function renderMemoryHealth(memory, memoryWarning) {
     if (!host) return;
     const m = memory ?? {};
     const pair = (current, peak) => `${formatMegabytes(current)}（峰值 ${formatMegabytes(peak)}）`;
+    // hardLimitBytes 是 GC 可用的記憶體總量：有設 HeapHardLimitPercent 時就是硬上限，
+    // 沒設時等於實體記憶體（或容器上限），標成「可用記憶體」以免把實體記憶體誤當成設定值
+    const hasHardLimit = m.gcHeapHardLimitPercent !== null && m.gcHeapHardLimitPercent !== undefined;
     let hardLimit = '未設定';
     if (m.hardLimitBytes !== null && m.hardLimitBytes !== undefined) {
-        hardLimit = m.hardLimitUsagePercent === null || m.hardLimitUsagePercent === undefined
-            ? formatMegabytes(m.hardLimitBytes)
-            : `${formatMegabytes(m.hardLimitBytes)}（已用 ${m.hardLimitUsagePercent}%）`;
+        const percent = m.hardLimitUsagePercent === null || m.hardLimitUsagePercent === undefined
+            ? '' : `（已用 ${m.hardLimitUsagePercent}%）`;
+        const setting = hasHardLimit ? `，設定 ${m.gcHeapHardLimitPercent}%` : '，未設硬上限';
+        hardLimit = `${formatMegabytes(m.hardLimitBytes)}${percent}${setting}`;
     }
     let gcMode = '—';
     if (memory) {
@@ -958,7 +962,7 @@ function renderMemoryHealth(memory, memoryWarning) {
         { item: '工作集', status: pair(m.workingSetBytes, m.peakWorkingSetBytes) },
         { item: '私有記憶體', status: formatMegabytes(m.privateBytes) },
         { item: '.NET 堆', status: formatMegabytes(m.managedHeapBytes) },
-        { item: '.NET 硬上限', status: hardLimit },
+        { item: hasHardLimit ? '.NET 硬上限' : '.NET 可用記憶體', status: hardLimit },
         { item: 'GC 已提交', status: formatMegabytes(m.gcCommittedBytes) },
         { item: '大型物件堆（LOH）', status: formatMegabytes(m.lohSizeBytes) },
         { item: 'GC 模式', status: gcMode },
@@ -980,7 +984,9 @@ function renderMemoryHealth(memory, memoryWarning) {
         badge.className = 'badge text-bg-warning me-2';
         badge.textContent = '警示';
         const text = document.createElement('span');
-        text.textContent = '.NET 記憶體已接近上限，排程可能因記憶體不足中止';
+        text.textContent = hasHardLimit
+            ? '.NET 記憶體已接近上限（硬上限），排程可能因記憶體不足中止'
+            : '.NET 記憶體已接近上限（本機可用記憶體），排程可能因記憶體不足中止';
         warn.append(badge, text);
         children.push(warn);
     }

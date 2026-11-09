@@ -216,6 +216,24 @@ public class CacheEvictionTests
     }
 
     [Fact]
+    public void 計算期間版本已前進_結果不寫入快取()
+    {
+        var stamp = new DataVersionStamp();
+        var ranking = new IssueRankingCache(stamp, TickingClock());
+        var actionable = new ActionableSnapshotCache(stamp, TickingClock());
+        var keyVersion = stamp.Current;
+        stamp.Bump();
+        ranking.Set("k", Dtos(2), keyVersion);
+        actionable.Set("k", Occs(2), keyVersion);
+        Assert.Null(ranking.TryGet("k"));
+        Assert.Null(actionable.TryGet("k"));
+        Assert.Equal(0, ranking.GetStatistics().Entries);
+
+        ranking.Set("k2", Dtos(2), stamp.Current);
+        Assert.NotNull(ranking.TryGet("k2"));
+    }
+
+    [Fact]
     public void 單筆超過上限時同鍵舊條目一併移除()
     {
         var ranking = new IssueRankingCache(new DataVersionStamp(), TickingClock(), maxElements: 10);

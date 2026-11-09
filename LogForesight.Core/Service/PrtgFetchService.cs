@@ -1245,10 +1245,9 @@ public sealed class PrtgFetchService
         return SummarizeValueFetch(run);
     }
 
-    /// <summary>單顆 sensor 取數失敗的輕量記錄：例外型別短名、訊息（截前 500 字）、記錄當下是否為逾時。</summary>
-    internal readonly record struct SensorFetchFailure(string Kind, string Message, bool IsTimeout)
+    /// <summary>單顆 sensor 取數失敗的輕量記錄：只留輪末統計會用到的「是否逾時」，不保留整個例外到輪末。</summary>
+    internal readonly record struct SensorFetchFailure(bool IsTimeout)
     {
-        internal const int MaxMessageLength = 500;
     }
 
     /// <summary>
@@ -1419,10 +1418,7 @@ public sealed class PrtgFetchService
         {
             var retryable = requestPhase && ex is PrtgClientException clientEx && run.Policy.ShouldRetry(clientEx);
             run.States[index] = ValueFetchState.Failed;
-            run.Failures[index] = new SensorFetchFailure(
-                ex.GetType().Name,
-                ex.Message.Length > SensorFetchFailure.MaxMessageLength ? ex.Message[..SensorFetchFailure.MaxMessageLength] : ex.Message,
-                IsTimeoutException(ex, CancellationToken.None));
+            run.Failures[index] = new SensorFetchFailure(IsTimeoutException(ex, CancellationToken.None));
             run.Retryable[index] = retryable;
             Interlocked.CompareExchange(ref run.FirstFailureMessage, ex.Message, null);
             if (retryable) OnRetryableValueFailure(run, (PrtgClientException)ex, sentGeneration, ct);

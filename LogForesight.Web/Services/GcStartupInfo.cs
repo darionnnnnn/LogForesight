@@ -12,8 +12,10 @@ internal static class GcStartupInfo
         var hardLimit = hardLimitBytes is { } bytes
             ? $"{(long)Math.Round(bytes / 1048576.0, MidpointRounding.AwayFromZero)} MB"
             : Unset;
+        // hardLimitBytes 是 GC 可用的記憶體總量：沒設 HeapHardLimitPercent 時是實體記憶體，不能標成硬上限
+        var limitLabel = gcConfig.ContainsKey("GCHeapHardLimitPercent") ? "GCHeapHardLimit" : "GC 可用記憶體（未設硬上限）";
         return $"GC 設定生效值：ServerGC={Read(gcConfig, "ServerGC")}、GCConserveMem={Read(gcConfig, "GCConserveMem")}、"
-               + $"GCHeapHardLimitPercent={Read(gcConfig, "GCHeapHardLimitPercent")}、GCHeapHardLimit={hardLimit}";
+               + $"GCHeapHardLimitPercent={Read(gcConfig, "GCHeapHardLimitPercent")}、{limitLabel}={hardLimit}";
     }
 
     private static string Read(IReadOnlyDictionary<string, object> config, string key)

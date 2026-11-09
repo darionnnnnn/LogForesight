@@ -54,9 +54,10 @@ public class IssueTodoQuery
     {
         // 跨請求快取：鍵含資料版本戳，同版本下不同外層鍵的請求共用同一份快照，
         // TTL 是背景寫入期間（版本戳不推進）的上限——理由詳見 ActionableSnapshotCache
+        var cacheVersion = _cache?.Version ?? 0;
         var cacheKey = _cache == null
             ? null
-            : ActionableSnapshotCache.KeyOf(_cache.Version, from, to, visibleHostIds, riskLevels,
+            : ActionableSnapshotCache.KeyOf(cacheVersion, from, to, visibleHostIds, riskLevels,
                 visibleSeverities?.Select(s => s.ToString()).ToList(), exclusion.CacheToken);
         if (cacheKey != null)
         {
@@ -71,7 +72,7 @@ public class IssueTodoQuery
             : _statusResolver.Resolve(occurrences, from, to);
 
         // 空結果也要快取——「這段期間沒有可行動項目」同樣是花了整趟查詢換來的答案
-        if (cacheKey != null) _cache!.Set(cacheKey, resolved);
+        if (cacheKey != null) _cache!.Set(cacheKey, resolved, cacheVersion);
         return resolved;
     }
 

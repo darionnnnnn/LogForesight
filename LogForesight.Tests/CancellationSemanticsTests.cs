@@ -203,6 +203,42 @@ public sealed class CancellationSemanticsTests : IDisposable
     }
 
     [Fact]
+    public async Task Orchestrator記憶體不足_失敗原因為記憶體上限_執行紀錄仍有結束標記()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-test-oom-orch-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var settings = new AppSettings
+            {
+                Ai = new AiSettings { BaseUrl = "" },
+                Storage = new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "test.db")}" }
+            };
+            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource(), NullAiRequestGate.Instance);
+            var result = await orchestrator.RunAsync(
+                new RunRequest { Scope = RunScope.Full, IncludeLocal = false, BackfillOverride = 3, PrtgBackfillDays = 3 },
+                settings, dir, new RetentionOptions(), new ListConsole(new List<string>()), CancellationToken.None,
+                progress: null, manualWorkGate: null,
+                prtgBackfillTail: new ThrowingTail(() => new OutOfMemoryException("模擬撞到硬上限")));
+
+            Assert.False(result.Success);
+            Assert.Equal(RunFailureReasons.MemoryLimit, result.FailureMessage);
+
+            // 失敗正是最需要結束標記的情境：開始與結束標記都要寫進這一趟
+            var backend = new StorageBackend(settings.Storage, dir);
+            var run = Assert.Single(new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"))
+                .GetRecentRuns(1, null));
+            Assert.NotNull(run.MemoryStart);
+            Assert.NotNull(run.MemoryEnd);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task Orchestrator使用者取消_失敗訊息維持使用者取消()
     {
         using var cts = new CancellationTokenSource();
