@@ -323,6 +323,7 @@ public class AnalysisOrchestrator
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
             runRecorder.Milestone($"批次啟動（版本 {BuildVersion.Current.Label}）");
+            runRecorder.RecordMemory(true, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
             if (request.WindowNote != null)
             {
                 runRecorder.Milestone(request.WindowNote);
@@ -822,6 +823,7 @@ public class AnalysisOrchestrator
                 {
                     runRecorder.Milestone($"本趟結束仍待補：{left.Describe()}");
                 }
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 runRecorder.Milestone("執行結束");
                 runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
@@ -854,7 +856,7 @@ public class AnalysisOrchestrator
             // 回填與排程狀態卡的「上次執行結果」）能監控到。
             // HttpClient 逾時擲 TaskCanceledException（屬 OCE），但走到這裡代表 ct 並未取消：是逾時不是使用者停止
             var isTimeout = ex is OperationCanceledException;
-            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : ex.Message;
+            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : RunFailureReasons.Describe(ex);
             console.WriteLine(isTimeout ? $"\n執行失敗：呼叫外部服務逾時：{ex.Message}" : $"\n執行失敗：{ex}");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
             if (isTimeout) Log.Fatal(ex, "呼叫外部服務逾時，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);

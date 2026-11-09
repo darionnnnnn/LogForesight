@@ -675,6 +675,49 @@ public class AiAnalysisSchedulerTests : IDisposable
         }
     }
 
+    /// <summary>處理迴圈查詢待補時擲 <see cref="OutOfMemoryException"/>，其餘原樣轉交真實 store</summary>
+    public class OutOfMemoryRecordQuery : DispatchProxy
+    {
+        internal IAnalysisRecordQuery Target { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IAnalysisRecordQuery.QueryPendingAi))
+                throw new OutOfMemoryException();
+            try
+            {
+                return targetMethod.Invoke(Target, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task 第67輪_處理迴圈擲OOM_執行紀錄失敗原因為記憶體上限且有記憶體里程碑()
+    {
+        var failing = DispatchProxy.Create<IAnalysisRecordQuery, OutOfMemoryRecordQuery>();
+        ((OutOfMemoryRecordQuery)failing).Target = _backend.RecordStore();
+        var (service, runState, _, _) = CreateTestHarness(recordQuery: failing);
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        // 失敗的趟完成訊號為 false（成功才是 true），這裡只等它結束、不斷言回傳值
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+        Assert.False(runState.IsRunning);
+
+        var outcome = runState.Snapshot().LastOutcome;
+        Assert.NotNull(outcome);
+        Assert.False(outcome!.Success);
+        Assert.Contains("記憶體上限", outcome.Message);
+
+        var aiRun = LatestAiRun();
+        Assert.Equal(1, aiRun.ExitCode);
+        Assert.NotNull(aiRun.MemoryStart);
+        Assert.NotNull(aiRun.MemoryEnd);
+    }
+
     [Fact]
     public async Task 強制重標擲例外_執行閘門釋放且可再次開始()
     {

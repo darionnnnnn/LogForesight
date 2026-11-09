@@ -261,6 +261,7 @@ public class AiAnalysisHostedService : BackgroundService
             var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
             using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
             _runState.SetCurrentBatchRunId(recorder.RunId);
+            recorder.RecordMemory(true, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
             var aiPhase = recorder.Phase(RunTimingPhases.Ai);
 
             try
@@ -276,7 +277,7 @@ public class AiAnalysisHostedService : BackgroundService
             catch (Exception ex)
             {
                 Log.Error(ex, "AI 分析排程執行時發生未預期錯誤：{Msg}", ex.Message);
-                failureMessage = ex.Message;
+                failureMessage = RunFailureReasons.Describe(ex);
                 success = false;
             }
             finally
@@ -304,6 +305,7 @@ public class AiAnalysisHostedService : BackgroundService
                 // 降級也是 AI 失敗：沒有拿到可用的白話摘要，趟次因此為「有警告」
                 recorder.AiFailures = counters.Failed + counters.Degraded;
                 recorder.Stopped = stopped;
+                recorder.RecordMemory(false, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 recorder.Finish(success ? 0 : 1);
 
                 _runState.EndRun(success, failureMessage);

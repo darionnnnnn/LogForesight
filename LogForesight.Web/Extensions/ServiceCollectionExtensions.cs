@@ -470,7 +470,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ScheduleOptionsStore>(),
             sp.GetRequiredService<IHostStore>(),
             sp.GetRequiredService<IAnalysisRecordQuery>(),
-            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create()));
+            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create(),
+            sqliteHeap: sp.GetRequiredService<StorageBackend>().TryReadSqliteHeap));
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）

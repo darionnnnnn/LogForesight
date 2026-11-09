@@ -159,7 +159,10 @@ public class RunExportServiceTests
 {
     private static readonly string Anomaly = LogAnalysisService.AiFormatAnomalyHeadline;
 
-    private static string Strip(string json) => Regex.Replace(json, "\"exportedAt\":\"[^\"]*\"", "\"exportedAt\":\"-\"");
+    // exportedAt 與 meta.memory（匯出當下的即時行程記憶體）每次匯出都不同，比對穩定性時一併略過
+    private static string Strip(string json) => Regex.Replace(
+        Regex.Replace(json, "\"exportedAt\":\"[^\"]*\"", "\"exportedAt\":\"-\""),
+        @"""memory"":\{[^}]*\}", "\"memory\":{}");
 
     // ===== C-1：訊號收集 =====
 

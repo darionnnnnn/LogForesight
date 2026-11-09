@@ -482,6 +482,8 @@ public class RunMonitorService
             Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run)),
             Interrupted = run.Interrupted,
             Phases = RunPhaseDto.From(run.Phases),
+            MemoryStart = RunMemoryMarkDto.From(run.MemoryStart),
+            MemoryEnd = RunMemoryMarkDto.From(run.MemoryEnd),
             ExitCode = run.ExitCode,
             Stopped = run.Stopped,
             AppVersion = run.AppVersion,

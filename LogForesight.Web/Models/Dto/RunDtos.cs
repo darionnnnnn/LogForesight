@@ -156,6 +156,33 @@ public class RunDayTimingDto
     public List<RunBranchTimingDto> Branches { get; set; } = new();
 }
 
+/// <summary>記憶體里程碑（數值以 bytes 傳，前端換算）</summary>
+public class RunMemoryMarkDto
+{
+    public DateTime At { get; set; }
+    public long? WorkingSetBytes { get; set; }
+    public long? PeakWorkingSetBytes { get; set; }
+    public long? ManagedHeapBytes { get; set; }
+    public long? GcCommittedBytes { get; set; }
+    public long? LohSizeBytes { get; set; }
+    public long? HardLimitBytes { get; set; }
+    public long? SqliteHeapHighwaterBytes { get; set; }
+    public int? NlogRuleCount { get; set; }
+
+    public static RunMemoryMarkDto? From(RunMemoryMark? mark) => mark == null ? null : new RunMemoryMarkDto
+    {
+        At = mark.At,
+        WorkingSetBytes = mark.WorkingSetBytes,
+        PeakWorkingSetBytes = mark.PeakWorkingSetBytes,
+        ManagedHeapBytes = mark.ManagedHeapBytes,
+        GcCommittedBytes = mark.GcCommittedBytes,
+        LohSizeBytes = mark.LohSizeBytes,
+        HardLimitBytes = mark.HardLimitBytes,
+        SqliteHeapHighwaterBytes = mark.SqliteHeapHighwaterBytes,
+        NlogRuleCount = mark.NlogRuleCount
+    };
+}
+
 public class RunDetailDto
 {
     public long RunId { get; set; }
@@ -167,6 +194,13 @@ public class RunDetailDto
     public bool Interrupted { get; set; }
 
     public List<RunPhaseDto>? Phases { get; set; }
+
+    /// <summary>本趟開始時的記憶體里程碑（bytes；null＝舊紀錄或讀不到）</summary>
+    public RunMemoryMarkDto? MemoryStart { get; set; }
+
+    /// <summary>本趟結束時的記憶體里程碑（bytes；null＝舊紀錄、異常中斷或讀不到）</summary>
+    public RunMemoryMarkDto? MemoryEnd { get; set; }
+
     public string HostName { get; set; } = string.Empty;
     public DateTime StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }

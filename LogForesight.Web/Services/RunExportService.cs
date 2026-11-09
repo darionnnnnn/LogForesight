@@ -39,6 +39,7 @@ public sealed record RunExportLimits
     public int SamplesPerGroup { get; init; } = 3;
     public int StackChars { get; init; } = 8 * 1024;
     public int AbnormalRuns { get; init; } = 200;
+    public int RunMemory { get; init; } = 200;
     public int SlowSqlOperations { get; init; } = 100;
     public int AiCases { get; init; } = 100;
     public int AiCasesScanned { get; init; } = 500;
@@ -135,11 +136,15 @@ public sealed class RunExportService : IRunExportService
     private readonly Func<IRunExportMasker> _maskerFactory;
     private readonly RunExportLimits _limits;
 
+    /// <summary>SQLite 原生堆讀取（匯出 meta.memory 用；null＝不讀，例如測試）</summary>
+    private readonly Func<(long? Used, long? Highwater)>? _sqliteHeap;
+
     public RunExportService(
         BatchRunStore runs, RunMonitorService monitor, ISystemSettingsStore settings, ScheduleOptionsStore schedule,
         IHostStore hosts, IAnalysisRecordQuery records, Func<IRunExportMasker> maskerFactory,
-        RunExportLimits? limits = null)
+        RunExportLimits? limits = null, Func<(long? Used, long? Highwater)>? sqliteHeap = null)
     {
+        _sqliteHeap = sqliteHeap;
         _runs = runs;
         _monitor = monitor;
         _settings = settings;
@@ -492,6 +497,8 @@ public sealed class RunExportService : IRunExportService
             var (signalGroups, stacks, runCodes) = BuildSignalGroups();
             var slowSql = BuildSlowSql();
             var abnormal = BuildAbnormalRuns(periodRuns, statuses, runCodes);
+            var runMemory = BuildRunMemory(periodRuns);
+            var memory = BuildMemory();
             var ai = BuildAiSection(caseRecords, caseLowerBound, hostById);
             var context = BuildContext(settings, schedule, hosts);
 
@@ -515,6 +522,7 @@ public sealed class RunExportService : IRunExportService
                     Notice = Lit("主機、帳號、IP、網址、路徑、SID 與密鑰已換成代號，代號只在本檔內有效、檔案內沒有對照表；"
                                  + "自由文字（訊息樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除，含空白的人名若不在系統字典內，後半可能漏遮；群組與角色名稱若在兩字以內不會被遮。")
                 },
+                Memory = memory,
                 SignalTotals = new ExportSignalTotalsDto
                 {
                     ErrorFatal = _totErrorFatal,
@@ -537,6 +545,7 @@ public sealed class RunExportService : IRunExportService
                 Stacks = stacks,
                 SlowSql = slowSql,
                 AbnormalRuns = abnormal,
+                RunMemory = runMemory,
                 AiFormatAnomalies = ai
             };
 
@@ -969,6 +978,66 @@ public sealed class RunExportService : IRunExportService
                 Versions = versions
             };
         }
+
+        // ---------- 記憶體 ----------
+
+        private ExportMemoryDto BuildMemory()
+        {
+            var snap = MemorySnapshot.Capture(_s._sqliteHeap, nlogRuleCount: () => NLog.LogManager.Configuration?.LoggingRules.Count);
+            return new ExportMemoryDto
+            {
+                WorkingSetBytes = snap.WorkingSetBytes,
+                PeakWorkingSetBytes = snap.PeakWorkingSetBytes,
+                ManagedHeapBytes = snap.ManagedHeapBytes,
+                GcCommittedBytes = snap.GcCommittedBytes,
+                LohSizeBytes = snap.LohSizeBytes,
+                HardLimitBytes = snap.HardLimitBytes,
+                SqliteHeapHighwaterBytes = snap.SqliteHeapHighwaterBytes,
+                NlogRuleCount = snap.NlogRuleCount,
+                IsServerGc = snap.IsServerGc,
+                GcConserveMemory = snap.GcConserveMemory,
+                GcHeapHardLimitPercent = snap.GcHeapHardLimitPercent,
+                Gen2Collections = snap.Gen2Collections
+            };
+        }
+
+        /// <summary>期間內有記憶體里程碑的趟次，由舊到新；超過上限取最新的（省略筆數記進 meta.omitted）</summary>
+        private List<ExportRunMemoryDto> BuildRunMemory(List<BatchRun> runs)
+        {
+            var withMemory = runs
+                .Where(r => r.MemoryStart != null || r.MemoryEnd != null)
+                .OrderBy(r => r.StartedAt)
+                .ThenBy(r => r.RunId)
+                .ToList();
+            var kept = withMemory;
+            if (withMemory.Count > _l.RunMemory)
+            {
+                kept = withMemory.Skip(withMemory.Count - _l.RunMemory).ToList();
+                _omitted.Add(new ExportOmittedDto { Item = Lit("runMemory"), Count = withMemory.Count - kept.Count, Limit = _l.RunMemory });
+            }
+
+            return kept.Select(r => new ExportRunMemoryDto
+            {
+                RunId = r.RunId,
+                JobType = Lit(JobTypeOf(r)),
+                StartedAt = Ts(r.StartedAt),
+                Start = MemoryMark(r.MemoryStart),
+                End = MemoryMark(r.MemoryEnd)
+            }).ToList();
+        }
+
+        private ExportRunMemoryMarkDto? MemoryMark(RunMemoryMark? mark) => mark == null ? null : new ExportRunMemoryMarkDto
+        {
+            At = Ts(mark.At),
+            WorkingSetBytes = mark.WorkingSetBytes,
+            PeakWorkingSetBytes = mark.PeakWorkingSetBytes,
+            ManagedHeapBytes = mark.ManagedHeapBytes,
+            GcCommittedBytes = mark.GcCommittedBytes,
+            LohSizeBytes = mark.LohSizeBytes,
+            HardLimitBytes = mark.HardLimitBytes,
+            SqliteHeapHighwaterBytes = mark.SqliteHeapHighwaterBytes,
+            NlogRuleCount = mark.NlogRuleCount
+        };
 
         // ---------- 異常趟 ----------
 

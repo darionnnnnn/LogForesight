@@ -304,6 +304,46 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    /// <summary>
+    /// 記錄記憶體里程碑：start=true 寫 <see cref="BatchRun.MemoryStart"/>，否則寫 <see cref="BatchRun.MemoryEnd"/>，
+    /// 並在診斷行留一句白話。結束那一次必須在 <see cref="Finish"/> 之前呼叫才會進最終列。失敗不中斷分析。
+    /// </summary>
+    public void RecordMemory(bool start, MemorySnapshot snapshot)
+    {
+        if (_store == null) return;
+        try
+        {
+            var mark = new RunMemoryMark(
+                snapshot.CapturedAt,
+                snapshot.WorkingSetBytes,
+                snapshot.PeakWorkingSetBytes,
+                snapshot.ManagedHeapBytes,
+                snapshot.GcCommittedBytes,
+                snapshot.LohSizeBytes,
+                snapshot.HardLimitBytes,
+                snapshot.SqliteHeapHighwaterBytes,
+                snapshot.NlogRuleCount);
+            lock (_countLock)
+            {
+                if (start) _run.MemoryStart = mark;
+                else _run.MemoryEnd = mark;
+            }
+
+            var parts = new List<string>();
+            if (mark.WorkingSetBytes is { } ws) parts.Add($"工作集 {ToMb(ws)} MB");
+            if (mark.PeakWorkingSetBytes is { } peak) parts.Add($"峰值 {ToMb(peak)} MB");
+            if (mark.ManagedHeapBytes is { } heap) parts.Add($".NET 堆 {ToMb(heap)} MB");
+            if (mark.SqliteHeapHighwaterBytes is { } sqlite) parts.Add($"SQLite 峰值 {ToMb(sqlite)} MB");
+            Milestone($"記憶體（{(start ? "開始" : "結束")}）：{string.Join("、", parts)}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "記憶體里程碑記錄失敗（不影響本次分析）：{0}", ex.Message);
+        }
+    }
+
+    private static long ToMb(long bytes) => (long)Math.Round(bytes / 1048576.0, MidpointRounding.AwayFromZero);
+
     /// <summary>致命原因親自寫進紀錄：最外層 catch 執行 Log.Fatal 時 NLog target 已卸除，靠它會遺失</summary>
     public void Fatal(Exception ex)
     {

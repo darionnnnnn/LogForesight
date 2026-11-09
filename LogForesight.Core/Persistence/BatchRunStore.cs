@@ -188,6 +188,12 @@ public class BatchRun
     /// <summary>各階段起訖（null＝舊紀錄，不從舊 log 推算；鍵見 <see cref="LogForesight.Core.Service.RunTimingPhases"/>）</summary>
     public List<RunPhaseRecord>? Phases { get; set; }
 
+    /// <summary>本趟開始時的記憶體里程碑（null＝舊紀錄或讀不到）</summary>
+    public RunMemoryMark? MemoryStart { get; set; }
+
+    /// <summary>本趟結束（寫出最終列前）的記憶體里程碑（null＝舊紀錄、異常中斷或讀不到）</summary>
+    public RunMemoryMark? MemoryEnd { get; set; }
+
     /// <summary>寫入用的獨立副本：寫入時其他路徑可能正在改階段清單，序列化不能直接讀活的物件</summary>
     public BatchRun Snapshot()
     {
@@ -197,6 +203,21 @@ public class BatchRun
         return copy;
     }
 }
+
+/// <summary>
+/// 執行紀錄的記憶體里程碑（只放判斷「這趟吃了多少」的最小欄位；快取明細不進執行紀錄，避免每趟列變大）。
+/// 數值單位為 bytes；null 表示讀不到。
+/// </summary>
+public sealed record RunMemoryMark(
+    DateTime At,
+    long? WorkingSetBytes,
+    long? PeakWorkingSetBytes,
+    long? ManagedHeapBytes,
+    long? GcCommittedBytes,
+    long? LohSizeBytes,
+    long? HardLimitBytes,
+    long? SqliteHeapHighwaterBytes,
+    int? NlogRuleCount);
 
 /// <summary>執行紀錄的單一階段。FinishedAt／Outcome 為 null＝進行中或該趟異常中斷。</summary>
 public sealed record RunPhaseRecord(string Key, DateTime StartedAt)
