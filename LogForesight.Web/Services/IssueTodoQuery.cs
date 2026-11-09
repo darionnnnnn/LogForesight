@@ -46,7 +46,7 @@ public class IssueTodoQuery
     /// 對全站可見範圍解析一次，再用 <see cref="Aggregate"/> 對各群組的主機子集各自彙總。
     /// </summary>
     /// <param name="exclusion">呼叫端同一次請求取得的靜音排除條件（儀表板與同頁其他查詢共用一份）</param>
-    public List<ResolvedOccurrence> ResolveActionable(
+    public IReadOnlyList<ResolvedOccurrence> ResolveActionable(
         IssueExclusion exclusion,
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
         IReadOnlySet<string>? riskLevels,

@@ -274,7 +274,7 @@ public class DashboardService
     /// </summary>
     private void BuildGroupRisk(
         DashboardDto dto, IReadOnlyList<HostRiskAggregate> hostRiskAgg, List<WebHost> visibleHosts,
-        List<ResolvedOccurrence> actionableResolved)
+        IReadOnlyList<ResolvedOccurrence> actionableResolved)
     {
         var aggByHost = hostRiskAgg.ToDictionary(h => h.HostId);
 

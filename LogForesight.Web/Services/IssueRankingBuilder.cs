@@ -104,7 +104,7 @@ public class IssueRankingBuilder
     /// 傳進來就不再自己打一次整份主機表（報表一次請求原本要載入三次）。null 時退回自行查詢。
     /// 只用來查主機分級，而分級只問「本期有命中的主機」，那些主機必然在可見範圍內。
     /// </summary>
-    public List<IssueRankingDto> Build(
+    public IReadOnlyList<IssueRankingDto> Build(
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
         IReadOnlyCollection<WebHost>? hostSnapshot = null) =>
         Build(_exclusions.Current(), from, to, visibleHostIds, totalHosts, hostSnapshot);
@@ -114,7 +114,7 @@ public class IssueRankingBuilder
     /// <see cref="IIssueExclusionSource.Current"/>，這份排行與同頁其他查詢才會用同一份規則。
     /// 機房首見日不套靜音（見該呼叫處註解），其餘聚合一律套用。
     /// </summary>
-    public List<IssueRankingDto> Build(
+    public IReadOnlyList<IssueRankingDto> Build(
         IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
         IReadOnlyCollection<WebHost>? hostSnapshot)
     {

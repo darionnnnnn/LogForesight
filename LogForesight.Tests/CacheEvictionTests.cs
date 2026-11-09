@@ -107,4 +107,165 @@ public class CacheEvictionTests
                 });
         });
     }
+
+    // ───────── 版本清除／元素總數上限／命中不複製（第 67 輪 D）─────────
+
+    private static List<IssueRankingDto> Dtos(int n) =>
+        Enumerable.Range(0, n).Select(i => new IssueRankingDto { Source = "s", EventId = i }).ToList();
+
+    private static List<ResolvedOccurrence> Occs(int n) => Enumerable.Range(0, n).Select(_ => (ResolvedOccurrence)null!).ToList();
+
+    private static Func<DateTime> TickingClock()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0);
+        return () => now = now.AddMilliseconds(1);
+    }
+
+    [Fact]
+    public void IssueRankingCache_版本推進後寫新鍵_舊版整批清除()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new IssueRankingCache(stamp, TickingClock());
+        for (var i = 1; i <= 3; i++) cache.Set($"old{i}", Dtos(1));
+        stamp.Bump();
+        cache.Set("new", Dtos(1));
+
+        var stats = cache.GetStatistics();
+        Assert.Equal(1, stats.Entries);
+        Assert.Equal(3, stats.Evictions);
+        for (var i = 1; i <= 3; i++) Assert.Null(cache.TryGet($"old{i}"));
+        Assert.NotNull(cache.TryGet("new"));
+    }
+
+    [Fact]
+    public void ActionableSnapshotCache_版本推進後寫新鍵_舊版整批清除()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new ActionableSnapshotCache(stamp, TickingClock());
+        for (var i = 1; i <= 3; i++) cache.Set($"old{i}", Occs(1));
+        stamp.Bump();
+        cache.Set("new", Occs(1));
+
+        var stats = cache.GetStatistics();
+        Assert.Equal(1, stats.Entries);
+        Assert.Equal(3, stats.Evictions);
+        for (var i = 1; i <= 3; i++) Assert.Null(cache.TryGet($"old{i}"));
+        Assert.NotNull(cache.TryGet("new"));
+    }
+
+    [Fact]
+    public void IssueRankingCache_元素總數超限_淘汰最久沒存取的條目()
+    {
+        var cache = new IssueRankingCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        cache.Set("a", Dtos(3));
+        cache.Set("b", Dtos(3));
+        cache.Set("c", Dtos(3));
+        Assert.NotNull(cache.TryGet("a"));   // a 變新，b 成為最久沒存取
+        cache.Set("d", Dtos(3));
+
+        var stats = cache.GetStatistics();
+        Assert.Equal(3, stats.Entries);
+        Assert.True(stats.Elements <= 10);
+        Assert.Null(cache.TryGet("b"));
+        Assert.NotNull(cache.TryGet("a"));
+        Assert.NotNull(cache.TryGet("c"));
+        Assert.NotNull(cache.TryGet("d"));
+    }
+
+    [Fact]
+    public void ActionableSnapshotCache_元素總數超限_淘汰最久沒存取的條目()
+    {
+        var cache = new ActionableSnapshotCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        cache.Set("a", Occs(3));
+        cache.Set("b", Occs(3));
+        cache.Set("c", Occs(3));
+        Assert.NotNull(cache.TryGet("a"));
+        cache.Set("d", Occs(3));
+
+        var stats = cache.GetStatistics();
+        Assert.Equal(3, stats.Entries);
+        Assert.True(stats.Elements <= 10);
+        Assert.Null(cache.TryGet("b"));
+        Assert.NotNull(cache.TryGet("a"));
+        Assert.NotNull(cache.TryGet("c"));
+        Assert.NotNull(cache.TryGet("d"));
+    }
+
+    [Fact]
+    public void IssueRankingCache_單筆超過上限_不進快取並計入拒收()
+    {
+        var cache = new IssueRankingCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        cache.Set("big", Dtos(11));
+
+        Assert.Null(cache.TryGet("big"));
+        var stats = cache.GetStatistics();
+        Assert.Equal(1, stats.OversizeRejected);
+        Assert.Equal(0, stats.Entries);
+    }
+
+    [Fact]
+    public void ActionableSnapshotCache_單筆超過上限_不進快取並計入拒收()
+    {
+        var cache = new ActionableSnapshotCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        cache.Set("big", Occs(11));
+
+        Assert.Null(cache.TryGet("big"));
+        var stats = cache.GetStatistics();
+        Assert.Equal(1, stats.OversizeRejected);
+        Assert.Equal(0, stats.Entries);
+    }
+
+    [Fact]
+    public void 單筆超過上限時同鍵舊條目一併移除()
+    {
+        var ranking = new IssueRankingCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        ranking.Set("k", Dtos(3));
+        ranking.Set("k", Dtos(11));
+        Assert.Null(ranking.TryGet("k"));
+        Assert.Equal(0, ranking.GetStatistics().Elements);
+
+        var actionable = new ActionableSnapshotCache(new DataVersionStamp(), TickingClock(), maxElements: 10);
+        actionable.Set("k", Occs(3));
+        actionable.Set("k", Occs(11));
+        Assert.Null(actionable.TryGet("k"));
+        Assert.Equal(0, actionable.GetStatistics().Elements);
+    }
+
+    [Fact]
+    public void IssueRankingCache_命中不複製_同鍵回同一個參考()
+    {
+        var cache = new IssueRankingCache(new DataVersionStamp(), TickingClock());
+        cache.Set("k", Dtos(2));
+        Assert.Same(cache.TryGet("k"), cache.TryGet("k"));
+    }
+
+    [Fact]
+    public void ActionableSnapshotCache_命中不複製_同鍵回同一個參考()
+    {
+        var cache = new ActionableSnapshotCache(new DataVersionStamp(), TickingClock());
+        cache.Set("k", Occs(2));
+        Assert.Same(cache.TryGet("k"), cache.TryGet("k"));
+    }
+
+    [Fact]
+    public void 統計的元素總數_隨寫入覆寫與移除同步()
+    {
+        var stamp = new DataVersionStamp();
+        var r = new IssueRankingCache(stamp, TickingClock());
+        r.Set("a", Dtos(2));
+        r.Set("b", Dtos(5));
+        Assert.Equal(7, r.GetStatistics().Elements);
+        r.Set("a", Dtos(1));   // 覆寫同鍵：舊的 2 要扣掉
+        Assert.Equal(6, r.GetStatistics().Elements);
+        stamp.Bump();
+        r.Set("c", Dtos(4));   // 舊版整批清除
+        Assert.Equal(4, r.GetStatistics().Elements);
+
+        var a = new ActionableSnapshotCache(new DataVersionStamp(), TickingClock());
+        a.Set("a", Occs(2));
+        a.Set("b", Occs(5));
+        Assert.Equal(7, a.GetStatistics().Elements);
+        a.Set("a", Occs(1));
+        Assert.Equal(6, a.GetStatistics().Elements);
+    }
 }

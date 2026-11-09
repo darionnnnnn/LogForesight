@@ -50,14 +50,14 @@ public class ActionableSnapshotCacheTests
     }
 
     [Fact]
-    public void 命中回傳副本_呼叫端修改不影響快取()
+    public void 命中回傳同一份唯讀清單_呼叫端無法修改快取()
     {
         var cache = new ActionableSnapshotCache(new DataVersionStamp(), () => new DateTime(2026, 9, 1));
         var key = ActionableSnapshotCache.KeyOf(0, new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), null, null, null, IssueExclusion.None.CacheToken);
 
         cache.Set(key, EmptySnapshot());
         var first = cache.TryGet(key)!;
-        first.Add(null!);
+        Assert.Same(first, cache.TryGet(key));   // 命中不複製：唯讀型別保證呼叫端改不到共用清單
 
         var second = cache.TryGet(key)!;
         Assert.Empty(second);
@@ -69,7 +69,7 @@ public class ActionableSnapshotCacheTests
         var stamp = new DataVersionStamp();
         var cache = new ActionableSnapshotCache(stamp, () => new DateTime(2026, 9, 1));
         var calls = 0;
-        List<ResolvedOccurrence> GetOrAdd()
+        IReadOnlyList<ResolvedOccurrence> GetOrAdd()
         {
             var key = ActionableSnapshotCache.KeyOf(cache.Version, new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), null, null, null, IssueExclusion.None.CacheToken);
             var hit = cache.TryGet(key);
