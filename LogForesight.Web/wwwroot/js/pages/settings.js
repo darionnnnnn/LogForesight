@@ -966,8 +966,8 @@ function renderMemoryHealth(memory, memoryWarning) {
         { item: 'SQLite 堆', status: sqliteNone ? '不適用' : pair(m.sqliteHeapBytes, m.sqliteHeapHighwaterBytes) },
         { item: 'NLog 規則數', status: m.nlogRuleCount === null || m.nlogRuleCount === undefined ? '—' : formatNumber(m.nlogRuleCount) }
     ];
-    const tableHost = document.createElement('div');
-    renderTable(tableHost, {
+    const metricsHost = document.createElement('div');
+    renderTable(metricsHost, {
         columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
         rows,
         caption: '記憶體指標'
@@ -984,7 +984,7 @@ function renderMemoryHealth(memory, memoryWarning) {
         warn.append(badge, text);
         children.push(warn);
     }
-    children.push(tableHost);
+    children.push(metricsHost);
     host.replaceChildren(...children);
 
     const cacheHost = document.getElementById('health-memory-caches');

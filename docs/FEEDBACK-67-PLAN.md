@@ -1,6 +1,6 @@
 # LogForesight 第 67 輪規劃：記憶體用量體檢
 
-> 狀態：規劃中（使用者 2026-11-09 確認方向；同日完成四視角複檢改版，尚未開分支）
+> 狀態：實作完成，待換模型體檢（分支 feature/feedback-67）
 > 基準：dev@03a2a992（Windows 8,634 綠／11 略過；macOS 8,512 綠／14 略過；全量約 8 分鐘）
 > 來源：使用者回報「排程連續執行三天，整台 24 GB 記憶體被 `LogForesight.Web` 吃光」（後端 Sqlite）；本輪為全專案記憶體體檢
 > 實作方式：主代理寫階段規格，實作派內建 Agent（Sonnet 5.5，effort 由主代理依段評估；純測試小段可用 Haiku 5.5）；同一 checkout 一次只派一個改檔代理；每段主代理獨立重跑驗收，不採信代理摘要；收尾換模型體檢
@@ -335,9 +335,31 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 | G 附帶 bug | 主代理 | `2f974646` | 新增 `PrtgSnapshotJournalSegmentLimitTests` 4 案；換回修正前 journal → 3 案紅（第 4 案「單一組成超限仍擲」兩版皆綠）；G-2 grep 該檔已無「預設 7 天」 | ①實作時一度把載入時的 snapshot 檢查也放寬到整體上限，突變顯示壓縮會先以 `SnapshotChunks` 切成每段 ≤ 100,000，原檢查本來就正確，已還原，只保留 segment 各組成分別比對的修正 |
 | 文件同步（PRTG-SPEC、BACKLOG） | 主代理 | `d10d90f3` | grep 無敘事字眼 | 無 |
 | D 兩個大結果快取 | Sonnet 5.5＋主代理微修 | `acbaf5a2` | 主代理重跑定向 210 通過；代理突變拿掉「清非當前版本」→ 3 案紅 | ①命中不複製後兩個既有「回傳副本」測試改為斷言同一參考，主代理順手改名（名稱已與行為不符）；②代理版單筆超限時保留同鍵舊條目，主代理改為一併移除並加案例，避免之後命中與本次查詢不一致的舊結果；③呼叫端只有 `DashboardService.BuildGroupRisk`、`ReportService.BuildIssueOthers` 兩個參數型別改唯讀，沒有任何呼叫端需要 `.ToList()` |
-| E 低風險峰值路徑 | Sonnet 5.5 | 見下一個提交 | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
+| E 低風險峰值路徑 | Sonnet 5.5 | `e23a855b` | 主代理重跑合併篩選全綠；主代理突變 E-1（keep 恆放行 → 2 案紅）、E-2（GetRun 永不讀全表 → 3 案紅，含既有保留窗口外查詢兩案） | ①`LatestPerRunStream` 另加 `onEach` 參數累計窗口最小 RunId（不提早停止）；②`LatestPerRun`／`ReadAllRunLines`／`ReadRunLinesFrom` 已無呼叫端，刪除；③E-1 的 `[WindowsFact]` 案在 macOS 略過 |
+| 瀏覽器實測（本機 Development 站台） | 主代理 | — | 見下方「實測紀錄」 | 無 |
+| 全量測試 | 主代理 | 見最後提交 | 第一次 8,733 通過／1 失敗：`SlowQueryCoverageTests` 以字串 `renderTable(tableHost` 定位慢查詢建表位置，A-3 新增的記憶體卡函式同名變數排在前面而誤判；記憶體卡變數改名 `metricsHost` 後第二次 8,734 通過／11 略過 | A-3 定向篩選（UiTests／JsModuleImport／BehaviorTests／ApiTimeout）不含此類，全量才抓到 |
 
+
+### 實測紀錄（2026-11-09，本機 `dotnet run` Development、Sqlite）
+
+| 項目 | 結果 |
+|---|---|
+| appsettings 三個 Sqlite 鍵為 `null` | 站台正常啟動（綁定為預設） |
+| 啟動 log GC 生效值 | `GC 設定生效值：ServerGC=True、GCConserveMem=5、GCHeapHardLimitPercent=60、GCHeapHardLimit=14656 MB`——錯鍵修正與硬上限皆生效 |
+| 健康頁記憶體卡 | 指標表 10 列與快取統計表正確渲染；NLog 規則數 5（與 nlog.config 五條一致）；主控台無錯誤 |
+| 立即執行一趟本機取數（RunId 4，12 主機日） | `memoryStart`／`memoryEnd` 寫入：.NET 堆 89→222 MB、峰值工作集 402 MB、SQLite 峰值 1 MB；執行中 NLog 規則數 6、結束後健康頁回到 5（附掛的 rule 已卸除）；詳情顯示記憶體一行與兩筆里程碑 |
+| 跟隨取數的 AI 趟（RunId 5） | 本機 `localhost:8080` 模型服務未啟動，2 筆失敗（環境因素）；記憶體起訖有寫入；伺服器 log 無 `ObjectDisposedException` |
+| C-4 退避 | 上述無進度一輪後 `ai-status` 回 `idleReason=backoff`、`nextRetryAt` 為結束後 5 分鐘；排程頁 AI 卡顯示「上一輪沒有進度，暫停自動重試中（可按「立即補跑」），約 11:55 再試」 |
+| 已知細節 | AI 趟執行中 `memoryStart` 尚未落地（recorder 在結束寫最終列時才帶出）；行程整個崩潰時這一趟沒有起訖，被接住的 OOM 會正常寫入 |
 
 ## 體檢交接
 
-（實作輪結束時填：全量測試數、與基線差、實作方最沒把握的地方）
+- 全量測試：Windows **8,734 通過／11 略過**（基線 8,634，新增 100 案），耗時約 8 分鐘；macOS 未跑（E-1 的 `[WindowsFact]` 一案在 macOS 略過）。
+- 規劃項目逐條對照：A～G 全部完成；與規劃不同之處都記在執行紀錄的「落差與處置」欄；「明確不做」項目已登錄 BACKLOG「記憶體用量（遞延）」。
+- 實作方最沒把握、請優先看：
+  1. **硬上限 60% 尚未經正式資料驗證**：P6／P8／P9 的峰值路徑本輪沒動，正式站台若單趟峰值本來就超過 60%，會從「吃光記憶體」變成「該趟中止並顯示記憶體上限」。請以第一晚的 `runMemory` 決定門檻（README 有環境變數覆寫方式）。
+  2. **AI 趟執行中 `memoryStart` 未落地**：recorder 在寫最終列時才帶出；被接住的 OOM 有起訖，行程整個崩潰則沒有。
+  3. **C-4 退避解除條件**：任何寫入 `SystemSettings` 的動作（含資源守門自動偵測寫回）都會解除退避；屬於「寧可多試」的方向，但退避效果會打折。
+  4. **D 命中回傳共用唯讀清單**：清單內的 DTO 物件跨請求共用（改前的淺複製本來也共用），呼叫端若就地改 DTO 屬性會互相影響；目前 grep 未見。
+  5. **C-2 主機對應變動最慢一小時反映**，與原設計「每小時重算」一致，但白天手動改對應後快照不會立即跟上。
+  6. **F 的 SQLite 軟上限是行程全域**，每次建 `StorageBackend` 都會重設同一個值；預設不設，不影響現況。
