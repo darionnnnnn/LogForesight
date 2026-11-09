@@ -31,6 +31,8 @@
 
 ## 資料表設計（欄位級）
 
+**SQLite 連線層 PRAGMA**（`SqlitePragmaInterceptor`，每次連線開啟時設）：`cache_size` 每條連線 page cache 上限，預設 64 MB（`Storage:SqliteCacheSizeKb`，按需成長、非預先配置）；`mmap_size` 記憶體對映上限，預設 1 GB（`Storage:SqliteMmapSizeBytes`，走 OS 檔案快取、跨連線共享，0＝不用）；`temp_store=MEMORY`、`busy_timeout=5000`、`journal_mode` 依 `Storage:SqliteWal`。整個行程的原生堆軟上限 `Storage:SqliteSoftHeapLimitBytes`（`sqlite3_soft_heap_limit64`，預設不設）在 schema 確認後設一次。設定值不合法（cache ≤ 0、其餘為負）啟動即失敗並點名鍵；SqlServer 後端忽略這三鍵並警示。
+
 **升級器連線**：SQLite 關閉連線池，`SchemaUpgrader.Upgrade` 整段維持一條開啟的連線（上百個「缺什麼補什麼」的檢查若各開一條連線，既有 DB 的啟動要 1 秒以上）；SQL Server 走連線池不受影響。schema 互斥鎖 SQL Server 用固定名稱，SQLite 依資料檔絕對路徑分名（`StorageBackend.BuildSchemaMutexName`），無法可靠正規化時退回固定名稱。
 
 現況原則：本節只列目前 `LfDbContext`／`SchemaUpgrader` 實際建立或使用的實體表；整份 JSON

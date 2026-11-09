@@ -235,6 +235,24 @@ public class StorageSettings
     /// </summary>
     public bool SqliteWal { get; set; } = true;
 
+    /// <summary>
+    /// 僅 Sqlite：每條連線的 page cache 上限（KB）。留空＝<see cref="SqlitePragmaInterceptor.DefaultCacheSizeKb"/>。
+    /// 是上限、按需成長，不是預先配置；連線池關閉，同時開幾條連線最壞就是幾份。必須大於 0。
+    /// </summary>
+    public long? SqliteCacheSizeKb { get; set; }
+
+    /// <summary>
+    /// 僅 Sqlite：記憶體對映讀取上限（位元組）。留空＝<see cref="SqlitePragmaInterceptor.DefaultMmapSizeBytes"/>。
+    /// 映射頁走 OS 檔案快取、跨連線共享，不計入行程私有記憶體；0＝不使用記憶體對映。不可為負。
+    /// </summary>
+    public long? SqliteMmapSizeBytes { get; set; }
+
+    /// <summary>
+    /// 僅 Sqlite：整個行程 SQLite 原生堆的軟上限（位元組，<c>sqlite3_soft_heap_limit64</c>）。
+    /// 達到時 SQLite 主動釋放 page cache；留空或 0＝不設。不可為負。
+    /// </summary>
+    public long? SqliteSoftHeapLimitBytes { get; set; }
+
     /// <summary>Type 是否為受支援的後端（不分大小寫）</summary>
     public bool IsValidType => ValidTypes.Contains(Type, StringComparer.OrdinalIgnoreCase);
 

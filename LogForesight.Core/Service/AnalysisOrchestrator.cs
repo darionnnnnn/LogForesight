@@ -987,7 +987,7 @@ public class AnalysisOrchestrator
 
             // 分塊掃描（回饋三十四輪 A1）：整個回補區間一次全載，一台吵雜主機 120 天可達數十 GB，
             // 這是排程執行占用 22GB 的主因之一。改成逐塊取數、逐塊分析、逐塊釋放——
-            // 同一時間記憶體裡只有一塊（預設 7 天）的事件。逐日分析的順序不變（由舊到新，
+            // 同一時間記憶體裡只有一塊（天數見 EventLogService.DefaultScanChunkDays）的事件。逐日分析的順序不變（由舊到新，
             // 趨勢比對依賴前面日期寫入的歷史），只是取數的邊界跟著區塊走。
             var chunks = EventLogService.SplitDateRange(rangeStart, ctx.Today, EventLogService.DefaultScanChunkDays)
                 .Where(chunk => datesToAnalyze.Any(d => d >= chunk.Start && d < chunk.EndExclusive))

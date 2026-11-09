@@ -94,8 +94,11 @@ public class StorageBackend
     {
         DbContextOptions<LfDbContext> options;
         IsSqlite = settings.IsSqlite;
+        long softHeapLimit = 0;
         if (settings.IsSqlite)
         {
+            var (cacheSizeKb, mmapSizeBytes, softHeapLimitBytes) = SqlitePragmaInterceptor.ResolveMemorySettings(settings);
+            softHeapLimit = softHeapLimitBytes;
             string cs;
             if (string.IsNullOrWhiteSpace(settings.ConnectionString))
             {
@@ -127,7 +130,7 @@ public class StorageBackend
             // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
             var sqliteOptions = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlite(cs)
-                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal));
+                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal, cacheSizeKb, mmapSizeBytes));
             if (commandInterceptor is not null) sqliteOptions.AddInterceptors(commandInterceptor);
             options = sqliteOptions.Options;
             _dbDesc = $"Sqlite（{cs}）";
@@ -135,6 +138,8 @@ public class StorageBackend
         }
         else
         {
+            if (settings.SqliteCacheSizeKb != null || settings.SqliteMmapSizeBytes != null || settings.SqliteSoftHeapLimitBytes != null)
+                Log.Warn("[SQL] Storage:SqliteCacheSizeKb／SqliteMmapSizeBytes／SqliteSoftHeapLimitBytes 僅 Sqlite 適用，SqlServer 後端已忽略");
             var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
             // 依用途分流逾時長度：
             // 前景站台（maxPoolSize == null）逾時設 60 秒，比預設寬一點吸收尖峰，但仍要在使用者放棄之前失敗。
@@ -194,6 +199,13 @@ public class StorageBackend
             }
 
             Log.Info("[SQL] schema 確認完成");
+
+            // SQLite 原生堆軟上限是整個行程一份：provider 要等第一條連線開啟才初始化，所以放在 schema 確認之後設
+            if (softHeapLimit > 0)
+            {
+                SQLitePCL.raw.sqlite3_soft_heap_limit64(softHeapLimit);
+                Log.Info("[SQL] SQLite 原生堆軟上限 {Mb} MB（Storage:SqliteSoftHeapLimitBytes）", softHeapLimit / 1048576);
+            }
         }
         catch (Exception ex)
         {
