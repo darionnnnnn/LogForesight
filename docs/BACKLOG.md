@@ -139,6 +139,17 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
 開發與 CI 只涵蓋 Windows 與 macOS。Linux 多出檔名大小寫敏感與 148 處 `\r\n` 字面的行為差異，兩者在 macOS（預設不分大小寫）測不到。
 **觸發時機**：要在 Linux 開發、跑 CI 或部署時，先補 `ubuntu-latest` job 看紅在哪裡。
 
+## 記憶體用量（遞延）
+
+健康頁「記憶體」卡與診斷匯出的 `runMemory`（每趟開始／結束的工作集、.NET 堆、SQLite 峰值）是下列項目的判斷依據；數據指出主因前不動。
+
+- **本機路徑一次載入整個掃描區塊**：`AnalysisOrchestrator` 依 `EventLogService.DefaultScanChunkDays` 分塊，區塊內全部頻道事件連訊息一次載入、沒有筆數上限；平日只有 1 天，補跑多天、重跑與首次回補才吃滿。改法是縮小區塊或加筆數上限（要定義超過時怎麼標資料不完整）。**觸發時機**：本機分析趟的 `memoryEnd` 明顯高於其他趟。
+- **PRTG 狀態變更兩天整批載入**：`PrtgDailyPipeline` 每天讀全站兩天份 `GetStateChanges`（含訊息、無筆數上限）再交給規則評估。改法是依 sensor 範圍分批，要動 `PrtgRuleEvaluator` 的輸入形狀。**觸發時機**：flapping 嚴重的站台取數趟記憶體偏高。
+- **PRTG 每個請求的範圍檢查點重讀監看政策**：`PrtgOperationScope.Checkpoint` 每次反序列化整份政策並計算雜湊，回填時次數以百萬計；是短暫配置不是累積。**觸發時機**：回填期間 GC 次數或 CPU 偏高。
+- **PRTG 取數仍為每顆 sensor 建一個非同步工作再限流**：`FetchValuesFirstRoundAsync` 對全部 sensor 一次展開，排隊中的工作約數十 MB（失敗記錄只存種類、訊息與是否逾時）。改成固定數量 worker 要重寫進度、暫停閘與配額的並行骨架。**觸發時機**：取數範圍成長到十萬顆以上。
+- **互動 AI 與工作流恢復的 `AIService` 不釋放**：AI 排程與取數路徑已在用完時釋放；`WebAiService` 換設定時直接換新實例（在飛的互動請求可能還在用舊的），`HostDayWorkflowRecoveryHostedService` 換設定極少，兩處仍靠 GC 回收。**觸發時機**：記憶體卡顯示長時間未重啟的站台 .NET 堆持續上升且 dump 指向 `HttpClient`。
+- **稽核查詢有篩選時讀整段日期範圍再篩**：`AuditLogStore.Query`／`Count` 結果依 `OccurredAt` 排序，改串流只省原始字串，要 top-K 才有實質效益。**觸發時機**：稽核頁自選長區間查詢明顯變慢或記憶體尖峰。
+
 ## NetIQ 整合：試點驗證與遞延項目
 
 - **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／
@@ -188,7 +199,7 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
   的 `eventsByIp` 持有該 job 全部事件（單 job 上限 10 萬筆），映射完才逐 IP 移除。解析端已
   加上欄位過濾讓**單筆**事件大小有上界，但**筆數**仍是整批。要再往下壓得改成「逐頁即映射即分析」，
   需一併處理「同一 IP 多台主機共用桶子」的既有語意（移除時機錯了會讓第二台拿到空事件、
-  整天被誤判為來源未回報），且必須用真實資料驗證分析結果不變。等記憶體改善的實測數字出來後再評估。
+  整天被誤判為來源未回報），且必須用真實資料驗證分析結果不變。**觸發時機**：執行紀錄的記憶體起訖（診斷匯出 `runMemory`）顯示 NetIQ 趟是峰值主因時。
 - **NetIQ 結果頁外層鍵的猜測式解析**（`SentinelClient.CandidateArrayKeys`）：待用診斷頁確認實機外層鍵後寫進 NETIQ-API-REFERENCE 再收窄。
 - **掃描匯入精靈的 Sentinel 下拉仍列出密碼解不開的項目**：`netiq-import-wizard.js` 以 `canDiscover`（只看密文欄位非空）篩選，解不開的 Sentinel 仍在下拉裡，按下「掃描匯入」才由後端回「密碼無法解密」；Sentinel 清單與探測下拉已讀 `credentialState` 並標示。
   **觸發時機**：現場實際發生金鑰不符、使用者在精靈裡才碰壁時——做法是下拉改讀 `credentialState`，解不開的標「（密碼無法解密）」並停用選項。
