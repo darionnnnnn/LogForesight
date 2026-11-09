@@ -39,6 +39,29 @@ function build(page, declarations, prelude, returns, args = {}) {
     return factory(...names.map((n) => args[n]));
 }
 
+/** 設定頁記憶體卡：production 的 renderMemoryHealth 與格式化函式，畫面邊界與 renderTable 為替身 */
+function makeMemoryCard() {
+    const hosts = {};
+    const tables = [];
+    const node = () => ({
+        className: '', textContent: '', children: [],
+        append(...c) { this.children.push(...c); },
+        replaceChildren(...c) { this.children = c; }
+    });
+    for (const id of ['health-memory', 'health-memory-caches']) hosts[id] = node();
+    const documentStub = {
+        getElementById: (id) => hosts[id],
+        createElement: () => node()
+    };
+    const inst = build('settings.js', ['function formatMegabytes(', 'function formatHitRate(', 'function renderMemoryHealth('], '',
+        '{ renderMemoryHealth }', {
+            document: documentStub,
+            formatNumber: (n) => n.toLocaleString('en-US'),
+            renderTable: (_c, opts) => { tables.push(opts); }
+        });
+    return { inst, hosts, tables };
+}
+
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 /** 主機頁徽章：以 production 的 prtgHintBadge／prtgUnmatchedLink／badge 搭簡易節點 */
@@ -1028,6 +1051,37 @@ const cases = {
             '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
         const text = inst.mailLedgerNotice({ occupiedKeys: 10800, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null });
         assert.match(text, /^郵件貢獻帳本接近上限（10800／上限 12000）/);
+    },
+    // ---- settings：記憶體卡 ----
+    記憶體卡_格式化函式處理空值千分位與命中率() {
+        const inst = build('settings.js', ['function formatMegabytes(', 'function formatHitRate('], '',
+            '{ formatMegabytes, formatHitRate }', { formatNumber: (n) => n.toLocaleString('en-US') });
+        assert.equal(inst.formatMegabytes(null), '—');
+        const big = inst.formatMegabytes(1048576 * 1536);
+        assert(big.includes('1,536') && big.includes('MB'), big);
+        assert.equal(inst.formatHitRate(0, 0), '—');
+        assert.equal(inst.formatHitRate(3, 1), '75%');
+    },
+    記憶體卡_警示為真時渲染含接近上限的徽章() {
+        const { inst, hosts, tables } = makeMemoryCard();
+        inst.renderMemoryHealth({ workingSetBytes: 1048576 * 100, isServerGc: true, gcConserveMemory: 5, caches: [{ name: 'a', entries: 1, elements: 2, hits: 3, misses: 1 }] }, true);
+        const warn = hosts['health-memory'].children[0];
+        assert(warn.children.some((c) => c.className.includes('badge text-bg-warning')), '要有 warning 徽章');
+        assert(warn.children.some((c) => c.textContent.includes('接近上限')), '徽章旁要有文字');
+        assert.equal(tables[0].caption, '記憶體指標');
+        assert.equal(tables[1].caption, '快取統計');
+        const gc = tables[0].rows.find((r) => r.item === 'GC 模式').status;
+        assert.equal(gc, 'Server，保守回收 5');
+        assert.equal(tables[1].columns[3].render(tables[1].rows[0]), '75%');
+    },
+    記憶體卡_memory為null時不擲例外且顯示空值() {
+        const { inst, hosts, tables } = makeMemoryCard();
+        inst.renderMemoryHealth(null, false);
+        assert.equal(hosts['health-memory'].children.length, 1, '沒有警示時只有表格');
+        assert.equal(tables[0].rows.find((r) => r.item === '工作集').status, '—（峰值 —）');
+        assert.equal(tables[0].rows.find((r) => r.item === 'SQLite 堆').status, '不適用');
+        assert.equal(tables[0].rows.find((r) => r.item === '.NET 硬上限').status, '未設定');
+        assert.deepEqual(tables[1].rows, []);
     },
 };
 

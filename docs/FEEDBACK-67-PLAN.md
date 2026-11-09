@@ -158,7 +158,7 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 - 定案：
   1. 退避狀態放既有單例 `AiAnalysisRunState`（`NoProgressStreak`、`NextEligibleAt`）；`AiAnalysisHostedService` 加可選 `Func<DateTime> now` 建構子參數（預設 `DateTime.Now`），五處直用改走它。
   2. 一輪結束時「成功完成＋降級寫回」為 0 → 進入退避：下一次自動觸發至少間隔 5 分鐘，連續無進度每次加倍，上限 **15 分鐘**（複檢後由 30 下修）；任何一次有進度歸零。
-  3. 提前解除：排程設定儲存（每 tick 比較 `ScheduleOptions.UpdatedAt`，`ScheduleOptionsStore.Touch` 已會更新它）、AI 設定儲存（比較 `SystemSettings.UpdatedAt`，`SystemSettings.cs:351` 已有）、待補數大於上一輪結束時的數字（新資料落地）、跟隨取數期間（上限壓到 5 分鐘不加倍）。不新增儲存鉤子。手動觸發（立即補跑／強制重新分析）不受退避影響。
+  3. 提前解除：排程設定儲存（每 tick 比較 `ScheduleOptions.UpdatedAt`，`ScheduleOptionsStore.Touch` 已會更新它）、AI 設定儲存（比較 `SystemSettings.UpdatedAt`，`SystemSettings.cs:351` 已有）、取數寫入新資料（`OnFetchFollowUp` 觸發時重置；「待補數上升」改用這個事件代替——退避中不查待補是本項的省成本前提，比較待補數會把查詢加回來）、跟隨取數期間（上限壓到 5 分鐘不加倍）。不新增儲存鉤子。手動觸發（立即補跑／強制重新分析）不受退避影響。
   4. 退避判斷放在 `BlockingIdleReason` 內 **`CountPendingAi` 之前**，退避中不查待補（省每分鐘 7～15 秒的查詢）。
   5. 新原因碼 `AiIdleReasons.Backoff = "backoff"`；`GET ai-status` 的 `idleReason` 帶它，另帶 `nextRetryAt`；`runs.js` 文案「上一輪沒有進度，暫停重試中（約 N 分後再試；可按『立即補跑』）」；WEB-SPEC §9.10 閒置原因清單同步。
   6. 站台重啟退避歸零（記憶體狀態，刻意不持久化）。
@@ -325,7 +325,10 @@ A 與 B 同一版出貨：硬上限的暫定值先上線擋住「再炸一次」
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| | | | | |
+| A-1 快照讀取點＋快取統計＋健康頁 | Sonnet 5.5 | `7404313a` | 主代理重跑定向 186 通過（含 DI 組裝 `HostDayWorkflowRegistrationTests`、`HealthTabUiTests`）；突變拿掉記憶體 degraded 條件 → 1 案紅 | 無 |
+| A-2 執行紀錄里程碑＋OOM＋匯出＋啟動 log | Sonnet 5.5＋主代理微修 | `6db60010` | 主代理重跑定向 427 通過／1 略過；突變拿掉結束標記寫入 → 2 案紅 | ①匯出沒有逐趟清單，記憶體改放新頂層區段 `runMemory`（最多 200 趟，超過寫進 `meta.omitted`）；②`GcSettings` 不另做 DTO，三欄併進 `meta.memory`；③代理版匯出拿不到 SQLite 值，主代理補 `RunExportService` 可選 `sqliteHeap` 委派並由 DI 傳 `StorageBackend.TryReadSqliteHeap`，加測試；④既有 `RunExportServiceTests.Strip` 改為略過 `meta.memory`（即時值每次不同）；⑤取數路徑 OOM 只有 `RunFailureReasons.Describe` 單元測試，`RunAsync` 無替身可擲例外 |
+| A-3 前端記憶體卡＋執行詳情＋文件 | Sonnet 5.5 | 見下一個提交 | 主代理重跑前端定向（UiTests／JsModuleImport／BehaviorTests／ApiTimeout／Help／CspPolicyGuard）692 通過；文件無敘事字眼；說明書按鈕名稱與 Runs.cshtml 一致；瀏覽器實測併入 C-4 後一次做 | 設計判準套 `ui-ux-pro-max` 檢索：表格溢出由既有 `lf-table-wrap` 處理、兩表帶隱藏 caption、警示 badge 帶文字 |
+
 
 ## 體檢交接
 

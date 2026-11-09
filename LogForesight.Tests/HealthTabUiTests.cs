@@ -87,6 +87,18 @@ public class HealthTabUiTests
     }
 
     [Fact]
+    public void 健康頁有記憶體卡且載入時渲染()
+    {
+        var cshtml = Read("LogForesight.Web", "Views", "Pages", "Settings.cshtml");
+        Assert.Contains("id=\"health-memory\"", PanelBlock(cshtml, "health"));
+        Assert.Contains("id=\"health-memory-caches\"", PanelBlock(cshtml, "health"));
+
+        var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "settings.js");
+        Assert.Contains("renderMemoryHealth(detail.memory, detail.memoryWarning)", FunctionBody(js, "loadHealthTab"));
+        Assert.Contains("接近上限", FunctionBody(js, "renderMemoryHealth"));
+    }
+
+    [Fact]
     public void 設定頁啟用Hash深連結且HealthDetail只有單一讀取點()
     {
         var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "settings.js");

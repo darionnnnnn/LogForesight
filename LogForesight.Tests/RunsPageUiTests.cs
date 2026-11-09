@@ -32,6 +32,16 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 執行詳情顯示開始與結束的記憶體標記()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("detail.memoryStart", js);
+        Assert.Contains("detail.memoryEnd", js);
+        Assert.Contains("SQLite 峰值", js);
+    }
+
+    [Fact]
     public void 執行總表_空資料待複查與今日待補摘要接上畫面()
     {
         var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));

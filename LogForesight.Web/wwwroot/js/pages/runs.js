@@ -681,6 +681,30 @@ function detailButton(runId) {
 
 // ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
 
+/** bytes 轉 MB 文字（整數、千分位）；null 或非數字回傳 null 讓呼叫端省略該項 */
+function megabytesOrNull(bytes) {
+    if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return null;
+    return `${formatNumber(Math.round(bytes / 1048576))} MB`;
+}
+
+/** 執行詳情的記憶體一行：開始｜結束；null 項目省略，一邊沒有就只顯示另一邊，都沒有回傳空字串 */
+function runMemoryText(start, end) {
+    const part = (label, value) => {
+        const text = megabytesOrNull(value);
+        return text === null ? null : `${label} ${text}`;
+    };
+    const join = items => items.filter(Boolean).join('、');
+    const startText = start ? join([part('工作集', start.workingSetBytes), part('.NET 堆', start.managedHeapBytes)]) : '';
+    const endText = end ? join([
+        part('工作集', end.workingSetBytes), part('.NET 堆', end.managedHeapBytes),
+        part('峰值', end.peakWorkingSetBytes), part('SQLite 峰值', end.sqliteHeapHighwaterBytes)
+    ]) : '';
+    const sides = [];
+    if (startText) sides.push(`開始：${startText}`);
+    if (endText) sides.push(`結束：${endText}`);
+    return sides.join('｜');
+}
+
 async function showDetail(runId, retryBody = null) {
     const body = retryBody ?? document.createElement('div');
     renderLoading(body, 5);
@@ -712,6 +736,18 @@ async function showDetail(runId, retryBody = null) {
         const timeline = renderPhaseTimeline(detail);
         timeline.classList.add('mb-3');
         body.appendChild(timeline);
+    }
+
+    // 記憶體：每趟開始與結束的標記（舊紀錄或讀不到時為 null，兩邊都沒有就不顯示）
+    const memoryText = runMemoryText(detail.memoryStart, detail.memoryEnd);
+    if (memoryText) {
+        const memoryTitle = document.createElement('div');
+        memoryTitle.className = 'fw-semibold mb-2';
+        memoryTitle.textContent = '記憶體';
+        const memoryLine = document.createElement('div');
+        memoryLine.className = 'small text-muted mb-3';
+        memoryLine.textContent = memoryText;
+        body.append(memoryTitle, memoryLine);
     }
 
     // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
