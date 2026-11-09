@@ -148,6 +148,52 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
+    public void GetSensorTypes_暫停的sensor不出現_集合只回該集合_空集合回空字典()
+    {
+        var store = CreateStore();
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 7001, DeviceObjid = 1, Name = "CPU", SensorType = "cpuload" },
+            new() { Objid = 7002, DeviceObjid = 1, Name = "Disk", SensorType = "diskspace" },
+            new() { Objid = 7003, DeviceObjid = 1, Name = "Paused", SensorType = "ping", Paused = true }
+        }, new DateTime(2026, 11, 9, 9, 0, 0));
+
+        var all = store.GetSensorTypes();
+        Assert.Equal(2, all.Count);
+        Assert.Equal("cpuload", all[7001]);
+        Assert.Equal("diskspace", all[7002]);
+        Assert.False(all.ContainsKey(7003));
+
+        var subset = store.GetSensorTypes(new long[] { 7002, 7003, 9999 });
+        Assert.Equal("diskspace", Assert.Single(subset).Value);
+
+        Assert.Empty(store.GetSensorTypes(Array.Empty<long>()));
+    }
+
+    [Fact]
+    public void PrtgMirrorGuardSource_同一實例讀兩次只查一次()
+    {
+        var store = CreateStore();
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 7101, DeviceObjid = 1, Name = "CPU", SensorType = "cpuload" }
+        }, new DateTime(2026, 11, 9, 9, 0, 0));
+        var source = new LogForesight.Core.Service.PrtgMirrorGuardSource(store);
+
+        var first = source.GetSensors();
+        // 讀完後再寫入一筆：快取生效的話第二次呼叫仍是同一份清單。
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 7102, DeviceObjid = 1, Name = "Mem", SensorType = "memory" }
+        }, new DateTime(2026, 11, 9, 9, 1, 0));
+        var second = source.GetSensors();
+
+        Assert.Same(first, second);
+        Assert.Single(second);
+        Assert.Same(source.GetDevices(), source.GetDevices());
+    }
+
+    [Fact]
     public void UpsertSensors_更新時不覆蓋Category與CategorySource()
     {
         var store = CreateStore();

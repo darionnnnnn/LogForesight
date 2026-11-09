@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>
@@ -17,7 +19,7 @@ namespace LogForesight.Web.Services;
 ///
 /// 存的是**輕量序列**（只有 hostId 與 date），不是清單 DTO——呼叫端只需要組一個連結。
 /// </summary>
-public class NextUnhandledSequenceCache
+public class NextUnhandledSequenceCache : ICacheStatistics
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由。</summary>
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
@@ -29,6 +31,10 @@ public class NextUnhandledSequenceCache
     private readonly DataVersionStamp _stamp;
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
+    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
+    private long _hits;
+    private long _misses;
+    private long _evictions;
     private readonly Dictionary<string, (List<(long HostId, string Date)> Items, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
 
     public NextUnhandledSequenceCache(DataVersionStamp stamp, Func<DateTime>? now = null)
@@ -63,9 +69,11 @@ public class NextUnhandledSequenceCache
                 && entry.Version == version
                 && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
+                _hits++;
                 _entries[key] = entry with { LastAccess = now };
                 return new List<(long, string)>(entry.Items);
             }
+            _misses++;
         }
 
         // factory 刻意在鎖外執行：慢路徑很慢，握著鎖算會讓其他請求全部排隊
@@ -93,10 +101,21 @@ public class NextUnhandledSequenceCache
             .Select(e => e.Key)
             .ToList();
         foreach (var k in expired) _entries.Remove(k);
+        _evictions += expired.Count;
 
         while (_entries.Count >= MaxEntries)
         {
             _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+            _evictions++;
+        }
+    }
+
+    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
+    public CacheStatisticsSnapshot GetStatistics()
+    {
+        lock (_lock)
+        {
+            return new CacheStatisticsSnapshot("NextUnhandledSequenceCache", _entries.Count, _entries.Values.Sum(e => (long)e.Items.Count), _hits, _misses, _evictions, 0);
         }
     }
 }

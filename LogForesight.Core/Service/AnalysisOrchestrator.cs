@@ -323,6 +323,7 @@ public class AnalysisOrchestrator
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
             runRecorder.Milestone($"批次啟動（版本 {BuildVersion.Current.Label}）");
+            runRecorder.RecordMemory(true, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
             if (request.WindowNote != null)
             {
                 runRecorder.Milestone(request.WindowNote);
@@ -343,7 +344,7 @@ public class AnalysisOrchestrator
             {
                 var eventLogService = new EventLogService();
                 IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-                var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
+                using var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
                     usageMeter: new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
                 var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
@@ -822,6 +823,7 @@ public class AnalysisOrchestrator
                 {
                     runRecorder.Milestone($"本趟結束仍待補：{left.Describe()}");
                 }
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 runRecorder.Milestone("執行結束");
                 runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
@@ -831,7 +833,14 @@ public class AnalysisOrchestrator
             }
             catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
+                // 失敗（含撞到記憶體硬上限）正是最需要記憶體結束標記的情境；Capture 本身不擲例外
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 runRecorder.Fatal(ex);
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 throw;
             }
         }
@@ -854,7 +863,7 @@ public class AnalysisOrchestrator
             // 回填與排程狀態卡的「上次執行結果」）能監控到。
             // HttpClient 逾時擲 TaskCanceledException（屬 OCE），但走到這裡代表 ct 並未取消：是逾時不是使用者停止
             var isTimeout = ex is OperationCanceledException;
-            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : ex.Message;
+            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : RunFailureReasons.Describe(ex);
             console.WriteLine(isTimeout ? $"\n執行失敗：呼叫外部服務逾時：{ex.Message}" : $"\n執行失敗：{ex}");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
             if (isTimeout) Log.Fatal(ex, "呼叫外部服務逾時，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
@@ -985,7 +994,7 @@ public class AnalysisOrchestrator
 
             // 分塊掃描（回饋三十四輪 A1）：整個回補區間一次全載，一台吵雜主機 120 天可達數十 GB，
             // 這是排程執行占用 22GB 的主因之一。改成逐塊取數、逐塊分析、逐塊釋放——
-            // 同一時間記憶體裡只有一塊（預設 7 天）的事件。逐日分析的順序不變（由舊到新，
+            // 同一時間記憶體裡只有一塊（天數見 EventLogService.DefaultScanChunkDays）的事件。逐日分析的順序不變（由舊到新，
             // 趨勢比對依賴前面日期寫入的歷史），只是取數的邊界跟著區塊走。
             var chunks = EventLogService.SplitDateRange(rangeStart, ctx.Today, EventLogService.DefaultScanChunkDays)
                 .Where(chunk => datesToAnalyze.Any(d => d >= chunk.Start && d < chunk.EndExclusive))

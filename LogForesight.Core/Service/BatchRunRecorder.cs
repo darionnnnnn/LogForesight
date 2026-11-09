@@ -1,4 +1,5 @@
 using NLog;
+using NLog.Config;
 using NLog.Targets;
 
 namespace LogForesight.Core.Service;
@@ -304,12 +305,57 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    /// <summary>
+    /// 記錄記憶體里程碑：start=true 寫 <see cref="BatchRun.MemoryStart"/>，否則寫 <see cref="BatchRun.MemoryEnd"/>，
+    /// 並在診斷行留一句白話。結束那一次必須在 <see cref="Finish"/> 之前呼叫才會進最終列。失敗不中斷分析。
+    /// </summary>
+    public void RecordMemory(bool start, MemorySnapshot snapshot)
+    {
+        if (_store == null) return;
+        try
+        {
+            var mark = new RunMemoryMark(
+                snapshot.CapturedAt,
+                snapshot.WorkingSetBytes,
+                snapshot.PeakWorkingSetBytes,
+                snapshot.ManagedHeapBytes,
+                snapshot.GcCommittedBytes,
+                snapshot.LohSizeBytes,
+                snapshot.HardLimitBytes,
+                snapshot.SqliteHeapHighwaterBytes,
+                snapshot.NlogRuleCount);
+            lock (_countLock)
+            {
+                if (start) _run.MemoryStart = mark;
+                else _run.MemoryEnd = mark;
+            }
+            // 開始標記要立刻寫成一列：行程中途被殺（吃光記憶體最常見的結局）時沒有任何階段會結束，
+            // 等第一個階段快照才落地的話，站台重啟補上的「異常中斷」列連開始標記都沒有。
+            // 結束標記由呼叫端接著的 Finish 寫出，不必多一列。
+            if (start) WriteSnapshot();
+
+            var parts = new List<string>();
+            if (mark.WorkingSetBytes is { } ws) parts.Add($"工作集 {ToMb(ws)} MB");
+            if (mark.PeakWorkingSetBytes is { } peak) parts.Add($"峰值 {ToMb(peak)} MB");
+            if (mark.ManagedHeapBytes is { } heap) parts.Add($".NET 堆 {ToMb(heap)} MB");
+            if (mark.SqliteHeapHighwaterBytes is { } sqlite) parts.Add($"SQLite 峰值 {ToMb(sqlite)} MB");
+            Milestone($"記憶體（{(start ? "開始" : "結束")}）：{string.Join("、", parts)}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "記憶體里程碑記錄失敗（不影響本次分析）：{0}", ex.Message);
+        }
+    }
+
+    private static long ToMb(long bytes) => (long)Math.Round(bytes / 1048576.0, MidpointRounding.AwayFromZero);
+
     /// <summary>致命原因親自寫進紀錄：最外層 catch 執行 Log.Fatal 時 NLog target 已卸除，靠它會遺失</summary>
     public void Fatal(Exception ex)
     {
         if (_store == null) return;
         lock (_countLock) _run.ErrorCount++;
-        Append("Fatal", "Orchestrator", ex.Message, ex.ToString());
+        // 記憶體不足要在執行詳情的診斷行也看得到固定字樣，不只在排程狀態卡
+        Append("Fatal", "Orchestrator", RunFailureReasons.Describe(ex), ex.ToString());
     }
 
     /// <summary>寫出超過上限後保留的最新輸出（任何結束路徑都經 Finish 呼叫；只寫一次）</summary>
@@ -503,7 +549,7 @@ public class BatchRunRecorder : IDisposable
     /// 用 target 而不是在各處加呼叫：既有程式碼已經在該記的地方記了 log，
     /// 逐處改呼叫既繁瑣又一定會漏。
     /// </summary>
-    private class BatchRunNLogTarget : TargetWithLayout
+    internal class BatchRunNLogTarget : TargetWithLayout
     {
         /// <summary>保護 <see cref="LogManager.Configuration"/> 這份全域設定的讀改寫（見 <see cref="Attach"/>）</summary>
         private static readonly object ConfigLock = new();
@@ -512,6 +558,13 @@ public class BatchRunRecorder : IDisposable
         private readonly long _runId;
         private readonly string _scopeToken;
         private readonly Action<string, string> _onRecorded;
+
+        /// <summary>
+        /// 附掛時自建的那一條規則；卸除時以同一個物件移除。
+        /// 不用 <c>config.AddRule(...)</c>：它不回傳規則物件，卸除端只能留下 Targets.Count==0 的空殼
+        /// （nlog.config 內 <c>Microsoft.*</c>／<c>System.Net.Http.*</c> 的 final 規則同樣沒有 target，不能憑此判斷刪除）。
+        /// </summary>
+        private LoggingRule? _rule;
 
         public BatchRunNLogTarget(BatchRunStore store, long runId, string scopeToken, Action<string, string> onRecorded)
         {
@@ -524,7 +577,8 @@ public class BatchRunRecorder : IDisposable
             Name = $"batchrun_{runId}_{scopeToken}";
         }
 
-        public void Attach()
+        /// <param name="configOverride">測試用：改掛在指定設定上而不動全域 <see cref="LogManager.Configuration"/></param>
+        public void Attach(LoggingConfiguration? configOverride = null)
         {
             // 全域設定的讀改寫要互斥：取數排程與 AI 排程可以並行（AI 跟隨取數），
             // 兩趟執行各有自己的 recorder，附掛與卸除動的都是 LogManager.Configuration
@@ -533,25 +587,51 @@ public class BatchRunRecorder : IDisposable
             // 而那個失敗是靜默的：執行紀錄只會顯示「這趟沒有任何警告」。
             lock (ConfigLock)
             {
-                var config = LogManager.Configuration;
+                var config = configOverride ?? LogManager.Configuration;
                 if (config == null) return;
 
+                PurgeLeakedEmptyRules(config);
+
                 config.AddTarget(this);
-                config.AddRule(LogLevel.Warn, LogLevel.Fatal, this);
+                _rule = new LoggingRule("*", LogLevel.Warn, LogLevel.Fatal, this);
+                config.LoggingRules.Add(_rule);
                 LogManager.ReconfigExistingLoggers();
             }
         }
 
-        public void Detach()
+        public void Detach(LoggingConfiguration? configOverride = null)
         {
             lock (ConfigLock)
             {
-                var config = LogManager.Configuration;
+                var config = configOverride ?? LogManager.Configuration;
                 if (config == null) return;
 
+                if (_rule != null)
+                {
+                    config.LoggingRules.Remove(_rule);
+                    _rule = null;
+                }
                 config.RemoveTarget(Name);
                 LogManager.ReconfigExistingLoggers();
             }
+        }
+
+        /// <summary>
+        /// 清掉舊版卸除時殘留的空殼規則：<c>*</c>、Warn～Fatal、沒有 target、非 final、無規則名稱。
+        /// 判準必須全部成立才刪，nlog.config 內有意為之的 final 規則（沒有 writeTo）不會符合。
+        /// </summary>
+        private static void PurgeLeakedEmptyRules(LoggingConfiguration config)
+        {
+            var leaked = config.LoggingRules.Where(r =>
+                r.LoggerNamePattern == "*"
+                && r.Targets.Count == 0
+                && !r.Final
+                && string.IsNullOrEmpty(r.RuleName)
+                && r.Levels.Count == 3
+                && r.Levels.Contains(LogLevel.Warn)
+                && r.Levels.Contains(LogLevel.Error)
+                && r.Levels.Contains(LogLevel.Fatal)).ToList();
+            foreach (var r in leaked) config.LoggingRules.Remove(r);
         }
 
         protected override void Write(LogEventInfo logEvent)

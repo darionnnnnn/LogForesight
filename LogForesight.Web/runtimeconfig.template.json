@@ -1,7 +1,8 @@
 {
   "configProperties": {
     "System.GC.Server": true,
-    "System.GC.Conserve": 5,
-    "System.GC.RetainVM": false
+    "System.GC.ConserveMemory": 5,
+    "System.GC.RetainVM": false,
+    "System.GC.HeapHardLimitPercent": 60
   }
 }

@@ -28,13 +28,17 @@ public sealed class PrtgMirrorGuardSource : IPrtgResourceGuardSource
 {
     private readonly EfPrtgStore _store;
 
+    // 實例本來就是每趟用時才 new，快取只活在單趟：同一趟內多次取用不重讀整表。
+    private IReadOnlyList<PrtgDeviceRow>? _devices;
+    private IReadOnlyList<PrtgSensorRow>? _sensors;
+
     public PrtgMirrorGuardSource(EfPrtgStore store) => _store = store;
 
     public string SourceLabel => "mirror";
 
-    public IReadOnlyList<PrtgDeviceRow> GetDevices() => _store.GetAllDevices();
+    public IReadOnlyList<PrtgDeviceRow> GetDevices() => _devices ??= _store.GetAllDevices();
 
-    public IReadOnlyList<PrtgSensorRow> GetSensors() => _store.GetAllSensors();
+    public IReadOnlyList<PrtgSensorRow> GetSensors() => _sensors ??= _store.GetAllSensors();
 }
 
 /// <summary>

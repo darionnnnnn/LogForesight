@@ -36,6 +36,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly HostDayWorkflowService? _workflow;
     private readonly IWebAiService _webAi;
     private readonly IAiRequestGate _aiGate;
+    private readonly Func<DateTime> _now;
 
     public AiAnalysisHostedService(
         ScheduleOptionsStore optionsStore,
@@ -52,8 +53,10 @@ public class AiAnalysisHostedService : BackgroundService
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null,
+        Func<DateTime>? now = null)
     {
+        _now = now ?? (() => DateTime.Now);
         _webAi = webAi;
         _optionsStore = optionsStore;
         _schedulerRunState = schedulerRunState;
@@ -123,6 +126,8 @@ public class AiAnalysisHostedService : BackgroundService
     /// </summary>
     private void OnFetchFollowUp()
     {
+        // 取數剛寫入新資料：先前「沒有進度」的判斷已經過時，提前解除退避
+        _runState.ResetBackoff();
         // 事件在取數執行的執行緒上發出，這裡不能同步等 AI 跑完。
         _ = Task.Run(async () =>
         {
@@ -132,7 +137,7 @@ public class AiAnalysisHostedService : BackgroundService
                 // 取數剛寫入新資料：待補件數不能沿用取數前留下的 30 秒快取
                 _runState.InvalidatePendingAiCache();
                 // 前置條件與輪詢同一份判定（docs/WEB-SPEC.md §9.10「閒置原因」），只差不看窗口
-                var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()),
+                var reason = BlockingIdleReason(_now(), _optionsStore.Get(), () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()),
                     out _, requireWindow: false);
                 _runState.SetIdleReason(reason);
                 if (reason != null) return;
@@ -155,7 +160,7 @@ public class AiAnalysisHostedService : BackgroundService
             // 窗口 End 到點：對排程自動觸發的進行中執行發優雅停止（停在單筆邊界）。
             // 手動觸發不受窗口限制。
             if (_runState.Trigger == BatchRunTriggers.Schedule &&
-                !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows) &&
+                !ScheduleCalculator.IsWithinAnyWindow(_now(), options.AiWindows) &&
                 _runState.TryCancel())
             {
                 Log.Info("AI 執行窗口已結束，對自動觸發的 AI 執行發出優雅停止（停在單筆邊界）。");
@@ -164,8 +169,8 @@ public class AiAnalysisHostedService : BackgroundService
         }
 
         // 跟隨取數期間資料持續落地，待補件數要實查；閒置的背景輪詢才沿用狀態 API 的 30 秒快取
-        if (_schedulerRunState.IsFollowingFetch(DateTime.Now)) _runState.InvalidatePendingAiCache();
-        var reason = BlockingIdleReason(DateTime.Now, options, () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()), out var inWindow);
+        if (_schedulerRunState.IsFollowingFetch(_now())) _runState.InvalidatePendingAiCache();
+        var reason = BlockingIdleReason(_now(), options, () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()), out var inWindow);
         if (reason != null)
         {
             _runState.SetIdleReason(reason);
@@ -201,8 +206,38 @@ public class AiAnalysisHostedService : BackgroundService
             if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
         }
 
+        // 無進度退避：上一輪自動觸發毫無進度時暫停重試，省下每分鐘的待補查詢與空轉。
+        // 放在 pendingCount() 之前——退避中不碰資料庫；設定被儲存過則先解除再判定。
+        ReleaseBackoffIfSettingsChanged(options);
+        var followingFetch = !requireWindow || _schedulerRunState.IsFollowingFetch(now);
+        if (_runState.IsBackingOff(now, followingFetch, out _)) return AiIdleReasons.Backoff;
+
         // 有待補資料才自動開跑
         return pendingCount() == 0 ? AiIdleReasons.NoPending : null;
+    }
+
+    /// <summary>讀取排程設定與系統設定的最後儲存時間；讀取失敗視為沒有變動（不讓退避判定拖垮輪詢）</summary>
+    private (DateTime? Schedule, DateTime? Settings) ReadSettingStamps(ScheduleOptions options)
+    {
+        DateTime? settings = null;
+        try { settings = _systemSettingsStore.Get().UpdatedAt; }
+        catch (Exception ex) { Log.Warn(ex, "讀取系統設定時間戳失敗，退避判定略過設定變動檢查"); return (options.UpdatedAt, _runState.BackoffSettingsStamp); }
+        return (options.UpdatedAt, settings);
+    }
+
+    private void ReleaseBackoffIfSettingsChanged(ScheduleOptions options)
+    {
+        if (_runState.BackoffUntil == null) return; // 沒在退避：不必每次輪詢都反序列化系統設定
+        var (schedule, settings) = ReadSettingStamps(options);
+        if (_runState.ReleaseBackoffIfSettingsChanged(schedule, settings))
+            Log.Info("AI 排程設定或系統設定已儲存，提前解除無進度退避。");
+    }
+
+    /// <summary>退避中時回實際的重試時間（已套用跟隨取數上限），否則 null；供狀態 API 的 nextRetryAt</summary>
+    public DateTime? CurrentBackoffUntil()
+    {
+        var now = _now();
+        return _runState.IsBackingOff(now, _schedulerRunState.IsFollowingFetch(now), out var until) ? until : null;
     }
 
     /// <summary>
@@ -213,7 +248,7 @@ public class AiAnalysisHostedService : BackgroundService
     public string? CurrentIdleReason(Func<int> pendingCount)
     {
         if (_runState.IsRunning) return null;
-        var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), pendingCount, out _);
+        var reason = BlockingIdleReason(_now(), _optionsStore.Get(), pendingCount, out _);
         return reason ?? (_schedulerRunState.IsWaitingForFindings() ? AiIdleReasons.WaitingFetch : null);
     }
 
@@ -255,12 +290,15 @@ public class AiAnalysisHostedService : BackgroundService
             bool stopped = false;
             string? failureMessage = null;
             var counters = new LoopCounters();
+            // 本輪開始時的設定時間戳：本輪中途被儲存的設定也要能提前解除之後的退避
+            var startStamps = ReadSettingStamps(_optionsStore.Get());
 
             // AI 執行也進執行紀錄（批次D 定案）：逐筆視角可辨識「AI 分析」作業與其件數；
             // 主機×日總表以 JobType 排除它（RunMonitorService）。
             var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
             using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
             _runState.SetCurrentBatchRunId(recorder.RunId);
+            recorder.RecordMemory(true, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
             var aiPhase = recorder.Phase(RunTimingPhases.Ai);
 
             try
@@ -275,8 +313,9 @@ public class AiAnalysisHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "AI 分析排程執行時發生未預期錯誤：{Msg}", ex.Message);
-                failureMessage = ex.Message;
+                failureMessage = RunFailureReasons.Describe(ex);
+                // 這行會經 recorder 進執行詳情的診斷行：記憶體不足要帶固定字樣，不只在排程狀態卡
+                Log.Error(ex, "AI 分析排程執行時發生未預期錯誤：{Msg}", failureMessage);
                 success = false;
             }
             finally
@@ -304,8 +343,10 @@ public class AiAnalysisHostedService : BackgroundService
                 // 降級也是 AI 失敗：沒有拿到可用的白話摘要，趟次因此為「有警告」
                 recorder.AiFailures = counters.Failed + counters.Degraded;
                 recorder.Stopped = stopped;
+                recorder.RecordMemory(false, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 recorder.Finish(success ? 0 : 1);
 
+                RecordBackoffOutcome(trigger, stopped, counters, startStamps);
                 _runState.EndRun(success, failureMessage);
 
                 // 本輪結束後若取數仍在跑、當日 PRTG finding 又還沒到齊，剩下的待補是被
@@ -322,6 +363,31 @@ public class AiAnalysisHostedService : BackgroundService
         });
 
         return await startSignal.Task;
+    }
+
+    /// <summary>
+    /// 一輪結束後更新無進度退避：停止的一輪不算（不改連續次數）；手動觸發有進度才解除、沒進度不進入退避
+    /// （手動不受退避影響）；自動觸發（排程、跟隨取數）有進度解除，沒進度進入或延長退避。
+    /// </summary>
+    private void RecordBackoffOutcome(string trigger, bool stopped, LoopCounters counters,
+        (DateTime? Schedule, DateTime? Settings) startStamps)
+    {
+        try
+        {
+            if (stopped) return;
+            var progressed = counters.Done + counters.Degraded > 0;
+            if (trigger.StartsWith(BatchRunTriggers.ManualPrefix, StringComparison.Ordinal))
+            {
+                if (progressed) _runState.ResetBackoff();
+                return;
+            }
+
+            _runState.RecordRoundOutcome(progressed, _now(), startStamps.Schedule, startStamps.Settings);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "記錄 AI 排程退避狀態失敗（不影響執行）");
+        }
     }
 
     /// <summary>處理迴圈的成果計數（執行紀錄用：完成件數／失敗件數）</summary>
@@ -406,6 +472,8 @@ public class AiAnalysisHostedService : BackgroundService
         // 設定頁的 AiConcurrency 形同失效（跨分片的併發上限由全站閘道負責）。
         // 設定在輪中變更不即時生效，下一輪才採用；也不在每個分片、每批重讀主機表。
         var aiServiceFactory = _injectedAiService is { } injected ? () => injected : ResolveAiServiceFactory();
+        // 只釋放這一輪自己建的實例；建構子注入的（測試用）歸注入端管
+        var ownsAiService = _injectedAiService is null;
         var hostOsMap = new HostOsLookup(BuildHostOsMap);
 
         // 待補總數：只在迴圈開頭實查一次，之後以「本批前總數 - 本批完成數」估算
@@ -456,139 +524,154 @@ public class AiAnalysisHostedService : BackgroundService
                     var first = group.First();
                     var hostKey = new HostKey { HostId = first.HostId, HostName = first.Host };
                     var hostStore = _storageBackend.RecordStore(hostKey);
-                    var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, aiServiceFactory(), hostOsMap);
-
-                    // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
-                    foreach (var record in group)
+                    var shardAiService = aiServiceFactory();
+                    try
                     {
-                        if (token.IsCancellationRequested) break;
-                        lock (attempted) { attempted.Add(AttemptKey(record)); }
+                        var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, shardAiService, hostOsMap);
 
-                        long workflowVersion = 0;
-                        try
+                        // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
+                        foreach (var record in group)
                         {
-                            // 補跑輸入必須是**完整紀錄**（體檢輪）：QueryPendingAi 是不讀 ContentJson
-                            // 的輕量投影——TrendAlerts／AuditEventCount 沒填、CorrelationAlerts 是
-                            // "(lightweight)" 佔位字串，直接餵 RetryAiAsync 會把佔位字串當成
-                            // 高嚴重度關聯訊號組進 prompt、趨勢警示整批消失。輕量投影只做
-                            // 佇列與排序，進到要花一次 AI 呼叫的這裡，多讀一列完整資料不算成本。
-                            var full = _recordQuery.GetOne(new[] { hostKey }, record.Date);
-                            if (full == null || full.DetailPruned || full.RiskReview != null ||
-                                full.TopIssues.Any(LogForesight.Core.Service.PrtgFindingMapper.IsPrtg) && !full.CanSupplementWithPrtg())
-                            {
-                                // 紀錄已消失（保留期清理）或詳情已清（AI 輸入無法重建）：跳過，
-                                // 查詢端已排除 detail_pruned，這裡是取到殘根時的防禦
-                                Log.Warn("主機 {Host} {Date:yyyy-MM-dd} 的完整紀錄不可得（已清理），跳過 AI 補跑", record.Host, record.Date);
-                                continue;
-                            }
+                            if (token.IsCancellationRequested) break;
+                            lock (attempted) { attempted.Add(AttemptKey(record)); }
 
-                            if (_workflow != null)
+                            long workflowVersion = 0;
+                            try
                             {
-                                try
+                                // 補跑輸入必須是**完整紀錄**（體檢輪）：QueryPendingAi 是不讀 ContentJson
+                                // 的輕量投影——TrendAlerts／AuditEventCount 沒填、CorrelationAlerts 是
+                                // "(lightweight)" 佔位字串，直接餵 RetryAiAsync 會把佔位字串當成
+                                // 高嚴重度關聯訊號組進 prompt、趨勢警示整批消失。輕量投影只做
+                                // 佇列與排序，進到要花一次 AI 呼叫的這裡，多讀一列完整資料不算成本。
+                                var full = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                                if (full == null || full.DetailPruned || full.RiskReview != null ||
+                                    full.TopIssues.Any(LogForesight.Core.Service.PrtgFindingMapper.IsPrtg) && !full.CanSupplementWithPrtg())
                                 {
-                                    _workflow.RestoreFromRecord(full, aiEnabled: true);
-                                    workflowVersion = _workflow.BeginAi(record.HostId, record.Date);
+                                    // 紀錄已消失（保留期清理）或詳情已清（AI 輸入無法重建）：跳過，
+                                    // 查詢端已排除 detail_pruned，這裡是取到殘根時的防禦
+                                    Log.Warn("主機 {Host} {Date:yyyy-MM-dd} 的完整紀錄不可得（已清理），跳過 AI 補跑", record.Host, record.Date);
+                                    continue;
                                 }
-                                catch (Exception workflowError)
-                                {
-                                    Log.Warn(workflowError, "AI workflow metadata recovery failed; source analysis remains available");
-                                }
-                            }
 
-                            var outcome = await analysisService.RetryAiAsync(full, TrendWindowDays, token);
-                            // Providers may finish or return a result after cancellation. Do not
-                            // persist an in-flight result once the user has stopped this run.
-                            token.ThrowIfCancellationRequested();
-
-                            // AI 呼叫成功：寫回結果並清 ai_pending
-                            if (outcome.AiAnalyzed || outcome.Skipped)
-                            {
-                                if (_workflow != null && workflowVersion > 0)
+                                if (_workflow != null)
                                 {
                                     try
                                     {
-                                        var current = _recordQuery.GetOne(new[] { hostKey }, record.Date);
-                                        if (current == null ||
-                                            HostDayWorkflowFingerprint.ForRecord(current) != HostDayWorkflowFingerprint.ForRecord(full) ||
-                                            !_workflow.IsCurrentAiVersion(record.HostId, record.Date, workflowVersion))
-                                        {
-                                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
-                                                "AI 判定版本已更新，舊分析不再有效。");
-                                            Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的判定版本已更新，拒絕舊 AI 回寫", record.Host, record.Date);
-                                            continue;
-                                        }
+                                        _workflow.RestoreFromRecord(full, aiEnabled: true);
+                                        workflowVersion = _workflow.BeginAi(record.HostId, record.Date);
                                     }
                                     catch (Exception workflowError)
                                     {
-                                        CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
-                                            workflowError.Message);
-                                        Log.Warn(workflowError, "AI version guard failed; refusing to risk writing a stale result");
-                                        continue;
+                                        Log.Warn(workflowError, "AI workflow metadata recovery failed; source analysis remains available");
                                     }
                                 }
-                                var expectedPrtgFingerprint = outcome.InputPrtgFingerprint ??
-                                    HostDayWorkflowFingerprint.PrtgInputFingerprint(full);
-                                var expectedDecisionFingerprint = HostDayWorkflowFingerprint.ForRecord(full);
-                                if (!hostStore.TryAttachAiResult(record.Date, outcome, full.RecordId,
-                                        expectedDecisionFingerprint, expectedPrtgFingerprint))
+
+                                var outcome = await analysisService.RetryAiAsync(full, TrendWindowDays, token);
+                                // Providers may finish or return a result after cancellation. Do not
+                                // persist an in-flight result once the user has stopped this run.
+                                token.ThrowIfCancellationRequested();
+
+                                // AI 呼叫成功：寫回結果並清 ai_pending
+                                if (outcome.AiAnalyzed || outcome.Skipped)
                                 {
-                                    CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
-                                        "正式資料已變更，舊 AI 分析不再有效。");
-                                    Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的正式 PRTG 證據已變更，拒絕舊 AI 回寫",
-                                        record.Host, record.Date);
-                                    continue;
-                                }
-                                if (_workflow != null && workflowVersion > 0)
-                                    _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
-                                if (outcome.AiDegraded)
-                                {
-                                    // 降級（AI 回覆格式異常）：結論與原文已寫回、次數 +1。算有進度（不觸發本批全滅防線），
-                                    // 但不算完成；同輪不再選到它（不從 attempted 移除），下一輪才輪到下一次嘗試。
-                                    var written = _recordQuery.GetOne(new[] { hostKey }, record.Date);
-                                    var attemptNo = written?.AiDegradedAttempts ?? full.AiDegradedAttempts + 1;
-                                    var stillPending = written?.AiPending ?? !AiDegradation.IsAbandoned(attemptNo);
-                                    Interlocked.Increment(ref counters.Degraded);
+                                    if (_workflow != null && workflowVersion > 0)
+                                    {
+                                        try
+                                        {
+                                            var current = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                                            if (current == null ||
+                                                HostDayWorkflowFingerprint.ForRecord(current) != HostDayWorkflowFingerprint.ForRecord(full) ||
+                                                !_workflow.IsCurrentAiVersion(record.HostId, record.Date, workflowVersion))
+                                            {
+                                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                                    "AI 判定版本已更新，舊分析不再有效。");
+                                                Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的判定版本已更新，拒絕舊 AI 回寫", record.Host, record.Date);
+                                                continue;
+                                            }
+                                        }
+                                        catch (Exception workflowError)
+                                        {
+                                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                                workflowError.Message);
+                                            Log.Warn(workflowError, "AI version guard failed; refusing to risk writing a stale result");
+                                            continue;
+                                        }
+                                    }
+                                    var expectedPrtgFingerprint = outcome.InputPrtgFingerprint ??
+                                        HostDayWorkflowFingerprint.PrtgInputFingerprint(full);
+                                    var expectedDecisionFingerprint = HostDayWorkflowFingerprint.ForRecord(full);
+                                    if (!hostStore.TryAttachAiResult(record.Date, outcome, full.RecordId,
+                                            expectedDecisionFingerprint, expectedPrtgFingerprint))
+                                    {
+                                        CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                            "正式資料已變更，舊 AI 分析不再有效。");
+                                        Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的正式 PRTG 證據已變更，拒絕舊 AI 回寫",
+                                            record.Host, record.Date);
+                                        continue;
+                                    }
+                                    if (_workflow != null && workflowVersion > 0)
+                                        _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
+                                    if (outcome.AiDegraded)
+                                    {
+                                        // 降級（AI 回覆格式異常）：結論與原文已寫回、次數 +1。算有進度（不觸發本批全滅防線），
+                                        // 但不算完成；同輪不再選到它（不從 attempted 移除），下一輪才輪到下一次嘗試。
+                                        var written = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                                        var attemptNo = written?.AiDegradedAttempts ?? full.AiDegradedAttempts + 1;
+                                        var stillPending = written?.AiPending ?? !AiDegradation.IsAbandoned(attemptNo);
+                                        Interlocked.Increment(ref counters.Degraded);
+                                        Interlocked.Increment(ref batchSuccessCount);
+                                        if (stillPending) Interlocked.Increment(ref batchDegradedStillPending);
+                                        _runState.ReportProgressDone(Volatile.Read(ref totalDone),
+                                            $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 降級（第 {attemptNo} 次）");
+                                        Log.Info("主機 {Host} {Date:yyyy-MM-dd} AI 回覆格式異常，已降級為規則層結論（第 {Attempt} 次，{State}）",
+                                            record.Host, record.Date, attemptNo, stillPending ? "下一輪再試" : "已放棄");
+                                        continue;
+                                    }
+                                    // 寫回後已不是待補；之後若因新證據重標，下一批照常再選得到
+                                    lock (attempted) { attempted.Remove(AttemptKey(record)); }
+                                    var doneNow = Interlocked.Increment(ref totalDone);
+                                    Interlocked.Increment(ref counters.Done);
                                     Interlocked.Increment(ref batchSuccessCount);
-                                    if (stillPending) Interlocked.Increment(ref batchDegradedStillPending);
-                                    _runState.ReportProgressDone(Volatile.Read(ref totalDone),
-                                        $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 降級（第 {attemptNo} 次）");
-                                    Log.Info("主機 {Host} {Date:yyyy-MM-dd} AI 回覆格式異常，已降級為規則層結論（第 {Attempt} 次，{State}）",
-                                        record.Host, record.Date, attemptNo, stillPending ? "下一輪再試" : "已放棄");
-                                    continue;
+                                    if (outcome.Skipped) Interlocked.Increment(ref counters.Skipped);
+                                    // 用 Increment 的回傳值、且不碰分母：分片是並行的，
+                                    // 「讀分母再寫回」會讓兩條分片的數字互相蓋（見 ReportProgressDone）
+                                    _runState.ReportProgressDone(doneNow, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
                                 }
-                                // 寫回後已不是待補；之後若因新證據重標，下一批照常再選得到
-                                lock (attempted) { attempted.Remove(AttemptKey(record)); }
-                                var doneNow = Interlocked.Increment(ref totalDone);
-                                Interlocked.Increment(ref counters.Done);
-                                Interlocked.Increment(ref batchSuccessCount);
-                                if (outcome.Skipped) Interlocked.Increment(ref counters.Skipped);
-                                // 用 Increment 的回傳值、且不碰分母：分片是並行的，
-                                // 「讀分母再寫回」會讓兩條分片的數字互相蓋（見 ReportProgressDone）
-                                _runState.ReportProgressDone(doneNow, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
+                                else
+                                {
+                                    // AI 未成功：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批
+                                    if (_workflow != null && workflowVersion > 0)
+                                        _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: false, outcome.Headline);
+                                    Interlocked.Increment(ref counters.Failed);
+                                    Log.Warn("主機 {Host} {Date:yyyy-MM-dd} AI 呼叫未成功（{Headline}），維持待補",
+                                        record.Host, record.Date, outcome.Headline);
+                                }
                             }
-                            else
+                            catch (OperationCanceledException) when (token.IsCancellationRequested)
                             {
-                                // AI 未成功：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批
-                                if (_workflow != null && workflowVersion > 0)
-                                    _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: false, outcome.Headline);
+                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, "cancelled");
+                                break;
+                            }
+                            catch (Exception ex) when (RunFailureReasons.IsOutOfMemory(ex))
+                            {
+                                // 記憶體不足時繼續逐筆只會一筆一筆撞牆：該筆維持待補，中止本輪，交給最外層記成「記憶體上限」
+                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, RunFailureReasons.MemoryLimit);
                                 Interlocked.Increment(ref counters.Failed);
-                                Log.Warn("主機 {Host} {Date:yyyy-MM-dd} AI 呼叫未成功（{Headline}），維持待補",
-                                    record.Host, record.Date, outcome.Headline);
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                // AI 呼叫失敗：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批。
+                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, ex.Message);
+                                Interlocked.Increment(ref counters.Failed);
+                                Log.Warn(ex, "主機 {Host} {Date:yyyy-MM-dd} AI 分析失敗，維持待補：{Msg}",
+                                    record.Host, record.Date, ex.Message);
                             }
                         }
-                        catch (OperationCanceledException) when (token.IsCancellationRequested)
-                        {
-                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, "cancelled");
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            // AI 呼叫失敗：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批。
-                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, ex.Message);
-                            Interlocked.Increment(ref counters.Failed);
-                            Log.Warn(ex, "主機 {Host} {Date:yyyy-MM-dd} AI 分析失敗，維持待補：{Msg}",
-                                record.Host, record.Date, ex.Message);
-                        }
+                    }
+                    finally
+                    {
+                        if (ownsAiService) (shardAiService as IDisposable)?.Dispose();
                     }
                 });
             }

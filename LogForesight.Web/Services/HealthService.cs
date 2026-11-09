@@ -1,6 +1,7 @@
 using System.Reflection;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services.Mail;
 
@@ -27,6 +28,7 @@ public class HealthService
     private readonly ScheduleFreshnessService _freshness;
     private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
     private readonly PrtgSnapshotHostedService? _snapshotService;
+    private readonly IReadOnlyList<ICacheStatistics> _caches;
 
     public HealthService(
         StorageBackend backend,
@@ -35,7 +37,8 @@ public class HealthService
         MailNotificationService mail,
         ScheduleFreshnessService freshness,
         IssueFirstSeenSeedHostedService? firstSeenSeedService = null,
-        PrtgSnapshotHostedService? snapshotService = null)
+        PrtgSnapshotHostedService? snapshotService = null,
+        IEnumerable<ICacheStatistics>? caches = null)
     {
         _backend = backend;
         _runState = runState;
@@ -44,6 +47,52 @@ public class HealthService
         _freshness = freshness;
         _firstSeenSeedService = firstSeenSeedService;
         _snapshotService = snapshotService;
+        _caches = caches?.ToList() ?? new List<ICacheStatistics>();
+    }
+
+    /// <summary>測試用：注入固定的記憶體快照（正式碼不設，走 <see cref="MemorySnapshot.Capture"/>）。</summary>
+    internal Func<MemorySnapshot>? MemoryCaptureOverride { get; set; }
+
+    /// <summary>擷取記憶體快照並轉成 DTO；不碰資料庫，任何讀取失敗都由 Capture 自行吞掉。</summary>
+    private (MemorySnapshotDto Dto, double? UsageRatio) CaptureMemory()
+    {
+        var snap = MemoryCaptureOverride?.Invoke() ?? MemorySnapshot.Capture(
+            _backend.TryReadSqliteHeap,
+            () => NLog.LogManager.Configuration?.LoggingRules.Count,
+            () => _caches.Select(c => c.GetStatistics()));
+        var ratio = snap.HardLimitUsageRatio;
+        return (new MemorySnapshotDto
+        {
+            CapturedAt = snap.CapturedAt,
+            WorkingSetBytes = snap.WorkingSetBytes,
+            PeakWorkingSetBytes = snap.PeakWorkingSetBytes,
+            PrivateBytes = snap.PrivateBytes,
+            PeakPagedBytes = snap.PeakPagedBytes,
+            ManagedHeapBytes = snap.ManagedHeapBytes,
+            GcHeapSizeBytes = snap.GcHeapSizeBytes,
+            GcCommittedBytes = snap.GcCommittedBytes,
+            GcFragmentedBytes = snap.GcFragmentedBytes,
+            LohSizeBytes = snap.LohSizeBytes,
+            HardLimitBytes = snap.HardLimitBytes,
+            Gen2Collections = snap.Gen2Collections,
+            IsServerGc = snap.IsServerGc,
+            GcConserveMemory = snap.GcConserveMemory,
+            GcHeapHardLimitPercent = snap.GcHeapHardLimitPercent,
+            SqliteHeapBytes = snap.SqliteHeapBytes,
+            SqliteHeapHighwaterBytes = snap.SqliteHeapHighwaterBytes,
+            NlogRuleCount = snap.NlogRuleCount,
+            HardLimitUsagePercent = ratio is { } r ? Math.Round(r * 100, 1) : null,
+            Caches = snap.Caches.Select(c => new CacheStatisticsDto
+            {
+                Name = c.Name,
+                Entries = c.Entries,
+                Elements = c.Elements,
+                Hits = c.Hits,
+                Misses = c.Misses,
+                Evictions = c.Evictions,
+                OversizeRejected = c.OversizeRejected
+            }).ToList()
+        }, ratio);
     }
 
     /// <summary>已登入者看的組建版本（含 commit）</summary>
@@ -83,6 +132,7 @@ public class HealthService
     {
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
+        var (memory, memoryRatio) = CaptureMemory();
         if (!storageOk)
         {
             // Storage-backed status providers can fail independently after the probe. Return the
@@ -109,7 +159,8 @@ public class HealthService
                     })
                     .ToList(),
                 PrtgFreshness = null,
-                PrtgSnapshot = null
+                PrtgSnapshot = null,
+                Memory = memory
             };
         }
 
@@ -134,11 +185,13 @@ public class HealthService
 
         // 「慢操作占比過高」或「首見日合併連續失敗達上限」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
         // 因此獨立成 degraded 狀態，而不是併進 ok。排程資料過期且未確認靜音時亦視為 degraded（任務 A-3）
+        var memoryWarning = memoryRatio >= DegradedMemoryUsageRatio;
         var degraded = (performance.TotalOperations > 0 &&
                        performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
                        || firstSeenFailed
                        || (freshness.Stale && !freshness.Acked)
                        || prtgSnapshot?.Warning == true
+                       || memoryWarning
                        || cryptoKeyMismatch || cryptoDecryptFailure;
 
         return new HealthDetailDto
@@ -221,7 +274,10 @@ public class HealthService
             CryptoKeySource = CryptoHelper.KeySource,
             CryptoKeyMismatch = cryptoKeyMismatch,
             CryptoDecryptFailure = cryptoDecryptFailure,
-            CryptoKeyLocationWarning = CryptoKeyBootstrapper.KeyLocationWarning
+            CryptoKeyLocationWarning = CryptoKeyBootstrapper.KeyLocationWarning,
+
+            Memory = memory,
+            MemoryWarning = memoryWarning
         };
     }
 
@@ -323,6 +379,9 @@ public class HealthService
 
     /// <summary>慢操作占比達此百分比即視為 degraded</summary>
     private const double DegradedSlowRatioPercent = 5.0;
+
+    /// <summary>託管堆占可用記憶體上限的比例達此值即視為 degraded（上限未知時不判定）</summary>
+    internal const double DegradedMemoryUsageRatio = 0.85;
 
     /// <summary>
     /// 資料庫可達性探測：刻意用**最輕的一次讀取**（讀一個必然存在或必然不存在的 blob key），

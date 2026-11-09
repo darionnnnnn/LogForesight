@@ -669,6 +669,7 @@ async function loadHealthTab({ refresh = false } = {}) {
     renderPrtgSnapshotHealth(detail.prtgSnapshot);
     renderSlowQueries(detail.topSlowOperations);
     renderBackgroundJobs(detail);
+    renderMemoryHealth(detail.memory, detail.memoryWarning);
     await Promise.all([loadLoginThrottle(), setupGuideTask]);
 }
 
@@ -919,6 +920,91 @@ function renderBackgroundJobs(detail) {
             `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
         document.getElementById('health-background').appendChild(note);
     }
+}
+
+/** bytes 轉 MB 文字（整數、千分位）；null 或非數字顯示「—」 */
+function formatMegabytes(bytes) {
+    if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '—';
+    return `${formatNumber(Math.round(bytes / 1048576))} MB`;
+}
+
+/** 快取命中率：hits ÷ (hits + misses) 取整數百分比；分母 0 顯示「—」 */
+function formatHitRate(hits, misses) {
+    const total = (hits ?? 0) + (misses ?? 0);
+    if (total <= 0) return '—';
+    return `${Math.round(((hits ?? 0) / total) * 100)}%`;
+}
+
+/** 記憶體卡：指標表與快取統計表；memory 為 null 時各項顯示「—」，不擲例外 */
+function renderMemoryHealth(memory, memoryWarning) {
+    const host = document.getElementById('health-memory');
+    if (!host) return;
+    const m = memory ?? {};
+    const pair = (current, peak) => `${formatMegabytes(current)}（峰值 ${formatMegabytes(peak)}）`;
+    // hardLimitBytes 是 GC 可用的記憶體總量：有設 HeapHardLimitPercent 時就是硬上限，
+    // 沒設時等於實體記憶體（或容器上限），標成「可用記憶體」以免把實體記憶體誤當成設定值
+    const hasHardLimit = m.gcHeapHardLimitPercent !== null && m.gcHeapHardLimitPercent !== undefined;
+    let hardLimit = '未設定';
+    if (m.hardLimitBytes !== null && m.hardLimitBytes !== undefined) {
+        const percent = m.hardLimitUsagePercent === null || m.hardLimitUsagePercent === undefined
+            ? '' : `（已用 ${m.hardLimitUsagePercent}%）`;
+        const setting = hasHardLimit ? `，設定 ${m.gcHeapHardLimitPercent}%` : '，未設硬上限';
+        hardLimit = `${formatMegabytes(m.hardLimitBytes)}${percent}${setting}`;
+    }
+    let gcMode = '—';
+    if (memory) {
+        gcMode = m.isServerGc ? 'Server' : 'Workstation';
+        if (m.gcConserveMemory !== null && m.gcConserveMemory !== undefined) gcMode += `，保守回收 ${m.gcConserveMemory}`;
+    }
+    const sqliteNone = (m.sqliteHeapBytes === null || m.sqliteHeapBytes === undefined)
+        && (m.sqliteHeapHighwaterBytes === null || m.sqliteHeapHighwaterBytes === undefined);
+    const rows = [
+        { item: '工作集', status: pair(m.workingSetBytes, m.peakWorkingSetBytes) },
+        { item: '私有記憶體', status: formatMegabytes(m.privateBytes) },
+        { item: '.NET 堆', status: formatMegabytes(m.managedHeapBytes) },
+        { item: hasHardLimit ? '.NET 硬上限' : '.NET 可用記憶體', status: hardLimit },
+        { item: 'GC 已提交', status: formatMegabytes(m.gcCommittedBytes) },
+        { item: '大型物件堆（LOH）', status: formatMegabytes(m.lohSizeBytes) },
+        { item: 'GC 模式', status: gcMode },
+        { item: 'Gen2 回收次數', status: memory ? formatNumber(m.gen2Collections ?? 0) : '—' },
+        { item: 'SQLite 堆', status: sqliteNone ? '不適用' : pair(m.sqliteHeapBytes, m.sqliteHeapHighwaterBytes) },
+        { item: 'NLog 規則數', status: m.nlogRuleCount === null || m.nlogRuleCount === undefined ? '—' : formatNumber(m.nlogRuleCount) }
+    ];
+    const metricsHost = document.createElement('div');
+    renderTable(metricsHost, {
+        columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],
+        rows,
+        caption: '記憶體指標'
+    });
+    const children = [];
+    if (memoryWarning) {
+        const warn = document.createElement('div');
+        warn.className = 'mb-2';
+        const badge = document.createElement('span');
+        badge.className = 'badge text-bg-warning me-2';
+        badge.textContent = '警示';
+        const text = document.createElement('span');
+        text.textContent = hasHardLimit
+            ? '.NET 記憶體已接近上限（硬上限），排程可能因記憶體不足中止'
+            : '.NET 記憶體已接近上限（本機可用記憶體），排程可能因記憶體不足中止';
+        warn.append(badge, text);
+        children.push(warn);
+    }
+    children.push(metricsHost);
+    host.replaceChildren(...children);
+
+    const cacheHost = document.getElementById('health-memory-caches');
+    if (!cacheHost) return;
+    renderTable(cacheHost, {
+        columns: [
+            { title: '快取', render: c => c.name ?? '' },
+            { title: '條目', className: 'text-end', render: c => formatNumber(c.entries ?? 0) },
+            { title: '元素', className: 'text-end', render: c => formatNumber(c.elements ?? 0) },
+            { title: '命中率', className: 'text-end', render: c => formatHitRate(c.hits, c.misses) }
+        ],
+        rows: Array.isArray(m.caches) ? m.caches : [],
+        caption: '快取統計'
+    });
 }
 
 /** 密碼欄位加密：金鑰不相符或曾有密文解不開時顯示警示，否則顯示金鑰來源 */

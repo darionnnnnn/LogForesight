@@ -19,10 +19,54 @@ public sealed record RunExportDocument
     public IReadOnlyList<ExportStackDto> Stacks { get; init; } = Array.Empty<ExportStackDto>();
     public IReadOnlyList<ExportSlowSqlDto> SlowSql { get; init; } = Array.Empty<ExportSlowSqlDto>();
     public IReadOnlyList<ExportAbnormalRunDto> AbnormalRuns { get; init; } = Array.Empty<ExportAbnormalRunDto>();
+
+    /// <summary>期間內有記憶體里程碑的趟次（由舊到新，最多 200 筆、超過取最新）</summary>
+    public IReadOnlyList<ExportRunMemoryDto> RunMemory { get; init; } = Array.Empty<ExportRunMemoryDto>();
     public ExportAiFormatAnomaliesDto AiFormatAnomalies { get; init; } = new();
 }
 
 public sealed record ExportCountDto(string Name, int Count);
+
+/// <summary>匯出當下的記憶體快照＋GC 設定（數值單位 bytes）。GC 設定三欄：isServerGc、gcConserveMemory、gcHeapHardLimitPercent。</summary>
+public sealed record ExportMemoryDto
+{
+    public long? WorkingSetBytes { get; init; }
+    public long? PeakWorkingSetBytes { get; init; }
+    public long? ManagedHeapBytes { get; init; }
+    public long? GcCommittedBytes { get; init; }
+    public long? LohSizeBytes { get; init; }
+    public long? HardLimitBytes { get; init; }
+    public long? SqliteHeapHighwaterBytes { get; init; }
+    public int? NlogRuleCount { get; init; }
+    public bool IsServerGc { get; init; }
+    public long? GcConserveMemory { get; init; }
+    public long? GcHeapHardLimitPercent { get; init; }
+    public int Gen2Collections { get; init; }
+}
+
+/// <summary>單趟的記憶體里程碑（時間為程式格式化的字串）</summary>
+public sealed record ExportRunMemoryMarkDto
+{
+    public string At { get; init; } = string.Empty;
+    public long? WorkingSetBytes { get; init; }
+    public long? PeakWorkingSetBytes { get; init; }
+    public long? ManagedHeapBytes { get; init; }
+    public long? GcCommittedBytes { get; init; }
+    public long? LohSizeBytes { get; init; }
+    public long? HardLimitBytes { get; init; }
+    public long? SqliteHeapHighwaterBytes { get; init; }
+    public int? NlogRuleCount { get; init; }
+}
+
+/// <summary>逐趟記憶體（<see cref="RunExportDocument.RunMemory"/> 的一筆）</summary>
+public sealed record ExportRunMemoryDto
+{
+    public long RunId { get; init; }
+    public string JobType { get; init; } = string.Empty;
+    public string StartedAt { get; init; } = string.Empty;
+    public ExportRunMemoryMarkDto? Start { get; init; }
+    public ExportRunMemoryMarkDto? End { get; init; }
+}
 
 // ===== meta =====
 
@@ -42,6 +86,10 @@ public sealed record RunExportMetaDto
 
     public ExportDeidentificationDto Deidentification { get; init; } = new();
     public ExportSignalTotalsDto SignalTotals { get; init; } = new();
+
+    /// <summary>匯出當下的行程記憶體與 GC 設定（診斷「吃光記憶體」用）</summary>
+    public ExportMemoryDto? Memory { get; init; }
+
     public IReadOnlyList<ExportOmittedDto> Omitted { get; init; } = Array.Empty<ExportOmittedDto>();
 }
 

@@ -307,7 +307,7 @@ public class ReportPerformanceContractTests : IDisposable
     };
 
     [Fact]
-    public void 排行快取_同鍵在TTL內回傳快取且回傳副本()
+    public void 排行快取_同鍵在TTL內回傳同一份唯讀清單()
     {
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
         var cache = new IssueRankingCache(new DataVersionStamp(), () => now);
@@ -317,7 +317,7 @@ public class ReportPerformanceContractTests : IDisposable
 
         var first = cache.TryGet(key);
         Assert.NotNull(first);
-        first!.Clear();   // 呼叫端亂改不得污染快取
+        Assert.Same(first, cache.TryGet(key));   // 命中不複製：唯讀型別保證呼叫端改不到共用清單
 
         var second = cache.TryGet(key);
         Assert.NotNull(second);
@@ -348,7 +348,7 @@ public class ReportPerformanceContractTests : IDisposable
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
         var calls = 0;
-        List<IssueRankingDto> GetOrAdd()
+        IReadOnlyList<IssueRankingDto> GetOrAdd()
         {
             var key = IssueRankingCache.KeyOf(cache.Version, from, to, null, 5, IssueExclusion.None.CacheToken);
             var hit = cache.TryGet(key);

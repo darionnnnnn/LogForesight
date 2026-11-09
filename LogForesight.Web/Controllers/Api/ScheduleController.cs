@@ -504,6 +504,10 @@ public class ScheduleController : ControllerBase
         _ => "不重跑"
     };
 
+    /// <summary>退避中（idleReason 為 backoff）才帶重試時間，其餘為 null</summary>
+    internal static DateTime? MapNextRetryAt(string? idleReason, DateTime? backoffUntil) =>
+        idleReason == AiIdleReasons.Backoff ? backoffUntil : null;
+
     /// <summary>AI 排程狀態查詢（是否執行中、本輪已處理／目標數、待補總數、最後訊息）</summary>
     [HttpGet("ai-status")]
     [Permission(Capability.DevMonitor, Capability.Maintain)]
@@ -513,6 +517,8 @@ public class ScheduleController : ControllerBase
         var snapshot = _aiRunState.Snapshot();
         var lastOutcome = snapshot.LastOutcome;
         var pendingTotal = _aiRunState.GetPendingAiCount(() => _records.CountPendingAi());
+        var idleReason = snapshot.IsRunning ? null
+            : _aiScheduler is not null ? _aiScheduler.CurrentIdleReason(() => pendingTotal) : snapshot.IdleReason;
 
         return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
         {
@@ -528,8 +534,8 @@ public class ScheduleController : ControllerBase
             UnitText = "件",
             CanStop = snapshot.IsRunning,
             // 讀取當下即時判定；單元測試以 aiScheduler: null! 建控制器時退回上一輪輪詢記下的值（同 GetStatus 的 _scheduler 慣例）
-            IdleReason = snapshot.IsRunning ? null
-                : _aiScheduler is not null ? _aiScheduler.CurrentIdleReason(() => pendingTotal) : snapshot.IdleReason,
+            IdleReason = idleReason,
+            NextRetryAt = MapNextRetryAt(idleReason, _aiScheduler?.CurrentBackoffUntil()),
             AiConcurrency = options.AiConcurrency,
             // 「下一個背景補跑窗口」——AI 本身一律啟用，這個時間只說明積壓什麼時候會被消化。
             // 已經在窗口內時為 null（不必說「下一次」，它現在就會跑）。

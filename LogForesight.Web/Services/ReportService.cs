@@ -258,7 +258,7 @@ public class ReportService
     }
 
     /// <summary>問題排行的「其他 N 個問題」彙總（§8-2）：尾端問題不隱形，同主機排行的作法</summary>
-    private static IssueRankingOthersDto? BuildIssueOthers(List<IssueRankingDto> ranked)
+    private static IssueRankingOthersDto? BuildIssueOthers(IReadOnlyList<IssueRankingDto> ranked)
     {
         var others = ranked.Skip(HostRankingLimit).ToList();
         if (others.Count == 0) return null;

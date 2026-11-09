@@ -78,7 +78,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
         CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
             HostDayWorkflowService? workflow = null, bool backfillCompleted = true,
-            IAnalysisRecordQuery? recordQuery = null)
+            IAnalysisRecordQuery? recordQuery = null, Func<DateTime>? now = null)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -110,7 +110,8 @@ public class AiAnalysisSchedulerTests : IDisposable
             NullAiRequestGate.Instance,
             _suppressions,
             _ai,
-            workflow: workflow);
+            workflow: workflow,
+            now: now);
 
         return (service, aiRunState, optionsStore, schedulerState);
     }
@@ -673,6 +674,51 @@ public class AiAnalysisSchedulerTests : IDisposable
                 throw ex.InnerException;
             }
         }
+    }
+
+    /// <summary>處理迴圈查詢待補時擲 <see cref="OutOfMemoryException"/>，其餘原樣轉交真實 store</summary>
+    public class OutOfMemoryRecordQuery : DispatchProxy
+    {
+        internal IAnalysisRecordQuery Target { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IAnalysisRecordQuery.QueryPendingAi))
+                throw new OutOfMemoryException();
+            try
+            {
+                return targetMethod.Invoke(Target, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task 第67輪_處理迴圈擲OOM_執行紀錄失敗原因為記憶體上限且有記憶體里程碑()
+    {
+        var failing = DispatchProxy.Create<IAnalysisRecordQuery, OutOfMemoryRecordQuery>();
+        ((OutOfMemoryRecordQuery)failing).Target = _backend.RecordStore();
+        var (service, runState, _, _) = CreateTestHarness(recordQuery: failing);
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        // 失敗的趟完成訊號為 false（成功才是 true），這裡只等它結束、不斷言回傳值
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+        Assert.False(runState.IsRunning);
+
+        var outcome = runState.Snapshot().LastOutcome;
+        Assert.NotNull(outcome);
+        Assert.False(outcome!.Success);
+        Assert.Contains("記憶體上限", outcome.Message);
+
+        var aiRun = LatestAiRun();
+        Assert.Equal(1, aiRun.ExitCode);
+        Assert.NotNull(aiRun.MemoryStart);
+        Assert.NotNull(aiRun.MemoryEnd);
+        // 執行詳情的診斷行（不只排程狀態卡）也要看得到固定字樣
+        Assert.Contains(BatchRuns().GetLogs(aiRun.RunId), l => (l.Message ?? "").Contains("記憶體上限"));
     }
 
     [Fact]
@@ -1909,5 +1955,350 @@ public class AiAnalysisSchedulerTests : IDisposable
         store.Append(late);
         Assert.Equal(0, ReadRow(2, prtgOnlyDate).AiDegradedAttempts);
         Assert.False(ReadRow(2, prtgOnlyDate).AiPending);
+    }
+
+    // ── AI 服務釋放：每個主機分片建的實例，分片結束（含例外與取消）都要釋放 ──────────
+
+    private sealed class DisposableCountingAi : IAiService, IDisposable
+    {
+        private readonly IAiService _inner;
+        private readonly Counter _counter;
+
+        public DisposableCountingAi(IAiService inner, Counter counter) { _inner = inner; _counter = counter; }
+
+        public sealed class Counter { public int Created; public int Disposed; }
+
+        public void Dispose() => Interlocked.Increment(ref _counter.Disposed);
+
+        public Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
+            string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
+            CancellationToken ct = default) =>
+            _inner.ChatAsync(prompt, systemPrompt, jsonMode, model, temperature, maxTokens, label, ct);
+
+        public Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
+            Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
+            string label = "chat-json", CancellationToken ct = default) where T : class =>
+            _inner.ChatJsonAsync(prompt, systemPrompt, validate, model, temperature, maxTokens, label, ct);
+    }
+
+    private sealed class DisposeCountingService : AiAnalysisHostedService
+    {
+        private readonly IAiService _ai;
+        public readonly DisposableCountingAi.Counter Counter = new();
+
+        public DisposeCountingService(ScheduleOptionsStore o, SchedulerRunState sr, AiAnalysisRunState rs,
+            IAnalysisRecordQuery q, StorageBackend b, ISystemSettingsStore ss, BatchRunStore runs,
+            DailyRecordBackfiller bf, IWebAiService web, IAiService ai)
+            : base(o, sr, rs, q, b, ss, new DataVersionStamp(), runs, bf, web, NullAiRequestGate.Instance, aiService: null)
+        {
+            _ai = ai;
+        }
+
+        internal override Func<IAiService> ResolveAiServiceFactory() =>
+            () =>
+            {
+                Interlocked.Increment(ref Counter.Created);
+                return new DisposableCountingAi(_ai, Counter);
+            };
+    }
+
+    private DisposeCountingService CreateDisposeCountingService(int hosts)
+    {
+        var service = new DisposeCountingService(
+            new ScheduleOptionsStore(_backend.Blob("schedule_options")), new SchedulerRunState(), new AiAnalysisRunState(),
+            _backend.RecordStore(), _backend, _settingsStore, BatchRuns(), CompletedBackfiller(),
+            new FakeWebAiService(true), _ai);
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        for (var i = 1; i <= hosts; i++)
+            store.Append(CreateRecord(i, $"HOST-D{i}", date, pending: true));
+        return service;
+    }
+
+    [Fact]
+    public async Task 兩個主機分片_每個新建的AI服務各釋放一次()
+    {
+        var service = CreateDisposeCountingService(2);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        Assert.Equal(2, service.Counter.Created);
+        Assert.Equal(2, service.Counter.Disposed);
+    }
+
+    [Fact]
+    public async Task 分片內擲例外_AI服務仍釋放_次數等於建立次數()
+    {
+        var service = CreateDisposeCountingService(2);
+        _ai.Behavior = (_, _) => throw new InvalidOperationException("模擬 AI 呼叫失敗");
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        Assert.True(service.Counter.Created >= 2);
+        Assert.Equal(service.Counter.Created, service.Counter.Disposed);
+    }
+
+    [Fact]
+    public async Task 逐筆遇到記憶體不足_中止本輪不再一筆一筆撞()
+    {
+        var service = CreateDisposeCountingService(3);
+        _ai.Behavior = (_, _) => throw new OutOfMemoryException("模擬撞到硬上限");
+
+        // 逐筆 catch 遇記憶體不足要往外擲（交給 TriggerRunAsync 最外層記成「記憶體上限」），不是記一筆失敗繼續
+        await Assert.ThrowsAnyAsync<Exception>(() => service.ExecuteProcessingLoopAsync(CancellationToken.None));
+        Assert.Equal(service.Counter.Created, service.Counter.Disposed);
+    }
+
+    [Fact]
+    public async Task 分片執行中被取消_AI服務仍釋放_次數等於建立次數()
+    {
+        var service = CreateDisposeCountingService(2);
+        using var cts = new CancellationTokenSource();
+        _ai.Behavior = async (_, ct) =>
+        {
+            cts.CancelAfter(50);
+            await Task.Delay(Timeout.Infinite, ct);
+            return new AiResponse { Success = true, Content = "{}" };
+        };
+
+        try { await service.ExecuteProcessingLoopAsync(cts.Token); }
+        catch (OperationCanceledException) { }
+
+        Assert.True(service.Counter.Created >= 1);
+        Assert.Equal(service.Counter.Created, service.Counter.Disposed);
+    }
+
+    // ── 無進度退避（時鐘用注入的假時鐘，不等真實時間）──────────────────────────
+
+    private sealed class TestClock
+    {
+        public DateTime Now = DateTime.Now;
+        public void Advance(TimeSpan span) => Now += span;
+    }
+
+    private static readonly TimeSpan OneMinute = TimeSpan.FromMinutes(1);
+
+    private sealed record BackoffHarness(AiAnalysisHostedService Service, AiAnalysisRunState RunState,
+        ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState, TestClock Clock, CountingPendingRecordQuery Counting);
+
+    /// <summary>全天窗口、一筆待補、AI 一律失敗（每輪都沒有進度）的退避測試環境</summary>
+    private BackoffHarness CreateBackoffHarness(bool aiFails = true)
+    {
+        var counting = DispatchProxy.Create<IAnalysisRecordQuery, CountingPendingRecordQuery>();
+        var proxy = (CountingPendingRecordQuery)counting;
+        proxy.Target = _backend.RecordStore();
+        var clock = new TestClock();
+        var (service, runState, optionsStore, schedulerState) =
+            CreateTestHarness(AllDay(), recordQuery: counting, now: () => clock.Now);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-BO", DateTime.Today.AddDays(-3), pending: true));
+        if (aiFails)
+            _ai.Behavior = (_, _) => Task.FromResult(new AiResponse { Success = false, Error = "模擬失敗" });
+        return new BackoffHarness(service, runState, optionsStore, schedulerState, clock, proxy);
+    }
+
+    /// <summary>跑一次輪詢；有開跑就等它結束</summary>
+    private static async Task TickAndWaitAsync(BackoffHarness h)
+    {
+        await h.Service.TickAsync();
+        Assert.True(await h.RunState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.True(condition(), "等待條件逾時");
+    }
+
+    [Fact]
+    public async Task 退避_無進度一輪後一分鐘不觸發也不查待補_五分鐘後觸發()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        Assert.Equal(1, h.RunState.NoProgressStreak);
+        var calls = _ai.Calls;
+        var pendingCalls = h.Counting.CountPendingCalls;
+
+        h.Clock.Advance(OneMinute);
+        await h.Service.TickAsync();
+
+        Assert.False(h.RunState.IsRunning);
+        Assert.Equal(calls, _ai.Calls);
+        Assert.Equal(pendingCalls, h.Counting.CountPendingCalls);
+        Assert.Equal(AiIdleReasons.Backoff, h.RunState.Snapshot().IdleReason);
+
+        h.Clock.Advance(TimeSpan.FromMinutes(4) + TimeSpan.FromSeconds(1));
+        await TickAndWaitAsync(h);
+        Assert.True(_ai.Calls > calls);
+    }
+
+    [Fact]
+    public async Task 退避_連續無進度依序五_十_十五_十五分鐘()
+    {
+        var h = CreateBackoffHarness();
+        var expected = new[] { 5, 10, 15, 15 };
+        for (var round = 0; round < expected.Length; round++)
+        {
+            await TickAndWaitAsync(h);
+            Assert.Equal(round + 1, h.RunState.NoProgressStreak);
+            Assert.Equal(h.Clock.Now + TimeSpan.FromMinutes(expected[round]), h.RunState.BackoffUntil);
+            h.Clock.Advance(TimeSpan.FromMinutes(expected[round]) + TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task 退避_有進度一輪後下一分鐘即觸發()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        Assert.Equal(1, h.RunState.NoProgressStreak);
+
+        // 退避期滿後 AI 恢復：這輪有進度，退避歸零
+        h.Clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        _ai.Behavior = null;
+        await TickAndWaitAsync(h);
+        Assert.Equal(0, h.RunState.NoProgressStreak);
+        Assert.Null(h.RunState.BackoffUntil);
+
+        _backend.RecordStore().Append(CreateRecord(2, "HOST-BO2", DateTime.Today.AddDays(-3), pending: true));
+        var calls = _ai.Calls;
+        h.Clock.Advance(OneMinute);
+        await TickAndWaitAsync(h);
+        Assert.True(_ai.Calls > calls);
+    }
+
+    [Fact]
+    public async Task 退避_儲存排程設定後下一個tick立即觸發()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        var calls = _ai.Calls;
+
+        await Task.Delay(20); // 確保 UpdatedAt 與進入退避時不同
+        h.OptionsStore.Update(o => o.AiConcurrency = o.AiConcurrency);
+        h.Clock.Advance(OneMinute);
+        await TickAndWaitAsync(h);
+
+        Assert.True(_ai.Calls > calls);
+    }
+
+    [Fact]
+    public async Task 退避_儲存系統設定後下一個tick立即觸發()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        var calls = _ai.Calls;
+
+        _settingsStore.Update(s => s.UpdatedAt = DateTime.Now.AddMinutes(1));
+        h.Clock.Advance(OneMinute);
+        await TickAndWaitAsync(h);
+
+        Assert.True(_ai.Calls > calls);
+    }
+
+    [Fact]
+    public async Task 退避_取數完成的跟隨觸發會解除退避並開跑()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        var calls = _ai.Calls;
+        Assert.Equal(AiIdleReasons.Backoff, h.Service.CurrentIdleReason(() => 1));
+
+        // 取數執行結束 → RunEnded → OnFetchFollowUp（不看窗口）
+        Assert.True(h.SchedulerState.TryBeginRun("schedule", out _));
+        h.SchedulerState.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        await WaitUntilAsync(() => _ai.Calls > calls);
+        await h.RunState.WaitForCompletionAsync(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task 退避_跟隨取數期間上限只有五分鐘()
+    {
+        var h = CreateBackoffHarness(aiFails: false);
+        // 沒有待補：取數結束的跟隨觸發不會開跑，只留下跟隨取數狀態
+        using (var ctx = _contextFactory())
+        {
+            foreach (var row in ctx.DailyRecords) row.AiPending = false;
+            ctx.SaveChanges();
+        }
+        Assert.True(h.SchedulerState.TryBeginRun("schedule", out _));
+        h.SchedulerState.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+        await Task.Delay(100);
+        h.Clock.Now = DateTime.Now.AddSeconds(1);
+        var start = h.Clock.Now;
+
+        var schedule = h.OptionsStore.Get().UpdatedAt;
+        var settings = _settingsStore.Get().UpdatedAt;
+        for (var i = 0; i < 3; i++) h.RunState.RecordRoundOutcome(false, start, schedule, settings);
+
+        // 一般輪詢退避 15 分；跟隨取數期間退避上限 5 分（進入退避起算）
+        Assert.True(h.RunState.IsBackingOff(start, false, out var plain));
+        Assert.Equal(start + TimeSpan.FromMinutes(15), plain);
+        Assert.Equal(start + TimeSpan.FromMinutes(5), h.Service.CurrentBackoffUntil());
+
+        Assert.Equal(AiIdleReasons.Backoff, h.Service.CurrentIdleReason(() => 1));
+        h.Clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        Assert.Null(h.Service.CurrentIdleReason(() => 1));
+    }
+
+    [Fact]
+    public async Task 退避_手動觸發不受影響_有進度才解除()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        Assert.Equal(1, h.RunState.NoProgressStreak);
+        var calls = _ai.Calls;
+
+        // 退避中手動仍能開跑；手動沒進度不改連續次數
+        Assert.True(await h.Service.TriggerRunAsync(trigger: "manual:test"));
+        Assert.True(await h.RunState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+        Assert.True(_ai.Calls > calls);
+        Assert.Equal(1, h.RunState.NoProgressStreak);
+
+        // 手動那一輪有進度才解除退避
+        _ai.Behavior = null;
+        Assert.True(await h.Service.TriggerRunAsync(trigger: "manual:test"));
+        Assert.True(await h.RunState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(0, h.RunState.NoProgressStreak);
+        Assert.Null(h.RunState.BackoffUntil);
+    }
+
+    [Fact]
+    public async Task 退避_狀態API的閒置原因與nextRetryAt()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+
+        var reason = h.Service.CurrentIdleReason(() => 1);
+        Assert.Equal("backoff", reason);
+        Assert.True(h.RunState.IsBackingOff(h.Clock.Now, out var until));
+        Assert.Equal(h.Clock.Now + TimeSpan.FromMinutes(5), until);
+        Assert.Equal(until, h.Service.CurrentBackoffUntil());
+        Assert.Equal(until, ScheduleController.MapNextRetryAt(reason, h.Service.CurrentBackoffUntil()));
+        Assert.Null(ScheduleController.MapNextRetryAt(AiIdleReasons.NoPending, until));
+        Assert.Null(ScheduleController.MapNextRetryAt(null, until));
+    }
+
+    [Fact]
+    public async Task 退避_停止的一輪不增加連續次數()
+    {
+        var h = CreateBackoffHarness();
+        await TickAndWaitAsync(h);
+        Assert.Equal(1, h.RunState.NoProgressStreak);
+        var calls = _ai.Calls;
+
+        _ai.Behavior = async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return new AiResponse { Success = true, Content = "{}" };
+        };
+        Assert.True(await h.Service.TriggerRunAsync(trigger: BatchRunTriggers.Schedule));
+        await WaitUntilAsync(() => _ai.Calls > calls);
+        Assert.True(h.RunState.TryCancel());
+        await h.RunState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)); // 停止的一輪回傳 false
+        Assert.False(h.RunState.IsRunning);
+
+        Assert.Equal(1, h.RunState.NoProgressStreak);
     }
 }

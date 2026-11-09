@@ -1163,6 +1163,48 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public void ValueFetchRun的Failures元素型別是輕量記錄而非Exception()
+    {
+        var runType = typeof(PrtgFetchService).GetNestedType("ValueFetchRun", System.Reflection.BindingFlags.NonPublic)!;
+        var elementType = runType.GetProperty("Failures", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .PropertyType.GetElementType()!;
+
+        Assert.False(typeof(Exception).IsAssignableFrom(elementType));
+        Assert.Equal("SensorFetchFailure", Nullable.GetUnderlyingType(elementType)?.Name ?? elementType.Name);
+    }
+
+    [Fact]
+    public async Task FetchDayAsync_全部sensor失敗_逾時計數等於逾時那一半()
+    {
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices")) return JsonResponse("{\"treesize\":0,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":4,\"sensors\":[" +
+                    "{\"objid\":901,\"parentid\":1,\"sensor\":\"A\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":902,\"parentid\":1,\"sensor\":\"B\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":903,\"parentid\":1,\"sensor\":\"C\",\"type\":\"ping\",\"paused\":false}," +
+                    "{\"objid\":904,\"parentid\":1,\"sensor\":\"D\",\"type\":\"ping\",\"paused\":false}]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata"))
+            {
+                if (url.Contains("id=901") || url.Contains("id=902")) throw new TaskCanceledException();
+                throw new HttpRequestException("模擬連線失敗");
+            }
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
+
+        Assert.Contains(console.Lines, l => l.Contains("數值擷取失敗 4 顆（其中逾時 2、"));
+    }
+
+    [Fact]
     public async Task FetchDayAsync_全部sensor數值擷取皆失敗時計為階段失敗()
     {
         var (client, _) = CreateClient(req =>

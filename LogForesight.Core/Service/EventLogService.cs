@@ -117,7 +117,11 @@ public class EventLogService
     /// <see cref="EventLog"/>（維持既有識別鍵、不斷舊歷史趨勢），Defender/RDP 等 Operational 頻道
     /// 走 <see cref="EventLogReader"/>（classic API 讀不到的新式頻道）。
     /// </summary>
-    public EventLogScanResult ScanRange(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
+    /// <param name="keep">可選的事件過濾：通過 <see cref="ShouldInclude"/> 的事件建成物件後再問一次，
+    /// 回 false 的不進結果清單（暫時物件立即可回收）。供只需要一小部分事件的補掃避免整天事件常駐記憶體；
+    /// null＝全留，其餘行為（不完整判定、頻道狀態）不變。</param>
+    public EventLogScanResult ScanRange(DateTime startDate, DateTime endDateExclusive, string logName,
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
     {
         // 注入的委派分析器看不懂，故同時以 OperatingSystem.IsWindows() 讓 CA1416 通過。
         if (!_isWindows() || !OperatingSystem.IsWindows())
@@ -126,21 +130,23 @@ public class EventLogService
             return new EventLogScanResult { Entries = new(), Complete = false, ReadFailed = true, PlatformUnsupported = true };
         }
 
-        return ScanRangeWindows(startDate, endDateExclusive, logName, securityExtraEventIds);
+        return ScanRangeWindows(startDate, endDateExclusive, logName, securityExtraEventIds, keep);
     }
 
     [SupportedOSPlatform("windows")]
-    private EventLogScanResult ScanRangeWindows(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds)
+    private EventLogScanResult ScanRangeWindows(DateTime startDate, DateTime endDateExclusive, string logName,
+        int[]? securityExtraEventIds, Func<EventLogEntryData, bool>? keep)
         => ClassicApiLogs.Contains(logName)
-            ? ScanRangeClassic(startDate, endDateExclusive, logName, securityExtraEventIds)
-            : ScanRangeModern(startDate, endDateExclusive, logName, securityExtraEventIds);
+            ? ScanRangeClassic(startDate, endDateExclusive, logName, securityExtraEventIds, keep)
+            : ScanRangeModern(startDate, endDateExclusive, logName, securityExtraEventIds, keep);
 
     /// <summary>
     /// 新式 Operational 頻道（Defender/RDP）的 EventLogReader 掃描。這些頻道沒有遷移前的歷史，
     /// <c>Source</c> 用 <see cref="EventRecord.ProviderName"/>（完整 manifest 名）不影響任何舊資料。
     /// </summary>
     [SupportedOSPlatform("windows")]
-    private EventLogScanResult ScanRangeModern(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
+    private EventLogScanResult ScanRangeModern(DateTime startDate, DateTime endDateExclusive, string logName,
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
     {
         var logs = new List<EventLogEntryData>();
         var policy = ChannelCatalog.Resolve(logName);
@@ -180,7 +186,7 @@ public class EventLogService
                         }
 
                         var mapped = EventRecordMapper.Map(record, logName, isAuditChannel);
-                        if (mapped != null)
+                        if (mapped != null && (keep == null || keep(mapped)))
                         {
                             logs.Add(mapped);
                         }
@@ -200,8 +206,8 @@ public class EventLogService
             }
 
             // 只記筆數，不記事件內容——完整訊息本來就會存進歷史/報告，這裡的 log 只是流程追蹤
-            Log.Info("{LogName} 掃描完成：{Count} 筆事件（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
-                logName, logs.Count, startDate, endDateExclusive, complete);
+            Log.Info("{LogName} 掃描完成：{Count} 筆事件{Filtered}（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
+                logName, logs.Count, keep == null ? "" : "（已依條件過濾）", startDate, endDateExclusive, complete);
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }
@@ -239,7 +245,8 @@ public class EventLogService
     /// 見 <see cref="ClassicApiLogs"/> 的說明。
     /// </summary>
     [SupportedOSPlatform("windows")]
-    private EventLogScanResult ScanRangeClassic(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
+    private EventLogScanResult ScanRangeClassic(DateTime startDate, DateTime endDateExclusive, string logName,
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
     {
         var logs = new List<EventLogEntryData>();
         var policy = ChannelCatalog.Resolve(logName);
@@ -277,7 +284,7 @@ public class EventLogService
                     continue;
                 }
 
-                logs.Add(new EventLogEntryData
+                var built = new EventLogEntryData
                 {
                     TimeGenerated = entry.TimeGenerated,
                     EntryType = entryType,
@@ -300,7 +307,11 @@ public class EventLogService
                             entry.TimeGenerated.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                             entry.Source, entry.Message)
                     }
-                });
+                };
+                if (keep == null || keep(built))
+                {
+                    logs.Add(built);
+                }
             }
 
             bool complete = true;
@@ -312,8 +323,8 @@ public class EventLogService
                     logName, earliestAvailable, startDate);
             }
 
-            Log.Info("{LogName} 掃描完成：{Count} 筆事件（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
-                logName, logs.Count, startDate, endDateExclusive, complete);
+            Log.Info("{LogName} 掃描完成：{Count} 筆事件{Filtered}（{Start:yyyy-MM-dd}~{End:yyyy-MM-dd}），Complete={Complete}",
+                logName, logs.Count, keep == null ? "" : "（已依條件過濾）", startDate, endDateExclusive, complete);
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }

@@ -92,7 +92,7 @@ public interface IAiService
         string label = "chat-json", CancellationToken ct = default) where T : class;
 }
 
-public class AIService : IAiService
+public class AIService : IAiService, IDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
@@ -119,6 +119,7 @@ public class AIService : IAiService
     /// 本機 llama.cpp 同時處理多個請求會互搶 GPU 資源導致全部變慢甚至逾時，序列化最穩定。
     /// </summary>
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
+    private int _disposed;
 
     /// <summary>全站 AI 閘道（跨實例的互動優先與併發上限）與本實例走的車道。</summary>
     private readonly IAiRequestGate _gate;
@@ -239,6 +240,7 @@ public class AIService : IAiService
         string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var messages = new List<OpenAIMessage>();
         if (!string.IsNullOrEmpty(systemPrompt))
         {
@@ -443,6 +445,7 @@ public class AIService : IAiService
         Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         string rawContent = string.Empty;
         string? lastError = null;
         int totalAttempts = _jsonRetryCount + 1;
@@ -884,4 +887,15 @@ public class AIService : IAiService
     /// <summary>單次 HTTP 回應的診斷資訊（原始回覆長度、token 用量、結束原因、清洗前原文頭尾、思考欄位長度）</summary>
     private sealed record ChatCallInfo(int ResponseChars, int? PromptTokens, int? CompletionTokens, string? FinishReason,
         int? RawChars, string? RawHead, string? RawTail, int? ReasoningChars);
+
+    /// <summary>
+    /// 釋放 HttpClient 與請求佇列；可重複呼叫。Dispose 後再呼叫 ChatAsync／ChatJsonAsync 擲 <see cref="ObjectDisposedException"/>。
+    /// 呼叫端必須在該實例的所有呼叫結束後才釋放（背景排程每個主機分片一個實例，分片結束即釋放）。
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _httpClient.Dispose();
+        _requestQueue.Dispose();
+    }
 }

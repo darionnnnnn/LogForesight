@@ -74,4 +74,24 @@ public class AIServiceCancellationTests
         Assert.False(response.Success);
         Assert.NotNull(response.Error);
     }
+
+    /// <summary>Dispose 後的呼叫要明確失敗，而不是打到已釋放的 HttpClient 或佇列</summary>
+    [Fact]
+    public async Task Dispose後呼叫ChatAsync與ChatJsonAsync擲ObjectDisposedException()
+    {
+        var service = new AIService(new AiSettings { BaseUrl = "http://localhost:1", TimeoutSeconds = 5 }, NullAiRequestGate.Instance);
+        service.Dispose();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.ChatAsync("hi"));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.ChatJsonAsync<object>("hi"));
+    }
+
+    [Fact]
+    public void Dispose可重複呼叫不擲例外()
+    {
+        var service = new AIService(new AiSettings { BaseUrl = "http://localhost:1", TimeoutSeconds = 5 }, NullAiRequestGate.Instance);
+        service.Dispose();
+        var ex = Record.Exception(() => service.Dispose());
+        Assert.Null(ex);
+    }
 }

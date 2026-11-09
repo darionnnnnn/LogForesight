@@ -79,7 +79,7 @@ public class LogAnalysisService
     private readonly IReadOnlyCollection<long> _hostGroupIds;
     private readonly List<RuleSuppression>? _suppressionSnapshot;
     private readonly AnalysisLogSource _logSource;
-    private readonly Func<DateTime, EventLogScanResult>? _localSecuritySupplementScanner;
+    private readonly Func<DateTime, Func<EventLogEntryData, bool>, EventLogScanResult>? _localSecuritySupplementScanner;
 
     /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-SPEC.md）：只影響「要不要吵」
     /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
@@ -105,13 +105,14 @@ public class LogAnalysisService
     /// <param name="logSource">事件資料實際來源。只有 Local 分析可補查執行此服務的主機 Security 4624；
     /// 遠端來源只使用傳入的遠端 4624 與 RDP 事件。</param>
     /// <param name="localSecuritySupplementScanner">可選的本機 4624 補查提供者，供隔離測試驗證來源邊界；
+    /// 第二個參數是補掃的事件過濾（只留與失敗集合有帳號或 IP 交集的 4624），提供者應照樣套用或原樣回傳皆可；
     /// null 時由 <see cref="EventLogService.ScanRange"/> 讀取本機 Security log。</param>
     public LogAnalysisService(EventLogService eventLogService, IAiService aiService, IAnalysisRecordStore historyService,
         ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null,
         string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
         IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null,
         AnalysisLogSource logSource = AnalysisLogSource.Local,
-        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null,
+        Func<DateTime, Func<EventLogEntryData, bool>, EventLogScanResult>? localSecuritySupplementScanner = null,
         string hostOs = WebHost.OsWindows)
     {
         _hostOs = hostOs;
@@ -883,9 +884,23 @@ public class LogAnalysisService
             l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4624);
         if (_logSource == AnalysisLogSource.Local)
         {
-            var scan = await Task.Run(() => _localSecuritySupplementScanner?.Invoke(targetDate.Date) ??
+            // 串流過濾：最終結果只看「成功集合 ∩ 失敗集合」與交集項目的最晚成功時間，
+            // 帳號與 IP 都不在失敗集合的成功登入不影響結論，掃描時就丟掉，不讓整天 4624 常駐記憶體。
+            // 抽取走與後續解析相同的 LogAggregator.ExtractAccountsAndIps。
+            bool KeepRelevantLogon(EventLogEntryData e)
+            {
+                if (e.EventId != 4624 || string.IsNullOrEmpty(e.Message))
+                {
+                    return false;
+                }
+
+                var (accounts, ips) = LogAggregator.ExtractAccountsAndIps(new[] { e.Message });
+                return accounts.Any(failedAccounts.Contains) || ips.Any(failedIps.Contains);
+            }
+
+            var scan = await Task.Run(() => _localSecuritySupplementScanner?.Invoke(targetDate.Date, KeepRelevantLogon) ??
                 _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security",
-                    securityExtraEventIds: new[] { 4624 }));
+                    securityExtraEventIds: new[] { 4624 }, keep: KeepRelevantLogon));
             logonSuccessEntries = logonSuccessEntries.Concat(scan.Entries.Where(l => l.EventId == 4624));
         }
 

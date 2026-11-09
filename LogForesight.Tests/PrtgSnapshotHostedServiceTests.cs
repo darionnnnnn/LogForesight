@@ -89,6 +89,110 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    // ---- 第 67 輪 C-2：快照目標不再每個 tick 整表重載 ----
+
+    private static readonly DateTime TargetRefreshBase = new(2026, 11, 9, 10, 5, 0);
+
+    [Fact]
+    public void 目標刷新_同小時連續三次只刷新一次()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(10));
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(20));
+
+        Assert.Equal(1, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標刷新_換小時刷新_跳過數小時後下一次也刷新一次()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(1));
+        Assert.Equal(2, service.TargetRefreshCount);
+
+        // 服務暫停數小時、中間沒有 tick：回來的第一個 tick 必須刷新，之後同小時不再刷新。
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(5));
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(5).AddMinutes(3));
+        Assert.Equal(3, service.TargetRefreshCount);
+    }
+
+    [Theory]
+    [InlineData("whitelist")]
+    [InlineData("overrideObjids")]
+    [InlineData("guardEnabled")]
+    [InlineData("hostsBlob")]
+    [InlineData("sentinelsBlob")]
+    public void 目標刷新_輸入改變時下一次立即刷新(string change)
+    {
+        var service = CreateService();
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase);
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(1));
+        Assert.Equal(1, service.TargetRefreshCount);
+
+        switch (change)
+        {
+            case "whitelist":
+                _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "cpuload" });
+                break;
+            case "overrideObjids":
+                _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = new List<string> { "9001" });
+                break;
+            case "guardEnabled":
+                _settingsStore.Update(s => s.PrtgResourceGuardEnabled = !s.PrtgResourceGuardEnabled);
+                break;
+            case "hostsBlob":
+                _hostStore.Upsert(new WebHost { HostName = "Server-X", IpAddress = "192.168.1.99", Active = false });
+                break;
+            case "sentinelsBlob":
+                new SentinelStore(_backend.Blob("sentinels")).Upsert(new Sentinel { Name = "s-c2", BaseUrl = "http://10.9.9.9" });
+                break;
+        }
+
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(2));
+        Assert.Equal(2, service.TargetRefreshCount);
+        // 刷新後指紋追上，同小時再來不重複刷新。
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(3));
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標刷新_RequestScopeRefresh後下一次立即刷新()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(1));
+        Assert.Equal(1, service.TargetRefreshCount);
+
+        service.RequestScopeRefresh();
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(2));
+
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public async Task 範圍補抓_單趟sensor整表只讀一次()
+    {
+        _backend.PrtgStore().UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 5001, DeviceObjid = 10, Name = "CPU", SensorType = "cpuload" }
+        }, DateTime.Now);
+        var service = CreateService();
+        var context = new PrtgSnapshotHostedService.RecentStateChangeScopeContext(
+            new HashSet<long>(), "id", "ver", DateTime.Today, DateTime.UtcNow);
+        _sqlDiagnostics.Reset();
+
+        await service.BackfillScopeSensorsAsync(_settingsStore.Get(), context, CancellationToken.None);
+
+        Assert.Equal(1, _sqlDiagnostics.SensorSelectCount);
+    }
+
     private PrtgSnapshotHostedService CreateService(TestConsole? console = null, TimeSpan? pollInterval = null)
     {
         var service = new PrtgSnapshotHostedService(
@@ -622,6 +726,46 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 快照後沒有補到新sensor_同小時連續三次tick只重算一次目標()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
+        var hour = DateTime.Today.AddHours(10);
+        var service = CreateService();
+
+        service.Now = () => hour;
+        await service.TickAsync();
+        service.Now = () => hour.AddMinutes(20);
+        await service.TickAsync();
+        service.Now = () => hour.AddMinutes(40);
+        await service.TickAsync();
+
+        // 快照後的範圍補抓沒有補到任何 sensor，不得清掉目標快取；三個 tick 走真實路徑只整表重算一次
+        Assert.Equal(1, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標重算期間被請求重設_不標本小時已算過_下一次仍重算()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var requested = false;
+        _sqlDiagnostics.OnSensorSelect = () =>
+        {
+            if (requested) return;
+            requested = true;
+            service.RequestScopeRefresh(); // 模擬請求執行緒在重算進行中要求重設
+        };
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        Assert.True(requested);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(10));
+
+        // 沒有世代防護的話，重算收尾會把「本小時已算過」蓋回去，第二次就不會重算
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
     public async Task 有舊來源待寫樣本時改網址_不重播不取數且保留原檔()
     {
         SetupTargetSensors(new[] { (501L, "Ping") });
@@ -929,6 +1073,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         public long SensorSelectCount => Interlocked.Read(ref _sensorSelectCount);
 
+        /// <summary>每次 sensor 表 SELECT 開始時呼叫（測試用：在整表重算途中插入其他動作）</summary>
+        public Action? OnSensorSelect { get; set; }
+
         public IReadOnlyList<string> BlobSelectCommands
         {
             get { lock (_commandsGate) return _blobSelectCommands.ToArray(); }
@@ -1031,7 +1178,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             var kind = Classify(sql);
             switch (kind)
             {
-                case CommandKind.SensorSelect: Interlocked.Increment(ref _sensorSelectCount); break;
+                case CommandKind.SensorSelect: Interlocked.Increment(ref _sensorSelectCount); OnSensorSelect?.Invoke(); break;
                 case CommandKind.IdentityBatchSelect: Interlocked.Increment(ref _identityBatchSelectCount); break;
                 case CommandKind.SensorWrite: Interlocked.Increment(ref _sensorWriteCount); break;
                 case CommandKind.BlobWrite: Interlocked.Increment(ref _blobWriteCount); break;

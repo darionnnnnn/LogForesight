@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>
@@ -30,7 +32,7 @@ public class DataVersionStamp
 /// <c>ApiResponse</c> 序列化、沒有任何呼叫端會改它。要新增消費端時請維持這個前提，
 /// 需要改內容就自己複製一份。
 /// </summary>
-public class SummaryCache
+public class SummaryCache : ICacheStatistics
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值——
     /// 兩層快取的新鮮度不一致會讓同一畫面的區塊互相矛盾。</summary>
@@ -43,6 +45,10 @@ public class SummaryCache
     private readonly DataVersionStamp _stamp;
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
+    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
+    private long _hits;
+    private long _misses;
+    private long _evictions;
     private readonly Dictionary<string, (object Payload, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
 
     public SummaryCache(DataVersionStamp stamp, Func<DateTime>? now = null)
@@ -67,9 +73,11 @@ public class SummaryCache
                 && entry.Version == version
                 && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
+                _hits++;
                 _entries[key] = entry with { LastAccess = now };
                 return (T)entry.Payload;
             }
+            _misses++;
         }
 
         // factory 刻意在鎖外執行：聚合查詢很慢，握著鎖算會讓其他請求全部排隊。
@@ -97,10 +105,21 @@ public class SummaryCache
             .Select(e => e.Key)
             .ToList();
         foreach (var k in expired) _entries.Remove(k);
+        _evictions += expired.Count;
 
         while (_entries.Count >= MaxEntries)
         {
             _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+            _evictions++;
+        }
+    }
+
+    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
+    public CacheStatisticsSnapshot GetStatistics()
+    {
+        lock (_lock)
+        {
+            return new CacheStatisticsSnapshot("SummaryCache", _entries.Count, _entries.Count, _hits, _misses, _evictions, 0);
         }
     }
 }

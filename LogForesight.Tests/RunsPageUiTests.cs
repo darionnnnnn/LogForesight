@@ -32,6 +32,16 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 執行詳情顯示開始與結束的記憶體標記()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("detail.memoryStart", js);
+        Assert.Contains("detail.memoryEnd", js);
+        Assert.Contains("SQLite 峰值", js);
+    }
+
+    [Fact]
     public void 執行總表_空資料待複查與今日待補摘要接上畫面()
     {
         var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
@@ -1080,5 +1090,22 @@ console.log('PASS operational status refresh');
         Assert.Contains("new URLSearchParams(location.search).get('run')", js);
         Assert.Contains("showDetail(Number(linkedRunId))", js);
         Assert.Contains("aiAvailable = status.idleReason !== 'disabled';", js);
+    }
+
+    [Fact]
+    public void AI閒置原因backoff有文案_只在仍有待補時顯示並可帶重試時間()
+    {
+        var js = ReadRunsJs();
+        Assert.Contains("'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'", js);
+
+        // 待補已是 0 件時沒有東西可以補跑，退避提示不出現（不放進「待補 0 件也顯示」的例外清單）
+        var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.Contains("['disabled', 'backfill-pending'].includes(status.idleReason)", aiBody);
+        Assert.DoesNotContain("'backfill-pending', 'backoff']", aiBody);
+        Assert.Contains("aiIdleHintText(status)", aiBody);
+
+        var hintBody = ExtractBlock(js, "function aiIdleHintText(");
+        Assert.Contains("status.nextRetryAt", hintBody);
+        Assert.Contains("再試", hintBody);
     }
 }

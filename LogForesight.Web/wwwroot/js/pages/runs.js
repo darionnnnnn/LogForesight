@@ -681,6 +681,30 @@ function detailButton(runId) {
 
 // ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
 
+/** bytes 轉 MB 文字（整數、千分位）；null 或非數字回傳 null 讓呼叫端省略該項 */
+function megabytesOrNull(bytes) {
+    if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return null;
+    return `${formatNumber(Math.round(bytes / 1048576))} MB`;
+}
+
+/** 執行詳情的記憶體一行：開始｜結束；null 項目省略，一邊沒有就只顯示另一邊，都沒有回傳空字串 */
+function runMemoryText(start, end) {
+    const part = (label, value) => {
+        const text = megabytesOrNull(value);
+        return text === null ? null : `${label} ${text}`;
+    };
+    const join = items => items.filter(Boolean).join('、');
+    const startText = start ? join([part('工作集', start.workingSetBytes), part('.NET 堆', start.managedHeapBytes)]) : '';
+    const endText = end ? join([
+        part('工作集', end.workingSetBytes), part('.NET 堆', end.managedHeapBytes),
+        part('峰值', end.peakWorkingSetBytes), part('SQLite 峰值', end.sqliteHeapHighwaterBytes)
+    ]) : '';
+    const sides = [];
+    if (startText) sides.push(`開始：${startText}`);
+    if (endText) sides.push(`結束：${endText}`);
+    return sides.join('｜');
+}
+
 async function showDetail(runId, retryBody = null) {
     const body = retryBody ?? document.createElement('div');
     renderLoading(body, 5);
@@ -712,6 +736,18 @@ async function showDetail(runId, retryBody = null) {
         const timeline = renderPhaseTimeline(detail);
         timeline.classList.add('mb-3');
         body.appendChild(timeline);
+    }
+
+    // 記憶體：每趟開始與結束的標記（舊紀錄或讀不到時為 null，兩邊都沒有就不顯示）
+    const memoryText = runMemoryText(detail.memoryStart, detail.memoryEnd);
+    if (memoryText) {
+        const memoryTitle = document.createElement('div');
+        memoryTitle.className = 'fw-semibold mb-2';
+        memoryTitle.textContent = '記憶體';
+        const memoryLine = document.createElement('div');
+        memoryLine.className = 'small text-muted mb-3';
+        memoryLine.textContent = memoryText;
+        body.append(memoryTitle, memoryLine);
     }
 
     // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
@@ -1433,8 +1469,19 @@ const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
     'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
-    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
+    'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。',
+    'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'
 };
+
+// 閒置提示文案：退避中且後端給了 nextRetryAt 時，句尾補「，約 HH:mm 再試」；其餘原樣取對照表
+function aiIdleHintText(status) {
+    const base = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
+    if (status.idleReason === 'backoff' && status.nextRetryAt) {
+        const clock = formatDateTime(status.nextRetryAt).slice(-5);
+        if (clock) return `${base}，約 ${clock} 再試`;
+    }
+    return base;
+}
 
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
@@ -1479,7 +1526,7 @@ function applyAiScheduleStatus(status) {
         // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
         // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
         if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
-            hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
+            hint = aiIdleHintText(status);
         }
 
         hintEl.textContent = hint;

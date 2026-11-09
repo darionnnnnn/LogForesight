@@ -550,4 +550,63 @@ public class BatchRunStoreSqlPushdownTests : IDisposable
         Assert.Equal("SRV-OLD", found[old].HostName);
         Assert.DoesNotContain(99999, found.Keys);
     }
+
+    // ── 串流讀取：全表查詢只在可能落在窗口之外時才發出 ──────────────────────
+
+    /// <summary>無日期下界＝SQL 不含 created_at 條件的 batch_runs 讀取</summary>
+    private List<(string Sql, List<object?> Parameters)> UnboundedRunReads() =>
+        _recorder.LineReads()
+            .Where(c => c.Parameters.Contains("batch_runs") && !c.Sql.Contains("created_at"))
+            .ToList();
+
+    [Fact]
+    public void GetRun在窗口內找到時不發出無日期下界的全表查詢()
+    {
+        var store = NewBatchRunStore();
+        var runId = store.StartRun(Run("SRV-01", DateTime.Now));
+        _recorder.Clear();
+
+        Assert.NotNull(store.GetRun(runId));
+
+        Assert.Empty(UnboundedRunReads());
+    }
+
+    [Fact]
+    public void GetRun在窗口外且RunId小於窗口最小值時發出全表查詢()
+    {
+        var store = NewBatchRunStore();
+        var oldId = store.StartRun(Run("SRV-OLD", DateTime.Today.AddDays(-400)));
+        Backdate("batch_runs", 1, DateTime.Today.AddDays(-400));
+        store.StartRun(Run("SRV-NEW", DateTime.Now));
+        _recorder.Clear();
+
+        var found = store.GetRun(oldId);
+
+        Assert.Equal("SRV-OLD", found!.HostName);
+        Assert.NotEmpty(UnboundedRunReads());
+    }
+
+    [Fact]
+    public void 同一RunId三列時GetRun與GetRecentRuns都只取最後一列()
+    {
+        var store = NewBatchRunStore();
+        var run = Run("SRV-01", DateTime.Now);
+        var runId = store.StartRun(run);
+        run.ErrorCount = 1;
+        store.FinishRun(run);          // 中途
+        run.FinishedAt = DateTime.Now;
+        run.ErrorCount = 5;
+        store.FinishRun(run);          // 結束
+        var other = Run("SRV-02", DateTime.Now);
+        store.StartRun(other);
+
+        var one = store.GetRun(runId)!;
+        Assert.Equal(5, one.ErrorCount);
+        Assert.NotNull(one.FinishedAt);
+
+        var recent = store.GetRecentRuns(7, null);
+        var mine = Assert.Single(recent, r => r.RunId == runId);
+        Assert.Equal(5, mine.ErrorCount);
+        Assert.Equal(recent.Count, recent.Select(r => r.RunId).Distinct().Count());
+    }
 }

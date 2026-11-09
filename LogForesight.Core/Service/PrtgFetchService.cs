@@ -1245,6 +1245,11 @@ public sealed class PrtgFetchService
         return SummarizeValueFetch(run);
     }
 
+    /// <summary>單顆 sensor 取數失敗的輕量記錄：只留輪末統計會用到的「是否逾時」，不保留整個例外到輪末。</summary>
+    internal readonly record struct SensorFetchFailure(bool IsTimeout)
+    {
+    }
+
     /// <summary>
     /// 一次 <see cref="FetchValuesAsync"/> 的共用狀態。每顆 sensor 的結果寫在自己的索引位置（不同顆互不干擾），
     /// 政策與停損旗標的變動由 <see cref="Sync"/> 序列化。
@@ -1259,7 +1264,7 @@ public sealed class PrtgFetchService
             Sdate = day.Date.ToString("yyyy-MM-dd-00-00-00");
             Edate = day.Date.AddDays(1).ToString("yyyy-MM-dd-00-00-00");
             States = new ValueFetchState[sensors.Count];
-            Failures = new Exception?[sensors.Count];
+            Failures = new SensorFetchFailure?[sensors.Count];
             Retryable = new bool[sensors.Count];
             Supplemented = new bool[sensors.Count];
         }
@@ -1272,7 +1277,8 @@ public sealed class PrtgFetchService
         internal string Sdate { get; }
         internal string Edate { get; }
         internal ValueFetchState[] States { get; }
-        internal Exception?[] Failures { get; }
+        /// <summary>每顆最近一次失敗的輕量記錄（不保留整個例外與堆疊，避免整輪結束前常駐大量例外物件）。</summary>
+        internal SensorFetchFailure?[] Failures { get; }
         /// <summary>該顆最近一次失敗是不是可重試（補抓清單的依據）。</summary>
         internal bool[] Retryable { get; }
         /// <summary>該顆有沒有進過補抓輪（「補抓後仍失敗」的計數依據）。</summary>
@@ -1412,7 +1418,7 @@ public sealed class PrtgFetchService
         {
             var retryable = requestPhase && ex is PrtgClientException clientEx && run.Policy.ShouldRetry(clientEx);
             run.States[index] = ValueFetchState.Failed;
-            run.Failures[index] = ex;
+            run.Failures[index] = new SensorFetchFailure(IsTimeoutException(ex, CancellationToken.None));
             run.Retryable[index] = retryable;
             Interlocked.CompareExchange(ref run.FirstFailureMessage, ex.Message, null);
             if (retryable) OnRetryableValueFailure(run, (PrtgClientException)ex, sentGeneration, ct);
@@ -1491,7 +1497,7 @@ public sealed class PrtgFetchService
                     break;
                 default:
                     failedSensors++;
-                    if (run.Failures[i] is { } ex && IsTimeoutException(ex, CancellationToken.None)) timedOutSensors++;
+                    if (run.Failures[i] is { IsTimeout: true }) timedOutSensors++;
                     if (run.Supplemented[i]) supplementFailedSensors++;
                     else if (run.Retryable[i]) supplementNotReached++;
                     break;

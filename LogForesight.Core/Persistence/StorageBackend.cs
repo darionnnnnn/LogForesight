@@ -24,6 +24,10 @@ public class StorageBackend
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    // 每趟分析都會 new 一個 StorageBackend：設定類提示整個行程只記一次，不每趟洗版
+    private static int _sqliteKeysIgnoredWarned;
+    private static int _softHeapLimitLogged;
+
     private readonly Func<LfDbContext> _dbFactory;
     private readonly string _dbDesc;
 
@@ -32,6 +36,27 @@ public class StorageBackend
 
     /// <summary>暫存恢復佇列使用的資料根目錄；業務資料仍以 SQL 為準。</summary>
     public string DataRoot => _dataRoot;
+
+    /// <summary>目前是否為 Sqlite 後端（建構時依設定決定；健康頁記憶體詳情用）。</summary>
+    public bool IsSqlite { get; }
+
+    /// <summary>
+    /// 讀取 SQLite 原生堆的目前用量與歷史高水位（位元組）。非 Sqlite 後端回 (null, null)。
+    /// SQLitePCL provider 尚未初始化時原生呼叫會擲例外，一律吞掉回 (null, null)——
+    /// 記憶體監測不得影響健康頁。
+    /// </summary>
+    public (long? Used, long? Highwater) TryReadSqliteHeap()
+    {
+        if (!IsSqlite) return (null, null);
+        try
+        {
+            return (SQLitePCL.raw.sqlite3_memory_used(), SQLitePCL.raw.sqlite3_memory_highwater(0));
+        }
+        catch (Exception)
+        {
+            return (null, null);
+        }
+    }
 
     public const int ForegroundCommandTimeoutSeconds = 60;
     public const int AnalysisCommandTimeoutSeconds = 300;
@@ -72,8 +97,12 @@ public class StorageBackend
         DbCommandInterceptor? commandInterceptor)
     {
         DbContextOptions<LfDbContext> options;
+        IsSqlite = settings.IsSqlite;
+        long softHeapLimit = 0;
         if (settings.IsSqlite)
         {
+            var (cacheSizeKb, mmapSizeBytes, softHeapLimitBytes) = SqlitePragmaInterceptor.ResolveMemorySettings(settings);
+            softHeapLimit = softHeapLimitBytes;
             string cs;
             if (string.IsNullOrWhiteSpace(settings.ConnectionString))
             {
@@ -105,7 +134,7 @@ public class StorageBackend
             // 只能在每次連線開啟時重設——理由與各 PRAGMA 取值見 SqlitePragmaInterceptor
             var sqliteOptions = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlite(cs)
-                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal));
+                .AddInterceptors(new SqlitePragmaInterceptor(settings.SqliteWal, cacheSizeKb, mmapSizeBytes));
             if (commandInterceptor is not null) sqliteOptions.AddInterceptors(commandInterceptor);
             options = sqliteOptions.Options;
             _dbDesc = $"Sqlite（{cs}）";
@@ -113,6 +142,9 @@ public class StorageBackend
         }
         else
         {
+            if ((settings.SqliteCacheSizeKb != null || settings.SqliteMmapSizeBytes != null || settings.SqliteSoftHeapLimitBytes != null)
+                && Interlocked.Exchange(ref _sqliteKeysIgnoredWarned, 1) == 0)
+                Log.Warn("[SQL] Storage:SqliteCacheSizeKb／SqliteMmapSizeBytes／SqliteSoftHeapLimitBytes 僅 Sqlite 適用，SqlServer 後端已忽略");
             var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
             // 依用途分流逾時長度：
             // 前景站台（maxPoolSize == null）逾時設 60 秒，比預設寬一點吸收尖峰，但仍要在使用者放棄之前失敗。
@@ -172,6 +204,14 @@ public class StorageBackend
             }
 
             Log.Info("[SQL] schema 確認完成");
+
+            // SQLite 原生堆軟上限是整個行程一份：provider 要等第一條連線開啟才初始化，所以放在 schema 確認之後設
+            if (softHeapLimit > 0)
+            {
+                SQLitePCL.raw.sqlite3_soft_heap_limit64(softHeapLimit);
+                if (Interlocked.Exchange(ref _softHeapLimitLogged, 1) == 0)
+                    Log.Info("[SQL] SQLite 原生堆軟上限 {Mb} MB（Storage:SqliteSoftHeapLimitBytes）", softHeapLimit / 1048576);
+            }
         }
         catch (Exception ex)
         {

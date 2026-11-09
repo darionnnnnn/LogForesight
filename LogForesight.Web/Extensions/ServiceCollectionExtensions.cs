@@ -372,6 +372,7 @@ public static class ServiceCollectionExtensions
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
         // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
         services.AddSingleton<IssueRankingCache>(sp => new IssueRankingCache(sp.GetRequiredService<DataVersionStamp>()));
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<IssueRankingCache>());
         // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
@@ -381,16 +382,20 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<DataVersionStamp>(),
             () => DateTime.Today));
         services.AddSingleton<SummaryCache>();
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<SummaryCache>());
         // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton
         // ——它要吸收的正是「每次進詳情頁、每次批次儲存後」的重複詢問，跨請求才有意義。
         services.AddSingleton<NextUnhandledSequenceCache>();
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<NextUnhandledSequenceCache>());
         // 問題負責人可見範圍的跨請求快取（回饋四十五輪 B4）：Singleton 才跨得了請求，
         // 由 Scoped 的 VisibilityService 以可選相依取用；鍵含版本戳，授權變更不必等 TTL。
         services.AddSingleton<IssueOwnedHostIdsCache>();
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<IssueOwnedHostIdsCache>());
         // PRTG 裝置索引的跨請求快取（回饋四十五輪 B5）：Singleton 才跨得了請求
         // ——它要吸收的正是衝突清單「每翻一頁重讀裝置全表」的成本；
         // 刻意不綁版本戳（鏡像由夜間批次直接寫 DB，版本戳不會推進），新鮮度由 TTL 負責。
         services.AddSingleton<PrtgDeviceIndexCache>();
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<PrtgDeviceIndexCache>());
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
@@ -404,6 +409,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IssueHandlingRollupQuery>();
         // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
         services.AddSingleton<ActionableSnapshotCache>(sp => new ActionableSnapshotCache(sp.GetRequiredService<DataVersionStamp>()));
+        services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<ActionableSnapshotCache>());
         services.AddScoped<IssueTodoQuery>();
         // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
         services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
@@ -464,7 +470,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ScheduleOptionsStore>(),
             sp.GetRequiredService<IHostStore>(),
             sp.GetRequiredService<IAnalysisRecordQuery>(),
-            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create()));
+            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create(),
+            sqliteHeap: sp.GetRequiredService<StorageBackend>().TryReadSqliteHeap));
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）

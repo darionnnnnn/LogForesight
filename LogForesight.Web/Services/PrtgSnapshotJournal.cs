@@ -62,6 +62,18 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     private Dictionary<(DateTime Hour, long Sensor), PrtgSnapshotAccumulator.CheckpointRow> _currentAccumulator = new();
     private Dictionary<string, Batch> _currentPending = new(StringComparer.Ordinal);
     private const int MaxRowsPerSegment = 100_000;
+
+    /// <summary>
+    /// 單一 segment 的大小檢查：各組成**分別**不超過 <see cref="MaxRowsPerSegment"/>。
+    /// 不用合計——整點結算一個 delta 同時帶 N 個移除鍵與一個 N 列 batch（約 2N 列），
+    /// 合計比對會讓 5 萬顆以上的快照目標在整點直接停採；journal 整體容量另由 <see cref="MaxRows"/> 把關。
+    /// </summary>
+    private static bool SegmentTooLarge(Segment segment) =>
+        segment.Upserts.Count > MaxRowsPerSegment
+        || segment.Removals.Count > MaxRowsPerSegment
+        || segment.AddedBatches.Count > MaxRowsPerSegment
+        || segment.AckedBatchIds.Count > MaxRowsPerSegment
+        || segment.AddedBatches.Sum(b => (long)b.Rows.Count) > MaxRowsPerSegment;
     private const int CompactAfterSegments = 127;
     private const long GenerationQuotaBytes = MaxBytes / 2 - 64 * 1024;
     internal long BytesRead { get; private set; }
@@ -271,7 +283,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
 
     private void AppendSegment(Segment segment, DateTime now)
     {
-        if (segment.Upserts.Count + segment.Removals.Count + segment.AddedBatches.Count + segment.AckedBatchIds.Count + segment.AddedBatches.Sum(b => (long)b.Rows.Count) > MaxRowsPerSegment)
+        if (SegmentTooLarge(segment))
             throw new InvalidDataException("快照單次 journal segment 超過 100000 列上限");
         var nextCounts = ValidateDelta(segment, now);
         var checksumSegment = segment with { Checksum = SegmentChecksum(segment) };
@@ -605,7 +617,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             {
                 snapshotPhase = false;
                 if (!sawSnapshot) throw new InvalidDataException("快照 journal generation 缺少起始 snapshot");
-                if (segment.Upserts.Count + segment.Removals.Count + segment.AddedBatches.Count + segment.AckedBatchIds.Count + segment.AddedBatches.Sum(b => (long)b.Rows.Count) > MaxRowsPerSegment)
+                if (SegmentTooLarge(segment))
                     throw new InvalidDataException("快照 journal segment 超過 100000 列上限");
                 Apply(segment, accumulator, pending);
             }

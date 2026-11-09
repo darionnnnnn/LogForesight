@@ -188,6 +188,12 @@ public class BatchRun
     /// <summary>各階段起訖（null＝舊紀錄，不從舊 log 推算；鍵見 <see cref="LogForesight.Core.Service.RunTimingPhases"/>）</summary>
     public List<RunPhaseRecord>? Phases { get; set; }
 
+    /// <summary>本趟開始時的記憶體里程碑（null＝舊紀錄或讀不到）</summary>
+    public RunMemoryMark? MemoryStart { get; set; }
+
+    /// <summary>本趟結束（寫出最終列前）的記憶體里程碑（null＝舊紀錄、異常中斷或讀不到）</summary>
+    public RunMemoryMark? MemoryEnd { get; set; }
+
     /// <summary>寫入用的獨立副本：寫入時其他路徑可能正在改階段清單，序列化不能直接讀活的物件</summary>
     public BatchRun Snapshot()
     {
@@ -197,6 +203,21 @@ public class BatchRun
         return copy;
     }
 }
+
+/// <summary>
+/// 執行紀錄的記憶體里程碑（只放判斷「這趟吃了多少」的最小欄位；快取明細不進執行紀錄，避免每趟列變大）。
+/// 數值單位為 bytes；null 表示讀不到。
+/// </summary>
+public sealed record RunMemoryMark(
+    DateTime At,
+    long? WorkingSetBytes,
+    long? PeakWorkingSetBytes,
+    long? ManagedHeapBytes,
+    long? GcCommittedBytes,
+    long? LohSizeBytes,
+    long? HardLimitBytes,
+    long? SqliteHeapHighwaterBytes,
+    int? NlogRuleCount);
 
 /// <summary>執行紀錄的單一階段。FinishedAt／Outcome 為 null＝進行中或該趟異常中斷。</summary>
 public sealed record RunPhaseRecord(string Key, DateTime StartedAt)
@@ -399,7 +420,7 @@ public class BatchRunStore
 
         // SQL 端先以附加時間窄化（含緩衝，不保證精確：CreatedAt 為 null 的既存列一律留下），
         // 業務時間的精確判斷仍在記憶體端做，不可因為「SQL 已經篩過」就拿掉。
-        var runs = LatestPerRun(ReadRunLinesFrom(cutoff.AddDays(-AppendTimeBufferDays)))
+        var runs = LatestPerRunStream(_runs.EnumerateLines(cutoff.AddDays(-AppendTimeBufferDays), null)).Values
             .Where(r => r.StartedAt.Date >= cutoff);
 
         // hostNames 為 null = 不限；空集合 = 查不到（與其他查詢介面同一語意）
@@ -430,13 +451,15 @@ public class BatchRunStore
         if (runId <= 0) return null;
 
         var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
-        var window = LatestPerRun(ReadRunLinesFrom(from));
-        var hit = window.FirstOrDefault(r => r.RunId == runId);
-        if (hit != null) return hit;
+        // 串流只保留目標列；窗口最小 RunId 要看過每一列才準，所以不提早停止
+        long? minInWindow = null;
+        var window = LatestPerRunStream(_runs.EnumerateLines(from, null), r => r.RunId == runId,
+            r => minInWindow = minInWindow is { } m && m <= r.RunId ? m : r.RunId);
+        if (window.TryGetValue(runId, out var hit)) return hit;
 
-        var mayBeOlderThanWindow = window.Count == 0 || runId < window.Min(r => r.RunId);
+        var mayBeOlderThanWindow = minInWindow == null || runId < minInWindow;
         return mayBeOlderThanWindow
-            ? LatestPerRun(ReadAllRunLines()).FirstOrDefault(r => r.RunId == runId)
+            ? LatestPerRunStream(_runs.EnumerateLines(null, null), r => r.RunId == runId).GetValueOrDefault(runId)
             : null;
     }
 
@@ -530,16 +553,16 @@ public class BatchRunStore
         if (runIds.Count == 0) return found;
 
         var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
-        var window = LatestPerRun(ReadRunLinesFrom(from));
-        foreach (var r in window)
-            if (runIds.Contains(r.RunId)) found[r.RunId] = r;
+        long minInWindow = long.MaxValue;
+        var window = LatestPerRunStream(_runs.EnumerateLines(from, null), r => runIds.Contains(r.RunId),
+            r => { if (r.RunId < minInWindow) minInWindow = r.RunId; });
+        foreach (var r in window.Values) found[r.RunId] = r;
 
         var missing = runIds.Where(id => id > 0 && !found.ContainsKey(id)).ToList();
-        var minInWindow = window.Count == 0 ? long.MaxValue : window.Min(r => r.RunId);
         if (missing.Any(id => id < minInWindow))
         {
-            foreach (var r in LatestPerRun(ReadAllRunLines()))
-                if (runIds.Contains(r.RunId)) found[r.RunId] = r;
+            foreach (var r in LatestPerRunStream(_runs.EnumerateLines(null, null), r => runIds.Contains(r.RunId)).Values)
+                found[r.RunId] = r;
         }
         return found;
     }
@@ -555,21 +578,25 @@ public class BatchRunStore
         return _runs.Prune(cutoff) + _logs.Prune(cutoff);
     }
 
-    /// <summary>同一 RunId 取最後一列——「結束」那一列會覆蓋先前的「開始」</summary>
-    private static List<BatchRun> LatestPerRun(IEnumerable<BatchRun> lines) =>
-        lines
-            .GroupBy(r => r.RunId)
-            .Select(g => g.Last())
-            .ToList();
+    /// <summary>
+    /// 同一 RunId 取最後一列——「結束」那一列會覆蓋先前的「開始」。依附加順序（升冪）逐行串流，
+    /// 後到覆蓋先到；<paramref name="keep"/> 通過的列才留下，<paramref name="onEach"/> 則對每個解析成功的列都呼叫
+    /// （不受 keep 影響，供呼叫端累計窗口統計）。
+    /// </summary>
+    private static Dictionary<long, BatchRun> LatestPerRunStream(IEnumerable<string> lines,
+        Func<BatchRun, bool>? keep = null, Action<BatchRun>? onEach = null)
+    {
+        var latest = new Dictionary<long, BatchRun>();
+        foreach (var r in JsonLogParser.ParseStream<BatchRun>(lines, LfJsonOptions.Compact))
+        {
+            onEach?.Invoke(r);
+            if (keep == null || keep(r)) latest[r.RunId] = r;
+        }
+        return latest;
+    }
 
     private void AppendRunLine(BatchRun run) =>
         _runs.AppendLine(JsonSerializer.Serialize(run, LfJsonOptions.Compact));
-
-    private List<BatchRun> ReadAllRunLines() => JsonLogParser.Parse<BatchRun>(_runs.ReadLines(), LfJsonOptions.Compact);
-
-    /// <summary>附加時間不早於 from 的執行紀錄行（SQL 端窄化，不保證精確）</summary>
-    private List<BatchRun> ReadRunLinesFrom(DateTime from) =>
-        JsonLogParser.Parse<BatchRun>(_runs.ReadLines(from, null), LfJsonOptions.Compact);
 
     /// <summary>附加時間落在範圍內的診斷紀錄行（SQL 端窄化，不保證精確）</summary>
     private List<BatchRunLog> ReadLogs(DateTime? from, DateTime? to) =>

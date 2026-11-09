@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>
@@ -18,7 +20,7 @@ namespace LogForesight.Web.Services;
 /// 舊鍵當下就再也命不中、下一次呼叫即重算。TTL 與條目上限純粹是清理機制
 /// （避免離線使用者的舊條目無限累積），不是新鮮度的保證來源。
 /// </summary>
-public class IssueOwnedHostIdsCache
+public class IssueOwnedHostIdsCache : ICacheStatistics
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由
     /// （全站快取的清理節奏一致）。</summary>
@@ -31,6 +33,10 @@ public class IssueOwnedHostIdsCache
     private readonly DataVersionStamp _stamp;
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
+    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
+    private long _hits;
+    private long _misses;
+    private long _evictions;
     private readonly Dictionary<string, (HashSet<long> HostIds, DateTime CachedAt, DateTime LastAccess)> _entries = new();
 
     /// <summary>上一次看到的版本戳：版本一推進，所有舊鍵都已經死掉（鍵含版本戳），
@@ -61,15 +67,18 @@ public class IssueOwnedHostIdsCache
             // 版本戳只前進：較舊版本的晚到請求不得清掉較新版本的條目（D4 契約 5）
             if (version > _seenVersion)
             {
+                _evictions += _entries.Count;
                 _entries.Clear();
                 _seenVersion = version;
             }
             else if (_entries.TryGetValue(key, out var entry)
                      && (_now() - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
+                _hits++;
                 _entries[key] = entry with { LastAccess = _now() };
                 return new HashSet<long>(entry.HostIds);
             }
+            _misses++;
         }
 
         // factory 刻意在鎖外執行：那支聚合查詢很慢，握著鎖算會讓其他請求全部排隊
@@ -97,10 +106,21 @@ public class IssueOwnedHostIdsCache
             .Select(e => e.Key)
             .ToList();
         foreach (var k in expired) _entries.Remove(k);
+        _evictions += expired.Count;
 
         while (_entries.Count >= MaxEntries)
         {
             _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+            _evictions++;
+        }
+    }
+
+    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
+    public CacheStatisticsSnapshot GetStatistics()
+    {
+        lock (_lock)
+        {
+            return new CacheStatisticsSnapshot("IssueOwnedHostIdsCache", _entries.Count, _entries.Values.Sum(e => (long)e.HostIds.Count), _hits, _misses, _evictions, 0);
         }
     }
 }

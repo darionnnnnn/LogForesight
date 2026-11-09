@@ -366,6 +366,9 @@ public class AiScheduleStatusDto
     /// </summary>
     public string? IdleReason { get; set; }
 
+    /// <summary>閒置原因為 backoff（無進度退避）時的下次自動重試時間，其餘為 null</summary>
+    public DateTime? NextRetryAt { get; set; }
+
     public int AiConcurrency { get; set; } = 1;
     public DateTime? NextTriggerTime { get; set; }
     public bool? LastRunSuccess { get; set; }

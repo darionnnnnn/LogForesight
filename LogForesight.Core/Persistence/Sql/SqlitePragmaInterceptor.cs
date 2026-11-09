@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using LogForesight.Core.Configuration;
 
 namespace LogForesight;
 
@@ -23,16 +24,38 @@ namespace LogForesight;
 /// </summary>
 public sealed class SqlitePragmaInterceptor : DbConnectionInterceptor
 {
-    /// <summary>單一連線的 page cache 上限：64MB（負值＝KB）。按需成長，不是預先配置。</summary>
-    private const string BasePragmas =
-        "PRAGMA cache_size=-65536; PRAGMA mmap_size=1073741824; PRAGMA temp_store=MEMORY; PRAGMA busy_timeout=5000;";
+    /// <summary>單一連線的 page cache 上限預設 64MB（KB）。按需成長，不是預先配置（Storage:SqliteCacheSizeKb）。</summary>
+    public const long DefaultCacheSizeKb = 65536;
+
+    /// <summary>記憶體對映讀取上限預設 1GB（Storage:SqliteMmapSizeBytes）。</summary>
+    public const long DefaultMmapSizeBytes = 1073741824;
 
     private readonly string Pragmas;
 
     /// <param name="wal">true＝journal_mode=WAL；false＝journal_mode=DELETE（Storage:SqliteWal）</param>
-    public SqlitePragmaInterceptor(bool wal)
+    /// <param name="cacheSizeKb">每條連線 page cache 上限（KB，&gt; 0）</param>
+    /// <param name="mmapSizeBytes">記憶體對映上限（位元組，≥ 0）</param>
+    public SqlitePragmaInterceptor(bool wal, long cacheSizeKb = DefaultCacheSizeKb, long mmapSizeBytes = DefaultMmapSizeBytes)
     {
-        Pragmas = BasePragmas + (wal ? " PRAGMA journal_mode=WAL;" : " PRAGMA journal_mode=DELETE;");
+        Pragmas = $"PRAGMA cache_size=-{cacheSizeKb}; PRAGMA mmap_size={mmapSizeBytes}; PRAGMA temp_store=MEMORY; PRAGMA busy_timeout=5000;"
+                  + (wal ? " PRAGMA journal_mode=WAL;" : " PRAGMA journal_mode=DELETE;");
+    }
+
+    /// <summary>
+    /// 驗證三個 Sqlite 記憶體設定並回傳生效值；不合法時擲 <see cref="InvalidOperationException"/> 並點名設定鍵。
+    /// </summary>
+    public static (long CacheSizeKb, long MmapSizeBytes, long SoftHeapLimitBytes) ResolveMemorySettings(StorageSettings settings)
+    {
+        var cache = settings.SqliteCacheSizeKb ?? DefaultCacheSizeKb;
+        if (cache <= 0)
+            throw new InvalidOperationException($"Storage:SqliteCacheSizeKb 必須大於 0（目前 {cache}）；留空使用預設 {DefaultCacheSizeKb}。");
+        var mmap = settings.SqliteMmapSizeBytes ?? DefaultMmapSizeBytes;
+        if (mmap < 0)
+            throw new InvalidOperationException($"Storage:SqliteMmapSizeBytes 不可為負（目前 {mmap}）；0＝不使用記憶體對映，留空使用預設 {DefaultMmapSizeBytes}。");
+        var soft = settings.SqliteSoftHeapLimitBytes ?? 0;
+        if (soft < 0)
+            throw new InvalidOperationException($"Storage:SqliteSoftHeapLimitBytes 不可為負（目前 {soft}）；留空或 0＝不設上限。");
+        return (cache, mmap, soft);
     }
 
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)

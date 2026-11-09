@@ -234,6 +234,15 @@ try
 
     app.MapControllers();
 
+    try
+    {
+        logger.Info(GcStartupInfo.DescribeGcStartup(GC.GetConfigurationVariables(), GC.GetGCMemoryInfo().TotalAvailableMemoryBytes));
+    }
+    catch (Exception ex)
+    {
+        logger.Warn(ex, "GC 設定生效值讀取失敗（不影響啟動）");
+    }
+
     logger.Info("LogForesight.Web 啟動：驗證方式 {0}，資料根目錄 {1}",
         settings.Auth.Provider, settings.Storage.ResolveDataRoot());
 
