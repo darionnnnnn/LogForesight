@@ -33,6 +33,27 @@ public class StorageBackend
     /// <summary>暫存恢復佇列使用的資料根目錄；業務資料仍以 SQL 為準。</summary>
     public string DataRoot => _dataRoot;
 
+    /// <summary>目前是否為 Sqlite 後端（建構時依設定決定；健康頁記憶體詳情用）。</summary>
+    public bool IsSqlite { get; }
+
+    /// <summary>
+    /// 讀取 SQLite 原生堆的目前用量與歷史高水位（位元組）。非 Sqlite 後端回 (null, null)。
+    /// SQLitePCL provider 尚未初始化時原生呼叫會擲例外，一律吞掉回 (null, null)——
+    /// 記憶體監測不得影響健康頁。
+    /// </summary>
+    public (long? Used, long? Highwater) TryReadSqliteHeap()
+    {
+        if (!IsSqlite) return (null, null);
+        try
+        {
+            return (SQLitePCL.raw.sqlite3_memory_used(), SQLitePCL.raw.sqlite3_memory_highwater(0));
+        }
+        catch (Exception)
+        {
+            return (null, null);
+        }
+    }
+
     public const int ForegroundCommandTimeoutSeconds = 60;
     public const int AnalysisCommandTimeoutSeconds = 300;
 
@@ -72,6 +93,7 @@ public class StorageBackend
         DbCommandInterceptor? commandInterceptor)
     {
         DbContextOptions<LfDbContext> options;
+        IsSqlite = settings.IsSqlite;
         if (settings.IsSqlite)
         {
             string cs;

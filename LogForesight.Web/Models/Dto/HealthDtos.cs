@@ -161,6 +161,52 @@ public class HealthDetailDto : HealthDto
 
     /// <summary>PRTG 快照最近完整小時摘要；PRTG 未啟用時為 null。</summary>
     public PrtgSnapshotHealthDto? PrtgSnapshot { get; set; }
+
+    /// <summary>行程記憶體快照（儲存探測失敗時也會填；記憶體讀取不碰資料庫）。</summary>
+    public MemorySnapshotDto? Memory { get; set; }
+
+    /// <summary>託管堆占上限比例達警戒線（<c>HealthService.DegradedMemoryUsageRatio</c>），已使整體狀態為 degraded。</summary>
+    public bool MemoryWarning { get; set; }
+}
+
+/// <summary>單一快取的統計（與 <c>CacheStatisticsSnapshot</c> 一一對應）。</summary>
+public sealed class CacheStatisticsDto
+{
+    public string Name { get; set; } = string.Empty;
+    public int Entries { get; set; }
+    public long Elements { get; set; }
+    public long Hits { get; set; }
+    public long Misses { get; set; }
+    public long Evictions { get; set; }
+    public long OversizeRejected { get; set; }
+}
+
+/// <summary>行程記憶體快照 DTO（欄位與 <c>MemorySnapshot</c> 一一對應；可空者為 null 表示讀不到）。</summary>
+public sealed class MemorySnapshotDto
+{
+    public DateTime CapturedAt { get; set; }
+    public long? WorkingSetBytes { get; set; }
+    public long? PeakWorkingSetBytes { get; set; }
+    public long? PrivateBytes { get; set; }
+    public long? PeakPagedBytes { get; set; }
+    public long? ManagedHeapBytes { get; set; }
+    public long? GcHeapSizeBytes { get; set; }
+    public long? GcCommittedBytes { get; set; }
+    public long? GcFragmentedBytes { get; set; }
+    public long? LohSizeBytes { get; set; }
+    public long? HardLimitBytes { get; set; }
+    public int Gen2Collections { get; set; }
+    public bool IsServerGc { get; set; }
+    public long? GcConserveMemory { get; set; }
+    public long? GcHeapHardLimitPercent { get; set; }
+    public long? SqliteHeapBytes { get; set; }
+    public long? SqliteHeapHighwaterBytes { get; set; }
+    public int? NlogRuleCount { get; set; }
+
+    /// <summary>託管堆占上限的百分比（四捨五入到 1 位）；上限未知為 null。</summary>
+    public double? HardLimitUsagePercent { get; set; }
+
+    public List<CacheStatisticsDto> Caches { get; set; } = new();
 }
 
 /// <summary>系統健康頁使用的精簡快照診斷。</summary>

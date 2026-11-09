@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -15,7 +16,7 @@ namespace LogForesight.Web.Services;
 ///
 /// 鍵含**可見主機集合**：不同授權範圍的使用者各自一份，不得串味。
 /// </summary>
-public class IssueRankingCache
+public class IssueRankingCache : ICacheStatistics
 {
     /// <summary>存活秒數（暫定 30）：長到涵蓋「儀表板→報表」的頁面切換，短到處理狀態
     /// 變更不會停留在畫面上超過一次手動重整的自然間隔。</summary>
@@ -30,6 +31,11 @@ public class IssueRankingCache
     private readonly Dictionary<string, (List<IssueRankingDto> Items, DateTime CachedAt, DateTime LastAccess)> _entries = new();
 
     private readonly DataVersionStamp _versionStamp;
+
+    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
+    private long _hits;
+    private long _misses;
+    private long _evictions;
 
     public IssueRankingCache(DataVersionStamp versionStamp, Func<DateTime>? now = null)
     {
@@ -55,13 +61,15 @@ public class IssueRankingCache
     {
         lock (_lock)
         {
-            if (!_entries.TryGetValue(key, out var entry)) return null;
+            if (!_entries.TryGetValue(key, out var entry)) { _misses++; return null; }
             var now = _now();
             if ((now - entry.CachedAt).TotalSeconds >= TtlSeconds)
             {
                 _entries.Remove(key);
+                _misses++;
                 return null;
             }
+            _hits++;
             _entries[key] = entry with { LastAccess = now };
             return new List<IssueRankingDto>(entry.Items);
         }
@@ -87,10 +95,21 @@ public class IssueRankingCache
             .Select(e => e.Key)
             .ToList();
         foreach (var k in expired) _entries.Remove(k);
+        _evictions += expired.Count;
 
         while (_entries.Count >= MaxEntries)
         {
             _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
+            _evictions++;
+        }
+    }
+
+    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
+    public CacheStatisticsSnapshot GetStatistics()
+    {
+        lock (_lock)
+        {
+            return new CacheStatisticsSnapshot("IssueRankingCache", _entries.Count, _entries.Values.Sum(e => (long)e.Items.Count), _hits, _misses, _evictions, 0);
         }
     }
 }
