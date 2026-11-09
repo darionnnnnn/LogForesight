@@ -376,7 +376,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "範圍或 sentinel 設定在預覽期間變更，請重新查詢。"));
         var scopeRevision = $"{scopeRevisionVersion}:{policyStoreVersion}:{rulesVersion}:{sentinelFingerprint}:{hostFingerprint}";
         var policyHosts = policy.HostIds.ToHashSet();
-        var sensorTypes = store.GetSensorStatuses().GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().SensorType);
+        var sensorTypes = store.GetSensorTypes(dataPage.Rows.Select(r => r.SensorId).Distinct().ToList());
         var rows = dataPage.Rows.Select(sensor =>
         {
             hostById.TryGetValue(sensor.HostId ?? 0, out var host);

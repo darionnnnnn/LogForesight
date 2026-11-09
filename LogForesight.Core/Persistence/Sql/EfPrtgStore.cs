@@ -2090,6 +2090,28 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+    /// <summary>
+    /// 未暫停 sensor 的 Objid→SensorType 投影（同 objid 多列取第一筆）。
+    /// <paramref name="objids"/> 非 null 時只查該集合（空集合直接回空字典、不查詢）。
+    /// </summary>
+    public Dictionary<long, string> GetSensorTypes(IReadOnlyCollection<long>? objids = null)
+    {
+        if (objids is { Count: 0 }) return new Dictionary<long, string>();
+        using var __perf = _performance.Measure("prtg:GetSensorTypes");
+        using var ctx = _contextFactory();
+        var query = ctx.PrtgSensors.AsNoTracking().Where(s => !s.Paused);
+        if (objids != null)
+        {
+            var ids = objids.Distinct().ToList();
+            query = query.Where(s => ids.Contains(s.Objid));
+        }
+        return query
+            .Select(s => new { s.Objid, s.SensorType })
+            .ToList()
+            .GroupBy(s => s.Objid)
+            .ToDictionary(g => g.Key, g => g.First().SensorType);
+    }
+
     /// <summary>依所選主機及同一個最新全域對應日期，在 SQL 端計數並回傳一頁感測器。</summary>
     public PrtgMonitoringSensorPage GetMonitoringSensorPage(
         DateTime mapDate, IReadOnlyCollection<long> hostIds, string? search, int offset, int take, int? knownTotal = null)

@@ -93,6 +93,18 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private DateTime? _targetRefreshHour;
     private string? _targetWhitelistFingerprint;
+
+    /// <summary>
+    /// 上次刷新目標時的整體指紋（型別白名單、守門設定、主機與 Sentinel 清單版本）。
+    /// 同小時內指紋沒變就不重算，避免每個 tick 整表重載。
+    /// </summary>
+    private string? _targetFingerprint;
+
+    /// <summary>守門監看的 sensor objid；與 <see cref="_targetObjids"/> 同一個週期刷新，守門停用時為空。</summary>
+    private IReadOnlyList<long>? _guardSensorObjids;
+
+    /// <summary>測試鉤子：<see cref="RefreshTargets"/> 實際執行的次數。</summary>
+    internal int TargetRefreshCount { get; private set; }
     private HashSet<long>? _targetObjids;
     private Dictionary<long, string>? _sensorTypes;
 
@@ -622,14 +634,15 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 快照目標（docs/PRTG-SPEC.md §3b）：最近 30 日內最近一次 ok 對應、主機啟用中的裝置上，
     /// 型別在取數白名單內的未暫停 sensor，加上資源守門監看的 sensor；監看政策的 sensor 清單非空時再縮圈。
     /// </summary>
-    private IReadOnlyList<long> ResolveTargets(SystemSettings settings, DateTime now)
+    internal IReadOnlyList<long> ResolveTargets(SystemSettings settings, DateTime now)
     {
         var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-        RefreshTargets(settings, now, currentHour);
-        var guardSensors = settings.PrtgResourceGuardEnabled
-            ? PrtgResourceGuardTargets.Resolve(new PrtgMirrorGuardSource(_backend.PrtgStore()), settings,
-                _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids
-            : Array.Empty<long>();
+        // 只在「尚未算過／換小時／輸入指紋變了」時整表重算；其餘 tick 沿用快取。
+        // 重設點把 _targetRefreshHour 設 null，所以第一個 tick 與跳過數小時後的 tick 一定會刷新。
+        var fingerprint = ComputeTargetFingerprint(settings);
+        if (_targetRefreshHour != currentHour || _targetFingerprint != fingerprint)
+            RefreshTargets(settings, now, currentHour, fingerprint);
+        var guardSensors = _guardSensorObjids ?? Array.Empty<long>();
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var targetObjids = _targetObjids;
         return PrtgSnapshotTargetResolver.SelectEffectiveTargets(targetObjids ?? new HashSet<long>(), policy, guardSensors);
@@ -817,7 +830,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         public int UnparsedIntervals;
     }
 
-    private sealed record RecentStateChangeScopeContext(
+    internal sealed record RecentStateChangeScopeContext(
         HashSet<long> BusinessDeviceObjids,
         string SourceIdentityHash,
         string ScopeVersionHash,
@@ -835,7 +848,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 的守門項就會把該裝置納入範圍，之後由結構同步持續刷新、不會被「未刷新即刪除」清掉。
     /// </para>
     /// </summary>
-    private async Task<IReadOnlyList<long>> BackfillScopeSensorsAsync(SystemSettings settings,
+    internal async Task<IReadOnlyList<long>> BackfillScopeSensorsAsync(SystemSettings settings,
         RecentStateChangeScopeContext queueContext, CancellationToken ct)
     {
         var newlyBackfilled = new List<long>();
@@ -857,11 +870,13 @@ public class PrtgSnapshotHostedService : BackgroundService
             }
             _seenStructureSyncedAt = latestSynced;
 
+            // 同一個來源實例：Compute 讀過的 sensor 整表直接沿用，單趟只讀一次。
+            var mirrorSource = new PrtgMirrorGuardSource(store);
             var scope = PrtgScopeDevices.Compute(
-                store, _hosts, new PrtgMirrorGuardSource(store), settings, _sentinels.GetAll(),
+                store, _hosts, mirrorSource, settings, _sentinels.GetAll(),
                 SilentConsole, _addressResolver, hostIds: null);
 
-            var mirrorSensors = store.GetAllSensors();
+            var mirrorSensors = mirrorSource.GetSensors();
             var devicesWithSensors = mirrorSensors.Select(s => s.DeviceObjid).ToHashSet();
             var scopePending = scope.DeviceObjids
                 .Where(id => !devicesWithSensors.Contains(id) && !_confirmedEmptyDevices.Contains(id))
@@ -1364,8 +1379,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
     }
 
-    private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour)
+    private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour, string fingerprint)
     {
+        TargetRefreshCount++;
         var store = _backend.PrtgStore();
         var today = now.Date;
         // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
@@ -1381,14 +1397,35 @@ public class PrtgSnapshotHostedService : BackgroundService
         var targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds);
         _targetObjids = targets.ToHashSet();
 
-        var statuses = store.GetSensorStatuses();
-        _sensorTypes = statuses
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().SensorType);
+        _sensorTypes = store.GetSensorTypes();
+
+        _guardSensorObjids = settings.PrtgResourceGuardEnabled
+            ? PrtgResourceGuardTargets.Resolve(new PrtgMirrorGuardSource(store), settings,
+                _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids
+            : Array.Empty<long>();
 
         _targetRefreshHour = currentHour;
         _targetWhitelistFingerprint = WhitelistFingerprint(settings.PrtgSensorTypeWhitelist);
+        _targetFingerprint = fingerprint;
         return okDeviceIds.Count;
+    }
+
+    /// <summary>
+    /// 快照目標的輸入指紋：型別白名單、守門相關設定（啟用旗標、覆寫清單、PRTG 網址）、
+    /// 主機與 Sentinel 清單的 blob 版本。任何一項改變，下一個 tick 立即重算。
+    /// </summary>
+    private string ComputeTargetFingerprint(SystemSettings settings)
+    {
+        var overrides = settings.PrtgResourceGuardSensorObjids == null
+            ? string.Empty
+            : string.Join(",", settings.PrtgResourceGuardSensorObjids);
+        return string.Join("|",
+            WhitelistFingerprint(settings.PrtgSensorTypeWhitelist),
+            settings.PrtgResourceGuardEnabled ? "1" : "0",
+            overrides,
+            settings.PrtgUrl ?? string.Empty,
+            _backend.Blob("hosts").ReadVersion(),
+            _backend.Blob("sentinels").ReadVersion());
     }
 
     private static string WhitelistFingerprint(IReadOnlyCollection<string>? whitelist) =>

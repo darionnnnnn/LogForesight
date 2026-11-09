@@ -89,6 +89,110 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    // ---- 第 67 輪 C-2：快照目標不再每個 tick 整表重載 ----
+
+    private static readonly DateTime TargetRefreshBase = new(2026, 11, 9, 10, 5, 0);
+
+    [Fact]
+    public void 目標刷新_同小時連續三次只刷新一次()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(10));
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(20));
+
+        Assert.Equal(1, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標刷新_換小時刷新_跳過數小時後下一次也刷新一次()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(1));
+        Assert.Equal(2, service.TargetRefreshCount);
+
+        // 服務暫停數小時、中間沒有 tick：回來的第一個 tick 必須刷新，之後同小時不再刷新。
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(5));
+        service.ResolveTargets(settings, TargetRefreshBase.AddHours(5).AddMinutes(3));
+        Assert.Equal(3, service.TargetRefreshCount);
+    }
+
+    [Theory]
+    [InlineData("whitelist")]
+    [InlineData("overrideObjids")]
+    [InlineData("guardEnabled")]
+    [InlineData("hostsBlob")]
+    [InlineData("sentinelsBlob")]
+    public void 目標刷新_輸入改變時下一次立即刷新(string change)
+    {
+        var service = CreateService();
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase);
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(1));
+        Assert.Equal(1, service.TargetRefreshCount);
+
+        switch (change)
+        {
+            case "whitelist":
+                _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "cpuload" });
+                break;
+            case "overrideObjids":
+                _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = new List<string> { "9001" });
+                break;
+            case "guardEnabled":
+                _settingsStore.Update(s => s.PrtgResourceGuardEnabled = !s.PrtgResourceGuardEnabled);
+                break;
+            case "hostsBlob":
+                _hostStore.Upsert(new WebHost { HostName = "Server-X", IpAddress = "192.168.1.99", Active = false });
+                break;
+            case "sentinelsBlob":
+                new SentinelStore(_backend.Blob("sentinels")).Upsert(new Sentinel { Name = "s-c2", BaseUrl = "http://10.9.9.9" });
+                break;
+        }
+
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(2));
+        Assert.Equal(2, service.TargetRefreshCount);
+        // 刷新後指紋追上，同小時再來不重複刷新。
+        service.ResolveTargets(_settingsStore.Get(), TargetRefreshBase.AddMinutes(3));
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public void 目標刷新_RequestScopeRefresh後下一次立即刷新()
+    {
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        service.ResolveTargets(settings, TargetRefreshBase);
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(1));
+        Assert.Equal(1, service.TargetRefreshCount);
+
+        service.RequestScopeRefresh();
+        service.ResolveTargets(settings, TargetRefreshBase.AddMinutes(2));
+
+        Assert.Equal(2, service.TargetRefreshCount);
+    }
+
+    [Fact]
+    public async Task 範圍補抓_單趟sensor整表只讀一次()
+    {
+        _backend.PrtgStore().UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 5001, DeviceObjid = 10, Name = "CPU", SensorType = "cpuload" }
+        }, DateTime.Now);
+        var service = CreateService();
+        var context = new PrtgSnapshotHostedService.RecentStateChangeScopeContext(
+            new HashSet<long>(), "id", "ver", DateTime.Today, DateTime.UtcNow);
+        _sqlDiagnostics.Reset();
+
+        await service.BackfillScopeSensorsAsync(_settingsStore.Get(), context, CancellationToken.None);
+
+        Assert.Equal(1, _sqlDiagnostics.SensorSelectCount);
+    }
+
     private PrtgSnapshotHostedService CreateService(TestConsole? console = null, TimeSpan? pollInterval = null)
     {
         var service = new PrtgSnapshotHostedService(
