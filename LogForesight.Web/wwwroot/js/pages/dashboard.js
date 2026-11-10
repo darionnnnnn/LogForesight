@@ -9,6 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad, helpIcon } from '../core/ui.js';
+import { roleText } from '../core/elements.js';
 import { revealFirstRow } from '../core/reveal.js';
 import { categoryName, formatNumber, formatDateTime, latestStatusCell, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
@@ -88,7 +89,7 @@ function renderAiFocusResting(container, err) {
     const card = document.createElement('div');
     card.className = 'lf-card mb-3';
     const body = document.createElement('div');
-    body.className = 'lf-card__body text-muted small';
+    body.className = 'lf-card__body lf-text-meta';
     body.textContent = seconds
         ? `AI 暫時休息，約 ${seconds} 秒後再試。`
         : 'AI 暫時休息，請稍後再試。';
@@ -180,7 +181,7 @@ function renderServerAdminGuide() {
     body.appendChild(title);
 
     const intro = document.createElement('p');
-    intro.className = 'text-muted mb-3';
+    intro.className = 'lf-text-meta mb-3';
     intro.textContent = '此帳號的用途是「指派 admin 成員」與「AD／資料庫停擺時的救援入口」，'
         + '依最小授權原則刻意只有維護與稽核能力，不檢視業務資料——所以儀表板、問題查詢、報表對它是空白，這是正常的。';
     body.appendChild(intro);
@@ -243,8 +244,8 @@ function renderBanner(data, user) {
     banner.className = 'lf-card lf-card--ok mb-3';
     banner.innerHTML = `
         <div class="lf-card__body text-center py-4">
-            <div class="fs-4 fw-semibold text-success mb-1">已分析資料未顯示風險訊號</div>
-            <div class="text-muted">僅代表目前可見的分析結果；未回報、涵蓋缺口與隱藏項目仍須檢查。</div>
+            <div class="fs-4 fw-semibold mb-1">已分析資料未顯示風險訊號</div>
+            <div class="lf-text-meta">僅代表目前可見的分析結果；未回報、涵蓋缺口與隱藏項目仍須檢查。</div>
         </div>`;
     container.replaceChildren(banner);
 }
@@ -407,15 +408,16 @@ function renderKpi(data, user, displaySettings, myBadge) {
     const container = document.getElementById('dashboard-kpi');
     const strip = kpiStrip(groups, { singleRow: true });
     container.replaceChildren(strip);
-    mountKpiReveal(strip, container);
+    mountKpiReveal(strip, container, new Set(cards.filter(c => c.variant === 'danger').map(c => c.label)));
 }
 
-function mountKpiReveal(strip, container) {
+/** 告警卡＝建卡時 variant 為 danger 的卡（以標籤對應，不看樣式類別，換角色類別不會讓「藏起來的告警數」靜默變 0） */
+function mountKpiReveal(strip, container, alertLabels) {
     mountReveal('kpi', {
         grids: [...strip.querySelectorAll('.lf-kpi-grid')],
         host: container,
         noun: '項指標',
-        isAlert: card => card.querySelector('.text-danger') !== null,
+        isAlert: card => alertLabels.has(card.querySelector('.lf-stat__label')?.textContent),
         // 收合時三組等寬（只看展開狀態，不看量測結果，沒有量測→寬度→量測的回授）
         onCollapsedChange: expanded => strip.classList.toggle('lf-kpi-strip--collapsed', !expanded)
     });
@@ -466,7 +468,7 @@ function renderCategories(data) {
                     <span class="lf-stat__label">個問題</span>
                 </div>
                 <div class="lf-stat__label mb-1 category-hosts"></div>
-                <div class="small text-muted mb-2 category-cumulative"></div>
+                <div class="lf-text-meta mb-2 category-cumulative"></div>
                 <div class="small category-severity"></div>
             </div>`;
 
@@ -536,7 +538,7 @@ function renderTopIssues(data) {
 
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
-            { title: '問題', render: i => issueNameCell(i) },
+            { title: '問題', className: 'lf-minw-lg', render: i => issueNameCell(i) },
             { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
             { title: '嚴重度', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
@@ -577,7 +579,7 @@ function renderConcludedNote(containerId, concludedCount, mutedCount) {
     // 用 classList 增減而不是整個蓋掉 className——容器在 cshtml 帶著 px-3 pb-2 的排版 class，
     // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
     el.classList.remove('d-none');
-    el.classList.add('small', 'text-muted');
+    el.classList.add('lf-text-meta');
     // 靜音中的問題同樣不列入（docs/archive/FEEDBACK-47-PLAN.md 15.3 (2)）；儀表板給所有角色看，不加連結
     if (c && m) el.textContent = `另有 ${c} 個問題已有結論、${m} 個靜音中（未列入）`;
     else if (c) el.textContent = `另有 ${c} 個問題已有結論（未列入）`;
@@ -610,7 +612,7 @@ function issueNameCell(issue) {
     const wrap = document.createElement('div');
 
     const title = document.createElement('div');
-    title.className = 'fw-semibold d-flex align-items-center gap-1';
+    title.className = 'lf-text-title d-flex align-items-center gap-1';
     const name = document.createElement('span');
     name.textContent = `${issue.source} (${issue.eventId})`;
     title.appendChild(name);
@@ -632,7 +634,7 @@ function issueNameCell(issue) {
     wrap.appendChild(title);
 
     const category = document.createElement('div');
-    category.className = 'small text-muted';
+    category.className = 'lf-text-meta';
     category.textContent = categoryName(issue.category);
     wrap.appendChild(category);
 
@@ -653,7 +655,7 @@ function issueHostCell(issue) {
 
     if (issue.hostRatio > 0) {
         const ratio = document.createElement('div');
-        ratio.className = 'small text-muted';
+        ratio.className = 'lf-text-meta';
         ratio.textContent = `${Math.round(issue.hostRatio * 100)}%`;
         ratio.title = '影響率＝主機數 ÷ 可見主機總數';
         wrap.appendChild(ratio);
@@ -670,7 +672,7 @@ function issueOpenCell(issue) {
     const wrap = document.createElement('div');
     const count = document.createElement('div');
     count.textContent = formatNumber(issue.openHostCount);
-    count.className = issue.openHostCount > 0 ? 'text-danger fw-semibold' : 'text-muted';
+    count.className = issue.openHostCount > 0 ? 'lf-text-alert' : 'lf-text-meta';
     wrap.appendChild(count);
     return wrap;
 }
@@ -682,7 +684,7 @@ function issueOpenCell(issue) {
  */
 function issuePriorityScoreCell(issue) {
     const span = document.createElement('span');
-    span.className = 'lf-mono fw-semibold';
+    span.className = 'lf-text-data';
     span.textContent = issue.priorityScore.toFixed(0);
     span.title = '為什麼是這個分數：' +
         `嚴重度×${issue.priorityScoreSeverityWeight.toFixed(2)}　` +
@@ -703,17 +705,16 @@ function issueSpanCell(issue) {
     const wrap = document.createElement('div');
 
     const span = document.createElement('div');
-    span.className = 'lf-mono small';
+    span.className = 'lf-text-data';
     span.textContent = issue.firstSeen;
     wrap.appendChild(span);
 
     const hint = document.createElement('div');
-    hint.className = 'small';
     if (issue.daysSinceLastSeen === 0) {
-        hint.className += ' text-danger fw-semibold';
+        hint.className = 'lf-text-alert';
         hint.textContent = '昨日仍在發生';
     } else {
-        hint.className += ' text-muted';
+        hint.className = 'lf-text-meta';
         hint.textContent = `${issue.daysSinceLastSeen} 天前`;
     }
     wrap.appendChild(hint);
@@ -724,7 +725,7 @@ function issueSpanCell(issue) {
 /** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
 function issueFleetFirstSeenCell(issue) {
     const span = document.createElement('span');
-    span.className = 'lf-mono small';
+    span.className = 'lf-text-data';
     span.textContent = issue.fleetFirstSeen || issue.firstSeen;
     return span;
 }
@@ -739,13 +740,13 @@ function issueChangeCell(issue) {
     span.className = 'small';
 
     if (issue.isNew) {
-        span.className += ' text-danger fw-semibold';
+        span.className += ' lf-text-alert';
         span.textContent = '本期新增';
         return span;
     }
 
     if (issue.previousHostCount === 0) {
-        span.className += ' text-muted';
+        span.className += ' lf-text-meta';
         span.textContent = '—';
         return span;
     }
@@ -753,14 +754,14 @@ function issueChangeCell(issue) {
     const delta = (issue.hostCount - issue.previousHostCount) / issue.previousHostCount;
     const percent = Math.round(delta * 100);
     if (percent === 0) {
-        span.className += ' text-muted';
+        span.className += ' lf-text-meta';
         span.textContent = '持平';
     } else if (percent > 0) {
-        span.className += ' text-danger';
+        span.className += ' lf-text-alert';
         span.textContent = `↑${percent}%`;
         span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
     } else {
-        span.className += ' text-success';
+        span.className += ' lf-text-meta';
         span.textContent = `↓${Math.abs(percent)}%`;
         span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
     }
@@ -786,7 +787,7 @@ function correlationCell(host) {
 
     // 關聯訊號＝程式確定性比對出的攻擊鏈/故障鏈，比單一事件更值得警戒，用紅色鏈結圖示延續 console 的視覺語言
     const span = document.createElement('span');
-    span.className = 'text-danger fw-semibold d-inline-flex align-items-center gap-1 justify-content-end';
+    span.className = 'lf-text-alert d-inline-flex align-items-center gap-1 justify-content-end';
     span.appendChild(icon('link-45deg'));
     const count = document.createElement('span');
     count.textContent = String(host.correlationDays);
@@ -807,7 +808,7 @@ function renderGroupRisk(data, user) {
     const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
-            { title: '群組', render: g => g.groupName },
+            { title: '群組', render: g => roleText('lf-text-title', g.groupName) },
             { title: '主機數', className: 'text-end', render: g => formatNumber(g.hostCount) },
             { title: '高風險日', className: 'text-end', render: g => formatNumber(g.highRiskDays) },
             { title: '中風險日', className: 'text-end', render: g => formatNumber(g.mediumRiskDays) },
@@ -844,8 +845,8 @@ async function loadFreshness() {
     let text = `資料最近更新：${f.lastSuccessAt ? formatDateTime(f.lastSuccessAt) : '近 14 天無紀錄'}`;
     if (warn && contacts.length > 0) text += `，請聯絡系統管理員：${contacts.join('、')}`;
     el.textContent = text;
-    el.classList.toggle('text-muted', !warn);
-    el.classList.toggle('text-warning-emphasis', warn);
+    el.classList.toggle('lf-text-meta', !warn);
+    el.classList.toggle('lf-text-alert', warn);
 }
 
 loadFreshness();

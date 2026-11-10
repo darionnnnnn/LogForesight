@@ -1092,7 +1092,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **頂部 KPI 卡列分三組**（`kpiStrip`，docs/DESIGN-SYSTEM.md §6b）：風險概況（高／中風險日、監控主機數、涵蓋率缺口天數）、
   待處理（未處理問題、待派工問題、我的交辦單、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。
 - **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕，依實際格線欄數藏起第一排以外的卡，
-  按鈕寫出被藏幾項與其中幾項告警（KPI 看紅字、風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
+  按鈕寫出被藏幾項與其中幾項告警（KPI 以建卡時 `variant` 為 `danger` 的標籤集合判定、不看樣式類別，風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
   （`lf.collapse.dashboard-kpi`、`lf.collapse.dashboard-categories`），列印時一律全部顯示。風險類型的順序由後端排定（有高 > 有中 > 問題數）。
   KPI 三組的寬度只取決於展開與否，不量測：`revealFirstRow` 以選用回呼 `onCollapsedChange(expanded)` 通知，`dashboard.js` 據此在 strip 上切換 `lf-kpi-strip--collapsed`；CSS 只在 `(min-width:576px) and (max-width:1799.98px)` 且收合時讓三組 `flex: 1 1 0` 等寬。更寬的畫面全部卡片放得下，維持依卡數分寬；展開後與小於 576px 同樣依卡數分寬。
 - **未回報主機是頂部 KPI 卡列的一張計數卡**：兩千台規模下逐台列出可能數百筆，
@@ -1945,6 +1945,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 > `.lf-content` 用 `overflow:auto` 而非 `hidden`：視窗矮到觸發下限時仍捲得到，不會被裁掉。
 > 期間列與「顯示範圍」chips 併成同一列、頁底簽章查詢導引收進 popover，都是為了把固定高度
 > 讓給圖表。列印與窄螢幕（≤768px）整組解除綁定，回到「內容多長排多長」。
+> KPI 卡走 `kpiStrip(…, { singleRow: true })`，四張卡排同一排（不夠寬時才換行）；三顆占比小圖的圖例列用說明字級、
+> 收掉列左右留白，名稱至少留三個字寬，數值放不下時換到名稱下一行靠右，不得超出卡片。
 > **跨主機同簽章查詢已移除**——問題查詢的 Event ID＋來源欄位＋「依問題」視角是其嚴格超集
 > （可下鑽、可指派），報表頁只留一個導向問題查詢的按鈕＋說明 popover。
 
@@ -2630,7 +2632,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
 - **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
   一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
-  深連結（`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI
+  深連結（`#{章節id}`），章節結尾的「相關功能」連結（頁內導航項 `lf-nav-item`）沿用 manifest 的 `related`，人與 AI
   問答共用同一份關聯資訊。**問答框位於章節內容下方**。**章節內容區自然展開**：
   不用 `help-manual.js` 量測目錄卡高度、不把內容區塞進同高的 `max-height` 內捲動——否則內容
   一長就要在小視窗裡捲兩層（頁面本身＋內容區）。左側目錄卡 `position: sticky`

@@ -252,6 +252,11 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
     letter-spacing: -.01em;
 }
 
+/* KPI 數字的語意色（kpiStrip 的 card.variant）：紅與琥珀只給需要注意的數字 */
+.lf-stat__value--danger { color: var(--lf-danger); }
+.lf-stat__value--warning { color: var(--lf-warning); }
+.lf-stat__value--secondary { color: var(--lf-text-muted); }
+
 .lf-stat__label {
     font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);

@@ -8,7 +8,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, showDetailModal, loadRunHint } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, loadRunHint, button } from '../core/ui.js';
 import { severityName } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
@@ -172,19 +172,14 @@ function renderFocus() {
 
     if (focus.length === 0) {
         const empty = document.createElement('span');
-        empty.className = 'small text-muted';
+        empty.className = 'lf-text-meta';
         empty.textContent = '未指定，系統會依提問判斷';
         bar.appendChild(empty);
     }
 
-    const pick = document.createElement('button');
-    pick.type = 'button';
-    pick.className = 'btn btn-sm btn-outline-secondary lf-focus-pick';
-    pick.textContent = '指定問題';
-    pick.disabled = controlsLocked;
+    const pick = button('指定問題', { className: 'lf-focus-pick', disabled: controlsLocked, onClick: openFocusPicker });
     pick.setAttribute('aria-expanded', pickerOpen ? 'true' : 'false');
     pick.setAttribute('aria-controls', 'chat-focus-picker');
-    pick.addEventListener('click', openFocusPicker);
     bar.appendChild(pick);
     pickBtn = pick;
 }
@@ -242,7 +237,7 @@ function openFocusPicker() {
     });
     if (rows.length === 0) {
         const none = document.createElement('div');
-        none.className = 'text-muted';
+        none.className = 'lf-text-meta';
         none.textContent = '目前沒有可指定的問題。';
         list.appendChild(none);
     }
@@ -258,24 +253,18 @@ function openFocusPicker() {
     actions.className = 'lf-focus-picker__actions';
     let cancel;
     if (rows.length > 0) {
-        const apply = document.createElement('button');
-        apply.type = 'button';
-        apply.className = 'btn btn-primary btn-sm';
-        apply.textContent = '套用';
-        apply.addEventListener('click', () => {
-            if (controlsLocked) return;
-            const chosen = rows.filter(r => r.box.checked)
-                .map(r => toFocusItem(r.issue.issueKey, r.issue.sourceEventLabel));
-            focus = [...kept, ...chosen];
-            closeFocusPicker(true);
-        });
-        actions.appendChild(apply);
+        actions.appendChild(button('套用', {
+            variant: 'primary',
+            onClick: () => {
+                if (controlsLocked) return;
+                const chosen = rows.filter(r => r.box.checked)
+                    .map(r => toFocusItem(r.issue.issueKey, r.issue.sourceEventLabel));
+                focus = [...kept, ...chosen];
+                closeFocusPicker(true);
+            }
+        }));
     }
-    cancel = document.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn btn-outline-secondary btn-sm';
-    cancel.textContent = '取消';
-    cancel.addEventListener('click', () => closeFocusPicker(true));
+    cancel = button('取消', { onClick: () => closeFocusPicker(true) });
     actions.appendChild(cancel);
 
     panel.replaceChildren(list, actions);
@@ -416,13 +405,13 @@ function renderBubble(message) {
         bubble.className = 'lf-ai-block lf-bubble';
         if (message.hint) {
             const hint = document.createElement('div');
-            hint.className = 'small text-muted mb-1';
+            hint.className = 'lf-text-meta mb-1';
             hint.textContent = message.hint;
             bubble.appendChild(hint);
         }
         if (message.fetchedLogCount > 0) {
             const note = document.createElement('div');
-            note.className = 'small text-muted mb-1';
+            note.className = 'lf-text-meta mb-1';
             note.textContent = `已取回現場事件 ${message.fetchedLogCount} 則納入分析`;
             bubble.appendChild(note);
         }

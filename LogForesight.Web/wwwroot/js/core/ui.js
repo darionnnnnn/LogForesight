@@ -1706,7 +1706,8 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             if (fullText) el.title = fullText;
 
             const valueEl = document.createElement('div');
-            valueEl.className = card.variant ? `lf-stat__value text-${card.variant}` : 'lf-stat__value';
+            // 數字顏色走 KPI 自己的修飾類別（danger＝風險狀態紅、warning＝琥珀、secondary＝次要灰），不借 Bootstrap 的 text-* 工具類
+            valueEl.className = card.variant ? `lf-stat__value lf-stat__value--${card.variant}` : 'lf-stat__value';
             valueEl.textContent = card.value;
 
             const labelEl = document.createElement('div');

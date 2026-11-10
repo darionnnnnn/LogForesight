@@ -49,13 +49,6 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> AdHocTextColorAllowed = new(StringComparer.Ordinal)
     {
-        "Views/Pages/Dashboard.cshtml",
-        "Views/Pages/HelpManual.cshtml",
-        "Views/Pages/Reports.cshtml",
-        "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/dashboard.js",
-        "wwwroot/js/pages/handling-panel.js",
-        "wwwroot/js/pages/help-manual.js",
-        "wwwroot/js/pages/reports.js",
     };
 
     [Fact]
@@ -80,8 +73,6 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> HandwrittenButtonAllowed = new(StringComparer.Ordinal)
     {
-        "wwwroot/js/pages/chat-panel.js",
-        "wwwroot/js/pages/handling-panel.js", "wwwroot/js/pages/help-manual.js",
     };
 
     [Fact]

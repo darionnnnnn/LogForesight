@@ -2045,5 +2045,212 @@
         }
       }
     ]
+  },
+  {
+    "name": "互動-儀表板-期間切換與告警分流",
+    "role": "ui-admin",
+    "path": "/",
+    "steps": [
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-issues .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-kpi .lf-kpi-card",
+          "visible": true
+        }
+      },
+      {
+        "click": "[data-range=\"30\"]"
+      },
+      {
+        "waitFor": "[data-range=\"30\"].active"
+      },
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-range",
+          "visible": true
+        }
+      },
+      {
+        "click": "[data-range=\"1\"]"
+      },
+      {
+        "waitFor": "[data-range=\"1\"].active"
+      },
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      }
+    ]
+  },
+  {
+    "name": "互動-報表-期間視角與一屏綁定",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "assertAt": {
+          "1280": {
+            "sel": ".lf-layout",
+            "style": {
+              "height": "900px"
+            }
+          },
+          "1920": {
+            "sel": ".lf-layout",
+            "style": {
+              "height": "900px"
+            }
+          }
+        }
+      },
+      {
+        "click": "[data-range=\"30\"]"
+      },
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "click": "#rank-mode-toggle [data-rank-mode=\"issue\"]"
+      },
+      {
+        "waitFor": "#rank-mode-toggle [data-rank-mode=\"issue\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#btn-print-report",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": ".lf-report-page .lf-legend-row__value",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-報表",
+    "role": "ui-viewer",
+    "path": "/reports",
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#btn-print-report",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-說明書-切章與相關功能",
+    "role": "ui-admin",
+    "path": "/help/manual",
+    "steps": [
+      {
+        "waitFor": "#help-chapter-nav button"
+      },
+      {
+        "click": "#help-chapter-nav button:nth-child(3)"
+      },
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      },
+      {
+        "assert": {
+          "sel": "#help-chapter-related .lf-nav-item",
+          "visible": true
+        }
+      },
+      {
+        "click": "#help-chapter-related .lf-nav-item"
+      },
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-說明書",
+    "role": "ui-viewer",
+    "path": "/help/manual",
+    "steps": [
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-詢問AI與處理面板",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": "#chat-focus .lf-focus-pick"
+      },
+      {
+        "clickIf": "#chat-focus-picker .btn-outline-secondary"
+      },
+      {
+        "clickIf": ".lf-side-rail__btn[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#handling-panel button[type=\"submit\"]"
+      },
+      {
+        "assert": {
+          "sel": "#handling-panel .lf-text-label",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-風險日詳情-處理面板",
+    "role": "ui-handler",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": ".lf-side-rail__btn[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#handling-panel button[type=\"submit\"]"
+      }
+    ]
   }
 ]

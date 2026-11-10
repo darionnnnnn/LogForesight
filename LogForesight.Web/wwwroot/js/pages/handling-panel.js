@@ -199,14 +199,14 @@ function statusSummary(handling) {
     const current = document.createElement('div');
     current.className = 'lf-handling__current';
     const label = document.createElement('span');
-    label.className = 'small text-muted';
+    label.className = 'lf-text-label';
     label.textContent = '目前狀態';
     const value = document.createElement('strong');
     value.textContent = derivedStatusLabel(handling);
     current.append(label, value);
     if (handling.isOverdue) {
         const overdue = document.createElement('span');
-        overdue.className = 'text-danger fw-semibold';
+        overdue.className = 'lf-text-alert';
         overdue.textContent = '・逾期';
         current.appendChild(overdue);
     }
@@ -214,7 +214,7 @@ function statusSummary(handling) {
 
     if (handling.updatedAt) {
         const updated = document.createElement('span');
-        updated.className = 'small text-muted lf-handling__updated';
+        updated.className = 'lf-text-meta lf-handling__updated';
         updated.textContent = `最後更新 ${formatDateTime(handling.updatedAt)}`;
         row.appendChild(updated);
     }
@@ -245,7 +245,7 @@ function readonlyField(label, value, hint, hintAsIcon = false) {
     wrap.className = 'lf-handling__row';
 
     const labelEl = document.createElement('div');
-    labelEl.className = 'lf-handling__row-label small text-muted';
+    labelEl.className = 'lf-handling__row-label lf-text-label';
     labelEl.textContent = label;
     if (hint && hintAsIcon) {
         labelEl.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
@@ -272,7 +272,7 @@ function assignField(handling, users, hostId, date) {
     wrap.className = 'lf-handling__row';
 
     const label = document.createElement('label');
-    label.className = 'lf-handling__row-label form-label small mb-0 text-muted';
+    label.className = 'lf-handling__row-label form-label lf-text-label mb-0';
     label.textContent = '處理人';
     label.htmlFor = 'handler-select';
 
@@ -426,7 +426,7 @@ function handlingForm() {
 
     // chips 是一組按鈕不是單一控制項：用 role=group＋aria-labelledby 指到這個標題（不用沒有對象的 label）
     const statusLabel = document.createElement('div');
-    statusLabel.className = 'form-label small mb-1 text-muted';
+    statusLabel.className = 'form-label lf-text-label mb-1';
     statusLabel.id = 'handling-status-label';
     statusLabel.textContent = '處理狀態';
     form.appendChild(statusLabel);
@@ -473,7 +473,7 @@ function handlingForm() {
 
     if (!batchMode && handling.isOverdue) {
         const overdue = document.createElement('div');
-        overdue.className = 'form-text text-danger fw-semibold';
+        overdue.className = 'form-text lf-text-alert';
         overdue.textContent = '⚠ 已逾期';
         dueWrap.appendChild(overdue);
     }
@@ -483,7 +483,7 @@ function handlingForm() {
     const observeWrap = document.createElement('div');
     observeWrap.className = 'mb-3 d-none';
     const observeLabel = document.createElement('label');
-    observeLabel.className = 'form-label small mb-1 text-muted';
+    observeLabel.className = 'form-label lf-text-label mb-1';
     observeLabel.htmlFor = 'observe-days';
     observeLabel.textContent = '觀察天數';
     const observeInput = document.createElement('input');
@@ -541,7 +541,7 @@ function handlingForm() {
 
     // 說明：label 單獨一列（updateFieldsForStatus 會改它的文字，工具列不可放進 label 節點）
     const noteLabel = document.createElement('label');
-    noteLabel.className = 'form-label small mb-1 text-muted';
+    noteLabel.className = 'form-label lf-text-label mb-1';
     noteLabel.htmlFor = 'handling-note';
     form.appendChild(noteLabel);
 
@@ -624,10 +624,7 @@ function handlingForm() {
     // ── (4) 動作區：只放主鈕 ──
     const actions = document.createElement('div');
     actions.className = 'lf-form-actions';
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'btn btn-sm btn-primary w-100';
-    submit.textContent = batchMode ? `套用到 ${selection.size} 個問題` : '儲存';
+    const submit = button(batchMode ? `套用到 ${selection.size} 個問題` : '儲存', { variant: 'primary', type: 'submit', className: 'w-100' });
     actions.appendChild(submit);
     form.appendChild(actions);
 
@@ -778,13 +775,13 @@ function renderLogItem(log) {
     head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
     const action = document.createElement('span');
-    action.className = 'fw-semibold small';
+    action.className = 'lf-text-title';
     action.textContent = log.actionText;
     head.appendChild(action);
 
     if (log.issueLabel) {
         const issue = document.createElement('span');
-        issue.className = 'small text-muted';
+        issue.className = 'lf-text-meta';
         issue.textContent = `【${log.issueLabel}】`;
         head.appendChild(issue);
     }
@@ -796,7 +793,7 @@ function renderLogItem(log) {
 
     if (log.handlerName) {
         const handler = document.createElement('span');
-        handler.className = 'small text-muted';
+        handler.className = 'lf-text-meta';
         handler.textContent = `處理人：${log.handlerName}`;
         head.appendChild(handler);
     }
@@ -811,7 +808,7 @@ function renderLogItem(log) {
     }
 
     const meta = document.createElement('div');
-    meta.className = 'small text-muted mt-1';
+    meta.className = 'lf-text-meta mt-1';
     meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${operatorLabel(log.actorDisplayName, log.actorAccount)}`;
     item.appendChild(meta);
 
@@ -828,7 +825,7 @@ function renderGroupSummary(group) {
 
     const verb = group.action === 'issue_status_cleared' ? '清除標記' : '標記';
     const action = document.createElement('span');
-    action.className = 'fw-semibold small';
+    action.className = 'lf-text-title';
     action.textContent = `${verb} ${group.logs.length} 個問題`;
     head.appendChild(action);
 
@@ -842,7 +839,7 @@ function renderGroupSummary(group) {
     item.appendChild(head);
 
     const meta = document.createElement('div');
-    meta.className = 'small text-muted mt-1';
+    meta.className = 'lf-text-meta mt-1';
     meta.textContent =
         `${formatDateTime(group.createdAt)}　操作者：${operatorLabel(group.actorDisplayName, group.actorAccount)}　點「放大檢視」看逐筆明細`;
     item.appendChild(meta);

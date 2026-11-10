@@ -26,6 +26,13 @@
     }
 }
 
+/* 操作說明書的「相關功能」與「參考章節」：頁內導航項（lf-nav-item），用主色與底線表示可點 */
+.lf-help-nav-links .lf-nav-item {
+    color: var(--lf-primary);
+    text-decoration: underline;
+    text-underline-offset: .2em;
+}
+
 /* 操作說明書內文（markdown-lite 的 asDocument 模式，docs/HELP-WRITING-GUIDE.md）：讀者是非 IT 人員，
    要能快速掃讀。行高 1.7 給中文較舒適的呼吸、每行約 46 字（max-inline-size）避免大螢幕一行過長；
    段落標題是語意 h3（卡片標題 h2 是章名），上方大留白＋底線把章節切成一段一段；
@@ -273,8 +280,7 @@
 
 /* 三顆占比小圖並排時，圖例是唯一會讓三張卡分到不同甜甜圈高度的東西：
    標籤字數與數值長度不同 → 換行列數不同 → 圓大小不一。
-   在報表頁的窄欄裡取消 min-width（改為欄寬自適應）、每列單行不換行，
-   讓三組圖例的高度恆等（都是兩列） */
+   在報表頁的窄欄裡取消 min-width（改為欄寬自適應），名稱與數值各自不在字中斷行 */
 .lf-report-page .lf-chart-stack .lf-legend-list {
     min-width: 0;
     width: 100%;
@@ -283,11 +289,34 @@
 .lf-report-page .lf-chart-stack .lf-legend-row {
     white-space: nowrap;
     min-width: 0;
+    /* 半欄再切三份的窄卡：數值（例如「13（31%）」）不能被擠出卡片外，名稱才是可以被省略的那一個。
+       字級用說明角色的大小、行高收緊、收掉列的左右留白與負邊距（列寬恆等於圖例欄寬），
+       列高仍保有 24px 點擊下限。名稱至少留 3 個字寬，剩的寬度放不下數值時，數值換到名稱下一行靠右
+       （寧可多一行，也不要名稱被省略成一個點、或數值超出卡片） */
+    flex-wrap: wrap;
+    font-size: var(--lf-font-size-sm);
+    line-height: 1.3;
+    gap: 0 var(--lf-space-1);
+    margin-inline: 0;
+    padding: 2px 0;
+    min-height: 24px;
 }
 
 .lf-report-page .lf-chart-stack .lf-legend-row__label {
+    flex: 1 1 0;
+    min-width: 3em;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row__value {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+/* 占比小圖卡的內容區左右留白收到一半，把寬度讓給圖例 */
+.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__body {
+    padding-inline: var(--lf-space-2);
 }
 
 .lf-legend-row {

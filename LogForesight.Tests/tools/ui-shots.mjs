@@ -56,7 +56,7 @@ const FULL_MATRIX = [
 ];
 const WIDTHS_MATRIX = [375, 768, 1280, 1920, 2560].map(width => ({ width, scale: 'medium' }));
 const QUICK_MATRIX = [{ width: 1280, scale: 'medium' }];
-const VIEWPORT_HEIGHT = 900;
+const VIEWPORT_HEIGHT = Number(args.height) || 900;   // --height 800 之類：量「一屏內看完」的頁（報表）
 const MAX_SHOT_HEIGHT = 16000;
 const METRICS = ['hscroll', 'overflow', 'target', 'console', 'stuck', 'assert'];
 
@@ -213,7 +213,9 @@ function pageMeasure() {
     }
 
     const sheets = [...document.styleSheets].reduce((sum, s) => { try { return sum + [...s.cssRules].reduce((a, r) => a + r.cssText.length, 0); } catch { return sum; } }, 0);
-    return { ...result, observe: { domNodes: document.getElementsByTagName('*').length, cssChars: sheets } };
+    const content = document.querySelector('.lf-content');
+    // contentOverflowY：主內容區被內容撐出的高度（一屏化頁面 > 0 代表要在內容區內捲動）
+    return { ...result, observe: { domNodes: document.getElementsByTagName('*').length, cssChars: sheets, contentOverflowY: content ? content.scrollHeight - content.clientHeight : 0 } };
 }
 
 function assertInPage(spec) {

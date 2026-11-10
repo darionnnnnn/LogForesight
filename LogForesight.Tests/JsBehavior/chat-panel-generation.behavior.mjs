@@ -71,13 +71,22 @@ function setup() {
         .replace(/^import[\s\S]*?;\n/gm, '')
         .replace(/^export function/gm, 'function')
         + '\nreturn { initChatPanel, updateIssueOptions };';
-    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', 'loadRunHint', body);
+    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', 'loadRunHint', 'button', body);
     const panel = factory(
         document, api, () => {},
         button => { button.disabled = true; return () => { button.disabled = false; }; },
         () => {}, value => String(value),
         (container, text) => { container.appendChild({ aiText: text }); },
-        () => {});
+        () => {},
+        // ui.js button() 的替身：只保留這個測試看得到的部分（className、文字、disabled、點擊）
+        (text, { className, disabled, onClick } = {}) => {
+            const btn = new El('button');
+            btn.className = ('btn ' + (className ?? '')).trim();
+            btn.textContent = text;
+            btn.disabled = !!disabled;
+            if (onClick) btn.addEventListener('click', onClick);
+            return btn;
+        });
     const issues = [
         { issueKey: 'A', sourceEventLabel: '問題甲', severity: 3 },
         { issueKey: 'B', sourceEventLabel: '問題乙', severity: 2 }

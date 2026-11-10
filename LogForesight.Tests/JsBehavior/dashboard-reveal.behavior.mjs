@@ -213,7 +213,14 @@ const cases = {
     dashboard收合時strip有collapsed類別且展開移除() {
         const source = fs.readFileSync(path.join(jsRoot, 'pages', 'dashboard.js'), 'utf8').replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
         const body = source.slice(source.indexOf('function mountKpiReveal('), source.indexOf('function renderCategories('));
+        // 卡片帶 .lf-stat__label（kpiStrip 的標籤節點）：告警判定以建卡時 variant 為 danger 的標籤集合為準，不看樣式類別
         const grid = makeGrid(4);
+        [...grid.children].forEach((card, i) => {
+            const label = dom.newElement('div');
+            label.className = 'lf-stat__label';
+            label.textContent = `指標${i}`;
+            card.appendChild(label);
+        });
         const columns = new Map([[grid, 2]]);
         const data = {};
         const classes = new Set();
@@ -237,9 +244,12 @@ const cases = {
             });
         };
         const host = dom.newElement('div');
-        new Function('mountReveal', `${body}\nmountKpiReveal(strip, host);`.replace('strip, host', 'arguments[1], arguments[2]'))(mountReveal, strip, host);
+        new Function('mountReveal', `${body}\nmountKpiReveal(strip, host);`.replace('strip, host', 'arguments[1], arguments[2], arguments[3]'))(
+            mountReveal, strip, host, new Set(['指標3']));
         assert.equal(classes.has('lf-kpi-strip--collapsed'), true, '預設收合');
         const toggle = host.find(node => node.tagName === 'BUTTON');
+        // 被收起的是第 3、4 張卡；只有「指標3」是告警卡，收合鈕要寫出 1 項告警（原本以 .text-danger 樣式判斷，現在以標籤集合判斷）
+        assert.match(toggle.textContent, /顯示其餘 2 項指標（1 項告警）/);
         toggle.dispatch('click');
         assert.equal(classes.has('lf-kpi-strip--collapsed'), false, '展開要移除');
         // 字級／量測改變不動它
