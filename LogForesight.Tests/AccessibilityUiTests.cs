@@ -109,7 +109,6 @@ public class AccessibilityUiTests
     }
 
     [Theory]
-    [InlineData("RecordDetail.cshtml", "chat-issue-select")]
     [InlineData("RecordDetail.cshtml", "chat-input")]
     [InlineData("HelpManual.cshtml", "help-ask-input")]
     [InlineData("Imports.cshtml", "import-owners-file")]

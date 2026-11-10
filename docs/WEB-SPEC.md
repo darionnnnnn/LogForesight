@@ -1486,7 +1486,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
 - **問題列 Source/EventId 顯示**：Linux 事件沒有
-  EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 下拉選單一律改顯示
+  EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 的指定問題清單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊**（實驗性精簡版）：報告全文卡之上，AI 可用且當日有重點問題才顯示。
@@ -1507,11 +1507,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、整日摘要與焦點區塊先算進
   「其餘內容」、超出從尾端截斷並在圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）；
   system prompt 要求提問涉及多個項目時分別說明並指出彼此關聯，資料裡沒有的項目要明說。
+  **前端焦點列**（`#chat-focus`，位於 `#chat-body` 訊息區上方）：輸入框一開始即可用，不必先選問題；送出 body 為 `{ hostId, date, focusKeys, messages }`（`focusKeys` 取目前焦點的 `issueKey`，可為空陣列）。有焦點時每個焦點一顆標籤（`lf-badge`，附「×」移除鈕）；沒有焦點時顯示「未指定，系統會依提問判斷」。「指定問題」開 modal 列出目前可見問題的 checkbox（最多勾 4 個，滿額後其餘 disabled），**關閉 modal 時套用**。回覆抵達且世代相同時以回應 `focus` 取代目前焦點，但 `focusSource` 為 `default` 時不存入（預設焦點只用於該輪，下一輪不會被當成指定送出）；`focusSource` 為 `keyword` 時該則 AI 泡泡上方顯示「已判定針對：…」，`default` 時顯示「未偵測到指定問題，以最嚴重的幾項為主」，`manual` 不顯示。移除標籤與指定問題不重設對話、不改輪數；清除重來連焦點一併清空；`updateIssueOptions` 只更新可指定清單。等待回覆期間「×」、「指定問題」與清除鈕 disabled。
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
   ）、清除重來鈕帶圖示。**放大檢視**：
-  header 的「放大檢視」鈕把 `#chat-body`（下拉／訊息／輸入表單整組）**節點搬移**（非複製）進
+  header 的「放大檢視」鈕把 `#chat-body`（焦點列／訊息／輸入表單整組）**節點搬移**（非複製）進
   全螢幕 modal（`showDetailModal` 擴充 `fullscreen`／`onClose`，關閉時於 modal 殼銷毀前搬回
   原位）——監聽器與對話狀態隨節點保留，chat-panel.js 對話邏輯零改動；modal 內訊息區
   改 flex 撐滿高度（`.modal-body #chat-messages` 覆寫），關閉後自動恢復 340px 上限。
@@ -2308,7 +2309,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
        （`RecordStatsBuilder.BuildCategoryCards`）不論模式，永遠只計勾選的層級。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
        ，
-       詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖全部同一套過濾，沒有例外頁。
+       詳情頁、AI 對話指定問題清單、儀表板類別卡、報表統計、問題查詢分組視圖全部同一套過濾，沒有例外頁。
        **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
   1b. **日風險等級顯示**：
       高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓

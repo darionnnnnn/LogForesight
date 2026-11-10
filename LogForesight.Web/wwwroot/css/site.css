@@ -1683,6 +1683,38 @@ a.lf-badge:hover { text-decoration: underline; }
     overflow-y: auto;
 }
 
+.lf-chat-focus {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+}
+
+.lf-focus-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+}
+
+/* 「×」視覺小、點擊區至少 24×24 CSS px */
+.lf-focus-chip__remove {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.lf-focus-chip__remove:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.modal-body #chat-focus { flex: none; }
+
 /* 放大檢視全螢幕 modal（docs/FEEDBACK-3-PLAN.md #6）：#chat-body 被搬進 .modal-body 後
    改撐滿可用高度——下拉與輸入表單維持原本高度釘在上下，訊息區用 flex:1 取代固定
    340px，可視空間隨螢幕大小放大。id 選擇器的特異度足以覆蓋 .lf-chat-messages，

@@ -106,8 +106,8 @@ public class FrontendMiscUiTests
         Assert.Contains("const requestGeneration = generation", submit);
         Assert.Contains("requestGeneration !== generation", submit);
         Assert.Contains("setConversationControlsDisabled(true)", submit);
-        Assert.Contains("input.disabled = !hasIssue", submit);
-        Assert.DoesNotContain("input.disabled = false;", submit);
+        Assert.DoesNotContain("issueKey:", source);
+        Assert.Contains("focusKeys", submit);
     }
 
     [Fact]
@@ -320,7 +320,7 @@ public class ChatPanelGenerationBehaviorTests
     [InlineData("sameConversationReplyKept")]
     [InlineData("staleReplyDropped")]
     [InlineData("staleFailureDropped")]
-    [InlineData("finallyKeepsInputDisabledWithoutIssue")]
+    [InlineData("staleReplyDoesNotChangeFocus")]
     [InlineData("舊請求收尾不得重新開啟新請求等待中的控制項")]
     public void 對話面板世代行為案例(string caseName)
     {
@@ -342,5 +342,73 @@ public class ChatPanelGenerationBehaviorTests
         var stderr = r.Stderr;
         Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
+    }
+}
+
+/// <summary>對話面板焦點列行為：載入 production 的 chat-panel.js，以替身驅動焦點 chip、指定問題清單與回覆時序。</summary>
+public class ChatPanelFocusBehaviorTests
+{
+    [NodeTheory]
+    [InlineData("initialState")]
+    [InlineData("keywordFocusThenFollowUp")]
+    [InlineData("removeChipKeepsConversation")]
+    [InlineData("pickerLimitsToFour")]
+    [InlineData("updateIssueOptionsKeepsState")]
+    [InlineData("pendingLocksFocusControls")]
+    [InlineData("clearWhilePendingDropsStaleReply")]
+    [InlineData("defaultAndManualHints")]
+    public void 對話面板焦點列行為案例(string caseName)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
+        var scriptDir = Path.Combine(dir!.FullName, "LogForesight.Tests", "JsBehavior");
+        var script = Path.Combine(scriptDir, "chat-panel-focus.behavior.mjs");
+        Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
+
+        var r = NodeRuntime.RunOrFail(
+            new[] { script, caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(15), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        Assert.Contains($"PASS {caseName}", stdout);
+    }
+}
+
+/// <summary>詢問 AI 的焦點列守門：畫面不再有必選下拉，送出 body 不帶舊欄位。</summary>
+public class ChatFocusUiTests
+{
+    private static string Web(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
+        return File.ReadAllText(Path.Combine(new[] { dir!.FullName, "LogForesight.Web" }.Concat(parts).ToArray()));
+    }
+
+    [Fact]
+    public void 詳情頁不含必選下拉且有焦點列()
+    {
+        var view = Web("Views", "Pages", "RecordDetail.cshtml");
+        Assert.DoesNotContain("chat-issue-select", view);
+        Assert.Contains("id=\"chat-focus\"", view);
+    }
+
+    [Fact]
+    public void 對話面板送出body不帶舊欄位issueKey()
+    {
+        var js = Web("wwwroot", "js", "pages", "chat-panel.js");
+        Assert.DoesNotContain("issueKey:", js);
+        Assert.DoesNotContain("chat-issue-select", js);
+        Assert.Contains("focusKeys", js);
     }
 }

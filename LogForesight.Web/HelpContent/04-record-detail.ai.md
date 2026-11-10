@@ -9,7 +9,7 @@
   - 原始分析報告全文：`GET /api/records/{hostId:long}/{date}/report`，回傳等寬純文字報告。
   - 單一問題歷史處理紀錄：`GET /api/records/{hostId:long}/{date}/handling/issue-history?issueKey={key}`。
   - 單一問題 AI 白話判讀：`GET /api/ai/interpret-issue?hostId={hostId}&date={date}&issueKey={issueKey}`。
-  - 詢問 AI 對話互動：`POST /api/ai/chat`，接收 `ChatRequest`（包含 `hostId`, `date`, `issueKey`, `messages`）。
+  - 詢問 AI 對話互動：`POST /api/ai/chat`，接收 `ChatRequest`（包含 `hostId`, `date`, `focusKeys`〔可空〕, `messages`；舊欄位 `issueKey` 仍接受）。
   - 單日處理狀態查詢與更新：`GET/PUT /api/records/{hostId:long}/{date}/handling`。
   - 個別問題處理狀態設定：`PUT /api/records/{hostId:long}/{date}/handling/issues`。
 
@@ -86,6 +86,7 @@
 - **上下文深度注入**：
   - 第一輪對話時，後端自動注入**當日分析報告全文**。
   - **現場事件即時抓取（`RiskyEventLookupService`）**：第一輪自動獲取該主機該問題的原始日誌樣本（優先自風險 log 暫存讀取，若無則 fallback 呼叫 Sentinel 即時查詢）。
+- **焦點問題**：不必先選問題，直接發問即可。後端依 `focusKeys`、提問中的事件編號或來源名稱判斷針對哪些問題，判斷不到時以最嚴重的幾項為主；回應的 `focus` 與 `focusSource`（`manual`／`keyword`／`default`）告知實際納入的問題。畫面焦點列以標籤顯示，可按「指定問題」自選（最多 4 個）或移除標籤，變更焦點不影響對話與輪數；清除重來會一併清空焦點。
 - **生命週期**：對話不持久化儲存於資料庫，關閉彈窗或切換頁面後自動釋放，避免無效歷史堆積。
 
 ### 3. 知識庫優先原則（Zero-Hallucination Design）
