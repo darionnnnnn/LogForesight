@@ -1,6 +1,6 @@
 # LogForesight 第 68 輪規劃：風險日詳情可讀性、詢問 AI 改版、解析與排程訊號修正
 
-> 狀態：實作完成，待換模型體檢（分支 feature/feedback-68，19 段皆已推送）
+> 狀態：全案完成已併 dev（實作與自查 Opus 5.5；換模型體檢 Fable 5.2）
 > 基準：dev@f6426de7（Windows 8,748 綠／11 略過；macOS 8,512 綠／14 略過；全量約 8 分鐘）
 > 來源：使用者回饋十項（風險日詳情畫面七項、PRTG 快照補抓一項、排程匯出診斷兩項）＋ 2026-11-09 排程作業頁匯出檔與兩份探測輸出＋五張截圖
 > 實作方式：主代理寫階段規格，實作派 subagent（簡單小段 Haiku 5.5、其餘 Sonnet 5.5，effort 由主代理逐段評估；不用 agy）；同一 checkout 一次只派一個改檔代理；每段主代理獨立重跑驗收，不採信代理摘要；收尾換模型體檢
@@ -443,6 +443,29 @@ A 4 段、C 2 段、E 6 段、B 3 段、D 4 段，共 19 段，每段可獨立�
 - 驗收標準逐段檢查：每一條都是測試、grep 或腳本量測可判定；需要真實站台或真實 AI 伺服器的都移到〈站台側待辦〉。
 - 規劃引用的既有名稱已 grep 驗證存在：`briefBlock`、`aiSummaryBlock`、`issueCell`、`guidancePanel`、`sourceEvidenceBlock`、`loginFailureDetailsTable`、`createSideRail`、`collapsibleText`、`ExtractLastValue`、`ExtractAccountsAndIps`、`ResolveHostMapRows`、`GetLatestHostMapWithDate`、`FindLatestHostMapDate`、`PrtgHostMapLookup.Select`、`WeeklyCheckupService.ShouldRun`、`localHostDisabled`、`AiJsonDiagnostics.Write`、`SecretInventory`（Core）、`RunExportDeidentifierFactory.Secret`、`CredentialPreflight.Run`、`AiController.Chat`、`AiInsightService.ChatAsync`／`BuildIssueContext`、`chat-panel.js` `updateIssueOptions`。
 - 補查完成的三個事實：`NetiqAttemptStatus` 有七個常數（running／success／partial／retained-incomplete／failed／stopped／empty-once），B-2 對照表與守門測試以這七個為準，狀態為 null 時維持既有的「已保存的分析結果」；`RiskReportService` 既有測試 13 條（篩選詞有效）；`OrchestratorResult` 有 `FailureMessage` 與 `NetiqResult`，E-5 的原因摘要優先用 `FailureMessage`，為空時用 `NetiqResult` 的失敗主機日數組句。
+
+## 體檢輪修正（換模型體檢：Fable 5.2，2026-11-10）
+
+實作與自查由 Opus 5.5 完成；本節是換模型後對 `dev..feature/feedback-68` 整條 diff 的獨立體檢。規劃比對、獵 bug 與取捨由體檢方親做，未派代理。
+
+**修正（3 條，皆在 `ChatFocusResolver`，commit db1b5398）**
+
+1. **焦點滿了之後新問到的問題被靜默丟掉**（規劃契約本身的缺陷）。症狀：上限 4 個、規則是「前輪焦點先保留、新命中的補在後面」，幾輪後焦點滿了，再問「那 Ntfs 呢」不會進焦點，焦點列仍顯示舊的四個。修法：最新提問命中的排最前，請求帶來的焦點接在後面，被擠掉的是較舊的延續焦點。迴歸：`焦點已滿時再問到新的問題_新問題進焦點而不是被靜默丟掉`、`命中的問題已在focusKeys裡_不重複且移到最前`；既有「前三依序」案例改為新順序。本條推翻 D-2 定案第 2 點的合併順序。
+2. **短來源名被其他英文字的片段誤命中**。症狀：來源以子字串比對，Linux 來源 `su` 會被 `issue`、`result`、`sudo` 命中，回答被帶去談無關的問題。已實測重現（三條轉紅）後修正：改為整詞比對，前後不得緊鄰英數或底線；緊鄰中文、標點、連字號不算相連。迴歸：`短來源名不得被其他英文字的片段誤命中`（3 例）、`短來源名整詞出現時命中`（3 例）、`來源名的後半段以連字號相連時仍命中`。
+3. **請求的 `focusKeys` 沒有數量上限**。修法：只看前 16 個（`MaxRequestedKeys`）。迴歸：`請求帶超量focusKeys_只看前幾個_不擲例外`。DTO 註解與 WEB-SPEC 同步。
+
+**查過、確認不需要修的**
+
+- **F1 新增查詢的成本**：以實機規模（52 天 × 6,779 台＝35 萬列）實測，`GetHostMapForDay` 0.2 ms；`GetOkHostMapDates` 71 ms，與同一方法內既有的 `GetReadinessMaps`（66 ms）同級，取數範圍內的 sensor 通常只有一頁。不加索引、不改七個呼叫端。
+- **同型普查**：Core 內沒有其他「逐行找標籤取到行尾」的解析（只有 `LogAggregator` 一處，已修）。
+- **E-5 的連帶影響**：`ErrorCount` 的消費端只有趟次狀態（本來就由結束代碼判 failed）與排程頁「失敗卻沒有 Error 行」計數（會自然歸零），沒有其他副作用。
+- **E-1 的連帶影響**：體檢階段記 `Skipped`，匯出與排程頁都不把 skipped 算成未成功；本機主機登記（`Touch`）不受執行範圍影響，不會誤印「未登記」。
+- **本輪新增的 CSS class** 15 個都有使用端；現行文件的新增行沒有歷程敘事。
+- **自查修正 commit（F1～F6）** 逐一重讀：F1 的排除條件與最新日借用分支不衝突；F2 面板在清除重來、等待回覆、放大檢視中的狀態轉移正確。
+
+**已知殘留（不修，進 BACKLOG）**：欄位之間只有單一空白的來源，標籤值會讀到下一個欄位名稱之後。
+
+**CLAUDE.md 新增四條「不要做」**：過去日的對應一律走 `GetHostMapForDay`；Windows 事件欄位不逐行取到行尾；`showDetailModal` 不疊開；詢問 AI 的焦點與整日摘要的唯一來源。
 
 ## 體檢交接
 
