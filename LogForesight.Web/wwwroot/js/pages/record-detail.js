@@ -1544,7 +1544,7 @@ function issueCell(issue) {
     wrap.appendChild(sourceEvidenceBlock(issue));
 
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
-    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「顯示全文」可以展開，
+    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「展開…」可以展開，
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
@@ -1577,26 +1577,33 @@ function issueCell(issue) {
 /** Bounded provenance disclosure. Every external value is rendered as text, never as markup or a link. */
 function sourceEvidenceBlock(issue) {
     const observations = (issue.sourceObservations || []).slice(0, 64);
-    const exactReferences = observations.filter(item => item.nativeReference).length;
-    const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
+    const truncatedText = issue.sourceObservationsTruncated ? '，清單已截斷' : '';
     const summary = document.createElement('div');
     summary.className = 'small text-muted mt-1';
-    summary.textContent = `來源佐證：${observations.length} 筆觀測；${exactTimes} 筆有明確 UTC 時間；${exactReferences} 筆有原生參照。群組顯示時段不是來源時間窗` +
-        (issue.sourceObservationsTruncated ? '；清單已截斷' : '');
 
     if (observations.length === 0) {
-        summary.textContent = '來源佐證：未知；未保存可核對的來源觀測。群組顯示時段不能代替來源時間窗' +
-            (issue.sourceObservationsTruncated ? '；清單已截斷' : '');
+        summary.textContent = `來源觀測：未保存可核對的來源觀測${truncatedText}`;
         return summary;
     }
 
+    const exactReferences = observations.filter(item => item.nativeReference).length;
+    const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
+    summary.appendChild(document.createTextNode(
+        `來源觀測 ${observations.length} 筆（${exactTimes} 筆有 UTC 時間、${exactReferences} 筆有原生參照）${truncatedText} `));
+
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm px-0 py-0 lf-no-print';
-    toggle.textContent = `檢視來源觀測（${observations.length}）`;
+    toggle.className = 'btn btn-link btn-sm p-0 lf-no-print';
+    toggle.textContent = '展開';
+    toggle.setAttribute('aria-label', '展開來源觀測');
     toggle.setAttribute('aria-expanded', 'false');
+    summary.appendChild(toggle);
     const details = document.createElement('div');
     details.className = 'd-none small border-start ps-2 mt-1';
+    const windowNote = document.createElement('div');
+    windowNote.className = 'mb-1 text-muted';
+    windowNote.textContent = '群組顯示時段不是來源時間窗';
+    details.appendChild(windowNote);
     for (const item of observations) {
         const row = document.createElement('div');
         row.className = 'mb-1';
@@ -1625,12 +1632,13 @@ function sourceEvidenceBlock(issue) {
     }
     toggle.addEventListener('click', () => {
         const open = details.classList.toggle('d-none') === false;
-        toggle.textContent = `${open ? '收合' : '檢視'}來源觀測（${observations.length}）`;
+        toggle.textContent = open ? '收合' : '展開';
+        toggle.setAttribute('aria-label', open ? '收合來源觀測' : '展開來源觀測');
         toggle.setAttribute('aria-expanded', String(open));
     });
 
     const block = document.createElement('div');
-    block.append(summary, toggle, details);
+    block.append(summary, details);
     return block;
 }
 
@@ -1670,6 +1678,14 @@ function loginFailureDetailsTable(issue) {
     wrap.className = 'mt-1';
 
     const maxRows = 10;
+    // 解析正常時不會觸發，是給歷史資料的護欄：帳號／來源／原因超過這個字數才收合
+    const CELL_COLLAPSE_LIMIT = 80;
+    const guardCell = el => ((el.textContent || '').length > CELL_COLLAPSE_LIMIT ? collapsibleText(el, { limit: CELL_COLLAPSE_LIMIT }) : el);
+    const textSpan = text => {
+        const span = document.createElement('span');
+        span.textContent = text;
+        return span;
+    };
     renderTable(wrap, {
         columns: [
             {
@@ -1683,12 +1699,12 @@ function loginFailureDetailsTable(issue) {
                         note.textContent = '（電腦帳號）';
                         accountTd.appendChild(note);
                     }
-                    return accountTd;
+                    return guardCell(accountTd);
                 }
             },
-            { title: '來源', render: d => (d.source ? d.source : '（不明）') },
+            { title: '來源', render: d => guardCell(textSpan(d.source ? d.source : '（不明）')) },
             { title: '類型', render: d => (d.logonTypeText ? d.logonTypeText : '—') },
-            { title: '原因', render: d => (d.reasonText ? d.reasonText : '（不明）') },
+            { title: '原因', render: d => guardCell(textSpan(d.reasonText ? d.reasonText : '（不明）')) },
             { title: '次數', className: 'text-end', render: d => formatNumber(d.count) }
         ],
         rows: details.slice(0, maxRows)
@@ -1751,7 +1767,7 @@ function workOrderBadge(workOrderId) {
 /**
  * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
  * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，交給共用的 collapsibleText：
- * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「顯示全文」，不量測版面、
+ * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「展開…」，不量測版面、
  * 藏在 d-none 區塊裡的列也判得準。列印時一律看得到全文（見 ui.js／site.css）。
  */
 function keyDetailsBlock(keyDetails) {

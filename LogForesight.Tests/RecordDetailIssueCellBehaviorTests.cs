@@ -18,6 +18,11 @@ public sealed class RecordDetailIssueCellBehaviorTests
     [InlineData("identicalTextShownOnce")]
     [InlineData("noGuidanceLeavesNoEmptyNode")]
     [InlineData("guidancePanelOmitsExplanationLabel")]
+    [InlineData("sourceEvidenceThreeObservationsToggle")]
+    [InlineData("sourceEvidenceTruncatedMarker")]
+    [InlineData("sourceEvidenceZeroObservationsNoButton")]
+    [InlineData("loginFailureLongAccountCollapses")]
+    [InlineData("loginFailureLongSourceAndReasonCollapse")]
     public void 問題欄白話說明的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

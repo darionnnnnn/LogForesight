@@ -50,7 +50,9 @@ const cases = {
         const wrap = collapsibleText(container);
         assert.notEqual(wrap, container);
         const toggle = toggleOf(wrap);
-        assert.equal(toggle.textContent, '顯示全文（共 301 字）');
+        assert.equal(toggle.textContent, '展開…');
+        assert.equal(toggle.getAttribute('aria-label'), `展開全文（共 ${original.length} 字）`);
+        assert.equal(toggle.title, '展開全文（共 301 字）');
         assert.equal(toggle.getAttribute('aria-expanded'), 'false');
         assert.equal(toggle.getAttribute('aria-controls'), container.id);
         assert.equal(toggle.type, 'button');
@@ -61,6 +63,7 @@ const cases = {
         assert.equal(container.textContent, original);
         assert.equal(toggle.textContent, '收合');
         assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        assert.equal(toggle.getAttribute('aria-label'), '收合');
         click(toggle);
         assert.equal(container.textContent, 'a'.repeat(289) + '…');
         assert.equal(toggle.getAttribute('aria-expanded'), 'false');

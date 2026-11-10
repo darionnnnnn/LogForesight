@@ -1856,7 +1856,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
     return { selected, rowCheckboxCell, selectAllHeaderCheckbox, sync, renderBar, clear };
 }
 
-/** 長文字收合的字數門檻：超過才收合並出現「顯示全文」。 */
+/** 長文字收合的字數門檻：超過才收合並出現「展開…」。 */
 const COLLAPSE_LIMIT = 300;
 
 // 純文字收合元件的列印處理：全站只掛一組 beforeprint／afterprint 監聽。
@@ -1936,7 +1936,10 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
         } else {
             container.textContent = collapsed ? shortText : fullText;
         }
-        toggle.textContent = collapsed ? `顯示全文（共 ${total} 字）` : '收合';
+        toggle.textContent = collapsed ? '展開…' : '收合';
+        const label = collapsed ? `展開全文（共 ${total} 字）` : '收合';
+        toggle.title = label;
+        toggle.setAttribute('aria-label', label);
         toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     };
     apply();
