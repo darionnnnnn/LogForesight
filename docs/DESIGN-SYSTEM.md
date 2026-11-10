@@ -243,6 +243,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | 語意 | 元件 | 外觀 |
 |---|---|---|
 | 就地展開／收合 | `elements.js` `disclosure(標籤, 目標)` | 箭頭＋文字、無底線、次要文字色，滑過與焦點轉主色；收合朝右、展開朝下；標籤寫所指對象（「全文」「佐證」），展開前後不變，狀態看箭頭與 `aria-expanded` |
+| 工具列的次要條件 | `elements.js` `filterDisclosure(目標, 已套用數)` | 同就地展開；標籤「更多條件」後接已套用的條件數（0 個時不寫數字），進頁已有套用中的條件就預設展開 |
 | 開 modal 或面板 | `ui.js` `button(文字, { opens: 'dialog' })` | 小外框按鈕＋圖示，數量寫進標籤（「原始訊息 3」）；加 `aria-haspopup="dialog"` |
 | 換頁 | `a[href]`（走 `appUrl()`） | 主色文字，底線只在滑過與焦點出現 |
 
@@ -284,6 +285,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | 「標籤 值」一組（放進 metaLine） | `elements.js` `fact(標籤, 值)` |
 | 一行次要資訊 | `elements.js` `metaLine(items)` |
 | 就地展開／收合 | `elements.js` `disclosure(標籤, 目標, opts)` |
+| 工具列的次要條件（「更多條件 2」） | `elements.js` `filterDisclosure(目標, 已套用數, opts)`，回傳 `{ button, refresh }` |
 | 操作結果與驗證訊息 | `elements.js` `statusNote(error／warning／success／info, 文字)` |
 | 按鈕 | `ui.js` `button(文字, { variant, size, icon, title, opens, className, disabled, onClick })` |
 | 換頁但要按鈕外觀 | `ui.js` `linkButton(文字, href, opts)` |

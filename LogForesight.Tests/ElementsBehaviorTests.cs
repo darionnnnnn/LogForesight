@@ -19,6 +19,8 @@ public sealed class ElementsBehaviorTests
     [InlineData("elements.behavior.mjs", "disclosureInitiallyExpandedAndCallback")]
     [InlineData("elements.behavior.mjs", "disclosureUnmanagedTargetUntouched")]
     [InlineData("elements.behavior.mjs", "disclosureNotPrinted")]
+    [InlineData("elements.behavior.mjs", "filterDisclosureCountsApplied")]
+    [InlineData("elements.behavior.mjs", "filterDisclosureExpandedWhenAppliedOnLoad")]
     [InlineData("elements.behavior.mjs", "metaLineEmptyReturnsNull")]
     [InlineData("elements.behavior.mjs", "metaLineSkipsEmptyItems")]
     [InlineData("elements.behavior.mjs", "metaLineTextIsNotMarkup")]

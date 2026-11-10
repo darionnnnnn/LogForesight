@@ -5,7 +5,7 @@ import { installDom } from './mini-dom.mjs';
 import { loadElements } from './load-elements.mjs';
 
 const dom = installDom();
-const { disclosure, metaLine, statusNote } = loadElements(dom);
+const { disclosure, filterDisclosure, metaLine, statusNote } = loadElements(dom);
 
 function click(button) {
     let stopped = 0;
@@ -53,6 +53,29 @@ const cases = {
     },
     disclosureNotPrinted() {
         assert(disclosure('佐證', dom.newElement('div')).classList.contains('lf-no-print'));
+    },
+    filterDisclosureCountsApplied() {
+        const target = dom.newElement('div');
+        let applied = 0;
+        const { button, refresh } = filterDisclosure(target, () => applied);
+        assert.equal(labelOf(button), '更多條件', '0 個條件時不寫數字');
+        assert.equal(button.getAttribute('aria-expanded'), 'false', '沒有套用中的條件時預設收合');
+        assert(target.classList.contains('d-none'));
+        applied = 2;
+        refresh();
+        assert.equal(labelOf(button), '更多條件 2');
+        click(button);
+        assert.equal(labelOf(button), '更多條件 2', '展開前後標籤不變');
+        applied = 0;
+        refresh();
+        assert.equal(labelOf(button), '更多條件');
+    },
+    filterDisclosureExpandedWhenAppliedOnLoad() {
+        const target = dom.newElement('div');
+        const { button } = filterDisclosure(target, () => 1, { label: '其他條件' });
+        assert.equal(button.getAttribute('aria-expanded'), 'true', '進頁已有套用中的條件要看得到');
+        assert(!target.classList.contains('d-none'));
+        assert.equal(labelOf(button), '其他條件 1');
     },
     metaLineEmptyReturnsNull() {
         assert.equal(metaLine([]), null);

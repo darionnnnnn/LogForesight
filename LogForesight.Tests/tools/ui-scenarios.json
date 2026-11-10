@@ -2252,5 +2252,105 @@
         "waitFor": "#handling-panel button[type=\"submit\"]"
       }
     ]
+  },
+  {
+    "name": "互動-問題查詢-更多條件",
+    "role": "ui-admin",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件",
+          "notText": "更多條件 "
+        }
+      },
+      {
+        "click": "[aria-controls=\"filter-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": true
+        }
+      },
+      {
+        "type": [
+          "#filter-source",
+          "disk"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件 1"
+        }
+      }
+    ]
+  },
+  {
+    "name": "問題查詢-網址帶EventID",
+    "role": "ui-admin",
+    "path": "/records?eventId=4625",
+    "steps": [
+      {
+        "waitFor": "[aria-controls=\"filter-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件 1"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-更多條件",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-resumed",
+          "visible": false
+        }
+      },
+      {
+        "click": "[aria-controls=\"wo-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "#wo-unread-only",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-resumed"
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"wo-more\"]",
+          "text": "更多條件 1"
+        }
+      }
+    ]
   }
 ]

@@ -19,13 +19,16 @@
             <label for="filter-to" class="form-label lf-text-label mb-1">結束日期</label>
             <input type="date" class="form-control form-control-sm" id="filter-to" />
         </div>
-        <div class="lf-toolbar__field lf-minw-xs">
-            <label for="filter-event-id" class="form-label lf-text-label mb-1">Event ID</label>
-            <input type="number" class="form-control form-control-sm" id="filter-event-id" />
-        </div>
-        <div class="lf-toolbar__field lf-minw-xs">
-            <label for="filter-source" class="form-label lf-text-label mb-1">來源（選填）</label>
-            <input type="text" class="form-control form-control-sm" id="filter-source" placeholder="如 disk" autocomplete="off" />
+        @* 次要條件：records.js 以 filterDisclosure 收合，按鈕標籤帶已套用數 *@
+        <div class="d-flex flex-wrap align-items-center gap-3" id="filter-more">
+            <div class="lf-toolbar__field lf-minw-xs">
+                <label for="filter-event-id" class="form-label lf-text-label mb-1">Event ID</label>
+                <input type="number" class="form-control form-control-sm" id="filter-event-id" />
+            </div>
+            <div class="lf-toolbar__field lf-minw-xs">
+                <label for="filter-source" class="form-label lf-text-label mb-1">來源</label>
+                <input type="text" class="form-control form-control-sm" id="filter-source" placeholder="如 disk" autocomplete="off" />
+            </div>
         </div>
         <div class="d-flex gap-2 align-self-end">
             <button type="submit" class="btn btn-sm btn-primary">套用</button>

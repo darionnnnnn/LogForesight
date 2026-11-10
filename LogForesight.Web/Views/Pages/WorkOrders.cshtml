@@ -45,13 +45,16 @@
                     <label for="wo-group" class="form-label mb-0 lf-text-label text-nowrap">群組</label>
                     <select id="wo-group" class="form-select form-select-sm w-auto"><option value="">全部</option></select>
                 </div>
-                <div class="form-check mb-0">
-                    <input class="form-check-input" type="checkbox" id="wo-resumed">
-                    <label class="form-check-label lf-text-meta" for="wo-resumed">只看自靜音恢復</label>
-                </div>
-                <div class="form-check mb-0">
-                    <input class="form-check-input" type="checkbox" id="wo-handler-inactive">
-                    <label class="form-check-label lf-text-meta" for="wo-handler-inactive">只看處理人已停用</label>
+                @* 次要條件：work-orders.js 以 filterDisclosure 收合，按鈕標籤帶已勾選數 *@
+                <div class="d-flex flex-wrap align-items-center gap-3" id="wo-more">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="wo-resumed">
+                        <label class="form-check-label lf-text-meta" for="wo-resumed">只看自靜音恢復</label>
+                    </div>
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="wo-handler-inactive">
+                        <label class="form-check-label lf-text-meta" for="wo-handler-inactive">只看處理人已停用</label>
+                    </div>
                 </div>
             </div>
             <div id="wo-list"></div>

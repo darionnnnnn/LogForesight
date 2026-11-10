@@ -18,7 +18,7 @@ import {
     loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
     headerWithHelp, icon, bindPastDateCheck, linkButton
 } from '../core/ui.js';
-import { statusNote, roleText } from '../core/elements.js';
+import { statusNote, roleText, filterDisclosure } from '../core/elements.js';
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
@@ -59,6 +59,7 @@ const activeGroupIds = new Set();  // groupId(string)
 
 async function init() {
     applyUrlToForm();
+    setupMoreFilters();
     currentUser = await getCurrentUser();
     await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions(), applyDayRiskVisibility()]);
     await search();
@@ -307,6 +308,16 @@ async function loadGroupOptions() {
             search();
         }
     });
+}
+
+/** Event ID 與來源是次要條件：收進「更多條件」，標籤帶已填的條件數（URL 帶進來時預設展開） */
+function setupMoreFilters() {
+    const more = document.getElementById('filter-more');
+    const inputs = [document.getElementById('filter-event-id'), document.getElementById('filter-source')];
+    const { button, refresh } = filterDisclosure(more,
+        () => inputs.filter(input => input.value.trim() !== '').length, { className: 'align-self-end' });
+    more.before(button);
+    inputs.forEach(input => input.addEventListener('input', refresh));
 }
 
 /** URL → 表單／chip。下鑽進來的連結帶著條件，畫面必須反映它們 */

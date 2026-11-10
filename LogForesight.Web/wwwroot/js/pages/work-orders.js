@@ -27,7 +27,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
-import { roleText } from '../core/elements.js';
+import { roleText, filterDisclosure } from '../core/elements.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -41,6 +41,7 @@ const activeResumedCheckbox = document.getElementById('wo-resumed');
 const activeHandlerInactiveCheckbox = document.getElementById('wo-handler-inactive');
 // 只看未讀回覆：處理人回覆後管理者尚未開過詳情的單（判定見 WorkOrder.HasUnreadReply）
 const activeUnreadOnlyCheckbox = createUnreadOnlyCheckbox();
+setupMoreFilters();
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
 
@@ -128,6 +129,16 @@ function createUnreadOnlyCheckbox() {
     if (anchor?.parentElement) anchor.after(wrap);
     else activeStatusSelect?.closest('.d-flex')?.appendChild(wrap);
     return input;
+}
+
+/** 三個「只看…」是次要條件：收進「更多條件」，標籤帶已勾選數 */
+function setupMoreFilters() {
+    const more = document.getElementById('wo-more');
+    if (!more) return;
+    const boxes = [activeResumedCheckbox, activeHandlerInactiveCheckbox, activeUnreadOnlyCheckbox].filter(Boolean);
+    const { button, refresh } = filterDisclosure(more, () => boxes.filter(box => box.checked).length);
+    more.before(button);
+    boxes.forEach(box => box.addEventListener('change', refresh));
 }
 
 /** 篩選橫幅：「篩選：{source} {eventId}｜處理人 {名稱}」；名稱未知時用「處理人 #{id}」 */

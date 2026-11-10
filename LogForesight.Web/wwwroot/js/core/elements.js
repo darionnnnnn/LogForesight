@@ -3,6 +3,7 @@
  *
  * 只放「三個以上頁面都會用到、而且有行為要封裝」的元素：
  *   - disclosure：就地展開／收合（取代頁面各自組的連結樣式「展開」）
+ *   - filterDisclosure：工具列的次要條件，標籤帶已套用的條件數
  *   - metaLine：一行次要資訊（次數、時段、來源…），空值自動略過
  *   - statusNote：操作結果與驗證訊息，帶圖示與正確的 role
  * 只是設定 className 的東西不包工廠，頁面直接用 lf-text-* 角色類別。
@@ -28,6 +29,7 @@ export function disclosure(label, target, { expanded = false, onToggle, manageTa
     button.className = `lf-disclosure lf-no-print${className ? ` ${className}` : ''}`;
     button.appendChild(icon('chevron-down', 'lf-disclosure__icon'));
     const text = document.createElement('span');
+    text.className = 'lf-disclosure__label';
     text.textContent = label;
     button.appendChild(text);
 
@@ -50,6 +52,22 @@ export function disclosure(label, target, { expanded = false, onToggle, manageTa
         onToggle?.(open);
     });
     return button;
+}
+
+/**
+ * 工具列的次要條件：不常用的篩選收進 target，按鈕標籤後接已套用的條件數（0 個時只寫標籤）。
+ * countApplied() 回傳目前已套用幾個條件；條件變動後呼叫回傳的 refresh() 更新標籤。
+ * 進頁時已有套用中的條件（下鑽連結帶進來）就預設展開，看得到是哪些條件在作用。
+ */
+export function filterDisclosure(target, countApplied, { label = '更多條件', className = '' } = {}) {
+    const button = disclosure(label, target, { expanded: countApplied() > 0, className });
+    const text = button.querySelector('.lf-disclosure__label');
+    const refresh = () => {
+        const count = countApplied();
+        text.textContent = count > 0 ? `${label} ${count}` : label;
+    };
+    refresh();
+    return { button, refresh };
 }
 
 /**
