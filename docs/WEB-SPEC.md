@@ -103,7 +103,7 @@ LogForesight.Web/
 ├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）
 ├── Views/                        -- 頁面殼（.cshtml 內不寫業務邏輯、不用 ViewModel 帶資料）
 └── wwwroot/
-    ├── css/site.css              -- 主題與元件樣式（§8.2）
+    ├── css/                      -- 主題與元件樣式四層：base／components／layout／pages（§8.2）
     └── js/
         ├── core/                 -- api.js（fetch 包裝）、ui.js（toast/modal/表格）、format.js、charts.js（Chart.js 包裝）
         └── pages/                -- 一頁一模組（dashboard.js、records.js…），與 View 一一對應
@@ -655,7 +655,9 @@ toast 的 message 若是 `Node`（例：自建的 `<a>`），連結同樣由組�
 Bootstrap 提供柵格、表單元件與可及性行為；**頁面外觀不受限於 Bootstrap 預設風格**。
 設計目標只有一個：**維運人員打開頁面 3 秒內看到最該看的東西**，美化是為這個目標服務。
 
-**設計 token（`site.css` 的 `:root` 自訂變數，全站樣式的唯一取值來源）**：
+**設計 token（`base.css` 的 `:root` 自訂變數，全站樣式的唯一取值來源）**：
+樣式表分四層、依序載入 `base.css` → `components.css` → `layout.css` → `pages.css`，唯一引用點是 `Views/Shared/_Styles.cshtml`；
+文字角色、揭露、按鈕與寬度規則見 DESIGN-SYSTEM §8。
 具體取值與 v1→v2 對照一律查 **docs/DESIGN-SYSTEM.md**，本節只記原則。
 頁面與頁模組不寫 inline style；動態量值以 CSS 變數交給 class。
 
@@ -712,7 +714,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    介面本身維持低飽和（灰藍白），紅/黃只保留給風險訊號，異常自然從畫面裡跳出來。
 2. **數字優先**：統計卡採「大字數字（2rem+）＋小字標籤＋趨勢箭頭」結構，掃視即得；
    文字說明放次要層級。
-3. **語意色全站一致**（`format.js`/`site.css` 單點定義）：
+3. **語意色全站一致**（`format.js`／`base.css` 單點定義）：
    風險「高」`danger`、「中」`warning`、「低」`secondary`；嚴重度 High `warning`、
    Medium `info`、Low `neutral`；「重大」旗標徽章 `danger`；處理狀態 open `danger`、
    in_progress `primary`、resolved `success`（對外三態，見下）；執行結果 成功 `success`、
@@ -2576,7 +2578,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     使用者版的寫法依 docs/HELP-WRITING-GUIDE.md。
   - **文件排版**：章節以 `renderAiText(..., { asDocument: true })` 渲染（只有說明書頁開啟，AI 回覆等其他呼叫端維持預設）：
     內文開頭的 `# 章名` 先拿掉（卡片 h2 已是章名）；`#`／`##` 行輸出語意 `h3.lf-doc__heading`、段落用 `p`、清單不帶 Bootstrap 間距 class；
-    以「注意：」開頭的段落加 `.lf-doc__note` 提示框。樣式在 site.css `.lf-doc`（行高 1.7、每行約 46em、段落與清單間距、只用既有 token）。
+    以「注意：」開頭的段落加 `.lf-doc__note` 提示框。樣式在 `pages.css` `.lf-doc`（行高 1.7、每行約 46em、段落與清單間距、只用既有 token）。
     章節圖示必須存在於 `icons.svg`（`HelpManualLayoutTests` 守門）。章節內的導覽、頁籤與按鈕名稱必須以目前頁面實際文案為準。
     說明書守門的基準是 `wwwroot/js/core/layout.js` 的導覽 `label`、對應 View 的
     `ViewData["Title"]`／可見標題與實際按鈕文字；測試應把 manifest `title` 當待比對值，
