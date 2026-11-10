@@ -22,6 +22,10 @@
 //   { clickIf: "選擇器" }                            選擇器有符合才點（不符合不算失敗）
 //   { markRect: ["選擇器", …] }                      記下元素的頁面座標與大小
 //   { sameRect: 0.5 }                                與 markRect 比對，位置或大小差超過容許值（px）就是失敗
+//
+// 離開頁面提醒（瀏覽器原生 beforeunload 對話框量不到）：
+//   { beforeUnload: true|false }                     在頁面派送可取消的 beforeunload 事件，斷言頁面是否掛了「有未儲存變更」的提醒
+//                                                    （true＝處理常式呼叫了 preventDefault；不會真的離開頁面）
 // 流程：patchApi → reload → waitFor（執行中的畫面出現）→ markRect → wait（一個輪詢週期以上）→ sameRect。
 
 import { spawn } from 'node:child_process';
@@ -319,6 +323,9 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
             const now = await evaluate(browser, 'window.scrollY');
             if (marked === null) failures.push('scrollWithin 之前沒有 markScroll');
             else if (Math.abs(now - marked) > Number(step.scrollWithin)) failures.push(`捲動位置跳動 ${Math.round(now - marked)}px（上限 ${step.scrollWithin}px）`);
+        } else if (step.beforeUnload !== undefined) {
+            const prevented = await evaluate(browser, `(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; })()`);
+            if (prevented !== step.beforeUnload) failures.push(`${width}px：離開頁面提醒預期${step.beforeUnload ? '啟動' : '不啟動'}，實際${prevented ? '啟動' : '未啟動'}`);
         } else if (step.wait) {
             await sleep(Number(step.wait));
         } else if (step.patchApi) {
@@ -379,7 +386,9 @@ async function runScenario(browser, scenario, cell, state) {
             errors.push(`console.error：${msg.params.args.map(a => a.value ?? a.description ?? '').join(' ').slice(0, 300)}`);
         } else if (msg.method === 'Runtime.exceptionThrown') {
             errors.push(`未攔截例外：${(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text || '').slice(0, 300)}`);
-        } else if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error' && msg.params.entry.source !== 'network') {
+        } else if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error' && msg.params.entry.source !== 'network'
+            && !msg.params.entry.text.includes("'beforeunload' confirmation panel")) {
+            // 上面的 beforeunload 例外：離開「有未儲存變更」的頁面時，無頭瀏覽器因沒有使用者手勢而擋下原生確認框，是工具造成的訊息，不是頁面錯誤
             errors.push(`瀏覽器錯誤：${msg.params.entry.text.slice(0, 300)}`);
         }
     };

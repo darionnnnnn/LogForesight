@@ -49,20 +49,13 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> AdHocTextColorAllowed = new(StringComparer.Ordinal)
     {
-        "Views/Pages/Dashboard.cshtml", "Views/Pages/Groups.cshtml",
+        "Views/Pages/Dashboard.cshtml",
         "Views/Pages/HelpManual.cshtml",
-        "Views/Pages/Imports.cshtml",
-        "Views/Pages/Netiq.cshtml",
         "Views/Pages/Reports.cshtml",
-        "Views/Pages/Settings.cshtml",
-        "Views/Pages/Setup.cshtml",
         "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/dashboard.js",
-        "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handling-panel.js",
+        "wwwroot/js/pages/handling-panel.js",
         "wwwroot/js/pages/help-manual.js",
-        "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
         "wwwroot/js/pages/reports.js",
-        "wwwroot/js/pages/settings.js",
-        "wwwroot/js/pages/setup.js",
     };
 
     [Fact]
@@ -75,7 +68,6 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> BtnLinkAllowed = new(StringComparer.Ordinal)
     {
-        "wwwroot/js/pages/groups.js",
     };
 
     [Fact]
@@ -88,10 +80,8 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> HandwrittenButtonAllowed = new(StringComparer.Ordinal)
     {
-        "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/groups.js",
+        "wwwroot/js/pages/chat-panel.js",
         "wwwroot/js/pages/handling-panel.js", "wwwroot/js/pages/help-manual.js",
-        "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
-        "wwwroot/js/pages/settings.js", "wwwroot/js/pages/setup.js",
     };
 
     [Fact]

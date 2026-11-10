@@ -4,6 +4,7 @@
 
 - **頁面路徑**：`/admin/settings`。
 - **存取權限**：需要 `Maintain` 能力（`Capability.Maintain`，管理員角色可存取）。
+- **儲存回饋**：整頁共用一個固定在畫面下方的儲存列；驗證擋下、儲存成功與欄位填回預設的訊息顯示在儲存列旁。頁籤可用網址 hash 深連結（如 `#mail`），有未儲存變更時離開頁面由瀏覽器原生提醒。
 - **後端端點**：
   - 讀取設定：`GET /api/admin/settings`，回傳 `SystemSettingsDto`（含目前設定與進階參數出廠預設值 `aiAdvancedDefaults`）。
   - 更新設定：`PUT /api/admin/settings`，傳入 `UpdateSystemSettingsRequest`，儲存後即時生效，無需重啟站台。

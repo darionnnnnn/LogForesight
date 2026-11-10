@@ -103,7 +103,7 @@ public class SettingsPageWordingUiTests
         {
             var ph = Regex.Match(block, @"placeholder=""(?<ph>[^""]*)""");
             if (!ph.Success || !ph.Groups["ph"].Value.Contains("一行一")) continue;
-            var visible = Regex.Matches(block, @"<(?:div|p|span)\b[^>]*class=""[^""]*(?:form-text|text-muted small|small text-muted)[^""]*""[^>]*>(?<t>[^<]*)<");
+            var visible = Regex.Matches(block, @"<(?:div|p|span)\b[^>]*class=""[^""]*(?:form-text|lf-text-meta|text-muted small|small text-muted)[^""]*""[^>]*>(?<t>[^<]*)<");
             foreach (Match v in visible)
             {
                 Assert.DoesNotContain("一行一", v.Groups["t"].Value);

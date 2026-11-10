@@ -2121,6 +2121,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **NetIQ 單筆登錄與啟停**：單筆登錄（`NetiqHostService.AddHost`）對**既有主機**，Sentinel 與角色描述省略（未選／空白）時沿用既有值，明確提供才覆寫
   （與批次登錄 `BulkAddHosts` 同一判定）；群組與負責人不動。主機啟停（`SetActive`）以既有主機的複本只改 `Active`：**停用時保留孤兒標記**
   （仍是原屬某台已移除 Sentinel 的孤兒，掃描精靈據此認出），**人工重新啟用才清除**孤兒標記。
+- **群組頁畫面層級（設計系統 v3）**：群組名稱是列的主體（`lf-text-title`）；主機群組列尾的「成員」按鈕（`opens: 'dialog'`）開成員視窗，不再以點群組名稱開啟；
+  群組編輯視窗的名稱未填、成員查找未填、移出後將未分組的提醒都用 `statusNote`（警告型），授權矩陣標題列不再重複「勾選＝…」（本文已有）。
 - 群組：三頁籤——使用者群組（builtin admin/manager 鎖刪除與 role；**派工池**欄為切換開關、切換即存，
   內建群組 disabled，`PUT api/admin/groups/{id}/dispatch-pool`）、主機群組、
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
@@ -2153,6 +2155,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   ＋前端另打 `api/handlers/{id}/workload`。
 
 ### 9.9 `/admin/imports` 資料匯入（`Maintain`）
+**畫面層級（設計系統 v3）**：上傳預覽失敗與套用完成的結果顯示在上傳欄位下方（`statusNote`，失敗 `role="alert"`）；預覽的「請確認以下事項」與自動建立帳號提醒也是 `statusNote`（警告／資訊型）；
+預覽統計只有「錯誤」筆數用 `lf-text-alert`；匯入紀錄的說明是 `?` 按鈕（`.lf-help`），不是可聚焦的 `span`。
 **§2a本頁收斂為單一卡片「負責人」**：使用者／主機／
 群組授權三種 CSV 連同 Importer、範本與測試**整組退役**（主機的主要來源是 NetIQ 掃描匯入）。
 `ImportKind` 保留那三個列舉值——歷次匯入紀錄存的是字串 Kind，拿掉會讓過去的紀錄失去顯示名稱，
@@ -2244,7 +2248,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
   新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
 - **網段範圍掃描**：掃描前必須輸入要掃描的網段前綴（如 `192.168.0`）或
-  CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
+  CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（掃描列下方就地 `statusNote` 警告）；後端
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
   掃描機制採**涵蓋保證**設計（完整說明見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §3.4）：
   結果只有「完整／顯性警告不完整／顯性失敗」三種，不會靜默漏掉安靜主機。重掃時該
@@ -2313,6 +2317,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   只送一個近 1 小時、最多 3 筆事件的查詢，報告只列欄位名稱與形狀、不含任何值，30 秒期限；細節見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §8）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
+
+- **畫面層級（設計系統 v3，第 69 輪 E2）**：整頁回饋走 `statusNote`——驗證擋下、欄位填回預設、儲存成功都顯示在常駐儲存列旁（`#settings-save-status`，不論目前頁籤都看得到）；
+  AD 測試與測試寄信的結果、缺欄位提示顯示在各自的測試按鈕下方，「確認並靜音」缺日期顯示在該卡內。常駐說明改 `lf-text-meta`，層級／嚴重度切換鈕經 `button()`；
+  表單標籤一律是 `form-label`（標籤在欄位上方，各寬度一致）。離開頁面的未儲存提醒仍是瀏覽器原生 `beforeunload`，量測工具以派送事件斷言它已掛上。
 - **頁籤化**：設定項目多且長，
   九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
@@ -2320,7 +2328,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
   （`.lf-settings-footer`，`position: sticky; bottom: 0`），任何頁籤／捲動位置都看得到，不必
   捲到頁尾。表單本身有 `novalidate`，`required`/`min`/`max` 不會攔截原生送出——既有的 JS 層
-  驗證（保留天數大小關係、AD 伺服器必填）在丟出 toast 前先切到欄位所在頁籤
+  驗證（保留天數大小關係、AD 伺服器必填）在顯示訊息前先切到欄位所在頁籤
   （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
@@ -2680,6 +2688,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （任何已登入者；沒有 `Maintain` 時回 `available=false`，前端因此不顯示問答卡）、`POST api/help/ask`（`Maintain`）。
 
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
+
+- **畫面層級（設計系統 v3）**：步驟標題 `lf-text-title`、detail `lf-text-meta`；「前往設定」是 `linkButton`（換頁）、「跳過此步」是 `button()`；AD／郵件／AI 三張內嵌表單的測試與儲存結果一律 `statusNote`
+  （缺欄位與失敗為 `error`、`role="alert"`；測試成功為 `success`），欄位標籤是一般 `form-label`，不再疊 `small fw-semibold`。
 
 - **回答「設好了嗎」，與 `/api/health/detail` 的「現在健康嗎」刻意分開**（後者是六大塊維運
   訊號，硬併會讓它更難用）。`SetupReadinessService` 彙整十個一次性設定步驟成 checklist：

@@ -6,7 +6,7 @@
 - **存取權限**：需要 `Capability.Maintain`（僅 `admin` 與 `serverAdmin` 角色具備）。
 - **後端端點**：
   - 範本下載：`GET /api/imports/{kind}/template`（目前僅支援 `kind = "owners"`，回傳 `owners.csv` 檔案，帶 UTF-8 BOM）。
-  - 上傳與計畫預覽：`POST /api/imports/{kind}/preview`（接收 multipart/form-data 檔案上傳，依「系統設定」之 `ImportMaxFileSizeKb` 限制檔案大小，回傳 `ImportPlan` 與安全防偽 `Token`）。
+  - 上傳與計畫預覽：`POST /api/imports/{kind}/preview`（接收 multipart/form-data 檔案上傳，依「系統設定」之 `ImportMaxFileSizeKb` 限制檔案大小，回傳 `ImportPlan` 與安全防偽 `Token`；上傳或預覽失敗時，原因顯示在上傳欄位下方）。
   - 套用匯入計畫：`POST /api/imports/{kind}/apply`，接收 `{ token }` 執行實際寫入。
   - 匯入歷史日誌：`GET /api/imports/logs`，回傳全量 CSV 匯入與 NetIQ 掃描匯入之歷史紀錄。
 

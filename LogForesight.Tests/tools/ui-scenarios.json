@@ -1580,5 +1580,470 @@
         }
       }
     ]
+  },
+  {
+    "name": "設定-頁籤-ai",
+    "role": "ui-admin",
+    "path": "/admin/settings#ai",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ai\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-ad",
+    "role": "ui-admin",
+    "path": "/admin/settings#ad",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ad\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-analysis",
+    "role": "ui-admin",
+    "path": "/admin/settings#analysis",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"analysis\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-retention",
+    "role": "ui-admin",
+    "path": "/admin/settings#retention",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"retention\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-health",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"health\"]:not(.d-none)"
+      },
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-guard",
+    "role": "ui-admin",
+    "path": "/admin/settings#guard",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"guard\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-mail",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-brand",
+    "role": "ui-admin",
+    "path": "/admin/settings#brand",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"brand\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-未儲存提醒與頁籤深連結",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#settings-tabs [data-tab=\"mail\"].active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"levels\"]",
+          "visible": false
+        }
+      },
+      {
+        "beforeUnload": false
+      },
+      {
+        "type": [
+          "#mail-from",
+          "e2-check@example.com"
+        ]
+      },
+      {
+        "click": "#settings-tabs [data-tab=\"brand\"]"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"brand\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"mail\"]",
+          "visible": false
+        }
+      },
+      {
+        "beforeUnload": true
+      }
+    ]
+  },
+  {
+    "name": "設定-儲存驗證擋下顯示statusNote",
+    "role": "ui-admin",
+    "path": "/admin/settings#retention",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"retention\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#initial-history-days",
+          "365"
+        ]
+      },
+      {
+        "type": [
+          "#retention-days",
+          "90"
+        ]
+      },
+      {
+        "click": "#settings-save"
+      },
+      {
+        "waitFor": "#settings-save-status .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#settings-save-status .lf-status-note",
+          "visible": true,
+          "text": "不可小於首次執行回補天數"
+        }
+      }
+    ]
+  },
+  {
+    "name": "設定-AD測試缺欄位顯示statusNote",
+    "role": "ui-admin",
+    "path": "/admin/settings#ad",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ad\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#ad-servers",
+          ""
+        ]
+      },
+      {
+        "click": "#ad-test-btn"
+      },
+      {
+        "waitFor": "#ad-test-result .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#ad-test-result .lf-status-note",
+          "visible": true,
+          "text": "請至少輸入一台 AD 伺服器"
+        }
+      }
+    ]
+  },
+  {
+    "name": "初始設定-AD測試失敗顯示alert",
+    "role": "ui-admin",
+    "path": "/setup",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#setup-ad-test-btn"
+      },
+      {
+        "type": [
+          "#setup-ad-servers",
+          ""
+        ]
+      },
+      {
+        "click": "#setup-ad-test-btn"
+      },
+      {
+        "waitFor": "#setup-ad-test-result [role=\"alert\"]"
+      },
+      {
+        "assert": {
+          "sel": "#setup-ad-test-result [role=\"alert\"]",
+          "visible": true,
+          "text": "請至少輸入一台 AD 伺服器"
+        }
+      }
+    ]
+  },
+  {
+    "name": "NetIQ維護-連線測試失敗顯示alert",
+    "role": "ui-admin",
+    "path": "/admin/netiq",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#btn-new-sentinel"
+      },
+      {
+        "waitFor": "#sentinel-modal.show"
+      },
+      {
+        "type": [
+          "#sentinel-base-url",
+          "http://127.0.0.1:1"
+        ]
+      },
+      {
+        "type": [
+          "#sentinel-username",
+          "e2-check"
+        ]
+      },
+      {
+        "type": [
+          "#sentinel-password",
+          "e2-check"
+        ]
+      },
+      {
+        "click": "#sentinel-test-connection"
+      },
+      {
+        "waitFor": "#sentinel-test-result [role=\"alert\"]",
+        "timeout": 30000
+      },
+      {
+        "assert": {
+          "sel": "#sentinel-test-result [role=\"alert\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "群組-成員視窗與查找提示",
+    "role": "ui-admin",
+    "path": "fixture:admin.groups",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#group-tabs [data-tab=\"host-groups\"]"
+      },
+      {
+        "waitFor": "#host-group-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-group-list button[aria-haspopup=\"dialog\"]",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-group-list tbody tr button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "waitFor": "#members-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#members-group-name",
+          "visible": true
+        }
+      },
+      {
+        "click": "#members-tabs [data-tab=\"add\"]"
+      },
+      {
+        "click": "#members-search"
+      },
+      {
+        "waitFor": "#members-summary .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#members-summary .lf-status-note",
+          "visible": true,
+          "text": "請輸入網段或關鍵字"
+        }
+      }
+    ]
+  },
+  {
+    "name": "資料匯入-欄位格式說明展開",
+    "role": "ui-admin",
+    "path": "fixture:page.admin-imports",
+    "steps": [
+      {
+        "click": "#import-cards details summary"
+      },
+      {
+        "assert": {
+          "sel": "#import-cards details table",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-設定",
+    "role": "ui-viewer",
+    "path": "/admin/settings",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#settings-save",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-NetIQ維護",
+    "role": "ui-viewer",
+    "path": "/admin/netiq",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#btn-new-sentinel",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-群組與授權",
+    "role": "ui-viewer",
+    "path": "/admin/groups",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "[data-new-user-group]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-資料匯入",
+    "role": "ui-viewer",
+    "path": "/admin/imports",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#import-owners-file",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-初始設定",
+    "role": "ui-viewer",
+    "path": "/setup",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#setup-steps button, #setup-steps a.btn",
+          "count": 0
+        }
+      }
+    ]
   }
 ]

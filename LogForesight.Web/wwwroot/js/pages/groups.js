@@ -5,6 +5,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad } from '../core/ui.js';
+import { roleText, statusNote } from '../core/elements.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
@@ -103,11 +104,11 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
     heading.className = 'px-3 pt-3';
 
     const titleEl = document.createElement('div');
-    titleEl.className = 'fw-semibold';
+    titleEl.className = 'lf-text-title';
     titleEl.textContent = title;
 
     const hintEl = document.createElement('div');
-    hintEl.className = 'small text-muted mb-2';
+    hintEl.className = 'lf-text-meta mb-2';
     hintEl.textContent = hint;
 
     heading.append(titleEl, hintEl);
@@ -115,7 +116,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
 
     if (groups.length === 0) {
         const emptyEl = document.createElement('div');
-        emptyEl.className = 'small text-muted px-3 pb-3';
+        emptyEl.className = 'lf-text-meta px-3 pb-3';
         emptyEl.textContent = empty;
         container.appendChild(emptyEl);
         return;
@@ -124,7 +125,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
     const table = document.createElement('div');
     renderTable(table, {
         columns: [
-            { title: '群組名稱', render: g => g.groupName },
+            { title: '群組名稱', render: g => roleText('lf-text-title', g.groupName) },
             { title: '角色', render: g => roleBadge(g.role) },
             { title: '成員數', className: 'text-end', render: g => String(g.memberCount) },
             { title: '派工池', className: 'text-center', render: g => renderDispatchPoolToggle(g) },
@@ -150,14 +151,9 @@ function renderHostGroups() {
     });
 }
 
-/** 群組名稱點擊＝開成員 modal（目前成員／加入成員），兩千台規模下逐台編輯不現實 */
+/** 群組名稱是列的主體（純文字）；開成員視窗改由列尾的「成員」按鈕，兩千台規模下逐台編輯不現實 */
 function hostGroupNameCell(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-link p-0 text-decoration-none';
-    btn.textContent = group.groupName;
-    btn.addEventListener('click', () => openMembersModal(group));
-    return btn;
+    return roleText('lf-text-title', group.groupName);
 }
 
 /**
@@ -192,7 +188,7 @@ function renderMatrix() {
 
     // 矩陣不是授權的全貌（體檢 M9）：負責人路徑不經過這裡，只看矩陣會盤點錯
     const note = document.createElement('div');
-    note.className = 'small text-muted px-3 pt-3 pb-2';
+    note.className = 'lf-text-meta px-3 pt-3 pb-2';
     note.textContent = '勾選＝該部門可看見該群組的主機。此矩陣不含「負責人」路徑——'
         + '主機一旦指定負責人，那個人不必在這裡被勾選也看得到該主機，並自動取得處理能力'
         + '（負責人於「主機」頁維護）。';
@@ -203,7 +199,7 @@ function renderMatrix() {
         title: '使用者群組 ＼ 主機群組',
         render: row => {
             const name = document.createElement('span');
-            name.className = 'fw-semibold';
+            name.className = 'lf-text-title';
             name.textContent = row.userGroupName;
             if (!row.active) {
                 const hint = document.createElement('span');
@@ -263,7 +259,9 @@ function groupActions(kind, group) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-1 justify-content-end';
 
-    wrap.appendChild(button('編輯', { variant: 'outline-primary', onClick: () => openModal(kind, group) }));
+    // 主機群組：成員視窗（目前成員／加入成員）從列尾開，不再靠點群組名稱
+    if (kind === 'host') wrap.appendChild(button('成員', { variant: 'outline-primary', opens: 'dialog', onClick: () => openMembersModal(group) }));
+    wrap.appendChild(button('編輯', { variant: 'outline-primary', opens: 'dialog', onClick: () => openModal(kind, group) }));
 
     // 系統內建群組不顯示刪除鈕：整套授權建立在這些群組上，刪掉就沒有依據了
     if (!(kind === 'user' && group.builtin)) {
@@ -275,6 +273,7 @@ function groupActions(kind, group) {
 
 function openModal(kind, group) {
     editing = { kind, group };
+    document.getElementById('group-form-status').replaceChildren();
 
     document.getElementById('group-modal-title').textContent =
         group ? `編輯群組 ${group.groupName}` : (kind === 'user' ? '新增使用者群組' : '新增主機群組');
@@ -334,8 +333,10 @@ form.addEventListener('submit', async event => {
     event.preventDefault();
 
     const name = document.getElementById('group-name').value.trim();
+    const formStatus = document.getElementById('group-form-status');
+    formStatus.replaceChildren();
     if (!name) {
-        toast('請輸入群組名稱', 'warning');
+        formStatus.appendChild(statusNote('warning', '請輸入群組名稱'));
         return;
     }
 
@@ -480,7 +481,7 @@ function renderCurrentMembers() {
         details.open = true;
 
         const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small lf-pointer';
+        summary.className = 'px-2 py-1 lf-text-meta lf-pointer';
         summary.textContent = `${cidr}（${members.length} 台）`;
         details.appendChild(summary);
 
@@ -503,7 +504,7 @@ function slash24(ip) {
 
 function currentMemberRow(member) {
     const row = document.createElement('div');
-    row.className = 'd-flex align-items-center gap-2 py-1 small';
+    row.className = 'd-flex align-items-center gap-2 py-1';
 
     const box = document.createElement('input');
     box.type = 'checkbox';
@@ -535,8 +536,8 @@ function updateCurrentMembersState() {
     document.getElementById('current-members-remove').disabled = selectedIds.size === 0;
 
     const ungroupCount = currentMembers.filter(m => selectedIds.has(m.hostId) && m.otherGroupCount === 0).length;
-    document.getElementById('current-members-warning').textContent =
-        ungroupCount > 0 ? `${ungroupCount} 台將變未分組（只有 admin 看得到）` : '';
+    document.getElementById('current-members-warning').replaceChildren(
+        ...(ungroupCount > 0 ? [statusNote('warning', `${ungroupCount} 台將變未分組（只有 admin 看得到）`)] : []));
 }
 
 document.getElementById('current-members-remove').addEventListener('click', async () => {
@@ -590,7 +591,10 @@ membersInput.addEventListener('keydown', event => {
 
 async function searchMembers() {
     const value = membersInput.value.trim();
-    if (!value) { toast('請輸入網段或關鍵字', 'warning'); return; }
+    if (!value) {
+        document.getElementById('members-summary').replaceChildren(statusNote('warning', '請輸入網段或關鍵字'));
+        return;
+    }
 
     const body = membersState.mode === 'cidr' ? { pattern: value } : { query: value };
     try {

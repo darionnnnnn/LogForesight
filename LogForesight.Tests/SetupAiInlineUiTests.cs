@@ -251,7 +251,7 @@ console.log('PASS_CHECK_AI_PROBE_RESULT');
         Assert.Contains("checkAiProbeResult(newStatus)", renderForm);
         Assert.Contains("if (isSuccess) {", renderForm);
         Assert.Contains("await load()", renderForm);
-        Assert.Contains("feedback.textContent = `儲存成功但探活失敗：${detail}`", renderForm);
+        Assert.Contains("showNote(feedback, 'error', `儲存成功但探活失敗：${detail}`)", renderForm);
     }
 
     [Fact]

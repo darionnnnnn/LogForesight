@@ -7,7 +7,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, guardLoad, renderPageHeader } from '../core/ui.js';
+import { renderTable, renderLoading, confirmAction, withBusy, guardLoad, renderPageHeader } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import { appUrl } from '../core/paths.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
@@ -17,6 +18,13 @@ const previewSummary = document.getElementById('preview-summary');
 const previewWarnings = document.getElementById('preview-warnings');
 const previewRows = document.getElementById('preview-rows');
 const applyButton = document.getElementById('preview-apply');
+const importStatus = document.getElementById('import-status');
+
+/** 上傳與套用的結果訊息（statusNote；失敗帶 role=alert）；傳 null 清除 */
+function showStatus(type, text) {
+    if (!importStatus) return;
+    importStatus.replaceChildren(...(text ? [statusNote(type, text)] : []));
+}
 
 // 已退役類型（Users／Hosts／GroupAccess）保留顯示名稱：歷次匯入紀錄裡還有它們的資料列
 const KIND_NAMES = { Users: '使用者', Hosts: '主機', GroupAccess: '群組授權', Owners: '負責人', Netiq: 'NetIQ 掃描匯入' };
@@ -51,6 +59,7 @@ for (const input of document.querySelectorAll('[data-upload]')) {
         const file = input.files?.[0];
         if (!file) return;
 
+        showStatus(null);
         const kind = input.dataset.upload;
         const formData = new FormData();
         formData.append('file', file);
@@ -62,13 +71,13 @@ for (const input of document.querySelectorAll('[data-upload]')) {
         try {
             // 檔案上傳同樣走 api.js（它認得 FormData，會讓瀏覽器自己帶 multipart boundary）：
             // CSRF 標頭、信封解析、401 導頁、掛載前綴都在那裡一次處理好
-            // silent：下面的 catch 自己跳 toast（含較長的停留時間），不加會跳兩次
+            // silent：下面的 catch 自己在上傳欄位下方顯示 statusNote，不加會再跳一次 toast
             currentPlan = await api.post(`/api/imports/${kind}/preview`, formData, { silent: true });
             currentKind = kind;
             renderPreview();
         } catch (error) {
             previewCard.classList.add('d-none');
-            toast(error.message, 'danger', 8000);
+            showStatus('error', error.message);
         } finally {
             input.value = '';   // 清空以便重新選同一個檔案
         }
@@ -104,7 +113,8 @@ function renderSummary() {
         box.className = 'text-center px-3';
 
         const value = document.createElement('div');
-        value.className = `lf-stat__value text-${item.variant}`;
+        // 只有錯誤筆數是需要注意的結果（lf-text-alert）；新增／更新／不變是一般數字，不上色
+        value.className = item.label === '錯誤' ? 'lf-stat__value lf-text-alert' : 'lf-stat__value';
         value.textContent = String(item.value);
 
         const label = document.createElement('div');
@@ -118,9 +128,8 @@ function renderSummary() {
     previewSummary.replaceChildren(wrap);
 
     if (currentPlan.newUsers && currentPlan.newUsers.length > 0) {
-        const note = document.createElement('div');
-        note.className = 'alert alert-info mt-3 mb-0';
-        note.textContent = `套用時將自動建立 ${currentPlan.newUsers.length} 個使用者帳號：${currentPlan.newUsers.join('、')}`;
+        const note = statusNote('info', `套用時將自動建立 ${currentPlan.newUsers.length} 個使用者帳號：${currentPlan.newUsers.join('、')}`);
+        note.classList.add('mt-3');
         previewSummary.appendChild(note);
     }
 }
@@ -130,15 +139,10 @@ function renderWarnings() {
     if (!currentPlan.warnings || currentPlan.warnings.length === 0) return;
 
     const box = document.createElement('div');
-    box.className = 'alert alert-warning';
-
-    const title = document.createElement('div');
-    title.className = 'fw-semibold mb-2';
-    title.textContent = '請確認以下事項';
-    box.appendChild(title);
+    box.appendChild(statusNote('warning', '請確認以下事項'));
 
     const list = document.createElement('ul');
-    list.className = 'mb-0 ps-3';
+    list.className = 'mb-0 mt-2 ps-3';
     for (const warning of currentPlan.warnings) {
         const item = document.createElement('li');
         item.textContent = warning;
@@ -186,7 +190,7 @@ applyButton.addEventListener('click', async () => {
     try {
         const result = await api.post(`/api/imports/${currentKind}/apply`, { token: currentPlan.token });
 
-        toast(`匯入完成：新增 ${result.added}、更新 ${result.updated}`, 'success', 6000);
+        showStatus('success', `匯入完成：新增 ${result.added}、更新 ${result.updated}`);
 
         previewCard.classList.add('d-none');
         currentPlan = null;
