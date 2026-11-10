@@ -35,7 +35,7 @@ public class FrontendConsistencyUiTests
     {
         var css = SiteCss.Read();
         var match = System.Text.RegularExpressions.Regex.Match(css, @"select option,\s*select optgroup\s*\{(?<body>[^}]*)\}");
-        Assert.True(match.Success, "site.css 必須有 select option／optgroup 規則");
+        Assert.True(match.Success, "樣式表必須有 select option／optgroup 規則");
         Assert.Contains("color: var(--lf-text)", match.Groups["body"].Value);
         Assert.Contains("background-color:", match.Groups["body"].Value);
         Assert.Matches(@"select\s*\{\s*color-scheme:\s*light;", css);

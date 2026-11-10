@@ -64,7 +64,7 @@ const RISK_CLASS = {
 };
 
 /**
- * 嚴重度 → 淡色徽章 variant（對應 site.css 的 lf-badge--*）。
+ * 嚴重度 → 淡色徽章 variant（對應樣式表的 lf-badge--*）。
  * docs/archive/HISTORY.md #1（B1 三級化）：Critical 已收斂進 High，不再是獨立層級——
  * 原本「特別嚴重」的意義改由 elevatesBadge() 的「重大」徽章承接，不再靠嚴重度本身多分一級。
  */
@@ -175,7 +175,7 @@ export const AI_DEGRADED_MAX_ATTEMPTS = 3;
 
 /**
  * 泛用淡色徽章工廠（§8.2「顏色＋文字」）——各頁面自訂狀態徽章（啟用/停用/IP衝突…）
- * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應 site.css 的 lf-badge--*：
+ * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應樣式表的 lf-badge--*：
  * success | danger | warning | info | primary | neutral | dark。
  * icon（選填）為 sprite symbol id，會以 SVG 前置於文字（取代原本用 emoji 當圖示的做法）。
  */

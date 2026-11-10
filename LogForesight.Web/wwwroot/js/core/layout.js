@@ -275,7 +275,7 @@ function setSectionCollapsed(toggle, itemsWrap, collapsed) {
 
 /**
  * 視窗矮到選單放不下時，自動收合「系統管理」（目前唯一可收合的分組）——
- * 側欄現在貼齊視窗高度（見 site.css），選單项目一多就會被裁切、只能内部捲動，
+ * 側欄現在貼齊視窗高度（見樣式表），選單项目一多就會被裁切、只能内部捲動，
  * 這裡讓最常不需要天天點的一組先讓路，而不是預設就要捲動才看得到「報表」在下面。
  * 只在使用者**沒有手動設定過**這組的展開狀態時才自動介入，不覆蓋使用者的明確選擇。
  */
@@ -347,7 +347,7 @@ function bindLogout(user) {
 
 /**
  * 字級偏好（小／中／大）：套在 <html> 的 data-font-scale 上，乘進根字級的縮放倍率
- * （見 site.css）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
+ * （見樣式表）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
  * 回來才縮放造成閃動。中＝預設，不覆寫倍率。
  */
 function initFontScale() {

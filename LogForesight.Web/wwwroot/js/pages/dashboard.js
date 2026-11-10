@@ -808,7 +808,7 @@ function renderGroupRisk(data, user) {
     const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
-            { title: '群組', render: g => roleText('lf-text-title', g.groupName) },
+            { title: '群組', className: 'lf-minw-sm', render: g => roleText('lf-text-title', g.groupName) },
             { title: '主機數', className: 'text-end', render: g => formatNumber(g.hostCount) },
             { title: '高風險日', className: 'text-end', render: g => formatNumber(g.highRiskDays) },
             { title: '中風險日', className: 'text-end', render: g => formatNumber(g.mediumRiskDays) },

@@ -619,10 +619,12 @@ public sealed partial class UiFixtureDataSet
         var utc = DateTime.UtcNow;
         long run = 900;
 
-        void Record(string key, string hostKey, int daysAgo, string status, int minutesAgo)
+        void Record(string key, string hostKey, int daysAgo, string status, int minutesAgo) =>
+            RecordAt(key, hostKey, daysAgo, status, utc.AddMinutes(-minutesAgo));
+
+        void RecordAt(string key, string hostKey, int daysAgo, string status, DateTime attemptAtUtc)
         {
-            var host = HostIds[hostKey];
-            NetiqSourceAttempt.RecordBatch(Backend, new[] { host }, DayOf(daysAgo), ++run, status, utc.AddMinutes(-minutesAgo));
+            NetiqSourceAttempt.RecordBatch(Backend, new[] { HostIds[hostKey] }, DayOf(daysAgo), ++run, status, attemptAtUtc);
             NetiqLedger[key] = (hostKey, daysAgo, status);
         }
 
@@ -632,10 +634,11 @@ public sealed partial class UiFixtureDataSet
         Record("stopped", "fqdn", 4, NetiqAttemptStatus.Stopped, 540);
         Record("empty-once", "fqdn", 5, NetiqAttemptStatus.EmptyOnce, 520);
         Record("retained-incomplete", "fqdn", 6, NetiqAttemptStatus.RetainedIncomplete, 500);
-        // 同一主機日連續失敗三趟：自動重試次數用盡
-        Record("failed-exhausted", "ip-only", 3, NetiqAttemptStatus.Failed, 480);
-        NetiqSourceAttempt.RecordBatch(Backend, new[] { HostIds["ip-only"] }, DayOf(3), ++run, NetiqAttemptStatus.Failed, utc.AddMinutes(-300));
-        NetiqSourceAttempt.RecordBatch(Backend, new[] { HostIds["ip-only"] }, DayOf(3), ++run, NetiqAttemptStatus.Failed, utc.AddMinutes(-60));
+        // 同一主機日在「今天」連續失敗三趟：自動重試次數用盡。重試次數以本地日期計，三趟都要落在今天——
+        // 以「現在往前 N 分鐘」排的話，凌晨產生資料集時前幾趟會落到昨天、次數不夠（時段相依的假失敗）
+        var todayStartUtc = DateTime.Today.ToUniversalTime();
+        for (var i = 1; i <= 3; i++)
+            RecordAt("failed-exhausted", "ip-only", 3, NetiqAttemptStatus.Failed, todayStartUtc.AddSeconds(i));
     }
 
     // ── 情境 ────────────────────────────────────────────────────────────────

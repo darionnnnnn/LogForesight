@@ -123,16 +123,14 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - 寬表格撐破版面：溢出容器一律 `overflow-x: auto`。
 - 逐列單獨操作：清單頁維持批次選取（§8.6 #11）。
 
-## 6. 交付前檢查表（skill pre-delivery，Phase 4 逐頁走查用）
+## 6. 交付前檢查表
 
-- [ ] 主文字對比 ≥ 4.5:1、次要文字 ≥ 3:1
-- [ ] 所有可點元素 cursor: pointer、hover 有 150–300ms 平滑回饋
-- [ ] focus 態鍵盤可見
-- [ ] prefers-reduced-motion 生效
-- [ ] 分隔線／邊框在內容密集區可辨
-- [ ] 響應斷點 768px（既有側欄轉頂列）不破版；列印樣式存活
-- [ ] 無 Bootstrap 預設藍 `#0d6efd` 殘留
-- [ ] 字級三檔切換下版面不破
+可機器判定的項目由 §8.7 的量測工具與守門測試負責，畫面改動交付前必須是 0：
+- [ ] 375／768／1280／1920／2560 五個寬度（另 375、1280 的小、大字級）：水平捲軸、元素溢出、點擊區 < 24×24、console 與網路錯誤、卡在載入、情境斷言六項皆 0
+- [ ] `DesignSystemGuardUiTests`、`AccessibilityUiTests`（文字角色對比 ≥ 4.5:1、焦點可見）綠
+人工確認：
+- [ ] 1280 與 1920 截圖：畫面上最醒目的是風險訊號，不是按鈕或裝飾；寬螢幕沒有大片無意義空白
+- [ ] hover 只變色與陰影、不位移；prefers-reduced-motion 生效；列印樣式存活（佐證層與收合區印出）
 
 ## 6a. 視窗高度驅動的版面（詳見 docs/archive/FEEDBACK-10-PLAN.md §5）
 
@@ -277,3 +275,34 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 資料量大的列（問題、交辦、主機）分兩層：
 - **判斷層**（預設可見）：回答「要不要處理」——嚴重度、標題、一句白話、次數與時段、趨勢、狀態，以及入侵判讀必要的帳號／來源摘要。
 - **佐證層**（列展開）：回答「憑什麼」——處置參考、登入失敗明細、數值佐證、來源觀測。內容一字不減、列印全顯示，只是換位置。
+
+### 8.6 共用元件一覽（頁面不另寫一份）
+
+| 用途 | 出口 |
+|---|---|
+| 單一文字節點套角色 | `elements.js` `roleText(角色, 文字)` |
+| 「標籤 值」一組（放進 metaLine） | `elements.js` `fact(標籤, 值)` |
+| 一行次要資訊 | `elements.js` `metaLine(items)` |
+| 就地展開／收合 | `elements.js` `disclosure(標籤, 目標, opts)` |
+| 操作結果與驗證訊息 | `elements.js` `statusNote(error／warning／success／info, 文字)` |
+| 按鈕 | `ui.js` `button(文字, { variant, size, icon, title, opens, className, disabled, onClick })` |
+| 換頁但要按鈕外觀 | `ui.js` `linkButton(文字, href, opts)` |
+| 頁內導航（捲到分節、切頁籤） | `lf-nav-item`（句中用 `lf-nav-item--inline`） |
+| 只有圖示的連結 | `lf-icon-link` |
+| 詳情頁頁首卡 | `lf-entity-head`（`__title`／`__link`／`__badges`／`__actions`／`__facts`，layout.css） |
+| 可展開表格就地重繪保留展開 | `renderTable(..., { rowKey, expandedKeys })`；`toggleAllTableDetails` 走列自己的切換 |
+| KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary` |
+
+表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
+表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。
+
+### 8.7 驗收工具（LogForesight.Tests）
+
+- **資料集** `UiFixture/`：經產品 `StorageBackend` 產生涵蓋版面邊界的 SQLite（長名稱、無空白長字串、HTML 字元、0／1／極多筆、各種狀態與角色）。
+  一般測試每次斷言矩陣齊全；設 `LF_UI_FIXTURE=<目錄>` 時把 DB 與情境清單留在 `<目錄>/ai`、`<目錄>/noai`。
+  資料日期相對於產生當天（「昨日」就是產生前一天），隔天截圖前要重產，否則預設期間是空的。
+- **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
+  Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
+- **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
+  情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
+- **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

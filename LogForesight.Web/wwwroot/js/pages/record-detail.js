@@ -564,7 +564,7 @@ function renderHeader(detail) {
  * 正在惡化」與「誰在處理」，這兩者不適合塞進合併欄。
  * 「選取」不再獨立佔欄（原本欄寬窄、checkbox 不好點）：全選移到「處理狀態」表頭
  * 右側，逐列 checkbox 移到「處理狀態」欄內容右上角、加大點擊範圍（見 statusCell／
- * site.css .lf-status-cell__checkbox）。sectionIssues 是這張表要渲染的那批問題
+ *樣式表.lf-status-cell__checkbox）。sectionIssues 是這張表要渲染的那批問題
  * （全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
@@ -600,7 +600,7 @@ function statusHeader(sectionIssues) {
 
 /**
  * 「處理狀態」欄內容：canHandle 時右上角疊一顆勾選 checkbox（絕對定位，見
- * site.css .lf-status-cell__wrap），下方是既有的 statusControl 內容（狀態文字／
+ *樣式表.lf-status-cell__wrap），下方是既有的 statusControl 內容（狀態文字／
  * 快速動作）。批次套用允許覆蓋任何問題的狀態（後端 SetIssueStatusBatch 不區分），
  * 前端沒理由把「不處理（預設）」「已知雜訊（自動）」擋在批次選取之外。
  */

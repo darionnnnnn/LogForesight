@@ -179,8 +179,8 @@ function renderProgress() {
 }
 
 // 三態共用一份定義（回饋十八輪體檢輪修正）：狀態字典 dot 顏色與 lf-badge 變體都從同一個
-// stepState() 結果查表，兩者不會各自判斷而彼此漂移。dot 顏色走 site.css tokens（終檢輪修正：
-// 原本硬編字面值，site.css 換色時這裡會漂移）。
+// stepState() 結果查表，兩者不會各自判斷而彼此漂移。dot 顏色走樣式表tokens（終檢輪修正：
+// 原本硬編字面值，樣式表 換色時這裡會漂移）。
 const STEP_STATE_META = {
     done: { dot: 'var(--lf-success)', badgeVariant: 'success', badgeText: '已完成' },
     skipped: { dot: 'var(--lf-gray-400)', badgeVariant: 'secondary', badgeText: '已跳過' },

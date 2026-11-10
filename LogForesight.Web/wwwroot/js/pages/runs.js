@@ -18,7 +18,7 @@ import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 import { disclosure } from '../core/elements.js';
 
-/* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
+/* 色值於執行期讀樣式表語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
    backfilled=--lf-success-muted、warning=--lf-warning、failed=--lf-danger、
    stopped=--lf-severity-high、running=--lf-primary、stuck=--lf-cat-hardware、

@@ -760,11 +760,6 @@ a.lf-badge:hover { text-decoration: underline; }
     gap: var(--lf-space-1);
 }
 
-.lf-toolbar__sort {
-    width: auto;
-    min-width: 9rem;
-}
-
 .lf-toolbar__spacer { flex: 1 1 auto; }
 
 .lf-toolbar__divider {
@@ -856,7 +851,8 @@ a.lf-badge:hover { text-decoration: underline; }
     display: inline-flex;
     align-items: center;
     gap: .3em;
-    min-height: 24px;   /* 點擊區下限（DESIGN-SYSTEM §8.2），表頭文字本身只有一行高 */
+    min-width: 24px;    /* 點擊區下限（DESIGN-SYSTEM §8.2）：表頭文字可能只有一兩個字、也可能只有一行高 */
+    min-height: 24px;
     padding: 0;
     border: 0;
     background: none;
@@ -1153,7 +1149,6 @@ a.lf-badge:hover { text-decoration: underline; }
     animation: lf-skeleton-shimmer 1.2s ease-in-out infinite;
 }
 
-.lf-skeleton--lg { height: 1.75rem; }
 
 @keyframes lf-skeleton-shimmer {
     0% { background-position: 100% 50%; }
@@ -1221,11 +1216,6 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 /* 提示框（淡底色＋語意文字色） */
-.lf-callout-info {
-    background-color: var(--lf-info-soft);
-    color: var(--lf-info-text);
-}
-
 .lf-callout-warning {
     background-color: var(--lf-warning-soft);
     color: var(--lf-warning-text);

@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 操作說明書頁的排版（docs/HELP-WRITING-GUIDE.md、site.css .lf-doc）：
+/// 操作說明書頁的排版（docs/HELP-WRITING-GUIDE.md、樣式表 .lf-doc）：
 /// markdown-lite 的文件模式（語意 h3 段落標題、提示框、清單交給 .lf-doc 排版）與預設模式不受影響，
 /// 內文開頭重複的章名拿掉，以及章節目錄每個圖示都要在 icons.svg 裡（缺圖示時目錄會出現空白）。
 /// </summary>
@@ -64,7 +64,7 @@ public sealed class HelpManualLayoutTests
 
         var css = SiteCss.Read();
         var start = css.IndexOf(".lf-doc {", StringComparison.Ordinal);
-        Assert.True(start >= 0, "site.css 缺少 .lf-doc");
+        Assert.True(start >= 0, "樣式表缺少 .lf-doc");
         // 區段到下一個區段標題（「/* ──」開頭的註解）為止；樣式表分層後下一段不一定是哪一段
         var next = css.IndexOf("/* ──", start, StringComparison.Ordinal);
         var block = css[start..(next < 0 ? css.Length : next)];

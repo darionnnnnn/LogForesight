@@ -133,7 +133,7 @@ const cases = {
         rail.expand('handling', { focus: false, scroll: false });
         assert.equal(scrolled.length, 0);
     },
-    // 斷點只在側軌模組一處：與 site.css 的 lg 斷點同值（992px），頁面層一律問 rail.isRailMode()
+    // 斷點只在側軌模組一處：與樣式表的 lg 斷點同值（992px），頁面層一律問 rail.isRailMode()
     isRailModeFollowsLgBreakpoint() {
         const queries = [];
         const original = globalThis.window.matchMedia;

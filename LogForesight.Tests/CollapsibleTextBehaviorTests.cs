@@ -3,7 +3,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>長文字收合共用元件（core/ui.js collapsibleText）的 production 行為，以及 record-detail／site.css 的接線斷言。</summary>
+/// <summary>長文字收合共用元件（core/ui.js collapsibleText）的 production 行為，以及 record-detail／樣式表 的接線斷言。</summary>
 public sealed class CollapsibleTextBehaviorTests
 {
     private static string FindRepoRoot()

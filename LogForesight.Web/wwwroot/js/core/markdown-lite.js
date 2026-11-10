@@ -233,7 +233,7 @@ function renderBlocks(container, text, asDocument = false) {
  * @param {HTMLElement} container
  * @param {string} text
  * @param {{ badge?: string, badgeClassName?: string, asDocument?: boolean }} [options]
- *        asDocument：操作說明書的文件排版（語意標題、段距、提示框，見 site.css .lf-doc）
+ *        asDocument：操作說明書的文件排版（語意標題、段距、提示框，見樣式表.lf-doc）
  */
 export function renderAiText(container, text, { badge, badgeClassName = 'lf-badge lf-badge--secondary', asDocument = false } = {}) {
     container.replaceChildren();

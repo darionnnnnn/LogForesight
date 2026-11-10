@@ -293,7 +293,11 @@ body {
 .btn-group-sm > .btn {
     --bs-btn-font-size: var(--lf-control-font-size-sm);
     --bs-btn-border-radius: var(--lf-radius-sm);
+    min-height: 24px;   /* 點擊區下限（DESIGN-SYSTEM §8.2）：小字級時字高＋內距不到 24px */
 }
+
+/* 勾選框與開關靠標籤擴大點擊範圍：行內標籤的上下內距只擴大可點區、不改變行高（小字級時標籤字高不到 20px） */
+.form-check-label { padding-block: 3px; }
 
 .btn-primary {
     --bs-btn-bg: var(--lf-primary);

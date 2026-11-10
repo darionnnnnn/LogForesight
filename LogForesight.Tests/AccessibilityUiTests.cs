@@ -136,7 +136,7 @@ public class AccessibilityUiTests
             if (m.Success) return m.Groups[1].Value;
         }
 
-        Assert.Fail($"site.css 的 :root 找不到 {name}");
+        Assert.Fail($"base.css 的 :root 找不到 {name}");
         return string.Empty;
     }
 

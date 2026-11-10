@@ -417,7 +417,7 @@ public class RunsPageUiTests
         Assert.True(tabsEnd > 0 && firstPanel > tabsEnd);
     }
 
-    /// <summary>批次F：新版狀態卡用到的樣式都要在 site.css 定義，否則版面直接散掉。</summary>
+    /// <summary>批次F：新版狀態卡用到的樣式都要在樣式表定義，否則版面直接散掉。</summary>
     [Fact]
     public void Runs頁面樣式在site中已定義()
     {

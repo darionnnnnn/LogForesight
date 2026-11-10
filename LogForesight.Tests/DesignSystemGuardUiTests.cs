@@ -5,11 +5,8 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 設計系統 v3 的棘輪式守門（docs/FEEDBACK-69-PLAN.md D7、A-3～A-5）。
-///
-/// 每條規則有一份「尚未改版的檔案」允許清單：清單外的檔案一律不得出現舊樣式；
-/// 清單內的檔案改乾淨後必須同步從清單移除（清單不得有多餘項），否則守門就悄悄失效。
-/// 各頁批次完成時把該頁移出清單，收尾時清單歸零、規則改為無條件。
+/// 設計系統 v3 的守門（docs/DESIGN-SYSTEM.md §8）：文字語意色、btn-link、手寫按鈕類別在全站前端無條件禁止，
+/// 另守樣式表唯一引用點、中斷點白名單與按鈕變體白名單。
 /// </summary>
 public sealed class DesignSystemGuardUiTests
 {
@@ -27,16 +24,13 @@ public sealed class DesignSystemGuardUiTests
 
     private static string Read(string relative) => File.ReadAllText(Path.Combine(WebRoot(), relative), Encoding.UTF8);
 
-    /// <summary>掃描範圍內命中 pattern 的檔案，與允許清單比對：清單外命中＝退步；清單內沒命中＝清單過期。</summary>
-    private static void AssertRatchet(IEnumerable<string> scope, Regex pattern, IReadOnlySet<string> allowed, string rule)
+    /// <summary>掃描範圍內任何檔案命中 pattern 即失敗；scope 掃不到檔案也算失敗（路徑寫錯時守門會悄悄失效）。</summary>
+    private static void AssertNone(IEnumerable<string> scope, Regex pattern, string rule)
     {
-        var hits = scope.Where(f => pattern.IsMatch(Read(f))).ToHashSet();
-        var regressions = hits.Except(allowed).OrderBy(f => f).ToList();
-        var stale = allowed.Except(hits).OrderBy(f => f).ToList();
-        Assert.True(regressions.Count == 0,
-            $"{rule}：以下檔案不在允許清單內卻出現舊樣式，改用設計系統 v3 的元件或角色類別：{string.Join("、", regressions)}");
-        Assert.True(stale.Count == 0,
-            $"{rule}：以下檔案已改乾淨，請從允許清單移除（清單不得有多餘項）：{string.Join("、", stale)}");
+        var files = scope.ToList();
+        Assert.True(files.Count > 0, $"{rule}：掃描範圍沒有任何檔案，守門的路徑寫錯了");
+        var hits = files.Where(f => pattern.IsMatch(Read(f))).OrderBy(f => f).ToList();
+        Assert.True(hits.Count == 0, $"{rule}：以下檔案出現舊樣式，改用設計系統 v3 的元件或角色類別：{string.Join("、", hits)}");
     }
 
     private static IEnumerable<string> PageScope() =>
@@ -47,37 +41,25 @@ public sealed class DesignSystemGuardUiTests
     internal static readonly Regex AdHocTextColor =
         new(@"\btext-(danger|warning|success)\b|\bsmall text-muted\b|\btext-muted small\b", RegexOptions.Compiled);
 
-    private static readonly HashSet<string> AdHocTextColorAllowed = new(StringComparer.Ordinal)
-    {
-    };
-
     [Fact]
-    public void 頁面不得現場拼文字語意色_棘輪() =>
-        AssertRatchet(PageScope(), AdHocTextColor, AdHocTextColorAllowed, "文字語意色");
+    public void 頁面不得現場拼文字語意色() =>
+        AssertNone(PageScope(), AdHocTextColor, "文字語意色");
 
     // ── A-4 揭露：btn-link 不再當按鈕樣式，就地展開走 disclosure、開視窗走外框按鈕、換頁走連結 ──
 
     internal static readonly Regex BtnLink = new(@"\bbtn-link\b", RegexOptions.Compiled);
 
-    private static readonly HashSet<string> BtnLinkAllowed = new(StringComparer.Ordinal)
-    {
-    };
-
     [Fact]
-    public void 不得以btn_link當按鈕樣式_棘輪() =>
-        AssertRatchet(Files("wwwroot/js", "*.js").Concat(Files("Views", "*.cshtml")), BtnLink, BtnLinkAllowed, "btn-link");
+    public void 不得以btn_link當按鈕樣式() =>
+        AssertNone(Files("wwwroot/js", "*.js").Concat(Files("Views", "*.cshtml")), BtnLink, "btn-link");
 
     // ── A-5 按鈕工廠：頁面模組的按鈕一律經 ui.js button()，不手寫 'btn btn-…' ──
 
     internal static readonly Regex HandwrittenButton = new(@"['""`]btn btn-", RegexOptions.Compiled);
 
-    private static readonly HashSet<string> HandwrittenButtonAllowed = new(StringComparer.Ordinal)
-    {
-    };
-
     [Fact]
-    public void 頁面模組不得手寫按鈕類別_棘輪() =>
-        AssertRatchet(Files("wwwroot/js/pages", "*.js"), HandwrittenButton, HandwrittenButtonAllowed, "手寫按鈕類別");
+    public void 頁面模組不得手寫按鈕類別() =>
+        AssertNone(Files("wwwroot/js/pages", "*.js"), HandwrittenButton, "手寫按鈕類別");
 
     // ── A-1 樣式表唯一引用點：頁面殼一律 <partial name="_Styles" />，四檔載入順序只寫一次 ──
 

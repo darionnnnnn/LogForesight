@@ -714,7 +714,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 並在展開／收合（含 toggleAllTableDetails）時同步更新——同一頁就地重繪後，使用者展開的列維持展開。
  * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
  * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
- * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
+ *樣式表的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
  * caption（選填）：螢幕閱讀器用的隱藏表格標題。
  * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
  * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
@@ -1287,7 +1287,7 @@ function backLinkNode({ href, text = '返回清單' }) {
 }
 
 /**
- * 執行期讀取 CSS 變數（設計 token）：顏色只在 site.css 定義一次，圖表與 style 直塗的地方
+ * 執行期讀取 CSS 變數（設計 token）：顏色只在樣式表定義一次，圖表與 style 直塗的地方
  * （吃不到 CSS class）一律走這裡，不再各自寫死色值。fallback 只在變數不存在時使用。
  */
 export function cssVar(name, fallback = '') {
