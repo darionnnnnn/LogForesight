@@ -284,4 +284,29 @@ public class PasswordSprayDetectorTests
         Assert.True(CorrelationPatternIds.IsValid("password-spray"));
         Assert.True(CorrelationPatternIds.IsValid(CorrelationPatternIds.PasswordSpray));
     }
+
+    [Fact]
+    public void 測試13_單行事件訊息_同一帳號20則相異帳號數為1且不判定噴灑()
+    {
+        var msg = "帳戶無法登入。    帳戶名稱:  -   登入類型:   3    登入失敗的帳戶:   帳戶名稱:  user-002   帳戶網域:  domain-001    " +
+                  "失敗資訊:   狀態:   0xC000006D   子狀態:  0xC000006A    網路資訊:   工作站名稱:  WS01   來源網路位址:  10.0.0.5   來源連接埠:  0";
+        var logs = Enumerable.Range(0, 20)
+            .Select(i => new EventLogEntryData
+            {
+                TimeGenerated = DateTime.Today.AddMinutes(i),
+                LogName = "Security",
+                Source = "Microsoft-Windows-Security-Auditing",
+                EventId = 4625,
+                EntryType = LogEntryType.FailureAudit,
+                Message = msg + new string(' ', 2) + "#" + i,
+                InstanceId = 4625
+            })
+            .ToList();
+
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        Assert.Single(sig.LoginFailureDetails!.Select(d => d.Account).Distinct());
+        Assert.Equal("user-002", sig.LoginFailureDetails![0].Account);
+        Assert.Empty(PasswordSprayDetector.Detect(new List<LogIssueSignature> { sig }));
+    }
 }
