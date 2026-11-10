@@ -604,7 +604,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
    預先算好，以「（頻率上升：近14日基準 x2.1、昨日 x3）」的形式附註在事件行上，模型只解讀不計算。
 5. **JSON 契約 + grammar 強制 + 低溫度** — prompt 指定回傳
    `{risk_level, headline, brief, story, trend_story, action}` 的 JSON 結構（`risk_level` 欄位語意為
-   「AI 的白話翻譯」而非判斷結果，只作為向上拉的安全網；`brief` 是「給主管的說明」，2～3 句、可直接照念給主管聽，
+   「AI 的白話翻譯」而非判斷結果，只作為向上拉的安全網；`brief`（畫面名稱：重點速報）是給主管的說明，2～3 句、可直接照念給主管聽，
    **選填且不進內容檢查**：缺少視為空字串；超過 150 字（`MaxBriefChars`）在前 150 字內最後一個句末標點截斷、截不出就丟棄；
    含 IPv4、Event ID、事件編號字樣一律丟棄（`LogAnalysisService.NormalizeBrief`），丟棄不重試、不降級，只記 Debug），
    並透過 llama.cpp 的 `response_format: json_object`（grammar 約束解碼）從 server 端**保證**

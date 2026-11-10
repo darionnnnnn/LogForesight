@@ -45,7 +45,7 @@ public sealed class SideRailBehaviorTests
     public void RecordDetail版面改用側軌layout_不再用col_lg_8與col_lg_4排主欄()
     {
         var view = Read("LogForesight.Web", "Views", "Pages", "RecordDetail.cshtml");
-        var main = view.Substring(0, view.IndexOf("id=\"record-evidence\"", StringComparison.Ordinal));
+        var main = view.Substring(0, view.IndexOf("id=\"record-context\"", StringComparison.Ordinal));
         Assert.DoesNotContain("col-lg-8", main);
         Assert.DoesNotContain("col-lg-4", main);
         Assert.Contains("lf-detail-layout", main);

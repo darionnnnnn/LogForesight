@@ -66,6 +66,21 @@ public class RiskReportServiceTests
     }
 
     [Fact]
+    public async Task 有重點速報的紀錄報告寫重點速報前綴_不寫舊名()
+    {
+        // 第 68 輪 A-1：畫面與報告前綴改名「重點速報」；舊名「給主管的說明」不再寫入新報告
+        var sink = new FakeReportSink();
+        var service = MakeService(sink);
+        var record = MakeRecord(MakeStorageIssue());
+        record.Brief = "磁碟即將故障，需要主管安排採購備品。";
+
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
+
+        Assert.Contains("重點速報：磁碟即將故障，需要主管安排採購備品。", draft.Content);
+        Assert.DoesNotContain("給主管的說明：", draft.Content);
+    }
+
+    [Fact]
     public async Task 規則命中類別直接渲染靜態知識庫不呼叫AI()
     {
         var sink = new FakeReportSink();

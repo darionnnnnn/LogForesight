@@ -1473,11 +1473,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
-  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／給主管的說明／狀況／趨勢／建議處置；「給主管的說明」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
+  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／重點速報／狀況／趨勢／建議處置；「重點速報」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
   僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
-  依 `AiAnalyzed` 旗標；「給主管的說明：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
+  依 `AiAnalyzed` 旗標；「重點速報：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
 - **「AI 分析中」徽章**：取數與 AI 判讀脫鉤後
   （見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節），統計已寫入、

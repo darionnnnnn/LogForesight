@@ -153,7 +153,7 @@ const cases = {
             document, renderAiInline, navigator, (m, k) => toasts.push([m, k]));
         const wrap = briefBlock('一台主機**磁碟異常**，請採購備品。');
         const copyBtn = wrap.find(n => n.tagName === 'BUTTON');
-        assert.equal(copyBtn.getAttribute('aria-label'), '複製給主管的說明');
+        assert.equal(copyBtn.getAttribute('aria-label'), '複製重點速報');
         const shown = wrap.find(n => n.tagName === 'P').textContent;
         assert(!shown.includes('*'), shown);
         await Promise.all((copyBtn.listeners.click || []).map(h => h()));

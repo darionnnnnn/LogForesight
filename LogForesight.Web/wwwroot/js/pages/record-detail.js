@@ -322,7 +322,7 @@ function aiStatusBadge(detail) {
 }
 
 /**
- * 風險日詳情頁的 AI 摘要區塊（標題、給主管的說明、狀況／趨勢／建議處置）；沒有任何文字時回 null。
+ * 風險日詳情頁的 AI 摘要區塊（標題、重點速報、狀況／趨勢／建議處置）；沒有任何文字時回 null。
  * 從 renderHeader 抽出，行為測試可單獨執行。
  */
 function aiSummaryBlock(detail) {
@@ -370,7 +370,7 @@ function aiSummaryBlock(detail) {
     return target;
 }
 
-/** 「給主管的說明」：可直接照念的 2～3 句，附一鍵複製（列印時不顯示按鈕） */
+/** 「重點速報」：可直接照念的 2～3 句，附一鍵複製（列印時不顯示按鈕） */
 function briefBlock(text) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-ai-brief';
@@ -378,13 +378,13 @@ function briefBlock(text) {
     head.className = 'lf-ai-brief__head';
     const badge = document.createElement('span');
     badge.className = 'lf-badge lf-badge--secondary';
-    badge.textContent = '給主管的說明';
+    badge.textContent = '重點速報';
     head.appendChild(badge);
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'btn btn-link btn-sm p-0 lf-no-print';
     copy.textContent = '複製';
-    copy.setAttribute('aria-label', '複製給主管的說明');
+    copy.setAttribute('aria-label', '複製重點速報');
     // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
     const p = document.createElement('p');
     copy.addEventListener('click', async () => {

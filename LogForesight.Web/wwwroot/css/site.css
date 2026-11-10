@@ -1602,7 +1602,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius);
 }
 
-/* 「給主管的說明」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
+/* 「重點速報」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
 .lf-ai-brief {
     background: var(--lf-primary-soft);
     border: 1px solid var(--lf-primary-soft-border);

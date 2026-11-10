@@ -1432,7 +1432,7 @@ public class AnalysisOrchestrator
             console.WriteLine($"\n  白話說明：{record.Summary}");
             if (record.Brief.Length > 0)
             {
-                console.WriteLine($"  給主管的說明：{record.Brief}");
+                console.WriteLine($"  重點速報：{record.Brief}");
             }
             if (record.TrendAssessment.Length > 0)
             {
