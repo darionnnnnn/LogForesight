@@ -82,6 +82,13 @@ export function roleText(role, text) {
     return span;
 }
 
+/** 「標籤 值」一組（標籤用 lf-text-label），通常放進 metaLine；value 可為字串、數字或 Node */
+export function fact(label, value) {
+    const span = document.createElement('span');
+    span.append(roleText('lf-text-label', label), ' ', value instanceof Node ? value : String(value ?? ''));
+    return span;
+}
+
 const STATUS_NOTE = {
     error: { icon: 'exclamation-triangle', role: 'alert' },
     success: { icon: 'clipboard-check', role: 'status' },

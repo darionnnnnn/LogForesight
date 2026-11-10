@@ -25,9 +25,12 @@ import {
     renderPageHeader,
     loadPageSize,
     savePageSize,
-    toast
+    toast,
+    button,
+    linkButton
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, renderIssueCell, statusText, dueCell, originBadge } from '../core/format.js';
+import { metaLine, roleText, disclosure } from '../core/elements.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 import { statusBadgeMeta, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 
@@ -46,6 +49,7 @@ const pausedCheckbox = document.getElementById('handler-wo-paused');
 const replyOrdersBtn = document.getElementById('handler-wo-reply');
 const selectedCountEl = document.getElementById('handler-wo-selected');
 const advancedEl = document.getElementById('handler-advanced');
+const advancedBodyEl = document.getElementById('handler-advanced-body');
 
 const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
@@ -130,10 +134,8 @@ function renderSelfOnly(container, user) {
         icon: 'lock'
     });
     if (user?.userId) {
-        const link = document.createElement('a');
-        link.className = 'btn btn-sm btn-outline-primary mt-2';
-        link.href = appUrl('/handlers/' + user.userId);
-        link.textContent = '前往我的交辦';
+        const link = linkButton('前往我的交辦', appUrl('/handlers/' + user.userId), { variant: 'outline-primary' });
+        link.classList.add('mt-2');
         container.firstElementChild.appendChild(link);
     }
 }
@@ -187,14 +189,13 @@ function clearOrderParam() {
 }
 
 function renderHeader(data) {
-    // 頁首（renderPageHeader）：副標開頭以強調文字放處理人名稱；停用帳號的說明併入副標
+    // 頁首（renderPageHeader）：處理人名稱為主體；停用帳號的後果說明併入副標
     const name = document.createElement('strong');
     const displayName = formatUserName(data.displayName, data.account);
     name.textContent = data.active ? displayName : `${displayName}（已停用）`;
-    const note = data.active
-        ? ' 的交辦單與處理進度'
-        : ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。';
-    renderPageHeader(document.getElementById('page-header'), { subtitle: [name, note] });
+    renderPageHeader(document.getElementById('page-header'), {
+        subtitle: data.active ? [name] : [name, ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。']
+    });
 }
 
 function renderKpi(data) {
@@ -273,7 +274,7 @@ async function refreshAfterReply({ keepExpandedId = null } = {}) {
     window.scrollTo(0, scrollY);
 
     if (advancedLoaded) {
-        if (advancedEl.open) guardLoad([casesEl, daysEl], loadAdvanced);
+        if (isAdvancedOpen()) guardLoad([casesEl, daysEl], loadAdvanced);
         else advancedLoaded = false;
     }
 }
@@ -402,21 +403,23 @@ function renderOrders(data) {
     columns.push(
         {
             title: '單號',
-            className: 'text-nowrap',
+            className: 'text-nowrap d-none d-sm-table-cell',
             render: row => {
                 const a = document.createElement('a');
                 a.href = appUrl('/work-orders/' + row.workOrderId);
                 a.textContent = '#' + row.workOrderId;
+                a.className = 'lf-text-data';
                 a.dataset.woId = String(row.workOrderId);
                 return a;
             }
         },
         {
             title: '問題',
-            render: row => renderIssueCell(row.issueLabel, row.plainExplanation)
+            render: row => orderIssueCell(row)
         },
         {
             title: '主機',
+            className: 'd-none d-sm-table-cell',
             render: row => {
                 const wrap = document.createElement('div');
                 const counts = row.counts || {};
@@ -433,9 +436,8 @@ function renderOrders(data) {
                 if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
 
                 if (parts.length > 0) {
-                    const sub = document.createElement('div');
-                    sub.className = 'text-muted small';
-                    sub.textContent = parts.join('、');
+                    const sub = roleText('lf-text-meta', parts.join('、'));
+                    sub.classList.add('d-block');
                     wrap.appendChild(sub);
                 }
                 return wrap;
@@ -443,33 +445,22 @@ function renderOrders(data) {
         },
         {
             title: '逾期',
-            className: 'text-end text-nowrap',
+            className: 'text-end text-nowrap d-none d-sm-table-cell',
             render: row => {
                 const overdue = row.counts?.overdue ?? 0;
-                if (overdue > 0) return statusBadge(String(overdue), 'danger');
-                const span = document.createElement('span');
-                span.textContent = '0';
-                return span;
+                // 逾期是風險狀態：有逾期用警示文字，沒有就是一般的 0
+                return roleText(overdue > 0 ? 'lf-text-alert' : 'lf-text-data', String(overdue));
             }
         },
         {
             title: '未回覆',
-            className: 'text-end text-nowrap',
-            render: row => (row.unrepliedDays == null ? '—' : `${row.unrepliedDays} 天`)
+            className: 'text-end text-nowrap d-none d-sm-table-cell',
+            render: row => roleText('lf-text-data', row.unrepliedDays == null ? '—' : `${row.unrepliedDays} 天`)
         },
         {
             title: '期限',
-            className: 'text-nowrap',
+            className: 'text-nowrap d-none d-sm-table-cell',
             render: row => dueDateCell(row)
-        },
-        {
-            title: '來源',
-            render: row => originBadge(row.origin)
-        },
-        {
-            title: '最近新增',
-            className: 'text-nowrap',
-            render: row => (row.lastAppendedAt ? formatDateTime(row.lastAppendedAt) : '—')
         }
     );
 
@@ -479,11 +470,8 @@ function renderOrders(data) {
             className: 'text-end',
             render: row => {
                 if (row.closedAt) return '';
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'btn btn-sm btn-outline-primary text-nowrap';
-                btn.textContent = '回覆';
-                btn.addEventListener('click', () => replyOrder(row, null));
+                const btn = button('回覆', { variant: 'outline-primary', onClick: () => replyOrder(row, null) });
+                btn.classList.add('text-nowrap');
                 return btn;
             }
         });
@@ -708,16 +696,15 @@ function dueDateCell(row) {
     const showValue = () => {
         const text = row.dueDate ? formatDate(row.dueDate) : '—';
         if (!canReply || row.closedAt) {
-            wrap.replaceChildren(document.createTextNode(text));
+            wrap.replaceChildren(roleText('lf-text-data', text));
             return;
         }
-        const link = document.createElement('button');
-        link.type = 'button';
-        link.className = 'btn btn-link btn-sm p-0 text-nowrap';
-        link.textContent = row.dueDate ? text : '設定期限';
-        link.title = '修改這張單的期限';
-        link.addEventListener('click', showEditor);
-        wrap.replaceChildren(link);
+        // 沒有期限：整顆鈕就是「設定期限」；有期限：日期旁一顆鉛筆鈕進編輯
+        const edit = row.dueDate
+            ? button('', { icon: 'pencil', title: '修改這張單的期限', onClick: showEditor })
+            : button('設定期限', { title: '修改這張單的期限', onClick: showEditor });
+        edit.classList.add('text-nowrap');
+        wrap.replaceChildren(...(row.dueDate ? [roleText('lf-text-data', text), edit] : [edit]));
     };
 
     const showEditor = () => {
@@ -733,16 +720,8 @@ function dueDateCell(row) {
         input.value = row.dueDate ? String(row.dueDate).slice(0, 10) : '';
         input.setAttribute('aria-label', '期限');
 
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'btn btn-sm btn-outline-primary';
-        save.textContent = '儲存';
-
-        const cancel = document.createElement('button');
-        cancel.type = 'button';
-        cancel.className = 'btn btn-sm btn-outline-secondary';
-        cancel.textContent = '取消';
-        cancel.addEventListener('click', showValue);
+        const save = button('儲存', { variant: 'outline-primary' });
+        const cancel = button('取消', { onClick: showValue });
 
         save.addEventListener('click', async () => {
             save.disabled = true;
@@ -774,11 +753,17 @@ function buildMemberPanel(row, cell, carry = null) {
     box.tabIndex = -1;
     box._replyCarry = carry;
 
+    // 佐證層：這張單的來源與最近新增時間（判斷「要不要處理」用不到，放展開列）
+    const facts = metaLine([
+        `來源：${ORIGIN_LABELS[row.origin] || row.origin || '未知'}`,
+        row.lastAppendedAt ? `最近新增：${formatDateTime(row.lastAppendedAt)}` : null
+    ], { className: 'mb-2' });
+
     const bar = document.createElement('div');
     bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
 
     const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label mb-0 text-muted small text-nowrap';
+    statusLabel.className = 'lf-text-label text-nowrap';
     statusLabel.textContent = '狀態';
     const memberStatus = document.createElement('select');
     memberStatus.className = 'form-select form-select-sm w-auto';
@@ -792,10 +777,8 @@ function buildMemberPanel(row, cell, carry = null) {
     memberStatus.id = statusLabel.htmlFor;
     bar.append(statusLabel, memberStatus);
 
-    const replyHostsBtn = document.createElement('button');
-    replyHostsBtn.type = 'button';
-    replyHostsBtn.className = 'btn btn-sm btn-outline-primary ms-auto';
-    replyHostsBtn.textContent = '回覆選取的主機';
+    const replyHostsBtn = button('回覆選取的主機', { variant: 'outline-primary', opens: 'dialog' });
+    replyHostsBtn.classList.add('ms-auto');
     replyHostsBtn.disabled = true;
     if (!canReply) replyHostsBtn.classList.add('d-none');
     bar.appendChild(replyHostsBtn);
@@ -804,8 +787,9 @@ function buildMemberPanel(row, cell, carry = null) {
     const pagerBox = document.createElement('nav');
     pagerBox.className = 'mt-2';
     const noteEl = document.createElement('div');
-    noteEl.className = 'text-muted small mt-2 d-none';
+    noteEl.className = 'lf-text-meta mt-2 d-none';
 
+    if (facts) box.appendChild(facts);
     box.append(bar, tableBox, pagerBox, noteEl);
     cell.replaceChildren(box);
 
@@ -890,13 +874,10 @@ function buildMemberPanel(row, cell, carry = null) {
                 title: '主機',
                 truncate: true,
                 render: item => {
-                    if (!item.hostId) {
-                        const span = document.createElement('span');
-                        span.textContent = item.hostName || '';
-                        return span;
-                    }
+                    if (!item.hostId) return roleText('lf-text-title', item.hostName || '');
                     const a = document.createElement('a');
                     a.href = appUrl('/hosts/' + item.hostId);
+                    a.className = 'lf-text-title';
                     a.textContent = item.hostName || '';
                     return a;
                 }
@@ -915,17 +896,15 @@ function buildMemberPanel(row, cell, carry = null) {
                 render: item => {
                     const wrap = document.createElement('div');
                     wrap.className = 'd-flex align-items-center gap-1 text-nowrap';
-                    const span = document.createElement('span');
-                    span.textContent = item.dueDate ? formatDate(item.dueDate) : '—';
-                    wrap.appendChild(span);
-                    if (item.overdue) wrap.appendChild(statusBadge('逾期', 'danger'));
+                    wrap.appendChild(roleText('lf-text-data', item.dueDate ? formatDate(item.dueDate) : '—'));
+                    if (item.overdue) wrap.appendChild(roleText('lf-text-alert', '逾期'));
                     return wrap;
                 }
             },
             {
                 title: '期間',
                 className: 'text-nowrap',
-                render: item => `${formatDate(item.firstLinkedDate)} ~ ${formatDate(item.lastLinkedDate)}`
+                render: item => roleText('lf-text-meta', `${formatDate(item.firstLinkedDate)} ~ ${formatDate(item.lastLinkedDate)}`)
             }
         );
 
@@ -1002,7 +981,7 @@ function renderCases(cases) {
             { title: '主機', truncate: true, render: c => hostLink(c) },
             { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
-            { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
+            { title: '涵蓋範圍', render: c => roleText('lf-text-meta', `${c.firstLinkedDate} ~ ${c.lastLinkedDate}`) },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
         ],
         rows: cases,
@@ -1015,7 +994,7 @@ function renderCases(cases) {
 function renderDays(days) {
     renderTable(daysEl, {
         columns: [
-            { title: '日期', render: d => d.date },
+            { title: '日期', render: d => roleText('lf-text-data', d.date) },
             { title: '主機', truncate: true, render: d => hostLink(d) },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
@@ -1033,9 +1012,36 @@ function renderDays(days) {
 function hostLink(item) {
     const link = document.createElement('a');
     link.href = appUrl(`/hosts/${item.hostId}`);
+    link.className = 'lf-text-title';
     link.textContent = item.hostName;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
+}
+
+/**
+ * 「問題」欄：標題為主體，白話說明收成次要文字。
+ * 窄螢幕（< 576px）隱藏單號／主機／逾期／未回覆／期限五欄，把判斷「要不要處理」的數字收成這欄底下的一行，
+ * 讓手機上「看單 → 回覆」不必橫捲；寬螢幕這一行不顯示（d-sm-none），欄位照常各自一欄。
+ */
+function orderIssueCell(row) {
+    const wrap = document.createElement('div');
+    wrap.appendChild(roleText('lf-text-title', row.issueLabel || ''));
+    if (row.plainExplanation) {
+        const sub = roleText('lf-text-meta', row.plainExplanation);
+        sub.classList.add('d-block');
+        wrap.appendChild(sub);
+    }
+    const counts = row.counts || {};
+    const overdue = counts.overdue ?? 0;
+    const narrow = metaLine([
+        `#${row.workOrderId}`,
+        `${counts.active ?? 0}／${counts.total ?? 0} 台`,
+        overdue > 0 ? roleText('lf-text-alert', `逾期 ${overdue}`) : null,
+        row.unrepliedDays != null ? `未回覆 ${row.unrepliedDays} 天` : null,
+        row.dueDate ? `期限 ${formatDate(row.dueDate)}` : null
+    ], { className: 'd-sm-none mt-1' });
+    if (narrow) wrap.appendChild(narrow);
+    return wrap;
 }
 
 // ── 事件綁定與初始化 ───────────────────────────────────────────────────────
@@ -1058,19 +1064,26 @@ document.getElementById('toggle-resolved-days').addEventListener('change', event
     guardLoad([casesEl, daysEl], loadAdvanced);
 });
 
-advancedEl.addEventListener('toggle', () => {
+function isAdvancedOpen() {
+    return !advancedBodyEl.classList.contains('d-none');
+}
+
+function onAdvancedToggle(open) {
     // 本機儲存區不可用（隱私模式等）時 safeStorage 靜默略過：不記住展開狀態，不影響功能
-    safeStorage.set(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
-    if (!advancedEl.open || advancedLoaded) return;
+    safeStorage.set(ADVANCED_OPEN_KEY, open ? '1' : '0');
+    if (!open || advancedLoaded) return;
     // 權限尚未確認（load 還在跑）就先記著，確認有權後由 load 補載入；無權者永遠不會呼叫 workload
     if (!advancedAllowed) {
         advancedPending = true;
         return;
     }
     guardLoad([casesEl, daysEl], loadAdvanced);
-});
+}
 
-// 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入；讀不到（儲存區不可用）就維持預設收合
-if (safeStorage.get(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
+// 進階檢視的揭露鈕；讀不到記住的狀態（儲存區不可用）就維持預設收合
+const advancedOpenAtStart = safeStorage.get(ADVANCED_OPEN_KEY) === '1';
+document.getElementById('handler-advanced-toggle').appendChild(
+    disclosure('進階檢視：依主機、被指派的風險日', advancedBodyEl, { expanded: advancedOpenAtStart, onToggle: onAdvancedToggle }));
+if (advancedOpenAtStart) onAdvancedToggle(true);
 
 guardLoad([kpiEl, ordersEl], load);

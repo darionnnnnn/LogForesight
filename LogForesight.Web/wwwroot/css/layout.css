@@ -398,6 +398,44 @@
     border-top: 1px solid var(--lf-border);
 }
 
+/* ── 詳情頁頁首卡（風險日／主機／使用者／交辦單共用；docs/DESIGN-SYSTEM.md §8.5）──────
+   主體名稱為主標，身分資訊（徽章、IP、狀態）同一列，頁面層級動作靠右；
+   次要資訊另起一行 metaLine。長名稱（63 字元主機名、長標題）在容器內換行，不撐出水平捲軸。 */
+.lf-entity-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2) var(--lf-space-3);
+    margin-bottom: var(--lf-space-2);
+}
+
+.lf-entity-head__title {
+    margin: 0;
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+
+/* 標題旁的徽章直接成為頁首列的 flex 項目，沿用列的 gap */
+.lf-entity-head__badges { display: contents; }
+
+.lf-entity-head__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-left: auto;
+}
+
+/* 主標是連結時（風險日詳情的主機名）：不加底線，滑過與焦點才出現 */
+.lf-entity-head__link { text-decoration: none; }
+.lf-entity-head__link:hover,
+.lf-entity-head__link:focus-visible { text-decoration: underline; }
+
+/* 頁首卡第二行的次要資訊（metaLine） */
+.lf-entity-head__facts { margin-bottom: var(--lf-space-3); }
+
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
 
 @media print {

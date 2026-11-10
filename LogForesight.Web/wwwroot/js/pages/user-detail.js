@@ -10,7 +10,8 @@
 
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl, recordDetailUrl } from '../core/paths.js';
-import { renderTable, renderLoading, kpiStrip, guardLoad, renderPageHeader } from '../core/ui.js';
+import { renderTable, renderLoading, kpiStrip, guardLoad, linkButton } from '../core/ui.js';
+import { metaLine, roleText, statusNote, fact } from '../core/elements.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge, statusText, dueCell } from '../core/format.js';
 
 const root = document.getElementById('user-detail');
@@ -46,6 +47,10 @@ async function load() {
     renderAssignmentHistory(detail.assignmentHistory);
 }
 
+/**
+ * 頁首卡（DESIGN-SYSTEM §8.5）：使用者名稱為主標，啟用狀態與所屬群組同一列，
+ * 頁面層級動作「開啟工作頁」放在頁首卡右側；Email、上次登入、能力收成一行 metaLine。
+ */
 function renderHeader(detail) {
     const user = detail.user;
 
@@ -55,47 +60,40 @@ function renderHeader(detail) {
     const body = document.createElement('div');
     body.className = 'lf-card__body';
 
-    const titleRow = document.createElement('div');
-    titleRow.className = 'd-flex align-items-center flex-wrap gap-2';
+    const head = document.createElement('div');
+    head.className = 'lf-entity-head';
 
-    titleRow.appendChild(badge(user.active ? '啟用' : '停用', user.active ? 'success' : 'secondary'));
+    const title = document.createElement('h2');
+    title.className = 'lf-entity-head__title';
+    title.textContent = formatUserName(user.displayName, user.account);
+    head.appendChild(title);
+
+    head.appendChild(badge(user.active ? '啟用' : '停用', user.active ? 'success' : 'secondary'));
 
     for (const group of detail.groups) {
         const text = group.active ? `${group.groupName}（${group.role}）` : `${group.groupName}（${group.role}．已停用）`;
-        titleRow.appendChild(badge(text, group.active ? 'light' : 'secondary', !group.active));
+        head.appendChild(badge(text, group.active ? 'light' : 'secondary', !group.active));
     }
     if (detail.groups.length === 0) {
-        titleRow.appendChild(badge('未指派群組', 'warning'));
+        head.appendChild(badge('未指派群組', 'warning'));
     }
 
-    const workLink = document.createElement('a');
-    workLink.className = 'btn btn-sm btn-outline-primary';
-    workLink.href = appUrl(`/handlers/${user.userId}`);
-    workLink.textContent = '開啟工作頁';
+    const actions = document.createElement('div');
+    actions.className = 'lf-entity-head__actions lf-no-print';
+    actions.appendChild(linkButton('開啟工作頁', appUrl(`/handlers/${user.userId}`), { variant: 'outline-primary', size: null }));
+    head.appendChild(actions);
+    body.appendChild(head);
 
-    // 頁首（renderPageHeader）：副標開頭以強調文字放使用者名稱，「開啟工作頁」是頁面層級動作
-    const name = document.createElement('strong');
-    name.textContent = formatUserName(user.displayName, user.account);
-    renderPageHeader(document.getElementById('page-header'), {
-        subtitle: [name, ' 的帳號、授權與工作全貌（管理視角）'],
-        actions: [workLink]
-    });
-
-    body.appendChild(titleRow);
-
-    const meta = document.createElement('div');
-    meta.className = 'text-muted small mt-2';
-    meta.textContent = [
-        user.email ? `Email：${user.email}` : 'Email：未填',
-        `上次登入：${user.lastLoginAt ? formatDateTime(user.lastLoginAt) : '從未登入'}`,
-        `能力：${detail.capabilities.length > 0 ? detail.capabilities.join('、') : '無（未指派群組且非任何主機的負責人）'}`
-    ].join('　｜　');
-    body.appendChild(meta);
+    const facts = metaLine([
+        fact('Email', user.email || '未填'),
+        fact('上次登入', user.lastLoginAt ? formatDateTime(user.lastLoginAt) : '從未登入'),
+        fact('能力', detail.capabilities.length > 0 ? detail.capabilities.join('、') : '無（未指派群組且非任何主機的負責人）')
+    ]);
+    if (facts) body.appendChild(facts);
 
     if (!user.active) {
-        const note = document.createElement('div');
-        note.className = 'text-muted small mt-1';
-        note.textContent = '此帳號已停用：無法登入，且不具任何可見範圍；交辦紀錄是歷史事實，仍保留於下方。';
+        const note = roleText('lf-text-meta', '此帳號已停用：無法登入，且不具任何可見範圍；交辦紀錄是歷史事實，仍保留於下方。');
+        note.classList.add('d-block', 'mt-1');
         body.appendChild(note);
     }
 
@@ -172,10 +170,10 @@ function renderVisibleHosts(hosts) {
 
     renderTable(document.getElementById('user-visible-hosts'), {
         columns: [
-            { title: '主機', truncate: true, render: h => h.hostName },
-            { title: 'IP', render: h => h.ipAddress ?? '' },
-            { title: '作業系統', render: h => (h.os === 'linux' ? 'Linux' : 'Windows') },
-            { title: '群組', render: h => h.groupNames.join('、') },
+            { title: '主機', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
+            { title: 'IP', render: h => roleText('lf-text-data', h.ipAddress ?? '') },
+            { title: '作業系統', render: h => roleText('lf-text-meta', h.os === 'linux' ? 'Linux' : 'Windows') },
+            { title: '群組', render: h => roleText('lf-text-meta', h.groupNames.join('、')) },
             { title: '可見來源', render: h => visibilitySourceCell(h) }
         ],
         rows: hosts,
@@ -203,18 +201,16 @@ function renderOpenWork(workload) {
     // 檢視者沒有業務範圍時，這一區塊必然是空的——顯示空表格會被讀成「這個人沒有工作」，
     // 而下方「被指派歷程」（以被查看者為準）同時列著處理中的案件，畫面自相矛盾（體檢 H4）
     if (viewerHasNoBusinessScope()) {
-        const card = document.createElement('div');
-        card.className = 'alert alert-secondary mb-0';
-        card.textContent = '「處理中項目」以您的可見範圍計算，而您的帳號沒有業務資料範圍，'
+        const card = statusNote('info', '「處理中項目」以您的可見範圍計算，而您的帳號沒有業務資料範圍，'
             + '因此這裡不顯示任何項目。此人實際的交辦狀況請看下方「被指派歷程」，'
-            + '或改用具備資料範圍的管理者帳號檢視。';
+            + '或改用具備資料範圍的管理者帳號檢視。');
+        card.classList.add('m-3');
         container.appendChild(card);
         return;
     }
 
-    const scopeNote = document.createElement('div');
-    scopeNote.className = 'small text-muted mb-2';
-    scopeNote.textContent = '以下項目以您的可見範圍顯示，可能不完整（下方「被指派歷程」以此人為準）。';
+    const scopeNote = roleText('lf-text-meta', '以下項目以您的可見範圍顯示，可能不完整（下方「被指派歷程」以此人為準）。');
+    scopeNote.classList.add('d-block', 'px-3', 'pt-3');
     container.appendChild(scopeNote);
 
     const casesTitle = sectionLabel(`進行中案件（${workload.cases.length}）`);
@@ -224,10 +220,10 @@ function renderOpenWork(workload) {
     container.appendChild(casesBox);
     renderTable(casesBox, {
         columns: [
-            { title: '主機', truncate: true, render: c => c.hostName },
+            { title: '主機', truncate: true, render: c => roleText('lf-text-title', c.hostName) },
             { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
-            { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
+            { title: '涵蓋範圍', render: c => roleText('lf-text-meta', `${c.firstLinkedDate} ~ ${c.lastLinkedDate}`) },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
         ],
         rows: workload.cases,
@@ -245,8 +241,8 @@ function renderOpenWork(workload) {
     container.appendChild(daysBox);
     renderTable(daysBox, {
         columns: [
-            { title: '日期', render: d => d.date },
-            { title: '主機', truncate: true, render: d => d.hostName },
+            { title: '日期', render: d => roleText('lf-text-data', d.date) },
+            { title: '主機', truncate: true, render: d => roleText('lf-text-title', d.hostName) },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
@@ -262,11 +258,11 @@ function renderClosedWork(history) {
 
     renderTable(document.getElementById('user-closed-work'), {
         columns: [
-            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '主機', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
             { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '結論', render: h => h.statusText },
-            { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` },
-            { title: '結案時間', className: 'text-nowrap', render: h => (h.closedAt ? formatDateTime(h.closedAt) : '') }
+            { title: '涵蓋範圍', render: h => roleText('lf-text-meta', `${h.firstLinkedDate} ~ ${h.lastLinkedDate}`) },
+            { title: '結案時間', className: 'text-nowrap', render: h => roleText('lf-text-data', h.closedAt ? formatDateTime(h.closedAt) : '') }
         ],
         rows: closed,
         rowHref: h => (h.hostId ? `/records/${h.hostId}/${h.lastLinkedDate}` : null),
@@ -283,6 +279,7 @@ function workOrderCell(workOrderId) {
 
     const link = document.createElement('a');
     link.href = appUrl(`/work-orders/${workOrderId}`);
+    link.className = 'lf-text-data';
     link.title = '檢視交辦單';
     link.textContent = `#${workOrderId}`;
     link.addEventListener('click', event => event.stopPropagation());
@@ -292,13 +289,13 @@ function workOrderCell(workOrderId) {
 function renderAssignmentHistory(history) {
     renderTable(document.getElementById('user-assignment-history'), {
         columns: [
-            { title: '交辦時間', className: 'text-nowrap', render: h => formatDateTime(h.createdAt) },
-            { title: '交辦者', render: h => h.createdByAccount || '（系統）' },
-            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '交辦時間', className: 'text-nowrap', render: h => roleText('lf-text-data', formatDateTime(h.createdAt)) },
+            { title: '交辦者', render: h => roleText('lf-text-meta', h.createdByAccount || '（系統）') },
+            { title: '主機', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
             { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '目前狀態', render: h => historyStatusCell(h) },
             { title: '所屬交辦單', className: 'text-nowrap', render: h => workOrderCell(h.workOrderId) },
-            { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` }
+            { title: '涵蓋範圍', render: h => roleText('lf-text-meta', `${h.firstLinkedDate} ~ ${h.lastLinkedDate}`) }
         ],
         rows: history,
         rowHref: h => (h.hostId ? `/records/${h.hostId}/${h.lastLinkedDate}` : null),
@@ -312,22 +309,16 @@ function historyStatusCell(item) {
     const isReassigned = item.status === 'reassigned';
     wrap.appendChild(badge(item.statusText, item.closed ? 'secondary' : 'primary'));
     if (isReassigned && item.closedAt) {
-        const when = document.createElement('span');
-        when.className = 'text-muted small';
-        when.textContent = `改派於 ${formatDateTime(item.closedAt)}`;
-        wrap.appendChild(when);
+        wrap.appendChild(roleText('lf-text-meta', `改派於 ${formatDateTime(item.closedAt)}`));
     } else if (item.closed && item.closedAt) {
-        const when = document.createElement('span');
-        when.className = 'text-muted small';
-        when.textContent = `結案於 ${formatDateTime(item.closedAt)}`;
-        wrap.appendChild(when);
+        wrap.appendChild(roleText('lf-text-meta', `結案於 ${formatDateTime(item.closedAt)}`));
     }
     return wrap;
 }
 
 function sectionLabel(text) {
     const div = document.createElement('div');
-    div.className = 'px-3 pt-3 pb-1 small fw-semibold text-muted';
+    div.className = 'px-3 pt-3 pb-1 lf-text-label';
     div.textContent = text;
     return div;
 }

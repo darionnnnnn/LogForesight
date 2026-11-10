@@ -414,8 +414,10 @@ public class FrontendConsistencyUiTests
     {
         var hostJs = ReadJs("pages", "host-detail.js");
         Assert.Contains("function renderCaseGrantScopeNotice(container, message)", hostJs);
-        Assert.Contains("notice.textContent = message", hostJs);
-        Assert.DoesNotContain("notice.innerHTML", hostJs);
+        // 說明文字只走 statusNote（內部 textContent），不把授權範圍說明當 HTML 解析
+        var notice = ExtractBody(hostJs, @"function renderCaseGrantScopeNotice\(container, message\)");
+        Assert.Contains("statusNote('info', message)", notice);
+        Assert.DoesNotContain("innerHTML", notice);
         Assert.Contains("if (detail.caseGrantOnly === true)", ExtractBody(hostJs, @"function renderTimeline\(detail\)"));
         Assert.Contains("交辦授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。", hostJs);
         Assert.Contains("交辦授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。", hostJs);
@@ -519,7 +521,8 @@ public class FrontendConsistencyUiTests
         Assert.Contains("/seen", detail);
         Assert.Contains("/return", detail);
         Assert.Contains("退回處理人", detail);
-        Assert.Contains("btn-outline-secondary", detail);
+        // 退回鈕是次要動作：經 button() 工廠建立、不指定 primary／danger 變體（預設 outline-secondary），且開 modal
+        Assert.Contains("button('退回處理人', { size: null, opens: 'dialog'", detail);
 
         var orders = ReadJs("pages", "work-orders.js");
         Assert.Contains("unreadOnly", orders);

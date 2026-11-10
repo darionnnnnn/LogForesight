@@ -33,18 +33,17 @@ public class PageHeaderUiTests
     /// 套用頁首的頁（cshtml 檔名 → 對應頁模組）。其餘頁不套用的理由：
     /// 頂部已是 .lf-toolbar 篩選列（Audit／Records／Hosts／Users）、
     /// 頁面層級動作鈕在頁籤或卡片內（Groups／Netiq／Prtg／Settings／Runs／WorkOrders／Setup）、
-    /// 頂部即主體內容（Dashboard／Reports／HelpManual／WorkOrderDetail），
+    /// 頂部即主體內容（Dashboard／Reports／HelpManual）、
+    /// 詳情頁的頁首卡自帶標題與右側動作（RecordDetail 也用 lf-entity-head；HostDetail／UserDetail／WorkOrderDetail 的 lf-entity-head），
     /// 或為獨立殼頁（Login／Error／AccessDenied）。
     /// </summary>
     private static readonly Dictionary<string, string> AppliedPages = new()
     {
         ["HandlerDetail.cshtml"] = "handler-detail.js",
-        ["HostDetail.cshtml"] = "host-detail.js",
         ["Imports.cshtml"] = "imports.js",
         ["IssueOwners.cshtml"] = "issue-owners.js",
         ["PermissionChanges.cshtml"] = "permission-changes.js",
         ["Rules.cshtml"] = "rules.js",
-        ["UserDetail.cshtml"] = "user-detail.js",
     };
 
     private static string WebRoot()

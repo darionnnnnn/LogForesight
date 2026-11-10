@@ -140,6 +140,10 @@ function makeHostPanel() {
     `, '{ occurrenceDetailPanel }', {
         api,
         document: { createElement: node },
+        // 面板用到的共用元素工廠（core/elements.js）以最小替身帶入；行為測試只看展開、快取與高亮
+        roleText: () => node(),
+        statusNote: () => node(),
+        metaLine: () => node(),
         renderSpinner: () => {},
         renderOccurrencePanel: () => { state.rendered++; },
         highlightTimeline: (dates) => { state.highlights.push(dates); },

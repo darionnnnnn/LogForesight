@@ -526,31 +526,6 @@ a.lf-calendar__cell:focus-visible {
     cursor: pointer;
 }
 
-/* ── 風險日詳情頁首卡（record-detail.js renderHeader）：主機名為頁面主標，日期／風險／系統／IP 同列，
-   「下一筆未處理」靠右；資料來源與事件數收成一行次要資訊 ── */
-.lf-record-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--lf-space-2) var(--lf-space-3);
-    margin-bottom: var(--lf-space-1);
-}
-
-.lf-record-head__host {
-    font-size: var(--lf-font-size-xl);
-    font-weight: 600;
-    text-decoration: none;
-    overflow-wrap: anywhere;
-    min-width: 0;
-}
-
-.lf-record-head__host:hover,
-.lf-record-head__host:focus-visible { text-decoration: underline; }
-
-.lf-record-head__next { margin-left: auto; }
-
-.lf-record-head__facts { margin-bottom: var(--lf-space-3); }
-
 /* ── 「問題」欄的判斷層（docs/DESIGN-SYSTEM.md §8.5，record-detail.js issueCell）──────
    嚴重度＋標題 → 白話說明 → 一行次要資訊 → 狀態徽章 → 帳號／來源摘要 → 原始訊息；
    各段以固定的小間距堆疊，不靠每段各自的 mt-1。超過 300 字的文字由 collapsibleText 收合。 */

@@ -925,5 +925,229 @@
         }
       }
     ]
+  },
+  {
+    "name": "互動-主機詳情-切換天數與展開明細",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-update-open",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-detail [data-days=\"90\"]"
+      },
+      {
+        "waitFor": "#host-detail [data-days=\"90\"][aria-pressed=\"true\"]"
+      },
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-detail [data-days=\"30\"][aria-pressed=\"false\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-timeline .lf-calendar__month",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-issues th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#host-issues .lf-th-sort--active"
+      },
+      {
+        "click": "#host-issues tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#host-issues tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "waitFor": "#host-issues tr.lf-row-detail:not(.d-none) table, #host-issues tr.lf-row-detail:not(.d-none) .lf-text-meta"
+      },
+      {
+        "assert": {
+          "sel": "#host-issues tr.lf-row-detail:not(.d-none)",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "主管-主機詳情",
+    "role": "ui-manager",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-header .lf-entity-head"
+      },
+      {
+        "assert": {
+          "sel": "#host-update-open",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-header .lf-entity-head__title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-手機-看單與回覆",
+    "role": "ui-handler",
+    "path": "/handlers/3",
+    "widths": [
+      375
+    ],
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list tbody tr .btn-outline-primary",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#handler-wo-list tbody tr .btn-outline-primary"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form button[type=\"submit\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "text": "送出並回覆下一張"
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-交辦單詳情-動作",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "text": "回覆這張單"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "改派"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "取消交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "代為結案"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-split",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦單詳情-詳細資訊與成員選取",
+    "role": "ui-admin",
+    "path": "fixture:work-order.mass",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "text": "改派"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-meta-line.d-none",
+          "visible": false
+        }
+      },
+      {
+        "click": "#wo-header .lf-disclosure"
+      },
+      {
+        "waitFor": "#wo-header .lf-disclosure[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-meta-line:not(.d-none)",
+          "count": 2
+        }
+      },
+      {
+        "type": [
+          "#wo-member-status",
+          "all"
+        ]
+      },
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "click": "#wo-members .wo-member-select"
+      },
+      {
+        "waitFor": "#wo-member-split:not(:disabled)"
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-split:not(:disabled)",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-reply",
+          "visible": false
+        }
+      }
+    ]
   }
 ]

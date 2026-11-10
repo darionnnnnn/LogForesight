@@ -123,6 +123,12 @@
 .lf-icon-link:hover { color: var(--lf-primary); background: var(--lf-primary-soft); }
 .lf-icon-link:focus-visible { outline: none; box-shadow: var(--lf-focus-ring); }
 
+/* 表格裡的換頁連結（日期、主機名）：主色、不畫底線，滑過與焦點才出現（DESIGN-SYSTEM §8.2）——
+   滿版底線讓一欄日期看起來像一排錯字標記 */
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link) { text-decoration: none; }
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link):hover,
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link):focus-visible { text-decoration: underline; }
+
 /* ── 頁內導航項（類型分布 → 分節、趨勢告警 → 問題）：整列可點的純文字按鈕，滑過淡底；
    不是連結（不換頁），也不是就地展開（目標在頁面別處），所以外觀與兩者都不同 ── */
 .lf-nav-item {
@@ -1191,6 +1197,7 @@ a.lf-badge:hover { text-decoration: underline; }
 /* 表格內沒有文字標籤的勾選框（逐列選取、全選）：點擊區至少 24×24；有 <label> 的勾選框靠標籤擴大點擊範圍，不在此列 */
 .table td > .form-check-input,
 .table th > .form-check-input,
+.table td .lf-row-expand-cell__body > .form-check-input,
 .table td > .form-check > .form-check-input:not([id]),
 .table th > .form-check > .form-check-input:not([id]) {
     width: max(1.25rem, 24px);

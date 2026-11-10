@@ -56,21 +56,24 @@ public class HandlerWorkPageTests : IDisposable
     }
 
     [Fact]
-    public void 頁面_沒有頁籤列_進階檢視收在details_主區塊不出現案件()
+    public void 頁面_沒有頁籤列_進階檢視收在揭露區_主區塊不出現案件()
     {
         var page = Page();
 
         Assert.DoesNotContain("id=\"handler-tabs\"", page);
-        Assert.Contains("<details", page);
+        // 進階檢視由 disclosure 控制（原生 <details> 已不用）：揭露鈕容器與預設收合（d-none）的內容區
+        Assert.DoesNotContain("<details", page);
         Assert.Contains("id=\"handler-advanced\"", page);
-        Assert.Contains("進階檢視：依主機、被指派的風險日", page);
-        Assert.Contains("每台主機上被交辦給你的問題，狀態會跟著交辦單同步", page);
+        Assert.Contains("id=\"handler-advanced-toggle\"", page);
+        Assert.Contains("id=\"handler-advanced-body\"", page);
+        Assert.Contains("進階檢視：依主機、被指派的風險日", Js());
 
-        var main = page.Substring(0, page.IndexOf("<details", StringComparison.Ordinal));
+        var advancedStart = page.IndexOf("id=\"handler-advanced\"", StringComparison.Ordinal);
+        var main = page.Substring(0, advancedStart);
         Assert.Contains("id=\"handler-wo-list\"", main);
         Assert.DoesNotContain("案件", main);
         // 依主機、風險日兩個區塊在進階檢視內
-        var advanced = page.Substring(page.IndexOf("<details", StringComparison.Ordinal));
+        var advanced = page.Substring(advancedStart);
         Assert.Contains("id=\"handler-cases\"", advanced);
         Assert.Contains("id=\"handler-days\"", advanced);
     }

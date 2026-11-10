@@ -34,5 +34,5 @@ export function loadElements(dom) {
     assert(source.includes(IMPORT_LINE), 'elements.js 的 ui.js 匯入改了，load-elements.mjs 的替身要跟著改');
     const iconStub = name => { const svg = dom.newElement('svg'); svg.setAttribute('data-icon', name); return svg; };
     const body = source.replace(IMPORT_LINE, '').replace(/^export /gm, '');
-    return new Function('icon', `${body}\nreturn { disclosure, metaLine, statusNote, roleText };`)(iconStub);
+    return new Function('icon', `${body}\nreturn { disclosure, metaLine, statusNote, roleText, fact };`)(iconStub);
 }

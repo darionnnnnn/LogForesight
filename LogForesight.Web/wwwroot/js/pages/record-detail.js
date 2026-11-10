@@ -65,7 +65,7 @@ initRecordSections();
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
 // 每次 renderHeader 重繪都把同一個元素接回去，已取得的連結不會因重繪消失。
 const nextUnhandledLink = linkButton('下一筆未處理 →', '');
-nextUnhandledLink.classList.add('d-none', 'lf-no-print', 'lf-record-head__next');
+nextUnhandledLink.classList.add('d-none', 'lf-no-print', 'ms-auto');
 nextUnhandledLink.id = 'next-unhandled';
 
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
@@ -466,11 +466,11 @@ function renderHeader(detail) {
     }
 
     const top = document.createElement('div');
-    top.className = 'lf-record-head';
+    top.className = 'lf-entity-head';
 
     const hostLink = document.createElement('a');
     hostLink.href = appUrl(`/hosts/${detail.hostId}`);
-    hostLink.className = 'lf-record-head__host';
+    hostLink.className = 'lf-entity-head__title lf-entity-head__link';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
 
@@ -520,7 +520,7 @@ function renderHeader(detail) {
         stat('警告', detail.warningCount),
         stat('稽核事件', detail.auditEventCount),
         detail.hostRoleDesc ? `主機角色：${detail.hostRoleDesc}` : null
-    ], { className: 'lf-record-head__facts' });
+    ], { className: 'lf-entity-head__facts' });
     if (facts) body.appendChild(facts);
     if (detail.riskReview) {
         const review = document.createElement('div');
