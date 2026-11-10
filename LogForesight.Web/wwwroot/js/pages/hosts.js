@@ -555,7 +555,7 @@ function actionsCell(host) {
     wrap.appendChild(button('編輯', { variant: 'outline-primary', onClick: () => openModal(host) }));
     wrap.appendChild(host.active
         ? button('停用', { variant: 'outline-secondary', onClick: () => setActive(host, false) })
-        : button('啟用', { variant: 'outline-success', onClick: () => setActive(host, true) }));
+        : button('啟用', { variant: 'outline-secondary', onClick: () => setActive(host, true) }));
 
     return wrap;
 }
@@ -586,7 +586,7 @@ async function unmerge(host) {
         message: `${host.hostName} 將恢復為獨立主機並重新啟用。` +
             '合併時帶入對方的群組／負責人等設定不會自動收回，請解除後一併確認。',
         confirmText: '解除',
-        confirmVariant: 'warning'
+        confirmVariant: 'primary'
     });
     if (!confirmed) return;
 

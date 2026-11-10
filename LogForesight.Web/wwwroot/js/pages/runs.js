@@ -2153,7 +2153,8 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
             title: '確認重新分析',
             message: `模式：${config.label}\n回望天數：${daysText}\n\n${config.consequence}`,
             confirmText: '確定重新分析',
-            confirmVariant: config.variant
+            // 三種範圍都會刪除既有分析結果：確認鈕一律是危險樣式，輕重差別由上方提示框的顏色表達
+            confirmVariant: 'danger'
         });
         if (!confirmed) return;
     }

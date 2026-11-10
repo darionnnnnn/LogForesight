@@ -140,12 +140,49 @@ const cases = {
         try {
             globalThis.window.matchMedia = q => { queries.push(q); return { matches: true }; };
             const { rail } = build();
+            queries.length = 0;   // 建立時另會問一次寬螢幕預設展開，這裡只驗 isRailMode 問的斷點
             assert.equal(rail.isRailMode(), true);
             assert.deepEqual(queries, ['(min-width: 992px)']);
             globalThis.window.matchMedia = () => ({ matches: false });
             assert.equal(rail.isRailMode(), false);
             globalThis.window.matchMedia = undefined;
             assert.equal(rail.isRailMode(), false);
+        } finally {
+            globalThis.window.matchMedia = original;
+        }
+    },
+    wideViewportOpensByDefault() {
+        const original = globalThis.window.matchMedia;
+        try {
+            globalThis.window.matchMedia = q => ({ matches: q.includes('1600') || q.includes('992') });
+            const { layout, buttons, rail } = build();
+            assert(layout.classList.contains(OPEN), '>= 1600px 預設展開');
+            assert.equal(buttons[0].getAttribute('aria-expanded'), 'true');
+            assert.equal(focused.length, 0, '預設展開不搶焦點');
+            assert.equal(scrolled.length, 0, '預設展開不捲動');
+            assert.equal(rail.hasUserChoice(), false, '預設展開不算使用者的選擇');
+        } finally {
+            globalThis.window.matchMedia = original;
+        }
+    },
+    belowWideKeepsCollapsed() {
+        const original = globalThis.window.matchMedia;
+        try {
+            globalThis.window.matchMedia = q => ({ matches: q.includes('992') });
+            const { layout } = build();
+            assert(!layout.classList.contains(OPEN), '1599px（側軌模式但未達寬螢幕）維持收合');
+        } finally {
+            globalThis.window.matchMedia = original;
+        }
+    },
+    wideDefaultThenUserCollapseStaysCollapsed() {
+        const original = globalThis.window.matchMedia;
+        try {
+            globalThis.window.matchMedia = q => ({ matches: q.includes('1600') || q.includes('992') });
+            const { layout, handling, rail } = build();
+            click(collapseOf(handling));
+            assert(!layout.classList.contains(OPEN));
+            assert.equal(rail.hasUserChoice(), true);
         } finally {
             globalThis.window.matchMedia = original;
         }

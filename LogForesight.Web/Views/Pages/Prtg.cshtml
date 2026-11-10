@@ -66,7 +66,7 @@
             <p class="small text-muted">依已儲存的回填天數、各日主機對應與 sensor 白名單預估：保守策略補全部已對應主機，激進策略依「夜間數值取數對象」。只含主機清單內的主機，不是全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</p>
             <div class="d-flex flex-wrap gap-2 mb-3">
                 <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
-                <button type="button" class="btn btn-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
+                <button type="button" class="btn btn-outline-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
             </div>
             <div id="prtg-full-backfill-preview-result" data-runs-url="@Url.Content("~/runs")" aria-live="polite" aria-atomic="true"></div>
         </div>
@@ -760,7 +760,7 @@
                     </div>
                 </div>
                 <span class="text-muted small" id="calibration-export-size-hint"></span>
-                <button type="button" class="btn btn-success" id="calibration-export-btn" disabled>
+                <button type="button" class="btn btn-outline-secondary" id="calibration-export-btn" disabled>
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#file-earmark-text"></use></svg>
                     匯出校準數值
                 </button>

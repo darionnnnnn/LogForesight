@@ -538,7 +538,7 @@ function actionsCell(rule) {
         title: rule.enabled ? '停用（不影響趨勢層／關聯層對同一事件的偵測）' : '啟用',
         onClick: () => toggleEnabled(rule)
     }));
-    wrap.appendChild(button('', { variant: 'outline-dark', icon: 'bell-slash', title: '抑制', onClick: () => openSuppressModal(rule) }));
+    wrap.appendChild(button('', { variant: 'outline-secondary', icon: 'bell-slash', title: '抑制', onClick: () => openSuppressModal(rule) }));
 
     // 回饋十三輪 A10：builtin 規則本身可編輯可回復（見頁首提示），但「改內容」與「照著寫一條
     // 新規則」是兩種不同意圖——後者過去只能手動把每個欄位抄一遍。以此為範本開新規則modal，
@@ -551,7 +551,7 @@ function actionsCell(rule) {
     }
 
     if (rule.canRestore) {
-        wrap.appendChild(button('', { variant: 'outline-warning', icon: 'arrow-counterclockwise', title: '回復預設', onClick: () => openRestoreModal(rule) }));
+        wrap.appendChild(button('', { variant: 'outline-secondary', icon: 'arrow-counterclockwise', title: '回復預設', onClick: () => openRestoreModal(rule) }));
     }
 
     // builtin 沒有刪除鈕——不需要它時請停用（可隨時恢復）
@@ -1014,7 +1014,7 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         const previewResult = await confirmAction({
             title: '確認啟用磁碟趨勢規則',
             message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${formatDateTime(latestDiskPreview.latestPreviewAt)}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
-            confirmText: '確認啟用', confirmVariant: 'warning'
+            confirmText: '確認啟用', confirmVariant: 'primary'
         });
         if (!previewResult) { restore(); return; }
     } else if (draft.platform === 'prtg' && isTrendRuleCode(draft.prtgRuleCode) && draft.enabled) {
@@ -1034,7 +1034,7 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         const previewResult = await confirmAction({
             title: '確認啟用趨勢規則',
             message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${formatDateTime(latestDiskPreview.latestPreviewAt)}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
-            confirmText: '確認啟用', confirmVariant: 'warning'
+            confirmText: '確認啟用', confirmVariant: 'primary'
         });
         if (!previewResult) { restore(); return; }
     }
@@ -1250,7 +1250,7 @@ async function confirmSuppressionScope(scope, hostGroupId) {
         message: `此抑制將影響 ${preview.affectedHostCount} 台主機；過去 ${preview.windowDays} 天，` +
                  `這條規則在這些主機上共命中 ${preview.recentHitCount} 次${approxNote}。確定要繼續嗎？`,
         confirmText: '確定抑制',
-        confirmVariant: 'warning'
+        confirmVariant: 'primary'
     });
 }
 
@@ -1395,7 +1395,7 @@ function removeSuppressionButton(suppression) {
             title: '解除抑制',
             message: `解除後，${targetTypeName}「${suppressionTargetLabel(suppression)}」於${suppressionTargetText(suppression)}的告警將恢復。`,
             confirmText: '解除',
-            confirmVariant: 'warning'
+            confirmVariant: 'primary'
         });
         if (!confirmed) return;
 

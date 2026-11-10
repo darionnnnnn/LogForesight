@@ -150,7 +150,18 @@ function pageMeasure() {
     const doc = document.documentElement;
     const result = { hscroll: [], overflow: [], target: [], stuck: [] };
 
-    if (doc.scrollWidth > doc.clientWidth + 1) result.hscroll.push(`scrollWidth ${doc.scrollWidth} > clientWidth ${doc.clientWidth}`);
+    if (doc.scrollWidth > doc.clientWidth + 1) {
+        // 一併指出最外層撐出視窗的元素（祖先沒有超出的那一層），修的時候才知道從哪裡下手
+        const culprits = [...document.querySelectorAll('body *')].filter(el => {
+            if (el.getBoundingClientRect().right <= doc.clientWidth + 1 || !visible(el)) return false;
+            for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+                if (getComputedStyle(n).overflowX !== 'visible') return false;
+                if (n.getBoundingClientRect().right > doc.clientWidth + 1) return false;
+            }
+            return true;
+        }).slice(0, 3).map(el => `${path(el)} 右緣 ${Math.round(el.getBoundingClientRect().right)}`);
+        result.hscroll.push(`scrollWidth ${doc.scrollWidth} > clientWidth ${doc.clientWidth}${culprits.length ? '：' + culprits.join('；') : ''}`);
+    }
 
     // 元素超出所屬卡片／表格格子右緣：只看有自己文字或是替換元素的節點，避免父子重複計數
     const leaves = [...document.querySelectorAll('body *')].filter(el =>
@@ -210,7 +221,7 @@ function assertInPage(spec) {
 
 // ── 步驟 ─────────────────────────────────────────────────────────────────
 
-async function runSteps(browser, steps, inflight) {
+async function runSteps(browser, steps, inflight, width) {
     const failures = [];
     for (const step of steps || []) {
         if (step.click) {
@@ -230,9 +241,13 @@ async function runSteps(browser, steps, inflight) {
                 if (!found) await sleep(150);
             }
             if (!found) failures.push(`等不到元素：${step.waitFor}`);
-        } else if (step.assert) {
-            const msg = await evaluate(browser, `(${assertInPage.toString()})(${JSON.stringify(step.assert)})`);
-            if (msg) failures.push(msg);
+        } else if (step.assert || step.assertAt) {
+            // assertAt：依寬度給不同斷言（{ "767": {...}, "768": {...} }），沒列到的寬度不驗
+            const spec = step.assert || step.assertAt[String(width)];
+            if (spec) {
+                const msg = await evaluate(browser, `(${assertInPage.toString()})(${JSON.stringify(spec)})`);
+                if (msg) failures.push(`${width}px：${msg}`);
+            }
         } else if (step.scroll !== undefined) {
             await evaluate(browser, `window.scrollTo(0, ${Number(step.scroll)})`);
         } else if (step.wait) {
@@ -285,7 +300,7 @@ async function runScenario(browser, scenario, cell, state) {
         await evaluate(browser, `localStorage.setItem('lf.fontScale', ${JSON.stringify(scale)}); true`);
         await browser.send('Page.navigate', { url: `${base}${scenario.path}` });
         await settle(browser, state.inflight);
-        const assertFailures = await runSteps(browser, scenario.steps, state.inflight);
+        const assertFailures = await runSteps(browser, scenario.steps, state.inflight, width);
         // 骨架列還在就多等最多 5 秒：分批載入的頁面在網路靜止後仍可能有最後一段在渲染，
         // 只在真的卡住時才記為 stuck（否則同一頁兩次量測結果會隨時序跳動）
         for (let i = 0; i < 25 && await evaluate(browser, '!!document.querySelector(".lf-skeleton")'); i++) await sleep(200);

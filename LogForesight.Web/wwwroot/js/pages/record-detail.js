@@ -1580,7 +1580,7 @@ function issueCell(issue) {
     wrap.appendChild(sourceEvidenceBlock(issue));
 
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
-    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「展開…」可以展開，
+    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「全文」切換鈕可以展開，
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
@@ -1803,7 +1803,7 @@ function workOrderBadge(workOrderId) {
 /**
  * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
  * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，交給共用的 collapsibleText：
- * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「展開…」，不量測版面、
+ * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「全文」切換鈕，不量測版面、
  * 藏在 d-none 區塊裡的列也判得準。列印時一律看得到全文（見 ui.js／site.css）。
  */
 function keyDetailsBlock(keyDetails) {

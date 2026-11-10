@@ -128,5 +128,46 @@
     "name": "受限檢視者-問題查詢",
     "role": "ui-viewer",
     "path": "/records"
+  },
+  {
+    "name": "中斷點-767與768",
+    "role": "ui-admin",
+    "path": "/admin/settings",
+    "widths": [
+      767,
+      768
+    ],
+    "steps": [
+      {
+        "assertAt": {
+          "767": {
+            "sel": ".lf-layout",
+            "style": {
+              "flex-direction": "column"
+            }
+          },
+          "768": {
+            "sel": ".lf-layout",
+            "style": {
+              "flex-direction": "row"
+            }
+          }
+        }
+      },
+      {
+        "assertAt": {
+          "767": {
+            "sel": ".lf-sidebar__nav",
+            "style": {
+              "display": "none"
+            }
+          },
+          "768": {
+            "sel": ".lf-mobile-menu-toggle",
+            "visible": false
+          }
+        }
+      }
+    ]
   }
 ]

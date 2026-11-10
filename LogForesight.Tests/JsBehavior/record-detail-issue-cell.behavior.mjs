@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadElements } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -25,7 +26,7 @@ function extractFunction(source, declaration) {
     throw new Error(`production 函式未閉合：${declaration}`);
 }
 
-installDom();
+const dom = installDom();
 const issueCellSrc = extractFunction(recordDetail, 'function issueCell');
 const guidancePanelSrc = extractFunction(recordDetail, 'function guidancePanel');
 const appendListSrc = extractFunction(recordDetail, 'function appendList');
@@ -89,11 +90,12 @@ const cases = {
 const uiSource = fs.readFileSync(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'ui.js'), 'utf8').replaceAll('\r\n', '\n');
 globalThis.window = { addEventListener: () => {} };
 const printSetup = uiSource.slice(uiSource.indexOf('const printableCollapsibles'), uiSource.indexOf('function hookCollapsiblePrint'));
-const realCollapsibleText = new Function('COLLAPSE_LIMIT', `${printSetup}
+const { disclosure } = loadElements(dom);
+const realCollapsibleText = new Function('COLLAPSE_LIMIT', 'disclosure', `${printSetup}
 ${extractFunction(uiSource, 'function prunePrintableCollapsibles')}
 ${extractFunction(uiSource, 'function hookCollapsiblePrint')}
 ${extractFunction(uiSource, 'export function collapsibleText').replace(/^export /, '')}
-return collapsibleText;`)(300);
+return collapsibleText;`)(300, disclosure);
 
 const sourceEvidenceBlock = new Function('document', 'formatSourceUtc',
     `${extractFunction(recordDetail, 'function sourceEvidenceBlock')}\nreturn sourceEvidenceBlock;`)(

@@ -4,18 +4,27 @@
  *
  * 模組只管「展開／收合／焦點／摘要」，不知道 hash 與勾選——什麼時候該自動展開由頁面層決定
  * （見 record-detail.js）。狀態只以 layout 上的 class 表示、不記 localStorage：
- * 每次進頁面都從收合開始，避免「上次展開、這次忘了」造成左欄寬度忽大忽小。
- * 視窗 < lg 時 CSS 讓兩欄上下堆疊、側軌不顯示、右欄內容一律展開（見 site.css）。
+ * 每次進頁面都從同一個預設開始，避免「上次展開、這次忘了」造成左欄寬度忽大忽小。
+ * 預設：視窗 >= 1600px 時展開（寬螢幕把多的寬度用在並排，不是拉長左欄行寬），其餘收合；
+ * 使用者在本頁按過收合／展開之後就照使用者的。
+ * 視窗 < lg 時 CSS 讓兩欄上下堆疊、側軌不顯示、右欄內容一律展開（見 layout.css）。
  */
 
 const OPEN_CLASS = 'lf-detail-layout--side-open';
 
-/** 側軌模式的斷點（>= lg）。與 site.css 的 `@media (min-width: 992px)` 側軌規則是同一個值，兩處要一起改。 */
+/** 側軌模式的斷點（>= lg）。與 layout.css 的 `@media (min-width: 992px)` 側軌規則是同一個值，兩處要一起改。 */
 const RAIL_MEDIA_QUERY = '(min-width: 992px)';
+
+/** 預設展開的寬度（設計系統中斷點 1600，docs/DESIGN-SYSTEM.md §8.4） */
+const WIDE_MEDIA_QUERY = '(min-width: 1600px)';
 
 /** 目前視窗是否在側軌模式（寬螢幕）；< lg 時右欄堆疊在下、內容一律展開，側軌不顯示。 */
 function isRailMode() {
     try { return !!window.matchMedia?.(RAIL_MEDIA_QUERY).matches; } catch { return false; }
+}
+
+function isWideMode() {
+    try { return !!window.matchMedia?.(WIDE_MEDIA_QUERY).matches; } catch { return false; }
 }
 
 /**
@@ -75,6 +84,9 @@ export function createSideRail({ layout, side, items, collapseHost = null }) {
     } else {
         body.insertAdjacentElement('afterbegin', collapseButton);
     }
+
+    // 寬螢幕預設展開：不搶焦點、不捲動，也不算使用者的選擇
+    if (isWideMode()) setOpen(true);
 
     function setOpen(value) {
         open = value;

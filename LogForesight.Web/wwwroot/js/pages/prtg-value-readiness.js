@@ -61,7 +61,7 @@ export function initValueReadiness() {
             btn.type = 'button';
             const isReady = group.reason === 'Ready';
             const isCurrent = reason === group.reason;
-            btn.className = 'btn btn-sm ' + (isReady ? 'btn-outline-success' : 'btn-outline-secondary') + (isCurrent ? ' active' : '');
+            btn.className = 'btn btn-sm ' + (isReady ? 'btn-outline-primary' : 'btn-outline-secondary') + (isCurrent ? ' active' : '');
             btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
             btn.textContent = `${group.label} ${formatNumber(group.count)}`;
             if ((group.count || 0) === 0) {

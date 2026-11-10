@@ -377,6 +377,12 @@
     flex: 1 1 auto;
 }
 
+/* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
+   --lf-content-max、靠左，避免單欄內容被拉到 2000px 以上；清單、儀表板、報表與維護頁滿版 */
+.lf-content--bounded {
+    max-width: calc(var(--lf-content-max) + 2 * var(--lf-space-5));
+}
+
 /* 頁籤化長表單的儲存列常駐畫面下方（docs/FEEDBACK-5-PLAN.md §9）：目前只有設定頁使用，
    但寫成通用 class 供日後其他頁籤化的長表單沿用。sticky 相對視窗捲動（.lf-content 本身
    無 overflow 設定），底部留白抵銷 .lf-content 的 padding-bottom，讓儲存列貼齊視窗底緣。 */
@@ -440,7 +446,7 @@
 
 /* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .lf-layout {
         flex-direction: column;
     }

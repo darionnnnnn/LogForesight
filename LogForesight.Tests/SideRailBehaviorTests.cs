@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -24,6 +24,9 @@ public sealed class SideRailBehaviorTests
     [InlineData("side-rail.behavior.mjs", "expandWithoutScrollDoesNotScroll")]
     [InlineData("side-rail.behavior.mjs", "recordDetailUrlHandle")]
     [InlineData("side-rail.behavior.mjs", "isRailModeFollowsLgBreakpoint")]
+    [InlineData("side-rail.behavior.mjs", "wideViewportOpensByDefault")]
+    [InlineData("side-rail.behavior.mjs", "belowWideKeepsCollapsed")]
+    [InlineData("side-rail.behavior.mjs", "wideDefaultThenUserCollapseStaysCollapsed")]
     public void 側軌與詳情連結的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

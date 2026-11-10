@@ -17,6 +17,8 @@ import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
+// 同一個循環 import 安全模式：elements.js 也 import 本檔的 icon()，雙方都只在函式體內使用
+import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
 import { safeStorage } from './storage.js';
 
@@ -109,14 +111,18 @@ const ICON_FALLBACK_LABELS = {
 /**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
+ * variant 只用設計系統白名單（docs/DESIGN-SYSTEM.md §8.3）：primary／outline-primary／outline-secondary／
+ * outline-danger／danger。opens: 'dialog' 表示按了會開 modal 或面板（加 aria-haspopup），
+ * 與就地展開（elements.js disclosure）、換頁（連結）三種語意外觀不同。
  * 只有圖示又沒給 title 時，以圖示名稱查 ICON_FALLBACK_LABELS 補 aria-label（查無則用圖示名稱），
  * 並 console.warn 提醒呼叫端補 title——不擲例外，避免單一呼叫點拖垮整頁。
  */
-export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title } = {}) {
+export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title, opens } = {}) {
     const btn = document.createElement('button');
     btn.type = type;
-    btn.className = `btn btn-${size} btn-${variant}`;
+    btn.className = size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`;
     if (title) btn.title = title;
+    if (opens === 'dialog') btn.setAttribute('aria-haspopup', 'dialog');
     if (iconName) btn.appendChild(icon(iconName));
     if (text) {
         const span = document.createElement('span');
@@ -1856,7 +1862,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
     return { selected, rowCheckboxCell, selectAllHeaderCheckbox, sync, renderBar, clear };
 }
 
-/** 長文字收合的字數門檻：超過才收合並出現「展開…」。 */
+/** 長文字收合的字數門檻：超過才收合並出現「全文」切換鈕。 */
 const COLLAPSE_LIMIT = 300;
 
 // 純文字收合元件的列印處理：全站只掛一組 beforeprint／afterprint 監聽。
@@ -1894,7 +1900,8 @@ function hookCollapsiblePrint() {
  * - 區塊模式（容器有子元素，如 markdown 渲染結果）：不動內容，以 CSS 高度＋漸層遮罩收合
  *   （.lf-collapsible--clamped）。
  * 列印時一律看得到全文：區塊模式由 @media print 解除，純文字模式在 beforeprint 寫回全文。
- * 按鈕放在可點擊展開的表格列裡，click 必須 stopPropagation，避免連帶觸發列展開。
+ * 切換鈕是共用的 disclosure（標籤「全文」、箭頭與 aria-expanded 表達狀態，click 已 stopPropagation，
+ * 放在可點擊展開的表格列裡不會連帶觸發列展開）。
  */
 export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
     const fullText = container.textContent || '';
@@ -1923,11 +1930,6 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-collapsible';
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 lf-no-print lf-collapsible__toggle';
-    toggle.setAttribute('aria-controls', container.id);
-
     let collapsed = true;
     const apply = () => {
         if (blockMode) {
@@ -1936,19 +1938,15 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
         } else {
             container.textContent = collapsed ? shortText : fullText;
         }
-        toggle.textContent = collapsed ? '展開…' : '收合';
-        const label = collapsed ? `展開全文（共 ${total} 字）` : '收合';
-        toggle.title = label;
-        toggle.setAttribute('aria-label', label);
-        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     };
     apply();
 
-    toggle.addEventListener('click', event => {
-        event.stopPropagation();
-        collapsed = !collapsed;
-        apply();
+    const toggle = disclosure('全文', container, {
+        manageTarget: false,
+        className: 'lf-collapsible__toggle',
+        onToggle: expanded => { collapsed = !expanded; apply(); }
     });
+    toggle.title = `全文共 ${total} 字`;
 
     // 純文字模式的列印：收合中的文字在列印前寫回全文、列印後還原（監聽由 hookCollapsiblePrint 統一掛）
     if (!blockMode) {

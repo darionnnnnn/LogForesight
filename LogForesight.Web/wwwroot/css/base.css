@@ -132,6 +132,10 @@
     --lf-space-5: 1.5rem;
     --lf-space-6: 2rem;
 
+    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限 */
+    --lf-content-max: 120rem;
+    --lf-measure: 40em;
+
     /* ── 圓角（v2 收緊一階：data-dense 專業感）────────────────────────── */
     --lf-radius-sm: .25rem;
     --lf-radius: .5rem;
@@ -239,6 +243,9 @@ body {
     font-family: var(--lf-font-family);
     font-size: var(--lf-font-size-base);
     line-height: var(--lf-line-base);
+    /* 長字串規則（docs/DESIGN-SYSTEM.md §8.4）：沒有空白的連續字串（路徑、雜湊、外部系統送來的訊息）
+       放不下時才在字中斷行，一般字詞不受影響；不影響表格的最小寬度計算，寬表格仍交給 .lf-table-wrap 橫向捲動 */
+    overflow-wrap: break-word;
 }
 
 /* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源

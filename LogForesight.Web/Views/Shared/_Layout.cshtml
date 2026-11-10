@@ -67,7 +67,7 @@
                 <div id="lf-alerts-summary" class="d-none lf-no-print"></div>
             </div>
 
-            <main class="lf-content">
+            <main class="lf-content@(ViewData["ContentWidth"] as string == "bounded" ? " lf-content--bounded" : "")">
                 @RenderBody()
             </main>
         </div>

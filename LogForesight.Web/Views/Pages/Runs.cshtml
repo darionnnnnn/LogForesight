@@ -96,7 +96,7 @@
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions d-none" data-maintain-only data-maintain-action>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
-                <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="schedule-ai-force-rerun">強制重新分析</button>
                 @* 啟動鈕被互斥條件藏起來時，這一列不能只剩空白（也避免卡片高度塌掉）：說明為什麼不能按 *@
                 <div class="small text-warning d-none" id="schedule-ai-actions-hint">
                     <span id="schedule-ai-actions-hint-text"></span>
@@ -244,7 +244,7 @@
         @* 沒有錯誤紀錄卻失敗或中斷的趟數（D-3）：大於 0 才顯示，等於 0 不佔版面 *@
         <div class="alert alert-secondary py-2 small mx-3 mt-3 mb-0 d-none" id="run-errors-notice" role="status">
             <span id="run-errors-notice-text"></span>
-            <button type="button" class="btn btn-sm btn-outline-dark lf-touch-36 ms-2" id="run-errors-notice-go">查看執行紀錄</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary lf-touch-36 ms-2" id="run-errors-notice-go">查看執行紀錄</button>
         </div>
         <div class="lf-card__body p-0" id="run-errors"></div>
     </section>
@@ -447,7 +447,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-warning" id="schedule-ai-rerun-confirm" data-maintain-only>強制重新分析</button>
+                <button type="button" class="btn btn-danger" id="schedule-ai-rerun-confirm" data-maintain-only>強制重新分析</button>
             </div>
         </div>
     </div>

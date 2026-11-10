@@ -833,7 +833,7 @@ function detailView(change) {
 
         const authorized = document.createElement('button');
         authorized.type = 'button';
-        authorized.className = 'btn btn-sm btn-outline-success';
+        authorized.className = 'btn btn-sm btn-outline-primary';
         authorized.textContent = '確認為授權操作';
         authorized.addEventListener('click', () => openConfirm(change, 'authorized'));
 

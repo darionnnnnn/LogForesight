@@ -65,6 +65,54 @@
 
 .lf-help:hover { color: var(--lf-primary); }
 
+/* ── 文字角色（docs/DESIGN-SYSTEM.md §8.1）───────────────────────────────
+   頁面只用角色，不再現場拼 small／text-muted／fw-semibold。沒有角色的文字就是正文。
+   一律用 rem token：Bootstrap 的 .small 是相對 em，巢狀時會連乘縮小。 */
+.lf-text-title { font-size: var(--lf-font-size-base); font-weight: 600; color: var(--lf-text); }
+.lf-text-meta { font-size: var(--lf-font-size-sm); font-weight: 400; color: var(--lf-text-muted); }
+.lf-text-label { font-size: var(--lf-font-size-sm); font-weight: 600; color: var(--lf-text-muted); }
+.lf-text-data { font-family: var(--lf-font-mono); font-variant-numeric: tabular-nums; }
+.lf-text-alert { font-weight: 600; color: var(--lf-danger-text); }
+
+/* 技術值（主機名、路徑、事件來源）可在任意位置斷行，不撐寬容器；人讀的句子不套用 */
+.lf-text-data, .lf-break-anywhere { overflow-wrap: anywhere; min-width: 0; }
+
+/* 一行次要資訊（core/elements.js metaLine）：間距由 gap 提供，窄寬度整項換行 */
+.lf-meta-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--lf-space-3); row-gap: var(--lf-space-1); }
+.lf-meta-line > * { min-width: 0; }
+
+/* ── 揭露（core/elements.js disclosure）：就地展開／收合 ─────────────────
+   箭頭＋文字、無底線、次要文字色；滑過與焦點轉主色。收合朝右、展開朝下。
+   換頁用連結、開視窗用外框按鈕，三種語意外觀不同（§8.2）。 */
+.lf-disclosure {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+    min-height: max(24px, 1.5rem);   /* 點擊區下限用 px：小字級時 rem 會低於 24px */
+    padding: 0 var(--lf-space-1);
+    margin-left: calc(-1 * var(--lf-space-1));
+    border: 0;
+    border-radius: var(--lf-radius-sm);
+    background: transparent;
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-sm);
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color var(--lf-transition), background-color var(--lf-transition);
+}
+.lf-disclosure:hover { color: var(--lf-primary); background: var(--lf-primary-soft); }
+.lf-disclosure:focus-visible { outline: none; color: var(--lf-primary); box-shadow: var(--lf-focus-ring); }
+.lf-disclosure__icon { width: .85em; height: .85em; flex-shrink: 0; transform: rotate(-90deg); transition: transform var(--lf-transition); }
+.lf-disclosure[aria-expanded="true"] .lf-disclosure__icon { transform: none; }
+
+/* ── 操作結果與驗證訊息（core/elements.js statusNote）────────────────── */
+.lf-status-note { display: flex; align-items: flex-start; gap: var(--lf-space-2); font-size: var(--lf-font-size-sm); }
+.lf-status-note > .lf-icon { flex-shrink: 0; margin-top: .15em; }
+.lf-status-note--error { color: var(--lf-danger-text); }
+.lf-status-note--success { color: var(--lf-success-text); }
+.lf-status-note--info { color: var(--lf-text-muted); }
+
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */
 
 .lf-card {
@@ -296,7 +344,7 @@ a.lf-kpi-card--link:focus-visible {
    （資訊密度低本來就該讓卡片大）。 */
 .lf-category-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
     gap: var(--lf-space-3);
 }
 
@@ -413,20 +461,20 @@ a.lf-badge:hover { text-decoration: underline; }
     font-size: 1.0625rem;
     font-weight: 500;
     line-height: 1.7;
-    max-width: 40em;
+    max-width: var(--lf-measure);
     margin: 0;
     color: var(--lf-primary-text);
 }
 
 .lf-ai-headline {
-    max-width: 40em;
+    max-width: var(--lf-measure);
     line-height: 1.5;
 }
 
 /* 狀況／趨勢／建議處置三格：寬螢幕並排、窄螢幕自動換行；只有重點速報有底色 */
 .lf-ai-summary {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
     gap: var(--lf-space-4);
     margin-top: var(--lf-space-3);
 }
@@ -441,7 +489,7 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-ai-summary__text {
     font-size: 1rem;
     line-height: 1.7;
-    max-width: 40em;
+    max-width: var(--lf-measure);
 }
 
 .lf-ai-summary__item--action {
@@ -643,6 +691,8 @@ a.lf-badge:hover { text-decoration: underline; }
     align-items: center;
     gap: var(--lf-space-2);
     flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .lf-toolbar__group-label {
@@ -687,7 +737,10 @@ a.lf-badge:hover { text-decoration: underline; }
     font-weight: 500;
     line-height: 1.4;
     cursor: pointer;
-    white-space: nowrap;
+    /* 名稱來自資料（主機群組名可能很長）：一般長度維持一行，比容器寬時才換行，不撐寬工具列 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    max-width: 100%;
     transition: background-color var(--lf-transition), border-color var(--lf-transition), color var(--lf-transition);
 }
 
