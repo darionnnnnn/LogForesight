@@ -78,16 +78,47 @@ public class ChatFocusResolverTests
     }
 
     [Fact]
-    public void focusKeys三個加訊息命中兩個新的_回四個_前三依序_manual()
+    public void focusKeys三個加訊息命中兩個新的_回四個_最新命中在前_較舊的延續焦點被擠掉()
     {
         var issues = Day();
         issues.Add(I("Disk", 11));
         issues.Add(I("Ntfs", 55));
         var keys = new[] { issues[3].IssueKey, issues[0].IssueKey, issues[2].IssueKey };
         var (focus, source) = ChatFocusResolver.Resolve(issues, keys, "4735 和 Ntfs 與 11");
-        Assert.Equal(4, focus.Count);
-        Assert.Equal(keys, focus.Take(3).Select(f => f.IssueKey));
+        // 命中：4735（issues[1]）與 Ntfs（issues[5]）排最前；其後接 focusKeys 前兩個，第三個被上限擠掉
+        Assert.Equal(new[] { issues[1].IssueKey, issues[5].IssueKey, keys[0], keys[1] }, focus.Select(f => f.IssueKey));
         Assert.Equal("manual", source);
+    }
+
+    [Fact]
+    public void 焦點已滿時再問到新的問題_新問題進焦點而不是被靜默丟掉()
+    {
+        var issues = Day();
+        issues.Add(I("Ntfs", 55));
+        var full = issues.Take(4).Select(i => i.IssueKey).ToArray();
+        var (focus, _) = ChatFocusResolver.Resolve(issues, full, "那 Ntfs 的錯誤呢");
+        Assert.Equal(4, focus.Count);
+        Assert.Equal("Ntfs", focus[0].Source);
+    }
+
+    [Fact]
+    public void 命中的問題已在focusKeys裡_不重複且移到最前()
+    {
+        var issues = Day();
+        var keys = new[] { issues[2].IssueKey, issues[0].IssueKey };
+        var (focus, source) = ChatFocusResolver.Resolve(issues, keys, "4625 怎麼了");
+        Assert.Equal(new[] { issues[0].IssueKey, issues[2].IssueKey }, focus.Select(f => f.IssueKey));
+        Assert.Equal("manual", source);
+    }
+
+    [Fact]
+    public void 請求帶超量focusKeys_只看前幾個_不擲例外()
+    {
+        var issues = Day();
+        var keys = Enumerable.Repeat("不存在的鍵", 5000).Append(issues[0].IssueKey).ToArray();
+        var (focus, source) = ChatFocusResolver.Resolve(issues, keys, "今天怎麼樣");
+        Assert.Equal("default", source);
+        Assert.Equal(3, focus.Count);
     }
 
     [Fact]
@@ -114,5 +145,37 @@ public class ChatFocusResolverTests
         var (focus, source) = ChatFocusResolver.Resolve(day, null, "共 12 次");
         Assert.Equal("default", source);
         Assert.DoesNotContain(focus, f => f.EventId == 12);
+    }
+
+    [Theory]
+    [InlineData("這個 issue 的 result 怎麼看")]
+    [InlineData("sudo 的紀錄正常嗎")]
+    [InlineData("consult 一下")]
+    public void 短來源名不得被其他英文字的片段誤命中(string message)
+    {
+        var issues = new List<IssueDto> { I("su", 0, "High", label: "su（linux-su-fail）"), I("sshd", 0, "Medium"), I("crond", 0, "Low") };
+        var (focus, source) = ChatFocusResolver.Resolve(issues, null, message);
+        Assert.Equal("default", source);
+    }
+
+    [Fact]
+    public void 來源名的後半段以連字號相連時仍命中()
+    {
+        var (focus, source) = ChatFocusResolver.Resolve(Day(), null, "Security-Auditing 的事件怎麼了");
+        Assert.Equal("keyword", source);
+        Assert.All(focus, f => Assert.Equal("Microsoft-Windows-Security-Auditing", f.Source));
+        Assert.Equal(2, focus.Count);
+    }
+
+    [Theory]
+    [InlineData("su 失敗是怎麼回事")]
+    [InlineData("請說明su的問題")]
+    [InlineData("SU?")]
+    public void 短來源名整詞出現時命中(string message)
+    {
+        var issues = new List<IssueDto> { I("su", 0, "High"), I("sshd", 0, "Medium") };
+        var (focus, source) = ChatFocusResolver.Resolve(issues, null, message);
+        Assert.Equal("keyword", source);
+        Assert.Equal("su", Assert.Single(focus).Source);
     }
 }

@@ -10,8 +10,9 @@ public class ChatMessageDto
 }
 
 /// <summary>
-/// 對話請求：不持久化，前端每輪送出完整歷史。伺服器端重新從 hostId/date/issueKey
-/// 取得 context（授權與資料來源與 interpret-issue 同一條路徑），不信任 client 端帶來的內容以外的任何欄位。
+/// 對話請求：不持久化，前端每輪送出完整歷史與目前焦點。伺服器端重新從 hostId/date 取得 context
+/// （授權與資料來源與 interpret-issue 同一條路徑），焦點鍵只在當日 TopIssues 範圍內採用，
+/// 不信任 client 端帶來的內容以外的任何欄位。
 /// </summary>
 public class ChatRequest
 {

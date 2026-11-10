@@ -1495,10 +1495,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
   合計上限 3,000 tokens，超出時從最後一個焦點起先拿掉樣本、再拿掉關鍵細節）。整日摘要只取自
   `GetDetail` 回傳的 `RecordDetailDto`（案件授與檢視時標題等已是空字串、`TopIssues` 已過濾），不另讀紀錄。
-  **焦點由 `ChatFocusResolver` 以確定性規則決定，不呼叫 AI 做路由**：請求的 `focusKeys`
-  （含舊欄位 `issueKey`，視為第一項）先依序保留，不在當日 `TopIssues` 的鍵靜默忽略；再補最新一則
-  使用者訊息的關鍵字命中（獨立的 3 位以上數字等於 EventId、Source 全名、Source 以 `-` 或 `:` 切開的
-  最後一段〔4 字以上〕、規則 Id〔4 字以上〕、`SourceEventLabel` 全文；不分大小寫），合併去重最多 4 個；
+  **焦點由 `ChatFocusResolver` 以確定性規則決定，不呼叫 AI 做路由**：最新一則
+  使用者訊息的關鍵字命中排最前（獨立的 3 位以上數字等於 EventId、Source 全名、Source 以 `-` 或 `:` 切開的
+  最後一段〔4 字以上〕、規則 Id〔4 字以上〕、`SourceEventLabel` 全文；不分大小寫），其後接請求的 `focusKeys`
+  （含舊欄位 `issueKey`，視為第一項；只看前 16 個，不在當日 `TopIssues` 的鍵靜默忽略），合併去重最多 4 個——
+  焦點滿了之後再問到新的問題，被擠掉的是較舊的延續焦點，不是剛問的那個；
   仍為空則取嚴重度最高的前 3 個。回應的 `focus`（`[{issueKey,label}]`）與 `focusSource`
   （`manual`／`keyword`／`default`）告知前端本輪實際納入的焦點。10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-SPEC.md` 的

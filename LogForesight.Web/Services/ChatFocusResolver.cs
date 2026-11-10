@@ -4,8 +4,9 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 詢問 AI 的焦點判定（確定性規則，不呼叫 AI）：使用者指定的 focusKeys 先保留順序，
-/// 再依最新一則使用者訊息的關鍵字命中補上；都沒有時取嚴重度最高的前幾個。
+/// 詢問 AI 的焦點判定（確定性規則，不呼叫 AI）：最新一則使用者訊息的關鍵字命中排最前面
+/// （使用者此刻問的就是它），其後接請求帶來的 focusKeys（使用者指定或前輪延續）；都沒有時取嚴重度最高的前幾個。
+/// 焦點有上限，命中排前面才不會在焦點滿了之後把剛問到的問題靜默丟掉。
 /// 只在傳入的 topIssues（控制器以 GetDetail 取得、已過授權）範圍內選，不會憑空帶出範圍外的問題。
 /// </summary>
 public static class ChatFocusResolver
@@ -16,6 +17,9 @@ public static class ChatFocusResolver
 
     /// <summary>焦點上限（暫定）</summary>
     public const int MaxFocus = 4;
+
+    /// <summary>請求可帶的 focusKeys 上限：超出的不看（前端最多送 MaxFocus 個，這是防止異常請求的上界）</summary>
+    public const int MaxRequestedKeys = 16;
 
     /// <summary>沒有任何指定或命中時，取嚴重度最高的前幾個（暫定）</summary>
     public const int DefaultFocusCount = 3;
@@ -28,7 +32,7 @@ public static class ChatFocusResolver
         IReadOnlyList<IssueDto> topIssues, IReadOnlyList<string>? focusKeys, string latestUserMessage)
     {
         var manual = new List<IssueDto>();
-        foreach (var key in focusKeys ?? Array.Empty<string>())
+        foreach (var key in (focusKeys ?? Array.Empty<string>()).Take(MaxRequestedKeys))
         {
             if (string.IsNullOrWhiteSpace(key)) continue;
             var hit = topIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, key));
@@ -37,9 +41,10 @@ public static class ChatFocusResolver
 
         var message = latestUserMessage ?? string.Empty;
         var numbers = DigitRun.Matches(message).Select(m => m.Value).ToHashSet();
-        var keyword = topIssues.Where(i => !manual.Contains(i) && MatchesKeyword(i, message, numbers)).ToList();
+        var keyword = topIssues.Where(i => MatchesKeyword(i, message, numbers)).ToList();
 
-        var merged = manual.Concat(keyword).Take(MaxFocus).ToList();
+        // 最新提問命中的在前，其餘指定／延續的焦點依原順序接在後面；超出上限丟的是較舊的延續焦點
+        var merged = keyword.Concat(manual.Where(i => !keyword.Contains(i))).Take(MaxFocus).ToList();
         if (merged.Count == 0)
         {
             var top = topIssues
@@ -84,6 +89,26 @@ public static class ChatFocusResolver
         return idx >= 0 ? source[(idx + 1)..].Trim() : string.Empty;
     }
 
-    private static bool Contains(string message, string? token) =>
-        !string.IsNullOrWhiteSpace(token) && message.Contains(token.Trim(), StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// 整詞比對（不分大小寫）：token 前後不得緊鄰英數或底線——短來源名（su、cron）才不會被
+    /// issue、sudo、result 這類字的片段誤命中；緊鄰中文、標點或連字號不算相連
+    /// （「su的問題」「Security-Auditing」仍命中）。
+    /// </summary>
+    private static bool Contains(string message, string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var t = token.Trim();
+        for (var from = 0; from < message.Length;)
+        {
+            var idx = message.IndexOf(t, from, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return false;
+            var end = idx + t.Length;
+            if ((idx == 0 || !IsWordChar(message[idx - 1])) && (end >= message.Length || !IsWordChar(message[end])))
+                return true;
+            from = idx + 1;
+        }
+        return false;
+    }
+
+    private static bool IsWordChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_';
 }
