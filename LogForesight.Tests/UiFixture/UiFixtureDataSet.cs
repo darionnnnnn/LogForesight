@@ -25,7 +25,7 @@ public sealed record UiFixtureScenario(string Key, string Title, string Path);
 /// 與 <see cref="ScaleDataSet"/> 的分工：那邊求量、這邊求邊界；能走 store／分析紀錄寫入入口的都走產品路徑，
 /// DTO 形狀才是真的。固定亂數種子；日期以「今天」為基準往前推（最近一天＝昨天，跨度不超過 30 天）。
 /// </summary>
-public sealed class UiFixtureDataSet : IDisposable
+public sealed partial class UiFixtureDataSet : IDisposable
 {
     // ── 對外資料 ────────────────────────────────────────────────────────────
 
@@ -125,6 +125,7 @@ public sealed class UiFixtureDataSet : IDisposable
         BuildHosts();
         WriteRecords();
         WriteHandlingAndCases();
+        BuildExtended();
         RegisterScenarios();
     }
 
@@ -248,6 +249,7 @@ public sealed class UiFixtureDataSet : IDisposable
             Rule(RuleExplMixed, "UiFixture-Explain-Mixed", 9007, UiFixtureText.RepeatTo(UiFixtureText.MixedUnit, 600)),
             Rule(RuleExplLongSource, "UiFixture-LongSource-", 9006, "來源名稱長達 255 字元（簽章 Source 欄位上限）的問題說明。")
         });
+        AddExtendedRules(content.Rules);
         store.Save(content);
     }
 
@@ -307,7 +309,8 @@ public sealed class UiFixtureDataSet : IDisposable
         Host("win", "UI-WIN-NORMAL", groups: new[] { rackA, longGroup }, display: "標準 Windows 主機",
             ip: "10.10.1.10", role: "Web 應用程式伺服器", tier: WebHost.TierCore, owners: new[] { handler, admin });
         Host("long63", HostName63, groups: new[] { rackA }, display: "名稱剛好 63 字元的主機", ip: "10.10.1.63");
-        Host("fqdn", HostFqdn, groups: new[] { rackA }, ip: "10.10.1.20");
+        Host("fqdn", HostFqdn, groups: new[] { rackA }, ip: "10.10.1.20",
+            owners: new[] { handler, UserIds["ui-same-a"], UserIds["ui-same-b"] });   // 一台多位負責人
         Host("fqdn-long", HostFqdnLong, groups: new[] { dmz }, ip: "10.20.1.21", role: "DMZ 對外服務");
         // 只有 IP 當名稱（NetIQ 登錄慣例），顯示名稱來自 Sentinel 回報
         Host("ip-only", HostIpOnly, groups: new[] { dmz }, display: "VM-SPRINGBOARD7", ip: HostIpOnly);
@@ -551,22 +554,22 @@ public sealed class UiFixtureDataSet : IDisposable
             foreach (var d in offsets.OrderByDescending(x => x)) Save(Background(key, d, source, high));
         }
 
-        Many("long63", new[] { 13, 8, 5, 3, 2, 1 });
+        Many("long63", new[] { 8, 3, 1 });
         Many("fqdn", Enumerable.Range(1, 6));
         Many("fqdn-long", new[] { 4, 2, 1 });
         Many("ip-only", new[] { 3, 2, 1 });
-        Many("fin", Enumerable.Range(1, 5), high: 0.5);
+        Many("fin", Enumerable.Range(1, 3), high: 0.5);
         Many("no-group", new[] { 3, 2, 1 });
-        Many("disabled", Enumerable.Range(10, 5));
+        Many("disabled", Enumerable.Range(10, 2));
         Many("tomb", new[] { 28, 27 });
-        Many("silent", Enumerable.Range(21, 8));
-        Many("linux", Enumerable.Range(1, 7), high: 0.4);
+        Many("silent", Enumerable.Range(21, 3));
+        Many("linux", Enumerable.Range(1, 4), high: 0.4);
         Many("linux2", new[] { 3, 2, 1 });
-        Many("prtg", Enumerable.Range(1, 6), AnalysisLogSource.Prtg, high: 0.4);
+        Many("prtg", Enumerable.Range(1, 3), AnalysisLogSource.Prtg, high: 0.4);
         Many("local", new[] { 3, 2, 1 }, AnalysisLogSource.Local);
         Many("hostile", new[] { 2, 1 });
-        // 大群組的重點是「台數很多」：只有前 6 台有一天紀錄，其餘是新登錄、尚無紀錄的主機（空狀態也是要檢查的畫面）
-        for (var i = 1; i <= 6; i++) Many($"bulk{i:D2}", new[] { 1 });
+        // 大群組的重點是「台數很多」：只有前 3 台有一天紀錄，其餘是新登錄、尚無紀錄的主機（空狀態也是要檢查的畫面）
+        for (var i = 1; i <= 3; i++) Many($"bulk{i:D2}", new[] { 1 });
 
         // 主機日誌的最後回報時間跟著最新紀錄走（靜默主機維持 21 天前；其餘為昨天凌晨）
         PatchRecordFlags();
@@ -1305,8 +1308,8 @@ public sealed class UiFixtureDataSet : IDisposable
         Scenarios.Add(new UiFixtureScenario("page.dashboard", "儀表板", "/"));
         Scenarios.Add(new UiFixtureScenario("page.records", "紀錄總覽（問題／主機視角）", "/records"));
         Scenarios.Add(new UiFixtureScenario("page.work-orders", "交辦單清單", "/work-orders"));
-        foreach (var (account, id) in WorkOrderIds)
-            Scenarios.Add(new UiFixtureScenario($"work-order.{account}", $"交辦單詳情（處理人 {account}）", $"/work-orders/{id}"));
+        foreach (var account in new[] { "ui-handler", "ui-handler-long", "ui-same-a", "ui-same-b" })
+            Scenarios.Add(new UiFixtureScenario($"work-order.{account}", $"交辦單詳情（處理人 {account}）", $"/work-orders/{WorkOrderIds[account]}"));
         foreach (var account in new[] { "ui-handler", "ui-handler-long", "ui-same-a", "ui-same-b" })
             Scenarios.Add(new UiFixtureScenario($"handler.{account}", $"處理人頁面（{account}）", $"/handlers/{UserIds[account]}"));
         Scenarios.Add(new UiFixtureScenario("admin.hosts", "主機管理", "/admin/hosts"));
@@ -1314,7 +1317,8 @@ public sealed class UiFixtureDataSet : IDisposable
         Scenarios.Add(new UiFixtureScenario("admin.users", "使用者管理（長顯示名稱／同名／停用／暫停接單）", "/admin/users"));
         foreach (var account in new[] { "ui-handler-long", "ui-same-a", "ui-disabled", "ui-paused", "ui-hostile" })
             Scenarios.Add(new UiFixtureScenario($"admin.user.{account}", $"使用者詳情（{account}）", $"/admin/users/{UserIds[account]}"));
-        Scenarios.Add(new UiFixtureScenario("admin.rules", "規則維護（含 6 條自訂白話說明邊界規則）", "/admin/rules"));
+        Scenarios.Add(new UiFixtureScenario("admin.rules", "規則維護（含自訂白話說明邊界規則）", "/admin/rules"));
+        RegisterExtendedScenarios();
     }
 
     private void WriteScenarioFile()

@@ -78,6 +78,24 @@ internal sealed class UiFixtureChecks
         return _hosts.GetAll().Where(h => h.Active && h.GroupIds.Any(hostGroups.Contains)).Select(h => h.HostId).ToHashSet();
     }
 
+    public WorkOrder Order(string key) => _d.Backend.WorkOrderStore().Get(_d.WorkOrderIds[key]) ?? throw new Xunit.Sdk.XunitException($"交辦單 {key} 不存在");
+    public List<IssueCase> CasesOf(long orderId) => _d.Backend.IssueCaseStore().GetByWorkOrder(orderId, 0, 500);
+    private BatchRunStore Runs() => new(_d.Backend.LogStore("batch_runs"), _d.Backend.LogStore("batch_run_logs"));
+    public BatchRun Run(string key) => Runs().GetRun(_d.RunIds[key]) ?? throw new Xunit.Sdk.XunitException($"執行 {key} 查不到");
+    public List<BatchRunLog> RunLogs(string key) => Runs().GetLogs(_d.RunIds[key]);
+    public List<AuditEntry> Audits() => new AuditLogStore(_d.Backend.LogStore("audit")).Query(new AuditQuery { Page = 1, PageSize = 500 }).Items.ToList();
+    public List<PermissionChangeRecord> Perms() => _d.Backend.PermissionChanges().Query(new PermissionChangeQueryFilter { PageSize = 200 }).Items.ToList();
+    public List<string> PermStatuses() => _d.Backend.PermissionChanges().GetConfirmations(_d.PermissionChangeIds).Select(x => x.Status).ToList();
+    public EfPrtgStore Prtg() => _d.Backend.PrtgStore();
+    public List<PrtgHostMapRow> PrtgMap() => Prtg().GetHostMapForDate(_d.Yesterday);
+    public void Ledger(string key, string status)
+    {
+        var (hostKey, days, _) = _d.NetiqLedger[key];
+        var date = DateTime.Today.AddDays(-days);
+        var h = NetiqSourceAttempt.ReadHistory(_d.Backend, date, date, DateTime.Today);
+        Assert.Equal(status, h[(_d.HostIds[hostKey], date)].LatestStatus);
+    }
+
     private static void True(bool condition, string message) => Assert.True(condition, message);
 
     // ── 矩陣 ────────────────────────────────────────────────────────────────
@@ -467,6 +485,134 @@ internal sealed class UiFixtureChecks
             Assert.Equal(6, custom.Count);
             var result = RuleValidator.Validate(rules);
             Assert.DoesNotContain(result.SkippedRules, x => x.Rule.Id.StartsWith("ui-fixture-expl-", StringComparison.Ordinal));
+        },
+
+        // ═══ A-0c：交辦單 ═══
+        ["交辦單.進行中"] = c => { var o = c.Order("ui-handler"); Assert.Null(o.ClosedAt); Assert.NotEmpty(c.CasesOf(o.WorkOrderId)); },
+        ["交辦單.已結案"] = c => { var o = c.Order("closed"); Assert.NotNull(o.ClosedAt); Assert.Equal(WorkOrderCloseReasons.AllClosed, o.ClosedReason); },
+        ["交辦單.上報中"] = c => Assert.Contains(c.CasesOf(c.Order("escalated").WorkOrderId), x => x.Status == IssueHandlingStatuses.Escalated && x.ClosedAt == null),
+        ["交辦單.暫停靜音中問題"] = c =>
+        {
+            var o = c.Order("paused");
+            var p = new IssueOwnerStore(c._d.Backend.Blob("issue_owners")).Get(o.SourceName!, o.EventId!.Value);
+            Assert.NotNull(p);
+            Assert.True(IssueProfile.IsMutedOn(p!, DateTime.Today), "問題應在靜音中");
+        },
+        ["交辦單.未回覆"] = c => Assert.Null(c.Order("ui-same-b").LastReplyAt),
+        ["交辦單.成員200台"] = c => Assert.Equal(200, c._d.Backend.IssueCaseStore().CountByWorkOrder(c._d.WorkOrderIds["mass"])),
+        ["交辦單.超長說明"] = c => True((c.Order("long-note").Note?.Length ?? 0) > 500, $"備註應超過 500 字（實得 {c.Order("long-note").Note?.Length}）"),
+
+        // ═══ A-0c：規則與問題負責 ═══
+        ["規則.自訂超長描述"] = c => Assert.Equal(500, c.Rules().Single(r => r.Id == "ui-fixture-rule-longdesc").Description.Length),
+        ["規則.自訂有知識庫"] = c => { var r = c.Rules().Single(r => r.Id == "ui-fixture-rule-kb"); Assert.NotEmpty(r.NextSteps); Assert.NotEmpty(r.LikelyCauses); },
+        ["規則.自訂無知識庫"] = c =>
+        {
+            var r = c.Rules().Single(r => r.Id == "ui-fixture-rule-nokb");
+            Assert.Empty(r.NextSteps); Assert.Empty(r.LikelyCauses); Assert.Equal("", r.Impact);
+            // 產品驗證不接受這種規則（要求知識庫必填），資料集直接寫入
+            Assert.Contains(RuleValidator.Validate(c.Rules()).SkippedRules, x => x.Rule.Id == "ui-fixture-rule-nokb");
+        },
+        ["規則.退役規則"] = c =>
+        {
+            var r = c.Rules().Single(r => r.Id == "ui-fixture-rule-retired");
+            Assert.True(PrtgRuleCatalog.IsRetired(r.PrtgRuleCode)); Assert.False(r.Enabled);
+            Assert.DoesNotContain(RuleValidator.Validate(c.Rules()).SkippedRules, x => x.Rule.Id == r.Id);
+        },
+        ["規則.其餘自訂規則通過產品驗證"] = c =>
+        {
+            var skipped = RuleValidator.Validate(c.Rules()).SkippedRules.Select(x => x.Rule.Id).ToList();
+            foreach (var id in new[] { "ui-fixture-rule-longdesc", "ui-fixture-rule-kb", "ui-fixture-rule-disabled" }) Assert.DoesNotContain(id, skipped);
+        },
+        ["問題負責.靜音中"] = c => Assert.True(IssueProfile.IsMutedOn(new IssueOwnerStore(c._d.Backend.Blob("issue_owners")).Get("Ui-Muted-Issue", 8620)!, DateTime.Today)),
+        ["問題負責.靜音已到期與預約"] = c =>
+        {
+            var s = new IssueOwnerStore(c._d.Backend.Blob("issue_owners"));
+            Assert.False(IssueProfile.IsMutedOn(s.Get("Ui-Mute-Expired", 8630)!, DateTime.Today));
+            Assert.False(IssueProfile.IsMutedOn(s.Get("Ui-Mute-Future", 8631)!, DateTime.Today));
+            Assert.Single(s.Get("Ui-Mute-Future", 8631)!.Mutes);
+        },
+        ["問題負責.多位負責人與結論"] = c =>
+        {
+            var s = new IssueOwnerStore(c._d.Backend.Blob("issue_owners"));
+            Assert.Equal(3, s.Get("Ui-Case-Issue-2", 8002)!.OwnerUserIds.Count);
+            Assert.True(s.Get("UiFixture-<script>alert(1)</script>&\"'", 9100)!.AutoApply);
+        },
+        ["主機負責人.一台多位"] = c => Assert.Equal(3, c.Host("fqdn").OwnerUserIds.Count),
+        ["主機負責人.單一與雙人"] = c => { Assert.Single(c.Host("fin").OwnerUserIds); Assert.Equal(2, c.Host("win").OwnerUserIds.Count); },
+
+        // ═══ A-0c：排程執行紀錄 ═══
+        ["執行紀錄.成功"] = c => { var r = c.Run("success"); Assert.Equal(0, r.ExitCode); Assert.Equal(0, r.WarnCount); Assert.NotNull(r.FinishedAt); },
+        ["執行紀錄.有警告"] = c => { var r = c.Run("warnings"); Assert.True(r.WarnCount > 0); Assert.Equal(0, r.ExitCode); },
+        ["執行紀錄.失敗"] = c => { var r = c.Run("failed"); Assert.Equal(1, r.ExitCode); Assert.True(r.ErrorCount > 0); },
+        ["執行紀錄.中斷"] = c => { var r = c.Run("interrupted"); Assert.True(r.Interrupted); Assert.Equal(BatchRun.ExitCodeInterrupted, r.ExitCode); },
+        ["執行紀錄.已回補"] = c => Assert.True(c.Run("catch-up").CatchUp),
+        ["執行紀錄.已停止"] = c => Assert.True(c.Run("stopped").Stopped),
+        ["執行紀錄.AI背景工作"] = c => Assert.Equal(BatchRun.JobTypeAi, c.Run("ai-job").JobType),
+        ["執行紀錄.執行中"] = c => { var r = c.Run("running"); Assert.Null(r.FinishedAt); Assert.Null(r.ExitCode); },
+        ["執行紀錄.訊息極長"] = c => True(c.RunLogs("warnings").Any(l => l.Message.Length > 5000 && (l.ExceptionText?.Length ?? 0) > 1000), "應有超長訊息與例外文字"),
+        ["執行紀錄.階段時間軸長短懸殊"] = c =>
+        {
+            var phases = c.Run("success").Phases!;
+            var durations = phases.Where(p => p.FinishedAt != null).Select(p => (p.FinishedAt!.Value - p.StartedAt).TotalSeconds).ToList();
+            True(durations.Min() <= 5 && durations.Max() >= 3 * 3600, "階段最短應在秒級、最長應在小時級");
+        },
+        ["執行紀錄.診斷行查得到"] = c => True(c.RunLogs("failed").Count >= 2, "失敗執行的診斷行應查得到（附加時間已回填成執行時間）"),
+
+        // ═══ A-0c：稽核 ═══
+        ["稽核.各種結果"] = c =>
+        {
+            var all = c.Audits();
+            Assert.Contains(all, e => e.Result == AuditResult.Ok);
+            Assert.Contains(all, e => e.Result == AuditResult.Failed);
+            Assert.Contains(all, e => e.Result == AuditResult.Denied);
+        },
+        ["稽核.長摘要"] = c => True(c.Audits().Any(e => e.Summary.Length >= 1200) && c.Audits().Any(e => e.Summary.Length == 2000), "應有 1200 與 2000 字摘要"),
+        ["稽核.查詢路徑讀得到"] = c => True(c.Audits().Count >= 30, $"稽核查詢只讀到 {c.Audits().Count} 筆"),
+
+        // ═══ A-0c：權限異動 ═══
+        ["權限異動.可解析成鍵值"] = c => Assert.Contains(c.Perms(), r => r.Category == PermissionCategory.GroupMember && r.InitiatorAccount != null && r.TargetAccount != null),
+        ["權限異動.解析不出走退路"] = c => Assert.Contains(c.Perms(), r => r.Category == PermissionCategory.Other && r.Target == "" && r.InitiatorAccount == null && r.RawText != null),
+        ["權限異動.待確認"] = c => Assert.Contains(c.PermStatuses(), s => s == PermissionConfirmStatuses.Pending),
+        ["權限異動.已確認授權"] = c => Assert.Contains(c.PermStatuses(), s => s == PermissionConfirmStatuses.Authorized),
+        ["權限異動.可疑"] = c => Assert.Contains(c.PermStatuses(), s => s == PermissionConfirmStatuses.Suspicious),
+
+        // ═══ A-0c：PRTG ═══
+        ["PRTG.設定未啟用且位址為invalid"] = c =>
+        {
+            var s = new SystemSettingsStore(c._d.Backend.Blob("system_settings")).Get();
+            Assert.False(s.PrtgEnabled); Assert.EndsWith(".invalid", new Uri(s.PrtgUrl).Host); Assert.Equal("", s.PrtgApiTokenEnc);
+        },
+        ["PRTG.裝置已對應"] = c => Assert.Contains(c.PrtgMap(), r => r.MapStatus == PrtgMapStatus.Ok && r.HostId == c._d.HostIds["win"]),
+        ["PRTG.裝置未對應"] = c => Assert.Contains(c.PrtgMap(), r => r.MapStatus == PrtgMapStatus.Unmatched),
+        ["PRTG.裝置衝突"] = c => Assert.Contains(c.PrtgMap(), r => r.MapStatus == PrtgMapStatus.Conflict),
+        ["PRTG.超長sensor名稱"] = c => True(c.Prtg().GetAllSensors().Any(s => s.Name.Length >= 250), "應有 250 字以上 sensor 名稱"),
+        ["PRTG.有數值"] = c => True(c.Prtg().GetValuesForSensor(2002, DateTime.Today.AddDays(-3), DateTime.Today).Count(v => v.Quality == PrtgDataQuality.Ok) >= 24, "sensor 2002 應有 24 筆可用數值"),
+        ["PRTG.無數值"] = c => Assert.Empty(c.Prtg().GetValuesForSensor(2051, DateTime.Today.AddDays(-3), DateTime.Today)),
+        ["PRTG.單位不可判"] = c =>
+        {
+            var sensors = c.Prtg().GetAllSensors();
+            Assert.True(string.IsNullOrEmpty(sensors.Single(s => s.Objid == 2052).Unit));
+            True(c.Prtg().GetValuesForSensor(2052, DateTime.Today.AddDays(-3), DateTime.Today).Count > 0, "單位不可判的 sensor 仍有數值");
+        },
+        ["PRTG.快照取樣覆蓋率高低"] = c =>
+        {
+            var v = c.Prtg().GetValuesForSensor(2054, DateTime.Today.AddDays(-3), DateTime.Today);
+            Assert.Contains(v, x => x.Quality == PrtgDataQuality.Sampled && x.Coverage >= PrtgValueUsability.SampledMinCoverage);
+            Assert.Contains(v, x => x.Quality == PrtgDataQuality.Sampled && x.Coverage < PrtgValueUsability.SampledMinCoverage);
+        },
+
+        // ═══ A-0c：NetIQ 帳本 ═══
+        ["NetIQ.成功"] = c => c.Ledger("success", NetiqAttemptStatus.Success),
+        ["NetIQ.部分完成"] = c => c.Ledger("partial", NetiqAttemptStatus.Partial),
+        ["NetIQ.失敗"] = c => c.Ledger("failed", NetiqAttemptStatus.Failed),
+        ["NetIQ.已停止"] = c => c.Ledger("stopped", NetiqAttemptStatus.Stopped),
+        ["NetIQ.查無資料待複查"] = c => c.Ledger("empty-once", NetiqAttemptStatus.EmptyOnce),
+        ["NetIQ.自動重試用盡"] = c =>
+        {
+            var (hostKey, days, _) = c._d.NetiqLedger["failed-exhausted"];
+            var date = DateTime.Today.AddDays(-days);
+            var h = NetiqSourceAttempt.ReadHistory(c._d.Backend, date, date, DateTime.Today)[(c._d.HostIds[hostKey], date)];
+            Assert.True(NetiqAttemptStatus.AutoRetryExhausted(h));
         },
 
         // ═══ 產品讀取路徑 ═══
