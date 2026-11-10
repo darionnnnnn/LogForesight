@@ -204,7 +204,7 @@ const cases = {
         assert(text.includes('複製'), text);
         const headlineAt = text.indexOf('H');
         const briefAt = text.indexOf('重點速報');
-        const summaryAt = text.indexOf('狀況：');
+        const summaryAt = text.indexOf('狀況');
         assert(headlineAt < briefAt && briefAt < summaryAt, `順序錯誤：${text}`);
         const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
         assert(brief, '找不到 lf-ai-brief');

@@ -1621,8 +1621,51 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-ai-brief__text {
     font-size: 1.0625rem;
     font-weight: 500;
+    line-height: 1.7;
+    max-width: 40em;
     margin: 0;
     color: var(--lf-primary-text);
+}
+
+.lf-ai-headline {
+    max-width: 40em;
+    line-height: 1.5;
+}
+
+/* 狀況／趨勢／建議處置三格：寬螢幕並排、窄螢幕自動換行；只有重點速報有底色 */
+.lf-ai-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    gap: var(--lf-space-4);
+    margin-top: var(--lf-space-3);
+}
+
+.lf-ai-summary__label {
+    font-size: var(--lf-font-size-sm);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+    margin: 0 0 var(--lf-space-1);
+}
+
+.lf-ai-summary__text {
+    font-size: 1rem;
+    line-height: 1.7;
+    max-width: 40em;
+}
+
+.lf-ai-summary__item--action {
+    border-left: 3px solid var(--lf-primary);
+    padding-left: var(--lf-space-3);
+}
+
+.lf-ai-summary__item--action .lf-ai-summary__label {
+    color: var(--lf-primary-text);
+}
+
+@media print {
+    .lf-ai-summary {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，

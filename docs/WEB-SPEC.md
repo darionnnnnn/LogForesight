@@ -1474,7 +1474,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
-  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／重點速報／狀況／趨勢／建議處置；「重點速報」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
+  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／重點速報／狀況／趨勢／建議處置；狀況／趨勢／建議處置三段為並排的三格摘要，窄螢幕自動換行、列印單欄，缺值的格不渲染，建議處置格帶主色左色條；頁首日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；「重點速報」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
   僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，

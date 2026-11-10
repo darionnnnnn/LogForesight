@@ -9,7 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader, collapsibleText } from '../core/ui.js';
-import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell } from '../core/format.js';
+import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
 import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
@@ -347,16 +347,22 @@ function aiSummaryBlock(detail) {
         target.appendChild(badge);
     }
 
+    // 三段摘要：AI 模式用「眉標＋內文」三格；統計模式的替代文字維持單行段落
+    const labeled = [];
     for (const part of textParts) {
         if (part.headline) {
             const headline = document.createElement('div');
-            headline.className = 'fs-5 mb-2';
+            headline.className = detail.aiAnalyzed ? 'fs-5 fw-semibold lf-ai-headline mb-2' : 'fs-5 mb-2';
             renderAiInline(headline, part.text);
             target.appendChild(headline);
             continue;
         }
         if (part.brief) {
             target.appendChild(briefBlock(part.text));
+            continue;
+        }
+        if (detail.aiAnalyzed) {
+            labeled.push(part);
             continue;
         }
         const p = document.createElement('p');
@@ -366,6 +372,27 @@ function aiSummaryBlock(detail) {
         p.appendChild(strong);
         renderAiInline(p, part.text);
         target.appendChild(p);
+    }
+
+    if (labeled.length > 0) {
+        const grid = document.createElement('div');
+        grid.className = 'lf-ai-summary';
+        for (const part of labeled) {
+            const item = document.createElement('div');
+            item.className = part.label === '建議處置'
+                ? 'lf-ai-summary__item lf-ai-summary__item--action'
+                : 'lf-ai-summary__item';
+            const label = document.createElement('h3');
+            label.className = 'lf-ai-summary__label';
+            label.textContent = part.label;
+            item.appendChild(label);
+            const body = document.createElement('div');
+            body.className = 'lf-ai-summary__text';
+            renderAiInline(body, part.text);
+            item.appendChild(body);
+            grid.appendChild(item);
+        }
+        target.appendChild(grid);
     }
     return target;
 }
@@ -401,6 +428,17 @@ function briefBlock(text) {
     renderAiInline(p, text);
     wrap.appendChild(p);
     return wrap;
+}
+
+/** 頁首「資料來源」副標：把後端列舉值轉成白話，並說明這一天還能不能補 PRTG 資料 */
+function sourceLine(detail) {
+    const state = detail.latestNetiqAttemptStatus == null
+        ? '已保存的分析結果'
+        : `最近一次取數：${netiqAttemptStatusName(detail.latestNetiqAttemptStatus)}`;
+    const supplement = detail.prtgSupplementEligible
+        ? '這一天可以再補上 PRTG 資料。'
+        : '這一天不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ。';
+    return `資料來源：${logSourceName(detail.logSource)}（${state}）。${supplement}`;
 }
 
 function renderHeader(detail) {
@@ -467,9 +505,7 @@ function renderHeader(detail) {
         body.appendChild(source);
     } else if (detail.logSource) {
         const source = document.createElement('p'); source.className = 'small text-muted';
-        const status = detail.latestNetiqAttemptStatus ?? '已保存的分析結果';
-        source.textContent = `日誌來源：${detail.logSource}；最新 NetIQ 嘗試：${status}。${detail.prtgSupplementEligible
-            ? '此日可接受可信 PRTG 補充。' : '此日不能接受新的 PRTG 補充；原分析保留，請核對來源或補跑 NetIQ。'}`;
+        source.textContent = sourceLine(detail);
         body.appendChild(source);
     }
     if (detail.riskReview) {

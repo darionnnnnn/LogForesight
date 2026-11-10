@@ -21,6 +21,31 @@ export function categoryName(category) {
     return CATEGORY_NAMES[category] ?? category;
 }
 
+/** 風險日紀錄的日誌來源 → 中文（後端列舉 Netiq／Local／Prtg） */
+export function logSourceName(value) {
+    switch (value) {
+        case 'Netiq': return 'NetIQ';
+        case 'Local': return '本機';
+        case 'Prtg': return 'PRTG';
+        default: return '未知';
+    }
+}
+
+/** NetIQ 取數嘗試狀態 → 中文；對照表與後端 NetiqAttemptStatus 常數同步（有守門測試） */
+const NETIQ_ATTEMPT_STATUS_NAMES = {
+    'running': '執行中',
+    'success': '成功',
+    'partial': '部分完成',
+    'retained-incomplete': '保留不完整結果',
+    'failed': '失敗',
+    'stopped': '已停止',
+    'empty-once': '查無資料待複查'
+};
+
+export function netiqAttemptStatusName(value) {
+    return NETIQ_ATTEMPT_STATUS_NAMES[value] ?? '未知';
+}
+
 /**
  * 使用者名稱的唯一顯示格式（docs/archive/FEEDBACK-8-PLAN.md #6）：「顯示名稱(帳號)」（半形括號）。
  * 全站只要是使用者名稱欄位一律走這裡——分散各頁各自組字串遲早有一處漏改或用了全形括號。
