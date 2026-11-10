@@ -1690,6 +1690,25 @@ a.lf-badge:hover { text-decoration: underline; }
     gap: var(--lf-space-2);
 }
 
+/* 「指定問題」就地面板：焦點列下方展開的 checkbox 清單，過長時內部捲動 */
+.lf-focus-picker {
+    padding: var(--lf-space-3);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-card-bg);
+}
+
+.lf-focus-picker__list {
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: var(--lf-space-3);
+}
+
+.lf-focus-picker__actions {
+    display: flex;
+    gap: var(--lf-space-2);
+}
+
 .lf-focus-chip {
     display: inline-flex;
     align-items: center;

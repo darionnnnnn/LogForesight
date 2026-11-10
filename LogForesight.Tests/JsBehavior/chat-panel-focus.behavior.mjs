@@ -55,9 +55,10 @@ function setup(issues) {
     elements = {};
     modals = [];
     for (const id of ['chat-card', 'chat-form', 'chat-clear', 'chat-expand', 'chat-focus',
-        'chat-messages', 'chat-input', 'chat-send', 'chat-turn-count', 'chat-run-hint', 'chat-body']) {
+        'chat-messages', 'chat-input', 'chat-send', 'chat-turn-count', 'chat-run-hint', 'chat-body', 'chat-focus-picker']) {
         elements[id] = new El(id);
     }
+    elements['chat-focus-picker'].classList.add('d-none');
     const document = {
         getElementById: id => elements[id] ?? null,
         createElement: () => new El('x'),
@@ -105,6 +106,10 @@ function bar() { return elements['chat-focus']; }
 function chips() { return bar().children.filter(c => c.className.includes('lf-focus-chip')); }
 function removeButton(chip) { return chip.children[1]; }
 function pickButton() { return bar().children.find(c => c.className.includes('lf-focus-pick')); }
+function picker() { return elements['chat-focus-picker']; }
+function pickerHidden() { return picker().classList.contains('d-none'); }
+function pickerBoxes() { return picker().children[0].children.map(row => row.children[0]); }
+function pickerButton(text) { return picker().children[1].children.find(b => b.textContent === text); }
 function bubbleTexts() { return elements['chat-messages'].children.map(textOf); }
 
 const FOCUS2 = [{ issueKey: 'A', label: '問題甲' }, { issueKey: 'B', label: '問題乙' }];
@@ -153,10 +158,10 @@ const cases = {
         const many = ['A', 'B', 'C', 'D', 'E'].map((k, i) => ({ issueKey: k, sourceEventLabel: `問題${k}`, severity: i }));
         setup(many);
         await pickButton().fire('click');
-        assert.equal(modals.length, 1, '應開啟指定問題 modal');
-        const boxes = modals[0].body.children.map(row => row.children[0]);
+        assert.equal(pickerHidden(), false, '應展開指定問題面板');
+        const boxes = pickerBoxes();
         assert.equal(boxes.length, 5);
-        assert.ok(textOf(modals[0].body.children[0]).includes('問題A（嚴重度0）'), '清單項顯示來源事件與嚴重度');
+        assert.ok(textOf(picker().children[0].children[0]).includes('問題A（嚴重度0）'), '清單項顯示來源事件與嚴重度');
         for (let i = 0; i < 4; i++) {
             boxes[i].checked = true;
             await boxes[i].fire('change');
@@ -166,11 +171,88 @@ const cases = {
         boxes[0].checked = false;
         await boxes[0].fire('change');
         assert.equal(boxes[4].disabled, false, '取消一個後其餘恢復可勾');
-        // 關閉 modal 時套用
         boxes[4].checked = true;
         await boxes[4].fire('change');
-        modals[0].onClose();
+        await pickerButton('套用').fire('click');
         assert.deepEqual(chips().map(c => c.children[0].textContent), ['問題B', '問題C', '問題D', '問題E']);
+    },
+
+    async pickerOpensInline() {
+        setup();
+        assert.equal(pickButton().attributes['aria-controls'], 'chat-focus-picker');
+        assert.equal(pickButton().attributes['aria-expanded'], 'false');
+        await pickButton().fire('click');
+        assert.equal(pickerHidden(), false, '面板顯示');
+        assert.equal(pickButton().attributes['aria-expanded'], 'true');
+        assert.equal(modals.length, 0, '不得呼叫 showDetailModal');
+        assert.equal(pickerBoxes()[0].focused, true, '焦點移到第一個 checkbox');
+    },
+
+    async pickerApply() {
+        setup();
+        await pickButton().fire('click');
+        for (const box of pickerBoxes()) {
+            box.checked = true;
+            await box.fire('change');
+        }
+        await pickerButton('套用').fire('click');
+        assert.equal(chips().length, 2, '焦點列兩個 chip');
+        assert.equal(pickerHidden(), true, '面板隱藏');
+        assert.equal(pickButton().attributes['aria-expanded'], 'false');
+        assert.equal(pickButton().focused, true, '焦點回到指定問題鈕');
+        assert.equal(modals.length, 0);
+    },
+
+    async pickerCancel() {
+        setup();
+        await pickButton().fire('click');
+        const boxes = pickerBoxes();
+        boxes[0].checked = true;
+        await boxes[0].fire('change');
+        await pickerButton('取消').fire('click');
+        assert.equal(chips().length, 0, '焦點不變');
+        assert.equal(pickerHidden(), true);
+        assert.equal(pickButton().attributes['aria-expanded'], 'false');
+        assert.equal(pickButton().focused, true);
+    },
+
+    async pickerClosesWhenSending() {
+        const ctx = setup();
+        await pickButton().fire('click');
+        await send();
+        assert.equal(pickerHidden(), true, '送出後面板關閉');
+        assert.equal(pickButton().disabled, true, '等待中指定問題鈕 disabled');
+        ctx.calls[0].resolve({ text: '回覆', focus: FOCUS2, focusSource: 'manual' });
+        await tick();
+        assert.equal(pickButton().disabled, false, '回覆後恢復可用');
+    },
+
+    async pickerClosesOnClear() {
+        setup();
+        await pickButton().fire('click');
+        const boxes = pickerBoxes();
+        boxes[0].checked = true;
+        await boxes[0].fire('change');
+        await pickerButton('套用').fire('click');
+        assert.equal(chips().length, 1);
+        await pickButton().fire('click');
+        assert.equal(pickerHidden(), false);
+        await elements['chat-clear'].fire('click');
+        assert.equal(pickerHidden(), true, '清除重來關閉面板');
+        assert.equal(chips().length, 0, '焦點清空');
+    },
+
+    async pickerEscCancels() {
+        setup();
+        await pickButton().fire('click');
+        const boxes = pickerBoxes();
+        boxes[0].checked = true;
+        await boxes[0].fire('change');
+        let stopped = false;
+        await picker().fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() { stopped = true; } });
+        assert.equal(pickerHidden(), true, 'Esc 關閉面板');
+        assert.equal(chips().length, 0, 'Esc 不改焦點');
+        assert.equal(stopped, true, 'Esc 不外傳給外層 modal');
     },
 
     async updateIssueOptionsKeepsState() {
@@ -184,7 +266,7 @@ const cases = {
         assert.equal(elements['chat-messages'].children.length, before, '訊息不變');
         assert.equal(elements['chat-turn-count'].textContent, '1/10');
         await pickButton().fire('click');
-        assert.equal(modals[0].body.children.length, 1, '指定清單改為新清單');
+        assert.equal(pickerBoxes().length, 1, '指定清單改為新清單');
     },
 
     async pendingLocksFocusControls() {

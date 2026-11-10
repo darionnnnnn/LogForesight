@@ -53,7 +53,8 @@
                        關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
                     <div id="chat-body">
                         <div class="text-muted small mb-2 d-none" id="chat-run-hint">分析執行中，AI 回應可能較慢。</div>
-                        <div id="chat-focus" class="lf-chat-focus mb-2"></div>
+                        <div id="chat-focus" class="lf-chat-focus mb-2" role="group" aria-label="焦點問題"></div>
+                        <div id="chat-focus-picker" class="lf-focus-picker mb-2 d-none" role="group" aria-label="指定問題"></div>
                         <div id="chat-messages" class="mb-2 lf-chat-messages"></div>
                         <form id="chat-form" class="d-flex gap-2">
                             <label for="chat-input" class="visually-hidden">發問</label>

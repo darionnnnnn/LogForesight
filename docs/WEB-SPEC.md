@@ -1507,7 +1507,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、整日摘要與焦點區塊先算進
   「其餘內容」、超出從尾端截斷並在圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）；
   system prompt 要求提問涉及多個項目時分別說明並指出彼此關聯，資料裡沒有的項目要明說。
-  **前端焦點列**（`#chat-focus`，位於 `#chat-body` 訊息區上方）：輸入框一開始即可用，不必先選問題；送出 body 為 `{ hostId, date, focusKeys, messages }`（`focusKeys` 取目前焦點的 `issueKey`，可為空陣列）。有焦點時每個焦點一顆標籤（`lf-badge`，附「×」移除鈕）；沒有焦點時顯示「未指定，系統會依提問判斷」。「指定問題」開 modal 列出目前可見問題的 checkbox（最多勾 4 個，滿額後其餘 disabled），**關閉 modal 時套用**。回覆抵達且世代相同時以回應 `focus` 取代目前焦點，但 `focusSource` 為 `default` 時不存入（預設焦點只用於該輪，下一輪不會被當成指定送出）；`focusSource` 為 `keyword` 時該則 AI 泡泡上方顯示「已判定針對：…」，`default` 時顯示「未偵測到指定問題，以最嚴重的幾項為主」，`manual` 不顯示。移除標籤與指定問題不重設對話、不改輪數；清除重來連焦點一併清空；`updateIssueOptions` 只更新可指定清單。等待回覆期間「×」、「指定問題」與清除鈕 disabled。
+  **前端焦點列**（`#chat-focus`，位於 `#chat-body` 訊息區上方）：輸入框一開始即可用，不必先選問題；送出 body 為 `{ hostId, date, focusKeys, messages }`（`focusKeys` 取目前焦點的 `issueKey`，可為空陣列）。有焦點時每個焦點一顆標籤（`lf-badge`，附「×」移除鈕）；沒有焦點時顯示「未指定，系統會依提問判斷」。按「指定問題」在焦點列下方就地展開面板 `#chat-focus-picker`（不開 modal，放大檢視中同樣可用；按鈕帶 `aria-expanded`／`aria-controls`）：列出目前可見問題的 checkbox（最多勾 4 個，滿額後其餘 disabled），勾選後按「套用」更新焦點，「取消」或面板內按 Esc 不改焦點，關閉後鍵盤焦點回到「指定問題」鈕。`#chat-focus` 為 `role="group"`（`aria-label="焦點問題"`）。回覆抵達且世代相同時以回應 `focus` 取代目前焦點，但 `focusSource` 為 `default` 時不存入（預設焦點只用於該輪，下一輪不會被當成指定送出）；`focusSource` 為 `keyword` 時該則 AI 泡泡上方顯示「已判定針對：…」，`default` 時顯示「未偵測到指定問題，以最嚴重的幾項為主」，`manual` 不顯示。移除標籤與指定問題不重設對話、不改輪數；清除重來連焦點一併清空；`updateIssueOptions` 只更新可指定清單。等待回覆期間「×」、「指定問題」與清除鈕 disabled。
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，

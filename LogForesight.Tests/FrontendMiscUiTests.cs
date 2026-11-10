@@ -353,6 +353,12 @@ public class ChatPanelFocusBehaviorTests
     [InlineData("keywordFocusThenFollowUp")]
     [InlineData("removeChipKeepsConversation")]
     [InlineData("pickerLimitsToFour")]
+    [InlineData("pickerOpensInline")]
+    [InlineData("pickerApply")]
+    [InlineData("pickerCancel")]
+    [InlineData("pickerClosesWhenSending")]
+    [InlineData("pickerClosesOnClear")]
+    [InlineData("pickerEscCancels")]
     [InlineData("updateIssueOptionsKeepsState")]
     [InlineData("pendingLocksFocusControls")]
     [InlineData("clearWhilePendingDropsStaleReply")]
@@ -401,6 +407,19 @@ public class ChatFocusUiTests
         var view = Web("Views", "Pages", "RecordDetail.cshtml");
         Assert.DoesNotContain("chat-issue-select", view);
         Assert.Contains("id=\"chat-focus\"", view);
+    }
+
+    [Fact]
+    public void 焦點列有群組語意且指定問題不再開modal()
+    {
+        var view = Web("Views", "Pages", "RecordDetail.cshtml");
+        Assert.Matches("id=\"chat-focus\"[^>]*role=\"group\"", view);
+        Assert.Contains("id=\"chat-focus-picker\"", view);
+        var js = Web("wwwroot", "js", "pages", "chat-panel.js");
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(js, @"showDetailModal\("));
+        var expand = js.IndexOf("function expandChat", StringComparison.Ordinal);
+        var call = js.IndexOf("showDetailModal(", StringComparison.Ordinal);
+        Assert.True(expand >= 0 && call > expand, "showDetailModal 只能出現在 expandChat 內");
     }
 
     [Fact]
