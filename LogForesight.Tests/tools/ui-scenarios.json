@@ -530,5 +530,400 @@
         }
       }
     ]
+  },
+  {
+    "name": "互動-交辦總覽-篩選頁籤與靜音",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "type": [
+          "#wo-status",
+          "all"
+        ]
+      },
+      {
+        "waitFor": "#wo-list tbody tr .lf-text-data"
+      },
+      {
+        "type": [
+          "#wo-sort",
+          "members_desc"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "#wo-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"load\"]"
+      },
+      {
+        "waitFor": "#wo-load tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-load tbody tr .lf-text-data",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-gaps-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-auto-dispatch",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"muted\"]"
+      },
+      {
+        "waitFor": "#wo-muted-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-muted-list button[aria-haspopup=\"dialog\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "主管-交辦總覽",
+    "role": "ui-manager",
+    "path": "/work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-tabs [data-tab=\"muted\"]",
+          "count": 0
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-gaps-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-auto-dispatch",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-muted-list",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-稽核紀錄-篩選排序與展開",
+    "role": "ui-admin",
+    "path": "fixture:page.audit",
+    "steps": [
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#btn-denied"
+      },
+      {
+        "waitFor": "#btn-denied.active"
+      },
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#btn-denied"
+      },
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#audit-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#audit-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#audit-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "type": [
+          "#audit-from",
+          "2026-01-01"
+        ]
+      },
+      {
+        "waitFor": "#audit-list .lf-disclosure"
+      },
+      {
+        "click": "#audit-list .lf-disclosure"
+      },
+      {
+        "waitFor": "#audit-list .lf-disclosure[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#audit-list pre",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-權限異動-全部展開與頁籤",
+    "role": "ui-admin",
+    "path": "fixture:page.permission-changes",
+    "steps": [
+      {
+        "waitFor": "#perm-list tbody tr"
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "waitFor": "#perm-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#btn-toggle-expand",
+          "text": "全部收合"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain",
+          "visible": true
+        }
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "assert": {
+          "sel": "#btn-toggle-expand",
+          "text": "全部展開"
+        }
+      },
+      {
+        "click": "#perm-tabs [data-status=\"\"]"
+      },
+      {
+        "waitFor": "#perm-list tbody tr .lf-text-title"
+      },
+      {
+        "click": "#perm-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#perm-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "waitFor": "#perm-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain, #perm-list table",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-權限異動-勾選與批次確認視窗",
+    "role": "ui-admin",
+    "path": "fixture:page.permission-changes",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#perm-list tbody tr"
+      },
+      {
+        "click": "#perm-list tbody .lf-checkbox-cell input"
+      },
+      {
+        "waitFor": "#perm-selection-bar:not(.d-none)"
+      },
+      {
+        "click": "#btn-batch-suspicious"
+      },
+      {
+        "waitFor": "#batch-confirm-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#batch-confirm-modal #batch-confirm-note",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#batch-confirm-submit.btn-danger",
+          "count": 1
+        }
+      },
+      {
+        "click": "#batch-confirm-modal .btn-close"
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-權限異動",
+    "role": "ui-viewer",
+    "path": "/permission-changes",
+    "steps": [
+      {
+        "waitFor": "#perm-list .lf-empty, #perm-list tbody tr, #perm-list .lf-state"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list",
+          "notText": "UI-WIN-NORMAL"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list tbody tr",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-selection-bar",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-問題負責與靜音-新增與靜音視窗",
+    "role": "ui-admin",
+    "path": "fixture:page.admin-issue-owners",
+    "steps": [
+      {
+        "waitFor": "#issue-owner-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-list .lf-skeleton",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-new"
+      },
+      {
+        "waitFor": "#issue-owner-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-picker",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-manual-toggle"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-source",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-modal .btn-close"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": "#issue-owner-list button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "click": "#issue-owner-list button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "click": ".modal.show button[type=\"submit\"]"
+      },
+      {
+        "waitFor": ".modal.show .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show .lf-status-note",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "button.btn-outline-primary"
+      },
+      {
+        "click": "button.btn-outline-primary"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "visible": true
+        }
+      }
+    ]
   }
 ]

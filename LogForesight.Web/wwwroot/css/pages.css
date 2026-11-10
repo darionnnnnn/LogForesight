@@ -775,6 +775,18 @@ a.lf-calendar__cell:focus-visible {
     border-radius: inherit;
 }
 
+/* ── 權限異動清單「帳號」欄（permission-changes.js accountCell）──────────────────
+   AD 帳號值可能是整串 DN 或無空白長字串；單行截斷要有寬度上界，否則最小內容寬度會把表格撐到
+   類別／說明／狀態欄被推出視窗。完整值在 title 與展開明細。 */
+.lf-perm-account-line {
+    max-width: 10rem;
+}
+
+/* 異動說明欄：單行省略，完整句在 title 與展開明細；上界比共用的 .lf-issue-col 小，讓六欄在 1280 放得進卡片 */
+.lf-perm-summary-col {
+    max-width: 16rem;
+}
+
 /* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */
 
 /* 解析不出成對欄位時的退路：只保留原文換行與折行。異動前／異動後兩欄另加

@@ -119,7 +119,7 @@
      - `failed`（失敗）：`lf-badge--warning` 黃色徽章，顯示「失敗」。
   5. `內容`（`summaryCell`）：
      - 顯示白話中文摘要 `entry.summary`。
-     - 若該筆紀錄包含 `detailJson`，右下方顯示「詳細」連結按鈕。點擊可展開摺疊的 `<pre class="report-text small">` 區塊，顯示美化排版後的 JSON 異動前後欄位差異。
+     - 若該筆紀錄包含 `detailJson`，「內容」欄的白話摘要（粗體主標）下方顯示「詳細」展開鈕（箭頭加文字，`disclosure`，展開前後標籤不變、以箭頭與 `aria-expanded` 表示狀態）。點擊可展開摺疊的 `<pre class="report-text lf-text-data">` 區塊，顯示美化排版後的 JSON 異動前後欄位差異。
   6. `來源 IP`：發起請求之客戶端 IP 位址（`ipAddress`）。
 - 無資料狀態：顯示「沒有符合條件的稽核紀錄」，提示「請調整日期區間或動作條件。」。
 

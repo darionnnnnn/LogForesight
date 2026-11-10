@@ -9,7 +9,7 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
-import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck, button as makeButton } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { todayLocal, toLocalDateString } from '../core/format.js';
@@ -50,7 +50,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     form.appendChild(hint);
 
     const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label small text-muted';
+    statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '處理狀態';
     statusLabel.htmlFor = 'wo-reply-status';
     const statusSelect = document.createElement('select');
@@ -68,7 +68,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     form.append(statusLabel, statusSelect);
 
     const noteLabel = document.createElement('label');
-    noteLabel.className = 'form-label small text-muted';
+    noteLabel.className = 'form-label lf-text-label';
     noteLabel.textContent = '處理說明';
     noteLabel.htmlFor = 'wo-reply-note';
     const noteInput = document.createElement('textarea');
@@ -79,10 +79,8 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     // 下一張：說明預設清空，上一張的說明改成一鍵帶入（不同單的說明不一定能照抄）
     let previousNoteLink = null;
     if (previousNote) {
-        previousNoteLink = document.createElement('button');
-        previousNoteLink.type = 'button';
-        previousNoteLink.className = 'btn btn-link btn-sm p-0 mb-1 d-block';
-        previousNoteLink.textContent = '帶入上一張的說明';
+        previousNoteLink = makeButton('帶入上一張的說明');
+        previousNoteLink.classList.add('mb-1', 'd-block');
         form.appendChild(previousNoteLink);
     }
     form.appendChild(noteInput);
@@ -118,7 +116,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
     const dueLabel = document.createElement('label');
-    dueLabel.className = 'form-label small text-muted';
+    dueLabel.className = 'form-label lf-text-label';
     dueLabel.textContent = '預計完成日／觀察至';
     dueLabel.htmlFor = 'wo-reply-due';
     const dueInput = document.createElement('input');
@@ -146,18 +144,13 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     statusSelect.addEventListener('change', syncDueVisibility);
     syncDueVisibility();
 
-    const submitBtn = document.createElement('button');
-    submitBtn.type = 'submit';
-    submitBtn.className = 'btn btn-sm btn-primary';
-    submitBtn.textContent = '送出';
+    const submitBtn = makeButton('送出', { variant: 'primary', type: 'submit' });
     form.appendChild(submitBtn);
 
     let nextBtn = null;
     if (onNext) {
-        nextBtn = document.createElement('button');
-        nextBtn.type = 'button';
-        nextBtn.className = 'btn btn-sm btn-outline-primary ms-2';
-        nextBtn.textContent = '送出並回覆下一張';
+        nextBtn = makeButton('送出並回覆下一張', { variant: 'outline-primary' });
+        nextBtn.classList.add('ms-2');
         form.appendChild(nextBtn);
         nextBtn.addEventListener('click', () => send(nextBtn, true));
     }

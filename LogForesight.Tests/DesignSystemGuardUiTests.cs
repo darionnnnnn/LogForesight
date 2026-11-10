@@ -49,24 +49,23 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> AdHocTextColorAllowed = new(StringComparer.Ordinal)
     {
-        "Views/Pages/Audit.cshtml", "Views/Pages/Dashboard.cshtml", "Views/Pages/Groups.cshtml",
+        "Views/Pages/Dashboard.cshtml", "Views/Pages/Groups.cshtml",
         "Views/Pages/HandlerDetail.cshtml", "Views/Pages/HelpManual.cshtml", "Views/Pages/HostDetail.cshtml",
-        "Views/Pages/Imports.cshtml", "Views/Pages/IssueOwners.cshtml",
-        "Views/Pages/Netiq.cshtml", "Views/Pages/PermissionChanges.cshtml", "Views/Pages/Prtg.cshtml",
+        "Views/Pages/Imports.cshtml",
+        "Views/Pages/Netiq.cshtml", "Views/Pages/Prtg.cshtml",
         "Views/Pages/Reports.cshtml",
         "Views/Pages/Runs.cshtml", "Views/Pages/Settings.cshtml",
         "Views/Pages/Setup.cshtml", "Views/Pages/UserDetail.cshtml",
-        "Views/Pages/WorkOrderDetail.cshtml", "Views/Pages/WorkOrders.cshtml",
-        "wwwroot/js/pages/audit.js", "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/dashboard.js",
+        "Views/Pages/WorkOrderDetail.cshtml",
+        "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/dashboard.js",
         "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handler-detail.js", "wwwroot/js/pages/handling-panel.js",
         "wwwroot/js/pages/help-manual.js", "wwwroot/js/pages/host-detail.js",
-        "wwwroot/js/pages/issue-mute-modal.js", "wwwroot/js/pages/issue-owners.js", "wwwroot/js/pages/issue-status-reply.js",
-        "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js", "wwwroot/js/pages/permission-changes.js",
+        "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
         "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-calibration.js", "wwwroot/js/pages/prtg-guard.js",
         "wwwroot/js/pages/reports.js",
         "wwwroot/js/pages/runs.js", "wwwroot/js/pages/settings.js",
         "wwwroot/js/pages/setup.js", "wwwroot/js/pages/user-detail.js",
-        "wwwroot/js/pages/work-order-detail.js", "wwwroot/js/pages/work-orders.js",
+        "wwwroot/js/pages/work-order-detail.js",
     };
 
     [Fact]
@@ -79,9 +78,7 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> BtnLinkAllowed = new(StringComparer.Ordinal)
     {
-        "Views/Pages/IssueOwners.cshtml",
-        "wwwroot/js/pages/audit.js", "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handler-detail.js",
-        "wwwroot/js/pages/issue-status-reply.js", "wwwroot/js/pages/permission-changes.js",
+        "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handler-detail.js",
         "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
         "wwwroot/js/pages/runs.js",
     };
@@ -96,11 +93,11 @@ public sealed class DesignSystemGuardUiTests
 
     private static readonly HashSet<string> HandwrittenButtonAllowed = new(StringComparer.Ordinal)
     {
-        "wwwroot/js/pages/audit.js", "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/groups.js",
+        "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/groups.js",
         "wwwroot/js/pages/handler-detail.js", "wwwroot/js/pages/handling-panel.js", "wwwroot/js/pages/help-manual.js",
-        "wwwroot/js/pages/host-detail.js", "wwwroot/js/pages/issue-mute-modal.js", "wwwroot/js/pages/issue-owners.js",
-        "wwwroot/js/pages/issue-status-reply.js", "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
-        "wwwroot/js/pages/permission-changes.js", "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
+        "wwwroot/js/pages/host-detail.js",
+        "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
+        "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
         "wwwroot/js/pages/runs.js",
         "wwwroot/js/pages/settings.js", "wwwroot/js/pages/setup.js", "wwwroot/js/pages/user-detail.js",
         "wwwroot/js/pages/work-order-detail.js",

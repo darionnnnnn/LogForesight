@@ -1002,6 +1002,21 @@ a.lf-badge:hover { text-decoration: underline; }
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* 表格寬到要橫向捲動時，展開列的內容固定在捲動容器的可視範圍內（不然明細右半要捲才看得到）。
+   只有卡片內頂層的表格容器當尺寸容器：它們的寬度來自卡片；巢在格子裡的小表格寬度來自內容，套 inline-size 會塌成 0。
+   不支援 container query 的瀏覽器 100cqw 退回視窗寬，仍不會比原本差。 */
+.lf-card > .lf-table-wrap,
+.lf-card__body > .lf-table-wrap,
+.lf-card__body > div > .lf-table-wrap {
+    container-type: inline-size;
+}
+
+.lf-row-detail > td > * {
+    position: sticky;
+    left: var(--lf-space-5);
+    max-width: calc(100cqw - var(--lf-space-5) - var(--lf-space-4));
+}
+
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 
 .report-text {

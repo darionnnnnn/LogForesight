@@ -10,12 +10,13 @@
 import { api } from '../core/api.js';
 import {
     renderTable, buildKeyValueTable, renderLoading, renderPager, loadPageSize,
-    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader, createPageSelection
+    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader, createPageSelection, button
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
 import { bindRangeChips } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { roleText } from '../core/elements.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
 
@@ -363,10 +364,11 @@ function render() {
             {
                 key: 'detectedAt',
                 title: '時間',
+                className: 'text-nowrap',
                 sortKey: 'detectedAt',
                 sortDefaultDir: 'desc',
                 renderHeader: () => headerWithHelp('時間', '本機監控來源的時間語意為系統偵測比對時間，非事件實際發生時間。', '時間說明'),
-                render: row => formatDateTime(row.detectedAt)
+                render: row => timeCell(row.detectedAt)
             },
             // 選取欄刻意不排第一欄（WEB-SPEC §8.6 第 6 條）：renderTable 的展開箭頭
             // 固定插在第一欄，排第一欄會與 checkbox 擠在同一格
@@ -396,7 +398,7 @@ function render() {
             },
             {
                 title: '異動說明',
-                className: 'lf-issue-col',
+                className: 'lf-perm-summary-col',
                 render: row => summaryCell(row)
             },
             {
@@ -430,16 +432,28 @@ function render() {
     selection.renderBar();
 }
 
+/** 時間欄兩行：日期在上、時分在下，欄寬只要一個日期的寬度（單行 16 字元的等寬字會把表格撐出視窗） */
+function timeCell(value) {
+    const text = formatDateTime(value);
+    const wrap = document.createElement('div');
+    wrap.className = 'text-nowrap';
+    const date = roleText('lf-text-data', text.slice(0, 10));
+    const time = roleText('lf-text-data', text.slice(11));
+    time.classList.add('d-block');
+    wrap.append(date, time);
+    return wrap;
+}
+
 function hostCell(row) {
     const wrap = document.createElement('div');
     const hostName = document.createElement('div');
-    hostName.className = 'fw-semibold';
+    hostName.className = 'lf-text-title';
     hostName.textContent = row.hostName;
     wrap.appendChild(hostName);
 
     if (row.hostIp) {
         const ip = document.createElement('div');
-        ip.className = 'text-muted small';
+        ip.className = 'lf-text-data';
         ip.textContent = row.hostIp;
         wrap.appendChild(ip);
     }
@@ -449,17 +463,17 @@ function hostCell(row) {
 
 function accountCell(row) {
     const wrap = document.createElement('div');
-    wrap.className = 'small';
 
     // 顯示短名（完整 DN 留在 title 與展開明細）：AD 的帳號值動輒是
     // CN=…,OU=…,DC=… 整串，直接印會把這一欄撐開、也蓋不住重點
     const line = (labelText, display, full) => {
         const rowEl = document.createElement('div');
-        rowEl.className = 'text-truncate';
+        rowEl.className = 'text-truncate lf-perm-account-line';
         const label = document.createElement('span');
-        label.className = 'text-muted me-1';
+        label.className = 'lf-text-label me-1';
         label.textContent = labelText;
         const val = document.createElement('span');
+        val.className = 'lf-text-meta';
         val.textContent = display || full || '—';
         if (full) rowEl.title = full;
         rowEl.append(label, val);
@@ -638,7 +652,7 @@ function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = fals
     const text = (rawText != null) ? String(rawText).trim() : '';
     if (!text) {
         const emptyEl = document.createElement('span');
-        emptyEl.className = 'text-muted';
+        emptyEl.className = 'lf-text-meta';
         emptyEl.textContent = emptyFallback;
         return emptyEl;
     }
@@ -660,7 +674,7 @@ function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = fals
     // 少於 2 對時，整段退回純文字（僅套用保留換行與自動折行）
     if (totalKvCount < 2) {
         const plainWrap = document.createElement('div');
-        plainWrap.className = monoPlain ? 'lf-detail-plain font-monospace' : 'lf-detail-plain';
+        plainWrap.className = monoPlain ? 'lf-detail-plain lf-text-data' : 'lf-detail-plain';
         plainWrap.textContent = String(rawText);
         return plainWrap;
     }
@@ -686,15 +700,17 @@ function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = fals
 
 function detailView(change) {
     const wrap = document.createElement('div');
-    wrap.className = 'p-3 bg-light rounded border';
+    // lf-break-anywhere：對象、處理程序、原文常是無空白長字串，overflow-wrap 會繼承到整個明細，
+    // 否則最小內容寬度把整張表格撐出卡片
+    wrap.className = 'p-3 bg-light rounded border lf-break-anywhere';
 
     const metaGrid = document.createElement('div');
-    metaGrid.className = 'row g-2 mb-3 small';
+    metaGrid.className = 'row g-2 mb-3';
 
     const colAlert = document.createElement('div');
     colAlert.className = 'col-12';
     const alertLabel = document.createElement('div');
-    alertLabel.className = 'text-muted mb-1';
+    alertLabel.className = 'lf-text-label mb-1';
     alertLabel.textContent = '行為說明：';
     const alertVal = document.createElement('div');
     alertVal.appendChild(renderStructuredDetail(change.alertText, '—'));
@@ -703,17 +719,17 @@ function detailView(change) {
     const colTarget = document.createElement('div');
     colTarget.className = 'col-md-6';
     const targetLabel = document.createElement('span');
-    targetLabel.className = 'text-muted me-2';
+    targetLabel.className = 'lf-text-label me-2';
     targetLabel.textContent = '對象：';
     const targetVal = document.createElement('span');
-    targetVal.className = 'font-monospace';
+    targetVal.className = 'lf-text-data';
     targetVal.textContent = change.target || '—';
     colTarget.append(targetLabel, targetVal);
 
     const colSource = document.createElement('div');
     colSource.className = 'col-md-3';
     const sourceLabel = document.createElement('span');
-    sourceLabel.className = 'text-muted me-2';
+    sourceLabel.className = 'lf-text-label me-2';
     sourceLabel.textContent = '來源：';
     const sourceVal = document.createElement('span');
     sourceVal.textContent = change.source || '本機監控';
@@ -722,10 +738,10 @@ function detailView(change) {
     const colEventId = document.createElement('div');
     colEventId.className = 'col-md-3';
     const eventIdLabel = document.createElement('span');
-    eventIdLabel.className = 'text-muted me-2';
+    eventIdLabel.className = 'lf-text-label me-2';
     eventIdLabel.textContent = 'EventId：';
     const eventIdVal = document.createElement('span');
-    eventIdVal.className = 'font-monospace';
+    eventIdVal.className = 'lf-text-data';
     eventIdVal.textContent = change.eventId != null ? String(change.eventId) : '—';
     colEventId.append(eventIdLabel, eventIdVal);
 
@@ -737,7 +753,7 @@ function detailView(change) {
         const colObject = document.createElement('div');
         colObject.className = 'col-md-4';
         const objectLabel = document.createElement('span');
-        objectLabel.className = 'text-muted me-2';
+        objectLabel.className = 'lf-text-label me-2';
         objectLabel.textContent = '物件類型：';
         const objectVal = document.createElement('span');
         objectVal.textContent = change.objectType || '—';
@@ -746,10 +762,10 @@ function detailView(change) {
         const colProcess = document.createElement('div');
         colProcess.className = 'col-md-8';
         const processLabel = document.createElement('span');
-        processLabel.className = 'text-muted me-2';
+        processLabel.className = 'lf-text-label me-2';
         processLabel.textContent = '處理程序：';
         const processVal = document.createElement('span');
-        processVal.className = 'font-monospace';
+        processVal.className = 'lf-text-data';
         processVal.textContent = change.processName || '—';
         colProcess.append(processLabel, processVal);
 
@@ -762,7 +778,7 @@ function detailView(change) {
         const colCovered = document.createElement('div');
         colCovered.className = 'col-12';
         const coveredLabel = document.createElement('span');
-        coveredLabel.className = 'text-muted me-2';
+        coveredLabel.className = 'lf-text-label me-2';
         coveredLabel.textContent = '涵蓋時間：';
         const coveredVal = document.createElement('span');
         // 彙總列以主機日為單位，起訖必在同一天：日期已在時間欄，這裡只印時分
@@ -799,7 +815,7 @@ function detailView(change) {
         rawWrap.className = 'mb-3';
 
         const rawLabel = document.createElement('div');
-        rawLabel.className = 'small text-muted mb-1';
+        rawLabel.className = 'lf-text-label mb-1';
         const isSummaryRow = change.coveredFrom != null && change.coveredTo != null;
         // 本機監控的異動由快照比對產生，本來就沒有事件原文可存——
         // 不能把「無 rawText」一律歸因於升級前寫入，那個標註對本機來源會說謊
@@ -814,7 +830,7 @@ function detailView(change) {
         rawWrap.appendChild(rawLabel);
 
         const rawBody = document.createElement('div');
-        rawBody.className = 'lf-mono small border rounded bg-white p-2 lf-scroll-xl lf-pre-wrap lf-break-word';
+        rawBody.className = 'lf-text-data border rounded bg-white p-2 lf-scroll-xl lf-pre-wrap lf-break-word';
         rawBody.textContent = rawText !== '' ? rawText : fallbackText;
         rawWrap.appendChild(rawBody);
 
@@ -825,45 +841,36 @@ function detailView(change) {
         actionArea.className = 'd-flex align-items-center justify-content-between flex-wrap gap-2 pt-2 border-top';
 
         const prompt = document.createElement('div');
-        prompt.className = 'small text-muted';
+        prompt.className = 'lf-text-meta';
         prompt.textContent = '此異動是否為您或授權人員的操作？若否，可能為入侵或誤設定，建議立即調查。';
 
         const actions = document.createElement('div');
         actions.className = 'd-flex gap-2';
 
-        const authorized = document.createElement('button');
-        authorized.type = 'button';
-        authorized.className = 'btn btn-sm btn-outline-primary';
-        authorized.textContent = '確認為授權操作';
-        authorized.addEventListener('click', () => openConfirm(change, 'authorized'));
-
-        const suspicious = document.createElement('button');
-        suspicious.type = 'button';
-        suspicious.className = 'btn btn-sm btn-outline-danger';
-        suspicious.textContent = '標記可疑';
-        suspicious.addEventListener('click', () => openConfirm(change, 'suspicious'));
+        const authorized = button('確認為授權操作', { variant: 'outline-primary', opens: 'dialog', onClick: () => openConfirm(change, 'authorized') });
+        const suspicious = button('標記可疑', { variant: 'outline-danger', opens: 'dialog', onClick: () => openConfirm(change, 'suspicious') });
 
         actions.append(authorized, suspicious);
         actionArea.append(prompt, actions);
         wrap.appendChild(actionArea);
     } else {
         const confirmedArea = document.createElement('div');
-        confirmedArea.className = 'small text-muted pt-2 border-top row g-2';
+        confirmedArea.className = 'pt-2 border-top row g-2';
 
         const resultCol = document.createElement('div');
         resultCol.className = 'col-md-3';
         const resLabel = document.createElement('span');
-        resLabel.className = 'text-muted me-1';
+        resLabel.className = 'lf-text-label me-1';
         resLabel.textContent = '確認結果：';
         const resVal = document.createElement('span');
-        resVal.className = 'fw-medium';
+        resVal.className = 'lf-text-title';
         resVal.textContent = change.status === 'authorized' ? '已確認授權' : '標記為可疑';
         resultCol.append(resLabel, resVal);
 
         const userCol = document.createElement('div');
         userCol.className = 'col-md-3';
         const uLabel = document.createElement('span');
-        uLabel.className = 'text-muted me-1';
+        uLabel.className = 'lf-text-label me-1';
         uLabel.textContent = '確認人：';
         const uVal = document.createElement('span');
         uVal.textContent = formatUserName(change.confirmedByDisplayName, change.confirmedByAccount) || '—';
@@ -872,7 +879,7 @@ function detailView(change) {
         const timeCol = document.createElement('div');
         timeCol.className = 'col-md-3';
         const tLabel = document.createElement('span');
-        tLabel.className = 'text-muted me-1';
+        tLabel.className = 'lf-text-label me-1';
         tLabel.textContent = '確認時間：';
         const tVal = document.createElement('span');
         tVal.textContent = change.confirmedAt ? formatDateTime(change.confirmedAt) : '—';
@@ -881,7 +888,7 @@ function detailView(change) {
         const noteCol = document.createElement('div');
         noteCol.className = 'col-md-3';
         const nLabel = document.createElement('span');
-        nLabel.className = 'text-muted me-1';
+        nLabel.className = 'lf-text-label me-1';
         nLabel.textContent = '確認說明：';
         const nVal = document.createElement('span');
         nVal.textContent = change.confirmNote || '—';
@@ -916,10 +923,7 @@ function dayReportLink(change) {
     const area = document.createElement('div');
     area.className = 'pt-2 mt-2 border-top lf-no-print';
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-link p-0';
-    btn.textContent = '查看當日權限異動報告全文';
+    const btn = button('查看當日權限異動報告全文', { opens: 'dialog' });
     btn.addEventListener('click', async () => {
         // 日期取異動的偵測日：報告是以主機日為單位產生的
         const day = String(change.detectedAt ?? '').slice(0, 10);
@@ -980,7 +984,7 @@ function openConfirm(change, targetStatus) {
     const detail = document.getElementById('confirm-detail');
     detail.replaceChildren();
     const summary = document.createElement('div');
-    summary.className = 'alert alert-light border mb-0 small';
+    summary.className = 'alert alert-light border mb-0';
     // 對象剖不出時是空字串，濾掉才不會留一個沒有下文的分隔線
     summary.textContent = [change.hostName, change.changeType, change.target]
         .filter(Boolean).join('｜');
@@ -996,7 +1000,8 @@ function openConfirm(change, targetStatus) {
         : '選填：可記錄這是誰在什麼情況下做的變更。';
 
     const submit = document.getElementById('confirm-submit');
-    submit.className = `btn btn-${targetStatus === 'authorized' ? 'success' : 'danger'}`;
+    submit.classList.toggle('btn-danger', targetStatus !== 'authorized');
+    submit.classList.toggle('btn-primary', targetStatus === 'authorized');
     submit.textContent = targetStatus === 'authorized' ? '確認為授權操作' : '標記可疑';
 
     modal.show();
@@ -1063,7 +1068,7 @@ function openBatchConfirmModal(targetStatus) {
     catContainer.replaceChildren();
     for (const [cat, count] of categoryCounts.entries()) {
         const item = document.createElement('div');
-        item.className = 'd-flex justify-content-between align-items-center small py-1 border-bottom';
+        item.className = 'd-flex justify-content-between align-items-center py-1 border-bottom';
         const name = document.createElement('span');
         name.textContent = cat;
         const badge = document.createElement('span');
@@ -1077,9 +1082,9 @@ function openBatchConfirmModal(targetStatus) {
     hostContainer.replaceChildren();
     for (const [host, count] of hostCounts.entries()) {
         const item = document.createElement('div');
-        item.className = 'd-flex justify-content-between align-items-center small py-1 border-bottom';
+        item.className = 'd-flex justify-content-between align-items-center py-1 border-bottom';
         const name = document.createElement('span');
-        name.className = 'font-monospace';
+        name.className = 'lf-text-data';
         name.textContent = host;
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
@@ -1103,7 +1108,8 @@ function openBatchConfirmModal(targetStatus) {
         : '選填：可記錄這是誰在什麼情況下做的變更。';
 
     const submitBtn = document.getElementById('batch-confirm-submit');
-    submitBtn.className = `btn btn-${isSuspicious ? 'danger' : 'success'}`;
+    submitBtn.classList.toggle('btn-danger', isSuspicious);
+    submitBtn.classList.toggle('btn-primary', !isSuspicious);
     submitBtn.textContent = isSuspicious ? '標記可疑' : '確認為授權操作';
 
     batchConfirmModal.show();
@@ -1121,14 +1127,14 @@ function showSkippedModal(result) {
 
     for (const item of result.skipped) {
         const row = document.createElement('div');
-        row.className = 'd-flex align-items-center justify-content-between py-1 border-bottom small';
+        row.className = 'd-flex align-items-center justify-content-between py-1 border-bottom';
 
         const host = document.createElement('span');
-        host.className = 'fw-medium text-truncate me-2';
+        host.className = 'lf-text-title text-truncate me-2';
         host.textContent = item.hostName || '（未指定主機）';
 
         const reason = document.createElement('span');
-        reason.className = 'text-danger';
+        reason.className = 'lf-text-meta';
         reason.textContent = item.reason;
 
         row.append(host, reason);

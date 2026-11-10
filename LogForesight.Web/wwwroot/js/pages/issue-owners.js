@@ -11,7 +11,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad, renderPageHeader, confirmAndClearMute } from '../core/ui.js';
+import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, collapsibleText, guardLoad, renderPageHeader, confirmAndClearMute } from '../core/ui.js';
+import { roleText } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 
@@ -74,41 +75,45 @@ function renderList() {
         columns: [
             {
                 title: '問題',
+                className: 'lf-minw-lg',
                 render: r => {
                     const main = document.createElement('div');
-                    main.className = 'fw-semibold';
+                    // lf-break-anywhere：來源名可能是整串無空白字元，否則最小內容寬度把「問題」欄撐到上千 px、其餘欄被擠成窄條
+                    main.className = 'lf-text-title lf-break-anywhere';
                     main.textContent = issueLabel(r);
                     return main;
                 }
             },
             {
                 title: '負責人',
+                className: 'lf-minw-sm',
                 render: r => r.ownerNames.length > 0 ? r.ownerNames.join('、') : '（無）'
             },
             {
                 title: '近期出現（30 天）',
-                className: 'text-end',
+                className: 'text-end lf-minw-sm',
                 render: r => r.recentHostCount == null
                     ? renderMuted('尚未出現')
-                    : `${r.recentHostCount} 台主機，最近 ${formatDateTime(r.recentLastSeen).slice(0, 10)}`
+                    : roleText('lf-text-data', `${r.recentHostCount} 台主機，最近 ${formatDateTime(r.recentLastSeen).slice(0, 10)}`)
             },
-            { title: '備註', render: r => r.note || '' },
+            { title: '備註', className: 'lf-minw-lg', render: r => collapsibleText(roleText('lf-text-meta', r.note || ''), { limit: 60 }) },
             {
                 title: '機房結論',
+                className: 'lf-minw-md',
                 render: r => {
                     if (!r.conclusionStatus) return renderMuted('（無）');
                     const wrap = document.createElement('div');
                     const status = document.createElement('div');
                     status.textContent = r.conclusionStatusText + (r.autoApply ? '（自動套用中）' : '');
                     const note = document.createElement('div');
-                    note.className = 'text-muted small';
+                    note.className = 'lf-text-meta';
                     note.textContent = r.conclusionNote || '';
-                    wrap.append(status, note);
+                    wrap.append(status, collapsibleText(note, { limit: 60 }));
                     // 代全體下結論的留痕（批次I 體檢補上，與「更新」欄同一慣例）：
                     // 這個結論會自動套用到未來的主機日，之後有人問「這是誰決定的」要答得出來
                     if (r.concludedAt) {
                         const by = document.createElement('div');
-                        by.className = 'text-muted small';
+                        by.className = 'lf-text-meta';
                         by.textContent = `由 ${formatUserName(r.concludedByDisplayName, r.concludedByAccount)} 於 ${formatDateTime(r.concludedAt)} 設定`;
                         wrap.appendChild(by);
                     }
@@ -134,8 +139,8 @@ function renderList() {
                     const wrap = document.createElement('div');
                     wrap.className = 'd-flex gap-1 justify-content-end';
                     wrap.append(
-                        button('編輯', { icon: 'pencil', onClick: () => openModal(r) }),
-                        button('刪除', { icon: 'trash', variant: 'outline-danger', onClick: () => removeRule(r) })
+                        button('編輯', { icon: 'pencil', opens: 'dialog', onClick: () => openModal(r) }),
+                        button('刪除', { icon: 'trash', variant: 'outline-danger', opens: 'dialog', onClick: () => removeRule(r) })
                     );
                     return wrap;
                 }
@@ -161,14 +166,14 @@ async function loadMuteActions(rule, container) {
     try {
         const rows = await api.get(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}/mute-history`, { silent: true });
         const heading = document.createElement('p');
-        heading.className = 'fw-semibold mt-3';
+        heading.className = 'lf-text-title mt-3';
         heading.textContent = '最近 10 筆靜音操作（保留期間內）';
         const table = document.createElement('div');
         container.replaceChildren(heading, table);
         renderTable(table, {
             rows,
             columns: [
-                { title: '時間', render: row => formatDateTime(row.at) },
+                { title: '時間', render: row => roleText('lf-text-data', formatDateTime(row.at)) },
                 { title: '操作者', render: row => row.byAccount || '—' },
                 { title: '動作', render: row => row.action },
                 { title: '說明', render: row => row.summary }
@@ -178,11 +183,7 @@ async function loadMuteActions(rule, container) {
     } catch {
         const message = document.createElement('span');
         message.textContent = '載入靜音操作失敗。';
-        const retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'btn btn-sm btn-outline-secondary';
-        retry.textContent = '重試';
-        retry.addEventListener('click', () => loadMuteActions(rule, container));
+        const retry = button('重試', { onClick: () => loadMuteActions(rule, container) });
         container.replaceChildren(message, retry);
     }
 }
@@ -192,7 +193,7 @@ function renderMuteHistoryDetail(rule) {
     wrap.className = 'p-3 bg-light border-top';
 
     const header = document.createElement('div');
-    header.className = 'fw-semibold mb-2 text-secondary small';
+    header.className = 'lf-text-label mb-2';
     header.textContent = '留存的靜音區間';
     wrap.appendChild(header);
 
@@ -210,7 +211,7 @@ function renderMuteHistoryDetail(rule) {
             {
                 title: '時間',
                 className: 'text-nowrap',
-                render: m => m.at ? formatDateTime(m.at) : (m.from ? formatDateTime(m.from).slice(0, 10) : '—')
+                render: m => roleText('lf-text-data', m.at ? formatDateTime(m.at) : (m.from ? formatDateTime(m.from).slice(0, 10) : '—'))
             },
             {
                 title: '操作者',
@@ -220,12 +221,12 @@ function renderMuteHistoryDetail(rule) {
             {
                 title: '開始日',
                 className: 'text-nowrap',
-                render: m => m.from ? formatDateTime(m.from).slice(0, 10) : '—'
+                render: m => roleText('lf-text-data', m.from ? formatDateTime(m.from).slice(0, 10) : '—')
             },
             {
                 title: '到期日',
                 className: 'text-nowrap',
-                render: m => m.to ? formatDateTime(m.to).slice(0, 10) : '—'
+                render: m => roleText('lf-text-data', m.to ? formatDateTime(m.to).slice(0, 10) : '—')
             },
             {
                 title: '理由',
@@ -241,7 +242,7 @@ function renderMuteHistoryDetail(rule) {
 
 function renderMuted(text) {
     const span = document.createElement('span');
-    span.className = 'text-muted small';
+    span.className = 'lf-text-meta';
     span.textContent = text;
     return span;
 }
@@ -257,18 +258,18 @@ function muteCell(rule) {
 
     const mute = rule.currentMute;
     if (!mute) {
-        wrap.append(renderMuted('—'), button('靜音', { icon: 'bell-slash', onClick: () => openMute(rule) }));
+        wrap.append(renderMuted('—'), button('靜音', { icon: 'bell-slash', opens: 'dialog', onClick: () => openMute(rule) }));
         return wrap;
     }
 
     const badge = document.createElement('span');
-    badge.className = 'badge text-bg-secondary';
+    badge.className = 'lf-badge lf-badge--secondary';
     badge.textContent = `靜音至 ${formatDateTime(mute.to).slice(0, 10)}`;
     badge.title = `原因：${mute.reason ?? ''}｜設定者：${mute.byAccount ?? ''}`;
     wrap.append(
         badge,
-        button('延長', { onClick: () => openMute(rule) }),
-        button('解除', { variant: 'outline-danger', onClick: () => removeMute(rule) })
+        button('延長', { opens: 'dialog', onClick: () => openMute(rule) }),
+        button('解除', { variant: 'outline-danger', opens: 'dialog', onClick: () => removeMute(rule) })
     );
     return wrap;
 }

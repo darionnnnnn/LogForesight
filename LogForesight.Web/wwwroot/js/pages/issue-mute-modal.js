@@ -11,7 +11,8 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { toast, withBusy, showDetailModal } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, button } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 /** 前五顆快捷時長；自訂以 days: null 表示，選中時才顯示天數輸入 */
@@ -103,7 +104,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     // ── 2. 目前靜音資訊（延長情境）────────────────────────────────────────
     if (isExtend) {
         const current = document.createElement('div');
-        current.className = 'alert alert-secondary py-2 small';
+        current.className = 'alert alert-secondary py-2';
         current.textContent = `目前靜音至 ${dateOnly(currentMute.to)}｜原因：${currentMute.reason ?? ''}` +
             `｜設定者：${currentMute.byAccount ?? ''}`;
         form.appendChild(current);
@@ -111,7 +112,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
 
     // ── 3. 時長 ───────────────────────────────────────────────────────────
     const durationLabel = document.createElement('label');
-    durationLabel.className = 'form-label small text-muted';
+    durationLabel.className = 'form-label lf-text-label';
     durationLabel.textContent = '靜音時長';
     form.appendChild(durationLabel);
 
@@ -136,13 +137,11 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     let selected = DURATION_OPTIONS[1];   // 預設 1 週
     const durationButtons = [];
     for (const option of DURATION_OPTIONS) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-sm btn-outline-secondary';
-        btn.textContent = option.label;
-        btn.addEventListener('click', () => {
-            selected = option;
-            syncDuration();
+        const btn = button(option.label, {
+            onClick: () => {
+                selected = option;
+                syncDuration();
+            }
         });
         durationButtons.push({ option, btn });
         durationWrap.appendChild(btn);
@@ -158,15 +157,14 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
 
     // ── 4. 原因（必填）────────────────────────────────────────────────────
     const reasonLabel = document.createElement('label');
-    reasonLabel.className = 'form-label small text-muted';
+    reasonLabel.className = 'form-label lf-text-label';
     reasonLabel.textContent = '原因';
     const reasonInput = document.createElement('textarea');
     reasonInput.className = 'form-control form-control-sm';
     reasonInput.rows = 2;
     reasonInput.maxLength = 500;
-    const reasonError = document.createElement('div');
-    reasonError.className = 'text-danger small d-none';
-    reasonError.textContent = '請填寫靜音原因';
+    const reasonError = statusNote('error', '請填寫靜音原因');
+    reasonError.classList.add('d-none');
     form.append(reasonLabel, reasonInput, reasonError);
 
     // ── 5. 既有進行中交辦單處置（沒有單就整段不顯示）──────────────────────
@@ -176,7 +174,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
         section.className = 'mt-3';
 
         const summary = document.createElement('div');
-        summary.className = 'small mb-1';
+        summary.className = 'mb-1';
         summary.textContent = `這個問題目前有 ${activeOrders.orders} 張進行中交辦單、共 ${activeOrders.hosts} 台`;
         section.appendChild(summary);
 
@@ -199,7 +197,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
                 if (input.checked) existingOrdersValue = choice.value;
             });
             const label = document.createElement('label');
-            label.className = 'form-check-label small';
+            label.className = 'form-check-label';
             label.htmlFor = input.id;
             label.textContent = choice.label;
             wrap.append(input, label);
@@ -215,7 +213,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
 
         if (!canClose) {
             const note = document.createElement('div');
-            note.className = 'text-muted small';
+            note.className = 'lf-text-meta';
             note.textContent = '代為結案需要指派與處理權限';
             section.appendChild(note);
         }
@@ -224,10 +222,8 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     }
 
     // ── 6. 送出 ───────────────────────────────────────────────────────────
-    const submitBtn = document.createElement('button');
-    submitBtn.type = 'submit';
-    submitBtn.className = 'btn btn-sm btn-primary mt-3';
-    submitBtn.textContent = actionText;
+    const submitBtn = button(actionText, { variant: 'primary', type: 'submit' });
+    submitBtn.classList.add('mt-3');
     form.appendChild(submitBtn);
 
     form.addEventListener('submit', async event => {

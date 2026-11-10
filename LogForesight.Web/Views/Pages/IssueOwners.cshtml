@@ -24,17 +24,17 @@
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <select class="form-select" id="issue-owner-picker"></select>
-                        <button type="button" class="btn btn-link btn-sm px-0 mt-1" id="issue-owner-manual-toggle">
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-1" id="issue-owner-manual-toggle">
                             找不到？改為手動輸入
                         </button>
                     </div>
                     <div class="row g-3 mb-3 d-none" id="issue-owner-manual-field">
                         <div class="col-md-8">
-                            <label for="issue-owner-source" class="form-label">來源（Source） <span class="text-danger">*</span></label>
+                            <label for="issue-owner-source" class="form-label">來源（Source） <span aria-hidden="true">*</span></label>
                             <input type="text" class="form-control" id="issue-owner-source" placeholder="例如 disk、DCOM" />
                         </div>
                         <div class="col-md-4">
-                            <label for="issue-owner-event-id" class="form-label">Event ID <span class="text-danger">*</span></label>
+                            <label for="issue-owner-event-id" class="form-label">Event ID <span aria-hidden="true">*</span></label>
                             <input type="number" class="form-control" id="issue-owner-event-id" min="0" />
                         </div>
                     </div>
@@ -53,7 +53,7 @@
                         <div class="mb-3">
                             <div class="d-flex align-items-center justify-content-between">
                                 <label for="issue-owner-conclusion-status" class="form-label mb-0">機房結論</label>
-                                <button type="button" class="btn btn-link btn-sm px-0 d-none" id="issue-owner-conclusion-clear">
+                                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="issue-owner-conclusion-clear">
                                     解除結論
                                 </button>
                             </div>
@@ -70,7 +70,7 @@
                                           placeholder="原因（必填）——這是代全體下結論的操作，理由要留在紀錄裡。"></textarea>
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="issue-owner-conclusion-auto-apply" />
-                                    <label class="form-check-label small" for="issue-owner-conclusion-auto-apply">
+                                    <label class="form-check-label lf-text-meta" for="issue-owner-conclusion-auto-apply">
                                         之後新出現的主機日也自動套用這個結論
                                     </label>
                                 </div>

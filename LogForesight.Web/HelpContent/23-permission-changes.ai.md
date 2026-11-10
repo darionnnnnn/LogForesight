@@ -10,7 +10,7 @@
   - 全選待確認項目 ID 清單：`GET /api/permission-changes/ids`。
   - 單筆確認／標記可疑：`PUT /api/permission-changes/{changeId}/confirm`。
   - 批次確認／標記可疑：`POST /api/permission-changes/confirm/batch`。
-- **批次操作按鈕**：「標記為授權操作」、「標記為可疑」、「清除選取」；確認視窗按鈕「確認為授權操作」／「標記可疑」。
+- **批次操作按鈕**：「標記為授權操作」、「標記為可疑」、「清除選取」；確認視窗按鈕「確認為授權操作」（主色）／「標記可疑」（危險色）。展開列內的「確認為授權操作」「標記可疑」與「查看當日權限異動報告全文」都是外框按鈕，開啟視窗時帶 `aria-haspopup="dialog"`。
 
 ## 權限異動檢核（Permission Changes Monitoring）
 
