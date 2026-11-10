@@ -115,6 +115,33 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     private const string GoodJson =
         "{\"risk_level\":\"高\",\"headline\":\"標題\",\"story\":\"內容\",\"trend_story\":\"\",\"action\":\"處理\"}";
 
+    [Fact]
+    public async Task 第一次空形狀_第二次成功_寫recovered診斷()
+    {
+        var service = NewService(n => new Reply { Content = n == 1 ? "[\n]" : GoodJson }, jsonRetryCount: 2, out var handler);
+
+        var (diagnostics, _, _, result) = await RunAsync(service);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, handler.RequestCount);
+        var entry = Assert.Single(diagnostics);
+        Assert.Equal(AiJsonDiagnostics.EndedRecovered, entry.EndedBy);
+        Assert.Equal("recovered", entry.EndedBy);
+        var attempt = Assert.Single(entry.AttemptDetails);
+        Assert.Equal(AiJsonDiagnostics.CategoryEmpty, attempt.Category);
+    }
+
+    [Fact]
+    public async Task 第一次就成功_沒有診斷行()
+    {
+        var service = NewService(_ => new Reply { Content = GoodJson }, jsonRetryCount: 2, out _);
+
+        var (diagnostics, _, _, result) = await RunAsync(service);
+
+        Assert.True(result.Success);
+        Assert.Empty(diagnostics);
+    }
+
     // ── 失敗類別：每個類別各一個輸入 ───────────────────────────────
 
     [Fact]
@@ -290,7 +317,7 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     }
 
     [Fact]
-    public async Task 重試後成功_不寫診斷()
+    public async Task 重試後成功_寫recovered診斷且不計警告數()
     {
         var service = NewService(a => new Reply { Content = a == 1 ? "不是 JSON" : GoodJson }, 2, out var handler);
 
@@ -298,7 +325,7 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
 
         Assert.True(result.Success);
         Assert.Equal(2, handler.RequestCount);
-        Assert.Empty(diagnostics);
+        Assert.Equal(AiJsonDiagnostics.EndedRecovered, Assert.Single(diagnostics).EndedBy);
     }
 
     [Fact]

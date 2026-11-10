@@ -48,6 +48,8 @@ public static class AiJsonDiagnostics
     public const string EndedEmpty = "empty";
     /// <summary>先有內容層失敗，後來遇到傳輸層失敗而結束</summary>
     public const string EndedTransport = "transport_error";
+    /// <summary>最終成功，但途中有內容層失敗（用來看首次失敗的類別分布，不是案例）</summary>
+    public const string EndedRecovered = "recovered";
 
     /// <summary>回覆開頭保留的字元數</summary>
     public const int HeadChars = 1500;
@@ -264,7 +266,7 @@ public sealed class AiJsonDiagnosticsEntry
     /// <summary>實際發出的 JSON 層嘗試次數（含最後遇到傳輸層失敗的那一次）</summary>
     [JsonPropertyName("attempts")] public int Attempts { get; set; }
 
-    /// <summary>exhausted／empty／transport_error，見 <see cref="AiJsonDiagnostics.EndedExhausted"/></summary>
+    /// <summary>exhausted／empty／transport_error／recovered，見 <see cref="AiJsonDiagnostics.EndedExhausted"/></summary>
     [JsonPropertyName("endedBy")] public string EndedBy { get; set; } = string.Empty;
 
     [JsonPropertyName("attemptDetails")] public List<AiJsonAttemptDiagnostics> AttemptDetails { get; set; } = new();

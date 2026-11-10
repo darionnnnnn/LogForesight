@@ -106,6 +106,9 @@ public sealed record ExportDeidentificationDto
 
     /// <summary>解不開、無法比對實際值的憑證名稱（固定清單，不含任何值）</summary>
     public IReadOnlyList<string> UndecryptableSecrets { get; init; } = Array.Empty<string>();
+
+    /// <summary>已不是目前認證方式的舊密文且解不開的名稱（不含任何值）；目前沒有使用</summary>
+    public IReadOnlyList<string> RetiredUndecryptableSecrets { get; init; } = Array.Empty<string>();
 }
 
 public sealed record ExportTokenCountDto(string Kind, int Count);
