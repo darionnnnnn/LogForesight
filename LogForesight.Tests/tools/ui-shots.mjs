@@ -286,6 +286,9 @@ async function runScenario(browser, scenario, cell, state) {
         await browser.send('Page.navigate', { url: `${base}${scenario.path}` });
         await settle(browser, state.inflight);
         const assertFailures = await runSteps(browser, scenario.steps, state.inflight);
+        // 骨架列還在就多等最多 5 秒：分批載入的頁面在網路靜止後仍可能有最後一段在渲染，
+        // 只在真的卡住時才記為 stuck（否則同一頁兩次量測結果會隨時序跳動）
+        for (let i = 0; i < 25 && await evaluate(browser, '!!document.querySelector(".lf-skeleton")'); i++) await sleep(200);
         const measured = await evaluate(browser, `(${pageMeasure.toString()})()`);
 
         const metrics = await browser.send('Page.getLayoutMetrics');
