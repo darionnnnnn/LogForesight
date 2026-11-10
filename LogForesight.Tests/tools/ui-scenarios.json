@@ -1,0 +1,132 @@
+[
+  {
+    "name": "登入頁",
+    "role": "ui-admin",
+    "path": "/login"
+  },
+  {
+    "name": "儀表板",
+    "role": "ui-admin",
+    "path": "/"
+  },
+  {
+    "name": "問題查詢",
+    "role": "ui-admin",
+    "path": "/records"
+  },
+  {
+    "name": "交辦總覽",
+    "role": "ui-admin",
+    "path": "/work-orders"
+  },
+  {
+    "name": "報表",
+    "role": "ui-admin",
+    "path": "/reports"
+  },
+  {
+    "name": "權限異動檢核",
+    "role": "ui-admin",
+    "path": "/permission-changes"
+  },
+  {
+    "name": "稽核紀錄",
+    "role": "ui-admin",
+    "path": "/audit"
+  },
+  {
+    "name": "排程作業",
+    "role": "ui-admin",
+    "path": "/runs"
+  },
+  {
+    "name": "規則維護",
+    "role": "ui-admin",
+    "path": "/admin/rules"
+  },
+  {
+    "name": "使用者",
+    "role": "ui-admin",
+    "path": "/admin/users"
+  },
+  {
+    "name": "主機",
+    "role": "ui-admin",
+    "path": "/admin/hosts"
+  },
+  {
+    "name": "群組與授權",
+    "role": "ui-admin",
+    "path": "/admin/groups"
+  },
+  {
+    "name": "問題負責與靜音",
+    "role": "ui-admin",
+    "path": "/admin/issue-owners"
+  },
+  {
+    "name": "資料匯入",
+    "role": "ui-admin",
+    "path": "/admin/imports"
+  },
+  {
+    "name": "NetIQ維護",
+    "role": "ui-admin",
+    "path": "/admin/netiq"
+  },
+  {
+    "name": "PRTG維護",
+    "role": "ui-admin",
+    "path": "/admin/prtg"
+  },
+  {
+    "name": "設定",
+    "role": "ui-admin",
+    "path": "/admin/settings"
+  },
+  {
+    "name": "操作說明書",
+    "role": "ui-admin",
+    "path": "/help/manual"
+  },
+  {
+    "name": "初始設定",
+    "role": "ui-admin",
+    "path": "/setup"
+  },
+  {
+    "name": "拒絕存取",
+    "role": "ui-admin",
+    "path": "/access-denied"
+  },
+  {
+    "name": "處理人-首頁",
+    "role": "ui-handler",
+    "path": "/"
+  },
+  {
+    "name": "處理人-我的交辦",
+    "role": "ui-handler",
+    "path": "/handlers/3"
+  },
+  {
+    "name": "處理人-交辦單",
+    "role": "ui-handler",
+    "path": "/work-orders/1"
+  },
+  {
+    "name": "處理人-問題查詢",
+    "role": "ui-handler",
+    "path": "/records"
+  },
+  {
+    "name": "受限檢視者-首頁",
+    "role": "ui-viewer",
+    "path": "/"
+  },
+  {
+    "name": "受限檢視者-問題查詢",
+    "role": "ui-viewer",
+    "path": "/records"
+  }
+]
