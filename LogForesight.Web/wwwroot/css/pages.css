@@ -496,7 +496,6 @@ a.lf-calendar__cell:focus-visible {
 .lf-trend-cell {
     max-width: 180px;
     min-width: 9rem;
-    white-space: pre-line;
     line-height: 1.4;
 }
 
@@ -521,28 +520,137 @@ a.lf-calendar__cell:focus-visible {
     position: absolute;
     top: 0;
     right: 0;
-    width: 1.25rem;
-    height: 1.25rem;
+    width: max(1.25rem, 24px);
+    height: max(1.25rem, 24px);
     margin: 0;
     cursor: pointer;
 }
 
-/* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
-   取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
-   （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
-   超過 300 字才收合並出現「顯示全文」（core/ui.js collapsibleText，區塊模式用 .lf-collapsible--clamped）。 */
+/* ── 風險日詳情頁首卡（record-detail.js renderHeader）：主機名為頁面主標，日期／風險／系統／IP 同列，
+   「下一筆未處理」靠右；資料來源與事件數收成一行次要資訊 ── */
+.lf-record-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2) var(--lf-space-3);
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-record-head__host {
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+
+.lf-record-head__host:hover,
+.lf-record-head__host:focus-visible { text-decoration: underline; }
+
+.lf-record-head__next { margin-left: auto; }
+
+.lf-record-head__facts { margin-bottom: var(--lf-space-3); }
+
+/* ── 「問題」欄的判斷層（docs/DESIGN-SYSTEM.md §8.5，record-detail.js issueCell）──────
+   嚴重度＋標題 → 白話說明 → 一行次要資訊 → 狀態徽章 → 帳號／來源摘要 → 原始訊息；
+   各段以固定的小間距堆疊，不靠每段各自的 mt-1。超過 300 字的文字由 collapsibleText 收合。 */
 .lf-issue-cell {
-    min-width: 20rem;
+    min-width: min(20rem, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-1);
+    overflow-wrap: anywhere;
 }
 
-.lf-issue-cell__meta {
-    row-gap: .25rem;
+.lf-issue-cell__head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--lf-space-2);
 }
 
-/* 白話說明：一般正文色的小字，完整顯示（超過 300 字才由 collapsibleText 收合） */
+/* 徽章固定在左、標題在自己的欄內換行——欄窄時不讓徽章單獨佔一行 */
+.lf-issue-cell__head > :first-child { flex-shrink: 0; }
+
+.lf-issue-cell__title { flex: 1 1 auto; min-width: 0; }
+
+/* 白話說明：正文色、行寬受 --lf-measure 限制，寬螢幕也好讀 */
 .lf-issue-cell__explain {
+    max-width: var(--lf-measure);
+    line-height: 1.6;
+}
+
+.lf-issue-cell__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1);
+}
+
+.lf-issue-cell__action { align-self: flex-start; margin-top: var(--lf-space-1); }
+
+/* 帳號／來源 IP 摘要：每段一行，標籤固定在左、值可斷行；窄時標籤在上 */
+.lf-key-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-1);
+    font-size: var(--lf-font-size-sm);
+    max-width: var(--lf-measure);
+}
+
+.lf-key-details__row {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, max-content) minmax(0, 1fr);
+    column-gap: var(--lf-space-3);
+}
+
+@media (max-width: 575.98px) {
+    .lf-key-details__row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── 佐證層（列展開，record-detail.js evidencePanel）：各區眉標＋內容，寬螢幕兩欄並排 ── */
+.lf-evidence {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));
+    gap: var(--lf-space-4) var(--lf-space-5);
     font-size: var(--lf-font-size-sm);
 }
+
+.lf-evidence__section { min-width: 0; }
+
+.lf-evidence__label {
+    margin: 0 0 var(--lf-space-2);
+    text-transform: none;
+}
+
+.lf-source-obs__list {
+    margin: var(--lf-space-2) 0 0;
+    padding-left: 1.25rem;
+    overflow-wrap: anywhere;
+}
+
+.lf-source-obs__list > li + li { margin-top: var(--lf-space-2); }
+
+/* 分節底部「已處理／已有結論」的收合列 */
+.lf-issue-group__rest-toggle { margin: var(--lf-space-2) var(--lf-space-3); }
+
+/* 處理狀態欄表頭的全選：與逐列勾選同尺寸，點擊區至少 24×24 */
+.lf-status-cell .form-check-input {
+    width: max(1.25rem, 24px);
+    height: max(1.25rem, 24px);
+    margin: 0;
+}
+
+/* 列印：紙上沒有「點了展開」，佐證層與「已處理／已有結論」收合區一律印出（內容一字不減） */
+@media print {
+    #detail-issues tr.lf-row-detail.d-none { display: table-row !important; }
+    #detail-issues [id^="lf-disclosure-"].d-none { display: block !important; }
+}
+
+/* 分節標頭的「全部展開」靠右 */
+.lf-issue-group__expand-all { margin-left: auto; }
+
+/* 趨勢欄：狀態詞一行（上升／首次出現加重）、數字收成一行次要資訊 */
+.lf-trend__word { font-weight: 600; }
+.lf-trend__word--up { color: var(--lf-warning-text); }
 
 .lf-collapsible--clamped {
     max-height: 9rem;
@@ -598,10 +706,11 @@ a.lf-calendar__cell:focus-visible {
     margin-bottom: 0;
 }
 
-/* 處置參考面板（問題列展開）：與 txt 報告「處置參考（知識庫）」同一份內容 */
+/* 處置參考（佐證層的第一區）：與 txt 報告「處置參考（知識庫）」同一份內容 */
 .lf-guidance__label {
     font-weight: 600;
     font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
     margin-top: var(--lf-space-3);
     margin-bottom: var(--lf-space-1);
 }

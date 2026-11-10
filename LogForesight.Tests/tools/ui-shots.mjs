@@ -31,8 +31,12 @@ const fixtureScenarios = args.fixture
         .filter(s => !['host.disabled', 'host.tomb'].includes(s.Key))
         .map(s => ({ name: s.Key, role: s.Role || 'ui-admin', path: s.Path }))
     : [];
+// 情境檔的 path 可寫成 "fixture:<資料集情境鍵>"，執行時換成資料集裡的實際網址（日期相對今天，不寫死在情境檔）
+const fixturePaths = new Map(fixtureScenarios.map(s => [s.name, s.path]));
 const scenarios = [...JSON.parse(readFileSync(args.scenarios || new URL('./ui-scenarios.json', import.meta.url), 'utf8')), ...fixtureScenarios]
-    .filter(s => !args.only || s.name.includes(args.only));
+    .filter(s => !args.only || s.name.includes(args.only))
+    .filter(s => !s.path.startsWith('fixture:') || fixturePaths.has(s.path.slice(8)))
+    .map(s => (s.path.startsWith('fixture:') ? { ...s, path: fixturePaths.get(s.path.slice(8)) } : s));
 
 const FULL_MATRIX = [
     ...[375, 768, 1280, 1920, 2560].map(width => ({ width, scale: 'medium' })),
@@ -223,9 +227,11 @@ function assertInPage(spec) {
 
 async function runSteps(browser, steps, inflight, width) {
     const failures = [];
+    let marked = null;
     for (const step of steps || []) {
         if (step.click) {
-            const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(step.click)}); if (!el) return false; el.scrollIntoView({ block: 'center' }); el.click(); return true; })()`);
+            // scrollIntoView 只在元素不在視窗內時才捲，避免「量捲動是否跳動」的情境被工具自己捲動
+            const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(step.click)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); el.click(); return true; })()`);
             if (!ok) failures.push(`找不到可點選的元素：${step.click}`);
             await settle(browser, inflight);
         } else if (step.type) {
@@ -250,6 +256,13 @@ async function runSteps(browser, steps, inflight, width) {
             }
         } else if (step.scroll !== undefined) {
             await evaluate(browser, `window.scrollTo(0, ${Number(step.scroll)})`);
+        } else if (step.markScroll) {
+            marked = await evaluate(browser, 'window.scrollY');
+        } else if (step.scrollWithin !== undefined) {
+            // 與 markScroll 記下的位置比較：就地重繪後捲動位置不得跳走
+            const now = await evaluate(browser, 'window.scrollY');
+            if (marked === null) failures.push('scrollWithin 之前沒有 markScroll');
+            else if (Math.abs(now - marked) > Number(step.scrollWithin)) failures.push(`捲動位置跳動 ${Math.round(now - marked)}px（上限 ${step.scrollWithin}px）`);
         } else if (step.wait) {
             await sleep(Number(step.wait));
         }

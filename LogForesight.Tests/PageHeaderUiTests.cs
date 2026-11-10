@@ -43,7 +43,6 @@ public class PageHeaderUiTests
         ["Imports.cshtml"] = "imports.js",
         ["IssueOwners.cshtml"] = "issue-owners.js",
         ["PermissionChanges.cshtml"] = "permission-changes.js",
-        ["RecordDetail.cshtml"] = "record-detail.js",
         ["Rules.cshtml"] = "rules.js",
         ["UserDetail.cshtml"] = "user-detail.js",
     };

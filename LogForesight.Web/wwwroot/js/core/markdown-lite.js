@@ -55,7 +55,22 @@ function hasPipeOutsideCode(line) {
     return line.replace(/`[^`]*`/g, '').includes('|');
 }
 
-/** 一行文字中的 **粗體** 與 `行內代碼` 拆成節點附加到 target；其餘文字原樣 createTextNode */
+/**
+ * AI 偶爾仍會輸出 LaTeX 數學式（$\rightarrow$ 之類），這裡只把成對 $…$ 內「單一已知指令」換成對應字元；
+ * 認不得的指令、金額（$100）、成對 $ 之間是一般文字的情況一律原樣保留。行內代碼裡的內容不轉（見 appendInline）。
+ */
+const LATEX_SYMBOLS = {
+    rightarrow: '→', to: '→', leftarrow: '←', gets: '←', Rightarrow: '⇒', Leftarrow: '⇐', leftrightarrow: '↔',
+    uparrow: '↑', downarrow: '↓', leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠',
+    approx: '≈', times: '×', pm: '±', cdot: '·'
+};
+const LATEX_INLINE = /\$\s*\\([A-Za-z]+)\s*\$/g;
+
+function replaceLatexSymbols(text) {
+    return text.replace(LATEX_INLINE, (whole, name) => LATEX_SYMBOLS[name] ?? whole);
+}
+
+/** 一行文字中的 **粗體** 與 `行內代碼` 拆成節點附加到 target；其餘文字原樣 createTextNode（先換掉已知的 LaTeX 符號） */
 function appendInline(target, line) {
     INLINE_TOKEN.lastIndex = 0;
     let lastIndex = 0;
@@ -63,12 +78,12 @@ function appendInline(target, line) {
 
     while ((match = INLINE_TOKEN.exec(line)) !== null) {
         if (match.index > lastIndex) {
-            target.appendChild(document.createTextNode(line.slice(lastIndex, match.index)));
+            target.appendChild(document.createTextNode(replaceLatexSymbols(line.slice(lastIndex, match.index))));
         }
 
         if (match[1] !== undefined) {
             const strong = document.createElement('strong');
-            strong.textContent = match[1];
+            strong.textContent = replaceLatexSymbols(match[1]);
             target.appendChild(strong);
         } else {
             const code = document.createElement('code');
@@ -80,7 +95,7 @@ function appendInline(target, line) {
     }
 
     if (lastIndex < line.length) {
-        target.appendChild(document.createTextNode(line.slice(lastIndex)));
+        target.appendChild(document.createTextNode(replaceLatexSymbols(line.slice(lastIndex))));
     }
 }
 

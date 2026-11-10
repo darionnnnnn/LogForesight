@@ -8,12 +8,13 @@
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader, collapsibleText } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
 import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
+import { metaLine, disclosure, statusNote } from '../core/elements.js';
 import { reportCard } from '../core/report-view.js';
 import { statusesWhere, statusVariant } from '../core/handling-statuses.js';
 
@@ -60,16 +61,12 @@ function initRecordSections() {
 
 initRecordSections();
 
-// 頁首：只放頁面層級動作「下一筆未處理」。按鈕先以 d-none 建立（保留原 id），
-// 待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示——header 在模組頂層先渲染，
-// 一定早於 guardLoad(load) 與 setupNextUnhandled 的 getElementById。
-const nextUnhandledLink = document.createElement('a');
-nextUnhandledLink.className = 'btn btn-sm btn-outline-primary d-none lf-no-print';
+// 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
+// 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
+// 每次 renderHeader 重繪都把同一個元素接回去，已取得的連結不會因重繪消失。
+const nextUnhandledLink = linkButton('下一筆未處理 →', '');
+nextUnhandledLink.classList.add('d-none', 'lf-no-print', 'lf-record-head__next');
 nextUnhandledLink.id = 'next-unhandled';
-nextUnhandledLink.textContent = '下一筆未處理 →';
-renderPageHeader(document.getElementById('page-header'), {
-    actions: [nextUnhandledLink]
-});
 
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
@@ -83,6 +80,10 @@ let currentDisplaySettings = null;
 // 與這列目前的處理狀態脫鉤——狀態改在右側「處理狀態」區塊填一次套用給全部勾選的問題
 // （見 handling-panel.js），不再逐列各自跳出面板。每次 load() 重新整理時清空。
 const selectedIssueKeys = new Set();
+
+// 使用者展開過的問題列（issueKey）：批次套用或改狀態後就地重繪，展開的列維持展開。
+// 不清空——同一頁停留期間都有效，換頁自然重來
+const expandedIssueKeys = new Set();
 
 // 標「已知雜訊」時要不要提議建立抑制規則，取決於能否維護規則（Maintain）
 let canMaintainRules = false;
@@ -144,7 +145,8 @@ function inCurrentScope(issue) {
 }
 
 async function load() {
-    renderLoading(document.getElementById('detail-issues'), 5);
+    // 只有第一次載入顯示骨架列：批次套用後的重載若先換成骨架，頁面高度瞬間縮短、捲動位置跟著跳走
+    if (!currentDetail) renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
 
     const [detail, user, aiReady, displaySettings] = await Promise.all([
@@ -407,10 +409,8 @@ function briefBlock(text) {
     badge.className = 'lf-badge lf-badge--secondary';
     badge.textContent = '重點速報';
     head.appendChild(badge);
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.className = 'btn btn-link btn-sm p-0 lf-no-print';
-    copy.textContent = '複製';
+    const copy = button('', { icon: 'copy', title: '複製重點速報' });
+    copy.classList.add('lf-no-print');
     copy.setAttribute('aria-label', '複製重點速報');
     // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
     const p = document.createElement('p');
@@ -430,15 +430,18 @@ function briefBlock(text) {
     return wrap;
 }
 
-/** 頁首「資料來源」副標：把後端列舉值轉成白話，並說明這一天還能不能補 PRTG 資料 */
+/** 頁首「資料來源」：把後端列舉值轉成白話，並說明這一天還能不能補 PRTG 資料 */
 function sourceLine(detail) {
+    if (detail.logSource === 'Prtg') {
+        return '資料來源：PRTG（當日沒有日誌分析；之後補到日誌分析會更新為同一筆紀錄並保留這些 PRTG 問題）';
+    }
     const state = detail.latestNetiqAttemptStatus == null
         ? '已保存的分析結果'
         : `最近一次取數：${netiqAttemptStatusName(detail.latestNetiqAttemptStatus)}`;
     const supplement = detail.prtgSupplementEligible
-        ? '這一天可以再補上 PRTG 資料。'
-        : '這一天不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ。';
-    return `資料來源：${logSourceName(detail.logSource)}（${state}）。${supplement}`;
+        ? '可再補 PRTG 資料'
+        : '不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ';
+    return `資料來源：${logSourceName(detail.logSource)}（${state}；${supplement}）`;
 }
 
 function renderHeader(detail) {
@@ -463,16 +466,16 @@ function renderHeader(detail) {
     }
 
     const top = document.createElement('div');
-    top.className = 'd-flex align-items-center gap-3 mb-2 flex-wrap';
+    top.className = 'lf-record-head';
 
     const hostLink = document.createElement('a');
     hostLink.href = appUrl(`/hosts/${detail.hostId}`);
-    hostLink.className = 'fs-5 fw-semibold text-decoration-none';
+    hostLink.className = 'lf-record-head__host';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
 
     const dateSpan = document.createElement('span');
-    dateSpan.className = 'text-muted';
+    dateSpan.className = 'lf-text-meta lf-text-data';
     dateSpan.textContent = detail.date;
 
     // 判定依據（docs/archive/HISTORY.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
@@ -490,24 +493,35 @@ function renderHeader(detail) {
 
     if (detail.hostIpAddress) {
         const ipSpan = document.createElement('span');
-        ipSpan.className = 'text-muted small font-monospace';
+        ipSpan.className = 'lf-text-meta lf-text-data';
         ipSpan.textContent = detail.hostIpAddress;
         top.appendChild(ipSpan);
     }
 
     const aiBadge = aiStatusBadge(detail);
     if (aiBadge) top.appendChild(aiBadge);
+    top.appendChild(nextUnhandledLink);
 
     body.appendChild(top);
-    if (detail.logSource === 'Prtg') {
-        const source = document.createElement('p'); source.className = 'small text-muted';
-        source.textContent = '資料來源：PRTG。當日沒有日誌分析，這一天只有 PRTG 訊號；之後若補到日誌分析，會更新為同一筆紀錄並保留這些 PRTG 問題。';
-        body.appendChild(source);
-    } else if (detail.logSource) {
-        const source = document.createElement('p'); source.className = 'small text-muted';
-        source.textContent = sourceLine(detail);
-        body.appendChild(source);
-    }
+
+    // 一行次要資訊：資料來源、三種事件數、主機角色（取代原本分散在卡片底部的統計列與單獨的角色行）
+    const stat = (label, value) => {
+        const span = document.createElement('span');
+        span.append(`${label} `);
+        const strong = document.createElement('strong');
+        strong.className = 'lf-text-data';
+        strong.textContent = formatNumber(value);
+        span.appendChild(strong);
+        return span;
+    };
+    const facts = metaLine([
+        detail.logSource ? sourceLine(detail) : null,
+        stat('錯誤', detail.errorCount),
+        stat('警告', detail.warningCount),
+        stat('稽核事件', detail.auditEventCount),
+        detail.hostRoleDesc ? `主機角色：${detail.hostRoleDesc}` : null
+    ], { className: 'lf-record-head__facts' });
+    if (facts) body.appendChild(facts);
     if (detail.riskReview) {
         const review = document.createElement('div');
         review.className = 'alert alert-warning small';
@@ -518,7 +532,7 @@ function renderHeader(detail) {
         label.textContent = `原始歷史判定（${detail.riskReview.originalRiskLevel}）；以下敘事已被修訂，不能作現行佐證`;
         history.appendChild(label);
         const oldText = document.createElement('p');
-        oldText.className = 'small text-muted';
+        oldText.className = 'lf-text-meta';
         oldText.textContent = [detail.riskReview.originalHeadline, detail.riskReview.originalSummary].filter(Boolean).join('；');
         history.appendChild(oldText);
         body.appendChild(history);
@@ -527,30 +541,11 @@ function renderHeader(detail) {
     const aiBlock = aiSummaryBlock(detail);
     if (aiBlock) body.appendChild(aiBlock);
 
-    const stats = document.createElement('div');
-    stats.className = 'd-flex gap-4 mt-3 pt-3 border-top small text-muted';
-    for (const [label, value] of [['錯誤', detail.errorCount], ['警告', detail.warningCount], ['稽核事件', detail.auditEventCount]]) {
-        const span = document.createElement('span');
-        span.append(`${label} `);
-        const strong = document.createElement('strong');
-        strong.textContent = formatNumber(value);
-        span.appendChild(strong);
-        stats.appendChild(span);
-    }
-    body.appendChild(stats);
-
-    if (detail.hostRoleDesc) {
-        const role = document.createElement('div');
-        role.className = 'small text-muted mt-2';
-        role.textContent = `主機角色：${detail.hostRoleDesc}`;
-        body.appendChild(role);
-    }
-
     // docs/archive/HISTORY.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
     // 否則使用者會誤以為「風險等級判定的依據」就是眼前看到的這些問題
     if (detail.hiddenIssueCount > 0) {
         const hiddenNote = document.createElement('div');
-        hiddenNote.className = 'small text-muted mt-2';
+        hiddenNote.className = 'lf-text-meta mt-2';
         hiddenNote.textContent =
             `另有 ${detail.hiddenIssueCount} 項問題已依全站顯示設定隱藏；風險等級以完整資料判定，不受此設定影響。`;
         body.appendChild(hiddenNote);
@@ -585,7 +580,7 @@ function issueColumns(sectionIssues) {
     return [
         // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在第一欄最前面
         { title: '問題', render: i => issueCell(i) },
-        { title: '趨勢', className: 'lf-trend-cell', render: i => i.trendText },
+        { title: '趨勢', className: 'lf-trend-cell', render: i => trendCell(i.trendText) },
         statusColumn
     ];
 }
@@ -635,11 +630,8 @@ function statusCell(issue, sectionIssues) {
  * 點開 modal 看上次案件摘要＋逐日結案標記（只含結案類，處理中／未處理的歷史不列入）。
  */
 function priorHandlingTrigger(issue) {
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'btn btn-link btn-sm p-0 lf-no-print mt-1';
-    trigger.textContent = '先前處理';
-    trigger.title = '這個問題之前結案過，點開看上次怎麼處理的';
+    const trigger = button('先前處理', { icon: 'journal-text', opens: 'dialog', title: '這個問題之前結案過，點開看上次怎麼處理的' });
+    trigger.classList.add('lf-no-print', 'mt-1');
 
     trigger.addEventListener('click', async event => {
         event.stopPropagation();
@@ -711,7 +703,7 @@ function issueHistoryCaseItem(c) {
 
     if (c.note) {
         const note = document.createElement('div');
-        note.className = 'small text-muted mt-1';
+        note.className = 'lf-text-meta mt-1';
         note.textContent = c.note;
         item.appendChild(note);
     }
@@ -732,7 +724,7 @@ function issueHistoryEntryItem(entry) {
     head.appendChild(status);
 
     const date = document.createElement('span');
-    date.className = 'small text-muted';
+    date.className = 'lf-text-meta';
     date.textContent = `${entry.date}　${formatUserName(entry.actorDisplayName, entry.actorAccount)}${entry.fromCase ? '（交辦逐日同步）' : ''}`;
     head.appendChild(date);
 
@@ -740,7 +732,7 @@ function issueHistoryEntryItem(entry) {
 
     if (entry.note) {
         const note = document.createElement('div');
-        note.className = 'small text-muted mt-1';
+        note.className = 'lf-text-meta mt-1';
         note.textContent = entry.note;
         item.appendChild(note);
     }
@@ -936,12 +928,7 @@ function autoNoiseControl(issue) {
 }
 
 function smallActionButton(text, onClick) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-link p-0';
-    btn.textContent = text;
-    btn.addEventListener('click', event => { event.stopPropagation(); onClick(); });
-    return btn;
+    return button(text, { onClick: event => { event.stopPropagation(); onClick(); } });
 }
 
 /**
@@ -956,7 +943,6 @@ function statusLabel(issue) {
     const hasStatus = issue.handlingStatus && issue.handlingStatus !== 'open';
 
     const label = document.createElement('div');
-    label.className = 'small';
     label.textContent = hasStatus ? issue.handlingStatusText : '未處理';
     wrap.appendChild(label);
 
@@ -965,7 +951,7 @@ function statusLabel(issue) {
         const isOverdue = issue.dueDate < todayLocal();
 
         const due = document.createElement('div');
-        due.className = `small lf-issue-status__due ${isOverdue ? 'text-danger fw-semibold' : 'text-muted'}`;
+        due.className = `lf-issue-status__due ${isOverdue ? 'lf-text-alert' : 'lf-text-meta'}`;
         due.textContent = `${isOverdue ? '逾期' : '預計'} ${issue.dueDate.slice(5)}`;
         wrap.appendChild(due);
     }
@@ -976,7 +962,7 @@ function statusLabel(issue) {
         const isExpired = issue.dueDate < todayLocal();
 
         const observe = document.createElement('div');
-        observe.className = `small lf-issue-status__due ${isExpired ? 'text-danger fw-semibold' : 'text-muted'}`;
+        observe.className = `lf-issue-status__due ${isExpired ? 'lf-text-alert' : 'lf-text-meta'}`;
         if (isExpired) {
             observe.textContent = `觀察到期 ${issue.dueDate.slice(5)}，問題仍在發生`;
         } else {
@@ -1287,14 +1273,14 @@ function renderSeverityFilter(detail) {
     container.replaceChildren();
     for (const severity of present) {
         const count = countIssues(detail.topIssues, { severity, scoped: true });
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary' + (activeSeverities.has(severity) ? ' active' : '');
-        btn.textContent = `${severityName(severity)} ${count}`;
+        const btn = button(`${severityName(severity)} ${count}`, { size: '' });
+        btn.classList.toggle('active', activeSeverities.has(severity));
+        btn.setAttribute('aria-pressed', String(activeSeverities.has(severity)));
         btn.addEventListener('click', () => {
             if (activeSeverities.has(severity)) activeSeverities.delete(severity);
             else activeSeverities.add(severity);
             btn.classList.toggle('active');
+            btn.setAttribute('aria-pressed', String(activeSeverities.has(severity)));
             renderIssues(currentDetail);
             // 顯示範圍下拉的數量是「嚴重度篩選後」的數量（§8），改嚴重度就要重算，
             // 否則下拉會停在舊數字、與實際看到的列數對不起來
@@ -1389,7 +1375,7 @@ function renderIssues(detail) {
         if (highlighted.has(category.category)) section.classList.add('lf-issue-group--hit');
 
         const header = document.createElement('div');
-        header.className = `lf-issue-group__header lf-issue-group__header--${category.maxSeverity.toLowerCase()} d-flex align-items-center gap-2`;
+        header.className = `lf-issue-group__header lf-issue-group__header--${category.maxSeverity.toLowerCase()} d-flex align-items-center flex-wrap gap-2`;
 
         const title = document.createElement('span');
         title.className = 'fw-semibold';
@@ -1412,7 +1398,9 @@ function renderIssues(detail) {
         const body = document.createElement('div');
         if (primary.length > 0) {
             // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
-            renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: guidancePanel });
+            renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
+            const expandAll = expandAllToggle(body);
+            if (expandAll) header.appendChild(expandAll);
         } else {
             renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」檢視。' });
         }
@@ -1465,7 +1453,7 @@ function renderIssues(detail) {
     // 有被使用者篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
     if (hidden > 0) {
         const note = document.createElement('div');
-        note.className = 'text-muted small px-3 py-2 border-top';
+        note.className = 'lf-text-meta px-3 py-2 border-top';
         note.textContent = `另有 ${hidden} 項因嚴重度篩選或顯示範圍未顯示。`;
         container.appendChild(note);
     }
@@ -1483,172 +1471,211 @@ function collapsedRestSection(rest) {
     const wrap = document.createElement('div');
     wrap.className = 'border-top';
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm text-decoration-none text-body d-flex align-items-center gap-2 px-3 py-2 lf-no-print';
-
-    const caret = document.createElement('span');
-    caret.className = 'lf-collapse-caret';
-    caret.appendChild(icon('chevron-down'));
-
-    const label = document.createElement('span');
-    label.textContent = `已處理／已有結論 ${rest.length} 項`;
-    toggle.append(caret, label);
-
     const body = document.createElement('div');
-    body.className = 'd-none';
-    renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: guidancePanel });
-
-    toggle.addEventListener('click', () => {
-        const nowOpen = body.classList.toggle('d-none') === false;
-        caret.classList.toggle('lf-collapse-caret--open', nowOpen);
-    });
+    renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
+    const toggle = disclosure(`已處理／已有結論 ${rest.length} 項`, body, { className: 'lf-issue-group__rest-toggle' });
 
     wrap.append(toggle, body);
     return wrap;
 }
 
 /**
- * 「問題」合併欄（docs/archive/FEEDBACK-3-PLAN.md #5）：取代原本各自獨立的來源/Event、
- * 次數、嚴重度、時段、說明五欄。由上而下：標題、白話說明（guidance.explanation）、knownIssue、
- * log 名＋已抑制／靜音徽章、meta 行（嚴重度／重大徽章・次數・時段）、來源佐證、
- * keyDetails（見 keyDetailsBlock）、相異訊息數／原始訊息連結。
+ * 分節標頭的「全部展開／全部收合」：一次看完整個分節的佐證（入侵判讀常要比對多個事件的帳號與明細）。
+ * 沒有任何可展開列的分節不出現；列被個別展開或收合後，標籤跟著目前狀態更新。
+ */
+function expandAllToggle(container) {
+    const rows = () => [...container.querySelectorAll('tbody tr.lf-row-expandable')];
+    if (rows().length === 0) return null;
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'lf-disclosure lf-no-print lf-issue-group__expand-all';
+    toggle.appendChild(icon('chevron-down', 'lf-disclosure__icon'));
+    const label = document.createElement('span');
+    toggle.appendChild(label);
+
+    const sync = () => {
+        const allOpen = rows().every(tr => tr.getAttribute('aria-expanded') === 'true');
+        toggle.setAttribute('aria-expanded', String(allOpen));
+        label.textContent = allOpen ? '全部收合' : '全部展開';
+    };
+    toggle.addEventListener('click', event => {
+        event.stopPropagation();
+        toggleAllTableDetails(container, toggle.getAttribute('aria-expanded') !== 'true');
+        sync();
+    });
+    // 個別列展開／收合（點列或按 Enter）之後同步標籤；事件冒泡到容器時列的狀態已更新
+    container.addEventListener('click', sync);
+    container.addEventListener('keydown', sync);
+    sync();
+    return toggle;
+}
+
+/**
+ * 「問題」欄的判斷層（docs/DESIGN-SYSTEM.md §8.5）：回答「要不要處理」。
+ * 由上而下：嚴重度＋標題 → 白話說明 → 已知問題 → 一行次要資訊（次數、時段、記錄檔、相異訊息數）
+ * → 狀態徽章 → 帳號／來源摘要 → 「原始訊息」。佐證（處置參考、登入失敗明細、數值趨勢、
+ * 殘留憑證判定、來源觀測）放在列展開的 evidencePanel，內容一字不減、列印全顯示。
  */
 function issueCell(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-issue-cell';
 
-    const title = document.createElement('div');
-    title.className = 'fw-semibold';
+    const head = document.createElement('div');
+    head.className = 'lf-issue-cell__head';
+    head.appendChild(severityCell(issue.severity, issue.elevatesDayRisk));
+    const title = document.createElement('span');
+    title.className = 'lf-text-title lf-issue-cell__title';
     title.textContent = issue.sourceEventLabel;
-    wrap.appendChild(title);
+    head.appendChild(title);
+    wrap.appendChild(head);
 
     // 白話說明緊接標題：第一眼就看得到「這是什麼」，不必展開列；與 knownIssue 同文只留一個
     const explanation = (issue.guidance?.explanation || '').trim();
     if (explanation) {
         const explain = document.createElement('div');
-        explain.className = 'lf-issue-cell__explain mt-1';
+        explain.className = 'lf-issue-cell__explain';
         explain.textContent = explanation;
         wrap.appendChild(collapsibleText(explain));
     }
     const knownIssue = (issue.knownIssue || '').trim();
     if (knownIssue && knownIssue !== explanation) {
         const text = document.createElement('div');
-        text.className = 'small text-muted mt-1';
+        text.className = 'lf-text-meta';
         text.textContent = issue.knownIssue;
         wrap.appendChild(collapsibleText(text));
     }
 
-    const logName = document.createElement('div');
-    logName.className = 'small text-muted';
-    logName.textContent = issue.logName;
-    wrap.appendChild(logName);
-
-    if (issue.suppressed) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
-        badge.textContent = '已抑制';
-        badge.title = '此規則已被本機抑制：只關掉通知與風險升級，事件仍照常紀錄';
-        wrap.appendChild(badge);
-    }
-
-    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
-    if (issue.isMuted && issue.muteTo) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
-        if (issue.suppressed) badge.classList.add('ms-1');
-        badge.textContent = `靜音至 ${issue.muteTo}`;
-        const tip = [];
-        if (issue.muteReason) tip.push(`原因：${issue.muteReason}`);
-        if (issue.mutedByAccount) tip.push(`設定者：${issue.mutedByAccount}`);
-        if (tip.length > 0) badge.title = tip.join('｜');
-        wrap.appendChild(badge);
-    }
-
-    const meta = document.createElement('div');
-    meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
-    meta.appendChild(severityCell(issue.severity, issue.elevatesDayRisk));
-    const count = document.createElement('span');
-    count.textContent = `次數 ${formatNumber(issue.count)}`;
-    meta.appendChild(count);
+    // 時段是這一組事件在當日最早到最晚出現的時間，不是來源時間窗——口徑放在 title 與佐證的來源觀測區
     const period = document.createElement('span');
     period.className = 'text-nowrap';
-    period.textContent = `群組顯示時段 ${issue.firstSeen}~${issue.lastSeen}`;
-    meta.appendChild(period);
-    wrap.appendChild(meta);
+    period.textContent = `${issue.firstSeen}–${issue.lastSeen}`;
+    period.title = '群組顯示時段：這組事件當日最早到最晚出現的時間，不是來源時間窗';
+    const meta = metaLine([
+        `${formatNumber(issue.count)} 次`,
+        period,
+        issue.logName,
+        issue.distinctMessageCount > 1 ? `${issue.distinctMessageCount} 種訊息` : null
+    ]);
+    if (meta) wrap.appendChild(meta);
 
-    wrap.appendChild(sourceEvidenceBlock(issue));
+    const badges = issueStateBadges(issue);
+    if (badges) wrap.appendChild(badges);
 
-    // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
-    // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「全文」切換鈕可以展開，
-    // 不是把內容拿掉
+    // Security 事件的帳號／IP 彙總是入侵判讀的依據，留在判斷層（不藏進展開列）；
+    // 詳情已清除時明講，不讓空白被誤讀成「沒有帳號」
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
-        prunedHint.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
+        prunedHint.className = 'lf-text-meta';
         prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
         wrap.appendChild(prunedHint);
     } else {
-        if (issue.residualCredentialBasis) wrap.appendChild(residualCredentialBlock(issue));
-
-        if (issue.loginFailureDetails?.length) wrap.appendChild(loginFailureDetailsTable(issue));
-
         if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
-
-        if (issue.distinctMessageCount > 1) {
-            const distinct = document.createElement('div');
-            distinct.className = 'small text-muted mt-1';
-            distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
-            wrap.appendChild(distinct);
-        }
-
-        if (issue.prtgTrendEvidence) wrap.appendChild(prtgTrendEvidenceBlock(issue.prtgTrendEvidence));
-
         if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
     }
 
     return wrap;
 }
 
+/** 問題狀態徽章（已抑制、靜音、殘留憑證）；一個都沒有時回 null */
+function issueStateBadges(issue) {
+    const items = [];
+    if (issue.suppressed) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = '已抑制';
+        badge.title = '此規則已被本機抑制：只關掉通知與風險升級，事件仍照常紀錄';
+        items.push(badge);
+    }
+    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
+    if (issue.isMuted && issue.muteTo) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = `靜音至 ${issue.muteTo}`;
+        const tip = [];
+        if (issue.muteReason) tip.push(`原因：${issue.muteReason}`);
+        if (issue.mutedByAccount) tip.push(`設定者：${issue.mutedByAccount}`);
+        if (tip.length > 0) badge.title = tip.join('｜');
+        items.push(badge);
+    }
+    if (issue.residualCredentialBasis && !currentDetail.detailPruned) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = issue.residualCredentialRetry ? '疑似殘留憑證重試' : '可能由殘留憑證觸發';
+        badge.title = '判定依據在展開列的「殘留憑證判定」';
+        items.push(badge);
+    }
+    if (items.length === 0) return null;
+    const row = document.createElement('div');
+    row.className = 'lf-issue-cell__badges';
+    row.append(...items);
+    return row;
+}
 
-/** Bounded provenance disclosure. Every external value is rendered as text, never as markup or a link. */
+/**
+ * 佐證層（列展開）：回答「憑什麼」。依序為處置參考／AI 判讀、登入失敗明細、數值趨勢、殘留憑證判定、來源觀測；
+ * 一區都沒有時回 null，renderTable 就不替該列加展開列（不出現空面板）。
+ * 詳情已清除的日子只剩處置參考（知識庫內容，不屬於被清除的詳情）。
+ */
+function evidencePanel(issue) {
+    const sections = [];
+    const add = (label, content) => { if (content) sections.push([label, content]); };
+
+    add(issue.guidance ? '處置參考' : 'AI 判讀', guidancePanel(issue));
+    if (!currentDetail.detailPruned) {
+        if (issue.loginFailureDetails?.length) add('登入失敗明細', loginFailureDetailsTable(issue));
+        if (issue.prtgTrendEvidence) add('數值趨勢', prtgTrendEvidenceBlock(issue.prtgTrendEvidence));
+        if (issue.residualCredentialBasis) add('殘留憑證判定', residualCredentialBlock(issue));
+        add('來源觀測', sourceEvidenceBlock(issue));
+    }
+    if (sections.length === 0) return null;
+
+    const panel = document.createElement('div');
+    panel.className = 'lf-evidence';
+    for (const [label, content] of sections) {
+        const section = document.createElement('section');
+        section.className = 'lf-evidence__section';
+        const heading = document.createElement('h3');
+        heading.className = 'lf-text-label lf-evidence__label';
+        heading.textContent = label;
+        section.append(heading, content);
+        panel.appendChild(section);
+    }
+    return panel;
+}
+
+
+/**
+ * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
+ * 沒有任何觀測時回 null（「沒有可核對的來源」不是判斷資訊，不佔版面）。
+ */
 function sourceEvidenceBlock(issue) {
     const observations = (issue.sourceObservations || []).slice(0, 64);
-    const truncatedText = issue.sourceObservationsTruncated ? '，清單已截斷' : '';
-    const summary = document.createElement('div');
-    summary.className = 'small text-muted mt-1';
+    if (observations.length === 0) return null;
 
-    if (observations.length === 0) {
-        summary.textContent = `來源觀測：未保存可核對的來源觀測${truncatedText}`;
-        return summary;
-    }
-
+    const block = document.createElement('div');
+    block.className = 'lf-source-obs';
     const exactReferences = observations.filter(item => item.nativeReference).length;
     const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
-    summary.appendChild(document.createTextNode(
-        `來源觀測 ${observations.length} 筆（${exactTimes} 筆有 UTC 時間、${exactReferences} 筆有原生參照）${truncatedText} `));
+    const summary = metaLine([
+        `${observations.length} 筆`,
+        `${exactTimes} 筆有 UTC 時間`,
+        `${exactReferences} 筆有原生參照`,
+        issue.sourceObservationsTruncated ? '清單已截斷' : null,
+        '群組顯示時段不是來源時間窗'
+    ]);
+    block.appendChild(summary);
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 lf-no-print';
-    toggle.textContent = '展開';
-    toggle.setAttribute('aria-label', '展開來源觀測');
-    toggle.setAttribute('aria-expanded', 'false');
-    summary.appendChild(toggle);
-    const details = document.createElement('div');
-    details.className = 'd-none small border-start ps-2 mt-1';
-    const windowNote = document.createElement('div');
-    windowNote.className = 'mb-1 text-muted';
-    windowNote.textContent = '群組顯示時段不是來源時間窗';
-    details.appendChild(windowNote);
+    const sourceNames = {
+        Prtg: 'PRTG', SentinelWindows: 'Sentinel Windows', SentinelLinux: 'Sentinel Linux',
+        LocalClassicEventLog: '本機事件記錄', LocalEventRecord: '本機 Event Record'
+    };
+    const scopes = { Host: '主機', Volume: '磁碟區', Device: '裝置', Sensor: '感測器' };
+    const list = document.createElement('ol');
+    list.className = 'lf-source-obs__list';
     for (const item of observations) {
-        const row = document.createElement('div');
-        row.className = 'mb-1';
-        const sourceNames = {
-            Prtg: 'PRTG', SentinelWindows: 'Sentinel Windows', SentinelLinux: 'Sentinel Linux',
-            LocalClassicEventLog: '本機事件記錄', LocalEventRecord: '本機 Event Record'
-        };
+        const row = document.createElement('li');
         const line = document.createElement('div');
-        const scopes = { Host: '主機', Volume: '磁碟區', Device: '裝置', Sensor: '感測器' };
         line.textContent = `來源：${sourceNames[item.sourceKind] || '未知'}；範圍：${scopes[item.resourceScope] || '未知'}；主機：${item.exactHostKey || '未知'}；資源：${item.exactResourceKey || '未知'}`;
         row.appendChild(line);
 
@@ -1664,17 +1691,9 @@ function sourceEvidenceBlock(issue) {
         const reference = document.createElement('div');
         reference.textContent = `原生參照：${item.nativeReference || '未知'}`;
         row.appendChild(reference);
-        details.appendChild(row);
+        list.appendChild(row);
     }
-    toggle.addEventListener('click', () => {
-        const open = details.classList.toggle('d-none') === false;
-        toggle.textContent = open ? '收合' : '展開';
-        toggle.setAttribute('aria-label', open ? '收合來源觀測' : '展開來源觀測');
-        toggle.setAttribute('aria-expanded', String(open));
-    });
-
-    const block = document.createElement('div');
-    block.append(summary, details);
+    block.appendChild(list);
     return block;
 }
 
@@ -1683,25 +1702,11 @@ function formatSourceUtc(value) {
     return Number.isNaN(date.getTime()) ? '未知' : date.toISOString();
 }
 
-/**
- * 殘留徽章與判定依據（A6）：
- * 當 issue.residualCredentialBasis 有值時呈現疑似殘留或由殘留觸發的徽章與說明。
- */
+/** 殘留憑證判定依據（佐證層；徽章在判斷層 issueStateBadges） */
 function residualCredentialBlock(issue) {
-    const wrap = document.createElement('div');
-    wrap.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
-
-    const badge = document.createElement('span');
-    badge.className = 'lf-badge lf-badge--secondary';
-    badge.textContent = issue.residualCredentialRetry ? '疑似殘留憑證重試' : '可能由殘留憑證觸發';
-    wrap.appendChild(badge);
-
     const basis = document.createElement('div');
-    basis.className = 'mt-1';
     basis.textContent = issue.residualCredentialBasis;
-    wrap.appendChild(collapsibleText(basis));
-
-    return wrap;
+    return collapsibleText(basis);
 }
 
 /**
@@ -1731,7 +1736,7 @@ function loginFailureDetailsTable(issue) {
                     accountTd.appendChild(document.createTextNode(d.account ? d.account : '（不明）'));
                     if (d.isComputerAccount) {
                         const note = document.createElement('span');
-                        note.className = 'text-muted small ms-1';
+                        note.className = 'lf-text-meta ms-1';
                         note.textContent = '（電腦帳號）';
                         accountTd.appendChild(note);
                     }
@@ -1749,7 +1754,7 @@ function loginFailureDetailsTable(issue) {
     if (details.length > maxRows || issue.loginFailureDetailsTruncated) {
         const remaining = details.length - maxRows;
         const note = document.createElement('div');
-        note.className = 'text-muted small mt-1';
+        note.className = 'lf-text-meta mt-1';
         // 後端明細封頂 50 組——截斷時不能拿清單長度冒充全貌，改報總次數並言明已截斷
         note.textContent = issue.loginFailureDetailsTruncated
             ? `另有 ${remaining} 筆明細未顯示（實際共 ${issue.loginFailureTotalCount} 次登入失敗，明細僅保留前 ${details.length} 組）`
@@ -1801,47 +1806,82 @@ function workOrderBadge(workOrderId) {
 }
 
 /**
- * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
- * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，交給共用的 collapsibleText：
- * 只看字數，超過 COLLAPSE_LIMIT 才收合並出現「全文」切換鈕，不量測版面、
- * 藏在 d-none 區塊裡的列也判得準。列印時一律看得到全文（見 ui.js／site.css）。
+ * 帳號／來源 IP 摘要（判斷層）：後端組的字串形如「相關帳號(3個): a, b, c；來源IP(1個): 10.0.0.1」，
+ * 以「；」切段、每段在第一個冒號分成標籤與值，各自一行（標籤用 lf-text-label、值用 lf-text-data）。
+ * 切不出這個形狀（舊資料、格式改變）就整段原樣顯示——前端不判斷值的內容對不對，只負責不撐破版面。
+ * 這是佐證資訊不是風險訊號，不上紅字（docs/DESIGN-SYSTEM.md §8.1）。超長的值交給共用收合，不截斷。
  */
 function keyDetailsBlock(keyDetails) {
     const wrap = document.createElement('div');
-    wrap.className = 'mt-1';
+    wrap.className = 'lf-key-details';
 
-    const details = document.createElement('div');
-    details.className = 'small text-danger';
-    details.textContent = keyDetails;
-    wrap.appendChild(collapsibleText(details));
+    const segments = keyDetails.split('；').map(s => s.trim()).filter(Boolean);
+    const parsed = segments.map(segment => /^([^:：]{1,24})[:：]\s*([\s\S]+)$/.exec(segment));
+    if (parsed.length === 0 || parsed.some(m => !m)) {
+        const raw = document.createElement('div');
+        raw.className = 'lf-text-data';
+        raw.textContent = keyDetails;
+        wrap.appendChild(collapsibleText(raw));
+        return wrap;
+    }
 
+    for (const [, label, value] of parsed) {
+        const row = document.createElement('div');
+        row.className = 'lf-key-details__row';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'lf-text-label';
+        labelEl.textContent = label.trim();
+        const valueEl = document.createElement('span');
+        valueEl.className = 'lf-text-data';
+        valueEl.textContent = value.trim();
+        row.append(labelEl, collapsibleText(valueEl));
+        wrap.appendChild(row);
+    }
     return wrap;
 }
 
 /**
- * 原始訊息（docs/archive/HISTORY.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
- * 這個問題實際觸發的事件訊息樣本，供比對確認——舊名稱「範例訊息」看不出指的是什麼。
- * hover popover 在窄欄位下常被 Popper 定位空間壓縮、內容擠成一團，且與點擊維持顯示
- * 兩套手勢並存會曖昧；改為點擊開 modal，寬度不受定位限制，逐則訊息各自成段落，
- * 不再把 `---` 當分隔字串塞進同一段文字裡。
+ * 原始訊息（docs/archive/HISTORY.md #14）：這個問題實際觸發的事件訊息樣本，點了開 modal，
+ * 寬度不受定位限制，逐則訊息各自成段落。開視窗的動作用外框按鈕（§8.2），數量寫在標籤上。
  */
 function sampleMessagesTrigger(issue) {
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'btn btn-link btn-sm p-0 lf-no-print';
-    trigger.textContent = `原始訊息 ${issue.sampleMessages.length} 則`;
-    trigger.title = '這個問題實際觸發的事件訊息樣本，供比對確認';
-
-    trigger.addEventListener('click', event => {
-        event.stopPropagation();
-        showDetailModal({
-            title: `原始訊息（${issue.sourceEventLabel}，共 ${issue.sampleMessages.length} 則）`,
-            body: sampleMessagesBody(issue.sampleMessages),
-            size: 'modal-lg'
-        });
+    const trigger = button(`原始訊息 ${issue.sampleMessages.length}`, {
+        icon: 'file-earmark-text',
+        opens: 'dialog',
+        title: '這個問題實際觸發的事件訊息樣本，供比對確認',
+        onClick: event => {
+            event.stopPropagation();
+            showDetailModal({
+                title: `原始訊息（${issue.sourceEventLabel}，共 ${issue.sampleMessages.length} 則）`,
+                body: sampleMessagesBody(issue.sampleMessages),
+                size: 'modal-lg'
+            });
+        }
     });
-
+    trigger.classList.add('lf-no-print', 'lf-issue-cell__action');
     return trigger;
+}
+
+/**
+ * 趨勢欄：後端以換行串起「狀態詞＋數字」（首次出現／頻率上升／重複發生／頻率下降，接著前一日、歷史基準、近期出現天數）。
+ * 狀態詞獨立一行、數字收成一行次要資訊；沒有狀態詞（舊紀錄只有數字）時整段都當數字。
+ */
+const TREND_WORDS = new Set(['首次出現', '頻率上升', '重複發生', '頻率下降']);
+function trendCell(text) {
+    const parts = (text || '').split('\n').map(s => s.trim()).filter(Boolean);
+    if (parts.length === 0) return document.createTextNode('');
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-trend';
+    const numbers = TREND_WORDS.has(parts[0]) ? parts.slice(1) : parts;
+    if (TREND_WORDS.has(parts[0])) {
+        const word = document.createElement('div');
+        word.className = `lf-trend__word${parts[0] === '頻率上升' || parts[0] === '首次出現' ? ' lf-trend__word--up' : ''}`;
+        word.textContent = parts[0];
+        wrap.appendChild(word);
+    }
+    const meta = metaLine(numbers);
+    if (meta) wrap.appendChild(meta);
+    return wrap;
 }
 
 function prtgTrendEvidenceBlock(evidence) {
@@ -2034,7 +2074,7 @@ function trendAlertItem(ref) {
     if (ref.kind === 'signature' && ref.issueKey) {
         const link = document.createElement('button');
         link.type = 'button';
-        link.className = 'btn btn-link p-0 text-body text-start lf-alert-item__text';
+        link.className = 'lf-nav-item lf-alert-item__text';
         link.textContent = ref.text;
         link.addEventListener('click', () => scrollToIssue(ref.issueKey));
         item.appendChild(link);
@@ -2070,21 +2110,18 @@ function renderSuppressedAlertsBox(detail) {
     const box = document.createElement('div');
     box.className = 'alert alert-secondary mb-0 mt-2';
 
-    const summary = document.createElement('button');
-    summary.type = 'button';
-    summary.className = 'btn btn-link p-0 text-body text-decoration-none fw-semibold';
     const count = (detail.suppressedTrendAlerts?.length ?? 0) + (detail.suppressedCorrelationAlerts?.length ?? 0);
-    summary.textContent = `已抑制的告警 ${count} 項（通知已關閉，偵測與紀錄照常）`;
-
     const list = document.createElement('ul');
-    list.className = 'mb-0 mt-2 ps-3 small d-none';
+    list.className = 'mb-0 mt-2 ps-3 small';
     for (const text of [...(detail.suppressedCorrelationAlerts ?? []), ...(detail.suppressedTrendAlerts ?? [])]) {
         list.appendChild(plainAlertItem(text));
     }
+    const summary = disclosure(`已抑制的告警 ${count} 項`, list);
+    const note = document.createElement('div');
+    note.className = 'lf-text-meta';
+    note.textContent = '通知已關閉，偵測與紀錄照常。';
 
-    summary.addEventListener('click', () => list.classList.toggle('d-none'));
-
-    box.append(summary, list);
+    box.append(summary, note, list);
     return box;
 }
 
@@ -2174,7 +2211,7 @@ function renderCategories(detail) {
 
         const nav = document.createElement('button');
         nav.type = 'button';
-        nav.className = 'btn btn-link p-0 text-body text-decoration-none text-start flex-grow-1 d-flex justify-content-between align-items-center';
+        nav.className = 'lf-nav-item flex-grow-1 d-flex justify-content-between align-items-center';
         nav.addEventListener('click', () => scrollToCategory(category.category));
 
         const name = document.createElement('span');
@@ -2185,7 +2222,7 @@ function renderCategories(detail) {
         right.append(severityBadge(category.maxSeverity));
 
         const count = document.createElement('span');
-        count.className = 'text-muted small';
+        count.className = 'lf-text-meta';
         count.textContent = `${category.issueCount} 項 / ${formatNumber(category.totalEvents)} 筆`;
         right.appendChild(count);
 
@@ -2193,7 +2230,7 @@ function renderCategories(detail) {
 
         // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
         const cross = document.createElement('a');
-        cross.className = 'lf-no-print ms-2 text-muted';
+        cross.className = 'lf-icon-link lf-no-print ms-2';
         cross.href = appUrl(recordsUrl({ categories: category.category, riskLevels: '高,中,低', from: detail.date, to: detail.date }));
         cross.title = '在問題查詢中看這一類（可跨日）';
         cross.appendChild(icon('search'));
@@ -2240,10 +2277,7 @@ function renderCoverage(detail) {
     const hasGap = detail.dataIncomplete || detail.securityLogAvailable === false;
 
     if (!hasGap) {
-        const ok = document.createElement('div');
-        ok.className = 'text-success';
-        ok.textContent = '✓ 本日資料完整，所有偵測項目皆已執行。';
-        container.appendChild(ok);
+        container.appendChild(statusNote('success', '本日資料完整，所有偵測項目皆已執行。'));
         return;
     }
 
@@ -2313,10 +2347,7 @@ function aiInterpretPanel(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-guidance';
 
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-secondary';
-    button.textContent = 'AI 判讀';
+    const button = makeButton('AI 判讀');
 
     const output = document.createElement('div');
     output.className = 'small mt-2';
@@ -2378,7 +2409,7 @@ function otherAnalysis(detail) {
 
         if (finding.impact) {
             const impact = document.createElement('div');
-            impact.className = 'small text-muted mb-1';
+            impact.className = 'lf-text-meta mb-1';
             impact.appendChild(document.createTextNode('影響：'));
             renderAiInline(impact, finding.impact);
             item.appendChild(impact);
@@ -2422,7 +2453,7 @@ const riskReportCard = reportCard();
 const checkupReportCard = reportCard();
 const reportCards = document.getElementById('report-cards');
 const riskReportPendingNotice = document.createElement('p');
-riskReportPendingNotice.className = 'small text-warning-emphasis mb-0';
+riskReportPendingNotice.className = 'lf-text-meta mb-0';
 riskReportPendingNotice.hidden = true;
 reportCards.before(riskReportPendingNotice);
 reportCards.append(riskReportCard.el, checkupReportCard.el);

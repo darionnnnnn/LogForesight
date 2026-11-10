@@ -139,6 +139,23 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
 }
 
 /**
+ * 換頁的動作做成按鈕外觀時用（「下一筆未處理」「開始設定」之類）：仍是 <a href>，
+ * 中鍵／新分頁與瀏覽器的上一頁照常運作。href 由呼叫端以 appUrl() 組好再傳入（可先傳空字串、之後再設）。
+ * variant 同 button() 的白名單。
+ */
+export function linkButton(text, href, { variant = 'outline-primary', size = 'sm', icon: iconName, title } = {}) {
+    const link = document.createElement('a');
+    link.className = size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`;
+    if (href) link.href = href;
+    if (title) link.title = title;
+    if (iconName) link.appendChild(icon(iconName));
+    const span = document.createElement('span');
+    span.textContent = text;
+    link.appendChild(span);
+    return link;
+}
+
+/**
  * 頁首元件（WEB-SPEC §8.2）：topbar 是每頁唯一的標題（h1），頁首只放「一句話副標」與
  * 頁面層級動作，每頁至多一個 btn-primary（DESIGN-SYSTEM §6b）。沒有動作也沒有必要副標的頁不放。
  *
@@ -692,6 +709,8 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  * onRowToggle（選填）：每次展開／收合都呼叫 onRowToggle(row, expanded, cell)；onRowExpand 只在首次展開呼叫一次，
  * 需要在收合或再展開時做事（例如清掉連動高亮）就用這個；首次展開時 onRowExpand 先於它執行，內容已填好。
+ * rowKey／expandedKeys（選填，一起給）：呼叫端持有 expandedKeys（Set），表格依它決定哪些列一開始就展開，
+ * 並在展開／收合（含 toggleAllTableDetails）時同步更新——同一頁就地重繪後，使用者展開的列維持展開。
  * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
  * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
  * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
@@ -699,7 +718,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
  * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, onRowToggle, sort, onSort, stickyLastColumn, caption, footer }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, onRowToggle, sort, onSort, stickyLastColumn, caption, footer, rowKey, expandedKeys }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -813,22 +832,33 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             tbody.appendChild(detailRow);
 
             let populated = !!detail;   // eager 版本一開始就已填好；lazy 版本首次展開才填
+            const key = rowKey && expandedKeys ? rowKey(row) : null;
             tr.classList.add('lf-row-expandable');
             // 展開列同樣要鍵盤可達（體檢 H5），另外補 aria-expanded 讓螢幕閱讀器
             // 知道現在是展開還是收合——只有視覺上的箭頭對輔助技術等於沒有狀態
             tr.setAttribute('aria-expanded', 'false');
-            makeRowActivatable(tr, () => {
-                const open = detailRow.classList.toggle('d-none');
-                tr.classList.toggle('lf-row-open', !open);
-                tr.setAttribute('aria-expanded', String(!open));
+            const setExpanded = open => {
+                detailRow.classList.toggle('d-none', !open);
+                tr.classList.toggle('lf-row-open', open);
+                tr.setAttribute('aria-expanded', String(open));
                 // 首次展開才呼叫 onRowExpand 填內容（之後展開/收合重用同一份 DOM）
-                if (!open && !populated && onRowExpand) {
+                if (open && !populated && onRowExpand) {
                     populated = true;
                     onRowExpand(row, cell);
                 }
-                // 每次展開／收合都通知（onRowExpand 只在首次展開呼叫一次，收合與再展開要靠這個）
-                if (onRowToggle) onRowToggle(row, !open, cell);
-            });
+                if (key !== null) {
+                    if (open) expandedKeys.add(key);
+                    else expandedKeys.delete(key);
+                }
+            };
+            // 使用者操作的展開／收合（點列、全部展開）：每次都通知 onRowToggle
+            tr._lfSetExpanded = open => {
+                setExpanded(open);
+                if (onRowToggle) onRowToggle(row, open, cell);
+            };
+            makeRowActivatable(tr, () => tr._lfSetExpanded(detailRow.classList.contains('d-none')));
+            // 重繪前已展開的列直接展開（不是使用者這一次的操作，不通知 onRowToggle）
+            if (key !== null && expandedKeys.has(key)) setExpanded(true);
         }
     }
     table.appendChild(tbody);
@@ -1022,6 +1052,11 @@ export function toggleAllTableDetails(container, expand) {
         : Array.from(rows).some(r => r.getAttribute('aria-expanded') !== 'true');
 
     for (const tr of rows) {
+        // renderTable 建的列走它自己的切換（同步 expandedKeys、lazy 內容、onRowToggle）
+        if (tr._lfSetExpanded) {
+            if ((tr.getAttribute('aria-expanded') === 'true') !== shouldExpand) tr._lfSetExpanded(shouldExpand);
+            continue;
+        }
         const detailRow = tr.nextElementSibling;
         if (!detailRow || !detailRow.classList.contains('lf-row-detail')) continue;
 

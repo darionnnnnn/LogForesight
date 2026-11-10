@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadButton } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -35,7 +36,8 @@ function extractBlock(source, prefix) {
     return source.slice(start, source.indexOf('\n};\n', start) + 3);
 }
 
-installDom();
+const dom = installDom();
+const button = loadButton(dom);
 
 const formatSource = sourceOf('core', 'format.js');
 const { logSourceName, netiqAttemptStatusName } = new Function(`
@@ -46,11 +48,11 @@ const { logSourceName, netiqAttemptStatusName } = new Function(`
 `)();
 
 const detailSource = sourceOf('pages', 'record-detail.js');
-const { aiSummaryBlock } = new Function('renderAiInline', 'toast', `
+const { aiSummaryBlock } = new Function('renderAiInline', 'toast', 'button', `
     ${extractFunction(detailSource, 'function aiSummaryBlock(')}
     ${extractFunction(detailSource, 'function briefBlock(')}
     return { aiSummaryBlock };
-`)((el, text) => { el.appendChild(document.createTextNode(text)); }, () => {});
+`)((el, text) => { el.appendChild(document.createTextNode(text)); }, () => {}, button);
 
 const { sourceLine } = new Function('logSourceName', 'netiqAttemptStatusName', `
     ${extractFunction(detailSource, 'function sourceLine(')}
@@ -107,10 +109,11 @@ const cases = {
     副標組字() {
         assert.equal(
             sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: 'success', prtgSupplementEligible: true }),
-            '資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。');
+            '資料來源：NetIQ（最近一次取數：成功；可再補 PRTG 資料）');
         const saved = sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: null, prtgSupplementEligible: false });
         assert(saved.includes('已保存的分析結果'));
-        assert(saved.includes('這一天不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ。'));
+        assert(saved.includes('不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ'));
+        assert(sourceLine({ logSource: 'Prtg' }).startsWith('資料來源：PRTG（當日沒有日誌分析'), 'PRTG 當日的說明併進同一句');
         const unknown = sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: 'weird', prtgSupplementEligible: true });
         assert(unknown.includes('未知'));
         assert(!unknown.includes('weird'));

@@ -169,5 +169,130 @@
         }
       }
     ]
+  },
+  {
+    "name": "互動-全部展開",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues section.lf-issue-group .lf-issue-group__expand-all"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable[aria-expanded=\"false\"]",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type .lf-issue-group__expand-all",
+          "text": "全部收合"
+        }
+      },
+      {
+        "click": "#detail-issues section.lf-issue-group .lf-issue-group__expand-all"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-重繪保留展開與捲動",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(3)"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(3)[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      },
+      {
+        "click": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(1) input[data-issue-key]"
+      },
+      {
+        "click": ".lf-handling__chips [data-status=\"resolved\"]"
+      },
+      {
+        "type": [
+          "#handling-note",
+          "UI 驗收：重繪後展開狀態"
+        ]
+      },
+      {
+        "markScroll": true
+      },
+      {
+        "click": "#handling-panel button[type=\"submit\"]"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      },
+      {
+        "scrollWithin": 4
+      }
+    ]
+  },
+  {
+    "name": "列印-風險日佐證",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "media": "print",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#detail-issues .lf-evidence",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues .lf-disclosure",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-手機-風險日",
+    "role": "ui-handler",
+    "path": "fixture:record.cases",
+    "widths": [
+      375
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues tr.lf-row-expandable"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      }
+    ]
   }
 ]

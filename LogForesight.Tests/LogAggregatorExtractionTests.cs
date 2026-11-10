@@ -455,4 +455,50 @@ Failure Code:		0x12";
         Assert.Contains("john smith", accounts);
         Assert.DoesNotContain("CONTOSO\\john", accounts);
     }
+
+    // ── 截圖中的三種事件形狀（docs/FEEDBACK-69-PLAN.md X2）：NetIQ 單行訊息、欄位間 2 個空白 ──
+    // 修正前整段訊息被當成「相關帳號」寫進紀錄；這裡確認現行擷取不再產生那種值。
+
+    private const string Single4735 =
+        "A security-enabled local group was changed.  Subject:  Security ID: S-1-5-18  Account Name: TP-BKSVR02$  " +
+        "Account Domain: BRK  Logon ID: 0x3E7  Group:  Security ID: S-1-5-32-544  Group Name: Administrators  " +
+        "Group Domain: Builtin  Changed Attributes:  SAM Account Name: -  SID History: -  Additional Information:  Privileges: -";
+
+    private const string Single4719 =
+        "System audit policy was changed.  Subject:  Security ID: S-1-5-18  Account Name: TP-BKSVR02$  Account Domain: BRK  " +
+        "Logon ID: 0x3E7  Audit Policy Change:  Category: Privilege Use  Subcategory: Other Privilege Use Events  " +
+        "Subcategory GUID: {0cce922a-69ae-11d9-bed3-505054503030}  Changes: Success removed, Failure removed";
+
+    private const string Single4625 =
+        "An account failed to log on.  Subject:  Security ID: S-1-0-0  Account Name: -  Account Domain: -  Logon ID: 0x0  " +
+        "Logon Type: 3  Account For Which Logon Failed:  Security ID: S-1-0-0  Account Name: srvadm18.brk  Account Domain: brk  " +
+        "Failure Information:  Failure Reason: Unknown user name or bad password.  Status: 0xC000006D  Sub Status: 0xC0000064\n" +
+        "Network Information:  Workstation Name: VM-SPRINGBOARD7  Source Network Address: 10.216.8.188  Source Port: 0";
+
+    [Theory]
+    [InlineData(Single4735)]
+    [InlineData(Single4719)]
+    [InlineData(Single4625)]
+    public void 截圖三種單行訊息不再把整段訊息當成帳號(string message)
+    {
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { message });
+        foreach (var account in accounts)
+        {
+            Assert.DoesNotContain("Account Domain", account);
+            Assert.DoesNotContain(":", account);
+            Assert.True(account.Length <= 64, $"帳號值過長：{account}");
+        }
+    }
+
+    [Fact]
+    public void 截圖4625的登入失敗明細帳號與來源各自獨立()
+    {
+        var (accounts, ips) = LogAggregator.ExtractAccountsAndIps(new[] { Single4625 });
+        Assert.Contains("srvadm18.brk", accounts);
+        Assert.Contains("10.216.8.188", ips);
+
+        var detail = LogAggregator.ExtractLoginFailureDetail(4625, Single4625);
+        Assert.Equal("srvadm18.brk", detail.Account);
+        Assert.DoesNotContain("Source Network Address", detail.Source);
+    }
 }

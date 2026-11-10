@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadButton } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -149,8 +150,8 @@ const cases = {
         const { renderAiInline } = await import(pathToFileURL(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'markdown-lite.js')).href);
         const navigator = { clipboard: { writeText: async t => { copied.push(t); } } };
         const src = extractFunction(recordDetail, 'function briefBlock');
-        const briefBlock = new Function('document', 'renderAiInline', 'navigator', 'toast', `${src}\nreturn briefBlock;`)(
-            document, renderAiInline, navigator, (m, k) => toasts.push([m, k]));
+        const briefBlock = new Function('document', 'renderAiInline', 'navigator', 'toast', 'button', `${src}\nreturn briefBlock;`)(
+            document, renderAiInline, navigator, (m, k) => toasts.push([m, k]), loadButton(dom));
         const wrap = briefBlock('一台主機**磁碟異常**，請採購備品。');
         const copyBtn = wrap.find(n => n.tagName === 'BUTTON');
         assert.equal(copyBtn.getAttribute('aria-label'), '複製重點速報');

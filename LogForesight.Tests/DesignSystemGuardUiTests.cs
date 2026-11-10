@@ -53,7 +53,7 @@ public sealed class DesignSystemGuardUiTests
         "Views/Pages/HandlerDetail.cshtml", "Views/Pages/HelpManual.cshtml", "Views/Pages/HostDetail.cshtml",
         "Views/Pages/Hosts.cshtml", "Views/Pages/Imports.cshtml", "Views/Pages/IssueOwners.cshtml",
         "Views/Pages/Netiq.cshtml", "Views/Pages/PermissionChanges.cshtml", "Views/Pages/Prtg.cshtml",
-        "Views/Pages/RecordDetail.cshtml", "Views/Pages/Records.cshtml", "Views/Pages/Reports.cshtml",
+        "Views/Pages/Records.cshtml", "Views/Pages/Reports.cshtml",
         "Views/Pages/Rules.cshtml", "Views/Pages/Runs.cshtml", "Views/Pages/Settings.cshtml",
         "Views/Pages/Setup.cshtml", "Views/Pages/UserDetail.cshtml", "Views/Pages/Users.cshtml",
         "Views/Pages/WorkOrderDetail.cshtml", "Views/Pages/WorkOrders.cshtml",
@@ -63,7 +63,7 @@ public sealed class DesignSystemGuardUiTests
         "wwwroot/js/pages/issue-mute-modal.js", "wwwroot/js/pages/issue-owners.js", "wwwroot/js/pages/issue-status-reply.js",
         "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js", "wwwroot/js/pages/permission-changes.js",
         "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-calibration.js", "wwwroot/js/pages/prtg-guard.js",
-        "wwwroot/js/pages/record-detail.js", "wwwroot/js/pages/records.js", "wwwroot/js/pages/reports.js",
+        "wwwroot/js/pages/records.js", "wwwroot/js/pages/reports.js",
         "wwwroot/js/pages/rules.js", "wwwroot/js/pages/runs.js", "wwwroot/js/pages/settings.js",
         "wwwroot/js/pages/setup.js", "wwwroot/js/pages/user-detail.js", "wwwroot/js/pages/users.js",
         "wwwroot/js/pages/work-order-detail.js", "wwwroot/js/pages/work-orders.js",
@@ -84,7 +84,7 @@ public sealed class DesignSystemGuardUiTests
         "wwwroot/js/pages/audit.js", "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handler-detail.js",
         "wwwroot/js/pages/issue-status-reply.js", "wwwroot/js/pages/permission-changes.js",
         "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
-        "wwwroot/js/pages/record-detail.js", "wwwroot/js/pages/runs.js",
+        "wwwroot/js/pages/runs.js",
     };
 
     [Fact]
@@ -102,7 +102,7 @@ public sealed class DesignSystemGuardUiTests
         "wwwroot/js/pages/host-detail.js", "wwwroot/js/pages/issue-mute-modal.js", "wwwroot/js/pages/issue-owners.js",
         "wwwroot/js/pages/issue-status-reply.js", "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
         "wwwroot/js/pages/permission-changes.js", "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
-        "wwwroot/js/pages/record-detail.js", "wwwroot/js/pages/records.js", "wwwroot/js/pages/runs.js",
+        "wwwroot/js/pages/records.js", "wwwroot/js/pages/runs.js",
         "wwwroot/js/pages/settings.js", "wwwroot/js/pages/setup.js", "wwwroot/js/pages/user-detail.js",
         "wwwroot/js/pages/work-order-detail.js",
     };
