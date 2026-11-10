@@ -1,0 +1,906 @@
+﻿/* 頁面層：只屬於單一頁面的樣式。 */
+
+/* 操作說明書的章節目錄卡（回饋十七輪批次G-1，推翻十六輪批次E-4）：原本用 JS 量測目錄卡
+   高度、把內容區塞進同高的 max-height 內捲動——內容一長就要在小視窗裡捲兩層（頁面本身
+   +內容區），體驗很差。改回目錄卡 sticky 跟著頁面捲動，內容區自然展開多長顯示多長。
+   .lf-topbar 不是 fixed／sticky，捲動時會一起滑出視窗，所以 top:0 不會被任何東西擋住，
+   跟 .lf-sidebar 的 sticky 用法一致。只在 md 以上生效——這個斷點以下兩欄變上下堆疊，
+   sticky 在那裡沒有意義（見 Bootstrap 的 col-md-3/col-md-9 斷點）。 */
+@media (min-width: 768px) {
+    #help-chapter-nav-card {
+        position: sticky;
+        top: var(--lf-space-4);
+        /* 體檢輪修正：矮視窗（筆電未最大化、開發者工具開著等）下，sticky 卡住後若卡片本身
+           比視窗還高，超出視窗底緣的章節在整段捲動期間都摸不到也點不到——.lf-sidebar 早就
+           踩過同一個坑（見其註解），這裡比照它的做法：卡片限制最大高度，超出的部分改由
+           內部（章節清單）捲動，不讓卡片本身無止盡撐高。 */
+        max-height: calc(100vh - var(--lf-space-4) * 2);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    #help-chapter-nav-card .lf-card__body {
+        overflow-y: auto;
+        min-height: 0;
+    }
+}
+
+/* 操作說明書內文（markdown-lite 的 asDocument 模式，docs/HELP-WRITING-GUIDE.md）：讀者是非 IT 人員，
+   要能快速掃讀。行高 1.7 給中文較舒適的呼吸、每行約 46 字（max-inline-size）避免大螢幕一行過長；
+   段落標題是語意 h3（卡片標題 h2 是章名），上方大留白＋底線把章節切成一段一段；
+   「注意：」段落改成警示色提示框。字級、間距、顏色全部沿用既有 token。 */
+.lf-doc {
+    line-height: 1.7;
+    max-inline-size: 46em;
+}
+
+.lf-doc > p,
+.lf-doc > ul,
+.lf-doc > ol,
+.lf-doc > .table-responsive {
+    margin: 0 0 var(--lf-space-3);
+}
+
+.lf-doc > ul,
+.lf-doc > ol {
+    padding-left: 1.5em;
+}
+
+.lf-doc li + li {
+    margin-top: var(--lf-space-1);
+}
+
+.lf-doc li::marker {
+    color: var(--lf-text-muted);
+}
+
+.lf-doc__heading {
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    line-height: var(--lf-line-tight);
+    margin: var(--lf-space-6) 0 var(--lf-space-3);
+    padding-bottom: var(--lf-space-2);
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-doc > .lf-doc__heading:first-child {
+    margin-top: var(--lf-space-3);
+}
+
+.lf-doc__note {
+    padding: var(--lf-space-2) var(--lf-space-3);
+    background: var(--lf-warning-soft);
+    color: var(--lf-warning-text);
+    border-left: 4px solid var(--lf-warning);
+    border-radius: var(--lf-radius);
+}
+
+.lf-doc__note strong {
+    color: inherit;
+}
+
+/* ── 報表一屏化：隨視窗自動縮放（docs/archive/FEEDBACK-10-PLAN.md §5）────────────────
+   前一版（回饋第九輪 §4）靠把 .lf-chart 從 280px 砍到 230px 硬擠出一屏，等於押注
+   「使用者的可用高度剛好是我猜的那個數字」——瀏覽器邊框、工具列、字級偏好任何一項不同
+   就破功。改成由外而內分配：頁面佔滿可用高度 → 圖表區吃掉扣除期間列與 KPI 後的剩餘 →
+   每張圖卡的畫布容器填滿卡片。Chart.js 本來就是 responsive + maintainAspectRatio:false
+   （core/charts.js），容器多高圖就多高，不需要為此改任何圖表程式碼。
+
+   :has() 是頁面範圍的關鍵：只有含 .lf-report-page 的版面被綁成視窗高度，其他頁維持
+   原本「內容多長就多長」的捲動行為。舊瀏覽器不支援 :has 時整組規則失效，
+   報表頁退回可捲動的一般版面——功能不壞，只是不再保證一屏。 */
+
+.lf-layout:has(.lf-report-page) {
+    height: 100dvh;
+}
+
+.lf-layout:has(.lf-report-page) .lf-content {
+    min-height: 0;      /* flex 子項的預設 min-height:auto 會讓內容撐破容器，這行是收斂的前提 */
+    /* 上下留白減半：內容區的 24px 上下留白在其他頁是呼吸空間，在這一頁是直接從圖表身上
+       扣掉的 48px。左右維持原值，橫向沒有擁擠問題 */
+    padding-block: var(--lf-space-3);
+    /* auto 而非 hidden：正常情況下沒有東西可捲（版面剛好填滿），但視窗矮到觸發圖表的
+       min-height 下限時，內容必須還捲得到——hidden 會把超出的部分直接裁掉且救不回來 */
+    overflow: auto;
+}
+
+.lf-report-page {
+    display: flex;
+    flex-direction: column;
+    /* 區塊間距用 space-2 而非其他頁的 space-3：這一頁的每一列都在跟圖表搶高度，
+       四個區塊間各省 4px 就足以讓 1536×864 從「差一點」變成「剛好放得下」 */
+    gap: var(--lf-space-2);
+    height: 100%;
+    min-height: 0;
+}
+
+/* 期間列與 KPI 列：內容多高就多高，不參與剩餘空間的分配 */
+.lf-report-page__fixed {
+    flex: 0 0 auto;
+}
+
+/* 圖表區吃掉剩餘高度，內部兩列再均分 */
+.lf-report-page__charts {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-2);
+}
+
+/* 每一列圖表外面包一層普通 div（見 Reports.cshtml 的說明）：Bootstrap .row 的負 margin-top
+   直接當 flex 子項時會讓高度算錯，多出一條只捲得動幾像素的捲軸 */
+.lf-report-page__row {
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.lf-report-page__charts .lf-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.lf-report-page__charts .lf-card__body {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* 圖卡的畫布容器改為填滿卡片。min-height 是可讀性下限：視窗矮到連這個高度都排不下時，
+   寧可讓頁面出現捲軸，也不要把圖壓成一條看不懂的色帶。
+   **用 px 不用 rem**：這是圖看不看得懂的物理下限，不該跟著使用者的字級偏好放大——
+   選「大」字級時 rem 下限會連帶膨脹 25%，反而在同一台螢幕上逼出捲軸。
+   96px 是實測值：1536×864（常見筆電全螢幕、已扣掉瀏覽器邊框）剛好容得下期間列＋KPI＋六張圖。
+   實際高度通常遠大於此（1920×1080 約 220px），下限只在最擠的情況下才生效 */
+.lf-report-page .lf-chart {
+    height: 100%;
+    min-height: 96px;
+}
+
+/* 「此期間沒有資料」的替代文字（charts.js renderNoData）：.lf-empty 帶的是給整頁空狀態
+   設計的大留白，塞進被版面壓縮過的圖卡裡會頂破容器（實測在全新環境逼出捲軸）。
+   收掉留白並置中，讓它安分待在圖表原本的位置 */
+.lf-report-page .lf-chart .lf-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: var(--lf-space-2);
+}
+
+/* canvas 絕對定位（docs/archive/FEEDBACK-10-PLAN.md §5）：容器高度改由版面決定後，
+   如果 canvas 還留在文件流裡，它的高度會回過頭撐大容器 → 容器變高 → Chart.js 再放大
+   canvas，形成量測震盪（實測會讓同一個視窗尺寸每次載入算出不同高度）。
+   絕對定位讓 canvas 只「填滿」容器、不再參與撐高，尺寸單向由版面流向圖表。 */
+.lf-report-page .lf-chart > canvas {
+    position: absolute;
+    inset: 0;
+}
+
+/* KPI 卡在報表頁壓縮留白（docs/archive/FEEDBACK-10-PLAN.md §5）：它是固定高度的一列，
+   省下來的每一像素都直接變成圖表的高度。數字本身的字級不動——那是主管一眼要看的東西，
+   縮的是四周留白與「與前期對比」那行的上方間距 */
+.lf-report-page__fixed .lf-card__body {
+    padding: var(--lf-space-3);
+}
+
+.lf-report-page__fixed .lf-card__body > .small.mt-2 {
+    margin-top: .125rem !important;
+}
+
+/* 占比小圖卡的內容：甜甜圈在上、圖例在下（欄位窄，左右並排會把圖例文字擠成逐字直排）。
+   甜甜圈吃掉扣除圖例後的剩餘高度並維持正圓（aspect-ratio） */
+.lf-chart-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--lf-space-2);
+    min-height: 0;
+}
+
+/* 甜甜圈容器**不用 aspect-ratio**（docs/archive/FEEDBACK-10-PLAN.md §5）：aspect-ratio 會由寬度
+   反推高度，在半欄寬 230px 的卡片裡等於強制 230px 高，整張卡的最小高度因此爆掉、
+   一屏化破功。改成填滿寬度、由 flex 分配高度——Chart.js 的甜甜圈本來就取容器長短邊的
+   較小值畫圓並置中，扁容器裡畫出來仍是正圓，不需要我們自己維持比例。 */
+.lf-report-page .lf-chart--sm {
+    width: 100%;
+    height: auto;
+    flex: 1 1 0;
+    min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
+}
+
+/* lg+ 視口，右側三顆圓餅卡片的卡頭高度下限，對齊左側主機告警排行卡的卡頭
+   （左卡頭含 btn-group-sm + rank-mode-toggle，比純標題列高）。
+   值由控制項高度變數 ＋ .lf-card__header 垂直 padding 推導，不是量測值，字級縮放時跟著走。
+   實測附註：這三顆卡的標題另有 min-height: 2.4em（見下方「標題固定佔兩行」那條），
+   算出來恆高於這裡的下限，因此本條目前不會實際生效——留著是為了標題那條若改回單行時仍有下限可守。
+   兩側卡片與圖形底緣的對齊不靠這條，靠的是 Reports.cshtml 內層 row 的 gx-3 ＋ col 的 h-100。
+   md 以下不套用，不影響手機 / 小平板版面。 */
+@media (min-width: 992px) {
+    .lf-report-page #risk-section .lf-card__header,
+    .lf-report-page #affected-hosts-section .lf-card__header,
+    .lf-report-page #handling-progress-section .lf-card__header {
+        min-height: calc(var(--lf-control-height-sm) + var(--lf-space-3) * 2);
+    }
+}
+
+/* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
+   這裡的值只是還沒算出來之前的起始字級 */
+.lf-chart__center-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: var(--lf-center-font-size, 1.25rem);
+    font-weight: 600;
+    line-height: 1;
+    pointer-events: none;
+}
+
+/* 空資料狀態（charts.js renderNoData）：canvas 留在原地只是藏起來，
+   換一個有資料的期間時 create() 會把它放回來 */
+.lf-chart--empty > canvas {
+    visibility: hidden;
+}
+
+.lf-chart--empty > .lf-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--lf-space-2);
+}
+
+/* 圓餅圖右側文字條列（#3，取代表格切換）：色點＋名稱＋數值/百分比，
+   有下鑽目的地的列走連結色＋hover，彙總列（無下鑽）維持一般文字 */
+.lf-legend-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-2);
+    min-width: 140px;
+}
+
+/* 三顆占比小圖並排時，卡片標題的字數不同（「風險層級占比」6 字／「受影響主機占比」7 字／
+   「處理進度」4 字）在半欄再切三份的窄欄裡會換成不同行數，甜甜圈分到的剩餘高度就不一樣。
+   標題固定佔兩行的高度，三張卡的圓才會一樣大 */
+.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__title {
+    min-height: 2.4em;
+}
+
+/* 三顆占比小圖並排時，圖例是唯一會讓三張卡分到不同甜甜圈高度的東西：
+   標籤字數與數值長度不同 → 換行列數不同 → 圓大小不一。
+   在報表頁的窄欄裡取消 min-width（改為欄寬自適應）、每列單行不換行，
+   讓三組圖例的高度恆等（都是兩列） */
+.lf-report-page .lf-chart-stack .lf-legend-list {
+    min-width: 0;
+    width: 100%;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row {
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lf-legend-row {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    color: inherit;
+    text-decoration: none;
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-1) var(--lf-space-2);
+    margin: 0 calc(var(--lf-space-2) * -1);
+}
+
+.lf-legend-row--link {
+    cursor: pointer;
+}
+.lf-legend-row--link:hover {
+    background: var(--lf-gray-50);
+}
+
+.lf-legend-row__dot {
+    width: .7em;
+    height: .7em;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--lf-swatch);
+}
+
+.lf-legend-row__label {
+    flex-grow: 1;
+}
+
+.lf-legend-row__value {
+    font-variant-numeric: tabular-nums;
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+}
+
+/* ── 重點問題的類別分節（§9.3）────────────────────────────────────────────
+   對齊報告 txt 的「■【類別】重點問題 N 項」；--hit = 下鑽帶入的類別，
+   左側主色框標示「這節就是你點進來的那一類」。*/
+
+.lf-issue-group + .lf-issue-group { border-top: 1px solid var(--lf-border); }
+.lf-issue-group__header {
+    padding: .6rem 1rem;
+    border-bottom: 1px solid var(--lf-border);
+}
+.lf-issue-group--hit { box-shadow: inset 3px 0 0 var(--lf-primary); }
+
+/* 類別標題列依最高嚴重度加淡色底（§5.1 D-1 #4）：一眼區分分節輕重，不必逐列看嚴重度徽章 */
+.lf-issue-group__header--critical,
+.lf-issue-group__header--high { background: var(--lf-danger-soft); }
+.lf-issue-group__header--medium { background: var(--lf-warning-soft); }
+.lf-issue-group__header--low { background: var(--lf-neutral-soft); }
+
+/* 類型分布頁內導航的短暫高亮：點某一類 → 捲到分節並閃一下主色底 */
+.lf-issue-group--flash { animation: lf-flash 1.2s ease-out; }
+@keyframes lf-flash {
+    0%   { background: var(--lf-primary-soft); }
+    100% { background: transparent; }
+}
+
+/* ── 主機詳情：月曆式風險時間軸（docs/task-M.md）────────────────────────── */
+
+.lf-calendar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4, 1rem);
+    align-items: flex-start;
+}
+
+.lf-calendar__month {
+    flex: 0 0 auto;
+    width: 210px;
+    max-width: 100%;
+}
+
+.lf-calendar__title {
+    font-size: var(--lf-font-size-sm, .86rem);
+    font-weight: 600;
+    color: var(--lf-text, #0f172a);
+    margin-bottom: var(--lf-space-2, .5rem);
+    text-align: center;
+}
+
+.lf-calendar__weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.lf-calendar__weekday {
+    font-size: var(--lf-font-size-xs, .78rem);
+    font-weight: 500;
+    color: var(--lf-text-muted, #64748b);
+    line-height: 1.2;
+}
+
+.lf-calendar__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.lf-calendar__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--lf-radius-sm, .25rem);
+    font-size: .75rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    color: var(--lf-gray-900, #0f172a);
+    user-select: none;
+    position: relative;
+    transition: transform var(--lf-transition, .15s ease),
+                opacity var(--lf-transition, .15s ease),
+                outline-color var(--lf-transition, .15s ease),
+                box-shadow var(--lf-transition, .15s ease);
+}
+
+.lf-calendar__cell[data-risk="高"] {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell {
+    cursor: pointer;
+}
+
+a.lf-calendar__cell:hover {
+    transform: scale(1.12);
+    z-index: 2;
+    box-shadow: var(--lf-shadow-sm, 0 1px 3px rgba(15, 23, 42, .08));
+    color: var(--lf-gray-900, #0f172a);
+}
+
+a.lf-calendar__cell[data-risk="高"]:hover {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell:focus-visible {
+    outline: 2px solid var(--lf-primary, #1e40af);
+    outline-offset: 2px;
+    z-index: 3;
+}
+
+.lf-calendar__cell--empty {
+    background: transparent;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* 主機詳情問題發生明細展開時的時間軸高亮連動（docs/FEEDBACK-4-PLAN.md §3）：
+   這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
+   只疊加外框/透明度，展開哪個問題一眼看得出來 */
+.lf-timeline-cell--highlight {
+    outline: 2px solid var(--lf-primary, #1e40af);
+    outline-offset: 1px;
+    z-index: 1;
+}
+
+.lf-timeline-cell--dim {
+    opacity: .25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lf-calendar__cell {
+        transition: none;
+    }
+    a.lf-calendar__cell:hover {
+        transform: none;
+    }
+}
+
+/* ── 問題層級處理狀態：狀態文字＋右側批次套用（2026-07-27 改版；2026-07-28 #7 拆欄）─────
+   勾選已獨立成「選取」欄的表頭全選 checkbox（見 issueColumns/selectCheckbox），
+   這裡只顯示狀態文字＋預計完成日；狀態改到右側「處理狀態」區塊填一次、
+   套用到所有勾選的問題（見 handling-panel.js）。 */
+
+.lf-issue-status {
+    display: flex;
+    flex-direction: column;
+    min-width: 8rem;
+}
+
+/* 預計完成日：獨立一行，日期本身不換行（避免「07-30」被硬拆成兩行） */
+.lf-issue-status__due {
+    white-space: nowrap;
+}
+
+/* 唯讀（無 Handle 能力）或已結案狀態的小徽章＋動作鈕排列 */
+.lf-issue-status__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+    flex-wrap: wrap;
+}
+
+/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀。
+   min-width（docs/FEEDBACK-3-PLAN.md #5）：「問題」合併欄吃掉大部分寬度後，
+   趨勢欄仍需要一個底線寬度，否則長片語會被壓成逐字直排 */
+.lf-trend-cell {
+    max-width: 180px;
+    min-width: 9rem;
+    white-space: pre-line;
+    line-height: 1.4;
+}
+
+/* 處理狀態欄底線寬度（docs/FEEDBACK-3-PLAN.md #5）：多數列走 .lf-issue-status
+   自己的 min-width，但唯讀徽章／「不處理（預設）」等短內容沒有這層包裝，
+   欄位本身仍需要一個底線避免被合併欄擠壓 */
+.lf-status-cell {
+    min-width: 8rem;
+}
+
+/* 勾選併入「處理狀態」欄右上角（docs/FEEDBACK-4-PLAN.md §1）：取代原本獨立、
+   偏窄不好點的「選取」欄。checkbox 絕對定位在右上角，內容（statusControl 的
+   輸出）保留原本的排版流；右側留白避免文字被壓到 checkbox 底下。 */
+.lf-status-cell__wrap {
+    position: relative;
+    padding-right: 1.75rem;
+}
+
+/* 加大點擊範圍：預設 checkbox 尺寸太小，2000 台規模下逐列勾選是高頻操作，
+   ~1.75rem 見方的可點區域比預設瀏覽器尺寸（約 1rem）好點得多 */
+.lf-status-cell__checkbox {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    cursor: pointer;
+}
+
+/* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
+   取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
+   （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
+   超過 300 字才收合並出現「顯示全文」（core/ui.js collapsibleText，區塊模式用 .lf-collapsible--clamped）。 */
+.lf-issue-cell {
+    min-width: 20rem;
+}
+
+.lf-issue-cell__meta {
+    row-gap: .25rem;
+}
+
+/* 白話說明：一般正文色的小字，完整顯示（超過 300 字才由 collapsibleText 收合） */
+.lf-issue-cell__explain {
+    font-size: var(--lf-font-size-sm);
+}
+
+.lf-collapsible--clamped {
+    max-height: 9rem;
+    overflow: hidden;
+    position: relative;
+    --lf-collapsible-fade: var(--lf-card-bg);
+}
+
+/* 展開列的灰底內，漸層要漸變到同一個底色才不會出現白帶 */
+.lf-row-detail .lf-collapsible--clamped,
+.lf-issue-group__ai .lf-collapsible--clamped,
+.lf-ai-block .lf-collapsible--clamped {
+    --lf-collapsible-fade: var(--lf-gray-50);
+}
+
+.lf-collapsible--clamped::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.5rem;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--lf-collapsible-fade));
+}
+
+/* 列印時一律看得到完整內容，紙本沒有「點擊展開」這回事 */
+@media print {
+    .lf-collapsible--clamped {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .lf-collapsible--clamped::after {
+        display: none;
+    }
+}
+
+/* 原始訊息 modal（#14）：逐則訊息各自成段落，等寬字型、保留原始換行；
+   邊框分隔取代舊版把 `---` 塞進同一段文字的做法 */
+.lf-sample-messages__item {
+    font-family: var(--lf-font-mono);
+    font-size: var(--lf-font-size-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: var(--lf-space-2) var(--lf-space-3);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-50);
+    margin: 0 0 var(--lf-space-2);
+}
+.lf-sample-messages__item:last-child {
+    margin-bottom: 0;
+}
+
+/* 處置參考面板（問題列展開）：與 txt 報告「處置參考（知識庫）」同一份內容 */
+.lf-guidance__label {
+    font-weight: 600;
+    font-size: var(--lf-font-size-sm);
+    margin-top: var(--lf-space-3);
+    margin-bottom: var(--lf-space-1);
+}
+.lf-guidance__label:first-child { margin-top: 0; }
+.lf-guidance ul { margin: 0; padding-left: 1.25rem; }
+
+/* 可收合區塊的箭頭圖示：收合時朝右、展開時朝下（§5.1 D-1 #1 報告全文預設收合） */
+.lf-collapse-caret {
+    display: inline-flex;
+    transform: rotate(-90deg);
+    transition: transform .15s ease;
+}
+.lf-collapse-caret--open { transform: rotate(0); }
+
+/* ── 登入頁 ────────────────────────────────────────────────────────────── */
+
+.lf-login {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 中間色跟隨 v2 海軍藍→企業藍的過渡（介於 --lf-sidebar-bg 與 --lf-primary-dark 之間） */
+    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #16294f 55%, var(--lf-primary-dark) 130%);
+    padding: var(--lf-space-4);
+}
+
+.lf-login__card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--lf-card-bg);
+    border-radius: var(--lf-radius-lg);
+    box-shadow: var(--lf-shadow-lg);
+    padding: var(--lf-space-6);
+}
+
+/* 錯誤頁的標題（Error.cshtml）：借用登入頁的卡片版面，但不是品牌區塊 */
+.lf-login__heading {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+/* 設定頁的圖示預覽格（docs/archive/FEEDBACK-10-PLAN.md §1）：尺寸刻意接近側欄實際顯示大小，
+   讓管理者上傳前就看得出「縮到這麼小還認得出來嗎」 */
+.lf-brand-preview {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-50);
+    color: var(--lf-text-muted);
+}
+
+.lf-brand-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: inherit;
+}
+
+/* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */
+
+/* 解析不出成對欄位時的退路：只保留原文換行與折行。異動前／異動後兩欄另加
+   .font-monospace——安全性描述元這類單串值走的正是這條路徑，等寬字是它唯一的可讀性依靠 */
+.lf-detail-plain,
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.lf-kv-table {
+    width: 100%;
+    table-layout: fixed;
+    margin: 0;
+    background: transparent;
+    border-collapse: collapse;
+}
+
+.lf-kv-table tr {
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-kv-table tr:last-child {
+    border-bottom: none;
+}
+
+.lf-kv-row--section th.lf-kv-section-header {
+    background-color: var(--lf-gray-100);
+    color: var(--lf-text);
+    font-weight: 600;
+    font-size: var(--lf-font-size-xs);
+    padding: var(--lf-space-2) var(--lf-space-2);
+    border: none;
+    letter-spacing: .02em;
+}
+
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    color: var(--lf-text);
+}
+
+/* 欄寬由 width 決定（表格是 table-layout: fixed，max-width 在此不生效） */
+.lf-kv-key {
+    width: 32%;
+    vertical-align: top;
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    padding: var(--lf-space-1) var(--lf-space-2);
+    white-space: normal;
+    word-break: break-word;
+}
+
+.lf-kv-val {
+    width: 68%;
+    vertical-align: top;
+    font-family: var(--lf-font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    color: var(--lf-text);
+    padding: var(--lf-space-1) var(--lf-space-2);
+}
+
+/* 鍵值表（buildKeyValueTable）的一般內容欄：不套等寬字與強制斷行，保留 .lf-kv-val 的欄寬與留白 */
+.lf-kv-val.lf-kv-val--plain {
+    font-family: inherit;
+    white-space: normal;
+    word-break: normal;
+}
+
+/* 時間輸入欄：不鎖死寬度，改以下限容納各地區設定的原生 time picker。
+   12 小時制（「上午 01:00」＋時鐘圖示）比 24 小時制寬，固定寬度會把數字裁掉。 */
+.lf-time-input {
+    width: auto;
+    min-width: 12rem;
+    max-width: 100%;
+}
+
+/* ── 排程作業頁（/runs）狀態卡 ─────────────────────────────────────────
+   三張卡（取數執行／AI 分析／PRTG 歷史回填）等寬並排，窄螢幕疊直。
+   舊版把這三件事用 <hr> 疊在同一張卡的右欄裡（還是卡中卡），讀不出它們是三個獨立的東西。 */
+.lf-run-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--lf-space-3);
+    /* stretch（而非 start）讓三張卡等高：三者的固定列數本來就不同（進度軌條數、有無說明段落），
+       align-items:start 會讓每張卡貼齊自己的內容高度，並排時高低不齊。
+       等高由 grid 給，不寫死 min-height——寫死的話內容一改就要回頭調數字。 */
+    align-items: stretch;
+}
+
+/* 卡片撐滿格線高度後，內容要能把按鈕列推到底，否則三張卡的按鈕會各自停在不同高度。 */
+.lf-run-status-grid > .lf-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.lf-run-status-grid > .lf-card > .lf-card__body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+}
+
+/* 按鈕列貼底：這一列是三張卡可見內容的最後一個元素（PRTG 卡後面的回填輸出預設收合，不占高度） */
+.lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
+    margin-top: auto;
+    padding-top: var(--lf-space-2);
+}
+
+@media (max-width: 991.98px) {
+    .lf-run-status-grid {
+        grid-template-columns: 1fr;
+    }
+
+    /* 疊直時每張卡各自為政，不必再把按鈕推到底 */
+    .lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
+        margin-top: var(--lf-space-2);
+    }
+}
+
+/* 標籤／值成對顯示：取代舊版手刻的 .small.text-muted + .fw-semibold 兩層 div */
+.lf-kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lf-space-2);
+    padding: 0.15rem 0;
+}
+
+.lf-kv__label {
+    color: var(--lf-text-muted);
+    font-size: 0.8125rem;
+    flex: 0 0 auto;
+}
+
+.lf-kv__value {
+    font-weight: 600;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+/* 進度軌區塊預留高度：狀態卡每 3 秒重繪一次，進度條出現/消失時版面不得跳動 */
+.lf-run-tracks {
+    min-height: 4.5rem;
+    margin-top: var(--lf-space-2);
+}
+
+.lf-run-tracks--single {
+    min-height: 1.75rem;
+}
+
+/* 兩條軌的區塊（取數卡的本機＋NetIQ、PRTG 卡的每日擷取＋回填） */
+.lf-run-tracks--pair {
+    min-height: 3.25rem;
+}
+
+.lf-run-progress {
+    height: 6px;
+}
+
+/* 階段時間軸（core/run-timeline.js）：條的位置與寬度是動態量值，走 CSS 變數；結果一律另有文字，不只靠顏色 */
+.lf-phase-timeline {
+    display: grid;
+    gap: var(--lf-space-2);
+    padding: var(--lf-space-2) 0;
+    font-size: var(--lf-font-size-sm);
+}
+
+.lf-phase-row {
+    display: grid;
+    grid-template-columns: 9rem minmax(6rem, 1fr) minmax(0, 2fr);
+    align-items: center;
+    gap: var(--lf-space-3);
+}
+
+.lf-phase-row--sub .lf-phase-name {
+    padding-left: var(--lf-space-3);
+    color: var(--lf-text-muted);
+}
+
+.lf-phase-track {
+    position: relative;
+    height: 0.625rem;
+    border-radius: 999px;
+    background: var(--lf-border);
+    overflow: hidden;
+}
+
+.lf-phase-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: min(var(--lf-phase-start, 0%), calc(100% - 2px));
+    width: var(--lf-phase-width, 0);
+    min-width: 2px;
+    border-radius: 999px;
+    background: var(--lf-primary);
+}
+
+.lf-phase-bar--success { background: var(--lf-success); }
+.lf-phase-bar--partial { background: var(--lf-warning); }
+.lf-phase-bar--failed { background: var(--lf-danger); }
+.lf-phase-bar--stopped { background: var(--lf-severity-high); }
+.lf-phase-bar--skipped { background: var(--lf-border-strong); }
+.lf-phase-bar--interrupted { background: var(--lf-cat-hardware); }
+
+.lf-phase-detail {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--lf-text-muted);
+}
+
+.lf-day-timing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1) var(--lf-space-5);
+    padding: var(--lf-space-2) 0 var(--lf-space-3);
+    font-size: var(--lf-font-size-sm);
+}
+
+@media (max-width: 767.98px) {
+    .lf-phase-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--lf-space-1);
+    }
+}
+
+/* 最新訊息固定兩行高，訊息長短不影響卡片高度 */
+.lf-run-message {
+    min-height: 2.5em;
+    overflow-wrap: anywhere;
+}
+
+/* 窄數值輸入框（併發數等）：取代散落各處的 style="max-width:120px" */
+.lf-input-narrow {
+    max-width: 7.5rem;
+}

@@ -44,7 +44,7 @@ public sealed class RecordDetailRailBehaviorTests
     [Fact]
     public void 側軌收合鈕在小螢幕與列印維持隱藏()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        var css = SiteCss.Read().Replace("\r\n", "\n");
         Assert.Contains(".lf-side-rail,\n.lf-side-rail__collapse {\n    display: none;\n}", css);
         Assert.Contains("@media print {\n    .lf-side-rail,\n    .lf-side-rail__collapse {\n        display: none !important;\n    }", css);
         // 展開才顯示收合鈕，且只在 >= lg 的區塊內

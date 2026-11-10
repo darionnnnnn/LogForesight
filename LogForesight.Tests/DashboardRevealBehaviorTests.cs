@@ -76,5 +76,5 @@ public class DashboardRevealBehaviorTests
     }
 
     private static string ReadSiteCss() =>
-        File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        SiteCss.Read().Replace("\r\n", "\n");
 }

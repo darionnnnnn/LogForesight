@@ -33,7 +33,7 @@ public class FrontendConsistencyUiTests
     [Fact]
     public void 下拉選項明確指定前景與背景色_避免Chrome選項文字空白()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         var match = System.Text.RegularExpressions.Regex.Match(css, @"select option,\s*select optgroup\s*\{(?<body>[^}]*)\}");
         Assert.True(match.Success, "site.css 必須有 select option／optgroup 規則");
         Assert.Contains("color: var(--lf-text)", match.Groups["body"].Value);
@@ -46,7 +46,7 @@ public class FrontendConsistencyUiTests
     [Fact]
     public void KPI副標最多兩行_空佔位保留兩行高()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         var sub = Regex.Match(css, @"\.lf-kpi-card__sub\s*\{(?<body>[^}]*)\}");
         Assert.True(sub.Success);
         Assert.Contains("-webkit-line-clamp: 2", sub.Groups["body"].Value);
@@ -719,7 +719,7 @@ public class FrontendConsistencyUiTests
     [Fact]
     public void KPI卡_hover規則只變陰影與邊框_不得位移()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         // 所有選擇器含 lf-kpi 的規則區塊（含 hover／focus／一般狀態）都不得有 transform，transition 也不得列 transform
         var blocks = Regex.Matches(css, @"(?<sel>[^{}]*\.lf-kpi[^{}]*)\{(?<body>[^}]*)\}");
         Assert.NotEmpty(blocks);
@@ -743,7 +743,7 @@ public class FrontendConsistencyUiTests
         Assert.Contains("toggle.setAttribute('aria-expanded'", reveal);
         Assert.Contains("toggle.setAttribute('aria-controls'", reveal);
 
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         var print = Regex.Match(css, @"@media print\s*\{\s*\.lf-kpi-grid > \[hidden\][\s\S]*?\.lf-reveal-bar\s*\{\s*display:\s*none !important;");
         Assert.True(print.Success, "列印樣式要還原被藏的卡並隱藏揭露鈕");
     }

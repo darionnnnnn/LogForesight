@@ -94,7 +94,7 @@ public sealed class SideRailBehaviorTests
     [Fact]
     public void 樣式表有側軌兩欄與列印隱藏規則()
     {
-        var css = Read("LogForesight.Web", "wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         Assert.Contains(".lf-detail-layout", css);
         Assert.Contains(".lf-side-rail__btn", css);
         var start = css.IndexOf("風險日詳情兩欄版面與右側側軌", StringComparison.Ordinal);

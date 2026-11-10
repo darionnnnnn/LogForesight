@@ -120,7 +120,7 @@ public class PageHeaderUiTests
         Assert.Contains("lf-page-header__actions", ui);
         Assert.Contains("lf-page-header__subtitle", ui);
 
-        var css = Read("wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         Assert.Contains(".lf-page-header", css);
         Assert.Contains(".lf-page-header__actions", css);
     }

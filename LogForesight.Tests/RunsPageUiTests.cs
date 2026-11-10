@@ -422,7 +422,7 @@ public class RunsPageUiTests
     public void Runs頁面樣式在site中已定義()
     {
         var root = FindRepoRoot();
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         foreach (var cls in new[] { ".lf-run-status-grid", ".lf-kv", ".lf-run-progress", ".lf-run-tracks", ".lf-input-narrow" })
         {
@@ -454,7 +454,7 @@ public class RunsPageUiTests
     public void 狀態卡等高的三個必要條件都在()
     {
         var root = FindRepoRoot();
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         Assert.Contains("align-items: stretch", css);
         Assert.DoesNotContain("align-items: start", css.Split(".lf-run-status-grid")[1].Split('}')[0]);
@@ -983,7 +983,7 @@ console.log('PASS operational status refresh');
         var js = Path.Combine(root, "LogForesight.Web", "wwwroot", "js");
         var runs = File.ReadAllText(Path.Combine(js, "pages", "runs.js"));
         var charts = File.ReadAllText(Path.Combine(js, "core", "charts.js"));
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         Assert.Empty(System.Text.RegularExpressions.Regex.Matches(runs, "#[0-9a-fA-F]{6}"));
         Assert.Equal(0, CountOccurrences(charts, "rgba("));

@@ -60,10 +60,12 @@ public sealed class HelpManualLayoutTests
         var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "help-manual.js"));
         Assert.Contains("renderAiText(container, withoutTitleLine(chapter.content), { asDocument: true })", js);
 
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         var start = css.IndexOf(".lf-doc {", StringComparison.Ordinal);
         Assert.True(start >= 0, "site.css 缺少 .lf-doc");
-        var block = css[start..css.IndexOf("/* ── 卡片", start, StringComparison.Ordinal)];
+        // 區段到下一個區段標題（「/* ──」開頭的註解）為止；樣式表分層後下一段不一定是哪一段
+        var next = css.IndexOf("/* ──", start, StringComparison.Ordinal);
+        var block = css[start..(next < 0 ? css.Length : next)];
         // 只用既有 token，不寫死色碼
         Assert.DoesNotMatch(new Regex("#[0-9a-fA-F]{3,6}\\b"), block);
         foreach (var selector in new[] { ".lf-doc__heading", ".lf-doc__note", ".lf-doc li + li" })

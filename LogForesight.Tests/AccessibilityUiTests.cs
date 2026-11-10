@@ -159,7 +159,7 @@ public class AccessibilityUiTests
     [Fact]
     public void 側欄分組標題色對側欄底色對比至少4_5()
     {
-        var css = ReadWeb("wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         var fg = RootTokenValue(css, "--lf-sidebar-section");
         var bg = RootTokenValue(css, "--lf-sidebar-bg");
         var ratio = Contrast(fg, bg);
@@ -209,7 +209,7 @@ public class AccessibilityUiTests
     [Fact]
     public void modal內互動元件有focus_visible規則()
     {
-        var css = ReadWeb("wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         foreach (var sel in new[] { ".modal .btn:focus-visible", ".modal .form-control:focus-visible", ".modal .form-select:focus-visible", ".modal .form-check-input:focus-visible" })
         {
             Assert.Contains(sel, css);
