@@ -14,6 +14,7 @@ import {
     renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips, renderPageHeader,
     renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
 } from '../core/ui.js';
+import { statusNote, roleText } from '../core/elements.js';
 import { categoryName, severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText, CATEGORY_NAMES, SEVERITY_ORDER, severityCell } from '../core/format.js';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
@@ -213,13 +214,13 @@ function updateSearchPlaceholder() {
 const RULE_COLUMNS = [
     {
         title: '順序', className: 'text-end', sortKey: 'matchOrder',
-        sortValue: r => r.matchOrder, render: r => String(r.matchOrder)
+        sortValue: r => r.matchOrder, render: r => roleText('lf-text-data', String(r.matchOrder))
     },
     { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
     { title: '比對', render: r => matchCell(r) },
     {
         title: '類別', sortKey: 'category', sortValue: r => categoryName(r.category),
-        render: r => categoryName(r.category)
+        render: r => roleText('lf-text-meta', categoryName(r.category))
     },
     {
         title: '嚴重度', sortKey: 'severity', sortDefaultDir: 'asc',
@@ -321,11 +322,12 @@ function ruleCell(rule) {
     const wrap = document.createElement('div');
 
     const id = document.createElement('div');
-    id.className = 'font-monospace small';
+    id.className = 'lf-text-data';
     id.textContent = rule.id;
     wrap.appendChild(id);
 
     const desc = document.createElement('div');
+    desc.className = 'lf-text-title';
     desc.textContent = rule.description;
     wrap.appendChild(desc);
 
@@ -406,12 +408,12 @@ function matchCell(rule) {
 
     if (rule.platform === 'prtg') {
         const code = document.createElement('div');
-        code.className = 'font-monospace small';
+        code.className = 'lf-text-data';
         code.textContent = rule.prtgRuleCode ?? '';
         wrap.appendChild(code);
 
         const threshold = document.createElement('div');
-        threshold.className = 'small text-muted';
+        threshold.className = 'lf-text-meta';
         if (rule.prtgRuleCode === 'disk_free_trend') {
             const t = rule.prtgDiskTrendThresholds;
             threshold.textContent = t ? `低水位 ${t.lowWaterPercent}% · ${t.minimumDeclinePercentagePointsPerDay} 百分點／日 · ${t.maximumDaysToDepletion} 日內耗盡 · ${t.maximumDaysToLowWater ?? 7} 日內降到低水位` : '磁碟趨勢門檻未設定';
@@ -436,19 +438,19 @@ function matchCell(rule) {
     if (rule.platform === 'linux') {
         if (rule.programPattern) {
             const program = document.createElement('div');
-            program.className = 'font-monospace small';
+            program.className = 'lf-text-data';
             program.textContent = rule.programPattern;
             wrap.appendChild(program);
         }
         if (rule.eventNamePattern) {
             const eventName = document.createElement('div');
-            eventName.className = 'small text-muted';
+            eventName.className = 'lf-text-meta';
             eventName.textContent = `事件名：${rule.eventNamePattern}`;
             wrap.appendChild(eventName);
         }
         if (rule.messagePatterns.length > 0) {
             const messages = document.createElement('div');
-            messages.className = 'small text-muted';
+            messages.className = 'lf-text-meta';
             messages.textContent = rule.messagePatterns.join(' / ');
             wrap.appendChild(messages);
         }
@@ -456,12 +458,12 @@ function matchCell(rule) {
     }
 
     const source = document.createElement('div');
-    source.className = 'font-monospace small';
+    source.className = 'lf-text-data';
     source.textContent = rule.sourcePattern;
     wrap.appendChild(source);
 
     const ids = document.createElement('div');
-    ids.className = 'small text-muted';
+    ids.className = 'lf-text-meta';
     ids.textContent = rule.matchAllEventIds ? '全部事件' : rule.eventIds.join(', ');
     wrap.appendChild(ids);
 
@@ -825,7 +827,7 @@ async function runDiskPreview(event) {
             : `符合抑制：${result.suppressedCount ?? 0}（${result.suppressionEstimateNote || '依本頁命中列、主機與完整簽章套用目前抑制；不含靜音／派工閘門。'}）`;
         diskPreviewSummary.textContent = `整段日期範圍（${result.fromDate} 至 ${result.throughDate}）候選配對 ${candidateCount} 組（完成日 × sensor；不是唯一 sensor 數）。本頁 ${assessedCount} 組：已驗證 ${result.verifiedCandidateCount ?? 0}、資料就緒 ${result.dataReadyCount ?? 0}、語意就緒 ${result.semanticReadyCount ?? 0}、適用 ${result.applicableCount ?? 0}、可評估 ${result.eligibleCount ?? 0}、草稿條件命中 ${result.hitCount ?? 0}、唯一命中主機 ${result.uniqueHitHostCount ?? 0}、未受目前抑制的命中配對列 ${result.unsuppressedHitRowCount ?? 0}（僅本頁命中配對列數，受分頁影響；不能推算實際交辦量）、${suppressionSummary}。最近試算：${latest}。正式站真實 28 日證據仍待確認；預覽不代表已驗證或可啟用，也不代表實際交辦量。`;
         const counts = document.createElement('p');
-        counts.className = 'small mb-2';
+        counts.className = 'lf-text-meta mb-2';
         const reasons = Object.entries(result.exclusionCounts ?? {}).map(([reason, count]) => `${exclusionReasonLabel(reason)}：${count}`).join('；') || '無排除項目';
         counts.textContent = `本頁排除原因（${assessedCount} 組中的配對數）：${reasons}`;
         diskPreviewResults.appendChild(counts);
@@ -833,7 +835,7 @@ async function runDiskPreview(event) {
         list.className = 'list-group';
         for (const row of result.rows ?? []) {
             const item = document.createElement('li');
-            item.className = 'list-group-item small';
+            item.className = 'list-group-item lf-text-meta';
             const flags = `驗證${row.verifiedCandidate ? '通過' : '未通過'}／資料${row.dataReady ? '就緒' : '不足'}／語意${row.semanticReady ? '就緒' : '未確認'}／適用${row.applicable ? '是' : '否'}／可評估${row.eligible ? '是' : '否'}`;
             const readiness = row.exclusionReason
                 ? `排除：${exclusionReasonLabel(row.exclusionReason)}`
@@ -956,28 +958,25 @@ function showValidation(result) {
     container.replaceChildren();
 
     if (result.errors.length > 0) {
-        container.appendChild(alertBox('danger', '規則不合格，無法儲存', result.errors));
+        container.appendChild(validationNote('error', '規則不合格，無法儲存', result.errors));
     }
     if (result.warnings.length > 0) {
-        container.appendChild(alertBox('warning', '請注意', result.warnings));
+        container.appendChild(validationNote('info', '請注意', result.warnings));
     }
     if (result.isValid && result.warnings.length === 0) {
-        container.appendChild(alertBox('success', '通過驗證', []));
+        container.appendChild(validationNote('success', '通過驗證', []));
     }
 }
 
-function alertBox(variant, title, items) {
+/** 驗證結果：標題走 statusNote（語意色與 role 由共用元件決定），逐項說明列在下方 */
+function validationNote(type, title, items) {
     const box = document.createElement('div');
-    box.className = `alert alert-${variant}`;
-
-    const titleEl = document.createElement('div');
-    titleEl.className = 'fw-semibold';
-    titleEl.textContent = title;
-    box.appendChild(titleEl);
+    box.className = 'mb-3';
+    box.appendChild(statusNote(type, title));
 
     if (items.length > 0) {
         const list = document.createElement('ul');
-        list.className = 'mb-0 ps-3 small';
+        list.className = 'lf-text-meta mb-0 mt-1 ps-4';
         for (const item of items) {
             const li = document.createElement('li');
             li.textContent = item;
@@ -1118,12 +1117,12 @@ async function openRestoreModal(rule) {
     body.replaceChildren();
 
     if (preview.differences.length === 0) {
-        body.appendChild(alertBox('info', '目前內容與程式內建預設相同，回復不會有任何變化。', []));
+        body.appendChild(validationNote('info', '目前內容與程式內建預設相同，回復不會有任何變化。', []));
         return;
     }
 
     const note = document.createElement('div');
-    note.className = 'alert alert-light border small';
+    note.className = 'lf-text-meta mb-2';
     note.textContent = '回復只還原規則內容，會保留您目前的啟用/停用設定。';
     body.appendChild(note);
 
@@ -1131,10 +1130,9 @@ async function openRestoreModal(rule) {
     renderTable(wrap, {
         columns: [
             { title: '欄位', render: diff => diff.field },
-            { title: '目前內容', className: 'small', render: diff => diff.current || '（空）' },
+            { title: '目前內容', render: diff => diff.current || '（空）' },
             {
                 title: '內建預設',
-                className: 'small text-success',
                 render: diff => diff.seed || '（空）'
             }
         ],
@@ -1310,8 +1308,8 @@ const SUPPRESSION_COLUMNS = [
         // 顯示「—」而不是預設猜成 Windows，誠實反映「這欄對這筆資料不適用」
         render: s => s.platform === 'linux' ? 'Linux' : s.platform === 'windows' ? 'Windows' : '—'
     },
-    { title: '範圍', sortKey: 'scope', sortValue: s => s.scope, render: s => suppressionTargetText(s) },
-    { title: '原因', render: s => s.reason },
+    { title: '範圍', sortKey: 'scope', sortValue: s => s.scope, render: s => roleText('lf-text-meta', suppressionTargetText(s)) },
+    { title: '原因', render: s => roleText('lf-text-meta', s.reason ?? '') },
     { title: '到期', sortKey: 'expiresAt', sortValue: s => s.expiresAt ? new Date(s.expiresAt).getTime() : Infinity, render: s => expiryCell(s) },
     { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
 ];
@@ -1322,7 +1320,7 @@ function targetCell(s) {
     badge.className = 'badge text-bg-secondary me-1';
     badge.textContent = TARGET_TYPE_NAMES[s.targetType] ?? '規則';
     wrap.appendChild(badge);
-    wrap.appendChild(document.createTextNode(suppressionTargetLabel(s)));
+    wrap.appendChild(roleText('lf-text-title', suppressionTargetLabel(s)));
     if (s.retired) {
         wrap.appendChild(document.createTextNode(' '));
         wrap.appendChild(statusBadge('已退役', 'secondary', { title: '此關聯模式已移除，這筆抑制不再有作用，可刪除' }));
@@ -1382,7 +1380,7 @@ function expiryCell(suppression) {
     span.textContent = formatDate(suppression.expiresAt);
     if (suppression.isExpired) {
         // 到期後不自動清理、只是恢復告警——這裡標示出來讓人知道可以清掉了
-        span.className = 'text-muted';
+        span.className = 'lf-text-meta';
         span.textContent += '（已到期，告警已恢復）';
     }
     return span;

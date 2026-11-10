@@ -77,8 +77,10 @@
 .lf-text-data { font-family: var(--lf-font-mono); font-variant-numeric: tabular-nums; }
 .lf-text-alert { font-weight: 600; color: var(--lf-danger-text); }
 
-/* 技術值（主機名、路徑、事件來源）可在任意位置斷行，不撐寬容器；人讀的句子不套用 */
-.lf-text-data, .lf-break-anywhere { overflow-wrap: anywhere; min-width: 0; }
+/* 技術值不在字中斷行：overflow-wrap: anywhere 會把表格欄的最小寬度算成一個字，IP、日期、來源名被拆成逐字直排。
+   放不下的長字串交給 body 的 overflow-wrap: break-word（只在真的溢出時才斷）；確定要任意斷行的容器用 lf-break-anywhere */
+.lf-text-data { min-width: 0; }
+.lf-break-anywhere { overflow-wrap: anywhere; min-width: 0; }
 
 /* 一行次要資訊（core/elements.js metaLine）：間距由 gap 提供，窄寬度整項換行 */
 .lf-meta-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--lf-space-3); row-gap: var(--lf-space-1); }
@@ -908,6 +910,12 @@ a.lf-badge:hover { text-decoration: underline; }
    自己硬寫 rem 上界的話，短說明在寬欄位裡照樣被砍（回饋二十七輪 P5 的原症狀）；
    但只寫 max-width:100% 也不夠——auto-layout 表格的儲存格寬度由內容決定，
    百分比會解析成內容本身的寬度、永遠不觸發 overflow，長說明反而把欄位撐爆（終檢抓到）。 */
+/* 有 tabindex 的單行說明句（問題查詢、權限異動檢核共用）：點擊高度至少 24px */
+.lf-issue-explanation {
+    min-height: max(24px, 1.5rem);
+    line-height: max(24px, 1.5rem);
+}
+
 .lf-issue-explanation {
     font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);

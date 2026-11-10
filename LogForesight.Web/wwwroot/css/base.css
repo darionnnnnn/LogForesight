@@ -399,6 +399,13 @@ select[multiple] option:checked {
 .form-text { font-size: var(--lf-font-size-xs); }
 
 /* 分頁 */
+/* 分頁鈕點擊區至少 24×24（窄螢幕的頁碼鈕原本只有 21～23px 寬） */
+.pagination .page-link {
+    min-width: max(24px, 1.5rem);
+    min-height: max(24px, 1.5rem);
+    text-align: center;
+}
+
 .pagination {
     --bs-pagination-color: var(--lf-text-muted);
     --bs-pagination-hover-color: var(--lf-primary-dark);

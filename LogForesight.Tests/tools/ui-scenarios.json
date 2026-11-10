@@ -117,7 +117,30 @@
   {
     "name": "處理人-問題查詢",
     "role": "ui-handler",
-    "path": "/records"
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "統一標記"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "靜音"
+        }
+      }
+    ]
   },
   {
     "name": "受限檢視者-首頁",
@@ -127,7 +150,36 @@
   {
     "name": "受限檢視者-問題查詢",
     "role": "ui-viewer",
-    "path": "/records"
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "統一標記"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "靜音"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "回覆處理狀態"
+        }
+      }
+    ]
   },
   {
     "name": "中斷點-767與768",
@@ -290,6 +342,190 @@
       {
         "assert": {
           "sel": "#detail-issues tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-篩選排序與視角",
+    "role": "ui-admin",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "click": "#filter-risk-chips [data-risk=\"低\"]"
+      },
+      {
+        "waitFor": "#filter-risk-chips [data-risk=\"低\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#record-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#record-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#record-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#view-toggle [data-view=\"host\"]"
+      },
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#view-toggle [data-view=\"issue\"]"
+      },
+      {
+        "waitFor": "#record-list tbody tr .lf-text-title"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-主機-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/hosts",
+    "steps": [
+      {
+        "waitFor": "#host-list tbody tr"
+      },
+      {
+        "click": "#host-status-chips [data-status=\"local\"]"
+      },
+      {
+        "waitFor": "#host-status-chips [data-status=\"local\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#host-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#host-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#host-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-使用者-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/users",
+    "steps": [
+      {
+        "waitFor": "#user-list tbody tr"
+      },
+      {
+        "click": "#user-status-chips [data-status=\"\"]"
+      },
+      {
+        "waitFor": "#user-status-chips [data-status=\"\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#user-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#user-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#user-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#user-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#user-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-規則維護-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/rules",
+    "steps": [
+      {
+        "waitFor": "#rule-list tbody tr"
+      },
+      {
+        "click": "#rule-status-chips .lf-chip:nth-child(2)"
+      },
+      {
+        "waitFor": "#rule-status-chips .lf-chip.active:nth-child(2)"
+      },
+      {
+        "assert": {
+          "sel": "#rule-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#rule-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#rule-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#rule-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#rule-list tbody tr .lf-text-title",
           "visible": true
         }
       }

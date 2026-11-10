@@ -16,8 +16,9 @@ import { appUrl, recordDetailUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, renderPager, withBusy, renderChips,
     loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
-    headerWithHelp, icon, bindPastDateCheck
+    headerWithHelp, icon, bindPastDateCheck, linkButton
 } from '../core/ui.js';
+import { statusNote, roleText } from '../core/elements.js';
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
@@ -116,7 +117,7 @@ async function initAiSummary() {
 function showAiSummaryNotice(area, text) {
     area.querySelector?.('[data-role="ai-summary-notice"]')?.remove();
     const note = document.createElement('div');
-    note.className = 'text-muted small';
+    note.className = 'lf-text-meta';
     note.setAttribute('data-role', 'ai-summary-notice');
     note.textContent = text;
     area.appendChild(note);
@@ -266,7 +267,7 @@ function setupHostAutocomplete() {
         // 只出現 20 筆而不說明，使用者會合理地認為「就只有這 20 台」
         if (result.truncated) {
             const note = document.createElement('div');
-            note.className = 'dropdown-item-text small text-muted border-top';
+            note.className = 'dropdown-item-text lf-text-meta border-top';
             note.textContent = `顯示前 ${result.items.length} 筆，共 ${result.total} 筆符合，請再輸入以縮小範圍`;
             suggestions.appendChild(note);
         }
@@ -542,7 +543,7 @@ function renderActiveConditions(filters) {
 
     if (skipped.length) {
         const hint = document.createElement('span');
-        hint.className = 'small text-muted';
+        hint.className = 'lf-text-meta';
         hint.setAttribute('data-role', 'unsupported-filters-hint');
         hint.textContent = `目前的檢視不支援：${skipped.join('、')}（切回明細可套用）`;
         container.appendChild(hint);
@@ -591,8 +592,8 @@ function render() {
 function renderDetailView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => r.date },
-            { title: '主機', sortKey: 'host', truncate: true, render: r => r.hostName },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => roleText('lf-text-data text-nowrap', r.date) },
+            { title: '主機', sortKey: 'host', truncate: true, render: r => roleText('lf-text-title', r.hostName) },
             { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
             { title: '類型', render: r => categoryBadges(r.categories) },
@@ -656,7 +657,7 @@ function headlineCell(record) {
 
     const text = document.createElement('span');
     text.textContent = record.headline || '（無 AI 摘要）';
-    if (!record.aiAnalyzed && !record.aiPending) text.className = 'text-muted';
+    if (!record.aiAnalyzed && !record.aiPending) text.className = 'lf-text-meta';
     wrap.appendChild(text);
 
     if (record.hasCorrelation) {
@@ -695,7 +696,7 @@ function handlingCell(record) {
     // 問題結案進度（方案 B）：未全部結案時顯示 N/M，讓「處理中」看得出還剩幾項
     if (record.totalIssues > 0 && record.closedIssues < record.totalIssues) {
         const progress = document.createElement('span');
-        progress.className = 'text-muted small ms-2';
+        progress.className = 'lf-text-meta ms-2';
         progress.textContent = `${record.closedIssues}/${record.totalIssues}`;
         progress.title = '已結案問題數 / 當日問題總數';
         wrap.appendChild(progress);
@@ -724,10 +725,10 @@ function handlerCell(record) {
 function renderHostView() {
     renderTable(listContainer, {
         columns: [
-            { title: '主機', sortKey: 'host', truncate: true, render: h => textCell(h.hostName) },
-            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => String(h.highRiskDays) },
-            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => String(h.mediumRiskDays) },
-            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => String(h.lowRiskDays) },
+            { title: '主機', sortKey: 'host', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.highRiskDays)) },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.mediumRiskDays)) },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.lowRiskDays)) },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: h => correlationCell(h.correlationDays) },
             { title: '類型', render: h => categoryBadges(h.categories) },
             { title: '最新狀況', render: h => latestStatusCell(h, `${h.latestDate}　${h.latestHeadline}`) }
@@ -745,11 +746,11 @@ function renderHostView() {
 function renderDateView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => d.date },
-            { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => String(d.hostCount) },
-            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => String(d.highRiskHosts) },
-            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => String(d.mediumRiskHosts) },
-            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: d => String(d.lowRiskHosts) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => roleText('lf-text-title text-nowrap', d.date) },
+            { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.hostCount)) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.highRiskHosts)) },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.mediumRiskHosts)) },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.lowRiskHosts)) },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: d => correlationCell(d.correlationHosts) },
             { title: '類型', render: d => categoryBadges(d.categories) }
         ],
@@ -783,7 +784,7 @@ function renderIssueView() {
     // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
         { title: '問題', className: 'lf-issue-col', render: i => issueGroupCell(i) },
-        { title: '分類', render: i => categoryName(i.category) },
+        { title: '分類', className: 'text-nowrap', render: i => roleText('lf-text-meta', categoryName(i.category)) },
         { title: '嚴重度', sortKey: 'severity', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
         {
             title: '主機數 / 主機日',
@@ -795,10 +796,10 @@ function renderIssueView() {
             render: i => {
                 const wrap = document.createElement('div');
                 const hosts = document.createElement('div');
-                hosts.className = 'text-nowrap';
+                hosts.className = 'lf-text-data text-nowrap';
                 hosts.textContent = `${formatNumber(i.hostCount)} 台`;
                 const days = document.createElement('div');
-                days.className = 'small text-muted text-nowrap';
+                days.className = 'lf-text-meta text-nowrap';
                 days.textContent = `${formatNumber(i.dayCount)} 主機日`;
                 wrap.append(hosts, days);
                 return wrap;
@@ -829,7 +830,7 @@ function renderIssueView() {
             className: 'text-end',
             sortKey: 'totalCount', sortDefaultDir: 'desc',
             renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
-            render: i => formatNumber(i.totalCount)
+            render: i => roleText('lf-text-data', formatNumber(i.totalCount))
         },
         { title: '最近出現', className: 'text-nowrap', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
         {
@@ -901,8 +902,8 @@ async function renderIssueOccurrences(cell, group) {
     const inner = document.createElement('div');
     renderTable(inner, {
         columns: [
-            { title: '主機', truncate: true, render: r => r.hostName },
-            { title: '日期', render: r => r.date },
+            { title: '主機', truncate: true, render: r => roleText('lf-text-title', r.hostName) },
+            { title: '日期', render: r => roleText('lf-text-data text-nowrap', r.date) },
             { title: '風險', render: r => riskBadge(r.riskLevel) },
             { title: '處理狀態', render: r => handlingCell(r) },
             { title: '處理人', render: r => handlerCell(r) },
@@ -916,10 +917,9 @@ async function renderIssueOccurrences(cell, group) {
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
     const foot = document.createElement('div');
-    foot.className = 'small mt-2 d-flex align-items-center gap-2';
+    foot.className = 'lf-text-meta mt-2 d-flex align-items-center flex-wrap gap-2';
     if (result.total > result.items.length) {
         const truncNote = document.createElement('span');
-        truncNote.className = 'text-muted';
         truncNote.textContent = `共 ${formatNumber(result.total)} 筆（不套用風險層級篩選），僅顯示前 ${result.items.length} 筆。`;
         foot.appendChild(truncNote);
     }
@@ -933,11 +933,7 @@ async function renderIssueOccurrences(cell, group) {
 
 /** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
 function goHandleLink(record) {
-    const link = document.createElement('a');
-    link.href = appUrl(recordDetailUrl(record.hostId, record.date, { handle: true }));
-    link.className = 'btn btn-sm btn-outline-primary';
-    link.textContent = '去處理';
-    return link;
+    return linkButton('去處理', appUrl(recordDetailUrl(record.hostId, record.date, { handle: true })));
 }
 
 /**
@@ -979,7 +975,7 @@ function issueAssignedCell(group) {
 
     if (assigned === 0) {
         const span = document.createElement('span');
-        span.className = 'text-muted';
+        span.className = 'lf-text-meta';
         span.textContent = '未交辦';
         return span;
     }
@@ -1002,7 +998,7 @@ function issueAssignedCell(group) {
 
     if (assigned < total) {
         const line2 = document.createElement('div');
-        line2.className = 'small text-muted text-nowrap';
+        line2.className = 'lf-text-meta text-nowrap';
         line2.textContent = `還有 ${total - assigned} 台未交辦`;
         wrap.appendChild(line2);
     }
@@ -1015,18 +1011,17 @@ function issueAssignedCell(group) {
  */
 function issueHandlingSummaryCell(group) {
     const wrap = document.createElement('div');
-    wrap.className = 'small lf-mono';
 
     const unhandled = document.createElement('div');
-    unhandled.className = group.unhandledCount > 0 ? '' : 'text-muted';
+    unhandled.className = group.unhandledCount > 0 ? 'lf-text-data' : 'lf-text-meta';
     unhandled.textContent = `${formatNumber(group.unhandledCount)} 台未處理`;
 
     const inProgress = document.createElement('div');
-    inProgress.className = group.inProgressCount > 0 ? '' : 'text-muted';
+    inProgress.className = group.inProgressCount > 0 ? 'lf-text-data' : 'lf-text-meta';
     inProgress.textContent = `${formatNumber(group.inProgressCount)} 台處理中`;
 
     const resolved = document.createElement('div');
-    resolved.className = group.resolvedCount > 0 ? '' : 'text-muted';
+    resolved.className = group.resolvedCount > 0 ? 'lf-text-data' : 'lf-text-meta';
     resolved.textContent = `${formatNumber(group.resolvedCount)} 台已處理`;
 
     wrap.append(unhandled, inProgress, resolved);
@@ -1047,13 +1042,13 @@ function issueFirstSeenCell(group) {
     wrap.title = '機房首見：此問題在全機房歷史記錄中首次出現的日期。\n本期首見：此問題在本次查詢區間內首次出現的日期。';
 
     const fleetLine = document.createElement('div');
-    fleetLine.className = 'lf-mono small';
+    fleetLine.className = 'lf-text-data';
     fleetLine.textContent = fleetFirst;
     wrap.appendChild(fleetLine);
 
     if (periodFirst && periodFirst !== fleetFirst) {
         const periodLine = document.createElement('div');
-        periodLine.className = 'lf-mono small text-muted d-flex align-items-center gap-1 mt-1';
+        periodLine.className = 'lf-text-meta d-flex align-items-center gap-1 mt-1';
         const date = document.createElement('span');
         date.textContent = periodFirst;
         periodLine.appendChild(date);
@@ -1080,20 +1075,19 @@ function issueLastSeenCell(group) {
     const wrap = document.createElement('div');
 
     const date = document.createElement('div');
-    date.className = 'lf-mono small';
+    date.className = 'lf-text-data';
     date.textContent = group.lastSeen;
     wrap.appendChild(date);
 
+    // 還在發生是風險狀態（alert）；三天內是一般文字；久未出現退為次要資訊
     const hint = document.createElement('div');
-    hint.className = 'small';
     if (group.daysSinceLastSeen === 0) {
-        hint.className += ' text-danger fw-semibold';
+        hint.className = 'lf-text-alert';
         hint.textContent = '昨日仍在發生';
     } else if (group.daysSinceLastSeen <= 3) {
-        hint.className += ' text-danger';
         hint.textContent = `${group.daysSinceLastSeen} 天前`;
     } else {
-        hint.className += ' text-muted';
+        hint.className = 'lf-text-meta';
         hint.textContent = `已 ${group.daysSinceLastSeen} 天未再出現`;
     }
     wrap.appendChild(hint);
@@ -1104,7 +1098,7 @@ function issueLastSeenCell(group) {
 function issueGroupCell(group) {
     const wrap = document.createElement('div');
     const title = document.createElement('div');
-    title.className = 'fw-semibold';
+    title.className = 'lf-text-title';
     title.textContent = `${group.source} (${group.eventId})`;
     wrap.appendChild(title);
 
@@ -1133,7 +1127,7 @@ function issueGroupCell(group) {
     // 與下方 issueHandlersCell（現在誰在處理）是不同概念，見後端 IssueGroupDto.IssueOwnerNames 註解。
     if (group.issueOwnerNames?.length > 0) {
         const owner = document.createElement('div');
-        owner.className = 'small mt-1';
+        owner.className = 'mt-1';
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--info';
         badge.textContent = `負責人：${group.issueOwnerNames.join('、')}`;
@@ -1143,7 +1137,7 @@ function issueGroupCell(group) {
 
     if (group.knownIssue) {
         const known = document.createElement('div');
-        known.className = 'small text-muted';
+        known.className = 'lf-text-meta';
         known.textContent = group.knownIssue;
         wrap.appendChild(known);
     }
@@ -1188,46 +1182,41 @@ function issueActionsCell(group) {
 
 /** 統一標記（§6）：把這個問題在還沒有人接手的主機上一次標成結論 */
 function issueBulkCloseButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary';
-    btn.textContent = '統一標記';
-    btn.title = '把這個問題在尚未有人接手的主機上一次標成結論';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openBulkCloseModal(group);
+    return button('統一標記', {
+        opens: 'dialog',
+        title: '把這個問題在尚未有人接手的主機上一次標成結論',
+        onClick: event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openBulkCloseModal(group);
+        }
     });
-    return btn;
 }
 
 /** 回覆處理狀態（§11）：modal 本身是共用元件（處理人工作頁的依問題視角也用同一個） */
 function issueReplyButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary';
-    btn.textContent = '回覆處理狀態';
-    btn.title = '一次回覆這個問題在所有指派給您的主機上的處理狀態';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openIssueStatusReplyModal(group, search);
+    return button('回覆處理狀態', {
+        opens: 'dialog',
+        title: '一次回覆這個問題在所有指派給您的主機上的處理狀態',
+        onClick: event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openIssueStatusReplyModal(group, search);
+        }
     });
-    return btn;
 }
 
 function issueAssignButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-primary';
-    btn.textContent = '交辦';
-    btn.title = '把這個問題交辦給處理人（建立交辦單）';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openWorkOrderModal(group);
+    return button('交辦', {
+        variant: 'outline-primary',
+        opens: 'dialog',
+        title: '把這個問題交辦給處理人（建立交辦單）',
+        onClick: event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openWorkOrderModal(group);
+        }
     });
-    return btn;
 }
 
 /**
@@ -1237,23 +1226,21 @@ function issueAssignButton(group) {
  * 後端在今天已靜音時本來就會延長，不會因此多出一段區間。
  */
 function issueMuteButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary';
-    btn.textContent = '靜音';
-    btn.title = '暫時不看這個問題（到期自動恢復）';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openIssueMuteModal({
-            source: group.source,
-            eventId: group.eventId,
-            issueLabel: `${group.source} (${group.eventId})`,
-            currentMute: null,
-            onApplied: search
-        });
+    return button('靜音', {
+        opens: 'dialog',
+        title: '暫時不看這個問題（到期自動恢復）',
+        onClick: event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openIssueMuteModal({
+                source: group.source,
+                eventId: group.eventId,
+                issueLabel: `${group.source} (${group.eventId})`,
+                currentMute: null,
+                onApplied: search
+            });
+        }
     });
-    return btn;
 }
 
 /**
@@ -1285,10 +1272,7 @@ async function loadBulkCloseForm(group, body) {
         preview = await api.get(`/api/handling/issue-cases/close-preview?${params.toString()}`, { silent: true });
     } catch (error) {
         body.replaceChildren();
-        const msg = document.createElement('div');
-        msg.className = 'text-danger';
-        msg.textContent = error?.message || '載入受影響主機失敗';
-        body.appendChild(msg);
+        body.appendChild(statusNote('error', error?.message || '載入受影響主機失敗'));
         return;
     }
 
@@ -1320,7 +1304,7 @@ function renderBulkCloseForm(body, group, preview) {
     // 摘要一律用**總數**而不是本頁列出的筆數（體檢 M10）：逐台清單有 200 筆上限，
     // 拿截斷後的長度當摘要會讓「我到底影響了多少」少報，而那正是這個操作最需要準確的數字
     const summary = document.createElement('div');
-    summary.className = 'mb-3 small fw-semibold';
+    summary.className = 'mb-3 lf-text-title';
     const overwriteDays = targets.reduce((sum, h) => sum + h.overwriteDayCount, 0);
     const affectedHosts = preview.totalHostCount - preview.skippedHostCount;
     summary.textContent = `將標記 ${formatNumber(affectedHosts)} 台主機、共 ${formatNumber(preview.totalDayCount)} 天` +
@@ -1353,7 +1337,7 @@ function renderBulkCloseForm(body, group, preview) {
     form.appendChild(table);
 
     const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label small text-muted';
+    statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '結論';
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
@@ -1366,7 +1350,7 @@ function renderBulkCloseForm(body, group, preview) {
     form.append(statusLabel, statusSelect);
 
     const noteLabel = document.createElement('label');
-    noteLabel.className = 'form-label small text-muted';
+    noteLabel.className = 'form-label lf-text-label';
     noteLabel.textContent = '原因（必填）';
     const noteInput = document.createElement('textarea');
     noteInput.className = 'form-control form-control-sm mb-3';
@@ -1383,16 +1367,13 @@ function renderBulkCloseForm(body, group, preview) {
     autoApplyInput.className = 'form-check-input';
     autoApplyInput.id = 'bulk-close-auto-apply';
     const autoApplyLabel = document.createElement('label');
-    autoApplyLabel.className = 'form-check-label small';
+    autoApplyLabel.className = 'form-check-label';
     autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
     autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
     autoApplyWrap.append(autoApplyInput, autoApplyLabel);
     form.appendChild(autoApplyWrap);
 
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'btn btn-sm btn-primary';
-    submit.textContent = '套用';
+    const submit = button('套用', { variant: 'primary', size: '', type: 'submit' });
     // 上限用總數判斷，不是本頁列出的筆數——列表被截斷不代表可以送出更多
     const overLimit = preview.totalDayCount > BULK_CLOSE_DAY_LIMIT;
     submit.disabled = targets.length === 0 || overLimit;
@@ -1400,7 +1381,7 @@ function renderBulkCloseForm(body, group, preview) {
 
     if (overLimit) {
         const limitNote = document.createElement('div');
-        limitNote.className = 'alert alert-danger py-2 mt-3 mb-0 small';
+        limitNote.className = 'alert alert-danger py-2 mt-3 mb-0';
         limitNote.textContent = `本次將寫入 ${formatNumber(preview.totalDayCount)} 筆，超過單次上限 `
             + `${formatNumber(BULK_CLOSE_DAY_LIMIT)} 筆。請縮小日期區間或改用更精確的問題條件，分次執行。`;
         form.appendChild(limitNote);
@@ -1474,10 +1455,9 @@ function showBulkCloseTraceLink(result) {
 function bulkCloseStatusCell(host) {
     const span = document.createElement('span');
     if (host.skipReason) {
-        span.className = 'text-muted small';
+        span.className = 'lf-text-meta';
         span.textContent = `略過：${host.skipReason}`;
     } else {
-        span.className = 'text-success small';
         span.textContent = '將標記';
     }
     return span;
@@ -1515,10 +1495,7 @@ async function loadWorkOrderForm(group, body) {
         groups = loadedGroups;
     } catch (error) {
         body.replaceChildren();
-        const msg = document.createElement('div');
-        msg.className = 'text-danger';
-        msg.textContent = error?.message || '載入資料失敗';
-        body.appendChild(msg);
+        body.appendChild(statusNote('error', error?.message || '載入資料失敗'));
         return;
     }
 
@@ -1567,7 +1544,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const modeWrap = document.createElement('div');
     modeWrap.className = 'mb-3';
     const modeLabel = document.createElement('div');
-    modeLabel.className = 'form-label small text-muted';
+    modeLabel.className = 'form-label lf-text-label';
     modeLabel.textContent = '交辦給';
     const modeGroup = document.createElement('div');
     modeGroup.className = 'btn-group btn-group-sm mb-2';
@@ -1611,7 +1588,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const splitWrap = document.createElement('div');
     splitWrap.className = 'd-flex align-items-center gap-2 flex-wrap';
     const splitLabel = document.createElement('span');
-    splitLabel.className = 'small text-muted';
+    splitLabel.className = 'lf-text-label';
     splitLabel.textContent = '分攤方式';
     const splitSelect = document.createElement('select');
     splitSelect.className = 'form-select form-select-sm w-auto';
@@ -1648,12 +1625,12 @@ function renderWorkOrderForm(body, group, users, groups) {
     const scopeWrap = document.createElement('div');
     scopeWrap.className = 'mb-3';
     const scopeLine = document.createElement('div');
-    scopeLine.className = 'small text-muted mb-1';
+    scopeLine.className = 'lf-text-meta mb-1';
     scopeLine.textContent = `範圍：${workOrderScopeText(scopeKind, filters)}`;
     scopeWrap.appendChild(scopeLine);
 
     const autoAttachLabel = document.createElement('label');
-    autoAttachLabel.className = 'form-check-label small d-flex align-items-center gap-1';
+    autoAttachLabel.className = 'form-check-label d-flex align-items-center gap-1';
     const autoAttachCheck = document.createElement('input');
     autoAttachCheck.type = 'checkbox';
     autoAttachCheck.className = 'form-check-input mt-0';
@@ -1685,7 +1662,7 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     // 3. 說明（note，選填，textarea）與期限（dueDate，選填，input type="date"）
     const noteLabel = document.createElement('label');
-    noteLabel.className = 'form-label small text-muted';
+    noteLabel.className = 'form-label lf-text-label';
     noteLabel.textContent = '說明（選填）';
     const noteInput = document.createElement('textarea');
     noteInput.className = 'form-control form-control-sm mb-3';
@@ -1693,7 +1670,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     form.append(noteLabel, noteInput);
 
     const dueLabel = document.createElement('label');
-    dueLabel.className = 'form-label small text-muted';
+    dueLabel.className = 'form-label lf-text-label';
     dueLabel.textContent = '預計完成日（選填）';
     const dueInput = document.createElement('input');
     dueInput.type = 'date';
@@ -1710,10 +1687,10 @@ function renderWorkOrderForm(body, group, users, groups) {
     conflictWrap.className = 'mb-3';
 
     const conflictList = document.createElement('div');
-    conflictList.className = 'small text-muted mb-1 d-none';
+    conflictList.className = 'lf-text-meta mb-1 d-none';
 
     const reassignCheckLabel = document.createElement('label');
-    reassignCheckLabel.className = 'form-check-label small d-flex align-items-center gap-1';
+    reassignCheckLabel.className = 'form-check-label d-flex align-items-center gap-1';
     const reassignCheck = document.createElement('input');
     reassignCheck.type = 'checkbox';
     reassignCheck.className = 'form-check-input mt-0';
@@ -1734,7 +1711,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const hostDetails = document.createElement('details');
     hostDetails.className = 'mb-3';
     const hostSummary = document.createElement('summary');
-    hostSummary.className = 'form-label small text-muted lf-pointer';
+    hostSummary.className = 'form-label lf-text-label lf-pointer';
     hostSummary.textContent = '檢視受影響主機（0 台）';
     hostDetails.appendChild(hostSummary);
 
@@ -1751,7 +1728,7 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     // 7. 立即通知（預設不勾：通知照交辦摘要時刻寄出）
     const notifyNowLabel = document.createElement('label');
-    notifyNowLabel.className = 'form-check-label small d-flex align-items-center gap-1 mb-3';
+    notifyNowLabel.className = 'form-check-label d-flex align-items-center gap-1 mb-3';
     const notifyNowCheck = document.createElement('input');
     notifyNowCheck.type = 'checkbox';
     notifyNowCheck.className = 'form-check-input mt-0';
@@ -1759,10 +1736,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     form.appendChild(notifyNowLabel);
 
     // 8. 送出按鈕
-    const submitBtn = document.createElement('button');
-    submitBtn.type = 'submit';
-    submitBtn.className = 'btn btn-sm btn-primary';
-    submitBtn.textContent = '建立交辦單';
+    const submitBtn = button('建立交辦單', { variant: 'primary', size: '', type: 'submit' });
     form.appendChild(submitBtn);
 
     body.appendChild(form);
@@ -1815,10 +1789,7 @@ function renderWorkOrderForm(body, group, users, groups) {
                 } catch (error) {
                     if (currentRequestId === previewRequestId) {
                         summaryWrap.replaceChildren();
-                        const errDiv = document.createElement('div');
-                        errDiv.className = 'text-danger small';
-                        errDiv.textContent = error?.message || '預覽失敗';
-                        summaryWrap.appendChild(errDiv);
+                        summaryWrap.appendChild(statusNote('error', error?.message || '預覽失敗'));
                     }
                 }
             } while (pendingFetch !== null);
@@ -1845,12 +1816,12 @@ function renderWorkOrderForm(body, group, users, groups) {
         summaryWrap.replaceChildren();
 
         const primaryLine = document.createElement('div');
-        primaryLine.className = 'fw-semibold mb-1';
+        primaryLine.className = 'lf-text-title mb-1';
         primaryLine.textContent = `將交辦 ${formatNumber(preview.affectedHosts ?? 0)} 台（${formatNumber(preview.affectedMembers ?? 0)} 個問題成員）`;
         summaryWrap.appendChild(primaryLine);
 
         const secondaryLine = document.createElement('div');
-        secondaryLine.className = 'small text-muted mb-1';
+        secondaryLine.className = 'lf-text-meta mb-1';
         const daysLabel = preview.estimatedHostDaysLabel || '期間內';
         secondaryLine.textContent = `${daysLabel} 預估 ${formatNumber(preview.estimatedHostDays ?? 0)} 主機日`;
         summaryWrap.appendChild(secondaryLine);
@@ -1867,14 +1838,14 @@ function renderWorkOrderForm(body, group, users, groups) {
         }
         for (const ex of exclusions) {
             const exDiv = document.createElement('div');
-            exDiv.className = 'small text-muted mb-1';
+            exDiv.className = 'lf-text-meta mb-1';
             exDiv.textContent = ex;
             summaryWrap.appendChild(exDiv);
         }
 
         if (preview.allocation && preview.allocation.length > 0) {
             const allocWrap = document.createElement('div');
-            allocWrap.className = 'small mt-2 pt-2 border-top';
+            allocWrap.className = 'mt-2 pt-2 border-top';
             for (const a of preview.allocation) {
                 const row = document.createElement('div');
                 const mergeNote = a.mergeIntoWorkOrderId != null
@@ -1910,28 +1881,28 @@ function renderWorkOrderForm(body, group, users, groups) {
                 });
 
                 const name = document.createElement('span');
-                name.className = 'small flex-grow-1';
+                name.className = 'flex-grow-1';
                 name.textContent = host.hostName;
 
                 row.append(check, name);
 
                 if (host.existingHandlerName) {
                     const existing = document.createElement('span');
-                    existing.className = 'small text-muted';
+                    existing.className = 'lf-text-meta';
                     existing.textContent = `目前：${host.existingHandlerName}`;
                     row.appendChild(existing);
                 }
 
                 if (host.noiseExcluded) {
                     const noise = document.createElement('span');
-                    noise.className = 'small text-muted';
+                    noise.className = 'lf-text-meta';
                     noise.textContent = '已知雜訊';
                     row.appendChild(noise);
                 }
 
                 if (host.manuallyExcluded) {
                     const manual = document.createElement('span');
-                    manual.className = 'small text-muted';
+                    manual.className = 'lf-text-meta';
                     manual.textContent = '已排除';
                     row.appendChild(manual);
                 }
@@ -1940,7 +1911,7 @@ function renderWorkOrderForm(body, group, users, groups) {
             }
         } else {
             const empty = document.createElement('div');
-            empty.className = 'small text-muted py-2';
+            empty.className = 'lf-text-meta py-2';
             empty.textContent = '沒有受影響的主機';
             hostList.appendChild(empty);
         }
@@ -2031,16 +2002,10 @@ function renderWorkOrderForm(body, group, users, groups) {
 
 // ── 共用元件 ─────────────────────────────────────────────────────────────────
 
-function textCell(value) {
-    const span = document.createElement('span');
-    span.textContent = value;
-    return span;
-}
-
 function correlationCell(count) {
     if (!count) return '';
     const span = document.createElement('span');
-    span.className = 'text-danger fw-semibold';
+    span.className = 'lf-text-alert';
     span.textContent = String(count);
     span.title = '有攻擊鏈／故障鏈的關聯訊號';
     return span;

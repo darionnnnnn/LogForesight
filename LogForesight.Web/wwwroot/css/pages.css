@@ -1013,3 +1013,11 @@ a.lf-calendar__cell:focus-visible {
 .lf-input-narrow {
     max-width: 7.5rem;
 }
+
+/* ── 問題查詢（/records）：卡片標頭 ──────────────────────────── */
+/* 檢視切換、筆數說明與動作鈕在窄螢幕各自換行，筆數說明不被擠成一條窄欄 */
+.lf-records-head__count {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+

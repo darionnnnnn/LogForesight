@@ -50,22 +50,22 @@
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
         全選符合目前篩選的主機
     </button>
-    <span class="text-muted small">已併入其他主機的列不會被選到。</span>
+    <span class="lf-text-meta">已併入其他主機的列不會被選到。</span>
 </div>
 
 @* 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）：勾選跨頁／篩選保留，這條列只在有勾選時出現 *@
 <div class="lf-toolbar mb-3 d-none" id="host-selection-bar">
-    <span class="fw-semibold" id="host-selection-count"></span>
+    <span class="lf-text-title" id="host-selection-count"></span>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-groups">批次設定群組</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-tier">批次設定分級</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-owners">指派負責人</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
-    <span class="small text-muted"><a id="link-owner-csv" href="#">用 CSV 大量指派</a></span>
+    <span class="lf-text-meta"><a id="link-owner-csv" href="#">用 CSV 大量指派</a></span>
 </div>
 
 <div class="lf-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">主機 <span class="text-muted small" id="host-count"></span></h2>
+        <h2 class="lf-card__title">主機 <span class="lf-text-meta" id="host-count"></span></h2>
     </div>
     <div class="lf-card__body p-0" id="host-list"></div>
 </div>
@@ -83,7 +83,7 @@
                 <div class="modal-body">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label for="host-name" class="form-label">主機名稱 <span class="text-danger">*</span></label>
+                            <label for="host-name" class="form-label">主機名稱 <span aria-hidden="true">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="本機主機須與批次回報的機器名稱一致；NetIQ 主機請填 IP。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -246,7 +246,7 @@
             <form id="batch-groups-form" novalidate>
                 <div class="modal-body">
                     <div class="mb-2">
-                        <div class="form-label small text-muted" id="batch-groups-hosts-label"></div>
+                        <div class="form-label lf-text-label" id="batch-groups-hosts-label"></div>
                         <div id="batch-groups-hosts" class="lf-bulk-assign-hosts"></div>
                     </div>
                     <div class="mb-3" role="group" aria-labelledby="batch-groups-mode-label">
@@ -263,7 +263,7 @@
                                 取代（改為僅勾選的群組）
                             </label>
                         </div>
-                        <div class="form-text text-danger d-none" id="batch-groups-replace-warning"></div>
+                        <div class="form-text d-none" id="batch-groups-replace-warning"></div>
                     </div>
                     <div>
                         <span class="form-label d-inline-block" id="batch-groups-label">群組</span>
@@ -289,7 +289,7 @@
             <form id="batch-tier-form" novalidate>
                 <div class="modal-body">
                     <div class="mb-2">
-                        <div class="form-label small text-muted" id="batch-tier-hosts-label"></div>
+                        <div class="form-label lf-text-label" id="batch-tier-hosts-label"></div>
                         <div id="batch-tier-hosts" class="lf-bulk-assign-hosts"></div>
                     </div>
                     <div>
@@ -320,7 +320,7 @@
             <form id="batch-owners-form" novalidate>
                 <div class="modal-body">
                     <div class="mb-2">
-                        <div class="form-label small text-muted" id="batch-owners-hosts-label"></div>
+                        <div class="form-label lf-text-label" id="batch-owners-hosts-label"></div>
                         <div id="batch-owners-hosts" class="lf-bulk-assign-hosts"></div>
                     </div>
                     <div class="mb-3" role="group" aria-labelledby="batch-owners-mode-label">

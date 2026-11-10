@@ -1147,6 +1147,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   **靜音**（`Maintain`，§9.4b）、**回覆處理狀態**（處理人清單含自己且具 `Handle`）——同一個問題被交辦到
   N 台主機時，在這裡填一次即回覆**自己名下**該問題的全部進行中交辦單（`POST api/work-orders/reply-many`，
   modal 為共用元件 `issue-status-reply.js`）。別人的單不受影響——這是「回覆自己手上的工作」，不是代人回覆。
+- **畫面層級（設計系統 v3，DESIGN-SYSTEM §8）**：四個視角每列只有一個主體——明細與依主機為主機名、依日期為日期、依問題為「來源 (EventId)」，
+  皆用 `lf-text-title`；日期、數量與技術值用 `lf-text-data`，分類與補充用 `lf-text-meta`，數字欄靠右。
+  「最近出現」寫「昨日仍在發生」時用 `lf-text-alert`（風險狀態），關聯訊號天數同；其餘不上紅字。列內動作（交辦、統一標記、靜音、回覆處理狀態）
+  一律經 `button()`，會開 modal 的帶 `opens: 'dialog'`；「去處理」是換頁，用 `linkButton`。載入受影響主機、載入資料、預覽失敗走 `statusNote('error', …)`。
+  卡片標頭的檢視切換、筆數說明與動作鈕在窄螢幕各自換行，筆數說明不被擠成窄欄。
 - **主機篩選為 autocomplete**：兩千台規模下不能把全部主機灌進一個
   `<select multiple>`。輸入 2 字元後查 `GET api/hosts?query=`（伺服器端包含比對、上限 20 筆），
   已選主機顯示為可移除 chip；URL 帶入的 `hostIds` 以 `GET api/hosts?ids=`（精確取回、不受上限）
@@ -1191,7 +1196,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   M 台未處理」）／處理人（進行中問題案件的處理人，去重超過 3 人摺疊「等 N 人」，姓名連到
   `/work-orders?source=&eventId=&handlerId=`——「這個問題、這個人」的交辦單，通常正好一張）／
   **已交辦**（「N／M 台」＝已在進行中交辦單內的主機數／總主機數，連到 `/work-orders?source=&eventId=`；
-  零台顯示灰字「未交辦」；N 由同一批已套檢視範圍與查詢期間的出現點計算，與 M 同一母體——
+  零台顯示次要文字「未交辦」；N 由同一批已套檢視範圍與查詢期間的出現點計算，與 M 同一母體——
   全站計數會讓只看得到 10 台的人看到「300／10 台」並洩漏看不到的台數）；預設排序嚴重度→主機數→總次數（**不採 §9.1／§9.6 的 PriorityScore
   排序**——規劃定案「其他視角排序不變」，`IssueGroupDto` 刻意不附加分數欄位）。
   另有 `IssueGroupDto.PlainExplanation`（命中規則的白話說明，未命中為 null；
@@ -2038,6 +2043,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **主機下拉改伺服器端搜尋**：抑制目標主機選擇器改用 `ui.js` 的
   `searchableHostSelect`（輸入關鍵字 debounce 300ms 打 `GET /api/admin/hosts?query=&os=&pageSize=50`），
   不用一次性 `pageSize=200` 全量下拉——大規模環境下主機清單過長時可直接輸入關鍵字篩選。
+- **畫面層級（設計系統 v3）**：規則表每列的主體是白話說明（`lf-text-title`），規則 Id、比對樣式與順序用 `lf-text-data`，門檻與類別用 `lf-text-meta`；
+  規則驗證結果（不合格／請注意／通過）與回復預設的「內容相同」提示走 `statusNote`，逐項問題列在其下；抑制清單的目標名稱是主體。
+  必填欄位的星號是不帶顏色的符號，必填與否以 `required` 屬性和送出時的驗證訊息表達。
 - **範本套用可停用原規則**：套用規則範本時新增「停用原規則」勾選（先建立新
   規則、成功後才停用來源規則，避免建立失敗卻已停用原規則的中間態）。
 
@@ -2056,6 +2064,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   上限 100 筆）。**AD 登入自動補資料（#8）**：只填帳號的使用者首次以 AD 登入時，用同一次驗證取得的
   AD 屬性補齊顯示名稱與 Email（只補「視同未填」的欄位——DisplayName 為空或等於帳號、Email 為 null；
   手動填過的值不覆寫），寫一筆「AD 登入自動同步」稽核。
+- **畫面層級（設計系統 v3）**：使用者表主體是帳號（`lf-text-title`），顯示名稱與 Email 用 `lf-text-meta`，上次登入用 `lf-text-data`，「從未登入」用 `lf-text-meta`；
+  主機表主體是主機名（`lf-text-title`），IP 用 `lf-text-data`，來源、OS、角色描述用 `lf-text-meta`；
+  **只有「未回報」的最近回報時間用 `lf-text-alert`**（風險狀態），待辦佇列卡的數字用一般標題色、不上黃字。
+  「尚未於 NetIQ 維護頁新增任何 Sentinel」提示、批次登錄結果與批次取代群組警告走 `statusNote`。
+  主機頁的狀態／群組／OS／PRTG 四組 chip 在窄螢幕換行，不撐出水平捲軸。
 - 主機：清單（名稱/IP/**OS**/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/**os**/群組/負責人）、
   新舊主機合併（自停用清單選取→確認→`merged_into` 墓碑）。
   **快速篩選 toolbar**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，

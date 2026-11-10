@@ -74,6 +74,14 @@ export function metaLine(items, { className = '' } = {}) {
     return line;
 }
 
+/** 單一文字節點套一個文字角色（lf-text-title／meta／label／data／alert）；text 走 textContent */
+export function roleText(role, text) {
+    const span = document.createElement('span');
+    span.className = role;
+    span.textContent = text ?? '';
+    return span;
+}
+
 const STATUS_NOTE = {
     error: { icon: 'exclamation-triangle', role: 'alert' },
     success: { icon: 'clipboard-check', role: 'status' },
