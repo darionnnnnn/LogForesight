@@ -17,7 +17,13 @@ public class ChatRequest
 {
     public long HostId { get; set; }
     public string Date { get; set; } = string.Empty;
+
+    /// <summary>舊欄位（單一問題）：有值時視為 FocusKeys 的第一項，保留相容</summary>
     public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>使用者明確指定的焦點問題鍵（可多個、可為空）；不在當日 TopIssues 的鍵靜默忽略</summary>
+    public List<string>? FocusKeys { get; set; }
+
     public List<ChatMessageDto> Messages { get; set; } = new();
 }
 

@@ -1490,15 +1490,23 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊**（實驗性精簡版）：報告全文卡之上，AI 可用且當日有重點問題才顯示。
-  範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
-  仍可見的問題**，篩選切換即連動）、10 輪上限**伺服器端強制**、
+  範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
+  標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
+  超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
+  合計上限 3,000 tokens，超出時從最後一個焦點起先拿掉樣本、再拿掉關鍵細節）。整日摘要只取自
+  `GetDetail` 回傳的 `RecordDetailDto`（案件授與檢視時標題等已是空字串、`TopIssues` 已過濾），不另讀紀錄。
+  **焦點由 `ChatFocusResolver` 以確定性規則決定，不呼叫 AI 做路由**：請求的 `focusKeys`
+  （含舊欄位 `issueKey`，視為第一項）先依序保留，不在當日 `TopIssues` 的鍵靜默忽略；再補最新一則
+  使用者訊息的關鍵字命中（獨立的 3 位以上數字等於 EventId、Source 全名、Source 以 `-` 或 `:` 切開的
+  最後一段〔4 字以上〕、規則 Id〔4 字以上〕、`SourceEventLabel` 全文；不分大小寫），合併去重最多 4 個；
+  仍為空則取嚴重度最高的前 3 個。回應的 `focus`（`[{issueKey,label}]`）與 `focusSource`
+  （`manual`／`keyword`／`default`）告知前端本輪實際納入的焦點。10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-SPEC.md` 的
-  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。**等待回覆期間**問題下拉與清除鈕停用；換問題或清除各使對話世代加一，
-  送出時記下世代，回覆（含失敗）抵達時世代已不同就整份丟棄、不寫進新對話；收尾時輸入框與送出鈕依「是否已選問題」
-  決定可否使用，而非無條件開啟。context 由伺服器端依 issueKey 重組
+  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端重組
   （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages **與當日報告全文**（#11，
-  `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、超出從尾端截斷並在
-  圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）。
+  `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、整日摘要與焦點區塊先算進
+  「其餘內容」、超出從尾端截斷並在圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）；
+  system prompt 要求提問涉及多個項目時分別說明並指出彼此關聯，資料裡沒有的項目要明說。
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
@@ -1510,7 +1518,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
   **現場事件取得（兩段式）**：對話首輪
-  （尚無歷史）伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
+  （尚無歷史）且焦點恰 1 個、焦點來源是 `manual` 或 `keyword` 時，伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
   規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
   上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
   `IRiskyEventStore` 只在自身的 `source_key` 回填完成後宣告就緒；這條閘門不等待
@@ -1534,7 +1542,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `PUT api/records/{key}/handling/issues`（單筆問題層級狀態）、
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
   `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、
-  `POST api/ai/chat`（對話一輪：`{hostId, date, issueKey, messages}`，輪數／角色交錯／單則長度
+  `POST api/ai/chat`（對話一輪：`{hostId, date, focusKeys?, issueKey?, messages}`，兩個焦點欄位皆可省略；回應 `{text, fetchedLogCount, focus, focusSource}`；輪數／角色交錯／單則長度
   伺服器端驗證，AI 不可用或失敗回 `data:null`；首輪視情況併入現場事件——風險 log 暫存優先、
   Sentinel 即時查詢 fallback，見上方「現場事件取得」）
 

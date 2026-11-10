@@ -179,10 +179,15 @@ public class AiController : ControllerBase
 
         var parsedDate = ParseRequiredDate(request.Date);
         var detail = _recordsDetail.GetDetail(request.HostId, parsedDate);
-        var issue = detail.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, request.IssueKey));
-        if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
+        if (detail.TopIssues.Count == 0) return ApiResponse<AiTextDto?>.Ok(null);
 
         ValidateChatMessages(request.Messages);
+
+        // 焦點以確定性規則決定（不呼叫 AI 做路由）：舊的 IssueKey 併入 FocusKeys 最前面
+        var focusKeys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(request.IssueKey)) focusKeys.Add(request.IssueKey);
+        if (request.FocusKeys != null) focusKeys.AddRange(request.FocusKeys.Where(k => !string.IsNullOrWhiteSpace(k)));
+        var (focus, focusSource) = ChatFocusResolver.Resolve(detail.TopIssues, focusKeys, request.Messages[^1].Content);
 
         // 對話沒有快取，通過驗證、確定要呼叫 AI（含第一輪的現場事件查詢）時才扣額
         if (!_manualThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow, out var chatRetryAfter))
@@ -193,18 +198,23 @@ public class AiController : ControllerBase
         // ChatAsync 略過即可，不影響既有問答流程
         var report = _recordsDetail.GetReport(request.HostId, parsedDate);
 
-        // 詢問 AI 現場事件取得：只在第一輪（使用者剛選定這個問題、還沒有對話歷史）取一次，
-        // 後續輪次沿用同一份 context，不必每輪重查。RiskyEventLookupService 內部先查風險 log
-        // 暫存（本機與 NetIQ 主機皆有）、查無才 fallback 既有的 Sentinel 即時查詢（僅 NetIQ 主機、
-        // 開關/節流語意不變）。任何失敗／不符資格一律回 null，靜默降級。
+        // 詢問 AI 現場事件取得：只在第一輪、焦點恰 1 個且來源是使用者指定或關鍵字命中時取一次
+        // （預設焦點代表使用者沒指向任何項目，不為猜測的項目查）。RiskyEventLookupService 內部先查風險 log
+        // 暫存、查無才 fallback 既有的 Sentinel 即時查詢。任何失敗／不符資格一律回 null，靜默降級。
         LiveEventFetchResult? liveEvents = null;
-        if (request.Messages.Count == 1)
+        if (request.Messages.Count == 1 && focus.Count == 1 && focusSource != ChatFocusResolver.SourceDefault)
         {
             var host = _hosts.Get(request.HostId);
-            if (host != null) liveEvents = await _eventLookup.FindAsync(host, parsedDate, issue.Source, issue.EventId);
+            if (host != null) liveEvents = await _eventLookup.FindAsync(host, parsedDate, focus[0].Source, focus[0].EventId);
         }
 
-        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages, report, liveEvents));
+        var result = await _ai.ChatAsync(detail, focus, request.Messages, report, liveEvents);
+        if (result != null)
+        {
+            result.Focus = focus.Select(f => new AiChatFocusItemDto { IssueKey = f.IssueKey, Label = f.SourceEventLabel }).ToList();
+            result.FocusSource = focusSource;
+        }
+        return ApiResponse<AiTextDto?>.Ok(result);
     }
 
     private const int MaxChatTurns = 10;
