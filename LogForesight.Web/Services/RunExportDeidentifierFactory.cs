@@ -155,6 +155,9 @@ public sealed record RunExportDeidentifierSource
 
     /// <summary>用目前金鑰解不開、因此無法比對實際值的憑證名稱（例如「PRTG 密碼」），不含任何值</summary>
     public IReadOnlyList<string> UndecryptableSecrets { get; init; } = Array.Empty<string>();
+
+    /// <summary>已不是目前認證方式的舊密文且解不開的名稱；目前沒有使用，不代表要重新設定</summary>
+    public IReadOnlyList<string> RetiredUndecryptableSecrets { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -223,8 +226,9 @@ public sealed class RunExportDeidentifierFactory
         // 密文欄位清單只有 SecretInventory 一份（啟動探測與取數前置檢查共用）；這裡不看「這趟用不用得到」，全部都要比對
         var secrets = new List<string>();
         var undecryptable = new List<string>();
+        var retiredUndecryptable = new List<string>();
         foreach (var entry in SecretInventory.Build(settings, sentinels))
-            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext, entry.Retired);
+            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext, entry.Retired, retiredUndecryptable);
 
         return new RunExportDeidentifierSource
         {
@@ -241,7 +245,8 @@ public sealed class RunExportDeidentifierFactory
             PrtgDevices = devices.Select(d => new DeidentifierPrtgDevice(d.Objid, d.Name, d.Ip, d.GroupPath)).ToList(),
             Settings = DeidentifierSettings.From(settings),
             Secrets = secrets,
-            UndecryptableSecrets = undecryptable.Distinct(StringComparer.Ordinal).ToList()
+            UndecryptableSecrets = undecryptable.Distinct(StringComparer.Ordinal).ToList(),
+            RetiredUndecryptableSecrets = retiredUndecryptable.Distinct(StringComparer.Ordinal).ToList()
         };
     }
 
@@ -269,13 +274,22 @@ public sealed class RunExportDeidentifierFactory
     /// 目前的行程讀不出這個值，也無法用它連線，因此不會把它寫進之後的紀錄；只有換金鑰前寫入的舊紀錄有理論風險，
     /// 由 <c>password=</c>、<c>passhash=</c>、<c>Bearer</c> 等樣式比對接手，並把欄位名稱寫進檔案的 meta 交代。
     /// </summary>
-    internal static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored, bool retired = false)
+    internal static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored, bool retired = false,
+        List<string>? retiredUndecryptable = null)
     {
         if (string.IsNullOrEmpty(stored)) return;
 
         var decrypted = retired ? CryptoHelper.TryDecryptQuietly(stored, out var plain) : CryptoHelper.TryDecrypt(stored, out plain);
         if (!decrypted)
         {
+            // 已停用認證方式的舊密文：目前沒有使用，分開列出，不當成「需要重新設定」
+            if (retired)
+            {
+                retiredUndecryptable?.Add(name);
+                Log.Info("診斷匯出：「{0}」是已停用認證方式的舊密文且解不開，略過實際值比對。", name);
+                return;
+            }
+
             undecryptable.Add(name);
             Log.Warn("診斷匯出：「{0}」用目前金鑰解不開，略過實際值比對；請重新設定該憑證。", name);
             return;

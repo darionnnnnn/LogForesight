@@ -329,4 +329,130 @@ Failure Code:		0x12";
         Assert.DoesNotContain("WKS01$", accounts);
         Assert.Contains("10.0.0.1", ips);
     }
+
+    // ---- Sentinel／NetIQ 單行訊息的標籤值邊界 ----
+
+    private const string ZhSingleLine4625 =
+        "帳戶無法登入。    主旨:   安全性識別碼:  S-1-0-0   帳戶名稱:  -   帳戶網域:  -   登入識別碼:  0x0    登入類型:   3    " +
+        "登入失敗的帳戶:   安全性識別碼:  S-1-0-0   帳戶名稱:  user-002   帳戶網域:  domain-001    " +
+        "失敗資訊:   失敗原因:  不明的使用者名稱或錯誤密碼。   狀態:   0xC000006D   子狀態:  0xC000006A    " +
+        "處理程序資訊:   處理程序識別碼:  0x0   網路資訊:   工作站名稱:  WS01   來源網路位址:  10.0.0.5   來源連接埠:  0";
+
+    [Fact]
+    public void 單行zhTW4625後接追加兩行_取到帳號類型原因與工作站()
+    {
+        var msg = ZhSingleLine4625 + "\nWorkstation Name: WS01\nSource Network Address: 10.0.0.5";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+
+        Assert.Equal("user-002", d.Account);
+        Assert.Equal(3, d.LogonType);
+        Assert.Equal("bad_password", d.ReasonCode);
+        Assert.Equal("WS01", d.Source);
+        Assert.False(d.IsComputerAccount);
+    }
+
+    [Fact]
+    public void 單行zhTW4625沒有追加行_工作站從訊息內讀取()
+    {
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, ZhSingleLine4625);
+
+        Assert.Equal("WS01", d.Source);
+        Assert.Equal("user-002", d.Account);
+        Assert.Equal(3, d.LogonType);
+    }
+
+    [Fact]
+    public void 全形冒號單行訊息_帳號集合恰為單一帳號()
+    {
+        var msg = "帳戶已順利登入。    主體：安全性識別碼：S-1-5-18   帳戶名稱：svc-test.corp";
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
+
+        Assert.Equal(new[] { "svc-test.corp" }, accounts.ToArray());
+    }
+
+    [Fact]
+    public void 單行英文4625_取到帳號類型子狀態與工作站()
+    {
+        var msg = "An account failed to log on.  Subject:   Security ID:  S-1-0-0   Account Name:  -   Account Domain:  -   Logon ID:  0x0   " +
+                  "Logon Type:  3   Account For Which Logon Failed:   Security ID:  S-1-0-0   Account Name:  alice   Account Domain:  CORP   " +
+                  "Failure Information:   Failure Reason:  Unknown user name or bad password.   Status: 0xC000006D  Sub Status: 0xC000006A   " +
+                  "Network Information:   Workstation Name:  WKS1  Source Network Address:  10.1.1.1  Source Port:  0";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+
+        Assert.Equal("alice", d.Account);
+        Assert.Equal(3, d.LogonType);
+        Assert.Equal("bad_password", d.ReasonCode);
+        Assert.Equal("WKS1", d.Source);
+    }
+
+    [Fact]
+    public void 單行4771_取到帳號用戶端位址與失敗碼()
+    {
+        var msg = "A Kerberos pre-authentication failed.  Account Information:   Security ID:  S-1-5-21-1   Account Name:  bob   " +
+                  "Network Information:   Client Address:  ::ffff:10.1.1.1   Client Port:  5000   Additional Information:   Failure Code:  0x18   Pre-Authentication Type:  2";
+        var d = LogAggregator.ExtractLoginFailureDetail(4771, msg);
+
+        Assert.Equal("bob", d.Account);
+        Assert.Equal("10.1.1.1", d.Source);
+        Assert.Equal("bad_password", d.ReasonCode);
+    }
+
+    [Fact]
+    public void 空欄位後直接接下一個標籤_視為空值()
+    {
+        var msg = "帳戶名稱:    帳戶網域:  CORP";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
+
+        Assert.Equal(string.Empty, d.Account);
+        Assert.Empty(accounts);
+    }
+
+    [Fact]
+    public void 值超過128字_視為空值()
+    {
+        var msg = "Account Name: " + new string('a', 200);
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
+
+        Assert.Equal(string.Empty, d.Account);
+        Assert.Empty(accounts);
+    }
+
+    [Fact]
+    public void 單行zhTW4625_ExtractAccountsAndIps帳號集合恰為失敗帳號()
+    {
+        var (accounts, ips) = LogAggregator.ExtractAccountsAndIps(new[] { ZhSingleLine4625 });
+
+        Assert.Equal(new[] { "user-002" }, accounts.ToArray());
+        Assert.Contains("10.0.0.5", ips);
+    }
+
+    [Fact]
+    public void 子狀態為零時取狀態_不讀到子狀態的值()
+    {
+        var msg = ZhSingleLine4625.Replace("子狀態:  0xC000006A", "子狀態:  0x0");
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+        Assert.Equal("0xc000006d", d.ReasonCode);
+
+        var en = "Account Name:  alice  Logon Type:  3  Status: 0xC000006D  Sub Status: 0x0  Workstation Name:  W1";
+        Assert.Equal("0xc000006d", LogAggregator.ExtractLoginFailureDetail(4625, en).ReasonCode);
+    }
+
+    [Fact]
+    public void 單行zhTW4625_子狀態非零時取子狀態()
+    {
+        Assert.Equal("bad_password", LogAggregator.ExtractLoginFailureDetail(4625, ZhSingleLine4625).ReasonCode);
+    }
+
+    [Fact]
+    public void 單行訊息_值內的單一空白保留_連續空白才是邊界()
+    {
+        // RDP 工作階段事件：帳號值含單一空白，後面以兩個空白接下一個欄位
+        var msg = "遠端桌面服務: 工作階段登入成功:    User: CONTOSO\\john smith  Session ID: 3  Source Network Address: 10.0.0.9";
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
+        Assert.Contains("CONTOSO\\john smith", accounts);
+        Assert.Contains("john smith", accounts);
+        Assert.DoesNotContain("CONTOSO\\john", accounts);
+    }
 }

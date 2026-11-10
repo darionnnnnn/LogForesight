@@ -100,7 +100,7 @@ public class DailyAnalysisRecord
     /// <summary>一句話標題，讓不懂 Event Log 的人一眼看懂今天的狀況</summary>
     public string Headline { get; set; } = string.Empty;
 
-    /// <summary>給主管的說明（2～3 句、可直接照念；AI 選填產出，經 LogAnalysisService.NormalizeBrief 後處理）。
+    /// <summary>重點速報（brief；2～3 句、可直接照念；AI 選填產出，經 LogAnalysisService.NormalizeBrief 後處理）。
     /// 存在 content_json，不是抽出欄；空字串＝沒有（舊紀錄、降級、被丟棄）</summary>
     public string Brief { get; set; } = string.Empty;
 

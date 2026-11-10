@@ -521,6 +521,8 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
 | 伺服器角色描述 | `Program.cs` 的 `ServerDescription`（自行填寫） | 同一事件在 AD 網域控制站和一般檔案伺服器上的嚴重性不同 |
 | 稽核事件總量趨勢 | `TrendAnalyzer` 獨立比對（4625 等稽核事件不計入錯誤數） | 安全事件總量暴增時即使個別簽章不顯眼也會告警 |
 
+**標籤值擷取邊界**：帳號、登入類型、狀態碼、工作站、來源位址等欄位依標籤擷取，標籤在整則訊息中的每個出現處都會處理。Sentinel／NetIQ 送來的 Windows 事件訊息主體是單行，欄位間以 2～4 個空白分隔，冒號有半形與全形，所以值從標籤後第一個非空白字元起，讀到換行、tab、連續兩個以上空白或訊息結尾為止，值內單一空白保留。值以冒號結尾（欄位為空、讀到下一個標籤）、長度超過 128 字或為 `-` 一律視為空值。同名標籤出現多次（例如 4625 的「主旨」與「登入失敗的帳戶」各有一個帳戶名稱）時取最後一個非空值；`Status` 不會讀到 `Sub Status`（「狀態」不會讀到「子狀態」）的值。
+
 > 注意：classic EventLog API 讀取新式 **Critical 等級**事件（如 Kernel-Power 41）時，
 > `EntryType` 可能為 0（列舉中沒有 Critical 值）。程式已特別納入這類事件並計入錯誤數，
 > 避免最嚴重的事件反而被過濾掉。
@@ -604,7 +606,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
    預先算好，以「（頻率上升：近14日基準 x2.1、昨日 x3）」的形式附註在事件行上，模型只解讀不計算。
 5. **JSON 契約 + grammar 強制 + 低溫度** — prompt 指定回傳
    `{risk_level, headline, brief, story, trend_story, action}` 的 JSON 結構（`risk_level` 欄位語意為
-   「AI 的白話翻譯」而非判斷結果，只作為向上拉的安全網；`brief` 是「給主管的說明」，2～3 句、可直接照念給主管聽，
+   「AI 的白話翻譯」而非判斷結果，只作為向上拉的安全網；`brief`（畫面名稱：重點速報）是給主管的說明，2～3 句、可直接照念給主管聽，
    **選填且不進內容檢查**：缺少視為空字串；超過 150 字（`MaxBriefChars`）在前 150 字內最後一個句末標點截斷、截不出就丟棄；
    含 IPv4、Event ID、事件編號字樣一律丟棄（`LogAnalysisService.NormalizeBrief`），丟棄不重試、不降級，只記 Debug），
    並透過 llama.cpp 的 `response_format: json_object`（grammar 約束解碼）從 server 端**保證**
@@ -694,7 +696,7 @@ AI 的日子要等 AI 補寫完成才產出（暫代紀錄的 `ReportFile` 為 `
 | **context 預算共用防線** | `PromptBudget`（`Analysis/PromptBudget.cs`）依實測環境 Gemma 4 26B、context 20480 保守估算（CJK 約 1:1、其餘約 3.5 字元 1 token，留 10% 餘裕）。檢查點放在 `AIService.ChatAsync`——所有 AI 呼叫的單一咽喉點，同時知道 prompt 與該次輸出上限，任何一次呼叫送出前若估計會超出可用預算就記 WARN。小模型爆 context 時 server 端行為不可靠（可能靜默截頭、可能報錯），這道防線負責在各呼叫類型自己的截斷（深入分析 16KB 字元硬上限、週體檢 40 行輸入塑形、主分析結構性上限）萬一失效時把問題顯性化，而不是等 server 端悄悄吞掉一段輸入 |
 | **回應信封也做容錯 + 記錄原始內容** | `ChatAsync` 先把 HTTP 回應讀成字串再自行解析，不直接 `ReadFromJsonAsync`——曾觀察到 HTTP 狀態碼是成功、但回應本體不是 JSON（`'H' is an invalid start of a value`），可能是中間 proxy/gateway 用 200 回傳純文字/HTML 錯誤頁。解析失敗時記錄回應預覽（此前完全是黑盒，看不到內容）並拋出 `AiEnvelopeParseException` 交給 Polly 重試——原本這類失敗完全沒有走 Polly 重試、直接判定整次呼叫失敗，白白浪費一次 `JsonRetryCount` 名額 |
 | **AI JSON 容錯解析** | `AiJson`（`Models/AiAnalysisResult.cs`）用括號配對掃描（正確跳過字串內容中的括號）取出真正的 JSON 物件，比天真的「第一個 `{` 到最後一個 `}`」精準——前言文字混有大括號、或模型多回了一個陣列包裹都能正確抓出。若輸出被 `max_tokens` 攔腰截斷，另外用堆疊追蹤 `{}`/`[]` 的巢狀順序，依正確的後進先出順序補上缺少的收尾符號（只算深度不記順序的話，物件裡包陣列會補錯括號種類，产生語法仍不合法的「修復」）後再解析一次。全部候選都失敗時印出回覆預覽方便診斷，而非直接吞掉黑盒子 |
-| **AI JSON 格式/內容重試** | `response_format=json_object` 只保證輸出是「合法 JSON」，不保證是預期的物件形狀——模型可能回傳陣列包多個物件、或欄位塞入異常冗長的重複文字，兩者語法都合法但不符期望。`ChatJsonAsync<T>` 解析後再檢查內容合理性（必填欄位非空、長度未超出正常摘要範圍），檢查未過就重新請求（預設 2 次），失敗原因與嘗試次數皆印出 |
+| **AI JSON 格式/內容重試** | `response_format=json_object` 只保證輸出是「合法 JSON」，不保證是預期的物件形狀——模型可能回傳陣列包多個物件、或欄位塞入異常冗長的重複文字，兩者語法都合法但不符期望。`ChatJsonAsync<T>` 解析後再檢查內容合理性（必填欄位非空、長度未超出正常摘要範圍），檢查未過就重新請求（預設 2 次），失敗原因與嘗試次數皆印出；最終成功但途中有內容層失敗的呼叫，診斷行的 `endedBy` 為 `recovered`（首次失敗的類別分布，不是案例），第一次就成功不寫 |
 | **System prompt 明確禁止前言** | 兩個系統提示都要求「直接以 `{` 開始輸出，不要有任何前言、推理過程或說明文字」，減少 MoE 模型在正式輸出前先寫一段推理文字、把 `max_tokens` 額度耗在 JSON 本體之外的情況 |
 | **失敗降級** | 網路層與 JSON 層重試皆耗盡仍失敗時，當日降級為統計模式紀錄（`AiAnalyzed=false`），規則與趨勢告警照常運作，不會整天沒有紀錄；若有拿到內容只是格式不合格，會保留原文（截斷）供人工參考，不遺失資訊 |
 | **結構化錯誤協定** | AI 呼叫回傳 `AiResponse { Success, Content, Error }` / `AiJsonResult<T> { Success, Value, RawContent, Error, Attempts }`，錯誤與正常內容分離，不靠字串前綴判斷 |

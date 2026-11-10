@@ -768,7 +768,13 @@ public class AnalysisOrchestrator
                 }
 
                 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
-                if (weeklyCheckupService.ShouldRun(runToday, settings.Analysis.CheckupIntervalDays))
+                var checkupSkipReason = LocalCheckupSkipReason(currentHostId, localHostDisabled);
+                if (checkupSkipReason != null)
+                {
+                    runRecorder.Phase(RunTimingPhases.Checkup).Complete(RunPhaseOutcomes.Skipped, checkupSkipReason);
+                    runConsole.WriteLine(checkupSkipReason);
+                }
+                else if (weeklyCheckupService.ShouldRun(runToday, settings.Analysis.CheckupIntervalDays))
                 {
                     var checkupPhase = runRecorder.Phase(RunTimingPhases.Checkup);
                     runConsole.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
@@ -825,6 +831,9 @@ public class AnalysisOrchestrator
                 }
                 runRecorder.RecordMemory(false, MemorySnapshot.Capture(backend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
                 runRecorder.Milestone("執行結束");
+                // 停止（使用者或窗口到點）不是失敗：取消已觸發時不補寫
+                if (UnsuccessfulRunError(result.Success || ct.IsCancellationRequested, runRecorder.ErrorCount, result.FailureMessage) is { } unsuccessfulError)
+                    Log.Error("{Message}", unsuccessfulError);
                 runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
 
@@ -901,6 +910,27 @@ public class AnalysisOrchestrator
 
     /// <summary>排程續跑時，NetIQ 失敗或未完成的主機日往回補幾天（暫定）；不受常態回望天數限制。</summary>
     internal const int NetiqResumeRetryDays = 7;
+
+    /// <summary>
+    /// 體檢以本機主機為對象：本機未登記或已停用時略過，回傳略過原因；可以跑則回 null。
+    /// 判斷只寫在這裡，呼叫端不另算。
+    /// </summary>
+    internal static string? LocalCheckupSkipReason(long currentHostId, bool localHostDisabled)
+    {
+        if (currentHostId == 0) return "本機主機未登記，略過體檢";
+        if (localHostDisabled) return "本機主機已停用，略過體檢（體檢以本機主機為對象）";
+        return null;
+    }
+
+    /// <summary>
+    /// 本趟結束非成功（結束代碼非 0）卻沒有任何 Error 行時，回傳要補寫的一行說明；其餘情況回 null。
+    /// 呼叫端在 Finish 之前呼叫，確保排程作業頁的「異常彙總」（預設只看 Error）看得到失敗原因。
+    /// </summary>
+    internal static string? UnsuccessfulRunError(bool success, int errorCount, string? failureMessage)
+    {
+        if (success || errorCount > 0) return null;
+        return $"本趟未成功完成：{failureMessage ?? "原因未記錄，請看本趟輸出"}";
+    }
 
     /// <summary>
     /// 本機與 NetIQ 的回望天數：沒指定用該路常態值；手動指定就照指定（受保留期上限夾制）。
@@ -1432,7 +1462,7 @@ public class AnalysisOrchestrator
             console.WriteLine($"\n  白話說明：{record.Summary}");
             if (record.Brief.Length > 0)
             {
-                console.WriteLine($"  給主管的說明：{record.Brief}");
+                console.WriteLine($"  重點速報：{record.Brief}");
             }
             if (record.TrendAssessment.Length > 0)
             {

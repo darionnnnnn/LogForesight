@@ -312,34 +312,24 @@ internal static class LogAggregator
                 }
             }
 
-            foreach (var line in message.Split('\n'))
+            foreach (var (_, value) in EnumerateLabelValues(message, AccountLabels, null))
             {
-                foreach (var label in AccountLabels)
+                if (value.Length == 0 || value == "-" || value.EndsWith("$"))
                 {
-                    int idx = line.IndexOf(label, StringComparison.OrdinalIgnoreCase);
-                    if (idx < 0)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    var value = line[(idx + label.Length)..].Trim();
-                    if (value.Length == 0 || value == "-" || value.EndsWith("$"))
-                    {
-                        continue;
-                    }
+                accounts.Add(value);
 
-                    accounts.Add(value);
-
-                    // RDP 的 "User:" 是 DOMAIN\user 格式，4625 的 "Account Name:" 常是純帳號——
-                    // 同時收錄 \ 後的純帳號，兩種來源的帳號才對得上（否則交集永遠落空）
-                    int slash = value.LastIndexOf('\\');
-                    if (slash >= 0 && slash + 1 < value.Length)
+                // RDP 的 "User:" 是 DOMAIN\user 格式，4625 的 "Account Name:" 常是純帳號——
+                // 同時收錄 \ 後的純帳號，兩種來源的帳號才對得上（否則交集永遠落空）
+                int slash = value.LastIndexOf('\\');
+                if (slash >= 0 && slash + 1 < value.Length)
+                {
+                    var bare = value[(slash + 1)..];
+                    if (bare.Length > 0 && !bare.EndsWith("$"))
                     {
-                        var bare = value[(slash + 1)..];
-                        if (bare.Length > 0 && !bare.EndsWith("$"))
-                        {
-                            accounts.Add(bare);
-                        }
+                        accounts.Add(bare);
                     }
                 }
             }
@@ -633,36 +623,111 @@ internal static class LogAggregator
         return trimmed == "-" ? string.Empty : trimmed;
     }
 
+    /// <summary>標籤值長度上限。超過視為空值——護欄，防止標籤後面沒有邊界時整段訊息被當成值。</summary>
+    private const int MaxLabelValueLength = 128;
+
+    /// <summary>
+    /// 取標籤在整則訊息中「最後一個非空值」；值為 "-" 回傳空字串（沿用既有語意）。
+    /// excludeSubstrings：標籤本身落在這些字串之內時略過該出現處（例如「Status:」不吃「Sub Status:」）。
+    /// </summary>
     private static string? ExtractLastValue(string message, string[] labels, string[]? excludeSubstrings = null)
     {
         string? last = null;
-        foreach (var line in message.Split('\n'))
+        foreach (var (_, value) in EnumerateLabelValues(message, labels, excludeSubstrings))
         {
-            if (excludeSubstrings != null && excludeSubstrings.Any(ex => line.Contains(ex, StringComparison.OrdinalIgnoreCase)))
+            if (value == "-")
             {
-                continue;
+                last = string.Empty;
             }
-
-            foreach (var label in labels)
+            else if (value.Length > 0)
             {
-                int idx = line.IndexOf(label, StringComparison.OrdinalIgnoreCase);
+                last = value;
+            }
+        }
+        return last;
+    }
+
+    /// <summary>
+    /// 依訊息位置順序列舉每個標籤的每個出現處與其值。
+    /// Sentinel／NetIQ 送來的 Windows 事件訊息主體是單行：欄位間以 2～4 個空白分隔，標籤後有 0～3 個空白，
+    /// 冒號有半形與全形；只有 4625／4771 尾端追加的 Workstation／Source Network Address 才有換行。
+    /// 因此值從標籤後第一個非空白字元（不跨越 \r\n）起算，讀到第一個邊界為止：
+    /// \n、\r、\t、連續兩個以上空白、訊息結尾；值內的單一空白保留（"CONTOSO\alice"、英文失敗原因句）。
+    /// 值以冒號結尾（原欄位為空、讀到了下一個標籤）或超過 <see cref="MaxLabelValueLength"/> 字視為空值（回傳 ""）。
+    /// 值為 "-" 原樣回傳，由呼叫端決定語意。
+    /// </summary>
+    private static List<(int Index, string Value)> EnumerateLabelValues(string message, string[] labels, string[]? excludeSubstrings)
+    {
+        var results = new List<(int Index, string Value)>();
+        foreach (var label in labels)
+        {
+            int from = 0;
+            while (from < message.Length)
+            {
+                int idx = message.IndexOf(label, from, StringComparison.OrdinalIgnoreCase);
                 if (idx < 0)
+                {
+                    break;
+                }
+                from = idx + label.Length;
+
+                if (excludeSubstrings != null && IsInsideExcluded(message, idx, excludeSubstrings))
                 {
                     continue;
                 }
 
-                var value = line[(idx + label.Length)..].Trim();
-                if (value == "-")
-                {
-                    last = string.Empty;
-                }
-                else if (value.Length > 0)
-                {
-                    last = value;
-                }
-                break;
+                results.Add((idx, ReadLabelValue(message, from)));
             }
         }
-        return last;
+
+        results.Sort((x, y) => x.Index.CompareTo(y.Index));
+        return results;
+    }
+
+    /// <summary>標籤起點是否落在某個排除字串之內（例如「Status:」的 S 是「Sub Status」的一部分）。</summary>
+    private static bool IsInsideExcluded(string message, int labelIdx, string[] excludeSubstrings)
+    {
+        foreach (var ex in excludeSubstrings)
+        {
+            for (int q = Math.Max(0, labelIdx - ex.Length + 1); q <= labelIdx; q++)
+            {
+                if (message.AsSpan(q).StartsWith(ex, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static string ReadLabelValue(string message, int start)
+    {
+        int i = start;
+        while (i < message.Length && (message[i] == ' ' || message[i] == '\t'))
+        {
+            i++;
+        }
+
+        int end = i;
+        while (end < message.Length)
+        {
+            char c = message[end];
+            if (c == '\n' || c == '\r' || c == '\t')
+            {
+                break;
+            }
+            if (c == ' ' && end + 1 < message.Length && message[end + 1] == ' ')
+            {
+                break;
+            }
+            end++;
+        }
+
+        var value = message[i..end].TrimEnd();
+        if (value.Length == 0 || value.Length > MaxLabelValueLength || value.EndsWith(':') || value.EndsWith('：'))
+        {
+            return string.Empty;
+        }
+        return value;
     }
 }

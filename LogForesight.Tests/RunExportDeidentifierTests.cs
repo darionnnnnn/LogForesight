@@ -1062,8 +1062,32 @@ public class RunExportDeidentifierTestsSource : IDisposable
 
         var masker = Factory(s).Create();
 
-        Assert.Equal(new[] { "AI 金鑰", "PRTG 密碼" }, masker.UndecryptableSecrets);
+        Assert.Equal(new[] { "AI 金鑰" }, masker.UndecryptableSecrets);
+        Assert.Equal(new[] { "PRTG 密碼" }, masker.RetiredUndecryptableSecrets);
         Assert.DoesNotContain("plain-value-1", masker.Mask("連線失敗 password=plain-value-1"));
+    }
+
+    [Fact]
+    public void Secret_retired解不開只進retired清單_非retired只進原清單_解得開皆空()
+    {
+        const string Bad = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var secrets = new List<string>();
+        var u = new List<string>();
+        var r = new List<string>();
+
+        RunExportDeidentifierFactory.Secret(secrets, u, "舊", Bad, retired: true, retiredUndecryptable: r);
+        Assert.Empty(u);
+        Assert.Equal(new[] { "舊" }, r);
+
+        u.Clear(); r.Clear();
+        RunExportDeidentifierFactory.Secret(secrets, u, "現", Bad, retired: false, retiredUndecryptable: r);
+        Assert.Equal(new[] { "現" }, u);
+        Assert.Empty(r);
+
+        u.Clear(); r.Clear();
+        RunExportDeidentifierFactory.Secret(secrets, u, "好", "plain-ok", retired: true, retiredUndecryptable: r);
+        Assert.Empty(u);
+        Assert.Empty(r);
     }
 
     [Fact]

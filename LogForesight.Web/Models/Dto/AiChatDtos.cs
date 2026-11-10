@@ -10,14 +10,21 @@ public class ChatMessageDto
 }
 
 /// <summary>
-/// 對話請求：不持久化，前端每輪送出完整歷史。伺服器端重新從 hostId/date/issueKey
-/// 取得 context（授權與資料來源與 interpret-issue 同一條路徑），不信任 client 端帶來的內容以外的任何欄位。
+/// 對話請求：不持久化，前端每輪送出完整歷史與目前焦點。伺服器端重新從 hostId/date 取得 context
+/// （授權與資料來源與 interpret-issue 同一條路徑），焦點鍵只在當日 TopIssues 範圍內採用，
+/// 不信任 client 端帶來的內容以外的任何欄位。
 /// </summary>
 public class ChatRequest
 {
     public long HostId { get; set; }
     public string Date { get; set; } = string.Empty;
+
+    /// <summary>舊欄位（單一問題）：有值時視為 FocusKeys 的第一項，保留相容</summary>
     public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>使用者明確指定的焦點問題鍵（可多個、可為空）；不在當日 TopIssues 的鍵靜默忽略</summary>
+    public List<string>? FocusKeys { get; set; }
+
     public List<ChatMessageDto> Messages { get; set; } = new();
 }
 

@@ -1271,7 +1271,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
      其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
      兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
-     欄頂「收合 ›」收回並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
+     「處理狀態」卡 header 右側的「收合 ›」收回（`collapseHost` 預設為第一個項目卡的 `.lf-card__header`）並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
      < lg 與列印回到上下堆疊、側軌隱藏。「去處理」意圖的連結帶 `#handling`（`core/paths.js` `recordDetailUrl(…, { handle: true })`）：
@@ -1331,12 +1331,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      顯示通用說明。SiteHidden 模式另在 header 補一行「另有 N 項問題已依全站顯示設定隱藏；
      風險等級以完整資料判定」（`HiddenIssueCount`）。
   12. **重點問題表格欄位合併**：「來源/Event」
-     「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題行＋
-     嚴重度/次數/時段 meta 行＋說明＋keyDetails＋原始訊息連結），趨勢與處理狀態維持獨立欄
+     「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題＋
+     白話說明（`guidance.explanation`，完整顯示；與 knownIssue 同文只留一個）＋knownIssue＋log 名與徽章＋嚴重度/次數/時段 meta 行＋來源佐證＋keyDetails＋原始訊息連結；
+     處置參考展開列（`guidancePanel`）只放影響、可能原因、處置步驟，只有白話說明時不掛展開列），趨勢與處理狀態維持獨立欄
      （補 `min-width` 防擠壓）——keyDetails（4703 這類事件動輒數百字的帳號/IP 彙總）
      否則會把其餘欄壓成逐字直排。長文字一律走 `ui.js` 的 `collapsibleText`：容器文字超過 300 字（`COLLAPSE_LIMIT`）才收合，
      純文字顯示到前 300 字內最後一個分隔符（空白、換行、Tab、頓號、全形與半形的逗號和分號、句號）＋「…」，300 字內沒有分隔符時取前 300 字＋「…」，不從帳號或 IP 中間切；
-     有子元素的區塊（AI 判讀、AI 深入分析每一條）以 `max-height`＋底部漸層收合；按鈕「顯示全文（共 N 字）」／「收合」，
+     有子元素的區塊（AI 判讀、AI 深入分析每一條）以 `max-height`＋底部漸層收合；按鈕「展開…」（title 與 aria-label「展開全文（共 N 字）」）／「收合」，
      判準只看字數不量版面（收合區在 `d-none` 內建構也成立）。套用於 keyDetails、說明、殘留憑證說明、處置參考的說明與影響、
      AI 判讀結果、AI 深入分析；PRTG 趨勢證據（固定欄位）不套用。列印一律全文（全站單一 beforeprint／afterprint 監聽）。
   12a. **殘留憑證徽章與登入失敗明細表**（`issueCell` 內，依此順序排在 keyDetails 之前）：
@@ -1473,11 +1474,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
-  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／給主管的說明／狀況／趨勢／建議處置；「給主管的說明」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
+  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／重點速報／狀況／趨勢／建議處置；狀況／趨勢／建議處置三段為並排的三格摘要，窄螢幕自動換行、列印單欄，缺值的格不渲染，建議處置格帶主色左色條；頁首日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；「重點速報」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
   僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
-  依 `AiAnalyzed` 旗標；「給主管的說明：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
+  依 `AiAnalyzed` 旗標；「重點速報：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
 - **「AI 分析中」徽章**：取數與 AI 判讀脫鉤後
   （見 docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節），統計已寫入、
@@ -1485,31 +1486,41 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
 - **問題列 Source/EventId 顯示**：Linux 事件沒有
-  EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 下拉選單一律改顯示
+  EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 的指定問題清單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊**（實驗性精簡版）：報告全文卡之上，AI 可用且當日有重點問題才顯示。
-  範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
-  仍可見的問題**，篩選切換即連動）、10 輪上限**伺服器端強制**、
+  範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
+  標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
+  超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
+  合計上限 3,000 tokens，超出時從最後一個焦點起先拿掉樣本、再拿掉關鍵細節）。整日摘要只取自
+  `GetDetail` 回傳的 `RecordDetailDto`（案件授與檢視時標題等已是空字串、`TopIssues` 已過濾），不另讀紀錄。
+  **焦點由 `ChatFocusResolver` 以確定性規則決定，不呼叫 AI 做路由**：最新一則
+  使用者訊息的關鍵字命中排最前（獨立的 3 位以上數字等於 EventId、Source 全名、Source 以 `-` 或 `:` 切開的
+  最後一段〔4 字以上〕、規則 Id〔4 字以上〕、`SourceEventLabel` 全文；不分大小寫），其後接請求的 `focusKeys`
+  （含舊欄位 `issueKey`，視為第一項；只看前 16 個，不在當日 `TopIssues` 的鍵靜默忽略），合併去重最多 4 個——
+  焦點滿了之後再問到新的問題，被擠掉的是較舊的延續焦點，不是剛問的那個；
+  仍為空則取嚴重度最高的前 3 個。回應的 `focus`（`[{issueKey,label}]`）與 `focusSource`
+  （`manual`／`keyword`／`default`）告知前端本輪實際納入的焦點。10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-SPEC.md` 的
-  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。**等待回覆期間**問題下拉與清除鈕停用；換問題或清除各使對話世代加一，
-  送出時記下世代，回覆（含失敗）抵達時世代已不同就整份丟棄、不寫進新對話；收尾時輸入框與送出鈕依「是否已選問題」
-  決定可否使用，而非無條件開啟。context 由伺服器端依 issueKey 重組
+  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端重組
   （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages **與當日報告全文**（#11，
-  `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、超出從尾端截斷並在
-  圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）。
+  `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、整日摘要與焦點區塊先算進
+  「其餘內容」、超出從尾端截斷並在圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）；
+  system prompt 要求提問涉及多個項目時分別說明並指出彼此關聯，資料裡沒有的項目要明說。
+  **前端焦點列**（`#chat-focus`，位於 `#chat-body` 訊息區上方）：輸入框一開始即可用，不必先選問題；送出 body 為 `{ hostId, date, focusKeys, messages }`（`focusKeys` 取目前焦點的 `issueKey`，可為空陣列）。有焦點時每個焦點一顆標籤（`lf-badge`，附「×」移除鈕）；沒有焦點時顯示「未指定，系統會依提問判斷」。按「指定問題」在焦點列下方就地展開面板 `#chat-focus-picker`（不開 modal，放大檢視中同樣可用；按鈕帶 `aria-expanded`／`aria-controls`）：列出目前可見問題的 checkbox（最多勾 4 個，滿額後其餘 disabled），勾選後按「套用」更新焦點，「取消」或面板內按 Esc 不改焦點，關閉後鍵盤焦點回到「指定問題」鈕。`#chat-focus` 為 `role="group"`（`aria-label="焦點問題"`）。回覆抵達且世代相同時以回應 `focus` 取代目前焦點，但 `focusSource` 為 `default` 時不存入（預設焦點只用於該輪，下一輪不會被當成指定送出）；`focusSource` 為 `keyword` 時該則 AI 泡泡上方顯示「已判定針對：…」，`default` 時顯示「未偵測到指定問題，以最嚴重的幾項為主」，`manual` 不顯示。移除標籤與指定問題不重設對話、不改輪數；清除重來連焦點一併清空；`updateIssueOptions` 只更新可指定清單。等待回覆期間「×」、「指定問題」與清除鈕 disabled。
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
   ）、清除重來鈕帶圖示。**放大檢視**：
-  header 的「放大檢視」鈕把 `#chat-body`（下拉／訊息／輸入表單整組）**節點搬移**（非複製）進
+  header 的「放大檢視」鈕把 `#chat-body`（焦點列／訊息／輸入表單整組）**節點搬移**（非複製）進
   全螢幕 modal（`showDetailModal` 擴充 `fullscreen`／`onClose`，關閉時於 modal 殼銷毀前搬回
   原位）——監聽器與對話狀態隨節點保留，chat-panel.js 對話邏輯零改動；modal 內訊息區
   改 flex 撐滿高度（`.modal-body #chat-messages` 覆寫），關閉後自動恢復 340px 上限。
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
   **現場事件取得（兩段式）**：對話首輪
-  （尚無歷史）伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
+  （尚無歷史）且焦點恰 1 個、焦點來源是 `manual` 或 `keyword` 時，伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
   規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
   上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
   `IRiskyEventStore` 只在自身的 `source_key` 回填完成後宣告就緒；這條閘門不等待
@@ -1533,7 +1544,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `PUT api/records/{key}/handling/issues`（單筆問題層級狀態）、
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
   `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、
-  `POST api/ai/chat`（對話一輪：`{hostId, date, issueKey, messages}`，輪數／角色交錯／單則長度
+  `POST api/ai/chat`（對話一輪：`{hostId, date, focusKeys?, issueKey?, messages}`，兩個焦點欄位皆可省略；回應 `{text, fetchedLogCount, focus, focusSource}`；輪數／角色交錯／單則長度
   伺服器端驗證，AI 不可用或失敗回 `data:null`；首輪視情況併入現場事件——風險 log 暫存優先、
   Sentinel 即時查詢 fallback，見上方「現場事件取得」）
 
@@ -2299,7 +2310,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
        （`RecordStatsBuilder.BuildCategoryCards`）不論模式，永遠只計勾選的層級。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
        ，
-       詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖全部同一套過濾，沒有例外頁。
+       詳情頁、AI 對話指定問題清單、儀表板類別卡、報表統計、問題查詢分組視圖全部同一套過濾，沒有例外頁。
        **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
   1b. **日風險等級顯示**：
       高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
@@ -2782,8 +2793,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **結果語意**：主程序與 AI 各自顯示「正常結束」或「已停止」；缺省／null 結果顯示「結果未知」。正常結束不表示 PRTG／AI 待補皆完成，需同時查看來源欄與待補數。AI 取消後拒絕 provider 晚到結果，保留完成紀錄及待補；目前版本的 Running workflow 在取消／例外時收尾，版本已更新者不覆寫。
-- **停用主機與本機格**：總表主機＝啟用主機 ∪ 趟次回報的未登記主機；已停用的主機只有當天真的跑過本機分析才算入（`TotalHosts` 逐日計）。本機格狀態看本機階段（`Phases.local`），不看整趟：整趟含 NetIQ 與 PRTG 的錯誤，拿來當本機狀態會把沒出問題的本機算成失敗；該日只有不含本機階段的趟時視同沒跑本機；執行中與異常中斷以整趟為準；舊紀錄無階段資料時以整趟代表並標 `Legacy`。站台主機在主機清單停用時略過本機日誌分析（權限檢查、保留清除、派工與體檢照跑），判定收斂在 `LocalHostPolicy`，「全部」範圍預覽不含本機，指定它回驗證錯誤。
-- **多窗口續跑**：排程趟的停止點是自己所屬窗口實例的 End（`RunRequest.WindowEnd`，相鄰窗口在交界處停，下一個窗口正常觸發；補跑趟維持 `CatchUpDeadline`）。**同一窗口續跑**（`ScheduleCalculator.RunToContinue`）：上一趟在窗口內提早結束且留下失敗或待補（`RunResume.Of`，直接從該趟結果算，含 NetIQ 失敗主機日、PRTG 待補裝置與失敗數值），距上一趟開跑與距窗口結束都滿 10 分時再跑一趟，同一實例最多 2 趟（計數讀執行紀錄 `WindowInstanceStart`，重啟不歸零）；留有 PRTG 待補裝置或失敗數值的趟另從結束時刻起算 10 分。停止點在觸發當下決定，執行中修改窗口不影響本趟；PRTG 的同日沿用以日曆日為界，跨午夜窗口午夜後開跑的趟整段重做。被窗口結束或手動停掉、異常中斷、補跑與手動趟都不續跑；續跑趟走 `WindowNote`，不放大回望也不算補跑。趟首里程碑寫上一趟留下什麼（「續跑：上一趟 #N 留下 NetIQ 4 主機日／PRTG 30 裝置」）。每個窗口實例觸發一次，不看前一趟成敗；同日每趟的目標日都是昨天。本機與 NetIQ 依缺漏日只補未完成的主機日；PRTG 在同日最新統計的來源同步完整時沿用，不重打外部系統（PRTG-SPEC §3）；權限檢查、保留清除、派工與體檢每趟照常。趟首里程碑寫「本趟為今日第 n 個執行窗口」，各路結束里程碑寫結果與數量；一趟的目標日在開跑時固定，跨午夜不變——跨午夜窗口（如 22:00→06:00）午夜後處理到的主機仍以開跑日的昨天為目標，隔晚才分析新的一天；要讓資料日當晚完成，窗口開始時間設在午夜後。
+- **停用主機與本機格**：總表主機＝啟用主機 ∪ 趟次回報的未登記主機；已停用的主機只有當天真的跑過本機分析才算入（`TotalHosts` 逐日計）。本機格狀態看本機階段（`Phases.local`），不看整趟：整趟含 NetIQ 與 PRTG 的錯誤，拿來當本機狀態會把沒出問題的本機算成失敗；該日只有不含本機階段的趟時視同沒跑本機；執行中與異常中斷以整趟為準；舊紀錄無階段資料時以整趟代表並標 `Legacy`。站台主機在主機清單停用時略過本機日誌分析（權限檢查、保留清除與派工照跑；體檢以本機主機為對象，同樣略過，體檢階段記為跳過並附原因，不寫警告），判定收斂在 `LocalHostPolicy`，「全部」範圍預覽不含本機，指定它回驗證錯誤。
+- **多窗口續跑**：排程趟的停止點是自己所屬窗口實例的 End（`RunRequest.WindowEnd`，相鄰窗口在交界處停，下一個窗口正常觸發；補跑趟維持 `CatchUpDeadline`）。**同一窗口續跑**（`ScheduleCalculator.RunToContinue`）：上一趟在窗口內提早結束且留下失敗或待補（`RunResume.Of`，直接從該趟結果算，含 NetIQ 失敗主機日、PRTG 待補裝置與失敗數值），距上一趟開跑與距窗口結束都滿 10 分時再跑一趟，同一實例最多 2 趟（計數讀執行紀錄 `WindowInstanceStart`，重啟不歸零）；留有 PRTG 待補裝置或失敗數值的趟另從結束時刻起算 10 分。停止點在觸發當下決定，執行中修改窗口不影響本趟；PRTG 的同日沿用以日曆日為界，跨午夜窗口午夜後開跑的趟整段重做。被窗口結束或手動停掉、異常中斷、補跑與手動趟都不續跑；續跑趟走 `WindowNote`，不放大回望也不算補跑。趟首里程碑寫上一趟留下什麼（「續跑：上一趟 #N 留下 NetIQ 4 主機日／PRTG 30 裝置」）。每個窗口實例觸發一次，不看前一趟成敗；同日每趟的目標日都是昨天。本機與 NetIQ 依缺漏日只補未完成的主機日；PRTG 在同日最新統計的來源同步完整時沿用，不重打外部系統（PRTG-SPEC §3）；權限檢查、保留清除與派工每趟照常（體檢的略過規則見「停用主機與本機格」）。趟首里程碑寫「本趟為今日第 n 個執行窗口」，各路結束里程碑寫結果與數量；一趟的目標日在開跑時固定，跨午夜不變——跨午夜窗口（如 22:00→06:00）午夜後處理到的主機仍以開跑日的昨天為目標，隔晚才分析新的一天；要讓資料日當晚完成，窗口開始時間設在午夜後。
 - **錯過窗口自動補跑（`AutoCatchUp`）**：站台停機錯過窗口時，窗口結束後 4 小時內補跑最近一個已結束的窗口一次，`Trigger` 仍是 `schedule`、算該窗口已觸發。補跑在窗口外開跑，不受窗口結束停止；它的停止點＝開跑時刻＋錯過窗口的長度（狀態卡與里程碑都寫出來）。本機與 NetIQ 的回望取缺口天數與常態值較大者。站台重啟造成的異常中斷，在窗口內由正常觸發補一次，仍受窗口結束停止。
 - **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與「本行程沒有持有、卻逾 6 小時未結束」的異常中斷同一狀態；本行程仍持有的執行不論跑多久都顯示執行中，`BatchRunStatus.Compute` 的 `heldByThisProcess`），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
 - **狀態卡的續跑與停止點**：執行中的趟寫「本趟到 HH:mm 停止」與 `windowNote`（第幾個窗口、要接上一趟的什麼）。PRTG 進度軌在暫停時顯示「PRTG 回應異常，暫停中（第 N 次，約 X 秒後重試）」（`prtgResumeAt` 是絕對時刻，前端倒數），停損後顯示「PRTG 已停止本趟取數，N 台待補」；訊號只來自夜間管線，回填與結構同步不顯示。執行紀錄的「觸發來源」欄附「仍待補：…」（`RunResume.Describe`）。
@@ -2886,7 +2897,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **內容**：`meta`（期間、省略項目 `omitted`、去識別化摘要）、`guide`（給 AI 的名詞解釋）、`context`（排程與模組設定白名單）、`dailyHealth`（逐日狀態台數，今天有取數趟時多一列 `isToday`、不含主機名單）、`runStats`（依作業與觸發類別、階段耗時、版本）、`signalGroups`＋`stacks`、`slowSql`、`abnormalRuns`、`aiFormatAnomalies`、`runMemory`。`meta.memory` 帶匯出當下的記憶體快照與 GC 生效設定（`isServerGc`、`gcConserveMemory`、`gcHeapHardLimitPercent`、`gen2Collections`，bytes）；`runMemory[]` 是期間內有記憶體標記的趟（`runId`、`jobType`、`startedAt`、`start`、`end`），由舊到新、最多 200 筆（超過取最新並記入 `omitted`）。`schemaVersion` 仍為 1。
   - **訊號組**：Warn 以上的診斷行，加上 `Output` 中去空白後行首為 `⚠`／`✗` 的行（只影響匯出多寡，不影響任何判定；分析結果類輸出排除）。先遮罩、再以 `RunMessageNormalizer` 正規化，組鍵含 logger，所以組數可能少於畫面；`source=log` 的 Error＋Fatal 次數總和必須等於同期異常彙總的次數總和。
   - **不匯出**：正常趟次逐筆、一般輸出與里程碑、帳號與主機名單、訊號組內的 AI 回覆片段、prompt 全文。
-  - **去識別化**（`RunExportDeidentifier`，一律套用，無開關）：順序固定為密鑰 → URL → 已知字典（長字串優先）→ 樣式。代號依首次出現配發、只在單一檔案內穩定、不用雜湊，檔案內沒有對照表；主機 IP 對應到同一個主機代號。字典來源讀取失敗，或序列化後掃描仍有字典原值、IPv4、Email、密鑰，一律中止並回 500 `export_deidentification_failed`，不給檔案。憑證用目前金鑰解不開（搬站或換金鑰後的舊值）不中止：略過實際值比對，改靠 `password=`、`passhash=`、`Bearer` 等樣式遮罩，名稱寫進 `meta.deidentification.undecryptableSecrets`。`guide` 不進掃描；封閉集合的值整串放行；只掃值不掃欄位名（匯出沒有動態欄位名），避免帳號 `status` 這類常見詞讓匯出永遠失敗。標籤後的值只取單一詞，含空白的人名若不在字典內，後半可能漏遮；檔案 `meta` 寫明自由文字無法保證完全遮除。
+  - **去識別化**（`RunExportDeidentifier`，一律套用，無開關）：順序固定為密鑰 → URL → 已知字典（長字串優先）→ 樣式。代號依首次出現配發、只在單一檔案內穩定、不用雜湊，檔案內沒有對照表；主機 IP 對應到同一個主機代號。字典來源讀取失敗，或序列化後掃描仍有字典原值、IPv4、Email、密鑰，一律中止並回 500 `export_deidentification_failed`，不給檔案。憑證用目前金鑰解不開（搬站或換金鑰後的舊值）不中止：略過實際值比對，改靠 `password=`、`passhash=`、`Bearer` 等樣式遮罩，名稱寫進 `meta.deidentification.undecryptableSecrets`；已不是目前認證方式的舊密文解不開時，名稱改寫進 `retiredUndecryptableSecrets`（目前沒有使用，不代表要重新設定，空也輸出空陣列）。`guide` 不進掃描；封閉集合的值整串放行；只掃值不掃欄位名（匯出沒有動態欄位名），避免帳號 `status` 這類常見詞讓匯出永遠失敗。標籤後的值只取單一詞，含空白的人名若不在字典內，後半可能漏遮；檔案 `meta` 寫明自由文字無法保證完全遮除。
   - **AI 回覆格式異常**（`aiFormatAnomalies`）：案例由降級欄位判定（`IAnalysisRecordQuery.QueryAiDegradedCases`，不比對標題）：`ai_degraded_attempts > 0` 且（仍待補，或已達 3 次上限），或存量資料中標題精確等於 `LogAnalysisService.AiFormatAnomalyHeadline` 的舊紀錄；涵蓋解析失敗與內容檢查失敗兩種。降級過但之後 AI 摘要補成功的主機日不是案例，也不會被選為對照組。每案帶 `degradedAttempts`（AI 排程對這個主機日降級的次數，舊標題資料為 0）與 `abandoned`；`attempts` 仍是摘要前綴寫的單次呼叫內嘗試次數，摘要解析不出前綴時 `attempts`、`reply`、`replyShape` 為 null。每案附遮罩後的回覆前 600 字、回覆類別、輸入特徵（`AiInputFeatures`）、同主機前後 7 天最接近、從未降級過的正常日作對照；最新 50 案另附遮罩後的問題清單。
   - **失敗診斷**：`ChatJsonAsync` 最終失敗且有內容層失敗時，以 logger `AiJsonDiagnostics` 寫一行 Warn（精簡 JSON：`finish_reason`、字數與 token 數、解析錯誤位置、各欄長度、回覆頭尾；另有 `emptyShape`——`category=empty` 時回覆只有 `[]` 或 `{}` 記 `array`／`object`；`rawChars`／`rawHead`／`rawTail`——清洗前（去 channel 標記與簡轉繁之前）原文的字數與頭 1,500／尾 500 字，與清洗後完全相同時省略；`reasoningChars`——伺服器另放在 `reasoning_content`／`reasoning` 的思考字數，只記長度）。回覆頭尾與原文頭尾走文字遮罩，孤立代理字元先換成 U+FFFD。`guide` 另寫明兩種「AI 失敗率」的分母（見下方「AI 格式異常降級」）。它不計入 `WarnCount`，執行詳情與異常彙總都不顯示，只給匯出。互動 AI 卡片不在 recorder 範圍內，不納入。
 - **AI 跟隨取數**：AI 分析**沒有獨立的啟用開關**，AI 服務設定好（`IWebAiService.Available`）就一律啟用。
@@ -3371,7 +3382,7 @@ target 名稱也帶 runId 與識別碼以免互相移除。
 之後附上最後回覆的前 300 字（換行與連續空白摺成單一空白、超長截斷加「…」、空回覆寫「（空回覆）」）。
 沒有這段，異常彙總裡幾百筆同樣的一句話無從判斷是模型能力還是 prompt 問題。**不附 prompt**。
 
-**警告等級**：「模型回了但格式不合格」是 Warn（`ChatJsonAsync` 最終失敗，主機日降級完成），「AI 服務不通」是 Error（傳輸層失敗、`LogAnalysisService` 主分析完全失敗）。PRTG 與 Sentinel 的「略過憑證驗證」提醒是 Info（刻意設定，不讓每趟都變「有警告」）；Security 記錄檔讀不到是真的偵測盲區，維持 Warn，服務帳號取得讀取權後才會消失。
+**警告等級**：「模型回了但格式不合格」是 Warn（`ChatJsonAsync` 最終失敗，主機日降級完成），「AI 服務不通」是 Error（傳輸層失敗、`LogAnalysisService` 主分析完全失敗）。PRTG 與 Sentinel 的「略過憑證驗證」提醒是 Info（刻意設定，不讓每趟都變「有警告」）；Security 記錄檔讀不到是真的偵測盲區，維持 Warn，服務帳號取得讀取權後才會消失。結束代碼非 0 的取數趟次至少有一行 Error 說明原因（`UnsuccessfulRunError`，僅在本趟非成功且沒有任何 Error 行時寫入）。
 
 **取數前憑證前置檢查**（`CredentialPreflight`，logger 名稱 `CredentialPreflight`）：`AnalysisOrchestrator.RunAsync` 在三路分析之前，對 `SecretInventory` 中「這趟用得到」的密文逐筆試解（`CryptoHelper.TryDecrypt`），解不開的寫一行 Warn「取數前憑證檢查：下列憑證無法用目前金鑰解密，本趟略過：…」並在執行輸出留一行 ⚠。**只寫 Warn、不寫 Error**：Error 會讓只跑本機分析的趟也被判 failed；失敗的那一路由該路表達（NetIQ：該 Sentinel 轄下主機計失敗主機日並標未完成、不建 client、不送請求；PRTG：`disabled` 加原因）。檢查本身擲例外只記 Warn，不中斷分析。此 logger 計入 `WarnCount`。啟動時 `CryptoKeyBootstrapper.ProbeSecrets` 對同一份清單逐筆試解一次，使健康頁在第一個夜間取數之前就顯示降級，不改任何資料。
 

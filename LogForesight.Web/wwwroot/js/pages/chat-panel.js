@@ -1,9 +1,10 @@
 /**
- * 風險日詳情頁的 AI 對話（R7 精簡版，實驗性）。
+ * 風險日詳情頁的 AI 對話（實驗性）。
  *
  * 不持久化：對話史只存在這個模組的記憶體，重新整理即清空，符合「可清除重來」的需求。
- * 每輪送出完整歷史給後端，伺服器端重新從 hostId/date/issueKey 取得 context 並強制 10 輪上限——
- * 這裡的 MAX_TURNS 只是提前擋掉明知會被拒的請求，真正的防線在後端（見 AiController.Chat）。
+ * 每輪送出完整歷史與目前焦點（focusKeys，可空）給後端，伺服器端重新從 hostId/date 取得 context、
+ * 判斷針對哪些問題並強制 10 輪上限——這裡的 MAX_TURNS 只是提前擋掉明知會被拒的請求，
+ * 真正的防線在後端（見 AiController.Chat）。焦點由伺服器驗證，前端只負責顯示與回送。
  */
 
 import { api } from '../core/api.js';
@@ -12,21 +13,24 @@ import { severityName } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 const MAX_TURNS = 10;
+const MAX_FOCUS = 4;   // 與後端 ChatFocusResolver 的焦點上限一致
 
 let hostId = null;
 let date = null;
-let messages = [];   // { role: 'user'|'assistant', content }
-let currentIssueKey = '';
+let messages = [];   // { role: 'user'|'assistant', content, hint? }
+let focus = [];      // 目前焦點：{ issueKey, label }
+let availableIssues = [];   // 「指定問題」可勾選的清單（目前可見的重點問題）
+let controlsLocked = false;  // 等待回覆期間鎖住焦點列與清除鈕
 let restoreSend = null;   // 進行中請求的送出鈕還原函式；重設對話時由 resetConversation 代為還原
 let generation = 0;    // 對話世代：每次 resetConversation 加一，送出時記下，回覆抵達若世代不同就丟棄
+let pickerOpen = false;   // 「指定問題」就地面板是否展開
+let pickBtn = null;       // 目前焦點列上的「指定問題」鈕（renderFocus 每次重建）
 let pending = false;   // 送出後、收到回覆前——顯示「思考中」泡泡
 
 export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     hostId = hostIdParam;
     date = dateParam;
-    // 重新初始化（批次套用後的頁面重載）時歸零選擇：下拉選項已重建回到「請先選擇」，
-    // 留著舊的 issueKey 會讓輸入框誤保持可用、送出時用到已不存在畫面上的選擇
-    currentIssueKey = '';
+    availableIssues = topIssues;
 
     const card = document.getElementById('chat-card');
     if (!aiAvailable || topIssues.length === 0) {
@@ -35,50 +39,20 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     }
     card.classList.remove('d-none');
 
-    renderIssueOptions(topIssues);
     resetConversation();
     bindEvents();
     loadRunHint(document.getElementById('chat-run-hint'));
 }
 
 /**
- * 嚴重度篩選鈕切換時呼叫（record-detail.js renderSeverityFilter）：下拉選單只列出
- * 目前篩選後仍可見的問題（docs/archive/HISTORY.md #4）——不重新綁定事件，
- * 只重建選項；目前選中的問題被篩掉時才重置選擇與對話，否則保留使用者正在進行的對話。
+ * 嚴重度篩選鈕切換時呼叫（record-detail.js renderSeverityFilter）：只更新「指定問題」可勾選的清單。
+ * 不重設對話、不動目前焦點——焦點由伺服器驗證，不在當日問題中的鍵會被靜默忽略。
  */
 export function updateIssueOptions(topIssues) {
-    renderIssueOptions(topIssues);
-
-    const select = document.getElementById('chat-issue-select');
-    const stillVisible = currentIssueKey && topIssues.some(i => i.issueKey === currentIssueKey);
-
-    if (stillVisible) {
-        select.value = currentIssueKey;
-    } else {
-        currentIssueKey = '';
-        resetConversation();
-    }
-}
-
-function renderIssueOptions(topIssues) {
-    const select = document.getElementById('chat-issue-select');
-    select.replaceChildren();
-
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = '請先選擇要詢問的異常項目…';
-    select.appendChild(placeholder);
-
-    for (const issue of topIssues) {
-        const option = document.createElement('option');
-        option.value = issue.issueKey;
-        option.textContent = `${issue.sourceEventLabel}（${severityName(issue.severity)}）`;
-        select.appendChild(option);
-    }
+    availableIssues = topIssues;
 }
 
 function bindEvents() {
-    const select = document.getElementById('chat-issue-select');
     const form = document.getElementById('chat-form');
     const clearBtn = document.getElementById('chat-clear');
     const expandBtn = document.getElementById('chat-expand');
@@ -86,8 +60,6 @@ function bindEvents() {
     // replaceWith 拋棄舊節點連同其上的監聽器，避免每次 initChatPanel（例如批次套用後 load() 重呼）疊加重複綁定。
     // #chat-body（expandChat 搬移的對象）本身不在此列——它是穩定的容器節點，
     // 內容物各自被替換，容器身分從不改變，expandChat 每次都能取到正確的即時容器。
-    const freshSelect = select.cloneNode(true);
-    select.replaceWith(freshSelect);
     const freshForm = form.cloneNode(true);
     form.replaceWith(freshForm);
     const freshClear = clearBtn.cloneNode(true);
@@ -95,18 +67,26 @@ function bindEvents() {
     const freshExpand = expandBtn.cloneNode(true);
     expandBtn.replaceWith(freshExpand);
 
-    freshSelect.addEventListener('change', () => {
-        currentIssueKey = freshSelect.value;
-        resetConversation();
-    });
-
     freshForm.addEventListener('submit', onSubmit);
     freshClear.addEventListener('click', resetConversation);
     freshExpand.addEventListener('click', expandChat);
+
+    // 就地面板內按 Esc 等同取消；在面板上攔下，不讓外層放大檢視 modal 一併關閉
+    const picker = document.getElementById('chat-focus-picker');
+    if (picker) {
+        const freshPicker = picker.cloneNode(true);
+        picker.replaceWith(freshPicker);
+        freshPicker.addEventListener('keydown', event => {
+            if (event.key !== 'Escape' || !pickerOpen) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeFocusPicker(true);
+        });
+    }
 }
 
 /**
- * 放大檢視（docs/archive/FEEDBACK-3-PLAN.md #6）：把 #chat-body（下拉／訊息／輸入表單整組）
+ * 放大檢視（docs/archive/FEEDBACK-3-PLAN.md #6）：把 #chat-body（焦點列／訊息／輸入表單整組）
  * 搬移進全螢幕 modal——是搬移不是複製，節點上的事件監聽器與對話狀態原樣保留，
  * chat-panel.js 其餘邏輯零改動。關閉時搬回原位置：insertBefore 用搬移前記下的
  * 下一個兄弟節點還原確切順序（目前 chat-body 是 lf-card__body 裡唯一子節點，
@@ -137,32 +117,184 @@ function scrollMessagesToBottom() {
 
 function resetConversation() {
     generation++;
-    // 進行中的舊請求不會再收尾（世代已變），送出鈕的「送出中」外觀由這裡還原，
-    // 之後才依「是否已選問題」決定可用與否
+    // 進行中的舊請求不會再收尾（世代已變），送出鈕的「送出中」外觀由這裡還原
     if (restoreSend) {
         restoreSend();
         restoreSend = null;
     }
     messages = [];
+    focus = [];
     pending = false;
+    if (pickerOpen) closeFocusPicker(false);
     renderMessages();
     updateTurnCount();
 
     const input = document.getElementById('chat-input');
     const send = document.getElementById('chat-send');
-    const hasIssue = !!currentIssueKey;
-    input.disabled = !hasIssue;
-    send.disabled = !hasIssue;
+    input.disabled = false;
+    send.disabled = false;
     input.value = '';
     setConversationControlsDisabled(false);
 }
 
-/** 回覆等待期間鎖住問題下拉與清除鈕：換問題或清除會重設對話，回覆回來時舊對話已不存在 */
+/** 回覆等待期間鎖住焦點列（移除與指定）與清除鈕：回覆回來時以伺服器回的焦點為準，等待中不接受變更 */
 function setConversationControlsDisabled(disabled) {
-    const select = document.getElementById('chat-issue-select');
+    controlsLocked = disabled;
+    if (disabled && pickerOpen) closeFocusPicker(false);
     const clearBtn = document.getElementById('chat-clear');
-    if (select) select.disabled = disabled;
     if (clearBtn) clearBtn.disabled = disabled;
+    renderFocus();
+}
+
+/** 焦點列：每個焦點一顆 chip（附「×」）；沒有焦點且尚無回覆時顯示說明；列尾是「指定問題」鈕 */
+function renderFocus() {
+    const bar = document.getElementById('chat-focus');
+    if (!bar) return;
+    bar.replaceChildren();
+
+    for (const item of focus) {
+        const chip = document.createElement('span');
+        chip.className = 'lf-badge lf-badge--primary lf-focus-chip';
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        chip.appendChild(label);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'lf-focus-chip__remove';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `移除焦點：${item.label}`);
+        remove.disabled = controlsLocked;
+        remove.addEventListener('click', () => removeFocus(item.issueKey));
+        chip.appendChild(remove);
+        bar.appendChild(chip);
+    }
+
+    if (focus.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'small text-muted';
+        empty.textContent = '未指定，系統會依提問判斷';
+        bar.appendChild(empty);
+    }
+
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'btn btn-sm btn-outline-secondary lf-focus-pick';
+    pick.textContent = '指定問題';
+    pick.disabled = controlsLocked;
+    pick.setAttribute('aria-expanded', pickerOpen ? 'true' : 'false');
+    pick.setAttribute('aria-controls', 'chat-focus-picker');
+    pick.addEventListener('click', openFocusPicker);
+    bar.appendChild(pick);
+    pickBtn = pick;
+}
+
+function toFocusItem(issueKey, label) {
+    return { issueKey, label };
+}
+
+/** 移除單一焦點：不重設對話、不改輪數 */
+function removeFocus(issueKey) {
+    if (controlsLocked) return;
+    focus = focus.filter(f => f.issueKey !== issueKey);
+    renderFocus();
+}
+
+/**
+ * 「指定問題」：在焦點列下方就地展開 checkbox 清單（#chat-focus-picker），不開 modal——
+ * 放大檢視本身就是 modal，Bootstrap 不支援疊開第二層。已是焦點者預設勾選，最多 4 個；
+ * 按「套用」才更新焦點，「取消」或 Esc 不改焦點。再按一次「指定問題」等同取消。
+ * 不在清單中的既有焦點（例如被嚴重度篩選藏起來的）原樣保留並計入上限。
+ */
+function openFocusPicker() {
+    if (controlsLocked) return;
+    if (pickerOpen) {
+        closeFocusPicker(true);
+        return;
+    }
+    const panel = document.getElementById('chat-focus-picker');
+    if (!panel) return;
+
+    const current = new Set(focus.map(f => f.issueKey));
+    const listed = new Set(availableIssues.map(i => i.issueKey));
+    const kept = focus.filter(f => !listed.has(f.issueKey));
+    const limit = MAX_FOCUS - kept.length;
+
+    const list = document.createElement('div');
+    list.className = 'lf-focus-picker__list';
+    const rows = [];
+    availableIssues.forEach((issue, index) => {
+        const row = document.createElement('div');
+        row.className = 'form-check';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.className = 'form-check-input';
+        box.id = `chat-pick-${index}`;
+        box.checked = current.has(issue.issueKey);
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', box.id);
+        label.textContent = `${issue.sourceEventLabel}（${severityName(issue.severity)}）`;
+        row.appendChild(box);
+        row.appendChild(label);
+        list.appendChild(row);
+        rows.push({ box, issue });
+    });
+    if (rows.length === 0) {
+        const none = document.createElement('div');
+        none.className = 'text-muted';
+        none.textContent = '目前沒有可指定的問題。';
+        list.appendChild(none);
+    }
+
+    const refresh = () => {
+        const checkedCount = rows.filter(r => r.box.checked).length;
+        for (const r of rows) r.box.disabled = !r.box.checked && checkedCount >= limit;
+    };
+    for (const r of rows) r.box.addEventListener('change', refresh);
+    refresh();
+
+    const actions = document.createElement('div');
+    actions.className = 'lf-focus-picker__actions';
+    let cancel;
+    if (rows.length > 0) {
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'btn btn-primary btn-sm';
+        apply.textContent = '套用';
+        apply.addEventListener('click', () => {
+            if (controlsLocked) return;
+            const chosen = rows.filter(r => r.box.checked)
+                .map(r => toFocusItem(r.issue.issueKey, r.issue.sourceEventLabel));
+            focus = [...kept, ...chosen];
+            closeFocusPicker(true);
+        });
+        actions.appendChild(apply);
+    }
+    cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-outline-secondary btn-sm';
+    cancel.textContent = '取消';
+    cancel.addEventListener('click', () => closeFocusPicker(true));
+    actions.appendChild(cancel);
+
+    panel.replaceChildren(list, actions);
+    panel.classList.remove('d-none');
+    pickerOpen = true;
+    renderFocus();
+    (rows.length > 0 ? rows[0].box : cancel).focus();
+}
+
+/** 關閉就地面板；restoreFocus 為 true 時鍵盤焦點回到「指定問題」鈕 */
+function closeFocusPicker(restoreFocus) {
+    const panel = document.getElementById('chat-focus-picker');
+    if (panel) {
+        panel.replaceChildren();
+        panel.classList.add('d-none');
+    }
+    pickerOpen = false;
+    renderFocus();
+    if (restoreFocus && pickBtn) pickBtn.focus();
 }
 
 function updateTurnCount() {
@@ -172,8 +304,6 @@ function updateTurnCount() {
 
 async function onSubmit(event) {
     event.preventDefault();
-    if (!currentIssueKey) return;
-
     const input = document.getElementById('chat-input');
     const send = document.getElementById('chat-send');
     const content = input.value.trim();
@@ -197,13 +327,26 @@ async function onSubmit(event) {
     restoreSend = restore;
     input.disabled = true;
     try {
-        const result = await api.post('/api/ai/chat', { hostId, date, issueKey: currentIssueKey, messages }, { silent: true });
-        // 等待期間對話被重設（換問題、清除、問題清單更新）：回覆屬於舊對話，丟棄
+        const result = await api.post('/api/ai/chat', {
+            hostId, date,
+            focusKeys: focus.map(f => f.issueKey),
+            messages: messages.map(m => ({ role: m.role, content: m.content }))
+        }, { silent: true });
+        // 等待期間對話被重設（清除重來）：回覆屬於舊對話，丟棄
         if (requestGeneration !== generation) return;
         if (result?.text) {
             // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：只有真的取到資料才顯示提示，
             // 不誤導（開關關閉／非 NetIQ 主機／失敗時 fetchedLogCount 為 null，不顯示任何取數跡象）
-            messages.push({ role: 'assistant', content: result.text, fetchedLogCount: result.fetchedLogCount });
+            messages.push({
+                role: 'assistant', content: result.text, fetchedLogCount: result.fetchedLogCount,
+                hint: buildFocusHint(result)
+            });
+            // 以伺服器實際採用的焦點取代目前焦點；沒帶 focus 欄位就維持原狀。
+            // 預設焦點（沒指定也沒命中時系統取的最嚴重幾項）只用於這一輪：存起來下一輪會被當成使用者指定，
+            // 之後問別的問題時一直夾帶這幾項
+            if (Array.isArray(result.focus) && result.focusSource !== 'default') {
+                focus = result.focus.map(f => toFocusItem(f.issueKey, f.label));
+            }
         } else {
             messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
         }
@@ -221,13 +364,20 @@ async function onSubmit(event) {
             setConversationControlsDisabled(false);
             renderMessages();
             updateTurnCount();
-            // 輸入框是否可用取決於「是否已選問題」，不是無條件開啟
-            const hasIssue = !!currentIssueKey;
-            input.disabled = !hasIssue;
-            send.disabled = !hasIssue;
-            if (hasIssue) input.focus();
+            input.disabled = false;
+            send.disabled = false;
+            input.focus();
         }
     }
+}
+
+/** 該則回覆的焦點提示：keyword 列出判定的問題、default 說明退回最嚴重的項目、manual 不顯示 */
+function buildFocusHint(result) {
+    if (result.focusSource === 'keyword' && Array.isArray(result.focus) && result.focus.length > 0) {
+        return `已判定針對：${result.focus.map(f => f.label).join('、')}`;
+    }
+    if (result.focusSource === 'default') return '未偵測到指定問題，以最嚴重的幾項為主';
+    return '';
 }
 
 function renderMessages() {
@@ -264,6 +414,12 @@ function renderBubble(message) {
     } else {
         // AI 回覆：安全子集 Markdown 渲染（**粗體**／清單等），取代原本星號原樣顯示
         bubble.className = 'lf-ai-block lf-bubble';
+        if (message.hint) {
+            const hint = document.createElement('div');
+            hint.className = 'small text-muted mb-1';
+            hint.textContent = message.hint;
+            bubble.appendChild(hint);
+        }
         if (message.fetchedLogCount > 0) {
             const note = document.createElement('div');
             note.className = 'small text-muted mb-1';

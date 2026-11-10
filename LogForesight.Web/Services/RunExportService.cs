@@ -519,6 +519,7 @@ public sealed class RunExportService : IRunExportService
                     Tokens = _m.TokenCounts.OrderBy(kv => kv.Key, StringComparer.Ordinal)
                         .Select(kv => new ExportTokenCountDto(Lit(kv.Key), kv.Value)).ToList(),
                     UndecryptableSecrets = _m.UndecryptableSecrets.Select(Lit).ToList(),
+                    RetiredUndecryptableSecrets = _m.RetiredUndecryptableSecrets.Select(Lit).ToList(),
                     Notice = Lit("主機、帳號、IP、網址、路徑、SID 與密鑰已換成代號，代號只在本檔內有效、檔案內沒有對照表；"
                                  + "自由文字（訊息樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除，含空白的人名若不在系統字典內，後半可能漏遮；群組與角色名稱若在兩字以內不會被遮。")
                 },
@@ -1432,8 +1433,8 @@ public sealed class RunExportService : IRunExportService
         {
             "【用途】本檔是 LogForesight 排程作業頁匯出的診斷資料，請協助找出這個專案「尚未完善的細節」：反覆出現的錯誤、沒跑完的趟次、效能瓶頸、AI 回覆格式異常的成因。",
             "【去識別化】主機、帳號、IP、網址、路徑、SID 與密鑰已換成 host-001、user-001、ip-001、secret 之類代號；代號只在本檔內有效，檔案內沒有對照表。自由文字（樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除。看到代號請當成「某一台／某一位」，不要試圖還原。",
-            "【解不開的憑證】meta.deidentification.undecryptableSecrets 列出站台存著、但用目前金鑰解不開的憑證名稱，這些值只靠 password=、passhash= 等樣式遮罩。它也是可回報的設定問題：代表憑證需要重新設定。",
-            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 可能多一列今天（isToday），它的 notRun 代表尚未處理、不是失敗；notRun 不含空資料待複查，空資料待複查另計於 recheckCount；pendingSummary 只在今天的列有值；signalGroups 與 abnormalRuns 含今天。",
+            "【解不開的憑證】meta.deidentification.undecryptableSecrets 列出站台存著、但用目前金鑰解不開的憑證名稱，這些值只靠 password=、passhash= 等樣式遮罩。它也是可回報的設定問題：代表憑證需要重新設定。retiredUndecryptableSecrets 是已不是目前認證方式的舊密文，目前沒有使用，可到設定頁清空或忽略，不代表要重新設定。",
+            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 可能多一列今天（isToday），它的 notRun 代表尚未處理、不是失敗；notRun 不含空資料待複查，空資料待複查另計於 recheckCount；pendingSummary 只在今天的列有值；signalGroups 與 abnormalRuns 含今天。保守取數策略下夜間不逐顆取 PRTG 數值，prtgTargetSensors 為 0 屬正常，數值由快照供應。",
             "【狀態】success＝完成且無警告；warning＝完成但有警告或 AI 失敗；failed＝結束代碼非 0 或有 Error；stopped＝使用者或執行窗口到點停止，不算失敗；stuck＝站台重啟時還沒結束，或逾 6 小時沒有人持有；running＝匯出當下仍在跑的快照，只計入 runStats，不進 abnormalRuns。",
             "【null 與 0】null 代表沒有資料或無法計算（舊紀錄缺欄位、樣本數為 0 的中位數與 P95、AI 呼叫數為 0 的失敗率）；0 才是真的零。請不要把 null 當成 0 解讀。",
             "【執行站台不等於被分析主機】abnormalRuns.host 是跑這一趟的主機（站台），不是被分析的對象。同一個錯誤在幾個「執行站台」出現，不代表它影響了幾台被分析主機；要判斷個案或通案，請看 affectedRuns 與 versions。",
@@ -1445,7 +1446,7 @@ public sealed class RunExportService : IRunExportService
             "【runStats】byJob 依作業類型（fetch＝取數分析，ai＝AI 分析排程）與觸發類別（schedule、manual、fetch-followup、console＝工作排程器或舊紀錄）統計；phases 是各階段耗時（只算有結束時間的）與未成功次數，P95 用最近排名法；versions 看問題是不是某一版之後才出現。",
             "【aiFormatAnomalies】「案例」是 AI 重試用盡後仍未通過 JSON 檢查、系統保留原文降級的主機日紀錄，有兩種來源：一是 degradedAttempts 大於 0 且仍未成功（還在待補，或連續 3 次格式異常後已放棄，abandoned 為 true）；二是歷史資料中標題為「AI 回覆格式異常，以下為原始內容」的舊紀錄（degradedAttempts 為 0）。已恢復的不算案例：降級過但之後 AI 摘要補成功的主機日，degradedAttempts 雖大於 0，卻不在 aiFormatAnomalies 內，也不會當對照組。degradedAttempts 是 AI 排程對這個主機日降級的排程次數（每趟排程嘗試最多算 1 次，同一趟內的重試不另計）；attempts 是紀錄摘要前綴寫的單次呼叫內嘗試次數（解析不到為 null；摘要沒有這段前綴時 attempts、reply、replyShape 都是 null）。replyShape：object＝以 { 開頭、fence＝Markdown 圍欄、array＝以 [ 開頭、text＝一般文字、blank＝空白；cutOff 為 true 代表保留字數已達 600 字上限，後面可能還有被截掉的內容，不要推測它是什麼。",
             "【兩種 AI 失敗率】runStats 的 aiFailures／aiCalls 是主機日層：AI 排程每個主機日算一次呼叫，格式異常降級也算一次失敗；signalGroups 與診斷行是呼叫層：以 AIService 的單次呼叫為單位，呼叫內每次嘗試各有一筆診斷行，重試用盡才算該次呼叫最終失敗。同一個主機日的一次呼叫在診斷行可能有 3 筆，在主機日層只算 1 次，兩個分母不同，不能直接相除或相減。",
-            "【失敗類別】診斷的 category：empty＝空回覆；no_json＝完全沒有 {；truncated＝括號未閉合或 finishReason 為 length（被 maxTokens 截斷）；type_mismatch＝JSON 合法但欄位型別不符（parseErrorPath 指到欄位）；parse_other＝其他解析失敗；validation＝解析得出但內容檢查沒過（fieldLengths 是各欄字數，請對照 context.ai 的上限：headlineMaxChars 與 otherFieldMaxChars）。context.ai 的 aiMaxTokens 與 aiJsonRetryCount 是呼叫當時的設定值。empty 的 emptyShape：array＝回覆只有 []、object＝只有 {}，這是伺服器用文法（response_format）強制輸出 JSON 時，模型想先思考卻被擋下的最短合法輸出；上一次是 empty 或 no_json 時，下一次嘗試會關掉文法重試，提示尾句改成允許先思考、最後只輸出一個 JSON 物件，其他類別的重試維持文法與「嚴格輸出合法 JSON」的尾句。rawChars、rawHead、rawTail 是清洗前（去 channel 標記與簡轉繁之前）的原文字數與頭尾，缺值代表與清洗後完全相同；reasoningChars 是伺服器另放在 reasoning_content 或 reasoning 欄位的思考字數，只有長度，null 代表伺服器沒有這類欄位。",
+            "【失敗類別】診斷的 category：empty＝空回覆；no_json＝完全沒有 {；truncated＝括號未閉合或 finishReason 為 length（被 maxTokens 截斷）；type_mismatch＝JSON 合法但欄位型別不符（parseErrorPath 指到欄位）；parse_other＝其他解析失敗；validation＝解析得出但內容檢查沒過（fieldLengths 是各欄字數，請對照 context.ai 的上限：headlineMaxChars 與 otherFieldMaxChars）。context.ai 的 aiMaxTokens 與 aiJsonRetryCount 是呼叫當時的設定值。empty 的 emptyShape：array＝回覆只有 []、object＝只有 {}，這是伺服器用文法（response_format）強制輸出 JSON 時，模型想先思考卻被擋下的最短合法輸出；上一次是 empty 或 no_json 時，下一次嘗試會關掉文法重試，提示尾句改成允許先思考、最後只輸出一個 JSON 物件，其他類別的重試維持文法與「嚴格輸出合法 JSON」的尾句。rawChars、rawHead、rawTail 是清洗前（去 channel 標記與簡轉繁之前）的原文字數與頭尾，缺值代表與清洗後完全相同；reasoningChars 是伺服器另放在 reasoning_content 或 reasoning 欄位的思考字數，只有長度，null 代表伺服器沒有這類欄位。endedBy 為 recovered 代表最終成功、但先前嘗試失敗過，這類診斷用來看首次失敗的類別分布，不是案例。",
             "【診斷起始日】detailedDiagnosticsFirstSeen 是期間內最早一筆詳細診斷的日期；在那之前的案例只有摘要，沒有 category、finishReason 與字數。null 代表期間內沒有任何詳細診斷，可能是還沒發生過失敗，也可能是功能上線前的資料，兩者無法區分。",
             "【失敗歷史統計】summary.failureHistory 是從執行紀錄 Warn 訊息比對出的解析失敗與內容檢查失敗次數（依回覆型別）。比對靠固定的訊息字首，找不到就是 0，0 不代表沒發生過。",
             "【對照組】每個案例最多一筆 control：同一台主機、日期最接近（前後 7 天內，同距離取較新）、AI 正常分析完成的紀錄，只放輸入特徵；找不到是 null，不會換別台主機。comparison 是案例與對照各特徵的中位數與樣本數，任一組樣本為 0 時 features 為 null。請用它判斷是輸入內容造成的，還是模型本來就不穩。",

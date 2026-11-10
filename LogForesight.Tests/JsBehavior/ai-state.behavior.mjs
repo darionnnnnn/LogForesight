@@ -64,7 +64,7 @@ const { aiStatusBadge } = new Function('aiStateOf', 'aiDegradedBadge', `
     return { aiStatusBadge };
 `)(aiStateOf, aiDegradedBadge);
 
-// 第 66 輪 C：AI 摘要區塊（含給主管的說明）；renderAiInline 以 textContent 附加，等同 production 對純文字的行為
+// 第 66 輪 C：AI 摘要區塊（含重點速報）；renderAiInline 以 textContent 附加，等同 production 對純文字的行為
 const briefToasts = [];
 const { aiSummaryBlock } = new Function('renderAiInline', 'toast', `
     ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function aiSummaryBlock(')}
@@ -197,14 +197,14 @@ const cases = {
             assert.deepEqual(badge ? [badge.textContent] : [], expected, `詳情：${label}`);
         }
     },
-    摘要區塊給主管的說明位置與複製鈕() {
+    摘要區塊重點速報位置與複製鈕() {
         const block = aiSummaryBlock(briefDetail());
         const text = block.textContent;
-        assert(text.includes('給主管的說明'), text);
+        assert(text.includes('重點速報'), text);
         assert(text.includes('複製'), text);
         const headlineAt = text.indexOf('H');
-        const briefAt = text.indexOf('給主管的說明');
-        const summaryAt = text.indexOf('狀況：');
+        const briefAt = text.indexOf('重點速報');
+        const summaryAt = text.indexOf('狀況');
         assert(headlineAt < briefAt && briefAt < summaryAt, `順序錯誤：${text}`);
         const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
         assert(brief, '找不到 lf-ai-brief');
@@ -217,7 +217,7 @@ const cases = {
     摘要區塊沒有brief或未分析時不建節點() {
         for (const detail of [briefDetail({ brief: '' }), briefDetail({ aiAnalyzed: false }), briefDetail({ brief: undefined })]) {
             const block = aiSummaryBlock(detail);
-            assert(!block.textContent.includes('給主管的說明'), block.textContent);
+            assert(!block.textContent.includes('重點速報'), block.textContent);
             assert.equal(block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief')), null);
         }
         assert.equal(aiSummaryBlock({ aiAnalyzed: true }), null);

@@ -343,7 +343,12 @@ public sealed class CredentialPreflightTests : IDisposable
         var warn = Assert.Single(PreflightLogs(logs));
         Assert.Contains("SENT-A", warn.Message);
         Assert.DoesNotContain("SENT-B", warn.Message);
-        Assert.Equal(0, run.ErrorCount);
+        // 前置檢查本身只寫 Warn；NetIQ 這一路全部失敗讓趟次以結束代碼 1 結束，
+        // 收尾補的唯一一行 Error 是失敗原因說明（AnalysisOrchestrator.UnsuccessfulRunError），不是前置檢查
+        Assert.Equal("Warn", warn.Level);
+        var error = Assert.Single(logs, l => l.Level is "Error" or "Fatal");
+        Assert.Contains("本趟未成功完成", error.Message);
+        Assert.Equal(1, run.ErrorCount);
         // 管線端：不送請求、計失敗主機日（由 NetiqPipelineBaselineTests 逐項斷言），這裡只確認整趟照常走完並留下輸出
         Assert.Contains(_console, l => l.Contains("Sentinel「SENT-A」密碼無法解密"));
     }

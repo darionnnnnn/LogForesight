@@ -87,10 +87,12 @@ public class CryptoRecoveryTests : IDisposable
         var secrets = new List<string>();
         var undecryptable = new List<string>();
 
-        RunExportDeidentifierFactory.Secret(secrets, undecryptable, "PRTG 密碼", Undecryptable, retired: true);
+        var retiredList = new List<string>();
+        RunExportDeidentifierFactory.Secret(secrets, undecryptable, "PRTG 密碼", Undecryptable, retired: true, retiredUndecryptable: retiredList);
 
         Assert.False(CryptoHelper.DecryptFailureSeen);
-        Assert.Equal(new[] { "PRTG 密碼" }, undecryptable);
+        Assert.Empty(undecryptable);
+        Assert.Equal(new[] { "PRTG 密碼" }, retiredList);
 
         RunExportDeidentifierFactory.Secret(secrets, undecryptable, "PRTG passhash", Undecryptable);
         Assert.True(CryptoHelper.DecryptFailureSeen);

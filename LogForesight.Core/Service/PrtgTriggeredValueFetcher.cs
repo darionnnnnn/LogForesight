@@ -66,7 +66,7 @@ public sealed class PrtgTriggeredValueFetcher
         // 取「該日或之前最近一日」的對應，不是只取該日：主機對應只對最新一天重算，
         // 回望多日時較舊的日子沒有自己的對應列，只取該日會讓那些日子一台主機都對不到、一個數值都不取。
         // 也不能拿今天的對應套到過去日——那會把裝置掛到錯的主機上（docs/PRTG-SPEC.md §5）。
-        var hostMapRows = _store.GetLatestHostMapWithDate(HostMapLookbackDays, anchor: day).Rows;
+        var hostMapRows = _store.GetHostMapForDay(day, HostMapLookbackDays).Rows;
         var hostToDevices = new Dictionary<long, List<long>>();
         foreach (var row in hostMapRows)
         {

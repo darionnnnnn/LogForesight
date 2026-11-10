@@ -24,7 +24,7 @@ public class LogAnalysisService
     /// <summary>標題欄位（headline）的長度上限——比敘事欄位更短，一句話而非一段話</summary>
     public const int MaxHeadlineChars = 60;
 
-    /// <summary>「給主管的說明」（brief）的長度上限。brief 是選填欄位，不進 validate（不合格不重試、不降級），
+    /// <summary>「重點速報」（brief）的長度上限。brief 是選填欄位，不進 validate（不合格不重試、不降級），
     /// 超長時由 <see cref="NormalizeBrief"/> 截到句末或丟棄</summary>
     public const int MaxBriefChars = 150;
 
@@ -675,7 +675,7 @@ public class LogAnalysisService
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// 「給主管的說明」後處理（只在 AI 成功路徑套用）：trim；超過 <see cref="MaxBriefChars"/> 時在前 150 字內最後一個
+    /// 「重點速報」後處理（只在 AI 成功路徑套用）：trim；超過 <see cref="MaxBriefChars"/> 時在前 150 字內最後一個
     /// 句末標點（。！？；與半形 . ! ?）截斷，找不到就丟棄；截斷後含 IPv4／Event ID／事件編號字樣一律丟棄。
     /// 丟棄＝回空字串並以 <paramref name="droppedReason"/> 說明原因（呼叫端記 Debug）；不影響 AI 判讀本身。
     /// </summary>

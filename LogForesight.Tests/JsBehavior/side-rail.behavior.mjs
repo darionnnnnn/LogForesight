@@ -62,6 +62,7 @@ function build() {
     const nav = side.children[0];
     return { layout, side, sideBody, handling, log, rail, nav, buttons: nav.children };
 }
+const collapseOf = handling => handling.querySelector('.lf-side-rail__collapse');
 const click = el => (el.listeners.click || []).forEach(h => h({ stopPropagation() { } }));
 const OPEN = 'lf-detail-layout--side-open';
 
@@ -79,31 +80,31 @@ const cases = {
         assert(!layout.classList.contains(OPEN));
     },
     clickExpandsAndFocusesHeading() {
-        const { layout, buttons, rail, handling, sideBody } = build();
+        const { layout, buttons, rail, handling } = build();
         click(buttons[0]);
         assert(layout.classList.contains(OPEN));
         assert(rail.isExpanded());
         assert.equal(buttons[0].getAttribute('aria-expanded'), 'true');
         // 欄頂的收合鈕也控制同一個區塊，aria-expanded 要同步
-        assert.equal(sideBody.children[0].getAttribute('aria-expanded'), 'true');
+        assert.equal(collapseOf(handling).getAttribute('aria-expanded'), 'true');
         assert(rail.hasUserChoice());
         assert.equal(focused.at(-1), handling._title);
         assert.equal(handling._title.getAttribute('tabindex'), '-1');
         assert(scrolled.includes(handling));
     },
     collapseReturnsFocusToTrigger() {
-        const { layout, buttons, rail, sideBody } = build();
+        const { layout, buttons, rail, handling } = build();
         click(buttons[1]);
         rail.collapse();
         assert(!layout.classList.contains(OPEN));
         assert(!rail.isExpanded());
         assert.equal(buttons[1].getAttribute('aria-expanded'), 'false');
-        assert.equal(sideBody.children[0].getAttribute('aria-expanded'), 'false');
+        assert.equal(collapseOf(handling).getAttribute('aria-expanded'), 'false');
         assert.equal(focused.at(-1), buttons[1]);
     },
     collapseButtonMarksUserChoice() {
-        const { sideBody, rail, buttons } = build();
-        const collapseBtn = sideBody.children[0];
+        const { handling, rail, buttons } = build();
+        const collapseBtn = collapseOf(handling);
         assert.equal(collapseBtn.type, 'button');
         assert(collapseBtn.textContent.includes('收合'));
         rail.expand('handling', { focus: false });

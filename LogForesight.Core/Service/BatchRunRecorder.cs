@@ -145,6 +145,12 @@ public class BatchRunRecorder : IDisposable
         set { lock (_countLock) _run.AiFailures = value; }
     }
 
+    /// <summary>本趟累計的 Error 行數（含 Fatal），收尾判斷「非成功卻沒有任何 Error」用。</summary>
+    public int ErrorCount
+    {
+        get { lock (_countLock) return _run.ErrorCount; }
+    }
+
     public bool Stopped
     {
         get { lock (_countLock) return _run.Stopped; }

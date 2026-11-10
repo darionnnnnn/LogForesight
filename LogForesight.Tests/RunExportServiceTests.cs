@@ -1413,6 +1413,52 @@ public class RunExportServiceTests
     }
 
     [Fact]
+    public void AI診斷_recovered一筆_計入entries與byEndedBy並有起始日()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var run = h.AddRun();
+        h.AddLog(run, "Warn", AiJsonDiagnostics.LoggerName, RunExportHarness.DiagnosticMessage("daily-20200101-h1", "DailyAiResult", "recovered",
+            new AiJsonAttemptDiagnostics { Attempt = 1, Category = "empty", Head = "[" }),
+            y.AddHours(3));
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var section = root.G("aiFormatAnomalies");
+            var diag = section.G("summary").G("diagnostics");
+            Assert.Equal(1, diag.G("entries").GetInt32());
+            Assert.Contains("recovered", diag.G("byEndedBy").L().Select(x => x.S("name")));
+            Assert.Equal(y.ToString("yyyy-MM-dd"), section.S("detailedDiagnosticsFirstSeen"));
+        }
+    }
+
+    [Fact]
+    public void 匯出meta_retiredUndecryptableSecrets存在_空陣列也輸出_guide有說明()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun();
+
+        var (root, _, doc) = h.Export(masker: () => RunExportDeidentifier.Create(
+            new RunExportDeidentifierSource { RetiredUndecryptableSecrets = new[] { "PRTG 密碼" } }));
+        using (doc)
+        {
+            var d = root.GetProperty("meta").GetProperty("deidentification");
+            Assert.Equal(new[] { "PRTG 密碼" }, d.GetProperty("retiredUndecryptableSecrets").EnumerateArray().Select(e => e.GetString()).ToArray());
+            Assert.Empty(d.GetProperty("undecryptableSecrets").EnumerateArray());
+            var g = root.G("guide").L().Select(x => x.GetString() ?? "").ToList();
+            Assert.Contains(g, s => s.Contains("retiredUndecryptableSecrets") && s.Contains("不代表要重新設定"));
+            Assert.Contains(g, s => s.Contains("prtgTargetSensors") && s.Contains("快照"));
+        }
+
+        var (root2, _, doc2) = h.Export(masker: () => RunExportDeidentifier.Create(new RunExportDeidentifierSource()));
+        using (doc2)
+        {
+            Assert.Empty(root2.GetProperty("meta").GetProperty("deidentification").GetProperty("retiredUndecryptableSecrets").EnumerateArray());
+        }
+    }
+
+    [Fact]
     public void AI案例_每個案例只保留對得上的診斷_最近的幾筆()
     {
         using var h = new RunExportHarness();

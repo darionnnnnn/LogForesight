@@ -158,7 +158,7 @@ public class HelpContentServiceTests
         var handling = _service.Chapters.Single(c => c.Id == "handling").Content;
         var myWork = _service.Chapters.Single(c => c.Id == "my-work").Content;
 
-        Assert.Contains("檢視來源觀測", detail);
+        Assert.Contains("來源觀測", detail);
         Assert.Contains("PRTG 監控對應", detail);
         // CPU／記憶體期間觀察、正式模式、試算啟用已整套移除（docs/PRTG-SPEC.md §9b 只剩數值三條件），說明書不得再描述
         foreach (var removed in new[] { "期間觀察", "正式模式", "等待可信資料", "撤回／重評" })

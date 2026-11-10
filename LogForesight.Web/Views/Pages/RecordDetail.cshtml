@@ -49,20 +49,18 @@
                     </div>
                 </div>
                 <div class="lf-card__body">
-                    @* #chat-body 整組（下拉／訊息／輸入表單）在「放大檢視」時被搬移進全螢幕 modal，
+                    @* #chat-body 整組（焦點列／訊息／輸入表單）在「放大檢視」時被搬移進全螢幕 modal，
                        關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
                     <div id="chat-body">
                         <div class="text-muted small mb-2 d-none" id="chat-run-hint">分析執行中，AI 回應可能較慢。</div>
-                        <label for="chat-issue-select" class="visually-hidden">要詢問的異常項目</label>
-                        <select class="form-select form-select-sm mb-2" id="chat-issue-select">
-                            <option value="">請先選擇要詢問的異常項目…</option>
-                        </select>
+                        <div id="chat-focus" class="lf-chat-focus mb-2" role="group" aria-label="焦點問題"></div>
+                        <div id="chat-focus-picker" class="lf-focus-picker mb-2 d-none" role="group" aria-label="指定問題"></div>
                         <div id="chat-messages" class="mb-2 lf-chat-messages"></div>
                         <form id="chat-form" class="d-flex gap-2">
-                            <label for="chat-input" class="visually-hidden">針對所選問題發問</label>
+                            <label for="chat-input" class="visually-hidden">發問</label>
                             <input type="text" class="form-control form-control-sm" id="chat-input"
-                                   placeholder="針對上面選的問題發問…" maxlength="500" disabled />
-                            <button type="submit" class="btn btn-sm btn-primary" id="chat-send" disabled>送出</button>
+                                   placeholder="直接發問，可以同時問多個問題，例如：4625 和 4735 有關聯嗎？" maxlength="500" />
+                            <button type="submit" class="btn btn-sm btn-primary" id="chat-send">送出</button>
                         </form>
                     </div>
                 </div>
@@ -114,19 +112,19 @@
         </aside>
     </div>
 
-    <details class="lf-card mb-3 mt-3" id="record-evidence">
-        <summary class="lf-card__header"><h2 class="lf-card__title">證據</h2></summary>
-        <div class="lf-card__body row g-3">
-            <div class="col-lg-8" id="record-evidence-main"></div>
-            <div class="col-lg-4" id="record-evidence-side"></div>
-        </div>
-    </details>
-
-    <details class="lf-card mb-3" id="record-context">
+    <details class="lf-card mb-3 mt-3" id="record-context">
         <summary class="lf-card__header"><h2 class="lf-card__title">脈絡</h2></summary>
         <div class="lf-card__body row g-3">
             <div class="col-lg-8" id="record-context-main"></div>
             <div class="col-lg-4" id="record-context-side"></div>
+        </div>
+    </details>
+
+    <details class="lf-card mb-3" id="record-evidence">
+        <summary class="lf-card__header"><h2 class="lf-card__title">證據</h2></summary>
+        <div class="lf-card__body row g-3">
+            <div class="col-lg-8" id="record-evidence-main"></div>
+            <div class="col-lg-4" id="record-evidence-side"></div>
         </div>
     </details>
 </div>

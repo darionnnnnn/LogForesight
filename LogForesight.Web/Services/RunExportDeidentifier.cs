@@ -185,6 +185,9 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     /// <inheritdoc />
     public IReadOnlyList<string> UndecryptableSecrets { get; }
 
+    /// <inheritdoc />
+    public IReadOnlyList<string> RetiredUndecryptableSecrets { get; }
+
     private readonly object _gate = new();
     private readonly Dictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _counters = new(StringComparer.Ordinal);
@@ -193,6 +196,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     private RunExportDeidentifier(RunExportDeidentifierSource source)
     {
         UndecryptableSecrets = source.UndecryptableSecrets;
+        RetiredUndecryptableSecrets = source.RetiredUndecryptableSecrets;
         foreach (var h in source.Hosts) AddHost(h);
         foreach (var u in source.Users) AddUser(u);
         foreach (var s in source.Sentinels) AddSentinel(s);

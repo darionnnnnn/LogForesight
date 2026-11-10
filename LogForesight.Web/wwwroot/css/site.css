@@ -1602,7 +1602,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius);
 }
 
-/* 「給主管的說明」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
+/* 「重點速報」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
 .lf-ai-brief {
     background: var(--lf-primary-soft);
     border: 1px solid var(--lf-primary-soft-border);
@@ -1621,8 +1621,51 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-ai-brief__text {
     font-size: 1.0625rem;
     font-weight: 500;
+    line-height: 1.7;
+    max-width: 40em;
     margin: 0;
     color: var(--lf-primary-text);
+}
+
+.lf-ai-headline {
+    max-width: 40em;
+    line-height: 1.5;
+}
+
+/* 狀況／趨勢／建議處置三格：寬螢幕並排、窄螢幕自動換行；只有重點速報有底色 */
+.lf-ai-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    gap: var(--lf-space-4);
+    margin-top: var(--lf-space-3);
+}
+
+.lf-ai-summary__label {
+    font-size: var(--lf-font-size-sm);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+    margin: 0 0 var(--lf-space-1);
+}
+
+.lf-ai-summary__text {
+    font-size: 1rem;
+    line-height: 1.7;
+    max-width: 40em;
+}
+
+.lf-ai-summary__item--action {
+    border-left: 3px solid var(--lf-primary);
+    padding-left: var(--lf-space-3);
+}
+
+.lf-ai-summary__item--action .lf-ai-summary__label {
+    color: var(--lf-primary-text);
+}
+
+@media print {
+    .lf-ai-summary {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，
@@ -1639,6 +1682,57 @@ a.lf-badge:hover { text-decoration: underline; }
     max-height: 340px;
     overflow-y: auto;
 }
+
+.lf-chat-focus {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+}
+
+/* 「指定問題」就地面板：焦點列下方展開的 checkbox 清單，過長時內部捲動 */
+.lf-focus-picker {
+    padding: var(--lf-space-3);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-card-bg);
+}
+
+.lf-focus-picker__list {
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: var(--lf-space-3);
+}
+
+.lf-focus-picker__actions {
+    display: flex;
+    gap: var(--lf-space-2);
+}
+
+.lf-focus-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+}
+
+/* 「×」視覺小、點擊區至少 24×24 CSS px */
+.lf-focus-chip__remove {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.lf-focus-chip__remove:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.modal-body #chat-focus { flex: none; }
 
 /* 放大檢視全螢幕 modal（docs/FEEDBACK-3-PLAN.md #6）：#chat-body 被搬進 .modal-body 後
    改撐滿可用高度——下拉與輸入表單維持原本高度釘在上下，訊息區用 flex:1 取代固定
@@ -2206,6 +2300,11 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-issue-cell__meta {
     row-gap: .25rem;
+}
+
+/* 白話說明：一般正文色的小字，完整顯示（超過 300 字才由 collapsibleText 收合） */
+.lf-issue-cell__explain {
+    font-size: var(--lf-font-size-sm);
 }
 
 .lf-collapsible--clamped {
@@ -2950,6 +3049,13 @@ a.lf-calendar__cell:focus-visible {
     .lf-detail-layout--side-open .lf-side-rail__collapse {
         display: inline-flex;
         margin-bottom: var(--lf-space-3);
+    }
+
+    /* 收合鈕併在「處理狀態」卡 header 右側：靠右、不需要下方間距 */
+    .lf-detail-layout--side-open .lf-side-rail__collapse--in-header {
+        margin-bottom: 0;
+        margin-left: auto;
+        flex-shrink: 0;
     }
 
     .lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail {

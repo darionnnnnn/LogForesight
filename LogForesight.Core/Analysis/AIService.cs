@@ -509,6 +509,8 @@ public class AIService : IAiService, IDisposable
                     {
                         Log.Info("ChatJsonAsync 於第 {Attempt}/{Total} 次嘗試成功，型別={Type}", attempt, totalAttempts, typeof(T).Name);
                     }
+                    // 途中有內容層失敗但最終成功：照寫診斷（第一次就成功時 attemptDiagnostics 為空，不寫）
+                    WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics, AiJsonDiagnostics.EndedRecovered);
                     return new AiJsonResult<T> { Success = true, Value = parsed, RawContent = rawContent, Attempts = attempt };
                 }
 

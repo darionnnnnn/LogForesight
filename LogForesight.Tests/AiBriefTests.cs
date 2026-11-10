@@ -242,7 +242,7 @@ public class AiBriefFlowTests
     [Theory]
     [InlineData("一台主機磁碟異常，需要主管支援採購備品。", true)]
     [InlineData("", false)]
-    public async Task 報告白話總覽_Brief非空才印給主管的說明(string brief, bool expected)
+    public async Task 報告白話總覽_Brief非空才印重點速報(string brief, bool expected)
     {
         var sink = new FakeReportSink();
         var ai = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance);
@@ -264,12 +264,12 @@ public class AiBriefFlowTests
 
         var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        if (expected) Assert.Contains($"給主管的說明：{brief}", draft.Content);
-        else Assert.DoesNotContain("給主管的說明：", draft.Content);
+        if (expected) Assert.Contains($"重點速報：{brief}", draft.Content);
+        else Assert.DoesNotContain("重點速報：", draft.Content);
     }
 
     [Fact]
-    public async Task 報告白話總覽_AI結果失效後不印舊的給主管的說明()
+    public async Task 報告白話總覽_AI結果失效後不印舊的重點速報()
     {
         var sink = new FakeReportSink();
         var ai = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance);
@@ -291,7 +291,7 @@ public class AiBriefFlowTests
 
         var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
 
-        Assert.DoesNotContain("給主管的說明：", draft.Content);
+        Assert.DoesNotContain("重點速報：", draft.Content);
     }
 
     [Fact]

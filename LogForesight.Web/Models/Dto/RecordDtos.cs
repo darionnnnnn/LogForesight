@@ -256,7 +256,7 @@ public class RecordDetailDto
 
     public string Headline { get; set; } = string.Empty;
 
-    /// <summary>給主管的說明（2～3 句、可直接照念）；空＝沒有</summary>
+    /// <summary>重點速報（brief，2～3 句、可直接照念）；空＝沒有</summary>
     public string Brief { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public string TrendAssessment { get; set; } = string.Empty;
