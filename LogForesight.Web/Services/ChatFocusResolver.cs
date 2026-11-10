@@ -44,7 +44,7 @@ public static class ChatFocusResolver
         {
             var top = topIssues
                 .Select((issue, index) => (issue, index))
-                .OrderByDescending(x => SeverityOrder(x.issue.Severity))
+                .OrderByDescending(x => SeverityRank(x.issue.Severity))
                 .ThenBy(x => x.index)
                 .Take(DefaultFocusCount)
                 .Select(x => x.issue)
@@ -55,7 +55,8 @@ public static class ChatFocusResolver
         return (merged, manual.Count > 0 ? SourceManual : SourceKeyword);
     }
 
-    private static int SeverityOrder(string severity) =>
+    /// <summary>嚴重度字串的排序值（Low→Critical 遞增，無法解析為 -1）；詢問 AI 的焦點預設與整日摘要共用這一份</summary>
+    internal static int SeverityRank(string severity) =>
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
 
     private static bool MatchesKeyword(IssueDto issue, string message, HashSet<string> numbers)

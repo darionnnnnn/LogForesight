@@ -240,9 +240,6 @@ public class AiInsightService
     /// <summary>每個焦點最多附幾則樣本訊息</summary>
     private const int FocusSampleMaxCount = 2;
 
-    private static int SeverityOrder(string severity) =>
-        Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
-
     /// <summary>
     /// 整日摘要（薄）：只取自控制器以 GetDetail 取得的 <see cref="RecordDetailDto"/>——
     /// 案件授與檢視時 headline／summary 等已是空字串、TopIssues 已過濾，這裡不另讀任何資料來源，
@@ -263,7 +260,7 @@ public class AiInsightService
         Field("建議處置", detail.Action);
 
         var lines = new List<string>();
-        foreach (var i in detail.TopIssues.OrderByDescending(x => SeverityOrder(x.Severity)).Take(DaySummaryMaxIssues))
+        foreach (var i in detail.TopIssues.OrderByDescending(x => ChatFocusResolver.SeverityRank(x.Severity)).Take(DaySummaryMaxIssues))
         {
             var firstSentence = FirstSentence(i.TrendText);
             var explain = (i.Guidance?.Explanation ?? i.KnownIssue ?? string.Empty).Replace('\n', ' ').Trim().Truncate(40);
