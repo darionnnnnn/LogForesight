@@ -1474,9 +1474,9 @@ function collapsedRestSection(rest) {
 
 /**
  * 「問題」合併欄（docs/archive/FEEDBACK-3-PLAN.md #5）：取代原本各自獨立的來源/Event、
- * 次數、嚴重度、時段、說明五欄。由上而下：標題行（來源/Event＋log 名＋已抑制徽章）、
- * meta 行（嚴重度／重大徽章・次數・時段）、說明、keyDetails（見 keyDetailsBlock）、
- * 相異訊息數／原始訊息連結。
+ * 次數、嚴重度、時段、說明五欄。由上而下：標題、白話說明（guidance.explanation）、knownIssue、
+ * log 名＋已抑制／靜音徽章、meta 行（嚴重度／重大徽章・次數・時段）、來源佐證、
+ * keyDetails（見 keyDetailsBlock）、相異訊息數／原始訊息連結。
  */
 function issueCell(issue) {
     const wrap = document.createElement('div');
@@ -1486,6 +1486,22 @@ function issueCell(issue) {
     title.className = 'fw-semibold';
     title.textContent = issue.sourceEventLabel;
     wrap.appendChild(title);
+
+    // 白話說明緊接標題：第一眼就看得到「這是什麼」，不必展開列；與 knownIssue 同文只留一個
+    const explanation = (issue.guidance?.explanation || '').trim();
+    if (explanation) {
+        const explain = document.createElement('div');
+        explain.className = 'lf-issue-cell__explain mt-1';
+        explain.textContent = explanation;
+        wrap.appendChild(collapsibleText(explain));
+    }
+    const knownIssue = (issue.knownIssue || '').trim();
+    if (knownIssue && knownIssue !== explanation) {
+        const text = document.createElement('div');
+        text.className = 'small text-muted mt-1';
+        text.textContent = issue.knownIssue;
+        wrap.appendChild(collapsibleText(text));
+    }
 
     const logName = document.createElement('div');
     logName.className = 'small text-muted';
@@ -1526,13 +1542,6 @@ function issueCell(issue) {
     wrap.appendChild(meta);
 
     wrap.appendChild(sourceEvidenceBlock(issue));
-
-    if (issue.knownIssue) {
-        const text = document.createElement('div');
-        text.className = 'mt-1';
-        text.textContent = issue.knownIssue;
-        wrap.appendChild(collapsibleText(text));
-    }
 
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
     // 超長時只是先收合（keyDetailsBlock／collapsibleText），有明確的「顯示全文」可以展開，
@@ -2226,16 +2235,7 @@ function guidancePanel(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-guidance';
 
-    if (g.explanation) {
-        const label = document.createElement('div');
-        label.className = 'lf-guidance__label';
-        label.textContent = '說明';
-        const text = document.createElement('div');
-        text.className = 'small';
-        text.textContent = g.explanation;
-        wrap.append(label, collapsibleText(text));
-    }
-
+    // 白話說明已顯示在問題標題下（issueCell），展開列不重複
     if (g.impact) {
         const label = document.createElement('div');
         label.className = 'lf-guidance__label';
@@ -2249,7 +2249,8 @@ function guidancePanel(issue) {
     appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
     appendList(wrap, '處置步驟', g.nextSteps, 'lf-guidance__label');
 
-    return wrap;
+    // 只剩白話說明（已在問題列顯示）時沒有可展開的內容：回 null 讓列不掛展開列
+    return wrap.children.length > 0 ? wrap : null;
 }
 
 /**

@@ -25,6 +25,7 @@ public sealed class RecordDetailRailBehaviorTests
     [InlineData("record-detail-rail.behavior.mjs", "briefCopyUsesRenderedText")]
     [InlineData("record-detail-rail.behavior.mjs", "panelNotifiesOnRefreshed")]
     [InlineData("record-detail-rail.behavior.mjs", "panelInternalReloadsKeepOptions")]
+    [InlineData("record-detail-rail.behavior.mjs", "collapseButtonLivesInHandlingHeader")]
     [InlineData("report-card.behavior.mjs", "withoutStorageKeyAlwaysCollapsedAndNeverStores")]
     [InlineData("report-card.behavior.mjs", "withStorageKeyStillRemembers")]
     public void 側軌接線與報告卡的production行為(string scriptName, string caseName)
@@ -37,6 +38,19 @@ public sealed class RecordDetailRailBehaviorTests
             timeout: TimeSpan.FromSeconds(60), label: caseName);
         Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{r.Stdout}{r.Stderr}");
         Assert.Contains($"PASS {caseName}", r.Stdout);
+    }
+
+    /// <summary>收合鈕在 &lt; lg（預設 display:none，只在寬螢幕展開時顯示）與列印都必須隱藏。</summary>
+    [Fact]
+    public void 側軌收合鈕在小螢幕與列印維持隱藏()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        Assert.Contains(".lf-side-rail,\n.lf-side-rail__collapse {\n    display: none;\n}", css);
+        Assert.Contains("@media print {\n    .lf-side-rail,\n    .lf-side-rail__collapse {\n        display: none !important;\n    }", css);
+        // 展開才顯示收合鈕，且只在 >= lg 的區塊內
+        var wide = css.IndexOf("@media (min-width: 992px)", StringComparison.Ordinal);
+        var shown = css.IndexOf(".lf-detail-layout--side-open .lf-side-rail__collapse {", StringComparison.Ordinal);
+        Assert.True(wide >= 0 && shown > wide, "收合鈕的顯示規則必須在 >= lg 媒體查詢之內");
     }
 
     [Fact]

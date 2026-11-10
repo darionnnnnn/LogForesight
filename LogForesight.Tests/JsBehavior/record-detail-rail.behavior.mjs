@@ -180,6 +180,44 @@ const cases = {
         pageEnv({ rail: null, hash: '' }).expandSideRailForSelection();
     },
 
+    // 收合鈕掛在「處理狀態」卡的 header（靠右），不再佔右欄 body 最上方
+    async collapseButtonLivesInHandlingHeader() {
+        installDom();
+        globalThis.window = { LF_BASE: '', matchMedia: () => ({ matches: true }) };
+        const { createSideRail } = await import(pathToFileURL(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'side-rail.js')).href);
+        const card = (cls, title) => {
+            const section = document.createElement('section');
+            const header = document.createElement('div');
+            header.className = 'lf-card__header';
+            const h = document.createElement('h2');
+            h.className = 'lf-card__title';
+            h.textContent = title;
+            header.appendChild(h);
+            section.appendChild(header);
+            return { section, header };
+        };
+        const layout = document.createElement('div');
+        const side = document.createElement('aside');
+        const body = document.createElement('div');
+        body.className = 'lf-detail-side__body';
+        const handling = card('', '處理狀態');
+        const log = card('', '處理歷程');
+        body.append(handling.section, log.section);
+        side.appendChild(body);
+        layout.appendChild(side);
+        createSideRail({ layout, side, items: [
+            { key: 'handling', label: '處理狀態', target: handling.section },
+            { key: 'log', label: '處理歷程', target: log.section }
+        ] });
+        const btn = handling.header.querySelector('.lf-side-rail__collapse');
+        assert(btn, '處理狀態卡 header 內應有收合鈕');
+        assert.equal(btn._parent, handling.header);
+        assert(btn.textContent.includes('收合'));
+        assert.notEqual(body.children[0], btn);
+        assert(!body.children.some(c => c.classList?.contains('lf-side-rail__collapse')));
+        assert.equal(log.header.querySelector('.lf-side-rail__collapse'), null);
+    },
+
     // 處理面板每次載完都要通知頁面層（含面板自行重載），否則側軌摘要停在舊值
     async panelNotifiesOnRefreshed() {
         const src = extractFunction(handlingPanel, 'export async function initHandlingPanel').replace(/^export /, '');

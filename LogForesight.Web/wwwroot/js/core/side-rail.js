@@ -19,9 +19,11 @@ function isRailMode() {
 }
 
 /**
- * @param {{ layout: HTMLElement, side: HTMLElement, items: {key: string, label: string, target: HTMLElement}[] }} options
+ * 「收合 ›」按鈕預設掛在第一個項目卡片的 `.lf-card__header`（靠右）；collapseHost 可另指定掛載元素，
+ * 預設容器找不到時才退回插在右欄 body 最前面。
+ * @param {{ layout: HTMLElement, side: HTMLElement, items: {key: string, label: string, target: HTMLElement}[], collapseHost?: HTMLElement|null }} options
  */
-export function createSideRail({ layout, side, items }) {
+export function createSideRail({ layout, side, items, collapseHost = null }) {
     if (!side.id) side.id = 'lf-detail-side';
     const body = side.querySelector('.lf-detail-side__body') || side;
 
@@ -66,7 +68,13 @@ export function createSideRail({ layout, side, items }) {
     });
 
     side.insertAdjacentElement('afterbegin', nav);
-    body.insertAdjacentElement('afterbegin', collapseButton);
+    const host = collapseHost || items[0]?.target?.querySelector?.('.lf-card__header') || null;
+    if (host) {
+        collapseButton.classList.add('lf-side-rail__collapse--in-header');
+        host.appendChild(collapseButton);
+    } else {
+        body.insertAdjacentElement('afterbegin', collapseButton);
+    }
 
     function setOpen(value) {
         open = value;

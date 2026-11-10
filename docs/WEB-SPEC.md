@@ -1271,7 +1271,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
      其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
      兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
-     欄頂「收合 ›」收回並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
+     「處理狀態」卡 header 右側的「收合 ›」收回（`collapseHost` 預設為第一個項目卡的 `.lf-card__header`）並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
      < lg 與列印回到上下堆疊、側軌隱藏。「去處理」意圖的連結帶 `#handling`（`core/paths.js` `recordDetailUrl(…, { handle: true })`）：
@@ -1331,8 +1331,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      顯示通用說明。SiteHidden 模式另在 header 補一行「另有 N 項問題已依全站顯示設定隱藏；
      風險等級以完整資料判定」（`HiddenIssueCount`）。
   12. **重點問題表格欄位合併**：「來源/Event」
-     「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題行＋
-     嚴重度/次數/時段 meta 行＋說明＋keyDetails＋原始訊息連結），趨勢與處理狀態維持獨立欄
+     「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題＋
+     白話說明（`guidance.explanation`，完整顯示；與 knownIssue 同文只留一個）＋knownIssue＋log 名與徽章＋嚴重度/次數/時段 meta 行＋來源佐證＋keyDetails＋原始訊息連結；
+     處置參考展開列（`guidancePanel`）只放影響、可能原因、處置步驟，只有白話說明時不掛展開列），趨勢與處理狀態維持獨立欄
      （補 `min-width` 防擠壓）——keyDetails（4703 這類事件動輒數百字的帳號/IP 彙總）
      否則會把其餘欄壓成逐字直排。長文字一律走 `ui.js` 的 `collapsibleText`：容器文字超過 300 字（`COLLAPSE_LIMIT`）才收合，
      純文字顯示到前 300 字內最後一個分隔符（空白、換行、Tab、頓號、全形與半形的逗號和分號、句號）＋「…」，300 字內沒有分隔符時取前 300 字＋「…」，不從帳號或 IP 中間切；

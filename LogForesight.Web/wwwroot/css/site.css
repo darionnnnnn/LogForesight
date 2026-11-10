@@ -2208,6 +2208,11 @@ a.lf-calendar__cell:focus-visible {
     row-gap: .25rem;
 }
 
+/* 白話說明：一般正文色的小字，完整顯示（超過 300 字才由 collapsibleText 收合） */
+.lf-issue-cell__explain {
+    font-size: var(--lf-font-size-sm);
+}
+
 .lf-collapsible--clamped {
     max-height: 9rem;
     overflow: hidden;
@@ -2950,6 +2955,13 @@ a.lf-calendar__cell:focus-visible {
     .lf-detail-layout--side-open .lf-side-rail__collapse {
         display: inline-flex;
         margin-bottom: var(--lf-space-3);
+    }
+
+    /* 收合鈕併在「處理狀態」卡 header 右側：靠右、不需要下方間距 */
+    .lf-detail-layout--side-open .lf-side-rail__collapse--in-header {
+        margin-bottom: 0;
+        margin-left: auto;
+        flex-shrink: 0;
     }
 
     .lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail {
