@@ -244,6 +244,51 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         Assert.Equal(3, row.RequiredDays);
     }
 
+    private void MapOn(DateOnly day, params (long Device, long Host, string Status)[] maps) =>
+        _store.ReplaceHostMapForDate(day.ToDateTime(TimeOnly.MinValue), maps.Select(m => new PrtgHostMapRow
+        {
+            DeviceObjid = m.Device, HostId = m.Status == PrtgMapStatus.Ok ? m.Host : null,
+            HostName = $"h{m.Host}", MapStatus = m.Status
+        }).ToList());
+
+    [Fact]
+    public void 失敗的整份對應_該日沿用隔天成功的對應而不判未對應()
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        var d = Completed.AddDays(-1);
+        // D 那份整份都不是 ok（那次對應沒成功）；D+1（= Completed）成功
+        MapOn(d, (1, 11, PrtgMapStatus.Unmatched));
+        MapOn(Completed, (1, 11, PrtgMapStatus.Ok));
+        SeedHours(101, 3, (day, h) => 10 + h);
+
+        var row = Assert.Single(Assess());
+
+        Assert.Equal(PrtgValueReason.Ready, row.Reason);
+        Assert.Equal(3, row.ValidDays);
+        Assert.Contains(row.Daily, x => x.Day == d);
+    }
+
+    [Fact]
+    public void 同一份對應有其他device是ok_只有該device是unmatched_該日仍判未對應()
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            (201, 2, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        var d = Completed.AddDays(-1);
+        MapOn(d, (1, 11, PrtgMapStatus.Unmatched), (2, 12, PrtgMapStatus.Ok));
+        MapOn(Completed, (1, 11, PrtgMapStatus.Ok), (2, 12, PrtgMapStatus.Ok));
+        MapOn(Completed.AddDays(-2), (1, 11, PrtgMapStatus.Ok), (2, 12, PrtgMapStatus.Ok));
+        SeedHours(101, 3, (day, h) => 10 + h);
+        SeedHours(201, 3, (day, h) => 10 + h);
+
+        var rows = Assess();
+
+        var x = Assert.Single(rows, r => r.Sensor.SensorObjid == 101);
+        Assert.DoesNotContain(x.Daily, day => day.Day == d);
+        Assert.Equal(2, x.ValidDays);
+        var y = Assert.Single(rows, r => r.Sensor.SensorObjid == 201);
+        Assert.Equal(PrtgValueReason.Ready, y.Reason);
+    }
+
     [Fact]
     public void 範圍內沒有sensor_候選為空()
     {

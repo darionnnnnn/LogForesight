@@ -279,8 +279,14 @@ public sealed class PrtgValueAssessment
         // 讀取窗上界延到今天（含），讓第一份對應之前的日子可往後沿用（PrtgHostMapLookup）。
         var today = DateTime.Today;
         var mapsEnd = today.AddDays(1) > windowEnd ? today.AddDays(1) : windowEnd;
+        // 與整份對應的選法一致（GetHostMapForDay）：只在「至少一列 ok」的整份對應中選，
+        // 全是 unmatched／conflict 的那一份代表那次對應沒成功，先排除；單一 device 在成功的整份對應裡
+        // 是 unmatched／conflict 則是它的真實狀態，保留給 PrtgHostMapLookup.Select。
+        var mapsFrom = windowStart.AddDays(-MapLookbackDays);
+        var okDates = _store.GetOkHostMapDates(mapsFrom, mapsEnd);
         var mapsByDevice = _store.GetReadinessMaps(known.Select(s => s.DeviceObjid).Distinct().ToArray(),
-                windowStart.AddDays(-MapLookbackDays), mapsEnd)
+                mapsFrom, mapsEnd)
+            .Where(m => okDates.Contains(m.MapDate))
             .GroupBy(m => m.DeviceObjid)
             .ToDictionary(g => g.Key, g => g.OrderBy(m => m.MapDate).ToList());
 

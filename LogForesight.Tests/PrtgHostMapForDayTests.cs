@@ -111,6 +111,23 @@ public class PrtgHostMapForDayTests : IDisposable
     }
 
     [Fact]
+    public void 含ok列的對應日期集合_只回含ok的日期且上界不含()
+    {
+        var store = Store();
+        var d = Today.AddDays(-10);
+        Seed(store, d, PrtgMapStatus.Ok, PrtgMapStatus.Unmatched);
+        Seed(store, d.AddDays(1), PrtgMapStatus.Unmatched);
+        Seed(store, d.AddDays(2), PrtgMapStatus.Conflict, PrtgMapStatus.Ok);
+        Seed(store, d.AddDays(3), PrtgMapStatus.Ok);
+
+        var dates = store.GetOkHostMapDates(d, d.AddDays(3));
+
+        Assert.Equal(new[] { d, d.AddDays(2) }, dates.OrderBy(x => x));
+        Assert.Contains(d.AddDays(3), store.GetOkHostMapDates(d, d.AddDays(4)));
+        Assert.Empty(store.GetOkHostMapDates(d.AddDays(1), d.AddDays(2)));
+    }
+
+    [Fact]
     public void 某日對應查詢_SQLServer與SQLite都翻譯得出來()
     {
         foreach (var options in new[]

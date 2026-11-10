@@ -2338,6 +2338,17 @@ public sealed class EfPrtgStore
     internal static IQueryable<DateTime> BuildOkMapDatesQuery(IQueryable<PrtgHostMapRow> maps, DateTime from, DateTime to) =>
         maps.Where(m => m.MapStatus == PrtgMapStatus.Ok && m.MapDate >= from && m.MapDate <= to).Select(m => m.MapDate);
 
+    /// <summary>
+    /// [from, toExclusive) 內「至少一列 ok」的對應日期集合（與 <see cref="GetHostMapForDay"/> 同一份篩選）；
+    /// 供逐 device 選對應的呼叫端排除「那次對應沒成功」的整份對應。
+    /// </summary>
+    public HashSet<DateTime> GetOkHostMapDates(DateTime from, DateTime toExclusive)
+    {
+        using var ctx = _contextFactory();
+        var last = toExclusive.AddDays(-1);
+        return BuildOkMapDatesQuery(ctx.PrtgHostMaps.AsNoTracking(), from, last).Distinct().ToHashSet();
+    }
+
     /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
     public DateTime? GetLatestHostMapDate(int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays)
     {
