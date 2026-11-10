@@ -147,6 +147,8 @@
     transition: background-color var(--lf-transition);
 }
 .lf-nav-item:hover { background: var(--lf-primary-soft); }
+/* 行內變體：接在句子裡的頁內導航（例如「到衝突清單處理」） */
+.lf-nav-item--inline { display: inline-block; width: auto; margin: 0; }
 .lf-nav-item:focus-visible { outline: none; box-shadow: var(--lf-focus-ring); }
 
 /* ── 操作結果與驗證訊息（core/elements.js statusNote）────────────────── */
@@ -155,6 +157,7 @@
 .lf-status-note--error { color: var(--lf-danger-text); }
 .lf-status-note--success { color: var(--lf-success-text); }
 .lf-status-note--info { color: var(--lf-text-muted); }
+.lf-status-note--warning { color: var(--lf-warning-text); }
 
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */
 

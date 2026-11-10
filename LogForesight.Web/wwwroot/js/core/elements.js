@@ -91,13 +91,14 @@ export function fact(label, value) {
 
 const STATUS_NOTE = {
     error: { icon: 'exclamation-triangle', role: 'alert' },
+    warning: { icon: 'exclamation-triangle', role: 'status' },
     success: { icon: 'clipboard-check', role: 'status' },
     info: { icon: 'info-circle', role: 'status' }
 };
 
 /**
- * 操作結果與驗證訊息（連線測試結果、儲存失敗…）。失敗用 role="alert" 讓螢幕閱讀器立即唸出，
- * 其餘 role="status"。text 走 textContent。
+ * 操作結果與驗證訊息（連線測試結果、儲存失敗…）。類型 error／warning／success／info；
+ * 失敗用 role="alert" 讓螢幕閱讀器立即唸出，其餘 role="status"。text 走 textContent。
  */
 export function statusNote(type, text) {
     const spec = STATUS_NOTE[type] || STATUS_NOTE.info;

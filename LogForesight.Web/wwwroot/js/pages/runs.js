@@ -9,13 +9,14 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, saveBlobAsFile } fr
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar, button
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
+import { disclosure } from '../core/elements.js';
 
 /* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
@@ -84,7 +85,7 @@ function renderPrtgDaySummaryCell(s) {
     if (s.prtgNote != null) {
         badge.title = s.prtgNote;
         const note = document.createElement('div');
-        note.className = 'small text-muted';
+        note.className = 'lf-text-meta';
         note.textContent = s.prtgNote;
         wrap.appendChild(note);
     }
@@ -116,8 +117,8 @@ function renderPrtgCell(outcome, fetched, failed, triggeredHosts, strategy, note
         const disabledWrap = document.createElement('span');
         disabledWrap.className = 'd-inline-flex align-items-center gap-1';
         disabledWrap.appendChild(badge);
-        const reason = document.createElement('small');
-        reason.className = 'text-muted';
+        const reason = document.createElement('span');
+        reason.className = 'lf-text-meta';
         reason.textContent = note;
         disabledWrap.appendChild(reason);
         return disabledWrap;
@@ -299,8 +300,8 @@ function renderSummary(summaryPage) {
 
     renderTable(container, {
         columns: [
-            { title: '日期', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
-            { title: '執行時間', render: s => renderDayTimingCell(s.timing, { pendingText: s.pendingSummary, inProgress: s.inProgress }) },
+            { title: '日期', className: 'text-nowrap', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
+            { title: '執行時間', className: 'lf-minw-sm', render: s => renderDayTimingCell(s.timing, { pendingText: s.pendingSummary, inProgress: s.inProgress }) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
@@ -363,12 +364,11 @@ function failedHostsCell(summary) {
     if (total === 0) return document.createTextNode('');
 
     const wrap = document.createElement('div');
-    wrap.className = 'small';
     wrap.textContent = summary.failedHostNames.join('、');
 
     if (summary.otherFailedCount > 0) {
         const more = document.createElement('span');
-        more.className = 'text-muted';
+        more.className = 'lf-text-meta';
         more.textContent = `　其他 ${summary.otherFailedCount} 台`;
         wrap.appendChild(more);
     }
@@ -488,12 +488,7 @@ function statusBadgeCell(status, note = null) {
 }
 
 function viewRunButton(runId) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = '檢視執行';
-    button.addEventListener('click', () => showDetail(runId));
-    return button;
+    return button('檢視執行', { variant: 'outline-primary', opens: 'dialog', onClick: () => showDetail(runId) });
 }
 
 /** 站台清單缺欄時當空清單，一列壞資料不讓整張表渲染失敗 */
@@ -544,7 +539,7 @@ function errorLevelCell(group) {
     wrap.appendChild(levelBadge(group.level));
     if (group.excludedFromWarnCount) {
         const note = document.createElement('div');
-        note.className = 'small text-muted';
+        note.className = 'lf-text-meta';
         note.textContent = '不計入警告數';
         wrap.appendChild(note);
     }
@@ -631,7 +626,7 @@ function withPhaseDuration(content, run, key) {
     const wrap = document.createElement('div');
     wrap.append(content);
     const time = document.createElement('div');
-    time.className = 'small text-muted';
+    time.className = 'lf-text-meta';
     time.textContent = formatDuration(seconds);
     wrap.appendChild(time);
     return wrap;
@@ -658,7 +653,7 @@ function renderRunListTable() {
 
 function messageCell(group) {
     const div = document.createElement('div');
-    div.className = 'small lf-maxw-xl';
+    div.className = 'lf-maxw-xl';
     div.textContent = group.message;
     return div;
 }
@@ -671,12 +666,7 @@ function levelBadge(level) {
 }
 
 function detailButton(runId) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = '檢視執行';
-    button.addEventListener('click', () => showDetail(runId));
-    return button;
+    return button('檢視執行', { variant: 'outline-primary', opens: 'dialog', onClick: () => showDetail(runId) });
 }
 
 // ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
@@ -723,7 +713,7 @@ async function showDetail(runId, retryBody = null) {
 
     // 主機＋起始時間放在 body 標頭（modal 標題已固定「執行詳情」）
     const heading = document.createElement('div');
-    heading.className = 'fw-semibold mb-3';
+    heading.className = 'lf-text-title mb-3';
     heading.textContent = `${detail.hostName}　${formatDateTime(detail.startedAt)}`;
     body.appendChild(heading);
 
@@ -742,10 +732,10 @@ async function showDetail(runId, retryBody = null) {
     const memoryText = runMemoryText(detail.memoryStart, detail.memoryEnd);
     if (memoryText) {
         const memoryTitle = document.createElement('div');
-        memoryTitle.className = 'fw-semibold mb-2';
+        memoryTitle.className = 'lf-text-label d-block mb-2';
         memoryTitle.textContent = '記憶體';
         const memoryLine = document.createElement('div');
-        memoryLine.className = 'small text-muted mb-3';
+        memoryLine.className = 'lf-text-meta mb-3';
         memoryLine.textContent = memoryText;
         body.append(memoryTitle, memoryLine);
     }
@@ -753,7 +743,7 @@ async function showDetail(runId, retryBody = null) {
     // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
     if (Array.isArray(detail.prtgDays) && detail.prtgDays.length > 0) {
         const prtgTitle = document.createElement('div');
-        prtgTitle.className = 'fw-semibold mb-2';
+        prtgTitle.className = 'lf-text-label d-block mb-2';
         prtgTitle.textContent = 'PRTG 逐日';
         const prtgEl = document.createElement('div');
         prtgEl.className = 'mb-3';
@@ -763,7 +753,7 @@ async function showDetail(runId, retryBody = null) {
         const triggerCount = value => (conservative ? '—' : formatNumber(value));
         renderTable(prtgEl, {
             columns: [
-                { title: '日期', render: d => String(d.date).slice(0, 10) },
+                { title: '日期', className: 'text-nowrap', render: d => String(d.date).slice(0, 10) },
                 { title: '結局', render: d => renderPrtgBadge(d.outcome) ?? d.outcome },
                 { title: 'finding', render: d => formatNumber(d.findings) },
                 { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },
@@ -777,7 +767,7 @@ async function showDetail(runId, retryBody = null) {
         });
         if (conservative) {
             const hint = document.createElement('div');
-            hint.className = 'small text-muted mt-1';
+            hint.className = 'lf-text-meta mt-1';
             hint.textContent = '保守策略：夜間不逐顆查詢數值（數值由快照供應），觸發主機、目標 sensor、失敗 sensor 不適用。';
             prtgEl.appendChild(hint);
         }
@@ -852,7 +842,7 @@ function renderStats(container, detail) {
             labelEl.className = 'lf-stat__label';
             labelEl.textContent = stat.label;
             const valueEl = document.createElement('div');
-            valueEl.className = 'fw-semibold';
+            valueEl.className = 'lf-text-title';
             valueEl.appendChild(stat.node);
             col.append(labelEl, valueEl);
         } else {
@@ -887,23 +877,16 @@ function logMessageCell(log) {
     const wrap = document.createElement('div');
 
     const message = document.createElement('div');
-    message.className = 'small';
     message.textContent = log.message;
     wrap.appendChild(message);
 
     // 完整堆疊只有 Error/Fatal 有，展開才顯示——清單要保持可掃視
     if (log.exceptionText) {
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'btn btn-link btn-sm p-0';
-        toggle.textContent = '完整堆疊';
-
         const box = document.createElement('pre');
-        box.className = 'report-text small mt-1 d-none';
+        box.className = 'report-text small mt-1';
         box.textContent = log.exceptionText;
 
-        toggle.addEventListener('click', () => box.classList.toggle('d-none'));
-        wrap.append(toggle, box);
+        wrap.append(disclosure('完整堆疊', box), box);
     }
 
     return wrap;
@@ -1162,7 +1145,7 @@ function renderScheduleWindows(containerId = 'schedule-windows', windowsList = s
 
     windowsList.forEach((window_, index) => {
         const row = document.createElement('div');
-        row.className = 'd-flex align-items-center gap-2 mb-2';
+        row.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
 
         const start = document.createElement('input');
         start.type = 'time';
@@ -1174,7 +1157,7 @@ function renderScheduleWindows(containerId = 'schedule-windows', windowsList = s
         start.addEventListener('change', () => { window_.start = start.value; });
 
         const arrow = document.createElement('span');
-        arrow.className = 'text-muted';
+        arrow.className = 'lf-text-meta';
         arrow.textContent = '→';
 
         const end = document.createElement('input');
@@ -1187,16 +1170,15 @@ function renderScheduleWindows(containerId = 'schedule-windows', windowsList = s
         row.append(start, arrow, end);
 
         if (canMaintainSchedule) {
-            const remove = document.createElement('button');
-            remove.type = 'button';
-            remove.className = 'btn btn-sm btn-outline-danger';
-            remove.textContent = '移除';
-            remove.disabled = windowsList.length <= 1;
-            remove.title = windowsList.length <= 1 ? '至少要保留一個窗口' : '';
-            remove.addEventListener('click', () => {
-                windowsList.splice(index, 1);
-                renderScheduleWindows(containerId, windowsList);
+            const remove = button('移除', {
+                variant: 'outline-danger',
+                title: windowsList.length <= 1 ? '至少要保留一個窗口' : '',
+                onClick: () => {
+                    windowsList.splice(index, 1);
+                    renderScheduleWindows(containerId, windowsList);
+                }
             });
+            remove.disabled = windowsList.length <= 1;
             row.appendChild(remove);
         }
 
@@ -1414,8 +1396,7 @@ function applyScheduleStatus(status) {
     const messageEl = document.getElementById('schedule-latest-message');
     if (status.isRunning) {
         messageEl.textContent = status.latestMessage ?? '';
-        messageEl.classList.remove('text-danger');
-        messageEl.classList.add('text-muted');
+        setMessageTone(messageEl, false);
     } else {
         // 閒置時顯示「上次執行到底成不成功」（docs/archive/FEEDBACK-7-PLAN.md）：原本失敗只寫 log，
         // 使用者看到「已開始執行」的 toast 之後就再也沒有回饋，只能翻 log 檔才知道其實炸了。
@@ -1539,8 +1520,7 @@ function applyAiScheduleStatus(status) {
     if (messageEl) {
         if (status.isRunning) {
             messageEl.textContent = status.latestMessage ?? '';
-            messageEl.classList.remove('text-danger');
-            messageEl.classList.add('text-muted');
+            setMessageTone(messageEl, false);
         } else {
             renderLastRunOutcome(messageEl, status, 'AI 分析');
         }
@@ -1892,12 +1872,16 @@ function renderAiScheduleProgress(status) {
  * 使用者手動取消不算失敗（AnalysisOrchestrator 把取消也回報成 Success=false，
  * FailureMessage="使用者取消"），這裡特判成中性語氣，不用紅字嚇人。
  */
+function setMessageTone(messageEl, failed) {
+    messageEl.classList.toggle('lf-text-alert', failed);
+    messageEl.classList.toggle('lf-text-meta', !failed);
+}
+
 function renderLastRunOutcome(messageEl, status, operation = '主程序') {
     const endedAt = status.lastRunEndedAt ?? status.completedAt;
     if (!endedAt) {
         messageEl.textContent = status.latestMessage ?? '';
-        messageEl.classList.remove('text-danger');
-        messageEl.classList.add('text-muted');
+        setMessageTone(messageEl, false);
         return;
     }
 
@@ -1905,22 +1889,18 @@ function renderLastRunOutcome(messageEl, status, operation = '主程序') {
     if (status.lastRunSuccess === true) {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
         messageEl.textContent = `上次${operation}：正常結束${trigger}；各來源與待補工作請看執行總表。`;
-        messageEl.classList.remove('text-danger');
-        messageEl.classList.add('text-muted');
+        setMessageTone(messageEl, false);
     } else if (status.lastRunSuccess == null) {
         messageEl.textContent = `上次${operation}：結果未知（${when}）；請看執行總表核對。`;
-        messageEl.classList.remove('text-danger');
-        messageEl.classList.add('text-muted');
+        setMessageTone(messageEl, false);
     } else if (status.lastRunMessage === '使用者取消' || status.lastRunMessage === '執行已停止（優雅停止）。') {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
         messageEl.textContent = `上次${operation}：已停止${trigger}`;
-        messageEl.classList.remove('text-danger');
-        messageEl.classList.add('text-muted');
+        setMessageTone(messageEl, false);
     } else {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
         messageEl.textContent = `上次${operation}：失敗${trigger}— ${status.lastRunMessage ?? ''}`;
-        messageEl.classList.remove('text-muted');
-        messageEl.classList.add('text-danger');
+        setMessageTone(messageEl, true);
     }
 }
 
@@ -2258,13 +2238,13 @@ function confirmRunWithPrtgValues(days, segment) {
         modalEl.querySelector('.modal-dialog').classList.add('modal-dialog-centered');
         const footer = modalEl.querySelector('.modal-footer');
         footer.querySelector('[data-bs-dismiss="modal"]').textContent = '取消';
-        const okButton = document.createElement('button');
-        okButton.type = 'button';
-        okButton.className = 'btn btn-primary';
-        okButton.textContent = '仍要開始';
-        okButton.addEventListener('click', () => {
-            confirmed = true;
-            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        const okButton = button('仍要開始', {
+            variant: 'primary',
+            size: null,
+            onClick: () => {
+                confirmed = true;
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            }
         });
         footer.appendChild(okButton);
         // 估算回來前先停用「仍要開始」：查詢量大時勾選要改成預設不勾，太早按會用到預設的勾選

@@ -1,7 +1,7 @@
 import { api } from '../core/api.js';
 import { prtgCategoryShort } from '../core/prtg-sensor-categories.js';
 import { formatDate, formatNumber } from '../core/format.js';
-import { guardLoad, renderSpinner, renderTable } from '../core/ui.js';
+import { guardLoad, renderSpinner, renderTable, button } from '../core/ui.js';
 
 /**
  * 數值資料就緒度卡片（環境探測頁籤）
@@ -30,14 +30,10 @@ export function initValueReadiness() {
         const population = data.population || 0;
         if (population === 0) {
             statusEl.textContent = '範圍內無可評估 sensor ';
-            const mirrorBtn = document.createElement('button');
-            mirrorBtn.type = 'button';
-            mirrorBtn.className = 'btn btn-link btn-sm p-0 align-baseline';
-            mirrorBtn.textContent = '前往鏡像狀態';
-            mirrorBtn.addEventListener('click', () => {
-                document.querySelector('#prtg-tabs [data-tab="mirror"]')?.click();
-            });
-            statusEl.appendChild(mirrorBtn);
+            const mirrorLink = document.createElement('a');
+            mirrorLink.href = '#mirror';
+            mirrorLink.textContent = '前往鏡像狀態';
+            statusEl.appendChild(mirrorLink);
 
             groupsEl.replaceChildren();
             bodyEl.replaceChildren();
@@ -57,13 +53,11 @@ export function initValueReadiness() {
         const groupButtons = [];
         const groups = data.groups || [];
         for (const group of groups) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
             const isReady = group.reason === 'Ready';
             const isCurrent = reason === group.reason;
-            btn.className = 'btn btn-sm ' + (isReady ? 'btn-outline-primary' : 'btn-outline-secondary') + (isCurrent ? ' active' : '');
+            const btn = button(`${group.label} ${formatNumber(group.count)}`, { variant: isReady ? 'outline-primary' : 'outline-secondary' });
+            btn.classList.toggle('active', isCurrent);
             btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
-            btn.textContent = `${group.label} ${formatNumber(group.count)}`;
             if ((group.count || 0) === 0) {
                 btn.disabled = true;
             }

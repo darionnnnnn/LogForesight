@@ -15,6 +15,14 @@
 // 情境檔格式見 ui-scenarios.json；--fixture 另讀資料集產生的 ui-fixture-scenarios.json（路徑含相對今天的日期，不進版控）。
 // 矩陣：full＝五個寬度＋375／1280 的小、大字級；widths＝五個寬度、字級中；quick＝1280 一格。輸出 <out>/summary.json 與 <out>/<情境>/<寬>-<字級>[-print].png。
 // 任一量測項非零時結束代碼為 1（--no-fail 時一律 0）。
+//
+// 輪詢穩定性（排程作業、PRTG 維護）用三個步驟組合：
+//   { patchApi: { "<網址片段>": { 欄位: 值 } }, }  以真實回應為底覆蓋欄位（"$now-90" ＝ 90 秒前的 ISO 時間），
+//       同時登記為「新文件載入前先安裝」，所以接著 { reload: true } 後頁面第一次載入就看到被覆蓋的資料（例如執行中）
+//   { clickIf: "選擇器" }                            選擇器有符合才點（不符合不算失敗）
+//   { markRect: ["選擇器", …] }                      記下元素的頁面座標與大小
+//   { sameRect: 0.5 }                                與 markRect 比對，位置或大小差超過容許值（px）就是失敗
+// 流程：patchApi → reload → waitFor（執行中的畫面出現）→ markRect → wait（一個輪詢週期以上）→ sameRect。
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -227,22 +235,68 @@ function assertInPage(spec) {
 
 // ── 步驟 ─────────────────────────────────────────────────────────────────
 
-async function runSteps(browser, steps, inflight, width) {
+/** 頁面內：以真實回應為底覆蓋欄位的 fetch 包裝（輪詢穩定情境用）；"$now-N" 換成 N 秒前的 ISO 時間 */
+function installApiPatch(patches) {
+    if (window.__lfPatches) { window.__lfPatches = patches; return true; }
+    window.__lfPatches = patches;
+    const realFetch = window.fetch.bind(window);
+    const resolve = v => (typeof v === 'string' && v.startsWith('$now-') ? new Date(Date.now() - Number(v.slice(5)) * 1000).toISOString() : v);
+    window.fetch = async (input, init) => {
+        const response = await realFetch(input, init);
+        const url = typeof input === 'string' ? input : input.url;
+        for (const [part, patch] of Object.entries(window.__lfPatches)) {
+            if (!response.ok || !url.includes(part)) continue;
+            const data = await response.clone().json();
+            const overrides = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, resolve(v)]));
+            // API 信封是 { success, data }：覆蓋的是 data 內的欄位
+            const merged = data && data.data && typeof data.data === 'object' && !Array.isArray(data.data)
+                ? { ...data, data: { ...data.data, ...overrides } }
+                : { ...data, ...overrides };
+            return new Response(JSON.stringify(merged), { status: response.status, headers: response.headers });
+        }
+        return response;
+    };
+    return true;
+}
+
+/** 頁面內：各選擇器第一個元素的頁面座標與大小（找不到回 null） */
+function measureRects(selectors) {
+    return selectors.map(sel => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const round = n => Math.round(n * 10) / 10;
+        return { x: round(r.left + window.scrollX), y: round(r.top + window.scrollY), width: round(r.width), height: round(r.height) };
+    });
+}
+
+/** sameRect 比對的選擇器＝最近一個 markRect 的選擇器 */
+function marksSelectors(steps, current) {
+    const list = steps.slice(0, steps.indexOf(current)).filter(s => s.markRect);
+    return list[list.length - 1].markRect;
+}
+
+async function runSteps(browser, steps, inflight, width, patchScripts) {
     const failures = [];
     let marked = null;
+    let marks = null;
     for (const step of steps || []) {
         if (step.click) {
             // scrollIntoView 只在元素不在視窗內時才捲，避免「量捲動是否跳動」的情境被工具自己捲動
             const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(step.click)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); el.click(); return true; })()`);
             if (!ok) failures.push(`找不到可點選的元素：${step.click}`);
             await settle(browser, inflight);
+        } else if (step.clickIf) {
+            // 條件式點選：選擇器符合才點（展開狀態會被頁面記在 localStorage，同一瀏覽器的下一格寬度進來已是展開）
+            const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(step.clickIf)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); el.click(); return true; })()`);
+            if (ok) await settle(browser, inflight);
         } else if (step.type) {
             const [sel, text] = step.type;
             const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
             if (!ok) failures.push(`找不到輸入欄：${sel}`);
             await settle(browser, inflight);
         } else if (step.waitFor) {
-            const deadline = Date.now() + 10000;
+            const deadline = Date.now() + (Number(step.timeout) || 10000);
             let found = false;
             while (!found && Date.now() < deadline) {
                 found = await evaluate(browser, `!!document.querySelector(${JSON.stringify(step.waitFor)})`);
@@ -267,6 +321,30 @@ async function runSteps(browser, steps, inflight, width) {
             else if (Math.abs(now - marked) > Number(step.scrollWithin)) failures.push(`捲動位置跳動 ${Math.round(now - marked)}px（上限 ${step.scrollWithin}px）`);
         } else if (step.wait) {
             await sleep(Number(step.wait));
+        } else if (step.patchApi) {
+            const source = `(${installApiPatch.toString()})(${JSON.stringify(step.patchApi)})`;
+            const added = await browser.send('Page.addScriptToEvaluateOnNewDocument', { source });
+            patchScripts.push(added.identifier);
+            await evaluate(browser, source);
+        } else if (step.reload) {
+            await browser.send('Page.reload', {});
+            await sleep(300);
+            await settle(browser, inflight);
+        } else if (step.markRect) {
+            marks = await evaluate(browser, `(${measureRects.toString()})(${JSON.stringify(step.markRect)})`);
+            const missing = step.markRect.filter((sel, i) => marks[i] === null);
+            if (missing.length) failures.push(`markRect 找不到元素：${missing.join('、')}`);
+        } else if (step.sameRect !== undefined) {
+            if (!marks) { failures.push('sameRect 之前沒有 markRect'); continue; }
+            const selectors = marksSelectors(steps, step);
+            const now = await evaluate(browser, `(${measureRects.toString()})(${JSON.stringify(selectors)})`);
+            const tolerance = Number(step.sameRect) || 0.5;
+            selectors.forEach((sel, i) => {
+                if (!marks[i] || !now[i]) { failures.push(`${width}px：輪詢後找不到元素：${sel}`); return; }
+                const diffs = ['x', 'y', 'width', 'height'].filter(k => Math.abs(marks[i][k] - now[i][k]) > tolerance)
+                    .map(k => `${k} ${marks[i][k]}→${now[i][k]}`);
+                if (diffs.length) failures.push(`${width}px：輪詢重繪後 ${sel} 版面跳動（${diffs.join('，')}）`);
+            });
         }
     }
     return failures;
@@ -315,7 +393,14 @@ async function runScenario(browser, scenario, cell, state) {
         await evaluate(browser, `localStorage.setItem('lf.fontScale', ${JSON.stringify(scale)}); true`);
         await browser.send('Page.navigate', { url: `${base}${scenario.path}` });
         await settle(browser, state.inflight);
-        const assertFailures = await runSteps(browser, scenario.steps, state.inflight, width);
+        const patchScripts = [];
+        let assertFailures;
+        try {
+            assertFailures = await runSteps(browser, scenario.steps, state.inflight, width, patchScripts);
+        } finally {
+            // 登記在新文件的 fetch 覆蓋只屬於這個情境，之後的情境不能沿用
+            for (const identifier of patchScripts) await browser.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => { });
+        }
         // 骨架列還在就多等最多 5 秒：分批載入的頁面在網路靜止後仍可能有最後一段在渲染，
         // 只在真的卡住時才記為 stuck（否則同一頁兩次量測結果會隨時序跳動）
         for (let i = 0; i < 25 && await evaluate(browser, '!!document.querySelector(".lf-skeleton")'); i++) await sleep(200);

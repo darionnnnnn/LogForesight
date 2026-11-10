@@ -1067,7 +1067,7 @@ console.log('PASS operational status refresh');
         // 體檢輪：等級變數的初值要讀下拉目前的值（重新整理後瀏覽器可能還原表單狀態）
         Assert.Contains("normalizeMinLevel(document.getElementById('run-errors-level')?.value)", js);
         Assert.Contains("自由文字無法保證完全遮除", view);
-        Assert.Contains("<label class=\"small text-muted mb-0\" for=\"run-errors-level\">顯示等級</label>", view);
+        Assert.Contains("<label class=\"lf-text-label mb-0\" for=\"run-errors-level\">顯示等級</label>", view);
         Assert.Contains("id=\"run-errors-level\"", view);
         Assert.Matches("class=\"[^\"]*\\bd-none\\b[^\"]*\" id=\"run-errors-notice\"", view);
         Assert.DoesNotContain("style=", view);

@@ -341,6 +341,9 @@ input:-webkit-autofill:active {
     font-size: 1rem !important;
 }
 
+/* <summary>（原生收合標題）點擊區至少 24px 高 */
+summary { min-height: max(24px, 1.5rem); }
+
 /* 關閉鈕（提示列、modal、toast）：Bootstrap 是 content-box 1em＋.25em 內距，小字級時不到 24px——
    補內容區下限讓整顆點擊區至少 24×24（DESIGN-SYSTEM §8.2） */
 .btn-close {

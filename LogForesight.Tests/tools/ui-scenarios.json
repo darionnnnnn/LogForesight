@@ -1149,5 +1149,436 @@
         }
       }
     ]
+  },
+  {
+    "name": "互動-排程作業-天數頁籤排序與展開",
+    "role": "ui-admin",
+    "path": "fixture:page.runs",
+    "steps": [
+      {
+        "waitFor": "#run-summary tbody tr"
+      },
+      {
+        "click": "#run-summary tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#run-summary tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "click": "[data-days=\"7\"]"
+      },
+      {
+        "waitFor": "[data-days=\"7\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#run-summary tbody tr .lf-disclosure, #run-summary tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"errors\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"errors\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#run-errors-level",
+          "warn"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "#run-errors",
+          "visible": true
+        }
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"list\"]"
+      },
+      {
+        "waitFor": "#run-list tbody tr"
+      },
+      {
+        "click": "#run-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#run-list .lf-th-sort--active"
+      },
+      {
+        "click": "#run-list tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#run-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"settings\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"settings\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-form",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#runs-toolbar",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-排程作業-輪詢穩定",
+    "role": "ui-admin",
+    "path": "fixture:page.runs",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#schedule-run-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/schedule/status": {
+            "isRunning": true,
+            "canStop": true,
+            "startedAt": "$now-95",
+            "latestMessage": "本機分析：主機日 3／10",
+            "localProgressPhase": "local",
+            "localProgressDone": 3,
+            "localProgressTotal": 10,
+            "progressPhase": "netiq",
+            "progressDone": 12,
+            "progressTotal": 40
+          },
+          "/api/admin/schedule/ai-status": {
+            "isRunning": true,
+            "canStop": true,
+            "startedAt": "$now-60",
+            "latestMessage": "AI 分析進行中"
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#schedule-stop:not(.d-none)",
+        "timeout": 15000
+      },
+      {
+        "waitFor": "#schedule-ai-stop:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-progress-text",
+          "visible": true
+        }
+      },
+      {
+        "markRect": [
+          "#schedule-run-card",
+          "#schedule-ai-card",
+          "#prtg-status-card",
+          "#runs-tabs"
+        ]
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-排程作業",
+    "role": "ui-viewer",
+    "path": "/runs",
+    "steps": [
+      {
+        "assert": {
+          "sel": "[data-maintain-action]:not(.d-none)",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#schedule-run-now",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#schedule-ai-force-rerun",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-頁籤深連結與啟用準備連結",
+    "role": "ui-admin",
+    "path": "/admin/prtg#probe",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"probe\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"connection\"]",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#prtg-tabs [data-tab=\"probe\"].active",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"mirror\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"mirror\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"probe\"]",
+          "visible": false
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"selected-backfill\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"selected-backfill\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-full-backfill-preview",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"effectiveness\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"effectiveness\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-effectiveness-refresh",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-setup-steps a[href^=\"#\"]"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-tabs .nav-link.active",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-輪詢穩定",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-structure-sync-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/settings/prtg-structure-sync/status": {
+            "isRunning": true,
+            "progressPhase": "prtg-sync-devices",
+            "progressDone": 3,
+            "progressTotal": 10,
+            "latestMessage": "同步裝置結構中…"
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#prtg-structure-sync-cancel-btn:not(.d-none)",
+        "timeout": 15000
+      },
+      {
+        "markRect": [
+          "#prtg-structure-sync-card",
+          "#prtg-mirror-stats",
+          "#prtg-setup-summary",
+          "#prtg-tabs"
+        ]
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-連線測試失敗訊息",
+    "role": "ui-admin",
+    "path": "/admin/prtg",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-test-btn"
+      },
+      {
+        "type": [
+          "#prtg-url",
+          "not-a-valid-url"
+        ]
+      },
+      {
+        "click": "#prtg-test-btn"
+      },
+      {
+        "waitFor": "#prtg-test-result [role=\"alert\"]",
+        "timeout": 15000
+      },
+      {
+        "assert": {
+          "sel": "#prtg-test-result [role=\"alert\"]",
+          "visible": true
+        }
+      }
+    ],
+    "allowStatus": [
+      400
+    ]
+  },
+  {
+    "name": "PRTG維護-擷取參數頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#params",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"params\"]:not(.d-none)"
+      },
+      {
+        "clickIf": "#prtg-monitoring-toggle[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#prtg-monitoring-body.show"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-鏡像狀態頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mirror\"]:not(.d-none)"
+      },
+      {
+        "waitFor": "#prtg-mirror-conflicts-table table, #prtg-mirror-conflicts-table .lf-empty"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-環境探測頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#probe",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"probe\"]:not(.d-none)"
+      },
+      {
+        "click": "#prtg-calibration-advanced summary"
+      },
+      {
+        "click": "#calibration-calc-btn"
+      },
+      {
+        "waitFor": "#calibration-cards:not(.d-none)",
+        "timeout": 60000
+      },
+      {
+        "assert": {
+          "sel": "#calibration-cards",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-歷史回填頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#selected-backfill",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"selected-backfill\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-使用效果頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#effectiveness",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"effectiveness\"]:not(.d-none)"
+      },
+      {
+        "click": "#prtg-effectiveness-refresh"
+      },
+      {
+        "waitFor": "#prtg-effectiveness-metrics:not(.d-none)",
+        "timeout": 20000
+      }
+    ]
+  },
+  {
+    "name": "排程作業-排程設定頁籤",
+    "role": "ui-admin",
+    "path": "/runs#settings",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"settings\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-windows input",
+          "visible": true
+        }
+      }
+    ]
   }
 ]

@@ -8,6 +8,7 @@
 
 import { api } from '../core/api.js';
 import { withBusy, collectLines, numberOr, renderTable } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 
 /**
  * 把已儲存的守門設定填進畫面欄位。
@@ -18,9 +19,8 @@ export function loadGuardFields(settings) {
     const hintEl = document.getElementById('guard-prtg-hint');
     if (hintEl) {
         const prtgOff = !settings.prtgEnabled;
-        hintEl.classList.toggle('text-warning', prtgOff);
-        hintEl.classList.toggle('fw-semibold', prtgOff);
-        hintEl.classList.toggle('text-muted', !prtgOff);
+        hintEl.classList.toggle('lf-text-alert', prtgOff);
+        hintEl.classList.toggle('lf-text-meta', !prtgOff);
     }
 
     const guardEnabled = document.getElementById('prtg-guard-enabled');
@@ -88,16 +88,15 @@ export function bindGuardPreview() {
             }
 
             if (!res.success) {
-                const errEl = document.createElement('div');
-                errEl.className = 'text-danger small mt-2';
-                errEl.textContent = res.errorMessage || '預覽失敗。';
+                const errEl = statusNote('error', res.errorMessage || '預覽失敗。');
+                errEl.classList.add('mt-2');
                 container.appendChild(errEl);
                 return;
             }
 
             // 清單來源
             const sourceEl = document.createElement('div');
-            sourceEl.className = 'small text-muted mb-2';
+            sourceEl.className = 'lf-text-meta mb-2';
             // 來源要說清楚：讀鏡像的「找不到」多半是還沒同步，直接查 PRTG 的「找不到」
             // 才代表 PRTG 上真的沒有那台裝置——兩者的處置完全不同。
             const SOURCE_TEXT = {
@@ -114,10 +113,7 @@ export function bindGuardPreview() {
                 const warnContainer = document.createElement('div');
                 warnContainer.className = 'mb-2';
                 for (const w of res.warnings) {
-                    const wEl = document.createElement('div');
-                    wEl.className = 'text-warning small';
-                    wEl.textContent = `⚠ ${w}`;
-                    warnContainer.appendChild(wEl);
+                    warnContainer.appendChild(statusNote('warning', w));
                 }
                 container.appendChild(warnContainer);
             }
@@ -133,12 +129,12 @@ export function bindGuardPreview() {
                     { title: '分類', render: s => s.category || '-' },
                     { title: '狀態', render: s => s.status || '-' },
                     {
-                        // 目前值：有百分比就顯示 xx.x %，沒有就顯示無法判定的原因（text-muted）
+                        // 目前值：有百分比就顯示 xx.x %，沒有就顯示無法判定的原因（次要文字）
                         title: '目前值',
                         render: s => {
                             if (s.percentage != null) return `${Number(s.percentage).toFixed(1)} %`;
                             const span = document.createElement('span');
-                            span.className = 'text-muted';
+                            span.className = 'lf-text-meta';
                             span.textContent = s.unmeasurableReason || '-';
                             return span;
                         }
@@ -149,7 +145,7 @@ export function bindGuardPreview() {
                             if (s.unmeasurableReason && s.percentage != null) return s.unmeasurableReason;
                             if (s.percentage != null) return '正常量測';
                             const span = document.createElement('span');
-                            span.className = 'text-muted';
+                            span.className = 'lf-text-meta';
                             span.textContent = s.unmeasurableReason || '-';
                             return span;
                         }
@@ -165,24 +161,21 @@ export function bindGuardPreview() {
                 const objids = sensors.map(x => x.objid).filter(x => x != null);
 
                 const noteEl = document.createElement('div');
-                noteEl.className = 'small mt-2';
+                noteEl.className = 'mt-2';
 
                 if (objids.length === 0) {
                     // 偵測不到時**不清空**輸入框：管理者手填的清單比一次失敗的偵測可信。
-                    noteEl.className = 'text-warning small mt-2';
-                    noteEl.textContent = '⚠ 自動偵測沒有找到任何感測器，已保留原本的覆寫清單。';
+                    noteEl.appendChild(statusNote('info', '自動偵測沒有找到任何感測器，已保留原本的覆寫清單。'));
                 } else if (textarea) {
                     textarea.value = objids.join('\n');
-                    noteEl.className = 'text-success small mt-2';
-                    noteEl.textContent = `已填入 ${objids.length} 個 objid，尚未儲存——請按「儲存」才會生效。`;
+                    noteEl.appendChild(statusNote('success', `已填入 ${objids.length} 個 objid，尚未儲存——請按「儲存」才會生效。`));
                 }
 
                 container.appendChild(noteEl);
             }
         } catch (error) {
-            const errEl = document.createElement('div');
-            errEl.className = 'text-danger small mt-2';
-            errEl.textContent = error?.message || '預覽失敗。';
+            const errEl = statusNote('error', error?.message || '預覽失敗。');
+            errEl.classList.add('mt-2');
             container.appendChild(errEl);
         } finally {
             restore();

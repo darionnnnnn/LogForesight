@@ -4,6 +4,7 @@
 
 import { api, saveBlobAsFile } from '../core/api.js';
 import { toast, withBusy, guardLoad, renderLoading, renderSpinner, renderEmpty } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import { formatNumber, formatTime } from '../core/format.js';
 
 let latestStatusData = null;
@@ -94,7 +95,7 @@ function renderThresholds(cardKey, thresholds) {
     const entries = Object.entries(thresholds ?? {});
     if (entries.length === 0) {
         const empty = document.createElement('div');
-        empty.className = 'text-muted small';
+        empty.className = 'lf-text-meta';
         empty.textContent = '-';
         container.appendChild(empty);
         return;
@@ -220,8 +221,8 @@ function renderAssessment(data) {
     if (hint) {
         const timeStr = formatTime(new Date());
         if (data.canExport) {
-            hint.className = 'text-success small fw-semibold';
-            hint.textContent = `計算完成（${timeStr}）：四項指標皆達標，可直接匯出`;
+            hint.className = '';
+            hint.replaceChildren(statusNote('success', `計算完成（${timeStr}）：四項指標皆達標，可直接匯出`));
         } else {
             // 直接點名是哪幾項卡住匯出——只說「部分指標未達標」會讓使用者得自己四張卡逐一比對
             const blocking = [
@@ -231,10 +232,10 @@ function renderAssessment(data) {
                 data.residualCredentialThresholds
             ].filter(item => item && !item.isEligible).map(item => item.itemName);
 
-            hint.className = 'text-warning small fw-semibold';
-            hint.textContent = blocking.length > 0
+            hint.className = '';
+            hint.replaceChildren(statusNote('info', blocking.length > 0
                 ? `計算完成（${timeStr}）：${blocking.join('、')} 未達標，需勾選覆寫才可匯出`
-                : `計算完成（${timeStr}）：部分指標未達標，需勾選覆寫才可匯出`;
+                : `計算完成（${timeStr}）：部分指標未達標，需勾選覆寫才可匯出`));
         }
     }
 

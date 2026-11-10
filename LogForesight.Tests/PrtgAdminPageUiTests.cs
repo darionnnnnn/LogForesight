@@ -190,7 +190,8 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("title: '快照寫入', render: row => formatNumber(row.availableValues)", table);
 
         var acceptance = FunctionBody(js, "function renderAcceptance(allConfirmed)");
-        Assert.Contains("refresh.addEventListener('click', refreshAcceptance)", acceptance);
+        // 「重新確認」鈕要綁到 refreshAcceptance（經 ui.js button() 工廠，不手寫 addEventListener）
+        Assert.Matches(new Regex(@"makeButton\('重新確認',[^)]*onClick: refreshAcceptance"), acceptance);
         var refresh = FunctionBody(js, "function refreshAcceptance()");
         foreach (var call in new[] { "refreshScheduleWarning();", "loadSnapshotDiagnostics();", "refreshAcceptanceAi();" })
             Assert.Contains(call, refresh);

@@ -52,17 +52,16 @@ public sealed class DesignSystemGuardUiTests
         "Views/Pages/Dashboard.cshtml", "Views/Pages/Groups.cshtml",
         "Views/Pages/HelpManual.cshtml",
         "Views/Pages/Imports.cshtml",
-        "Views/Pages/Netiq.cshtml", "Views/Pages/Prtg.cshtml",
+        "Views/Pages/Netiq.cshtml",
         "Views/Pages/Reports.cshtml",
-        "Views/Pages/Runs.cshtml", "Views/Pages/Settings.cshtml",
+        "Views/Pages/Settings.cshtml",
         "Views/Pages/Setup.cshtml",
         "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/dashboard.js",
         "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handling-panel.js",
         "wwwroot/js/pages/help-manual.js",
         "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
-        "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-calibration.js", "wwwroot/js/pages/prtg-guard.js",
         "wwwroot/js/pages/reports.js",
-        "wwwroot/js/pages/runs.js", "wwwroot/js/pages/settings.js",
+        "wwwroot/js/pages/settings.js",
         "wwwroot/js/pages/setup.js",
     };
 
@@ -77,8 +76,6 @@ public sealed class DesignSystemGuardUiTests
     private static readonly HashSet<string> BtnLinkAllowed = new(StringComparer.Ordinal)
     {
         "wwwroot/js/pages/groups.js",
-        "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
-        "wwwroot/js/pages/runs.js",
     };
 
     [Fact]
@@ -94,8 +91,6 @@ public sealed class DesignSystemGuardUiTests
         "wwwroot/js/pages/chat-panel.js", "wwwroot/js/pages/groups.js",
         "wwwroot/js/pages/handling-panel.js", "wwwroot/js/pages/help-manual.js",
         "wwwroot/js/pages/netiq-import-wizard.js", "wwwroot/js/pages/netiq.js",
-        "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",
-        "wwwroot/js/pages/runs.js",
         "wwwroot/js/pages/settings.js", "wwwroot/js/pages/setup.js",
     };
 

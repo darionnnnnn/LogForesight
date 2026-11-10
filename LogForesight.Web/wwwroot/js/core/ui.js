@@ -117,10 +117,11 @@ const ICON_FALLBACK_LABELS = {
  * 只有圖示又沒給 title 時，以圖示名稱查 ICON_FALLBACK_LABELS 補 aria-label（查無則用圖示名稱），
  * 並 console.warn 提醒呼叫端補 title——不擲例外，避免單一呼叫點拖垮整頁。
  */
-export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title, opens } = {}) {
+export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title, opens, className, disabled } = {}) {
     const btn = document.createElement('button');
     btn.type = type;
-    btn.className = size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`;
+    btn.className = (size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`) + (className ? ` ${className}` : '');
+    if (disabled) btn.disabled = true;
     if (title) btn.title = title;
     if (opens === 'dialog') btn.setAttribute('aria-haspopup', 'dialog');
     if (iconName) btn.appendChild(icon(iconName));

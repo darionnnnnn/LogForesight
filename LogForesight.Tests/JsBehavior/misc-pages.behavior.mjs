@@ -744,7 +744,7 @@ const cases = {
         assert.equal(badge.textContent, '未啟用');
         assert.equal(badge.title, note, '原因同時放在徽章的滑鼠提示');
         assert.equal(reason.textContent, note);
-        assert.equal(reason.tagName, 'small');
+        assert.equal(reason.className, 'lf-text-meta', '原因走次要文字角色，不再用 small／text-muted');
     },
     runs清單PRTG未啟用沒有原因時只有徽章() {
         const { renderPrtgCell } = makePrtgCell();

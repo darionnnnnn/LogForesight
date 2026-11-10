@@ -77,6 +77,9 @@ const cases = {
         assert.equal(statusNote('error', '連線失敗').getAttribute('role'), 'alert');
         assert.equal(statusNote('success', '已儲存').getAttribute('role'), 'status');
         assert.equal(statusNote('info', '提示').getAttribute('role'), 'status');
+        const warn = statusNote('warning', '可能不完整');
+        assert.equal(warn.getAttribute('role'), 'status');
+        assert(warn.classList.contains('lf-status-note--warning'));
         const unknown = statusNote('weird', '未知類型');
         assert.equal(unknown.getAttribute('role'), 'status');
         assert(unknown.classList.contains('lf-status-note--info'));

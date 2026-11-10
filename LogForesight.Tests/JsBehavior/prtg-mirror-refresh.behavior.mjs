@@ -74,6 +74,13 @@ function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, risk
         document,
         formatNumber: v => String(v),
         appUrl: v => v,
+        // ui.js button() 的替身：只保留測試需要的 click 與 disabled
+        makeButton: (text, { onClick } = {}) => {
+            const btn = dom.newElement('button');
+            btn.textContent = text;
+            if (onClick) btn.addEventListener('click', onClick);
+            return btn;
+        },
         renderPrtgMirror: data => log.rendered.push(['mirror', data]),
         renderManualMaps: data => log.rendered.push(['manual', data]),
         renderIpExcludes: data => log.rendered.push(['excludes', data]),
