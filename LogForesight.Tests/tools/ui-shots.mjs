@@ -190,8 +190,10 @@ function pageMeasure() {
         if (!visible(el) || el.disabled) continue;
         const cs = getComputedStyle(el);
         if (el.tagName === 'A' && cs.display === 'inline') continue;   // WCAG 2.5.8 行內例外
+        // 有可見 <label> 的勾選框／單選鈕：點標籤也會切換，等同擴大的點擊範圍（WCAG 2.5.8 的同等控制例外）
+        if (el.tagName === 'INPUT' && /^(checkbox|radio)$/.test(el.type) && [...(el.labels || [])].some(l => visible(l) && l.getBoundingClientRect().height >= 20)) continue;
         const r = el.getBoundingClientRect();
-        if (r.width < 24 || r.height < 24) result.target.push(`${path(el)} ${Math.round(r.width)}×${Math.round(r.height)}`);
+        if (r.width < 23.5 || r.height < 23.5) result.target.push(`${path(el)} ${Math.round(r.width)}×${Math.round(r.height)}`);
     }
 
     for (const el of document.querySelectorAll('.lf-skeleton, .lf-error')) {

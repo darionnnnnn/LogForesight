@@ -341,6 +341,13 @@ input:-webkit-autofill:active {
     font-size: 1rem !important;
 }
 
+/* 關閉鈕（提示列、modal、toast）：Bootstrap 是 content-box 1em＋.25em 內距，小字級時不到 24px——
+   補內容區下限讓整顆點擊區至少 24×24（DESIGN-SYSTEM §8.2） */
+.btn-close {
+    min-width: calc(24px - .5em);
+    min-height: calc(24px - .5em);
+}
+
 /* 下拉選項明確指定前景與背景：選項背景預設透明時，Windows 版 Chrome 部分寬下拉的選項文字畫不出來
    （點得到、看不到，重繪後才出現）。本站沒有深色模式，select 一併宣告淺色配色。不要當成多餘樣式刪掉。 */
 select {

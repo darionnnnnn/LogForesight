@@ -40,7 +40,7 @@ public sealed class DesignSystemGuardUiTests
     }
 
     private static IEnumerable<string> PageScope() =>
-        Files("wwwroot/js/pages", "*.js").Concat(Files("Views/Pages", "*.cshtml"));
+        Files("wwwroot/js/pages", "*.js").Concat(Files("wwwroot/js/core", "*.js")).Concat(Files("Views", "*.cshtml"));
 
     // ── A-3 文字語意色：驗證與操作結果走 statusNote、風險狀態走 lf-text-alert、其餘回一般文字色 ──
 
@@ -80,7 +80,6 @@ public sealed class DesignSystemGuardUiTests
     private static readonly HashSet<string> BtnLinkAllowed = new(StringComparer.Ordinal)
     {
         "Views/Pages/IssueOwners.cshtml",
-        "wwwroot/js/core/layout.js", "wwwroot/js/core/note-editor.js",
         "wwwroot/js/pages/audit.js", "wwwroot/js/pages/groups.js", "wwwroot/js/pages/handler-detail.js",
         "wwwroot/js/pages/issue-status-reply.js", "wwwroot/js/pages/permission-changes.js",
         "wwwroot/js/pages/prtg-admin.js", "wwwroot/js/pages/prtg-value-readiness.js",

@@ -131,8 +131,7 @@ const cases = {
         assert.equal(cell.children.length, 2);
         assert.equal(cell.children[0].textContent, '01:00～01:03（2 分 11 秒）');
         assert.equal(cell.children[1].textContent, 'NetIQ 44 秒 · AI 1 分 27 秒');
-        assert.ok(cell.children[1].classList.contains('small'));
-        assert.ok(cell.children[1].classList.contains('text-muted'));
+        assert.ok(cell.children[1].classList.contains('lf-text-meta'), '第二行是次要資訊角色');
         const withOther = renderDayTimingCell({ ...timing, otherAiRuns: 2, otherAiSeconds: 2400 });
         assert.ok(withOther.children[1].textContent.includes('另有 AI 補跑 2 趟（'));
         // 沒有第二行內容時維持純文字
@@ -200,8 +199,7 @@ const cases = {
         const cell = renderDayTimingCell(timing, { pendingText: 'X' });
         assert.ok(cell.textContent.includes('X'));
         assert.equal(cell.children[cell.children.length - 1].textContent, 'X');
-        assert.ok(cell.children[cell.children.length - 1].classList.contains('small'));
-        assert.ok(cell.children[cell.children.length - 1].classList.contains('text-muted'));
+        assert.ok(cell.children[cell.children.length - 1].classList.contains('lf-text-meta'), '待補說明是次要資訊角色');
         // 有第二行時待補排在它之後
         const two = renderDayTimingCell({ ...timing, branches: [{ key: 'netiq', seconds: 44 }] }, { pendingText: 'X' });
         assert.equal(two.children.length, 3);

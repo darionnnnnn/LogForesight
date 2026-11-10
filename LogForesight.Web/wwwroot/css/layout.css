@@ -345,6 +345,8 @@
 .lf-sidebar__version {
     margin-top: var(--lf-space-2);
     text-align: center;
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-sidebar-fg);
     opacity: .6;
 }
 

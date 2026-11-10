@@ -7,7 +7,7 @@
 
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
-import { icon } from './ui.js';
+import { icon, button, linkButton } from './ui.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 import { safeStorage } from './storage.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
@@ -478,7 +478,7 @@ function coordinateAlerts() {
     if (summaryEl) {
         if (hiddenCount > 0) {
             summaryEl.textContent = `另有 ${hiddenCount} 則提醒`;
-            summaryEl.className = 'text-muted small py-1 px-1 mb-2 lf-no-print';
+            summaryEl.className = 'lf-text-meta py-1 px-1 mb-2 lf-no-print';
             summaryEl.classList.remove('d-none');
             topContainer.appendChild(summaryEl);
         } else {
@@ -580,7 +580,7 @@ async function loadSetupGuide(user) {
 
         if (nextStep.detail) {
             const detailSpan = document.createElement('div');
-            detailSpan.className = 'text-muted small';
+            detailSpan.className = 'lf-text-meta';
             detailSpan.textContent = nextStep.detail;
             content.appendChild(detailSpan);
         }
@@ -590,16 +590,11 @@ async function loadSetupGuide(user) {
     const actions = document.createElement('div');
     actions.className = 'd-flex align-items-center gap-2';
 
-    const link = document.createElement('a');
-    link.href = appUrl(isFromSetup || !nextStep?.id ? '/setup' : `/setup#${encodeURIComponent(nextStep.id)}`);
-    link.className = 'btn btn-sm btn-primary';
-    link.textContent = isFromSetup ? '返回啟動精靈' : '繼續設定';
+    const link = linkButton(isFromSetup ? '返回啟動精靈' : '繼續設定',
+        appUrl(isFromSetup || !nextStep?.id ? '/setup' : `/setup#${encodeURIComponent(nextStep.id)}`), { variant: 'primary' });
     actions.appendChild(link);
 
-    const hideBtn = document.createElement('button');
-    hideBtn.type = 'button';
-    hideBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted';
-    hideBtn.textContent = '不再顯示';
+    const hideBtn = button('不再顯示');
     hideBtn.addEventListener('click', async () => {
         try {
             await api.put('/api/me/setup-guide', { hidden: true });

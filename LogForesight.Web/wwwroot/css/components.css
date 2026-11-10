@@ -840,6 +840,7 @@ a.lf-badge:hover { text-decoration: underline; }
     display: inline-flex;
     align-items: center;
     gap: .3em;
+    min-height: 24px;   /* 點擊區下限（DESIGN-SYSTEM §8.2），表頭文字本身只有一行高 */
     padding: 0;
     border: 0;
     background: none;
@@ -1163,6 +1164,16 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-text-accent { color: var(--lf-accent-text); }
 .lf-progress-thin { height: 8px; }
 .btn-close.lf-close-xs { font-size: .6rem; }
+
+/* 表格內沒有文字標籤的勾選框（逐列選取、全選）：點擊區至少 24×24；有 <label> 的勾選框靠標籤擴大點擊範圍，不在此列 */
+.table td > .form-check-input,
+.table th > .form-check-input,
+.table td > .form-check > .form-check-input:not([id]),
+.table th > .form-check > .form-check-input:not([id]) {
+    width: max(1.25rem, 24px);
+    height: max(1.25rem, 24px);
+    margin-top: 0;
+}
 .input-group > .lf-flex-search { flex: 0 1 40%; }
 .lf-bubble { max-width: 85%; }
 .lf-wizard-host-grid {

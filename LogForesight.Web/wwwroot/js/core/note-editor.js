@@ -11,7 +11,7 @@
  */
 
 import { api, getCurrentUser } from './api.js';
-import { confirmAction, showDetailModal, toast } from './ui.js';
+import { button, confirmAction, showDetailModal, toast } from './ui.js';
 
 const KEY_PREFIX = 'lf-draft:';
 const SAVE_DELAY_MS = 500;
@@ -76,17 +76,15 @@ const AI_TOO_SHORT_TEXT = 'AI 整理是把你已經寫下的內容整理成條�
 
 function mutedHint(text) {
     const el = document.createElement('span');
-    el.className = 'small text-muted';
+    el.className = 'lf-text-meta';
     el.textContent = text;
     return el;
 }
 
-function linkButton(text, onClick) {
-    const btn = document.createElement('button');
-    btn.type = 'button';   // 放在 form 裡，不指定會變成送出鈕
-    btn.className = 'btn btn-link btn-sm p-0 ms-2 align-baseline';
-    btn.textContent = text;
-    btn.addEventListener('click', onClick);
+/** 提示句尾端的小動作（捨棄、帶入、復原…）：外框小按鈕，接在句子後面（button() 已指定 type="button"，放在 form 裡不會變成送出鈕） */
+function inlineAction(text, onClick) {
+    const btn = button(text, { onClick });
+    btn.classList.add('ms-2', 'lf-note-editor__action');
     return btn;
 }
 
@@ -133,7 +131,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
         counter.textContent = over > 0
             ? `${length} / ${maxLength}，超過上限 ${over} 字`
             : `${length} / ${maxLength}`;
-        counter.classList.toggle('text-danger', over > 0);
+        counter.classList.toggle('lf-text-alert', over > 0);
         textarea.setCustomValidity(over > 0 ? `處理說明不可超過 ${maxLength} 字` : '');
     }
 
@@ -167,7 +165,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
     function showNotice(parts) {
         removeNotice();
         notice = document.createElement('div');
-        notice.className = 'text-muted small mb-1';
+        notice.className = 'lf-text-meta mb-1';
         notice.append(...parts);
         mainRow.before(notice);
     }
@@ -180,7 +178,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
             textarea.value = draft;
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
             // 捨棄＝清空說明欄；setValue 以空值寫入即刪除草稿鍵
-            showNotice(['已還原未送出的草稿', linkButton('捨棄', () => {
+            showNotice(['已還原未送出的草稿', inlineAction('捨棄', () => {
                 removeNotice();
                 setValue('');
             })]);
@@ -190,7 +188,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
         const preview = draft.length > 20 ? `${draft.slice(0, 20)}…` : draft;
         showNotice([
             `有未送出的草稿（${preview}）`,
-            linkButton('帶入', async () => {
+            inlineAction('帶入', async () => {
                 const confirmed = await confirmAction({
                     title: '要以草稿取代目前的說明嗎？',
                     message: '目前說明欄的內容會被草稿取代。',
@@ -201,7 +199,7 @@ export function attachNoteEditor(textarea, { draftKey, maxLength = 1000, ai, reu
                 removeNotice();
                 setValue(draft);
             }),
-            linkButton('捨棄', () => {
+            inlineAction('捨棄', () => {
                 removeNotice();
                 clearDraft();
             })
@@ -255,10 +253,10 @@ function attachReuseLink(textarea, leftTools, issueKey, setValue) {
     if (!issueKey()) return;
 
     const hint = document.createElement('span');
-    hint.className = 'small text-muted';
+    hint.className = 'lf-text-meta';
     hint.setAttribute('aria-live', 'polite');
 
-    const link = linkButton('沿用此問題上次的說明', async () => {
+    const link = inlineAction('沿用此問題上次的說明', async () => {
         const key = issueKey();
         if (!key) return;
         hint.textContent = '';
@@ -333,7 +331,7 @@ function attachPhraseMenu(textarea, leftTools, setValue) {
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 align-baseline dropdown-toggle';
+    toggle.className = 'btn btn-sm btn-outline-secondary dropdown-toggle';
     toggle.setAttribute('data-bs-toggle', 'dropdown');
     toggle.setAttribute('aria-expanded', 'false');
     toggle.textContent = '常用語';
@@ -373,7 +371,7 @@ function attachPhraseMenu(textarea, leftTools, setValue) {
         if (items.length === 0) {
             const empty = document.createElement('li');
             const text = document.createElement('span');
-            text.className = 'dropdown-item-text small text-muted';
+            text.className = 'dropdown-item-text lf-text-meta';
             text.textContent = '還沒有常用語';
             empty.appendChild(text);
             items.push(empty);
@@ -389,7 +387,7 @@ function attachPhraseMenu(textarea, leftTools, setValue) {
     wrap.addEventListener('show.bs.dropdown', () => {
         const loading = document.createElement('li');
         const text = document.createElement('span');
-        text.className = 'dropdown-item-text small text-muted';
+        text.className = 'dropdown-item-text lf-text-meta';
         text.textContent = '載入中…';
         loading.appendChild(text);
         menu.replaceChildren(loading);
@@ -411,7 +409,7 @@ function openPhraseManager(data) {
     }
 
     const label = document.createElement('label');
-    label.className = 'form-label small text-muted';
+    label.className = 'form-label lf-text-meta';
     label.textContent = '一行一條，最多 20 條、每條最多 200 字';
     const input = document.createElement('textarea');
     input.className = 'form-control form-control-sm mb-3';
@@ -461,7 +459,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
     box.className = 'lf-note-editor__ai';
 
     const emptyHint = document.createElement('span');
-    emptyHint.className = 'small text-danger me-2';
+    emptyHint.className = 'lf-text-alert me-2';
 
     if (status.external) box.appendChild(mutedHint('內容會送至外部 AI 服務'));
     if (status.batchBusy) box.appendChild(mutedHint('AI 分析排程執行中，可能較慢'));
@@ -472,7 +470,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
     button.textContent = 'AI 整理';
 
     let requestSeq = 0;
-    const abandon = linkButton('放棄', () => {
+    const abandon = inlineAction('放棄', () => {
         requestSeq++;   // 這次回應到了也不採用
         setIdle();
     });
@@ -484,7 +482,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
 
     // 結果訊息列：放在尾區最下方
     const message = document.createElement('div');
-    message.className = 'small text-muted lf-note-editor__message';
+    message.className = 'lf-text-meta lf-note-editor__message';
     message.setAttribute('aria-live', 'polite');
     tail.appendChild(message);
 
@@ -549,7 +547,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
 
         undoText = textarea.value;   // 最近一次整理前的原文（等待期間若有修改，以修改後為準）
         setValue(result.text);
-        const undo = linkButton('復原', () => {
+        const undo = inlineAction('復原', () => {
             if (undoText === null) return;
             const original = undoText;
             resetUndo();

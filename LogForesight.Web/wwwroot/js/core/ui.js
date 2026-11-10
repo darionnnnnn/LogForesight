@@ -347,7 +347,7 @@ function pageSizeSelect(current, options, onChange) {
     wrap.className = 'lf-page-size';
 
     const label = document.createElement('span');
-    label.className = 'text-muted small';
+    label.className = 'lf-text-meta';
     label.textContent = '每頁顯示';
 
     const select = document.createElement('select');
@@ -1319,7 +1319,7 @@ export function renderLoading(container, rows = 4) {
  */
 export function renderSpinner(container, text = '載入中…') {
     const el = document.createElement('div');
-    el.className = 'text-muted small d-flex align-items-center gap-2';
+    el.className = 'lf-text-meta d-flex align-items-center gap-2';
 
     const spinner = document.createElement('span');
     spinner.className = 'spinner-border spinner-border-sm';
@@ -1362,7 +1362,7 @@ export function checkboxList(container, items, emptyHint, options) {
 
     if (items.length === 0) {
         const hint = document.createElement('div');
-        hint.className = 'text-muted small';
+        hint.className = 'lf-text-meta';
         hint.textContent = emptyHint;
         container.appendChild(hint);
         return;
@@ -1392,7 +1392,7 @@ export function checkboxList(container, items, emptyHint, options) {
     let noMatchHint = null;
     if (filterable) {
         noMatchHint = document.createElement('div');
-        noMatchHint.className = 'text-muted small d-none';
+        noMatchHint.className = 'lf-text-meta d-none';
         noMatchHint.textContent = '沒有符合的項目';
         listRoot.appendChild(noMatchHint);
     }

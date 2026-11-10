@@ -380,7 +380,7 @@ export function issueBaselineCell(group) {
     const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
 
     if (noBaseline) {
-        wrap.className = 'small text-muted';
+        wrap.className = 'lf-text-meta';
         wrap.textContent = '新問題，無基準';
         wrap.title = '過去 30 天出現不足 3 天，視為新問題，尚無基準可比';
         return wrap;
@@ -460,7 +460,7 @@ export function renderIssueCell(issueLabelText, plainExplanationText) {
 
     if (plainExplanationText) {
         const sub = document.createElement('div');
-        sub.className = 'text-muted small';
+        sub.className = 'lf-text-meta';
         sub.textContent = plainExplanationText;
         wrap.appendChild(sub);
     }
@@ -471,7 +471,7 @@ export function renderIssueCell(issueLabelText, plainExplanationText) {
 export function statusText(item) {
     const span = document.createElement('span');
     span.textContent = item.derivedStatusText ?? item.statusText;
-    if (item.isOverdue) span.className = 'text-danger fw-semibold';
+    if (item.isOverdue) span.className = 'lf-text-alert';
     return span;
 }
 
@@ -479,7 +479,7 @@ export function statusText(item) {
 export function dueCell(item) {
     if (!item.dueDate) return '';
     const span = document.createElement('span');
-    span.className = item.isOverdue ? 'text-danger fw-semibold' : '';
+    span.className = item.isOverdue ? 'lf-text-alert' : '';
     span.textContent = item.isOverdue ? `逾期 ${item.dueDate}` : item.dueDate;
     return span;
 }
