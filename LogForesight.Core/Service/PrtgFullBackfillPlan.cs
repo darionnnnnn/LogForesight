@@ -52,7 +52,7 @@ public static class PrtgFullBackfillPlanBuilder
         ArgumentNullException.ThrowIfNull(scopeDeviceObjids);
 
         var date = day.Date;
-        var hostMapRows = store.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, date).Rows;
+        var hostMapRows = store.GetHostMapForDay(date, PrtgTriggeredValueFetcher.HostMapLookbackDays).Rows;
         var mappedHostIds = hostMapRows
             .Where(row => row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue)
             .Select(row => row.HostId!.Value)

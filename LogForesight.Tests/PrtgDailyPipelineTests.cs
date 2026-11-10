@@ -1087,6 +1087,27 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public void 過去日當天只有unmatched且隔天有ok_ResolveHostMapRows回隔天的列()
+    {
+        var day = DateTime.Today.AddDays(-3);
+        var next = day.AddDays(1);
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow { MapDate = day, DeviceObjid = 5, MapStatus = PrtgMapStatus.Unmatched, CreatedAt = DateTime.Now }
+        });
+        store.ReplaceHostMapForDate(next, new[]
+        {
+            new PrtgHostMapRow { MapDate = next, DeviceObjid = 5, HostId = 9, HostName = "SRV-X", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }
+        });
+
+        var (mapDate, rows) = PrtgValueAssessment.ResolveHostMapRows(store, day, DateTime.Today.AddDays(-1));
+
+        Assert.Equal(next, mapDate);
+        Assert.Contains(rows, r => r.MapStatus == PrtgMapStatus.Ok && r.HostId == 9);
+    }
+
+    [Fact]
     public async Task 同主機兩台裝置各一顆sensor同時Down_同主機日兩筆finding不合併()
     {
         EnableConservativePrtgWithDefaultWhitelist();

@@ -222,10 +222,10 @@ public sealed class PrtgValueAssessment
             var todayRows = store.GetHostMapForDate(d);
             if (todayRows.Any(r => r.MapStatus == PrtgMapStatus.Ok)) return (d, todayRows);
             // 錨點用最新日自己會找回同一份 unmatched；主機真的被移除時由評估範圍濾掉，不會誤歸戶
-            var prior = store.GetLatestHostMapWithDate(MapLookbackDays, anchor: d.AddDays(-1));
+            var prior = store.GetHostMapForDay(d.AddDays(-1), MapLookbackDays);
             return prior.MapDate != null && prior.Rows.Any(r => r.MapStatus == PrtgMapStatus.Ok) ? prior : (d, todayRows);
         }
-        return store.GetLatestHostMapWithDate(MapLookbackDays, anchor: d);
+        return store.GetHostMapForDay(d, MapLookbackDays);
     }
 
     /// <summary>

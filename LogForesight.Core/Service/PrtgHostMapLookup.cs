@@ -5,7 +5,8 @@ namespace LogForesight.Core.Service;
 /// <summary>
 /// 「某日用哪一份 PRTG 主機對應」的唯一選法（純函式，docs/PRTG-SPEC.md §4）：
 /// 先取回看窗內（<c>day - lookbackDays &lt; MapDate &lt;= day</c>）最晚的一份；窗內沒有時，往後沿用 day 之後、今天（含）之前最早的一份。
-/// SQL 端的 <c>EfPrtgStore.FindLatestHostMapDate</c> 以查詢表達同一規則（不便直接共用此函式），兩處規則須一起改。
+/// SQL 端的 <c>EfPrtgStore.GetHostMapForDay</c> 以查詢表達同一規則（不便直接共用此函式），兩處規則須一起改；
+/// SQL 端只採用含 ok 列的對應，逐 device 版本（本函式）看該 device 自己的列。
 /// </summary>
 public static class PrtgHostMapLookup
 {

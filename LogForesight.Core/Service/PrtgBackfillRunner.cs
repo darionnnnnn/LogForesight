@@ -62,7 +62,7 @@ public static class PrtgBackfillRunner
             dayProgress?.Invoke(offset, totalDays, day);
 
             // 與全量回填同一種取法：該日或之前 31 天內最近一份，沒有再沿用之後的（docs/PRTG-SPEC.md §4）
-            var mapRows = store.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, day).Rows
+            var mapRows = store.GetHostMapForDay(day, PrtgTriggeredValueFetcher.HostMapLookbackDays).Rows
                 .Where(row => row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue && selectedHosts.Contains(row.HostId.Value))
                 .ToList();
             if (mapRows.Count == 0)

@@ -2308,6 +2308,36 @@ public sealed class EfPrtgStore
         return (latestDate.Value, rows);
     }
 
+    /// <summary>
+    /// 某日用哪一份主機對應（docs/PRTG-SPEC.md §4）：只採用「至少有一列 ok」的對應。
+    /// 先取 (day - lookbackDays, day]（含 day）內最晚的一份；沒有時往後沿用 day 之後、今天（含）以前最早的一份；
+    /// 都沒有回 (null, 空清單)。回傳該日全部列（含非 ok 列），呼叫端自行過濾 ok。
+    /// 全 unmatched／conflict 的那一份（那次對應沒有成功）不被選中，免得該日歸不了戶。
+    /// </summary>
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetHostMapForDay(DateTime day, int lookbackDays)
+    {
+        using var __perf = _performance.Measure("prtg:GetHostMapForDay");
+        using var ctx = _contextFactory();
+        var mapDate = FindHostMapDateForDay(ctx, day, lookbackDays);
+        if (mapDate == null) return (null, new List<PrtgHostMapRow>());
+        var rows = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == mapDate.Value).ToList();
+        return (mapDate.Value, rows);
+    }
+
+    internal static DateTime? FindHostMapDateForDay(LfDbContext ctx, DateTime day, int lookbackDays)
+    {
+        if (lookbackDays <= 0) return null;
+        var dayDate = day.Date;
+        var cutoff = dayDate.AddDays(-(lookbackDays - 1));
+        var onOrBefore = BuildOkMapDatesQuery(ctx.PrtgHostMaps, cutoff, dayDate).Max(d => (DateTime?)d);
+        if (onOrBefore != null) return onOrBefore;
+        return BuildOkMapDatesQuery(ctx.PrtgHostMaps, dayDate.AddDays(1), DateTime.Today).Min(d => (DateTime?)d);
+    }
+
+    /// <summary>[from, to]（含）內「含 ok 列」的對應日期（可重複）；供 <see cref="GetHostMapForDay"/> 取 Max／Min。</summary>
+    internal static IQueryable<DateTime> BuildOkMapDatesQuery(IQueryable<PrtgHostMapRow> maps, DateTime from, DateTime to) =>
+        maps.Where(m => m.MapStatus == PrtgMapStatus.Ok && m.MapDate >= from && m.MapDate <= to).Select(m => m.MapDate);
+
     /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
     public DateTime? GetLatestHostMapDate(int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays)
     {
