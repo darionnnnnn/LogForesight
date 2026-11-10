@@ -84,6 +84,14 @@ public class EventLogService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>
+    /// 讀取記錄檔失敗的警告範本（NLog 範本，保留 {LogName} 佔位）。權限被拒（Security 記錄檔常見）時直接告訴管理者處理方式。
+    /// </summary>
+    internal static string ReadFailureTemplate(Exception ex) =>
+        ex is System.Security.SecurityException or UnauthorizedAccessException
+            ? "讀取 {LogName} 記錄檔被拒：執行站台的帳號需加入本機「Event Log Readers」群組，或改以系統管理員身分執行"
+            : "讀取 {LogName} Event Log 失敗";
+
     /// <summary>非 Windows 平台讀取 Event Log 時回報的固定原因字串。</summary>
     public const string UnsupportedPlatformReason = "此平台不支援 Windows Event Log 讀取";
 
@@ -221,7 +229,7 @@ public class EventLogService
         catch (Exception ex)
         {
             // 其他例外（含權限不足 UnauthorizedAccessException）：存在但讀不到，屬偵測盲區。
-            Log.Warn(ex, "讀取 {LogName} Event Log 失敗", logName);
+            Log.Warn(ex, ReadFailureTemplate(ex), logName);
             return new EventLogScanResult { Entries = logs, Complete = false, ReadFailed = true };
         }
     }
@@ -330,7 +338,7 @@ public class EventLogService
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "讀取 {LogName} Event Log 失敗", logName);
+            Log.Warn(ex, ReadFailureTemplate(ex), logName);
             return new EventLogScanResult { Entries = logs, Complete = false, ReadFailed = true };
         }
     }
