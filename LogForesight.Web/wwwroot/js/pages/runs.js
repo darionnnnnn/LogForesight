@@ -38,7 +38,7 @@ const STATUS_META = {
     running: statusMeta('執行中', '--lf-primary'),
     stuck: statusMeta('異常中斷', '--lf-cat-hardware'),
     none: statusMeta('未執行', '--lf-gray-200'),
-    // NetIQ 回空資料、等下一窗口複查：不是漏跑，所以不併進「未執行」
+    // NetIQ 回空資料、等複查（同窗口約 60 分後或下一窗口）：不是漏跑，所以不併進「未執行」
     recheck: statusMeta('空資料待複查', '--lf-info'),
     // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
     local_disabled: statusMeta('本機分析已停用', '--lf-gray-400')
@@ -343,7 +343,7 @@ function setBarProgress(barEl, percent) {
 function notRunCell(s) {
     const base = s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
     if (!(s.recheckCount > 0)) return base;
-    const recheck = `空資料待複查 ${s.recheckCount}`;
+    const recheck = `空資料待複查 ${s.recheckCount}` + (s.recheckAt ? `（約 ${s.recheckAt} 複查）` : '');
     if (s.notRunCount === 0) return document.createTextNode(recheck);
     const wrap = document.createElement('span');
     wrap.append(base, `＋${recheck}`);

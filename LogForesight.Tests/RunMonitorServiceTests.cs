@@ -499,14 +499,15 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(1, 1, "空資料，下一窗口複查一次")]
-    [InlineData(3, 1, "空資料，下一窗口複查一次")]
+    [InlineData(1, 1, "空資料，下一窗口複查")]
+    [InlineData(3, 1, "空資料，下一窗口複查")]
     [InlineData(1, 2, "今天的自動重查已用完，明天會再試")]
     [InlineData(3, 2, "今天的自動重查已用完，明天會再試")]
     public void NetIQ空資料待複查_說明依自動重查是否用完_不看列日期(int daysAgo, int attemptRuns, string expected)
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.12", Source = "netiq" });
         var rowDate = DateTime.Today.AddDays(-daysAgo);
+        Options().Update(o => o.Enabled = true);   // 過去的格子：排程啟用時寫「下一窗口」（複查時刻只算今天）
         for (var run = 1; run <= attemptRuns; run++)
             NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), run, NetiqAttemptStatus.EmptyOnce);
 
@@ -515,6 +516,17 @@ public class RunMonitorServiceTests : IDisposable
 
         Assert.Contains(expected, row.StatusNote);
         Assert.DoesNotContain("已無自動複查", row.StatusNote);
+    }
+
+    [Theory]
+    [InlineData(false, null, "空資料，排程未啟用，不會自動複查")]
+    [InlineData(false, "02:00", "空資料，排程未啟用，不會自動複查")]
+    [InlineData(true, "02:00", "空資料，約 02:00 複查")]
+    [InlineData(true, null, "空資料，下一窗口複查")]
+    public void 空資料待複查說明_排程未啟用_排得進寫時刻_排不進寫下一窗口(bool enabled, string? at, string expected)
+    {
+        DateTime? recheckAt = at == null ? null : DateTime.Today.Add(TimeSpan.Parse(at));
+        Assert.Equal(expected, RunMonitorService.EmptyRecheckNote(enabled, recheckAt));
     }
 
     private long AddTodayRun(int minuteOffset, int? netiqDaysFailed = null, bool interrupted = false)

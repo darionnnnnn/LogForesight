@@ -361,6 +361,9 @@ public sealed record ExportAbnormalRunDto
     public int? NetiqDaysAnalyzed { get; init; }
     public int? NetiqDaysFailed { get; init; }
     public int? NetiqHostsSkipped { get; init; }
+
+    /// <summary>這趟結束時仍為空資料待複查的 NetIQ 主機日（本趟新記＋未滿複查間隔而延後）；舊紀錄為 null</summary>
+    public int? NetiqEmptyPending { get; init; }
     public string? PrtgOutcome { get; init; }
 
     /// <summary>趟次層的 PRTG 結局原因（disabled 早退：未啟用／尚未設定認證資訊／憑證無法解密）；經 Text 遮罩，沒有原因為 null</summary>

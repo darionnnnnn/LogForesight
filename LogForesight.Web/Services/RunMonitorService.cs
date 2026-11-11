@@ -117,7 +117,8 @@ public class RunMonitorService
         var runsById = runs.ToDictionary(run => run.RunId);
 
         var hosts = AllHosts(runs);
-        var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
+        var scheduleOptions = _scheduleOptions.Get();
+        var localEnabled = scheduleOptions.LocalAnalysisEnabled;
 
         var summaries = new List<RunDaySummaryDto>();
         for (var date = pageFrom; date <= lastDate; date = date.AddDays(1))
@@ -198,6 +199,9 @@ public class RunMonitorService
             }
 
             if (isToday) summary.PendingSummary = BuildPendingSummary(runs, today);
+            if (isToday && summary.RecheckCount > 0 && scheduleOptions.Enabled &&
+                ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) is { } recheckAt)
+                summary.RecheckAt = recheckAt.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
             summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
             summary.OtherFailedCount = Math.Max(0, failedHosts.Count - MaxFailedHostNames);
             summaries.Add(summary);
@@ -237,6 +241,10 @@ public class RunMonitorService
         var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
         var histories = ReadHistories(recordDate);
+        var scheduleOptions = _scheduleOptions.Get();
+        // 複查時刻只對今天的格子有意義（過去的格子留著待複查，代表當天沒排進窗口）；runs 已涵蓋前一天，跨午夜窗口的實例也找得到
+        var recheckNote = EmptyRecheckNote(scheduleOptions.Enabled,
+            date.Date == DateTime.Today ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
 
         return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runs, host.HostName, dateStr))).Select(host =>
         {
@@ -258,7 +266,7 @@ public class RunMonitorService
                 AiFailures = cell.AiFailures,
                 RunCount = cell.RunCount,
                 Legacy = cell.Legacy,
-                StatusNote = NetiqStatusNote(host, recordDate, histories),
+                StatusNote = NetiqStatusNote(host, recordDate, histories, recheckNote),
                 DecisionVersion = workflow?.DecisionVersion,
                 ParentWorkflowState = workflow?.Parent.ToString().ToLowerInvariant(),
                 PrtgWorkflowState = workflow?.Prtg.ToString().ToLowerInvariant(),
@@ -301,16 +309,22 @@ public class RunMonitorService
 
     /// <summary>格子上要讓人看得懂的那句話：空資料等複查、自動重查已放棄（否則是一個永遠的黃燈，看不出該手動補跑）。</summary>
     private static string? NetiqStatusNote(HostRef host, DateTime date,
-        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories)
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories, string recheckNote)
     {
         if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
         // 空資料的續跑與其他需重查狀態同一套規則（看自動重查是否用完，不看列日期）；用完就走下面的「已用完」說明
         if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce && !NetiqAttemptStatus.AutoRetryExhausted(history))
-            return "空資料，下一窗口複查一次";
+            return recheckNote;
         if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
         // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
         return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";
     }
+
+    /// <summary>空資料待複查的說明：排程未啟用、同窗口內排得進（寫時刻）、排不進（等下一窗口）三種；時刻只由 NextEmptyRecheckAt 算。</summary>
+    internal static string EmptyRecheckNote(bool scheduleEnabled, DateTime? recheckAt) =>
+        !scheduleEnabled ? "空資料，排程未啟用，不會自動複查"
+        : recheckAt is { } at ? $"空資料，約 {at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)} 複查"
+        : "空資料，下一窗口複查";
 
     private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
         HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,
