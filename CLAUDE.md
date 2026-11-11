@@ -46,6 +46,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；
   `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
+- **版號**：`1.0.<輪次>.<修訂>`，規則寫在 `Directory.Build.props` 註解。開新一輪的第一個提交就把輪次改成該輪 `FEEDBACK-N-PLAN` 的 N、修訂歸 0；
+  實作方自查修正、換模型體檢修正、併 dev 後的實測補修各加 1 次修訂（同一批多個 commit 只加一次）；零星修補只加修訂。
+  第三碼由 `VersionRoundGuardTests` 守門，第四碼在收尾時檢查。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
 - **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕、寬度、判斷層／佐證層與共用元件一覽）為基準，不必再問。
   驗收用 UI 資料集＋截圖量測工具（DESIGN-SYSTEM §8.7）：改到的頁面在五個寬度下六項量測為 0 才算完成；樣式表是 `wwwroot/css/` 的 base／components／layout／pages 四層，唯一引用點 `Views/Shared/_Styles.cshtml`。
@@ -120,7 +123,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要以「逐行找到標籤、取到行尾」擷取 Windows 事件欄位：NetIQ／Sentinel 的訊息主體是單行（欄位間是連續空白、同一個標籤會出現多次），
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
-- 不要拿版本號判斷站台部署了哪一版：`Directory.Build.props` 的版本號不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.53.2+短 sha`，執行紀錄、匯出與健康頁都是它）。
+- 不要拿版本號判斷站台部署了哪個 commit：版本號在同一個修訂內不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.70.0+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
