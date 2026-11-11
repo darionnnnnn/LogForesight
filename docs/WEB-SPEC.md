@@ -1485,8 +1485,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
-  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽五段（headline／重點速報／狀況／趨勢／建議處置；狀況／趨勢／建議處置三段為並排的三格摘要，窄螢幕自動換行、列印單欄，缺值的格不渲染，建議處置格帶主色左色條；頁首日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；「重點速報」子卡只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現，右上「複製」鈕列印時隱藏；
-  僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
+  `.lf-ai-block`（左邊框＋淡底）標出；詳情頁頂部的白話總覽（`aiSummaryBlock`、`.lf-briefing__*`）例外，以「AI 摘要」徽章標註、不用左框淡底：
+  結論列＝AI 標題（頁首唯一的大字）＋一顆「AI 摘要」徽章（AI 分析中、降級待補、已放棄、統計模式時改放對應狀態徽章、不放「AI 摘要」）；其下「重點速報」與「建議處置」並排（≥ 992px 約 1.6 : 1、窄螢幕直排，建議處置是頁首唯一有底色的面、僅 `aiAnalyzed=true` 時上底色；只有其一時佔滿），再下以細線分隔「狀況」「趨勢」兩欄；四段共用 `lf-text-label` 眉標，缺值的段連眉標與細線都不渲染，列印時結論以下單欄；「重點速報」複製鈕在眉標列右側、列印隱藏，只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現；第一行是主機名（`lf-font-size-lg`）、日期、風險徽章與「下一筆未處理」，系統類型與 IP（僅當與主機名不同）移到次要資訊行；次要資訊行的日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；
+  統計模式是替代文字非 AI 產出，不標「AI 摘要」）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標；「重點速報：」只在 `Brief` 非空時印在標題之後）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱

@@ -448,6 +448,10 @@
 .lf-entity-head__link:hover,
 .lf-entity-head__link:focus-visible { text-decoration: underline; }
 
+/* 風險日詳情的主機名：脈絡資訊，字級降一級（AI 標題才是頁首的大字）；其他詳情頁維持 xl */
+/* 字級降一級後單行高度不到 24px：連結補點擊區下限（DESIGN-SYSTEM §8.2） */
+.lf-entity-head__title--context { font-size: var(--lf-font-size-lg); min-height: max(24px, 1.5rem); display: inline-flex; align-items: center; }
+
 /* 頁首卡第二行的次要資訊（metaLine） */
 .lf-entity-head__facts { margin-bottom: var(--lf-space-3); }
 
