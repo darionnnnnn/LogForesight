@@ -27,13 +27,16 @@ public class BatchRunRecorder : IDisposable
     public const string OutputLogger = "Output";
 
     /// <summary>
-    /// 不計入 WarnCount 的 logger 短名稱（依名稱判定，不比對訊息內容）：慢 SQL 監控，以及
+    /// 不計入 WarnCount 的 logger 短名稱（依名稱判定，不比對訊息內容）：慢 SQL 監控、
     /// AI JSON 失敗診斷（<see cref="AiJsonDiagnostics.LoggerName"/>，只給匯出用的證據行，
-    /// 不是這趟分析的新問題）。兩者仍照常寫入執行紀錄。執行監控頁（RunMonitorService）共用此判定。
+    /// 不是這趟分析的新問題），以及 AI 單次嘗試層級的失敗（<see cref="AIService.AttemptLoggerName"/>，
+    /// 重試機制本來就會處理，「最終失敗」另由原 logger 照計）。三者仍照常寫入執行紀錄。
+    /// 執行監控頁（RunMonitorService）與診斷匯出（RunExportService）共用此判定。
     /// </summary>
     public static bool IsWarnCountExemptLogger(string? loggerName) =>
         string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal)
-        || string.Equals(loggerName, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
+        || string.Equals(loggerName, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal)
+        || string.Equals(loggerName, AIService.AttemptLoggerName, StringComparison.Ordinal);
 
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;

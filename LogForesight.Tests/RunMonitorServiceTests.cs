@@ -1192,6 +1192,21 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void 異常彙總_AI嘗試層級logger標示不計入警告數_與警告數同一個判定點()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "JSON 解析失敗（第 1/3 次）", logger: AIService.AttemptLoggerName);
+        // 同樣的訊息、一般 AIService logger：最終失敗類，照計
+        SeedLog(run, "Warn", "JSON 解析失敗（第 1/3 次）", logger: "AIService");
+
+        var groups = Create().GetErrorSummary(7, "warn").Groups;
+
+        Assert.Equal(2, groups.Count);
+        Assert.True(Assert.Single(groups, g => g.ExcludedFromWarnCount).Count == 1);
+        Assert.False(Assert.Single(groups, g => !g.ExcludedFromWarnCount).ExcludedFromWarnCount);
+    }
+
+    [Fact]
     public void 異常彙總_AI診斷logger的行完全排除_warn模式也看不到()
     {
         var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));

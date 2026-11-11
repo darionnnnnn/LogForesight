@@ -660,7 +660,7 @@ public class RunMonitorService
     private static bool IsDiagnosticsOnly(BatchRunLog log) =>
         string.Equals(log.Logger, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
 
-    /// <summary>以 logger 名稱判定（共用 <see cref="BatchRunRecorder.ExemptWarnLogger"/>），不比對訊息內容</summary>
+    /// <summary>以 logger 名稱判定（共用 <see cref="BatchRunRecorder.IsWarnCountExemptLogger"/>，與警告數同一個判定點），不比對訊息內容</summary>
     private static bool IsExemptWarn(BatchRunLog log) =>
-        log.Level == "Warn" && string.Equals(log.Logger, BatchRunRecorder.ExemptWarnLogger, StringComparison.Ordinal);
+        log.Level == "Warn" && BatchRunRecorder.IsWarnCountExemptLogger(log.Logger);
 }

@@ -27,6 +27,12 @@ public interface IAiRequestGate
     /// 只限閘道等於沒限——畫面上的人會在佇列裡等到前一個問題答完）。不節流時為無限。
     /// </summary>
     TimeSpan InteractiveMaxWait { get; }
+
+    /// <summary>
+    /// 強制格式（response_format）的啟用狀態記憶（第 70 輪 C-1）：跨 <see cref="AIService"/> 實例與跨呼叫共用，
+    /// 掛在閘道上是因為閘道本來就是全站唯一、每個 <see cref="AIService"/> 建構點都必須帶的物件。
+    /// </summary>
+    AiGrammarMemory GrammarMemory { get; }
 }
 
 /// <summary>不節流（僅供測試；正式碼的閘道參數一律必填）：行為等同只有各實例自己的序列化。</summary>
@@ -39,6 +45,9 @@ public sealed class NullAiRequestGate : IAiRequestGate
     public Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct) => NoLease;
 
     public TimeSpan InteractiveMaxWait => Timeout.InfiniteTimeSpan;
+
+    /// <summary>每次存取回傳新實例：本類別是測試用的全域單例，不能讓測試彼此共用記憶狀態。</summary>
+    public AiGrammarMemory GrammarMemory => new();
 
     private sealed class Nothing : IDisposable
     {
@@ -80,6 +89,9 @@ public sealed class AiRequestGate : IAiRequestGate
     }
 
     public TimeSpan InteractiveMaxWait => _interactiveMaxWait;
+
+    /// <summary>全站共用的強制格式記憶（本閘道是全站唯一實例）。</summary>
+    public AiGrammarMemory GrammarMemory { get; } = new();
 
     /// <summary>互動排隊逾上限的訊息（實例佇列與閘道共用同一句）。</summary>
     public static string InteractiveTimeoutMessage(TimeSpan maxWait) =>
