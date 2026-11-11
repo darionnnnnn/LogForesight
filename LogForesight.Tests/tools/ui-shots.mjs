@@ -27,6 +27,9 @@
 //   { beforeUnload: true|false }                     在頁面派送可取消的 beforeunload 事件，斷言頁面是否掛了「有未儲存變更」的提醒
 //                                                    （true＝處理常式呼叫了 preventDefault；不會真的離開頁面）
 // 流程：patchApi → reload → waitFor（執行中的畫面出現）→ markRect → wait（一個輪詢週期以上）→ sameRect。
+//
+// 任意量測：
+//   { evalAssert: "函式本體" }                       在頁面執行，回傳 null 通過、回傳字串即為失敗訊息（例：圖示外框落在按鈕內、字高下限）
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -316,6 +319,10 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
                 const msg = await evaluate(browser, `(${assertInPage.toString()})(${JSON.stringify(spec)})`);
                 if (msg) failures.push(`${width}px：${msg}`);
             }
+        } else if (step.evalAssert) {
+            // 任意量測：一段函式本體，回傳 null／空字串＝通過，回傳字串＝失敗訊息（例：圖示外框是否落在按鈕內、字高下限）
+            const msg = await evaluate(browser, `(() => { ${step.evalAssert} })()`);
+            if (msg) failures.push(`${width}px：${msg}`);
         } else if (step.scroll !== undefined) {
             await evaluate(browser, `window.scrollTo(0, ${Number(step.scroll)})`);
         } else if (step.markScroll) {

@@ -114,6 +114,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **動效**：`--lf-transition: .15s ease` 維持；較大轉場（modal、燈箱）150–300ms `ease-out`；**hover/pressed 不得位移佈局**（用透明度/陰影/色彩）；新增全站 `prefers-reduced-motion: reduce` 支援（動畫關閉、transition 降為 0）。
 - **下拉選項**：`select option／optgroup` 明確指定 `--lf-text` 與 `--lf-card-bg`、`select` 宣告 `color-scheme: light`——選項背景透明時 Windows 版 Chrome 部分寬下拉的選項文字畫不出來（`FrontendConsistencyUiTests` 守門）。
 - **focus ring**：`0 0 0 .2rem rgba(30, 64, 175, .22)`，鍵盤導覽全元件可見。
+- **捲軸**：顏色由 `html` 的 `scrollbar-color` 繼承到全站（拇指 `--lf-scrollbar-thumb`，軌道透明，對白底 4.8:1）；寬度分兩級——頁面主內容區與 modal 內文維持預設寬度（細捲軸不好抓），側欄選單、`.lf-table-wrap`、`.lf-scroll-*` 這類小型捲動容器用 `thin`。側欄另用 `--lf-scrollbar-thumb-sidebar`（對側欄底 3.2:1），滑過側欄時提亮。只用標準屬性，不用 `::-webkit-scrollbar`。
 
 ## 5. Anti-patterns（skill 檢索所得，適用本產品）
 

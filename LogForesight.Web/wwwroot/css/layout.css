@@ -223,6 +223,13 @@
     padding: var(--lf-space-2) var(--lf-space-2) var(--lf-space-4);
     flex: 1 1 auto;
     overflow-y: auto;
+    /* 深底上的系統預設淺色捲軸很突兀：細、軌道透明，滑過側欄時拇指提亮 */
+    scrollbar-width: thin;
+    scrollbar-color: var(--lf-scrollbar-thumb-sidebar) transparent;
+}
+
+.lf-sidebar__nav:hover {
+    scrollbar-color: var(--lf-scrollbar-thumb-sidebar-hover) transparent;
 }
 
 .lf-sidebar__section {

@@ -899,7 +899,7 @@ a.lf-badge:hover { text-decoration: underline; }
     font-variant-numeric: tabular-nums;
 }
 
-.table > tbody > tr:last-child > td { border-bottom: none; }
+.table > tbody > tr:last-child > :is(td, th) { border-bottom: none; }   /* 列標題（th scope=row）也要一起，否則末列只剩第一欄有線 */
 
 /* 出現密度條（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3）：文字「2/90」是主要資訊，
    這條只是讓比例一眼可辨的輔助——**不可拿掉文字只留圖**，那會讓精確值消失，
@@ -1188,6 +1188,8 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-maxw-xl { max-width: 40rem; }
 
 /* 捲動區：限制高度、超出時捲動 */
+/* 卡片內的小型捲動容器用細捲軸（顏色由 html 繼承） */
+:is(.lf-scroll-sm, .lf-scroll-md, .lf-scroll-lg, .lf-scroll-xl) { scrollbar-width: thin; }
 .lf-scroll-sm { max-height: 12rem; overflow: auto; }
 .lf-scroll-md { max-height: 14rem; overflow: auto; }
 .lf-scroll-lg { max-height: 16rem; overflow: auto; }

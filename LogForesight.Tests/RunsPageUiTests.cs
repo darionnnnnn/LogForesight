@@ -17,6 +17,26 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 立即執行只說明選定模式_四個模式都有重建與保留_不再有對照表()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var start = js.IndexOf("const RERUN_MODE_CONFIG = {", StringComparison.Ordinal);
+        var end = js.IndexOf("\n};", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start, "找不到 RERUN_MODE_CONFIG");
+        var config = js[start..end];
+        foreach (var mode in new[] { "None", "Unhandled", "UnhandledAndAssigned", "All" })
+            Assert.Contains($"    {mode}: {{", config);
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(config, "rebuilds: '[^']+'").Count);
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(config, "keeps: '[^']+'").Count);
+        Assert.Contains("id=\"run-now-rerun-rebuilds\"", cshtml);
+        Assert.Contains("id=\"run-now-rerun-keeps\"", cshtml);
+        Assert.DoesNotContain("執行模式影響對照", cshtml);
+        Assert.Contains("rebuildsEl.textContent = config?.rebuilds", js);
+    }
+
+    [Fact]
     public void RunsJs包含三軌完成旗標與文案()
     {
         var root = FindRepoRoot();
