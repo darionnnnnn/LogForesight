@@ -233,7 +233,7 @@ function renderAssessment(data) {
             ].filter(item => item && !item.isEligible).map(item => item.itemName);
 
             hint.className = '';
-            hint.replaceChildren(statusNote('info', blocking.length > 0
+            hint.replaceChildren(statusNote('warning', blocking.length > 0
                 ? `計算完成（${timeStr}）：${blocking.join('、')} 未達標，需勾選覆寫才可匯出`
                 : `計算完成（${timeStr}）：部分指標未達標，需勾選覆寫才可匯出`));
         }

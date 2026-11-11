@@ -135,12 +135,12 @@
 
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label for="rule-id" class="form-label">規則 Id <span aria-hidden="true">*</span></label>
+                            <label for="rule-id" class="form-label">規則 Id <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <input type="text" class="form-control" id="rule-id" required />
                             <div class="form-text" id="rule-id-hint">新規則必須以 custom- 開頭。</div>
                         </div>
                         <div class="col-md-6" id="rule-match-windows-source" data-platform-block="windows">
-                            <label for="rule-source" class="form-label">來源比對 <span aria-hidden="true">*</span></label>
+                            <label for="rule-source" class="form-label">來源比對 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="Event Log 的來源名稱，例如 disk、Ntfs。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -179,7 +179,7 @@
                         </div>
 
                         <div class="col-md-6" id="rule-match-prtg-code" data-platform-block="prtg">
-                            <label for="rule-prtg-code" class="form-label">規則代碼 <span aria-hidden="true">*</span></label>
+                            <label for="rule-prtg-code" class="form-label">規則代碼 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <select class="form-select" id="rule-prtg-code">
                                 <option value="down">持續 Down (down)</option>
                                 <option value="flapping">頻繁震盪 (flapping)</option>
@@ -283,7 +283,7 @@
                         </div>
 
                         <div class="col-md-9">
-                            <label for="rule-description" class="form-label">說明 <span aria-hidden="true">*</span></label>
+                            <label for="rule-description" class="form-label">說明 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <input type="text" class="form-control" id="rule-description" required />
                         </div>
                         <div class="col-md-3">
@@ -403,7 +403,7 @@
                     </div>
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
-                            <label for="suppress-scope" class="form-label">範圍 <span aria-hidden="true">*</span></label>
+                            <label for="suppress-scope" class="form-label">範圍 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <select class="form-select" id="suppress-scope">
                                 <option value="Host">單一主機</option>
                                 <option value="Group">主機群組</option>
@@ -412,11 +412,11 @@
                         </div>
                         <div class="col-md-8">
                             <div id="suppress-host-wrap">
-                                <span class="form-label d-inline-block" id="suppress-host-label">主機 <span aria-hidden="true">*</span></span>
+                                <span class="form-label d-inline-block" id="suppress-host-label">主機 <span class="lf-required-mark" aria-hidden="true">*</span></span>
                                 <div id="suppress-host-select" role="group" aria-labelledby="suppress-host-label"></div>
                             </div>
                             <div id="suppress-group-wrap" class="d-none">
-                                <label for="suppress-group" class="form-label">主機群組 <span aria-hidden="true">*</span></label>
+                                <label for="suppress-group" class="form-label">主機群組 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                                 <select class="form-select" id="suppress-group">
                                     <option value="">請選擇主機群組…</option>
                                 </select>
@@ -434,7 +434,7 @@
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label for="suppress-reason" class="form-label">原因 <span aria-hidden="true">*</span></label>
+                        <label for="suppress-reason" class="form-label">原因 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="日後回頭確認「當初為什麼關掉」的唯一依據。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>

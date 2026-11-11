@@ -21,7 +21,7 @@ let disclosureSeq = 0;
  * - expanded：初始狀態，預設收合（target 加上 d-none）。
  * - onToggle(expanded)：切換後呼叫；由呼叫端自行切換內容時（例如純文字截斷）傳 manageTarget: false。
  * 放在可點擊展開的表格列裡時 click 會 stopPropagation，避免連帶觸發列展開。
- * 列印時按鈕不印（lf-no-print）；目標的列印顯示由呼叫端或 CSS 決定。
+ * 列印時按鈕不印（lf-no-print）、由按鈕管理的目標一律印出（lf-disclosure-target）；manageTarget: false 時由呼叫端自理。
  */
 export function disclosure(label, target, { expanded = false, onToggle, manageTarget = true, className = '' } = {}) {
     const button = document.createElement('button');
@@ -36,6 +36,8 @@ export function disclosure(label, target, { expanded = false, onToggle, manageTa
     if (target) {
         if (!target.id) target.id = `lf-disclosure-${++disclosureSeq}`;
         button.setAttribute('aria-controls', target.id);
+        // 由按鈕管理顯示的目標加上標記，列印時一律印出（layout.css @media print）
+        if (manageTarget) target.classList.add('lf-disclosure-target');
     }
 
     let open = expanded;

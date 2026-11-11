@@ -39,11 +39,21 @@ let unsaved = null;
  * 常駐畫面下方的儲存列旁，不論目前在哪個頁籤都看得到；text 為 null 時清除。
  * error 型帶 role="alert"，其餘 role="status"。
  */
+let saveNoteType = null;
+
 function showSaveNote(type, text) {
     const host = document.getElementById('settings-save-status');
     if (!host) return;
-    host.replaceChildren(...(type && text ? [statusNote(type, text)] : []));
+    saveNoteType = type && text ? type : null;
+    host.replaceChildren(...(saveNoteType ? [statusNote(type, text)] : []));
 }
+
+// 「已儲存設定」與驗證擋下的訊息只對當下的表單成立：之後再改任何欄位就清掉。
+// 「已選擇圖示…」這類 info 是「按儲存才生效」的待辦提醒，留到儲存為止；選圖檔本身的事件不算修改。
+document.getElementById('settings-form')?.addEventListener('input', event => {
+    if (event.target?.type === 'file') return;
+    if (saveNoteType === 'success' || saveNoteType === 'warning') showSaveNote(null);
+});
 
 // 兩段式（docs/archive/HISTORY.md #5，2026-07-27 簡化自三段式）：
 // 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁。

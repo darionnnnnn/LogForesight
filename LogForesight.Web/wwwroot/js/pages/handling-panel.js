@@ -98,7 +98,7 @@ function aiNoteContext(selection) {
     if (selection.size !== 1) return { hostCount: 1 };
     const [issueKey] = selection;
     const check = document.querySelector(`input[type="checkbox"][data-issue-key="${CSS.escape(issueKey)}"]`);
-    const title = check && check.closest('tr') && check.closest('tr').querySelector('.lf-issue-cell .fw-semibold');
+    const title = check && check.closest('tr') && check.closest('tr').querySelector('.lf-issue-cell__title');
     const issueLabel = title ? title.textContent.trim() : '';
     return issueLabel ? { issueLabel, hostCount: 1 } : { hostCount: 1 };
 }

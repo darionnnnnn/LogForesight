@@ -73,6 +73,11 @@ const cases = {
         assert.equal(flatText(render('花了 $5 和 $10')), '花了 $5 和 $10');
         assert.equal(flatText(render('未知 $\\foo$ 指令')), '未知 $\\foo$ 指令');
         assert.equal(flatText(render('用 `$\\rightarrow$` 表示')), '用 $\\rightarrow$ 表示');
+    },
+    latexDisplayDollarsConverted() {
+        // 雙錢號 $$\to$$ 整組換掉，不留前後各一個錢號；錢號數不成對的不算一組
+        assert.equal(flatText(render('結果 $$\\to$$ 下一步')), '結果 → 下一步');
+        assert.equal(flatText(render('結果 $$\\to$ 下一步')), '結果 $→ 下一步');
     }
 };
 

@@ -379,6 +379,12 @@
     flex: 1 1 auto;
 }
 
+/* 頁頂提醒列（layout.js）：滿版色帶、多條時上下相接；與內容之間只留內容區自己的上內距
+   （和沒有提醒列時一樣），不再疊一層 .alert 的外距 */
+#lf-top-alerts .alert {
+    margin-bottom: 0;
+}
+
 /* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
    --lf-content-max、靠左，避免單欄內容被拉到 2000px 以上；清單、儀表板、報表與維護頁滿版 */
 .lf-content--bounded {
@@ -443,6 +449,11 @@
     .lf-topbar,
     .lf-no-print {
         display: none !important;
+    }
+
+    /* disclosure 的目標：紙上沒有「點了展開」，一律印出（按鈕本身 lf-no-print） */
+    .lf-disclosure-target.d-none {
+        display: block !important;
     }
 
     .lf-content {

@@ -568,14 +568,16 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-issue-cell__head {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: var(--lf-space-2);
+    gap: var(--lf-space-1) var(--lf-space-2);
 }
 
-/* 徽章固定在左、標題在自己的欄內換行——欄窄時不讓徽章單獨佔一行 */
+/* 徽章在左、標題同列；欄寬放不下徽章加 12rem 標題時（手機、側軌展開後的中寬螢幕），
+   標題整個換到徽章下一行用滿欄寬，不被徽章擠成一字一行 */
 .lf-issue-cell__head > :first-child { flex-shrink: 0; }
 
-.lf-issue-cell__title { flex: 1 1 auto; min-width: 0; }
+.lf-issue-cell__title { flex: 1 1 12rem; min-width: 0; }
 
 /* 白話說明：正文色、行寬受 --lf-measure 限制，寬螢幕也好讀 */
 .lf-issue-cell__explain {
@@ -643,10 +645,9 @@ a.lf-calendar__cell:focus-visible {
     margin: 0;
 }
 
-/* 列印：紙上沒有「點了展開」，佐證層與「已處理／已有結論」收合區一律印出（內容一字不減） */
+/* 列印：紙上沒有「點了展開」，佐證層一律印出（內容一字不減）；收合區見 layout.css 的 .lf-disclosure-target */
 @media print {
     #detail-issues tr.lf-row-detail.d-none { display: table-row !important; }
-    #detail-issues [id^="lf-disclosure-"].d-none { display: block !important; }
 }
 
 /* 分節標頭的「全部展開」靠右 */

@@ -565,7 +565,7 @@ async function loadSetupGuide(user) {
     const totalCount = steps.length;
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 mb-3';
+    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2';
     bar.setAttribute('role', 'status');
 
     const content = document.createElement('div');
@@ -667,7 +667,7 @@ async function refreshRunActivity() {
 function renderRunActivity(activity) {
     if (activity?.isRunning) {
         const bar = document.createElement('div');
-        bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
+        bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2';
         bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
         bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
 
@@ -707,7 +707,7 @@ function caseDaySyncBar(activity) {
     if (pending <= 0) return null;
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-secondary d-flex align-items-center gap-2 py-2 mb-3';
+    bar.className = 'alert alert-secondary d-flex align-items-center gap-2 py-2';
     bar.setAttribute('role', 'status');
     bar.setAttribute('aria-live', 'polite');
 
@@ -756,7 +756,7 @@ async function loadHealthBanner(user) {
     }
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2 mb-3';
+    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2';
     bar.setAttribute('role', 'status');
 
     const text = document.createElement('span');

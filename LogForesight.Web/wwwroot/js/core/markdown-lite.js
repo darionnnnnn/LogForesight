@@ -64,10 +64,10 @@ const LATEX_SYMBOLS = {
     uparrow: '↑', downarrow: '↓', leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠',
     approx: '≈', times: '×', pm: '±', cdot: '·'
 };
-const LATEX_INLINE = /\$\s*\\([A-Za-z]+)\s*\$/g;
+const LATEX_INLINE = /(\$\$?)\s*\\([A-Za-z]+)\s*\1/g;
 
 function replaceLatexSymbols(text) {
-    return text.replace(LATEX_INLINE, (whole, name) => LATEX_SYMBOLS[name] ?? whole);
+    return text.replace(LATEX_INLINE, (whole, _dollars, name) => LATEX_SYMBOLS[name] ?? whole);
 }
 
 /** 一行文字中的 **粗體** 與 `行內代碼` 拆成節點附加到 target；其餘文字原樣 createTextNode（先換掉已知的 LaTeX 符號） */
@@ -233,7 +233,7 @@ function renderBlocks(container, text, asDocument = false) {
  * @param {HTMLElement} container
  * @param {string} text
  * @param {{ badge?: string, badgeClassName?: string, asDocument?: boolean }} [options]
- *        asDocument：操作說明書的文件排版（語意標題、段距、提示框，見樣式表.lf-doc）
+ *        asDocument：操作說明書的文件排版（語意標題、段距、提示框，見樣式表 .lf-doc）
  */
 export function renderAiText(container, text, { badge, badgeClassName = 'lf-badge lf-badge--secondary', asDocument = false } = {}) {
     container.replaceChildren();

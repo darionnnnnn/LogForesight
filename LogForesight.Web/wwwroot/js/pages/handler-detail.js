@@ -404,14 +404,7 @@ function renderOrders(data) {
         {
             title: '單號',
             className: 'text-nowrap d-none d-sm-table-cell',
-            render: row => {
-                const a = document.createElement('a');
-                a.href = appUrl('/work-orders/' + row.workOrderId);
-                a.textContent = '#' + row.workOrderId;
-                a.className = 'lf-text-data';
-                a.dataset.woId = String(row.workOrderId);
-                return a;
-            }
+            render: row => workOrderLink(row)
         },
         {
             title: '問題',
@@ -689,6 +682,22 @@ async function openNextOrder(fromId, carry) {
 // ── 期限就地修改 ───────────────────────────────────────────────────────────
 
 /** 期限欄：本人且未結案時可點（無期限顯示「設定期限」），點了就地換成日期欄＋儲存／取消 */
+/** 窄螢幕摘要行的期限：可編輯時沿用 dueDateCell（含設定／修改鈕），唯讀且沒有期限時不顯示 */
+function narrowDueDate(row) {
+    const editable = canReply && !row.closedAt;
+    if (!editable && !row.dueDate) return null;
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    if (row.dueDate) {
+        const label = document.createElement('span');
+        label.className = 'text-nowrap';
+        label.textContent = '期限';
+        wrap.append(label);
+    }
+    wrap.append(dueDateCell(row));
+    return wrap;
+}
+
 function dueDateCell(row) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex flex-wrap align-items-center gap-1';
@@ -1009,6 +1018,17 @@ function renderDays(days) {
     });
 }
 
+/** 「#單號」連到交辦單詳情；寬螢幕的單號欄與窄螢幕的摘要行共用 */
+function workOrderLink(row) {
+    const a = document.createElement('a');
+    a.href = appUrl('/work-orders/' + row.workOrderId);
+    a.textContent = '#' + row.workOrderId;
+    a.className = 'lf-text-data';
+    a.dataset.woId = String(row.workOrderId);
+    a.addEventListener('click', event => event.stopPropagation());
+    return a;
+}
+
 function hostLink(item) {
     const link = document.createElement('a');
     link.href = appUrl(`/hosts/${item.hostId}`);
@@ -1022,6 +1042,7 @@ function hostLink(item) {
  * 「問題」欄：標題為主體，白話說明收成次要文字。
  * 窄螢幕（< 576px）隱藏單號／主機／逾期／未回覆／期限五欄，把判斷「要不要處理」的數字收成這欄底下的一行，
  * 讓手機上「看單 → 回覆」不必橫捲；寬螢幕這一行不顯示（d-sm-none），欄位照常各自一欄。
+ * 被隱藏的欄裡有操作的（單號連結、設定／修改期限）在這一行保留同一個操作，不能只剩文字。
  */
 function orderIssueCell(row) {
     const wrap = document.createElement('div');
@@ -1034,11 +1055,11 @@ function orderIssueCell(row) {
     const counts = row.counts || {};
     const overdue = counts.overdue ?? 0;
     const narrow = metaLine([
-        `#${row.workOrderId}`,
+        workOrderLink(row),
         `${counts.active ?? 0}／${counts.total ?? 0} 台`,
         overdue > 0 ? roleText('lf-text-alert', `逾期 ${overdue}`) : null,
         row.unrepliedDays != null ? `未回覆 ${row.unrepliedDays} 天` : null,
-        row.dueDate ? `期限 ${formatDate(row.dueDate)}` : null
+        narrowDueDate(row)
     ], { className: 'd-sm-none mt-1' });
     if (narrow) wrap.appendChild(narrow);
     return wrap;

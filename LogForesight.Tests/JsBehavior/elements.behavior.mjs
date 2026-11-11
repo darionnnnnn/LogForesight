@@ -47,12 +47,15 @@ const cases = {
     disclosureUnmanagedTargetUntouched() {
         const target = dom.newElement('div');
         const button = disclosure('全文', target, { manageTarget: false });
+        assert(!target.classList.contains('lf-disclosure-target'), '呼叫端自理顯示的目標不標記列印全顯示');
         click(button);
         assert(!target.classList.contains('d-none'), 'manageTarget: false 時不動目標的 class');
         assert.equal(button.getAttribute('aria-expanded'), 'true');
     },
     disclosureNotPrinted() {
-        assert(disclosure('佐證', dom.newElement('div')).classList.contains('lf-no-print'));
+        const target = dom.newElement('div');
+        assert(disclosure('佐證', target).classList.contains('lf-no-print'));
+        assert(target.classList.contains('lf-disclosure-target'), '由按鈕管理的目標要標記，列印時一律印出');
     },
     filterDisclosureCountsApplied() {
         const target = dom.newElement('div');

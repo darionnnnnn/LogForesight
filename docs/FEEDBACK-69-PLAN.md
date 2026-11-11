@@ -1,6 +1,6 @@
 # 回饋第 69 輪規劃：全站 UI／UX 整體優化
 
-> 狀態：實作完成（`feature/feedback-69`；A～G 全部完成，待換模型體檢後併 dev）
+> 狀態：實作完成、實作方自查完成（`feature/feedback-69`；待換模型體檢後併 dev）
 > 基準：dev@cbd408a1（Windows 8,861 通過／11 略過）
 > 來源：使用者回饋——資料量大而呈現缺乏層級與質感，連結樣式的點擊方式突兀；
 > 核心原則「Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.」；
@@ -554,8 +554,39 @@
 
 ## 體檢交接
 
-- **全量測試**：9,088 通過／11 略過（基線 8,861／11，+227：UiFixture 159 格、共用元素與問題格行為案例、守門）；之後補做工具列次要條件加 2 個行為案例（定向已過，未重跑全量），基線記為 9,090。
+- **全量測試**：9,088 通過／11 略過（基線 8,861／11，+227：UiFixture 159 格、共用元素與問題格行為案例、守門）；補做工具列次要條件與實作方自查修正後，最終樹全量 **9,099 通過／11 略過**。
 - **全矩陣量測**：162 情境 × 9 格（五寬度＋375／1280 小大字級）＝1,276 格，水平捲軸、溢出、點擊區、console、卡住、斷言六項皆 0；子路徑 `/LogForesight` 180 情境皆 0。
 - **前後對照**：22 頁 × 1280／1920 並排圖，交給使用者（基準是 A-0 改版前截圖，資料集日期不同，數字差異不是改動）。
 - **被改寫的字串型斷言**：側軌、collapsibleText、執行時間軸、kpiStrip、AI 摘要／狀態／風險日側軌的 button 替身、FrontendGuard 的 onRowToggle、排程頁憑證提示 class——皆改成結構或角色類別斷言，行為不變。
 - **殘留風險**：報表 1280×800 仍需在內容區內捲動約 127px（BACKLOG）；權限異動 1280 表格需橫向捲動（有提示）；「實心 danger 只在確認 modal」靠審查不靠守門；資料集與截圖只證明版面，不代表正式站台資料形狀（真實長字串來源以 PRTG、NetIQ 為主）。
+
+
+## 實作方自查（收尾前）
+
+使用者要求收尾前先由實作方（Opus 5.5）自己檢查一輪；**這不算換模型的獨立體檢**，併 dev 前仍要換模型體檢。
+做法：主代理逐條比對規劃子句，另派四個唯讀 Sonnet 代理依角色分區實測（A 處理人、B 管理者／主管／檢視者清單頁、C 維護頁與外殼、D 程式碼稽核與整體影響），
+各自用獨立站台與 CDP 探針，四份 `git status --porcelain` 皆為空。
+
+**規劃比對**：逐條比對時補做了 C 共同契約的「更多條件」（b7b6caec，見執行紀錄）；另抓到 F 外殼「提示列與頁首之間的空白」沒處理（下表 1）、A-4「列印時目標一律顯示」只在風險日問題區生效（下表 4）。其餘契約子句皆有對應實作或已在執行紀錄寫明落差。
+
+| # | 位置 | 症狀 | 修法 | 迴歸 |
+|---|---|---|---|---|
+| 1 | `core/layout.js` 頁頂提醒列 | 提醒列帶 `mb-3`，加上內容區上內距，提醒列與內容之間空約 48px（F 契約） | 四處提醒列拿掉 `mb-3`，`#lf-top-alerts .alert` 外距歸零，間距只剩內容區上內距（29px，與沒有提醒列時相同）。先試的 `:has()` 寫法在 Edge 實測不生效，改掉 | `DesignSystemWiringUiTests` 提醒列條；瀏覽器實測 48→29px |
+| 2 | `handling-panel.js` `aiNoteContext` | 勾單一問題用 AI 協助寫備註時拿不到問題名稱（標題改用 `lf-issue-cell__title`，面板還在找 `.fw-semibold`） | 選擇器改 `.lf-issue-cell__title` | `DesignSystemWiringUiTests` 處理面板條；突變改回舊選擇器轉紅 |
+| 3 | `handler-detail.js` 窄版摘要 | 375 寬時單號欄與期限欄隱藏，摘要行只有文字：手機上沒有到交辦單詳情的連結、也不能設定／修改期限 | 摘要行的單號改用共用 `workOrderLink`、期限改用 `narrowDueDate`（沿用 `dueDateCell` 的設定／修改鈕）；量測抓到「#1」連結只有 15×20，`metaLine` 裡單獨成項的連結補 24px 點擊區；「期限」二字加不換行 | `DesignSystemWiringUiTests` 窄版條；突變轉紅；375 實測兩張單的連結與修改鈕皆可見 |
+| 4 | `elements.js` `disclosure`、樣式表列印 | 列印還原規則只限 `#detail-issues`，其餘收合區（已抑制的告警、稽核「詳細」、排程「完整堆疊」等）紙上看不到 | 由按鈕管理的目標加 `lf-disclosure-target`，`layout.css` 列印規則一律印出；`manageTarget: false` 的不標記 | `elements.behavior.mjs` 兩案例補斷言；`DesignSystemWiringUiTests` 列印條 |
+| 5 | `pages.css` 問題格 | 375 寬、或 1280～1440 寬勾選後側軌展開時，嚴重度徽章把標題擠成一字一行（實測 22px 寬、265px 高） | 標題列可換行：放不下徽章加 12rem 時標題整個換到徽章下一行 | `DesignSystemWiringUiTests` 問題格條；375 實測標題寬 22→109px |
+| 6 | `record-detail.js` `expandSideRailForSelection` | 勾選問題時側軌自動展開，左欄變窄列變高，剛勾的那列被推出視窗（1280 實測捲動位置差 1,645px） | 傳入勾選框，展開後依它的前後位置差捲回 | `record-detail-rail.behavior.mjs` 新案例；1280 實測勾選前後位置 388→388 |
+| 7 | `settings.js` 儲存列 | 改版前是會消失的 toast；改成常駐 `statusNote` 後，「已儲存設定」與驗證訊息在之後改欄位時仍掛著，表單已未儲存卻寫已儲存 | 表單 `input` 時清掉 success／warning 型；「已選擇圖示…」這類 info 留到儲存；選圖檔本身的事件不算 | `DesignSystemWiringUiTests` 設定條 |
+| 8 | `netiq.js` Sentinel modal | 缺欄位訊息寫在 modal 最底部，375 寬時在視窗外，按儲存像沒反應 | 共用 `flagMissingField`：訊息＋該欄 `is-invalid`＋移入焦點，開始輸入就解除標紅 | `DesignSystemWiringUiTests` NetIQ 條 |
+| 9 | `Prtg.cshtml`、`prtg-calibration.js`、`prtg-admin.js`、`prtg-guard.js` | 「激進策略負載明顯較高」後果句降成灰字；「未達標需覆寫才可匯出」「範圍估算警告」「自動偵測沒找到感測器」降成 info | 激進提醒改 `statusNote` warning 樣式（靜態 markup）；三處改 warning 型。DESIGN-SYSTEM 補一句：需處理才能繼續或有明顯後果的提示用 warning 型 | 定向測試 |
+| 10 | 17 個必填星號 | 為過文字色守門把 `text-danger` 拿掉，星號與標籤同色、必填提示變弱 | 新增角色類別 `lf-required-mark`（`--lf-danger-text`），DESIGN-SYSTEM 補一句 | `DesignSystemWiringUiTests` 星號條 |
+| 11 | 說明書 `16-my-work.md`、`.ai.md` | 仍寫「點來源觀測的『展開』」，改版後沒有這顆鈕 | 改成「點問題列展開，看『來源觀測』」，與 04 同句 | `HelpContent` 相關測試 |
+| 12 | `markdown-lite.js` | `$$\to$$` 轉成 `$→$`，前後各留一個錢號 | 錢號數成對（`$` 或 `$$`）才算一組 | `markdown-doc.behavior.mjs` 新案例（含錢號數不成對的反例） |
+| 13 | `DesignSystemGuardUiTests` 按鈕變體 | `\bbutton\(` 擋不到 `linkButton(`、`makeButton(`（別名） | 正規式納入兩者 | 守門本身 |
+| 14 | 雜項 | `.lf-disclosure:focus-visible` 在強制色彩模式沒有焦點環；註解「site.css」整批替換時吃掉空格 | 改 `outline: 2px solid transparent`；註解補空格。代理建議補回就緒度捲動區的 `tabindex`，量測發現區塊沒資料時是 0 高的可聚焦元素（點擊區不足），不採納（Edge 對可捲動區本來就給鍵盤焦點） | — |
+
+**既有問題（dev 上本來就有，記入 BACKLOG，不在本輪修）**：實心 Bootstrap 徽章約 25 處、`lock` 圖示不存在、稽核頁起日晚於迄日仍顯示今天、權限異動網段無效時列表顯示成空狀態。
+**代理主張不採納**：「主管看到指派鈕」沒走到是資料集角色設定（ui-manager 只有 ViewAll），不是程式問題；`prtg-effectiveness-status` 內 `role=alert` 疊在 `aria-live` 容器裡屬低影響，未改。
+
+**驗證**：全部 165 情境五寬度 743 格，第一次跑出 16 格點擊區不足（皆為本自查修正自己造成：就緒度區塊的 tabindex、窄版「#單號」連結），修正後改動頁面（PRTG 維護、處理人、風險日、NetIQ、設定、交辦）九格全矩陣 587 格六項全 0；最終樹全量 9,099 通過／11 略過（+9：行為案例 4、接線守門 7，扣除改寫 2）。

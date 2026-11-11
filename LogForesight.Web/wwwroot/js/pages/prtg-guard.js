@@ -165,7 +165,7 @@ export function bindGuardPreview() {
 
                 if (objids.length === 0) {
                     // 偵測不到時**不清空**輸入框：管理者手填的清單比一次失敗的偵測可信。
-                    noteEl.appendChild(statusNote('info', '自動偵測沒有找到任何感測器，已保留原本的覆寫清單。'));
+                    noteEl.appendChild(statusNote('warning', '自動偵測沒有找到任何感測器，已保留原本的覆寫清單。'));
                 } else if (textarea) {
                     textarea.value = objids.join('\n');
                     noteEl.appendChild(statusNote('success', `已填入 ${objids.length} 個 objid，尚未儲存——請按「儲存」才會生效。`));

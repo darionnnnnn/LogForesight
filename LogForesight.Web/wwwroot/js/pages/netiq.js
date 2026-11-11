@@ -140,17 +140,30 @@ function openSentinelModal(sentinel) {
 
 document.getElementById('btn-new-sentinel').addEventListener('click', () => openSentinelModal(null));
 
+/**
+ * Sentinel modal 的缺欄位提示：訊息寫在 modal 底部的結果區，小螢幕不一定看得到，
+ * 所以同時把該欄標紅並移入焦點；使用者一開始輸入就解除標紅。
+ */
+function flagMissingField(inputId, message) {
+    document.getElementById('sentinel-test-result').replaceChildren(statusNote('warning', message));
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.classList.add('is-invalid');
+    input.addEventListener('input', () => input.classList.remove('is-invalid'), { once: true });
+    input.focus();
+}
+
 document.getElementById('sentinel-test-connection').addEventListener('click', async () => {
     const baseUrl = document.getElementById('sentinel-base-url').value.trim();
     const username = document.getElementById('sentinel-username').value.trim();
     const password = document.getElementById('sentinel-password').value;
     const resultEl = document.getElementById('sentinel-test-result');
 
-    // 輸入缺漏就地用 statusNote 提示（取代 toast），不發出請求
-    const missing = !baseUrl ? '請先輸入連線位址'
-        : !username ? '請先輸入探索帳號'
-        : (!password && !editingSentinel?.hasPassword) ? '請先輸入探索密碼' : null;
-    if (missing) { resultEl.replaceChildren(statusNote('warning', missing)); return; }
+    // 輸入缺漏：就地 statusNote＋該欄標紅並取得焦點，不發出請求
+    const missing = !baseUrl ? ['sentinel-base-url', '請先輸入連線位址']
+        : !username ? ['sentinel-username', '請先輸入探索帳號']
+        : (!password && !editingSentinel?.hasPassword) ? ['sentinel-password', '請先輸入探索密碼'] : null;
+    if (missing) { flagMissingField(...missing); return; }
 
     const testButton = document.getElementById('sentinel-test-connection');
     const restore = withBusy(testButton, '測試中');
@@ -180,7 +193,7 @@ sentinelForm.addEventListener('submit', async event => {
 
     const name = document.getElementById('sentinel-name').value.trim();
     if (!name) {
-        document.getElementById('sentinel-test-result').replaceChildren(statusNote('warning', '請輸入 Sentinel 名稱'));
+        flagMissingField('sentinel-name', '請輸入 Sentinel 名稱');
         return;
     }
 

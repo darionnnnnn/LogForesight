@@ -180,6 +180,27 @@ const cases = {
         // 案件授與沒有側軌：不得拋錯
         pageEnv({ rail: null, hash: '' }).expandSideRailForSelection();
     },
+    expandForSelectionKeepsAnchorInView() {
+        // 展開後左欄變窄、列變高：剛勾的勾選框從視窗 y=300 被推到 y=900，要捲回原位置（捲 600）
+        const scrolls = [];
+        const savedWindow = globalThis.window;
+        globalThis.window = { scrollBy: (x, y) => scrolls.push([x, y]) };
+        try {
+            let top = 300;
+            const anchor = { getBoundingClientRect: () => ({ top }) };
+            const rail = fakeRail();
+            const expand = rail.expand.bind(rail);
+            rail.expand = (key, opts) => { expand(key, opts); top = 900; };
+            pageEnv({ rail, hash: '' }).expandSideRailForSelection(anchor);
+            assert.deepEqual(scrolls, [[0, 600]]);
+
+            // 已展開（不會重排）時不捲動
+            pageEnv({ rail: fakeRail({ expanded: true }), hash: '' }).expandSideRailForSelection(anchor);
+            assert.equal(scrolls.length, 1);
+        } finally {
+            globalThis.window = savedWindow;
+        }
+    },
 
     // 收合鈕掛在「處理狀態」卡的 header（靠右），不再佔右欄 body 最上方
     async collapseButtonLivesInHandlingHeader() {

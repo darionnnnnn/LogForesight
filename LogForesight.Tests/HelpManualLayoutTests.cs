@@ -26,6 +26,7 @@ public sealed class HelpManualLayoutTests
     [InlineData("titleLineStripped")]
     [InlineData("latexArrowConverted")]
     [InlineData("latexLookalikesUntouched")]
+    [InlineData("latexDisplayDollarsConverted")]
     public void 說明書文件排版的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

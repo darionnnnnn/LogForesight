@@ -252,10 +252,15 @@ function updateSideRail(panelInfo) {
     }
 }
 
-/** 勾選問題時右欄自動展開（使用者沒手動操作過側軌才做；勾選清空不自動收合） */
-function expandSideRailForSelection() {
+/**
+ * 勾選問題時右欄自動展開（使用者沒手動操作過側軌才做；勾選清空不自動收合）。
+ * 展開後左欄變窄、問題列變高，剛勾的那列會被往下推出視窗——依 anchor（剛勾的勾選框）捲回原本的視窗位置。
+ */
+function expandSideRailForSelection(anchor) {
     if (sideRail && !sideRail.hasUserChoice() && !sideRail.isExpanded()) {
+        const before = anchor?.getBoundingClientRect().top;
         sideRail.expand('handling', { focus: false, scroll: false });
+        if (before !== undefined) window.scrollBy(0, anchor.getBoundingClientRect().top - before);
     }
 }
 
@@ -564,7 +569,7 @@ function renderHeader(detail) {
  * 正在惡化」與「誰在處理」，這兩者不適合塞進合併欄。
  * 「選取」不再獨立佔欄（原本欄寬窄、checkbox 不好點）：全選移到「處理狀態」表頭
  * 右側，逐列 checkbox 移到「處理狀態」欄內容右上角、加大點擊範圍（見 statusCell／
- *樣式表.lf-status-cell__checkbox）。sectionIssues 是這張表要渲染的那批問題
+ * 樣式表 .lf-status-cell__checkbox）。sectionIssues 是這張表要渲染的那批問題
  * （全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
@@ -600,7 +605,7 @@ function statusHeader(sectionIssues) {
 
 /**
  * 「處理狀態」欄內容：canHandle 時右上角疊一顆勾選 checkbox（絕對定位，見
- *樣式表.lf-status-cell__wrap），下方是既有的 statusControl 內容（狀態文字／
+ * 樣式表 .lf-status-cell__wrap），下方是既有的 statusControl 內容（狀態文字／
  * 快速動作）。批次套用允許覆蓋任何問題的狀態（後端 SetIssueStatusBatch 不區分），
  * 前端沒理由把「不處理（預設）」「已知雜訊（自動）」擋在批次選取之外。
  */
@@ -774,7 +779,7 @@ function selectCheckbox(issue, sectionIssues) {
     check.addEventListener('change', () => {
         if (check.checked) selectedIssueKeys.add(issue.issueKey);
         else selectedIssueKeys.delete(issue.issueKey);
-        if (check.checked) expandSideRailForSelection();
+        if (check.checked) expandSideRailForSelection(check);
         refreshRailSelectionSummary();
         refreshSelection();
 
@@ -810,7 +815,7 @@ function selectAllCheckbox(sectionIssues) {
         }
         refreshRailSelectionSummary();
         refreshSelection();
-        if (check.checked) expandSideRailForSelection();
+        if (check.checked) expandSideRailForSelection(check);
     });
 
     return check;

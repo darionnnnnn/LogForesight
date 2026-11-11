@@ -77,6 +77,9 @@
 .lf-text-data { font-family: var(--lf-font-mono); font-variant-numeric: tabular-nums; }
 .lf-text-alert { font-weight: 600; color: var(--lf-danger-text); }
 
+/* 欄位標籤後的必填星號：與 lf-text-alert 同色；aria-hidden，必填語意由 input 的 required 或說明文字負責 */
+.lf-required-mark { margin-left: .15em; color: var(--lf-danger-text); }
+
 /* 技術值不在字中斷行：overflow-wrap: anywhere 會把表格欄的最小寬度算成一個字，IP、日期、來源名被拆成逐字直排。
    放不下的長字串交給 body 的 overflow-wrap: break-word（只在真的溢出時才斷）；確定要任意斷行的容器用 lf-break-anywhere */
 .lf-text-data { min-width: 0; }
@@ -85,6 +88,8 @@
 /* 一行次要資訊（core/elements.js metaLine）：間距由 gap 提供，窄寬度整項換行 */
 .lf-meta-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--lf-space-3); row-gap: var(--lf-space-1); }
 .lf-meta-line > * { min-width: 0; }
+/* 次要資訊行裡單獨成項的連結（如「#單號」）：點擊區至少 24×24，短字也點得到 */
+.lf-meta-line > a { display: inline-flex; align-items: center; min-width: 24px; min-height: 24px; }
 
 /* ── 揭露（core/elements.js disclosure）：就地展開／收合 ─────────────────
    箭頭＋文字、無底線、次要文字色；滑過與焦點轉主色。收合朝右、展開朝下。
@@ -107,7 +112,7 @@
     transition: color var(--lf-transition), background-color var(--lf-transition);
 }
 .lf-disclosure:hover { color: var(--lf-primary); background: var(--lf-primary-soft); }
-.lf-disclosure:focus-visible { outline: none; color: var(--lf-primary); box-shadow: var(--lf-focus-ring); }
+.lf-disclosure:focus-visible { outline: 2px solid transparent; color: var(--lf-primary); box-shadow: var(--lf-focus-ring); }
 .lf-disclosure__icon { width: .85em; height: .85em; flex-shrink: 0; transform: rotate(-90deg); transition: transform var(--lf-transition); }
 .lf-disclosure[aria-expanded="true"] .lf-disclosure__icon { transform: none; }
 

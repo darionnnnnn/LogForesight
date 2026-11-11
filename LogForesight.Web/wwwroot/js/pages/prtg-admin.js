@@ -892,7 +892,7 @@ function bindScopeControls() {
                          `sensor ${formatNumber(res.sensors)} 個/晚`;
 
             result.className = '';
-            result.replaceChildren(statusNote(res.warning ? 'info' : 'success', res.warning ? `${base}——${res.warning}` : base));
+            result.replaceChildren(statusNote(res.warning ? 'warning' : 'success', res.warning ? `${base}——${res.warning}` : base));
         } catch (error) {
             result.className = '';
             result.replaceChildren(statusNote('error', error?.message || '估算失敗。'));

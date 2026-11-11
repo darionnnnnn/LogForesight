@@ -88,7 +88,7 @@ public sealed class DesignSystemGuardUiTests
 
     internal static IEnumerable<string> ButtonVariants(string text) =>
         Regex.Matches(text, @"\bbtn-((?:outline-)?(?:primary|secondary|success|danger|warning|info|light|dark))\b").Select(m => m.Groups[1].Value)
-            .Concat(Regex.Matches(text, @"\bbutton\([^;]*?\bvariant:\s*'([\w-]+)'").Select(m => m.Groups[1].Value))
+            .Concat(Regex.Matches(text, @"\b(?:button|linkButton|makeButton)\([^;]*?\bvariant:\s*'([\w-]+)'").Select(m => m.Groups[1].Value))
             .Concat(Regex.Matches(text, @"\bconfirmVariant:\s*'([\w-]+)'").Select(m => m.Groups[1].Value));
 
     [Fact]

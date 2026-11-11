@@ -235,7 +235,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
 
 紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
-風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。
+風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。表單必填星號用 `lf-required-mark`（同色、`aria-hidden`）；需要使用者處理才能繼續、或選了會有明顯後果的提示用 `statusNote` 的 warning 型，不降成次要文字。
 一行次要資訊用 `metaLine(items)`：空值自動略過，沒有任何有效項目時回傳 null；間隔由 gap 提供，窄寬度整項換行。
 
 ### 8.2 揭露與動作：三種語意三種外觀
