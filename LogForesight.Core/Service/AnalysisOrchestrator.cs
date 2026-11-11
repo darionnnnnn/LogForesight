@@ -29,6 +29,12 @@ public class RunRequest
     /// <summary>排程趟屬於今日第幾個執行窗口的說明（里程碑用）；非排程趟為 null。</summary>
     public string? WindowNote { get; init; }
 
+    /// <summary>
+    /// 只為空資料複查而跑的同窗口續跑：NetIQ 計畫只涵蓋帳本有待重查的主機，不重掃全部主機的缺漏日
+    /// （3000 台逐台掃一次約 3 分鐘，見 EmptyRecheckPlanBenchmarks）。帳本讀不到時退回全部主機。其餘趟為 false。
+    /// </summary>
+    public bool NetiqLedgerRetryOnly { get; init; }
+
     /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
     public DateTime? CatchUpDeadline { get; init; }
 
@@ -1303,6 +1309,7 @@ public class AnalysisOrchestrator
                 prtgEnabled: prtgEnabled,
                 hostDayTiming: _hostDayTiming,
                 runToday: ctx.Today,
+                ledgerRetryOnly: request.NetiqLedgerRetryOnly,
                 // 排程才走續跑；手動是有人看著選模式。往回最多 7 天，不超過保留期
                 resumeRetryDays: request.Trigger == BatchRunTriggers.Schedule && request.Scope == RunScope.Full
                     ? Math.Min(NetiqResumeRetryDays, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
@@ -1321,7 +1328,8 @@ public class AnalysisOrchestrator
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
                     : "") +
                 (netiqResult.EmptyDeferred > 0 ? $"、回 0 筆待複查 {netiqResult.EmptyDeferred} 個主機日" : ""));
-            runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
+            runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate,
+                netiqResult.EmptyDeferred + netiqResult.EmptyRecheckDeferred);
             netiqPhase.Complete(
                 netiqResult.HostsFailed > 0 ? RunPhaseOutcomes.Partial
                     : netiqResult.HostDaysAnalyzed == 0 ? RunPhaseOutcomes.Skipped

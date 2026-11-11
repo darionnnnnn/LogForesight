@@ -72,6 +72,10 @@ public class NetiqPipelineService
     private readonly int _resumeRetryDays;
     /// <summary>排程續跑開跑時讀一次的嘗試摘要；null＝關閉或帳本讀不到（退回原本只看回望窗的判定）。</summary>
     private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory>? _attemptHistory;
+    /// <summary>本趟開始時刻（UTC，可注入）：判斷空資料待複查是否已隔夠 <see cref="ScheduleCalculator.EmptyRecheckGap"/>。</summary>
+    private readonly DateTime _runStartedUtc;
+    /// <summary>只為空資料複查的趟：計畫只涵蓋帳本有待重查的主機（<see cref="RunRequest.NetiqLedgerRetryOnly"/>）。</summary>
+    private readonly bool _ledgerRetryOnly;
     /// <summary>帳本有重查狀態的主機：只有它們要讀到 7 天前的紀錄，其餘維持常態回望（每台每趟都多讀一週不划算）。</summary>
     private HashSet<long> _hostsWithRetry = new();
     /// <summary>本趟已送出查詢的主機日：它們的回執由查詢路徑寫，沒開始的才由 <see cref="RecordUnattempted"/> 補記。</summary>
@@ -132,7 +136,8 @@ public class NetiqPipelineService
         PrtgFindingsRegistry? prtgFindings = null,
         HostDayWorkflowService? workflow = null,
         bool prtgEnabled = true,
-        INetiqHostDayTimingCollector? hostDayTiming = null, DateTime? runToday = null, int resumeRetryDays = 0)
+        INetiqHostDayTimingCollector? hostDayTiming = null, DateTime? runToday = null, int resumeRetryDays = 0,
+        DateTime? runStartedUtc = null, bool ledgerRetryOnly = false)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -165,6 +170,8 @@ public class NetiqPipelineService
         _workflow = workflow;
         _prtgEnabled = prtgEnabled;
         _hostDayTiming = hostDayTiming;
+        _runStartedUtc = runStartedUtc ?? DateTime.UtcNow;
+        _ledgerRetryOnly = ledgerRetryOnly;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -360,7 +367,7 @@ public class NetiqPipelineService
     /// 排程續跑的待補日：回望窗內照舊（沒紀錄或狀態要重查），窗外只補帳本記著失敗或未完成的日子；
     /// 從沒嘗試過的舊日子不算（否則新主機第一天就補一週）；已達自動重查上限的不再重查。成功的不動。
     /// </summary>
-    private List<DateTime> ApplyResumePolicy(long hostId, List<DateTime> scanned, int lookback)
+    private List<DateTime> ApplyResumePolicy(long hostId, List<DateTime> scanned, int lookback, NetiqPipelineResult result)
     {
         if (_attemptHistory == null) return scanned;
         var windowStart = _today.AddDays(-lookback);
@@ -369,6 +376,13 @@ public class NetiqPipelineService
             _attemptHistory.TryGetValue((hostId, date.Date), out var history);
             if (history != null && NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) && NetiqAttemptStatus.AutoRetryExhausted(history))
                 return false;
+            // 空資料待複查：距上次嘗試未滿 EmptyRecheckGap 的本趟不查（不送查詢、不寫回執，帳本不動），同窗口內稍後再複查
+            if (history != null && history.LatestStatus == NetiqAttemptStatus.EmptyOnce
+                && _runStartedUtc - history.LastAttemptAtUtc < ScheduleCalculator.EmptyRecheckGap)
+            {
+                result.AddEmptyRecheckDeferred();
+                return false;
+            }
             return date >= windowStart || (history != null && NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus));
         }).ToList();
     }
@@ -433,6 +447,13 @@ public class NetiqPipelineService
             if (targets.Count == 0) return;
         }
 
+        // 空資料複查趟：只看帳本有待重查的主機（帳本讀不到時 _attemptHistory 為 null，退回全部主機，寧可多掃不漏查）
+        if (_ledgerRetryOnly && _attemptHistory != null)
+        {
+            targets = targets.Where(t => _hostsWithRetry.Contains(t.HostId)).ToList();
+            if (targets.Count == 0) return;
+        }
+
         var osLabel = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
         _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 {osLabel} 主機");
 
@@ -450,7 +471,7 @@ public class NetiqPipelineService
                 // 第二個參數是本趟的今天（見 runToday）
                 store, _today, _hostsWithRetry.Contains(target.HostId) ? Math.Max(lookback, _resumeRetryDays) : lookback,
                 requireAi: _onlyMissingOrFailed, useAi: _useAi);
-            var missingDates = ApplyResumePolicy(target.HostId, missingScan.MissingDates, lookback);
+            var missingDates = ApplyResumePolicy(target.HostId, missingScan.MissingDates, lookback, result);
 
             // 缺漏日與重跑日共用同一個回望窗口（回饋三十四輪 C）：兩者找的是同一條時間軸上
             // 互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），沒有任何模式需要兩個不同的天數。
@@ -1056,6 +1077,12 @@ public sealed class NetiqPipelineResult
     public int RerunDaysRetained => _rerunDaysRetained;
 
     private int _emptyDeferred;
+    private int _emptyRecheckDeferred;
+
+    /// <summary>空資料待複查但距上次嘗試未滿 <see cref="ScheduleCalculator.EmptyRecheckGap"/>、本趟延後的主機日數。</summary>
+    public int EmptyRecheckDeferred => _emptyRecheckDeferred;
+
+    internal void AddEmptyRecheckDeferred() => Interlocked.Increment(ref _emptyRecheckDeferred);
 
     /// <summary>來源回 0 筆、等下一趟複查的主機日數。</summary>
     public int EmptyDeferred => _emptyDeferred;

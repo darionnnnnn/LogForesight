@@ -412,7 +412,7 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    public void RecordNetiqOutcome(int daysAnalyzed, int daysFailed, int hostsSkipped)
+    public void RecordNetiqOutcome(int daysAnalyzed, int daysFailed, int hostsSkipped, int? emptyPending = null)
     {
         if (_store == null) return;
         lock (_countLock)
@@ -420,6 +420,7 @@ public class BatchRunRecorder : IDisposable
             _run.NetiqDaysAnalyzed = daysAnalyzed;
             _run.NetiqDaysFailed = daysFailed;
             _run.NetiqHostsSkipped = hostsSkipped;
+            _run.NetiqEmptyPending = emptyPending;
         }
     }
 

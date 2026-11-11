@@ -262,7 +262,8 @@ public class SchedulerHostedService : BackgroundService
         // 同一窗口續跑：上一趟提早結束、還留著失敗或待補。不帶 CatchUpNote：那會放大回望並被統計成補跑
         if (ScheduleCalculator.RunToContinue(now, options.Windows, recentRuns) is { } previous)
         {
-            var request = ComposeContinueRequest(previous, ScheduleCalculator.CurrentWindowInstance(now, options.Windows));
+            var request = ComposeContinueRequest(previous, ScheduleCalculator.CurrentWindowInstance(now, options.Windows),
+                ContinueRunNumber(now, options.Windows, recentRuns));
             Log.Info(request.WindowNote);
             await TriggerRunAsync(request);
             return;
@@ -427,9 +428,27 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>
     /// 同窗口續跑的請求。不帶 CatchUpNote：那會放大回望並被統計成補跑（<c>BatchRun.CatchUp</c>）。
     /// </summary>
-    internal static RunRequest ComposeContinueRequest(BatchRun previous, (DateTime Start, DateTime End)? window) =>
-        ComposeScheduledRequest(null,
-            $"本趟為窗口內續跑（第 2 趟，上一趟 #{previous.RunId} 留下：{RunResume.Of(previous).Describe()}）", window);
+    internal static RunRequest ComposeContinueRequest(BatchRun previous, (DateTime Start, DateTime End)? window, int runNumber = 2)
+    {
+        var resume = RunResume.Of(previous);
+        var note = resume.OnlyEmptyPending
+            ? $"本趟為窗口內空資料複查（上一趟 #{previous.RunId} 留下：{resume.Describe()}）"
+            : $"本趟為窗口內續跑（第 {runNumber} 趟，上一趟 #{previous.RunId} 留下：{resume.Describe()}）";
+        var request = ComposeScheduledRequest(null, note, window);
+        return new RunRequest
+        {
+            Scope = request.Scope, Trigger = request.Trigger, WindowNote = request.WindowNote,
+            WindowInstanceStart = request.WindowInstanceStart, WindowEnd = request.WindowEnd,
+            NetiqLedgerRetryOnly = resume.OnlyEmptyPending
+        };
+    }
+
+    /// <summary>續跑這一趟是實例內第幾趟（已有排程取數趟數＋1）。</summary>
+    internal static int ContinueRunNumber(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
+    {
+        if (ScheduleCalculator.CurrentWindowInstance(now, windows) is not { } instance) return 2;
+        return recentRuns.Count(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instance.Start) + 1;
+    }
 
     /// <summary>趟首里程碑：第幾個窗口，加上今天上一趟排程留下的失敗或待補（看得出這趟要接什麼）。</summary>
     internal static string? DescribeWindowRun(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
@@ -466,6 +485,7 @@ public class SchedulerHostedService : BackgroundService
         Trigger = request.Trigger,
         CatchUpNote = request.CatchUpNote,
         WindowNote = request.WindowNote,
+        NetiqLedgerRetryOnly = request.NetiqLedgerRetryOnly,
         CatchUpDeadline = request.CatchUpDeadline,
         WindowInstanceStart = request.WindowInstanceStart,
         WindowEnd = request.WindowEnd,

@@ -145,6 +145,36 @@ public static class ScheduleCalculator
     /// <summary>同一窗口實例最多跑幾趟（含續跑與異常中斷後的補跑）。</summary>
     public const int MaxRunsPerWindowInstance = 2;
 
+    /// <summary>NetIQ 回 0 筆待複查的主機日，距上一次嘗試至少要隔這麼久才複查（暫定）；管線與排程共用這一個常數。</summary>
+    public static readonly TimeSpan EmptyRecheckGap = TimeSpan.FromMinutes(60);
+
+    /// <summary>實例內只為空資料複查而多跑一趟時的趟數上限（失敗續跑仍是 <see cref="MaxRunsPerWindowInstance"/>）。</summary>
+    public const int MaxRunsWithEmptyRecheck = 3;
+
+    private static List<BatchRun> InstanceRuns(DateTime instanceStart, IEnumerable<BatchRun> recentRuns) =>
+        recentRuns
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instanceStart)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
+            .ToList();
+
+    /// <summary>
+    /// 下一次空資料複查的時刻（唯一判定點）：now 在窗口內、實例內已有排程取數趟但未達 <see cref="MaxRunsWithEmptyRecheck"/>、
+    /// 最新一趟沒被停止或異常中斷，候選＝最新一趟開跑＋<see cref="EmptyRecheckGap"/>（已過則取 now）；
+    /// 候選距實例結束不足 <see cref="WindowContinueGap"/> 就不排（回 null）。
+    /// 是否真的有待複查的主機日由 <see cref="RunToContinue"/> 看上一趟的 <see cref="RunResume"/>。
+    /// </summary>
+    public static DateTime? NextEmptyRecheckAt(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
+    {
+        if (CurrentWindowInstance(now, windows) is not { } instance) return null;
+        var inInstance = InstanceRuns(instance.Start, recentRuns);
+        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
+        var last = inInstance[0];
+        if (last.Stopped || last.Interrupted) return null;
+        var candidate = last.StartedAt + EmptyRecheckGap;
+        if (candidate < now) candidate = now;
+        return instance.End - candidate < WindowContinueGap ? null : candidate;
+    }
+
     /// <summary>
     /// 同一窗口該不該再跑一趟：上一趟在窗口內提早結束、還留著失敗或待補。回傳那一趟（null＝不續跑）。
     /// 計數讀執行紀錄，站台重啟不歸零。被窗口結束或手動停掉的不續跑（等下一個窗口）；補跑與手動趟沒有窗口實例，不算在內。
@@ -153,14 +183,12 @@ public static class ScheduleCalculator
     /// </summary>
     public static BatchRun? RunToContinue(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
+        var runs = recentRuns as IReadOnlyCollection<BatchRun> ?? recentRuns.ToList();
         if (CurrentWindowInstance(now, windows) is not { } instance) return null;
         if (instance.End - now < WindowContinueGap) return null;
 
-        var inInstance = recentRuns
-            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instance.Start)
-            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
-            .ToList();
-        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsPerWindowInstance) return null;
+        var inInstance = InstanceRuns(instance.Start, runs);
+        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
 
         var last = inInstance[0];
         if (last.FinishedAt is not { } finishedAt || last.Stopped || last.Interrupted) return null;
@@ -168,6 +196,11 @@ public static class ScheduleCalculator
 
         var resume = RunResume.Of(last);
         if (!resume.HasWork) return null;
+        if (resume.OnlyEmptyPending)
+            // 只剩空資料待複查：間隔與趟數上限由 NextEmptyRecheckAt 這唯一判定點決定
+            return NextEmptyRecheckAt(now, windows, runs) is { } recheckAt && now >= recheckAt ? last : null;
+        // 還有失敗或待補：沿用失敗續跑規則（實例內最多 MaxRunsPerWindowInstance 趟）
+        if (inInstance.Count >= MaxRunsPerWindowInstance) return null;
         if ((resume.PrtgDevices > 0 || resume.PrtgSensors > 0) && now - finishedAt < WindowContinueGap) return null;
         return last;
     }
