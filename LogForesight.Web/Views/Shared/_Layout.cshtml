@@ -12,9 +12,11 @@
     // （Directory.Build.props 的 <Version>，全專案共用同一個版本號）。
     var appVersion = typeof(LogForesight.Web.Configuration.WebAppSettings).Assembly.GetName().Version;
     var brand = Brand.Get();
+    // 報表頁在網址帶 display=wall 時設 ViewData["DisplayMode"]="wall"（大螢幕模式）；其他頁不設，<html> 完全不加類別
+    var wallMode = ViewData["DisplayMode"] as string == "wall";
 }
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" class="@(wallMode ? "lf-wall" : null)">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

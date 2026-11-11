@@ -1,5 +1,12 @@
-﻿@{
+﻿@inject LogForesight.Web.Services.IBrandProvider Brand
+@{
     ViewData["Title"] = "報表";
+    // 大螢幕模式（戰情中心）只有這一頁提供：網址帶 display=wall 時由 _Layout 在 <html> 輸出 lf-wall 類別，
+    // 側欄、頁首與提醒區在第一次繪製前就不顯示（等前端腳本才套用會在進頁時閃現側欄）
+    if (string.Equals(Context.Request.Query["display"], "wall", StringComparison.Ordinal))
+    {
+        ViewData["DisplayMode"] = "wall";
+    }
 }
 
 @* 版面依 docs/WEB-SPEC.md §9.6：工具列一列 → 第一排四格 → 圖表區兩列。
@@ -8,6 +15,22 @@
    工具列、第一排、圖表區各自有 id，之後的大螢幕模式可以單獨隱藏。 *@
 
 <div class="lf-report-page">
+    @* 大螢幕標頭列：只在大螢幕模式顯示（樣式表控制），取代工具列。條件文字與工具列左側由同一個函式填入 *@
+    <div class="lf-wall-header lf-no-print" id="wall-header">
+        <span class="lf-wall-header__brand">@Brand.Get().Name</span>
+        <p class="lf-wall-header__period mb-0">
+            <span class="lf-text-title" id="wall-period-title"></span>
+            <span class="lf-text-meta" id="wall-period-meta"></span>
+        </p>
+        <p class="lf-wall-header__status mb-0" aria-live="polite">
+            <span class="lf-text-meta" id="wall-updated"></span>
+            <span class="lf-text-alert" id="wall-stale"></span>
+        </p>
+    </div>
+
+    @* 大螢幕模式的離開鈕：滑鼠移動時出現、3 秒沒動作後淡出；鍵盤聚焦時一直看得到 *@
+    <div class="lf-wall-exit lf-no-print" id="wall-exit"></div>
+
     <div class="lf-card lf-no-print lf-report-page__fixed" id="report-toolbar">
         <div class="lf-card__body">
             <form id="report-form" class="lf-report-toolbar">

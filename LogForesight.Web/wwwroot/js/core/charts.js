@@ -61,6 +61,19 @@ export function statusColors() {
 
 const FONT_FAMILY = '"Segoe UI", "Microsoft JhengHei", system-ui, sans-serif';
 
+/**
+ * 圖表文字倍率：預設 1，一般模式的字級完全不變。報表的大螢幕模式依視窗高度放大時，
+ * 進入設成大於 1 的值、離開設回 1（呼叫端自己重畫圖表，倍率只影響之後建立的圖）。
+ */
+let fontScale = 1;
+
+export function setFontScale(scale) {
+    fontScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+/** 基準字級乘上倍率；倍率 1 時回傳原值 */
+const fontSize = base => Math.round(base * fontScale);
+
 // 圓形圖（甜甜圈／圓餅）沒有 XY 軸，也不該用 index 模式的共用提示——
 // 兩者都是為折線／長條圖準備的，套到圓形圖上會多畫出一組 0～1 的空軸並吃掉繪圖區。
 const CIRCULAR_TYPES = new Set(['doughnut', 'pie', 'polarArea']);
@@ -76,12 +89,12 @@ function baseOptions({ drillTo, onDrill, type }) {
         plugins: {
             legend: {
                 position: 'bottom',
-                labels: { font: { family: FONT_FAMILY, size: 12 }, usePointStyle: true, boxWidth: 8 }
+                labels: { font: { family: FONT_FAMILY, size: fontSize(12) }, usePointStyle: true, boxWidth: fontSize(8), boxHeight: fontSize(8), padding: fontSize(14) }
             },
             tooltip: {
                 backgroundColor: cssVar('--lf-chart-tooltip-bg', '#1b2a41'),
-                titleFont: { family: FONT_FAMILY, size: 13 },
-                bodyFont: { family: FONT_FAMILY, size: 12 },
+                titleFont: { family: FONT_FAMILY, size: fontSize(13) },
+                bodyFont: { family: FONT_FAMILY, size: fontSize(12) },
                 padding: 10,
                 displayColors: true
             }
@@ -110,12 +123,12 @@ function baseOptions({ drillTo, onDrill, type }) {
 
     if (!circular) {
         options.scales = {
-            x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: 11 } } },
+            x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: fontSize(11) } } },
             y: {
                 beginAtZero: true,
                 grid: { color: cssVar('--lf-chart-grid', '#0000000f') },
                 // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
-                ticks: { font: { family: FONT_FAMILY, size: 11 }, precision: 0 }
+                ticks: { font: { family: FONT_FAMILY, size: fontSize(11) }, precision: 0 }
             }
         };
     }
@@ -148,10 +161,20 @@ export function create(canvas, spec) {
     // 前一次可能顯示過「沒有資料」——重新畫圖時要把提示收掉，並讓 canvas 回到可見狀態
     clearNoData(canvas.parentElement);
 
+    const options = merge(baseOptions(spec), spec.options);
+    // 頁面自訂的座標軸會整組取代共用設定，刻度字級就退回 Chart.js 預設（根層的 options.font 對座標軸無效）：
+    // 倍率不是 1 時把放大後的刻度字級補進沒有自己指定字級的座標軸（倍率 1 不動任何設定）
+    if (fontScale !== 1 && options.scales) {
+        for (const [axis, cfg] of Object.entries(options.scales)) {
+            if (cfg?.ticks?.font) continue;
+            options.scales[axis] = { ...cfg, ticks: { ...(cfg?.ticks ?? {}), font: { family: FONT_FAMILY, size: fontSize(11) } } };
+        }
+    }
+
     const chart = new Chart(canvas, {
         type: spec.type,
         data: spec.data,
-        options: merge(baseOptions(spec), spec.options)
+        options
     });
 
     return chart;

@@ -14,18 +14,19 @@
  *   - 工具列（#report-toolbar）、第一排（#report-kpi-area）、圖表區（#report-charts）各自可單獨隱藏。
  */
 
-import { api, getDisplaySettings } from '../core/api.js';
+import { api as baseApi, getDisplaySettings } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { kpiStrip, toast, guardLoad, renderLoading } from '../core/ui.js';
+import { kpiStrip, toast, guardLoad, renderLoading, button } from '../core/ui.js';
 import {
     formatNumber, categoryName, severityName, SEVERITY_ORDER,
     issueBaselineText, toLocalDateString
 } from '../core/format.js';
-import * as charts from '../core/charts.js';
+import * as chartLib from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
 import { safeStorage } from '../core/storage.js';
 import { filterDisclosure, roleText, fact, metaLine } from '../core/elements.js';
+import { createWall } from './reports-wall.js';
 
 let currentData = null;
 // 保留天數來自第一次 summary 回覆；在那之前不做自動切換（寫死一個猜測值反而會猜錯）
@@ -49,6 +50,29 @@ let requestedScope = null;
 let activePresetDays = null;
 // 「更多條件」揭露鈕（setupMoreFilters 建立）；條件變動後 refresh() 更新已套用數
 let filterMore = null;
+
+// ── 大螢幕模式的轉接（狀態機與排程在 reports-wall.js，見 §9.6「大螢幕模式」）──────────────
+
+/** 大螢幕模式下 API 錯誤不跳 toast：沒有人在操作，通知只會在畫面上堆積；失敗狀態由標頭列呈現 */
+const api = {
+    get: (url, options) => baseApi.get(url, wall.isActive() ? { ...options, silent: true } : options)
+};
+
+// 本次重繪要不要做圖表進場動畫（renderAll 依模式決定）
+let chartAnimate = true;
+
+/** 圖表包裝層外加一道轉接：大螢幕模式生效時圖表不可下鑽；自動更新與縮放的重繪不做進場動畫 */
+const charts = {
+    ...chartLib,
+    bar: (canvas, spec) => chartLib.bar(canvas, adaptChartSpec(spec))
+};
+
+function adaptChartSpec(spec) {
+    const adapted = { ...spec };
+    if (wall.isActive()) delete adapted.drillTo;
+    if (!chartAnimate) adapted.options = { ...spec.options, animation: false };
+    return adapted;
+}
 
 /**
  * 區間檢查先做、再放骨架列（回饋第 45 輪 B7）：這頁的 summary 是全站最慢的查詢之一，
@@ -124,7 +148,7 @@ async function loadReport() {
         `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}` +
         (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
 
-    renderAll();
+    renderAll(true);
     return true;
 }
 
@@ -141,11 +165,15 @@ function scopeDrillParams() {
 /**
  * 重畫整頁的唯一入口（依 currentData）：工具列的條件文字、第一排四格、所有圖表。
  * 重新整理或切換大螢幕模式時只呼叫它，不必各自記得要重畫哪些區塊。
+ * loaded：這次重繪來自一次成功載入（而非縮放或切換模式），完成後通知大螢幕記下更新時間。
  */
-function renderAll() {
+function renderAll(loaded = false) {
+    // 大螢幕模式下，首次成功載入之後的重繪（自動更新、視窗縮放）只換數字與圖，不做進場動畫
+    chartAnimate = !(wall.isActive() && wall.status().loads > 0);
     renderToolbarSummary();
     renderKpi();
     renderCharts();
+    if (loaded) wall.dataLoaded();
 }
 
 // ── 工具列 ───────────────────────────────────────────────────────────────────
@@ -181,6 +209,9 @@ function renderToolbarSummary() {
     });
     document.getElementById('report-period-title').textContent = summary.title;
     document.getElementById('report-period-meta').textContent = summary.meta;
+    // 大螢幕標頭列顯示同一份條件文字
+    document.getElementById('wall-period-title').textContent = summary.title;
+    document.getElementById('wall-period-meta').textContent = summary.meta;
     filterMore?.refresh();
 }
 
@@ -231,7 +262,9 @@ function renderKpi() {
     const col = document.createElement('div');
     col.className = 'col-12';
     // 一屏化：四張卡排同一排，不佔兩排高度（卡不夠寬時才自動換行）
-    col.appendChild(kpiStrip([{ cards: buildKpiCards() }], { singleRow: true }));
+    // 大螢幕上的數字不可點：卡片不帶下鑽網址，kpiStrip 就不會輸出連結
+    const cards = buildKpiCards().map(card => (wall.isActive() ? { ...card, url: null } : card));
+    col.appendChild(kpiStrip([{ cards }], { singleRow: true }));
     container.appendChild(col);
 }
 
@@ -393,6 +426,8 @@ function clearToolbar(container, wrapper) {
 /** 長標籤在座標軸上截斷（完整文字仍在提示與表格）；量測不得出現溢出卡片 */
 const MAX_TICK_CHARS = 18;
 const NARROW_TICK_CHARS = 9;
+/** 大螢幕圖表字級的額外倍率：1080 高時座標約 15px、2160 高時約 31px */
+const WALL_CHART_FONT_BOOST = 1.4;
 function truncateTick(value) {
     const label = String(this.getLabelForValue(value));
     // 窄畫布（手機單欄）放不下完整長度的標籤，會被畫布左緣裁掉：依畫布寬度收短
@@ -557,7 +592,9 @@ function renderCategoryChart() {
     const total = document.getElementById('category-issue-total');
     total.textContent = `${formatNumber(currentData.kpi.totalIssues)} 個問題`;
     // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，免得問題查詢的「預設隱藏低風險」把數字對不上
-    total.href = appUrl(recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to }) + scopeDrillParams());
+    // 大螢幕模式下只顯示數字：沒有 href 的 <a> 不可聚焦也不可點
+    if (wall.isActive()) total.removeAttribute('href');
+    else total.href = appUrl(recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to }) + scopeDrillParams());
     total.hidden = false;
 
     // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與依問題視角的問題排行同一個限制：
@@ -862,6 +899,8 @@ document.getElementById('report-form').addEventListener('submit', event => {
 bindRangeChips({ onApply: ({ days }) => { setRange(days); load(); } });
 
 document.getElementById('btn-print-report').addEventListener('click', () => window.print());
+document.getElementById('btn-report-fullscreen').addEventListener('click', () => wall.enter());
+document.getElementById('wall-exit').appendChild(button('離開大螢幕', { onClick: () => wall.exit() }));
 
 // 處理狀態顯示範圍（§5）：單選 chip，切換即重載（母體改變，全圖表跟著變）
 document.getElementById('report-scope-chips').addEventListener('click', onScopeChipClick);
@@ -965,7 +1004,60 @@ function setRange(days) {
     updateYoyOptionLabel();
 }
 
+// ── 大螢幕模式 ───────────────────────────────────────────────────────────────
+
+/** 大螢幕每一輪自動更新：快捷期間是滾動的（跨過午夜自然前進一天），自訂日期固定不動 */
+async function wallRefresh() {
+    if (activePresetDays != null) setRange(activePresetDays);
+    try {
+        return (await loadReport()) === true;
+    } catch {
+        return false;   // 保留畫面上的舊資料；失敗狀態由 wall 記下、標頭列呈現，下一輪照常再試
+    }
+}
+
+/** 標頭列的更新時間與失敗提示、工具列「大螢幕」鈕的顯示（寬度不足 992px 時不提供） */
+function syncWallUi() {
+    document.getElementById('btn-report-fullscreen').hidden = !wall.canEnter();
+    const { updated, stale } = wall.statusText();
+    document.getElementById('wall-updated').textContent = updated;
+    document.getElementById('wall-stale').textContent = stale;
+}
+
+const wall = createWall({
+    win: window,
+    doc: document,
+    loc: location,
+    hist: history,
+    now: () => Date.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: handle => clearTimeout(handle),
+    refresh: wallRefresh,
+    rerender: () => { if (currentData) renderAll(); },
+    applyScale: scale => {
+        // 圖表字（座標 11px）在 1080 高的大螢幕遠看太小：與根字級同步放大（大螢幕根字級 18px＝一般 15px 的 1.2 倍，圖表再多給一些）
+        chartLib.setFontScale(scale === null ? 1 : scale * WALL_CHART_FONT_BOOST);
+        const rootStyle = document.documentElement.style;
+        if (scale === null) rootStyle.removeProperty('--lf-wall-scale');
+        else rootStyle.setProperty('--lf-wall-scale', String(scale));
+    },
+    setExitVisible: visible => document.getElementById('wall-exit').classList.toggle('is-visible', visible),
+    onState: syncWallUi
+});
+
+/** 首次載入：大螢幕要知道它何時結束（成功或失敗），失敗也要排下一輪重試 */
+async function initialLoad() {
+    const before = wall.status().loads;
+    wall.loadStarted();
+    try {
+        await load();
+    } finally {
+        wall.loadSettled(wall.status().loads > before);
+    }
+}
+
 bindRankModeToggle();
 setRange(30);
 setupMoreFilters();
-load();
+wall.init();
+initialLoad();
