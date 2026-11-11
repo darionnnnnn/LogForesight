@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { toast, withBusy, icon, guardLoad, renderLoading, loadRunHint } from '../core/ui.js';
+import { toast, withBusy, icon, guardLoad, renderLoading, loadRunHint, linkButton } from '../core/ui.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 /** 沒有指定圖示的章節（理論上不會發生，manifest 十四章都已配置）退回這個通用圖示 */
@@ -103,11 +103,7 @@ function renderChapterContent(chapter) {
     desc.textContent = '透過就緒度檢查一步步完成初始設定：儲存體、管理員帳號、郵件通知、AI 服務、NetIQ、群組授權、排程，每一步都可以跳過稍後再回來。';
     card.appendChild(desc);
 
-    const link = document.createElement('a');
-    link.className = 'btn btn-primary';
-    link.href = appUrl(chapter.href);
-    link.textContent = '開啟啟動精靈';
-    card.appendChild(link);
+    card.appendChild(linkButton('開啟啟動精靈', appUrl(chapter.href), { variant: 'primary' }));
 
     container.appendChild(card);
 }
@@ -123,16 +119,16 @@ function renderRelated(chapter) {
     }
 
     const label = document.createElement('div');
-    label.className = 'small text-muted mb-2';
+    label.className = 'lf-text-label mb-2';
     label.textContent = '相關功能';
     wrap.appendChild(label);
 
     const list = document.createElement('div');
-    list.className = 'd-flex flex-wrap gap-2';
+    list.className = 'd-flex flex-wrap gap-2 lf-help-nav-links';
     for (const related of relatedChapters) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn-sm btn-outline-secondary';
+        btn.className = 'lf-nav-item lf-nav-item--inline';
         btn.textContent = related.title;
         btn.addEventListener('click', () => selectChapter(related.id));
         list.appendChild(btn);
@@ -173,7 +169,7 @@ function bindAskForm() {
             const result = await api.post('/api/help/ask', { question }, { silent: true });
             if (!result) {
                 const warn = document.createElement('div');
-                warn.className = 'text-muted small';
+                warn.className = 'lf-text-meta';
                 warn.textContent = 'AI 服務暫時無法回應，可先查閱下方章節。';
                 resultEl.appendChild(warn);
                 return;
@@ -190,16 +186,16 @@ function bindAskForm() {
             const citedChapters = (result.citedChapterIds ?? []).map(id => chapterById.get(id)).filter(Boolean);
             if (citedChapters.length > 0) {
                 const citeLabel = document.createElement('div');
-                citeLabel.className = 'small text-muted mb-1';
+                citeLabel.className = 'lf-text-label mb-1';
                 citeLabel.textContent = '參考章節（提供給 AI 的內容）：';
                 resultEl.appendChild(citeLabel);
 
                 const citeList = document.createElement('div');
-                citeList.className = 'd-flex flex-wrap gap-2';
+                citeList.className = 'd-flex flex-wrap gap-2 lf-help-nav-links';
                 for (const chapter of citedChapters) {
                     const btn = document.createElement('button');
                     btn.type = 'button';
-                    btn.className = 'btn btn-sm btn-outline-primary';
+                    btn.className = 'lf-nav-item lf-nav-item--inline';
                     btn.append(icon('file-earmark-text'), document.createTextNode(' ' + chapter.title));
                     btn.addEventListener('click', () => selectChapter(chapter.id));
                     citeList.appendChild(btn);

@@ -127,14 +127,16 @@ public class AccessibilityUiTests
 
     private static string RootTokenValue(string css, string name)
     {
-        // 只取 :root 區塊內的定義（深色模式或其他區塊的同名 token 不算）
+        // 只取 :root 區塊內的定義（深色模式或其他區塊的同名 token 不算）；先去掉註解——
+        // :root 裡的說明註解寫了 html{font-size}，不去掉的話 [^}]* 會在註解裡提早結束
+        css = Regex.Replace(css, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
         foreach (Match block in Regex.Matches(css, @":root\s*\{([^}]*)\}"))
         {
             var m = Regex.Match(block.Groups[1].Value, $@"{Regex.Escape(name)}\s*:\s*(#[0-9a-fA-F]{{6}})\b");
             if (m.Success) return m.Groups[1].Value;
         }
 
-        Assert.Fail($"site.css 的 :root 找不到 {name}");
+        Assert.Fail($"base.css 的 :root 找不到 {name}");
         return string.Empty;
     }
 
@@ -159,11 +161,43 @@ public class AccessibilityUiTests
     [Fact]
     public void 側欄分組標題色對側欄底色對比至少4_5()
     {
-        var css = ReadWeb("wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         var fg = RootTokenValue(css, "--lf-sidebar-section");
         var bg = RootTokenValue(css, "--lf-sidebar-bg");
         var ratio = Contrast(fg, bg);
         Assert.True(ratio >= 4.5, $"--lf-sidebar-section {fg} 對 --lf-sidebar-bg {bg} 對比 {ratio:F2}:1，低於 4.5:1");
+    }
+
+    /// <summary>
+    /// 設計系統 v3 文字角色與揭露／操作結果訊息的前景色，對它們會出現的底色都要 ≥ 4.5:1
+    /// （docs/DESIGN-SYSTEM.md §8.1）。第三欄是該規則必須引用的 token，避免規則改用別的色而這裡測了寂寞。
+    /// </summary>
+    [Theory]
+    [InlineData("--lf-text", "--lf-card-bg", ".lf-text-title")]
+    [InlineData("--lf-text-muted", "--lf-card-bg", ".lf-text-meta")]
+    [InlineData("--lf-text-muted", "--lf-gray-50", ".lf-text-label")]
+    [InlineData("--lf-text-muted", "--lf-content-bg", ".lf-disclosure")]
+    [InlineData("--lf-danger-text", "--lf-card-bg", ".lf-text-alert")]
+    [InlineData("--lf-danger-text", "--lf-gray-50", ".lf-status-note--error")]
+    [InlineData("--lf-success-text", "--lf-card-bg", ".lf-status-note--success")]
+    [InlineData("--lf-primary", "--lf-primary-soft", ".lf-disclosure:hover")]
+    public void 文字角色前景對底色對比至少4_5(string fgToken, string bgToken, string selector)
+    {
+        var css = SiteCss.Read();
+        var rule = Regex.Match(css, $@"(?m)^{Regex.Escape(selector)}\s*\{{([^}}]*)\}}");
+        Assert.True(rule.Success, $"找不到 {selector} 規則");
+        Assert.Contains($"var({fgToken})", rule.Groups[1].Value);
+        var ratio = Contrast(RootTokenValue(css, fgToken), RootTokenValue(css, bgToken));
+        Assert.True(ratio >= 4.5, $"{selector}：{fgToken} 對 {bgToken} 對比 {ratio:F2}:1，低於 4.5:1");
+    }
+
+    [Fact]
+    public void 揭露按鈕鍵盤焦點可見()
+    {
+        var css = SiteCss.Read();
+        var rule = Regex.Match(css, @"(?m)^\.lf-disclosure:focus-visible\s*\{([^}]*)\}");
+        Assert.True(rule.Success, "缺少 .lf-disclosure:focus-visible 規則");
+        Assert.Contains("var(--lf-focus-ring)", rule.Groups[1].Value);
     }
 
     [Fact]
@@ -209,7 +243,7 @@ public class AccessibilityUiTests
     [Fact]
     public void modal內互動元件有focus_visible規則()
     {
-        var css = ReadWeb("wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         foreach (var sel in new[] { ".modal .btn:focus-visible", ".modal .form-control:focus-visible", ".modal .form-select:focus-visible", ".modal .form-check-input:focus-visible" })
         {
             Assert.Contains(sel, css);

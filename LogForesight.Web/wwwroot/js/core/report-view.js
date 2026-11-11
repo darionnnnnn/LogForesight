@@ -98,7 +98,7 @@ function evidenceVersionNotice(report) {
         : null;
     if (!message) return null;
     const notice = document.createElement('p');
-    notice.className = 'small text-muted mb-2';
+    notice.className = 'lf-text-meta mb-2';
     notice.textContent = message;
     return notice;
 }
@@ -132,7 +132,7 @@ export function reportCard({ storageKey, title } = {}) {
     heading.className = 'lf-card__title mb-0';
 
     const subtitle = document.createElement('span');
-    subtitle.className = 'small text-muted';
+    subtitle.className = 'lf-text-meta';
 
     left.append(caret, heading, subtitle);
     header.appendChild(left);
@@ -198,7 +198,7 @@ export function openReportModal(report) {
     head.className = 'd-flex justify-content-between align-items-center gap-2 mb-2';
 
     const meta = document.createElement('span');
-    meta.className = 'small text-muted';
+    meta.className = 'lf-text-meta';
     meta.textContent = subtitleOf(report);
 
     head.append(meta, toolbar(report));

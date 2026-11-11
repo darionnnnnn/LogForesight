@@ -425,7 +425,7 @@ public class SetupUxF2Tests : IDisposable
         }
 
         var submit = FunctionBody(js, "bindForm");
-        var success = submit[submit.IndexOf("toast('已儲存設定'", StringComparison.Ordinal)..];
+        var success = submit[submit.IndexOf("showSaveNote('success', '已儲存設定'", StringComparison.Ordinal)..];
         Assert.Contains("applySettings(current)", success);
         Assert.DoesNotContain("renderAiFields(", submit);
         Assert.Contains("applySettings(current)", FunctionBody(js, "loadSettings"));

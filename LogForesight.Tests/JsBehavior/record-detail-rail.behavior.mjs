@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadButton } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -149,8 +150,8 @@ const cases = {
         const { renderAiInline } = await import(pathToFileURL(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'markdown-lite.js')).href);
         const navigator = { clipboard: { writeText: async t => { copied.push(t); } } };
         const src = extractFunction(recordDetail, 'function briefBlock');
-        const briefBlock = new Function('document', 'renderAiInline', 'navigator', 'toast', `${src}\nreturn briefBlock;`)(
-            document, renderAiInline, navigator, (m, k) => toasts.push([m, k]));
+        const briefBlock = new Function('document', 'renderAiInline', 'navigator', 'toast', 'button', `${src}\nreturn briefBlock;`)(
+            document, renderAiInline, navigator, (m, k) => toasts.push([m, k]), loadButton(dom));
         const wrap = briefBlock('一台主機**磁碟異常**，請採購備品。');
         const copyBtn = wrap.find(n => n.tagName === 'BUTTON');
         assert.equal(copyBtn.getAttribute('aria-label'), '複製重點速報');
@@ -178,6 +179,46 @@ const cases = {
 
         // 案件授與沒有側軌：不得拋錯
         pageEnv({ rail: null, hash: '' }).expandSideRailForSelection();
+    },
+    expandForSelectionKeepsAnchorInView() {
+        // 展開後左欄變窄、列變高：剛勾的勾選框從視窗 y=300 被推到 y=900，要捲回原位置（捲 600）。
+        // 重排不是同步的：expand() 當下位置還沒變，第二個畫面格才變——太早量會得到 0、等於沒補
+        const scrolls = [];
+        const frames = [];
+        const savedWindow = globalThis.window;
+        const savedRaf = globalThis.requestAnimationFrame;
+        globalThis.window = { scrollBy: (x, y) => scrolls.push([x, y]) };
+        globalThis.requestAnimationFrame = fn => frames.push(fn);
+        try {
+            let top = 300;
+            const anchor = { getBoundingClientRect: () => ({ top }) };
+            const rail = fakeRail();
+            pageEnv({ rail, hash: '' }).expandSideRailForSelection(anchor);
+            assert.equal(scrolls.length, 0, '展開當下不捲（版面還沒重排）');
+            frames.shift()();          // 第一格：還沒重排
+            assert.equal(scrolls.length, 0);
+            top = 900;                 // 第二格前重排了一次
+            frames.shift()();
+            assert.deepEqual(scrolls, [[0, 600]]);
+            top = 300;                 // 捲回原位後版面再變一次（往下 80）
+            frames.shift()();
+            assert.equal(scrolls.length, 1, '位置沒變就不捲');
+            top = 380;
+            frames.shift()();
+            assert.deepEqual(scrolls.at(-1), [0, 80]);
+            top = 300;
+            let guard = 100;
+            while (frames.length && guard-- > 0) frames.shift()();
+            assert.equal(frames.length, 0, '校正有格數上限，不會一直掛著');
+            assert.equal(scrolls.length, 2);
+
+            // 已展開（不會重排）時不捲動
+            pageEnv({ rail: fakeRail({ expanded: true }), hash: '' }).expandSideRailForSelection(anchor);
+            assert.equal(scrolls.length, 2);
+        } finally {
+            globalThis.window = savedWindow;
+            globalThis.requestAnimationFrame = savedRaf;
+        }
     },
 
     // 收合鈕掛在「處理狀態」卡的 header（靠右），不再佔右欄 body 最上方

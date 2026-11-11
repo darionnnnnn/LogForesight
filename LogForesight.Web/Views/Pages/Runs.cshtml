@@ -13,7 +13,7 @@
             <h2 class="lf-card__title">取數執行</h2>
             <div class="d-flex align-items-center gap-2">
                 <span id="schedule-debug-dump-badge" class="lf-badge lf-badge--warning d-none">AI 診斷傾印開啟中</span>
-                <span id="schedule-paused-badge" class="badge bg-warning text-dark d-none"></span>
+                <span id="schedule-paused-badge" class="lf-badge lf-badge--warning d-none"></span>
             </div>
         </div>
         <div class="lf-card__body">
@@ -37,18 +37,18 @@
                 <div class="progress lf-run-progress mb-1 d-none" id="schedule-local-progress-wrap">
                     <div class="progress-bar bg-info" id="schedule-local-progress-bar" role="progressbar"></div>
                 </div>
-                <div class="small text-muted mb-2 d-none" id="schedule-local-progress-text"></div>
+                <div class="lf-text-meta mb-2 d-none" id="schedule-local-progress-text"></div>
                 <div class="progress lf-run-progress mb-1 d-none" id="schedule-progress-wrap">
                     <div class="progress-bar" id="schedule-progress-bar" role="progressbar"></div>
                 </div>
-                <div class="small text-muted mb-2 d-none" id="schedule-progress-text"></div>
+                <div class="lf-text-meta mb-2 d-none" id="schedule-progress-text"></div>
             </div>
 
             @* 手動執行佔用排程窗口時的說明：手動觸發不受窗口 End 停止，一趟大回填可以吃掉
                整段窗口，畫面上原本只看得到「排程設了卻沒跑」。 *@
-            <div class="text-warning small d-none" id="schedule-skipped-window"></div>
+            <div class="lf-text-meta d-none" id="schedule-skipped-window"></div>
 
-            <div class="small text-muted lf-run-message" id="schedule-latest-message"></div>
+            <div class="lf-text-meta lf-run-message" id="schedule-latest-message"></div>
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions d-none" data-maintain-only data-maintain-action>
                 <button type="button" class="btn btn-sm btn-primary" id="schedule-run-now">立即執行</button>
@@ -82,23 +82,23 @@
 
             @* 閒置原因（批次A）：只顯示「閒置＋N 件待補」時，使用者無從分辨是設定沒開、
                不在窗口、還是在等當日 PRTG 訊號算完。 *@
-            <div id="ai-schedule-disabled-hint" class="text-warning small d-none"></div>
+            <div id="ai-schedule-disabled-hint" class="lf-text-meta d-none"></div>
 
             <div class="lf-run-tracks lf-run-tracks--single">
                 <div class="progress lf-run-progress mb-1 d-none" id="schedule-ai-progress-wrap">
                     <div class="progress-bar" id="schedule-ai-progress-bar" role="progressbar"></div>
                 </div>
-                <div class="small text-muted mb-2 d-none" id="schedule-ai-progress-text"></div>
+                <div class="lf-text-meta mb-2 d-none" id="schedule-ai-progress-text"></div>
             </div>
 
-            <div class="small text-muted lf-run-message" id="schedule-ai-latest-message"></div>
+            <div class="lf-text-meta lf-run-message" id="schedule-ai-latest-message"></div>
 
             <div class="d-flex flex-wrap align-items-center gap-2 lf-run-actions d-none" data-maintain-only data-maintain-action>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
-                <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="schedule-ai-force-rerun">強制重新分析</button>
                 @* 啟動鈕被互斥條件藏起來時，這一列不能只剩空白（也避免卡片高度塌掉）：說明為什麼不能按 *@
-                <div class="small text-warning d-none" id="schedule-ai-actions-hint">
+                <div class="lf-text-meta d-none" id="schedule-ai-actions-hint">
                     <span id="schedule-ai-actions-hint-text"></span>
                     <a class="d-none" id="schedule-ai-actions-hint-link" href="@Url.Content("~/admin/settings")">前往系統設定</a>
                 </div>
@@ -119,12 +119,12 @@
                 <span class="lf-kv__value" id="prtg-module-state">載入中…</span>
             </div>
             @* 未啟用時指路到真正的啟用核取方塊；數值取數對象不是模組開關。 *@
-            <div class="small text-warning d-none" id="prtg-disabled-hint">
+            <div class="lf-text-meta d-none" id="prtg-disabled-hint">
                 <span class="d-none" data-maintain-only data-maintain-action>要啟用自動擷取，請到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>勾選「啟用 PRTG 擷取」並儲存；</span>
                 停用時排程擷取與回填不執行；維護者仍可手動同步結構。
             </div>
             @* 已啟用但認證密文解不開（金鑰檔與資料庫不相符）：夜間會略過 PRTG，指路到「連線」頁籤重新輸入。 *@
-            <div class="small text-warning d-none" id="prtg-credential-hint">
+            <div class="lf-text-alert d-none" id="prtg-credential-hint">
                 PRTG 認證資訊無法解密（金鑰檔與資料庫不相符）。
                 <span class="d-none" data-maintain-only data-maintain-action>請到 <a href="@Url.Content("~/admin/prtg")#connection">PRTG 維護頁「連線」</a>重新輸入並儲存；</span>
                 重新輸入前，排程擷取與回填會略過 PRTG。
@@ -156,11 +156,11 @@
                 <div class="progress lf-run-progress mb-1 d-none" id="schedule-prtg-progress-wrap">
                     <div class="progress-bar" id="schedule-prtg-progress-bar" role="progressbar"></div>
                 </div>
-                <div class="small text-muted mb-2 d-none" id="schedule-prtg-progress-text"></div>
+                <div class="lf-text-meta mb-2 d-none" id="schedule-prtg-progress-text"></div>
                 <div class="progress lf-run-progress mb-1 d-none" id="prtg-backfill-progress-wrap">
                     <div class="progress-bar" id="prtg-backfill-progress-bar" role="progressbar"></div>
                 </div>
-                <div class="small text-muted mb-2 d-none" id="prtg-backfill-progress-text"></div>
+                <div class="lf-text-meta mb-2 d-none" id="prtg-backfill-progress-text"></div>
             </div>
 
             @* 這張卡刻意沒有「最新訊息」列：狀態 API 的 latestMessage 是整趟執行共用的最後一行，
@@ -172,7 +172,7 @@
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-backfill-cancel" data-maintain-only>停止回填</button>
             </div>
 
-            <div class="small text-muted mt-3 d-none" data-maintain-only data-maintain-action>結構同步會在每次執行時自動進行；要補過去日的數值，用「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
+            <div class="lf-text-meta mt-3 d-none" data-maintain-only data-maintain-action>補過去日的數值：「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
         </div>
     </section>
 </div>
@@ -191,7 +191,7 @@
 
 @* 天數與圖例只對三個報表頁籤有意義，切到「排程設定」時由 runs.js 整組隱藏 *@
 <div class="lf-toolbar__row justify-content-end mt-2 mb-3" id="runs-toolbar">
-    <div id="run-legend" class="d-flex gap-3 small text-muted flex-wrap"></div>
+    <div id="run-legend" class="d-flex gap-3 lf-text-meta flex-wrap"></div>
     <div class="btn-group btn-group-sm">
         <button type="button" class="btn btn-outline-primary" data-days="7">7 天</button>
         <button type="button" class="btn btn-outline-primary active" data-days="14">14 天</button>
@@ -214,14 +214,13 @@
 <div data-panel="summary">
     <section class="lf-card mb-3">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">執行總表</h2>
-            <span class="text-muted small">
-                每列為執行日 D；主機狀態對應 D-1 資料，PRTG 欄對應 D 資料。點列展開主機狀態。
-                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="D 日列的主機狀態核對 D-1 的 NetIQ／本機分析資料；PRTG 欄依 D 日的資料日期呈現，兩者不是同一天的資料。今天有執行時最上方多一列「今日」，其中「尚未處理」不是漏跑。">
+            <div class="d-flex align-items-center gap-1">
+                <h2 class="lf-card__title">執行總表</h2>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" aria-label="執行總表說明"
+                        data-bs-content="每列為執行日 D。D 日列的主機狀態核對 D-1 的 NetIQ／本機分析資料；PRTG 欄依 D 日的資料日期呈現，兩者不是同一天的資料。今天有執行時最上方多一列「今日」，其中「尚未處理」不是漏跑。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-            </span>
+            </div>
         </div>
         <div class="lf-card__body p-0" id="run-summary"></div>
     </section>
@@ -234,7 +233,7 @@
         <div class="lf-card__header">
             <h2 class="lf-card__title">異常彙總</h2>
             <div class="d-flex align-items-center gap-2">
-                <label class="small text-muted mb-0" for="run-errors-level">顯示等級</label>
+                <label class="lf-text-label mb-0" for="run-errors-level">顯示等級</label>
                 <select class="form-select form-select-sm w-auto lf-touch-36" id="run-errors-level">
                     <option value="error" selected>Error 以上</option>
                     <option value="warn">Warn 以上</option>
@@ -244,7 +243,7 @@
         @* 沒有錯誤紀錄卻失敗或中斷的趟數（D-3）：大於 0 才顯示，等於 0 不佔版面 *@
         <div class="alert alert-secondary py-2 small mx-3 mt-3 mb-0 d-none" id="run-errors-notice" role="status">
             <span id="run-errors-notice-text"></span>
-            <button type="button" class="btn btn-sm btn-outline-dark lf-touch-36 ms-2" id="run-errors-notice-go">查看執行紀錄</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary lf-touch-36 ms-2" id="run-errors-notice-go">查看執行紀錄</button>
         </div>
         <div class="lf-card__body p-0" id="run-errors"></div>
     </section>
@@ -301,7 +300,7 @@
                     </button>
                 </div>
 
-                <span class="form-label small fw-semibold d-inline-block" id="schedule-windows-label">執行窗口</span>
+                <span class="form-label lf-text-label d-inline-block" id="schedule-windows-label">執行窗口</span>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="Start 到點觸發一次執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。設多組時每組都會跑一次，只接著做當天還沒完成的部分：本機與 NetIQ 跳過已完成的主機日，PRTG 當天已同步過就沿用。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -331,9 +330,7 @@
                 </button>
             </div>
             <div class="lf-card__body">
-                <p class="text-muted small">AI 跟著取數自動進行，不受窗口限制；這裡只設定背景補跑。</p>
-
-                <label class="form-label small fw-semibold" for="schedule-ai-windows">背景補跑窗口</label>
+                <label class="form-label lf-text-label" for="schedule-ai-windows">背景補跑窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="消化積壓待補的時段。跟隨取數的即時分析不受此限制，窗口內外都會跟上；End 到點只對背景補跑發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -344,7 +341,7 @@
                 </button>
 
                 <div class="mb-3">
-                    <label class="form-label small fw-semibold" for="schedule-ai-concurrency">併發數</label>
+                    <label class="form-label lf-text-label" for="schedule-ai-concurrency">併發數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。範圍 1 到 8。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -358,7 +355,7 @@
         @* 「最後更新」不在 data-maintain-only 內：唯讀模式藏的是動作，設定值與它的更新資訊都要看得到 *@
         <div class="d-flex align-items-center flex-wrap gap-3 mb-3">
             <button type="submit" class="btn btn-primary btn-sm d-none" id="schedule-save" data-maintain-only data-maintain-action>儲存排程設定</button>
-            <span class="text-muted small" id="schedule-updated"></span>
+            <span class="lf-text-meta" id="schedule-updated"></span>
         </div>
     </form>
 </div>
@@ -404,7 +401,7 @@
                             <option value="UnhandledAndAssigned">重新分析未處理與處理中的日子</option>
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
-                        <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
+                        <div class="form-text lf-text-meta" id="run-now-ai-disabled-hint" hidden></div>
                         <div class="lf-table-wrap mt-2">
                             <table class="table table-sm table-hover align-middle mb-0" aria-label="執行模式影響對照">
                                 <thead><tr><th scope="col">模式</th><th scope="col">會重建什麼</th><th scope="col">保留什麼</th><th scope="col">何時使用</th></tr></thead>
@@ -417,7 +414,7 @@
                             </table>
                         </div>
                     </div>
-                    <div class="form-text text-warning mb-2" id="run-now-prtg-backfill-hint" hidden>PRTG 歷史回填執行中：這趟的 PRTG 部分最多等 30 分鐘再開始，NetIQ 與本機照常；要讓 PRTG 立刻開始，請先在 PRTG 卡停止回填。</div>
+                    <div class="form-text lf-text-meta mb-2" id="run-now-prtg-backfill-hint" hidden>PRTG 歷史回填執行中：這趟的 PRTG 部分最多等 30 分鐘再開始，NetIQ 與本機照常；要讓 PRTG 立刻開始，請先在 PRTG 卡停止回填。</div>
                     <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
                 </div>
@@ -441,13 +438,12 @@
                 <div class="alert alert-warning py-2 px-3 mb-3" role="alert">
                     會把全部既有 AI 結論標記為待重跑（低風險日不受影響），舊結果在被覆蓋前仍可查看。適用於規則更新後。
                 </div>
-                <p class="small text-warning mb-2 d-none" id="schedule-ai-rerun-current"></p>
-                <p class="small text-danger mb-2 d-none" id="schedule-ai-rerun-blocked">已有新的 AI 執行開始，為避免誤中斷，請關閉本視窗後重新確認。</p>
-                <p class="small text-muted mb-0">確定要將全部既有 AI 結論標記為待重跑並立即開始執行嗎？</p>
+                <p class="lf-text-meta mb-2 d-none" id="schedule-ai-rerun-current"></p>
+                <p class="lf-text-alert mb-2 d-none" id="schedule-ai-rerun-blocked">已有新的 AI 執行開始，為避免誤中斷，請關閉本視窗後重新確認。</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-warning" id="schedule-ai-rerun-confirm" data-maintain-only>強制重新分析</button>
+                <button type="button" class="btn btn-danger" id="schedule-ai-rerun-confirm" data-maintain-only>強制重新分析</button>
             </div>
         </div>
     </div>

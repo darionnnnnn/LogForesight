@@ -16,12 +16,12 @@
                 <h2 class="lf-card__title">負責人</h2>
             </div>
             <div class="lf-card__body">
-                <p class="small text-muted">
-                    指派主機的負責人。一台主機多列＝多位負責人；<strong>檔案中出現的主機，負責人整組取代</strong>。
+                <p class="lf-text-meta">
+                    一台主機多列＝多位負責人；<strong>檔案中出現的主機，負責人整組取代</strong>。
                     負責人會自動取得所負責主機的檢視權與處理狀態維護權限。
                 </p>
                 <details class="mb-3">
-                    <summary class="small text-muted mb-2 lf-pointer">欄位格式說明</summary>
+                    <summary class="lf-text-meta mb-2 lf-pointer">欄位格式說明</summary>
                     <div class="lf-table-wrap">
                     <table class="table table-sm table-hover align-middle mb-0">
                         <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
@@ -36,6 +36,7 @@
                 <a class="btn btn-sm btn-outline-secondary mb-2" href="@Url.Content("~/api/imports/Owners/template")">下載範本</a>
                 <label for="import-owners-file" class="visually-hidden">選擇要上傳的負責人 CSV 檔</label>
                 <input type="file" class="form-control form-control-sm" id="import-owners-file" accept=".csv" data-upload="Owners" />
+                <div id="import-status" class="mt-2"></div>
             </div>
         </div>
     </div>
@@ -43,7 +44,7 @@
 
 <div class="lf-card mt-3 d-none" id="preview-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">預覽 <span class="text-muted small" id="preview-file"></span></h2>
+        <h2 class="lf-card__title">預覽 <span class="lf-text-meta" id="preview-file"></span></h2>
         <div class="d-flex gap-2">
             <button type="button" class="btn btn-sm btn-outline-secondary" id="preview-cancel">取消</button>
             <button type="button" class="btn btn-sm btn-primary" id="preview-apply">套用</button>
@@ -57,7 +58,7 @@
 </div>
 
 <div class="lf-card mt-3" id="encoding-note">
-    <div class="lf-card__body small text-muted">
+    <div class="lf-card__body lf-text-meta">
         檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，
         否則中文欄位會變成亂碼。
     </div>
@@ -66,10 +67,10 @@
 <div class="lf-card mt-3">
     <div class="lf-card__header">
         <h2 class="lf-card__title">匯入紀錄</h2>
-        <span tabindex="0" data-bs-toggle="popover"
-              data-bs-content="含歷次 CSV 匯入與 NetIQ 掃描匯入的結果。已退役的匯入類型（使用者／主機／群組授權）的歷史紀錄仍保留在這裡——匯入紀錄是稽核性質的歷史事實。">
+        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                data-bs-content="含歷次 CSV 匯入與 NetIQ 掃描匯入的結果。已退役的匯入類型（使用者／主機／群組授權）的歷史紀錄仍保留在這裡——匯入紀錄是稽核性質的歷史事實。" aria-label="匯入紀錄說明">
             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-        </span>
+        </button>
     </div>
     <div class="lf-card__body p-0" id="import-logs"></div>
 </div>

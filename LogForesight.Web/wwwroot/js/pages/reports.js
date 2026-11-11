@@ -292,7 +292,7 @@ function renderKpi() {
                 ? comparisonBadge(card.value, card.previous)
                 : card.hint
         }))
-    }]));
+    }], { singleRow: true }));   // 一屏化：四張卡排同一排，不佔兩排高度（卡不夠寬時才自動換行）
     container.appendChild(col);
 }
 
@@ -302,16 +302,15 @@ function renderKpi() {
  */
 function comparisonBadge(current, previous) {
     const wrap = document.createElement('div');
-    wrap.className = 'small';
 
     if (previous === 0 && current === 0) {
-        wrap.className += ' text-muted';
+        wrap.className = 'lf-text-meta';
         wrap.textContent = '與前期相同';
         return wrap;
     }
 
     if (previous === 0) {
-        wrap.className += ' text-danger';
+        wrap.className = 'lf-text-alert';
         wrap.textContent = `↑ 前期為 0`;
         return wrap;
     }
@@ -320,13 +319,13 @@ function comparisonBadge(current, previous) {
     const percent = Math.round((delta / previous) * 100);
 
     if (delta === 0) {
-        wrap.className += ' text-muted';
+        wrap.className = 'lf-text-meta';
         wrap.textContent = '與前期持平';
     } else if (delta > 0) {
-        wrap.className += ' text-danger';
+        wrap.className = 'lf-text-alert';
         wrap.textContent = `↑ ${percent}%（前期 ${formatNumber(previous)}）`;
     } else {
-        wrap.className += ' text-success';
+        wrap.className = 'lf-text-meta';
         wrap.textContent = `↓ ${Math.abs(percent)}%（前期 ${formatNumber(previous)}）`;
     }
 

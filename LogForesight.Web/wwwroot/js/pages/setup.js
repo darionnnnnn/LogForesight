@@ -8,7 +8,8 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { toast, withBusy, guardLoad } from '../core/ui.js';
+import { toast, withBusy, guardLoad, button, linkButton } from '../core/ui.js';
+import { roleText, statusNote } from '../core/elements.js';
 import { statusBadge } from '../core/format.js';
 
 const stepsContainer = document.getElementById('setup-steps');
@@ -178,8 +179,8 @@ function renderProgress() {
 }
 
 // 三態共用一份定義（回饋十八輪體檢輪修正）：狀態字典 dot 顏色與 lf-badge 變體都從同一個
-// stepState() 結果查表，兩者不會各自判斷而彼此漂移。dot 顏色走 site.css tokens（終檢輪修正：
-// 原本硬編字面值，site.css 換色時這裡會漂移）。
+// stepState() 結果查表，兩者不會各自判斷而彼此漂移。dot 顏色走樣式表 tokens（終檢輪修正：
+// 原本硬編字面值，樣式表 換色時這裡會漂移）。
 const STEP_STATE_META = {
     done: { dot: 'var(--lf-success)', badgeVariant: 'success', badgeText: '已完成' },
     skipped: { dot: 'var(--lf-gray-400)', badgeVariant: 'secondary', badgeText: '已跳過' },
@@ -213,16 +214,13 @@ function renderSteps() {
         const titleRow = document.createElement('div');
         titleRow.className = 'd-flex align-items-center gap-2 flex-wrap';
 
-        const title = document.createElement('span');
-        title.className = 'fw-semibold';
-        title.textContent = `${index + 1}. ${step.title}`;
-        titleRow.appendChild(title);
+        titleRow.appendChild(roleText('lf-text-title', `${index + 1}. ${step.title}`));
 
         titleRow.appendChild(statusBadge(meta.badgeText, meta.badgeVariant));
         body.appendChild(titleRow);
 
         const detail = document.createElement('div');
-        detail.className = 'small text-muted mt-1';
+        detail.className = 'lf-text-meta mt-1';
         detail.textContent = step.detail;
         body.appendChild(detail);
 
@@ -238,19 +236,11 @@ function renderSteps() {
         actions.className = 'd-flex gap-2 mt-2';
 
         if (step.targetUrl && !step.done && step.id !== 'ad' && step.id !== 'mail' && step.id !== 'ai') {
-            const goButton = document.createElement('a');
-            goButton.className = 'btn btn-sm btn-primary';
-            goButton.href = buildSetupTargetUrl(step.targetUrl);
-            goButton.textContent = '前往設定';
-            actions.appendChild(goButton);
+            actions.appendChild(linkButton('前往設定', buildSetupTargetUrl(step.targetUrl), { variant: 'primary' }));
         }
 
         if (step.canSkip && !step.done) {
-            const skipButton = document.createElement('button');
-            skipButton.type = 'button';
-            skipButton.className = 'btn btn-sm btn-outline-secondary';
-            skipButton.textContent = step.skipped ? '取消跳過' : '跳過此步';
-            skipButton.addEventListener('click', () => toggleSkip(step, skipButton));
+            const skipButton = button(step.skipped ? '取消跳過' : '跳過此步', { variant: 'outline-secondary', onClick: () => toggleSkip(step, skipButton) });
             actions.appendChild(skipButton);
         }
 
@@ -262,6 +252,11 @@ function renderSteps() {
     });
 
     stepsContainer.appendChild(list);
+}
+
+/** 測試與儲存的結果訊息：statusNote 取代整格內容（error 帶 role=alert）；type 為 null 時清空 */
+function showNote(el, type, text) {
+    el.replaceChildren(...(type ? [statusNote(type, text)] : []));
 }
 
 function renderAdInlineForm(step) {
@@ -294,28 +289,24 @@ function renderAdInlineForm(step) {
     saveBtn.type = 'button';
 
     testBtn.addEventListener('click', async () => {
-        testResult.textContent = '';
-        testResult.className = 'mt-2 small';
+        showNote(testResult, null);
 
         const servers = parseServers(serversInput.value);
         const account = accountInput.value.trim();
         const password = passwordInput.value;
 
         if (servers.length === 0) {
-            testResult.className = 'mt-2 small text-danger';
-            testResult.textContent = '請至少輸入一台 AD 伺服器。';
+            showNote(testResult, 'error', '請至少輸入一台 AD 伺服器。');
             serversInput.focus();
             return;
         }
         if (!account) {
-            testResult.className = 'mt-2 small text-danger';
-            testResult.textContent = '請輸入測試帳號。';
+            showNote(testResult, 'error', '請輸入測試帳號。');
             accountInput.focus();
             return;
         }
         if (!password) {
-            testResult.className = 'mt-2 small text-danger';
-            testResult.textContent = '請輸入測試密碼。';
+            showNote(testResult, 'error', '請輸入測試密碼。');
             passwordInput.focus();
             return;
         }
@@ -332,20 +323,17 @@ function renderAdInlineForm(step) {
                 account,
                 password
             });
-            testResult.className = result.success ? 'mt-2 small text-success' : 'mt-2 small text-danger';
-            testResult.textContent = result.message;
+            showNote(testResult, result.success ? 'success' : 'error', result.message);
         } catch (err) {
             // API exception 由 api.js 顯示（api.js 自動 toast），但表單不可清空
-            testResult.className = 'mt-2 small text-danger';
-            testResult.textContent = err?.message || '測試連線失敗。';
+            showNote(testResult, 'error', err?.message || '測試連線失敗。');
         } finally {
             restore();
         }
     });
 
     saveBtn.addEventListener('click', async () => {
-        saveFeedback.textContent = '';
-        saveFeedback.className = 'small';
+        showNote(saveFeedback, null);
 
         const adAuthEnabled = enabledCheckbox.checked;
         const adServers = parseServers(serversInput.value);
@@ -353,8 +341,7 @@ function renderAdInlineForm(step) {
         const adSearchFilter = searchFilterInput.value.trim();
 
         if (adAuthEnabled && adServers.length === 0) {
-            saveFeedback.className = 'small text-danger';
-            saveFeedback.textContent = '啟用 AD 驗證時，請至少輸入一台 AD 伺服器。';
+            showNote(saveFeedback, 'error', '啟用 AD 驗證時，請至少輸入一台 AD 伺服器。');
             serversInput.focus();
             return;
         }
@@ -378,8 +365,7 @@ function renderAdInlineForm(step) {
                 target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }
         } catch (err) {
-            saveFeedback.className = 'small text-danger';
-            saveFeedback.textContent = err?.message || '儲存設定失敗。';
+            showNote(saveFeedback, 'error', err?.message || '儲存設定失敗。');
         } finally {
             restore();
         }
@@ -420,8 +406,7 @@ function renderMailInlineForm(step) {
     saveBtn.type = 'button';
 
     testBtn.addEventListener('click', async () => {
-        testResult.textContent = '';
-        testResult.className = 'small';
+        showNote(testResult, null);
 
         const smtpServer = smtpServerInput.value.trim();
         const portVal = smtpPortInput.value.trim();
@@ -433,29 +418,25 @@ function renderMailInlineForm(step) {
         const recipients = parseRecipients(mailRecipientsInput.value);
 
         if (!smtpServer) {
-            testResult.className = 'small text-danger';
-            testResult.textContent = '請輸入 SMTP 伺服器。';
+            showNote(testResult, 'error', '請輸入 SMTP 伺服器。');
             smtpServerInput.focus();
             return;
         }
 
         if (!portVal || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
-            testResult.className = 'small text-danger';
-            testResult.textContent = 'SMTP Port 必須介於 1~65535。';
+            showNote(testResult, 'error', 'SMTP Port 必須介於 1~65535。');
             smtpPortInput.focus();
             return;
         }
 
         if (!mailFrom) {
-            testResult.className = 'small text-danger';
-            testResult.textContent = '請輸入寄件人。';
+            showNote(testResult, 'error', '請輸入寄件人。');
             mailFromInput.focus();
             return;
         }
 
         if (recipients.length === 0) {
-            testResult.className = 'small text-danger';
-            testResult.textContent = '請至少輸入一位收件人。';
+            showNote(testResult, 'error', '請至少輸入一位收件人。');
             mailRecipientsInput.focus();
             return;
         }
@@ -473,19 +454,16 @@ function renderMailInlineForm(step) {
                 subjectTemplate: settingsSnapshot?.mailSubjectTemplate ?? '',
                 bodyIntro: settingsSnapshot?.mailBodyIntro ?? ''
             }, { silent: true });
-            testResult.className = result.success ? 'small text-success' : 'small text-danger';
-            testResult.textContent = result.message;
+            showNote(testResult, result.success ? 'success' : 'error', result.message);
         } catch (err) {
-            testResult.className = 'small text-danger';
-            testResult.textContent = err?.message || '測試寄信失敗。';
+            showNote(testResult, 'error', err?.message || '測試寄信失敗。');
         } finally {
             restore();
         }
     });
 
     saveBtn.addEventListener('click', async () => {
-        saveFeedback.textContent = '';
-        saveFeedback.className = 'small';
+        showNote(saveFeedback, null);
 
         const mailEnabled = enabledCheckbox.checked;
         const smtpServer = smtpServerInput.value.trim();
@@ -499,30 +477,26 @@ function renderMailInlineForm(step) {
         const mailOnRunCompleted = mailOnRunCompletedCheckbox.checked;
 
         if (!portVal || !Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
-            saveFeedback.className = 'small text-danger';
-            saveFeedback.textContent = 'SMTP Port 必須介於 1~65535。';
+            showNote(saveFeedback, 'error', 'SMTP Port 必須介於 1~65535。');
             smtpPortInput.focus();
             return;
         }
 
         if (mailEnabled) {
             if (!smtpServer) {
-                saveFeedback.className = 'small text-danger';
-                saveFeedback.textContent = '請輸入 SMTP 伺服器。';
+                showNote(saveFeedback, 'error', '請輸入 SMTP 伺服器。');
                 smtpServerInput.focus();
                 return;
             }
 
             if (!mailFrom) {
-                saveFeedback.className = 'small text-danger';
-                saveFeedback.textContent = '請輸入寄件人。';
+                showNote(saveFeedback, 'error', '請輸入寄件人。');
                 mailFromInput.focus();
                 return;
             }
 
             if (mailRecipients.length === 0) {
-                saveFeedback.className = 'small text-danger';
-                saveFeedback.textContent = '請至少輸入一位收件人。';
+                showNote(saveFeedback, 'error', '請至少輸入一位收件人。');
                 mailRecipientsInput.focus();
                 return;
             }
@@ -535,8 +509,7 @@ function renderMailInlineForm(step) {
             if (mailEnabled) {
                 const hasAnyTrigger = mailOnRunCompleted || Boolean(latest?.mailDailyEnabled || latest?.mailWeeklyEnabled || latest?.mailUrgentEnabled);
                 if (!hasAnyTrigger) {
-                    saveFeedback.className = 'small text-danger';
-                    saveFeedback.textContent = '請至少勾選一項通知觸發（請勾選「執行摘要」）。';
+                    showNote(saveFeedback, 'error', '請至少勾選一項通知觸發（請勾選「執行摘要」）。');
                     mailOnRunCompletedCheckbox.focus();
                     return;
                 }
@@ -564,8 +537,7 @@ function renderMailInlineForm(step) {
                 target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }
         } catch (err) {
-            saveFeedback.className = 'small text-danger';
-            saveFeedback.textContent = err?.message || '儲存設定失敗。';
+            showNote(saveFeedback, 'error', err?.message || '儲存設定失敗。');
         } finally {
             restore();
         }
@@ -609,8 +581,7 @@ function renderAiInlineForm(step) {
     updateFields(currentProvider);
 
     saveTestBtn.addEventListener('click', async () => {
-        feedback.textContent = '';
-        feedback.className = 'small';
+        showNote(feedback, null);
 
         const provider = providerSelect.value;
         const baseUrl = baseUrlInput.value.trim();
@@ -622,39 +593,33 @@ function renderAiInlineForm(step) {
 
         if (provider === 'OpenAi') {
             if (!hasApiKey) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 OpenAI 官方 API 時，請輸入 API 金鑰。';
+                showNote(feedback, 'error', '使用 OpenAI 官方 API 時，請輸入 API 金鑰。');
                 apiKeyInput.focus();
                 return;
             }
             if (!model) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 OpenAI 官方 API 時，請輸入模型名稱。';
+                showNote(feedback, 'error', '使用 OpenAI 官方 API 時，請輸入模型名稱。');
                 modelInput.focus();
                 return;
             }
         } else if (provider === 'AzureOpenAi') {
             if (!baseUrl) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 Azure OpenAI 時，請輸入端點位址。';
+                showNote(feedback, 'error', '使用 Azure OpenAI 時，請輸入端點位址。');
                 baseUrlInput.focus();
                 return;
             }
             if (!azureDeployment) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 Azure OpenAI 時，請輸入部署名稱。';
+                showNote(feedback, 'error', '使用 Azure OpenAI 時，請輸入部署名稱。');
                 azureDepInput.focus();
                 return;
             }
             if (!azureApiVersion) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 Azure OpenAI 時，請輸入 API 版本。';
+                showNote(feedback, 'error', '使用 Azure OpenAI 時，請輸入 API 版本。');
                 azureVerInput.focus();
                 return;
             }
             if (!hasApiKey) {
-                feedback.className = 'small text-danger';
-                feedback.textContent = '使用 Azure OpenAI 時，請輸入 API 金鑰。';
+                showNote(feedback, 'error', '使用 Azure OpenAI 時，請輸入 API 金鑰。');
                 apiKeyInput.focus();
                 return;
             }
@@ -686,16 +651,14 @@ function renderAiInlineForm(step) {
                     target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 }
             } else {
-                feedback.className = 'small text-danger';
-                feedback.textContent = `儲存成功但探活失敗：${detail}`;
+                showNote(feedback, 'error', `儲存成功但探活失敗：${detail}`);
                 if (apiKeyHint) {
                     apiKeyHint.textContent = settingsSnapshot?.aiHasApiKey ? '已設定金鑰' : '';
                     if (settingsSnapshot?.aiHasApiKey) apiKeyHint.classList.remove('d-none'); else apiKeyHint.classList.add('d-none');
                 }
             }
         } catch (err) {
-            feedback.className = 'small text-danger';
-            feedback.textContent = err?.message || '儲存或測試 AI 設定失敗。';
+            showNote(feedback, 'error', err?.message || '儲存或測試 AI 設定失敗。');
         } finally {
             restore();
         }
@@ -710,8 +673,8 @@ function stepState(step) {
     return 'pending';
 }
 
-async function toggleSkip(step, button) {
-    const restore = withBusy(button, '處理中');
+async function toggleSkip(step, skipButton) {
+    const restore = withBusy(skipButton, '處理中');
     try {
         status = await api.post(`/api/admin/setup/skip/${encodeURIComponent(step.id)}`, { skipped: !step.skipped });
         render();

@@ -17,6 +17,8 @@ import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
+// 同一個循環 import 安全模式：elements.js 也 import 本檔的 icon()，雙方都只在函式體內使用
+import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
 import { safeStorage } from './storage.js';
 
@@ -109,14 +111,19 @@ const ICON_FALLBACK_LABELS = {
 /**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
+ * variant 只用設計系統白名單（docs/DESIGN-SYSTEM.md §8.3）：primary／outline-primary／outline-secondary／
+ * outline-danger／danger。opens: 'dialog' 表示按了會開 modal 或面板（加 aria-haspopup），
+ * 與就地展開（elements.js disclosure）、換頁（連結）三種語意外觀不同。
  * 只有圖示又沒給 title 時，以圖示名稱查 ICON_FALLBACK_LABELS 補 aria-label（查無則用圖示名稱），
  * 並 console.warn 提醒呼叫端補 title——不擲例外，避免單一呼叫點拖垮整頁。
  */
-export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title } = {}) {
+export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title, opens, className, disabled } = {}) {
     const btn = document.createElement('button');
     btn.type = type;
-    btn.className = `btn btn-${size} btn-${variant}`;
+    btn.className = (size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`) + (className ? ` ${className}` : '');
+    if (disabled) btn.disabled = true;
     if (title) btn.title = title;
+    if (opens === 'dialog') btn.setAttribute('aria-haspopup', 'dialog');
     if (iconName) btn.appendChild(icon(iconName));
     if (text) {
         const span = document.createElement('span');
@@ -130,6 +137,23 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
     }
     if (onClick) btn.addEventListener('click', onClick);
     return btn;
+}
+
+/**
+ * 換頁的動作做成按鈕外觀時用（「下一筆未處理」「開始設定」之類）：仍是 <a href>，
+ * 中鍵／新分頁與瀏覽器的上一頁照常運作。href 由呼叫端以 appUrl() 組好再傳入（可先傳空字串、之後再設）。
+ * variant 同 button() 的白名單。
+ */
+export function linkButton(text, href, { variant = 'outline-primary', size = 'sm', icon: iconName, title } = {}) {
+    const link = document.createElement('a');
+    link.className = size ? `btn btn-${size} btn-${variant}` : `btn btn-${variant}`;
+    if (href) link.href = href;
+    if (title) link.title = title;
+    if (iconName) link.appendChild(icon(iconName));
+    const span = document.createElement('span');
+    span.textContent = text;
+    link.appendChild(span);
+    return link;
 }
 
 /**
@@ -324,7 +348,7 @@ function pageSizeSelect(current, options, onChange) {
     wrap.className = 'lf-page-size';
 
     const label = document.createElement('span');
-    label.className = 'text-muted small';
+    label.className = 'lf-text-meta';
     label.textContent = '每頁顯示';
 
     const select = document.createElement('select');
@@ -686,14 +710,16 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  * onRowToggle（選填）：每次展開／收合都呼叫 onRowToggle(row, expanded, cell)；onRowExpand 只在首次展開呼叫一次，
  * 需要在收合或再展開時做事（例如清掉連動高亮）就用這個；首次展開時 onRowExpand 先於它執行，內容已填好。
+ * rowKey／expandedKeys（選填，一起給）：呼叫端持有 expandedKeys（Set），表格依它決定哪些列一開始就展開，
+ * 並在展開／收合（含 toggleAllTableDetails）時同步更新——同一頁就地重繪後，使用者展開的列維持展開。
  * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
  * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
- * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
+ *樣式表的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
  * caption（選填）：螢幕閱讀器用的隱藏表格標題。
  * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
  * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, onRowToggle, sort, onSort, stickyLastColumn, caption, footer }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, onRowToggle, sort, onSort, stickyLastColumn, caption, footer, rowKey, expandedKeys }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -807,22 +833,33 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             tbody.appendChild(detailRow);
 
             let populated = !!detail;   // eager 版本一開始就已填好；lazy 版本首次展開才填
+            const key = rowKey && expandedKeys ? rowKey(row) : null;
             tr.classList.add('lf-row-expandable');
             // 展開列同樣要鍵盤可達（體檢 H5），另外補 aria-expanded 讓螢幕閱讀器
             // 知道現在是展開還是收合——只有視覺上的箭頭對輔助技術等於沒有狀態
             tr.setAttribute('aria-expanded', 'false');
-            makeRowActivatable(tr, () => {
-                const open = detailRow.classList.toggle('d-none');
-                tr.classList.toggle('lf-row-open', !open);
-                tr.setAttribute('aria-expanded', String(!open));
+            const setExpanded = open => {
+                detailRow.classList.toggle('d-none', !open);
+                tr.classList.toggle('lf-row-open', open);
+                tr.setAttribute('aria-expanded', String(open));
                 // 首次展開才呼叫 onRowExpand 填內容（之後展開/收合重用同一份 DOM）
-                if (!open && !populated && onRowExpand) {
+                if (open && !populated && onRowExpand) {
                     populated = true;
                     onRowExpand(row, cell);
                 }
-                // 每次展開／收合都通知（onRowExpand 只在首次展開呼叫一次，收合與再展開要靠這個）
-                if (onRowToggle) onRowToggle(row, !open, cell);
-            });
+                if (key !== null) {
+                    if (open) expandedKeys.add(key);
+                    else expandedKeys.delete(key);
+                }
+            };
+            // 使用者操作的展開／收合（點列、全部展開）：每次都通知 onRowToggle
+            tr._lfSetExpanded = open => {
+                setExpanded(open);
+                if (onRowToggle) onRowToggle(row, open, cell);
+            };
+            makeRowActivatable(tr, () => tr._lfSetExpanded(detailRow.classList.contains('d-none')));
+            // 重繪前已展開的列直接展開（不是使用者這一次的操作，不通知 onRowToggle）
+            if (key !== null && expandedKeys.has(key)) setExpanded(true);
         }
     }
     table.appendChild(tbody);
@@ -1016,6 +1053,11 @@ export function toggleAllTableDetails(container, expand) {
         : Array.from(rows).some(r => r.getAttribute('aria-expanded') !== 'true');
 
     for (const tr of rows) {
+        // renderTable 建的列走它自己的切換（同步 expandedKeys、lazy 內容、onRowToggle）
+        if (tr._lfSetExpanded) {
+            if ((tr.getAttribute('aria-expanded') === 'true') !== shouldExpand) tr._lfSetExpanded(shouldExpand);
+            continue;
+        }
         const detailRow = tr.nextElementSibling;
         if (!detailRow || !detailRow.classList.contains('lf-row-detail')) continue;
 
@@ -1245,7 +1287,7 @@ function backLinkNode({ href, text = '返回清單' }) {
 }
 
 /**
- * 執行期讀取 CSS 變數（設計 token）：顏色只在 site.css 定義一次，圖表與 style 直塗的地方
+ * 執行期讀取 CSS 變數（設計 token）：顏色只在樣式表定義一次，圖表與 style 直塗的地方
  * （吃不到 CSS class）一律走這裡，不再各自寫死色值。fallback 只在變數不存在時使用。
  */
 export function cssVar(name, fallback = '') {
@@ -1278,7 +1320,7 @@ export function renderLoading(container, rows = 4) {
  */
 export function renderSpinner(container, text = '載入中…') {
     const el = document.createElement('div');
-    el.className = 'text-muted small d-flex align-items-center gap-2';
+    el.className = 'lf-text-meta d-flex align-items-center gap-2';
 
     const spinner = document.createElement('span');
     spinner.className = 'spinner-border spinner-border-sm';
@@ -1321,7 +1363,7 @@ export function checkboxList(container, items, emptyHint, options) {
 
     if (items.length === 0) {
         const hint = document.createElement('div');
-        hint.className = 'text-muted small';
+        hint.className = 'lf-text-meta';
         hint.textContent = emptyHint;
         container.appendChild(hint);
         return;
@@ -1351,7 +1393,7 @@ export function checkboxList(container, items, emptyHint, options) {
     let noMatchHint = null;
     if (filterable) {
         noMatchHint = document.createElement('div');
-        noMatchHint.className = 'text-muted small d-none';
+        noMatchHint.className = 'lf-text-meta d-none';
         noMatchHint.textContent = '沒有符合的項目';
         listRoot.appendChild(noMatchHint);
     }
@@ -1664,7 +1706,8 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             if (fullText) el.title = fullText;
 
             const valueEl = document.createElement('div');
-            valueEl.className = card.variant ? `lf-stat__value text-${card.variant}` : 'lf-stat__value';
+            // 數字顏色走 KPI 自己的修飾類別（danger＝風險狀態紅、warning＝琥珀、secondary＝次要灰），不借 Bootstrap 的 text-* 工具類
+            valueEl.className = card.variant ? `lf-stat__value lf-stat__value--${card.variant}` : 'lf-stat__value';
             valueEl.textContent = card.value;
 
             const labelEl = document.createElement('div');
@@ -1856,7 +1899,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
     return { selected, rowCheckboxCell, selectAllHeaderCheckbox, sync, renderBar, clear };
 }
 
-/** 長文字收合的字數門檻：超過才收合並出現「展開…」。 */
+/** 長文字收合的字數門檻：超過才收合並出現「全文」切換鈕。 */
 const COLLAPSE_LIMIT = 300;
 
 // 純文字收合元件的列印處理：全站只掛一組 beforeprint／afterprint 監聽。
@@ -1894,7 +1937,8 @@ function hookCollapsiblePrint() {
  * - 區塊模式（容器有子元素，如 markdown 渲染結果）：不動內容，以 CSS 高度＋漸層遮罩收合
  *   （.lf-collapsible--clamped）。
  * 列印時一律看得到全文：區塊模式由 @media print 解除，純文字模式在 beforeprint 寫回全文。
- * 按鈕放在可點擊展開的表格列裡，click 必須 stopPropagation，避免連帶觸發列展開。
+ * 切換鈕是共用的 disclosure（標籤「全文」、箭頭與 aria-expanded 表達狀態，click 已 stopPropagation，
+ * 放在可點擊展開的表格列裡不會連帶觸發列展開）。
  */
 export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
     const fullText = container.textContent || '';
@@ -1923,11 +1967,6 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-collapsible';
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-link btn-sm p-0 lf-no-print lf-collapsible__toggle';
-    toggle.setAttribute('aria-controls', container.id);
-
     let collapsed = true;
     const apply = () => {
         if (blockMode) {
@@ -1936,19 +1975,15 @@ export function collapsibleText(container, { limit = COLLAPSE_LIMIT } = {}) {
         } else {
             container.textContent = collapsed ? shortText : fullText;
         }
-        toggle.textContent = collapsed ? '展開…' : '收合';
-        const label = collapsed ? `展開全文（共 ${total} 字）` : '收合';
-        toggle.title = label;
-        toggle.setAttribute('aria-label', label);
-        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     };
     apply();
 
-    toggle.addEventListener('click', event => {
-        event.stopPropagation();
-        collapsed = !collapsed;
-        apply();
+    const toggle = disclosure('全文', container, {
+        manageTarget: false,
+        className: 'lf-collapsible__toggle',
+        onToggle: expanded => { collapsed = !expanded; apply(); }
     });
+    toggle.title = `全文共 ${total} 字`;
 
     // 純文字模式的列印：收合中的文字在列印前寫回全文、列印後還原（監聽由 hookCollapsiblePrint 統一掛）
     if (!blockMode) {

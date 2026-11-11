@@ -7,7 +7,7 @@
 
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
-import { icon } from './ui.js';
+import { icon, button, linkButton } from './ui.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 import { safeStorage } from './storage.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
@@ -275,7 +275,7 @@ function setSectionCollapsed(toggle, itemsWrap, collapsed) {
 
 /**
  * 視窗矮到選單放不下時，自動收合「系統管理」（目前唯一可收合的分組）——
- * 側欄現在貼齊視窗高度（見 site.css），選單项目一多就會被裁切、只能内部捲動，
+ * 側欄現在貼齊視窗高度（見樣式表），選單项目一多就會被裁切、只能内部捲動，
  * 這裡讓最常不需要天天點的一組先讓路，而不是預設就要捲動才看得到「報表」在下面。
  * 只在使用者**沒有手動設定過**這組的展開狀態時才自動介入，不覆蓋使用者的明確選擇。
  */
@@ -347,7 +347,7 @@ function bindLogout(user) {
 
 /**
  * 字級偏好（小／中／大）：套在 <html> 的 data-font-scale 上，乘進根字級的縮放倍率
- * （見 site.css）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
+ * （見樣式表）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
  * 回來才縮放造成閃動。中＝預設，不覆寫倍率。
  */
 function initFontScale() {
@@ -478,7 +478,7 @@ function coordinateAlerts() {
     if (summaryEl) {
         if (hiddenCount > 0) {
             summaryEl.textContent = `另有 ${hiddenCount} 則提醒`;
-            summaryEl.className = 'text-muted small py-1 px-1 mb-2 lf-no-print';
+            summaryEl.className = 'lf-text-meta py-1 px-1 mb-2 lf-no-print';
             summaryEl.classList.remove('d-none');
             topContainer.appendChild(summaryEl);
         } else {
@@ -565,7 +565,7 @@ async function loadSetupGuide(user) {
     const totalCount = steps.length;
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 mb-3';
+    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2';
     bar.setAttribute('role', 'status');
 
     const content = document.createElement('div');
@@ -580,7 +580,7 @@ async function loadSetupGuide(user) {
 
         if (nextStep.detail) {
             const detailSpan = document.createElement('div');
-            detailSpan.className = 'text-muted small';
+            detailSpan.className = 'lf-text-meta';
             detailSpan.textContent = nextStep.detail;
             content.appendChild(detailSpan);
         }
@@ -590,16 +590,11 @@ async function loadSetupGuide(user) {
     const actions = document.createElement('div');
     actions.className = 'd-flex align-items-center gap-2';
 
-    const link = document.createElement('a');
-    link.href = appUrl(isFromSetup || !nextStep?.id ? '/setup' : `/setup#${encodeURIComponent(nextStep.id)}`);
-    link.className = 'btn btn-sm btn-primary';
-    link.textContent = isFromSetup ? '返回啟動精靈' : '繼續設定';
+    const link = linkButton(isFromSetup ? '返回啟動精靈' : '繼續設定',
+        appUrl(isFromSetup || !nextStep?.id ? '/setup' : `/setup#${encodeURIComponent(nextStep.id)}`), { variant: 'primary' });
     actions.appendChild(link);
 
-    const hideBtn = document.createElement('button');
-    hideBtn.type = 'button';
-    hideBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted';
-    hideBtn.textContent = '不再顯示';
+    const hideBtn = button('不再顯示');
     hideBtn.addEventListener('click', async () => {
         try {
             await api.put('/api/me/setup-guide', { hidden: true });
@@ -672,7 +667,7 @@ async function refreshRunActivity() {
 function renderRunActivity(activity) {
     if (activity?.isRunning) {
         const bar = document.createElement('div');
-        bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
+        bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2';
         bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
         bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
 
@@ -712,7 +707,7 @@ function caseDaySyncBar(activity) {
     if (pending <= 0) return null;
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-secondary d-flex align-items-center gap-2 py-2 mb-3';
+    bar.className = 'alert alert-secondary d-flex align-items-center gap-2 py-2';
     bar.setAttribute('role', 'status');
     bar.setAttribute('aria-live', 'polite');
 
@@ -761,7 +756,7 @@ async function loadHealthBanner(user) {
     }
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2 mb-3';
+    bar.className = 'alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2';
     bar.setAttribute('role', 'status');
 
     const text = document.createElement('span');

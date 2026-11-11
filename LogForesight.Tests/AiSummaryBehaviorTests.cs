@@ -56,7 +56,7 @@ public class AiSummaryBehaviorTests
     [Fact]
     public void 三格摘要列印時改單欄()
     {
-        var css = ReadWeb("css", "site.css");
+        var css = SiteCss.Read();
         Assert.Matches(new Regex(@"@media print\s*\{\s*\.lf-ai-summary\s*\{\s*grid-template-columns:\s*1fr;"), css);
     }
 }

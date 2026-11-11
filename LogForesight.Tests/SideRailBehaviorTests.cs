@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -24,6 +24,9 @@ public sealed class SideRailBehaviorTests
     [InlineData("side-rail.behavior.mjs", "expandWithoutScrollDoesNotScroll")]
     [InlineData("side-rail.behavior.mjs", "recordDetailUrlHandle")]
     [InlineData("side-rail.behavior.mjs", "isRailModeFollowsLgBreakpoint")]
+    [InlineData("side-rail.behavior.mjs", "wideViewportOpensByDefault")]
+    [InlineData("side-rail.behavior.mjs", "belowWideKeepsCollapsed")]
+    [InlineData("side-rail.behavior.mjs", "wideDefaultThenUserCollapseStaysCollapsed")]
     public void 側軌與詳情連結的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
@@ -94,7 +97,7 @@ public sealed class SideRailBehaviorTests
     [Fact]
     public void 樣式表有側軌兩欄與列印隱藏規則()
     {
-        var css = Read("LogForesight.Web", "wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         Assert.Contains(".lf-detail-layout", css);
         Assert.Contains(".lf-side-rail__btn", css);
         var start = css.IndexOf("風險日詳情兩欄版面與右側側軌", StringComparison.Ordinal);

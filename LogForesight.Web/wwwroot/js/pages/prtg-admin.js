@@ -10,8 +10,9 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
-    collectLines, renderTable, renderError, renderUpdatedAt
+    collectLines, renderTable, renderError, renderUpdatedAt, button as makeButton, headerWithHelp
 } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { initValueReadiness } from './prtg-value-readiness.js';
@@ -56,19 +57,15 @@ function renderAcceptance(allConfirmed) {
         li.dataset.acceptance = item.key;
         li.dataset.state = item.state;
         li.append(document.createTextNode(`${ACCEPTANCE_STATE_TEXT[item.state]}：${item.label}。${item.detail}`));
-        const link = document.createElement(item.path ? 'a' : 'button');
-        if (item.path) link.href = appUrl(item.path);
-        else { link.type = 'button'; link.className = 'btn btn-link btn-sm p-0 align-baseline'; link.addEventListener('click', () => document.querySelector(`#prtg-tabs [data-tab="${item.tab}"]`)?.click()); }
+        const link = document.createElement('a');
+        link.href = item.path ? appUrl(item.path) : `#${item.tab}`;
         link.classList.add('ms-1');
         link.textContent = item.linkText;
         li.appendChild(link);
         list.appendChild(li);
     }
-    const refresh = document.createElement('button');
-    refresh.type = 'button';
-    refresh.className = 'btn btn-outline-secondary btn-sm mt-1';
-    refresh.textContent = '重新確認';
-    refresh.addEventListener('click', refreshAcceptance);
+    const refresh = makeButton('重新確認', { variant: 'outline-secondary', onClick: refreshAcceptance });
+    refresh.classList.add('mt-1');
     host.append(title, list, refresh);
 }
 
@@ -122,9 +119,8 @@ function renderSetupSummary() {
         const item = document.createElement('li');
         item.append(document.createTextNode(`${check.ok ? '已確認' : '待確認'}：${check.label}。`));
         if (!check.ok) {
-            const link = document.createElement(check.href ? 'a' : 'button');
-            if (check.href) link.href = check.href;
-            else { link.type = 'button'; link.className = 'btn btn-link btn-sm p-0 align-baseline'; link.addEventListener('click', () => document.querySelector(`#prtg-tabs [data-tab="${check.tab}"]`)?.click()); }
+            const link = document.createElement('a');
+            link.href = check.href || `#${check.tab}`;
             link.textContent = check.next;
             item.appendChild(link);
         }
@@ -169,15 +165,18 @@ function renderEffectiveness(summary) {
         const card = document.createElement('div');
         card.className = 'border rounded p-3 h-100';
         const heading = document.createElement('div');
-        heading.className = 'small text-muted';
-        heading.textContent = label;
+        heading.className = 'lf-text-label';
+        heading.appendChild(headerWithHelp(label, description));
         const number = document.createElement('div');
-        number.className = 'fs-4 fw-semibold';
+        number.className = 'fs-4 lf-text-title';
         number.textContent = value == null ? '—' : formatNumber(value);
-        const note = document.createElement('div');
-        note.className = 'small text-muted mt-1';
-        note.textContent = value == null ? `${description}目前沒有可計數的資料；目前無法計算（非 0）。` : description;
-        card.append(heading, number, note);
+        card.append(heading, number);
+        if (value == null) {
+            const note = document.createElement('div');
+            note.className = 'lf-text-meta mt-1';
+            note.textContent = '目前沒有可計數的資料；目前無法計算（非 0）。';
+            card.appendChild(note);
+        }
         column.appendChild(card);
         metrics.appendChild(column);
     }
@@ -191,17 +190,12 @@ function renderEffectiveness(summary) {
         const totalMarks = totalFp + totalHandled;
         if (marks.length === 0 || totalMarks === 0) {
             const emptyEl = document.createElement('div');
-            emptyEl.className = 'small text-muted mt-3';
+            emptyEl.className = 'lf-text-meta mt-3';
             emptyEl.textContent = '尚無標記';
             ruleMarks.appendChild(emptyEl);
         } else {
             const wrapper = document.createElement('div');
             wrapper.className = 'mt-3';
-            const note = document.createElement('p');
-            note.className = 'small text-muted mb-2';
-            note.textContent = '分母是已標記的 PRTG 問題';
-            wrapper.appendChild(note);
-
             const marksHost = document.createElement('div');
             renderTable(marksHost, {
                 caption: '分母是已標記的 PRTG 問題',
@@ -234,12 +228,12 @@ async function loadPrtgEffectiveness() {
     error.replaceChildren();
     const rangeError = effectivenessRangeError(fromInput.value, throughInput.value);
     if (rangeError) {
-        status.textContent = rangeError;
-        status.className = 'small mb-3 text-danger';
+        status.className = 'mb-3';
+        status.replaceChildren(statusNote('error', rangeError));
         return;
     }
     const restoreButton = withBusy(button, '查詢中');
-    status.className = 'small mb-3';
+    status.className = 'lf-text-meta mb-3';
     status.textContent = '正在讀取使用效果…';
     error.replaceChildren();
     try {
@@ -252,23 +246,20 @@ async function loadPrtgEffectiveness() {
         if (!hasCount) {
             status.textContent += ' 此期間沒有可計數的資料；若預期應有資料，請先查看環境探測與資料準備度。';
         }
-        status.className = 'small mb-3 text-muted';
+        status.className = 'lf-text-meta mb-3';
     } catch (exception) {
         metrics.classList.add('d-none');
         const ruleMarks = document.getElementById('prtg-effectiveness-rule-marks');
         if (ruleMarks) ruleMarks.replaceChildren();
-        status.textContent = '使用效果載入失敗。';
-        status.className = 'small mb-3 text-danger';
+        status.className = 'mb-3';
+        status.replaceChildren(statusNote('error', '使用效果載入失敗。'));
         const alert = document.createElement('div');
         alert.className = 'alert alert-danger py-2';
         alert.setAttribute('role', 'alert');
         const message = document.createElement('span');
         message.textContent = exception?.message || '目前無法讀取資料。';
-        const retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'btn btn-sm btn-outline-danger ms-2';
-        retry.textContent = '重試';
-        retry.addEventListener('click', loadPrtgEffectiveness);
+        const retry = makeButton('重試', { variant: 'outline-danger', onClick: loadPrtgEffectiveness });
+        retry.classList.add('ms-2');
         alert.append(message, retry);
         error.appendChild(alert);
     } finally {
@@ -331,7 +322,7 @@ function renderSelectedBackfillHosts(hosts) {
     const filtered = (hosts || []).filter(host => `${host.hostName ?? ''} ${host.ipAddress ?? ''}`.toLocaleLowerCase().includes(query));
     if (!filtered.length) {
         const empty = document.createElement('span');
-        empty.className = 'small text-muted';
+        empty.className = 'lf-text-meta';
         empty.textContent = hosts?.length ? '沒有符合的主機。' : '沒有可選的已儲存主機。';
         root.appendChild(empty);
         return;
@@ -437,10 +428,7 @@ function bindSelectedBackfill() {
     }).catch(error => {
         const root = document.getElementById('prtg-selected-backfill-hosts');
         root.replaceChildren();
-        const message = document.createElement('span');
-        message.className = 'small text-danger';
-        message.textContent = `無法載入主機清單：${error?.message || '請重新整理頁面重試。'}`;
-        root.appendChild(message);
+        root.appendChild(statusNote('error', `無法載入主機清單：${error?.message || '請重新整理頁面重試。'}`));
     });
     document.getElementById('prtg-selected-backfill-preview').addEventListener('click', async event => {
         const request = selectedBackfillRequest();
@@ -510,11 +498,11 @@ function renderFullBackfillPreview(preview) {
         `${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata；配額時間下界 ${formatNumber(Math.ceil(preview.historicQuotaLowerBoundSeconds / 60))} 分鐘（不含回應延遲）。`;
     root.appendChild(summary);
     const limits = document.createElement('p');
-    limits.className = 'small text-muted mb-2';
+    limits.className = 'lf-text-meta mb-2';
     limits.textContent = `${preview.daysWithTargets} 天有數值目標；另有 ${formatNumber(preview.stateChangeObjects)} 個狀態變更對象，table 分頁成本未知，故不估總 ETA。${preview.message}`;
     root.appendChild(limits);
     const metadata = document.createElement('p');
-    metadata.className = 'small text-muted text-break mb-2';
+    metadata.className = 'lf-text-meta text-break mb-2';
     metadata.textContent = `預覽版本 ${preview.contractVersion} / ${preview.buildVersion}，有效至 ${formatDateTime(preview.expiresAtUtc)}；起算日 ${preview.planAnchorLocalDate.slice(0, 10)}。設定與範圍版本已綁定。`;
     root.appendChild(metadata);
 
@@ -851,7 +839,7 @@ function bindScopeControls() {
     button.addEventListener('click', async () => {
         const restore = withBusy(button, '估算中');
         result.replaceChildren();
-        result.className = 'small';
+        result.className = '';
         const snapshotResult = document.getElementById('prtg-snapshot-estimate-result');
         snapshotResult?.replaceChildren();
 
@@ -864,8 +852,8 @@ function bindScopeControls() {
                 { silent: true });
 
             if (!res.success) {
-                result.className = 'text-danger small';
-                result.textContent = res.errorMessage || '估算失敗。';
+                result.className = '';
+                result.replaceChildren(statusNote('error', res.errorMessage || '估算失敗。'));
                 return;
             }
 
@@ -873,27 +861,27 @@ function bindScopeControls() {
                 const snapBase = `快照（不受數值取數對象影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
                 const batches = `每輪 ${formatNumber(res.snapshotBatchCount)} 批（每批最多 100 顆）`;
                 if (res.snapshotWarning) {
-                    snapshotResult.className = 'text-warning small d-block';
-                    snapshotResult.textContent = `⚠ ${snapBase}，${batches}——${res.snapshotWarning}`;
+                    snapshotResult.className = 'd-block';
+                    snapshotResult.replaceChildren(statusNote('warning', `${snapBase}，${batches}——${res.snapshotWarning}`));
                 } else {
-                    snapshotResult.className = 'text-muted small d-block';
+                    snapshotResult.className = 'lf-text-meta d-block';
                     snapshotResult.textContent = `${snapBase}，${batches}`;
                 }
             }
 
             if (scope === 'triggered') {
                 if (strategy !== 'aggressive') {
-                    result.className = 'text-muted small';
+                    result.className = 'lf-text-meta';
                     result.textContent = '保守策略不執行夜間逐 sensor 取數；快照規模已列於上方。';
                     return;
                 }
-                result.className = 'text-muted small';
+                result.className = 'lf-text-meta';
                 result.textContent = '只抓觸發主機：數量逐日變動，事前無法估算。';
                 return;
             }
 
             if (strategy !== 'aggressive') {
-                result.className = 'text-muted small';
+                result.className = 'lf-text-meta';
                 result.textContent = '保守策略不執行夜間逐 sensor 取數；快照規模已列於上方。';
                 return;
             }
@@ -903,16 +891,11 @@ function bindScopeControls() {
             const base = `${prefix}主機 ${formatNumber(res.hosts)} 台、device ${formatNumber(res.devices)} 個、` +
                          `sensor ${formatNumber(res.sensors)} 個/晚`;
 
-            if (res.warning) {
-                result.className = 'text-warning small';
-                result.textContent = `⚠ ${base}——${res.warning}`;
-            } else {
-                result.className = 'text-success small';
-                result.textContent = base;
-            }
+            result.className = '';
+            result.replaceChildren(statusNote(res.warning ? 'warning' : 'success', res.warning ? `${base}——${res.warning}` : base));
         } catch (error) {
-            result.className = 'text-danger small';
-            result.textContent = error?.message || '估算失敗。';
+            result.className = '';
+            result.replaceChildren(statusNote('error', error?.message || '估算失敗。'));
         } finally {
             restore();
         }
@@ -945,7 +928,6 @@ function bindPrtgTest() {
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value) || 60
             }, { silent: true });
 
-            const mark = result.success ? '✓' : '✗';
             const saved = setupState.settings;
             const matchesSaved = saved && url === saved.prtgUrl
                 && (document.getElementById('prtg-auth-mode')?.value ?? 'token') === (saved.prtgAuthMode || 'token')
@@ -958,14 +940,15 @@ function bindPrtgTest() {
                 && !document.getElementById('prtg-clear-passhash')?.checked
                 && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
                 && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
-            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
-            resultEl.textContent = result.elapsedMs != null
-                ? `${mark} ${result.message}（耗時 ${result.elapsedMs}ms）`
-                : `${mark} ${result.message}`;
-            if (result.success && !matchesSaved) resultEl.textContent += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
+            let text = result.elapsedMs != null
+                ? `${result.message}（耗時 ${result.elapsedMs}ms）`
+                : `${result.message}`;
+            if (result.success && !matchesSaved) text += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
+            resultEl.className = '';
+            resultEl.replaceChildren(statusNote(result.success ? 'success' : 'error', text));
         } catch (error) {
-            resultEl.className = 'text-danger small';
-            resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;
+            resultEl.className = '';
+            resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
         } finally {
             restore();
         }
@@ -1119,19 +1102,19 @@ function renderPrtgMirror(data) {
     let snapText;
     if (!data.snapshotLastAt) {
         snapText = '數值快照：本次啟動後尚無成功取樣';
-        snapEl?.classList.remove('text-warning');
+        snapEl?.classList.remove('lf-text-alert');
     } else {
         snapText = `數值快照：最近 ${formatDateTime(data.snapshotLastAt)}，${formatNumber(data.snapshotSensors)} 顆，間隔 ${data.snapshotIntervalMinutes} 分鐘`;
         if (data.snapshotBackingOff) {
             snapText += `（PRTG 連續失敗 ${data.snapshotConsecutiveFailures} 次，已自動拉長間隔）`;
-            snapEl?.classList.add('text-warning');
+            snapEl?.classList.add('lf-text-alert');
         } else {
-            snapEl?.classList.remove('text-warning');
+            snapEl?.classList.remove('lf-text-alert');
         }
     }
     if (data.snapshotSkipReason) {
         snapText += `（目前暫停：${data.snapshotSkipReason}）`;
-        snapEl?.classList.add('text-warning');
+        snapEl?.classList.add('lf-text-alert');
     }
     if (data.snapshotPendingSamples > 0)
         snapText += `；等待寫入 ${formatNumber(data.snapshotPendingSamples)} 筆（含本小時樣本）`;
@@ -1162,7 +1145,7 @@ function renderPrtgFreshness(items) {
                 render: f => {
                     if (!f.suspicious) return formatNumber(f.lastCount);
                     const warn = document.createElement('span');
-                    warn.className = 'text-warning fw-semibold';
+                    warn.className = 'lf-text-alert';
                     warn.textContent = `${formatNumber(f.lastCount)}（連續 ${f.zeroStreak} 次取得 0 筆）`;
                     return warn;
                 }
@@ -1530,17 +1513,12 @@ function mirrorKindBadge(item) {
 function mirrorAssignExcludeActions(item) {
     const actions = document.createElement('span');
 
-    const assignBtn = document.createElement('button');
-    assignBtn.type = 'button';
-    assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
-    assignBtn.textContent = '指派';
-    assignBtn.addEventListener('click', () => openAssignModal(item));
+    const assignBtn = makeButton('指派', { variant: 'outline-primary', opens: 'dialog', onClick: () => openAssignModal(item) });
+    assignBtn.classList.add('text-nowrap');
     actions.appendChild(assignBtn);
 
-    const excludeBtn = document.createElement('button');
-    excludeBtn.type = 'button';
-    excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
-    excludeBtn.textContent = '排除此 IP';
+    const excludeBtn = makeButton('排除此 IP', { variant: 'outline-danger' });
+    excludeBtn.classList.add('text-nowrap', 'ms-1');
     if (!item.ip) {
         excludeBtn.disabled = true;
         excludeBtn.title = '此 device 沒有 IP';
@@ -1629,7 +1607,7 @@ function renderUnmappedHosts(items) {
                     if (item.reason === 'conflict') {
                         const link = document.createElement('button');
                         link.type = 'button';
-                        link.className = 'btn btn-link btn-sm p-0 ms-2 align-baseline';
+                        link.className = 'lf-nav-item lf-nav-item--inline ms-2';
                         link.textContent = '到衝突清單處理';
                         link.addEventListener('click', () => {
                             const target = document.getElementById('prtg-conflicts-section');
@@ -1644,11 +1622,8 @@ function renderUnmappedHosts(items) {
                 title: '動作',
                 className: 'lf-w-mdl',
                 render: item => {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
-                    btn.textContent = '指派 PRTG 裝置';
-                    btn.addEventListener('click', () => openHostAssignModal(item));
+                    const btn = makeButton('指派 PRTG 裝置', { variant: 'outline-primary', opens: 'dialog', onClick: () => openHostAssignModal(item) });
+                    btn.classList.add('text-nowrap');
                     return btn;
                 }
             }
@@ -1710,17 +1685,15 @@ function renderIpExcludes(items) {
     renderTable(container, {
         columns: [
             { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
-            { title: '備註', className: 'text-muted', render: item => item.note || '-' },
+            { title: '備註', className: 'lf-text-meta', render: item => item.note || '-' },
             { title: '建立者', className: 'lf-w-md', render: item => item.createdBy || '-' },
             { title: '建立時間', className: 'lf-w-mdl', render: item => (item.createdAt ? formatDateTime(item.createdAt) : '-') },
             {
                 title: '操作',
                 className: 'lf-w-sm',
                 render: item => {
-                    const removeBtn = document.createElement('button');
-                    removeBtn.type = 'button';
-                    removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
-                    removeBtn.textContent = '移除';
+                    const removeBtn = makeButton('移除', { variant: 'outline-danger' });
+                    removeBtn.classList.add('text-nowrap');
                     removeBtn.addEventListener('click', async () => {
                         if (!requireScopeRevision()) return;
                         const confirmed = await confirmAction({
@@ -1779,10 +1752,8 @@ function renderManualMaps(items) {
                 title: '操作',
                 className: 'lf-w-sm',
                 render: item => {
-                    const removeBtn = document.createElement('button');
-                    removeBtn.type = 'button';
-                    removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
-                    removeBtn.textContent = '移除';
+                    const removeBtn = makeButton('移除', { variant: 'outline-danger' });
+                    removeBtn.classList.add('text-nowrap');
                     removeBtn.addEventListener('click', async () => {
                         if (!requireScopeRevision()) return;
                         const confirmed = await confirmAction({
@@ -1930,7 +1901,7 @@ async function searchPrtgDevicesForHost() {
         box.replaceChildren();
         if (items.length === 0) {
             const empty = document.createElement('div');
-            empty.className = 'text-muted small py-2';
+            empty.className = 'lf-text-meta py-2';
             empty.textContent = '找不到符合的 PRTG 裝置。';
             box.appendChild(empty);
             return;
@@ -2271,9 +2242,8 @@ async function refreshRiskReviewPanel(page = riskReviewPage) {
             const navigation = document.createElement('div');
             navigation.append(document.createTextNode(`第 ${page} 頁，共 ${pending.total} 筆。`));
             for (const [label, target, disabled] of [['上一頁', page - 1, page <= 1], ['下一頁', page + 1, page * 50 >= pending.total]]) {
-                const button = document.createElement('button'); button.type = 'button';
-                button.className = 'btn btn-sm btn-outline-secondary ms-2'; button.textContent = label; button.disabled = disabled;
-                button.addEventListener('click', () => refreshRiskReviewPanel(target)); navigation.append(button);
+                const pageButton = makeButton(label, { variant: 'outline-secondary', onClick: () => refreshRiskReviewPanel(target) });
+                pageButton.classList.add('ms-2'); pageButton.disabled = disabled; navigation.append(pageButton);
             }
             riskReviewEl.append(navigation);
         }
@@ -3240,9 +3210,8 @@ if (monitoringForm) {
             panel.append(list);
             if (previewOffset > 0 || data.hasMore) {
                 for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, data.hasMore]]) {
-                    const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-sm btn-outline-secondary me-2';
-                    button.textContent = text; button.disabled = !allowed;
-                    button.addEventListener('click', () => { previewOffset = next; previewScope(); }); panel.append(button);
+                    const pageButton = makeButton(text, { variant: 'outline-secondary', onClick: () => { previewOffset = next; previewScope(); } });
+                    pageButton.classList.add('me-2'); pageButton.disabled = !allowed; panel.append(pageButton);
                 }
             }
         } catch (error) {
@@ -3449,8 +3418,7 @@ if (monitoringForm) {
         const labels = { eligible: '可選', inactive: '已停用', merged: '已合併', 'not-netiq': '非 NetIQ', 'not-visible': '目前不可見', missing: '目錄已移除' };
         for (const host of rows) {
             const label = document.createElement('label'); label.className = 'd-flex align-items-center gap-2 py-1';
-            const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-sm btn-outline-danger';
-            remove.textContent = '移除'; remove.setAttribute('aria-label', `移除已保存主機 ${host.hostId}`);
+            const remove = makeButton('移除', { variant: 'outline-danger' }); remove.setAttribute('aria-label', `移除已保存主機 ${host.hostId}`);
             remove.disabled = !monitoring?.canEdit;
             remove.addEventListener('click', () => {
                 hostSelection.delete(Number(host.hostId));

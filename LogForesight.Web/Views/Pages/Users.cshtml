@@ -35,7 +35,7 @@
 
 <div class="lf-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">使用者 <span class="text-muted small" id="user-count"></span></h2>
+        <h2 class="lf-card__title">使用者 <span class="lf-text-meta" id="user-count"></span></h2>
     </div>
     <div class="lf-card__body p-0" id="user-list"></div>
     <div class="lf-card__body pt-0">
@@ -60,7 +60,7 @@
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6" id="user-account-single-group">
-                            <label for="user-account" class="form-label">帳號 <span class="text-danger">*</span></label>
+                            <label for="user-account" class="form-label">帳號 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="AD 帳號，例如 DOMAIN\user1。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -70,7 +70,7 @@
                         </div>
 
                         <div class="col-12 d-none" id="user-account-batch-group">
-                            <label for="user-accounts-batch" class="form-label">帳號 <span class="text-danger">*</span></label>
+                            <label for="user-accounts-batch" class="form-label">帳號 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="一行一個帳號（也接受逗號分隔）。顯示名稱預設為帳號本身，若之後以 AD 登入會自動補上真實姓名與 Email。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>

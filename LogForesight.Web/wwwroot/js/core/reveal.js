@@ -7,7 +7,7 @@
  *
  * 用 hidden 屬性而不是固定高度＋overflow：被藏的卡仍在 DOM、無障礙樹與畫面一致。
  * `.lf-kpi-card{display:block}` 會蓋過瀏覽器預設的 [hidden]，實際靠 Bootstrap 的
- * `[hidden]{display:none!important}` 生效；列印時由 site.css 還原成全部顯示。
+ * `[hidden]{display:none!important}` 生效；列印時由樣式表還原成全部顯示。
  *
  * 記憶鍵與 bindRememberedCollapse 同一個前綴與 open／closed 值，讀寫各一行不另抽共用函式。
  */

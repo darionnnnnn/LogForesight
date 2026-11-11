@@ -61,8 +61,36 @@ const cases = {
         assert.equal(withoutTitleLine('# 名詞解釋\r\n\r\n## 基本單位\r\n內文'), '\r\n## 基本單位\r\n內文');
         assert.equal(withoutTitleLine('## 直接是段落\n內文'), '## 直接是段落\n內文');
         assert.equal(withoutTitleLine(null), '');
+    },
+    latexArrowConverted() {
+        // AI 回覆中的 $\rightarrow$ 換成「→」，粗體裡的也換（docs/archive/FEEDBACK-69-PLAN.md X1）
+        const text = flatText(render('嘗試登入 $\\rightarrow$ 修改權限 $\\Rightarrow$ 抹除痕跡，**$\\leq$ 3 次**'));
+        assert.equal(text, '嘗試登入 → 修改權限 ⇒ 抹除痕跡，≤ 3 次');
+    },
+    latexLookalikesUntouched() {
+        // 反例：金額、成對 $ 之間是一般文字、認不得的指令、行內代碼——一律原樣
+        assert.equal(flatText(render('授權費 $100')), '授權費 $100');
+        assert.equal(flatText(render('花了 $5 和 $10')), '花了 $5 和 $10');
+        assert.equal(flatText(render('未知 $\\foo$ 指令')), '未知 $\\foo$ 指令');
+        assert.equal(flatText(render('用 `$\\rightarrow$` 表示')), '用 $\\rightarrow$ 表示');
+    },
+    latexDisplayDollarsConverted() {
+        // 雙錢號 $$\to$$ 整組換掉，不留前後各一個錢號；錢號數不成對的不算一組
+        assert.equal(flatText(render('結果 $$\\to$$ 下一步')), '結果 → 下一步');
+        assert.equal(flatText(render('結果 $$\\to$ 下一步')), '結果 $→ 下一步');
     }
 };
+
+function render(text) {
+    const container = new Node('div');
+    renderAiText(container, text);
+    return container;
+}
+function flatText(node) {
+    if (node.tagName === '#text') return node.textContent;
+    if (node.children?.length) return node.children.map(flatText).join('');
+    return node.textContent ?? '';
+}
 
 const name = process.argv[2];
 if (!name) {

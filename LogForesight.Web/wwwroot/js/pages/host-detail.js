@@ -7,8 +7,9 @@
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit, renderPageHeader } from '../core/ui.js';
-import { categoryName, formatDateTime, formatNumber, severityBadge, riskBadge, SEVERITY_ORDER } from '../core/format.js';
+import { renderLoading, renderSpinner, renderTable, button, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
+import { metaLine, roleText, statusNote, fact } from '../core/elements.js';
+import { categoryName, formatDateTime, formatNumber, severityBadge, riskBadge, statusBadge, SEVERITY_ORDER } from '../core/format.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('host-detail');
@@ -72,13 +73,14 @@ async function load() {
 
 function renderCaseGrantScopeNotice(container, message) {
     if (!container) return;
-    const notice = document.createElement('div');
-    notice.className = 'alert alert-info small mb-0';
-    notice.setAttribute('role', 'note');
-    notice.textContent = message;
-    container.replaceChildren(notice);
+    container.replaceChildren(statusNote('info', message));
 }
 
+/**
+ * 頁首卡（DESIGN-SYSTEM §8.5）：主機名稱為主標，作業系統、IP、分級同一列，
+ * 其餘次要資訊（Sentinel、群組、負責人、最近回報、角色說明）收成一行 metaLine；
+ * 頁面層級動作「指定主機更新」放在頁首卡右側。
+ */
 function renderHeader(detail) {
     const card = document.createElement('div');
     card.className = 'lf-card';
@@ -86,62 +88,52 @@ function renderHeader(detail) {
     const body = document.createElement('div');
     body.className = 'lf-card__body';
 
-    // 頁首（renderPageHeader）：副標開頭以強調文字放主機名稱，頁面層級動作放右側
-    const title = document.createElement('strong');
+    const head = document.createElement('div');
+    head.className = 'lf-entity-head';
+
+    const title = document.createElement('h2');
+    title.className = 'lf-entity-head__title';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
-    const actions = [];
+    head.appendChild(title);
+
+    const osBadge = statusBadge(detail.os === 'linux' ? 'Linux' : 'Windows', 'light');
+    osBadge.classList.add('border');
+    head.appendChild(osBadge);
+    if (detail.ipAddress) head.appendChild(roleText('lf-text-meta lf-text-data', detail.ipAddress));
+    head.appendChild(statusBadge(detail.tierText ?? '一般', 'neutral'));
 
     // 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
     // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）。本機主機在「分析本機主機」
-    // 停用時不顯示這顆按鈕（回饋十八輪批次D）：按下去只會打到後端 400，不如不顯示。
+    // 停用時不顯示這顆按鈕：按下去只會打到後端 400，不如不顯示。
+    let hasUpdateButton = false;
     if (canMaintainHost && (detail.source !== 'local' || localAnalysisEnabled)) {
-        const updateButton = document.createElement('button');
-        updateButton.type = 'button';
-        updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';
-        updateButton.textContent = '指定主機更新';
+        const actions = document.createElement('div');
+        actions.className = 'lf-entity-head__actions lf-no-print';
+        const updateButton = button('指定主機更新', {
+            variant: 'outline-primary', size: null, opens: 'dialog',
+            onClick: () => openHostUpdateModal(detail)
+        });
         updateButton.id = 'host-update-open';
-        updateButton.addEventListener('click', () => openHostUpdateModal(detail));
-        actions.push(updateButton);
+        actions.appendChild(updateButton);
+        head.appendChild(actions);
+        hasUpdateButton = true;
     }
+    body.appendChild(head);
 
-    renderPageHeader(document.getElementById('page-header'), {
-        subtitle: title,
-        actions
-    });
-    // 按鈕是每次 load() 重建的，須在頁首渲染（按鈕進 DOM）之後補上目前狀態
-    if (actions.length > 0) applyRunActivityState();
+    const facts = metaLine([
+        fact('所屬 Sentinel', detail.netiqServer || '本機直讀'),
+        fact('主機群組', detail.groupNames.length ? detail.groupNames.join('、') : '未分群'),
+        fact('負責人', detail.ownerNames.length ? detail.ownerNames.join('、') : '未指定'),
+        fact('最近回報', detail.lastReportAt ? formatDateTime(detail.lastReportAt) : '尚未回報'),
+        detail.roleDesc ? fact('角色', detail.roleDesc) : null
+    ]);
+    if (facts) body.appendChild(facts);
 
-    if (detail.roleDesc) {
-        const role = document.createElement('div');
-        role.className = 'text-muted mb-3';
-        role.textContent = detail.roleDesc;
-        body.appendChild(role);
-    }
-
-    const grid = document.createElement('div');
-    grid.className = 'row g-3 small';
-
-    const fields = [
-        ['IP 位址', detail.ipAddress || '未設定'],
-        ['作業系統', detail.os === 'linux' ? 'Linux' : 'Windows'],
-        ['分級', detail.tierText ?? '一般'],
-        ['所屬 Sentinel', detail.netiqServer || '本機直讀'],
-        ['主機群組', detail.groupNames.length ? detail.groupNames.join('、') : '未分群'],
-        ['負責人', detail.ownerNames.length ? detail.ownerNames.join('、') : '未指定'],
-        ['最近回報', detail.lastReportAt ? formatDateTime(detail.lastReportAt) : '尚未回報']
-    ];
-
-    for (const [label, value] of fields) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-md-4 col-lg-2';
-        col.append(...labelValue(label, value));
-        grid.appendChild(col);
-    }
-
-    body.appendChild(grid);
     card.appendChild(body);
     document.getElementById('host-header').replaceChildren(card);
+    // 按鈕是每次 load() 重建的，須在進 DOM 之後補上目前的停用狀態與說明
+    if (hasUpdateButton) applyRunActivityState();
 }
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
@@ -219,7 +211,7 @@ function renderTimeline(detail) {
 
             if (day.riskReportPending === true) {
                 const marker = document.createElement('span');
-                marker.className = 'position-absolute top-0 end-0 small text-warning fw-bold';
+                marker.className = 'position-absolute top-0 end-0 lf-text-label';
                 marker.textContent = '!';
                 marker.setAttribute('aria-hidden', 'true');
                 cell.appendChild(marker);
@@ -269,10 +261,7 @@ function renderLegend() {
         swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--md';
         swatch.style.setProperty('--lf-swatch', item.color);
 
-        const label = document.createElement('span');
-        label.textContent = item.label;
-
-        wrap.append(swatch, label);
+        wrap.append(swatch, roleText('lf-text-meta', item.label));
         legend.appendChild(wrap);
     }
 }
@@ -282,13 +271,13 @@ const ISSUE_COLUMNS = [
         title: '來源 / Event',
         sortKey: 'source',
         sortValue: s => `${s.source} (${s.eventId})`,
-        render: s => `${s.source} (${s.eventId})`
+        render: s => roleText('lf-text-title', `${s.source} (${s.eventId})`)
     },
     {
         title: '分類',
         sortKey: 'category',
         sortValue: s => categoryName(s.category),
-        render: s => categoryName(s.category)
+        render: s => roleText('lf-text-meta', categoryName(s.category))
     },
     {
         title: '嚴重度',
@@ -303,7 +292,7 @@ const ISSUE_COLUMNS = [
         sortKey: 'totalCount',
         sortDefaultDir: 'desc',
         sortValue: s => s.totalCount,
-        render: s => formatNumber(s.totalCount)
+        render: s => roleText('lf-text-data', formatNumber(s.totalCount))
     },
     {
         title: '出現天數',
@@ -311,7 +300,7 @@ const ISSUE_COLUMNS = [
         sortKey: 'daysSeen',
         sortDefaultDir: 'desc',
         sortValue: s => s.daysSeen,
-        render: s => formatNumber(s.daysSeen)
+        render: s => roleText('lf-text-data', formatNumber(s.daysSeen))
     },
     {
         title: '最近出現',
@@ -325,7 +314,7 @@ const ISSUE_COLUMNS = [
         title: '說明',
         sortKey: 'knownIssue',
         sortValue: s => s.knownIssue || '',
-        render: s => s.knownIssue || ''
+        render: s => roleText('lf-text-meta', s.knownIssue || '')
     }
 ];
 
@@ -399,6 +388,7 @@ function lastSeenLink(signature) {
     const link = document.createElement('a');
     link.href = appUrl(`/records/${hostId}/${signature.lastSeenDate}`);
     link.textContent = signature.lastSeenDate;
+    link.className = 'lf-text-data';
     link.title = '前往這天的風險日詳情';
     link.addEventListener('click', event => event.stopPropagation());
     return link;
@@ -415,10 +405,7 @@ function occurrenceDetailPanel(signature) {
     const container = document.createElement('div');
     container.className = 'p-3';
 
-    const placeholder = document.createElement('div');
-    placeholder.className = 'text-muted small';
-    placeholder.textContent = '展開檢視發生明細…';
-    container.appendChild(placeholder);
+    container.appendChild(roleText('lf-text-meta', '展開檢視發生明細…'));
 
     let cachedDates = null;
     let expanded = false;
@@ -446,11 +433,7 @@ function occurrenceDetailPanel(signature) {
             renderOccurrencePanel(container, data);
             if (expanded) claimHighlight(panel, cachedDates);
         } catch {
-            container.replaceChildren();
-            const error = document.createElement('div');
-            error.className = 'text-danger small';
-            error.textContent = '載入發生明細失敗，請重新整理頁面後再試。';
-            container.appendChild(error);
+            container.replaceChildren(statusNote('error', '載入發生明細失敗，請重新整理頁面後再試。'));
             cachedDates = null;   // 失敗不快取，下次展開可以重試
         }
     }
@@ -478,8 +461,6 @@ function occurrenceDetailPanel(signature) {
 function renderOccurrencePanel(container, data) {
     container.replaceChildren();
 
-    const stats = document.createElement('div');
-    stats.className = 'd-flex flex-wrap gap-4 small text-muted mb-3';
     const statParts = [
         `出現 ${data.stats.daysSeen} 天`,
         `總次數 ${formatNumber(data.stats.totalCount)}`,
@@ -487,12 +468,8 @@ function renderOccurrencePanel(container, data) {
         `最長連續 ${data.stats.longestStreak} 天`,
         `首見 ${data.stats.firstSeen}～最近 ${data.stats.lastSeen}`
     ].filter(Boolean);
-    for (const part of statParts) {
-        const span = document.createElement('span');
-        span.textContent = part;
-        stats.appendChild(span);
-    }
-    container.appendChild(stats);
+    const stats = metaLine(statParts, { className: 'mb-3' });
+    if (stats) container.appendChild(stats);
 
     if (data.case) {
         const caseRow = document.createElement('div');
@@ -513,10 +490,7 @@ function renderOccurrencePanel(container, data) {
     }
 
     if (data.occurrences.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'text-muted small';
-        empty.textContent = '目前篩選期間內沒有發生紀錄。';
-        container.appendChild(empty);
+        container.appendChild(roleText('lf-text-meta', '目前篩選期間內沒有發生紀錄。'));
         return;
     }
 
@@ -528,11 +502,12 @@ function renderOccurrencePanel(container, data) {
                 render: occurrence => {
                     const link = document.createElement('a');
                     link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
+                    link.className = 'lf-text-data';
                     link.textContent = occurrence.date;
                     return link;
                 }
             },
-            { title: '當日次數', className: 'text-end', render: occurrence => formatNumber(occurrence.count) },
+            { title: '當日次數', className: 'text-end', render: occurrence => roleText('lf-text-data', formatNumber(occurrence.count)) },
             { title: '日風險', render: occurrence => riskBadge(occurrence.riskLevel) },
             {
                 title: '處理狀態',
@@ -540,9 +515,8 @@ function renderOccurrencePanel(container, data) {
                     const statusCell = document.createElement('span');
                     statusCell.append(document.createTextNode(occurrence.statusText ?? ''));
                     if (occurrence.fromCase) {
-                        const note = document.createElement('span');
-                        note.className = 'text-muted small ms-1';
-                        note.textContent = '（交辦逐日同步）';
+                        const note = roleText('lf-text-meta', '（交辦逐日同步）');
+                        note.classList.add('ms-1');
                         statusCell.appendChild(note);
                     }
                     return statusCell;
@@ -576,10 +550,8 @@ function renderCheckup(detail) {
     document.getElementById('checkup-card').classList.remove('d-none');
     const container = document.getElementById('host-checkup');
 
-    const date = document.createElement('div');
-    date.className = 'text-muted small mb-2';
-    date.textContent = `${detail.latestCheckup.checkupDate}` +
-        (detail.latestCheckup.hasFindings ? '' : '（本期無累積性異常）');
+    const date = metaLine([`${detail.latestCheckup.checkupDate}` +
+        (detail.latestCheckup.hasFindings ? '' : '（本期無累積性異常）')], { className: 'mb-2' });
 
     const conclusion = document.createElement('div');
     renderAiInline(conclusion, detail.latestCheckup.conclusion);
@@ -640,7 +612,7 @@ function ensureRunActivityNotes() {
             inlineNote?.remove();
             inlineNote = document.createElement('span');
             inlineNote.id = 'host-update-busy-note-inline';
-            inlineNote.className = 'small text-muted d-none';
+            inlineNote.className = 'lf-text-meta d-none';
             inlineNote.textContent = RUN_BUSY_NOTE_TEXT;
             openButton.parentElement.appendChild(inlineNote);
         }
@@ -655,7 +627,7 @@ function ensureRunActivityNotes() {
         if (!note) {
             note = document.createElement('div');
             note.id = 'host-update-busy-note';
-            note.className = 'small text-muted mt-2 d-none';
+            note.className = 'lf-text-meta mt-2 d-none';
             note.textContent = RUN_BUSY_NOTE_TEXT;
             modalBody.appendChild(note);
         }
@@ -701,26 +673,15 @@ async function loadPrtgMapping() {
     try {
         const data = await api.get(`/api/host-detail/${hostId}/prtg`, { silent: true });
         if (!data || !data.devices || data.devices.length === 0) {
-            container.replaceChildren();
-            const empty = document.createElement('div');
-            if (data?.ipExcluded) {
-                empty.className = 'text-warning small';
-                empty.textContent = `此主機 IP（${data.excludedIp || ''}）已排除 PRTG 對應，因此不會建立 device 對應，也不會取數。`;
-            } else {
-                empty.className = 'text-muted small';
-                empty.textContent = '這台主機目前沒有對應到 PRTG device';
-            }
-            container.appendChild(empty);
+            container.replaceChildren(data?.ipExcluded
+                ? statusNote('info', `此主機 IP（${data.excludedIp || ''}）已排除 PRTG 對應，因此不會建立 device 對應，也不會取數。`)
+                : roleText('lf-text-meta', '這台主機目前沒有對應到 PRTG device'));
             return;
         }
 
         renderPrtgDevices(container, data);
     } catch {
-        container.replaceChildren();
-        const empty = document.createElement('div');
-        empty.className = 'text-muted small';
-        empty.textContent = '這台主機目前沒有對應到 PRTG device';
-        container.appendChild(empty);
+        container.replaceChildren(roleText('lf-text-meta', '這台主機目前沒有對應到 PRTG device'));
     }
 }
 
@@ -748,9 +709,8 @@ function renderPrtgDevices(container, data) {
     container.replaceChildren();
 
     if (data.ipExcluded) {
-        const warn = document.createElement('div');
-        warn.className = 'text-warning small mb-3';
-        warn.textContent = '此主機 IP 在排除清單中，以下對應來自人工指定。';
+        const warn = statusNote('info', '此主機 IP 在排除清單中，以下對應來自人工指定。');
+        warn.classList.add('mb-3');
         container.appendChild(warn);
     }
 
@@ -761,33 +721,27 @@ function renderPrtgDevices(container, data) {
         const devHeader = document.createElement('div');
         devHeader.className = 'd-flex justify-content-between align-items-center mb-2 flex-wrap gap-2';
 
-        const devTitle = document.createElement('div');
-        devTitle.className = 'fw-semibold';
-        devTitle.textContent = device.name
+        const devTitle = roleText('lf-text-title', device.name
             ? `${device.name}（objid ${device.deviceObjid}${device.ip ? `，${device.ip}` : ''}）`
-            : `PRTG Device: ${device.deviceObjid}${device.ip ? ` (${device.ip})` : ''}`;
+            : `PRTG Device: ${device.deviceObjid}${device.ip ? ` (${device.ip})` : ''}`);
 
-        const devMeta = document.createElement('div');
-        devMeta.className = 'small text-muted';
-        const parts = [];
-        if (device.mapStatus) parts.push(`對應狀態：${device.mapStatus}`);
-        if (data.mapDate) parts.push(`基準日：${data.mapDate.split('T')[0]}`);
-        if (device.note) parts.push(`備註：${device.note}`);
-        devMeta.textContent = parts.join(' ｜ ');
+        const devMeta = metaLine([
+            device.mapStatus ? `對應狀態：${device.mapStatus}` : null,
+            data.mapDate ? `基準日：${data.mapDate.split('T')[0]}` : null,
+            device.note ? `備註：${device.note}` : null
+        ]);
 
-        devHeader.append(devTitle, devMeta);
+        devHeader.append(devTitle);
+        if (devMeta) devHeader.append(devMeta);
         devCard.appendChild(devHeader);
 
         if (!device.sensors || device.sensors.length === 0 || device.sensorCount === 0) {
-            const noSensors = document.createElement('div');
-            noSensors.className = 'text-muted small';
-            noSensors.textContent = 'PRTG 資料準備中：新對應的裝置正在補抓感測器，通常幾分鐘內完成。';
-            devCard.appendChild(noSensors);
+            devCard.appendChild(roleText('lf-text-meta', 'PRTG 資料準備中：新對應的裝置正在補抓感測器，通常幾分鐘內完成。'));
         } else {
             const sensorHost = document.createElement('div');
             renderTable(sensorHost, {
                 columns: [
-                    { title: 'Sensor ID', className: 'font-monospace', render: s => String(s.objid) },
+                    { title: 'Sensor ID', render: s => roleText('lf-text-data', String(s.objid)) },
                     { title: '名稱', truncate: true, render: s => s.name ?? '' },
                     { title: '類型', render: s => s.sensorType || '-' },
                     { title: '分類', render: s => s.category || '—' },
@@ -828,11 +782,25 @@ function renderPrtgDevices(container, data) {
         linkRow.className = 'mt-2';
         const link = document.createElement('a');
         link.href = appUrl('/admin/prtg#probe');
-        link.className = 'small';
         link.textContent = '查看數值資料就緒度';
         linkRow.appendChild(link);
         container.appendChild(linkRow);
     }
+}
+
+// 切換時間軸天數：期間變了，時間軸與重點問題都要重取
+for (const dayButton of document.querySelectorAll('[data-days]')) {
+    dayButton.addEventListener('click', () => {
+        const days = Number(dayButton.dataset.days);
+        if (days === currentDays) return;
+        currentDays = days;
+        for (const other of document.querySelectorAll('[data-days]')) {
+            const active = other === dayButton;
+            other.classList.toggle('active', active);
+            other.setAttribute('aria-pressed', String(active));
+        }
+        guardLoad([document.getElementById('host-timeline'), document.getElementById('host-issues')], load);
+    });
 }
 
 guardLoad([

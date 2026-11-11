@@ -78,7 +78,25 @@ const api = {
 };
 const appUrl = path => path;
 const formatDate = value => value || '';
+const formatDateTime = value => String(value || '');
+const ORIGIN_LABELS = {};
 const statusBadge = label => String(label);
+// 共用元素工廠（core/ui.js button、core/elements.js roleText／metaLine）的最小替身；本測試只看 carry 的傳遞
+const roleText = (role, text) => { const span = document.createElement('span'); span.className = role; span.textContent = text ?? ''; return span; };
+const metaLine = items => {
+    const valid = (items || []).filter(item => item !== null && item !== undefined && item !== '' && item !== false);
+    if (valid.length === 0) return null;
+    const line = document.createElement('div');
+    for (const item of valid) line.appendChild(typeof item === 'object' ? item : roleText('', String(item)));
+    return line;
+};
+const button = (text, { onClick } = {}) => {
+    const el = document.createElement('button');
+    el.className = 'btn';
+    el.textContent = text;
+    if (onClick) el.addEventListener('click', onClick);
+    return el;
+};
 const renderLoading = () => { };
 const renderPagination = () => { };
 const toastReplyResult = () => { };

@@ -172,7 +172,9 @@ console.log('PASS_ALERT_COORDINATION');
         var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "settings.js");
         Assert.Contains("api.get('/api/me/setup-guide'", js);
         Assert.Contains("api.put('/api/me/setup-guide', { hidden: false })", js);
-        Assert.Contains("btn.type = 'button'", js);
+        // 按鈕改經共用 button() 工廠；表單內不得變成 submit，由工廠的 type 預設值 'button' 保證
+        Assert.Contains("uiButton('重新顯示初始設定引導', { variant: 'outline-secondary' })", js);
+        Assert.Contains("type = 'button'", Read("LogForesight.Web", "wwwroot", "js", "core", "ui.js"));
         Assert.Contains("重新顯示初始設定引導", js);
         Assert.Contains("引導會在初始設定完成前顯示", js);
     }

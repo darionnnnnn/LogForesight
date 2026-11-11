@@ -20,6 +20,7 @@ public sealed class RecordDetailRailBehaviorTests
     [InlineData("record-detail-rail.behavior.mjs", "noHashDoesNotTouchHistory")]
     [InlineData("record-detail-rail.behavior.mjs", "summaryShowsOverdueSuffixAndLogCount")]
     [InlineData("record-detail-rail.behavior.mjs", "expandForSelectionRules")]
+    [InlineData("record-detail-rail.behavior.mjs", "expandForSelectionKeepsAnchorInView")]
     [InlineData("record-detail-rail.behavior.mjs", "selectionCountShownInSummary")]
     [InlineData("record-detail-rail.behavior.mjs", "selectionPathsBothRefreshSummary")]
     [InlineData("record-detail-rail.behavior.mjs", "briefCopyUsesRenderedText")]
@@ -44,7 +45,7 @@ public sealed class RecordDetailRailBehaviorTests
     [Fact]
     public void 側軌收合鈕在小螢幕與列印維持隱藏()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        var css = SiteCss.Read().Replace("\r\n", "\n");
         Assert.Contains(".lf-side-rail,\n.lf-side-rail__collapse {\n    display: none;\n}", css);
         Assert.Contains("@media print {\n    .lf-side-rail,\n    .lf-side-rail__collapse {\n        display: none !important;\n    }", css);
         // 展開才顯示收合鈕，且只在 >= lg 的區塊內
@@ -70,8 +71,8 @@ public sealed class RecordDetailRailBehaviorTests
         Assert.Contains("if (!sideRail) {", js);
         Assert.Contains("if (!currentDetail.caseGrantOnly) sideRail = setupSideRail();", js);
         Assert.Contains("else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');", js);
-        // 單列與表頭全選兩條勾選路徑都要自動展開並更新摘要
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"if \(check\.checked\) expandSideRailForSelection\(\);").Count);
+        // 單列與表頭全選兩條勾選路徑都要自動展開並更新摘要；傳入剛勾的勾選框，展開後捲回它原本的視窗位置
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"if \(check\.checked\) expandSideRailForSelection\(check\);").Count);
         Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(js, @"^\s+refreshRailSelectionSummary\(\);", System.Text.RegularExpressions.RegexOptions.Multiline).Count);
     }
 }

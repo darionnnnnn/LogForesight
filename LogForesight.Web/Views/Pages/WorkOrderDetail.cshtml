@@ -1,14 +1,18 @@
 ﻿@{
     ViewData["Title"] = "交辦單";
+    ViewData["ContentWidth"] = "bounded";
 }
 
 <div id="wo-detail" data-work-order-id="@ViewData["WorkOrderId"]">
     <section class="lf-card">
-        <div class="lf-card__header">
-            <h2 class="lf-card__title" id="wo-title"></h2>
-            <div class="d-flex align-items-center gap-2" id="wo-actions"></div>
+        <div class="lf-card__body">
+            <div class="lf-entity-head">
+                <h2 class="lf-entity-head__title" id="wo-title"></h2>
+                <span class="lf-entity-head__badges" id="wo-badges"></span>
+                <div class="lf-entity-head__actions lf-no-print" id="wo-actions"></div>
+            </div>
+            <div id="wo-header"></div>
         </div>
-        <div class="lf-card__body" id="wo-header"></div>
     </section>
 
     <section class="lf-card mt-3">
@@ -16,7 +20,7 @@
             <h2 class="lf-card__title">成員</h2>
             <div class="d-flex flex-wrap align-items-center gap-2">
                 <div class="d-flex align-items-center gap-1">
-                    <label for="wo-member-status" class="form-label mb-0 text-muted small text-nowrap">狀態</label>
+                    <label for="wo-member-status" class="lf-text-label text-nowrap">狀態</label>
                     <select id="wo-member-status" class="form-select form-select-sm w-auto">
                         <option value="active" selected>進行中</option>
                         <option value="escalated">上報中</option>
@@ -26,12 +30,12 @@
                     </select>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="wo-member-csv">複製 CSV</button>
-                <button type="button" class="btn btn-sm btn-outline-primary d-none" id="wo-member-split" disabled>拆出選取的主機</button>
-                <button type="button" class="btn btn-sm btn-outline-primary d-none" id="wo-member-reply" disabled>回覆選取的主機</button>
+                <button type="button" class="btn btn-sm btn-outline-primary d-none" id="wo-member-split" aria-haspopup="dialog" disabled>拆出選取的主機</button>
+                <button type="button" class="btn btn-sm btn-outline-primary d-none" id="wo-member-reply" aria-haspopup="dialog" disabled>回覆選取的主機</button>
             </div>
         </div>
         <div class="lf-card__body">
-            <div id="wo-member-note" class="small text-muted mb-3 d-none"></div>
+            <div id="wo-member-note" class="lf-text-meta mb-3 d-none"></div>
             <div id="wo-members"></div>
             <nav id="wo-member-pager" class="mt-3"></nav>
         </div>

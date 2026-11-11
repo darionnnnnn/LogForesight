@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace LogForesight.Tests;
 
@@ -16,6 +16,7 @@ public sealed class CollapsibleWordingUiTests
     [Theory]
     [InlineData("顯示全文（")]
     [InlineData("檢視來源觀測")]
+    [InlineData("展開…")]   // 就地展開一律是 disclosure（標籤寫所指對象，如「全文」「佐證」）
     public void 前端與說明書不再出現舊的收合字樣(string retired)
     {
         var web = Path.Combine(FindRepoRoot(), "LogForesight.Web");

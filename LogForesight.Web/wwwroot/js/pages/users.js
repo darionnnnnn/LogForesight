@@ -2,6 +2,7 @@
  * 使用者維護（docs/WEB-SPEC.md §9.8）。
  */
 
+import { roleText } from '../core/elements.js';
 import { api } from '../core/api.js';
 import {
     renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
@@ -78,9 +79,9 @@ function setupToolbar() {
 }
 
 const USER_COLUMNS = [
-    { title: '帳號', sortKey: 'account', sortValue: u => u.account, render: u => u.account },
-    { title: '顯示名稱', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => u.displayName },
-    { title: 'Email', render: u => u.email ?? '' },
+    { title: '帳號', sortKey: 'account', sortValue: u => u.account, render: u => roleText('lf-text-title', u.account) },
+    { title: '顯示名稱', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => roleText('lf-text-meta', u.displayName ?? '') },
+    { title: 'Email', render: u => roleText('lf-text-meta', u.email ?? '') },
     { title: '群組', render: u => renderGroupBadges(u) },
     {
         title: '上次登入',
@@ -163,7 +164,7 @@ function renderGroupBadges(user) {
 
     if (!user.groupNames || user.groupNames.length === 0) {
         const span = document.createElement('span');
-        span.className = 'text-muted';
+        span.className = 'lf-text-meta';
         // **只陳述事實，不下權限結論**（體檢 H3）：回饋第十一輪 §2b 讓負責人成為
         // 群組之外的第二條授權路徑之後，「沒有群組」不再等於「沒有任何權限」——
         // 舊文案會讓管理者盤點時誤判「這個人沒權限，可以不用管」。
@@ -194,11 +195,11 @@ function renderGroupBadges(user) {
 function renderLastLogin(lastLoginAt) {
     if (!lastLoginAt) {
         const span = document.createElement('span');
-        span.className = 'text-muted small';
+        span.className = 'lf-text-meta';
         span.textContent = '從未登入';
         return span;
     }
-    return formatDateTime(lastLoginAt);
+    return roleText('lf-text-data', formatDateTime(lastLoginAt));
 }
 
 function renderDispatchPausedToggle(user) {

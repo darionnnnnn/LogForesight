@@ -167,7 +167,7 @@ public class NoteEditorUiTests
     [Fact]
     public void 版面樣式_含說明欄尾區與處理面板chips格線與動作區()
     {
-        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css")).Replace("\r\n", "\n");
+        var css = SiteCss.Read().Replace("\r\n", "\n");
         Assert.Contains(".lf-note-editor__tail", css);
         Assert.Contains(".lf-form-actions", css);
         var chips = css.IndexOf(".lf-handling__chips {", StringComparison.Ordinal);

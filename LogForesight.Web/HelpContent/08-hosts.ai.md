@@ -5,7 +5,7 @@
 - **頁面路徑**：
   - 主機管理頁面：`/admin/hosts`。
   - 群組與授權管理頁面：`/admin/groups`（包含「使用者群組」、「主機群組」、「授權矩陣」三個分頁）。
-  - 單一主機詳情／時間軸：`/hosts/{id}`。
+  - 單一主機詳情／時間軸：`/hosts/{id}`。頁首卡放主機名稱、作業系統、IP、分級，「指定主機更新」在卡片右側；時間軸卡右上角可切換 14／30／90 天。
 - **存取權限**：`/admin/hosts` 與 `/admin/groups` 需要 `Capability.Maintain`（`admin` 與 `serverAdmin` 角色具備）。
 - **後端端點**：
   - 主機清單分頁查詢：`GET /api/admin/hosts`（支援 `query`, `status`, `sentinel`, `groupIds`, `os`, `sort`, `dir`, `page`, `pageSize` 伺服器端分頁與過濾）。

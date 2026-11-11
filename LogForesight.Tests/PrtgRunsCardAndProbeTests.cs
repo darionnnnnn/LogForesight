@@ -375,7 +375,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
 
         Assert.Contains("id=\"prtg-credential-hint\"", view);
         Assert.Contains("@Url.Content(\"~/admin/prtg\")#connection", view);
-        Assert.Contains("class=\"small text-warning d-none\" id=\"prtg-credential-hint\"", view);
+        Assert.Contains("class=\"lf-text-alert d-none\" id=\"prtg-credential-hint\"", view);
         var js = RepoFile("LogForesight.Web", "wwwroot", "js", "core", "prtg-scope-labels.js");
         Assert.Contains("已啟用（憑證無法解密）", js);
     }

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadElements } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -28,7 +29,9 @@ const printSetup = source.slice(source.indexOf('const printableCollapsibles'), s
 const hookPrint = extractFunction('function hookCollapsiblePrint');
 const body = extractFunction('export function collapsibleText').replace(/^export /, '');
 const prune = extractFunction('function prunePrintableCollapsibles');
-const { collapsibleText, printableCollapsibles } = new Function('COLLAPSE_LIMIT', `${printSetup}\n${prune}\n${hookPrint}\n${body}\nreturn { collapsibleText, printableCollapsibles };`)(300);
+// 切換鈕是 core/elements.js 的 disclosure：載入 production 版本，不另寫假的
+const { disclosure } = loadElements(dom);
+const { collapsibleText, printableCollapsibles } = new Function('COLLAPSE_LIMIT', 'disclosure', `${printSetup}\n${prune}\n${hookPrint}\n${body}\nreturn { collapsibleText, printableCollapsibles };`)(300, disclosure);
 
 function textContainer(text) {
     const el = dom.newElement('div');
@@ -36,6 +39,7 @@ function textContainer(text) {
     return el;
 }
 function toggleOf(wrap) { return wrap.find(n => n.tagName === 'BUTTON'); }
+const labelOf = toggle => toggle.children.find(c => c.tagName === 'SPAN').textContent;
 function click(button) {
     let stopped = 0;
     (button.listeners.click || []).forEach(h => h({ stopPropagation: () => { stopped++; } }));
@@ -50,9 +54,9 @@ const cases = {
         const wrap = collapsibleText(container);
         assert.notEqual(wrap, container);
         const toggle = toggleOf(wrap);
-        assert.equal(toggle.textContent, '展開…');
-        assert.equal(toggle.getAttribute('aria-label'), `展開全文（共 ${original.length} 字）`);
-        assert.equal(toggle.title, '展開全文（共 301 字）');
+        assert.equal(labelOf(toggle), '全文');
+        assert.equal(toggle.title, '全文共 301 字');
+        assert(toggle.classList.contains('lf-disclosure'), '切換鈕是共用的 disclosure');
         assert.equal(toggle.getAttribute('aria-expanded'), 'false');
         assert.equal(toggle.getAttribute('aria-controls'), container.id);
         assert.equal(toggle.type, 'button');
@@ -61,9 +65,8 @@ const cases = {
         assert(container.textContent.length <= 291);
         click(toggle);
         assert.equal(container.textContent, original);
-        assert.equal(toggle.textContent, '收合');
+        assert.equal(labelOf(toggle), '全文', '標籤展開前後不變，狀態看 aria-expanded');
         assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-        assert.equal(toggle.getAttribute('aria-label'), '收合');
         click(toggle);
         assert.equal(container.textContent, 'a'.repeat(289) + '…');
         assert.equal(toggle.getAttribute('aria-expanded'), 'false');
@@ -107,7 +110,7 @@ const cases = {
         assert.equal(container.children.length, 2);
         click(toggle);
         assert(!container.classList.contains('lf-collapsible--clamped'));
-        assert.equal(toggle.textContent, '收合');
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
         click(toggle);
         assert(container.classList.contains('lf-collapsible--clamped'));
 

@@ -54,7 +54,7 @@
 - **視窗標題（`#issue-owner-modal-title`）**：新增時為「新增問題設定」，編輯時為「編輯問題設定」。
 - **問題選擇區塊（`#issue-owner-picker-field`）**：
   - 下拉選單 `#issue-owner-picker`：資料來源為 `/api/admin/issue-owners/recent-issues`（近 30 天內出現過的問題，依受影響主機數降冪排序）。選項格式為 `{label} — {hostCount} 台主機`，若已被指派過則後綴 `（已指派）`。
-  - 切換按鈕 `#issue-owner-manual-toggle`：「找不到？改為手動輸入」，點擊後隱藏選擇器並展開手動輸入欄位。
+  - 切換按鈕 `#issue-owner-manual-toggle`（外框按鈕）：「找不到？改為手動輸入」，點擊後隱藏選擇器並展開手動輸入欄位。
 - **手動輸入區塊（`#issue-owner-manual-field`）**：
   - `#issue-owner-source`：來源（Source）文字輸入框，如 `disk`、`DCOM`。必填。
   - `#issue-owner-event-id`：Event ID 數字輸入框（`<input type="number" min="0">`）。必填。
@@ -70,7 +70,7 @@
 - **機房結論區塊（`#issue-owner-conclusion-section`）**：
   - **顯示時機**：僅在編輯既有規則（`rule != null`）時顯示；新增規則時此區塊強制隱藏（`d-none`），因為負責人與機房結論為兩支獨立 API，必須先有持久化的 `(Source, EventId)` 記錄方能設定結論。
   - 目前結論提示（`#issue-owner-conclusion-current`）：顯示當前已設定的結論狀態、原因與是否自動套用。
-  - 解除結論按鈕（`#issue-owner-conclusion-clear`）：若已有結論時顯示。點擊彈出確認對話框，確認後呼叫 `DELETE .../conclusion` 解除結論。
+  - 解除結論按鈕（`#issue-owner-conclusion-clear`，外框危險按鈕）：若已有結論時顯示。點擊彈出確認對話框，確認後呼叫 `DELETE .../conclusion` 解除結論。
   - 結論狀態選單（`#issue-owner-conclusion-status`）：
     - `""`（留空）：表示本次儲存不變更機房結論（既有結論維持原樣）。
     - `resolved`：已處理。

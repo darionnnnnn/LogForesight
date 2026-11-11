@@ -1,5 +1,6 @@
 ﻿@{
     ViewData["Title"] = "設定";
+    ViewData["ContentWidth"] = "bounded";
 }
 
 <ul class="nav nav-tabs mb-3" id="settings-tabs">
@@ -31,24 +32,23 @@
         <div class="lf-card__body">
             <div class="d-flex flex-wrap gap-2 mb-3" id="severity-checks"></div>
 
-            <span class="form-label small fw-semibold d-inline-block" id="severity-display-mode-label">未勾選層級的顯示方式</span>
+            <span class="form-label d-inline-block" id="severity-display-mode-label">未勾選層級的顯示方式</span>
             <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode" role="group" aria-labelledby="severity-display-mode-label"></div>
             <div class="form-text mb-3" id="severity-display-mode-hint"></div>
 
             <hr />
 
-            <span class="form-label small fw-semibold d-inline-block" id="day-risk-level-label">日風險等級顯示</span>
-            <p class="text-muted small mb-2">
+            <span class="form-label d-inline-block" id="day-risk-level-label">日風險等級顯示</span>
+            <p class="lf-text-meta mb-2">
                 未勾選等級的風險日整批從儀表板 KPI、報表趨勢、問題查詢的統計與清單中消失
                 （上方說明的判定結果本身不受影響）。風險日詳情的直接連結與主機詳情頁的時間軸
-                不受此設定影響，兩處仍顯示完整證據——避免時間軸把「這天有分析但被藏起來」
-                誤顯示成「這天沒有分析紀錄」。
+                不受此設定影響，兩處仍顯示完整證據。
             </p>
             <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks" role="group" aria-labelledby="day-risk-level-label"></div>
 
             <hr />
 
-            <label for="default-note-phrases" class="form-label small fw-semibold">預設常用語</label>
+            <label for="default-note-phrases" class="form-label">預設常用語</label>
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                     data-bs-content="處理說明輸入框「常用語」選單的全站預設清單，最多 20 條、每條最多 200 字。使用者自己儲存過常用語後改用自己的清單。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -189,33 +189,33 @@
             @* 三個數字摘要 *@
             <div class="row g-3 mb-2" id="ai-usage-summary">
                 <div class="col-sm-4">
-                    <div class="text-muted small">今日消耗</div>
-                    <div class="fw-semibold" id="ai-usage-today-tokens">—</div>
+                    <div class="lf-text-meta">今日消耗</div>
+                    <div class="lf-text-title" id="ai-usage-today-tokens">—</div>
                 </div>
                 <div class="col-sm-4">
-                    <div class="text-muted small">
+                    <div class="lf-text-meta">
                         累計消耗
                         <span class="fw-normal" id="ai-usage-since"></span>
                     </div>
-                    <div class="fw-semibold" id="ai-usage-total-tokens">—</div>
+                    <div class="lf-text-title" id="ai-usage-total-tokens">—</div>
                 </div>
                 <div class="col-sm-4">
-                    <div class="text-muted small">累計呼叫次數</div>
-                    <div class="fw-semibold" id="ai-usage-total-calls">—</div>
+                    <div class="lf-text-meta">累計呼叫次數</div>
+                    <div class="lf-text-title" id="ai-usage-total-calls">—</div>
                 </div>
             </div>
 
             @* 未回報 token 提示（有時才顯示） *@
-            <div class="text-muted small d-none mb-2" id="ai-usage-no-token-hint"></div>
+            <div class="lf-text-meta d-none mb-2" id="ai-usage-no-token-hint"></div>
 
             <div class="mb-2">
-                <div class="text-muted small">累計估算金額
+                <div class="lf-text-meta">累計估算金額
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
                             data-bs-content="依下方「進階設定（估費單價）」換算。單價 0＝不估費；幣別由使用者自行認定，僅供試算，不影響實際呼叫。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                 </div>
-                <div class="fw-semibold" id="ai-usage-cost">—</div>
+                <div class="lf-text-title" id="ai-usage-cost">—</div>
             </div>
 
             @* 單價輸入框（隨整頁 form 儲存，不另做按鈕）：純調校參數，收進進階設定 *@
@@ -223,12 +223,12 @@
                 <summary class="fw-semibold">進階設定（估費單價）</summary>
                 <div class="row g-3 mt-1">
                     <div class="col-sm-6">
-                        <label for="ai-input-price" class="form-label small">input 每百萬 token 金額</label>
+                        <label for="ai-input-price" class="form-label">input 每百萬 token 金額</label>
                         <input type="number" class="form-control form-control-sm" id="ai-input-price"
                                min="0" step="0.01" placeholder="0" />
                     </div>
                     <div class="col-sm-6">
-                        <label for="ai-output-price" class="form-label small">output 每百萬 token 金額</label>
+                        <label for="ai-output-price" class="form-label">output 每百萬 token 金額</label>
                         <input type="number" class="form-control form-control-sm" id="ai-output-price"
                                min="0" step="0.01" placeholder="0" />
                     </div>
@@ -241,7 +241,7 @@
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#trash"></use></svg>
                     清空重新計算
                 </button>
-                <span class="text-muted small ms-2" id="ai-usage-updated"></span>
+                <span class="lf-text-meta ms-2" id="ai-usage-updated"></span>
             </div>
 
             @* 30 天明細（折疊，與「進階參數」同樣的 details 慣例） *@
@@ -398,8 +398,7 @@
             <hr />
 
             <h3 class="h6">使用者名稱顯示規則</h3>
-            <p class="text-muted small mb-2">
-                畫面上顯示的帳號可用正則表達式調整，例如把使用者名稱裡的公司名稱前綴去掉。
+            <p class="lf-text-meta mb-2">
                 一行一條規則，格式為 <code>樣式 =&gt; 取代文字</code>；取代文字留空代表刪除符合的片段，
                 <code>#</code> 開頭的行是註解。多條規則由上往下依序套用。
             </p>
@@ -423,11 +422,11 @@
             </h3>
             <div class="row g-2 align-items-end mb-2">
                 <div class="col-sm-5">
-                    <label for="ad-test-account" class="form-label small mb-1">測試帳號</label>
+                    <label for="ad-test-account" class="form-label mb-1">測試帳號</label>
                     <input type="text" class="form-control form-control-sm" id="ad-test-account" />
                 </div>
                 <div class="col-sm-5">
-                    <label for="ad-test-password" class="form-label small mb-1">測試密碼</label>
+                    <label for="ad-test-password" class="form-label mb-1">測試密碼</label>
                     <input type="password" class="form-control form-control-sm" id="ad-test-password" autocomplete="off" />
                 </div>
                 <div class="col-sm-2">
@@ -458,7 +457,7 @@
                         data-bs-content="刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄與案件。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <div class="text-muted small mb-2">
+                <div class="lf-text-meta mb-2">
                     不可小於首次執行回補天數。
                 </div>
                 <input type="number" class="form-control lf-maxw-sm" id="retention-days" min="90" max="3650" required />
@@ -470,7 +469,7 @@
                         data-bs-content="刪除原始事件文字：每日紀錄的樣本訊息，以及規則命中／趨勢異常的事件暫存（「詢問 AI」會優先取用這份暫存）。刪除後該日的統計、風險等級與問題清單仍在，只是看不到原始訊息。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <div class="text-muted small mb-2">
+                <div class="lf-text-meta mb-2">
                     不可大於歷史資料保留天數。
                 </div>
                 <input type="number" class="form-control lf-maxw-sm" id="raw-event-retention-days" min="90" max="3650" required />
@@ -500,10 +499,10 @@
                         data-bs-content="這一項管三種報告的全文：風險報告、體檢報告、權限異動報告。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <div class="text-muted small mb-2">
+                <div class="lf-text-meta mb-2">
                     <strong>報告全文存在資料庫裡，會佔用資料庫空間</strong>——單份約 20～30 KB，主機數量多、風險日多的環境累積得很快，設定前請一併衡量資料庫的容量規劃。
                 </div>
-                <div class="text-muted small mb-2">
+                <div class="lf-text-meta mb-2">
                     不可大於歷史資料保留天數：超過之後對應的分析紀錄已被清除，那些報告在網站上不再有任何入口可以點開，留著只會佔空間。
                 </div>
                 <div class="alert alert-secondary py-2 px-3 small mb-2 lf-maxw-lg" id="report-usage" role="status">
@@ -523,7 +522,7 @@
                 </button>
                 <input type="number" class="form-control lf-maxw-sm" id="initial-history-days" min="90" max="3650" required />
             </div>
-            <p class="text-muted small mb-0">
+            <p class="lf-text-meta mb-0">
                 PRTG 資料保留天數在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁設定。
             </p>
         </div>
@@ -532,12 +531,12 @@
     @* 系統健康：切到本頁籤（或 #health 深連結進站）才載入 /api/health/detail。
        整頁在 settings-form 內，按鈕一律 type="button"，避免觸發表單送出 *@
     <div class="d-none" data-panel="health">
-        <p class="small text-muted mb-3" id="health-build" role="status"></p>
+        <p class="lf-text-meta mb-3" id="health-build" role="status"></p>
         <div class="lf-card mb-3">
             <div class="lf-card__header"><h2 class="lf-card__title">PRTG 快照</h2></div>
             <div class="lf-card__body">
                 <div id="health-prtg-snapshot" role="status" aria-live="polite"></div>
-                <p class="small mb-0 mt-2"><a href="@Url.Content("~/admin/prtg#mirror")">前往 PRTG 維護頁檢查鏡像</a></p>
+                <p class="mb-0 mt-2"><a href="@Url.Content("~/admin/prtg#mirror")">前往 PRTG 維護頁檢查鏡像</a></p>
             </div>
         </div>
         <div class="lf-card mb-3">
@@ -551,7 +550,8 @@
                     <input type="date" class="form-control lf-maxw-sm" id="health-ack-until" />
                     <button type="button" class="btn btn-outline-secondary" id="health-ack-btn">確認並靜音</button>
                 </div>
-                <p class="small mb-0 mt-3"><a id="health-runs-link" href="@Url.Content("~/runs")">前往排程作業</a></p>
+                <div id="health-ack-note" class="mt-2"></div>
+                <p class="mb-0 mt-3"><a id="health-runs-link" href="@Url.Content("~/runs")">前往排程作業</a></p>
             </div>
         </div>
 
@@ -615,7 +615,7 @@
             </h2>
         </div>
         <div class="lf-card__body">
-            <p class="small mb-3" id="guard-prtg-hint">
+            <p class="lf-text-meta mb-3" id="guard-prtg-hint">
                 資源數據取自 PRTG：需先在
                 <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁啟用模組並設定連線。
             </p>
@@ -668,7 +668,7 @@
 
             <div class="mb-3">
                 <label for="prtg-guard-sensor-objids" class="form-label">受監看感測器覆寫清單（objid）</label>
-                <div id="prtg-guard-autodetect-note" class="text-muted small mb-1"></div>
+                <div id="prtg-guard-autodetect-note" class="lf-text-meta mb-1"></div>
                 <textarea class="form-control lf-mono" id="prtg-guard-sensor-objids" rows="4"
                           placeholder="1001&#10;1002"></textarea>
                 <div class="form-text">
@@ -680,7 +680,7 @@
             <div class="d-flex align-items-center flex-wrap gap-3 mt-3 mb-3">
                 <button type="button" class="btn btn-outline-secondary" id="prtg-guard-preview-btn">預覽受監看 sensor</button>
                 <button type="button" class="btn btn-outline-secondary" id="prtg-guard-autofill-btn">自動偵測並填入</button>
-                <span class="text-muted small">預覽列的是 PRTG 與 Sentinel 伺服器本身的監看目標，可能不在主機清單內。</span>
+                <span class="lf-text-meta">預覽列的是 PRTG 與 Sentinel 伺服器本身的監看目標，可能不在主機清單內。</span>
             </div>
 
             <div id="prtg-guard-preview-result"></div>
@@ -793,7 +793,7 @@
                     </div>
                 </div>
                 <div class="col-auto">
-                    <label for="mail-daily-time" class="form-label small mb-1">時刻</label>
+                    <label for="mail-daily-time" class="form-label mb-1">時刻</label>
                     <input type="time" class="form-control form-control-sm lf-time-input" id="mail-daily-time" />
                 </div>
             </div>
@@ -805,7 +805,7 @@
                     </div>
                 </div>
                 <div class="col-auto">
-                    <label for="mail-weekly-day" class="form-label small mb-1">星期</label>
+                    <label for="mail-weekly-day" class="form-label mb-1">星期</label>
                     <select class="form-select form-select-sm" id="mail-weekly-day">
                         <option value="Monday">星期一</option>
                         <option value="Tuesday">星期二</option>
@@ -817,7 +817,7 @@
                     </select>
                 </div>
                 <div class="col-auto">
-                    <label for="mail-weekly-time" class="form-label small mb-1">時刻</label>
+                    <label for="mail-weekly-time" class="form-label mb-1">時刻</label>
                     <input type="time" class="form-control form-control-sm lf-time-input" id="mail-weekly-time" />
                 </div>
             </div>
@@ -876,8 +876,9 @@
                 <input class="form-check-input" type="checkbox" id="auto-dispatch-enabled" />
                 <label class="form-check-label" for="auto-dispatch-enabled">夜間分析後自動派工</label>
             </div>
-            <div class="text-warning small mb-2 d-none" id="auto-dispatch-no-pool-warning">
-                目前沒有任何使用者群組被設為派工池，自動派工不會派出任何單。請到「群組與授權」設定。
+            <div class="lf-status-note lf-status-note--warning mb-2 d-none" id="auto-dispatch-no-pool-warning" role="status">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#exclamation-triangle"></use></svg>
+                <span>目前沒有任何使用者群組被設為派工池，自動派工不會派出任何單。請到「群組與授權」設定。</span>
             </div>
             <div id="auto-dispatch-alert-tools"></div>
         </div>
@@ -936,7 +937,8 @@
 
     <div class="d-flex align-items-center gap-3 lf-settings-footer">
         <button type="submit" class="btn btn-primary" id="settings-save">儲存</button>
-        <span class="text-muted small" id="settings-updated"></span>
+        <span class="lf-text-meta" id="settings-updated"></span>
+        <div id="settings-save-status"></div>
     </div>
 </form>
 

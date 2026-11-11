@@ -3,7 +3,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>長文字收合共用元件（core/ui.js collapsibleText）的 production 行為，以及 record-detail／site.css 的接線斷言。</summary>
+/// <summary>長文字收合共用元件（core/ui.js collapsibleText）的 production 行為，以及 record-detail／樣式表 的接線斷言。</summary>
 public sealed class CollapsibleTextBehaviorTests
 {
     private static string FindRepoRoot()
@@ -55,7 +55,7 @@ public sealed class CollapsibleTextBehaviorTests
     [Fact]
     public void 樣式表以collapsible取代舊line_clamp_且列印解除()
     {
-        var css = Read("LogForesight.Web", "wwwroot", "css", "site.css");
+        var css = SiteCss.Read();
         Assert.DoesNotContain("lf-issue-details" + "--clamped", css);
         Assert.Contains(".lf-collapsible--clamped", css);
         var print = css.IndexOf("@media print", css.IndexOf(".lf-collapsible--clamped", StringComparison.Ordinal), StringComparison.Ordinal);

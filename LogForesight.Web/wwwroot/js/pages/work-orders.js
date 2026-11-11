@@ -27,6 +27,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
+import { roleText, filterDisclosure } from '../core/elements.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -40,6 +41,7 @@ const activeResumedCheckbox = document.getElementById('wo-resumed');
 const activeHandlerInactiveCheckbox = document.getElementById('wo-handler-inactive');
 // 只看未讀回覆：處理人回覆後管理者尚未開過詳情的單（判定見 WorkOrder.HasUnreadReply）
 const activeUnreadOnlyCheckbox = createUnreadOnlyCheckbox();
+setupMoreFilters();
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
 
@@ -96,7 +98,7 @@ if (hasUrlFilter) {
     const toolbar = activeStatusSelect?.closest('.d-flex');
     if (toolbar && toolbar.parentElement) {
         const hintRow = document.createElement('div');
-        hintRow.className = 'd-flex align-items-center gap-2 mb-2 small text-muted';
+        hintRow.className = 'd-flex align-items-center gap-2 mb-2 lf-text-meta';
         const labelSpan = document.createElement('span');
         filterLabelSpan = labelSpan;
         updateFilterLabel(null);
@@ -118,7 +120,7 @@ function createUnreadOnlyCheckbox() {
     input.type = 'checkbox';
     input.id = 'wo-unread-only';
     const label = document.createElement('label');
-    label.className = 'form-check-label small';
+    label.className = 'form-check-label lf-text-meta';
     label.htmlFor = 'wo-unread-only';
     label.textContent = '只看未讀回覆';
     wrap.append(input, label);
@@ -127,6 +129,16 @@ function createUnreadOnlyCheckbox() {
     if (anchor?.parentElement) anchor.after(wrap);
     else activeStatusSelect?.closest('.d-flex')?.appendChild(wrap);
     return input;
+}
+
+/** 三個「只看…」是次要條件：收進「更多條件」，標籤帶已勾選數 */
+function setupMoreFilters() {
+    const more = document.getElementById('wo-more');
+    if (!more) return;
+    const boxes = [activeResumedCheckbox, activeHandlerInactiveCheckbox, activeUnreadOnlyCheckbox].filter(Boolean);
+    const { button, refresh } = filterDisclosure(more, () => boxes.filter(box => box.checked).length);
+    more.before(button);
+    boxes.forEach(box => box.addEventListener('change', refresh));
 }
 
 /** 篩選橫幅：「篩選：{source} {eventId}｜處理人 {名稱}」；名稱未知時用「處理人 #{id}」 */
@@ -214,16 +226,19 @@ function renderActiveTable(data) {
             render: r => {
                 const a = document.createElement('a');
                 a.href = appUrl('/work-orders/' + r.workOrderId);
+                a.className = 'lf-text-data';
                 a.textContent = '#' + r.workOrderId;
                 return a;
             }
         },
         {
             title: '問題',
+            className: 'lf-minw-xl',
             render: r => renderIssueCell(r.issueLabel, r.plainExplanation)
         },
         {
             title: '處理人',
+            className: 'lf-minw-sm',
             render: r => {
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
@@ -241,11 +256,12 @@ function renderActiveTable(data) {
         },
         {
             title: '成員',
+            className: 'lf-minw-xs',
             render: r => {
                 const wrap = document.createElement('div');
                 const counts = r.counts || {};
                 const main = document.createElement('div');
-                main.className = 'text-nowrap';
+                main.className = 'text-nowrap lf-text-data';
                 main.textContent = `${counts.active ?? 0}／${counts.total ?? 0} 台`;
                 wrap.appendChild(main);
 
@@ -258,7 +274,7 @@ function renderActiveTable(data) {
 
                 if (parts.length > 0) {
                     const sub = document.createElement('div');
-                    sub.className = 'text-muted small';
+                    sub.className = 'lf-text-meta';
                     sub.textContent = parts.join('、');
                     wrap.appendChild(sub);
                 }
@@ -281,7 +297,7 @@ function renderActiveTable(data) {
         {
             title: '未回覆',
             className: 'text-end text-nowrap',
-            render: r => (r.unrepliedDays == null ? '—' : `${r.unrepliedDays} 天`)
+            render: r => (r.unrepliedDays == null ? '—' : roleText('lf-text-data', `${r.unrepliedDays} 天`))
         },
         {
             title: '未讀回覆',
@@ -293,7 +309,7 @@ function renderActiveTable(data) {
         {
             title: '期限',
             className: 'text-nowrap',
-            render: r => (r.dueDate ? formatDate(r.dueDate) : '—')
+            render: r => (r.dueDate ? roleText('lf-text-data', formatDate(r.dueDate)) : '—')
         },
         {
             title: '來源',
@@ -302,12 +318,12 @@ function renderActiveTable(data) {
         {
             title: '建立',
             className: 'text-nowrap',
-            render: r => formatDateTime(r.createdAt)
+            render: r => roleText('lf-text-data', formatDateTime(r.createdAt))
         },
         {
             title: '最近新增',
             className: 'text-nowrap',
-            render: r => (r.lastAppendedAt ? formatDateTime(r.lastAppendedAt) : '—')
+            render: r => (r.lastAppendedAt ? roleText('lf-text-data', formatDateTime(r.lastAppendedAt)) : '—')
         },
         {
             title: '狀態',
@@ -370,6 +386,7 @@ function renderLoadBoardTable(data) {
     const columns = [
         {
             title: '處理人',
+            className: 'lf-minw-sm',
             render: r => {
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
@@ -392,31 +409,31 @@ function renderLoadBoardTable(data) {
         {
             title: '進行中單',
             className: 'text-end',
-            render: r => formatNumber(r.activeWorkOrders)
+            render: r => roleText('lf-text-data', formatNumber(r.activeWorkOrders))
         },
         {
             title: '進行中台數',
             className: 'text-end',
-            render: r => formatNumber(r.activeMembers)
+            render: r => roleText('lf-text-data', formatNumber(r.activeMembers))
         },
         {
             title: '未回覆單',
             className: 'text-end',
-            render: r => formatNumber(r.unrepliedWorkOrders)
+            render: r => roleText('lf-text-data', formatNumber(r.unrepliedWorkOrders))
         },
         {
             title: '逾期台數',
             className: 'text-end',
-            render: r => formatNumber(r.overdueMembers)
+            render: r => roleText('lf-text-data', formatNumber(r.overdueMembers))
         },
         {
             title: '近 7 天結案',
             className: 'text-end',
-            render: r => formatNumber(r.closedLast7Days)
+            render: r => roleText('lf-text-data', formatNumber(r.closedLast7Days))
         },
         {
             title: '最舊進行中',
-            render: r => (r.oldestActiveCreatedAt ? formatDate(r.oldestActiveCreatedAt) : '—')
+            render: r => (r.oldestActiveCreatedAt ? roleText('lf-text-data', formatDate(r.oldestActiveCreatedAt)) : '—')
         }
     ];
 
@@ -461,12 +478,13 @@ function renderGapsTable(data) {
     const columns = [
         {
             title: '問題',
+            className: 'lf-minw-xl',
             render: r => renderIssueCell(r.issueLabel, r.plainExplanation)
         },
         {
             title: '待派台數',
             className: 'text-end',
-            render: r => formatNumber(r.gapHosts)
+            render: r => roleText('lf-text-data', formatNumber(r.gapHosts))
         },
         {
             title: '建議處理人',
@@ -479,7 +497,7 @@ function renderGapsTable(data) {
                     const line = document.createElement('div');
                     line.textContent = `${s.name} ${s.hosts} 台 `;
                     const tag = document.createElement('span');
-                    tag.className = 'text-muted small';
+                    tag.className = 'lf-text-meta';
                     tag.textContent = s.willCreate ? '新建單' : '併入既有單';
                     line.appendChild(tag);
                     wrap.appendChild(line);
@@ -504,7 +522,7 @@ function renderGapsTable(data) {
                 }
                 if (unseen.length > 0) {
                     const sub = document.createElement('div');
-                    sub.className = 'text-muted small';
+                    sub.className = 'lf-text-meta';
                     sub.textContent = `無人看得到的主機群組：${unseen.join('、')}`;
                     wrap.appendChild(sub);
                 }
@@ -638,12 +656,13 @@ function renderMutedTable(rows, pausedCounts) {
     const columns = [
         {
             title: '問題',
+            className: 'lf-minw-xl',
             render: r => renderIssueCell(r.displayLabel, `${r.sourceName ?? ''} ${r.eventId ?? ''}`.trim())
         },
         {
             title: '靜音至',
             className: 'text-nowrap',
-            render: r => String(r.currentMute.to ?? '').slice(0, 10) || '—'
+            render: r => roleText('lf-text-data', String(r.currentMute.to ?? '').slice(0, 10) || '—')
         },
         {
             title: '剩餘天數',
@@ -653,15 +672,15 @@ function renderMutedTable(rows, pausedCounts) {
         {
             title: '起始日',
             className: 'text-nowrap',
-            render: r => String(r.currentMute.from ?? '').slice(0, 10) || '—'
+            render: r => roleText('lf-text-data', String(r.currentMute.from ?? '').slice(0, 10) || '—')
         },
         {
             title: '原因',
-            render: r => r.currentMute.reason || '—'
+            render: r => roleText('lf-text-meta', r.currentMute.reason || '—')
         },
         {
             title: '設定者',
-            render: r => r.currentMute.byAccount || '—'
+            render: r => roleText('lf-text-data', r.currentMute.byAccount || '—')
         },
         {
             title: '暫停中交辦單',
@@ -683,8 +702,8 @@ function renderMutedTable(rows, pausedCounts) {
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex align-items-center gap-1';
                 wrap.append(
-                    button('延長', { onClick: () => extendMute(r) }),
-                    button('解除', { variant: 'outline-danger', onClick: () => removeMute(r) })
+                    button('延長', { opens: 'dialog', onClick: () => extendMute(r) }),
+                    button('解除', { variant: 'outline-danger', opens: 'dialog', onClick: () => removeMute(r) })
                 );
                 return wrap;
             }
@@ -695,7 +714,7 @@ function renderMutedTable(rows, pausedCounts) {
 
     if (rows.length > MUTED_PAUSED_LOOKUP_LIMIT) {
         const note = document.createElement('div');
-        note.className = 'small text-muted mt-2';
+        note.className = 'lf-text-meta mt-2';
         note.textContent = `只統計前 ${MUTED_PAUSED_LOOKUP_LIMIT} 個問題的暫停交辦單張數`;
         mutedContainer.appendChild(note);
     }

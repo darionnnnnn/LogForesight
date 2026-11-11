@@ -9,7 +9,7 @@
   - Sentinel 儲存：`POST /api/admin/sentinels`，對應 `SentinelAdminController.Save`。
   - Sentinel 啟用切換：`PUT /api/admin/sentinels/{id}/active`，對應 `SentinelAdminController.SetActive`。
   - Sentinel 刪除：`DELETE /api/admin/sentinels/{id}`，對應 `SentinelAdminController.Delete`。
-  - Sentinel 測試連線：`POST /api/admin/sentinels/test-connection`，對應 `SentinelAdminController.TestConnection`。
+  - Sentinel 測試連線：`POST /api/admin/sentinels/test-connection`，對應 `SentinelAdminController.TestConnection`；結果與缺欄位提示顯示在編輯視窗內。
   - 節流參數讀取與儲存：`GET /api/admin/netiq/options`、`PUT /api/admin/netiq/options`，對應 `NetiqOptionsController` 與 `NetiqOptionsService`。
   - 網段掃描：`POST /api/admin/netiq/scan`，對應 `NetiqImportController.Scan`。
   - 匯入提交：`POST /api/admin/netiq/import`，對應 `NetiqImportController.Apply`。

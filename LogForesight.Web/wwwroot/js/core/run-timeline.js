@@ -164,13 +164,13 @@ export function renderDayTimingCell(timing, options = {}) {
     wrap.append(line);
     if (detail) {
         const small = document.createElement('div');
-        small.className = 'small text-muted';
+        small.className = 'lf-text-meta';
         small.textContent = detail;
         wrap.append(small);
     }
     if (pending) {
         const pendingLine = document.createElement('div');
-        pendingLine.className = 'small text-muted';
+        pendingLine.className = 'lf-text-meta';
         pendingLine.textContent = pending;
         wrap.append(pendingLine);
     }
@@ -197,7 +197,7 @@ export function renderDayTiming(timing) {
         wrap.appendChild(item);
         for (const sub of branch?.subPhases ?? []) {
             const subItem = document.createElement('div');
-            subItem.className = 'small text-muted';
+            subItem.className = 'lf-text-meta';
             subItem.textContent = `　${SUB_PHASE_LABEL[sub.key] ?? sub.key}　${minuteOf(sub.from)}～${minuteOf(sub.to)}（${formatDuration(sub.seconds)}）`;
             wrap.appendChild(subItem);
         }

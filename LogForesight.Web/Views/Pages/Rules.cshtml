@@ -69,8 +69,8 @@
 
     <div class="lf-card">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">規則 <span class="text-muted small" id="rule-count"></span></h2>
-            <span class="text-muted small d-none" id="rule-sort-hint">目前排序非比對順序，比對以「順序」欄為準</span>
+            <h2 class="lf-card__title">規則 <span class="lf-text-meta" id="rule-count"></span></h2>
+            <span class="lf-text-meta d-none" id="rule-sort-hint">目前排序非比對順序，比對以「順序」欄為準</span>
         </div>
         <div class="lf-card__body p-0" id="rule-list"></div>
         <div class="lf-card__body pt-0">
@@ -96,7 +96,7 @@
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">告警抑制</h2>
-            <span class="text-muted small">抑制只關掉通知與風險升級，事件仍照常聚合與紀錄</span>
+            <span class="lf-text-meta">抑制只關掉通知與風險升級，事件仍照常聚合與紀錄</span>
         </div>
         <div class="lf-card__body p-0" id="suppression-list"></div>
         <div class="lf-card__body pt-0">
@@ -135,12 +135,12 @@
 
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label for="rule-id" class="form-label">規則 Id <span class="text-danger">*</span></label>
+                            <label for="rule-id" class="form-label">規則 Id <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <input type="text" class="form-control" id="rule-id" required />
                             <div class="form-text" id="rule-id-hint">新規則必須以 custom- 開頭。</div>
                         </div>
                         <div class="col-md-6" id="rule-match-windows-source" data-platform-block="windows">
-                            <label for="rule-source" class="form-label">來源比對 <span class="text-danger">*</span></label>
+                            <label for="rule-source" class="form-label">來源比對 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="Event Log 的來源名稱，例如 disk、Ntfs。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -179,7 +179,7 @@
                         </div>
 
                         <div class="col-md-6" id="rule-match-prtg-code" data-platform-block="prtg">
-                            <label for="rule-prtg-code" class="form-label">規則代碼 <span class="text-danger">*</span></label>
+                            <label for="rule-prtg-code" class="form-label">規則代碼 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <select class="form-select" id="rule-prtg-code">
                                 <option value="down">持續 Down (down)</option>
                                 <option value="flapping">頻繁震盪 (flapping)</option>
@@ -192,7 +192,7 @@
                             </select>
                         </div>
                         <div class="col-12 d-none" id="rule-prtg-disk-trend-fields" data-platform-block="prtg">
-                            <div class="small fw-semibold mb-2" id="rule-prtg-disk-trend-info">磁碟趨勢門檻<button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="此規則預設停用，只評估語意已確認且資料品質足夠的磁碟 sensor。資料不足會明確標示，不視為正常，也不產生告警。門檻目前均為暫定值，尚待實機資料校準。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></div>
+                            <div class="lf-text-title mb-2" id="rule-prtg-disk-trend-info">磁碟趨勢門檻<button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="此規則預設停用，只評估語意已確認且資料品質足夠的磁碟 sensor。資料不足會明確標示，不視為正常，也不產生告警。門檻目前均為暫定值，尚待實機資料校準。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></div>
                             <div class="row g-3">
                                 <div class="col-md-4"><label for="rule-prtg-trend-low-water" class="form-label">低水位（%）</label><button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="0–100%；預估降到此低水位或低水位後耗盡時使用。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button><input type="number" class="form-control" id="rule-prtg-trend-low-water" min="0" max="100" step="0.1" /></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-decline" class="form-label">最低下降速度（百分點／日）</label><button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="大於 0，最多 100 百分點／日。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button><input type="number" class="form-control" id="rule-prtg-trend-decline" min="0.01" max="100" step="0.01" /></div>
@@ -204,7 +204,7 @@
                             </div>
                         </div>
                         <div class="col-12 d-none" id="rule-prtg-value-trend-fields" data-platform-block="prtg">
-                            <div class="small fw-semibold mb-2" id="rule-prtg-value-trend-info">趨勢門檻<button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="此規則預設停用；只評估對應有效、單位可判且資料足夠的 sensor。趨勢規則只抓慢性惡化，一夜之間的突發由 PRTG 告警經狀態規則處理。門檻暫定，尚待實機校準。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></div>
+                            <div class="lf-text-title mb-2" id="rule-prtg-value-trend-info">趨勢門檻<button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="此規則預設停用；只評估對應有效、單位可判且資料足夠的 sensor。趨勢規則只抓慢性惡化，一夜之間的突發由 PRTG 告警經狀態規則處理。門檻暫定，尚待實機校準。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></div>
                             <div class="row g-3">
                                 <div class="col-md-4"><label for="rule-prtg-vtrend-window" class="form-label">觀察窗（日）</label><button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="最少有效日至 400 日；預設 35 日。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button><input type="number" class="form-control" id="rule-prtg-vtrend-window" min="2" max="400" step="1" /></div>
                                 <div class="col-md-4"><label for="rule-prtg-vtrend-min-days" class="form-label">最少有效日（日）</label><button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="大於等於 2 日；預設 28 日。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button><input type="number" class="form-control" id="rule-prtg-vtrend-min-days" min="2" max="400" step="1" /></div>
@@ -219,18 +219,18 @@
                         <div class="col-12 d-none" id="rule-prtg-trend-preview-container" data-platform-block="prtg">
                             <section class="border rounded p-3 mt-3" aria-labelledby="rule-disk-preview-title">
                                 <h3 class="h6" id="rule-disk-preview-title">未儲存門檻預覽</h3>
-                                <p class="small mb-2" id="rule-disk-preview-description">預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。</p>
+                                <p class="lf-text-meta mb-2" id="rule-disk-preview-description">預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。</p>
                                 <div class="row g-2 align-items-end">
                                     <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-days">日期範圍（日）</label><input class="form-control" type="number" id="rule-disk-preview-days" min="1" max="730" value="6" /></div>
                                     <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-limit">每頁配對數</label><input class="form-control" type="number" id="rule-disk-preview-limit" min="1" max="100" value="25" /></div>
                                     <div class="col-12 col-sm-6 d-flex gap-2">
                                         <button type="button" class="btn btn-outline-secondary flex-fill" id="rule-disk-preview-previous" disabled>上一頁</button>
-                                        <span class="small text-center align-self-center flex-fill" id="rule-disk-preview-page" aria-live="polite">尚未試算</span>
+                                        <span class="lf-text-meta text-center align-self-center flex-fill" id="rule-disk-preview-page" aria-live="polite">尚未試算</span>
                                         <button type="button" class="btn btn-outline-secondary flex-fill" id="rule-disk-preview-next" disabled>下一頁</button>
                                     </div>
                                     <div class="col-12 col-sm-3"><button type="button" class="btn btn-primary w-100" id="rule-disk-preview-run">試算草稿</button></div>
                                 </div>
-                                <div class="small mt-2" id="rule-disk-preview-summary" role="status" aria-live="polite"></div>
+                                <div class="lf-text-meta mt-2" id="rule-disk-preview-summary" role="status" aria-live="polite"></div>
                                 <div class="mt-2" id="rule-disk-preview-results"></div>
                                 <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="rule-prtg-trend-clear">清除預覽結果</button>
                             </section>
@@ -283,7 +283,7 @@
                         </div>
 
                         <div class="col-md-9">
-                            <label for="rule-description" class="form-label">說明 <span class="text-danger">*</span></label>
+                            <label for="rule-description" class="form-label">說明 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <input type="text" class="form-control" id="rule-description" required />
                         </div>
                         <div class="col-md-3">
@@ -313,7 +313,7 @@
                                     data-bs-toggle="collapse" data-bs-target="#rule-kb" aria-expanded="false" aria-controls="rule-kb">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#chevron-down"></use></svg>
                                 處置知識庫
-                                <span class="text-muted small" id="rule-kb-summary"></span>
+                                <span class="lf-text-meta" id="rule-kb-summary"></span>
                             </button>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。（選填）">
@@ -376,7 +376,7 @@
             <div class="modal-body" id="restore-body"></div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-warning" id="restore-confirm">回復預設</button>
+                <button type="button" class="btn btn-danger" id="restore-confirm">回復預設</button>
             </div>
         </div>
     </div>
@@ -403,7 +403,7 @@
                     </div>
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
-                            <label for="suppress-scope" class="form-label">範圍 <span class="text-danger">*</span></label>
+                            <label for="suppress-scope" class="form-label">範圍 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                             <select class="form-select" id="suppress-scope">
                                 <option value="Host">單一主機</option>
                                 <option value="Group">主機群組</option>
@@ -412,11 +412,11 @@
                         </div>
                         <div class="col-md-8">
                             <div id="suppress-host-wrap">
-                                <span class="form-label d-inline-block" id="suppress-host-label">主機 <span class="text-danger">*</span></span>
+                                <span class="form-label d-inline-block" id="suppress-host-label">主機 <span class="lf-required-mark" aria-hidden="true">*</span></span>
                                 <div id="suppress-host-select" role="group" aria-labelledby="suppress-host-label"></div>
                             </div>
                             <div id="suppress-group-wrap" class="d-none">
-                                <label for="suppress-group" class="form-label">主機群組 <span class="text-danger">*</span></label>
+                                <label for="suppress-group" class="form-label">主機群組 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                                 <select class="form-select" id="suppress-group">
                                     <option value="">請選擇主機群組…</option>
                                 </select>
@@ -434,7 +434,7 @@
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
+                        <label for="suppress-reason" class="form-label">原因 <span class="lf-required-mark" aria-hidden="true">*</span></label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="日後回頭確認「當初為什麼關掉」的唯一依據。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>

@@ -8,7 +8,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, withBusy, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, withBusy, guardLoad, button } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
 
@@ -91,17 +92,19 @@ function renderScanPicker(allSentinels) {
     concurrencySelect.appendChild(new Option('同時 3 個查詢', '3'));
     row.appendChild(concurrencySelect);
 
-    const scanButton = document.createElement('button');
-    scanButton.type = 'button';
-    scanButton.className = 'btn btn-primary';
-    scanButton.textContent = '掃描匯入';
+    const scanStatus = document.createElement('div');
+    scanStatus.id = 'scan-picker-status';
+    scanStatus.className = 'mt-2';
+
+    const scanButton = button('掃描匯入', { variant: 'primary', size: null, opens: 'dialog' });
     scanButton.addEventListener('click', () => {
+        scanStatus.replaceChildren();
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
         const subnetPrefix = subnetInput.value.trim();
         const granularity = granularitySelect.value;
         const concurrency = parseInt(concurrencySelect.value, 10) || 1;
         if (!subnetPrefix) {
-            toast('請輸入要掃描的網段', 'warning');
+            scanStatus.replaceChildren(statusNote('warning', '請輸入要掃描的網段'));
             return;
         }
         if (sentinel) openWizard(sentinel, subnetPrefix, granularity, concurrency);
@@ -109,12 +112,13 @@ function renderScanPicker(allSentinels) {
     row.appendChild(scanButton);
 
     scanPicker.appendChild(row);
+    scanPicker.appendChild(scanStatus);
     scanPicker.appendChild(pickerHint('網段事件量大時選較細的粒度可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。併發會同時對這台 Sentinel 開多條查詢（各自獨立登入、節流間隔各自計算）；只掃單一網段時併發沒有作用。'));
 }
 
 function pickerHint(text) {
     const p = document.createElement('p');
-    p.className = 'text-muted small mb-0';
+    p.className = 'lf-text-meta mb-0';
     p.textContent = text;
     return p;
 }
@@ -246,10 +250,7 @@ function renderScanProgress(jobId, stage, hostsFound) {
     const stageText = stage || '掃描中';
     renderSpinner(statusWrap, `${stageText}（已發現 ${hostsFound} 台）…`);
 
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'btn btn-sm btn-outline-danger';
-    cancelBtn.textContent = '取消掃描';
+    const cancelBtn = button('取消掃描', { variant: 'outline-danger' });
     cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true;
         cancelBtn.textContent = '取消中…';
@@ -385,23 +386,14 @@ function renderCoverageNote() {
     const warningsEl = document.getElementById('wizard-warnings');
     warningsEl.replaceChildren();
     if (wizardScan.warnings && wizardScan.warnings.length > 0) {
-        const box = document.createElement('div');
-        box.className = 'alert alert-warning small mb-0';
-        const list = document.createElement('ul');
-        list.className = 'mb-0 ps-3';
-        for (const warning of wizardScan.warnings) {
-            const item = document.createElement('li');
-            item.textContent = warning;
-            list.appendChild(item);
-        }
-        box.appendChild(list);
-        warningsEl.appendChild(box);
+        // 每則掃描警告一條 statusNote（warning 型）
+        for (const warning of wizardScan.warnings) warningsEl.appendChild(statusNote('warning', warning));
     }
 }
 
 function wizardNote(text) {
     const p = document.createElement('p');
-    p.className = 'text-muted small';
+    p.className = 'lf-text-meta';
     p.textContent = text;
     return p;
 }
@@ -448,7 +440,7 @@ function renderImportDone(result) {
 
 function wizardAdvanceToGroups() {
     if (selectedWizardIps().length === 0) {
-        toast('請至少勾選一台主機', 'warning');
+        wizardHint.replaceChildren(statusNote('warning', '請至少勾選一台主機'));
         return;
     }
     wizardPane = 'groups';
@@ -496,7 +488,7 @@ function renderSubnetSelection() {
     container.replaceChildren();
 
     const total = document.createElement('div');
-    total.className = 'small text-muted mb-2';
+    total.className = 'lf-text-meta mb-2';
     total.textContent = `共掃描到 ${wizardScan.totalCount} 台，分佈於 ${wizardScan.subnets.length} 個網段`;
     container.appendChild(total);
 
@@ -506,7 +498,7 @@ function renderSubnetSelection() {
         details.open = subnet.hosts.length <= WIZARD_SUBNET_COLLAPSE_THRESHOLD;
 
         const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small lf-pointer';
+        summary.className = 'px-2 py-1 lf-text-meta lf-pointer';
 
         const segBox = document.createElement('input');
         segBox.type = 'checkbox';
@@ -539,7 +531,7 @@ function renderSubnetSelection() {
 
 function wizardHostRow(host) {
     const row = document.createElement('div');
-    row.className = 'd-flex align-items-center gap-1 py-1 small text-truncate';
+    row.className = 'd-flex align-items-center gap-1 py-1 text-truncate';
     // title 掛在整列而非只掛名稱 span：名稱常被截斷但可視寬度只佔一小塊，
     // 掛在單一 span 上要滑鼠精準停在文字正上方才會出現，掛整列讓滑到 checkbox 旁邊
     // 空白處也看得到完整「IP＋主機名稱」（子元素如「可復活」徽章自己的 title 仍優先顯示，不受影響）。
@@ -605,7 +597,7 @@ async function renderGroupAssignment() {
         row.dataset.cidr = subnet.cidr;
 
         const labelCol = document.createElement('div');
-        labelCol.className = 'col-4 small';
+        labelCol.className = 'col-4 lf-text-label';
         labelCol.textContent = `${subnet.cidr}（${selectedInSubnet} 台）`;
         row.appendChild(labelCol);
 

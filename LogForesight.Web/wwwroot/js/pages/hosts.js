@@ -10,6 +10,7 @@ import {
     renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPager,
     checkboxList, button, loadPageSize, guardLoad, createPageSelection
 } from '../core/ui.js';
+import { statusNote, roleText } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard } from '../core/async-guards.js';
@@ -125,12 +126,10 @@ function fillSentinelOptions() {
     // 之後在 NetIQ 頁補上 Sentinel 再回來，提示不會消失，會一直說「尚未新增任何 Sentinel」
     const hint = document.getElementById('host-netiq-hint');
     const noSentinel = overview.sentinelNames.length === 0;
-    hint.textContent = noSentinel
-        ? '尚未於「NetIQ 維護」頁新增任何 Sentinel，目前只能登錄為待歸屬。'
-        : '';
-    // text-warning 在白底上對比不足（約 1.6:1），改用 danger 的深紅——這是「填了也沒用」的
-    // 提示，需要被看見；語意色的取值見 docs/DESIGN-SYSTEM.md
-    hint.classList.toggle('text-danger', noSentinel);
+    // 「填了也沒用」的提示需要被看見：走 statusNote（語意色與圖示由共用元件提供）
+    hint.replaceChildren(...(noSentinel
+        ? [statusNote('info', '尚未於「NetIQ 維護」頁新增任何 Sentinel，目前只能登錄為待歸屬。')]
+        : []));
 }
 
 /**
@@ -171,15 +170,15 @@ function renderQueues() {
         button.disabled = card.count === 0;
 
         const value = document.createElement('div');
-        value.className = card.count > 0 ? 'fs-4 fw-semibold text-warning-emphasis' : 'fs-4 fw-semibold text-muted';
+        value.className = card.count > 0 ? 'fs-4 lf-text-title' : 'fs-4 lf-text-meta';
         value.textContent = card.count;
 
         const title = document.createElement('div');
-        title.className = 'fw-semibold';
+        title.className = 'lf-text-title';
         title.textContent = card.title;
 
         const hint = document.createElement('div');
-        hint.className = 'small text-muted';
+        hint.className = 'lf-text-meta';
         hint.textContent = card.count > 0 ? card.hint : '目前沒有待處理項目';
 
         button.append(value, title, hint);
@@ -365,10 +364,10 @@ function render() {
             { title: '', className: 'lf-checkbox-cell', renderHeader: selection.selectAllHeaderCheckbox, render: selection.rowCheckboxCell },
             { title: '主機', sortKey: 'name', render: hostNameCell },
             { title: '來源', sortKey: 'source', render: sourceCell },
-            { title: 'IP', sortKey: 'ip', render: h => h.ipAddress ?? '' },
-            { title: 'OS', sortKey: 'os', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
+            { title: 'IP', sortKey: 'ip', render: h => roleText('lf-text-data text-nowrap', h.ipAddress ?? '') },
+            { title: 'OS', sortKey: 'os', render: h => roleText('lf-text-meta', h.os === 'linux' ? 'Linux' : 'Windows') },
             { title: '分級', render: tierCell },
-            { title: '角色描述', sortKey: 'roleDesc', render: h => h.roleDesc },
+            { title: '角色描述', sortKey: 'roleDesc', render: h => roleText('lf-text-meta', h.roleDesc ?? '') },
             { title: '主機群組', render: h => badges(h.groupNames, '未分組（一般使用者看不到）') },
             { title: '負責人', render: h => badges(h.ownerNames, '未指定') },
             { title: '最近回報', sortKey: 'lastReport', sortDefaultDir: 'desc', render: lastReportCell },
@@ -398,13 +397,14 @@ function hostNameCell(host) {
     const wrap = document.createElement('div');
 
     const name = document.createElement('div');
+    name.className = 'lf-text-title';
     name.textContent = host.hostName;
     wrap.appendChild(name);
 
     // Sentinel 回報的主機名：NetIQ 主機以 IP 登錄，沒有這行就認不出是哪台機器
     if (host.displayName) {
         const display = document.createElement('div');
-        display.className = 'small text-muted';
+        display.className = 'lf-text-meta';
         display.textContent = host.displayName;
         wrap.appendChild(display);
     }
@@ -489,11 +489,11 @@ function badge(text, variant) {
 
 function sourceCell(host) {
     const wrap = document.createElement('span');
+    wrap.className = 'lf-text-meta';
     wrap.textContent = host.source === 'netiq' ? 'NetIQ' : '本機直讀';
 
     if (host.netiqServer) {
         const server = document.createElement('div');
-        server.className = 'small text-muted';
         server.textContent = host.netiqServer;
         wrap.appendChild(server);
     }
@@ -511,15 +511,15 @@ function lastReportCell(host) {
     const span = document.createElement('span');
 
     if (!host.lastReportAt) {
-        span.className = host.isSilent ? 'text-danger' : 'text-muted';
+        span.className = host.isSilent ? 'lf-text-alert' : 'lf-text-meta';
         span.textContent = '尚未回報';
         return span;
     }
 
     const days = (Date.now() - new Date(host.lastReportAt).getTime()) / 86400000;
     span.textContent = formatDateTime(host.lastReportAt);
+    span.className = host.isSilent ? 'lf-text-alert text-nowrap' : 'lf-text-data text-nowrap';
     if (host.isSilent) {
-        span.className = 'text-danger fw-semibold';
         span.title = `已 ${Math.floor(days)} 天沒有回報`;
     }
     return span;
@@ -528,7 +528,7 @@ function lastReportCell(host) {
 function badges(names, emptyText) {
     if (!names || names.length === 0) {
         const span = document.createElement('span');
-        span.className = 'text-muted';
+        span.className = 'lf-text-meta';
         span.textContent = emptyText;
         return span;
     }
@@ -555,7 +555,7 @@ function actionsCell(host) {
     wrap.appendChild(button('編輯', { variant: 'outline-primary', onClick: () => openModal(host) }));
     wrap.appendChild(host.active
         ? button('停用', { variant: 'outline-secondary', onClick: () => setActive(host, false) })
-        : button('啟用', { variant: 'outline-success', onClick: () => setActive(host, true) }));
+        : button('啟用', { variant: 'outline-secondary', onClick: () => setActive(host, true) }));
 
     return wrap;
 }
@@ -586,7 +586,7 @@ async function unmerge(host) {
         message: `${host.hostName} 將恢復為獨立主機並重新啟用。` +
             '合併時帶入對方的群組／負責人等設定不會自動收回，請解除後一併確認。',
         confirmText: '解除',
-        confirmVariant: 'warning'
+        confirmVariant: 'primary'
     });
     if (!confirmed) return;
 
@@ -709,23 +709,21 @@ function renderBulkResult(result) {
     const container = document.getElementById('bulk-result');
     container.replaceChildren();
 
-    const summary = document.createElement('div');
-    summary.className = result.skipped.length > 0 ? 'alert alert-warning' : 'alert alert-success';
-    summary.textContent =
-        `新增 ${result.addedCount} 台、更新 ${result.updatedCount} 台、略過 ${result.skipped.length} 行。`;
+    const summary = statusNote(result.skipped.length > 0 ? 'info' : 'success',
+        `新增 ${result.addedCount} 台、更新 ${result.updatedCount} 台、略過 ${result.skipped.length} 行。`);
     container.appendChild(summary);
 
     if (result.skipped.length === 0) return;
 
     const list = document.createElement('ul');
-    list.className = 'list-group small';
+    list.className = 'list-group';
 
     for (const line of result.skipped) {
         const item = document.createElement('li');
         item.className = 'list-group-item';
 
         const location = document.createElement('span');
-        location.className = 'fw-semibold me-2';
+        location.className = 'lf-text-title me-2';
         location.textContent = `第 ${line.lineNumber} 行`;
 
         const raw = document.createElement('code');
@@ -733,7 +731,7 @@ function renderBulkResult(result) {
         raw.textContent = line.rawLine;
 
         const reason = document.createElement('span');
-        reason.className = 'text-muted';
+        reason.className = 'lf-text-meta';
         reason.textContent = line.reason;
 
         item.append(location, raw, reason);
@@ -763,7 +761,7 @@ function openBatchGroupsModal() {
     list.replaceChildren();
     for (const host of hosts) {
         const row = document.createElement('div');
-        row.className = 'small mb-1';
+        row.className = 'mb-1';
         const name = document.createElement('span');
         name.className = 'me-2';
         name.textContent = host.hostName;
@@ -794,7 +792,7 @@ function openBatchTierModal() {
     list.replaceChildren();
     for (const host of hosts) {
         const row = document.createElement('div');
-        row.className = 'small mb-1';
+        row.className = 'mb-1';
         const name = document.createElement('span');
         name.className = 'me-2';
         name.textContent = host.hostName;
@@ -818,7 +816,7 @@ function openBatchOwnersModal() {
     list.replaceChildren();
     for (const host of hosts) {
         const row = document.createElement('div');
-        row.className = 'small mb-1';
+        row.className = 'mb-1';
         const name = document.createElement('span');
         name.className = 'me-2';
         name.textContent = host.hostName;
@@ -843,10 +841,11 @@ function updateReplaceWarning() {
 
     if (mode !== 'replace' || selectedIds('batch-groups-checks').length > 0) {
         warning.classList.add('d-none');
+        warning.replaceChildren();
         return;
     }
 
-    warning.textContent = `${selectedHosts.size} 台將變成未分組，一般使用者會看不到。`;
+    warning.replaceChildren(statusNote('error', `${selectedHosts.size} 台將變成未分組，一般使用者會看不到。`));
     warning.classList.remove('d-none');
 }
 

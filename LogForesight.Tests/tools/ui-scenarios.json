@@ -1,0 +1,2356 @@
+[
+  {
+    "name": "登入頁",
+    "role": "ui-admin",
+    "path": "/login"
+  },
+  {
+    "name": "儀表板",
+    "role": "ui-admin",
+    "path": "/"
+  },
+  {
+    "name": "問題查詢",
+    "role": "ui-admin",
+    "path": "/records"
+  },
+  {
+    "name": "交辦總覽",
+    "role": "ui-admin",
+    "path": "/work-orders"
+  },
+  {
+    "name": "報表",
+    "role": "ui-admin",
+    "path": "/reports"
+  },
+  {
+    "name": "權限異動檢核",
+    "role": "ui-admin",
+    "path": "/permission-changes"
+  },
+  {
+    "name": "稽核紀錄",
+    "role": "ui-admin",
+    "path": "/audit"
+  },
+  {
+    "name": "排程作業",
+    "role": "ui-admin",
+    "path": "/runs"
+  },
+  {
+    "name": "規則維護",
+    "role": "ui-admin",
+    "path": "/admin/rules"
+  },
+  {
+    "name": "使用者",
+    "role": "ui-admin",
+    "path": "/admin/users"
+  },
+  {
+    "name": "主機",
+    "role": "ui-admin",
+    "path": "/admin/hosts"
+  },
+  {
+    "name": "群組與授權",
+    "role": "ui-admin",
+    "path": "/admin/groups"
+  },
+  {
+    "name": "問題負責與靜音",
+    "role": "ui-admin",
+    "path": "/admin/issue-owners"
+  },
+  {
+    "name": "資料匯入",
+    "role": "ui-admin",
+    "path": "/admin/imports"
+  },
+  {
+    "name": "NetIQ維護",
+    "role": "ui-admin",
+    "path": "/admin/netiq"
+  },
+  {
+    "name": "PRTG維護",
+    "role": "ui-admin",
+    "path": "/admin/prtg"
+  },
+  {
+    "name": "設定",
+    "role": "ui-admin",
+    "path": "/admin/settings"
+  },
+  {
+    "name": "操作說明書",
+    "role": "ui-admin",
+    "path": "/help/manual"
+  },
+  {
+    "name": "初始設定",
+    "role": "ui-admin",
+    "path": "/setup"
+  },
+  {
+    "name": "拒絕存取",
+    "role": "ui-admin",
+    "path": "/access-denied"
+  },
+  {
+    "name": "處理人-首頁",
+    "role": "ui-handler",
+    "path": "/"
+  },
+  {
+    "name": "處理人-我的交辦",
+    "role": "ui-handler",
+    "path": "/handlers/3"
+  },
+  {
+    "name": "處理人-交辦單",
+    "role": "ui-handler",
+    "path": "/work-orders/1"
+  },
+  {
+    "name": "處理人-問題查詢",
+    "role": "ui-handler",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "統一標記"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "靜音"
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-首頁",
+    "role": "ui-viewer",
+    "path": "/"
+  },
+  {
+    "name": "受限檢視者-問題查詢",
+    "role": "ui-viewer",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "統一標記"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "靜音"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list button",
+          "notText": "回覆處理狀態"
+        }
+      }
+    ]
+  },
+  {
+    "name": "中斷點-767與768",
+    "role": "ui-admin",
+    "path": "/admin/settings",
+    "widths": [
+      767,
+      768
+    ],
+    "steps": [
+      {
+        "assertAt": {
+          "767": {
+            "sel": ".lf-layout",
+            "style": {
+              "flex-direction": "column"
+            }
+          },
+          "768": {
+            "sel": ".lf-layout",
+            "style": {
+              "flex-direction": "row"
+            }
+          }
+        }
+      },
+      {
+        "assertAt": {
+          "767": {
+            "sel": ".lf-sidebar__nav",
+            "style": {
+              "display": "none"
+            }
+          },
+          "768": {
+            "sel": ".lf-mobile-menu-toggle",
+            "visible": false
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-全部展開",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues section.lf-issue-group .lf-issue-group__expand-all"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable[aria-expanded=\"false\"]",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type .lf-issue-group__expand-all",
+          "text": "全部收合"
+        }
+      },
+      {
+        "click": "#detail-issues section.lf-issue-group .lf-issue-group__expand-all"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-重繪保留展開與捲動",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(3)"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(3)[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      },
+      {
+        "click": "#detail-issues section.lf-issue-group:first-of-type tbody tr.lf-row-expandable:nth-child(1) input[data-issue-key]"
+      },
+      {
+        "click": ".lf-handling__chips [data-status=\"resolved\"]"
+      },
+      {
+        "type": [
+          "#handling-note",
+          "UI 驗收：重繪後展開狀態"
+        ]
+      },
+      {
+        "markScroll": true
+      },
+      {
+        "click": "#handling-panel button[type=\"submit\"]"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      },
+      {
+        "scrollWithin": 4
+      }
+    ]
+  },
+  {
+    "name": "列印-風險日佐證",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "media": "print",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#detail-issues .lf-evidence",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues .lf-disclosure",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-手機-風險日",
+    "role": "ui-handler",
+    "path": "fixture:record.cases",
+    "widths": [
+      375
+    ],
+    "steps": [
+      {
+        "click": "#detail-issues tr.lf-row-expandable"
+      },
+      {
+        "assert": {
+          "sel": "#detail-issues tr.lf-row-expandable[aria-expanded=\"true\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-篩選排序與視角",
+    "role": "ui-admin",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "click": "#filter-risk-chips [data-risk=\"低\"]"
+      },
+      {
+        "waitFor": "#filter-risk-chips [data-risk=\"低\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#record-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#record-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#record-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#view-toggle [data-view=\"host\"]"
+      },
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#view-toggle [data-view=\"issue\"]"
+      },
+      {
+        "waitFor": "#record-list tbody tr .lf-text-title"
+      },
+      {
+        "assert": {
+          "sel": "#record-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-主機-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/hosts",
+    "steps": [
+      {
+        "waitFor": "#host-list tbody tr"
+      },
+      {
+        "click": "#host-status-chips [data-status=\"local\"]"
+      },
+      {
+        "waitFor": "#host-status-chips [data-status=\"local\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#host-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#host-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#host-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-使用者-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/users",
+    "steps": [
+      {
+        "waitFor": "#user-list tbody tr"
+      },
+      {
+        "click": "#user-status-chips [data-status=\"\"]"
+      },
+      {
+        "waitFor": "#user-status-chips [data-status=\"\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#user-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#user-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#user-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#user-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#user-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-規則維護-篩選與排序",
+    "role": "ui-admin",
+    "path": "/admin/rules",
+    "steps": [
+      {
+        "waitFor": "#rule-list tbody tr"
+      },
+      {
+        "click": "#rule-status-chips .lf-chip:nth-child(2)"
+      },
+      {
+        "waitFor": "#rule-status-chips .lf-chip.active:nth-child(2)"
+      },
+      {
+        "assert": {
+          "sel": "#rule-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#rule-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#rule-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#rule-list .lf-th-sort--active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#rule-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-篩選頁籤與靜音",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "type": [
+          "#wo-status",
+          "all"
+        ]
+      },
+      {
+        "waitFor": "#wo-list tbody tr .lf-text-data"
+      },
+      {
+        "type": [
+          "#wo-sort",
+          "members_desc"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "#wo-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"load\"]"
+      },
+      {
+        "waitFor": "#wo-load tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-load tbody tr .lf-text-data",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-gaps-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-auto-dispatch",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"muted\"]"
+      },
+      {
+        "waitFor": "#wo-muted-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-muted-list button[aria-haspopup=\"dialog\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "主管-交辦總覽",
+    "role": "ui-manager",
+    "path": "/work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-tabs [data-tab=\"muted\"]",
+          "count": 0
+        }
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-gaps-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-auto-dispatch",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-muted-list",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-稽核紀錄-篩選排序與展開",
+    "role": "ui-admin",
+    "path": "fixture:page.audit",
+    "steps": [
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#btn-denied"
+      },
+      {
+        "waitFor": "#btn-denied.active"
+      },
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#btn-denied"
+      },
+      {
+        "waitFor": "#audit-list tbody tr"
+      },
+      {
+        "click": "#audit-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#audit-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#audit-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "type": [
+          "#audit-from",
+          "2026-01-01"
+        ]
+      },
+      {
+        "waitFor": "#audit-list .lf-disclosure"
+      },
+      {
+        "click": "#audit-list .lf-disclosure"
+      },
+      {
+        "waitFor": "#audit-list .lf-disclosure[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#audit-list pre",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-權限異動-全部展開與頁籤",
+    "role": "ui-admin",
+    "path": "fixture:page.permission-changes",
+    "steps": [
+      {
+        "waitFor": "#perm-list tbody tr"
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "waitFor": "#perm-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#btn-toggle-expand",
+          "text": "全部收合"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain",
+          "visible": true
+        }
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "assert": {
+          "sel": "#btn-toggle-expand",
+          "text": "全部展開"
+        }
+      },
+      {
+        "click": "#perm-tabs [data-status=\"\"]"
+      },
+      {
+        "waitFor": "#perm-list tbody tr .lf-text-title"
+      },
+      {
+        "click": "#perm-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#perm-list .lf-th-sort--active"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#btn-toggle-expand"
+      },
+      {
+        "waitFor": "#perm-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list .lf-detail-plain, #perm-list table",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-權限異動-勾選與批次確認視窗",
+    "role": "ui-admin",
+    "path": "fixture:page.permission-changes",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#perm-list tbody tr"
+      },
+      {
+        "click": "#perm-list tbody .lf-checkbox-cell input"
+      },
+      {
+        "waitFor": "#perm-selection-bar:not(.d-none)"
+      },
+      {
+        "click": "#btn-batch-suspicious"
+      },
+      {
+        "waitFor": "#batch-confirm-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#batch-confirm-modal #batch-confirm-note",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#batch-confirm-submit.btn-danger",
+          "count": 1
+        }
+      },
+      {
+        "click": "#batch-confirm-modal .btn-close"
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-權限異動",
+    "role": "ui-viewer",
+    "path": "/permission-changes",
+    "steps": [
+      {
+        "waitFor": "#perm-list .lf-empty, #perm-list tbody tr, #perm-list .lf-state"
+      },
+      {
+        "assert": {
+          "sel": "#perm-list",
+          "notText": "UI-WIN-NORMAL"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-list tbody tr",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#perm-selection-bar",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-問題負責與靜音-新增與靜音視窗",
+    "role": "ui-admin",
+    "path": "fixture:page.admin-issue-owners",
+    "steps": [
+      {
+        "waitFor": "#issue-owner-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-list .lf-skeleton",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-new"
+      },
+      {
+        "waitFor": "#issue-owner-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-picker",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-manual-toggle"
+      },
+      {
+        "assert": {
+          "sel": "#issue-owner-source",
+          "visible": true
+        }
+      },
+      {
+        "click": "#issue-owner-modal .btn-close"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": "#issue-owner-list button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "click": "#issue-owner-list button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "click": ".modal.show button[type=\"submit\"]"
+      },
+      {
+        "waitFor": ".modal.show .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show .lf-status-note",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "button.btn-outline-primary"
+      },
+      {
+        "click": "button.btn-outline-primary"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-主機詳情-切換天數與展開明細",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-update-open",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-detail [data-days=\"90\"]"
+      },
+      {
+        "waitFor": "#host-detail [data-days=\"90\"][aria-pressed=\"true\"]"
+      },
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-detail [data-days=\"30\"][aria-pressed=\"false\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-timeline .lf-calendar__month",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-issues th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#host-issues .lf-th-sort--active"
+      },
+      {
+        "click": "#host-issues tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#host-issues tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "waitFor": "#host-issues tr.lf-row-detail:not(.d-none) table, #host-issues tr.lf-row-detail:not(.d-none) .lf-text-meta"
+      },
+      {
+        "assert": {
+          "sel": "#host-issues tr.lf-row-detail:not(.d-none)",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "主管-主機詳情",
+    "role": "ui-manager",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-header .lf-entity-head"
+      },
+      {
+        "assert": {
+          "sel": "#host-update-open",
+          "count": 0
+        }
+      },
+      {
+        "assert": {
+          "sel": "#host-header .lf-entity-head__title",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-手機-看單與回覆",
+    "role": "ui-handler",
+    "path": "/handlers/3",
+    "widths": [
+      375
+    ],
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list tbody tr .btn-outline-primary",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list tbody tr .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "click": "#handler-wo-list tbody tr .btn-outline-primary"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form button[type=\"submit\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "text": "送出並回覆下一張"
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-交辦單詳情-動作",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "text": "回覆這張單"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "改派"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "取消交辦"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "notText": "代為結案"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-split",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦單詳情-詳細資訊與成員選取",
+    "role": "ui-admin",
+    "path": "fixture:work-order.mass",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-actions",
+          "text": "改派"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-meta-line.d-none",
+          "visible": false
+        }
+      },
+      {
+        "click": "#wo-header .lf-disclosure"
+      },
+      {
+        "waitFor": "#wo-header .lf-disclosure[aria-expanded=\"true\"]"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-meta-line:not(.d-none)",
+          "count": 2
+        }
+      },
+      {
+        "type": [
+          "#wo-member-status",
+          "all"
+        ]
+      },
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "click": "#wo-members .wo-member-select"
+      },
+      {
+        "waitFor": "#wo-member-split:not(:disabled)"
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-split:not(:disabled)",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-member-reply",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-排程作業-天數頁籤排序與展開",
+    "role": "ui-admin",
+    "path": "fixture:page.runs",
+    "steps": [
+      {
+        "waitFor": "#run-summary tbody tr"
+      },
+      {
+        "click": "#run-summary tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#run-summary tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "click": "[data-days=\"7\"]"
+      },
+      {
+        "waitFor": "[data-days=\"7\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#run-summary tbody tr .lf-disclosure, #run-summary tbody tr",
+          "visible": true
+        }
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"errors\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"errors\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#run-errors-level",
+          "warn"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "#run-errors",
+          "visible": true
+        }
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"list\"]"
+      },
+      {
+        "waitFor": "#run-list tbody tr"
+      },
+      {
+        "click": "#run-list th[aria-sort] .lf-th-sort"
+      },
+      {
+        "waitFor": "#run-list .lf-th-sort--active"
+      },
+      {
+        "click": "#run-list tr.lf-row-expandable"
+      },
+      {
+        "waitFor": "#run-list tr.lf-row-expandable[aria-expanded=\"true\"]"
+      },
+      {
+        "click": "#runs-tabs [data-tab=\"settings\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"settings\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-form",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#runs-toolbar",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-排程作業-輪詢穩定",
+    "role": "ui-admin",
+    "path": "fixture:page.runs",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#schedule-run-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/schedule/status": {
+            "isRunning": true,
+            "canStop": true,
+            "startedAt": "$now-95",
+            "latestMessage": "本機分析：主機日 3／10",
+            "localProgressPhase": "local",
+            "localProgressDone": 3,
+            "localProgressTotal": 10,
+            "progressPhase": "netiq",
+            "progressDone": 12,
+            "progressTotal": 40
+          },
+          "/api/admin/schedule/ai-status": {
+            "isRunning": true,
+            "canStop": true,
+            "startedAt": "$now-60",
+            "latestMessage": "AI 分析進行中"
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#schedule-stop:not(.d-none)",
+        "timeout": 15000
+      },
+      {
+        "waitFor": "#schedule-ai-stop:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-progress-text",
+          "visible": true
+        }
+      },
+      {
+        "markRect": [
+          "#schedule-run-card",
+          "#schedule-ai-card",
+          "#prtg-status-card",
+          "#runs-tabs"
+        ]
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-排程作業",
+    "role": "ui-viewer",
+    "path": "/runs",
+    "steps": [
+      {
+        "assert": {
+          "sel": "[data-maintain-action]:not(.d-none)",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#schedule-run-now",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#schedule-ai-force-rerun",
+          "visible": false
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-頁籤深連結與啟用準備連結",
+    "role": "ui-admin",
+    "path": "/admin/prtg#probe",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"probe\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"connection\"]",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "#prtg-tabs [data-tab=\"probe\"].active",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"mirror\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"mirror\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"probe\"]",
+          "visible": false
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"selected-backfill\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"selected-backfill\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-full-backfill-preview",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-tabs [data-tab=\"effectiveness\"]"
+      },
+      {
+        "waitFor": "[data-panel=\"effectiveness\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-effectiveness-refresh",
+          "visible": true
+        }
+      },
+      {
+        "click": "#prtg-setup-steps a[href^=\"#\"]"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-tabs .nav-link.active",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-輪詢穩定",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-structure-sync-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/settings/prtg-structure-sync/status": {
+            "isRunning": true,
+            "progressPhase": "prtg-sync-devices",
+            "progressDone": 3,
+            "progressTotal": 10,
+            "latestMessage": "同步裝置結構中…"
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#prtg-structure-sync-cancel-btn:not(.d-none)",
+        "timeout": 15000
+      },
+      {
+        "markRect": [
+          "#prtg-structure-sync-card",
+          "#prtg-mirror-stats",
+          "#prtg-setup-summary",
+          "#prtg-tabs"
+        ]
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      },
+      {
+        "wait": 3500
+      },
+      {
+        "sameRect": 0.5
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-連線測試失敗訊息",
+    "role": "ui-admin",
+    "path": "/admin/prtg",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-test-btn"
+      },
+      {
+        "type": [
+          "#prtg-url",
+          "not-a-valid-url"
+        ]
+      },
+      {
+        "click": "#prtg-test-btn"
+      },
+      {
+        "waitFor": "#prtg-test-result [role=\"alert\"]",
+        "timeout": 15000
+      },
+      {
+        "assert": {
+          "sel": "#prtg-test-result [role=\"alert\"]",
+          "visible": true
+        }
+      }
+    ],
+    "allowStatus": [
+      400
+    ]
+  },
+  {
+    "name": "PRTG維護-擷取參數頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#params",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"params\"]:not(.d-none)"
+      },
+      {
+        "clickIf": "#prtg-monitoring-toggle[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#prtg-monitoring-body.show"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-鏡像狀態頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mirror\"]:not(.d-none)"
+      },
+      {
+        "waitFor": "#prtg-mirror-conflicts-table table, #prtg-mirror-conflicts-table .lf-empty"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-環境探測頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#probe",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"probe\"]:not(.d-none)"
+      },
+      {
+        "click": "#prtg-calibration-advanced summary"
+      },
+      {
+        "click": "#calibration-calc-btn"
+      },
+      {
+        "waitFor": "#calibration-cards:not(.d-none)",
+        "timeout": 60000
+      },
+      {
+        "assert": {
+          "sel": "#calibration-cards",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-歷史回填頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#selected-backfill",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"selected-backfill\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "PRTG維護-使用效果頁籤",
+    "role": "ui-admin",
+    "path": "/admin/prtg#effectiveness",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"effectiveness\"]:not(.d-none)"
+      },
+      {
+        "click": "#prtg-effectiveness-refresh"
+      },
+      {
+        "waitFor": "#prtg-effectiveness-metrics:not(.d-none)",
+        "timeout": 20000
+      }
+    ]
+  },
+  {
+    "name": "排程作業-排程設定頁籤",
+    "role": "ui-admin",
+    "path": "/runs#settings",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"settings\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#schedule-windows input",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-ai",
+    "role": "ui-admin",
+    "path": "/admin/settings#ai",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ai\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-ad",
+    "role": "ui-admin",
+    "path": "/admin/settings#ad",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ad\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-analysis",
+    "role": "ui-admin",
+    "path": "/admin/settings#analysis",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"analysis\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-retention",
+    "role": "ui-admin",
+    "path": "/admin/settings#retention",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"retention\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-health",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"health\"]:not(.d-none)"
+      },
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-guard",
+    "role": "ui-admin",
+    "path": "/admin/settings#guard",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"guard\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-mail",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-brand",
+    "role": "ui-admin",
+    "path": "/admin/settings#brand",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"brand\"]:not(.d-none)"
+      }
+    ]
+  },
+  {
+    "name": "設定-未儲存提醒與頁籤深連結",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#settings-tabs [data-tab=\"mail\"].active",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"levels\"]",
+          "visible": false
+        }
+      },
+      {
+        "beforeUnload": false
+      },
+      {
+        "type": [
+          "#mail-from",
+          "e2-check@example.com"
+        ]
+      },
+      {
+        "click": "#settings-tabs [data-tab=\"brand\"]"
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"brand\"]",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "[data-panel=\"mail\"]",
+          "visible": false
+        }
+      },
+      {
+        "beforeUnload": true
+      }
+    ]
+  },
+  {
+    "name": "設定-儲存驗證擋下顯示statusNote",
+    "role": "ui-admin",
+    "path": "/admin/settings#retention",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"retention\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#initial-history-days",
+          "365"
+        ]
+      },
+      {
+        "type": [
+          "#retention-days",
+          "90"
+        ]
+      },
+      {
+        "click": "#settings-save"
+      },
+      {
+        "waitFor": "#settings-save-status .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#settings-save-status .lf-status-note",
+          "visible": true,
+          "text": "不可小於首次執行回補天數"
+        }
+      }
+    ]
+  },
+  {
+    "name": "設定-AD測試缺欄位顯示statusNote",
+    "role": "ui-admin",
+    "path": "/admin/settings#ad",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"ad\"]:not(.d-none)"
+      },
+      {
+        "type": [
+          "#ad-servers",
+          ""
+        ]
+      },
+      {
+        "click": "#ad-test-btn"
+      },
+      {
+        "waitFor": "#ad-test-result .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#ad-test-result .lf-status-note",
+          "visible": true,
+          "text": "請至少輸入一台 AD 伺服器"
+        }
+      }
+    ]
+  },
+  {
+    "name": "初始設定-AD測試失敗顯示alert",
+    "role": "ui-admin",
+    "path": "/setup",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#setup-ad-test-btn"
+      },
+      {
+        "type": [
+          "#setup-ad-servers",
+          ""
+        ]
+      },
+      {
+        "click": "#setup-ad-test-btn"
+      },
+      {
+        "waitFor": "#setup-ad-test-result [role=\"alert\"]"
+      },
+      {
+        "assert": {
+          "sel": "#setup-ad-test-result [role=\"alert\"]",
+          "visible": true,
+          "text": "請至少輸入一台 AD 伺服器"
+        }
+      }
+    ]
+  },
+  {
+    "name": "NetIQ維護-連線測試失敗顯示alert",
+    "role": "ui-admin",
+    "path": "/admin/netiq",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#btn-new-sentinel"
+      },
+      {
+        "waitFor": "#sentinel-modal.show"
+      },
+      {
+        "type": [
+          "#sentinel-base-url",
+          "http://127.0.0.1:1"
+        ]
+      },
+      {
+        "type": [
+          "#sentinel-username",
+          "e2-check"
+        ]
+      },
+      {
+        "type": [
+          "#sentinel-password",
+          "e2-check"
+        ]
+      },
+      {
+        "click": "#sentinel-test-connection"
+      },
+      {
+        "waitFor": "#sentinel-test-result [role=\"alert\"]",
+        "timeout": 30000
+      },
+      {
+        "assert": {
+          "sel": "#sentinel-test-result [role=\"alert\"]",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "群組-成員視窗與查找提示",
+    "role": "ui-admin",
+    "path": "fixture:admin.groups",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "click": "#group-tabs [data-tab=\"host-groups\"]"
+      },
+      {
+        "waitFor": "#host-group-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#host-group-list button[aria-haspopup=\"dialog\"]",
+          "visible": true
+        }
+      },
+      {
+        "click": "#host-group-list tbody tr button[aria-haspopup=\"dialog\"]"
+      },
+      {
+        "waitFor": "#members-modal.show"
+      },
+      {
+        "assert": {
+          "sel": "#members-group-name",
+          "visible": true
+        }
+      },
+      {
+        "click": "#members-tabs [data-tab=\"add\"]"
+      },
+      {
+        "click": "#members-search"
+      },
+      {
+        "waitFor": "#members-summary .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#members-summary .lf-status-note",
+          "visible": true,
+          "text": "請輸入網段或關鍵字"
+        }
+      }
+    ]
+  },
+  {
+    "name": "資料匯入-欄位格式說明展開",
+    "role": "ui-admin",
+    "path": "fixture:page.admin-imports",
+    "steps": [
+      {
+        "click": "#import-cards details summary"
+      },
+      {
+        "assert": {
+          "sel": "#import-cards details table",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-設定",
+    "role": "ui-viewer",
+    "path": "/admin/settings",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#settings-save",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-NetIQ維護",
+    "role": "ui-viewer",
+    "path": "/admin/netiq",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#btn-new-sentinel",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-群組與授權",
+    "role": "ui-viewer",
+    "path": "/admin/groups",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "[data-new-user-group]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-資料匯入",
+    "role": "ui-viewer",
+    "path": "/admin/imports",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#import-owners-file",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限角色-初始設定",
+    "role": "ui-viewer",
+    "path": "/setup",
+    "widths": [
+      375,
+      1280
+    ],
+    "allowStatus": [
+      401,
+      403
+    ],
+    "steps": [
+      {
+        "assert": {
+          "sel": "#setup-steps button, #setup-steps a.btn",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-儀表板-期間切換與告警分流",
+    "role": "ui-admin",
+    "path": "/",
+    "steps": [
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-issues .lf-text-title",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-kpi .lf-kpi-card",
+          "visible": true
+        }
+      },
+      {
+        "click": "[data-range=\"30\"]"
+      },
+      {
+        "waitFor": "[data-range=\"30\"].active"
+      },
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#dashboard-range",
+          "visible": true
+        }
+      },
+      {
+        "click": "[data-range=\"1\"]"
+      },
+      {
+        "waitFor": "[data-range=\"1\"].active"
+      },
+      {
+        "waitFor": "#dashboard-kpi .lf-kpi-card"
+      }
+    ]
+  },
+  {
+    "name": "互動-報表-期間視角與一屏綁定",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "assertAt": {
+          "1280": {
+            "sel": ".lf-layout",
+            "style": {
+              "height": "900px"
+            }
+          },
+          "1920": {
+            "sel": ".lf-layout",
+            "style": {
+              "height": "900px"
+            }
+          }
+        }
+      },
+      {
+        "click": "[data-range=\"30\"]"
+      },
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "click": "#rank-mode-toggle [data-rank-mode=\"issue\"]"
+      },
+      {
+        "waitFor": "#rank-mode-toggle [data-rank-mode=\"issue\"].active"
+      },
+      {
+        "assert": {
+          "sel": "#btn-print-report",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": ".lf-report-page .lf-legend-row__value",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-報表",
+    "role": "ui-viewer",
+    "path": "/reports",
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "assert": {
+          "sel": "#btn-print-report",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-說明書-切章與相關功能",
+    "role": "ui-admin",
+    "path": "/help/manual",
+    "steps": [
+      {
+        "waitFor": "#help-chapter-nav button"
+      },
+      {
+        "click": "#help-chapter-nav button:nth-child(3)"
+      },
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      },
+      {
+        "assert": {
+          "sel": "#help-chapter-related .lf-nav-item",
+          "visible": true
+        }
+      },
+      {
+        "click": "#help-chapter-related .lf-nav-item"
+      },
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      }
+    ]
+  },
+  {
+    "name": "受限檢視者-說明書",
+    "role": "ui-viewer",
+    "path": "/help/manual",
+    "steps": [
+      {
+        "waitFor": "#help-chapter-content.lf-doc"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-詢問AI與處理面板",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": "#chat-focus .lf-focus-pick"
+      },
+      {
+        "clickIf": "#chat-focus-picker .btn-outline-secondary"
+      },
+      {
+        "clickIf": ".lf-side-rail__btn[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#handling-panel button[type=\"submit\"]"
+      },
+      {
+        "assert": {
+          "sel": "#handling-panel .lf-text-label",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-風險日詳情-處理面板",
+    "role": "ui-handler",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": ".lf-side-rail__btn[aria-expanded=\"false\"]"
+      },
+      {
+        "waitFor": "#handling-panel button[type=\"submit\"]"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-更多條件",
+    "role": "ui-admin",
+    "path": "/records",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": false
+        }
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件",
+          "notText": "更多條件 "
+        }
+      },
+      {
+        "click": "[aria-controls=\"filter-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": true
+        }
+      },
+      {
+        "type": [
+          "#filter-source",
+          "disk"
+        ]
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件 1"
+        }
+      }
+    ]
+  },
+  {
+    "name": "問題查詢-網址帶EventID",
+    "role": "ui-admin",
+    "path": "/records?eventId=4625",
+    "steps": [
+      {
+        "waitFor": "[aria-controls=\"filter-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"filter-more\"]",
+          "text": "更多條件 1"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#filter-event-id",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-更多條件",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-resumed",
+          "visible": false
+        }
+      },
+      {
+        "click": "[aria-controls=\"wo-more\"]"
+      },
+      {
+        "assert": {
+          "sel": "#wo-unread-only",
+          "visible": true
+        }
+      },
+      {
+        "click": "#wo-resumed"
+      },
+      {
+        "assert": {
+          "sel": "[aria-controls=\"wo-more\"]",
+          "text": "更多條件 1"
+        }
+      }
+    ]
+  }
+]

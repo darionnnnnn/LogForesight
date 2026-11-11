@@ -2,7 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>風險日詳情「問題」欄：白話說明緊接標題、與 knownIssue 去重，guidancePanel 不再重複輸出說明。</summary>
+/// <summary>風險日詳情「問題」欄的判斷層與列展開的佐證層（docs/archive/FEEDBACK-69-PLAN.md 批次B）。</summary>
 public sealed class RecordDetailIssueCellBehaviorTests
 {
     private static string FindRepoRoot()
@@ -14,15 +14,28 @@ public sealed class RecordDetailIssueCellBehaviorTests
     }
 
     [NodeTheory]
-    [InlineData("explanationAndKnownIssueBeforeLogName")]
+    [InlineData("judgmentLayerOrder")]
     [InlineData("identicalTextShownOnce")]
     [InlineData("noGuidanceLeavesNoEmptyNode")]
+    [InlineData("judgmentExcludesEvidence")]
+    [InlineData("prunedDayShowsHintNotDetails")]
+    [InlineData("keyDetailsNone")]
+    [InlineData("keyDetailsOneAccount")]
+    [InlineData("keyDetailsAccountsAndIps")]
+    [InlineData("keyDetailsManyAccountsCollapsible")]
+    [InlineData("keyDetailsLegacyWholeMessage")]
     [InlineData("guidancePanelOmitsExplanationLabel")]
-    [InlineData("sourceEvidenceThreeObservationsToggle")]
+    [InlineData("evidencePanelAllSections")]
+    [InlineData("evidencePanelSingleSection")]
+    [InlineData("evidencePanelStatesMissingSourceObservations")]
+    [InlineData("evidencePanelNoneReturnsNull")]
+    [InlineData("evidencePanelPrunedKeepsGuidanceOnly")]
+    [InlineData("sourceEvidenceList")]
     [InlineData("sourceEvidenceTruncatedMarker")]
-    [InlineData("sourceEvidenceZeroObservationsNoButton")]
+    [InlineData("sourceEvidenceZeroReturnsNull")]
     [InlineData("loginFailureLongAccountCollapses")]
     [InlineData("loginFailureLongSourceAndReasonCollapse")]
+    [InlineData("trendCellSplitsWordAndNumbers")]
     public void 問題欄白話說明的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

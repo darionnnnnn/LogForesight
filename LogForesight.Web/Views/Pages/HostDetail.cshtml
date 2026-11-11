@@ -1,9 +1,9 @@
 ﻿@{
     ViewData["Title"] = "主機詳情";
+    ViewData["ContentWidth"] = "bounded";
 }
 
 <div id="host-detail" data-host-id="@ViewData["HostId"]">
-    <div id="page-header"></div>
     <div id="host-header"></div>
 
     <div class="modal fade" id="host-update-modal" tabindex="-1" aria-labelledby="host-update-modal-title">
@@ -36,14 +36,14 @@
         <div class="lf-card__header">
             <h2 class="lf-card__title">風險時間軸</h2>
             <div class="btn-group btn-group-sm lf-no-print">
-                <button type="button" class="btn btn-outline-primary" data-days="14">14 天</button>
-                <button type="button" class="btn btn-outline-primary active" data-days="30">30 天</button>
-                <button type="button" class="btn btn-outline-primary" data-days="90">90 天</button>
+                <button type="button" class="btn btn-outline-primary" data-days="14" aria-pressed="false">14 天</button>
+                <button type="button" class="btn btn-outline-primary active" data-days="30" aria-pressed="true">30 天</button>
+                <button type="button" class="btn btn-outline-primary" data-days="90" aria-pressed="false">90 天</button>
             </div>
         </div>
         <div class="lf-card__body">
             <div id="host-timeline"></div>
-            <div class="d-flex gap-3 mt-3 small text-muted flex-wrap" id="timeline-legend"></div>
+            <div class="d-flex gap-3 mt-3 flex-wrap" id="timeline-legend"></div>
         </div>
     </section>
 

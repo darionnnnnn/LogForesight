@@ -417,12 +417,12 @@ public class RunsPageUiTests
         Assert.True(tabsEnd > 0 && firstPanel > tabsEnd);
     }
 
-    /// <summary>批次F：新版狀態卡用到的樣式都要在 site.css 定義，否則版面直接散掉。</summary>
+    /// <summary>批次F：新版狀態卡用到的樣式都要在樣式表定義，否則版面直接散掉。</summary>
     [Fact]
     public void Runs頁面樣式在site中已定義()
     {
         var root = FindRepoRoot();
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         foreach (var cls in new[] { ".lf-run-status-grid", ".lf-kv", ".lf-run-progress", ".lf-run-tracks", ".lf-input-narrow" })
         {
@@ -454,7 +454,7 @@ public class RunsPageUiTests
     public void 狀態卡等高的三個必要條件都在()
     {
         var root = FindRepoRoot();
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         Assert.Contains("align-items: stretch", css);
         Assert.DoesNotContain("align-items: start", css.Split(".lf-run-status-grid")[1].Split('}')[0]);
@@ -983,7 +983,7 @@ console.log('PASS operational status refresh');
         var js = Path.Combine(root, "LogForesight.Web", "wwwroot", "js");
         var runs = File.ReadAllText(Path.Combine(js, "pages", "runs.js"));
         var charts = File.ReadAllText(Path.Combine(js, "core", "charts.js"));
-        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
 
         Assert.Empty(System.Text.RegularExpressions.Regex.Matches(runs, "#[0-9a-fA-F]{6}"));
         Assert.Equal(0, CountOccurrences(charts, "rgba("));
@@ -1067,7 +1067,7 @@ console.log('PASS operational status refresh');
         // 體檢輪：等級變數的初值要讀下拉目前的值（重新整理後瀏覽器可能還原表單狀態）
         Assert.Contains("normalizeMinLevel(document.getElementById('run-errors-level')?.value)", js);
         Assert.Contains("自由文字無法保證完全遮除", view);
-        Assert.Contains("<label class=\"small text-muted mb-0\" for=\"run-errors-level\">顯示等級</label>", view);
+        Assert.Contains("<label class=\"lf-text-label mb-0\" for=\"run-errors-level\">顯示等級</label>", view);
         Assert.Contains("id=\"run-errors-level\"", view);
         Assert.Matches("class=\"[^\"]*\\bd-none\\b[^\"]*\" id=\"run-errors-notice\"", view);
         Assert.DoesNotContain("style=", view);

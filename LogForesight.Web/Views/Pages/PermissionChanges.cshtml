@@ -31,7 +31,7 @@
         </div>
         <div class="lf-toolbar__field d-flex align-items-center gap-1 lf-minw-xxl">
             <input type="date" class="form-control form-control-sm" id="filter-from" title="起始時間" />
-            <span class="text-muted small">～</span>
+            <span class="lf-text-meta">～</span>
             <input type="date" class="form-control form-control-sm" id="filter-to" title="結束時間" />
         </div>
         <div class="lf-toolbar__field">
@@ -59,19 +59,19 @@
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
         全選符合目前篩選的權限異動
     </button>
-    <span class="text-muted small">只會選取待確認的項目；已確認的項目不會被選到。</span>
+    <span class="lf-text-meta">只會選取待確認的項目；已確認的項目不會被選到。</span>
 </div>
 
 <div class="lf-toolbar mb-3 d-none" id="perm-selection-bar">
-    <span class="fw-semibold" id="perm-selection-count"></span>
-    <button type="button" class="btn btn-sm btn-success" id="btn-batch-authorize">標記為授權操作</button>
-    <button type="button" class="btn btn-sm btn-danger" id="btn-batch-suspicious">標記為可疑</button>
+    <span class="lf-text-title" id="perm-selection-count"></span>
+    <button type="button" class="btn btn-sm btn-primary" id="btn-batch-authorize">標記為授權操作</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="btn-batch-suspicious">標記為可疑</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
 </div>
 
 <div class="lf-card">
     <div class="lf-card__header d-flex align-items-center justify-content-between flex-wrap gap-2">
-        <h2 class="lf-card__title mb-0">權限異動 <span class="text-muted small" id="perm-count"></span></h2>
+        <h2 class="lf-card__title mb-0">權限異動 <span class="lf-text-meta" id="perm-count"></span></h2>
         <div>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-toggle-expand">全部展開</button>
         </div>
@@ -118,16 +118,16 @@
                     <div class="alert alert-info mb-3" id="batch-confirm-summary-text"></div>
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
-                            <span class="form-label fw-semibold d-inline-block" id="batch-confirm-categories-label">依類別摘要</span>
+                            <span class="form-label lf-text-label d-inline-block" id="batch-confirm-categories-label">依類別摘要</span>
                             <div id="batch-confirm-categories" role="group" aria-labelledby="batch-confirm-categories-label" class="border rounded p-2 lf-scroll-sm"></div>
                         </div>
                         <div class="col-md-6">
-                            <span class="form-label fw-semibold d-inline-block" id="batch-confirm-hosts-label">依主機摘要</span>
+                            <span class="form-label lf-text-label d-inline-block" id="batch-confirm-hosts-label">依主機摘要</span>
                             <div id="batch-confirm-hosts" role="group" aria-labelledby="batch-confirm-hosts-label" class="border rounded p-2 lf-scroll-sm"></div>
                         </div>
                     </div>
                     <div class="mb-2">
-                        <label for="batch-confirm-note" class="form-label">說明 <span id="batch-confirm-note-required" class="text-danger d-none">*</span></label>
+                        <label for="batch-confirm-note" class="form-label">說明 <span id="batch-confirm-note-required" class="lf-required-mark d-none" aria-hidden="true">*</span></label>
                         <textarea class="form-control" id="batch-confirm-note" rows="3"></textarea>
                         <div class="form-text" id="batch-confirm-note-hint"></div>
                     </div>

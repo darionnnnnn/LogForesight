@@ -262,7 +262,7 @@ const cases = {
         assert.equal(ctx.boxes()[0].textContent, '第一次的歸納');
         assert.equal(ctx.notices().length, 1);
         assert.equal(ctx.notices()[0].textContent, '這次歸納沒有成功，請稍後再試。');
-        assert.equal(ctx.notices()[0].className, 'text-muted small');
+        assert.equal(ctx.notices()[0].className, 'lf-text-meta');
         assert.equal(ctx.area.children[ctx.area.children.length - 1], ctx.notices()[0], '提示固定在最後一列');
         assert.equal(ctx.state.restored, 2);
         // 下一次成功就清掉提示

@@ -121,7 +121,9 @@ public class FrontendGuardUiTests
         Assert.DoesNotContain("addEventListener", panel);
 
         var ui = File.ReadAllText(Path.Combine(JsRoot(), "core", "ui.js"));
-        Assert.Contains("onRowToggle(row, !open, cell)", ui);
+        // 使用者操作的展開／收合（點列與全部展開）都經 _lfSetExpanded，每次都通知 onRowToggle
+        Assert.Contains("if (onRowToggle) onRowToggle(row, open, cell);", ui);
+        Assert.Contains("tr._lfSetExpanded(", ui);
     }
 
     [Fact]

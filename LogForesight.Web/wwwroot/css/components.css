@@ -1,0 +1,1368 @@
+﻿/* 元件層：跨頁共用的元件樣式（卡片、徽章、表格、篩選、狀態、AI 區塊、工具類）。 */
+
+/* ── 共用小元件 ────────────────────────────────────────────────────────── */
+
+/* 內嵌 SVG sprite 圖示：跟隨文字色與字級，裝飾性、永遠 aria-hidden（§8.2）*/
+.lf-icon {
+    width: 1em;
+    height: 1em;
+    fill: currentColor;
+    vertical-align: -0.125em;
+    flex-shrink: 0;
+}
+
+/* 一行式輔助說明，取代大段 alert（§8.6）*/
+.lf-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lf-space-2);
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+.lf-hint .lf-icon {
+    margin-top: .15em;
+    color: var(--lf-gray-400);
+}
+
+/* 主機頁批次改群組的勾選欄（docs/FEEDBACK-5-PLAN.md §8）：固定窄寬，不隨內容撐開 */
+.lf-checkbox-cell {
+    width: 2.5rem;
+}
+
+/* 依問題視角批次指派 modal 的受影響主機清單（docs/FEEDBACK-4-PLAN.md §4）：
+   2000 台規模下單一問題可能影響數百台主機，限高＋捲動避免 modal 被撐爆版面 */
+.lf-bulk-assign-hosts {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
+/* checkboxList filterable 模式的勾選項目捲動容器（回饋二十七輪作業 E）：
+   人數多達數十人時以限高＋捲動取代全部攤開，約 12 列高 */
+.lf-checkbox-list-scroll {
+    max-height: 18rem;
+    overflow-y: auto;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
+/* 小型「說明」圖示鈕（開 popover）*/
+.lf-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--lf-gray-400);
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--lf-transition);
+}
+
+.lf-help:hover { color: var(--lf-primary); }
+
+/* ── 文字角色（docs/DESIGN-SYSTEM.md §8.1）───────────────────────────────
+   頁面只用角色，不再現場拼 small／text-muted／fw-semibold。沒有角色的文字就是正文。
+   一律用 rem token：Bootstrap 的 .small 是相對 em，巢狀時會連乘縮小。 */
+.lf-text-title { font-size: var(--lf-font-size-base); font-weight: 600; color: var(--lf-text); }
+.lf-text-meta { font-size: var(--lf-font-size-sm); font-weight: 400; color: var(--lf-text-muted); }
+.lf-text-label { font-size: var(--lf-font-size-sm); font-weight: 600; color: var(--lf-text-muted); }
+.lf-text-data { font-family: var(--lf-font-mono); font-variant-numeric: tabular-nums; }
+.lf-text-alert { font-weight: 600; color: var(--lf-danger-text); }
+
+/* 欄位標籤後的必填星號：與 lf-text-alert 同色；aria-hidden，必填語意由 input 的 required 或說明文字負責 */
+.lf-required-mark { margin-left: .15em; color: var(--lf-danger-text); }
+
+/* 技術值不在字中斷行：overflow-wrap: anywhere 會把表格欄的最小寬度算成一個字，IP、日期、來源名被拆成逐字直排。
+   放不下的長字串交給 body 的 overflow-wrap: break-word（只在真的溢出時才斷）；確定要任意斷行的容器用 lf-break-anywhere */
+.lf-text-data { min-width: 0; }
+.lf-break-anywhere { overflow-wrap: anywhere; min-width: 0; }
+
+/* 一行次要資訊（core/elements.js metaLine）：間距由 gap 提供，窄寬度整項換行 */
+.lf-meta-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--lf-space-3); row-gap: var(--lf-space-1); }
+.lf-meta-line > * { min-width: 0; }
+/* 次要資訊行裡單獨成項的連結（如「#單號」）：點擊區至少 24×24，短字也點得到 */
+.lf-meta-line > a { display: inline-flex; align-items: center; min-width: 24px; min-height: 24px; }
+
+/* ── 揭露（core/elements.js disclosure）：就地展開／收合 ─────────────────
+   箭頭＋文字、無底線、次要文字色；滑過與焦點轉主色。收合朝右、展開朝下。
+   換頁用連結、開視窗用外框按鈕，三種語意外觀不同（§8.2）。 */
+.lf-disclosure {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+    min-height: max(24px, 1.5rem);   /* 點擊區下限用 px：小字級時 rem 會低於 24px */
+    padding: 0 var(--lf-space-1);
+    margin-left: calc(-1 * var(--lf-space-1));
+    border: 0;
+    border-radius: var(--lf-radius-sm);
+    background: transparent;
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-sm);
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color var(--lf-transition), background-color var(--lf-transition);
+}
+.lf-disclosure:hover { color: var(--lf-primary); background: var(--lf-primary-soft); }
+.lf-disclosure:focus-visible { outline: 2px solid transparent; color: var(--lf-primary); box-shadow: var(--lf-focus-ring); }
+.lf-disclosure__icon { width: .85em; height: .85em; flex-shrink: 0; transform: rotate(-90deg); transition: transform var(--lf-transition); }
+.lf-disclosure[aria-expanded="true"] .lf-disclosure__icon { transform: none; }
+
+.lf-icon-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: var(--lf-radius-sm);
+    color: var(--lf-text-muted);
+}
+.lf-icon-link:hover { color: var(--lf-primary); background: var(--lf-primary-soft); }
+.lf-icon-link:focus-visible { outline: none; box-shadow: var(--lf-focus-ring); }
+
+/* 表格裡的換頁連結（日期、主機名）：主色、不畫底線，滑過與焦點才出現（DESIGN-SYSTEM §8.2）——
+   滿版底線讓一欄日期看起來像一排錯字標記 */
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link) { text-decoration: none; }
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link):hover,
+.table a:not(.btn):not(.lf-badge):not(.lf-icon-link):focus-visible { text-decoration: underline; }
+
+/* ── 頁內導航項（類型分布 → 分節、趨勢告警 → 問題）：整列可點的純文字按鈕，滑過淡底；
+   不是連結（不換頁），也不是就地展開（目標在頁面別處），所以外觀與兩者都不同 ── */
+.lf-nav-item {
+    display: block;
+    width: 100%;
+    min-height: max(24px, 1.5rem);
+    padding: var(--lf-space-1) var(--lf-space-2);
+    margin: 0 calc(-1 * var(--lf-space-2));
+    border: 0;
+    border-radius: var(--lf-radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--lf-transition);
+}
+.lf-nav-item:hover { background: var(--lf-primary-soft); }
+/* 行內變體：接在句子裡的頁內導航（例如「到衝突清單處理」） */
+.lf-nav-item--inline { display: inline-block; width: auto; margin: 0; }
+.lf-nav-item:focus-visible { outline: none; box-shadow: var(--lf-focus-ring); }
+
+/* ── 操作結果與驗證訊息（core/elements.js statusNote）────────────────── */
+.lf-status-note { display: flex; align-items: flex-start; gap: var(--lf-space-2); font-size: var(--lf-font-size-sm); }
+.lf-status-note > .lf-icon { flex-shrink: 0; margin-top: .15em; }
+.lf-status-note--error { color: var(--lf-danger-text); }
+.lf-status-note--success { color: var(--lf-success-text); }
+.lf-status-note--info { color: var(--lf-text-muted); }
+.lf-status-note--warning { color: var(--lf-warning-text); }
+
+/* ── 卡片 ──────────────────────────────────────────────────────────────── */
+
+.lf-card {
+    background: var(--lf-card-bg);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    box-shadow: var(--lf-shadow-xs);
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
+}
+
+.lf-card:hover {
+    background-color: var(--lf-primary-soft);
+}
+
+.lf-card--clickable {
+    cursor: pointer;
+}
+
+.lf-card--clickable:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+}
+
+.lf-card__header {
+    padding: var(--lf-space-3) var(--lf-space-4);
+    border-bottom: 1px solid var(--lf-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2) var(--lf-space-3);
+}
+
+summary.lf-card__header {
+    cursor: pointer;
+    list-style: none;
+}
+summary.lf-card__header::-webkit-details-marker { display: none; }
+summary.lf-card__header:focus-visible { outline: none; box-shadow: inset var(--lf-focus-ring); }
+summary.lf-card__header::after { content: '▾'; margin-left: auto; color: var(--lf-text-muted); transition: transform .15s ease; }
+details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
+
+.lf-card__title {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    font-size: var(--lf-font-size-lg);
+    font-weight: 600;
+    margin: 0;
+}
+
+.lf-card__title .lf-icon { color: var(--lf-gray-400); }
+
+/* 整列可點的卡頭（docs/WEB-FEEDBACK-2-PLAN.md #10：報告全文展開/收合）——
+   點空白處也能開合，不必精準點中標題文字 */
+.lf-card__header--clickable {
+    cursor: pointer;
+}
+.lf-card__header--clickable:hover {
+    background: var(--lf-gray-50);
+}
+.lf-card__header--clickable:focus-visible {
+    outline: none;
+    box-shadow: inset var(--lf-focus-ring);
+}
+
+.lf-card__body {
+    padding: var(--lf-space-4);
+}
+
+/*
+  統計卡：大字數字＋小字標籤（§8.2 原則 2「數字優先」）。
+  可下鑽的卡片（§8.4）以 hover 抬升提示可點擊——統計數字是入口，不是終點。
+*/
+.lf-stat {
+    display: block;
+    /* 沒有這行，同一排卡片高度仍會不一致：.row 的 flex 拉伸只會撐高 .col（本身沒有內容），
+       中間這層 block 元素預設不會跟著撐滿，導致孫層 .lf-card 的 h-100 其實是相對一個
+       仍然貼齊自身內容高度的父層，等於沒作用。撐滿這層，h-100 才吃得到同排最高卡片的高度。 */
+    height: 100%;
+    text-decoration: none;
+    color: inherit;
+    transition: box-shadow var(--lf-transition), border-color var(--lf-transition), transform var(--lf-transition);
+}
+
+.lf-stat__value {
+    font-size: var(--lf-font-size-stat);
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
+}
+
+/* KPI 數字的語意色（kpiStrip 的 card.variant）：紅與琥珀只給需要注意的數字 */
+.lf-stat__value--danger { color: var(--lf-danger); }
+.lf-stat__value--warning { color: var(--lf-warning); }
+.lf-stat__value--secondary { color: var(--lf-text-muted); }
+
+.lf-stat__label {
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+a.lf-stat:hover .lf-card,
+.lf-card--clickable:hover {
+    box-shadow: var(--lf-shadow-md);
+    border-color: var(--lf-primary-soft-border);
+}
+
+/*
+  KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
+  - singleRow（--row）：三組排同一排、依卡數分寬，每組放得下幾張就顯示幾張，其餘由 core/reveal.js 收合；
+    不換列也不留 14rem 上限造成的組間空白。575px 以下回到每組佔滿一列、每列兩張。
+  - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
+  - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
+  - ≥1200px 放得下的組並排，各組以卡片數當 flex-grow 分寬、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；窄螢幕各組依序佔滿一列，375px 每列兩張。
+  - hover 只變陰影與邊框色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
+*/
+.lf-kpi-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4) var(--lf-space-5);
+    min-width: 0;
+}
+
+.lf-kpi-group {
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+.lf-kpi-group--n1 { --lf-kpi-count: 1; }
+.lf-kpi-group--n2 { --lf-kpi-count: 2; }
+.lf-kpi-group--n3 { --lf-kpi-count: 3; }
+.lf-kpi-group--n4 { --lf-kpi-count: 4; }
+.lf-kpi-group--n5 { --lf-kpi-count: 5; }
+.lf-kpi-group--n6 { --lf-kpi-count: 6; }
+
+.lf-kpi-group__title .lf-help {
+    margin-left: var(--lf-space-1);
+}
+
+.lf-kpi-group__title {
+    margin: 0 0 var(--lf-space-2);
+    font-size: var(--lf-font-size-sm);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+}
+
+.lf-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9rem, 14rem));
+    gap: var(--lf-space-3);
+}
+
+@media (max-width: 575.98px) {
+    /* 窄螢幕：兩欄均分，不留 14rem 上限造成的右側空白 */
+    .lf-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1200px) {
+    .lf-kpi-group {
+        /* 組寬下限＝卡數 × 9rem ＋ 間距；放不下就整組換列，不壓縮卡寬 */
+        flex: var(--lf-kpi-count, 1) 1 0;
+        min-width: min(calc(var(--lf-kpi-count, 1) * 9rem + (var(--lf-kpi-count, 1) - 1) * var(--lf-space-3)), 100%);
+    }
+}
+
+@media (min-width: 576px) {
+    .lf-kpi-strip--row .lf-kpi-group {
+        flex: var(--lf-kpi-count, 1) 1 0;
+        min-width: 9rem;
+    }
+
+    .lf-kpi-strip--row .lf-kpi-grid {
+        grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    }
+}
+
+/* 收合（只顯示第一排）且放不下全部卡片的寬度：三組等寬，不然只剩一張卡的組會寬窄不一。
+   更寬的畫面全部卡片都放得下，維持依卡數分寬；等寬反而會讓卡多的組藏卡。展開移除類別後同樣回到依卡數分寬。 */
+@media (min-width: 576px) and (max-width: 1799.98px) {
+    .lf-kpi-strip--row.lf-kpi-strip--collapsed .lf-kpi-group {
+        flex: 1 1 0;
+    }
+}
+
+.lf-kpi-card {
+    display: block;
+    min-width: 0;
+    padding: var(--lf-space-3);
+    background: var(--lf-card-bg);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    box-shadow: var(--lf-shadow-xs);
+    color: inherit;
+    text-decoration: none;
+    text-align: left;
+    transition: box-shadow var(--lf-transition), border-color var(--lf-transition);
+}
+
+a.lf-kpi-card--link:hover {
+    box-shadow: var(--lf-shadow-md);
+    border-color: var(--lf-primary-soft-border);
+    color: inherit;
+}
+
+a.lf-kpi-card--link:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+}
+
+/* 標籤可換行（「未處理問題（逾期 3）」截斷就看不到重點；同列卡片由 grid 拉成等高）。
+   副標列一定存在：沒有副標時是空佔位，仍保留兩行高度（同列等高的結構前提）；最多兩行後省略，完整文字在卡片 title
+   （14rem 的卡一行約 14 個中文字，「其中 N 台有 PRTG 監測項目異常」這種可行動的句子一行放不下） */
+.lf-kpi-card__sub {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    min-height: 2.5em;
+    font-size: var(--lf-font-size-sm);
+    line-height: 1.25;
+    color: var(--lf-text-muted);
+}
+
+/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁。
+   docs/FEEDBACK-3-PLAN.md #3：原本用 auto-fill 是想讓卡少時維持合理寬度、不被拉爆成
+   半版寬，但 auto-fill 會保留空軌道——卡片數少於可容納軌道數時，實卡被鎖在 minmax
+   下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）。
+   docs/archive/FEEDBACK-9-PLAN.md §7：上限由 20rem 改為 1fr——20rem 固定上限在寬容器/類別少時
+   右側留大片空白，換行末列也不伸展，觀感「缺乏內容」。1fr 讓 auto-fit 摺疊空軌後卡片
+   平均撐滿整列，每列都填滿。類別最多 8 個（固定值域），卡片極少時偏寬屬可接受
+   （資訊密度低本來就該讓卡片大）。 */
+.lf-category-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+    gap: var(--lf-space-3);
+}
+
+/* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
+.lf-reveal-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--lf-space-2);
+}
+
+@media print {
+    .lf-kpi-grid > [hidden],
+    .lf-category-grid > [hidden] {
+        display: block !important;
+    }
+
+    .lf-reveal-bar {
+        display: none !important;
+    }
+}
+
+/* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
+.lf-card--critical {
+    border-left: 3px solid var(--lf-risk-high);
+}
+
+.lf-card--warning {
+    border-left: 3px solid var(--lf-risk-mid);
+}
+
+.lf-card--ok {
+    border-left: 3px solid var(--lf-success);
+}
+
+/* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據。
+   docs/archive/FEEDBACK-9-PLAN.md §4：280→230px，配合報表一頁化（KPI＋六圖一屏內不捲動）。 */
+.lf-chart {
+    position: relative;
+    height: 230px;
+}
+
+/* 占比小圖（docs/WEB-FEEDBACK-PLAN.md #6）：三顆一列，不需要跟趨勢/類型分布圖同樣高度。
+   2026-07-28（#3）改左圖右文字條列後固定寬度——Chart.js 的 responsive 需要父層有
+   明確尺寸依據，flex 版面下不能只靠 flex-shrink: 0 撐出寬度。 */
+.lf-chart--sm {
+    width: 160px;
+    height: 160px;
+}
+
+/* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI（§8.2）───────────────
+   風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
+
+a.lf-badge { text-decoration: none; }
+a.lf-badge:hover { text-decoration: underline; }
+
+.lf-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .3em;
+    padding: .2rem .6rem;
+    border-radius: var(--lf-radius-pill);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+
+/* 風險：高＝實心紅（最響亮）、中＝琥珀、低＝中性 */
+.lf-badge--high { background: var(--lf-risk-high); color: #fff; }
+.lf-badge--mid { background: var(--lf-risk-mid-soft); color: var(--lf-risk-mid-text); border-color: #f6dca6; }
+.lf-badge--low { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+
+/* 狀態淡色徽章（statusBadge / severityBadge / handlingBadge 使用）*/
+.lf-badge--danger { background: var(--lf-danger-soft); color: var(--lf-danger-text); border-color: #f6cccc; }
+.lf-badge--warning { background: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: #f6dca6; }
+.lf-badge--success { background: var(--lf-success-soft); color: var(--lf-success-text); border-color: #bbe7c9; }
+.lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #bae6fd; }
+.lf-badge--primary { background: var(--lf-primary-soft); color: var(--lf-primary-text); border-color: var(--lf-primary-soft-border); }
+.lf-badge--neutral,
+.lf-badge--secondary,
+.lf-badge--light { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+.lf-badge--dark { background: var(--lf-dark-soft); color: var(--lf-dark-text); }
+
+.lf-badge .lf-icon { width: .85em; height: .85em; }
+
+/* ── AI 產出內容標註（統一 2026-07-27）──────────────────────────────────────
+   凡是 AI 生成的文字都用左邊框＋淡底標出，讓使用者一眼分辨「這段是 AI 講的」
+   和「這段是規則/統計算出來的」；徽章負責語意，邊框負責視覺分區。 */
+.lf-ai-block {
+    border-left: 3px solid var(--lf-primary);
+    background: var(--lf-gray-50);
+    padding: var(--lf-space-3);
+    border-radius: var(--lf-radius);
+}
+
+/* 「重點速報」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
+.lf-ai-brief {
+    background: var(--lf-primary-soft);
+    border: 1px solid var(--lf-primary-soft-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+    margin: var(--lf-space-2) 0;
+}
+
+.lf-ai-brief__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-ai-brief__text {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    line-height: 1.7;
+    max-width: var(--lf-measure);
+    margin: 0;
+    color: var(--lf-primary-text);
+}
+
+.lf-ai-headline {
+    max-width: var(--lf-measure);
+    line-height: 1.5;
+}
+
+/* 狀況／趨勢／建議處置三格：寬螢幕並排、窄螢幕自動換行；只有重點速報有底色 */
+.lf-ai-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    gap: var(--lf-space-4);
+    margin-top: var(--lf-space-3);
+}
+
+.lf-ai-summary__label {
+    font-size: var(--lf-font-size-sm);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+    margin: 0 0 var(--lf-space-1);
+}
+
+.lf-ai-summary__text {
+    font-size: 1rem;
+    line-height: 1.7;
+    max-width: var(--lf-measure);
+}
+
+.lf-ai-summary__item--action {
+    border-left: 3px solid var(--lf-primary);
+    padding-left: var(--lf-space-3);
+}
+
+.lf-ai-summary__item--action .lf-ai-summary__label {
+    color: var(--lf-primary-text);
+}
+
+@media print {
+    .lf-ai-summary {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，
+   不疊加 .lf-ai-block 的 padding（避免雙重留白） */
+.lf-issue-group__ai {
+    border-left: 3px solid var(--lf-primary);
+    background: var(--lf-gray-50);
+}
+
+/* ── 詢問 AI（實驗性）對話區塊 ───────────────────────────────────────────────
+   固定高度＋捲軸：對話一長會把下方報告全文卡越推越遠，改成有限高度、內部捲動。
+   用 max-height 而非 height——對話還沒開始時區塊維持精簡，不擺一個空框。 */
+.lf-chat-messages {
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+.lf-chat-focus {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+}
+
+/* 「指定問題」就地面板：焦點列下方展開的 checkbox 清單，過長時內部捲動 */
+.lf-focus-picker {
+    padding: var(--lf-space-3);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-card-bg);
+}
+
+.lf-focus-picker__list {
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: var(--lf-space-3);
+}
+
+.lf-focus-picker__actions {
+    display: flex;
+    gap: var(--lf-space-2);
+}
+
+.lf-focus-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+}
+
+/* 「×」視覺小、點擊區至少 24×24 CSS px */
+.lf-focus-chip__remove {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.lf-focus-chip__remove:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.modal-body #chat-focus { flex: none; }
+
+/* 放大檢視全螢幕 modal（docs/FEEDBACK-3-PLAN.md #6）：#chat-body 被搬進 .modal-body 後
+   改撐滿可用高度——下拉與輸入表單維持原本高度釘在上下，訊息區用 flex:1 取代固定
+   340px，可視空間隨螢幕大小放大。id 選擇器的特異度足以覆蓋 .lf-chat-messages，
+   不需要 !important；搬回卡片原位後這兩條規則自然不再命中（選擇器要求 .modal-body 父層）。 */
+.modal-body #chat-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.modal-body #chat-messages {
+    flex: 1;
+    max-height: none;
+}
+
+/* 處理歷程卡固定高度（docs/WEB-FEEDBACK-2-PLAN.md #13）：D4 改逐問題逐筆記錄後歷程
+   只會更長，不限高會把下方的程式偵測訊號／類型分布／資料涵蓋率卡推到很深的位置。
+   逐筆明細改到「放大檢視」modal 看，不受這個高度限制。 */
+#handling-log {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+/* 送出鈕在 flex 輸入列裡寬度僅容「送出」二字，withBusy 換成「spinner＋送出中」後
+   nowrap 會把它撐開；nowrap 已避免折行，這裡再擋住 flex 反過來把它壓扁（#9） */
+#chat-send {
+    flex-shrink: 0;
+}
+
+/* AI 思考中的三點跳動動畫：送出訊息後到收到回覆前的等待回饋 */
+.lf-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+}
+
+.lf-typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--lf-gray-400);
+    animation: lf-typing-bounce 1.2s ease-in-out infinite;
+}
+
+.lf-typing span:nth-child(2) { animation-delay: 0.15s; }
+.lf-typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes lf-typing-bounce {
+    0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* ── 篩選工具列（§5.0 D-0）────────────────────────────────────────────────
+   統一問題查詢／規則維護／主機／使用者頁的搜尋＋快速篩選＋排序排版；
+   取代各頁各自手排的 flex 列與裸 btn-group，避免排版各異、間距不一致。 */
+
+.lf-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-3);
+    flex-wrap: wrap;
+    padding: var(--lf-space-3) var(--lf-space-4);
+    background: var(--lf-gray-50);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    margin-bottom: var(--lf-space-4);
+}
+
+.lf-toolbar__row {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-3);
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+/* 排程作業頁的小尺寸控制項（匯出鈕、等級下拉）：觸控區至少 36px 高 */
+/* 從他頁連結定位到某一列時的短暫高亮（1.5 秒後由 JS 移除類別）；動態淡出只在使用者不要求減少動態時才有 */
+.lf-focus-flash > td {
+    box-shadow: inset var(--lf-focus-ring);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .lf-focus-flash > td {
+        animation: lf-focus-flash-fade 1.5s ease-out;
+    }
+}
+
+@keyframes lf-focus-flash-fade {
+    from { box-shadow: inset var(--lf-focus-ring); }
+    to { box-shadow: inset 0 0 0 .2rem transparent; }
+}
+
+.lf-touch-36 {
+    min-height: 36px; /* 固定 36px：根字級隨「小／中／大」切換，rem 在小字級會低於設計規範的觸控下限 */
+}
+
+.lf-toolbar__row + .lf-toolbar__row {
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+.lf-toolbar__search {
+    flex: 1 1 220px;
+    min-width: 180px;
+    max-width: 320px;
+}
+
+.lf-toolbar__field {
+    min-width: 140px;
+}
+
+.lf-toolbar__group {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.lf-toolbar__group-label {
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+}
+
+.lf-toolbar__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1);
+}
+
+.lf-toolbar__spacer { flex: 1 1 auto; }
+
+.lf-toolbar__divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--lf-border-strong);
+    margin: 0 var(--lf-space-1);
+}
+
+/* chip：取代裸 btn-group 的篩選鈕，藥丸狀＋淡底，比按鈕更輕、比純文字更可點 */
+.lf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .35em;
+    padding: .3rem .7rem;
+    min-height: var(--lf-control-height-sm);
+    border-radius: var(--lf-radius-pill);
+    border: 1px solid var(--lf-border-strong);
+    background: var(--lf-card-bg);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+    /* 名稱來自資料（主機群組名可能很長）：一般長度維持一行，比容器寬時才換行，不撐寬工具列 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), color var(--lf-transition);
+}
+
+.lf-chip:hover { border-color: var(--lf-primary-hover); color: var(--lf-primary-text); }
+
+/* 鍵盤焦點（體檢 H6）：chip 是全站最主要的篩選元件（問題查詢、主機、規則、使用者、
+   報表、我的交辦視角切換），過去 :focus 量到 outline:none + box-shadow:none——
+   鍵盤使用者 Tab 過去看不到自己在哪裡。.btn:focus-visible 的既有規則選不到 chip
+   （它不是 .btn），所以要自己一條。 */
+.lf-chip:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+    border-color: var(--lf-primary);
+}
+
+.lf-chip.active {
+    background: var(--lf-primary);
+    border-color: var(--lf-primary);
+    color: #fff;
+    font-weight: 600;
+}
+
+.lf-chip:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.lf-chip__count {
+    font-variant-numeric: tabular-nums;
+    opacity: .85;
+}
+
+/* 空的已選主機 chip 容器不佔位，避免 mt-1 撐開欄位、把同列的主機輸入框頂高約 2px。
+   要 !important 才壓得過容器自己的 .d-flex——Bootstrap 的 display utility 本身就帶 !important */
+#filter-host-chips:empty {
+    display: none !important;
+}
+
+/* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
+
+.table {
+    --bs-table-hover-bg: var(--lf-primary-soft);
+    --bs-table-color: var(--lf-text);
+    margin-bottom: 0;
+}
+
+.table > thead > tr > th {
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--lf-text-muted);
+    text-transform: none;
+    border-bottom: 1px solid var(--lf-border);
+    padding: var(--lf-space-2) var(--lf-space-3);
+    white-space: nowrap;
+}
+
+/* 可排序表頭：表頭本身仍是純文字語意的按鈕，hover/active 才顯出可點感，
+   不排序的欄位維持原樣（無按鈕、無 caret） */
+.lf-th-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: .3em;
+    min-width: 24px;    /* 點擊區下限（DESIGN-SYSTEM §8.2）：表頭文字可能只有一兩個字、也可能只有一行高 */
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+.lf-th-sort:hover { color: var(--lf-primary-text); }
+.lf-th-sort--active { color: var(--lf-text); }
+
+.lf-th-sort__caret {
+    display: inline-flex;
+    opacity: .35;
+    transform: rotate(180deg);   /* 預設朝上，代表尚未排序／asc 的視覺基準 */
+    transition: transform .15s ease, opacity .15s ease;
+}
+.lf-th-sort--active .lf-th-sort__caret { opacity: 1; }
+.lf-th-sort__caret--desc { transform: rotate(0); }
+
+/* 分頁列：每頁筆數下拉＋頁碼導覽並排，下拉在有資料時恆顯示，頁碼僅多頁才出現 */
+.lf-pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2);
+}
+.lf-page-size {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+}
+
+.table > tbody > tr > td {
+    padding: var(--lf-space-3);
+    border-bottom-color: var(--lf-border);
+    vertical-align: middle;
+    /* 數字欄上下列對齊（DESIGN-SYSTEM.md §3）：等寬數字對純文字欄無影響 */
+    font-variant-numeric: tabular-nums;
+}
+
+.table > tbody > tr:last-child > td { border-bottom: none; }
+
+/* 出現密度條（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3）：文字「2/90」是主要資訊，
+   這條只是讓比例一眼可辨的輔助——**不可拿掉文字只留圖**，那會讓精確值消失，
+   也讓輔助技術讀不到（圖表準則：資訊不得只靠視覺傳達）。 */
+.lf-density {
+    display: inline-block;
+    width: 3rem;
+    height: .4rem;
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-200);
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+.lf-density__fill {
+    display: block;
+    height: 100%;
+    background: var(--lf-primary);
+}
+
+/* 問題欄白話說明（單行截斷、支援 focus-visible 樣式）。
+   截斷的實際上界由**欄位**給（見 .lf-issue-col），這裡只吃滿欄寬：
+   自己硬寫 rem 上界的話，短說明在寬欄位裡照樣被砍（回饋二十七輪 P5 的原症狀）；
+   但只寫 max-width:100% 也不夠——auto-layout 表格的儲存格寬度由內容決定，
+   百分比會解析成內容本身的寬度、永遠不觸發 overflow，長說明反而把欄位撐爆（終檢抓到）。 */
+/* 有 tabindex 的單行說明句（問題查詢、權限異動檢核共用）：點擊高度至少 24px */
+.lf-issue-explanation {
+    min-height: max(24px, 1.5rem);
+    line-height: max(24px, 1.5rem);
+}
+
+.lf-issue-explanation {
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    cursor: default;
+}
+
+/* 問題欄的寬度上界：說明放得下就完整顯示，真的過長才以 ellipsis 收尾。
+   32rem 是「一句白話說明的合理長度」，只在說明異常長時才生效。 */
+.lf-issue-col {
+    max-width: 32rem;
+}
+
+.lf-issue-explanation:focus-visible {
+    outline: 2px solid var(--lf-primary);
+    border-radius: var(--lf-radius-sm);
+}
+
+/* 白話句是該列的主要資訊時（權限異動檢核的「異動說明」）：用正文色而非附註灰，
+   寬度由欄位實際可用寬度決定（同基礎 .lf-issue-explanation）——
+   保留此 class 不刪，兩個頁面都在用（records.js／permission-changes.js） */
+.lf-issue-explanation--primary {
+    color: var(--lf-text);
+    /* 不吃掉整列可點的手指游標（.lf-issue-explanation 的 cursor: default 會蓋掉列的 pointer） */
+    cursor: inherit;
+}
+
+/* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
+.table > tbody > tr.lf-row-link { cursor: pointer; }
+
+/* 可展開列：首欄展開箭頭，收合時朝右、展開時朝下 */
+.table > tbody > tr.lf-row-expandable { cursor: pointer; }
+
+/* 整列可點的鍵盤焦點（體檢 H5）：這些列現在有 role="button" + tabindex="0"，
+   Tab 得到就必須看得見。用 inset 陰影而不是 outline——<tr> 的 outline 在部分瀏覽器
+   會被相鄰儲存格的邊框裁掉，內陰影畫在儲存格背景上不會有這個問題。 */
+.table > tbody > tr.lf-row-link:focus-visible > td,
+.table > tbody > tr.lf-row-expandable:focus-visible > td {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--lf-primary);
+}
+.table > tbody > tr.lf-row-link:focus-visible,
+.table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
+/* 告警列的文字側（回饋二十輪 Q18）：li 是 flex 容器，子項預設 min-width:auto——
+   來源名稱這類不含空白的長 token 會拒絕收縮並把右側按鈕推出卡片。
+   min-width:0 讓它可收縮，overflow-wrap 讓長 token 真的斷得下去 */
+.lf-alert-item__text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+.lf-row-expand-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: .4em;
+}
+.lf-row-expand-cell__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.lf-row-caret {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: .15em;
+    color: var(--lf-text-muted);
+    transform: rotate(-90deg);
+    transition: transform .15s ease;
+}
+.lf-row-open .lf-row-caret { transform: rotate(0); }
+/* 剛回覆而結案的列：就地重繪前短暫淡化（處理人工作頁） */
+.lf-row--done { opacity: .55; }
+/* 由網址 ?order= 定位到的列（處理人工作頁） */
+.table > tbody > tr.lf-row--highlight > td { background-color: var(--lf-primary-soft); }
+.lf-row-detail > td {
+    background: var(--lf-gray-50);
+    /* 展開格不參與列 hover：Bootstrap 的 hover 色是 .table > :not(caption) > * > * 的 inset 陰影，
+       同特異度、本檔後載入即可拿掉；只重設 --bs-table-bg-state 會輸給 .table-hover 的 (0,2,2) */
+    box-shadow: none;
+    padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
+}
+
+/* 表格寬到要橫向捲動時，展開列的內容固定在捲動容器的可視範圍內（不然明細右半要捲才看得到）。
+   只有卡片內頂層的表格容器當尺寸容器：它們的寬度來自卡片；巢在格子裡的小表格寬度來自內容，套 inline-size 會塌成 0。
+   不支援 container query 的瀏覽器 100cqw 退回視窗寬，仍不會比原本差。 */
+.lf-card > .lf-table-wrap,
+.lf-card__body > .lf-table-wrap,
+.lf-card__body > div > .lf-table-wrap {
+    container-type: inline-size;
+}
+
+.lf-row-detail > td > * {
+    position: sticky;
+    left: var(--lf-space-5);
+    max-width: calc(100cqw - var(--lf-space-5) - var(--lf-space-4));
+}
+
+/* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
+
+.report-text {
+    /* 不用 --lf-font-mono：報告全文含框線符號（U+2500 區），不在 Fira Code 的
+       latin subset 內，混排兩種等寬字型會讓框線與文字的欄位對不齊 */
+    font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
+    font-size: var(--lf-font-size-sm);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    color: var(--lf-text);
+}
+
+/* ── 表格與寬內容：橫向捲動限制在容器內，頁面本身永遠不橫向捲動 ─────────── */
+
+.lf-table-wrap {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    position: relative;
+}
+
+.lf-table-wrap > table {
+    margin-bottom: 0;
+}
+
+/* 長字串截斷（renderTable 欄位選項 truncate）：主機名、問題標籤、sensor 名稱以省略號收斂，
+   完整文字放在 title。max-width 預設 18rem，不寫 inline style。 */
+.lf-table-wrap td.text-truncate {
+    max-width: 18rem;
+}
+
+/* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
+   1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
+   沒有提示的話，第一次使用的人會認定「這個視角沒有指派功能」。
+   陰影用 sticky 而不是 fixed/absolute：它要跟著捲動容器的右緣，不是頁面的。 */
+.lf-table-wrap--scrollable::after {
+    content: '← 可左右捲動';
+    position: sticky;
+    right: 0;
+    bottom: 0;
+    float: right;
+    z-index: 2;
+    padding: .15rem .5rem;
+    border-radius: var(--lf-radius-sm) 0 0 0;
+    background: var(--lf-card-bg);
+    border-top: 1px solid var(--lf-border);
+    border-left: 1px solid var(--lf-border);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-xs);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。
+   只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
+   與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
+   :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
+.lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+    /* 與左側內容的分界：捲動時才看得出這一欄是浮在上面的 */
+    box-shadow: -6px 0 6px -6px rgba(15, 23, 42, .18);
+}
+
+/* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
+.lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)):hover > td:last-child {
+    background: var(--bs-table-hover-bg, var(--lf-gray-50));
+}
+
+/* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
+@media print {
+    .lf-table-wrap--scrollable::after { display: none; }
+    .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child { position: static; box-shadow: none; }
+}
+
+/* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────
+   全站等待動畫只有三種出口（docs/FEEDBACK-8-PLAN.md #1），不要再長出第四種寫法：
+     - 整塊清單載入 → ui.js renderLoading()（骨架列）
+     - 按鈕忙碌 → ui.js withBusy()（按鈕內文字換成 spinner＋「⋯中」）
+     - 其餘區塊內等待（精靈步驟、輪詢中的狀態文字等）→ ui.js renderSpinner() */
+
+.lf-empty {
+    padding: var(--lf-space-6) var(--lf-space-4);
+    text-align: center;
+    color: var(--lf-text-muted);
+}
+
+.lf-empty__icon {
+    color: var(--lf-gray-300);
+    margin-bottom: var(--lf-space-3);
+}
+
+.lf-empty__icon .lf-icon { width: 2.25rem; height: 2.25rem; }
+
+.lf-empty__title {
+    font-weight: 600;
+    color: var(--lf-text);
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-error {
+    padding: var(--lf-space-4);
+    border: 1px solid var(--lf-danger);
+    border-radius: var(--lf-radius-sm);
+    color: var(--lf-danger-text);
+    background: var(--lf-danger-soft);
+    text-align: center;
+}
+
+.lf-skeleton {
+    width: var(--lf-skeleton-width, auto);
+    height: 1rem;
+    border-radius: var(--lf-radius-sm);
+    background: linear-gradient(90deg, var(--lf-gray-100) 25%, var(--lf-gray-200) 37%, var(--lf-gray-100) 63%);
+    background-size: 400% 100%;
+    animation: lf-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+
+@keyframes lf-skeleton-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+
+/* ==========================================================================
+   Inline style 收斂工具類（頁面與頁模組不寫 inline style）
+   - 固定量值：寬度／最小寬度／最大寬度／捲動區高度，一律用下列 class。
+   - 動態量值（進度、色塊顏色、量測結果）：JS 只設 CSS 變數，由這裡的 class 消費。
+   ========================================================================== */
+
+/* 寬度（表格欄寬提示、固定寬控制項） */
+.lf-w-xxs { width: 2.5rem; }
+.lf-w-sm { width: 6rem; }
+.lf-w-md { width: 8rem; }
+.lf-w-mdl { width: 10rem; }
+.lf-w-lg { width: 12rem; }
+
+/* 最小寬度（工具列欄位） */
+.lf-minw-xs { min-width: 7.5rem; }
+.lf-minw-sm { min-width: 10rem; }
+.lf-minw-md { min-width: 11.25rem; }
+.lf-minw-lg { min-width: 12.5rem; }
+.lf-minw-xl { min-width: 15rem; }
+.lf-minw-xxl { min-width: 16.25rem; }
+
+/* 最大寬度（.lf-input-narrow 為 7.5rem 的數字輸入） */
+.lf-maxw-sm { max-width: 12rem; }
+.lf-maxw-md { max-width: 14rem; }
+.lf-maxw-lg { max-width: 32rem; }
+.lf-maxw-xl { max-width: 40rem; }
+
+/* 捲動區：限制高度、超出時捲動 */
+.lf-scroll-sm { max-height: 12rem; overflow: auto; }
+.lf-scroll-md { max-height: 14rem; overflow: auto; }
+.lf-scroll-lg { max-height: 16rem; overflow: auto; }
+.lf-scroll-xl { max-height: 18rem; overflow: auto; }
+
+/* 雜項固定樣式 */
+.lf-pointer { cursor: pointer; }
+.lf-pre-line { white-space: pre-line; }
+.lf-pre-wrap { white-space: pre-wrap; }
+.lf-break-word { word-break: break-word; }
+.lf-text-accent { color: var(--lf-accent-text); }
+.lf-progress-thin { height: 8px; }
+.btn-close.lf-close-xs { font-size: .6rem; }
+
+/* 表格內沒有文字標籤的勾選框（逐列選取、全選）：點擊區至少 24×24；有 <label> 的勾選框靠標籤擴大點擊範圍，不在此列 */
+.table td > .form-check-input,
+.table th > .form-check-input,
+.table td .lf-row-expand-cell__body > .form-check-input,
+.table td > .form-check > .form-check-input:not([id]),
+.table th > .form-check > .form-check-input:not([id]) {
+    width: max(1.25rem, 24px);
+    height: max(1.25rem, 24px);
+    margin-top: 0;
+}
+.input-group > .lf-flex-search { flex: 0 1 40%; }
+.lf-bubble { max-width: 85%; }
+.lf-wizard-host-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    column-gap: .75rem;
+}
+
+/* 提示框（淡底色＋語意文字色） */
+.lf-callout-warning {
+    background-color: var(--lf-warning-soft);
+    color: var(--lf-warning-text);
+}
+
+/* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
+.lf-swatch { background: var(--lf-swatch); }
+.lf-swatch--sm { width: 10px; height: 10px; }
+.lf-swatch--md { width: 12px; height: 12px; }
+.lf-swatch--lg { width: 14px; height: 14px; }
+.lf-progress-fill { width: var(--lf-progress, 0); }
+.lf-status-count { color: var(--lf-status-color); font-weight: 600; }
+.lf-timeline-cell { background-color: var(--lf-swatch); }
+
+/* ===== 說明欄編輯器（core/note-editor.js）：尾區緊貼 textarea 下緣，視覺上同一個外框 =====
+   DOM 順序固定為 [textarea.lf-note-editor__field, .lf-note-editor__tail, 呼叫端的錯誤訊息]，
+   不包裹 textarea（保住 .is-invalid ~ .invalid-feedback 的兄弟選擇器）。 */
+.lf-note-editor__field {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.lf-note-editor__tail {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    border: 1px solid var(--bs-border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--lf-radius-sm) var(--lf-radius-sm);
+    background: var(--lf-gray-50);
+    min-width: 0;
+}
+
+/* 狀態不只靠顏色：焦點與錯誤時尾區邊框同步跟著 textarea 變色 */
+.lf-note-editor__field:focus + .lf-note-editor__tail {
+    border-color: var(--lf-primary);
+}
+
+.lf-note-editor__field.is-invalid + .lf-note-editor__tail {
+    border-color: var(--bs-form-invalid-border-color, var(--lf-danger));
+}
+
+.lf-note-editor__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-note-editor__tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-1) var(--lf-space-3);
+    min-width: 0;
+}
+
+.lf-note-editor__tail .form-text {
+    margin-top: 0;
+}
+
+.lf-note-editor__ai {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--lf-space-1) var(--lf-space-2);
+    min-width: 0;
+    margin-left: auto;
+}
+
+.lf-note-editor__message:not(:empty) {
+    margin-top: var(--lf-space-1);
+    overflow-wrap: anywhere;
+}
+
+/* ===== 風險日處理面板（pages/handling-panel.js）：狀態摘要／人員／表單／動作四區 ===== */
+.lf-handling__section + .lf-handling__section {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+.lf-handling__summary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__current {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--lf-space-2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* 人員列：容器寬時標籤在左（固定寬），窄時 flex 自動換行成標籤在上（不用 JS 量寬） */
+.lf-handling__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--lf-space-1) var(--lf-space-2);
+}
+
+.lf-handling__row + .lf-handling__row {
+    margin-top: var(--lf-space-2);
+}
+
+.lf-handling__row-label {
+    flex: 0 0 6rem;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value {
+    flex: 1 1 11.5rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.lf-handling__row-value > .flex-grow-1 {
+    min-width: 0;
+}
+
+/* 狀態 chips：自動排格，窄到放不下兩欄時自然變單欄；文字可換行，不截字 */
+.lf-handling__chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
+    gap: var(--lf-space-1);
+}
+
+.lf-handling__chips .lf-chip {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+}
+
+.lf-form-actions {
+    margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}

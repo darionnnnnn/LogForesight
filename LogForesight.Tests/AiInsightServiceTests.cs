@@ -227,6 +227,14 @@ public class AiInsightServiceTests
         Assert.Contains("分別說明並指出彼此關聯", rec.System);
     }
 
+    [Fact]
+    public async Task 對話_system_prompt禁止LaTeX數學式()
+    {
+        var rec = new SystemRecordingAi();
+        await new AiInsightService(rec).ChatAsync(Detail(Issue()), Focus(Issue()), Messages("?"), null);
+        Assert.Contains("不要使用 LaTeX 數學式", rec.System);
+    }
+
     private sealed class SystemRecordingAi : IWebAiService
     {
         public bool Available => true;

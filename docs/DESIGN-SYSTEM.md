@@ -1,8 +1,8 @@
-# LogForesight 設計系統 v2
+# LogForesight 設計系統 v3
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
-視覺改版依據文件。本文件是 site.css token 區、共用元件層（ui.js／format.js／charts.js）與版面骨架的**單一設計依據**；與 WEB-SPEC §8 互補——§8 管架構規範（分層、白名單、驗收條目），本文件管視覺語彙的具體取值與理由。
+視覺改版依據文件。本文件是樣式表（`wwwroot/css/` 四層）token 區、共用元件層（ui.js／format.js／charts.js）與版面骨架的**單一設計依據**；與 WEB-SPEC §8 互補——§8 管架構規範（分層、白名單、驗收條目），本文件管視覺語彙的具體取值與理由。
 
 ## 1. 產生方式與定位
 
@@ -95,7 +95,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 - **Fira Sans**（latin，400/500/600/700）：標題與 UI 文字。中文 fallback 維持系統字。
 - **Fira Code**（latin，400/600）：新增 `--lf-font-mono`，用於日誌原文、事件 ID、主機名、路徑等技術值——資料密集產品的「精確感」主要來源。
-- 交付方式：**self-host woff2**（latin subset，每檔約 20–40KB，共 6 檔 ≈ 200KB 以內）放 `wwwroot/fonts/` + `@font-face`（`font-display: swap`）。**不用 CDN**（§8.1 禁外部請求）、**不引入中文 webfont**（MB 級，違反零依賴精神）。
+- 交付方式：**self-host woff2**（latin subset，每檔約 20–40KB，共 5 檔 ≈ 200KB 以內）放 `wwwroot/fonts/` + `@font-face`（`font-display: swap`）。**不用 CDN**（§8.1 禁外部請求）、**不引入中文 webfont**（MB 級，違反零依賴精神）。
 - token 化：
 
 ```css
@@ -123,16 +123,14 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - 寬表格撐破版面：溢出容器一律 `overflow-x: auto`。
 - 逐列單獨操作：清單頁維持批次選取（§8.6 #11）。
 
-## 6. 交付前檢查表（skill pre-delivery，Phase 4 逐頁走查用）
+## 6. 交付前檢查表
 
-- [ ] 主文字對比 ≥ 4.5:1、次要文字 ≥ 3:1
-- [ ] 所有可點元素 cursor: pointer、hover 有 150–300ms 平滑回饋
-- [ ] focus 態鍵盤可見
-- [ ] prefers-reduced-motion 生效
-- [ ] 分隔線／邊框在內容密集區可辨
-- [ ] 響應斷點 768px（既有側欄轉頂列）不破版；列印樣式存活
-- [ ] 無 Bootstrap 預設藍 `#0d6efd` 殘留
-- [ ] 字級三檔切換下版面不破
+可機器判定的項目由 §8.7 的量測工具與守門測試負責，畫面改動交付前必須是 0：
+- [ ] 375／768／1280／1920／2560 五個寬度（另 375、1280 的小、大字級）：水平捲軸、元素溢出、點擊區 < 24×24、console 與網路錯誤、卡在載入、情境斷言六項皆 0
+- [ ] `DesignSystemGuardUiTests`、`AccessibilityUiTests`（文字角色對比 ≥ 4.5:1、焦點可見）綠
+人工確認：
+- [ ] 1280 與 1920 截圖：畫面上最醒目的是風險訊號，不是按鈕或裝飾；寬螢幕沒有大片無意義空白
+- [ ] hover 只變色與陰影、不位移；prefers-reduced-motion 生效；列印樣式存活（佐證層與收合區印出）
 
 ## 6a. 視窗高度驅動的版面（詳見 docs/archive/FEEDBACK-10-PLAN.md §5）
 
@@ -187,7 +185,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 **窄螢幕（處理人會在機房用手機看單）**
 - 375px 寬必須能完成「看單 → 回覆 → 下一筆」；統計卡、表格工具列在 `< md` 時換列，不固定欄數。
-- 可點擊元素觸控區至少 36px 高；清單列的主要動作在窄螢幕不得被擠出畫面（放列尾、允許換行）。
+- 處理人會用手機操作的頁面（我的交辦、交辦單詳情、風險日詳情的處理面板）：可點擊元素觸控區至少 36px 高；其餘頁面的下限是 §8.2 的 24×24。清單列的主要動作在窄螢幕不得被擠出畫面（放列尾、允許換行）；窄螢幕隱藏的欄位若帶操作（連結、編輯鈕），摘要行要保留同一個操作。
 
 **處理人畫面的用詞**
 - 處理人（只有 `Handle`）看到的概念只有：**交辦單、主機、狀態**。「案件」「日層級狀態」「出現」只出現在管理視角與進階檢視。
@@ -203,16 +201,113 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 | 層 | 檔案 | 內容 |
 |---|---|---|
-| token | `LogForesight.Web/wwwroot/css/site.css` `:root` 區 | 本文件 §2–4 全部取值 |
-| 字型 | `wwwroot/fonts/` + site.css `@font-face` | Fira Sans ×4、Fira Code ×2（latin woff2） |
-| 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + site.css 元件區 | 列高/內距/動效/mono 套用 |
-| 頁首 | `ui.js` `renderPageHeader` + site.css `.lf-page-header` | topbar 為唯一標題；頁首只放一句副標與頁面層級動作，每頁至多一個 `btn-primary`（§6b） |
-| 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + site.css `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
-| 詳情頁右欄側軌 | `core/side-rail.js` + site.css `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
-| 長文字收合 | `ui.js` `collapsibleText` + site.css `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；按鈕為連結樣式、列印全文 |
-| AI 重點速報 | `record-detail.js` `briefBlock` + site.css `.lf-ai-brief` | `.lf-ai-block` 內的子卡：`--lf-primary-soft` 底、`--lf-primary-soft-border` 邊框、不另加左色條；徽章「重點速報」＋複製鈕；字級介於標題與狀況段之間 |
-| AI 摘要三格 | `record-detail.js` `aiSummaryBlock` + site.css `.lf-ai-summary` | AI 摘要＝標題（`fs-5`、字重 600）→ 重點速報 → 三格摘要（狀況／趨勢／建議處置）：`grid` `repeat(auto-fit, minmax(20rem, 1fr))`、間距用 `--lf-space-*`；眉標 `h3.lf-ai-summary__label`（`--lf-font-size-sm`、600、`--lf-text-muted`）、內文 1rem／行高 1.7／最寬 40em；建議處置格加 3px `--lf-primary` 左色條與 `--lf-primary-text` 眉標、不加底色（全區只有重點速報有底色）；缺值的格不渲染；列印改單欄 |
+| 樣式表 | `wwwroot/css/` 四層，載入順序 `base.css` → `components.css` → `layout.css` → `pages.css`，唯一引用點 `Views/Shared/_Styles.cshtml` | base＝token、字型、元素預設、Bootstrap 元件級變數；components＝跨頁元件；layout＝外殼、頁首、兩欄與側軌、列印與窄螢幕外殼；pages＝單頁專屬 |
+| token | `base.css` `:root` 區 | 本文件 §2–4、§8 全部取值 |
+| 字型 | `wwwroot/fonts/` + `base.css` `@font-face` | Fira Sans ×4、Fira Code ×1（可變字重 300–700；latin woff2） |
+| 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + `components.css` | 列高/內距/動效/mono 套用 |
+| 頁首 | `ui.js` `renderPageHeader` + `.lf-page-header` | topbar 為唯一標題；頁首只放一句副標與頁面層級動作，每頁至多一個 `btn-primary`（§6b） |
+| 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
+| 詳情頁右欄側軌 | `core/side-rail.js` + `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
+| 長文字收合 | `ui.js` `collapsibleText` + `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；切換鈕是 `disclosure`（標籤「全文」）、列印全文 |
+| AI 重點速報 | `record-detail.js` `briefBlock` + `.lf-ai-brief` | `.lf-ai-block` 內的子卡：`--lf-primary-soft` 底、`--lf-primary-soft-border` 邊框、不另加左色條；徽章「重點速報」＋複製鈕；字級介於標題與狀況段之間 |
+| AI 摘要三格 | `record-detail.js` `aiSummaryBlock` + `.lf-ai-summary` | AI 摘要＝標題（`fs-5`、字重 600）→ 重點速報 → 三格摘要（狀況／趨勢／建議處置）：`grid` `repeat(auto-fit, minmax(20rem, 1fr))`、間距用 `--lf-space-*`；眉標 `h3.lf-ai-summary__label`（`--lf-font-size-sm`、600、`--lf-text-muted`）、內文 1rem／行高 1.7／最寬 40em；建議處置格加 3px `--lf-primary` 左色條與 `--lf-primary-text` 眉標、不加底色（全區只有重點速報有底色）；缺值的格不渲染；列印改單欄 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
-| 版面 | `Views/Shared/_Layout.cshtml` + site.css 版面區 | 側欄/頂欄新語彙 |
-| 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + site.css `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
+| 版面 | `Views/Shared/_Layout.cshtml` + `layout.css` | 側欄/頂欄新語彙 |
+| 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
 | 前置 | `wwwroot/lib/bootstrap/dist/` | 5.1→5.3 升級（元件級變數 retheme 的前提） |
+
+## 8. 設計系統 v3：層級、揭露、動作與寬度
+
+色票與 token 見 §2～§5；本節定義「怎麼用」：每頁的層級由版面與共用元件表達，不由各頁拼工具類。
+核心原則：**版面能說明的不再寫一遍說明**（同 WEB-SPEC §8.6a）。守門測試在 `DesignSystemGuardUiTests`、`AccessibilityUiTests`。
+
+### 8.1 文字角色
+
+頁面只用角色類別，不再現場組 `small`／`text-muted`／`fw-semibold`；沒有角色的文字就是正文。
+一個文字節點只帶一個角色；角色一律用 rem token（Bootstrap 的 `.small` 是相對 em，巢狀會連乘縮小）。
+
+| 角色 | 用途 | 取值 |
+|---|---|---|
+| `lf-text-title` | 列或區塊的主標 | base、600、`--lf-text` |
+| `lf-text-meta` | 次要資訊（次數、時段、來源） | sm、400、`--lf-text-muted` |
+| `lf-text-label` | 眉標、欄位標籤 | sm、600、`--lf-text-muted` |
+| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
+| `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
+
+紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
+風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。表單必填星號用 `lf-required-mark`（同色、`aria-hidden`）；需要使用者處理才能繼續、或選了會有明顯後果的提示用 `statusNote` 的 warning 型，不降成次要文字。
+一行次要資訊用 `metaLine(items)`：空值自動略過，沒有任何有效項目時回傳 null；間隔由 gap 提供，窄寬度整項換行。
+
+### 8.2 揭露與動作：三種語意三種外觀
+
+| 語意 | 元件 | 外觀 |
+|---|---|---|
+| 就地展開／收合 | `elements.js` `disclosure(標籤, 目標)` | 箭頭＋文字、無底線、次要文字色，滑過與焦點轉主色；收合朝右、展開朝下；標籤寫所指對象（「全文」「佐證」），展開前後不變，狀態看箭頭與 `aria-expanded` |
+| 工具列的次要條件 | `elements.js` `filterDisclosure(目標, 已套用數)` | 同就地展開；標籤「更多條件」後接已套用的條件數（0 個時不寫數字），進頁已有套用中的條件就預設展開 |
+| 開 modal 或面板 | `ui.js` `button(文字, { opens: 'dialog' })` | 小外框按鈕＋圖示，數量寫進標籤（「原始訊息 3」）；加 `aria-haspopup="dialog"` |
+| 換頁 | `a[href]`（走 `appUrl()`） | 主色文字，底線只在滑過與焦點出現 |
+
+`btn-link` 不當按鈕樣式；就地展開的標籤不寫「展開…」。`disclosure` 放在可點擊展開的表格列裡時自行阻止冒泡；列印時按鈕不印、由按鈕管理的目標一律印出（`lf-disclosure-target`），`filterDisclosure` 的篩選欄位除外。
+點擊區下限 24×24 CSS px（`max(24px, 1.5rem)`，小字級時 rem 會低於 24px），全站適用；處理人會用手機操作的頁面另依 §6b 至少 36px 高。
+
+### 8.3 按鈕
+
+- **變體白名單**：`primary`（每頁、每個 modal 至多一顆）、`outline-primary`（列內重複動作）、`outline-secondary`（其餘）、
+  `outline-danger`（危險動作入口）、`danger`（危險動作的確認鈕）。`confirmAction` 的 `confirmVariant` 只用 `primary` 或 `danger`；
+  同一類確認的輕重差別交給確認框內提示框的顏色，不靠按鈕換色。唯一例外：深色側欄上的登出鈕用 `outline-light`。
+- **尺寸**：頁首動作、表單動作區、modal footer 用預設尺寸；卡片標頭、工具列、表格列內用 `sm`。
+- **位置**：頁面動作在頁首右側；卡片動作在卡片標頭右側；表單動作在尾端靠右、主要動作最右（與 modal 一致）；
+  列內動作在列尾；工具列篩選在左、動作在右。
+- 頁面模組的按鈕一律經 `ui.js` `button()`，不手寫 `btn btn-…` 類別。
+
+### 8.4 寬度策略與中斷點
+
+- **中斷點**只用 576／768／992／1200／1600，寫法 `min-width: N`、`max-width: N−0.02`。唯一例外 `max-width: 1799.98px`
+  是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992（並排模式）與 CSS 同值；1600（預設展開）只在 `side-rail.js` 使用，樣式表沒有對應的 `@media`。卡片內頂層表格容器是尺寸容器（`container-type`），展開列內容依它限制在可視寬度內。
+- `--lf-content-max: 120rem`：詳情頁（風險日、主機、處理人、使用者、交辦單）與表單頁（設定、初始設定）在 View 設
+  `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；清單、儀表板、報表與維護頁滿版。
+- `--lf-measure: 40em`：成段文字的行寬上限，表格與技術值不套用。
+- 寬螢幕（≥ 1600px）詳情頁側軌預設展開，把多出的寬度用在並排，而不是拉長左欄行寬；使用者在本頁按過收合就照使用者的。
+- 長字串：`body` 全站 `overflow-wrap: break-word`（沒有空白的連續字串放不下時才斷，一般字詞不受影響）；
+  格線欄寬用 `minmax(min(Xrem, 100%), 1fr)`，窄容器不被最小欄寬撐破；資料來的名稱（chip、群組名）比容器寬時換行，不截斷。
+
+### 8.5 判斷層與佐證層
+
+資料量大的列（問題、交辦、主機）分兩層：
+- **判斷層**（預設可見）：回答「要不要處理」——嚴重度、標題、一句白話、次數與時段、趨勢、狀態，以及入侵判讀必要的帳號／來源摘要。
+- **佐證層**（列展開）：回答「憑什麼」——處置參考、登入失敗明細、數值佐證、來源觀測。內容一字不減、列印全顯示，只是換位置。
+
+### 8.6 共用元件一覽（頁面不另寫一份）
+
+| 用途 | 出口 |
+|---|---|
+| 單一文字節點套角色 | `elements.js` `roleText(角色, 文字)` |
+| 「標籤 值」一組（放進 metaLine） | `elements.js` `fact(標籤, 值)` |
+| 一行次要資訊 | `elements.js` `metaLine(items)` |
+| 容器內的長字串可在任意位置斷行 | `lf-break-anywhere` |
+| 表單必填星號 | `lf-required-mark` |
+| 就地展開／收合 | `elements.js` `disclosure(標籤, 目標, opts)` |
+| 工具列的次要條件（「更多條件 2」） | `elements.js` `filterDisclosure(目標, 已套用數, opts)`，回傳 `{ button, refresh }` |
+| 操作結果與驗證訊息 | `elements.js` `statusNote(error／warning／success／info, 文字)` |
+| 按鈕 | `ui.js` `button(文字, { variant, size, icon, title, opens, className, disabled, onClick })` |
+| 換頁但要按鈕外觀 | `ui.js` `linkButton(文字, href, opts)` |
+| 頁內導航（捲到分節、切頁籤） | `lf-nav-item`（句中用 `lf-nav-item--inline`） |
+| 只有圖示的連結 | `lf-icon-link` |
+| 詳情頁頁首卡 | `lf-entity-head`（`__title`／`__link`／`__badges`／`__actions`／`__facts`，layout.css） |
+| 可展開表格就地重繪保留展開 | `renderTable(..., { rowKey, expandedKeys })`；`toggleAllTableDetails` 走列自己的切換 |
+| KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary` |
+
+表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
+表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。
+
+### 8.7 驗收工具（LogForesight.Tests）
+
+- **資料集** `UiFixture/`：經產品 `StorageBackend` 產生涵蓋版面邊界的 SQLite（長名稱、無空白長字串、HTML 字元、0／1／極多筆、各種狀態與角色）。
+  一般測試每次斷言矩陣齊全；設 `LF_UI_FIXTURE=<目錄>` 時把 DB 與情境清單留在 `<目錄>/ai`、`<目錄>/noai`。
+  資料日期相對於產生當天（「昨日」就是產生前一天），隔天截圖前要重產，否則預設期間是空的。
+- **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
+  Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
+  站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
+- **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
+  情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
+- **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

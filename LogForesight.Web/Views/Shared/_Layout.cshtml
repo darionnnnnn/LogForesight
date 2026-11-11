@@ -20,8 +20,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - @brand.Name</title>
     <link rel="icon" href="~/favicon.ico" />
-    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <partial name="_Styles" />
     @* 站台掛載路徑（IIS 子 Application 時是 /LogForesight 這種前綴）：前端的連結組裝與
        API 呼叫靠它補前綴，見 wwwroot/js/core/paths.js 的 appUrl()。必須早於任何 module。 *@
     <script nonce="@Context.GetCspNonce()">window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
@@ -46,7 +45,7 @@
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#box-arrow-right"></use></svg>
                     登出
                 </button>
-                <div class="lf-sidebar__version text-muted small">v@(appVersion)</div>
+                <div class="lf-sidebar__version">v@(appVersion)</div>
             </div>
         </aside>
 
@@ -68,7 +67,7 @@
                 <div id="lf-alerts-summary" class="d-none lf-no-print"></div>
             </div>
 
-            <main class="lf-content">
+            <main class="lf-content@(ViewData["ContentWidth"] as string == "bounded" ? " lf-content--bounded" : "")">
                 @RenderBody()
             </main>
         </div>

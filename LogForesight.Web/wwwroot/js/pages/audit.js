@@ -9,6 +9,7 @@ import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderPager, loadPageSize, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { disclosure, roleText } from '../core/elements.js';
 
 const RESULT_META = {
     ok: { text: '成功', variant: 'light' },
@@ -107,12 +108,12 @@ function render() {
 
     renderTable(document.getElementById('audit-list'), {
         columns: [
-            { title: '時間', sortKey: 'occurredAt', sortDefaultDir: 'desc', render: e => formatDateTime(e.occurredAt) },
-            { title: '帳號', render: e => formatUserName(e.accountDisplayName, e.account) },
-            { title: '動作', render: e => e.actionText },
+            { title: '時間', sortKey: 'occurredAt', sortDefaultDir: 'desc', render: e => roleText('lf-text-data', formatDateTime(e.occurredAt)) },
+            { title: '帳號', render: e => roleText('lf-text-meta', formatUserName(e.accountDisplayName, e.account)) },
+            { title: '動作', className: 'text-nowrap', render: e => e.actionText },
             { title: '結果', render: e => resultBadge(e.result) },
-            { title: '內容', render: e => summaryCell(e) },
-            { title: '來源 IP', render: e => e.ipAddress ?? '' }
+            { title: '內容', className: 'lf-minw-xl', render: e => summaryCell(e) },
+            { title: '來源 IP', render: e => roleText('lf-text-data', e.ipAddress ?? '') }
         ],
         rows: lastResult.items,
         sort,
@@ -142,26 +143,21 @@ function summaryCell(entry) {
     const wrap = document.createElement('div');
 
     const summary = document.createElement('div');
+    summary.className = 'lf-text-title';
     summary.textContent = entry.summary;
     wrap.appendChild(summary);
 
     // 欄位級前後對照放在展開處：清單保持可掃視，需要細節時才點開
     if (entry.detailJson) {
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'btn btn-link btn-sm p-0';
-        toggle.textContent = '詳細';
-
         const box = document.createElement('pre');
-        box.className = 'report-text small mt-1 d-none';
+        box.className = 'report-text lf-text-data mt-1 d-none';
         try {
             box.textContent = JSON.stringify(JSON.parse(entry.detailJson), null, 2);
         } catch {
             box.textContent = entry.detailJson;
         }
 
-        toggle.addEventListener('click', () => box.classList.toggle('d-none'));
-        wrap.append(toggle, box);
+        wrap.append(disclosure('詳細', box), box);
     }
 
     return wrap;
@@ -176,7 +172,7 @@ function renderDefaultRangeNotice(applied) {
     if (!notice) {
         notice = document.createElement('div');
         notice.id = 'audit-default-range';
-        notice.className = 'text-muted small px-3 pt-2';
+        notice.className = 'lf-text-meta px-3 pt-2';
         notice.textContent = '未指定起日，僅顯示近 90 天的紀錄。';
         const list = document.getElementById('audit-list');
         list.parentNode.insertBefore(notice, list);

@@ -1,0 +1,500 @@
+﻿/* 基礎層：設計 token、自架字型、元素預設與 Bootstrap 元件級變數覆寫。載入順序 base → components → layout → pages。 */
+
+/*
+  LogForesight 設計系統（docs/DESIGN-SYSTEM.md、docs/WEB-SPEC.md §8.2）
+
+  Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
+  所有樣式取值一律引用下面的 token，元件樣式裡不出現寫死的顏色/圓角/陰影/間距——
+  這是「自訂外觀」與「維護成本最小化」能同時成立的前提：調整外觀改這一段，全站生效。
+
+  2026-08-05 v2 視覺改版（docs/DESIGN-SYSTEM.md）：品牌色靛藍→企業藍 + 琥珀強調，
+  字型導入 self-host Fira Sans/Fira Code（latin；中文維持系統字），圓角收緊一階。
+  取值理由與 v1→v2 對照表一律查 DESIGN-SYSTEM.md，這裡不重複。
+*/
+
+/* ── 自架字型（wwwroot/fonts，latin subset；無外部請求）───────────────────
+   Fira Code 為可變字型（wght 軸），一個檔案涵蓋所需字重。 */
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../fonts/fira-sans-400-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("../fonts/fira-sans-500-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../fonts/fira-sans-600-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("../fonts/fira-sans-700-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Code";
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url("../fonts/fira-code-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+:root {
+    /* ── 品牌色（企業藍 + 琥珀強調，DESIGN-SYSTEM.md §2）────────────────── */
+    --lf-primary: #1e40af;
+    --lf-primary-dark: #1e3a8a;
+    --lf-primary-hover: #2563eb;
+    --lf-primary-soft: #eff6ff;
+    --lf-primary-soft-border: #dbeafe;
+    --lf-primary-text: #1e3a8a;
+    --lf-accent: #d97706;
+    --lf-accent-soft: #fef3e2;
+    --lf-accent-text: #92400e;
+
+    /* ── 中性色階（cool slate，符合「灰藍白」低彩度基調）──────────────── */
+    --lf-gray-50: #f8fafc;
+    --lf-gray-100: #f1f5f9;
+    --lf-gray-200: #e2e8f0;
+    --lf-gray-300: #cbd5e1;
+    --lf-gray-400: #94a3b8;
+    --lf-gray-500: #64748b;
+    --lf-gray-600: #475569;
+    --lf-gray-700: #334155;
+    --lf-gray-800: #1e293b;
+    --lf-gray-900: #0f172a;
+
+    /* ── 版面 ─────────────────────────────────────────────────────────── */
+    --lf-sidebar-bg: #0f1d3a;
+    --lf-sidebar-fg: #9fb0cc;
+    --lf-sidebar-fg-strong: #f1f4fa;
+    --lf-sidebar-section: #9fb0cc; /* 與 --lf-sidebar-fg 同值：深底對比 7.6:1（原 #68799a 僅 3.81:1），層級靠大寫／字距／字級 */
+    --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
+    --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
+    /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
+       （見下方 html 規則的說明）——原本固定 px 時，2K 螢幕＋「大字級」偏好疊加後根字級衝到
+       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-brand__name
+       的省略號截斷成「LogForesig...」。15.25rem 是原 244px 换算（244÷16），預設字級下畫面
+       完全不變，只有字級被放大時側欄才跟著等比變寬。 */
+    --lf-sidebar-width: 15.25rem;
+    --lf-content-bg: #f8fafc;
+    --lf-card-bg: #ffffff;
+    --lf-border: #e2e8f0;
+    --lf-border-strong: #cbd5e1;
+    --lf-text: #0f172a;
+    --lf-text-muted: #64748b;
+
+    /* ── 字族（拉丁用自架 Fira，中文 fallback 系統字；DESIGN-SYSTEM.md §3）── */
+    --lf-font-family: "Fira Sans", "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    --lf-font-mono: "Fira Code", "Cascadia Mono", Consolas, "Microsoft JhengHei", monospace;
+
+    /* ── 字級階層 ─────────────────────────────────────────────────────── */
+    /* 全部用 rem，跟隨 html 根字級（見下方 html 規則）等比縮放；base 較舊版提一階 */
+    --lf-font-size-xs: .78rem;
+    --lf-font-size-sm: .86rem;
+    --lf-font-size-base: .95rem;
+    --lf-font-size-lg: 1rem;
+    --lf-font-size-xl: 1.2rem;
+    --lf-font-size-2xl: 1.45rem;
+    --lf-font-size-stat: 1.95rem;
+    --lf-line-tight: 1.25;
+    --lf-line-base: 1.55;
+
+    /* ── 控制項尺寸基準（filter bar 內 input／select／button／chip 的共同高度基準）──
+       高度由「小尺寸控制項字級 × Bootstrap 行高 1.5 ＋ 垂直 padding 合計 .5rem ＋ 上下邊框 2px」推導 */
+    --lf-control-font-size-sm: 1rem;
+    --lf-control-height-sm: calc(var(--lf-control-font-size-sm) * 1.5 + .5rem + 2px);
+
+    /* ── 間距階層 ─────────────────────────────────────────────────────── */
+    --lf-space-1: .25rem;
+    --lf-space-2: .5rem;
+    --lf-space-3: .75rem;
+    --lf-space-4: 1rem;
+    --lf-space-5: 1.5rem;
+    --lf-space-6: 2rem;
+
+    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限 */
+    --lf-content-max: 120rem;
+    --lf-measure: 40em;
+
+    /* ── 圓角（v2 收緊一階：data-dense 專業感）────────────────────────── */
+    --lf-radius-sm: .25rem;
+    --lf-radius: .5rem;
+    --lf-radius-lg: .75rem;
+    --lf-radius-pill: 100px;
+
+    /* ── 陰影 ─────────────────────────────────────────────────────────── */
+    --lf-shadow-xs: 0 1px 2px rgba(15, 23, 42, .06);
+    --lf-shadow-sm: 0 1px 3px rgba(15, 23, 42, .08), 0 1px 2px rgba(15, 23, 42, .04);
+    --lf-shadow-md: 0 6px 18px rgba(15, 23, 42, .12), 0 2px 6px rgba(15, 23, 42, .06);
+    --lf-shadow-lg: 0 14px 40px rgba(15, 23, 42, .18);
+
+    /* ── 互動 ─────────────────────────────────────────────────────────── */
+    --lf-focus-ring: 0 0 0 .2rem rgba(30, 64, 175, .22);
+    --lf-transition: .15s ease;
+
+    /* 舊 token 別名（保留既有元件引用，升級零成本）*/
+    --lf-card-radius: var(--lf-radius);
+    --lf-card-shadow: var(--lf-shadow-xs);
+    --lf-card-shadow-hover: var(--lf-shadow-md);
+
+    /* ── 語意色：風險與嚴重度。名稱固定不可改（charts.js 執行期讀取），只調色值 ──
+       同一個顏色在圖表、徽章、卡片、時間軸中意義相同（§8.2 原則 3）。
+       另備 -soft companion 供淡色徽章使用。*/
+    --lf-risk-high: #dc2626;
+    --lf-risk-high-soft: #fdecec;
+    --lf-risk-high-text: #991b1b;
+    --lf-risk-mid: #d97706;
+    --lf-risk-mid-soft: #fef4e2;
+    --lf-risk-mid-text: #92400e;
+    --lf-risk-low: #64748b;
+
+    /* docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High，token 剩三級 */
+    --lf-severity-high: #ea580c;
+    --lf-severity-medium: #0284c7;
+    --lf-severity-low: #94a3b8;
+
+    /* 一般狀態語意色（供 statusBadge 淡色徽章）*/
+    --lf-success: #16a34a;
+    --lf-success-soft: #e8f6ec;
+    --lf-success-text: #166534;
+    --lf-success-muted: #65a30d;
+    --lf-info: #0284c7;
+    --lf-info-soft: #e0f2fe;
+    --lf-info-text: #075985;
+    --lf-warning: #d97706;
+    --lf-warning-soft: #fef4e2;
+    --lf-warning-text: #92400e;
+    --lf-danger: #dc2626;
+    --lf-danger-soft: #fdecec;
+    --lf-danger-text: #991b1b;
+    --lf-neutral-soft: #eef1f6;
+    --lf-neutral-text: #475569;
+    --lf-dark-soft: #e2e6ee;
+    --lf-dark-text: #334155;
+
+    /* 主機時間軸熱圖的輔助格色（host-detail.js cellColor/LEGEND 讀取）：
+       低風險/涵蓋不完整/無紀錄。比 -soft 系再深一階，熱圖小格才辨識得出彼此差別；
+       色相對齊 success 綠/warning 琥珀/gray-200 */
+    --lf-timeline-low: #bbe7c9;
+    --lf-timeline-gap: #f6dca6;
+    --lf-timeline-none: #e2e8f0;
+
+    /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
+    --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);
+    --lf-chart-grid: rgba(0, 0, 0, .06);
+
+    /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
+    --lf-cat-storage: #1d4ed8;
+    --lf-cat-hardware: #7c3aed;
+    --lf-cat-security: #dc2626;
+    --lf-cat-service: #ea580c;
+    --lf-cat-backup: #0d9488;
+    --lf-cat-config: #64748b;
+    --lf-cat-resource: #db2777;
+    --lf-cat-other: #94a3b8;
+
+    /* ── Bootstrap 元件級變數 retheme（不動 lib，只覆寫 CSS 變數）─────── */
+    --bs-primary: var(--lf-primary);
+    --bs-primary-rgb: 30, 64, 175;
+    --bs-link-color: var(--lf-primary);
+    --bs-link-hover-color: var(--lf-primary-dark);
+    --bs-body-color: var(--lf-text);
+    --bs-border-color: var(--lf-border);
+    --bs-font-monospace: var(--lf-font-mono);
+}
+
+/*
+  根字級隨視寬平滑縮放：所有字級 token 用 rem，會一併等比放大。
+  舊版沒設 html 字級＝固定沿用瀏覽器預設 16px，在 2K/4K 大螢幕上整體偏小
+  （rem 跟隨根字級、不會自己跟解析度變）。clamp 讓小筆電維持 15px 不爆版、
+  2K 約 18px、再寬到上限 20px 收斂。乘上使用者偏好倍率（見下）做個人微調。
+*/
+html {
+    font-size: calc(clamp(15px, 0.5vw + 13px, 20px) * var(--lf-font-scale, 1));
+}
+
+/* 使用者字級偏好（存 localStorage，由 layout.js 套在 <html> 上）。中＝預設不覆寫 */
+:root[data-font-scale="small"] { --lf-font-scale: .9; }
+:root[data-font-scale="large"] { --lf-font-scale: 1.15; }
+
+body {
+    background: var(--lf-content-bg);
+    color: var(--lf-text);
+    font-family: var(--lf-font-family);
+    font-size: var(--lf-font-size-base);
+    line-height: var(--lf-line-base);
+    /* 長字串規則（docs/DESIGN-SYSTEM.md §8.4）：沒有空白的連續字串（路徑、雜湊、外部系統送來的訊息）
+       放不下時才在字中斷行，一般字詞不受影響；不影響表格的最小寬度計算，寬表格仍交給 .lf-table-wrap 橫向捲動 */
+    overflow-wrap: break-word;
+}
+
+/* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源
+   （DESIGN-SYSTEM.md §3）。Bootstrap 的 .font-monospace 已改吃 --lf-font-mono，
+   此別名供 cshtml 靜態骨架語意標示用。 */
+.lf-mono {
+    font-family: var(--lf-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/*
+  尊重系統「減少動態效果」偏好（DESIGN-SYSTEM.md §6、skill UX 指南）：
+  關閉動畫、把轉場壓到近乎瞬時。前庭功能敏感的使用者不會被卡片抬升、
+  caret 旋轉、skeleton 脈動等效果影響，但版面與功能完全不變。
+*/
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Bootstrap 元件微調（透過元件級變數，維持 Bootstrap 行為）─────────── */
+
+.btn {
+    --bs-btn-border-radius: var(--lf-radius-sm);
+    --bs-btn-font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    /* inline-flex 主軸預設 justify-content:flex-start，一般按鈕寬度貼齊內容看不出差異，
+       但滿寬（w-100）按鈕（登入送出鈕／側欄登出鈕／處理面板儲存鈕）內容會整排靠左——
+       docs/FEEDBACK-5-PLAN.md §1 */
+    justify-content: center;
+    gap: .4em;
+    /* withBusy() 把按鈕內容換成「spinner＋⋯中」文字後，Bootstrap 按鈕預設不禁止換行，
+       在窄容器（如聊天輸入列）裡會醜陋地折成兩行（docs/WEB-FEEDBACK-2-PLAN.md #9） */
+    white-space: nowrap;
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition);
+}
+
+/* .btn-group-sm > .btn 的 specificity (0,2,0) 高於 .btn-sm (0,1,0)，需一併覆寫字級避免被 Bootstrap 原生 .875rem 蓋掉 */
+.btn-sm,
+.btn-group-sm > .btn {
+    --bs-btn-font-size: var(--lf-control-font-size-sm);
+    --bs-btn-border-radius: var(--lf-radius-sm);
+    min-height: 24px;   /* 點擊區下限（DESIGN-SYSTEM §8.2）：小字級時字高＋內距不到 24px */
+}
+
+/* 勾選框與開關靠標籤擴大點擊範圍：行內標籤的上下內距只擴大可點區、不改變行高（小字級時標籤字高不到 20px） */
+.form-check-label { padding-block: 3px; }
+
+.btn-primary {
+    --bs-btn-bg: var(--lf-primary);
+    --bs-btn-border-color: var(--lf-primary);
+    --bs-btn-hover-bg: var(--lf-primary-dark);
+    --bs-btn-hover-border-color: var(--lf-primary-dark);
+    --bs-btn-active-bg: var(--lf-primary-dark);
+    --bs-btn-active-border-color: var(--lf-primary-dark);
+    --bs-btn-disabled-bg: var(--lf-primary);
+    --bs-btn-disabled-border-color: var(--lf-primary);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--lf-primary);
+    --bs-btn-border-color: var(--lf-primary);
+    --bs-btn-hover-bg: var(--lf-primary);
+    --bs-btn-hover-border-color: var(--lf-primary);
+    --bs-btn-active-bg: var(--lf-primary-dark);
+    --bs-btn-active-border-color: var(--lf-primary-dark);
+}
+
+.btn:focus-visible { box-shadow: var(--lf-focus-ring); }
+
+.form-control,
+.form-select {
+    border-color: var(--lf-border-strong);
+    border-radius: var(--lf-radius-sm);
+    /* 明確指定字族與字級：瀏覽器 autofill 狀態下用自己的 UA 字型渲染，使用者一聚焦
+       就變回站台字型，看起來像「點一下字就變大」（回饋二十七輪 P9）。
+       **值必須是 1rem**——那正是 Bootstrap .form-control 原本生效的字級，也是使用者
+       指名要保留的「放大後」那個大小；改用 body 的 --lf-font-size-base（.95rem）
+       會把全站表單欄位一起縮小，方向剛好相反 */
+    font-family: var(--lf-font-family);
+    font-size: 1rem;
+}
+
+/* autofill 系列：瀏覽器注入的 UA 樣式優先權高，字族與字級要明確覆寫才壓得住，
+   否則自動填入狀態下與一般輸入不一致（登入頁帳號欄位最明顯）。
+   底色不覆寫——那是瀏覽器給使用者「這格是自動填入的」的提示。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    font-family: var(--lf-font-family) !important;
+    font-size: 1rem !important;
+}
+
+/* <summary>（原生收合標題）點擊區至少 24px 高 */
+summary { min-height: max(24px, 1.5rem); }
+
+/* 關閉鈕（提示列、modal、toast）：Bootstrap 是 content-box 1em＋.25em 內距，小字級時不到 24px——
+   補內容區下限讓整顆點擊區至少 24×24（DESIGN-SYSTEM §8.2） */
+.btn-close {
+    min-width: calc(24px - .5em);
+    min-height: calc(24px - .5em);
+}
+
+/* 下拉選項明確指定前景與背景：選項背景預設透明時，Windows 版 Chrome 部分寬下拉的選項文字畫不出來
+   （點得到、看不到，重繪後才出現）。本站沒有深色模式，select 一併宣告淺色配色。不要當成多餘樣式刪掉。 */
+select {
+    color-scheme: light;
+}
+
+select option,
+select optgroup {
+    color: var(--lf-text);
+    background-color: var(--lf-card-bg);
+}
+
+/* 多選清單（稽核頁動作篩選）：上面的底色規則不可蓋掉「已選取」的辨識 */
+select[multiple] option:checked {
+    background-color: var(--lf-primary-soft);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--lf-primary-hover);
+    box-shadow: var(--lf-focus-ring);
+}
+
+.form-check-input:checked {
+    background-color: var(--lf-primary);
+    border-color: var(--lf-primary);
+}
+
+.form-check-input:focus {
+    border-color: var(--lf-primary-hover);
+    box-shadow: var(--lf-focus-ring);
+}
+
+/* modal 內的互動元件：鍵盤 focus 一律可見（沿用既有 focus ring token，不另造顏色） */
+.modal .btn:focus-visible,
+.modal .form-control:focus-visible,
+.modal .form-select:focus-visible,
+.modal .form-check-input:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+}
+
+.form-label {
+    font-size: var(--lf-font-size-sm);
+    font-weight: 500;
+    margin-bottom: var(--lf-space-1);
+}
+
+.form-text { font-size: var(--lf-font-size-xs); }
+
+/* 分頁 */
+/* 分頁鈕點擊區至少 24×24（窄螢幕的頁碼鈕原本只有 21～23px 寬） */
+.pagination .page-link {
+    min-width: max(24px, 1.5rem);
+    min-height: max(24px, 1.5rem);
+    text-align: center;
+}
+
+.pagination {
+    --bs-pagination-color: var(--lf-text-muted);
+    --bs-pagination-hover-color: var(--lf-primary-dark);
+    --bs-pagination-hover-bg: var(--lf-primary-soft);
+    --bs-pagination-focus-box-shadow: var(--lf-focus-ring);
+    --bs-pagination-active-bg: var(--lf-primary);
+    --bs-pagination-active-border-color: var(--lf-primary);
+    --bs-pagination-border-color: var(--lf-border);
+    --bs-pagination-border-radius: var(--lf-radius-sm);
+}
+
+/* 模態框 */
+.modal-content {
+    border: none;
+    border-radius: var(--lf-radius-lg);
+    box-shadow: var(--lf-shadow-lg);
+}
+
+.modal-header {
+    border-bottom-color: var(--lf-border);
+    padding: var(--lf-space-4) var(--lf-space-5);
+}
+
+.modal-title { font-size: var(--lf-font-size-lg); font-weight: 600; }
+.modal-body { padding: var(--lf-space-5); }
+.modal-footer { border-top-color: var(--lf-border); padding: var(--lf-space-3) var(--lf-space-5); }
+
+/* 下拉/提示氣泡 */
+.dropdown-menu {
+    --bs-dropdown-border-color: var(--lf-border);
+    --bs-dropdown-border-radius: var(--lf-radius);
+    --bs-dropdown-box-shadow: var(--lf-shadow-md);
+    --bs-dropdown-link-active-bg: var(--lf-primary);
+    font-size: var(--lf-font-size-sm);
+}
+
+.popover {
+    --bs-popover-border-color: var(--lf-border);
+    --bs-popover-border-radius: var(--lf-radius);
+    --bs-popover-header-bg: var(--lf-gray-50);
+    --bs-popover-max-width: 320px;
+    box-shadow: var(--lf-shadow-md);
+    font-size: var(--lf-font-size-sm);
+}
+
+.alert {
+    --bs-alert-border-radius: var(--lf-radius);
+    border-color: var(--lf-border);
+    font-size: var(--lf-font-size-sm);
+}
+
+/* 警示框改用設計系統的琥珀語意色（原本各頁以 inline style 拼這組顏色，收斂成元件級變數）*/
+.alert-warning {
+    --bs-alert-bg: var(--lf-warning-soft);
+    --bs-alert-color: var(--lf-warning-text);
+    --bs-alert-border-color: var(--lf-warning);
+    border-color: var(--lf-warning);
+}
+
+/* 底線式頁籤（三個用 nav-tabs 的頁面零 markup 變更即生效）*/
+.nav-tabs {
+    --bs-nav-tabs-border-color: var(--lf-border);
+    gap: var(--lf-space-1);
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.nav-tabs .nav-link {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: var(--lf-space-2) var(--lf-space-3);
+    transition: color var(--lf-transition), border-color var(--lf-transition);
+}
+
+.nav-tabs .nav-link:hover { color: var(--lf-primary); border-color: transparent; }
+
+.nav-tabs .nav-link.active {
+    color: var(--lf-primary);
+    font-weight: 600;
+    background: none;
+    border: none;
+    border-bottom: 2px solid var(--lf-primary);
+}

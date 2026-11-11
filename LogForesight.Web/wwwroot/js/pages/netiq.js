@@ -7,7 +7,8 @@
  */
 
 import { api, getAiAvailable } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit, renderUpdatedAt } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit, renderUpdatedAt, button } from '../core/ui.js';
+import { roleText, statusNote } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 import { pollWhile } from '../core/async-guards.js';
@@ -40,11 +41,11 @@ function renderSentinels() {
 
     renderTable(sentinelListContainer, {
         columns: [
-            { title: '名稱', render: s => s.name },
-            { title: '連線位址', render: s => s.baseUrl || '' },
-            { title: '作業系統', render: s => s.os === 'linux' ? 'Linux' : 'Windows' },
+            { title: '名稱', render: s => roleText('lf-text-title', s.name) },
+            { title: '連線位址', render: s => roleText('lf-text-data', s.baseUrl || '') },
+            { title: '作業系統', render: s => roleText('lf-text-meta', s.os === 'linux' ? 'Linux' : 'Windows') },
             { title: '探索帳密', render: s => renderDiscoverBadge(s) },
-            { title: '主機數', render: s => String(s.hostCount) },
+            { title: '主機數', className: 'text-end', render: s => String(s.hostCount) },
             { title: '狀態', render: s => renderSentinelActiveBadge(s.active) },
             { title: '', className: 'text-end', render: s => renderSentinelActions(s) }
         ],
@@ -64,7 +65,7 @@ function renderDiscoverBadge(sentinel) {
         span.className = 'lf-badge lf-badge--success';
         span.textContent = '已設定';
     } else {
-        span.className = 'text-muted small';
+        span.className = 'lf-text-meta';
         span.textContent = sentinel.hasPassword ? '缺帳號' : '未設定';
     }
     return span;
@@ -81,26 +82,9 @@ function renderSentinelActions(sentinel) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-1 justify-content-end';
 
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.className = 'btn btn-sm btn-outline-primary';
-    edit.textContent = '編輯';
-    edit.addEventListener('click', () => openSentinelModal(sentinel));
-    wrap.appendChild(edit);
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-sm btn-outline-secondary';
-    toggle.textContent = sentinel.active ? '停用' : '啟用';
-    toggle.addEventListener('click', () => onToggleSentinelActive(sentinel));
-    wrap.appendChild(toggle);
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'btn btn-sm btn-outline-danger';
-    remove.textContent = '刪除';
-    remove.addEventListener('click', () => onDeleteSentinel(sentinel));
-    wrap.appendChild(remove);
+    wrap.appendChild(button('編輯', { variant: 'outline-primary', opens: 'dialog', onClick: () => openSentinelModal(sentinel) }));
+    wrap.appendChild(button(sentinel.active ? '停用' : '啟用', { variant: 'outline-secondary', onClick: () => onToggleSentinelActive(sentinel) }));
+    wrap.appendChild(button('刪除', { variant: 'outline-danger', onClick: () => onDeleteSentinel(sentinel) }));
 
     return wrap;
 }
@@ -150,11 +134,30 @@ function openSentinelModal(sentinel) {
             ? '已設定，留空＝不變更。'
             : '留空＝此 Sentinel 無法主動掃描。';
     document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
+    for (const id of ['sentinel-name', 'sentinel-base-url', 'sentinel-username', 'sentinel-password']) {
+        document.getElementById(id).classList.remove('is-invalid');       // 也不留上一次缺欄位的紅框
+    }
 
     sentinelModal.show();
 }
 
 document.getElementById('btn-new-sentinel').addEventListener('click', () => openSentinelModal(null));
+
+/**
+ * Sentinel modal 的缺欄位提示：訊息寫在 modal 底部的結果區，小螢幕不一定看得到，
+ * 所以同時把該欄標紅並移入焦點；使用者一開始輸入就解除標紅。
+ */
+function flagMissingField(inputId, message) {
+    document.getElementById('sentinel-test-result').replaceChildren(statusNote('warning', message));
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.classList.add('is-invalid');
+    input.addEventListener('input', () => {
+        input.classList.remove('is-invalid');
+        document.getElementById('sentinel-test-result').replaceChildren();
+    }, { once: true });
+    input.focus();
+}
 
 document.getElementById('sentinel-test-connection').addEventListener('click', async () => {
     const baseUrl = document.getElementById('sentinel-base-url').value.trim();
@@ -162,9 +165,11 @@ document.getElementById('sentinel-test-connection').addEventListener('click', as
     const password = document.getElementById('sentinel-password').value;
     const resultEl = document.getElementById('sentinel-test-result');
 
-    if (!baseUrl) { toast('請先輸入連線位址', 'warning'); return; }
-    if (!username) { toast('請先輸入探索帳號', 'warning'); return; }
-    if (!password && !editingSentinel?.hasPassword) { toast('請先輸入探索密碼', 'warning'); return; }
+    // 輸入缺漏：就地 statusNote＋該欄標紅並取得焦點，不發出請求
+    const missing = !baseUrl ? ['sentinel-base-url', '請先輸入連線位址']
+        : !username ? ['sentinel-username', '請先輸入探索帳號']
+        : (!password && !editingSentinel?.hasPassword) ? ['sentinel-password', '請先輸入探索密碼'] : null;
+    if (missing) { flagMissingField(...missing); return; }
 
     const testButton = document.getElementById('sentinel-test-connection');
     const restore = withBusy(testButton, '測試中');
@@ -179,10 +184,9 @@ document.getElementById('sentinel-test-connection').addEventListener('click', as
             password: password || null
         });
 
-        resultEl.textContent = result.success
-            ? `✓ ${result.message}（耗時 ${result.elapsedMs}ms）`
-            : `✗ ${result.message}`;
-        resultEl.className = `small mb-0 ${result.success ? 'text-success' : 'text-danger'}`;
+        resultEl.replaceChildren(result.success
+            ? statusNote('success', `${result.message}（耗時 ${result.elapsedMs}ms）`)
+            : statusNote('error', result.message));
     } catch {
         // 輸入不合法（如既有 Sentinel 找不到）由 api.js 以 toast 顯示；此處不用另外處理
     } finally {
@@ -195,7 +199,7 @@ sentinelForm.addEventListener('submit', async event => {
 
     const name = document.getElementById('sentinel-name').value.trim();
     if (!name) {
-        toast('請輸入 Sentinel 名稱', 'warning');
+        flagMissingField('sentinel-name', '請輸入 Sentinel 名稱');
         return;
     }
 
@@ -352,8 +356,9 @@ function renderProbeStatus(status) {
         if (status.isRunning) {
             metadataProbeStateEl.textContent = `Sentinel #${status.sentinelId}：執行中（安全欄位形狀探測）…`;
         } else if (status.completedAt) {
-            metadataProbeStateEl.textContent = `Sentinel #${status.sentinelId}：上次執行 ${formatDateTime(status.completedAt)}　` +
-                (status.success ? '✓ 完成' : '✗ 未完成；請查看安全原因');
+            metadataProbeStateEl.replaceChildren(statusNote(status.success ? 'success' : 'error',
+                `Sentinel #${status.sentinelId}：上次執行 ${formatDateTime(status.completedAt)}　` +
+                (status.success ? '完成' : '未完成；請查看安全原因')));
         } else {
             metadataProbeStateEl.textContent = '';
         }
@@ -377,8 +382,9 @@ function renderProbeStatus(status) {
         probeStateEl.textContent = '';
         return;
     }
-    probeStateEl.textContent = `上次執行：${formatDateTime(status.completedAt)}　` +
-        (status.success ? '✓ 完成（詳見下方輸出，個別步驟仍可能失敗，請自行檢視）' : '✗ 執行中發生錯誤，詳見下方輸出');
+    probeStateEl.replaceChildren(statusNote(status.success ? 'success' : 'error',
+        `上次執行：${formatDateTime(status.completedAt)}　` +
+        (status.success ? '完成（詳見下方輸出，個別步驟仍可能失敗，請自行檢視）' : '執行中發生錯誤，詳見下方輸出')));
 }
 
 async function refreshProbeStatus() {
@@ -406,7 +412,7 @@ async function refreshProbeStatus() {
 probeStartButton.addEventListener('click', async () => {
     const sentinelId = Number(probeSentinelSelect.value);
     if (!sentinelId) {
-        toast('請先選擇要診斷的 Sentinel', 'warning');
+        probeStateEl.replaceChildren(statusNote('warning', '請先選擇要診斷的 Sentinel'));
         return;
     }
 
@@ -430,7 +436,7 @@ probeStartButton.addEventListener('click', async () => {
 metadataProbeStartButton.addEventListener('click', async () => {
     const sentinelId = Number(probeSentinelSelect.value);
     if (!sentinelId) {
-        toast('請先選擇要探測的 Sentinel', 'warning');
+        metadataProbeStateEl.replaceChildren(statusNote('warning', '請先選擇要探測的 Sentinel'));
         return;
     }
 
@@ -449,7 +455,7 @@ probeCopyButton.addEventListener('click', async () => {
         await navigator.clipboard.writeText(probeOutputEl.value);
         toast('已複製診斷輸出', 'success');
     } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        probeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
     }
 });
 
@@ -458,7 +464,7 @@ metadataProbeCopyButton.addEventListener('click', async () => {
         await navigator.clipboard.writeText(metadataProbeOutputEl.value);
         toast('已複製安全欄位形狀報告', 'success');
     } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+        metadataProbeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
     }
 });
 

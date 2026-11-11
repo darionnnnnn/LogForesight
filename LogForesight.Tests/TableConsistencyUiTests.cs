@@ -108,7 +108,7 @@ public class TableConsistencyUiTests
         Assert.Contains("export function buildKeyValueTable(", ui);
         Assert.Matches(@"table table-sm mb-0", ui);
 
-        var css = File.ReadAllText(Path.Combine(WebDir(), "wwwroot", "css", "site.css"));
+        var css = SiteCss.Read();
         Assert.Matches(@"\.lf-table-wrap td\.text-truncate\s*\{[^}]*max-width:\s*18rem", css);
     }
 
@@ -117,7 +117,7 @@ public class TableConsistencyUiTests
     {
         // 後代選擇器會命中展開列的 colspan 格（它也是 :last-child）與展開格裡巢狀表格的最後一欄：
         // hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄變成 sticky。每個選擇器都要以 "> table >" 子代鏈限定、排除展開列。
-        var rawCss = File.ReadAllText(Path.Combine(WebDir(), "wwwroot", "css", "site.css"));
+        var rawCss = SiteCss.Read();
         var css = Regex.Replace(rawCss, @"/\*.*?\*/", "", RegexOptions.Singleline);   // 註解裡的逗號不能拿來切選擇器
         var selectors = Regex.Matches(css, @"(?<sel>[^{}]*lf-table-wrap--sticky-action[^{}]*)\{")
             .SelectMany(m => Regex.Split(m.Groups["sel"].Value, @",(?![^()]*\))"))   // 只切括號外的逗號，:where(thead, tbody) 不能被切開

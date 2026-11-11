@@ -1,0 +1,719 @@
+﻿/* 版面層：外殼（側欄、頂列）、頁首、詳情頁兩欄與側軌、列印與窄螢幕的外殼規則。 */
+
+/* 頁首元件（ui.js renderPageHeader）：topbar 已是每頁唯一標題，這裡只放一句副標與頁面層級動作。
+   < md（767.98px 以下）動作換到副標下方並左對齊 */
+.lf-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-4);
+}
+
+.lf-page-header__subtitle {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+.lf-page-header__subtitle strong {
+    color: var(--lf-text);
+}
+
+.lf-page-header__subtitle .lf-help {
+    margin-left: var(--lf-space-2);
+}
+
+.lf-page-header__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+@media (max-width: 767.98px) {
+    .lf-page-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .lf-page-header__actions {
+        margin-left: 0;
+    }
+}
+
+/* ── 版面骨架：深色側欄＋淺灰內容區 ─────────────────────────────────────── */
+
+.lf-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+.lf-sidebar {
+    width: var(--lf-sidebar-width);
+    flex: 0 0 var(--lf-sidebar-width);
+    background: var(--lf-sidebar-bg);
+    color: var(--lf-sidebar-fg);
+    display: flex;
+    flex-direction: column;
+    /* 貼齊視窗高度：沒有這個，.lf-layout 只有 min-height:100vh，側欄會跟著整頁內容一路長高，
+       .lf-sidebar__nav 的 overflow-y:auto 永遠不會真的觸發。貼齊之後側欄固定在視窗高度內，
+       選單項目太多時才會出現內部捲動，也才輪得到 JS 的自動收合邏輯派上用場。 */
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    align-self: flex-start;
+}
+
+.lf-mobile-menu-toggle { display: none; }
+
+/* ── 品牌區塊（側欄／登入頁共用，Views/Shared/_Brand.cshtml）──────────────────
+   兩處原本各有一份結構與樣式（平行複製），改為同一份：尺寸差異全部收斂成
+   .lf-brand--sidebar／--login 覆寫的四個變數，結構與對齊規則只有一套。
+
+   副標題的對齊由 core/brand-align.js 量測後決定（docs/WEB-SPEC.md §9.9b 2d）：
+   比主標題窄時撐 letter-spacing 左右貼齊、比主標題寬時靠左＋省略號。 */
+.lf-brand {
+    --lf-brand-mark-size: 2.75rem;
+    --lf-brand-name-size: 1.6rem;
+    --lf-brand-subtitle-size: .92rem;
+    --lf-brand-mark-radius: var(--lf-radius-sm);
+
+    display: flex;
+    /* align-items:stretch：有副標時兩行文字的自然高度可能超過圖示，stretch 讓文字區
+       撐到自然高度，圖示則以 align-self:center 維持正方形並置中（見 .lf-brand__mark） */
+    align-items: stretch;
+    /* 整組（圖示＋文字）置中，文字本身仍靠左貼著圖示——文字區用 flex:0 1 auto
+       才不會吃滿剩餘空間把整組推回左邊 */
+    justify-content: center;
+    gap: var(--lf-space-2);
+    text-decoration: none;
+}
+
+/* 品牌名稱過長時要優雅省略號而非撐版或裁一半的字：flex 子項預設 min-width:auto，
+   不寫 min-width:0 不會縮到內容寬度以下。主標題與副標題各自截斷——兩者共用一個
+   truncate 容器時，副標不受父層 nowrap/ellipsis 保護，超長會被硬裁到字元一半。 */
+.lf-brand__text {
+    display: flex;
+    flex-direction: column;
+    /* space-between：兩行文字上下撐滿圖示高度——首行頂貼、末行底貼。
+       單行（無副標）時等同貼頂，故另有 :not(:has()) 規則改回置中。 */
+    justify-content: space-between;
+    align-self: stretch;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+/* 沒有副標時只有一行，撐滿沒有意義——垂直置中對齊圖示中線 */
+.lf-brand__text:not(:has(.lf-brand__subtitle)) {
+    justify-content: center;
+}
+
+.lf-brand__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* 行高壓到接近 1：否則行高留白會讓字形離圖示邊緣還有一段空隙 */
+    font-size: var(--lf-brand-name-size);
+    line-height: 1.05;
+}
+
+.lf-brand__subtitle {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* 字級不在 token 階上：這裡的約束是「主標題＋副標題兩行合計貼齊圖示高度」，
+       由主標題字級與行高反推而來 */
+    font-size: var(--lf-brand-subtitle-size);
+    font-weight: 400;
+    line-height: 1.05;
+    /* 字距與右側補償由 brand-align.js 依量測結果設成變數（未設＝不撐開） */
+    letter-spacing: var(--lf-brand-spacing, 0);
+    margin-right: var(--lf-brand-offset, 0);
+}
+
+/* 副標題自然寬度的離屏量測節點；字型屬性由 brand-align.js 以變數帶入 */
+.lf-brand-probe {
+    position: absolute;
+    visibility: hidden;
+    white-space: pre;
+    letter-spacing: 0;
+    font-family: var(--lf-probe-font-family);
+    font-size: var(--lf-probe-font-size);
+    font-weight: var(--lf-probe-font-weight);
+    font-style: var(--lf-probe-font-style);
+}
+
+/* 圖示固定正方形＋置中：aspect-ratio 鎖住比例，align-self:center 不跟著父層 stretch
+   撐高——被拉成瘦長矩形時，無 viewBox 的 SVG 會真的變形，漸層底也不再像方形標記 */
+.lf-brand__mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--lf-brand-mark-size);
+    aspect-ratio: 1 / 1;
+    align-self: center;
+    border-radius: var(--lf-brand-mark-radius);
+    background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.lf-brand__mark .lf-icon { width: 1.5rem; height: 1.5rem; }
+
+/* 自訂品牌圖示：上傳的圖片比例不一，contain 保證整張看得到（cover 會裁掉邊角，
+   logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
+.lf-brand__img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: inherit;
+}
+
+/* 側欄變體：整塊是連結（可 hover／focus），底線分隔選單 */
+.lf-brand--sidebar {
+    /* 左右內距用 space-3：側欄總寬固定（--lf-sidebar-width），主標題能用的水平空間
+       ＝總寬扣掉圖示、gap 與左右內距 */
+    padding: var(--lf-space-4) var(--lf-space-3);
+    font-size: var(--lf-font-size-2xl);
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: .01em;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    cursor: pointer;
+    transition: background-color var(--lf-transition);
+}
+
+.lf-brand--sidebar .lf-brand__subtitle {
+    color: var(--lf-sidebar-section);
+}
+
+.lf-brand--sidebar:hover {
+    background: var(--lf-sidebar-hover-bg);
+    color: #fff;
+}
+
+.lf-brand--sidebar:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: -2px;
+}
+
+/* 登入頁變體：卡片裡的靜態區塊，尺寸略大 */
+.lf-brand--login {
+    --lf-brand-mark-size: 3rem;
+    --lf-brand-name-size: 1.85rem;
+    --lf-brand-subtitle-size: 1.02rem;
+    --lf-brand-mark-radius: var(--lf-radius);
+
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-5);
+    font-weight: 600;
+}
+
+.lf-brand--login .lf-brand__subtitle {
+    color: var(--lf-text-muted);
+}
+
+.lf-sidebar__nav {
+    padding: var(--lf-space-2) var(--lf-space-2) var(--lf-space-4);
+    flex: 1 1 auto;
+    overflow-y: auto;
+}
+
+.lf-sidebar__section {
+    padding: var(--lf-space-4) var(--lf-space-3) var(--lf-space-1);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    letter-spacing: .06em;
+    color: var(--lf-sidebar-section);
+    text-transform: uppercase;
+}
+
+/* 可收合的分組標題（目前只有「系統管理」用得到，見 layout.js）：
+   視覺上盡量貼近純文字標題，只多一個可點擊游標與收合箭頭 */
+.lf-sidebar__section--toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: 0;
+    cursor: pointer;
+}
+
+/* 鍵盤焦點（體檢 L9）：深色側欄上用主色陰影看不出來，改用亮色描邊 */
+.lf-sidebar__section--toggle:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: 2px;
+    border-radius: var(--lf-radius-sm);
+}
+
+.lf-sidebar__section--toggle .lf-icon {
+    width: .85rem;
+    height: .85rem;
+    opacity: .7;
+    transition: transform var(--lf-transition);
+}
+
+.lf-sidebar__section--toggle[aria-expanded="false"] .lf-icon {
+    transform: rotate(-90deg);
+}
+
+.lf-sidebar__section-items.is-collapsed {
+    display: none;
+}
+
+.lf-sidebar__link {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-3);
+    margin: 1px var(--lf-space-1);
+    padding: .5rem .7rem;
+    color: var(--lf-sidebar-fg);
+    text-decoration: none;
+    font-size: var(--lf-font-size-base);
+    border-radius: var(--lf-radius-sm);
+    transition: background-color var(--lf-transition), color var(--lf-transition);
+}
+
+.lf-sidebar__link .lf-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+    opacity: .75;
+}
+
+/* 「我的交辦」未結案數（體檢 M7）：靠右、不搶標籤的視覺位置。
+   逾期時轉紅——那是唯一需要「今天就處理」的狀態，其餘只是待辦量。 */
+.lf-sidebar__badge {
+    margin-left: auto;
+    min-width: 1.4rem;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .16);
+    color: var(--lf-sidebar-fg-strong);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.lf-sidebar__badge--overdue {
+    background: var(--lf-risk-high);
+    color: #fff;
+}
+
+.lf-sidebar__link:hover {
+    background: var(--lf-sidebar-hover-bg);
+    color: var(--lf-sidebar-fg-strong);
+}
+
+.lf-sidebar__link.is-active {
+    background: var(--lf-sidebar-active-bg);
+    color: #fff;
+    font-weight: 500;
+}
+
+.lf-sidebar__link.is-active .lf-icon { opacity: 1; }
+
+.lf-sidebar__footer {
+    padding: var(--lf-space-3) var(--lf-space-4);
+    border-top: 1px solid rgba(255, 255, 255, .07);
+    font-size: var(--lf-font-size-sm);
+}
+
+.lf-sidebar__user {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-bottom: var(--lf-space-2);
+    color: var(--lf-sidebar-fg-strong);
+}
+
+.lf-sidebar__user .lf-icon { color: var(--lf-sidebar-section); width: 1.1rem; height: 1.1rem; }
+
+/* #lf-current-user 的 text-truncate 原本不會生效——flex 子項預設 min-width:auto，
+   不會縮到內容寬度以下；補 min-width:0 讓省略號真正出現，長名字不再把側欄撐爆
+   （docs/FEEDBACK-5-PLAN.md §3）*/
+.lf-sidebar__user #lf-current-user { min-width: 0; flex: 1 1 auto; }
+
+.lf-sidebar__version {
+    margin-top: var(--lf-space-2);
+    text-align: center;
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-sidebar-fg);
+    opacity: .6;
+}
+
+.lf-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.lf-topbar {
+    background: var(--lf-card-bg);
+    border-bottom: 1px solid var(--lf-border);
+    padding: var(--lf-space-3) var(--lf-space-5);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 3.25rem;
+}
+
+.lf-topbar__title {
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    margin: 0;
+    color: var(--lf-text);
+}
+
+.lf-content {
+    padding: var(--lf-space-5);
+    flex: 1 1 auto;
+}
+
+/* 頁頂提醒列（layout.js）：滿版色帶、多條時上下相接；與內容之間只留內容區自己的上內距
+   （和沒有提醒列時一樣），不再疊一層 .alert 的外距 */
+#lf-top-alerts .alert {
+    margin-bottom: 0;
+    border-width: 0 0 1px;
+    border-radius: 0;
+}
+
+/* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
+   --lf-content-max、靠左，避免單欄內容被拉到 2000px 以上；清單、儀表板、報表與維護頁滿版 */
+.lf-content--bounded {
+    max-width: calc(var(--lf-content-max) + 2 * var(--lf-space-5));
+}
+
+/* 頁籤化長表單的儲存列常駐畫面下方（docs/FEEDBACK-5-PLAN.md §9）：目前只有設定頁使用，
+   但寫成通用 class 供日後其他頁籤化的長表單沿用。sticky 相對視窗捲動（.lf-content 本身
+   無 overflow 設定），底部留白抵銷 .lf-content 的 padding-bottom，讓儲存列貼齊視窗底緣。 */
+.lf-settings-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 calc(var(--lf-space-5) * -1) calc(var(--lf-space-5) * -1);
+    padding: var(--lf-space-3) var(--lf-space-5);
+    background: var(--lf-content-bg);
+    border-top: 1px solid var(--lf-border);
+}
+
+/* ── 詳情頁頁首卡（風險日／主機／使用者／交辦單共用；docs/DESIGN-SYSTEM.md §8.5）──────
+   主體名稱為主標，身分資訊（徽章、IP、狀態）同一列，頁面層級動作靠右；
+   次要資訊另起一行 metaLine。長名稱（63 字元主機名、長標題）在容器內換行，不撐出水平捲軸。 */
+.lf-entity-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2) var(--lf-space-3);
+    margin-bottom: var(--lf-space-2);
+}
+
+.lf-entity-head__title {
+    margin: 0;
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+
+/* 標題旁的徽章直接成為頁首列的 flex 項目，沿用列的 gap */
+.lf-entity-head__badges { display: contents; }
+
+.lf-entity-head__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-left: auto;
+}
+
+/* 主標是連結時（風險日詳情的主機名）：不加底線，滑過與焦點才出現 */
+.lf-entity-head__link { text-decoration: none; }
+.lf-entity-head__link:hover,
+.lf-entity-head__link:focus-visible { text-decoration: underline; }
+
+/* 頁首卡第二行的次要資訊（metaLine） */
+.lf-entity-head__facts { margin-bottom: var(--lf-space-3); }
+
+/* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
+
+@media print {
+    .lf-sidebar,
+    .lf-topbar,
+    .lf-no-print {
+        display: none !important;
+    }
+
+    /* disclosure 的目標：紙上沒有「點了展開」，一律印出（按鈕本身 lf-no-print） */
+    .lf-disclosure-target.d-none {
+        display: block !important;
+    }
+
+    .lf-meta-line.lf-disclosure-target.d-none {
+        display: flex !important;
+    }
+
+    .lf-content {
+        padding: 0;
+    }
+
+    .lf-card {
+        box-shadow: none;
+        border: 1px solid #ccc;
+        break-inside: avoid;
+    }
+
+    /* 淡色徽章在灰階列印仍靠邊框與文字辨識 */
+    .lf-badge { border-color: #bbb !important; }
+
+    /* 報表的視窗高度綁定只對螢幕有意義（docs/archive/FEEDBACK-10-PLAN.md §5）：紙張是分頁的，
+       綁死一個視窗高度會讓內容被裁在第一頁。列印時整組解除，回到「內容多長印多長」 */
+    .lf-layout:has(.lf-report-page),
+    .lf-report-page {
+        height: auto;
+    }
+
+    .lf-layout:has(.lf-report-page) .lf-content {
+        overflow: visible;
+    }
+
+    .lf-report-page__charts,
+    .lf-report-page__row {
+        height: auto;
+        flex: none;
+    }
+
+    .lf-report-page__charts .lf-card {
+        height: auto;
+    }
+
+    /* 紙本回到固定高度：印出來的圖需要足夠的絕對尺寸才看得清楚 */
+    .lf-report-page .lf-chart { height: 230px; }
+    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
+}
+
+/* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
+
+@media (max-width: 767.98px) {
+    .lf-layout {
+        flex-direction: column;
+    }
+
+    /* 手機上不綁視窗高度（docs/archive/FEEDBACK-10-PLAN.md §5）：側欄已變成頂部橫列，
+       六張圖硬塞進一屏只會每張都小到看不懂——窄螢幕本來就是捲動閱讀 */
+    .lf-layout:has(.lf-report-page) {
+        height: auto;
+    }
+
+    .lf-layout:has(.lf-report-page) .lf-content {
+        overflow: visible;
+    }
+
+    .lf-report-page,
+    .lf-report-page__charts,
+    .lf-report-page__row {
+        height: auto;
+        flex: none;
+    }
+
+    .lf-report-page__charts .lf-card {
+        height: auto;
+    }
+
+    .lf-report-page .lf-chart { height: 230px; }
+    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
+
+    .lf-sidebar {
+        width: 100%;
+        flex: 0 0 auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        position: static;
+        height: auto;
+    }
+
+    .lf-mobile-menu-toggle {
+        display: block;
+        margin-right: var(--lf-space-3);
+        padding: .45rem .75rem;
+        border: 1px solid var(--lf-sidebar-fg);
+        border-radius: var(--lf-radius-sm);
+        background: transparent;
+        color: var(--lf-sidebar-fg-strong);
+    }
+
+    .lf-mobile-menu-toggle:focus-visible { outline: 2px solid var(--lf-sidebar-fg-strong); outline-offset: 2px; }
+
+    .lf-sidebar__nav {
+        display: none;
+        grid-column: 1 / -1;
+        overflow-x: hidden;
+        max-height: 60vh;
+        padding: var(--lf-space-2);
+    }
+
+    .lf-sidebar.is-mobile-open .lf-sidebar__nav { display: block; }
+
+    .lf-sidebar__section {
+        display: block;
+    }
+    .lf-sidebar__section--toggle { display: flex; }
+
+    .lf-sidebar__link {
+        margin: 0;
+        border-radius: 0;
+        white-space: normal;
+    }
+
+    .lf-sidebar__link.is-active {
+        background: var(--lf-sidebar-hover-bg);
+        border-left: 3px solid var(--lf-primary-hover);
+    }
+
+    .lf-sidebar__footer { display: none; grid-column: 1 / -1; }
+    .lf-sidebar.is-mobile-open .lf-sidebar__footer { display: block; }
+}
+
+/* ── 風險日詳情兩欄版面與右側側軌（第 66 輪 D2）───────────────────────────
+   < lg：左右欄上下堆疊、側軌不顯示、右欄內容一律展開（等同改版前）。
+   ≥ lg：grid 兩欄；右欄收合時是 3rem 的直式側軌，展開（layout 加 --side-open）時取 20rem 與內容區 34% 的較小者。
+   不做寬度動畫，因此天然符合 prefers-reduced-motion。 */
+.lf-detail-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-4);
+}
+
+.lf-detail-main,
+.lf-detail-side {
+    min-width: 0;
+}
+
+.lf-side-rail,
+.lf-side-rail__collapse {
+    display: none;
+}
+
+/* 992px 與 core/side-rail.js 的 RAIL_MEDIA_QUERY 是同一個斷點，兩處要一起改 */
+@media (min-width: 992px) {
+    .lf-detail-layout {
+        display: grid;
+        /* 展開寬度取 20rem 與內容區 34% 的較小者：rem 會隨使用者字級放大，1024 寬時只給 20rem 會把主欄擠到 300px 上下；
+           34% 約等於改版前 col-lg-4 的寬度 */
+        grid-template-columns: minmax(0, 1fr) min(20rem, 34%);
+        align-items: start;
+    }
+
+    /* 收合狀態（JS 建立了側軌才有 nav；案件授與檢視沒有側軌，由 --side-open 直接展開） */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) {
+        grid-template-columns: minmax(0, 1fr) 3rem;
+    }
+
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side__body {
+        display: none;
+    }
+
+    /* 收合時右欄只剩側軌的高度，grid 的 align-items: start 讓它停在列頂、sticky 沒有可移動的空間；
+       拉到與主欄等高，長頁面捲動時側軌才會跟著停在視窗頂端 */
+    .lf-detail-layout:has(.lf-side-rail):not(.lf-detail-layout--side-open) .lf-detail-side {
+        align-self: stretch;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail {
+        display: none;
+    }
+
+    .lf-detail-layout--side-open .lf-side-rail__collapse {
+        display: inline-flex;
+        margin-bottom: var(--lf-space-3);
+    }
+
+    /* 收合鈕併在「處理狀態」卡 header 右側：靠右、不需要下方間距 */
+    .lf-detail-layout--side-open .lf-side-rail__collapse--in-header {
+        margin-bottom: 0;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+
+    .lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--lf-space-2);
+        position: sticky;
+        top: var(--lf-space-4);
+    }
+}
+
+.lf-side-rail__btn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--lf-space-2);
+    width: 100%;
+    max-height: 14rem;
+    padding: var(--lf-space-3) var(--lf-space-1);
+    writing-mode: vertical-rl;
+    text-align: start;
+    background: var(--lf-card-bg);
+    color: inherit;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.lf-side-rail__btn:hover {
+    border-color: var(--lf-border-strong);
+}
+
+.lf-side-rail__btn:focus-visible,
+.lf-side-rail__collapse:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+.lf-side-rail__label {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.lf-side-rail__summary {
+    font-size: 0.8125rem;
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 0;
+}
+
+/* 側軌標題可被程式聚焦（tabindex=-1）：不畫焦點框以外的雜訊，但保留可見焦點 */
+.lf-detail-side .lf-card__title:focus-visible {
+    box-shadow: var(--lf-focus-ring);
+    outline: none;
+}
+
+/* 側軌的列印規則：紙上沒有側軌按鈕，兩欄改上下堆疊、內容全部展開 */
+@media print {
+    .lf-side-rail,
+    .lf-side-rail__collapse {
+        display: none !important;
+    }
+
+    .lf-detail-layout {
+        display: block !important;
+    }
+
+    .lf-detail-layout .lf-detail-side__body {
+        display: block !important;
+    }
+}

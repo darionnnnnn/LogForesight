@@ -6,7 +6,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 第 56 輪 F37：頁面與頁模組不寫 inline style 的守門，以及 KPI 欄格統一。
 ///
-/// - cshtml 一律不得出現 <c>style="</c>（固定量值走 site.css 工具類）。
+/// - cshtml 一律不得出現 <c>style="</c>（固定量值走樣式表工具類）。
 /// - JS 不得以 <c>.style.xxx =</c> 指派；只有「動態量值」可用 <c>style.setProperty('--lf-…')</c>
 ///   設 CSS 變數，且必須列在下方允許清單（檔名＋用途），由 class 消費。
 /// - KPI 卡列已改由 <c>kpiStrip</c> 統一產生（守門見 FrontendConsistencyUiTests）。
@@ -86,7 +86,7 @@ public class InlineStyleUiTests
             .Select(Path.GetFileName)
             .ToList();
 
-        Assert.True(offenders.Count == 0, "以下檢視含 inline style，請改用 site.css 工具類: " + string.Join(", ", offenders));
+        Assert.True(offenders.Count == 0, "以下檢視含 inline style，請改用樣式表工具類: " + string.Join(", ", offenders));
     }
 
     [Fact]

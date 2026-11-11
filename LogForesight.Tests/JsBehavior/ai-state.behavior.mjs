@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadButton } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -37,7 +38,8 @@ function extractLine(source, prefix) {
     return source.slice(start, source.indexOf('\n', start)).replace(/^export /, '');
 }
 
-installDom();
+const dom = installDom();
+const button = loadButton(dom);
 
 const formatSource = sourceOf('core', 'format.js');
 const { aiStateOf, aiDegradedBadge, latestStatusCell, maxAttempts } = new Function(`
@@ -66,11 +68,11 @@ const { aiStatusBadge } = new Function('aiStateOf', 'aiDegradedBadge', `
 
 // 第 66 輪 C：AI 摘要區塊（含重點速報）；renderAiInline 以 textContent 附加，等同 production 對純文字的行為
 const briefToasts = [];
-const { aiSummaryBlock } = new Function('renderAiInline', 'toast', `
+const { aiSummaryBlock } = new Function('renderAiInline', 'toast', 'button', `
     ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function aiSummaryBlock(')}
     ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function briefBlock(')}
     return { aiSummaryBlock };
-`)((el, text) => { el.appendChild(document.createTextNode(text)); }, (message, kind) => briefToasts.push([message, kind]));
+`)((el, text) => { el.appendChild(document.createTextNode(text)); }, (message, kind) => briefToasts.push([message, kind]), button);
 
 const briefDetail = (over) => ({ aiAnalyzed: true, headline: 'H', brief: 'X', summary: 'S', trendAssessment: '', action: 'A', ...over });
 
@@ -201,16 +203,16 @@ const cases = {
         const block = aiSummaryBlock(briefDetail());
         const text = block.textContent;
         assert(text.includes('重點速報'), text);
-        assert(text.includes('複製'), text);
         const headlineAt = text.indexOf('H');
         const briefAt = text.indexOf('重點速報');
         const summaryAt = text.indexOf('狀況');
         assert(headlineAt < briefAt && briefAt < summaryAt, `順序錯誤：${text}`);
         const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
         assert(brief, '找不到 lf-ai-brief');
-        const button = brief.find((n) => n.tagName === 'BUTTON');
-        assert.equal(button.textContent, '複製');
-        assert(String(button.className).includes('lf-no-print'));
+        const copyButton = brief.find((n) => n.tagName === 'BUTTON');
+        assert.equal(copyButton.getAttribute('aria-label'), '複製重點速報', '單一動作用圖示按鈕，名稱在 aria-label');
+        assert(!String(copyButton.className).includes('btn-link'));
+        assert(String(copyButton.className).includes('lf-no-print'));
         const textNode = brief.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief__text'));
         assert.equal(textNode.textContent, 'X');
     },

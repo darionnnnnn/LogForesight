@@ -100,7 +100,8 @@ const cases = {
         ] }]);
         const [danger, none] = cardsOf(strip);
         const dangerValue = danger.find(n => has(n, 'lf-stat__value'));
-        assert.equal(has(dangerValue, 'text-danger'), true);
+        assert.equal(has(dangerValue, 'lf-stat__value--danger'), true, '數字顏色走 KPI 修飾類別');
+        assert.equal(dangerValue.className.includes('text-'), false, '不再借 Bootstrap 的 text-* 工具類');
         assert.equal(dangerValue.textContent, '9');
         const noneValue = none.find(n => has(n, 'lf-stat__value'));
         assert.equal(noneValue.className.includes('text-'), false);

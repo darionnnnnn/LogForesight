@@ -7,8 +7,9 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt
+    guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt, button as uiButton
 } from '../core/ui.js';
+import { statusNote } from '../core/elements.js';
 import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
     prtgFreshnessLabel, statusBadge, toLocalDateString
@@ -32,6 +33,27 @@ const CLOUD_AI_DECLARATION = '分析時最多 500 則原始 log 訊息（可能�
 // 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
 let unsaved = null;
+
+/**
+ * 儲存列的結果訊息（statusNote）：驗證擋下、儲存成功、欄位填回預設等整頁層級的回饋都顯示在
+ * 常駐畫面下方的儲存列旁，不論目前在哪個頁籤都看得到；text 為 null 時清除。
+ * error 型帶 role="alert"，其餘 role="status"。
+ */
+let saveNoteType = null;
+
+function showSaveNote(type, text) {
+    const host = document.getElementById('settings-save-status');
+    if (!host) return;
+    saveNoteType = type && text ? type : null;
+    host.replaceChildren(...(saveNoteType ? [statusNote(type, text)] : []));
+}
+
+// 「已儲存設定」與驗證擋下的訊息只對當下的表單成立：之後再改任何欄位就清掉。
+// 「已選擇圖示…」這類 info 是「按儲存才生效」的待辦提醒，留到儲存為止；選圖檔本身的事件不算修改。
+document.getElementById('settings-form')?.addEventListener('input', event => {
+    if (event.target?.type === 'file') return;
+    if (saveNoteType === 'success' || saveNoteType === 'warning') showSaveNote(null);
+});
 
 // 兩段式（docs/archive/HISTORY.md #5，2026-07-27 簡化自三段式）：
 // 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁。
@@ -103,9 +125,9 @@ function renderSeverityChecks(selected) {
 
     const selectedSet = new Set(selected);
     for (const severity of SEVERITY_ORDER) {
-        const btn = document.createElement('button');
-        btn.type = 'button'; // 按鈕在 <form> 內，不加 type=button 會被當成 submit 誤觸儲存
-        btn.className = 'btn btn-outline-secondary' + (selectedSet.has(severity) ? ' active' : '');
+        // uiButton 預設 type=button：按鈕在 <form> 內，不加會被當成 submit 誤觸儲存
+        const btn = uiButton('', { variant: 'outline-secondary', size: null });
+        if (selectedSet.has(severity)) btn.classList.add('active');
         btn.setAttribute('aria-pressed', String(selectedSet.has(severity)));
         btn.dataset.severity = severity;
         btn.textContent = severityName(severity);
@@ -128,9 +150,8 @@ function renderDisplayModeButtons(selectedMode) {
     };
 
     for (const mode of DISPLAY_MODES) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary' + (mode.value === selectedMode ? ' active' : '');
+        const btn = uiButton('', { variant: 'outline-secondary', size: null });
+        if (mode.value === selectedMode) btn.classList.add('active');
         btn.dataset.mode = mode.value;
         btn.textContent = mode.label;
         btn.addEventListener('click', () => {
@@ -159,9 +180,8 @@ function renderDayRiskLevelChecks(selected) {
     const selectedSet = new Set(selected);
     for (const level of DAY_RISK_LEVELS) {
         const locked = level === '高';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary' + (selectedSet.has(level) || locked ? ' active' : '');
+        const btn = uiButton('', { variant: 'outline-secondary', size: null });
+        if (selectedSet.has(level) || locked) btn.classList.add('active');
         btn.setAttribute('aria-pressed', String(selectedSet.has(level) || locked));
         btn.dataset.riskLevel = level;
         btn.textContent = level;
@@ -700,7 +720,7 @@ function renderPrtgSnapshotHealth(snapshot) {
     const children = [badge, message];
     for (const hour of snapshot.recentHours ?? []) {
         const line = document.createElement('div');
-        line.className = 'small text-muted mt-1';
+        line.className = 'lf-text-meta mt-1';
         const date = document.createElement('span');
         date.textContent = `${formatDateTime(hour.hour)}：`;
         const data = document.createElement('span');
@@ -729,10 +749,7 @@ function renderSetupGuideHealth(guide) {
     const host = document.getElementById('health-setup-guide');
     if (!host) return;
     if (guide?.hidden) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary btn-sm';
-        btn.textContent = '重新顯示初始設定引導';
+        const btn = uiButton('重新顯示初始設定引導', { variant: 'outline-secondary' });
         btn.addEventListener('click', async () => {
             const restore = withBusy(btn, '更新中…');
             try {
@@ -748,7 +765,7 @@ function renderSetupGuideHealth(guide) {
         host.replaceChildren(btn);
     } else {
         const text = document.createElement('span');
-        text.className = 'text-muted small';
+        text.className = 'lf-text-meta';
         text.textContent = '引導會在初始設定完成前顯示';
         host.replaceChildren(text);
     }
@@ -778,10 +795,7 @@ async function loadLoginThrottle() {
 }
 
 function loginThrottleClearButton(key) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-outline-secondary btn-sm';
-    btn.textContent = '解除';
+    const btn = uiButton('解除', { variant: 'outline-secondary' });
     btn.addEventListener('click', async () => {
         const restore = withBusy(btn, '解除中…');
         try {
@@ -813,7 +827,7 @@ function renderFreshness(freshness) {
         const row = document.createElement('div');
         row.className = 'mb-1';
         const labelEl = document.createElement('span');
-        labelEl.className = 'text-muted me-2';
+        labelEl.className = 'lf-text-label me-2';
         labelEl.textContent = label;
         row.append(labelEl, value);
         return row;
@@ -915,7 +929,7 @@ function renderBackgroundJobs(detail) {
     const preview = detail.sourceMergePreview ?? [];
     if (preview.length > 0) {
         const note = document.createElement('p');
-        note.className = 'small text-muted mt-2';
+        note.className = 'lf-text-meta mt-2';
         note.textContent = `來源大小寫合併預覽（最多 50 組）：${preview.map(g =>
             `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
         document.getElementById('health-background').appendChild(note);
@@ -1021,8 +1035,10 @@ function bindFreshnessAck() {
     const btn = document.getElementById('health-ack-btn');
     btn?.addEventListener('click', async () => {
         const until = document.getElementById('health-ack-until').value;
+        const ackNote = document.getElementById('health-ack-note');
+        ackNote?.replaceChildren();
         if (!until) {
-            toast('請選擇靜音到哪一天', 'warning');
+            ackNote?.replaceChildren(statusNote('warning', '請選擇靜音到哪一天'));
             return;
         }
         const restore = withBusy(btn, '確認中…');
@@ -1054,14 +1070,14 @@ export function renderSlowQueries(items, host = resolveSlowQueryHost()) {
     host.classList.remove('d-none');
 
     const title = document.createElement('div');
-    title.className = 'fw-semibold mb-2';
+    title.className = 'lf-text-title mb-2';
     title.textContent = `資料層慢查詢（最慢 ${SLOW_QUERY_TOP_N} 支）`;
     host.appendChild(title);
 
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
         const empty = document.createElement('div');
-        empty.className = 'text-muted';
+        empty.className = 'lf-text-meta';
         empty.dataset.slowQueryEmpty = '1';
         empty.textContent = SLOW_QUERY_EMPTY_TEXT;
         host.appendChild(empty);
@@ -1173,12 +1189,12 @@ function bindBrandIcon() {
         if (!file) return;
 
         if (!['image/png', 'image/jpeg'].includes(file.type)) {
-            toast('圖示只接受 PNG 或 JPG。', 'warning');
+            showSaveNote('warning', '圖示只接受 PNG 或 JPG。');
             fileInput.value = '';
             return;
         }
         if (file.size > BRAND_ICON_MAX_KB * 1024) {
-            toast(`圖示不可超過 ${BRAND_ICON_MAX_KB} KB（目前 ${Math.ceil(file.size / 1024)} KB）。`, 'warning');
+            showSaveNote('warning', `圖示不可超過 ${BRAND_ICON_MAX_KB} KB（目前 ${Math.ceil(file.size / 1024)} KB）。`);
             fileInput.value = '';
             return;
         }
@@ -1186,9 +1202,9 @@ function bindBrandIcon() {
         const reader = new FileReader();
         reader.onload = () => {
             setBrandIcon(String(reader.result));
-            toast('已選擇圖示，按「儲存」後才會套用。', 'info');
+            showSaveNote('info', '已選擇圖示，按「儲存」後才會套用。');
         };
-        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'danger');
+        reader.onerror = () => showSaveNote('error', '讀取圖片失敗，請換一張圖片再試。');
         reader.readAsDataURL(file);
     });
 
@@ -1204,7 +1220,7 @@ function bindBrandIcon() {
         document.getElementById('brand-subtitle').value = BRAND_DEFAULT_SUBTITLE;
         setBrandIcon('');
         fileInput.value = '';
-        toast('已還原預設外觀，按「儲存」後才會生效。', 'info');
+        showSaveNote('info', '已還原預設外觀，按「儲存」後才會生效。');
     });
 }
 
@@ -1274,7 +1290,7 @@ function showFieldErrors(errors) {
     const details = first.closest('details');
     if (details) details.open = true;
     first.focus();
-    toast(`有 ${errors.length} 個欄位需要修正`, 'warning');
+    showSaveNote('warning', `有 ${errors.length} 個欄位需要修正`);
 }
 
 function bindForm() {
@@ -1283,6 +1299,7 @@ function bindForm() {
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
+        showSaveNote(null);
 
         // 表單是 novalidate：數字欄空白或超出範圍要自己擋，否則空白會被當成 0 送出
         const invalidFields = findInvalidNumberFields(form);
@@ -1294,7 +1311,7 @@ function bindForm() {
         const severities = collectSeverities();
         if (severities.length === 0) {
             activateTabForElement(document.getElementById('severity-checks'));
-            toast('請至少選擇一個層級。', 'warning');
+            showSaveNote('warning', '請至少選擇一個層級。');
             return;
         }
 
@@ -1302,7 +1319,7 @@ function bindForm() {
         const retentionDays = readNumber('retention-days');
         if (retentionDays < initialHistoryDays) {
             activateTabForElement(document.getElementById('retention-days'));
-            toast('歷史資料保留天數不可小於首次執行回補天數。', 'warning');
+            showSaveNote('warning', '歷史資料保留天數不可小於首次執行回補天數。');
             return;
         }
 
@@ -1312,14 +1329,14 @@ function bindForm() {
         const reportRetentionDays = readNumber('report-retention-days');
         if (rawEventRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('raw-event-retention-days'));
-            toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
+            showSaveNote('warning', '原始事件內容保留天數不可大於歷史資料保留天數。');
             return;
         }
 
         // 報告全文存在資料庫，超過歷史資料保留天數之後站上已無入口可點，留著只佔空間
         if (reportRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('report-retention-days'));
-            toast('報告保留天數不可大於歷史資料保留天數。', 'warning');
+            showSaveNote('warning', '報告保留天數不可大於歷史資料保留天數。');
             return;
         }
 
@@ -1365,33 +1382,33 @@ function bindForm() {
         if (aiProvider === 'OpenAi') {
             if (!hasApiKey) {
                 activateTabForElement(document.getElementById('ai-api-key'));
-                toast('使用 OpenAI 官方 API 時，請輸入 API 金鑰。', 'warning');
+                showSaveNote('warning', '使用 OpenAI 官方 API 時，請輸入 API 金鑰。');
                 return;
             }
             if (!aiModel) {
                 activateTabForElement(document.getElementById('ai-model'));
-                toast('使用 OpenAI 官方 API 時，請輸入模型名稱。', 'warning');
+                showSaveNote('warning', '使用 OpenAI 官方 API 時，請輸入模型名稱。');
                 return;
             }
         } else if (aiProvider === 'AzureOpenAi') {
             if (!aiBaseUrl) {
                 activateTabForElement(document.getElementById('ai-base-url'));
-                toast('使用 Azure OpenAI 時，請輸入端點位址。', 'warning');
+                showSaveNote('warning', '使用 Azure OpenAI 時，請輸入端點位址。');
                 return;
             }
             if (!aiAzureDeployment) {
                 activateTabForElement(document.getElementById('ai-azure-deployment'));
-                toast('使用 Azure OpenAI 時，請輸入部署名稱。', 'warning');
+                showSaveNote('warning', '使用 Azure OpenAI 時，請輸入部署名稱。');
                 return;
             }
             if (!aiAzureApiVersion) {
                 activateTabForElement(document.getElementById('ai-azure-api-version'));
-                toast('使用 Azure OpenAI 時，請輸入 API 版本。', 'warning');
+                showSaveNote('warning', '使用 Azure OpenAI 時，請輸入 API 版本。');
                 return;
             }
             if (!hasApiKey) {
                 activateTabForElement(document.getElementById('ai-api-key'));
-                toast('使用 Azure OpenAI 時，請輸入 API 金鑰。', 'warning');
+                showSaveNote('warning', '使用 Azure OpenAI 時，請輸入 API 金鑰。');
                 return;
             }
         }
@@ -1400,7 +1417,7 @@ function bindForm() {
         const adServers = collectAdServers();
         if (adAuthEnabled && adServers.length === 0) {
             activateTabForElement(document.getElementById('ad-servers'));
-            toast('啟用 AD 驗證時，請至少輸入一台 AD 伺服器。', 'warning');
+            showSaveNote('warning', '啟用 AD 驗證時，請至少輸入一台 AD 伺服器。');
             return;
         }
 
@@ -1409,7 +1426,7 @@ function bindForm() {
         const ruleError = validateAccountDisplayRules(document.getElementById('account-display-rules').value);
         if (ruleError) {
             activateTabForElement(document.getElementById('account-display-rules'));
-            toast(ruleError, 'warning');
+            showSaveNote('warning', ruleError);
             return;
         }
 
@@ -1426,7 +1443,7 @@ function bindForm() {
         if (mailEnabled && (mailOnRunCompleted || mailDailyEnabled || mailWeeklyEnabled || mailUrgentEnabled)) {
             if (!smtpServer || !mailFrom || mailRecipients.length === 0) {
                 activateTabForElement(document.getElementById('mail-recipients'));
-                toast('已啟用郵件通知的觸發項目，請填妥 SMTP 伺服器、寄件人與至少一位收件人。', 'warning');
+                showSaveNote('warning', '已啟用郵件通知的觸發項目，請填妥 SMTP 伺服器、寄件人與至少一位收件人。');
                 return;
             }
         }
@@ -1525,7 +1542,7 @@ function bindForm() {
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
                 brandIconDataUri: brandIconDataUri
             });
-            toast('已儲存設定', 'success');
+            showSaveNote('success', '已儲存設定');
             applySettings(current);
             applyBrandToSidebar(current);
             unsaved?.clear();
@@ -1572,19 +1589,20 @@ function bindAdTest() {
 
     button.addEventListener('click', async () => {
         const servers = collectAdServers();
+        const resultEl = document.getElementById('ad-test-result');
+        resultEl.replaceChildren();
         if (servers.length === 0) {
-            toast('請至少輸入一台 AD 伺服器。', 'warning');
+            resultEl.replaceChildren(statusNote('warning', '請至少輸入一台 AD 伺服器。'));
             return;
         }
 
         const account = document.getElementById('ad-test-account').value.trim();
         const password = document.getElementById('ad-test-password').value;
         if (!account || !password) {
-            toast('請輸入測試帳號與密碼。', 'warning');
+            resultEl.replaceChildren(statusNote('warning', '請輸入測試帳號與密碼。'));
             return;
         }
 
-        const resultEl = document.getElementById('ad-test-result');
         const restore = withBusy(button, '測試中');
         try {
             const result = await api.post('/api/admin/settings/ad-test', {
@@ -1595,11 +1613,9 @@ function bindAdTest() {
                 password
             }, { silent: true });
 
-            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
-            resultEl.textContent = result.message;
+            resultEl.replaceChildren(statusNote(result.success ? 'success' : 'error', result.message));
         } catch (error) {
-            resultEl.className = 'text-danger small';
-            resultEl.textContent = error?.message || '測試連線失敗。';
+            resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
         } finally {
             // 密碼欄不保留：每次測試都要求重新輸入，降低殘留在畫面上的機會
             document.getElementById('ad-test-password').value = '';
@@ -1618,12 +1634,13 @@ function bindMailTest() {
 
     button.addEventListener('click', async () => {
         const recipients = collectMailRecipients();
+        const resultEl = document.getElementById('mail-test-result');
+        resultEl.replaceChildren();
         if (recipients.length === 0) {
-            toast('請至少輸入一位收件人。', 'warning');
+            resultEl.replaceChildren(statusNote('warning', '請至少輸入一位收件人。'));
             return;
         }
 
-        const resultEl = document.getElementById('mail-test-result');
         const restore = withBusy(button, '寄送中');
         try {
             const result = await api.post('/api/admin/settings/mail-test', {
@@ -1638,11 +1655,9 @@ function bindMailTest() {
                 bodyIntro: document.getElementById('mail-body-intro').value.trim()
             }, { silent: true });
 
-            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
-            resultEl.textContent = result.message;
+            resultEl.replaceChildren(statusNote(result.success ? 'success' : 'error', result.message));
         } catch (error) {
-            resultEl.className = 'text-danger small';
-            resultEl.textContent = error?.message || '測試寄信失敗。';
+            resultEl.replaceChildren(statusNote('error', error?.message || '測試寄信失敗。'));
         } finally {
             restore();
         }
@@ -1661,7 +1676,7 @@ function bindAiAdvancedReset() {
     button.addEventListener('click', () => {
         const defaults = current?.aiAdvancedDefaults;
         if (!defaults) {
-            toast('尚未載入預設值，請重新整理頁面後再試。', 'warning');
+            showSaveNote('warning', '尚未載入預設值，請重新整理頁面後再試。');
             return;
         }
 
@@ -1677,7 +1692,7 @@ function bindAiAdvancedReset() {
 
         // 未儲存提醒不必手動觸發：這顆按鈕在 #settings-form 內，trackUnsaved 監聽的是表單的
         // click（不只 input），按下去本身就已標記為未儲存
-        toast('已填入出廠預設值，按「儲存」後才會生效。', 'info');
+        showSaveNote('info', '已填入出廠預設值，按「儲存」後才會生效。');
     });
 }
 
