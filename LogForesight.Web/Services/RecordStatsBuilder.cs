@@ -56,6 +56,7 @@ public static class RecordStatsBuilder
             {
                 HostId = hostsByName.TryGetValue(group.Key, out var host) ? host.HostId : 0,
                 HostName = group.Key,
+                DisplayName = hostsByName.TryGetValue(group.Key, out var named) ? NormalizeDisplayName(named.DisplayName) : null,
                 HighRiskDays = group.Count(r => r.RiskLevel == RiskLevels.High),
                 MediumRiskDays = group.Count(r => r.RiskLevel == RiskLevels.Medium),
                 CorrelationDays = group.Count(r => r.CorrelationAlerts.Count > 0),
@@ -71,6 +72,9 @@ public static class RecordStatsBuilder
             .ToList();
     }
 
+    /// <summary>顯示名空白視為沒有（null），畫面不必再判斷空字串</summary>
+    private static string? NormalizeDisplayName(string? name) => string.IsNullOrWhiteSpace(name) ? null : name;
+
     public static List<DashboardHostDto> BuildHostRanking(
         IReadOnlyList<HostRiskAggregate> hosts, IReadOnlyDictionary<long, WebHost> hostsById)
     {
@@ -80,6 +84,7 @@ public static class RecordStatsBuilder
             {
                 HostId = h.HostId,
                 HostName = hostsById.TryGetValue(h.HostId, out var wh) ? wh.HostName : h.HostId.ToString(),
+                DisplayName = hostsById.TryGetValue(h.HostId, out var dn) ? NormalizeDisplayName(dn.DisplayName) : null,
                 HighRiskDays = h.HighRiskDays,
                 MediumRiskDays = h.MediumRiskDays,
                 CorrelationDays = h.CorrelationDays,

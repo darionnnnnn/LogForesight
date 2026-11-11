@@ -203,10 +203,41 @@ public class ReportService
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
                 ? handlingDto ?? new HandlingTodoDto()
-                : _handling.GetTodo(exclusion, recordsForTodo!)
+                : _handling.GetTodo(exclusion, recordsForTodo!),
+            Coverage = BuildCoverage(
+                exclusion, from, to, visibleHosts, nothingVisible, hostIds, riskLevels, visibleSeverities,
+                scope == HandlingHistoryQueryService.HandlingScopes.All ? kpi.CoverageGapDays : (int?)null)
         };
 
         return dto;
+    }
+
+    /// <summary>
+    /// 資料完整度：不論顯示範圍都算同一份（完整度與處理狀態無關）。
+    /// 既有缺口紀錄數在「全部」範圍直接取 KPI 那一份；其他範圍的 KPI 只含該範圍的風險日，
+    /// 所以另以全部範圍的 KPI 聚合取回，兩種範圍的 <c>MissingHostDays</c> 才會一致。
+    /// </summary>
+    private ReportCoverageDto BuildCoverage(
+        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts, bool nothingVisible,
+        List<long> hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities,
+        int? allScopeGapDays)
+    {
+        var activeIds = visibleHosts.Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
+        if (nothingVisible || activeIds.Count == 0) return new ReportCoverageDto { NoData = true };
+
+        var gapDays = allScopeGapDays
+            ?? _aggregates.AggregateReportKpi(exclusion, from, to, hostIds, riskLevels, visibleSeverities).CoverageGapDays;
+        var agg = _aggregates.AggregateReportCoverage(exclusion, from, to, activeIds);
+
+        // 某日的資料要隔天凌晨才分析，今天永遠還沒有：應有資料的最後一天＝ min(期間終點, 昨天)
+        var expectedLast = to.Date < DateTime.Today.AddDays(-1) ? to.Date : DateTime.Today.AddDays(-1);
+        return new ReportCoverageDto
+        {
+            MissingHostDays = agg.MissingHostDays + gapDays,
+            DataThrough = agg.DataThrough?.ToString("yyyy-MM-dd"),
+            Lagging = agg.DataThrough != null && agg.DataThrough.Value.Date < expectedLast,
+            NoData = agg.NoData
+        };
     }
 
     private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)

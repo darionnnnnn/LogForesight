@@ -1169,6 +1169,89 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return (current, previous);
     }
 
+    /// <summary>每台主機（含別名列）有史以來第一筆日誌分析紀錄的日期</summary>
+    internal sealed record CoverageFirstRow(long HostId, DateTime First);
+
+    /// <summary>每台主機（含別名列）區間內的日誌分析紀錄筆數與最後日期</summary>
+    internal sealed record CoverageRangeRow(long HostId, int Rows, DateTime Last);
+
+    /// <summary>有史以來最早日期：SQL 端單純 GROUP BY HostId＋MIN，不引用外層、不 HAVING（兩個 provider 都翻得出來）</summary>
+    internal static IQueryable<CoverageFirstRow> BuildCoverageFirstQuery(
+        IQueryable<DailyRecordRow> rows, IReadOnlyCollection<long> hostIds, short prtgSource) =>
+        rows.Where(r => hostIds.Contains(r.HostId) && r.LogSource != prtgSource)
+            .GroupBy(r => r.HostId)
+            .Select(g => new CoverageFirstRow(g.Key, g.Min(r => r.RecordDate)));
+
+    /// <summary>區間內筆數與最大日期：同樣單層 GROUP BY HostId</summary>
+    internal static IQueryable<CoverageRangeRow> BuildCoverageRangeQuery(
+        IQueryable<DailyRecordRow> rows, IReadOnlyCollection<long> hostIds, short prtgSource, DateTime from, DateTime to) =>
+        rows.Where(r => hostIds.Contains(r.HostId) && r.LogSource != prtgSource && r.RecordDate >= from && r.RecordDate <= to)
+            .GroupBy(r => r.HostId)
+            .Select(g => new CoverageRangeRow(g.Key, g.Count(), g.Max(r => r.RecordDate)));
+
+    /// <summary>
+    /// 報表資料完整度的缺漏主機日（定義見 <see cref="IIssueAggregateQuery.AggregateReportCoverage"/>）。
+    ///
+    /// 查詢數固定 2 次（有史以來最早日期、區間內筆數與最大日期，皆 SQL 端 GROUP BY HostId），
+    /// 不隨主機數成長；別名併入存活主機在記憶體做（列數＝主機數，不是主機×天數）。
+    /// 別名與存活主機同一天各有一筆時，區間筆數會重複計入（可能少算缺漏），
+    /// 所以每台的缺漏夾在 0 到應有天數之間——寧可少報也不會報出超過應有天數的缺漏。
+    /// </summary>
+    public ReportCoverageAggregate AggregateReportCoverage(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long> activeHostIds)
+    {
+        _ = exclusion;
+        if (activeHostIds.Count == 0) return ReportCoverageAggregate.Empty;
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = AliasIndex();
+        var eligible = activeHostIds.ToHashSet();
+        var expanded = ExpandToAliasIds(aliasIndex, activeHostIds);
+        var prtg = (short)AnalysisLogSource.Prtg;
+
+        using var ctx = _contextFactory();
+        var firstRows = BuildCoverageFirstQuery(ctx.DailyRecords.AsNoTracking(), expanded, prtg).ToList();
+        var rangeRows = BuildCoverageRangeQuery(ctx.DailyRecords.AsNoTracking(), expanded, prtg, f, t).ToList();
+
+        var firstByHost = new Dictionary<long, DateTime>();
+        foreach (var row in firstRows)
+        {
+            var host = Surviving(aliasIndex, row.HostId);
+            if (!eligible.Contains(host)) continue;
+            firstByHost[host] = firstByHost.TryGetValue(host, out var cur) && cur <= row.First ? cur : row.First;
+        }
+
+        var rowsByHost = new Dictionary<long, int>();
+        DateTime? dataThrough = null;
+        foreach (var row in rangeRows)
+        {
+            var host = Surviving(aliasIndex, row.HostId);
+            if (!eligible.Contains(host)) continue;
+            rowsByHost[host] = rowsByHost.GetValueOrDefault(host) + row.Rows;
+            if (dataThrough == null || row.Last > dataThrough) dataThrough = row.Last;
+        }
+
+        var missing = 0;
+        if (dataThrough != null)
+        {
+            foreach (var (host, first) in firstByHost)
+            {
+                var start = first > f ? first : f;
+                if (start > dataThrough.Value) continue;
+                var days = (dataThrough.Value - start).Days + 1;
+                missing += Math.Clamp(days - rowsByHost.GetValueOrDefault(host), 0, days);
+            }
+        }
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportCoverage（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ 缺漏 {Missing}、{Ms}ms",
+            f, t, missing, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportCoverage", sw.ElapsedMilliseconds);
+
+        return new ReportCoverageAggregate(missing, dataThrough, dataThrough == null);
+    }
+
     public List<TrendAggregate> AggregateReportTrend(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
         // 趨勢三欄（高／中風險日數、錯誤數）全部來自 lf_daily_records 的日層級欄位，不讀問題列，

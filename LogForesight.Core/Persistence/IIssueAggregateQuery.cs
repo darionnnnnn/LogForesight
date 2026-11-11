@@ -279,6 +279,26 @@ public interface IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) =>
         (AggregateReportKpi(exclusion, from, to, hostIds, riskLevels, visibleSeverities),
          AggregateReportKpi(exclusion, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
+
+    /// <summary>
+    /// 報表「資料完整度」的缺漏主機日（本輪 F-a）。<paramref name="activeHostIds"/> 是呼叫端已決定的對象：
+    /// 可見（授權範圍內）、啟用、未合併的存活主機；別名（被合併主機）的紀錄併入存活主機計算。
+    /// 「日誌分析紀錄」＝ LogSource 不是 PRTG 的每日紀錄（只有 PRTG 訊號的主機日算缺漏）。
+    /// 每台主機的起算日＝ max(期間起日, 該主機有史以來第一筆日誌分析紀錄的日期)、迄日＝期間內最後一個有任何主機
+    /// 日誌分析紀錄的日期（<see cref="ReportCoverageAggregate.DataThrough"/>）；缺漏＝ max(0, 起訖天數 − 區間內紀錄天數)。
+    /// 從沒有任何紀錄的主機不算。與靜音無關，<paramref name="exclusion"/> 只為符合介面慣例而保留。
+    /// 預設實作回「沒有資料」狀態（測試替身自動取得）。
+    /// </summary>
+    ReportCoverageAggregate AggregateReportCoverage(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long> activeHostIds) =>
+        ReportCoverageAggregate.Empty;
+}
+
+/// <summary>報表資料完整度的 SQL 端聚合結果（不含既有缺口紀錄數，由呼叫端加總）</summary>
+public sealed record ReportCoverageAggregate(int MissingHostDays, DateTime? DataThrough, bool NoData)
+{
+    /// <summary>沒有可評估資料（無對象主機或期間內無任何日誌分析紀錄）</summary>
+    public static readonly ReportCoverageAggregate Empty = new(0, null, true);
 }
 
 /// <summary>
