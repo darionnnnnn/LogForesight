@@ -1,5 +1,5 @@
 /**
- * 風險日詳情「問題」欄的判斷層（issueCell）與列展開的佐證層（evidencePanel）——docs/FEEDBACK-69-PLAN.md 批次B。
+ * 風險日詳情「問題」欄的判斷層（issueCell）與列展開的佐證層（evidencePanel）——docs/archive/FEEDBACK-69-PLAN.md 批次B。
  * 以 extractFunction 切出 production 函式本體一起執行；只有 renderTable、severityCell、AI 與 modal 這類
  * 和本契約無關的外部相依用替身，collapsibleText、metaLine、button 都是 production 版本。
  */
@@ -221,7 +221,17 @@ const cases = {
         reset();
         assert.deepEqual(labelsOf(fns.evidencePanel(baseIssue({ sourceObservations: obs(1) }))), ['來源觀測']);
         ctx.aiAvailable = true;
-        assert.deepEqual(labelsOf(fns.evidencePanel(baseIssue())), ['AI 判讀'], '沒有知識庫但 AI 可用時提供 AI 判讀');
+        assert.deepEqual(labelsOf(fns.evidencePanel(baseIssue())), ['AI 判讀', '來源觀測'], '沒有知識庫但 AI 可用時提供 AI 判讀');
+    },
+    evidencePanelStatesMissingSourceObservations() {
+        // 面板有其他佐證但沒有來源觀測：要明講「未保存」（分得出「沒有」與「漏顯示」），截斷也要講
+        reset();
+        const panel = fns.evidencePanel(baseIssue({ loginFailureDetails: [failure('alice')], sourceObservationsTruncated: true }));
+        assert.deepEqual(labelsOf(panel), ['登入失敗明細', '來源觀測']);
+        assert(allText(panel).includes('未保存可核對的來源觀測'));
+        assert(allText(panel).includes('清單已截斷'));
+        // 有觀測時不出現這一句
+        assert(!allText(fns.evidencePanel(baseIssue({ sourceObservations: obs(1) }))).includes('未保存'));
     },
     evidencePanelNoneReturnsNull() {
         reset();

@@ -1,4 +1,4 @@
-// UI 截圖與版面量測工具（docs/FEEDBACK-69-PLAN.md A-0）。
+// UI 截圖與版面量測工具（docs/archive/FEEDBACK-69-PLAN.md A-0）。
 //
 // 以無頭 Edge 加 Node 內建 WebSocket 走 Chrome DevTools Protocol，零第三方相依。
 // 逐情境 × 寬度 × 字級截整頁圖，並量測六項「0 才通過」的版面指標：

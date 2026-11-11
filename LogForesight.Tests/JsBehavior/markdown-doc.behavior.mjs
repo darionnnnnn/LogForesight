@@ -63,7 +63,7 @@ const cases = {
         assert.equal(withoutTitleLine(null), '');
     },
     latexArrowConverted() {
-        // AI 回覆中的 $\rightarrow$ 換成「→」，粗體裡的也換（docs/FEEDBACK-69-PLAN.md X1）
+        // AI 回覆中的 $\rightarrow$ 換成「→」，粗體裡的也換（docs/archive/FEEDBACK-69-PLAN.md X1）
         const text = flatText(render('嘗試登入 $\\rightarrow$ 修改權限 $\\Rightarrow$ 抹除痕跡，**$\\leq$ 3 次**'));
         assert.equal(text, '嘗試登入 → 修改權限 ⇒ 抹除痕跡，≤ 3 次');
     },

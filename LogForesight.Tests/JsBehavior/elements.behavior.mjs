@@ -1,4 +1,4 @@
-// core/elements.js 的 production 行為（docs/FEEDBACK-69-PLAN.md A-3、A-4）。
+// core/elements.js 的 production 行為（docs/archive/FEEDBACK-69-PLAN.md A-3、A-4）。
 // 整檔載入（load-elements.mjs），只把 ui.js 的 icon 換成替身。
 import assert from 'node:assert/strict';
 import { installDom } from './mini-dom.mjs';
@@ -62,6 +62,7 @@ const cases = {
         let applied = 0;
         const { button, refresh } = filterDisclosure(target, () => applied);
         assert.equal(labelOf(button), '更多條件', '0 個條件時不寫數字');
+        assert(!target.classList.contains('lf-disclosure-target'), '篩選欄位收合時列印不印出');
         assert.equal(button.getAttribute('aria-expanded'), 'false', '沒有套用中的條件時預設收合');
         assert(target.classList.contains('d-none'));
         applied = 2;
@@ -89,6 +90,7 @@ const cases = {
         const node = dom.newElement('span');
         const line = metaLine(['次數 3', '', null, node, 0]);
         assert.equal(line.children.length, 3, '空字串與 null 略過，數字 0 保留');
+        assert.equal(metaLine(['只有一項']).children.length, 1, '單一項目不產生分隔節點');
         assert.equal(line.children[0].textContent, '次數 3');
         assert.equal(line.children[1], node);
         assert.equal(line.children[2].textContent, '0');

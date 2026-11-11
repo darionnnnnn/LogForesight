@@ -698,6 +698,9 @@ function narrowDueDate(row) {
     return wrap;
 }
 
+// 同一張單在畫面上有兩個期限顯示（寬螢幕的期限欄、窄螢幕的摘要行）；一邊存檔後另一邊也要換成新值
+const dueDateViews = new WeakMap();   // row → 該列每個實例的重繪函式
+
 function dueDateCell(row) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex flex-wrap align-items-center gap-1';
@@ -738,7 +741,7 @@ function dueDateCell(row) {
                 const result = await api.put(`/api/work-orders/${row.workOrderId}/due-date`, { dueDate: input.value || null });
                 row.dueDate = result.dueDate;
                 toast('已更新期限', 'success');
-                showValue();
+                dueDateViews.get(row).forEach(refresh => refresh());
             } catch {
                 save.disabled = false;   // api.js 已出過錯誤 toast；留在編輯狀態讓人改
             }
@@ -748,6 +751,8 @@ function dueDateCell(row) {
         input.focus();
     };
 
+    if (!dueDateViews.has(row)) dueDateViews.set(row, []);
+    dueDateViews.get(row).push(showValue);
     showValue();
     return wrap;
 }

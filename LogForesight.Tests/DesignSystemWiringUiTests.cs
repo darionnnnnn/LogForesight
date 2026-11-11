@@ -41,6 +41,9 @@ public sealed class DesignSystemWiringUiTests
         Assert.Contains("workOrderLink(row)", narrow.Groups[1].Value);
         Assert.Contains("narrowDueDate(row)", narrow.Groups[1].Value);
         Assert.Contains("dueDateCell(row)", Regex.Match(js, @"function narrowDueDate\(row\) \{.*?\n\}", RegexOptions.Singleline).Value);
+        // 同一張單有寬版與窄版兩個期限實例：存檔後要全部重繪，不能只重繪被操作的那個
+        Assert.Contains("dueDateViews.get(row).forEach(refresh => refresh());", js);
+        Assert.Contains("dueDateViews.get(row).push(showValue);", js);
     }
 
     [Fact]
@@ -62,6 +65,9 @@ public sealed class DesignSystemWiringUiTests
         Assert.Contains("input.focus()", helper);
         Assert.Contains("flagMissingField('sentinel-name'", js);
         Assert.Equal(4, Regex.Matches(js, @"'sentinel-(name|base-url|username|password)', '請").Count);
+        // 關掉重開或換一台編輯時不留上一次的紅框
+        Assert.Contains("classList.remove('is-invalid');",
+            Regex.Match(js, @"function openSentinelModal\(sentinel\) \{.*?\n\}", RegexOptions.Singleline).Value);
     }
 
     [Fact]
@@ -73,7 +79,7 @@ public sealed class DesignSystemWiringUiTests
         Assert.Equal(4, bars.Count);
         Assert.All(bars, c => Assert.DoesNotMatch(@"\bmb-\d\b", c));
         var css = SiteCss.Read();
-        Assert.Matches(@"#lf-top-alerts \.alert \{\s*margin-bottom: 0;", css);
+        Assert.Matches(@"#lf-top-alerts \.alert \{\s*margin-bottom: 0;\s*border-width: 0 0 1px;\s*border-radius: 0;", css);
     }
 
     [Fact]
@@ -81,7 +87,10 @@ public sealed class DesignSystemWiringUiTests
     {
         var css = SiteCss.Read();
         var print = Regex.Matches(css, @"@media print \{(.*?)\n\}", RegexOptions.Singleline).Select(m => m.Groups[1].Value);
-        Assert.Contains(print, block => block.Contains(".lf-disclosure-target.d-none") && block.Contains("display: block !important"));
+        Assert.Contains(print, block => block.Contains(".lf-disclosure-target.d-none") && block.Contains("display: block !important")
+            && block.Contains(".lf-meta-line.lf-disclosure-target.d-none") && block.Contains("display: flex !important"));
+        // 工具列的「更多條件」是篩選欄位不是內容：收合時列印不印出
+        Assert.Contains("target.classList.remove('lf-disclosure-target');", Read("wwwroot/js/core/elements.js"));
 
         var head = Regex.Match(css, @"\.lf-issue-cell__head \{(.*?)\}", RegexOptions.Singleline).Groups[1].Value;
         Assert.Contains("flex-wrap: wrap", head);

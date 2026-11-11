@@ -383,6 +383,8 @@
    （和沒有提醒列時一樣），不再疊一層 .alert 的外距 */
 #lf-top-alerts .alert {
     margin-bottom: 0;
+    border-width: 0 0 1px;
+    border-radius: 0;
 }
 
 /* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
@@ -454,6 +456,10 @@
     /* disclosure 的目標：紙上沒有「點了展開」，一律印出（按鈕本身 lf-no-print） */
     .lf-disclosure-target.d-none {
         display: block !important;
+    }
+
+    .lf-meta-line.lf-disclosure-target.d-none {
+        display: flex !important;
     }
 
     .lf-content {

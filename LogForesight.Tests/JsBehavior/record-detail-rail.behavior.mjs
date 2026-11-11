@@ -181,24 +181,43 @@ const cases = {
         pageEnv({ rail: null, hash: '' }).expandSideRailForSelection();
     },
     expandForSelectionKeepsAnchorInView() {
-        // 展開後左欄變窄、列變高：剛勾的勾選框從視窗 y=300 被推到 y=900，要捲回原位置（捲 600）
+        // 展開後左欄變窄、列變高：剛勾的勾選框從視窗 y=300 被推到 y=900，要捲回原位置（捲 600）。
+        // 重排不是同步的：expand() 當下位置還沒變，第二個畫面格才變——太早量會得到 0、等於沒補
         const scrolls = [];
+        const frames = [];
         const savedWindow = globalThis.window;
+        const savedRaf = globalThis.requestAnimationFrame;
         globalThis.window = { scrollBy: (x, y) => scrolls.push([x, y]) };
+        globalThis.requestAnimationFrame = fn => frames.push(fn);
         try {
             let top = 300;
             const anchor = { getBoundingClientRect: () => ({ top }) };
             const rail = fakeRail();
-            const expand = rail.expand.bind(rail);
-            rail.expand = (key, opts) => { expand(key, opts); top = 900; };
             pageEnv({ rail, hash: '' }).expandSideRailForSelection(anchor);
+            assert.equal(scrolls.length, 0, '展開當下不捲（版面還沒重排）');
+            frames.shift()();          // 第一格：還沒重排
+            assert.equal(scrolls.length, 0);
+            top = 900;                 // 第二格前重排了一次
+            frames.shift()();
             assert.deepEqual(scrolls, [[0, 600]]);
+            top = 300;                 // 捲回原位後版面再變一次（往下 80）
+            frames.shift()();
+            assert.equal(scrolls.length, 1, '位置沒變就不捲');
+            top = 380;
+            frames.shift()();
+            assert.deepEqual(scrolls.at(-1), [0, 80]);
+            top = 300;
+            let guard = 100;
+            while (frames.length && guard-- > 0) frames.shift()();
+            assert.equal(frames.length, 0, '校正有格數上限，不會一直掛著');
+            assert.equal(scrolls.length, 2);
 
             // 已展開（不會重排）時不捲動
             pageEnv({ rail: fakeRail({ expanded: true }), hash: '' }).expandSideRailForSelection(anchor);
-            assert.equal(scrolls.length, 1);
+            assert.equal(scrolls.length, 2);
         } finally {
             globalThis.window = savedWindow;
+            globalThis.requestAnimationFrame = savedRaf;
         }
     },
 

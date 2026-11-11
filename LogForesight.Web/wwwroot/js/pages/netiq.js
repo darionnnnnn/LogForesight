@@ -134,6 +134,9 @@ function openSentinelModal(sentinel) {
             ? '已設定，留空＝不變更。'
             : '留空＝此 Sentinel 無法主動掃描。';
     document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
+    for (const id of ['sentinel-name', 'sentinel-base-url', 'sentinel-username', 'sentinel-password']) {
+        document.getElementById(id).classList.remove('is-invalid');       // 也不留上一次缺欄位的紅框
+    }
 
     sentinelModal.show();
 }
@@ -149,7 +152,10 @@ function flagMissingField(inputId, message) {
     const input = document.getElementById(inputId);
     if (!input) return;
     input.classList.add('is-invalid');
-    input.addEventListener('input', () => input.classList.remove('is-invalid'), { once: true });
+    input.addEventListener('input', () => {
+        input.classList.remove('is-invalid');
+        document.getElementById('sentinel-test-result').replaceChildren();
+    }, { once: true });
     input.focus();
 }
 

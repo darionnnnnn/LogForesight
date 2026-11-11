@@ -2,7 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>風險日詳情「問題」欄的判斷層與列展開的佐證層（docs/FEEDBACK-69-PLAN.md 批次B）。</summary>
+/// <summary>風險日詳情「問題」欄的判斷層與列展開的佐證層（docs/archive/FEEDBACK-69-PLAN.md 批次B）。</summary>
 public sealed class RecordDetailIssueCellBehaviorTests
 {
     private static string FindRepoRoot()
@@ -27,6 +27,7 @@ public sealed class RecordDetailIssueCellBehaviorTests
     [InlineData("guidancePanelOmitsExplanationLabel")]
     [InlineData("evidencePanelAllSections")]
     [InlineData("evidencePanelSingleSection")]
+    [InlineData("evidencePanelStatesMissingSourceObservations")]
     [InlineData("evidencePanelNoneReturnsNull")]
     [InlineData("evidencePanelPrunedKeepsGuidanceOnly")]
     [InlineData("sourceEvidenceList")]

@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **9,099 通過／11 略過**、macOS **8,512 通過／14 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **9,104 通過／11 略過**、macOS **8,512 通過／14 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 11 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -131,12 +131,14 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在正式碼或測試用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
 - 不要在 `showDetailModal` 開著時再開一個：Bootstrap 5.3 不支援疊開，內層關閉後背景可捲動、外層焦點鎖定失效。已在 modal 內的次要選擇用就地面板（樣板：`chat-panel.js` 的「指定問題」）。
 - 詢問 AI 的焦點只由 `ChatFocusResolver` 決定（確定性規則、整詞比對、不呼叫 AI 做路由），整日摘要只取自 `GetDetail` 回傳的 DTO——另讀紀錄會把案件授與檢視範圍外的整日敘事帶進 prompt。
-- 不要在頁面現場拼文字樣式：`text-danger|text-warning|text-success`、`small text-muted`、`btn-link`、頁面模組手寫 `'btn btn-…'` 在全站前端無條件禁止
-  （`DesignSystemGuardUiTests`）。文字用角色類別、結果訊息用 `statusNote`、按鈕走 `button()`／`linkButton()`，共用出口見 DESIGN-SYSTEM §8.6；
+- 不要在頁面現場拼文字樣式、按鈕類別，也不要寫設計系統外的中斷點與按鈕變體：`text-danger|text-warning|text-success`、`small text-muted`、`btn-link`、
+  頁面模組手寫 `'btn btn-…'` 全站禁止（`DesignSystemGuardUiTests`）。規則在 DESIGN-SYSTEM §8.1～§8.4、共用出口在 §8.6；
   同一結構在三個以上頁面出現才抽進 `core/`，抽了就刪掉各頁那份。
-- 不要寫設計系統外的中斷點與按鈕變體：`@media` 寬度只用 576／768／992／1200／1600（`max-width` 寫 N−0.02），按鈕只用 primary／outline-primary／
-  outline-secondary／outline-danger／danger，`confirmVariant` 只用 primary 或 danger（同一個守門類別）。
 - 不要讓 `lf-text-data` 之類的短值在字中斷行：`overflow-wrap: anywhere` 會把表格欄最小寬度算成一個字（IP、日期逐字直排）；需要任意斷行的容器才用 `lf-break-anywhere`。
+- 改 markup 的類別名之前，grep 全前端的 `querySelector`／`closest`：別的模組用舊類別找元素時不會報錯，只會靜默找不到
+  （問題格標題改用角色類別後，處理面板的 AI 備註拿不到問題名稱）。
+- 窄螢幕隱藏欄位、或把 toast 改成常駐訊息時各問一句：被藏的欄裡有沒有操作（連結、編輯鈕）要在摘要行保留；常駐訊息什麼時候清掉
+  （「已儲存設定」不能掛在已經又改過的表單上）。
 - 不要新增不帶 nonce 的 inline script：CSP 只放行每請求 nonce，漏帶的腳本在正式環境被瀏覽器擋掉（`CspPolicyGuardTests` 掃所有 view）。
   同理不要在 view 或 JS 字串寫 `style=` 屬性與 inline 事件屬性；動態樣式用 `classList` 或 `style.setProperty`。
 - 不要在 `runtimeconfig.template.json` 加白名單外的 `System.GC.*` 鍵：runtime 對認不得的鍵靜默忽略，錯鍵看起來有設定、實際沒生效（`System.GC.Conserve` 沉默了 32 輪）；鍵名進 `RuntimeConfigGuardTests` 白名單，生效值由啟動 log 與健康頁記憶體卡用 `GC.GetConfigurationVariables()` 讀回。讀回時 `GCHeapHardLimitPercent` 未設是值 0 不是缺鍵，判斷有無硬上限要看「值 > 0」。

@@ -125,7 +125,7 @@ public sealed class DesignSystemGuardUiTests
     };
 
     internal static IEnumerable<string> MediaWidthConditions(string css) =>
-        Regex.Matches(css, @"@media[^{]*").SelectMany(m => Regex.Matches(m.Value, @"(min|max)-width:\s*[\d.]+px").Select(c => Regex.Replace(c.Value, @":\s*", ": ")));
+        Regex.Matches(css, @"@media[^{]*").SelectMany(m => Regex.Matches(m.Value, @"(?:(?:min|max)-width:\s*[\d.]+[a-z%]*|\bwidth\s*[<>]=?\s*[\d.]+[a-z%]*)").Select(c => Regex.Replace(c.Value, @":\s*", ": ")));
 
     [Fact]
     public void 中斷點只用設計系統的五個值()
@@ -143,6 +143,10 @@ public sealed class DesignSystemGuardUiTests
     [InlineData("@media (max-width: 768px) {", false)]
     [InlineData("@media (min-width: 1600px) {", true)]
     [InlineData("@media (min-width:1400px) {", false)]
+    [InlineData("@media (min-width: 48em) {", false)]
+    [InlineData("@media (min-width: 100rem) {", false)]
+    [InlineData("@media (width >= 768px) {", false)]
+    [InlineData("@media print {", true)]
     public void 中斷點守門的邊界(string sample, bool allowed) =>
         Assert.Equal(allowed, MediaWidthConditions(sample).All(AllowedBreakpoints.Contains));
 

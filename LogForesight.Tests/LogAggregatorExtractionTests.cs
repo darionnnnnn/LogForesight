@@ -456,7 +456,7 @@ Failure Code:		0x12";
         Assert.DoesNotContain("CONTOSO\\john", accounts);
     }
 
-    // ── 截圖中的三種事件形狀（docs/FEEDBACK-69-PLAN.md X2）：NetIQ 單行訊息、欄位間 2 個空白 ──
+    // ── 截圖中的三種事件形狀（docs/archive/FEEDBACK-69-PLAN.md X2）：NetIQ 單行訊息、欄位間 2 個空白 ──
     // 修正前整段訊息被當成「相關帳號」寫進紀錄；這裡確認現行擷取不再產生那種值。
 
     private const string Single4735 =

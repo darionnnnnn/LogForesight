@@ -1,4 +1,4 @@
-// 以 UI 驗收資料集啟動站台（docs/FEEDBACK-69-PLAN.md A-0），供 ui-shots.mjs 截圖。
+// 以 UI 驗收資料集啟動站台（docs/archive/FEEDBACK-69-PLAN.md A-0），供 ui-shots.mjs 截圖。
 //
 // 站台從獨立的發佈目錄執行，不占用專案 bin（站台執行中會鎖住 bin 的 DLL，測試就建置不了）。
 // 資料集先以 `LF_UI_FIXTURE=<目錄>` 跑 UiFixtureDataSetTests 產生，<目錄>/ai 與 <目錄>/noai 各一份。

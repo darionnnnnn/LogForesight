@@ -1,4 +1,4 @@
-// 比對兩次 ui-shots.mjs 的截圖輸出（docs/FEEDBACK-69-PLAN.md A-1／G-2 的「逐像素相同」驗收）。
+// 比對兩次 ui-shots.mjs 的截圖輸出（docs/archive/FEEDBACK-69-PLAN.md A-1／G-2 的「逐像素相同」驗收）。
 // 先比檔案雜湊；不同的再解碼比像素，印出差異範圍（x、y、寬、高與差異像素數），
 // 方便直接打開兩張圖對照那一塊。全部相同時結束代碼 0。
 //

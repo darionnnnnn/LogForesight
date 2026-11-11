@@ -255,12 +255,22 @@ function updateSideRail(panelInfo) {
 /**
  * 勾選問題時右欄自動展開（使用者沒手動操作過側軌才做；勾選清空不自動收合）。
  * 展開後左欄變窄、問題列變高，剛勾的那列會被往下推出視窗——依 anchor（剛勾的勾選框）捲回原本的視窗位置。
+ * 重排不是在 expand() 當下同步完成，而是分散在之後幾個畫面格（實測第二格才開始變、且不只變一次），
+ * 所以接下來 RAIL_SETTLE_FRAMES 格每格都量一次差值補捲，直到版面穩定。
  */
 function expandSideRailForSelection(anchor) {
+    const RAIL_SETTLE_FRAMES = 20;
     if (sideRail && !sideRail.hasUserChoice() && !sideRail.isExpanded()) {
         const before = anchor?.getBoundingClientRect().top;
         sideRail.expand('handling', { focus: false, scroll: false });
-        if (before !== undefined) window.scrollBy(0, anchor.getBoundingClientRect().top - before);
+        if (before === undefined) return;
+        let frames = RAIL_SETTLE_FRAMES;
+        const settle = () => {
+            const drift = anchor.getBoundingClientRect().top - before;
+            if (drift !== 0) window.scrollBy(0, drift);
+            if (--frames > 0) requestAnimationFrame(settle);
+        };
+        requestAnimationFrame(settle);
     }
 }
 
@@ -1632,6 +1642,11 @@ function evidencePanel(issue) {
         if (issue.prtgTrendEvidence) add('數值趨勢', prtgTrendEvidenceBlock(issue.prtgTrendEvidence));
         if (issue.residualCredentialBasis) add('殘留憑證判定', residualCredentialBlock(issue));
         add('來源觀測', sourceEvidenceBlock(issue));
+        // 面板有其他佐證但沒有來源觀測：明講「沒保存」，讀的人才分得出「沒有」與「漏顯示」；
+        // 只為這一句不另開面板（四區皆無的列維持不可展開）
+        if (sections.length > 0 && !(issue.sourceObservations || []).length) {
+            add('來源觀測', metaLine(['未保存可核對的來源觀測', issue.sourceObservationsTruncated ? '清單已截斷' : null]));
+        }
     }
     if (sections.length === 0) return null;
 
@@ -1652,7 +1667,7 @@ function evidencePanel(issue) {
 
 /**
  * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
- * 沒有任何觀測時回 null（「沒有可核對的來源」不是判斷資訊，不佔版面）。
+ * 沒有任何觀測時回 null；面板有其他佐證時由 evidencePanel 補一句「未保存」。
  */
 function sourceEvidenceBlock(issue) {
     const observations = (issue.sourceObservations || []).slice(0, 64);

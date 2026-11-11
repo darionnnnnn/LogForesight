@@ -63,6 +63,7 @@ export function disclosure(label, target, { expanded = false, onToggle, manageTa
  */
 export function filterDisclosure(target, countApplied, { label = '更多條件', className = '' } = {}) {
     const button = disclosure(label, target, { expanded: countApplied() > 0, className });
+    target.classList.remove('lf-disclosure-target');   // 篩選欄位不是內容：收合時列印不印出
     const text = button.querySelector('.lf-disclosure__label');
     const refresh = () => {
         const count = countApplied();

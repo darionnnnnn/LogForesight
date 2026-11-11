@@ -95,7 +95,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 - **Fira Sans**（latin，400/500/600/700）：標題與 UI 文字。中文 fallback 維持系統字。
 - **Fira Code**（latin，400/600）：新增 `--lf-font-mono`，用於日誌原文、事件 ID、主機名、路徑等技術值——資料密集產品的「精確感」主要來源。
-- 交付方式：**self-host woff2**（latin subset，每檔約 20–40KB，共 6 檔 ≈ 200KB 以內）放 `wwwroot/fonts/` + `@font-face`（`font-display: swap`）。**不用 CDN**（§8.1 禁外部請求）、**不引入中文 webfont**（MB 級，違反零依賴精神）。
+- 交付方式：**self-host woff2**（latin subset，每檔約 20–40KB，共 5 檔 ≈ 200KB 以內）放 `wwwroot/fonts/` + `@font-face`（`font-display: swap`）。**不用 CDN**（§8.1 禁外部請求）、**不引入中文 webfont**（MB 級，違反零依賴精神）。
 - token 化：
 
 ```css
@@ -185,7 +185,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 **窄螢幕（處理人會在機房用手機看單）**
 - 375px 寬必須能完成「看單 → 回覆 → 下一筆」；統計卡、表格工具列在 `< md` 時換列，不固定欄數。
-- 可點擊元素觸控區至少 36px 高；清單列的主要動作在窄螢幕不得被擠出畫面（放列尾、允許換行）。
+- 處理人會用手機操作的頁面（我的交辦、交辦單詳情、風險日詳情的處理面板）：可點擊元素觸控區至少 36px 高；其餘頁面的下限是 §8.2 的 24×24。清單列的主要動作在窄螢幕不得被擠出畫面（放列尾、允許換行）；窄螢幕隱藏的欄位若帶操作（連結、編輯鈕），摘要行要保留同一個操作。
 
 **處理人畫面的用詞**
 - 處理人（只有 `Handle`）看到的概念只有：**交辦單、主機、狀態**。「案件」「日層級狀態」「出現」只出現在管理視角與進階檢視。
@@ -203,7 +203,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 |---|---|---|
 | 樣式表 | `wwwroot/css/` 四層，載入順序 `base.css` → `components.css` → `layout.css` → `pages.css`，唯一引用點 `Views/Shared/_Styles.cshtml` | base＝token、字型、元素預設、Bootstrap 元件級變數；components＝跨頁元件；layout＝外殼、頁首、兩欄與側軌、列印與窄螢幕外殼；pages＝單頁專屬 |
 | token | `base.css` `:root` 區 | 本文件 §2–4、§8 全部取值 |
-| 字型 | `wwwroot/fonts/` + `base.css` `@font-face` | Fira Sans ×4、Fira Code ×2（latin woff2） |
+| 字型 | `wwwroot/fonts/` + `base.css` `@font-face` | Fira Sans ×4、Fira Code ×1（可變字重 300–700；latin woff2） |
 | 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + `components.css` | 列高/內距/動效/mono 套用 |
 | 頁首 | `ui.js` `renderPageHeader` + `.lf-page-header` | topbar 為唯一標題；頁首只放一句副標與頁面層級動作，每頁至多一個 `btn-primary`（§6b） |
 | 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
@@ -218,7 +218,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 ## 8. 設計系統 v3：層級、揭露、動作與寬度
 
-v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的層級由版面與共用元件表達，而不是各頁拼工具類。
+色票與 token 見 §2～§5；本節定義「怎麼用」：每頁的層級由版面與共用元件表達，不由各頁拼工具類。
 核心原則：**版面能說明的不再寫一遍說明**（同 WEB-SPEC §8.6a）。守門測試在 `DesignSystemGuardUiTests`、`AccessibilityUiTests`。
 
 ### 8.1 文字角色
@@ -231,7 +231,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | `lf-text-title` | 列或區塊的主標 | base、600、`--lf-text` |
 | `lf-text-meta` | 次要資訊（次數、時段、來源） | sm、400、`--lf-text-muted` |
 | `lf-text-label` | 眉標、欄位標籤 | sm、600、`--lf-text-muted` |
-| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums、可在任意位置斷行 |
+| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
 | `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
 
 紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
@@ -247,8 +247,8 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | 開 modal 或面板 | `ui.js` `button(文字, { opens: 'dialog' })` | 小外框按鈕＋圖示，數量寫進標籤（「原始訊息 3」）；加 `aria-haspopup="dialog"` |
 | 換頁 | `a[href]`（走 `appUrl()`） | 主色文字，底線只在滑過與焦點出現 |
 
-`btn-link` 不再當按鈕樣式；「展開…」字樣停用。`disclosure` 放在可點擊展開的表格列裡時自行阻止冒泡；列印時按鈕不印、目標全文。
-點擊區下限 24×24 CSS px（`max(24px, 1.5rem)`，小字級時 rem 會低於 24px）。
+`btn-link` 不當按鈕樣式；就地展開的標籤不寫「展開…」。`disclosure` 放在可點擊展開的表格列裡時自行阻止冒泡；列印時按鈕不印、由按鈕管理的目標一律印出（`lf-disclosure-target`），`filterDisclosure` 的篩選欄位除外。
+點擊區下限 24×24 CSS px（`max(24px, 1.5rem)`，小字級時 rem 會低於 24px），全站適用；處理人會用手機操作的頁面另依 §6b 至少 36px 高。
 
 ### 8.3 按鈕
 
@@ -263,7 +263,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 ### 8.4 寬度策略與中斷點
 
 - **中斷點**只用 576／768／992／1200／1600，寫法 `min-width: N`、`max-width: N−0.02`。唯一例外 `max-width: 1799.98px`
-  是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992 與 1600 與 CSS 同值。
+  是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992（並排模式）與 CSS 同值；1600（預設展開）只在 `side-rail.js` 使用，樣式表沒有對應的 `@media`。卡片內頂層表格容器是尺寸容器（`container-type`），展開列內容依它限制在可視寬度內。
 - `--lf-content-max: 120rem`：詳情頁（風險日、主機、處理人、使用者、交辦單）與表單頁（設定、初始設定）在 View 設
   `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；清單、儀表板、報表與維護頁滿版。
 - `--lf-measure: 40em`：成段文字的行寬上限，表格與技術值不套用。
@@ -284,6 +284,8 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
 | 單一文字節點套角色 | `elements.js` `roleText(角色, 文字)` |
 | 「標籤 值」一組（放進 metaLine） | `elements.js` `fact(標籤, 值)` |
 | 一行次要資訊 | `elements.js` `metaLine(items)` |
+| 容器內的長字串可在任意位置斷行 | `lf-break-anywhere` |
+| 表單必填星號 | `lf-required-mark` |
 | 就地展開／收合 | `elements.js` `disclosure(標籤, 目標, opts)` |
 | 工具列的次要條件（「更多條件 2」） | `elements.js` `filterDisclosure(目標, 已套用數, opts)`，回傳 `{ button, refresh }` |
 | 操作結果與驗證訊息 | `elements.js` `statusNote(error／warning／success／info, 文字)` |
@@ -305,6 +307,7 @@ v2 定義了色票與 token；v3 補上「怎麼用」這一層，讓每頁的�
   資料日期相對於產生當天（「昨日」就是產生前一天），隔天截圖前要重產，否則預設期間是空的。
 - **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
   Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
+  站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
 - **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
   情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
 - **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

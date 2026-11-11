@@ -2,7 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>core/elements.js（揭露按鈕、次要資訊行、操作結果訊息）的 production 行為（docs/FEEDBACK-69-PLAN.md A-3、A-4）。</summary>
+/// <summary>core/elements.js（揭露按鈕、次要資訊行、操作結果訊息）的 production 行為（docs/archive/FEEDBACK-69-PLAN.md A-3、A-4）。</summary>
 public sealed class ElementsBehaviorTests
 {
     private static string FindRepoRoot()
