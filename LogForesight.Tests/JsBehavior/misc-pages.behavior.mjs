@@ -414,8 +414,7 @@ const cases = {
             const location = { search: '', pathname: '/reports' };
             const history = { replaceState() {} };
             const updateYoyOptionLabel = () => {};
-            const renderKpi = () => {};
-            const renderVisibleCharts = () => {};
+            const renderAll = () => {};
             const syncScopeChips = () => synced.push(currentScope);
         `, '{ load, scope: () => currentScope }', {
             api,

@@ -2141,7 +2141,7 @@
       },
       {
         "assert": {
-          "sel": ".lf-report-page .lf-legend-row__value",
+          "sel": "#handling-body",
           "visible": true
         }
       }

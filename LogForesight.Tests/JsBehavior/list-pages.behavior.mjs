@@ -133,8 +133,7 @@ function makeReports() {
         const location = { search: '', pathname: '/reports' };
         const history = { replaceState() { onWrite('url'); } };
         const updateYoyOptionLabel = () => onWrite('yoy');
-        const renderKpi = () => onWrite('kpi');
-        const renderVisibleCharts = () => onWrite('charts');
+        const renderAll = () => onWrite('render');
     `, { api, createSeqGuard, getDisplaySettings: async () => ({}), onWrite: (w) => writes.push(w) });
     return { run: inst.loadReport, api, writes };
 }

@@ -486,30 +486,7 @@
     /* 淡色徽章在灰階列印仍靠邊框與文字辨識 */
     .lf-badge { border-color: #bbb !important; }
 
-    /* 報表的視窗高度綁定只對螢幕有意義（docs/archive/FEEDBACK-10-PLAN.md §5）：紙張是分頁的，
-       綁死一個視窗高度會讓內容被裁在第一頁。列印時整組解除，回到「內容多長印多長」 */
-    .lf-layout:has(.lf-report-page),
-    .lf-report-page {
-        height: auto;
-    }
-
-    .lf-layout:has(.lf-report-page) .lf-content {
-        overflow: visible;
-    }
-
-    .lf-report-page__charts,
-    .lf-report-page__row {
-        height: auto;
-        flex: none;
-    }
-
-    .lf-report-page__charts .lf-card {
-        height: auto;
-    }
-
-    /* 紙本回到固定高度：印出來的圖需要足夠的絕對尺寸才看得清楚 */
-    .lf-report-page .lf-chart { height: 230px; }
-    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
+    /* 報表頁的視窗高度綁定在列印時的解除，寫在 pages.css 報表區（載入順序在 layout.css 之後，才壓得過畫面規則） */
 }
 
 /* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
@@ -518,30 +495,6 @@
     .lf-layout {
         flex-direction: column;
     }
-
-    /* 手機上不綁視窗高度（docs/archive/FEEDBACK-10-PLAN.md §5）：側欄已變成頂部橫列，
-       六張圖硬塞進一屏只會每張都小到看不懂——窄螢幕本來就是捲動閱讀 */
-    .lf-layout:has(.lf-report-page) {
-        height: auto;
-    }
-
-    .lf-layout:has(.lf-report-page) .lf-content {
-        overflow: visible;
-    }
-
-    .lf-report-page,
-    .lf-report-page__charts,
-    .lf-report-page__row {
-        height: auto;
-        flex: none;
-    }
-
-    .lf-report-page__charts .lf-card {
-        height: auto;
-    }
-
-    .lf-report-page .lf-chart { height: 230px; }
-    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
 
     .lf-sidebar {
         width: 100%;

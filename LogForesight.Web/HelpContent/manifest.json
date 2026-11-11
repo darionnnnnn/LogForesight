@@ -55,7 +55,7 @@
       "keywords": ["常見問題", "FAQ", "問題排解", "AI未回應", "沒有告警", "誤報", "排查", "測試寄信", "統計模式", "為什麼沒有信", "內建規則覆蓋"],
       "related": ["overview", "glossary"] },
     { "id": "reports", "title": "報表", "file": "15-reports.md", "aiFile": "15-reports.ai.md", "icon": "file-earmark-text",
-      "keywords": ["報表", "KPI", "告警趨勢", "風險類型分布", "主機排行", "問題排行", "風險層級占比", "受影響主機占比", "處理進度", "自訂圖表", "對比前一期", "對比去年同期", "顯示範圍", "涵蓋率缺口"],
+      "keywords": ["報表", "KPI", "風險趨勢", "風險類型分布", "主機排行", "問題排行", "處理進度", "未結案風險日", "資料完整度", "缺漏主機日", "更多條件", "對比前一期", "對比去年同期", "顯示範圍"],
       "related": ["dashboard", "issues", "settings"] },
     { "id": "issue-owners", "title": "問題負責與靜音", "file": "16-issue-owners.md", "aiFile": "16-issue-owners.ai.md", "icon": "people", "requires": "Maintain",
       "keywords": ["問題負責與靜音", "問題設定", "問題負責人", "機房結論", "自動套用", "解除結論", "Source", "Event ID", "手動輸入", "近期出現"],

@@ -443,14 +443,6 @@ a.lf-kpi-card--link:focus-visible {
     height: 230px;
 }
 
-/* 占比小圖（docs/WEB-FEEDBACK-PLAN.md #6）：三顆一列，不需要跟趨勢/類型分布圖同樣高度。
-   2026-07-28（#3）改左圖右文字條列後固定寬度——Chart.js 的 responsive 需要父層有
-   明確尺寸依據，flex 版面下不能只靠 flex-shrink: 0 撐出寬度。 */
-.lf-chart--sm {
-    width: 160px;
-    height: 160px;
-}
-
 /* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI（§8.2）───────────────
    風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
 

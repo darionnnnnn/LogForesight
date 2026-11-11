@@ -46,10 +46,15 @@ export function riskColors() {
     };
 }
 
-/** 占比圖表用的中性色（docs/archive/HISTORY.md #6：受影響主機占比／處理進度） */
+/**
+ * 處理狀態用色（報表處理進度條）：已處理＝成功綠、處理中＝資訊藍、未處理＝中性灰。
+ * 刻意不用風險色（紅／琥珀）——同一張卡的第二條是風險層級，兩條用同色系會互相混淆。
+ */
 export function statusColors() {
     return {
         success: cssVar('--lf-success', '#16a34a'),
+        inProgress: cssVar('--lf-info', '#0284c7'),
+        unhandled: cssVar('--lf-gray-400', '#94a3b8'),
         neutral: cssVar('--lf-gray-300', '#cbd5e1')
     };
 }

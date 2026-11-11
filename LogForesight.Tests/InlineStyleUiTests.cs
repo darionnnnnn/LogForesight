@@ -60,6 +60,8 @@ public class InlineStyleUiTests
         ["pages/runs.js"] = new[] { "--lf-swatch", "--lf-progress", "--lf-status-color" },
         // 設定精靈進度條寬度、步驟狀態色點
         ["pages/setup.js"] = new[] { "--lf-progress", "--lf-swatch" },
+        // 報表處理進度的堆疊條：各段寬度（百分比）與顏色
+        ["pages/reports.js"] = new[] { "--lf-share", "--lf-swatch" },
     };
 
     private static IEnumerable<string> JsFiles()

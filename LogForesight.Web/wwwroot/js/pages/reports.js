@@ -1,16 +1,17 @@
 ﻿/**
- * 報表（docs/WEB-SPEC.md §9.6）——主管的主要畫面。
+ * 報表（docs/WEB-SPEC.md §9.6）——主管與更高階主管看的期間面。
+ *
+ * 版面由上而下、由左而右就是閱讀順序：現在要不要擔心（第一排四格）→ 變好還是變壞（前期對比、風險趨勢）
+ * → 風險集中在哪（主機排行、類型分布）→ 有沒有人在處理（處理進度）→ 這些數字可不可信（資料完整度）。
  *
  * §8.4 的驗收標準在這頁兌現：**任何一個數字，最多兩次點擊就能看到組成它的風險日清單**。
  * 實作方式是「組出帶篩選條件的網址再導頁」——問題查詢頁已支援 URL 同步，
  * 所以下鑽不需要在明細端寫任何程式碼。
  *
- * 2026-07-27 改版（docs/archive/HISTORY.md #6）：
- *   - 原本獨占一張大卡的「風險層級占比」改與新增的「受影響主機占比」「處理進度」
- *     並列成一列三顆小圖，騰出的版面讓主機告警排行放寬成整列。
- *   - 圖表註冊表 + 自訂圖表 modal：使用者自行決定要顯示哪些圖表，勾選狀態存 localStorage，
- *     隱藏的圖不呼叫 render（省一次 Chart.js 建構），重新勾選時才 lazy render。
- *   - 列印沿用畫面狀態：隱藏的圖表卡片是 d-none，本來就不會出現在列印結果裡。
+ * 結構約定（大螢幕模式與重新整理依賴它）：
+ *   - 資料只經 loadReport() 載入（序號守門），載入成功後呼叫 renderAll()；
+ *   - 所有圖表的建立集中在 renderCharts()，要重畫整頁只呼叫 renderAll()；
+ *   - 工具列（#report-toolbar）、第一排（#report-kpi-area）、圖表區（#report-charts）各自可單獨隱藏。
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
@@ -24,6 +25,7 @@ import * as charts from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
 import { safeStorage } from '../core/storage.js';
+import { filterDisclosure, roleText, fact, metaLine } from '../core/elements.js';
 
 let currentData = null;
 // 保留天數來自第一次 summary 回覆；在那之前不做自動切換（寫死一個猜測值反而會猜錯）
@@ -33,107 +35,20 @@ let retentionDays = null;
 // 與保留天數無關（以往這兩件事被混在同一個 180）
 const LONG_RANGE_DAYS = 180;
 // docs/archive/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
-// 本來就正確），只有趨勢圖需要主動隱藏被藏等級的 series——否則 legend 仍會列出一條
-// 圖例但整條線恆為 0，容易被誤讀成「這期間真的沒有中風險日」而不是「被設定藏起來」
+// 本來就正確），只有趨勢圖需要主動隱藏被藏等級的 series——否則圖例仍會列出一組
+// 但整組恆為 0，容易被誤讀成「這期間真的沒有中風險日」而不是「被設定藏起來」
 let visibleDayRisk = new Set(['高', '中', '低']);
 const chartInstances = {};
-
-// ── 圖表可見性（自訂圖表 modal）──────────────────────────────────────────────
-
-const VISIBLE_CHARTS_STORAGE_KEY = 'lf.reports.visibleCharts';
-
-/** {id, title, sectionId, render}：id 是 localStorage 與 checkbox 的鍵，sectionId 是外層 col 的容器 id */
-const CHART_REGISTRY = [
-    { id: 'trend', title: '告警數量趨勢', sectionId: 'trend-section', render: renderTrendChart },
-    { id: 'category', title: '風險類型分布', sectionId: 'category-section', render: renderCategoryChart },
-    { id: 'host', title: '主機告警排行', sectionId: 'host-section', render: renderHostChart },
-    { id: 'risk', title: '風險層級占比', sectionId: 'risk-section', render: renderRiskChart },
-    { id: 'affected-hosts', title: '受影響主機占比', sectionId: 'affected-hosts-section', render: renderAffectedHostsChart },
-    { id: 'handling-progress', title: '處理進度', sectionId: 'handling-progress-section', render: renderHandlingProgressChart }
-];
-
-/** 壞資料（手改過的 localStorage、舊格式）一律當作未設定，退回全開，不讓一筆壞值把整頁圖表藏光 */
-function loadVisibleCharts() {
-    try {
-        const stored = JSON.parse(safeStorage.get(VISIBLE_CHARTS_STORAGE_KEY));
-        if (Array.isArray(stored)) return new Set(stored);
-    } catch { /* 忽略壞資料 */ }
-    return new Set(CHART_REGISTRY.map(c => c.id));
-}
-
-let visibleCharts = loadVisibleCharts();
-
-function saveVisibleCharts() {
-    safeStorage.set(VISIBLE_CHARTS_STORAGE_KEY, JSON.stringify([...visibleCharts]));
-}
-
-/** scope≠all 時「處理進度」無資訊量（母體已抽掉已處理，恆 0%/100%）——不論自訂圖表是否勾選都隱藏 */
-function isChartHidden(chart) {
-    if (chart.id === 'handling-progress' && currentScope !== 'all') return true;
-    return !visibleCharts.has(chart.id);
-}
-
-function applyChartVisibility() {
-    for (const chart of CHART_REGISTRY) {
-        document.getElementById(chart.sectionId).classList.toggle('d-none', isChartHidden(chart));
-    }
-}
-
-/** 只對目前可見的圖表呼叫 render——隱藏的圖不必花這次 Chart.js 建構的成本 */
-function renderVisibleCharts() {
-    applyChartVisibility();
-    for (const chart of CHART_REGISTRY) {
-        if (!isChartHidden(chart)) chart.render();
-    }
-}
-
-/** 自訂圖表 modal：checkbox 逐圖勾選，切換即時生效（存 localStorage＋切換可見度＋新顯示的圖 lazy render） */
-function renderChartPickerBody() {
-    const body = document.getElementById('chart-picker-body');
-    body.replaceChildren();
-
-    for (const chart of CHART_REGISTRY) {
-        // docs/archive/FEEDBACK-5-PLAN.md §7：modal-body 是 row row-cols-2 grid，每個選項要包一層 col
-        const col = document.createElement('div');
-        col.className = 'col';
-
-        const wrap = document.createElement('div');
-        wrap.className = 'form-check';
-
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.className = 'form-check-input';
-        input.id = `chart-picker-${chart.id}`;
-        input.checked = visibleCharts.has(chart.id);
-
-        const label = document.createElement('label');
-        label.className = 'form-check-label';
-        label.htmlFor = input.id;
-        label.textContent = chart.title;
-
-        input.addEventListener('change', () => {
-            if (input.checked) {
-                visibleCharts.add(chart.id);
-            } else {
-                visibleCharts.delete(chart.id);
-            }
-            saveVisibleCharts();
-            applyChartVisibility();
-            // 重新顯示時才 render：render 函式內部已對 chartInstances 做 destroy-then-create，
-            // 重複呼叫是安全的，不需要額外判斷「是否已建立過」
-            if (input.checked) chart.render();
-        });
-
-        wrap.append(input, label);
-        col.appendChild(wrap);
-        body.appendChild(col);
-    }
-}
 
 // 處理狀態顯示範圍（§5）：單選，存 URL（可分享）；不入 localStorage——報表以「全部」為誠實預設
 let currentScope = new URLSearchParams(location.search).get('handlingScope') || 'all';
 // 使用者點了 chip 但尚未載入成功的範圍：查詢先用它，成功後才成為 currentScope、chip 才亮起
 let requestedScope = null;
+
+// 目前選的是哪一顆快捷期間（天數）；手動改日期後為 null（＝自訂期間）
+let activePresetDays = null;
+// 「更多條件」揭露鈕（setupMoreFilters 建立）；條件變動後 refresh() 更新已套用數
+let filterMore = null;
 
 /**
  * 區間檢查先做、再放骨架列（回饋第 45 輪 B7）：這頁的 summary 是全站最慢的查詢之一，
@@ -209,9 +124,7 @@ async function loadReport() {
         `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}` +
         (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
 
-    // scope≠all 時「處理進度」小圖無資訊量（母體已抽掉已處理）——由 applyChartVisibility 統一隱藏
-    renderKpi();
-    renderVisibleCharts();
+    renderAll();
     return true;
 }
 
@@ -225,39 +138,76 @@ function scopeDrillParams() {
     return '';
 }
 
-/** KPI 卡：帶與前一等長期間的對比——主管要的不是數字本身，是「變好還是變壞」 */
-function renderKpi() {
-    const kpi = currentData.kpi;
-    const cards = [
-        {
-            label: '問題總數',
-            value: kpi.totalIssues,
-            previous: kpi.totalIssuesPrevious,
-            // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，
-            // 免得問題查詢的「預設隱藏低風險」把數字對不上
-            url: recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to })
-        },
-        {
-            label: '高風險日',
-            value: kpi.highRiskDays,
-            previous: kpi.highRiskDaysPrevious,
-            url: recordsUrl({ riskLevels: '高', from: currentData.from, to: currentData.to })
-        },
-        {
-            label: '受影響主機',
-            value: kpi.affectedHosts,
-            previous: kpi.affectedHostsPrevious,
-            url: recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to })
-        },
-        {
-            label: '涵蓋率缺口天數',
-            value: kpi.coverageGapDays,
-            previous: null,
-            hint: '資料不完整或 Security log 未讀取——沒告警不等於沒問題',
-            url: null
-        }
-    ];
+/**
+ * 重畫整頁的唯一入口（依 currentData）：工具列的條件文字、第一排四格、所有圖表。
+ * 重新整理或切換大螢幕模式時只呼叫它，不必各自記得要重畫哪些區塊。
+ */
+function renderAll() {
+    renderToolbarSummary();
+    renderKpi();
+    renderCharts();
+}
 
+// ── 工具列 ───────────────────────────────────────────────────────────────────
+
+const PRESET_TITLES = { 1: '昨日', 7: '近 7 天', 30: '近 30 天', 90: '近 90 天' };
+
+function shortDate(date, withYear) {
+    return withYear ? date.replaceAll('-', '/') : date.slice(5).replace('-', '/');
+}
+
+/**
+ * 工具列左側「目前條件」的兩段文字（純函式）：期間名稱（醒目）＋日期、比較基準與非「全部」的顯示範圍（次要）。
+ * 例：「近 30 天」＋「10/12–11/10 · 對比前一期」；跨年的區間日期帶年份，避免 01/05–12/20 這種讀不出年的寫法。
+ */
+function periodSummary({ presetDays, from, to, compare, scope }) {
+    const title = PRESET_TITLES[presetDays] ?? '自訂期間';
+    const withYear = from.slice(0, 4) !== to.slice(0, 4);
+    const range = from === to
+        ? shortDate(from, withYear)
+        : `${shortDate(from, withYear)}–${shortDate(to, withYear)}`;
+    const parts = [range, compare === 'yoy' ? '對比去年同期' : '對比前一期'];
+    if (scope && scope !== 'all' && SCOPE_LABEL[scope]) parts.push(`僅${SCOPE_LABEL[scope]}`);
+    return { title, meta: parts.join(' · ') };
+}
+
+function renderToolbarSummary() {
+    const summary = periodSummary({
+        presetDays: activePresetDays,
+        from: currentData.from,
+        to: currentData.to,
+        compare: document.getElementById('report-compare').value,
+        scope: currentScope
+    });
+    document.getElementById('report-period-title').textContent = summary.title;
+    document.getElementById('report-period-meta').textContent = summary.meta;
+    filterMore?.refresh();
+}
+
+/** 「更多條件」已套用幾個：自訂日期 1、比較模式非預設 1、顯示範圍非「全部」1 */
+function appliedFilterCount() {
+    let count = 0;
+    if (activePresetDays == null) count++;
+    const days = rangeDays(document.getElementById('report-from').value, document.getElementById('report-to').value);
+    if (document.getElementById('report-compare').value !== defaultCompareFor(days)) count++;
+    if ((requestedScope ?? currentScope) !== 'all') count++;
+    return count;
+}
+
+/** 次要條件收進「更多條件」：進頁已有套用中的條件（網址帶範圍、自訂日期）就預設展開 */
+function setupMoreFilters() {
+    const panel = document.getElementById('report-filter-panel');
+    filterMore = filterDisclosure(panel, appliedFilterCount);
+    document.getElementById('report-more-slot').replaceWith(filterMore.button);
+}
+
+// ── 第一排四格 ────────────────────────────────────────────────────────────────
+
+/**
+ * 第一排：高風險日／受影響主機／未結案風險日／資料完整度。
+ * 語意色只用在需要注意的狀態（上升、逾期、缺漏、落後），正常狀態一律一般文字色。
+ */
+function renderKpi() {
     const container = document.getElementById('report-kpi');
     container.replaceChildren();
 
@@ -280,20 +230,99 @@ function renderKpi() {
 
     const col = document.createElement('div');
     col.className = 'col-12';
-    col.appendChild(kpiStrip([{
-        cards: cards.map(card => ({
-            value: formatNumber(card.value),
-            label: card.label,
-            // 下鑽帶上目前顯示範圍（§5）：點進去的清單與卡片數字對得上（KPI 卡本身不帶 statuses，附加不衝突）
-            url: card.url ? card.url + scopeDrillParams() : null,
-            title: card.hint,
-            // 與前期對比徽章放進可見副標；沒有前期資料的卡改放說明（說明不只藏在 tooltip）
-            sub: (card.previous !== null && card.previous !== undefined)
-                ? comparisonBadge(card.value, card.previous)
-                : card.hint
-        }))
-    }], { singleRow: true }));   // 一屏化：四張卡排同一排，不佔兩排高度（卡不夠寬時才自動換行）
+    // 一屏化：四張卡排同一排，不佔兩排高度（卡不夠寬時才自動換行）
+    col.appendChild(kpiStrip([{ cards: buildKpiCards() }], { singleRow: true }));
     container.appendChild(col);
+}
+
+/** 與前期對比的副標；沒有前期資料時回 undefined（kpiStrip 保留空副標列） */
+function compareSub(current, previous) {
+    return (previous !== null && previous !== undefined) ? comparisonBadge(current, previous) : undefined;
+}
+
+function buildKpiCards() {
+    const kpi = currentData.kpi;
+    const range = { from: currentData.from, to: currentData.to };
+    return [
+        {
+            label: '高風險日',
+            value: formatNumber(kpi.highRiskDays),
+            sub: compareSub(kpi.highRiskDays, kpi.highRiskDaysPrevious),
+            // 下鑽帶上目前顯示範圍（§5）：點進去的清單與卡片數字對得上
+            url: recordsUrl({ riskLevels: '高', ...range }) + scopeDrillParams()
+        },
+        {
+            label: '受影響主機',
+            value: `${formatNumber(kpi.affectedHosts)} / ${formatNumber(currentData.totalHosts)} 台`,
+            sub: compareSub(kpi.affectedHosts, kpi.affectedHostsPrevious),
+            url: recordsUrl({ riskLevels: '高,中', ...range }) + scopeDrillParams()
+        },
+        openRiskCard(),
+        coverageCard(currentData.coverage)
+    ];
+}
+
+/**
+ * 未結案風險日＝處理中＋未處理（逾期是其中一部分，只在有逾期時才在副標提醒）。
+ * 下鑽網址自帶處理狀態條件，並隨顯示範圍調整，所以不再附加 scopeDrillParams（會重複帶 statuses）。
+ */
+function openRiskCard() {
+    const handling = currentData.handling;
+    const overdue = handling.overdueCount;
+    return {
+        label: '未結案風險日',
+        value: formatNumber(handling.openCount + handling.inProgressCount),
+        sub: overdue > 0 ? roleText('lf-text-alert', `逾期 ${formatNumber(overdue)}`) : '',
+        url: recordsUrl({
+            statuses: currentScope === 'open' ? 'open' : 'open,in_progress',
+            riskLevels: '高,中',
+            from: currentData.from,
+            to: currentData.to,
+            unassigned: currentScope === 'unassigned' ? 'true' : null
+        })
+    };
+}
+
+/** 「資料至 MM/DD」：dataThrough 是 yyyy-MM-dd；沒有值（整段期間都沒資料）時只說落後 */
+function laggingText(dataThrough) {
+    return dataThrough ? `資料至 ${dataThrough.slice(5).replace('-', '/')}` : '資料落後';
+}
+
+/**
+ * 資料完整度（純函式，回傳 kpiStrip 的一張卡）。「可不可信」是主管最後一個問題：
+ *   - 整段期間都沒資料 → 「無資料」（次要灰）；
+ *   - 缺漏主機日（期間內某台主機某天沒有分析紀錄）→ 「缺 N 主機日」（警示琥珀）；
+ *   - 資料落後（最新資料早於應有的最後一天）→ 副標「資料至 MM/DD」（風險狀態文字），
+ *     沒缺漏但落後時值仍是「完整」、卡片轉警示色，提醒「完整」只到那一天；
+ *   - 其餘 → 「完整」，一般文字色。
+ * 不可下鑽：它回答的是「這份報表可不可信」，不是一份清單。
+ */
+function coverageCard(coverage) {
+    const card = {
+        label: '資料完整度',
+        title: '缺漏主機日：期間內某台主機某天沒有分析資料。資料落後：最新資料早於應有的最後一天。沒告警不等於沒問題。',
+        url: null,
+        sub: ''
+    };
+
+    if (coverage.noData) {
+        return { ...card, value: '無資料', variant: 'secondary' };
+    }
+
+    const missing = coverage.missingHostDays > 0;
+    // 數字要短（KPI 卡的大字折成兩行會把整排撐高）：單位與落後說明放副標
+    const parts = [];
+    if (missing) parts.push(roleText('lf-text-meta', '主機日沒有分析資料'));
+    if (coverage.lagging) parts.push(roleText('lf-text-alert', laggingText(coverage.dataThrough)));
+    let sub = '';
+    if (parts.length === 1) sub = parts[0];
+    else if (parts.length > 1) { sub = document.createElement('div'); sub.append(...parts.flatMap((p, i) => (i ? [document.createTextNode('・'), p] : [p]))); }
+    return {
+        ...card,
+        value: missing ? `缺 ${formatNumber(coverage.missingHostDays)}` : '完整',
+        variant: (missing || coverage.lagging) ? 'warning' : undefined,
+        sub
+    };
 }
 
 /**
@@ -332,48 +361,86 @@ function comparisonBadge(current, previous) {
     return wrap;
 }
 
+// ── 圖表區 ───────────────────────────────────────────────────────────────────
+
+/**
+ * 圖表區的所有繪製集中在這裡。顯示範圍非「全部」時處理進度卡整張隱藏
+ * （母體已抽掉已處理，進度恆為 0%／100%，無資訊量），趨勢卡補滿該列。
+ */
+function renderCharts() {
+    const showHandling = currentScope === 'all';
+    document.getElementById('handling-section').classList.toggle('d-none', !showHandling);
+    document.getElementById('report-row-top').classList.toggle('lf-report-page__row--solo', !showHandling);
+
+    renderTrendChart();
+    if (showHandling) renderHandlingProgress();
+    renderHostChart();
+    renderCategoryChart();
+}
+
+/** 掛上「表格」切換：重畫後一律回到圖表視圖，不留下上一次的「表格」狀態（否則整張卡只剩空白） */
+function mountToolbar(container, wrapper, spec) {
+    wrapper.classList.remove('d-none');
+    charts.attachToolbar(container, { canvasWrapper: wrapper, ...spec });
+}
+
+/** 沒資料時收掉上一次的表格切換：舊按鈕留著會讓人切出上一期的數字 */
+function clearToolbar(container, wrapper) {
+    mountToolbar(container, wrapper, { title: '', tableColumns: [], tableRows: [] });
+    container.replaceChildren();
+}
+
+/** 長標籤在座標軸上截斷（完整文字仍在提示與表格）；量測不得出現溢出卡片 */
+const MAX_TICK_CHARS = 18;
+const NARROW_TICK_CHARS = 9;
+function truncateTick(value) {
+    const label = String(this.getLabelForValue(value));
+    // 窄畫布（手機單欄）放不下完整長度的標籤，會被畫布左緣裁掉：依畫布寬度收短
+    const max = (this.chart?.width ?? Infinity) < 480 ? NARROW_TICK_CHARS : MAX_TICK_CHARS;
+    return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
+/**
+ * 風險趨勢：逐日堆疊長條（高在下、中在上）。期間很長時不另做彙總，交給座標軸 autoSkip 省略刻度。
+ * 沒有 tension——那是折線圖的設定，長條圖不該有。
+ */
 function renderTrendChart() {
     const points = currentData.trend;
     const wrapper = document.getElementById('trend-wrapper');
+    const toolbar = document.getElementById('trend-toolbar');
 
-    if (points.length === 0) {
+    if (points.length === 0 || points.every(p => p.highRisk + p.mediumRisk === 0)) {
         // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
         chartInstances.trend?.destroy();
         chartInstances.trend = null;
+        clearToolbar(toolbar, wrapper);
         charts.renderNoData(wrapper);
         return;
     }
 
     const risk = charts.riskColors();
 
-    // 中風險被顯示設定藏起來時整條 series 不畫——資料母體已在後端過濾，mediumRisk 恆為 0，
-    // 留著這條線只會是一條貼底的平線，圖例卻仍暗示「有這個類別」，容易誤讀成真的沒有中風險日
+    // 中風險被顯示設定藏起來時整組不畫——資料母體已在後端過濾，mediumRisk 恆為 0
     const datasets = [
-        {
-            label: '高風險',
-            data: points.map(p => p.highRisk),
-            borderColor: risk['高'],
-            backgroundColor: risk['高'],
-            tension: .3
-        }
+        { label: '高風險', data: points.map(p => p.highRisk), backgroundColor: risk['高'] }
     ];
     if (visibleDayRisk.has('中')) {
-        datasets.push({
-            label: '中風險',
-            data: points.map(p => p.mediumRisk),
-            borderColor: risk['中'],
-            backgroundColor: risk['中'],
-            tension: .3
-        });
+        datasets.push({ label: '中風險', data: points.map(p => p.mediumRisk), backgroundColor: risk['中'] });
     }
 
     chartInstances.trend?.destroy();
-    chartInstances.trend = charts.line(document.getElementById('trend-chart'), {
+    chartInstances.trend = charts.bar(document.getElementById('trend-chart'), {
         data: {
             labels: points.map(p => p.date.slice(5)),
             datasets
         },
-        // 下鑽：點某天的資料點 → 該日該風險層級的清單（datasetIndex 1 只在中風險 series 存在時出現）
+        options: {
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxRotation: 0 } },
+                y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+            }
+        },
+        // 下鑽：點某天的長條 → 該日該風險層級的清單（datasetIndex 1 只在中風險存在時出現）
         drillTo: point => {
             const day = points[point.index];
             const level = point.datasetIndex === 0 ? '高' : '中';
@@ -381,22 +448,122 @@ function renderTrendChart() {
         }
     });
 
-    charts.attachToolbar(document.getElementById('trend-toolbar'), {
-        canvasWrapper: wrapper,
-        title: '告警數量趨勢',
+    mountToolbar(toolbar, wrapper, {
+        title: '風險趨勢',
         tableColumns: ['日期', '高風險', '中風險', '錯誤數'],
         tableRows: points.map(p => [p.date, p.highRisk, p.mediumRisk, p.errorCount])
     });
 }
 
+// ── 處理進度 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 一條橫向堆疊條＋條下方的「標籤 數字」。純 HTML：寬度以 CSS 變數 --lf-share（百分比）傳入，
+ * 顏色以 --lf-swatch 傳入，不寫 style 屬性、不用 innerHTML。條本身 role="img" 並帶可讀的替代文字，
+ * 數字也直接寫在畫面上（不靠顏色分辨）。
+ * segments: [{ label, value, color }]；值為 0 的段不畫但仍列出數字。
+ */
+function progressBlock(title, ariaLabel, segments) {
+    const block = document.createElement('div');
+    block.className = 'lf-report-progress__block';
+
+    const heading = document.createElement('div');
+    heading.className = 'lf-text-label';
+    heading.textContent = title;
+
+    const sum = segments.reduce((total, seg) => total + seg.value, 0);
+    const bar = document.createElement('div');
+    bar.className = 'lf-stack-bar';
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', ariaLabel);
+    for (const seg of segments) {
+        if (seg.value <= 0) continue;
+        const el = document.createElement('span');
+        el.className = 'lf-stack-bar__seg';
+        el.style.setProperty('--lf-share', String((seg.value / sum) * 100));
+        el.style.setProperty('--lf-swatch', seg.color);
+        bar.appendChild(el);
+    }
+
+    const facts = metaLine(segments.map(seg => {
+        const item = document.createElement('span');
+        const dot = document.createElement('span');
+        dot.className = 'lf-progress-dot';
+        dot.style.setProperty('--lf-swatch', seg.color);
+        item.append(dot, fact(seg.label, formatNumber(seg.value)));
+        return item;
+    }));
+
+    block.append(heading, bar);
+    if (facts) block.appendChild(facts);
+    return block;
+}
+
+/**
+ * 處理進度：兩條堆疊條。
+ *   - 第一條：已處理／處理中／未處理（三段相加＝期間內高＋中風險日總數；母體與儀表板待辦同一套規則）。
+ *   - 第二條：風險層級（高、中；中風險被顯示設定隱藏時只列高）。
+ * 總數為 0 時只寫一句「此期間沒有風險日」，不畫 0% 的條。
+ */
+function renderHandlingProgress() {
+    const body = document.getElementById('handling-body');
+    const handling = currentData.handling;
+    const total = handling.totalCount;
+    body.replaceChildren();
+
+    if (!(total > 0)) {
+        const empty = document.createElement('p');
+        empty.className = 'mb-0';
+        empty.textContent = '此期間沒有風險日';
+        body.appendChild(empty);
+        return;
+    }
+
+    const status = charts.statusColors();
+    const risk = charts.riskColors();
+    const resolved = handling.resolvedCount;
+    const inProgress = handling.inProgressCount;
+    const open = Math.max(total - resolved - inProgress, 0);
+
+    body.appendChild(progressBlock(
+        '處理狀態',
+        `處理狀態：已處理 ${resolved}、處理中 ${inProgress}、未處理 ${open}，共 ${total} 個風險日`,
+        [
+            { label: '已處理', value: resolved, color: status.success },
+            { label: '處理中', value: inProgress, color: status.inProgress },
+            { label: '未處理', value: open, color: status.unhandled }
+        ]));
+
+    const high = currentData.trend.reduce((sum, p) => sum + p.highRisk, 0);
+    const medium = visibleDayRisk.has('中') ? currentData.trend.reduce((sum, p) => sum + p.mediumRisk, 0) : null;
+    if (high + (medium ?? 0) > 0) {
+        const levels = [{ label: '高', value: high, color: risk['高'] }];
+        if (medium !== null) levels.push({ label: '中', value: medium, color: risk['中'] });
+        body.appendChild(progressBlock(
+            '風險層級',
+            `風險層級：${levels.map(l => `${l.label} ${l.value}`).join('、')}`,
+            levels));
+    }
+}
+
+// ── 排行與類型分布 ────────────────────────────────────────────────────────────
+
 function renderCategoryChart() {
     const categories = currentData.categories;
     const wrapper = document.getElementById('category-wrapper');
+    const toolbar = document.getElementById('category-toolbar');
+
+    // 標題列的「N 個問題」：原本第一排的「問題總數」搬到這裡，下鑽沿用原本的網址
+    const total = document.getElementById('category-issue-total');
+    total.textContent = `${formatNumber(currentData.kpi.totalIssues)} 個問題`;
+    // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，免得問題查詢的「預設隱藏低風險」把數字對不上
+    total.href = appUrl(recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to }) + scopeDrillParams());
+    total.hidden = false;
 
     // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與依問題視角的問題排行同一個限制：
     // 母體是跨主機跨日的獨立投影，套用「顯示範圍」會把「這個類型有幾個風險資訊」變成
-    // 「符合這個處理狀態的日子裡有幾個」，那是另一個問題的答案——同一頁已有先例（問題排行
-    // 的 scopeNote），這裡照樣講清楚，不要讓數字看起來像回應了篩選卻其實沒有
+    // 「符合這個處理狀態的日子裡有幾個」，那是另一個問題的答案——這裡照樣講清楚，
+    // 不要讓數字看起來像回應了篩選卻其實沒有
     const subtitle = document.getElementById('category-subtitle');
     if (subtitle) subtitle.textContent = currentScope !== 'all' ? '不受「顯示範圍」篩選影響' : '';
 
@@ -404,6 +571,7 @@ function renderCategoryChart() {
         // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
         chartInstances.category?.destroy();
         chartInstances.category = null;
+        clearToolbar(toolbar, wrapper);
         charts.renderNoData(wrapper);
         return;
     }
@@ -442,8 +610,7 @@ function renderCategoryChart() {
         }
     });
 
-    charts.attachToolbar(document.getElementById('category-toolbar'), {
-        canvasWrapper: wrapper,
+    mountToolbar(toolbar, wrapper, {
         title: '風險類型分布',
         // 問題數＝去重風險資訊筆數（回饋十九輪批次D），高/中/低三欄依此口徑分桶、三者之和＝問題數
         tableColumns: ['類型', '高', '中', '低', '問題數', '期間累計', '主機數'],
@@ -456,7 +623,7 @@ function renderCategoryChart() {
 
 /**
  * 排行卡的視角（docs/archive/FEEDBACK-11-PLAN.md §8-2）：'host' ｜ 'issue'。
- * 狀態存 localStorage，預設主機——既有畫面零變化，要看問題排行的人切一次就記住。
+ * 狀態存 localStorage，預設主機——要看問題排行的人切一次就記住。
  */
 const RANK_MODE_KEY = 'lf.reports.rankMode';
 let rankMode = safeStorage.get(RANK_MODE_KEY) === 'issue' ? 'issue' : 'host';
@@ -479,9 +646,17 @@ function bindRankModeToggle() {
     }
 }
 
+/**
+ * 主機在排行上的標籤：有顯示名時為「顯示名（主機名）」，沒有時只寫主機名。
+ * NetIQ 主機的主機名是 IP，單看 IP 認不出是哪一台，顯示名補上辨識，主機名留著對得上其他畫面。
+ */
+function hostRankLabel(host) {
+    return host.displayName ? `${host.displayName}（${host.hostName}）` : host.hostName;
+}
+
 /** 排行卡：依 rankMode 分派給主機或問題兩種呈現（同一張卡、同一個 canvas 容器） */
 function renderHostChart() {
-    document.getElementById('rank-title').textContent = rankMode === 'issue' ? '問題排行' : '主機告警排行';
+    document.getElementById('rank-title').textContent = rankMode === 'issue' ? '問題排行' : '主機排行';
     if (rankMode === 'issue') {
         renderIssueRankChart();
         return;
@@ -490,6 +665,7 @@ function renderHostChart() {
     const hosts = currentData.hostRanking;
     const others = currentData.others;
     const wrapper = document.getElementById('host-wrapper');
+    const toolbar = document.getElementById('host-toolbar');
 
     renderHostRankMeta();
 
@@ -497,13 +673,14 @@ function renderHostChart() {
         // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
         chartInstances.host?.destroy();
         chartInstances.host = null;
+        clearToolbar(toolbar, wrapper);
         charts.renderNoData(wrapper, '此期間沒有風險主機');
         return;
     }
 
     // 主機量大時，Top 10 之外的主機併成一條「其他 N 台」——尾端主機不會完全隱形，
     // 也看得出前 10 佔整體多少。這一條不可下鑽（它是彙總，不是單一主機）。
-    const labels = hosts.map(h => h.hostName);
+    const labels = hosts.map(hostRankLabel);
     const high = hosts.map(h => h.highRiskDays);
     const medium = hosts.map(h => h.mediumRiskDays);
     if (others) {
@@ -526,7 +703,7 @@ function renderHostChart() {
             indexAxis: 'y',
             scales: {
                 x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
-                y: { stacked: true, grid: { display: false } }
+                y: { stacked: true, grid: { display: false }, ticks: { callback: truncateTick } }
             }
         },
         drillTo: point => {
@@ -537,14 +714,13 @@ function renderHostChart() {
 
     // 表格模式（工具列切換）：Top 10 逐台＋「其他」彙總列；完整逐台清單走「查看全部」
     // 連到問題查詢的依主機視角（伺服器端排行只回 Top 10＋彙總，不整包搬運）
-    const tableRows = hosts.map(h => [h.hostName, h.highRiskDays, h.mediumRiskDays, h.correlationDays, h.latestHeadline]);
+    const tableRows = hosts.map(h => [hostRankLabel(h), h.highRiskDays, h.mediumRiskDays, h.correlationDays, h.latestHeadline]);
     if (others) {
         tableRows.push([`其他 ${others.hostCount} 台（彙總）`, others.highRiskDays, others.mediumRiskDays, '', '']);
     }
 
-    charts.attachToolbar(document.getElementById('host-toolbar'), {
-        canvasWrapper: wrapper,
-        title: '主機告警排行',
+    mountToolbar(toolbar, wrapper, {
+        title: '主機排行',
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
         tableRows
     });
@@ -558,6 +734,7 @@ function renderIssueRankChart() {
     const issues = currentData.issueRanking ?? [];
     const others = currentData.issueOthers;
     const wrapper = document.getElementById('host-wrapper');
+    const toolbar = document.getElementById('host-toolbar');
 
     renderIssueRankMeta();
 
@@ -565,6 +742,7 @@ function renderIssueRankChart() {
         // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
         chartInstances.host?.destroy();
         chartInstances.host = null;
+        clearToolbar(toolbar, wrapper);
         charts.renderNoData(wrapper, '此期間沒有問題事件');
         return;
     }
@@ -586,7 +764,7 @@ function renderIssueRankChart() {
             indexAxis: 'y',
             scales: {
                 x: { beginAtZero: true, ticks: { precision: 0 } },
-                y: { grid: { display: false } }
+                y: { grid: { display: false }, ticks: { callback: truncateTick } }
             }
         },
         drillTo: point => {
@@ -607,8 +785,7 @@ function renderIssueRankChart() {
         tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', '', others.hostCount, '', others.totalCount, '', '']);
     }
 
-    charts.attachToolbar(document.getElementById('host-toolbar'), {
-        canvasWrapper: wrapper,
+    mountToolbar(toolbar, wrapper, {
         title: '問題排行',
         // 排序已改依分數（§G3，見 IssueRankingBuilder.Build），這裡只是把數字亮出來讓人看得懂
         // 為什麼是這個順序——不重算，直接顯示後端算好的分數
@@ -659,13 +836,12 @@ function renderIssueRankMeta() {
     }
 }
 
-/** 排行榜標題副說明（共 N 台）與「查看全部」連結——連到問題查詢的依主機視角，同一段期間 */
+/** 主機排行的「查看全部」連結（連到問題查詢的依主機視角，同一段期間）；副標清空 */
 function renderHostRankMeta() {
     const subtitle = document.getElementById('host-rank-subtitle');
     const viewAll = document.getElementById('host-view-all');
-    const count = currentData.rankedHostCount;
-
-    subtitle.textContent = count > 0 ? `共 ${count} 台有風險日` : '';
+    // 主機模式不寫「共 N 台」：第一排「受影響主機」已經是這個數字，重複只會把標頭擠成兩列
+    subtitle.textContent = '';
 
     // 有主機被 Top 10 擋在外面時才顯示「查看全部」，沒有就別給多餘的出口
     if (currentData.others) {
@@ -674,135 +850,6 @@ function renderHostRankMeta() {
     } else {
         viewAll.classList.add('d-none');
     }
-}
-
-function renderRiskChart() {
-    const totalDays = currentData.trend.reduce((sum, p) => sum + p.highRisk + p.mediumRisk, 0);
-    const wrapper = document.getElementById('risk-wrapper');
-    const legend = document.getElementById('risk-legend');
-
-    if (totalDays === 0) {
-        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
-        chartInstances.risk?.destroy();
-        chartInstances.risk = null;
-        charts.renderNoData(wrapper, '此期間沒有風險日');
-        legend.replaceChildren();
-        return;
-    }
-
-    const risk = charts.riskColors();
-    const high = currentData.trend.reduce((sum, p) => sum + p.highRisk, 0);
-    const medium = currentData.trend.reduce((sum, p) => sum + p.mediumRisk, 0);
-
-    chartInstances.risk?.destroy();
-    chartInstances.risk = charts.doughnut(document.getElementById('risk-chart'), {
-        data: {
-            labels: ['高風險', '中風險'],
-            datasets: [{ data: [high, medium], backgroundColor: [risk['高'], risk['中']] }]
-        },
-        options: { plugins: { legend: { display: false } } },
-        drillTo: point => {
-            const level = point.index === 0 ? '高' : '中';
-            return recordsUrl({ riskLevels: level, from: currentData.from, to: currentData.to });
-        }
-    });
-
-    charts.setCenterText(wrapper, `${Math.round((high / (high + medium)) * 100)}%`);
-
-    charts.attachDoughnutLegend(legend, [
-        { label: '高風險', value: high, color: risk['高'],
-            url: recordsUrl({ riskLevels: '高', from: currentData.from, to: currentData.to }) },
-        { label: '中風險', value: medium, color: risk['中'],
-            url: recordsUrl({ riskLevels: '中', from: currentData.from, to: currentData.to }) }
-    ]);
-}
-
-/**
- * 受影響主機占比（docs/archive/HISTORY.md #6）：本期高／中風險主機數 ÷ 可見主機總數。
- * 分子（Kpi.AffectedHosts）與分母（TotalHosts）同一次回應取得，不會各自查詢對不上。
- */
-function renderAffectedHostsChart() {
-    const wrapper = document.getElementById('affected-hosts-wrapper');
-    const legend = document.getElementById('affected-hosts-legend');
-    const total = currentData.totalHosts;
-    const affected = currentData.kpi.affectedHosts;
-
-    if (total === 0) {
-        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
-        chartInstances.affectedHosts?.destroy();
-        chartInstances.affectedHosts = null;
-        charts.renderNoData(wrapper, '尚無主機資料');
-        legend.replaceChildren();
-        return;
-    }
-
-    const status = charts.statusColors();
-    const risk = charts.riskColors();
-    const remaining = Math.max(total - affected, 0);
-    const percent = Math.round((affected / total) * 100);
-
-    chartInstances.affectedHosts?.destroy();
-    chartInstances.affectedHosts = charts.doughnut(document.getElementById('affected-hosts-chart'), {
-        data: {
-            labels: ['受影響', '其餘'],
-            datasets: [{ data: [affected, remaining], backgroundColor: [risk['高'], status.neutral] }]
-        },
-        options: { plugins: { legend: { display: false } } },
-        drillTo: point => point.index === 0
-            ? recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to })
-            : null   // 「其餘」是彙總（沒問題的主機），沒有對應的下鑽清單
-    });
-    charts.setCenterText(wrapper, `${percent}%`);
-
-    charts.attachDoughnutLegend(legend, [
-        { label: '受影響', value: affected, color: risk['高'],
-            url: recordsUrl({ riskLevels: '高,中', from: currentData.from, to: currentData.to }) },
-        { label: '其餘', value: remaining, color: status.neutral, url: null }
-    ]);
-}
-
-/**
- * 處理進度（docs/archive/HISTORY.md #6）：期間內高／中風險日已結案（resolved）的比例。
- * 母體與儀表板待辦同一套 HandlingService.GetTodo 規則（docs/archive/HISTORY.md S3），
- * 不是問題層級的計數——兩個層級的「已處理」語意不同，不能混用。
- */
-function renderHandlingProgressChart() {
-    const wrapper = document.getElementById('handling-progress-wrapper');
-    const legend = document.getElementById('handling-progress-legend');
-    const handling = currentData.handling;
-    const total = handling.totalCount;
-
-    if (total === 0) {
-        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
-        chartInstances.handlingProgress?.destroy();
-        chartInstances.handlingProgress = null;
-        charts.renderNoData(wrapper, '此期間沒有高／中風險日');
-        legend.replaceChildren();
-        return;
-    }
-
-    const status = charts.statusColors();
-    const remaining = total - handling.resolvedCount;
-    const percent = Math.round((handling.resolvedCount / total) * 100);
-
-    chartInstances.handlingProgress?.destroy();
-    chartInstances.handlingProgress = charts.doughnut(document.getElementById('handling-progress-chart'), {
-        data: {
-            labels: ['已處理', '未完成'],
-            datasets: [{ data: [handling.resolvedCount, remaining], backgroundColor: [status.success, status.neutral] }]
-        },
-        options: { plugins: { legend: { display: false } } },
-        drillTo: point => point.index === 1
-            ? recordsUrl({ statuses: 'open,in_progress', riskLevels: '高,中', from: currentData.from, to: currentData.to })
-            : null   // 「已處理」分散在各日，沒有單一篩選條件可以精確對應回這個數字，不下鑽
-    });
-    charts.setCenterText(wrapper, `${percent}%`);
-
-    charts.attachDoughnutLegend(legend, [
-        { label: '已處理', value: handling.resolvedCount, color: status.success, url: null },
-        { label: '未完成', value: remaining, color: status.neutral,
-            url: recordsUrl({ statuses: 'open,in_progress', riskLevels: '高,中', from: currentData.from, to: currentData.to }) }
-    ]);
 }
 
 // ── 期間控制 ─────────────────────────────────────────────────────────────────
@@ -845,6 +892,7 @@ let userSelectedCompare = false;
 
 document.getElementById('report-compare').addEventListener('change', () => {
     userSelectedCompare = true;
+    filterMore?.refresh();
 });
 
 /** 起訖日期字串算出含頭含尾的天數；任一為空回 null */
@@ -894,14 +942,22 @@ function updateDefaultCompare() {
     }
 }
 
-document.getElementById('report-from').addEventListener('change', updateDefaultCompare);
-document.getElementById('report-to').addEventListener('change', updateDefaultCompare);
+// 手動改日期＝自訂期間：快捷期間不再成立，「更多條件」的已套用數要跟著變
+function onDateEdited() {
+    activePresetDays = null;
+    updateDefaultCompare();
+    filterMore?.refresh();
+}
+
+document.getElementById('report-from').addEventListener('change', onDateEdited);
+document.getElementById('report-to').addEventListener('change', onDateEdited);
 
 function setRange(days) {
     // 期間的計算（錨在昨天、本地日期）在 core/date-range.js，三頁共用
     const { from, to } = rangeFromDays(days);
     document.getElementById('report-from').value = from;
     document.getElementById('report-to').value = to;
+    activePresetDays = days;
 
     if (!userSelectedCompare) {
         document.getElementById('report-compare').value = defaultCompareFor(days);
@@ -909,8 +965,7 @@ function setRange(days) {
     updateYoyOptionLabel();
 }
 
-document.getElementById('chart-picker-modal').addEventListener('show.bs.modal', renderChartPickerBody);
-
 bindRankModeToggle();
 setRange(30);
+setupMoreFilters();
 load();
