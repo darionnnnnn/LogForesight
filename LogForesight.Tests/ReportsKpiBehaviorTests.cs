@@ -39,6 +39,7 @@ public class ReportsKpiBehaviorTests
     [InlineData("排行標籤_有顯示名")]
     [InlineData("排行標籤_沒有顯示名")]
     [InlineData("趨勢圖是堆疊長條且沒有tension")]
+    [InlineData("趨勢圖下鑽帶上顯示範圍")]
     [InlineData("趨勢圖_中風險被隱藏時只畫高")]
     [InlineData("趨勢圖_期間全為0顯示無資料")]
     [InlineData("工具列條件文字")]

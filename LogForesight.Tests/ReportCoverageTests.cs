@@ -51,7 +51,7 @@ public class ReportCoverageTests : IDisposable
         foreach (var d in days) Add(host, D(d));
     }
 
-    private ReportService Service()
+    private ReportService Service(ScheduleOptionsStore? schedule = null)
     {
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_store, _hosts, visibility, _severityVisibility);
@@ -66,11 +66,74 @@ public class ReportCoverageTests : IDisposable
         var ranking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
         return new ReportService(repository, _hosts, visibility, handling, ranking, _settingsStore, aggregates, _severityVisibility,
             new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None),
-            new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
+            new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor(), schedule);
     }
 
     private ReportCoverageDto Coverage(DateTime? from = null, DateTime? to = null, string? scope = null) =>
         Service().GetSummary(from ?? From, to ?? To, scope).Coverage;
+
+    // ── 夜間：排程窗口還沒跑完，昨天的資料本來就不該有 ──────────────────
+
+    /// <summary>窗口涵蓋「現在」（前 30 分到後 3 小時）：今天的實例還沒結束，最近結束的是昨天開跑那一個 → 應有資料到前天</summary>
+    private ScheduleOptionsStore WindowCoveringNow()
+    {
+        var now = DateTime.Now;
+        var store = new ScheduleOptionsStore(_fx.Blob("schedule_options"));
+        store.Update(o =>
+        {
+            o.Enabled = true;
+            o.Windows = new List<ScheduleWindow> { new() { Start = now.AddMinutes(-30).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") } };
+        });
+        return store;
+    }
+
+    [Fact]
+    public void 窗口還沒跑完_昨天跑到一半的主機不算缺漏也不算落後()
+    {
+        if (DateTime.Now.AddMinutes(-30).Date != DateTime.Today) return;   // 剛過午夜：窗口起點落在昨天，此案的「今天的實例」不成立
+        var a = AddHost("A"); var b = AddHost("B"); var c = AddHost("C");
+        AddDays(a, 1, 2, 3, 4, 5); AddDays(b, 1, 2, 3, 4); AddDays(c, 1, 2, 3, 4);   // 昨天（D5）只有 A 跑完
+
+        var night = Service(WindowCoveringNow()).GetSummary(From, To).Coverage;
+        Assert.Equal(0, night.MissingHostDays);
+        Assert.False(night.Lagging);
+
+        // 沒有排程資訊（退回「昨天應有資料」）：B、C 昨天各算一個缺漏
+        Assert.Equal(2, Coverage().MissingHostDays);
+    }
+
+    [Fact]
+    public void 窗口還沒跑完_期間只有昨天一天_沒有應有資料的日子_回無資料()
+    {
+        if (DateTime.Now.AddMinutes(-30).Date != DateTime.Today) return;
+        var a = AddHost("A");
+        AddDays(a, 5);
+        Assert.True(Service(WindowCoveringNow()).GetSummary(D(5), D(5)).Coverage.NoData);
+    }
+
+    [Fact]
+    public void 同主機同日兩列_只算一天_缺漏不會被算少()
+    {
+        var a = AddHost("A");
+        AddDays(a, 1, 2, 3, 4, 5);
+        var b = AddHost("B");
+        AddDays(b, 1, 5);
+        // B 在 D1 另有一筆非 PRTG 紀錄（同日第二列）：天數仍是 2，缺 D2～D4 三天
+        Add(b, D(1), AnalysisLogSource.Netiq);
+        Assert.Equal(3, Coverage().MissingHostDays);
+    }
+
+    [Fact]
+    public void 缺口紀錄不受風險等級顯示設定影響()
+    {
+        var a = AddHost("A");
+        AddDays(a, 1, 2, 3, 4);
+        Add(a, D(5), risk: "低", incomplete: true);
+        var before = Coverage().MissingHostDays;
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高", "中" };   // 隱藏低風險日
+        Assert.Equal(before, Coverage().MissingHostDays);
+        Assert.Equal(1, before);
+    }
 
     // ── 驗收 1～5：基本形狀 ────────────────────────────────────────
 

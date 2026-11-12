@@ -503,6 +503,8 @@ public class AIService : IAiService, IDisposable
                 {
                     var emptyAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, string.Empty, null);
                     if (emptyAttempt != null) attemptDiagnostics.Add(emptyAttempt);
+                    // 空字串的空回覆也是「模型被文法擋成最短輸出」的徵兆：第一次嘗試就回報記憶（這條路徑整次呼叫直接失敗，沒有關掉文法再試的機會）
+                    if (attempt == 1) _grammarMemory.ReportFirstAttempt(grammarKey, !grammarSkippedByMemory, FirstAttemptOutcome.Empty);
                 }
                 // 純傳輸層失敗（先前也沒有任何內容層失敗）不寫；先前有內容層失敗的，那些證據照寫
                 WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics,

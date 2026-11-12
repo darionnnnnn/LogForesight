@@ -220,6 +220,7 @@ const cases = {
             const document = { getElementById: id => inputs[id] };
             const defaultCompareFor = () => 'previous';
             const updateYoyOptionLabel = () => {};
+            const clearDisplaySettingsCache = () => { state.settingsCleared = (state.settingsCleared ?? 0) + 1; };
             const loadReport = async () => {
                 loaded.push([inputs['report-from'].value, inputs['report-to'].value]);
                 if (state.failing) throw new Error('boom');
@@ -235,6 +236,7 @@ const cases = {
             assert.deepEqual([inputs['report-from'].value, inputs['report-to'].value], ['2026-11-04', '2026-11-10']);
             assert.equal(await preset.wallRefresh(), true);
             assert.deepEqual(loaded.at(-1), ['2026-11-04', '2026-11-10'], '同一天內更新，起訖不變');
+            assert.equal(state.settingsCleared, 1, '每次自動更新都重取顯示設定（大螢幕整天不重新整理）');
 
             clock = new RealDate(2026, 10, 12, 0, 5).getTime();   // 跨過午夜
             assert.equal(await preset.wallRefresh(), true);

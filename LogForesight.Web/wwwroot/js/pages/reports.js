@@ -14,7 +14,7 @@
  *   - 工具列（#report-toolbar）、第一排（#report-kpi-area）、圖表區（#report-charts）各自可單獨隱藏。
  */
 
-import { api as baseApi, getDisplaySettings } from '../core/api.js';
+import { api as baseApi, getDisplaySettings, clearDisplaySettingsCache } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { kpiStrip, toast, guardLoad, renderLoading, button } from '../core/ui.js';
 import {
@@ -55,6 +55,7 @@ let filterMore = null;
 
 /** 大螢幕模式下 API 錯誤不跳 toast：沒有人在操作，通知只會在畫面上堆積；失敗狀態由標頭列呈現 */
 const api = {
+    ...baseApi,   // 其他方法照原樣，只覆寫 get
     get: (url, options) => baseApi.get(url, wall.isActive() ? { ...options, silent: true } : options)
 };
 
@@ -479,7 +480,8 @@ function renderTrendChart() {
         drillTo: point => {
             const day = points[point.index];
             const level = point.datasetIndex === 0 ? '高' : '中';
-            return recordsUrl({ riskLevels: level, from: day.date, to: day.date });
+            // 顯示範圍不是「全部」時，長條只算該範圍的風險日：下鑽帶同一個範圍，點進去的筆數才對得上
+            return recordsUrl({ riskLevels: level, from: day.date, to: day.date }) + scopeDrillParams();
         }
     });
 
@@ -678,7 +680,7 @@ function bindRankModeToggle() {
             for (const other of toggle.querySelectorAll('[data-rank-mode]')) {
                 other.classList.toggle('active', other.dataset.rankMode === rankMode);
             }
-            renderHostChart();
+            if (currentData) renderHostChart();   // 資料還沒載入（或首次載入失敗）時只記住選擇，載入後照它畫
         });
     }
 }
@@ -1009,6 +1011,7 @@ function setRange(days) {
 /** 大螢幕每一輪自動更新：快捷期間是滾動的（跨過午夜自然前進一天），自訂日期固定不動 */
 async function wallRefresh() {
     if (activePresetDays != null) setRange(activePresetDays);
+    clearDisplaySettingsCache();   // 大螢幕整天不重新整理：管理者改了顯示的風險等級，下一輪更新就要跟上
     try {
         return (await loadReport()) === true;
     } catch {

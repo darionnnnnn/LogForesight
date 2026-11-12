@@ -69,11 +69,11 @@ public class EmptyRecheckTests
     // ── NextEmptyRecheckAt ─────────────────────────────────────────────────
 
     [Fact]
-    public void NextEmptyRecheckAt_上一趟開跑後60分()
+    public void NextEmptyRecheckAt_上一趟結束後60分()
     {
         var w = Windows("01:00", "07:00");
         var start = Today.AddHours(1);
-        var run = Run(start, start, emptyPending: 2);
+        var run = Run(start, start, emptyPending: 2, minutes: 0);
         Assert.Equal(Today.AddHours(2), ScheduleCalculator.NextEmptyRecheckAt(start.AddMinutes(30), w, new[] { run }));
     }
 
@@ -83,14 +83,14 @@ public class EmptyRecheckTests
         var w = Windows("01:00", "07:00");
         var start = Today.AddHours(1);
         var now = Today.AddHours(2).AddMinutes(30);
-        Assert.Equal(now, ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2) }));
+        Assert.Equal(now, ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2, minutes: 0) }));
     }
 
     [Fact]
     public void NextEmptyRecheckAt_距實例結束不足10分_回null_剛好10分仍回()
     {
         var start = Today.AddHours(1);
-        var run = Run(start, start, emptyPending: 2);
+        var run = Run(start, start, emptyPending: 2, minutes: 0);
         var now = start.AddMinutes(30);
         // 窗口 01:00～02:05：候選 02:00 距結束 5 分
         Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, Windows("01:00", "02:05"), new[] { run }));
@@ -103,9 +103,9 @@ public class EmptyRecheckTests
     {
         var w = Windows("01:00", "07:00");
         var start = Today.AddHours(1);
-        var two = new[] { Run(start, start, netiqFailed: 1), Run(start.AddMinutes(30), start, emptyPending: 2) };
+        var two = new[] { Run(start, start, netiqFailed: 1), Run(start.AddMinutes(30), start, emptyPending: 2, minutes: 0) };
         Assert.NotNull(ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(2), w, two));
-        var three = two.Append(Run(start.AddMinutes(90), start, emptyPending: 2)).ToArray();
+        var three = two.Append(Run(start.AddMinutes(90), start, emptyPending: 2, minutes: 0)).ToArray();
         Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(3), w, three));
     }
 
@@ -115,13 +115,44 @@ public class EmptyRecheckTests
         var w = Windows("01:00", "07:00");
         var start = Today.AddHours(1);
         var now = Today.AddHours(2);
-        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2, stopped: true) }));
-        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2, interrupted: true) }));
-        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(8), w, new[] { Run(start, start, emptyPending: 2) }));
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2, minutes: 0, stopped: true) }));
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(start, start, emptyPending: 2, minutes: 0, interrupted: true) }));
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(8), w, new[] { Run(start, start, emptyPending: 2, minutes: 0) }));
         Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, Array.Empty<BatchRun>()));
         // 別的實例（昨天）的趟不算
         var yesterdayStart = start.AddDays(-1);
-        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(yesterdayStart, yesterdayStart, emptyPending: 2) }));
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(yesterdayStart, yesterdayStart, emptyPending: 2, minutes: 0) }));
+    }
+
+    // ── ExpectedLastDataDay：報表資料完整度「應有資料的最後一天」 ──────────
+
+    [Theory]
+    [InlineData(5, -2)]    // 01:00～07:00 窗口，05:00 還沒跑完：最近結束的是昨天開跑那一個 → 前天
+    [InlineData(7, -1)]    // 07:00 整窗口結束 → 昨天
+    [InlineData(10, -1)]
+    [InlineData(0, -2)]    // 午夜剛過
+    public void 應有資料日_一般窗口_跑完才算到昨天(int hour, int expectedOffset)
+    {
+        var now = Today.AddHours(hour);
+        Assert.Equal(Today.AddDays(expectedOffset), ScheduleCalculator.ExpectedLastDataDay(now, true, Windows("01:00", "07:00")));
+    }
+
+    [Theory]
+    [InlineData(10, -2)]   // 22:00～06:00：昨晚 22:00 開跑的實例目標日＝前天
+    [InlineData(23, -2)]   // 今晚 22:00 的實例還沒結束
+    [InlineData(30, -1)]   // 隔天 06:00 後，今晚那個實例結束 → 目標日＝今天的昨天（相對隔天是前天）
+    public void 應有資料日_跨午夜窗口_目標日是開跑日的昨天(int hoursFromToday, int expectedOffsetFromToday)
+    {
+        var now = Today.AddHours(hoursFromToday);
+        Assert.Equal(Today.AddDays(expectedOffsetFromToday), ScheduleCalculator.ExpectedLastDataDay(now, true, Windows("22:00", "06:00")));
+    }
+
+    [Fact]
+    public void 應有資料日_排程未啟用或窗口壞掉_退回昨天()
+    {
+        var now = Today.AddHours(5);
+        Assert.Equal(Today.AddDays(-1), ScheduleCalculator.ExpectedLastDataDay(now, false, Windows("01:00", "07:00")));
+        Assert.Equal(Today.AddDays(-1), ScheduleCalculator.ExpectedLastDataDay(now, true, Windows("x", "07:00")));
     }
 
     // ── RunToContinue：只留待複查 ──────────────────────────────────────────
@@ -131,10 +162,22 @@ public class EmptyRecheckTests
     {
         var w = Windows("01:00", "07:00");
         var start = Today.AddHours(1);
-        var run = Run(start, start, emptyPending: 2);
+        var run = Run(start, start, emptyPending: 2, minutes: 0);
         Assert.Null(ScheduleCalculator.RunToContinue(Today.AddHours(1).AddMinutes(59), w, new[] { run }));
         Assert.Same(run, ScheduleCalculator.RunToContinue(Today.AddHours(2), w, new[] { run }));
         Assert.Same(run, ScheduleCalculator.RunToContinue(Today.AddHours(2).AddMinutes(1), w, new[] { run }));
+    }
+
+    [Fact]
+    public void NextEmptyRecheckAt_第一趟跑很久_從結束起算不是開跑()
+    {
+        // 3000 台第一趟 01:00 開跑、03:00 結束：空資料嘗試散在 01:00～03:00，結束後立刻複查只會全部延後、白跑一趟
+        var w = Windows("01:00", "07:00");
+        var start = Today.AddHours(1);
+        var run = Run(start, start, emptyPending: 500, minutes: 120);
+        Assert.Equal(Today.AddHours(4), ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(3), w, new[] { run }));
+        Assert.Null(ScheduleCalculator.RunToContinue(Today.AddHours(3).AddMinutes(59), w, new[] { run }));
+        Assert.Same(run, ScheduleCalculator.RunToContinue(Today.AddHours(4), w, new[] { run }));
     }
 
     [Fact]
@@ -144,7 +187,9 @@ public class EmptyRecheckTests
         var start = Today.AddHours(1);
         var first = Run(start, start, netiqFailed: 3);
         var second = Run(start.AddMinutes(30), start, emptyPending: 2);
-        Assert.Same(second, ScheduleCalculator.RunToContinue(Today.AddHours(2).AddMinutes(30), w, new[] { first, second }));
+        // 第二趟 01:30 開跑、01:50 結束：結束＋60 分＝02:50 才複查
+        Assert.Null(ScheduleCalculator.RunToContinue(Today.AddHours(2).AddMinutes(49), w, new[] { first, second }));
+        Assert.Same(second, ScheduleCalculator.RunToContinue(Today.AddHours(2).AddMinutes(50), w, new[] { first, second }));
         var third = Run(start.AddMinutes(90), start, emptyPending: 2);
         Assert.Null(ScheduleCalculator.RunToContinue(Today.AddHours(4), w, new[] { first, second, third }));
     }

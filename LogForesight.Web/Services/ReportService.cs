@@ -1,4 +1,7 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 
@@ -19,12 +22,14 @@ public class ReportService
     private readonly SummaryCache _summaryCache;
     private readonly IIssueExclusionSource _exclusions;
     private readonly SqlPerformanceMonitor _performance;
+    private readonly ScheduleOptionsStore? _scheduleOptions;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings,
-        SummaryCache summaryCache, IIssueExclusionSource exclusions, SqlPerformanceMonitor performance)
+        SummaryCache summaryCache, IIssueExclusionSource exclusions, SqlPerformanceMonitor performance,
+        ScheduleOptionsStore? scheduleOptions = null)
     {
         _repository = repository;
         _hosts = hosts;
@@ -37,6 +42,8 @@ public class ReportService
         _summaryCache = summaryCache;
         _exclusions = exclusions;
         _performance = performance;
+        // 資料完整度「應有資料的最後一天」依排程窗口判定；沒給（測試）時退回「昨天」
+        _scheduleOptions = scheduleOptions;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
@@ -197,43 +204,43 @@ public class ReportService
             MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, null, null),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
-            TotalHosts = visibleHosts.Count,
+            // 第一排「受影響主機 N / M 台」的分母：可見且未合併的主機。合併掉的主機已併進存活主機，
+            // 算進來會重複；受影響主機的分子也是以存活主機計（AggregateReportKpiPair 的 Surviving），分子不會大於分母
+            TotalHosts = visibleHosts.Count(h => h.MergedInto == null),
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
                 ? handlingDto ?? new HandlingTodoDto()
                 : _handling.GetTodo(exclusion, recordsForTodo!),
-            Coverage = BuildCoverage(
-                exclusion, from, to, visibleHosts, nothingVisible, hostIds, riskLevels, visibleSeverities,
-                scope == HandlingHistoryQueryService.HandlingScopes.All ? kpi.CoverageGapDays : (int?)null)
+            Coverage = BuildCoverage(exclusion, from, to, visibleHosts, nothingVisible)
         };
 
         return dto;
     }
 
     /// <summary>
-    /// 資料完整度：不論顯示範圍都算同一份（完整度與處理狀態無關）。
-    /// 既有缺口紀錄數在「全部」範圍直接取 KPI 那一份；其他範圍的 KPI 只含該範圍的風險日，
-    /// 所以另以全部範圍的 KPI 聚合取回，兩種範圍的 <c>MissingHostDays</c> 才會一致。
+    /// 資料完整度：不論顯示範圍、風險等級篩選都算同一份（完整度與處理狀態無關）。
+    /// 缺漏主機日與缺口紀錄由同一個聚合、同一個母體（啟用、未合併主機的日誌分析紀錄）一次算出。
     /// </summary>
     private ReportCoverageDto BuildCoverage(
-        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts, bool nothingVisible,
-        List<long> hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities,
-        int? allScopeGapDays)
+        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts, bool nothingVisible)
     {
         var activeIds = visibleHosts.Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
         if (nothingVisible || activeIds.Count == 0) return new ReportCoverageDto { NoData = true };
 
-        var gapDays = allScopeGapDays
-            ?? _aggregates.AggregateReportKpi(exclusion, from, to, hostIds, riskLevels, visibleSeverities).CoverageGapDays;
-        var agg = _aggregates.AggregateReportCoverage(exclusion, from, to, activeIds);
+        // 應有資料的最後一天＝ min(期間終點, 最近一個已結束窗口的目標日)：窗口跑完之前昨天本來就不該有資料，
+        // 缺漏只算到這一天、落後也以它判斷（窗口跑到一半時，還沒輪到的主機不算缺漏）
+        var schedule = _scheduleOptions?.Get();
+        var expectedDay = ScheduleCalculator.ExpectedLastDataDay(DateTime.Now, schedule?.Enabled == true, schedule?.Windows ?? new List<ScheduleWindow>());
+        var expectedLast = to.Date < expectedDay ? to.Date : expectedDay;
+        if (expectedLast < from.Date) return new ReportCoverageDto { NoData = true };   // 期間內還沒有任何一天應該有資料
 
-        // 某日的資料要隔天凌晨才分析，今天永遠還沒有：應有資料的最後一天＝ min(期間終點, 昨天)
-        var expectedLast = to.Date < DateTime.Today.AddDays(-1) ? to.Date : DateTime.Today.AddDays(-1);
+        var agg = _aggregates.AggregateReportCoverage(exclusion, from, expectedLast, activeIds);
+
         return new ReportCoverageDto
         {
-            MissingHostDays = agg.MissingHostDays + gapDays,
+            MissingHostDays = agg.MissingHostDays + agg.GapRecords,
             DataThrough = agg.DataThrough?.ToString("yyyy-MM-dd"),
             Lagging = agg.DataThrough != null && agg.DataThrough.Value.Date < expectedLast,
             NoData = agg.NoData

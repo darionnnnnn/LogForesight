@@ -132,11 +132,43 @@ public static class ScheduleCalculator
         foreach (var w in windows)
         {
             if (CurrentWindowInstanceStart(now, w) is not { } start) continue;
-            if (!TryParseMinutes(w.Start, out var startMinutes) || !TryParseMinutes(w.End, out var endMinutes)) continue;
-            var length = endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
+            if (!TryWindowLength(w, out _, out var length)) continue;
             return (start, start.AddMinutes(length));
         }
         return null;
+    }
+
+    /// <summary>窗口的起點（分鐘）與長度（分鐘）：跨午夜時長度跨到隔天。任一端解析不了回 false。</summary>
+    private static bool TryWindowLength(ScheduleWindow w, out int startMinutes, out int length)
+    {
+        length = 0;
+        if (!TryParseMinutes(w.Start, out startMinutes) || !TryParseMinutes(w.End, out var endMinutes)) return false;
+        length = endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
+        return true;
+    }
+
+    /// <summary>
+    /// 「應該已經有資料」的最後一個資料日（唯一判定點，報表資料完整度用）。
+    /// 某天的資料要等之後的排程窗口跑完才分析：取最近一個**已結束**的窗口實例，它的目標日是開跑日的昨天（跨午夜窗口亦同）。
+    /// 窗口還沒跑完之前，昨天的資料本來就不該有——不能算缺漏、也不能說資料落後，否則戰情中心每晚都會亮警示。
+    /// 排程未啟用或窗口無法解析時退回「昨天」。
+    /// </summary>
+    public static DateTime ExpectedLastDataDay(DateTime now, bool scheduleEnabled, IEnumerable<ScheduleWindow> windows)
+    {
+        var fallback = now.Date.AddDays(-1);
+        if (!scheduleEnabled) return fallback;
+        DateTime? lastEndedStart = null;
+        foreach (var w in windows)
+        {
+            if (!TryWindowLength(w, out var startMinutes, out var length)) continue;
+            // 最長的窗口不到 24 小時，往回看三天一定找得到已結束的實例
+            for (var offset = 0; offset <= 2; offset++)
+            {
+                var start = now.Date.AddDays(-offset).AddMinutes(startMinutes);
+                if (start.AddMinutes(length) <= now && (lastEndedStart == null || start > lastEndedStart)) lastEndedStart = start;
+            }
+        }
+        return lastEndedStart is { } s ? s.Date.AddDays(-1) : fallback;
     }
 
     /// <summary>同一窗口續跑：距窗口結束與距上一趟開跑都要留這麼久（暫定），避免反覆失敗時空轉。</summary>
@@ -159,7 +191,7 @@ public static class ScheduleCalculator
 
     /// <summary>
     /// 下一次空資料複查的時刻（唯一判定點）：now 在窗口內、實例內已有排程取數趟但未達 <see cref="MaxRunsWithEmptyRecheck"/>、
-    /// 最新一趟沒被停止或異常中斷，候選＝最新一趟開跑＋<see cref="EmptyRecheckGap"/>（已過則取 now）；
+    /// 最新一趟沒被停止或異常中斷，候選＝最新一趟結束＋<see cref="EmptyRecheckGap"/>（還沒結束以 now 估；已過則取 now）；
     /// 候選距實例結束不足 <see cref="WindowContinueGap"/> 就不排（回 null）。
     /// 是否真的有待複查的主機日由 <see cref="RunToContinue"/> 看上一趟的 <see cref="RunResume"/>。
     /// </summary>
@@ -170,7 +202,9 @@ public static class ScheduleCalculator
         if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
         var last = inInstance[0];
         if (last.Stopped || last.Interrupted) return null;
-        var candidate = last.StartedAt + EmptyRecheckGap;
+        // 從上一趟「結束」起算：那一趟的每個空資料嘗試都發生在結束之前，結束＋間隔時一定全部滿間隔。
+        // 從開跑起算的話，跑很久的第一趟（3000 台、數小時）一結束就排複查，管線卻因各主機日未滿間隔全部延後，白跑一趟還吃掉趟數名額
+        var candidate = (last.FinishedAt ?? now) + EmptyRecheckGap;
         if (candidate < now) candidate = now;
         return instance.End - candidate < WindowContinueGap ? null : candidate;
     }

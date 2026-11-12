@@ -1172,8 +1172,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>每台主機（含別名列）有史以來第一筆日誌分析紀錄的日期</summary>
     internal sealed record CoverageFirstRow(long HostId, DateTime First);
 
-    /// <summary>每台主機（含別名列）區間內的日誌分析紀錄筆數與最後日期</summary>
-    internal sealed record CoverageRangeRow(long HostId, int Rows, DateTime Last);
+    /// <summary>每台主機（含別名列）區間內有日誌分析紀錄的天數（不重複日期）、其中標了缺口的筆數、最後日期</summary>
+    internal sealed record CoverageRangeRow(long HostId, int Rows, int Gaps, DateTime Last);
 
     /// <summary>有史以來最早日期：SQL 端單純 GROUP BY HostId＋MIN，不引用外層、不 HAVING（兩個 provider 都翻得出來）</summary>
     internal static IQueryable<CoverageFirstRow> BuildCoverageFirstQuery(
@@ -1182,12 +1182,18 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .GroupBy(r => r.HostId)
             .Select(g => new CoverageFirstRow(g.Key, g.Min(r => r.RecordDate)));
 
-    /// <summary>區間內筆數與最大日期：同樣單層 GROUP BY HostId</summary>
+    /// <summary>
+    /// 區間內不重複天數、缺口筆數與最大日期：同樣單層 GROUP BY HostId。天數用 COUNT(DISTINCT 日期)——同主機同日多列時不會把缺漏算少。
+    /// 缺口（資料不完整或 Security log 未讀取）與既有 <c>CoverageGapDays</c> 同一條件，但母體跟缺漏一致（啟用、未合併、非 PRTG），不受風險等級篩選影響。
+    /// </summary>
     internal static IQueryable<CoverageRangeRow> BuildCoverageRangeQuery(
         IQueryable<DailyRecordRow> rows, IReadOnlyCollection<long> hostIds, short prtgSource, DateTime from, DateTime to) =>
         rows.Where(r => hostIds.Contains(r.HostId) && r.LogSource != prtgSource && r.RecordDate >= from && r.RecordDate <= to)
             .GroupBy(r => r.HostId)
-            .Select(g => new CoverageRangeRow(g.Key, g.Count(), g.Max(r => r.RecordDate)));
+            .Select(g => new CoverageRangeRow(g.Key,
+                g.Select(r => r.RecordDate).Distinct().Count(),
+                g.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false),
+                g.Max(r => r.RecordDate)));
 
     /// <summary>
     /// 報表資料完整度的缺漏主機日（定義見 <see cref="IIssueAggregateQuery.AggregateReportCoverage"/>）。
@@ -1224,12 +1230,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         var rowsByHost = new Dictionary<long, int>();
+        var gaps = 0;
         DateTime? dataThrough = null;
         foreach (var row in rangeRows)
         {
             var host = Surviving(aliasIndex, row.HostId);
             if (!eligible.Contains(host)) continue;
             rowsByHost[host] = rowsByHost.GetValueOrDefault(host) + row.Rows;
+            gaps += row.Gaps;
             if (dataThrough == null || row.Last > dataThrough) dataThrough = row.Last;
         }
 
@@ -1249,7 +1257,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             f, t, missing, sw.ElapsedMilliseconds);
         _performance?.Record("issues:AggregateReportCoverage", sw.ElapsedMilliseconds);
 
-        return new ReportCoverageAggregate(missing, dataThrough, dataThrough == null);
+        return new ReportCoverageAggregate(missing, dataThrough, dataThrough == null, gaps);
     }
 
     public List<TrendAggregate> AggregateReportTrend(IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)

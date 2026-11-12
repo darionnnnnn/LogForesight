@@ -519,7 +519,7 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
-    public void 今日列_有待複查且同窗口排得進_RecheckAt是上一趟開跑加60分()
+    public void 今日列_有待複查且同窗口排得進_RecheckAt是上一趟結束加60分()
     {
         // 窗口以「現在」為準動態建立（前 30 分到後 3 小時），測試不靠固定時刻
         var now = DateTime.Now;
@@ -544,7 +544,8 @@ public class RunMonitorServiceTests : IDisposable
 
         Assert.True(today.IsToday);
         Assert.Equal(1, today.RecheckCount);
-        var expected = started.AddMinutes(60) < now ? now : started.AddMinutes(60);
+        var due = started.AddMinutes(2).AddMinutes(60);   // 上一趟結束＋60 分
+        var expected = due < now ? now : due;
         Assert.Equal(expected.ToString("HH:mm"), today.RecheckAt);
     }
 

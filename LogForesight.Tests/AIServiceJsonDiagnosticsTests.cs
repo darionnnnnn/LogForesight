@@ -1307,6 +1307,23 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public async Task 帶格式時回空字串的空回覆也計入記憶_第四次起第一次就不帶格式()
+    {
+        // 空字串回覆在 ChatAsync 層就判為空回覆、整次呼叫直接失敗（沒有關掉格式的重試機會），更需要記住
+        ScriptedHandler h = null!;
+        var service = NewServiceWithGate(_ => new Reply { Content = HasResponseFormat(h.RequestBodies[^1]) ? "" : GoodJson },
+            2, new AiRequestGate(() => 1), out h);
+
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold; i++)
+            Assert.False((await CallAsync(service)).Success);
+
+        var before = h.RequestCount;
+        var result = await CallAsync(service);
+        Assert.True(result.Success);
+        Assert.False(HasResponseFormat(h.RequestBodies[before]));
+    }
+
+    [Fact]
     public async Task NullAiRequestGate的兩個實例互不影響()
     {
         ScriptedHandler h1 = null!, h2 = null!;

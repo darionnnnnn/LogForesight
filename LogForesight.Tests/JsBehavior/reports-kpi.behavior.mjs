@@ -100,7 +100,7 @@ function makeHandling(data, visibleRisk = ['高', '中', '低']) {
     return inst;
 }
 
-function makeTrend(points, { visibleRisk = ['高', '中', '低'] } = {}) {
+function makeTrend(points, { visibleRisk = ['高', '中', '低'], scope = 'all' } = {}) {
     for (const id of ['trend-wrapper', 'trend-toolbar', 'trend-chart']) dom.byId.set(id, dom.newElement(id === 'trend-chart' ? 'canvas' : 'div'));
     const calls = { bar: [], line: 0, noData: 0, toolbar: 0 };
     const charts = {
@@ -110,8 +110,9 @@ function makeTrend(points, { visibleRisk = ['高', '中', '低'] } = {}) {
         renderNoData: () => { calls.noData++; },
         attachToolbar: () => { calls.toolbar++; }
     };
-    const inst = build(['function renderTrendChart(', 'function mountToolbar(', 'function clearToolbar('], `
+    const inst = build(['function renderTrendChart(', 'function mountToolbar(', 'function clearToolbar(', 'function scopeDrillParams('], `
         const currentData = { trend: points };
+        const currentScope = ${JSON.stringify(scope)};
         const visibleDayRisk = new Set(visibleRisk);
         const chartInstances = {};
     `, '{ renderTrendChart }', { points, visibleRisk, charts, recordsUrl });
@@ -317,6 +318,15 @@ const cases = {
         assert.equal(high.searchParams.get('from'), '2026-11-08');
         assert.equal(new URL(spec.drillTo({ index: 1, datasetIndex: 1 }), 'http://x').searchParams.get('riskLevels'), '中');
         assert.equal(t.calls.toolbar, 1, '保留表格切換');
+    },
+    趨勢圖下鑽帶上顯示範圍() {
+        const points = [{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }];
+        const all = makeTrend(points);
+        all.renderTrendChart();
+        assert.equal(new URL(all.calls.bar[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), null, '全部範圍不帶條件');
+        const open = makeTrend(points, { scope: 'open' });
+        open.renderTrendChart();
+        assert.equal(new URL(open.calls.bar[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), 'open', '長條只算未處理時，下鑽也只看未處理');
     },
     趨勢圖_中風險被隱藏時只畫高() {
         const t = makeTrend([{ date: '2026-11-08', highRisk: 3, mediumRisk: 0, errorCount: 0 }], { visibleRisk: ['高'] });

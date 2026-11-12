@@ -294,8 +294,11 @@ public interface IIssueAggregateQuery
         ReportCoverageAggregate.Empty;
 }
 
-/// <summary>報表資料完整度的 SQL 端聚合結果（不含既有缺口紀錄數，由呼叫端加總）</summary>
-public sealed record ReportCoverageAggregate(int MissingHostDays, DateTime? DataThrough, bool NoData)
+/// <summary>
+/// 報表資料完整度的 SQL 端聚合結果：<paramref name="MissingHostDays"/> 是沒有日誌分析紀錄的主機日，
+/// <paramref name="GapRecords"/> 是有紀錄但資料不完整或 Security log 未讀取的筆數（同一母體，呼叫端加總）。
+/// </summary>
+public sealed record ReportCoverageAggregate(int MissingHostDays, DateTime? DataThrough, bool NoData, int GapRecords = 0)
 {
     /// <summary>沒有可評估資料（無對象主機或期間內無任何日誌分析紀錄）</summary>
     public static readonly ReportCoverageAggregate Empty = new(0, null, true);
