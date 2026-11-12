@@ -211,9 +211,10 @@
     /* 主機時間軸熱圖的輔助格色（host-detail.js cellColor/LEGEND 讀取）：
        低風險/涵蓋不完整/無紀錄。比 -soft 系再深一階，熱圖小格才辨識得出彼此差別；
        色相對齊 success 綠/warning 琥珀/gray-200 */
-    --lf-timeline-low: #bbe7c9;
-    --lf-timeline-gap: #f6dca6;
-    --lf-timeline-none: #e2e8f0;
+    --lf-timeline-mid: #fbd5a5;
+    --lf-timeline-low: #eef0f3;
+    --lf-timeline-gap: #fff1bf;
+    --lf-timeline-none: transparent;
 
     /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
     --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);

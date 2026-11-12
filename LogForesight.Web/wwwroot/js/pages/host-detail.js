@@ -21,7 +21,7 @@ const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update
 
 const LEGEND = [
     { key: 'high', label: '高風險', color: 'var(--lf-risk-high)' },
-    { key: 'mid', label: '中風險', color: 'var(--lf-risk-mid)' },
+    { key: 'mid', label: '中風險', color: 'var(--lf-timeline-mid)' },
     { key: 'low', label: '低風險', color: 'var(--lf-timeline-low)' },
     { key: 'gap', label: '涵蓋不完整', color: 'var(--lf-timeline-gap)' },
     { key: 'none', label: '無分析紀錄', color: 'var(--lf-timeline-none)' }
@@ -244,7 +244,7 @@ function renderTimeline(detail) {
 function cellColor(day) {
     if (!day.hasRecord) return 'var(--lf-timeline-none)';
     if (day.riskLevel === '高') return 'var(--lf-risk-high)';
-    if (day.riskLevel === '中') return 'var(--lf-risk-mid)';
+    if (day.riskLevel === '中') return 'var(--lf-timeline-mid)';
     if (day.hasCoverageGap) return 'var(--lf-timeline-gap)';
     return 'var(--lf-timeline-low)';
 }
@@ -260,6 +260,7 @@ function renderLegend() {
         const swatch = document.createElement('span');
         swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--md';
         swatch.style.setProperty('--lf-swatch', item.color);
+        swatch.dataset.legend = item.key;   // 圖例與格子共用不靠顏色的線索（中風險底線、無紀錄空框）
 
         wrap.append(swatch, roleText('lf-text-meta', item.label));
         legend.appendChild(wrap);

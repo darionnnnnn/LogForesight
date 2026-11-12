@@ -99,9 +99,12 @@ export const SEVERITY_ORDER = Object.keys(SEVERITY_NAMES);
  * （§8.2 顏色＋文字單一定義原則）。
  */
 export function elevatesBadge() {
-    return statusBadge('重大', 'danger', {
+    const badge = statusBadge('重大', 'danger', {
         title: '命中即列為高風險日（重大）'
     });
+    // 旗標外觀（保留淡底）：一般標記是圓點加文字，「重大」要被看見（DESIGN-SYSTEM §8.8）
+    badge.classList.add('lf-badge--flag');
+    return badge;
 }
 
 /**
@@ -151,7 +154,9 @@ export function issueDensityCell(row, { layout = 'row' } = {}) {
  * 因此曾經是兩種顏色。改走這裡，SEVERITY_VARIANT 單一標準不會再走樣。
  */
 export function severityCountBadge(severity, count) {
-    return statusBadge(`${severityName(severity)} ${count}`, SEVERITY_VARIANT[severity] ?? 'neutral');
+    const badge = statusBadge(`${severityName(severity)} ${count}`, SEVERITY_VARIANT[severity] ?? 'neutral');
+    badge.classList.add('lf-badge--level');
+    return badge;
 }
 
 /**
@@ -258,7 +263,7 @@ export function statusBadge(text, variant = 'neutral', { title, icon: iconName }
  */
 export function riskBadge(riskLevel, { title } = {}) {
     const span = document.createElement('span');
-    span.className = `lf-badge ${RISK_CLASS[riskLevel] ?? 'lf-badge--low'}`;
+    span.className = `lf-badge lf-badge--level ${RISK_CLASS[riskLevel] ?? 'lf-badge--low'}`;
     span.textContent = `${riskLevel}風險`;
     if (title) span.title = title;
     return span;
@@ -266,9 +271,11 @@ export function riskBadge(riskLevel, { title } = {}) {
 
 /** 嚴重度徽章元素（title 附英文原值，方便與規則設定頁等處的英文值對照） */
 export function severityBadge(severity) {
-    return statusBadge(severityName(severity), SEVERITY_VARIANT[severity] ?? 'neutral', {
+    const badge = statusBadge(severityName(severity), SEVERITY_VARIANT[severity] ?? 'neutral', {
         title: `嚴重度：${severity}`
     });
+    badge.classList.add('lf-badge--level');
+    return badge;
 }
 
 /** 處理狀態徽章元素 */
