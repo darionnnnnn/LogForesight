@@ -88,8 +88,12 @@ const fontFamily = () => cssVar('--lf-font-family', 'system-ui, sans-serif');
 const textFont = () => ({ family: fontFamily(), size: textPx('text') });
 const tooltipFont = () => ({ family: fontFamily(), size: textPx('tooltip') });
 
-/** 字級偏好切換時，現存的圖表重新解析字級並重畫；已銷毀的圖表不在 Chart.instances 裡，不會被呼叫 */
+/**
+ * 字級偏好切換時，現存的圖表重新解析字級並重畫；已銷毀的圖表不在 Chart.instances 裡，不會被呼叫。
+ * 只用到色盤的頁面（儀表板）會匯入本模組卻沒有載入 Chart.js，那時沒有圖表可重畫
+ */
 export function refreshFonts() {
+    if (typeof Chart === 'undefined') return;
     for (const chart of Object.values(Chart.instances ?? {})) chart.update('none');
 }
 if (typeof window !== 'undefined') window.addEventListener(FONT_SCALE_EVENT, refreshFonts);

@@ -135,8 +135,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 角色 | 字階 | px | 套用在 |
 |---|---|---|---|
 | 頁標題 | 2xl | 24 | `lf-topbar__title`、登入頁標題 |
-| 實體標題、結論標題 | xl | 20 | `lf-entity-head__title`、`lf-briefing__headline`、說明書段落標題、`.fs-4`、`.lead` |
-| 卡片標題 | lg | 18 | `lf-card__title`、`modal-title`、`lf-entity-head__title--context`、`.fs-5`、`h5` |
+| 實體標題、結論標題 | xl | 20 | `lf-entity-head__title`、`lf-briefing__headline`、`.fs-4`、`.lead` |
+| 卡片標題 | lg | 18 | `lf-card__title`、`modal-title`、`lf-entity-head__title--context`、說明書章內小節（`lf-doc__heading`，不大於所在卡片的章名）、`.fs-5`、`h5` |
 | 內文、表格內容、控制項 | base | 16 | `body`、`td`、`.btn`、`.form-control`／`.form-select`（含 `-sm`）、`h6` |
 | 標籤、說明、表頭、膠囊、徽章、小按鈕 | sm | 14 | `lf-text-label`、`lf-text-meta`、`.form-label`、`.form-text`、`th`、`lf-chip`、`lf-badge`、`.btn-sm`、分段控制、側欄分組標題、`small` |
 | 最小字 | xs | 12 | 圖表座標與圖例、側欄計數徽章、月曆、舊 `.badge`；其他地方不用 |

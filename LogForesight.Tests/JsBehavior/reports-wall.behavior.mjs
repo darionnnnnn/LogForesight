@@ -563,6 +563,11 @@ const cases = {
         env.set({ root: 36, wall: true });
         assert.equal(font().size, a * 2, '倍率變兩倍，座標字級也變兩倍');
         assert.equal(a, 15.75, '大螢幕 1080 高時座標用 sm（18 × .875）');
+    },
+    charts沒有載入Chartjs的頁面切換字級偏好不擲錯() {
+        // 儀表板只用色盤：匯入 charts.js 卻沒有載入 Chart.js
+        const env = chartsEnv({ root: 16, withChart: false });
+        assert.doesNotThrow(() => env.dispatch('lf:font-scale'));
     }
 };
 
@@ -570,7 +575,7 @@ const cases = {
  * 載入 production 的 core/charts.js：匯入換成替身，Chart 換成記錄設定的假類別。
  * getComputedStyle 的替身扮演瀏覽器：依根字級與 <html> 類別算出探針的字級（規則與 base.css／layout.css 相同）。
  */
-function chartsEnv({ root }) {
+function chartsEnv({ root, withChart = true }) {
     const state = { root, wall: false };
     const created = [];
     class FakeChart { constructor(_canvas, config) { created.push(config); } }
@@ -595,7 +600,7 @@ function chartsEnv({ root }) {
     const source = read('core', 'charts.js');
     const body = source.replace(/^import .*$/gm, '').replace(/^export /gm, '');
     const api = new Function('Chart', 'appUrl', 'formatNumber', 'cssVar', 'document', 'getComputedStyle', 'window', 'FONT_SCALE_EVENT',
-        `${body}\nreturn { bar };`)(FakeChart, x => x, n => n, (name, fallback) => name === '--lf-font-family' ? 'Fira Test' : fallback,
+        `${body}\nreturn { bar };`)(withChart ? FakeChart : undefined, x => x, n => n, (name, fallback) => name === '--lf-font-family' ? 'Fira Test' : fallback,
         doc, getComputedStyle, win, 'lf:font-scale');
     return {
         api, created, FakeChart,

@@ -43,6 +43,7 @@ public class ReportsWallBehaviorTests
     [InlineData("charts字級取自token_根字級16為12與14_18為13點5_14時下限12")]
     [InlineData("charts頁面自訂座標軸補上token字級_頁面自己指定的優先")]
     [InlineData("charts字級偏好切換時現存圖表重畫_大螢幕倍率變兩倍時字級變兩倍")]
+    [InlineData("charts沒有載入Chartjs的頁面切換字級偏好不擲錯")]
     public void 大螢幕模式行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
