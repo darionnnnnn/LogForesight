@@ -432,12 +432,14 @@ function clearToolbar(container, wrapper) {
 /** 長標籤在座標軸上截斷（完整文字仍在提示與表格）；量測不得出現溢出卡片 */
 const MAX_TICK_CHARS = 18;
 const NARROW_TICK_CHARS = 9;
-/** 大螢幕圖表字級的額外倍率：1080 高時座標約 15px、2160 高時約 31px */
-const WALL_CHART_FONT_BOOST = 1.4;
 function truncateTick(value) {
-    const label = String(this.getLabelForValue(value));
-    // 窄畫布（手機單欄）放不下完整長度的標籤，會被畫布左緣裁掉：依畫布寬度收短
-    const max = (this.chart?.width ?? Infinity) < 480 ? NARROW_TICK_CHARS : MAX_TICK_CHARS;
+    return truncateLabel(this.getLabelForValue(value), this.chart);
+}
+
+/** 窄畫布（手機單欄）放不下完整長度的標籤，會被畫布左緣裁掉：依畫布寬度收短 */
+function truncateLabel(text, chart) {
+    const label = String(text);
+    const max = (chart?.width ?? Infinity) < 480 ? NARROW_TICK_CHARS : MAX_TICK_CHARS;
     return label.length > max ? `${label.slice(0, max - 1)}…` : label;
 }
 
@@ -698,6 +700,11 @@ function hostRankLabel(host) {
     return host.displayName ? `${host.displayName}（${host.hostName}）` : host.hostName;
 }
 
+/** 座標軸上只寫顯示名（有的話），完整的「顯示名（主機名）」留在提示框與表格：括號裡的主機名讓軸標籤長到被截斷 */
+function hostAxisLabel(host) {
+    return host.displayName || host.hostName;
+}
+
 /** 排行卡：依 rankMode 分派給主機或問題兩種呈現（同一張卡、同一個 canvas 容器） */
 function renderHostChart() {
     document.getElementById('rank-title').textContent = rankMode === 'issue' ? '問題排行' : '主機排行';
@@ -725,10 +732,12 @@ function renderHostChart() {
     // 主機量大時，Top 10 之外的主機併成一條「其他 N 台」——尾端主機不會完全隱形，
     // 也看得出前 10 佔整體多少。這一條不可下鑽（它是彙總，不是單一主機）。
     const labels = hosts.map(hostRankLabel);
+    const axisLabels = hosts.map(hostAxisLabel);
     const high = hosts.map(h => h.highRiskDays);
     const medium = hosts.map(h => h.mediumRiskDays);
     if (others) {
         labels.push(`其他 ${others.hostCount} 台`);
+        axisLabels.push(`其他 ${others.hostCount} 台`);
         high.push(others.highRiskDays);
         medium.push(others.mediumRiskDays);
     }
@@ -747,7 +756,7 @@ function renderHostChart() {
             indexAxis: 'y',
             scales: {
                 x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
-                y: { stacked: true, grid: { display: false }, ticks: { callback: truncateTick } }
+                y: { stacked: true, grid: { display: false }, ticks: { callback(value, index) { return truncateLabel(axisLabels[index] ?? this.getLabelForValue(value), this.chart); } } }
             }
         },
         drillTo: point => {
@@ -1044,8 +1053,7 @@ const wall = createWall({
     refresh: wallRefresh,
     rerender: () => { if (currentData) renderAll(); },
     applyScale: scale => {
-        // 圖表字（座標 11px）在 1080 高的大螢幕遠看太小：與根字級同步放大（大螢幕根字級 18px＝一般 15px 的 1.2 倍，圖表再多給一些）
-        chartLib.setFontScale(scale === null ? 1 : scale * WALL_CHART_FONT_BOOST);
+        // 圖表字級跟著根字級（--lf-wall-scale）與樣式表的大螢幕 token 變化，倍率改變後由 rerender 重建圖表
         const rootStyle = document.documentElement.style;
         if (scale === null) rootStyle.removeProperty('--lf-wall-scale');
         else rootStyle.setProperty('--lf-wall-scale', String(scale));

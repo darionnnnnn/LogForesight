@@ -117,6 +117,8 @@ public sealed class FontScaleGuardUiTests
         "var(--lf-probe-font-size)",                // brand-align 量測用的探針，複製實際字級
         "calc(18px * var(--lf-wall-scale, 1))",     // 大螢幕模式的根字級（依視窗高度）
         "calc(64px * var(--lf-wall-scale, 1))",     // 大螢幕模式的 KPI 數字
+        "var(--lf-chart-text-size)",                // 圖表字級的離屏探針（token 本身指向字階）
+        "var(--lf-chart-tooltip-size)",
         ".6rem"                                     // .btn-close.lf-close-xs：關閉鈕圖示的尺寸，不是文字
     ];
 

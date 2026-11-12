@@ -522,60 +522,87 @@ const cases = {
         assert(spec.drillTo && spec.options.animation === undefined, '不得改動原本的 spec');
     },
 
-    // ── charts.js 字級倍率 ────────────────────────────────────────────────
-    charts倍率預設1時座標字級仍是11且不加根字級() {
-        const { api, created } = loadCharts();
-        api.bar({ parentElement: null }, { data: { labels: [], datasets: [] } });
-        const options = created.at(-1).options;
-        assert.equal(options.scales.x.ticks.font.size, 11);
-        assert.equal(options.scales.y.ticks.font.size, 11);
-        assert.equal(options.plugins.legend.labels.font.size, 12);
-        assert.equal(options.plugins.tooltip.bodyFont.size, 12);
-        assert.equal('font' in options, false, '倍率 1 不加任何新設定');
-
-        // 頁面自訂座標軸（整組取代共用設定）時同樣不補刻度字級
-        api.bar({ parentElement: null }, { data: {}, options: { scales: { x: { stacked: true } } } });
-        assert.equal(created.at(-1).options.scales.x.ticks, undefined, '倍率 1 不動頁面自訂的座標軸');
+    // ── charts.js 圖表字級（從 CSS token 讀實際 px）──────────────────────
+    charts字級取自token_根字級16為12與14_18為13點5_14時下限12() {
+        for (const [root, axis, tip] of [[16, 12, 14], [18, 13.5, 15.75], [14, 12, 12.25]]) {
+            const env = chartsEnv({ root });
+            env.api.bar({ parentElement: null }, { data: { labels: [], datasets: [] } });
+            const options = env.created.at(-1).options;
+            assert.equal(options.scales.x.ticks.font().size, axis, `根字級 ${root}：座標`);
+            assert.equal(options.scales.y.ticks.font().size, axis, `根字級 ${root}：座標 y`);
+            assert.equal(options.plugins.legend.labels.font().size, axis, `根字級 ${root}：圖例`);
+            assert.equal(options.plugins.tooltip.bodyFont().size, tip, `根字級 ${root}：提示框`);
+            assert.equal(options.scales.x.ticks.font().family, 'Fira Test', '字型讀 --lf-font-family');
+            assert.equal(env.probesLeft(), 0, '量測用的探針用完即移除');
+        }
     },
-    charts倍率大於1時座標與圖例與提示字級放大_設回1即還原() {
-        const { api, created } = loadCharts();
-        api.setFontScale(2);
-        api.bar({ parentElement: null }, { data: {} });
-        let options = created.at(-1).options;
-        assert.equal(options.scales.x.ticks.font.size, 22);
-        assert.equal(options.scales.y.ticks.font.size, 22);
-        assert.equal(options.plugins.legend.labels.font.size, 24);
-        assert.equal(options.plugins.tooltip.titleFont.size, 26);
-        assert.equal('font' in options, false, '不靠根層 font（Chart.js 的座標軸不吃它）');
+    charts頁面自訂座標軸補上token字級_頁面自己指定的優先() {
+        const env = chartsEnv({ root: 16 });
+        env.api.bar({ parentElement: null }, { data: {}, options: { scales: { x: { stacked: true }, y: { ticks: { font: { size: 30 } } } } } });
+        const scales = env.created.at(-1).options.scales;
+        assert.equal(scales.x.ticks.font().size, 12, '被頁面取代的座標軸也有字級');
+        assert.equal(scales.x.stacked, true, '頁面原有設定保留');
+        assert.equal(scales.y.ticks.font.size, 30, '頁面自己指定的刻度字級優先');
+    },
+    charts字級偏好切換時現存圖表重畫_大螢幕倍率變兩倍時字級變兩倍() {
+        const env = chartsEnv({ root: 16 });
+        env.api.bar({ parentElement: null }, { data: {} });
+        const font = env.created.at(-1).options.scales.x.ticks.font;
+        const updated = [];
+        env.FakeChart.instances = { 1: { update: mode => updated.push(['a', mode]) }, 2: { update: mode => updated.push(['b', mode]) } };
+        env.dispatch('lf:font-scale');
+        assert.deepEqual(updated, [['a', 'none'], ['b', 'none']], '收到偏好切換事件，每張現存的圖表都重畫一次（不播動畫）');
+        env.FakeChart.instances = { 2: { update: mode => updated.push(['b2', mode]) } };
+        env.dispatch('lf:font-scale');
+        assert.deepEqual(updated.at(-1), ['b2', 'none'], '已銷毀的圖表不在 instances 裡，不會被呼叫');
+        assert.equal(updated.length, 3);
 
-        // 頁面自訂座標軸整組取代共用設定：補上放大後的刻度字級；頁面自己指定字級的軸不動
-        api.bar({ parentElement: null }, { data: {}, options: { scales: { x: { stacked: true }, y: { ticks: { font: { size: 30 } } } } } });
-        assert.equal(created.at(-1).options.scales.x.ticks.font.size, 22, '被頁面取代的座標軸也放大');
-        assert.equal(created.at(-1).options.scales.x.stacked, true, '頁面原有設定保留');
-        assert.equal(created.at(-1).options.scales.y.ticks.font.size, 30, '頁面自己指定的刻度字級優先');
-
-        api.setFontScale(1);
-        api.bar({ parentElement: null }, { data: {} });
-        options = created.at(-1).options;
-        assert.equal(options.scales.x.ticks.font.size, 11);
-        assert.equal('font' in options, false);
-
-        api.setFontScale(NaN);
-        api.setFontScale(-3);
-        api.bar({ parentElement: null }, { data: {} });
-        assert.equal(created.at(-1).options.scales.x.ticks.font.size, 11, '不合理的倍率一律視為 1');
+        // 大螢幕：根字級 18 → 36（倍率 2），token 改指 sm
+        env.set({ root: 18, wall: true });
+        const a = font().size;
+        env.set({ root: 36, wall: true });
+        assert.equal(font().size, a * 2, '倍率變兩倍，座標字級也變兩倍');
+        assert.equal(a, 15.75, '大螢幕 1080 高時座標用 sm（18 × .875）');
     }
 };
 
-/** 載入 production 的 core/charts.js：匯入換成替身，Chart 換成記錄設定的假類別 */
-function loadCharts() {
-    const source = read('core', 'charts.js');
-    const body = source.replace(/^import .*$/gm, '').replace(/^export /gm, '');
+/**
+ * 載入 production 的 core/charts.js：匯入換成替身，Chart 換成記錄設定的假類別。
+ * getComputedStyle 的替身扮演瀏覽器：依根字級與 <html> 類別算出探針的字級（規則與 base.css／layout.css 相同）。
+ */
+function chartsEnv({ root }) {
+    const state = { root, wall: false };
     const created = [];
     class FakeChart { constructor(_canvas, config) { created.push(config); } }
-    const api = new Function('Chart', 'appUrl', 'formatNumber', 'cssVar', 'document',
-        `${body}\nreturn { bar, setFontScale };`)(FakeChart, x => x, n => n, (_name, fallback) => fallback, document);
-    return { api, created };
+    let probes = 0;
+    const listeners = new Map();
+    const html = { get className() { return state.wall ? 'lf-wall' : ''; } };
+    const doc = {
+        documentElement: html,
+        body: { appendChild: () => { probes++; } },
+        createElement: () => ({ className: '', remove: () => { probes--; } })
+    };
+    const resolve = kind => {
+        const xs = Math.max(.75 * state.root, 12), sm = .875 * state.root, base = state.root;
+        if (kind === 'text') return state.wall ? sm : xs;
+        if (kind === 'tooltip') return state.wall ? base : sm;
+        throw new Error(`未知的探針：${kind}`);
+    };
+    const getComputedStyle = el => el === html
+        ? { fontSize: `${state.root}px` }
+        : { fontSize: `${resolve(el.className.match(/lf-chart-probe__(\w+)/)[1])}px` };
+    const win = { addEventListener: (type, fn) => listeners.set(type, fn) };
+    const source = read('core', 'charts.js');
+    const body = source.replace(/^import .*$/gm, '').replace(/^export /gm, '');
+    const api = new Function('Chart', 'appUrl', 'formatNumber', 'cssVar', 'document', 'getComputedStyle', 'window', 'FONT_SCALE_EVENT',
+        `${body}\nreturn { bar };`)(FakeChart, x => x, n => n, (name, fallback) => name === '--lf-font-family' ? 'Fira Test' : fallback,
+        doc, getComputedStyle, win, 'lf:font-scale');
+    return {
+        api, created, FakeChart,
+        probesLeft: () => probes,
+        dispatch: type => listeners.get(type)?.(),
+        set: next => Object.assign(state, next)
+    };
 }
 
 const name = process.argv[2];

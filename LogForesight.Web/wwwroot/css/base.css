@@ -128,6 +128,9 @@
     --lf-font-size-xl: 1.25rem;
     --lf-font-size-2xl: 1.5rem;
     --lf-font-size-stat: 1.875rem;
+    /* 圖表文字（core/charts.js 讀取實際 px）：座標、圖例＝xs，提示框＝sm；大螢幕模式在 layout.css 改指大一級 */
+    --lf-chart-text-size: var(--lf-font-size-xs);
+    --lf-chart-tooltip-size: var(--lf-font-size-sm);
     --lf-line-tight: 1.25;
     --lf-line-base: 1.55;
 

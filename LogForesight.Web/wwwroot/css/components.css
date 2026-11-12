@@ -1504,3 +1504,8 @@ a.lf-badge:hover { text-decoration: underline; }
     padding-top: var(--lf-space-3);
     border-top: 1px solid var(--lf-border);
 }
+
+/* core/charts.js 讀圖表字級用的離屏探針：建立後立即移除，只用來讓瀏覽器算出 token 的實際 px */
+.lf-chart-probe { position: absolute; visibility: hidden; pointer-events: none; }
+.lf-chart-probe__text { font-size: var(--lf-chart-text-size); }
+.lf-chart-probe__tooltip { font-size: var(--lf-chart-tooltip-size); }

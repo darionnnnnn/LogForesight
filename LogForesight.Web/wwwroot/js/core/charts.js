@@ -13,6 +13,7 @@
 import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
 import { cssVar } from './ui.js';
+import { FONT_SCALE_EVENT } from './reveal.js';
 
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
 export function categoryColors() {
@@ -57,20 +58,40 @@ export function statusColors() {
     };
 }
 
-const FONT_FAMILY = '"Segoe UI", "Microsoft JhengHei", system-ui, sans-serif';
+/**
+ * 圖表文字的字級（DESIGN-SYSTEM §3）：座標、圖例用 --lf-chart-text-size，提示框用 --lf-chart-tooltip-size。
+ * 對應到哪一級寫在樣式表（一般模式 xs／sm，大螢幕模式改指 sm／base），這裡只負責讀出實際 px。
+ */
+const pxCache = new Map();
 
 /**
- * 圖表文字倍率：預設 1，一般模式的字級完全不變。報表的大螢幕模式依視窗高度放大時，
- * 進入設成大於 1 的值、離開設回 1（呼叫端自己重畫圖表，倍率只影響之後建立的圖）。
+ * 圖表文字實際的 px（kind：'text' 座標與圖例、'tooltip' 提示框）。用樣式表的離屏探針 .lf-chart-probe__* 讀計算值——
+ * 偏好倍率、瀏覽器字級設定、12px 下限、大螢幕倍率都寫在樣式表，JS 不重寫一份換算規則。
+ * 根字級與 <html> 類別相同時結果不變，以兩者當快取鍵（圖表每畫一次會讀很多次）。
  */
-let fontScale = 1;
-
-export function setFontScale(scale) {
-    fontScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+export function textPx(kind) {
+    const root = document.documentElement;
+    const key = `${getComputedStyle(root).fontSize}|${root.className}|${kind}`;
+    if (!pxCache.has(key)) {
+        const probe = document.createElement('span');
+        probe.className = `lf-chart-probe lf-chart-probe__${kind}`;
+        document.body.appendChild(probe);
+        pxCache.set(key, parseFloat(getComputedStyle(probe).fontSize) || 12);
+        probe.remove();
+    }
+    return pxCache.get(key);
 }
 
-/** 基準字級乘上倍率；倍率 1 時回傳原值 */
-const fontSize = base => Math.round(base * fontScale);
+const fontFamily = () => cssVar('--lf-font-family', 'system-ui, sans-serif');
+/** Chart.js 的字型設定接受函式：每次重畫時重新解析，字級偏好改變後 update() 就會換成新字級 */
+const textFont = () => ({ family: fontFamily(), size: textPx('text') });
+const tooltipFont = () => ({ family: fontFamily(), size: textPx('tooltip') });
+
+/** 字級偏好切換時，現存的圖表重新解析字級並重畫；已銷毀的圖表不在 Chart.instances 裡，不會被呼叫 */
+export function refreshFonts() {
+    for (const chart of Object.values(Chart.instances ?? {})) chart.update('none');
+}
+if (typeof window !== 'undefined') window.addEventListener(FONT_SCALE_EVENT, refreshFonts);
 
 function baseOptions({ drillTo, onDrill }) {
     const options = {
@@ -80,12 +101,13 @@ function baseOptions({ drillTo, onDrill }) {
         plugins: {
             legend: {
                 position: 'bottom',
-                labels: { font: { family: FONT_FAMILY, size: fontSize(12) }, usePointStyle: true, boxWidth: fontSize(8), boxHeight: fontSize(8), padding: fontSize(14) }
+                // 圖例色點與間距跟著字級（Chart.js 不接受函式，建立圖表時取一次；大螢幕倍率改變時頁面會重建圖表）
+                labels: { font: textFont, usePointStyle: true, boxWidth: Math.round(textPx('text') * 2 / 3), boxHeight: Math.round(textPx('text') * 2 / 3), padding: Math.round(textPx('text') * 7 / 6) }
             },
             tooltip: {
                 backgroundColor: cssVar('--lf-chart-tooltip-bg', '#1b2a41'),
-                titleFont: { family: FONT_FAMILY, size: fontSize(13) },
-                bodyFont: { family: FONT_FAMILY, size: fontSize(12) },
+                titleFont: tooltipFont,
+                bodyFont: tooltipFont,
                 padding: 10,
                 displayColors: true
             }
@@ -113,12 +135,12 @@ function baseOptions({ drillTo, onDrill }) {
     };
 
     options.scales = {
-        x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: fontSize(11) } } },
+        x: { grid: { display: false }, ticks: { font: textFont } },
         y: {
             beginAtZero: true,
             grid: { color: cssVar('--lf-chart-grid', '#0000000f') },
             // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
-            ticks: { font: { family: FONT_FAMILY, size: fontSize(11) }, precision: 0 }
+            ticks: { font: textFont, precision: 0 }
         }
     };
 
@@ -147,13 +169,11 @@ export function create(canvas, spec) {
     clearNoData(canvas.parentElement);
 
     const options = merge(baseOptions(spec), spec.options);
-    // 頁面自訂的座標軸會整組取代共用設定，刻度字級就退回 Chart.js 預設（根層的 options.font 對座標軸無效）：
-    // 倍率不是 1 時把放大後的刻度字級補進沒有自己指定字級的座標軸（倍率 1 不動任何設定）
-    if (fontScale !== 1 && options.scales) {
-        for (const [axis, cfg] of Object.entries(options.scales)) {
-            if (cfg?.ticks?.font) continue;
-            options.scales[axis] = { ...cfg, ticks: { ...(cfg?.ticks ?? {}), font: { family: FONT_FAMILY, size: fontSize(11) } } };
-        }
+    // 頁面自訂的座標軸會整組取代共用設定，刻度字級就退回 Chart.js 預設 12px（根層的 options.font 對座標軸無效）：
+    // 補進沒有自己指定字級的座標軸，頁面自己指定的優先
+    for (const [axis, cfg] of Object.entries(options.scales ?? {})) {
+        if (cfg?.ticks?.font) continue;
+        options.scales[axis] = { ...cfg, ticks: { ...(cfg?.ticks ?? {}), font: textFont } };
     }
 
     const chart = new Chart(canvas, {

@@ -526,6 +526,9 @@
 @media screen and (min-width: 992px) {
     :root.lf-wall {
         font-size: calc(18px * var(--lf-wall-scale, 1));
+        /* 遠看的圖表文字大一級（1080 高時座標約 15.75px）；倍率改變時頁面會重建圖表 */
+        --lf-chart-text-size: var(--lf-font-size-sm);
+        --lf-chart-tooltip-size: var(--lf-font-size-base);
     }
 
     /* 沒有人操作：側欄、頁首、提醒區、工具列、圖卡的「表格」切換與所有下鑽入口一律不顯示（display:none 的元素不可聚焦）。

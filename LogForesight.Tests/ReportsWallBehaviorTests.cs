@@ -40,8 +40,9 @@ public class ReportsWallBehaviorTests
     [InlineData("離開鈕滑鼠移動出現且3秒後淡出")]
     [InlineData("大螢幕生效時第一排卡片不帶連結")]
     [InlineData("圖表轉接_大螢幕不掛下鑽_重繪不做進場動畫")]
-    [InlineData("charts倍率預設1時座標字級仍是11且不加根字級")]
-    [InlineData("charts倍率大於1時座標與圖例與提示字級放大_設回1即還原")]
+    [InlineData("charts字級取自token_根字級16為12與14_18為13點5_14時下限12")]
+    [InlineData("charts頁面自訂座標軸補上token字級_頁面自己指定的優先")]
+    [InlineData("charts字級偏好切換時現存圖表重畫_大螢幕倍率變兩倍時字級變兩倍")]
     public void 大螢幕模式行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
