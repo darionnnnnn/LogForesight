@@ -756,7 +756,7 @@ function renderHostChart() {
             indexAxis: 'y',
             scales: {
                 x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
-                y: { stacked: true, grid: { display: false }, ticks: { callback(value, index) { return truncateLabel(axisLabels[index] ?? this.getLabelForValue(value), this.chart); } } }
+                y: { stacked: true, grid: { display: false }, ticks: { callback(value) { return truncateLabel(axisLabels[value] ?? this.getLabelForValue(value), this.chart); } } }
             }
         },
         drillTo: point => {
