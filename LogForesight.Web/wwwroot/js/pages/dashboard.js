@@ -775,7 +775,8 @@ function renderHosts(data) {
             { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
             { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h) },
-            { title: '最新狀況', render: h => latestStatusCell(h, h.latestHeadline) }
+            // 單行省略、完整文字在 title：並排的半寬面板裡不必左右捲動（DESIGN-SYSTEM §8.4）
+            { title: '最新狀況', truncate: true, render: h => latestStatusCell(h, h.latestHeadline) }
         ],
         rows: data.hostRanking,
         empty: { title: '本期沒有風險主機', hint: EMPTY_SCOPE_HINT }

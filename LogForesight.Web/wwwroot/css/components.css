@@ -317,6 +317,9 @@ a.lf-stat:hover .lf-card,
 }
 
 .lf-kpi-group__title {
+    display: flex;
+    align-items: center;
+    min-height: max(24px, 1.5rem);
     margin: 0 0 var(--lf-space-2);
     font-size: var(--lf-font-size-sm);
     font-weight: 600;
@@ -325,7 +328,7 @@ a.lf-stat:hover .lf-card,
 
 .lf-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(9rem, 14rem));
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
     gap: var(--lf-space-3);
 }
 
@@ -366,21 +369,34 @@ a.lf-stat:hover .lf-card,
 .lf-kpi-card {
     display: block;
     min-width: 0;
-    padding: var(--lf-space-3);
+    padding: var(--lf-space-3) var(--lf-space-4);
     background: var(--lf-card-bg);
-    border: 1px solid var(--lf-border);
+    border: 1px solid transparent;
     border-radius: var(--lf-radius);
-    box-shadow: var(--lf-shadow-xs);
+    box-shadow: var(--lf-panel-ring);
     color: inherit;
     text-decoration: none;
     text-align: left;
-    transition: box-shadow var(--lf-transition), border-color var(--lf-transition);
+    transition: background-color var(--lf-transition);
 }
 
-a.lf-kpi-card--link:hover {
-    box-shadow: var(--lf-shadow-md);
-    border-color: var(--lf-primary-soft-border);
-    color: inherit;
+/* 可點的卡：靜止時右上角一個箭頭當線索（觸控裝置沒有滑過）；滑過只變底色、不位移 */
+a.lf-kpi-card--link { position: relative; }
+a.lf-kpi-card--link::after {
+    content: "›";
+    position: absolute;
+    top: var(--lf-space-2);
+    right: var(--lf-space-3);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-lg);
+    line-height: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    a.lf-kpi-card--link:hover {
+        background: var(--lf-gray-50);
+        color: inherit;
+    }
 }
 
 a.lf-kpi-card--link:focus-visible {
@@ -413,7 +429,25 @@ a.lf-kpi-card--link:focus-visible {
 .lf-category-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
-    gap: var(--lf-space-3);
+    gap: 1px;
+    overflow: hidden;
+}
+
+/* 內層卡去掉自己的框與陰影；每格以左、上兩條外側細線分隔（落在 1px 間距裡，最左欄與第一列的線被 overflow 裁掉） */
+.lf-category-grid > a > .lf-card,
+.lf-category-grid > .lf-card {
+    border-color: transparent;
+    border-radius: 0;
+    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
+}
+
+/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色） */
+a.lf-stat:hover .lf-category-grid .lf-card,
+.lf-category-grid a.lf-stat:hover > .lf-card,
+.lf-category-grid .lf-card--clickable:hover {
+    border-color: transparent;
+    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
+    background: var(--lf-gray-50);
 }
 
 /* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
