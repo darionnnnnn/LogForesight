@@ -76,7 +76,8 @@ export function textPx(kind) {
         const probe = document.createElement('span');
         probe.className = `lf-chart-probe lf-chart-probe__${kind}`;
         document.body.appendChild(probe);
-        pxCache.set(key, parseFloat(getComputedStyle(probe).fontSize) || 12);
+        // 讀不到探針（樣式表未載入）時退回根字級，不在 JS 寫字級數字
+        pxCache.set(key, parseFloat(getComputedStyle(probe).fontSize) || parseFloat(getComputedStyle(root).fontSize));
         probe.remove();
     }
     return pxCache.get(key);

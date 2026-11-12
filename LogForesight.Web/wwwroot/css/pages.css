@@ -62,8 +62,9 @@
     color: var(--lf-text-muted);
 }
 
+/* 章內小節：與卡片標題（章名）同一級、以底線區分，不能比所在卡片的標題大 */
 .lf-doc__heading {
-    font-size: var(--lf-font-size-xl);
+    font-size: var(--lf-font-size-lg);
     font-weight: 600;
     line-height: var(--lf-line-tight);
     margin: var(--lf-space-6) 0 var(--lf-space-3);
