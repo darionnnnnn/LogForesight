@@ -425,6 +425,13 @@ body {
     box-shadow: 0 1px 2px rgba(15, 23, 42, .12), 0 0 0 1px var(--lf-border);
 }
 
+/* 凹槽裡的停用選項：一般停用的凹底與凹槽同色、字色又與未選中相同，看不出差別，改成透明底＋淡化 */
+.btn-group > .btn:disabled,
+:where(div):has(> .btn[aria-pressed]) > .btn:disabled {
+    --bs-btn-disabled-bg: transparent;
+    --bs-btn-disabled-opacity: .45;
+}
+
 .btn-group > .btn:focus-visible,
 :where(div):has(> .btn[aria-pressed]) > .btn:focus-visible { box-shadow: var(--lf-focus-ring); z-index: 1; }
 

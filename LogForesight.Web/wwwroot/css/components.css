@@ -441,14 +441,24 @@ a.lf-kpi-card--link:focus-visible {
     box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
 }
 
-/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色） */
-a.lf-stat:hover .lf-category-grid .lf-card,
+/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色）；只給滑鼠，觸控點過不會留著滑過樣式 */
 .lf-category-grid a.lf-stat:hover > .lf-card,
 .lf-category-grid .lf-card--clickable:hover {
     border-color: transparent;
     box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
-    background: var(--lf-gray-50);
 }
+
+@media (hover: hover) and (pointer: fine) {
+    .lf-category-grid a.lf-stat:hover > .lf-card,
+    .lf-category-grid .lf-card--clickable:hover {
+        background: var(--lf-gray-50);
+    }
+}
+
+/* 鍵盤焦點：格線容器 overflow: hidden 會裁掉外擴的焦點環，改畫在格子內側 */
+.lf-category-grid > a:focus-visible { outline: none; }
+.lf-category-grid > a:focus-visible > .lf-card,
+.lf-category-grid > .lf-card--clickable:focus-visible { box-shadow: var(--lf-focus-ring-inset); }
 
 /* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
 .lf-reveal-bar {

@@ -329,6 +329,12 @@
 
 .lf-sidebar__link.is-active .lf-icon { opacity: 1; }
 
+/* 深色側欄的焦點指示：淺色實線內框（品牌藍在深底上不夠亮，DESIGN-SYSTEM §4） */
+.lf-sidebar__link:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: -2px;
+}
+
 .lf-sidebar__footer {
     padding: var(--lf-space-3) var(--lf-space-4);
     border-top: 1px solid rgba(255, 255, 255, .07);
@@ -712,10 +718,8 @@
         white-space: normal;
     }
 
-    .lf-sidebar__link.is-active {
-        background: var(--lf-sidebar-hover-bg);
-        border-left: 3px solid var(--lf-primary-hover);
-    }
+    /* 左側指示條沿用桌面版的內陰影，不再另加 border-left（兩者疊加會變雙條） */
+    .lf-sidebar__link.is-active { background: var(--lf-sidebar-hover-bg); }
 
     .lf-sidebar__footer { display: none; grid-column: 1 / -1; }
     .lf-sidebar.is-mobile-open .lf-sidebar__footer { display: block; }
