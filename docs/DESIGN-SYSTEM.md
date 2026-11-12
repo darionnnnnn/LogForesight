@@ -237,7 +237,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | `lf-text-title` | 列或區塊的主標 | base、600、`--lf-text` |
 | `lf-text-meta` | 次要資訊（次數、時段、來源） | sm、400、`--lf-text-muted` |
 | `lf-text-label` | 眉標、欄位標籤 | sm、600、`--lf-text-muted` |
-| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），表格內整段不斷行（欄寬讓給技術值，折行留給成段文字欄）；放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
+| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），表格內整段不斷行（欄寬讓給技術值，折行留給成段文字欄；展開列、`lf-break-anywhere` 容器內，以及 `<pre>`／`lf-pre-wrap`／`lf-pre-line` 這類保留換行的內容除外）；放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
 | `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
 
 紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
@@ -320,7 +320,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 - **一般標記＝圓點加文字**（`lf-badge lf-badge--<變體>`）：無底無框，前方一顆圓點，文字維持文字色。變體只決定圓點顏色
   （`danger`／`warning`／`success`／`info`／`primary` 為語意色，`neutral`／`secondary`／`light`／`dark` 為灰）；同一個變體可以表示狀態，也可以表示標註。
-  圓點以邊框畫（列印不印背景色時仍在）；帶圖示的標記不畫圓點，由圖示表示。
+  圓點以邊框畫（列印不印背景色時仍在）；帶圖示的標記不畫圓點，由圖示表示。相鄰的標記間距大於圓點到文字的距離（沒有底色當邊界，靠間距分組）。
 - **層級**（嚴重度、日風險等級）由層級出口加 `lf-badge--level`：`severityBadge`、`severityCountBadge`、`riskBadge`。只有最高一級（風險「高」）保留淡底。
 - **「重大」旗標**由 `elevatesBadge` 加 `lf-badge--flag`，保留淡底——這兩個是全站僅有的有底色標記。
 - **標籤外觀的例外**：內含移除鈕的條件標籤（`:has(> button)`，例：問題查詢已選主機）與明確加 `border` 的歸屬標籤（群組、負責人），維持細框標籤、無圓點。

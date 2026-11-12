@@ -492,6 +492,11 @@ a.lf-calendar__cell:hover {
     color: var(--lf-gray-900, #0f172a);
 }
 
+/* 中風險的底線是不靠顏色的線索，滑過時的陰影不能把它蓋掉 */
+a.lf-calendar__cell[data-risk="中"]:hover {
+    box-shadow: inset 0 -3px 0 var(--lf-risk-mid), var(--lf-shadow-sm);
+}
+
 a.lf-calendar__cell[data-risk="高"]:hover {
     color: #ffffff;
 }

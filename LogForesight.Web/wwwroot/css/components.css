@@ -287,11 +287,11 @@ a.lf-stat:hover .lf-card,
 /*
   KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
   - singleRow（--row）：三組排同一排、依卡數分寬，每組放得下幾張就顯示幾張，其餘由 core/reveal.js 收合；
-    不換列也不留 14rem 上限造成的組間空白。575px 以下回到每組佔滿一列、每列兩張。
+    不換列也不留組間空白。575px 以下回到每組佔滿一列、每列兩張。
   - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
-  - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
+  - 卡寬下限 11rem、不設上限：下限讓標籤不逐字換行，4 張卡在 1280 寬同一列。
   - ≥1200px 放得下的組並排，各組以卡片數當 flex-grow 分寬、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；窄螢幕各組依序佔滿一列，375px 每列兩張。
-  - hover 只變陰影與邊框色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
+  - 可點的卡 hover 只變底色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
 */
 .lf-kpi-strip {
     display: flex;
@@ -476,6 +476,12 @@ a.lf-kpi-card--link:focus-visible {
     .lf-reveal-bar {
         display: none !important;
     }
+
+    /* 風險類型格線平常把內層卡的邊框設成透明，會蓋過列印時 .lf-card 的實線框；紙上只剩極淡的細線，補回實線 */
+    .lf-category-grid > a > .lf-card,
+    .lf-category-grid > .lf-card {
+        border-color: #ccc;
+    }
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目——不靠色條，靠卡內的數字色與層級標記。
@@ -527,6 +533,9 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-badge:has(> .lf-icon)::before { display: none; }
+
+/* 相鄰的標記：沒有底色當邊界，間距要明顯大於圓點到文字的距離，否則下一顆的圓點會被讀成前一顆的尾巴 */
+.lf-badge + .lf-badge { margin-inline-start: .5em; }
 
 .lf-badge--danger { --lf-badge-dot: var(--lf-danger); }
 .lf-badge--warning { --lf-badge-dot: var(--lf-warning); }
@@ -1343,12 +1352,11 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 /* 表格內的技術值（lf-text-data：時間、IP、規則代號、連線位址）整段不斷行（DESIGN-SYSTEM §8.1）：
-   窄欄會在連字號與空白處把「2026-11-12 09:52」拆成三行；欄寬讓給技術值，折行留給成段文字欄 */
-.table .lf-text-data { white-space: nowrap; }
-
-/* 展開列（佐證、原始資料）與明確允許任意斷行的容器不在此限：裡面的技術值可能是很長的原始字串 */
-.lf-row-detail .lf-text-data,
-.lf-break-anywhere .lf-text-data { white-space: normal; }
+   窄欄會在連字號與空白處把「2026-11-12 09:52」拆成三行；欄寬讓給技術值，折行留給成段文字欄。
+   不在此限（維持各自原本的換行方式）：展開列（佐證、原始資料）與明確允許任意斷行的容器——裡面可能是很長的原始字串；
+   保留換行的內容（<pre>、lf-pre-wrap、lf-pre-line）——稽核詳情的前後對照、權限異動的原始訊息靠換行排版。
+   寫成單一條 :not() 而不是事後覆寫回 normal：覆寫會連 pre-wrap 一起蓋掉 */
+.table .lf-text-data:not(pre, .lf-pre-wrap, .lf-pre-line, .lf-row-detail *, .lf-break-anywhere *) { white-space: nowrap; }
 
 /* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
 .lf-swatch { background: var(--lf-swatch); }

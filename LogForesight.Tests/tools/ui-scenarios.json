@@ -2584,5 +2584,32 @@
         "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};const lines=e=>{const r=document.createRange();r.selectNodeContents(e);const lh=parseFloat(getComputedStyle(e).lineHeight)||parseFloat(getComputedStyle(e).fontSize)*1.5;return Math.max(1,Math.round(r.getBoundingClientRect().height/lh));};const d=[...document.querySelectorAll('.lf-content table tbody td .lf-text-data')].filter(vis); if(!d.length) return '找不到技術值'; const bad=d.filter(e=>lines(e)>1); return bad.length? bad.length+' 個技術值折行（例 '+bad[0].textContent.slice(0,20)+'）':null;"
       }
     ]
+  },
+  {
+    "name": "守門-表格內保留換行的技術值不被壓成一行",
+    "role": "ui-admin",
+    "path": "/audit",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const host=document.querySelector('.lf-content'); const t=document.createElement('table'); t.className='table'; t.innerHTML='<tbody><tr><td><pre class=\"report-text lf-text-data\" id=\"g-pre\">a</pre><span class=\"lf-text-data\" id=\"g-plain\">2026-11-12 09:52</span><div class=\"lf-text-data lf-pre-wrap\" id=\"g-wrap\">a</div></td></tr><tr class=\"lf-row-detail\"><td><div class=\"lf-text-data lf-pre-wrap\" id=\"g-detail-wrap\">a</div><span class=\"lf-text-data\" id=\"g-detail\">a</span></td></tr></tbody>'; host.prepend(t); const ws=id=>getComputedStyle(document.getElementById(id)).whiteSpace; const got={pre:ws('g-pre'),plain:ws('g-plain'),wrap:ws('g-wrap'),detailWrap:ws('g-detail-wrap'),detail:ws('g-detail')}; t.remove(); const want={pre:'pre-wrap',plain:'nowrap',wrap:'pre-wrap',detailWrap:'pre-wrap',detail:'normal'}; const bad=Object.keys(want).filter(k=>got[k]!==want[k]).map(k=>k+'='+got[k]+'（應為 '+want[k]+'）'); return bad.length?bad.join('；'):null;"
+      }
+    ]
+  },
+  {
+    "name": "守門-相鄰標記的間距大於圓點到文字的距離",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;}; const pairs=[...document.querySelectorAll('.lf-badge + .lf-badge')].filter(b=>vis(b)&&vis(b.previousElementSibling)&&Math.abs(b.getBoundingClientRect().top-b.previousElementSibling.getBoundingClientRect().top)<4); if(!pairs.length) return '首頁找不到同一行相鄰的標記'; const bad=pairs.filter(b=>{const gap=b.getBoundingClientRect().left-b.previousElementSibling.getBoundingClientRect().right; const inner=parseFloat(getComputedStyle(b).columnGap)||0; return !(gap>inner*1.5);}); return bad.length? bad.length+' 組相鄰標記的間距不到圓點內距的 1.5 倍':null;"
+      }
+    ]
   }
 ]
