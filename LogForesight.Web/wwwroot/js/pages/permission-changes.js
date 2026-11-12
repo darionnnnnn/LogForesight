@@ -447,7 +447,7 @@ function timeCell(value) {
 function hostCell(row) {
     const wrap = document.createElement('div');
     const hostName = document.createElement('div');
-    hostName.className = 'lf-text-title';
+    hostName.className = 'lf-text-title text-nowrap';
     hostName.textContent = row.hostName;
     wrap.appendChild(hostName);
 

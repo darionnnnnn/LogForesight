@@ -1332,6 +1332,14 @@ a.lf-badge:hover { text-decoration: underline; }
     box-shadow: inset 0 0 0 1px var(--lf-warning-line);
 }
 
+/* 表格內的技術值（lf-text-data：時間、IP、規則代號、連線位址）整段不斷行（DESIGN-SYSTEM §8.1）：
+   窄欄會在連字號與空白處把「2026-11-12 09:52」拆成三行；欄寬讓給技術值，折行留給成段文字欄 */
+.table .lf-text-data { white-space: nowrap; }
+
+/* 展開列（佐證、原始資料）與明確允許任意斷行的容器不在此限：裡面的技術值可能是很長的原始字串 */
+.lf-row-detail .lf-text-data,
+.lf-break-anywhere .lf-text-data { white-space: normal; }
+
 /* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
 .lf-swatch { background: var(--lf-swatch); }
 .lf-swatch--sm { width: 10px; height: 10px; }
