@@ -11,9 +11,14 @@
 //
 // 用法：
 //   node ui-shots.mjs --base http://localhost:5099 --scenarios scenarios.json --out <目錄>
-//     [--fixture <資料集目錄>] [--matrix full|widths|quick] [--only 情境名稱子字串] [--edge <msedge.exe>] [--no-fail]
+//     [--fixture <資料集目錄>] [--matrix full|widths|quick|screens] [--only 情境名稱子字串] [--edge <msedge.exe>] [--font-default <px>] [--no-fail]
 // 情境檔格式見 ui-scenarios.json；--fixture 另讀資料集產生的 ui-fixture-scenarios.json（路徑含相對今天的日期，不進版控）。
-// 矩陣：full＝五個寬度＋375／1280 的小、大字級；widths＝五個寬度、字級中；quick＝1280 一格。輸出 <out>/summary.json 與 <out>/<情境>/<寬>-<字級>[-print].png。
+// 矩陣：full＝五個寬度＋375／1280 的小、大字級；widths＝五個寬度、字級中；quick＝1280 一格；
+//   screens＝FHD 1920×1080、2K 2560×1440、4K 3840×2160 三種螢幕（視窗高度跟著螢幕，字級中）。
+// 輸出 <out>/summary.json、<out>/<情境>/<寬>-<字級>[-print].png（整頁）與 <寬>-<字級>-first.png（首屏，即視窗看到的範圍）。
+// --font-default：模擬使用者把瀏覽器預設字級改成指定 px（驗證頁面尊重瀏覽器字級設定）。
+// 整頁截圖先把視窗撐到整頁高度再拍，不用 captureBeyondViewport：後者在截圖當下改變版面尺寸，
+//   部分頁面會重新排版成較小的字級，Chart.js 也會因尺寸改變從 0 重播動畫，拍到空白的圖表。
 // 任一量測項非零時結束代碼為 1（--no-fail 時一律 0）。
 //
 // 輪詢穩定性（排程作業、PRTG 維護）用三個步驟組合：
@@ -63,6 +68,7 @@ const FULL_MATRIX = [
 ];
 const WIDTHS_MATRIX = [375, 768, 1280, 1920, 2560].map(width => ({ width, scale: 'medium' }));
 const QUICK_MATRIX = [{ width: 1280, scale: 'medium' }];
+const SCREENS_MATRIX = [[1920, 1080], [2560, 1440], [3840, 2160]].map(([width, height]) => ({ width, height, scale: 'medium' }));
 const VIEWPORT_HEIGHT = Number(args.height) || 900;   // --height 800 之類：量「一屏內看完」的頁（報表）
 const MAX_SHOT_HEIGHT = 16000;
 const METRICS = ['hscroll', 'overflow', 'target', 'console', 'stuck', 'assert'];
@@ -122,6 +128,7 @@ async function launchBrowser() {
         setTimeout(() => { try { rmSync(profile, { recursive: true, force: true }); } catch { /* Edge 還鎖著檔，留在暫存區 */ } }, 1500);
     };
     await Promise.all(['Page.enable', 'Runtime.enable', 'Network.enable', 'Log.enable'].map(m => send(m)));
+    if (args['font-default']) await send('Page.setFontSizes', { fontSizes: { standard: Number(args['font-default']) } });
     return { send, on: fn => listeners.add(fn), off: fn => listeners.delete(fn), close };
 }
 
@@ -415,6 +422,7 @@ async function login(browser, account, inflight) {
 
 async function runScenario(browser, scenario, cell, state) {
     const { width, scale } = cell;
+    const viewportHeight = cell.height || VIEWPORT_HEIGHT;
     const started = Date.now();
     const errors = [];
     const onEvent = msg => {
@@ -437,7 +445,7 @@ async function runScenario(browser, scenario, cell, state) {
     };
     browser.on(onEvent);
     try {
-        await browser.send('Emulation.setDeviceMetricsOverride', { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false });
+        await browser.send('Emulation.setDeviceMetricsOverride', { width, height: viewportHeight, deviceScaleFactor: 1, mobile: false });
         await browser.send('Emulation.setEmulatedMedia', {
             media: scenario.media === 'print' ? 'print' : '',
             features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
@@ -460,12 +468,16 @@ async function runScenario(browser, scenario, cell, state) {
 
         const metrics = await browser.send('Page.getLayoutMetrics');
         const height = Math.min(MAX_SHOT_HEIGHT, Math.ceil(metrics.cssContentSize.height));
-        const shotWidth = Math.ceil(Math.max(width, metrics.cssContentSize.width));
-        const shot = await browser.send('Page.captureScreenshot', {
-            format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: shotWidth, height, scale: 1 }
-        });
-        const file = join(outDir, safeName(scenario.name), `${width}-${scale}${scenario.media === 'print' ? '-print' : ''}.png`);
+        const stem = join(outDir, safeName(scenario.name), `${width}-${scale}${scenario.media === 'print' ? '-print' : ''}`);
         mkdirSync(join(outDir, safeName(scenario.name)), { recursive: true });
+        const firstScreen = await browser.send('Page.captureScreenshot', { format: 'png' });
+        writeFileSync(`${stem}-first.png`, Buffer.from(firstScreen.data, 'base64'));
+        // 整頁：把視窗撐到整頁高度再拍，拍完還原（理由見檔頭）
+        await browser.send('Emulation.setDeviceMetricsOverride', { width, height: Math.max(viewportHeight, height), deviceScaleFactor: 1, mobile: false });
+        await sleep(300);
+        const shot = await browser.send('Page.captureScreenshot', { format: 'png' });
+        await browser.send('Emulation.setDeviceMetricsOverride', { width, height: viewportHeight, deviceScaleFactor: 1, mobile: false });
+        const file = `${stem}.png`;
         writeFileSync(file, Buffer.from(shot.data, 'base64'));
 
         return {
@@ -487,7 +499,7 @@ function safeName(name) {
 }
 
 async function main() {
-    const matrix = args.matrix === 'quick' ? QUICK_MATRIX : args.matrix === 'widths' ? WIDTHS_MATRIX : FULL_MATRIX;
+    const matrix = { quick: QUICK_MATRIX, widths: WIDTHS_MATRIX, screens: SCREENS_MATRIX }[args.matrix] || FULL_MATRIX;
     mkdirSync(outDir, { recursive: true });
     const results = [];
     const roles = [...new Set(scenarios.map(s => s.role || 'ui-admin'))];

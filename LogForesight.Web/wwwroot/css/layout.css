@@ -234,7 +234,7 @@
 
 .lf-sidebar__section {
     padding: var(--lf-space-4) var(--lf-space-3) var(--lf-space-1);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     letter-spacing: .06em;
     color: var(--lf-sidebar-section);
@@ -526,6 +526,9 @@
 @media screen and (min-width: 992px) {
     :root.lf-wall {
         font-size: calc(18px * var(--lf-wall-scale, 1));
+        /* 遠看的圖表文字大一級（1080 高時座標約 15.75px）；倍率改變時頁面會重建圖表 */
+        --lf-chart-text-size: var(--lf-font-size-sm);
+        --lf-chart-tooltip-size: var(--lf-font-size-base);
     }
 
     /* 沒有人操作：側欄、頁首、提醒區、工具列、圖卡的「表格」切換與所有下鑽入口一律不顯示（display:none 的元素不可聚焦）。
@@ -829,7 +832,7 @@
 }
 
 .lf-side-rail__summary {
-    font-size: 0.8125rem;
+    font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
     white-space: nowrap;
     overflow: hidden;

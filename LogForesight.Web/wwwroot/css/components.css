@@ -517,7 +517,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius-sm);
     background: none;
     color: var(--lf-text);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 500;
     line-height: 1.5;
     white-space: nowrap;
@@ -611,7 +611,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-briefing__text {
-    font-size: 1rem;
+    font-size: var(--lf-font-size-base);
     line-height: 1.7;
     max-width: var(--lf-measure);
 }
@@ -644,7 +644,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-briefing__brief-text {
-    font-size: 1.0625rem;
+    font-size: var(--lf-font-size-lg);
     font-weight: 500;
     line-height: 1.7;
     max-width: var(--lf-measure);
@@ -865,6 +865,12 @@ a.lf-badge:hover { text-decoration: underline; }
     min-width: 140px;
 }
 
+/* 同一格裡並排的起訖日期：讓兩個日期框平分剩餘寬度，不以內容寬度撐出格子（窄螢幕＋大字級時會超出版面） */
+.lf-toolbar__field > .form-control[type="date"] {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .lf-toolbar__group {
     display: flex;
     align-items: center;
@@ -875,7 +881,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-toolbar__group-label {
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     color: var(--lf-text-muted);
     white-space: nowrap;
@@ -907,7 +913,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border: 1px solid var(--lf-border-strong);
     background: var(--lf-card-bg);
     color: var(--lf-text-muted);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 500;
     line-height: 1.4;
     cursor: pointer;
@@ -962,7 +968,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .table > thead > tr > th {
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     letter-spacing: .02em;
     color: var(--lf-text-muted);
@@ -1203,7 +1209,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-top: 1px solid var(--lf-border);
     border-left: 1px solid var(--lf-border);
     color: var(--lf-text-muted);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     white-space: nowrap;
     pointer-events: none;
 }
@@ -1498,3 +1504,8 @@ a.lf-badge:hover { text-decoration: underline; }
     padding-top: var(--lf-space-3);
     border-top: 1px solid var(--lf-border);
 }
+
+/* core/charts.js 讀圖表字級用的離屏探針：建立後立即移除，只用來讓瀏覽器算出 token 的實際 px */
+.lf-chart-probe { position: absolute; visibility: hidden; pointer-events: none; }
+.lf-chart-probe__text { font-size: var(--lf-chart-text-size); }
+.lf-chart-probe__tooltip { font-size: var(--lf-chart-tooltip-size); }

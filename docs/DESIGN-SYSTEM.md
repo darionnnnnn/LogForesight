@@ -108,7 +108,44 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 ```
 
 - 數字對齊：統計數值與表格數字欄加 `font-variant-numeric: tabular-nums`（Fira Sans 支援）。
-- 字級階層／根字級 clamp／使用者三檔倍率：**維持 v1 不動**（已是成熟決策）。
+- 字級系統見 §3a。
+
+## 3a. 字級系統
+
+依據：Bootstrap、Tabler 等後台樣板保留瀏覽器預設的根字級；WCAG F94（視窗單位調整的文字無法被縮放與瀏覽器字級設定放大）；
+資料密集產品的內文多在 14～16px，按鈕字級等於內文，大小差異用高度與內距表現。背景見 docs/archive/FEEDBACK-72-PLAN.md。
+
+**分層與責任邊界**（下層不得改寫上層）：
+
+| 層 | 內容 | 誰可以改 | 怎麼變化 |
+|---|---|---|---|
+| 0 使用者 | 瀏覽器預設字級、瀏覽器縮放、作業系統縮放 | 只有使用者 | 站台不覆寫 |
+| 1 個人偏好 | 頂列「小／中／大」：`html` 字級＝瀏覽器預設 × `--lf-font-scale`（.875／1／1.125） | 使用者 | 不含 vw、vh、clamp、px |
+| 2 字階 | `--lf-font-size-*`：xs `max(.75rem, 12px)`／sm .875／base 1／lg 1.125／xl 1.25／2xl 1.5／stat 1.875rem | 設計系統 | 固定，不隨視窗寬度變化；相鄰比值 ≥ 1.11 |
+| 3 文字角色 | 角色類別與元件樣式只引用字階（見下表） | 設計系統 | 頁面不寫字級數值 |
+| 4 元件尺寸 | 一般按鈕、輸入框、下拉選單＝base；小按鈕、分段控制（`btn-group-sm`）、膠囊＝sm；小按鈕與分段控制的最小高度＝`--lf-control-height-sm`（小尺寸輸入框的高度） | 元件層 | 大小差異用高度與內距表現 |
+| 5 密度 | 表格列高與內距 | 元件層 | 不動字級 |
+| 6 圖表 | `--lf-chart-text-size`（座標、圖例，指向 xs）、`--lf-chart-tooltip-size`（提示框，指向 sm）；`core/charts.js` 以離屏探針 `.lf-chart-probe__*` 讀實際 px，收到 `lf:font-scale` 時重畫現存圖表 | 圖表封裝層 | 跟著第 1～3 層變化 |
+
+大螢幕：一般頁面不隨視窗寬度放大字，寬螢幕交給作業系統縮放、瀏覽器縮放與版面格線。報表的大螢幕模式另有規則（WEB-SPEC §9.6）：
+根字級 `18px × 倍率`、KPI 數字 `64px × 倍率`，不受偏好影響；兩個圖表 token 在該模式改指 sm／base。
+
+**文字角色對應**（中檔、瀏覽器預設 16px 時的 px）：
+
+| 角色 | 字階 | px | 套用在 |
+|---|---|---|---|
+| 頁標題 | 2xl | 24 | `lf-topbar__title`、登入頁標題 |
+| 實體標題、結論標題 | xl | 20 | `lf-entity-head__title`、`lf-briefing__headline`、`.fs-4`、`.lead` |
+| 卡片標題 | lg | 18 | `lf-card__title`、`modal-title`、`lf-entity-head__title--context`、說明書章內小節（`lf-doc__heading`，不大於所在卡片的章名）、`.fs-5`、`h5` |
+| 內文、表格內容、控制項 | base | 16 | `body`、`td`、`.btn`、`.form-control`／`.form-select`（含 `-sm`）、`h6` |
+| 標籤、說明、表頭、膠囊、徽章、小按鈕 | sm | 14 | `lf-text-label`、`lf-text-meta`、`.form-label`、`.form-text`、`th`、`lf-chip`、`lf-badge`、`.btn-sm`、分段控制、側欄分組標題、`small` |
+| 最小字 | xs | 12 | 圖表座標與圖例、側欄計數徽章、月曆、舊 `.badge`；其他地方不用 |
+| KPI 數字 | stat | 30 | `lf-stat__value` |
+
+- 輸入框維持 base，不縮成 sm：iOS Safari 對小於 16px 的輸入框會自動放大整頁。
+- Bootstrap 的 `fs-4`／`fs-5`／`h5`／`h6`／`small`／`.lead`／`.badge` 在 `base.css` 一處對到字階；`fs-1`～`fs-3`、`display-*`、`h1`～`h4` 類別的字級含 vw，不使用。
+- 守門：`FontScaleGuardUiTests`（根字級、偏好倍率、字階數值與級距、控制項來源、樣式表字級只引用 token、禁用類別）；
+  渲染後的字級（角色、字階內、最小 12px、品牌名稱不截斷）由 ui-shots 的探針量測。
 
 ## 4. 形狀、陰影、間距、動效
 
@@ -133,6 +170,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 可機器判定的項目由 §8.7 的量測工具與守門測試負責，畫面改動交付前必須是 0：
 - [ ] 375／768／1280／1920／2560 五個寬度（另 375、1280 的小、大字級）：水平捲軸、元素溢出、點擊區 < 24×24、console 與網路錯誤、卡在載入、情境斷言六項皆 0
+- [ ] FHD／2K／4K 首屏（`--matrix screens`）六項皆 0；改到字級時另以 `--font-default 20` 確認尊重瀏覽器字級設定
+- [ ] `FontScaleGuardUiTests` 綠：新增的字級只引用 `--lf-font-size-*`，不使用含 vw 的 Bootstrap 字級類別
 - [ ] `DesignSystemGuardUiTests`、`AccessibilityUiTests`（文字角色對比 ≥ 4.5:1、焦點可見）綠
 人工確認：
 - [ ] 1280 與 1920 截圖：畫面上最醒目的是風險訊號，不是按鈕或裝飾；寬螢幕沒有大片無意義空白
@@ -148,7 +187,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
   每一層都要 `min-height: 0`，否則 flex 子項的預設 `min-height:auto` 會讓內容撐破容器。
 - **canvas 絕對定位**：Chart.js 的 canvas 留在文件流裡會回頭撐大容器，形成量測震盪
   （同一視窗尺寸每次載入算出不同高度）。`position:absolute; inset:0` 讓尺寸單向由版面流向圖表。
-- **可讀性下限用 px 不用 rem**：那是「圖看不看得懂」的物理尺寸，用 rem 會隨字級偏好放大 25%，
+- **可讀性下限用 px 不用 rem**：那是「圖看不看得懂」的物理尺寸，用 rem 會隨字級偏好與瀏覽器字級設定放大，
   選「大」字級反而在同一台螢幕逼出捲軸。
 - **Bootstrap `.row` 不直接當 flex 子項**：它的負 `margin-top` 會讓高度算錯，多出幾像素的捲軸；
   外面包一層普通 div 隔開；多欄的卡片列用 CSS grid（`minmax(0, …)`）排列，不借用 `.row`。
@@ -216,7 +255,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
 | 詳情頁右欄側軌 | `core/side-rail.js` + `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
 | 長文字收合 | `ui.js` `collapsibleText` + `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；切換鈕是 `disclosure`（標籤「全文」）、列印全文 |
-| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、1.0625rem／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排：≥ 992px 約 1.6 : 1、右欄最小 16rem，窄螢幕直排，缺一則另一佔滿；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，眉標 `--lf-primary-text`），統計模式不上底色；再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄（`repeat(auto-fit, minmax(min(20rem, 100%), 1fr))`）；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
+| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、`--lf-font-size-lg`／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排：≥ 992px 約 1.6 : 1、右欄最小 16rem，窄螢幕直排，缺一則另一佔滿；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，眉標 `--lf-primary-text`），統計模式不上底色；再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄（`repeat(auto-fit, minmax(min(20rem, 100%), 1fr))`）；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + `layout.css` | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |

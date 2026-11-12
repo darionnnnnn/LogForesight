@@ -116,22 +116,28 @@
     --lf-font-family: "Fira Sans", "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
     --lf-font-mono: "Fira Code", "Cascadia Mono", Consolas, "Microsoft JhengHei", monospace;
 
-    /* ── 字級階層 ─────────────────────────────────────────────────────── */
-    /* 全部用 rem，跟隨 html 根字級（見下方 html 規則）等比縮放；base 較舊版提一階 */
-    --lf-font-size-xs: .78rem;
-    --lf-font-size-sm: .86rem;
-    --lf-font-size-base: .95rem;
-    --lf-font-size-lg: 1rem;
-    --lf-font-size-xl: 1.2rem;
-    --lf-font-size-2xl: 1.45rem;
-    --lf-font-size-stat: 1.95rem;
+    /* ── 字階（DESIGN-SYSTEM §3）─────────────────────────────────────────
+       固定 rem，跟著 html 根字級（＝瀏覽器預設 × 使用者偏好）縮放，不隨視窗寬度變化。
+       相鄰兩級比值 ≥ 1.11（FontScaleGuardUiTests 守門）；中檔下為 12／14／16／18／20／24／30px。
+       xs 只給圖表座標、圖例與計數徽章，設 12px 下限：小檔的 .75rem 只有 10.5px，中文看不清楚。
+       頁面與元件只引用這些 token（或文字角色類別），不寫字級數值。 */
+    --lf-font-size-xs: max(.75rem, 12px);
+    --lf-font-size-sm: .875rem;
+    --lf-font-size-base: 1rem;
+    --lf-font-size-lg: 1.125rem;
+    --lf-font-size-xl: 1.25rem;
+    --lf-font-size-2xl: 1.5rem;
+    --lf-font-size-stat: 1.875rem;
+    /* 圖表文字（core/charts.js 讀取實際 px）：座標、圖例＝xs，提示框＝sm；大螢幕模式在 layout.css 改指大一級 */
+    --lf-chart-text-size: var(--lf-font-size-xs);
+    --lf-chart-tooltip-size: var(--lf-font-size-sm);
     --lf-line-tight: 1.25;
     --lf-line-base: 1.55;
 
     /* ── 控制項尺寸基準（filter bar 內 input／select／button／chip 的共同高度基準）──
-       高度由「小尺寸控制項字級 × Bootstrap 行高 1.5 ＋ 垂直 padding 合計 .5rem ＋ 上下邊框 2px」推導 */
-    --lf-control-font-size-sm: 1rem;
-    --lf-control-height-sm: calc(var(--lf-control-font-size-sm) * 1.5 + .5rem + 2px);
+       高度＝小尺寸輸入框的自然高度：輸入框字級（base）× Bootstrap 行高 1.5 ＋ 垂直 padding 合計 .5rem ＋ 上下邊框 2px。
+       膠囊與小按鈕的字較小（sm），以這個高度當最小高度，同一列才會等高 */
+    --lf-control-height-sm: calc(var(--lf-font-size-base) * 1.5 + .5rem + 2px);
 
     /* ── 間距階層 ─────────────────────────────────────────────────────── */
     --lf-space-1: .25rem;
@@ -238,24 +244,25 @@
     --bs-body-color: var(--lf-text);
     --bs-border-color: var(--lf-border);
     --bs-font-monospace: var(--lf-font-mono);
+    --bs-body-font-size: var(--lf-font-size-base);
 }
 
 /*
-  根字級隨視寬平滑縮放：所有字級 token 用 rem，會一併等比放大。
-  舊版沒設 html 字級＝固定沿用瀏覽器預設 16px，在 2K/4K 大螢幕上整體偏小
-  （rem 跟隨根字級、不會自己跟解析度變）。clamp 讓小筆電維持 15px 不爆版、
-  2K 約 18px、再寬到上限 20px 收斂。乘上使用者偏好倍率（見下）做個人微調。
+  根字級＝瀏覽器預設字級 × 使用者偏好倍率（DESIGN-SYSTEM §3）。
+  不用 vw／clamp：視窗單位調整的文字無法透過縮放或瀏覽器字級設定放大（WCAG F94），
+  大螢幕的需求交給作業系統縮放、瀏覽器縮放與版面格線，不靠放大字。
+  背景見 docs/archive/FEEDBACK-72-PLAN.md。
 */
 html {
-    font-size: calc(clamp(15px, 0.5vw + 13px, 20px) * var(--lf-font-scale, 1));
+    font-size: calc(100% * var(--lf-font-scale, 1));
     /* scrollbar-color 會繼承：全站捲動容器同一套顏色。寬度不在這裡改——主內容區與 modal 內文維持預設寬度（細捲軸不好抓），
        只有側欄與卡片內的小型捲動容器另設 thin */
     scrollbar-color: var(--lf-scrollbar-thumb) transparent;
 }
 
 /* 使用者字級偏好（存 localStorage，由 layout.js 套在 <html> 上）。中＝預設不覆寫 */
-:root[data-font-scale="small"] { --lf-font-scale: .9; }
-:root[data-font-scale="large"] { --lf-font-scale: 1.15; }
+:root[data-font-scale="small"] { --lf-font-scale: .875; }
+:root[data-font-scale="large"] { --lf-font-scale: 1.125; }
 
 body {
     background: var(--lf-content-bg);
@@ -267,6 +274,18 @@ body {
        放不下時才在字中斷行，一般字詞不受影響；不影響表格的最小寬度計算，寬表格仍交給 .lf-table-wrap 橫向捲動 */
     overflow-wrap: break-word;
 }
+
+/* Bootstrap 的字級類別對到字階（DESIGN-SYSTEM §3）：Bootstrap 原值有的含 vw（fs-1～fs-4、h1～h4 走 RFS），
+   有的是相對 em（small），都會落在字階外。標記不改，在這裡一處對應；fs-1～fs-3、display-*、h1～h4 類別禁止使用
+   （FontScaleGuardUiTests）。Bootstrap 的 fs-* 是帶 !important 的工具類別，覆寫也要帶 */
+.fs-4 { font-size: var(--lf-font-size-xl) !important; }
+.fs-5 { font-size: var(--lf-font-size-lg) !important; }
+h5, .h5 { font-size: var(--lf-font-size-lg); }
+h6, .h6 { font-size: var(--lf-font-size-base); }
+small, .small { font-size: var(--lf-font-size-sm); }
+.lead { font-size: var(--lf-font-size-xl); }
+/* 舊的 Bootstrap .badge（不再新增，見 §8.8）字級是 .75em，放在小字裡會小於 12px：對到 xs（有 12px 下限） */
+.badge { --bs-badge-font-size: var(--lf-font-size-xs); }
 
 /* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源
    （DESIGN-SYSTEM.md §3）。Bootstrap 的 .font-monospace 已改吃 --lf-font-mono，
@@ -293,6 +312,7 @@ body {
 /* ── Bootstrap 元件微調（透過元件級變數，維持 Bootstrap 行為）─────────── */
 
 .btn {
+    --bs-btn-font-size: var(--lf-font-size-base);
     --bs-btn-border-radius: var(--lf-radius-sm);
     --bs-btn-font-weight: 500;
     display: inline-flex;
@@ -318,12 +338,15 @@ body {
     cursor: not-allowed;
 }
 
-/* .btn-group-sm > .btn 的 specificity (0,2,0) 高於 .btn-sm (0,1,0)，需一併覆寫字級避免被 Bootstrap 原生 .875rem 蓋掉 */
+/* 控制項的字級：一般按鈕＝內文（base），小按鈕＝sm；大小差異靠高度與內距（DESIGN-SYSTEM §3）。
+   .btn-group-sm > .btn 的 specificity (0,2,0) 高於 .btn-sm (0,1,0)，需一併覆寫 */
 .btn-sm,
 .btn-group-sm > .btn {
-    --bs-btn-font-size: var(--lf-control-font-size-sm);
+    --bs-btn-font-size: var(--lf-font-size-sm);
     --bs-btn-border-radius: var(--lf-radius-sm);
-    min-height: 24px;   /* 點擊區下限（DESIGN-SYSTEM §8.2）：小字級時字高＋內距不到 24px */
+    /* 高度與小尺寸輸入框相同：字比輸入框小（sm 對 base），不補高度的話篩選列的按鈕、分段控制會比輸入框矮一截。
+       這個高度在小字級下也大於點擊區下限 24px（DESIGN-SYSTEM §8.2） */
+    min-height: var(--lf-control-height-sm);
 }
 
 /* 勾選框與開關靠標籤擴大點擊範圍：行內標籤的上下內距只擴大可點區、不改變行高（小字級時標籤字高不到 20px） */
@@ -443,11 +466,10 @@ body {
     border-radius: var(--lf-radius-sm);
     /* 明確指定字族與字級：瀏覽器 autofill 狀態下用自己的 UA 字型渲染，使用者一聚焦
        就變回站台字型，看起來像「點一下字就變大」（回饋二十七輪 P9）。
-       **值必須是 1rem**——那正是 Bootstrap .form-control 原本生效的字級，也是使用者
-       指名要保留的「放大後」那個大小；改用 body 的 --lf-font-size-base（.95rem）
-       會把全站表單欄位一起縮小，方向剛好相反 */
+       字級＝內文（base），.form-control-sm／.form-select-sm 也一樣：輸入框不縮成 sm，
+       避免 iOS Safari 對小於 16px 的輸入框自動放大整頁，也維持使用者指定保留的大小 */
     font-family: var(--lf-font-family);
-    font-size: 1rem;
+    font-size: var(--lf-font-size-base);
 }
 
 /* autofill 系列：瀏覽器注入的 UA 樣式優先權高，字族與字級要明確覆寫才壓得住，
@@ -458,7 +480,7 @@ input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
     font-family: var(--lf-font-family) !important;
-    font-size: 1rem !important;
+    font-size: var(--lf-font-size-base) !important;
 }
 
 /* <summary>（原生收合標題）點擊區至少 24px 高 */
@@ -519,7 +541,7 @@ select[multiple] option:checked {
     margin-bottom: var(--lf-space-1);
 }
 
-.form-text { font-size: var(--lf-font-size-xs); }
+.form-text { font-size: var(--lf-font-size-sm); }
 
 /* 分頁 */
 /* 分頁鈕點擊區至少 24×24（窄螢幕的頁碼鈕原本只有 21～23px 寬） */
