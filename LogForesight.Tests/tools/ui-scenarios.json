@@ -2379,7 +2379,7 @@
         "evalAssert": "if (innerWidth < 992) return null; const a = [...document.querySelectorAll('.lf-report-page a[href], .lf-report-page button')].filter(e => e.getBoundingClientRect().width > 0 && !e.closest('#wall-exit')); return a.length ? ('大螢幕仍有可點元素：' + a.map(e => e.id || e.className).slice(0, 5).join(',')) : null;"
       },
       {
-        "evalAssert": "if (innerWidth < 992) return null; const vals = [...document.querySelectorAll('#report-kpi .lf-stat__value')]; if (!vals.length) return '找不到 KPI 數字'; const fs = Math.min(...vals.map(v => parseFloat(getComputedStyle(v).fontSize))); const need = innerHeight >= 2000 ? 128 : innerHeight >= 1000 ? 64 : 0; return fs < need ? ('KPI 字高 ' + fs + 'px < ' + need + '（以 --height 1080／2160 量）') : null;"
+        "evalAssert": "if (innerWidth < 992) return null; const vals = [...document.querySelectorAll('#report-kpi .lf-stat__value')]; if (!vals.length) return '找不到 KPI 數字'; const fs = Math.min(...vals.map(v => parseFloat(getComputedStyle(v).fontSize))); const expected = 64 * Math.max(1, innerHeight / 1080); return Math.abs(fs - expected) > 1 ? ('KPI 字高 ' + fs + 'px，應為 ' + expected.toFixed(1) + 'px（隨視窗高度、不隨使用者字級偏好）') : null;"
       },
       {
         "assertAt": {

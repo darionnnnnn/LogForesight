@@ -518,6 +518,50 @@ public class RunMonitorServiceTests : IDisposable
         Assert.DoesNotContain("已無自動複查", row.StatusNote);
     }
 
+    [Fact]
+    public void 今日列_有待複查且同窗口排得進_RecheckAt是上一趟開跑加60分()
+    {
+        // 窗口以「現在」為準動態建立（前 30 分到後 3 小時），測試不靠固定時刻
+        var now = DateTime.Now;
+        var window = new ScheduleWindow { Start = now.AddMinutes(-30).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") };
+        if (now.AddMinutes(-30).Date != now.Date) return;   // 剛過午夜：窗口起點落在昨天，今日列沒有上一趟，此案無意義
+        Options().Update(o => { o.Enabled = true; o.Windows = new List<ScheduleWindow> { window }; });
+        var instance = ScheduleCalculator.CurrentWindowInstance(now, new[] { window })!.Value;
+
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.9.21", Source = "netiq" });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        var runs = Runs();
+        var started = instance.Start.AddMinutes(1);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE-R", StartedAt = started, Trigger = BatchRunTriggers.Schedule, WindowInstanceStart = instance.Start });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = id, HostName = "SITE-R", StartedAt = started, FinishedAt = started.AddMinutes(2),
+            Trigger = BatchRunTriggers.Schedule, WindowInstanceStart = instance.Start, NetiqEmptyPending = 1, ExitCode = 0
+        });
+
+        var today = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.True(today.IsToday);
+        Assert.Equal(1, today.RecheckCount);
+        var expected = started.AddMinutes(60) < now ? now : started.AddMinutes(60);
+        Assert.Equal(expected.ToString("HH:mm"), today.RecheckAt);
+    }
+
+    [Fact]
+    public void 今日列_排程未啟用時沒有RecheckAt()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.9.22", Source = "netiq" });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        AddTodayRun(1);
+
+        var today = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.Equal(1, today.RecheckCount);
+        Assert.Null(today.RecheckAt);
+    }
+
     [Theory]
     [InlineData(false, null, "空資料，排程未啟用，不會自動複查")]
     [InlineData(false, "02:00", "空資料，排程未啟用，不會自動複查")]

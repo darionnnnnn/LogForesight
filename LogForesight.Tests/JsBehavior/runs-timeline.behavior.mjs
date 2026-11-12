@@ -253,6 +253,10 @@ const cases = {
         assert.equal(text(notRunCell({ isToday: false, notRunCount: 1, recheckCount: 2 })), '1＋空資料待複查 2');
         assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 2 })), '空資料待複查 2');
         assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 0 })), '');
+        // 今日列在同一窗口排得進複查時接預計時刻；沒有時刻（排不進、其他日期）就只寫台數
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: '02:00' })), '空資料待複查 2（約 02:00 複查）');
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2, recheckAt: '02:00' })), '3（尚未處理）＋空資料待複查 2（約 02:00 複查）');
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: null })), '空資料待複查 2');
     }
 };
 

@@ -504,17 +504,17 @@ Windows · NetIQ · 錯誤 8 · 警告 1 · 稽核事件 8 · 主機角色…
 | B-3 | 完成 | `AttemptHistory.LastAttemptAtUtc`；`NetiqPipelineService.ApplyResumePolicy` 延後 |
 | B-4 | 完成 | `RunMonitorService.EmptyRecheckNote`（三種文字） |
 | B-5 | 完成（含收窄） | `EmptyRecheckPlanBenchmarks` 實測 174.3 秒 → `RunRequest.NetiqLedgerRetryOnly` |
-| B-6 | 完成 | `RunDaySummaryDto.RecheckAt`、`runs.js` 今日列；匯出 `netiqEmptyPending` 與說明 |
+| B-6 | 完成（二次比對補測試） | `RunDaySummaryDto.RecheckAt`、`runs.js` 今日列；匯出 `netiqEmptyPending` 與說明。補：`runs-timeline.behavior.mjs` 今日列時刻三例；`RunMonitorServiceTests` 以「現在」動態建窗口驗接線（突變轉紅）與排程未啟用無時刻 |
 | B-7 | 完成 | WEB-SPEC 兩段、說明書 `10-scheduler` |
 | C-1a／C-1b | 完成 | `AiGrammarMemory`；`IAiRequestGate.GrammarMemory`；`AIService` 第一次嘗試、`grammarSkippedByMemory` |
 | C-2 | 完成 | `AIService.AttemptLoggerName`；`IsWarnCountExemptLogger`；監控頁與匯出共用判定 |
 | C-3 | 完成 | `LocalCheckupSkipReason` 兩個新原因；重現測試 |
 | C-4 | 完成 | WEB-SPEC §9.10、DETECTION-SPEC、BACKLOG |
-| D-1～D-4 | 完成 | `components.css` 末列線；捲軸 token；`Runs.cshtml`／`RERUN_MODE_CONFIG`；`icons.svg` copy 路徑＋`IconSpriteTests` |
+| D-1～D-4 | 完成（二次比對補普查） | `components.css` 末列線；捲軸 token；`Runs.cshtml`／`RERUN_MODE_CONFIG`；`icons.svg` copy 路徑＋`IconSpriteTests`。補：圖示外框普查 8 頁（儀表板、問題查詢、主機、排程作業、報表、交辦總覽、設定、風險日詳情）× 完整矩陣皆在按鈕內 |
 | E-1～E-6 | 完成 | `record-detail.js` `aiSummaryBlock`／`briefBlock`／`identityFacts`；`lf-briefing__*`；說明書與文件；列印情境「列印-風險日頁首」 |
-| F-1～F-6 | 完成 | `DashboardHostDto.DisplayName`；`ReportCoverageDto`＋`AggregateReportCoverage`；`reports.js` 第一排、趨勢、處理進度、排行、工具列與移除項 |
+| F-1～F-6 | 完成（二次比對補量測） | `DashboardHostDto.DisplayName`；`ReportCoverageDto`＋`AggregateReportCoverage`；`reports.js` 第一排、趨勢、處理進度、排行、工具列與移除項。補：366 天期間趨勢圖在 375／1280／1920 刻度不重疊 |
 | F-7 | **部分**（偏離） | 1920×1080、1280×900 一屏；1280×800 差約 30px（可讀下限 130px），BACKLOG 記錄；「列印分頁數與改版前相同」不適用（版面已改），以列印模擬量測取代 |
-| F-8～F-10 | 完成 | `_Layout.cshtml` 伺服器端 `lf-wall`；`reports-wall.js`；`charts.setFontScale` 與座標軸補字級 |
+| F-8～F-10 | 完成（二次比對補量測） | `_Layout.cshtml` 伺服器端 `lf-wall`；`reports-wall.js`；`charts.setFontScale` 與座標軸補字級。補：使用者字級小／中／大時大螢幕 KPI 皆為 64px（1080 高），常駐情境的斷言改為精確值 |
 | F-11 | 完成（收尾補） | `ui-scenarios.json` 新增「大螢幕-報表」「列印-風險日頁首」；報表三種狀態（逾期、缺漏、落後）由行為測試覆蓋，資料集現有逾期與缺漏，沒有「資料落後」的資料 |
 | F-12 | 完成 | WEB-SPEC §9.6、說明書 `15-reports`、BACKLOG 兩條 |
 | G-1 | 完成 | 本表 |
