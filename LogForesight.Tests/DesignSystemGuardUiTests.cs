@@ -171,4 +171,41 @@ public sealed class DesignSystemGuardUiTests
         var isLinkSample = sample.Contains("link") || sample.Contains("disclosure");
         Assert.Equal(expected, isLinkSample ? BtnLink.IsMatch(sample) : HandwrittenButton.IsMatch(sample));
     }
+
+    // ── 第 71 輪：標記與顏色訊號（DESIGN-SYSTEM §8.8）——有底色的標記只留給層級最高一級與「重大」 ──
+
+    private static string Rule(string css, string selector)
+    {
+        var m = Regex.Match(css, $@"(?m)^{Regex.Escape(selector)}\s*\{{([^}}]*)\}}");
+        Assert.True(m.Success, $"樣式表找不到 {selector} 規則");
+        return m.Groups[1].Value;
+    }
+
+    [Fact]
+    public void 一般標記的變體只決定圓點顏色_不設底色()
+    {
+        var css = Regex.Replace(SiteCss.Read(), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        foreach (var variant in new[] { "danger", "warning", "success", "info", "primary", "high", "mid", "low" })
+        {
+            var body = Rule(css, $".lf-badge--{variant}");
+            Assert.Contains("--lf-badge-dot", body);
+            Assert.DoesNotMatch(@"(^|[\s;])background", body);
+        }
+        Assert.Matches(@"background:\s*none", Rule(css, ".lf-badge"));
+    }
+
+    [Fact]
+    public void 篩選膠囊選中不用實心主色()
+    {
+        var css = Regex.Replace(SiteCss.Read(), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        var body = Rule(css, ".lf-chip.active");
+        Assert.DoesNotMatch(@"background:\s*var\(--lf-primary\)", body);
+    }
+
+    [Fact]
+    public void 卡片不以左側色條表達嚴重度()
+    {
+        var css = Regex.Replace(SiteCss.Read(), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        Assert.DoesNotMatch(@"\.lf-card--(critical|warning|ok)\s*\{[^}]*border-left", css);
+    }
 }

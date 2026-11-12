@@ -50,7 +50,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   實作方自查修正、換模型體檢修正、併 dev 後的實測補修各加 1 次修訂（同一批多個 commit 只加一次）；零星修補只加修訂。
   第三碼由 `VersionRoundGuardTests` 守門，第四碼在收尾時檢查。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
-- **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕、寬度、判斷層／佐證層與共用元件一覽）為基準，不必再問。
+- **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕與分段控制、寬度、判斷層／佐證層、共用元件一覽、§8.8 標記與顏色訊號）為基準，不必再問。
   驗收用 UI 資料集＋截圖量測工具（DESIGN-SYSTEM §8.7）：改到的頁面在五個寬度下六項量測為 0 才算完成；樣式表是 `wwwroot/css/` 的 base／components／layout／pages 四層，唯一引用點 `Views/Shared/_Styles.cshtml`。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
   `appsettings.json` 只留啟動與安全前提（Storage/Jwt/Auth）。**新增設定必須有消費端**——

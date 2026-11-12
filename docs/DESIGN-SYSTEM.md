@@ -36,18 +36,20 @@
 
 | token | v1 | v2 | 說明 |
 |---|---|---|---|
-| `--lf-sidebar-bg` | `#161d2e` | `#0f1d3a` | 深海軍藍，從「近黑」轉向與主色同族的深藍，品牌感更聚焦 |
+| `--lf-sidebar-bg` | `#161d2e` | `#0c1527` | 深海軍藍，與主色同族；比內容區深得多，側欄與工作區一眼分開 |
 | `--lf-sidebar-fg` | `#a9b4c7` | `#9fb0cc` | 隨底色微調 |
 | `--lf-sidebar-fg-strong` | `#f1f4fa` | 不變 | |
 | `--lf-sidebar-section` | `#6f7c93` | `#9fb0cc` | 與 `--lf-sidebar-fg` 同值，在 `--lf-sidebar-bg` 上對比 7.6:1（WCAG AA 要求 4.5:1）；分組標題的層級靠大寫、字距、字級與 600 字重表現 |
-| `--lf-sidebar-active-bg` | `rgba(99,102,241,.22)` | `rgba(59,130,246,.24)` | 換藍族 |
+| `--lf-sidebar-active-bg` | `rgba(99,102,241,.22)` | `rgba(255,255,255,.08)` | 選中項淡底；另有 `--lf-sidebar-active-bar`（`#6b9bff`）左側 3px 細條，灰階下也看得出選中 |
 | `--lf-sidebar-hover-bg` | 不變 | 不變 | |
-| `--lf-content-bg` | `#f6f7fb` | `#f8fafc` | slate-50，與中性階完全對齊 |
-| `--lf-card-bg` | `#ffffff` | 不變 | |
-| `--lf-border` | `#e5e9f0` | `#e2e8f0` | slate-200 對齊 |
-| `--lf-border-strong` | `#d5dbe6` | `#cbd5e1` | slate-300 對齊 |
+| `--lf-content-bg` | `#f6f7fb` | `#f4f5f7` | 頁底：底色階梯（頁底 → 面板 → 凹槽）的第一階，與白色面板對比 1.09 |
+| `--lf-card-bg` | `#ffffff` | 不變 | 面板 |
+| `--lf-sunken` | — | `#eef0f3` | 凹槽：分段控制的軌道、停用按鈕、進度條的軌道 |
+| `--lf-panel-ring` | — | `0 0 0 1px var(--lf-border), 0 1px 2px …` | 面板外環：面板用透明 1px 邊框（強制色彩模式下仍有輪廓）加這圈細環，不用實線邊框 |
+| `--lf-border` | `#e5e9f0` | `rgba(15, 23, 42, .10)` | 細線由文字色的透明度推出，放在任何淡底上都同一個濃度 |
+| `--lf-border-strong` | `#d5dbe6` | `rgba(15, 23, 42, .18)` | 較強的細線：輸入框、髮絲邊按鈕 |
 | `--lf-text` | `#1e293b` | `#0f172a` | slate-900，資料密集畫面拉高正文對比（16.9:1） |
-| `--lf-text-muted` | `#64748b` | 不變 | slate-500（4.76:1，過 AA） |
+| `--lf-text-muted` | `#64748b` | `#5b6678` | 次要文字：對白底 5.9:1、對頁底 5.4:1 |
 
 ### 語意色（名稱固定不可改，charts.js 執行期讀取；只調色值）
 
@@ -63,7 +65,9 @@
 | `--lf-info` / `-soft` / `-text` | `#0891b2` / `#e4f6fa` / `#155e75` | `#0284c7` / `#e0f2fe` / `#075985` | 同上歸族 |
 | `--lf-warning` 系 | `#d97706` 系 | 不變 | 本就是琥珀，與 accent 自然統一 |
 | success／danger／neutral／dark 系 | | 全部不變 | |
-| `--lf-success-muted` | — | `#65a30d` | 新增：執行紀錄「已回補」狀態（淺綠，與「當天真的有跑」的 `--lf-success` 分色） |
+| `--lf-success-muted` | — | `#65a30d` | 執行紀錄「已回補」狀態（淺綠，與「當天真的有跑」的 `--lf-success` 分色） |
+| `--lf-warning-line`／`--lf-danger-line`／`--lf-success-line` | — | 語意色 30～35% 透明度 | 提示框與「重大」旗標的細環（比實線語意色安靜） |
+| `--lf-timeline-mid`／`-low`／`-gap`／`-none` | — | `#fbd5a5`／`#eef0f3`／`#fff1bf`／`transparent` | 主機風險月曆：只有高風險用實色（`--lf-risk-high`）；中風險淡琥珀加底線、無紀錄空框（見 §8.8） |
 
 ### 圖表 8 類固定色盤（§8.3 規則 3）
 
@@ -109,11 +113,11 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 ## 4. 形狀、陰影、間距、動效
 
 - **圓角**（收緊一階，data-dense 專業感）：`--lf-radius-sm: .25rem`、`--lf-radius: .5rem`、`--lf-radius-lg: .75rem`、pill 不變。
-- **陰影**：階層不變；卡片 hover 提升維持 `xs→md`。
+- **陰影**：只給浮在內容上方的東西（下拉選單、popover、modal、toast）。面板靜止時靠 `--lf-panel-ring` 與頁底分開，不靠陰影；可點的卡滑過只變底色。下拉選單的陰影直接寫 `box-shadow`（Bootstrap 5.3.8 沒有規則引用 `--bs-dropdown-box-shadow`）。
 - **間距**：`--lf-space-*` 不變（已是 4/8 節奏）。表格列高目標 36px、卡片內距 12–16px（skill Data-Dense 建議值，Phase 3 元件層落實）。
 - **動效**：`--lf-transition: .15s ease` 維持；較大轉場（modal、燈箱）150–300ms `ease-out`；**hover/pressed 不得位移佈局**（用透明度/陰影/色彩）；新增全站 `prefers-reduced-motion: reduce` 支援（動畫關閉、transition 降為 0）。
 - **下拉選項**：`select option／optgroup` 明確指定 `--lf-text` 與 `--lf-card-bg`、`select` 宣告 `color-scheme: light`——選項背景透明時 Windows 版 Chrome 部分寬下拉的選項文字畫不出來（`FrontendConsistencyUiTests` 守門）。
-- **focus ring**：`0 0 0 .2rem rgba(30, 64, 175, .22)`，鍵盤導覽全元件可見。
+- **焦點指示**：`--lf-focus-ring` 是 2px 面板色間隔＋2px 實心 `--lf-focus-color`（品牌藍），合成後對白底、淡底、頁底都 ≥ 3:1；嵌在列或標頭內的用 `--lf-focus-ring-inset`。半透明光暈對白底只有約 1.5:1，不得使用（`AccessibilityUiTests` 守門）。深色側欄的元件另用淺色外框。
 - **捲軸**：顏色由 `html` 的 `scrollbar-color` 繼承到全站（拇指 `--lf-scrollbar-thumb`，軌道透明，對白底 4.8:1）；寬度分兩級——頁面主內容區與 modal 內文維持預設寬度（細捲軸不好抓），側欄選單、`.lf-table-wrap`、`.lf-scroll-*` 這類小型捲動容器用 `thin`。側欄另用 `--lf-scrollbar-thumb-sidebar`（對側欄底 3.2:1），滑過側欄時提亮。只用標準屬性，不用 `::-webkit-scrollbar`。
 
 ## 5. Anti-patterns（skill 檢索所得，適用本產品）
@@ -123,6 +127,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - Emoji 當結構性圖示：一律 SVG sprite（既有原則，維持）。
 - 寬表格撐破版面：溢出容器一律 `overflow-x: auto`。
 - 逐列單獨操作：清單頁維持批次選取（§8.6 #11）。
+- 同一種膠囊表示不同種類的資訊：狀態、層級、歸屬一律長得一樣時，有底色的標記就失去訊號（§8.8）。
 
 ## 6. 交付前檢查表
 
@@ -157,10 +162,10 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 （`FrontendConsistencyUiTests` 等），新頁面與改版一律適用。
 
 **動作層級**
-- **每頁至多一個主要按鈕**（`btn-primary`，實心）：它就是這頁最常做的那件事。其餘一律 `btn-outline-secondary`；
-  危險動作 `btn-outline-danger` 並經 `confirmAction` 二次確認。modal 內另計（每個 modal 同樣至多一個主要按鈕）。
-- **清單列內重複出現的動作**（每列一顆「回覆」）不算頁面主要按鈕，樣式用 `btn-sm btn-outline-primary`——
-  一頁 20 顆實心按鈕等於沒有重點。
+- **每頁至多一個主要按鈕**（`btn-primary`，實心）：它就是這頁最常做的那件事。其餘一律 `btn-outline-secondary`（髮絲邊）；
+  危險動作 `btn-outline-danger`（無框危險色文字）並經 `confirmAction` 二次確認。modal 內另計（每個 modal 同樣至多一個主要按鈕）。
+- **清單列內重複出現的動作**（每列一顆「回覆」）不算頁面主要按鈕，樣式用 `btn-sm btn-outline-primary`（無框品牌色文字）——
+  一頁 20 顆實心按鈕等於沒有重點。外觀見 §8.3。
 - 功能未啟用、前置條件未滿足時，相關動作按鈕**不可呈現為主要樣式**；改顯示指路文字（「到 X 頁啟用」）。
 
 **三種狀態版型必須看得出差別**
@@ -173,9 +178,9 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 **資訊密度**
 - 說明文字的取捨見 WEB-SPEC §8.6a（保留後果句、其餘收進 `?` 或刪除）；一個下拉有多重副作用時，把副作用做成選項旁的對照表，不寫整段散文。
 - 日常動線用不到的內容（開發工具、校準、純調校參數）收進「進階」收合區，預設收合、記住使用者的展開選擇（`localStorage`，try/catch 包起來）。
-- KPI 統計卡一律用 `core/ui.js` 的 `kpiStrip(groups)`（唯一出口，`FrontendConsistencyUiTests` 守門）：卡片分組（可有組標題），組內 grid `minmax(9rem, 14rem)`，
+- KPI 統計卡一律用 `core/ui.js` 的 `kpiStrip(groups)`（唯一出口，`FrontendConsistencyUiTests` 守門）：卡片分組（可有組標題，列高固定、有無說明圖示同一條基線），組內 grid `repeat(auto-fill, minmax(11rem, 1fr))`（不設上限，4 張卡在 1280 寬同一列），
   寬螢幕（≥1200px）放得下的組依卡數比例並排、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；575px 以下每列兩張。每張卡固定「數字／標籤／副標」三列，副標沒有內容也保留兩行高，
-  同列等高；標籤可換行、副標最多兩行後省略（完整文字在 `title`），可行動的句子放前半。副標只放含資料或口徑的句子。hover 只變陰影與邊框色，不位移。
+  同列等高；標籤可換行、副標最多兩行後省略（完整文字在 `title`），可行動的句子放前半。副標只放含資料或口徑的句子。卡片與面板同一語言（透明邊框＋細環）；可點的卡右上角有「›」當靜止時的線索，滑過只變底色，不位移。
 - 卡片超過一排且第一排已足夠判斷時，`kpiStrip(groups, { singleRow: true })` 搭配 `core/reveal.js` 的 `revealFirstRow` 只顯示第一排：576px 以上各組同排依卡數分寬、卡片撐滿；依實際格線欄數收合、一個區域一顆揭露鈕、按鈕寫出被藏的數量與告警數、列印時全部顯示。不用固定高度裁切。
 
 **互動**
@@ -232,12 +237,13 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | `lf-text-title` | 列或區塊的主標 | base、600、`--lf-text` |
 | `lf-text-meta` | 次要資訊（次數、時段、來源） | sm、400、`--lf-text-muted` |
 | `lf-text-label` | 眉標、欄位標籤 | sm、600、`--lf-text-muted` |
-| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
+| `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），表格內整段不斷行（欄寬讓給技術值，折行留給成段文字欄）；放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
 | `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
 
 紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
 風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。表單必填星號用 `lf-required-mark`（同色、`aria-hidden`）；需要使用者處理才能繼續、或選了會有明顯後果的提示用 `statusNote` 的 warning 型，不降成次要文字。
 一行次要資訊用 `metaLine(items)`：空值自動略過，沒有任何有效項目時回傳 null；間隔由 gap 提供，窄寬度整項換行。
+表格裡的帳號、主機名、Sentinel 名稱、來源這類識別值加 `text-nowrap`，不在連字號處斷行；名稱欄給 `lf-minw-md` 讓超長名稱折行不超過四行。
 
 ### 8.2 揭露與動作：三種語意三種外觀
 
@@ -245,7 +251,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 |---|---|---|
 | 就地展開／收合 | `elements.js` `disclosure(標籤, 目標)` | 箭頭＋文字、無底線、次要文字色，滑過與焦點轉主色；收合朝右、展開朝下；標籤寫所指對象（「全文」「佐證」），展開前後不變，狀態看箭頭與 `aria-expanded` |
 | 工具列的次要條件 | `elements.js` `filterDisclosure(目標, 已套用數)` | 同就地展開；標籤「更多條件」後接已套用的條件數（0 個時不寫數字），進頁已有套用中的條件就預設展開 |
-| 開 modal 或面板 | `ui.js` `button(文字, { opens: 'dialog' })` | 小外框按鈕＋圖示，數量寫進標籤（「原始訊息 3」）；加 `aria-haspopup="dialog"` |
+| 開 modal 或面板 | `ui.js` `button(文字, { opens: 'dialog' })` | 小髮絲邊按鈕＋圖示（表格列內無框），數量寫進標籤（「原始訊息 3」）；加 `aria-haspopup="dialog"` |
 | 換頁 | `a[href]`（走 `appUrl()`） | 主色文字，底線只在滑過與焦點出現 |
 
 `btn-link` 不當按鈕樣式；就地展開的標籤不寫「展開…」。`disclosure` 放在可點擊展開的表格列裡時自行阻止冒泡；列印時按鈕不印、由按鈕管理的目標一律印出（`lf-disclosure-target`），`filterDisclosure` 的篩選欄位除外。
@@ -256,6 +262,11 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **變體白名單**：`primary`（每頁、每個 modal 至多一顆）、`outline-primary`（列內重複動作）、`outline-secondary`（其餘）、
   `outline-danger`（危險動作入口）、`danger`（危險動作的確認鈕）。`confirmAction` 的 `confirmVariant` 只用 `primary` 或 `danger`；
   同一類確認的輕重差別交給確認框內提示框的顏色，不靠按鈕換色。唯一例外：深色側欄上的登出鈕用 `outline-light`。
+- **變體名稱是角色，不是外觀**（外觀只在 `base.css` 定義一次）：`primary`／`danger` 實心；`outline-secondary` 面板色底＋髮絲細環（`--lf-border-strong`），滑過出現凹槽底；
+  `outline-primary` 無框品牌色文字、`outline-danger` 無框危險色文字，滑過出現對應淡底；表格列內帶圖示的 `outline-secondary` 小按鈕無框，靠圖示辨識。
+  所有按鈕保留 1px 邊框（無框者為透明），強制色彩模式下仍有輪廓。停用：凹槽底、次要文字色、`not-allowed` 游標。
+- **分段控制**（互斥或可複選的切換）：全站一種外觀——一條凹槽（`--lf-sunken`），選中的選項浮起成面板色並加粗。`.btn-group` 一律是分段控制；
+  不是 `.btn-group` 但子按鈕帶 `aria-pressed` 的容器（設定頁層級）同一外觀。按下狀態以 `.active` 或 `aria-pressed="true"` 表達，新寫的切換兩者都設。
 - **尺寸**：頁首動作、表單動作區、modal footer 用預設尺寸；卡片標頭、工具列、表格列內用 `sm`。
 - **位置**：頁面動作在頁首右側；卡片動作在卡片標頭右側；表單動作在尾端靠右、主要動作最右（與 modal 一致）；
   列內動作在列尾；工具列篩選在左、動作在右。
@@ -296,10 +307,25 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 只有圖示的連結 | `lf-icon-link` |
 | 詳情頁頁首卡 | `lf-entity-head`（`__title`／`__link`／`__badges`／`__actions`／`__facts`，layout.css） |
 | 可展開表格就地重繪保留展開 | `renderTable(..., { rowKey, expandedKeys })`；`toggleAllTableDetails` 走列自己的切換 |
-| KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary` |
+| KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary`：只有 `danger` 上色；`warning` 數字維持文字色、標籤前一顆警示色圓點；`secondary`（零或無事）淡化 |
+| 狀態、層級、旗標標記 | `format.js` `statusBadge`／`severityBadge`／`riskBadge`／`elevatesBadge`（形式見 §8.8） |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。
+
+### 8.8 標記與顏色訊號
+
+有底色的標記是稀有資源：一張表格裡每列都有兩三顆彩色膠囊時，就沒有東西被看見。
+
+- **一般標記＝圓點加文字**（`lf-badge lf-badge--<變體>`）：無底無框，前方一顆圓點，文字維持文字色。變體只決定圓點顏色
+  （`danger`／`warning`／`success`／`info`／`primary` 為語意色，`neutral`／`secondary`／`light`／`dark` 為灰）；同一個變體可以表示狀態，也可以表示標註。
+  圓點以邊框畫（列印不印背景色時仍在）；帶圖示的標記不畫圓點，由圖示表示。
+- **層級**（嚴重度、日風險等級）由層級出口加 `lf-badge--level`：`severityBadge`、`severityCountBadge`、`riskBadge`。只有最高一級（風險「高」）保留淡底。
+- **「重大」旗標**由 `elevatesBadge` 加 `lf-badge--flag`，保留淡底——這兩個是全站僅有的有底色標記。
+- **標籤外觀的例外**：內含移除鈕的條件標籤（`:has(> button)`，例：問題查詢已選主機）與明確加 `border` 的歸屬標籤（群組、負責人），維持細框標籤、無圓點。
+- **KPI 數字**：見 §8.6；最嚴重的類別卡（`lf-card--critical`，`dashboard.js` 以這個類別判斷告警）不加色條，數字轉危險色。
+- **主機風險月曆**：只有高風險用實色；中風險淡琥珀加 3px 底線（灰階下與低風險分得出）、低風險近中性、無紀錄空框。圖例的色塊用同一組 token 與線索（`data-legend`）。
+- 舊的 Bootstrap 徽章寫法（`badge bg-*`／`text-bg-*`）不再新增。
 
 ### 8.7 驗收工具（LogForesight.Tests）
 
