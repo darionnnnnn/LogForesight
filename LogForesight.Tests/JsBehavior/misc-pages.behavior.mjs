@@ -379,6 +379,8 @@ const cases = {
         const synced = [];
         const api = { get: () => Promise.reject(new Error('boom')) };
         const inst = build('reports.js', ['async function load(', 'async function loadReport('], `
+            let activePresetDays = null;
+            let appliedView = null;
             let currentScope = 'all';
             let requestedScope = 'unresolved';   // 使用者剛點了「未結案」chip
             const reportGuard = createSeqGuard();
@@ -403,6 +405,8 @@ const cases = {
         const urls = [];
         const api = { get: async (url) => { urls.push(url); return { handlingScope: 'unresolved', from: 'a', to: 'b' }; } };
         const inst = build('reports.js', ['async function load(', 'async function loadReport('], `
+            let activePresetDays = null;
+            let appliedView = null;
             let currentData = null;
             let retentionDays = 90;
             let currentScope = 'all';
@@ -414,8 +418,7 @@ const cases = {
             const location = { search: '', pathname: '/reports' };
             const history = { replaceState() {} };
             const updateYoyOptionLabel = () => {};
-            const renderKpi = () => {};
-            const renderVisibleCharts = () => {};
+            const renderAll = () => {};
             const syncScopeChips = () => synced.push(currentScope);
         `, '{ load, scope: () => currentScope }', {
             api,
@@ -448,6 +451,8 @@ const cases = {
     async reports載入失敗後清掉待生效範圍() {
         const api = { get: () => Promise.reject(new Error('boom')) };
         const inst = build('reports.js', ['async function load(', 'async function loadReport('], `
+            let activePresetDays = null;
+            let appliedView = null;
             let currentScope = 'all';
             let requestedScope = 'unresolved';
             const reportGuard = createSeqGuard();

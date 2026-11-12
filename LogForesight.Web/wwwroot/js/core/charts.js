@@ -5,8 +5,7 @@
  *   1. 注入設計 token 的色盤與字型（語意色全站一致，§8.2 原則 3）
  *   2. 統一 tooltip / legend / 座標軸樣式
  *   3. 接上下鑽（§8.4）：點擊資料點 → 導向帶篩選條件的明細頁
- *   4. 提供折線/長條圖的「表格」切換，與占比圓餅圖的右側文字條列
- *      （2026-07-28 起不再提供 PNG 下載，見 attachToolbar／attachDoughnutLegend）
+ *   4. 提供折線/長條圖的「表格」切換（attachToolbar）
  *
  * 換圖表庫時只需要重寫這個模組——這是防廢棄的實際手段，不是原則宣示。
  */
@@ -46,37 +45,47 @@ export function riskColors() {
     };
 }
 
-/** 占比圖表用的中性色（docs/archive/HISTORY.md #6：受影響主機占比／處理進度） */
+/**
+ * 處理狀態用色（報表處理進度條）：已處理＝成功綠、處理中＝資訊藍、未處理＝中性灰。
+ * 刻意不用風險色（紅／琥珀）——同一張卡的第二條是風險層級，兩條用同色系會互相混淆。
+ */
 export function statusColors() {
     return {
         success: cssVar('--lf-success', '#16a34a'),
-        neutral: cssVar('--lf-gray-300', '#cbd5e1')
+        inProgress: cssVar('--lf-info', '#0284c7'),
+        unhandled: cssVar('--lf-gray-400', '#94a3b8')
     };
 }
 
 const FONT_FAMILY = '"Segoe UI", "Microsoft JhengHei", system-ui, sans-serif';
 
-// 圓形圖（甜甜圈／圓餅）沒有 XY 軸，也不該用 index 模式的共用提示——
-// 兩者都是為折線／長條圖準備的，套到圓形圖上會多畫出一組 0～1 的空軸並吃掉繪圖區。
-const CIRCULAR_TYPES = new Set(['doughnut', 'pie', 'polarArea']);
+/**
+ * 圖表文字倍率：預設 1，一般模式的字級完全不變。報表的大螢幕模式依視窗高度放大時，
+ * 進入設成大於 1 的值、離開設回 1（呼叫端自己重畫圖表，倍率只影響之後建立的圖）。
+ */
+let fontScale = 1;
 
-function baseOptions({ drillTo, onDrill, type }) {
-    const circular = CIRCULAR_TYPES.has(type);
+export function setFontScale(scale) {
+    fontScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+/** 基準字級乘上倍率；倍率 1 時回傳原值 */
+const fontSize = base => Math.round(base * fontScale);
+
+function baseOptions({ drillTo, onDrill }) {
     const options = {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: circular
-            ? { mode: 'nearest', intersect: true }
-            : { mode: 'index', intersect: false },
+        interaction: { mode: 'index', intersect: false },
         plugins: {
             legend: {
                 position: 'bottom',
-                labels: { font: { family: FONT_FAMILY, size: 12 }, usePointStyle: true, boxWidth: 8 }
+                labels: { font: { family: FONT_FAMILY, size: fontSize(12) }, usePointStyle: true, boxWidth: fontSize(8), boxHeight: fontSize(8), padding: fontSize(14) }
             },
             tooltip: {
                 backgroundColor: cssVar('--lf-chart-tooltip-bg', '#1b2a41'),
-                titleFont: { family: FONT_FAMILY, size: 13 },
-                bodyFont: { family: FONT_FAMILY, size: 12 },
+                titleFont: { family: FONT_FAMILY, size: fontSize(13) },
+                bodyFont: { family: FONT_FAMILY, size: fontSize(12) },
                 padding: 10,
                 displayColors: true
             }
@@ -103,17 +112,15 @@ function baseOptions({ drillTo, onDrill, type }) {
         }
     };
 
-    if (!circular) {
-        options.scales = {
-            x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: 11 } } },
-            y: {
-                beginAtZero: true,
-                grid: { color: cssVar('--lf-chart-grid', '#0000000f') },
-                // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
-                ticks: { font: { family: FONT_FAMILY, size: 11 }, precision: 0 }
-            }
-        };
-    }
+    options.scales = {
+        x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: fontSize(11) } } },
+        y: {
+            beginAtZero: true,
+            grid: { color: cssVar('--lf-chart-grid', '#0000000f') },
+            // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
+            ticks: { font: { family: FONT_FAMILY, size: fontSize(11) }, precision: 0 }
+        }
+    };
 
     return options;
 }
@@ -126,11 +133,7 @@ function merge(base, extra) {
         plugins: { ...base.plugins, ...(extra.plugins ?? {}) }
     };
 
-    // 圓形圖的 base 沒有 scales，這裡也不能無條件補一個空物件回去——
-    // Chart.js 會照 options.scales 逐項建軸，不因圖型是甜甜圈而略過。
-    if (base.scales || extra.scales) {
-        merged.scales = { ...base.scales, ...(extra.scales ?? {}) };
-    }
+    merged.scales = { ...base.scales, ...(extra.scales ?? {}) };
 
     return merged;
 }
@@ -143,10 +146,20 @@ export function create(canvas, spec) {
     // 前一次可能顯示過「沒有資料」——重新畫圖時要把提示收掉，並讓 canvas 回到可見狀態
     clearNoData(canvas.parentElement);
 
+    const options = merge(baseOptions(spec), spec.options);
+    // 頁面自訂的座標軸會整組取代共用設定，刻度字級就退回 Chart.js 預設（根層的 options.font 對座標軸無效）：
+    // 倍率不是 1 時把放大後的刻度字級補進沒有自己指定字級的座標軸（倍率 1 不動任何設定）
+    if (fontScale !== 1 && options.scales) {
+        for (const [axis, cfg] of Object.entries(options.scales)) {
+            if (cfg?.ticks?.font) continue;
+            options.scales[axis] = { ...cfg, ticks: { ...(cfg?.ticks ?? {}), font: { family: FONT_FAMILY, size: fontSize(11) } } };
+        }
+    }
+
     const chart = new Chart(canvas, {
         type: spec.type,
         data: spec.data,
-        options: merge(baseOptions(spec), spec.options)
+        options
     });
 
     return chart;
@@ -154,7 +167,6 @@ export function create(canvas, spec) {
 
 export const line = (canvas, spec) => create(canvas, { ...spec, type: 'line' });
 export const bar = (canvas, spec) => create(canvas, { ...spec, type: 'bar' });
-export const doughnut = (canvas, spec) => create(canvas, { ...spec, type: 'doughnut' });
 
 /**
  * 圖卡的工具列：表格切換（§8.3 規則 4）。
@@ -200,45 +212,6 @@ export function attachToolbar(container, { canvasWrapper, tableColumns, tableRow
 
     toolbar.appendChild(toggleButton);
     container.appendChild(toolbar);
-}
-
-/**
- * 圓餅圖左圖右文字條列（docs/archive/HISTORY.md #3）：取代表格切換＋PNG 下載——
- * 圓餅圖本來就沒有 XY 軸，數字已經在條列裡，不需要再切換一次表格模式。
- * 每列「色點＋名稱＋數值＋百分比」，列本身可點（沿用該分段的 drillTo URL，
- * 與點圖同一個下鑽目的地）；沒有 url 的列（如彙總的「其餘」）不做成連結。
- * items: [{ label, value, color, url }]
- */
-export function attachDoughnutLegend(container, items) {
-    const total = items.reduce((sum, item) => sum + item.value, 0);
-
-    const list = document.createElement('div');
-    list.className = 'lf-legend-list';
-
-    for (const item of items) {
-        const percent = total > 0 ? Math.round((item.value / total) * 100) : 0;
-
-        const row = document.createElement(item.url ? 'a' : 'div');
-        row.className = 'lf-legend-row' + (item.url ? ' lf-legend-row--link' : '');
-        if (item.url) row.href = appUrl(item.url);
-
-        const dot = document.createElement('span');
-        dot.className = 'lf-legend-row__dot';
-        dot.style.setProperty('--lf-swatch', item.color);
-
-        const label = document.createElement('span');
-        label.className = 'lf-legend-row__label';
-        label.textContent = item.label;
-
-        const value = document.createElement('span');
-        value.className = 'lf-legend-row__value';
-        value.textContent = `${formatNumber(item.value)}（${percent}%）`;
-
-        row.append(dot, label, value);
-        list.appendChild(row);
-    }
-
-    container.replaceChildren(list);
 }
 
 function buildTable(columns, rows) {
@@ -296,41 +269,4 @@ export function clearNoData(container) {
     if (!container) return;
     container.classList.remove('lf-chart--empty');
     container.querySelector(':scope > .lf-empty')?.remove();
-}
-
-/**
- * 甜甜圈中央疊加文字（docs/archive/HISTORY.md #6：受影響主機占比／處理進度的百分比）。
- * canvasWrapper 需為 .lf-chart（position: relative）；文字絕對定位置中，不影響圖表本身。
- */
-export function setCenterText(canvasWrapper, text) {
-    let label = canvasWrapper.querySelector('.lf-chart__center-text');
-    if (!label) {
-        label = document.createElement('div');
-        label.className = 'lf-chart__center-text';
-        canvasWrapper.appendChild(label);
-    }
-    label.textContent = text;
-
-    // 甜甜圈取容器短邊畫圓，容器變扁時圓會縮小而固定字級不會——跟著短邊縮放，
-    // 字才不會溢出圓環。**observer 掛在 wrapper 上、每個 wrapper 只掛一次**：
-    // renderNoData 會把 label 移除，若跟著 label 建立，每次「沒資料→有資料」都會多一個
-    // observer，而舊的那些還抓著已脫離 DOM 的節點。callback 每次自己重查當前 label。
-    if (!canvasWrapper.__lfCenterTextObserver) {
-        canvasWrapper.__lfCenterTextObserver = new ResizeObserver(() => {
-            const current = canvasWrapper.querySelector('.lf-chart__center-text');
-            if (current) fitCenterText(canvasWrapper, current);
-        });
-        canvasWrapper.__lfCenterTextObserver.observe(canvasWrapper);
-    }
-
-    fitCenterText(canvasWrapper, label);
-}
-
-function fitCenterText(canvasWrapper, label) {
-    const rect = canvasWrapper.getBoundingClientRect();
-    const shortSide = Math.min(rect.width, rect.height);
-    if (shortSide <= 0) return;
-    // 甜甜圈預設環寬約半徑的一半，內圈直徑約短邊的一半——字寬控制在內圈以內
-    const size = Math.max(11, Math.min(20, shortSide * 0.18));
-    label.style.setProperty('--lf-center-font-size', `${size.toFixed(1)}px`);
 }

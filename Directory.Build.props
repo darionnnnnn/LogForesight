@@ -1,11 +1,18 @@
 <Project>
   <!--
-    docs/OPS-HARDENING-PLAN.md P1-4：所有專案共用同一個版本號，取代各自散落的預設 1.0.0.0——
-    報修時要能一眼確認回報者手上的批次／Web 是不是同一次部署，版本要對得上程式碼版本。
+    所有專案共用同一個版本號：報修時要能一眼確認回報者手上的站台是哪一次部署。
     MSBuild 會自動套用到同目錄與子目錄下所有專案，不必逐一在 .csproj 裡設定。
+
+    版號規則 1.0.<輪次>.<修訂>（VersionRoundGuardTests 守住第三碼）：
+    - 輪次＝docs/ 或 docs/archive/ 內 FEEDBACK-N-PLAN.md 的最大 N。開新一輪的第一個提交就改，修訂歸 0。
+    - 修訂＝同一輪內「會交給使用者實測」的後續修正批次，各加 1：實作方自查修正、換模型體檢修正、
+      併 dev 後依實測回饋的補修。同一批修正有多個 commit 只加一次。
+    - 不屬於任何一輪的零星修補（直接在 dev 上的小修）：修訂加 1，輪次不動。
+    - 前兩碼 1.0 是產品里程碑，只由使用者決定何時動。
+    判斷站台部署了哪個 commit 一律看 BuildVersion.Current.Label（版號＋短 sha）。
   -->
   <PropertyGroup>
-    <Version>1.0.53.2</Version>
+    <Version>1.0.70.2</Version>
     <!-- 平台專屬 API 呼叫一律視為錯誤：不得用 NoWarn／#pragma 壓制 -->
     <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>

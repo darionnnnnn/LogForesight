@@ -43,7 +43,7 @@ public class NetiqEvidenceMetadataProbeTests
         var after = DateTimeOffset.UtcNow;
         Assert.True(result.Success, result.Report);
         Assert.Contains("sentinel-id=53", result.Report);
-        Assert.Contains("schema-version=1; program-version=1.0.53.2", result.Report);
+        Assert.Contains($"schema-version=1; program-version={BuildVersion.Current.Number}", result.Report);
         var window = result.Report.Split('\n').Single(line => line.StartsWith("query-start-utc="));
         var parts = window.Trim().Split("; query-end-utc=");
         var start = DateTimeOffset.Parse(parts[0]["query-start-utc=".Length..], System.Globalization.CultureInfo.InvariantCulture);

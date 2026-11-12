@@ -381,9 +381,11 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         Assert.Equal(1, entry.Attempts);
         Assert.Equal(AiJsonDiagnostics.EndedExhausted, entry.EndedBy);
 
-        // AIService 的 Warn：每次嘗試一筆（JSON 解析失敗）＋最終失敗一筆（第 63-2 輪 B-a-4 由 Error 改 Warn）；診斷行不加一筆
-        Assert.Equal(2, run.WarnCount);
-        Assert.Equal(2, logs.Count(l => l.Logger == "AIService" && l.Level == "Warn"));
+        // AIService 的 Warn：每次嘗試一筆（JSON 解析失敗，logger 為 AIServiceAttempt，第 70 輪 C-2 起不計）＋
+        // 最終失敗一筆（第 63-2 輪 B-a-4 由 Error 改 Warn，照計）；診斷行不加一筆
+        Assert.Equal(1, run.WarnCount);
+        Assert.Equal(1, logs.Count(l => l.Logger == "AIService" && l.Level == "Warn"));
+        Assert.Equal(1, logs.Count(l => l.Logger == AIService.AttemptLoggerName && l.Level == "Warn"));
         Assert.Equal(0, run.ErrorCount); // 格式異常是警告不是錯誤
     }
 
@@ -1227,6 +1229,230 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         var parsed = AiJson.TryParse<AiAnalysisResult>(string.Join(" 然後 ", first));
 
         Assert.Equal("丙", parsed!.RiskLevel);
+    }
+
+    // ══ 第 70 輪 C-1：強制格式啟用狀態跨呼叫記憶 ═════════════════════════
+
+    private static AIService NewServiceWithGate(Func<int, Reply> script, int jsonRetryCount, IAiRequestGate gate,
+        out ScriptedHandler handler)
+    {
+        handler = new ScriptedHandler(script);
+        return new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", Model = "test-model", MaxTokens = 2048,
+            RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = jsonRetryCount
+        }, handler, gate);
+    }
+
+    /// <summary>
+    /// 模型行為替身：帶 response_format 的請求回空陣列 []、不帶的回合格 JSON——
+    /// 以請求本體判斷，不依請求序號，記憶生效前後都能用同一份腳本。
+    /// </summary>
+    private static Func<int, Reply> GrammarBlockedScript(Func<ScriptedHandler> handler) =>
+        _ => new Reply { Content = HasResponseFormat(handler().RequestBodies[^1]) ? "[]" : GoodJson };
+
+    private static Task<AiJsonResult<AiAnalysisResult>> CallAsync(AIService service, string prompt = "請分析") =>
+        service.ChatJsonAsync<AiAnalysisResult>(prompt, validate: Validate, label: "daily-20261101-h7", maxTokens: 777);
+
+    /// <summary>讓 <paramref name="service"/> 連續撞三次「帶格式第一次空回覆」。</summary>
+    private static async Task ObserveEmptiesAsync(AIService service, ScriptedHandler handler)
+    {
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold; i++)
+        {
+            var before = handler.RequestCount;
+            var result = await CallAsync(service);
+            Assert.True(result.Success);
+            Assert.Equal(2, handler.RequestCount - before); // 第一次 [] ＋ 關掉格式的第二次
+            Assert.True(HasResponseFormat(handler.RequestBodies[before]));
+            Assert.False(HasResponseFormat(handler.RequestBodies[before + 1]));
+        }
+    }
+
+    [Fact]
+    public async Task 記憶停用後_第一個請求不帶response_format且提示尾端附先思考句()
+    {
+        ScriptedHandler h = null!;
+        var service = NewServiceWithGate(GrammarBlockedScript(() => h), 2, new AiRequestGate(() => 1), out h);
+        await ObserveEmptiesAsync(service, h);
+
+        var before = h.RequestCount;
+        var result = await CallAsync(service, "請分析");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.Attempts);
+        Assert.Equal(1, h.RequestCount - before); // 不再多打被擋成 [] 的那一趟
+        var body = h.RequestBodies[before];
+        Assert.False(HasResponseFormat(body));
+        var prompt = UserPromptOf(body);
+        Assert.StartsWith("請分析", prompt);
+        Assert.EndsWith(AIService.FirstAttemptClosingWithoutGrammar, prompt);
+        Assert.DoesNotContain("修正上述問題", prompt);
+        Assert.DoesNotContain("前次嘗試失敗", prompt);
+    }
+
+    [Fact]
+    public async Task 兩個共用同一閘道的實例共用記憶()
+    {
+        var gate = new AiRequestGate(() => 1);
+        ScriptedHandler h1 = null!, h2 = null!;
+        var first = NewServiceWithGate(GrammarBlockedScript(() => h1), 2, gate, out h1);
+        var second = NewServiceWithGate(GrammarBlockedScript(() => h2), 2, gate, out h2);
+
+        await ObserveEmptiesAsync(first, h1);
+        var result = await CallAsync(second);
+
+        Assert.True(result.Success);
+        Assert.Equal(1, h2.RequestCount);
+        Assert.False(HasResponseFormat(h2.RequestBodies[0]));
+    }
+
+    [Fact]
+    public async Task 帶格式時回空字串的空回覆也計入記憶_第四次起第一次就不帶格式()
+    {
+        // 空字串回覆在 ChatAsync 層就判為空回覆、整次呼叫直接失敗（沒有關掉格式的重試機會），更需要記住
+        ScriptedHandler h = null!;
+        var service = NewServiceWithGate(_ => new Reply { Content = HasResponseFormat(h.RequestBodies[^1]) ? "" : GoodJson },
+            2, new AiRequestGate(() => 1), out h);
+
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold; i++)
+            Assert.False((await CallAsync(service)).Success);
+
+        var before = h.RequestCount;
+        var result = await CallAsync(service);
+        Assert.True(result.Success);
+        Assert.False(HasResponseFormat(h.RequestBodies[before]));
+    }
+
+    [Fact]
+    public async Task NullAiRequestGate的兩個實例互不影響()
+    {
+        ScriptedHandler h1 = null!, h2 = null!;
+        var first = NewServiceWithGate(GrammarBlockedScript(() => h1), 2, NullAiRequestGate.Instance, out h1);
+        var second = NewServiceWithGate(GrammarBlockedScript(() => h2), 2, NullAiRequestGate.Instance, out h2);
+
+        await ObserveEmptiesAsync(first, h1);
+        var result = await CallAsync(second);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, h2.RequestCount); // 第二個實例沒有學到：照舊先撞一次 []
+        Assert.True(HasResponseFormat(h2.RequestBodies[0]));
+        Assert.False(HasResponseFormat(h2.RequestBodies[1]));
+    }
+
+    [Fact]
+    public async Task 不同回覆型別是另一把鍵_不受影響()
+    {
+        var gate = new AiRequestGate(() => 1);
+        ScriptedHandler h = null!;
+        var service = NewServiceWithGate(GrammarBlockedScript(() => h), 2, gate, out h);
+        await ObserveEmptiesAsync(service, h);
+
+        var before = h.RequestCount;
+        await service.ChatJsonAsync<Mixed>("另一種型別", label: "other");
+
+        Assert.True(HasResponseFormat(h.RequestBodies[before])); // Mixed 沒有觀察過空回覆，仍帶格式
+    }
+
+    private const string BadFieldsJson = "{\"risk_level\":\"高\",\"headline\":\"\",\"story\":\"\"}";
+
+    [Fact]
+    public async Task 從未空回覆時_請求內容與記憶出現前完全相同()
+    {
+        var gate = new AiRequestGate(() => 1);
+        // 第一次嘗試內容檢查沒過（OtherFailure，不是空回覆）：連續多次都不得讓記憶停用
+        var service = NewServiceWithGate(n => new Reply { Content = n % 2 == 1 ? BadFieldsJson : GoodJson }, 2, gate, out var h);
+
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold + 3; i++)
+        {
+            var before = h.RequestCount;
+            var result = await CallAsync(service, "請分析");
+            Assert.True(result.Success);
+            var body = h.RequestBodies[before];
+            Assert.True(HasResponseFormat(body));
+            Assert.Equal("請分析", UserPromptOf(body)); // 提示一字不差、沒有附加任何尾句
+        }
+
+        using var doc = JsonDocument.Parse(h.RequestBodies[0]);
+        Assert.Equal("json_object", doc.RootElement.GetProperty("response_format").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task 傳輸層失敗_不回報記憶()
+    {
+        var gate = new AiRequestGate(() => 1);
+        var service = NewServiceWithGate(_ => new Reply { Status = HttpStatusCode.InternalServerError }, 2, gate, out var h);
+
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold + 2; i++)
+        {
+            var result = await CallAsync(service);
+            Assert.False(result.Success);
+        }
+
+        Assert.All(h.RequestBodies, body => Assert.True(HasResponseFormat(body)));
+    }
+
+    [Fact]
+    public async Task 記憶讓第一次不帶格式而失敗_診斷標記grammarSkippedByMemory_平常為null()
+    {
+        var gate = new AiRequestGate(() => 1);
+        ScriptedHandler h = null!;
+        var service = NewServiceWithGate(GrammarBlockedScript(() => h), 0, gate, out h);
+        // 連續三次空回覆（JsonRetryCount=0：每次只一趟，帶格式回 []）→ 停用
+        for (var i = 0; i < AiGrammarMemory.DisableThreshold; i++) Assert.False((await CallAsync(service)).Success);
+
+        // 同一閘道的另一個實例：第一次嘗試因記憶而不帶格式，內容不合格 → 失敗並寫診斷（走真實 recorder 路徑）
+        var failing = NewServiceWithGate(_ => new Reply { Content = "不是 JSON" }, 0, gate, out _);
+        var (diagnostics, _, _, _) = await RunAsync(failing);
+
+        var entry = Assert.Single(diagnostics);
+        Assert.True(entry.GrammarSkippedByMemory);
+        Assert.Contains("\"grammarSkippedByMemory\":true", JsonSerializer.Serialize(entry));
+
+        var fresh = NewServiceWithGate(_ => new Reply { Content = "不是 JSON" }, 0, new AiRequestGate(() => 1), out _);
+        var (normal, _, _, _) = await RunAsync(fresh);
+        Assert.Null(Assert.Single(normal).GrammarSkippedByMemory);
+    }
+
+    // ══ 第 70 輪 C-2：嘗試層級警告不計入趟次警告數 ═══════════════════════
+
+    [Fact]
+    public async Task 第一次空回覆_第二次成功_趟次警告數為0_嘗試層級Warn仍寫入紀錄()
+    {
+        var service = NewService(n => new Reply { Content = n == 1 ? "[]" : GoodJson }, jsonRetryCount: 2, out _);
+
+        var (_, logs, run, result) = await RunAsync(service);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, run.WarnCount);
+        var attemptWarn = Assert.Single(logs, l => l.Logger == AIService.AttemptLoggerName);
+        Assert.Equal("Warn", attemptWarn.Level);
+        Assert.StartsWith(AIService.JsonParseFailedPrefix, attemptWarn.Message);
+        Assert.DoesNotContain(logs, l => l.Logger == "AIService" && l.Level == "Warn");
+    }
+
+    [Fact]
+    public async Task 三次都失敗_最終失敗那行照計警告數()
+    {
+        var service = NewService(_ => new Reply { Content = "[]" }, jsonRetryCount: 2, out _);
+
+        var (_, logs, run, result) = await RunAsync(service);
+
+        Assert.False(result.Success);
+        Assert.Equal(1, run.WarnCount); // 三筆嘗試層級不計，最終失敗一筆照計
+        var final = Assert.Single(logs, l => l.Level == "Warn" && l.Message.Contains("ChatJsonAsync 最終失敗"));
+        Assert.Equal("AIService", final.Logger);
+        Assert.Equal(3, logs.Count(l => l.Logger == AIService.AttemptLoggerName));
+    }
+
+    [Fact]
+    public void 嘗試層級logger名稱不含句點_且由唯一判定點免計()
+    {
+        Assert.Equal("AIServiceAttempt", AIService.AttemptLoggerName);
+        Assert.DoesNotContain('.', AIService.AttemptLoggerName);
+        Assert.True(BatchRunRecorder.IsWarnCountExemptLogger(AIService.AttemptLoggerName));
+        Assert.True(BatchRunRecorder.IsWarnCountExemptLogger(AiJsonDiagnostics.LoggerName));
+        Assert.True(BatchRunRecorder.IsWarnCountExemptLogger(BatchRunRecorder.ExemptWarnLogger));
+        Assert.False(BatchRunRecorder.IsWarnCountExemptLogger("AIService"));
     }
 
     [Fact]

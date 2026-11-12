@@ -96,6 +96,16 @@ public class AIService : IAiService, IDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>
+    /// 「單次嘗試」層級警告專用的 logger 名稱（第 70 輪 C-2）：第 n 次嘗試失敗、之後重試成功是正常的重試機制在運作，
+    /// 不該讓整趟變成「有警告」。**不含句點**，NLog 完整名稱與執行紀錄的短名稱一致；
+    /// 由 <see cref="LogForesight.Core.Service.BatchRunRecorder.IsWarnCountExemptLogger"/> 免計，仍照常寫入執行紀錄。
+    /// 「最終失敗」的警告維持用 <see cref="Log"/>，照計。
+    /// </summary>
+    public const string AttemptLoggerName = "AIServiceAttempt";
+
+    private static readonly Logger AttemptLog = LogManager.GetLogger(AttemptLoggerName);
+
     private readonly HttpClient _httpClient;
     private readonly string _provider;
     private readonly string _requestUrl;
@@ -125,6 +135,9 @@ public class AIService : IAiService, IDisposable
     private readonly IAiRequestGate _gate;
     private readonly AiLane _lane;
 
+    /// <summary>強制格式啟用狀態的跨呼叫記憶（取自閘道，建構時取一次；見 <see cref="AiGrammarMemory"/>）</summary>
+    private readonly AiGrammarMemory _grammarMemory;
+
     public AIService(AiSettings settings, IAiRequestGate gate, IPromptDumper? dumper = null,
         IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
         : this(settings, CreateDefaultHandler(), gate, dumper, usageMeter, lane)
@@ -137,6 +150,7 @@ public class AIService : IAiService, IDisposable
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
         _gate = gate ?? throw new ArgumentNullException(nameof(gate));
+        _grammarMemory = _gate.GrammarMemory;
         _lane = lane;
         _httpClient = new HttpClient(handler)
         {
@@ -208,7 +222,7 @@ public class AIService : IAiService, IDisposable
                     .Handle<AiEnvelopeParseException>(),
                 OnRetry = args =>
                 {
-                    Log.Warn(args.Outcome.Exception, "AI 網路層呼叫失敗，第 {Attempt}/{Total} 次重試", args.AttemptNumber + 1, settings.RetryCount);
+                    AttemptLog.Warn(args.Outcome.Exception, "AI 網路層呼叫失敗，第 {Attempt}/{Total} 次重試", args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
             });
@@ -455,14 +469,20 @@ public class AIService : IAiService, IDisposable
         // 上一次內容層失敗的類別（第 63-2 輪 B-a-2）：決定下一次要不要關掉文法（response_format），
         // 也決定重試提示的尾句——兩者共用同一個判定（見 RetryWithoutGrammar），不各寫一份
         string? lastCategory = null;
+        // 第一次嘗試要不要帶強制格式由跨呼叫記憶決定（第 70 輪 C-1）：同一端點＋模型＋型別連續撞到空回覆後，
+        // 直接不帶，省掉每次呼叫各自重撞一次的那趟請求；從未觀察到空回覆時恆為帶，請求與記憶出現前完全相同
+        var grammarKey = AiGrammarMemory.BuildKey(_requestUrl, EffectiveModelName(model), typeof(T).Name);
+        var grammarSkippedByMemory = !_grammarMemory.UseGrammarFirst(grammarKey);
         // 文法一旦因 empty／no_json 關掉就不再打開：之後就算內容檢查沒過，回到文法只會再被擋成 []，浪費最後一次機會
-        var withoutGrammar = false;
+        var withoutGrammar = grammarSkippedByMemory;
+        // 記憶讓第一次嘗試不帶文法時，提示尾端附一句「可以先思考、最後只輸出 JSON」（沒有「修正上述問題」，因為還沒失敗過）
+        var firstPrompt = grammarSkippedByMemory ? $"{prompt}\n\n{FirstAttemptClosingWithoutGrammar}" : prompt;
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
             withoutGrammar = withoutGrammar || (attempt > 1 && RetryWithoutGrammar(lastCategory));
             var currentPrompt = attempt == 1 || string.IsNullOrWhiteSpace(lastError)
-                ? prompt
+                ? firstPrompt
                 : BuildRetryPrompt(prompt, lastError, rawContent, withoutGrammar);
 
             var response = await ChatAsync(currentPrompt, systemPrompt, jsonMode: !withoutGrammar, model: model, temperature: temperature, maxTokens: maxTokens,
@@ -472,7 +492,7 @@ public class AIService : IAiService, IDisposable
             {
                 // 傳輸層失敗（連線、HTTP 錯誤、逾時）：沒有回覆可供修正，重問只會把同一段等待再放大一次，
                 // 立即回傳失敗。JSON 重試只針對「有回應但內容不合格」（D4 契約 4）。
-                Log.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
+                AttemptLog.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
                     attempt, totalAttempts, response.Error);
                 // 空回覆屬內容層失敗、已由 Polly 層重試過：同樣不進 JSON 重試，但錯誤訊息沿用契約失敗的組法（附「（空回覆）」）
                 var isEmptyResponse = response.Error == EmptyAiResponseException.DefaultMessage;
@@ -483,10 +503,12 @@ public class AIService : IAiService, IDisposable
                 {
                     var emptyAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, string.Empty, null);
                     if (emptyAttempt != null) attemptDiagnostics.Add(emptyAttempt);
+                    // 空字串的空回覆也是「模型被文法擋成最短輸出」的徵兆：第一次嘗試就回報記憶（這條路徑整次呼叫直接失敗，沒有關掉文法再試的機會）
+                    if (attempt == 1) _grammarMemory.ReportFirstAttempt(grammarKey, !grammarSkippedByMemory, FirstAttemptOutcome.Empty);
                 }
                 // 純傳輸層失敗（先前也沒有任何內容層失敗）不寫；先前有內容層失敗的，那些證據照寫
                 WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics,
-                    isEmptyResponse ? AiJsonDiagnostics.EndedEmpty : AiJsonDiagnostics.EndedTransport);
+                    isEmptyResponse ? AiJsonDiagnostics.EndedEmpty : AiJsonDiagnostics.EndedTransport, grammarSkippedByMemory);
                 // 傳輸失敗時 RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
                 // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補。
                 // 空回覆不同：服務有回應，是模型給不出內容（例如關掉文法後思考吃光 token）。前面已有不合格回覆時要帶著它走降級，
@@ -503,14 +525,18 @@ public class AIService : IAiService, IDisposable
                 AiJsonParseOutcome<T>? parseOutcome = emptyShape == null ? AiJson.TryParseDetailed(response.Content, validate) : null;
                 var parsed = parseOutcome?.Value;
 
-                if (parsed != null && (validate == null || validate(parsed)))
+                var valid = parsed != null && (validate == null || validate(parsed));
+                if (valid)
                 {
+                    // 記憶只看第一次嘗試：後續嘗試帶不帶文法是失敗類別決定的，不是記憶
+                    if (attempt == 1)
+                        _grammarMemory.ReportFirstAttempt(grammarKey, !grammarSkippedByMemory, FirstAttemptOutcome.Success);
                     if (attempt > 1)
                     {
                         Log.Info("ChatJsonAsync 於第 {Attempt}/{Total} 次嘗試成功，型別={Type}", attempt, totalAttempts, typeof(T).Name);
                     }
                     // 途中有內容層失敗但最終成功：照寫診斷（第一次就成功時 attemptDiagnostics 為空，不寫）
-                    WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics, AiJsonDiagnostics.EndedRecovered);
+                    WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics, AiJsonDiagnostics.EndedRecovered, grammarSkippedByMemory);
                     return new AiJsonResult<T> { Success = true, Value = parsed, RawContent = rawContent, Attempts = attempt };
                 }
 
@@ -520,7 +546,7 @@ public class AIService : IAiService, IDisposable
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
-                    Log.Warn(JsonParseFailedTemplate,
+                    AttemptLog.Warn(JsonParseFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, response.Content.Length, preview);
                 }
                 else
@@ -528,12 +554,17 @@ public class AIService : IAiService, IDisposable
                     lastError = "AI 回覆內容未通過檢查（可能為異常重複文字或欄位不合理）";
                     // JSON 語法沒問題、是內容合理性沒過關：記錄解析出的物件本身（本來就是我們定義的
                     // 小結構，不是原始長文字），才看得出究竟是哪個欄位不合理
-                    Log.Warn(JsonValidationFailedTemplate,
+                    AttemptLog.Warn(JsonValidationFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, SafeSerialize(parsed));
                 }
 
                 lastCategory = AiJsonDiagnostics.Classify(response.Content, response.FinishReason, parsed != null,
                     parseOutcome?.LastSyntaxValidException != null);
+                if (attempt == 1)
+                {
+                    _grammarMemory.ReportFirstAttempt(grammarKey, !grammarSkippedByMemory,
+                        RetryWithoutGrammar(lastCategory) ? FirstAttemptOutcome.Empty : FirstAttemptOutcome.OtherFailure);
+                }
                 var failedAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, response.Content, parseOutcome);
                 if (failedAttempt != null) attemptDiagnostics.Add(failedAttempt);
             }
@@ -550,20 +581,24 @@ public class AIService : IAiService, IDisposable
         // 「AI 服務不通」（傳輸層失敗、主分析完全失敗）才是 Error，由呼叫端另記
         Log.Warn("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
             totalAttempts, typeof(T).Name, finalError);
-        WriteDiagnostics<T>(label, model, maxTokens, totalAttempts, attemptDiagnostics, AiJsonDiagnostics.EndedExhausted);
+        WriteDiagnostics<T>(label, model, maxTokens, totalAttempts, attemptDiagnostics, AiJsonDiagnostics.EndedExhausted, grammarSkippedByMemory);
         return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = finalError, Attempts = totalAttempts };
     }
 
     /// <summary>寫 AI JSON 失敗診斷（見 <see cref="AiJsonDiagnostics"/>）；模型與 max_tokens 取實際生效值。</summary>
     private void WriteDiagnostics<T>(string label, string? model, int? maxTokens, int attemptsMade,
-        IReadOnlyList<AiJsonAttemptDiagnostics> attempts, string endedBy) where T : class
+        IReadOnlyList<AiJsonAttemptDiagnostics> attempts, string endedBy, bool grammarSkippedByMemory) where T : class
     {
         if (attempts.Count == 0) return;
-        var effectiveModel = _provider == AiProviders.AzureOpenAi
-            ? _azureDeployment
-            : (!string.IsNullOrWhiteSpace(model) ? model : _defaultModel);
-        AiJsonDiagnostics.Write(label, typeof(T).Name, effectiveModel, maxTokens ?? _maxTokens, attemptsMade, endedBy, attempts);
+        AiJsonDiagnostics.Write(label, typeof(T).Name, EffectiveModelName(model), maxTokens ?? _maxTokens, attemptsMade, endedBy, attempts,
+            grammarSkippedByMemory ? true : null);
     }
+
+    /// <summary>診斷與記憶鍵用的模型名稱：Azure 沒有 model 欄位，記部署名稱</summary>
+    private string EffectiveModelName(string? model) =>
+        _provider == AiProviders.AzureOpenAi
+            ? _azureDeployment
+            : (!string.IsNullOrWhiteSpace(model) ? model! : _defaultModel);
 
     /// <summary>
     /// JSON 契約不符的錯誤訊息。收斂成常數：產生處、判定處與最終訊息組裝處各有一份字面值時，
@@ -628,6 +663,13 @@ public class AIService : IAiService, IDisposable
 
     /// <summary>重試提示的尾句：這次請求仍帶文法（response_format），模型只能直接輸出 JSON</summary>
     internal const string RetryClosingWithGrammar = "請修正上述問題，並嚴格依要求輸出合法的 JSON。";
+
+    /// <summary>
+    /// 第一次嘗試就不帶文法（跨呼叫記憶判定）的提示尾句：與 <see cref="RetryClosingWithoutGrammar"/> 同意思，
+    /// 但還沒有失敗過，所以不含「修正上述問題」。
+    /// </summary>
+    internal const string FirstAttemptClosingWithoutGrammar =
+        "你可以先簡短思考，但最後必須只輸出一個 JSON 物件（以 { 開頭、以 } 結尾），不要輸出空陣列或空物件。";
 
     /// <summary>重試提示的尾句：這次請求不帶文法，模型可以先思考，但最後只能輸出一個 JSON 物件</summary>
     internal const string RetryClosingWithoutGrammar =

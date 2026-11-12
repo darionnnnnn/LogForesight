@@ -402,17 +402,11 @@
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
                         <div class="form-text lf-text-meta" id="run-now-ai-disabled-hint" hidden></div>
-                        <div class="lf-table-wrap mt-2">
-                            <table class="table table-sm table-hover align-middle mb-0" aria-label="執行模式影響對照">
-                                <thead><tr><th scope="col">模式</th><th scope="col">會重建什麼</th><th scope="col">保留什麼</th><th scope="col">何時使用</th></tr></thead>
-                                <tbody>
-                                    <tr><th scope="row">只補跑失敗或未執行</th><td>缺漏或失敗日</td><td>已有的成功結果與處理結論</td><td>日常補缺</td></tr>
-                                    <tr><th scope="row">重新分析未處理</th><td>未處理日的分析、AI 判讀與深度分析</td><td>已指派、已完成的日子</td><td>規則更新後，重算尚未處理的問題</td></tr>
-                                    <tr><th scope="row">重新分析未處理與處理中</th><td>未處理與處理中日的分析結果</td><td>已完成的日子與處理結論</td><td>要一併更新尚在處理的工作</td></tr>
-                                    <tr><th scope="row">全部重新分析</th><td>所有選定日的分析結果</td><td>處理結論；問題不再出現時原紀錄可能失去對應</td><td>完整重算，確認影響後再用</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        @* 只說明目前選到的模式（runs.js 的 RERUN_MODE_CONFIG 是唯一文字來源）；四個模式的完整對照在說明書排程頁 *@
+                        <dl class="lf-rerun-summary mt-2 mb-0" id="run-now-rerun-summary" aria-live="polite">
+                            <dt class="lf-text-label">重建</dt><dd id="run-now-rerun-rebuilds"></dd>
+                            <dt class="lf-text-label">保留</dt><dd id="run-now-rerun-keeps"></dd>
+                        </dl>
                     </div>
                     <div class="form-text lf-text-meta mb-2" id="run-now-prtg-backfill-hint" hidden>PRTG 歷史回填執行中：這趟的 PRTG 部分最多等 30 分鐘再開始，NetIQ 與本機照常；要讓 PRTG 立刻開始，請先在 PRTG 卡停止回填。</div>
                     <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>

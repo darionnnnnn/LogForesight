@@ -223,6 +223,13 @@
     padding: var(--lf-space-2) var(--lf-space-2) var(--lf-space-4);
     flex: 1 1 auto;
     overflow-y: auto;
+    /* 深底上的系統預設淺色捲軸很突兀：細、軌道透明，滑過側欄時拇指提亮 */
+    scrollbar-width: thin;
+    scrollbar-color: var(--lf-scrollbar-thumb-sidebar) transparent;
+}
+
+.lf-sidebar__nav:hover {
+    scrollbar-color: var(--lf-scrollbar-thumb-sidebar-hover) transparent;
 }
 
 .lf-sidebar__section {
@@ -441,8 +448,134 @@
 .lf-entity-head__link:hover,
 .lf-entity-head__link:focus-visible { text-decoration: underline; }
 
+/* 風險日詳情的主機名：脈絡資訊，字級降一級（AI 標題才是頁首的大字）；其他詳情頁維持 xl */
+/* 字級降一級後單行高度不到 24px：連結補點擊區下限（DESIGN-SYSTEM §8.2） */
+.lf-entity-head__title--context { font-size: var(--lf-font-size-lg); min-height: max(24px, 1.5rem); display: inline-flex; align-items: center; }
+
 /* 頁首卡第二行的次要資訊（metaLine） */
 .lf-entity-head__facts { margin-bottom: var(--lf-space-3); }
+
+/* ── 報表大螢幕模式（戰情中心，docs/WEB-SPEC.md §9.6）────────────────────────────
+   <html class="lf-wall">：報表頁網址帶 display=wall 時由 _Layout 在伺服器端輸出（第一次繪製前就生效，
+   進頁不會閃現側欄），離開時由 reports-wall.js 移除。其他頁不會有這個類別。
+   所有規則包在 screen ＋ ≥ 992px 之內：窄螢幕不提供大螢幕版面、列印照一般版面。
+   字級：--lf-wall-scale（reports-wall.js 設定）＝視窗高 ÷ 1080、下限 1。根字級乘上它，頁面所有 rem 字級
+   一起等比放大，也不受使用者的小／中／大字級偏好影響；第一排數字另以 px 直接乘倍率（1080 高 64px、2160 高 128px）。 */
+.lf-wall-header,
+.lf-wall-exit {
+    display: none;
+}
+
+@media screen and (min-width: 992px) {
+    :root.lf-wall {
+        font-size: calc(18px * var(--lf-wall-scale, 1));
+    }
+
+    /* 沒有人操作：側欄、頁首、提醒區、工具列、圖卡的「表格」切換與所有下鑽入口一律不顯示（display:none 的元素不可聚焦）。
+       #report-kpi .btn 是首次載入失敗的錯誤狀態裡的「重試」鈕——大螢幕靠自動更新重試 */
+    .lf-wall .lf-sidebar,
+    .lf-wall .lf-topbar,
+    .lf-wall #lf-top-alerts,
+    .lf-wall #report-toolbar,
+    .lf-wall #trend-toolbar,
+    .lf-wall #host-toolbar,
+    .lf-wall #category-toolbar,
+    .lf-wall #rank-mode-toggle,
+    .lf-wall #host-view-all,
+    .lf-wall #report-kpi .btn {
+        display: none !important;
+    }
+
+    .lf-wall .lf-layout:has(.lf-report-page) .lf-content {
+        padding: var(--lf-space-3) var(--lf-space-4);
+    }
+
+    /* 標頭列：產品名、目前條件、最後更新；右側讓出離開鈕的位置 */
+    .lf-wall .lf-wall-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex: 0 0 auto;
+        gap: var(--lf-space-4);
+        padding: 0 9rem 0 var(--lf-space-1);
+    }
+
+    .lf-wall .lf-wall-header__brand {
+        font-size: var(--lf-font-size-2xl);
+        font-weight: 700;
+        color: var(--lf-text);
+        white-space: nowrap;
+    }
+
+    .lf-wall .lf-wall-header__period {
+        display: flex;
+        align-items: baseline;
+        flex: 1 1 auto;
+        flex-wrap: wrap;
+        gap: 0 var(--lf-space-3);
+        min-width: 0;
+    }
+
+    .lf-wall .lf-wall-header__status {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0 var(--lf-space-3);
+    }
+
+    .lf-wall .lf-wall-header .lf-text-title {
+        font-size: var(--lf-font-size-2xl);
+    }
+
+    .lf-wall .lf-wall-header .lf-text-meta,
+    .lf-wall .lf-wall-header .lf-text-alert {
+        font-size: var(--lf-font-size-xl);
+    }
+
+    /* 看得遠：第一排數字 64px × 倍率，標籤、副標與圖卡標題各升一級 */
+    .lf-wall .lf-stat__value {
+        font-size: calc(64px * var(--lf-wall-scale, 1));
+    }
+
+    .lf-wall .lf-stat__label {
+        font-size: var(--lf-font-size-xl);
+    }
+
+    .lf-wall .lf-kpi-card__sub {
+        font-size: var(--lf-font-size-lg);
+    }
+
+    .lf-wall .lf-card__title {
+        font-size: var(--lf-font-size-xl);
+    }
+
+    .lf-wall .lf-report-page .lf-text-meta {
+        font-size: var(--lf-font-size-base);
+    }
+
+    /* 離開鈕：滑鼠移動時出現、3 秒沒動作後淡出；鍵盤聚焦時一直看得到。動效偏好為減少時直接顯示／隱藏 */
+    .lf-wall .lf-wall-exit {
+        display: block;
+        position: fixed;
+        top: var(--lf-space-3);
+        right: var(--lf-space-4);
+        z-index: 1080;
+        opacity: 0;
+        transition: opacity var(--lf-transition);
+    }
+
+    .lf-wall .lf-wall-exit.is-visible,
+    .lf-wall .lf-wall-exit:focus-within {
+        opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .lf-wall .lf-wall-exit {
+            transition: none;
+        }
+    }
+}
 
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
 
@@ -475,30 +608,7 @@
     /* 淡色徽章在灰階列印仍靠邊框與文字辨識 */
     .lf-badge { border-color: #bbb !important; }
 
-    /* 報表的視窗高度綁定只對螢幕有意義（docs/archive/FEEDBACK-10-PLAN.md §5）：紙張是分頁的，
-       綁死一個視窗高度會讓內容被裁在第一頁。列印時整組解除，回到「內容多長印多長」 */
-    .lf-layout:has(.lf-report-page),
-    .lf-report-page {
-        height: auto;
-    }
-
-    .lf-layout:has(.lf-report-page) .lf-content {
-        overflow: visible;
-    }
-
-    .lf-report-page__charts,
-    .lf-report-page__row {
-        height: auto;
-        flex: none;
-    }
-
-    .lf-report-page__charts .lf-card {
-        height: auto;
-    }
-
-    /* 紙本回到固定高度：印出來的圖需要足夠的絕對尺寸才看得清楚 */
-    .lf-report-page .lf-chart { height: 230px; }
-    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
+    /* 報表頁的視窗高度綁定在列印時的解除，寫在 pages.css 報表區（載入順序在 layout.css 之後，才壓得過畫面規則） */
 }
 
 /* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
@@ -507,30 +617,6 @@
     .lf-layout {
         flex-direction: column;
     }
-
-    /* 手機上不綁視窗高度（docs/archive/FEEDBACK-10-PLAN.md §5）：側欄已變成頂部橫列，
-       六張圖硬塞進一屏只會每張都小到看不懂——窄螢幕本來就是捲動閱讀 */
-    .lf-layout:has(.lf-report-page) {
-        height: auto;
-    }
-
-    .lf-layout:has(.lf-report-page) .lf-content {
-        overflow: visible;
-    }
-
-    .lf-report-page,
-    .lf-report-page__charts,
-    .lf-report-page__row {
-        height: auto;
-        flex: none;
-    }
-
-    .lf-report-page__charts .lf-card {
-        height: auto;
-    }
-
-    .lf-report-page .lf-chart { height: 230px; }
-    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
 
     .lf-sidebar {
         width: 100%;

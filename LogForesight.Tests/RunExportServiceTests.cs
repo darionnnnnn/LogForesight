@@ -679,6 +679,59 @@ public class RunExportServiceTests
     }
 
     [Fact]
+    public void AI嘗試層級Warn_訊號組標示不計警告數_一般AIService的Warn不標示()
+    {
+        using var h = new RunExportHarness();
+        var run = h.AddRun();
+        var parse = $"{AIService.JsonParseFailedPrefix}1/3 次）{AIService.JsonFailureTypeMarker}DailyAiResult，回覆長度=2，{AIService.JsonParseFailedPreviewMarker}[]";
+        h.AddLog(run, "Warn", AIService.AttemptLoggerName, parse);
+        h.AddLog(run, "Warn", "AIService", "ChatJsonAsync 最終失敗（3 次嘗試皆未通過），型別=DailyAiResult，原因：x");
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var groups = root.G("signalGroups").L().ToList();
+            Assert.Equal(2, groups.Count);
+            var attempt = Assert.Single(groups, g => g.S("logger") == AIService.AttemptLoggerName);
+            Assert.True(attempt.G("excludedFromWarnCount").GetBoolean());
+            var final = Assert.Single(groups, g => g.S("logger") == "AIService");
+            Assert.False(final.G("excludedFromWarnCount").GetBoolean());
+            Assert.Equal(0, root.G("meta").G("signalTotals").G("slowSql").GetInt32()); // 不被當成慢 SQL 解析
+            Assert.Empty(root.G("slowSql").L());
+        }
+    }
+
+    [Fact]
+    public void failureHistory_含嘗試層級logger的輸入_與只含舊logger的同內容輸入次數相同()
+    {
+        static Dictionary<string, (int Parse, int Validate)> History(string logger)
+        {
+            using var h = new RunExportHarness();
+            var run = h.AddRun();
+            var parse = $"{AIService.JsonParseFailedPrefix}1/3 次）{AIService.JsonFailureTypeMarker}DailyAiResult，回覆長度=88，{AIService.JsonParseFailedPreviewMarker}亂回";
+            var validate = $"{AIService.JsonValidationFailedPrefix}2/3 次）{AIService.JsonFailureTypeMarker}DailyAiResult，{AIService.JsonValidationParsedMarker}{{\"headline\":\"x\"}}";
+            var other = $"{AIService.JsonParseFailedPrefix}1/3 次）{AIService.JsonFailureTypeMarker}OtherResult，回覆長度=5，{AIService.JsonParseFailedPreviewMarker}abc";
+            h.AddLog(run, "Warn", logger, parse);
+            h.AddLog(run, "Warn", logger, parse);
+            h.AddLog(run, "Warn", logger, validate);
+            h.AddLog(run, "Warn", logger, other);
+
+            var (root, _, doc) = h.Export();
+            using (doc)
+            {
+                return root.G("aiFormatAnomalies").G("summary").G("failureHistory").L()
+                    .ToDictionary(x => x.S("responseType"), x => (x.G("parseFailures").GetInt32(), x.G("validationFailures").GetInt32()));
+            }
+        }
+
+        var old = History("AIService");
+        var now = History(AIService.AttemptLoggerName);
+
+        Assert.Equal((2, 1), old["DailyAiResult"]);
+        Assert.Equal(old, now);
+    }
+
+    [Fact]
     public void StripReplyFragment_契約失敗後的片段與兩個逐次嘗試範本的預覽欄被換成長度_沒有片段的訊息原樣保留()
     {
         var contract = $"原因：{AIService.JsonContractError}：這是回覆片段";

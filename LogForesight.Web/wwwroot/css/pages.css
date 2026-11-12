@@ -106,7 +106,7 @@
     min-height: 0;      /* flex 子項的預設 min-height:auto 會讓內容撐破容器，這行是收斂的前提 */
     /* 上下留白減半：內容區的 24px 上下留白在其他頁是呼吸空間，在這一頁是直接從圖表身上
        扣掉的 48px。左右維持原值，橫向沒有擁擠問題 */
-    padding-block: var(--lf-space-3);
+    padding-block: var(--lf-space-2);
     /* auto 而非 hidden：正常情況下沒有東西可捲（版面剛好填滿），但視窗矮到觸發圖表的
        min-height 下限時，內容必須還捲得到——hidden 會把超出的部分直接裁掉且救不回來 */
     overflow: auto;
@@ -130,17 +130,38 @@
 /* 圖表區吃掉剩餘高度，內部兩列再均分 */
 .lf-report-page__charts {
     flex: 1 1 0;
-    min-height: 0;
+    min-height: auto;
     display: flex;
     flex-direction: column;
     gap: var(--lf-space-2);
 }
 
-/* 每一列圖表外面包一層普通 div（見 Reports.cshtml 的說明）：Bootstrap .row 的負 margin-top
-   直接當 flex 子項時會讓高度算錯，多出一條只捲得動幾像素的捲軸 */
+/* 圖表區兩列：上列「趨勢（約 2/3）＋處理進度（約 1/3）」、下列「排行（1/2）＋類型分布（1/2）」。
+   每列是普通 div 的 CSS grid，不用 Bootstrap .row——.row 的負 margin-top 直接當 flex 子項時
+   會讓高度算錯，多出一條只捲得動幾像素的捲軸。minmax(0, …) 讓欄寬不被內容撐開。
+   下列要放排行的十多條長條，分到的高度比上列多一些。 */
 .lf-report-page__row {
-    flex: 1 1 0;
-    min-height: 0;
+    /* 列高下限＝卡片內容的最小高度（標頭＋圖表下限）：空間不夠時讓內容區捲動，
+       不能把卡片壓到比內容矮——那會讓圖例溢出、疊到下一張卡上 */
+    min-height: auto;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(auto, 1fr);
+    gap: var(--lf-space-3);
+}
+
+.lf-report-page__row--top {
+    flex: 5 1 0;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+/* 顯示範圍非「全部」時處理進度卡隱藏，趨勢卡補滿整列 */
+.lf-report-page__row--top.lf-report-page__row--solo {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.lf-report-page__row--bottom {
+    flex: 6 1 0;
 }
 
 .lf-report-page__charts .lf-card {
@@ -153,6 +174,12 @@
 .lf-report-page__charts .lf-card__body {
     flex: 1 1 auto;
     min-height: 0;
+    padding: var(--lf-space-3) var(--lf-space-4);
+}
+
+/* 圖卡標頭上下留白收一階：這一頁每一像素都是從圖表身上扣的 */
+.lf-report-page__charts .lf-card__header {
+    padding-block: var(--lf-space-2);
 }
 
 /* 圖卡的畫布容器改為填滿卡片。min-height 是可讀性下限：視窗矮到連這個高度都排不下時，
@@ -163,7 +190,7 @@
    實際高度通常遠大於此（1920×1080 約 220px），下限只在最擠的情況下才生效 */
 .lf-report-page .lf-chart {
     height: 100%;
-    min-height: 96px;
+    min-height: 130px;
 }
 
 /* 「此期間沒有資料」的替代文字（charts.js renderNoData）：.lf-empty 帶的是給整頁空狀態
@@ -193,57 +220,146 @@
     padding: var(--lf-space-3);
 }
 
+/* 類型分布卡標頭的「N 個問題」連結：窄螢幕時獨占一行、不算句中連結，要有點擊區下限（DESIGN-SYSTEM §8.2） */
+#category-issue-total:not([hidden]) {
+    display: inline-flex;
+    align-items: center;
+    min-height: max(24px, 1.5rem);
+}
+
+/* 工具列只有一列控制項：上下留白再收一階 */
+#report-toolbar .lf-card__body {
+    padding-block: var(--lf-space-2);
+}
+
 .lf-report-page__fixed .lf-card__body > .small.mt-2 {
     margin-top: .125rem !important;
 }
 
-/* 占比小圖卡的內容：甜甜圈在上、圖例在下（欄位窄，左右並排會把圖例文字擠成逐字直排）。
-   甜甜圈吃掉扣除圖例後的剩餘高度並維持正圓（aspect-ratio） */
-.lf-chart-stack {
+/* ── 報表工具列：一列 ──────────────────────────────────────────────────────
+   左側是目前條件的一行文字，右側是快捷期間與動作；「更多條件」收合的面板在同一張卡內的下方。
+   視窗窄時整組換行，不橫向溢出。 */
+.lf-report-toolbar__main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2) var(--lf-space-3);
+}
+
+.lf-report-toolbar__summary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0 var(--lf-space-2);
+    min-width: 0;
+}
+
+.lf-report-toolbar__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2);
+}
+
+.lf-report-filters {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--lf-space-3);
+    margin-top: var(--lf-space-2);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+/* ── 處理進度卡：兩條橫向堆疊條（純 HTML，不用 Chart.js）──────────────────
+   寬度由 JS 以 --lf-share（百分比數字）傳入、顏色以 --lf-swatch 傳入，不寫 style 屬性。
+   內容多到放不下時卡內捲動（auto 不是 hidden：矮視窗仍看得到全部）。 */
+.lf-report-progress {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    justify-content: center;
+    gap: var(--lf-space-4);
+    overflow: auto;
+}
+
+.lf-report-progress__block {
+    display: flex;
+    flex-direction: column;
     gap: var(--lf-space-2);
-    min-height: 0;
+    min-width: 0;
 }
 
-/* 甜甜圈容器**不用 aspect-ratio**（docs/archive/FEEDBACK-10-PLAN.md §5）：aspect-ratio 會由寬度
-   反推高度，在半欄寬 230px 的卡片裡等於強制 230px 高，整張卡的最小高度因此爆掉、
-   一屏化破功。改成填滿寬度、由 flex 分配高度——Chart.js 的甜甜圈本來就取容器長短邊的
-   較小值畫圓並置中，扁容器裡畫出來仍是正圓，不需要我們自己維持比例。 */
-.lf-report-page .lf-chart--sm {
-    width: 100%;
-    height: auto;
-    flex: 1 1 0;
-    min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
+.lf-stack-bar {
+    display: flex;
+    gap: 2px;
+    height: var(--lf-space-3);
+    border-radius: var(--lf-radius-pill);
+    overflow: hidden;
+    background: var(--lf-border);
 }
 
-/* lg+ 視口，右側三顆圓餅卡片的卡頭高度下限，對齊左側主機告警排行卡的卡頭
-   （左卡頭含 btn-group-sm + rank-mode-toggle，比純標題列高）。
-   值由控制項高度變數 ＋ .lf-card__header 垂直 padding 推導，不是量測值，字級縮放時跟著走。
-   實測附註：這三顆卡的標題另有 min-height: 2.4em（見下方「標題固定佔兩行」那條），
-   算出來恆高於這裡的下限，因此本條目前不會實際生效——留著是為了標題那條若改回單行時仍有下限可守。
-   兩側卡片與圖形底緣的對齊不靠這條，靠的是 Reports.cshtml 內層 row 的 gx-3 ＋ col 的 h-100。
-   md 以下不套用，不影響手機 / 小平板版面。 */
-@media (min-width: 992px) {
-    .lf-report-page #risk-section .lf-card__header,
-    .lf-report-page #affected-hosts-section .lf-card__header,
-    .lf-report-page #handling-progress-section .lf-card__header {
-        min-height: calc(var(--lf-control-height-sm) + var(--lf-space-3) * 2);
+.lf-stack-bar__seg {
+    flex: 0 1 calc(var(--lf-share, 0) * 1%);
+    min-width: 2px;
+    background: var(--lf-swatch);
+}
+
+.lf-progress-dot {
+    display: inline-block;
+    width: .7em;
+    height: .7em;
+    margin-right: var(--lf-space-1);
+    border-radius: 50%;
+    background: var(--lf-swatch);
+}
+
+/* 處理進度的條與色點全靠背景色：瀏覽器列印預設不印背景，不指定的話「列印 / 存成 PDF」整張卡只剩數字 */
+.lf-stack-bar,
+.lf-stack-bar__seg,
+.lf-progress-dot {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+/* ── 窄螢幕與列印：解除視窗高度綁定 ─────────────────────────────────────────
+   ≤ 991px 單欄、自然捲動——窄螢幕本來就是捲動閱讀，硬塞進一屏只會每張都小到看不懂；
+   紙張是分頁的，綁死視窗高度會讓內容被裁在第一頁，列印時整組解除，圖固定高度才有足夠的絕對尺寸。
+   這組規則必須寫在畫面規則之後（同一個檔案、同樣的選擇器權重，後者勝出）。 */
+@media (max-width: 991.98px) {
+    .lf-report-page__row,
+    .lf-report-page__row--top,
+    .lf-report-page__row--top.lf-report-page__row--solo {
+        grid-template-columns: minmax(0, 1fr);
     }
 }
 
-/* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
-   這裡的值只是還沒算出來之前的起始字級 */
-.lf-chart__center-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: var(--lf-center-font-size, 1.25rem);
-    font-weight: 600;
-    line-height: 1;
-    pointer-events: none;
+@media (max-width: 991.98px), print {
+    .lf-layout:has(.lf-report-page) {
+        height: auto;
+    }
+
+    .lf-layout:has(.lf-report-page) .lf-content {
+        overflow: visible;
+    }
+
+    .lf-report-page,
+    .lf-report-page__charts,
+    .lf-report-page__row {
+        height: auto;
+        flex: none;
+    }
+
+    .lf-report-page__row {
+        grid-template-rows: none;
+    }
+
+    .lf-report-page__charts .lf-card {
+        height: auto;
+    }
+
+    .lf-report-page .lf-chart { height: 230px; }
+    .lf-report-progress { overflow: visible; }
 }
 
 /* 空資料狀態（charts.js renderNoData）：canvas 留在原地只是藏起來，
@@ -260,99 +376,6 @@
     justify-content: center;
     text-align: center;
     padding: var(--lf-space-2);
-}
-
-/* 圓餅圖右側文字條列（#3，取代表格切換）：色點＋名稱＋數值/百分比，
-   有下鑽目的地的列走連結色＋hover，彙總列（無下鑽）維持一般文字 */
-.lf-legend-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--lf-space-2);
-    min-width: 140px;
-}
-
-/* 三顆占比小圖並排時，卡片標題的字數不同（「風險層級占比」6 字／「受影響主機占比」7 字／
-   「處理進度」4 字）在半欄再切三份的窄欄裡會換成不同行數，甜甜圈分到的剩餘高度就不一樣。
-   標題固定佔兩行的高度，三張卡的圓才會一樣大 */
-.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__title {
-    min-height: 2.4em;
-}
-
-/* 三顆占比小圖並排時，圖例是唯一會讓三張卡分到不同甜甜圈高度的東西：
-   標籤字數與數值長度不同 → 換行列數不同 → 圓大小不一。
-   在報表頁的窄欄裡取消 min-width（改為欄寬自適應），名稱與數值各自不在字中斷行 */
-.lf-report-page .lf-chart-stack .lf-legend-list {
-    min-width: 0;
-    width: 100%;
-}
-
-.lf-report-page .lf-chart-stack .lf-legend-row {
-    white-space: nowrap;
-    min-width: 0;
-    /* 半欄再切三份的窄卡：數值（例如「13（31%）」）不能被擠出卡片外，名稱才是可以被省略的那一個。
-       字級用說明角色的大小、行高收緊、收掉列的左右留白與負邊距（列寬恆等於圖例欄寬），
-       列高仍保有 24px 點擊下限。名稱至少留 3 個字寬，剩的寬度放不下數值時，數值換到名稱下一行靠右
-       （寧可多一行，也不要名稱被省略成一個點、或數值超出卡片） */
-    flex-wrap: wrap;
-    font-size: var(--lf-font-size-sm);
-    line-height: 1.3;
-    gap: 0 var(--lf-space-1);
-    margin-inline: 0;
-    padding: 2px 0;
-    min-height: 24px;
-}
-
-.lf-report-page .lf-chart-stack .lf-legend-row__label {
-    flex: 1 1 0;
-    min-width: 3em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.lf-report-page .lf-chart-stack .lf-legend-row__value {
-    flex: 0 0 auto;
-    margin-left: auto;
-}
-
-/* 占比小圖卡的內容區左右留白收到一半，把寬度讓給圖例 */
-.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__body {
-    padding-inline: var(--lf-space-2);
-}
-
-.lf-legend-row {
-    display: flex;
-    align-items: center;
-    gap: var(--lf-space-2);
-    color: inherit;
-    text-decoration: none;
-    border-radius: var(--lf-radius-sm);
-    padding: var(--lf-space-1) var(--lf-space-2);
-    margin: 0 calc(var(--lf-space-2) * -1);
-}
-
-.lf-legend-row--link {
-    cursor: pointer;
-}
-.lf-legend-row--link:hover {
-    background: var(--lf-gray-50);
-}
-
-.lf-legend-row__dot {
-    width: .7em;
-    height: .7em;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--lf-swatch);
-}
-
-.lf-legend-row__label {
-    flex-grow: 1;
-}
-
-.lf-legend-row__value {
-    font-variant-numeric: tabular-nums;
-    color: var(--lf-text-muted);
-    white-space: nowrap;
 }
 
 /* ── 重點問題的類別分節（§9.3）────────────────────────────────────────────
@@ -1038,3 +1061,11 @@ a.lf-calendar__cell:focus-visible {
     min-width: 0;
 }
 
+/* 立即執行 modal：目前選到的執行模式會重建／保留什麼（兩列「標籤 內容」，標籤欄依最長標籤收窄） */
+.lf-rerun-summary {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--lf-space-1) var(--lf-space-3);
+}
+.lf-rerun-summary dt { margin: 0; }
+.lf-rerun-summary dd { margin: 0; }

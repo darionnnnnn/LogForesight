@@ -93,7 +93,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
     private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null,
         INetiqHostDayTimingCollector? hostDayTiming = null, bool onlyMissingOrFailed = false,
-        Func<Sentinel, ISentinelSearchClient>? clientFactory = null, int resumeRetryDays = 0, long runSeed = 0)
+        Func<Sentinel, ISentinelSearchClient>? clientFactory = null, int resumeRetryDays = 0, long runSeed = 0,
+        DateTime? runStartedUtc = null, bool ledgerRetryOnly = false)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var hosts = overrideHosts ?? _hosts;
@@ -115,7 +116,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: clientFactory ?? FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming,
-            onlyMissingOrFailed: onlyMissingOrFailed, resumeRetryDays: resumeRetryDays);
+            onlyMissingOrFailed: onlyMissingOrFailed, resumeRetryDays: resumeRetryDays, runStartedUtc: runStartedUtc, ledgerRetryOnly: ledgerRetryOnly);
     }
 
     /// <summary>基準 1：全程零事件的乾淨主機——統計模式寫入一筆低風險紀錄，AI 完全不被呼叫。</summary>
@@ -141,13 +142,107 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Empty(store.ReadRecent(yesterday, 1));
         Assert.Equal(NetiqAttemptStatus.EmptyOnce, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
 
-        var second = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var second = await MakePipeline(resumeRetryDays: 7, runStartedUtc: DateTime.UtcNow.Add(ScheduleCalculator.EmptyRecheckGap))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
 
         Assert.Equal(0, second.EmptyDeferred);
         Assert.Equal(1, second.HostDaysAnalyzed);
         var record = Assert.Single(store.ReadRecent(yesterday, 1));
         Assert.NotEqual(NetiqAttemptStatus.EmptyOnce, record.LatestNetiqAttemptStatus);
         Assert.Equal(NetiqAttemptStatus.Success, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+    }
+
+    /// <summary>該主機日帳本最後一次嘗試的時刻（UTC）。</summary>
+    private DateTime LastAttemptUtc(long hostId, DateTime date) => History(date)[(hostId, date)].LastAttemptAtUtc;
+
+    [Fact]
+    public async Task 排程續跑_空資料待複查_未滿60分延後_滿60分才複查()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = "HOST-A" });
+
+        var first = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, first.EmptyDeferred);
+        Assert.Equal(0, first.EmptyRecheckDeferred);
+        var attemptAt = LastAttemptUtc(host.HostId, yesterday);
+        var requestsAfterFirst = _client.Requests.Count;
+
+        // 59 分：不在計畫、不送查詢、帳本沒有新回執
+        var tooEarly = await MakePipeline(resumeRetryDays: 7, runStartedUtc: attemptAt.AddMinutes(59))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, tooEarly.EmptyRecheckDeferred);
+        Assert.Equal(0, tooEarly.EmptyDeferred);
+        Assert.Equal(0, tooEarly.HostDaysAnalyzed);
+        Assert.Equal(requestsAfterFirst, _client.Requests.Count);
+        Assert.Empty(store.ReadRecent(yesterday, 1));
+        var unchanged = History(yesterday)[(host.HostId, yesterday)];
+        Assert.Equal(NetiqAttemptStatus.EmptyOnce, unchanged.LatestStatus);
+        Assert.Equal(attemptAt, unchanged.LastAttemptAtUtc);
+        Assert.Equal(1, unchanged.RetryRunsToday);
+
+        // 60 分：進計畫、送查詢、仍空就定案
+        var due = await MakePipeline(resumeRetryDays: 7, runStartedUtc: attemptAt.AddMinutes(60))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(0, due.EmptyRecheckDeferred);
+        Assert.Equal(1, due.HostDaysAnalyzed);
+        Assert.True(_client.Requests.Count > requestsAfterFirst);
+        Assert.Equal(NetiqAttemptStatus.Success, History(yesterday)[(host.HostId, yesterday)].LatestStatus);
+    }
+
+    [Fact]
+    public async Task 空資料複查趟_只查帳本有待重查的主機_帳本讀不到時退回全部()
+    {
+        var sentinel = AddSentinel();
+        var pending = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var first = await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, first.EmptyDeferred);
+        var attemptAt = LastAttemptUtc(pending.HostId, DateTime.Today.AddDays(-1));
+
+        // 第一趟之後才登錄的主機：昨天缺漏、但帳本沒有它的紀錄
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+
+        var narrowed = await MakePipeline(resumeRetryDays: 7, runStartedUtc: attemptAt.AddMinutes(60), ledgerRetryOnly: true)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, narrowed.HostDaysAnalyzed);   // 只有帳本裡的 HOST-A
+        Assert.Equal(0, narrowed.EmptyDeferred);      // HOST-B 沒有進計畫（進了就會因回 0 筆被記成待複查）
+
+        // 帳本關閉（resumeRetryDays=0 → 不讀帳本）時旗標不生效：兩台都進計畫
+        var fallback = await MakePipeline(ledgerRetryOnly: true)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, fallback.HostDaysAnalyzed);   // HOST-A 已定案，剩 HOST-B
+    }
+
+    [Fact]
+    public async Task 空資料複查趟_Sentinel整台失敗_只把帳本主機計為失敗()
+    {
+        var sentinel = AddSentinel();
+        var pending = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var attemptAt = LastAttemptUtc(pending.HostId, DateTime.Today.AddDays(-1));
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");   // 不在帳本裡，本趟沒要查它
+
+        var failed = await MakePipeline(resumeRetryDays: 7, runStartedUtc: attemptAt.AddMinutes(60), ledgerRetryOnly: true,
+                clientFactory: _ => throw new InvalidOperationException("Sentinel 連不上"))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        // 收窄前的整台主機數是 2：算成 2 會把沒要查的主機灌進失敗數、並替它寫失敗回執
+        Assert.Equal(1, failed.HostsFailed);
+    }
+
+    [Fact]
+    public async Task 非排程_沒有帳本_不套用空資料複查間隔()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+
+        // 手動趟（resumeRetryDays=0 → 不讀帳本）：就算本趟開始時刻很早也不延後
+        var result = await MakePipeline(runStartedUtc: DateTime.UtcNow.AddHours(-5))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(0, result.EmptyRecheckDeferred);
+        Assert.Equal(1, result.HostDaysAnalyzed);
     }
 
     [Fact]
@@ -173,7 +268,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         await MakePipeline(options: options, resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
         Assert.Equal(NetiqAttemptStatus.EmptyOnce, History(nineDaysAgo)[(host.HostId, nineDaysAgo)].LatestStatus);
 
-        var second = await MakePipeline(options: options, resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var second = await MakePipeline(options: options, resumeRetryDays: 7, runStartedUtc: DateTime.UtcNow.Add(ScheduleCalculator.EmptyRecheckGap))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
 
         // 第二趟讀得到 9 天前的 empty-once，照常定案；讀不到的話會再寫一次 empty-once，每晚空轉
         Assert.Equal(0, second.EmptyDeferred);
@@ -318,8 +414,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     [Fact]
     public void 截斷類重查上限累計_不隨日期歸零()
     {
-        var exhausted = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Partial, TruncatedRuns: 2, RetryRunsToday: 0);
-        var notYet = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.RetainedIncomplete, TruncatedRuns: 1, RetryRunsToday: 0);
+        var exhausted = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Partial, TruncatedRuns: 2, RetryRunsToday: 0, LastAttemptAtUtc: DateTime.UtcNow);
+        var notYet = new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.RetainedIncomplete, TruncatedRuns: 1, RetryRunsToday: 0, LastAttemptAtUtc: DateTime.UtcNow);
         Assert.True(NetiqAttemptStatus.AutoRetryExhausted(exhausted));
         Assert.False(NetiqAttemptStatus.AutoRetryExhausted(notYet));
     }

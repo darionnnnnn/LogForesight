@@ -339,91 +339,93 @@ function aiStatusBadge(detail) {
 }
 
 /**
- * 風險日詳情頁的 AI 摘要區塊（標題、重點速報、狀況／趨勢／建議處置）；沒有任何文字時回 null。
- * 從 renderHeader 抽出，行為測試可單獨執行。
+ * 風險日詳情頁首的 AI 摘要（結論列、重點速報＋建議處置、狀況＋趨勢）；沒有任何文字時回 null。
+ * 層級由版面表達：標題是唯一的大字，建議處置是唯一有底色的面（僅 AI 完成時），其餘只靠眉標與細線分區。
+ * statusBadge 是 aiStatusBadge 的結果：有結論列時放進結論列（降級／放棄時不放「AI 摘要」徽章），
+ * 沒有結論列就不收，由呼叫端留在第一行。從 renderHeader 抽出，行為測試可單獨執行。
  */
-function aiSummaryBlock(detail) {
+function aiSummaryBlock(detail, statusBadge = null) {
     // headline/brief/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
     // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
-    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
-    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
-    const textParts = [];
-    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
-    if (detail.aiAnalyzed && detail.brief) textParts.push({ brief: true, text: detail.brief });
-    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
-        if (text) textParts.push({ label, text });
-    }
-    if (textParts.length === 0) return null;
+    // 清單／表格不在預期輸出內；inline 附加而不清空。
+    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出：版面相同，
+    // 但不放「AI 摘要」徽章、不顯示重點速報、建議處置不上底色。
+    const aiOn = Boolean(detail.aiAnalyzed);
+    const brief = aiOn ? detail.brief : '';
+    if (!detail.headline && !brief && !detail.summary && !detail.trendAssessment && !detail.action) return null;
 
-    const target = document.createElement('div');
-    if (detail.aiAnalyzed) {
-        target.className = 'lf-ai-block mb-2';
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary mb-2';
-        badge.textContent = 'AI 摘要';
-        target.appendChild(badge);
-    }
+    const root = document.createElement('div');
+    root.className = 'lf-briefing';
 
-    // 三段摘要：AI 模式用「眉標＋內文」三格；統計模式的替代文字維持單行段落
-    const labeled = [];
-    for (const part of textParts) {
-        if (part.headline) {
+    // 結論列：標題＋「AI 摘要」徽章（或狀態徽章）；整個頁首只有這一個 AI 標記
+    if (detail.headline || (aiOn && !statusBadge)) {
+        const row = document.createElement('div');
+        row.className = 'lf-briefing__conclusion';
+        if (detail.headline) {
             const headline = document.createElement('div');
-            headline.className = detail.aiAnalyzed ? 'fs-5 fw-semibold lf-ai-headline mb-2' : 'fs-5 mb-2';
-            renderAiInline(headline, part.text);
-            target.appendChild(headline);
-            continue;
+            headline.className = 'lf-briefing__headline';
+            renderAiInline(headline, detail.headline);
+            row.appendChild(headline);
         }
-        if (part.brief) {
-            target.appendChild(briefBlock(part.text));
-            continue;
+        if (aiOn && !statusBadge) {
+            const badge = document.createElement('span');
+            badge.className = 'lf-badge lf-badge--secondary';
+            badge.textContent = 'AI 摘要';
+            row.appendChild(badge);
         }
-        if (detail.aiAnalyzed) {
-            labeled.push(part);
-            continue;
-        }
-        const p = document.createElement('p');
-        p.className = 'mb-2';
-        const strong = document.createElement('strong');
-        strong.textContent = `${part.label}：`;
-        p.appendChild(strong);
-        renderAiInline(p, part.text);
-        target.appendChild(p);
+        if (statusBadge) row.appendChild(statusBadge);
+        root.appendChild(row);
     }
 
-    if (labeled.length > 0) {
-        const grid = document.createElement('div');
-        grid.className = 'lf-ai-summary';
-        for (const part of labeled) {
-            const item = document.createElement('div');
-            item.className = part.label === '建議處置'
-                ? 'lf-ai-summary__item lf-ai-summary__item--action'
-                : 'lf-ai-summary__item';
-            const label = document.createElement('h3');
-            label.className = 'lf-ai-summary__label';
-            label.textContent = part.label;
-            item.appendChild(label);
-            const body = document.createElement('div');
-            body.className = 'lf-ai-summary__text';
-            renderAiInline(body, part.text);
-            item.appendChild(body);
-            grid.appendChild(item);
-        }
-        target.appendChild(grid);
+    // 四段共用同一種眉標（lf-text-label、h3）：重點速報、建議處置、狀況、趨勢
+    const section = (className, labelText, text) => {
+        const item = document.createElement('section');
+        item.className = className;
+        const label = document.createElement('h3');
+        label.className = 'lf-text-label lf-briefing__label';
+        label.textContent = labelText;
+        item.appendChild(label);
+        const body = document.createElement('div');
+        body.className = 'lf-briefing__text';
+        renderAiInline(body, text);
+        item.appendChild(body);
+        return item;
+    };
+
+    // 重點速報＋建議處置：寬螢幕並排、窄螢幕直排；只有其中一個時佔滿
+    const briefNode = brief ? briefBlock(brief) : null;
+    const actionNode = detail.action
+        ? section(aiOn ? 'lf-briefing__action lf-briefing__action--tinted' : 'lf-briefing__action', '建議處置', detail.action)
+        : null;
+    if (briefNode || actionNode) {
+        const lead = document.createElement('div');
+        lead.className = briefNode && actionNode ? 'lf-briefing__lead lf-briefing__lead--split' : 'lf-briefing__lead';
+        if (briefNode) lead.appendChild(briefNode);
+        if (actionNode) lead.appendChild(actionNode);
+        root.appendChild(lead);
     }
-    return target;
+
+    // 狀況＋趨勢：細線分隔、兩欄並排；缺的段不渲染，兩段都沒有時連細線與容器都不出現
+    const detailItems = [['狀況', detail.summary], ['趨勢', detail.trendAssessment]].filter(([, text]) => text);
+    if (detailItems.length > 0) {
+        const grid = document.createElement('div');
+        grid.className = 'lf-briefing__detail';
+        for (const [label, text] of detailItems) grid.appendChild(section('lf-briefing__item', label, text));
+        root.appendChild(grid);
+    }
+    return root;
 }
 
-/** 「重點速報」：可直接照念的 2～3 句，附一鍵複製（列印時不顯示按鈕） */
+/** 「重點速報」：可直接照念的 2～3 句，眉標列右側附一鍵複製（列印時不顯示按鈕） */
 function briefBlock(text) {
-    const wrap = document.createElement('div');
-    wrap.className = 'lf-ai-brief';
+    const wrap = document.createElement('section');
+    wrap.className = 'lf-briefing__brief';
     const head = document.createElement('div');
-    head.className = 'lf-ai-brief__head';
-    const badge = document.createElement('span');
-    badge.className = 'lf-badge lf-badge--secondary';
-    badge.textContent = '重點速報';
-    head.appendChild(badge);
+    head.className = 'lf-briefing__brief-head';
+    const label = document.createElement('h3');
+    label.className = 'lf-text-label lf-briefing__label';
+    label.textContent = '重點速報';
+    head.appendChild(label);
     const copy = button('', { icon: 'copy', title: '複製重點速報' });
     copy.classList.add('lf-no-print');
     copy.setAttribute('aria-label', '複製重點速報');
@@ -439,10 +441,17 @@ function briefBlock(text) {
     });
     head.appendChild(copy);
     wrap.appendChild(head);
-    p.className = 'lf-ai-brief__text';
+    p.className = 'lf-briefing__brief-text';
     renderAiInline(p, text);
     wrap.appendChild(p);
     return wrap;
+}
+
+/** 頁首次要資訊行的身分項目：系統類型；IP 只在與主機名不同時才放（NetIQ 主機的主機名就是 IP，不重複） */
+function identityFacts(detail) {
+    const os = detail.hostOs === 'linux' ? 'Linux' : 'Windows';
+    const ip = detail.hostIpAddress && detail.hostIpAddress !== detail.hostName ? detail.hostIpAddress : null;
+    return [os, ip];
 }
 
 /** 頁首「資料來源」：把後端列舉值轉成白話，並說明這一天還能不能補 PRTG 資料 */
@@ -485,7 +494,7 @@ function renderHeader(detail) {
 
     const hostLink = document.createElement('a');
     hostLink.href = appUrl(`/hosts/${detail.hostId}`);
-    hostLink.className = 'lf-entity-head__title lf-entity-head__link';
+    hostLink.className = 'lf-entity-head__title lf-entity-head__title--context lf-entity-head__link';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
 
@@ -500,26 +509,16 @@ function renderHeader(detail) {
         '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
     top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
 
-    // docs/LINUX-RULES.md：詳情頁除 hostname 外，加 IP 與作業系統類型
-    const osBadge = document.createElement('span');
-    osBadge.className = 'lf-badge lf-badge--light border';
-    osBadge.textContent = detail.hostOs === 'linux' ? 'Linux' : 'Windows';
-    top.appendChild(osBadge);
-
-    if (detail.hostIpAddress) {
-        const ipSpan = document.createElement('span');
-        ipSpan.className = 'lf-text-meta lf-text-data';
-        ipSpan.textContent = detail.hostIpAddress;
-        top.appendChild(ipSpan);
-    }
-
+    // AI 狀態徽章：有結論列就放結論列（由 aiSummaryBlock 收下），沒有才留在第一行
     const aiBadge = aiStatusBadge(detail);
-    if (aiBadge) top.appendChild(aiBadge);
+    const aiBlock = aiSummaryBlock(detail, aiBadge);
+    if (aiBadge && !(aiBlock && aiBlock.querySelector('.lf-briefing__conclusion'))) top.appendChild(aiBadge);
     top.appendChild(nextUnhandledLink);
 
     body.appendChild(top);
 
-    // 一行次要資訊：資料來源、三種事件數、主機角色（取代原本分散在卡片底部的統計列與單獨的角色行）
+    // 一行次要資訊：系統類型與 IP（docs/LINUX-RULES.md）、資料來源、三種事件數、主機角色
+    // （取代原本分散在卡片底部的統計列與單獨的角色行）
     const stat = (label, value) => {
         const span = document.createElement('span');
         span.append(`${label} `);
@@ -530,6 +529,7 @@ function renderHeader(detail) {
         return span;
     };
     const facts = metaLine([
+        ...identityFacts(detail),
         detail.logSource ? sourceLine(detail) : null,
         stat('錯誤', detail.errorCount),
         stat('警告', detail.warningCount),
@@ -553,7 +553,6 @@ function renderHeader(detail) {
         body.appendChild(history);
     }
 
-    const aiBlock = aiSummaryBlock(detail);
     if (aiBlock) body.appendChild(aiBlock);
 
     // docs/archive/HISTORY.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，

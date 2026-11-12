@@ -38,7 +38,7 @@ const STATUS_META = {
     running: statusMeta('執行中', '--lf-primary'),
     stuck: statusMeta('異常中斷', '--lf-cat-hardware'),
     none: statusMeta('未執行', '--lf-gray-200'),
-    // NetIQ 回空資料、等下一窗口複查：不是漏跑，所以不併進「未執行」
+    // NetIQ 回空資料、等複查（同窗口約 60 分後或下一窗口）：不是漏跑，所以不併進「未執行」
     recheck: statusMeta('空資料待複查', '--lf-info'),
     // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
     local_disabled: statusMeta('本機分析已停用', '--lf-gray-400')
@@ -343,7 +343,7 @@ function setBarProgress(barEl, percent) {
 function notRunCell(s) {
     const base = s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
     if (!(s.recheckCount > 0)) return base;
-    const recheck = `空資料待複查 ${s.recheckCount}`;
+    const recheck = `空資料待複查 ${s.recheckCount}` + (s.recheckAt ? `（約 ${s.recheckAt} 複查）` : '');
     if (s.notRunCount === 0) return document.createTextNode(recheck);
     const wrap = document.createElement('span');
     wrap.append(base, `＋${recheck}`);
@@ -1991,21 +1991,29 @@ let runNowAiDisabled = null;
 const RERUN_MODE_CONFIG = {
     None: {
         label: '只補跑失敗或未執行（預設）',
+        rebuilds: '缺漏或失敗日',
+        keeps: '已有的成功結果與處理結論',
         variant: null,
         consequence: ''
     },
     Unhandled: {
         label: '重新分析未處理的日子',
+        rebuilds: '未處理日的分析、AI 判讀與深度分析',
+        keeps: '已指派、已完成的日子',
         variant: 'warning',
         consequence: '將刪除選定日子中「沒有人處理過」的既有分析結果（含 AI 判讀與深度分析）並以目前的規則重新產生。來源已無資料的日子會保留原結果。'
     },
     UnhandledAndAssigned: {
         label: '重新分析未處理與處理中的日子',
+        rebuilds: '未處理與處理中日的分析結果',
+        keeps: '已完成的日子與處理結論',
         variant: 'warning',
         consequence: '除了未處理的日子，已指派但尚未完成處理的日子也會被刪除並重新分析。處理結論本身不會被刪除，同一個問題會自動接回。'
     },
     All: {
         label: '全部重新分析（含已處理完的）',
+        rebuilds: '所有選定日的分析結果',
+        keeps: '處理結論；問題不再出現時原紀錄可能失去對應',
         variant: 'danger',
         consequence: '已處理完成的日子也會被刪除重建：這些日子的既有分析結果（含 AI 判讀與深度分析）會被刪除，並以目前的規則重新產生。處理結論本身不會被刪除，同一個問題會自動接回；若新規則不再產生該問題，舊的處理紀錄會成為孤兒紀錄保留在歷史中。'
     }
@@ -2015,6 +2023,10 @@ function updateRerunModeUI() {
     const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
     const warningEl = document.getElementById('run-now-rerun-warning');
     const config = RERUN_MODE_CONFIG[rerunMode];
+    const rebuildsEl = document.getElementById('run-now-rerun-rebuilds');
+    const keepsEl = document.getElementById('run-now-rerun-keeps');
+    if (rebuildsEl) rebuildsEl.textContent = config?.rebuilds ?? '';
+    if (keepsEl) keepsEl.textContent = config?.keeps ?? '';
 
     if (!config || rerunMode === 'None') {
         if (warningEl) {

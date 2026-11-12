@@ -47,7 +47,7 @@ public static class NetiqSourceAttempt
     }
 
     /// <summary>一個主機日的嘗試摘要：最新狀態、累計截斷趟數、今天需要重查的趟數（同一趟多筆回執算一趟）。</summary>
-    public sealed record AttemptHistory(string LatestStatus, int TruncatedRuns, int RetryRunsToday);
+    public sealed record AttemptHistory(string LatestStatus, int TruncatedRuns, int RetryRunsToday, DateTime LastAttemptAtUtc);
 
     /// <summary>
     /// 讀多天的嘗試摘要（查詢數依天數，不依主機數）。排程續跑開跑時讀一次，不逐主機查。
@@ -56,7 +56,7 @@ public static class NetiqSourceAttempt
     public static IReadOnlyDictionary<(long HostId, DateTime Date), AttemptHistory> ReadHistory(
         StorageBackend backend, DateTime from, DateTime to, DateTime today) =>
         ReadLatest(backend, from, to).ToDictionary(pair => pair.Key, pair => new AttemptHistory(
-            pair.Value.Status, pair.Value.TruncatedRuns, pair.Value.RetryDay == today.Date ? pair.Value.RetryRuns : 0));
+            pair.Value.Status, pair.Value.TruncatedRuns, pair.Value.RetryDay == today.Date ? pair.Value.RetryRuns : 0, pair.Value.AttemptAtUtc));
 
     /// <summary>Atomically records attempts and disqualifies existing NetIQ parents for non-success attempts.
     /// A success receipt never qualifies an old parent; qualification requires a successfully saved replacement.</summary>

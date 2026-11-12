@@ -114,6 +114,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **動效**：`--lf-transition: .15s ease` 維持；較大轉場（modal、燈箱）150–300ms `ease-out`；**hover/pressed 不得位移佈局**（用透明度/陰影/色彩）；新增全站 `prefers-reduced-motion: reduce` 支援（動畫關閉、transition 降為 0）。
 - **下拉選項**：`select option／optgroup` 明確指定 `--lf-text` 與 `--lf-card-bg`、`select` 宣告 `color-scheme: light`——選項背景透明時 Windows 版 Chrome 部分寬下拉的選項文字畫不出來（`FrontendConsistencyUiTests` 守門）。
 - **focus ring**：`0 0 0 .2rem rgba(30, 64, 175, .22)`，鍵盤導覽全元件可見。
+- **捲軸**：顏色由 `html` 的 `scrollbar-color` 繼承到全站（拇指 `--lf-scrollbar-thumb`，軌道透明，對白底 4.8:1）；寬度分兩級——頁面主內容區與 modal 內文維持預設寬度（細捲軸不好抓），側欄選單、`.lf-table-wrap`、`.lf-scroll-*` 這類小型捲動容器用 `thin`。側欄另用 `--lf-scrollbar-thumb-sidebar`（對側欄底 3.2:1），滑過側欄時提亮。只用標準屬性，不用 `::-webkit-scrollbar`。
 
 ## 5. Anti-patterns（skill 檢索所得，適用本產品）
 
@@ -145,9 +146,10 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **可讀性下限用 px 不用 rem**：那是「圖看不看得懂」的物理尺寸，用 rem 會隨字級偏好放大 25%，
   選「大」字級反而在同一台螢幕逼出捲軸。
 - **Bootstrap `.row` 不直接當 flex 子項**：它的負 `margin-top` 會讓高度算錯，多出幾像素的捲軸；
-  外面包一層普通 div 隔開。
+  外面包一層普通 div 隔開；多欄的卡片列用 CSS grid（`minmax(0, …)`）排列，不借用 `.row`。
 - **`overflow: auto` 不是 `hidden`**：視窗矮到觸發下限時內容仍捲得到；hidden 會直接裁掉且救不回來。
-- **列印與窄螢幕（≤768px）整組解除**：紙張是分頁的，手機本來就是捲動閱讀。
+- **列印與窄螢幕（≤991px）整組解除**：紙張是分頁的，窄螢幕單欄、自然捲動。解除規則要寫在畫面規則之後（`pages.css` 的報表區）：
+  同權重的規則後者勝出，放在載入順序較前的 `layout.css` 會被畫面規則蓋掉。
 
 ## 6b. 頁面層級規則（一看就知道要點哪裡）
 
@@ -209,8 +211,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
 | 詳情頁右欄側軌 | `core/side-rail.js` + `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
 | 長文字收合 | `ui.js` `collapsibleText` + `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；切換鈕是 `disclosure`（標籤「全文」）、列印全文 |
-| AI 重點速報 | `record-detail.js` `briefBlock` + `.lf-ai-brief` | `.lf-ai-block` 內的子卡：`--lf-primary-soft` 底、`--lf-primary-soft-border` 邊框、不另加左色條；徽章「重點速報」＋複製鈕；字級介於標題與狀況段之間 |
-| AI 摘要三格 | `record-detail.js` `aiSummaryBlock` + `.lf-ai-summary` | AI 摘要＝標題（`fs-5`、字重 600）→ 重點速報 → 三格摘要（狀況／趨勢／建議處置）：`grid` `repeat(auto-fit, minmax(20rem, 1fr))`、間距用 `--lf-space-*`；眉標 `h3.lf-ai-summary__label`（`--lf-font-size-sm`、600、`--lf-text-muted`）、內文 1rem／行高 1.7／最寬 40em；建議處置格加 3px `--lf-primary` 左色條與 `--lf-primary-text` 眉標、不加底色（全區只有重點速報有底色）；缺值的格不渲染；列印改單欄 |
+| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、1.0625rem／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排：≥ 992px 約 1.6 : 1、右欄最小 16rem，窄螢幕直排，缺一則另一佔滿；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，眉標 `--lf-primary-text`），統計模式不上底色；再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄（`repeat(auto-fit, minmax(min(20rem, 100%), 1fr))`）；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + `layout.css` | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
@@ -308,6 +309,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
   Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
+  `ui-shots.mjs` 被逾時或中斷時會留下無頭 Edge 程序，累積後同樣讓行為案例在約 5 秒處逾時：跑測試前清掉命令列含 `--headless` 的 `msedge`（不要動使用者自己開的瀏覽器）。
+  情境步驟 `evalAssert`（函式本體，回傳 null 通過、字串為失敗訊息）用來量六項指標以外的東西：圖示外框是否落在按鈕內、字高下限、欄數、是否需捲動。
 - **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
   情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
 - **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

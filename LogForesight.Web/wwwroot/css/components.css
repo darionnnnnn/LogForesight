@@ -443,14 +443,6 @@ a.lf-kpi-card--link:focus-visible {
     height: 230px;
 }
 
-/* 占比小圖（docs/WEB-FEEDBACK-PLAN.md #6）：三顆一列，不需要跟趨勢/類型分布圖同樣高度。
-   2026-07-28（#3）改左圖右文字條列後固定寬度——Chart.js 的 responsive 需要父層有
-   明確尺寸依據，flex 版面下不能只靠 flex-shrink: 0 撐出寬度。 */
-.lf-chart--sm {
-    width: 160px;
-    height: 160px;
-}
-
 /* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI（§8.2）───────────────
    風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
 
@@ -498,68 +490,110 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius);
 }
 
-/* 「重點速報」：AI 摘要區塊內的可複製短段落；左色條由外層 .lf-ai-block 提供，這裡不另加 */
-.lf-ai-brief {
-    background: var(--lf-primary-soft);
-    border: 1px solid var(--lf-primary-soft-border);
-    border-radius: var(--lf-radius-sm);
-    padding: var(--lf-space-2) var(--lf-space-3);
-    margin: var(--lf-space-2) 0;
-}
-
-.lf-ai-brief__head {
+/* ── 風險日詳情頁首的 AI 摘要（briefing）─────────────────────────────────────
+   層級由版面表達：標題是唯一的大字，建議處置是唯一有底色的面，其餘只靠眉標（lf-text-label）與細線分區；
+   不用框線與徽章分層。AI 標記只有結論列那一顆「AI 摘要」徽章。 */
+.lf-briefing {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--lf-space-1);
-}
-
-.lf-ai-brief__text {
-    font-size: 1.0625rem;
-    font-weight: 500;
-    line-height: 1.7;
-    max-width: var(--lf-measure);
-    margin: 0;
-    color: var(--lf-primary-text);
-}
-
-.lf-ai-headline {
-    max-width: var(--lf-measure);
-    line-height: 1.5;
-}
-
-/* 狀況／趨勢／建議處置三格：寬螢幕並排、窄螢幕自動換行；只有重點速報有底色 */
-.lf-ai-summary {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    flex-direction: column;
     gap: var(--lf-space-4);
     margin-top: var(--lf-space-3);
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
 }
 
-.lf-ai-summary__label {
-    font-size: var(--lf-font-size-sm);
+.lf-briefing__conclusion {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2) var(--lf-space-3);
+}
+
+.lf-briefing__headline {
+    font-size: var(--lf-font-size-xl);
     font-weight: 600;
-    color: var(--lf-text-muted);
+    line-height: 1.5;
+    color: var(--lf-text);
+    max-width: var(--lf-measure);
+    min-width: 0;
+}
+
+.lf-briefing__label {
     margin: 0 0 var(--lf-space-1);
 }
 
-.lf-ai-summary__text {
+.lf-briefing__text {
     font-size: 1rem;
     line-height: 1.7;
     max-width: var(--lf-measure);
 }
 
-.lf-ai-summary__item--action {
-    border-left: 3px solid var(--lf-primary);
-    padding-left: var(--lf-space-3);
+/* 重點速報＋建議處置：窄螢幕直排；寬螢幕並排於約 1.6 : 1，右欄最小約 16rem；只有其中一個時佔滿 */
+.lf-briefing__lead {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--lf-space-4);
 }
 
-.lf-ai-summary__item--action .lf-ai-summary__label {
+@media (min-width: 992px) {
+    .lf-briefing__lead--split {
+        grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 1fr);
+        align-items: start;
+    }
+}
+
+.lf-briefing__brief-head {
+    display: flex;
+    /* 複製鈕緊跟在眉標後：速報限行寬，靠右對齊會讓按鈕離它複製的那段文字很遠 */
+    justify-content: flex-start;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-bottom: var(--lf-space-1);
+}
+
+.lf-briefing__brief-head .lf-briefing__label {
+    margin: 0;
+}
+
+.lf-briefing__brief-text {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    line-height: 1.7;
+    max-width: var(--lf-measure);
+    margin: 0;
+    color: var(--lf-text);
+}
+
+/* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted） */
+.lf-briefing__action--tinted {
+    background: var(--lf-primary-soft);
+    border-radius: var(--lf-radius);
+    padding: var(--lf-space-3);
+}
+
+.lf-briefing__action--tinted .lf-briefing__label {
     color: var(--lf-primary-text);
 }
 
+/* 狀況＋趨勢：上方細線分隔，兩欄並排、窄時直排；只有一段時佔左欄 */
+.lf-briefing__detail {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    gap: var(--lf-space-4);
+    padding-top: var(--lf-space-4);
+    border-top: 1px solid var(--lf-border);
+}
+
+/* 只有狀況／趨勢、前面沒有結論或重點速報時：外框已有一條線，不再疊第二條 */
+.lf-briefing__detail:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
 @media print {
-    .lf-ai-summary {
+    .lf-briefing__lead,
+    .lf-briefing__lead--split,
+    .lf-briefing__detail {
         grid-template-columns: 1fr;
     }
 }
@@ -899,7 +933,7 @@ a.lf-badge:hover { text-decoration: underline; }
     font-variant-numeric: tabular-nums;
 }
 
-.table > tbody > tr:last-child > td { border-bottom: none; }
+.table > tbody > tr:last-child > :is(td, th) { border-bottom: none; }   /* 列標題（th scope=row）也要一起，否則末列只剩第一欄有線 */
 
 /* 出現密度條（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3）：文字「2/90」是主要資訊，
    這條只是讓比例一眼可辨的輔助——**不可拿掉文字只留圖**，那會讓精確值消失，
@@ -1188,6 +1222,8 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-maxw-xl { max-width: 40rem; }
 
 /* 捲動區：限制高度、超出時捲動 */
+/* 卡片內的小型捲動容器用細捲軸（顏色由 html 繼承） */
+:is(.lf-scroll-sm, .lf-scroll-md, .lf-scroll-lg, .lf-scroll-xl) { scrollbar-width: thin; }
 .lf-scroll-sm { max-height: 12rem; overflow: auto; }
 .lf-scroll-md { max-height: 14rem; overflow: auto; }
 .lf-scroll-lg { max-height: 16rem; overflow: auto; }

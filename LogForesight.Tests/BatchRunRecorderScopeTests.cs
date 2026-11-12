@@ -434,8 +434,9 @@ public class BatchRunRecorderScopeTests
         var final = Assert.Single(logs, l => l.Message.Contains("ChatJsonAsync 最終失敗"));
         Assert.Equal("Warn", final.Level);
         Assert.DoesNotContain(logs, l => l.Level is "Error" or "Fatal");
-        // 每次嘗試的解析失敗 2 筆＋最終失敗 1 筆；診斷行不計
-        Assert.Equal(3, run.WarnCount);
+        // 每次嘗試的解析失敗 2 筆（AIServiceAttempt，第 70 輪 C-2 起不計）＋最終失敗 1 筆（照計）；診斷行不計
+        Assert.Equal(1, run.WarnCount);
+        Assert.Equal(2, logs.Count(l => l.Logger == AIService.AttemptLoggerName && l.Level == "Warn"));
     }
 
     [Fact]

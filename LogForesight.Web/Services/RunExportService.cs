@@ -593,7 +593,8 @@ public sealed class RunExportService : IRunExportService
                 if (isErrorFatal) _totErrorFatal++;
                 else _totWarn++;
 
-                if (l.Level == "Warn" && string.Equals(logger, nameof(AIService), StringComparison.Ordinal))
+                if (l.Level == "Warn" && (string.Equals(logger, nameof(AIService), StringComparison.Ordinal)
+                        || string.Equals(logger, AIService.AttemptLoggerName, StringComparison.Ordinal)))
                     CountAiWarn(message);
 
                 // 慢 SQL 依操作彙總；訊息解析不到的退回一般訊號組，不丟棄
@@ -713,7 +714,7 @@ public sealed class RunExportService : IRunExportService
             g.Rank = Math.Max(g.Rank, rank);
             g.Count++;
             if (rank >= RankError && source == SourceLog) g.ErrorFatalCount++;
-            if (l.Level == "Warn" && string.Equals(logger, BatchRunRecorder.ExemptWarnLogger, StringComparison.Ordinal))
+            if (l.Level == "Warn" && BatchRunRecorder.IsWarnCountExemptLogger(logger))
                 g.Exempt = true;
             g.Runs.Add(l.RunId);
             if (l.LoggedAt < g.First) g.First = l.LoggedAt;
@@ -1080,6 +1081,7 @@ public sealed class RunExportService : IRunExportService
                 NetiqDaysAnalyzed = r.NetiqDaysAnalyzed,
                 NetiqDaysFailed = r.NetiqDaysFailed,
                 NetiqHostsSkipped = r.NetiqHostsSkipped,
+                NetiqEmptyPending = r.NetiqEmptyPending,
                 PrtgOutcome = r.PrtgOutcome == null ? null : Closed(r.PrtgOutcome, KnownPrtgOutcomes),
                 PrtgOutcomeNote = string.IsNullOrWhiteSpace(r.PrtgOutcomeNote) ? null : TextCut(r.PrtgOutcomeNote, _l.AiInputTextChars),
                 UnsuccessfulPhases = (r.Phases ?? new List<RunPhaseRecord>())
@@ -1434,12 +1436,12 @@ public sealed class RunExportService : IRunExportService
             "【用途】本檔是 LogForesight 排程作業頁匯出的診斷資料，請協助找出這個專案「尚未完善的細節」：反覆出現的錯誤、沒跑完的趟次、效能瓶頸、AI 回覆格式異常的成因。",
             "【去識別化】主機、帳號、IP、網址、路徑、SID 與密鑰已換成 host-001、user-001、ip-001、secret 之類代號；代號只在本檔內有效，檔案內沒有對照表。自由文字（樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除。看到代號請當成「某一台／某一位」，不要試圖還原。",
             "【解不開的憑證】meta.deidentification.undecryptableSecrets 列出站台存著、但用目前金鑰解不開的憑證名稱，這些值只靠 password=、passhash= 等樣式遮罩。它也是可回報的設定問題：代表憑證需要重新設定。retiredUndecryptableSecrets 是已不是目前認證方式的舊密文，目前沒有使用，可到設定頁清空或忽略，不代表要重新設定。",
-            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 可能多一列今天（isToday），它的 notRun 代表尚未處理、不是失敗；notRun 不含空資料待複查，空資料待複查另計於 recheckCount；pendingSummary 只在今天的列有值；signalGroups 與 abnormalRuns 含今天。保守取數策略下夜間不逐顆取 PRTG 數值，prtgTargetSensors 為 0 屬正常，數值由快照供應。",
+            "【時間】所有時間是伺服器本地時間（meta.utcOffset 是與 UTC 的位移）。dailyHealth 的 date 是「執行日」，它分析的資料日期是前一天（D 對應 D-1）；dailyHealth 可能多一列今天（isToday），它的 notRun 代表尚未處理、不是失敗；notRun 不含空資料待複查，空資料待複查另計於 recheckCount（同一窗口內約 60 分後複查一次，排不進才等下一窗口；abnormalRuns 的 netiqEmptyPending 是該趟結束時仍待複查的主機日）；pendingSummary 只在今天的列有值；signalGroups 與 abnormalRuns 含今天。保守取數策略下夜間不逐顆取 PRTG 數值，prtgTargetSensors 為 0 屬正常，數值由快照供應。",
             "【狀態】success＝完成且無警告；warning＝完成但有警告或 AI 失敗；failed＝結束代碼非 0 或有 Error；stopped＝使用者或執行窗口到點停止，不算失敗；stuck＝站台重啟時還沒結束，或逾 6 小時沒有人持有；running＝匯出當下仍在跑的快照，只計入 runStats，不進 abnormalRuns。",
             "【null 與 0】null 代表沒有資料或無法計算（舊紀錄缺欄位、樣本數為 0 的中位數與 P95、AI 呼叫數為 0 的失敗率）；0 才是真的零。請不要把 null 當成 0 解讀。",
             "【執行站台不等於被分析主機】abnormalRuns.host 是跑這一趟的主機（站台），不是被分析的對象。同一個錯誤在幾個「執行站台」出現，不代表它影響了幾台被分析主機；要判斷個案或通案，請看 affectedRuns 與 versions。",
             "【訊號組】signalGroups 收 Warn、Error、Fatal 的診斷行，加上白話輸出（source=output）裡行首為 ⚠ 或 ✗ 的行；output 的等級是依符號推定（⚠＝Warn、✗＝Error），不是原本的等級。同類訊息先去識別化，再把日期、數字、GUID 正規化後分組。count 是次數（同一組可能同時含 Warn 與 Error 等級的行）、errorFatalCount 是其中 Error／Fatal 的次數、affectedRuns 是涉及趟數、stages 是發生在哪個階段（unknown＝落在階段之外或舊紀錄沒有階段資料）、daily 與 versions 只列有發生的日子與版本。samples 最多 3 個不同樣本，stackId 對應 stacks（只保留專案框架，框架層收成略過行數）。",
-            "【不計警告】excludedFromWarnCount 為 true 的是慢 SQL 監控的 Warn，不計入該趟的警告數。慢 SQL 依操作彙總在 slowSql（格式解析不到的才留在訊號組）。AI JSON 失敗診斷行不進訊號組，改在 aiFormatAnomalies 使用。",
+            "【不計警告】excludedFromWarnCount 為 true 的是慢 SQL 監控的 Warn，以及 AI 單次嘗試的失敗（重試機制處理的，最終失敗另計），不計入該趟的警告數。慢 SQL 依操作彙總在 slowSql（格式解析不到的才留在訊號組）。AI JSON 失敗診斷行不進訊號組，改在 aiFormatAnomalies 使用。",
             "【AI 回覆片段已移除】訊號組樣本裡原本附的 AI 回覆片段已替換成「有片段／空回覆＋字數」。同一則回覆的內容在 aiFormatAnomalies 的案例中，不在這裡重複。",
             "【次數對得上畫面】meta.signalTotals.errorFatal 等於排程作業頁「異常彙總」（預設只看 Error）各組次數的總和；組數可以不同，因為這裡先去識別化再分組，會把只差主機名的訊息併在一起。",
             "【省略】meta.omitted 列出每一處因上限而省略的項目、數量與上限；signalGroups 的省略會同時列出被省略的次數（occurrences）與其中 Error／Fatal 的次數（errorFatalOccurrences）。沒有出現的項目代表沒有被省略。",

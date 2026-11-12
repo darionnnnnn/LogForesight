@@ -223,7 +223,8 @@ public static class AiJsonDiagnostics
     /// 寫一行診斷。序列化或寫入失敗只記一般 Warn；嘗試紀錄為空（沒有內容層失敗）時什麼都不寫。
     /// </summary>
     internal static void Write(string label, string responseType, string? model, int maxTokens,
-        int attemptsMade, string endedBy, IReadOnlyList<AiJsonAttemptDiagnostics> attempts)
+        int attemptsMade, string endedBy, IReadOnlyList<AiJsonAttemptDiagnostics> attempts,
+        bool? grammarSkippedByMemory = null)
     {
         if (attempts.Count == 0) return;
         try
@@ -236,6 +237,7 @@ public static class AiJsonDiagnostics
                 MaxTokens = maxTokens,
                 Attempts = attemptsMade,
                 EndedBy = endedBy,
+                GrammarSkippedByMemory = grammarSkippedByMemory,
                 AttemptDetails = attempts.ToList()
             };
             var json = JsonSerializer.Serialize(entry, WriteOptions);
@@ -268,6 +270,12 @@ public sealed class AiJsonDiagnosticsEntry
 
     /// <summary>exhausted／empty／transport_error／recovered，見 <see cref="AiJsonDiagnostics.EndedExhausted"/></summary>
     [JsonPropertyName("endedBy")] public string EndedBy { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 第一次嘗試是否因跨呼叫記憶而不帶強制格式（response_format）。true＝是；null／缺省＝否
+    /// （含舊版診斷行）。看診斷時據此分辨「第一次就沒帶格式卻失敗」與「帶格式被擋成 []」。
+    /// </summary>
+    [JsonPropertyName("grammarSkippedByMemory")] public bool? GrammarSkippedByMemory { get; set; }
 
     [JsonPropertyName("attemptDetails")] public List<AiJsonAttemptDiagnostics> AttemptDetails { get; set; } = new();
 }

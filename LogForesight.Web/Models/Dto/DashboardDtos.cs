@@ -247,6 +247,9 @@ public class DashboardHostDto
     public string LatestHeadline { get; set; } = string.Empty;
     public bool LatestAiPending { get; set; }
     public int LatestAiDegradedAttempts { get; set; }
+
+    /// <summary>主機顯示名（<c>WebHost.DisplayName</c>，空白視為 null）；NetIQ 主機的 <see cref="HostName"/> 是 IP，畫面靠它辨識</summary>
+    public string? DisplayName { get; set; }
 }
 
 /// <summary>依主機群組的風險概況（§5.4 D-4）</summary>
@@ -346,6 +349,28 @@ public class ReportSummaryDto
     /// 「去年同期超出保留期」標註都要用它——不帶出來的話前端只能寫死一個猜測的天數。
     /// </summary>
     public int RetentionDays { get; set; }
+
+    /// <summary>資料完整度（與顯示範圍、處理狀態無關，同一份）</summary>
+    public ReportCoverageDto Coverage { get; set; } = new();
+}
+
+/// <summary>
+/// 報表「資料完整度」。與 <see cref="ReportKpiDto.CoverageGapDays"/> 不同：後者只數「有紀錄且標了缺口」的主機日，
+/// 整晚取數失敗、完全沒有紀錄的主機日不在內；這裡把那種主機日也算進 <see cref="MissingHostDays"/>。
+/// </summary>
+public class ReportCoverageDto
+{
+    /// <summary>缺漏主機日（應有日誌分析紀錄卻沒有）＋既有缺口紀錄數</summary>
+    public int MissingHostDays { get; set; }
+
+    /// <summary>期間內最後一個有任何主機日誌分析紀錄的日期（yyyy-MM-dd），沒有則 null</summary>
+    public string? DataThrough { get; set; }
+
+    /// <summary>資料落後：<see cref="DataThrough"/> 早於「應有資料的最後一天」＝ min(期間終點, 昨天)</summary>
+    public bool Lagging { get; set; }
+
+    /// <summary>沒有可評估的資料：可見且啟用的主機數為 0，或期間內沒有任何日誌分析紀錄</summary>
+    public bool NoData { get; set; }
 }
 
 /// <summary>主機排行 Top 10 之外的彙總（避免主機量大時尾端主機完全隱形）</summary>

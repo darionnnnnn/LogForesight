@@ -275,6 +275,8 @@ public sealed class AiRequestGateTests
 
         public TimeSpan InteractiveMaxWait => Timeout.InfiniteTimeSpan;
 
+        public AiGrammarMemory GrammarMemory { get; } = new();
+
         public Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct)
         {
             Lanes.Add(lane);

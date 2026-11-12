@@ -1,4 +1,7 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 
@@ -19,12 +22,14 @@ public class ReportService
     private readonly SummaryCache _summaryCache;
     private readonly IIssueExclusionSource _exclusions;
     private readonly SqlPerformanceMonitor _performance;
+    private readonly ScheduleOptionsStore? _scheduleOptions;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings,
-        SummaryCache summaryCache, IIssueExclusionSource exclusions, SqlPerformanceMonitor performance)
+        SummaryCache summaryCache, IIssueExclusionSource exclusions, SqlPerformanceMonitor performance,
+        ScheduleOptionsStore? scheduleOptions = null)
     {
         _repository = repository;
         _hosts = hosts;
@@ -37,6 +42,8 @@ public class ReportService
         _summaryCache = summaryCache;
         _exclusions = exclusions;
         _performance = performance;
+        // 資料完整度「應有資料的最後一天」依排程窗口判定；沒給（測試）時退回「昨天」
+        _scheduleOptions = scheduleOptions;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
@@ -197,16 +204,47 @@ public class ReportService
             MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, null, null),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
+            // 可見主機（VisibilityService 只回啟用中的主機，被合併的來源一律已停用，不會重複計）
             TotalHosts = visibleHosts.Count,
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
                 ? handlingDto ?? new HandlingTodoDto()
-                : _handling.GetTodo(exclusion, recordsForTodo!)
+                : _handling.GetTodo(exclusion, recordsForTodo!),
+            Coverage = BuildCoverage(exclusion, from, to, visibleHosts)
         };
 
         return dto;
+    }
+
+    /// <summary>
+    /// 資料完整度：不論顯示範圍、風險等級篩選都算同一份（完整度與處理狀態無關）。
+    /// 缺漏主機日與缺口紀錄由同一個聚合、同一個母體（啟用、未合併主機的日誌分析紀錄）一次算出。
+    /// </summary>
+    private ReportCoverageDto BuildCoverage(
+        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts)
+    {
+        var activeIds = visibleHosts.Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
+        // 不看 nothingVisible：管理者把風險等級全部隱藏時，資料有沒有收齊仍是同一個答案
+        if (activeIds.Count == 0) return new ReportCoverageDto { NoData = true };
+
+        // 應有資料的最後一天＝ min(期間終點, 最近一個已結束窗口的目標日)：窗口跑完之前昨天本來就不該有資料，
+        // 缺漏只算到這一天、落後也以它判斷（窗口跑到一半時，還沒輪到的主機不算缺漏）
+        var schedule = _scheduleOptions?.Get();
+        var expectedDay = ScheduleCalculator.ExpectedLastDataDay(DateTime.Now, schedule?.Enabled == true, schedule?.Windows ?? new List<ScheduleWindow>());
+        var expectedLast = to.Date < expectedDay ? to.Date : expectedDay;
+        if (expectedLast < from.Date) return new ReportCoverageDto { NoData = true };   // 期間內還沒有任何一天應該有資料
+
+        var agg = _aggregates.AggregateReportCoverage(exclusion, from, expectedLast, activeIds);
+
+        return new ReportCoverageDto
+        {
+            MissingHostDays = agg.MissingHostDays + agg.GapRecords,
+            DataThrough = agg.DataThrough?.ToString("yyyy-MM-dd"),
+            Lagging = agg.DataThrough != null && agg.DataThrough.Value.Date < expectedLast,
+            NoData = agg.NoData
+        };
     }
 
     private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)

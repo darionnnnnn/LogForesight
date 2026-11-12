@@ -39,10 +39,13 @@ public class BriefRenameGuardTests
     }
 
     [Fact]
-    public void briefBlock徽章與複製鈕使用重點速報()
+    public void briefBlock眉標與複製鈕使用重點速報()
     {
         var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "record-detail.js");
-        Assert.Contains("badge.textContent = '重點速報';", js);
+        // 「重點速報」是與其他三段共用的眉標（h3.lf-text-label），不再是徽章
+        Assert.Contains("label.textContent = '重點速報';", js);
+        Assert.Contains("label.className = 'lf-text-label lf-briefing__label';", js);
+        Assert.DoesNotContain("badge.textContent = '重點速報';", js);
         Assert.Contains("copy.setAttribute('aria-label', '複製重點速報');", js);
     }
 

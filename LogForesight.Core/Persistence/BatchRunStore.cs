@@ -130,6 +130,9 @@ public class BatchRun
     /// <summary>NetIQ 機房分析失敗主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqDaysFailed { get; set; }
 
+    /// <summary>這趟結束時仍待複查（來源回 0 筆、尚未定案）的 NetIQ 主機日數＝本趟新記的＋本趟因未滿複查間隔而延後的（null＝舊紀錄）</summary>
+    public int? NetiqEmptyPending { get; set; }
+
     /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqHostsSkipped { get; set; }
 

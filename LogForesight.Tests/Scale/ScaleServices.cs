@@ -19,6 +19,7 @@ internal sealed class ScaleServices
     public IVisibilityService Visibility { get; }
     public DashboardService Dashboard { get; }
     public ReportService Report { get; }
+    public IIssueAggregateQuery Aggregates { get; }
     public RecordListQueryService RecordList { get; }
     public IssueHandlingCommandService IssueCommands { get; }
     public IssueCaseCoordinator CaseCoordinator { get; }
@@ -71,6 +72,7 @@ internal sealed class ScaleServices
             Hosts, Visibility, currentUser, new RecordingAuditService(), users, new NullReportReader(), new FakeSystemSettingsStore());
 
         var aggregates = backend.IssueAggregateQuery(Hosts);
+        Aggregates = aggregates;
         var issueRanking = new IssueRankingBuilder(aggregates, Hosts, new FixedIssueExclusionSource(IssueExclusion.None));
         var statusResolver = new OccurrenceStatusResolver(Hosts, IssueHandlings, Cases, settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver, new FixedIssueExclusionSource(IssueExclusion.None));

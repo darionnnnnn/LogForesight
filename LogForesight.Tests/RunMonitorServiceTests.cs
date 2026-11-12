@@ -499,14 +499,15 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(1, 1, "空資料，下一窗口複查一次")]
-    [InlineData(3, 1, "空資料，下一窗口複查一次")]
-    [InlineData(1, 2, "今天的自動重查已用完，明天會再試")]
-    [InlineData(3, 2, "今天的自動重查已用完，明天會再試")]
-    public void NetIQ空資料待複查_說明依自動重查是否用完_不看列日期(int daysAgo, int attemptRuns, string expected)
+    [InlineData(1, 1, "空資料，下一窗口複查")]
+    [InlineData(3, 1, "空資料，下一窗口複查")]
+    [InlineData(1, 2, "空資料，下一窗口複查")]   // 空資料待複查不受每日自動重查上限限制：下一次查詢一定定案
+    [InlineData(3, 2, "空資料，下一窗口複查")]
+    public void NetIQ空資料待複查_一律寫複查說明_不受自動重查上限影響(int daysAgo, int attemptRuns, string expected)
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.12", Source = "netiq" });
         var rowDate = DateTime.Today.AddDays(-daysAgo);
+        Options().Update(o => o.Enabled = true);   // 過去的格子：排程啟用時寫「下一窗口」（複查時刻只算今天）
         for (var run = 1; run <= attemptRuns; run++)
             NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), run, NetiqAttemptStatus.EmptyOnce);
 
@@ -515,6 +516,62 @@ public class RunMonitorServiceTests : IDisposable
 
         Assert.Contains(expected, row.StatusNote);
         Assert.DoesNotContain("已無自動複查", row.StatusNote);
+    }
+
+    [Fact]
+    public void 今日列_有待複查且同窗口排得進_RecheckAt是上一趟結束加60分()
+    {
+        // 窗口以「現在」為準動態建立（前 30 分到後 3 小時），測試不靠固定時刻
+        var now = DateTime.Now;
+        var window = new ScheduleWindow { Start = now.AddMinutes(-30).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") };
+        if (now.AddMinutes(-30).Date != now.Date) return;   // 剛過午夜：窗口起點落在昨天，今日列沒有上一趟，此案無意義
+        Options().Update(o => { o.Enabled = true; o.Windows = new List<ScheduleWindow> { window }; });
+        var instance = ScheduleCalculator.CurrentWindowInstance(now, new[] { window })!.Value;
+
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.9.21", Source = "netiq" });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        var runs = Runs();
+        var started = instance.Start.AddMinutes(1);
+        var id = runs.StartRun(new BatchRun { HostName = "SITE-R", StartedAt = started, Trigger = BatchRunTriggers.Schedule, WindowInstanceStart = instance.Start });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = id, HostName = "SITE-R", StartedAt = started, FinishedAt = started.AddMinutes(2),
+            Trigger = BatchRunTriggers.Schedule, WindowInstanceStart = instance.Start, NetiqEmptyPending = 1, ExitCode = 0
+        });
+
+        var today = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.True(today.IsToday);
+        Assert.Equal(1, today.RecheckCount);
+        var due = started.AddMinutes(2).AddMinutes(60);   // 上一趟結束＋60 分
+        var expected = due < now ? now : due;
+        Assert.Equal(expected.ToString("HH:mm"), today.RecheckAt);
+    }
+
+    [Fact]
+    public void 今日列_排程未啟用時沒有RecheckAt()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.9.22", Source = "netiq" });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        AddTodayRun(1);
+
+        var today = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(1, 1, 1)[^1];
+
+        Assert.Equal(1, today.RecheckCount);
+        Assert.Null(today.RecheckAt);
+    }
+
+    [Theory]
+    [InlineData(false, null, "空資料，排程未啟用，不會自動複查")]
+    [InlineData(false, "02:00", "空資料，排程未啟用，不會自動複查")]
+    [InlineData(true, "02:00", "空資料，約 02:00 複查")]
+    [InlineData(true, null, "空資料，下一窗口複查")]
+    public void 空資料待複查說明_排程未啟用_排得進寫時刻_排不進寫下一窗口(bool enabled, string? at, string expected)
+    {
+        DateTime? recheckAt = at == null ? null : DateTime.Today.Add(TimeSpan.Parse(at));
+        Assert.Equal(expected, RunMonitorService.EmptyRecheckNote(enabled, recheckAt));
     }
 
     private long AddTodayRun(int minuteOffset, int? netiqDaysFailed = null, bool interrupted = false)
@@ -1171,6 +1228,21 @@ public class RunMonitorServiceTests : IDisposable
         SeedLog(run, "Warn", "[SQL][慢] Query 耗時 2500ms", logger: BatchRunRecorder.ExemptWarnLogger);
         // 訊息一樣但 logger 不同：不得被當成免計
         SeedLog(run, "Warn", "[SQL][慢] Query 耗時 3100ms", logger: "Other");
+
+        var groups = Create().GetErrorSummary(7, "warn").Groups;
+
+        Assert.Equal(2, groups.Count);
+        Assert.True(Assert.Single(groups, g => g.ExcludedFromWarnCount).Count == 1);
+        Assert.False(Assert.Single(groups, g => !g.ExcludedFromWarnCount).ExcludedFromWarnCount);
+    }
+
+    [Fact]
+    public void 異常彙總_AI嘗試層級logger標示不計入警告數_與警告數同一個判定點()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "JSON 解析失敗（第 1/3 次）", logger: AIService.AttemptLoggerName);
+        // 同樣的訊息、一般 AIService logger：最終失敗類，照計
+        SeedLog(run, "Warn", "JSON 解析失敗（第 1/3 次）", logger: "AIService");
 
         var groups = Create().GetErrorSummary(7, "warn").Groups;
 

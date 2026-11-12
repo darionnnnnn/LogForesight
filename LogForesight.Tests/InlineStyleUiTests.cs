@@ -45,7 +45,6 @@ public class InlineStyleUiTests
             "--lf-probe-font-family", "--lf-probe-font-size", "--lf-probe-font-weight", "--lf-probe-font-style"
         },
         // 圖例色塊顏色、甜甜圈中央文字依容器短邊縮放的字級
-        ["core/charts.js"] = new[] { "--lf-swatch", "--lf-center-font-size" },
         // 載入骨架列的隨機寬度
         ["core/ui.js"] = new[] { "--lf-skeleton-width" },
         // 問題密度條寬度（issueDensityCell）
@@ -60,6 +59,8 @@ public class InlineStyleUiTests
         ["pages/runs.js"] = new[] { "--lf-swatch", "--lf-progress", "--lf-status-color" },
         // 設定精靈進度條寬度、步驟狀態色點
         ["pages/setup.js"] = new[] { "--lf-progress", "--lf-swatch" },
+        // 報表處理進度的堆疊條：各段寬度（百分比）與顏色；大螢幕模式的字級倍率（視窗高 ÷ 1080，依量測計算）
+        ["pages/reports.js"] = new[] { "--lf-share", "--lf-swatch", "--lf-wall-scale" },
     };
 
     private static IEnumerable<string> JsFiles()

@@ -306,6 +306,11 @@ export function canViewHandlerPage(user, handlerId) {
  */
 let displaySettingsCache = null;
 
+/** 讓下一次 getDisplaySettings 重新向伺服器取（長時間不重新整理的頁面用，例如報表大螢幕） */
+export function clearDisplaySettingsCache() {
+    displaySettingsCache = null;
+}
+
 export async function getDisplaySettings() {
     if (displaySettingsCache === null) {
         try {

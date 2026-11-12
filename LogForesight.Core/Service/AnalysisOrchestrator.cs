@@ -29,6 +29,12 @@ public class RunRequest
     /// <summary>排程趟屬於今日第幾個執行窗口的說明（里程碑用）；非排程趟為 null。</summary>
     public string? WindowNote { get; init; }
 
+    /// <summary>
+    /// 只為空資料複查而跑的同窗口續跑：NetIQ 計畫只涵蓋帳本有待重查的主機，不重掃全部主機的缺漏日
+    /// （3000 台逐台掃一次約 3 分鐘，見 EmptyRecheckPlanBenchmarks）。帳本讀不到時退回全部主機。其餘趟為 false。
+    /// </summary>
+    public bool NetiqLedgerRetryOnly { get; init; }
+
     /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
     public DateTime? CatchUpDeadline { get; init; }
 
@@ -675,6 +681,8 @@ public class AnalysisOrchestrator
                 // IncludeLocal=false（回饋十八輪批次D，排程設定「分析本機主機」關閉）整段跳過，
                 // 只印一行讓執行詳情看得出是設定行為、不是漏跑（不是「未執行」）。
                 Task localTask;
+                // 本趟是否真的啟動了本機分析：體檢以本機分析的產出為基準（見 LocalCheckupSkipReason）
+                var localAnalysisRan = false;
                 if (request.Scope == RunScope.NetiqHosts)
                 {
                     localTask = Task.CompletedTask;
@@ -694,6 +702,7 @@ public class AnalysisOrchestrator
                 }
                 else
                 {
+                    localAnalysisRan = true;
                     localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
                 }
 
@@ -768,7 +777,8 @@ public class AnalysisOrchestrator
                 }
 
                 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
-                var checkupSkipReason = LocalCheckupSkipReason(currentHostId, localHostDisabled);
+                var checkupSkipReason = LocalCheckupSkipReason(currentHostId, localHostDisabled,
+                    localAnalysisRan, baselineRecordExists: historyService.HasRecord(yesterday));
                 if (checkupSkipReason != null)
                 {
                     runRecorder.Phase(RunTimingPhases.Checkup).Complete(RunPhaseOutcomes.Skipped, checkupSkipReason);
@@ -912,13 +922,20 @@ public class AnalysisOrchestrator
     internal const int NetiqResumeRetryDays = 7;
 
     /// <summary>
-    /// 體檢以本機主機為對象：本機未登記或已停用時略過，回傳略過原因；可以跑則回 null。
-    /// 判斷只寫在這裡，呼叫端不另算。
+    /// 體檢以本機主機與本機分析的產出為對象：本機未登記、已停用、本趟沒有執行本機分析、
+    /// 或基準日（昨天）沒有本機分析紀錄時略過，回傳略過原因；可以跑則回 null。
+    /// 後兩項的理由：體檢結果要掛到基準日的紀錄上，沒有紀錄就掛不上、「上次體檢日」不會更新，
+    /// 下一趟又整段重跑（並記一筆 Warn）。判斷只寫在這裡，呼叫端不另算。
     /// </summary>
-    internal static string? LocalCheckupSkipReason(long currentHostId, bool localHostDisabled)
+    /// <param name="localAnalysisRan">本趟是否啟動了本機分析（範圍不含本機、或排程設定關閉時為 false）</param>
+    /// <param name="baselineRecordExists">基準日是否已有本機分析紀錄</param>
+    internal static string? LocalCheckupSkipReason(long currentHostId, bool localHostDisabled,
+        bool localAnalysisRan, bool baselineRecordExists)
     {
         if (currentHostId == 0) return "本機主機未登記，略過體檢";
         if (localHostDisabled) return "本機主機已停用，略過體檢（體檢以本機主機為對象）";
+        if (!localAnalysisRan) return "本趟沒有執行本機分析，略過體檢（體檢以本機分析紀錄為基準）";
+        if (!baselineRecordExists) return "基準日沒有本機分析紀錄，略過體檢（體檢結果無處可掛）";
         return null;
     }
 
@@ -1303,6 +1320,7 @@ public class AnalysisOrchestrator
                 prtgEnabled: prtgEnabled,
                 hostDayTiming: _hostDayTiming,
                 runToday: ctx.Today,
+                ledgerRetryOnly: request.NetiqLedgerRetryOnly,
                 // 排程才走續跑；手動是有人看著選模式。往回最多 7 天，不超過保留期
                 resumeRetryDays: request.Trigger == BatchRunTriggers.Schedule && request.Scope == RunScope.Full
                     ? Math.Min(NetiqResumeRetryDays, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
@@ -1321,7 +1339,8 @@ public class AnalysisOrchestrator
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
                     : "") +
                 (netiqResult.EmptyDeferred > 0 ? $"、回 0 筆待複查 {netiqResult.EmptyDeferred} 個主機日" : ""));
-            runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
+            runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate,
+                netiqResult.EmptyDeferred + netiqResult.EmptyRecheckDeferred);
             netiqPhase.Complete(
                 netiqResult.HostsFailed > 0 ? RunPhaseOutcomes.Partial
                     : netiqResult.HostDaysAnalyzed == 0 ? RunPhaseOutcomes.Skipped

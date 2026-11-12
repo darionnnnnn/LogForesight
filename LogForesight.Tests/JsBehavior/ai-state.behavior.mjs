@@ -207,25 +207,25 @@ const cases = {
         const briefAt = text.indexOf('重點速報');
         const summaryAt = text.indexOf('狀況');
         assert(headlineAt < briefAt && briefAt < summaryAt, `順序錯誤：${text}`);
-        const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
-        assert(brief, '找不到 lf-ai-brief');
+        const brief = block.find((n) => String(n.className || '').split(' ').includes('lf-briefing__brief'));
+        assert(brief, '找不到 lf-briefing__brief');
         const copyButton = brief.find((n) => n.tagName === 'BUTTON');
         assert.equal(copyButton.getAttribute('aria-label'), '複製重點速報', '單一動作用圖示按鈕，名稱在 aria-label');
         assert(!String(copyButton.className).includes('btn-link'));
         assert(String(copyButton.className).includes('lf-no-print'));
-        const textNode = brief.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief__text'));
+        const textNode = brief.find((n) => String(n.className || '').split(' ').includes('lf-briefing__brief-text'));
         assert.equal(textNode.textContent, 'X');
     },
     摘要區塊沒有brief或未分析時不建節點() {
         for (const detail of [briefDetail({ brief: '' }), briefDetail({ aiAnalyzed: false }), briefDetail({ brief: undefined })]) {
             const block = aiSummaryBlock(detail);
             assert(!block.textContent.includes('重點速報'), block.textContent);
-            assert.equal(block.find((n) => String(n.className || '').split(' ').includes('lf-ai-brief')), null);
+            assert.equal(block.find((n) => String(n.className || '').split(' ').includes('lf-briefing__brief')), null);
         }
         assert.equal(aiSummaryBlock({ aiAnalyzed: true }), null);
     },
     摘要區塊複製鈕成功與失敗提示() {
-        const brief = aiSummaryBlock(briefDetail()).find((n) => String(n.className || '').split(' ').includes('lf-ai-brief'));
+        const brief = aiSummaryBlock(briefDetail()).find((n) => String(n.className || '').split(' ').includes('lf-briefing__brief'));
         const button = brief.find((n) => n.tagName === 'BUTTON');
         const wait = () => new Promise((r) => setTimeout(r, 0));
         return (async () => {

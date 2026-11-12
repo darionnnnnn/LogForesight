@@ -122,6 +122,8 @@ function makeReports() {
     const writes = [];
     const inst = build('reports.js', 'async function loadReport(', 'loadReport', `
         const state = {};
+        let activePresetDays = null;
+        let appliedView = null;
         let currentData = null;
         let retentionDays = 90;
         let currentScope = 'all';
@@ -133,8 +135,7 @@ function makeReports() {
         const location = { search: '', pathname: '/reports' };
         const history = { replaceState() { onWrite('url'); } };
         const updateYoyOptionLabel = () => onWrite('yoy');
-        const renderKpi = () => onWrite('kpi');
-        const renderVisibleCharts = () => onWrite('charts');
+        const renderAll = () => onWrite('render');
     `, { api, createSeqGuard, getDisplaySettings: async () => ({}), onWrite: (w) => writes.push(w) });
     return { run: inst.loadReport, api, writes };
 }

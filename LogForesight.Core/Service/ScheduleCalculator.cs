@@ -132,11 +132,51 @@ public static class ScheduleCalculator
         foreach (var w in windows)
         {
             if (CurrentWindowInstanceStart(now, w) is not { } start) continue;
-            if (!TryParseMinutes(w.Start, out var startMinutes) || !TryParseMinutes(w.End, out var endMinutes)) continue;
-            var length = endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
+            if (!TryWindowLength(w, out _, out var length)) continue;
             return (start, start.AddMinutes(length));
         }
         return null;
+    }
+
+    /// <summary>
+    /// 「現在還在進行的那一天」在執行總表上是哪一列：總表的列以趟的開跑日為準，
+    /// 跨午夜窗口（22:00～06:00）過了午夜仍是昨天那一列——用 Today 判斷的話，當晚排好的複查時刻會顯示不出來。
+    /// 不在任何窗口內時就是今天。
+    /// </summary>
+    public static DateTime LiveRunDay(DateTime now, IEnumerable<ScheduleWindow> windows) =>
+        CurrentWindowInstance(now, windows)?.Start.Date ?? now.Date;
+
+    /// <summary>窗口的起點（分鐘）與長度（分鐘）：跨午夜時長度跨到隔天。任一端解析不了回 false。</summary>
+    private static bool TryWindowLength(ScheduleWindow w, out int startMinutes, out int length)
+    {
+        length = 0;
+        if (!TryParseMinutes(w.Start, out startMinutes) || !TryParseMinutes(w.End, out var endMinutes)) return false;
+        length = endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
+        return true;
+    }
+
+    /// <summary>
+    /// 「應該已經有資料」的最後一個資料日（唯一判定點，報表資料完整度用）。
+    /// 某天的資料要等之後的排程窗口跑完才分析：取最近一個**已結束**的窗口實例，它的目標日是開跑日的昨天（跨午夜窗口亦同）。
+    /// 窗口還沒跑完之前，昨天的資料本來就不該有——不能算缺漏、也不能說資料落後，否則戰情中心每晚都會亮警示。
+    /// 排程未啟用或窗口無法解析時退回「昨天」。
+    /// </summary>
+    public static DateTime ExpectedLastDataDay(DateTime now, bool scheduleEnabled, IEnumerable<ScheduleWindow> windows)
+    {
+        var fallback = now.Date.AddDays(-1);
+        if (!scheduleEnabled) return fallback;
+        DateTime? lastEndedStart = null;
+        foreach (var w in windows)
+        {
+            if (!TryWindowLength(w, out var startMinutes, out var length)) continue;
+            // 最長的窗口不到 24 小時，往回看三天一定找得到已結束的實例
+            for (var offset = 0; offset <= 2; offset++)
+            {
+                var start = now.Date.AddDays(-offset).AddMinutes(startMinutes);
+                if (start.AddMinutes(length) <= now && (lastEndedStart == null || start > lastEndedStart)) lastEndedStart = start;
+            }
+        }
+        return lastEndedStart is { } s ? s.Date.AddDays(-1) : fallback;
     }
 
     /// <summary>同一窗口續跑：距窗口結束與距上一趟開跑都要留這麼久（暫定），避免反覆失敗時空轉。</summary>
@@ -144,6 +184,42 @@ public static class ScheduleCalculator
 
     /// <summary>同一窗口實例最多跑幾趟（含續跑與異常中斷後的補跑）。</summary>
     public const int MaxRunsPerWindowInstance = 2;
+
+    /// <summary>NetIQ 回 0 筆待複查的主機日，距上一次嘗試至少要隔這麼久才複查（暫定）；管線與排程共用這一個常數。</summary>
+    public static readonly TimeSpan EmptyRecheckGap = TimeSpan.FromMinutes(60);
+
+    /// <summary>實例內只為空資料複查而多跑一趟時的趟數上限（失敗續跑仍是 <see cref="MaxRunsPerWindowInstance"/>）。</summary>
+    public const int MaxRunsWithEmptyRecheck = 3;
+
+    private static List<BatchRun> InstanceRuns(DateTime instanceStart, IEnumerable<BatchRun> recentRuns) =>
+        recentRuns
+            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instanceStart)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
+            .ToList();
+
+    /// <summary>
+    /// 下一次空資料複查的時刻（唯一判定點）：now 在窗口內、實例內已有排程取數趟但未達 <see cref="MaxRunsWithEmptyRecheck"/>、
+    /// 最新一趟沒被停止或異常中斷，候選＝最新一趟結束＋<see cref="EmptyRecheckGap"/>（還沒結束以 now 估；已過則取 now）；
+    /// 候選距實例結束不足 <see cref="WindowContinueGap"/> 就不排（回 null）。
+    /// 上一趟已結束時必須只剩空資料待複查（<see cref="RunResume.OnlyEmptyPending"/>）才有時刻，與 <see cref="RunToContinue"/> 的觸發條件一致。
+    /// </summary>
+    public static DateTime? NextEmptyRecheckAt(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
+    {
+        if (CurrentWindowInstance(now, windows) is not { } instance) return null;
+        var inInstance = InstanceRuns(instance.Start, recentRuns);
+        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
+        var last = inInstance[0];
+        if (last.Stopped || last.Interrupted) return null;
+        // 排得出複查的只有兩種：上一趟還在跑（以 now 估）、或上一趟結束後只剩空資料待複查。
+        // 上一趟還留著失敗時，接下來是失敗續跑（它會把未滿間隔的空資料延後）或趟數已用完——複查時刻還不知道，
+        // 回 null 讓畫面寫「下一窗口複查」，不承諾一個 RunToContinue 不會觸發的時刻
+        if (last.FinishedAt.HasValue && !RunResume.Of(last).OnlyEmptyPending) return null;
+        // 從上一趟「結束」起算：那一趟的每個空資料嘗試都發生在結束之前，結束＋間隔時一定全部滿間隔。
+        // 從開跑起算的話，跑很久的第一趟（3000 台、數小時）一結束就排複查，管線卻因各主機日未滿間隔全部延後，白跑一趟還吃掉趟數名額
+        var candidate = (last.FinishedAt ?? now) + EmptyRecheckGap;
+        if (candidate < now) candidate = now;
+        return instance.End - candidate < WindowContinueGap ? null : candidate;
+    }
 
     /// <summary>
     /// 同一窗口該不該再跑一趟：上一趟在窗口內提早結束、還留著失敗或待補。回傳那一趟（null＝不續跑）。
@@ -153,14 +229,12 @@ public static class ScheduleCalculator
     /// </summary>
     public static BatchRun? RunToContinue(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
+        var runs = recentRuns as IReadOnlyCollection<BatchRun> ?? recentRuns.ToList();
         if (CurrentWindowInstance(now, windows) is not { } instance) return null;
         if (instance.End - now < WindowContinueGap) return null;
 
-        var inInstance = recentRuns
-            .Where(r => r.JobType != BatchRun.JobTypeAi && r.Trigger == BatchRunTriggers.Schedule && r.WindowInstanceStart == instance.Start)
-            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId)
-            .ToList();
-        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsPerWindowInstance) return null;
+        var inInstance = InstanceRuns(instance.Start, runs);
+        if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
 
         var last = inInstance[0];
         if (last.FinishedAt is not { } finishedAt || last.Stopped || last.Interrupted) return null;
@@ -168,6 +242,11 @@ public static class ScheduleCalculator
 
         var resume = RunResume.Of(last);
         if (!resume.HasWork) return null;
+        if (resume.OnlyEmptyPending)
+            // 只剩空資料待複查：間隔與趟數上限由 NextEmptyRecheckAt 這唯一判定點決定
+            return NextEmptyRecheckAt(now, windows, runs) is { } recheckAt && now >= recheckAt ? last : null;
+        // 還有失敗或待補：沿用失敗續跑規則（實例內最多 MaxRunsPerWindowInstance 趟）
+        if (inInstance.Count >= MaxRunsPerWindowInstance) return null;
         if ((resume.PrtgDevices > 0 || resume.PrtgSensors > 0) && now - finishedAt < WindowContinueGap) return null;
         return last;
     }
