@@ -19,9 +19,12 @@ public sealed class FontScaleGuardUiTests
         return Path.Combine(dir!.FullName, "LogForesight.Web", "wwwroot", "css");
     }
 
-    /// <summary>去掉註解：說明文字會提到 clamp、vw 等字眼，不能算進規則本文。</summary>
+    /// <summary>
+    /// 去掉註解（說明文字會提到 clamp、vw 等字眼，不能算進規則本文），並把換行統一成 \n：
+    /// Windows checkout 的檔案是 CRLF，多行選擇器的比對要在兩個平台一致。
+    /// </summary>
     private static string ReadCss(string file) =>
-        Regex.Replace(File.ReadAllText(Path.Combine(CssDir(), file), Encoding.UTF8), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        Regex.Replace(File.ReadAllText(Path.Combine(CssDir(), file), Encoding.UTF8).Replace("\r\n", "\n"), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
 
     /// <summary>取出 selector 完全相符的第一個規則區塊的內容；找不到即失敗（避免改名後守門悄悄失效）。</summary>
     private static string RuleBody(string css, string selector)

@@ -484,3 +484,5 @@
 | D（落差 1） | 主代理 | 第一版的探針用 `style.setProperty('font-size', …)`，`InlineStyleUiTests` 擋下（JS 只能設 CSS 變數） | 改成樣式表定義離屏探針類別，JS 只加 class | 已修；樣式表守門的白名單加入兩個圖表 token |
 | D（落差 2） | 主代理 | 規劃寫「大螢幕可以改用 sm」由 JS 判斷；改成在樣式表切換 token，`charts.js` 不知道大螢幕模式的存在 | — | 設計修正（單一來源在 CSS） |
 | D（落差 3） | 主代理 | D-7 原規劃「不重複顯示括號裡的主機識別碼」會丟資訊（`hostRankLabel` 註解寫明括號裡的主機名是為了對應其他畫面）；改成只有座標軸省略，提示框與表格保留完整名稱。1280 寬時這張卡不到 480px，仍套既有的窄畫布截斷（9 字） | FHD 驗收通過 | 規劃修正 |
+| CI 1 | 主代理 | B 批推送後 CI 的 Windows 紅：`FontScaleGuardUiTests.控制項字級不大於內文`。測試以 `\n` 比對多行選擇器，Windows checkout 的 CSS 是 CRLF | 讀 CSS 時把換行統一成 `\n`；在 macOS 把 `base.css` 暫時轉成 CRLF 重跑，守門綠 | 已修。教訓：讀檔比對多行字串的守門要先正規化換行 |
+| CI 2 | 主代理 | A 批推送後 CI 的 Windows 紅：`AiAnalysisSchedulerTests.TickAsync_取數執行中且PRTG未就緒時閒置原因為等待取數`（期望 `waiting-fetch`，得到 null） | A 批只改版號、截圖工具與文件，與此測試無關；dev 上最近三次 CI 都通過 | 判定為 Windows 上的時序偶發，後續 CI 若重現再處理 |
