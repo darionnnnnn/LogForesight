@@ -12,7 +12,7 @@
     判斷站台部署了哪個 commit 一律看 BuildVersion.Current.Label（版號＋短 sha）。
   -->
   <PropertyGroup>
-    <Version>1.0.70.2</Version>
+    <Version>1.0.71.0</Version>
     <!-- 平台專屬 API 呼叫一律視為錯誤：不得用 NoWarn／#pragma 壓制 -->
     <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>
