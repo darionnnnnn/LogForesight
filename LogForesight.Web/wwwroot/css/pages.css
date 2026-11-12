@@ -418,7 +418,7 @@
 }
 
 .lf-calendar__title {
-    font-size: var(--lf-font-size-sm, .86rem);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     color: var(--lf-text, #0f172a);
     margin-bottom: var(--lf-space-2, .5rem);
@@ -434,7 +434,7 @@
 }
 
 .lf-calendar__weekday {
-    font-size: var(--lf-font-size-xs, .78rem);
+    font-size: var(--lf-font-size-xs);
     font-weight: 500;
     color: var(--lf-text-muted, #64748b);
     line-height: 1.2;
@@ -452,7 +452,7 @@
     justify-content: center;
     aspect-ratio: 1 / 1;
     border-radius: var(--lf-radius-sm, .25rem);
-    font-size: .75rem;
+    font-size: var(--lf-font-size-xs);
     font-weight: 500;
     line-height: 1;
     text-decoration: none;
@@ -793,7 +793,7 @@ a.lf-calendar__cell:focus-visible {
 
 /* 錯誤頁的標題（Error.cshtml）：借用登入頁的卡片版面，但不是品牌區塊 */
 .lf-login__heading {
-    font-size: 1.5rem;
+    font-size: var(--lf-font-size-2xl);
     font-weight: 600;
     line-height: 1.2;
 }
@@ -863,7 +863,7 @@ a.lf-calendar__cell:focus-visible {
     background-color: var(--lf-gray-100);
     color: var(--lf-text);
     font-weight: 600;
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     padding: var(--lf-space-2) var(--lf-space-2);
     border: none;
     letter-spacing: .02em;
@@ -964,7 +964,7 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-kv__label {
     color: var(--lf-text-muted);
-    font-size: 0.8125rem;
+    font-size: var(--lf-font-size-sm);
     flex: 0 0 auto;
 }
 

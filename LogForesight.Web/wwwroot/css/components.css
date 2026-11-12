@@ -517,7 +517,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-radius: var(--lf-radius-sm);
     background: none;
     color: var(--lf-text);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 500;
     line-height: 1.5;
     white-space: nowrap;
@@ -611,7 +611,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-briefing__text {
-    font-size: 1rem;
+    font-size: var(--lf-font-size-base);
     line-height: 1.7;
     max-width: var(--lf-measure);
 }
@@ -644,7 +644,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-briefing__brief-text {
-    font-size: 1.0625rem;
+    font-size: var(--lf-font-size-lg);
     font-weight: 500;
     line-height: 1.7;
     max-width: var(--lf-measure);
@@ -881,7 +881,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-toolbar__group-label {
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     color: var(--lf-text-muted);
     white-space: nowrap;
@@ -913,7 +913,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border: 1px solid var(--lf-border-strong);
     background: var(--lf-card-bg);
     color: var(--lf-text-muted);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 500;
     line-height: 1.4;
     cursor: pointer;
@@ -968,7 +968,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .table > thead > tr > th {
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     letter-spacing: .02em;
     color: var(--lf-text-muted);
@@ -1209,7 +1209,7 @@ a.lf-badge:hover { text-decoration: underline; }
     border-top: 1px solid var(--lf-border);
     border-left: 1px solid var(--lf-border);
     color: var(--lf-text-muted);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     white-space: nowrap;
     pointer-events: none;
 }

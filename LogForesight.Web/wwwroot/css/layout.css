@@ -234,7 +234,7 @@
 
 .lf-sidebar__section {
     padding: var(--lf-space-4) var(--lf-space-3) var(--lf-space-1);
-    font-size: var(--lf-font-size-xs);
+    font-size: var(--lf-font-size-sm);
     font-weight: 600;
     letter-spacing: .06em;
     color: var(--lf-sidebar-section);
@@ -829,7 +829,7 @@
 }
 
 .lf-side-rail__summary {
-    font-size: 0.8125rem;
+    font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
     white-space: nowrap;
     overflow: hidden;

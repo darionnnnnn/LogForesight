@@ -272,6 +272,18 @@ body {
     overflow-wrap: break-word;
 }
 
+/* Bootstrap 的字級類別對到字階（DESIGN-SYSTEM §3）：Bootstrap 原值有的含 vw（fs-1～fs-4、h1～h4 走 RFS），
+   有的是相對 em（small），都會落在字階外。標記不改，在這裡一處對應；fs-1～fs-3、display-*、h1～h4 類別禁止使用
+   （FontScaleGuardUiTests）。Bootstrap 的 fs-* 是帶 !important 的工具類別，覆寫也要帶 */
+.fs-4 { font-size: var(--lf-font-size-xl) !important; }
+.fs-5 { font-size: var(--lf-font-size-lg) !important; }
+h5, .h5 { font-size: var(--lf-font-size-lg); }
+h6, .h6 { font-size: var(--lf-font-size-base); }
+small, .small { font-size: var(--lf-font-size-sm); }
+.lead { font-size: var(--lf-font-size-xl); }
+/* 舊的 Bootstrap .badge（不再新增，見 §8.8）字級是 .75em，放在小字裡會小於 12px：對到 xs（有 12px 下限） */
+.badge { --bs-badge-font-size: var(--lf-font-size-xs); }
+
 /* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源
    （DESIGN-SYSTEM.md §3）。Bootstrap 的 .font-monospace 已改吃 --lf-font-mono，
    此別名供 cshtml 靜態骨架語意標示用。 */
@@ -526,7 +538,7 @@ select[multiple] option:checked {
     margin-bottom: var(--lf-space-1);
 }
 
-.form-text { font-size: var(--lf-font-size-xs); }
+.form-text { font-size: var(--lf-font-size-sm); }
 
 /* 分頁 */
 /* 分頁鈕點擊區至少 24×24（窄螢幕的頁碼鈕原本只有 21～23px 寬） */

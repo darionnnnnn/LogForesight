@@ -105,4 +105,55 @@ public sealed class FontScaleGuardUiTests
         Assert.Equal("var(--lf-font-size-base)", Declaration(RuleBody(css, ".form-control,\n.form-select"), "font-size"));
         Assert.Equal("var(--lf-font-size-base)", Declaration(RuleBody(css, ":root"), "--bs-body-font-size"));
     }
+
+    private static readonly string[] CssFiles = ["base.css", "components.css", "layout.css", "pages.css"];
+
+    /// <summary>字級只能引用字階 token；以下是有理由的例外（不是文字角色）。</summary>
+    private static readonly string[] AllowedFontSizes =
+    [
+        "calc(100% * var(--lf-font-scale, 1))",     // 根字級
+        "var(--lf-brand-name-size)",                // 品牌標誌，隨側欄寬度另算
+        "var(--lf-brand-subtitle-size)",
+        "var(--lf-probe-font-size)",                // brand-align 量測用的探針，複製實際字級
+        "calc(18px * var(--lf-wall-scale, 1))",     // 大螢幕模式的根字級（依視窗高度）
+        "calc(64px * var(--lf-wall-scale, 1))",     // 大螢幕模式的 KPI 數字
+        ".6rem"                                     // .btn-close.lf-close-xs：關閉鈕圖示的尺寸，不是文字
+    ];
+
+    private static readonly Regex TokenFontSize = new(@"^var\(--lf-font-size-(xs|sm|base|lg|xl|2xl|stat)\)(\s*!important)?$");
+
+    [Fact]
+    public void 樣式表的字級只引用字階token()
+    {
+        var bad = new List<string>();
+        foreach (var file in CssFiles)
+        {
+            foreach (Match m in Regex.Matches(ReadCss(file), @"(?<![\w-])(font-size|--bs-btn-font-size)\s*:\s*([^;}]+)"))
+            {
+                var value = m.Groups[2].Value.Trim();
+                if (TokenFontSize.IsMatch(value) || value == "inherit" || AllowedFontSizes.Contains(value)) continue;
+                bad.Add($"{file}：{m.Groups[1].Value}: {value}");
+            }
+        }
+        Assert.True(bad.Count == 0, "字級要引用 --lf-font-size-* 字階 token（DESIGN-SYSTEM §3）：\n" + string.Join("\n", bad));
+    }
+
+    private static string WebDir() => Path.GetFullPath(Path.Combine(CssDir(), "..", ".."));
+
+    /// <summary>class 屬性或 className 字串裡出現的 Bootstrap 字級類別：fs-1～fs-3、display-*、h1～h4 的字級含 vw，落在字階外。</summary>
+    internal static readonly Regex ForbiddenSizeClass =
+        new(@"class(Name)?\s*[=:+]\s*[""'`][^""'`]*(?<![\w-])(fs-[1-3]|display-[1-6]|h[1-4])(?![\w-])", RegexOptions.Compiled);
+
+    [Fact]
+    public void 不使用字級含視窗單位的Bootstrap類別()
+    {
+        var files = Directory.GetFiles(Path.Combine(WebDir(), "Views"), "*.cshtml", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(Path.Combine(WebDir(), "wwwroot", "js"), "*.js", SearchOption.AllDirectories))
+            .Where(f => !f.Replace('\\', '/').Contains("/lib/"))
+            .ToList();
+        Assert.True(files.Count > 0, "掃描範圍沒有任何檔案，守門的路徑寫錯了");
+        var hits = files.Where(f => ForbiddenSizeClass.IsMatch(File.ReadAllText(f, Encoding.UTF8)))
+            .Select(f => Path.GetRelativePath(WebDir(), f)).OrderBy(f => f).ToList();
+        Assert.True(hits.Count == 0, "改用文字角色類別或 fs-4／fs-5／h5／h6（已對到字階）：" + string.Join("、", hits));
+    }
 }
