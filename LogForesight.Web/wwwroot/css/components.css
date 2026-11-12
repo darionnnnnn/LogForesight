@@ -865,6 +865,12 @@ a.lf-badge:hover { text-decoration: underline; }
     min-width: 140px;
 }
 
+/* 同一格裡並排的起訖日期：讓兩個日期框平分剩餘寬度，不以內容寬度撐出格子（窄螢幕＋大字級時會超出版面） */
+.lf-toolbar__field > .form-control[type="date"] {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .lf-toolbar__group {
     display: flex;
     align-items: center;
