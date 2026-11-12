@@ -84,11 +84,12 @@
     --lf-gray-900: #0f172a;
 
     /* ── 版面 ─────────────────────────────────────────────────────────── */
-    --lf-sidebar-bg: #0f1d3a;
+    --lf-sidebar-bg: #0c1527;
     --lf-sidebar-fg: #9fb0cc;
     --lf-sidebar-fg-strong: #f1f4fa;
     --lf-sidebar-section: #9fb0cc; /* 與 --lf-sidebar-fg 同值：深底對比 7.6:1（原 #68799a 僅 3.81:1），層級靠大寫／字距／字級 */
-    --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
+    --lf-sidebar-active-bg: rgba(255, 255, 255, .08);
+    --lf-sidebar-active-bar: #6b9bff; /* 選中項左側細條：淡底之外的第二個線索（灰階下也看得出選中） */
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 捲軸（DESIGN-SYSTEM §4）：拇指對所在底色至少 3:1；淺色面 #64748b 對白 4.8:1，側欄 #5b6f94 對側欄底 3.2:1 */
     --lf-scrollbar-thumb: var(--lf-gray-500);
@@ -100,12 +101,16 @@
        的省略號截斷成「LogForesig...」。15.25rem 是原 244px 换算（244÷16），預設字級下畫面
        完全不變，只有字級被放大時側欄才跟著等比變寬。 */
     --lf-sidebar-width: 15.25rem;
-    --lf-content-bg: #f8fafc;
+    /* 底色階梯（DESIGN-SYSTEM §2）：頁底 → 面板 → 凹槽。面板靠一圈細環與頁底分開，不靠實線邊框 */
+    --lf-content-bg: #f4f5f7;
     --lf-card-bg: #ffffff;
-    --lf-border: #e2e8f0;
-    --lf-border-strong: #cbd5e1;
+    --lf-sunken: #eef0f3;
+    /* 細線由文字色推出（透明度），放在任何淡底上都同一個濃度，不另選灰 */
+    --lf-border: rgba(15, 23, 42, .10);
+    --lf-border-strong: rgba(15, 23, 42, .18);
+    --lf-panel-ring: 0 0 0 1px var(--lf-border), 0 1px 2px rgba(15, 23, 42, .04);
     --lf-text: #0f172a;
-    --lf-text-muted: #64748b;
+    --lf-text-muted: #5b6678; /* 對白底 5.9:1、對頁底 #f4f5f7 5.4:1 */
 
     /* ── 字族（拉丁用自架 Fira，中文 fallback 系統字；DESIGN-SYSTEM.md §3）── */
     --lf-font-family: "Fira Sans", "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
@@ -158,7 +163,7 @@
 
     /* 舊 token 別名（保留既有元件引用，升級零成本）*/
     --lf-card-radius: var(--lf-radius);
-    --lf-card-shadow: var(--lf-shadow-xs);
+    --lf-card-shadow: var(--lf-panel-ring);
     --lf-card-shadow-hover: var(--lf-shadow-md);
 
     /* ── 語意色：風險與嚴重度。名稱固定不可改（charts.js 執行期讀取），只調色值 ──
@@ -191,6 +196,9 @@
     --lf-danger: #dc2626;
     --lf-danger-soft: #fdecec;
     --lf-danger-text: #991b1b;
+    --lf-warning-line: rgba(217, 119, 6, .35);
+    --lf-danger-line: rgba(220, 38, 38, .30);
+    --lf-success-line: rgba(22, 163, 74, .30);
     --lf-neutral-soft: #eef1f6;
     --lf-neutral-text: #475569;
     --lf-dark-soft: #e2e6ee;
@@ -453,6 +461,7 @@ select[multiple] option:checked {
     --bs-dropdown-border-radius: var(--lf-radius);
     --bs-dropdown-box-shadow: var(--lf-shadow-md);
     --bs-dropdown-link-active-bg: var(--lf-primary);
+    box-shadow: var(--lf-shadow-md);
     font-size: var(--lf-font-size-sm);
 }
 
@@ -472,11 +481,35 @@ select[multiple] option:checked {
 }
 
 /* 警示框改用設計系統的琥珀語意色（原本各頁以 inline style 拼這組顏色，收斂成元件級變數）*/
+.alert-info,
+.alert-secondary,
+.alert-light {
+    --bs-alert-bg: var(--lf-neutral-soft);
+    --bs-alert-color: var(--lf-text);
+    --bs-alert-border-color: var(--lf-border);
+    --bs-alert-link-color: var(--lf-primary);
+    border-color: var(--lf-border);
+}
+
 .alert-warning {
     --bs-alert-bg: var(--lf-warning-soft);
     --bs-alert-color: var(--lf-warning-text);
-    --bs-alert-border-color: var(--lf-warning);
-    border-color: var(--lf-warning);
+    --bs-alert-border-color: var(--lf-warning-line);
+    border-color: var(--lf-warning-line);
+}
+
+.alert-danger {
+    --bs-alert-bg: var(--lf-danger-soft);
+    --bs-alert-color: var(--lf-danger-text);
+    --bs-alert-border-color: var(--lf-danger-line);
+    border-color: var(--lf-danger-line);
+}
+
+.alert-success {
+    --bs-alert-bg: var(--lf-success-soft);
+    --bs-alert-color: var(--lf-success-text);
+    --bs-alert-border-color: var(--lf-success-line);
+    border-color: var(--lf-success-line);
 }
 
 /* 底線式頁籤（三個用 nav-tabs 的頁面零 markup 變更即生效）*/

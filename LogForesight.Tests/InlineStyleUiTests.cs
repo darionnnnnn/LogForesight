@@ -47,6 +47,8 @@ public class InlineStyleUiTests
         // 圖例色塊顏色、甜甜圈中央文字依容器短邊縮放的字級
         // 載入骨架列的隨機寬度
         ["core/ui.js"] = new[] { "--lf-skeleton-width" },
+        // 初始設定提醒列的進度細條寬度
+        ["core/layout.js"] = new[] { "--lf-progress" },
         // 問題密度條寬度（issueDensityCell）
         ["core/format.js"] = new[] { "--lf-progress" },
         // 類別卡色點

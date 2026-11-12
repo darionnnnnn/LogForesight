@@ -322,6 +322,7 @@
 
 .lf-sidebar__link.is-active {
     background: var(--lf-sidebar-active-bg);
+    box-shadow: inset 3px 0 0 var(--lf-sidebar-active-bar);
     color: #fff;
     font-weight: 500;
 }
@@ -332,15 +333,31 @@
     padding: var(--lf-space-3) var(--lf-space-4);
     border-top: 1px solid rgba(255, 255, 255, .07);
     font-size: var(--lf-font-size-sm);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--lf-space-2);
 }
 
 .lf-sidebar__user {
     display: flex;
     align-items: center;
     gap: var(--lf-space-2);
-    margin-bottom: var(--lf-space-2);
+    min-width: 0;
     color: var(--lf-sidebar-fg-strong);
 }
+
+/* 登出：同一列的安靜按鈕，保留文字（不只剩圖示） */
+#lf-logout {
+    --bs-btn-color: var(--lf-sidebar-fg-strong);
+    --bs-btn-border-color: rgba(255, 255, 255, .22);
+    --bs-btn-hover-bg: rgba(255, 255, 255, .10);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-border-color: rgba(255, 255, 255, .35);
+    white-space: nowrap;
+}
+
+.lf-sidebar__footer .lf-sidebar__version { grid-column: 1 / -1; }
 
 .lf-sidebar__user .lf-icon { color: var(--lf-sidebar-section); width: 1.1rem; height: 1.1rem; }
 
@@ -375,7 +392,9 @@
 }
 
 .lf-topbar__title {
-    font-size: var(--lf-font-size-xl);
+    font-size: var(--lf-font-size-2xl);
+    letter-spacing: -.01em;
+    line-height: var(--lf-line-tight);
     font-weight: 600;
     margin: 0;
     color: var(--lf-text);
@@ -392,6 +411,38 @@
     margin-bottom: 0;
     border-width: 0 0 1px;
     border-radius: 0;
+}
+
+/* 初始設定提醒（layout.js）：面板色的一行＋品牌藍進度細條，不用 Bootstrap 的青色警示底；
+   仍保留實心「繼續設定」當這一列的主要動作——未完成設定是需要處理的事 */
+.lf-setup-bar {
+    --bs-alert-bg: var(--lf-card-bg);
+    --bs-alert-color: var(--lf-text);
+}
+
+.lf-setup-bar__content {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--lf-space-3);
+}
+
+.lf-setup-bar__content > :not(.lf-setup-bar__progress) { grid-column: 2; }
+
+.lf-setup-bar__progress {
+    grid-row: 1 / span 2;
+    width: 5rem;
+    height: .375rem;
+    border-radius: var(--lf-radius-pill);
+    background: var(--lf-sunken);
+    overflow: hidden;
+}
+
+.lf-setup-bar__progress > .lf-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--lf-primary);
 }
 
 /* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過

@@ -168,9 +168,9 @@
 
 .lf-card {
     background: var(--lf-card-bg);
-    border: 1px solid var(--lf-border);
+    border: 1px solid transparent;
     border-radius: var(--lf-radius);
-    box-shadow: var(--lf-shadow-xs);
+    box-shadow: var(--lf-card-shadow);
     transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
 }
 
@@ -1260,6 +1260,7 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-callout-warning {
     background-color: var(--lf-warning-soft);
     color: var(--lf-warning-text);
+    box-shadow: inset 0 0 0 1px var(--lf-warning-line);
 }
 
 /* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
