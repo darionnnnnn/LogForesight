@@ -28,6 +28,10 @@
 //                                                    （true＝處理常式呼叫了 preventDefault；不會真的離開頁面）
 // 流程：patchApi → reload → waitFor（執行中的畫面出現）→ markRect → wait（一個輪詢週期以上）→ sameRect。
 //
+// 載入中與錯誤狀態：
+//   { faultApi: { delay: { "<網址片段>": 毫秒 }, fail: { "<網址片段>": 狀態碼 } } }  接著 { reload: true }，
+//       頁面載入時該 API 延遲回應或直接回失敗（失敗回應的狀態碼要列進情境的 allowStatus，頁面記下的錯誤以 allowConsole 子字串排除）
+//
 // 任意量測：
 //   { evalAssert: "函式本體" }                       在頁面執行，回傳 null 通過、回傳字串即為失敗訊息（例：圖示外框落在按鈕內、字高下限）
 
@@ -268,6 +272,30 @@ function installApiPatch(patches) {
     return true;
 }
 
+/**
+ * 頁面內：讓符合網址片段的 API 延遲回應或直接失敗（載入中、錯誤狀態情境用）。
+ * spec = { delay: { "<網址片段>": 毫秒 }, fail: { "<網址片段>": HTTP 狀態碼 } }；同一頁再呼叫一次會換成新的設定。
+ */
+function installApiFault(spec) {
+    if (window.__lfFaults) { window.__lfFaults = spec; return true; }
+    window.__lfFaults = spec;
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        for (const [part, status] of Object.entries(window.__lfFaults.fail || {})) {
+            if (url.includes(part)) {
+                return new Response(JSON.stringify({ success: false, error: { code: 'UI_FAULT', message: '量測工具模擬的失敗' } }),
+                    { status: Number(status), headers: { 'Content-Type': 'application/json' } });
+            }
+        }
+        for (const [part, ms] of Object.entries(window.__lfFaults.delay || {})) {
+            if (url.includes(part)) await new Promise(r => setTimeout(r, Number(ms)));
+        }
+        return realFetch(input, init);
+    };
+    return true;
+}
+
 /** 頁面內：各選擇器第一個元素的頁面座標與大小（找不到回 null） */
 function measureRects(selectors) {
     return selectors.map(sel => {
@@ -338,6 +366,11 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
             if (prevented !== step.beforeUnload) failures.push(`${width}px：離開頁面提醒預期${step.beforeUnload ? '啟動' : '不啟動'}，實際${prevented ? '啟動' : '未啟動'}`);
         } else if (step.wait) {
             await sleep(Number(step.wait));
+        } else if (step.faultApi) {
+            // 只登記在新文件：接著要 { reload: true }，頁面第一次載入就吃到延遲或失敗
+            const source = `(${installApiFault.toString()})(${JSON.stringify(step.faultApi)})`;
+            const added = await browser.send('Page.addScriptToEvaluateOnNewDocument', { source });
+            patchScripts.push(added.identifier);
         } else if (step.patchApi) {
             const source = `(${installApiPatch.toString()})(${JSON.stringify(step.patchApi)})`;
             const added = await browser.send('Page.addScriptToEvaluateOnNewDocument', { source });
@@ -422,7 +455,7 @@ async function runScenario(browser, scenario, cell, state) {
         }
         // 骨架列還在就多等最多 5 秒：分批載入的頁面在網路靜止後仍可能有最後一段在渲染，
         // 只在真的卡住時才記為 stuck（否則同一頁兩次量測結果會隨時序跳動）
-        for (let i = 0; i < 25 && await evaluate(browser, '!!document.querySelector(".lf-skeleton")'); i++) await sleep(200);
+        for (let i = 0; i < 25 && !scenario.allowStuck && await evaluate(browser, '!!document.querySelector(".lf-skeleton")'); i++) await sleep(200);
         const measured = await evaluate(browser, `(${pageMeasure.toString()})()`);
 
         const metrics = await browser.send('Page.getLayoutMetrics');
@@ -438,7 +471,10 @@ async function runScenario(browser, scenario, cell, state) {
         return {
             scenario: scenario.name, role: scenario.role, path: scenario.path, width, scale, media: scenario.media || 'screen', file,
             hscroll: measured.hscroll, overflow: measured.overflow, target: measured.target,
-            console: [...new Set(errors)], stuck: measured.stuck, assert: assertFailures,
+            // allowConsole：錯誤狀態情境刻意讓 API 失敗，頁面記下的 [load] 錯誤是預期行為，以子字串排除
+            console: [...new Set(errors)].filter(e => !(scenario.allowConsole || []).some(part => e.includes(part))),
+            // allowStuck：「載入中」情境刻意停在骨架列，骨架是要拍的對象，不是卡住
+            stuck: scenario.allowStuck ? [] : measured.stuck, assert: assertFailures,
             observe: { ...measured.observe, elapsedMs: Date.now() - started }
         };
     } finally {
