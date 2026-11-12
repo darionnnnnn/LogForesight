@@ -1,6 +1,6 @@
 # FEEDBACK 第 70 輪規劃
 
-> 狀態：規劃中（待使用者確認後開分支）
+> 狀態：實作完成，待換模型體檢
 > 基準：dev@158efa8f（Windows 9,104 通過／11 略過）
 > 來源：使用者 2026-11-11 回饋 6 條＋同日排程診斷匯出（期間 10/29～11/11，41 趟）
 > 核心原則：版面能說明的不再寫一遍說明（DESIGN-SYSTEM §8）。每一條先找根因、以全站角度修，不針對單一畫面硬改。
@@ -494,4 +494,68 @@ Windows · NetIQ · 錯誤 8 · 警告 1 · 稽核事件 8 · 主機角色…
 
 ## 體檢交接
 
-（實作輪收官時填：全量測試數、與基線差、量測結果、逐條比對清單、交付提醒。）
+### 逐條比對（規劃 → 實作）
+
+| 項目 | 狀態 | 實作位置／證據 |
+|---|---|---|
+| A-1～A-4 | 完成 | `Directory.Build.props` 1.0.70.0＋規則註解；`VersionRoundGuardTests`；`CLAUDE.md` 慣例「版號」與「不要做」改寫 |
+| B-1 | 完成 | `BatchRun.NetiqEmptyPending`、`RunResume.OnlyEmptyPending`／`Describe` |
+| B-2 | 完成 | `ScheduleCalculator.EmptyRecheckGap`／`MaxRunsWithEmptyRecheck`／`NextEmptyRecheckAt`／`RunToContinue`；`SchedulerHostedService.ComposeContinueRequest` |
+| B-3 | 完成 | `AttemptHistory.LastAttemptAtUtc`；`NetiqPipelineService.ApplyResumePolicy` 延後 |
+| B-4 | 完成 | `RunMonitorService.EmptyRecheckNote`（三種文字） |
+| B-5 | 完成（含收窄） | `EmptyRecheckPlanBenchmarks` 實測 174.3 秒 → `RunRequest.NetiqLedgerRetryOnly` |
+| B-6 | 完成 | `RunDaySummaryDto.RecheckAt`、`runs.js` 今日列；匯出 `netiqEmptyPending` 與說明 |
+| B-7 | 完成 | WEB-SPEC 兩段、說明書 `10-scheduler` |
+| C-1a／C-1b | 完成 | `AiGrammarMemory`；`IAiRequestGate.GrammarMemory`；`AIService` 第一次嘗試、`grammarSkippedByMemory` |
+| C-2 | 完成 | `AIService.AttemptLoggerName`；`IsWarnCountExemptLogger`；監控頁與匯出共用判定 |
+| C-3 | 完成 | `LocalCheckupSkipReason` 兩個新原因；重現測試 |
+| C-4 | 完成 | WEB-SPEC §9.10、DETECTION-SPEC、BACKLOG |
+| D-1～D-4 | 完成 | `components.css` 末列線；捲軸 token；`Runs.cshtml`／`RERUN_MODE_CONFIG`；`icons.svg` copy 路徑＋`IconSpriteTests` |
+| E-1～E-6 | 完成 | `record-detail.js` `aiSummaryBlock`／`briefBlock`／`identityFacts`；`lf-briefing__*`；說明書與文件；列印情境「列印-風險日頁首」 |
+| F-1～F-6 | 完成 | `DashboardHostDto.DisplayName`；`ReportCoverageDto`＋`AggregateReportCoverage`；`reports.js` 第一排、趨勢、處理進度、排行、工具列與移除項 |
+| F-7 | **部分**（偏離） | 1920×1080、1280×900 一屏；1280×800 差約 30px（可讀下限 130px），BACKLOG 記錄；「列印分頁數與改版前相同」不適用（版面已改），以列印模擬量測取代 |
+| F-8～F-10 | 完成 | `_Layout.cshtml` 伺服器端 `lf-wall`；`reports-wall.js`；`charts.setFontScale` 與座標軸補字級 |
+| F-11 | 完成（收尾補） | `ui-scenarios.json` 新增「大螢幕-報表」「列印-風險日頁首」；報表三種狀態（逾期、缺漏、落後）由行為測試覆蓋，資料集現有逾期與缺漏，沒有「資料落後」的資料 |
+| F-12 | 完成 | WEB-SPEC §9.6、說明書 `15-reports`、BACKLOG 兩條 |
+| G-1 | 完成 | 本表 |
+| G-2 | 完成 | 新欄位 `NetiqEmptyPending`、`RecheckAt`、`LastAttemptAtUtc`、`NetiqLedgerRetryOnly`、`DisplayName`、`Coverage.*`、`GrammarMemory`、`AttemptLoggerName` 皆有消費端 |
+| G-3～G-6 | 見下 | |
+
+### 全量測試
+
+- `dotnet test`：9,258 通過、3 失敗、12 略過（8 分 35 秒）。基線 9,104／11 → 本輪新增 157 個測試、多 1 筆規模壓測。
+- 3 條失敗的處置：
+  - `HelpWritingGuideTests.使用者版每句不超過45字`：`15-reports.md` 一句 46 字（F-c 新增），拆成兩句後通過。各批次的定向篩選只含 `HelpContent`，沒含這個類別，漏到全量才紅；`CLAUDE.md` 的說明書篩選建議已補上。
+  - `ReportsKpiBehaviorTests` 一案、`KpiStripBehaviorTests` 一案：在 5 秒處輸出空白，是全量並行時的 Node 逾時；單獨重跑通過。
+- 修正後定向重跑 41 通過；只動一句說明書，沒有再跑全量。基線記為 **9,261 通過／12 略過**（`CLAUDE.md` 已更新）。
+
+### 畫面量測（無頭 Edge，UI 資料集，完整矩陣＝五個寬度＋375／1280 的小、大字級）
+
+| 範圍 | 結果 |
+|---|---|
+| 儀表板、報表、主機詳情、排程作業（`charts.js` 圖例改動影響所有圖表頁） | 六項皆 0 |
+| 風險日詳情 13 種狀態（批次 E） | 六項皆 0；頁首沒有第二條左色條；1920 寬建議處置欄比例 55%～70% |
+| 立即執行 modal（批次 D） | 六項皆 0；1280×800 內不需捲動 |
+| 報表一屏 | 1920×1080、1280×900 一屏；1280×800 差約 30px（記入 BACKLOG） |
+| 大螢幕（991／992／1920×1080／3840×2160） | 伺服器回應即帶 `lf-wall`；991 有側欄、992 起沒有；KPI 字高達標；一屏；除離開鈕外無可點元素 |
+| 列印：風險日頁首 | 單欄、複製鈕不印 |
+
+### 交付提醒（給使用者）
+
+1. **畫面位置變更**：
+   - 報表：第一排改為高風險日、受影響主機、未結案風險日、資料完整度。條件收在「更多條件」。
+   - 報表：自訂圖表、三顆甜甜圈、「查同一問題的其他主機」已移除。
+   - 風險日詳情：建議處置移到右側、狀況與趨勢在下方。
+   - 立即執行：只顯示選定模式的「重建／保留」。
+2. **大螢幕**：報表頁按「大螢幕」或網址加 `?display=wall`。登入 8 小時到期要重新登入，或由站台調高 `Jwt:ExpireHours`。
+3. **排程**：每晚可能多一趟「空資料複查」（約上一趟開跑後 60 分），排程頁的趟數會從 1 變 2；趟次狀態會更常是「成功」。
+4. **版號**：本版 `1.0.70.0`。之後體檢修正為 `1.0.70.1`，依此類推。
+5. 站台側待辦見上方「站台側待辦」一節。
+
+### 換模型體檢時請特別看
+
+- 規劃假設「使用者看到的兩台失敗其實是空資料待複查」仍未經使用者確認。
+- `AiGrammarMemory` 的門檻（3／20）與複查間隔（60 分）都是暫定常數，需看實機匯出再定。
+- `IssueExclusionTests` 的介面方法數、`InlineStyleUiTests` 的允許清單是白名單外的必要改動。
+- 報表非「全部」顯示範圍時多一次全範圍 KPI 查詢（為了讓資料完整度不隨範圍變）。
+

@@ -2352,5 +2352,64 @@
         }
       }
     ]
+  },
+  {
+    "name": "大螢幕-報表",
+    "role": "ui-admin",
+    "path": "/reports?display=wall",
+    "widths": [
+      991,
+      992,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const x = new XMLHttpRequest(); x.open('GET', location.href, false); x.send(); return /<html[^>]*class=\"lf-wall\"/.test(x.responseText) ? null : '伺服器回應的 <html> 沒有 lf-wall（第一次繪製會閃現側欄）';"
+      },
+      {
+        "evalAssert": "const s = document.querySelector('.lf-sidebar'); const vis = !!s && s.getBoundingClientRect().width > 0 && getComputedStyle(s).display !== 'none'; const want = innerWidth < 992; return vis !== want ? ('側欄可見=' + vis + '，寬 ' + innerWidth) : null;"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null; const a = [...document.querySelectorAll('.lf-report-page a[href], .lf-report-page button')].filter(e => e.getBoundingClientRect().width > 0 && !e.closest('#wall-exit')); return a.length ? ('大螢幕仍有可點元素：' + a.map(e => e.id || e.className).slice(0, 5).join(',')) : null;"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null; const vals = [...document.querySelectorAll('#report-kpi .lf-stat__value')]; if (!vals.length) return '找不到 KPI 數字'; const fs = Math.min(...vals.map(v => parseFloat(getComputedStyle(v).fontSize))); const need = innerHeight >= 2000 ? 128 : innerHeight >= 1000 ? 64 : 0; return fs < need ? ('KPI 字高 ' + fs + 'px < ' + need + '（以 --height 1080／2160 量）') : null;"
+      },
+      {
+        "assertAt": {
+          "992": {
+            "sel": "#wall-header",
+            "visible": true
+          },
+          "1920": {
+            "sel": "#wall-header",
+            "visible": true
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "列印-風險日頁首",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "media": "print",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "wait": 500
+      },
+      {
+        "evalAssert": "const bad = []; for (const sel of ['.lf-briefing__lead', '.lf-briefing__detail']) { const el = document.querySelector(sel); if (!el) { bad.push('找不到 ' + sel); continue; } const cols = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length; if (cols > 1) bad.push(sel + ' 列印時 ' + cols + ' 欄'); } const copy = document.querySelector('.lf-briefing__brief button'); if (copy && getComputedStyle(copy).display !== 'none') bad.push('複製鈕列印時仍顯示'); return bad.length ? bad.join('；') : null;"
+      }
+    ]
   }
 ]
