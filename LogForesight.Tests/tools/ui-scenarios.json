@@ -2411,5 +2411,205 @@
         "evalAssert": "const bad = []; for (const sel of ['.lf-briefing__lead', '.lf-briefing__detail']) { const el = document.querySelector(sel); if (!el) { bad.push('找不到 ' + sel); continue; } const cols = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length; if (cols > 1) bad.push(sel + ' 列印時 ' + cols + ' 欄'); } const copy = document.querySelector('.lf-briefing__brief button'); if (copy && getComputedStyle(copy).display !== 'none') bad.push('複製鈕列印時仍顯示'); return bad.length ? bad.join('；') : null;"
       }
     ]
+  },
+  {
+    "name": "狀態-錯誤頁",
+    "role": "ui-admin",
+    "path": "/error",
+    "widths": [
+      375,
+      1280
+    ]
+  },
+  {
+    "name": "狀態-載入中骨架",
+    "role": "ui-admin",
+    "path": "/work-orders",
+    "matrix": "quick",
+    "allowStuck": true,
+    "steps": [
+      {
+        "faultApi": {
+          "delay": {
+            "/api/work-orders?": 9000
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "evalAssert": "return document.querySelectorAll('#wo-list .lf-skeleton').length > 0 ? null : '應看到載入骨架';"
+      }
+    ]
+  },
+  {
+    "name": "狀態-錯誤狀態與提示訊息",
+    "role": "ui-admin",
+    "path": "/work-orders",
+    "matrix": "quick",
+    "allowStatus": [
+      500
+    ],
+    "allowConsole": [
+      "[load]"
+    ],
+    "steps": [
+      {
+        "faultApi": {
+          "fail": {
+            "/api/work-orders?": 500
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "evalAssert": "const t=[...document.querySelectorAll('#wo-list .lf-empty')].some(e=>e.textContent.includes('載入失敗')); const toast=document.querySelector('.toast'); return t && toast ? null : '應看到載入失敗狀態（' + t + '）與失敗提示訊息（' + !!toast + '）';"
+      }
+    ]
+  },
+  {
+    "name": "狀態-下拉選單展開",
+    "role": "ui-admin",
+    "path": "/records",
+    "matrix": "quick",
+    "steps": [
+      {
+        "type": [
+          "#filter-host-search",
+          "UI"
+        ]
+      },
+      {
+        "waitFor": "#filter-host-suggestions.show"
+      },
+      {
+        "evalAssert": "const m=document.querySelector('#filter-host-suggestions.show'); return m && m.getBoundingClientRect().height > 0 ? null : '下拉選單沒有展開';"
+      }
+    ]
+  },
+  {
+    "name": "狀態-危險確認對話框",
+    "role": "ui-admin",
+    "path": "fixture:page.admin-issue-owners",
+    "matrix": "quick",
+    "steps": [
+      {
+        "waitFor": "#issue-owner-list tbody tr .btn-outline-danger"
+      },
+      {
+        "click": "#issue-owner-list tbody tr .btn-outline-danger"
+      },
+      {
+        "waitFor": ".modal.show .modal-footer .btn-danger"
+      },
+      {
+        "evalAssert": "const f=document.querySelector('.modal.show .modal-footer'); return f.querySelectorAll('.btn-primary, .btn-danger').length === 1 ? null : '確認框應只有一顆實心按鈕';"
+      }
+    ]
+  },
+  {
+    "name": "狀態-停用按鈕",
+    "role": "ui-admin",
+    "path": "/admin/prtg#probe",
+    "matrix": "quick",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"probe\"]:not(.d-none)"
+      },
+      {
+        "evalAssert": "const b=[...document.querySelectorAll('[data-panel=\"probe\"] button:disabled')].filter(x=>x.getBoundingClientRect().width>0); return b.length > 0 ? null : '探測頁應有可見的停用按鈕';"
+      }
+    ]
+  },
+  {
+    "name": "守門-分段控制只有一種外觀",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};const g=[...document.querySelectorAll('.btn-group')].filter(vis); if(g.length<2) return '首頁應有兩組分段控制，實際 '+g.length; const sig=x=>{const on=x.querySelector('.btn.active, .btn[aria-pressed=\"true\"]'); const c=getComputedStyle(x); return [c.backgroundColor,c.borderTopLeftRadius,on&&getComputedStyle(on).backgroundColor,on&&getComputedStyle(on).fontWeight].join('|');}; const s=new Set(g.map(sig)); return s.size===1?null:'分段控制有 '+s.size+' 種外觀';"
+      }
+    ]
+  },
+  {
+    "name": "守門-下拉選單有陰影",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "type": [
+          "#filter-host-search",
+          "UI"
+        ]
+      },
+      {
+        "waitFor": "#filter-host-suggestions.show"
+      },
+      {
+        "evalAssert": "const m=document.querySelector('#filter-host-suggestions.show'); return m&&getComputedStyle(m).boxShadow!=='none'?null:'下拉選單沒有陰影';"
+      }
+    ]
+  },
+  {
+    "name": "守門-每列至多一個有底色的標記",
+    "role": "ui-admin",
+    "path": "/admin/rules",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};const filled=b=>{const m=getComputedStyle(b).backgroundColor.match(/[\\d.]+/g)||[];return m.length>=3&&(m.length<4||+m[3]>0)&&getComputedStyle(b).backgroundColor!=='rgb(255, 255, 255)';};const rows=[...document.querySelectorAll('.lf-content table tbody tr')].filter(vis); if(!rows.length) return '找不到列'; const bad=rows.filter(r=>[...r.querySelectorAll('.lf-badge')].filter(b=>vis(b)&&filled(b)).length>1); return bad.length? bad.length+' 列有兩個以上有底色的標記':null;"
+      }
+    ]
+  },
+  {
+    "name": "守門-稽核時間與IP不折行",
+    "role": "ui-admin",
+    "path": "/audit",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};const lines=e=>{const r=document.createRange();r.selectNodeContents(e);const lh=parseFloat(getComputedStyle(e).lineHeight)||parseFloat(getComputedStyle(e).fontSize)*1.5;return Math.max(1,Math.round(r.getBoundingClientRect().height/lh));};const d=[...document.querySelectorAll('.lf-content table tbody td .lf-text-data')].filter(vis); if(!d.length) return '找不到技術值'; const bad=d.filter(e=>lines(e)>1); return bad.length? bad.length+' 個技術值折行（例 '+bad[0].textContent.slice(0,20)+'）':null;"
+      }
+    ]
+  },
+  {
+    "name": "守門-表格內保留換行的技術值不被壓成一行",
+    "role": "ui-admin",
+    "path": "/audit",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const host=document.querySelector('.lf-content'); const t=document.createElement('table'); t.className='table'; t.innerHTML='<tbody><tr><td><pre class=\"report-text lf-text-data\" id=\"g-pre\">a</pre><span class=\"lf-text-data\" id=\"g-plain\">2026-11-12 09:52</span><div class=\"lf-text-data lf-pre-wrap\" id=\"g-wrap\">a</div></td></tr><tr class=\"lf-row-detail\"><td><div class=\"lf-text-data lf-pre-wrap\" id=\"g-detail-wrap\">a</div><span class=\"lf-text-data\" id=\"g-detail\">a</span></td></tr></tbody>'; host.prepend(t); const ws=id=>getComputedStyle(document.getElementById(id)).whiteSpace; const got={pre:ws('g-pre'),plain:ws('g-plain'),wrap:ws('g-wrap'),detailWrap:ws('g-detail-wrap'),detail:ws('g-detail')}; t.remove(); const want={pre:'pre-wrap',plain:'nowrap',wrap:'pre-wrap',detailWrap:'pre-wrap',detail:'normal'}; const bad=Object.keys(want).filter(k=>got[k]!==want[k]).map(k=>k+'='+got[k]+'（應為 '+want[k]+'）'); return bad.length?bad.join('；'):null;"
+      }
+    ]
+  },
+  {
+    "name": "守門-相鄰標記的間距大於圓點到文字的距離",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;}; const pairs=[...document.querySelectorAll('.lf-badge + .lf-badge')].filter(b=>vis(b)&&vis(b.previousElementSibling)&&Math.abs(b.getBoundingClientRect().top-b.previousElementSibling.getBoundingClientRect().top)<4); if(!pairs.length) return '首頁找不到同一行相鄰的標記'; const bad=pairs.filter(b=>{const gap=b.getBoundingClientRect().left-b.previousElementSibling.getBoundingClientRect().right; const inner=parseFloat(getComputedStyle(b).columnGap)||0; return !(gap>inner*1.5);}); return bad.length? bad.length+' 組相鄰標記的間距不到圓點內距的 1.5 倍':null;"
+      }
+    ]
   }
 ]

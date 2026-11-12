@@ -39,7 +39,8 @@ public class AiStateUiTests
     [InlineData("records.js")]
     public void 主機彙總的最新狀況都走latestStatusCell(string file)
     {
-        Assert.Matches(new Regex(@"title: '最新狀況', render: h => latestStatusCell\(h, "), Read("pages", file));
+        // 欄位選項（例如 truncate）可以寫在 title 與 render 之間
+        Assert.Matches(new Regex(@"title: '最新狀況',[^}]*?render: h => latestStatusCell\(h, "), Read("pages", file));
     }
 
     [Fact]

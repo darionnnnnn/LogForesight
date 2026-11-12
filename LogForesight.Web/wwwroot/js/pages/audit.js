@@ -112,7 +112,7 @@ function render() {
             { title: '帳號', render: e => roleText('lf-text-meta', formatUserName(e.accountDisplayName, e.account)) },
             { title: '動作', className: 'text-nowrap', render: e => e.actionText },
             { title: '結果', render: e => resultBadge(e.result) },
-            { title: '內容', className: 'lf-minw-xl', render: e => summaryCell(e) },
+            { title: '內容', className: 'lf-minw-md', render: e => summaryCell(e) },
             { title: '來源 IP', render: e => roleText('lf-text-data', e.ipAddress ?? '') }
         ],
         rows: lastResult.items,

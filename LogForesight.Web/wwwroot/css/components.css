@@ -168,9 +168,9 @@
 
 .lf-card {
     background: var(--lf-card-bg);
-    border: 1px solid var(--lf-border);
+    border: 1px solid transparent;
     border-radius: var(--lf-radius);
-    box-shadow: var(--lf-shadow-xs);
+    box-shadow: var(--lf-card-shadow);
     transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
 }
 
@@ -202,7 +202,7 @@ summary.lf-card__header {
     list-style: none;
 }
 summary.lf-card__header::-webkit-details-marker { display: none; }
-summary.lf-card__header:focus-visible { outline: none; box-shadow: inset var(--lf-focus-ring); }
+summary.lf-card__header:focus-visible { outline: none; box-shadow: var(--lf-focus-ring-inset); }
 summary.lf-card__header::after { content: '▾'; margin-left: auto; color: var(--lf-text-muted); transition: transform .15s ease; }
 details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 
@@ -227,7 +227,7 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 }
 .lf-card__header--clickable:focus-visible {
     outline: none;
-    box-shadow: inset var(--lf-focus-ring);
+    box-shadow: var(--lf-focus-ring-inset);
 }
 
 .lf-card__body {
@@ -259,8 +259,19 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 
 /* KPI 數字的語意色（kpiStrip 的 card.variant）：紅與琥珀只給需要注意的數字 */
 .lf-stat__value--danger { color: var(--lf-danger); }
-.lf-stat__value--warning { color: var(--lf-warning); }
+.lf-stat__value--warning { color: var(--lf-text); }
 .lf-stat__value--secondary { color: var(--lf-text-muted); }
+
+.lf-stat__value--warning + .lf-stat__label::before {
+    content: "";
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-right: .4em;
+    border: .3em solid var(--lf-warning);
+    border-radius: 50%;
+    vertical-align: .1em;
+}
 
 .lf-stat__label {
     font-size: var(--lf-font-size-sm);
@@ -276,11 +287,11 @@ a.lf-stat:hover .lf-card,
 /*
   KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
   - singleRow（--row）：三組排同一排、依卡數分寬，每組放得下幾張就顯示幾張，其餘由 core/reveal.js 收合；
-    不換列也不留 14rem 上限造成的組間空白。575px 以下回到每組佔滿一列、每列兩張。
+    不換列也不留組間空白。575px 以下回到每組佔滿一列、每列兩張。
   - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
-  - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
+  - 卡寬下限 11rem、不設上限：下限讓標籤不逐字換行，4 張卡在 1280 寬同一列。
   - ≥1200px 放得下的組並排，各組以卡片數當 flex-grow 分寬、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；窄螢幕各組依序佔滿一列，375px 每列兩張。
-  - hover 只變陰影與邊框色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
+  - 可點的卡 hover 只變底色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
 */
 .lf-kpi-strip {
     display: flex;
@@ -306,6 +317,9 @@ a.lf-stat:hover .lf-card,
 }
 
 .lf-kpi-group__title {
+    display: flex;
+    align-items: center;
+    min-height: max(24px, 1.5rem);
     margin: 0 0 var(--lf-space-2);
     font-size: var(--lf-font-size-sm);
     font-weight: 600;
@@ -314,7 +328,7 @@ a.lf-stat:hover .lf-card,
 
 .lf-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(9rem, 14rem));
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
     gap: var(--lf-space-3);
 }
 
@@ -355,21 +369,34 @@ a.lf-stat:hover .lf-card,
 .lf-kpi-card {
     display: block;
     min-width: 0;
-    padding: var(--lf-space-3);
+    padding: var(--lf-space-3) var(--lf-space-4);
     background: var(--lf-card-bg);
-    border: 1px solid var(--lf-border);
+    border: 1px solid transparent;
     border-radius: var(--lf-radius);
-    box-shadow: var(--lf-shadow-xs);
+    box-shadow: var(--lf-panel-ring);
     color: inherit;
     text-decoration: none;
     text-align: left;
-    transition: box-shadow var(--lf-transition), border-color var(--lf-transition);
+    transition: background-color var(--lf-transition);
 }
 
-a.lf-kpi-card--link:hover {
-    box-shadow: var(--lf-shadow-md);
-    border-color: var(--lf-primary-soft-border);
-    color: inherit;
+/* 可點的卡：靜止時右上角一個箭頭當線索（觸控裝置沒有滑過）；滑過只變底色、不位移 */
+a.lf-kpi-card--link { position: relative; }
+a.lf-kpi-card--link::after {
+    content: "›";
+    position: absolute;
+    top: var(--lf-space-2);
+    right: var(--lf-space-3);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-lg);
+    line-height: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    a.lf-kpi-card--link:hover {
+        background: var(--lf-gray-50);
+        color: inherit;
+    }
 }
 
 a.lf-kpi-card--link:focus-visible {
@@ -402,8 +429,36 @@ a.lf-kpi-card--link:focus-visible {
 .lf-category-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
-    gap: var(--lf-space-3);
+    gap: 1px;
+    overflow: hidden;
 }
+
+/* 內層卡去掉自己的框與陰影；每格以左、上兩條外側細線分隔（落在 1px 間距裡，最左欄與第一列的線被 overflow 裁掉） */
+.lf-category-grid > a > .lf-card,
+.lf-category-grid > .lf-card {
+    border-color: transparent;
+    border-radius: 0;
+    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
+}
+
+/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色）；只給滑鼠，觸控點過不會留著滑過樣式 */
+.lf-category-grid a.lf-stat:hover > .lf-card,
+.lf-category-grid .lf-card--clickable:hover {
+    border-color: transparent;
+    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .lf-category-grid a.lf-stat:hover > .lf-card,
+    .lf-category-grid .lf-card--clickable:hover {
+        background: var(--lf-gray-50);
+    }
+}
+
+/* 鍵盤焦點：格線容器 overflow: hidden 會裁掉外擴的焦點環，改畫在格子內側 */
+.lf-category-grid > a:focus-visible { outline: none; }
+.lf-category-grid > a:focus-visible > .lf-card,
+.lf-category-grid > .lf-card--clickable:focus-visible { box-shadow: var(--lf-focus-ring-inset); }
 
 /* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
 .lf-reveal-bar {
@@ -421,20 +476,17 @@ a.lf-kpi-card--link:focus-visible {
     .lf-reveal-bar {
         display: none !important;
     }
+
+    /* 風險類型格線平常把內層卡的邊框設成透明，會蓋過列印時 .lf-card 的實線框；紙上只剩極淡的細線，補回實線 */
+    .lf-category-grid > a > .lf-card,
+    .lf-category-grid > .lf-card {
+        border-color: #ccc;
+    }
 }
 
-/* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
-.lf-card--critical {
-    border-left: 3px solid var(--lf-risk-high);
-}
-
-.lf-card--warning {
-    border-left: 3px solid var(--lf-risk-mid);
-}
-
-.lf-card--ok {
-    border-left: 3px solid var(--lf-success);
-}
+/* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目——不靠色條，靠卡內的數字色與層級標記。
+   類別本身保留：dashboard.js 以 .lf-card--critical 判斷告警類別 */
+.lf-card--critical .lf-stat__value { color: var(--lf-danger); }
 
 /* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據。
    docs/archive/FEEDBACK-9-PLAN.md §4：280→230px，配合報表一頁化（KPI＋六圖一屏內不捲動）。 */
@@ -447,36 +499,72 @@ a.lf-kpi-card--link:focus-visible {
    風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
 
 a.lf-badge { text-decoration: none; }
+/* 可點的標記仍是點擊目標：圓點形式沒有內距，補足 24×24 下限（DESIGN-SYSTEM §8.2） */
+a.lf-badge,
+button.lf-badge { min-height: 24px; min-width: 24px; }
 a.lf-badge:hover { text-decoration: underline; }
 
+/* 標記（DESIGN-SYSTEM §8.8）：變體只決定圓點顏色；文字維持文字色、無底無框。
+   圓點以邊框畫（列印不印背景色時仍在）；帶圖示的標記以圖示取代圓點。
+   有底色的只有層級最高一級（風險高）與「重大」旗標——有底色的標記是稀有資源。 */
 .lf-badge {
+    --lf-badge-dot: var(--lf-gray-400);
     display: inline-flex;
     align-items: center;
-    gap: .3em;
-    padding: .2rem .6rem;
-    border-radius: var(--lf-radius-pill);
+    gap: .4em;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--lf-radius-sm);
+    background: none;
+    color: var(--lf-text);
     font-size: var(--lf-font-size-xs);
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1.5;
     white-space: nowrap;
-    border: 1px solid transparent;
 }
 
-/* 風險：高＝實心紅（最響亮）、中＝琥珀、低＝中性 */
-.lf-badge--high { background: var(--lf-risk-high); color: #fff; }
-.lf-badge--mid { background: var(--lf-risk-mid-soft); color: var(--lf-risk-mid-text); border-color: #f6dca6; }
-.lf-badge--low { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+.lf-badge::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 0;
+    border: .3em solid var(--lf-badge-dot);
+    border-radius: 50%;
+}
 
-/* 狀態淡色徽章（statusBadge / severityBadge / handlingBadge 使用）*/
-.lf-badge--danger { background: var(--lf-danger-soft); color: var(--lf-danger-text); border-color: #f6cccc; }
-.lf-badge--warning { background: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: #f6dca6; }
-.lf-badge--success { background: var(--lf-success-soft); color: var(--lf-success-text); border-color: #bbe7c9; }
-.lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #bae6fd; }
-.lf-badge--primary { background: var(--lf-primary-soft); color: var(--lf-primary-text); border-color: var(--lf-primary-soft-border); }
-.lf-badge--neutral,
-.lf-badge--secondary,
-.lf-badge--light { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
-.lf-badge--dark { background: var(--lf-dark-soft); color: var(--lf-dark-text); }
+.lf-badge:has(> .lf-icon)::before { display: none; }
+
+/* 相鄰的標記：沒有底色當邊界，間距要明顯大於圓點到文字的距離，否則下一顆的圓點會被讀成前一顆的尾巴 */
+.lf-badge + .lf-badge { margin-inline-start: .5em; }
+
+.lf-badge--danger { --lf-badge-dot: var(--lf-danger); }
+.lf-badge--warning { --lf-badge-dot: var(--lf-warning); }
+.lf-badge--success { --lf-badge-dot: var(--lf-success); }
+.lf-badge--info { --lf-badge-dot: var(--lf-info); }
+.lf-badge--primary { --lf-badge-dot: var(--lf-primary); }
+.lf-badge--high { --lf-badge-dot: var(--lf-risk-high); }
+.lf-badge--mid { --lf-badge-dot: var(--lf-risk-mid); }
+.lf-badge--low { --lf-badge-dot: var(--lf-risk-low); }
+
+/* 層級最高一級與「重大」：保留淡底，文字轉危險色 */
+.lf-badge--level.lf-badge--high,
+.lf-badge--flag {
+    padding: 0 .45rem;
+    background: var(--lf-danger-soft);
+    color: var(--lf-danger-text);
+    font-weight: 600;
+}
+
+/* 可移除的條件標籤（內含移除鈕）與明確加了 border 的歸屬標籤：維持標籤外觀，改細框、無圓點 */
+.lf-badge:has(> button),
+.lf-badge.border {
+    padding: 0 .5rem;
+    border: 1px solid var(--lf-border-strong) !important;
+    background: var(--lf-card-bg);
+}
+
+.lf-badge:has(> button)::before,
+.lf-badge.border::before { display: none; }
 
 .lf-badge .lf-icon { width: .85em; height: .85em; }
 
@@ -744,7 +832,7 @@ a.lf-badge:hover { text-decoration: underline; }
 /* 排程作業頁的小尺寸控制項（匯出鈕、等級下拉）：觸控區至少 36px 高 */
 /* 從他頁連結定位到某一列時的短暫高亮（1.5 秒後由 JS 移除類別）；動態淡出只在使用者不要求減少動態時才有 */
 .lf-focus-flash > td {
-    box-shadow: inset var(--lf-focus-ring);
+    box-shadow: var(--lf-focus-ring-inset);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -754,7 +842,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 @keyframes lf-focus-flash-fade {
-    from { box-shadow: inset var(--lf-focus-ring); }
+    from { box-shadow: var(--lf-focus-ring-inset); }
     to { box-shadow: inset 0 0 0 .2rem transparent; }
 }
 
@@ -843,9 +931,9 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-chip.active {
-    background: var(--lf-primary);
-    border-color: var(--lf-primary);
-    color: #fff;
+    background: var(--lf-primary-soft);
+    border-color: var(--lf-primary-soft-border);
+    color: var(--lf-primary-text);
     font-weight: 600;
 }
 
@@ -1260,7 +1348,15 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-callout-warning {
     background-color: var(--lf-warning-soft);
     color: var(--lf-warning-text);
+    box-shadow: inset 0 0 0 1px var(--lf-warning-line);
 }
+
+/* 表格內的技術值（lf-text-data：時間、IP、規則代號、連線位址）整段不斷行（DESIGN-SYSTEM §8.1）：
+   窄欄會在連字號與空白處把「2026-11-12 09:52」拆成三行；欄寬讓給技術值，折行留給成段文字欄。
+   不在此限（維持各自原本的換行方式）：展開列（佐證、原始資料）與明確允許任意斷行的容器——裡面可能是很長的原始字串；
+   保留換行的內容（<pre>、lf-pre-wrap、lf-pre-line）——稽核詳情的前後對照、權限異動的原始訊息靠換行排版。
+   寫成單一條 :not() 而不是事後覆寫回 normal：覆寫會連 pre-wrap 一起蓋掉 */
+.table .lf-text-data:not(pre, .lf-pre-wrap, .lf-pre-line, .lf-row-detail *, .lf-break-anywhere *) { white-space: nowrap; }
 
 /* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
 .lf-swatch { background: var(--lf-swatch); }

@@ -489,7 +489,7 @@ function badge(text, variant) {
 
 function sourceCell(host) {
     const wrap = document.createElement('span');
-    wrap.className = 'lf-text-meta';
+    wrap.className = 'lf-text-meta text-nowrap';
     wrap.textContent = host.source === 'netiq' ? 'NetIQ' : '本機直讀';
 
     if (host.netiqServer) {

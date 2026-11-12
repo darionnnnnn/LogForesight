@@ -463,7 +463,8 @@ function renderOrders(data) {
             className: 'text-end',
             render: row => {
                 if (row.closedAt) return '';
-                const btn = button('回覆', { variant: 'outline-primary', onClick: () => replyOrder(row, null) });
+                // 處理人會在機房用手機回覆：觸控區至少 36px 高（DESIGN-SYSTEM §6b）
+                const btn = button('回覆', { variant: 'outline-primary', className: 'lf-touch-36', onClick: () => replyOrder(row, null) });
                 btn.classList.add('text-nowrap');
                 return btn;
             }

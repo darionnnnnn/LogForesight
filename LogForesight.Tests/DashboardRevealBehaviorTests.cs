@@ -70,7 +70,8 @@ public class DashboardRevealBehaviorTests
     public void 定位高亮樣式走focus_ring且尊重減少動態()
     {
         var css = ReadSiteCss();
-        Assert.Contains(".lf-focus-flash > td {\n    box-shadow: inset var(--lf-focus-ring);", css);
+        // 嵌在列內的焦點指示走 inset 版 token（--lf-focus-ring 是兩層的外環，前面不能直接加 inset）
+        Assert.Contains(".lf-focus-flash > td {\n    box-shadow: var(--lf-focus-ring-inset);", css);
         var motion = css.IndexOf("@media (prefers-reduced-motion: no-preference) {\n    .lf-focus-flash", StringComparison.Ordinal);
         Assert.True(motion >= 0, "淡出動畫只能放在 no-preference 之內");
     }

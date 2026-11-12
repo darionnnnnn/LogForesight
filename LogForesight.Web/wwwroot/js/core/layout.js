@@ -565,15 +565,26 @@ async function loadSetupGuide(user) {
     const totalCount = steps.length;
 
     const bar = document.createElement('div');
-    bar.className = 'alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2';
+    bar.className = 'alert alert-info lf-setup-bar d-flex flex-wrap align-items-center justify-content-between gap-2 py-2';
     bar.setAttribute('role', 'status');
 
     const content = document.createElement('div');
+    content.className = 'lf-setup-bar__content';
     if (isFromSetup) {
         const text = document.createElement('span');
         text.textContent = '設定完成後可回到啟動精靈';
         content.appendChild(text);
     } else {
+        // 進度細條：裝飾性（文字已寫出 N/M），寬度以 style.setProperty 設定（CSP 不放行 style 屬性）
+        const progress = document.createElement('span');
+        progress.className = 'lf-setup-bar__progress';
+        progress.setAttribute('aria-hidden', 'true');
+        const fill = document.createElement('span');
+        fill.className = 'lf-progress-fill';
+        fill.style.setProperty('--lf-progress', `${totalCount > 0 ? Math.round(settledCount / totalCount * 100) : 0}%`);
+        progress.appendChild(fill);
+        content.appendChild(progress);
+
         const titleSpan = document.createElement('span');
         titleSpan.textContent = `初始設定 ${settledCount}/${totalCount} 完成——下一步：${nextStep.title}`;
         content.appendChild(titleSpan);

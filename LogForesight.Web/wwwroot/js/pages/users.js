@@ -79,8 +79,8 @@ function setupToolbar() {
 }
 
 const USER_COLUMNS = [
-    { title: '帳號', sortKey: 'account', sortValue: u => u.account, render: u => roleText('lf-text-title', u.account) },
-    { title: '顯示名稱', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => roleText('lf-text-meta', u.displayName ?? '') },
+    { title: '帳號', sortKey: 'account', sortValue: u => u.account, render: u => roleText('lf-text-title text-nowrap', u.account) },
+    { title: '顯示名稱', className: 'lf-minw-sm', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => roleText('lf-text-meta', u.displayName ?? '') },
     { title: 'Email', render: u => roleText('lf-text-meta', u.email ?? '') },
     { title: '群組', render: u => renderGroupBadges(u) },
     {

@@ -152,11 +152,17 @@ function renderDisplayModeButtons(selectedMode) {
     for (const mode of DISPLAY_MODES) {
         const btn = uiButton('', { variant: 'outline-secondary', size: null });
         if (mode.value === selectedMode) btn.classList.add('active');
+        // aria-pressed：讀屏念得出目前選哪個，也讓它套上全站分段控制的外觀（DESIGN-SYSTEM §8.3）
+        btn.setAttribute('aria-pressed', String(mode.value === selectedMode));
         btn.dataset.mode = mode.value;
         btn.textContent = mode.label;
         btn.addEventListener('click', () => {
-            container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('button').forEach(b => {
+                b.classList.remove('active');
+                b.setAttribute('aria-pressed', 'false');
+            });
             btn.classList.add('active');
+            btn.setAttribute('aria-pressed', 'true');
             updateHint(mode.value);
         });
         container.appendChild(btn);

@@ -41,7 +41,7 @@ function renderSentinels() {
 
     renderTable(sentinelListContainer, {
         columns: [
-            { title: '名稱', render: s => roleText('lf-text-title', s.name) },
+            { title: '名稱', render: s => roleText('lf-text-title text-nowrap', s.name) },
             { title: '連線位址', render: s => roleText('lf-text-data', s.baseUrl || '') },
             { title: '作業系統', render: s => roleText('lf-text-meta', s.os === 'linux' ? 'Linux' : 'Windows') },
             { title: '探索帳密', render: s => renderDiscoverBadge(s) },
