@@ -362,19 +362,6 @@
     .lf-report-progress { overflow: visible; }
 }
 
-/* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
-   這裡的值只是還沒算出來之前的起始字級 */
-.lf-chart__center-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: var(--lf-center-font-size, 1.25rem);
-    font-weight: 600;
-    line-height: 1;
-    pointer-events: none;
-}
-
 /* 空資料狀態（charts.js renderNoData）：canvas 留在原地只是藏起來，
    換一個有資料的期間時 create() 會把它放回來 */
 .lf-chart--empty > canvas {
@@ -389,51 +376,6 @@
     justify-content: center;
     text-align: center;
     padding: var(--lf-space-2);
-}
-
-/* 圓餅圖右側文字條列（#3，取代表格切換）：色點＋名稱＋數值/百分比，
-   有下鑽目的地的列走連結色＋hover，彙總列（無下鑽）維持一般文字 */
-.lf-legend-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--lf-space-2);
-    min-width: 140px;
-}
-
-.lf-legend-row {
-    display: flex;
-    align-items: center;
-    gap: var(--lf-space-2);
-    color: inherit;
-    text-decoration: none;
-    border-radius: var(--lf-radius-sm);
-    padding: var(--lf-space-1) var(--lf-space-2);
-    margin: 0 calc(var(--lf-space-2) * -1);
-}
-
-.lf-legend-row--link {
-    cursor: pointer;
-}
-.lf-legend-row--link:hover {
-    background: var(--lf-gray-50);
-}
-
-.lf-legend-row__dot {
-    width: .7em;
-    height: .7em;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--lf-swatch);
-}
-
-.lf-legend-row__label {
-    flex-grow: 1;
-}
-
-.lf-legend-row__value {
-    font-variant-numeric: tabular-nums;
-    color: var(--lf-text-muted);
-    white-space: nowrap;
 }
 
 /* ── 重點問題的類別分節（§9.3）────────────────────────────────────────────

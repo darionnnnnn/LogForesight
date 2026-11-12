@@ -124,6 +124,17 @@ public class ReportCoverageTests : IDisposable
     }
 
     [Fact]
+    public void 風險等級全部隱藏時_完整度仍照算_不變成無資料()
+    {
+        var a = AddHost("A");
+        AddDays(a, 1, 2, 4, 5);
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string>();   // 全部隱藏
+        var c = Coverage();
+        Assert.False(c.NoData);
+        Assert.Equal(1, c.MissingHostDays);
+    }
+
+    [Fact]
     public void 缺口紀錄不受風險等級顯示設定影響()
     {
         var a = AddHost("A");
@@ -521,7 +532,9 @@ public class ReportCoverageTests : IDisposable
         Assert.Contains("MIN(", first, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("GROUP BY", range, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MAX(", range, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("COUNT(", range, StringComparison.OrdinalIgnoreCase);
+        // 天數要在 SQL 端去重（同主機同日多列只算一天）；缺口筆數是條件計數——只斷言 COUNT( 的話拿掉 Distinct 也會過
+        Assert.Contains("COUNT(DISTINCT", range, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CASE", range, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("HAVING", range, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("client", first + range, StringComparison.OrdinalIgnoreCase);
     }

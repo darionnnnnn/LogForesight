@@ -12,7 +12,7 @@ public class LocalCheckupSkipTests
     [Fact]
     public void 本機未登記時略過體檢並說明未登記()
     {
-        var reason = AnalysisOrchestrator.LocalCheckupSkipReason(0, false);
+        var reason = AnalysisOrchestrator.LocalCheckupSkipReason(0, false, localAnalysisRan: true, baselineRecordExists: true);
         Assert.NotNull(reason);
         Assert.Contains("未登記", reason);
     }
@@ -20,7 +20,7 @@ public class LocalCheckupSkipTests
     [Fact]
     public void 本機已停用時略過體檢並說明已停用()
     {
-        var reason = AnalysisOrchestrator.LocalCheckupSkipReason(5, true);
+        var reason = AnalysisOrchestrator.LocalCheckupSkipReason(5, true, localAnalysisRan: true, baselineRecordExists: true);
         Assert.NotNull(reason);
         Assert.Contains("已停用", reason);
     }
@@ -28,7 +28,7 @@ public class LocalCheckupSkipTests
     [Fact]
     public void 本機登記且啟用時可以跑體檢()
     {
-        Assert.Null(AnalysisOrchestrator.LocalCheckupSkipReason(5, false));
+        Assert.Null(AnalysisOrchestrator.LocalCheckupSkipReason(5, false, localAnalysisRan: true, baselineRecordExists: true));
     }
 
     [Fact]

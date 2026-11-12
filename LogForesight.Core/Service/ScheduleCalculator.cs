@@ -138,6 +138,14 @@ public static class ScheduleCalculator
         return null;
     }
 
+    /// <summary>
+    /// 「現在還在進行的那一天」在執行總表上是哪一列：總表的列以趟的開跑日為準，
+    /// 跨午夜窗口（22:00～06:00）過了午夜仍是昨天那一列——用 Today 判斷的話，當晚排好的複查時刻會顯示不出來。
+    /// 不在任何窗口內時就是今天。
+    /// </summary>
+    public static DateTime LiveRunDay(DateTime now, IEnumerable<ScheduleWindow> windows) =>
+        CurrentWindowInstance(now, windows)?.Start.Date ?? now.Date;
+
     /// <summary>窗口的起點（分鐘）與長度（分鐘）：跨午夜時長度跨到隔天。任一端解析不了回 false。</summary>
     private static bool TryWindowLength(ScheduleWindow w, out int startMinutes, out int length)
     {
@@ -193,7 +201,7 @@ public static class ScheduleCalculator
     /// 下一次空資料複查的時刻（唯一判定點）：now 在窗口內、實例內已有排程取數趟但未達 <see cref="MaxRunsWithEmptyRecheck"/>、
     /// 最新一趟沒被停止或異常中斷，候選＝最新一趟結束＋<see cref="EmptyRecheckGap"/>（還沒結束以 now 估；已過則取 now）；
     /// 候選距實例結束不足 <see cref="WindowContinueGap"/> 就不排（回 null）。
-    /// 是否真的有待複查的主機日由 <see cref="RunToContinue"/> 看上一趟的 <see cref="RunResume"/>。
+    /// 上一趟已結束時必須只剩空資料待複查（<see cref="RunResume.OnlyEmptyPending"/>）才有時刻，與 <see cref="RunToContinue"/> 的觸發條件一致。
     /// </summary>
     public static DateTime? NextEmptyRecheckAt(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<BatchRun> recentRuns)
     {
@@ -202,6 +210,10 @@ public static class ScheduleCalculator
         if (inInstance.Count == 0 || inInstance.Count >= MaxRunsWithEmptyRecheck) return null;
         var last = inInstance[0];
         if (last.Stopped || last.Interrupted) return null;
+        // 排得出複查的只有兩種：上一趟還在跑（以 now 估）、或上一趟結束後只剩空資料待複查。
+        // 上一趟還留著失敗時，接下來是失敗續跑（它會把未滿間隔的空資料延後）或趟數已用完——複查時刻還不知道，
+        // 回 null 讓畫面寫「下一窗口複查」，不承諾一個 RunToContinue 不會觸發的時刻
+        if (last.FinishedAt.HasValue && !RunResume.Of(last).OnlyEmptyPending) return null;
         // 從上一趟「結束」起算：那一趟的每個空資料嘗試都發生在結束之前，結束＋間隔時一定全部滿間隔。
         // 從開跑起算的話，跑很久的第一趟（3000 台、數小時）一結束就排複查，管線卻因各主機日未滿間隔全部延後，白跑一趟還吃掉趟數名額
         var candidate = (last.FinishedAt ?? now) + EmptyRecheckGap;

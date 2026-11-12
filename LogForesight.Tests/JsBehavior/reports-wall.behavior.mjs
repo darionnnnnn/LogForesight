@@ -17,7 +17,7 @@ const read = (...parts) => fs.readFileSync(path.join(jsRoot, ...parts), 'utf8').
 
 const dom = installDom();
 const wallModule = await import(pathToFileURL(path.join(jsRoot, 'pages', 'reports-wall.js')).href);
-const { createWall, WALL_REFRESH_MS, wallScale, formatClock, WALL_CLASS } = wallModule;
+const { createWall, WALL_REFRESH_MS, WALL_RETRY_MS, wallWaitMs, wallScale, formatClock, WALL_CLASS } = wallModule;
 
 const MINUTE = 60 * 1000;
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -217,6 +217,7 @@ const cases = {
         const make = presetDays => build(reports, ['async function wallRefresh(', 'function setRange('], `
             let activePresetDays = presetDays;
             let userSelectedCompare = false;
+            const filterMore = { refresh: () => {} };
             const document = { getElementById: id => inputs[id] };
             const defaultCompareFor = () => 'previous';
             const updateYoyOptionLabel = () => {};
@@ -266,6 +267,8 @@ const cases = {
         const old = { from: 'a', to: 'b', marker: 'old' };
         const loadInst = build(reports, ['async function loadReport('], `
             let currentData = old;
+            let activePresetDays = null;
+            let appliedView = null;
             let retentionDays = 90;
             let currentScope = 'all';
             let requestedScope = null;
@@ -291,11 +294,18 @@ const cases = {
         assert.deepEqual(env.wall.statusText(), { updated: '最後更新 09:00', stale: '更新失敗，目前是 09:00 的資料' });
         assert.equal(formatClock(new Date(2026, 10, 11, 9, 5).getTime()), '09:05', 'HH:mm 補零');
 
-        // 下一輪照常再試；成功後訊息消失、時間更新
-        await env.advance(WALL_REFRESH_MS);
-        assert.equal(env.calls.refresh, 2, '失敗後下一輪照常再試');
+        // 失敗後 1 分鐘就再試（不等滿一輪）；成功後訊息消失、時間更新
+        await env.advance(WALL_RETRY_MS - 1000);
+        assert.equal(env.calls.refresh, 1, '未滿重試間隔不發');
+        await env.advance(1000);
+        assert.equal(env.calls.refresh, 2, '失敗後 1 分鐘再試');
         await env.finishRefresh(true);
-        assert.deepEqual(env.wall.statusText(), { updated: '最後更新 09:30', stale: '' });
+        assert.deepEqual(env.wall.statusText(), { updated: '最後更新 09:16', stale: '' });
+        // 成功後回到一輪的間隔
+        await env.advance(WALL_REFRESH_MS - 1000);
+        assert.equal(env.calls.refresh, 2);
+        await env.advance(1000);
+        assert.equal(env.calls.refresh, 3);
     },
     async 首次載入失敗不寫舊資料提示並排下一次重試() {
         const env = makeEnv({ search: WALL_URL });
@@ -304,13 +314,18 @@ const cases = {
         assert.deepEqual(env.wall.statusText(), { updated: '', stale: '' }, '沒有舊資料可說，由頁面的錯誤狀態負責');
         assert.equal(env.timers.size, 1, '首次失敗也要排下一次');
 
-        await env.advance(WALL_REFRESH_MS - 1000);
+        // 電視開機時站台還沒好：1 分鐘後就重試，不是等 15 分鐘
+        await env.advance(WALL_RETRY_MS - 1000);
         assert.equal(env.calls.refresh, 0);
         await env.advance(1000);
-        assert.equal(env.calls.refresh, 1, '15 分後重試');
+        assert.equal(env.calls.refresh, 1, '1 分鐘後重試');
         await env.finishRefresh(true);
         assert.equal(env.wall.statusText().stale, '');
-        assert.equal(env.wall.statusText().updated, '最後更新 09:15');
+        assert.equal(env.wall.statusText().updated, '最後更新 09:01');
+    },
+    重試間隔_連續失敗逐次加倍到一輪封頂() {
+        assert.equal(wallWaitMs(0), WALL_REFRESH_MS, '成功後等滿一輪');
+        assert.deepEqual([1, 2, 3, 4, 5, 6].map(wallWaitMs), [1, 2, 4, 8, 15, 15].map(m => m * MINUTE));
     },
 
     // ── 離開 ──────────────────────────────────────────────────────────────

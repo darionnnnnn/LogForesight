@@ -121,15 +121,23 @@ public class AiGrammarMemoryTests
         Assert.True(memory.UseGrammarFirst(Key)); // 下一個探測點
     }
 
-    [Theory]
-    [InlineData(FirstAttemptOutcome.Empty)]
-    [InlineData(FirstAttemptOutcome.OtherFailure)]
-    public void 不帶格式時非成功_恢復啟用並歸零(FirstAttemptOutcome outcome)
+    [Fact]
+    public void 不帶格式時其他失敗_與格式無關_維持停用()
+    {
+        // 內容檢查沒過、截斷這類失敗帶不帶格式都會發生：為它恢復只會讓下一次再撞三次空回覆
+        var memory = Disabled();
+        memory.ReportFirstAttempt(Key, usedGrammar: false, FirstAttemptOutcome.OtherFailure);
+        Assert.True(memory.IsDisabled(Key));
+        Assert.False(memory.UseGrammarFirst(Key));
+    }
+
+    [Fact]
+    public void 不帶格式時仍是空回覆_恢復啟用並歸零()
     {
         var memory = Disabled();
         Assert.False(memory.UseGrammarFirst(Key));
 
-        memory.ReportFirstAttempt(Key, usedGrammar: false, outcome);
+        memory.ReportFirstAttempt(Key, usedGrammar: false, FirstAttemptOutcome.Empty);
 
         Assert.False(memory.IsDisabled(Key));
         Assert.True(memory.UseGrammarFirst(Key));

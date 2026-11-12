@@ -204,16 +204,15 @@ public class ReportService
             MutedIssueCount = _aggregates.CountCurrentlyMutedIssues(exclusion, from, to, hostIds, null, null),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
-            // 第一排「受影響主機 N / M 台」的分母：可見且未合併的主機。合併掉的主機已併進存活主機，
-            // 算進來會重複；受影響主機的分子也是以存活主機計（AggregateReportKpiPair 的 Surviving），分子不會大於分母
-            TotalHosts = visibleHosts.Count(h => h.MergedInto == null),
+            // 可見主機（VisibilityService 只回啟用中的主機，被合併的來源一律已停用，不會重複計）
+            TotalHosts = visibleHosts.Count,
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
                 ? handlingDto ?? new HandlingTodoDto()
                 : _handling.GetTodo(exclusion, recordsForTodo!),
-            Coverage = BuildCoverage(exclusion, from, to, visibleHosts, nothingVisible)
+            Coverage = BuildCoverage(exclusion, from, to, visibleHosts)
         };
 
         return dto;
@@ -224,10 +223,11 @@ public class ReportService
     /// 缺漏主機日與缺口紀錄由同一個聚合、同一個母體（啟用、未合併主機的日誌分析紀錄）一次算出。
     /// </summary>
     private ReportCoverageDto BuildCoverage(
-        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts, bool nothingVisible)
+        IssueExclusion exclusion, DateTime from, DateTime to, List<WebHost> visibleHosts)
     {
         var activeIds = visibleHosts.Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
-        if (nothingVisible || activeIds.Count == 0) return new ReportCoverageDto { NoData = true };
+        // 不看 nothingVisible：管理者把風險等級全部隱藏時，資料有沒有收齊仍是同一個答案
+        if (activeIds.Count == 0) return new ReportCoverageDto { NoData = true };
 
         // 應有資料的最後一天＝ min(期間終點, 最近一個已結束窗口的目標日)：窗口跑完之前昨天本來就不該有資料，
         // 缺漏只算到這一天、落後也以它判斷（窗口跑到一半時，還沒輪到的主機不算缺漏）

@@ -584,6 +584,12 @@ a.lf-badge:hover { text-decoration: underline; }
     border-top: 1px solid var(--lf-border);
 }
 
+/* 只有狀況／趨勢、前面沒有結論或重點速報時：外框已有一條線，不再疊第二條 */
+.lf-briefing__detail:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
 @media print {
     .lf-briefing__lead,
     .lf-briefing__lead--split,

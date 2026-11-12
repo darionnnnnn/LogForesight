@@ -322,7 +322,8 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
         } else if (step.evalAssert) {
             // 任意量測：一段函式本體，回傳 null／空字串＝通過，回傳字串＝失敗訊息（例：圖示外框是否落在按鈕內、字高下限）
             const msg = await evaluate(browser, `(() => { ${step.evalAssert} })()`);
-            if (msg) failures.push(`${width}px：${msg}`);
+            // 忘了 return（undefined）或回傳非字串都不能當成通過：量測會靜默恆綠
+            if (msg !== null && msg !== '') failures.push(`${width}px：${typeof msg === 'string' ? msg : `evalAssert 要回傳 null 或字串，實際回傳 ${JSON.stringify(msg) ?? 'undefined'}`}`);
         } else if (step.scroll !== undefined) {
             await evaluate(browser, `window.scrollTo(0, ${Number(step.scroll)})`);
         } else if (step.markScroll) {

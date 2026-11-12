@@ -63,8 +63,8 @@ public sealed class AiGrammarMemory
     /// 回報第一次嘗試的結果（傳輸層失敗不回報）。
     /// 帶強制格式且空回覆 → 連續計數＋1，達 <see cref="DisableThreshold"/> 即停用；
     /// 帶強制格式且非空回覆 → 計數歸零、恢復啟用（探測成功即恢復）；
-    /// 不帶強制格式且非成功 → 恢復啟用、計數歸零（不帶反而失敗就回到預設）；
-    /// 不帶強制格式且成功 → 不變。
+    /// 不帶強制格式且仍是空回覆 → 恢復啟用、計數歸零（不帶也沒用就回到預設）；
+    /// 不帶強制格式的其他結果（成功、內容檢查沒過、截斷）→ 不變。
     /// </summary>
     public void ReportFirstAttempt(string key, bool usedGrammar, FirstAttemptOutcome outcome)
     {
@@ -87,7 +87,9 @@ public sealed class AiGrammarMemory
                     Reset(state);
                 }
             }
-            else if (outcome != FirstAttemptOutcome.Success && _states.TryGetValue(key, out var state))
+            // 不帶格式時只有「仍然什麼都沒說」才恢復：內容檢查沒過、截斷這類失敗與格式無關，
+            // 為它恢復只會讓下一次再撞三次空回覆才重新停用；語法壞掉的情況交給每 ProbeInterval 次的探測
+            else if (outcome == FirstAttemptOutcome.Empty && _states.TryGetValue(key, out var state))
             {
                 Reset(state);
             }

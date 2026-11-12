@@ -48,6 +48,9 @@ let requestedScope = null;
 
 // 目前選的是哪一顆快捷期間（天數）；手動改日期後為 null（＝自訂期間）
 let activePresetDays = null;
+// 畫面上的資料是用哪個快捷期間與比較模式取回的（載入成功時記下）。條件文字只讀這份：
+// 直接讀輸入欄的話，改了還沒按「套用」的值會被重繪（進大螢幕、視窗縮放）畫成已套用
+let appliedView = { presetDays: null, compare: 'previous' };
 // 「更多條件」揭露鈕（setupMoreFilters 建立）；條件變動後 refresh() 更新已套用數
 let filterMore = null;
 
@@ -114,6 +117,7 @@ async function loadReport() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
     const compare = document.getElementById('report-compare').value;
+    const presetAtRequest = activePresetDays;
 
     const seq = reportGuard.next();
     let data;
@@ -133,6 +137,7 @@ async function loadReport() {
     // 回應回來時已有更新的查詢就整份丟掉，不得寫入任何頁面狀態
     if (!reportGuard.isCurrent(seq)) return;
     currentData = data;
+    appliedView = { presetDays: presetAtRequest, compare };
     retentionDays = data.retentionDays ?? retentionDays;
     updateYoyOptionLabel();
     // 範圍只在載入成功後才生效，失敗時 chip 與 currentScope 都維持上一次成功的狀態
@@ -202,10 +207,10 @@ function periodSummary({ presetDays, from, to, compare, scope }) {
 
 function renderToolbarSummary() {
     const summary = periodSummary({
-        presetDays: activePresetDays,
+        presetDays: appliedView.presetDays,
         from: currentData.from,
         to: currentData.to,
-        compare: document.getElementById('report-compare').value,
+        compare: appliedView.compare,
         scope: currentScope
     });
     document.getElementById('report-period-title').textContent = summary.title;
@@ -1004,6 +1009,7 @@ function setRange(days) {
         document.getElementById('report-compare').value = defaultCompareFor(days);
     }
     updateYoyOptionLabel();
+    filterMore?.refresh();   // 已套用數跟著輸入欄走，不等載入回來（請求最久 180 秒）
 }
 
 // ── 大螢幕模式 ───────────────────────────────────────────────────────────────

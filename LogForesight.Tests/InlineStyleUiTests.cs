@@ -45,7 +45,6 @@ public class InlineStyleUiTests
             "--lf-probe-font-family", "--lf-probe-font-size", "--lf-probe-font-weight", "--lf-probe-font-style"
         },
         // 圖例色塊顏色、甜甜圈中央文字依容器短邊縮放的字級
-        ["core/charts.js"] = new[] { "--lf-swatch", "--lf-center-font-size" },
         // 載入骨架列的隨機寬度
         ["core/ui.js"] = new[] { "--lf-skeleton-width" },
         // 問題密度條寬度（issueDensityCell）

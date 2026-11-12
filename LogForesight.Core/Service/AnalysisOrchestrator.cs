@@ -930,7 +930,7 @@ public class AnalysisOrchestrator
     /// <param name="localAnalysisRan">本趟是否啟動了本機分析（範圍不含本機、或排程設定關閉時為 false）</param>
     /// <param name="baselineRecordExists">基準日是否已有本機分析紀錄</param>
     internal static string? LocalCheckupSkipReason(long currentHostId, bool localHostDisabled,
-        bool localAnalysisRan = true, bool baselineRecordExists = true)
+        bool localAnalysisRan, bool baselineRecordExists)
     {
         if (currentHostId == 0) return "本機主機未登記，略過體檢";
         if (localHostDisabled) return "本機主機已停用，略過體檢（體檢以本機主機為對象）";

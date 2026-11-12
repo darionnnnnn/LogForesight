@@ -92,7 +92,6 @@
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 捲軸（DESIGN-SYSTEM §4）：拇指對所在底色至少 3:1；淺色面 #64748b 對白 4.8:1，側欄 #5b6f94 對側欄底 3.2:1 */
     --lf-scrollbar-thumb: var(--lf-gray-500);
-    --lf-scrollbar-thumb-hover: var(--lf-gray-600);
     --lf-scrollbar-thumb-sidebar: #5b6f94;
     --lf-scrollbar-thumb-sidebar-hover: var(--lf-sidebar-fg);
     /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放

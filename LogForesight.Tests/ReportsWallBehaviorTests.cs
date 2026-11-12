@@ -27,6 +27,7 @@ public class ReportsWallBehaviorTests
     [InlineData("快捷期間跨午夜後起訖各前進一天_自訂日期不變")]
     [InlineData("更新失敗保留舊資料且標頭寫更新失敗_下一次成功後消失")]
     [InlineData("首次載入失敗不寫舊資料提示並排下一次重試")]
+    [InlineData("重試間隔_連續失敗逐次加倍到一輪封頂")]
     [InlineData("Esc離開時網址與類別與計時器全部還原")]
     [InlineData("Esc離開只有display參數時網址回到無查詢字串")]
     [InlineData("按鈕進入後全螢幕退出事件會離開模式")]

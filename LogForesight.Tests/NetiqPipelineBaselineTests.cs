@@ -215,6 +215,23 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     }
 
     [Fact]
+    public async Task 空資料複查趟_Sentinel整台失敗_只把帳本主機計為失敗()
+    {
+        var sentinel = AddSentinel();
+        var pending = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        await MakePipeline(resumeRetryDays: 7).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var attemptAt = LastAttemptUtc(pending.HostId, DateTime.Today.AddDays(-1));
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");   // 不在帳本裡，本趟沒要查它
+
+        var failed = await MakePipeline(resumeRetryDays: 7, runStartedUtc: attemptAt.AddMinutes(60), ledgerRetryOnly: true,
+                clientFactory: _ => throw new InvalidOperationException("Sentinel 連不上"))
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        // 收窄前的整台主機數是 2：算成 2 會把沒要查的主機灌進失敗數、並替它寫失敗回執
+        Assert.Equal(1, failed.HostsFailed);
+    }
+
+    [Fact]
     public async Task 非排程_沒有帳本_不套用空資料複查間隔()
     {
         var sentinel = AddSentinel();

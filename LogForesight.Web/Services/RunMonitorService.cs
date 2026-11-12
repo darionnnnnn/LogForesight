@@ -199,7 +199,7 @@ public class RunMonitorService
             }
 
             if (isToday) summary.PendingSummary = BuildPendingSummary(runs, today);
-            if (isToday && summary.RecheckCount > 0 && scheduleOptions.Enabled &&
+            if (date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) && summary.RecheckCount > 0 && scheduleOptions.Enabled &&
                 ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) is { } recheckAt)
                 summary.RecheckAt = recheckAt.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
             summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
@@ -242,9 +242,10 @@ public class RunMonitorService
         var runsById = runs.ToDictionary(run => run.RunId);
         var histories = ReadHistories(recordDate);
         var scheduleOptions = _scheduleOptions.Get();
-        // 複查時刻只對今天的格子有意義（過去的格子留著待複查，代表當天沒排進窗口）；runs 已涵蓋前一天，跨午夜窗口的實例也找得到
+        // 複查時刻只對「還在進行的那一天」的格子有意義（過去的格子留著待複查，代表當天沒排進窗口）；
+        // 那一天由 LiveRunDay 判定（跨午夜窗口過了午夜仍是開跑日那一列）
         var recheckNote = EmptyRecheckNote(scheduleOptions.Enabled,
-            date.Date == DateTime.Today ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
+            date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
 
         return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runs, host.HostName, dateStr))).Select(host =>
         {
@@ -312,9 +313,8 @@ public class RunMonitorService
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.AttemptHistory> histories, string recheckNote)
     {
         if (host.Source != "netiq" || !histories.TryGetValue((host.HostId, date.Date), out var history)) return null;
-        // 空資料的續跑與其他需重查狀態同一套規則（看自動重查是否用完，不看列日期）；用完就走下面的「已用完」說明
-        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce && !NetiqAttemptStatus.AutoRetryExhausted(history))
-            return recheckNote;
+        // 空資料待複查不受自動重查上限限制（NetiqAttemptStatus.AutoRetryExhausted），一律寫複查說明
+        if (history.LatestStatus == NetiqAttemptStatus.EmptyOnce) return recheckNote;
         if (!NetiqAttemptStatus.LedgerNeedsRetry(history.LatestStatus) || !NetiqAttemptStatus.AutoRetryExhausted(history)) return null;
         // 失敗類的上限按日計，明天還會再試；只有截斷類是真的不再自動查
         return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";

@@ -344,6 +344,23 @@ const cases = {
     },
 
     // ── 工具列條件文字 ────────────────────────────────────────────────────
+    條件文字只讀已套用的快照_不讀還沒套用的輸入() {
+        for (const id of ['report-period-title', 'report-period-meta', 'wall-period-title', 'wall-period-meta']) dom.byId.set(id, dom.newElement('span'));
+        // 使用者在「更多條件」改了日期與比較模式但還沒按套用（activePresetDays 已是 null、輸入欄是去年同期），
+        // 這時重繪（進大螢幕、視窗縮放）不得把沒套用的條件畫成已套用
+        dom.byId.set('report-compare', Object.assign(dom.newElement('select'), { value: 'yoy' }));
+        const inst = build(['const PRESET_TITLES', 'const SCOPE_LABEL', 'function shortDate(', 'function periodSummary(', 'function renderToolbarSummary('], `
+            const currentData = { from: '2026-10-12', to: '2026-11-10' };
+            const currentScope = 'all';
+            const activePresetDays = null;
+            const appliedView = { presetDays: 30, compare: 'previous' };
+            const filterMore = null;
+        `, '{ renderToolbarSummary }');
+        inst.renderToolbarSummary();
+        assert.equal(dom.byId.get('report-period-title').textContent, '近 30 天');
+        assert.equal(dom.byId.get('report-period-meta').textContent, '10/12–11/10 · 對比前一期');
+        assert.equal(dom.byId.get('wall-period-title').textContent, '近 30 天', '大螢幕標頭同一份');
+    },
     工具列條件文字() {
         const { periodSummary } = build(['const PRESET_TITLES', 'const SCOPE_LABEL', 'function shortDate(', 'function periodSummary('], '', '{ periodSummary }');
         assert.deepEqual(

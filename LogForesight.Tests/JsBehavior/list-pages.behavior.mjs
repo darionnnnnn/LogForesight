@@ -122,6 +122,8 @@ function makeReports() {
     const writes = [];
     const inst = build('reports.js', 'async function loadReport(', 'loadReport', `
         const state = {};
+        let activePresetDays = null;
+        let appliedView = null;
         let currentData = null;
         let retentionDays = 90;
         let currentScope = 'all';

@@ -242,7 +242,13 @@ public class NetiqPipelineService
                 CancellationToken = ct
             }, async (entry, serverCt) =>
             {
-                var (serverName, targets) = entry;
+                var (serverName, allTargets) = entry;
+                // 空資料複查趟：只看帳本有待重查的主機（帳本讀不到時 _attemptHistory 為 null，退回全部主機，寧可多掃不漏查）。
+                // 在這裡就收窄，下面整台 Sentinel 的失敗路徑（計失敗主機日、補失敗回執）才不會波及本趟沒要查的主機
+                var targets = _ledgerRetryOnly && _attemptHistory != null
+                    ? allTargets.Where(t => _hostsWithRetry.Contains(t.HostId)).ToList()
+                    : allTargets;
+                if (targets.Count == 0) return;
 
                 var sentinel = _sentinels.FindByName(serverName);
                 if (sentinel == null)
@@ -444,13 +450,6 @@ public class NetiqPipelineService
         if (unqueryable.Count > 0)
         {
             targets = targets.Except(unqueryable).ToList();
-            if (targets.Count == 0) return;
-        }
-
-        // 空資料複查趟：只看帳本有待重查的主機（帳本讀不到時 _attemptHistory 為 null，退回全部主機，寧可多掃不漏查）
-        if (_ledgerRetryOnly && _attemptHistory != null)
-        {
-            targets = targets.Where(t => _hostsWithRetry.Contains(t.HostId)).ToList();
             if (targets.Count == 0) return;
         }
 

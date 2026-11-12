@@ -124,6 +124,46 @@ public class EmptyRecheckTests
         Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { Run(yesterdayStart, yesterdayStart, emptyPending: 2, minutes: 0) }));
     }
 
+    // ── 畫面承諾的時刻與實際觸發是同一個判定 ───────────────────────────────
+
+    [Fact]
+    public void NextEmptyRecheckAt_上一趟還留著失敗_不承諾時刻_與RunToContinue一致()
+    {
+        var w = Windows("01:00", "07:00");
+        var start = Today.AddHours(1);
+        // 失敗＋待複查，實例內已 2 趟：不會再跑，也不能寫出一個時刻
+        var first = Run(start, start, netiqFailed: 1, emptyPending: 2);
+        var second = Run(start.AddMinutes(30), start, netiqFailed: 1, emptyPending: 2);
+        var now = Today.AddHours(3);
+        Assert.Null(ScheduleCalculator.RunToContinue(now, w, new[] { first, second }));
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(now, w, new[] { first, second }));
+        // 只有 1 趟且留著失敗：接下來是失敗續跑，複查時刻還不知道
+        Assert.Null(ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(1).AddMinutes(25), w, new[] { first }));
+        // 上一趟還在跑：以現在估
+        var running = Run(start, start, finished: false);
+        Assert.Equal(Today.AddHours(2).AddMinutes(30), ScheduleCalculator.NextEmptyRecheckAt(Today.AddHours(1).AddMinutes(30), w, new[] { running }));
+    }
+
+    [Fact]
+    public void 空資料待複查不受每日自動重查上限限制_其他狀態照舊()
+    {
+        var at = DateTime.UtcNow;
+        Assert.False(NetiqAttemptStatus.AutoRetryExhausted(new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.EmptyOnce, 0, 5, at)));
+        Assert.True(NetiqAttemptStatus.AutoRetryExhausted(new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Failed, 0, NetiqAttemptStatus.MaxAutoRetriesPerDay, at)));
+        Assert.False(NetiqAttemptStatus.AutoRetryExhausted(new NetiqSourceAttempt.AttemptHistory(NetiqAttemptStatus.Failed, 0, NetiqAttemptStatus.MaxAutoRetriesPerDay - 1, at)));
+    }
+
+    [Theory]
+    [InlineData("01:00", "07:00", 5, 0)]     // 一般窗口：今天那一列
+    [InlineData("01:00", "07:00", 10, 0)]    // 不在窗口內：今天
+    [InlineData("22:00", "06:00", 23, 0)]    // 跨午夜窗口，午夜前：開跑日＝今天
+    [InlineData("22:00", "06:00", 25, 0)]    // 過了午夜（隔天 01:00）：仍是開跑日那一列，不是「今天」
+    [InlineData("22:00", "06:00", 31, 1)]    // 隔天 07:00 窗口已結束：回到當天
+    public void 進行中的那一天_跨午夜窗口過了午夜仍是開跑日(string start, string end, int hoursFromToday, int expectedOffset)
+    {
+        Assert.Equal(Today.AddDays(expectedOffset), ScheduleCalculator.LiveRunDay(Today.AddHours(hoursFromToday), Windows(start, end)));
+    }
+
     // ── ExpectedLastDataDay：報表資料完整度「應有資料的最後一天」 ──────────
 
     [Theory]

@@ -274,6 +274,14 @@ public class ScaleBenchmarks
             return $"問題排行 {dto.RankedIssueCount} 種、主機排行 {dto.RankedHostCount} 台";
         });
 
+        // 資料完整度單獨量：其中「有史以來第一筆」那個查詢沒有日期下界，是報表唯一隨保留期成長的部分
+        Measure("報表資料完整度（30 天）", () =>
+        {
+            var ids = svc.Hosts.GetAll().Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
+            var agg = svc.Aggregates.AggregateReportCoverage(IssueExclusion.None, today.AddDays(-29), today.AddDays(-1), ids);
+            return $"缺漏 {agg.MissingHostDays:N0} 主機日、缺口 {agg.GapRecords:N0} 筆";
+        });
+
         Measure("問題查詢：明細（第 1 頁）", () =>
         {
             var page = svc.RecordList.Search(NewRequest(from, today));

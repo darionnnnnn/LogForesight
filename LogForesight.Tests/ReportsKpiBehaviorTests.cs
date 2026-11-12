@@ -42,6 +42,7 @@ public class ReportsKpiBehaviorTests
     [InlineData("趨勢圖下鑽帶上顯示範圍")]
     [InlineData("趨勢圖_中風險被隱藏時只畫高")]
     [InlineData("趨勢圖_期間全為0顯示無資料")]
+    [InlineData("條件文字只讀已套用的快照_不讀還沒套用的輸入")]
     [InlineData("工具列條件文字")]
     public void 報表頁行為(string caseName)
     {

@@ -501,9 +501,9 @@ public class RunMonitorServiceTests : IDisposable
     [Theory]
     [InlineData(1, 1, "空資料，下一窗口複查")]
     [InlineData(3, 1, "空資料，下一窗口複查")]
-    [InlineData(1, 2, "今天的自動重查已用完，明天會再試")]
-    [InlineData(3, 2, "今天的自動重查已用完，明天會再試")]
-    public void NetIQ空資料待複查_說明依自動重查是否用完_不看列日期(int daysAgo, int attemptRuns, string expected)
+    [InlineData(1, 2, "空資料，下一窗口複查")]   // 空資料待複查不受每日自動重查上限限制：下一次查詢一定定案
+    [InlineData(3, 2, "空資料，下一窗口複查")]
+    public void NetIQ空資料待複查_一律寫複查說明_不受自動重查上限影響(int daysAgo, int attemptRuns, string expected)
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.8.12", Source = "netiq" });
         var rowDate = DateTime.Today.AddDays(-daysAgo);

@@ -37,8 +37,13 @@ public static class NetiqAttemptStatus
     /// 自動重查是否已達上限（只限制排程；手動補跑不受限）。
     /// 失敗類按日計：憑證過期或服務中斷一整晚不該讓那幾天永遠補不回來；截斷類累計：重查結果不會變。
     /// </summary>
+    /// <remarks>
+    /// 空資料待複查不受上限限制：它的下一次查詢一定定案（成功、或轉成失敗後才依失敗類計數），另有複查間隔節流。
+    /// 算進去的話，「先失敗、續跑回 0 筆」的主機日當天次數已滿，為它排的複查趟會整趟空轉、要等隔天。
+    /// </remarks>
     public static bool AutoRetryExhausted(NetiqSourceAttempt.AttemptHistory history) =>
-        IsTruncated(history.LatestStatus)
+        history.LatestStatus == EmptyOnce ? false
+        : IsTruncated(history.LatestStatus)
             ? history.TruncatedRuns >= MaxTruncatedAutoRetries
             : history.RetryRunsToday >= MaxAutoRetriesPerDay;
 

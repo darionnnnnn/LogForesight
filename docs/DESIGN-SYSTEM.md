@@ -309,6 +309,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
   Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
+  `ui-shots.mjs` 被逾時或中斷時會留下無頭 Edge 程序，累積後同樣讓行為案例在約 5 秒處逾時：跑測試前清掉命令列含 `--headless` 的 `msedge`（不要動使用者自己開的瀏覽器）。
+  情境步驟 `evalAssert`（函式本體，回傳 null 通過、字串為失敗訊息）用來量六項指標以外的東西：圖示外框是否落在按鈕內、字高下限、欄數、是否需捲動。
 - **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
   情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
 - **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

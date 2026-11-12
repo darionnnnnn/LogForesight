@@ -14,6 +14,18 @@
 /** 自動更新間隔（暫定）：上一次載入完成後這麼久才排下一次 */
 export const WALL_REFRESH_MS = 15 * 60 * 1000;
 
+/** 更新失敗後的重試間隔起點（毫秒）：連續失敗每次加倍，到 WALL_REFRESH_MS 封頂 */
+export const WALL_RETRY_MS = 60 * 1000;
+
+/**
+ * 距上一次完成要等多久才取下一次：成功後等滿一輪；失敗後先 1 分鐘、連續失敗逐次加倍到一輪封頂。
+ * 電視開機時站台或網路常常還沒好——首次載入失敗若也等滿 15 分鐘，大螢幕就是一整頁錯誤卡在那裡。
+ */
+export function wallWaitMs(consecutiveFailures) {
+    if (consecutiveFailures <= 0) return WALL_REFRESH_MS;
+    return Math.min(WALL_REFRESH_MS, WALL_RETRY_MS * 2 ** (consecutiveFailures - 1));
+}
+
 /** 離開鈕在滑鼠停止移動後多久淡出（毫秒） */
 export const WALL_EXIT_FADE_MS = 3000;
 
@@ -83,6 +95,7 @@ export function createWall(deps) {
     let lastDoneAt = null;   // 上一次載入完成（成功或失敗）的時間
     let lastOkAt = null;     // 上一次成功載入的時間；標頭列顯示它
     let failed = false;
+    let failures = 0;   // 連續失敗次數（決定重試間隔），成功即歸零
     let loads = 0;           // 成功載入累計次數，供頁面判斷一次載入有沒有成功
     let appliedScale = null;
     let fullscreenByButton = false;
@@ -108,7 +121,7 @@ export function createWall(deps) {
         if (timer !== null) deps.clearTimer(timer);
         timer = null;
         if (!running || busy || lastDoneAt === null) return;
-        const wait = Math.max(0, WALL_REFRESH_MS - (deps.now() - lastDoneAt));
+        const wait = Math.max(0, wallWaitMs(failures) - (deps.now() - lastDoneAt));
         timer = deps.setTimer(tick, wait);
     }
 
@@ -131,14 +144,14 @@ export function createWall(deps) {
             ok = false;
         }
         busy = false;
-        if (ok) dataLoaded(); else { lastDoneAt = deps.now(); failed = true; }
+        if (ok) dataLoaded(); else { lastDoneAt = deps.now(); failed = true; failures += 1; }
         if (running) schedule();
         changed();
     }
 
     function onVisibility() {
         if (!running || busy || doc.visibilityState === 'hidden' || lastDoneAt === null) return;
-        if (deps.now() - lastDoneAt >= WALL_REFRESH_MS) {
+        if (deps.now() - lastDoneAt >= wallWaitMs(failures)) {
             if (timer !== null) deps.clearTimer(timer);
             timer = null;
             run();
@@ -255,6 +268,7 @@ export function createWall(deps) {
     function dataLoaded() {
         lastOkAt = lastDoneAt = deps.now();
         failed = false;
+        failures = 0;
         loads += 1;
     }
 
@@ -267,7 +281,7 @@ export function createWall(deps) {
         /** 首次載入結束（成功或失敗）：失敗也要排下一輪重試 */
         loadSettled(ok) {
             busy = false;
-            if (!ok) { lastDoneAt = deps.now(); failed = true; }
+            if (!ok) { lastDoneAt = deps.now(); failed = true; failures += 1; }
             schedule();
             changed();
         },

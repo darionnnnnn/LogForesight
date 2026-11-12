@@ -418,11 +418,11 @@ public class SchedulerHostedService : BackgroundService
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
     internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null, string? windowNote = null,
-        (DateTime Start, DateTime End)? window = null) =>
+        (DateTime Start, DateTime End)? window = null, bool netiqLedgerRetryOnly = false) =>
         new()
         {
             Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote, WindowNote = windowNote,
-            WindowInstanceStart = window?.Start, WindowEnd = window?.End
+            WindowInstanceStart = window?.Start, WindowEnd = window?.End, NetiqLedgerRetryOnly = netiqLedgerRetryOnly
         };
 
     /// <summary>
@@ -434,13 +434,8 @@ public class SchedulerHostedService : BackgroundService
         var note = resume.OnlyEmptyPending
             ? $"本趟為窗口內空資料複查（上一趟 #{previous.RunId} 留下：{resume.Describe()}）"
             : $"本趟為窗口內續跑（第 {runNumber} 趟，上一趟 #{previous.RunId} 留下：{resume.Describe()}）";
-        var request = ComposeScheduledRequest(null, note, window);
-        return new RunRequest
-        {
-            Scope = request.Scope, Trigger = request.Trigger, WindowNote = request.WindowNote,
-            WindowInstanceStart = request.WindowInstanceStart, WindowEnd = request.WindowEnd,
-            NetiqLedgerRetryOnly = resume.OnlyEmptyPending
-        };
+        // 排程請求只有 ComposeScheduledRequest 一個組裝點：這裡不逐欄重抄（漏抄的欄位會靜默失效）
+        return ComposeScheduledRequest(null, note, window, netiqLedgerRetryOnly: resume.OnlyEmptyPending);
     }
 
     /// <summary>續跑這一趟是實例內第幾趟（已有排程取數趟數＋1）。</summary>
