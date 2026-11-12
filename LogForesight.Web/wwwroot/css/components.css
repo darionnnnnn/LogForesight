@@ -202,7 +202,7 @@ summary.lf-card__header {
     list-style: none;
 }
 summary.lf-card__header::-webkit-details-marker { display: none; }
-summary.lf-card__header:focus-visible { outline: none; box-shadow: inset var(--lf-focus-ring); }
+summary.lf-card__header:focus-visible { outline: none; box-shadow: var(--lf-focus-ring-inset); }
 summary.lf-card__header::after { content: '▾'; margin-left: auto; color: var(--lf-text-muted); transition: transform .15s ease; }
 details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 
@@ -227,7 +227,7 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 }
 .lf-card__header--clickable:focus-visible {
     outline: none;
-    box-shadow: inset var(--lf-focus-ring);
+    box-shadow: var(--lf-focus-ring-inset);
 }
 
 .lf-card__body {
@@ -744,7 +744,7 @@ a.lf-badge:hover { text-decoration: underline; }
 /* 排程作業頁的小尺寸控制項（匯出鈕、等級下拉）：觸控區至少 36px 高 */
 /* 從他頁連結定位到某一列時的短暫高亮（1.5 秒後由 JS 移除類別）；動態淡出只在使用者不要求減少動態時才有 */
 .lf-focus-flash > td {
-    box-shadow: inset var(--lf-focus-ring);
+    box-shadow: var(--lf-focus-ring-inset);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -754,7 +754,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 @keyframes lf-focus-flash-fade {
-    from { box-shadow: inset var(--lf-focus-ring); }
+    from { box-shadow: var(--lf-focus-ring-inset); }
     to { box-shadow: inset 0 0 0 .2rem transparent; }
 }
 
@@ -843,9 +843,9 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 .lf-chip.active {
-    background: var(--lf-primary);
-    border-color: var(--lf-primary);
-    color: #fff;
+    background: var(--lf-primary-soft);
+    border-color: var(--lf-primary-soft-border);
+    color: var(--lf-primary-text);
     font-weight: 600;
 }
 

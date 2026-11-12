@@ -158,7 +158,11 @@
     --lf-shadow-lg: 0 14px 40px rgba(15, 23, 42, .18);
 
     /* ── 互動 ─────────────────────────────────────────────────────────── */
-    --lf-focus-ring: 0 0 0 .2rem rgba(30, 64, 175, .22);
+    /* 焦點指示（DESIGN-SYSTEM §4）：2px 白色間隔＋2px 實心品牌色，對白底、淡底都 ≥ 3:1；
+       半透明光暈對白底只有 1.5:1，不得改回（AccessibilityUiTests 守門） */
+    --lf-focus-color: var(--lf-primary);
+    --lf-focus-ring: 0 0 0 2px var(--lf-card-bg), 0 0 0 4px var(--lf-focus-color);
+    --lf-focus-ring-inset: inset 0 0 0 2px var(--lf-focus-color);
     --lf-transition: .15s ease;
 
     /* 舊 token 別名（保留既有元件引用，升級零成本）*/
@@ -300,7 +304,17 @@ body {
     /* withBusy() 把按鈕內容換成「spinner＋⋯中」文字後，Bootstrap 按鈕預設不禁止換行，
        在窄容器（如聊天輸入列）裡會醜陋地折成兩行（docs/WEB-FEEDBACK-2-PLAN.md #9） */
     white-space: nowrap;
-    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition);
+    transition: color var(--lf-transition), background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition);
+}
+
+/* 停用：除了變淡，底色與游標也不同（不只是灰掉的文字） */
+.btn:disabled,
+.btn.disabled {
+    --bs-btn-disabled-opacity: 1;
+    --bs-btn-disabled-bg: var(--lf-sunken);
+    --bs-btn-disabled-border-color: transparent;
+    --bs-btn-disabled-color: var(--lf-text-muted);
+    cursor: not-allowed;
 }
 
 /* .btn-group-sm > .btn 的 specificity (0,2,0) 高於 .btn-sm (0,1,0)，需一併覆寫字級避免被 Bootstrap 原生 .875rem 蓋掉 */
@@ -325,14 +339,93 @@ body {
     --bs-btn-disabled-border-color: var(--lf-primary);
 }
 
+/* 變體名稱是角色，不是外觀（DESIGN-SYSTEM §8.3）：
+   outline-secondary＝一般次要動作，面板色底＋髮絲細環；
+   outline-primary＝列內重複動作，無框品牌色文字；outline-danger＝危險動作入口，無框危險色文字。
+   邊框保留 1px 透明（強制色彩模式下仍有輪廓）。 */
+.btn-outline-secondary {
+    --bs-btn-color: var(--lf-text);
+    --bs-btn-bg: var(--lf-card-bg);
+    --bs-btn-border-color: var(--lf-border-strong);
+    --bs-btn-hover-color: var(--lf-text);
+    --bs-btn-hover-bg: var(--lf-sunken);
+    --bs-btn-hover-border-color: var(--lf-border-strong);
+    --bs-btn-active-color: var(--lf-text);
+    --bs-btn-active-bg: var(--lf-gray-200);
+    --bs-btn-active-border-color: var(--lf-border-strong);
+}
+
 .btn-outline-primary {
     --bs-btn-color: var(--lf-primary);
-    --bs-btn-border-color: var(--lf-primary);
-    --bs-btn-hover-bg: var(--lf-primary);
-    --bs-btn-hover-border-color: var(--lf-primary);
-    --bs-btn-active-bg: var(--lf-primary-dark);
-    --bs-btn-active-border-color: var(--lf-primary-dark);
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-color: var(--lf-primary-text);
+    --bs-btn-hover-bg: var(--lf-primary-soft);
+    --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-color: var(--lf-primary-text);
+    --bs-btn-active-bg: var(--lf-primary-soft-border);
+    --bs-btn-active-border-color: transparent;
 }
+
+.btn-outline-danger {
+    --bs-btn-color: var(--lf-danger-text);
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-color: var(--lf-danger-text);
+    --bs-btn-hover-bg: var(--lf-danger-soft);
+    --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-color: var(--lf-danger-text);
+    --bs-btn-active-bg: var(--lf-danger-soft);
+    --bs-btn-active-border-color: var(--lf-danger-line);
+}
+
+/* 表格列內帶圖示的一般小按鈕：無框，只留圖示與文字（靜止時靠圖示辨識，滑過出現淡底） */
+.table .btn-outline-secondary.btn-sm:has(> .lf-icon) {
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-border-color: transparent;
+}
+
+/* 分段控制（DESIGN-SYSTEM §8.3）：一條凹槽，選中的選項浮起成面板色並加粗。
+   全站的 .btn-group 都是切換用途；不是 btn-group、但子按鈕帶 aria-pressed 的容器（設定頁層級）同一外觀。
+   Bootstrap 對 btn-group 內側按鈕寫死 radius 0 與 -1px 外距，這裡以 !important 還原成獨立的圓角選項。 */
+.btn-group,
+:where(div):has(> .btn[aria-pressed]) {
+    width: fit-content;
+    max-width: 100%;
+    background: var(--lf-sunken);
+    border-radius: calc(var(--lf-radius-sm) + 3px);
+    padding: 3px;
+    gap: 2px;
+}
+
+.btn-group > .btn,
+:where(div):has(> .btn[aria-pressed]) > .btn {
+    --bs-btn-color: var(--lf-text-muted);
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-color: var(--lf-text);
+    --bs-btn-hover-bg: rgba(15, 23, 42, .05);
+    --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-color: var(--lf-text);
+    --bs-btn-active-bg: var(--lf-card-bg);
+    --bs-btn-active-border-color: transparent;
+    font-weight: 500;
+    border-radius: var(--lf-radius-sm) !important;
+    margin-left: 0 !important;
+}
+
+.btn-group > .btn.active,
+.btn-group > .btn[aria-pressed="true"],
+:where(div):has(> .btn[aria-pressed]) > .btn[aria-pressed="true"] {
+    background: var(--lf-card-bg);
+    color: var(--lf-text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .12), 0 0 0 1px var(--lf-border);
+}
+
+.btn-group > .btn:focus-visible,
+:where(div):has(> .btn[aria-pressed]) > .btn:focus-visible { box-shadow: var(--lf-focus-ring); z-index: 1; }
 
 .btn:focus-visible { box-shadow: var(--lf-focus-ring); }
 

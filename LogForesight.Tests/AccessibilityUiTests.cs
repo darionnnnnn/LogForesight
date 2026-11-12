@@ -191,6 +191,29 @@ public class AccessibilityUiTests
         Assert.True(ratio >= 4.5, $"{selector}：{fgToken} 對 {bgToken} 對比 {ratio:F2}:1，低於 4.5:1");
     }
 
+    /// <summary>
+    /// 焦點指示要量得出來（WCAG 2.4.11／1.4.11，DESIGN-SYSTEM §4）：外環必須是實色，且對白底、淡底、頁底都 ≥ 3:1。
+    /// 半透明的光暈（例：主色 22% 透明度）合成後對白底只有約 1.5:1，不得改回。
+    /// </summary>
+    [Fact]
+    public void 焦點指示是實色外環_對淺色底至少3比1()
+    {
+        var css = Regex.Replace(SiteCss.Read(), @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        var ring = Regex.Match(css, @"--lf-focus-ring\s*:\s*([^;]+);");
+        Assert.True(ring.Success, "base.css 找不到 --lf-focus-ring");
+        Assert.DoesNotMatch(@"rgba\(", ring.Groups[1].Value);
+        Assert.Contains("var(--lf-focus-color)", ring.Groups[1].Value);
+
+        var colorDef = Regex.Match(css, @"--lf-focus-color\s*:\s*var\((--[a-z0-9-]+)\)");
+        Assert.True(colorDef.Success, "--lf-focus-color 應指向一個色票 token");
+        var color = RootTokenValue(css, colorDef.Groups[1].Value);
+        foreach (var bg in new[] { "--lf-card-bg", "--lf-content-bg", "--lf-gray-50", "--lf-primary-soft", "--lf-danger-soft" })
+        {
+            var ratio = Contrast(color, RootTokenValue(css, bg));
+            Assert.True(ratio >= 3, $"焦點指示 {color} 對 {bg} 只有 {ratio:F2}:1");
+        }
+    }
+
     [Fact]
     public void 揭露按鈕鍵盤焦點可見()
     {
