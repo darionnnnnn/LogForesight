@@ -692,6 +692,12 @@ a.lf-badge:hover { text-decoration: underline; }
     .lf-briefing__detail {
         grid-template-columns: 1fr;
     }
+
+    /* 紙上不印底色、內陰影是否印出依瀏覽器而定：指示條改成實線左框，處置在紙上仍有一致的標記 */
+    .lf-briefing__action--tinted {
+        box-shadow: none;
+        border-left: 3px solid var(--lf-primary);
+    }
 }
 
 /* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，

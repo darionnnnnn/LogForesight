@@ -61,6 +61,11 @@ function initRecordSections() {
 initRecordSections();
 // 詢問 AI 預設收合、記住使用者的開合（不列印，所以列印前不必展開）
 bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');
+// 收合時訊息區是 display:none，捲到底無效（例如收合狀態下用「放大檢視」對話後關閉）；每次展開完成再捲到最新一則
+document.getElementById('chat-collapse')?.addEventListener('shown.bs.collapse', () => {
+    const messages = document.getElementById('chat-messages');
+    if (messages) messages.scrollTop = messages.scrollHeight;
+});
 
 // 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；

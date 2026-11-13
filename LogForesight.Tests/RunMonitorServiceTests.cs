@@ -762,6 +762,13 @@ public class RunMonitorServiceTests : IDisposable
         var scheduled = AddPrtgRun(dataDate.AddDays(1).AddHours(1));                   // 處理日當天：不是補跑
         var netiqCatchUp = AddPrtgRun(DateTime.Today.AddDays(-3).AddHours(9));        // 只靠 NetIQ 回執連到 dataDate
         var prtgCatchUp = AddPrtgRun(DateTime.Today.AddDays(-2).AddHours(10), dataDate, dataDate.AddDays(-1));
+        // AI 趟就算帶了含這一天的逐日統計也不列（總表只看取數趟）
+        var aiRuns = Runs();
+        var ai = new BatchRun { HostName = "SITE-AI", StartedAt = DateTime.Today.AddDays(-1).AddHours(4), JobType = BatchRun.JobTypeAi };
+        ai.RunId = aiRuns.StartRun(ai);
+        ai.FinishedAt = ai.StartedAt.AddMinutes(5);
+        ai.PrtgDays = new List<PrtgDayStat> { new(dataDate, BatchRun.PrtgOutcomeSuccess, 1, 1, true, 0, 0, 0) };
+        aiRuns.FinishRun(ai);
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, scheduled, "failed");
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, netiqCatchUp, "success");
 
