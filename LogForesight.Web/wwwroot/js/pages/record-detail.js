@@ -1199,6 +1199,28 @@ function allowedSeverities() {
     return new Set(currentDisplaySettings?.visibleSeverities ?? SEVERITY_ORDER);
 }
 
+/**
+ * 清單重繪的單一出口（嚴重度篩選、顯示範圍、重載都經 renderIssues）：取消不在目前可見清單內的勾選。
+ * 送出對象必須等於畫面上看得到的對象——否則「套用到 3 個問題」會改到使用者已經篩掉、看不到的問題。
+ * 有取消時同步側軌摘要並請面板說明一次；回傳取消的數量。
+ */
+function pruneHiddenSelection() {
+    if (selectedIssueKeys.size === 0) return 0;
+    const visible = new Set(visibleTopIssues().map(issue => issue.issueKey));
+    let pruned = 0;
+    for (const key of [...selectedIssueKeys]) {
+        if (!visible.has(key)) {
+            selectedIssueKeys.delete(key);
+            pruned++;
+        }
+    }
+    if (pruned > 0) {
+        refreshRailSelectionSummary();
+        refreshSelection({ prunedCount: pruned });
+    }
+    return pruned;
+}
+
 function visibleTopIssues() {
     const allowed = allowedSeverities();
     return currentDetail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity) && inCurrentScope(i));
@@ -1355,6 +1377,7 @@ function renderWorkOrderHint(detail, container) {
  */
 function renderIssues(detail) {
     const container = document.getElementById('detail-issues');
+    pruneHiddenSelection();
 
     if (detail.topIssues.length === 0) {
         renderEmpty(container, {

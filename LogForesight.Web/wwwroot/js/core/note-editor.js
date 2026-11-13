@@ -530,6 +530,9 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
             errorText = err.status === 429 || err.code === 'validation_failed' ? err.message : AI_FAILED_TEXT;
         }
         if (seq !== requestSeq) return;   // 已按「放棄」或又送了新的一次
+        // 等待期間表單被整張重建（勾選變動）：這個說明欄已不在畫面上，回應整個丟棄——
+        // 寫進舊欄位或本機草稿，使用者眼前的新表單看不到，下次進頁才冒出莫名的草稿
+        if (!textarea.isConnected) return;
         setIdle();
 
         if (errorText) {

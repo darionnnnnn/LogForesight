@@ -40,6 +40,15 @@ class FakeNode {
         this.classList = new FakeClassList(this);
     }
 
+    // 是否掛在文件上：沿 _parent 往上走到根，根是 body 才是 true；沒掛到 body 時回個別案例指定的值
+    // （預設 undefined＝未知——既有案例的替身節點從不掛樹，ui.js 以 === false 判斷卸下，不能一律回 false）
+    get isConnected() {
+        let node = this;
+        while (node._parent) node = node._parent;
+        return node.tagName === 'BODY' ? true : this._connected;
+    }
+    set isConnected(value) { this._connected = value; }
+
     get textContent() {
         return this._text || this.children.map(c => c.textContent).join('');
     }
@@ -54,7 +63,7 @@ class FakeNode {
     // append／prepend 收到字串時，真瀏覽器會轉成文字節點（runs.js 的 notRunCell 以 append(span, '＋…') 組字）
     _asNode(n) { if (typeof n !== 'string') return n; const t = new FakeNode('#text'); t.textContent = n; return t; }
     append(...nodes) { nodes.map(n => this._asNode(n)).forEach(n => { this._detach(n); this.children.push(n); if (n) n._parent = this; }); }
-    replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
+    replaceChildren(...nodes) { nodes = nodes.map(n => this._asNode(n)); this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
     remove() { if (this._parent) this._parent.children = this._parent.children.filter(c => c !== this); this._parent = null; }
     // 兄弟節點操作（D2／E 段的就地重繪與插入會用到）：依 _parent.children 順序定位
     _detach(node) { if (node && node._parent && node._parent !== undefined) node._parent.children = node._parent.children.filter(c => c !== node); }

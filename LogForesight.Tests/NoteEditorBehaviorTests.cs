@@ -17,6 +17,15 @@ public sealed class NoteEditorBehaviorTests
     }
 
     [NodeTheory]
+    [InlineData("note-editor.behavior.mjs", "暫存_自動還原後進批次不預選")]
+    [InlineData("note-editor.behavior.mjs", "暫存_批次選的狀態不帶回日層級")]
+    [InlineData("note-editor.behavior.mjs", "暫存_沒點過狀態時重載取新的推導狀態")]
+    [InlineData("note-editor.behavior.mjs", "暫存_親自點過的狀態同模式重載保留")]
+    [InlineData("note-editor.behavior.mjs", "暫存_批次打的說明回日層級保留並提示套用對象")]
+    [InlineData("note-editor.behavior.mjs", "暫存_批次說明為空回日層級不提示")]
+    [InlineData("note-editor.behavior.mjs", "篩選取消勾選的提示只出現一次")]
+    [InlineData("note-editor.behavior.mjs", "AI整理回應到達時欄位已卸下就丟棄")]
+    [InlineData("note-editor.behavior.mjs", "AI整理沒有重建時照常填入")]
     [InlineData("note-editor.behavior.mjs", "有errorEl時順序為說明欄_尾區_錯誤")]
     [InlineData("note-editor.behavior.mjs", "尾區含字數計數與AI整理按鈕")]
     [InlineData("note-editor.behavior.mjs", "不傳errorEl時說明欄後面仍是尾區")]

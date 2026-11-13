@@ -52,7 +52,9 @@ public class NoteEditorUiTests
 
         Assert.DoesNotContain("noteInput.value = batchMode ? ''", form);
         Assert.Contains("state.formDraft", form);
-        Assert.Matches(new Regex(@"noteInput\.value = draft \? draft\.note"), form);
+        // 說明跨模式保留（只保留有字的暫存），其餘欄位只在同一模式沿用
+        Assert.Matches(new Regex(@"noteInput\.value = sameModeDraft \|\| draft\?\.note \? draft\.note"), form);
+        Assert.Contains("const sameModeDraft = draft && draft.mode === mode ? draft : null;", form);
         Assert.Contains("attachNoteEditor(noteInput", form);
     }
 

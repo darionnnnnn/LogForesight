@@ -69,9 +69,14 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     return { handling, logCount };
 }
 
-/** 勾選狀態改變時呼叫：只重繪「處理狀態」表單，不重新打 API（負責人／處理人／歷程不受影響） */
-export function refreshSelection() {
-    if (state) render();
+/**
+ * 勾選狀態改變時呼叫：只重繪「處理狀態」表單，不重新打 API（負責人／處理人／歷程不受影響）。
+ * prunedCount：頁面因篩選變更而取消了幾個看不到的勾選；有值時表單上方說明一次，下一次勾選變動（不帶值）就清掉
+ */
+export function refreshSelection({ prunedCount = 0 } = {}) {
+    if (!state) return;
+    state.prunedNotice = prunedCount;
+    render();
 }
 
 async function loadAssignableUsers(hostId) {
@@ -409,12 +414,35 @@ function handlingForm() {
     const { handling, hostId, date, getSelection } = state;
     const selection = getSelection();
     const batchMode = selection.size > 0;
-    // 使用者已經動過表單（勾選問題會整張重建）：以暫存為初值，不依模式重設
+    const mode = batchMode ? 'batch' : 'day';
+    // 使用者已經動過表單（勾選問題會整張重建）：以暫存為初值。暫存記著當時的模式——
+    // 狀態、預計完成日、觀察天數、「清除雜訊記憶」只在同一模式沿用（日層級的預選帶進批次＝違反批次不預選；
+    // 批次的結論帶回日層級＝把針對某個問題的結論寫成整天狀態）；說明文字是使用者打的字，跨模式保留
     const draft = state.formDraft;
+    const sameModeDraft = draft && draft.mode === mode ? draft : null;
+    // 狀態只在使用者親自點過膠囊時才沿用：沒點過就每次依當下模式取初值，
+    // 編輯器自動還原草稿觸發的 input 不會把推導出的預選凍結進暫存
+    let statusTouched = !!sameModeDraft?.statusTouched;
 
     const form = document.createElement('form');
     form.className = 'lf-handling__section lf-handling__form';
     form.noValidate = true;   // 驗證只走下方手動一套（說明欄超過字數的 customValidity 不可觸發原生泡泡）
+
+    // 因篩選變更而取消的勾選：說一次，免得使用者以為勾選無故消失
+    if (state.prunedNotice > 0) {
+        const pruned = hintText(`已取消 ${state.prunedNotice} 個不在目前清單的勾選。`);
+        pruned.classList.add('mb-2');
+        pruned.dataset.role = 'pruned-notice';
+        form.appendChild(pruned);
+    }
+
+    // 從批次回到日層級、說明欄還留著剛才打的字：明講現在會套用到哪裡
+    if (!batchMode && draft?.mode === 'batch' && draft.note) {
+        const target = hintText('目前沒有勾選問題，儲存會套用到這一天的整體狀態。');
+        target.classList.add('mb-2');
+        target.dataset.role = 'day-target-notice';
+        form.appendChild(target);
+    }
 
     // 批次提示留在表單區最上方
     if (batchMode) {
@@ -435,8 +463,8 @@ function handlingForm() {
     // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
     // 觀察中只在批次模式提供，見 DAY_CHIPS／BATCH_CHIPS 的宣告理由
     const availableChips = batchMode ? BATCH_CHIPS : DAY_CHIPS;
-    let selectedStatus = draft && availableChips.some(chip => chip.value === draft.status)
-        ? draft.status
+    let selectedStatus = statusTouched && availableChips.some(chip => chip.value === sameModeDraft.status)
+        ? sameModeDraft.status
         : (batchMode ? null : (handling.derivedStatus ?? handling.status));
 
     const chipGroup = document.createElement('div');
@@ -467,7 +495,7 @@ function handlingForm() {
     dueInput.type = 'date';
     dueInput.className = 'form-control form-control-sm';
     dueInput.id = 'due-date';
-    dueInput.value = draft ? draft.dueDate : (batchMode ? '' : (handling.dueDate ?? ''));
+    dueInput.value = sameModeDraft ? sameModeDraft.dueDate : (batchMode ? '' : (handling.dueDate ?? ''));
 
     dueWrap.append(quickRow, dueInput);
 
@@ -492,7 +520,7 @@ function handlingForm() {
     observeInput.id = 'observe-days';
     observeInput.min = '1';
     observeInput.max = '90';
-    observeInput.value = draft?.observeDays ?? '7';
+    observeInput.value = sameModeDraft?.observeDays ?? '7';
     const observeHint = document.createElement('div');
     observeHint.className = 'form-text';
     observeHint.textContent = '觀察期間這個問題不再進入待辦，觀察到期後若仍在發生，會回到「處理中逾期」提醒。';
@@ -520,7 +548,7 @@ function handlingForm() {
     forgetNoiseCheck.type = 'checkbox';
     forgetNoiseCheck.className = 'form-check-input';
     forgetNoiseCheck.id = 'forget-noise';
-    forgetNoiseCheck.checked = draft?.forgetNoise ?? false;
+    forgetNoiseCheck.checked = sameModeDraft?.forgetNoise ?? false;
     const forgetNoiseLabel = document.createElement('label');
     forgetNoiseLabel.className = 'form-check-label small';
     forgetNoiseLabel.htmlFor = 'forget-noise';
@@ -549,7 +577,8 @@ function handlingForm() {
     noteInput.className = 'form-control form-control-sm';
     noteInput.id = 'handling-note';
     noteInput.rows = 3;
-    noteInput.value = draft ? draft.note : (batchMode ? '' : (handling.note ?? ''));
+    // 說明跨模式保留，但只保留真的有字的（空字串的暫存不得蓋掉日層級已存的說明）
+    noteInput.value = sameModeDraft || draft?.note ? draft.note : (batchMode ? '' : (handling.note ?? ''));
     noteInput.placeholder = '例如：已確認為每週維護重開機，屬正常現象';
     form.appendChild(noteInput);
 
@@ -570,6 +599,8 @@ function handlingForm() {
     /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */
     function saveFormDraft() {
         state.formDraft = {
+            mode,
+            statusTouched,
             status: selectedStatus,
             note: noteInput.value,
             dueDate: dueInput.value,
@@ -615,6 +646,7 @@ function handlingForm() {
         multi: false,
         onToggle: value => {
             selectedStatus = value;
+            statusTouched = true;
             updateFieldsForStatus();
             saveFormDraft();
         }

@@ -59,7 +59,49 @@ function fakeRail({ userChoice = false, expanded = false } = {}) {
     };
 }
 
+const pruneSrc = extractFunction(recordDetail, 'function pruneHiddenSelection');
+
+/** 修剪函式取自 production，外部相依（可見清單、側軌摘要、面板刷新）替換成記錄呼叫的替身 */
+function pruneEnv(selected, visibleKeys) {
+    const calls = { rail: 0, panel: [] };
+    const selectedIssueKeys = new Set(selected);
+    const factory = new Function('selectedIssueKeys', 'visibleTopIssues', 'refreshRailSelectionSummary', 'refreshSelection',
+        `${pruneSrc}\nreturn pruneHiddenSelection;`);
+    const prune = factory(selectedIssueKeys, () => visibleKeys.map(issueKey => ({ issueKey })),
+        () => { calls.rail++; }, opts => calls.panel.push(opts));
+    return { prune, selectedIssueKeys, calls };
+}
+
 const cases = {
+    pruneDropsHiddenSelectionAndNotifies() {
+        const env = pruneEnv(['a', 'b', 'c'], ['a', 'x']);
+        assert.equal(env.prune(), 2);
+        assert.deepEqual([...env.selectedIssueKeys], ['a']);
+        assert.equal(env.calls.rail, 1);
+        assert.deepEqual(env.calls.panel, [{ prunedCount: 2 }]);
+    },
+    pruneKeepsSelectionWhenAllVisible() {
+        const env = pruneEnv(['a', 'b'], ['a', 'b', 'c']);
+        assert.equal(env.prune(), 0);
+        assert.deepEqual([...env.selectedIssueKeys], ['a', 'b']);
+        assert.equal(env.calls.rail, 0);
+        assert.deepEqual(env.calls.panel, []);
+    },
+    pruneToZeroSelection() {
+        const env = pruneEnv(['a', 'b'], []);
+        assert.equal(env.prune(), 2);
+        assert.equal(env.selectedIssueKeys.size, 0);
+        assert.deepEqual(env.calls.panel, [{ prunedCount: 2 }]);
+    },
+    // 修剪掛在清單重繪的單一出口：嚴重度篩選與顯示範圍變更都經 renderIssues
+    pruneRunsAtRenderIssuesEntry() {
+        const body = extractFunction(recordDetail, 'function renderIssues');
+        const first = body.indexOf('pruneHiddenSelection()');
+        assert(first > 0, 'renderIssues 應呼叫 pruneHiddenSelection');
+        assert(first < body.indexOf('return;'), '修剪要在空清單提早返回之前');
+        assert(extractFunction(recordDetail, 'function changeScope').includes('renderIssues('));
+        assert(extractFunction(recordDetail, 'function renderSeverityFilter').includes('renderIssues('));
+    },
     hashHandlingWideExpandsOnceAndClearsHash() {
         const rail = fakeRail();
         const env = pageEnv({ rail, hash: '#handling', wide: true });
