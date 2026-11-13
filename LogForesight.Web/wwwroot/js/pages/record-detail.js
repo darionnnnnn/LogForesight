@@ -1671,6 +1671,9 @@ function evidencePanel(issue) {
 /**
  * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
  * 沒有任何觀測時回 null；面板有其他佐證時由 evidencePanel 補一句「未保存」。
+ * 每筆只印有值的行：「時間解讀」「原生參照」沒有值時不逐筆印「未知」，改由摘要行的計數承擔，
+ * 「不能推定連續狀態」的警語也移到摘要行（換位置、不消失）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
+ * 資源鍵與主機鍵相同時不重複；其他鍵原樣顯示，不猜別台主機的名稱（第 73 輪 E）。
  */
 function sourceEvidenceBlock(issue) {
     const observations = (issue.sourceObservations || []).slice(0, 64);
@@ -1680,10 +1683,12 @@ function sourceEvidenceBlock(issue) {
     block.className = 'lf-source-obs';
     const exactReferences = observations.filter(item => item.nativeReference).length;
     const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
+    const unresolved = observations.filter(item => !item.windowResolution).length;
     const summary = metaLine([
         `${observations.length} 筆`,
         `${exactTimes} 筆有 UTC 時間`,
         `${exactReferences} 筆有原生參照`,
+        unresolved > 0 ? `${unresolved} 筆無時間解讀，不能推定連續狀態` : null,
         issue.sourceObservationsTruncated ? '清單已截斷' : null,
         '群組顯示時段不是來源時間窗'
     ]);
@@ -1694,12 +1699,16 @@ function sourceEvidenceBlock(issue) {
         LocalClassicEventLog: '本機事件記錄', LocalEventRecord: '本機 Event Record'
     };
     const scopes = { Host: '主機', Volume: '磁碟區', Device: '裝置', Sensor: '感測器' };
+    const ownHostKey = currentDetail?.hostId != null ? `host-id:${currentDetail.hostId}` : null;
+    const hostLabel = key => (key && key === ownHostKey && currentDetail.hostName ? currentDetail.hostName : key || '未知');
     const list = document.createElement('ol');
     list.className = 'lf-source-obs__list';
     for (const item of observations) {
         const row = document.createElement('li');
+        const parts = [`來源：${sourceNames[item.sourceKind] || '未知'}`, `範圍：${scopes[item.resourceScope] || '未知'}`, `主機：${hostLabel(item.exactHostKey)}`];
+        if (item.exactResourceKey !== item.exactHostKey) parts.push(`資源：${item.exactResourceKey || '未知'}`);
         const line = document.createElement('div');
-        line.textContent = `來源：${sourceNames[item.sourceKind] || '未知'}；範圍：${scopes[item.resourceScope] || '未知'}；主機：${item.exactHostKey || '未知'}；資源：${item.exactResourceKey || '未知'}`;
+        line.textContent = parts.join('；');
         row.appendChild(line);
 
         const time = document.createElement('div');
@@ -1707,13 +1716,16 @@ function sourceEvidenceBlock(issue) {
         else if (item.windowStartUtc && item.windowEndUtc) time.textContent = `UTC 區間：[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`;
         else time.textContent = 'UTC 時間／區間：未知';
         row.appendChild(time);
-        const resolution = document.createElement('div');
-        resolution.textContent = `時間解讀：${item.windowResolution || '未知；不能推定連續狀態'}`;
-        row.appendChild(resolution);
-
-        const reference = document.createElement('div');
-        reference.textContent = `原生參照：${item.nativeReference || '未知'}`;
-        row.appendChild(reference);
+        if (item.windowResolution) {
+            const resolution = document.createElement('div');
+            resolution.textContent = `時間解讀：${item.windowResolution}`;
+            row.appendChild(resolution);
+        }
+        if (item.nativeReference) {
+            const reference = document.createElement('div');
+            reference.textContent = `原生參照：${item.nativeReference}`;
+            row.appendChild(reference);
+        }
         list.appendChild(row);
     }
     block.appendChild(list);

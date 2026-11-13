@@ -385,10 +385,13 @@ public class FrontendConsistencyUiTests
         var js = ReadJs("pages", "record-detail.js");
         var block = ExtractBody(js, @"function sourceEvidenceBlock\(issue\)");
         Assert.Contains("slice(0, 64)", block);
-        Assert.Contains("item.exactHostKey || '未知'", block);
+        Assert.Contains("主機：${hostLabel(item.exactHostKey)}", block);
+        Assert.Contains("key || '未知'", block);
         Assert.Contains("item.exactResourceKey || '未知'", block);
         Assert.Contains("UTC 時間／區間：未知", block);
-        Assert.Contains("原生參照：${item.nativeReference || '未知'}", block);
+        // 沒有值的「時間解讀」「原生參照」不逐筆印，警語移到摘要行（第 73 輪 E）
+        Assert.Contains("原生參照：${item.nativeReference}", block);
+        Assert.Contains("筆無時間解讀，不能推定連續狀態", block);
         Assert.Contains("row.appendChild(reference)", block);
         Assert.DoesNotContain("innerHTML", block);
         Assert.DoesNotContain("href", block);
