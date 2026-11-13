@@ -3322,7 +3322,7 @@
         "wait": 600
       },
       {
-        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) return null;\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
+        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) { const ref = document.getElementById('dashboard-issues').closest('.lf-card').querySelector(':scope > .lf-card__header'); const d = Math.abs(header.getBoundingClientRect().height - ref.getBoundingClientRect().height); return d > 1 ? ('沒有揭露鈕時標頭高度與其他卡片不同（差 ' + Math.round(d) + 'px）') : null; }\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
       },
       {
         "clickIf": "#dashboard-categories ~ * .lf-reveal-toggle, .lf-card:has(#dashboard-categories) .lf-reveal-toggle"
@@ -3331,7 +3331,7 @@
         "wait": 400
       },
       {
-        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) return null;\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
+        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) { const ref = document.getElementById('dashboard-issues').closest('.lf-card').querySelector(':scope > .lf-card__header'); const d = Math.abs(header.getBoundingClientRect().height - ref.getBoundingClientRect().height); return d > 1 ? ('沒有揭露鈕時標頭高度與其他卡片不同（差 ' + Math.round(d) + 'px）') : null; }\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
       }
     ]
   },
@@ -3702,6 +3702,169 @@
       },
       {
         "evalAssert": "if (innerWidth < 992) return null;\nconst rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nconst contentWidth = td => { const r = document.createRange(); r.selectNodeContents(td); return r.getBoundingClientRect().width; };\nfor (const id of ['dashboard-issues', 'dashboard-group-risk']) {\n  const t = document.querySelector('#' + id + ' table');\n  if (!t) continue;\n  const ths = [...t.querySelectorAll(':scope > thead > tr > th')];\n  const rows = [...t.querySelectorAll(':scope > tbody > tr:not(.lf-row-detail)')];\n  for (let i = 1; i < ths.length; i++) {\n    const widest = Math.max(contentWidth(ths[i]), ...rows.map(tr => tr.children[i] ? contentWidth(tr.children[i]) : 0));\n    const col = ths[i].getBoundingClientRect().width;\n    if (col - widest > 2 * rem + 1) return id + ' 的「' + ths[i].textContent.trim() + '」欄寬 ' + Math.round(col) + 'px，最寬內容只有 ' + Math.round(widest) + 'px';\n  }\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-更多選單鍵盤操作",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const t = document.querySelector('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail) .dropdown-toggle'); if (!t) return '第一列沒有「更多」'; t.scrollIntoView({ block: 'center' }); t.focus(); window.__more = t; return document.activeElement === t ? null : '焦點沒有落在「更多」';"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "evalAssert": "const m = window.__more.parentElement.querySelector('.dropdown-menu'); return m.classList.contains('show') ? null : '按 Enter 沒有展開選單';"
+      },
+      {
+        "key": "ArrowDown"
+      },
+      {
+        "evalAssert": "return document.activeElement && document.activeElement.classList.contains('dropdown-item') ? null : ('方向鍵沒有把焦點移到選單項（目前在 ' + (document.activeElement ? document.activeElement.className : '無') + '）');"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "waitFor": ".modal.show"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Escape"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "if (document.querySelector('.modal.show')) return '按 Esc 沒有關閉視窗'; return document.activeElement === window.__more ? null : ('視窗關閉後焦點沒有回到「更多」（目前在 ' + (document.activeElement ? (document.activeElement.textContent || document.activeElement.tagName).trim().slice(0, 12) : '無') + '）');"
+      }
+    ]
+  },
+  {
+    "name": "版面-交辦單-管理者視角沒有實心按鈕",
+    "role": "ui-admin",
+    "path": "fixture:work-order.ui-handler",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst p = [...document.querySelectorAll('main .btn-primary')].filter(b => vis(b) && !b.closest('.modal'));\nreturn p.length === 0 ? null : ('管理者視角出現實心按鈕：' + p.map(b => b.textContent.trim()).join('、'));"
+      }
+    ]
+  },
+  {
+    "name": "版面-交辦單-處理人只有回覆這張單是實心",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst p = [...document.querySelectorAll('main .btn-primary')].filter(b => vis(b) && !b.closest('.modal'));\nreturn p.length === 1 && p[0].textContent.trim() === '回覆這張單' ? null : ('實心按鈕應只有「回覆這張單」，實際：' + (p.map(b => b.textContent.trim()).join('、') || '無'));"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-清單列圖示鈕維持無框",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const btns = [...document.querySelectorAll('.lf-list-row .btn-outline-danger')].filter(b => b.getBoundingClientRect().width > 0);\nif (!btns.length) return '找不到清單列內的抑制鈕';\nconst ringed = btns.filter(b => { const c = getComputedStyle(b).borderTopColor; return c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent'; });\nreturn ringed.length ? ('清單列內的圖示鈕被加了細環：' + ringed.length + ' 顆') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-紅字只剩風險狀態-儀表板",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#dashboard-issues table"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst bad = [...document.querySelectorAll('.lf-text-alert, .lf-stat__value--danger')].filter(vis)\n  .map(e => e.textContent.trim()).filter(t => /本期新增|昨日仍在發生|↑|前期/.test(t));\nreturn bad.length ? ('變化類文字仍是紅字：' + [...new Set(bad)].slice(0, 5).join('、')) : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-紅字只剩風險狀態-問題查詢",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst bad = [...document.querySelectorAll('.lf-text-alert, .lf-stat__value--danger')].filter(vis)\n  .map(e => e.textContent.trim()).filter(t => /本期新增|昨日仍在發生|↑|前期/.test(t));\nreturn bad.length ? ('變化類文字仍是紅字：' + [...new Set(bad)].slice(0, 5).join('、')) : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-紅字只剩風險狀態-報表",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst bad = [...document.querySelectorAll('.lf-text-alert, .lf-stat__value--danger')].filter(vis)\n  .map(e => e.textContent.trim()).filter(t => /本期新增|昨日仍在發生|↑|前期/.test(t));\nreturn bad.length ? ('變化類文字仍是紅字：' + [...new Set(bad)].slice(0, 5).join('、')) : null;"
       }
     ]
   }

@@ -40,6 +40,7 @@
 // 任意量測：
 //   { evalAssert: "函式本體" }                       在頁面執行，回傳 null 通過、回傳字串即為失敗訊息（例：圖示外框落在按鈕內、字高下限）
 //   { hover: "選擇器" }                              真實滑鼠移入該元素（:hover 會成立）；{ hover: null } 移到視窗左上角離開所有元素
+//   { key: "Enter" | "Escape" | "ArrowDown" | "ArrowUp" | "Tab" | " " }   真實按鍵，送給目前有焦點的元素
 //
 // 全域斷言（每個情境都跑）：tools/ui-global-asserts.json（[{ name, body }]，body 同 evalAssert 的函式本體），
 //   在頁面載入完成後與情境步驟跑完後各執行一次，失敗計入 assert 項（不另增量測項）。
@@ -368,6 +369,15 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
                 const msg = await evaluate(browser, `(${assertInPage.toString()})(${JSON.stringify(spec)})`);
                 if (msg) failures.push(`${width}px：${msg}`);
             }
+        } else if (step.key) {
+            // 真實按鍵（CDP Input 事件，送給目前有焦點的元素）：量鍵盤操作（Enter 展開選單、方向鍵移動、Esc 關閉）
+            const keys = { Enter: { code: 'Enter', keyCode: 13, text: '\r' }, Escape: { code: 'Escape', keyCode: 27 }, ArrowDown: { code: 'ArrowDown', keyCode: 40 }, ArrowUp: { code: 'ArrowUp', keyCode: 38 }, Tab: { code: 'Tab', keyCode: 9 }, ' ': { code: 'Space', keyCode: 32, text: ' ' } };
+            const k = keys[step.key];
+            if (!k) { failures.push(`不支援的按鍵：${step.key}`); continue; }
+            const base = { key: step.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode };
+            await browser.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...base, ...(k.text ? { text: k.text } : {}) });
+            await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+            await sleep(300);
         } else if (step.hover !== undefined) {
             // 真實滑鼠移入（CDP Input 事件），:hover 才會成立；hover: null 把滑鼠移到視窗左上角（離開所有元素）
             let point = { x: 0, y: 0 };
