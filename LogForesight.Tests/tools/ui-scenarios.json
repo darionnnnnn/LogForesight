@@ -2611,5 +2611,59 @@
         "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;}; const pairs=[...document.querySelectorAll('.lf-badge + .lf-badge')].filter(b=>vis(b)&&vis(b.previousElementSibling)&&Math.abs(b.getBoundingClientRect().top-b.previousElementSibling.getBoundingClientRect().top)<4); if(!pairs.length) return '首頁找不到同一行相鄰的標記'; const bad=pairs.filter(b=>{const gap=b.getBoundingClientRect().left-b.previousElementSibling.getBoundingClientRect().right; const inner=parseFloat(getComputedStyle(b).columnGap)||0; return !(gap>inner*1.5);}); return bad.length? bad.length+' 組相鄰標記的間距不到圓點內距的 1.5 倍':null;"
       }
     ]
+  },
+  {
+    "name": "版面-風險日詳情-帳號值不越過格子",
+    "role": "ui-admin",
+    "path": "fixture:record.legacy-messages",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; for (const v of document.querySelectorAll('#detail-issues .lf-key-details .lf-text-data')) { const td = v.closest('td'); const r = document.createRange(); r.selectNodeContents(v); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); const limit = td.getBoundingClientRect().right; if (right > limit + 1) bad.push(Math.round(right - limit)); } if (!document.querySelector('#detail-issues .lf-key-details')) return '找不到帳號摘要（資料集沒有載入？）'; return bad.length ? ('帳號值越過所在格子 ' + bad.join(',') + 'px') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-帳號值不越過格子-列印",
+    "role": "ui-admin",
+    "path": "fixture:record.legacy-messages",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; for (const v of document.querySelectorAll('#detail-issues .lf-key-details .lf-text-data')) { const td = v.closest('td'); const r = document.createRange(); r.selectNodeContents(v); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); const limit = td.getBoundingClientRect().right; if (right > limit + 1) bad.push(Math.round(right - limit)); } if (!document.querySelector('#detail-issues .lf-key-details')) return '找不到帳號摘要（資料集沒有載入？）'; return bad.length ? ('帳號值越過所在格子 ' + bad.join(',') + 'px') : null;"
+      }
+    ],
+    "media": "print"
+  },
+  {
+    "name": "版面-問題查詢-表格內短技術值不折行",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; let seen = 0; for (const v of document.querySelectorAll('main .table .lf-text-data')) { if (v.closest('.lf-break-anywhere, .lf-row-detail, pre')) continue; const t = (v.textContent || '').trim(); if (!t || t.length > 20) continue; seen++; const r = document.createRange(); r.selectNodeContents(v); const tops = new Set([...r.getClientRects()].map(x => Math.round(x.top))); if (tops.size > 1) bad.push(t); } if (!seen) return '頁面上沒有表格內的短技術值，斷言沒有對象'; return bad.length ? ('短技術值被折成多行：' + bad.slice(0, 5).join('、')) : null;"
+      }
+    ]
   }
 ]

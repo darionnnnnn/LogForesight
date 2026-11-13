@@ -199,6 +199,9 @@ const cases = {
         const raw = fns.keyDetailsBlock(LEGACY);
         assert(raw.children[0].className.includes('lf-text-data'), '切不出「標籤：值」形狀時整段原樣顯示');
         assert.equal(raw.children[0].textContent, LEGACY);
+        // 兩種形狀的值都在可任意折行的容器內：不帶的話，表格內 lf-text-data 不斷行，長值越過格子蓋住隔壁欄（第 73 輪 D）
+        assert(labeled.className.split(' ').includes('lf-break-anywhere'), '有標籤的值可任意折行');
+        assert(raw.className.split(' ').includes('lf-break-anywhere'), '整段原樣的值可任意折行');
     },
     // ── 佐證層 ──
     guidancePanelOmitsExplanationLabel() {

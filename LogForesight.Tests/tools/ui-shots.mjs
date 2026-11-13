@@ -3,7 +3,7 @@
 // 以無頭 Edge 加 Node 內建 WebSocket 走 Chrome DevTools Protocol，零第三方相依。
 // 逐情境 × 寬度 × 字級截整頁圖，並量測六項「0 才通過」的版面指標：
 //   hscroll  頁面水平捲軸
-//   overflow 元素超出所屬卡片或表格格子右緣（中間有宣告捲動或裁切的容器不算）
+//   overflow 元素超出所屬卡片或表格格子右緣，或文字溢出自身方框而越過格子右緣（中間有宣告捲動或裁切的容器不算）
 //   target   可點擊元素小於 24×24（行內文字連結依 WCAG 2.5.8 例外不算）
 //   console  console error、未攔截例外、失敗或 4xx/5xx 的網路請求
 //   stuck    頁面停在骨架列（載入中）或錯誤狀態
@@ -208,7 +208,14 @@ function pageMeasure() {
         if (clipped || getComputedStyle(box).overflowX !== 'visible') continue;
         const r = el.getBoundingClientRect();
         const b = box.getBoundingClientRect();
-        if (r.right > b.right + 1) result.overflow.push(`${path(el)} 超出 ${path(box)} ${Math.round(r.right - b.right)}px`);
+        if (r.right > b.right + 1) { result.overflow.push(`${path(el)} 超出 ${path(box)} ${Math.round(r.right - b.right)}px`); continue; }
+        // 方框在格子內、文字卻溢出方框：格線欄 minmax(0, 1fr) 把最小寬度算成 0，不斷行的長值會蓋到隔壁欄，
+        // 但元素自己的方框仍在格子裡，上一條量不到（第 73 輪 D：重點問題的帳號值蓋住趨勢與處理狀態欄）
+        const cs = getComputedStyle(el);
+        if (cs.display !== 'inline' && cs.overflowX === 'visible' && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1
+            && r.left + el.scrollWidth > b.right + 1) {
+            result.overflow.push(`${path(el)} 文字溢出自身方框 ${el.scrollWidth - el.clientWidth}px（超出 ${path(box)}）`);
+        }
     }
 
     const targets = document.querySelectorAll('a[href], button, [role="button"], input:not([type="hidden"]), select, summary, [tabindex="0"]');

@@ -1832,7 +1832,10 @@ function workOrderBadge(workOrderId) {
  */
 function keyDetailsBlock(keyDetails) {
     const wrap = document.createElement('div');
-    wrap.className = 'lf-key-details';
+    // lf-break-anywhere：值是外部資料、沒有長度保證（帳號清單、舊版整段訊息），一律可在任意位置折行。
+    // 它同時讓值脫離「表格內 lf-text-data 不斷行」：格線欄 minmax(0, 1fr) 的最小寬度是 0，
+    // 不斷行的長值會越過格子、蓋住趨勢與處理狀態欄（第 73 輪 D）
+    wrap.className = 'lf-key-details lf-break-anywhere';
 
     const segments = keyDetails.split('；').map(s => s.trim()).filter(Boolean);
     const parsed = segments.map(segment => /^([^:：]{1,24})[:：]\s*([\s\S]+)$/.exec(segment));

@@ -976,7 +976,9 @@ public sealed partial class UiFixtureDataSet : IDisposable
             new() { Account = "srvadm18.brk", Source = "10.216.8.188", LogonType = 3, ReasonCode = "bad_password", Count = 2 }
         };
         logon.LoginFailureTotalCount = 42;
-        Fill(r, new[] { group, audit, logon });
+        // 300 字元、沒有任何斷點的值：測帳號摘要在格子內折行，不越過趨勢與處理狀態欄（第 73 輪 D）
+        var contiguous = Legacy(4740, "帳戶被鎖定", UiFixtureText.Contiguous2000[..300], null);
+        Fill(r, new[] { group, audit, logon, contiguous });
         Ai(r, "稽核與群組變更事件出現", "安全性群組與稽核原則在同一時段被變更，另有登入失敗。", "近三日首次出現。", "請確認這些變更是否為授權作業。");
         r.RiskBasis = "high_issue:Microsoft-Windows-Security-Auditing EventId 4728";
         return r;
