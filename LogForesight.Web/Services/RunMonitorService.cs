@@ -223,6 +223,8 @@ public class RunMonitorService
     /// 資料日 <paramref name="dataDate"/> 由「排程處理日（隔天）以外」開跑的趟：NetIQ 主機日回執指向的趟、
     /// PRTG 逐日統計含這一天的趟。只用既有的兩種連結；本機分析沒有「哪一趟處理了哪天」的紀錄，不列。
     /// 回執指向的趟不在本次讀取的執行紀錄內（已過保留期或窗口外）時略過。回傳開始時刻、新到舊、已去重。
+    /// 趟屬於哪一天以所屬排程窗口的開始日為準（<see cref="BatchRun.WindowInstanceStart"/>，沒有才用開跑日）：
+    /// 跨午夜窗口過了午夜的續跑與空資料複查仍是處理日那個窗口的工作，不算補跑。
     /// </summary>
     private static List<DateTime> CatchUpRuns(List<BatchRun> runs, IReadOnlyDictionary<long, BatchRun> runsById,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, List<HostRef> hosts, DateTime dataDate)
@@ -232,16 +234,18 @@ public class RunMonitorService
         foreach (var host in hosts.Where(h => h.Source == "netiq" && h.HostId > 0))
         {
             if (attempts.TryGetValue((host.HostId, dataDate), out var receipt) &&
-                runsById.TryGetValue(receipt.RunId, out var run) && run.StartedAt.Date != scheduledDay)
+                runsById.TryGetValue(receipt.RunId, out var run) && WindowDay(run) != scheduledDay)
                 found[run.RunId] = run.StartedAt;
         }
         foreach (var run in runs)
         {
-            if (run.StartedAt.Date != scheduledDay && run.PrtgDays?.Any(d => d.Date.Date == dataDate) == true)
+            if (WindowDay(run) != scheduledDay && run.PrtgDays?.Any(d => d.Date.Date == dataDate) == true)
                 found[run.RunId] = run.StartedAt;
         }
         return found.Values.OrderByDescending(t => t).ToList();
     }
+
+    private static DateTime WindowDay(BatchRun run) => (run.WindowInstanceStart ?? run.StartedAt).Date;
 
     /// <summary>今天列的「最後一趟結束時尚有」：取今天開跑、已結束或已判定異常中斷的最後一趟；
     /// 沒有符合的趟、或最後一趟沒有待補事項時回 null。</summary>

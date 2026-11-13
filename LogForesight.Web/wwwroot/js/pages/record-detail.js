@@ -1711,7 +1711,7 @@ function sourceEvidenceBlock(issue) {
     for (const item of observations) {
         const row = document.createElement('li');
         const parts = [`來源：${sourceNames[item.sourceKind] || '未知'}`, `範圍：${scopes[item.resourceScope] || '未知'}`, `主機：${hostLabel(item.exactHostKey)}`];
-        if (item.exactResourceKey !== item.exactHostKey) parts.push(`資源：${item.exactResourceKey || '未知'}`);
+        if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) parts.push(`資源：${item.exactResourceKey || '未知'}`);
         const line = document.createElement('div');
         line.textContent = parts.join('；');
         row.appendChild(line);

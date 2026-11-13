@@ -729,11 +729,14 @@ a.lf-badge:hover { text-decoration: underline; }
     min-height: 0;
     display: flex;
     flex-direction: column;
+    /* 「指定問題」面板展開時整組內容可能超過卡高：在卡內捲動，不讓輸入列溢出到下一張卡 */
+    overflow-y: auto;
 }
 
+/* 訊息區留最小高度：面板展開時不被擠成 0（其餘子項不縮，只有它會讓出空間） */
 #chat-collapse #chat-messages {
-    flex: 1;
-    min-height: 0;
+    flex: 1 0 auto;
+    min-height: 6rem;
     max-height: none;
 }
 

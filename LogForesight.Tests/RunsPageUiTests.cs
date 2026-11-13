@@ -76,6 +76,8 @@ public class RunsPageUiTests
         Assert.Contains("{ title: '資料日', className: 'text-nowrap', render: dataDateCell }", js);
         Assert.Contains("{ title: '執行日與時間',", js);
         Assert.DoesNotContain("'今日（執行中）'", js);
+        // 執行詳情「PRTG 逐日」表的日期也是資料日
+        Assert.Contains("{ title: '資料日', className: 'text-nowrap', render: d => String(d.date).slice(0, 10) }", js);
     }
 
     [Fact]

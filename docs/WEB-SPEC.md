@@ -1500,7 +1500,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊**（實驗性精簡版）：主欄、重點問題卡正下方的可收合卡，AI 可用且當日有重點問題才顯示。
-  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動。
+  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動（最小 6rem）；「指定問題」面板展開而放不下時整組在卡內捲動，不溢出卡片。
   範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
   標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
   超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
@@ -3169,6 +3169,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     同日多趟時第一行加「共 N 趟」（起訖差會大於總耗時）。第二行小字「本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 · AI 1 分 27 秒」（`Branches`，舊趟沒有階段資料時寫「無階段資料（升級前紀錄）」），PRTG 是 `prtg`、`prtg-sync`、`prtg-triggered`、`prtg-value-fill` 的聯集，展開列再列子階段（`SubPhases`）；當天另有非跟隨的 AI 趟（排程補跑、手動）時加「另有 AI 補跑 N 趟（M）」
     （`OtherAiRuns`、`OtherAiSeconds`），這些趟不進第一行的起訖與總計；當天只有這類 AI 趟時第一行就寫「AI 補跑 N 趟（M）」。
     **補跑行**：這個資料日的 NetIQ 主機日回執或 PRTG 逐日統計指向處理日以外開跑的趟時，多一行「另於 MM-DD HH:mm 補跑」（`CatchUpStartedAt` 新到舊最多兩趟，其餘「等 N 趟」＝`CatchUpMore`）；
+    趟屬於哪一天以所屬排程窗口的開始日為準（`BatchRun.WindowInstanceStart`，沒有才用開跑日），跨午夜窗口過了午夜的續跑與空資料複查不算補跑；
     補跑趟的耗時不併入這一列（一趟補跑同時處理多個資料日），本機分析沒有「哪一趟處理了哪天」的紀錄，不列；回執指向的趟已不在讀取範圍時略過。
     `dailyHealth.date`（診斷匯出）是資料日、`runDate` 是處理日；`recheckCount`／`pendingSummary` 同上；`notRun` 不含空資料待複查。`dailyHealth.totalSeconds` 即第一行的總耗時，含跟隨取數 AI 趟。
     展開列列本機／NetIQ／PRTG／AI 各路區間與耗時，最後一列「總計」（`RunDayTimingBuilder`）；AI 路在趟沒有階段資料時用整趟起訖。

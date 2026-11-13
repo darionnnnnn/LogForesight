@@ -780,6 +780,34 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void 資料日列_跨午夜窗口過了午夜的續跑不算補跑_手動趟才算()
+    {
+        // 窗口 23:00 開始：處理日那一趟 23:30 開跑；同一窗口過了午夜的複查趟（WindowInstanceStart 仍是前一天 23:00）不算補跑。
+        // 同一時刻附近的手動趟（沒有 WindowInstanceStart）才算（邊界另一側）
+        var dataDate = DateTime.Today.AddDays(-6);
+        var windowStart = dataDate.AddDays(1).AddHours(23);
+        AddPrtgRun(windowStart.AddMinutes(30), dataDate);
+        var runs = Runs();
+        long Add(DateTime startedAt, DateTime? window)
+        {
+            var run = new BatchRun { HostName = "SITE-PRTG", StartedAt = startedAt, WindowInstanceStart = window };
+            run.RunId = runs.StartRun(run);
+            run.FinishedAt = startedAt.AddMinutes(5);
+            run.ExitCode = 0;
+            run.PrtgDays = new List<PrtgDayStat> { new(dataDate, BatchRun.PrtgOutcomeSuccess, 1, 1, true, 0, 0, 0) };
+            runs.FinishRun(run);
+            return run.RunId;
+        }
+        Add(windowStart.AddHours(1).AddMinutes(50), windowStart);    // 隔天 00:50，同一窗口
+        var manualAt = windowStart.AddHours(2);                       // 隔天 01:00，手動
+        Add(manualAt, null);
+
+        var row = Assert.Single(Create().GetDaySummaries(10, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+
+        Assert.Equal(new[] { manualAt }, row.CatchUpStartedAt);
+    }
+
+    [Fact]
     public void 資料日列_補跑超過兩趟只列最新兩趟_回執指向不存在的趟略過()
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.73.3", Source = "netiq" });
