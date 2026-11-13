@@ -3151,5 +3151,119 @@
         "hover": null
       }
     ]
+  },
+  {
+    "name": "版面-群組與授權-兩表欄位對齊",
+    "role": "ui-admin",
+    "path": "/admin/groups",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#user-group-list table"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst tables = [...document.querySelectorAll(\"#user-group-list table\")].filter(t => t.getBoundingClientRect().width > 0);\nif (tables.length < 2) return '無從比較：只找到 ' + tables.length + ' 張表';\nconst lefts = t => [...t.querySelectorAll(':scope > thead > tr > th')].map(th => th.getBoundingClientRect().left);\nconst base = lefts(tables[0]);\nfor (const t of tables.slice(1)) {\n  const l = lefts(t);\n  if (l.length !== base.length) return '欄數不同：' + base.length + ' / ' + l.length;\n  const bad = l.map((x, i) => Math.abs(x - base[i])).findIndex(d => d > 1);\n  if (bad >= 0) return '第 ' + (bad + 1) + ' 欄左緣不一致：' + Math.round(base[bad]) + ' / ' + Math.round(l[bad]);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-類別表欄位對齊",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst tables = [...document.querySelectorAll(\"#detail-issues .lf-table-aligned > .lf-table-wrap > table, #detail-issues .lf-issue-group table:not(.lf-row-detail table)\")].filter(t => t.getBoundingClientRect().width > 0);\nif (tables.length < 2) return '無從比較：只找到 ' + tables.length + ' 張表';\nconst lefts = t => [...t.querySelectorAll(':scope > thead > tr > th')].map(th => th.getBoundingClientRect().left);\nconst base = lefts(tables[0]);\nfor (const t of tables.slice(1)) {\n  const l = lefts(t);\n  if (l.length !== base.length) return '欄數不同：' + base.length + ' / ' + l.length;\n  const bad = l.map((x, i) => Math.abs(x - base[i])).findIndex(d => d > 1);\n  if (bad >= 0) return '第 ' + (bad + 1) + ' 欄左緣不一致：' + Math.round(base[bad]) + ' / ' + Math.round(l[bad]);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-類別表欄位對齊-側欄展開",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": ".lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail__btn"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst tables = [...document.querySelectorAll(\"#detail-issues .lf-table-aligned > .lf-table-wrap > table, #detail-issues .lf-issue-group table:not(.lf-row-detail table)\")].filter(t => t.getBoundingClientRect().width > 0);\nif (tables.length < 2) return '無從比較：只找到 ' + tables.length + ' 張表';\nconst lefts = t => [...t.querySelectorAll(':scope > thead > tr > th')].map(th => th.getBoundingClientRect().left);\nconst base = lefts(tables[0]);\nfor (const t of tables.slice(1)) {\n  const l = lefts(t);\n  if (l.length !== base.length) return '欄數不同：' + base.length + ' / ' + l.length;\n  const bad = l.map((x, i) => Math.abs(x - base[i])).findIndex(d => d > 1);\n  if (bad >= 0) return '第 ' + (bad + 1) + ' 欄左緣不一致：' + Math.round(base[bad]) + ' / ' + Math.round(l[bad]);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-使用者詳情-可見主機表短值欄收緊",
+    "role": "ui-admin",
+    "path": "fixture:admin.user.ui-handler-long",
+    "widths": [
+      375,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#user-visible-hosts table"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst t = document.querySelector('#user-visible-hosts table');\nif (!t) return '找不到可見主機表';\nconst ths = [...t.querySelectorAll(':scope > thead > tr > th')];\nconst names = ths.map(th => th.textContent.trim());\nif (names[names.length - 1] !== '群組') return '吸收欄（群組）應在最後一欄，實際順序：' + names.join('、');\nconst rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nconst contentWidth = td => { const r = document.createRange(); r.selectNodeContents(td); return r.getBoundingClientRect().width; };\nconst rows = [...t.querySelectorAll(':scope > tbody > tr')];\nfor (let i = 0; i < ths.length - 1; i++) {\n  if (ths[i].classList.contains('text-truncate') || rows.some(tr => tr.children[i]?.classList.contains('text-truncate'))) continue;\n  const widest = Math.max(contentWidth(ths[i]), ...rows.map(tr => tr.children[i] ? contentWidth(tr.children[i]) : 0));\n  const col = ths[i].getBoundingClientRect().width;\n  if (col - widest > 2 * rem + 1) return names[i] + ' 欄寬 ' + Math.round(col) + 'px，最寬內容只有 ' + Math.round(widest) + 'px';\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-主機詳情-重點問題表不溢出",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst wrap = document.querySelector('#host-issues .lf-table-wrap');\nif (!wrap) return '找不到主機重點問題表';\nif (wrap.scrollWidth > wrap.clientWidth + 1) return '表格需要水平捲動：' + wrap.scrollWidth + ' > ' + wrap.clientWidth;\nconst card = wrap.closest('.lf-card').getBoundingClientRect();\nconst out = [...wrap.querySelectorAll('thead th')].filter(th => th.getBoundingClientRect().right > card.right + 1).map(th => th.textContent.trim());\nif (out.length) return '欄位超出卡片：' + out.join('、');\nconst ths = [...wrap.querySelectorAll('thead th')].map(th => th.textContent.trim());\nconst idx = ths.indexOf('分類');\nconst lh = parseFloat(getComputedStyle(wrap.querySelector('tbody td')).lineHeight) || 21;\nconst multi = [...wrap.querySelectorAll('tbody > tr:not(.lf-row-detail)')].map(tr => tr.children[idx]).filter(td => td && td.firstElementChild && td.firstElementChild.getBoundingClientRect().height > lh * 1.5);\nreturn multi.length ? ('分類折行：' + multi[0].textContent.trim()) : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-規則維護-類別欄單行",
+    "role": "ui-admin",
+    "path": "/admin/rules",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "table tbody tr"
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst t = [...document.querySelectorAll('table')].find(x => x.getBoundingClientRect().width > 0 && [...x.querySelectorAll('thead th')].some(th => th.textContent.trim().startsWith('類別')));\nif (!t) return '找不到規則表';\nconst idx = [...t.querySelectorAll('thead th')].findIndex(th => th.textContent.trim().startsWith('類別'));\nconst multi = [...t.querySelectorAll(':scope > tbody > tr')].map(tr => tr.children[idx]).filter(td => td && td.firstElementChild && td.firstElementChild.getClientRects().length > 1 || (td && td.firstElementChild && td.firstElementChild.getBoundingClientRect().height > (parseFloat(getComputedStyle(td.firstElementChild).lineHeight) || 20) * 1.5));\nreturn multi.length ? ('類別折行：' + multi[0].textContent.trim()) : null;"
+      }
+    ]
   }
 ]

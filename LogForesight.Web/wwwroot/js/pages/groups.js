@@ -122,15 +122,17 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
         return;
     }
 
+    // 角色群組、部門群組兩張表共用同一組欄寬（lf-table-aligned），欄位起點才對得齊；群組名稱是吸收欄
     const table = document.createElement('div');
+    table.className = 'lf-table-aligned';
     renderTable(table, {
         columns: [
             { title: '群組名稱', render: g => roleText('lf-text-title', g.groupName) },
-            { title: '角色', render: g => roleBadge(g.role) },
-            { title: '成員數', className: 'text-end', render: g => String(g.memberCount) },
-            { title: '派工池', className: 'text-center', render: g => renderDispatchPoolToggle(g) },
-            { title: '狀態', render: g => activeBadge(g.active) },
-            { title: '', className: 'text-end', render: g => groupActions('user', g) }
+            { title: '角色', className: 'lf-col-w-md', render: g => roleBadge(g.role) },
+            { title: '成員數', className: 'text-end lf-col-w-sm', render: g => String(g.memberCount) },
+            { title: '派工池', className: 'text-center lf-col-w-sm', render: g => renderDispatchPoolToggle(g) },
+            { title: '狀態', className: 'lf-col-w-sm', render: g => activeBadge(g.active) },
+            { title: '', className: 'text-end lf-col-w-md', render: g => groupActions('user', g) }
         ],
         rows: groups,
         empty: { title: '尚無群組', hint: '可按「新增群組」建立。' }

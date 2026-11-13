@@ -1211,6 +1211,27 @@ a.lf-badge:hover { text-decoration: underline; }
     margin-bottom: 0;
 }
 
+/* 表格欄寬規則（DESIGN-SYSTEM §8.4a）：瀏覽器預設把多餘寬度均攤到每一欄，寬螢幕上欄與欄之間空出一大段。
+   - lf-col-nowrap：短值欄（日期、數字、狀態、分類、嚴重度）不在字中斷行、寬度依內容收緊。
+   - 沒有標 lf-col-nowrap 的欄就是吸收欄，拿走多餘寬度；一張表只留一欄（最多兩欄）不標。
+   - lf-table-aligned（放在 renderTable 的容器上）：同一張卡片內結構相同的多張表，寬螢幕改固定版面，
+     短值欄用 lf-col-w-* 給相同寬度，欄位起點才會一致；窄螢幕維持自動版面（表格可在容器內捲動）。 */
+.table > thead > tr > th.lf-col-nowrap,
+.table > tbody > tr > td.lf-col-nowrap {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-sm { width: 6rem; }
+.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-md { width: 10rem; }
+.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-lg { width: 12rem; }
+
+@media (min-width: 992px) {
+    .lf-table-aligned > .lf-table-wrap > table {
+        table-layout: fixed;
+    }
+}
+
 /* 長字串截斷（renderTable 欄位選項 truncate）：主機名、問題標籤、sensor 名稱以省略號收斂，
    完整文字放在 title。max-width 預設 18rem，不寫 inline style。 */
 .lf-table-wrap td.text-truncate {

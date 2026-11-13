@@ -591,9 +591,10 @@ function renderHeader(detail) {
  * （全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
+    // 同一張卡片內的各類別表共用欄寬（容器帶 lf-table-aligned）：「問題」是吸收欄，趨勢與處理狀態固定寬
     const statusColumn = {
         title: '處理狀態',
-        className: 'lf-status-cell',
+        className: 'lf-status-cell lf-col-w-md',
         render: i => statusCell(i, sectionIssues)
     };
     if (currentDetail.canHandle) {
@@ -603,7 +604,7 @@ function issueColumns(sectionIssues) {
     return [
         // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在第一欄最前面
         { title: '問題', render: i => issueCell(i) },
-        { title: '趨勢', className: 'lf-trend-cell', render: i => trendCell(i.trendText) },
+        { title: '趨勢', className: 'lf-trend-cell lf-col-w-lg', render: i => trendCell(i.trendText) },
         statusColumn
     ];
 }
@@ -1442,6 +1443,7 @@ function renderIssues(detail) {
             : [];
 
         const body = document.createElement('div');
+        body.className = 'lf-table-aligned';
         if (primary.length > 0) {
             // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
             renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
@@ -1518,6 +1520,7 @@ function collapsedRestSection(rest) {
     wrap.className = 'border-top';
 
     const body = document.createElement('div');
+    body.className = 'lf-table-aligned';
     renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
     const toggle = disclosure(`已處理／已有結論 ${rest.length} 項`, body, { className: 'lf-issue-group__rest-toggle' });
 

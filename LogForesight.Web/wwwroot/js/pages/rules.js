@@ -219,7 +219,7 @@ const RULE_COLUMNS = [
     { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
     { title: '比對', render: r => matchCell(r) },
     {
-        title: '類別', sortKey: 'category', sortValue: r => categoryName(r.category),
+        title: '類別', className: 'lf-col-nowrap', sortKey: 'category', sortValue: r => categoryName(r.category),
         render: r => roleText('lf-text-meta', categoryName(r.category))
     },
     {
