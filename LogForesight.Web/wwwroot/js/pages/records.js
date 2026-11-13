@@ -1253,7 +1253,8 @@ function issueMoreMenu(actions) {
     toggle.setAttribute('data-bs-toggle', 'dropdown');
     toggle.setAttribute('aria-expanded', 'false');
     toggle.setAttribute('data-bs-popper-config', '{"strategy":"fixed"}');
-    toggle.addEventListener('click', event => event.stopPropagation());
+    // 不在「更多」上阻止冒泡：Bootstrap 收起其他已開選單的處理掛在 document 的冒泡階段，擋掉會讓兩列的選單同時開著；
+    // 整列展開本來就略過按鈕上的點擊（ui.js 的列點擊排除 a／button）
 
     const menu = document.createElement('ul');
     menu.className = 'dropdown-menu dropdown-menu-end';

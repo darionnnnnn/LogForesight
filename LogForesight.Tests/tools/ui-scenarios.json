@@ -3867,5 +3867,70 @@
         "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst bad = [...document.querySelectorAll('.lf-text-alert, .lf-stat__value--danger')].filter(vis)\n  .map(e => e.textContent.trim()).filter(t => /本期新增|昨日仍在發生|↑|前期/.test(t));\nreturn bad.length ? ('變化類文字仍是紅字：' + [...new Set(bad)].slice(0, 5).join('、')) : null;"
       }
     ]
+  },
+  {
+    "name": "互動-問題查詢-同時只開一個更多選單",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return (async () => { const toggles = [...document.querySelectorAll('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail) .dropdown-toggle')];\nif (toggles.length < 2) return '需要至少兩列有「更多」';\ntoggles[0].click(); await new Promise(r => setTimeout(r, 300));\ntoggles[1].click(); await new Promise(r => setTimeout(r, 300));\nconst open = document.querySelectorAll('#record-list .dropdown-menu.show').length;\ndocument.body.click();\nreturn open === 1 ? null : ('同時開著 ' + open + ' 個「更多」選單'); })();"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-類別表窄容器不壓縮問題欄",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      992,
+      1024,
+      1100,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "clickIf": ".lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail__btn"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const tables = [...document.querySelectorAll('#detail-issues .lf-table-aligned > .lf-table-wrap > table')].filter(t => t.getBoundingClientRect().width > 0);\nif (!tables.length) return innerWidth < 992 ? null : '找不到類別表';\nconst rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nfor (const t of tables) { const w = t.querySelector('thead th').getBoundingClientRect().width; if (innerWidth >= 992 && w < 16 * rem) return '問題欄只剩 ' + Math.round(w) + 'px'; }\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-權限異動-異動說明欄維持可讀寬度",
+    "role": "ui-admin",
+    "path": "/permission-changes",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#perm-list tbody tr"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "if (innerWidth < 1920) return null; const rem = parseFloat(getComputedStyle(document.documentElement).fontSize); const ths=[...document.querySelectorAll('#perm-list table thead th')]; const th=ths.find(t=>t.textContent.trim().startsWith('異動說明')); if (!th) return '找不到異動說明欄'; const w=th.getBoundingClientRect().width; return w < 14 * rem ? ('異動說明欄只剩 ' + Math.round(w) + 'px') : null;"
+      }
+    ]
   }
 ]

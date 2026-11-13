@@ -1101,9 +1101,10 @@ a.lf-badge:hover { text-decoration: underline; }
     cursor: default;
 }
 
-/* 表格內的單行說明不參與欄寬計算（寬度 0、至少撐滿儲存格）：不設的話，它的整段文字寬（上限 32rem）
-   會成為「問題」欄的最小寬度，整張表在 FHD 下也縮不進來、固定的動作欄蓋住右側欄位 */
-.table .lf-issue-explanation {
+/* 問題查詢「問題」欄的單行說明不參與欄寬計算（寬度 0、至少撐滿儲存格）：不設的話，它的整段文字寬（上限 32rem）
+   會成為「問題」欄的最小寬度，整張表在 FHD 下也縮不進來、固定的動作欄蓋住右側欄位。
+   只限這一欄（同格的標題撐住欄寬）；權限異動「異動說明」欄裡只有這段說明，套用的話整欄會縮成一百多 px */
+.table td.lf-issue-col .lf-issue-explanation {
     width: 0;
     min-width: 100%;
 }
@@ -1242,8 +1243,11 @@ a.lf-badge:hover { text-decoration: underline; }
     .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-md { width: 10rem; }
     .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-lg { width: 12rem; }
 
+    /* 最小寬度 40rem：容器窄時（側軌展開、992～1200px）表格在容器內捲動，吸收欄至少保留約 18rem；
+       不設的話固定版面會把吸收欄壓到一百多 px、內容溢出儲存格 */
     .lf-table-aligned > .lf-table-wrap > table {
         table-layout: fixed;
+        min-width: 40rem;
     }
 }
 
