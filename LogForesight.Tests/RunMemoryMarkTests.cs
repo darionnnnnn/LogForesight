@@ -156,7 +156,7 @@ public class RunMemoryMarkTests
     }
 
     [Fact]
-    public void 匯出_期間內帶記憶體的趟進runMemory_meta含memory與GC設定_SchemaVersion為1()
+    public void 匯出_期間內帶記憶體的趟進runMemory_meta含memory與GC設定_SchemaVersion為目前版號()
     {
         using var h = new RunExportHarness();
         var at = RunExportHarness.Y.AddHours(1);
@@ -168,7 +168,7 @@ public class RunMemoryMarkTests
         var (root, _, doc) = h.Export();
         using (doc)
         {
-            Assert.Equal(1, root.G("meta").G("schemaVersion").GetInt32());
+            Assert.Equal(RunExportService.SchemaVersion, root.G("meta").G("schemaVersion").GetInt32());
             var memory = root.G("meta").G("memory");
             Assert.True(memory.TryGetProperty("isServerGc", out _));
             Assert.True(memory.TryGetProperty("gcConserveMemory", out _));

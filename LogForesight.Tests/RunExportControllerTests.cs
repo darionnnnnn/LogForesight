@@ -240,7 +240,7 @@ public class RunExportControllerTests : IDisposable
         var file = Assert.IsType<FileContentResult>(Create(_h.Service()).Export(14));
 
         using var doc = JsonDocument.Parse(file.FileContents);
-        Assert.Equal(1, doc.RootElement.GetProperty("meta").GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(RunExportService.SchemaVersion, doc.RootElement.GetProperty("meta").GetProperty("schemaVersion").GetInt32());
         var text = System.Text.Encoding.UTF8.GetString(file.FileContents);
         Assert.DoesNotContain("SRV-REAL-E2E", text);
         Assert.DoesNotContain("10.9.9.9", text);
