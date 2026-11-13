@@ -3618,5 +3618,50 @@
         "evalAssert": "const row = document.querySelector('main [data-range]').closest('.d-flex');\nconst kids = [...row.children].filter(k => k.getBoundingClientRect().width > 0);\nconst rects = kids.map(k => k.getBoundingClientRect());\nfor (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {\n  const a = rects[i], b = rects[j];\n  if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) return '頂部元素互相重疊';\n}\nfor (const k of kids) {\n  if (k.matches('.btn-group')) continue;\n  const lh = parseFloat(getComputedStyle(k).lineHeight) || 20;\n  if (k.getBoundingClientRect().height > lh * 1.5) return '頂部文字被擠成多行：' + k.textContent.trim().slice(0, 16);\n}\nreturn null;"
       }
     ]
+  },
+  {
+    "name": "版面-問題查詢-固定動作欄不蓋欄位",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const wrap = document.querySelector('#record-list .lf-table-wrap');\nif (!wrap) return '找不到問題查詢表格';\nif (innerWidth >= 1920 && wrap.scrollWidth > wrap.clientWidth + 1) return '1920 下表格仍需水平捲動：' + wrap.scrollWidth + ' > ' + wrap.clientWidth;\n// 需要捲動的寬度：捲到最右邊時，每一欄都要能完整看到（不被固定的動作欄蓋住）\nwrap.scrollLeft = wrap.scrollWidth;\nconst rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nfor (const tr of [...wrap.querySelectorAll(':scope > table > tbody > tr:not(.lf-row-detail)')].slice(0, 8)) {\n  const cells = [...tr.children];\n  const last = cells[cells.length - 1];\n  const actions = last.querySelector('.lf-row-actions') || last.firstElementChild;\n  if (actions && actions.getBoundingClientRect().height > 2.75 * rem) return '動作欄高 ' + Math.round(actions.getBoundingClientRect().height) + 'px（動作疊成多行）';\n  const edge = last.getBoundingClientRect().left;\n  const visibleRight = wrap.getBoundingClientRect().right;\n  for (const td of cells.slice(0, -1)) {\n    const r = document.createRange(); r.selectNodeContents(td);\n    for (const box of r.getClientRects()) {\n      if (box.width < 1) continue;\n      if (box.left < edge - 1 && box.right > edge + 1 && box.left < visibleRight) return '固定動作欄蓋住了「' + (wrap.querySelectorAll('thead th')[cells.indexOf(td)]?.textContent.trim() || '?') + '」欄的文字';\n    }\n  }\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-更多選單完整顯示且可鍵盤關閉",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return (async () => { // 壓成一行高的列（短問題名稱的真實樣子）：選單一定會延伸到下面幾列，才量得到「被下一列的固定格蓋住」\nif (!document.getElementById('lf-compact-rows')) { const st = document.createElement('style'); st.id = 'lf-compact-rows'; st.textContent = '#record-list tbody td > * { max-height: 1.75rem; overflow: hidden; }'; document.head.appendChild(st); }\nconst rows = [...document.querySelectorAll('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail)')];\nconst pick = 0;\nconst tr = rows[pick < 0 ? rows.length + pick : pick];\nif (!tr) return '找不到資料列';\nconst toggle = tr.querySelector('.dropdown-toggle');\nif (!toggle) return '這一列沒有「更多」選單';\ntoggle.scrollIntoView({ block: 'center' });\nconst expandedBefore = tr.getAttribute('aria-expanded');\ntoggle.click();\nawait new Promise(r => setTimeout(r, 400));\nconst menu = tr.querySelector('.dropdown-menu');\nif (!menu.classList.contains('show')) return '「更多」沒有展開';\nif (pick === 0 && menu.getBoundingClientRect().bottom <= tr.getBoundingClientRect().bottom) return '量測前提不成立：選單沒有延伸到下一列';\nif (tr.getAttribute('aria-expanded') !== expandedBefore) return '點「更多」觸發了整列展開';\nfor (const item of menu.querySelectorAll('.dropdown-item')) {\n  const b = item.getBoundingClientRect();\n  if (b.width === 0) return '選單項沒有顯示：' + item.textContent;\n  const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);\n  if (!hit || !item.contains(hit)) return '選單項「' + item.textContent.trim() + '」被裁切或被蓋住（最上層是 ' + (hit ? (hit.className || hit.tagName) : '無') + '）';\n}\nmenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));\nawait new Promise(r => setTimeout(r, 300));\nif (menu.classList.contains('show')) return 'Esc 沒有關閉選單';\nif (document.activeElement !== toggle) return 'Esc 關閉後焦點沒有回到「更多」';\nreturn null; })();"
+      },
+      {
+        "evalAssert": "return (async () => { // 壓成一行高的列（短問題名稱的真實樣子）：選單一定會延伸到下面幾列，才量得到「被下一列的固定格蓋住」\nif (!document.getElementById('lf-compact-rows')) { const st = document.createElement('style'); st.id = 'lf-compact-rows'; st.textContent = '#record-list tbody td > * { max-height: 1.75rem; overflow: hidden; }'; document.head.appendChild(st); }\nconst rows = [...document.querySelectorAll('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail)')];\nconst pick = -1;\nconst tr = rows[pick < 0 ? rows.length + pick : pick];\nif (!tr) return '找不到資料列';\nconst toggle = tr.querySelector('.dropdown-toggle');\nif (!toggle) return '這一列沒有「更多」選單';\ntoggle.scrollIntoView({ block: 'center' });\nconst expandedBefore = tr.getAttribute('aria-expanded');\ntoggle.click();\nawait new Promise(r => setTimeout(r, 400));\nconst menu = tr.querySelector('.dropdown-menu');\nif (!menu.classList.contains('show')) return '「更多」沒有展開';\nif (pick === 0 && menu.getBoundingClientRect().bottom <= tr.getBoundingClientRect().bottom) return '量測前提不成立：選單沒有延伸到下一列';\nif (tr.getAttribute('aria-expanded') !== expandedBefore) return '點「更多」觸發了整列展開';\nfor (const item of menu.querySelectorAll('.dropdown-item')) {\n  const b = item.getBoundingClientRect();\n  if (b.width === 0) return '選單項沒有顯示：' + item.textContent;\n  const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);\n  if (!hit || !item.contains(hit)) return '選單項「' + item.textContent.trim() + '」被裁切或被蓋住（最上層是 ' + (hit ? (hit.className || hit.tagName) : '無') + '）';\n}\nmenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));\nawait new Promise(r => setTimeout(r, 300));\nif (menu.classList.contains('show')) return 'Esc 沒有關閉選單';\nif (document.activeElement !== toggle) return 'Esc 關閉後焦點沒有回到「更多」';\nreturn null; })();"
+      }
+    ]
   }
 ]

@@ -1168,90 +1168,115 @@ function detailForIssue(group) {
 }
 
 /**
- * 依問題視角的動作欄：admin 可指派（§4）與統一標記（§6，回饋第十一輪）；
- * 處理人清單含自己時可一次回覆處理狀態（§11）。都沒有時回空字串——不留一顆按不下去的按鈕。
+ * 依問題視角的動作欄：依能力組出可用的動作，依固定優先序排——回覆處理狀態（§11）→ 交辦（§4）→
+ * 統一標記（§6）→ 靜音。兩個以內全部橫排在列上；三個以上第一個留在列上、其餘收進「更多」選單，
+ * 動作欄窄到不再蓋住其他欄（原本直排三、四顆，列高約 135px、FHD 下仍蓋住「處理」欄）。
+ * 都沒有時回空字串——不留一顆按不下去的按鈕。
  */
 function issueActionsCell(group) {
+    const actions = issueActions(group);
+    if (actions.length === 0) return '';
     const wrap = document.createElement('div');
-    // 直排（E1）：三顆按鈕橫排時這一欄約 15 個字寬，是全表最寬的欄之一
-    wrap.className = 'd-flex flex-column gap-1 align-items-end';
+    wrap.className = 'lf-row-actions';
+    const inline = actions.length <= 2 ? actions : actions.slice(0, 1);
+    for (const action of inline) wrap.appendChild(issueActionButton(action));
+    if (actions.length > 2) wrap.appendChild(issueMoreMenu(actions.slice(1)));
+    return wrap;
+}
 
+/** 這一列可用的動作（依優先序）；每個動作是 { text, title, run } */
+function issueActions(group) {
+    const list = [];
     // 「是我的案件」還不夠，還要「動得了」（體檢 H2）：被指派但沒有 Handle 能力的人
     // （manager／dev／未分群組且非負責人）過去看得到這顆按鈕，按下去必定 403。
     // 後端才是真正的防線，但前端不該擺一顆一定失敗的按鈕。
     const isMyIssue = (group.handlers ?? []).some(h => h.handlerId === currentUser?.userId);
-    if (isMyIssue && hasCapability(currentUser, 'Handle')) wrap.appendChild(issueReplyButton(group));
+    if (isMyIssue && hasCapability(currentUser, 'Handle')) {
+        list.push({
+            text: '回覆處理狀態',
+            title: '一次回覆這個問題在所有指派給您的主機上的處理狀態',
+            run: () => openIssueStatusReplyModal(group, search)
+        });
+    }
+    if (hasCapability(currentUser, 'Assign')) {
+        list.push({ text: '交辦', title: '把這個問題交辦給處理人（建立交辦單）', run: () => openWorkOrderModal(group) });
+    }
     // 統一標記要 Assign＋Handle 兩者（後端同一條規則）——實務上就是 admin
     if (hasCapability(currentUser, 'Assign') && hasCapability(currentUser, 'Handle')) {
-        wrap.appendChild(issueBulkCloseButton(group));
+        list.push({
+            text: '統一標記',
+            title: '把這個問題在尚未有人接手的主機上一次標成結論',
+            run: () => openBulkCloseModal(group)
+        });
     }
-    if (hasCapability(currentUser, 'Assign')) wrap.appendChild(issueAssignButton(group));
-    if (hasCapability(currentUser, 'Maintain')) wrap.appendChild(issueMuteButton(group));
-
-    return wrap.children.length > 0 ? wrap : '';
-}
-
-/** 統一標記（§6）：把這個問題在還沒有人接手的主機上一次標成結論 */
-function issueBulkCloseButton(group) {
-    return button('統一標記', {
-        opens: 'dialog',
-        title: '把這個問題在尚未有人接手的主機上一次標成結論',
-        onClick: event => {
-            event.preventDefault();
-            event.stopPropagation();
-            openBulkCloseModal(group);
-        }
-    });
-}
-
-/** 回覆處理狀態（§11）：modal 本身是共用元件（處理人工作頁的依問題視角也用同一個） */
-function issueReplyButton(group) {
-    return button('回覆處理狀態', {
-        opens: 'dialog',
-        title: '一次回覆這個問題在所有指派給您的主機上的處理狀態',
-        onClick: event => {
-            event.preventDefault();
-            event.stopPropagation();
-            openIssueStatusReplyModal(group, search);
-        }
-    });
-}
-
-function issueAssignButton(group) {
-    return button('交辦', {
-        variant: 'outline-primary',
-        opens: 'dialog',
-        title: '把這個問題交辦給處理人（建立交辦單）',
-        onClick: event => {
-            event.preventDefault();
-            event.stopPropagation();
-            openWorkOrderModal(group);
-        }
-    });
-}
-
-/**
- * 靜音（B-3）：把這個問題在一段期間內完全噤聲，到期自動恢復。modal 是共用元件
- * （問題負責與靜音頁的「靜音／延長」走同一顆）。這裡沒有現成的 currentMute 可帶——
- * 依問題視角的列不含靜音區間，傳 null 就是「新設定一段靜音」的版面；
- * 後端在今天已靜音時本來就會延長，不會因此多出一段區間。
- */
-function issueMuteButton(group) {
-    return button('靜音', {
-        opens: 'dialog',
-        title: '暫時不看這個問題（到期自動恢復）',
-        onClick: event => {
-            event.preventDefault();
-            event.stopPropagation();
-            openIssueMuteModal({
+    // 靜音（B-3）：把這個問題在一段期間內完全噤聲，到期自動恢復。modal 是共用元件（問題負責與靜音頁的
+    // 「靜音／延長」走同一顆）。依問題視角的列不含靜音區間，傳 null 就是「新設定一段靜音」的版面；
+    // 後端在今天已靜音時本來就會延長，不會因此多出一段區間。
+    if (hasCapability(currentUser, 'Maintain')) {
+        list.push({
+            text: '靜音',
+            title: '暫時不看這個問題（到期自動恢復）',
+            run: () => openIssueMuteModal({
                 source: group.source,
                 eventId: group.eventId,
                 issueLabel: `${group.source} (${group.eventId})`,
                 currentMute: null,
                 onApplied: search
-            });
+            })
+        });
+    }
+    return list;
+}
+
+/** 列上的動作按鈕：列內重複動作用無框品牌色文字（DESIGN-SYSTEM §6b）；不觸發整列展開 */
+function issueActionButton(action) {
+    return button(action.text, {
+        variant: 'outline-primary',
+        opens: 'dialog',
+        title: action.title,
+        onClick: event => {
+            event.preventDefault();
+            event.stopPropagation();
+            action.run();
         }
     });
+}
+
+/**
+ * 「更多」選單：表格容器會裁切溢出的內容，選單以 fixed 定位才能完整顯示在容器外；
+ * 固定末欄每格各自一層，展開中的那一格由樣式表提到最上層（不被下一列的固定格蓋住）。
+ * 選單項先把焦點交回「更多」再開視窗：視窗關閉時焦點回到開啟者，而選單項那時已經隱藏。
+ */
+function issueMoreMenu(actions) {
+    const wrap = document.createElement('div');
+    wrap.className = 'dropdown';
+    const toggle = button('更多', { className: 'dropdown-toggle', title: '其他動作' });
+    toggle.setAttribute('data-bs-toggle', 'dropdown');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('data-bs-popper-config', '{"strategy":"fixed"}');
+    toggle.addEventListener('click', event => event.stopPropagation());
+
+    const menu = document.createElement('ul');
+    menu.className = 'dropdown-menu dropdown-menu-end';
+    for (const action of actions) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'dropdown-item';
+        item.textContent = action.text;
+        item.title = action.title;
+        item.setAttribute('aria-haspopup', 'dialog');
+        item.addEventListener('click', event => {
+            event.stopPropagation();
+            bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+            toggle.focus();
+            action.run();
+        });
+        const li = document.createElement('li');
+        li.appendChild(item);
+        menu.appendChild(li);
+    }
+    wrap.append(toggle, menu);
+    return wrap;
 }
 
 /**

@@ -1101,6 +1101,13 @@ a.lf-badge:hover { text-decoration: underline; }
     cursor: default;
 }
 
+/* 表格內的單行說明不參與欄寬計算（寬度 0、至少撐滿儲存格）：不設的話，它的整段文字寬（上限 32rem）
+   會成為「問題」欄的最小寬度，整張表在 FHD 下也縮不進來、固定的動作欄蓋住右側欄位 */
+.table .lf-issue-explanation {
+    width: 0;
+    min-width: 100%;
+}
+
 /* 問題欄的寬度上界：說明放得下就完整顯示，真的過長才以 ellipsis 收尾。
    32rem 是「一句白話說明的合理長度」，只在說明異常長時才生效。 */
 .lf-issue-col {
@@ -1259,6 +1266,14 @@ a.lf-badge:hover { text-decoration: underline; }
    只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
    與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
    :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
+/* 列內動作（依問題視角）：一顆主要動作＋「更多」選單橫排，不換行 */
+.lf-row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+    white-space: nowrap;
+}
+
 .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child {
     position: sticky;
     right: 0;
@@ -1266,6 +1281,11 @@ a.lf-badge:hover { text-decoration: underline; }
     background: var(--lf-card-bg);
     /* 與左側內容的分界：捲動時才看得出這一欄是浮在上面的 */
     box-shadow: -6px 0 6px -6px rgba(15, 23, 42, .18);
+}
+
+/* 列內動作「更多」選單展開中：那一格提到其他固定格之上，選單才不會被下一列的固定格蓋住 */
+.lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)) > td:last-child:has(.dropdown-menu.show) {
+    z-index: 3;
 }
 
 /* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
