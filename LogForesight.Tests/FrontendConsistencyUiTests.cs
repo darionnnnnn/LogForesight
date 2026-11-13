@@ -754,7 +754,8 @@ public class FrontendConsistencyUiTests
         // 可點的卡片：滑過只換底色（DESIGN-SYSTEM §5：陰影只給浮在內容上方的東西），只給滑鼠裝置，不位移
         var rule = Regex.Match(css, @"@media \(hover: hover\) and \(pointer: fine\)\s*\{\s*(?<sel>[^{}]*\.lf-card--clickable:hover[^{}]*)\{(?<body>[^}]*)\}");
         Assert.True(rule.Success, "可點卡片的滑過規則要放在 @media (hover: hover) and (pointer: fine) 內");
-        foreach (var expected in new[] { "a.lf-stat:hover .lf-card", "button.lf-card:hover", ".lf-card--clickable:hover" })
+        // 停用的卡片按鈕不是可點的卡片：:not(:disabled)
+        foreach (var expected in new[] { "a.lf-stat:hover .lf-card", "button.lf-card:not(:disabled):hover", ".lf-card--clickable:hover" })
             Assert.Contains(expected, rule.Groups["sel"].Value);
         var body = rule.Groups["body"].Value;
         Assert.Contains("background", body);

@@ -303,6 +303,16 @@ const cases = {
         assert.equal(countCell(3, 'success').style['--lf-status-color'], 'GREEN');
         const runs = src.replaceAll('\r\n', '\n');
         assert.match(runs, /none: statusMeta\('未執行', '--lf-gray-200', '--lf-text-muted'\)/);
+        assert.match(runs, /local_disabled: statusMeta\('本機分析已停用', '--lf-gray-400', '--lf-text-muted'\)/);
+        // statusMeta 本身：有另定文字色就回文字色，沒有就回色塊色
+        const ms = runs.indexOf('function statusMeta');
+        const mo = runs.indexOf('{', runs.indexOf(')', ms));
+        let d = 0, me = mo;
+        for (; me < runs.length; me++) { if (runs[me] === '{') d++; else if (runs[me] === '}' && --d === 0) break; }
+        const statusMeta = new Function('cssVar', `${runs.slice(ms, me + 1)}\nreturn statusMeta;`)(name => `VAR(${name})`);
+        assert.equal(statusMeta('未執行', '--lf-gray-200', '--lf-text-muted').textColor, 'VAR(--lf-text-muted)');
+        assert.equal(statusMeta('未執行', '--lf-gray-200', '--lf-text-muted').color, 'VAR(--lf-gray-200)');
+        assert.equal(statusMeta('成功', '--lf-success').textColor, 'VAR(--lf-success)');
     },
 
     // PRTG 欄：備註與徽章說的是同一件事（PRTG 未啟用）時不重印；其他原因照印

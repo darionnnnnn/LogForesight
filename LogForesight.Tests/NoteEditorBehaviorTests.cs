@@ -23,6 +23,8 @@ public sealed class NoteEditorBehaviorTests
     [InlineData("note-editor.behavior.mjs", "暫存_親自點過的狀態同模式重載保留")]
     [InlineData("note-editor.behavior.mjs", "暫存_批次打的說明回日層級保留並提示套用對象")]
     [InlineData("note-editor.behavior.mjs", "暫存_批次說明為空回日層級不提示")]
+    [InlineData("note-editor.behavior.mjs", "暫存_批次的輸入不蓋掉日層級親自點的狀態與日期")]
+    [InlineData("note-editor.behavior.mjs", "暫存_已存的整天說明不帶進批次")]
     [InlineData("note-editor.behavior.mjs", "篩選取消勾選的提示只出現一次")]
     [InlineData("note-editor.behavior.mjs", "AI整理回應到達時欄位已卸下就丟棄")]
     [InlineData("note-editor.behavior.mjs", "AI整理沒有重建時照常填入")]

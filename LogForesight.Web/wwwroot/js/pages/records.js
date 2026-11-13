@@ -1258,6 +1258,8 @@ function issueMoreMenu(actions) {
 
     const menu = document.createElement('ul');
     menu.className = 'dropdown-menu dropdown-menu-end';
+    // 選單的留白（ul／li）不是按鈕，點到會被整列展開的處理接走；在選單這一層擋下
+    menu.addEventListener('click', event => event.stopPropagation());
     for (const action of actions) {
         const item = document.createElement('button');
         item.type = 'button';
@@ -1265,8 +1267,7 @@ function issueMoreMenu(actions) {
         item.textContent = action.text;
         item.title = action.title;
         item.setAttribute('aria-haspopup', 'dialog');
-        item.addEventListener('click', event => {
-            event.stopPropagation();
+        item.addEventListener('click', () => {
             bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
             toggle.focus();
             action.run();

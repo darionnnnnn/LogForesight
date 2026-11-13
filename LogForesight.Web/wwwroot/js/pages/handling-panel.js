@@ -421,11 +421,14 @@ function handlingForm() {
     const selection = getSelection();
     const batchMode = selection.size > 0;
     const mode = batchMode ? 'batch' : 'day';
-    // 使用者已經動過表單（勾選問題會整張重建）：以暫存為初值。暫存記著當時的模式——
-    // 狀態、預計完成日、觀察天數、「清除雜訊記憶」只在同一模式沿用（日層級的預選帶進批次＝違反批次不預選；
-    // 批次的結論帶回日層級＝把針對某個問題的結論寫成整天狀態）；說明文字是使用者打的字，跨模式保留
-    const draft = state.formDraft;
-    const sameModeDraft = draft && draft.mode === mode ? draft : null;
+    // 使用者已經動過表單（勾選問題會整張重建）：以暫存為初值。暫存日層級、批次各一份（state.formDraft.day／.batch）——
+    // 狀態、預計完成日、觀察天數、「清除雜訊記憶」只取自己模式那一份（日層級的預選帶進批次＝違反批次不預選；
+    // 批次的結論帶回日層級＝把針對某個問題的結論寫成整天狀態；只存一份的話，在批次打個字就蓋掉日層級剛點的狀態）。
+    // 說明文字是使用者打的字，跨模式保留：取最近寫入的那一份（lastMode），而且只在它不是預填值時才帶過去
+    const drafts = state.formDraft;
+    const sameModeDraft = drafts?.[mode] ?? null;
+    const lastDraft = drafts ? drafts[drafts.lastMode] : null;
+    const carriedNote = lastDraft && lastDraft !== sameModeDraft && lastDraft.noteDirty && lastDraft.note ? lastDraft.note : null;
     // 狀態只在使用者親自點過膠囊時才沿用：沒點過就每次依當下模式取初值，
     // 編輯器自動還原草稿觸發的 input 不會把推導出的預選凍結進暫存
     let statusTouched = !!sameModeDraft?.statusTouched;
@@ -443,7 +446,7 @@ function handlingForm() {
     }
 
     // 從批次回到日層級、說明欄還留著剛才打的字：明講現在會套用到哪裡
-    if (!batchMode && draft?.mode === 'batch' && draft.note) {
+    if (!batchMode && carriedNote !== null) {
         const target = hintText('目前沒有勾選問題，儲存會套用到這一天的整體狀態。');
         target.classList.add('mb-2');
         target.dataset.role = 'day-target-notice';
@@ -583,8 +586,11 @@ function handlingForm() {
     noteInput.className = 'form-control form-control-sm';
     noteInput.id = 'handling-note';
     noteInput.rows = 3;
-    // 說明跨模式保留，但只保留真的有字的（空字串的暫存不得蓋掉日層級已存的說明）
-    noteInput.value = sameModeDraft || draft?.note ? draft.note : (batchMode ? '' : (handling.note ?? ''));
+    // 說明的初值：另一個模式剛打的字優先（跨模式保留）→ 自己模式的暫存 → 預填值。
+    // 預填值（日層級是這一天已存的說明）不算使用者打的字：點個狀態就會進暫存，跟著帶進批次的話，
+    // 整天的舊說明會被套用到勾選的問題上
+    const defaultNote = batchMode ? '' : (handling.note ?? '');
+    noteInput.value = carriedNote ?? (sameModeDraft ? sameModeDraft.note : defaultNote);
     noteInput.placeholder = '例如：已確認為每週維護重開機，屬正常現象';
     form.appendChild(noteInput);
 
@@ -605,13 +611,17 @@ function handlingForm() {
     /** 使用者對表單的輸入存進模組層暫存：勾選問題會整張重建，重建時以此為初值 */
     function saveFormDraft() {
         state.formDraft = {
-            mode,
-            statusTouched,
-            status: selectedStatus,
-            note: noteInput.value,
-            dueDate: dueInput.value,
-            observeDays: observeInput.value,
-            forgetNoise: forgetNoiseCheck.checked
+            ...state.formDraft,
+            lastMode: mode,
+            [mode]: {
+                statusTouched,
+                status: selectedStatus,
+                note: noteInput.value,
+                noteDirty: noteInput.value !== defaultNote,
+                dueDate: dueInput.value,
+                observeDays: observeInput.value,
+                forgetNoise: forgetNoiseCheck.checked
+            }
         };
     }
 

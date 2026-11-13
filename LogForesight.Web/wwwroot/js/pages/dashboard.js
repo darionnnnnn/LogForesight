@@ -45,6 +45,8 @@ async function load() {
     }
 
     const seq = loadGuard.next();
+    // 風險類型的揭露鈕在卡片標頭（不在會被換成骨架列的格線容器裡）：載入中先收掉，失敗時才不會留著一顆沒有對象的按鈕
+    mountReveal('categories', null);
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-issues'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);

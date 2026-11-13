@@ -63,13 +63,16 @@ function fakeRail({ userChoice = false, expanded = false } = {}) {
 const pruneSrc = extractFunction(recordDetail, 'function pruneHiddenSelection');
 
 /** 修剪函式取自 production，外部相依（可見清單、側軌摘要、面板刷新）替換成記錄呼叫的替身 */
-function pruneEnv(selected, visibleKeys) {
+function pruneEnv(selected, visibleKeys, { collapseDone = true, doneKeys = [] } = {}) {
     const calls = { rail: 0, panel: [] };
     const selectedIssueKeys = new Set(selected);
     const factory = new Function('selectedIssueKeys', 'visibleTopIssues', 'refreshRailSelectionSummary', 'refreshSelection',
+        'currentScopeOption', 'isUnresolvedIssue', 'isInProgressIssue',
         `${pruneSrc}\nreturn pruneHiddenSelection;`);
+    // doneKeys：已處理／已有結論的問題（collapseDone 時重繪後落在收合區）
     const prune = factory(selectedIssueKeys, () => visibleKeys.map(issueKey => ({ issueKey })),
-        () => { calls.rail++; }, opts => calls.panel.push(opts));
+        () => { calls.rail++; }, opts => calls.panel.push(opts),
+        () => ({ collapseDone }), issue => !doneKeys.includes(issue.issueKey), () => false);
     return { prune, selectedIssueKeys, calls };
 }
 
@@ -101,6 +104,19 @@ const cases = {
         assert.equal(env.prune(), 2);
         assert.equal(env.selectedIssueKeys.size, 0);
         assert.deepEqual(env.calls.panel, [{ prunedCount: 2 }]);
+    },
+    // 收合區每次重繪都重新收起：展開後勾在裡面的問題重繪後看不到，要一起取消
+    pruneDropsSelectionInsideCollapsedDoneSection() {
+        const env = pruneEnv(['a', 'done1'], ['a', 'done1'], { collapseDone: true, doneKeys: ['done1'] });
+        assert.equal(env.prune(), 1);
+        assert.deepEqual([...env.selectedIssueKeys], ['a']);
+        assert.deepEqual(env.calls.panel, [{ prunedCount: 1 }]);
+    },
+    // 另一側：這個顯示範圍不收合已完成（平鋪）時，已完成的勾選仍看得到，不取消
+    pruneKeepsDoneSelectionWhenNotCollapsed() {
+        const env = pruneEnv(['a', 'done1'], ['a', 'done1'], { collapseDone: false, doneKeys: ['done1'] });
+        assert.equal(env.prune(), 0);
+        assert.deepEqual([...env.selectedIssueKeys], ['a', 'done1']);
     },
     // 修剪掛在清單重繪的單一出口：嚴重度篩選與顯示範圍變更都經 renderIssues
     pruneRunsAtRenderIssuesEntry() {

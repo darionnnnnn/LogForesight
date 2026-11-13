@@ -61,6 +61,15 @@ public class RunsPageUiTests
         Assert.Contains("SQLite 峰值", js);
     }
 
+    // 前端以這段字串判斷「原因與狀態字樣重複、不必再寫一次」：後端常數改字時這裡要跟著改
+    [Fact]
+    public void PRTG未啟用的原因字樣與後端常數一致()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains($"note: '{LogForesight.Core.Persistence.BatchRun.PrtgNoteNotEnabled}'", js);
+    }
+
     [Fact]
     public void 執行總表_空資料待複查與今日待補摘要接上畫面()
     {

@@ -1214,7 +1214,11 @@ function allowedSeverities() {
  */
 function pruneHiddenSelection() {
     if (selectedIssueKeys.size === 0) return 0;
-    const visible = new Set(visibleTopIssues().map(issue => issue.issueKey));
+    // 「已處理／已有結論」收合區每次重繪都重新收起：展開後勾在裡面的問題，重繪後同樣看不到
+    const { collapseDone } = currentScopeOption();
+    const visible = new Set(visibleTopIssues()
+        .filter(issue => !collapseDone || isUnresolvedIssue(issue) || isInProgressIssue(issue))
+        .map(issue => issue.issueKey));
     let pruned = 0;
     for (const key of [...selectedIssueKeys]) {
         if (!visible.has(key)) {

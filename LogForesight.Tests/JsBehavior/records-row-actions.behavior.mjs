@@ -95,10 +95,14 @@ const cases = {
         assert.equal(toggle.getAttribute('data-bs-toggle'), 'dropdown');
         assert.equal(JSON.parse(toggle.getAttribute('data-bs-popper-config')).strategy, 'fixed');
         toggle.focus = () => { document.activeElement = toggle; };
-        const item = menuOf(result).find(n => n.classList.contains('dropdown-menu')).children[1].children[0];
+        const menu = menuOf(result).find(n => n.classList.contains('dropdown-menu'));
+        const item = menu.children[1].children[0];
+        // 選單這一層擋下冒泡（留白也不會觸發整列展開）；「更多」按鈕本身不擋（Bootstrap 收起其他選單要靠冒泡）
         let stopped = false;
-        (item.listeners.click || []).forEach(h => h({ stopPropagation: () => { stopped = true; }, preventDefault() { } }));
-        assert.equal(stopped, true);
+        (menu.listeners.click || []).forEach(h => h({ stopPropagation: () => { stopped = true; } }));
+        assert.equal(stopped, true, '選單要擋下點擊冒泡');
+        assert.equal((toggle.listeners.click || []).length, 0, '「更多」按鈕不得阻止冒泡');
+        (item.listeners.click || []).forEach(h => h({ stopPropagation() { }, preventDefault() { } }));
         assert.deepEqual(hidden, [toggle]);
         assert.equal(opened.length, 1);
         assert.equal(opened[0].name, 'mute');

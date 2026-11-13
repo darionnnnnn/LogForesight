@@ -18,6 +18,8 @@ public sealed class RecordDetailRailBehaviorTests
     [InlineData("record-detail-rail.behavior.mjs", "pruneDropsHiddenSelectionAndNotifies")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneKeepsSelectionWhenAllVisible")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneToZeroSelection")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneDropsSelectionInsideCollapsedDoneSection")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneKeepsDoneSelectionWhenNotCollapsed")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneRunsAtRenderIssuesEntry")]
     [InlineData("record-detail-rail.behavior.mjs", "hashHandlingWideExpandsOnceAndClearsHash")]
     [InlineData("record-detail-rail.behavior.mjs", "hashHandlingNarrowOnlyClearsHash")]

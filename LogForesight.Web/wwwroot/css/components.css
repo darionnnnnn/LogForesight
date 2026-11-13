@@ -171,7 +171,7 @@
     border: 1px solid transparent;
     border-radius: var(--lf-radius);
     box-shadow: var(--lf-card-shadow);
-    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
+    transition: background-color var(--lf-transition), box-shadow var(--lf-transition);
 }
 
 .lf-card--clickable {
@@ -237,7 +237,7 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 
 /*
   統計卡：大字數字＋小字標籤（§8.2 原則 2「數字優先」）。
-  可下鑽的卡片（§8.4）以 hover 抬升提示可點擊——統計數字是入口，不是終點。
+  可下鑽的卡片（§8.4）滑過換底色提示可點擊——統計數字是入口，不是終點。
 */
 .lf-stat {
     display: block;
@@ -283,7 +283,7 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
    只給滑鼠裝置，觸控點過不會留著滑過樣式。頁首、處理狀態、狀態卡這類不可點的卡片滑過一律不變 */
 @media (hover: hover) and (pointer: fine) {
     a.lf-stat:hover .lf-card,
-    button.lf-card:hover,
+    button.lf-card:not(:disabled):hover,
     .lf-card--clickable:hover {
         background-color: var(--lf-gray-50);
     }
@@ -646,7 +646,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 /* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted）。
-   左側指示條：卡片滑過時整張卡也變成 --lf-primary-soft，只靠底色會與卡片融成一片（第 73 輪 C） */
+   左側指示條：與同排的「重點速報」區分，不只靠底色（灰階與列印時仍分得出） */
 .lf-briefing__action--tinted {
     background: var(--lf-primary-soft);
     border-radius: var(--lf-radius);
@@ -1260,10 +1260,12 @@ a.lf-badge:hover { text-decoration: underline; }
 /* 還有內容在右邊看不到時的線索（體檢 M2／W1）：容器右緣的內陰影，捲到底自動消失（ui.js 切換類別）。
    1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
    沒有線索的話，第一次使用的人會認定「這個視角沒有指派功能」。
-   陰影畫在捲動容器自己的外框上（不隨內容捲動），不占版面；文字提示只給輔助技術（ui.js 的 visually-hidden 節點）。
+   用遮罩讓容器右緣的內容淡出（遮罩作用在捲動容器的可視框、不隨內容捲動，也不占版面）；
+   不用內陰影：表格儲存格有不透明底色，畫在容器上的陰影會被整個蓋住。文字提示只給輔助技術（ui.js 的 visually-hidden 節點）。
    有固定末欄的表格不加：固定欄左側本來就有一條陰影當分界。 */
 .lf-table-wrap--scrollable:not(.lf-table-wrap--sticky-action) {
-    box-shadow: inset -12px 0 10px -10px rgba(15, 23, 42, .22);
+    -webkit-mask-image: linear-gradient(to left, transparent, #000 2rem);
+    mask-image: linear-gradient(to left, transparent, #000 2rem);
 }
 
 /* 列內動作（依問題視角）：一顆主要動作＋「更多」選單橫排，不換行 */
@@ -1300,7 +1302,7 @@ a.lf-badge:hover { text-decoration: underline; }
 
 /* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
 @media print {
-    .lf-table-wrap--scrollable { box-shadow: none; }
+    .lf-table-wrap--scrollable { -webkit-mask-image: none; mask-image: none; }
     .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child { position: static; box-shadow: none; }
 }
 

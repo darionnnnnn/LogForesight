@@ -571,7 +571,6 @@ a.lf-calendar__cell:focus-visible {
    min-width（docs/FEEDBACK-3-PLAN.md #5）：「問題」合併欄吃掉大部分寬度後，
    趨勢欄仍需要一個底線寬度，否則長片語會被壓成逐字直排 */
 .lf-trend-cell {
-    max-width: 180px;
     min-width: 9rem;
     line-height: 1.4;
 }

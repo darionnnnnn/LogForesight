@@ -495,6 +495,8 @@ async function runScenario(browser, scenario, cell, state) {
         });
         await evaluate(browser, `localStorage.setItem('lf.fontScale', ${JSON.stringify(scale)}); true`);
         await browser.send('Page.navigate', { url: `${base}${scenario.path}` });
+        // 滑鼠位置跨情境保留：上一個情境的 hover 步驟會讓這一個情境的元素一載入就在滑過狀態
+        await browser.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
         await settle(browser, state.inflight);
         const patchScripts = [];
         let assertFailures;

@@ -3139,13 +3139,25 @@
         "waitFor": "button.lf-card"
       },
       {
-        "evalAssert": "const el = document.querySelector(\"button.lf-card\"); if (!el) return '找不到 button.lf-card'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+        "evalAssert": "const el = document.querySelector('button.lf-card:not(:disabled)'); if (!el) return '找不到 button.lf-card:not(:disabled)'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
       },
       {
-        "hover": "button.lf-card"
+        "hover": "button.lf-card:not(:disabled)"
       },
       {
-        "evalAssert": "const cs = getComputedStyle(document.querySelector(\"button.lf-card\")); if (cs.backgroundColor === window.__hover.bg) return '可點卡片 button.lf-card 滑過後底色沒變'; return cs.boxShadow !== window.__hover.shadow ? ('可點卡片 button.lf-card 滑過後陰影改變：' + cs.boxShadow) : null;"
+        "evalAssert": "const cs = getComputedStyle(document.querySelector('button.lf-card:not(:disabled)')); if (cs.backgroundColor === window.__hover.bg) return '可點的卡片按鈕滑過後底色沒變'; return cs.boxShadow !== window.__hover.shadow ? ('可點的卡片按鈕滑過後陰影改變：' + cs.boxShadow) : null;"
+      },
+      {
+        "hover": null
+      },
+      {
+        "evalAssert": "const el = document.querySelector('button.lf-card:disabled'); if (!el) return '找不到 button.lf-card:disabled'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": "button.lf-card:disabled"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector('button.lf-card:disabled')); return cs.backgroundColor !== window.__hover.bg ? ('停用的卡片按鈕滑過後底色變了：' + cs.backgroundColor) : null;"
       },
       {
         "hover": null
@@ -3351,7 +3363,7 @@
         "wait": 500
       },
       {
-        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const shadow = getComputedStyle(w).boxShadow;\n  if (scrollable && !sticky && (shadow === 'none' || !shadow)) return '可捲動的表格右緣沒有陰影線索';\n  if (!scrollable && shadow !== 'none' && shadow) return '不可捲動的表格不該有捲動陰影：' + shadow;\n}\nreturn null;"
+        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const cs = getComputedStyle(w);\n  const mask = cs.maskImage || cs.webkitMaskImage;\n  const faded = !!mask && mask !== 'none';\n  if (scrollable && !sticky && !faded) return '可捲動的表格右緣沒有淡出線索';\n  if ((!scrollable || sticky) && faded) return '不可捲動或有固定末欄的表格不該有淡出遮罩：' + mask;\n  if (cs.boxShadow !== 'none') return '捲動線索不得用容器內陰影（會被儲存格底色蓋住）：' + cs.boxShadow;\n}\nreturn null;"
       }
     ]
   },
@@ -3371,7 +3383,7 @@
         "wait": 500
       },
       {
-        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const shadow = getComputedStyle(w).boxShadow;\n  if (scrollable && !sticky && (shadow === 'none' || !shadow)) return '可捲動的表格右緣沒有陰影線索';\n  if (!scrollable && shadow !== 'none' && shadow) return '不可捲動的表格不該有捲動陰影：' + shadow;\n}\nreturn null;"
+        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const cs = getComputedStyle(w);\n  const mask = cs.maskImage || cs.webkitMaskImage;\n  const faded = !!mask && mask !== 'none';\n  if (scrollable && !sticky && !faded) return '可捲動的表格右緣沒有淡出線索';\n  if ((!scrollable || sticky) && faded) return '不可捲動或有固定末欄的表格不該有淡出遮罩：' + mask;\n  if (cs.boxShadow !== 'none') return '捲動線索不得用容器內陰影（會被儲存格底色蓋住）：' + cs.boxShadow;\n}\nreturn null;"
       }
     ]
   },
@@ -3468,7 +3480,7 @@
         "waitFor": ".lf-calendar__month"
       },
       {
-        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst cardEl = months[0].closest('.lf-card');\nif (!cardEl) return '月曆不在卡片內';\nconst card = cardEl.getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
       },
       {
         "evalAssert": "const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '90 天'); if (!b) return '找不到 90 天切換'; b.click(); return null;"
@@ -3477,7 +3489,7 @@
         "wait": 1200
       },
       {
-        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst cardEl = months[0].closest('.lf-card');\nif (!cardEl) return '月曆不在卡片內';\nconst card = cardEl.getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
       },
       {
         "evalAssert": "const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '14 天'); b.click(); return null;"
@@ -3486,7 +3498,7 @@
         "wait": 1200
       },
       {
-        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst cardEl = months[0].closest('.lf-card');\nif (!cardEl) return '月曆不在卡片內';\nconst card = cardEl.getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
       }
     ]
   },

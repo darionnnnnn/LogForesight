@@ -253,6 +253,51 @@ const cases = {
         panelModule.refreshSelection();
         assert.equal(noticeOf(panel, 'day-target-notice'), null);
     },
+    // 暫存各模式各一份：在批次打字或點狀態，不得蓋掉日層級剛才親自點的狀態與日期
+    async 暫存_批次的輸入不蓋掉日層級親自點的狀態與日期() {
+        const selection = new Set();
+        const { panel } = await freshPanel(selection);
+        const inProgress = DAY_CHIPS.find(c => c.value === 'in_progress').text;
+        chipByTitle(panel, inProgress).dispatch('click');
+        panel.find(n => n.id === 'due-date').value = '2026-12-01';
+        formOf(panel).dispatch('input');
+        selection.add('issue-1');
+        panelModule.refreshSelection();
+        noteOf(panel).value = 'abc';
+        formOf(panel).dispatch('input');
+        chipByTitle(panel, BATCH_CHIPS[3].text).dispatch('click');
+        selection.clear();
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), [inProgress]);
+        assert.equal(panel.find(n => n.id === 'due-date').value, '2026-12-01');
+        // 再回批次：批次自己點的狀態也還在
+        selection.add('issue-1');
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), [BATCH_CHIPS[3].text]);
+    },
+    // 日層級預填的是「這一天已存的說明」，不是使用者這次打的字：點了狀態也不得跟著帶進批次
+    async 暫存_已存的整天說明不帶進批次() {
+        const old = HANDLING.note;
+        HANDLING.note = '上週已確認為例行維護';
+        try {
+            const selection = new Set();
+            const { panel } = await freshPanel(selection);
+            assert.equal(noteOf(panel).value, '上週已確認為例行維護');
+            chipByTitle(panel, DAY_CHIPS[1].text).dispatch('click');
+            selection.add('issue-1');
+            panelModule.refreshSelection();
+            assert.equal(noteOf(panel).value, '', '批次說明欄不得出現整天的舊說明');
+            assert.equal(noticeOf(panel, 'day-target-notice'), null);
+            // 批次沒打字就回日層級：已存說明還在，沒有「沿用剛才輸入」的提示
+            formOf(panel).dispatch('input');
+            selection.clear();
+            panelModule.refreshSelection();
+            assert.equal(noteOf(panel).value, '上週已確認為例行維護');
+            assert.equal(noticeOf(panel, 'day-target-notice'), null);
+        } finally {
+            HANDLING.note = old;
+        }
+    },
     async 篩選取消勾選的提示只出現一次() {
         const selection = new Set();
         const { panel } = await freshPanel(selection);
