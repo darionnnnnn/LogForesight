@@ -174,10 +174,6 @@
     transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
 }
 
-.lf-card:hover {
-    background-color: var(--lf-primary-soft);
-}
-
 .lf-card--clickable {
     cursor: pointer;
 }
@@ -278,10 +274,14 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
     color: var(--lf-text-muted);
 }
 
-a.lf-stat:hover .lf-card,
-.lf-card--clickable:hover {
-    box-shadow: var(--lf-shadow-md);
-    border-color: var(--lf-primary-soft-border);
+/* 只有可點的卡片滑過才有回饋，而且只換底色、不浮起不位移（陰影只給浮在內容上方的東西，DESIGN-SYSTEM §5）；
+   只給滑鼠裝置，觸控點過不會留著滑過樣式。頁首、處理狀態、狀態卡這類不可點的卡片滑過一律不變 */
+@media (hover: hover) and (pointer: fine) {
+    a.lf-stat:hover .lf-card,
+    button.lf-card:hover,
+    .lf-card--clickable:hover {
+        background-color: var(--lf-gray-50);
+    }
 }
 
 /*
@@ -439,20 +439,6 @@ a.lf-kpi-card--link:focus-visible {
     border-color: transparent;
     border-radius: 0;
     box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
-}
-
-/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色）；只給滑鼠，觸控點過不會留著滑過樣式 */
-.lf-category-grid a.lf-stat:hover > .lf-card,
-.lf-category-grid .lf-card--clickable:hover {
-    border-color: transparent;
-    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
-}
-
-@media (hover: hover) and (pointer: fine) {
-    .lf-category-grid a.lf-stat:hover > .lf-card,
-    .lf-category-grid .lf-card--clickable:hover {
-        background: var(--lf-gray-50);
-    }
 }
 
 /* 鍵盤焦點：格線容器 overflow: hidden 會裁掉外擴的焦點環，改畫在格子內側 */

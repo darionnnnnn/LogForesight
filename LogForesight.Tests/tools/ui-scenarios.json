@@ -3024,5 +3024,132 @@
         "evalAssert": "const chat = document.getElementById('chat-card'); if (!chat.classList.contains('d-none')) return '當日沒有問題時詢問 AI 卡應隱藏'; const cat = document.getElementById('detail-categories').textContent; if (!cat.includes('無分類資料')) return '0 類時應顯示「無分類資料」：' + cat.slice(0, 40); const btn = [...document.querySelectorAll('.lf-side-rail__btn')].find(b => b.querySelector('.lf-side-rail__label').textContent === '類型分布'); if (!btn) return '找不到類型分布側軌按鈕'; const sum = btn.querySelector('.lf-side-rail__summary').textContent; return sum === '0 類' ? null : '側軌摘要應為「0 類」：' + sum;"
       }
     ]
+  },
+  {
+    "name": "互動-卡片滑過-風險日詳情不可點的卡不變色",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "waitFor": "#handling-panel .lf-handling__form"
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\"#detail-header > .lf-card\"); if (!el) return '找不到 #detail-header > .lf-card'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": "#detail-header > .lf-card"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\"#detail-header > .lf-card\")); return cs.backgroundColor !== window.__hover.bg ? ('不可點卡片 #detail-header > .lf-card 滑過後底色改變：' + window.__hover.bg + ' → ' + cs.backgroundColor) : null;"
+      },
+      {
+        "hover": null
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\".lf-card:has(#handling-panel)\"); if (!el) return '找不到 .lf-card:has(#handling-panel)'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": ".lf-card:has(#handling-panel)"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\".lf-card:has(#handling-panel)\")); return cs.backgroundColor !== window.__hover.bg ? ('不可點卡片 .lf-card:has(#handling-panel) 滑過後底色改變：' + window.__hover.bg + ' → ' + cs.backgroundColor) : null;"
+      },
+      {
+        "hover": null
+      }
+    ]
+  },
+  {
+    "name": "互動-卡片滑過-排程狀態卡不變色",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-run-status-grid > .lf-card"
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\".lf-run-status-grid > .lf-card\"); if (!el) return '找不到 .lf-run-status-grid > .lf-card'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": ".lf-run-status-grid > .lf-card"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\".lf-run-status-grid > .lf-card\")); return cs.backgroundColor !== window.__hover.bg ? ('不可點卡片 .lf-run-status-grid > .lf-card 滑過後底色改變：' + window.__hover.bg + ' → ' + cs.backgroundColor) : null;"
+      },
+      {
+        "hover": null
+      }
+    ]
+  },
+  {
+    "name": "互動-卡片滑過-儀表板可點卡變色且一般卡不變",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-category-grid .lf-card--clickable"
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\".lf-category-grid .lf-card--clickable\"); if (!el) return '找不到 .lf-category-grid .lf-card--clickable'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": ".lf-category-grid .lf-card--clickable"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\".lf-category-grid .lf-card--clickable\")); if (cs.backgroundColor === window.__hover.bg) return '可點卡片 .lf-category-grid .lf-card--clickable 滑過後底色沒變'; return cs.boxShadow !== window.__hover.shadow ? ('可點卡片 .lf-category-grid .lf-card--clickable 滑過後陰影改變：' + cs.boxShadow) : null;"
+      },
+      {
+        "hover": null
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\".lf-card:has(#dashboard-hosts)\"); if (!el) return '找不到 .lf-card:has(#dashboard-hosts)'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": ".lf-card:has(#dashboard-hosts)"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\".lf-card:has(#dashboard-hosts)\")); return cs.backgroundColor !== window.__hover.bg ? ('不可點卡片 .lf-card:has(#dashboard-hosts) 滑過後底色改變：' + window.__hover.bg + ' → ' + cs.backgroundColor) : null;"
+      },
+      {
+        "hover": null
+      }
+    ]
+  },
+  {
+    "name": "互動-卡片滑過-主機卡片按鈕變色",
+    "role": "ui-admin",
+    "path": "/admin/hosts",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "button.lf-card"
+      },
+      {
+        "evalAssert": "const el = document.querySelector(\"button.lf-card\"); if (!el) return '找不到 button.lf-card'; const cs = getComputedStyle(el); window.__hover = { bg: cs.backgroundColor, shadow: cs.boxShadow }; return null;"
+      },
+      {
+        "hover": "button.lf-card"
+      },
+      {
+        "evalAssert": "const cs = getComputedStyle(document.querySelector(\"button.lf-card\")); if (cs.backgroundColor === window.__hover.bg) return '可點卡片 button.lf-card 滑過後底色沒變'; return cs.boxShadow !== window.__hover.shadow ? ('可點卡片 button.lf-card 滑過後陰影改變：' + cs.boxShadow) : null;"
+      },
+      {
+        "hover": null
+      }
+    ]
   }
 ]
