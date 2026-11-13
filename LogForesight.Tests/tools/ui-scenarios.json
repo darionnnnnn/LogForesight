@@ -2215,7 +2215,16 @@
         "waitFor": "#detail-issues tbody tr"
       },
       {
-        "clickIf": "#chat-focus .lf-focus-pick"
+        "clickIf": "#chat-toggle[aria-expanded=\"false\"]"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": "#chat-focus .lf-focus-pick"
+      },
+      {
+        "evalAssert": "const body = document.querySelector('#chat-collapse > .lf-card__body').getBoundingClientRect(); const picker = document.getElementById('chat-focus-picker'); if (picker.classList.contains('d-none') || picker.getBoundingClientRect().height === 0) return '指定問題面板沒有展開'; const m = document.getElementById('chat-messages').getBoundingClientRect(); if (m.height < 40) return '指定問題面板展開時訊息區被擠到 ' + Math.round(m.height) + 'px'; const next = document.getElementById('chat-card').getBoundingClientRect().bottom; const form = document.getElementById('chat-form').getBoundingClientRect(); const cb = document.getElementById('chat-body'); if (form.bottom > next + 1 && cb.scrollHeight <= cb.clientHeight + 1) return '輸入列溢出卡片外且無法捲動'; for (const el of cb.children) { const r = el.getBoundingClientRect(); if (r.height > 0 && r.top < body.bottom && r.bottom > body.bottom + 1 && getComputedStyle(cb).overflowY === 'visible') return '內容溢出卡片：' + el.id; } return null;"
       },
       {
         "clickIf": "#chat-focus-picker .btn-outline-secondary"
@@ -2609,6 +2618,410 @@
     "steps": [
       {
         "evalAssert": "const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;}; const pairs=[...document.querySelectorAll('.lf-badge + .lf-badge')].filter(b=>vis(b)&&vis(b.previousElementSibling)&&Math.abs(b.getBoundingClientRect().top-b.previousElementSibling.getBoundingClientRect().top)<4); if(!pairs.length) return '首頁找不到同一行相鄰的標記'; const bad=pairs.filter(b=>{const gap=b.getBoundingClientRect().left-b.previousElementSibling.getBoundingClientRect().right; const inner=parseFloat(getComputedStyle(b).columnGap)||0; return !(gap>inner*1.5);}); return bad.length? bad.length+' 組相鄰標記的間距不到圓點內距的 1.5 倍':null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-帳號值不越過格子",
+    "role": "ui-admin",
+    "path": "fixture:record.legacy-messages",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; for (const v of document.querySelectorAll('#detail-issues .lf-key-details .lf-text-data')) { const td = v.closest('td'); const r = document.createRange(); r.selectNodeContents(v); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); const limit = td.getBoundingClientRect().right; if (right > limit + 1) bad.push(Math.round(right - limit)); } if (!document.querySelector('#detail-issues .lf-key-details')) return '找不到帳號摘要（資料集沒有載入？）'; return bad.length ? ('帳號值越過所在格子 ' + bad.join(',') + 'px') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-帳號值不越過格子-列印",
+    "role": "ui-admin",
+    "path": "fixture:record.legacy-messages",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; for (const v of document.querySelectorAll('#detail-issues .lf-key-details .lf-text-data')) { const td = v.closest('td'); const r = document.createRange(); r.selectNodeContents(v); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); const limit = td.getBoundingClientRect().right; if (right > limit + 1) bad.push(Math.round(right - limit)); } if (!document.querySelector('#detail-issues .lf-key-details')) return '找不到帳號摘要（資料集沒有載入？）'; return bad.length ? ('帳號值越過所在格子 ' + bad.join(',') + 'px') : null;"
+      }
+    ],
+    "media": "print"
+  },
+  {
+    "name": "版面-問題查詢-表格內短技術值不折行",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "evalAssert": "const bad = []; let seen = 0; for (const v of document.querySelectorAll('main .table .lf-text-data')) { if (v.closest('.lf-break-anywhere, .lf-row-detail, pre')) continue; const t = (v.textContent || '').trim(); if (!t || t.length > 20) continue; seen++; const r = document.createRange(); r.selectNodeContents(v); const tops = new Set([...r.getClientRects()].map(x => Math.round(x.top))); if (tops.size > 1) bad.push(t); } if (!seen) return '頁面上沒有表格內的短技術值，斷言沒有對象'; return bad.length ? ('短技術值被折成多行：' + bad.slice(0, 5).join('、')) : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-風險日",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      },
+      {
+        "evalAssert": "const bad = [...document.querySelectorAll('.lf-briefing__text, .lf-briefing__brief-text, .lf-issue-cell__explain')].filter(e => e.getBoundingClientRect().width > parseFloat(getComputedStyle(e).fontSize) * 40 + 1); return bad.length ? ('成段文字超過 40em 行寬：' + bad.length + ' 處') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-主機",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-交辦單",
+    "role": "ui-admin",
+    "path": "fixture:work-order.ui-handler",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-處理人",
+    "role": "ui-admin",
+    "path": "fixture:handler.ui-handler",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-使用者",
+    "role": "ui-admin",
+    "path": "fixture:admin.user.ui-handler-long",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-設定頁維持限寬",
+    "role": "ui-admin",
+    "path": "/admin/settings",
+    "widths": [
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "main.lf-content--bounded"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap < 100 ? ('設定頁應限寬，右側只空 ' + Math.round(gap) + 'px') : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-詢問AI可收合",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "evalAssert": "const c = document.getElementById('chat-collapse'); const t = document.getElementById('chat-toggle'); if (c.classList.contains('show')) return '首次進頁應為收合'; if (t.getAttribute('aria-expanded') !== 'false') return 'aria-expanded 應為 false'; const card = document.getElementById('chat-card'); const issues = document.getElementById('detail-issues').closest('section'); if (!card.closest('.lf-detail-main')) return '詢問 AI 應在主欄'; if (issues.nextElementSibling !== card) return '詢問 AI 應緊接重點問題卡'; return null;"
+      },
+      {
+        "click": "#chat-toggle"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const c = document.getElementById('chat-collapse'); if (!c.classList.contains('show')) return '按展開後應為展開'; const body = c.querySelector('.lf-card__body'); const h = body.getBoundingClientRect().height; const rem = parseFloat(getComputedStyle(document.documentElement).fontSize); const want = Math.max(20 * rem, innerHeight / 2); if (Math.abs(h - want) > want * 0.05) return '展開高度 ' + Math.round(h) + 'px，應約 ' + Math.round(want) + 'px'; const form = document.getElementById('chat-form').getBoundingClientRect(); if (form.bottom > body.getBoundingClientRect().bottom + 1) return '輸入列超出卡片'; const m = document.getElementById('chat-messages'); if (getComputedStyle(m).overflowY !== 'auto') return '訊息區應內部捲動'; return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-collapse').classList.contains('show') && document.getElementById('chat-toggle').getAttribute('aria-expanded') === 'true' ? null : '重新進頁應記住展開';"
+      },
+      {
+        "click": "#chat-toggle"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return document.getElementById('chat-collapse').classList.contains('show') ? '再按應收合' : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-收合時放大檢視",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "click": "#chat-expand"
+      },
+      {
+        "waitFor": ".modal.show #chat-body"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('.modal.show #chat-messages'); const b = document.querySelector('.modal.show .modal-body'); return m.getBoundingClientRect().height < b.getBoundingClientRect().height * 0.5 ? '放大檢視的訊息區應撐滿' : null;"
+      },
+      {
+        "click": ".modal.show .btn-close"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const body = document.getElementById('chat-body'); if (!body.closest('#chat-collapse')) return '關閉後 #chat-body 應回到卡片內'; return document.getElementById('chat-collapse').classList.contains('show') ? '放大檢視不應改變卡片開合' : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-類型分布在右欄",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "scroll": 600
+      },
+      {
+        "evalAssert": "const btns = [...document.querySelectorAll('.lf-side-rail__btn')]; if (innerWidth < 1600) { if (btns.length !== 3) return '側軌應有三顆按鈕，實際 ' + btns.length; const labels = btns.map(b => b.querySelector('.lf-side-rail__label').textContent); if (labels[2] !== '類型分布') return '第三顆應為類型分布：' + labels.join(','); if (!/^\\d+ 類$/.test(btns[2].querySelector('.lf-side-rail__summary').textContent)) return '類型分布摘要應為「N 類」'; if (btns.some(b => b.getBoundingClientRect().bottom > innerHeight)) return '捲動後側軌按鈕仍超出視窗（側軌是 sticky，頁首時可在視窗下方）'; } return null;"
+      },
+      {
+        "clickIf": ".lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail__btn:nth-child(3)"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const card = document.getElementById('categories-card'); if (!card.closest('#record-side')) return '類型分布應在右欄'; const log = document.getElementById('handling-log-card').getBoundingClientRect(); const r = card.getBoundingClientRect(); if (r.width === 0) return '類型分布沒有顯示'; if (r.top < log.bottom) return '類型分布應在處理歷程下方'; if (innerWidth < 1600 && document.activeElement !== card.querySelector('.lf-card__title')) return '點側軌按鈕後焦點應在類型分布標題'; return null;"
+      },
+      {
+        "click": "#detail-categories button"
+      },
+      {
+        "wait": 900
+      },
+      {
+        "evalAssert": "const name = document.querySelector('#detail-categories button').textContent.trim(); const sec = [...document.querySelectorAll('#detail-issues [data-category]')].find(s => s.getBoundingClientRect().top >= -2 && s.getBoundingClientRect().top < innerHeight); return sec ? null : '點類別後沒有任何問題分節進入視窗（' + name + '）';"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-列印不含詢問AI",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "media": "print",
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const chat = document.getElementById('chat-card'); if (chat.getBoundingClientRect().height > 0) return '列印時詢問 AI 應隱藏'; const cat = document.getElementById('categories-card'); return cat.getBoundingClientRect().height > 0 ? null : '列印時類型分布應可見';"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要對齊",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-briefing__detail"
+      },
+      {
+        "evalAssert": "const q = s => document.querySelector(s); const brief = q('.lf-briefing__brief'), action = q('.lf-briefing__action'); const items = [...document.querySelectorAll('.lf-briefing__detail > .lf-briefing__item')]; if (!brief || !action || items.length !== 2) return '資料集應四段齊全：速報' + !!brief + ' 處置' + !!action + ' 狀況趨勢' + items.length; const [sit, trend] = items.map(e => e.getBoundingClientRect()); const b = brief.getBoundingClientRect(), a = action.getBoundingClientRect(); const near = (x, y) => Math.abs(x - y) <= 1; if (innerWidth >= 992) { if (!near(a.left, trend.left)) return '建議處置左緣 ' + Math.round(a.left) + ' ≠ 趨勢左緣 ' + Math.round(trend.left); if (!near(b.left, sit.left)) return '重點速報左緣 ≠ 狀況左緣'; if (!near(a.top, b.top) || !near(a.bottom, b.bottom)) return '建議處置與重點速報不等高'; if (!near(a.width, trend.width)) return '上下兩排欄寬不同'; } else { const order = [b, a, sit, trend]; for (let i = 1; i < order.length; i++) if (order[i].top < order[i - 1].bottom - 1) return '窄螢幕順序應為速報→處置→狀況→趨勢（第 ' + (i + 1) + ' 段位置不對）'; if (!near(a.width, b.width) || !near(sit.width, b.width)) return '窄螢幕四段應同寬'; } const cs = getComputedStyle(action); const card = action.closest('.lf-card'); if (cs.backgroundColor === getComputedStyle(card).backgroundColor) return '處置底色與卡片相同'; if (!cs.boxShadow || cs.boxShadow === 'none') return '處置缺少指示條（卡片滑過時底色會與卡片相同）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要列印直排",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "media": "print",
+    "steps": [
+      {
+        "waitFor": ".lf-briefing__detail"
+      },
+      {
+        "evalAssert": "const els = ['.lf-briefing__brief', '.lf-briefing__action', '.lf-briefing__detail > :nth-child(1)', '.lf-briefing__detail > :nth-child(2)'].map(s => document.querySelector(s).getBoundingClientRect()); for (let i = 1; i < els.length; i++) if (els[i].top < els[i - 1].bottom - 1) return '列印應直排（第 ' + (i + 1) + ' 段）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要缺段",
+    "role": "ui-admin",
+    "path": "fixture:record.ai-missing-two",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-briefing"
+      },
+      {
+        "evalAssert": "const items = [...document.querySelectorAll('.lf-briefing__detail > .lf-briefing__item')]; if (items.length !== 1) return '資料集應只剩狀況一段，實際 ' + items.length; const grid = document.querySelector('.lf-briefing__detail').getBoundingClientRect(); const r = items[0].getBoundingClientRect(); if (Math.abs(r.left - grid.left) > 1) return '只有一段時應在左欄'; if (r.width > grid.width * 0.6) return '只有一段時應只佔左欄'; const lead = document.querySelector('.lf-briefing__lead'); if (lead && lead.children.length === 1 && Math.abs(lead.children[0].getBoundingClientRect().width - lead.getBoundingClientRect().width) > 1) return '上排只有一段時應佔滿'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-排程作業-執行總表以資料日為列",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#run-summary tbody tr"
+      },
+      {
+        "evalAssert": "const heads = [...document.querySelectorAll('#run-summary thead th')].map(th => th.textContent.trim()).filter(Boolean); if (heads[0] !== '資料日' || heads[1] !== '執行日與時間') return '表頭應為資料日、執行日與時間：' + heads.slice(0, 3).join('｜'); const rows = [...document.querySelectorAll('#run-summary tbody tr')].filter(tr => !tr.classList.contains('lf-row-detail')); if (!rows.length) return '總表沒有任何列'; const pad = n => String(n).padStart(2, '0'); const fmt = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); const bad = []; for (const tr of rows) { const cells = [...tr.children].filter(td => !td.classList.contains('lf-row-toggle')); const dateCell = tr.querySelector('td:nth-child(2)') ; const text = tr.innerText; const m = /(\\d{4}-\\d{2}-\\d{2})/.exec(text); if (!m) { bad.push('列沒有資料日'); continue; } const data = new Date(m[1] + 'T00:00:00'); const run = new Date(data); run.setDate(run.getDate() + 1); const md = fmt(run).slice(5); if (!text.includes(md + '　')) bad.push(m[1] + ' 的執行時間應以處理日 ' + md + ' 開頭'); if (text.includes('今日處理')) { const y = new Date(); y.setDate(y.getDate() - 1); if (m[1] !== fmt(y)) bad.push('今日處理那一列的資料日應為昨天'); } } return bad.length ? bad.slice(0, 3).join('；') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-零問題的類型分布與詢問AI",
+    "role": "ui-admin",
+    "path": "fixture:record.issues-0",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-categories"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const chat = document.getElementById('chat-card'); if (!chat.classList.contains('d-none')) return '當日沒有問題時詢問 AI 卡應隱藏'; const cat = document.getElementById('detail-categories').textContent; if (!cat.includes('無分類資料')) return '0 類時應顯示「無分類資料」：' + cat.slice(0, 40); const btn = [...document.querySelectorAll('.lf-side-rail__btn')].find(b => b.querySelector('.lf-side-rail__label').textContent === '類型分布'); if (!btn) return '找不到類型分布側軌按鈕'; const sum = btn.querySelector('.lf-side-rail__summary').textContent; return sum === '0 類' ? null : '側軌摘要應為「0 類」：' + sum;"
       }
     ]
   }

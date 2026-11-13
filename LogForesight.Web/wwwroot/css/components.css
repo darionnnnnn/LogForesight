@@ -616,7 +616,8 @@ a.lf-badge:hover { text-decoration: underline; }
     max-width: var(--lf-measure);
 }
 
-/* 重點速報＋建議處置：窄螢幕直排；寬螢幕並排於約 1.6 : 1，右欄最小約 16rem；只有其中一個時佔滿 */
+/* 重點速報＋建議處置：窄螢幕直排；寬螢幕與下方「狀況＋趨勢」用同一組兩等欄，四段排成欄線對齊的 2×2
+   （左欄速報／狀況、右欄處置／趨勢）；只有其中一個時佔滿。處置色塊拉伸到與速報等高（第 73 輪 C） */
 .lf-briefing__lead {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -625,8 +626,7 @@ a.lf-badge:hover { text-decoration: underline; }
 
 @media (min-width: 992px) {
     .lf-briefing__lead--split {
-        grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 1fr);
-        align-items: start;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -652,24 +652,32 @@ a.lf-badge:hover { text-decoration: underline; }
     color: var(--lf-text);
 }
 
-/* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted） */
+/* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted）。
+   左側指示條：卡片滑過時整張卡也變成 --lf-primary-soft，只靠底色會與卡片融成一片（第 73 輪 C） */
 .lf-briefing__action--tinted {
     background: var(--lf-primary-soft);
     border-radius: var(--lf-radius);
-    padding: var(--lf-space-3);
+    padding: var(--lf-space-3) var(--lf-space-3) var(--lf-space-3) var(--lf-space-4);
+    box-shadow: inset 3px 0 0 var(--lf-primary);
 }
 
 .lf-briefing__action--tinted .lf-briefing__label {
     color: var(--lf-primary-text);
 }
 
-/* 狀況＋趨勢：上方細線分隔，兩欄並排、窄時直排；只有一段時佔左欄 */
+/* 狀況＋趨勢：上方細線分隔；寬螢幕與上排同一組兩等欄、窄螢幕直排；只有一段時佔左欄 */
 .lf-briefing__detail {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--lf-space-4);
     padding-top: var(--lf-space-4);
     border-top: 1px solid var(--lf-border);
+}
+
+@media (min-width: 992px) {
+    .lf-briefing__detail {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 /* 只有狀況／趨勢、前面沒有結論或重點速報時：外框已有一條線，不再疊第二條 */
@@ -683,6 +691,12 @@ a.lf-badge:hover { text-decoration: underline; }
     .lf-briefing__lead--split,
     .lf-briefing__detail {
         grid-template-columns: 1fr;
+    }
+
+    /* 紙上不印底色、內陰影是否印出依瀏覽器而定：指示條改成實線左框，處置在紙上仍有一致的標記 */
+    .lf-briefing__action--tinted {
+        box-shadow: none;
+        border-left: 3px solid var(--lf-primary);
     }
 }
 
@@ -699,6 +713,31 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-chat-messages {
     max-height: 340px;
     overflow-y: auto;
+}
+
+/* 風險日詳情的詢問 AI 卡展開時：內容區約為視窗高度的一半（下限 20rem），訊息區吃掉焦點列與輸入列以外的空間、
+   內部捲動，輸入列固定在卡片底部。只作用於卡片內的 #chat-collapse；「放大檢視」把 #chat-body 搬進 modal 後
+   由下方 .modal-body 的規則接手，搬回來時這組規則自然再命中（第 73 輪 B） */
+#chat-collapse > .lf-card__body {
+    display: flex;
+    flex-direction: column;
+    height: max(20rem, 50vh);
+}
+
+#chat-collapse #chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    /* 「指定問題」面板展開時整組內容可能超過卡高：在卡內捲動，不讓輸入列溢出到下一張卡 */
+    overflow-y: auto;
+}
+
+/* 訊息區留最小高度：面板展開時不被擠成 0（其餘子項不縮，只有它會讓出空間） */
+#chat-collapse #chat-messages {
+    flex: 1 0 auto;
+    min-height: 6rem;
+    max-height: none;
 }
 
 .lf-chat-focus {

@@ -50,14 +50,23 @@ public class BriefRenameGuardTests
     }
 
     [Fact]
-    public void 脈絡區塊排在證據區塊之前()
+    public void 詢問AI在重點問題卡之後且沒有脈絡收合區()
     {
+        // 第 73 輪 B：「脈絡」只剩詢問 AI 一張卡，拿掉這一層；詢問 AI 留在主欄、緊接重點問題，類型分布留在右欄
         var cshtml = Read("LogForesight.Web", "Views", "Pages", "RecordDetail.cshtml");
-        var contextAt = cshtml.IndexOf("id=\"record-context\"", StringComparison.Ordinal);
-        var evidenceAt = cshtml.IndexOf("id=\"record-evidence\"", StringComparison.Ordinal);
-        Assert.True(contextAt >= 0, "找不到 record-context");
-        Assert.True(evidenceAt >= 0, "找不到 record-evidence");
-        Assert.True(contextAt < evidenceAt, $"record-context({contextAt}) 應在 record-evidence({evidenceAt}) 之前");
+        var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "record-detail.js");
+        Assert.DoesNotContain("record-context", cshtml);
+        Assert.DoesNotContain("record-context", js);
+        var issuesAt = cshtml.IndexOf("id=\"detail-issues\"", StringComparison.Ordinal);
+        var chatAt = cshtml.IndexOf("id=\"chat-card\"", StringComparison.Ordinal);
+        var sideAt = cshtml.IndexOf("id=\"record-side\"", StringComparison.Ordinal);
+        Assert.True(issuesAt >= 0 && chatAt > issuesAt && chatAt < sideAt, "詢問 AI 應在主欄、重點問題卡之後");
+        Assert.True(cshtml.IndexOf("id=\"categories-card\"", StringComparison.Ordinal) > sideAt, "類型分布應在右欄");
+        Assert.DoesNotContain("['chat-card',", js);
+        Assert.DoesNotContain("['categories-card',", js);
+        // 詢問 AI 預設收合（不帶 show）、開合由共用的 bindRememberedCollapse 記住（行為見 ui-collapse.behavior.mjs）
+        Assert.Contains("<div class=\"collapse\" id=\"chat-collapse\">", cshtml);
+        Assert.Contains("bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');", js);
     }
 
     [Fact]

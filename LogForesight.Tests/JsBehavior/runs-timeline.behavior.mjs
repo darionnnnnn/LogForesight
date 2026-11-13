@@ -10,7 +10,7 @@ import { installDom } from './mini-dom.mjs';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 installDom();
-const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration, prtgPauseLabel } =
+const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, catchUpText, phaseSeconds, formatDuration, prtgPauseLabel } =
     await import(pathToFileURL(path.join(jsRoot, 'core', 'run-timeline.js')).href);
 
 const at = (h, m = 0) => `2026-11-02T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
@@ -136,6 +136,33 @@ const cases = {
         assert.ok(withOther.children[1].textContent.includes('另有 AI 補跑 2 趟（'));
         // 沒有第二行內容時維持純文字
         assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }), '01:00～02:00（1 時 0 分）');
+    },
+
+    // ── 第 73 輪 F：總表的列是資料日，這一格以處理日開頭，補跑另起一行 ──
+    dayTimingCellStartsWithRunDate() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 };
+        assert.equal(renderDayTimingCell(timing, { runDate: '2026-11-13' }), '11-13　01:00～02:00（1 時 0 分）');
+        assert.equal(renderDayTimingCell(null, { runDate: '2026-11-13' }), '11-13　—', '處理日沒有任何趟仍寫出處理日');
+        assert.equal(renderDayTimingCell(timing), '01:00～02:00（1 時 0 分）', '沒傳處理日時維持原樣');
+    },
+    dayTimingCellCatchUpLine() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 };
+        const cell = renderDayTimingCell(timing, { runDate: '2026-11-03', catchUp: ['2026-11-05T08:00:00'], catchUpMore: 0 });
+        assert.equal(cell.children.length, 2);
+        assert.equal(cell.children[1].textContent, '另於 11-05 08:00 補跑');
+        assert.ok(cell.children[1].classList.contains('lf-text-meta'));
+        // 只有補跑、處理日沒有趟：第一行「—」，補跑照常
+        const onlyCatchUp = renderDayTimingCell(null, { runDate: '2026-11-03', catchUp: ['2026-11-05T08:00:00'] });
+        assert.equal(onlyCatchUp.children[0].textContent, '11-03　—');
+        assert.equal(onlyCatchUp.children[1].textContent, '另於 11-05 08:00 補跑');
+        // 沒有補跑：不出現這一行（邊界另一側）
+        assert.equal(renderDayTimingCell(timing, { runDate: '2026-11-03', catchUp: [], catchUpMore: 0 }), '11-03　01:00～02:00（1 時 0 分）');
+    },
+    catchUpTextListsTwoAndCountsRest() {
+        assert.equal(catchUpText([]), '');
+        assert.equal(catchUpText(null), '');
+        assert.equal(catchUpText(['2026-11-06T09:12:00', '2026-11-05T08:00:00']), '另於 11-06 09:12、11-05 08:00 補跑');
+        assert.equal(catchUpText(['2026-11-06T09:12:00', '2026-11-05T08:00:00'], 3), '另於 11-06 09:12、11-05 08:00 等 5 趟補跑');
     },
 
     dayTimingFourPathsAndSubPhases() {

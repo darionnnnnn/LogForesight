@@ -451,8 +451,8 @@
     background: var(--lf-primary);
 }
 
-/* 詳情頁與表單頁（View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
-   --lf-content-max、靠左，避免單欄內容被拉到 2000px 以上；清單、儀表板、報表與維護頁滿版 */
+/* 單欄表單頁（設定、初始設定；View 設 ViewData["ContentWidth"] = "bounded"）：寬螢幕下內容區不超過
+   --lf-content-max、靠左，避免單欄表單被拉到 2000px 以上；其餘頁面（含詳情頁）滿版 */
 .lf-content--bounded {
     max-width: calc(var(--lf-content-max) + 2 * var(--lf-space-5));
 }

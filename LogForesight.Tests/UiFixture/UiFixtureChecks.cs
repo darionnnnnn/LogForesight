@@ -332,6 +332,7 @@ internal sealed class UiFixtureChecks
         ["佐證.帳號50個"] = c => Assert.Equal(50, c.Issue("evidence", "Microsoft-Windows-Security-Auditing", 4625).KeyAccounts!.Count),
         ["佐證.舊版整段訊息1"] = c => LegacyCheck(c, 4728, UiFixtureText.Legacy1),
         ["佐證.舊版整段訊息2"] = c => LegacyCheck(c, 4719, UiFixtureText.Legacy2),
+        ["佐證.帳號值300字無斷點"] = c => LegacyCheck(c, 4740, UiFixtureText.Contiguous2000[..300]),
         ["佐證.舊版整段訊息3帳號與來源欄"] = c =>
         {
             LegacyCheck(c, 4625, UiFixtureText.Legacy3);

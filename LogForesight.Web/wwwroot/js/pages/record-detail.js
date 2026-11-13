@@ -8,7 +8,7 @@
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
 import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
@@ -23,12 +23,11 @@ const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
 function initRecordSections() {
+    // 類型分布留在右欄（側軌有按鈕）、詢問 AI 留在主欄重點問題下方，兩者不搬（第 73 輪 B）
     const destinations = [
         ['report-cards', 'record-evidence-main'],
         ['alerts-card', 'record-evidence-side'],
-        ['coverage-card', 'record-evidence-side'],
-        ['chat-card', 'record-context-main'],
-        ['categories-card', 'record-context-side']
+        ['coverage-card', 'record-evidence-side']
     ];
     for (const [sourceId, destinationId] of destinations) {
         const source = document.getElementById(sourceId);
@@ -36,7 +35,7 @@ function initRecordSections() {
         if (source && destination) destination.appendChild(source);
     }
 
-    const sections = ['record-evidence', 'record-context']
+    const sections = ['record-evidence']
         .map(id => document.getElementById(id)).filter(Boolean);
     let printing = false;
     let priorOpen = [];
@@ -60,6 +59,13 @@ function initRecordSections() {
 }
 
 initRecordSections();
+// 詢問 AI 預設收合、記住使用者的開合（不列印，所以列印前不必展開）
+bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');
+// 收合時訊息區是 display:none，捲到底無效（例如收合狀態下用「放大檢視」對話後關閉）；每次展開完成再捲到最新一則
+document.getElementById('chat-collapse')?.addEventListener('shown.bs.collapse', () => {
+    const messages = document.getElementById('chat-messages');
+    if (messages) messages.scrollTop = messages.scrollHeight;
+});
 
 // 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
@@ -192,6 +198,8 @@ async function load() {
         // 案件授與檢視沒有側軌：右欄直接展開，維持原本的堆疊內容
         else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');
     }
+    // 類型分布的側軌摘要：每次載入都依當日類別數更新（重繪後類別數可能不同）
+    sideRail?.setSummary('categories', `${currentDetail.categories.length} 類`);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
@@ -217,7 +225,8 @@ function setupSideRail() {
         side: document.getElementById('record-side'),
         items: [
             { key: 'handling', label: '處理狀態', target: document.getElementById('handling-panel').closest('section') },
-            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') }
+            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') },
+            { key: 'categories', label: '類型分布', target: document.getElementById('categories-card') }
         ]
     });
 }
@@ -1667,6 +1676,9 @@ function evidencePanel(issue) {
 /**
  * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
  * 沒有任何觀測時回 null；面板有其他佐證時由 evidencePanel 補一句「未保存」。
+ * 每筆只印有值的行：「時間解讀」「原生參照」沒有值時不逐筆印「未知」，改由摘要行的計數承擔，
+ * 「不能推定連續狀態」的警語也移到摘要行（換位置、不消失）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
+ * 資源鍵與主機鍵相同時不重複；其他鍵原樣顯示，不猜別台主機的名稱（第 73 輪 E）。
  */
 function sourceEvidenceBlock(issue) {
     const observations = (issue.sourceObservations || []).slice(0, 64);
@@ -1676,10 +1688,12 @@ function sourceEvidenceBlock(issue) {
     block.className = 'lf-source-obs';
     const exactReferences = observations.filter(item => item.nativeReference).length;
     const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
+    const unresolved = observations.filter(item => !item.windowResolution).length;
     const summary = metaLine([
         `${observations.length} 筆`,
         `${exactTimes} 筆有 UTC 時間`,
         `${exactReferences} 筆有原生參照`,
+        unresolved > 0 ? `${unresolved} 筆無時間解讀，不能推定連續狀態` : null,
         issue.sourceObservationsTruncated ? '清單已截斷' : null,
         '群組顯示時段不是來源時間窗'
     ]);
@@ -1690,12 +1704,16 @@ function sourceEvidenceBlock(issue) {
         LocalClassicEventLog: '本機事件記錄', LocalEventRecord: '本機 Event Record'
     };
     const scopes = { Host: '主機', Volume: '磁碟區', Device: '裝置', Sensor: '感測器' };
+    const ownHostKey = currentDetail?.hostId != null ? `host-id:${currentDetail.hostId}` : null;
+    const hostLabel = key => (key && key === ownHostKey && currentDetail.hostName ? currentDetail.hostName : key || '未知');
     const list = document.createElement('ol');
     list.className = 'lf-source-obs__list';
     for (const item of observations) {
         const row = document.createElement('li');
+        const parts = [`來源：${sourceNames[item.sourceKind] || '未知'}`, `範圍：${scopes[item.resourceScope] || '未知'}`, `主機：${hostLabel(item.exactHostKey)}`];
+        if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) parts.push(`資源：${item.exactResourceKey || '未知'}`);
         const line = document.createElement('div');
-        line.textContent = `來源：${sourceNames[item.sourceKind] || '未知'}；範圍：${scopes[item.resourceScope] || '未知'}；主機：${item.exactHostKey || '未知'}；資源：${item.exactResourceKey || '未知'}`;
+        line.textContent = parts.join('；');
         row.appendChild(line);
 
         const time = document.createElement('div');
@@ -1703,13 +1721,16 @@ function sourceEvidenceBlock(issue) {
         else if (item.windowStartUtc && item.windowEndUtc) time.textContent = `UTC 區間：[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`;
         else time.textContent = 'UTC 時間／區間：未知';
         row.appendChild(time);
-        const resolution = document.createElement('div');
-        resolution.textContent = `時間解讀：${item.windowResolution || '未知；不能推定連續狀態'}`;
-        row.appendChild(resolution);
-
-        const reference = document.createElement('div');
-        reference.textContent = `原生參照：${item.nativeReference || '未知'}`;
-        row.appendChild(reference);
+        if (item.windowResolution) {
+            const resolution = document.createElement('div');
+            resolution.textContent = `時間解讀：${item.windowResolution}`;
+            row.appendChild(resolution);
+        }
+        if (item.nativeReference) {
+            const reference = document.createElement('div');
+            reference.textContent = `原生參照：${item.nativeReference}`;
+            row.appendChild(reference);
+        }
         list.appendChild(row);
     }
     block.appendChild(list);
@@ -1832,7 +1853,10 @@ function workOrderBadge(workOrderId) {
  */
 function keyDetailsBlock(keyDetails) {
     const wrap = document.createElement('div');
-    wrap.className = 'lf-key-details';
+    // lf-break-anywhere：值是外部資料、沒有長度保證（帳號清單、舊版整段訊息），一律可在任意位置折行。
+    // 它同時讓值脫離「表格內 lf-text-data 不斷行」：格線欄 minmax(0, 1fr) 的最小寬度是 0，
+    // 不斷行的長值會越過格子、蓋住趨勢與處理狀態欄（第 73 輪 D）
+    wrap.className = 'lf-key-details lf-break-anywhere';
 
     const segments = keyDetails.split('；').map(s => s.trim()).filter(Boolean);
     const parsed = segments.map(segment => /^([^:：]{1,24})[:：]\s*([\s\S]+)$/.exec(segment));

@@ -149,15 +149,33 @@ export function dayTimingDetailText(timing) {
     return parts.join(' · ');
 }
 
-/** 總表一格：第一行文字＋第二行小字（比照 runs.js 的 withPhaseDuration，textContent 組字） */
+const monthDayOf = iso => String(iso).slice(5, 10);
+
+/**
+ * 總表「另於 MM-DD HH:mm 補跑」：這個資料日由排程處理日以外開跑的趟（後端給最新兩趟＋其餘趟數）；沒有回空字串。
+ * 補跑趟同時處理多個資料日，耗時歸不到單一列，這裡只寫日期與時刻（第 73 輪 F）。
+ */
+export function catchUpText(startedAt, more = 0) {
+    if (!startedAt?.length) return '';
+    const list = startedAt.map(iso => `${monthDayOf(iso)} ${minuteOf(iso)}`).join('、');
+    return `另於 ${list}${more > 0 ? ` 等 ${startedAt.length + more} 趟補跑` : ' 補跑'}`;
+}
+
+/**
+ * 總表一格：第一行文字＋第二行小字（比照 runs.js 的 withPhaseDuration，textContent 組字）。
+ * options.runDate（yyyy-MM-dd）：第一行以處理日 MM-DD 開頭——總表的列是資料日，這一格是處理日當天開跑的趟；
+ * options.catchUp／catchUpMore：補跑行（catchUpText）。
+ */
 export function renderDayTimingCell(timing, options = {}) {
     const detail = dayTimingDetailText(timing);
     // 今天還在跑且算不出總耗時：第一行寫「進行中」，不要顯示「—」
     // 只在沒有任何可顯示內容（'—'）時才換成「進行中」；已有異常中斷或 AI 補跑文字就保留，不蓋掉
     const timingText = dayTimingText(timing);
-    const first = options.inProgress === true && timingText === '—' ? '進行中' : timingText;
+    const firstText = options.inProgress === true && timingText === '—' ? '進行中' : timingText;
+    const first = options.runDate ? `${monthDayOf(options.runDate)}　${firstText}` : firstText;
     const pending = options.pendingText;
-    if (!detail && !pending) return first;
+    const catchUp = catchUpText(options.catchUp, options.catchUpMore);
+    if (!detail && !pending && !catchUp) return first;
     const wrap = document.createElement('div');
     const line = document.createElement('div');
     line.textContent = first;
@@ -173,6 +191,12 @@ export function renderDayTimingCell(timing, options = {}) {
         pendingLine.className = 'lf-text-meta';
         pendingLine.textContent = pending;
         wrap.append(pendingLine);
+    }
+    if (catchUp) {
+        const catchUpLine = document.createElement('div');
+        catchUpLine.className = 'lf-text-meta';
+        catchUpLine.textContent = catchUp;
+        wrap.append(catchUpLine);
     }
     return wrap;
 }

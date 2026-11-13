@@ -1,6 +1,5 @@
 ﻿@{
     ViewData["Title"] = "風險日詳情";
-    ViewData["ContentWidth"] = "bounded";
 }
 
 @*
@@ -37,18 +36,23 @@
                 <div class="lf-card__body p-0" id="detail-issues"></div>
             </section>
 
+            @* 詢問 AI：重點問題正下方的一張可收合卡，預設收合、記住使用者的開合（record-detail.js bindRememberedCollapse）。
+               AI 不可用或當日沒有問題時整張卡不顯示（chat-panel.js）。展開時內容區約為視窗高度一半，訊息區內部捲動 *@
             <section class="lf-card d-none mb-3 lf-no-print" id="chat-card">
                 <div class="lf-card__header">
                     <h2 class="lf-card__title">詢問 AI（實驗性）</h2>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center flex-wrap gap-2">
                         <span class="lf-text-meta" id="chat-turn-count"></span>
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="chat-expand">放大檢視</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="chat-clear">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                             清除重來
                         </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="chat-toggle" data-bs-toggle="collapse"
+                                data-bs-target="#chat-collapse" aria-expanded="false" aria-controls="chat-collapse">展開</button>
                     </div>
                 </div>
+                <div class="collapse" id="chat-collapse">
                 <div class="lf-card__body">
                     @* #chat-body 整組（焦點列／訊息／輸入表單）在「放大檢視」時被搬移進全螢幕 modal，
                        關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
@@ -64,6 +68,7 @@
                             <button type="submit" class="btn btn-sm btn-primary" id="chat-send">送出</button>
                         </form>
                     </div>
+                </div>
                 </div>
             </section>
 
@@ -96,6 +101,7 @@
                 <div class="lf-card__body" id="detail-alerts"></div>
             </section>
 
+            @* 類型分布＝本日問題的目錄（點類別捲到該分節），留在右欄、側軌有對應按鈕 *@
             <section class="lf-card mb-3" id="categories-card">
                 <div class="lf-card__header">
                     <h2 class="lf-card__title">類型分布</h2>
@@ -113,15 +119,7 @@
         </aside>
     </div>
 
-    <details class="lf-card mb-3 mt-3" id="record-context">
-        <summary class="lf-card__header"><h2 class="lf-card__title">脈絡</h2></summary>
-        <div class="lf-card__body row g-3">
-            <div class="col-lg-8" id="record-context-main"></div>
-            <div class="col-lg-4" id="record-context-side"></div>
-        </div>
-    </details>
-
-    <details class="lf-card mb-3" id="record-evidence">
+    <details class="lf-card mb-3 mt-3" id="record-evidence">
         <summary class="lf-card__header"><h2 class="lf-card__title">證據</h2></summary>
         <div class="lf-card__body row g-3">
             <div class="col-lg-8" id="record-evidence-main"></div>

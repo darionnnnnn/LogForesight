@@ -341,7 +341,7 @@
 
 ## 第 73 輪（不在本輪）
 
-版面格線、元件一致性、顏色訊號的完整清單、待決與批次草案在 [`docs/drafts/FEEDBACK-73-PLAN.md`](../drafts/FEEDBACK-73-PLAN.md)，以本文件為準的只有「字級」。第 73 輪開輪前要用本輪完成後的畫面重新盤點。
+版面格線、元件一致性、顏色訊號的完整清單、待決與批次草案在 [`docs/drafts/FEEDBACK-74-PLAN.md`](../drafts/FEEDBACK-74-PLAN.md)（原 `FEEDBACK-73-PLAN.md`，第 73 輪未採用、順延改名），以本文件為準的只有「字級」。第 73 輪開輪前要用本輪完成後的畫面重新盤點。
 
 ---
 

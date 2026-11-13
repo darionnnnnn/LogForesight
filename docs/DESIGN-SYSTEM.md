@@ -255,7 +255,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
 | 詳情頁右欄側軌 | `core/side-rail.js` + `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
 | 長文字收合 | `ui.js` `collapsibleText` + `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；切換鈕是 `disclosure`（標籤「全文」）、列印全文 |
-| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、`--lf-font-size-lg`／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排：≥ 992px 約 1.6 : 1、右欄最小 16rem，窄螢幕直排，缺一則另一佔滿；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，眉標 `--lf-primary-text`），統計模式不上底色；再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄（`repeat(auto-fit, minmax(min(20rem, 100%), 1fr))`）；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
+| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、`--lf-font-size-lg`／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排，再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄；≥ 992px 兩排同為 `repeat(2, minmax(0, 1fr))`，四段排成欄線對齊的 2×2（處置與速報等高），窄螢幕單欄直排，上排缺一則另一佔滿、下排只有一段時在左欄；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，左側 3px `--lf-primary` 內陰影指示條，眉標 `--lf-primary-text`），統計模式不上底色與指示條；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + `layout.css` | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
@@ -316,8 +316,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 - **中斷點**只用 576／768／992／1200／1600，寫法 `min-width: N`、`max-width: N−0.02`。唯一例外 `max-width: 1799.98px`
   是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992（並排模式）與 CSS 同值；1600（預設展開）只在 `side-rail.js` 使用，樣式表沒有對應的 `@media`。卡片內頂層表格容器是尺寸容器（`container-type`），展開列內容依它限制在可視寬度內。
-- `--lf-content-max: 120rem`：詳情頁（風險日、主機、處理人、使用者、交辦單）與表單頁（設定、初始設定）在 View 設
-  `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；清單、儀表板、報表與維護頁滿版。
+- `--lf-content-max: 120rem`：單欄表單頁（設定、初始設定）在 View 設 `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；
+  其餘頁面（清單、儀表板、報表、維護頁與詳情頁）隨視窗滿版。詳情頁是卡片與表格、成段文字另受 `--lf-measure` 限制，滿版不會拉長文字行（`ContentWidthGuardUiTests` 守門）。
 - `--lf-measure: 40em`：成段文字的行寬上限，表格與技術值不套用。
 - 寬螢幕（≥ 1600px）詳情頁側軌預設展開，把多出的寬度用在並排，而不是拉長左欄行寬；使用者在本頁按過收合就照使用者的。
 - 長字串：`body` 全站 `overflow-wrap: break-word`（沒有空白的連續字串放不下時才斷，一般字詞不受影響）；
@@ -377,6 +377,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
   `ui-shots.mjs` 被逾時或中斷時會留下無頭 Edge 程序，累積後同樣讓行為案例在約 5 秒處逾時：跑測試前清掉命令列含 `--headless` 的 `msedge`（不要動使用者自己開的瀏覽器）。
   情境步驟 `evalAssert`（函式本體，回傳 null 通過、字串為失敗訊息）用來量六項指標以外的東西：圖示外框是否落在按鈕內、字高下限、欄數、是否需捲動。
-- **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick] [--height] [--only]`：
+- **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick|screens] [--height] [--only]`：
+  溢出量測（`overflow`）除了比元素方框，也抓「方框在格子內、文字越過格子」——格線欄 `minmax(0, 1fr)` 內不斷行的長值屬於這一型。
   情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。
 - **前後比對** `tools/ui-diff.mjs <基準> <新輸出>`：位元組相同或列出像素差異範圍。

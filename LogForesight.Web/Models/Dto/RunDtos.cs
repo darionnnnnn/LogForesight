@@ -4,16 +4,28 @@ namespace LogForesight.Web.Models.Dto;
 /// 執行監控每日彙總（§5.4 D-4）：取代舊版「主機×日期」矩陣。
 /// 兩千台規模下矩陣會炸出 2000×90 格 DOM，改成每天一列的計數＋失敗主機清單
 /// （上限 10 台＋「其他 N 台」），完整清單透過 <see cref="RunDayDetailHostDto"/> 點日期取得。
+/// 每列是一個**資料日**（<see cref="Date"/>，事件發生的那一天）；主機狀態、PRTG 都是這一天的資料，
+/// 執行時間是排程處理日（<see cref="RunDate"/>＝資料日的隔天）當天開跑的趟，其他日子補跑的趟列在 <see cref="CatchUpStartedAt"/>。
 /// </summary>
 public class RunDaySummaryDto
 {
-    /// <summary>今天的附加列（不佔 days）：未執行數代表尚未處理，不是漏跑</summary>
+    /// <summary>今天處理的那一列（資料日＝昨天、不佔 days）：未執行數代表尚未處理，不是漏跑</summary>
     public bool IsToday { get; set; }
 
     /// <summary>今天的取數趟還在跑</summary>
     public bool InProgress { get; set; }
 
+    /// <summary>資料日（yyyy-MM-dd）</summary>
     public string Date { get; set; } = string.Empty;
+
+    /// <summary>排程處理日（yyyy-MM-dd，資料日的隔天）：<see cref="Timing"/> 是這一天開跑的趟</summary>
+    public string RunDate { get; set; } = string.Empty;
+
+    /// <summary>這個資料日由其他日子開跑的趟補跑過（NetIQ 回執或 PRTG 逐日統計指向的趟），最新兩趟的開始時刻、新到舊</summary>
+    public List<DateTime> CatchUpStartedAt { get; set; } = new();
+
+    /// <summary>補跑趟超過兩趟時其餘的趟數</summary>
+    public int CatchUpMore { get; set; }
 
     public int TotalHosts { get; set; }
     public int SuccessCount { get; set; }
@@ -44,10 +56,10 @@ public class RunDaySummaryDto
     /// <summary>優雅停止（手動停止或執行窗口 End 到點）——不算失敗，見 <c>BatchRun.Stopped</c></summary>
     public int StoppedCount { get; set; }
 
-    /// <summary>當天開跑的執行時間（null＝當天沒有任何趟）</summary>
+    /// <summary>排程處理日（<see cref="RunDate"/>）當天開跑的執行時間（null＝那天沒有任何趟）</summary>
     public RunDayTimingDto? Timing { get; set; }
 
-    /// <summary>PRTG 擷取成果狀態（取該日取數類最後一筆，null＝舊紀錄或當日未執行 PRTG）</summary>
+    /// <summary>這個資料日的 PRTG 擷取成果狀態（最新一趟含該資料日的逐日統計；null＝沒有任何趟處理過）</summary>
     public string? PrtgOutcome { get; set; }
 
     /// <summary>該日 PRTG finding 數（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄為 null）</summary>

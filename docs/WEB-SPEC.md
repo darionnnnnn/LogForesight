@@ -1266,7 +1266,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在主要內容載入完成之後才發出且不阻塞——它走的是記錄查詢的慢路徑，串在主載入裡會讓整頁陪它等。
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
   報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）、
-  類型分布（頁內導航到對應問題分節）。
+  類型分布（右欄，頁內導航到對應問題分節）。
 - **標題列的主機識別**（詳見 [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段）：除主機名稱外顯示
   **Sentinel 回報的顯示名、作業系統徽章與 IP**（`RecordDetailDto` 的 `HostDisplayName`／`HostOs`／
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
@@ -1274,9 +1274,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
 - **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
-  0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
-     其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
-     兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
+  0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時有「處理狀態」「處理歷程」「類型分布」三張卡，
+     程式偵測訊號、資料涵蓋率與報告全文由 `initRecordSections` 搬進下方「證據」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
+     三顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」、類型分布＝「N 類」；點按鈕展開、捲到並聚焦該卡標題，
      「處理狀態」卡 header 右側的「收合 ›」收回（`collapseHost` 預設為第一個項目卡的 `.lf-card__header`）並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
@@ -1484,7 +1484,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
   `.lf-ai-block`（左邊框＋淡底）標出；詳情頁頂部的白話總覽（`aiSummaryBlock`、`.lf-briefing__*`）例外，以「AI 摘要」徽章標註、不用左框淡底：
-  結論列＝AI 標題（頁首唯一的大字）＋一顆「AI 摘要」徽章（AI 分析中、降級待補、已放棄、統計模式時改放對應狀態徽章、不放「AI 摘要」）；其下「重點速報」與「建議處置」並排（≥ 992px 約 1.6 : 1、窄螢幕直排，建議處置是頁首唯一有底色的面、僅 `aiAnalyzed=true` 時上底色；只有其一時佔滿），再下以細線分隔「狀況」「趨勢」兩欄；四段共用 `lf-text-label` 眉標，缺值的段連眉標與細線都不渲染，列印時結論以下單欄；「重點速報」複製鈕在眉標列右側、列印隱藏，只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現；第一行是主機名（`lf-font-size-lg`）、日期、風險徽章與「下一筆未處理」，系統類型與 IP（僅當與主機名不同）移到次要資訊行；次要資訊行的日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；
+  結論列＝AI 標題（頁首唯一的大字）＋一顆「AI 摘要」徽章（AI 分析中、降級待補、已放棄、統計模式時改放對應狀態徽章、不放「AI 摘要」）；其下「重點速報」與「建議處置」並排，再下以細線分隔「狀況」「趨勢」兩欄；≥ 992px 四段排成欄線對齊的 2×2（兩排同為兩等欄，左欄速報／狀況、右欄處置／趨勢，處置與速報等高），窄螢幕直排（速報→處置→狀況→趨勢）；建議處置是頁首唯一有底色的面、左側加指示條（卡片滑過時整張卡也會變淡藍底），僅 `aiAnalyzed=true` 時上底色與指示條；上排只有其一時佔滿，下排只有一段時在左欄；四段共用 `lf-text-label` 眉標，缺值的段連眉標與細線都不渲染，列印時結論以下單欄；「重點速報」複製鈕在眉標列右側、列印隱藏，只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現；第一行是主機名（`lf-font-size-lg`）、日期、風險徽章與「下一筆未處理」，系統類型與 IP（僅當與主機名不同）移到次要資訊行；次要資訊行的日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；
   統計模式是替代文字非 AI 產出，不標「AI 摘要」）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
@@ -1499,7 +1499,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 的指定問題清單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
-- **詢問 AI 對話區塊**（實驗性精簡版）：報告全文卡之上，AI 可用且當日有重點問題才顯示。
+- **詢問 AI 對話區塊**（實驗性精簡版）：主欄、重點問題卡正下方的可收合卡，AI 可用且當日有重點問題才顯示。
+  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動（最小 6rem）；「指定問題」面板展開而放不下時整組在卡內捲動，不溢出卡片。
   範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
   標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
   超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
@@ -2965,7 +2966,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。
   逐日「說明」欄：整趟共用階段失敗時寫出是哪個階段（`PrtgDailyPipeline.StageFailureNote`），完整訊息逐條進「重要紀錄」（「PRTG 擷取階段失敗：…」）；
   沿用之後的主機對應時註明「沿用 YYYY-MM-DD 的主機對應」（docs/PRTG-SPEC.md §4）。資料來自 `BatchRun` 的分路結構化欄位；
-  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（逐日欄位全部顯示在執行詳情的「PRTG 逐日」表）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
+  總表每列的 PRTG 徽章是該列資料日的結果：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（逐日欄位全部顯示在執行詳情的「PRTG 逐日」表，表頭「資料日」）；舊紀錄取資料日隔天開跑的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。沒有任何趟處理過的資料日顯示「—」，提示「這個資料日沒有 PRTG 處理紀錄」。
   **舊紀錄那些欄位為 null，畫面顯示「—」**，與「數字是 0」語意分開
   （0＝跑了但沒抓到，null＝這一路沒有產出）。總表主體仍是主機×日，
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
@@ -2977,7 +2978,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **執行詳情的記憶體標記**：每趟開始與結束各記一次記憶體（`RunDetailDto.memoryStart`／`memoryEnd`，`RunMemoryMarkDto`：`at`、工作集、工作集峰值、.NET 堆、GC 已提交、LOH、硬上限、SQLite 峰值、NLog 規則數，單位 bytes，可為 null；舊紀錄為 null），同時寫一行「里程碑」診斷；開始標記寫入時立刻落地一列，行程中途被殺、站台重啟補成「異常中斷」的那趟仍有開始標記、沒有結束標記。工作集峰值與 SQLite 峰值是行程啟動以來的累計值。因記憶體不足中止的趟，失敗原因（排程狀態卡、`ai-status`）與執行詳情的 Fatal／Error 診斷行都帶固定字樣「記憶體上限」（`RunFailureReasons.MemoryLimit`，內層或彙總例外裡的 `OutOfMemoryException` 也算）。執行詳情在時間軸之後、「PRTG 逐日」之前顯示一行「記憶體」摘要（開始：工作集、.NET 堆；結束：工作集、.NET 堆、峰值、SQLite 峰值；MB 整數，null 項目省略，只有一邊有值就只顯示那一邊）。
 - **診斷資料匯出**（`GET /api/runs/export?days=N`，工具列「匯出分析資料」）：給 AI 分析用的單一 JSON，只有一種格式。
   - **權限與資源**：類別層 `DevMonitor|Maintain` 加 `[RequireViewAll]`，serverAdmin 回 403。單一併發（搶不到回 503 `capture_busy`）；檔案上限 16 MiB，超過回 413 `capacity_exceeded`，不截斷。寫稽核 `run_diagnostics_export`，只記天數、組數、趟數、位元組數與代號數，不記內容。沒有設定鍵，上限是 `RunExportLimits` 常數。
-  - **內容**：`meta`（期間、省略項目 `omitted`、去識別化摘要）、`guide`（給 AI 的名詞解釋）、`context`（排程與模組設定白名單）、`dailyHealth`（逐日狀態台數，今天有取數趟時多一列 `isToday`、不含主機名單）、`runStats`（依作業與觸發類別、階段耗時、版本）、`signalGroups`＋`stacks`、`slowSql`、`abnormalRuns`、`aiFormatAnomalies`、`runMemory`。`meta.memory` 帶匯出當下的記憶體快照與 GC 生效設定（`isServerGc`、`gcConserveMemory`、`gcHeapHardLimitPercent`、`gen2Collections`，bytes）；`runMemory[]` 是期間內有記憶體標記的趟（`runId`、`jobType`、`startedAt`、`start`、`end`），由舊到新、最多 200 筆（超過取最新並記入 `omitted`）。`schemaVersion` 仍為 1。
+  - **內容**：`meta`（期間、省略項目 `omitted`、去識別化摘要）、`guide`（給 AI 的名詞解釋）、`context`（排程與模組設定白名單）、`dailyHealth`（每個資料日的狀態台數，`date` 資料日、`runDate` 處理日，今天有取數趟時多一列 `isToday`、不含主機名單；`meta.schemaVersion` 2）、`runStats`（依作業與觸發類別、階段耗時、版本）、`signalGroups`＋`stacks`、`slowSql`、`abnormalRuns`、`aiFormatAnomalies`、`runMemory`。`meta.memory` 帶匯出當下的記憶體快照與 GC 生效設定（`isServerGc`、`gcConserveMemory`、`gcHeapHardLimitPercent`、`gen2Collections`，bytes）；`runMemory[]` 是期間內有記憶體標記的趟（`runId`、`jobType`、`startedAt`、`start`、`end`），由舊到新、最多 200 筆（超過取最新並記入 `omitted`）。`schemaVersion` 仍為 1。
   - **訊號組**：Warn 以上的診斷行，加上 `Output` 中去空白後行首為 `⚠`／`✗` 的行（只影響匯出多寡，不影響任何判定；分析結果類輸出排除）。先遮罩、再以 `RunMessageNormalizer` 正規化，組鍵含 logger，所以組數可能少於畫面；`source=log` 的 Error＋Fatal 次數總和必須等於同期異常彙總的次數總和。
   - **不匯出**：正常趟次逐筆、一般輸出與里程碑、帳號與主機名單、訊號組內的 AI 回覆片段、prompt 全文。
   - **去識別化**（`RunExportDeidentifier`，一律套用，無開關）：順序固定為密鑰 → URL → 已知字典（長字串優先）→ 樣式。代號依首次出現配發、只在單一檔案內穩定、不用雜湊，檔案內沒有對照表；主機 IP 對應到同一個主機代號。字典來源讀取失敗，或序列化後掃描仍有字典原值、IPv4、Email、密鑰，一律中止並回 500 `export_deidentification_failed`，不給檔案。憑證用目前金鑰解不開（搬站或換金鑰後的舊值）不中止：略過實際值比對，改靠 `password=`、`passhash=`、`Bearer` 等樣式遮罩，名稱寫進 `meta.deidentification.undecryptableSecrets`；已不是目前認證方式的舊密文解不開時，名稱改寫進 `retiredUndecryptableSecrets`（目前沒有使用，不代表要重新設定，空也輸出空陣列）。`guide` 不進掃描；封閉集合的值整串放行；只掃值不掃欄位名（匯出沒有動態欄位名），避免帳號 `status` 這類常見詞讓匯出永遠失敗。標籤後的值只取單一詞，含空白的人名若不在字典內，後半可能漏遮；檔案 `meta` 寫明自由文字無法保證完全遮除。
@@ -3148,9 +3149,11 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   下方（切到排程設定時整組隱藏），前三個報表頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
   切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
   `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
-  - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
-    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天）。
-    **今天的附加列**：今天已有取數趟時，第 1 頁多一列（`IsToday`，執行中再帶 `InProgress`），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
+  - **執行總表**（**每個資料日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
+    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點列就地展開**該資料日逐主機狀態，§2——懶載入 `onRowExpand`，`GET api/runs/day/{資料日}`，各列排序/分頁狀態獨立、可同時展開多天）。
+    **列是資料日**（`Date`，表頭「資料日」）：主機狀態、PRTG 都是這一天的資料，之後任何一趟補跑都歸在同一列。
+    排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetail`。
+    **今天處理的那一列**：今天已有取數趟時，第 1 頁多一列（資料日＝昨天，`IsToday`，執行中再帶 `InProgress`），日期旁標「今日處理」（執行中為「今日處理・執行中」），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
     **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
     計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」；今天的列在同一窗口排得進複查時接「（約 HH:mm 複查）」（`RecheckAt`）。主機明細說明與續跑規則同一判定：
     自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote` 寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
@@ -3158,16 +3161,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
     異常中斷寫「最後一趟異常中斷」，否則 `RunResume.HasWork` 時寫「最後一趟結束時尚有：」＋`Describe()`；顯示在「執行時間」格第二行之後。
     過去日期不顯示（那是當時的快照）。今天執行中且第一行原本會是「—」時，改寫「進行中」（有異常中斷或 AI 補跑文字時保留原文字）。
-    **日期錨點是昨天**：D 日的列＝D 日夜間執行的批次，分析的是 D-1 的資料
-    （NetIQ 主機的狀態判定就是「D-1 有無分析紀錄」），今天的批次白天尚未執行，列進來必然
-    整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
-    （範圍 `[Today-days, Today-1]`），分頁數學不變。今天的執行看狀態卡與「執行紀錄」頁籤
+    **列數錨點**：`days` 代表列數，處理日範圍 `[Today-days, Today-1]`（資料日 `[Today-days-1, Today-2]`），分頁數學不變；
+    昨天的資料由今天處理，只以上述附加列出現。今天的執行另看狀態卡與「執行紀錄」頁籤
     ——**異常彙總與執行紀錄刻意仍含今天**，它們是事件清單、不是主機×日視角。
-    「執行時間」欄用同一個鍵（當天開跑，跨午夜仍以 `StartedAt.Date` 歸日），兩行呈現：
+    「執行日與時間」欄是處理日當天開跑的趟（跨午夜仍以 `StartedAt.Date` 歸日），第一行以處理日 MM-DD 開頭：
     第一行是取數趟與跟隨取數 AI 趟（`Trigger=fetch-followup`）的最早開始～最晚結束與總耗時（聯集，重疊不重複算）；
     同日多趟時第一行加「共 N 趟」（起訖差會大於總耗時）。第二行小字「本機 2 秒 · NetIQ 44 秒 · PRTG 30 分 · AI 1 分 27 秒」（`Branches`，舊趟沒有階段資料時寫「無階段資料（升級前紀錄）」），PRTG 是 `prtg`、`prtg-sync`、`prtg-triggered`、`prtg-value-fill` 的聯集，展開列再列子階段（`SubPhases`）；當天另有非跟隨的 AI 趟（排程補跑、手動）時加「另有 AI 補跑 N 趟（M）」
     （`OtherAiRuns`、`OtherAiSeconds`），這些趟不進第一行的起訖與總計；當天只有這類 AI 趟時第一行就寫「AI 補跑 N 趟（M）」。
-    `dailyHealth.recheckCount`／`pendingSummary`（診斷匯出）同上；`notRun` 不含空資料待複查。`dailyHealth.totalSeconds`（診斷匯出）即第一行的總耗時，含跟隨取數 AI 趟。
+    **補跑行**：這個資料日的 NetIQ 主機日回執或 PRTG 逐日統計指向處理日以外開跑的趟時，多一行「另於 MM-DD HH:mm 補跑」（`CatchUpStartedAt` 新到舊最多兩趟，其餘「等 N 趟」＝`CatchUpMore`）；
+    趟屬於哪一天以所屬排程窗口的開始日為準（`BatchRun.WindowInstanceStart`，沒有才用開跑日），跨午夜窗口過了午夜的續跑與空資料複查不算補跑；
+    補跑趟的耗時不併入這一列（一趟補跑同時處理多個資料日），本機分析沒有「哪一趟處理了哪天」的紀錄，不列；回執指向的趟已不在讀取範圍時略過。
+    `dailyHealth.date`（診斷匯出）是資料日、`runDate` 是處理日；`recheckCount`／`pendingSummary` 同上；`notRun` 不含空資料待複查。`dailyHealth.totalSeconds` 即第一行的總耗時，含跟隨取數 AI 趟。
     展開列列本機／NetIQ／PRTG／AI 各路區間與耗時，最後一列「總計」（`RunDayTimingBuilder`）；AI 路在趟沒有階段資料時用整趟起訖。
     異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；
     當天已完成的取數趟全部沒有階段資料（升級前紀錄，`FetchRunsWithoutPhases` 等於 `FetchRuns`）時，本機／NetIQ／PRTG 顯示「無階段資料（升級前紀錄）」，新舊混合時只用有階段資料的趟計算；當天完全沒有趟次才是「—」。AI 趟不進主機×日。

@@ -1,6 +1,6 @@
 namespace LogForesight.Web.Models.Dto;
 
-// 排程作業診斷匯出的檔案結構（schemaVersion 1）。欄位名是給 AI 讀的契約，語意見 docs/FEEDBACK-63-PLAN.md 批次 C。
+// 排程作業診斷匯出的檔案結構（schemaVersion 2：dailyHealth.date 改為資料日、新增 runDate）。欄位名是給 AI 讀的契約，語意見 docs/FEEDBACK-63-PLAN.md 批次 C。
 //
 // 兩條結構規則（結果掃描 C-10 依賴它們）：
 // 1. 所有物件都是固定結構的類別，沒有「資料內容當屬性名稱」的字典——要表達「依某維度的計數」一律用
@@ -197,13 +197,17 @@ public sealed record ExportHostSourceDto(string Source, int Total, int Active);
 
 // ===== dailyHealth =====
 
-/// <summary>執行總表的一天（<see cref="Date"/> 是執行日，分析的資料日期是前一天）。不含主機名單</summary>
+/// <summary>執行總表的一列（<see cref="Date"/> 是資料日，<see cref="RunDate"/> 是排程處理日＝隔天）。不含主機名單</summary>
 public sealed record ExportDailyHealthDto
 {
     public bool IsToday { get; init; }
     public bool InProgress { get; init; }
 
+    /// <summary>資料日（這一列的主機狀態與 PRTG 都是這一天的資料）</summary>
     public string Date { get; init; } = string.Empty;
+
+    /// <summary>排程處理日（資料日的隔天）；totalSeconds 是這一天開跑的趟</summary>
+    public string RunDate { get; init; } = string.Empty;
     public int TotalHosts { get; init; }
     public int Success { get; init; }
     public int Backfilled { get; init; }

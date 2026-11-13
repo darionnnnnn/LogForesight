@@ -199,6 +199,9 @@ const cases = {
         const raw = fns.keyDetailsBlock(LEGACY);
         assert(raw.children[0].className.includes('lf-text-data'), '切不出「標籤：值」形狀時整段原樣顯示');
         assert.equal(raw.children[0].textContent, LEGACY);
+        // 兩種形狀的值都在可任意折行的容器內：不帶的話，表格內 lf-text-data 不斷行，長值越過格子蓋住隔壁欄（第 73 輪 D）
+        assert(labeled.className.split(' ').includes('lf-break-anywhere'), '有標籤的值可任意折行');
+        assert(raw.className.split(' ').includes('lf-break-anywhere'), '整段原樣的值可任意折行');
     },
     // ── 佐證層 ──
     guidancePanelOmitsExplanationLabel() {
@@ -249,9 +252,42 @@ const cases = {
         reset();
         const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
         const summary = block.children[0].children.map(c => c.textContent);
-        assert.deepEqual(summary, ['3 筆', '2 筆有 UTC 時間', '1 筆有原生參照', '群組顯示時段不是來源時間窗']);
+        assert.deepEqual(summary, ['3 筆', '2 筆有 UTC 時間', '1 筆有原生參照', '3 筆無時間解讀，不能推定連續狀態', '群組顯示時段不是來源時間窗']);
         assert.equal(block.children[1].children.length, 3);
         assert(!all(block).some(n => n.tagName === 'BUTTON' || n.tagName === 'A'), '佐證層內不再有切換鈕，也不產生連結');
+    },
+    // ── 第 73 輪 E：沒有值的行不逐筆印、警語移到摘要行、本頁主機顯示名稱 ──
+    sourceEvidenceUnknownLinesOmitted() {
+        reset();
+        const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
+        const rows = block.children[1].children;
+        assert.deepEqual(rows.map(r => r.children.length), [2, 2, 3], '只印來源與時間兩行；有原生參照的那筆多一行');
+        assert(!allText(block).includes('原生參照：未知'), '不逐筆印未知的原生參照');
+        assert(!allText(block).includes('時間解讀：'), '沒有時間解讀時不逐筆印');
+        assert(allText(rows[2]).includes('原生參照：ref'), '有值的原生參照照印');
+    },
+    sourceEvidencePartialResolution() {
+        reset();
+        const items = obs(3);
+        items[1].windowResolution = '整日彙總';
+        const block = fns.sourceEvidenceBlock({ sourceObservations: items });
+        const summary = block.children[0].children.map(c => c.textContent);
+        assert(summary.includes('2 筆無時間解讀，不能推定連續狀態'), '警語筆數＝沒有時間解讀的筆數');
+        assert(allText(block.children[1].children[1]).includes('時間解讀：整日彙總'), '有值的時間解讀照印');
+        items.forEach(i => { i.windowResolution = 'x'; });
+        const all = fns.sourceEvidenceBlock({ sourceObservations: items }).children[0].children.map(c => c.textContent);
+        assert(!all.some(t => t.includes('無時間解讀')), '全部都有時間解讀時沒有警語');
+    },
+    sourceEvidenceOwnHostName() {
+        reset();
+        ctx.currentDetail = { detailPruned: false, hostId: 12, hostName: 'SRV-01' };
+        const own = { sourceKind: 'SentinelWindows', resourceScope: 'Host', exactHostKey: 'host-id:12', exactResourceKey: 'host-id:12', eventTimeUtc: '2026-01-01T00:00:00Z' };
+        const other = { ...own, exactHostKey: 'host-id:99', exactResourceKey: 'vol-C' };
+        const text = allText(fns.sourceEvidenceBlock({ sourceObservations: [own, other] }));
+        assert(text.includes('主機：SRV-01'), '本頁主機的內部鍵顯示主機名稱');
+        assert(!text.includes('資源：host-id:12'), '資源鍵與主機鍵相同時不重複');
+        assert(text.includes('主機：host-id:99'), '別台主機的鍵原樣顯示，不猜名稱');
+        assert(text.includes('資源：vol-C'), '資源鍵不同時照印');
     },
     sourceEvidenceTruncatedMarker() {
         reset();
