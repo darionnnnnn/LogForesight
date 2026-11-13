@@ -1266,11 +1266,6 @@ a.lf-badge:hover { text-decoration: underline; }
     box-shadow: inset -12px 0 10px -10px rgba(15, 23, 42, .22);
 }
 
-/* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
-   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。
-   只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
-   與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
-   :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
 /* 列內動作（依問題視角）：一顆主要動作＋「更多」選單橫排，不換行 */
 .lf-row-actions {
     display: inline-flex;
@@ -1279,6 +1274,11 @@ a.lf-badge:hover { text-decoration: underline; }
     white-space: nowrap;
 }
 
+/* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。
+   只套在標記容器「直接包的那張表」的表頭與資料列：後代選擇器會滲進展開列（colspan 那格也是 :last-child）
+   與展開格裡的巢狀表格，hover 巢狀列時整個展開格跟著變色、巢狀表最後一欄也變成 sticky。
+   :where() 把特異度壓在 (0,2,1)，讓 .lf-row--highlight 這類列狀態仍蓋得過 sticky 欄的白底。 */
 .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child {
     position: sticky;
     right: 0;
