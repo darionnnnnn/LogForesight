@@ -616,7 +616,8 @@ a.lf-badge:hover { text-decoration: underline; }
     max-width: var(--lf-measure);
 }
 
-/* 重點速報＋建議處置：窄螢幕直排；寬螢幕並排於約 1.6 : 1，右欄最小約 16rem；只有其中一個時佔滿 */
+/* 重點速報＋建議處置：窄螢幕直排；寬螢幕與下方「狀況＋趨勢」用同一組兩等欄，四段排成欄線對齊的 2×2
+   （左欄速報／狀況、右欄處置／趨勢）；只有其中一個時佔滿。處置色塊拉伸到與速報等高（第 73 輪 C） */
 .lf-briefing__lead {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -625,8 +626,7 @@ a.lf-badge:hover { text-decoration: underline; }
 
 @media (min-width: 992px) {
     .lf-briefing__lead--split {
-        grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 1fr);
-        align-items: start;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -652,24 +652,32 @@ a.lf-badge:hover { text-decoration: underline; }
     color: var(--lf-text);
 }
 
-/* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted） */
+/* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted）。
+   左側指示條：卡片滑過時整張卡也變成 --lf-primary-soft，只靠底色會與卡片融成一片（第 73 輪 C） */
 .lf-briefing__action--tinted {
     background: var(--lf-primary-soft);
     border-radius: var(--lf-radius);
-    padding: var(--lf-space-3);
+    padding: var(--lf-space-3) var(--lf-space-3) var(--lf-space-3) var(--lf-space-4);
+    box-shadow: inset 3px 0 0 var(--lf-primary);
 }
 
 .lf-briefing__action--tinted .lf-briefing__label {
     color: var(--lf-primary-text);
 }
 
-/* 狀況＋趨勢：上方細線分隔，兩欄並排、窄時直排；只有一段時佔左欄 */
+/* 狀況＋趨勢：上方細線分隔；寬螢幕與上排同一組兩等欄、窄螢幕直排；只有一段時佔左欄 */
 .lf-briefing__detail {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--lf-space-4);
     padding-top: var(--lf-space-4);
     border-top: 1px solid var(--lf-border);
+}
+
+@media (min-width: 992px) {
+    .lf-briefing__detail {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 /* 只有狀況／趨勢、前面沒有結論或重點速報時：外框已有一條線，不再疊第二條 */

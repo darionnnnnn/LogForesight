@@ -2923,5 +2923,58 @@
         "evalAssert": "const chat = document.getElementById('chat-card'); if (chat.getBoundingClientRect().height > 0) return '列印時詢問 AI 應隱藏'; const cat = document.getElementById('categories-card'); return cat.getBoundingClientRect().height > 0 ? null : '列印時類型分布應可見';"
       }
     ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要對齊",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-briefing__detail"
+      },
+      {
+        "evalAssert": "const q = s => document.querySelector(s); const brief = q('.lf-briefing__brief'), action = q('.lf-briefing__action'); const items = [...document.querySelectorAll('.lf-briefing__detail > .lf-briefing__item')]; if (!brief || !action || items.length !== 2) return '資料集應四段齊全：速報' + !!brief + ' 處置' + !!action + ' 狀況趨勢' + items.length; const [sit, trend] = items.map(e => e.getBoundingClientRect()); const b = brief.getBoundingClientRect(), a = action.getBoundingClientRect(); const near = (x, y) => Math.abs(x - y) <= 1; if (innerWidth >= 992) { if (!near(a.left, trend.left)) return '建議處置左緣 ' + Math.round(a.left) + ' ≠ 趨勢左緣 ' + Math.round(trend.left); if (!near(b.left, sit.left)) return '重點速報左緣 ≠ 狀況左緣'; if (!near(a.top, b.top) || !near(a.bottom, b.bottom)) return '建議處置與重點速報不等高'; if (!near(a.width, trend.width)) return '上下兩排欄寬不同'; } else { const order = [b, a, sit, trend]; for (let i = 1; i < order.length; i++) if (order[i].top < order[i - 1].bottom - 1) return '窄螢幕順序應為速報→處置→狀況→趨勢（第 ' + (i + 1) + ' 段位置不對）'; if (!near(a.width, b.width) || !near(sit.width, b.width)) return '窄螢幕四段應同寬'; } const cs = getComputedStyle(action); const card = action.closest('.lf-card'); if (cs.backgroundColor === getComputedStyle(card).backgroundColor) return '處置底色與卡片相同'; if (!cs.boxShadow || cs.boxShadow === 'none') return '處置缺少指示條（卡片滑過時底色會與卡片相同）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要列印直排",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "media": "print",
+    "steps": [
+      {
+        "waitFor": ".lf-briefing__detail"
+      },
+      {
+        "evalAssert": "const els = ['.lf-briefing__brief', '.lf-briefing__action', '.lf-briefing__detail > :nth-child(1)', '.lf-briefing__detail > :nth-child(2)'].map(s => document.querySelector(s).getBoundingClientRect()); for (let i = 1; i < els.length; i++) if (els[i].top < els[i - 1].bottom - 1) return '列印應直排（第 ' + (i + 1) + ' 段）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-頁首摘要缺段",
+    "role": "ui-admin",
+    "path": "fixture:record.ai-missing-two",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-briefing"
+      },
+      {
+        "evalAssert": "const items = [...document.querySelectorAll('.lf-briefing__detail > .lf-briefing__item')]; if (items.length !== 1) return '資料集應只剩狀況一段，實際 ' + items.length; const grid = document.querySelector('.lf-briefing__detail').getBoundingClientRect(); const r = items[0].getBoundingClientRect(); if (Math.abs(r.left - grid.left) > 1) return '只有一段時應在左欄'; if (r.width > grid.width * 0.6) return '只有一段時應只佔左欄'; const lead = document.querySelector('.lf-briefing__lead'); if (lead && lead.children.length === 1 && Math.abs(lead.children[0].getBoundingClientRect().width - lead.getBoundingClientRect().width) > 1) return '上排只有一段時應佔滿'; return null;"
+      }
+    ]
   }
 ]
