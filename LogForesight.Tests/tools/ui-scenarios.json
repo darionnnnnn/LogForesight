@@ -2774,5 +2774,154 @@
         "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap < 100 ? ('設定頁應限寬，右側只空 ' + Math.round(gap) + 'px') : null;"
       }
     ]
+  },
+  {
+    "name": "互動-風險日詳情-詢問AI可收合",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "evalAssert": "const c = document.getElementById('chat-collapse'); const t = document.getElementById('chat-toggle'); if (c.classList.contains('show')) return '首次進頁應為收合'; if (t.getAttribute('aria-expanded') !== 'false') return 'aria-expanded 應為 false'; const card = document.getElementById('chat-card'); const issues = document.getElementById('detail-issues').closest('section'); if (!card.closest('.lf-detail-main')) return '詢問 AI 應在主欄'; if (issues.nextElementSibling !== card) return '詢問 AI 應緊接重點問題卡'; return null;"
+      },
+      {
+        "click": "#chat-toggle"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const c = document.getElementById('chat-collapse'); if (!c.classList.contains('show')) return '按展開後應為展開'; const body = c.querySelector('.lf-card__body'); const h = body.getBoundingClientRect().height; const rem = parseFloat(getComputedStyle(document.documentElement).fontSize); const want = Math.max(20 * rem, innerHeight / 2); if (Math.abs(h - want) > want * 0.05) return '展開高度 ' + Math.round(h) + 'px，應約 ' + Math.round(want) + 'px'; const form = document.getElementById('chat-form').getBoundingClientRect(); if (form.bottom > body.getBoundingClientRect().bottom + 1) return '輸入列超出卡片'; const m = document.getElementById('chat-messages'); if (getComputedStyle(m).overflowY !== 'auto') return '訊息區應內部捲動'; return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-collapse').classList.contains('show') && document.getElementById('chat-toggle').getAttribute('aria-expanded') === 'true' ? null : '重新進頁應記住展開';"
+      },
+      {
+        "click": "#chat-toggle"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return document.getElementById('chat-collapse').classList.contains('show') ? '再按應收合' : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-收合時放大檢視",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "click": "#chat-expand"
+      },
+      {
+        "waitFor": ".modal.show #chat-body"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('.modal.show #chat-messages'); const b = document.querySelector('.modal.show .modal-body'); return m.getBoundingClientRect().height < b.getBoundingClientRect().height * 0.5 ? '放大檢視的訊息區應撐滿' : null;"
+      },
+      {
+        "click": ".modal.show .btn-close"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const body = document.getElementById('chat-body'); if (!body.closest('#chat-collapse')) return '關閉後 #chat-body 應回到卡片內'; return document.getElementById('chat-collapse').classList.contains('show') ? '放大檢視不應改變卡片開合' : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-類型分布在右欄",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "scroll": 600
+      },
+      {
+        "evalAssert": "const btns = [...document.querySelectorAll('.lf-side-rail__btn')]; if (innerWidth < 1600) { if (btns.length !== 3) return '側軌應有三顆按鈕，實際 ' + btns.length; const labels = btns.map(b => b.querySelector('.lf-side-rail__label').textContent); if (labels[2] !== '類型分布') return '第三顆應為類型分布：' + labels.join(','); if (!/^\\d+ 類$/.test(btns[2].querySelector('.lf-side-rail__summary').textContent)) return '類型分布摘要應為「N 類」'; if (btns.some(b => b.getBoundingClientRect().bottom > innerHeight)) return '捲動後側軌按鈕仍超出視窗（側軌是 sticky，頁首時可在視窗下方）'; } return null;"
+      },
+      {
+        "clickIf": ".lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail__btn:nth-child(3)"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const card = document.getElementById('categories-card'); if (!card.closest('#record-side')) return '類型分布應在右欄'; const log = document.getElementById('handling-log-card').getBoundingClientRect(); const r = card.getBoundingClientRect(); if (r.width === 0) return '類型分布沒有顯示'; if (r.top < log.bottom) return '類型分布應在處理歷程下方'; if (innerWidth < 1600 && document.activeElement !== card.querySelector('.lf-card__title')) return '點側軌按鈕後焦點應在類型分布標題'; return null;"
+      },
+      {
+        "click": "#detail-categories button"
+      },
+      {
+        "wait": 900
+      },
+      {
+        "evalAssert": "const name = document.querySelector('#detail-categories button').textContent.trim(); const sec = [...document.querySelectorAll('#detail-issues [data-category]')].find(s => s.getBoundingClientRect().top >= -2 && s.getBoundingClientRect().top < innerHeight); return sec ? null : '點類別後沒有任何問題分節進入視窗（' + name + '）';"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-列印不含詢問AI",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "media": "print",
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const chat = document.getElementById('chat-card'); if (chat.getBoundingClientRect().height > 0) return '列印時詢問 AI 應隱藏'; const cat = document.getElementById('categories-card'); return cat.getBoundingClientRect().height > 0 ? null : '列印時類型分布應可見';"
+      }
+    ]
   }
 ]

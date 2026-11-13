@@ -701,6 +701,28 @@ a.lf-badge:hover { text-decoration: underline; }
     overflow-y: auto;
 }
 
+/* 風險日詳情的詢問 AI 卡展開時：內容區約為視窗高度的一半（下限 20rem），訊息區吃掉焦點列與輸入列以外的空間、
+   內部捲動，輸入列固定在卡片底部。只作用於卡片內的 #chat-collapse；「放大檢視」把 #chat-body 搬進 modal 後
+   由下方 .modal-body 的規則接手，搬回來時這組規則自然再命中（第 73 輪 B） */
+#chat-collapse > .lf-card__body {
+    display: flex;
+    flex-direction: column;
+    height: max(20rem, 50vh);
+}
+
+#chat-collapse #chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#chat-collapse #chat-messages {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+}
+
 .lf-chat-focus {
     display: flex;
     flex-wrap: wrap;

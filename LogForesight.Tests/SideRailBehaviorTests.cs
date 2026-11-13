@@ -48,7 +48,7 @@ public sealed class SideRailBehaviorTests
     public void RecordDetail版面改用側軌layout_不再用col_lg_8與col_lg_4排主欄()
     {
         var view = Read("LogForesight.Web", "Views", "Pages", "RecordDetail.cshtml");
-        var main = view.Substring(0, view.IndexOf("id=\"record-context\"", StringComparison.Ordinal));
+        var main = view.Substring(0, view.IndexOf("id=\"record-evidence\"", StringComparison.Ordinal));
         Assert.DoesNotContain("col-lg-8", main);
         Assert.DoesNotContain("col-lg-4", main);
         Assert.Contains("lf-detail-layout", main);
@@ -70,6 +70,9 @@ public sealed class SideRailBehaviorTests
         // 建立側軌的呼叫必須在「不是案件授與」的條件之內：條件被拿掉時這條要變紅
         Assert.Contains("if (!currentDetail.caseGrantOnly) sideRail = setupSideRail();", js);
         Assert.Contains("if (!sideRail) {", js);
+        // 第 73 輪 B：類型分布有側軌按鈕，摘要每次載入依類別數更新
+        Assert.Contains("{ key: 'categories', label: '類型分布', target: document.getElementById('categories-card') }", js);
+        Assert.Contains("sideRail?.setSummary('categories', `${currentDetail.categories.length} 類`);", js);
         // 單列勾選與表頭全選兩條路徑都要能自動展開（定義一處＋呼叫兩處）
         Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(js, @"expandSideRailForSelection\(").Count);
     }

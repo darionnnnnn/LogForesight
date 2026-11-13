@@ -1266,7 +1266,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在主要內容載入完成之後才發出且不阻塞——它走的是記錄查詢的慢路徑，串在主載入裡會讓整頁陪它等。
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
   報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）、
-  類型分布（頁內導航到對應問題分節）。
+  類型分布（右欄，頁內導航到對應問題分節）。
 - **標題列的主機識別**（詳見 [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段）：除主機名稱外顯示
   **Sentinel 回報的顯示名、作業系統徽章與 IP**（`RecordDetailDto` 的 `HostDisplayName`／`HostOs`／
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
@@ -1274,9 +1274,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
 - **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
-  0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時只有「處理狀態」與「處理歷程」兩張卡，
-     其餘卡由 `initRecordSections` 搬進下方「證據」「脈絡」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
-     兩顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」；點按鈕展開、捲到並聚焦該卡標題，
+  0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時有「處理狀態」「處理歷程」「類型分布」三張卡，
+     程式偵測訊號、資料涵蓋率與報告全文由 `initRecordSections` 搬進下方「證據」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
+     三顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」、類型分布＝「N 類」；點按鈕展開、捲到並聚焦該卡標題，
      「處理狀態」卡 header 右側的「收合 ›」收回（`collapseHost` 預設為第一個項目卡的 `.lf-card__header`）並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
@@ -1499,7 +1499,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 的指定問題清單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
-- **詢問 AI 對話區塊**（實驗性精簡版）：報告全文卡之上，AI 可用且當日有重點問題才顯示。
+- **詢問 AI 對話區塊**（實驗性精簡版）：主欄、重點問題卡正下方的可收合卡，AI 可用且當日有重點問題才顯示。
+  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動。
   範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
   標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
   超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，

@@ -8,7 +8,7 @@
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
 import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
@@ -23,12 +23,11 @@ const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
 function initRecordSections() {
+    // 類型分布留在右欄（側軌有按鈕）、詢問 AI 留在主欄重點問題下方，兩者不搬（第 73 輪 B）
     const destinations = [
         ['report-cards', 'record-evidence-main'],
         ['alerts-card', 'record-evidence-side'],
-        ['coverage-card', 'record-evidence-side'],
-        ['chat-card', 'record-context-main'],
-        ['categories-card', 'record-context-side']
+        ['coverage-card', 'record-evidence-side']
     ];
     for (const [sourceId, destinationId] of destinations) {
         const source = document.getElementById(sourceId);
@@ -36,7 +35,7 @@ function initRecordSections() {
         if (source && destination) destination.appendChild(source);
     }
 
-    const sections = ['record-evidence', 'record-context']
+    const sections = ['record-evidence']
         .map(id => document.getElementById(id)).filter(Boolean);
     let printing = false;
     let priorOpen = [];
@@ -60,6 +59,8 @@ function initRecordSections() {
 }
 
 initRecordSections();
+// 詢問 AI 預設收合、記住使用者的開合（不列印，所以列印前不必展開）
+bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');
 
 // 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
@@ -192,6 +193,8 @@ async function load() {
         // 案件授與檢視沒有側軌：右欄直接展開，維持原本的堆疊內容
         else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');
     }
+    // 類型分布的側軌摘要：每次載入都依當日類別數更新（重繪後類別數可能不同）
+    sideRail?.setSummary('categories', `${currentDetail.categories.length} 類`);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
@@ -217,7 +220,8 @@ function setupSideRail() {
         side: document.getElementById('record-side'),
         items: [
             { key: 'handling', label: '處理狀態', target: document.getElementById('handling-panel').closest('section') },
-            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') }
+            { key: 'log', label: '處理歷程', target: document.getElementById('handling-log-card') },
+            { key: 'categories', label: '類型分布', target: document.getElementById('categories-card') }
         ]
     });
 }
