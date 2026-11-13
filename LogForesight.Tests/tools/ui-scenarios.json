@@ -3682,5 +3682,27 @@
         "evalAssert": "const ths = [...document.querySelectorAll('table thead th')].map(th => th.textContent.trim());\nconst idx = ths.indexOf('未執行');\nif (idx < 0) return '找不到「未執行」欄';\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const tr of document.querySelectorAll('table tbody tr')) {\n  const cell = tr.children[idx];\n  const num = cell && cell.querySelector('.lf-status-count');\n  if (!num) continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '沒有可量的「未執行」數字';"
       }
     ]
+  },
+  {
+    "name": "版面-儀表板-表格短值欄收緊",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#dashboard-issues table"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null;\nconst rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nconst contentWidth = td => { const r = document.createRange(); r.selectNodeContents(td); return r.getBoundingClientRect().width; };\nfor (const id of ['dashboard-issues', 'dashboard-group-risk']) {\n  const t = document.querySelector('#' + id + ' table');\n  if (!t) continue;\n  const ths = [...t.querySelectorAll(':scope > thead > tr > th')];\n  const rows = [...t.querySelectorAll(':scope > tbody > tr:not(.lf-row-detail)')];\n  for (let i = 1; i < ths.length; i++) {\n    const widest = Math.max(contentWidth(ths[i]), ...rows.map(tr => tr.children[i] ? contentWidth(tr.children[i]) : 0));\n    const col = ths[i].getBoundingClientRect().width;\n    if (col - widest > 2 * rem + 1) return id + ' 的「' + ths[i].textContent.trim() + '」欄寬 ' + Math.round(col) + 'px，最寬內容只有 ' + Math.round(widest) + 'px';\n  }\n}\nreturn null;"
+      }
+    ]
   }
 ]

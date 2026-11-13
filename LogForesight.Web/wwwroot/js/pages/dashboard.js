@@ -538,19 +538,21 @@ function renderTopIssues(data) {
     renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount, data.mutedIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
+        // 欄寬規則（DESIGN-SYSTEM §8.4a）：「問題」是吸收欄，其餘短值欄依內容收緊——
+        // 均攤時 2K 下欄與欄之間空 150～250px
         columns: [
             { title: '問題', className: 'lf-minw-lg', render: i => issueNameCell(i) },
-            { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
-            { title: '嚴重度', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
-            { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
-            { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
+            { title: '分數', className: 'text-end lf-col-nowrap', render: i => issuePriorityScoreCell(i) },
+            { title: '嚴重度', className: 'lf-col-nowrap', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
+            { title: '主機數', className: 'text-end lf-col-nowrap', render: i => issueHostCell(i) },
+            { title: '未處理', className: 'text-end lf-col-nowrap', render: i => issueOpenCell(i) },
             // 機房級基準線（回饋十九輪批次G1）：與問題查詢「依問題」共用 format.js 的同一個 cell
-            { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
-            { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
-            { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
-            { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i, { layout: 'row' }) },
-            { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
-            { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
+            { title: 'vs 基準', className: 'lf-col-nowrap', render: i => issueBaselineCell(i) },
+            { title: '本期首見', className: 'lf-col-nowrap', render: i => issueSpanCell(i) },
+            { title: '首見（機房）', className: 'lf-col-nowrap', render: i => issueFleetFirstSeenCell(i) },
+            { title: '出現密度', className: 'text-end lf-col-nowrap', render: i => issueDensityCell(i, { layout: 'row' }) },
+            { title: '變化', className: 'text-end lf-col-nowrap', render: i => issueChangeCell(i) },
+            { title: '總次數', className: 'text-end lf-col-nowrap', render: i => formatNumber(i.totalCount) }
         ],
         rows: data.topIssues,
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
@@ -810,11 +812,12 @@ function renderGroupRisk(data, user) {
     const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
+            // 群組是吸收欄，數字欄依內容收緊（DESIGN-SYSTEM §8.4a）
             { title: '群組', className: 'lf-minw-sm', render: g => roleText('lf-text-title', g.groupName) },
-            { title: '主機數', className: 'text-end', render: g => formatNumber(g.hostCount) },
-            { title: '高風險日', className: 'text-end', render: g => formatNumber(g.highRiskDays) },
-            { title: '中風險日', className: 'text-end', render: g => formatNumber(g.mediumRiskDays) },
-            { title: '未處理', className: 'text-end', render: g => formatNumber(g.unhandledCount) }
+            { title: '主機數', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.hostCount) },
+            { title: '高風險日', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.highRiskDays) },
+            { title: '中風險日', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.mediumRiskDays) },
+            { title: '未處理', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.unhandledCount) }
         ],
         rows: data.groupRisk,
         rowHref: g => recordsUrl({ groupIds: g.groupId, riskLevels: '高,中', from: data.from, to: data.to }),
