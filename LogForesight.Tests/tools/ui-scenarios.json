@@ -2665,5 +2665,114 @@
         "evalAssert": "const bad = []; let seen = 0; for (const v of document.querySelectorAll('main .table .lf-text-data')) { if (v.closest('.lf-break-anywhere, .lf-row-detail, pre')) continue; const t = (v.textContent || '').trim(); if (!t || t.length > 20) continue; seen++; const r = document.createRange(); r.selectNodeContents(v); const tops = new Set([...r.getClientRects()].map(x => Math.round(x.top))); if (tops.size > 1) bad.push(t); } if (!seen) return '頁面上沒有表格內的短技術值，斷言沒有對象'; return bad.length ? ('短技術值被折成多行：' + bad.slice(0, 5).join('、')) : null;"
       }
     ]
+  },
+  {
+    "name": "版面-詳情頁滿版-風險日",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      },
+      {
+        "evalAssert": "const bad = [...document.querySelectorAll('.lf-briefing__text, .lf-briefing__brief-text, .lf-issue-cell__explain')].filter(e => e.getBoundingClientRect().width > parseFloat(getComputedStyle(e).fontSize) * 40 + 1); return bad.length ? ('成段文字超過 40em 行寬：' + bad.length + ' 處') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-主機",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-交辦單",
+    "role": "ui-admin",
+    "path": "fixture:work-order.ui-handler",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-處理人",
+    "role": "ui-admin",
+    "path": "fixture:handler.ui-handler",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁滿版-使用者",
+    "role": "ui-admin",
+    "path": "fixture:admin.user.ui-handler-long",
+    "widths": [
+      1920,
+      2560,
+      3840
+    ],
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-設定頁維持限寬",
+    "role": "ui-admin",
+    "path": "/admin/settings",
+    "widths": [
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "main.lf-content--bounded"
+      },
+      {
+        "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap < 100 ? ('設定頁應限寬，右側只空 ' + Math.round(gap) + 'px') : null;"
+      }
+    ]
   }
 ]

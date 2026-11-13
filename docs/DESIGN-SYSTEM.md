@@ -316,8 +316,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 
 - **中斷點**只用 576／768／992／1200／1600，寫法 `min-width: N`、`max-width: N−0.02`。唯一例外 `max-width: 1799.98px`
   是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992（並排模式）與 CSS 同值；1600（預設展開）只在 `side-rail.js` 使用，樣式表沒有對應的 `@media`。卡片內頂層表格容器是尺寸容器（`container-type`），展開列內容依它限制在可視寬度內。
-- `--lf-content-max: 120rem`：詳情頁（風險日、主機、處理人、使用者、交辦單）與表單頁（設定、初始設定）在 View 設
-  `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；清單、儀表板、報表與維護頁滿版。
+- `--lf-content-max: 120rem`：單欄表單頁（設定、初始設定）在 View 設 `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；
+  其餘頁面（清單、儀表板、報表、維護頁與詳情頁）隨視窗滿版。詳情頁是卡片與表格、成段文字另受 `--lf-measure` 限制，滿版不會拉長文字行（`ContentWidthGuardUiTests` 守門）。
 - `--lf-measure: 40em`：成段文字的行寬上限，表格與技術值不套用。
 - 寬螢幕（≥ 1600px）詳情頁側軌預設展開，把多出的寬度用在並排，而不是拉長左欄行寬；使用者在本頁按過收合就照使用者的。
 - 長字串：`body` 全站 `overflow-wrap: break-word`（沒有空白的連續字串放不下時才斷，一般字詞不受影響）；
