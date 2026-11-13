@@ -397,7 +397,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
   `ui-shots.mjs` 被逾時或中斷時會留下無頭 Edge 程序，累積後同樣讓行為案例在約 5 秒處逾時：跑測試前清掉命令列含 `--headless` 的 `msedge`（不要動使用者自己開的瀏覽器）。
   情境步驟 `evalAssert`（函式本體，回傳 null 通過、字串為失敗訊息）用來量六項指標以外的東西：圖示外框是否落在按鈕內、字高下限、欄數、是否需捲動。
-  `hover`（選擇器或 null）以真實滑鼠事件移入，量滑過樣式；`tools/ui-global-asserts.json` 是每個情境都跑的全域斷言（載入後與步驟後各一次，失敗計入 assert 項），`--global`／`--no-global` 切換。
+  `hover`（選擇器或 null）以真實滑鼠事件移入，量滑過樣式；`key`（Enter、Escape、方向鍵、Tab、空白）對目前焦點送真實按鍵，量鍵盤操作；`tools/ui-global-asserts.json` 是每個情境都跑的全域斷言（載入後與步驟後各一次，失敗計入 assert 項），`--global`／`--no-global` 切換。
   修畫面缺陷時先寫會紅的斷言、在未修正的建置上確認它紅，再修——六項量測抓不到「欄位起點不一致」「孤立元素」這類版面關係。
 - **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick|screens] [--height] [--only]`：
   溢出量測（`overflow`）除了比元素方框，也抓「方框在格子內、文字越過格子」——格線欄 `minmax(0, 1fr)` 內不斷行的長值屬於這一型。
