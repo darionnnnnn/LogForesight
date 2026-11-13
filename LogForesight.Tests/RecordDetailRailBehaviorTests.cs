@@ -14,6 +14,7 @@ public sealed class RecordDetailRailBehaviorTests
     }
 
     [NodeTheory]
+    [InlineData("record-detail-rail.behavior.mjs", "statusShortLabelCombinations")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneDropsHiddenSelectionAndNotifies")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneKeepsSelectionWhenAllVisible")]
     [InlineData("record-detail-rail.behavior.mjs", "pruneToZeroSelection")]

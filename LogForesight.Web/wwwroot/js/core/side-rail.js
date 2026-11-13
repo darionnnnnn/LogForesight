@@ -124,12 +124,14 @@ export function createSideRail({ layout, side, items, collapseHost = null }) {
         back?.focus?.();
     }
 
-    function setSummary(key, text) {
+    /**
+     * 直式側軌空間窄：按鈕上顯示短摘要 text，完整文字 fullText（省略時同 text）放 title 供滑鼠停留與輔助科技讀取
+     */
+    function setSummary(key, text, fullText = text) {
         const entry = buttons.get(key);
         if (!entry) return;
         entry.summary.textContent = text ?? '';
-        // 直式側軌空間窄、摘要可能被截斷，完整文字放 title 供滑鼠停留與輔助科技讀取
-        entry.button.setAttribute('title', entry.item.label + (text ? `：${text}` : ''));
+        entry.button.setAttribute('title', entry.item.label + (fullText ? `：${fullText}` : ''));
     }
 
     return {

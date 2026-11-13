@@ -40,11 +40,12 @@ function pageEnv({ rail, hash, wide = true }) {
     // 斷點由側軌自己回答（isRailMode），頁面層不再直接問 matchMedia
     if (rail) rail.isRailMode = () => wide;
     const derivedStatusLabel = h => h.label;
+    const derivedStatusShortLabel = h => h.short ?? h.label;
     const selectedIssueKeys = new Set();
-    const factory = new Function('history', 'location', 'derivedStatusLabel', 'initialRail', 'initialHash', 'selectedIssueKeys',
-        `let sideRail = initialRail; let pendingHandlingHash = initialHash; let railHandlingSummary = '';\n${updateSideRailSrc}\n${expandForSelectionSrc}\n${refreshRailSelectionSummarySrc}\n` +
+    const factory = new Function('history', 'location', 'derivedStatusLabel', 'derivedStatusShortLabel', 'initialRail', 'initialHash', 'selectedIssueKeys',
+        `let sideRail = initialRail; let pendingHandlingHash = initialHash; let railHandlingSummary = ''; let railHandlingShort = '';\n${updateSideRailSrc}\n${expandForSelectionSrc}\n${refreshRailSelectionSummarySrc}\n` +
         'return { updateSideRail, expandSideRailForSelection, refreshRailSelectionSummary, pending: () => pendingHandlingHash };');
-    const env = factory(history, location, derivedStatusLabel, rail, hash === '#handling', selectedIssueKeys);
+    const env = factory(history, location, derivedStatusLabel, derivedStatusShortLabel, rail, hash === '#handling', selectedIssueKeys);
     return { ...env, calls, selectedIssueKeys };
 }
 
@@ -53,7 +54,7 @@ function fakeRail({ userChoice = false, expanded = false } = {}) {
         expands: [], summaries: [],
         userChoice, expanded,
         expand(key, opts) { this.expands.push({ key, opts }); this.expanded = true; },
-        setSummary(key, text) { this.summaries.push({ key, text }); },
+        setSummary(key, text, full = text) { this.summaries.push({ key, text, full }); },
         hasUserChoice() { return this.userChoice; },
         isExpanded() { return this.expanded; }
     };
@@ -73,6 +74,14 @@ function pruneEnv(selected, visibleKeys) {
 }
 
 const cases = {
+    // 側軌短寫法：0 個問題只有狀態；全部結案、部分結案都帶「已結／總數」
+    statusShortLabelCombinations() {
+        const src = extractFunction(handlingPanel, 'export function derivedStatusShortLabel').replace(/^export /, '');
+        const shortLabel = new Function(`${src}\nreturn derivedStatusShortLabel;`)();
+        assert.equal(shortLabel({ derivedStatusText: '未處理', totalIssues: 0, closedIssues: 0 }), '未處理');
+        assert.equal(shortLabel({ derivedStatusText: '已處理', totalIssues: 17, closedIssues: 17 }), '已處理 17/17');
+        assert.equal(shortLabel({ derivedStatusText: null, statusText: '處理中', totalIssues: 17, closedIssues: 3 }), '處理中 3/17');
+    },
     pruneDropsHiddenSelectionAndNotifies() {
         const env = pruneEnv(['a', 'b', 'c'], ['a', 'x']);
         assert.equal(env.prune(), 2);
@@ -137,11 +146,12 @@ const cases = {
     summaryShowsOverdueSuffixAndLogCount() {
         const rail = fakeRail();
         const env = pageEnv({ rail, hash: '', wide: true });
-        env.updateSideRail({ handling: { label: '處理中（1/4 已結案）', isOverdue: true }, logCount: 7 });
+        env.updateSideRail({ handling: { label: '處理中（1/4 已結案）', short: '處理中 1/4', isOverdue: true }, logCount: 7 });
         const handling = rail.summaries.find(s => s.key === 'handling');
         const log = rail.summaries.find(s => s.key === 'log');
-        // 逾期放最前面：側軌窄、摘要會被截斷，逾期不能被截掉
-        assert.equal(handling.text, '逾期・處理中（1/4 已結案）');
+        // 按鈕上是短寫法、逾期放最前面；提示文字是完整寫法
+        assert.equal(handling.text, '逾期・處理中 1/4');
+        assert.equal(handling.full, '逾期・處理中（1/4 已結案）');
         assert(!handling.text.endsWith('・逾期'), handling.text);
         assert.equal(log.text, '7 筆');
         env.updateSideRail({ handling: { label: '已結案', isOverdue: false }, logCount: undefined });
@@ -154,22 +164,27 @@ const cases = {
         const rail = fakeRail();
         const env = pageEnv({ rail, hash: '' });
         env.updateSideRail({ handling: { label: '處理中', isOverdue: true }, logCount: 1 });
-        const lastHandling = () => rail.summaries.filter(s => s.key === 'handling').at(-1).text;
+        const last = () => rail.summaries.filter(s => s.key === 'handling').at(-1);
+        const lastHandling = () => last().text;
         assert.equal(lastHandling(), '逾期・處理中');
+        // 有勾選時按鈕上只放勾選數（直式按鈕放不下兩件事），完整文字在提示
         env.selectedIssueKeys.add('a');
         env.refreshRailSelectionSummary();
-        assert.equal(lastHandling(), '已勾選 1 個・逾期・處理中');
+        assert.equal(lastHandling(), '已勾選 1 個');
+        assert.equal(last().full, '已勾選 1 個・逾期・處理中');
         env.selectedIssueKeys.add('b');
         env.selectedIssueKeys.add('c');
         env.refreshRailSelectionSummary();
-        assert.equal(lastHandling(), '已勾選 3 個・逾期・處理中');
+        assert.equal(lastHandling(), '已勾選 3 個');
         env.selectedIssueKeys.clear();
         env.refreshRailSelectionSummary();
         assert.equal(lastHandling(), '逾期・處理中');
+        assert.equal(last().full, '逾期・處理中');
         // 面板重載（onRefreshed）時若仍有勾選，摘要也要帶勾選數
         env.selectedIssueKeys.add('a');
         env.updateSideRail({ handling: { label: '未處理', isOverdue: false }, logCount: 1 });
-        assert.equal(lastHandling(), '已勾選 1 個・未處理');
+        assert.equal(lastHandling(), '已勾選 1 個');
+        assert.equal(last().full, '已勾選 1 個・未處理');
         // 案件授與沒有側軌：不得拋錯
         pageEnv({ rail: null, hash: '' }).refreshRailSelectionSummary();
     },

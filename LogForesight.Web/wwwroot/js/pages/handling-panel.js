@@ -121,6 +121,12 @@ export function derivedStatusLabel(handling) {
     return handling.totalIssues > 0 ? `${text}（${handling.closedIssues}/${handling.totalIssues} 已結案）` : text;
 }
 
+/** 同上的短寫法（直式側軌放得下）：「未處理 0/17」；完整寫法留給提示文字與展開後的卡片 */
+export function derivedStatusShortLabel(handling) {
+    const text = handling.derivedStatusText ?? handling.statusText;
+    return handling.totalIssues > 0 ? `${text} ${handling.closedIssues}/${handling.totalIssues}` : text;
+}
+
 function render() {
     const panel = document.getElementById('handling-panel');
     const { handling, users, hostId, date, options } = state;

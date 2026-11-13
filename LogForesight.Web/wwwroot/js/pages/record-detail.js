@@ -10,7 +10,7 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings,
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
-import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -231,21 +231,28 @@ function setupSideRail() {
     });
 }
 
-// 處理狀態按鈕的原摘要（不含勾選數）；勾選數量變動時以它為底重組
+// 處理狀態按鈕的原摘要（不含勾選數）：完整寫法給提示文字、短寫法給按鈕；勾選數量變動時以它們為底重組
 let railHandlingSummary = '';
+let railHandlingShort = '';
 
-/** 側軌「處理狀態」摘要：有勾選時前綴「已勾選 N 個・」，讓右欄收合時勾選也有回饋；沒有勾選就是原摘要 */
+/**
+ * 側軌「處理狀態」摘要：直式按鈕只放得下約十個字，按鈕上只顯示一件事——有勾選時是「已勾選 N 個」
+ * （右欄收合時勾選也有回饋），沒有勾選時是短狀態（逾期在最前面）；完整文字一律放提示文字
+ */
 function refreshRailSelectionSummary() {
     if (!sideRail) return;
     const count = selectedIssueKeys.size;
-    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary);
+    const full = count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary;
+    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個` : railHandlingShort, full);
 }
 
 function updateSideRail(panelInfo) {
     if (sideRail && panelInfo) {
         const { handling, logCount } = panelInfo;
         // 逾期放最前面：側軌空間窄、摘要會被截斷，最該先看到的是逾期
-        railHandlingSummary = (handling.isOverdue ? '逾期・' : '') + derivedStatusLabel(handling);
+        const overdue = handling.isOverdue ? '逾期・' : '';
+        railHandlingSummary = overdue + derivedStatusLabel(handling);
+        railHandlingShort = overdue + derivedStatusShortLabel(handling);
         refreshRailSelectionSummary();
         sideRail.setSummary('log', `${logCount ?? 0} 筆`);
     }

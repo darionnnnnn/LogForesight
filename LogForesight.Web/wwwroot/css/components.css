@@ -1516,9 +1516,12 @@ a.lf-badge:hover { text-decoration: underline; }
     margin-top: var(--lf-space-2);
 }
 
+/* 標籤不在字中斷行（「主機負責人」加說明圖示放不進固定 6rem 會折成兩行）：至少 6rem、依內容加寬；
+   容器放不下時整列換行成標籤在上 */
 .lf-handling__row-label {
-    flex: 0 0 6rem;
-    overflow-wrap: anywhere;
+    flex: 0 0 auto;
+    min-width: 6rem;
+    white-space: nowrap;
 }
 
 .lf-handling__row-value {

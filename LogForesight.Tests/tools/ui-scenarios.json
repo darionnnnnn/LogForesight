@@ -3265,5 +3265,43 @@
         "evalAssert": "if (innerWidth < 992) return null;\nconst t = [...document.querySelectorAll('table')].find(x => x.getBoundingClientRect().width > 0 && [...x.querySelectorAll('thead th')].some(th => th.textContent.trim().startsWith('類別')));\nif (!t) return '找不到規則表';\nconst idx = [...t.querySelectorAll('thead th')].findIndex(th => th.textContent.trim().startsWith('類別'));\nconst multi = [...t.querySelectorAll(':scope > tbody > tr')].map(tr => tr.children[idx]).filter(td => td && td.firstElementChild && td.firstElementChild.getClientRects().length > 1 || (td && td.firstElementChild && td.firstElementChild.getBoundingClientRect().height > (parseFloat(getComputedStyle(td.firstElementChild).lineHeight) || 20) * 1.5));\nreturn multi.length ? ('類別折行：' + multi[0].textContent.trim()) : null;"
       }
     ]
+  },
+  {
+    "name": "版面-風險日詳情-側軌摘要不截斷",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "evalAssert": "const btns = [...document.querySelectorAll('.lf-side-rail__btn')].filter(b => b.getBoundingClientRect().width > 0);\nif (!btns.length) return null;\nfor (const b of btns) {\n  const label = b.querySelector('.lf-side-rail__label').textContent.trim();\n  const s = b.querySelector('.lf-side-rail__summary');\n  if (s.scrollHeight > s.clientHeight + 1 || s.scrollWidth > s.clientWidth + 1) return label + ' 的摘要被截斷：' + s.textContent;\n  const title = b.getAttribute('title') || '';\n  if (!title.startsWith(label + '：')) return label + ' 的提示文字沒有完整摘要：' + title;\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-風險日詳情-人員列標籤與膠囊單行",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "steps": [
+      {
+        "waitFor": "#handling-panel .lf-handling__chips"
+      },
+      {
+        "clickIf": ".lf-detail-layout:not(.lf-detail-layout--side-open) .lf-side-rail__btn"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const labels = [...document.querySelectorAll('.lf-handling__row-label')].filter(l => l.getBoundingClientRect().width > 0);\nif (!labels.length) return '找不到人員列標籤（處理狀態卡沒有展開）';\nfor (const l of labels) {\n  const lh = parseFloat(getComputedStyle(l).lineHeight) || 20;\n  const h = l.getBoundingClientRect().height;\n  if (h > lh * 1.5) return '標籤折行：' + l.textContent.trim() + '（高 ' + Math.round(h) + 'px）';\n}\nreturn null;"
+      },
+      {
+        "evalAssert": "const chips = [...document.querySelectorAll('.lf-handling__chips .lf-chip')].filter(c => c.getBoundingClientRect().width > 0);\nif (!chips.length) return '找不到處理狀態膠囊（處理狀態卡沒有展開）';\nfor (const c of chips) {\n  const r = document.createRange(); r.selectNodeContents(c);\n  const lh = parseFloat(getComputedStyle(c).lineHeight) || 20;\n  const tops = [...r.getClientRects()].filter(x => x.width > 1 && x.height > 1).map(x => x.top);\n  if (tops.length && Math.max(...tops) - Math.min(...tops) > lh * 0.5) return '膠囊文字折行：' + c.textContent.trim();\n}\nreturn null;"
+      }
+    ]
   }
 ]
