@@ -3303,5 +3303,320 @@
         "evalAssert": "const chips = [...document.querySelectorAll('.lf-handling__chips .lf-chip')].filter(c => c.getBoundingClientRect().width > 0);\nif (!chips.length) return '找不到處理狀態膠囊（處理狀態卡沒有展開）';\nfor (const c of chips) {\n  const r = document.createRange(); r.selectNodeContents(c);\n  const lh = parseFloat(getComputedStyle(c).lineHeight) || 20;\n  const tops = [...r.getClientRects()].filter(x => x.width > 1 && x.height > 1).map(x => x.top);\n  if (tops.length && Math.max(...tops) - Math.min(...tops) > lh * 0.5) return '膠囊文字折行：' + c.textContent.trim();\n}\nreturn null;"
       }
     ]
+  },
+  {
+    "name": "版面-儀表板-揭露鈕在卡片標頭",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-category-grid"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) return null;\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
+      },
+      {
+        "clickIf": "#dashboard-categories ~ * .lf-reveal-toggle, .lf-card:has(#dashboard-categories) .lf-reveal-toggle"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const body = document.getElementById('dashboard-categories');\nconst card = body.closest('.lf-card');\nconst header = card.querySelector(':scope > .lf-card__header');\nconst bar = card.querySelector('.lf-reveal-bar');\nif (!bar || bar.hidden) return null;\nif (body.contains(bar)) return '揭露鈕單獨放在卡片內文下方，沒有在標頭列';\nconst h = header.getBoundingClientRect(), b = bar.getBoundingClientRect();\nreturn (b.top >= h.top - 1 && b.bottom <= h.bottom + 1 && b.right <= h.right + 1) ? null : '揭露鈕外框不在卡片標頭列內';"
+      }
+    ]
+  },
+  {
+    "name": "版面-表格捲動提示不占版面-問題查詢",
+    "role": "ui-admin",
+    "path": "/records",
+    "widths": [
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-table-wrap table tbody tr"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const shadow = getComputedStyle(w).boxShadow;\n  if (scrollable && !sticky && (shadow === 'none' || !shadow)) return '可捲動的表格右緣沒有陰影線索';\n  if (!scrollable && shadow !== 'none' && shadow) return '不可捲動的表格不該有捲動陰影：' + shadow;\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-表格捲動提示不占版面-主機詳情",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "widths": [
+      375,
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#host-issues tbody tr"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "evalAssert": "const wraps = [...document.querySelectorAll('.lf-table-wrap')].filter(w => w.getBoundingClientRect().width > 0);\nif (!wraps.length) return '找不到表格';\nfor (const w of wraps) {\n  const t = w.querySelector(':scope > table');\n  if (!t) continue;\n  if (w.clientHeight - t.offsetHeight > 1) return '表格容器比表格高 ' + (w.clientHeight - t.offsetHeight) + 'px（捲動提示占了版面）';\n  const scrollable = w.scrollWidth - w.clientWidth - w.scrollLeft > 1;\n  const sticky = w.classList.contains('lf-table-wrap--sticky-action');\n  const shadow = getComputedStyle(w).boxShadow;\n  if (scrollable && !sticky && (shadow === 'none' || !shadow)) return '可捲動的表格右緣沒有陰影線索';\n  if (!scrollable && shadow !== 'none' && shadow) return '不可捲動的表格不該有捲動陰影：' + shadow;\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-排程作業-狀態卡按鈕跟在內容後",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-run-status-grid > .lf-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nconst cards = [...document.querySelectorAll('.lf-run-status-grid > .lf-card')];\nif (cards.length !== 3) return '狀態卡應有 3 張，實際 ' + cards.length;\nconst heights = cards.map(c => Math.round(c.getBoundingClientRect().height));\nif (Math.max(...heights) - Math.min(...heights) > 1) return '三張卡不等高：' + heights.join('/');\nfor (const c of cards) {\n  const actions = c.querySelector('.lf-run-actions');\n  if (!actions || actions.getBoundingClientRect().height === 0) continue;\n  let prev = actions.previousElementSibling;\n  while (prev && prev.getBoundingClientRect().height === 0) prev = prev.previousElementSibling;\n  if (!prev) continue;\n  const gap = actions.getBoundingClientRect().top - prev.getBoundingClientRect().bottom;\n  if (gap > 1.5 * rem) return c.querySelector('.lf-card__title').textContent.trim() + ' 卡的內容與按鈕之間空 ' + Math.round(gap) + 'px';\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-排程作業-鍵值列值緊跟標籤",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      375,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-run-status-grid .lf-kv"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);\nconst rows = [...document.querySelectorAll('.lf-run-status-grid .lf-kv')].filter(r => r.getBoundingClientRect().height > 0);\nif (!rows.length) return '找不到鍵值列';\nfor (const r of rows) {\n  const label = r.querySelector('.lf-kv__label'), value = r.querySelector('.lf-kv__value');\n  if (!label || !value || !value.textContent.trim()) continue;\n  const range = document.createRange(); range.selectNodeContents(value);\n  const rects = [...range.getClientRects()].filter(x => x.width > 0.5);\n  if (!rects.length) continue;\n  const first = Math.min(...rects.map(x => x.left));\n  const gap = first - label.getBoundingClientRect().right;\n  if (gap > 2 * rem) return label.textContent.trim() + ' 的值離標籤 ' + Math.round(gap) + 'px';\n  const lines = new Map();\n  for (const x of rects) { const k = Math.round(x.top); lines.set(k, (lines.get(k) || 0) + x.width); }\n  if (lines.size > 1) {\n    const lastTop = Math.max(...lines.keys());\n    const fs = parseFloat(getComputedStyle(value).fontSize);\n    if (lines.get(lastTop) < fs * 1.5) return label.textContent.trim() + ' 的值最後一行只剩一個字：' + value.textContent.trim().slice(-6);\n  }\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁-KPI單組填滿-使用者",
+    "role": "ui-admin",
+    "path": "fixture:admin.user.ui-handler-long",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-kpi-grid"
+      },
+      {
+        "evalAssert": "const grids = [...document.querySelectorAll('.lf-kpi-grid')].filter(g => g.getBoundingClientRect().width > 0);\nif (!grids.length) return '找不到 KPI';\nfor (const g of grids) {\n  const cards = [...g.children].filter(c => !c.hidden && c.getBoundingClientRect().width > 0);\n  const right = Math.max(...cards.map(c => c.getBoundingClientRect().right));\n  const gap = g.getBoundingClientRect().right - right;\n  if (gap > 1) return 'KPI 卡右側空出 ' + Math.round(gap) + 'px（應填滿整列）';\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-詳情頁-KPI單組填滿-處理人",
+    "role": "ui-admin",
+    "path": "fixture:handler.ui-handler",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-kpi-grid"
+      },
+      {
+        "evalAssert": "const grids = [...document.querySelectorAll('.lf-kpi-grid')].filter(g => g.getBoundingClientRect().width > 0);\nif (!grids.length) return '找不到 KPI';\nfor (const g of grids) {\n  const cards = [...g.children].filter(c => !c.hidden && c.getBoundingClientRect().width > 0);\n  const right = Math.max(...cards.map(c => c.getBoundingClientRect().right));\n  const gap = g.getBoundingClientRect().right - right;\n  if (gap > 1) return 'KPI 卡右側空出 ' + Math.round(gap) + 'px（應填滿整列）';\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-主機詳情-月曆隨寬度放大",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "widths": [
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": ".lf-calendar__month"
+      },
+      {
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '90 天'); if (!b) return '找不到 90 天切換'; b.click(); return null;"
+      },
+      {
+        "wait": 1200
+      },
+      {
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '14 天'); b.click(); return null;"
+      },
+      {
+        "wait": 1200
+      },
+      {
+        "evalAssert": "const months = [...document.querySelectorAll('.lf-calendar__month')];\nif (!months.length) return '找不到月曆';\nconst w = Math.round(months[0].getBoundingClientRect().width);\nconst want = innerWidth >= 2400 ? 315 : innerWidth >= 1900 ? 262 : innerWidth < 1600 ? 210 : 0;\nif (innerWidth < 1600 ? Math.abs(w - 210) > 1 : w < want - 1 || w > 316) return '月份寬 ' + w + 'px，預期 ' + (innerWidth < 1600 ? '210' : ('≥ ' + want + ' 且 ≤ 315')) + 'px';\nconst card = months[0].closest('.lf-card').getBoundingClientRect();\nconst out = months.filter(m => m.getBoundingClientRect().right > card.right + 1);\nreturn out.length ? '月份超出卡片右緣' : null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-規則維護",
+    "role": "ui-admin",
+    "path": "/admin/rules",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-問題負責與靜音",
+    "role": "ui-admin",
+    "path": "/admin/issue-owners",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-權限異動檢核",
+    "role": "ui-admin",
+    "path": "/permission-changes",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-資料匯入",
+    "role": "ui-admin",
+    "path": "/admin/imports",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-NetIQ維護",
+    "role": "ui-admin",
+    "path": "/admin/netiq",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-沒有孤立元素-主機",
+    "role": "ui-admin",
+    "path": "/admin/hosts",
+    "widths": [
+      375,
+      1280,
+      1920
+    ],
+    "steps": [
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst sub = document.querySelector('.lf-page-header__subtitle');\nif (sub && !sub.textContent.trim()) return '頁首只有說明圖示、沒有副標文字';\nconst blocks = [...document.querySelectorAll('main > *, main [data-panel] > *')]\n  .filter(b => vis(b) && !b.matches('.modal, .nav, #page-header, script, [data-panel]'));\nfor (const b of blocks) {\n  if (!b.matches('.lf-toolbar, .lf-card')) continue;\n  const controls = [...b.querySelectorAll('button, a[href], input, select, textarea')].filter(c => vis(c) && !c.matches('.lf-help'));\n  const structural = b.querySelector('table, .lf-card__title, .lf-empty, canvas, .lf-skeleton, form, details');\n  if (!structural && controls.length === 1) return '只裝一個控制項的' + (b.matches('.lf-card') ? '卡片' : '工具列') + '：' + controls[0].textContent.trim();\n  if (!structural && controls.length === 0 && b.matches('.lf-card')) return '只裝一段文字的卡片：' + b.textContent.trim().slice(0, 20);\n}\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-儀表板-頂部列窄螢幕換行",
+    "role": "ui-admin",
+    "path": "/",
+    "widths": [
+      375,
+      768,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "main [data-range]"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const row = document.querySelector('main [data-range]').closest('.d-flex');\nconst kids = [...row.children].filter(k => k.getBoundingClientRect().width > 0);\nconst rects = kids.map(k => k.getBoundingClientRect());\nfor (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {\n  const a = rects[i], b = rects[j];\n  if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) return '頂部元素互相重疊';\n}\nfor (const k of kids) {\n  if (k.matches('.btn-group')) continue;\n  const lh = parseFloat(getComputedStyle(k).lineHeight) || 20;\n  if (k.getBoundingClientRect().height > lh * 1.5) return '頂部文字被擠成多行：' + k.textContent.trim().slice(0, 16);\n}\nreturn null;"
+      }
+    ]
   }
 ]

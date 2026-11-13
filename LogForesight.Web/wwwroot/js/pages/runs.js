@@ -1810,7 +1810,14 @@ function renderPrtgSyncSummary(status) {
     }
 
     const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
-    el.textContent = `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　${prtgHostMapSummary(status)}`;
+    // 時間與對應數各成一段：窄卡片換行時整段換到下一行，不會把「台」單獨擠到第二行
+    const when = document.createElement('span');
+    when.className = 'lf-kv__part';
+    when.textContent = `${formatDateTime(status.lastCompletedAt)}${sourceLabel}`;
+    const mapped = document.createElement('span');
+    mapped.className = 'lf-kv__part';
+    mapped.textContent = prtgHostMapSummary(status);
+    el.replaceChildren(when, mapped);
 }
 
 async function refreshPrtgSyncStatus() {

@@ -491,9 +491,10 @@ function renderCategories(data) {
     }
 
     container.replaceChildren(grid);
+    // 揭露鈕放在「風險類型」卡片標頭右側：放在格線下方時它會獨自占一列、孤立在右下角
     mountReveal('categories', {
         grids: [grid],
-        host: container,
+        host: container.closest('.lf-card').querySelector(':scope > .lf-card__header'),
         noun: '類',
         isAlert: link => link.querySelector('.lf-card--critical') !== null
     });

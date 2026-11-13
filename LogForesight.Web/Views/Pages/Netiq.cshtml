@@ -9,18 +9,13 @@
 </ul>
 
 <div data-panel="config">
-    <div class="lf-toolbar">
-        <div class="lf-toolbar__row">
-            <div class="lf-toolbar__spacer"></div>
-            <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
-        </div>
-    </div>
 
     <div class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">
                 Sentinel <span class="lf-text-meta" id="sentinel-count"></span>
             </h2>
+            <button type="button" class="btn btn-sm btn-primary ms-auto" id="btn-new-sentinel">新增 Sentinel</button>
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                   data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請切到本頁的「匯入」分頁。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>

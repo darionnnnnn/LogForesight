@@ -418,6 +418,12 @@
     max-width: 100%;
 }
 
+/* 寬螢幕放大月份格（日格是 aspect-ratio 1:1，隨月份寬度等比放大）：一列放五個月的寬度，
+   下限維持 210px、上限 1.5 倍（315px）——再大日格就比內文大太多；到上限後右側留白（30 天只有兩個月） */
+@media (min-width: 1600px) {
+    .lf-calendar__month { width: max(210px, min(315px, calc((100% - 4 * var(--lf-space-4)) / 5))); }
+}
+
 .lf-calendar__title {
     font-size: var(--lf-font-size-sm);
     font-weight: 600;
@@ -925,40 +931,23 @@ a.lf-calendar__cell:focus-visible {
     align-items: stretch;
 }
 
-/* 卡片撐滿格線高度後，內容要能把按鈕列推到底，否則三張卡的按鈕會各自停在不同高度。 */
-.lf-run-status-grid > .lf-card {
-    display: flex;
-    flex-direction: column;
-}
-
-.lf-run-status-grid > .lf-card > .lf-card__body {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-}
-
-/* 按鈕列貼底：這一列是三張卡可見內容的最後一個元素（PRTG 卡後面的回填輸出預設收合，不占高度） */
+/* 按鈕列跟在內容後面（動作靠近它作用的資訊）：三張卡仍等高，空白留在卡片最下方，
+   不夾在內容與按鈕之間——寬螢幕上貼卡底會在取數卡中段空出一大段 */
 .lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
-    margin-top: auto;
-    padding-top: var(--lf-space-2);
+    margin-top: var(--lf-space-2);
 }
 
 @media (max-width: 991.98px) {
     .lf-run-status-grid {
         grid-template-columns: 1fr;
     }
-
-    /* 疊直時每張卡各自為政，不必再把按鈕推到底 */
-    .lf-run-status-grid > .lf-card > .lf-card__body > .lf-run-actions {
-        margin-top: var(--lf-space-2);
-    }
 }
 
-/* 標籤／值成對顯示：取代舊版手刻的 .small.text-muted + .fw-semibold 兩層 div */
+/* 標籤／值成對顯示：標籤固定寬、值緊跟其後靠左（兩端對齊在寬螢幕上會讓短值離標籤好幾百 px）；
+   長值自然換行，text-wrap: pretty 避免最後一行只剩一個字 */
 .lf-kv {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
     gap: var(--lf-space-2);
     padding: 0.15rem 0;
 }
@@ -966,13 +955,23 @@ a.lf-calendar__cell:focus-visible {
 .lf-kv__label {
     color: var(--lf-text-muted);
     font-size: var(--lf-font-size-sm);
-    flex: 0 0 auto;
+    flex: 0 0 6.5rem;
 }
 
 .lf-kv__value {
     font-weight: 600;
-    text-align: right;
-    overflow-wrap: anywhere;
+    min-width: 0;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+}
+
+/* 一個值由兩段組成時（時間＋對應數）：每段盡量整段換行，不在段中間斷開 */
+.lf-kv__part {
+    display: inline-block;
+}
+
+.lf-kv__part:not(:last-child) {
+    margin-right: .75em;
 }
 
 /* 進度軌區塊預留高度：狀態卡每 3 秒重繪一次，進度條出現/消失時版面不得跳動 */

@@ -44,15 +44,6 @@
     </div>
 </div>
 
-@* 全選符合篩選（體檢 X3）：常駐而非隨選取狀態出現——它是**開始**批次操作的入口，
-   放進「只有選了東西才顯示」的工具列就永遠按不到 *@
-<div class="lf-toolbar mb-3">
-    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
-        全選符合目前篩選的主機
-    </button>
-    <span class="lf-text-meta">已併入其他主機的列不會被選到。</span>
-</div>
-
 @* 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）：勾選跨頁／篩選保留，這條列只在有勾選時出現 *@
 <div class="lf-toolbar mb-3 d-none" id="host-selection-bar">
     <span class="lf-text-title" id="host-selection-count"></span>
@@ -66,6 +57,14 @@
 <div class="lf-card">
     <div class="lf-card__header">
         <h2 class="lf-card__title">主機 <span class="lf-text-meta" id="host-count"></span></h2>
+        @* 全選符合篩選（體檢 X3）：常駐在清單卡標頭而非隨選取狀態出現——它是**開始**批次操作的入口，
+           放進「只有選了東西才顯示」的工具列就永遠按不到 *@
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="lf-text-meta">已併入其他主機的列不會被選到</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
+                全選符合目前篩選的主機
+            </button>
+        </div>
     </div>
     <div class="lf-card__body p-0" id="host-list"></div>
 </div>
