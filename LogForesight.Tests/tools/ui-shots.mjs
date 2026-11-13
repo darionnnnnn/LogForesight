@@ -39,6 +39,11 @@
 //
 // 任意量測：
 //   { evalAssert: "函式本體" }                       在頁面執行，回傳 null 通過、回傳字串即為失敗訊息（例：圖示外框落在按鈕內、字高下限）
+//   { hover: "選擇器" }                              真實滑鼠移入該元素（:hover 會成立）；{ hover: null } 移到視窗左上角離開所有元素
+//
+// 全域斷言（每個情境都跑）：tools/ui-global-asserts.json（[{ name, body }]，body 同 evalAssert 的函式本體），
+//   在頁面載入完成後與情境步驟跑完後各執行一次，失敗計入 assert 項（不另增量測項）。
+//   --global <檔案> 改用別的清單；--no-global 不跑。
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -57,6 +62,8 @@ const fixtureScenarios = args.fixture
     : [];
 // 情境檔的 path 可寫成 "fixture:<資料集情境鍵>"，執行時換成資料集裡的實際網址（日期相對今天，不寫死在情境檔）
 const fixturePaths = new Map(fixtureScenarios.map(s => [s.name, s.path]));
+const globalAsserts = args['no-global'] ? []
+    : JSON.parse(readFileSync(args.global || new URL('./ui-global-asserts.json', import.meta.url), 'utf8'));
 const scenarios = [...JSON.parse(readFileSync(args.scenarios || new URL('./ui-scenarios.json', import.meta.url), 'utf8')), ...fixtureScenarios]
     .filter(s => !args.only || s.name.includes(args.only))
     .filter(s => !s.path.startsWith('fixture:') || fixturePaths.has(s.path.slice(8)))
@@ -361,6 +368,15 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
                 const msg = await evaluate(browser, `(${assertInPage.toString()})(${JSON.stringify(spec)})`);
                 if (msg) failures.push(`${width}px：${msg}`);
             }
+        } else if (step.hover !== undefined) {
+            // 真實滑鼠移入（CDP Input 事件），:hover 才會成立；hover: null 把滑鼠移到視窗左上角（離開所有元素）
+            let point = { x: 0, y: 0 };
+            if (step.hover !== null) {
+                point = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(step.hover)}); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+                if (!point) { failures.push(`找不到可移入的元素：${step.hover}`); continue; }
+            }
+            await browser.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+            await sleep(250);   // 等滑過的轉場跑完（prefers-reduced-motion 下轉場仍可能有短暫時間）
         } else if (step.evalAssert) {
             // 任意量測：一段函式本體，回傳 null／空字串＝通過，回傳字串＝失敗訊息（例：圖示外框是否落在按鈕內、字高下限）
             const msg = await evaluate(browser, `(() => { ${step.evalAssert} })()`);
@@ -414,6 +430,16 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
     return failures;
 }
 
+/** 全域斷言：清單裡每一條在目前頁面執行一次；回傳字串就是失敗，訊息帶斷言名稱與時機（載入後／步驟後） */
+async function runGlobalAsserts(browser, width, when) {
+    const failures = [];
+    for (const rule of globalAsserts) {
+        const msg = await evaluate(browser, `(() => { ${rule.body} })()`);
+        if (msg !== null && msg !== '' && msg !== undefined) failures.push(`${width}px［全域：${rule.name}／${when}］${msg}`);
+    }
+    return failures;
+}
+
 // ── 主流程 ───────────────────────────────────────────────────────────────
 
 async function login(browser, account, inflight) {
@@ -463,7 +489,9 @@ async function runScenario(browser, scenario, cell, state) {
         const patchScripts = [];
         let assertFailures;
         try {
-            assertFailures = await runSteps(browser, scenario.steps, state.inflight, width, patchScripts);
+            const beforeSteps = await runGlobalAsserts(browser, width, '載入後');
+            assertFailures = [...beforeSteps, ...await runSteps(browser, scenario.steps, state.inflight, width, patchScripts)];
+            if (scenario.steps?.length) assertFailures.push(...await runGlobalAsserts(browser, width, '步驟後'));
         } finally {
             // 登記在新文件的 fetch 覆蓋只屬於這個情境，之後的情境不能沿用
             for (const identifier of patchScripts) await browser.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => { });
