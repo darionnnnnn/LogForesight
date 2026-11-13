@@ -68,10 +68,14 @@ public class RunsPageUiTests
 
         Assert.Contains("recheck: statusMeta('空資料待複查'", js);
         // 總表欄位要把今日待補摘要與執行中旗標接進共用的執行時間格（行為測試只驗 renderDayTimingCell 本身）
-        Assert.Contains("renderDayTimingCell(s.timing, { pendingText: s.pendingSummary, inProgress: s.inProgress })", js);
+        // 第 73 輪 F：同一格另帶處理日與補跑行
+        Assert.Contains("renderDayTimingCell(s.timing, { runDate: s.runDate, pendingText: s.pendingSummary, inProgress: s.inProgress, catchUp: s.catchUpStartedAt, catchUpMore: s.catchUpMore })", js);
         Assert.Contains("render: s => notRunCell(s)", js);
         Assert.Contains("recheckCount", js);
-        Assert.Contains("renderDayTimingCell(s.timing, { pendingText: s.pendingSummary", js);
+        // 列是資料日、執行日只在執行時間欄
+        Assert.Contains("{ title: '資料日', className: 'text-nowrap', render: dataDateCell }", js);
+        Assert.Contains("{ title: '執行日與時間',", js);
+        Assert.DoesNotContain("'今日（執行中）'", js);
     }
 
     [Fact]
@@ -183,7 +187,9 @@ public class RunsPageUiTests
         // 今日的執行紀錄使用 List API；每日彙總今天有趟時多一列，畫面講明「尚未處理」不是漏跑。
         Assert.Contains("api.get(`/api/runs/list?days=${currentDays}`)", js);
         var cshtml = ReadRunsCshtml();
-        Assert.Contains("今天有執行時最上方多一列「今日」", cshtml);
+        Assert.Contains("每列是一個資料日（事件發生的那一天）", cshtml);
+        Assert.Contains("標「今日處理」", cshtml);
+        Assert.DoesNotContain("兩者不是同一天的資料", cshtml);
         Assert.Contains("「尚未處理」不是漏跑", cshtml);
         // 狀態卡講得出這趟到幾點停、為什麼又跑一趟；執行紀錄列講得出還留著什麼
         Assert.Contains("本趟到", js);

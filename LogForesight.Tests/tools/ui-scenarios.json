@@ -2976,5 +2976,25 @@
         "evalAssert": "const items = [...document.querySelectorAll('.lf-briefing__detail > .lf-briefing__item')]; if (items.length !== 1) return '資料集應只剩狀況一段，實際 ' + items.length; const grid = document.querySelector('.lf-briefing__detail').getBoundingClientRect(); const r = items[0].getBoundingClientRect(); if (Math.abs(r.left - grid.left) > 1) return '只有一段時應在左欄'; if (r.width > grid.width * 0.6) return '只有一段時應只佔左欄'; const lead = document.querySelector('.lf-briefing__lead'); if (lead && lead.children.length === 1 && Math.abs(lead.children[0].getBoundingClientRect().width - lead.getBoundingClientRect().width) > 1) return '上排只有一段時應佔滿'; return null;"
       }
     ]
+  },
+  {
+    "name": "版面-排程作業-執行總表以資料日為列",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#run-summary tbody tr"
+      },
+      {
+        "evalAssert": "const heads = [...document.querySelectorAll('#run-summary thead th')].map(th => th.textContent.trim()).filter(Boolean); if (heads[0] !== '資料日' || heads[1] !== '執行日與時間') return '表頭應為資料日、執行日與時間：' + heads.slice(0, 3).join('｜'); const rows = [...document.querySelectorAll('#run-summary tbody tr')].filter(tr => !tr.classList.contains('lf-row-detail')); if (!rows.length) return '總表沒有任何列'; const pad = n => String(n).padStart(2, '0'); const fmt = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); const bad = []; for (const tr of rows) { const cells = [...tr.children].filter(td => !td.classList.contains('lf-row-toggle')); const dateCell = tr.querySelector('td:nth-child(2)') ; const text = tr.innerText; const m = /(\\d{4}-\\d{2}-\\d{2})/.exec(text); if (!m) { bad.push('列沒有資料日'); continue; } const data = new Date(m[1] + 'T00:00:00'); const run = new Date(data); run.setDate(run.getDate() + 1); const md = fmt(run).slice(5); if (!text.includes(md + '　')) bad.push(m[1] + ' 的執行時間應以處理日 ' + md + ' 開頭'); if (text.includes('今日處理')) { const y = new Date(); y.setDate(y.getDate() - 1); if (m[1] !== fmt(y)) bad.push('今日處理那一列的資料日應為昨天'); } } return bad.length ? bad.slice(0, 3).join('；') : null;"
+      }
+    ]
   }
 ]

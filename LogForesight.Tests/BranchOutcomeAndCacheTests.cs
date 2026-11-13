@@ -179,7 +179,8 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var service = CreateService();
         var summaries = service.GetDaySummaries(1, page: 1, pageSize: 30);
 
-        var summary = Assert.Single(summaries, s => s.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
+        // 今天沒有趟時最新一列是前天的資料（第 73 輪 F）
+        var summary = Assert.Single(summaries, s => s.Date == DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"));
         Assert.Null(summary.PrtgOutcome);
     }
 
@@ -212,9 +213,12 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var summaryPage = Assert.IsType<ApiResponse<RunDaySummaryPageDto>>(controller.Summary(days: 1, page: 1, pageSize: 1)).Data!;
         Assert.Equal(1, summaryPage.TotalDays);
         Assert.Equal(2, summaryPage.Items.Count);
-        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), summaryPage.Items[0].Date);
+        // 每列是資料日、RunDate 是處理日（第 73 輪 F）
+        Assert.Equal(DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"), summaryPage.Items[0].Date);
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), summaryPage.Items[0].RunDate);
         Assert.False(summaryPage.Items[0].IsToday);
-        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), summaryPage.Items[1].Date);
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), summaryPage.Items[1].Date);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), summaryPage.Items[1].RunDate);
         Assert.True(summaryPage.Items[1].IsToday);
     }
 
@@ -247,12 +251,11 @@ public class BranchOutcomeAndCacheTests : IDisposable
         // 查最近 3 天：day1, day2, day3
         var summaries = service.GetDaySummaries(3, page: 1, pageSize: 30);
 
-        var summaryDay1 = Assert.Single(summaries, s => s.Date == day1.ToString("yyyy-MM-dd"));
         var summaryDay2 = Assert.Single(summaries, s => s.Date == day2.ToString("yyyy-MM-dd"));
         var summaryDay3 = Assert.Single(summaries, s => s.Date == day3.ToString("yyyy-MM-dd"));
 
-        // 該趟開始日 (day1) 那一列不顯示它（PrtgDays 不含 day1 且非 null，不得落到舊規則）
-        Assert.Null(summaryDay1.PrtgOutcome);
+        // 列是資料日：day1 的資料由今天處理，今天沒有趟就沒有這一列（第 73 輪 F）
+        Assert.DoesNotContain(summaries, s => s.Date == day1.ToString("yyyy-MM-dd"));
         // day2 與 day3 兩列各自顯示該日 Outcome
         Assert.Equal(BatchRun.PrtgOutcomeSuccess, summaryDay2.PrtgOutcome);
         Assert.Equal(BatchRun.PrtgOutcomePartial, summaryDay3.PrtgOutcome);
@@ -281,13 +284,13 @@ public class BranchOutcomeAndCacheTests : IDisposable
         var service = CreateService();
         var summaries = service.GetDaySummaries(2, page: 1, pageSize: 30);
 
-        var summaryDay1 = Assert.Single(summaries, s => s.Date == day1.ToString("yyyy-MM-dd"));
         var summaryDay2 = Assert.Single(summaries, s => s.Date == day2.ToString("yyyy-MM-dd"));
+        var summaryDay3 = Assert.Single(summaries, s => s.Date == today.AddDays(-3).ToString("yyyy-MM-dd"));
 
-        // 開始日前一天 (day2) 對應到該執行的 PrtgOutcome
+        // 開始日前一天 (day2) 這個資料日對應到該執行的 PrtgOutcome
         Assert.Equal(BatchRun.PrtgOutcomeSuccess, summaryDay2.PrtgOutcome);
-        // 開始日 (day1) 本身不對應到該執行
-        Assert.Null(summaryDay1.PrtgOutcome);
+        // 再前一天不對應到該執行（舊規則只認「開始日＝資料日隔天」）
+        Assert.Null(summaryDay3.PrtgOutcome);
     }
 
     [Fact]

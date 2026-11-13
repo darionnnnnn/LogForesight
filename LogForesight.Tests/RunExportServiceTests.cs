@@ -185,7 +185,14 @@ public class RunExportServiceTests
         {
             var rows = root.G("dailyHealth").EnumerateArray().ToList();
             Assert.True(rows[^1].G("isToday").GetBoolean());
-            Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), rows[^1].G("date").GetString());
+            // 列是資料日：今天處理的那一列資料日是昨天，PRTG 是昨天這一天的結果（第 73 輪 F）
+            Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), rows[^1].G("date").GetString());
+            Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), rows[^1].G("runDate").GetString());
+            Assert.Equal(BatchRun.PrtgOutcomePartial, rows[^1].G("prtgOutcome").GetString());
+            Assert.Equal(2, root.G("meta").G("schemaVersion").GetInt32());
+            var guideText = string.Join('\n', root.G("guide").L().Select(x => x.GetString()));
+            Assert.Contains("dailyHealth 的 date 是「資料日」", guideText);
+            Assert.DoesNotContain("D 對應 D-1", guideText);
             Assert.Single(rows, r => r.G("isToday").GetBoolean());
             var pending = root.G("abnormalRuns").EnumerateArray().SelectMany(r => r.G("unsuccessfulPrtgDays").EnumerateArray()).Single();
             Assert.Equal(3, pending.G("pendingDevices").GetInt32());
@@ -483,7 +490,7 @@ public class RunExportServiceTests
         var (root, _, doc) = h.Export(7);
         using (doc)
         {
-            Assert.Equal(1, root.G("meta").G("schemaVersion").GetInt32());
+            Assert.Equal(RunExportService.SchemaVersion, root.G("meta").G("schemaVersion").GetInt32());
             Assert.False(root.G("meta").G("hasData").GetBoolean());
             Assert.Equal(7, root.G("meta").G("days").GetInt32());
             Assert.Empty(root.G("signalGroups").L());

@@ -62,11 +62,17 @@ function renderPrtgBadge(outcome) {
     return badge;
 }
 
-// 執行總表每日 PRTG 欄：徽章＋finding／sensor 數字；原因放徽章滑鼠提示並在下方小字顯示
+// 執行總表 PRTG 欄：該列資料日的徽章＋finding／sensor 數字；原因放徽章滑鼠提示並在下方小字顯示。
+// 沒有任何趟處理過這個資料日時「—」帶提示，分得出「沒跑」與「漏顯示」（第 73 輪 F）
 function renderPrtgDaySummaryCell(s) {
-    if (s.prtgOutcome == null) return document.createTextNode('—');
-    const badge = renderPrtgBadge(s.prtgOutcome);
-    if (!badge) return document.createTextNode('—');
+    const badge = s.prtgOutcome == null ? null : renderPrtgBadge(s.prtgOutcome);
+    if (!badge) {
+        const none = document.createElement('span');
+        none.textContent = '—';
+        none.title = '這個資料日沒有 PRTG 處理紀錄';
+        return none;
+    }
+    badge.title = `資料日 ${s.date}`;
     const wrap = document.createElement('div');
     const line = document.createElement('span');
     line.className = 'd-inline-flex align-items-center gap-1';
@@ -83,7 +89,7 @@ function renderPrtgDaySummaryCell(s) {
     }
     wrap.appendChild(line);
     if (s.prtgNote != null) {
-        badge.title = s.prtgNote;
+        badge.title = `資料日 ${s.date}：${s.prtgNote}`;
         const note = document.createElement('div');
         note.className = 'lf-text-meta';
         note.textContent = s.prtgNote;
@@ -300,8 +306,9 @@ function renderSummary(summaryPage) {
 
     renderTable(container, {
         columns: [
-            { title: '日期', className: 'text-nowrap', render: s => s.isToday ? (s.inProgress ? '今日（執行中）' : '今日') : s.date },
-            { title: '執行時間', className: 'lf-minw-sm', render: s => renderDayTimingCell(s.timing, { pendingText: s.pendingSummary, inProgress: s.inProgress }) },
+            // 每列是資料日（事件發生的那一天）；執行日只出現在「執行日與時間」欄（第 73 輪 F）
+            { title: '資料日', className: 'text-nowrap', render: dataDateCell },
+            { title: '執行日與時間', className: 'lf-minw-sm', render: s => renderDayTimingCell(s.timing, { runDate: s.runDate, pendingText: s.pendingSummary, inProgress: s.inProgress, catchUp: s.catchUpStartedAt, catchUpMore: s.catchUpMore }) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
@@ -332,6 +339,19 @@ function renderSummary(summaryPage) {
             onPage: p => { currentSummaryPage = p; loadSummary(); }
         });
     }
+}
+
+/** 「資料日」格：日期；今天處理的那一列下方標「今日處理」（執行中再加「・執行中」） */
+function dataDateCell(s) {
+    if (!s.isToday) return s.date;
+    const wrap = document.createElement('div');
+    const day = document.createElement('div');
+    day.textContent = s.date;
+    const tag = document.createElement('div');
+    tag.className = 'lf-text-meta';
+    tag.textContent = s.inProgress ? '今日處理・執行中' : '今日處理';
+    wrap.append(day, tag);
+    return wrap;
 }
 
 /** 進度條寬度是動態量值：設 CSS 變數，由 .lf-progress-fill 消費 */
@@ -753,7 +773,7 @@ async function showDetail(runId, retryBody = null) {
         const triggerCount = value => (conservative ? '—' : formatNumber(value));
         renderTable(prtgEl, {
             columns: [
-                { title: '日期', className: 'text-nowrap', render: d => String(d.date).slice(0, 10) },
+                { title: '資料日', className: 'text-nowrap', render: d => String(d.date).slice(0, 10) },
                 { title: '結局', render: d => renderPrtgBadge(d.outcome) ?? d.outcome },
                 { title: 'finding', render: d => formatNumber(d.findings) },
                 { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },

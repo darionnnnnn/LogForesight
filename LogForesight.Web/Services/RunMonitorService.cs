@@ -78,6 +78,9 @@ public class RunMonitorService
     /// 執行總表分頁取得（批次G）：以「最新的一頁為第 1 頁」切割，
     /// 只計算當頁涵蓋日期的狀態，不先算全部再切片。
     /// 每頁內部維持舊→新排序（前端 reverse 顯示）。
+    /// 每列是一個資料日 R（<see cref="RunDaySummaryDto.Date"/>）。下面的迴圈以排程處理日 D＝R+1 計算——
+    /// NetIQ／本機狀態本來就核對 D-1、執行時間就是 D 當天開跑的趟——輸出時把列標成 R，
+    /// PRTG 也取 R 的逐日統計，整列同一天（第 73 輪 F）。日期換算只在這個方法與 <see cref="GetDayDetail"/>。
     /// </summary>
     /// <param name="days">總天數（已 Clamp）</param>
     /// <param name="page">頁碼（1 起算）</param>
@@ -125,9 +128,11 @@ public class RunMonitorService
         {
             var dateStr = date.ToString("yyyy-MM-dd");
             var isToday = date == today;
+            var dataDate = date.AddDays(-1);
             var summary = new RunDaySummaryDto
             {
-                Date = dateStr,
+                Date = dataDate.ToString("yyyy-MM-dd"),
+                RunDate = dateStr,
                 IsToday = isToday,
                 InProgress = isToday && runs.Any(r => r.StartedAt.Date == today && !r.FinishedAt.HasValue && _isHeld(r)),
                 // 與主機格同一個鍵（當天開跑）；AI 趟只進這裡，不進主機×日
@@ -135,14 +140,12 @@ public class RunMonitorService
             };
             var failedHosts = new List<string>();
 
-            // 執行總表的 PRTG 欄依「資料日期」取（而不是開始日期）：
-            // 一趟夜間取數處理的是前一天的資料（資料日期為 StartedAt.Date - 1 天，或多日執行中 PrtgDays 記錄的各個資料日期）。
-            // 若依開始日期取，不僅舊紀錄會錯開一天，多日回望重跑的舊日也無法對應到正確的 PRTG 結果。
+            // PRTG 欄取這一列的資料日 R（＝D-1）：一趟取數處理的是前一天的資料，多日回望則記在 PrtgDays 的各個資料日。
             // 規則（在取數類執行中，依 StartedAt 由新到舊找第一個符合者）：
-            // 1. PrtgDays 非 null 且含 Date.Date == D 的一筆 → 用那筆的 Outcome；
-            // 2. 否則，PrtgDays 為 null（舊紀錄）且 StartedAt.Date == D.AddDays(1) → 用該執行的 PrtgOutcome（處理前一天）；
+            // 1. PrtgDays 非 null 且含 Date.Date == R 的一筆 → 用那筆的 Outcome；
+            // 2. 否則，PrtgDays 為 null（舊紀錄）且 StartedAt.Date == R.AddDays(1)（＝D）→ 用該執行的 PrtgOutcome（處理前一天）；
             // 3. 都沒有 → null。
-            // 注意：PrtgDays 非 null 但不含 D 的執行不得落到第 2 條。
+            // 注意：PrtgDays 非 null 但不含 R 的執行不得落到第 2 條。
             string? prtgOutcome = null;
             int? prtgFindings = null;
             int? prtgTargetSensors = null;
@@ -151,7 +154,7 @@ public class RunMonitorService
             {
                 if (run.PrtgDays != null)
                 {
-                    var dayStat = run.PrtgDays.FirstOrDefault(d => d.Date.Date == date.Date);
+                    var dayStat = run.PrtgDays.FirstOrDefault(d => d.Date.Date == dataDate.Date);
                     if (dayStat != null)
                     {
                         prtgOutcome = dayStat.Outcome;
@@ -161,7 +164,7 @@ public class RunMonitorService
                         break;
                     }
                 }
-                else if (run.StartedAt.Date == date.Date.AddDays(1))
+                else if (run.StartedAt.Date == date.Date)
                 {
                     prtgOutcome = run.PrtgOutcome;
                     // 早退（未啟用／憑證不可用）沒有逐日統計，原因在趟次層
@@ -202,12 +205,42 @@ public class RunMonitorService
             if (date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) && summary.RecheckCount > 0 && scheduleOptions.Enabled &&
                 ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) is { } recheckAt)
                 summary.RecheckAt = recheckAt.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+            var catchUp = CatchUpRuns(runs, runsById, attempts, hosts, dataDate.Date);
+            summary.CatchUpStartedAt = catchUp.Take(MaxCatchUpRuns).ToList();
+            summary.CatchUpMore = Math.Max(0, catchUp.Count - MaxCatchUpRuns);
             summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
             summary.OtherFailedCount = Math.Max(0, failedHosts.Count - MaxFailedHostNames);
             summaries.Add(summary);
         }
 
         return summaries;
+    }
+
+    /// <summary>總表「另於…補跑」最多列幾趟（其餘寫「等 N 趟」）</summary>
+    private const int MaxCatchUpRuns = 2;
+
+    /// <summary>
+    /// 資料日 <paramref name="dataDate"/> 由「排程處理日（隔天）以外」開跑的趟：NetIQ 主機日回執指向的趟、
+    /// PRTG 逐日統計含這一天的趟。只用既有的兩種連結；本機分析沒有「哪一趟處理了哪天」的紀錄，不列。
+    /// 回執指向的趟不在本次讀取的執行紀錄內（已過保留期或窗口外）時略過。回傳開始時刻、新到舊、已去重。
+    /// </summary>
+    private static List<DateTime> CatchUpRuns(List<BatchRun> runs, IReadOnlyDictionary<long, BatchRun> runsById,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, List<HostRef> hosts, DateTime dataDate)
+    {
+        var scheduledDay = dataDate.AddDays(1);
+        var found = new Dictionary<long, DateTime>();
+        foreach (var host in hosts.Where(h => h.Source == "netiq" && h.HostId > 0))
+        {
+            if (attempts.TryGetValue((host.HostId, dataDate), out var receipt) &&
+                runsById.TryGetValue(receipt.RunId, out var run) && run.StartedAt.Date != scheduledDay)
+                found[run.RunId] = run.StartedAt;
+        }
+        foreach (var run in runs)
+        {
+            if (run.StartedAt.Date != scheduledDay && run.PrtgDays?.Any(d => d.Date.Date == dataDate) == true)
+                found[run.RunId] = run.StartedAt;
+        }
+        return found.Values.OrderByDescending(t => t).ToList();
     }
 
     /// <summary>今天列的「最後一趟結束時尚有」：取今天開跑、已結束或已判定異常中斷的最後一趟；
@@ -226,8 +259,10 @@ public class RunMonitorService
         return resume.HasWork ? "最後一趟結束時尚有：" + resume.Describe() : null;
     }
 
-    public List<RunDayHostStatusDto> GetDayDetail(DateTime date)
+    /// <summary>總表某一列（資料日 <paramref name="dataDate"/>）的逐主機狀態；內部以排程處理日（隔天）計算，與總表同一套換算。</summary>
+    public List<RunDayHostStatusDto> GetDayDetail(DateTime dataDate)
     {
+        var date = dataDate.Date.AddDays(1);
         // GetRecentRuns 的窗口是 [Today-days+1, Today]；用「到這天為止經過的天數」當窗口大小，
         // 剛好含括目標日期，再於 RunsForHostOnDate 篩到那一天。日期在未來時窗口最小取 1。
         var windowDays = Math.Max(1, (DateTime.Today - date.Date).Days + 1);

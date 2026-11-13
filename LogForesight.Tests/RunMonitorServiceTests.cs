@@ -66,7 +66,7 @@ public class RunMonitorServiceTests : IDisposable
         using (var ctx = _attemptBackend.CreateContext()) Assert.Empty(ctx.DailyRecords);
         var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
             backend: _attemptBackend);
-        var detail = Assert.Single(service.GetDayDetail(dataDate.AddDays(1)), row => row.HostName == host.HostName);
+        var detail = Assert.Single(service.GetDayDetail(dataDate), row => row.HostName == host.HostName);
         var summary = Assert.Single(service.GetDaySummaries(1, 1, 30));
 
         Assert.Equal("failed", detail.Status);
@@ -99,12 +99,12 @@ public class RunMonitorServiceTests : IDisposable
 
         var service = new RunMonitorService(Runs(), _hosts, _attemptBackend.RecordStore(), new FakeUserStore(), Options(), _displayNames,
             backend: _attemptBackend);
-        Assert.Equal("failed", Assert.Single(service.GetDayDetail(dataDate.AddDays(1))).Status);
+        Assert.Equal("failed", Assert.Single(service.GetDayDetail(dataDate)).Status);
         Assert.Equal(1, Assert.Single(service.GetDaySummaries(1, 1, 30)).FailedCount);
 
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 3003, "success");
         NetiqSourceAttempt.Mark(_attemptBackend, host.HostId, dataDate, "success");
-        Assert.Equal("success", Assert.Single(service.GetDayDetail(dataDate.AddDays(1))).Status);
+        Assert.Equal("success", Assert.Single(service.GetDayDetail(dataDate)).Status);
         Assert.Equal(1, Assert.Single(service.GetDaySummaries(1, 1, 30)).SuccessCount);
         using (var ctx = _attemptBackend.CreateContext())
         {
@@ -193,7 +193,7 @@ public class RunMonitorServiceTests : IDisposable
             runId + 1, "running", DateTime.UtcNow.AddHours(-7));
 
         var detail = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
-            backend: _attemptBackend).GetDayDetail(dataDate.AddDays(1));
+            backend: _attemptBackend).GetDayDetail(dataDate);
         Assert.Equal("stopped", Assert.Single(detail, row => row.HostName == stoppedHost.HostName).Status);
         Assert.Equal("stuck", Assert.Single(detail, row => row.HostName == stuckHost.HostName).Status);
     }
@@ -204,7 +204,7 @@ public class RunMonitorServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.5", Source = "netiq" });
         Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
 
-        var detail = Create().GetDayDetail(DateTime.Today);
+        var detail = Create().GetDayDetail(DateTime.Today.AddDays(-1));
 
         var row = Assert.Single(detail, d => d.HostName == host.HostName);
         Assert.Equal("success", row.Status);
@@ -216,7 +216,7 @@ public class RunMonitorServiceTests : IDisposable
     {
         _hosts.Upsert(new WebHost { HostName = "10.0.0.6", Source = "netiq" });
 
-        var detail = Create().GetDayDetail(DateTime.Today);
+        var detail = Create().GetDayDetail(DateTime.Today.AddDays(-1));
 
         var row = Assert.Single(detail, d => d.HostName == "10.0.0.6");
         Assert.Equal("none", row.Status);
@@ -238,7 +238,7 @@ public class RunMonitorServiceTests : IDisposable
         Records().Append(Rec(host.HostId, host.HostName, targetDate.AddDays(-1)));
 
         var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDaySummaries(3, page: 1, pageSize: 30);
-        var latest = summaries.Single(s => s.Date == targetDate.ToString("yyyy-MM-dd"));
+        var latest = summaries.Single(s => s.RunDate == targetDate.ToString("yyyy-MM-dd"));
 
         // DEV-BATCH-HOST（跑批次的機器本身）與 10.0.0.7（NetIQ 主機）都算成功——
         // 重點是後者不受前者這筆無關 run 影響、也不會落回未執行
@@ -251,7 +251,7 @@ public class RunMonitorServiceTests : IDisposable
     {
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var detail = Create().GetDayDetail(DateTime.Today);
+        var detail = Create().GetDayDetail(DateTime.Today.AddDays(-1));
 
         var row = Assert.Single(detail, d => d.HostName == "SRV-LOCAL");
         Assert.Equal("none", row.Status);
@@ -268,7 +268,7 @@ public class RunMonitorServiceTests : IDisposable
 
         var service = Create();
 
-        var row = Assert.Single(service.GetDayDetail(targetDate), d => d.HostName == "SRV-LOCAL");
+        var row = Assert.Single(service.GetDayDetail(targetDate.AddDays(-1)), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("backfilled", row.Status);
         Assert.Null(row.RunId);   // 回補 fallback 沒有可連到的單次執行紀錄
 
@@ -289,7 +289,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today.AddDays(-1)),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
         Assert.Equal(runId, row.RunId);
@@ -303,7 +303,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today);
+        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today.AddDays(-1));
 
         var row = Assert.Single(detail, d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
@@ -328,7 +328,7 @@ public class RunMonitorServiceTests : IDisposable
 
         var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames);
 
-        var row = Assert.Single(service.GetDayDetail(targetDate), d => d.HostName == "SRV-LOCAL");
+        var row = Assert.Single(service.GetDayDetail(targetDate.AddDays(-1)), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("stopped", row.Status);
 
         var latest = service.GetDaySummaries(1, page: 1, pageSize: 30).Single();
@@ -350,7 +350,7 @@ public class RunMonitorServiceTests : IDisposable
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today.AddDays(-1)),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }
@@ -471,7 +471,7 @@ public class RunMonitorServiceTests : IDisposable
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { givenUp.HostId }, dataDate, 2, NetiqAttemptStatus.Partial);
 
         var rows = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
-            .GetDayDetail(runDate);
+            .GetDayDetail(runDate.AddDays(-1));
 
         var waitingRow = Assert.Single(rows, r => r.HostName == waiting.HostName);
         // 第 66 輪：空資料待複查是獨立狀態（recheck），不再與「沒排到」混在 none
@@ -491,7 +491,7 @@ public class RunMonitorServiceTests : IDisposable
         var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend);
 
         var row = Assert.Single(service.GetDaySummaries(1, 1, 1));
-        var detail = Assert.Single(service.GetDayDetail(runDate), r => r.HostName == waiting.HostName);
+        var detail = Assert.Single(service.GetDayDetail(runDate.AddDays(-1)), r => r.HostName == waiting.HostName);
 
         Assert.Equal(1, row.RecheckCount);
         Assert.Equal(0, row.NotRunCount);
@@ -512,7 +512,7 @@ public class RunMonitorServiceTests : IDisposable
             NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, rowDate.AddDays(-1), run, NetiqAttemptStatus.EmptyOnce);
 
         var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
-            .GetDayDetail(rowDate), r => r.HostName == host.HostName);
+            .GetDayDetail(rowDate.AddDays(-1)), r => r.HostName == host.HostName);
 
         Assert.Contains(expected, row.StatusNote);
         Assert.DoesNotContain("已無自動複查", row.StatusNote);
@@ -662,7 +662,7 @@ public class RunMonitorServiceTests : IDisposable
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 2, NetiqAttemptStatus.Failed);
 
         var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
-            .GetDayDetail(runDate), r => r.HostName == host.HostName);
+            .GetDayDetail(runDate.AddDays(-1)), r => r.HostName == host.HostName);
 
         Assert.Contains("明天會再試", row.StatusNote);
     }
@@ -696,7 +696,9 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal(3, first.Count); // 2 天＋今天
         var today = first[^1];
         Assert.True(today.IsToday);
-        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), today.Date);
+        // 今天處理的那一列：資料日是昨天，排程處理日是今天（第 73 輪 F）
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), today.Date);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), today.RunDate);
         Assert.False(today.InProgress);
         // 今天還沒處理到的 NetIQ 主機是未執行，不是失敗
         Assert.Equal(1, today.NotRunCount);
@@ -716,6 +718,93 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     // ── 停用主機與本機格（第 64 輪 E-2）──────────
+
+    // ── 第 73 輪 F：每列是資料日、PRTG 與主機狀態同一天、補跑行 ──
+
+    private long AddPrtgRun(DateTime startedAt, params DateTime[] prtgDays)
+    {
+        var runs = Runs();
+        var run = new BatchRun { HostName = "SITE-PRTG", StartedAt = startedAt };
+        run.RunId = runs.StartRun(run);
+        run.FinishedAt = startedAt.AddMinutes(5);
+        run.ExitCode = 0;
+        run.PrtgOutcome = BatchRun.PrtgOutcomeSuccess;
+        run.PrtgDays = prtgDays.Select(d => new PrtgDayStat(d, BatchRun.PrtgOutcomeSuccess, 1, 1, true, 0, 0, 0)).ToList();
+        runs.FinishRun(run);
+        return run.RunId;
+    }
+
+    [Fact]
+    public void 資料日列_今天處理的那一列PRTG有值且與主機狀態同一天()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.73.1", Source = "netiq" });
+        var yesterday = DateTime.Today.AddDays(-1);
+        var runId = AddPrtgRun(DateTime.Today.AddHours(1), yesterday);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, yesterday, runId, "failed");
+
+        var rows = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(2, 1, 30);
+        var today = rows[^1];
+        Assert.True(today.IsToday);
+        Assert.Equal(yesterday.ToString("yyyy-MM-dd"), today.Date);
+        Assert.Equal(BatchRun.PrtgOutcomeSuccess, today.PrtgOutcome);
+        Assert.Equal(1, today.FailedCount);            // 同一列的 NetIQ 狀態也是昨天的
+        Assert.Empty(today.CatchUpStartedAt);          // 處理日當天開跑的趟不是補跑
+        // 前一列（資料日＝前天）沒有任何趟處理過：PRTG 為 null，不會拿到昨天的結果
+        Assert.Null(rows[^2].PrtgOutcome);
+    }
+
+    [Fact]
+    public void 資料日列_其他日子開跑的趟列為補跑_處理日當天的趟不列()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.73.2", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-6);
+        var scheduled = AddPrtgRun(dataDate.AddDays(1).AddHours(1));                   // 處理日當天：不是補跑
+        var netiqCatchUp = AddPrtgRun(DateTime.Today.AddDays(-3).AddHours(9));        // 只靠 NetIQ 回執連到 dataDate
+        var prtgCatchUp = AddPrtgRun(DateTime.Today.AddDays(-2).AddHours(10), dataDate, dataDate.AddDays(-1));
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, scheduled, "failed");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, netiqCatchUp, "success");
+
+        var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(10, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+
+        Assert.Equal(new[] { DateTime.Today.AddDays(-2).AddHours(10), DateTime.Today.AddDays(-3).AddHours(9) }, row.CatchUpStartedAt);
+        Assert.Equal(0, row.CatchUpMore);
+    }
+
+    [Fact]
+    public void 資料日列_補跑超過兩趟只列最新兩趟_回執指向不存在的趟略過()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.73.3", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-8);
+        foreach (var daysAgo in new[] { 5, 4, 3 }) AddPrtgRun(DateTime.Today.AddDays(-daysAgo).AddHours(2), dataDate);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 987654, "success");   // 這一趟不在執行紀錄裡
+
+        var row = Assert.Single(new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(10, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+
+        Assert.Equal(new[] { DateTime.Today.AddDays(-3).AddHours(2), DateTime.Today.AddDays(-4).AddHours(2) }, row.CatchUpStartedAt);
+        Assert.Equal(1, row.CatchUpMore);
+    }
+
+    [Fact]
+    public void 資料日列_逐日明細以資料日查詢_與總表該列計數相符()
+    {
+        var ok = _hosts.Upsert(new WebHost { HostName = "10.0.73.4", Source = "netiq" });
+        var bad = _hosts.Upsert(new WebHost { HostName = "10.0.73.5", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-3);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { bad.HostId }, dataDate, 5001, "failed");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { ok.HostId }, dataDate.AddDays(-1), 5002, "failed");   // 前一個資料日，不得算進來
+
+        var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend);
+        var row = Assert.Single(service.GetDaySummaries(5, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+        var detail = service.GetDayDetail(dataDate);
+
+        Assert.Equal(1, row.FailedCount);
+        Assert.Equal(row.FailedCount, detail.Count(d => d.Status == "failed"));
+        Assert.Equal("failed", Assert.Single(detail, d => d.HostName == bad.HostName).Status);
+        Assert.NotEqual("failed", Assert.Single(detail, d => d.HostName == ok.HostName).Status);
+    }
 
     private void AddRun(string host, DateTime startedAt, int exitCode, int errorCount, params (string Key, string Outcome)[] phases)
     {
@@ -749,7 +838,7 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal(12, summary.TotalHosts);
         Assert.Equal(12, summary.FailedCount);
         Assert.DoesNotContain(site, summary.FailedHostNames);
-        Assert.DoesNotContain(service.GetDayDetail(runDate), row => row.HostName == site);
+        Assert.DoesNotContain(service.GetDayDetail(runDate.AddDays(-1)), row => row.HostName == site);
     }
 
     [Fact]
@@ -763,7 +852,7 @@ public class RunMonitorServiceTests : IDisposable
 
         var service = Create();
         var summary = Assert.Single(service.GetDaySummaries(1, 1, 30));
-        var row = Assert.Single(service.GetDayDetail(runDate), r => r.HostName == site);
+        var row = Assert.Single(service.GetDayDetail(runDate.AddDays(-1)), r => r.HostName == site);
 
         Assert.Equal(1, summary.TotalHosts);
         Assert.Equal(0, summary.FailedCount);
@@ -784,7 +873,7 @@ public class RunMonitorServiceTests : IDisposable
         var runDate = DateTime.Today.AddDays(-1);
         AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3, (RunTimingPhases.Local, outcome));
 
-        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+        var row = Assert.Single(Create().GetDayDetail(runDate.AddDays(-1)), r => r.HostName == site);
 
         Assert.Equal(expected, row.Status);
     }
@@ -797,7 +886,7 @@ public class RunMonitorServiceTests : IDisposable
         var runDate = DateTime.Today.AddDays(-1);
         AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3, (RunTimingPhases.Netiq, RunPhaseOutcomes.Failed));
 
-        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+        var row = Assert.Single(Create().GetDayDetail(runDate.AddDays(-1)), r => r.HostName == site);
 
         Assert.Equal("none", row.Status);
     }
@@ -810,7 +899,7 @@ public class RunMonitorServiceTests : IDisposable
         var runDate = DateTime.Today.AddDays(-1);
         AddRun(site, runDate.AddHours(1), exitCode: 1, errorCount: 3);
 
-        var row = Assert.Single(Create().GetDayDetail(runDate), r => r.HostName == site);
+        var row = Assert.Single(Create().GetDayDetail(runDate.AddDays(-1)), r => r.HostName == site);
 
         Assert.Equal(BatchRunStatus.Failed, row.Status);
         Assert.True(row.Legacy);
@@ -828,7 +917,7 @@ public class RunMonitorServiceTests : IDisposable
         Options().Update(o => o.LocalAnalysisEnabled = false);
         var service = Create();
 
-        var row = Assert.Single(service.GetDayDetail(targetDate), d => d.HostName == "SRV-LOCAL");
+        var row = Assert.Single(service.GetDayDetail(targetDate.AddDays(-1)), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("local_disabled", row.Status);
 
         var latest = service.GetDaySummaries(1, page: 1, pageSize: 30).Single();
@@ -847,7 +936,7 @@ public class RunMonitorServiceTests : IDisposable
         Options().Update(o => o.LocalAnalysisEnabled = false);
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options(), _displayNames).GetDayDetail(DateTime.Today.AddDays(-1)),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }
@@ -860,7 +949,7 @@ public class RunMonitorServiceTests : IDisposable
         Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
         Options().Update(o => o.LocalAnalysisEnabled = false);
 
-        var row = Assert.Single(Create().GetDayDetail(DateTime.Today), d => d.HostName == host.HostName);
+        var row = Assert.Single(Create().GetDayDetail(DateTime.Today.AddDays(-1)), d => d.HostName == host.HostName);
         Assert.Equal("success", row.Status);
     }
 
@@ -962,7 +1051,8 @@ public class RunMonitorServiceTests : IDisposable
 
         // 跨頁日期不重不漏：把兩頁日期串起來排序，應等於完整區間
         var allDates = page1.Concat(page2).Select(s => s.Date).OrderBy(d => d).ToList();
-        var anchor = DateTime.Today.AddDays(-1);
+        // 每列是資料日：昨天的資料由今天處理（今天有趟才多一列），所以 days 天的最新一列是前天（第 73 輪 F）
+        var anchor = DateTime.Today.AddDays(-2);
         var expectedDates = Enumerable.Range(0, days)
             .Select(i => anchor.AddDays(-days + 1 + i).ToString("yyyy-MM-dd"))
             .OrderBy(d => d)
@@ -991,7 +1081,8 @@ public class RunMonitorServiceTests : IDisposable
 
         // 跨頁日期不重不漏
         var allDates = page1.Concat(page2).Concat(page3).Select(s => s.Date).OrderBy(d => d).ToList();
-        var anchor = DateTime.Today.AddDays(-1);
+        // 每列是資料日：昨天的資料由今天處理（今天有趟才多一列），所以 days 天的最新一列是前天（第 73 輪 F）
+        var anchor = DateTime.Today.AddDays(-2);
         var expectedDates = Enumerable.Range(0, days)
             .Select(i => anchor.AddDays(-days + 1 + i).ToString("yyyy-MM-dd"))
             .OrderBy(d => d)
@@ -1011,7 +1102,8 @@ public class RunMonitorServiceTests : IDisposable
 
         var page1 = service.GetDaySummaries(days, page: 1, pageSize: pageSize);
 
-        var anchor = DateTime.Today.AddDays(-1);
+        // 每列是資料日：昨天的資料由今天處理（今天有趟才多一列），所以 days 天的最新一列是前天（第 73 輪 F）
+        var anchor = DateTime.Today.AddDays(-2);
         var newestStr = anchor.ToString("yyyy-MM-dd");
         var oldestStr = anchor.AddDays(-days + 1).ToString("yyyy-MM-dd");
 
@@ -1088,8 +1180,12 @@ public class RunMonitorServiceTests : IDisposable
         var oldest = result.First();
         var newest = result.Last();
 
-        Assert.Equal(DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"), oldest.Date);
-        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), newest.Date);
+        // 列是資料日、處理日是隔天：處理日區間仍是七天前～昨天（第 73 輪 F）
+        Assert.Equal(DateTime.Today.AddDays(-8).ToString("yyyy-MM-dd"), oldest.Date);
+        Assert.Equal(DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"), newest.Date);
+        Assert.Equal(DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"), oldest.RunDate);
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), newest.RunDate);
+        Assert.All(result, s => Assert.Equal(DateTime.Parse(s.Date).AddDays(1).ToString("yyyy-MM-dd"), s.RunDate));
     }
 
     // ── 第 63 輪批次A：異常彙總（GetErrorSummary） ─────────────────────
