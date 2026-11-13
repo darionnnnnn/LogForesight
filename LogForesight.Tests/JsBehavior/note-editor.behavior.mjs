@@ -62,6 +62,50 @@ const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
 const wait = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
 const has = (node, name) => node.classList.contains(name);
 
+async function aiTidyCase({ detach }) {
+    const writes = [];
+    globalThis.localStorage = {
+        length: 0, key: () => null, getItem: () => null,
+        setItem: (k, v) => writes.push([k, v]), removeItem: k => writes.push([k, null])
+    };
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async url => {
+        if (String(url).endsWith('/api/ai/tidy-note')) {
+            await gate;
+            return respond({ text: '整理後的內容', truncated: false });
+        }
+        return realFetch(url);
+    };
+    try {
+        const form = document.createElement('div');
+        dom.body.appendChild(form);
+        const textarea = document.createElement('textarea');
+        textarea.value = '原本的說明';
+        form.appendChild(textarea);
+        attachNoteEditor(textarea, { draftKey: 'record:9:2026-10-01', ai: { context: () => ({ hostCount: 1 }) } });
+        await wait();
+        const button = form.find(n => n.tagName === 'BUTTON' && n.textContent === 'AI 整理');
+        assert(button, '應有 AI 整理按鈕');
+        writes.length = 0;
+        button.dispatch('click');
+        await wait();
+        if (detach) form.remove();
+        release();
+        await wait();
+        if (detach) {
+            assert.equal(textarea.value, '原本的說明');
+            assert.deepEqual(writes, [], '欄位已卸下時不得寫本機草稿');
+        } else {
+            assert.equal(textarea.value, '整理後的內容');
+        }
+    } finally {
+        globalThis.fetch = realFetch;
+        delete globalThis.localStorage;
+    }
+}
+
 function buildEditor(options) {
     const form = document.createElement('div');
     const textarea = document.createElement('textarea');
@@ -121,7 +165,156 @@ async function chipCase(selection, expected) {
     assert.deepEqual(before.map(b => b.getAttribute('aria-pressed')), before.map((_, i) => i === 2 ? 'true' : 'false'));
 }
 
+/** 依完整名稱（title）找狀態膠囊 */
+function chipByTitle(panel, title) {
+    const chip = chipButtons(panel).children.find(b => b.title === title);
+    assert(chip, `找不到狀態膠囊：${title}`);
+    return chip;
+}
+const activeTitles = panel => chipButtons(panel).children.filter(b => has(b, 'active')).map(b => b.title);
+const formOf = panel => panel.find(n => has(n, 'lf-handling__form'));
+const noteOf = panel => panel.find(n => n.id === 'handling-note');
+const noticeOf = (panel, role) => panel.find(n => n.dataset?.role === role) ?? null;
+
+/** 每個暫存案例用不同日期起頭：面板只在同一主機同一天沿用暫存，換日期＝乾淨的暫存 */
+let draftDay = 10;
+async function freshPanel(selection) {
+    const date = `2026-10-${String(draftDay++).padStart(2, '0')}`;
+    const panel = document.createElement('div');
+    panel.id = 'handling-panel';
+    const log = document.createElement('div');
+    log.id = 'handling-log';
+    dom.byId.set('handling-panel', panel);
+    dom.byId.set('handling-log', log);
+    await initHandlingPanel(1, date, () => selection, async () => { }, {});
+    return { panel, reload: () => initHandlingPanel(1, date, () => selection, async () => { }, {}) };
+}
+
 const cases = {
+    // 編輯器自動還原草稿會觸發表單 input（暫存寫入）：日層級推導出的預選不得因此被帶進批次
+    async 暫存_自動還原後進批次不預選() {
+        const selection = new Set();
+        const { panel } = await freshPanel(selection);
+        formOf(panel).dispatch('input');
+        selection.add('issue-1');
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), []);
+    },
+    async 暫存_批次選的狀態不帶回日層級() {
+        const selection = new Set(['issue-1']);
+        const { panel } = await freshPanel(selection);
+        chipByTitle(panel, BATCH_CHIPS[3].text).dispatch('click');
+        selection.clear();
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), [DAY_CHIPS[0].text]);
+    },
+    async 暫存_沒點過狀態時重載取新的推導狀態() {
+        const selection = new Set();
+        const { panel, reload } = await freshPanel(selection);
+        formOf(panel).dispatch('input');
+        const old = HANDLING.derivedStatus;
+        HANDLING.derivedStatus = 'in_progress';
+        try {
+            await reload();
+            const expected = DAY_CHIPS.find(c => c.value === 'in_progress').text;
+            assert.deepEqual(activeTitles(panel), [expected]);
+        } finally {
+            HANDLING.derivedStatus = old;
+        }
+    },
+    // 另一側：使用者親自點過的狀態與日期，同一模式重載後要保住（暫存原本的用途）
+    async 暫存_親自點過的狀態同模式重載保留() {
+        const selection = new Set();
+        const { panel, reload } = await freshPanel(selection);
+        const inProgress = DAY_CHIPS.find(c => c.value === 'in_progress').text;
+        chipByTitle(panel, inProgress).dispatch('click');
+        const due = panel.find(n => n.id === 'due-date');
+        due.value = '2026-12-01';
+        formOf(panel).dispatch('input');
+        await reload();
+        assert.deepEqual(activeTitles(panel), [inProgress]);
+        assert.equal(panel.find(n => n.id === 'due-date').value, '2026-12-01');
+    },
+    async 暫存_批次打的說明回日層級保留並提示套用對象() {
+        const selection = new Set(['issue-1']);
+        const { panel } = await freshPanel(selection);
+        noteOf(panel).value = '這批是同一次維護造成的';
+        formOf(panel).dispatch('input');
+        selection.clear();
+        panelModule.refreshSelection();
+        assert.equal(noteOf(panel).value, '這批是同一次維護造成的');
+        assert(noticeOf(panel, 'day-target-notice'), '回到日層級且說明有字時要提示套用對象');
+    },
+    async 暫存_批次說明為空回日層級不提示() {
+        const selection = new Set(['issue-1']);
+        const { panel } = await freshPanel(selection);
+        formOf(panel).dispatch('input');
+        selection.clear();
+        panelModule.refreshSelection();
+        assert.equal(noticeOf(panel, 'day-target-notice'), null);
+    },
+    // 暫存各模式各一份：在批次打字或點狀態，不得蓋掉日層級剛才親自點的狀態與日期
+    async 暫存_批次的輸入不蓋掉日層級親自點的狀態與日期() {
+        const selection = new Set();
+        const { panel } = await freshPanel(selection);
+        const inProgress = DAY_CHIPS.find(c => c.value === 'in_progress').text;
+        chipByTitle(panel, inProgress).dispatch('click');
+        panel.find(n => n.id === 'due-date').value = '2026-12-01';
+        formOf(panel).dispatch('input');
+        selection.add('issue-1');
+        panelModule.refreshSelection();
+        noteOf(panel).value = 'abc';
+        formOf(panel).dispatch('input');
+        chipByTitle(panel, BATCH_CHIPS[3].text).dispatch('click');
+        selection.clear();
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), [inProgress]);
+        assert.equal(panel.find(n => n.id === 'due-date').value, '2026-12-01');
+        // 再回批次：批次自己點的狀態也還在
+        selection.add('issue-1');
+        panelModule.refreshSelection();
+        assert.deepEqual(activeTitles(panel), [BATCH_CHIPS[3].text]);
+    },
+    // 日層級預填的是「這一天已存的說明」，不是使用者這次打的字：點了狀態也不得跟著帶進批次
+    async 暫存_已存的整天說明不帶進批次() {
+        const old = HANDLING.note;
+        HANDLING.note = '上週已確認為例行維護';
+        try {
+            const selection = new Set();
+            const { panel } = await freshPanel(selection);
+            assert.equal(noteOf(panel).value, '上週已確認為例行維護');
+            chipByTitle(panel, DAY_CHIPS[1].text).dispatch('click');
+            selection.add('issue-1');
+            panelModule.refreshSelection();
+            assert.equal(noteOf(panel).value, '', '批次說明欄不得出現整天的舊說明');
+            assert.equal(noticeOf(panel, 'day-target-notice'), null);
+            // 批次沒打字就回日層級：已存說明還在，沒有「沿用剛才輸入」的提示
+            formOf(panel).dispatch('input');
+            selection.clear();
+            panelModule.refreshSelection();
+            assert.equal(noteOf(panel).value, '上週已確認為例行維護');
+            assert.equal(noticeOf(panel, 'day-target-notice'), null);
+        } finally {
+            HANDLING.note = old;
+        }
+    },
+    async 篩選取消勾選的提示只出現一次() {
+        const selection = new Set();
+        const { panel } = await freshPanel(selection);
+        panelModule.refreshSelection({ prunedCount: 2 });
+        const notice = noticeOf(panel, 'pruned-notice');
+        assert(notice, '應出現取消勾選的提示');
+        assert(notice.textContent.includes('2'), notice.textContent);
+        panelModule.refreshSelection();
+        assert.equal(noticeOf(panel, 'pruned-notice'), null);
+    },
+    // AI 整理等待期間表單被重建：回應到達時舊欄位已脫離文件，不得寫入欄位或本機草稿
+    async AI整理回應到達時欄位已卸下就丟棄() {
+        await aiTidyCase({ detach: true });
+    },
+    async AI整理沒有重建時照常填入() {
+        await aiTidyCase({ detach: false });
+    },
     有errorEl時順序為說明欄_尾區_錯誤() {
         const errorEl = document.createElement('div');
         errorEl.className = 'invalid-feedback';

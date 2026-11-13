@@ -45,6 +45,8 @@ async function load() {
     }
 
     const seq = loadGuard.next();
+    // 風險類型的揭露鈕在卡片標頭（不在會被換成骨架列的格線容器裡）：載入中先收掉，失敗時才不會留著一顆沒有對象的按鈕
+    mountReveal('categories', null);
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-issues'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
@@ -491,9 +493,10 @@ function renderCategories(data) {
     }
 
     container.replaceChildren(grid);
+    // 揭露鈕放在「風險類型」卡片標頭右側：放在格線下方時它會獨自占一列、孤立在右下角
     mountReveal('categories', {
         grids: [grid],
-        host: container,
+        host: container.closest('.lf-card').querySelector(':scope > .lf-card__header'),
         noun: '類',
         isAlert: link => link.querySelector('.lf-card--critical') !== null
     });
@@ -537,19 +540,21 @@ function renderTopIssues(data) {
     renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount, data.mutedIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
+        // 欄寬規則（DESIGN-SYSTEM §8.4a）：「問題」是吸收欄，其餘短值欄依內容收緊——
+        // 均攤時 2K 下欄與欄之間空 150～250px
         columns: [
             { title: '問題', className: 'lf-minw-lg', render: i => issueNameCell(i) },
-            { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
-            { title: '嚴重度', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
-            { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
-            { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
+            { title: '分數', className: 'text-end lf-col-nowrap', render: i => issuePriorityScoreCell(i) },
+            { title: '嚴重度', className: 'lf-col-nowrap', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
+            { title: '主機數', className: 'text-end lf-col-nowrap', render: i => issueHostCell(i) },
+            { title: '未處理', className: 'text-end lf-col-nowrap', render: i => issueOpenCell(i) },
             // 機房級基準線（回饋十九輪批次G1）：與問題查詢「依問題」共用 format.js 的同一個 cell
-            { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
-            { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
-            { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
-            { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i, { layout: 'row' }) },
-            { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
-            { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
+            { title: 'vs 基準', className: 'lf-col-nowrap', render: i => issueBaselineCell(i) },
+            { title: '本期首見', className: 'lf-col-nowrap', render: i => issueSpanCell(i) },
+            { title: '首見（機房）', className: 'lf-col-nowrap', render: i => issueFleetFirstSeenCell(i) },
+            { title: '出現密度', className: 'text-end lf-col-nowrap', render: i => issueDensityCell(i, { layout: 'row' }) },
+            { title: '變化', className: 'text-end lf-col-nowrap', render: i => issueChangeCell(i) },
+            { title: '總次數', className: 'text-end lf-col-nowrap', render: i => formatNumber(i.totalCount) }
         ],
         rows: data.topIssues,
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
@@ -672,7 +677,8 @@ function issueOpenCell(issue) {
     const wrap = document.createElement('div');
     const count = document.createElement('div');
     count.textContent = formatNumber(issue.openHostCount);
-    count.className = issue.openHostCount > 0 ? 'lf-text-alert' : 'lf-text-meta';
+    // 未處理台數是一般資訊，不上紅色（紅色只給逾期、失敗這類風險狀態，DESIGN-SYSTEM §8.1）；0 台退為次要文字
+    count.className = issue.openHostCount > 0 ? '' : 'lf-text-meta';
     wrap.appendChild(count);
     return wrap;
 }
@@ -711,7 +717,7 @@ function issueSpanCell(issue) {
 
     const hint = document.createElement('div');
     if (issue.daysSinceLastSeen === 0) {
-        hint.className = 'lf-text-alert';
+        // 持續中是事實陳述，不是風險狀態：一般文字色（每列都紅就分不出輕重）
         hint.textContent = '昨日仍在發生';
     } else {
         hint.className = 'lf-text-meta';
@@ -739,8 +745,8 @@ function issueChangeCell(issue) {
     const span = document.createElement('span');
     span.className = 'small';
 
+    // 變化（本期新增、上升）不上紅色：靠文字與箭頭辨識，紅色留給逾期、失敗
     if (issue.isNew) {
-        span.className += ' lf-text-alert';
         span.textContent = '本期新增';
         return span;
     }
@@ -757,7 +763,6 @@ function issueChangeCell(issue) {
         span.className += ' lf-text-meta';
         span.textContent = '持平';
     } else if (percent > 0) {
-        span.className += ' lf-text-alert';
         span.textContent = `↑${percent}%`;
         span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
     } else {
@@ -809,11 +814,12 @@ function renderGroupRisk(data, user) {
     const canMaintain = hasCapability(user, 'Maintain');
     renderTable(document.getElementById('dashboard-group-risk'), {
         columns: [
+            // 群組是吸收欄，數字欄依內容收緊（DESIGN-SYSTEM §8.4a）
             { title: '群組', className: 'lf-minw-sm', render: g => roleText('lf-text-title', g.groupName) },
-            { title: '主機數', className: 'text-end', render: g => formatNumber(g.hostCount) },
-            { title: '高風險日', className: 'text-end', render: g => formatNumber(g.highRiskDays) },
-            { title: '中風險日', className: 'text-end', render: g => formatNumber(g.mediumRiskDays) },
-            { title: '未處理', className: 'text-end', render: g => formatNumber(g.unhandledCount) }
+            { title: '主機數', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.hostCount) },
+            { title: '高風險日', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.highRiskDays) },
+            { title: '中風險日', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.mediumRiskDays) },
+            { title: '未處理', className: 'text-end lf-col-nowrap', render: g => formatNumber(g.unhandledCount) }
         ],
         rows: data.groupRisk,
         rowHref: g => recordsUrl({ groupIds: g.groupId, riskLevels: '高,中', from: data.from, to: data.to }),

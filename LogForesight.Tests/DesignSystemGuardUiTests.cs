@@ -79,6 +79,43 @@ public sealed class DesignSystemGuardUiTests
         Assert.False(File.Exists(Path.Combine(SiteCss.CssDir(), "site.css")), "site.css 已拆成四檔，不得再出現");
     }
 
+    // ── 紅字只給風險狀態（DESIGN-SYSTEM §8.1）：lf-text-alert 的使用處逐檔登錄 ──
+    // 每一處都是逾期、失敗、超限、未回報、資料過期或關聯訊號；「本期新增」「昨日仍在發生」「上升」這類變化不上紅色。
+    // 新增用法先確認是風險狀態，再更新這張表（數字變了就是有人新增或刪除）
+    private static readonly Dictionary<string, int> AlertTextWhitelist = new()
+    {
+        ["core/format.js"] = 2,            // 逾期的狀態文字與預計完成日
+        ["core/note-editor.js"] = 2,       // 字數超過上限、AI 整理前沒有內容
+        ["pages/dashboard.js"] = 2,        // 關聯訊號、資料過期
+        ["pages/handler-detail.js"] = 3,   // 逾期
+        ["pages/handling-panel.js"] = 2,   // 逾期
+        ["pages/hosts.js"] = 2,            // 失聯主機
+        ["pages/imports.js"] = 2,          // 匯入錯誤筆數
+        ["pages/prtg-admin.js"] = 5,       // 快照落後、取數失敗
+        ["pages/prtg-guard.js"] = 1,       // PRTG 未啟用時的守門提示
+        ["pages/record-detail.js"] = 2,    // 逾期、觀察到期
+        ["pages/records.js"] = 1,          // 關聯訊號
+        ["pages/reports.js"] = 2,          // 逾期、資料落後
+        ["pages/runs.js"] = 1,             // 執行失敗訊息
+        ["pages/work-order-detail.js"] = 1 // 逾期
+    };
+
+    [Fact]
+    public void 紅字只出現在登錄的風險狀態用途()
+    {
+        var jsRoot = Path.Combine(WebRoot(), "wwwroot", "js");
+        var actual = Directory.GetFiles(jsRoot, "*.js", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.DirectorySeparatorChar + "lib" + Path.DirectorySeparatorChar))
+            .Select(f => (file: Path.GetRelativePath(jsRoot, f).Replace('\\', '/'), count: Regex.Matches(File.ReadAllText(f), "lf-text-alert").Count))
+            .Where(x => x.count > 0)
+            .ToDictionary(x => x.file, x => x.count);
+        var diff = actual.Keys.Union(AlertTextWhitelist.Keys)
+            .Where(k => actual.GetValueOrDefault(k) != AlertTextWhitelist.GetValueOrDefault(k))
+            .Select(k => $"{k}：登錄 {AlertTextWhitelist.GetValueOrDefault(k)}、實際 {actual.GetValueOrDefault(k)}")
+            .ToList();
+        Assert.True(diff.Count == 0, "lf-text-alert 用法與登錄不符（紅字只給風險狀態）：" + string.Join("；", diff));
+    }
+
     // ── A-5 按鈕變體白名單：primary／outline-primary／outline-secondary／outline-danger／danger ──
 
     private static readonly HashSet<string> AllowedButtonVariants = new(StringComparer.Ordinal)

@@ -80,7 +80,7 @@ function renderHeader(detail) {
 
     const actions = document.createElement('div');
     actions.className = 'lf-entity-head__actions lf-no-print';
-    actions.appendChild(linkButton('開啟工作頁', appUrl(`/handlers/${user.userId}`), { variant: 'outline-primary', size: null }));
+    actions.appendChild(linkButton('開啟工作頁', appUrl(`/handlers/${user.userId}`), { variant: 'outline-secondary', size: null }));
     head.appendChild(actions);
     body.appendChild(head);
 
@@ -170,11 +170,13 @@ function renderVisibleHosts(hosts) {
 
     renderTable(document.getElementById('user-visible-hosts'), {
         columns: [
-            { title: '主機', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
-            { title: 'IP', render: h => roleText('lf-text-data', h.ipAddress ?? '') },
-            { title: '作業系統', render: h => roleText('lf-text-meta', h.os === 'linux' ? 'Linux' : 'Windows') },
-            { title: '群組', render: h => roleText('lf-text-meta', h.groupNames.join('、')) },
-            { title: '可見來源', render: h => visibilitySourceCell(h) }
+            // 短值欄依內容收緊靠左；群組（可能是多個群組的長字串）放最後當吸收欄、可換行，
+            // 寬螢幕多出的寬度留在列尾，不會把「可見來源」推到最右邊、中間空一大段
+            { title: '主機', className: 'lf-col-nowrap', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
+            { title: 'IP', className: 'lf-col-nowrap', render: h => roleText('lf-text-data', h.ipAddress ?? '') },
+            { title: '作業系統', className: 'lf-col-nowrap', render: h => roleText('lf-text-meta', h.os === 'linux' ? 'Linux' : 'Windows') },
+            { title: '可見來源', className: 'lf-col-nowrap', render: h => visibilitySourceCell(h) },
+            { title: '群組', render: h => roleText('lf-text-meta', h.groupNames.join('、')) }
         ],
         rows: hosts,
         rowHref: h => `/hosts/${h.hostId}`,

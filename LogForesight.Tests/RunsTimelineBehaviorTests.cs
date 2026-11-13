@@ -41,6 +41,8 @@ public class RunsTimelineBehaviorTests
     [InlineData("dayTimingCellInProgress")]
     [InlineData("dayTimingCellInProgressKeepsInterrupted")]
     [InlineData("notRunCellCombos")]
+    [InlineData("notRunCountUsesTextColor")]
+    [InlineData("prtgNoteNotRepeatedWhenSameAsBadge")]
     public void 時間軸與執行時間(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

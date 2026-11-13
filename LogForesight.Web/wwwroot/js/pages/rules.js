@@ -60,6 +60,7 @@ const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { 
 
 // 頁首：規則維護說明（原 .lf-hint）；本頁的「新增規則」在規則清單工具列內，不屬頁首
 renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '規則決定事件怎麼分類、算多嚴重；儲存前會自動驗證。',
     help: {
         title: '關於規則維護',
         content: '儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。'
@@ -219,7 +220,7 @@ const RULE_COLUMNS = [
     { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
     { title: '比對', render: r => matchCell(r) },
     {
-        title: '類別', sortKey: 'category', sortValue: r => categoryName(r.category),
+        title: '類別', className: 'lf-col-nowrap', sortKey: 'category', sortValue: r => categoryName(r.category),
         render: r => roleText('lf-text-meta', categoryName(r.category))
     },
     {

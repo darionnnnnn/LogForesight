@@ -111,7 +111,7 @@ function renderHeader(detail) {
         const actions = document.createElement('div');
         actions.className = 'lf-entity-head__actions lf-no-print';
         const updateButton = button('指定主機更新', {
-            variant: 'outline-primary', size: null, opens: 'dialog',
+            size: null, opens: 'dialog',
             onClick: () => openHostUpdateModal(detail)
         });
         updateButton.id = 'host-update-open';
@@ -269,19 +269,23 @@ function renderLegend() {
 
 const ISSUE_COLUMNS = [
     {
+        // 來源名可能是不含空白的長字串（同說明欄），任意斷行才不會把整張表撐出畫面
         title: '來源 / Event',
+        className: 'lf-break-anywhere',
         sortKey: 'source',
         sortValue: s => `${s.source} (${s.eventId})`,
         render: s => roleText('lf-text-title', `${s.source} (${s.eventId})`)
     },
     {
         title: '分類',
+        className: 'lf-col-nowrap',
         sortKey: 'category',
         sortValue: s => categoryName(s.category),
         render: s => roleText('lf-text-meta', categoryName(s.category))
     },
     {
         title: '嚴重度',
+        className: 'lf-col-nowrap',
         sortKey: 'severity',
         sortDefaultDir: 'asc',
         sortValue: s => SEVERITY_ORDER.indexOf(s.maxSeverity),
@@ -289,7 +293,7 @@ const ISSUE_COLUMNS = [
     },
     {
         title: '總次數',
-        className: 'text-end',
+        className: 'text-end lf-col-nowrap',
         sortKey: 'totalCount',
         sortDefaultDir: 'desc',
         sortValue: s => s.totalCount,
@@ -297,7 +301,7 @@ const ISSUE_COLUMNS = [
     },
     {
         title: '出現天數',
-        className: 'text-end',
+        className: 'text-end lf-col-nowrap',
         sortKey: 'daysSeen',
         sortDefaultDir: 'desc',
         sortValue: s => s.daysSeen,
@@ -305,14 +309,16 @@ const ISSUE_COLUMNS = [
     },
     {
         title: '最近出現',
-        className: 'text-nowrap',
+        className: 'lf-col-nowrap',
         sortKey: 'lastSeenDate',
         sortDefaultDir: 'desc',
         sortValue: s => s.lastSeenDate,
         render: s => lastSeenLink(s)
     },
     {
+        // 說明是規則描述，可能是不含空白的長字串：任意斷行，否則這一欄會撐到上萬 px、把其他欄推出畫面
         title: '說明',
+        className: 'lf-break-anywhere',
         sortKey: 'knownIssue',
         sortValue: s => s.knownIssue || '',
         render: s => roleText('lf-text-meta', s.knownIssue || '')

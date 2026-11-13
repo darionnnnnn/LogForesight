@@ -14,6 +14,13 @@ public sealed class RecordDetailRailBehaviorTests
     }
 
     [NodeTheory]
+    [InlineData("record-detail-rail.behavior.mjs", "statusShortLabelCombinations")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneDropsHiddenSelectionAndNotifies")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneKeepsSelectionWhenAllVisible")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneToZeroSelection")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneDropsSelectionInsideCollapsedDoneSection")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneKeepsDoneSelectionWhenNotCollapsed")]
+    [InlineData("record-detail-rail.behavior.mjs", "pruneRunsAtRenderIssuesEntry")]
     [InlineData("record-detail-rail.behavior.mjs", "hashHandlingWideExpandsOnceAndClearsHash")]
     [InlineData("record-detail-rail.behavior.mjs", "hashHandlingNarrowOnlyClearsHash")]
     [InlineData("record-detail-rail.behavior.mjs", "hashHandlingCaseGrantWithoutRailStillClearsHash")]
@@ -73,6 +80,7 @@ public sealed class RecordDetailRailBehaviorTests
         Assert.Contains("else document.getElementById('record-layout')?.classList.add('lf-detail-layout--side-open');", js);
         // 單列與表頭全選兩條勾選路徑都要自動展開並更新摘要；傳入剛勾的勾選框，展開後捲回它原本的視窗位置
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"if \(check\.checked\) expandSideRailForSelection\(check\);").Count);
-        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(js, @"^\s+refreshRailSelectionSummary\(\);", System.Text.RegularExpressions.RegexOptions.Multiline).Count);
+        // 單選、全選、updateSideRail、篩選修剪四處
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(js, @"^\s+refreshRailSelectionSummary\(\);", System.Text.RegularExpressions.RegexOptions.Multiline).Count);
     }
 }

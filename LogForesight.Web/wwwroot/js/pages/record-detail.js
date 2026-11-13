@@ -10,7 +10,7 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings,
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
-import { initHandlingPanel, refreshSelection, derivedStatusLabel } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -70,7 +70,7 @@ document.getElementById('chat-collapse')?.addEventListener('shown.bs.collapse', 
 // 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
 // 每次 renderHeader 重繪都把同一個元素接回去，已取得的連結不會因重繪消失。
-const nextUnhandledLink = linkButton('下一筆未處理 →', '');
+const nextUnhandledLink = linkButton('下一筆未處理 →', '', { variant: 'outline-secondary' });
 nextUnhandledLink.classList.add('d-none', 'lf-no-print', 'ms-auto');
 nextUnhandledLink.id = 'next-unhandled';
 
@@ -231,21 +231,28 @@ function setupSideRail() {
     });
 }
 
-// 處理狀態按鈕的原摘要（不含勾選數）；勾選數量變動時以它為底重組
+// 處理狀態按鈕的原摘要（不含勾選數）：完整寫法給提示文字、短寫法給按鈕；勾選數量變動時以它們為底重組
 let railHandlingSummary = '';
+let railHandlingShort = '';
 
-/** 側軌「處理狀態」摘要：有勾選時前綴「已勾選 N 個・」，讓右欄收合時勾選也有回饋；沒有勾選就是原摘要 */
+/**
+ * 側軌「處理狀態」摘要：直式按鈕只放得下約十個字，按鈕上只顯示一件事——有勾選時是「已勾選 N 個」
+ * （右欄收合時勾選也有回饋），沒有勾選時是短狀態（逾期在最前面）；完整文字一律放提示文字
+ */
 function refreshRailSelectionSummary() {
     if (!sideRail) return;
     const count = selectedIssueKeys.size;
-    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary);
+    const full = count > 0 ? `已勾選 ${count} 個・${railHandlingSummary}` : railHandlingSummary;
+    sideRail.setSummary('handling', count > 0 ? `已勾選 ${count} 個` : railHandlingShort, full);
 }
 
 function updateSideRail(panelInfo) {
     if (sideRail && panelInfo) {
         const { handling, logCount } = panelInfo;
         // 逾期放最前面：側軌空間窄、摘要會被截斷，最該先看到的是逾期
-        railHandlingSummary = (handling.isOverdue ? '逾期・' : '') + derivedStatusLabel(handling);
+        const overdue = handling.isOverdue ? '逾期・' : '';
+        railHandlingSummary = overdue + derivedStatusLabel(handling);
+        railHandlingShort = overdue + derivedStatusShortLabel(handling);
         refreshRailSelectionSummary();
         sideRail.setSummary('log', `${logCount ?? 0} 筆`);
     }
@@ -591,9 +598,10 @@ function renderHeader(detail) {
  * （全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
+    // 同一張卡片內的各類別表共用欄寬（容器帶 lf-table-aligned）：「問題」是吸收欄，趨勢與處理狀態固定寬
     const statusColumn = {
         title: '處理狀態',
-        className: 'lf-status-cell',
+        className: 'lf-status-cell lf-col-w-md',
         render: i => statusCell(i, sectionIssues)
     };
     if (currentDetail.canHandle) {
@@ -603,7 +611,7 @@ function issueColumns(sectionIssues) {
     return [
         // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在第一欄最前面
         { title: '問題', render: i => issueCell(i) },
-        { title: '趨勢', className: 'lf-trend-cell', render: i => trendCell(i.trendText) },
+        { title: '趨勢', className: 'lf-trend-cell lf-col-w-lg', render: i => trendCell(i.trendText) },
         statusColumn
     ];
 }
@@ -1199,6 +1207,32 @@ function allowedSeverities() {
     return new Set(currentDisplaySettings?.visibleSeverities ?? SEVERITY_ORDER);
 }
 
+/**
+ * 清單重繪的單一出口（嚴重度篩選、顯示範圍、重載都經 renderIssues）：取消不在目前可見清單內的勾選。
+ * 送出對象必須等於畫面上看得到的對象——否則「套用到 3 個問題」會改到使用者已經篩掉、看不到的問題。
+ * 有取消時同步側軌摘要並請面板說明一次；回傳取消的數量。
+ */
+function pruneHiddenSelection() {
+    if (selectedIssueKeys.size === 0) return 0;
+    // 「已處理／已有結論」收合區每次重繪都重新收起：展開後勾在裡面的問題，重繪後同樣看不到
+    const { collapseDone } = currentScopeOption();
+    const visible = new Set(visibleTopIssues()
+        .filter(issue => !collapseDone || isUnresolvedIssue(issue) || isInProgressIssue(issue))
+        .map(issue => issue.issueKey));
+    let pruned = 0;
+    for (const key of [...selectedIssueKeys]) {
+        if (!visible.has(key)) {
+            selectedIssueKeys.delete(key);
+            pruned++;
+        }
+    }
+    if (pruned > 0) {
+        refreshRailSelectionSummary();
+        refreshSelection({ prunedCount: pruned });
+    }
+    return pruned;
+}
+
 function visibleTopIssues() {
     const allowed = allowedSeverities();
     return currentDetail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity) && inCurrentScope(i));
@@ -1355,6 +1389,7 @@ function renderWorkOrderHint(detail, container) {
  */
 function renderIssues(detail) {
     const container = document.getElementById('detail-issues');
+    pruneHiddenSelection();
 
     if (detail.topIssues.length === 0) {
         renderEmpty(container, {
@@ -1419,6 +1454,7 @@ function renderIssues(detail) {
             : [];
 
         const body = document.createElement('div');
+        body.className = 'lf-table-aligned';
         if (primary.length > 0) {
             // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
             renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
@@ -1453,7 +1489,6 @@ function renderIssues(detail) {
                 hint: `有 ${unscopedCount} 項符合目前嚴重度篩選的問題不在「${currentScopeOption().label}」這個顯示範圍內。`
             });
             const btn = button(`切換為「${target.label}」`, {
-                variant: 'outline-primary',
                 size: 'sm',
                 onClick: () => changeScope(target.value)
             });
@@ -1495,6 +1530,7 @@ function collapsedRestSection(rest) {
     wrap.className = 'border-top';
 
     const body = document.createElement('div');
+    body.className = 'lf-table-aligned';
     renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
     const toggle = disclosure(`已處理／已有結論 ${rest.length} 項`, body, { className: 'lf-issue-group__rest-toggle' });
 
@@ -2065,7 +2101,8 @@ function renderCorrelationBox(detail) {
 
 function correlationAlertItem(ref) {
     const item = document.createElement('li');
-    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+    // lf-list-row：清單列內重複的動作（抑制鈕）維持無框，不套頁面層級按鈕的細環
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1 lf-list-row';
 
     const text = document.createElement('span');
     text.className = 'lf-alert-item__text';
@@ -2109,7 +2146,7 @@ function renderTrendBox(detail) {
 
 function trendAlertItem(ref) {
     const item = document.createElement('li');
-    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1 lf-list-row';
 
     // 文字側必須能收縮（lf-alert-item__text）：flex 子項預設 min-width:auto，
     // 而這裡的內容是「Microsoft-Windows-Security-Auditing EventId 4719」這種不含空白的

@@ -143,6 +143,7 @@ function makeReports() {
 function makeDashboard() {
     const api = makeApi();
     const writes = [];
+    const reveals = [];
     const inst = build('dashboard.js', 'async function load(', 'load', `
         const state = {};
         let currentDays = 7;
@@ -156,13 +157,15 @@ function makeDashboard() {
         const renderGroupRisk = () => onWrite('groupRisk');
         const renderServerAdminGuide = () => onWrite('guide');
         const loadAiFocus = () => onWrite('ai');
+        const mountReveal = (key, bar) => onReveal([key, bar]);
     `, {
         api, createSeqGuard, renderLoading: () => {},
         getCurrentUser: async () => ({ isServerAdmin: false }),
         getDisplaySettings: async () => ({}),
-        onWrite: (w) => writes.push(w)
+        onWrite: (w) => writes.push(w),
+        onReveal: (r) => reveals.push(r)
     });
-    return { run: inst.load, api, writes };
+    return { run: inst.load, api, writes, reveals };
 }
 
 /** 儀表板自動 AI 卡：抽 production 的 loadAiFocus 與 renderAiFocusResting，只替換 api 與 DOM 邊界 */
@@ -355,6 +358,17 @@ const cases = {
         c.api.pending[0].reject(new Error('late boom'));
         await first;   // 外擲會讓 guardLoad 把新結果換成「載入失敗」，本案例就會失敗
         assert.equal(c.writes.length, afterNew, '舊請求失敗不得改動頁面');
+    },
+    // 風險類型的揭露鈕掛在卡片標頭、不會跟著格線被換成骨架：載入一開始就要收掉，
+    // 否則載入中與載入失敗時還留著上一次的「顯示其餘 N 類」
+    async dashboard載入中先收掉風險類型揭露鈕() {
+        const c = makeDashboard();
+        const first = c.run();
+        await tick();
+        assert.deepEqual(c.reveals, [['categories', null]]);
+        assert.equal(c.writes.length, 0, '資料還沒回來，不得已有渲染');
+        c.api.pending[0].reject(new Error('boom'));
+        await assert.rejects(first, /boom/);
     },
     async dashboard最新請求失敗要外擲() {
         const c = makeDashboard();

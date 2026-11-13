@@ -403,6 +403,12 @@ small, .small { font-size: var(--lf-font-size-sm); }
     --bs-btn-active-border-color: var(--lf-danger-line);
 }
 
+/* 危險動作入口在表格列、分段控制、清單列以外：加危險色髮絲細環——無框文字放在頁面上，靜止時看起來像連結 */
+.btn-outline-danger:not(:is(.table, .btn-group, .lf-list-row) *) {
+    --bs-btn-border-color: var(--lf-danger-line);
+    --bs-btn-hover-border-color: var(--lf-danger-line);
+}
+
 /* 表格列內帶圖示的一般小按鈕：無框，只留圖示與文字（靜止時靠圖示辨識，滑過出現淡底） */
 .table .btn-outline-secondary.btn-sm:has(> .lf-icon) {
     --bs-btn-bg: transparent;

@@ -120,6 +120,11 @@ const cases = {
         assert(buttons[0].textContent.includes('未處理（0/4 已結案）・逾期'));
         assert(buttons[0].getAttribute('title').includes('逾期'));
         assert(!buttons[1].textContent.includes('逾期'));
+        // 短摘要＋完整文字：按鈕上是短的，提示文字是完整的
+        rail.setSummary('handling', '未處理 0/4', '未處理（0/4 已結案）');
+        assert(buttons[0].textContent.includes('未處理 0/4'));
+        assert(!buttons[0].textContent.includes('已結案'));
+        assert.equal(buttons[0].getAttribute('title'), '處理狀態：未處理（0/4 已結案）');
     },
     expandWithoutFocusDoesNotFocus() {
         const { layout, rail } = build();

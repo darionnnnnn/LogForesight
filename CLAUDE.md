@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **9,315 通過／12 略過**、macOS **9,294 通過／20 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **9,345 通過／12 略過**、macOS **9,294 通過／20 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -53,6 +53,8 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕與分段控制、寬度、判斷層／佐證層、共用元件一覽、§8.8 標記與顏色訊號）為基準，不必再問。
   字級只引用 `--lf-font-size-*` 字階或文字角色類別、不寫數值，根字級交給瀏覽器與「小／中／大」偏好（DESIGN-SYSTEM §3a，`FontScaleGuardUiTests` 守門）。
   驗收用 UI 資料集＋截圖量測工具（DESIGN-SYSTEM §8.7）：改到的頁面在五個寬度下六項量測為 0 才算完成；樣式表是 `wwwroot/css/` 的 base／components／layout／pages 四層，唯一引用點 `Views/Shared/_Styles.cshtml`。
+  表格欄寬照 DESIGN-SYSTEM §8.4a（短值欄 `lf-col-nowrap`、留一欄吸收、同卡多表 `lf-table-aligned`）；無框品牌色按鈕只放表格列、分段控制與清單列（`lf-list-row`），按鈕角色與「每個範圍至多一顆主要按鈕」由 `tools/ui-global-asserts.json` 在每個量測情境檢查。
+  修版面缺陷先寫會紅的量測斷言、在未修正的建置確認它紅再修——六項量測抓不到欄位起點不一致、孤立元素這類版面關係。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
   `appsettings.json` 只留啟動與安全前提（Storage/Jwt/Auth）。**新增設定必須有消費端**——
   「有設定無行為」是本專案紅線。

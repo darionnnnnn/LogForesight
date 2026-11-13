@@ -35,7 +35,10 @@
                 </details>
                 <a class="btn btn-sm btn-outline-secondary mb-2" href="@Url.Content("~/api/imports/Owners/template")">下載範本</a>
                 <label for="import-owners-file" class="visually-hidden">選擇要上傳的負責人 CSV 檔</label>
-                <input type="file" class="form-control form-control-sm" id="import-owners-file" accept=".csv" data-upload="Owners" />
+                <input type="file" class="form-control form-control-sm" id="import-owners-file" accept=".csv" data-upload="Owners" aria-describedby="encoding-note" />
+                <div class="form-text" id="encoding-note">
+                    檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，否則中文欄位會變成亂碼。
+                </div>
                 <div id="import-status" class="mt-2"></div>
             </div>
         </div>
@@ -54,13 +57,6 @@
         <div id="preview-summary" class="mb-3"></div>
         <div id="preview-warnings"></div>
         <div id="preview-rows"></div>
-    </div>
-</div>
-
-<div class="lf-card mt-3" id="encoding-note">
-    <div class="lf-card__body lf-text-meta">
-        檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，
-        否則中文欄位會變成亂碼。
     </div>
 </div>
 

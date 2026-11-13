@@ -942,14 +942,22 @@ export function buildKeyValueTable(rows, { mono = false } = {}) {
  * 可視寬僅 709px，右側的「處理概況／處理人／動作」整段在畫面外，
  * 第一次使用的人會直接認定「這個視角沒有指派功能」。
  *
- * 作法是右緣漸層陰影＋一行文字提示，捲到底自動消失。**一處改、全站表格受惠**。
+ * 作法是右緣內陰影（樣式表）＋只給輔助技術的一句文字，捲到底自動消失。**一處改、全站表格受惠**。
  * 用 class 切換而不是直接改 style：視覺細節留在 CSS，這裡只負責狀態。
  */
 function bindScrollAffordance(wrap) {
+    // 視覺上是右緣陰影（樣式表）；輔助技術讀不到陰影，另放一句只給它們的文字，跟著可捲動狀態出現
+    const srHint = document.createElement('span');
+    srHint.className = 'visually-hidden';
+    srHint.textContent = '表格可左右捲動';
+    srHint.hidden = true;
+    wrap.appendChild(srHint);
+
     const update = () => {
         // 1px 容差：捲到底時 scrollLeft 可能因為小數寬度差一點點
         const more = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft > 1;
         wrap.classList.toggle('lf-table-wrap--scrollable', more);
+        srHint.hidden = !more;
     };
 
     wrap.addEventListener('scroll', update, { passive: true });
@@ -1264,7 +1272,6 @@ function retryNode(containers, fn, options) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-3';
     wrap.appendChild(button('重試', {
-        variant: 'outline-primary',
         icon: 'arrow-counterclockwise',
         onClick: () => {
             [containers].flat().filter(Boolean).forEach(container => renderLoading(container));

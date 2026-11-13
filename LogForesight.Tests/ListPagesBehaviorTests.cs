@@ -35,6 +35,7 @@ public class ListPagesBehaviorTests
     [InlineData("reports舊請求失敗不外擲")]
     [InlineData("dashboard舊回應晚到不寫入狀態")]
     [InlineData("dashboard舊請求失敗不外擲")]
+    [InlineData("dashboard載入中先收掉風險類型揭露鈕")]
     [InlineData("dashboard最新請求失敗要外擲")]
     [InlineData("dashboard自動AI卡遇429顯示暫時休息且不隱藏")]
     [InlineData("dashboard自動AI卡一般失敗維持隱藏")]

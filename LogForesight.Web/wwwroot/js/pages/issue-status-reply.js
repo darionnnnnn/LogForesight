@@ -149,7 +149,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     let nextBtn = null;
     if (onNext) {
-        nextBtn = makeButton('送出並回覆下一張', { variant: 'outline-primary' });
+        nextBtn = makeButton('送出並回覆下一張', { variant: 'outline-secondary' });
         nextBtn.classList.add('ms-2');
         form.appendChild(nextBtn);
         nextBtn.addEventListener('click', () => send(nextBtn, true));

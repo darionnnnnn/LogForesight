@@ -377,8 +377,8 @@ function comparisonBadge(current, previous) {
         return wrap;
     }
 
+    // 上升不上紅色（變化不是風險狀態，DESIGN-SYSTEM §8.1）：靠箭頭辨識
     if (previous === 0) {
-        wrap.className = 'lf-text-alert';
         wrap.textContent = `↑ 前期為 0`;
         return wrap;
     }
@@ -390,7 +390,6 @@ function comparisonBadge(current, previous) {
         wrap.className = 'lf-text-meta';
         wrap.textContent = '與前期持平';
     } else if (delta > 0) {
-        wrap.className = 'lf-text-alert';
         wrap.textContent = `↑ ${percent}%（前期 ${formatNumber(previous)}）`;
     } else {
         wrap.className = 'lf-text-meta';

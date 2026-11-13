@@ -150,7 +150,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 ## 4. 形狀、陰影、間距、動效
 
 - **圓角**（收緊一階，data-dense 專業感）：`--lf-radius-sm: .25rem`、`--lf-radius: .5rem`、`--lf-radius-lg: .75rem`、pill 不變。
-- **陰影**：只給浮在內容上方的東西（下拉選單、popover、modal、toast）。面板靜止時靠 `--lf-panel-ring` 與頁底分開，不靠陰影；可點的卡滑過只變底色。下拉選單的陰影直接寫 `box-shadow`（Bootstrap 5.3.8 沒有規則引用 `--bs-dropdown-box-shadow`）。
+- **陰影**：只給浮在內容上方的東西（下拉選單、popover、modal、toast）。面板靜止時靠 `--lf-panel-ring` 與頁底分開，不靠陰影。只有可點的卡片（連結內的卡、按鈕形式的卡、`lf-card--clickable`）滑過才有回饋：換淺灰底（`--lf-gray-50`）、只給滑鼠裝置、不加陰影不位移；頁首、處理狀態、狀態卡這類不可點的卡片滑過不變（`FrontendConsistencyUiTests` 守門）。下拉選單的陰影直接寫 `box-shadow`（Bootstrap 5.3.8 沒有規則引用 `--bs-dropdown-box-shadow`）。
 - **間距**：`--lf-space-*` 不變（已是 4/8 節奏）。表格列高目標 36px、卡片內距 12–16px（skill Data-Dense 建議值，Phase 3 元件層落實）。
 - **動效**：`--lf-transition: .15s ease` 維持；較大轉場（modal、燈箱）150–300ms `ease-out`；**hover/pressed 不得位移佈局**（用透明度/陰影/色彩）；新增全站 `prefers-reduced-motion: reduce` 支援（動畫關閉、transition 降為 0）。
 - **下拉選項**：`select option／optgroup` 明確指定 `--lf-text` 與 `--lf-card-bg`、`select` 宣告 `color-scheme: light`——選項背景透明時 Windows 版 Chrome 部分寬下拉的選項文字畫不出來（`FrontendConsistencyUiTests` 守門）。
@@ -204,7 +204,10 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **每頁至多一個主要按鈕**（`btn-primary`，實心）：它就是這頁最常做的那件事。其餘一律 `btn-outline-secondary`（髮絲邊）；
   危險動作 `btn-outline-danger`（無框危險色文字）並經 `confirmAction` 二次確認。modal 內另計（每個 modal 同樣至多一個主要按鈕）。
 - **清單列內重複出現的動作**（每列一顆「回覆」）不算頁面主要按鈕，樣式用 `btn-sm btn-outline-primary`（無框品牌色文字）——
-  一頁 20 顆實心按鈕等於沒有重點。外觀見 §8.3。
+  一頁 20 顆實心按鈕等於沒有重點。外觀見 §8.3。無框品牌色文字只放在三種位置：表格列內、分段控制、清單列（`lf-list-row`）；
+  頁面、卡片標頭、工具列、選取列與 modal 裡的動作一律 `outline-secondary`，換頁的頁面動作同樣用 `linkButton(…, { variant: 'outline-secondary' })`。
+- 主要按鈕的範圍：頁面本體、每個 modal、每個表單、每個清單列（`.list-group-item`，例如初始設定的步驟列）與標了 `data-primary-scope` 的區塊各自至多一顆。
+  上面兩條由 `tools/ui-global-asserts.json` 的「按鈕角色」全域斷言在每個量測情境檢查。
 - 功能未啟用、前置條件未滿足時，相關動作按鈕**不可呈現為主要樣式**；改顯示指路文字（「到 X 頁啟用」）。
 
 **三種狀態版型必須看得出差別**
@@ -217,10 +220,10 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 **資訊密度**
 - 說明文字的取捨見 WEB-SPEC §8.6a（保留後果句、其餘收進 `?` 或刪除）；一個下拉有多重副作用時，把副作用做成選項旁的對照表，不寫整段散文。
 - 日常動線用不到的內容（開發工具、校準、純調校參數）收進「進階」收合區，預設收合、記住使用者的展開選擇（`localStorage`，try/catch 包起來）。
-- KPI 統計卡一律用 `core/ui.js` 的 `kpiStrip(groups)`（唯一出口，`FrontendConsistencyUiTests` 守門）：卡片分組（可有組標題，列高固定、有無說明圖示同一條基線），組內 grid `repeat(auto-fill, minmax(11rem, 1fr))`（不設上限，4 張卡在 1280 寬同一列），
+- KPI 統計卡一律用 `core/ui.js` 的 `kpiStrip(groups)`（唯一出口，`FrontendConsistencyUiTests` 守門）：卡片分組（可有組標題，列高固定、有無說明圖示同一條基線），組內 grid `repeat(auto-fit, minmax(11rem, 1fr))`（不設上限，4 張卡在 1280 寬同一列；卡片數少於可放的欄數時撐滿整列，詳情頁單組 KPI 的右緣與下方卡片對齊），
   寬螢幕（≥1200px）放得下的組依卡數比例並排、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；575px 以下每列兩張。每張卡固定「數字／標籤／副標」三列，副標沒有內容也保留兩行高，
   同列等高；標籤可換行、副標最多兩行後省略（完整文字在 `title`），可行動的句子放前半。副標只放含資料或口徑的句子。卡片與面板同一語言（透明邊框＋細環）；可點的卡右上角有「›」當靜止時的線索，滑過只變底色，不位移。
-- 卡片超過一排且第一排已足夠判斷時，`kpiStrip(groups, { singleRow: true })` 搭配 `core/reveal.js` 的 `revealFirstRow` 只顯示第一排：576px 以上各組同排依卡數分寬、卡片撐滿；依實際格線欄數收合、一個區域一顆揭露鈕、按鈕寫出被藏的數量與告警數、列印時全部顯示。不用固定高度裁切。
+- 卡片超過一排且第一排已足夠判斷時，`kpiStrip(groups, { singleRow: true })` 搭配 `core/reveal.js` 的 `revealFirstRow` 只顯示第一排：576px 以上各組同排依卡數分寬、卡片撐滿；依實際格線欄數收合、一個區域一顆揭露鈕、按鈕寫出被藏的數量與告警數、列印時全部顯示。不用固定高度裁切。揭露鈕放在所屬卡片的標頭列右側（放在格線下方會獨自占一列、孤立在右下角）；沒有卡片可放的指標列放在列下方。
 
 **互動**
 - 送出後**就地更新**：只重繪受影響的列或區塊，保留使用者的勾選、展開與捲動位置；不整頁重載。
@@ -277,10 +280,12 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | `lf-text-meta` | 次要資訊（次數、時段、來源） | sm、400、`--lf-text-muted` |
 | `lf-text-label` | 眉標、欄位標籤 | sm、600、`--lf-text-muted` |
 | `lf-text-data` | 技術值與數字 | `--lf-font-mono`、tabular-nums；不在字中斷行（IP、日期、來源名不拆成逐字直排），表格內整段不斷行（欄寬讓給技術值，折行留給成段文字欄；展開列、`lf-break-anywhere` 容器內，以及 `<pre>`／`lf-pre-wrap`／`lf-pre-line` 這類保留換行的內容除外）；放不下的長字串由容器的 `lf-break-anywhere` 斷行 |
-| `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗） | 600、`--lf-danger-text` |
+| `lf-text-alert` | 風險狀態文字（逾期、失聯、失敗、超限、未回報、資料過期、關聯訊號） | 600、`--lf-danger-text` |
 
 紅、黃、綠字只有三種合法用途：驗證與操作結果走 `statusNote`（`core/elements.js`，失敗 `role="alert"`、其餘 `role="status"`）；
-風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。表單必填星號用 `lf-required-mark`（同色、`aria-hidden`）；需要使用者處理才能繼續、或選了會有明顯後果的提示用 `statusNote` 的 warning 型，不降成次要文字。
+風險狀態走 `lf-text-alert`；其餘一律一般文字色（例：相關帳號是佐證資訊，不是風險訊號，不上紅字）。
+變化與持續不是風險狀態：「本期新增」「昨日仍在發生」「↑ N%」「↑ 前期為 0」、未處理台數用一般文字，靠文字與箭頭辨識——每列都紅就分不出輕重。
+`lf-text-alert` 的使用處逐檔登錄在 `DesignSystemGuardUiTests`（「紅字只出現在登錄的風險狀態用途」），新增用法先確認是風險狀態再更新登錄。表單必填星號用 `lf-required-mark`（同色、`aria-hidden`）；需要使用者處理才能繼續、或選了會有明顯後果的提示用 `statusNote` 的 warning 型，不降成次要文字。
 一行次要資訊用 `metaLine(items)`：空值自動略過，沒有任何有效項目時回傳 null；間隔由 gap 提供，窄寬度整項換行。
 表格裡的帳號、主機名、Sentinel 名稱、來源這類識別值加 `text-nowrap`，不在連字號處斷行；名稱欄給 `lf-minw-md` 讓超長名稱折行不超過四行。
 
@@ -303,6 +308,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
   同一類確認的輕重差別交給確認框內提示框的顏色，不靠按鈕換色。唯一例外：深色側欄上的登出鈕用 `outline-light`。
 - **變體名稱是角色，不是外觀**（外觀只在 `base.css` 定義一次）：`primary`／`danger` 實心；`outline-secondary` 面板色底＋髮絲細環（`--lf-border-strong`），滑過出現凹槽底；
   `outline-primary` 無框品牌色文字、`outline-danger` 無框危險色文字，滑過出現對應淡底；表格列內帶圖示的 `outline-secondary` 小按鈕無框，靠圖示辨識。
+  `outline-danger` 在表格列、分段控制、清單列以外加危險色髮絲細環（`--lf-danger-line`）——無框文字放在頁面上，靜止時看起來像連結。
   所有按鈕保留 1px 邊框（無框者為透明），強制色彩模式下仍有輪廓。停用：凹槽底、次要文字色、`not-allowed` 游標。
 - **分段控制**（互斥或可複選的切換）：全站一種外觀——一條凹槽（`--lf-sunken`），選中的選項浮起成面板色並加粗。`.btn-group` 一律是分段控制；
   不是 `.btn-group` 但子按鈕帶 `aria-pressed` 的容器（設定頁層級）同一外觀。按下狀態以 `.active` 或 `aria-pressed="true"` 表達，新寫的切換兩者都設。
@@ -322,6 +328,18 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - 寬螢幕（≥ 1600px）詳情頁側軌預設展開，把多出的寬度用在並排，而不是拉長左欄行寬；使用者在本頁按過收合就照使用者的。
 - 長字串：`body` 全站 `overflow-wrap: break-word`（沒有空白的連續字串放不下時才斷，一般字詞不受影響）；
   格線欄寬用 `minmax(min(Xrem, 100%), 1fr)`，窄容器不被最小欄寬撐破；資料來的名稱（chip、群組名）比容器寬時換行，不截斷。
+
+#### 8.4a 表格欄寬與鍵值列
+
+瀏覽器預設把多餘寬度均攤到每一欄，寬螢幕上欄與欄之間會空出一大段。表格欄位一律分兩種：
+- **短值欄**（日期、數字、狀態、分類、嚴重度）標 `lf-col-nowrap`：不在字中斷行、寬度依內容收緊。
+- **吸收欄**：沒有標 `lf-col-nowrap` 的那一欄拿走多餘寬度，通常是名稱或說明；一張表只留一欄（最多兩欄）。吸收欄放最後一欄時，多出的寬度留在列尾，不會把後面的短值欄推到最右邊。
+  資料來的長字串（規則描述、來源名）可能不含空白，吸收欄要加 `lf-break-anywhere`，否則一列就能把整張表撐到上萬 px。
+- **同一張卡片內結構相同的多張表**（群組與授權兩張、風險日詳情各類別）：容器加 `lf-table-aligned`（≥ 992px 改固定版面、最小寬 40rem——側軌展開這類窄容器下表格在容器內捲動，吸收欄不被壓到一百多 px），短值欄用 `lf-col-w-sm／md／lg`（6／10／12rem）給相同寬度，欄位起點才一致；窄螢幕維持自動版面、在容器內捲動。
+- 表格內的單行省略說明（`.lf-issue-explanation`，限問題查詢的「問題」欄 `td.lf-issue-col`）寬度 0、至少撐滿儲存格，不參與欄寬計算——否則它的整段文字寬會成為欄的最小寬度，整張表縮不進來。
+- 表格寬到要橫向捲動時，容器右緣的內容以遮罩淡出（捲到底消失），文字提示只給輔助技術；不用畫在容器上的內陰影——儲存格有不透明底色，會把它整個蓋住。有固定末欄的表格不另加，固定欄左側的陰影就是分界。
+
+**鍵值列**（`.lf-kv`，排程作業狀態卡）：標籤固定 6.5rem、值緊跟其後靠左，長值自然換行並以 `text-wrap: pretty` 避免最後一行只剩一個字；一個值由兩段組成時（時間＋對應數）每段包成 `.lf-kv__part`，換行時整段換。不用兩端對齊——寬螢幕上短值會離標籤好幾百 px。
 
 ### 8.5 判斷層與佐證層
 
@@ -347,6 +365,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 只有圖示的連結 | `lf-icon-link` |
 | 詳情頁頁首卡 | `lf-entity-head`（`__title`／`__link`／`__badges`／`__actions`／`__facts`，layout.css） |
 | 可展開表格就地重繪保留展開 | `renderTable(..., { rowKey, expandedKeys })`；`toggleAllTableDetails` 走列自己的切換 |
+| 表格欄寬（短值欄、同卡多表對齊） | `lf-col-nowrap`、`lf-col-w-sm／md／lg`、容器 `lf-table-aligned`（§8.4a） |
+| 詳情頁側軌按鈕摘要 | `side-rail.js` `setSummary(key, 短摘要, 完整文字)`：直式按鈕只放得下約十個字，完整文字放提示 |
 | KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary`：只有 `danger` 上色；`warning` 數字維持文字色、標籤前一顆警示色圓點；`secondary`（零或無事）淡化 |
 | 狀態、層級、旗標標記 | `format.js` `statusBadge`／`severityBadge`／`riskBadge`／`elevatesBadge`（形式見 §8.8） |
 
@@ -377,6 +397,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
   `ui-shots.mjs` 被逾時或中斷時會留下無頭 Edge 程序，累積後同樣讓行為案例在約 5 秒處逾時：跑測試前清掉命令列含 `--headless` 的 `msedge`（不要動使用者自己開的瀏覽器）。
   情境步驟 `evalAssert`（函式本體，回傳 null 通過、字串為失敗訊息）用來量六項指標以外的東西：圖示外框是否落在按鈕內、字高下限、欄數、是否需捲動。
+  `hover`（選擇器或 null）以真實滑鼠事件移入，量滑過樣式；`key`（Enter、Escape、方向鍵、Tab、空白）對目前焦點送真實按鍵，量鍵盤操作；`tools/ui-global-asserts.json` 是每個情境都跑的全域斷言（載入後與步驟後各一次，失敗計入 assert 項），`--global`／`--no-global` 切換。
+  修畫面缺陷時先寫會紅的斷言、在未修正的建置上確認它紅，再修——六項量測抓不到「欄位起點不一致」「孤立元素」這類版面關係。
 - **截圖與量測** `tools/ui-shots.mjs --base <網址> --fixture <目錄>/ai [--matrix full|widths|quick|screens] [--height] [--only]`：
   溢出量測（`overflow`）除了比元素方框，也抓「方框在格子內、文字越過格子」——格線欄 `minmax(0, 1fr)` 內不斷行的長值屬於這一型。
   情境清單 `tools/ui-scenarios.json`（資料集網址寫 `fixture:<鍵>`），步驟見檔頭；輸出截圖與 `summary.json`，任一量測項非零時結束代碼非零。

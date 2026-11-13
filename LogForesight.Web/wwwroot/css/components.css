@@ -171,11 +171,7 @@
     border: 1px solid transparent;
     border-radius: var(--lf-radius);
     box-shadow: var(--lf-card-shadow);
-    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
-}
-
-.lf-card:hover {
-    background-color: var(--lf-primary-soft);
+    transition: background-color var(--lf-transition), box-shadow var(--lf-transition);
 }
 
 .lf-card--clickable {
@@ -195,6 +191,11 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: var(--lf-space-2) var(--lf-space-3);
+}
+
+/* 揭露鈕放在卡片標頭時：靠右、不留格線下方那段上距 */
+.lf-card__header > .lf-reveal-bar {
+    margin: 0 0 0 auto;
 }
 
 summary.lf-card__header {
@@ -236,7 +237,7 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
 
 /*
   統計卡：大字數字＋小字標籤（§8.2 原則 2「數字優先」）。
-  可下鑽的卡片（§8.4）以 hover 抬升提示可點擊——統計數字是入口，不是終點。
+  可下鑽的卡片（§8.4）滑過換底色提示可點擊——統計數字是入口，不是終點。
 */
 .lf-stat {
     display: block;
@@ -278,10 +279,14 @@ details[open] > summary.lf-card__header::after { transform: rotate(180deg); }
     color: var(--lf-text-muted);
 }
 
-a.lf-stat:hover .lf-card,
-.lf-card--clickable:hover {
-    box-shadow: var(--lf-shadow-md);
-    border-color: var(--lf-primary-soft-border);
+/* 只有可點的卡片滑過才有回饋，而且只換底色、不浮起不位移（陰影只給浮在內容上方的東西，DESIGN-SYSTEM §5）；
+   只給滑鼠裝置，觸控點過不會留著滑過樣式。頁首、處理狀態、狀態卡這類不可點的卡片滑過一律不變 */
+@media (hover: hover) and (pointer: fine) {
+    a.lf-stat:hover .lf-card,
+    button.lf-card:not(:disabled):hover,
+    .lf-card--clickable:hover {
+        background-color: var(--lf-gray-50);
+    }
 }
 
 /*
@@ -326,9 +331,11 @@ a.lf-stat:hover .lf-card,
     color: var(--lf-text-muted);
 }
 
+/* auto-fit：卡片數少於可放的欄數時（詳情頁只有一組四張卡），卡片撐滿整列，右緣與下方卡片對齊；
+   auto-fill 會保留空軌，寬螢幕上四張卡只占左邊三成 */
 .lf-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
     gap: var(--lf-space-3);
 }
 
@@ -439,20 +446,6 @@ a.lf-kpi-card--link:focus-visible {
     border-color: transparent;
     border-radius: 0;
     box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
-}
-
-/* 滑過：只換底色，不浮起（覆寫一般可點卡的陰影與邊框色）；只給滑鼠，觸控點過不會留著滑過樣式 */
-.lf-category-grid a.lf-stat:hover > .lf-card,
-.lf-category-grid .lf-card--clickable:hover {
-    border-color: transparent;
-    box-shadow: -1px 0 0 0 var(--lf-border), 0 -1px 0 0 var(--lf-border);
-}
-
-@media (hover: hover) and (pointer: fine) {
-    .lf-category-grid a.lf-stat:hover > .lf-card,
-    .lf-category-grid .lf-card--clickable:hover {
-        background: var(--lf-gray-50);
-    }
 }
 
 /* 鍵盤焦點：格線容器 overflow: hidden 會裁掉外擴的焦點環，改畫在格子內側 */
@@ -653,7 +646,7 @@ a.lf-badge:hover { text-decoration: underline; }
 }
 
 /* 建議處置：頁首唯一有底色的面，僅 AI 完成時（統計模式不加 --tinted）。
-   左側指示條：卡片滑過時整張卡也變成 --lf-primary-soft，只靠底色會與卡片融成一片（第 73 輪 C） */
+   左側指示條：與同排的「重點速報」區分，不只靠底色（灰階與列印時仍分得出） */
 .lf-briefing__action--tinted {
     background: var(--lf-primary-soft);
     border-radius: var(--lf-radius);
@@ -1108,6 +1101,14 @@ a.lf-badge:hover { text-decoration: underline; }
     cursor: default;
 }
 
+/* 問題查詢「問題」欄的單行說明不參與欄寬計算（寬度 0、至少撐滿儲存格）：不設的話，它的整段文字寬（上限 32rem）
+   會成為「問題」欄的最小寬度，整張表在 FHD 下也縮不進來、固定的動作欄蓋住右側欄位。
+   只限這一欄（同格的標題撐住欄寬）；權限異動「異動說明」欄裡只有這段說明，套用的話整欄會縮成一百多 px */
+.table td.lf-issue-col .lf-issue-explanation {
+    width: 0;
+    min-width: 100%;
+}
+
 /* 問題欄的寬度上界：說明放得下就完整顯示，真的過長才以 ellipsis 收尾。
    32rem 是「一句白話說明的合理長度」，只在說明異常長時才生效。 */
 .lf-issue-col {
@@ -1225,32 +1226,54 @@ a.lf-badge:hover { text-decoration: underline; }
     margin-bottom: 0;
 }
 
+/* 表格欄寬規則（DESIGN-SYSTEM §8.4a）：瀏覽器預設把多餘寬度均攤到每一欄，寬螢幕上欄與欄之間空出一大段。
+   - lf-col-nowrap：短值欄（日期、數字、狀態、分類、嚴重度）不在字中斷行、寬度依內容收緊。
+   - 沒有標 lf-col-nowrap 的欄就是吸收欄，拿走多餘寬度；一張表只留一欄（最多兩欄）不標。
+   - lf-table-aligned（放在 renderTable 的容器上）：同一張卡片內結構相同的多張表，寬螢幕改固定版面，
+     短值欄用 lf-col-w-* 給相同寬度，欄位起點才會一致；窄螢幕維持自動版面（表格可在容器內捲動）。 */
+.table > thead > tr > th.lf-col-nowrap,
+.table > tbody > tr > td.lf-col-nowrap {
+    width: 1%;
+    white-space: nowrap;
+}
+
+/* 固定寬只在寬螢幕的對齊表格需要；窄螢幕維持自動版面，欄寬照內容（固定寬會讓不換行的徽章溢出儲存格） */
+@media (min-width: 992px) {
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-sm { width: 6rem; }
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-md { width: 10rem; }
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-lg { width: 12rem; }
+
+    /* 最小寬度 40rem：容器窄時（側軌展開、992～1200px）表格在容器內捲動，吸收欄至少保留約 18rem；
+       不設的話固定版面會把吸收欄壓到一百多 px、內容溢出儲存格 */
+    .lf-table-aligned > .lf-table-wrap > table {
+        table-layout: fixed;
+        min-width: 40rem;
+    }
+}
+
 /* 長字串截斷（renderTable 欄位選項 truncate）：主機名、問題標籤、sensor 名稱以省略號收斂，
    完整文字放在 title。max-width 預設 18rem，不寫 inline style。 */
 .lf-table-wrap td.text-truncate {
     max-width: 18rem;
 }
 
-/* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
+/* 還有內容在右邊看不到時的線索（體檢 M2／W1）：容器右緣的內陰影，捲到底自動消失（ui.js 切換類別）。
    1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
-   沒有提示的話，第一次使用的人會認定「這個視角沒有指派功能」。
-   陰影用 sticky 而不是 fixed/absolute：它要跟著捲動容器的右緣，不是頁面的。 */
-.lf-table-wrap--scrollable::after {
-    content: '← 可左右捲動';
-    position: sticky;
-    right: 0;
-    bottom: 0;
-    float: right;
-    z-index: 2;
-    padding: .15rem .5rem;
-    border-radius: var(--lf-radius-sm) 0 0 0;
-    background: var(--lf-card-bg);
-    border-top: 1px solid var(--lf-border);
-    border-left: 1px solid var(--lf-border);
-    color: var(--lf-text-muted);
-    font-size: var(--lf-font-size-sm);
+   沒有線索的話，第一次使用的人會認定「這個視角沒有指派功能」。
+   用遮罩讓容器右緣的內容淡出（遮罩作用在捲動容器的可視框、不隨內容捲動，也不占版面）；
+   不用內陰影：表格儲存格有不透明底色，畫在容器上的陰影會被整個蓋住。文字提示只給輔助技術（ui.js 的 visually-hidden 節點）。
+   有固定末欄的表格不加：固定欄左側本來就有一條陰影當分界。 */
+.lf-table-wrap--scrollable:not(.lf-table-wrap--sticky-action) {
+    -webkit-mask-image: linear-gradient(to left, transparent, #000 2rem);
+    mask-image: linear-gradient(to left, transparent, #000 2rem);
+}
+
+/* 列內動作（依問題視角）：一顆主要動作＋「更多」選單橫排，不換行 */
+.lf-row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lf-space-1);
     white-space: nowrap;
-    pointer-events: none;
 }
 
 /* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
@@ -1267,6 +1290,11 @@ a.lf-badge:hover { text-decoration: underline; }
     box-shadow: -6px 0 6px -6px rgba(15, 23, 42, .18);
 }
 
+/* 列內動作「更多」選單展開中：那一格提到其他固定格之上，選單才不會被下一列的固定格蓋住 */
+.lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)) > td:last-child:has(.dropdown-menu.show) {
+    z-index: 3;
+}
+
 /* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
 .lf-table-wrap--sticky-action > table > tbody > :where(tr:not(.lf-row-detail)):hover > td:last-child {
     background: var(--bs-table-hover-bg, var(--lf-gray-50));
@@ -1274,7 +1302,7 @@ a.lf-badge:hover { text-decoration: underline; }
 
 /* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
 @media print {
-    .lf-table-wrap--scrollable::after { display: none; }
+    .lf-table-wrap--scrollable { -webkit-mask-image: none; mask-image: none; }
     .lf-table-wrap--sticky-action > table > :where(thead, tbody) > :where(tr:not(.lf-row-detail)) > :where(th, td):last-child { position: static; box-shadow: none; }
 }
 
@@ -1509,9 +1537,12 @@ a.lf-badge:hover { text-decoration: underline; }
     margin-top: var(--lf-space-2);
 }
 
+/* 標籤不在字中斷行（「主機負責人」加說明圖示放不進固定 6rem 會折成兩行）：至少 6rem、依內容加寬；
+   容器放不下時整列換行成標籤在上 */
 .lf-handling__row-label {
-    flex: 0 0 6rem;
-    overflow-wrap: anywhere;
+    flex: 0 0 auto;
+    min-width: 6rem;
+    white-space: nowrap;
 }
 
 .lf-handling__row-value {

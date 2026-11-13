@@ -735,10 +735,39 @@ public class FrontendConsistencyUiTests
             Assert.DoesNotContain("transform", b.Groups["body"].Value);
         }
 
-        // 風險類型卡同一套動效：hover 只變陰影與邊框
-        var clickable = Regex.Match(css, @"a\.lf-stat:hover \.lf-card,\s*\.lf-card--clickable:hover\s*\{(?<body>[^}]*)\}");
-        Assert.True(clickable.Success);
-        Assert.DoesNotContain("transform", clickable.Groups["body"].Value);
+    }
+
+    [Fact]
+    public void 卡片滑過_只限可點的卡片且只換底色()
+    {
+        var css = Regex.Replace(SiteCss.Read(), @"/\*.*?\*/", "", RegexOptions.Singleline);
+        var selectors = Regex.Matches(css, @"(?<sel>[^{}@;]+)\{")
+            .SelectMany(m => Regex.Split(m.Groups["sel"].Value, @",(?![^()]*\))"))
+            .Select(sel => sel.Trim())
+            .ToList();
+
+        // 不可點的卡片（頁首、處理狀態、狀態卡…）滑過不變色：不得有「所有卡片」層級的滑過規則。
+        // 「.lf-card:hover」前面是開頭或組合子才算全卡；button.lf-card、.lf-card--clickable 是可點的卡
+        var bare = selectors.Where(sel => Regex.IsMatch(sel, @"(^|[\s>+~])\.lf-card:hover")).ToList();
+        Assert.True(bare.Count == 0, "不得對所有卡片設滑過樣式：" + string.Join(" | ", bare));
+
+        // 可點的卡片：滑過只換底色（DESIGN-SYSTEM §5：陰影只給浮在內容上方的東西），只給滑鼠裝置，不位移
+        var rule = Regex.Match(css, @"@media \(hover: hover\) and \(pointer: fine\)\s*\{\s*(?<sel>[^{}]*\.lf-card--clickable:hover[^{}]*)\{(?<body>[^}]*)\}");
+        Assert.True(rule.Success, "可點卡片的滑過規則要放在 @media (hover: hover) and (pointer: fine) 內");
+        // 停用的卡片按鈕不是可點的卡片：:not(:disabled)
+        foreach (var expected in new[] { "a.lf-stat:hover .lf-card", "button.lf-card:not(:disabled):hover", ".lf-card--clickable:hover" })
+            Assert.Contains(expected, rule.Groups["sel"].Value);
+        var body = rule.Groups["body"].Value;
+        Assert.Contains("background", body);
+        foreach (var forbidden in new[] { "box-shadow", "border-color", "transform" })
+            Assert.DoesNotContain(forbidden, body);
+
+        // 其他任何 .lf-card 的滑過規則也不得加陰影或位移（格線內曾有一組覆寫陰影的規則）
+        foreach (Match m in Regex.Matches(css, @"(?<sel>[^{}@;]*\.lf-card[^{}@;]*:hover[^{}@;]*)\{(?<body>[^}]*)\}"))
+        {
+            Assert.DoesNotContain("box-shadow", m.Groups["body"].Value);
+            Assert.DoesNotContain("transform", m.Groups["body"].Value);
+        }
     }
 
     [Fact]

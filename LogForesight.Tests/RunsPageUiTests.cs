@@ -61,6 +61,15 @@ public class RunsPageUiTests
         Assert.Contains("SQLite 峰值", js);
     }
 
+    // 前端以這段字串判斷「原因與狀態字樣重複、不必再寫一次」：後端常數改字時這裡要跟著改
+    [Fact]
+    public void PRTG未啟用的原因字樣與後端常數一致()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains($"note: '{LogForesight.Core.Persistence.BatchRun.PrtgNoteNotEnabled}'", js);
+    }
+
     [Fact]
     public void 執行總表_空資料待複查與今日待補摘要接上畫面()
     {
@@ -475,22 +484,24 @@ public class RunsPageUiTests
     }
 
     /// <summary>
-    /// 三張狀態卡等高（回饋第 40 輪批次A）：grid 用 stretch、卡片是 flex column、
-    /// 按鈕列靠 `lf-run-actions` 貼底。三者缺一，卡片就會各自貼齊自己的內容高度而高低不齊。
+    /// 三張狀態卡等高（grid 用 stretch），按鈕列跟在內容後面、不貼卡底：
+    /// 貼底會在內容少的取數卡中段空出一大段（2K 下約 190px），動作離它作用的資訊太遠。
+    /// 實際距離由 ui-shots 的「版面-排程作業-狀態卡按鈕跟在內容後」情境量測。
     /// </summary>
     [Fact]
-    public void 狀態卡等高的三個必要條件都在()
+    public void 狀態卡等高且按鈕列跟在內容後()
     {
         var root = FindRepoRoot();
         var css = SiteCss.Read();
 
         Assert.Contains("align-items: stretch", css);
         Assert.DoesNotContain("align-items: start", css.Split(".lf-run-status-grid")[1].Split('}')[0]);
-        Assert.Contains(".lf-run-status-grid > .lf-card", css);
-        Assert.Contains("margin-top: auto", css);
+        var actions = System.Text.RegularExpressions.Regex.Matches(css, @"\.lf-run-actions\s*\{(?<body>[^}]*)\}");
+        Assert.NotEmpty(actions);
+        foreach (System.Text.RegularExpressions.Match m in actions)
+            Assert.DoesNotContain("margin-top: auto", m.Groups["body"].Value);
 
         var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
-        // 三張卡的按鈕列都要掛上貼底的類別，漏一張那張的按鈕就會浮在中間
         Assert.Equal(3, CountOccurrences(cshtml, "lf-run-actions"));
     }
 
