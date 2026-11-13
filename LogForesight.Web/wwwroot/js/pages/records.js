@@ -1090,10 +1090,9 @@ function issueLastSeenCell(group) {
     date.textContent = group.lastSeen;
     wrap.appendChild(date);
 
-    // 還在發生是風險狀態（alert）；三天內是一般文字；久未出現退為次要資訊
+    // 還在發生與三天內是一般文字（持續中是事實陳述，不是逾期、失敗這類風險狀態）；久未出現退為次要資訊
     const hint = document.createElement('div');
     if (group.daysSinceLastSeen === 0) {
-        hint.className = 'lf-text-alert';
         hint.textContent = '昨日仍在發生';
     } else if (group.daysSinceLastSeen <= 3) {
         hint.textContent = `${group.daysSinceLastSeen} 天前`;

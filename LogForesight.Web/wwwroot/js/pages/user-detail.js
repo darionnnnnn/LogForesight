@@ -80,7 +80,7 @@ function renderHeader(detail) {
 
     const actions = document.createElement('div');
     actions.className = 'lf-entity-head__actions lf-no-print';
-    actions.appendChild(linkButton('開啟工作頁', appUrl(`/handlers/${user.userId}`), { variant: 'outline-primary', size: null }));
+    actions.appendChild(linkButton('開啟工作頁', appUrl(`/handlers/${user.userId}`), { variant: 'outline-secondary', size: null }));
     head.appendChild(actions);
     body.appendChild(head);
 

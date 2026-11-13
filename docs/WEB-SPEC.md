@@ -1089,7 +1089,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （沒事也要一眼確認是真的沒事）。
 - **頂部 KPI 卡列分三組**（`kpiStrip`，docs/DESIGN-SYSTEM.md §6b）：風險概況（高／中風險日、監控主機數、涵蓋率缺口天數）、
   待處理（未處理問題、待派工問題、我的交辦單、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。
-- **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕，依實際格線欄數藏起第一排以外的卡，
+- **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕（風險類型的放在卡片標頭右側，KPI 的放在指標列下方），依實際格線欄數藏起第一排以外的卡，
   按鈕寫出被藏幾項與其中幾項告警（KPI 以建卡時 `variant` 為 `danger` 的標籤集合判定、不看樣式類別，風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
   （`lf.collapse.dashboard-kpi`、`lf.collapse.dashboard-categories`），列印時一律全部顯示。風險類型的順序由後端排定（有高 > 有中 > 問題數）。
   KPI 三組的寬度只取決於展開與否，不量測：`revealFirstRow` 以選用回呼 `onCollapsedChange(expanded)` 通知，`dashboard.js` 據此在 strip 上切換 `lf-kpi-strip--collapsed`；CSS 只在 `(min-width:576px) and (max-width:1799.98px)` 且收合時讓三組 `flex: 1 1 0` 等寬。更寬的畫面全部卡片放得下，維持依卡數分寬；展開後與小於 576px 同樣依卡數分寬。
@@ -1141,13 +1141,15 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **依問題視角的處理**：狀態 chip 篩「處理概況」三態（`by-issue` 的 `statuses`，
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
-  列內動作鈕依能力出現：**交辦**（`Assign`，建交辦單，見下方）、**統一標記**（`Assign`＋`Handle`）、
-  **靜音**（`Maintain`，§9.4b）、**回覆處理狀態**（處理人清單含自己且具 `Handle`）——同一個問題被交辦到
+  列內動作依能力出現，依固定優先序排：**回覆處理狀態**（處理人清單含自己且具 `Handle`）→ **交辦**（`Assign`，建交辦單，見下方）→
+  **統一標記**（`Assign`＋`Handle`）→ **靜音**（`Maintain`，§9.4b）。兩個以內全部橫排在列上；三個以上第一個留在列上、其餘收進「更多」下拉選單
+  （以 fixed 定位跳出表格容器的裁切；展開中的固定格提到最上層；選單項先把焦點交回「更多」再開視窗；點選單不觸發整列展開）。動作欄因此窄到 FHD 下整張表不需水平捲動。
+  回覆處理狀態：同一個問題被交辦到
   N 台主機時，在這裡填一次即回覆**自己名下**該問題的全部進行中交辦單（`POST api/work-orders/reply-many`，
   modal 為共用元件 `issue-status-reply.js`）。別人的單不受影響——這是「回覆自己手上的工作」，不是代人回覆。
 - **畫面層級（設計系統 v3，DESIGN-SYSTEM §8）**：四個視角每列只有一個主體——明細與依主機為主機名、依日期為日期、依問題為「來源 (EventId)」，
   皆用 `lf-text-title`；日期、數量與技術值用 `lf-text-data`，分類與補充用 `lf-text-meta`，數字欄靠右。
-  「最近出現」寫「昨日仍在發生」時用 `lf-text-alert`（風險狀態），關聯訊號天數同；其餘不上紅字。列內動作（交辦、統一標記、靜音、回覆處理狀態）
+  「最近出現」寫「昨日仍在發生」用一般文字（持續中是事實陳述，不是逾期、失敗這類風險狀態）；關聯訊號天數用 `lf-text-alert`。列上的動作與「更多」
   一律經 `button()`，會開 modal 的帶 `opens: 'dialog'`；「去處理」是換頁，用 `linkButton`。載入受影響主機、載入資料、預覽失敗走 `statusNote('error', …)`。
   卡片標頭的檢視切換、筆數說明與動作鈕在窄螢幕各自換行，筆數說明不被擠成窄欄。
 - **主機篩選為 autocomplete**：兩千台規模下不能把全部主機灌進一個
@@ -1224,7 +1226,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   會被續掛加回，與排除的意圖矛盾）。手動交辦只排除已知雜訊主機並回報台數；
   抑制與嚴重度不擋（管理者手動選的問題與主機是明確意圖），預覽顯示提示。
   逐日寫入量超過就地門檻時送出後在背景完成（§9.4b「逐日同步」），toast 註明。
-  **統一標記**：列內第三顆動作鈕（需 `Assign`
+  **統一標記**：列內動作之一（需 `Assign`
   **且** `Handle`，兩個標註疊加＝都要滿足；實務上即 admin），把這個問題在**尚未有人接手**的
   主機上一次標成結論（僅結案四態，**原因必填**——代全體下結論的操作，理由是紀錄的一部分）。
   - **「尚未有人接手」＝該（主機, 問題）沒有進行中案件**，這是唯一的略過條件（定案 6-1）：
@@ -1272,14 +1274,20 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
   OS 則決定這台套哪個平台的規則面，判讀問題時需要知道。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
-- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
+- **處理面板版面**（`handling-panel.js`，容器 `.lf-handling`）：四區以上邊線分隔、不用 `<hr>`——狀態摘要（目前狀態、N/M 已結案、最後更新、逾期字樣、常駐一行雙軌語意說明）→ 人員（主機負責人、處理人；標籤至少 6rem、依內容加寬、不斷字）→ 表單（勾選時頂端「已勾選 N 個問題」；狀態 chips `.lf-handling__chips` 為 `repeat(auto-fill, minmax(4.75rem, 1fr))` 格線、以共用 `renderChips`（單選）建立、顯示短標籤、`title`／`aria-label` 為完整名稱，節點只建一次、點選只切換 `.active`／`aria-pressed`；條件欄位；說明）→ 動作區 `.lf-form-actions`（主鈕全寬）。說明欄編輯器 `attachNoteEditor` 的 DOM 順序固定為 `[textarea, .lf-note-editor__tail, errorEl]`：尾區緊貼 textarea 下緣，左側字數＋常用語＋沿用上次、右側 AI 整理，草稿提示與 AI 結果訊息在尾區內；不包裹 textarea（保留 `.is-invalid ~ .invalid-feedback`）。處理面板與交辦回覆彈窗共用此編輯器。
 - **風險日詳情處理面板**：
   0. **右欄側軌**：≥ lg 時主內容為 grid 兩欄（`.lf-detail-layout`），右欄（執行時有「處理狀態」「處理歷程」「類型分布」三張卡，
      程式偵測訊號、資料涵蓋率與報告全文由 `initRecordSections` 搬進下方「證據」）預設收成 3rem 直式側軌（`core/side-rail.js` `createSideRail`），
-     三顆按鈕顯示摘要：處理狀態＝`derivedStatusLabel`（逾期時前面加「逾期・」；有勾選問題時前面加「已勾選 N 個・」）、處理歷程＝「N 筆」、類型分布＝「N 類」；點按鈕展開、捲到並聚焦該卡標題，
+     三顆按鈕顯示短摘要、完整文字放提示（`setSummary(key, 短摘要, 完整文字)`，直式按鈕只放得下約十個字）：處理狀態平常是 `derivedStatusShortLabel`（「未處理 0/17」，逾期時前面加「逾期・」）、有勾選問題時只寫「已勾選 N 個」，
+     提示文字是完整寫法（`derivedStatusLabel`，「已勾選 N 個・逾期・未處理（0/17 已結案）」）；處理歷程＝「N 筆」、類型分布＝「N 類」；點按鈕展開、捲到並聚焦該卡標題，
      「處理狀態」卡 header 右側的「收合 ›」收回（`collapseHost` 預設為第一個項目卡的 `.lf-card__header`）並把焦點還給按鈕。展開寬度取 20rem 與內容區 34% 的較小者（rem 隨字級放大，1024 寬時只給 20rem 會把主欄擠窄）。
      狀態不記 localStorage。自動展開：進頁 hash 為 `#handling` 時（≥ lg 才展開，只捲動不搶焦點，讀一次即以 `history.replaceState` 清掉）、
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
+  0a. **勾選與表單暫存**：重點問題清單每次重繪（嚴重度篩選、顯示範圍、重載）都取消不在目前可見清單內的勾選（`pruneHiddenSelection`，掛在 `renderIssues` 入口）——
+     送出對象必須等於畫面上看得到的對象；有取消時面板說明一次「已取消 N 個不在目前清單的勾選」，下一次勾選變動就清掉。
+     表單暫存記著模式（日層級／批次）：狀態只有使用者親自點過才沿用、且只在同一模式沿用（日層級預設為推導狀態、批次不預選），預計完成日、觀察天數、「清除雜訊記憶」同樣只在同一模式沿用；
+     使用者打的說明跨模式保留，從批次回到日層級且說明有字時，表單上方寫明「目前沒有勾選問題，儲存會套用到這一天的整體狀態」。本機草稿只存說明文字，一個風險日一個鍵。
+     「AI 整理」回應到達時說明欄已不在畫面上（等待期間勾選變動重建了表單）就整個丟棄，不寫舊欄位、不寫草稿。
      < lg 與列印回到上下堆疊、側軌隱藏。「去處理」意圖的連結帶 `#handling`（`core/paths.js` `recordDetailUrl(…, { handle: true })`）：
      問題查詢展開列「去處理」、「下一筆未處理」、處理人頁的交辦單列與「被指派的風險日」、使用者頁的「未結案風險日」；列表整列、主機時間軸、PRTG 維護、交辦單 PRTG 佐證是查看，不帶。
   1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合；本頁每次進頁都收合，不記展開狀態（`reportCard` 不傳 `storageKey`）；
@@ -1484,7 +1492,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
   `.lf-ai-block`（左邊框＋淡底）標出；詳情頁頂部的白話總覽（`aiSummaryBlock`、`.lf-briefing__*`）例外，以「AI 摘要」徽章標註、不用左框淡底：
-  結論列＝AI 標題（頁首唯一的大字）＋一顆「AI 摘要」徽章（AI 分析中、降級待補、已放棄、統計模式時改放對應狀態徽章、不放「AI 摘要」）；其下「重點速報」與「建議處置」並排，再下以細線分隔「狀況」「趨勢」兩欄；≥ 992px 四段排成欄線對齊的 2×2（兩排同為兩等欄，左欄速報／狀況、右欄處置／趨勢，處置與速報等高），窄螢幕直排（速報→處置→狀況→趨勢）；建議處置是頁首唯一有底色的面、左側加指示條（卡片滑過時整張卡也會變淡藍底），僅 `aiAnalyzed=true` 時上底色與指示條；上排只有其一時佔滿，下排只有一段時在左欄；四段共用 `lf-text-label` 眉標，缺值的段連眉標與細線都不渲染，列印時結論以下單欄；「重點速報」複製鈕在眉標列右側、列印隱藏，只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現；第一行是主機名（`lf-font-size-lg`）、日期、風險徽章與「下一筆未處理」，系統類型與 IP（僅當與主機名不同）移到次要資訊行；次要資訊行的日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；
+  結論列＝AI 標題（頁首唯一的大字）＋一顆「AI 摘要」徽章（AI 分析中、降級待補、已放棄、統計模式時改放對應狀態徽章、不放「AI 摘要」）；其下「重點速報」與「建議處置」並排，再下以細線分隔「狀況」「趨勢」兩欄；≥ 992px 四段排成欄線對齊的 2×2（兩排同為兩等欄，左欄速報／狀況、右欄處置／趨勢，處置與速報等高），窄螢幕直排（速報→處置→狀況→趨勢）；建議處置是頁首唯一有底色的面、左側加指示條（頁首卡不可點，滑過不變色），僅 `aiAnalyzed=true` 時上底色與指示條；上排只有其一時佔滿，下排只有一段時在左欄；四段共用 `lf-text-label` 眉標，缺值的段連眉標與細線都不渲染，列印時結論以下單欄；「重點速報」複製鈕在眉標列右側、列印隱藏，只在 AI 成功判讀且 `Brief` 非空時出現，案件授與檢視、統計模式與舊紀錄不出現；第一行是主機名（`lf-font-size-lg`）、日期、風險徽章與「下一筆未處理」，系統類型與 IP（僅當與主機名不同）移到次要資訊行；次要資訊行的日誌來源副標寫成「資料來源：NetIQ（最近一次取數：成功）。這一天可以再補上 PRTG 資料。」，列舉值由 `core/format.js` 的 `logSourceName`／`netiqAttemptStatusName` 轉中文；
   統計模式是替代文字非 AI 產出，不標「AI 摘要」）、清單頁 headline 前的「AI」小徽章、
   既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
@@ -1563,7 +1571,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **頁首卡**（`lf-entity-head`，不另設頁首）：主機名（NetIQ 主機一併顯示 Sentinel 回報的顯示名，詳見
   [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段，長名稱在容器內換行）為主標，作業系統、IP、分級同一列，
   「指定主機更新」放在卡片右側；Sentinel、主機群組、負責人、最近回報、角色說明收成一行 `metaLine`。
-- 風險時間軸（近 14／30／90 天色格，右上角切換鈕以 `aria-pressed` 表達目前天數，切換後時間軸與重點問題重取，點入 9.3）、
+- 風險時間軸（近 14／30／90 天色格，右上角切換鈕以 `aria-pressed` 表達目前天數，切換後時間軸與重點問題重取，點入 9.3；月份格 210px，≥ 1600px 依容器寬度放大到一列五個月、上限 315px）、
   最近體檢結論。
 - **重點問題（期間彙總）**：問題查詢「依主機」
   下鑽進來時，時間軸卡下方有期間內問題
@@ -2179,7 +2187,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   但交辦紀錄照常保留（歷史事實）。
 - **KPI**：可見主機／處理中案件／已結案案件／逾期（案件＝交辦單成員，§9.4b）。
 - **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
-  **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。
+  **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。欄序為主機／IP／作業系統／可見來源／群組：短值欄收緊，群組放最後當吸收欄（DESIGN-SYSTEM §8.4a）。
 - **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
   **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress`／`escalated` 判定，由後端在每個日項目回 `isUnresolved`
   （`HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態），前端不另維護一份集合。
@@ -2865,10 +2873,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   排程設定自成一個頁籤，與即時狀態卡分離。
   - **`#runs-tabs` 與四個 `[data-panel]` 必須是同層手足**（`bindTabs` 用 `tabsEl.parentElement`
     找面板）；天數與圖例工具列插在中間不影響，切到「排程設定」時由 `runs.js` 整組隱藏。
-  - **三卡等高**由 grid `align-items: stretch` ＋ 卡片 `flex-direction: column` ＋
-    按鈕列 `.lf-run-actions` 的 `margin-top:auto` 三者共同達成，**不寫死 `min-height`**——
-    寫死的話內容一改就要回頭調數字。三張卡的固定列數本來就不同（軌條數、有無說明段落），
-    少了任一條，卡片就會各自貼齊自己的內容高度而高低不齊。
+  - **三卡等高**由 grid `align-items: stretch` 達成，**不寫死 `min-height`**——寫死的話內容一改就要回頭調數字。
+    按鈕列 `.lf-run-actions` 跟在內容後面、不貼卡底（動作靠近它作用的資訊）：空白留在卡片最下方，不夾在內容與按鈕之間。
+  - **鍵值列**（`.lf-kv`）標籤固定寬、值緊跟其後靠左（DESIGN-SYSTEM §8.4a）；PRTG 卡「結構同步」的值分「時間（來源）」「已對應／未對應主機」兩段，窄卡片換行時整段換。
   - 進度軌區塊**預留固定高度**（`.lf-run-tracks`，雙軌用 `--pair`、單軌用 `--single`）：
     狀態卡每 3 秒重繪，進度條出現／消失時版面不得跳動（`互動-排程作業-輪詢穩定` 情境以執行中資料量測兩個輪詢週期內卡片座標與高度不變）。
   - PRTG 回填輸出**預設收合**：它是全頁最高的單一元素，展開著會把那張卡撐得比另外兩張長一倍。
@@ -2961,7 +2968,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 五值：`disabled` 未啟用或憑證不可用／`success`／`no_output` 無產出／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
   取數趟的範圍放 `BatchRun.Scope`（`full`／`local`／`netiq-hosts`，舊紀錄與 AI 趟為 null）：執行詳情都顯示，清單的觸發來源只標範圍縮小的趟次。
-  `disabled` 的原因放趟次層 `BatchRun.PrtgOutcomeNote`（`PrtgDailyPipeline.DisabledReason`，早退沒有逐日統計，所以不放 `PrtgDays`）：「PRTG 未啟用」、「尚未設定認證資訊」（位址或目前認證模式的憑證沒填完整）、「憑證無法解密，請到 PRTG 維護頁重新輸入」（金鑰檔與資料庫不相符）。執行紀錄列表與執行詳情的 PRTG 欄在徽章旁直接顯示原因文字，總表日期列的徽章提示與診斷匯出（`abnormalRuns[].prtgOutcomeNote`，經文字遮罩）也帶；舊紀錄為 null。
+  `disabled` 的原因放趟次層 `BatchRun.PrtgOutcomeNote`（`PrtgDailyPipeline.DisabledReason`，早退沒有逐日統計，所以不放 `PrtgDays`）：「PRTG 未啟用」、「尚未設定認證資訊」（位址或目前認證模式的憑證沒填完整）、「憑證無法解密，請到 PRTG 維護頁重新輸入」（金鑰檔與資料庫不相符）。執行紀錄列表與執行詳情的 PRTG 欄在徽章旁直接顯示原因文字（執行總表的資料日列在原因與徽章同義——「PRTG 未啟用」——時不重印，其他原因照印），總表日期列的徽章提示與診斷匯出（`abnormalRuns[].prtgOutcomeNote`，經文字遮罩）也帶；舊紀錄為 null。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數；**保守策略**（`BatchRun.PrtgStrategy`＝`conservative`）夜間不逐顆取數，改顯示「保守策略（數值由快照供應）」，
   執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。
   逐日「說明」欄：整趟共用階段失敗時寫出是哪個階段（`PrtgDailyPipeline.StageFailureNote`），完整訊息逐條進「重要紀錄」（「PRTG 擷取階段失敗：…」）；
@@ -3155,7 +3162,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetail`。
     **今天處理的那一列**：今天已有取數趟時，第 1 頁多一列（資料日＝昨天，`IsToday`，執行中再帶 `InProgress`），日期旁標「今日處理」（執行中為「今日處理・執行中」），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
     **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
-    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」；今天的列在同一窗口排得進複查時接「（約 HH:mm 複查）」（`RecheckAt`）。主機明細說明與續跑規則同一判定：
+    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格（數字用次要文字色，圖例色塊維持淺灰）：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」；今天的列在同一窗口排得進複查時接「（約 HH:mm 複查）」（`RecheckAt`）。主機明細說明與續跑規則同一判定：
     自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote` 寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
     今天的格子且窗口內排得進「空資料，約 HH:mm 複查」（時刻只由 `ScheduleCalculator.NextEmptyRecheckAt` 算）、其餘「空資料，下一窗口複查」。「還在進行的那一天」由 `ScheduleCalculator.LiveRunDay` 判定（跨午夜窗口過了午夜仍是開跑日那一列）。空資料待複查不受自動重查上限限制，不會出現已用完文字。
     **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；

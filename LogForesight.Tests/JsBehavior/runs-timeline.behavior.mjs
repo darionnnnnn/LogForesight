@@ -284,6 +284,53 @@ const cases = {
         assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: '02:00' })), '空資料待複查 2（約 02:00 複查）');
         assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2, recheckAt: '02:00' })), '3（尚未處理）＋空資料待複查 2（約 02:00 複查）');
         assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: null })), '空資料待複查 2');
+    },
+
+    // 「未執行」的數字用次要文字色：圖例色塊的淺灰（gray-200）在白底上看不見；色塊顏色不變
+    notRunCountUsesTextColor() {
+        const src = fs.readFileSync(path.join(jsRoot, 'pages', 'runs.js'), 'utf8');
+        const start = src.indexOf('function countCell');
+        const open = src.indexOf('{', src.indexOf(')', start));
+        let depth = 0, end = open;
+        for (; end < src.length; end++) { if (src[end] === '{') depth++; else if (src[end] === '}' && --depth === 0) break; }
+        const STATUS_META = {
+            none: { color: 'GRAY200', textColor: 'MUTED' },
+            success: { color: 'GREEN' }
+        };
+        const countCell = new Function('document', 'STATUS_META', `${src.slice(start, end + 1)}\nreturn countCell;`)(document, STATUS_META);
+        assert.equal(countCell(3, 'none').style['--lf-status-color'], 'MUTED');
+        // 沒有另定文字色的狀態沿用色塊色
+        assert.equal(countCell(3, 'success').style['--lf-status-color'], 'GREEN');
+        const runs = src.replaceAll('\r\n', '\n');
+        assert.match(runs, /none: statusMeta\('未執行', '--lf-gray-200', '--lf-text-muted'\)/);
+    },
+
+    // PRTG 欄：備註與徽章說的是同一件事（PRTG 未啟用）時不重印；其他原因照印
+    prtgNoteNotRepeatedWhenSameAsBadge() {
+        const src = fs.readFileSync(path.join(jsRoot, 'pages', 'runs.js'), 'utf8').replaceAll('\r\n', '\n');
+        const block = (decl, opener) => {
+            const start = src.indexOf(decl);
+            assert(start >= 0, `找不到 ${decl}`);
+            const open = src.indexOf(opener, start);
+            let depth = 0;
+            for (let i = open; i < src.length; i++) {
+                if (src[i] === '{') depth++;
+                else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+            }
+            throw new Error(`未閉合 ${decl}`);
+        };
+        const meta = block('const PRTG_OUTCOME_META', '{');
+        const badge = block('function renderPrtgBadge', '{');
+        const cell = block('function renderPrtgDaySummaryCell', '{');
+        const render = new Function('document', `${meta};\n${badge}\n${cell}\nreturn renderPrtgDaySummaryCell;`)(document);
+        const notes = el => (el.children || []).filter(c => c.className === 'lf-text-meta').map(c => c.textContent);
+        const same = render({ date: '2026-11-12', prtgOutcome: 'disabled', prtgNote: 'PRTG 未啟用' });
+        assert.deepEqual(notes(same), [], '同義的備註不重印');
+        assert(same.textContent.includes('未啟用'));
+        const other = render({ date: '2026-11-12', prtgOutcome: 'disabled', prtgNote: '憑證無法解密，請重新輸入' });
+        assert.deepEqual(notes(other), ['憑證無法解密，請重新輸入']);
+        const none = render({ date: '2026-11-12', prtgOutcome: 'success', prtgNote: null });
+        assert.deepEqual(notes(none), []);
     }
 };
 

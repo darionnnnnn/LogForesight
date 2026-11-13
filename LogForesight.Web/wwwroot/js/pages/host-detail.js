@@ -111,7 +111,7 @@ function renderHeader(detail) {
         const actions = document.createElement('div');
         actions.className = 'lf-entity-head__actions lf-no-print';
         const updateButton = button('指定主機更新', {
-            variant: 'outline-primary', size: null, opens: 'dialog',
+            size: null, opens: 'dialog',
             onClick: () => openHostUpdateModal(detail)
         });
         updateButton.id = 'host-update-open';

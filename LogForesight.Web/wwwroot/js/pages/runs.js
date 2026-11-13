@@ -22,9 +22,14 @@ import { disclosure } from '../core/elements.js';
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
    backfilled=--lf-success-muted、warning=--lf-warning、failed=--lf-danger、
    stopped=--lf-severity-high、running=--lf-primary、stuck=--lf-cat-hardware、
-   none=--lf-gray-200、local_disabled=--lf-gray-400。color 用 getter，每次取用才讀 token */
-function statusMeta(label, tokenName) {
-    return { label, get color() { return cssVar(tokenName); } };
+   none=--lf-gray-200、local_disabled=--lf-gray-400。color 用 getter，每次取用才讀 token。
+   textToken（選填）：數字的文字色另取——淺灰色塊在圖例上分得出，當成白底上的文字卻看不見 */
+function statusMeta(label, tokenName, textToken = null) {
+    return {
+        label,
+        get color() { return cssVar(tokenName); },
+        get textColor() { return textToken ? cssVar(textToken) : cssVar(tokenName); }
+    };
 }
 
 const STATUS_META = {
@@ -37,15 +42,16 @@ const STATUS_META = {
     stopped: statusMeta('已停止', '--lf-severity-high'),   // 優雅停止（手動或窗口結束）——不是失敗
     running: statusMeta('執行中', '--lf-primary'),
     stuck: statusMeta('異常中斷', '--lf-cat-hardware'),
-    none: statusMeta('未執行', '--lf-gray-200'),
+    none: statusMeta('未執行', '--lf-gray-200', '--lf-text-muted'),
     // NetIQ 回空資料、等複查（同窗口約 60 分後或下一窗口）：不是漏跑，所以不併進「未執行」
     recheck: statusMeta('空資料待複查', '--lf-info'),
     // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
-    local_disabled: statusMeta('本機分析已停用', '--lf-gray-400')
+    local_disabled: statusMeta('本機分析已停用', '--lf-gray-400', '--lf-text-muted')
 };
 
 const PRTG_OUTCOME_META = {
-    disabled: { text: '未啟用', bg: 'bg-secondary' },
+    // note：後端寫入的備註若與徽章說的是同一件事，總表不重印（後端文字給匯出與其他畫面用，不改）
+    disabled: { text: '未啟用', bg: 'bg-secondary', note: 'PRTG 未啟用' },
     success: { text: '成功', bg: 'bg-success' },
     partial: { text: '部分失敗', bg: 'bg-warning text-dark' },
     failed: { text: '失敗', bg: 'bg-danger' },
@@ -90,6 +96,7 @@ function renderPrtgDaySummaryCell(s) {
     wrap.appendChild(line);
     if (s.prtgNote != null) {
         badge.title = `資料日 ${s.date}：${s.prtgNote}`;
+        if (PRTG_OUTCOME_META[s.prtgOutcome]?.note === s.prtgNote) return wrap;
         const note = document.createElement('div');
         note.className = 'lf-text-meta';
         note.textContent = s.prtgNote;
@@ -374,7 +381,8 @@ function countCell(count, status) {
     if (count === 0) return document.createTextNode('');
     const span = document.createElement('span');
     span.className = 'lf-status-count';
-    span.style.setProperty('--lf-status-color', STATUS_META[status].color);
+    const meta = STATUS_META[status];
+    span.style.setProperty('--lf-status-color', meta.textColor ?? meta.color);
     span.textContent = String(count);
     return span;
 }
@@ -1165,7 +1173,8 @@ function renderScheduleWindows(containerId = 'schedule-windows', windowsList = s
 
     windowsList.forEach((window_, index) => {
         const row = document.createElement('div');
-        row.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
+        // lf-list-row：每個窗口一列，列尾的「移除」是清單列內重複動作
+        row.className = 'd-flex flex-wrap align-items-center gap-2 mb-2 lf-list-row';
 
         const start = document.createElement('input');
         start.type = 'time';

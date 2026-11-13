@@ -65,7 +65,7 @@
         <div class="lf-card__body">
             <p class="lf-text-meta">預估只讀本機鏡像與紀錄，不連線 PRTG。不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</p>
             <div class="d-flex flex-wrap gap-2 mb-3">
-                <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
+                <button type="button" class="btn btn-outline-secondary" id="prtg-full-backfill-preview">預估全量工作量</button>
                 <button type="button" class="btn btn-outline-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
             </div>
             <div id="prtg-full-backfill-preview-result" data-runs-url="@Url.Content("~/runs")" aria-live="polite" aria-atomic="true"></div>
@@ -91,7 +91,7 @@
                     <div class="col-12 col-sm-6"><label for="prtg-selected-backfill-to" class="form-label">結束日期</label><input id="prtg-selected-backfill-to" class="form-control" type="date" /></div>
                 </div><div class="form-text mt-2">含起訖日；日期需在 PRTG 歷史保留範圍內。</div></div>
             </div>
-            <div class="d-flex flex-wrap gap-2 mb-3"><button type="button" class="btn btn-outline-primary" id="prtg-selected-backfill-preview">預覽工作量</button><button type="button" class="btn btn-primary" id="prtg-selected-backfill-start" disabled>確認並開始補值</button></div>
+            <div class="d-flex flex-wrap gap-2 mb-3"><button type="button" class="btn btn-outline-secondary" id="prtg-selected-backfill-preview">預覽工作量</button><button type="button" class="btn btn-primary" id="prtg-selected-backfill-start" disabled>確認並開始補值</button></div>
             <div id="prtg-selected-backfill-preview-result" aria-live="polite" aria-atomic="true"></div>
             <div class="border rounded p-3 mt-3" id="prtg-selected-backfill-status" aria-live="polite"><div class="d-flex flex-wrap align-items-center gap-2"><span id="prtg-selected-backfill-status-text">讀取回填狀態中…</span><button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-selected-backfill-cancel">停止回填</button><button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-selected-backfill-status-retry">重新整理狀態</button></div><div class="lf-text-meta mt-1" id="prtg-selected-backfill-progress"></div></div>
         </div>
@@ -189,7 +189,7 @@
                     <h3 class="h6">測試連線</h3>
                     <p class="lf-text-meta">用目前填的值試連線，不必先儲存；token 或密碼欄留空時沿用已儲存的值。</p>
                     <div class="d-flex align-items-center gap-2 mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-test-btn">測試連線</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-test-btn">測試連線</button>
                     </div>
                     <div id="prtg-test-result"></div>
                 </div>
@@ -350,9 +350,9 @@
                     <span class="lf-text-meta" id="prtg-monitoring-host-page-info"></span>
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-host-select-page" type="button">勾選本頁主機</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-select-page" type="button">勾選本頁主機</button>
                     <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-clear-page" type="button">取消本頁主機</button>
-                    <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-host-select-search" type="button">加入目前主機搜尋結果</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-select-search" type="button">加入目前主機搜尋結果</button>
                     <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-host-select-cancel" type="button">停止批次</button>
                     <span class="lf-text-meta" id="prtg-monitoring-host-batch-status" role="status" aria-live="polite"></span>
                 </div>
@@ -374,9 +374,9 @@
                     <span class="lf-text-meta" id="prtg-monitoring-sensor-page-info"></span>
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-sensor-select-page" type="button">勾選本頁 sensor</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-select-page" type="button">勾選本頁 sensor</button>
                     <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-clear-page" type="button">取消本頁 sensor</button>
-                    <button class="btn btn-sm btn-outline-primary" id="prtg-monitoring-sensor-select-search" type="button">加入目前 sensor 搜尋結果</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-sensor-select-search" type="button">加入目前 sensor 搜尋結果</button>
                     <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-sensor-select-cancel" type="button">停止批次</button>
                     <span class="lf-text-meta" id="prtg-monitoring-sensor-batch-status" role="status" aria-live="polite"></span>
                 </div>
@@ -390,9 +390,9 @@
                     <span class="lf-text-meta" id="prtg-monitoring-selected-sensor-page-info"></span>
                 </div>
                 <div id="prtg-monitoring-selected-sensors" class="d-flex flex-wrap gap-1 mb-2" aria-label="已選 sensor"></div>
-                <button class="btn btn-outline-primary mt-2" id="prtg-monitoring-estimate" type="button">估算所選範圍</button>
+                <button class="btn btn-outline-secondary mt-2" id="prtg-monitoring-estimate" type="button">估算所選範圍</button>
                 <div id="prtg-monitoring-estimate-result" class="small mt-2" role="status" aria-live="polite"></div>
-                <button class="btn btn-outline-primary mt-2" type="submit" disabled>儲存監看範圍</button>
+                <button class="btn btn-outline-secondary mt-2" type="submit" disabled>儲存監看範圍</button>
             </form>
             <div id="prtg-monitoring-status" class="small mt-2" role="status" aria-live="polite"></div>
             <button type="button" class="btn btn-outline-secondary mt-2" id="prtg-monitoring-preview">預覽已儲存範圍的實際作用範圍</button>
@@ -437,7 +437,7 @@
                             <div class="lf-text-meta">取樣停用時也可手動更新鏡像；不會啟用數值取樣。平常由夜間排程自動進行。</div>
                         </div>
                         <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-structure-sync-btn">同步結構與對應</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-structure-sync-btn">同步結構與對應</button>
                             <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-structure-sync-cancel-btn">停止同步</button>
                         </div>
                     </div>
@@ -529,7 +529,7 @@
                                 <label for="prtg-conflict-batch-note" class="lf-text-meta mb-0">說明：</label>
                                 <input type="text" class="form-control form-control-sm w-auto lf-minw-sm" id="prtg-conflict-batch-note" placeholder="可選說明" maxlength="512" />
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
                         </div>
                         <!-- 表格由 prtg-admin.js 以 renderTable 填入（含表頭全選 checkbox） -->
                         <div id="prtg-mirror-conflicts-table"><div class="lf-text-meta text-center py-2">載入中…</div></div>
@@ -607,7 +607,7 @@
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" aria-label="就緒度口徑說明" data-bs-content="取數範圍內、最新對應正常的 CPU／記憶體／磁碟／Ping sensor，近 28 天有幾天可用於數值規則。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
             <span class="me-auto"></span>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-refresh">重新整理</button>
-            <button type="button" class="btn btn-sm btn-outline-primary d-none" id="prtg-value-readiness-backfill">前往歷史回填</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="prtg-value-readiness-backfill">前往歷史回填</button>
         </div>
         <div class="lf-card__body">
             <p class="lf-text-meta mb-2">唯讀，不呼叫 PRTG。</p>
@@ -634,7 +634,7 @@
             </p>
 
             <div class="d-flex align-items-center gap-3 mb-4">
-                <button type="button" class="btn btn-outline-primary" id="calibration-calc-btn">
+                <button type="button" class="btn btn-outline-secondary" id="calibration-calc-btn">
                     <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                     重新計算
                 </button>
@@ -781,7 +781,7 @@
                     <input type="date" class="form-control form-control-sm" id="prtg-export-to" />
                 </div>
                 <div class="col-md-4 d-flex align-items-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-export-btn">匯出資料</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-export-btn">匯出資料</button>
                 </div>
             </div>
             <div class="row g-3 mb-3">

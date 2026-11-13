@@ -1272,7 +1272,6 @@ function retryNode(containers, fn, options) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-3';
     wrap.appendChild(button('重試', {
-        variant: 'outline-primary',
         icon: 'arrow-counterclockwise',
         onClick: () => {
             [containers].flat().filter(Boolean).forEach(container => renderLoading(container));

@@ -134,7 +134,7 @@ function renderSelfOnly(container, user) {
         icon: 'lock'
     });
     if (user?.userId) {
-        const link = linkButton('前往我的交辦', appUrl('/handlers/' + user.userId), { variant: 'outline-primary' });
+        const link = linkButton('前往我的交辦', appUrl('/handlers/' + user.userId), { variant: 'outline-secondary' });
         link.classList.add('mt-2');
         container.firstElementChild.appendChild(link);
     }
@@ -792,7 +792,7 @@ function buildMemberPanel(row, cell, carry = null) {
     memberStatus.id = statusLabel.htmlFor;
     bar.append(statusLabel, memberStatus);
 
-    const replyHostsBtn = button('回覆選取的主機', { variant: 'outline-primary', opens: 'dialog' });
+    const replyHostsBtn = button('回覆選取的主機', { opens: 'dialog' });
     replyHostsBtn.classList.add('ms-auto');
     replyHostsBtn.disabled = true;
     if (!canReply) replyHostsBtn.classList.add('d-none');

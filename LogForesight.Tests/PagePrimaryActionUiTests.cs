@@ -29,7 +29,8 @@ public class PagePrimaryActionUiTests
         Assert.Equal(1, PrimaryCount(shell));
         var batch = Regex.Match(shell, "<button[^>]*id=\"btn-batch-groups\"[^>]*>");
         Assert.True(batch.Success);
-        Assert.Contains("btn-outline-primary", batch.Value);
+        // 選取列的批次動作是頁面層級的一般次要按鈕（無框品牌色只給表格列內重複動作，DESIGN-SYSTEM §6b）
+        Assert.Contains("btn-outline-secondary", batch.Value);
     }
 
     [Fact]
@@ -42,7 +43,7 @@ public class PagePrimaryActionUiTests
         var config = html[start..end];
         Assert.Equal(1, PrimaryCount(config));
         Assert.Contains("id=\"netiq-options-save\"", config);
-        Assert.Contains("btn-outline-primary", config);
+        Assert.Contains("btn-outline-secondary\" id=\"netiq-options-save\"", config);
     }
 
     [Fact]
@@ -60,7 +61,7 @@ public class PagePrimaryActionUiTests
         var search = Regex.Match(html, "<button[^>]*id=\"members-search\"[^>]*>");
         var apply = Regex.Match(html, "<button[^>]*id=\"members-apply\"[^>]*>");
         Assert.True(search.Success && apply.Success);
-        Assert.Contains("btn-outline-primary", search.Value);
+        Assert.Contains("btn-outline-secondary", search.Value);
         Assert.Contains("btn-primary", apply.Value);
     }
 }

@@ -1236,11 +1236,12 @@ a.lf-badge:hover { text-decoration: underline; }
     white-space: nowrap;
 }
 
-.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-sm { width: 6rem; }
-.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-md { width: 10rem; }
-.table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-lg { width: 12rem; }
-
+/* 固定寬只在寬螢幕的對齊表格需要；窄螢幕維持自動版面，欄寬照內容（固定寬會讓不換行的徽章溢出儲存格） */
 @media (min-width: 992px) {
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-sm { width: 6rem; }
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-md { width: 10rem; }
+    .table > :is(thead, tbody) > tr > :is(th, td).lf-col-w-lg { width: 12rem; }
+
     .lf-table-aligned > .lf-table-wrap > table {
         table-layout: fixed;
     }

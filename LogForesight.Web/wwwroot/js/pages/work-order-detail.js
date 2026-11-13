@@ -328,7 +328,8 @@ function renderActions(detail, user) {
 
     if (detail.viewerCanReply) {
         // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
-        const replyBtn = button('回覆這張單', { variant: 'outline-primary', size: null, onClick: async () => {
+        // 處理人在這一頁最常做的事：頁面唯一的實心主要按鈕（管理動作是一般次要按鈕，處理人看不到）
+        const replyBtn = button('回覆這張單', { variant: 'primary', size: null, onClick: async () => {
             const activeCount = detail.counts.active;
             if (activeCount === 0) {
                 toast('這張單已沒有進行中的主機', 'info');
@@ -360,7 +361,7 @@ function renderActions(detail, user) {
     }
 
     // 改派按鈕
-    const reassignBtn = button('改派', { variant: 'outline-primary', size: null, opens: 'dialog', onClick: () => {
+    const reassignBtn = button('改派', { size: null, opens: 'dialog', onClick: () => {
         openSelectHandlerModal({
             title: '改派交辦單',
             submitText: '確定改派',

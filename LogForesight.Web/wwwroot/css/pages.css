@@ -553,9 +553,10 @@ a.lf-calendar__cell:focus-visible {
     min-width: 8rem;
 }
 
-/* 預計完成日：獨立一行，日期本身不換行（避免「07-30」被硬拆成兩行） */
+/* 預計完成日：獨立一行，可在字詞間換行（「觀察到期 11-10，問題仍在發生」放不進固定寬的處理狀態欄）；
+   「11-10」這種日期不會被拆開——連字號後接數字不是斷行點 */
 .lf-issue-status__due {
-    white-space: nowrap;
+    white-space: normal;
 }
 
 /* 唯讀（無 Handle 能力）或已結案狀態的小徽章＋動作鈕排列 */

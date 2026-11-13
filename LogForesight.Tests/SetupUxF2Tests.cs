@@ -516,7 +516,7 @@ public class SetupUxF2Tests : IDisposable
         var bar = cshtml[cshtml.IndexOf("id=\"host-selection-bar\"", StringComparison.Ordinal)..];
         bar = bar[..bar.IndexOf("</div>", StringComparison.Ordinal)];
         Assert.Contains("id=\"btn-batch-owners\"", bar);
-        Assert.Contains("btn-outline-primary\" id=\"btn-batch-owners\"", bar);
+        Assert.Contains("btn-outline-secondary\" id=\"btn-batch-owners\"", bar);
         Assert.Contains("用 CSV 大量指派", bar);
 
         var js = Js("hosts.js");

@@ -203,7 +203,9 @@ const cases = {
         const { comparisonBadge } = makeKpi(baseData());
         const fromZero = comparisonBadge(5, 0);
         assert.equal(fromZero.textContent, '↑ 前期為 0');
-        assert(has(fromZero, 'lf-text-alert'));
+        // 變化不是風險狀態：紅色只給逾期、失敗這類要處理的事（DESIGN-SYSTEM §8.1），上升靠箭頭與文字辨識
+        assert(!has(fromZero, 'lf-text-alert'), '前期為 0 不上紅色');
+        assert(!has(comparisonBadge(10, 5), 'lf-text-alert'), '上升不上紅色');
         const bothZero = comparisonBadge(0, 0);
         assert.equal(bothZero.textContent, '與前期相同');
         assert(has(bothZero, 'lf-text-meta'), '沒變化不上警示色');

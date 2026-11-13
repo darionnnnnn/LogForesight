@@ -673,7 +673,8 @@ function issueOpenCell(issue) {
     const wrap = document.createElement('div');
     const count = document.createElement('div');
     count.textContent = formatNumber(issue.openHostCount);
-    count.className = issue.openHostCount > 0 ? 'lf-text-alert' : 'lf-text-meta';
+    // 未處理台數是一般資訊，不上紅色（紅色只給逾期、失敗這類風險狀態，DESIGN-SYSTEM §8.1）；0 台退為次要文字
+    count.className = issue.openHostCount > 0 ? '' : 'lf-text-meta';
     wrap.appendChild(count);
     return wrap;
 }
@@ -712,7 +713,7 @@ function issueSpanCell(issue) {
 
     const hint = document.createElement('div');
     if (issue.daysSinceLastSeen === 0) {
-        hint.className = 'lf-text-alert';
+        // 持續中是事實陳述，不是風險狀態：一般文字色（每列都紅就分不出輕重）
         hint.textContent = '昨日仍在發生';
     } else {
         hint.className = 'lf-text-meta';
@@ -740,8 +741,8 @@ function issueChangeCell(issue) {
     const span = document.createElement('span');
     span.className = 'small';
 
+    // 變化（本期新增、上升）不上紅色：靠文字與箭頭辨識，紅色留給逾期、失敗
     if (issue.isNew) {
-        span.className += ' lf-text-alert';
         span.textContent = '本期新增';
         return span;
     }
@@ -758,7 +759,6 @@ function issueChangeCell(issue) {
         span.className += ' lf-text-meta';
         span.textContent = '持平';
     } else if (percent > 0) {
-        span.className += ' lf-text-alert';
         span.textContent = `↑${percent}%`;
         span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
     } else {

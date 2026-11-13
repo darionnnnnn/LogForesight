@@ -70,7 +70,7 @@ document.getElementById('chat-collapse')?.addEventListener('shown.bs.collapse', 
 // 頁面層級動作「下一筆未處理」放在頁首卡的標題列右側（renderHeader），不另佔一整列頁首。
 // 先以 d-none 建立（保留原 id），待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示；
 // 每次 renderHeader 重繪都把同一個元素接回去，已取得的連結不會因重繪消失。
-const nextUnhandledLink = linkButton('下一筆未處理 →', '');
+const nextUnhandledLink = linkButton('下一筆未處理 →', '', { variant: 'outline-secondary' });
 nextUnhandledLink.classList.add('d-none', 'lf-no-print', 'ms-auto');
 nextUnhandledLink.id = 'next-unhandled';
 
@@ -1485,7 +1485,6 @@ function renderIssues(detail) {
                 hint: `有 ${unscopedCount} 項符合目前嚴重度篩選的問題不在「${currentScopeOption().label}」這個顯示範圍內。`
             });
             const btn = button(`切換為「${target.label}」`, {
-                variant: 'outline-primary',
                 size: 'sm',
                 onClick: () => changeScope(target.value)
             });
@@ -2098,7 +2097,8 @@ function renderCorrelationBox(detail) {
 
 function correlationAlertItem(ref) {
     const item = document.createElement('li');
-    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+    // lf-list-row：清單列內重複的動作（抑制鈕）維持無框，不套頁面層級按鈕的細環
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1 lf-list-row';
 
     const text = document.createElement('span');
     text.className = 'lf-alert-item__text';
@@ -2142,7 +2142,7 @@ function renderTrendBox(detail) {
 
 function trendAlertItem(ref) {
     const item = document.createElement('li');
-    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1 lf-list-row';
 
     // 文字側必須能收縮（lf-alert-item__text）：flex 子項預設 min-width:auto，
     // 而這裡的內容是「Microsoft-Windows-Security-Auditing EventId 4719」這種不含空白的

@@ -910,10 +910,10 @@
     ],
     "steps": [
       {
-        "waitFor": "button.btn-outline-primary"
+        "waitFor": "main button.btn-primary:not(.modal *)"
       },
       {
-        "click": "button.btn-outline-primary"
+        "click": "main button.btn-primary:not(.modal *)"
       },
       {
         "waitFor": ".modal.show form"
@@ -3661,6 +3661,25 @@
       },
       {
         "evalAssert": "return (async () => { // 壓成一行高的列（短問題名稱的真實樣子）：選單一定會延伸到下面幾列，才量得到「被下一列的固定格蓋住」\nif (!document.getElementById('lf-compact-rows')) { const st = document.createElement('style'); st.id = 'lf-compact-rows'; st.textContent = '#record-list tbody td > * { max-height: 1.75rem; overflow: hidden; }'; document.head.appendChild(st); }\nconst rows = [...document.querySelectorAll('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail)')];\nconst pick = -1;\nconst tr = rows[pick < 0 ? rows.length + pick : pick];\nif (!tr) return '找不到資料列';\nconst toggle = tr.querySelector('.dropdown-toggle');\nif (!toggle) return '這一列沒有「更多」選單';\ntoggle.scrollIntoView({ block: 'center' });\nconst expandedBefore = tr.getAttribute('aria-expanded');\ntoggle.click();\nawait new Promise(r => setTimeout(r, 400));\nconst menu = tr.querySelector('.dropdown-menu');\nif (!menu.classList.contains('show')) return '「更多」沒有展開';\nif (pick === 0 && menu.getBoundingClientRect().bottom <= tr.getBoundingClientRect().bottom) return '量測前提不成立：選單沒有延伸到下一列';\nif (tr.getAttribute('aria-expanded') !== expandedBefore) return '點「更多」觸發了整列展開';\nfor (const item of menu.querySelectorAll('.dropdown-item')) {\n  const b = item.getBoundingClientRect();\n  if (b.width === 0) return '選單項沒有顯示：' + item.textContent;\n  const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);\n  if (!hit || !item.contains(hit)) return '選單項「' + item.textContent.trim() + '」被裁切或被蓋住（最上層是 ' + (hit ? (hit.className || hit.tagName) : '無') + '）';\n}\nmenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));\nawait new Promise(r => setTimeout(r, 300));\nif (menu.classList.contains('show')) return 'Esc 沒有關閉選單';\nif (document.activeElement !== toggle) return 'Esc 關閉後焦點沒有回到「更多」';\nreturn null; })();"
+      }
+    ]
+  },
+  {
+    "name": "版面-排程作業-未執行數字對比足夠",
+    "role": "ui-admin",
+    "path": "/runs",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "table tbody tr"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "const ths = [...document.querySelectorAll('table thead th')].map(th => th.textContent.trim());\nconst idx = ths.indexOf('未執行');\nif (idx < 0) return '找不到「未執行」欄';\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const tr of document.querySelectorAll('table tbody tr')) {\n  const cell = tr.children[idx];\n  const num = cell && cell.querySelector('.lf-status-count');\n  if (!num) continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '沒有可量的「未執行」數字';"
       }
     ]
   }

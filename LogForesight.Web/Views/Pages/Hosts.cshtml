@@ -16,8 +16,8 @@
         </div>
         <div class="lf-toolbar__spacer"></div>
         <div class="d-flex gap-2">
-            <a class="btn btn-sm btn-outline-primary" href="@Url.Content("~/admin/netiq")">從 NetIQ 匯入</a>
-            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-bulk-hosts">批次貼上</button>
+            <a class="btn btn-sm btn-outline-secondary" href="@Url.Content("~/admin/netiq")">從 NetIQ 匯入</a>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-bulk-hosts">批次貼上</button>
             <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
         </div>
     </div>
@@ -47,9 +47,9 @@
 @* 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）：勾選跨頁／篩選保留，這條列只在有勾選時出現 *@
 <div class="lf-toolbar mb-3 d-none" id="host-selection-bar">
     <span class="lf-text-title" id="host-selection-count"></span>
-    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-groups">批次設定群組</button>
-    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-tier">批次設定分級</button>
-    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-owners">指派負責人</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-batch-groups">批次設定群組</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-batch-tier">批次設定分級</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-batch-owners">指派負責人</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
     <span class="lf-text-meta"><a id="link-owner-csv" href="#">用 CSV 大量指派</a></span>
 </div>
@@ -61,7 +61,7 @@
            放進「只有選了東西才顯示」的工具列就永遠按不到 *@
         <div class="d-flex flex-wrap align-items-center gap-2">
             <span class="lf-text-meta">已併入其他主機的列不會被選到</span>
-            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-select-all-matching">
                 全選符合目前篩選的主機
             </button>
         </div>

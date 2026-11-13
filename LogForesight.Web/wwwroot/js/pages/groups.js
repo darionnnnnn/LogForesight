@@ -173,7 +173,7 @@ function renderMatrix() {
         });
         const actionWrap = document.createElement('div');
         actionWrap.className = 'mt-3';
-        actionWrap.appendChild(button('建立部門群組', { variant: 'outline-primary', onClick: () => openModal('user', null) }));
+        actionWrap.appendChild(button('建立部門群組', { onClick: () => openModal('user', null) }));
         container.querySelector('.lf-empty').appendChild(actionWrap);
         return;
     }
