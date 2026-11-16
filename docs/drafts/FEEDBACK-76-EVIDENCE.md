@@ -32,19 +32,46 @@
 
 ## E5 PRTG 取數
 
+### API 契約對照（程式假設 vs Paessler 官方手冊，2026-11-16 讀取）
+官方來源：`paessler.com/manuals/prtg/http_api`、`…/live_multiple_object_property_status`、`…/historic_data`。
+
+| 項目 | 程式的假設（位置） | 官方說法 | 結果 |
+|---|---|---|---|
+| 分頁 | `count=5000`＋`start`＋`sortby=objid`，短頁或無新鍵即停（`PrtgTablePager`） | `count` 預設 500、上限 50000；`start` 分頁；`sortby` 支援、messages 固定依日期遞減 | 一致 |
+| 單發大查詢 | `count=50000`，筆數少於 `treesize` 時警告截斷（`PrtgResourceGuardSource`、`PrtgProbeRunner`） | 上限 50000 | 一致；`treesize` 官方手冊未說明，屬實機經驗 |
+| `treesize` 缺席 | 多頁查詢照常翻到短頁為止，只少了截斷比對；messages 不比對（實機固定 100 萬） | 未說明 | 可接受，見 E5-03 |
+| historicdata 頻率 | 預算 60 秒 5 次（`PrtgRequestBudget`） | 每分鐘最多 5 次 | 一致 |
+| historicdata 範圍 | 一律 `avg=3600`、每次一天（`PrtgFetchService`） | 原始資料單次 40 天；60 分鐘平均 40～500 天 | 一致，遠低於上限 |
+| sdate／edate | `yyyy-MM-dd-00-00-00`，服務主機本地日 | `yyyy-mm-dd-hh-mm-ss`；時區未說明 | 格式一致；時區屬實機經驗 |
+| `datetime_raw` | OLE 日期、以 UTC 解讀後轉本地（`PrtgFetchService.cs:1806`）；顯示字串差 30 分鐘以上記時區漂移 | 自 1899-12-30 起的天數；時區未說明 | 基準一致；UTC 屬實機經驗（24.1.92 實機列有測試），且有交叉檢查 |
+| 數值 | `lastvalue_raw` 優先，`lastvalue` 字串退路 | `_RAW` 為可計算的數值；單位未說明 | 一致 |
+| 狀態 | 只讀顯示文字 `status`，以英文前綴比對 Up／Down／Warning／Unknown／Paused（`PrtgConstants.cs:9`） | 有數值代碼 1～14（含 Unusual、No Probe、Not Licensed、Down Partial 等） | 見 E5-01 |
+| 單位欄 | 結構同步要求 `unit` 欄 | 未列此欄 | 已知（BACKLOG「PRTG 鏡像沒有感測器單位」），數值語意改依感測器類型 |
+| 認證 | `apitoken=` 或 `username=&passhash=`，401 黏住帳號類憑證 | 三種方式皆可；401＝認證不被接受；400 回 XML 錯誤 | 一致；400 的 XML 被判為「其他 HTML」，訊息較籠統 |
+
 | 編號 | 層面 | 角色與情境 | 現象 | 預期 | 影響等級 | 同型 |
 |---|---|---|---|---|---|---|
+| E5-01 | 取數 | PRTG 帳號語系改成非英文，或感測器處於 Unusual、No Probe、Not Licensed 等狀態 | 狀態只以英文顯示文字前綴比對；官方提供的數值代碼 `status_raw`（1～14）沒有使用。Unusual／No Probe／Not Licensed 不屬於任何一類；「Down (Partial)」被當成 Down。第 75 輪校準檔有 113 個 Warning 樣本，代表目前實機的狀態文字是英文、比對有效 | 以語系無關的數值代碼判斷，顯示文字只當說明 | 誤導（潛在：目前實機正常） | 同根：BACKLOG「sensor type 以顯示名稱比對」 |
+| E5-02 | 取數 | 管理者看取數錯誤 | PRTG 對參數錯誤回 HTTP 400 與 XML `<prtg><error>`；程式只要回應以 `<` 開頭就歸為「其他 HTML」，錯誤原文沒有帶出 | 400 時帶出 PRTG 的錯誤訊息 | 困擾 | 待查：E5 整條鏈測試 |
+| E5-03 | 取數 | 單發 `count=50000` 而回應缺 `treesize` | 筆數未滿 50000 時無法判斷是否截斷，只在筆數達 50000 時警告 | 可接受：官方上限即 50000 | 瑕疵 | 無 |
 
 ## 量測工具
 
 | 編號 | 層面 | 角色與情境 | 現象 | 預期 | 影響等級 | 同型 |
 |---|---|---|---|---|---|---|
+| T-02 | 維運（測試工具） | Windows 11 ARM VM（8 GB）全量測試 | `RunsTimelineBehaviorTests`（caseName `skippedPhaseSaysSo`）失敗：node 結束碼 0、stdout 為空字串，耗時剛好 5 秒；單獨重跑通過。根因：`NodeRuntime.RunCore` 在程序結束後只等輸出管線 5 秒，逾時就靜默回傳空字串（`LogForesight.Tests/NodeRuntime.cs` 約 175 行），高負載時被誤判成「腳本沒有輸出 PASS」 | 管線沒讀完時明講「輸出未讀完」或等待到總逾時為止，不靜默回空字串 | 困擾（全量偶發紅） | 所有 `*BehaviorTests`（共用 `NodeRuntime`） |
 | T-01 | 維運（測試工具） | 全部情境以 `quick` 矩陣連續跑（macOS、Chrome） | 185 個情境中「互動-風險日詳情-詢問AI點標題列開合」（滑過沒有底色變化）與「報表-視角-總覽-一屏看完」（1920 寬出現垂直捲軸 11px）失敗；兩個情境單獨重跑皆為 0。前者對應工具檔頭已知的「滑鼠位置跨情境保留」 | 情境之間互不影響，整批與單獨結果相同 | 瑕疵 | 待查：其他依滑鼠或捲動狀態的情境 |
 
 ## E6 程式層橫向檢查
 
 | 編號 | 層面 | 角色與情境 | 現象 | 預期 | 影響等級 | 同型 |
 |---|---|---|---|---|---|---|
+
+## Windows 實機驗證（103 上的 Windows 11 ARM VM）
+
+- 環境：Windows 11 26300（ARM64）、8 GB、僅主機網路不聯網；.NET SDK 8.0.428 與 Node 22.23.5 以官方安裝檔（在 103 下載並核對官方雜湊）離線安裝；NuGet 以本機套件夾離線還原（`C:\lf\offline.config`，來源名沿用 nuget.org 以符合 repo 的 packageSourceMapping）。程式碼為 `git archive` 的 E0 提交（5d81dc20）。
+- 全量：10,105 通過、1 失敗、12 略過（共 10,118，6 分 47 秒）。唯一失敗是 T-02（重跑通過），扣除後即 10,106 通過＝CLAUDE.md 基線 10,090＋本輪 16。Windows 專屬測試（macOS 略過的 8 筆）全部通過。
+- 尚未做：IIS 子應用程式部署、以 Edge 跑量測工具、在 VM 內產生真實 Windows 事件（列入 E2／E4 執行時一併進行）。
 
 ## 交接確認事項
 
