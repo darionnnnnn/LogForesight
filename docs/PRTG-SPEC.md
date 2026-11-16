@@ -449,7 +449,7 @@ blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「
 
 **持續 Warning 且數值持平時降一級**（`PrtgCrossDay` 的 `steady` 證據，由 `PrtgDailyPipeline.BuildSteadyEvidence` 以 `PrtgValueAssessment` 算好）：`warning` finding（不含 `ElevatesDayRisk`）連續 ≥ 7 日，且該 sensor 評估日往前 7 天內可用日 ≥ 4、
 已用百分比（`PrtgValueAssessment.UsedPercent`）首尾差 ≤ 2 個百分點、最新值不在危險區（磁碟已用 < 90%、記憶體已用 < 95%）時，嚴重度降一級、不套跨日升級，說明補「已持續 M 日，數值持平（近 7 日已用 X%→Y%）」。
-數值不足、未知單位、CPU／Ping、數值查詢失敗一律維持原行為；只影響當趟評估的 finding，歷史主機日不重算。每日 finding 計數多「持平降級 N 筆」。常數在 `PrtgRuleCatalog`，暫定。
+數值不足、最後一個可用日早於評估日前一天（數值已中斷）、未知單位、CPU／Ping、數值查詢失敗一律維持原行為；只影響當趟評估的 finding，歷史主機日不重算。每日 finding 計數多「持平降級 N 筆」。常數在 `PrtgRuleCatalog`，暫定。
 
 ### 抑制
 

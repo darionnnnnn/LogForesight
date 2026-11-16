@@ -60,6 +60,20 @@ public class ReportBucketingTests
     }
 
     [Fact]
+    public void 按週_起日是週日首桶只有一天_週桶跨年_起訖顛倒自動交換()
+    {
+        // 2025-12-28 是週日：首桶只有它一天，第二桶 12-29（一）～ 01-04（日）跨年
+        var from = new DateTime(2025, 12, 28);
+        var to = new DateTime(2026, 1, 25);
+        var b = ReportBucketing.Build(from, to);
+        Assert.Equal(new[] { 1, 7, 7, 7, 7 }, b.Select(x => x.Days).ToArray());
+        Assert.Equal(("2025-12-29", "2026-01-04"), (F(b[1].From), F(b[1].To)));
+        Assert.Equal(1, ReportBucketing.IndexOf(b, new DateTime(2026, 1, 1)));
+
+        Assert.Equal(b, ReportBucketing.Build(to, from));
+    }
+
+    [Fact]
     public void 一天期間只有一桶()
     {
         var b = Assert.Single(ReportBucketing.Build(new DateTime(2026, 6, 15), new DateTime(2026, 6, 15)));

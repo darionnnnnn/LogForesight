@@ -152,10 +152,12 @@ public class ReportEffectivenessService
         // 只為「有已處理標記的組合」建出現日索引（靜音當天的出現不算）；一趟走完所有紀錄，與組合數無關
         var lastDataDay = loaded.Max(r => r.Date.Date);
         var appearances = new Dictionary<(string HostName, string IssueKey), List<DateTime>>(HostIssueSignatureKeyComparer.Instance);
+        var recordDays = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // 「主機|日期」：那一天有沒有紀錄
         foreach (var record in loaded)
         {
             var host = nameOf(record);
             var date = record.Date.Date;
+            recordDays.Add($"{host}|{date:yyyyMMdd}");
             foreach (var issue in record.TopIssues)
             {
                 var key = (host, IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey));
@@ -170,11 +172,12 @@ public class ReportEffectivenessService
         var perIssue = new Dictionary<string, (string Source, int EventId, string Label, int Hosts, int Recurred)>(IssueSignatureKeyComparer.Instance);
         foreach (var (key, resolvedDay) in lastResolved)
         {
-            // 母體與出現日同一口徑：已處理那天該問題不在顯示中的問題清單（已靜音、嚴重度或風險等級被隱藏）就不算一組，
+            // 母體與出現日同一口徑：已處理那天有紀錄、該問題卻不在顯示中的問題清單（已靜音、嚴重度被隱藏）就不算一組，
             // 否則這種組合的「又出現」永遠看不到，會一律落進「未再發生」把比例往下拉
-            if (!appearances.TryGetValue(key, out var days) || !days.Contains(resolvedDay)) continue;
+            appearances.TryGetValue(key, out var days);
+            if (recordDays.Contains($"{key.HostName}|{resolvedDay:yyyyMMdd}") && days?.Contains(resolvedDay) != true) continue;
             var windowEnd = resolvedDay.AddDays(RecurrenceWindowDays);
-            var recurred = days.Any(d => d > resolvedDay && d <= windowEnd);
+            var recurred = days != null && days.Any(d => d > resolvedDay && d <= windowEnd);
 
             if (recurred) result.Recurred++;
             else if (windowEnd <= lastDataDay) result.NotRecurred++;
