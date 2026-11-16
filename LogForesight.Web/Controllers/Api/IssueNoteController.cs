@@ -19,13 +19,11 @@ public class IssueNoteController : ControllerBase
 {
     private readonly IIssueNoteQuery _notes;
     private readonly IVisibilityService _visibility;
-    private readonly ICurrentUser _currentUser;
 
-    public IssueNoteController(IIssueNoteQuery notes, IVisibilityService visibility, ICurrentUser currentUser)
+    public IssueNoteController(IIssueNoteQuery notes, IVisibilityService visibility)
     {
         _notes = notes;
         _visibility = visibility;
-        _currentUser = currentUser;
     }
 
     [HttpGet("last-note")]
@@ -35,9 +33,8 @@ public class IssueNoteController : ControllerBase
         if (string.IsNullOrWhiteSpace(issueKey))
             throw DomainException.Validation("缺少問題簽章。");
 
-        IReadOnlyCollection<string>? hostKeys = _currentUser.Has(Capability.ViewAll)
-            ? null
-            : _visibility.GetVisibleHosts().Select(h => HostNameKey.Of(h.HostName)).ToList();
+        // 一律以可見主機篩：全站檢視者也看不到停用主機（WEB-SPEC §7.1），不能以 null（不篩）代替
+        IReadOnlyCollection<string> hostKeys = _visibility.GetVisibleHosts().Select(h => HostNameKey.Of(h.HostName)).ToList();
 
         var found = _notes.GetLatestNote(issueKey, hostKeys);
         return ApiResponse<LastIssueNoteDto?>.Ok(found is { } f

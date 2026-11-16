@@ -29,6 +29,8 @@ public class ReportsWallBehaviorTests
     [InlineData("首次載入失敗不寫舊資料提示並排下一次重試")]
     [InlineData("重試間隔_連續失敗逐次加倍到一輪封頂")]
     [InlineData("Esc離開時網址與類別與計時器全部還原")]
+    [InlineData("大螢幕_從處理成效進入顯示總覽_離開回處理成效")]
+    [InlineData("大螢幕_網址帶display_wall進頁時也先切回總覽_寬度不足時不動視角")]
     [InlineData("Esc離開只有display參數時網址回到無查詢字串")]
     [InlineData("按鈕進入後全螢幕退出事件會離開模式")]
     [InlineData("按鈕離開時仍在全螢幕就退出全螢幕")]

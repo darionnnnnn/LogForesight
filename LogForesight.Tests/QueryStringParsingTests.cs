@@ -89,7 +89,7 @@ public class QueryStringParsingTests
         // 日期驗證發生在 controller 層的 ParseDateRange 呼叫，
         // 不會進入 service，因此用 null! 即可測出此行為。
         // 故意把 from 設成比 to 晚，驗證「不會被靜默交換」。
-        var controller = new ReportsController(null!);
+        var controller = new ReportsController(null!, null!, null!);
         var from = "2026-08-15";
         var to   = "2026-01-01";  // from > to
 

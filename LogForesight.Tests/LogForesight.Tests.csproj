@@ -15,6 +15,8 @@
         <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
         <!-- SQL 後端合約測試以 SQLite in-memory 跑同一組案例（provider 中立驗證，正式環境為 SqlServer） -->
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+        <!-- 授權矩陣：真 JWT＋真路由＋真 VisibilityService 的站台組裝測試（LogForesight.Tests/Authorization） -->
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
     </ItemGroup>
 
     <ItemGroup>

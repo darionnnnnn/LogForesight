@@ -271,6 +271,47 @@ public class CaseGrantVisibilityTests : IDisposable
     }
 
     /// <summary>
+    /// 讀取日層級處理狀態：處理面板每次載入都先讀這裡，所以不能拒絕（面板會壞），
+    /// 但整天的狀態、處理人、期限、備註、負責人不給；一般授權主機的回應不受影響。
+    /// </summary>
+    [Fact]
+    public void 被指派者_讀日層級處理狀態只拿到識別與能力旗標()
+    {
+        const string sentinelNote = "整日備註-哨兵";
+        _handlings.Save(new RecordHandling
+        {
+            HostName = _grantedHost.HostName, Date = Day, Status = HandlingStatuses.InProgress,
+            HandlerId = _user.UserId, DueDate = Day.AddDays(3), Note = sentinelNote
+        });
+        // 負責人是另一位使用者（被交辦者本人當負責人就變成完整授權，不是這個情境）
+        var owner = _users.Upsert(new WebUser { Account = "owner", DisplayName = "負責人-哨兵" });
+        _grantedHost.OwnerUserIds = new List<long> { owner.UserId };
+        _hosts.Upsert(_grantedHost);
+        Assert.True(Visibility().IsCaseGrantOnly(_grantedHost.HostId), "前提：這台主機對檢視者是僅案件授與");
+
+        var dto = Handling(Visibility()).Get(_grantedHost.HostId, Day);
+
+        Assert.Equal(_grantedHost.HostId, dto.HostId);
+        Assert.True(dto.CanHandle);
+        Assert.False(dto.CanAssign);
+        Assert.Null(dto.Note);
+        Assert.Null(dto.HandlerId);
+        Assert.Null(dto.HandlerName);
+        Assert.Null(dto.DueDate);
+        Assert.Null(dto.DerivedStatus);
+        Assert.Empty(dto.OwnerNames);
+        Assert.Equal(0, dto.TotalIssues);
+        Assert.Equal(0, dto.OpenCaseCount);
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        Assert.DoesNotContain(sentinelNote, json);
+        Assert.DoesNotContain("負責人-哨兵", json);
+
+        // 邊界另一側：有完整權限的主機照常拿到整天的處理狀態
+        _handlings.Save(new RecordHandling { HostName = _ownHost.HostName, Date = Day, Status = HandlingStatuses.InProgress, Note = sentinelNote });
+        Assert.Equal(sentinelNote, Handling(Visibility()).Get(_ownHost.HostId, Day).Note);
+    }
+
+    /// <summary>
     /// 報告全文是整台主機當日的完整敘事，案件授與者不得取得——三種報告同一套判斷，
     /// 不能只擋住風險報告那一種。
     /// </summary>

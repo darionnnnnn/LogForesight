@@ -18,9 +18,13 @@ public sealed class PrtgManualWorkGate : IPrtgManualWorkGate
     private readonly TimeSpan _backfillMaxWait;
     private readonly TimeSpan _pollInterval;
 
-    public PrtgManualWorkGate(PrtgStructureSyncService sync, PrtgBackfillRunState backfill)
+    private readonly PrtgSnapshotHostedService? _snapshot;
+
+    public PrtgManualWorkGate(PrtgStructureSyncService sync, PrtgBackfillRunState backfill,
+        PrtgSnapshotHostedService? snapshot = null)
         : this(sync, backfill, IPrtgManualWorkGate.BackfillMaxWait, DefaultPollInterval)
     {
+        _snapshot = snapshot;
     }
 
     internal PrtgManualWorkGate(PrtgStructureSyncService sync, PrtgBackfillRunState backfill,
@@ -30,6 +34,16 @@ public sealed class PrtgManualWorkGate : IPrtgManualWorkGate
         _backfill = backfill;
         _backfillMaxWait = backfillMaxWait;
         _pollInterval = pollInterval;
+    }
+
+    /// <inheritdoc />
+    public string? SnapshotStoppedReason
+    {
+        get
+        {
+            var status = _snapshot?.GetStatus();
+            return status?.JournalStopCode == null ? null : status.LastSkipReason ?? "待寫檔無法使用";
+        }
     }
 
     public PrtgManualWork Running =>

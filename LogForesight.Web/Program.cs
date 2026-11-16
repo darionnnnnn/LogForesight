@@ -379,3 +379,6 @@ internal static class ForwardedHeadersSetup
         return forwarded;
     }
 }
+
+/// <summary>讓整合測試（WebApplicationFactory）取得頂層陳述式產生的進入點型別</summary>
+public partial class Program;

@@ -386,4 +386,60 @@ public sealed class PrtgSnapshotDiagnosticsTests : IDisposable
         return new PrtgSnapshotHostedService(settings, _backend, scheduler, sync, backfill, hostStore,
             new FakeSentinelStore(), probe, lifetime);
     }
+
+    [Fact]
+    public void 待寫檔停止的小時_狀態為stopped_目標數未知不是0()
+    {
+        var at = new DateTime(2026, 11, 10, 8, 0, 0);
+        NewStore().Record(at, "journal-stopped", "local-journal-unavailable", -1, reasonCode: "database-mismatch");
+
+        var hour = Assert.Single(NewReader().ReadRecent(at.AddHours(1), 1));
+
+        Assert.Equal(PrtgSnapshotHourState.Stopped, hour.State);
+        Assert.Equal(-1, hour.Targets);
+        Assert.Equal(1, hour.WriteFailures);
+        Assert.Equal("stopped", LogForesight.Web.Controllers.Api.PrtgSnapshotDiagnosticsController.StateName(hour.State));
+    }
+
+    [Fact]
+    public void 同一小時先有已知目標數再停止_保留已知目標數且仍為stopped()
+    {
+        var at = new DateTime(2026, 11, 10, 8, 0, 0);
+        NewStore().Record(at, "attempt", targets: 5);
+        NewStore().Record(at.AddMinutes(10), "journal-stopped", "local-journal-unavailable", -1);
+
+        var hour = Assert.Single(NewReader().ReadRecent(at.AddHours(1), 1));
+
+        Assert.Equal(PrtgSnapshotHourState.Stopped, hour.State);
+        Assert.Equal(5, hour.Targets);
+    }
+
+    [Fact]
+    public void 真的沒有目標_仍為NoTargets_兩側()
+    {
+        var stoppedHour = new DateTime(2026, 11, 10, 8, 0, 0);
+        var emptyHour = stoppedHour.AddHours(1);
+        NewStore().Record(stoppedHour, "journal-stopped", "local-journal-unavailable", -1);
+        NewStore().Record(emptyHour, "attempt", targets: 0);
+
+        var hours = NewReader().ReadRecent(emptyHour.AddHours(1), 2);
+
+        Assert.Equal(PrtgSnapshotHourState.Stopped, hours[0].State);
+        Assert.Equal(PrtgSnapshotHourState.NoTargets, hours[1].State);
+        Assert.Equal(0, hours[1].Targets);
+    }
+
+    [Fact]
+    public void 健康判定_待寫檔停止的兩個小時不是無目標()
+    {
+        var first = new DateTime(2026, 11, 10, 8, 0, 0);
+        NewStore().Record(first, "journal-stopped", "local-journal-unavailable", -1);
+        NewStore().Record(first.AddHours(1), "journal-stopped", "local-journal-unavailable", -1);
+        var recent = NewReader().ReadRecent(first.AddHours(2), 2);
+
+        var health = HealthService.BuildPrtgSnapshotHealth(true, recent);
+
+        Assert.NotEqual("no-targets", health.State);
+        Assert.All(health.RecentHours, h => Assert.Equal("stopped", h.State));
+    }
 }

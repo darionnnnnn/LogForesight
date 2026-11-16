@@ -81,6 +81,7 @@ export function wallStatusText({ lastOkAt, failed }) {
  * @param {(scale: number | null) => void} deps.applyScale  套用字級倍率；null 表示還原
  * @param {(visible: boolean) => void} deps.setExitVisible  離開鈕顯示／淡出
  * @param {() => void} deps.onState              狀態變動（標頭列、按鈕顯示）
+ * @param {(active: boolean) => void} [deps.onActiveChange]  大螢幕生效／結束（先於重繪）：頁面在這裡把視角切回總覽、離開時還原
  */
 export function createWall(deps) {
     const { win, doc, loc, hist } = deps;
@@ -173,6 +174,7 @@ export function createWall(deps) {
         root.classList.add(WALL_CLASS);
         applyScale(true);
         schedule();
+        deps.onActiveChange?.(true);
         deps.rerender();
     }
 
@@ -182,6 +184,7 @@ export function createWall(deps) {
         appliedScale = null;
         deps.applyScale(null);
         deps.setExitVisible(false);
+        deps.onActiveChange?.(false);
         deps.rerender();
     }
 

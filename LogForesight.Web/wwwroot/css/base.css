@@ -147,9 +147,10 @@
     --lf-space-5: 1.5rem;
     --lf-space-6: 2rem;
 
-    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限 */
+    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限。
+       行寬上限只防超寬螢幕：套用的文字都在格線欄或表格欄裡，欄寬本身已限制行長 */
     --lf-content-max: 120rem;
-    --lf-measure: 40em;
+    --lf-measure: 64em;
 
     /* ── 圓角（v2 收緊一階：data-dense 專業感）────────────────────────── */
     --lf-radius-sm: .25rem;
@@ -221,6 +222,15 @@
     --lf-timeline-low: #eef0f3;
     --lf-timeline-gap: #fff1bf;
     --lf-timeline-none: transparent;
+
+    /* 報表熱度表與未結案帳齡的淡階（單一色相＝品牌色，1 最淡、5 最深且只有 5 接近實色）。
+       格內數字才是主要資訊：1～3 級用正文色（對底 ≥ 7:1），4～5 級改白字（對底 ≥ 5.5:1）。
+       不用類別色或風險紅——紅橘只留給風險狀態本身（DESIGN-SYSTEM §8.8） */
+    --lf-heat-1: #dbe5fb;
+    --lf-heat-2: #b5c9f4;
+    --lf-heat-3: #84a3e8;
+    --lf-heat-4: #3b63c4;
+    --lf-heat-5: #1e40af;
 
     /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
     --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);

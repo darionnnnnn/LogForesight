@@ -47,7 +47,7 @@ function build(source, declarations, prelude, exportsExpr, args = {}) {
  * 假時鐘＋視窗／文件／網址替身。refresh 由測試以 env.finishRefresh(ok) 手動完成，
  * 才能表達「上一次還沒完成」與「完成後才排下一次」。
  */
-function makeEnv({ search = '', innerHeight = 1080, wide = true, visible = true } = {}) {
+function makeEnv({ search = '', innerHeight = 1080, wide = true, visible = true, onActiveChange = null } = {}) {
     let now = new Date(2026, 10, 11, 9, 0).getTime();
     let nextId = 1;
     const timers = new Map();
@@ -55,7 +55,7 @@ function makeEnv({ search = '', innerHeight = 1080, wide = true, visible = true 
     const winListeners = {};
     const mqListeners = [];
     const classes = new Set();
-    const calls = { refresh: 0, rerender: 0, scales: [], exitVisible: [], replace: [], states: 0, exitFullscreen: 0 };
+    const calls = { refresh: 0, rerender: 0, scales: [], exitVisible: [], replace: [], states: 0, exitFullscreen: 0, active: [] };
     let pending = null;
 
     const mq = { matches: wide, addEventListener: (_type, handler) => mqListeners.push(handler) };
@@ -95,7 +95,8 @@ function makeEnv({ search = '', innerHeight = 1080, wide = true, visible = true 
             rerender: () => { calls.rerender++; },
             applyScale: scale => { calls.scales.push(scale); },
             setExitVisible: v => { calls.exitVisible.push(v); },
-            onState: () => { calls.states++; }
+            onState: () => { calls.states++; },
+            onActiveChange: active => { calls.active.push(active); onActiveChange?.(active); }
         }),
         /** 前進假時鐘並依序觸發到期的計時器，每次觸發後讓非同步工作跑完 */
         async advance(ms) {
@@ -222,6 +223,7 @@ const cases = {
             const defaultCompareFor = () => 'previous';
             const updateYoyOptionLabel = () => {};
             const clearDisplaySettingsCache = () => { state.settingsCleared = (state.settingsCleared ?? 0) + 1; };
+            const markOtherViewsDirty = () => { state.markedDirty = (state.markedDirty ?? 0) + 1; };
             const loadReport = async () => {
                 loaded.push([inputs['report-from'].value, inputs['report-to'].value]);
                 if (state.failing) throw new Error('boom');
@@ -242,6 +244,7 @@ const cases = {
             clock = new RealDate(2026, 10, 12, 0, 5).getTime();   // 跨過午夜
             assert.equal(await preset.wallRefresh(), true);
             assert.deepEqual(loaded.at(-1), ['2026-11-05', '2026-11-11'], '跨午夜後起訖各前進一天');
+            assert.equal(state.markedDirty, 2, '快捷期間每次更新都把其他視角標成待重載（離開大螢幕回到的視角換新期間）');
 
             // 自訂日期：固定不動（activePresetDays 為 null）
             const custom = make(null);
@@ -251,6 +254,7 @@ const cases = {
             clock = new RealDate(2026, 10, 14, 0, 5).getTime();
             assert.equal(await custom.wallRefresh(), true);
             assert.deepEqual(loaded.at(-1), ['2026-10-01', '2026-10-05'], '自訂日期不得被滾動');
+            assert.equal(state.markedDirty, 2, '自訂日期不動，不必標其他視角');
 
             // 取數失敗：回 false（由 wall 記成更新失敗），不外擲
             state.failing = true;
@@ -267,6 +271,7 @@ const cases = {
         const old = { from: 'a', to: 'b', marker: 'old' };
         const loadInst = build(reports, ['async function loadReport('], `
             let currentData = old;
+            const views = { overview: { dirty: true } };
             let activePresetDays = null;
             let appliedView = null;
             let retentionDays = 90;
@@ -351,6 +356,52 @@ const cases = {
 
         await env.advance(2 * WALL_REFRESH_MS);
         assert.equal(env.calls.refresh, 0, '離開後不再自動更新');
+    },
+    // ── 大螢幕只顯示總覽（視角保存）────────────────────────────────────────
+    async 大螢幕_從處理成效進入顯示總覽_離開回處理成效() {
+        const { createWallViewKeeper } = await import(pathToFileURL(path.join(jsRoot, 'pages', 'reports-common.js')).href);
+        const log = [];
+        let currentView = 'effectiveness';
+        const keeper = createWallViewKeeper({
+            getView: () => currentView,
+            show: view => { currentView = view; log.push(`show:${view}`); },
+            restore: view => { currentView = view; log.push(`restore:${view}`); }
+        });
+        const env = makeEnv({
+            search: '?view=effectiveness',
+            onActiveChange: active => (active ? keeper.enter() : keeper.leave())
+        });
+        env.wall.init();
+        assert.equal(env.wall.isActive(), false, '只有 view 參數沒有 display=wall 不進大螢幕');
+        assert.deepEqual(log, []);
+
+        await env.wall.enter();
+        assert.equal(env.wall.isActive(), true);
+        assert.equal(currentView, 'overview', '進入大螢幕時從處理成效切回總覽');
+        assert.deepEqual(env.calls.active, [true]);
+
+        env.emit('keydown', { key: 'Escape' });
+        assert.equal(env.wall.isActive(), false);
+        assert.equal(currentView, 'effectiveness', '離開時回到原視角');
+        assert.deepEqual(log, ['show:overview', 'restore:effectiveness']);
+        assert.deepEqual(env.calls.active, [true, false]);
+    },
+    async 大螢幕_網址帶display_wall進頁時也先切回總覽_寬度不足時不動視角() {
+        const { createWallViewKeeper } = await import(pathToFileURL(path.join(jsRoot, 'pages', 'reports-common.js')).href);
+        let currentView = 'category';
+        const make = wide => {
+            const keeper = createWallViewKeeper({ getView: () => currentView, show: v => { currentView = v; }, restore: v => { currentView = v; } });
+            return makeEnv({ search: '?display=wall&view=category', wide, onActiveChange: active => (active ? keeper.enter() : keeper.leave()) });
+        };
+        const narrow = make(false);
+        narrow.wall.init();
+        assert.equal(currentView, 'category', '寬度不足不提供大螢幕，視角不動');
+
+        const wide = make(true);
+        wide.wall.init();
+        assert.equal(currentView, 'overview', '直接以網址進入時，大螢幕生效就先切回總覽');
+        wide.emit('keydown', { key: 'Escape' });
+        assert.equal(currentView, 'category');
     },
     async Esc離開只有display參數時網址回到無查詢字串() {
         const env = makeEnv({ search: WALL_URL });

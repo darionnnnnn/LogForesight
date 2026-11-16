@@ -384,6 +384,7 @@ const cases = {
             let currentScope = 'all';
             let requestedScope = 'unresolved';   // 使用者剛點了「未結案」chip
             const reportGuard = createSeqGuard();
+            const views = { overview: { dirty: true } };
             const document = { getElementById: (id) => ({ value: id === 'report-compare' ? 'prev' : '2026-10-01' }) };
             const syncScopeChips = () => synced.push(currentScope);
         `, '{ load, scope: () => currentScope }', {
@@ -414,6 +415,7 @@ const cases = {
             let visibleDayRisk = null;
             const SCOPE_LABEL = { unresolved: '未結案' };
             const reportGuard = createSeqGuard();
+            const views = { overview: { dirty: true } };
             const document = { getElementById: (id) => ({ value: id === 'report-compare' ? 'prev' : '2026-10-01', set textContent(v) {} }) };
             const location = { search: '', pathname: '/reports' };
             const history = { replaceState() {} };
@@ -456,6 +458,7 @@ const cases = {
             let currentScope = 'all';
             let requestedScope = 'unresolved';
             const reportGuard = createSeqGuard();
+            const views = { overview: { dirty: true } };
             const document = { getElementById: (id) => ({ value: id === 'report-compare' ? 'prev' : '2026-10-01' }) };
             const syncScopeChips = () => {};
         `, '{ load, requested: () => requestedScope, scope: () => currentScope }', {
@@ -473,7 +476,7 @@ const cases = {
         const calls = { loads: 0 };
         const inst = build('reports.js', ['function onScopeChipClick('], `
             let requestedScope = 'unresolved';
-            const load = () => { calls.loads++; };
+            const reload = () => { calls.loads++; };
         `, '{ onScopeChipClick, requested: () => requestedScope }', { calls });
         const active = { classList: { contains: () => true }, dataset: { scope: 'all' } };
         inst.onScopeChipClick({ target: { closest: () => active } });
@@ -484,7 +487,7 @@ const cases = {
         const calls = { loads: 0 };
         const inst = build('reports.js', ['function onScopeChipClick('], `
             let requestedScope = null;
-            const load = () => { calls.loads++; };
+            const reload = () => { calls.loads++; };
         `, '{ onScopeChipClick, requested: () => requestedScope }', { calls });
         const active = { classList: { contains: () => true }, dataset: { scope: 'all' } };
         inst.onScopeChipClick({ target: { closest: () => active } });

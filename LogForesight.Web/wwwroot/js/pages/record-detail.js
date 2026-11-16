@@ -60,7 +60,8 @@ function initRecordSections() {
 
 initRecordSections();
 // 詢問 AI 預設收合、記住使用者的開合（不列印，所以列印前不必展開）
-bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');
+bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat',
+    { header: document.querySelector('#chat-card > .lf-card__header') });
 // 收合時訊息區是 display:none，捲到底無效（例如收合狀態下用「放大檢視」對話後關閉）；每次展開完成再捲到最新一則
 document.getElementById('chat-collapse')?.addEventListener('shown.bs.collapse', () => {
     const messages = document.getElementById('chat-messages');
@@ -1744,29 +1745,32 @@ function sourceEvidenceBlock(issue) {
     const hostLabel = key => (key && key === ownHostKey && currentDetail.hostName ? currentDetail.hostName : key || '未知');
     const list = document.createElement('ol');
     list.className = 'lf-source-obs__list';
+    // 每筆的欄位名淡化、值用正文色（文字內容與順序不變，只分開包裝）；時間值是技術值
+    const sourceLine = (fields, valueClass) => {
+        const line = document.createElement('div');
+        fields.forEach(([key, value], index) => {
+            if (index > 0) line.appendChild(document.createTextNode('；'));
+            const keyEl = document.createElement('span');
+            keyEl.className = 'lf-source-obs__key';
+            keyEl.textContent = `${key}：`;
+            const valueEl = document.createElement('span');
+            if (valueClass) valueEl.className = valueClass;
+            valueEl.textContent = value;
+            line.append(keyEl, valueEl);
+        });
+        return line;
+    };
     for (const item of observations) {
         const row = document.createElement('li');
-        const parts = [`來源：${sourceNames[item.sourceKind] || '未知'}`, `範圍：${scopes[item.resourceScope] || '未知'}`, `主機：${hostLabel(item.exactHostKey)}`];
-        if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) parts.push(`資源：${item.exactResourceKey || '未知'}`);
-        const line = document.createElement('div');
-        line.textContent = parts.join('；');
-        row.appendChild(line);
+        const fields = [['來源', sourceNames[item.sourceKind] || '未知'], ['範圍', scopes[item.resourceScope] || '未知'], ['主機', hostLabel(item.exactHostKey)]];
+        if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) fields.push(['資源', item.exactResourceKey || '未知']);
+        row.appendChild(sourceLine(fields));
 
-        const time = document.createElement('div');
-        if (item.eventTimeUtc) time.textContent = `UTC 時間：${formatSourceUtc(item.eventTimeUtc)}`;
-        else if (item.windowStartUtc && item.windowEndUtc) time.textContent = `UTC 區間：[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`;
-        else time.textContent = 'UTC 時間／區間：未知';
-        row.appendChild(time);
-        if (item.windowResolution) {
-            const resolution = document.createElement('div');
-            resolution.textContent = `時間解讀：${item.windowResolution}`;
-            row.appendChild(resolution);
-        }
-        if (item.nativeReference) {
-            const reference = document.createElement('div');
-            reference.textContent = `原生參照：${item.nativeReference}`;
-            row.appendChild(reference);
-        }
+        if (item.eventTimeUtc) row.appendChild(sourceLine([['UTC 時間', formatSourceUtc(item.eventTimeUtc)]], 'lf-text-data'));
+        else if (item.windowStartUtc && item.windowEndUtc) row.appendChild(sourceLine([['UTC 區間', `[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`]], 'lf-text-data'));
+        else row.appendChild(sourceLine([['UTC 時間／區間', '未知']]));
+        if (item.windowResolution) row.appendChild(sourceLine([['時間解讀', item.windowResolution]]));
+        if (item.nativeReference) row.appendChild(sourceLine([['原生參照', item.nativeReference]], 'lf-text-data'));
         list.appendChild(row);
     }
     block.appendChild(list);
@@ -2407,13 +2411,13 @@ function guidancePanel(issue) {
         label.className = 'lf-guidance__label';
         label.textContent = '影響';
         const text = document.createElement('div');
-        text.className = 'small';
         text.textContent = g.impact;
         wrap.append(label, collapsibleText(text));
     }
 
-    appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
-    appendList(wrap, '處置步驟', g.nextSteps, 'lf-guidance__label');
+    // 三層：區標題（evidencePanel 的眉標）→ 小標（正文色、粗體）→ 內文（一般字級）；處置步驟有先後，用編號清單
+    appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label', { listClass: 'lf-guidance__list' });
+    appendList(wrap, '處置步驟', g.nextSteps, 'lf-guidance__label', { listClass: 'lf-guidance__list', ordered: true });
 
     // 只剩白話說明（已在問題列顯示）時沒有可展開的內容：回 null 讓列不掛展開列
     return wrap.children.length > 0 ? wrap : null;
@@ -2504,7 +2508,7 @@ function otherAnalysis(detail) {
     return box;
 }
 
-function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1') {
+function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1', { listClass = 'small mb-1 ps-3', ordered = false } = {}) {
     if (!items || items.length === 0) return;
 
     const title = document.createElement('div');
@@ -2512,8 +2516,8 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
     title.textContent = label;
     parent.appendChild(title);
 
-    const list = document.createElement('ul');
-    list.className = 'small mb-1 ps-3';
+    const list = document.createElement(ordered ? 'ol' : 'ul');
+    list.className = listClass;
     for (const item of items) {
         const li = document.createElement('li');
         renderAiInline(li, item);

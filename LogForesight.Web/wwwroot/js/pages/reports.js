@@ -1,8 +1,12 @@
 ﻿/**
  * 報表（docs/WEB-SPEC.md §9.6）——主管與更高階主管看的期間面。
  *
- * 版面由上而下、由左而右就是閱讀順序：現在要不要擔心（第一排四格）→ 變好還是變壞（前期對比、風險趨勢）
- * → 風險集中在哪（主機排行、類型分布）→ 有沒有人在處理（處理進度）→ 這些數字可不可信（資料完整度）。
+ * 同一頁三個視角（分段控制，網址 view=）：總覽（這支檔案）、處理成效（reports-effectiveness.js）、
+ * 問題類型（reports-category.js）。處理成效與問題類型延後載入——切過去才打各自的端點；期間條件改變時
+ * 只重載目前的視角，其他視角標記為待重載。各視角的載入序號守門與列印補載入在 reports-common.js。
+ *
+ * 總覽的版面由上而下、由左而右就是閱讀順序：現在要不要擔心（第一排四格）→ 變好還是變壞（前期對比、風險趨勢）
+ * → 風險集中在哪（主機排行、問題排行）→ 有沒有人在處理（處理進度）→ 這些數字可不可信（資料完整度）。
  *
  * §8.4 的驗收標準在這頁兌現：**任何一個數字，最多兩次點擊就能看到組成它的風險日清單**。
  * 實作方式是「組出帶篩選條件的網址再導頁」——問題查詢頁已支援 URL 同步，
@@ -16,19 +20,26 @@
 
 import { api as baseApi, getDisplaySettings, clearDisplaySettingsCache } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { kpiStrip, toast, guardLoad, renderLoading, button } from '../core/ui.js';
+import { kpiStrip, toast, guardLoad, renderLoading, button, cssVar } from '../core/ui.js';
 import {
-    formatNumber, categoryName, severityName, SEVERITY_ORDER,
+    formatNumber, categoryName, severityName,
     issueBaselineText, toLocalDateString
 } from '../core/format.js';
 import * as chartLib from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
-import { safeStorage } from '../core/storage.js';
 import { filterDisclosure, roleText, fact, metaLine } from '../core/elements.js';
 import { createWall } from './reports-wall.js';
+import {
+    VIEWS, viewFromSearch, searchWithView, normalizeView, rangeProblem, createViewState, loadViewData,
+    printAllViews, createWallViewKeeper
+} from './reports-common.js';
+import { createEffectivenessView } from './reports-effectiveness.js';
+import { createCategoryView } from './reports-category.js';
 
 let currentData = null;
+// 三個視角各自的載入狀態（序號守門、是否載入過、是否失敗、是否待重載）；總覽的資料在 currentData
+const views = { overview: createViewState(), effectiveness: createViewState(), category: createViewState() };
 // 保留天數來自第一次 summary 回覆；在那之前不做自動切換（寫死一個猜測值反而會猜錯）
 let retentionDays = null;
 
@@ -68,7 +79,8 @@ let chartAnimate = true;
 /** 圖表包裝層外加一道轉接：大螢幕模式生效時圖表不可下鑽；自動更新與縮放的重繪不做進場動畫 */
 const charts = {
     ...chartLib,
-    bar: (canvas, spec) => chartLib.bar(canvas, adaptChartSpec(spec))
+    bar: (canvas, spec) => chartLib.bar(canvas, adaptChartSpec(spec)),
+    line: (canvas, spec) => chartLib.line(canvas, adaptChartSpec(spec))
 };
 
 function adaptChartSpec(spec) {
@@ -79,6 +91,7 @@ function adaptChartSpec(spec) {
 }
 
 /**
+ * 總覽的載入入口（其他視角走 loadOtherView）。
  * 區間檢查先做、再放骨架列（回饋第 45 輪 B7）：這頁的 summary 是全站最慢的查詢之一，
  * 過去按下查詢到資料回來之間畫面完全沒有變化，使用者只能猜有沒有按到。
  * 檢查不過是直接 return，順序反了會留下一片永遠不會被換掉的骨架列。
@@ -120,6 +133,7 @@ async function loadReport() {
     const presetAtRequest = activePresetDays;
 
     const seq = reportGuard.next();
+    views.overview.dirty = false;   // 發出時就清：在途期間別的視角改了期間，重新標上的待重載不能被這次回應抹掉
     let data;
     let displaySettings;
     try {
@@ -132,6 +146,7 @@ async function loadReport() {
         // 過期請求的失敗不處理：失敗態只該屬於最新一次查詢
         if (!reportGuard.isCurrent(seq)) return;
         requestedScope = null;   // 失敗時 chip 與資料都停在上次成功的範圍，不留下沒生效的選擇
+        views.overview.dirty = true;   // 畫面上仍是舊條件的資料，切回總覽要再載入
         throw err;
     }
     // 回應回來時已有更新的查詢就整份丟掉，不得寫入任何頁面狀態
@@ -150,15 +165,17 @@ async function loadReport() {
     if (currentScope === 'all') params.delete('handlingScope'); else params.set('handlingScope', currentScope);
     history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
 
-    document.getElementById('print-title').textContent =
-        `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}` +
-        (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
-
     renderAll(true);
     return true;
 }
 
 const SCOPE_LABEL = { unresolved: '未結案', open: '未處理', unassigned: '未指派' };
+
+/** 列印標題：三個視角一起印，顯示範圍只套用在總覽，紙上要寫明（畫面上的提示在不列印的切換列裡） */
+function printTitle(from, to) {
+    return `LogForesight 風險報表　${from} ～ ${to}` +
+        (currentScope !== 'all' ? `（總覽：${SCOPE_LABEL[currentScope]}；處理成效與問題類型不套用顯示範圍）` : '');
+}
 
 /** 依 scope 附加到下鑽 URL 的處理狀態條件——點進去的清單筆數與卡片數字對得上（§5） */
 function scopeDrillParams() {
@@ -179,7 +196,18 @@ function renderAll(loaded = false) {
     renderToolbarSummary();
     renderKpi();
     renderCharts();
-    if (loaded) wall.dataLoaded();
+    if (loaded) {
+        views.overview.loaded = true;   // 總覽跟著這次成功載入更新（含大螢幕自動更新）；待重載標記在發出請求時已清
+        views.overview.failed = false;
+        // 列印補載入失敗時標上的「此部分未能載入」要跟著清掉，否則之後重載成功、再列印仍只印那一句
+        document.getElementById('view-overview').classList.remove('lf-report-view--failed');
+        // 列印補載入隱藏中的總覽時不動共用的標題與期間（那些屬於目前顯示的視角）
+        if (currentView === 'overview') {
+            document.getElementById('print-title').textContent = printTitle(currentData.from, currentData.to);
+            noteAppliedRange(currentData.from, currentData.to);
+        }
+        wall.dataLoaded();
+    }
 }
 
 // ── 工具列 ───────────────────────────────────────────────────────────────────
@@ -205,11 +233,12 @@ function periodSummary({ presetDays, from, to, compare, scope }) {
     return { title, meta: parts.join(' · ') };
 }
 
-function renderToolbarSummary() {
+/** range：要顯示的起訖（預設取總覽資料；處理成效、問題類型視角傳入自己回應的起訖） */
+function renderToolbarSummary(range = currentData) {
     const summary = periodSummary({
         presetDays: appliedView.presetDays,
-        from: currentData.from,
-        to: currentData.to,
+        from: range.from,
+        to: range.to,
         compare: appliedView.compare,
         scope: currentScope
     });
@@ -413,7 +442,7 @@ function renderCharts() {
     renderTrendChart();
     if (showHandling) renderHandlingProgress();
     renderHostChart();
-    renderCategoryChart();
+    renderIssueRankChart();
 }
 
 /** 掛上「表格」切換：重畫後一律回到圖表視圖，不留下上一次的「表格」狀態（否則整張卡只剩空白） */
@@ -443,8 +472,10 @@ function truncateLabel(text, chart) {
 }
 
 /**
- * 風險趨勢：逐日堆疊長條（高在下、中在上）。期間很長時不另做彙總，交給座標軸 autoSkip 省略刻度。
- * 沒有 tension——那是折線圖的設定，長條圖不該有。
+ * 風險趨勢：逐日折線，最多三條——高風險實線＋淡面積、中風險實線、前期高風險虛線。
+ * 線型不同，不只靠顏色區分（色盲安全）。中風險被顯示設定隱藏時不畫；前期超出保留期（previousTrend 為空）時
+ * 不畫前期線，保留期提示仍由第一排上方的警示顯示。期間很長時不另做彙總，交給座標軸 autoSkip 省略刻度。
+ * 點資料點下鑽：某天、某風險層級的清單；前期線的點下鑽到前期那一天。
  */
 function renderTrendChart() {
     const points = currentData.trend;
@@ -461,40 +492,64 @@ function renderTrendChart() {
     }
 
     const risk = charts.riskColors();
+    const highSoft = cssVar('--lf-risk-high-soft');
 
-    // 中風險被顯示設定藏起來時整組不畫——資料母體已在後端過濾，mediumRisk 恆為 0
-    const datasets = [
-        { label: '高風險', data: points.map(p => p.highRisk), backgroundColor: risk['高'] }
-    ];
-    if (visibleDayRisk.has('中')) {
-        datasets.push({ label: '中風險', data: points.map(p => p.mediumRisk), backgroundColor: risk['中'] });
+    // 前期以「期間第幾天」與本期對齊：前期比本期短（資料被保留期截掉一部分）時，對不到的天留空
+    const previous = new Map((currentData.previousTrend ?? []).map(p => [p.dayIndex, p]));
+    const showPrevious = previous.size > 0;
+    const showMedium = visibleDayRisk.has('中');   // 中風險被顯示設定藏起來時整條不畫（後端母體已過濾，恆為 0）
+
+    // 資料點小而可點：游標靠近就算命中（pointHitRadius），不必精準對準那個點
+    const line = { tension: 0, pointRadius: 2, pointHoverRadius: 5, pointHitRadius: 8 };
+    const datasets = [{
+        ...line, label: '高風險', kind: 'high', data: points.map(p => p.highRisk),
+        borderColor: risk['高'], backgroundColor: highSoft, fill: true, borderWidth: 2
+    }];
+    if (showMedium) {
+        datasets.push({
+            ...line, label: '中風險', kind: 'medium', data: points.map(p => p.mediumRisk),
+            borderColor: risk['中'], backgroundColor: risk['中'], fill: false, borderWidth: 2
+        });
     }
+    if (showPrevious) {
+        datasets.push({
+            ...line, label: '前期高風險', kind: 'previous', pointRadius: 0,
+            data: points.map((_, i) => previous.get(i)?.highRisk ?? null),
+            borderColor: risk['高'], backgroundColor: risk['高'], fill: false, borderWidth: 1.5, borderDash: [6, 4]
+        });
+    }
+    const kinds = datasets.map(d => d.kind);
 
     chartInstances.trend?.destroy();
-    chartInstances.trend = charts.bar(document.getElementById('trend-chart'), {
+    chartInstances.trend = charts.line(document.getElementById('trend-chart'), {
         data: {
             labels: points.map(p => p.date.slice(5)),
-            datasets
+            datasets: datasets.map(({ kind, ...dataset }) => dataset)
         },
         options: {
+            // 點哪個資料點就下鑽哪一條線：只在游標貼近資料點時命中，不是整條垂直帶
+            interaction: { mode: 'nearest', intersect: true },
             scales: {
-                x: { stacked: true, grid: { display: false }, ticks: { autoSkip: true, maxRotation: 0 } },
-                y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 0 } },
+                y: { beginAtZero: true, ticks: { precision: 0 } }
             }
         },
-        // 下鑽：點某天的長條 → 該日該風險層級的清單（datasetIndex 1 只在中風險存在時出現）
         drillTo: point => {
-            const day = points[point.index];
-            const level = point.datasetIndex === 0 ? '高' : '中';
-            // 顯示範圍不是「全部」時，長條只算該範圍的風險日：下鑽帶同一個範圍，點進去的筆數才對得上
+            const kind = kinds[point.datasetIndex];
+            const day = kind === 'previous' ? previous.get(point.index) : points[point.index];
+            if (!day) return null;
+            // 顯示範圍不是「全部」時，線只算該範圍的風險日：下鑽帶同一個範圍，點進去的筆數才對得上
+            const level = kind === 'medium' ? '中' : '高';
             return recordsUrl({ riskLevels: level, from: day.date, to: day.date }) + scopeDrillParams();
         }
     });
 
     mountToolbar(toolbar, wrapper, {
         title: '風險趨勢',
-        tableColumns: ['日期', '高風險', '中風險', '錯誤數'],
-        tableRows: points.map(p => [p.date, p.highRisk, p.mediumRisk, p.errorCount])
+        tableColumns: showPrevious ? ['日期', '高風險', '中風險', '錯誤數', '前期高風險'] : ['日期', '高風險', '中風險', '錯誤數'],
+        tableRows: points.map((p, i) => showPrevious
+            ? [p.date, p.highRisk, p.mediumRisk, p.errorCount, previous.get(i)?.highRisk ?? '']
+            : [p.date, p.highRisk, p.mediumRisk, p.errorCount])
     });
 }
 
@@ -589,107 +644,10 @@ function renderHandlingProgress() {
     }
 }
 
-// ── 排行與類型分布 ────────────────────────────────────────────────────────────
+// ── 排行（主機排行、問題排行並排兩張卡）────────────────────────────────────────
 
-function renderCategoryChart() {
-    const categories = currentData.categories;
-    const wrapper = document.getElementById('category-wrapper');
-    const toolbar = document.getElementById('category-toolbar');
-
-    // 標題列的「N 個問題」：原本第一排的「問題總數」搬到這裡，下鑽沿用原本的網址
-    const total = document.getElementById('category-issue-total');
-    total.textContent = `${formatNumber(currentData.kpi.totalIssues)} 個問題`;
-    // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，免得問題查詢的「預設隱藏低風險」把數字對不上
-    // 大螢幕模式下只顯示數字：沒有 href 的 <a> 不可聚焦也不可點
-    if (wall.isActive()) total.removeAttribute('href');
-    else total.href = appUrl(recordsUrl({ riskLevels: '高,中,低', from: currentData.from, to: currentData.to }) + scopeDrillParams());
-    total.hidden = false;
-
-    // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與依問題視角的問題排行同一個限制：
-    // 母體是跨主機跨日的獨立投影，套用「顯示範圍」會把「這個類型有幾個風險資訊」變成
-    // 「符合這個處理狀態的日子裡有幾個」，那是另一個問題的答案——這裡照樣講清楚，
-    // 不要讓數字看起來像回應了篩選卻其實沒有
-    const subtitle = document.getElementById('category-subtitle');
-    if (subtitle) subtitle.textContent = currentScope !== 'all' ? '不受「顯示範圍」篩選影響' : '';
-
-    if (categories.length === 0) {
-        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
-        chartInstances.category?.destroy();
-        chartInstances.category = null;
-        clearToolbar(toolbar, wrapper);
-        charts.renderNoData(wrapper);
-        return;
-    }
-
-    const severity = charts.severityColors();
-
-    // 類別 × 嚴重度的堆疊長條——這正是 lf_record_categories 需要嚴重度分解欄位的原因（§10.3）
-    // severity 存英文原值（下鑽 URL 參數、取色皆用它）；label 只用於畫面顯示。
-    // 由共用的 SEVERITY_ORDER 推導（S11），不再各頁各寫一份同順序的清單
-    const severityKeys = SEVERITY_ORDER.map(s => ({ key: `${s[0].toLowerCase()}${s.slice(1)}Count`, severity: s }));
-
-    chartInstances.category?.destroy();
-    chartInstances.category = charts.bar(document.getElementById('category-chart'), {
-        data: {
-            labels: categories.map(c => categoryName(c.category)),
-            datasets: severityKeys.map(s => ({
-                label: severityName(s.severity),
-                data: categories.map(c => c[s.key]),
-                backgroundColor: severity[s.severity]
-            }))
-        },
-        options: {
-            indexAxis: 'y',
-            scales: {
-                x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
-                y: { stacked: true, grid: { display: false } }
-            }
-        },
-        drillTo: point => {
-            const category = categories[point.index];
-            const severityValue = severityKeys[point.datasetIndex].severity;
-            // 類型分布跨全部風險日統計（嚴重度是問題層級，與當日風險等級無關），
-            // 下鑽顯式帶全部風險層級，否則點 Low 段會被預設隱藏低風險過濾成近乎空白
-            return recordsUrl({ categories: category.category, severity: severityValue,
-                                riskLevels: '高,中,低', from: currentData.from, to: currentData.to });
-        }
-    });
-
-    mountToolbar(toolbar, wrapper, {
-        title: '風險類型分布',
-        // 問題數＝去重風險資訊筆數（回饋十九輪批次D），高/中/低三欄依此口徑分桶、三者之和＝問題數
-        tableColumns: ['類型', '高', '中', '低', '問題數', '期間累計', '主機數'],
-        tableRows: categories.map(c => [
-            categoryName(c.category),
-            c.highCount, c.mediumCount, c.lowCount, c.riskItemCount, c.cumulativeCount, c.affectedHosts
-        ])
-    });
-}
-
-/**
- * 排行卡的視角（docs/archive/FEEDBACK-11-PLAN.md §8-2）：'host' ｜ 'issue'。
- * 狀態存 localStorage，預設主機——要看問題排行的人切一次就記住。
- */
-const RANK_MODE_KEY = 'lf.reports.rankMode';
-let rankMode = safeStorage.get(RANK_MODE_KEY) === 'issue' ? 'issue' : 'host';
-
-function bindRankModeToggle() {
-    const toggle = document.getElementById('rank-mode-toggle');
-    if (!toggle) return;
-
-    for (const btn of toggle.querySelectorAll('[data-rank-mode]')) {
-        btn.classList.toggle('active', btn.dataset.rankMode === rankMode);
-        btn.addEventListener('click', () => {
-            if (rankMode === btn.dataset.rankMode) return;
-            rankMode = btn.dataset.rankMode;
-            safeStorage.set(RANK_MODE_KEY, rankMode);
-            for (const other of toggle.querySelectorAll('[data-rank-mode]')) {
-                other.classList.toggle('active', other.dataset.rankMode === rankMode);
-            }
-            if (currentData) renderHostChart();   // 資料還沒載入（或首次載入失敗）時只記住選擇，載入後照它畫
-        });
-    }
-}
+/** 排行條收窄、留白加大：排名比較靠長度，不靠一整片實心色塊 */
+const RANK_BAR = { barPercentage: 0.62, categoryPercentage: 0.8, maxBarThickness: 28 };
 
 /**
  * 主機在排行上的標籤：有顯示名時為「顯示名（主機名）」，沒有時只寫主機名。
@@ -704,14 +662,8 @@ function hostAxisLabel(host) {
     return host.displayName || host.hostName;
 }
 
-/** 排行卡：依 rankMode 分派給主機或問題兩種呈現（同一張卡、同一個 canvas 容器） */
+/** 主機排行卡 */
 function renderHostChart() {
-    document.getElementById('rank-title').textContent = rankMode === 'issue' ? '問題排行' : '主機排行';
-    if (rankMode === 'issue') {
-        renderIssueRankChart();
-        return;
-    }
-
     const hosts = currentData.hostRanking;
     const others = currentData.others;
     const wrapper = document.getElementById('host-wrapper');
@@ -747,8 +699,8 @@ function renderHostChart() {
         data: {
             labels,
             datasets: [
-                { label: '高風險日', data: high, backgroundColor: risk['高'] },
-                { label: '中風險日', data: medium, backgroundColor: risk['中'] }
+                { label: '高風險日', data: high, backgroundColor: risk['高'], ...RANK_BAR },
+                { label: '中風險日', data: medium, backgroundColor: risk['中'], ...RANK_BAR }
             ]
         },
         options: {
@@ -779,21 +731,21 @@ function renderHostChart() {
 }
 
 /**
- * 問題排行（§8-2）：一條長條＝一個問題（Source＋EventId，與依問題視角同一把分組鍵），
+ * 問題排行卡（§8-2）：一條長條＝一個問題（Source＋EventId，與依問題視角同一把分組鍵），
  * 長度＝期間內的事件總次數，下鑽到問題查詢的依問題視角。
  */
 function renderIssueRankChart() {
     const issues = currentData.issueRanking ?? [];
     const others = currentData.issueOthers;
-    const wrapper = document.getElementById('host-wrapper');
-    const toolbar = document.getElementById('host-toolbar');
+    const wrapper = document.getElementById('issue-wrapper');
+    const toolbar = document.getElementById('issue-toolbar');
 
     renderIssueRankMeta();
 
     if (issues.length === 0) {
         // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
-        chartInstances.host?.destroy();
-        chartInstances.host = null;
+        chartInstances.issue?.destroy();
+        chartInstances.issue = null;
         clearToolbar(toolbar, wrapper);
         charts.renderNoData(wrapper, '此期間沒有問題事件');
         return;
@@ -806,11 +758,11 @@ function renderIssueRankChart() {
         counts.push(others.totalCount);
     }
 
-    chartInstances.host?.destroy();
-    chartInstances.host = charts.bar(document.getElementById('host-chart'), {
+    chartInstances.issue?.destroy();
+    chartInstances.issue = charts.bar(document.getElementById('issue-chart'), {
         data: {
             labels,
-            datasets: [{ label: '事件次數', data: counts, backgroundColor: charts.riskColors()['高'] }]
+            datasets: [{ label: '事件次數', data: counts, backgroundColor: charts.riskColors()['高'], ...RANK_BAR }]
         },
         options: {
             indexAxis: 'y',
@@ -847,8 +799,8 @@ function renderIssueRankChart() {
 }
 
 function renderIssueRankMeta() {
-    const subtitle = document.getElementById('host-rank-subtitle');
-    const viewAll = document.getElementById('host-view-all');
+    const subtitle = document.getElementById('issue-rank-subtitle');
+    const viewAll = document.getElementById('issue-view-all');
 
     const count = currentData.rankedIssueCount ?? 0;
 
@@ -879,6 +831,7 @@ function renderIssueRankMeta() {
                 : '';
 
     subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
+    subtitle.title = subtitle.textContent;   // 版面窄時單行省略，完整文字在提示
 
     if (currentData.issueOthers) {
         viewAll.href = appUrl(recordsUrl({ view: 'issue', riskLevels: '高,中,低', from: currentData.from, to: currentData.to }));
@@ -892,7 +845,7 @@ function renderIssueRankMeta() {
 function renderHostRankMeta() {
     const subtitle = document.getElementById('host-rank-subtitle');
     const viewAll = document.getElementById('host-view-all');
-    // 主機模式不寫「共 N 台」：第一排「受影響主機」已經是這個數字，重複只會把標頭擠成兩列
+    // 主機排行不寫「共 N 台」：第一排「受影響主機」已經是這個數字，重複只會把標頭擠成兩列
     subtitle.textContent = '';
 
     // 有主機被 Top 10 擋在外面時才顯示「查看全部」，沒有就別給多餘的出口
@@ -904,16 +857,225 @@ function renderHostRankMeta() {
     }
 }
 
+// ── 視角（總覽／處理成效／問題類型）──────────────────────────────────────────────
+
+/** 每個視角載入中與失敗狀態的容器（骨架列與「重試」鈕畫在這裡） */
+const VIEW_CONTAINER = {
+    overview: 'report-kpi',
+    effectiveness: 'eff-status',
+    category: 'cat-heat-body'
+};
+
+const effectivenessView = createEffectivenessView({ charts, progressBlock, readToken: cssVar });
+const categoryView = createCategoryView();
+
+/** 視角渲染的出口：總覽由 renderAll 負責（資料在 currentData） */
+const SUBVIEW_RENDER = {
+    effectiveness: data => effectivenessView.render(data),
+    category: data => categoryView.render(data)
+};
+
+const SUBVIEW_ENDPOINT = {
+    effectiveness: '/api/reports/effectiveness',
+    category: '/api/reports/category-trend'
+};
+
+/** 目前顯示的視角；網址 view= 決定（無效值退回總覽） */
+let currentView = viewFromSearch(location.search);
+
+/** 取一個視角的資料需要載入嗎：沒載入過、上次失敗、或期間條件已變動（待重載） */
+function needsLoad(view) {
+    const state = views[view];
+    return !state.loaded || state.failed || state.dirty;
+}
+
+/** 期間條件（或範圍）變動後：目前視角之外的其他視角標記為待重載，切過去才載入 */
+function markOtherViewsDirty() {
+    for (const view of VIEWS) {
+        if (view !== currentView) views[view].dirty = true;
+    }
+}
+
+/**
+ * 目前的視角以這組起訖成功載入。與上一次不同就把其他視角標成待重載——
+ * 輸入欄改了日期、沒按「查詢」就切視角時，新視角會用新日期載入，其他視角不重載的話工具列與各視角的數字會對不起來。
+ */
+let appliedRange = null;
+function noteAppliedRange(from, to) {
+    const range = `${from}|${to}`;
+    if (appliedRange !== null && appliedRange !== range) markOtherViewsDirty();
+    appliedRange = range;
+}
+
+/** 「此視角不套用顯示範圍」：在處理成效與問題類型，且顯示範圍不是「全部」時才出現（總覽套用範圍，沒有這個誤會） */
+function syncViewNotes() {
+    const note = document.getElementById('report-view-note');
+    if (note) note.hidden = !(currentView !== 'overview' && currentScope !== 'all');
+}
+
+/** 只換面板與切換鈕的狀態，不動網址也不載入（大螢幕進出與初次載入用） */
+function applyView(view) {
+    currentView = normalizeView(view);
+    for (const name of VIEWS) {
+        document.getElementById(`view-${name}`).classList.toggle('d-none', name !== currentView);
+    }
+    for (const btn of document.querySelectorAll('#report-view-switch button')) {
+        const on = btn.dataset.view === currentView;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', String(on));
+    }
+    syncViewNotes();
+}
+
+/** 使用者切換視角：換面板、寫網址（view=，總覽不留參數）、需要時才載入（延後載入） */
+function setView(view) {
+    const next = normalizeView(view);
+    if (next === currentView) return;
+    applyView(next);
+    history.replaceState(null, '', searchWithView(location.search, next) || location.pathname);
+    if (needsLoad(next)) loadCurrentView();
+}
+
+/** 載入目前的視角（不動其他視角的待重載標記：單純切換視角時其他視角的資料仍然有效） */
+function loadCurrentView() {
+    return currentView === 'overview' ? load() : loadOtherView(currentView);
+}
+
+/** 以目前條件重載目前的視角（套用條件、改快捷期間、改顯示範圍）；其他視角標記為待重載，切過去才載入 */
+function reload() {
+    markOtherViewsDirty();
+    return loadCurrentView();
+}
+
+/**
+ * 處理成效、問題類型的載入入口：與 load() 同一套流程（先檢查區間、再放骨架列、失敗可重試、成功才讓範圍 chip 生效），
+ * 檢查文字與 load() 相同，由 rangeProblem 提供。
+ */
+async function loadOtherView(view) {
+    const problem = rangeProblem(document.getElementById('report-from').value, document.getElementById('report-to').value);
+    if (problem) {
+        requestedScope = null;   // 沒發出查詢就不留下沒生效的範圍
+        toast(problem, 'danger');
+        return;
+    }
+    const container = document.getElementById(VIEW_CONTAINER[view]);
+    // 載入中與失敗時收起這個視角的圖表：舊期間的數字留在骨架列或「重試」下面，看起來像目前條件的結果
+    document.getElementById(`view-${view}`).classList.add('lf-report-view--pending');
+    renderLoading(container, 3);
+    if (await guardLoad(container, () => loadSubView(view))) syncScopeChips();
+}
+
+/**
+ * 載入處理成效或問題類型：兩者只看期間（不套用顯示範圍、不分比較模式），各自有序號守門——
+ * 快速連切視角或連按套用時，慢的舊回應不得蓋掉新結果。成功才讓範圍 chip 生效（與總覽同一規則）。
+ */
+async function loadSubView(view) {
+    const from = document.getElementById('report-from').value;
+    const to = document.getElementById('report-to').value;
+    const compare = document.getElementById('report-compare').value;
+    const presetAtRequest = activePresetDays;
+    const scope = requestedScope ?? currentScope;
+    const state = views[view];
+
+    let result;
+    try {
+        result = await loadViewData(state, () => api.get(`${SUBVIEW_ENDPOINT[view]}?from=${from}&to=${to}`, { timeoutMs: 180000 }));
+    } catch (err) {
+        requestedScope = null;   // loadViewData 只對最新一次請求擲例外：失敗時不留下沒生效的範圍
+        document.getElementById(`view-${view}`).classList.add('lf-report-view--failed');
+        throw err;
+    }
+    if (result.stale) return;   // 已有更新的請求：整份丟掉，不寫入任何頁面狀態
+
+    const { data } = result;
+    document.getElementById(`view-${view}`).classList.remove('lf-report-view--failed', 'lf-report-view--pending');
+    if (view !== currentView) {
+        // 使用者已切到別的視角（或列印補載入隱藏中的視角）：只畫這個面板，不改共用的條件、範圍、網址與工具列摘要
+        document.getElementById(VIEW_CONTAINER[view]).replaceChildren();
+        SUBVIEW_RENDER[view](data);
+        return true;
+    }
+    appliedView = { presetDays: presetAtRequest, compare };
+    currentScope = scope;
+    requestedScope = null;
+    noteAppliedRange(data.from, data.to);
+
+    // 範圍存網址（與總覽同一規則：all 不留參數）；view 參數不動
+    const params = new URLSearchParams(location.search);
+    if (currentScope === 'all') params.delete('handlingScope'); else params.set('handlingScope', currentScope);
+    history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
+
+    document.getElementById('print-title').textContent = printTitle(data.from, data.to);
+
+    renderToolbarSummary(data);
+    syncViewNotes();
+    document.getElementById(VIEW_CONTAINER[view]).replaceChildren();   // 收掉骨架列
+    SUBVIEW_RENDER[view](data);
+    return true;
+}
+
+// ── 列印：三個視角依序全部印出 ───────────────────────────────────────────────
+
+const PRINT_ALL_CLASS = 'lf-report-print-all';
+
+/** 列印前補載入的單一視角（不動目前的視角、不標記其他視角待重載） */
+async function loadForPrint(view) {
+    const rendered = view === 'overview' ? await loadReport() : await loadSubView(view);
+    // 回應被更新的請求取代（補載入途中使用者切到這個視角又發了一次）：這次沒有畫出任何東西，
+    // 當成未能載入，不能讓列印把還在骨架列的畫面當成功印出去
+    if (!rendered) throw new Error('列印補載入已被更新的請求取代');
+}
+
+/** 等兩個畫面更新（版面與圖表重排）；背景分頁不會觸發 requestAnimationFrame，所以另設上限 */
+function nextFrames() {
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, 300);
+        requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
+    });
+}
+
+/** 進行中的列印（連按「列印」時沿用同一次，不重複補載入、不開第二個列印視窗） */
+let printInFlight = null;
+
+function printReport() {
+    if (printInFlight) return printInFlight;
+    const page = document.querySelector('.lf-report-page');
+    const cleanup = () => page.classList.remove(PRINT_ALL_CLASS);
+    printInFlight = printAllViews({
+        views: VIEWS,
+        needsLoad: view => needsLoad(view),
+        load: loadForPrint,
+        onResult: (view, ok) => {
+            document.getElementById(`view-${view}`).classList.toggle('lf-report-view--failed', !ok);
+            if (!ok) views[view].failed = true;
+        },
+        // 三個視角都要在輸出裡：列印用的類別讓隱藏中的視角也顯示；印完（或取消）還原。
+        // 原本隱藏的視角裡的圖表是在 0 寬度下畫的，顯示後要等版面穩定、讓圖表（responsive）依新尺寸重排才印
+        beforePrint: async () => {
+            page.classList.add(PRINT_ALL_CLASS);
+            window.addEventListener('afterprint', cleanup, { once: true });
+            await nextFrames();
+        },
+        print: () => window.print()
+    }).finally(() => { printInFlight = null; });
+    return printInFlight;
+}
+
 // ── 期間控制 ─────────────────────────────────────────────────────────────────
 
 document.getElementById('report-form').addEventListener('submit', event => {
     event.preventDefault();
-    load();
+    reload();
 });
 
-bindRangeChips({ onApply: ({ days }) => { setRange(days); load(); } });
+bindRangeChips({ onApply: ({ days }) => { setRange(days); reload(); } });
 
-document.getElementById('btn-print-report').addEventListener('click', () => window.print());
+document.getElementById('report-view-switch').addEventListener('click', event => {
+    const btn = event.target.closest('button[data-view]');
+    if (btn) setView(btn.dataset.view);
+});
+
+document.getElementById('btn-print-report').addEventListener('click', printReport);
 document.getElementById('btn-report-fullscreen').addEventListener('click', () => wall.enter());
 document.getElementById('wall-exit').appendChild(button('離開大螢幕', { onClick: () => wall.exit() }));
 
@@ -927,11 +1089,11 @@ function onScopeChipClick(event) {
         // 已亮起的 chip 也是「取消」出口：有尚未生效的選擇就撤掉，改用目前範圍重查（舊的在途請求由序號守門丟棄）
         if (requestedScope === null) return;
         requestedScope = null;
-        load();
+        reload();
         return;
     }
     requestedScope = btn.dataset.scope;
-    load();
+    reload();
 }
 
 /** chip 的 active 一律對齊 currentScope（進頁與每次載入成功後呼叫） */
@@ -939,6 +1101,7 @@ function syncScopeChips() {
     for (const btn of document.querySelectorAll('#report-scope-chips button')) {
         btn.classList.toggle('active', btn.dataset.scope === currentScope);
     }
+    syncViewNotes();
 }
 syncScopeChips();
 
@@ -1024,7 +1187,10 @@ function setRange(days) {
 
 /** 大螢幕每一輪自動更新：快捷期間是滾動的（跨過午夜自然前進一天），自訂日期固定不動 */
 async function wallRefresh() {
-    if (activePresetDays != null) setRange(activePresetDays);
+    if (activePresetDays != null) {
+        setRange(activePresetDays);
+        markOtherViewsDirty();   // 跨過午夜期間前進一天：離開大螢幕回到的其他視角也要換成新期間
+    }
     clearDisplaySettingsCache();   // 大螢幕整天不重新整理：管理者改了顯示的風險等級，下一輪更新就要跟上
     try {
         return (await loadReport()) === true;
@@ -1058,22 +1224,42 @@ const wall = createWall({
         else rootStyle.setProperty('--lf-wall-scale', String(scale));
     },
     setExitVisible: visible => document.getElementById('wall-exit').classList.toggle('is-visible', visible),
-    onState: syncWallUi
+    onState: syncWallUi,
+    // 大螢幕只顯示總覽：進入時先切回總覽（記下原視角），離開時回到原視角；牆上不輪播
+    onActiveChange: active => (active ? wallViews.enter() : wallViews.leave())
 });
 
-/** 首次載入：大螢幕要知道它何時結束（成功或失敗），失敗也要排下一輪重試 */
-async function initialLoad() {
+const wallViews = createWallViewKeeper({
+    getView: () => currentView,
+    show: view => {
+        applyView(view);
+        // 進入大螢幕時總覽可能還沒載入（從其他視角直接進來）：補載入，並讓大螢幕的排程接手
+        if (initialStarted && needsLoad(view)) trackedLoad();
+    },
+    restore: view => setView(view)
+});
+
+/** 載入總覽並通知大螢幕：它要知道這次載入何時結束（成功或失敗），失敗也要排下一輪重試 */
+async function trackedLoad() {
     const before = wall.status().loads;
     wall.loadStarted();
     try {
-        await load();
+        await reload();
     } finally {
         wall.loadSettled(wall.status().loads > before);
     }
 }
 
-bindRankModeToggle();
+/** 首次載入：停在總覽時走大螢幕的載入追蹤；停在其他視角時只載入那個視角（大螢幕只看總覽，與它無關） */
+async function initialLoad() {
+    initialStarted = true;
+    if (currentView === 'overview') return trackedLoad();
+    return reload();
+}
+
+let initialStarted = false;
+applyView(currentView);
 setRange(30);
 setupMoreFilters();
-wall.init();
+wall.init();   // 網址帶 display=wall 且寬度足夠時，這裡會先把視角切回總覽
 initialLoad();

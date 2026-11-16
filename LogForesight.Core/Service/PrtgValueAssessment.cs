@@ -434,8 +434,15 @@ public sealed class PrtgValueAssessment
     };
 
     /// <summary>
+    /// 可用 % 轉已用 % 的唯一出口：磁碟與記憶體的 PRTG 值是「可用 %」，判斷「越來越滿」要看已用 %；
+    /// 其他語意原值回傳。趨勢評估（<see cref="EvaluateTrend"/>）與持續 Warning 的持平判定（PrtgSteadyEvidence）都呼叫這裡。
+    /// </summary>
+    public static double UsedPercent(PrtgValueSemantic semantic, double value) =>
+        semantic is PrtgValueSemantic.DiskPercentFree or PrtgValueSemantic.MemoryPercentFree ? 100 - value : value;
+
+    /// <summary>
     /// 三條趨勢規則的引擎評估單一出口（正式評估與試算共用）：列未就緒、語意不符或規則沒有趨勢門檻時回 null。
-    /// 記憶體可用 % 在這裡轉成已用 %——全專案只在這一處轉向。
+    /// 記憶體可用 % 經 <see cref="UsedPercent"/> 轉成已用 %。
     /// </summary>
     public static PrtgTrendResult? EvaluateTrend(PrtgValueAssessmentRow row, KnownIssueRule rule)
     {
@@ -444,7 +451,7 @@ public sealed class PrtgValueAssessment
         return rule.PrtgRuleCode switch
         {
             PrtgRuleEvaluator.RuleMemoryUsedTrend => PrtgTrendEngine.EvaluateMemoryUsed(
-                row.Daily.Select(d => (d.Day, 100 - d.Value)).ToArray(), thresholds),
+                row.Daily.Select(d => (d.Day, UsedPercent(semantic, d.Value))).ToArray(), thresholds),
             PrtgRuleEvaluator.RuleCpuLoadTrend => PrtgTrendEngine.EvaluateCpuLoad(
                 row.Daily.Select(d => (d.Day, d.Value)).ToArray(), thresholds),
             _ => PrtgTrendEngine.EvaluatePingLatency(row.Daily.Select(d => (d.Day, d.Value)).ToArray(), thresholds)

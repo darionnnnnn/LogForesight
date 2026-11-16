@@ -753,6 +753,61 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Contains(RunPhases.PrtgDone, progress.Phases);
     }
 
+    /// <summary>快照因待寫檔停止時的閘門替身：沒有手動作業，只回報快照停止原因。</summary>
+    private sealed class SnapshotStoppedGate(string? reason) : IPrtgManualWorkGate
+    {
+        public PrtgManualWork Running => PrtgManualWork.None;
+        public string? SnapshotStoppedReason => reason;
+        public Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(PrtgManualWork observed, CancellationToken ct) =>
+            Task.FromResult(PrtgManualWaitOutcome.BackfillEnded);
+    }
+
+    [Fact]
+    public async Task 保守策略且快照已停止_夜間輸出改寫為沒有數值來源_不再說數值由快照供應()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null,
+            manualWorkGate: new SnapshotStoppedGate("資料庫識別不符"));
+
+        Assert.Contains(console.Lines, l => l.Contains("取數策略為保守，但數值快照已停止（原因：資料庫識別不符），今晚沒有數值來源"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("數值由快照供應"));
+    }
+
+    [Fact]
+    public async Task 保守策略且快照正常_閘門有接上也維持原說明()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null,
+            manualWorkGate: new SnapshotStoppedGate(null));
+
+        Assert.Contains(console.Lines, l => l.Contains("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("今晚沒有數值來源"));
+    }
+
     /// <summary>
     /// 激進策略下：進入觸發式取數階段、印出激進策略狀態。
     /// </summary>
@@ -2073,7 +2128,7 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.DoesNotContain("近 14 日", oldestSig.SampleMessages[0]);
 
         Assert.Equal(1, progress.Phases.Count(p => p == RunPhases.PrtgFindingsReady));
-        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day1:yyyy-MM-dd}）") && l.Contains("跨日升級 1 筆、長期 Down 0 筆"));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day1:yyyy-MM-dd}）") && l.Contains("跨日升級 1 筆、持平降級 0 筆、長期 Down 0 筆"));
     }
 
     /// <summary>
@@ -2132,6 +2187,122 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Empty(registry.For(host.HostId, day2));
         var sig = Assert.Single(registry.For(host.HostId, day1), f => f.EventKey == PrtgEventKey("warning", 2001));
         Assert.DoesNotContain("近 14 日", sig.SampleMessages[0]);
+    }
+
+    // ---- 持平降級對日風險的影響（整條每日管線，G-2 驗收）
+
+    /// <summary>磁碟 Warning 已連續 8 日（前 8 日各有一筆歷史命中）；freeByDaysAgo 為 d 日前的可用百分比，null 表示不灌數值。</summary>
+    private (WebHost Host, DateTime Day, IAnalysisRecordStore Store) SeedDiskWarningStreak(Func<int, double>? freeByDaysAgo, bool withDownPing)
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-STEADY", Active = true, IpAddress = "192.168.1.131" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-STEADY", Ip = "192.168.1.131" } }, now);
+        var sensors = new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1, Name = "Disk C", SensorType = "SNMP Disk Free",
+                Category = PrtgSensorCategories.Disk, Status = "Warning" }
+        };
+        // 磁碟 Warning 每日 00:00 起記一筆（沿用既有跨日測試的造法），評估日整天都在 Warning（超過 240 分鐘門檻）
+        var changes = new List<PrtgStateChangeRow>();
+        for (var d = 0; d <= 9; d++)
+            changes.Add(new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.Date.AddDays(-d).AddMinutes(30), Status = "Warning" });
+        if (withDownPing)
+        {
+            sensors.Add(new PrtgSensorRow { Objid = 2002, DeviceObjid = 1, Name = "Ping", SensorType = "Ping",
+                Category = PrtgSensorCategories.Availability, Status = "Down" });
+            // 22:30 進入 Down，到午夜 90 分鐘（超過連通性 down 門檻）
+            changes.Add(new PrtgStateChangeRow { SensorObjid = 2002, ChangedAt = day.Date.AddHours(22).AddMinutes(30), Status = "Down" });
+        }
+        prtgStore.UpsertSensors(sensors, now);
+        prtgStore.AppendStateChanges(changes);
+        for (var d = 0; d <= 10; d++) MapDeviceToHost(day.AddDays(-d), 1, host);
+
+        if (freeByDaysAgo != null)
+        {
+            var rows = new List<PrtgValueRow>();
+            for (var d = 0; d < 7; d++)
+            for (var h = 0; h < 24; h++)
+                rows.Add(new PrtgValueRow
+                {
+                    SensorObjid = 2001, PeriodStart = day.AddDays(-d).AddHours(h), AvgValue = freeByDaysAgo(d),
+                    Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Now
+                });
+            prtgStore.UpsertValues(rows);
+        }
+
+        var store = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        SeedNetiqParent(host, day);
+        for (var n = 1; n <= 8; n++)
+        {
+            store.Append(new DailyAnalysisRecord
+            {
+                LogSource = AnalysisLogSource.Netiq,
+                Date = day.AddDays(-n), HostId = host.HostId, Host = host.HostName, RiskLevel = RiskLevels.Medium,
+                TopIssues = new List<LogIssueSignature>
+                {
+                    new()
+                    {
+                        LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
+                        EntryType = LogForesight.Core.Models.LogEntryType.Warning, EventKey = PrtgEventKey("warning", 2001),
+                        Count = 1, Severity = IssueSeverity.Medium
+                    }
+                }
+            });
+        }
+        return (host, day, store);
+    }
+
+    [Theory]
+    [InlineData("持平", true)]
+    [InlineData("下降5點", false)]
+    [InlineData("沒有數值", false)]
+    public async Task 磁碟Warning連續7日以上_持平降級後主機日為低風險_否則維持中以上(string scenario, bool expectLow)
+    {
+        Func<int, double>? free = scenario switch
+        {
+            "持平" => d => 18 + d * 0.1,          // 可用約 18%，近 7 日已用上升不到 1 點
+            "下降5點" => d => 18 + d * 5.0 / 6,   // 7 日內可用率下降 5 個百分點（已用上升 5 點）
+            _ => null
+        };
+        var (host, day, store) = SeedDiskWarningStreak(free, withDownPing: false);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("warning", 2001));
+        var record = Assert.Single(store.ReadRecent(day, 1));
+        if (expectLow)
+        {
+            Assert.Contains("數值持平", sig.SampleMessages[0]);
+            Assert.Equal(RiskLevels.Low, record.RiskLevel);
+        }
+        else
+        {
+            Assert.DoesNotContain("數值持平", sig.SampleMessages[0]);
+            Assert.Equal(RiskLevels.Medium, record.RiskLevel);
+        }
+    }
+
+    [Fact]
+    public async Task 磁碟Warning持平降級_同日有連通性Down仍為高風險()
+    {
+        var (host, day, store) = SeedDiskWarningStreak(d => 18 + d * 0.1, withDownPing: true);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        var disk = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("warning", 2001));
+        Assert.Contains("數值持平", disk.SampleMessages[0]);   // 磁碟 warning 確實被降級
+        var down = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("down", 2002));
+        Assert.True(down.ElevatesDayRisk);
+        Assert.Equal(RiskLevels.High, Assert.Single(store.ReadRecent(day, 1)).RiskLevel);
     }
 
     /// <summary>

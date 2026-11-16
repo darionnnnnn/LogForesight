@@ -521,6 +521,12 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 對保留期外的 key 先重置狀態再以完整 key 刪除 blob；未來日、保留期內的孤兒與 `workflow_recovery_cursor` 不刪。
 每頁筆數即單次上限，升級後的存量分多日清完。
 
+**超過單頁上限的主機日**：恢復服務的分頁讀取每列只取 128 KiB（`WorkflowRecoveryPage.MaximumPayloadBytes`），超過的列不在分頁裡反序列化，
+改由 `EfAnalysisRecordStore.QueryWorkflowRecoveryRecord` 逐列讀完整內容（與分頁同一段反序列化，工作流指紋一致），走與一般列相同的對帳與補寫報告。
+每頁最多逐列恢復 4 列（`MaxOversizedRecoveriesPerPage`），額度用完的列排進下一輪優先處理、**不標成恢復等待**（標了會把主機日排除在通知與 PRTG 判定之外）；
+已在同一個寫入版本恢復過的列不再重讀，PRTG／AI 啟用狀態改變時重新對帳；單列讀取失敗（逾時、連線中斷）該列下一輪再試，不影響同頁其他列。超過單列上限 4 MiB（`MaximumOversizedPayloadBytes`）、內容無法解析或主機編號無效的列才標成恢復等待，
+系統健康「背景工作」表的「主機日恢復」列顯示「需要檢查 N 筆」。逐列警告同一列同一個寫入版本只寫一次，摘要只帶目前仍在等待的相異列數；記憶體中的等待與逐列結果在「超過 2 天沒再讀到，且之後已走完一整趟深層巡掃」時才清除。
+
 **升級告知**：修好之後的第一個副作用是「這些設定值第一次真正生效」——既有部署升級後第一晚
 就會開始真的刪 NetIQ 主機的過期資料。若當初因為「反正沒作用」把天數設得很短，那是一次
 無法復原的刪除。README 的「升級注意事項」與說明書「資料保留」段都有對應警語。
@@ -1066,7 +1072,7 @@ lf_prtg_scope_purge_jobs                             -- 取數範圍外清除作
 ### 快照待寫 journal
 
 `Storage:DataRoot/pending/prtg-snapshot` 的 generation／segment journal（`PrtgSnapshotJournal`）是 SQL 不可用期間的恢復佇列：每批追加變更與固定 ID 待寫批次，
-flush 後發布具校驗的 manifest，SQL 提交後才確認；重播沿用 `lf_prtg_sampled_batches` 的 ID 不重複加權。上限 20 萬列／64 MiB；超過 30 日、損壞或資料庫識別不符時保留檔案並停止新採集。
+flush 後發布具校驗的 manifest，SQL 提交後才確認；重播沿用 `lf_prtg_sampled_batches` 的 ID 不重複加權。上限 20 萬列／64 MiB；超過 30 日或損壞時保留檔案並停止新採集；資料庫識別不符時，沒有 30 日期限內的樣本就自動搬到 `pending/prtg-snapshot-archive/` 後重新開始，有期限內樣本則停止並由 PRTG 維護頁手動封存（PRTG-SPEC §3b）。
 有效舊 `checkpoint.json` 先驗 checksum 再原子遷移。`.lock` 以 OS 獨佔開檔（`FileShare.None`）保護工作者生命週期，勿手動刪鎖；取不到鎖時該輪不採集並顯示原因，下一輪再試。
 
 ### PRTG 隔離診斷傳輸

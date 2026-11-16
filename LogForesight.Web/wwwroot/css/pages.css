@@ -221,13 +221,6 @@
     padding: var(--lf-space-3);
 }
 
-/* 類型分布卡標頭的「N 個問題」連結：窄螢幕時獨占一行、不算句中連結，要有點擊區下限（DESIGN-SYSTEM §8.2） */
-#category-issue-total:not([hidden]) {
-    display: inline-flex;
-    align-items: center;
-    min-height: max(24px, 1.5rem);
-}
-
 /* 工具列只有一列控制項：上下留白再收一階 */
 #report-toolbar .lf-card__body {
     padding-block: var(--lf-space-2);
@@ -323,6 +316,167 @@
     print-color-adjust: exact;
 }
 
+/* ── 報表三個視角（總覽／處理成效／問題類型）──────────────────────────────────
+   視角是 .lf-report-page 底下的面板，一次只顯示一個（d-none 切換）；面板自己是 flex 欄，
+   「固定列＋圖表區」的高度分配與總覽相同——每個視角各自一屏看完。 */
+.lf-report-view {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-2);
+}
+
+/* 視角切換列：分段控制＋「此視角不套用顯示範圍」 */
+#report-view-tabs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1) var(--lf-space-3);
+}
+
+/* 排行卡標頭左側：標題不換行；副標很長（「共 N 個問題；另有…」）時單行省略，完整文字在 title 屬性 */
+.lf-report-rank-head {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.lf-report-rank-head .lf-card__title {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.lf-report-rank-head .lf-text-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 「此部分未能載入」只在列印時、且該視角載入失敗才出現 */
+.lf-report-view__unavailable {
+    display: none;
+    margin: 0;
+}
+
+/* 視角載入中或載入失敗：收起圖表區，不讓上一個期間的數字留在骨架列或「重試」下面 */
+.lf-report-view--pending > .lf-report-page__charts {
+    display: none;
+}
+
+/* 處理成效：上列「分桶處理狀態（約 2/3）＋帳齡（約 1/3）」、下列「再發生」 */
+.lf-report-page__row--eff-top {
+    flex: 5 1 0;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.lf-report-page__row--eff-bottom {
+    flex: 6 1 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);   /* 表格多於卡片時卡內捲動，不撐高整頁 */
+}
+
+.lf-report-page__row--cat {
+    flex: 1 1 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+}
+
+/* 載入中與失敗狀態的容器：沒有內容時不佔高度，也不多出一格 flex 間距 */
+#eff-status:empty {
+    display: none;
+}
+
+/* 這幾張卡的內容是文字與表格，不是畫布：內容多於卡片時卡內捲動（auto 不是 hidden，矮視窗仍看得到全部） */
+#eff-recur-body,
+.lf-report-heat {
+    overflow: auto;
+}
+
+/* 結案後再發生：左邊大數字與說明、右邊前 10 名表格（窄螢幕上下排） */
+.lf-report-recur {
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) minmax(0, 3fr);
+    gap: var(--lf-space-4);
+    align-items: start;
+}
+
+.lf-report-recur__metric {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-1);
+}
+
+.lf-report-recur__value {
+    font-size: var(--lf-font-size-stat);
+    font-weight: 600;
+    line-height: var(--lf-line-tight);
+}
+
+.lf-report-recur__list {
+    min-width: 0;
+}
+
+/* 熱度表：格子是撐滿儲存格的色塊（連結），數字置中；0 的格只留次要色數字。顏色是單一色相的淡階（base.css --lf-heat-*），
+   高階格字改白（對底 ≥ 5.5:1）。色塊靠背景色，列印要明確要求印出背景，否則整張表只剩數字 */
+.lf-heat__col {
+    text-align: center;
+}
+
+/* 桶多（120 天按週）時表格橫向捲動：類型欄固定在左側，捲到右邊仍看得到是哪一列 */
+.lf-heat__label {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+}
+
+/* 列高收緊：八個類別加表頭要在矮視窗裡盡量一屏看完 */
+.lf-report-heat .table > :not(caption) > * > * {
+    padding-block: 2px;
+}
+
+.lf-heat__cell,
+.lf-heat__zero {
+    display: block;
+    min-width: 3rem;
+    min-height: max(24px, 1.5rem);
+    padding: var(--lf-space-1) var(--lf-space-2);
+    border-radius: var(--lf-radius-sm);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.lf-heat__zero {
+    color: var(--lf-text-muted);
+}
+
+a.lf-heat__cell {
+    color: var(--lf-text);
+    text-decoration: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+a.lf-heat__cell:hover,
+a.lf-heat__cell:focus-visible {
+    text-decoration: underline;
+}
+
+.lf-heat__cell--1 { background: var(--lf-heat-1); }
+.lf-heat__cell--2 { background: var(--lf-heat-2); }
+.lf-heat__cell--3 { background: var(--lf-heat-3); }
+.lf-heat__cell--4 { background: var(--lf-heat-4); }
+.lf-heat__cell--5 { background: var(--lf-heat-5); }
+
+a.lf-heat__cell--4,
+a.lf-heat__cell--5 {
+    color: var(--lf-card-bg);
+}
+
 /* ── 窄螢幕與列印：解除視窗高度綁定 ─────────────────────────────────────────
    ≤ 991px 單欄、自然捲動——窄螢幕本來就是捲動閱讀，硬塞進一屏只會每張都小到看不懂；
    紙張是分頁的，綁死視窗高度會讓內容被裁在第一頁，列印時整組解除，圖固定高度才有足夠的絕對尺寸。
@@ -330,7 +484,12 @@
 @media (max-width: 991.98px) {
     .lf-report-page__row,
     .lf-report-page__row--top,
-    .lf-report-page__row--top.lf-report-page__row--solo {
+    .lf-report-page__row--top.lf-report-page__row--solo,
+    .lf-report-page__row--eff-top {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .lf-report-recur {
         grid-template-columns: minmax(0, 1fr);
     }
 }
@@ -345,10 +504,16 @@
     }
 
     .lf-report-page,
+    .lf-report-view,
     .lf-report-page__charts,
     .lf-report-page__row {
         height: auto;
         flex: none;
+    }
+
+    #eff-recur-body,
+    .lf-report-heat {
+        overflow: visible;
     }
 
     .lf-report-page__row {
@@ -626,7 +791,7 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-issue-cell__title { flex: 1 1 12rem; min-width: 0; }
 
-/* 白話說明：正文色、行寬受 --lf-measure 限制，寬螢幕也好讀 */
+/* 白話說明：正文色、填滿問題欄；只在超寬螢幕以 --lf-measure 封頂（欄寬本身已限制行長） */
 .lf-issue-cell__explain {
     max-width: var(--lf-measure);
     line-height: 1.6;
@@ -669,10 +834,17 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-evidence__section { min-width: 0; }
 
+/* 佐證層三層文字（DESIGN-SYSTEM §8.5）：區標題＝最安靜的眉標＋細分隔線；小標（.lf-guidance__label）＝正文色粗體；
+   內文＝處置參考用一般字級，其餘區（表格、來源觀測）維持 sm 的資料密度 */
 .lf-evidence__label {
     margin: 0 0 var(--lf-space-2);
+    padding-bottom: var(--lf-space-1);
+    border-bottom: 1px solid var(--lf-border);
     text-transform: none;
 }
+
+/* 來源觀測：欄位名淡化、值用正文色 */
+.lf-source-obs__key { color: var(--lf-text-muted); }
 
 .lf-source-obs__list {
     margin: var(--lf-space-2) 0 0;
@@ -759,15 +931,15 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 處置參考（佐證層的第一區）：與 txt 報告「處置參考（知識庫）」同一份內容 */
+.lf-guidance { font-size: var(--lf-font-size-base); line-height: 1.5; }
 .lf-guidance__label {
     font-weight: 600;
-    font-size: var(--lf-font-size-sm);
-    color: var(--lf-text-muted);
+    color: var(--lf-text);
     margin-top: var(--lf-space-3);
     margin-bottom: var(--lf-space-1);
 }
 .lf-guidance__label:first-child { margin-top: 0; }
-.lf-guidance ul { margin: 0; padding-left: 1.25rem; }
+.lf-guidance__list { margin: 0; padding-left: 1.5rem; }
 
 /* 可收合區塊的箭頭圖示：收合時朝右、展開時朝下（§5.1 D-1 #1 報告全文預設收合） */
 .lf-collapse-caret {
@@ -1103,3 +1275,25 @@ a.lf-calendar__cell:focus-visible {
 
 /* 變成區塊後就不再適用行內連結的點擊區例外：單行高度補到 24px */
 #dashboard-hosts td.text-truncate > a { line-height: 24px; }
+
+/* ── 列印：三個視角依序全部印出、各自分頁 ──────────────────────────────────────
+   列印按鈕（reports.js printReport）先補載入尚未載入的視角，再加 lf-report-print-all 讓隱藏中的視角也顯示
+   （畫面與列印都生效：原本隱藏的視角裡的圖表要先看得到、重排過尺寸才印得出來；印完或取消就還原）；
+   載入失敗的視角（lf-report-view--failed）只印「此部分未能載入」，不印空白的圖表框。 */
+.lf-report-print-all .lf-report-view.d-none {
+    display: flex !important;
+}
+
+@media print {
+    .lf-report-print-all .lf-report-view + .lf-report-view {
+        break-before: page;
+    }
+
+    .lf-report-view--failed .lf-report-view__unavailable {
+        display: block;
+    }
+
+    .lf-report-view--failed > :not(.lf-report-view__unavailable) {
+        display: none !important;
+    }
+}

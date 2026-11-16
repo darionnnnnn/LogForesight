@@ -4,7 +4,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 報表頁（pages/reports.js）的行為：第一排四格（含資料完整度五種狀態）、處理進度條、排行標籤、
-/// 風險趨勢長條圖與工具列條件文字。實際執行 production 函式原文，只替換 DOM 與 Chart 包裝層。
+/// 風險趨勢折線圖與工具列條件文字。實際執行 production 函式原文，只替換 DOM 與 Chart 包裝層。
 /// </summary>
 public class ReportsKpiBehaviorTests
 {
@@ -38,8 +38,10 @@ public class ReportsKpiBehaviorTests
     [InlineData("處理進度_中風險被隱藏時風險層級只列高")]
     [InlineData("排行標籤_有顯示名")]
     [InlineData("排行標籤_沒有顯示名")]
-    [InlineData("趨勢圖是堆疊長條且沒有tension")]
+    [InlineData("趨勢圖是折線_高實線淡面積_中實線_前期虛線")]
+    [InlineData("趨勢圖下鑽_高_中_前期各帶各的日期與層級")]
     [InlineData("趨勢圖下鑽帶上顯示範圍")]
+    [InlineData("趨勢圖_沒有前期資料時不畫前期線")]
     [InlineData("趨勢圖_中風險被隱藏時只畫高")]
     [InlineData("趨勢圖_期間全為0顯示無資料")]
     [InlineData("條件文字只讀已套用的快照_不讀還沒套用的輸入")]

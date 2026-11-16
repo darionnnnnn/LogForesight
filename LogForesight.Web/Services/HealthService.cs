@@ -28,6 +28,7 @@ public class HealthService
     private readonly ScheduleFreshnessService _freshness;
     private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
     private readonly PrtgSnapshotHostedService? _snapshotService;
+    private readonly HostDayWorkflowRecoveryHostedService? _recoveryService;
     private readonly IReadOnlyList<ICacheStatistics> _caches;
 
     public HealthService(
@@ -38,8 +39,10 @@ public class HealthService
         ScheduleFreshnessService freshness,
         IssueFirstSeenSeedHostedService? firstSeenSeedService = null,
         PrtgSnapshotHostedService? snapshotService = null,
-        IEnumerable<ICacheStatistics>? caches = null)
+        IEnumerable<ICacheStatistics>? caches = null,
+        HostDayWorkflowRecoveryHostedService? recoveryService = null)
     {
+        _recoveryService = recoveryService;
         _backend = backend;
         _runState = runState;
         _backfiller = backfiller;
@@ -167,8 +170,9 @@ public class HealthService
         var migration = _backend.HandlingMigrator.State;
         var permMigration = _backend.PermissionChangeMigrator.State;
         var freshness = _freshness.GetScheduleFreshness(DateTime.Now);
-        var prtgEnabled = new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgEnabled;
-        var prtgSnapshot = BuildPrtgSnapshotHealth(prtgEnabled, DateTime.Now);
+        var healthSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        var prtgEnabled = healthSettings.PrtgEnabled;
+        var prtgSnapshot = BuildPrtgSnapshotHealth(prtgEnabled, healthSettings.PrtgFetchStrategy, DateTime.Now);
 
         // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
         // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
@@ -271,6 +275,11 @@ public class HealthService
             SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
             MailContributionLedger = _mail.GetContributionLedgerStatus(),
 
+            // 主機日恢復：目前仍在等待的列（含排隊等逐列恢復的）與其中需要人看的列（內容無效、主機編號無效、超過單列上限）
+            HostDayRecovery = _recoveryService?.GetWaitingSummary() is { } recovery
+                ? new HostDayRecoveryHealthDto { Waiting = recovery.Waiting, NeedsAttention = recovery.NeedsAttention, ByReason = recovery.ByReason.ToDictionary(pair => pair.Key, pair => pair.Value) }
+                : null,
+
             CryptoKeySource = CryptoHelper.KeySource,
             CryptoKeyMismatch = cryptoKeyMismatch,
             CryptoDecryptFailure = cryptoDecryptFailure,
@@ -281,24 +290,46 @@ public class HealthService
         };
     }
 
-    private PrtgSnapshotHealthDto? BuildPrtgSnapshotHealth(bool enabled, DateTime now)
+    private PrtgSnapshotHealthDto? BuildPrtgSnapshotHealth(bool enabled, string? fetchStrategy, DateTime now)
     {
         if (!enabled) return new() { State = "disabled", Message = "PRTG 未啟用；快照不參與系統健康判定。" };
         if (_snapshotService == null) return new() { State = "unknown", Message = "目前無法取得快照診斷資料。" };
 
+        var alert = PrtgSnapshotAlert.Evaluate(enabled, fetchStrategy, _snapshotService.GetStatus(), now);
         try
         {
-            return BuildPrtgSnapshotHealth(enabled, _snapshotService.Diagnostics.ReadRecent(now, 24));
+            return BuildPrtgSnapshotHealth(enabled, _snapshotService.Diagnostics.ReadRecent(now, 24), alert);
         }
         catch
         {
-            return new() { State = "unknown", Message = "快照診斷暫時無法讀取；不影響其他健康項目。" };
+            // 診斷讀不到時警示仍要出：停擺不能因為診斷文件讀失敗而沉默
+            return alert.Any
+                ? BuildPrtgSnapshotHealth(enabled, Array.Empty<PrtgSnapshotHourDiagnostic>(), alert)
+                : new() { State = "unknown", Message = "快照診斷暫時無法讀取；不影響其他健康項目。" };
         }
     }
 
-    public static PrtgSnapshotHealthDto BuildPrtgSnapshotHealth(bool enabled, IReadOnlyList<PrtgSnapshotHourDiagnostic> recent)
+    /// <param name="alert">保守策略下的立即／逾時警示（見 <see cref="PrtgSnapshotAlert"/>）；null＝不適用。</param>
+    public static PrtgSnapshotHealthDto BuildPrtgSnapshotHealth(bool enabled, IReadOnlyList<PrtgSnapshotHourDiagnostic> recent,
+        PrtgSnapshotAlert? alert = null)
     {
         if (!enabled) return new() { State = "disabled", Message = "PRTG 未啟用；快照不參與系統健康判定。" };
+        if (alert?.Stopped == true)
+            return new()
+            {
+                State = "stopped",
+                Warning = true,
+                Message = "快照已停止：待寫檔無法使用，採集中斷。請到 PRTG 維護 > 鏡像狀態查看原因，可封存舊待寫資料並重新開始。",
+                RecentHours = recent.TakeLast(2).Select(HourDto).ToList()
+            };
+        if (alert?.NoRecentSuccess == true)
+            return new()
+            {
+                State = "no-recent-success",
+                Warning = true,
+                Message = $"快照已超過 {(int)PrtgSnapshotAlert.NoSuccessThreshold.TotalHours} 小時沒有成功取樣（自 {alert.SilentSince:yyyy-MM-dd HH:mm} 起）；請到 PRTG 維護 > 鏡像狀態查看。",
+                RecentHours = recent.TakeLast(2).Select(HourDto).ToList()
+            };
         if (recent.Count == 0)
             return new() { State = "unknown", Message = "尚無完整小時診斷資料。" };
         try
@@ -307,14 +338,7 @@ public class HealthService
             var latest = history.TakeLast(2).ToArray();
             var output = new PrtgSnapshotHealthDto
             {
-                RecentHours = latest.Select(h => new PrtgSnapshotHourHealthDto
-                {
-                    Hour = h.Hour,
-                    State = h.State.ToString().ToLowerInvariant(),
-                    Targets = h.Targets,
-                    AvailableValues = h.AvailableValues,
-                    WriteFailures = h.WriteFailures
-                }).ToList()
+                RecentHours = latest.Select(HourDto).ToList()
             };
             if (latest.Length == 2 && latest.All(h => h.State == PrtgSnapshotHourState.NoTargets))
             {
@@ -376,6 +400,15 @@ public class HealthService
             return new() { State = "unknown", Message = "快照診斷暫時無法讀取；不影響其他健康項目。" };
         }
     }
+
+    private static PrtgSnapshotHourHealthDto HourDto(PrtgSnapshotHourDiagnostic h) => new()
+    {
+        Hour = h.Hour,
+        State = h.State.ToString().ToLowerInvariant(),
+        Targets = h.Targets,
+        AvailableValues = h.AvailableValues,
+        WriteFailures = h.WriteFailures
+    };
 
     /// <summary>慢操作占比達此百分比即視為 degraded</summary>
     private const double DegradedSlowRatioPercent = 5.0;

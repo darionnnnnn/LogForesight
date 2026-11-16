@@ -50,7 +50,54 @@ public class ReportServiceTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
+    /// <summary>以指定的可見範圍組裝報表服務（其餘與建構子同一組 store 與聚合查詢）</summary>
+    private ReportService ServiceWithVisibility(IVisibilityService visibility)
+    {
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
+        return new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
+    }
+
     private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
+
+    /// <summary>
+    /// 受限可見範圍（兩台主機各有高風險紀錄、只授權其中一台）：KPI、趨勢、主機排行與問題排行只算授權那台。
+    /// 用 <see cref="HostScopedVisibility"/> 而不是 <see cref="AlwaysVisibleService"/>（後者對誰都回全部主機，
+    /// 這類測試用它永遠看不到洩漏）。另一台主機的紀錄刻意比授權那台多，漏套範圍時數字會明顯偏大。
+    /// </summary>
+    [Fact]
+    public void GetSummary_受限可見範圍_KPI趨勢排行只算授權的主機()
+    {
+        var allowed = AddHost("ALLOWED");
+        var hidden = AddHost("HIDDEN");
+        var allowedIssue = new LogIssueSignature { LogName = "System", Source = "allowed-src", EventId = 11, Severity = IssueSeverity.High, Count = 1 };
+        var hiddenIssue = new LogIssueSignature { LogName = "System", Source = "hidden-src", EventId = 22, Severity = IssueSeverity.High, Count = 1 };
+        AddRecord(allowed, DateTime.Today, "高", allowedIssue);
+        AddRecord(allowed, DateTime.Today.AddDays(-1), "高", allowedIssue);
+        AddRecord(hidden, DateTime.Today, "高", hiddenIssue);
+        AddRecord(hidden, DateTime.Today.AddDays(-1), "高", hiddenIssue);
+        AddRecord(hidden, DateTime.Today.AddDays(-2), "高", hiddenIssue);
+
+        // 對照組：不限範圍時兩台都算（證明資料與判準比得到東西）
+        var all = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+        Assert.Equal(5, all.Kpi.HighRiskDays);
+        Assert.Equal(2, all.Kpi.AffectedHosts);
+
+        var scoped = ServiceWithVisibility(new HostScopedVisibility(_hosts, allowed.HostId))
+            .GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(2, scoped.Kpi.HighRiskDays);
+        Assert.Equal(1, scoped.Kpi.AffectedHosts);
+        Assert.Equal("ALLOWED", Assert.Single(scoped.HostRanking).HostName);
+        Assert.Equal(2, scoped.Trend.Sum(t => t.HighRisk));
+        Assert.DoesNotContain(scoped.IssueRanking, i => i.Source == "hidden-src");
+        Assert.Contains(scoped.IssueRanking, i => i.Source == "allowed-src");
+    }
 
     private void AddRecord(WebHost host, DateTime date, string risk, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
@@ -227,37 +274,6 @@ public class ReportServiceTests : IDisposable
         // 中風險日已被顯示設定藏起來，趨勢圖對應日期的中風險計數應為 0
         var hiddenDayPoint = result.Trend.Single(p => p.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
         Assert.Equal(0, hiddenDayPoint.MediumRisk);
-    }
-
-    /// <summary>
-    /// 回饋十三輪新增項3：「風險類型」卡片沒有像風險日詳情頁那樣的手動展開入口，不論
-    /// SeverityDisplayMode 為 DefaultHidden 或 SiteHidden，一律只計入 UnhandledSeverities
-    /// （預設 High+Medium，不含 Low）——「其他」類別本來就是低嚴重度雜訊大宗，
-    /// 修正前最容易讓人以為「明明沒勾 Low，其他類別怎麼還在顯示」。
-    /// </summary>
-    [Fact]
-    public void GetSummary_風險類型卡預設排除Low嚴重度問題_只剩Low的類別整卡消失()
-    {
-        var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高",
-            new LogIssueSignature
-            {
-                LogName = "System", Source = "sec", EventId = 4625,
-                Severity = IssueSeverity.High, Category = IssueCategory.Security, Count = 1
-            },
-            new LogIssueSignature
-            {
-                LogName = "System", Source = "noisy", EventId = 9999,
-                Severity = IssueSeverity.Low, Category = IssueCategory.Other, Count = 1
-            });
-
-        _severityVisibility.VisibleSeverities = new HashSet<string> { "High", "Medium" };
-        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
-
-        // 「其他」類別只有一個 Low 嚴重度問題，預設未勾選 Low 時整卡不應出現
-        Assert.DoesNotContain(result.Categories, c => c.Category == "Other");
-        var security = Assert.Single(result.Categories);
-        Assert.Equal("Security", security.Category);
     }
 
     [Fact]
@@ -691,7 +707,7 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void ReportsController_Summary_367天丟出驗證錯誤()
     {
-        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service, null!, null!);
         var from = DateTime.Today.AddDays(-366).ToString("yyyy-MM-dd");
         var to = DateTime.Today.ToString("yyyy-MM-dd");
 
@@ -702,7 +718,7 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void ReportsController_Summary_366天可以通過()
     {
-        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service, null!, null!);
         var from = DateTime.Today.AddDays(-365).ToString("yyyy-MM-dd");
         var to = DateTime.Today.ToString("yyyy-MM-dd");
 

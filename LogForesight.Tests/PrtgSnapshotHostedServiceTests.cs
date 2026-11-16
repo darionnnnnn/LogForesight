@@ -370,6 +370,24 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 停用期間每輪推後可採集起點_重新啟用後逾時警示不從停用前起算()
+    {
+        _settingsStore.Update(s => { s.PrtgEnabled = false; s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative; });
+        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("停用時不得開新請求");
+        var service = CreateService();
+        var now = DateTime.Today.AddHours(20);
+        service.StartedAt = now.AddDays(-2);
+        service.Now = () => now;
+        await service.TickAsync();
+
+        Assert.Equal(now, service.GetStatus().StartedAt);
+        // 重新啟用、尚未成功取樣時，判定點只過了 1 小時，不警示
+        var alert = PrtgSnapshotAlert.Evaluate(true, PrtgFetchStrategy.Conservative,
+            service.GetStatus() with { TargetCount = 5 }, now.AddHours(1));
+        Assert.False(alert.NoRecentSuccess);
+    }
+
+    [Fact]
     public async Task HostedServiceRestart_鏡像與Queue同交易提交後_下次ScopeRefresh仍取回近期狀態()
     {
         const long deviceId = 702;
@@ -3015,5 +3033,290 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.NotNull(status.LastSuccessAt);
         Assert.Equal(0, status.ConsecutiveFailures);
         Assert.Single(SnapshotUrls());
+    }
+
+    // ---- 第 75 輪 G-4：待寫檔停擺的自動封存、手動封存與診斷 ----
+
+    private string Endpoint => PrtgSnapshotJournal.Endpoint(_settingsStore.Get().PrtgUrl);
+
+    private string JournalRoot => Path.GetDirectoryName(new PrtgSnapshotJournal(_backend).FilePath)!;
+
+    private string ArchiveRoot => Path.Combine(Path.GetDirectoryName(JournalRoot)!, "prtg-snapshot-archive");
+
+    /// <summary>目錄內每個檔案的相對路徑與雜湊（不含擁有權鎖定檔）。</summary>
+    private static Dictionary<string, string> Hashes(string root) =>
+        !Directory.Exists(root) ? new()
+            : Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+                .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(path => Path.GetRelativePath(root, path),
+                    path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+
+    /// <summary>
+    /// 在資料目錄放一份待寫檔；<paramref name="foreignDatabase"/> 為 true 時把資料庫識別換掉，模擬資料庫被重建。
+    /// </summary>
+    private void SeedJournal(DateTime? sampleHour, DateTime writeNow, bool foreignDatabase, string? endpoint = null)
+    {
+        endpoint ??= Endpoint;
+        using (var journal = new PrtgSnapshotJournal(_backend))
+        {
+            journal.EnableIncremental(endpoint, writeNow);
+            if (sampleHour.HasValue)
+                journal.AppendDelta(endpoint, new PrtgSnapshotAccumulator.CheckpointDelta(
+                    new[] { new PrtgSnapshotAccumulator.CheckpointRow(sampleHour.Value, 1, 12, 1, 12, 12) },
+                    Array.Empty<PrtgSnapshotAccumulator.CheckpointKey>()), null, null, writeNow);
+        }
+        if (foreignDatabase)
+            _backend.Blob("prtg_snapshot_database_id").Mutate(_ => ("\"other-database\"", 0));
+    }
+
+    private static string[] ArchiveDirectories(string archiveRoot) =>
+        Directory.Exists(archiveRoot) ? Directory.GetDirectories(archiveRoot) : Array.Empty<string>();
+
+    [Fact]
+    public void 資料庫識別不符且沒有樣本_自動封存並恢復採集且封存內容與原檔逐檔相同()
+    {
+        var now = new DateTime(2026, 11, 10, 12, 0, 0);
+        SeedJournal(null, now, foreignDatabase: true);
+        var before = Hashes(JournalRoot);
+        Assert.NotEmpty(before);
+        var service = CreateService();
+        service.Now = () => now;
+        var audits = new List<(string Action, string Summary)>();
+        service.SystemAudit = (action, summary, _) => audits.Add((action, summary));
+
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+
+        var archive = Assert.Single(ArchiveDirectories(ArchiveRoot));
+        Assert.EndsWith("-database-mismatch", archive);
+        Assert.StartsWith("20261110-120000", Path.GetFileName(archive));
+        Assert.Equal(before, Hashes(archive));
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.True(File.Exists(ServiceJournal(service).ManifestFilePath));
+        // 恢復後可以正常寫新的待寫資料
+        ServiceAccumulator(service).Restore(new[] { new PrtgSnapshotAccumulator.CheckpointRow(now, 7, 1, 1, 1, 1) });
+        Assert.True(SaveJournal(service));
+        Assert.Contains(Outputs(service), line => line.Contains("已封存") && line.Contains("重新開始採集"));
+        var audit = Assert.Single(audits);
+        Assert.Equal(AuditActions.PrtgSnapshotJournalArchive, audit.Action);
+    }
+
+    [Theory]
+    [InlineData(-1, false)] // 剛好還在期限內一秒
+    [InlineData(0, false)]  // 邊界算期限內
+    [InlineData(1, true)]   // 剛好過期一秒
+    public void 資料庫識別不符_以樣本時間對照重播期限決定封存或停止(int secondsAfterWindow, bool archived)
+    {
+        var hour = new DateTime(2026, 9, 1, 10, 0, 0);
+        SeedJournal(hour, hour.AddMinutes(5), foreignDatabase: true);
+        var before = Hashes(JournalRoot);
+        var service = CreateService();
+        service.Now = () => hour.AddDays(PrtgSnapshotJournal.ReplayDays).AddSeconds(secondsAfterWindow);
+
+        var restored = RestoreJournal(service, _settingsStore.Get());
+
+        Assert.Equal(archived, restored);
+        if (archived)
+        {
+            var archive = Assert.Single(ArchiveDirectories(ArchiveRoot));
+            Assert.Equal(before, Hashes(archive));
+            Assert.Null(service.GetStatus().JournalStopCode);
+        }
+        else
+        {
+            Assert.Empty(ArchiveDirectories(ArchiveRoot));
+            Assert.Equal(before, Hashes(JournalRoot));
+            Assert.Equal(PrtgSnapshotJournalStopCodes.DatabaseMismatch, service.GetStatus().JournalStopCode);
+        }
+    }
+
+    [Fact]
+    public void 資料庫識別相符_不封存照常重播()
+    {
+        var now = DateTime.Today.AddHours(12);
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        var service = CreateService();
+        service.Now = () => now;
+
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Empty(ArchiveDirectories(ArchiveRoot));
+        Assert.Equal(1, service.Accumulator.SampleCount);
+    }
+
+    [Fact]
+    public void 資料庫識別不符但後段checksum不符_停止且不封存()
+    {
+        var hour = new DateTime(2026, 9, 1, 10, 0, 0);
+        SeedJournal(hour, hour.AddMinutes(5), foreignDatabase: true);
+        var second = Directory.GetFiles(JournalRoot, "00000000000000000002.json", SearchOption.AllDirectories).Single();
+        var bytes = File.ReadAllBytes(second);
+        bytes[bytes.Length / 2] ^= 0x01;
+        File.WriteAllBytes(second, bytes);
+        var before = Hashes(JournalRoot);
+        var service = CreateService();
+        service.Now = () => hour.AddDays(40);
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Empty(ArchiveDirectories(ArchiveRoot));
+        Assert.Equal(before, Hashes(JournalRoot));
+        var preview = service.GetJournalPreview();
+        Assert.True(preview.Stopped);
+        Assert.False(preview.CanArchive);
+        Assert.Contains("完整性", preview.CannotArchiveReason);
+    }
+
+    [Fact]
+    public void 資料庫識別相符但checksum不符_停止原因為unavailable且不可封存()
+    {
+        var hour = DateTime.Today.AddHours(8);
+        SeedJournal(hour, hour.AddMinutes(5), foreignDatabase: false);
+        var second = Directory.GetFiles(JournalRoot, "00000000000000000002.json", SearchOption.AllDirectories).Single();
+        var bytes = File.ReadAllBytes(second);
+        bytes[bytes.Length / 2] ^= 0x01;
+        File.WriteAllBytes(second, bytes);
+        var service = CreateService();
+        service.Now = () => hour.AddHours(2);
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Equal(PrtgSnapshotJournalStopCodes.Unavailable, service.GetStatus().JournalStopCode);
+        Assert.Empty(ArchiveDirectories(ArchiveRoot));
+        var error = Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.ArchiveJournalManually());
+        Assert.Equal(LogForesight.Web.Models.ApiErrorCodes.Conflict, error.Code);
+    }
+
+    [Fact]
+    public void 封存搬移失敗_維持停止且原檔完整()
+    {
+        var now = new DateTime(2026, 11, 10, 12, 0, 0);
+        SeedJournal(null, now, foreignDatabase: true);
+        var before = Hashes(JournalRoot);
+        var service = CreateService();
+        service.Now = () => now;
+        // 目的地已存在：搬移前就拒絕，不覆蓋、不動原檔
+        Directory.CreateDirectory(ServiceJournal(service).ArchiveLocation(now, PrtgSnapshotJournalStopCodes.DatabaseMismatch));
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Equal(before, Hashes(JournalRoot));
+        Assert.Equal(PrtgSnapshotJournalStopCodes.DatabaseMismatch, service.GetStatus().JournalStopCode);
+    }
+
+    [Fact]
+    public void 手動封存_預覽與待寫檔內容一致_執行後恢復並寫稽核()
+    {
+        var hour = DateTime.Today.AddHours(8);
+        SeedJournal(hour, hour.AddMinutes(5), foreignDatabase: true);
+        var before = Hashes(JournalRoot);
+        var service = CreateService();
+        service.Now = () => hour.AddHours(3);
+        var audits = new List<(string Action, string Summary, object? Detail)>();
+        service.SystemAudit = (action, summary, detail) => audits.Add((action, summary, detail));
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        var preview = service.GetJournalPreview();
+
+        Assert.True(preview.Stopped);
+        Assert.True(preview.CanArchive);
+        Assert.Equal(PrtgSnapshotJournalStopCodes.DatabaseMismatch, preview.StopCode);
+        Assert.Equal(1, preview.Rows);
+        Assert.Equal(1, preview.RowsInReplayWindow);
+        Assert.Equal(hour, preview.Earliest);
+        Assert.Equal(hour, preview.Latest);
+        Assert.StartsWith(ArchiveRoot, preview.ArchiveLocation);
+
+        var result = service.ArchiveJournalManually();
+
+        Assert.Equal(1, result.Rows);
+        Assert.Equal(before, Hashes(result.Location));
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.False(service.GetJournalPreview().Stopped);
+        Assert.StartsWith(preview.ArchiveLocation!, result.Location);
+        // 手動封存的稽核由控制器以操作者帳號寫一筆；服務不得再以系統帳號重複寫
+        Assert.DoesNotContain(audits, a => a.Action == AuditActions.PrtgSnapshotJournalArchive);
+        // 沒有停止時再按一次回 409
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.ArchiveJournalManually());
+    }
+
+    [Fact]
+    public void 手動封存_PRTG來源位址變更後舊樣本待處理也能封存()
+    {
+        var now = DateTime.Today.AddHours(12);
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        var service = CreateService();
+        service.Now = () => now;
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+        Assert.Equal(1, service.Accumulator.SampleCount);
+        _settingsStore.Update(s => s.PrtgUrl = "https://prtg-new.example.com");
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, service.GetStatus().JournalStopCode);
+        Assert.True(service.GetJournalPreview().CanArchive);
+
+        var result = service.ArchiveJournalManually();
+
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, result.StopCode);
+        Assert.EndsWith("-source-changed", result.Location);
+        Assert.Equal(0, service.Accumulator.SampleCount);
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+    }
+
+    [Fact]
+    public async Task 整合_資料庫重建後舊待寫檔過期_自動封存並恢復取樣且診斷列為成功()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(
+            "{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
+        var oldNow = DateTime.Now.AddDays(-40);
+        var oldHour = new DateTime(oldNow.Year, oldNow.Month, oldNow.Day, oldNow.Hour, 0, 0);
+        SeedJournal(oldHour, oldNow, foreignDatabase: true);
+        var service = CreateService();
+
+        await service.TickAsync();
+
+        Assert.Single(ArchiveDirectories(ArchiveRoot));
+        var status = service.GetStatus();
+        Assert.Null(status.JournalStopCode);
+        Assert.NotNull(status.LastSuccessAt);
+        var hours = service.Diagnostics.ReadRecent(DateTime.Now.AddHours(1), 3);
+        Assert.True(hours.Sum(h => h.Successes) >= 1);
+        Assert.DoesNotContain(hours, h => h.State == PrtgSnapshotHourState.Stopped);
+    }
+
+    [Fact]
+    public async Task 整合_資料庫重建後舊待寫檔仍在期限內_停止且診斷為stopped_封存後恢復取樣()
+    {
+        SetupTargetSensors(new[] { (501L, "Ping") });
+        var requests = 0;
+        _stubHandler.OnSend = (_, _) =>
+        {
+            Interlocked.Increment(ref requests);
+            return Task.FromResult(JsonResponse(
+                "{\"sensors\":[{\"objid\":501,\"lastvalue_raw\":10,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
+        };
+        var recent = DateTime.Now.AddHours(-3);
+        var recentHour = new DateTime(recent.Year, recent.Month, recent.Day, recent.Hour, 0, 0);
+        SeedJournal(recentHour, recent, foreignDatabase: true);
+        var service = CreateService();
+
+        await service.TickAsync();
+
+        Assert.Equal(0, requests);
+        Assert.Equal(PrtgSnapshotJournalStopCodes.DatabaseMismatch, service.GetStatus().JournalStopCode);
+        Assert.Null(service.GetStatus().LastSuccessAt);
+        var stopped = service.Diagnostics.ReadRecent(DateTime.Now.AddHours(1), 3)
+            .Where(h => h.State == PrtgSnapshotHourState.Stopped).ToList();
+        var hourRow = Assert.Single(stopped);
+        Assert.Equal(-1, hourRow.Targets);
+        Assert.True(hourRow.WriteFailures >= 1);
+
+        service.ArchiveJournalManually();
+        await service.TickAsync();
+
+        Assert.True(requests >= 1);
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
     }
 }

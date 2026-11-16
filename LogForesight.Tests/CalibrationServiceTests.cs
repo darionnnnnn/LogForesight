@@ -354,47 +354,73 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(CalibrationStatus.Unavailable, summary2.PrtgValueBaseline.Status);
     }
 
+    /// <summary>
+    /// 門檻主機數＝取數範圍內已對應主機數與 10 取小（第 75 輪 G-1）：小站台不再永遠「不足」；
+    /// 已對應但沒有資料的主機仍算進門檻，已對應 0 台時判不足並說明原因。
+    /// </summary>
+    [Theory]
+    [InlineData(9, 9, "可用", 9)]      // 9 台對應、9 台都有 30 天 → 門檻 9，可用
+    [InlineData(12, 9, "不足", 10)]    // 12 台對應、只有 9 台達到可用 → 門檻 10，不足
+    [InlineData(5, 5, "可用", 5)]      // 5 台對應、5 台都有 30 天 → 門檻 5，可用
+    [InlineData(5, 4, "不足", 5)]      // 5 台對應、只有 4 台有資料 → 門檻 5，不足
+    public void AssessStatus_值型基線_門檻主機數為已對應主機數與10取小(int mapped, int withData, string expectedStatus, int expectedRequired)
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        SeedValueBaseline(anchor, mapped, withData, coverageDays: 30);
+
+        var summary = CreateService().AssessStatus(anchor);
+
+        Assert.Equal(expectedStatus, summary.PrtgValueBaseline.StatusText);
+        Assert.Equal(expectedRequired, Convert.ToInt32(summary.PrtgValueBaseline.CurrentThresholds["RequiredHosts"]));
+        Assert.Equal(mapped, Convert.ToInt32(summary.PrtgValueBaseline.KeyMetrics["MappedHosts"]));
+        if (expectedStatus == "不足")
+            Assert.Contains(summary.PrtgValueBaseline.Explanations, s => s.Contains($"目前只有 {withData} 台主機達到可用標準（28 天），需要 {expectedRequired} 台"));
+    }
+
     [Fact]
-    public void AssessStatus_值型基線_未達可用主機數或天數_不足()
+    public void AssessStatus_值型基線_有白名單sensor但沒有一台對應成功_不足並說明()
+    {
+        // 已有 sensor 但對應全部失敗：門檻變 0 也不得判為可用或充足
+        var anchor = new DateTime(2026, 8, 31);
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 100, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false } }, DateTime.Now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = null, HostName = null, MapStatus = PrtgMapStatus.Unmatched, CreatedAt = DateTime.Now }
+        });
+
+        var summary = CreateService().AssessStatus(anchor);
+
+        Assert.Equal(CalibrationStatus.Insufficient, summary.PrtgValueBaseline.Status);
+        Assert.Equal(0, Convert.ToInt32(summary.PrtgValueBaseline.CurrentThresholds["RequiredHosts"]));
+        Assert.Contains(summary.PrtgValueBaseline.Explanations, s => s.Contains("沒有已對應 PRTG 且有白名單 sensor 的主機"));
+    }
+
+    /// <summary>建立 mapped 台已對應主機（各一顆磁碟 sensor），其中前 withData 台有 coverageDays 天、每天 12 列 ok 的數值。</summary>
+    private void SeedValueBaseline(DateTime anchor, int mapped, int withData, int coverageDays)
     {
         var store = new EfPrtgStore(_fx.NewContext);
-        var anchor = new DateTime(2026, 8, 31);
         var now = DateTime.Now;
-
-        // 建立 5 台主機（<10 台），每台 1 個 sensor 涵蓋 30 天
         var sensors = new List<PrtgSensorRow>();
         var hostMaps = new List<PrtgHostMapRow>();
         var values = new List<PrtgValueRow>();
-
-        for (int h = 1; h <= 5; h++)
+        for (int h = 1; h <= mapped; h++)
         {
             long devId = h * 10;
             long sensorId = h * 100;
             sensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = devId, SensorType = "SNMP Disk Free", Paused = false });
             hostMaps.Add(new PrtgHostMapRow { MapDate = anchor, DeviceObjid = devId, HostId = h, HostName = $"HOST-{h}", MapStatus = PrtgMapStatus.Ok, CreatedAt = now });
-
-            // 涵蓋 30 天，每天 12 列 ok
-            for (int d = 0; d < 30; d++)
+            if (h > withData) continue;
+            for (int d = 0; d < coverageDays; d++)
             {
                 var day = anchor.AddDays(-d);
                 for (int hour = 0; hour < 12; hour++)
-                {
                     values.Add(new PrtgValueRow { SensorObjid = sensorId, PeriodStart = day.AddHours(hour), AvgValue = 50.0, Quality = PrtgDataQuality.Ok });
-                }
             }
         }
-
-        store.UpsertSensors(sensors, now);
+        if (sensors.Count > 0) store.UpsertSensors(sensors, now);
         store.ReplaceHostMapForDate(anchor, hostMaps);
-        store.UpsertValues(values);
-
-        var service = CreateService();
-        var summary = service.AssessStatus(anchor);
-
-        Assert.Equal(CalibrationStatus.Insufficient, summary.PrtgValueBaseline.Status);
-        Assert.Equal("不足", summary.PrtgValueBaseline.StatusText);
-        Assert.Equal(5, Convert.ToInt32(summary.PrtgValueBaseline.KeyMetrics["MappedHosts"]));
-        Assert.Contains(summary.PrtgValueBaseline.Explanations, s => s.Contains("目前只有 5 台主機有基線資料，需要 10 台"));
+        if (values.Count > 0) store.UpsertValues(values);
     }
 
     [Fact]
@@ -1402,7 +1428,8 @@ public class CalibrationServiceTests : IDisposable
 
         var explanations = summary.PrtgValueBaseline.Explanations;
         Assert.Contains(explanations, s => s.Contains("30 天") && s.Contains("56 天"));
-        Assert.Contains(explanations, s => s.Contains("目前只有 1 台主機有基線資料，需要 10 台"));
+        // 1 台對應、1 台有資料：門檻 1 已達到，不再出現「需要 10 台」
+        Assert.DoesNotContain(explanations, s => s.Contains("台主機有基線資料"));
         Assert.Contains(explanations, s => s.Contains("目前最長涵蓋 8 天，還需要約 20 天"));
     }
 
@@ -2087,7 +2114,7 @@ public class CalibrationServiceTests : IDisposable
     }
 
     [Fact]
-    public void BuildExportPackage_格式版本3_含取樣小時與觀測極值且欄位順序正確()
+    public void BuildExportPackage_格式版本4_含取樣小時與觀測極值且欄位順序正確()
     {
         var store = new EfPrtgStore(_fx.NewContext);
         var anchor = new DateTime(2026, 8, 31);
@@ -2113,7 +2140,7 @@ public class CalibrationServiceTests : IDisposable
         var service = CreateService();
         var package = service.BuildExportPackage(anchor);
 
-        Assert.Equal(3, package.FormatVersion);
+        Assert.Equal(4, package.FormatVersion);
         Assert.Single(package.ValueBaselines);
         var row = package.ValueBaselines[0];
         Assert.Equal(1, row.OkHours);
@@ -2124,7 +2151,7 @@ public class CalibrationServiceTests : IDisposable
         var json = JsonSerializer.Serialize(package);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
-        Assert.Equal(3, root.GetProperty("FormatVersion").GetInt32());
+        Assert.Equal(4, root.GetProperty("FormatVersion").GetInt32());
 
         var vbElement = root.GetProperty("ValueBaselines")[0];
         Assert.True(vbElement.TryGetProperty("SampledHours", out var sampledHoursProp));
@@ -2557,6 +2584,135 @@ public class CalibrationServiceTests : IDisposable
         {
             if (File.Exists(databasePath)) File.Delete(databasePath);
         }
+    }
+
+    [Fact]
+    public void 第75輪G3_值型基線KeyMetrics含快照狀態四欄_未接快照服務時也有預設值()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        var plain = CreateService().BuildExportPackage(anchor).Summary.PrtgValueBaseline.KeyMetrics;
+        Assert.Equal("—", plain["SnapshotLastSuccessAt"]);
+        Assert.Equal(0, plain["SnapshotConsecutiveFailures"]);
+        Assert.True(plain.ContainsKey("SnapshotStopReason"));
+        Assert.Null(plain["SnapshotStopReason"]);
+        Assert.Equal(false, plain["SnapshotBackingOff"]);
+
+        var service = CreateService();
+        service.SnapshotStateProvider = () => new CalibrationSnapshotState(new DateTime(2026, 8, 31, 10, 30, 0), 4, "database-mismatch", true);
+        var metrics = service.BuildExportPackage(anchor).Summary.PrtgValueBaseline.KeyMetrics;
+        Assert.Equal("2026-08-31T10:30:00", metrics["SnapshotLastSuccessAt"]);
+        Assert.Equal(4, metrics["SnapshotConsecutiveFailures"]);
+        Assert.Equal("database-mismatch", metrics["SnapshotStopReason"]);
+        Assert.Equal(true, metrics["SnapshotBackingOff"]);
+        // 舊欄位名稱與意義不變
+        Assert.True(metrics.ContainsKey("SnapshotTargets"));
+        Assert.True(metrics.ContainsKey("ValueBaselineRows"));
+    }
+
+    [Fact]
+    public void 第75輪G3_殘留候選含最大組以外跨日重現的組數與占比()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+
+        LogIssueSignature Sig(bool withThird) => new()
+        {
+            LogName = "Security",
+            Source = "Microsoft-Windows-Security-Auditing",
+            EventId = 4625,
+            Count = 100,
+            LoginFailureDetails = new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_a", Source = "WKS-01", LogonType = 3, ReasonCode = "bad_password", Count = 50 },
+                new() { Account = "svc_b", Source = "WKS-02", LogonType = 3, ReasonCode = "bad_password", Count = 30 },
+                withThird
+                    ? new() { Account = "svc_c", Source = "WKS-03", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+                    : new() { Account = "svc_x", Source = "WKS-09", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            },
+            LoginFailureTotalCount = 100
+        };
+
+        using (var ctx = _fx.NewContext())
+        {
+            // 前一日有 a、b 與 x；當日有 a、b 與 c：b 在最大組（a）以外跨日重現，c 只出現一天
+            foreach (var date in new[] { anchor.AddDays(-1), anchor })
+            {
+                var record = new DailyAnalysisRecord
+                {
+                    HostId = 101, Host = "SEC-SRV-01", Date = date, RiskLevel = "高",
+                    TopIssues = new List<LogIssueSignature> { Sig(withThird: date == anchor) }
+                };
+                var dr = new DailyRecordRow
+                {
+                    HostId = 101, HostName = "SEC-SRV-01", RecordDate = date, RiskLevel = "高",
+                    DetailPruned = false, ContentJson = JsonSerializer.Serialize(record)
+                };
+                ctx.DailyRecords.Add(dr);
+                ctx.SaveChanges();
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = dr.RecordId, HostId = 101, RecordDate = date,
+                    SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+                });
+                ctx.SaveChanges();
+            }
+        }
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var today = package.ResidualCandidates.Single(c => c.Date.Date == anchor.Date);
+        Assert.Equal(1, today.RecurringGroupCount);
+        Assert.Equal(0.3, today.RecurringGroupShare, 3);
+        // 既有欄位不變
+        Assert.Equal(0.8, today.ConcentrationRatio, 3);
+        Assert.Equal(2, today.CrossDayDistinctDays);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(package));
+        var element = doc.RootElement.GetProperty("ResidualCandidates").EnumerateArray().First();
+        Assert.True(element.TryGetProperty("RecurringGroupCount", out _));
+        Assert.True(element.TryGetProperty("RecurringGroupShare", out _));
+        Assert.True(element.TryGetProperty("CrossDayDistinctDays", out _));
+    }
+
+    [Fact]
+    public void 第75輪G3_warning樣本含近7日已用百分比變化_算不到為null_非warning樣本不填()
+    {
+        var anchor = new DateTime(2026, 9, 1);
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, Name = "Disk", SensorType = "SNMP Disk Free",
+            Category = "disk", Status = "Warning", Paused = false }], DateTime.Now);
+        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
+            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
+        // 可用 % 70 → 40：已用 30 → 60，變化 +30 個百分點
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-7).AddHours(2), AvgValue = 70.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(2), AvgValue = 40.0, Quality = PrtgDataQuality.Ok }
+        });
+        InstallCalibrationPolicy(anchor, [1001]);
+        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddDays(-1).AddHours(1)), "Warning"));
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var warnings = package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode == PrtgRuleEvaluator.RuleWarning).ToList();
+        var onAnchor = Assert.Single(warnings, s => s.Date == anchor);
+        Assert.Equal(30.0, onAnchor.ValueChange7d);
+        // 前一天的 7 日前沒有資料 → 算不到
+        var previous = Assert.Single(warnings, s => s.Date == anchor.AddDays(-1));
+        Assert.Null(previous.ValueChange7d);
+        Assert.All(package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode != PrtgRuleEvaluator.RuleWarning),
+            s => Assert.Null(s.ValueChange7d));
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(package));
+        Assert.True(doc.RootElement.GetProperty("RuleThresholds").GetProperty("MagnitudeSamples")[0].TryGetProperty("ValueChange7d", out _));
     }
 }
 

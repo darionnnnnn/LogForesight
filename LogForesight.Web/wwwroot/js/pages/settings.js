@@ -719,7 +719,7 @@ function renderPrtgSnapshotHealth(snapshot) {
     }
     const badge = document.createElement('span');
     badge.className = `badge text-bg-${snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'secondary'} me-2`;
-    const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停' };
+    const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停', stopped: '已停止：待寫檔無法使用', 'no-recent-success': '逾時無成功取樣' };
     badge.textContent = labels[snapshot.state] ?? '待確認';
     const message = document.createElement('span');
     message.textContent = snapshot.message ?? '';
@@ -730,7 +730,7 @@ function renderPrtgSnapshotHealth(snapshot) {
         const date = document.createElement('span');
         date.textContent = `${formatDateTime(hour.hour)}：`;
         const data = document.createElement('span');
-        data.textContent = `${hour.availableValues ?? 0} / ${hour.targets ?? 0} 個目標有可用值${hour.writeFailures ? `，寫入失敗 ${hour.writeFailures} 次` : ''}`;
+        data.textContent = `${hour.availableValues ?? 0} / ${hour.targets < 0 ? '未知' : (hour.targets ?? 0)} 個目標有可用值${hour.writeFailures ? `，寫入失敗 ${hour.writeFailures} 次` : ''}`;
         line.append(date, data);
         children.push(line);
     }
@@ -885,6 +885,24 @@ function mailLedgerNotice(ledger) {
     return `郵件貢獻帳本接近上限（${count}）：滿載後新內容無法記帳，該收件人本輪不寄。${mailLedgerBreakdown(ledger)}`;
 }
 
+/**
+ * 主機日恢復列：排隊等逐列恢復的超大主機日不算問題；內容無效、主機編號無效、超過單列上限的才需要人看。
+ * 原因碼轉成白話，未知的原樣顯示。
+ */
+export function hostDayRecoveryStatus(recovery) {
+    if (!recovery.waiting) return '正常';
+    const reasons = {
+        'recovery-payload-over-limit': '內容過大',
+        'recovery-payload-invalid': '內容無法解析',
+        'recovery-host-id-invalid': '主機編號無效'
+    };
+    const breakdown = Object.entries(recovery.byReason ?? {})
+        .map(([code, count]) => `${reasons[code] ?? code} ${formatNumber(count)}`).join('、');
+    return recovery.needsAttention > 0
+        ? `需要檢查 ${formatNumber(recovery.needsAttention)} 筆（共 ${formatNumber(recovery.waiting)} 筆等待：${breakdown}）`
+        : `排隊處理中 ${formatNumber(recovery.waiting)} 筆（${breakdown}）`;
+}
+
 /** 背景工作：分析、回填、兩項遷移、首見日合併、暫停的郵件收件人（兩欄表） */
 function renderBackgroundJobs(detail) {
     const withError = (state, error) => (error ? `${state || '未知'}（錯誤：${error}）` : (state || '未知'));
@@ -916,6 +934,7 @@ function renderBackgroundJobs(detail) {
         { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
         { item: '密碼欄位加密', status: cryptoStatus(detail) }
     ];
+    if (detail.hostDayRecovery) rows.push({ item: '主機日恢復', status: hostDayRecoveryStatus(detail.hostDayRecovery) });
     const ledgerNotice = mailLedgerNotice(detail.mailContributionLedger);
     if (ledgerNotice) rows.push({ item: '郵件貢獻帳本', status: ledgerNotice });
     // PRTG 擷取：未啟用時後端回 null、不加這列；曾有資料卻連續多次取得 0 筆的類別列出來

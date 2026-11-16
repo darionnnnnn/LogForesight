@@ -669,16 +669,30 @@ public class RecordListQueryService
     private List<long> ResolveVisibleHostIds(RecordSearchRequest request)
     {
         var visible = _visibility.GetVisibleHostIds();
+        var requested = RequestedHostIds(request);
+        return requested == null ? visible.ToList() : visible.Where(requested.Contains).ToList();
+    }
+
+    /// <summary>
+    /// 請求指定的主機：明確勾選的 HostIds 與群組展開的主機取聯集——兩個條件都是「我要看這些主機」，
+    /// 不是互斥的兩種篩選（勾了群組又額外勾一台不在群組內的主機是常見用法）。
+    /// 回傳 null＝沒有指定任何主機或群組（不限）；空集合＝指定了但一台都對不到（例如群組底下沒有主機），
+    /// 呼叫端要回零筆，不能當成「不限」而列出全部可見主機。清單（BuildFilter）與依問題視角共用這一份。
+    /// </summary>
+    private HashSet<long>? RequestedHostIds(RecordSearchRequest request)
+    {
+        var hasHosts = request.HostIds is { Count: > 0 };
+        var hasGroups = request.GroupIds is { Count: > 0 };
+        if (!hasHosts && !hasGroups) return null;
 
         var hostIds = new HashSet<long>(request.HostIds ?? Enumerable.Empty<long>());
-        if (request.GroupIds is { Count: > 0 })
+        if (hasGroups)
         {
-            var wantedGroups = request.GroupIds.ToHashSet();
+            var wantedGroups = request.GroupIds!.ToHashSet();
             foreach (var host in _hosts.GetAll().Where(h => h.GroupIds.Any(wantedGroups.Contains)))
                 hostIds.Add(host.HostId);
         }
-
-        return hostIds.Count == 0 ? visible.ToList() : visible.Where(hostIds.Contains).ToList();
+        return hostIds;
     }
 
     /// <summary>期間未指定時退回全部歷史——SQL 聚合查詢需要具體的上下限，不能像 RecordQueryFilter
@@ -1002,19 +1016,11 @@ public class RecordListQueryService
             Source = request.Source
         };
 
-        // 主機群組展開成主機 Id 集合，與明確勾選的 HostIds 取聯集——兩個條件都是「我要看這些主機」，
-        // 不是互斥的兩種篩選（勾了群組又額外勾一台不在群組內的主機是常見用法）
-        var hostIds = new HashSet<long>(request.HostIds ?? Enumerable.Empty<long>());
-        if (request.GroupIds is { Count: > 0 })
+        var hostIds = RequestedHostIds(request);
+        if (hostIds != null)
         {
-            var wantedGroups = request.GroupIds.ToHashSet();
-            foreach (var host in _hosts.GetAll().Where(h => h.GroupIds.Any(wantedGroups.Contains)))
-                hostIds.Add(host.HostId);
-        }
-
-        if (hostIds.Count > 0)
-        {
-            // 每台主機展開成「本身＋已併入它的墓碑列」，篩選某台主機時才看得到它合併前的歷史
+            // 每台主機展開成「本身＋已併入它的墓碑列」，篩選某台主機時才看得到它合併前的歷史；
+            // 指定了卻對不到任何主機時是空清單（零筆），不是 null（不限）
             filter.Hosts = hostIds
                 .SelectMany(id => _repository.ResolveHostKeys(id))
                 .DistinctBy(k => k.HostId)

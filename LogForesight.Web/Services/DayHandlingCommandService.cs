@@ -94,6 +94,18 @@ public class DayHandlingCommandService
     public HandlingDto Get(long hostId, DateTime date)
     {
         var host = RequireVisibleHost(hostId);
+        // 案件授與者只回識別與能力旗標：處理面板對每位使用者都先讀這裡再依 canHandle 決定要不要給批次表單，
+        // 所以不能整個拒絕（面板會壞）；但整天的狀態、處理人、期限、備註、負責人是整天的結論，不給
+        // （與寫入路徑的 RequireNotCaseGrantOnly 同一個邊界，見 docs/WEB-SPEC.md §7.1 案件授與）
+        // 日層級欄位（status 等）刻意留空：消費端（handling-panel.js）在案件授與路徑只讀 canHandle
+        if (_visibility.IsCaseGrantOnly(hostId))
+            return new HandlingDto
+            {
+                HostId = host.HostId,
+                HostName = host.HostName,
+                Date = date.ToString("yyyy-MM-dd"),
+                CanHandle = _currentUser.Has(Capability.Handle)
+            };
         var handling = _store.Get(host.HostName, date);
         // 補撈 record 算推導狀態（docs/archive/HISTORY.md #6）：處理面板要顯示的是
         // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步

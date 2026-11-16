@@ -539,9 +539,10 @@
     .lf-wall #report-toolbar,
     .lf-wall #trend-toolbar,
     .lf-wall #host-toolbar,
-    .lf-wall #category-toolbar,
-    .lf-wall #rank-mode-toggle,
+    .lf-wall #issue-toolbar,
+    .lf-wall #report-view-tabs,
     .lf-wall #host-view-all,
+    .lf-wall #issue-view-all,
     .lf-wall #report-kpi .btn {
         display: none !important;
     }

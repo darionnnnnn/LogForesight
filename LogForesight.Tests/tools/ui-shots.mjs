@@ -13,6 +13,7 @@
 //   node ui-shots.mjs --base http://localhost:5099 --scenarios scenarios.json --out <目錄>
 //     [--fixture <資料集目錄>] [--matrix full|widths|quick|screens] [--only 情境名稱子字串] [--edge <msedge.exe>] [--font-default <px>] [--no-fail]
 // 情境檔格式見 ui-scenarios.json；--fixture 另讀資料集產生的 ui-fixture-scenarios.json（路徑含相對今天的日期，不進版控）。
+// 情境的 widths 項目可寫數字（寬度，視窗高度取 --height）或 { width, height }（指定視窗高度，量一屏內看完的頁）。
 // 矩陣：full＝五個寬度＋375／1280 的小、大字級；widths＝五個寬度、字級中；quick＝1280 一格；
 //   screens＝FHD 1920×1080、2K 2560×1440、4K 3840×2160 三種螢幕（視窗高度跟著螢幕，字級中）。
 // 輸出 <out>/summary.json、<out>/<情境>/<寬>-<字級>[-print].png（整頁）與 <寬>-<字級>-first.png（首屏，即視窗看到的範圍）。
@@ -561,7 +562,7 @@ async function main() {
             await login(browser, role, state.inflight);
             for (const scenario of scenarios.filter(s => (s.role || 'ui-admin') === role)) {
                 const cells = scenario.matrix === 'quick' ? QUICK_MATRIX : scenario.widths
-                    ? scenario.widths.map(width => ({ width, scale: 'medium' })) : matrix;
+                    ? scenario.widths.map(w => (typeof w === 'object' ? { scale: 'medium', ...w } : { width: w, scale: 'medium' })) : matrix;
                 for (const cell of cells) {
                     try {
                         const r = await runScenario(browser, scenario, cell, state);

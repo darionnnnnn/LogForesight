@@ -313,6 +313,33 @@ public sealed class PermissionChangeQueryTests : IDisposable
     }
 
     [Fact]
+    public void 單筆確認與清單同一口徑_ViewAll可確認停用主機的異動_受限者仍查無()
+    {
+        // 清單對 ViewAll 不過濾主機（含停用與已不在主機表的主機），單筆確認必須一致，
+        // 否則清單看得到、按下確認卻回「找不到」（docs/WEB-SPEC.md §7.1 權限異動例外）
+        var createdUser = _users.Upsert(new WebUser { Account = "regular_user", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "SRV-RETIRED", Active = false, OwnerUserIds = new List<long> { createdUser.UserId } });
+        _hosts.Upsert(new WebHost { HostName = "SRV-OTHER", Active = true, OwnerUserIds = new List<long> { 999 } });
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord { ChangeId = "retired-1", HostName = "SRV-RETIRED", DetectedAt = DateTime.Now },
+            new PermissionChangeRecord { ChangeId = "gone-1", HostName = "SRV-REMOVED", DetectedAt = DateTime.Now },
+            new PermissionChangeRecord { ChangeId = "other-1", HostName = "SRV-OTHER", DetectedAt = DateTime.Now }
+        });
+
+        var admin = CreateService(FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.ConfirmPermission));
+        Assert.Contains(admin.Query(new PermissionChangeQueryRequest()).Items, x => x.ChangeId == "retired-1");
+        Assert.Equal("retired-1", admin.Confirm("retired-1", new ConfirmPermissionChangeRequest { Status = PermissionConfirmStatuses.Authorized }).ChangeId);
+        Assert.Equal("gone-1", admin.Confirm("gone-1", new ConfirmPermissionChangeRequest { Status = PermissionConfirmStatuses.Authorized }).ChangeId);
+
+        // 邊界另一側：受限使用者對未授權主機的異動仍回 404
+        var limited = CreateService(FakeCurrentUser.ForUser(createdUser.UserId, Capability.Handle, Capability.ConfirmPermission));
+        var ex = Assert.Throws<DomainException>(() =>
+            limited.Confirm("other-1", new ConfirmPermissionChangeRequest { Status = PermissionConfirmStatuses.Authorized }));
+        Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    [Fact]
     public void SummaryText_所有類別皆產出非空中文摘要且無樣板括號殘留()
     {
         var categories = PermissionCategory.GetAllLabels().Keys;

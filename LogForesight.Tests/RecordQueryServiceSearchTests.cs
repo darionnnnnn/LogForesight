@@ -832,6 +832,80 @@ public class RecordQueryServiceSearchTests : IDisposable
     });
 
     [Fact]
+    public void 指定的群組底下沒有主機_四個視角都回零筆_不指定回全部_聯集不退()
+    {
+        // 「指定了卻一台都對不到」與「沒指定」是兩回事：前者要零筆，不能當成不限而列出全部可見主機
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        a.GroupIds = new List<long> { 10 };
+        _hosts.Upsert(a);
+        AddRecord(a, Yesterday, "高", issues: new[] { DiskIssue() });
+        AddRecord(b, Yesterday, "高", issues: new[] { DiskIssue() });
+
+        var emptyGroup = new RecordSearchRequest { GroupIds = new List<long> { 99 } };
+        Assert.Equal(0, _service.Search(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByHost(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByDate(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByIssue(emptyGroup).Total);
+
+        // 邊界另一側：不指定任何主機或群組＝全部
+        Assert.Equal(2, _service.Search(new RecordSearchRequest()).Total);
+        Assert.Equal(2, _service.SearchByHost(new RecordSearchRequest()).Total);
+
+        // 群組＋額外勾一台不在群組內的主機＝聯集
+        var union = new RecordSearchRequest { GroupIds = new List<long> { 10 }, HostIds = new List<long> { b.HostId } };
+        Assert.Equal(2, _service.Search(union).Total);
+        Assert.Equal(1, _service.Search(new RecordSearchRequest { GroupIds = new List<long> { 10 } }).Total);
+    }
+
+    /// <summary>
+    /// 受限可見範圍下的「依主機」視角：只列授權的主機，且高風險日數只算它自己的紀錄。
+    /// 用 <see cref="ScopedVisibility"/>（不是 <see cref="AlwaysVisibleService"/>）；另一台主機的紀錄刻意較多，漏套範圍時數字會偏大。
+    /// </summary>
+    [Fact]
+    public void SearchByHost_受限可見範圍_只列授權的主機()
+    {
+        var allowed = AddHost("HOST-ALLOWED");
+        var hidden = AddHost("HOST-HIDDEN");
+        AddRecord(allowed, Yesterday, "高");
+        AddRecord(hidden, Yesterday, "高");
+        AddRecord(hidden, Yesterday.AddDays(-1), "高");
+
+        // 對照組：不限範圍時兩台都列（證明資料與判準比得到東西）
+        Assert.Equal(2, _service.SearchByHost(new RecordSearchRequest()).Total);
+
+        var result = ServiceWithVisibility(new ScopedVisibility(allowed.HostId)).SearchByHost(new RecordSearchRequest());
+
+        Assert.Equal(1, result.Total);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("HOST-ALLOWED", item.HostName);
+        Assert.Equal(1, item.HighRiskDays);
+    }
+
+    /// <summary>受限可見範圍下的「依日期」視角：每天的主機數只算授權的主機，只有未授權主機有紀錄的日子不出現</summary>
+    [Fact]
+    public void SearchByDate_受限可見範圍_主機數只算授權的主機()
+    {
+        var allowed = AddHost("HOST-ALLOWED");
+        var hidden = AddHost("HOST-HIDDEN");
+        AddRecord(allowed, Yesterday, "高");
+        AddRecord(hidden, Yesterday, "高");
+        AddRecord(hidden, Yesterday.AddDays(-1), "高");   // 只有未授權主機有紀錄的日子
+
+        // 對照組：不限範圍時兩天都在、昨天有 2 台
+        var all = _service.SearchByDate(new RecordSearchRequest());
+        Assert.Equal(2, all.Total);
+        Assert.Equal(2, all.Items.Single(i => DateTime.Parse(i.Date) == Yesterday).HostCount);
+
+        var result = ServiceWithVisibility(new ScopedVisibility(allowed.HostId)).SearchByDate(new RecordSearchRequest());
+
+        Assert.Equal(1, result.Total);
+        var item = Assert.Single(result.Items);
+        Assert.Equal(Yesterday, DateTime.Parse(item.Date));
+        Assert.Equal(1, item.HostCount);
+    }
+
+    [Fact]
     public void 已交辦_只數檢視者範圍內的主機()
     {
         var a = AddHost("HOST-A");

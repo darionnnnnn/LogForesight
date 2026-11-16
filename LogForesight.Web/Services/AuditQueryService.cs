@@ -121,6 +121,7 @@ public class AuditQueryService
         [AuditActions.PrtgStructureSyncRun] = "啟動 PRTG 同步結構與對應",
         [AuditActions.PrtgStructureSyncCancel] = "停止 PRTG 同步結構與對應",
         [AuditActions.PrtgScopePurge] = "清除監看範圍外的 PRTG 資料",
+        [AuditActions.PrtgSnapshotJournalArchive] = "封存 PRTG 快照待寫檔",
         [AuditActions.PrtgManualMapSet] = "設定 PRTG 人工主機對應",
         [AuditActions.PrtgManualMapDelete] = "刪除 PRTG 人工主機對應",
         [AuditActions.PrtgIpExcludeSet] = "設定 PRTG IP 排除",

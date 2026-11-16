@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **9,345 通過／12 略過**、macOS **9,294 通過／20 略過**，全量約 8 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,090 通過／12 略過**、macOS **10,082 通過／20 略過**，全量 Windows 約 8 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -110,7 +110,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   「案件」只留在管理與進階說明。相關導覽名稱以 `layout.js` 與 View 的實際顯示文字校對，
   manifest 只是待比對資料，不是導覽名稱的來源。
 - 不要替 PRTG 數值再加閘門：數值可信＝三條件（該日對應有效、可用列、單位可判，`PrtgValueAssessment` 是唯一評估入口，PRTG-SPEC §9b）。
-  不足就顯示原因（`PrtgValueReason`），不要另造證據、資格或授權層——那是已整批移除的形狀（背景見 `docs/archive/README.md`）。記憶體可用 % 轉已用 % 只在 `EvaluateTrend` 一處。
+  不足就顯示原因（`PrtgValueReason`），不要另造證據、資格或授權層——那是已整批移除的形狀（背景見 `docs/archive/README.md`）。可用 % 轉已用 % 只在 `PrtgValueAssessment.UsedPercent` 一處（趨勢評估與持續 Warning 的持平判定共用）。
 - 不要在不可信範圍做清除：外部查詢未收斂、回傳空資料、權限縮小、範圍異常縮小、沒有成功對應
   或沒有成功寫入時，不得清除 PRTG 鏡像、狀態或數值資料；資源守門使用的裝置／sensor 需保留。
 - 不要把執行總表的列當成執行日：`RunDaySummaryDto.Date`、`GET api/runs/day/{date}`、診斷匯出 `dailyHealth.date` 都是**資料日**（事件發生的那一天），處理日在 `RunDate`。

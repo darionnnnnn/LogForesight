@@ -100,22 +100,23 @@ function makeHandling(data, visibleRisk = ['高', '中', '低']) {
     return inst;
 }
 
-function makeTrend(points, { visibleRisk = ['高', '中', '低'], scope = 'all' } = {}) {
+function makeTrend(points, { visibleRisk = ['高', '中', '低'], scope = 'all', previousTrend = [] } = {}) {
     for (const id of ['trend-wrapper', 'trend-toolbar', 'trend-chart']) dom.byId.set(id, dom.newElement(id === 'trend-chart' ? 'canvas' : 'div'));
-    const calls = { bar: [], line: 0, noData: 0, toolbar: 0 };
+    const calls = { bar: 0, line: [], noData: 0, toolbar: [] };
     const charts = {
-        riskColors: () => ({ 高: '#dc2626', 中: '#d97706', 低: '#64748b' }),
-        bar: (canvas, spec) => { calls.bar.push(spec); return { destroy() { } }; },
-        line: () => { calls.line++; },
+        riskColors: () => ({ 高: 'c-high', 中: 'c-mid', 低: 'c-low' }),
+        bar: () => { calls.bar++; return { destroy() { } }; },
+        line: (canvas, spec) => { calls.line.push(spec); return { destroy() { } }; },
         renderNoData: () => { calls.noData++; },
-        attachToolbar: () => { calls.toolbar++; }
+        attachToolbar: (_c, spec) => { calls.toolbar.push(spec); }
     };
+    const cssVar = name => `var(${name})`;
     const inst = build(['function renderTrendChart(', 'function mountToolbar(', 'function clearToolbar(', 'function scopeDrillParams('], `
-        const currentData = { trend: points };
+        const currentData = { trend: points, previousTrend };
         const currentScope = ${JSON.stringify(scope)};
         const visibleDayRisk = new Set(visibleRisk);
         const chartInstances = {};
-    `, '{ renderTrendChart }', { points, visibleRisk, charts, recordsUrl });
+    `, '{ renderTrendChart }', { points, previousTrend, visibleRisk, charts, recordsUrl, cssVar });
     inst.calls = calls;
     return inst;
 }
@@ -294,46 +295,75 @@ const cases = {
         assert.equal(hostRankLabel({ hostName: 'SRV-01', displayName: '' }), 'SRV-01');
     },
 
-    // ── 風險趨勢 ──────────────────────────────────────────────────────────
-    趨勢圖是堆疊長條且沒有tension() {
+    // ── 風險趨勢（折線）───────────────────────────────────────────────────
+    趨勢圖是折線_高實線淡面積_中實線_前期虛線() {
         const points = [
             { date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 },
             { date: '2026-11-09', highRisk: 0, mediumRisk: 2, errorCount: 1 }
         ];
-        const t = makeTrend(points);
+        const previousTrend = [
+            { dayIndex: 0, date: '2026-10-09', highRisk: 5, mediumRisk: 0 },
+            { dayIndex: 1, date: '2026-10-10', highRisk: 2, mediumRisk: 1 }
+        ];
+        const t = makeTrend(points, { previousTrend });
         t.renderTrendChart();
-        assert.equal(t.calls.bar.length, 1, '要經 charts.bar 建立長條圖');
-        assert.equal(t.calls.line, 0, '不得再用 charts.line');
-        const spec = t.calls.bar[0];
-        assert.deepEqual(spec.data.datasets.map(d => d.label), ['高風險', '中風險']);
-        for (const ds of spec.data.datasets) {
-            assert(!('tension' in ds), '長條圖不該有 tension');
-            assert(!('borderColor' in ds), '長條圖不用折線的 borderColor');
-        }
-        assert.equal(spec.options.scales.x.stacked, true);
-        assert.equal(spec.options.scales.y.stacked, true);
-        assert.equal(spec.options.scales.x.ticks.autoSkip, true, '長期間靠 autoSkip 省略刻度');
+        assert.equal(t.calls.bar, 0, '不得再用 charts.bar');
+        assert.equal(t.calls.line.length, 1, '要經 charts.line 建立折線');
+        const spec = t.calls.line[0];
+        const [high, medium, previous] = spec.data.datasets;
+        assert.deepEqual(spec.data.datasets.map(d => d.label), ['高風險', '中風險', '前期高風險'], '最多三條');
+        assert.equal(high.fill, true, '高風險有面積');
+        assert.equal(high.backgroundColor, 'var(--lf-risk-high-soft)', '面積用淡階 token，不用實色');
+        assert.equal(high.borderColor, 'c-high');
+        assert.equal(medium.fill, false, '中風險只有線');
+        assert.equal(medium.borderColor, 'c-mid');
+        assert(!('borderDash' in high) && !('borderDash' in medium), '本期兩條都是實線');
+        assert.deepEqual(previous.borderDash, [6, 4], '前期高風險是虛線（線型不同，不只靠顏色）');
+        assert.equal(previous.fill, false);
+        assert.deepEqual(previous.data, [5, 2], '前期依期間第幾天對齊');
         assert.deepEqual(spec.data.labels, ['11-08', '11-09']);
-        // 下鑽：第一組是高、第二組是中
-        const high = new URL(spec.drillTo({ index: 0, datasetIndex: 0 }), 'http://x');
+        for (const ds of spec.data.datasets) assert(!('kind' in ds), '內部標記不得傳給圖表庫');
+        assert.equal(spec.options.interaction.intersect, true, '點資料點才下鑽');
+        assert.equal(spec.options.scales.x.ticks.autoSkip, true, '長期間靠 autoSkip 省略刻度');
+        assert.equal(t.calls.toolbar.length, 1, '保留表格切換');
+        assert.deepEqual(t.calls.toolbar[0].tableColumns, ['日期', '高風險', '中風險', '錯誤數', '前期高風險']);
+        assert.deepEqual(t.calls.toolbar[0].tableRows[0], ['2026-11-08', 3, 1, 0, 5]);
+    },
+    趨勢圖下鑽_高_中_前期各帶各的日期與層級() {
+        const points = [{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }];
+        const previousTrend = [{ dayIndex: 0, date: '2026-10-09', highRisk: 5, mediumRisk: 0 }];
+        const t = makeTrend(points, { previousTrend });
+        t.renderTrendChart();
+        const drill = t.calls.line[0].drillTo;
+        const high = new URL(drill({ index: 0, datasetIndex: 0 }), 'http://x');
         assert.equal(high.searchParams.get('riskLevels'), '高');
         assert.equal(high.searchParams.get('from'), '2026-11-08');
-        assert.equal(new URL(spec.drillTo({ index: 1, datasetIndex: 1 }), 'http://x').searchParams.get('riskLevels'), '中');
-        assert.equal(t.calls.toolbar, 1, '保留表格切換');
+        assert.equal(high.searchParams.get('to'), '2026-11-08');
+        assert.equal(new URL(drill({ index: 0, datasetIndex: 1 }), 'http://x').searchParams.get('riskLevels'), '中');
+        const prev = new URL(drill({ index: 0, datasetIndex: 2 }), 'http://x');
+        assert.equal(prev.searchParams.get('from'), '2026-10-09', '前期線的點下鑽到前期那一天');
+        assert.equal(prev.searchParams.get('riskLevels'), '高');
+        assert.equal(drill({ index: 5, datasetIndex: 2 }), null, '前期沒有那一天就不下鑽');
     },
     趨勢圖下鑽帶上顯示範圍() {
         const points = [{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }];
         const all = makeTrend(points);
         all.renderTrendChart();
-        assert.equal(new URL(all.calls.bar[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), null, '全部範圍不帶條件');
+        assert.equal(new URL(all.calls.line[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), null, '全部範圍不帶條件');
         const open = makeTrend(points, { scope: 'open' });
         open.renderTrendChart();
-        assert.equal(new URL(open.calls.bar[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), 'open', '長條只算未處理時，下鑽也只看未處理');
+        assert.equal(new URL(open.calls.line[0].drillTo({ index: 0, datasetIndex: 0 }), 'http://x').searchParams.get('statuses'), 'open', '線只算未處理時，下鑽也只看未處理');
+    },
+    趨勢圖_沒有前期資料時不畫前期線() {
+        const t = makeTrend([{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }], { previousTrend: [] });
+        t.renderTrendChart();
+        assert.deepEqual(t.calls.line[0].data.datasets.map(d => d.label), ['高風險', '中風險'], '比較期整段超出保留期時前期線不畫');
+        assert.deepEqual(t.calls.toolbar[0].tableColumns, ['日期', '高風險', '中風險', '錯誤數']);
     },
     趨勢圖_中風險被隱藏時只畫高() {
         const t = makeTrend([{ date: '2026-11-08', highRisk: 3, mediumRisk: 0, errorCount: 0 }], { visibleRisk: ['高'] });
         t.renderTrendChart();
-        assert.deepEqual(t.calls.bar[0].data.datasets.map(d => d.label), ['高風險']);
+        assert.deepEqual(t.calls.line[0].data.datasets.map(d => d.label), ['高風險']);
     },
     趨勢圖_期間全為0顯示無資料() {
         const t = makeTrend([
@@ -341,7 +371,7 @@ const cases = {
             { date: '2026-11-09', highRisk: 0, mediumRisk: 0, errorCount: 0 }
         ]);
         t.renderTrendChart();
-        assert.equal(t.calls.bar.length, 0, '全為 0 不畫圖');
+        assert.equal(t.calls.line.length, 0, '全為 0 不畫圖');
         assert.equal(t.calls.noData, 1);
     },
 

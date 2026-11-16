@@ -131,6 +131,7 @@ function makeReports() {
         let visibleDayRisk = null;
         const SCOPE_LABEL = {};
         const reportGuard = createSeqGuard();
+        const views = { overview: { dirty: true } };
         const document = { getElementById: () => ({ value: '', set textContent(v) { onWrite('title'); } }) };
         const location = { search: '', pathname: '/reports' };
         const history = { replaceState() { onWrite('url'); } };

@@ -2,7 +2,8 @@ namespace LogForesight.Web.Services;
 
 // Healthy is retained for API/health compatibility, but this service never emits it:
 // persisted aggregate write counts do not retain sensor identity.
-public enum PrtgSnapshotHourState { NoTargets, Healthy, OkCovered, Insufficient, Unknown, ReportedWriteCountMetTarget }
+// Stopped：待寫檔無法使用而停止採集（目標數可能未知，不得當成無目標）。
+public enum PrtgSnapshotHourState { NoTargets, Healthy, OkCovered, Insufficient, Unknown, ReportedWriteCountMetTarget, Stopped }
 
 public static class PrtgSnapshotSkipReasonCodes
 {
@@ -56,14 +57,18 @@ public sealed class PrtgSnapshotDiagnosticsService
             var usable = db?.Usable ?? 0;
             var reportedComplete = s is not null && targetCount > 0 && available >= targetCount && usable >= targetCount
                 && s.Attempts > 0 && s.Successes > 0 && s.Skips == 0 && s.WriteFailures == 0;
+            var journalStopped = s is { JournalStops: > 0 };
             var state = s == null ? PrtgSnapshotHourState.Unknown
+                : journalStopped ? PrtgSnapshotHourState.Stopped
                 : s.Reasons.ContainsKey("startup-partial-hour") ? PrtgSnapshotHourState.Unknown
                 : targetCount == 0 ? PrtgSnapshotHourState.NoTargets
                 : s.WriteFailures > 0 || s.Skips > 0 || db?.SampledLowCoverage > 0 || usable < targetCount ? PrtgSnapshotHourState.Insufficient
                 : db?.Ok >= targetCount ? PrtgSnapshotHourState.OkCovered
                 : reportedComplete ? PrtgSnapshotHourState.ReportedWriteCountMetTarget
                 : PrtgSnapshotHourState.Unknown;
-            result.Add(new PrtgSnapshotHourDiagnostic(hour, state, targetCount, available, s?.Attempts ?? 0,
+            // 停止且沒有任何已知目標數：回 -1（未知），不是 0。
+            var reportedTargets = journalStopped && targetCount == 0 ? -1 : targetCount;
+            result.Add(new PrtgSnapshotHourDiagnostic(hour, state, reportedTargets, available, s?.Attempts ?? 0,
                 s?.Successes ?? 0, s?.Skips ?? 0, s?.WriteFailures ?? 0,
                 s?.Reasons ?? new Dictionary<string, int>())
             {

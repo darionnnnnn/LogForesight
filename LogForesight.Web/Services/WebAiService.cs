@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Web.Configuration;
 using NLog;
@@ -45,6 +46,12 @@ public interface IWebAiService
     /// </summary>
     Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt);
 }
+
+/// <summary>
+/// 標記「空結果是合法答案」的 AI 回應型別（例如今日焦點：期間內沒有值得列的事）。
+/// 型別必須有無參數建構子，空結果即預設值；只影響 <see cref="IWebAiService.GenerateAsync{T}(string, string, string)"/>。
+/// </summary>
+public interface IAiEmptyResultAllowed { }
 
 public class WebAiService : IWebAiService
 {
@@ -245,7 +252,20 @@ public class WebAiService : IWebAiService
             if (!beforeCall()) return null;   // 真的要呼叫 AI 了才扣每人額度
 
             var result = await ai.ChatJsonAsync<T>(userPrompt, systemPrompt);
-            if (!result.Success || result.Value == null) return null;
+            if (!result.Success || result.Value == null)
+            {
+                // 「沒有東西可列」也是一種答案的結果型別（IAiEmptyResultAllowed）：模型回空形狀（[]、{}）時
+                // AIService 依設計判為失敗（多數呼叫端的空回覆代表模型沒給出內容），這裡改視為空結果並快取，
+                // 同一組輸入不再每次開頁都重打 AI、重寫警告。其他型別維持失敗
+                if (typeof(IAiEmptyResultAllowed).IsAssignableFrom(typeof(T)) &&
+                    AiJsonDiagnostics.DetectEmptyShape(result.RawContent) != null)
+                {
+                    var empty = (T)Activator.CreateInstance(typeof(T), nonPublic: true)!;
+                    _cache.Put(cacheKey, JsonSerializer.Serialize(empty));
+                    return empty;
+                }
+                return null;
+            }
 
             _cache.Put(cacheKey, result.RawContent);
             return result.Value;

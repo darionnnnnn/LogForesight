@@ -66,7 +66,9 @@ public class BriefRenameGuardTests
         Assert.DoesNotContain("['categories-card',", js);
         // 詢問 AI 預設收合（不帶 show）、開合由共用的 bindRememberedCollapse 記住（行為見 ui-collapse.behavior.mjs）
         Assert.Contains("<div class=\"collapse\" id=\"chat-collapse\">", cshtml);
-        Assert.Contains("bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat');", js);
+        Assert.Contains("bindRememberedCollapse(document.getElementById('chat-collapse'), document.getElementById('chat-toggle'), 'record-detail-chat',", js);
+        // 整個標題列可點（觸發鈕在卡片標題列內，行為見 ui-collapse.behavior.mjs headerClickForwardsToToggle）
+        Assert.Contains("{ header: document.querySelector('#chat-card > .lf-card__header') }", js);
     }
 
     [Fact]

@@ -34,8 +34,11 @@ public enum CalibrationStatus
 /// </summary>
 public static class CalibrationConstants
 {
-    /// <summary>匯出檔案格式版本</summary>
-    public const int CurrentFormatVersion = 3;
+    /// <summary>
+    /// 匯出檔案格式版本。4：值型基線 KeyMetrics 補快照狀態四欄、殘留候選補重現組欄位、warning 樣本補 ValueChange7d；
+    /// 舊欄位名稱與意義不變，只增不減（讀取端只認欄位名稱，版本號僅供人與工具判讀）。
+    /// </summary>
+    public const int CurrentFormatVersion = 4;
 
     // ── 1. PRTG 值型基線門檻 ──────────────────────────────────────────
     /// <summary>值型基線所需最少主機數</summary>
@@ -193,6 +196,12 @@ public sealed record CalibrationRuleMagnitudeRow(
 {
     public int? ThresholdMagnitude { get; init; }
     public int? DayMagnitude { get; init; }
+
+    /// <summary>
+    /// 近 7 日已用百分比變化（百分點；當日已用％ − 7 日前已用％）。只有 warning 樣本會填；
+    /// sensor 單位不明、無百分比語意（如 Ping）或兩天任一天沒有可用日平均時為 null。
+    /// </summary>
+    public double? ValueChange7d { get; init; }
 }
 
 /// <summary>以同一可信 timeline/as-of 和正式門檻 evaluator 重算 down/flapping/warning 的命中筆數，按規則識別分列。</summary>
@@ -226,7 +235,8 @@ public sealed record CalibrationPrtgRuleThresholdInfo(
     bool RuleEnabled);
 
 /// <summary>
-/// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
+/// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）。
+/// <c>RecurringGroupCount</c>／<c>RecurringGroupShare</c> 只算最大組以外、跨日重現的組（最大組的跨日天數在 <c>CrossDayDistinctDays</c>）。
 /// </summary>
 public sealed record CalibrationResidualCandidateRow(
     long HostId,
@@ -240,7 +250,9 @@ public sealed record CalibrationResidualCandidateRow(
     double SingleGroupRatio,
     int CrossDayDistinctDays,
     bool IsTruncated,
-    bool IsMatch);
+    bool IsMatch,
+    int RecurringGroupCount = 0,
+    double RecurringGroupShare = 0);
 
 /// <summary>
 /// 每顆感測器的分佈摘要（匯出用）
@@ -273,6 +285,10 @@ public sealed record CalibrationValueTypeProfile(
     double? DailyP99,
     double? DailyMax,
     double?[] HourlyCurve);     // 長度固定 24，索引＝小時；取自 GetUsableHourlyProfileByType，沒資料的小時為 null
+
+/// <summary>快照服務在匯出當下的狀態（值型基線 KeyMetrics 的快照四欄來源）。</summary>
+/// <param name="StopReason">待寫檔停止原因碼；待寫檔沒有停止時是快照目前的跳過原因（未啟用、設定不齊、讓出給同步或回填），都沒有為 null</param>
+public sealed record CalibrationSnapshotState(DateTime? LastSuccessAt, int ConsecutiveFailures, string? StopReason, bool BackingOff);
 
 /// <summary>
 /// 校準匯出上下文環境與口徑說明（匯出用）
@@ -347,6 +363,11 @@ public sealed class CalibrationService
     private readonly IKnownIssueRuleStore _ruleStore;
     private readonly string _backendCacheIdentity;
     private readonly PrtgCalibrationCaptureLimits _captureLimits;
+
+    /// <summary>
+    /// 快照服務目前狀態的讀取點（Core 不認識 Web 的快照服務，由 Web 組裝時注入）；沒接上時四個快照欄位回預設值。
+    /// </summary>
+    public Func<CalibrationSnapshotState?>? SnapshotStateProvider { get; set; }
 
     public CalibrationService(
         Func<LfDbContext> contextFactory,
@@ -470,6 +491,7 @@ public sealed class CalibrationService
         budget.Charge(checked(capture.Sensors.Count * 64L + capture.ValueCoverage.Count * 64L),
             "baseline status sensor and coverage indexes");
         var item1 = AssessPrtgValueBaseline(anchorDate, settings, allSensors, capture);
+        AddSnapshotMetrics(item1.KeyMetrics);
         var item2 = AssessPrtgRuleThresholds(anchorDate, settings, allSensors, analysis);
         var item3 = AssessTriggeredFetchMagnitude(anchorDate, settings, allSensors, capture.DailyMagnitudes);
         var item4 = AssessResidualCredentialThresholds(anchorDate, settings, cancellationToken, budget);
@@ -781,7 +803,7 @@ public sealed class CalibrationService
         var ruleDataset = new CalibrationRuleThresholdDataset
         {
             DailyRuleHits = ruleHits,
-            MagnitudeSamples = ruleAnalysis.Samples,
+            MagnitudeSamples = WithValueChange7d(ruleAnalysis.Samples, dailyAggs, sensorsByObjid, settings),
             MagnitudeSummaries = ruleAnalysis.Summaries,
             CurrentRules = ruleAnalysis.CurrentRules,
             UnsupportedByMagnitudeAnalysisRuleCodes = ruleAnalysis.CurrentRules
@@ -823,6 +845,48 @@ public sealed class CalibrationService
         return package;
     }
 
+    /// <summary>
+    /// warning 樣本補「近 7 日已用百分比變化」：以值型基線每日聚合的日平均值換算已用％
+    /// （CPU 本身是已用％；記憶體與磁碟是可用％，已用＝100−可用；Ping 與單位不明的 type 不換算）。
+    /// 當日與 7 日前任一天沒有日平均值就是 null；非 warning 樣本原樣保留。快取中的樣本清單不被改動。
+    /// </summary>
+    private static List<CalibrationRuleMagnitudeRow> WithValueChange7d(
+        List<CalibrationRuleMagnitudeRow> samples,
+        IReadOnlyList<PrtgCalibrationDailyAggregation> dailyAggs,
+        Dictionary<long, PrtgSensorRow> sensorsByObjid,
+        SystemSettings settings)
+    {
+        if (samples.Count == 0) return samples;
+        var overrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
+        var avgBySensorDay = new Dictionary<(long Sensor, DateTime Day), double>();
+        foreach (var agg in dailyAggs)
+            if (agg.AvgValue.HasValue && double.IsFinite(agg.AvgValue.Value))
+                avgBySensorDay[(agg.SensorObjid, agg.Date.Date)] = agg.AvgValue.Value;
+        double? Used(long sensor, DateTime day)
+        {
+            if (!sensorsByObjid.TryGetValue(sensor, out var row) ||
+                !PrtgValueSemantics.TryResolve(row.SensorType, overrides, out var semantic) ||
+                !avgBySensorDay.TryGetValue((sensor, day.Date), out var avg)) return null;
+            // 可用 % 轉已用 % 只走 PrtgValueAssessment.UsedPercent（單一換算點）
+            return semantic is PrtgValueSemantic.CpuPercentUsed or PrtgValueSemantic.MemoryPercentFree or PrtgValueSemantic.DiskPercentFree
+                ? PrtgValueAssessment.UsedPercent(semantic, avg)
+                : null;
+        }
+        var result = new List<CalibrationRuleMagnitudeRow>(samples.Count);
+        foreach (var sample in samples)
+        {
+            if (sample.RuleCode != PrtgRuleEvaluator.RuleWarning || sample.SensorObjid is not { } sensor)
+            {
+                result.Add(sample);
+                continue;
+            }
+            var now = Used(sensor, sample.Date);
+            var before = Used(sensor, sample.Date.AddDays(-7));
+            result.Add(sample with { ValueChange7d = now.HasValue && before.HasValue ? Math.Round(now.Value - before.Value, 2) : null });
+        }
+        return result;
+    }
+
     private bool HasCurrentRuleAuthority(RuleMagnitudeAnalysis captured, PrtgCalibrationCaptureBudget budget)
     {
         using var guardReservation = budget.ReserveTransient(8L * 1024 * 1024,
@@ -844,6 +908,21 @@ public sealed class CalibrationService
         package.RuleThresholds.MagnitudeSamples.Count * 320L + package.RuleThresholds.MagnitudeSummaries.Count * 192L +
         package.RuleThresholds.CurrentRules.Count * 4096L + package.TriggeredMagnitudes.Count * 256L +
         package.ResidualCandidates.Count * 512L + 256 * 1024L);
+
+    /// <summary>
+    /// 值型基線的快照狀態四欄：最近成功時間、連續失敗次數、待寫檔停止原因碼（無停止為 null）、是否退避中。
+    /// 沒有注入快照服務時填預設值，欄位仍存在，讀取端不必判斷鍵缺不缺。
+    /// </summary>
+    private void AddSnapshotMetrics(Dictionary<string, object> metrics)
+    {
+        CalibrationSnapshotState? state = null;
+        try { state = SnapshotStateProvider?.Invoke(); }
+        catch (Exception ex) { Log.Warn(ex, "[校準] 讀取快照服務狀態失敗，快照欄位以預設值匯出"); }
+        metrics["SnapshotLastSuccessAt"] = state?.LastSuccessAt?.ToString("yyyy-MM-ddTHH:mm:ss") ?? (object)"—";
+        metrics["SnapshotConsecutiveFailures"] = state?.ConsecutiveFailures ?? 0;
+        metrics["SnapshotStopReason"] = state?.StopReason!;
+        metrics["SnapshotBackingOff"] = state?.BackingOff ?? false;
+    }
 
     private CalibrationItemAssessment AssessPrtgValueBaseline(
         DateTime anchor, SystemSettings settings, List<PrtgSensorRow> allSensors,
@@ -957,18 +1036,24 @@ public sealed class CalibrationService
         var hostsAvailable = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineAvailableDays);
         var hostsSufficient = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineSufficientDays);
 
+        // 門檻主機數＝已對應且有白名單 sensor 的主機數（mappedHostsCount）與 10 取小：小站台（例如只有 9 台對應到 PRTG）
+        // 用固定 10 台永遠到不了；沒有白名單 sensor 的主機永遠產生不了基線，不算進門檻。
+        // 0 台時門檻也是 0，下面的「無資料」判斷會擋下，不會因門檻變 0 而判為充足
+        var requiredHosts = Math.Min(CalibrationConstants.ValueBaselineRequiredHosts, mappedHostsCount);
+        thresholds["RequiredHosts"] = requiredHosts;
+
         // 分母為零一律判不足：若無任何主機或涵蓋天數為 0，不得判為可用
         CalibrationStatus status;
-        var valueBaselineNoData = mappedHostsCount == 0 || maxCoverageDays == 0;
+        var valueBaselineNoData = mappedHostsCount == 0 || maxCoverageDays == 0 || requiredHosts == 0;
         if (valueBaselineNoData)
         {
             status = CalibrationStatus.Insufficient;
         }
-        else if (hostsSufficient >= CalibrationConstants.ValueBaselineRequiredHosts)
+        else if (hostsSufficient >= requiredHosts)
         {
             status = CalibrationStatus.Sufficient;
         }
-        else if (hostsAvailable >= CalibrationConstants.ValueBaselineRequiredHosts)
+        else if (hostsAvailable >= requiredHosts)
         {
             status = CalibrationStatus.Available;
         }
@@ -978,7 +1063,11 @@ public sealed class CalibrationService
         }
 
         var explanations = new List<string>();
-        if (valueBaselineNoData)
+        if (mappedHostsCount == 0)
+        {
+            explanations.Add("沒有已對應 PRTG 且有白名單 sensor 的主機，無法建立基線；請先在 PRTG 維護完成主機對應");
+        }
+        else if (valueBaselineNoData)
         {
             explanations.Add("期間無事件，門檻無從校準，維持預設值");
         }
@@ -996,9 +1085,9 @@ public sealed class CalibrationService
 
         if (status == CalibrationStatus.Insufficient)
         {
-            if (mappedHostsCount < CalibrationConstants.ValueBaselineRequiredHosts)
+            if (mappedHostsCount > 0 && hostsAvailable < requiredHosts)
             {
-                explanations.Add($"目前只有 {mappedHostsCount} 台主機有基線資料，需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+                explanations.Add($"目前只有 {hostsAvailable} 台主機達到可用標準（{CalibrationConstants.ValueBaselineAvailableDays} 天），需要 {requiredHosts} 台；可對特定主機執行歷史回填");
             }
             if (maxCoverageDays < CalibrationConstants.ValueBaselineAvailableDays)
             {
@@ -1008,7 +1097,7 @@ public sealed class CalibrationService
         }
         else if (status == CalibrationStatus.Available)
         {
-            if (hostsSufficient < CalibrationConstants.ValueBaselineRequiredHosts)
+            if (hostsSufficient < requiredHosts)
             {
                 if (maxCoverageDays < CalibrationConstants.ValueBaselineSufficientDays)
                 {
@@ -1017,7 +1106,7 @@ public sealed class CalibrationService
                 }
                 else
                 {
-                    explanations.Add($"目前只有 {hostsSufficient} 台主機達到充足標準（56 天），需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+                    explanations.Add($"目前只有 {hostsSufficient} 台主機達到充足標準（56 天），需要 {requiredHosts} 台；可對特定主機執行歷史回填");
                 }
             }
         }
@@ -1677,7 +1766,9 @@ public sealed class CalibrationService
                     metrics.SingleGroupRatio,
                     metrics.CrossDayDistinctDays,
                     metrics.IsTruncated,
-                    metrics.IsMatch
+                    metrics.IsMatch,
+                    metrics.RecurringGroupCount,
+                    metrics.RecurringGroupShare
                 ));
 
                 if (result.Count >= CalibrationConstants.ResidualCandidateMaxCount)

@@ -9,6 +9,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Models;
 using Microsoft.Extensions.Hosting;
 using NLog;
 using LogLevel = NLog.LogLevel;
@@ -24,13 +25,40 @@ namespace LogForesight.Web.Services;
 /// <param name="ConsecutiveFailures">連續失敗次數</param>
 /// <param name="PendingSamples">累積器中的樣本及已結算但待資料庫重試的列數</param>
 /// <param name="LastSkipReason">快照跳過原因（若因前置條件未滿足暫停）</param>
+/// <param name="JournalStopCode">待寫檔停止原因碼（<see cref="PrtgSnapshotJournalStopCodes"/>）；null＝待寫檔正常</param>
+/// <param name="TargetCount">目前快照目標數；尚未算出時為 null</param>
+/// <param name="StartedAt">可以開始採集的時間（站台啟動，或 PRTG 停用／連線設定不齊後重新具備條件）；「超過 N 小時沒有成功取樣」從它與最近成功時間取晚者起算</param>
 public sealed record PrtgSnapshotStatus(
     DateTime? LastSuccessAt,
     int LastSensorCount,
     int IntervalMinutes,
     int ConsecutiveFailures,
     int PendingSamples,
-    string? LastSkipReason);
+    string? LastSkipReason,
+    string? JournalStopCode = null,
+    int? TargetCount = null,
+    DateTime StartedAt = default);
+
+/// <summary>待寫檔停止原因碼（對外字串）。</summary>
+public static class PrtgSnapshotJournalStopCodes
+{
+    /// <summary>待寫檔記載的資料庫識別與目前資料庫不同；可封存。</summary>
+    public const string DatabaseMismatch = "database-mismatch";
+    /// <summary>PRTG 來源位址或世代變更後舊樣本待處理；可封存。</summary>
+    public const string SourceChanged = "source-changed";
+    /// <summary>其他原因（checksum、容量、權限、IO…）；不可由畫面封存。</summary>
+    public const string Unavailable = "unavailable";
+
+    public static bool IsArchivable(string? code) => code is DatabaseMismatch or SourceChanged;
+}
+
+/// <summary>待寫檔停止時的封存預覽（鏡像狀態的按鈕與確認對話用）。</summary>
+public sealed record PrtgSnapshotJournalPreview(
+    bool Stopped, string? StopCode, string? Message, bool CanArchive, string? CannotArchiveReason,
+    int Rows, int RowsInReplayWindow, DateTime? Earliest, DateTime? Latest, string? ArchiveLocation);
+
+/// <summary>手動封存結果。</summary>
+public sealed record PrtgSnapshotArchiveResult(string Location, int Rows, DateTime? Earliest, DateTime? Latest, string StopCode);
 
 /// <summary>
 /// PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定期發送一次 table.json 取得即時快照數值，
@@ -62,6 +90,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private bool _journalLoaded;
     private string? _journalEndpoint;
     private string? _journalError;
+    private volatile string? _journalStopCode;
     private sealed class JournalWriteException : IOException { }
     private readonly List<PrtgSnapshotJournal.Batch> _pendingWrite = new();
     private int _pendingRows;
@@ -153,6 +182,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
+
+    /// <summary>可以開始採集的時間：服務啟動時設定，PRTG 停用或連線設定不齊期間每輪往後推，重新啟用後的逾時警示才不會從停用前起算（測試可覆寫）。</summary>
+    internal DateTime StartedAt { get; set; } = DateTime.Now;
+
+    /// <summary>系統自動行為的稽核出口（action、summary、detail）；DI 於組裝時接上，測試可替換。</summary>
+    internal Action<string, string, object?>? SystemAudit { get; set; }
 
     public PrtgSnapshotHostedService(
         ISystemSettingsStore systemSettingsStore,
@@ -247,7 +282,10 @@ public class PrtgSnapshotHostedService : BackgroundService
             IntervalMinutes: _effectiveIntervalMinutes,
             ConsecutiveFailures: _consecutiveFailures,
             PendingSamples: _accumulator.SampleCount + pendingRows,
-            LastSkipReason: _lastSkipReason);
+            LastSkipReason: _lastSkipReason,
+            JournalStopCode: _journalStopCode,
+            TargetCount: _targetObjids?.Count,
+            StartedAt: StartedAt);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -456,6 +494,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         if (!settings.PrtgEnabled)
         {
             NoteSkip(PrtgSnapshotSkipReasonCodes.PrtgDisabled, "PRTG 擷取未啟用", trackPause: false);
+            StartedAt = Now();
             return;
         }
 
@@ -463,6 +502,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
             NoteSkip(PrtgSnapshotSkipReasonCodes.ConnectionNotConfigured, "PRTG 連線設定不齊", trackPause: false);
+            StartedAt = Now();
             return;
         }
 
@@ -1216,7 +1256,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// <summary>
     /// 首輪恢復已落盤樣本；之後阻止不同來源位址的樣本混寫。
     /// </summary>
-    private bool RestoreJournal(SystemSettings settings)
+    private bool RestoreJournal(SystemSettings settings) => RestoreJournalCore(settings, allowAutoArchive: true);
+
+    private bool RestoreJournalCore(SystemSettings settings, bool allowAutoArchive)
     {
         lock (_pendingWrite)
         {
@@ -1241,17 +1283,136 @@ public class PrtgSnapshotHostedService : BackgroundService
                 if (endpoint != _journalEndpoint)
                 {
                     if (_accumulator.SampleCount > 0 || _pendingWrite.Count > 0)
-                        throw new InvalidDataException("PRTG 來源位址或來源世代變更，舊樣本保留待處理；不寫入新身分");
+                        throw PrtgSnapshotJournalReason.Tag(
+                            new InvalidDataException("PRTG 來源位址或來源世代變更，舊樣本保留待處理；不寫入新身分"),
+                            PrtgSnapshotJournalStopCodes.SourceChanged);
                     _journal.EnableIncremental(endpoint, Now(), binding.Legacy);
                     _journalEndpoint = endpoint;
                 }
                 _journalError = null;
+                _journalStopCode = null;
                 return true;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
             {
+                // 只有「資料庫識別不符」且待寫檔沒有任何仍在重播期限內的樣本時才自動封存並重試一次。
+                if (allowAutoArchive && PrtgSnapshotJournalReason.Of(ex) == PrtgSnapshotJournalStopCodes.DatabaseMismatch && TryAutoArchiveJournal())
+                    return RestoreJournalCore(settings, allowAutoArchive: false);
                 JournalFailed(ex);
                 return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 資料庫識別不符時的自動封存：完整性驗證通過且沒有期限內樣本才搬走整個待寫目錄。
+    /// 搬移失敗（目的地已存在、權限、IO）維持停止、原檔完整。
+    /// </summary>
+    private bool TryAutoArchiveJournal()
+    {
+        try
+        {
+            var now = Now();
+            var inspection = _journal.Inspect(now);
+            if (!inspection.IntegrityOk)
+            {
+                Log.Warn("PRTG 快照待寫檔資料庫識別不符，但完整性檢查未通過，不自動封存：{Reason}", inspection.Failure);
+                return false;
+            }
+            if (inspection.RowsInReplayWindow > 0)
+            {
+                Log.Warn("PRTG 快照待寫檔資料庫識別不符，但含 {Rows} 筆仍在 {Days} 日重播期限內的樣本，不自動封存；請到 PRTG 維護 > 鏡像狀態確認後手動封存。",
+                    inspection.RowsInReplayWindow, PrtgSnapshotJournal.ReplayDays);
+                return false;
+            }
+            var location = _journal.Archive(PrtgSnapshotJournalStopCodes.DatabaseMismatch, now);
+            ResetInMemoryJournalState();
+            var message = $"PRTG 快照待寫檔的資料庫識別與目前資料庫不符，且沒有仍在重播期限內的樣本；已封存 {inspection.Rows} 筆舊樣本到 {location} 並重新開始採集。";
+            WriteOutput(message, LogLevel.Warn);
+            WriteAutoArchiveAudit(inspection, location);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            Log.Warn(ex, "PRTG 快照待寫檔自動封存失敗，維持停止並保留原檔");
+            return false;
+        }
+    }
+
+    private void ResetInMemoryJournalState()
+    {
+        _journalLoaded = false;
+        _journalEndpoint = null;
+        _accumulator.Restore(Array.Empty<PrtgSnapshotAccumulator.CheckpointRow>());
+        _pendingWrite.Clear();
+        _pendingRows = 0;
+    }
+
+    /// <summary>自動封存只發生在資料庫識別不符，以系統帳號寫稽核；手動封存由控制器以操作者帳號寫，這裡不重複寫。</summary>
+    private void WriteAutoArchiveAudit(PrtgSnapshotJournalInspection inspection, string location)
+    {
+        try
+        {
+            const string stopCode = PrtgSnapshotJournalStopCodes.DatabaseMismatch;
+            SystemAudit?.Invoke(AuditActions.PrtgSnapshotJournalArchive,
+                $"自動封存 PRTG 快照待寫檔（{inspection.Rows} 筆，原因 {stopCode}）",
+                new { stopCode, auto = true, rows = inspection.Rows, earliest = inspection.Earliest, latest = inspection.Latest, location });
+        }
+        catch (Exception ex) { Log.Warn(ex, "PRTG 快照待寫檔封存稽核寫入失敗"); }
+    }
+
+    /// <summary>目前待寫檔停止原因與可否封存；停止時附上待寫檔的筆數與時間範圍（唯讀檢查）。</summary>
+    public PrtgSnapshotJournalPreview GetJournalPreview()
+    {
+        var code = _journalStopCode;
+        if (code == null)
+            return new(false, null, null, false, null, 0, 0, null, null, null);
+        var message = _journalError;
+        if (!PrtgSnapshotJournalStopCodes.IsArchivable(code))
+            return new(true, code, message, false,
+                "這個停止原因不能由畫面封存；請依訊息檢查檔案完整性、容量或服務帳號權限，必要時由維護管理者處理。",
+                0, 0, null, null, null);
+        PrtgSnapshotJournalInspection inspection;
+        lock (_pendingWrite) inspection = _journal.Inspect(Now());
+        if (!inspection.IntegrityOk)
+            return new(true, code, message, false, "待寫檔完整性檢查未通過，不能封存：" + inspection.Failure,
+                0, 0, null, null, null);
+        return new(true, code, message, true, null, inspection.Rows, inspection.RowsInReplayWindow,
+            inspection.Earliest, inspection.Latest, _journal.ArchiveRoot);
+    }
+
+    /// <summary>
+    /// 手動封存（資料庫識別不符、來源位址變更兩種停止原因）。其他原因或完整性不通過回 409。
+    /// 不提供「強制寫進目前資料庫」：舊樣本只搬到封存夾。
+    /// </summary>
+    public PrtgSnapshotArchiveResult ArchiveJournalManually()
+    {
+        lock (_pendingWrite)
+        {
+            var code = _journalStopCode;
+            if (code == null) throw DomainException.Conflict("快照待寫檔目前沒有停止，不需要封存。");
+            if (!PrtgSnapshotJournalStopCodes.IsArchivable(code))
+                throw DomainException.Conflict("這個停止原因不能由畫面封存；請依鏡像狀態的訊息檢查檔案完整性、容量或服務帳號權限。");
+            try
+            {
+                _journal.AcquireOwnership();
+                var now = Now();
+                var inspection = _journal.Inspect(now);
+                if (!inspection.IntegrityOk)
+                    throw DomainException.Conflict("待寫檔完整性檢查未通過，不能封存：" + inspection.Failure);
+                var location = _journal.Archive(code, now);
+                ResetInMemoryJournalState();
+                _journalError = null;
+                _journalStopCode = null;
+                _lastSkipReason = null;
+                WriteOutput($"管理者已封存 PRTG 快照待寫檔（{inspection.Rows} 筆，原因 {code}）到 {location}，重新開始採集。", LogLevel.Warn);
+                RestoreJournalCore(_settingsStore.Get(), allowAutoArchive: false);
+                return new PrtgSnapshotArchiveResult(location, inspection.Rows, inspection.Earliest, inspection.Latest, code);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.Warn(ex, "PRTG 快照待寫檔手動封存失敗，維持停止並保留原檔");
+                throw DomainException.Conflict("封存失敗，待寫檔維持原狀：" + ex.Message);
             }
         }
     }
@@ -1264,6 +1425,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             _journal.AppendDelta(_journalEndpoint!, delta, null, null, Now());
             _accumulator.CommitDelta(delta);
             _journalError = null;
+            _journalStopCode = null;
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
@@ -1275,6 +1437,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private void JournalFailed(Exception ex)
     {
+        _journalStopCode = PrtgSnapshotJournalReason.Of(ex) ?? PrtgSnapshotJournalStopCodes.Unavailable;
         var detail = ex switch
         {
             JsonException => "復原檔格式不完整或已損壞；請維護管理者先備份並檢查，勿直接刪除。",
@@ -1290,7 +1453,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         _journalError = reason;
         _lastSkipReason = reason;
-        RecordDiagnostic(Now(), "write-failure", "local-journal-unavailable", _targetObjids?.Count ?? 0);
+        // 失敗發生在算出目標之前：目標數未知（-1），不可記成 0 讓診斷誤判成「無目標」。
+        RecordDiagnostic(Now(), "journal-stopped", "local-journal-unavailable", -1, reasonCode: _journalStopCode);
     }
 
     private void FlushAccumulator(DateTime now, bool all)
@@ -1337,6 +1501,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 _pendingWrite.AddRange(added);
                 _pendingRows += added.Sum(batch => batch.Rows.Count);
                 _journalError = null;
+                _journalStopCode = null;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
             {
@@ -1365,6 +1530,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     _pendingWrite.Remove(pending);
                     _pendingRows -= pending.Rows.Count;
                     _journalError = null;
+                    _journalStopCode = null;
                 }
                 catch (Exception ex)
                 {

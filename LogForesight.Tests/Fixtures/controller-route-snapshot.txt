@@ -180,6 +180,7 @@ GET	/api/permission-changes/ids	C=-;A=ConfirmPermission	-	-	-	PermissionChangesC
 GET	/api/permission-changes/report	C=-;A=ConfirmPermission	-	-	-	PermissionChangesController
 PUT	/api/permission-changes/{changeId}/confirm	C=-;A=ConfirmPermission	-	-	-	PermissionChangesController
 GET	/api/prtg-snapshot-diagnostics	C=Maintain;A=-	-	-	-	PrtgSnapshotDiagnosticsController
+POST	/api/prtg-snapshot-diagnostics/archive-journal	C=Maintain;A=-	-	viewall	-	PrtgSnapshotDiagnosticsController
 GET	/api/prtg/effectiveness	C=Maintain;A=-	-	-	-	PrtgEffectivenessController
 GET	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController
 PUT	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController
@@ -207,6 +208,8 @@ PUT	/api/records/{hostId:long}/{date}/handling/issues	C=-;A=Handle	-	-	-	Handlin
 PUT	/api/records/{hostId:long}/{date}/handling/issues/batch	C=-;A=Handle	-	-	-	HandlingController
 GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	-	-	HandlingController
 GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	-	-	RecordsController
+GET	/api/reports/category-trend	C=-;A=-	-	-	-	ReportsController
+GET	/api/reports/effectiveness	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/summary	C=-;A=-	-	-	-	ReportsController
 GET	/api/rules	C=Maintain;A=-	-	-	-	RulesController
 POST	/api/rules	C=Maintain;A=-	-	-	-	RulesController

@@ -85,6 +85,10 @@ public interface IAnalysisRecordQuery
     WorkflowRecoveryPage QueryWorkflowRecoveryPage(DateTime from, DateTime to, long afterRecordId, int take) =>
         throw new NotSupportedException("This record query does not support workflow recovery paging.");
 
+    /// <summary>單筆、較大上限的恢復讀取（超過單頁上限的主機日逐列恢復用）；回傳只含這一列的頁。</summary>
+    WorkflowRecoveryPage QueryWorkflowRecoveryRecord(long recordId, int maximumPayloadBytes) =>
+        throw new NotSupportedException("This record query does not support single-row workflow recovery.");
+
     /// <summary>Bounded scalar projection for closing notification plans, including below-threshold days.</summary>
     List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take) =>
         throw new NotSupportedException("This record query does not support notification workflow paging.");
@@ -205,4 +209,6 @@ public sealed record WorkflowRecoveryPage(IReadOnlyList<DailyAnalysisRecord> Rec
     public const int MaximumRows = 100;
     public const int MaximumPayloadBytes = 128 * 1024;
     public const int MaximumPayloadPrefixCharacters = MaximumPayloadBytes + 1;
+    /// <summary>逐列恢復的單列上限（暫定）：超過的主機日維持恢復等待並在系統健康警示——代表資料異常，需要人看。</summary>
+    public const int MaximumOversizedPayloadBytes = 4 * 1024 * 1024;
 }
