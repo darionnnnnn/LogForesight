@@ -383,7 +383,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
 
-**權限異動的停用主機例外**：持有 `ViewAll` 者在權限異動的清單、單筆確認與批次確認看得到停用或已不在主機表的主機（`PermissionChangeService.IsChangeVisible`，三條路徑同一個判定）——異動是已經發生的事，主機停用不代表不用檢核。其他頁面的「停用主機一律不可見」不變；沒有 `ViewAll` 的人只看可見主機。
+**權限異動的停用主機例外**：持有 `ViewAll` 者在權限異動的清單、單筆確認、批次確認與報告全文看得到停用主機，清單與確認另含已不在主機表的主機（`PermissionChangeService.IsChangeVisible`，四條路徑同一個判定；報告需要主機編號，主機已不在主機表時回 404）——異動是已經發生的事，主機停用不代表不用檢核。其他頁面的「停用主機一律不可見」不變；沒有 `ViewAll` 的人只看可見主機。
 
 **全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。只回全站計數、不含主機身分的維護端點（`prtg-mirror`、`prtg-estimate`、`prtg-fetch-scope/estimate`）與主機管理（`api/admin/hosts*`）屬 `Maintain` 職責，不在此列；衝突清單 `prtg-host-map` 回傳候選主機身分，屬此列，受限角色在維護頁看到權限說明。
 
