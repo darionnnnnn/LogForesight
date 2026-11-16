@@ -2128,10 +2128,28 @@
         "waitFor": "#report-kpi .lf-kpi-card"
       },
       {
-        "click": "#rank-mode-toggle [data-rank-mode=\"issue\"]"
+        "assert": {
+          "sel": "#issue-section",
+          "visible": true
+        }
       },
       {
-        "waitFor": "#rank-mode-toggle [data-rank-mode=\"issue\"].active"
+        "click": "#report-view-switch [data-view=\"effectiveness\"]"
+      },
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"category\"]"
+      },
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"overview\"]"
+      },
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
       },
       {
         "assert": {
@@ -4068,6 +4086,439 @@
       },
       {
         "evalAssert": "const k = document.querySelector('#detail-issues .lf-source-obs__key'); if (!k) return null; const v = k.nextElementSibling; return getComputedStyle(k).color === getComputedStyle(v).color ? '來源觀測的欄位名與值同色' : null;"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-總覽-五個寬度",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const p = document.getElementById('view-overview'); return p && !p.classList.contains('d-none') ? null : '目前視角面板沒有顯示：overview';"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-總覽-一屏看完",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      {
+        "width": 1536,
+        "height": 864
+      },
+      {
+        "width": 1920,
+        "height": 1080
+      }
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null; const c = document.querySelector('.lf-content'); const over = Math.max(c.scrollHeight - c.clientHeight, document.documentElement.scrollHeight - innerHeight); return over > 1 ? ('出現垂直捲軸，超出 ' + over + 'px（' + innerWidth + '×' + innerHeight + '）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-處理成效-五個寬度",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const p = document.getElementById('view-effectiveness'); return p && !p.classList.contains('d-none') ? null : '目前視角面板沒有顯示：effectiveness';"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-處理成效-一屏看完",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness",
+    "widths": [
+      {
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "width": 1920,
+        "height": 1080
+      }
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null; const c = document.querySelector('.lf-content'); const over = Math.max(c.scrollHeight - c.clientHeight, document.documentElement.scrollHeight - innerHeight); return over > 1 ? ('出現垂直捲軸，超出 ' + over + 'px（' + innerWidth + '×' + innerHeight + '）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-問題類型-五個寬度",
+    "role": "ui-admin",
+    "path": "/reports?view=category",
+    "widths": [
+      375,
+      768,
+      1280,
+      1920,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const p = document.getElementById('view-category'); return p && !p.classList.contains('d-none') ? null : '目前視角面板沒有顯示：category';"
+      }
+    ]
+  },
+  {
+    "name": "報表-視角-問題類型-一屏看完",
+    "role": "ui-admin",
+    "path": "/reports?view=category",
+    "widths": [
+      {
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "width": 1920,
+        "height": 1080
+      }
+    ],
+    "steps": [
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "if (innerWidth < 992) return null; const c = document.querySelector('.lf-content'); const over = Math.max(c.scrollHeight - c.clientHeight, document.documentElement.scrollHeight - innerHeight); return over > 1 ? ('出現垂直捲軸，超出 ' + over + 'px（' + innerWidth + '×' + innerHeight + '）') : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-報表-視角切換與網址同步",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"effectiveness\"]"
+      },
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "evalAssert": "const on = [...document.querySelectorAll('#report-view-switch button')].filter(b => b.getAttribute('aria-pressed') === 'true' && b.classList.contains('active')).map(b => b.dataset.view); return on.join() === 'effectiveness' ? null : ('選中態應只有處理成效：' + on.join());"
+      },
+      {
+        "evalAssert": "return new URLSearchParams(location.search).get('view') === 'effectiveness' ? null : ('網址沒有 view=effectiveness：' + location.search);"
+      },
+      {
+        "evalAssert": "return document.getElementById('view-overview').classList.contains('d-none') ? null : '切走後總覽面板仍顯示';"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"category\"]"
+      },
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"overview\"]"
+      },
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "evalAssert": "return new URLSearchParams(location.search).has('view') ? ('回到總覽不應留 view 參數：' + location.search) : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-報表-無效view參數退回總覽",
+    "role": "ui-admin",
+    "path": "/reports?view=nonsense",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "evalAssert": "return document.getElementById('view-overview').classList.contains('d-none') ? '無效的 view 值應顯示總覽' : null;"
+      }
+    ]
+  },
+  {
+    "name": "報表-處理成效-顯示範圍提示-未結案有",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness&handlingScope=unresolved",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "evalAssert": "const n = document.getElementById('report-view-note'); const r = n.getBoundingClientRect(); return !n.hidden && r.width > 0 && n.textContent.includes('此視角不套用顯示範圍') ? null : '顯示範圍為未結案時，視角列要寫「此視角不套用顯示範圍」';"
+      }
+    ]
+  },
+  {
+    "name": "報表-問題類型-顯示範圍提示-未結案有",
+    "role": "ui-admin",
+    "path": "/reports?view=category&handlingScope=unresolved",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "evalAssert": "const n = document.getElementById('report-view-note'); const r = n.getBoundingClientRect(); return !n.hidden && r.width > 0 ? null : '顯示範圍為未結案時，問題類型視角也要有提示';"
+      }
+    ]
+  },
+  {
+    "name": "報表-處理成效與問題類型-顯示範圍全部時沒有提示",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "evalAssert": "const n = document.getElementById('report-view-note'); return n.hidden || n.getBoundingClientRect().width === 0 ? null : '顯示範圍為全部時不該出現提示';"
+      }
+    ]
+  },
+  {
+    "name": "報表-處理成效-三個指標的說明圖示",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "evalAssert": "const bad = []; for (const id of ['eff-buckets-help', 'eff-aging-help', 'eff-recur-help']) { const b = document.querySelector('#' + id + ' button.lf-help'); if (!b) { bad.push(id + ' 沒有說明圖示'); continue; } if (!(b.getAttribute('data-bs-content') || '').trim()) bad.push(id + ' 說明文字是空的'); if (b.tabIndex < 0) bad.push(id + ' 不可用鍵盤聚焦'); } return bad.length ? bad.join('；') : null;"
+      }
+    ]
+  },
+  {
+    "name": "報表-問題類型-熱度表鍵盤逐格到達與可讀名稱",
+    "role": "ui-admin",
+    "path": "/reports?view=category",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "evalAssert": "const cells = [...document.querySelectorAll('#cat-heat-body a.lf-heat__cell')]; if (cells.length < 2) return '資料集的熱度表至少要有兩個非 0 的格（現在 ' + cells.length + '）'; const noName = cells.filter(a => !/，.+，\\d+ 個問題日$/.test(a.getAttribute('aria-label') || '')); if (noName.length) return noName.length + ' 格沒有「類別，期間，N 個問題日」的名稱'; const zeroLinks = [...document.querySelectorAll('#cat-heat-body .lf-heat__zero')].filter(z => z.closest('a')); if (zeroLinks.length) return '0 的格不可點'; cells[0].focus(); return document.activeElement === cells[0] ? null : '第一格無法聚焦';"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "evalAssert": "const a = document.activeElement; const cells = [...document.querySelectorAll('#cat-heat-body a.lf-heat__cell')]; return cells.includes(a) && a !== cells[0] ? null : 'Tab 沒有移到下一個熱度格';"
+      }
+    ]
+  },
+  {
+    "name": "報表-問題類型-熱度格下鑽帶類別與起訖",
+    "role": "ui-admin",
+    "path": "/reports?view=category",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#cat-heat-body table"
+      },
+      {
+        "evalAssert": "const a = document.querySelector('#cat-heat-body a.lf-heat__cell'); if (!a) return '沒有可點的熱度格'; const u = new URL(a.href, location.href); return u.searchParams.get('categories') && u.searchParams.get('from') && u.searchParams.get('to') ? null : ('下鑽網址缺類別或起訖：' + a.href);"
+      }
+    ]
+  },
+  {
+    "name": "報表-處理成效-數字與總覽一致",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "evalAssert": "const card = [...document.querySelectorAll('#report-kpi .lf-kpi-card')].find(c => c.textContent.includes('未結案風險日')); if (!card) return '找不到未結案風險日卡'; window.__lfOpenKpi = Number(card.querySelector('.lf-stat__value').textContent.replace(/[^0-9]/g, '')); return null;"
+      },
+      {
+        "click": "#report-view-switch [data-view=\"effectiveness\"]"
+      },
+      {
+        "waitFor": "#eff-aging-body .lf-report-progress__block"
+      },
+      {
+        "evalAssert": "const m = /未結案\\s*([\\d,]+)/.exec(document.querySelector('#eff-aging-body .lf-text-label').textContent); if (!m) return '帳齡標題沒有「未結案 N」'; const aging = Number(m[1].replace(/,/g, '')); return aging === window.__lfOpenKpi ? null : ('帳齡合計 ' + aging + ' 與總覽「未結案風險日」' + window.__lfOpenKpi + ' 不一致');"
+      }
+    ]
+  },
+  {
+    "name": "報表-列印-補載入三個視角",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "evalAssert": "window.__lfPrint = null; window.print = () => { window.__lfPrint = { printAll: document.querySelector('.lf-report-page').classList.contains('lf-report-print-all'), eff: !!document.querySelector('#eff-recur-body .lf-report-recur__metric'), cat: !!document.querySelector('#cat-heat-body table, #cat-heat-body .lf-empty') }; }; return null;"
+      },
+      {
+        "click": "#btn-print-report"
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "evalAssert": "const p = window.__lfPrint; if (!p) return '按列印後沒有呼叫 window.print()'; if (!p.printAll) return '列印時三個視角沒有都顯示（缺 lf-report-print-all）'; return p.eff && p.cat ? null : ('列印前沒有補載入完：處理成效=' + p.eff + '、問題類型=' + p.cat);"
+      }
+    ]
+  },
+  {
+    "name": "報表-列印-某視角端點失敗時印出未能載入說明",
+    "role": "ui-admin",
+    "path": "/reports",
+    "widths": [
+      1280
+    ],
+    "allowStatus": [
+      500
+    ],
+    "allowConsole": [
+      "[load]"
+    ],
+    "steps": [
+      {
+        "faultApi": {
+          "fail": {
+            "/api/reports/category-trend": 500
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#report-kpi .lf-kpi-card"
+      },
+      {
+        "evalAssert": "window.__lfPrint = null; window.print = () => { window.__lfPrint = true; }; return null;"
+      },
+      {
+        "click": "#btn-print-report"
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "evalAssert": "if (!window.__lfPrint) return '端點失敗時仍要列印'; const v = document.getElementById('view-category'); const note = v.querySelector('.lf-report-view__unavailable'); return v.classList.contains('lf-report-view--failed') && note && note.textContent.includes('此部分未能載入') ? null : '失敗的視角沒有標成「此部分未能載入」';"
+      }
+    ]
+  },
+  {
+    "name": "大螢幕-報表-從處理成效進入顯示總覽離開回處理成效",
+    "role": "ui-admin",
+    "path": "/reports?view=effectiveness",
+    "widths": [
+      1920
+    ],
+    "steps": [
+      {
+        "waitFor": "#eff-recur-body .lf-report-recur__metric"
+      },
+      {
+        "evalAssert": "document.getElementById('btn-report-fullscreen').click(); return null;"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const ov = document.getElementById('view-overview'); const eff = document.getElementById('view-effectiveness'); return !ov.classList.contains('d-none') && eff.classList.contains('d-none') ? null : '進入大螢幕後應只顯示總覽';"
+      },
+      {
+        "evalAssert": "return document.querySelector('#report-view-tabs') && getComputedStyle(document.querySelector('#report-view-tabs')).display === 'none' ? null : '大螢幕不顯示視角切換';"
+      },
+      {
+        "key": "Escape"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "const eff = document.getElementById('view-effectiveness'); const q = new URLSearchParams(location.search); return !eff.classList.contains('d-none') && q.get('view') === 'effectiveness' && !q.has('display') ? null : ('離開後應回到處理成效且網址只剩 view：' + location.search);"
       }
     ]
   }

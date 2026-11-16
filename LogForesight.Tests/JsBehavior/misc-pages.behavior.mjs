@@ -473,7 +473,7 @@ const cases = {
         const calls = { loads: 0 };
         const inst = build('reports.js', ['function onScopeChipClick('], `
             let requestedScope = 'unresolved';
-            const load = () => { calls.loads++; };
+            const reload = () => { calls.loads++; };
         `, '{ onScopeChipClick, requested: () => requestedScope }', { calls });
         const active = { classList: { contains: () => true }, dataset: { scope: 'all' } };
         inst.onScopeChipClick({ target: { closest: () => active } });
@@ -484,7 +484,7 @@ const cases = {
         const calls = { loads: 0 };
         const inst = build('reports.js', ['function onScopeChipClick('], `
             let requestedScope = null;
-            const load = () => { calls.loads++; };
+            const reload = () => { calls.loads++; };
         `, '{ onScopeChipClick, requested: () => requestedScope }', { calls });
         const active = { classList: { contains: () => true }, dataset: { scope: 'all' } };
         inst.onScopeChipClick({ target: { closest: () => active } });

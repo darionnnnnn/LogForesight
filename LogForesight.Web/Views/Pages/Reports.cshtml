@@ -9,10 +9,10 @@
     }
 }
 
-@* 版面依 docs/WEB-SPEC.md §9.6：工具列一列 → 第一排四格 → 圖表區兩列。
-   由上而下、由左而右就是主管的閱讀順序：現在要不要擔心 → 變好還是變壞 → 風險集中在哪 → 有沒有人在處理 → 數字可不可信。
-   外層 .lf-report-page 佔滿可用高度，圖表區分配剩餘空間，不靠寫死的圖表像素高度（docs/DESIGN-SYSTEM.md §6a）。
-   工具列、第一排、圖表區各自有 id，之後的大螢幕模式可以單獨隱藏。 *@
+@* 版面依 docs/WEB-SPEC.md §9.6：工具列一列 → 視角切換 → 目前視角（總覽／處理成效／問題類型，同一頁切換，各自一屏看完）。
+   總覽由上而下、由左而右就是主管的閱讀順序：現在要不要擔心 → 變好還是變壞 → 風險集中在哪 → 有沒有人在處理 → 數字可不可信。
+   外層 .lf-report-page 佔滿可用高度，視角面板分配剩餘空間，不靠寫死的圖表像素高度（docs/DESIGN-SYSTEM.md §6a）。
+   處理成效與問題類型延後載入：切過去才打各自的端點（reports.js）。 *@
 
 <div class="lf-report-page">
     @* 大螢幕標頭列：只在大螢幕模式顯示（樣式表控制），取代工具列。條件文字與工具列左側由同一個函式填入 *@
@@ -90,72 +90,148 @@
         </div>
     </div>
 
-    <p class="h5 d-none d-print-block" id="print-title"></p>
-
-    @* 第一排四格外面多包一層普通 div：Bootstrap 的 .row 帶負的 margin-top，
-       直接當 flex 子項時會讓高度計算多出十幾像素、逼出一條只捲得動幾像素的捲軸 *@
-    <div class="lf-report-page__fixed" id="report-kpi-area">
-        <div class="row g-3" id="report-kpi"></div>
+    @* 視角切換（分段控制）：網址 view= 同步；大螢幕與列印不顯示 *@
+    <div class="lf-report-page__fixed lf-no-print" id="report-view-tabs">
+        <div class="btn-group btn-group-sm" role="group" aria-label="報表視角" id="report-view-switch">
+            <button type="button" class="btn btn-outline-secondary active" data-view="overview" aria-pressed="true">總覽</button>
+            <button type="button" class="btn btn-outline-secondary" data-view="effectiveness" aria-pressed="false">處理成效</button>
+            <button type="button" class="btn btn-outline-secondary" data-view="category" aria-pressed="false">問題類型</button>
+        </div>
+        @* 處理成效與問題類型不套用「顯示範圍」：範圍不是「全部」時在這裡說明（reports.js syncViewNotes） *@
+        <span class="lf-text-meta" id="report-view-note" hidden>此視角不套用顯示範圍</span>
     </div>
 
-    @* 圖表區：兩列分配剩餘高度（見樣式表 .lf-report-page__charts）。
-       每列用 CSS grid 而不是 Bootstrap .row，高度由容器決定，Chart.js 的 responsive 天然跟著縮放 *@
-    <div class="lf-report-page__charts" id="report-charts">
-        <div class="lf-report-page__row lf-report-page__row--top" id="report-row-top">
-            <section class="lf-card" id="trend-section">
-                <div class="lf-card__header">
-                    <h2 class="lf-card__title">風險趨勢</h2>
-                    <div id="trend-toolbar"></div>
-                </div>
-                <div class="lf-card__body">
-                    <div class="lf-chart" id="trend-wrapper"><canvas id="trend-chart"></canvas></div>
-                </div>
-            </section>
+    <p class="h5 d-none d-print-block" id="print-title"></p>
 
-            <section class="lf-card" id="handling-section">
-                <div class="lf-card__header">
-                    <h2 class="lf-card__title">處理進度</h2>
-                </div>
-                <div class="lf-card__body lf-report-progress" id="handling-body"></div>
-            </section>
+    @* ── 視角一：總覽 ─────────────────────────────────────────────────────────── *@
+    <div class="lf-report-view" id="view-overview" data-view="overview">
+        <p class="lf-report-view__unavailable lf-text-meta">此部分未能載入</p>
+
+        @* 第一排四格外面多包一層普通 div：Bootstrap 的 .row 帶負的 margin-top，
+           直接當 flex 子項時會讓高度計算多出十幾像素、逼出一條只捲得動幾像素的捲軸 *@
+        <div class="lf-report-page__fixed" id="report-kpi-area">
+            <div class="row g-3" id="report-kpi"></div>
         </div>
 
-        <div class="lf-report-page__row lf-report-page__row--bottom">
-            <section class="lf-card" id="host-section">
-                <div class="lf-card__header">
-                    <div class="d-flex align-items-center gap-2">
-                        @* 同一張卡兩個視角（主機｜問題）——不另開一張卡，報表一屏化的高度是由外而內分配的 *@
-                        <h2 class="lf-card__title mb-0" id="rank-title">主機排行</h2>
-                        <span class="lf-text-meta" id="host-rank-subtitle"></span>
+        @* 圖表區：兩列分配剩餘高度（見樣式表 .lf-report-page__charts）。
+           每列用 CSS grid 而不是 Bootstrap .row，高度由容器決定，Chart.js 的 responsive 天然跟著縮放 *@
+        <div class="lf-report-page__charts" id="report-charts">
+            <div class="lf-report-page__row lf-report-page__row--top" id="report-row-top">
+                <section class="lf-card" id="trend-section">
+                    <div class="lf-card__header">
+                        <h2 class="lf-card__title">風險趨勢</h2>
+                        <div id="trend-toolbar"></div>
                     </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="btn-group btn-group-sm lf-no-print" id="rank-mode-toggle" role="group" aria-label="排行視角">
-                            <button type="button" class="btn btn-outline-secondary active" data-rank-mode="host">主機</button>
-                            <button type="button" class="btn btn-outline-secondary" data-rank-mode="issue">問題</button>
-                        </div>
-                        <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="host-view-all">檢視全部</a>
-                        <div id="host-toolbar"></div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="trend-wrapper"><canvas id="trend-chart"></canvas></div>
                     </div>
-                </div>
-                <div class="lf-card__body">
-                    <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
-                </div>
-            </section>
+                </section>
 
-            <section class="lf-card" id="category-section">
-                <div class="lf-card__header">
-                    <div class="d-flex align-items-center flex-wrap gap-2">
-                        <h2 class="lf-card__title mb-0">風險類型分布</h2>
-                        @* 問題總數：點進去是期間內全部問題的清單 *@
-                        <a id="category-issue-total" hidden></a>
-                        <span class="lf-text-meta" id="category-subtitle"></span>
+                <section class="lf-card" id="handling-section">
+                    <div class="lf-card__header">
+                        <h2 class="lf-card__title">處理進度</h2>
                     </div>
-                    <div id="category-toolbar"></div>
-                </div>
-                <div class="lf-card__body">
-                    <div class="lf-chart" id="category-wrapper"><canvas id="category-chart"></canvas></div>
-                </div>
-            </section>
+                    <div class="lf-card__body lf-report-progress" id="handling-body"></div>
+                </section>
+            </div>
+
+            @* 主機排行與問題排行並排兩張卡：排名比較用橫條；兩張各自有「檢視全部」與「表格」切換 *@
+            <div class="lf-report-page__row lf-report-page__row--bottom">
+                <section class="lf-card" id="host-section">
+                    <div class="lf-card__header">
+                        <div class="lf-report-rank-head">
+                            <h2 class="lf-card__title mb-0">主機排行</h2>
+                            <span class="lf-text-meta" id="host-rank-subtitle"></span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="host-view-all">檢視全部</a>
+                            <div id="host-toolbar"></div>
+                        </div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
+                    </div>
+                </section>
+
+                <section class="lf-card" id="issue-section">
+                    <div class="lf-card__header">
+                        <div class="lf-report-rank-head">
+                            <h2 class="lf-card__title mb-0">問題排行</h2>
+                            <span class="lf-text-meta" id="issue-rank-subtitle"></span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="issue-view-all">檢視全部</a>
+                            <div id="issue-toolbar"></div>
+                        </div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="issue-wrapper"><canvas id="issue-chart"></canvas></div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    @* ── 視角二：處理成效（延後載入）──────────────────────────────────────────── *@
+    <div class="lf-report-view d-none" id="view-effectiveness" data-view="effectiveness">
+        <p class="lf-report-view__unavailable lf-text-meta">此部分未能載入</p>
+        @* 載入中的骨架列與失敗的「重試」畫在這裡，不覆蓋下面的圖表容器 *@
+        <div class="lf-report-page__fixed" id="eff-status"></div>
+        <div class="lf-report-page__charts" id="eff-body">
+            <div class="lf-report-page__row lf-report-page__row--eff-top">
+                <section class="lf-card" id="eff-buckets-section">
+                    <div class="lf-card__header">
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">各時段的處理狀態</h2>
+                            <span id="eff-buckets-help"></span>
+                        </div>
+                        <div id="eff-buckets-toolbar"></div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="eff-buckets-wrapper"><canvas id="eff-buckets-chart"></canvas></div>
+                    </div>
+                </section>
+
+                <section class="lf-card" id="eff-aging-section">
+                    <div class="lf-card__header">
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">未結案帳齡</h2>
+                            <span id="eff-aging-help"></span>
+                        </div>
+                    </div>
+                    <div class="lf-card__body lf-report-progress" id="eff-aging-body"></div>
+                </section>
+            </div>
+
+            <div class="lf-report-page__row lf-report-page__row--eff-bottom">
+                <section class="lf-card" id="eff-recur-section">
+                    <div class="lf-card__header">
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">結案後再發生</h2>
+                            <span id="eff-recur-help"></span>
+                        </div>
+                    </div>
+                    <div class="lf-card__body lf-report-recur" id="eff-recur-body"></div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    @* ── 視角三：問題類型（延後載入）──────────────────────────────────────────── *@
+    <div class="lf-report-view d-none" id="view-category" data-view="category">
+        <p class="lf-report-view__unavailable lf-text-meta">此部分未能載入</p>
+        <div class="lf-report-page__charts" id="cat-body">
+            <div class="lf-report-page__row lf-report-page__row--cat">
+                <section class="lf-card" id="cat-section">
+                    <div class="lf-card__header">
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">各類型的問題日</h2>
+                            <span id="cat-help"></span>
+                        </div>
+                    </div>
+                    <div class="lf-card__body lf-report-heat" id="cat-heat-body"></div>
+                </section>
+            </div>
         </div>
     </div>
 </div>

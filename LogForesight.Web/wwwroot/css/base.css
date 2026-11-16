@@ -223,6 +223,15 @@
     --lf-timeline-gap: #fff1bf;
     --lf-timeline-none: transparent;
 
+    /* 報表熱度表與未結案帳齡的淡階（單一色相＝品牌色，1 最淡、5 最深且只有 5 接近實色）。
+       格內數字才是主要資訊：1～3 級用正文色（對底 ≥ 7:1），4～5 級改白字（對底 ≥ 5.5:1）。
+       不用類別色或風險紅——紅橘只留給風險狀態本身（DESIGN-SYSTEM §8.8） */
+    --lf-heat-1: #dbe5fb;
+    --lf-heat-2: #b5c9f4;
+    --lf-heat-3: #84a3e8;
+    --lf-heat-4: #3b63c4;
+    --lf-heat-5: #1e40af;
+
     /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
     --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);
     --lf-chart-grid: rgba(0, 0, 0, .06);
