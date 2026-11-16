@@ -82,6 +82,10 @@ public class ReportService
 
         ReportKpiDto kpi;
         List<ReportTrendPointDto> trend;
+        List<ReportTrendPointDto> previousTrend;
+        // 前期逐日長度與本期相同（去年同期跨閏日時兩期天數可能差一天，以本期為準）
+        var trendLength = (to.Date - from.Date).Days + 1;
+        var previousTrendTo = previousFrom.Date.AddDays(trendLength - 1);
         List<DashboardHostDto> ranked;
         HandlingTodoDto? handlingDto = null;
 
@@ -94,6 +98,7 @@ public class ReportService
             {
                 kpi = new ReportKpiDto();
                 trend = BuildTrendFromAggregate(new List<TrendAggregate>(), from, to);
+                previousTrend = BuildTrendFromAggregate(new List<TrendAggregate>(), previousFrom, previousTrendTo);
                 ranked = new List<DashboardHostDto>();
                 handlingDto = new HandlingTodoDto();
             }
@@ -117,6 +122,12 @@ public class ReportService
 
                 var trendAgg = _aggregates.AggregateReportTrend(exclusion, from, to, hostIds, riskLevels, visibleSeverities);
                 trend = BuildTrendFromAggregate(trendAgg, from, to);
+                // 前期沿用同一個聚合查詢；整段超出保留期時不查（下方統一清成空陣列）
+                previousTrend = outOfRetention
+                    ? new List<ReportTrendPointDto>()
+                    : BuildTrendFromAggregate(
+                        _aggregates.AggregateReportTrend(exclusion, previousFrom, previousTrendTo, hostIds, riskLevels, visibleSeverities),
+                        previousFrom, previousTrendTo);
 
                 // 排序規則與 BuildHostRanking 一致：高風險日 → 關聯日 → 中風險日。
                 var hostRiskAgg = _aggregates.AggregateByHost(exclusion, from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
@@ -164,6 +175,7 @@ public class ReportService
             ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
             kpi = BuildKpi(exclusion, records, previousRecords);
             trend = BuildTrend(records, from, to);
+            previousTrend = BuildTrend(previousRecords, previousFrom, previousTrendTo);
         }
 
         var allIssueRanked = _issueRanking.Build(
@@ -184,6 +196,7 @@ public class ReportService
             RetentionDays = retentionDays,
             Kpi = kpi,
             Trend = trend,
+            PreviousTrend = outOfRetention ? new List<ReportPreviousTrendPointDto>() : ToPreviousTrend(previousTrend),
             // 風險類型分布走 SQL 端聚合（回饋十九輪批次D、二十輪批次B），與儀表板同一個查詢方法。
             // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
             // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
@@ -246,6 +259,13 @@ public class ReportService
             NoData = agg.NoData
         };
     }
+
+    /// <summary>前期逐日點轉成帶 DayIndex 的形狀（第 0 天＝前期起日，與本期 Trend 同索引對齊）</summary>
+    private static List<ReportPreviousTrendPointDto> ToPreviousTrend(List<ReportTrendPointDto> points) =>
+        points.Select((p, i) => new ReportPreviousTrendPointDto
+        {
+            DayIndex = i, Date = p.Date, HighRisk = p.HighRisk, MediumRisk = p.MediumRisk
+        }).ToList();
 
     private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)
     {

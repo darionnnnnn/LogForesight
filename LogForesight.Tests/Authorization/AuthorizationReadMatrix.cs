@@ -80,6 +80,11 @@ public static class ReadMatrix
         // ── 儀表板、報表、問題查詢（清單／彙總類）──────────────────────────────
         new() { Key = "GET /api/dashboard/summary", Scope = RowScope.Global, Positive = new[] { Host, Headline, IssueA } },
         new() { Key = "GET /api/reports/summary", Scope = RowScope.Global, Query = "from={from}&to={to}", Positive = new[] { Host, Headline, IssueA } },
+        // 處理成效：再發生排行的問題標籤帶主機前綴的問題名（哨兵 IssueA）；類型趨勢只回數字，
+        // 完整可見的主機數 × 兩個問題＝問題日總數（多算＝洩漏了不可見主機的資料）
+        new() { Key = "GET /api/reports/effectiveness", Scope = RowScope.Global, Query = "from={from}&to={to}", Positive = new[] { IssueA } },
+        new() { Key = "GET /api/reports/category-trend", Scope = RowScope.Global, Query = "from={from}&to={to}",
+            GlobalNeedle = id => id.Vis.Values.Count(v => v == Visibility.Full) is var n and > 0 ? $"\"total\":{n * 2}" : null },
         new() { Key = "GET /api/records", Scope = RowScope.Global, Query = RecordRange, Positive = new[] { Host, Headline, IssueA } },
         new() { Key = "GET /api/records/by-host", Scope = RowScope.Global, Query = RecordRange, Positive = new[] { Host } },
         new() { Key = "GET /api/records/by-date", Scope = RowScope.Global, Query = RecordRange,

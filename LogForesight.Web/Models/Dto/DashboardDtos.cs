@@ -280,6 +280,9 @@ public class ReportSummaryDto
     /// <summary>趨勢折線：逐日的高/中風險數</summary>
     public List<ReportTrendPointDto> Trend { get; set; } = new();
 
+    /// <summary>前一期（或去年同期）逐日高／中風險數；DayIndex 與 <see cref="Trend"/> 依期間第幾天對齊，長度相同。比較期整段超出保留期時為空陣列</summary>
+    public List<ReportPreviousTrendPointDto> PreviousTrend { get; set; } = new();
+
     /// <summary>類型分布：類別 × 嚴重度（堆疊長條）</summary>
     public List<DashboardCategoryDto> Categories { get; set; } = new();
 

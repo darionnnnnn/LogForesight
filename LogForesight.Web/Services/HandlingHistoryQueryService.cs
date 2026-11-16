@@ -317,12 +317,25 @@ public class HandlingHistoryQueryService
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) =>
         GetTodo(_exclusions.Current(), records);
 
-    /// <summary>呼叫端已在同一次請求取得靜音排除條件時用這個。</summary>
-    public HandlingTodoDto GetTodo(IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records)
+    /// <summary>單一風險日在「現在」的對外三態與是否逾期（<see cref="ClassifyDays"/> 的輸出）</summary>
+    internal readonly record struct ClassifiedDay(DailyAnalysisRecord Record, string External, bool Overdue);
+
+    /// <summary>
+    /// 逐筆算出風險日現在的對外三態與是否逾期——待辦統計（<see cref="GetTodo"/>）與報表處理成效共用的唯一推導，
+    /// 不另寫第二份判定。母體強制只取高＋中風險日（同 GetTodo）。
+    /// </summary>
+    /// <param name="issueHandlings">
+    /// 呼叫端已載入的問題層級處理列（須涵蓋這批紀錄的主機與日期範圍）；null 時自行依紀錄範圍查一次。
+    /// 報表處理成效把同一份也拿去算再發生率，整個請求因此只查一次 <see cref="IIssueHandlingStore.GetMany"/>。
+    /// </param>
+    internal List<ClassifiedDay> ClassifyDays(
+        IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records,
+        IReadOnlyCollection<IssueHandling>? issueHandlings = null)
     {
         // 待辦母體＝高＋中風險日，全站唯一定義（S3）：呼叫端不必也不應該自己先過濾
         var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
-        if (actionable.Count == 0) return new HandlingTodoDto();
+        var result = new List<ClassifiedDay>(actionable.Count);
+        if (actionable.Count == 0) return result;
 
         // 紀錄 → 現行主機名稱：handling 以現行名稱為鍵（與 RecordListQueryService 同一套規則）。
         // 可見範圍不在這裡過濾——傳入的紀錄已經過 RecordRepository 的可見範圍交集
@@ -333,7 +346,7 @@ public class HandlingHistoryQueryService
         var from = actionable.Min(r => r.Date);
         var to = actionable.Max(r => r.Date);
         var handlings = _store.GetMany(hostNames, from, to);
-        var issueHandlings = _issueStore.GetMany(hostNames, from, to);
+        var issueHandlingRows = issueHandlings ?? _issueStore.GetMany(hostNames, from, to);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
         // 迴圈外先建索引：3000 台 × 366 天下，迴圈內線性搜尋是 10^10 次字串比對。
@@ -341,11 +354,10 @@ public class HandlingHistoryQueryService
         // 轉換，兩套正規化規則遲早漂移，症狀是「名稱大小寫不同的主機處理狀態突然全部對不上」。
         // ToDictionary 不怕撞鍵：lf_record_handling 對 (host_name_key, record_date) 有 unique 索引。
         var handlingDict = handlings.ToDictionary(h => (HostNameKey.Of(h.HostName), h.Date.Date));
-        var issueHandlingDict = issueHandlings
+        var issueHandlingDict = issueHandlingRows
             .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date))
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var todo = new HandlingTodoDto { TotalCount = actionable.Count };
         foreach (var record in actionable)
         {
             var name = NameOf(record);
@@ -366,22 +378,37 @@ public class HandlingHistoryQueryService
             // （使用者把整天標成這些狀態、當天沒有問題層級標記時），改看 ExternalOf 前這三種狀態
             // 誰都不算，會讓 OpenCount+InProgressCount+ResolvedCount 加總小於 TotalCount，
             // 「未完成」（Total－Resolved）因此把已結案的日子誤算成未完成
-            switch (HandlingStatuses.ExternalOf(progress.DayStatus))
-            {
-                case HandlingStatuses.Open: todo.OpenCount++; break;
-                case HandlingStatuses.InProgress: todo.InProgressCount++; break;
-                default: todo.ResolvedCount++; break;
-            }
+            var external = HandlingStatuses.ExternalOf(progress.DayStatus);
 
             // 逾期兩層都看：日層級 DueDate 過期且未結案，或任一問題層級「處理中」過期
             // （與問題查詢清單的 IsOverdue 同一套語意，來源同為 DayHandlingDerivation.HasOverdueIssue）
             var dayOverdue = handling?.DueDate.HasValue == true &&
                              handling.DueDate.Value.Date < DateTime.Today &&
                              progress.IsUnresolved;
-            if (dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today, exclusion, record.Date))
+            var overdue = dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today, exclusion, record.Date);
+
+            result.Add(new ClassifiedDay(record, external, overdue));
+        }
+
+        return result;
+    }
+
+    /// <summary>呼叫端已在同一次請求取得靜音排除條件時用這個。</summary>
+    public HandlingTodoDto GetTodo(IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records)
+    {
+        var days = ClassifyDays(exclusion, records);
+        if (days.Count == 0) return new HandlingTodoDto();
+
+        var todo = new HandlingTodoDto { TotalCount = days.Count };
+        foreach (var day in days)
+        {
+            switch (day.External)
             {
-                todo.OverdueCount++;
+                case HandlingStatuses.Open: todo.OpenCount++; break;
+                case HandlingStatuses.InProgress: todo.InProgressCount++; break;
+                default: todo.ResolvedCount++; break;
             }
+            if (day.Overdue) todo.OverdueCount++;
         }
 
         return todo;

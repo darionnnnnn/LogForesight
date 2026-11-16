@@ -207,6 +207,8 @@ PUT	/api/records/{hostId:long}/{date}/handling/issues	C=-;A=Handle	-	-	-	Handlin
 PUT	/api/records/{hostId:long}/{date}/handling/issues/batch	C=-;A=Handle	-	-	-	HandlingController
 GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	-	-	HandlingController
 GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	-	-	RecordsController
+GET	/api/reports/category-trend	C=-;A=-	-	-	-	ReportsController
+GET	/api/reports/effectiveness	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/summary	C=-;A=-	-	-	-	ReportsController
 GET	/api/rules	C=Maintain;A=-	-	-	-	RulesController
 POST	/api/rules	C=Maintain;A=-	-	-	-	RulesController

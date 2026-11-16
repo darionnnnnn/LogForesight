@@ -38,6 +38,7 @@ public class AuthorizationCacheAndAnonymousHttpTests
         var to = AuthorizationHttpFixture.DayText;
         yield return new object[] { "/api/dashboard/summary" };
         yield return new object[] { $"/api/reports/summary?from={from}&to={to}" };
+        yield return new object[] { $"/api/reports/effectiveness?from={from}&to={to}" };
     }
 
     [Theory]

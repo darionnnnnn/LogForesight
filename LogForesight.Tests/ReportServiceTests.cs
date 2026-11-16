@@ -738,7 +738,7 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void ReportsController_Summary_367天丟出驗證錯誤()
     {
-        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service, null!, null!);
         var from = DateTime.Today.AddDays(-366).ToString("yyyy-MM-dd");
         var to = DateTime.Today.ToString("yyyy-MM-dd");
 
@@ -749,7 +749,7 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void ReportsController_Summary_366天可以通過()
     {
-        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service, null!, null!);
         var from = DateTime.Today.AddDays(-365).ToString("yyyy-MM-dd");
         var to = DateTime.Today.ToString("yyyy-MM-dd");
 
