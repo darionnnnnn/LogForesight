@@ -297,6 +297,7 @@
 | E0-b | 主代理 | 量測工具已有 `type`（核對時盤點漏看），補 `select` 與檔頭、DESIGN-SYSTEM §8.7 說明；新增情境「設定-下拉選值後儲存並保留」 | 兩個負例（選擇器錯、選項不存在）皆 assert=1 失敗 | 規劃寫「沒有輸入與送出」不正確：`type` 早已存在且有既有填表情境，E0-b 縮為補 `select` |
 | E0 全量 | 主代理 | macOS 10,098 通過／20 略過（基線 10,082＋本批 16） | quick 矩陣 185 情境，2 個整批時失敗、單獨重跑為 0，記為 T-01 | 無 |
 | E0-c | 主代理 | UI 資料集補 `ui-dev`、`ui-owner`（只靠主機負責人，負責 `ui-linux-db01`）；`svc-lfadmin` 在 Stub 模式免密碼即可登入，不必建 | 新增兩條資料集檢查 | 帳號接在清單最後，既有 UserId 不變 |
+| E5 | Sonnet 5.5 實作整條鏈、主代理對照官方手冊與驗收 | 契約對照表、`PrtgEndToEndChainTests` 13 個、`FakePrtgServer`；Windows VM 全量 10,105 通過／1 失敗（T-02）／12 略過 | 主代理重跑 13＋PlatformGuard 通過；突變兩個（treesize 出聲、messages 列鍵）皆轉紅並還原 | 未涵蓋範圍外清除與管線逾時重試（見評估記錄） |
 
 ### E0 實作事實（後續批次寫情境時要知道）
 - 分析與派工：驅動器照 `AnalysisOrchestrator` 的組裝重建 `NetiqPipelineService`、`IssueCaseCoordinator`、`WorkOrderCoordinator`、`NightlyDispatch`，派工脈絡是真的 `DispatchContext`（候選人來自站台 `IDispatchCandidateSource`），抑制用正式的 `MuteAwareSuppressionStore`；趟末 `FlushRun` 後與排程同一步入通知佇列。**不跑**保留清除、PRTG、權限檢查、體檢。
