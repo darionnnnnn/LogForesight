@@ -28,6 +28,7 @@ public class HealthService
     private readonly ScheduleFreshnessService _freshness;
     private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
     private readonly PrtgSnapshotHostedService? _snapshotService;
+    private readonly HostDayWorkflowRecoveryHostedService? _recoveryService;
     private readonly IReadOnlyList<ICacheStatistics> _caches;
 
     public HealthService(
@@ -38,8 +39,10 @@ public class HealthService
         ScheduleFreshnessService freshness,
         IssueFirstSeenSeedHostedService? firstSeenSeedService = null,
         PrtgSnapshotHostedService? snapshotService = null,
-        IEnumerable<ICacheStatistics>? caches = null)
+        IEnumerable<ICacheStatistics>? caches = null,
+        HostDayWorkflowRecoveryHostedService? recoveryService = null)
     {
+        _recoveryService = recoveryService;
         _backend = backend;
         _runState = runState;
         _backfiller = backfiller;
@@ -270,6 +273,11 @@ public class HealthService
 
             SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
             MailContributionLedger = _mail.GetContributionLedgerStatus(),
+
+            // 主機日恢復：目前仍在等待的列（含排隊等逐列恢復的）與其中需要人看的列（內容無效、主機編號無效、超過單列上限）
+            HostDayRecovery = _recoveryService?.GetWaitingSummary() is { } recovery
+                ? new HostDayRecoveryHealthDto { Waiting = recovery.Waiting, NeedsAttention = recovery.NeedsAttention, ByReason = recovery.ByReason.ToDictionary(pair => pair.Key, pair => pair.Value) }
+                : null,
 
             CryptoKeySource = CryptoHelper.KeySource,
             CryptoKeyMismatch = cryptoKeyMismatch,

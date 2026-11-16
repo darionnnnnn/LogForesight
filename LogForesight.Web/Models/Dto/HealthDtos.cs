@@ -136,6 +136,9 @@ public class HealthDetailDto : HealthDto
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
 
+    /// <summary>主機日恢復的等待狀態；恢復服務不在（測試）時為 null</summary>
+    public HostDayRecoveryHealthDto? HostDayRecovery { get; set; }
+
     /// <summary>郵件貢獻帳本狀態：佔用鍵數、上限與最近一次滿載（行程內記憶）。</summary>
     public MailContributionLedgerDto MailContributionLedger { get; set; } = new();
 
@@ -289,4 +292,12 @@ public sealed class MailContributionLedgerDto
 
     /// <summary>最近一次因滿載而略過的收件人；未發生過為 null</summary>
     public string? LastFullRecipient { get; set; }
+}
+
+/// <summary>系統健康「主機日恢復」列：仍在等待的列數、需要人看的列數與原因分布（原因碼 → 列數）</summary>
+public class HostDayRecoveryHealthDto
+{
+    public int Waiting { get; set; }
+    public int NeedsAttention { get; set; }
+    public Dictionary<string, int> ByReason { get; set; } = new();
 }

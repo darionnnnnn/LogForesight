@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using LogForesight.Core.Analysis;
@@ -28,6 +29,17 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     private readonly RecoveryBudget _budget;
     private readonly NamedMutexGate _lease = new(LeaseName);
     private const int MaxPendingReportsPerPage = 4;
+    /// <summary>每頁最多逐列恢復幾個超過單頁上限的主機日（暫定）；其餘維持等待，下一輪再處理</summary>
+    internal const int MaxOversizedRecoveriesPerPage = 4;
+
+    /// <summary>
+    /// 目前仍在恢復等待的列（記憶體、本次站台啟動以來），鍵為 RecordId。同一列同一個寫入版本只在第一次寫逐列警告，
+    /// 之後每輪只在摘要行帶相異列數（站台重啟後允許再印一次）；成功對帳就移除。系統健康讀這份。
+    /// </summary>
+    private readonly ConcurrentDictionary<long, WorkflowRecoveryWaitingHostDay> _waiting = new();
+
+    /// <summary>已逐列恢復過的超大列與當時的寫入版本：版本沒變就不再重讀（恢復是冪等的，版本變了才有新東西要對）</summary>
+    private readonly ConcurrentDictionary<long, long> _recoveredOversized = new();
 
     public HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, IAiRequestGate aiGate,
@@ -72,8 +84,9 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                         gatedResult = await RunSliceAsync(stoppingToken), stoppingToken);
                     result = gatedResult ?? throw new InvalidOperationException("Recovery gate completed without a slice result.");
                 }
+                // 逐列警告已在第一次歸為等待時寫過；摘要只帶目前仍在等待的相異列數，不再每輪重複警告
                 if (result.WaitingRows > 0)
-                    Log.Warn("Workflow recovery slice advanced past {Rows} bounded rows awaiting review; cumulative waiting={Cumulative}",
+                    Log.Info("Workflow recovery slice passed {Rows} rows still awaiting review; distinct waiting={Cumulative}",
                         result.WaitingRows, result.CumulativeWaitingRows);
                 Log.Info("Workflow recovery slice: hot={Hot} deep={Deep} orphan={Orphans} waiting={Waiting} payloadBytes={Bytes}",
                     result.HotRows, result.DeepRows, result.OrphanRows, result.WaitingRows, result.PayloadBytesRead);
@@ -145,8 +158,8 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             }
         }
 
-        var cursor = ReadCursor();
-        result.CumulativeWaitingRows = cursor.WaitingRows;
+        // 「累計」是目前仍在等待的相異列數，不是每輪重複加總（同一批列每 15 分鐘會再巡到一次）
+        result.CumulativeWaitingRows = _waiting.Count;
         return Task.FromResult(result.ToImmutable());
     }
 
@@ -177,10 +190,10 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             }
 
             ValidateAdvance(cursor.HotAfterRecordId, page);
-            Reconcile(page, prtgEnabled, aiEnabled, cursor.HotPassNumber, cancellationToken);
+            var stillWaiting = Reconcile(page, prtgEnabled, aiEnabled, cursor.HotPassNumber, cancellationToken);
             Advance(cursor, page, nowUtc);
             WriteCursor(cursor);
-            outcome = new PageOutcome(true, true, false, page.RawCount, page.WaitingHostDays.Count, page.PayloadBytesRead);
+            outcome = new PageOutcome(true, true, false, page.RawCount, stillWaiting, page.PayloadBytesRead);
         }, TimeSpan.FromSeconds(1), runActionWhenNotAcquired: false);
         return acquired ? outcome ?? PageOutcome.NoWork : PageOutcome.NoWork;
     }
@@ -205,10 +218,10 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             }
 
             ValidateAdvance(cursor.DeepAfterRecordId, page);
-            Reconcile(page, prtgEnabled, aiEnabled, cursor.DeepPassNumber, cancellationToken);
+            var stillWaiting = Reconcile(page, prtgEnabled, aiEnabled, cursor.DeepPassNumber, cancellationToken);
             Advance(cursor, page, nowUtc, deep: true);
             WriteCursor(cursor);
-            outcome = new PageOutcome(true, true, false, page.RawCount, page.WaitingHostDays.Count, page.PayloadBytesRead);
+            outcome = new PageOutcome(true, true, false, page.RawCount, stillWaiting, page.PayloadBytesRead);
         }, TimeSpan.FromSeconds(1), runActionWhenNotAcquired: false);
         return acquired ? outcome ?? PageOutcome.NoWork : PageOutcome.NoWork;
     }
@@ -267,13 +280,46 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         return acquired ? outcome ?? PageOutcome.NoWork : PageOutcome.NoWork;
     }
 
-    private void Reconcile(WorkflowRecoveryPage page, bool prtgEnabled, bool aiEnabled,
+    /// <returns>這一頁最後仍維持恢復等待的列數</returns>
+    private int Reconcile(WorkflowRecoveryPage page, bool prtgEnabled, bool aiEnabled,
         long retryPassNumber, CancellationToken cancellationToken)
     {
-        foreach (var waiting in page.WaitingHostDays)
+        var recovered = new List<DailyAnalysisRecord>();
+        var stillWaiting = 0;
+        // 上一輪被延後、目前仍在等待的列優先：分頁讀取每一輪都會把同一批超大列再列一次，
+        // 不排序的話已恢復過的前幾列會一直先吃掉每頁額度，排在後面的永遠輪不到
+        var ordered = page.WaitingHostDays.OrderBy(row => _waiting.ContainsKey(row.RecordId) ? 0 : 1).ToList();
+        foreach (var waiting in ordered)
         {
-            Log.Warn("Workflow recovery leaves authoritative row pending: recordId={RecordId} hostId={HostId} date={Date:yyyy-MM-dd} reason={Reason} chars={Characters}",
-                waiting.RecordId, waiting.HostId, waiting.Date, waiting.ReasonCode, waiting.ReportedPayloadCharacters);
+            cancellationToken.ThrowIfCancellationRequested();
+            // 超過單頁上限的主機日逐列讀完整內容、走與一般列相同的對帳與補寫報告，不再永遠停在等待
+            // （等待會把它排除在通知信與 PRTG 判定之外，而事件越多的日子越容易超過上限）
+            if (IsOversizedCandidate(waiting))
+            {
+                if (_recoveredOversized.TryGetValue(waiting.RecordId, out var recoveredRevision) &&
+                    recoveredRevision == waiting.CapturedWriteRevision)
+                    continue;
+                if (recovered.Count >= MaxOversizedRecoveriesPerPage)
+                {
+                    // 每頁額度用完：排進下一輪優先處理，但不標成恢復等待（標了會把它排除在通知之外）
+                    _waiting[waiting.RecordId] = waiting;
+                    stillWaiting++;
+                    continue;
+                }
+                if (TryRecoverOversized(waiting, prtgEnabled, aiEnabled) is { } record)
+                {
+                    recovered.Add(record);
+                    continue;
+                }
+            }
+            stillWaiting++;
+            var known = _waiting.TryGetValue(waiting.RecordId, out var previous) &&
+                        previous.CapturedWriteRevision == waiting.CapturedWriteRevision &&
+                        previous.ReasonCode == waiting.ReasonCode;
+            _waiting[waiting.RecordId] = waiting;
+            if (!known)
+                Log.Warn("Workflow recovery leaves authoritative row pending: recordId={RecordId} hostId={HostId} date={Date:yyyy-MM-dd} reason={Reason} chars={Characters}",
+                    waiting.RecordId, waiting.HostId, waiting.Date, waiting.ReasonCode, waiting.ReportedPayloadCharacters);
             if (waiting.HostId > 0 && !_workflow.MarkRecoveryWaiting(waiting))
                 Log.Info("Workflow recovery waiting snapshot was stale; preserved the newer workflow: recordId={RecordId} hostId={HostId} date={Date:yyyy-MM-dd}",
                     waiting.RecordId, waiting.HostId, waiting.Date);
@@ -285,10 +331,47 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 Log.Warn("Workflow recovery skipped row without its captured SQL revision: recordId={RecordId}", record.RecordId);
                 continue;
             }
+            _waiting.TryRemove(record.RecordId, out _);
             if (!_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled))
                 Log.Warn("Workflow recovery row changed after bounded read; it will be retried on a later pass: recordId={RecordId}", record.RecordId);
         }
-        RetryPendingReports(page.Records, cancellationToken, retryPassNumber);
+        RetryPendingReports(recovered.Count == 0 ? page.Records : page.Records.Concat(recovered).ToList(),
+            cancellationToken, retryPassNumber);
+        return stillWaiting;
+    }
+
+    /// <summary>
+    /// 逐列恢復一個超過單頁上限的主機日：只處理 <c>recovery-payload-over-limit</c> 且不超過單列上限
+    /// （<see cref="WorkflowRecoveryPage.MaximumOversizedPayloadBytes"/>）的列；讀不到、超過單列上限或查詢不支援時回 null，
+    /// 呼叫端維持原本的等待標記。一次只讀一列，記憶體上限＝單列上限。
+    /// </summary>
+    private static bool IsOversizedCandidate(WorkflowRecoveryWaitingHostDay waiting) =>
+        waiting.ReasonCode == "recovery-payload-over-limit" && waiting.HostId > 0 &&
+        waiting.ReportedPayloadCharacters <= WorkflowRecoveryPage.MaximumOversizedPayloadBytes;
+
+    private DailyAnalysisRecord? TryRecoverOversized(WorkflowRecoveryWaitingHostDay waiting, bool prtgEnabled, bool aiEnabled)
+    {
+        WorkflowRecoveryPage single;
+        try { single = _records.QueryWorkflowRecoveryRecord(waiting.RecordId, WorkflowRecoveryPage.MaximumOversizedPayloadBytes); }
+        catch (NotSupportedException) { return null; }
+        if (single.Records.Count != 1 || single.CapturedWriteRevisions == null ||
+            !single.CapturedWriteRevisions.TryGetValue(waiting.RecordId, out var revision))
+            return null;
+        var record = single.Records[0];
+        _waiting.TryRemove(record.RecordId, out _);
+        if (_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled))
+            _recoveredOversized[record.RecordId] = revision;
+        else
+            Log.Warn("Workflow recovery row changed after bounded read; it will be retried on a later pass: recordId={RecordId}", record.RecordId);
+        return record;
+    }
+
+    /// <summary>系統健康用：目前仍在恢復等待的列，以及其中需要人看的列（內容無效、主機編號無效、超過單列上限）</summary>
+    public (int Waiting, int NeedsAttention, IReadOnlyDictionary<string, int> ByReason) GetWaitingSummary()
+    {
+        var rows = _waiting.Values.ToList();
+        var attention = rows.Count(row => !IsOversizedCandidate(row));
+        return (rows.Count, attention, rows.GroupBy(row => row.ReasonCode).ToDictionary(group => group.Key, group => group.Count()));
     }
 
     internal int RetryPendingReports(IReadOnlyList<DailyAnalysisRecord> records, CancellationToken cancellationToken,

@@ -1459,7 +1459,34 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 row.ContentJson.Substring(0, WorkflowRecoveryPage.MaximumPayloadPrefixCharacters), row.ContentJson.Length,
                 row.WriteRevision))
             .ToList();
+        return BuildWorkflowRecoveryPage(projected, WorkflowRecoveryPage.MaximumPayloadBytes, capturedAtUtc);
+    }
 
+    /// <summary>
+    /// 單筆、較大上限的恢復讀取：分頁讀取因超過單頁上限而歸為等待的主機日，由恢復服務逐列以這個方法讀完整內容，
+    /// 走與分頁相同的反序列化（<see cref="BuildWorkflowRecoveryPage"/>），工作流指紋才會一致。
+    /// 一次只讀一列，記憶體上限＝<paramref name="maximumPayloadBytes"/>。
+    /// </summary>
+    public WorkflowRecoveryPage QueryWorkflowRecoveryRecord(long recordId, int maximumPayloadBytes)
+    {
+        if (recordId <= 0) throw new ArgumentOutOfRangeException(nameof(recordId));
+        if (maximumPayloadBytes is < WorkflowRecoveryPage.MaximumPayloadBytes or > WorkflowRecoveryPage.MaximumOversizedPayloadBytes)
+            throw new ArgumentOutOfRangeException(nameof(maximumPayloadBytes));
+        var capturedAtUtc = DateTime.UtcNow;
+        using var ctx = _contextFactory();
+        var projected = ctx.DailyRecords.AsNoTracking()
+            .Where(row => row.RecordId == recordId)
+            .Select(row => new WorkflowRecoveryProjection(row.RecordId, row.HostId, row.HostName, row.RecordDate,
+                row.RiskLevel, row.AiPending, row.DetailPruned, row.RiskReviewStatus, row.RiskProjectionVersion,
+                row.ContentJson.Substring(0, maximumPayloadBytes + 1), row.ContentJson.Length,
+                row.WriteRevision))
+            .ToList();
+        return BuildWorkflowRecoveryPage(projected, maximumPayloadBytes, capturedAtUtc);
+    }
+
+    private WorkflowRecoveryPage BuildWorkflowRecoveryPage(IReadOnlyList<WorkflowRecoveryProjection> projected,
+        int maximumPayloadBytes, DateTime capturedAtUtc)
+    {
         var records = new List<DailyAnalysisRecord>(projected.Count);
         var waiting = new List<WorkflowRecoveryWaitingHostDay>();
         long bytesRead = 0;
@@ -1473,8 +1500,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     "recovery-host-id-invalid", item.ContentLength, item.WriteRevision, capturedAtUtc));
                 continue;
             }
-            if (item.ContentLength > WorkflowRecoveryPage.MaximumPayloadBytes ||
-                prefixBytes > WorkflowRecoveryPage.MaximumPayloadBytes || item.ContentLength > item.ContentPrefix.Length)
+            if (item.ContentLength > maximumPayloadBytes ||
+                prefixBytes > maximumPayloadBytes || item.ContentLength > item.ContentPrefix.Length)
             {
                 waiting.Add(new WorkflowRecoveryWaitingHostDay(item.RecordId, item.HostId, item.RecordDate,
                     "recovery-payload-over-limit", item.ContentLength, item.WriteRevision, capturedAtUtc));
