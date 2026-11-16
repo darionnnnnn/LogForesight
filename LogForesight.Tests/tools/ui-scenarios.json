@@ -2680,6 +2680,7 @@
     "role": "ui-admin",
     "path": "fixture:record.all-kinds",
     "widths": [
+      1280,
       1920,
       2560,
       3840
@@ -2692,7 +2693,7 @@
         "evalAssert": "const m = document.querySelector('main.lf-content'); const gap = document.documentElement.clientWidth - m.getBoundingClientRect().right; return gap > 2 ? ('內容區右側空出 ' + Math.round(gap) + 'px（應滿版）') : null;"
       },
       {
-        "evalAssert": "const bad = [...document.querySelectorAll('.lf-briefing__text, .lf-briefing__brief-text, .lf-issue-cell__explain')].filter(e => e.getBoundingClientRect().width > parseFloat(getComputedStyle(e).fontSize) * 40 + 1); return bad.length ? ('成段文字超過 40em 行寬：' + bad.length + ' 處') : null;"
+        "evalAssert": "const bad = []; for (const e of document.querySelectorAll('.lf-briefing__text, .lf-briefing__brief-text, .lf-issue-cell__explain, .lf-key-details')) { if (!e.offsetParent) continue; const fs = parseFloat(getComputedStyle(e).fontSize); const p = e.parentElement; const ps = getComputedStyle(p); const pw = p.getBoundingClientRect().width - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight); const w = e.getBoundingClientRect().width; const name = e.className.split(' ')[0]; if (w > fs * 64 + 1) bad.push(name + ' 超過 64em'); else if (w < Math.min(pw * 0.9, fs * 64 - 1)) bad.push(name + ' 只占所在欄 ' + Math.round(w / pw * 100) + '%'); } return bad.length ? ('成段文字沒有填滿所在的欄（上限 64em）：' + [...new Set(bad)].slice(0, 4).join('；') + '，共 ' + bad.length + ' 處') : null;"
       }
     ]
   },
@@ -3942,6 +3943,131 @@
       },
       {
         "evalAssert": "if (innerWidth < 1920) return null; const rem = parseFloat(getComputedStyle(document.documentElement).fontSize); const ths=[...document.querySelectorAll('#perm-list table thead th')]; const th=ths.find(t=>t.textContent.trim().startsWith('異動說明')); if (!th) return '找不到異動說明欄'; const w=th.getBoundingClientRect().width; return w < 14 * rem ? ('異動說明欄只剩 ' + Math.round(w) + 'px') : null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-風險日詳情-詢問AI點標題列開合",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.record-detail-chat'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#chat-card:not(.d-none)"
+      },
+      {
+        "evalAssert": "const h = document.querySelector('#chat-card > .lf-card__header'); if (!h.classList.contains('lf-card__header--clickable')) return '詢問 AI 標題列沒有可點線索'; if (h.hasAttribute('tabindex') || h.getAttribute('role')) return '標題列不應另成焦點停駐點'; window.__bg = getComputedStyle(h).backgroundColor; return null;"
+      },
+      {
+        "hover": "#chat-card > .lf-card__header .lf-card__title"
+      },
+      {
+        "evalAssert": "const h = document.querySelector('#chat-card > .lf-card__header'); return getComputedStyle(h).backgroundColor === window.__bg ? '標題列滑過沒有底色變化' : null;"
+      },
+      {
+        "hover": null
+      },
+      {
+        "click": "#chat-card > .lf-card__header .lf-card__title"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-collapse').classList.contains('show') ? null : '點標題文字沒有展開';"
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-toggle').getAttribute('aria-expanded') === 'true' ? null : '展開後觸發鈕 aria-expanded 應為 true';"
+      },
+      {
+        "click": "#chat-card > .lf-card__header .lf-card__title"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-collapse').classList.contains('show') ? '再點標題文字沒有收合' : null;"
+      },
+      {
+        "click": "#chat-toggle"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return document.getElementById('chat-collapse').classList.contains('show') ? null : '觸發鈕本身仍要能展開';"
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-監看範圍點標題列開合",
+    "role": "ui-admin",
+    "path": "/admin/prtg",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "evalAssert": "localStorage.removeItem('lf.collapse.prtg-monitoring'); return null;"
+      },
+      {
+        "reload": true
+      },
+      {
+        "click": "[data-tab=\"params\"]"
+      },
+      {
+        "waitFor": "#prtg-monitoring-toggle"
+      },
+      {
+        "click": "#prtg-monitoring-title"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "evalAssert": "return document.getElementById('prtg-monitoring-body').classList.contains('show') ? null : '點「監看範圍」標題沒有展開';"
+      }
+    ]
+  },
+  {
+    "name": "版面-佐證層文字層級",
+    "role": "ui-admin",
+    "path": "fixture:record.all-kinds",
+    "widths": [
+      375,
+      1280,
+      2560
+    ],
+    "steps": [
+      {
+        "waitFor": "#detail-issues tbody tr"
+      },
+      {
+        "click": "#detail-issues section.lf-issue-group .lf-issue-group__expand-all"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const g = [...document.querySelectorAll('#detail-issues .lf-guidance')].find(x => x.querySelector('.lf-guidance__label')); if (!g) return '資料集沒有處置參考'; const sec = g.closest('.lf-evidence__section'); const st = el => { const c = getComputedStyle(el); return [c.color, c.fontWeight, c.fontSize]; }; const head = st(sec.querySelector('.lf-evidence__label')); const sub = st(g.querySelector('.lf-guidance__label')); const li = g.querySelector('li') || g.querySelector('.lf-guidance__label + div'); if (!li) return '處置參考沒有內文'; const body = st(li); const same = (a, b) => a.every((v, i) => v === b[i]); if (same(head, sub)) return '區標題與小標樣式完全相同：' + head.join(' / '); if (same(sub, body)) return '小標與內文樣式完全相同：' + sub.join(' / '); if (same(head, body)) return '區標題與內文樣式完全相同'; if (getComputedStyle(sec.querySelector('.lf-evidence__label')).borderBottomStyle === 'none') return '區標題缺分隔線'; return null;"
+      },
+      {
+        "evalAssert": "const ol = document.querySelector('#detail-issues .lf-guidance ol.lf-guidance__list'); const steps = [...document.querySelectorAll('#detail-issues .lf-guidance .lf-guidance__label')].some(e => e.textContent === '處置步驟'); if (steps && !ol) return '處置步驟沒有用編號清單'; return null;"
+      },
+      {
+        "evalAssert": "const k = document.querySelector('#detail-issues .lf-source-obs__key'); if (!k) return null; const v = k.nextElementSibling; return getComputedStyle(k).color === getComputedStyle(v).color ? '來源觀測的欄位名與值同色' : null;"
       }
     ]
   }

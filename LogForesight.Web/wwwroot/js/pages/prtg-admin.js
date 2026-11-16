@@ -3070,7 +3070,8 @@ function init() {
     bindScopeControls();
     // 監看範圍是可選縮圈，日常用不到：放在擷取參數頁籤、預設收合並記住使用者的選擇
     bindRememberedCollapse(document.getElementById('prtg-monitoring-body'),
-        document.getElementById('prtg-monitoring-toggle'), 'prtg-monitoring');
+        document.getElementById('prtg-monitoring-toggle'), 'prtg-monitoring',
+        { header: document.querySelector('[aria-labelledby="prtg-monitoring-title"] > .lf-card__header') });
     bindStructureSync();
     bindConflictBatchControls();
     bindUnmatchedControls();

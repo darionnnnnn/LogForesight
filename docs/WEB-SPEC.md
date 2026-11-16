@@ -1509,7 +1509,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊**（實驗性精簡版）：主欄、重點問題卡正下方的可收合卡，AI 可用且當日有重點問題才顯示。
-  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動（最小 6rem）；「指定問題」面板展開而放不下時整組在卡內捲動，不溢出卡片。
+  預設收合，開合以共用 `bindRememberedCollapse` 記住（鍵 `record-detail-chat`），整個標題列可點（標題列上的放大檢視、清除重來仍是各自的按鈕）；展開時內容區高 `max(20rem, 50vh)`、訊息區內部捲動（最小 6rem）；「指定問題」面板展開而放不下時整組在卡內捲動，不溢出卡片。
   範圍是這台主機這一天：每輪 context 固定含「整日摘要」（主機／日期／風險等級、有值才印的
   標題／重點速報／狀況／趨勢／建議處置，加上依嚴重度取前 15 筆的問題一覽，整段上限 1,500 字，
   超出從一覽尾端整行刪除），另附 0～4 個「焦點問題」的詳細區塊（問題欄位、關鍵細節、樣本訊息最多 2 則，
@@ -2794,7 +2794,7 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
   `PrtgRetentionDays` 受「不可大於歷史資料保留天數」約束，前端先提示、後端仍驗一次，
   且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
   **監看範圍（可選縮圈）**整卡在擷取參數表單之後（獨立表單，不得巢狀在參數表單內），Bootstrap collapse 預設收合，
-  展開狀態以 `ui.js` 的 `bindRememberedCollapse`（`localStorage` 鍵 `lf.collapse.prtg-monitoring`，讀寫皆 try/catch）記住；
+  展開狀態以 `ui.js` 的 `bindRememberedCollapse`（`localStorage` 鍵 `lf.collapse.prtg-monitoring`，讀寫皆 try/catch）記住，整個標題列可點；
   同頁籤只有「儲存」一顆實心主要按鈕（DESIGN-SYSTEM §6b）。
 - **鏡像狀態**：**「同步結構與對應」的入口與上次結果**（docs/PRTG-SPEC.md §5a；
   執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」，成功時在時間後標來源「（夜間取數）／（手動）」；

@@ -211,6 +211,27 @@ const cases = {
         assert(panel);
         assert(!allText(panel).includes('說明文字'), '白話說明已在判斷層，佐證不重複');
     },
+    guidanceThreeLayers() {
+        // 佐證層三層：小標用 lf-guidance__label；處置步驟有先後用編號清單；內文不再縮成小字
+        reset();
+        const panel = fns.guidancePanel({ guidance: { impact: '會被入侵', likelyCauses: ['甲', '乙'], nextSteps: ['先做', '再做'] } });
+        const labels = all(panel).filter(n => (n.className || '').split(' ').includes('lf-guidance__label')).map(n => n.textContent);
+        assert.deepEqual(labels, ['影響', '可能原因', '處置步驟']);
+        const lists = all(panel).filter(n => n.tagName === 'OL' || n.tagName === 'UL');
+        assert.deepEqual(lists.map(l => l.tagName), ['UL', 'OL'], '可能原因用項目符號、處置步驟用編號');
+        assert.deepEqual(lists.map(l => l.children.length), [2, 2]);
+        assert(!all(panel).some(n => (n.className || '').split(' ').includes('small')), '處置參考的內文與清單不帶 small');
+    },
+    sourceEvidenceKeysMuted() {
+        // 來源觀測的欄位名與值分開包裝；文字內容與順序不變，時間值是技術值
+        reset();
+        const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
+        const row = block.children[1].children[1];
+        const keys = all(row).filter(n => (n.className || '').split(' ').includes('lf-source-obs__key')).map(n => n.textContent);
+        assert.deepEqual(keys, ['來源：', '範圍：', '主機：', '資源：', 'UTC 時間：']);
+        assert.equal(row.children[0].textContent, '來源：PRTG；範圍：主機；主機：h1；資源：r1', '文字內容與順序不變');
+        assert(all(row.children[1]).some(n => (n.className || '').split(' ').includes('lf-text-data')), '時間值是技術值');
+    },
     evidencePanelAllSections() {
         reset();
         const panel = fns.evidencePanel(baseIssue({

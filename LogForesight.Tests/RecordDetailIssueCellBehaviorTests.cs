@@ -25,6 +25,8 @@ public sealed class RecordDetailIssueCellBehaviorTests
     [InlineData("keyDetailsManyAccountsCollapsible")]
     [InlineData("keyDetailsLegacyWholeMessage")]
     [InlineData("guidancePanelOmitsExplanationLabel")]
+    [InlineData("guidanceThreeLayers")]
+    [InlineData("sourceEvidenceKeysMuted")]
     [InlineData("evidencePanelAllSections")]
     [InlineData("evidencePanelSingleSection")]
     [InlineData("evidencePanelStatesMissingSourceObservations")]

@@ -220,6 +220,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 **資訊密度**
 - 說明文字的取捨見 WEB-SPEC §8.6a（保留後果句、其餘收進 `?` 或刪除）；一個下拉有多重副作用時，把副作用做成選項旁的對照表，不寫整段散文。
 - 日常動線用不到的內容（開發工具、校準、純調校參數）收進「進階」收合區，預設收合、記住使用者的展開選擇（`localStorage`，try/catch 包起來）。
+  觸發鈕在卡片標題列內時，`bindRememberedCollapse` 帶 `header` 讓整個標題列可點（與 `<details>` 卡一致）：點空白處或標題文字等同按觸發鈕，標題列上的其他按鈕、連結保有自己的行為，拖曳選字不開合；鍵盤仍操作觸發鈕，標題列不另成焦點停駐點。
 - KPI 統計卡一律用 `core/ui.js` 的 `kpiStrip(groups)`（唯一出口，`FrontendConsistencyUiTests` 守門）：卡片分組（可有組標題，列高固定、有無說明圖示同一條基線），組內 grid `repeat(auto-fit, minmax(11rem, 1fr))`（不設上限，4 張卡在 1280 寬同一列；卡片數少於可放的欄數時撐滿整列，詳情頁單組 KPI 的右緣與下方卡片對齊），
   寬螢幕（≥1200px）放得下的組依卡數比例並排、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；575px 以下每列兩張。每張卡固定「數字／標籤／副標」三列，副標沒有內容也保留兩行高，
   同列等高；標籤可換行、副標最多兩行後省略（完整文字在 `title`），可行動的句子放前半。副標只放含資料或口徑的句子。卡片與面板同一語言（透明邊框＋細環）；可點的卡右上角有「›」當靜止時的線索，滑過只變底色，不位移。
@@ -258,7 +259,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 處理面板與說明欄 | `handling-panel.js`、`note-editor.js` + `.lf-handling*`／`.lf-note-editor__*`／`.lf-form-actions` | 四區上邊線分隔；chips 自動排欄（最小格寬 4.75rem；右欄 1024 寬約 231px 時兩欄）；說明欄尾區與 textarea 同一外框、`--lf-gray-50` 底；主鈕在獨立動作區 |
 | 詳情頁右欄側軌 | `core/side-rail.js` + `.lf-detail-layout`／`.lf-side-rail` | ≥ lg：grid 主欄 `minmax(0,1fr)`＋右欄收合 3rem／展開 `min(20rem, 34%)`；直式按鈕（`writing-mode: vertical-rl`）含標籤與一行摘要；無寬度動畫；< lg 與列印上下堆疊 |
 | 長文字收合 | `ui.js` `collapsibleText` + `.lf-collapsible--clamped` | 超過 300 字才收合；純文字截到分隔符＋「…」，區塊以 9rem 高度＋底部漸層（展開格內漸變到 `--lf-gray-50`）；切換鈕是 `disclosure`（標籤「全文」）、列印全文 |
-| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、`--lf-font-size-lg`／500／行高 1.7／`--lf-measure`、無底無框）與「建議處置」並排，再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄；≥ 992px 兩排同為 `repeat(2, minmax(0, 1fr))`，四段排成欄線對齊的 2×2（處置與速報等高），窄螢幕單欄直排，上排缺一則另一佔滿、下排只有一段時在左欄；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，左側 3px `--lf-primary` 內陰影指示條，眉標 `--lf-primary-text`），統計模式不上底色與指示條；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；列印時結論以下單欄、複製鈕不印 |
+| 風險日詳情頁首 AI 摘要 | `record-detail.js` `aiSummaryBlock`／`briefBlock` + `.lf-briefing__*`（`components.css`） | 以「AI 摘要」徽章標註，不用 `.lf-ai-block` 的左框淡底；層級由版面表達，不靠框線與徽章。結論列＝AI 標題（`--lf-font-size-xl`、600、`--lf-text`，頁首唯一的大字）＋一顆 `lf-badge--secondary`「AI 摘要」（降級／放棄／分析中／統計模式改放狀態徽章）；其下「重點速報」（`lf-text-label` 眉標列右側複製鈕、`--lf-font-size-lg`／500／行高 1.7、無底無框）與「建議處置」並排，再下一條 1px `--lf-border` 細線分隔「狀況」「趨勢」兩欄；≥ 992px 兩排同為 `repeat(2, minmax(0, 1fr))`，四段排成欄線對齊的 2×2（處置與速報等高），窄螢幕單欄直排，上排缺一則另一佔滿、下排只有一段時在左欄；建議處置是頁首唯一有底色的面（`--lf-primary-soft`、`--lf-radius`、`--lf-space-3`，左側 3px `--lf-primary` 內陰影指示條，眉標 `--lf-primary-text`），統計模式不上底色與指示條；四段共用 `lf-text-label` 眉標（`h3`）；缺值的段連眉標與細線都不渲染；速報、建議處置、狀況、趨勢的文字填滿所在欄、上限 `--lf-measure`，標題不設上限；列印時結論以下單欄、複製鈕不印 |
 | 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + `layout.css` | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
@@ -323,8 +324,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **中斷點**只用 576／768／992／1200／1600，寫法 `min-width: N`、`max-width: N−0.02`。唯一例外 `max-width: 1799.98px`
   是 KPI 收合時「全部卡片放得下」的內容寬度，不是版面級中斷點。`core/side-rail.js` 的 992（並排模式）與 CSS 同值；1600（預設展開）只在 `side-rail.js` 使用，樣式表沒有對應的 `@media`。卡片內頂層表格容器是尺寸容器（`container-type`），展開列內容依它限制在可視寬度內。
 - `--lf-content-max: 120rem`：單欄表單頁（設定、初始設定）在 View 設 `ViewData["ContentWidth"] = "bounded"`，內容區不超過它、靠左；
-  其餘頁面（清單、儀表板、報表、維護頁與詳情頁）隨視窗滿版。詳情頁是卡片與表格、成段文字另受 `--lf-measure` 限制，滿版不會拉長文字行（`ContentWidthGuardUiTests` 守門）。
-- `--lf-measure: 40em`：成段文字的行寬上限，表格與技術值不套用。
+  其餘頁面（清單、儀表板、報表、維護頁與詳情頁）隨視窗滿版（`ContentWidthGuardUiTests` 守門）。
+- `--lf-measure: 64em`：格線欄或表格欄內成段文字的行寬上限（風險日頁首四段、問題的白話說明與帳號摘要）。這些文字填滿所在欄，欄寬本身已限制行長，上限只防超寬螢幕；在欄內再套更窄的上限會出現「文字只占左邊一截、旁邊整片空白」。量測情境「版面-詳情頁滿版-風險日」守住「填滿所在欄或到達上限」。說明書內文（`.lf-doc`）是單欄閱讀頁，另以 46em 限行寬。表格與技術值不套用。
 - 寬螢幕（≥ 1600px）詳情頁側軌預設展開，把多出的寬度用在並排，而不是拉長左欄行寬；使用者在本頁按過收合就照使用者的。
 - 長字串：`body` 全站 `overflow-wrap: break-word`（沒有空白的連續字串放不下時才斷，一般字詞不受影響）；
   格線欄寬用 `minmax(min(Xrem, 100%), 1fr)`，窄容器不被最小欄寬撐破；資料來的名稱（chip、群組名）比容器寬時換行，不截斷。
@@ -346,6 +347,16 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 資料量大的列（問題、交辦、主機）分兩層：
 - **判斷層**（預設可見）：回答「要不要處理」——嚴重度、標題、一句白話、次數與時段、趨勢、狀態，以及入侵判讀必要的帳號／來源摘要。
 - **佐證層**（列展開）：回答「憑什麼」——處置參考、登入失敗明細、數值佐證、來源觀測。內容一字不減、列印全顯示，只是換位置。
+
+佐證層的文字分三層，每層只用一種手段區分，不加底色與外框：
+
+| 層 | 內容 | 規格 |
+|---|---|---|
+| 區標題 | 處置參考、來源觀測等 | `lf-text-label`（sm、600、`--lf-text-muted`），下方 1px `--lf-border` 分隔線；最安靜的眉標 |
+| 小標 | 影響、可能原因、處置步驟 | `.lf-guidance__label`：正文色、600、與內文同字級 |
+| 內文 | 處置參考的說明與清單 | 一般字級（base）、正文色；處置步驟有先後，用編號清單 |
+
+表格（登入失敗明細）與來源觀測維持 sm 的資料密度；來源觀測的欄位名用 `--lf-text-muted`、值用正文色，時間值用 `lf-text-data`。
 
 ### 8.6 共用元件一覽（頁面不另寫一份）
 

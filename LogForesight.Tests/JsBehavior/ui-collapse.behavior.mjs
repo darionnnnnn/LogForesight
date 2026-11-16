@@ -27,11 +27,12 @@ function element() {
         attributes: {},
         classList: {
             toggle: (name, on) => { if (on) classes.add(name); else classes.delete(name); },
+            add: name => classes.add(name),
             contains: name => classes.has(name)
         },
         setAttribute(name, value) { this.attributes[name] = value; },
         addEventListener: (type, handler) => { listeners[type] = handler; },
-        fire: type => listeners[type]?.()
+        fire: (type, event) => listeners[type]?.(event)
     };
 }
 
@@ -75,6 +76,41 @@ const cases = {
 
         again.fire('hidden.bs.collapse');
         assert.equal(storage.data['lf.collapse.prtg-monitoring'], 'closed');
+    },
+    headerClickForwardsToToggle() {
+        // 觸發鈕在卡片標題列內時整列可點：點標題列空白處等同按觸發鈕
+        const header = element();
+        const toggle = element();
+        let clicks = 0;
+        toggle.click = () => { clicks++; };
+        load(memoryStorage())(element(), toggle, 'record-detail-chat', { header });
+        assert(header.classList.contains('lf-card__header--clickable'), '標題列有可點線索');
+
+        const blank = { closest: () => null };
+        header.fire('click', { target: blank });
+        assert.equal(clicks, 1, '點標題列空白處或標題文字等同按觸發鈕');
+
+        // 標題列上的其他按鈕（放大檢視、清除重來）與觸發鈕本身：交給它們自己，不再轉發一次
+        const onButton = { closest: selector => (selector.split(',').map(s => s.trim()).includes('button') ? {} : null) };
+        header.fire('click', { target: onButton });
+        assert.equal(clicks, 1, '點標題列上的按鈕不開合');
+
+        // 拖曳選字放開：有選取文字時不開合
+        globalThis.getSelection = () => '詢問 AI';
+        try {
+            header.fire('click', { target: blank });
+            assert.equal(clicks, 1, '拖曳選字不開合');
+        } finally {
+            delete globalThis.getSelection;
+        }
+        header.fire('click', { target: blank });
+        assert.equal(clicks, 2, '沒有選取時恢復可點');
+    },
+    withoutHeaderKeepsButtonOnly() {
+        // 沒給標題列的呼叫端行為不變：不加可點類別
+        const toggle = element();
+        load(memoryStorage())(element(), toggle, 'prtg-name-mismatch');
+        assert.equal(toggle.attributes['aria-expanded'], 'false');
     },
     storageUnavailableStillWorks() {
         const throwing = {

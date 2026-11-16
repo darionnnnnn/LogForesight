@@ -147,9 +147,10 @@
     --lf-space-5: 1.5rem;
     --lf-space-6: 2rem;
 
-    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限 */
+    /* 寬度策略（docs/DESIGN-SYSTEM.md §8.4）：詳情頁與表單頁的內容區上限、成段文字的行寬上限。
+       行寬上限只防超寬螢幕：套用的文字都在格線欄或表格欄裡，欄寬本身已限制行長 */
     --lf-content-max: 120rem;
-    --lf-measure: 40em;
+    --lf-measure: 64em;
 
     /* ── 圓角（v2 收緊一階：data-dense 專業感）────────────────────────── */
     --lf-radius-sm: .25rem;

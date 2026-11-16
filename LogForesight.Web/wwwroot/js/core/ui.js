@@ -271,8 +271,19 @@ export function savePageSize(key, size) {
  * 觸發鈕用 Bootstrap 的 data-bs-toggle="collapse"；這裡只負責初始狀態、按鈕文字與 aria-expanded，
  * 以及寫回 localStorage（鍵前綴 lf.collapse.）。localStorage 不可用（隱私模式等）時從收合開始，不擲例外。
  */
-export function bindRememberedCollapse(collapseEl, toggleEl, key, { expandText = '展開', collapseText = '收合' } = {}) {
+export function bindRememberedCollapse(collapseEl, toggleEl, key, { expandText = '展開', collapseText = '收合', header = null } = {}) {
     if (!collapseEl || !toggleEl) return;
+    // 觸發鈕在卡片標題列內時，點標題列空白處或標題文字等同按觸發鈕（與「證據」<details> 一樣整列可點）。
+    // 標題列上的其他按鈕、連結保有自己的行為；拖曳選字放開不開合。鍵盤與輔助技術仍操作觸發鈕本身，
+    // 標題列不加 role／tabindex，避免同一個動作有兩個焦點停駐點
+    if (header) {
+        header.classList.add('lf-card__header--clickable');
+        header.addEventListener('click', event => {
+            if (event.target.closest('a, button, input, select, textarea, label')) return;
+            if (String(globalThis.getSelection?.() ?? '').length > 0) return;
+            toggleEl.click();
+        });
+    }
     const storageKey = `lf.collapse.${key}`;
     const sync = expanded => {
         toggleEl.textContent = expanded ? collapseText : expandText;

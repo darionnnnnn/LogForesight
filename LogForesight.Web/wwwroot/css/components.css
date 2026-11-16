@@ -595,7 +595,6 @@ a.lf-badge:hover { text-decoration: underline; }
     font-weight: 600;
     line-height: 1.5;
     color: var(--lf-text);
-    max-width: var(--lf-measure);
     min-width: 0;
 }
 

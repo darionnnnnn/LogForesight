@@ -22,6 +22,8 @@ public sealed class PrtgAcceptanceBehaviorTests
     [InlineData("prtg-full-backfill.behavior.mjs", "noCompletedDaysHasNoRedoCheckbox")]
     [InlineData("ui-collapse.behavior.mjs", "defaultCollapsedAndRemembersChoice")]
     [InlineData("ui-collapse.behavior.mjs", "storageUnavailableStillWorks")]
+    [InlineData("ui-collapse.behavior.mjs", "headerClickForwardsToToggle")]
+    [InlineData("ui-collapse.behavior.mjs", "withoutHeaderKeepsButtonOnly")]
     public void PRTG維護頁判定的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

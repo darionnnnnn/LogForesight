@@ -626,7 +626,7 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-issue-cell__title { flex: 1 1 12rem; min-width: 0; }
 
-/* 白話說明：正文色、行寬受 --lf-measure 限制，寬螢幕也好讀 */
+/* 白話說明：正文色、填滿問題欄；只在超寬螢幕以 --lf-measure 封頂（欄寬本身已限制行長） */
 .lf-issue-cell__explain {
     max-width: var(--lf-measure);
     line-height: 1.6;
@@ -669,10 +669,17 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-evidence__section { min-width: 0; }
 
+/* 佐證層三層文字（DESIGN-SYSTEM §8.5）：區標題＝最安靜的眉標＋細分隔線；小標（.lf-guidance__label）＝正文色粗體；
+   內文＝處置參考用一般字級，其餘區（表格、來源觀測）維持 sm 的資料密度 */
 .lf-evidence__label {
     margin: 0 0 var(--lf-space-2);
+    padding-bottom: var(--lf-space-1);
+    border-bottom: 1px solid var(--lf-border);
     text-transform: none;
 }
+
+/* 來源觀測：欄位名淡化、值用正文色 */
+.lf-source-obs__key { color: var(--lf-text-muted); }
 
 .lf-source-obs__list {
     margin: var(--lf-space-2) 0 0;
@@ -759,15 +766,15 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 處置參考（佐證層的第一區）：與 txt 報告「處置參考（知識庫）」同一份內容 */
+.lf-guidance { font-size: var(--lf-font-size-base); line-height: 1.5; }
 .lf-guidance__label {
     font-weight: 600;
-    font-size: var(--lf-font-size-sm);
-    color: var(--lf-text-muted);
+    color: var(--lf-text);
     margin-top: var(--lf-space-3);
     margin-bottom: var(--lf-space-1);
 }
 .lf-guidance__label:first-child { margin-top: 0; }
-.lf-guidance ul { margin: 0; padding-left: 1.25rem; }
+.lf-guidance__list { margin: 0; padding-left: 1.5rem; }
 
 /* 可收合區塊的箭頭圖示：收合時朝右、展開時朝下（§5.1 D-1 #1 報告全文預設收合） */
 .lf-collapse-caret {
