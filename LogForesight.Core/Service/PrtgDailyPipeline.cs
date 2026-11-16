@@ -703,7 +703,10 @@ internal static class PrtgDailyPipeline
                         }
                     }
 
-                    var (escalatedCount, chronicCount) = PrtgCrossDay.Apply(daySignatures, history, day);
+                    var steadyEvidence = BuildSteadyEvidence(daySignatures, history, day, plan.DeviceToHost,
+                        evaluationHostIds, prtgStore, semanticOverrides, ct);
+                    var crossDay = PrtgCrossDay.ApplyDetailed(daySignatures, history, day, steadyEvidence);
+                    var (escalatedCount, chronicCount, steadyCount) = (crossDay.Escalated, crossDay.Chronic, crossDay.SteadyDowngraded);
 
                     var suppressedCount = 0;
                     var suppressedPatternIdsByHost = new Dictionary<long, IReadOnlySet<string>>();
@@ -754,7 +757,7 @@ internal static class PrtgDailyPipeline
                             else pendingHosts++;
                         }
 
-                        var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
+                        var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、持平降級 {steadyCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
                                       $"本階段追加 {appendedHosts} 台、PRTG 獨立主機日 {prtgOnlyHosts} 台（其餘 {pendingHosts} 台無變動：finding 已在紀錄中，或只剩被抑制的 finding）";
                         prtgConsole.WriteLine(summary);
                         runRecorder.Milestone(summary);
@@ -1153,6 +1156,55 @@ internal static class PrtgDailyPipeline
     }
 
     /// <summary>某日的 device → 主機：只取 ok 對應、且主機在本趟評估範圍內。</summary>
+    /// <summary>
+    /// 持續 Warning 且歷史顯示連續 ≥ 7 日的候選，才以 <see cref="PrtgValueAssessment"/>（數值唯一評估入口）查近 7 日數值。
+    /// 查詢失敗只寫 Warn、當成數值不足（不降級），不中斷管線。
+    /// </summary>
+    internal static IReadOnlyDictionary<string, PrtgSteadyEvidence> BuildSteadyEvidence(
+        IReadOnlyList<LogIssueSignature> daySignatures, IReadOnlyDictionary<string, HashSet<DateTime>> history, DateTime day,
+        IReadOnlyDictionary<long, long> deviceToHost, IReadOnlySet<long> evaluationHostIds,
+        EfPrtgStore prtgStore, IReadOnlyDictionary<string, PrtgValueSemantic> semanticOverrides, CancellationToken ct)
+    {
+        var result = new Dictionary<string, PrtgSteadyEvidence>(StringComparer.Ordinal);
+        try
+        {
+            var candidateKeys = PrtgCrossDay.SteadyCandidates(daySignatures, history, day).Keys;
+            var wantedObjids = new HashSet<long>();
+            foreach (var key in candidateKeys)
+            {
+                if (PrtgFindingMapper.TryGetTargetObjid(key, out var objid)) wantedObjids.Add(objid);
+            }
+            if (wantedObjids.Count == 0 || deviceToHost.Count == 0) return result;
+
+            var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
+            var sensors = PrtgValueAssessment.Candidates(assessment.SensorMirror(), deviceToHost, evaluationHostIds,
+                    new HashSet<long>())
+                .Where(s => wantedObjids.Contains(s.SensorObjid)).ToList();
+            var completedDay = DateOnly.FromDateTime(day);
+            var evidenceBySensor = new Dictionary<long, PrtgSteadyEvidence>();
+            foreach (var page in sensors.Chunk(PrtgValueAssessment.PageSize))
+            {
+                ct.ThrowIfCancellationRequested();
+                foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1))
+                {
+                    if (PrtgSteadyEvidence.FromRow(row) is { } evidence) evidenceBySensor[row.Sensor.SensorObjid] = evidence;
+                }
+            }
+            foreach (var key in candidateKeys)
+            {
+                if (PrtgFindingMapper.TryGetTargetObjid(key, out var objid) && evidenceBySensor.TryGetValue(objid, out var evidence))
+                    result[key] = evidence;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "PRTG 持平降級的數值查詢失敗，本日不降級");
+            result.Clear();
+        }
+        return result;
+    }
+
     private static Dictionary<long, long> DeviceToHost(IEnumerable<PrtgHostMapRow> rows, IReadOnlySet<long> evaluationHostIds)
     {
         var deviceToHost = new Dictionary<long, long>();

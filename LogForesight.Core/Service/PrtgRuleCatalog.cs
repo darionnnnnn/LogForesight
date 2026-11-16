@@ -46,6 +46,20 @@ public static class PrtgRuleCatalog
     /// 故障風險照舊保留，重複提醒交給通知層（見 <see cref="PrtgCrossDay"/>）</summary>
     public const int ChronicDownDays = 14;
 
+    // 持續 Warning 且數值持平降一級（暫定值，待校準資料驗證後調整）
+    /// <summary>暫定：連續第 M 日達此數才考慮降級</summary>
+    public const int SteadyWarningMinConsecutiveDays = 7;
+    /// <summary>暫定：數值觀察窗（日，含評估日）</summary>
+    public const int SteadyWarningWindowDays = 7;
+    /// <summary>暫定：窗口內可用日至少幾天</summary>
+    public const int SteadyWarningMinUsableDays = 4;
+    /// <summary>暫定：窗口內最早到最晚可用日的已用百分比上升容許（百分點）</summary>
+    public const double SteadyWarningMaxRisePoints = 2;
+    /// <summary>暫定：磁碟已用達此百分比視為危險區（可用 ≤ 10%），不降級</summary>
+    public const double SteadyWarningDiskDangerUsedPercent = 90;
+    /// <summary>暫定：記憶體已用達此百分比視為危險區，不降級</summary>
+    public const double SteadyWarningMemoryDangerUsedPercent = 95;
+
     private static readonly Dictionary<string, PrtgRuleInfo> Rules = new(StringComparer.Ordinal)
     {
         [PrtgRuleEvaluator.RuleDown] = new(

@@ -2073,7 +2073,7 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.DoesNotContain("近 14 日", oldestSig.SampleMessages[0]);
 
         Assert.Equal(1, progress.Phases.Count(p => p == RunPhases.PrtgFindingsReady));
-        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day1:yyyy-MM-dd}）") && l.Contains("跨日升級 1 筆、長期 Down 0 筆"));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day1:yyyy-MM-dd}）") && l.Contains("跨日升級 1 筆、持平降級 0 筆、長期 Down 0 筆"));
     }
 
     /// <summary>

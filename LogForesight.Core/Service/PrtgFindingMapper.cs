@@ -50,6 +50,14 @@ public static class PrtgFindingMapper
         return true;
     }
 
+    /// <summary>從 EventKey（<c>prtg:{code}:{objid}</c>）解出目標 objid；格式不符或 objid 非正數回 false。</summary>
+    public static bool TryGetTargetObjid(string? eventKey, out long objid)
+    {
+        objid = 0;
+        var parts = eventKey?.Split(':');
+        return parts is { Length: >= 3 } && parts[0] == "prtg" && long.TryParse(parts[2], out objid) && objid > 0;
+    }
+
     /// <summary>
     /// 一組 PRTG finding 推導出的日風險等級（docs/PRTG-SPEC.md §9）。
     /// 判定與 <c>LogAnalysisService.ComputeRuleBasedRisk</c> 的 issues 部分同語意：
