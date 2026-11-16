@@ -170,9 +170,11 @@ public class ReportEffectivenessService
         var perIssue = new Dictionary<string, (string Source, int EventId, string Label, int Hosts, int Recurred)>(IssueSignatureKeyComparer.Instance);
         foreach (var (key, resolvedDay) in lastResolved)
         {
+            // 母體與出現日同一口徑：已處理那天該問題不在顯示中的問題清單（已靜音、嚴重度或風險等級被隱藏）就不算一組，
+            // 否則這種組合的「又出現」永遠看不到，會一律落進「未再發生」把比例往下拉
+            if (!appearances.TryGetValue(key, out var days) || !days.Contains(resolvedDay)) continue;
             var windowEnd = resolvedDay.AddDays(RecurrenceWindowDays);
-            var recurred = appearances.TryGetValue(key, out var days)
-                && days.Any(d => d > resolvedDay && d <= windowEnd);
+            var recurred = days.Any(d => d > resolvedDay && d <= windowEnd);
 
             if (recurred) result.Recurred++;
             else if (windowEnd <= lastDataDay) result.NotRecurred++;

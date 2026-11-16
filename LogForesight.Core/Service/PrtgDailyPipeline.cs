@@ -1194,7 +1194,7 @@ internal static class PrtgDailyPipeline
                 ct.ThrowIfCancellationRequested();
                 foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1))
                 {
-                    if (PrtgSteadyEvidence.FromRow(row) is { } evidence) evidenceBySensor[row.Sensor.SensorObjid] = evidence;
+                    if (PrtgSteadyEvidence.FromRow(row, completedDay) is { } evidence) evidenceBySensor[row.Sensor.SensorObjid] = evidence;
                 }
             }
             foreach (var key in candidateKeys)

@@ -201,7 +201,7 @@ public sealed class PrtgCrossDaySteadyTests : IDisposable
 
     private static readonly DateTime Completed = DateTime.Today.AddDays(-1);
 
-    private void SeedDisk(long sensor, long device, int days, Func<int, double> freeByDaysAgo)
+    private void SeedDisk(long sensor, long device, int days, Func<int, double> freeByDaysAgo, int skipRecentDays = 0)
     {
         _store.UpsertSensors(new List<PrtgSensorRow>
         {
@@ -216,7 +216,7 @@ public sealed class PrtgCrossDaySteadyTests : IDisposable
             });
         }
         var rows = new List<PrtgValueRow>();
-        for (var d = 0; d < days; d++)
+        for (var d = skipRecentDays; d < days; d++)
         for (var h = 0; h < 24; h++)
             rows.Add(new PrtgValueRow
             {
@@ -266,6 +266,20 @@ public sealed class PrtgCrossDaySteadyTests : IDisposable
 
         Assert.Equal(0, r.SteadyDowngraded);
         Assert.Equal(IssueSeverity.High, sig.Severity);
+    }
+
+    [Theory]
+    [InlineData(1, true)]    // 最後可用日是評估日前一天：仍可代表現況
+    [InlineData(2, false)]   // 數值已斷兩天（例如快照停擺）：幾天前的值不能代表現在，不降
+    public void 管線組裝_最後可用日早於評估日前一天_不取證據(int skipRecentDays, bool expectEvidence)
+    {
+        SeedDisk(2001, 5, 7, _ => 18, skipRecentDays);   // 可用日 6／5 天，都超過下限 4 天
+        var (sig, hits) = WarningFinding(2001);
+
+        var r = PrtgCrossDay.ApplyDetailed(new[] { sig }, hits, Completed, Build(sig, hits));
+
+        Assert.Equal(expectEvidence ? 1 : 0, r.SteadyDowngraded);
+        Assert.Equal(expectEvidence ? IssueSeverity.Low : IssueSeverity.High, sig.Severity);
     }
 
     [Fact]

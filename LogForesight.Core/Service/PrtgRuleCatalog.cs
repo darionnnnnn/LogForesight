@@ -53,6 +53,8 @@ public static class PrtgRuleCatalog
     public const int SteadyWarningWindowDays = 7;
     /// <summary>暫定：窗口內可用日至少幾天</summary>
     public const int SteadyWarningMinUsableDays = 4;
+    /// <summary>暫定：最後一個可用日最多可比評估日早幾天；更早代表數值已中斷，不降級</summary>
+    public const int SteadyWarningMaxStaleDays = 1;
     /// <summary>暫定：窗口內最早到最晚可用日的已用百分比上升容許（百分點）</summary>
     public const double SteadyWarningMaxRisePoints = 2;
     /// <summary>暫定：磁碟已用達此百分比視為危險區（可用 ≤ 10%），不降級</summary>

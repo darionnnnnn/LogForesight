@@ -663,7 +663,8 @@ public static class ServiceCollectionExtensions
                     var status = snapshot.GetStatus();
                     var strategyInterval = PrtgFetchStrategy.Profile(settingsStore.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
                     return new CalibrationSnapshotState(status.LastSuccessAt, status.ConsecutiveFailures,
-                        status.JournalStopCode, status.IntervalMinutes > strategyInterval);
+                        // 待寫檔停止碼優先；沒有停止時帶目前的跳過原因（未啟用、連線設定不齊、讓出給同步或回填等）
+                        status.JournalStopCode ?? status.LastSkipReason, status.IntervalMinutes > strategyInterval);
                 };
             return calibration;
         });

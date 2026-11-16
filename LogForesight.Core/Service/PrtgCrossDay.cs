@@ -182,12 +182,16 @@ public sealed record PrtgSteadyEvidence(PrtgValueSemantic Semantic, int UsableDa
         }
     }
 
-    /// <summary>從數值評估列取證據；語意不是磁碟／記憶體、或沒有可用日回 null。</summary>
-    public static PrtgSteadyEvidence? FromRow(PrtgValueAssessmentRow row)
+    /// <summary>
+    /// 從數值評估列取證據；語意不是磁碟／記憶體、沒有可用日、或最後一個可用日早於評估日前一天回 null——
+    /// 數值已經斷了幾天（例如快照停擺）時，幾天前的值不能代表現在，不得據此降級。
+    /// </summary>
+    public static PrtgSteadyEvidence? FromRow(PrtgValueAssessmentRow row, DateOnly completedDay)
     {
         if (row.Semantic is not (PrtgValueSemantic.DiskPercentFree or PrtgValueSemantic.MemoryPercentFree)) return null;
         if (row.Reason == PrtgValueReason.MappingInvalid || row.Daily.Count == 0) return null;
         var ordered = row.Daily.OrderBy(d => d.Day).ToList();
+        if (ordered[^1].Day < completedDay.AddDays(-PrtgRuleCatalog.SteadyWarningMaxStaleDays)) return null;
         var semantic = row.Semantic.Value;
         return new PrtgSteadyEvidence(semantic, ordered.Count,
             PrtgValueAssessment.UsedPercent(semantic, ordered[0].Value), PrtgValueAssessment.UsedPercent(semantic, ordered[^1].Value));

@@ -287,7 +287,7 @@ public sealed record CalibrationValueTypeProfile(
     double?[] HourlyCurve);     // 長度固定 24，索引＝小時；取自 GetUsableHourlyProfileByType，沒資料的小時為 null
 
 /// <summary>快照服務在匯出當下的狀態（值型基線 KeyMetrics 的快照四欄來源）。</summary>
-/// <param name="StopReason">待寫檔停止原因碼；沒有停止為 null</param>
+/// <param name="StopReason">待寫檔停止原因碼；待寫檔沒有停止時是快照目前的跳過原因（未啟用、設定不齊、讓出給同步或回填），都沒有為 null</param>
 public sealed record CalibrationSnapshotState(DateTime? LastSuccessAt, int ConsecutiveFailures, string? StopReason, bool BackingOff);
 
 /// <summary>
