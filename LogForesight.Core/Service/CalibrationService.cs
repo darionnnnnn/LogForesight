@@ -957,18 +957,24 @@ public sealed class CalibrationService
         var hostsAvailable = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineAvailableDays);
         var hostsSufficient = hostCoverageDays.Values.Count(d => d >= CalibrationConstants.ValueBaselineSufficientDays);
 
+        // 門檻主機數＝已對應且有白名單 sensor 的主機數（mappedHostsCount）與 10 取小：小站台（例如只有 9 台對應到 PRTG）
+        // 用固定 10 台永遠到不了；沒有白名單 sensor 的主機永遠產生不了基線，不算進門檻。
+        // 0 台時門檻也是 0，下面的「無資料」判斷會擋下，不會因門檻變 0 而判為充足
+        var requiredHosts = Math.Min(CalibrationConstants.ValueBaselineRequiredHosts, mappedHostsCount);
+        thresholds["RequiredHosts"] = requiredHosts;
+
         // 分母為零一律判不足：若無任何主機或涵蓋天數為 0，不得判為可用
         CalibrationStatus status;
-        var valueBaselineNoData = mappedHostsCount == 0 || maxCoverageDays == 0;
+        var valueBaselineNoData = mappedHostsCount == 0 || maxCoverageDays == 0 || requiredHosts == 0;
         if (valueBaselineNoData)
         {
             status = CalibrationStatus.Insufficient;
         }
-        else if (hostsSufficient >= CalibrationConstants.ValueBaselineRequiredHosts)
+        else if (hostsSufficient >= requiredHosts)
         {
             status = CalibrationStatus.Sufficient;
         }
-        else if (hostsAvailable >= CalibrationConstants.ValueBaselineRequiredHosts)
+        else if (hostsAvailable >= requiredHosts)
         {
             status = CalibrationStatus.Available;
         }
@@ -978,7 +984,11 @@ public sealed class CalibrationService
         }
 
         var explanations = new List<string>();
-        if (valueBaselineNoData)
+        if (mappedHostsCount == 0)
+        {
+            explanations.Add("沒有已對應 PRTG 且有白名單 sensor 的主機，無法建立基線；請先在 PRTG 維護完成主機對應");
+        }
+        else if (valueBaselineNoData)
         {
             explanations.Add("期間無事件，門檻無從校準，維持預設值");
         }
@@ -996,9 +1006,9 @@ public sealed class CalibrationService
 
         if (status == CalibrationStatus.Insufficient)
         {
-            if (mappedHostsCount < CalibrationConstants.ValueBaselineRequiredHosts)
+            if (mappedHostsCount > 0 && hostsAvailable < requiredHosts)
             {
-                explanations.Add($"目前只有 {mappedHostsCount} 台主機有基線資料，需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+                explanations.Add($"目前只有 {hostsAvailable} 台主機達到可用標準（{CalibrationConstants.ValueBaselineAvailableDays} 天），需要 {requiredHosts} 台；可對特定主機執行歷史回填");
             }
             if (maxCoverageDays < CalibrationConstants.ValueBaselineAvailableDays)
             {
@@ -1008,7 +1018,7 @@ public sealed class CalibrationService
         }
         else if (status == CalibrationStatus.Available)
         {
-            if (hostsSufficient < CalibrationConstants.ValueBaselineRequiredHosts)
+            if (hostsSufficient < requiredHosts)
             {
                 if (maxCoverageDays < CalibrationConstants.ValueBaselineSufficientDays)
                 {
@@ -1017,7 +1027,7 @@ public sealed class CalibrationService
                 }
                 else
                 {
-                    explanations.Add($"目前只有 {hostsSufficient} 台主機達到充足標準（56 天），需要 {CalibrationConstants.ValueBaselineRequiredHosts} 台；可對特定主機執行歷史回填");
+                    explanations.Add($"目前只有 {hostsSufficient} 台主機達到充足標準（56 天），需要 {requiredHosts} 台；可對特定主機執行歷史回填");
                 }
             }
         }
