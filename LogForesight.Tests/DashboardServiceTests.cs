@@ -41,7 +41,12 @@ public class DashboardServiceTests : IDisposable
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         _handlingStore = new EfRecordHandlingStore(_fixture.NewContext, new EfJsonLogStore(_fixture.NewContext, "handling"));
         _issueHandlingStore = new EfIssueHandlingStore(_fixture.NewContext);
-        var visibility = new AlwaysVisibleService(_hosts);
+        (_service, _reports) = BuildServices(new AlwaysVisibleService(_hosts));
+    }
+
+    /// <summary>以指定的可見範圍組裝儀表板與報表服務（其餘串接同一組 store 與聚合查詢）</summary>
+    private (DashboardService Dashboard, ReportService Reports) BuildServices(IVisibilityService visibility)
+    {
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
@@ -57,12 +62,13 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver, new FixedIssueExclusionSource(IssueExclusion.None));
 
-        _service = new DashboardService(
+        var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
             new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), (_, _, _) => new GapsDto());
         // 兩頁一致的對照組：報表走同一組 store 與聚合
-        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
+        var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
+        return (dashboard, reports);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -93,6 +99,40 @@ public class DashboardServiceTests : IDisposable
         tomb.MergedInto = mergedInto.HostId;
         tomb.GroupIds = new List<long>(mergedInto.GroupIds);
         return tomb;
+    }
+
+    /// <summary>
+    /// 受限可見範圍（兩台主機各有高風險紀錄、只授權其中一台）：KPI、排行與群組風險（儀表板）、KPI、趨勢與排行（報表）只算授權那台。用 <see cref="HostScopedVisibility"/>（連 <c>GetVisibleHosts()</c> 都只回授權的主機；既有的 <c>ScopedVisibility</c> 這個清單回空）
+    /// 而不是 <see cref="AlwaysVisibleService"/>——後者對誰都回全部主機，這類測試用它永遠看不到洩漏。另一台主機的紀錄刻意比授權那台多，
+    /// 漏套範圍時數字會明顯偏大。
+    /// </summary>
+    [Fact]
+    public void GetSummary_受限可見範圍_KPI排行趨勢只算授權的主機()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var allowed = AddHost("ALLOWED", 1);
+        var hidden = AddHost("HIDDEN", 1);
+        AddRecord(allowed, 0, RiskLevels.High);
+        AddRecord(allowed, 1, RiskLevels.High);
+        AddRecord(hidden, 0, RiskLevels.High);
+        AddRecord(hidden, 1, RiskLevels.High);
+        AddRecord(hidden, 2, RiskLevels.High);
+
+        var (dashboard, reports) = BuildServices(new HostScopedVisibility(_hosts, allowed.HostId));
+
+        // 對照組：不限範圍時兩台都算（證明資料與判準比得到東西）
+        Assert.Equal(5, _service.GetSummary(7).HighRiskDays);
+
+        var summary = dashboard.GetSummary(7);
+        Assert.Equal(2, summary.HighRiskDays);
+        Assert.Equal("ALLOWED", Assert.Single(summary.HostRanking).HostName);
+        Assert.Equal(2, Assert.Single(summary.GroupRisk).HighRiskDays);
+
+        var report = reports.GetSummary(Anchor.AddDays(-6), Anchor);
+        Assert.Equal(2, report.Kpi.HighRiskDays);
+        Assert.Equal(1, report.Kpi.AffectedHosts);
+        Assert.Equal("ALLOWED", Assert.Single(report.HostRanking).HostName);
+        Assert.Equal(2, report.Trend.Sum(t => t.HighRisk));
     }
 
     [Fact]
@@ -697,5 +737,36 @@ public class DashboardServiceTests : IDisposable
         var assigner2 = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Assign), cache2, PagedGaps(calls));
         Assert.Null(plain2.GetSummary(7).PendingDispatch);
         Assert.NotNull(assigner2.GetSummary(7).PendingDispatch);
+    }
+}
+
+/// <summary>
+/// 只授權指定主機的可見範圍替身：<see cref="IVisibilityService.GetVisibleHostIds"/> 與
+/// <see cref="IVisibilityService.GetVisibleHosts"/> 都只回授權的那幾台（儀表板、報表兩者都用到）。
+/// 與 <see cref="AlwaysVisibleService"/> 相反——它存在就是為了讓「漏套可見範圍」的退化讓數字變大而轉紅。
+/// </summary>
+internal sealed class HostScopedVisibility : IVisibilityService
+{
+    private readonly FakeHostStore _hosts;
+    private readonly HashSet<long> _visible;
+
+    public HostScopedVisibility(FakeHostStore hosts, params long[] visibleHostIds)
+    {
+        _hosts = hosts;
+        _visible = visibleHostIds.ToHashSet();
+    }
+
+    public IReadOnlySet<long> GetVisibleHostIds() => _visible;
+    public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => _visible;
+    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => _visible;
+    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => _visible;
+    public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
+    public bool IsCaseGrantOnly(long hostId) => false;
+    public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
+    public List<WebHost> GetVisibleHosts() => _hosts.GetAll().Where(h => _visible.Contains(h.HostId)).ToList();
+
+    public void EnsureVisible(long hostId)
+    {
+        if (!_visible.Contains(hostId)) throw DomainException.NotFound("找不到這台主機。");
     }
 }

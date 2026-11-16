@@ -256,6 +256,8 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
   Stub 或 Ad 模式下皆可登入；AD 尚未於設定頁設定時，它是唯一進得來的帳號）。
 - **最小授權**：登入後能力僅 `Maintain`＋`ViewAudit`（使用者/群組/主機維護與稽核查閱），
   **不含任何業務資料檢視**——依「設定 admin 角色成員」的用途給權，不是萬能帳號。
+  例外：執行紀錄（`api/runs` 的總表、逐日明細、錯誤清單）對 `Maintain` 開放，含主機名稱與執行狀態，
+  讓它能確認排程活著；風險日、問題內容與診斷匯出（`RequireViewAll`）仍然進不去。
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
   輪替 SOP：產生新雜湊填入 `PasswordHash` 後重啟站台即可，產生指令
   （`LogForesight.Web.exe --hash-password`）提供；已簽發的 JWT 最長 8 小時自然失效。
@@ -381,6 +383,8 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
 
+**權限異動的停用主機例外**：持有 `ViewAll` 者在權限異動的清單、單筆確認與批次確認看得到停用或已不在主機表的主機（`PermissionChangeService.IsChangeVisible`，三條路徑同一個判定）——異動是已經發生的事，主機停用不代表不用檢核。其他頁面的「停用主機一律不可見」不變；沒有 `ViewAll` 的人只看可見主機。
+
 **全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。只回全站計數、不含主機身分的維護端點（`prtg-mirror`、`prtg-estimate`、`prtg-fetch-scope/estimate`）與主機管理（`api/admin/hosts*`）屬 `Maintain` 職責，不在此列；衝突清單 `prtg-host-map` 回傳候選主機身分，屬此列，受限角色在維護頁看到權限說明。
 
 **負責人隱含能力**：是任一**啟用中**主機的負責人時，
@@ -465,8 +469,15 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
    就能碰到同一天其他不屬於他的問題。套用點：問題層級標記（單筆／批次）、問題歷史
    （`issue-history`）、處理歷程（`GetLogs`，日層級的列一併排除——那是整天的敘事）。
    日層級的狀態與指派則整個拒絕（`DayHandlingCommandService.RequireNotCaseGrantOnly`）：
-   他被交辦的是「這台主機的這個問題」，不是這一天。
+   他被交辦的是「這台主機的這個問題」，不是這一天。讀取日層級處理狀態（`GET …/handling`）不拒絕
+   （處理面板每次載入都先讀它再決定要不要給批次表單），但只回識別與 `canHandle`，整天的狀態、處理人、期限、備註、負責人一律不帶。
    端到端驗收見 `LogForesight.Tests/CaseGrantVisibilityTests.cs`（刻意串真實服務，不用替身）。
+
+**授權測試**（`LogForesight.Tests/Authorization/`）：以 `WebApplicationFactory<Program>` 起真站台（Stub 登入、真的 JWT、`PermissionFilter` 與 `VisibilityService`），
+六種身分（兩位受限使用者、案件授與者、管理者、serverAdmin、匿名）× 四台主機（含停用）各放獨一無二的哨兵字串：
+讀取矩陣斷言受限者對未授權主機直取 404、清單不含哨兵；寫入矩陣斷言被拒且資料前後逐欄相同；角色閘門從每個 action 的 `[Permission]`／`[RequireViewAll]` 推算預期並逐條驗 403；
+快取分鍵、匿名端點恰為 6 條、`FallbackPolicy` 要求登入各有守門。涵蓋守門要求每個 action 都在讀取矩陣、寫入矩陣、有能力標註或附理由的豁免清單其中之一——新增端點沒登錄就紅。
+這組測試以行程層級環境變數帶站台設定，所在 collection 不與其他測試並行。
 
 **交辦單授權**（§9.4b）：單點函式逐單檢查，可看者＝處理人本人、`Assign`、`ViewAll` 三者之一，
 其他人 403（不是 404——單存在但無權）；成員依**檢視者**可見範圍過濾並回 `hiddenMemberCount`。

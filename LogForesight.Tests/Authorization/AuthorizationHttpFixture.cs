@@ -403,7 +403,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
         });
 
         // 身分與期望可見度（規格 §7.1）
-        var userCaps = new[] { Capability.Handle, Capability.ConfirmPermission };
+        var userCaps = RoleCapabilityMap.For(UserRole.User).ToArray();
         A = new IdentityFx { Name = "A受限", Account = userA.Account, UserId = userA.UserId, Caps = userCaps.ToHashSet() };
         A.Vis[1] = Visibility.Full;
         B = new IdentityFx { Name = "B負責人", Account = userB.Account, UserId = userB.UserId, Caps = userCaps.ToHashSet() };
@@ -415,7 +415,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
             Name = "Admin",
             Account = AdminAccount,
             UserId = admin.UserId,
-            Caps = Enum.GetValues<Capability>().ToHashSet()
+            Caps = RoleCapabilityMap.For(UserRole.Admin).ToHashSet()
         };
         // 停用主機（4）一律不可見，連管理者也一樣
         Admin.Vis[1] = Admin.Vis[2] = Admin.Vis[3] = Visibility.Full;
@@ -424,7 +424,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
             Name = "serverAdmin",
             Account = ServerAdminAccount,
             UserId = 0,
-            Caps = new HashSet<Capability> { Capability.Maintain, Capability.ViewAudit }
+            Caps = RoleCapabilityMap.ForServerAdmin().ToHashSet()
         };
         Identities = new[] { A, B, C, Admin, ServerAdmin, Anonymous };
     }
@@ -481,6 +481,19 @@ public sealed class AuthorizationHttpFixture : IDisposable
         using var response = await _client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         return (response.StatusCode, body);
+    }
+
+    /// <summary>以指定身分送任意方法的請求；<paramref name="body"/> 非 null 時以 JSON 送出</summary>
+    public async Task<(HttpStatusCode Status, string Body, string? Location)> SendAsync(
+        IdentityFx identity, HttpMethod method, string url, object? body = null, HttpContent? content = null)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        if (identity.Token != null) request.Headers.Add("Cookie", "lf_auth=" + identity.Token);
+        if (content != null) request.Content = content;
+        else if (body != null) request.Content = JsonContent.Create(body);
+        using var response = await _client.SendAsync(request);
+        var text = await response.Content.ReadAsStringAsync();
+        return (response.StatusCode, text, response.Headers.Location?.ToString());
     }
 
     public void Dispose()
