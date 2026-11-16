@@ -145,6 +145,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
 
     private readonly string _dataRoot;
     private readonly Dictionary<string, string?> _savedEnv = new();
+    private readonly NLog.Config.LoggingConfiguration? _savedNLogConfig;
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
     private TcpListener? _aiSink;
@@ -179,6 +180,9 @@ public sealed class AuthorizationHttpFixture : IDisposable
 
         // 設定走環境變數：Development 的 appsettings.Development.json 會蓋過 UseSetting，
         // 環境變數是最後載入的來源，才確保資料根目錄與簽章金鑰是測試自己的值。
+        // 站台啟動（Program）會重新載入全域 NLog 設定、改動全域加解密金鑰；結束時還原，否則之後依 NLog 收集警告
+        // 或依金鑰狀態判斷的測試（例如 CredentialPreflightTests）在全量時收不到預期的結果
+        _savedNLogConfig = NLog.LogManager.Configuration;
         SetEnv("Storage__Type", "Sqlite");
         SetEnv("Storage__DataRoot", _dataRoot);
         SetEnv("Storage__ConnectionString", "");
@@ -502,6 +506,8 @@ public sealed class AuthorizationHttpFixture : IDisposable
         _factory.Dispose();
         _aiSink?.Stop();
         foreach (var (key, value) in _savedEnv) Environment.SetEnvironmentVariable(key, value);
+        NLog.LogManager.Configuration = _savedNLogConfig;
+        CryptoHelper.ResetForTests();
         try { Directory.Delete(_dataRoot, recursive: true); } catch (IOException) { /* SQLite 檔案可能仍被連線池占用，留在暫存目錄無妨 */ }
     }
 }
