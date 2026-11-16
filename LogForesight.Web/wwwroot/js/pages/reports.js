@@ -165,15 +165,17 @@ async function loadReport() {
     if (currentScope === 'all') params.delete('handlingScope'); else params.set('handlingScope', currentScope);
     history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
 
-    document.getElementById('print-title').textContent =
-        `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}` +
-        (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
-
     renderAll(true);
     return true;
 }
 
 const SCOPE_LABEL = { unresolved: '未結案', open: '未處理', unassigned: '未指派' };
+
+/** 列印標題：三個視角一起印，顯示範圍只套用在總覽，紙上要寫明（畫面上的提示在不列印的切換列裡） */
+function printTitle(from, to) {
+    return `LogForesight 風險報表　${from} ～ ${to}` +
+        (currentScope !== 'all' ? `（總覽：${SCOPE_LABEL[currentScope]}；處理成效與問題類型不套用顯示範圍）` : '');
+}
 
 /** 依 scope 附加到下鑽 URL 的處理狀態條件——點進去的清單筆數與卡片數字對得上（§5） */
 function scopeDrillParams() {
@@ -197,6 +199,13 @@ function renderAll(loaded = false) {
     if (loaded) {
         views.overview.loaded = true;   // 總覽跟著這次成功載入更新（含大螢幕自動更新）；待重載標記在發出請求時已清
         views.overview.failed = false;
+        // 列印補載入失敗時標上的「此部分未能載入」要跟著清掉，否則之後重載成功、再列印仍只印那一句
+        document.getElementById('view-overview').classList.remove('lf-report-view--failed');
+        // 列印補載入隱藏中的總覽時不動共用的標題與期間（那些屬於目前顯示的視角）
+        if (currentView === 'overview') {
+            document.getElementById('print-title').textContent = printTitle(currentData.from, currentData.to);
+            noteAppliedRange(currentData.from, currentData.to);
+        }
         wall.dataLoaded();
     }
 }
@@ -887,6 +896,17 @@ function markOtherViewsDirty() {
     }
 }
 
+/**
+ * 目前的視角以這組起訖成功載入。與上一次不同就把其他視角標成待重載——
+ * 輸入欄改了日期、沒按「查詢」就切視角時，新視角會用新日期載入，其他視角不重載的話工具列與各視角的數字會對不起來。
+ */
+let appliedRange = null;
+function noteAppliedRange(from, to) {
+    const range = `${from}|${to}`;
+    if (appliedRange !== null && appliedRange !== range) markOtherViewsDirty();
+    appliedRange = range;
+}
+
 /** 「此視角不套用顯示範圍」：在處理成效與問題類型，且顯示範圍不是「全部」時才出現（總覽套用範圍，沒有這個誤會） */
 function syncViewNotes() {
     const note = document.getElementById('report-view-note');
@@ -939,6 +959,8 @@ async function loadOtherView(view) {
         return;
     }
     const container = document.getElementById(VIEW_CONTAINER[view]);
+    // 載入中與失敗時收起這個視角的圖表：舊期間的數字留在骨架列或「重試」下面，看起來像目前條件的結果
+    document.getElementById(`view-${view}`).classList.add('lf-report-view--pending');
     renderLoading(container, 3);
     if (await guardLoad(container, () => loadSubView(view))) syncScopeChips();
 }
@@ -966,7 +988,7 @@ async function loadSubView(view) {
     if (result.stale) return;   // 已有更新的請求：整份丟掉，不寫入任何頁面狀態
 
     const { data } = result;
-    document.getElementById(`view-${view}`).classList.remove('lf-report-view--failed');
+    document.getElementById(`view-${view}`).classList.remove('lf-report-view--failed', 'lf-report-view--pending');
     if (view !== currentView) {
         // 使用者已切到別的視角（或列印補載入隱藏中的視角）：只畫這個面板，不改共用的條件、範圍、網址與工具列摘要
         document.getElementById(VIEW_CONTAINER[view]).replaceChildren();
@@ -976,15 +998,14 @@ async function loadSubView(view) {
     appliedView = { presetDays: presetAtRequest, compare };
     currentScope = scope;
     requestedScope = null;
+    noteAppliedRange(data.from, data.to);
 
     // 範圍存網址（與總覽同一規則：all 不留參數）；view 參數不動
     const params = new URLSearchParams(location.search);
     if (currentScope === 'all') params.delete('handlingScope'); else params.set('handlingScope', currentScope);
     history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
 
-    document.getElementById('print-title').textContent =
-        `LogForesight 風險報表　${data.from} ～ ${data.to}` +
-        (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
+    document.getElementById('print-title').textContent = printTitle(data.from, data.to);
 
     renderToolbarSummary(data);
     syncViewNotes();
@@ -999,8 +1020,10 @@ const PRINT_ALL_CLASS = 'lf-report-print-all';
 
 /** 列印前補載入的單一視角（不動目前的視角、不標記其他視角待重載） */
 async function loadForPrint(view) {
-    if (view === 'overview') return loadReport();
-    return loadSubView(view);
+    const rendered = view === 'overview' ? await loadReport() : await loadSubView(view);
+    // 回應被更新的請求取代（補載入途中使用者切到這個視角又發了一次）：這次沒有畫出任何東西，
+    // 當成未能載入，不能讓列印把還在骨架列的畫面當成功印出去
+    if (!rendered) throw new Error('列印補載入已被更新的請求取代');
 }
 
 /** 等兩個畫面更新（版面與圖表重排）；背景分頁不會觸發 requestAnimationFrame，所以另設上限 */

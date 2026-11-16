@@ -40,18 +40,26 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 
     /// <summary>
     /// 逐列恢復試過的超大列與當時的寫入版本：恢復成功（冪等）或讀不到（超過單列位元組上限、內容無效）都記住，
-    /// 版本沒變就不再重讀；讀不到的算「需要檢查」。
+    /// 版本沒變就不再重讀；讀不到的算「需要檢查」。恢復成功的結果另記當時的 PRTG／AI 啟用狀態：
+    /// 啟用狀態變了要重新對帳（一般列每輪都以最新狀態對帳，超大列不能停在舊狀態）。
     /// </summary>
     private readonly ConcurrentDictionary<long, OversizedOutcome> _oversized = new();
 
     /// <summary>
-    /// 記憶體裡的等待與逐列結果超過這段時間沒再被分頁讀到就丟掉：列被保留期清除或改寫後不會再出現，
-    /// 不丟的話系統健康會一直報著已不存在的列。還在等待的列下次被讀到會再加回來。
+    /// 記憶體裡的等待與逐列結果超過這段時間沒再被分頁讀到、**而且之後已有一整趟深層巡掃走完**才丟掉：
+    /// 列被保留期清除或改寫後不會再出現，不丟的話系統健康會一直報著已不存在的列。
+    /// 只看時間不夠——列數多的站台一趟深層巡掃會超過這段時間，還沒輪到的列被丟掉後系統健康的「需要檢查」會先歸零、
+    /// 巡到時又出現，逐列警告也跟著重印。
     /// </summary>
     internal static readonly TimeSpan InMemoryRetention = TimeSpan.FromDays(2);
 
+    /// <summary>本行程內最近兩次深層巡掃走完的時間（UTC）；「上上次走完之前看到的項目」＝整整一趟沒再出現</summary>
+    private DateTime? _deepPassCompletedAtUtc;
+    private DateTime? _previousDeepPassCompletedAtUtc;
+
     private readonly record struct WaitingEntry(WorkflowRecoveryWaitingHostDay Row, DateTime SeenAtUtc);
-    private readonly record struct OversizedOutcome(long Revision, bool Recovered, DateTime SeenAtUtc);
+    private readonly record struct OversizedOutcome(long Revision, bool Recovered, DateTime SeenAtUtc,
+        bool PrtgEnabled = false, bool AiEnabled = false);
 
     /// <summary>目前這一片的時間（UTC），記憶體項目的「最後看到」用它</summary>
     private DateTime _sliceNowUtc = DateTime.UtcNow;
@@ -229,6 +237,7 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 cursor.DeepPassNumber++;
                 cursor.DeepLastCompletedAtUtc = nowUtc;
                 WriteCursor(cursor);
+                NoteDeepPassCompleted(nowUtc);
                 outcome = new PageOutcome(true, true, true, 0, page.WaitingHostDays.Count, page.PayloadBytesRead);
                 return;
             }
@@ -317,7 +326,11 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 if (_oversized.TryGetValue(waiting.RecordId, out var outcome) && outcome.Revision == waiting.CapturedWriteRevision)
                 {
                     _oversized[waiting.RecordId] = outcome with { SeenAtUtc = _sliceNowUtc };
-                    if (outcome.Recovered) continue;
+                    // 已恢復且啟用狀態沒變：不重讀。啟用狀態變了就當成沒試過，往下重新對帳（受每頁額度限制）
+                    if (outcome.Recovered && outcome.PrtgEnabled == prtgEnabled && outcome.AiEnabled == aiEnabled) continue;
+                }
+                if (_oversized.TryGetValue(waiting.RecordId, out var tried) && tried.Revision == waiting.CapturedWriteRevision && !tried.Recovered)
+                {
                     // 同一版本已試過讀不到：當成需要檢查的等待（往下走），不再每輪重讀
                 }
                 else if (oversizedAttempts >= MaxOversizedRecoveriesPerPage)
@@ -379,6 +392,12 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         WorkflowRecoveryPage single;
         try { single = _records.QueryWorkflowRecoveryRecord(waiting.RecordId, WorkflowRecoveryPage.MaximumOversizedPayloadBytes); }
         catch (NotSupportedException) { return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 單列讀取失敗（逾時、連線中斷）不得讓整頁游標停住：這一輪當成讀不到，不記結果，下一輪再試
+            Log.Warn(ex, "Workflow recovery could not read an oversized row; it will be retried on a later pass: recordId={RecordId}", waiting.RecordId);
+            return null;
+        }
         if (single.Records.Count != 1 || single.CapturedWriteRevisions == null ||
             !single.CapturedWriteRevisions.TryGetValue(waiting.RecordId, out var revision))
         {
@@ -389,7 +408,7 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         var record = single.Records[0];
         _waiting.TryRemove(record.RecordId, out _);
         if (_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled))
-            _oversized[record.RecordId] = new OversizedOutcome(revision, Recovered: true, _sliceNowUtc);
+            _oversized[record.RecordId] = new OversizedOutcome(revision, Recovered: true, _sliceNowUtc, prtgEnabled, aiEnabled);
         else
             Log.Warn("Workflow recovery row changed after bounded read; it will be retried on a later pass: recordId={RecordId}", record.RecordId);
         return record;
@@ -407,11 +426,19 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     internal void PruneInMemory(DateTime nowUtc)
     {
         _sliceNowUtc = nowUtc;
+        if (_previousDeepPassCompletedAtUtc is not { } fullPassAgo) return;
         var cutoff = nowUtc - InMemoryRetention;
+        if (fullPassAgo < cutoff) cutoff = fullPassAgo;
         foreach (var (key, entry) in _waiting)
             if (entry.SeenAtUtc < cutoff) _waiting.TryRemove(key, out _);
         foreach (var (key, outcome) in _oversized)
             if (outcome.SeenAtUtc < cutoff) _oversized.TryRemove(key, out _);
+    }
+
+    internal void NoteDeepPassCompleted(DateTime nowUtc)
+    {
+        _previousDeepPassCompletedAtUtc = _deepPassCompletedAtUtc;
+        _deepPassCompletedAtUtc = nowUtc;
     }
 
     internal int RetryPendingReports(IReadOnlyList<DailyAnalysisRecord> records, CancellationToken cancellationToken,

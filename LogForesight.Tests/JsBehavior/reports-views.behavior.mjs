@@ -66,7 +66,7 @@ function fakeNode(id, values) {
     return {
         id, hidden: false, dataset: {}, get value() { return values[id] ?? ''; }, textContent: '',
         classList: {
-            add: n => classes.add(n), remove: n => classes.delete(n),
+            add: n => classes.add(n), remove: (...names) => names.forEach(n => classes.delete(n)),
             contains: n => classes.has(n),
             toggle(n, force) { const on = force === undefined ? !classes.has(n) : Boolean(force); if (on) classes.add(n); else classes.delete(n); return on; }
         },
@@ -99,7 +99,8 @@ function makePage({ search = '', auto = true, from = '2026-10-01', to = '2026-10
     const inst = build([
         'const SCOPE_LABEL', 'const VIEW_CONTAINER', 'const SUBVIEW_ENDPOINT',
         'function needsLoad(', 'function markOtherViewsDirty(', 'function syncViewNotes(', 'function applyView(',
-        'function setView(', 'function loadCurrentView(', 'function reload(', 'async function loadOtherView(', 'async function loadSubView('
+        'function setView(', 'function loadCurrentView(', 'function reload(', 'async function loadOtherView(', 'async function loadSubView(',
+        'function noteAppliedRange(', 'function printTitle('
     ], `
         const views = { overview: createViewState(), effectiveness: createViewState(), category: createViewState() };
         let currentView = viewFromSearch(location.search);
@@ -107,6 +108,7 @@ function makePage({ search = '', auto = true, from = '2026-10-01', to = '2026-10
         let requestedScope = null;
         let activePresetDays = 30;
         let appliedView = null;
+        let appliedRange = null;
         const SUBVIEW_RENDER = {
             effectiveness: data => calls.rendered.push(['effectiveness', data]),
             category: data => calls.rendered.push(['category', data])
@@ -592,6 +594,7 @@ const cases = {
         page.views.effectiveness.dirty = false;
         const printed = [];
         const loadedSub = [];
+        const superseded = [];
         const classes = new Set();
         const listeners = [];
         const inst = build(['const PRINT_ALL_CLASS', 'async function loadForPrint(', 'function nextFrames(', 'function printReport('], `
@@ -600,16 +603,21 @@ const cases = {
             const VIEWS = ['overview', 'effectiveness', 'category'];
             const views = pageViews;
             const needsLoad = view => !views[view].loaded || views[view].failed || views[view].dirty;
-            const loadSubView = async view => { loadedSub.push(view); views[view].loaded = true; views[view].dirty = false; };
-            const loadReport = async () => { loadedSub.push('overview'); };
+            const loadSubView = async view => {
+                loadedSub.push(view);
+                if (superseded.includes(view)) return undefined;   // 回應被更新的請求取代：production 的 loadSubView 回 undefined
+                views[view].loaded = true; views[view].dirty = false;
+                return true;
+            };
+            const loadReport = async () => { loadedSub.push('overview'); return true; };
             const document = {
                 querySelector: () => ({ classList: { add: n => classes.add(n), remove: n => classes.delete(n) } }),
                 getElementById: id => pageNodes(id)
             };
             const window = { print: () => printed.push([...classes]), addEventListener: (t, fn) => listeners.push([t, fn]) };
         `, '{ printReport }', {
-            pageViews: page.views, loadedSub, classes, printed, listeners,
-            pageNodes: id => page.nodes.get(id) ?? fakeNode(id, {}),
+            pageViews: page.views, loadedSub, classes, printed, listeners, superseded,
+            pageNodes: id => { if (!page.nodes.has(id)) page.nodes.set(id, fakeNode(id, {})); return page.nodes.get(id); },
             printAllViews: common.printAllViews
         });
         const first = inst.printReport();
@@ -620,6 +628,84 @@ const cases = {
         assert.deepEqual(loadedSub, ['category'], '只補載入還沒載入的視角（問題類型）');
         assert.deepEqual(printed, [['lf-report-print-all']], '列印時三個視角都顯示（列印用類別已加上）');
         assert.equal(listeners[0][0], 'afterprint', '印完還原');
+
+        // 補載入途中使用者切到那個視角又發了一次請求：這次什麼都沒畫，不能當成功印出骨架列
+        page.views.category.dirty = true;
+        superseded.push('category');
+        await inst.printReport();
+        assert(page.nodes.get('view-category').classList.contains('lf-report-view--failed'), '被取代的補載入標成「此部分未能載入」');
+    },
+    async 改了日期沒按查詢就切視角_其他視角標成待重載() {
+        const page = makePage({ auto: false });
+        page.setView('effectiveness');
+        page.pending[0].resolve({ from: '2026-10-01', to: '2026-10-30' });
+        await flush();
+        assert.equal(page.views.overview.dirty, false, '同一個期間：總覽的資料仍然有效');
+        page.values['report-from'] = '2026-09-01';   // 改了起日，沒按「查詢」
+        page.setView('category');
+        assert.match(page.pending[1].url, /from=2026-09-01/);
+        page.pending[1].resolve({ from: '2026-09-01', to: '2026-10-30' });
+        await flush();
+        // 問題類型已用新期間載入、工具列也寫新期間：總覽與處理成效不重載的話同一頁的數字對不起來
+        assert.equal(page.views.overview.dirty, true);
+        assert.equal(page.views.effectiveness.dirty, true);
+        assert.equal(page.views.category.dirty, false);
+    },
+    總覽成功載入_清掉列印失敗標記_期間變了其他視角待重載_隱藏中不動共用標題() {
+        const page = makePage();
+        const overviewNode = fakeNode('view-overview', {});
+        page.nodes.set('view-overview', overviewNode);
+        const title = fakeNode('print-title', {});
+        page.nodes.set('print-title', title);
+        const shared = { range: null };
+        // build 以參數傳值：currentView／currentData 每段重新 build 才會換值，appliedRange 由 shared 接續
+        const run = (view, data) => build(['const SCOPE_LABEL', 'function renderAll(', 'function printTitle(', 'function noteAppliedRange(', 'function markOtherViewsDirty('], `
+            const VIEWS = ['overview', 'effectiveness', 'category'];
+            const views = pageViews;
+            let chartAnimate = true;
+            let currentScope = 'unresolved';
+            let appliedRange = shared.range;
+            const wall = { isActive: () => false, status: () => ({ loads: 0 }), dataLoaded() { } };
+            const renderToolbarSummary = () => { }, renderKpi = () => { }, renderCharts = () => { };
+            const document = { getElementById: id => pageNodes(id) };
+        `, '{ renderAll, range: () => appliedRange }', { pageViews: page.views, pageNodes: id => page.nodes.get(id), currentView: view, currentData: data, shared });
+
+        // 列印補載入失敗時標上的類別，總覽之後重載成功要清掉（否則再列印仍只印「此部分未能載入」）
+        overviewNode.classList.add('lf-report-view--failed');
+        page.views.effectiveness.loaded = true; page.views.effectiveness.dirty = false;
+        let r = run('overview', { from: '2026-10-01', to: '2026-10-30' });
+        r.renderAll(true);
+        shared.range = r.range();
+        assert(!overviewNode.classList.contains('lf-report-view--failed'));
+        assert.match(title.textContent, /總覽：未結案；處理成效與問題類型不套用顯示範圍/, '紙上寫明顯示範圍只套用在總覽');
+        assert.equal(page.views.effectiveness.dirty, false, '第一次載入不標其他視角');
+
+        // 期間不同的成功載入：其他視角待重載
+        r = run('overview', { from: '2026-09-01', to: '2026-10-30' });
+        r.renderAll(true);
+        shared.range = r.range();
+        assert.equal(page.views.effectiveness.dirty, true);
+
+        // 列印補載入隱藏中的總覽：不動共用的標題，也不把目前顯示的視角標成待重載
+        page.views.effectiveness.dirty = false;
+        title.textContent = '目前視角的標題';
+        r = run('effectiveness', { from: '2026-08-01', to: '2026-10-30' });
+        r.renderAll(true);
+        assert.equal(title.textContent, '目前視角的標題');
+        assert.equal(page.views.effectiveness.dirty, false);
+    },
+    async 視角重載中與失敗時收起舊期間的圖表_成功後還原() {
+        const page = makePage({ auto: false });
+        const pending = () => page.nodes.get('view-effectiveness').classList.contains('lf-report-view--pending');
+        page.setView('effectiveness');
+        assert.equal(pending(), true, '載入中不留上一個期間的數字');
+        page.pending[0].reject(new Error('逾時'));
+        await flush();
+        assert.equal(pending(), true, '失敗時「重試」下面也不留舊數字');
+        page.loadOtherView('effectiveness');
+        page.pending[1].resolve({ from: 'a', to: 'b' });
+        await flush();
+        assert.equal(pending(), false);
     },
 
     // ── 大螢幕 ────────────────────────────────────────────────────────────

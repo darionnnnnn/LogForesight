@@ -52,6 +52,9 @@ public class ReportsViewsBehaviorTests
     [InlineData("列印時某視角載入失敗仍會印_並標記失敗")]
     [InlineData("列印整合_頁面的printReport補載入待重載的視角")]
     [InlineData("大螢幕視角保存_進入切回總覽_離開還原")]
+    [InlineData("改了日期沒按查詢就切視角_其他視角標成待重載")]
+    [InlineData("總覽成功載入_清掉列印失敗標記_期間變了其他視角待重載_隱藏中不動共用標題")]
+    [InlineData("視角重載中與失敗時收起舊期間的圖表_成功後還原")]
     [InlineData("在途的其他視角舊期間回應不得清掉待重載標記")]
     [InlineData("處理成效_切成表格後重畫回到圖表")]
     public void 報表視角行為(string caseName)

@@ -179,18 +179,45 @@ public sealed class HostDayWorkflowOversizedRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task 記憶體中超過兩天沒再讀到的等待列會被清掉()
+    public async Task 記憶體中的等待列_超過兩天且之後走完一整趟深層巡掃才清掉()
     {
         var overCap = AppendSized(701, WorkflowRecoveryPage.MaximumOversizedPayloadBytes + 1);
         Prepare(overCap, prepareFromPage: false);
         var service = Service();
         await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
         Assert.Equal(1, service.GetWaitingSummary().Waiting);
+        var now = DateTime.UtcNow;
+        var past = now + HostDayWorkflowRecoveryHostedService.InMemoryRetention + TimeSpan.FromMinutes(1);
 
-        service.PruneInMemory(DateTime.UtcNow.AddDays(1));
+        // 列數多的站台一趟深層巡掃會超過兩天：還沒有整趟走完就不丟，否則「需要檢查」先歸零、巡到又出現
+        service.PruneInMemory(past);
+        Assert.Equal(1, service.GetWaitingSummary().Waiting);
+        service.NoteDeepPassCompleted(now.AddHours(1));   // 這一趟（含看到它的那一頁）走完
+        service.PruneInMemory(past);
+        Assert.Equal(1, service.GetWaitingSummary().Waiting);
+        service.NoteDeepPassCompleted(now.AddHours(2));   // 之後又整整走完一趟都沒再看到
+        service.PruneInMemory(now.AddDays(1));
         Assert.Equal(1, service.GetWaitingSummary().Waiting);   // 兩天內仍保留
-        service.PruneInMemory(DateTime.UtcNow + HostDayWorkflowRecoveryHostedService.InMemoryRetention + TimeSpan.FromMinutes(1));
+        service.PruneInMemory(past);
         Assert.Equal(0, service.GetWaitingSummary().Waiting);
+    }
+
+    [Fact]
+    public async Task 已恢復的超大列_PRTG啟用狀態變了要重新對帳()
+    {
+        var record = AppendSized(801, WorkflowRecoveryPage.MaximumPayloadBytes + 500);
+        Prepare(record);
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(value => { value.RetentionDays = 10; value.PrtgEnabled = true; });
+        var service = Service(settings);
+
+        await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
+        Assert.Equal(WorkflowLegState.Succeeded, _workflow.Get(record.HostId, Day)!.Prtg);
+
+        // 一般列每輪都以最新啟用狀態對帳；超大列同版本恢復過就跳過的話，PRTG 關閉後它會一直停在舊狀態
+        settings.Update(value => value.PrtgEnabled = false);
+        await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
+        Assert.Equal(WorkflowLegState.Disabled, _workflow.Get(record.HostId, Day)!.Prtg);
     }
 
     /// <summary>附加一筆主機日，內容 JSON 長度（字元）恰為 <paramref name="contentChars"/>（以標題補 ASCII 字元控制）。</summary>
@@ -256,10 +283,13 @@ public sealed class HostDayWorkflowOversizedRecoveryTests : IDisposable
         _backend.RecordStore().QueryWorkflowRecoveryRecord(recordId, WorkflowRecoveryPage.MaximumOversizedPayloadBytes)
             .CapturedWriteRevisions![recordId];
 
-    private HostDayWorkflowRecoveryHostedService Service()
+    private HostDayWorkflowRecoveryHostedService Service(FakeSystemSettingsStore? settings = null)
     {
-        var settings = new FakeSystemSettingsStore();
-        settings.Update(value => { value.RetentionDays = 10; value.PrtgEnabled = true; });
+        if (settings == null)
+        {
+            settings = new FakeSystemSettingsStore();
+            settings.Update(value => { value.RetentionDays = 10; value.PrtgEnabled = true; });
+        }
         return new HostDayWorkflowRecoveryHostedService((IAnalysisRecordQuery)_backend.RecordStore(), _backend, settings,
             new FakeWebAi(), _workflow,
             new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 3, 0, 0, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60)),

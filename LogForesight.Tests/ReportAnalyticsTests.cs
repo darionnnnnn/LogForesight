@@ -366,6 +366,23 @@ public class ReportAnalyticsTests : IDisposable
     }
 
     [Fact]
+    public void 再發生_已處理那天就被靜音的問題不算一組()
+    {
+        // 整段期間靜音：之後的「又出現」永遠看不到，算進分母會一律落在「未再發生」把比例往下拉
+        var (host, issue) = SeedResolved();
+        Rec(host, ResolvedDay.AddDays(3), "中", issue);
+        Filler(PeriodTo);
+        var exclusion = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "disk", EventId = 7, Mutes = { new MuteInterval { From = D0, To = PeriodTo } } }
+        }, DateTime.Today);
+
+        var r = MakeRig(exclusion: exclusion).Effectiveness.Get(D0, PeriodTo).Recurrence;
+        Assert.Equal((0, 0, 0), (r.Recurred, r.NotRecurred, r.Observing));
+        Assert.Null(r.Rate);
+    }
+
+    [Fact]
     public void 再發生_查詢次數不隨組合數成長()
     {
         void Seed(int from, int to)
