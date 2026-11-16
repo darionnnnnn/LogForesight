@@ -85,7 +85,7 @@ public class AiInsightService
             "每件用一句不超過 40 字的白話說明，並可附一個下鑽篩選（categories 用英文類別、riskLevels 用 高/中/低）。" +
             "只根據提供的統計，不要臆測。" + PromptGuidelines.Language +
             "只輸出 JSON：{\"items\":[{\"text\":\"...\",\"categories\":\"Storage\",\"riskLevels\":\"高,中\"}]}，" +
-            "categories/riskLevels 可省略。第一個字元必須是 {。";
+            "categories/riskLevels 可省略。沒有值得優先處理的事時輸出 {\"items\":[]}。第一個字元必須是 {。";
 
         var result = await GenerateAsync<FocusResult>(cacheKey, system, input, beforeCall);
         if (result?.Items == null || result.Items.Count == 0) return null;
@@ -456,7 +456,7 @@ public class AiInsightService
 
     // ── AI 回應契約（內部）──────────────────────────────────────────────────
 
-    private class FocusResult
+    private class FocusResult : IAiEmptyResultAllowed
     {
         [JsonPropertyName("items")] public List<FocusItem> Items { get; set; } = new();
     }
