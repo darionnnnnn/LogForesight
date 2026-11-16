@@ -4521,5 +4521,49 @@
         "evalAssert": "const eff = document.getElementById('view-effectiveness'); const q = new URLSearchParams(location.search); return !eff.classList.contains('d-none') && q.get('view') === 'effectiveness' && !q.has('display') ? null : ('離開後應回到處理成效且網址只剩 view：' + location.search);"
       }
     ]
+  },
+  {
+    "name": "設定-下拉選值後儲存並保留",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "select": [
+          "#mail-min-risk-level",
+          "中以上"
+        ]
+      },
+      {
+        "click": "#settings-save"
+      },
+      {
+        "waitFor": "#settings-save-status .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#settings-save-status .lf-status-note",
+          "visible": true,
+          "text": "已儲存設定"
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const v = document.getElementById('mail-min-risk-level').value; return v === '中' ? null : ('重新載入後應保留「中」，實際為 ' + v);"
+      }
+    ]
   }
 ]

@@ -43,6 +43,10 @@
 //   { hover: "選擇器" }                              真實滑鼠移入該元素（:hover 會成立）；{ hover: null } 移到視窗左上角離開所有元素
 //   { key: "Enter" | "Escape" | "ArrowDown" | "ArrowUp" | "Tab" | " " }   真實按鍵，送給目前有焦點的元素
 //
+// 填表與送出（找不到元素一律失敗，沒有條件式版本；送出用 click 點按鈕）：
+//   { type: ["選擇器", "文字"] }                     設定輸入欄的值並觸發 input／change
+//   { select: ["選擇器", "值或顯示文字"] }           下拉選值：先比 option 的 value、再比顯示文字；下拉或選項不存在都是失敗
+//
 // 全域斷言（每個情境都跑）：tools/ui-global-asserts.json（[{ name, body }]，body 同 evalAssert 的函式本體），
 //   在頁面載入完成後與情境步驟跑完後各執行一次，失敗計入 assert 項（不另增量測項）。
 //   --global <檔案> 改用別的清單；--no-global 不跑。
@@ -354,6 +358,13 @@ async function runSteps(browser, steps, inflight, width, patchScripts) {
             const [sel, text] = step.type;
             const ok = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
             if (!ok) failures.push(`找不到輸入欄：${sel}`);
+            await settle(browser, inflight);
+        } else if (step.select) {
+            // 下拉選值：先比 option 的 value，再比顯示文字（去頭尾空白）；找不到下拉或選項都是失敗，不做條件式版本
+            const [sel, wanted] = step.select;
+            const res = await evaluate(browser, `(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el || el.tagName !== 'SELECT') return 'no-select'; const w = ${JSON.stringify(String(wanted))}; const opt = [...el.options].find(o => o.value === w) || [...el.options].find(o => o.textContent.trim() === w); if (!opt) return 'no-option'; el.focus(); el.value = opt.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return 'ok'; })()`);
+            if (res === 'no-select') failures.push(`找不到下拉選單：${sel}`);
+            else if (res === 'no-option') failures.push(`下拉選單 ${sel} 沒有選項：${wanted}`);
             await settle(browser, inflight);
         } else if (step.waitFor) {
             const deadline = Date.now() + (Number(step.timeout) || 10000);

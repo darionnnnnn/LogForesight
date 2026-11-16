@@ -462,6 +462,20 @@ internal sealed class UiFixtureChecks
             var all = c._hosts.GetAll().Count(h => h.Active);
             True(viewer.Count > 0 && viewer.Count < handler.Count && handler.Count < all, $"可見主機數應 檢視者({viewer.Count}) < 處理人({handler.Count}) < 全部({all})");
         },
+        ["使用者.開發維運角色"] = c =>
+        {
+            var dev = c.Capabilities("ui-dev");
+            Assert.Contains(Capability.ViewAll, dev);
+            Assert.Contains(Capability.DevMonitor, dev);
+            Assert.DoesNotContain(Capability.Handle, dev);
+        },
+        ["使用者.隱含處理人只靠主機負責人"] = c =>
+        {
+            // 群組角色為空（能力只來自主機負責人的隱含 User 角色，由 UserCapabilityResolver 在站台端加上）
+            Assert.Empty(c.User("ui-owner").GroupIds);
+            Assert.Empty(c.Capabilities("ui-owner"));
+            Assert.Contains(c.User("ui-owner").UserId, c.Host("linux2").OwnerUserIds);
+        },
         ["使用者.長顯示名稱"] = c => True(c.User("ui-handler-long").DisplayName.Length > 30, "顯示名稱應超長"),
         ["使用者.停用"] = c => Assert.False(c.User("ui-disabled").Active),
         ["使用者.暫停接單"] = c => Assert.True(c.User("ui-paused").DispatchPaused),
