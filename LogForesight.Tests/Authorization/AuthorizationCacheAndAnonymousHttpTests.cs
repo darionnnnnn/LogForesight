@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Authorization;
+using LogForesight.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -59,9 +60,13 @@ public class AuthorizationCacheAndAnonymousHttpTests
         foreach (var n in new[] { 2, 3, 4 })
             Assert.False(Sentinels.ContainsAny(aFirst, n), $"A 拿到未授權主機 {n} 的資料（快取鍵缺少可見範圍？）：{url}");
 
-        // 3. 同一人再查：與第一次相同（命中自己那一格），仍不含未授權主機
+        // 3. 同一人再查：與第一次相同，且 SummaryCache 的命中數真的增加（回應相同不代表走了快取——
+        //    快取壞掉時每次重算也會得到同樣內容，所以必須用命中統計證明第二次是命中自己那一格）
+        var cache = _fx.Services.GetRequiredService<SummaryCache>();
+        var hitsBefore = cache.GetStatistics().Hits;
         var (_, aSecond) = await _fx.GetAsync(_fx.A, url);
         Assert.Equal(aFirst, aSecond);
+        Assert.True(cache.GetStatistics().Hits > hitsBefore, $"A 第二次查詢沒有命中 SummaryCache（命中數 {hitsBefore} → {cache.GetStatistics().Hits}）：{url}");
 
         // 4. 另一個受限者 B（負責主機 2）：只看到主機 2，不得拿到 A 的快取
         var (_, bBody) = await _fx.GetAsync(_fx.B, url);

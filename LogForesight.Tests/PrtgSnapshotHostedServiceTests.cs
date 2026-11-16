@@ -370,6 +370,24 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 停用期間每輪推後可採集起點_重新啟用後逾時警示不從停用前起算()
+    {
+        _settingsStore.Update(s => { s.PrtgEnabled = false; s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative; });
+        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("停用時不得開新請求");
+        var service = CreateService();
+        var now = DateTime.Today.AddHours(20);
+        service.StartedAt = now.AddDays(-2);
+        service.Now = () => now;
+        await service.TickAsync();
+
+        Assert.Equal(now, service.GetStatus().StartedAt);
+        // 重新啟用、尚未成功取樣時，判定點只過了 1 小時，不警示
+        var alert = PrtgSnapshotAlert.Evaluate(true, PrtgFetchStrategy.Conservative,
+            service.GetStatus() with { TargetCount = 5 }, now.AddHours(1));
+        Assert.False(alert.NoRecentSuccess);
+    }
+
+    [Fact]
     public async Task HostedServiceRestart_鏡像與Queue同交易提交後_下次ScopeRefresh仍取回近期狀態()
     {
         const long deviceId = 702;
@@ -3214,7 +3232,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(before, Hashes(result.Location));
         Assert.Null(service.GetStatus().JournalStopCode);
         Assert.False(service.GetJournalPreview().Stopped);
-        Assert.Contains(audits, a => a.Action == AuditActions.PrtgSnapshotJournalArchive);
+        Assert.StartsWith(preview.ArchiveLocation!, result.Location);
+        // 手動封存的稽核由控制器以操作者帳號寫一筆；服務不得再以系統帳號重複寫
+        Assert.DoesNotContain(audits, a => a.Action == AuditActions.PrtgSnapshotJournalArchive);
         // 沒有停止時再按一次回 409
         Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.ArchiveJournalManually());
     }

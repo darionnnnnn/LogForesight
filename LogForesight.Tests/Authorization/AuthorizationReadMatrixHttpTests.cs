@@ -133,6 +133,10 @@ public class AuthorizationReadMatrixHttpTests
                 case RowScope.HostSoft:
                     ExpectStatus(HttpStatusCode.OK);
                     CheckLeakAllHosts();
+                    // 完整可見的主機：回應要含預期哨兵（證明判準比得到東西）
+                    if (status == HttpStatusCode.OK && id.VisOf(host!.N) == Visibility.Full && row.Positive.Length > 0)
+                        Expect(Sentinels.ContainsAnyOf(body, host.N, row.Positive),
+                            $"完整可見的主機 {host.N} 沒有出現預期的哨兵（{string.Join("/", row.Positive)}）——判準比不到資料");
                     break;
 
                 case RowScope.User:
@@ -140,6 +144,9 @@ public class AuthorizationReadMatrixHttpTests
                     var allowed = id.UserId == targetUser!.UserId && id.UserId > 0 || id.Has(Capability.Assign) || id.Has(Capability.ViewAll);
                     ExpectStatus(allowed ? HttpStatusCode.OK : HttpStatusCode.Forbidden);
                     CheckLeakAllHosts();
+                    var userNeedle = row.UserNeedle?.Invoke(targetUser!);
+                    if (allowed && status == HttpStatusCode.OK && userNeedle != null)
+                        Expect(body.Contains(userNeedle, StringComparison.Ordinal), $"預期出現 {userNeedle}，判準比不到資料");
                     // 案件授與者查自己的工作量：被交辦的問題 A（主機 3）要出現，證明判準比得到案件授與的資料
                     if (allowed && status == HttpStatusCode.OK && key.EndsWith("/workload", StringComparison.Ordinal)
                         && id.Name == "C案件授與" && targetUser.Name == "C案件授與")

@@ -205,15 +205,16 @@ public static class WriteMatrix
 
     // ── 交辦單：回覆、到期日、已讀 ──────────────────────────────────────────
 
-    private sealed record OrderTarget(long Id, bool Own);
+    private sealed record OrderTarget(long Id, bool Own, bool Fixture = false);
 
     /// <summary>"WO-C"／"WO-A"＝夾具的單（不是該身分本人的）；"own"＝為該身分另建的一張，成員在主機 1</summary>
     private static OrderTarget ResolveOrder(WriteCtx c, bool withMember)
     {
         return c.Label switch
         {
-            "WO-C" => new OrderTarget(c.Fx.WorkOrderC.Id, false),
-            "WO-A" => new OrderTarget(c.Fx.WorkOrderA.Id, false),
+            // 夾具的單：處理人本人（例如 C 回覆 WO-C）才算自己的；其餘身分碰別人的單必須被擋
+            "WO-C" => new OrderTarget(c.Fx.WorkOrderC.Id, c.Identity.UserId == c.Fx.WorkOrderC.HandlerId, Fixture: true),
+            "WO-A" => new OrderTarget(c.Fx.WorkOrderA.Id, c.Identity.UserId == c.Fx.WorkOrderA.HandlerId, Fixture: true),
             _ => new OrderTarget(c.Probe.NewOrder(c.Identity, c.Fx.Host(1), "own" + Guid.NewGuid().ToString("N")[..6], withMember), true)
         };
     }
@@ -221,14 +222,19 @@ public static class WriteMatrix
     private static WritePlan ReplyPlan(WriteCtx c)
     {
         var o = ResolveOrder(c, withMember: true);
+        // 案件授與者 C 回覆自己名下的夾具單 WO-C：維持進行中（結案會讓他失去主機 3 的案件授與可見度，干擾其他列），
+        // 寫完把單、案件與主機 3 當天處理狀態復原
+        var fixtureOwn = o is { Fixture: true, Own: true };
+        var restore = fixtureOwn ? c.Probe.CaptureFixtureOrderRestore(o.Id, c.Fx.Host(3)) : null;
         return new WritePlan
         {
             Method = HttpMethod.Post,
             Url = $"/api/work-orders/{o.Id}/reply",
-            Body = new { status = IssueHandlingStatuses.Resolved, note = "寫入矩陣回覆" },
+            Body = new { status = fixtureOwn ? IssueHandlingStatuses.InProgress : IssueHandlingStatuses.Resolved, note = "寫入矩陣回覆" },
             Expect = o.Own ? WriteExpect.Write : WriteExpect.Reject,
             Snapshot = () => c.Probe.OrderSnapshot(o.Id),
-            ForbiddenHosts = Unauthorized(c.Identity)
+            ForbiddenHosts = Unauthorized(c.Identity),
+            Restore = restore
         };
     }
 
@@ -348,7 +354,8 @@ public static class WriteMatrix
         new() { Key = "PUT /api/records/{hostId:long}/{date}/handling/issues/batch", Cases = AOnHosts.Concat(CIssues).ToArray(), Plan = IssueBatchPlan },
         new() { Key = "PUT /api/permission-changes/{changeId}/confirm", Cases = AOnHosts.Append(("C案件授與", "H3")).ToArray(), Plan = ConfirmPlan },
         new() { Key = "POST /api/permission-changes/confirm/batch", Cases = AOnHosts.Append(("C案件授與", "H3")).ToArray(), Plan = ConfirmBatchPlan },
-        new() { Key = "POST /api/work-orders/{id:long}/reply", Cases = AOnOrders, Plan = ReplyPlan },
+        // 成對：A／C 打別人的單被擋；C 回覆自己名下的 WO-C 成功（正向，證明判準比得到東西）
+        new() { Key = "POST /api/work-orders/{id:long}/reply", Cases = AOnOrders.Append(("C案件授與", "WO-C")).ToArray(), Plan = ReplyPlan },
         new() { Key = "POST /api/work-orders/reply-many", Cases = AOnOrders, Plan = ReplyManyPlan },
         new() { Key = "PUT /api/work-orders/{id:long}/due-date", Cases = AOnOrders, Plan = DueDatePlan },
         new() { Key = "POST /api/work-orders/{id:long}/seen", Cases = AOnOrders.Take(2).ToArray(), Plan = SeenPlan },

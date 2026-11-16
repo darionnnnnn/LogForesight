@@ -1181,9 +1181,9 @@ function snapshotArchiveConfirmMessage(journal) {
         ? `${formatDateTime(journal.earliest)} 至 ${formatDateTime(journal.latest)}`
         : '無樣本';
     return `停止原因：${SNAPSHOT_STOP_LABELS[journal.stopCode] ?? journal.stopCode}。`
-        + `\將放棄 ${formatNumber(journal.rows)} 筆舊樣本（${range}，其中 ${formatNumber(journal.rowsInReplayWindow)} 筆仍在重播期限內），不會寫進目前資料庫。`
-        + `\舊檔會整個搬到封存位置，不會刪除：${journal.archiveLocation ?? '待寫目錄旁的封存夾'}。`
-        + '\封存後立即重新開始採集。';
+        + `\n將放棄 ${formatNumber(journal.rows)} 筆舊樣本（${range}，其中 ${formatNumber(journal.rowsInReplayWindow)} 筆仍在重播期限內），不會寫進目前資料庫。`
+        + `\n舊檔會整個搬到封存夾，不會刪除：${journal.archiveLocation ?? '待寫目錄旁的封存夾'}。`
+        + '\n封存後立即重新開始採集。';
 }
 
 /** 鏡像狀態「數值快照」那一行旁的封存入口；不可封存時只顯示原因說明。 */
@@ -1217,7 +1217,7 @@ function renderSnapshotArchive(journal, user) {
             })) return;
             try {
                 const result = await api.post('/api/prtg-snapshot-diagnostics/archive-journal', {});
-                toast(`已封存 ${formatNumber(result?.rows ?? 0)} 筆舊樣本，快照重新開始`, 'success');
+                toast(`已封存 ${formatNumber(result?.rows ?? 0)} 筆舊樣本到 ${result?.location ?? '封存夾'}，快照重新開始`, 'success');
             } catch {
                 // 錯誤訊息已由 api.js 以 toast 顯示
             }

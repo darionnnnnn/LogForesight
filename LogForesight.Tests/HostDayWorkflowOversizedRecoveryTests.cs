@@ -146,6 +146,53 @@ public sealed class HostDayWorkflowOversizedRecoveryTests : IDisposable
         Assert.Equal(1, service.GetWaitingSummary().NeedsAttention);
     }
 
+    [Fact]
+    public async Task 逐列讀不到的超大列_佔每頁額度_同版本不再重讀並列為需要檢查()
+    {
+        // 五列超過單頁上限但內容無效（逐列讀也讀不出來），最後一列正常：額度若只算成功，五列每輪都會被重讀
+        var broken = Enumerable.Range(0, 5)
+            .Select(index => AppendSized(600 + index, WorkflowRecoveryPage.MaximumPayloadBytes + 100 + index))
+            .ToList();
+        using (var context = _backend.CreateContext())
+        {
+            foreach (var record in broken)
+            {
+                var row = context.DailyRecords.Single(value => value.RecordId == record.RecordId);
+                row.ContentJson = "{\"broken\": " + new string('x', WorkflowRecoveryPage.MaximumPayloadBytes + 100);
+            }
+            context.SaveChanges();
+        }
+        var valid = AppendSized(610, WorkflowRecoveryPage.MaximumPayloadBytes + 50);
+        Prepare(valid);
+        var service = Service();
+
+        var first = await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
+        // 四次嘗試都花在壞列上：第五個壞列與正常列延後
+        Assert.Equal(6, first.WaitingRows);
+        Assert.Equal(4, service.GetWaitingSummary().NeedsAttention);
+
+        var second = await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
+        // 延後的優先：第五個壞列與正常列各試一次，正常列恢復；已確認讀不到的四列同版本不再重讀
+        Assert.Equal(5, second.WaitingRows);
+        Assert.Equal(5, service.GetWaitingSummary().NeedsAttention);
+        Assert.False(_workflow.Get(valid.HostId, Day)!.IsRecoveryWaiting);
+    }
+
+    [Fact]
+    public async Task 記憶體中超過兩天沒再讀到的等待列會被清掉()
+    {
+        var overCap = AppendSized(701, WorkflowRecoveryPage.MaximumOversizedPayloadBytes + 1);
+        Prepare(overCap, prepareFromPage: false);
+        var service = Service();
+        await service.RunSliceAsync(CancellationToken.None, Day.AddDays(1));
+        Assert.Equal(1, service.GetWaitingSummary().Waiting);
+
+        service.PruneInMemory(DateTime.UtcNow.AddDays(1));
+        Assert.Equal(1, service.GetWaitingSummary().Waiting);   // 兩天內仍保留
+        service.PruneInMemory(DateTime.UtcNow + HostDayWorkflowRecoveryHostedService.InMemoryRetention + TimeSpan.FromMinutes(1));
+        Assert.Equal(0, service.GetWaitingSummary().Waiting);
+    }
+
     /// <summary>附加一筆主機日，內容 JSON 長度（字元）恰為 <paramref name="contentChars"/>（以標題補 ASCII 字元控制）。</summary>
     private DailyAnalysisRecord AppendSized(long hostId, int contentChars)
     {

@@ -27,7 +27,7 @@ namespace LogForesight.Web.Services;
 /// <param name="LastSkipReason">快照跳過原因（若因前置條件未滿足暫停）</param>
 /// <param name="JournalStopCode">待寫檔停止原因碼（<see cref="PrtgSnapshotJournalStopCodes"/>）；null＝待寫檔正常</param>
 /// <param name="TargetCount">目前快照目標數；尚未算出時為 null</param>
-/// <param name="StartedAt">站台（本服務）啟動時間；「超過 N 小時沒有成功取樣」從它與最近成功時間取晚者起算</param>
+/// <param name="StartedAt">可以開始採集的時間（站台啟動，或 PRTG 停用／連線設定不齊後重新具備條件）；「超過 N 小時沒有成功取樣」從它與最近成功時間取晚者起算</param>
 public sealed record PrtgSnapshotStatus(
     DateTime? LastSuccessAt,
     int LastSensorCount,
@@ -183,7 +183,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
 
-    /// <summary>本服務啟動時間（測試可覆寫）。</summary>
+    /// <summary>可以開始採集的時間：服務啟動時設定，PRTG 停用或連線設定不齊期間每輪往後推，重新啟用後的逾時警示才不會從停用前起算（測試可覆寫）。</summary>
     internal DateTime StartedAt { get; set; } = DateTime.Now;
 
     /// <summary>系統自動行為的稽核出口（action、summary、detail）；DI 於組裝時接上，測試可替換。</summary>
@@ -494,6 +494,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         if (!settings.PrtgEnabled)
         {
             NoteSkip(PrtgSnapshotSkipReasonCodes.PrtgDisabled, "PRTG 擷取未啟用", trackPause: false);
+            StartedAt = Now();
             return;
         }
 
@@ -501,6 +502,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         {
             NoteSkip(PrtgSnapshotSkipReasonCodes.ConnectionNotConfigured, "PRTG 連線設定不齊", trackPause: false);
+            StartedAt = Now();
             return;
         }
 
@@ -1327,7 +1329,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             ResetInMemoryJournalState();
             var message = $"PRTG 快照待寫檔的資料庫識別與目前資料庫不符，且沒有仍在重播期限內的樣本；已封存 {inspection.Rows} 筆舊樣本到 {location} 並重新開始採集。";
             WriteOutput(message, LogLevel.Warn);
-            WriteSystemAudit(inspection, location, PrtgSnapshotJournalStopCodes.DatabaseMismatch, auto: true);
+            WriteAutoArchiveAudit(inspection, location);
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or InvalidOperationException)
@@ -1346,13 +1348,15 @@ public class PrtgSnapshotHostedService : BackgroundService
         _pendingRows = 0;
     }
 
-    private void WriteSystemAudit(PrtgSnapshotJournalInspection inspection, string location, string stopCode, bool auto)
+    /// <summary>自動封存只發生在資料庫識別不符，以系統帳號寫稽核；手動封存由控制器以操作者帳號寫，這裡不重複寫。</summary>
+    private void WriteAutoArchiveAudit(PrtgSnapshotJournalInspection inspection, string location)
     {
         try
         {
+            const string stopCode = PrtgSnapshotJournalStopCodes.DatabaseMismatch;
             SystemAudit?.Invoke(AuditActions.PrtgSnapshotJournalArchive,
-                $"{(auto ? "自動" : "手動")}封存 PRTG 快照待寫檔（{inspection.Rows} 筆，原因 {stopCode}）",
-                new { stopCode, auto, rows = inspection.Rows, earliest = inspection.Earliest, latest = inspection.Latest, location });
+                $"自動封存 PRTG 快照待寫檔（{inspection.Rows} 筆，原因 {stopCode}）",
+                new { stopCode, auto = true, rows = inspection.Rows, earliest = inspection.Earliest, latest = inspection.Latest, location });
         }
         catch (Exception ex) { Log.Warn(ex, "PRTG 快照待寫檔封存稽核寫入失敗"); }
     }
@@ -1374,7 +1378,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             return new(true, code, message, false, "待寫檔完整性檢查未通過，不能封存：" + inspection.Failure,
                 0, 0, null, null, null);
         return new(true, code, message, true, null, inspection.Rows, inspection.RowsInReplayWindow,
-            inspection.Earliest, inspection.Latest, _journal.ArchiveLocation(Now(), code));
+            inspection.Earliest, inspection.Latest, _journal.ArchiveRoot);
     }
 
     /// <summary>
@@ -1402,7 +1406,6 @@ public class PrtgSnapshotHostedService : BackgroundService
                 _journalStopCode = null;
                 _lastSkipReason = null;
                 WriteOutput($"管理者已封存 PRTG 快照待寫檔（{inspection.Rows} 筆，原因 {code}）到 {location}，重新開始採集。", LogLevel.Warn);
-                WriteSystemAudit(inspection, location, code, auto: false);
                 RestoreJournalCore(_settingsStore.Get(), allowAutoArchive: false);
                 return new PrtgSnapshotArchiveResult(location, inspection.Rows, inspection.Earliest, inspection.Latest, code);
             }

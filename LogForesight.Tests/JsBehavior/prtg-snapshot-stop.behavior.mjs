@@ -109,6 +109,8 @@ async function confirmDialogStatesRowsRangeAndLocation() {
     assert.match(message, /2 筆仍在重播期限內/);
     assert.match(message, /20261110-120000-database-mismatch/);
     assert.match(message, /不會刪除/);
+    // 四句各自一行（對話以 lf-pre-line 顯示換行）；跳脫字元寫錯時四句會黏成一段
+    assert.equal(message.split('\n').length, 4, message);
 }
 
 async function clickConfirmedPostsArchiveAndRefreshes() {

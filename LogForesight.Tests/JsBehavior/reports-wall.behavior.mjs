@@ -223,6 +223,7 @@ const cases = {
             const defaultCompareFor = () => 'previous';
             const updateYoyOptionLabel = () => {};
             const clearDisplaySettingsCache = () => { state.settingsCleared = (state.settingsCleared ?? 0) + 1; };
+            const markOtherViewsDirty = () => { state.markedDirty = (state.markedDirty ?? 0) + 1; };
             const loadReport = async () => {
                 loaded.push([inputs['report-from'].value, inputs['report-to'].value]);
                 if (state.failing) throw new Error('boom');
@@ -243,6 +244,7 @@ const cases = {
             clock = new RealDate(2026, 10, 12, 0, 5).getTime();   // 跨過午夜
             assert.equal(await preset.wallRefresh(), true);
             assert.deepEqual(loaded.at(-1), ['2026-11-05', '2026-11-11'], '跨午夜後起訖各前進一天');
+            assert.equal(state.markedDirty, 2, '快捷期間每次更新都把其他視角標成待重載（離開大螢幕回到的視角換新期間）');
 
             // 自訂日期：固定不動（activePresetDays 為 null）
             const custom = make(null);
@@ -252,6 +254,7 @@ const cases = {
             clock = new RealDate(2026, 10, 14, 0, 5).getTime();
             assert.equal(await custom.wallRefresh(), true);
             assert.deepEqual(loaded.at(-1), ['2026-10-01', '2026-10-05'], '自訂日期不得被滾動');
+            assert.equal(state.markedDirty, 2, '自訂日期不動，不必標其他視角');
 
             // 取數失敗：回 false（由 wall 記成更新失敗），不外擲
             state.failing = true;
@@ -268,6 +271,7 @@ const cases = {
         const old = { from: 'a', to: 'b', marker: 'old' };
         const loadInst = build(reports, ['async function loadReport('], `
             let currentData = old;
+            const views = { overview: { dirty: true } };
             let activePresetDays = null;
             let appliedView = null;
             let retentionDays = 90;

@@ -117,7 +117,7 @@ public class NoteReuseAndPhrasesTests : IDisposable
         var currentUser = FakeCurrentUser.ForUser(user.UserId, Capability.Handle);
         var visibility = new VisibilityService(currentUser, users, userGroups, access, hosts,
             new FakeIssueCaseStore(), _settings, new FakeIssueOwnerStore(), new FakeIssueAggregateQuery());
-        var controller = new IssueNoteController(Store, visibility, currentUser);
+        var controller = new IssueNoteController(Store, visibility);
 
         var result = controller.GetLastNote(IssueKey).Data;
 
@@ -127,11 +127,11 @@ public class NoteReuseAndPhrasesTests : IDisposable
         Assert.Equal(DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"), result.Date);
         Assert.NotEqual("乙", result.Note);
 
-        // 對照組：持有 ViewAll 的人不限範圍，拿到的是最新的「乙」——證明上面不是因為資料只有甲
+        // 對照組：持有 ViewAll 的人看得到全部啟用主機，拿到的是最新的「乙」——證明上面不是因為資料只有甲
         var admin = FakeCurrentUser.ForUser(user.UserId, Capability.Handle, Capability.ViewAll);
         var adminVisibility = new VisibilityService(admin, users, userGroups, access, hosts,
             new FakeIssueCaseStore(), _settings, new FakeIssueOwnerStore(), new FakeIssueAggregateQuery());
-        Assert.Equal("乙", new IssueNoteController(Store, adminVisibility, admin).GetLastNote(IssueKey).Data!.Note);
+        Assert.Equal("乙", new IssueNoteController(Store, adminVisibility).GetLastNote(IssueKey).Data!.Note);
     }
 
     // ── 常用語 ────────────────────────────────────────────────────────────

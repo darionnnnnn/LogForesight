@@ -214,6 +214,6 @@ public class ReportEffectivenessService
     {
         Resolution = "期間內的高、中風險日，依「現在」的處理狀態分成已處理、處理中、未處理；以風險日的紀錄日歸入時間桶，不受上方顯示範圍影響。",
         Aging = "目前仍未結案（未處理或處理中）的風險日，距離資料最後一個紀錄日已經過了幾天。",
-        Recurrence = $"已處理後 {RecurrenceWindowDays} 天內同一台主機同一個問題又出現的比例；觀察未滿 {RecurrenceWindowDays} 天且尚未再發生的不計入，不處理、誤報、已知雜訊也不算已處理。"
+        Recurrence = $"已處理後 {RecurrenceWindowDays} 天內同一台主機同一個問題又出現的比例；觀察未滿 {RecurrenceWindowDays} 天且尚未再發生的不計入，不處理、誤報、已知雜訊也不算已處理。「又出現」只看系統設定中顯示的風險等級與嚴重度。"
     };
 }

@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -20,11 +22,18 @@ public class AuthorizationCoverageTests
     private static IReadOnlySet<string> LoadActionKeys() =>
         ActionCatalog.Actions.Select(a => a.Key).ToHashSet(StringComparer.Ordinal);
 
-    /// <summary>掛了能力閘門（[Permission]／[RequireViewAll]）的 action：由角色閘門測試資料驅動地涵蓋，不必逐條登錄</summary>
-    private static IReadOnlySet<string> AnnotatedKeys() =>
-        ActionCatalog.Actions.Where(a => a.IsAnnotated).Select(a => a.Key).ToHashSet(StringComparer.Ordinal);
+    /// <summary>
+    /// 掛了能力閘門（[Permission]／[RequireViewAll]）<b>且受限 A 一定被擋</b>的 action：由角色閘門測試資料驅動地涵蓋，不必逐條登錄。
+    /// 角色閘門只拿受限 A 與 serverAdmin 打；A 本來就有的能力（Handle、ConfirmPermission）所標註的端點 A 能通過，
+    /// 角色閘門根本打不到，必須另外出現在讀取矩陣、寫入矩陣或豁免清單——不能因為有標註就算涵蓋。
+    /// </summary>
+    private static IReadOnlySet<string> AnnotatedKeys()
+    {
+        var aCaps = RoleCapabilityMap.For(UserRole.User);
+        return ActionCatalog.Actions.Where(a => a.IsAnnotated && !a.Passes(aCaps)).Select(a => a.Key).ToHashSet(StringComparer.Ordinal);
+    }
 
-    /// <summary>三份明確登錄的清單（互斥）；有標註的 action 另由角色閘門涵蓋，可與讀取／寫入矩陣重疊</summary>
+    /// <summary>三份明確登錄的清單（互斥）；A 一定被擋的標註 action 另由角色閘門涵蓋，可與讀取／寫入矩陣重疊</summary>
     private static readonly IReadOnlyList<(string Name, IReadOnlyCollection<string> Keys)> Lists = new (string, IReadOnlyCollection<string>)[]
     {
         ("讀取矩陣（AuthorizationReadMatrix.Rows）", ReadMatrix.Rows.Select(r => r.Key).ToList()),
@@ -40,7 +49,7 @@ public class AuthorizationCoverageTests
 
         var missing = actions.Where(a => !registered.Contains(a)).OrderBy(a => a, StringComparer.Ordinal).ToList();
         Assert.True(missing.Count == 0,
-            "下列端點沒有登錄到授權涵蓋清單——它沒有 [Permission]／[RequireViewAll]，" +
+            "下列端點沒有登錄到授權涵蓋清單——它沒有會擋下受限 A 的 [Permission]／[RequireViewAll]（A 能通過的標註角色閘門打不到），" +
             "請加進讀取矩陣（AuthorizationReadMatrix）、寫入矩陣（AuthorizationWriteMatrix），或豁免清單（附理由）：\n  " + string.Join("\n  ", missing));
     }
 

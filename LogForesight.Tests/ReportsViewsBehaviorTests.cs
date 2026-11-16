@@ -52,6 +52,8 @@ public class ReportsViewsBehaviorTests
     [InlineData("列印時某視角載入失敗仍會印_並標記失敗")]
     [InlineData("列印整合_頁面的printReport補載入待重載的視角")]
     [InlineData("大螢幕視角保存_進入切回總覽_離開還原")]
+    [InlineData("在途的其他視角舊期間回應不得清掉待重載標記")]
+    [InlineData("處理成效_切成表格後重畫回到圖表")]
     public void 報表視角行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

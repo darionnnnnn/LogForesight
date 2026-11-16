@@ -289,6 +289,25 @@ const cases = {
         assert.deepEqual(page.calls.rendered.map(r => [r[0], r[1].marker]), [['category', 'cat'], ['effectiveness', 'eff']]);
         assert.equal(page.view(), 'category', '目前視角是最後點的那個');
     },
+    async 在途的其他視角舊期間回應不得清掉待重載標記() {
+        const page = makePage({ auto: false });
+        page.setView('effectiveness');
+        const old = page.pending[0];
+        page.setView('category');
+        page.pending[1].resolve({ from: 'a', to: 'b', marker: 'cat' });
+        await flush();
+        page.values['report-to'] = '2026-10-20';
+        page.reload();   // 在問題類型按套用：處理成效標記待重載
+        assert.equal(page.views.effectiveness.dirty, true);
+        old.resolve({ from: '2026-10-01', to: '2026-10-30', marker: 'eff-old' });   // 舊期間的處理成效晚到
+        await flush();
+        assert.equal(page.views.effectiveness.dirty, true, '舊期間回應不得抹掉待重載');
+        assert.equal(page.scope(), 'all');
+        assert(!page.calls.toolbar.some(r => r.marker === 'eff-old'), '不是目前視角的回應不得改工具列摘要');
+        page.setView('effectiveness');
+        await flush();
+        assert.match(page.calls.get.at(-1), /effectiveness\?from=2026-10-01&to=2026-10-20/, '切回去以新期間重載');
+    },
     async 舊請求失敗不影響新請求的結果() {
         const page = makePage({ auto: false });
         page.setView('effectiveness');
@@ -394,6 +413,16 @@ const cases = {
         for (const label of ['0–7 天 2', '8–14 天 2', '61 天以上 0']) assert(body.textContent.includes(label.replace(' ', '')) || body.textContent.includes(label), `畫面上要有「${label}」`);
         assert.equal(collect(body, n => has(n, 'lf-stack-bar'))[0].getAttribute('role'), 'img');
         assert.deepEqual(agingSwatches(7, cssVar).slice(4), ['var(--lf-heat-5)', 'var(--lf-heat-5)', 'var(--lf-heat-5)'], '段數多於色階時共用最深一級');
+    },
+    處理成效_切成表格後重畫回到圖表() {
+        const { view, byId } = makeEffectiveness();
+        view.render(effectivenessData());
+        byId('eff-buckets-wrapper').classList.add('d-none');   // 使用者按了「表格」
+        view.render(effectivenessData());
+        assert.equal(byId('eff-buckets-wrapper').classList.contains('d-none'), false, '重畫後圖表容器要顯示，否則整張卡空白');
+        byId('eff-buckets-wrapper').classList.add('d-none');
+        view.render(effectivenessData({ buckets: [] }));
+        assert.equal(byId('eff-buckets-wrapper').classList.contains('d-none'), false, '沒資料時也要顯示「沒有風險日」');
     },
     處理成效_沒有未結案時不畫條() {
         const { view, byId } = makeEffectiveness();
@@ -567,6 +596,7 @@ const cases = {
         const listeners = [];
         const inst = build(['const PRINT_ALL_CLASS', 'async function loadForPrint(', 'function nextFrames(', 'function printReport('], `
             const requestAnimationFrame = fn => setTimeout(fn, 0);
+            let printInFlight = null;
             const VIEWS = ['overview', 'effectiveness', 'category'];
             const views = pageViews;
             const needsLoad = view => !views[view].loaded || views[view].failed || views[view].dirty;
@@ -582,7 +612,11 @@ const cases = {
             pageNodes: id => page.nodes.get(id) ?? fakeNode(id, {}),
             printAllViews: common.printAllViews
         });
-        await inst.printReport();
+        const first = inst.printReport();
+        const second = inst.printReport();   // 連按：沿用同一次
+        assert.equal(second, first, '列印進行中再按沿用同一次');
+        await first;
+        assert.equal(printed.length, 1, '只開一次列印視窗');
         assert.deepEqual(loadedSub, ['category'], '只補載入還沒載入的視角（問題類型）');
         assert.deepEqual(printed, [['lf-report-print-all']], '列印時三個視角都顯示（列印用類別已加上）');
         assert.equal(listeners[0][0], 'afterprint', '印完還原');

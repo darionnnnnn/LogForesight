@@ -61,7 +61,7 @@ export function createCategoryView(deps = {}) {
             const max = data.cellMax ?? 0;
 
             const columns = [
-                { key: 'category', title: '類型', className: 'lf-col-nowrap', render: row => categoryName(row.category) },
+                { key: 'category', title: '類型', className: 'lf-col-nowrap lf-heat__label', render: row => categoryName(row.category) },
                 ...buckets.map((bucket, i) => ({
                     key: `bucket${i}`,
                     title: periods[i],

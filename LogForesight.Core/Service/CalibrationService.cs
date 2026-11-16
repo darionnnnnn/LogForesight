@@ -235,7 +235,8 @@ public sealed record CalibrationPrtgRuleThresholdInfo(
     bool RuleEnabled);
 
 /// <summary>
-/// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）
+/// 殘留判定候選主機日指標資料列（匯出用，嚴格排除帳號等個人識別資訊）。
+/// <c>RecurringGroupCount</c>／<c>RecurringGroupShare</c> 只算最大組以外、跨日重現的組（最大組的跨日天數在 <c>CrossDayDistinctDays</c>）。
 /// </summary>
 public sealed record CalibrationResidualCandidateRow(
     long HostId,
@@ -866,12 +867,10 @@ public sealed class CalibrationService
             if (!sensorsByObjid.TryGetValue(sensor, out var row) ||
                 !PrtgValueSemantics.TryResolve(row.SensorType, overrides, out var semantic) ||
                 !avgBySensorDay.TryGetValue((sensor, day.Date), out var avg)) return null;
-            return semantic switch
-            {
-                PrtgValueSemantic.CpuPercentUsed => avg,
-                PrtgValueSemantic.MemoryPercentFree or PrtgValueSemantic.DiskPercentFree => 100 - avg,
-                _ => null
-            };
+            // 可用 % 轉已用 % 只走 PrtgValueAssessment.UsedPercent（單一換算點）
+            return semantic is PrtgValueSemantic.CpuPercentUsed or PrtgValueSemantic.MemoryPercentFree or PrtgValueSemantic.DiskPercentFree
+                ? PrtgValueAssessment.UsedPercent(semantic, avg)
+                : null;
         }
         var result = new List<CalibrationRuleMagnitudeRow>(samples.Count);
         foreach (var sample in samples)

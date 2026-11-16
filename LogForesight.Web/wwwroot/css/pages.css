@@ -421,6 +421,14 @@
     text-align: center;
 }
 
+/* 桶多（120 天按週）時表格橫向捲動：類型欄固定在左側，捲到右邊仍看得到是哪一列 */
+.lf-heat__label {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+}
+
 /* 列高收緊：八個類別加表頭要在矮視窗裡盡量一屏看完 */
 .lf-report-heat .table > :not(caption) > * > * {
     padding-block: 2px;
@@ -1280,7 +1288,7 @@ a.lf-calendar__cell:focus-visible {
         display: block;
     }
 
-    .lf-report-view--failed > :not(.lf-report-view__unavailable):not(.lf-report-view__head) {
+    .lf-report-view--failed > :not(.lf-report-view__unavailable) {
         display: none !important;
     }
 }

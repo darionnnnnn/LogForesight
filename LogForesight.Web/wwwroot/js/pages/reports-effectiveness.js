@@ -73,6 +73,8 @@ export function createEffectivenessView(deps) {
         const wrapper = byId('eff-buckets-wrapper');
         const toolbar = byId('eff-buckets-toolbar');
         const buckets = data.buckets ?? [];
+        // 上一次切成表格時圖表容器被藏起來；重畫一律回到圖表，否則新表格容器也是隱藏的，整張卡空白
+        wrapper.classList.remove('d-none');
         bucketChart?.destroy();
         bucketChart = null;
 
@@ -214,11 +216,6 @@ export function createEffectivenessView(deps) {
             renderBuckets(data);
             renderAging(data);
             renderRecurrence(data);
-        },
-        /** 銷毀圖表（頁面卸載前或換期間重畫前） */
-        destroy() {
-            bucketChart?.destroy();
-            bucketChart = null;
         }
     };
 }

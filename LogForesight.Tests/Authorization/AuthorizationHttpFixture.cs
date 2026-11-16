@@ -506,6 +506,11 @@ public sealed class AuthorizationHttpFixture : IDisposable
         _factory.Dispose();
         _aiSink?.Stop();
         foreach (var (key, value) in _savedEnv) Environment.SetEnvironmentVariable(key, value);
+        // 站台主程式結束時在 finally 呼叫 LogManager.Shutdown()（把全域設定清成 null），那是在主程式的執行緒上、
+        // 可能晚於 _factory.Dispose() 返回才跑：先還原的話會被它清掉，之後依 NLog 收集警告的測試全量時偶發收不到。
+        // 等到 Shutdown 跑完（設定變成 null）再還原；上限 10 秒，逾時照樣還原
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (NLog.LogManager.Configuration != null && DateTime.UtcNow < deadline) Thread.Sleep(20);
         NLog.LogManager.Configuration = _savedNLogConfig;
         CryptoHelper.ResetForTests();
         try { Directory.Delete(_dataRoot, recursive: true); } catch (IOException) { /* SQLite 檔案可能仍被連線池占用，留在暫存目錄無妨 */ }

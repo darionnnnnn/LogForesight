@@ -135,6 +135,30 @@ public sealed class AuthorizationDataProbe
         });
     }
 
+    /// <summary>
+    /// 對「夾具原有的交辦單」做寫入前先擷取，回傳復原動作：還原單本身、單底下的案件，以及成員所在主機當天的處理狀態。
+    /// 事件只能附加不能刪，復原後多出的回覆事件會留著（不影響其他列：它們只比對各自的前後快照）。
+    /// </summary>
+    public Action CaptureFixtureOrderRestore(long orderId, HostFx? memberHost)
+    {
+        var orders = Get<IWorkOrderStore>();
+        var order = orders.Get(orderId);
+        var cases = Get<IIssueCaseStore>().GetByWorkOrder(orderId, 0, 500);
+        var day = memberHost != null ? CaptureHostDay(memberHost) : null;
+        return () =>
+        {
+            if (order != null)
+            {
+                // Save 以 UpdatedAt 當併發權杖：先換成資料庫目前的值才寫得回去（回覆已把它推進了）
+                order.UpdatedAt = orders.Get(orderId)!.UpdatedAt;
+                orders.Save(order);
+            }
+            var store = Get<IIssueCaseStore>();
+            foreach (var c in cases) store.Save(c);
+            if (memberHost != null && day != null) RestoreHostDay(memberHost, day);
+        };
+    }
+
     /// <summary>為處理人建一張進行中的交辦單（正向對照用，每列各建一張避免互相干擾）；
     /// <paramref name="withMember"/> 時附一個該主機上的獨立問題案件（問題是這張單專屬的，不碰夾具的問題 A／B）</summary>
     public long NewOrder(IdentityFx handler, HostFx host, string tag, bool withMember)

@@ -133,6 +133,7 @@ async function loadReport() {
     const presetAtRequest = activePresetDays;
 
     const seq = reportGuard.next();
+    views.overview.dirty = false;   // 發出時就清：在途期間別的視角改了期間，重新標上的待重載不能被這次回應抹掉
     let data;
     let displaySettings;
     try {
@@ -145,6 +146,7 @@ async function loadReport() {
         // 過期請求的失敗不處理：失敗態只該屬於最新一次查詢
         if (!reportGuard.isCurrent(seq)) return;
         requestedScope = null;   // 失敗時 chip 與資料都停在上次成功的範圍，不留下沒生效的選擇
+        views.overview.dirty = true;   // 畫面上仍是舊條件的資料，切回總覽要再載入
         throw err;
     }
     // 回應回來時已有更新的查詢就整份丟掉，不得寫入任何頁面狀態
@@ -193,8 +195,7 @@ function renderAll(loaded = false) {
     renderKpi();
     renderCharts();
     if (loaded) {
-        views.overview.loaded = true;   // 總覽跟著這次成功載入更新（含大螢幕自動更新）
-        views.overview.dirty = false;
+        views.overview.loaded = true;   // 總覽跟著這次成功載入更新（含大螢幕自動更新）；待重載標記在發出請求時已清
         views.overview.failed = false;
         wall.dataLoaded();
     }
@@ -849,8 +850,6 @@ function renderHostRankMeta() {
 
 // ── 視角（總覽／處理成效／問題類型）──────────────────────────────────────────────
 
-const VIEW_LABEL = { overview: '總覽', effectiveness: '處理成效', category: '問題類型' };
-
 /** 每個視角載入中與失敗狀態的容器（骨架列與「重試」鈕畫在這裡） */
 const VIEW_CONTAINER = {
     overview: 'report-kpi',
@@ -968,6 +967,12 @@ async function loadSubView(view) {
 
     const { data } = result;
     document.getElementById(`view-${view}`).classList.remove('lf-report-view--failed');
+    if (view !== currentView) {
+        // 使用者已切到別的視角（或列印補載入隱藏中的視角）：只畫這個面板，不改共用的條件、範圍、網址與工具列摘要
+        document.getElementById(VIEW_CONTAINER[view]).replaceChildren();
+        SUBVIEW_RENDER[view](data);
+        return true;
+    }
     appliedView = { presetDays: presetAtRequest, compare };
     currentScope = scope;
     requestedScope = null;
@@ -1006,10 +1011,14 @@ function nextFrames() {
     });
 }
 
+/** 進行中的列印（連按「列印」時沿用同一次，不重複補載入、不開第二個列印視窗） */
+let printInFlight = null;
+
 function printReport() {
+    if (printInFlight) return printInFlight;
     const page = document.querySelector('.lf-report-page');
     const cleanup = () => page.classList.remove(PRINT_ALL_CLASS);
-    return printAllViews({
+    printInFlight = printAllViews({
         views: VIEWS,
         needsLoad: view => needsLoad(view),
         load: loadForPrint,
@@ -1025,7 +1034,8 @@ function printReport() {
             await nextFrames();
         },
         print: () => window.print()
-    });
+    }).finally(() => { printInFlight = null; });
+    return printInFlight;
 }
 
 // ── 期間控制 ─────────────────────────────────────────────────────────────────
@@ -1154,7 +1164,10 @@ function setRange(days) {
 
 /** 大螢幕每一輪自動更新：快捷期間是滾動的（跨過午夜自然前進一天），自訂日期固定不動 */
 async function wallRefresh() {
-    if (activePresetDays != null) setRange(activePresetDays);
+    if (activePresetDays != null) {
+        setRange(activePresetDays);
+        markOtherViewsDirty();   // 跨過午夜期間前進一天：離開大螢幕回到的其他視角也要換成新期間
+    }
     clearDisplaySettingsCache();   // 大螢幕整天不重新整理：管理者改了顯示的風險等級，下一輪更新就要跟上
     try {
         return (await loadReport()) === true;

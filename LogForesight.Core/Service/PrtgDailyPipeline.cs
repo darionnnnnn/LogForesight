@@ -1163,7 +1163,6 @@ internal static class PrtgDailyPipeline
         return (BatchRun.PrtgOutcomeSuccess, conservativeStrategy ? NoteSnapshotValues : null);
     }
 
-    /// <summary>某日的 device → 主機：只取 ok 對應、且主機在本趟評估範圍內。</summary>
     /// <summary>
     /// 持續 Warning 且歷史顯示連續 ≥ 7 日的候選，才以 <see cref="PrtgValueAssessment"/>（數值唯一評估入口）查近 7 日數值。
     /// 查詢失敗只寫 Warn、當成數值不足（不降級），不中斷管線。
@@ -1213,6 +1212,7 @@ internal static class PrtgDailyPipeline
         return result;
     }
 
+    /// <summary>某日的 device → 主機：只取 ok 對應、且主機在本趟評估範圍內。</summary>
     private static Dictionary<long, long> DeviceToHost(IEnumerable<PrtgHostMapRow> rows, IReadOnlySet<long> evaluationHostIds)
     {
         var deviceToHost = new Dictionary<long, long>();

@@ -8,7 +8,7 @@ namespace LogForesight.Tests.Authorization;
 /// <list type="number">
 /// <item><see cref="ReadMatrix.Keys"/>：讀取矩陣（AuthorizationReadMatrix.cs）。</item>
 /// <item><see cref="WriteMatrix.Keys"/>：寫入矩陣（AuthorizationWriteMatrix.cs），受限者能進的寫入端點。</item>
-/// <item>有 <c>[Permission]</c>／<c>[RequireViewAll]</c> 標註的 action：由角色閘門測試（AuthorizationRoleGateHttpTests）以反射資料驅動涵蓋，不逐條登錄。</item>
+/// <item>有 <c>[Permission]</c>／<c>[RequireViewAll]</c> 標註、且受限 A 一定被擋（A 的能力集合不滿足）的 action：由角色閘門測試（AuthorizationRoleGateHttpTests）以反射資料驅動涵蓋，不逐條登錄。</item>
 /// <item><see cref="Exempt"/>：免測並附理由（匿名端點、只碰自己的偏好、頁面殼）。</item>
 /// </list>
 /// 讀取矩陣、寫入矩陣與豁免三份互斥；有標註的 action 可同時在矩陣內（例如權限異動確認）。
@@ -44,5 +44,6 @@ public static class AuthorizationCoverageLists
         ["GET /hosts/{hostId:long}"] = "頁面殼：只回 View，資料由 /api/host-detail 授權（讀取矩陣）",
         ["GET /handlers/{userId:long}"] = "頁面殼：只回 View，資料由 /api/handlers 授權（讀取矩陣）",
         ["GET /work-orders/{id:long}"] = "頁面殼：只回 View，資料由 /api/work-orders/{id} 授權（讀取矩陣）",
+        ["GET /permission-changes"] = "頁面殼：只回 View（掛 ConfirmPermission，受限 A 本來就有該能力，所以角色閘門打不到）；資料由 /api/permission-changes 授權（讀取矩陣）",
     };
 }

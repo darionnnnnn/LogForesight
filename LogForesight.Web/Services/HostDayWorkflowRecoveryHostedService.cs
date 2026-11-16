@@ -36,10 +36,25 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     /// 目前仍在恢復等待的列（記憶體、本次站台啟動以來），鍵為 RecordId。同一列同一個寫入版本只在第一次寫逐列警告，
     /// 之後每輪只在摘要行帶相異列數（站台重啟後允許再印一次）；成功對帳就移除。系統健康讀這份。
     /// </summary>
-    private readonly ConcurrentDictionary<long, WorkflowRecoveryWaitingHostDay> _waiting = new();
+    private readonly ConcurrentDictionary<long, WaitingEntry> _waiting = new();
 
-    /// <summary>已逐列恢復過的超大列與當時的寫入版本：版本沒變就不再重讀（恢復是冪等的，版本變了才有新東西要對）</summary>
-    private readonly ConcurrentDictionary<long, long> _recoveredOversized = new();
+    /// <summary>
+    /// 逐列恢復試過的超大列與當時的寫入版本：恢復成功（冪等）或讀不到（超過單列位元組上限、內容無效）都記住，
+    /// 版本沒變就不再重讀；讀不到的算「需要檢查」。
+    /// </summary>
+    private readonly ConcurrentDictionary<long, OversizedOutcome> _oversized = new();
+
+    /// <summary>
+    /// 記憶體裡的等待與逐列結果超過這段時間沒再被分頁讀到就丟掉：列被保留期清除或改寫後不會再出現，
+    /// 不丟的話系統健康會一直報著已不存在的列。還在等待的列下次被讀到會再加回來。
+    /// </summary>
+    internal static readonly TimeSpan InMemoryRetention = TimeSpan.FromDays(2);
+
+    private readonly record struct WaitingEntry(WorkflowRecoveryWaitingHostDay Row, DateTime SeenAtUtc);
+    private readonly record struct OversizedOutcome(long Revision, bool Recovered, DateTime SeenAtUtc);
+
+    /// <summary>目前這一片的時間（UTC），記憶體項目的「最後看到」用它</summary>
+    private DateTime _sliceNowUtc = DateTime.UtcNow;
 
     public HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, IAiRequestGate aiGate,
@@ -112,6 +127,7 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         cancellationToken.ThrowIfCancellationRequested();
         var nowUtc = DateTime.UtcNow;
         var today = (localToday ?? DateTime.Today).Date;
+        PruneInMemory(nowUtc);
         var currentSettings = _settings.Get();
         var retentionDays = Math.Max(1, currentSettings.RetentionDays);
         var hotTo = today.AddDays(-1);
@@ -289,6 +305,8 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         // 上一輪被延後、目前仍在等待的列優先：分頁讀取每一輪都會把同一批超大列再列一次，
         // 不排序的話已恢復過的前幾列會一直先吃掉每頁額度，排在後面的永遠輪不到
         var ordered = page.WaitingHostDays.OrderBy(row => _waiting.ContainsKey(row.RecordId) ? 0 : 1).ToList();
+        // 額度算「嘗試次數」不是成功次數：讀不到的列也花了一次最多 4 MiB 的讀取
+        var oversizedAttempts = 0;
         foreach (var waiting in ordered)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -296,27 +314,34 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             // （等待會把它排除在通知信與 PRTG 判定之外，而事件越多的日子越容易超過上限）
             if (IsOversizedCandidate(waiting))
             {
-                if (_recoveredOversized.TryGetValue(waiting.RecordId, out var recoveredRevision) &&
-                    recoveredRevision == waiting.CapturedWriteRevision)
-                    continue;
-                if (recovered.Count >= MaxOversizedRecoveriesPerPage)
+                if (_oversized.TryGetValue(waiting.RecordId, out var outcome) && outcome.Revision == waiting.CapturedWriteRevision)
+                {
+                    _oversized[waiting.RecordId] = outcome with { SeenAtUtc = _sliceNowUtc };
+                    if (outcome.Recovered) continue;
+                    // 同一版本已試過讀不到：當成需要檢查的等待（往下走），不再每輪重讀
+                }
+                else if (oversizedAttempts >= MaxOversizedRecoveriesPerPage)
                 {
                     // 每頁額度用完：排進下一輪優先處理，但不標成恢復等待（標了會把它排除在通知之外）
-                    _waiting[waiting.RecordId] = waiting;
+                    _waiting[waiting.RecordId] = new WaitingEntry(waiting, _sliceNowUtc);
                     stillWaiting++;
                     continue;
                 }
-                if (TryRecoverOversized(waiting, prtgEnabled, aiEnabled) is { } record)
+                else
                 {
-                    recovered.Add(record);
-                    continue;
+                    oversizedAttempts++;
+                    if (TryRecoverOversized(waiting, prtgEnabled, aiEnabled) is { } record)
+                    {
+                        recovered.Add(record);
+                        continue;
+                    }
                 }
             }
             stillWaiting++;
             var known = _waiting.TryGetValue(waiting.RecordId, out var previous) &&
-                        previous.CapturedWriteRevision == waiting.CapturedWriteRevision &&
-                        previous.ReasonCode == waiting.ReasonCode;
-            _waiting[waiting.RecordId] = waiting;
+                        previous.Row.CapturedWriteRevision == waiting.CapturedWriteRevision &&
+                        previous.Row.ReasonCode == waiting.ReasonCode;
+            _waiting[waiting.RecordId] = new WaitingEntry(waiting, _sliceNowUtc);
             if (!known)
                 Log.Warn("Workflow recovery leaves authoritative row pending: recordId={RecordId} hostId={HostId} date={Date:yyyy-MM-dd} reason={Reason} chars={Characters}",
                     waiting.RecordId, waiting.HostId, waiting.Date, waiting.ReasonCode, waiting.ReportedPayloadCharacters);
@@ -356,11 +381,15 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         catch (NotSupportedException) { return null; }
         if (single.Records.Count != 1 || single.CapturedWriteRevisions == null ||
             !single.CapturedWriteRevisions.TryGetValue(waiting.RecordId, out var revision))
+        {
+            // 字元數在上限內、位元組超過（中文一字三位元組）或內容無效：記住這個版本，之後當成需要檢查
+            _oversized[waiting.RecordId] = new OversizedOutcome(waiting.CapturedWriteRevision, Recovered: false, _sliceNowUtc);
             return null;
+        }
         var record = single.Records[0];
         _waiting.TryRemove(record.RecordId, out _);
         if (_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled))
-            _recoveredOversized[record.RecordId] = revision;
+            _oversized[record.RecordId] = new OversizedOutcome(revision, Recovered: true, _sliceNowUtc);
         else
             Log.Warn("Workflow recovery row changed after bounded read; it will be retried on a later pass: recordId={RecordId}", record.RecordId);
         return record;
@@ -369,9 +398,20 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     /// <summary>系統健康用：目前仍在恢復等待的列，以及其中需要人看的列（內容無效、主機編號無效、超過單列上限）</summary>
     public (int Waiting, int NeedsAttention, IReadOnlyDictionary<string, int> ByReason) GetWaitingSummary()
     {
-        var rows = _waiting.Values.ToList();
-        var attention = rows.Count(row => !IsOversizedCandidate(row));
+        var rows = _waiting.Values.Select(entry => entry.Row).ToList();
+        var attention = rows.Count(row => !IsOversizedCandidate(row) ||
+            (_oversized.TryGetValue(row.RecordId, out var outcome) && !outcome.Recovered && outcome.Revision == row.CapturedWriteRevision));
         return (rows.Count, attention, rows.GroupBy(row => row.ReasonCode).ToDictionary(group => group.Key, group => group.Count()));
+    }
+
+    internal void PruneInMemory(DateTime nowUtc)
+    {
+        _sliceNowUtc = nowUtc;
+        var cutoff = nowUtc - InMemoryRetention;
+        foreach (var (key, entry) in _waiting)
+            if (entry.SeenAtUtc < cutoff) _waiting.TryRemove(key, out _);
+        foreach (var (key, outcome) in _oversized)
+            if (outcome.SeenAtUtc < cutoff) _oversized.TryRemove(key, out _);
     }
 
     internal int RetryPendingReports(IReadOnlyList<DailyAnalysisRecord> records, CancellationToken cancellationToken,

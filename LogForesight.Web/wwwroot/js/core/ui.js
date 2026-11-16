@@ -279,8 +279,10 @@ export function bindRememberedCollapse(collapseEl, toggleEl, key, { expandText =
     if (header) {
         header.classList.add('lf-card__header--clickable');
         header.addEventListener('click', event => {
-            if (event.target.closest('a, button, input, select, textarea, label')) return;
-            if (String(globalThis.getSelection?.() ?? '').length > 0) return;
+            if (event.target.closest('a, button, input, select, textarea, label, summary, [role="button"], [data-bs-toggle]')) return;
+            // 在標題列裡拖曳選字（要複製標題）不算點擊；別處殘留的選取不影響
+            const selection = globalThis.getSelection?.();
+            if (selection && String(selection).length > 0 && header.contains(selection.anchorNode)) return;
             toggleEl.click();
         });
     }

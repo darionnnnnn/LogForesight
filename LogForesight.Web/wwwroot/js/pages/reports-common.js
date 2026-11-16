@@ -75,9 +75,11 @@ export function createViewState() {
 /**
  * 取一次視角資料。回應回來時已有更新的請求，就回 { stale: true }、不得寫入任何狀態；
  * 失敗時舊請求的失敗也不外擲（失敗態只屬於最新一次請求）。成功回 { data }。
+ * 待重載標記在發出請求時就清掉：請求在途時期間又變了（其他視角按了套用），重新標上的待重載不會被這次的舊期間回應抹掉。
  */
 export async function loadViewData(state, fetcher) {
     const seq = state.guard.next();
+    state.dirty = false;
     let data;
     try {
         data = await fetcher();
@@ -90,7 +92,6 @@ export async function loadViewData(state, fetcher) {
     state.data = data;
     state.loaded = true;
     state.failed = false;
-    state.dirty = false;
     return { data };
 }
 

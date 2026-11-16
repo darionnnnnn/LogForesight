@@ -57,6 +57,9 @@ public sealed record ReadRow
     /// <summary>案件授與者查到 200 時，回應至少要含的哨兵（主機 3 的問題 A）；null＝不做正向斷言</summary>
     public SentinelKind[]? CasePositive { get; init; }
 
+    /// <summary>User 列：依「被查的目標使用者」取回應中必須出現的字串（null＝不斷言）；僅在查詢身分被允許（本人／Assign／ViewAll）時檢查</summary>
+    public Func<IdentityFx, string?>? UserNeedle { get; init; }
+
     /// <summary>WorkOrder 列：依交辦單取回應中必須出現的字串（null＝不帶資料）</summary>
     public Func<WorkOrderFx, string?>? WorkOrderNeedle { get; init; }
 
@@ -92,6 +95,10 @@ public static class ReadMatrix
             GlobalNeedle = id => id.Vis.Values.Count(v => v == Visibility.Full) is var n and > 0 ? $"\"highRiskHosts\":{n}" : null },
         new() { Key = "GET /api/records/by-issue", Scope = RowScope.Global, Query = RecordRange, Positive = new[] { IssueA } },
         new() { Key = "GET /api/records/next-unhandled", Scope = RowScope.HostSoft, Query = "hostId={hostId}&date={date}" },
+        // 沿用上次說明：以該主機的問題簽章查。受限者查未授權主機的簽章，回應不得含該主機的哨兵（hostKeys 篩選）；
+        // 完整可見者要查得到該主機的結案說明（正向）。Admin 也只在啟用主機內找：查停用主機 4 的簽章不得回出主機 4 的說明
+        new() { Key = "GET /api/handling/last-note", Scope = RowScope.HostSoft, Query = "issueKey={issueKey}", Gate = new[] { Capability.Handle },
+            Positive = new[] { IssueNote } },
 
         // ── 風險日詳情與子資源（編號直取）───────────────────────────────────────
         new() { Key = "GET /api/records/{hostId:long}/{date}", Scope = RowScope.Host, Positive = new[] { Headline, IssueA }, CaseStatuses = new[] { HttpStatusCode.OK }, CasePositive = new[] { IssueA } },
@@ -110,7 +117,7 @@ public static class ReadMatrix
         // ── 我的交辦／交辦單 ───────────────────────────────────────────────────
         new() { Key = "GET /api/handlers/me/badge", Scope = RowScope.Global },
         new() { Key = "GET /api/handlers/{userId:long}/workload", Scope = RowScope.User },
-        new() { Key = "GET /api/handlers/{userId:long}/work-orders", Scope = RowScope.User },
+        new() { Key = "GET /api/handlers/{userId:long}/work-orders", Scope = RowScope.User, UserNeedle = UserOrderNeedle },
         new() { Key = "GET /api/handlers/{userId:long}/work-orders/summary", Scope = RowScope.User },
         new() { Key = "GET /api/work-orders/{id:long}", Scope = RowScope.WorkOrder, WorkOrderNeedle = wo => wo.Needle("NOTE") },
         new() { Key = "GET /api/work-orders/{id:long}/members", Scope = RowScope.WorkOrder, WorkOrderNeedle = wo => wo.Tag == "C" ? Sentinels.Of(3, IssueA) : null },
@@ -118,7 +125,8 @@ public static class ReadMatrix
 
         // ── 權限異動（[Permission(ConfirmPermission)]）──────────────────────────
         new() { Key = "GET /api/permission-changes", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission }, Positive = new[] { Perm }, AdminSeesInactive = true },
-        new() { Key = "GET /api/permission-changes/ids", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission }, AdminSeesInactive = true },
+        new() { Key = "GET /api/permission-changes/ids", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission }, AdminSeesInactive = true,
+            GlobalNeedle = id => id.Vis.Where(kv => kv.Value == Visibility.Full).Select(kv => (int?)kv.Key).Min() is { } n ? $"authz-change-{n}" : null },
         new() { Key = "GET /api/permission-changes/categories", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission } },
         new() { Key = "GET /api/permission-changes/report", Scope = RowScope.Host, Query = "host={hostName}&date={date}", Gate = new[] { Capability.ConfirmPermission }, Positive = new[] { PermReport } },
 
@@ -131,6 +139,14 @@ public static class ReadMatrix
 
         // ── 執行活動（讀取類，登入即可）────────────────────────────────────────
         new() { Key = "GET /api/run-activity", Scope = RowScope.Global },
+    };
+
+    /// <summary>被查的目標使用者名下交辦單的哨兵：A 的單帶 SENTINEL-WO-A-*（無成員）；C 的單以主機 3 的問題 A 當問題標籤（清單不回單備註）</summary>
+    private static string? UserOrderNeedle(IdentityFx target) => target.Name switch
+    {
+        "A受限" => "SENTINEL-WO-A-",
+        "C案件授與" => Sentinels.Of(3, IssueA),
+        _ => null
     };
 
     public static IReadOnlySet<string> Keys { get; } = Rows.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
