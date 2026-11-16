@@ -215,7 +215,8 @@ public class PermissionChangeService
 
         // 授權範圍檢查：權限異動屬於主機的資料，同樣受可見範圍限制
         var host = _hosts.FindByName(change.HostName);
-        if (host == null || !_visibility.GetVisibleHostIds().Contains(host.HostId))
+        var hasViewAll = _currentUser.Has(Capability.ViewAll);
+        if (!IsChangeVisible(hasViewAll, host, hasViewAll ? null : _visibility.GetVisibleHostIds()))
             throw DomainException.NotFound("找不到這筆權限異動紀錄。");
 
         // 標記可疑必須說明原因：那是要交給別人接手調查的訊號，
@@ -324,8 +325,7 @@ public class PermissionChangeService
                 continue;
             }
 
-            var isVisible = hasViewAll ||
-                (hostsByName.TryGetValue(record.HostName, out var host) && visibleHostIds!.Contains(host.HostId));
+            var isVisible = IsChangeVisible(hasViewAll, hostsByName.GetValueOrDefault(record.HostName), visibleHostIds);
 
             if (!isVisible)
             {
@@ -482,6 +482,14 @@ public class PermissionChangeService
         }
         return result;
     }
+
+    /// <summary>
+    /// 單筆與批次確認共用的可見判定，與清單（BuildFilter）同一個口徑：持有 ViewAll 者看得到全部異動，
+    /// 含停用或已不在主機表的主機（異動是已經發生的事，主機停用不代表不用檢核，docs/WEB-SPEC.md §7.1）；
+    /// 其他人只限可見主機。
+    /// </summary>
+    private static bool IsChangeVisible(bool hasViewAll, WebHost? host, IReadOnlySet<long>? visibleHostIds) =>
+        hasViewAll || (host != null && visibleHostIds != null && visibleHostIds.Contains(host.HostId));
 
     private static PermissionChangeDto MapToDto(
         PermissionChangeRecord change,

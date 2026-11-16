@@ -832,6 +832,33 @@ public class RecordQueryServiceSearchTests : IDisposable
     });
 
     [Fact]
+    public void 指定的群組底下沒有主機_四個視角都回零筆_不指定回全部_聯集不退()
+    {
+        // 「指定了卻一台都對不到」與「沒指定」是兩回事：前者要零筆，不能當成不限而列出全部可見主機
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        a.GroupIds = new List<long> { 10 };
+        _hosts.Upsert(a);
+        AddRecord(a, Yesterday, "高", issues: new[] { DiskIssue() });
+        AddRecord(b, Yesterday, "高", issues: new[] { DiskIssue() });
+
+        var emptyGroup = new RecordSearchRequest { GroupIds = new List<long> { 99 } };
+        Assert.Equal(0, _service.Search(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByHost(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByDate(emptyGroup).Total);
+        Assert.Equal(0, _service.SearchByIssue(emptyGroup).Total);
+
+        // 邊界另一側：不指定任何主機或群組＝全部
+        Assert.Equal(2, _service.Search(new RecordSearchRequest()).Total);
+        Assert.Equal(2, _service.SearchByHost(new RecordSearchRequest()).Total);
+
+        // 群組＋額外勾一台不在群組內的主機＝聯集
+        var union = new RecordSearchRequest { GroupIds = new List<long> { 10 }, HostIds = new List<long> { b.HostId } };
+        Assert.Equal(2, _service.Search(union).Total);
+        Assert.Equal(1, _service.Search(new RecordSearchRequest { GroupIds = new List<long> { 10 } }).Total);
+    }
+
+    [Fact]
     public void 已交辦_只數檢視者範圍內的主機()
     {
         var a = AddHost("HOST-A");
