@@ -11,7 +11,28 @@ using Microsoft.Extensions.Hosting;
 namespace LogForesight.Tests.Scenarios;
 
 /// <summary>人為動作打 HTTP API 的結果；失敗（4xx／5xx）照樣是一筆結果，不會讓情境中斷</summary>
-public sealed record ActionHttpResult(int StatusCode, string? ErrorCode, string? Message);
+public sealed record ActionHttpResult(int StatusCode, string? ErrorCode, string? Message, string? Body = null);
+
+/// <summary>站台寄出的一封信（測試站台以替身取代 SMTP 傳輸，信不會真的出去）</summary>
+public sealed record SentMailRecord(IReadOnlyList<string> To, string Subject, string Body);
+
+/// <summary>記錄寄出內容的 SMTP 替身：只記錄、永遠成功</summary>
+internal sealed class RecordingSmtpSender : LogForesight.Web.Services.Mail.ISmtpMailSender
+{
+    private readonly List<SentMailRecord> _sent = new();
+
+    public IReadOnlyList<SentMailRecord> Snapshot()
+    {
+        lock (_sent) return _sent.ToList();
+    }
+
+    public Task SendAsync(LogForesight.Web.Services.Mail.SmtpConnectionSpec connection,
+        LogForesight.Web.Services.Mail.MailMessageSpec message, CancellationToken ct = default)
+    {
+        lock (_sent) _sent.Add(new SentMailRecord(message.To.ToList(), message.Subject, message.Body));
+        return Task.CompletedTask;
+    }
+}
 
 /// <summary>
 /// 情境用的整站：<see cref="WebApplicationFactory{TEntryPoint}"/> 起真的站台組裝（Stub 認證、Development 環境、
@@ -29,6 +50,10 @@ public sealed class ScenarioSite : IDisposable
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
     private readonly Dictionary<string, string> _tokens = new(StringComparer.OrdinalIgnoreCase);
+    private readonly RecordingSmtpSender _mailSender = new();
+
+    /// <summary>站台目前為止寄出的信（依寄出順序）；寄送由站台自己的服務執行，傳輸層換成記錄用替身</summary>
+    public IReadOnlyList<SentMailRecord> SentMail => _mailSender.Snapshot();
 
     public IServiceProvider Services => _factory.Services;
 
@@ -51,7 +76,12 @@ public sealed class ScenarioSite : IDisposable
             _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             {
                 builder.UseSetting(Microsoft.AspNetCore.Hosting.WebHostDefaults.EnvironmentKey, "Development");
-                builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IHostedService>();
+                    services.RemoveAll<LogForesight.Web.Services.Mail.ISmtpMailSender>();
+                    services.AddSingleton<LogForesight.Web.Services.Mail.ISmtpMailSender>(_mailSender);
+                });
             });
 
             _client = _factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -104,7 +134,7 @@ public sealed class ScenarioSite : IDisposable
         using var response = await _client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();
         var (code, message) = ParseError(text);
-        return new ActionHttpResult((int)response.StatusCode, code, message);
+        return new ActionHttpResult((int)response.StatusCode, code, message, text);
     }
 
     private static (string? Code, string? Message) ParseError(string body)

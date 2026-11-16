@@ -1,0 +1,334 @@
+using System.Text.Json;
+using LogForesight.Core.Models;
+using Xunit;
+
+namespace LogForesight.Tests.Scenarios;
+
+// S3～S10：上報未處理、處理人狀態變化（停用／暫停／授權移除）、主機環境變化、結案後再出現、靜音。
+public sealed partial class HandoffScenarioTests
+{
+    private static Scenario BuildMore(string key) => key switch
+    {
+        "S3" => BuildS3(),
+        "S4" => BuildContinuation("S4 處理人被停用", ContinuationKind.Disabled),
+        "S5" => BuildContinuation("S5 處理人暫停接單", ContinuationKind.Paused),
+        "S6" => BuildContinuation("S6 處理人的主機授權被移除", ContinuationKind.NoAccess),
+        "S7主機停用" => BuildS7Disabled(),
+        "S7改群組" => BuildS7Regroup(),
+        "S7換負責人" => BuildS7Owner(),
+        "S8" => BuildS8(),
+        "S9" => BuildS9(),
+        "S10" => BuildS10(),
+        _ => BuildEdge(key)
+    };
+
+    private static string OrderUrl(ScenarioActionContext ctx, string handler) =>
+        $"api/work-orders/{OrderRef.ForHandler(handler).Resolve(ctx)}";
+
+    // ── S3：「無法處理」後管理者一直沒處理 ────────────────────────────────────
+
+    internal static Scenario BuildS3() => new Scenario("S3 無法處理後管理者未處理")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d
+            .Act(ScenarioActions.Reply("h1", OrderRef.ForHandler("h1"), "escalated", "備品缺貨，無法自行更換"))
+            .Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100")
+            .Probe("admin-unread", "admin1", "api/work-orders/unread-count"))
+        .Day(3, d => d.Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100"))
+        .Day(4, d => d
+            .Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100")
+            .Probe("admin-unread", "admin1", "api/work-orders/unread-count"))
+        .Days(4)
+        .Expect(Check("S3.d2.escalated-list", 2, "上報中的單可在總覽以「上報中」篩出", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
+        .Expect(Check("S3.d4.still-listed", 4, "管理者一直沒處理，第 4 天仍可篩出（沒有被漏掉）", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
+        .Expect(Check("S3.d4.unread-badge", 4, "管理者未開啟前，側欄徽章持續提示（未讀回覆 1）", "1", d => d.Probe("admin-unread").Int("count").ToString()));
+
+    // ── S4／S5／S6：處理人被停用／暫停接單／主機授權被移除後，新主機是否仍續掛進他的單 ──────────
+
+    internal enum ContinuationKind { Disabled, Paused, NoAccess }
+
+    /// <summary>
+    /// 第 1 天夜間派工把 HOST-A 的單建給 h1，管理者把單的範圍擴為 G1 並開續掛（併入同處理人同問題的單，範圍取聯集）；
+    /// 第 2 天處理人狀態變化；第 3 天 HOST-B、HOST-C 同問題首次出現。續掛（④）與自動派工（⑥）各自該怎麼走由預期決定。
+    /// </summary>
+    internal static Scenario BuildContinuation(string name, ContinuationKind kind)
+    {
+        var s = new Scenario(name)
+            .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+            .WithHost(new HostSpec("HOST-B") { Groups = new[] { "G1" } })
+            .WithHost(new HostSpec("HOST-C") { Groups = new[] { "G1" } })
+            .WithUser(Admin("admin1"))
+            .WithUser(Handler("h1", new[] { "G1" }))
+            .WithUser(Handler("h2", new[] { "G1" }))
+            // 第 1 天關閉自動派工：HOST-A 的問題先不派，由管理者以「G1 範圍＋續掛」建單給 h1（夜間建的單一律指定主機、不續掛）；
+            // 第 2 天起開啟自動派工，第 3 天新主機出現時續掛（④）與自動派工（⑥）才各自面對處理人狀態
+            .WithSettings(new ScenarioSettings { AutoDispatchEnabled = false })
+            .Day(1, d => d
+                .Events("HOST-A", ScenarioEvents.DiskErrors(12))
+                .Act(ScenarioActions.CreateOrderScoped("admin1", Disk, DiskId, "h1", WorkOrderScopes.Groups, new[] { "G1" }, autoAttach: true))
+                .Probe("detail", "admin1", ctx => OrderUrl(ctx, "h1")))
+            .Expect(Expect.ActionStatus(1, 0, 200))
+            .Expect(Check("setup.autoattach", 1, "前置：h1 的單已是 G1 範圍且開續掛", "是/Groups", d =>
+                $"{Flag(d.Probe("detail").Data is { } x && x.Flag("autoAttach"))}/{d.Probe("detail").Data?.Str("scopeKind")}"));
+
+        switch (kind)
+        {
+            case ContinuationKind.Disabled:
+                s.Day(2, d => d
+                    .Setting(x => x.AutoDispatchEnabled = true)
+                    .Act(ScenarioActions.DisableUser("admin1", "h1"))
+                    .Probe("inactive-list", "admin1", "api/work-orders?status=active&handlerInactive=true&pageSize=100")
+                    .Probe("load-board", "admin1", "api/work-orders/load-board"))
+                    .Expect(Expect.ActionStatus(2, 0, 200))
+                    .Expect(Check("S4.d2.admin-warned", 2, "停用當下提醒管理者此人有進行中單（回應、通知佇列或信件其一提到張數）", "有提醒", d =>
+                        d.Actions[0].Body?.Contains("進行中", StringComparison.Ordinal) == true
+                        || d.Actions[0].Body?.Contains("workOrder", StringComparison.OrdinalIgnoreCase) == true
+                        || Outbox(d, "admin1") > 0 || d.MailsSent.Any(m => m.To.Contains("admin1@scenario.test")) ? "有提醒" : "沒有任何提醒"))
+                    .Expect(Check("S4.d2.inactive-filter", 2, "既有單可由「只看處理人已停用」找到", "1", d => d.Probe("inactive-list").Items("items").Count.ToString()))
+                    .Expect(Check("S4.d2.load-board", 2, "負載看板標示 h1 已停用", "否", d =>
+                        Flag(d.Probe("load-board").Items("rows").Any(r => r.Str("name").Contains("h1", StringComparison.Ordinal) && r.Flag("active")))));
+                break;
+            case ContinuationKind.Paused:
+                s.Day(2, d => d
+                    .Setting(x => x.AutoDispatchEnabled = true)
+                    .Act(ScenarioActions.SetDispatchPaused("admin1", "h1", true))
+                    .Probe("load-board", "admin1", "api/work-orders/load-board"))
+                    .Expect(Expect.ActionStatus(2, 0, 200))
+                    .Expect(Check("S5.d2.load-board", 2, "負載看板標示 h1 暫停接單", "是", d =>
+                        Flag(d.Probe("load-board").Items("rows").Any(r => r.Str("name").Contains("h1", StringComparison.Ordinal) && r.Flag("paused")))));
+                break;
+            case ContinuationKind.NoAccess:
+                s.Day(2, d => d
+                    .Setting(x => x.AutoDispatchEnabled = true)
+                    .Act(ScenarioActions.SetUserHostAccess("admin1", "h1"))
+                    .Probe("h1-detail", "h1", ctx => OrderUrl(ctx, "h1"))
+                    .Probe("h1-members", "h1", ctx => OrderUrl(ctx, "h1") + "/members?pageSize=50")
+                    .Probe("admin-detail", "admin1", ctx => OrderUrl(ctx, "h1")))
+                    .Expect(Expect.ActionStatus(2, 0, 200))
+                    .Expect(Check("S6.d2.handler-still-opens", 2, "處理人仍開得到被交辦的單", "200", d => d.Probe("h1-detail").StatusCode.ToString()))
+                    .Expect(Check("S6.d2.handler-sees-member", 2, "處理人在單上仍看得到被交辦的主機（案件授與）", "HOST-A", d =>
+                        string.Join(",", d.Probe("h1-members").Items("items").Select(i => i.Str("hostName")))))
+                    .Expect(Check("S6.d2.admin-sees-gap", 2, "管理者在單上看得到「處理人看不到 N 台」", "有", d =>
+                    {
+                        var body = d.Probe("admin-detail").Body ?? "";
+                        return new[] { "noaccess", "cannotsee", "invisible", "unseen", "handlerhidden", "hiddenfromhandler" }
+                            .Any(k => body.Contains(k, StringComparison.OrdinalIgnoreCase)) ? "有" : "沒有";
+                    }));
+                break;
+        }
+
+        s.Day(3, d =>
+            {
+                d.Events("HOST-A", ScenarioEvents.DiskErrors(12))
+                    .Events("HOST-B", ScenarioEvents.DiskErrors(12))
+                    .Events("HOST-C", ScenarioEvents.DiskErrors(12));
+                if (kind == ContinuationKind.Paused)
+                    d.Act(ScenarioActions.Reply("h1", OrderRef.ForHandler("h1"), "in_progress", "處理中"));
+            })
+            .Days(3)
+            .Expect(Check($"{name[..2]}.d3.h1-order-members", 3, "之後的夜間派工不再把新主機續掛進原處理人的單（單內只剩 HOST-A）", "HOST-A", d =>
+                string.Join(",", OrderOf(d, "h1").Members.Select(m => m.Host))))
+            .Expect(Check($"{name[..2]}.d3.no-new-order", 3, "h1 不再收到新派工（第 3 天沒有新建給 h1 的單）", "0", d => d.NewOrders.Count(o => o.Handler == "h1").ToString()))
+            .Expect(Check($"{name[..2]}.d3.b-holder", 3, "HOST-B 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-B")))
+            .Expect(Check($"{name[..2]}.d3.c-holder", 3, "HOST-C 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-C")));
+
+        // 續掛（④）只看單是否可續掛與範圍涵蓋，不看處理人狀態：新主機照樣掛進原處理人的單（評估記錄 E3-03）
+        var tag = name[..2];
+        var continuationId = kind == ContinuationKind.Paused ? "E3-S5-1" : $"E3-{tag}-2";
+        s.KnownDifference(continuationId, $"{tag}.d3.h1-order-members")
+            .KnownDifference(continuationId, $"{tag}.d3.b-holder")
+            .KnownDifference(continuationId, $"{tag}.d3.c-holder");
+        if (kind == ContinuationKind.Disabled) s.KnownDifference("E3-S4-1", "S4.d2.admin-warned");
+        if (kind == ContinuationKind.NoAccess) s.KnownDifference("E3-S6-1", "S6.d2.admin-sees-gap");
+
+        if (kind == ContinuationKind.Paused)
+            s.Expect(Check("S5.d3.existing-reply", 3, "暫停接單者既有單照常可回覆", "200", d => d.Actions[0].StatusCode.ToString()));
+
+        return s;
+    }
+
+    // ── S7：主機環境變化 ────────────────────────────────────────────────────
+
+    internal static Scenario BuildS7Disabled() => new Scenario("S7 主機停用")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithHost(new HostSpec("HOST-B") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d
+            .Events("HOST-A", ScenarioEvents.DiskErrors(12))
+            .Events("HOST-B", ScenarioEvents.DiskErrors(12))
+            .Probe("badge", "h1", "api/handlers/me/badge")
+            .Probe("load-board", "admin1", "api/work-orders/load-board"))
+        .Day(2, d => d
+            .Act(ScenarioActions.SetHostActive("admin1", "HOST-B", false))
+            .Probe("badge", "h1", "api/handlers/me/badge")
+            .Probe("load-board", "admin1", "api/work-orders/load-board")
+            .Probe("members", "admin1", ctx => OrderUrl(ctx, "h1") + "/members?pageSize=50"))
+        .Days(2)
+        .Expect(Check("S7a.d1.badge", 1, "前置：停用前 h1 手上 2 台", "2", d => d.Probe("badge").Int("activeMembers").ToString()))
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S7a.d2.badge", 2, "停用主機上的進行中成員不再算處理人的待辦（徽章台數）", "1", d => d.Probe("badge").Int("activeMembers").ToString()))
+        .Expect(Check("S7a.d2.load-board", 2, "負載看板的進行中台數同步扣除", "1", d =>
+            d.Probe("load-board").Items("rows").FirstOrDefault(r => r.Str("name").Contains("h1", StringComparison.Ordinal)).Int("activeMembers").ToString()))
+        .Expect(Check("S7a.d2.reason-visible", 2, "管理者在單的成員表看得到該台被排除的原因（成員資料帶主機停用標記）", "有", d =>
+        {
+            var hostB = d.Probe("members").Items("items").FirstOrDefault(i => i.Str("hostName") == "HOST-B");
+            return hostB.ValueKind == JsonValueKind.Object && hostB.EnumerateObject().Any(p => p.Name.Contains("active", StringComparison.OrdinalIgnoreCase)
+                && !p.Name.Equals("overdue", StringComparison.OrdinalIgnoreCase)) ? "有" : "沒有";
+        }))
+        .KnownDifference("E3-S7-1", "S7a.d2.badge")
+        .KnownDifference("E3-S7-2", "S7a.d2.load-board")
+        .KnownDifference("E3-S7-3", "S7a.d2.reason-visible");
+
+    internal static Scenario BuildS7Regroup() => new Scenario("S7 主機改群組")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithHost(new HostSpec("HOST-B") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .WithUser(Handler("h2", new[] { "G2" }))
+        .Day(1, d => d
+            .Events("HOST-B", ScenarioEvents.DiskErrors(12))
+            .Probe("h1-hosts", "h1", "api/hosts")
+            .Probe("h2-hosts", "h2", "api/hosts"))
+        .Day(2, d => d
+            .Act(ScenarioActions.SetHostGroups("admin1", "HOST-B", "G2"))
+            .Probe("h1-hosts", "h1", "api/hosts")
+            .Probe("h2-hosts", "h2", "api/hosts"))
+        .Days(2)
+        .Expect(Check("S7b.d1.visibility", 1, "前置：改群組前 h1 看得到 HOST-B、h2 看不到", "是/否", d =>
+            $"{Flag(HostNames(d.Probe("h1-hosts")).Contains("HOST-B"))}/{Flag(HostNames(d.Probe("h2-hosts")).Contains("HOST-B"))}"))
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S7b.d2.visibility", 2, "改群組後可見範圍隨之更新：h2 看得到 HOST-B", "是", d => Flag(HostNames(d.Probe("h2-hosts")).Contains("HOST-B"))));
+
+    private static List<string> HostNames(ProbeView p) => p.Items("items").Select(i => i.Str("hostName")).ToList();
+
+    internal static Scenario BuildS7Owner() => new Scenario("S7 換主機負責人")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G3" }, Owners = new[] { "h1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", Array.Empty<string>()))
+        .WithUser(Handler("h2", Array.Empty<string>()))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d.Act(ScenarioActions.SetHostOwners("admin1", "HOST-A", "h2")))
+        .Day(3, d => d.Events("HOST-A", ScenarioEvents.FailedLogons(15)))
+        .Days(3)
+        .Expect(Check("S7c.d1.owner-gets-order", 1, "前置：負責人 h1 是唯一看得到 HOST-A 的候選人，單派給他", "h1", d => HolderOf(d, "HOST-A")))
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S7c.d3.new-issue-handler", 3, "換負責人後新問題（登入失敗）走新負責人 h2", "h2", d =>
+            d.Orders.Where(o => o.IsNew).Select(o => o.Handler).FirstOrDefault() ?? "（沒有新單）"));
+
+    // ── S8：問題結案後再出現 ────────────────────────────────────────────────
+
+    internal static Scenario BuildS8()
+    {
+        var hosts = new[] { "HOST-A", "HOST-B", "HOST-C", "HOST-D" };
+        var s = new Scenario("S8 結案後再出現")
+            .WithUser(Admin("admin1"))
+            // a1 帳號排在 z1 之前，兩人負載同分時 a1 會贏；z1 上次修好，預期延續性偏好把單派回 z1
+            .WithUser(Handler("a1", new[] { "G1" }, paused: true))
+            .WithUser(Handler("z1", new[] { "G1" }));
+        foreach (var h in hosts) s.WithHost(new HostSpec(h) { Groups = new[] { "G1" } });
+
+        s.Day(1, d =>
+            {
+                foreach (var h in hosts) d.Events(h, ScenarioEvents.DiskErrors(12));
+            })
+            .Day(2, d => d.Act(
+                ScenarioActions.SetDispatchPaused("admin1", "a1", false),
+                ScenarioActions.ReplyHosts("z1", OrderRef.ForHandler("z1"), "resolved", new[] { "HOST-A" }, "已更換"),
+                ScenarioActions.ReplyHosts("z1", OrderRef.ForHandler("z1"), "wont_fix", new[] { "HOST-B" }, "舊機器不處理"),
+                ScenarioActions.ReplyHosts("z1", OrderRef.ForHandler("z1"), "false_positive", new[] { "HOST-C" }, "誤報"),
+                ScenarioActions.ReplyHosts("z1", OrderRef.ForHandler("z1"), "known_noise", new[] { "HOST-D" }, "已知雜訊")))
+            .Day(3, d =>
+            {
+                foreach (var h in hosts) d.Events(h, ScenarioEvents.DiskErrors(12));
+                d.Probe("gaps", "admin1", Gaps);
+            })
+            .Days(3)
+            .Expect(Check("S8.d1.setup", 1, "前置：四台都派給 z1（a1 暫停接單）", "z1:4", d => $"z1:{d.Orders.Where(o => o.Handler == "z1").Sum(o => o.Members.Count)}"))
+            .Expect(Check("S8.d2.replies", 2, "前置：四種結案回覆都成功，單已結案", "200,200,200,200/已結案(all_closed)", d =>
+                $"{string.Join(",", d.Actions.Skip(1).Select(a => a.StatusCode))}/{OrderOf(d, "z1").State}"))
+            .Expect(Check("S8.d3.resolved-recurs", 3, "已處理後再出現：重新派工（HOST-A 有新的進行中單）", "是", d => Flag(HolderOf(d, "HOST-A") != "（沒有進行中的單）")))
+            .Expect(Check("S8.d3.resolved-handler", 3, "復發優先派給上次處理的人（z1，雖然 a1 同分且帳號在前）", "z1", d => HolderOf(d, "HOST-A")))
+            .Expect(Check("S8.d3.recurrence-flag", 3, "派工彙總標「復發」", "是", d => Flag(d.Dispatch.PerHandlerLines.Any(l => l.Contains("復發 1 台", StringComparison.Ordinal)))))
+            .Expect(Check("S8.d3.wont-fix", 3, "不處理後再出現：依規格不再派工", "skipped:gate_dismissed", d => Decision(d, "HOST-B")))
+            .Expect(Check("S8.d3.false-positive", 3, "誤報後再出現：依規格不再派工", "skipped:gate_dismissed", d => Decision(d, "HOST-C")))
+            .Expect(Check("S8.d3.known-noise", 3, "已知雜訊後再出現：依規格不再派工", "skipped:gate_dismissed", d => Decision(d, "HOST-D")))
+            .Expect(Check("S8.d3.gaps-count", 3, "待派頁看得到「不再打擾」排除了 3 台", "3", d =>
+                d.Probe("gaps").Items("rows").Where(r => r.Str("source") == Disk && r.Int("eventId") == DiskId)
+                    .Sum(r => r.TryGetProperty("excluded", out var ex) && ex.TryGetProperty("gate_dismissed", out var n) ? n.GetInt32() : 0).ToString()))
+            .Expect(Check("S8.d3.gaps-lists-hosts", 3, "待派頁列出被「不再打擾」排除的主機（HOST-B、HOST-C、HOST-D），管理者才知道要恢復哪幾台", "有", d =>
+            {
+                var body = d.Probe("gaps").Body ?? "";
+                return new[] { "HOST-B", "HOST-C", "HOST-D" }.All(h => body.Contains(h, StringComparison.Ordinal)) ? "有" : "沒有";
+            }))
+            .Expect(Check("S8.d3.gaps-says-why", 3, "待派頁或問題頁說明「因先前結案為 X 而不派工」（帶出結案狀態）", "有", d =>
+            {
+                var body = d.Probe("gaps").Body ?? "";
+                return new[] { "wont_fix", "false_positive", "known_noise", "不處理", "誤報", "已知雜訊" }
+                    .Any(k => body.Contains(k, StringComparison.Ordinal)) ? "有" : "沒有";
+            }))
+            .KnownDifference("E3-S8-1", "S8.d3.gaps-lists-hosts")
+            .KnownDifference("E3-S8-2", "S8.d3.gaps-says-why");
+        return s;
+    }
+
+    // ── S9：靜音（暫停）→ 解除 ───────────────────────────────────────────────
+
+    internal static Scenario BuildS9() => new Scenario("S9 靜音暫停再解除")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d
+            .Act(ScenarioActions.Mute("admin1", Disk, DiskId, 3, "維修窗口", "pause"))
+            .Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100")
+            .Probe("h1-default", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?pageSize=100")
+            .Probe("h1-badge", "h1", "api/handlers/me/badge"))
+        .Day(3, d => d
+            .Act(ScenarioActions.Unmute("admin1", Disk, DiskId))
+            .Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100")
+            .Probe("h1-default", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?pageSize=100")
+            .Probe("h1-badge", "h1", "api/handlers/me/badge"))
+        .Days(3)
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S9.d2.derived-paused", 2, "靜音期間單推導為暫停（總覽標暫停並帶靜音至）", "是/有", d =>
+        {
+            var row = RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId);
+            return row is { } r ? $"{Flag(r.Flag("paused"))}/{(string.IsNullOrEmpty(r.Str("mutedUntil")) ? "無" : "有")}" : "（總覽沒有這張單）";
+        }))
+        .Expect(Check("S9.d2.handler-list-excludes", 2, "處理人清單預設排除暫停的單", "0", d => d.Probe("h1-default").Items("items").Count.ToString()))
+        .Expect(Check("S9.d2.handler-badge", 2, "處理人徽章不計暫停單（進行中 0）、另列暫停 1", "0/1", d =>
+            $"{d.Probe("h1-badge").Int("activeWorkOrders")}/{d.Probe("h1-badge").Int("pausedWorkOrders")}"))
+        .Expect(Check("S9.d2.handler-informed", 2, "暫停時處理人知道（通知佇列有他的新通知）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
+        .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("S9.d3.resumed-paused-flag", 3, "解除後單不再是暫停", "否", d => RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId) is { } r ? Flag(r.Flag("paused")) : "（總覽沒有這張單）"))
+        .Expect(Check("S9.d3.handler-list-back", 3, "解除後處理人清單恢復列出", "1", d => d.Probe("h1-default").Items("items").Count.ToString()))
+        .Expect(Check("S9.d3.handler-informed", 3, "恢復時處理人知道（通知佇列有他的新通知）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
+        .KnownDifference("E3-S9-1", "S9.d2.handler-informed")
+        .KnownDifference("E3-S9-2", "S9.d3.handler-informed");
+
+    // ── S10：靜音（代為結案）→ 解除 → 問題再出現 ──────────────────────────────
+
+    internal static Scenario BuildS10() => new Scenario("S10 靜音代為結案後再出現")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d.Act(ScenarioActions.Mute("admin1", Disk, DiskId, 3, "維修窗口", "close")))
+        .Day(3, d => d
+            .Events("HOST-A", ScenarioEvents.DiskErrors(12))
+            .Act(ScenarioActions.Unmute("admin1", Disk, DiskId)))
+        .Day(4, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Days(4)
+        .Expect(Check("S10.d1.setup", 1, "前置：第 1 天派給 h1", "h1", d => HolderOf(d, "HOST-A")))
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S10.d2.closed", 2, "代為結案：單已結案", "已結案(admin_closed)", d => OrderOf(d, "h1").State))
+        .Expect(Check("S10.d3.muted-skip", 3, "靜音期間再出現不派工（muted）", "skipped:muted", d => Decision(d, "HOST-A")))
+        .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("S10.d4.dispatch-again", 4, "解除後問題再出現時照常派工", "delivered", d => Decision(d, "HOST-A")))
+        .Expect(Check("S10.d4.holder", 4, "解除後再出現有進行中的單（派給 h1）", "h1", d => HolderOf(d, "HOST-A")))
+        .KnownDifference("E3-S10-1", "S10.d4.dispatch-again")
+        .KnownDifference("E3-S10-2", "S10.d4.holder");
+}

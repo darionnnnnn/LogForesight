@@ -100,6 +100,8 @@ public sealed class DayPlan
 {
     internal List<(string Host, IReadOnlyList<ScenarioEvent> Events)> EventSets { get; } = new();
     internal List<ScenarioAction> ActionList { get; } = new();
+    internal List<ScenarioProbe> ProbeList { get; } = new();
+    internal List<Action<LogForesight.Core.Models.SystemSettings>> SettingChanges { get; } = new();
 
     public int Day { get; }
 
@@ -109,6 +111,23 @@ public sealed class DayPlan
     public DayPlan Events(string host, IEnumerable<ScenarioEvent> events)
     {
         EventSets.Add((host, events.ToList()));
+        return this;
+    }
+
+    /// <summary>當天一開始（夜間分析與派工之前）調整系統設定，與情境起始設定走同一個設定儲存（例如第 2 天才開自動派工）。</summary>
+    public DayPlan Setting(Action<LogForesight.Core.Models.SystemSettings> change)
+    {
+        SettingChanges.Add(change);
+        return this;
+    }
+
+    /// <summary>當天結束時（人為動作之後）以 <paramref name="actor"/> 的身分讀一支 GET，結果記進當天的 <c>Probes</c>。</summary>
+    public DayPlan Probe(string name, string actor, string url) => Probe(name, actor, _ => url);
+
+    /// <summary>同上，網址在讀取當下才解析（例如帶入交辦單號、主機編號）</summary>
+    public DayPlan Probe(string name, string actor, Func<ScenarioActionContext, string> url)
+    {
+        ProbeList.Add(new ScenarioProbe(name, actor, url));
         return this;
     }
 

@@ -197,17 +197,69 @@ public static class ScenarioActions
     public static ScenarioAction SetDispatchPaused(string actor, string account, bool paused) =>
         new SetDispatchPausedAction(actor, account, paused);
 
+    /// <summary>處理人回覆（帶預計完成日／觀察至；回報期限驗證用）</summary>
+    public static ScenarioAction ReplyWithDue(string actor, OrderRef order, string status, DateTime dueDate, string? note = null) =>
+        new ReplyAction(actor, order, status, note, dueDate);
+
+    /// <summary>處理人只回覆單內指定主機的成員（其餘成員不動）</summary>
+    public static ScenarioAction ReplyHosts(string actor, OrderRef order, string status, string[] hosts, string? note = null) =>
+        new ReplyAction(actor, order, status, note, hosts: hosts);
+
+    /// <summary>
+    /// 管理者以範圍（全站或主機群組）建單；<paramref name="autoAttach"/> 開啟＝之後夜間新出現且在範圍內的主機會續掛進這張單。
+    /// 範圍內受影響主機＝資料日區間內出現該問題的主機（第 1 天到目前這天）。
+    /// </summary>
+    public static ScenarioAction CreateOrderScoped(string actor, string source, int eventId, string handler, string scopeKind,
+        string[] hostGroups, bool autoAttach, DateTime? dueDate = null, string? note = null) =>
+        new CreateScopedOrderAction(actor, source, eventId, handler, scopeKind, hostGroups, autoAttach, dueDate, note);
+
+    /// <summary>建單時帶預計完成日（日期可早於今天，用來驗證 API 如何處理）</summary>
+    public static ScenarioAction CreateOrderDue(string actor, string source, int eventId, string handler, string[] hosts, DateTime dueDate) =>
+        new CreateOrderAction(actor, source, eventId, handler, hosts, null, dueDate);
+
+    /// <summary>環境變化：整組取代主機負責人</summary>
+    public static ScenarioAction SetHostOwners(string actor, string host, params string[] owners) =>
+        new SetHostOwnersAction(actor, host, owners);
+
+    /// <summary>環境變化：停用／啟用主機</summary>
+    public static ScenarioAction SetHostActive(string actor, string host, bool active) =>
+        new SetHostActiveAction(actor, host, active);
+
+    /// <summary>設定問題負責人（整組取代）</summary>
+    public static ScenarioAction SetIssueOwners(string actor, string source, int eventId, params string[] owners) =>
+        new SetIssueOwnersAction(actor, source, eventId, owners);
+
+    /// <summary>環境變化：整組取代某使用者（其專屬使用者群組）可看的主機群組授權</summary>
+    public static ScenarioAction SetUserHostAccess(string actor, string account, params string[] hostGroups) =>
+        new SetUserHostAccessAction(actor, account, hostGroups);
+
     private static string Esc(string value) => Uri.EscapeDataString(value);
 
-    private sealed class ReplyAction(string actor, OrderRef order, string status, string? note) : ScenarioAction(actor)
+    private sealed class ReplyAction(string actor, OrderRef order, string status, string? note, DateTime? dueDate = null, string[]? hosts = null)
+        : ScenarioAction(actor)
     {
-        public override string Describe() => $"回覆 {order.Describe()}：{status}" + (string.IsNullOrEmpty(note) ? "" : $"（{note}）");
-        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
-            ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.Resolve(ctx)}/reply",
-                new WorkOrderReplyRequest { Status = status, Note = note });
+        public override string Describe() => $"回覆 {order.Describe()}：{status}"
+            + (hosts == null ? "" : $"（{string.Join("、", hosts)}）")
+            + (string.IsNullOrEmpty(note) ? "" : $"（{note}）");
+
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
+        {
+            var orderId = order.Resolve(ctx);
+            List<string>? caseIds = null;
+            if (hosts != null)
+            {
+                var wanted = hosts.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                caseIds = ctx.Site.Get<IIssueCaseStore>().GetByWorkOrder(orderId, 0, 500)
+                    .Where(c => c.ClosedAt == null && wanted.Contains(c.HostName)).Select(c => c.CaseId).ToList();
+            }
+
+            return ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{orderId}/reply",
+                new WorkOrderReplyRequest { Status = status, Note = note, DueDate = dueDate, CaseIds = caseIds });
+        }
     }
 
-    private sealed class CreateOrderAction(string actor, string source, int eventId, string handler, string[] hosts, string? note) : ScenarioAction(actor)
+    private sealed class CreateOrderAction(string actor, string source, int eventId, string handler, string[] hosts, string? note, DateTime? dueDate = null)
+        : ScenarioAction(actor)
     {
         public override string Describe() => $"建立交辦：{source} EventId {eventId}→{handler}（{string.Join("、", hosts)}）";
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
@@ -221,8 +273,67 @@ public static class ScenarioActions
                 AssignMode = "single",
                 HandlerId = ctx.UserId(handler),
                 ScopeKind = WorkOrderScopes.Hosts,
+                Note = note,
+                DueDate = dueDate
+            });
+    }
+
+    private sealed class CreateScopedOrderAction(string actor, string source, int eventId, string handler, string scopeKind,
+        string[] hostGroups, bool autoAttach, DateTime? dueDate, string? note) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"建立範圍交辦：{source} EventId {eventId}→{handler}（{scopeKind}"
+            + (hostGroups.Length == 0 ? "" : "：" + string.Join("、", hostGroups)) + (autoAttach ? "，續掛" : "") + "）";
+
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
+            ctx.Site.SendAsync(Actor, HttpMethod.Post, "api/work-orders", new CreateWorkOrderRequest
+            {
+                Source = source,
+                EventId = eventId,
+                From = ctx.DataDateOf(1),
+                To = ctx.DataDateOf(ctx.Day),
+                GroupIds = hostGroups.Select(ctx.HostGroupId).ToList(),
+                AssignMode = "single",
+                HandlerId = ctx.UserId(handler),
+                ScopeKind = scopeKind,
+                AutoAttach = autoAttach,
+                DueDate = dueDate,
                 Note = note
             });
+    }
+
+    private sealed class SetHostOwnersAction(string actor, string host, string[] owners) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"主機 {host} 負責人改為：{(owners.Length == 0 ? "（無）" : string.Join("、", owners))}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
+            ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/hosts/{ctx.HostId(host)}/owners",
+                new SetIdsRequest { Ids = owners.Select(ctx.UserId).ToList() });
+    }
+
+    private sealed class SetHostActiveAction(string actor, string host, bool active) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"{(active ? "啟用" : "停用")}主機 {host}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
+            ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/hosts/{ctx.HostId(host)}/active", new SetHostActiveRequest { Active = active });
+    }
+
+    private sealed class SetIssueOwnersAction(string actor, string source, int eventId, string[] owners) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"問題 {source} EventId {eventId} 負責人：{string.Join("、", owners)}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
+            ctx.Site.SendAsync(Actor, HttpMethod.Put, "api/admin/issue-owners",
+                new SaveIssueOwnerRequest { SourceName = source, EventId = eventId, OwnerUserIds = owners.Select(ctx.UserId).ToList() });
+    }
+
+    private sealed class SetUserHostAccessAction(string actor, string account, string[] hostGroups) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"{account} 的主機授權改為：{(hostGroups.Length == 0 ? "（無）" : string.Join("、", hostGroups))}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
+        {
+            var group = ctx.Site.Get<IUserGroupStore>().GetAll().FirstOrDefault(g => g.GroupName == "ug-" + account)
+                ?? throw new ScenarioUnresolvedException($"站台沒有使用者「{account}」的專屬群組");
+            return ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/access/{group.GroupId}",
+                new SetAccessRequest { HostGroupIds = hostGroups.Select(ctx.HostGroupId).ToList() });
+        }
     }
 
     private sealed class ReassignAction(string actor, OrderRef order, string newHandler) : ScenarioAction(actor)

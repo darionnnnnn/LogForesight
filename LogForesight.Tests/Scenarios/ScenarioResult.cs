@@ -42,7 +42,7 @@ public sealed record OutboxItemView(string Phase, string Kind, string Recipient,
 
 public sealed record AuditItemView(string Phase, string Account, string Action, string Result, string Summary);
 
-public sealed record ActionResultView(string Actor, string Description, int StatusCode, string? ErrorCode, string? Message)
+public sealed record ActionResultView(string Actor, string Description, int StatusCode, string? ErrorCode, string? Message, string? Body = null)
 {
     /// <summary>2xx＝成功；0＝對象解析不到而沒有送出</summary>
     public bool Succeeded => StatusCode is >= 200 and < 300;
@@ -78,6 +78,15 @@ public sealed class DayResult
     public IReadOnlyList<AuditItemView> AuditAdded { get; init; } = Array.Empty<AuditItemView>();
 
     public IReadOnlyList<ActionResultView> Actions { get; init; } = Array.Empty<ActionResultView>();
+
+    /// <summary>當天結束時的讀取探針結果（<c>DayPlan.Probe</c>），依宣告順序</summary>
+    public IReadOnlyList<ProbeView> Probes { get; init; } = Array.Empty<ProbeView>();
+
+    /// <summary>當天站台寄出的信（替身記錄；含即時寄出的上報信，不含摘要排程——背景服務在測試站台移除）</summary>
+    public IReadOnlyList<SentMailRecord> MailsSent { get; init; } = Array.Empty<SentMailRecord>();
+
+    public ProbeView Probe(string name) =>
+        Probes.FirstOrDefault(p => p.Name == name) ?? throw new KeyNotFoundException($"第 {Day} 天沒有探針「{name}」");
 
     public HostDayView Host(string name) =>
         Hosts.FirstOrDefault(h => string.Equals(h.Host, name, StringComparison.OrdinalIgnoreCase))

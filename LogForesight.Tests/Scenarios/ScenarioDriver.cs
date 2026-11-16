@@ -45,6 +45,8 @@ public static class ScenarioDriver
             scenario.Plans.TryGetValue(day, out var plan);
             var dataDate = DataDateOf(day);
             tracker.BeginDay();
+            foreach (var change in plan?.SettingChanges ?? new List<Action<SystemSettings>>())
+                site.Get<ISystemSettingsStore>().Update(change);
 
             // 1. 當天事件 → 2. 分析與夜間派工
             var night = await RunNightAsync(site, scenario, seeded, plan, day, dataDate);
@@ -57,8 +59,16 @@ public static class ScenarioDriver
             foreach (var action in plan?.ActionList ?? new List<ScenarioAction>())
             {
                 var result = await action.RunAsync(context);
-                actionResults.Add(new ActionResultView(action.Actor, action.Describe(), result.StatusCode, result.ErrorCode, result.Message));
+                actionResults.Add(new ActionResultView(action.Actor, action.Describe(), result.StatusCode, result.ErrorCode, result.Message, result.Body));
             }
+
+            // 上報信等即時通知是 fire-and-forget；替身寄送是同步完成的，留一小段讓背景續行收尾
+            if (actionResults.Count > 0) await Task.Delay(30);
+
+            // 4. 當天結束時的讀取探針（只走 HTTP）
+            var probes = new List<ProbeView>();
+            foreach (var probe in plan?.ProbeList ?? new List<ScenarioProbe>())
+                probes.Add(await probe.RunAsync(context));
 
             var outbox = outboxAfterAnalysis.Concat(tracker.NewOutbox("動作")).ToList();
             var audit = auditAfterAnalysis.Concat(tracker.NewAudit("動作")).ToList();
@@ -77,7 +87,9 @@ public static class ScenarioDriver
                 Orders = tracker.OrderSnapshot(),
                 OutboxAdded = outbox,
                 AuditAdded = audit,
-                Actions = actionResults
+                Actions = actionResults,
+                Probes = probes,
+                MailsSent = tracker.NewMail()
             });
         }
 
@@ -103,6 +115,10 @@ public static class ScenarioDriver
                 if (!hosts.Contains(host)) throw new ArgumentException($"第 {plan.Day} 天的事件指向不存在的主機「{host}」");
             foreach (var action in plan.ActionList)
                 if (!users.Contains(action.Actor)) throw new ArgumentException($"第 {plan.Day} 天的動作帳號「{action.Actor}」不在情境的使用者清單內");
+            foreach (var probe in plan.ProbeList)
+                if (!users.Contains(probe.Actor)) throw new ArgumentException($"第 {plan.Day} 天的探針帳號「{probe.Actor}」不在情境的使用者清單內");
+            var dupProbe = plan.ProbeList.GroupBy(p => p.Name).FirstOrDefault(g => g.Count() > 1);
+            if (dupProbe != null) throw new ArgumentException($"第 {plan.Day} 天的探針名稱重複：{dupProbe.Key}");
         }
     }
 
@@ -435,6 +451,16 @@ public static class ScenarioDriver
         }
 
         public void BeginDay() => _ordersAtDayStart = _knownOrders.ToHashSet();
+
+        private int _mailSeen;
+
+        public List<SentMailRecord> NewMail()
+        {
+            var all = _site.SentMail;
+            var fresh = all.Skip(_mailSeen).ToList();
+            _mailSeen = all.Count;
+            return fresh;
+        }
 
         public List<OutboxItemView> NewOutbox(string phase)
         {
