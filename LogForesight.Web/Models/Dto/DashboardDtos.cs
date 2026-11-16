@@ -292,11 +292,7 @@ public class ReportSummaryDto
     /// <summary>Top 10 以外主機的合計（高＋中風險日），供「其他 N 台」彙總條；無其他主機時為 null</summary>
     public HostRankingOthersDto? Others { get; set; }
 
-    /// <summary>
-    /// 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8-2）：與主機排行**同一張卡的另一個模式**
-    /// （卡 header 的「主機｜問題」切換），不另開第五張卡——報表一頁化的高度是由外而內
-    /// 分配的（docs/archive/FEEDBACK-10-PLAN.md §5），多一張常駐卡會讓整組高度重算。
-    /// </summary>
+    /// <summary>問題排行：報表總覽與主機排行並排的另一張卡，與儀表板「重點問題」同一份投影（IssueRankingBuilder）</summary>
     public List<IssueRankingDto> IssueRanking { get; set; } = new();
 
     /// <summary>本期出現過的相異問題總數——Top 10 之外還有多少個，畫面要說得出來</summary>

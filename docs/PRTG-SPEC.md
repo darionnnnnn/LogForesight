@@ -567,9 +567,10 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 | 殘留判定門檻 | 含登入失敗明細的主機日 | ≥200 且 ≥14 天 | ≥1000 且 ≥28 天 |
 
 - 分母為零判「不足」；PRTG 未啟用或鏡像無 sensor 判「無法取得」；門檻校準逐規則代碼進行。可用判定內嵌在 EF 查詢投影；判定快取 10 分鐘，匯出前強制重算。
-- 匯出檔：自描述 JSON（`FormatVersion` 3），`MagnitudeSemanticsVersion=3`、`FormalEvaluationScope=state-change-messages`；含值型基線（56 天逐日聚合）、
+- 匯出檔：自描述 JSON（`FormatVersion` 4），`MagnitudeSemanticsVersion=3`、`FormalEvaluationScope=state-change-messages`；含值型基線（56 天逐日聚合）、
   感測器摘要、type 輪廓（24 小時曲線，資料庫端聚合）、規則門檻（逐日命中、以最低門檻重評的 magnitude 樣本與 P50／P90／P99、`CurrentRules`）、
   數值取得量級、殘留判定指標（不含帳號名稱，與正式判定共用 `ResidualCredentialDetector.EvaluateMetrics`）。`detail=summary` 只匯出摘要。
+  第 4 版新增：值型基線 `KeyMetrics` 的 `SnapshotLastSuccessAt`、`SnapshotConsecutiveFailures`、`SnapshotStopReason`、`SnapshotBackingOff`（讓匯出檔自己回答「快照為什麼沒資料」）；殘留候選的 `RecurringGroupCount`、`RecurringGroupShare`（最大組以外跨日重現 ≥ 2 天的組數與其明細占比）；warning 樣本的 `ValueChange7d`（近 7 日已用百分比變化，算不到為 null）。舊欄位名稱與意義不變。
 - 匯出閘門：四項皆達「可用」才解鎖，否則勾「仍要匯出」覆寫；兩者都寫稽核。
 
 **使用效果**（維護頁頁籤，`PrtgEffectivenessService`）：期間內 PRTG finding 數、低涵蓋取樣小時、建立的案件與交辦、已回覆、已抑制、靜音 profile、
