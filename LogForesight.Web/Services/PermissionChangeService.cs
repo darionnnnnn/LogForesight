@@ -61,10 +61,14 @@ public class PermissionChangeService
         var host = _hosts.FindByName(hostName)
                    ?? throw DomainException.NotFound("找不到這台主機，或您沒有檢視權限。");
 
-        // 授權與清單同一套：可見範圍先過（EnsureVisible 查無權限一律回 404，不回 403）；
-        // 案件授與者另擋——報告全文是整台主機當日的完整敘事，不在被交辦問題的範圍內（§7）
-        _visibility.EnsureVisible(host.HostId);
-        if (_visibility.IsCaseGrantOnly(host.HostId)) return null;
+        // 授權與清單、單筆／批次確認同一個口徑（IsChangeVisible）：ViewAll 看得到停用主機的異動，
+        // 點報告也要讀得到；其他人只限可見主機（查無權限一律回 404，不回 403）。
+        // 案件授與者另擋——報告全文是整台主機當日的完整敘事，不在被交辦問題的範圍內（§7）；
+        // ViewAll 持有者不是案件授與者，不必走這一關（停用主機不在可見集合內，會被誤判成案件授與）
+        var hasViewAll = _currentUser.Has(Capability.ViewAll);
+        if (!IsChangeVisible(hasViewAll, host, hasViewAll ? null : _visibility.GetVisibleHostIds()))
+            throw DomainException.NotFound("找不到這台主機，或您沒有檢視權限。");
+        if (!hasViewAll && _visibility.IsCaseGrantOnly(host.HostId)) return null;
 
         var content = _reports.Read(new HostKey { HostId = host.HostId, HostName = host.HostName },
             date, ReportKinds.Permission);

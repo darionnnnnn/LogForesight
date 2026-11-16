@@ -37,28 +37,43 @@ public class AuthorizationCacheAndAnonymousHttpTests
     {
         var from = AuthorizationHttpFixture.Day.AddDays(-14).ToString("yyyy-MM-dd");
         var to = AuthorizationHttpFixture.DayText;
-        yield return new object[] { "/api/dashboard/summary" };
-        yield return new object[] { $"/api/reports/summary?from={from}&to={to}" };
-        yield return new object[] { $"/api/reports/effectiveness?from={from}&to={to}" };
+        // 第二個參數：回應是否只帶彙總數字、沒有哨兵（類型趨勢）——這種端點改以 "total":（每台可見主機 2 個問題日）比對可見範圍
+        yield return new object[] { "/api/dashboard/summary", false };
+        yield return new object[] { $"/api/reports/summary?from={from}&to={to}", false };
+        yield return new object[] { $"/api/reports/effectiveness?from={from}&to={to}", false };
+        yield return new object[] { $"/api/reports/category-trend?from={from}&to={to}", true };
     }
 
     [Theory]
     [MemberData(nameof(SummaryUrls))]
-    public async Task Summary_cache_is_keyed_by_visible_scope(string url)
+    public async Task Summary_cache_is_keyed_by_visible_scope(string url, bool totalsOnly)
     {
+        // 回應帶哨兵的端點：逐台比哨兵；只帶彙總數字的端點：比 "total":N（N＝可見主機數 × 2 個問題日），
+        // 快取鍵少了可見範圍時，受限者會拿到 Admin 的 6、Admin 會拿到受限者的 2
+        void ExpectVisible(string body, int[] visible, string who)
+        {
+            if (totalsOnly)
+            {
+                Assert.True(body.Contains($"\"total\":{visible.Length * 2}", StringComparison.Ordinal),
+                    $"{who} 的回應應含 \"total\":{visible.Length * 2}（快取鍵缺少可見範圍？）：{url}\n{body}");
+                return;
+            }
+            foreach (var n in new[] { 1, 2, 3, 4 })
+            {
+                if (visible.Contains(n)) Assert.True(Sentinels.ContainsAny(body, n), $"{who} 的回應應含主機 {n}：{url}");
+                else Assert.False(Sentinels.ContainsAny(body, n), $"{who} 拿到未授權主機 {n} 的資料（快取鍵缺少可見範圍？）：{url}");
+            }
+        }
+
         // 1. Admin 先查：回應含主機 1～3（快取被「全部主機」的內容填滿）
         var (adminStatus, adminBody) = await _fx.GetAsync(_fx.Admin, url);
         Assert.Equal(HttpStatusCode.OK, adminStatus);
-        foreach (var n in new[] { 1, 2, 3 })
-            Assert.True(Sentinels.ContainsAny(adminBody, n), $"Admin 的回應應含主機 {n}（否則這條測試沒有東西可洩漏）：{url}");
-        Assert.False(Sentinels.ContainsAny(adminBody, 4), "停用主機 4 不該出現在 Admin 的回應");
+        ExpectVisible(adminBody, new[] { 1, 2, 3 }, "Admin");
 
         // 2. 受限 A 立刻用同參數查：只能看到主機 1，不得拿到 Admin 的快取
         var (aStatus, aFirst) = await _fx.GetAsync(_fx.A, url);
         Assert.Equal(HttpStatusCode.OK, aStatus);
-        Assert.True(Sentinels.ContainsAny(aFirst, 1), $"A 的回應應含自己的主機 1：{url}");
-        foreach (var n in new[] { 2, 3, 4 })
-            Assert.False(Sentinels.ContainsAny(aFirst, n), $"A 拿到未授權主機 {n} 的資料（快取鍵缺少可見範圍？）：{url}");
+        ExpectVisible(aFirst, new[] { 1 }, "A");
 
         // 3. 同一人再查：與第一次相同，且 SummaryCache 的命中數真的增加（回應相同不代表走了快取——
         //    快取壞掉時每次重算也會得到同樣內容，所以必須用命中統計證明第二次是命中自己那一格）
@@ -70,14 +85,11 @@ public class AuthorizationCacheAndAnonymousHttpTests
 
         // 4. 另一個受限者 B（負責主機 2）：只看到主機 2，不得拿到 A 的快取
         var (_, bBody) = await _fx.GetAsync(_fx.B, url);
-        Assert.True(Sentinels.ContainsAny(bBody, 2), $"B 的回應應含自己負責的主機 2：{url}");
-        foreach (var n in new[] { 1, 3, 4 })
-            Assert.False(Sentinels.ContainsAny(bBody, n), $"B 拿到未授權主機 {n} 的資料：{url}");
+        ExpectVisible(bBody, new[] { 2 }, "B");
 
         // 5. Admin 再查：不被受限者的快取汙染（仍含主機 1～3）
         var (_, adminAgain) = await _fx.GetAsync(_fx.Admin, url);
-        foreach (var n in new[] { 1, 2, 3 })
-            Assert.True(Sentinels.ContainsAny(adminAgain, n), $"Admin 再查時缺少主機 {n}（快取被受限者的內容覆蓋？）：{url}");
+        ExpectVisible(adminAgain, new[] { 1, 2, 3 }, "Admin（再查）");
     }
 
     [Fact]

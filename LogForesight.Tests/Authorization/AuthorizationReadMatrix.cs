@@ -63,6 +63,10 @@ public sealed record ReadRow
     /// <summary>WorkOrder 列：依交辦單取回應中必須出現的字串（null＝不帶資料）</summary>
     public Func<WorkOrderFx, string?>? WorkOrderNeedle { get; init; }
 
+    /// <summary>回應結構斷言（哨兵比不到的端點，例如只回 {hostId, date}）：給身分、被查的主機（Host／HostSoft 列才有）、全部主機與回應全文，回傳問題描述（null＝通過）。
+    /// 只在狀態碼 200 且該身分通過閘門時檢查</summary>
+    public Func<IdentityFx, HostFx?, IReadOnlyList<HostFx>, string, string?>? ResponseCheck { get; init; }
+
     public string Method => Key[..Key.IndexOf(' ')];
     public string Route => Key[(Key.IndexOf(' ') + 1)..];
     public override string ToString() => Key;
@@ -94,7 +98,16 @@ public static class ReadMatrix
             // 依日期彙總只回數字：完整可見的主機數必須等於該身分看得到的高風險主機數（多算＝洩漏了不可見主機的存在）
             GlobalNeedle = id => id.Vis.Values.Count(v => v == Visibility.Full) is var n and > 0 ? $"\"highRiskHosts\":{n}" : null },
         new() { Key = "GET /api/records/by-issue", Scope = RowScope.Global, Query = RecordRange, Positive = new[] { IssueA } },
-        new() { Key = "GET /api/records/next-unhandled", Scope = RowScope.HostSoft, Query = "hostId={hostId}&date={date}" },
+        new() { Key = "GET /api/records/next-unhandled", Scope = RowScope.HostSoft, Query = "hostId={hostId}&date={date}",
+            // 回應只有 {hostId, date}、沒有哨兵：回傳的 hostId 必須落在該身分完整可見的主機編號內（或 data 為 null）
+            ResponseCheck = (id, _, hosts, body) =>
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind == System.Text.Json.JsonValueKind.Null) return null;
+                if (!data.TryGetProperty("hostId", out var hid) || !hid.TryGetInt64(out var returned)) return "回應缺少 hostId";
+                var visibleIds = hosts.Where(h => id.VisOf(h.N) == Visibility.Full).Select(h => h.Id).ToHashSet();
+                return visibleIds.Contains(returned) ? null : $"回傳的 hostId={returned} 不在該身分可見的主機編號集合 [{string.Join(",", visibleIds)}] 內";
+            } },
         // 沿用上次說明：以該主機的問題簽章查。受限者查未授權主機的簽章，回應不得含該主機的哨兵（hostKeys 篩選）；
         // 完整可見者要查得到該主機的結案說明（正向）。Admin 也只在啟用主機內找：查停用主機 4 的簽章不得回出主機 4 的說明
         new() { Key = "GET /api/handling/last-note", Scope = RowScope.HostSoft, Query = "issueKey={issueKey}", Gate = new[] { Capability.Handle },
@@ -103,7 +116,10 @@ public static class ReadMatrix
         // ── 風險日詳情與子資源（編號直取）───────────────────────────────────────
         new() { Key = "GET /api/records/{hostId:long}/{date}", Scope = RowScope.Host, Positive = new[] { Headline, IssueA }, CaseStatuses = new[] { HttpStatusCode.OK }, CasePositive = new[] { IssueA } },
         new() { Key = "GET /api/records/{hostId:long}/{date}/report", Scope = RowScope.Host, Positive = new[] { Report }, CaseStatuses = new[] { HttpStatusCode.OK } },
-        new() { Key = "GET /api/records/{hostId:long}/{date}/handling", Scope = RowScope.Host, Positive = new[] { Note }, CaseStatuses = new[] { HttpStatusCode.OK } },
+        new() { Key = "GET /api/records/{hostId:long}/{date}/handling", Scope = RowScope.Host, Positive = new[] { Note }, CaseStatuses = new[] { HttpStatusCode.OK },
+            // 案件授與者讀到的是裁剪後的回應（只有識別與能力旗標）：必須帶 canHandle=true（C 有 Handle 能力），面板才會給批次表單
+            ResponseCheck = (id, host, _, body) => id.VisOf(host!.N) == Visibility.CaseOnly && !body.Contains("\"canHandle\":true", StringComparison.Ordinal)
+                ? "案件授與者的 handling 回應應含 \"canHandle\":true" : null },
         new() { Key = "GET /api/records/{hostId:long}/{date}/handling/logs", Scope = RowScope.Host, Positive = new[] { Note } },
         new() { Key = "GET /api/records/{hostId:long}/{date}/handling/issue-history", Scope = RowScope.Host, Query = "issueKey={issueKey}", Positive = new[] { IssueNote }, CasePositive = new[] { IssueNote } },
 
@@ -128,7 +144,7 @@ public static class ReadMatrix
         new() { Key = "GET /api/permission-changes/ids", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission }, AdminSeesInactive = true,
             GlobalNeedle = id => id.Vis.Where(kv => kv.Value == Visibility.Full).Select(kv => (int?)kv.Key).Min() is { } n ? $"authz-change-{n}" : null },
         new() { Key = "GET /api/permission-changes/categories", Scope = RowScope.Global, Gate = new[] { Capability.ConfirmPermission } },
-        new() { Key = "GET /api/permission-changes/report", Scope = RowScope.Host, Query = "host={hostName}&date={date}", Gate = new[] { Capability.ConfirmPermission }, Positive = new[] { PermReport } },
+        new() { Key = "GET /api/permission-changes/report", Scope = RowScope.Host, Query = "host={hostName}&date={date}", Gate = new[] { Capability.ConfirmPermission }, Positive = new[] { PermReport }, AdminSeesInactive = true },
 
         // ── AI 讀取端點：AI 指向一個接受連線即關閉的本機埠，呼叫失敗時一律回 200＋data:null（不洩漏、也沒有哨兵可比）；
         //    interpret-issue 對不可見主機仍會先走 GetDetail 授權而回 404，所以編號直取的授權路徑有被驗到 ─

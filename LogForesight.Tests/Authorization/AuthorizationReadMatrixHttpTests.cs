@@ -125,6 +125,11 @@ public class AuthorizationReadMatrixHttpTests
 
                 case RowScope.Host:
                     ExpectHost(row, id, host!, status, body, Expect, ExpectStatus);
+                    if (status == HttpStatusCode.OK && row.ResponseCheck != null)
+                    {
+                        var problem = row.ResponseCheck(id, host, _fx.Hosts, body);
+                        Expect(problem == null, problem ?? "");
+                    }
                     if (id.VisOf(host!.N) == Visibility.Full && status == HttpStatusCode.OK && row.PositiveText != null)
                         Expect(body.Contains(row.PositiveText, StringComparison.Ordinal), $"回應應含 {row.PositiveText}");
                     CheckLeakAllHosts();
@@ -133,6 +138,11 @@ public class AuthorizationReadMatrixHttpTests
                 case RowScope.HostSoft:
                     ExpectStatus(HttpStatusCode.OK);
                     CheckLeakAllHosts();
+                    if (status == HttpStatusCode.OK && row.ResponseCheck != null)
+                    {
+                        var problem = row.ResponseCheck(id, host, _fx.Hosts, body);
+                        Expect(problem == null, problem ?? "");
+                    }
                     // 完整可見的主機：回應要含預期哨兵（證明判準比得到東西）
                     if (status == HttpStatusCode.OK && id.VisOf(host!.N) == Visibility.Full && row.Positive.Length > 0)
                         Expect(Sentinels.ContainsAnyOf(body, host.N, row.Positive),
@@ -175,6 +185,69 @@ public class AuthorizationReadMatrixHttpTests
             $"\n回應（前 600 字）：{(body.Length > 600 ? body[..600] : body)}");
     }
 
+    /// <summary>next-unhandled 的 ResponseCheck 對「沒有資料」恆真，這裡補一條：至少有一個身分在至少一台主機回非 null，
+    /// 證明判準比得到資料（回應形狀若改了，這條會紅）。</summary>
+    [Fact]
+    public async Task Next_unhandled_returns_data_for_at_least_one_identity()
+    {
+        var nonNull = 0;
+        foreach (var name in new[] { "A受限", "B負責人", "Admin" })
+            foreach (var h in _fx.Hosts)
+            {
+                var row = ReadMatrix.Rows.Single(r => r.Key == "GET /api/records/next-unhandled");
+                var (status, body) = await _fx.GetAsync(_fx.Identity(name), ReadMatrix.BuildUrl(row, _fx, h, null, null));
+                if (status != HttpStatusCode.OK) continue;
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == System.Text.Json.JsonValueKind.Object) nonNull++;
+            }
+        Assert.True(nonNull > 0, "next-unhandled 對所有身分、所有主機都回 null——斷言比不到資料");
+    }
+
+    /// <summary>handling 回應的欄位名集合快照：一般授權者 A 讀自己主機的完整回應，欄位集合寫死在測試裡。
+    /// 新增／移除欄位要同步改這份清單——這是「裁剪（案件授與）只動該動的欄位」的對照基準，
+    /// 欄位漂移（例如新增整天結論欄位卻漏了裁剪）會在這裡被看見。</summary>
+    private static readonly string[] HandlingFieldNames =
+    {
+        "assigneeCannotHandle",
+        "assigneeHasNoHostAccess",
+        "canAssign",
+        "canHandle",
+        "casesCreated",
+        "casesReassigned",
+        "casesSkippedHandlerNames",
+        "closedIssues",
+        "date",
+        "derivedStatus",
+        "derivedStatusText",
+        "dueDate",
+        "handlerAccount",
+        "handlerHasNoEmail",
+        "handlerId",
+        "handlerName",
+        "hostId",
+        "hostName",
+        "isOverdue",
+        "note",
+        "openCaseCount",
+        "ownerNames",
+        "skippedByReason",
+        "status",
+        "statusText",
+        "totalIssues",
+        "updatedAt"
+    };
+
+    [Fact]
+    public async Task Handling_response_field_names_match_snapshot_for_authorized_reader()
+    {
+        var row = ReadMatrix.Rows.Single(r => r.Key == "GET /api/records/{hostId:long}/{date}/handling");
+        var (status, body) = await _fx.GetAsync(_fx.Identity("A受限"), ReadMatrix.BuildUrl(row, _fx, _fx.Host(1), null, null));
+        Assert.Equal(HttpStatusCode.OK, status);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var names = doc.RootElement.GetProperty("data").EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        Assert.Equal(HandlingFieldNames.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
+    }
+
     private static void ExpectHost(ReadRow row, IdentityFx id, HostFx host, HttpStatusCode status, string body,
         Action<bool, string> expect, Action<HttpStatusCode[]> expectStatus)
     {
@@ -195,6 +268,15 @@ public class AuthorizationReadMatrixHttpTests
                 break;
 
             default:
+                // 權限異動的停用主機例外（WEB-SPEC §7.1）：ViewAll 的 Admin 與清單同口徑，讀得到停用主機的報告
+                if (row.AdminSeesInactive && id.Name == "Admin" && !host.Active)
+                {
+                    expectStatus(row.OkStatuses);
+                    if (status == HttpStatusCode.OK && row.Positive.Length > 0)
+                        expect(Sentinels.ContainsAnyOf(body, host.N, row.Positive),
+                            $"Admin 讀停用主機 {host.N} 沒有出現預期的哨兵（{string.Join("/", row.Positive)}）");
+                    break;
+                }
                 // 停用主機對 Admin 也不可見（docs/WEB-SPEC.md §7.1），直取一律 404
                 expectStatus(new[] { HttpStatusCode.NotFound });
                 break;

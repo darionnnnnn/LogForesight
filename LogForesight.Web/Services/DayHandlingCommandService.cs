@@ -97,6 +97,7 @@ public class DayHandlingCommandService
         // 案件授與者只回識別與能力旗標：處理面板對每位使用者都先讀這裡再依 canHandle 決定要不要給批次表單，
         // 所以不能整個拒絕（面板會壞）；但整天的狀態、處理人、期限、備註、負責人是整天的結論，不給
         // （與寫入路徑的 RequireNotCaseGrantOnly 同一個邊界，見 docs/WEB-SPEC.md §7.1 案件授與）
+        // 日層級欄位（status 等）刻意留空：消費端（handling-panel.js）在案件授與路徑只讀 canHandle
         if (_visibility.IsCaseGrantOnly(hostId))
             return new HandlingDto
             {

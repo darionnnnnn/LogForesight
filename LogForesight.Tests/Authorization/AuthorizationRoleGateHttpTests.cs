@@ -1,5 +1,7 @@
 using System.Net;
 using LogForesight.Web.Auth;
+using LogForesight.Core.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace LogForesight.Tests.Authorization;
@@ -103,29 +105,43 @@ public class AuthorizationRoleGateHttpTests
 
     /// <summary>
     /// PRTG 範圍清除的三條端點刻意不掛 <c>[Permission]</c>（Maintain 被撤銷後，建立者仍要能讀到進度），
-    /// 改在動作內以「作業建立者＋耐久授權」檢查。他人（受限 A、serverAdmin）用不存在的作業編號呼叫，
-    /// 必須被擋（4xx）且不寫任何資料。
+    /// 改在動作內以「作業建立者＋耐久授權」檢查。守門必須用**真實存在**的作業：不存在的編號任何人都回 400，
+    /// 拿掉擁有者比對也不會紅。這裡先以管理者身分建一筆 preview 作業，他人（受限 A、serverAdmin）打這筆
+    /// 必須 403、作業資料（狀態與版本）不變；管理者本人讀取則是 200（證明判準比得到資料）。
     /// </summary>
     [Fact]
     public async Task Self_authorized_purge_endpoints_reject_foreign_callers()
     {
+        var backend = _fx.Services.GetRequiredService<StorageBackend>();
+        var jobs = backend.PrtgStore().ScopePurgeJobs();
+        var job = jobs.CreatePreview(_fx.Admin.UserId, 0, null, "authz-fingerprint",
+            new HashSet<long> { 1L }, 1, DateTimeOffset.UtcNow);
+
         var calls = new (HttpMethod Method, string Url, object? Body)[]
         {
-            (HttpMethod.Post, "/api/admin/settings/prtg-scope-purge/confirm", new { previewId = "authz-no-such-preview" }),
-            (HttpMethod.Get, "/api/admin/settings/prtg-scope-purge/jobs/authz-no-such-job", null),
-            (HttpMethod.Post, "/api/admin/settings/prtg-scope-purge/jobs/authz-no-such-job/resume", new { expectedRevision = 1 })
+            (HttpMethod.Post, "/api/admin/settings/prtg-scope-purge/confirm", new { previewId = job.JobId }),
+            (HttpMethod.Get, $"/api/admin/settings/prtg-scope-purge/jobs/{job.JobId}", null),
+            (HttpMethod.Post, $"/api/admin/settings/prtg-scope-purge/jobs/{job.JobId}/resume", new { expectedRevision = job.Revision })
         };
         var problems = new List<string>();
         foreach (var name in new[] { "A受限", "serverAdmin" })
         {
             foreach (var (method, url, body) in calls)
             {
-                var before = _probe.Global();
+                var before = jobs.Get(job.JobId)!;
                 var (status, text, _) = await _fx.SendAsync(_fx.Identity(name), method, url, body);
-                if ((int)status is < 400 or >= 500) problems.Add($"{method} {url} 身分={name}：應 4xx，實際 {(int)status}　{Clip(text)}");
-                if (_probe.Global() != before) problems.Add($"{method} {url} 身分={name}：被擋的請求仍改了資料");
+                if (status != HttpStatusCode.Forbidden) problems.Add($"{method} {url} 身分={name}：應 403，實際 {(int)status}　{Clip(text)}");
+                var after = jobs.Get(job.JobId)!;
+                if (after.Status != before.Status || after.Revision != before.Revision)
+                    problems.Add($"{method} {url} 身分={name}：被擋的請求仍改了作業（{before.Status}/{before.Revision} → {after.Status}/{after.Revision}）");
             }
         }
+
+        // 正向：擁有者本人讀得到，證明上面的 403 來自擁有者比對而不是作業不存在
+        var (ownerStatus, ownerText, _) = await _fx.SendAsync(_fx.Admin, HttpMethod.Get,
+            $"/api/admin/settings/prtg-scope-purge/jobs/{job.JobId}", null);
+        if (ownerStatus != HttpStatusCode.OK || !ownerText.Contains(job.JobId, StringComparison.Ordinal))
+            problems.Add($"作業擁有者（Admin）讀取應 200 且含作業編號，實際 {(int)ownerStatus}　{Clip(ownerText)}");
 
         Assert.True(problems.Count == 0, string.Join("\n", problems));
     }

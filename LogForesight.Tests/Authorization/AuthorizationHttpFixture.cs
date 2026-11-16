@@ -183,36 +183,45 @@ public sealed class AuthorizationHttpFixture : IDisposable
         // 站台啟動（Program）會重新載入全域 NLog 設定、改動全域加解密金鑰；結束時還原，否則之後依 NLog 收集警告
         // 或依金鑰狀態判斷的測試（例如 CredentialPreflightTests）在全量時收不到預期的結果
         _savedNLogConfig = NLog.LogManager.Configuration;
-        SetEnv("Storage__Type", "Sqlite");
-        SetEnv("Storage__DataRoot", _dataRoot);
-        SetEnv("Storage__ConnectionString", "");
-        SetEnv("Auth__Provider", "Stub");
-        SetEnv("Jwt__SecretKey", "authz-matrix-test-secret-key-0123456789-abcdefghijklmnop");
-
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        try
         {
-            builder.UseSetting(Microsoft.AspNetCore.Hosting.WebHostDefaults.EnvironmentKey, "Development");
-            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
-        });
+            SetEnv("Storage__Type", "Sqlite");
+            SetEnv("Storage__DataRoot", _dataRoot);
+            SetEnv("Storage__ConnectionString", "");
+            SetEnv("Auth__Provider", "Stub");
+            SetEnv("Jwt__SecretKey", "authz-matrix-test-secret-key-0123456789-abcdefghijklmnop");
 
-        _client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+            _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            {
+                builder.UseSetting(Microsoft.AspNetCore.Hosting.WebHostDefaults.EnvironmentKey, "Development");
+                builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
+            });
+
+            _client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+            {
+                AllowAutoRedirect = false,
+                HandleCookies = false,
+                BaseAddress = new Uri("https://localhost")
+            });
+            _client.DefaultRequestHeaders.Add("X-Requested-By", "LogForesight");
+
+            Hosts = new[] { 1, 2, 3, 4 }.Select(n => new HostFx
+            {
+                N = n,
+                Active = n != 4,
+                IssueA = MakeIssue(n, "A", 1001),
+                IssueB = MakeIssue(n, "B", 1002)
+            }).ToList();
+
+            Seed();
+            LoginAll();
+        }
+        catch
         {
-            AllowAutoRedirect = false,
-            HandleCookies = false,
-            BaseAddress = new Uri("https://localhost")
-        });
-        _client.DefaultRequestHeaders.Add("X-Requested-By", "LogForesight");
-
-        Hosts = new[] { 1, 2, 3, 4 }.Select(n => new HostFx
-        {
-            N = n,
-            Active = n != 4,
-            IssueA = MakeIssue(n, "A", 1001),
-            IssueB = MakeIssue(n, "B", 1002)
-        }).ToList();
-
-        Seed();
-        LoginAll();
+            // 建構子擲例外時 xunit 不會呼叫 Dispose：環境變數與 NLog／加解密金鑰是行程層級狀態，不還原會汙染之後的測試
+            Dispose();
+            throw;
+        }
     }
 
     private void SetEnv(string key, string value)
@@ -502,8 +511,9 @@ public sealed class AuthorizationHttpFixture : IDisposable
 
     public void Dispose()
     {
-        _client.Dispose();
-        _factory.Dispose();
+        // 建構中途失敗時 _client／_factory 可能還是 null
+        _client?.Dispose();
+        _factory?.Dispose();
         _aiSink?.Stop();
         foreach (var (key, value) in _savedEnv) Environment.SetEnvironmentVariable(key, value);
         // 站台主程式結束時在 finally 呼叫 LogManager.Shutdown()（把全域設定清成 null），那是在主程式的執行緒上、

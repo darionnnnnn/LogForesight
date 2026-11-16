@@ -46,6 +46,35 @@ public sealed class PermissionChangeBatchTests : IDisposable
         return new PermissionChangeService(_store, _hosts, visibility, user, _audit, _users, new NullReportReader(), new FakeSystemSettingsStore());
     }
 
+    private sealed class StubReportReader : IReportReader
+    {
+        public ReportContent? Read(HostKey host, DateTime date, string kind) =>
+            new(1, kind, date, null, null, "permission.txt", "報告全文");
+        public bool Exists(HostKey host, DateTime date, string kind) => true;
+    }
+
+    private PermissionChangeService CreateReportService(ICurrentUser user)
+    {
+        var visibility = new VisibilityService(
+            user, _users, _userGroups, _access, _hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
+        return new PermissionChangeService(_store, _hosts, visibility, user, _audit, _users, new StubReportReader(), new FakeSystemSettingsStore());
+    }
+
+    [Fact]
+    public void 報告端點與清單同口徑_ViewAll讀得到停用主機的報告_受限者對未授權主機仍是NotFound()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SRV-OFF", Active = false });
+        var day = new DateTime(2026, 8, 20);
+
+        var admin = CreateReportService(FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.ConfirmPermission));
+        var report = admin.GetReport("SRV-OFF", day);
+        Assert.NotNull(report);
+
+        var restricted = CreateReportService(FakeCurrentUser.ForUser(501, Capability.ConfirmPermission));
+        Assert.Throws<DomainException>(() => restricted.GetReport("SRV-OFF", day));
+        Assert.Throws<DomainException>(() => restricted.GetReport("SRV-01", day));
+    }
+
     [Fact]
     public void 批次授權後_每一筆的status與確認人與確認時間都正確()
     {
