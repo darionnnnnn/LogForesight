@@ -586,6 +586,7 @@
 | I-4 | 主代理 | `HealthDetailDto.HostDayRecovery`＋設定頁「主機日恢復」列 | 行為測試 4 案（正常、排隊中不是問題、需要檢查、未知原因原樣）；`GetWaitingSummary` 的需要人看計數由 I-1 測試涵蓋 | 不併入整體狀態（資料異常，不是服務停擺） |
 | D | Sonnet（worktree，主代理驗收） | 分桶單一出口、`ClassifyDays` 抽出（`GetTodo` 改呼叫它）、處理成效與類型趨勢各一個服務、`summary.previousTrend`、兩個新端點登錄讀取矩陣與快取分鍵 | 合併後定向 1,197 項綠；主代理突變：14 天邊界改成不含→1 紅、拿掉「只算已處理」→3 紅 | `topRecurring` 的 `hostCount`＝被標已處理的主機數、`recurredCount`＝其中再發生的主機數；查詢範圍迄日延 14 天但不超過昨天（迄日是今天時以迄日為準）；worktree 起點非本輪分支，改 `checkout -B` 到 650d0992 後開工 |
 | G-1 | 主代理 | 門檻＝有白名單 sensor 的已對應主機數與 10 取小；說明改為「N 台達到可用標準（28 天）」 | 門檻四例＋對應全失敗一例；突變回固定 10 台→3 紅；校準 93 項綠 | 規劃寫「取數範圍內已對應主機數」：改用「有白名單 sensor 的已對應主機數」（沒有白名單 sensor 的主機永遠產生不了基線）；原說明「N 台主機有基線資料」實際數的是已對應主機數，一併更正 |
+| G-2 | Sonnet（worktree，主代理驗收） | `PrtgCrossDay` 可選 `steady` 證據＋`ApplyDetailed`；管線只對候選（warning、連續 ≥7 日）查數值；常數 6 個 | 合併後 PRTG 定向 468 項綠；主代理突變：拿掉危險區判斷→2 紅、可用日門檻改 1→2 紅 | 代理在新程式另寫了一份「100 − 值」，違反「可用 % 轉已用 % 只有一處」：主代理抽成 `PrtgValueAssessment.UsedPercent`，趨勢評估與持平判定共用，CLAUDE.md 規則同步；`Apply` 維持兩元組回傳（既有 15 處解構），降級數由 `ApplyDetailed` 回報 |
 
 ## 體檢交接
 

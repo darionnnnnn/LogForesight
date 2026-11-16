@@ -188,6 +188,8 @@ public sealed record PrtgSteadyEvidence(PrtgValueSemantic Semantic, int UsableDa
         if (row.Semantic is not (PrtgValueSemantic.DiskPercentFree or PrtgValueSemantic.MemoryPercentFree)) return null;
         if (row.Reason == PrtgValueReason.MappingInvalid || row.Daily.Count == 0) return null;
         var ordered = row.Daily.OrderBy(d => d.Day).ToList();
-        return new PrtgSteadyEvidence(row.Semantic.Value, ordered.Count, 100 - ordered[0].Value, 100 - ordered[^1].Value);
+        var semantic = row.Semantic.Value;
+        return new PrtgSteadyEvidence(semantic, ordered.Count,
+            PrtgValueAssessment.UsedPercent(semantic, ordered[0].Value), PrtgValueAssessment.UsedPercent(semantic, ordered[^1].Value));
     }
 }

@@ -441,6 +441,10 @@ blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「
 `N≥2` 時 Detail 加「近 14 日第 N 次，連續第 M 日」；`M≥3` 或 `N≥3` 嚴重度升一級（封頂 High）；`down` 且 `M≥14` 加「已連續 M 日，故障尚未恢復」。
 常數在 `PrtgRuleCatalog`，暫定待校準。查詢失敗只警告、用本趟資料判定。
 
+**持續 Warning 且數值持平時降一級**（`PrtgCrossDay` 的 `steady` 證據，由 `PrtgDailyPipeline.BuildSteadyEvidence` 以 `PrtgValueAssessment` 算好）：`warning` finding（不含 `ElevatesDayRisk`）連續 ≥ 7 日，且該 sensor 評估日往前 7 天內可用日 ≥ 4、
+已用百分比（`PrtgValueAssessment.UsedPercent`）首尾差 ≤ 2 個百分點、最新值不在危險區（磁碟已用 < 90%、記憶體已用 < 95%）時，嚴重度降一級、不套跨日升級，說明補「已持續 M 日，數值持平（近 7 日已用 X%→Y%）」。
+數值不足、未知單位、CPU／Ping、數值查詢失敗一律維持原行為；只影響當趟評估的 finding，歷史主機日不重算。每日 finding 計數多「持平降級 N 筆」。常數在 `PrtgRuleCatalog`，暫定。
+
 ### 抑制
 
 規則型與簽章型抑制在發佈登錄簿前依主機標記 `Suppressed`（`SuppressionFilter.MarkSuppressed`）。被抑制的 finding 仍追加，不拉風險、不進 AI prompt 的 PRTG 段。
