@@ -197,13 +197,6 @@ public class ReportService
             Kpi = kpi,
             Trend = trend,
             PreviousTrend = outOfRetention ? new List<ReportPreviousTrendPointDto>() : ToPreviousTrend(previousTrend),
-            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D、二十輪批次B），與儀表板同一個查詢方法。
-            // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
-            // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
-            // 篩的日層級處理狀態不是同一件事
-            Categories = RecordStatsBuilder.BuildCategoryCards(nothingVisible
-                ? new List<CategoryAggregate>()
-                : _aggregates.AggregateByCategory(exclusion, from, to, hostIds, visibleSeverities, riskLevels)),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),

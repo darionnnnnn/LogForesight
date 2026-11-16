@@ -1072,7 +1072,7 @@ lf_prtg_scope_purge_jobs                             -- 取數範圍外清除作
 ### 快照待寫 journal
 
 `Storage:DataRoot/pending/prtg-snapshot` 的 generation／segment journal（`PrtgSnapshotJournal`）是 SQL 不可用期間的恢復佇列：每批追加變更與固定 ID 待寫批次，
-flush 後發布具校驗的 manifest，SQL 提交後才確認；重播沿用 `lf_prtg_sampled_batches` 的 ID 不重複加權。上限 20 萬列／64 MiB；超過 30 日、損壞或資料庫識別不符時保留檔案並停止新採集。
+flush 後發布具校驗的 manifest，SQL 提交後才確認；重播沿用 `lf_prtg_sampled_batches` 的 ID 不重複加權。上限 20 萬列／64 MiB；超過 30 日或損壞時保留檔案並停止新採集；資料庫識別不符時，沒有 30 日期限內的樣本就自動搬到 `pending/prtg-snapshot-archive/` 後重新開始，有期限內樣本則停止並由 PRTG 維護頁手動封存（PRTG-SPEC §3b）。
 有效舊 `checkpoint.json` 先驗 checksum 再原子遷移。`.lock` 以 OS 獨佔開檔（`FileShare.None`）保護工作者生命週期，勿手動刪鎖；取不到鎖時該輪不採集並顯示原因，下一輪再試。
 
 ### PRTG 隔離診斷傳輸

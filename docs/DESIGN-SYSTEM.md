@@ -89,6 +89,16 @@
 | `--lf-chart-tooltip-bg` | `rgba(27, 42, 65, .92)` | 圖表 tooltip 背景 |
 | `--lf-chart-grid` | `rgba(0, 0, 0, .06)` | 長條／折線圖 Y 軸格線 |
 
+熱度與分段色階（報表問題類型熱度表、未結案帳齡；單一色相由淺到深，只有最高一級接近實色，格內一律印數字當非顏色線索）：
+
+| token | 值 |
+|---|---|
+| `--lf-heat-1` | `#dbe5fb` |
+| `--lf-heat-2` | `#b5c9f4` |
+| `--lf-heat-3` | `#84a3e8` |
+| `--lf-heat-4` | `#3b63c4` |
+| `--lf-heat-5` | `#1e40af` |
+
 ### Bootstrap 5.3 對接
 
 `--bs-primary(-rgb)`、`--bs-link-*`、按鈕／分頁／dropdown／popover 等元件級變數全部改指向 v2 token；`--bs-primary-rgb` 改 `30, 64, 175`。
