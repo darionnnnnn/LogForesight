@@ -43,6 +43,12 @@ public interface IPrtgManualWorkGate
     PrtgManualWork Running { get; }
 
     /// <summary>
+    /// 數值快照因待寫檔無法使用而停止時的原因說明；沒有停止（或沒有接上快照服務）回 null。
+    /// 夜間輸出據此說明「今晚沒有數值來源」，不再宣稱數值由快照供應。
+    /// </summary>
+    string? SnapshotStoppedReason => null;
+
+    /// <summary>
     /// 等 <paramref name="observed"/>（呼叫端剛從 <see cref="Running"/> 看到的作業）結束（各自有等待上限，逾時不擲例外）。
     /// 取消訊號穿透。只有等到的是**成功的同步**才回 <see cref="PrtgManualWaitOutcome.MirrorFresh"/>——
     /// 半套的鏡像看起來與完整的一模一樣，分不出來就會整晚用錯資料。

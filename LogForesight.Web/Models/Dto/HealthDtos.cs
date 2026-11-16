@@ -215,7 +215,7 @@ public sealed class MemorySnapshotDto
 /// <summary>系統健康頁使用的精簡快照診斷。</summary>
 public sealed class PrtgSnapshotHealthDto
 {
-    /// <summary>disabled｜no-targets｜healthy｜covered｜insufficient｜unknown｜paused</summary>
+    /// <summary>disabled｜no-targets｜healthy｜covered｜insufficient｜unknown｜paused｜stopped（待寫檔停擺）｜no-recent-success（逾時沒有成功取樣）</summary>
     public string State { get; set; } = "unknown";
     public int ConsecutiveAnomalousHours { get; set; }
     public bool Warning { get; set; }

@@ -795,7 +795,15 @@ internal static class PrtgDailyPipeline
             // 觸發式數值取數
             if (!strategyProfile.NightlyExactValues)
             {
-                prtgConsole.WriteLine("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。");
+                var snapshotStoppedReason = manualWorkGate?.SnapshotStoppedReason;
+                if (snapshotStoppedReason != null)
+                {
+                    var stoppedMessage = $"取數策略為保守，但數值快照已停止（原因：{snapshotStoppedReason}），今晚沒有數值來源；請到 PRTG 維護 > 鏡像狀態處理。";
+                    prtgConsole.WriteLine(stoppedMessage);
+                    Log.Warn(stoppedMessage);
+                }
+                else
+                    prtgConsole.WriteLine("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。");
                 if (days.Count > 1)
                 {
                     prtgConsole.WriteLine($"其餘 {days.Count - 1} 天的 PRTG 數值不在立即執行內取，請用排程作業頁的「開始回填」。");

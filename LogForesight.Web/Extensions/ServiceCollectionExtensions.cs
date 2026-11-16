@@ -601,17 +601,34 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPrtgManualWorkGate, PrtgManualWorkGate>();
 
         // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
-        services.AddSingleton(sp => new PrtgSnapshotHostedService(
-            sp.GetRequiredService<ISystemSettingsStore>(),
-            sp.GetRequiredService<StorageBackend>(),
-            sp.GetRequiredService<SchedulerRunState>(),
-            sp.GetRequiredService<PrtgStructureSyncService>(),
-            sp.GetRequiredService<PrtgBackfillService>(),
-            sp.GetRequiredService<IHostStore>(),
-            sp.GetRequiredService<ISentinelStore>(),
-            sp.GetRequiredService<PrtgProbeRunState>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
-            TimeSpan.FromSeconds(60)));
+        services.AddSingleton(sp =>
+        {
+            var snapshotService = new PrtgSnapshotHostedService(
+                sp.GetRequiredService<ISystemSettingsStore>(),
+                sp.GetRequiredService<StorageBackend>(),
+                sp.GetRequiredService<SchedulerRunState>(),
+                sp.GetRequiredService<PrtgStructureSyncService>(),
+                sp.GetRequiredService<PrtgBackfillService>(),
+                sp.GetRequiredService<IHostStore>(),
+                sp.GetRequiredService<ISentinelStore>(),
+                sp.GetRequiredService<PrtgProbeRunState>(),
+                sp.GetRequiredService<IHostApplicationLifetime>(),
+                TimeSpan.FromSeconds(60));
+            // 背景自動封存待寫檔時的稽核（帳號記為 (system)）；寫入失敗不影響採集。
+            var auditStore = sp.GetRequiredService<AuditLogStore>();
+            snapshotService.SystemAudit = (action, summary, detail) => auditStore.Append(new AuditEntry
+            {
+                OccurredAt = DateTime.Now,
+                Account = AuditActions.SystemAccount,
+                Action = action,
+                TargetKind = "prtg_snapshot_journal",
+                TargetId = "database-mismatch",
+                Summary = summary,
+                DetailJson = detail == null ? null : System.Text.Json.JsonSerializer.Serialize(detail),
+                Result = AuditResult.Ok
+            });
+            return snapshotService;
+        });
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
 
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：
@@ -632,10 +649,24 @@ public static class ServiceCollectionExtensions
         // 與其他 store 同一慣例——不要以反射取它的私有連線工廠（欄位改名不會編譯失敗，
         // 只會在執行時炸）
         services.AddScoped<CalibrationService>(sp =>
-            sp.GetRequiredService<StorageBackend>().CalibrationService(
+        {
+            var calibration = sp.GetRequiredService<StorageBackend>().CalibrationService(
                 sp.GetRequiredService<IIssueAggregateQuery>(),
                 sp.GetRequiredService<ISystemSettingsStore>(),
-                sp.GetRequiredService<IKnownIssueRuleStore>()));
+                sp.GetRequiredService<IKnownIssueRuleStore>());
+            // 值型基線匯出補快照狀態四欄：Core 不認識 Web 的快照服務，這裡接一個讀取點
+            var snapshot = sp.GetService<PrtgSnapshotHostedService>();
+            var settingsStore = sp.GetRequiredService<ISystemSettingsStore>();
+            if (snapshot != null)
+                calibration.SnapshotStateProvider = () =>
+                {
+                    var status = snapshot.GetStatus();
+                    var strategyInterval = PrtgFetchStrategy.Profile(settingsStore.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
+                    return new CalibrationSnapshotState(status.LastSuccessAt, status.ConsecutiveFailures,
+                        status.JournalStopCode, status.IntervalMinutes > strategyInterval);
+                };
+            return calibration;
+        });
 
         return services;
     }

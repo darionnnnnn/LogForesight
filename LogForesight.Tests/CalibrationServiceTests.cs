@@ -2114,7 +2114,7 @@ public class CalibrationServiceTests : IDisposable
     }
 
     [Fact]
-    public void BuildExportPackage_格式版本3_含取樣小時與觀測極值且欄位順序正確()
+    public void BuildExportPackage_格式版本4_含取樣小時與觀測極值且欄位順序正確()
     {
         var store = new EfPrtgStore(_fx.NewContext);
         var anchor = new DateTime(2026, 8, 31);
@@ -2140,7 +2140,7 @@ public class CalibrationServiceTests : IDisposable
         var service = CreateService();
         var package = service.BuildExportPackage(anchor);
 
-        Assert.Equal(3, package.FormatVersion);
+        Assert.Equal(4, package.FormatVersion);
         Assert.Single(package.ValueBaselines);
         var row = package.ValueBaselines[0];
         Assert.Equal(1, row.OkHours);
@@ -2151,7 +2151,7 @@ public class CalibrationServiceTests : IDisposable
         var json = JsonSerializer.Serialize(package);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
-        Assert.Equal(3, root.GetProperty("FormatVersion").GetInt32());
+        Assert.Equal(4, root.GetProperty("FormatVersion").GetInt32());
 
         var vbElement = root.GetProperty("ValueBaselines")[0];
         Assert.True(vbElement.TryGetProperty("SampledHours", out var sampledHoursProp));
@@ -2584,6 +2584,135 @@ public class CalibrationServiceTests : IDisposable
         {
             if (File.Exists(databasePath)) File.Delete(databasePath);
         }
+    }
+
+    [Fact]
+    public void 第75輪G3_值型基線KeyMetrics含快照狀態四欄_未接快照服務時也有預設值()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+        var now = DateTime.Now;
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 1001, DeviceObjid = 10, Name = "Disk Sensor", SensorType = "SNMP Disk Free", Paused = false }
+        }, now);
+        store.ReplaceHostMapForDate(anchor, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        });
+
+        var plain = CreateService().BuildExportPackage(anchor).Summary.PrtgValueBaseline.KeyMetrics;
+        Assert.Equal("—", plain["SnapshotLastSuccessAt"]);
+        Assert.Equal(0, plain["SnapshotConsecutiveFailures"]);
+        Assert.True(plain.ContainsKey("SnapshotStopReason"));
+        Assert.Null(plain["SnapshotStopReason"]);
+        Assert.Equal(false, plain["SnapshotBackingOff"]);
+
+        var service = CreateService();
+        service.SnapshotStateProvider = () => new CalibrationSnapshotState(new DateTime(2026, 8, 31, 10, 30, 0), 4, "database-mismatch", true);
+        var metrics = service.BuildExportPackage(anchor).Summary.PrtgValueBaseline.KeyMetrics;
+        Assert.Equal("2026-08-31T10:30:00", metrics["SnapshotLastSuccessAt"]);
+        Assert.Equal(4, metrics["SnapshotConsecutiveFailures"]);
+        Assert.Equal("database-mismatch", metrics["SnapshotStopReason"]);
+        Assert.Equal(true, metrics["SnapshotBackingOff"]);
+        // 舊欄位名稱與意義不變
+        Assert.True(metrics.ContainsKey("SnapshotTargets"));
+        Assert.True(metrics.ContainsKey("ValueBaselineRows"));
+    }
+
+    [Fact]
+    public void 第75輪G3_殘留候選含最大組以外跨日重現的組數與占比()
+    {
+        var anchor = new DateTime(2026, 8, 31);
+
+        LogIssueSignature Sig(bool withThird) => new()
+        {
+            LogName = "Security",
+            Source = "Microsoft-Windows-Security-Auditing",
+            EventId = 4625,
+            Count = 100,
+            LoginFailureDetails = new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_a", Source = "WKS-01", LogonType = 3, ReasonCode = "bad_password", Count = 50 },
+                new() { Account = "svc_b", Source = "WKS-02", LogonType = 3, ReasonCode = "bad_password", Count = 30 },
+                withThird
+                    ? new() { Account = "svc_c", Source = "WKS-03", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+                    : new() { Account = "svc_x", Source = "WKS-09", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            },
+            LoginFailureTotalCount = 100
+        };
+
+        using (var ctx = _fx.NewContext())
+        {
+            // 前一日有 a、b 與 x；當日有 a、b 與 c：b 在最大組（a）以外跨日重現，c 只出現一天
+            foreach (var date in new[] { anchor.AddDays(-1), anchor })
+            {
+                var record = new DailyAnalysisRecord
+                {
+                    HostId = 101, Host = "SEC-SRV-01", Date = date, RiskLevel = "高",
+                    TopIssues = new List<LogIssueSignature> { Sig(withThird: date == anchor) }
+                };
+                var dr = new DailyRecordRow
+                {
+                    HostId = 101, HostName = "SEC-SRV-01", RecordDate = date, RiskLevel = "高",
+                    DetailPruned = false, ContentJson = JsonSerializer.Serialize(record)
+                };
+                ctx.DailyRecords.Add(dr);
+                ctx.SaveChanges();
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = dr.RecordId, HostId = 101, RecordDate = date,
+                    SourceName = "Microsoft-Windows-Security-Auditing", EventId = 4625
+                });
+                ctx.SaveChanges();
+            }
+        }
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var today = package.ResidualCandidates.Single(c => c.Date.Date == anchor.Date);
+        Assert.Equal(1, today.RecurringGroupCount);
+        Assert.Equal(0.3, today.RecurringGroupShare, 3);
+        // 既有欄位不變
+        Assert.Equal(0.8, today.ConcentrationRatio, 3);
+        Assert.Equal(2, today.CrossDayDistinctDays);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(package));
+        var element = doc.RootElement.GetProperty("ResidualCandidates").EnumerateArray().First();
+        Assert.True(element.TryGetProperty("RecurringGroupCount", out _));
+        Assert.True(element.TryGetProperty("RecurringGroupShare", out _));
+        Assert.True(element.TryGetProperty("CrossDayDistinctDays", out _));
+    }
+
+    [Fact]
+    public void 第75輪G3_warning樣本含近7日已用百分比變化_算不到為null_非warning樣本不填()
+    {
+        var anchor = new DateTime(2026, 9, 1);
+        var store = new EfPrtgStore(_fx.NewContext);
+        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, Name = "Disk", SensorType = "SNMP Disk Free",
+            Category = "disk", Status = "Warning", Paused = false }], DateTime.Now);
+        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
+            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
+        // 可用 % 70 → 40：已用 30 → 60，變化 +30 個百分點
+        store.UpsertValues(new List<PrtgValueRow>
+        {
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddDays(-7).AddHours(2), AvgValue = 70.0, Quality = PrtgDataQuality.Ok },
+            new() { SensorObjid = 1001, PeriodStart = anchor.AddHours(2), AvgValue = 40.0, Quality = PrtgDataQuality.Ok }
+        });
+        InstallCalibrationPolicy(anchor, [1001]);
+        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddDays(-1).AddHours(1)), "Warning"));
+
+        var package = CreateService().BuildExportPackage(anchor);
+
+        var warnings = package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode == PrtgRuleEvaluator.RuleWarning).ToList();
+        var onAnchor = Assert.Single(warnings, s => s.Date == anchor);
+        Assert.Equal(30.0, onAnchor.ValueChange7d);
+        // 前一天的 7 日前沒有資料 → 算不到
+        var previous = Assert.Single(warnings, s => s.Date == anchor.AddDays(-1));
+        Assert.Null(previous.ValueChange7d);
+        Assert.All(package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode != PrtgRuleEvaluator.RuleWarning),
+            s => Assert.Null(s.ValueChange7d));
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(package));
+        Assert.True(doc.RootElement.GetProperty("RuleThresholds").GetProperty("MagnitudeSamples")[0].TryGetProperty("ValueChange7d", out _));
     }
 }
 

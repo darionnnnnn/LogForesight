@@ -114,7 +114,7 @@ public sealed class PrtgAdminPageUiTests
     }
 
     [Fact]
-    public void 啟用準備清單六項_不含重整就歸零的本次頁面連線測試()
+    public void 啟用準備清單七項_不含重整就歸零的本次頁面連線測試()
     {
         var js = Script();
         var summary = FunctionBody(js, "function renderSetupSummary()");
@@ -122,7 +122,7 @@ public sealed class PrtgAdminPageUiTests
         Assert.DoesNotContain("本次頁面連線測試", js);
         Assert.DoesNotContain("connectionTest", js);
         var labels = Regex.Matches(summary, @"label: '([^']+)'").Select(m => m.Groups[1].Value).ToList();
-        Assert.Equal(new[] { "已儲存的連線位址與認證", "PRTG 擷取", "上次結構與主機對應同步", "PRTG 規則", "每日排程", "上次環境探測" }, labels);
+        Assert.Equal(new[] { "已儲存的連線位址與認證", "PRTG 擷取", "上次結構與主機對應同步", "PRTG 規則", "每日排程", "數值快照", "上次環境探測" }, labels);
     }
 
     [Fact]
@@ -186,7 +186,7 @@ public sealed class PrtgAdminPageUiTests
         var js = Script();
 
         var table = FunctionBody(js, "function renderSnapshotDiagnostics(hours)");
-        Assert.Contains("title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${formatNumber(row.targets)}`", table);
+        Assert.Contains("title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${row.targets < 0 ? '未知' : formatNumber(row.targets)}`", table);
         Assert.Contains("title: '快照寫入', render: row => formatNumber(row.availableValues)", table);
 
         var acceptance = FunctionBody(js, "function renderAcceptance(allConfirmed)");

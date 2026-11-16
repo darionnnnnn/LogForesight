@@ -56,6 +56,8 @@ internal sealed class PrtgSnapshotDiagnosticsStore
                         if (!string.IsNullOrWhiteSpace(skipKey)) row.SkipReasons.Add(skipKey);
                         break;
                     case "write-failure": row.WriteFailures++; break;
+                    // 待寫檔無法使用：同時算一次寫入失敗（沿用既有判讀），並另記停止次數讓診斷分辨「停擺」與「無目標」。
+                    case "journal-stopped": row.WriteFailures++; row.JournalStops++; break;
                 }
                 if (!string.IsNullOrWhiteSpace(reason))
                     row.Reasons[reason] = row.Reasons.GetValueOrDefault(reason) + 1;
@@ -162,6 +164,8 @@ internal sealed class PrtgSnapshotDiagnosticHour
     public int Successes { get; set; }
     public int Skips { get; set; }
     public int WriteFailures { get; set; }
+    /// <summary>該小時因待寫檔無法使用而停止採集的次數；&gt; 0 時診斷狀態為 Stopped，目標數可能未知。</summary>
+    public int JournalStops { get; set; }
     public int Sampled { get; set; }
     public Dictionary<string, int> Reasons { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> ReasonCodes { get; set; } = new(StringComparer.Ordinal);

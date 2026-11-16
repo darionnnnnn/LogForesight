@@ -33,7 +33,9 @@ function requireScopeRevision() {
 // 最近一次排程驗收的三個來源：undefined＝讀取中、null＝讀取失敗（見 core/prtg-acceptance.js）
 const setupState = {
     settings: null, settingsLoading: true, probe: null, sync: null, rules: null, schedule: null,
-    scheduleStatus: undefined, aiStatus: undefined, snapshotHours: undefined
+    scheduleStatus: undefined, aiStatus: undefined, snapshotHours: undefined,
+    // 鏡像狀態回傳的快照警示：none｜stopped｜no-recent-success；尚未讀到前視為不適用
+    snapshotAlert: 'none'
 };
 
 const ACCEPTANCE_STATE_TEXT = {
@@ -109,7 +111,9 @@ function renderSetupSummary() {
         { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
         { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
         { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
-        { ok: setupState.schedule === true, label: '每日排程', next: '前往排程設定檢查', href: appUrl('/runs#settings') }
+        { ok: setupState.schedule === true, label: '每日排程', next: '前往排程設定檢查', href: appUrl('/runs#settings') },
+        // 保守策略下快照停止或逾時沒有成功取樣才待確認；激進策略、未啟用、目標為空由後端判為 none
+        { ok: setupState.snapshotAlert === 'none', label: '數值快照', next: '到鏡像狀態查看', tab: 'mirror' }
     ];
     checks.splice(1, 0, {
         ok: setupState.probe === true, label: '上次環境探測', next: setupState.probe === false ? '查看上次探測失敗原因並重試' : '執行環境探測，確認站台資料能力', tab: 'probe'
@@ -1119,6 +1123,9 @@ function renderPrtgMirror(data) {
     if (data.snapshotPendingSamples > 0)
         snapText += `；等待寫入 ${formatNumber(data.snapshotPendingSamples)} 筆（含本小時樣本）`;
     setTxt('prtg-mirror-snapshot', snapText);
+    setupState.snapshotAlert = data.snapshotAlert ?? 'none';
+    renderSetupSummary();
+    getCurrentUser().then(user => renderSnapshotArchive(data.snapshotJournal, user)).catch(() => renderSnapshotArchive(null, null));
 
     setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
     setTxt('prtg-mirror-map-ok', formatNumber(data.mappedHosts));
@@ -1156,7 +1163,74 @@ function renderPrtgFreshness(items) {
     });
 }
 
+/** 停止原因碼的說明（鏡像狀態一行與確認對話共用）。 */
+const SNAPSHOT_STOP_LABELS = {
+    'database-mismatch': '待寫檔記載的資料庫與目前資料庫不同（資料庫曾重建或換檔）',
+    'source-changed': 'PRTG 來源位址或世代變更後，舊樣本仍待處理',
+    unavailable: '待寫檔無法讀寫或驗證未通過'
+};
+
+/** 「封存舊待寫資料並重新開始」按鈕只給 Maintain 且 ViewAll、且後端判定可封存的人。 */
+function canShowSnapshotArchive(user, journal) {
+    return Boolean(journal?.stopped && journal.canArchive)
+        && hasCapability(user, 'Maintain') && hasCapability(user, 'ViewAll');
+}
+
+function snapshotArchiveConfirmMessage(journal) {
+    const range = journal.earliest && journal.latest
+        ? `${formatDateTime(journal.earliest)} 至 ${formatDateTime(journal.latest)}`
+        : '無樣本';
+    return `停止原因：${SNAPSHOT_STOP_LABELS[journal.stopCode] ?? journal.stopCode}。`
+        + `\將放棄 ${formatNumber(journal.rows)} 筆舊樣本（${range}，其中 ${formatNumber(journal.rowsInReplayWindow)} 筆仍在重播期限內），不會寫進目前資料庫。`
+        + `\舊檔會整個搬到封存位置，不會刪除：${journal.archiveLocation ?? '待寫目錄旁的封存夾'}。`
+        + '\封存後立即重新開始採集。';
+}
+
+/** 鏡像狀態「數值快照」那一行旁的封存入口；不可封存時只顯示原因說明。 */
+function renderSnapshotArchive(journal, user) {
+    const host = document.getElementById('prtg-mirror-snapshot-archive');
+    if (!host) return;
+    host.replaceChildren();
+    if (!journal?.stopped) return;
+    const note = document.createElement('div');
+    note.className = 'lf-text-meta';
+    note.textContent = `快照已停止：${SNAPSHOT_STOP_LABELS[journal.stopCode] ?? journal.stopCode}。`;
+    host.appendChild(note);
+    if (!journal.canArchive) {
+        if (journal.cannotArchiveReason) {
+            const reason = document.createElement('div');
+            reason.className = 'lf-text-meta';
+            reason.textContent = journal.cannotArchiveReason;
+            host.appendChild(reason);
+        }
+        return;
+    }
+    if (!canShowSnapshotArchive(user, journal)) return;
+    const archive = makeButton('封存舊待寫資料並重新開始', {
+        variant: 'outline-secondary',
+        onClick: async () => {
+            if (!await confirmAction({
+                title: '封存舊待寫資料',
+                message: snapshotArchiveConfirmMessage(journal),
+                confirmText: '封存並重新開始',
+                confirmVariant: 'primary'
+            })) return;
+            try {
+                const result = await api.post('/api/prtg-snapshot-diagnostics/archive-journal', {});
+                toast(`已封存 ${formatNumber(result?.rows ?? 0)} 筆舊樣本，快照重新開始`, 'success');
+            } catch {
+                // 錯誤訊息已由 api.js 以 toast 顯示
+            }
+            refreshPrtgMirror();
+            loadSnapshotDiagnostics();
+        }
+    });
+    archive.classList.add('mt-1');
+    host.appendChild(archive);
+}
+
 const snapshotStateLabels = {
+    stopped: '已停止：待寫檔無法使用',
     'no-targets': '無目標',
     'coverage-evidence': '有覆蓋率達標列；快照健康度未確認',
     'ok-covered': '由歷史 ok 數值覆蓋；不代表快照成功',
@@ -1165,6 +1239,7 @@ const snapshotStateLabels = {
     unknown: '資料未知'
 };
 const snapshotNextSteps = {
+    stopped: '到 PRTG 維護 > 鏡像狀態封存舊待寫資料',
     'no-targets': '確認 PRTG 啟用狀態與監看目標。',
     'coverage-evidence': '另看成功／嘗試次數判讀快照執行；此彙總未逐顆核對目標。',
     'ok-covered': '數值由歷史資料補足；請查看快照成功／嘗試與原因。',
@@ -1181,7 +1256,7 @@ function renderSnapshotDiagnostics(hours) {
             { title: '完整小時', render: row => formatDateTime(row.hour) },
             { title: '狀態', render: row => snapshotStateLabels[row.state] ?? '資料未知' },
             // 與「最近一次排程驗收」同一個數（core/prtg-acceptance.js 看 databaseUsableValues）：照表自己數要與驗收段一致
-            { title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${formatNumber(row.targets)}` },
+            { title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${row.targets < 0 ? '未知' : formatNumber(row.targets)}` },
             { title: '快照寫入', render: row => formatNumber(row.availableValues) },
             { title: '成功／嘗試', render: row => `${formatNumber(row.successes)} / ${formatNumber(row.attempts)}` },
             { title: '跳過／寫入失敗', render: row => `${formatNumber(row.skips)} / ${formatNumber(row.writeFailures)}` },

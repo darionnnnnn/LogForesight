@@ -180,6 +180,7 @@ GET	/api/permission-changes/ids	C=-;A=ConfirmPermission	-	-	-	PermissionChangesC
 GET	/api/permission-changes/report	C=-;A=ConfirmPermission	-	-	-	PermissionChangesController
 PUT	/api/permission-changes/{changeId}/confirm	C=-;A=ConfirmPermission	-	-	-	PermissionChangesController
 GET	/api/prtg-snapshot-diagnostics	C=Maintain;A=-	-	-	-	PrtgSnapshotDiagnosticsController
+POST	/api/prtg-snapshot-diagnostics/archive-journal	C=Maintain;A=-	-	viewall	-	PrtgSnapshotDiagnosticsController
 GET	/api/prtg/effectiveness	C=Maintain;A=-	-	-	-	PrtgEffectivenessController
 GET	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController
 PUT	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController

@@ -753,6 +753,61 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Contains(RunPhases.PrtgDone, progress.Phases);
     }
 
+    /// <summary>快照因待寫檔停止時的閘門替身：沒有手動作業，只回報快照停止原因。</summary>
+    private sealed class SnapshotStoppedGate(string? reason) : IPrtgManualWorkGate
+    {
+        public PrtgManualWork Running => PrtgManualWork.None;
+        public string? SnapshotStoppedReason => reason;
+        public Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(PrtgManualWork observed, CancellationToken ct) =>
+            Task.FromResult(PrtgManualWaitOutcome.BackfillEnded);
+    }
+
+    [Fact]
+    public async Task 保守策略且快照已停止_夜間輸出改寫為沒有數值來源_不再說數值由快照供應()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null,
+            manualWorkGate: new SnapshotStoppedGate("資料庫識別不符"));
+
+        Assert.Contains(console.Lines, l => l.Contains("取數策略為保守，但數值快照已停止（原因：資料庫識別不符），今晚沒有數值來源"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("數值由快照供應"));
+    }
+
+    [Fact]
+    public async Task 保守策略且快照正常_閘門有接上也維持原說明()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null,
+            manualWorkGate: new SnapshotStoppedGate(null));
+
+        Assert.Contains(console.Lines, l => l.Contains("取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("今晚沒有數值來源"));
+    }
+
     /// <summary>
     /// 激進策略下：進入觸發式取數階段、印出激進策略狀態。
     /// </summary>

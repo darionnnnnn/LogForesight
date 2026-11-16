@@ -95,6 +95,10 @@ public class PrtgMirrorStatusDto
     public bool SnapshotBackingOff { get; set; }
     public string? SnapshotSkipReason { get; set; }
     public int SnapshotPendingSamples { get; set; }
+    /// <summary>快照警示（保守策略）：none｜stopped（待寫檔停擺）｜no-recent-success（逾時沒有成功取樣）。「啟用準備」的數值快照項目只看這個值。</summary>
+    public string SnapshotAlert { get; set; } = "none";
+    /// <summary>待寫檔停止狀態與封存預覽（停止時才有意義）</summary>
+    public LogForesight.Web.Controllers.Api.PrtgSnapshotJournalDto? SnapshotJournal { get; set; }
     /// <summary>各類資料最後一次成功擷取的紀錄（鏡像頁「擷取紀錄」表）</summary>
     public List<PrtgFreshnessDto> Freshness { get; set; } = new();
 }

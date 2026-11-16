@@ -180,6 +180,8 @@ public static class AuditActions
     public const string PrtgStructureSyncRun = "prtg_structure_sync_run";
     public const string PrtgStructureSyncCancel = "prtg_structure_sync_cancel";
     public const string PrtgScopePurge = "prtg_scope_purge";
+    /// <summary>PRTG 快照待寫檔停擺後封存（自動：資料庫識別不符且無期限內樣本；手動：維護頁按鈕）</summary>
+    public const string PrtgSnapshotJournalArchive = "prtg_snapshot_journal_archive";
 
     // PRTG 人工主機對應（PRTG 第 2 輪任務E-1）
     public const string PrtgManualMapSet = "prtg_manual_map_set";

@@ -20,6 +20,12 @@ internal sealed record ResidualCandidateMetrics
     /// <summary>跨日重現的相異日期數（含當日）。判定門檻是 MinDistinctDays，
     /// 記錄實際值供校準——「差一天才成立」與「完全沒有」是不同的資訊。</summary>
     public int CrossDayDistinctDays { get; init; }
+
+    /// <summary>最大組以外、本身也跨日重現（相異日數 ≥ 2）的組數；供校準判斷「最大組之外還有幾組在重現」。</summary>
+    public int RecurringGroupCount { get; init; }
+
+    /// <summary>上述重現組的明細數占全部明細數的比例（分母是截斷前總量）；無明細為 0。</summary>
+    public double RecurringGroupShare { get; init; }
     internal LoginFailureDetail? LargestDetail { get; init; }
 }
 
@@ -138,8 +144,17 @@ internal static class ResidualCredentialDetector
             }
         }
 
+        // 最大組以外的組：同一 (Account, Source) 在回看窗內跨日重現（含當日 ≥ MinDistinctDays）者。
+        var recurringGroups = issue.LoginFailureDetails
+            .Where(d => !ReferenceEquals(d, largest) && !string.IsNullOrWhiteSpace(d.Account) &&
+                        CrossDayDistinctCount(history, targetDate, d.Account, d.Source) >= MinDistinctDays)
+            .ToList();
+        var recurringShare = totalDetailCount > 0 ? (double)recurringGroups.Sum(d => d.Count) / totalDetailCount : 0.0;
+
         return new ResidualCandidateMetrics
         {
+            RecurringGroupCount = recurringGroups.Count,
+            RecurringGroupShare = recurringShare,
             EventId = issue.EventId,
             EventKey = issue.EventKey ?? string.Empty,
             TotalDetailCount = totalDetailCount,

@@ -12,6 +12,24 @@ namespace LogForesight.Web.Services;
 internal sealed class PrtgSnapshotJournalLockedException(Exception inner)
     : IOException("無法取得復原佇列鎖定檔：可能有另一個快照工作者正在執行，也請檢查磁碟空間與服務帳號權限；下一輪會再試，勿刪除鎖定檔。", inner);
 
+/// <summary>
+/// 待寫檔停止的原因碼標記：<see cref="InvalidDataException"/> 是密封型別、既有呼叫端與測試也以它為準，
+/// 因此原因碼放在例外的 <c>Data</c>，呼叫端不必比對訊息字串。
+/// 資料庫識別不符（資料庫被重建或換檔）與來源位址／世代變更後舊樣本待處理是兩種可封存的原因。
+/// </summary>
+internal static class PrtgSnapshotJournalReason
+{
+    private const string Key = "lf.journal.stop-code";
+    internal static InvalidDataException Tag(InvalidDataException ex, string code) { ex.Data[Key] = code; return ex; }
+    internal static string? Of(Exception ex) => ex.Data.Contains(Key) ? ex.Data[Key] as string : null;
+    internal static InvalidDataException DatabaseMismatch(string message) =>
+        Tag(new InvalidDataException(message), PrtgSnapshotJournalStopCodes.DatabaseMismatch);
+}
+
+/// <summary>待寫檔封存前的唯讀檢查結果（不改動任何檔案）。</summary>
+internal sealed record PrtgSnapshotJournalInspection(bool IntegrityOk, string? Failure, int Rows, int RowsInReplayWindow,
+    DateTime? Earliest, DateTime? Latest);
+
 /// <summary>單一快照工作者的復原檔。先落盤再提交 SQL；SQL 批次鍵處理提交後當機的重播。</summary>
 internal sealed class PrtgSnapshotJournal : IDisposable
 {
@@ -566,64 +584,7 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     {
         var manifestBytes = ReadFile(ManifestPath);
         var manifest = ReadManifest(manifestBytes);
-        if (manifest.Sequence < 1) throw new InvalidDataException("快照 journal manifest sequence 無效");
-        var accumulator = new Dictionary<(DateTime, long), PrtgSnapshotAccumulator.CheckpointRow>();
-        var pending = new Dictionary<string, Batch>(StringComparer.Ordinal);
-        var previous = "";
-        string? generationEndpoint = null;
-        var snapshotPhase = true;
-        var sawSnapshot = false;
-        long bytesTotal = 0;
-        for (long seq = 1; seq <= manifest.Sequence; seq++)
-        {
-            var path = SegmentPath(manifest.Generation, seq);
-            var segmentDirectory = Path.GetDirectoryName(path)!;
-            if (Directory.Exists(segmentDirectory) && (File.GetAttributes(segmentDirectory) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("快照 journal segments 不可指向資料目錄外的 reparse point");
-            if (!File.Exists(path)) throw new InvalidDataException($"快照 journal committed segment {seq} 遺失；保留資料並停止採集。");
-            var bytes = ReadFile(path);
-            bytesTotal += bytes.LongLength;
-            if (bytes.LongLength > MaxBytes || bytesTotal > MaxBytes) throw new InvalidDataException("快照 journal 超過 64 MiB 上限；保留資料並停止採集");
-            var segment = JsonSerializer.Deserialize<Segment>(bytes) ?? throw new InvalidDataException("快照 journal segment 為空");
-            if (segment.Upserts == null || segment.Removals == null || segment.AddedBatches == null || segment.AckedBatchIds == null)
-                throw new InvalidDataException("快照 journal segment 欄位不完整");
-            if (segment.Version != 1 || segment.Sequence != seq || segment.PreviousChecksum != previous || segment.Checksum != SegmentChecksum(segment))
-                throw new InvalidDataException($"快照 journal committed segment {seq} checksum 或 sequence 不符；保留資料並停止採集。");
-            if (segment.DatabaseId != DatabaseId)
-                throw new InvalidDataException("快照 journal 的資料庫 binding 不符；保留資料並停止採集。");
-            generationEndpoint ??= segment.SourceEndpoint;
-            if (segment.SourceEndpoint != generationEndpoint)
-                throw new InvalidDataException("快照 journal generation 內 source binding 不一致；保留資料並停止採集。");
-            if (segment.Snapshot != null)
-            {
-                var snapshot = segment.Snapshot;
-                var snapshotPoints = snapshot.Accumulator.Count + snapshot.Pending.Sum(batch => batch.Rows.Count);
-                if (!snapshotPhase || snapshot.Version != 2 || snapshot.DatabaseId != segment.DatabaseId || snapshot.SourceEndpoint != segment.SourceEndpoint ||
-                    snapshot.Accumulator == null || snapshot.Pending == null || snapshot.Pending.Any(batch => batch == null || batch.Rows == null) ||
-                    snapshot.SourceEndpoint != segment.SourceEndpoint || snapshot.Checksum != Checksum(snapshot) ||
-                    snapshotPoints > MaxRowsPerSegment)
-                    throw new InvalidDataException("快照 journal snapshot checksum 不符；保留資料並停止採集。");
-                sawSnapshot = true;
-                foreach (var row in snapshot.Accumulator)
-                    if (!accumulator.TryAdd((row.Hour, row.SensorObjid), row)) throw new InvalidDataException("snapshot accumulator key 重複");
-                foreach (var batch in snapshot.Pending)
-                {
-                    if (pending.TryGetValue(batch.Id, out var prior))
-                        pending[batch.Id] = prior with { Rows = prior.Rows.Concat(batch.Rows).ToArray() };
-                    else pending.Add(batch.Id, batch);
-                }
-            }
-            else
-            {
-                snapshotPhase = false;
-                if (!sawSnapshot) throw new InvalidDataException("快照 journal generation 缺少起始 snapshot");
-                if (SegmentTooLarge(segment))
-                    throw new InvalidDataException("快照 journal segment 超過 100000 列上限");
-                Apply(segment, accumulator, pending);
-            }
-            previous = segment.Checksum;
-        }
-        if (!sawSnapshot || previous != manifest.LastChecksum) throw new InvalidDataException("快照 journal manifest 指向的 committed checksum 不符或缺少 snapshot；保留資料並停止採集。");
+        var (accumulator, pending, previous, generationEndpoint) = ParseSegments(manifest, allowForeignDatabase: false);
         var state = new State(2, DatabaseId, generationEndpoint!, accumulator.Values.ToArray(), pending.Values.ToArray());
         state = state with { Checksum = Checksum(state) };
         Validate(state, generationEndpoint!, now);
@@ -657,6 +618,82 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         _diskBytes = MeasureJournalBytes();
         SavedBytes = _diskBytes;
         return state;
+    }
+
+    /// <summary>
+    /// 逐段驗證 sequence、checksum、容量與前後鏈。<paramref name="allowForeignDatabase"/> 只給封存前檢查用：
+    /// 不比對目前資料庫識別，只要求各段彼此一致；其餘完整性驗證完全相同。
+    /// </summary>
+    private (Dictionary<(DateTime, long), PrtgSnapshotAccumulator.CheckpointRow> Accumulator,
+        Dictionary<string, Batch> Pending, string Previous, string? GenerationEndpoint)
+        ParseSegments(Manifest manifest, bool allowForeignDatabase)
+    {
+        if (manifest.Sequence < 1) throw new InvalidDataException("快照 journal manifest sequence 無效");
+        string? firstDatabaseId = null;
+        var accumulator = new Dictionary<(DateTime, long), PrtgSnapshotAccumulator.CheckpointRow>();
+        var pending = new Dictionary<string, Batch>(StringComparer.Ordinal);
+        var previous = "";
+        string? generationEndpoint = null;
+        var snapshotPhase = true;
+        var sawSnapshot = false;
+        long bytesTotal = 0;
+        for (long seq = 1; seq <= manifest.Sequence; seq++)
+        {
+            var path = SegmentPath(manifest.Generation, seq);
+            var segmentDirectory = Path.GetDirectoryName(path)!;
+            if (Directory.Exists(segmentDirectory) && (File.GetAttributes(segmentDirectory) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("快照 journal segments 不可指向資料目錄外的 reparse point");
+            if (!File.Exists(path)) throw new InvalidDataException($"快照 journal committed segment {seq} 遺失；保留資料並停止採集。");
+            var bytes = ReadFile(path);
+            bytesTotal += bytes.LongLength;
+            if (bytes.LongLength > MaxBytes || bytesTotal > MaxBytes) throw new InvalidDataException("快照 journal 超過 64 MiB 上限；保留資料並停止採集");
+            var segment = JsonSerializer.Deserialize<Segment>(bytes) ?? throw new InvalidDataException("快照 journal segment 為空");
+            if (segment.Upserts == null || segment.Removals == null || segment.AddedBatches == null || segment.AckedBatchIds == null)
+                throw new InvalidDataException("快照 journal segment 欄位不完整");
+            if (segment.Version != 1 || segment.Sequence != seq || segment.PreviousChecksum != previous || segment.Checksum != SegmentChecksum(segment))
+                throw new InvalidDataException($"快照 journal committed segment {seq} checksum 或 sequence 不符；保留資料並停止採集。");
+            firstDatabaseId ??= segment.DatabaseId;
+            if (allowForeignDatabase)
+            {
+                if (segment.DatabaseId != firstDatabaseId)
+                    throw new InvalidDataException("快照 journal 內的資料庫識別不一致；保留資料並停止採集。");
+            }
+            else if (segment.DatabaseId != DatabaseId)
+                throw PrtgSnapshotJournalReason.DatabaseMismatch("快照 journal 的資料庫 binding 不符；保留資料並停止採集。");
+            generationEndpoint ??= segment.SourceEndpoint;
+            if (segment.SourceEndpoint != generationEndpoint)
+                throw new InvalidDataException("快照 journal generation 內 source binding 不一致；保留資料並停止採集。");
+            if (segment.Snapshot != null)
+            {
+                var snapshot = segment.Snapshot;
+                var snapshotPoints = snapshot.Accumulator.Count + snapshot.Pending.Sum(batch => batch.Rows.Count);
+                if (!snapshotPhase || snapshot.Version != 2 || snapshot.DatabaseId != segment.DatabaseId || snapshot.SourceEndpoint != segment.SourceEndpoint ||
+                    snapshot.Accumulator == null || snapshot.Pending == null || snapshot.Pending.Any(batch => batch == null || batch.Rows == null) ||
+                    snapshot.SourceEndpoint != segment.SourceEndpoint || snapshot.Checksum != Checksum(snapshot) ||
+                    snapshotPoints > MaxRowsPerSegment)
+                    throw new InvalidDataException("快照 journal snapshot checksum 不符；保留資料並停止採集。");
+                sawSnapshot = true;
+                foreach (var row in snapshot.Accumulator)
+                    if (!accumulator.TryAdd((row.Hour, row.SensorObjid), row)) throw new InvalidDataException("snapshot accumulator key 重複");
+                foreach (var batch in snapshot.Pending)
+                {
+                    if (pending.TryGetValue(batch.Id, out var prior))
+                        pending[batch.Id] = prior with { Rows = prior.Rows.Concat(batch.Rows).ToArray() };
+                    else pending.Add(batch.Id, batch);
+                }
+            }
+            else
+            {
+                snapshotPhase = false;
+                if (!sawSnapshot) throw new InvalidDataException("快照 journal generation 缺少起始 snapshot");
+                if (SegmentTooLarge(segment))
+                    throw new InvalidDataException("快照 journal segment 超過 100000 列上限");
+                Apply(segment, accumulator, pending);
+            }
+            previous = segment.Checksum;
+        }
+        if (!sawSnapshot || previous != manifest.LastChecksum) throw new InvalidDataException("快照 journal manifest 指向的 committed checksum 不符或缺少 snapshot；保留資料並停止採集。");
+        return (accumulator, pending, previous, generationEndpoint);
     }
 
     private static void Apply(Segment segment,
@@ -733,6 +770,113 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         FilesWritten++;
     }
 
+    /// <summary>封存夾所在目錄（與待寫目錄同層）。</summary>
+    internal string ArchiveRoot => Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(FilePath)!)!, "prtg-snapshot-archive");
+
+    /// <summary>封存位置：<c>pending/prtg-snapshot-archive/yyyyMMdd-HHmmss-原因碼/</c>。</summary>
+    internal string ArchiveLocation(DateTime now, string reasonCode) =>
+        Path.Combine(ArchiveRoot, now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture) + "-" + reasonCode);
+
+    /// <summary>
+    /// 唯讀檢查待寫檔：完整性（checksum、序號、分段齊全、容量）與樣本時間範圍。
+    /// 不比對資料庫識別（資料庫被重建時它必然不同），其餘驗證與正常載入相同；任何一項失敗都回 IntegrityOk=false。
+    /// 樣本時間在 <c>now - ReplayDays</c> 當下或之後都算期限內（邊界算期限內）。
+    /// </summary>
+    internal PrtgSnapshotJournalInspection Inspect(DateTime now)
+    {
+        lock (_gate)
+        {
+            try
+            {
+                IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> accumulator;
+                IReadOnlyList<Batch> pending;
+                if (File.Exists(ManifestPath))
+                {
+                    var parsed = ParseSegments(ReadManifest(ReadFile(ManifestPath)), allowForeignDatabase: true);
+                    accumulator = parsed.Accumulator.Values.ToArray();
+                    pending = parsed.Pending.Values.ToArray();
+                }
+                else if (File.Exists(FilePath))
+                {
+                    var state = JsonSerializer.Deserialize<State>(ReadFile(FilePath)) ?? throw new InvalidDataException("快照復原檔為空");
+                    if (state.Version != 2) throw new InvalidDataException("舊版復原檔沒有完整性證明");
+                    if (string.IsNullOrEmpty(state.Checksum) || state.Checksum.Length != 64 || state.Checksum != Checksum(state))
+                        throw new InvalidDataException("快照復原檔 checksum 不符");
+                    if (state.Accumulator == null || state.Pending == null || state.Pending.Any(b => b == null || b.Rows == null))
+                        throw new InvalidDataException("快照復原檔欄位不完整");
+                    accumulator = state.Accumulator;
+                    pending = state.Pending;
+                }
+                else return new PrtgSnapshotJournalInspection(true, null, 0, 0, null, null);
+
+                var times = accumulator.Select(r => r.Hour)
+                    .Concat(pending.SelectMany(b => b.Rows).Select(r => r.PeriodStart)).ToList();
+                if (times.Count > MaxRows) throw new InvalidDataException("快照待寫資料達列數上限");
+                var cutoff = now.AddDays(-ReplayDays);
+                return new PrtgSnapshotJournalInspection(true, null, times.Count, times.Count(t => t >= cutoff),
+                    times.Count == 0 ? null : times.Min(), times.Count == 0 ? null : times.Max());
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {
+                return new PrtgSnapshotJournalInspection(false, ex.Message, 0, 0, null, null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 把整個待寫目錄的內容搬進 <see cref="ArchiveLocation"/>（是搬移不是刪除），之後以目前資料庫重新初始化。
+    /// 呼叫端須已持有擁有權（<see cref="AcquireOwnership"/>）；擁有權鎖定檔本身留在原處（開著時 Windows 不能搬）。
+    /// 任何一步失敗都把已搬走的項目搬回，原檔維持完整後重擲例外。
+    /// </summary>
+    internal string Archive(string reasonCode, DateTime now)
+    {
+        lock (_gate)
+        {
+            if (_ownership == null) throw new InvalidOperationException("封存待寫檔前必須持有擁有權");
+            var source = Path.GetDirectoryName(FilePath)!;
+            var destination = ArchiveLocation(now, reasonCode);
+            if (Directory.Exists(destination) || File.Exists(destination))
+                throw new IOException("封存位置已存在，不覆蓋：" + destination);
+            Directory.CreateDirectory(destination);
+            var lockName = Path.GetFileName(FilePath) + ".lock";
+            var moved = new List<(string From, string To, bool IsDirectory)>();
+            try
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(source).ToArray())
+                {
+                    var name = Path.GetFileName(entry);
+                    if (string.Equals(name, lockName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var target = Path.Combine(destination, name);
+                    var isDirectory = Directory.Exists(entry);
+                    if (isDirectory) Directory.Move(entry, target); else File.Move(entry, target);
+                    moved.Add((entry, target, isDirectory));
+                }
+            }
+            catch
+            {
+                for (var i = moved.Count - 1; i >= 0; i--)
+                {
+                    try
+                    {
+                        if (moved[i].IsDirectory) Directory.Move(moved[i].To, moved[i].From);
+                        else File.Move(moved[i].To, moved[i].From);
+                    }
+                    catch { /* 盡力復原；復原不了的項目留在封存夾，錯誤訊息由原例外帶出 */ }
+                }
+                try { if (!Directory.EnumerateFileSystemEntries(destination).Any()) Directory.Delete(destination); } catch { }
+                throw;
+            }
+            _loaded = false; _expectedDigest = null; _generation = null; _sequence = 0; _lastSegmentChecksum = "";
+            _manifestDigest = null; _segmentCount = 0; _generationBytes = 0; _diskBytes = 0; _manifestBytes = 0;
+            _liveAccumulatorRows = 0; _pendingRows = 0; _generationEndpoint = null;
+            _verifiedLegacyBinding = null; _verifiedLegacyTargetBinding = null;
+            _recordDates.Clear();
+            _currentAccumulator = new(); _currentPending = new(StringComparer.Ordinal);
+            SavedBytes = 0;
+            return destination;
+        }
+    }
+
     internal void Save(string endpoint, IReadOnlyList<PrtgSnapshotAccumulator.CheckpointRow> accumulator,
         IReadOnlyList<Batch> pending, DateTime now)
     {
@@ -766,8 +910,10 @@ internal sealed class PrtgSnapshotJournal : IDisposable
 
     private void Validate(State state, string endpoint, DateTime now)
     {
-        if (state.Version != 2 || state.DatabaseId != DatabaseId)
+        if (state.Version != 2)
             throw new InvalidDataException("快照復原檔的版本、資料庫或來源位址不符；保留資料並停止採集");
+        if (state.DatabaseId != DatabaseId)
+            throw PrtgSnapshotJournalReason.DatabaseMismatch("快照復原檔的版本、資料庫或來源位址不符；保留資料並停止採集");
         if (state.Accumulator == null || state.Pending == null || state.Pending.Any(b => b == null || b.Rows == null) ||
             state.Accumulator.Count + state.Pending.Sum(b => (long)b.Rows.Count) > MaxRows)
             throw new InvalidDataException("快照待寫資料達列數上限，停止採集");

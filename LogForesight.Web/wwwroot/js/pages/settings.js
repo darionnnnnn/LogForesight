@@ -719,7 +719,7 @@ function renderPrtgSnapshotHealth(snapshot) {
     }
     const badge = document.createElement('span');
     badge.className = `badge text-bg-${snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'secondary'} me-2`;
-    const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停' };
+    const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停', stopped: '已停止：待寫檔無法使用', 'no-recent-success': '逾時無成功取樣' };
     badge.textContent = labels[snapshot.state] ?? '待確認';
     const message = document.createElement('span');
     message.textContent = snapshot.message ?? '';
@@ -730,7 +730,7 @@ function renderPrtgSnapshotHealth(snapshot) {
         const date = document.createElement('span');
         date.textContent = `${formatDateTime(hour.hour)}：`;
         const data = document.createElement('span');
-        data.textContent = `${hour.availableValues ?? 0} / ${hour.targets ?? 0} 個目標有可用值${hour.writeFailures ? `，寫入失敗 ${hour.writeFailures} 次` : ''}`;
+        data.textContent = `${hour.availableValues ?? 0} / ${hour.targets < 0 ? '未知' : (hour.targets ?? 0)} 個目標有可用值${hour.writeFailures ? `，寫入失敗 ${hour.writeFailures} 次` : ''}`;
         line.append(date, data);
         children.push(line);
     }

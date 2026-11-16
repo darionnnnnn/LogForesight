@@ -400,6 +400,8 @@ public class PrtgScopeEstimateController : ControllerBase
         snapshotBackingOff = st.IntervalMinutes > PrtgFetchStrategy.Profile(_settings.Get().PrtgFetchStrategy).SnapshotIntervalMinutes;
         snapshotSkipReason = st.LastSkipReason;
         snapshotPendingSamples = st.PendingSamples;
+        var settingsNow = _settings.Get();
+        var snapshotAlert = PrtgSnapshotAlert.Evaluate(settingsNow.PrtgEnabled, settingsNow.PrtgFetchStrategy, st, DateTime.Now);
 
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
         {
@@ -423,6 +425,8 @@ public class PrtgScopeEstimateController : ControllerBase
             SnapshotBackingOff = snapshotBackingOff,
             SnapshotSkipReason = snapshotSkipReason,
             SnapshotPendingSamples = snapshotPendingSamples,
+            SnapshotAlert = snapshotAlert.Stopped ? "stopped" : snapshotAlert.NoRecentSuccess ? "no-recent-success" : "none",
+            SnapshotJournal = PrtgSnapshotJournalDto.From(_snapshot.GetJournalPreview()),
             Freshness = PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
         });
     }
