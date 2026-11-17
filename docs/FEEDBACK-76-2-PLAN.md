@@ -608,7 +608,7 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 - **體檢建議看的地方**：
   1. 派工決策：`DispatchContext.DismissedCases`、`WorkOrderDispatcher.IneligibleReason`／`SelectHandler`、`WorkOrderCoordinator.AdminClose`（`BlocksRedispatch` 寫入點三處）。
   2. 新欄位與升級：`blocks_redispatch`、`continuation_stopped_reason/_at`、`escalated_at`（加欄時回填）；SQL Server 只以查詢翻譯確認，未連實機。
-  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 與交辦服務的 `Guard`；殘餘風險是其他 Web 服務把 Core 的 InvalidOperation／Argument 例外轉成領域例外的 9 處。
+  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 與交辦服務的 `Guard`；殘餘風險是 PRTG 範圍估算、清除工作、排程與 PRTG 監看 409 共 6 處仍把 Core 例外訊息轉成領域例外（已列 BACKLOG；逐處分類見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`）。
   4. 通知：`WorkOrderDigestBuilder` 八段＋管理者提醒、`AdminReminderService.Compute`／`RunAfterNightly`、`MailLinks`。
   5. 健康整體狀態：`HealthAttention.Evaluate` 與 30 秒告示快取。
   6. 說明書：逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`。
@@ -653,3 +653,4 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 | Z-修 2（審查發現：前端） | Sonnet 實作、主代理驗收 | 代為結案台數改為進行中加停用主機上的進行中（後端 `AdminCloseLocked` 結案全部進行中成員），有停用主機時後果說明加「含已停用主機 N 台」；Z4 補三個前端消費點：續掛已停止帶日期（`continuationStoppedAt`）、提醒區每類「看是哪些」明細與彙整時間、提醒間隔 0 的常駐說明（`escalated`／`unassignable`／`unassignableAt`／`reminderDays`）、PRTG 維護頁同步狀態下逐條列出 `lastWarnings`；說明書兩版與 WEB-SPEC、PRTG-SPEC 同步 | 行為測試 8 案（突變台數改回只算進行中 → 轉紅）；量測：交辦總覽、交辦單、交辦-詳情、PRTG維護、問題負責與靜音（含靜音視窗附註變長）五個寬度六項皆 0，新增 3 個互動情境；全量 10,496 通過、1 筆 `PrtgBackfillRunnerTests.跨日回填…`（配額限速時間斷言）負載下偶發，單獨重跑三次皆綠 | 只剩停用主機的單由行為測試覆蓋，UI 資料集沒做這種單；新增負載偶發一筆（本段未動 PRTG 回填） |
 | Z（終檢） | 主代理 | Z1 對照、Z2 已知差異、Z4 跨批 grep、Z5 全部情境 quick 矩陣、Z6 全量、Z7 文件、Z8 版號 1.0.76.1、Z9 體檢交接節（見上方兩節） | quick 矩陣 2 格失敗與第一階段相同；最後一次全量 10,496 通過／1 失敗／21 略過，失敗為 `PrtgSelectedBackfillServiceTests` 收尾刪暫存目錄時背景回填仍在寫（Directory not empty），單獨重跑三次皆綠 | 收尾改為重試刪除、刪不掉不轉紅；量測站台結束時子行程 dotnet 殘留占 5099，已手動結束 |
 | 規劃對照程式 | 兩個唯讀代理（A/T/B/D、C/E/F/G）逐條讀程式與測試核對、主代理處置 | 沒有未實作項目。補齊：D2-a 行為測試（只靠案件授與的主機不進候選人可見主機、群組授權照常）；B6-a 以處理人摘要 `visibleHostCount` 表達取消收回授與（取消前 1、後 0）；G 第二輪唯讀複核只看 G-4 修正段落，**錯誤 0、含糊 0**；D 定案 2 補註問題負責人範圍；BACKLOG 保留清除一條與 DB-SPEC 措辭依現況修正；本檔已完成的「待使用者確認」「下一步」段落移除 | D2-a 突變擴大可見集合 → 轉紅；B6-a 突變拿掉 `HostNamesWithCases` 的 `!c.Cancelled` → 只有新斷言轉紅（詳情 404 走另一個查詢，證明新斷言才有鑑別力）；相關 378 通過；Windows VM 全量 10,506 通過／0 失敗／12 略過 | E2 分類表與 E-前置清單沒有書面留存，下一段補 |
+| E 逐處分類補檔 | Sonnet 依 `bf80e179`、`69e13774`、`c42c5302` 回溯、主代理抽驗 | 新增 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`：E2 母體 79 列（修改 44、保留 35，另 21 行純記錄檔附錄）、E-前置 29 列、Z 批影響 8 列；82＝修改前 Controllers 與 Services 含 `ex.Message` 的行數（主代理以 `git grep` 重現 82），92＝再加 `Auth/` 與記錄檔行 | 回溯發現 E-1 漏改一處行為：成效端點超範圍從 400 退成 500 而測試仍綠（已在 Z-修 1 修正並補端點測試）；前端沒有任何地方比對後端訊息 | 「修改 25 處、白名單 34 項」無法由歷史精確重現（實數 38 行、33 條），已在表內寫明；6 處殘餘例外轉換列入 BACKLOG |

@@ -36,6 +36,8 @@
   760 以上，儲存量靠 `RawEventRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
   詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
 - **多執行個體排程仍不支援**：日紀錄已有主機日程序內鎖及 `write_revision` 持久併發權杖，過期 JSON 提交會失敗；重建父列使用新 RecordId，補追加重新核對父資格。這些不等於跨程序工作租約。若需多實例主動排程，另定租約與工作重試契約，不可僅因資料列有版本就同時啟動兩個排程器。
+- **其他 Web 服務仍把 Core 的 InvalidOperation／Argument 例外訊息直接給使用者**：交辦類已改擲 `WorkOrderRuleException`、`Guard` 只轉它；`PrtgScopeEstimateController`（2 處）、`PrtgScopePurgeJobsController`（2 處）、`ScheduleController`（1 處）與 `PrtgMonitoringController` 的 409 仍依「Core 自擲中文」的假設轉成領域例外，範圍內若混入框架層例外，英文原文會外傳。
+  **觸發時機**：上述路徑出現英文錯誤訊息的回報，或下次改到這些控制器時，比照交辦類改擲專屬例外型別（逐處盤點見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md` 第 3 節）。
 - **夜間單升級成群組範圍續掛（E3-16）**：夜間派工建的單範圍是指定主機，不會隨群組擴大。需要新的範圍變更動作，使用情境少。
   **觸發時機**：管理者反映同一問題在同群組新主機上被分成多張單時。
 - **管理者提醒與不再自動派工清單的查詢量**：`AdminReminderService.Compute` 逐張上報單分頁查成員；`DismissedIssueService` 讀全部可見主機的案件後，對每列各讀處理歷程找結案的人。
