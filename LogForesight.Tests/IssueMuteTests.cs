@@ -430,6 +430,19 @@ public sealed class IssueMuteTests : IDisposable
     }
 
     [Fact]
+    public void SetMute_close_B1_代為結案的案件欄位為否()
+    {
+        CreateActiveOrder();
+
+        Admin(FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle))
+            .SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "換硬體", ExistingOrders = "close" });
+
+        var cases = _cases.GetMany(new[] { "SRV-01" });
+        Assert.NotEmpty(cases);
+        Assert.All(cases, c => Assert.False(c.BlocksRedispatch));
+    }
+
+    [Fact]
     public void SetMute_close有能力_進行中單以wont_fix代為結案()
     {
         var order = CreateActiveOrder();

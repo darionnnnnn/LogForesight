@@ -288,13 +288,13 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     // ── 三個已確認缺口的直接重現（不經預期機制，直接斷言現況；缺口修掉時這些會紅，同步移除已知差異）──────────
 
     [Fact]
-    public void 直接重現_S10_靜音代為結案後解除_問題再出現時不派工()
+    public void S10_靜音代為結案後解除_問題再出現時照常派工()
     {
         var result = R("S10");
         var d4 = result.Day(4);
-        // 靜音以「不處理」代為結案，等同處理人判定的不處理：「不再打擾」擋住，沒有新單
-        Assert.Equal("skipped:gate_dismissed", Decision(d4, "HOST-A"));
-        Assert.Empty(d4.NewOrders);
+        // 靜音代為結案的案件不擋之後的派工：解除後再出現會建新單
+        Assert.Equal("delivered", Decision(d4, "HOST-A"));
+        Assert.Single(d4.NewOrders);
         Assert.Equal(IssueHandlingStatuses.WontFix, OrderOf(result.Day(2), "h1").Members.Single().Status);
         Assert.Equal("h1", result.Day(1).Orders.Single().Handler);
     }

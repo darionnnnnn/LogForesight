@@ -111,13 +111,13 @@ public interface IIssueCaseStore
     /// </summary>
     List<IssueCase> GetByHandler(long userId);
 
-    /// <summary>指定處理人在指定主機上是否有案件，含已結案（案件授與語意）</summary>
+    /// <summary>指定處理人在指定主機上是否有案件，含已結案、排除因取消交辦而關閉的案件（案件授與語意）</summary>
     bool HasCaseOnHost(long handlerId, string hostName);
 
-    /// <summary>指定處理人在指定主機上的問題鍵集合，含已結案（案件授與語意）</summary>
+    /// <summary>指定處理人在指定主機上的問題鍵集合，含已結案、排除取消的案件（案件授與語意）</summary>
     HashSet<string> IssueKeysOnHost(long handlerId, string hostName);
 
-    /// <summary>指定處理人名下有案件的主機名清單，含已結案（案件授與語意）</summary>
+    /// <summary>指定處理人名下有案件的主機名清單，含已結案、排除取消的案件（案件授與語意）</summary>
     List<string> HostNamesWithCases(long handlerId);
 
     /// <summary>結案時間 &gt;= <paramref name="since"/> 且狀態為 resolved 的案件（派工延續性用）</summary>

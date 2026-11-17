@@ -796,12 +796,12 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>代為結案（2.7）：進行中成員全部標成指定的結案狀態</summary>
-    public WorkOrderCloseResult AdminClose(long workOrderId, string status, string reason, WorkOrderActor actor)
+    public WorkOrderCloseResult AdminClose(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch)
     {
-        lock (OrderMutationLock) return AdminCloseLocked(workOrderId, status, reason, actor);
+        lock (OrderMutationLock) return AdminCloseLocked(workOrderId, status, reason, actor, blocksRedispatch);
     }
 
-    private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor)
+    private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch)
     {
         if (!IssueHandlingStatuses.IsClosed(status))
             throw new ArgumentException($"WorkOrderCoordinator：代為結案的狀態「{status}」不是結案類。", nameof(status));
@@ -810,6 +810,8 @@ public class WorkOrderCoordinator
 
         var order = GetActive(workOrderId);
         var members = ActiveMembers(workOrderId);
+        // 先標記再套狀態：ApplyStatus 會連同成員一起存檔，欄位要跟結案狀態同一次寫入
+        foreach (var member in members) member.BlocksRedispatch = blocksRedispatch;
         var daySync = ApplyStatus(members, status, reason, null, actor);
 
         CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, EventNoteOf($"{status}：", reason, ""));

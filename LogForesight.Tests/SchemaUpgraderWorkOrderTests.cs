@@ -15,7 +15,7 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private static readonly string[] NewCaseColumns =
-        { "work_order_id", "source_key", "source_name", "event_id", "day_sync_pending", "cancelled" };
+        { "work_order_id", "source_key", "source_name", "event_id", "day_sync_pending", "cancelled", "blocks_redispatch" };
 
     private static readonly string[] NewCaseIndexes =
         { "IX_lf_issue_cases_work_order_closed", "IX_lf_issue_cases_issue_closed", "IX_lf_issue_cases_day_sync_pending" };
@@ -78,6 +78,40 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
         };
         store.Insert(Order());
         Assert.Throws<DbUpdateException>(() => store.Insert(Order()));
+    }
+
+    [Fact]
+    public void Upgrade補上案件blocks_redispatch可空欄_既有列為NULL()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN blocks_redispatch");
+            Assert.DoesNotContain("blocks_redispatch", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+            ctx.Database.ExecuteSqlRaw(
+                "INSERT INTO lf_issue_cases (case_id, host_name, host_name_key, issue_key, issue_label, status, handler_id, " +
+                "first_linked_date, last_linked_date, created_at, created_by_account, updated_at, day_sync_pending, cancelled) " +
+                "VALUES ('legacy', 'SRV-01', 'SRV-01', 'k', 'l', 'wont_fix', 1, '2026-01-01', '2026-01-01', '2026-01-01', 'a', '2026-01-01', 0, 0)");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);   // 重跑冪等
+
+        using var check = _fx.NewContext();
+        Assert.Contains("blocks_redispatch", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+        var legacy = new EfIssueCaseStore(_fx.NewContext).GetByHandler(1).Single(c => c.CaseId == "legacy");
+        Assert.Null(legacy.BlocksRedispatch);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出blocks_redispatch欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.IssueCases.Where(c => c.BlocksRedispatch == false).ToQueryString();
+
+        Assert.Contains("[blocks_redispatch]", sql);
     }
 
     [Fact]

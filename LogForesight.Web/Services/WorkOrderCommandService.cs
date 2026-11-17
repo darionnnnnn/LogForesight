@@ -401,7 +401,9 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "代為結案要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock)));
+        // 「已處理」不是不處理類，勾選值一律忽略；只有不處理類且勾選才擋住之後的派工
+        var blocksRedispatch = req.Status != IssueHandlingStatuses.Resolved && req.BlockRedispatch;
+        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch));
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,

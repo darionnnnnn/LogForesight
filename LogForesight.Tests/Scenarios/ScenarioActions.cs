@@ -172,8 +172,8 @@ public static class ScenarioActions
         new ReturnAction(actor, order, note);
 
     /// <summary>管理者代為結案；<paramref name="status"/> 例：resolved／wont_fix</summary>
-    public static ScenarioAction AdminClose(string actor, OrderRef order, string status, string? reason = null) =>
-        new AdminCloseAction(actor, order, status, reason);
+    public static ScenarioAction AdminClose(string actor, OrderRef order, string status, string? reason = null, bool blockRedispatch = false) =>
+        new AdminCloseAction(actor, order, status, reason, blockRedispatch);
 
     /// <summary>管理者取消交辦</summary>
     public static ScenarioAction Cancel(string actor, OrderRef order, string? reason = null) =>
@@ -351,12 +351,12 @@ public static class ScenarioActions
             ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.Resolve(ctx)}/return", new ReturnWorkOrderRequest { Note = note });
     }
 
-    private sealed class AdminCloseAction(string actor, OrderRef order, string status, string? reason) : ScenarioAction(actor)
+    private sealed class AdminCloseAction(string actor, OrderRef order, string status, string? reason, bool blockRedispatch) : ScenarioAction(actor)
     {
         public override string Describe() => $"代為結案 {order.Describe()}：{status}";
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
             ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.Resolve(ctx)}/admin-close",
-                new AdminCloseWorkOrderRequest { Status = status, Reason = reason });
+                new AdminCloseWorkOrderRequest { Status = status, Reason = reason, BlockRedispatch = blockRedispatch });
     }
 
     private sealed class CancelAction(string actor, OrderRef order, string? reason) : ScenarioAction(actor)

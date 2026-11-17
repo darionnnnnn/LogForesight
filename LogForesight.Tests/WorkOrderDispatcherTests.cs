@@ -660,6 +660,62 @@ public class WorkOrderDispatcherTests
         AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 1, WorkOrderOrigins.AutoDispatch);
     }
 
+    private void ClosedCaseBlocking(string hostName, string issueKey, string status, bool? blocks) =>
+        _cases.Save(new IssueCase
+        {
+            CaseId = "blk" + (++_caseSeq), HostName = hostName, IssueKey = issueKey, HandlerId = 9,
+            Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today.AddDays(-1), BlocksRedispatch = blocks
+        });
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix, true)]
+    [InlineData(IssueHandlingStatuses.FalsePositive, true)]
+    [InlineData(IssueHandlingStatuses.KnownNoise, true)]
+    [InlineData(IssueHandlingStatuses.Resolved, false)]
+    public void 閘門4_B2a_處理人回覆三種不處理類擋_已處理不擋(string status, bool blocked)
+    {
+        // 處理人回覆不寫欄位，維持 null
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today } };
+
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+    }
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix)]
+    [InlineData(IssueHandlingStatuses.FalsePositive)]
+    [InlineData(IssueHandlingStatuses.KnownNoise)]
+    public void 閘門4_B2b_欄位為否的不處理類不擋(string status)
+    {
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = false } };
+
+        Assert.Empty(DispatchContext.DismissedKeys(cases));
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void 閘門4_B2c_舊資料空值與勾選的不處理類擋(bool? blocks, bool blocked)
+    {
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = IssueHandlingStatuses.WontFix, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = blocks } };
+
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+    }
+
+    /// <summary>B2-d 夜間派工側：三個問題（空值／否／是）的判定，與日層級指派預覽那條測試用同一組資料</summary>
+    [Fact]
+    public void 閘門4_B2d_夜間派工對空值否是三件的判定()
+    {
+        ClosedCaseBlocking("SRV-01", "k-null", IssueHandlingStatuses.WontFix, null);
+        ClosedCaseBlocking("SRV-01", "k-false", IssueHandlingStatuses.WontFix, false);
+        ClosedCaseBlocking("SRV-01", "k-true", IssueHandlingStatuses.KnownNoise, true);
+        var ctx = Build();
+
+        Assert.True(ctx.IsDismissed("SRV-01", "k-null"));
+        Assert.False(ctx.IsDismissed("SRV-01", "k-false"));
+        Assert.True(ctx.IsDismissed("SRV-01", "k-true"));
+    }
+
     [Fact]
     public void 閘門4_續掛單也受不再打擾約束()
     {

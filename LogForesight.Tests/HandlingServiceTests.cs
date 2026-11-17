@@ -1306,6 +1306,31 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(1, service.Assign(_host.HostId, day, _owner.UserId).CasesCreated);
     }
 
+    /// <summary>B2-d 日層級側：與夜間派工測試同一組資料（空值／否／是），欄位為否的不計入不再打擾</summary>
+    [Fact]
+    public void 日層級指派_B2d_結案欄位為否的不處理類案件不擋_空值與是照擋()
+    {
+        var day = Today.AddDays(-44);
+        var viaNull = Issue("net", 4201);
+        var viaFalse = Issue("net", 4202);
+        var viaTrue = Issue("net", 4203);
+        _repository.AddRecord(_host.HostName, day, viaNull, viaFalse, viaTrue);
+        void Closed(string id, LogIssueSignature issue, string status, bool? blocks) => _cases.Save(new IssueCase
+        {
+            CaseId = id, HostName = _host.HostName, IssueKey = IssueSignatureKey.For(issue), Status = status,
+            ClosedAt = DateTime.Now, CreatedAt = DateTime.Now, UpdatedAt = DateTime.Now, BlocksRedispatch = blocks
+        });
+        Closed("C-NULL", viaNull, IssueHandlingStatuses.WontFix, null);
+        Closed("C-FALSE", viaFalse, IssueHandlingStatuses.WontFix, false);
+        Closed("C-TRUE", viaTrue, IssueHandlingStatuses.KnownNoise, true);
+        var service = CreateGated(IssueExclusion.None);
+
+        var preview = service.PreviewAssign(_host.HostId, day, _owner.UserId);
+
+        Assert.Equal(1, preview.CasesToCreate);
+        Assert.Equal(new Dictionary<string, int> { ["dismissed"] = 2 }, preview.SkippedByReason);
+    }
+
     [Fact]
     public void 預覽指派_停用帳號與不存在的處理人被拒()
     {

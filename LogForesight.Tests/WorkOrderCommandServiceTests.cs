@@ -840,6 +840,22 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(orderId.ToString(), SingleAudit(AuditActions.WorkOrderAdminClose).TargetId);
     }
 
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix, true, true)]
+    [InlineData(IssueHandlingStatuses.WontFix, false, false)]
+    [InlineData(IssueHandlingStatuses.FalsePositive, true, true)]
+    [InlineData(IssueHandlingStatuses.KnownNoise, false, false)]
+    [InlineData(IssueHandlingStatuses.Resolved, true, false)]   // B3-c：已處理時忽略勾選
+    [InlineData(IssueHandlingStatuses.Resolved, false, false)]
+    public void 代為結案_B1_案件欄位依勾選寫入_已處理一律為否(string status, bool block, bool expected)
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = status, Reason = "r", BlockRedispatch = block });
+
+        Assert.All(MembersOf(orderId), c => Assert.Equal(expected, c.BlocksRedispatch));
+    }
+
     // ── 郵件通知 ─────────────────────────────────────────────────────────────
 
     [Fact]

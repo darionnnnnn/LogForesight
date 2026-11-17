@@ -307,7 +307,7 @@ public class IssueOwnerAdminService
             {
                 try
                 {
-                    _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor);
+                    _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor, blocksRedispatch: false);
                 }
                 catch (Exception ex)
                 {

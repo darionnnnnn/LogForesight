@@ -133,6 +133,19 @@ public class WorkOrderReplyServiceTests : IDisposable
         Assert.Equal($"回覆交辦單 #{id}「disk 153」：2 台標為「已處理」", entry.Summary);
     }
 
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix)]
+    [InlineData(IssueHandlingStatuses.KnownNoise)]
+    [InlineData(IssueHandlingStatuses.Resolved)]
+    public void 處理人回覆結案_B1_案件欄位維持空值(string status)
+    {
+        var id = CreateOrder(_alice, 153, "H1");
+
+        Service(As(_alice, Capability.Handle)).Reply(id, new WorkOrderReplyRequest { Status = status, Note = "回覆" });
+
+        Assert.Null(Member(id, "H1").BlocksRedispatch);
+    }
+
     [Fact]
     public void 非處理人_一般使用者_Forbidden零寫入()
     {

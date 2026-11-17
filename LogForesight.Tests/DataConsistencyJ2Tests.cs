@@ -87,7 +87,7 @@ public class DataConsistencyJ2Tests : IDisposable
     {
         var (dispatch, orderId) = ArrangeAutoAttachOrder();
 
-        _coordinator.AdminClose(orderId, IssueHandlingStatuses.Resolved, "管理者結案", Admin);
+        _coordinator.AdminClose(orderId, IssueHandlingStatuses.Resolved, "管理者結案", Admin, blocksRedispatch: false);
         dispatch.DispatchDay("SRV-01", DateTime.Today, new[] { Issue() }, DateTime.Now);
 
         Assert.Null(_cases.GetOpen("SRV-01", IssueKey));

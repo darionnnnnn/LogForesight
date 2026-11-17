@@ -738,6 +738,8 @@ lf_issue_cases                                       -- 問題案件：一台主
   day_sync_pending   bool NOT NULL DEFAULT 0         -- 逐日列尚待背景同步
   day_sync_intent    text NULL                       -- 待同步的意圖（狀態、操作者、時間、模式，JSON）
   cancelled          bool NOT NULL DEFAULT 0         -- 因取消交辦而結案；同步時把案件寫出的非結案日子改回明確未處理
+  blocks_redispatch  bool NULL                       -- 這次結案是否擋住之後的派工：靜音代為結案寫 0、管理者代為結案依勾選（「已處理」寫 0）；
+                                                     -- 處理人回覆與升級前舊資料為 NULL，NULL 視為擋（只有 0 不擋）
   prtg_evidence_json text NULL                       -- 案件的最小 PRTG 證據；父分析精簡或重建後仍可查
 
 lf_work_orders                                       -- 交辦單：一個問題 × 一批主機 × 一位處理人

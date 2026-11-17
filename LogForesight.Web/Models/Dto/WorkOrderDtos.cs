@@ -224,6 +224,9 @@ public class AdminCloseWorkOrderRequest
     public string Status { get; set; } = string.Empty;
     [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Reason { get; set; }
+
+    /// <summary>結案狀態是不處理類時，是否讓這台主機的這個問題之後不再自動派工；結案狀態為「已處理」時忽略</summary>
+    public bool BlockRedispatch { get; set; }
 }
 
 /// <summary>退回處理人：說明必填（長度與空白由服務層驗證）</summary>

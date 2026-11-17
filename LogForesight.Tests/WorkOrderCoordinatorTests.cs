@@ -553,10 +553,10 @@ public class WorkOrderCoordinatorTests
         w.AddHostDays("H1", D2);
         var id = w.Coordinator.Create(Request(Alice, "H1")).WorkOrderId;
 
-        Assert.Throws<ArgumentException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor()));
+        Assert.Throws<ArgumentException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor(), blocksRedispatch: false));
 
         var later = T0.AddHours(1);
-        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "已換硬碟", Actor(later));
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "已換硬碟", Actor(later), blocksRedispatch: false);
 
         Assert.Equal(1, result.ClosedCases);
         var c = w.Cases.GetByWorkOrder(id, 0, 10).Single();

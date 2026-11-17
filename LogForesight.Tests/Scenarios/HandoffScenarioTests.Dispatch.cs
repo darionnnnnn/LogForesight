@@ -22,6 +22,11 @@ public sealed partial class HandoffScenarioTests
         "S9恢復" => BuildS9Resumed(),
         "S9迄日" => BuildS9MuteEnd(),
         "S10" => BuildS10(),
+        "B3不勾" => BuildAdminCloseRedispatch("B3 代為結案不勾選", block: false),
+        "B3勾選" => BuildAdminCloseRedispatch("B3 代為結案勾選", block: true),
+        "B6取消" => BuildCancelRevokesGrant(),
+        "B6結案" => BuildClosedKeepsGrant(),
+        "B6改派" => BuildReassignRevokesGrant(),
         _ => BuildEdge(key)
     };
 
@@ -385,7 +390,5 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S10.d3.muted-skip", 3, "靜音期間再出現不派工（muted）", "skipped:muted", d => Decision(d, "HOST-A")))
         .Expect(Expect.ActionStatus(3, 0, 200))
         .Expect(Check("S10.d4.dispatch-again", 4, "解除後問題再出現時照常派工", "delivered", d => Decision(d, "HOST-A")))
-        .Expect(Check("S10.d4.holder", 4, "解除後再出現有進行中的單（派給 h1）", "h1", d => HolderOf(d, "HOST-A")))
-        .KnownDifference("E3-S10-1", "S10.d4.dispatch-again")
-        .KnownDifference("E3-S10-2", "S10.d4.holder");
+        .Expect(Check("S10.d4.holder", 4, "解除後再出現有進行中的單（派給 h1）", "h1", d => HolderOf(d, "HOST-A")));
 }

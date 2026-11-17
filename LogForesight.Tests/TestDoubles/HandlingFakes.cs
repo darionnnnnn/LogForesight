@@ -326,15 +326,15 @@ internal class FakeIssueCaseStore : IIssueCaseStore
     public List<IssueCase> GetByHandler(long userId) => _items.Where(c => c.HandlerId == userId).ToList();
 
     public bool HasCaseOnHost(long handlerId, string hostName) =>
-        _items.Any(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName));
+        _items.Any(c => c.HandlerId == handlerId && !c.Cancelled && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName));
 
     public HashSet<string> IssueKeysOnHost(long handlerId, string hostName) =>
-        _items.Where(c => c.HandlerId == handlerId && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName))
+        _items.Where(c => c.HandlerId == handlerId && !c.Cancelled && HostNameKey.Of(c.HostName) == HostNameKey.Of(hostName))
             .Select(c => c.IssueKey)
             .ToHashSet(StringComparer.Ordinal);
 
     public List<string> HostNamesWithCases(long handlerId) =>
-        _items.Where(c => c.HandlerId == handlerId)
+        _items.Where(c => c.HandlerId == handlerId && !c.Cancelled)
             .Select(c => c.HostName)
             .Distinct()
             .ToList();
@@ -395,6 +395,7 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         existing.WorkOrderId = issueCase.WorkOrderId;
         existing.DaySyncPending = issueCase.DaySyncPending;
         existing.Cancelled = issueCase.Cancelled;
+        existing.BlocksRedispatch = issueCase.BlocksRedispatch;
         existing.DaySyncIntent = issueCase.DaySyncIntent;
     }
 

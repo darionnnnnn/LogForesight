@@ -78,4 +78,10 @@ public class IssueCase
 
     /// <summary>因取消交辦而關閉的案件</summary>
     public bool Cancelled { get; set; }
+
+    /// <summary>
+    /// 這次結案是否擋住之後的派工（「不再打擾」閘門）。只有靜音代為結案（false）、管理者代為結案（依勾選）
+    /// 與恢復動作（false）會寫；處理人回覆與升級前的舊資料維持 null，null 視為擋（<c>!= false</c> 才擋）。
+    /// </summary>
+    public bool? BlocksRedispatch { get; set; }
 }

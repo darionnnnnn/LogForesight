@@ -432,8 +432,11 @@ false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時�
 （負責人已有此問題的進行中單就掛入，否則建一張 `origin=owner_rule` 的系統交辦單）——問題負責人
 即長期負責人。多位負責人時取負載最輕者；停用、無處理能力、暫停接單的負責人不選，全部不可用時落到 ⑥ 自動派工。
 **不再打擾**：同主機同問題最近一筆案件若被以 wont_fix／false_positive／known_noise 結案，
-之後再出現不派工（resolved 除外——修好後再出現是新事件，重新交辦）。它是派工閘門之一，
-對續掛、負責人、自動派工一律適用（§9.4b）。
+且案件的 `BlocksRedispatch`（`lf_issue_cases.blocks_redispatch`）不是 false，之後再出現不派工
+（resolved 除外——修好後再出現是新事件，重新交辦）。`BlocksRedispatch` 只有三處會寫：靜音代為結案寫 false；
+管理者代為結案依請求的 `BlockRedispatch`（結案狀態為已處理時一律寫 false）；處理人回覆與升級前的舊資料維持 null，
+null 視為擋。它是派工閘門之一，對續掛、負責人、自動派工一律適用（§9.4b）；唯一判定是
+`DispatchContext.DismissedKeys`，夜間派工與日層級指派共用。
 負責人之後被移除時既有案件不回收；已分析過的歷史日子不回頭補建。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
 多一個判斷來源）。「解除結論」只清空 `IssueProfile` 上的結論欄位，已寫入的 `IssueHandling`
 列不回溯（誠實留痕，不假裝從沒發生過）。
@@ -445,7 +448,9 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
 **案件授與**：前面路徑之外、刻意更窄的一條。
 被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrantHostNames`／
 `IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
-等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
+等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西；
+因取消交辦而關閉的案件（`Cancelled`）不算授與，取消後原處理人下一個請求就看不到該主機。改派換掉案件的處理人，
+原處理人同樣不再有授與。同一台主機一件取消、一件進行中時仍有授與，且只授與進行中的那個問題。
 只授與那個問題，因此 `RecordDetailQueryService` 對這類檢視者**裁剪**：重點問題只留被授與的、
 整日敘事（白話總覽四段／關聯訊號／深入分析）清空、報告全文 `GetReport` 回 null
 （**回 null 不拋例外**——「詢問 AI」會一併餵報告給模型，拋例外會讓整個對話端點 404）。
@@ -456,7 +461,7 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
 **不進一般可見清單**：問題查詢／儀表板／報表的統計語意不變，動線走「我的交辦」與直連
 （`HandlerWorkloadDto` 的可見範圍＝檢視者可見主機 ∪ 自己的案件授與）。
 授與**按需查**：案件表以 `HasCaseOnHost`／`IssueKeysOnHost`／`HostNamesWithCases` 回答
-「這台有沒有我的案件」「我在這台有哪些問題」「我有案件的主機」，一律含已結案，請求內以主機為鍵快取；
+「這台有沒有我的案件」「我在這台有哪些問題」「我有案件的主機」，含已結案、排除已取消，請求內以主機為鍵快取；
 不預先載入使用者全部案件（處理人手上數千台時，每次請求全量讀是秒級成本）。
 
 授與的**實際邊界由兩個咽喉點守住**，缺一不可（放行與裁剪各自寫對、
@@ -1711,8 +1716,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 時間軸（交辦單事件：建立、追加、併入、改派、拆出／拆入、回覆、退回、取消、代為結案、結案；狀態碼與處理人 id
 在前端轉成中文與人名）；管理動作：**改派**（整張單換人，目標已有同問題單時併入、原單 `moved`）、
 **拆出主機**（勾選成員給另一人）、**取消交辦**（原因必填：成員案件關閉，案件寫出的非結案日子改回明確未處理並
-記 `issue_status_cleared` 歷程，使用者自己標的日子不動）、**代為結案**（`Assign`＋`Handle`，結案四態＋原因必填，
-逐案走同一套同步）、**退回處理人**（`Assign`；單上有 `escalated` 成員時才顯示，說明必填 ≤500：這些成員改回
+記 `issue_status_cleared` 歷程，使用者自己標的日子不動）、**代為結案**（`Assign`＋`Handle`，結案四態＋原因必填，請求另帶 `BlockRedispatch`：
+結案為不處理類時代表「這台主機的這個問題之後不再自動派工」，預設 false，結案為已處理時忽略；逐案走同一套同步）、**退回處理人**（`Assign`；單上有 `escalated` 成員時才顯示，說明必填 ≤500：這些成員改回
 `in_progress`、逐日歷程沿用同一套同步，記事件 `returned`、稽核 `work_order_return`，通知處理人；不推進 `LastReplyAt`，
 所以退回不會讓單變成「有新回覆」）。
 被改派走的原處理人可唯讀開啟原單（`lf_work_orders.previous_handler_id`，只記最近一位；整張改派時記在被改派的單，
@@ -1765,7 +1770,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 設定 `PUT api/admin/issue-owners/{source}/{eventId}/mute { days（1～365）| until, reason（必填，≤500）,
   existingOrders: pause|close }`，到期日＝今天＋days−1；今天已在靜音中再設定＝重設迄日（可縮短），不新增區間。
   `DELETE …/mute` 提前解除：迄日改成昨天（起日為今天則刪除區間）。皆 `Maintain`；`existingOrders=close`
-  另需 `Assign`＋`Handle`，把該問題進行中的交辦單以「不處理」代為結案，能力不足整筆 403 零寫入。
+  另需 `Assign`＋`Handle`，把該問題進行中的交辦單以「不處理」代為結案（案件 `BlocksRedispatch` 寫 false，不擋靜音解除後的派工），能力不足整筆 403 零寫入。
   稽核 `issue_mute`／`issue_unmute`。
 - **單一列判定**：某一列（問題, 紀錄日）靜音＝問題目前靜音中，或紀錄日落在它任一區間。清單、卡片、排行、
   待辦、逾期、派工全用這一條；記憶體只有 `IssueExclusion.IsMuted` 一份（派工脈絡 `DispatchContext.IsMuted` 委派它），

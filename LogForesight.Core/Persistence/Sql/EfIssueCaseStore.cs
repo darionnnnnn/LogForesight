@@ -98,7 +98,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var key = HostNameKey.Of(hostName);
         using var ctx = _contextFactory();
         return ctx.IssueCases.AsNoTracking()
-            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key);
+            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key && !c.Cancelled);
     }
 
     public HashSet<string> IssueKeysOnHost(long handlerId, string hostName)
@@ -106,7 +106,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var key = HostNameKey.Of(hostName);
         using var ctx = _contextFactory();
         var keys = ctx.IssueCases.AsNoTracking()
-            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key)
+            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key && !c.Cancelled)
             .Select(c => c.IssueKey)
             .ToList();
         return new HashSet<string>(keys, IssueSignatureKeyComparer.Instance);
@@ -116,7 +116,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     {
         using var ctx = _contextFactory();
         return ctx.IssueCases.AsNoTracking()
-            .Where(c => c.HandlerId == handlerId)
+            .Where(c => c.HandlerId == handlerId && !c.Cancelled)
             .Select(c => c.HostName)
             .Distinct()
             .OrderBy(h => h)
@@ -248,6 +248,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.DaySyncPending = issueCase.DaySyncPending;
         row.DaySyncIntent = issueCase.DaySyncIntent == null ? null : SerializeIntent(issueCase.DaySyncIntent);
         row.Cancelled = issueCase.Cancelled;
+        row.BlocksRedispatch = issueCase.BlocksRedispatch;
 
         if (row.SourceKey != null) return;
         var parsed = EfWorkOrderStore.ParseIssueColumns(row.IssueKey);
@@ -490,7 +491,8 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         DaySyncIntent = row.DaySyncIntent == null
             ? null
             : JsonSerializer.Deserialize<CaseDayIntent>(row.DaySyncIntent, LfJsonOptions.Compact),
-        Cancelled = row.Cancelled
+        Cancelled = row.Cancelled,
+        BlocksRedispatch = row.BlocksRedispatch
     };
 
     /// <summary>意圖的序列化單點：寫入與「未變更才清」的比對必須用同一份選項，否則字串永遠不相等</summary>

@@ -232,7 +232,7 @@ public sealed class DispatchContext
         }
     }
 
-    /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案者</summary>
+    /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者</summary>
     internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
             .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
@@ -243,6 +243,7 @@ public sealed class DispatchContext
                 .First())
             .Where(c => c.Status is IssueHandlingStatuses.WontFix
                 or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+            .Where(c => c.BlocksRedispatch != false)
             .Select(c => c.IssueKey)
             .ToHashSet(IssueSignatureKeyComparer.Instance);
 
