@@ -54,37 +54,107 @@ internal static class WorkOrderDigestBuilder
         AppendReminders(body, reminders, siteBaseUrl);
         if (rows.Count > reminders.Count)
         {
-            if (created.Count > 0)
-                body.AppendLine("新交辦請回覆處理狀態：開啟單後依實際情形標示處理中、已處理或無法處理（無法處理請寫明原因）。");
-            body.AppendLine($"請至站台的「{MailLinks.MyWorkOrdersName}」檢視上列單號。");
+            // 要處理人動作的種類（新交辦、新增成員、退回、靜音恢復）才請他去看；其餘（代為結案、取消、移交、靜音暫停）只是知會
+            var needsAction = created.Count + appended.Count + returned.Count + muteResumed.Count > 0;
+            if (needsAction)
+            {
+                if (created.Count > 0)
+                    body.AppendLine("新交辦請回覆處理狀態：開啟單後依實際情形標示處理中、已處理或無法處理（無法處理請寫明原因）。");
+                body.AppendLine($"請至站台的「{MailLinks.MyWorkOrdersName}」檢視上列單號。");
+            }
+            else
+            {
+                body.AppendLine("這些單不需要你再回覆。");
+            }
+            if (mutePaused.Count > 0)
+                body.AppendLine($"暫停中的單可至站台的「{MailLinks.MyWorkOrdersName}」，勾選「只看暫停的單」查看。");
             // 取消通知也連到「我的交辦」：取消後主機已調回未處理，不連到已收回授與的單或主機
             AppendLink(body, MailLinks.Build(siteBaseUrl, MailLinks.MyWorkOrdersPath(recipientUserId)));
         }
         return (subjectSummary, body.ToString());
     }
 
-    /// <summary>管理者提醒：同一位收件人同一時段有多筆時只列最新一筆（內容是當時的整份彙整，後一筆涵蓋前一筆）</summary>
     /// <summary>連結為 null（沒設站台網址）時什麼都不寫，信件與未設定時完全相同</summary>
     private static void AppendLink(StringBuilder body, string? link)
     {
         if (link != null) body.AppendLine($"連結：{link}");
     }
 
+    /// <summary>
+    /// 管理者提醒：同一位收件人同一時段可能有多筆（同一天摘要時刻前跑了不只一趟夜間派工）。每趟入列的是「本趟到期」的增量，
+    /// 且入列當下就記為已提醒，所以只取最後一筆會讓前一趟那組永遠不出現在信裡；這裡把所有筆合併成一段（每人仍是一封）：
+    /// 三項計數加總，明細依段落標題併段、同一行去重。
+    /// </summary>
     private static void AppendReminders(StringBuilder body, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> reminders,
         string? siteBaseUrl)
     {
         if (reminders.Count == 0) return;
-        var latest = reminders[^1].Item;
         body.AppendLine("【管理者提醒】");
-        body.AppendLine($"  上報逾期未處理 {latest.ReminderEscalated} 個成員、本趟派不出去 {latest.ReminderUnassignable} 項、上報時沒有收件人 {latest.ReminderNoRecipient} 張單。");
-        if (!string.IsNullOrWhiteSpace(latest.Detail))
+        body.AppendLine($"  上報逾期未處理 {reminders.Sum(r => r.Item.ReminderEscalated)} 個成員、本趟派不出去 {reminders.Sum(r => r.Item.ReminderUnassignable)} 項、上報時沒有收件人 {reminders.Sum(r => r.Item.ReminderNoRecipient)} 張單。");
+        var detail = MergeReminderDetails(reminders.Select(r => r.Item.Detail));
+        if (!string.IsNullOrWhiteSpace(detail))
         {
-            foreach (var line in latest.Detail.Split('\n'))
+            foreach (var line in detail.Split('\n'))
                 body.AppendLine("  " + line.TrimEnd('\r'));
         }
         body.AppendLine($"  請至站台的「{MailLinks.WorkOrdersName}」檢視：上報中篩選、待派頁籤與對應的單。");
         if (MailLinks.Build(siteBaseUrl, MailLinks.WorkOrdersPath) is { } link) body.AppendLine($"  連結：{link}");
         body.AppendLine();
+    }
+
+    /// <summary>
+    /// 合併多筆提醒的明細文字（格式見 AdminReminderService.FormatMailDetail：「【標題】共 N 單位」後接縮排明細行，可能有「…等 N」截斷行）。
+    /// 只有一筆時原文回傳；多筆時同標題併成一段，明細行去重，標題計數＝去重後的行數（段內有「…等」截斷行時行數不等於筆數，改用各段計數加總）。
+    /// 去重只擋「完全相同的行」（同一趟派不出去清單在不同趟重複的情形）。
+    /// </summary>
+    internal static string? MergeReminderDetails(IEnumerable<string?> details)
+    {
+        var list = details.Where(d => !string.IsNullOrWhiteSpace(d)).ToList();
+        if (list.Count == 0) return null;
+        if (list.Count == 1) return list[0];
+
+        var sections = new List<(string Title, string Unit, int Count, List<string> Lines)>();
+        foreach (var detail in list)
+        {
+            (string Title, string Unit, int Count, List<string> Lines)? current = null;
+            foreach (var raw in detail!.Split('\n'))
+            {
+                var line = raw.TrimEnd('\r');
+                if (line.Length == 0) continue;
+                var m = System.Text.RegularExpressions.Regex.Match(line, @"^(【[^】]*】)共 (\d+) (.+)$");
+                if (m.Success)
+                {
+                    var title = m.Groups[1].Value;
+                    var idx = sections.FindIndex(x => x.Title == title);
+                    if (idx < 0)
+                    {
+                        sections.Add((title, m.Groups[3].Value, 0, new List<string>()));
+                        idx = sections.Count - 1;
+                    }
+                    var sec = sections[idx];
+                    sections[idx] = (sec.Title, sec.Unit, sec.Count + int.Parse(m.Groups[2].Value), sec.Lines);
+                    current = sections[idx];
+                    continue;
+                }
+                if (current == null)
+                {
+                    // 沒有標題的雜行：獨立成一段，原樣保留
+                    sections.Add(("", "", 0, new List<string> { line }));
+                    continue;
+                }
+                if (!current.Value.Lines.Contains(line)) current.Value.Lines.Add(line);
+            }
+        }
+
+        var sb = new StringBuilder();
+        foreach (var (title, unit, count, lines) in sections)
+        {
+            // 沒有截斷行時，去重後的行數就是實際筆數（同一行在不同趟重複出現不重複計）；有截斷行就只能用加總
+            var truncated = lines.Any(l => l.TrimStart().StartsWith("…等", StringComparison.Ordinal));
+            if (title.Length > 0) sb.AppendLine($"{title}共 {(truncated ? count : lines.Count)} {unit}");
+            foreach (var l in lines) sb.AppendLine(l);
+        }
+        return sb.ToString().TrimEnd();
     }
 
     private static void AppendSection(StringBuilder body,
@@ -109,6 +179,7 @@ internal static class WorkOrderDigestBuilder
                     break;
                 case WorkOrderOutboxKinds.Returned:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}，由 {item.ActorAccount} 退回：{item.Reason}");
+                    body.AppendLine("    這些主機已改回處理中，請重新處理並回覆。");
                     break;
                 case WorkOrderOutboxKinds.AdminClosed:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
@@ -127,7 +198,7 @@ internal static class WorkOrderDigestBuilder
                     break;
                 case WorkOrderOutboxKinds.Cancelled:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
-                    body.AppendLine($"    由 {item.ActorAccount} 取消，其中的主機已調回未處理。");
+                    body.AppendLine($"    由 {item.ActorAccount} 取消，其中的主機已調回未處理。問題若仍出現，夜間派工可能重新派工。");
                     AppendReason(body, item);
                     break;
                 default:

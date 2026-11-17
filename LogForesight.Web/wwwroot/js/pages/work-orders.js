@@ -140,7 +140,7 @@ if (activeHandlerInactiveCheckbox && urlParams.get('handlerInactive') === '1') {
     activeHandlerInactiveCheckbox.checked = true;
 }
 
-/** 在「只看處理人已停用」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
+/** 在「只看處理人已停用或失去處理能力」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
 function createUnreadOnlyCheckbox() {
     const wrap = document.createElement('div');
     wrap.className = 'form-check mb-0';
@@ -657,6 +657,12 @@ function renderDismissed(data, canRestore) {
         return;
     }
 
+    if (!canRestore) {
+        const readOnly = roleText('lf-text-meta', '只有系統管理員可以處理或恢復。');
+        readOnly.classList.add('d-block', 'mb-3');
+        dismissedContainer.appendChild(readOnly);
+    }
+
     for (const group of groups) {
         const section = document.createElement('div');
         section.className = 'mb-4';
@@ -940,6 +946,10 @@ function renderReminders(data) {
     if (escalated + unassignable + noRecipient === 0) return;
 
     remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
+    // 沒有 Assign 的檢視者（主管、開發人員）只能看：不用行動語氣，直說誰能處理
+    if (!hasCapability(currentUser, 'Assign')) {
+        remindersContainer.appendChild(roleText('lf-text-meta', '只有系統管理員可以處理或恢復。'));
+    }
     // 設定為 0＝不寄提醒信，但這裡照常顯示：特殊值語意，常駐說明
     if ((data.reminderDays ?? 1) === 0) {
         remindersContainer.appendChild(statusNote('info', '提醒信已關閉（設定為 0），此處仍會顯示。'));
@@ -1105,8 +1115,10 @@ gapsAutoDispatchBtn.addEventListener('click', async () => {
 async function init() {
     currentUser = await getCurrentUser();
 
+    // 立即派工是業務動作（建單），能力是 Assign；Maintain 含不能看業務資料的救援帳號，不該看到這顆鈕
+    if (hasCapability(currentUser, 'Assign')) gapsAutoDispatchBtn.classList.remove('d-none');
+
     if (hasCapability(currentUser, 'Maintain')) {
-        gapsAutoDispatchBtn.classList.remove('d-none');
         mutedTabItem?.classList.remove('d-none');
         // 頁籤標題要帶數字，所以在 bindTabs 之前先取一次；失敗時標題維持「靜音中」，進頁籤再重試
         try {

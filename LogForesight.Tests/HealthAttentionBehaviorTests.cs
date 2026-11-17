@@ -26,6 +26,7 @@ public sealed class HealthAttentionBehaviorTests
     [InlineData("health-attention.behavior.mjs", "bannerKeepsStaleBarAndAddsReasons")]
     [InlineData("health-attention.behavior.mjs", "bannerHiddenWhenOk")]
     [InlineData("health-attention.behavior.mjs", "bannerDevMonitorSeesReasonsWithoutSettingsLink")]
+    [InlineData("health-attention.behavior.mjs", "bannerMaintainHasNoContactLine")]
     [InlineData("health-attention.behavior.mjs", "bannerNoCapabilityMakesNoRequest")]
     [InlineData("health-attention.behavior.mjs", "bannerAttentionFailureKeepsStaleBar")]
     [InlineData("health-attention.behavior.mjs", "bannerAttentionFailureAloneShowsNothing")]

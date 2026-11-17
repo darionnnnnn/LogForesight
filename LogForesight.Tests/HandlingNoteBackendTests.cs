@@ -6,6 +6,9 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -15,6 +18,7 @@ namespace LogForesight.Tests;
 /// 與 [ApiController] 自動回 400 同一條驗證）、事件欄位優先保留使用者原文、不處理必填理由、
 /// 多單回覆中途失敗時已成功的單逐張稽核且回應交代成功／失敗／未處理。
 /// </summary>
+[Collection("NLogGlobalConfig")]
 public class HandlingNoteBackendTests : IDisposable
 {
     private const string Source = "disk";
@@ -210,6 +214,41 @@ public class HandlingNoteBackendTests : IDisposable
         Assert.Equal(a.ToString(), entry.TargetId);
         Assert.Contains($"回覆交辦單 #{a}：1 台標為", entry.Summary);
         Assert.Null(_orders.Get(c)!.LastReplyAt);
+    }
+
+    [Fact]
+    public void 多單回覆_併發衝突給使用者看原訊息_記Warn不記Error()
+    {
+        var a = CreateOrder(153, "H1");
+        var b = CreateOrder(154, "H2");
+        _orders.FailOnReplyOf = b;
+        _orders.Failure = new LogForesight.Core.Persistence.ConcurrentUpdateException("交辦單 154", new Exception("db"));
+
+        var target = new MemoryTarget("lf-reply-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = LogManager.Configuration ??= new LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(WorkOrderReplyService).FullName!);
+        LogManager.ReconfigExistingLoggers();
+        WorkOrderReplyManyResultDto result;
+        try
+        {
+            result = Service().ReplyMany(new WorkOrderReplyManyRequest
+            {
+                WorkOrderIds = new List<long> { a, b }, Status = IssueHandlingStatuses.Resolved, Note = "修好了"
+            });
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            LogManager.ReconfigExistingLoggers();
+        }
+
+        Assert.Equal(b, result.FailedWorkOrderId);
+        Assert.Contains("剛剛已被其他人修改", result.FailureMessage);
+        Assert.DoesNotContain("未預期", result.FailureMessage);
+        Assert.Contains(target.Logs, l => l.StartsWith("Warn|"));
+        Assert.DoesNotContain(target.Logs, l => l.StartsWith("Error|") || l.StartsWith("Fatal|"));
     }
 
     [Fact]

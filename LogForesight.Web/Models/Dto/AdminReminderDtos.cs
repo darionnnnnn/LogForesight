@@ -1,11 +1,9 @@
-using System.Text.Json.Serialization;
-
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>
 /// 管理者提醒的彙整結果（<c>GET api/work-orders/admin-reminders</c>）：三類的筆數與明細，
 /// 交辦總覽的提醒區與管理者摘要信共用同一份（<c>AdminReminderService.Compute</c>）。
-/// 明細每類最多 50 筆，筆數是全部。
+/// 明細每類最多 50 筆，筆數是全部。只含回應欄位；入列與信件用的內部彙整欄位在 <c>AdminReminderResult</c>。
 /// </summary>
 public sealed class AdminReminderDto
 {
@@ -33,30 +31,17 @@ public sealed class AdminReminderDto
     public List<AdminReminderEscalatedDto> Escalated { get; set; } = new();
     public List<AdminReminderUnassignableDto> Unassignable { get; set; } = new();
     public List<AdminReminderNoRecipientDto> NoRecipient { get; set; } = new();
-
-    // ── 以下只給彙整函式與入列用，不序列化 ──
-    [JsonIgnore] public int MailEscalatedCount { get; set; }
-    [JsonIgnore] public int MailNoRecipientCount { get; set; }
-    [JsonIgnore] public bool UnassignableDueForMail { get; set; }
-    [JsonIgnore] public List<string> MailEscalatedKeys { get; set; } = new();
-    [JsonIgnore] public List<string> MailNoRecipientKeys { get; set; } = new();
-    [JsonIgnore] public List<AdminReminderEscalatedDto> EscalatedAll { get; set; } = new();
-    [JsonIgnore] public List<AdminReminderNoRecipientDto> NoRecipientAll { get; set; } = new();
 }
 
 /// <summary>上報逾期的一個成員（主機＋問題）</summary>
 public sealed class AdminReminderEscalatedDto
 {
-    [JsonIgnore] public string CaseId { get; set; } = "";
     public long WorkOrderId { get; set; }
     public string IssueLabel { get; set; } = "";
     public string HostName { get; set; } = "";
 
     /// <summary>上報後已過幾天</summary>
     public int Days { get; set; }
-
-    /// <summary>這次夜間彙整要不要提醒（距上次提醒已滿間隔天數）</summary>
-    [JsonIgnore] public bool DueForMail { get; set; }
 }
 
 /// <summary>派不出去的問題；<see cref="Reason"/> 是 no_pool／all_paused／no_visibility</summary>
@@ -72,6 +57,4 @@ public sealed class AdminReminderNoRecipientDto
 {
     public long WorkOrderId { get; set; }
     public string IssueLabel { get; set; } = "";
-
-    [JsonIgnore] public bool DueForMail { get; set; }
 }

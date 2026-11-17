@@ -15,7 +15,7 @@ public class UserFacingMessageGuardTests
     private const string SelfAuthored = "捕捉範圍僅限單一呼叫、該呼叫自擲的中文業務訊息（非框架例外）";
 
     private static readonly Regex MessageUse = new(
-        @"\b(?:ex|exception|[A-Za-z]*Ex|workflowError|error|domain|conflict|busy|transfer|deidentification)\.Message\b",
+        @"\b(?:ex|exception|[A-Za-z]*Ex|workflowError|error|domain|conflict|busy|transfer|deidentification|rule|scopeConflict|discovery)\.Message\b",
         RegexOptions.Compiled);
 
     private static readonly Regex LogOnly = new(@"\b(?:Log|logger)\.[A-Za-z]+\(", RegexOptions.Compiled);
@@ -40,6 +40,9 @@ public class UserFacingMessageGuardTests
         ("Filters/ApiExceptionFilter.cs", "busy.Message", "例外過濾器本身：只對已登錄型別取訊息"),
         ("Filters/ApiExceptionFilter.cs", "transfer.Message", "例外過濾器本身：只對已登錄型別取訊息"),
         ("Filters/ApiExceptionFilter.cs", "deidentification.Message", "例外過濾器本身：只對已登錄型別取訊息"),
+        ("Filters/ApiExceptionFilter.cs", "rule.Message", "例外過濾器本身：只對已登錄型別取訊息"),
+        ("Filters/ApiExceptionFilter.cs", "scopeConflict.Message", "例外過濾器本身：只對已登錄型別取訊息"),
+        ("Filters/ApiExceptionFilter.cs", "discovery.Message", "例外過濾器本身：只對已登錄型別取訊息"),
         ("Models/UserFacingMessage.cs", "ex.Message", "規則小幫手本身：已先判斷型別"),
         ("Program.cs", "\"啟動失敗：\" + ex.Message", "啟動期寫到主控台給部署人員，站台尚未提供任何 API"),
         ("Services/SentinelAdminService.cs", "? ex.Message", "只有 SafeCode＝invalid-base-url（位址未設定或格式不正確）才給原文，訊息只含使用者自己填的位址與修正方式"),
@@ -50,9 +53,6 @@ public class UserFacingMessageGuardTests
         ("Services/PrtgBackfillService.cs", "error = ex.Message", "只捕捉 DomainException"),
         ("Services/PrtgDiagnosticExportActionResult.cs", "error is PrtgTransferStoreException ? error.Message", "先判型別為已登錄的專屬例外才用原訊息，其餘給固定說明"),
         ("Services/PrtgSnapshotHostedService.cs", "InvalidDataException or PrtgSnapshotJournalLockedException => ex.Message", "兩種例外都是 PrtgSnapshotJournal 自己寫的中文（不含路徑）；其餘型別給固定說明"),
-        ("Services/WorkOrderCommandService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（只捕捉 WorkOrderRuleException；其餘例外記錄後往上拋）"),
-        ("Services/WorkOrderReplyService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（只捕捉 WorkOrderRuleException；其餘例外記錄後往上拋）"),
-        ("Services/WorkOrderReplyService.cs", "ex is DomainException ? ex.Message", "先判型別為領域例外才用原訊息，其餘給固定說明"),
     };
 
     private static string FindRepoRoot()

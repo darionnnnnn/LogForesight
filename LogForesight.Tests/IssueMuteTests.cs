@@ -5,6 +5,7 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -460,6 +461,73 @@ public sealed class IssueMuteTests : IDisposable
         Assert.Equal(2, _audit.Entries.Count);
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.WorkOrderAdminClose && e.TargetId == order.ToString());
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.IssueMute && e.Summary.Contains("代為結案進行中交辦單 1 張"));
+    }
+
+    [Fact]
+    public void SetMute_代為結案中途失敗_已結案的發代為結案通知_仍進行中的單補發靜音暫停通知()
+    {
+        using var fx = new EfSqliteFixture();
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var outbox = new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey));
+        var mail = NewMail(fx, settings, outbox);
+
+        var first = CreateActiveOrder("SRV-01", 9);
+        var second = CreateActiveOrder("SRV-02", 10);
+        var third = CreateActiveOrder("SRV-03", 11);
+        _orders.FailSaveForId = second;
+
+        var admin = new IssueOwnerAdminService(_owners, new FakeIssueAggregateQuery(), _users, _audit,
+            FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle),
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, mail: mail);
+        admin.SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "設備維護", ExistingOrders = "close" });
+
+        var items = outbox.Get().Items.Values.ToList();
+        Assert.Equal(WorkOrderOutboxKinds.AdminClosed, Assert.Single(items, i => i.WorkOrderId == first).Kind);
+        // 失敗那張與未處理的單仍進行中：處理人要知道這張單暫停了，不是被結案
+        Assert.Equal(WorkOrderOutboxKinds.MutePaused, Assert.Single(items, i => i.WorkOrderId == second).Kind);
+        Assert.Equal(WorkOrderOutboxKinds.MutePaused, Assert.Single(items, i => i.WorkOrderId == third).Kind);
+    }
+
+    private MailNotificationService NewMail(EfSqliteFixture fx, FakeSystemSettingsStore settings, WorkOrderOutboxStore outbox) => new(
+        settings, new FakeSmtpMailSender(), _hosts, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
+        new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(fx.Blob("mail_notify_state")),
+        new ScheduleFreshnessService(
+            new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
+            new ScheduleOptionsStore(fx.Blob("schedule_options"))),
+        outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), new FakeIssueOwnerStore());
+
+    [Theory]
+    [InlineData(false, 1, 1, 1)]
+    [InlineData(true, 0, 0, 0)]
+    public void 管理者提醒_目前靜音中的問題不列入_上報逾期_沒有收件人_派不出去三類(bool muted, int escalated, int noRecipient, int unassignable)
+    {
+        using var fx = new EfSqliteFixture();
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; s.EscalationReminderDays = 3; });
+        var mail = NewMail(fx, settings, new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey)));
+        var state = new MailNotifyStateStore(fx.Blob("admin_reminder_state"));
+
+        var orderId = CreateActiveOrder("SRV-01", 9);
+        var member = _cases.GetMany(new[] { "SRV-01" }).Single();
+        member.Status = IssueHandlingStatuses.Escalated;
+        member.EscalatedAt = DateTime.Now.AddDays(-10);
+        _cases.Save(member);
+        state.Update(st =>
+        {
+            st.NoRecipientEscalations.Add(new NoRecipientEscalation { WorkOrderId = orderId, At = DateTime.Now.AddDays(-9) });
+            st.LastUnassignable.Add(new UnassignableIssue { IssueLabel = $"{Source} {EventId}", Reason = "no_pool", Hosts = 1 });
+        });
+
+        var profiles = muted
+            ? new[] { Profile((Today.AddDays(-1), Today.AddDays(2))) }
+            : Array.Empty<IssueProfile>();
+        var service = new AdminReminderService(settings, _orders, _cases, _hosts, _users, new FakeUserGroupStore(), state, mail,
+            new FixedIssueExclusionSource(IssueExclusion.From(profiles, Today)));
+
+        var dto = service.Compute();
+
+        Assert.Equal((escalated, noRecipient, unassignable), (dto.EscalatedCount, dto.NoRecipientCount, dto.UnassignableCount));
     }
 
     [Fact]

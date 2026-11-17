@@ -31,7 +31,7 @@ const detailSource = read('work-order-detail.js');
 const listSource = read('work-orders.js');
 const usersSource = read('users.js');
 
-function env() {
+function env(capabilities = ['Assign', 'ViewAll']) {
     const dom = installDom();
     const { fact, statusNote, roleText } = loadElements(dom);
     const statusBadge = (text, variant, opts = {}) => {
@@ -44,19 +44,22 @@ function env() {
     const toasts = [];
     const toast = (message, type, delay, options) => toasts.push({ message, type, delay, options });
     const appUrl = p => `/lf${p}`;
-    return { fact, statusNote, roleText, statusBadge, toast, toasts, appUrl };
+    const currentUser = { userId: 1, capabilities };
+    const hasCapability = (user, capability) => Array.isArray(user?.capabilities) && user.capabilities.includes(capability);
+    return { fact, statusNote, roleText, statusBadge, toast, toasts, appUrl, currentUser, hasCapability };
 }
 
-const detailFns = e => new Function('fact', 'statusNote', 'roleText', 'statusBadge', 'appUrl', 'document',
-    `${extractFunction(detailSource, 'function memberGapFacts(')}\n${extractFunction(detailSource, 'function continuationStopNote(')}\n` +
+const detailFns = e => new Function('fact', 'statusNote', 'roleText', 'statusBadge', 'appUrl', 'document', 'hasCapability', 'currentUser',
+    `${extractFunction(detailSource, 'function viewerIsAdminLike(')}\n${extractFunction(detailSource, 'function memberGapFacts(')}\n${extractFunction(detailSource, 'function continuationStopNote(')}\n` +
     `${extractFunction(detailSource, 'function renderMemberHostCell(')}\nreturn { memberGapFacts, continuationStopNote, renderMemberHostCell };`)(
-    e.fact, e.statusNote, e.roleText, e.statusBadge, e.appUrl, document);
+    e.fact, e.statusNote, e.roleText, e.statusBadge, e.appUrl, document, e.hasCapability, e.currentUser);
 
 const listBadge = e => new Function('statusBadge',
     `${extractFunction(listSource, 'function continuationStoppedBadge(')}\nreturn continuationStoppedBadge;`)(e.statusBadge);
 
-const usersNotice = e => new Function('toast', 'appUrl', 'URLSearchParams',
-    `${extractFunction(usersSource, 'function notifyActiveWorkOrders(')}\nreturn notifyActiveWorkOrders;`)(e.toast, e.appUrl, URLSearchParams);
+const usersNotice = e => new Function('toast', 'appUrl', 'URLSearchParams', 'getCurrentUser', 'hasCapability',
+    `${extractFunction(usersSource, 'async function notifyActiveWorkOrders(')}\nreturn notifyActiveWorkOrders;`)(
+    e.toast, e.appUrl, URLSearchParams, async () => e.currentUser, e.hasCapability);
 
 const cases = {
     // D8：處理人都看得到（0）→ 頁首事實列不多任何東西
@@ -114,18 +117,18 @@ const cases = {
     },
 
     // D7：停用或暫停後 0 張單 → 不提示
-    noticeSilentWhenZero() {
+    async noticeSilentWhenZero() {
         const e = env();
         const notify = usersNotice(e);
-        notify({ userId: 5, account: 'DOMAIN\\h1' }, 0, '停用');
-        notify({ userId: 5, account: 'DOMAIN\\h1' }, undefined, '暫停接單');
+        await notify({ userId: 5, account: 'DOMAIN\\h1' }, 0, '停用');
+        await notify({ userId: 5, account: 'DOMAIN\\h1' }, undefined, '暫停接單');
         assert.equal(e.toasts.length, 0);
     },
 
     // D7：>0 張 → 提示張數，連到已篩選（該處理人、進行中）的交辦總覽，路徑走 appUrl
-    noticeWithLinkWhenPositive() {
+    async noticeWithLinkWhenPositive() {
         const e = env();
-        usersNotice(e)({ userId: 5, account: 'DOMAIN\\h1' }, 3, '暫停接單');
+        await usersNotice(e)({ userId: 5, account: 'DOMAIN\\h1' }, 3, '暫停接單');
         assert.equal(e.toasts.length, 1);
         const t = e.toasts[0];
         assert.equal(t.type, 'warning');
@@ -133,6 +136,32 @@ const cases = {
         assert.ok(t.message.includes('暫停接單'));
         assert.equal(t.options.link.href, '/lf/work-orders?handlerId=5&status=active');
         assert.ok(t.options.link.text.length > 0);
+    },
+
+    // 救援帳號（只有 Maintain、ViewAudit）進不了交辦總覽：不附連結，改請通知系統管理員
+    async noticeWithoutLinkWhenViewerCannotOpenWorkOrders() {
+        const e = env(['Maintain', 'ViewAudit']);
+        await usersNotice(e)({ userId: 5, account: 'DOMAIN\\h1' }, 3, '停用');
+        assert.equal(e.toasts.length, 1);
+        const t = e.toasts[0];
+        assert.ok(t.message.includes('3 張進行中的交辦單'));
+        assert.ok(t.message.includes('請通知系統管理員改派或結案'));
+        assert.ok(!t.options?.link, '進不去的人不給連結');
+    },
+
+    // 只有 ViewAll（例如主管）進得了交辦總覽：照樣附連結
+    async noticeWithLinkWhenViewerHasViewAllOnly() {
+        const e = env(['ViewAll']);
+        await usersNotice(e)({ userId: 5, account: 'DOMAIN\\h1' }, 2, '停用');
+        assert.equal(e.toasts[0].options.link.href, '/lf/work-orders?handlerId=5&status=active');
+    },
+
+    // 處理人本人（只有 Handle）看單：不顯示寫給管理者的「處理人目前看不到」與續掛已停止
+    handlerViewerDoesNotSeeAdminOnlyMarks() {
+        const { memberGapFacts, continuationStopNote } = detailFns(env(['Handle']));
+        const facts = memberGapFacts({ counts: { active: 3, activeOnDisabledHosts: 1 }, handlerUnseenMemberCount: 2 });
+        assert.deepEqual(facts.map(f => f.textContent.split(' ')[0]), ['主機已停用'], '停用主機的事實仍顯示，看不到台數不顯示');
+        assert.equal(continuationStopNote({ continuationStopped: true, continuationStoppedLabel: '處理人暫停接單' }), null);
     }
 };
 

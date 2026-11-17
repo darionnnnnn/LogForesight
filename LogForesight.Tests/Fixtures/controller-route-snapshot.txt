@@ -240,7 +240,7 @@ POST	/api/suppressions	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/work-orders	C=Assign|ViewAll;A=-	-	-	-	WorkOrderListController
 POST	/api/work-orders	C=Assign;A=-	-	-	-	WorkOrdersController
 GET	/api/work-orders/admin-reminders	C=Assign|ViewAll;A=-	-	-	skipbump	WorkOrderBoardController
-POST	/api/work-orders/auto-dispatch	C=Maintain;A=-	-	-	-	WorkOrderAutoDispatchController
+POST	/api/work-orders/auto-dispatch	C=Assign;A=-	-	-	-	WorkOrderAutoDispatchController
 POST	/api/work-orders/candidates	C=Assign;A=Assign	-	-	skipbump	WorkOrdersController
 GET	/api/work-orders/dismissed	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController
 POST	/api/work-orders/dismissed/restore	C=Assign;A=-	-	-	-	WorkOrderDismissedController

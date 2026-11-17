@@ -126,8 +126,6 @@ public static class ContinuationStopReasons
     /// <summary>處理人看不到這台新主機</summary>
     public const string HostNotVisible = "host_not_visible";
 
-    public static readonly string[] All = { HandlerInactive, HandlerPaused, HostNotVisible };
-
     public static string? LabelOf(string? code) => code switch
     {
         HandlerInactive => "處理人已停用或失去處理能力",

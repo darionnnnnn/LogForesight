@@ -24,6 +24,7 @@ public class WorkOrderDigestTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSmtpMailSender _sender = new();
     private readonly FakeUserStore _users = new();
+    private readonly FakeHostStore _hosts = new();
     private readonly FakeIssueCaseStore _cases = new();
     private readonly FakeWorkOrderStore _orders;
     private readonly FakeRuleStore _rules = new();
@@ -42,7 +43,7 @@ public class WorkOrderDigestTests : IDisposable
             new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
             new ScheduleOptionsStore(_fx.Blob("schedule_options")));
         _mail = new MailNotificationService(
-            _settingsStore, _sender, new FakeHostStore(), _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
+            _settingsStore, _sender, _hosts, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), new FakeHandlingStore(), _state, freshness, _outbox,
             _orders, _cases, _rules, new FakeIssueOwnerStore());
 
@@ -143,6 +144,23 @@ public class WorkOrderDigestTests : IDisposable
         var sent = Assert.Single(_sender.Sent);
         Assert.Contains($"單號 {id1}", sent.Message.Body);
         Assert.Contains($"單號 {id2}", sent.Message.Body);
+    }
+
+    [Fact]
+    public async Task A3_信中台數與主機名單排除停用主機_與畫面同口徑()
+    {
+        var id = SeedOrder("Schannel 36888", 3, _alice.UserId);
+        _hosts.Upsert(new WebHost { HostName = "host-01", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "host-02", Active = false });
+        _hosts.Upsert(new WebHost { HostName = "host-03", Active = true });
+        Enqueue(WorkOrderOutboxKinds.Created, id, _alice.UserId, At(0, 11, 30));
+
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(0, 12));
+
+        var body = Assert.Single(_sender.Sent).Message.Body;
+        Assert.Contains($"單號 {id}：Schannel 36888（2 台）", body);
+        Assert.Contains("主機：host-01、host-03", body);
+        Assert.DoesNotContain("host-02", body);
     }
 
     // ── (b) 時刻之後入列的等下一個時刻 ──────────────────────────────────────
@@ -443,6 +461,52 @@ public class WorkOrderDigestTests : IDisposable
         Assert.Contains("【退回】", body);
         Assert.Contains("單號 301：Disk Full，由 admin3 退回：磁碟已換新，請重試", body);
         Assert.DoesNotContain("【取消】", body);
+    }
+
+    [Fact]
+    public void J4c_Build_只含知會類_結尾改寫不需回覆_不叫人去檢視單號()
+    {
+        foreach (var kind in new[] { WorkOrderOutboxKinds.AdminClosed, WorkOrderOutboxKinds.Cancelled, WorkOrderOutboxKinds.Transferred })
+        {
+            var (_, body) = WorkOrderDigestBuilder.Build(new[] { (Item(kind, 401), (WorkOrderDigestOrder?)Order(401)) });
+            Assert.Contains("這些單不需要你再回覆。", body);
+            Assert.DoesNotContain("檢視上列單號", body);
+        }
+
+        // 靜音暫停：另寫去哪裡看暫停的單（勾選框文字與處理人頁一致）
+        var (_, paused) = WorkOrderDigestBuilder.Build(new[] { (Item(WorkOrderOutboxKinds.MutePaused, 402), (WorkOrderDigestOrder?)Order(402)) });
+        Assert.Contains("這些單不需要你再回覆。", paused);
+        Assert.Contains("勾選「只看暫停的單」查看", paused);
+    }
+
+    [Fact]
+    public void J4d_Build_含需處理人動作的種類_仍請處理人檢視上列單號()
+    {
+        foreach (var kind in new[] { WorkOrderOutboxKinds.Created, WorkOrderOutboxKinds.Appended, WorkOrderOutboxKinds.Returned, WorkOrderOutboxKinds.MuteResumed })
+        {
+            var (_, body) = WorkOrderDigestBuilder.Build(new[] { (Item(kind, 410), (WorkOrderDigestOrder?)Order(410)) });
+            Assert.Contains("請至站台的「我的交辦」檢視上列單號。", body);
+            Assert.DoesNotContain("不需要你再回覆", body);
+        }
+
+        // 混合：只要有一類需要動作就用檢視句
+        var (_, mixed) = WorkOrderDigestBuilder.Build(new[]
+        {
+            (Item(WorkOrderOutboxKinds.Cancelled, 411), (WorkOrderDigestOrder?)Order(411)),
+            (Item(WorkOrderOutboxKinds.Created, 412), (WorkOrderDigestOrder?)Order(412))
+        });
+        Assert.Contains("檢視上列單號", mixed);
+        Assert.DoesNotContain("不需要你再回覆", mixed);
+    }
+
+    [Fact]
+    public void J4e_Build_退回說明主機已改回處理中_取消說明夜間可能重新派工()
+    {
+        var (_, returned) = WorkOrderDigestBuilder.Build(new[] { (Item(WorkOrderOutboxKinds.Returned, 420, reason: "請重試"), (WorkOrderDigestOrder?)Order(420)) });
+        Assert.Contains("這些主機已改回處理中，請重新處理並回覆。", returned);
+
+        var (_, cancelled) = WorkOrderDigestBuilder.Build(new[] { (Item(WorkOrderOutboxKinds.Cancelled, 421, reason: "誤派"), (WorkOrderDigestOrder?)Order(421)) });
+        Assert.Contains("問題若仍出現，夜間派工可能重新派工。", cancelled);
     }
 
     [Fact]

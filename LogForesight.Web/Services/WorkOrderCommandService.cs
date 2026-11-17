@@ -159,7 +159,7 @@ public class WorkOrderCommandService
         var daySyncPending = 0;
         foreach (var allocation in plan.Allocations)
         {
-            var outcome = Guard(() => _coordinator.Create(new WorkOrderCreateRequest
+            var outcome = _coordinator.Create(new WorkOrderCreateRequest
             {
                 Source = plan.Source, EventId = plan.EventId, IssueLabel = plan.IssueLabel,
                 HandlerId = allocation.Handler.UserId, Origin = WorkOrderOrigins.Manual,
@@ -168,7 +168,7 @@ public class WorkOrderCommandService
                 ReassignConflicts = req.ReassignConflicts,
                 Members = allocation.Hosts.SelectMany(h => h.Effective).ToList(),
                 Actor = actor
-            }));
+            });
 
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
@@ -264,7 +264,7 @@ public class WorkOrderCommandService
         if (members.Count == 0)
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
 
-        var outcome = Guard(() => _coordinator.Append(id, members, req.ReassignConflicts, _currentUser.ToWorkOrderActor(_clock)));
+        var outcome = _coordinator.Append(id, members, req.ReassignConflicts, _currentUser.ToWorkOrderActor(_clock));
         var noiseExcluded = resolved.Count(r => r.NoiseExcluded);
 
         _audit.Record(
@@ -305,7 +305,7 @@ public class WorkOrderCommandService
         if (handler.UserId == order.HandlerId)
             throw DomainException.Validation($"{NameOf(handler)} 已經是這張交辦單的處理人。");
 
-        var result = Guard(() => _coordinator.Reassign(id, handler.UserId, _currentUser.ToWorkOrderActor(_clock)));
+        var result = _coordinator.Reassign(id, handler.UserId, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderReassign,
@@ -330,7 +330,7 @@ public class WorkOrderCommandService
         var order = GetOrder(id);
         var handler = ResolveActiveHandler(req.HandlerId);
 
-        var result = Guard(() => _coordinator.Split(id, req.CaseIds, handler.UserId, _currentUser.ToWorkOrderActor(_clock)));
+        var result = _coordinator.Split(id, req.CaseIds, handler.UserId, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderSplit,
@@ -355,7 +355,7 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "取消交辦單要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.Cancel(id, reason, _currentUser.ToWorkOrderActor(_clock)));
+        var result = _coordinator.Cancel(id, reason, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderCancel,
@@ -378,7 +378,7 @@ public class WorkOrderCommandService
         var note = RequireReason(req.Note, "退回處理人要填說明。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.Return(id, _currentUser.ToWorkOrderActor(_clock), note));
+        var result = _coordinator.Return(id, _currentUser.ToWorkOrderActor(_clock), note);
 
         _audit.Record(
             action: AuditActions.WorkOrderReturn,
@@ -404,7 +404,7 @@ public class WorkOrderCommandService
 
         // 「已處理」不是不處理類，勾選值一律忽略；只有不處理類且勾選才擋住之後的派工
         var blocksRedispatch = req.Status != IssueHandlingStatuses.Resolved && req.BlockRedispatch;
-        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch));
+        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch);
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
@@ -684,28 +684,6 @@ public class WorkOrderCommandService
         if (trimmed.Length > ReasonMaxLength)
             throw DomainException.Validation($"原因不可超過 {ReasonMaxLength} 字。");
         return trimmed;
-    }
-
-    /// <summary>
-    /// 協調器的規則違反（<see cref="WorkOrderRuleException"/>：成員不屬於本單、已結案、缺原因等）轉成 400。
-    /// 其他 ArgumentException／InvalidOperationException 可能來自框架層（EF／LINQ，英文內部細節），
-    /// 記錄後原樣往上拋，由 ApiExceptionFilter 回 500 與固定說明，不把原文給使用者
-    /// </summary>
-    private static T Guard<T>(Func<T> action)
-    {
-        try
-        {
-            return action();
-        }
-        catch (WorkOrderRuleException ex)
-        {
-            throw DomainException.Validation(ex.Message);
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            Log.Warn(ex, "交辦單操作擲出非規則例外（不轉成使用者訊息）");
-            throw;
-        }
     }
 
     private WorkOrderMoveResultDto ToMoveResult(long id, WorkOrderMoveResult result, WebUser handler) => new()

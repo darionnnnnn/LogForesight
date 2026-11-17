@@ -565,6 +565,30 @@ public class WorkOrderQueryServiceTests
     }
 
     [Fact]
+    public void 清單_HandlerInactive也包含失去處理能力者_與續掛停止原因同義()
+    {
+        var handleGroup = _userGroups.Upsert(new UserGroup { GroupName = "處理組", Role = UserRole.User, Active = true });
+        var viewGroup = _userGroups.Upsert(new UserGroup { GroupName = "主管組", Role = UserRole.Manager, Active = true });
+        _alice.GroupIds = new List<long> { handleGroup.GroupId };
+        _bob.GroupIds = new List<long> { viewGroup.GroupId };   // 帳號啟用但角色不含處理能力
+        _users.Upsert(_alice);
+        _users.Upsert(_bob);
+        _stranger.Active = false;
+        var alices = AddOrder(_alice.UserId);
+        var bobs = AddOrder(_bob.UserId);
+        var strangers = AddOrder(_stranger.UserId);
+        var svc = new WorkOrderQueryService(
+            _orders, _cases, _users, _hosts, _hostGroups, new FakeRuleStore(), new ScopedVisibility(Array.Empty<long>()), As(1, Capability.Assign),
+            new UserDisplayNameService(_settings), _exclusionSource, _userGroups, _records,
+            capabilities: new UserCapabilityResolver(_userGroups, _hosts));
+
+        var ids = Ids(svc.List(new WorkOrderListRequest { HandlerInactive = true }));
+
+        Assert.Equal(new[] { strangers, bobs }.OrderBy(i => i), ids.OrderBy(i => i));
+        Assert.DoesNotContain(alices, ids);
+    }
+
+    [Fact]
     public void 清單_HandlerInactive只列停用者的單_與HandlerId取交集()
     {
         _bob.Active = false;
@@ -741,6 +765,22 @@ public class WorkOrderQueryServiceTests
 
         Assert.Equal(new[] { mine }, Ids(dto));
         Assert.Equal(1, dto.Total);
+    }
+
+    /// <summary>處理人工作頁頁頭的「目前暫停接單」直接讀摘要，不靠清單列推測（從沒被派過單的人也要標得出來）</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void HandlerSummary_帶出處理人是否暫停接單_沒有任何單也一樣(bool paused)
+    {
+        _bob.DispatchPaused = paused;
+        _users.Upsert(_bob);
+        var svc = Service(As(_stranger.UserId, Capability.Assign));
+
+        var summary = svc.HandlerSummary(_bob.UserId);
+
+        Assert.Equal(0, summary.ActiveWorkOrders);
+        Assert.Equal(paused, summary.HandlerPaused);
     }
 
     [Theory]

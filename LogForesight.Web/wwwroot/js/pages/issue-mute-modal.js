@@ -10,7 +10,7 @@
  * 送出的請求本體完全相同。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { toast, withBusy, showDetailModal, button } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
@@ -82,6 +82,8 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     }
     const canClose = hasCapability(user, 'Assign') && hasCapability(user, 'Handle');
     const activeOrders = await loadActiveOrders(source, eventId);
+    // 結案通知要不要寄取決於交辦單通知開關：依設定說明，不承諾不一定寄出的信
+    const { mailWorkOrdersEnabled } = await getDisplaySettings();
 
     const isExtend = !!currentMute;
     const actionText = isExtend ? '延長靜音' : '靜音問題';
@@ -207,7 +209,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
         if (canClose) {
             const closeNote = document.createElement('div');
             closeNote.className = 'form-text';
-            closeNote.textContent = '代為結案：這些交辦單以「不處理」結案並通知處理人；靜音期間不派工，靜音結束後問題再出現會重新自動派工';
+            closeNote.textContent = `代為結案：這些交辦單以「不處理」結案，${mailWorkOrdersEnabled ? '處理人會在下一封交辦摘要收到通知' : '目前未啟用交辦單通知，請自行告知處理人'}；靜音期間不派工，靜音結束後問題再出現會重新自動派工`;
             section.appendChild(closeNote);
         }
 

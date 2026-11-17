@@ -3,6 +3,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Core.Time;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services.Mail;
 
@@ -33,6 +34,7 @@ public class HealthService
     private readonly PrtgSnapshotHostedService? _snapshotService;
     private readonly HostDayWorkflowRecoveryHostedService? _recoveryService;
     private readonly IReadOnlyList<ICacheStatistics> _caches;
+    private readonly TimeProvider _clock;
 
     public HealthService(
         StorageBackend backend,
@@ -43,8 +45,10 @@ public class HealthService
         IssueFirstSeenSeedHostedService? firstSeenSeedService = null,
         PrtgSnapshotHostedService? snapshotService = null,
         IEnumerable<ICacheStatistics>? caches = null,
-        HostDayWorkflowRecoveryHostedService? recoveryService = null)
+        HostDayWorkflowRecoveryHostedService? recoveryService = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _recoveryService = recoveryService;
         _backend = backend;
         _runState = runState;
@@ -134,7 +138,18 @@ public class HealthService
     /// <summary>取得排程資料新鮮度（任務 A-3）</summary>
     public ScheduleFreshnessDto GetScheduleFreshness(DateTime now) => _freshness.GetScheduleFreshness(now);
 
+    /// <summary>
+    /// 完整診斷。算出新結果後順手更新告示列（<see cref="GetAttention"/>）的快取——兩者同一份判定，
+    /// 健康頁已經正常時導覽告示不該再掛著舊的警示直到快取過期。
+    /// </summary>
     public HealthDetailDto GetDetail()
+    {
+        var detail = BuildDetail();
+        StoreAttention(detail);
+        return detail;
+    }
+
+    private HealthDetailDto BuildDetail()
     {
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
@@ -331,22 +346,27 @@ public class HealthService
     /// </summary>
     public HealthAttentionDto GetAttention()
     {
-        var now = (UtcNowOverride ?? (() => DateTime.UtcNow))();
+        var now = _clock.UtcNow();
         lock (_attentionLock)
         {
             if (_attentionCache != null && now - _attentionCachedAt < AttentionCacheTtl && now >= _attentionCachedAt)
                 return _attentionCache;
         }
 
-        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖
+        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖（GetDetail 算完會順手更新快取）
         var detail = GetDetail();
+        return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+    }
+
+    private void StoreAttention(HealthDetailDto detail)
+    {
         var fresh = new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        var now = _clock.UtcNow();
         lock (_attentionLock)
         {
             _attentionCache = fresh;
             _attentionCachedAt = now;
         }
-        return fresh;
     }
 
     /// <summary>
@@ -360,9 +380,6 @@ public class HealthService
     private readonly object _attentionLock = new();
     private HealthAttentionDto? _attentionCache;
     private DateTime _attentionCachedAt;
-
-    /// <summary>測試用：替換 <see cref="GetAttention"/> 快取的時間來源（正式碼不設，用 UTC 現在）。</summary>
-    internal Func<DateTime>? UtcNowOverride { get; set; }
 
     /// <summary>PRTG 擷取紀錄類別的中文名（與前端 <c>prtgFreshnessLabel</c> 同一份對照；未知類別原樣）</summary>
     private static string PrtgFreshnessLabel(string category) => category switch

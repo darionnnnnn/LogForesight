@@ -54,16 +54,16 @@ const textOf = node => node.textContent;
 const notes = root => all(root).filter(n => n.classList?.contains('lf-status-note'));
 
 // ── 代為結案對話框 ───────────────────────────────────────────────
-function openAdminClose(activeCount = 3, onDisabled = 0) {
+async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security' } = {}) {
     const env = makeEnv();
     const source = read('pages', 'work-order-detail.js');
-    const fn = extract(source, 'function openAdminCloseModal(');
+    const fn = extract(source, 'async function openAdminCloseModal(');
     const api = { post: async (url, payload) => { env.posts.push({ url, payload }); return { closedCases: activeCount }; } };
     const run = new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
-        'currentDetail', 'workOrderId', 'reloadAll', `${fn}\nreturn openAdminCloseModal;`)(
+        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', `${fn}\nreturn openAdminCloseModal;`)(
         env.button, env.statusNote, catalog.statusesWhere, catalog.isNoFixClosure, env.showDetailModal, api,
-        (m, t) => env.toasts.push({ m, t }), () => () => { }, { counts: { active: activeCount, activeOnDisabledHosts: onDisabled } }, 7, async () => { });
-    run();
+        (m, t) => env.toasts.push({ m, t }), () => () => { }, { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled } }, 7, async () => { }, async () => ({ mailWorkOrdersEnabled: mail }));
+    await run();
     const body = env.shown[0].body;
     const form = body.children[0];
     const block = byId(body, 'wo-close-block');
@@ -84,7 +84,7 @@ function openAdminClose(activeCount = 3, onDisabled = 0) {
 const cases = {
     // B5-a：打開時沒有預選、確認鈕停用
     async adminCloseOpensWithoutPreselection() {
-        const m = openAdminClose();
+        const m = await openAdminClose();
         assert.equal(m.select.value, '', '結案狀態不預選');
         assert.equal(m.submit.disabled, true, '未選狀態、未填原因時確認鈕停用');
         m.write('原因');
@@ -96,7 +96,7 @@ const cases = {
     },
     // B5-a：勾選框只在不處理類出現、預設不勾、改選已處理時清掉
     async adminCloseBlockCheckboxOnlyForNoFix() {
-        const m = openAdminClose();
+        const m = await openAdminClose();
         assert.equal(hidden(m.blockWrap), true, '未選狀態時不出現');
         m.pick('resolved');
         assert.equal(hidden(m.blockWrap), true, '已處理不出現');
@@ -115,10 +115,10 @@ const cases = {
     },
     // B5-a：後果說明三件事都看得到、確認鈕寫出台數
     async adminCloseExplainsConsequences() {
-        const m = openAdminClose(5);
+        const m = await openAdminClose(5);
         m.pick('wont_fix');
         const text = notes(m.consequence).map(textOf).join('｜');
-        assert.ok(text.includes('處理人會收到'), '處理人會收到通知');
+        assert.ok(text.includes('結案通知'), '通知開啟時說處理人會收到結案通知');
         assert.ok(text.includes('重新派工'), '不勾時問題再出現會重新派工');
         assert.ok(text.includes('勾選') && text.includes('靜音'), '可以勾選或改用靜音');
         assert.ok(notes(m.consequence).some(n => n.classList.contains('lf-status-note--warning')), '後果用 warning 型提示');
@@ -127,18 +127,18 @@ const cases = {
         assert.ok(!notes(m.consequence).map(textOf).join('').includes('會重新派工'), '勾選後不再說會重新派工');
         m.pick('resolved');
         assert.ok(!notes(m.consequence).some(n => n.classList.contains('lf-status-note--warning')), '已處理沒有警示');
-        assert.ok(notes(m.consequence).map(textOf).join('').includes('處理人會收到'), '已處理也要說處理人會收到通知');
+        assert.ok(notes(m.consequence).map(textOf).join('').includes('結案通知'), '已處理也要說處理人會收到通知');
         assert.ok(textOf(m.submit).includes('代為結案 5 台'), `確認鈕要含台數：${textOf(m.submit)}`);
     },
     // 單上只剩停用主機的進行中成員：後端仍會結案它們，按鈕台數不能是 0，後果說明帶出停用台數
     async adminCloseCountsMembersOnDisabledHosts() {
-        const m = openAdminClose(0, 2);
+        const m = await openAdminClose(0, 2);
         assert.ok(textOf(m.submit).includes('代為結案 2 台'), `只剩停用主機時台數不是 0：${textOf(m.submit)}`);
         m.pick('resolved');
         assert.ok(notes(m.consequence).map(textOf).join('').includes('含已停用主機 2 台'));
-        const mixed = openAdminClose(3, 1);
+        const mixed = await openAdminClose(3, 1);
         assert.ok(textOf(mixed.submit).includes('代為結案 4 台'));
-        const none = openAdminClose(3, 0);
+        const none = await openAdminClose(3, 0);
         none.pick('resolved');
         assert.ok(!notes(none.consequence).map(textOf).join('').includes('已停用主機'));
     },
@@ -146,16 +146,40 @@ const cases = {
     async continuationStopNoteShowsDate() {
         const env = makeEnv();
         const fn = extract(read('pages', 'work-order-detail.js'), 'function continuationStopNote(');
-        const run = new Function('statusNote', 'formatDate', `${fn}\nreturn continuationStopNote;`)(env.statusNote, v => `D:${v}`);
+        const run = new Function('statusNote', 'formatDate', 'viewerIsAdminLike', `${fn}\nreturn continuationStopNote;`)(env.statusNote, v => `D:${v}`, () => true);
         const withDate = run({ continuationStopped: true, continuationStoppedLabel: '處理人停用', continuationStoppedAt: '2026-11-03T02:00:00' });
         assert.ok(textOf(withDate).includes('續掛已停止（D:2026-11-03T02:00:00）：處理人停用'), textOf(withDate));
         const without = run({ continuationStopped: true, continuationStoppedLabel: '處理人停用', continuationStoppedAt: null });
         assert.ok(textOf(without).includes('續掛已停止：處理人停用'));
         assert.equal(run({ continuationStopped: false }), null);
     },
+    // 結案通知依「交辦單通知」切換：關閉時不承諾信會寄出，改請自行告知（與退回、取消同句型）
+    async adminCloseNotifyTextFollowsMailSetting() {
+        const on = await openAdminClose(3, 0, { mail: true });
+        on.pick('resolved');
+        const onText = notes(on.consequence).map(textOf).join('');
+        assert.ok(onText.includes('下一封交辦摘要收到結案通知'), onText);
+        assert.ok(!onText.includes('未啟用'));
+        const off = await openAdminClose(3, 0, { mail: false });
+        off.pick('resolved');
+        const offText = notes(off.consequence).map(textOf).join('');
+        assert.ok(offText.includes('目前未啟用交辦單通知，請自行告知處理人'), offText);
+        assert.ok(!offText.includes('會在下一封'), '關閉時不可承諾會寄信');
+    },
+    // 多問題單（沒有單一來源）的勾選框不指稱「這個問題」
+    async adminCloseCheckboxWordingForMultiIssueOrder() {
+        const single = await openAdminClose(3, 0, { issueSource: 'Security' });
+        assert.ok(textOf(single.blockWrap).includes('這 3 台主機的這個問題之後不再自動派工'), textOf(single.blockWrap));
+        const multi = await openAdminClose(3, 0, { issueSource: null });
+        const text = textOf(multi.blockWrap);
+        assert.ok(text.includes('這 3 台主機上的問題之後不再自動派工'), text);
+        assert.ok(!text.includes('這個問題'));
+        const one = await openAdminClose(1, 0, { issueSource: null });
+        assert.ok(textOf(one.blockWrap).includes('這台主機上的問題之後不再自動派工'));
+    },
     // B5-a：送出請求帶 blockRedispatch
     async adminCloseSendsBlockRedispatch() {
-        const checked = openAdminClose();
+        const checked = await openAdminClose();
         checked.pick('false_positive');
         checked.block.checked = true;
         checked.tick();
@@ -165,13 +189,13 @@ const cases = {
         assert.equal(checked.env.posts[0].url, '/api/work-orders/7/admin-close');
         assert.deepEqual(checked.env.posts[0].payload, { status: 'false_positive', reason: '誤報', blockRedispatch: true });
 
-        const unchecked = openAdminClose();
+        const unchecked = await openAdminClose();
         unchecked.pick('wont_fix');
         unchecked.write('不處理');
         await unchecked.send();
         assert.equal(unchecked.env.posts[0].payload.blockRedispatch, false);
 
-        const resolved = openAdminClose();
+        const resolved = await openAdminClose();
         resolved.pick('wont_fix');
         resolved.block.checked = true;
         resolved.tick();
@@ -182,7 +206,7 @@ const cases = {
     },
     // 未選狀態硬送（例如 Enter 鍵）也不會打出請求
     async adminCloseRefusesWithoutStatus() {
-        const m = openAdminClose();
+        const m = await openAdminClose();
         m.write('原因');
         await m.send();
         assert.equal(m.env.posts.length, 0);
@@ -195,10 +219,11 @@ const cases = {
         const fn = extract(source, 'export function openWorkOrderReplyModal(').replace(/^export /, '');
         const statusOptions = catalog.statusesWhere(s => s.replyable).map(s => ({ value: s.value, label: s.label }));
         const editor = { setValue() { }, clearDraft() { } };
-        const run = new Function('STATUS_OPTIONS', 'statusNote', 'isNoFixClosure', 'statusMeta', 'makeButton', 'attachNoteEditor',
+        const noFixConsequenceText = new Function(`${extract(source, 'export function noFixConsequenceText(').replace(/^export /, '')}\nreturn noFixConsequenceText;`)();
+        const run = new Function('STATUS_OPTIONS', 'noFixConsequenceText', 'statusNote', 'isNoFixClosure', 'statusMeta', 'makeButton', 'attachNoteEditor',
             'showDetailModal', 'bindPastDateCheck', 'confirmAction', 'withBusy', 'toast', 'todayLocal', 'toLocalDateString', 'MAX_DUE_DATE_DAYS',
             `${fn}\nreturn openWorkOrderReplyModal;`)(
-            statusOptions, env.statusNote, catalog.isNoFixClosure, catalog.statusMeta, env.button, () => editor,
+            statusOptions, noFixConsequenceText, env.statusNote, catalog.isNoFixClosure, catalog.statusMeta, env.button, () => editor,
             env.showDetailModal, () => ({ validate: () => true }), async () => true, () => () => { }, () => { },
             () => '2026-01-01', () => '2026-04-01', 90);
         const open = (extra = {}) => {
@@ -226,6 +251,10 @@ const cases = {
             m.select.dispatch('change');
             assert.equal(hidden(m.note), true, `${value} 不出現說明行`);
         }
+        // 一次涵蓋多台主機或多張單：改用複數說法，不說「這台主機」
+        const many = open({ multiTarget: true });
+        assert.ok(textOf(many.note).includes('這些主機的這個問題之後不會再派給任何人'), textOf(many.note));
+        assert.ok(!textOf(many.note).includes('這台主機'));
         // 「下一張」沿用上一張的初始狀態為不處理類時，一打開就要看得到
         const carried = open({ initialStatus: 'wont_fix' });
         assert.equal(hidden(carried.note), false, '初始就是不處理時一打開就顯示');

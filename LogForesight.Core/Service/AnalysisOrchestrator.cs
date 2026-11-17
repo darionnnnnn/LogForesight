@@ -36,6 +36,12 @@ public class RunRequest
     /// </summary>
     public bool NetiqLedgerRetryOnly { get; init; }
 
+    /// <summary>
+    /// 同窗口續跑（上一趟提早結束後接著處理留下的部分）。續跑與帳本複查趟只處理部分主機日，
+    /// 它的派工結果（尤其「派不出去」清單）不涵蓋全部——管理者提醒據此不拿續跑結果整份取代清單。其餘趟為 false。
+    /// </summary>
+    public bool ContinuesWindow { get; init; }
+
     /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
     public DateTime? CatchUpDeadline { get; init; }
 

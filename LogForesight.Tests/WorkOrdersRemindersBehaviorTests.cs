@@ -16,6 +16,7 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [NodeTheory]
     [InlineData("work-orders-reminders.behavior.mjs", "allZeroShowsNothing")]
     [InlineData("work-orders-reminders.behavior.mjs", "nullShowsNothing")]
+    [InlineData("work-orders-reminders.behavior.mjs", "readOnlyViewerSeesWhoCanAct")]
     [InlineData("work-orders-reminders.behavior.mjs", "allThreeClassesShowRowsWithLinks")]
     [InlineData("work-orders-reminders.behavior.mjs", "onlyNonZeroClassIsListed")]
     [InlineData("work-orders-reminders.behavior.mjs", "rerenderClearsPreviousContent")]

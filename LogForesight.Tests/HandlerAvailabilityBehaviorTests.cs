@@ -26,6 +26,9 @@ public sealed class HandlerAvailabilityBehaviorTests
     [InlineData("handler-availability.behavior.mjs", "memberHostCellMarksDisabledHost")]
     [InlineData("handler-availability.behavior.mjs", "noticeSilentWhenZero")]
     [InlineData("handler-availability.behavior.mjs", "noticeWithLinkWhenPositive")]
+    [InlineData("handler-availability.behavior.mjs", "noticeWithoutLinkWhenViewerCannotOpenWorkOrders")]
+    [InlineData("handler-availability.behavior.mjs", "noticeWithLinkWhenViewerHasViewAllOnly")]
+    [InlineData("handler-availability.behavior.mjs", "handlerViewerDoesNotSeeAdminOnlyMarks")]
     public void 停用主機與處理人資格提示的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

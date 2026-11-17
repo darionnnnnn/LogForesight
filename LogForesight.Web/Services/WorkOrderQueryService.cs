@@ -41,6 +41,7 @@ public class WorkOrderQueryService
     private const int ResumedWindowDays = 7;
 
     private readonly TimeProvider _clock;
+    private readonly UserCapabilityResolver? _capabilities;
 
     public WorkOrderQueryService(
         IWorkOrderStore orders,
@@ -55,8 +56,10 @@ public class WorkOrderQueryService
         IIssueExclusionSource exclusions,
         IUserGroupStore userGroups,
         IAnalysisRecordQuery records,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        UserCapabilityResolver? capabilities = null)
     {
+        _capabilities = capabilities;
         _clock = clock ?? TimeProvider.System;
         _userGroups = userGroups;
         _records = records;
@@ -98,6 +101,7 @@ public class WorkOrderQueryService
         dto.DisplayName = _displayNames.Of(user.DisplayName);
         dto.Account = user.Account;
         dto.Active = user.Active;
+        dto.HandlerPaused = user.DispatchPaused;
         // 檢視者自己的可見主機數：只用在本人頁的空狀態分流（側欄徽章不需要，不算）
         // 只經案件授與看得到的主機也算「有授權」：只算群組授權會把這種人誤判成「尚未被授權任何主機」
         dto.VisibleHostCount = _visibility.GetVisibleHostIds().Count + _visibility.GetCaseGrantHostNames().Count;
@@ -151,7 +155,11 @@ public class WorkOrderQueryService
         IReadOnlyCollection<long>? handlerIds = req.HandlerId.HasValue ? new[] { req.HandlerId.Value } : null;
         if (req.HandlerInactive)
         {
-            var inactive = users.Values.Where(u => !u.Active).Select(u => u.UserId).ToHashSet();
+            // 與續掛停止原因 handler_inactive 同義（處理人已停用，或已不具處理能力——派工端以不在候選人快照判定）：
+            // 帳號停用，或解析出的能力不含 Handle。測試組裝沒注入解析器時只看帳號停用
+            var inactive = users.Values
+                .Where(u => !u.Active || (_capabilities != null && !_capabilities.Resolve(u).Contains(Capability.Handle)))
+                .Select(u => u.UserId).ToHashSet();
             handlerIds = handlerIds == null ? inactive : handlerIds.Where(inactive.Contains).ToList();
         }
         if (req.GroupId.HasValue)

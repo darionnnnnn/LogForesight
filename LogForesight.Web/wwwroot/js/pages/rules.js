@@ -1448,7 +1448,7 @@ async function checkRuleImportStatus() {
     previewButton.classList.remove('d-none');
     if (status.hasUpdate) {
         document.getElementById('rule-import-banner-text').textContent =
-            `內建規則有更新（v${status.currentSeedVersion} → v${status.latestSeedVersion}）`;
+            `內建規則有更新（v${status.currentSeedVersion} → v${status.latestSeedVersion}）。套用後，新增或更新的規則才會生效；可先按「預覽差異」看會改哪些。`;
         banner.classList.remove('d-none');
     } else {
         banner.classList.add('d-none');
@@ -1506,6 +1506,25 @@ function importActionBadge(action, text) {
     return span;
 }
 
+/** 套用後的驗證警告：清單逐條列出（textContent），沒有警告就清空這個區塊 */
+function renderRuleImportWarnings(warnings) {
+    const box = document.getElementById('rule-import-warnings');
+    if (!box) return;
+    if (!warnings || warnings.length === 0) {
+        box.replaceChildren();
+        return;
+    }
+    const list = document.createElement('ul');
+    list.className = 'mb-3 ps-3';
+    for (const warning of warnings) {
+        const item = document.createElement('li');
+        item.textContent = warning;
+        list.appendChild(item);
+    }
+    const note = statusNote('warning', `套用完成，另有 ${warnings.length} 項驗證警告（遮蔽偵測或不合格被跳過的規則）；不影響已套用的規則，請檢視後視需要調整。`);
+    box.replaceChildren(note, list);
+}
+
 document.getElementById('rule-import-apply-btn').addEventListener('click', async () => {
     const overwrite = document.getElementById('rule-import-overwrite').checked;
     const applyButton = document.getElementById('rule-import-apply-btn');
@@ -1514,14 +1533,14 @@ document.getElementById('rule-import-apply-btn').addEventListener('click', async
         const result = await api.post('/api/rules/import-apply', { overwriteBuiltin: overwrite });
         toast(
             `已套用：新增 ${result.added}、更新 ${result.updated}` +
-            (result.warnings.length > 0 ? `（另有 ${result.warnings.length} 項驗證警告，詳見主控台）` : ''),
+            (result.warnings.length > 0 ? `（另有 ${result.warnings.length} 項驗證警告，見頁面上方）` : ''),
             'success'
         );
         toast('規則變更只影響之後的分析；如需回溯套用到過去的日子，請至「排程作業」頁使用「立即執行」的重新分析模式。', 'info');
 
-        // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版，
-        // 有需要深入排查的人打開瀏覽器主控台看——與原本 console 版逐行印出 ⚠ 同一份內容
-        for (const warning of result.warnings) console.warn(warning);
+        // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版：
+        // 留在頁面上方的說明區（純文字），管理者不必打開瀏覽器主控台就能看
+        renderRuleImportWarnings(result.warnings);
         ruleImportModal.hide();
         await checkRuleImportStatus();
         await load();

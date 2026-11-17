@@ -28,6 +28,9 @@ public class HandoffClockGuardTests
         "LogForesight.Web/Services/IssueStatusValidation.cs",
         "LogForesight.Web/Services/IssueExclusionProvider.cs",
         "LogForesight.Web/Services/AuditService.cs",
+        "LogForesight.Web/Services/AdminReminderService.cs",
+        "LogForesight.Web/Services/DismissedIssueService.cs",
+        "LogForesight.Web/Services/HealthAttention.cs",
         "LogForesight.Web/Services/RecordListQueryService.cs",
         "LogForesight.Web/Controllers/Api/IssueOwnersController.cs",
         "LogForesight.Core/Persistence/Sql/EfWorkOrderStore.cs",
@@ -40,6 +43,7 @@ public class HandoffClockGuardTests
         "LogForesight.Core/Persistence/WorkOrderCoordinator.cs",
         "LogForesight.Core/Persistence/Dispatch/DispatchContext.cs",
         "LogForesight.Core/Persistence/Dispatch/WorkOrderDispatcher.cs",
+        "LogForesight.Core/Persistence/Dispatch/NightlyDispatch.cs",
         "LogForesight.Core/Models/WorkOrder.cs",
         "LogForesight.Core/Models/IssueProfile.cs",
     };

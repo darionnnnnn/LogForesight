@@ -11,7 +11,7 @@
 import { api, getCurrentUser } from '../core/api.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck, button as makeButton } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
-import { statusMeta, statusesWhere, isNoFixClosure, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { statusMeta, statusesWhere, isNoFixClosure, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { statusNote } from '../core/elements.js';
 import { todayLocal, toLocalDateString } from '../core/format.js';
 
@@ -21,6 +21,17 @@ import { todayLocal, toLocalDateString } from '../core/format.js';
  * escalated：「我處理不了，需要上報」——非結案，後端會即時通知 admin 群組決定結案或重新指派
  */
 const STATUS_OPTIONS = statusesWhere(s => s.replyable).map(s => ({ value: s.value, label: s.label }));
+
+/**
+ * 不處理類（不處理、誤報、已知雜訊）的後果說明：處理人單方面結案，之後不會再派給任何人。
+ * 處理人回覆表單與風險日詳情的處理面板共用這一句，不各寫一份。
+ * multiHosts＝一次涵蓋多台主機或多張單（「這些主機的這個問題」）；
+ * multiIssues＝一次涵蓋同一台主機的多個問題（「這台主機的這些問題」）。
+ */
+export function noFixConsequenceText({ multiHosts = false, multiIssues = false } = {}) {
+    const subject = multiHosts ? '這些主機的這個問題' : (multiIssues ? '這台主機的這些問題' : '這台主機的這個問題');
+    return `${subject}之後不會再派給任何人；需要恢復請找管理者。`;
+}
 
 /**
  * @param {object} options
@@ -37,10 +48,11 @@ const STATUS_OPTIONS = statusesWhere(s => s.replyable).map(s => ({ value: s.valu
  * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => void} [options.onNext]
  *        有值時在「送出」旁多一顆「送出並回覆下一張」：送出成功後關閉彈窗並以這次送出的內容呼叫它；
  *        送出失敗或必填沒過時停在原彈窗
+ * @param {boolean} [options.multiTarget] 這次涵蓋多台主機或多張單：不處理類的後果說明改用複數說法
  * @param {string} [options.initialStatus] 狀態下拉的初始值（「下一張」沿用上一張的狀態）；不傳＝第一個選項
  * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false }) {
     const body = document.createElement('div');
     const form = document.createElement('form');
     form.noValidate = true;   // 超過字數的 customValidity 走下方手動驗證，不跳原生泡泡
@@ -67,7 +79,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         statusSelect.value = initialStatus;
     }
     // 選到不處理類時說明後果：這是處理人單方面的決定，之後不會再派給任何人（管理者代為結案才有「是否停派」可選）
-    const noFixNote = statusNote('warning', '這台主機的這個問題之後不會再派給任何人；需要恢復請找管理者。');
+    const noFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: multiTarget }));
     noFixNote.classList.add('mb-3');
     noFixNote.classList.add('d-none');
     noFixNote.id = 'wo-reply-no-fix-note';
@@ -305,10 +317,11 @@ export async function openIssueStatusReplyModal(group, onApplied) {
         return;
     }
 
-    const hosts = orders.reduce((sum, order) => sum + (order.counts?.active ?? 0), 0);
+    const hosts = orders.reduce((sum, order) => sum + replyableCount(order.counts), 0);
     const workOrderIds = orders.map(order => order.workOrderId);
 
     openWorkOrderReplyModal({
+        multiTarget: orders.length > 1 || hosts > 1,
         title: `回覆處理狀態：${group.source} (${group.eventId})`,
         targetText: `${orders.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),

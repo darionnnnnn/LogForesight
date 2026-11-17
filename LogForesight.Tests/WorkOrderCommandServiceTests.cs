@@ -783,9 +783,8 @@ public class WorkOrderCommandServiceTests : IDisposable
         var (orderId, _) = CreateOneOrder("HOST-A");
         _audit.Entries.Clear();
 
-        var error = Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
 
-        Assert.Equal(ApiErrorCodes.ValidationFailed, error.Code);
         Assert.Empty(_audit.Entries);
         Assert.DoesNotContain(_orderStore.ListEvents(orderId), e => e.Action == WorkOrderEventActions.Returned);
     }
@@ -823,8 +822,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         Escalate("HOST-A");
         _service.Cancel(orderId, new CancelWorkOrderRequest { Reason = "誤派" });
 
-        Assert.Equal(ApiErrorCodes.ValidationFailed,
-            Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" })).Code);
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
     }
 
     [Fact]

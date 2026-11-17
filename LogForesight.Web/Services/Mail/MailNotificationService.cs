@@ -762,8 +762,13 @@ public class MailNotificationService
         var order = _workOrders.Get(workOrderId);
         if (order == null) return null;
 
-        var hostCount = _issueCases.CountByWorkOrder(workOrderId);
-        var hostNames = _issueCases.GetByWorkOrder(workOrderId, 0, 20).Select(c => c.HostName).ToList();
+        // 台數與主機名單與畫面同口徑：進行中成員、排除已停用主機（WorkOrderQueries.DisabledHostKeys 是唯一一份）
+        var disabledKeys = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
+        var hostCount = _workOrders.CountMembers(new[] { workOrderId }, disabledKeys).TryGetValue(workOrderId, out var counts) ? counts.Active : 0;
+        var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
+        var hostNames = _issueCases.GetByWorkOrder(workOrderId, 0, 200)
+            .Where(c => c.ClosedAt == null && !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName)))
+            .Select(c => c.HostName).Take(20).ToList();
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);

@@ -29,6 +29,8 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseSendsBlockRedispatch")]
     [InlineData("adminCloseRefusesWithoutStatus")]
     [InlineData("replyFormShowsNoFixNoteOnlyForNoFix")]
+    [InlineData("adminCloseNotifyTextFollowsMailSetting")]
+    [InlineData("adminCloseCheckboxWordingForMultiIssueOrder")]
     public void 結案後果說明行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

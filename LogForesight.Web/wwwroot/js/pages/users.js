@@ -3,7 +3,7 @@
  */
 
 import { roleText } from '../core/elements.js';
-import { api } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
     renderPagination, sortRows, loadPageSize, savePageSize
@@ -207,11 +207,23 @@ function renderLastLogin(lastLoginAt) {
  * 停用帳號或暫停接單後，這個人名下還有進行中的交辦單（單不會自動轉走）：
  * 提示張數並連到已篩選的交辦總覽（該處理人、進行中），讓管理者改派或結案。0 張時不提示。
  */
-function notifyActiveWorkOrders(user, count, action) {
+async function notifyActiveWorkOrders(user, count, action) {
     const n = Number(count) || 0;
     if (n <= 0) return;
+    const message = `${user.account} 名下還有 ${n} 張進行中的交辦單，${action}後這些單仍在他名下`;
+    // 交辦總覽只有具 Assign 或 ViewAll 的人進得去（例如救援帳號就沒有）：進不去就不附連結，改請人通知系統管理員
+    let me = null;
+    try {
+        me = await getCurrentUser();
+    } catch {
+        // 取不到就當作沒有能力：寧可少一個連結，也不給進不去的連結
+    }
+    if (!hasCapability(me, 'Assign') && !hasCapability(me, 'ViewAll')) {
+        toast(`${message}。請通知系統管理員改派或結案`, 'warning', 12000);
+        return;
+    }
     const params = new URLSearchParams({ handlerId: String(user.userId), status: 'active' });
-    toast(`${user.account} 名下還有 ${n} 張進行中的交辦單，${action}後這些單仍在他名下`, 'warning', 12000, {
+    toast(message, 'warning', 12000, {
         link: { href: `${appUrl('/work-orders')}?${params}`, text: '到交辦總覽改派或結案' }
     });
 }

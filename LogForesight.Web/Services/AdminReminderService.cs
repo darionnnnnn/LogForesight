@@ -44,12 +44,13 @@ public sealed class AdminReminderService
     private readonly IUserGroupStore _userGroups;
     private readonly MailNotifyStateStore _state;
     private readonly MailNotificationService _mail;
+    private readonly IIssueExclusionSource? _exclusions;
     private readonly TimeProvider _clock;
 
     public AdminReminderService(
         ISystemSettingsStore settings, IWorkOrderStore orders, IIssueCaseStore cases, IHostStore hosts,
         IUserStore users, IUserGroupStore userGroups, MailNotifyStateStore state, MailNotificationService mail,
-        TimeProvider? clock = null)
+        IIssueExclusionSource? exclusions = null, TimeProvider? clock = null)
     {
         _settings = settings;
         _orders = orders;
@@ -59,6 +60,7 @@ public sealed class AdminReminderService
         _userGroups = userGroups;
         _state = state;
         _mail = mail;
+        _exclusions = exclusions;
         _clock = clock ?? TimeProvider.System;
     }
 
@@ -66,7 +68,13 @@ public sealed class AdminReminderService
     /// 彙整三類（唯一的計算點；交辦總覽端點與夜間入列共用）。純讀取、不改任何狀態。
     /// 逾期天數＝今天 − 案件最後更新日，大於 N 才算「超過 N 天」；N＝0（不提醒）時總覽仍以出廠預設天數判定逾期。
     /// </summary>
-    public AdminReminderDto Compute()
+    public AdminReminderDto Compute() => ComputeResult().Dto;
+
+    /// <summary>
+    /// <see cref="Compute"/> 的完整結果：對外回應（<see cref="AdminReminderResult.Dto"/>）加上入列與組信用的內部彙整欄位。
+    /// 目前靜音中的問題不列入三類（靜音期間不該提醒管理者處理它；派不出去清單是上一趟夜間的快照，靜音後才設的問題也要排除）。
+    /// </summary>
+    internal AdminReminderResult ComputeResult()
     {
         var settings = _settings.Get();
         var today = _clock.LocalToday();
@@ -75,9 +83,10 @@ public sealed class AdminReminderService
         var threshold = days > 0 ? days : SystemSettings.DefaultEscalationReminderDays;
 
         var dto = new AdminReminderDto { ReminderDays = days, ThresholdDays = threshold, UnassignableAt = state.LastUnassignableAt };
+        var exclusion = _exclusions?.Current() ?? IssueExclusion.None;
 
         var excluded = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
-        var escalated = new List<AdminReminderEscalatedDto>();
+        var escalated = new List<EscalatedEntry>();
         var overdueOrderIds = new HashSet<long>();
         for (var page = 1; ; page++)
         {
@@ -98,16 +107,13 @@ public sealed class AdminReminderService
                     foreach (var c in members.Items)
                     {
                         if (c.ClosedAt != null || excluded.Contains(Core.Persistence.Sql.HostNameKey.Of(c.HostName))) continue;
+                        if (c.SourceName != null && c.EventId is int caseEvent && exclusion.IsCurrentlyMuted(c.SourceName, caseEvent)) continue;
                         // 上報起算日：EscalatedAt（轉進 escalated 的時間，夜間掛接不動它）；升級前的舊資料為 null，退回最後更新日
                         var elapsed = (int)(today - (c.EscalatedAt ?? c.UpdatedAt).Date).TotalDays;
                         if (elapsed <= threshold) continue;
                         overdueOrderIds.Add(order.WorkOrderId);
-                        escalated.Add(new AdminReminderEscalatedDto
-                        {
-                            CaseId = c.CaseId, WorkOrderId = order.WorkOrderId, IssueLabel = order.IssueLabel,
-                            HostName = c.HostName, Days = elapsed,
-                            DueForMail = days > 0 && IsDue(state, c.CaseId, today, days)
-                        });
+                        escalated.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.IssueLabel, c.HostName, elapsed,
+                            days > 0 && IsDue(state, c.CaseId, today, days)));
                     }
                     if (members.Items.Count < MemberPageSize || mPage * MemberPageSize >= members.Total) break;
                 }
@@ -115,52 +121,63 @@ public sealed class AdminReminderService
             if (orders.Items.Count < OrderPageSize || page * OrderPageSize >= orders.Total) break;
         }
 
-        var noRecipient = new List<AdminReminderNoRecipientDto>();
+        var noRecipient = new List<NoRecipientEntry>();
         foreach (var entry in state.NoRecipientEscalations.OrderBy(e => e.At).ThenBy(e => e.WorkOrderId))
         {
             var order = _orders.Get(entry.WorkOrderId);
             if (order == null || order.ClosedAt != null) continue;
+            if (order.SourceName != null && order.EventId is int orderEvent && exclusion.IsCurrentlyMuted(order.SourceName, orderEvent)) continue;
             var open = _cases.QueryMembers(new WorkOrderMemberQuery
             {
                 WorkOrderId = order.WorkOrderId, Status = WorkOrderQueries.StatusEscalated, Page = 1, PageSize = 1
             });
             if (open.Total == 0) continue;
-            noRecipient.Add(new AdminReminderNoRecipientDto
-            {
-                WorkOrderId = order.WorkOrderId, IssueLabel = order.IssueLabel,
-                DueForMail = days > 0 && IsDue(state, NoRecipientKey(order.WorkOrderId), today, days)
-            });
+            noRecipient.Add(new NoRecipientEntry(order.WorkOrderId, order.IssueLabel,
+                days > 0 && IsDue(state, NoRecipientKey(order.WorkOrderId), today, days)));
         }
 
         escalated = escalated.OrderByDescending(e => e.Days).ThenBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal).ToList();
         var unassignable = state.LastUnassignable
+            .Where(u => !IsLabelMuted(exclusion, u.IssueLabel))
             .Select(u => new AdminReminderUnassignableDto { IssueLabel = u.IssueLabel, Reason = u.Reason, Hosts = u.Hosts })
             .ToList();
 
         dto.EscalatedCount = escalated.Count;
         dto.UnassignableCount = unassignable.Count;
         dto.NoRecipientCount = noRecipient.Count;
-        dto.UnassignableDueForMail = days > 0 && unassignable.Count > 0
-            && state.AdminReminderLastSent.GetValueOrDefault(UnassignableStateKey) != DateKey(today);
-        dto.Escalated = escalated.Take(OverviewItemLimit).ToList();
+        dto.Escalated = escalated.Take(OverviewItemLimit)
+            .Select(e => new AdminReminderEscalatedDto { WorkOrderId = e.WorkOrderId, IssueLabel = e.IssueLabel, HostName = e.HostName, Days = e.Days })
+            .ToList();
         dto.Unassignable = unassignable.Take(OverviewItemLimit).ToList();
-        dto.NoRecipient = noRecipient.Take(OverviewItemLimit).ToList();
-        dto.MailEscalatedCount = escalated.Count(e => e.DueForMail);
-        dto.MailNoRecipientCount = noRecipient.Count(e => e.DueForMail);
-        dto.MailEscalatedKeys = escalated.Where(e => e.DueForMail).Select(e => e.CaseId).ToList();
-        dto.MailNoRecipientKeys = noRecipient.Where(e => e.DueForMail).Select(e => NoRecipientKey(e.WorkOrderId)).ToList();
-        dto.EscalatedAll = escalated;
-        dto.NoRecipientAll = noRecipient;
-        return dto;
+        dto.NoRecipient = noRecipient.Take(OverviewItemLimit)
+            .Select(e => new AdminReminderNoRecipientDto { WorkOrderId = e.WorkOrderId, IssueLabel = e.IssueLabel })
+            .ToList();
+        return new AdminReminderResult(dto, escalated, noRecipient)
+        {
+            UnassignableDueForMail = days > 0 && unassignable.Count > 0
+                && state.AdminReminderLastSent.GetValueOrDefault(UnassignableStateKey) != DateKey(today)
+        };
     }
 
     /// <summary>
-    /// 本趟派工結果可以拿來「取代派不出去清單」的條件：只有全量執行（<see cref="RunScope.Full"/>）。
-    /// 非全量（只跑本機、只跑指定主機）的 <see cref="NightlyDispatchSummary.Unassignable"/> 只含該次範圍，
-    /// 整份取代會把範圍外仍派不出去的問題從提醒清掉；非全量回 null，清單維持上一次全量的結果（排程與手動觸發共用這一處判定）。
+    /// 派不出去清單只存標籤「Source EventId」（派工端組字串的格式）：拆出事件編號與來源，走 <see cref="IssueExclusion"/> 同一條靜音判定。
+    /// 標籤不是這個格式時視為不靜音。
     /// </summary>
-    public static NightlyDispatchSummary? SummaryForUnassignableList(RunScope scope, NightlyDispatchSummary? summary)
-        => scope == RunScope.Full ? summary : null;
+    private static bool IsLabelMuted(IssueExclusion exclusion, string label)
+    {
+        var cut = label.LastIndexOf(' ');
+        return cut > 0 && int.TryParse(label[(cut + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var eventId)
+            && exclusion.IsCurrentlyMuted(label[..cut], eventId);
+    }
+
+    /// <summary>
+    /// 本趟派工結果可以拿來「取代派不出去清單」的條件：只有涵蓋全部主機日的那一趟——全量執行（<see cref="RunScope.Full"/>）、
+    /// 且不是同窗口續跑、不是 NetIQ 帳本複查。這三類之外的趟（只跑本機、只跑指定主機、續跑、複查）的
+    /// <see cref="NightlyDispatchSummary.Unassignable"/> 只含該次處理到的部分，整份取代會把沒處理到、仍派不出去的問題從提醒清掉；
+    /// 不符時回 null，清單維持上一次完整趟的結果（排程與手動觸發共用這一處判定）。
+    /// </summary>
+    public static NightlyDispatchSummary? SummaryForUnassignableList(RunRequest request, NightlyDispatchSummary? summary)
+        => request.Scope == RunScope.Full && !request.NetiqLedgerRetryOnly && !request.ContinuesWindow ? summary : null;
 
     /// <summary>
     /// 夜間派工結束後呼叫（排程與情境驅動器共用同一個入口）：先記下本趟派不出去的問題，再彙整、入列給管理者。
@@ -183,9 +200,10 @@ public sealed class AdminReminderService
             }
 
             var settings = _settings.Get();
-            var dto = Compute();
-            var mailUnassignable = dto.UnassignableDueForMail ? dto.UnassignableCount : 0;
-            var mailTotal = dto.MailEscalatedCount + mailUnassignable + dto.MailNoRecipientCount;
+            var result = ComputeResult();
+            var dto = result.Dto;
+            var mailUnassignable = result.UnassignableDueForMail ? dto.UnassignableCount : 0;
+            var mailTotal = result.MailEscalatedCount + mailUnassignable + result.MailNoRecipientCount;
 
             var recipients = new List<long>();
             if (settings.EscalationReminderDays > 0 && settings.MailEnabled && settings.MailNotifyWorkOrders && mailTotal > 0)
@@ -199,28 +217,28 @@ public sealed class AdminReminderService
             }
 
             var queued = recipients.Count > 0 &&
-                         _mail.EnqueueAdminReminders(recipients, dto.MailEscalatedCount, mailUnassignable, dto.MailNoRecipientCount,
-                             FormatMailDetail(dto, mailUnassignable > 0));
+                         _mail.EnqueueAdminReminders(recipients, result.MailEscalatedCount, mailUnassignable, result.MailNoRecipientCount,
+                             FormatMailDetail(result, mailUnassignable > 0));
 
             _state.Update(s =>
             {
                 var todayKey = DateKey(today);
                 if (queued)
                 {
-                    foreach (var key in dto.MailEscalatedKeys.Concat(dto.MailNoRecipientKeys)) s.AdminReminderLastSent[key] = todayKey;
+                    foreach (var key in result.MailEscalatedKeys.Concat(result.MailNoRecipientKeys)) s.AdminReminderLastSent[key] = todayKey;
                     if (mailUnassignable > 0) s.AdminReminderLastSent[UnassignableStateKey] = todayKey;
                 }
 
                 // 不再逾期（已處理、已結案）的鍵清掉；本趟提醒的鍵一定在目前逾期集合內
-                var live = dto.EscalatedAll.Select(e => e.CaseId)
-                    .Concat(dto.NoRecipientAll.Select(e => NoRecipientKey(e.WorkOrderId)))
+                var live = result.EscalatedAll.Select(e => e.CaseId)
+                    .Concat(result.NoRecipientAll.Select(e => NoRecipientKey(e.WorkOrderId)))
                     .Append(UnassignableStateKey)
                     .ToHashSet(StringComparer.Ordinal);
                 foreach (var stale in s.AdminReminderLastSent.Keys.Where(k => !live.Contains(k)).ToList())
                     s.AdminReminderLastSent.Remove(stale);
 
                 // 已不在彙整結果內的「沒有收件人」記錄一併清掉（單結案或上報已處理）
-                var noRecipientLive = dto.NoRecipientAll.Select(e => e.WorkOrderId).ToHashSet();
+                var noRecipientLive = result.NoRecipientAll.Select(e => e.WorkOrderId).ToHashSet();
                 s.NoRecipientEscalations.RemoveAll(e => !noRecipientLive.Contains(e.WorkOrderId));
             });
         }
@@ -237,7 +255,7 @@ public sealed class AdminReminderService
         return (today - last.Date).TotalDays >= days;
     }
 
-    private static string NoRecipientKey(long workOrderId) => $"wo:{workOrderId}";
+    internal static string NoRecipientKey(long workOrderId) => $"wo:{workOrderId}";
 
     private static string DateKey(DateTime d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -251,10 +269,11 @@ public sealed class AdminReminderService
     };
 
     /// <summary>信件內文：只列「這次要提醒」的明細（逾期成員與沒有收件人的單依間隔過濾，派不出去的問題整份列）</summary>
-    internal static string FormatMailDetail(AdminReminderDto dto, bool includeUnassignable)
+    internal static string FormatMailDetail(AdminReminderResult result, bool includeUnassignable)
     {
+        var dto = result.Dto;
         var sb = new StringBuilder();
-        var escalated = dto.EscalatedAll.Where(e => e.DueForMail).ToList();
+        var escalated = result.EscalatedAll.Where(e => e.DueForMail).ToList();
         if (escalated.Count > 0)
         {
             sb.AppendLine($"【上報後逾 {dto.ReminderDays} 天沒人處理】共 {escalated.Count} 個成員");
@@ -269,7 +288,7 @@ public sealed class AdminReminderService
                 sb.AppendLine($"  {u.IssueLabel}：{ReasonText(u.Reason)}（{u.Hosts} 台）");
             if (dto.UnassignableCount > MailLineLimit) sb.AppendLine($"  …等 {dto.UnassignableCount} 項");
         }
-        var noRecipient = dto.NoRecipientAll.Where(e => e.DueForMail).ToList();
+        var noRecipient = result.NoRecipientAll.Where(e => e.DueForMail).ToList();
         if (noRecipient.Count > 0)
         {
             sb.AppendLine($"【上報時沒有任何收件人的單】共 {noRecipient.Count} 張");
@@ -279,4 +298,36 @@ public sealed class AdminReminderService
         }
         return sb.ToString().TrimEnd();
     }
+}
+
+/// <summary>上報逾期的成員（內部彙整：含案件編號與「本趟要不要提醒」，不外送）</summary>
+internal sealed record EscalatedEntry(string CaseId, long WorkOrderId, string IssueLabel, string HostName, int Days, bool DueForMail);
+
+/// <summary>上報時沒有收件人的單（內部彙整：含「本趟要不要提醒」，不外送）</summary>
+internal sealed record NoRecipientEntry(long WorkOrderId, string IssueLabel, bool DueForMail);
+
+/// <summary>
+/// <see cref="AdminReminderService.ComputeResult"/> 的結果：對外回應 <see cref="Dto"/> 加上入列與組信用的內部彙整。
+/// 對外 DTO 只留回應欄位，內部欄位不靠序列化屬性遮蔽。
+/// </summary>
+internal sealed class AdminReminderResult
+{
+    public AdminReminderResult(AdminReminderDto dto, List<EscalatedEntry> escalatedAll, List<NoRecipientEntry> noRecipientAll)
+    {
+        Dto = dto;
+        EscalatedAll = escalatedAll;
+        NoRecipientAll = noRecipientAll;
+    }
+
+    public AdminReminderDto Dto { get; }
+    public List<EscalatedEntry> EscalatedAll { get; }
+    public List<NoRecipientEntry> NoRecipientAll { get; }
+
+    /// <summary>派不出去清單這趟要不要提醒（間隔天數已開、清單非空、今天還沒提醒過）</summary>
+    public bool UnassignableDueForMail { get; init; }
+
+    public int MailEscalatedCount => EscalatedAll.Count(e => e.DueForMail);
+    public int MailNoRecipientCount => NoRecipientAll.Count(e => e.DueForMail);
+    public List<string> MailEscalatedKeys => EscalatedAll.Where(e => e.DueForMail).Select(e => e.CaseId).ToList();
+    public List<string> MailNoRecipientKeys => NoRecipientAll.Where(e => e.DueForMail).Select(e => AdminReminderService.NoRecipientKey(e.WorkOrderId)).ToList();
 }

@@ -29,9 +29,11 @@ function extractFunction(declaration) {
 
 const SOURCES = ['function renderReminders(', 'async function loadReminders('].map(extractFunction).join('\n');
 
-function env({ response, fail = false } = {}) {
+function env({ response, fail = false, capabilities = ['Assign', 'ViewAll'] } = {}) {
     const dom = installDom();
-    const { statusNote, disclosure } = loadElements(dom);
+    const { statusNote, disclosure, roleText } = loadElements(dom);
+    const currentUser = { capabilities };
+    const hasCapability = (user, capability) => user.capabilities.includes(capability);
     const el = tag => document.createElement(tag);
     const remindersContainer = el('div');
     const appUrl = p => '/lf' + p;
@@ -40,9 +42,9 @@ function env({ response, fail = false } = {}) {
     const formatDateTime = v => `T:${v}`;
     const UNASSIGNABLE_LABELS = { no_pool: '沒有派工池成員' };
     const api = { get: async url => { if (fail) throw new Error('boom'); api.last = url; return response; } };
-    const factory = new Function('document', 'remindersContainer', 'statusNote', 'linkButton', 'appUrl', 'formatNumber', 'api', 'disclosure', 'formatDateTime', 'UNASSIGNABLE_LABELS',
+    const factory = new Function('document', 'remindersContainer', 'statusNote', 'linkButton', 'appUrl', 'formatNumber', 'api', 'disclosure', 'formatDateTime', 'UNASSIGNABLE_LABELS', 'roleText', 'currentUser', 'hasCapability',
         `${SOURCES}\nreturn { renderReminders, loadReminders };`);
-    const fns = factory(document, remindersContainer, statusNote, linkButton, appUrl, formatNumber, api, disclosure, formatDateTime, UNASSIGNABLE_LABELS);
+    const fns = factory(document, remindersContainer, statusNote, linkButton, appUrl, formatNumber, api, disclosure, formatDateTime, UNASSIGNABLE_LABELS, roleText, currentUser, hasCapability);
     return { ...fns, remindersContainer, api };
 }
 
@@ -56,6 +58,16 @@ const cases = {
         renderReminders(data());
         assert.equal(remindersContainer.children.length, 0);
         assert.equal(remindersContainer.textContent, '');
+    },
+
+    // 沒有 Assign 的檢視者（主管、開發人員）：多一行直說誰能處理；有 Assign 的人不多這行
+    readOnlyViewerSeesWhoCanAct() {
+        const viewer = env({ capabilities: ['ViewAll'] });
+        viewer.renderReminders(data({ escalatedCount: 1 }));
+        assert.ok(viewer.remindersContainer.textContent.includes('只有系統管理員可以處理或恢復'));
+        const admin = env({ capabilities: ['Assign', 'ViewAll'] });
+        admin.renderReminders(data({ escalatedCount: 1 }));
+        assert.ok(!admin.remindersContainer.textContent.includes('只有系統管理員可以處理或恢復'));
     },
 
     // 沒有資料（取不到）也不顯示

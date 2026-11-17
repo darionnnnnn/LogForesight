@@ -1112,7 +1112,12 @@ public class WorkOrderCoordinator
         foreach (var caseId in caseIds.Distinct(StringComparer.Ordinal))
         {
             if (!byId.TryGetValue(caseId, out var member))
-                throw new WorkOrderRuleException($"案件 {caseId} 不是交辦單 {workOrderId} 的進行中成員。");
+            {
+                // 給使用者看的訊息以主機名稱表達（案件編號是內部 GUID）；案件已被清除查不到時只提示重新整理
+                var hostName = _cases.Get(caseId)?.HostName;
+                var who = hostName == null ? "選取的成員中有主機" : $"主機 {hostName}";
+                throw new WorkOrderRuleException($"{who}已不是交辦單 {workOrderId} 的進行中成員（可能已改派、結案或移走），請重新整理成員清單。");
+            }
             selected.Add(member);
         }
         return selected;

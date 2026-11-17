@@ -827,6 +827,14 @@ async function loadHealthBanner(user) {
             list.appendChild(item);
         }
         bar.appendChild(list);
+        // 沒有 Maintain 的人（開發人員）進不了系統健康頁，只看得到原因：補上下一步，免得看完不知道找誰
+        if (!hasCapability(user, 'Maintain')) {
+            const contact = document.createElement('div');
+            contact.className = 'w-100';
+            contact.setAttribute('data-health-contact', '1');
+            contact.textContent = '請聯絡系統管理員。';
+            bar.appendChild(contact);
+        }
     }
     registerAlert('health', bar);
 }

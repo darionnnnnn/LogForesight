@@ -65,7 +65,7 @@ public class WorkOrderReplyService
 
         var actor = _currentUser.ToWorkOrderActor(_clock);
         var newlyEscalated = NewlyEscalatedHosts(id, req.CaseIds, req.Status);
-        var result = Guard(() => _coordinator.Reply(id, req.CaseIds, req.Status, req.Note, req.DueDate, actor));
+        var result = _coordinator.Reply(id, req.CaseIds, req.Status, req.Note, req.DueDate, actor);
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
@@ -92,7 +92,7 @@ public class WorkOrderReplyService
             throw DomainException.Validation("請至少選一張交辦單。");
 
         // 先全部檢查（存在、本人、進行中、狀態），任一不合整筆擋下——零寫入
-        var orders = ids.Select(RequireOwnActive).ToList();
+        var orders = ids.Select(i => RequireOwnActive(i, batch: true)).ToList();
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
         var actor = _currentUser.ToWorkOrderActor(_clock);
@@ -112,14 +112,16 @@ public class WorkOrderReplyService
             try
             {
                 escalatedHosts = NewlyEscalatedHosts(order.WorkOrderId, null, req.Status);
-                result = Guard(() => _coordinator.Reply(order.WorkOrderId, null, req.Status, req.Note, req.DueDate, actor));
+                result = _coordinator.Reply(order.WorkOrderId, null, req.Status, req.Note, req.DueDate, actor);
             }
             catch (Exception ex)
             {
                 // 中途失敗：停在這張，已寫入的單照常有稽核與通知，回應交代成功／失敗／未處理
                 failedId = order.WorkOrderId;
-                failureMessage = ex is DomainException ? ex.Message : "回覆時發生未預期的錯誤。";
-                if (ex is not DomainException)
+                failureMessage = UserFacingMessage.For(ex, "回覆時發生未預期的錯誤。");
+                if (ex is LogForesight.Core.Persistence.ConcurrentUpdateException)
+                    Log.Warn(ex, "多單回覆在交辦單 #{0} 遇到併發衝突（前面的單已寫入）", order.WorkOrderId);
+                else if (!UserFacingMessage.IsUserFacing(ex))
                     Log.Error(ex, "多單回覆在交辦單 #{0} 發生未預期錯誤（前面的單已寫入）", order.WorkOrderId);
                 break;
             }
@@ -175,7 +177,7 @@ public class WorkOrderReplyService
         if (dueDate > today.AddDays(MaxDueDateDays))
             throw DomainException.Validation($"期限最多只能設在 {MaxDueDateDays} 天內。");
 
-        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor(_clock)));
+        var changed = _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor(_clock));
         if (changed)
         {
             _audit.Record(
@@ -192,13 +194,15 @@ public class WorkOrderReplyService
     // ── 內部 ────────────────────────────────────────────────────────────────
 
     /// <summary>單不存在 404；不是本人 403（管理者也擋）；已結案 400</summary>
-    private WorkOrder RequireOwnActive(long id)
+    private WorkOrder RequireOwnActive(long id, bool batch = false)
     {
+        // 批次回覆時整批先檢查：某張單在畫面載入後被改派或結案，訊息要帶單號並提示下一步
+        var hint = batch ? "已改派或結案的單請取消勾選後再送出。" : "";
         var order = _orders.Get(id) ?? throw DomainException.NotFound($"找不到交辦單 #{id}。");
         if (order.HandlerId != _currentUser.UserId)
-            throw DomainException.Forbidden($"交辦單 #{id} 不是指派給您的，只有處理人本人可以回覆。");
+            throw DomainException.Forbidden($"交辦單 #{id} 不是指派給您的，只有處理人本人可以回覆。{hint}");
         if (order.ClosedAt != null)
-            throw DomainException.Validation($"交辦單 #{id} 已結案，無法回覆。");
+            throw DomainException.Validation($"交辦單 #{id} 已結案，無法回覆。{hint}");
         return order;
     }
 
@@ -236,27 +240,5 @@ public class WorkOrderReplyService
             issueLabel,
             newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
             _currentUser.Account, note, workOrderId));
-    }
-
-    /// <summary>
-    /// 協調器的規則違反（<see cref="WorkOrderRuleException"/>：成員不屬於本單、已結案、缺原因等）轉成 400。
-    /// 其他 ArgumentException／InvalidOperationException 可能來自框架層（EF／LINQ，英文內部細節），
-    /// 記錄後原樣往上拋，由 ApiExceptionFilter 回 500 與固定說明，不把原文給使用者
-    /// </summary>
-    private static T Guard<T>(Func<T> action)
-    {
-        try
-        {
-            return action();
-        }
-        catch (WorkOrderRuleException ex)
-        {
-            throw DomainException.Validation(ex.Message);
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            Log.Warn(ex, "交辦單操作擲出非規則例外（不轉成使用者訊息）");
-            throw;
-        }
     }
 }

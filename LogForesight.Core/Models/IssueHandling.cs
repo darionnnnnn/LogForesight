@@ -264,6 +264,15 @@ public static class IssueHandlingStatuses
         Resolved, WontFix, FalsePositive, KnownNoise
     };
 
+    /// <summary>
+    /// 處理人判定「這個問題不用處理」的不處理類狀態（結案類去掉 <see cref="Resolved"/>：修好後再出現是新事件）。
+    /// 「不再打擾」閘門（DispatchContext.DismissedCases）與案件保留清除（EfIssueCaseStore.Prune）共用這一份。
+    /// </summary>
+    public static readonly string[] Dismissals =
+    {
+        WontFix, FalsePositive, KnownNoise
+    };
+
     public static readonly string[] All =
     {
         Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Observing, Open, Escalated

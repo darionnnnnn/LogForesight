@@ -167,7 +167,14 @@ public class HealthAttentionServiceWiringTests : IDisposable
         new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
         new ScheduleOptionsStore(_backend.Blob("schedule_options")));
 
-    private HealthService NewService()
+    /// <summary>可手動撥動的假時鐘（告示快取存活期的測試用）</summary>
+    private sealed class ManualClock(DateTime utcNow) : TimeProvider
+    {
+        public DateTime UtcNowValue { get; set; } = utcNow;
+        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(UtcNowValue, DateTimeKind.Utc));
+    }
+
+    private HealthService NewService(TimeProvider? clock = null)
     {
         var freshness = NewFreshnessService();
         var mail = new MailNotificationService(
@@ -175,7 +182,7 @@ public class HealthAttentionServiceWiringTests : IDisposable
             new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
             new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)),
             new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
-        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness);
+        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock);
     }
 
     [Fact]
@@ -221,9 +228,8 @@ public class HealthAttentionServiceWiringTests : IDisposable
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgEnabled = true);
         var syncStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
-        var service = NewService();
-        var clock = new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc);
-        service.UtcNowOverride = () => clock;
+        var clock = new ManualClock(new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc));
+        var service = NewService(clock);
 
         Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
 
@@ -234,12 +240,37 @@ public class HealthAttentionServiceWiringTests : IDisposable
             s.Success = true;
             s.Warnings = new List<PrtgSyncWarning> { PrtgSyncWarning.Create(PrtgSyncWarning.SensorsAllEmpty, "範圍內的感測器全部回空") };
         });
-        clock = clock.AddSeconds(29);
+        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(29);
         Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
 
         // 過期後重算，看到新狀態
-        clock = clock.AddSeconds(2);
+        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(2);
         Assert.Equal(HealthStatuses.Degraded, service.GetAttention().Status);
+    }
+
+    [Fact]
+    public void 健康頁算出新結果後_告示列快取同步更新_不再掛著舊警示()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgEnabled = true);
+        var syncStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+        syncStore.Update(s =>
+        {
+            s.CompletedAt = DateTime.Now;
+            s.Success = true;
+            s.Warnings = new List<PrtgSyncWarning> { PrtgSyncWarning.Create(PrtgSyncWarning.SensorsAllEmpty, "範圍內的感測器全部回空") };
+        });
+        var clock = new ManualClock(new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc));
+        var service = NewService(clock);
+        Assert.Equal(HealthStatuses.Degraded, service.GetAttention().Status);
+
+        // 問題排除後使用者開健康頁：健康頁已正常，告示列（同一個行程內的快取）不能再掛 30 秒
+        syncStore.Update(s => s.Warnings = new List<PrtgSyncWarning>());
+        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(5);
+        Assert.Equal(HealthStatuses.Ok, service.GetDetail().Status);
+
+        var attention = service.GetAttention();
+        Assert.Equal(HealthStatuses.Ok, attention.Status);
+        Assert.Empty(attention.Reasons);
     }
 
     [Fact]

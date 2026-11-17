@@ -167,6 +167,14 @@ const cases = {
         assert.deepEqual(calls.sort(), ['/api/health/attention', '/api/health/freshness']);
         assert.equal(find(bar(), n => n.tagName === 'LI').length, 2);
         assert.equal(find(bar(), n => n.tagName === 'A').length, 0);
+        assert.ok(bar().textContent.includes('請聯絡系統管理員'), '沒有 Maintain 的人看到原因後要有下一步');
+    },
+
+    // 有 Maintain 的人有連結可處理，不多寫「請聯絡」
+    async bannerMaintainHasNoContactLine() {
+        const { load, bar } = bannerEnv({ capabilities: ['Maintain'], attention: { status: 'degraded', reasons } });
+        await load({});
+        assert.ok(!bar().textContent.includes('請聯絡系統管理員'));
     },
 
     // C14-b：沒有維護與開發監看能力 → 一個請求都不發，告示向協調器移除

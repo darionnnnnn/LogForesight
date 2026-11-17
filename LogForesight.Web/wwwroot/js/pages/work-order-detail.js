@@ -168,6 +168,11 @@ function renderMemberHostCell(item) {
     return wrap;
 }
 
+/** 檢視者是管理側（具 Assign 或 ViewAll）：處理人視角不顯示寫給管理者的標示 */
+function viewerIsAdminLike() {
+    return hasCapability(currentUser, 'Assign') || hasCapability(currentUser, 'ViewAll');
+}
+
 /**
  * 成員台數旁的補充事實（有值才出現）：停用主機上的成員不計入左邊的台數，處理人目前看不到的台數是讀取時算的。
  * 兩者都是 0 時回空陣列，頁首不多一個字。
@@ -176,14 +181,15 @@ function memberGapFacts(detail) {
     const facts = [];
     const disabled = detail.counts?.activeOnDisabledHosts ?? 0;
     if (disabled > 0) facts.push(fact('主機已停用', `${disabled} 台（不計入處理人的台數）`));
+    // 「處理人看不到」是寫給管理者的訊息：處理人本人看了只會困惑（他無從處理），只對具 Assign／ViewAll 的檢視者出現
     const unseen = detail.handlerUnseenMemberCount ?? 0;
-    if (unseen > 0) facts.push(fact('處理人目前看不到', `${unseen} 台`));
+    if (unseen > 0 && viewerIsAdminLike()) facts.push(fact('處理人目前看不到', `${unseen} 台`));
     return facts;
 }
 
 /** 續掛已停止：只在後端標了 continuationStopped（進行中單）時出現，顯示原因的顯示名稱 */
 function continuationStopNote(detail) {
-    if (!detail.continuationStopped) return null;
+    if (!detail.continuationStopped || !viewerIsAdminLike()) return null;   // 說明是寫給管理者的（恢復資格是管理動作）
     const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
     const when = detail.continuationStoppedAt ? `（${formatDate(detail.continuationStoppedAt)}）` : '';
     return statusNote('info', `續掛已停止${when}：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
@@ -281,7 +287,9 @@ function renderHeader(detail) {
 
 // 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
-function openAdminCloseModal() {
+async function openAdminCloseModal() {
+    // 結案通知要不要寄取決於交辦單通知開關：依實際設定說明，不承諾不一定寄出的信
+    const { mailWorkOrdersEnabled } = await getDisplaySettings();
     // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
     const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
     const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
@@ -321,10 +329,14 @@ function openAdminCloseModal() {
     const blockLabel = document.createElement('label');
     blockLabel.className = 'form-check-label';
     blockLabel.htmlFor = 'wo-close-block';
-    blockLabel.textContent = `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}的這個問題之後不再自動派工`;
+    // 只有單一問題的單（有 source）才能說「這個問題」；多問題單改指稱主機上的問題
+    const singleIssue = !!currentDetail?.source;
+    blockLabel.textContent = singleIssue
+        ? `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}的這個問題之後不再自動派工`
+        : `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}上的問題之後不再自動派工`;
     blockWrap.append(blockInput, blockLabel);
 
-    // 後果說明：處理人一定會收到通知；不處理類再依勾選說明問題再出現時會怎樣
+    // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
     const consequence = document.createElement('div');
     consequence.className = 'mb-3';
     consequence.id = 'wo-close-consequence';
@@ -346,7 +358,7 @@ function openAdminCloseModal() {
     actions.appendChild(submitBtn);
 
     function renderConsequence() {
-        const notes = [statusNote('info', '處理人會收到結案通知。' + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        const notes = [statusNote('info', (mailWorkOrdersEnabled ? '處理人會在下一封交辦摘要收到結案通知。' : '目前未啟用交辦單通知，請自行告知處理人。') + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
         if (isNoFixClosure(statusSelect.value)) {
             notes.push(statusNote('warning', blockInput.checked
                 ? '已勾選：這台主機的這個問題之後不會再自動派工。'

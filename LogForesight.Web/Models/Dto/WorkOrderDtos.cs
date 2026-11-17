@@ -269,7 +269,7 @@ public class WorkOrderListRequest
     /// <summary><c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c></summary>
     public string Status { get; set; } = "active";
 
-    /// <summary>true＝只列處理人已停用的單</summary>
+    /// <summary>true＝只列處理人已停用或已失去處理能力的單（與續掛停止原因 <c>handler_inactive</c> 同義）</summary>
     public bool HandlerInactive { get; set; }
 
     /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>
@@ -746,6 +746,9 @@ public class HandlerSummaryDto
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; set; }
+
+    /// <summary>這位處理人目前暫停接單（自動派工排除他）；處理人工作頁頁頭標記用，側欄徽章不填</summary>
+    public bool HandlerPaused { get; set; }
 
     /// <summary>檢視者自己的可見主機數（處理人工作頁空狀態分流用；側欄徽章不填，恆為 0）</summary>
     public int VisibleHostCount { get; set; }

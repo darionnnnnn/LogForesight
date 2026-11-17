@@ -448,6 +448,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// 用日期把它清掉等於幫忙把爛帳藏起來。
     ///
     /// 結案時間才是案件自己的生命週期終點，也才是「可以忘記了」的正確判準。
+    /// 例外：處理人判定的不處理類且仍是該鍵最新案件者不過期（見 <see cref="Expired"/>）。
     /// </summary>
     public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
 
@@ -457,15 +458,28 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<string>(_contextFactory,
-            (ctx, take) => ctx.IssueCases
-                .Where(c => c.ClosedAt != null && c.ClosedAt < cutoff)
+            (ctx, take) => Expired(ctx, cutoff)
                 .OrderBy(c => c.ClosedAt)
                 .Select(c => c.CaseId)
                 .Take(take)
                 .ToList(),
             (ctx, ids) => ctx.IssueCases.Where(c => ids.Contains(c.CaseId)).ExecuteDelete(),
-            ctx => ctx.IssueCases.Count(c => c.ClosedAt != null && c.ClosedAt < cutoff),
+            ctx => Expired(ctx, cutoff).Count(),
             "已結案的問題案件", maxRows, batchSize);
+    }
+
+    /// <summary>
+    /// 可清除的已結案案件：結案早於 cutoff，**但**保留「處理人判定的不處理類且仍是該（主機, 問題）最新案件」——
+    /// 這種案件是「不再打擾」閘門與待派頁恢復清單的依據（判定見 DispatchContext.DismissedCases：不處理類狀態、BlocksRedispatch 不是 false、
+    /// 該鍵最新的未取消案件），刪掉它問題會重新派工、也從恢復清單消失。以 NOT EXISTS 較新的同鍵未取消案件表達，兩個後端都能翻譯。
+    /// </summary>
+    internal static IQueryable<IssueCaseRow> Expired(LfDbContext ctx, DateTime cutoff)
+    {
+        var dismissals = IssueHandlingStatuses.Dismissals;
+        return ctx.IssueCases.Where(c => c.ClosedAt != null && c.ClosedAt < cutoff
+            && !(dismissals.Contains(c.Status) && !c.Cancelled && c.BlocksRedispatch != false
+                 && !ctx.IssueCases.Any(n => n.HostNameKey == c.HostNameKey && n.IssueKey == c.IssueKey
+                                             && !n.Cancelled && n.CreatedAt > c.CreatedAt)));
     }
 
     private static IssueCase ToModel(IssueCaseRow row) => new()

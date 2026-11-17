@@ -225,7 +225,7 @@ public sealed partial class HandoffScenarioTests
                     .Expect(Expect.ActionStatus(2, 0, 200))
                     .Expect(Check("S4.d2.admin-warned", 2, "停用當下的回應帶此人進行中單數（畫面據此提示並連到交辦總覽）", "1", d =>
                         ActiveWorkOrdersOf(d.Actions[0])))
-                    .Expect(Check("S4.d2.inactive-filter", 2, "既有單可由「只看處理人已停用」找到", "1", d => d.Probe("inactive-list").Items("items").Count.ToString()))
+                    .Expect(Check("S4.d2.inactive-filter", 2, "既有單可由「只看處理人已停用或失去處理能力」找到", "1", d => d.Probe("inactive-list").Items("items").Count.ToString()))
                     .Expect(Check("S4.d2.load-board", 2, "負載看板標示 h1 已停用", "否", d =>
                         Flag(d.Probe("load-board").Items("rows").Any(r => r.Str("name").Contains("h1", StringComparison.Ordinal) && r.Flag("active")))));
                 break;

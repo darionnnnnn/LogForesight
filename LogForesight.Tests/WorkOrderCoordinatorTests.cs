@@ -484,6 +484,26 @@ public class WorkOrderCoordinatorTests
     }
 
     [Fact]
+    public void Split_選到不在本單的成員_訊息用主機名稱與重新整理提示_不外露案件編號()
+    {
+        var w = new World();
+        var id = w.AddOrder(Alice);
+        w.AddCase("a", "H1", Alice, id);
+        w.AddCase("0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33", "H2-DONE", Alice, id, closedAt: T0.AddHours(-1));
+
+        var known = Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.Split(id, new[] { "a", "0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33" }, Carol, Actor()));
+        Assert.Contains("H2-DONE", known.Message);
+        Assert.Contains("請重新整理成員清單", known.Message);
+        Assert.DoesNotContain("0f8e6d2c", known.Message);
+
+        // 查不到案件（已被清除）時不寫識別碼，只提示重新整理
+        var unknown = Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "ghost-id" }, Carol, Actor()));
+        Assert.DoesNotContain("ghost-id", unknown.Message);
+        Assert.Contains("請重新整理成員清單", unknown.Message);
+    }
+
+    [Fact]
     public void Split_空清單與同處理人擲例外()
     {
         var w = new World();

@@ -42,6 +42,25 @@ public class ApiExceptionFilter : IExceptionFilter
                 ApiErrorCodes.Conflict,
                 busy.Message),
 
+            // 協調器自己判定的規則違反（成員不屬於本單、已結案、缺原因……）：訊息是協調器寫好的中文，回 400。
+            // 所有呼叫協調器的路徑（交辦、回覆、看板建單、處理面板）共用這一處，服務層不各抄一份 try/catch
+            LogForesight.Core.Persistence.WorkOrderRuleException rule => (
+                ApiErrorCodes.StatusOf(ApiErrorCodes.ValidationFailed),
+                ApiErrorCodes.ValidationFailed,
+                rule.Message),
+
+            // PRTG 對應／排除範圍被別人先改了（樂觀鎖衝突）：訊息固定中文，回 409
+            LogForesight.Core.Persistence.Sql.PrtgScopeConflictException scopeConflict => (
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.Conflict,
+                scopeConflict.Message),
+
+            // NetIQ 探索的領域錯誤（輸入格式、掃描預算、連線失敗說明）：訊息是寫好的中文，回 400
+            LogForesight.Web.Services.NetiqDiscoveryException discovery => (
+                ApiErrorCodes.StatusOf(ApiErrorCodes.ValidationFailed),
+                ApiErrorCodes.ValidationFailed,
+                discovery.Message),
+
             // PRTG 診斷傳輸儲存層的領域例外：狀態碼與錯誤碼由拋出點決定（例如 403 transfer_binding_changed、
             // 409 transfer_context_changed），訊息本身就是給使用者看的。專屬型別，不會誤傷其他控制器
             LogForesight.Core.Persistence.Sql.PrtgTransferStoreException transfer => (

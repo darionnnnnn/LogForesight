@@ -112,10 +112,10 @@ public class DispatchEligibilityTests : IDisposable
     [Fact]
     public void 原因代碼都有顯示名稱_未知代碼回null()
     {
-        foreach (var code in ContinuationStopReasons.All) Assert.False(string.IsNullOrWhiteSpace(ContinuationStopReasons.LabelOf(code)));
+        foreach (var code in new[] { ContinuationStopReasons.HandlerInactive, ContinuationStopReasons.HandlerPaused, ContinuationStopReasons.HostNotVisible })
+            Assert.False(string.IsNullOrWhiteSpace(ContinuationStopReasons.LabelOf(code)));
         Assert.Null(ContinuationStopReasons.LabelOf(null));
         Assert.Null(ContinuationStopReasons.LabelOf("unknown"));
-        Assert.Equal(3, ContinuationStopReasons.All.Length);
     }
 
     /// <summary>JSON 依宣告型別序列化：交辦單詳情與總覽端點的宣告型別必須含續掛停止欄位（見 CLAUDE.md 控制器回傳型別）</summary>

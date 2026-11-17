@@ -76,6 +76,33 @@ public class DismissedIssueServiceTests
         Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName })));
     }
 
+    [Fact]
+    public void 較新的已取消案件不解除閘門_取最新時略過Cancelled()
+    {
+        var host = Host("HOST-A");
+        Case("dismissed", host.HostName, "disk", 1, IssueHandlingStatuses.WontFix, createdAt: Now.AddDays(-10));
+        // 管理者對被擋主機手動建單、之後取消：取消案件建立較晚，但不是處理人的判定
+        var cancelled = Case("cancelled", host.HostName, "disk", 1, IssueHandlingStatuses.Open, createdAt: Now.AddDays(-1));
+        cancelled.Cancelled = true;
+        _cases.Save(cancelled);
+
+        var all = _cases.GetMany(new[] { host.HostName });
+        Assert.Equal("dismissed", Assert.Single(DispatchContext.DismissedCases(all)).CaseId);
+        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(all));
+        Assert.Single(Service().GetList(1).Groups.SelectMany(g => g.Rows));
+    }
+
+    [Fact]
+    public void 已取消的不處理案件本身不構成閘門()
+    {
+        var host = Host("HOST-A");
+        var c = Case("c", host.HostName, "disk", 1, IssueHandlingStatuses.WontFix);
+        c.Cancelled = true;
+        _cases.Save(c);
+
+        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName })));
+    }
+
     // ── 欄位、分組、分頁、可見範圍 ───────────────────────────────────────────
 
     [Fact]

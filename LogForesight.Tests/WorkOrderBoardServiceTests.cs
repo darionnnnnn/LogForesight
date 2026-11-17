@@ -829,10 +829,10 @@ public class WorkOrderBoardServiceTests : IDisposable
             .ToList();
 
     [Fact]
-    public void 權限_看板待派為Assign或ViewAll_立即派工為Maintain()
+    public void 權限_看板待派為Assign或ViewAll_立即派工為Assign()
     {
         Assert.Equal(new[] { Capability.Assign, Capability.ViewAll }, Assert.Single(PermissionsOf(typeof(WorkOrderBoardController))));
-        Assert.Equal(new[] { Capability.Maintain }, Assert.Single(PermissionsOf(typeof(WorkOrderAutoDispatchController))));
+        Assert.Equal(new[] { Capability.Assign }, Assert.Single(PermissionsOf(typeof(WorkOrderAutoDispatchController))));
     }
 
     [Fact]

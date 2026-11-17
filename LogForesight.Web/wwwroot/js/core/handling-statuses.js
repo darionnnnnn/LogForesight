@@ -33,3 +33,12 @@ export function statusBadgeMeta(value) {
     const meta = statusMeta(value);
     return meta ? { label: meta.shortLabel, variant: meta.variant } : null;
 }
+
+/**
+ * 一張單「處理人可回覆的進行中台數」：進行中（counts.active）加上停用主機上的進行中（counts.activeOnDisabledHosts）。
+ * counts.active 不含停用主機，但回覆端點與成員清單（status=active）都涵蓋它們，
+ * 所以判斷「只剩一台」與回覆彈窗的台數要用這個合計，否則停用主機會被漏算而抓錯主機。
+ */
+export function replyableCount(counts) {
+    return (counts?.active ?? 0) + (counts?.activeOnDisabledHosts ?? 0);
+}

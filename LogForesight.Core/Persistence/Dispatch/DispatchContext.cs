@@ -234,19 +234,20 @@ public sealed class DispatchContext
     }
 
     /// <summary>
-    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者。
+    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的未取消案件，以不處理類狀態（<see cref="IssueHandlingStatuses.Dismissals"/>）結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者。
     /// 回傳的是那件案件本身（待派頁的恢復清單要顯示先前結案狀態、並對它寫回欄位）；閘門只取它的鍵（<see cref="DismissedKeys"/>）。
     /// </summary>
     internal static List<IssueCase> DismissedCases(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
+            // 已取消的案件不是處理人的判定（管理者對被擋主機手動建單又取消，取消案件不能把閘門解除），取最新時略過
+            .Where(c => !c.Cancelled)
             .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
             .Select(g => g.OrderByDescending(c => c.CreatedAt)
                 .ThenByDescending(c => c.UpdatedAt)
                 .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
                 .ThenBy(c => c.CaseId, StringComparer.Ordinal)
                 .First())
-            .Where(c => c.Status is IssueHandlingStatuses.WontFix
-                or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+            .Where(c => IssueHandlingStatuses.Dismissals.Contains(c.Status))
             .Where(c => c.BlocksRedispatch != false)
             .ToList();
 

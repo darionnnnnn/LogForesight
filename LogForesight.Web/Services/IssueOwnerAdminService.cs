@@ -335,14 +335,14 @@ public class IssueOwnerAdminService
 
         var closedCount = closeOutcome?.Succeeded.Count ?? 0;
 
-        // 通知處理人：靜音連同代為結案 → 只發結案那一則（帶靜音迄日）；只暫停 → 發暫停一則（帶迄日與到期自動恢復）
-        var notices = closeOrders
-            ? ordersToClose.Where(o => closeOutcome!.Succeeded.Contains(o.WorkOrderId))
-                .Select(o => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.AdminClosed, o.WorkOrderId, o.HandlerId,
-                    Reason: "靜音：" + reason, Status: IssueHandlingStatuses.WontFix, Until: interval.To))
-            : activeOrders
-                .Select(o => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.MutePaused, o.WorkOrderId, o.HandlerId,
-                    Reason: reason, Until: interval.To));
+        // 通知處理人：結案成功的單發代為結案（帶靜音迄日）；其餘仍進行中的單（只暫停，或代為結案中途失敗而沒處理到的）
+        // 發暫停一則（帶迄日與到期自動恢復）——處理人才知道這張單暫停了而不是被結案
+        var closedIds = closeOutcome?.Succeeded.ToHashSet() ?? new HashSet<long>();
+        var notices = activeOrders.Select(o => closedIds.Contains(o.WorkOrderId)
+            ? new WorkOrderNoticeRequest(WorkOrderOutboxKinds.AdminClosed, o.WorkOrderId, o.HandlerId,
+                Reason: "靜音：" + reason, Status: IssueHandlingStatuses.WontFix, Until: interval.To)
+            : new WorkOrderNoticeRequest(WorkOrderOutboxKinds.MutePaused, o.WorkOrderId, o.HandlerId,
+                Reason: reason, Until: interval.To));
         _mail?.EnqueueWorkOrderNotices(notices.ToList(), _currentUser.UserId, _currentUser.Account);
 
         _audit.Record(
