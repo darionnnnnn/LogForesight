@@ -342,6 +342,7 @@ docs/archive/HISTORY.md #1）。
 | Eventlog | 104 | **System／Application 記錄檔被清除** — 補上 1102（僅涵蓋 Security）之外的另一半滅跡面 | 高（重大） |
 | Security-Auditing | 4740 | 帳戶被鎖定（通常是暴力破解的結果） | High |
 | Security-Auditing | 1102 | **安全稽核日誌被清除 — 入侵者滅跡的典型行為，應立即調查** | 高（重大） |
+| Eventlog | 1102 | 同上（`builtin-security-audit-log-cleared-1102-eventlog`）。1102 的真實發出者是 `Microsoft-Windows-Eventlog`；兩種來源樣式並存，取得正式環境樣本後只留對得上的那條 | 高（重大） |
 | Security-Auditing | 4719 | 稽核原則被變更（關閉記錄以躲避偵測） | High |
 | Security-Auditing | 4720, 4722, 4724 | 帳戶建立 / 啟用 / 密碼被重設 — 入侵者建立立足點 | High |
 | Security-Auditing | 4728, 4732, 4756 | 帳戶被加入特權群組（如 Administrators）— 典型提權手法。**同批 EventId（含 4729/4733/4757、4670、4717/4718/4719/4907）在 NetIQ 主機另會逐則寫成「權限異動檢核」**（`HostDayPostProcessor.RecordPermissionChanges`，與規則命中互不影響） | High |

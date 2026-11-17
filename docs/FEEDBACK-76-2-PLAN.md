@@ -1,6 +1,6 @@
 # 回饋第 76 輪第二階段規劃：交辦串接、通知與文字
 
-> 狀態：規劃完成（已做多角度複檢），待使用者確認後實作
+> 狀態：實作中（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；待使用者確認的兩項依預設：勾選框預設不勾、E1-01 留第 77 輪）
 > 基準：`feature/feedback-76`@f11d2080（macOS 10,193 通過／23 略過，1.0.76.0）
 > 來源：第一階段評估報告 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（101 條發現、12 個同根因群組）；第一階段規劃見 `docs/FEEDBACK-76-PLAN.md`
 > 實作方式：主代理規劃與驗收；跨檔實作委派 Sonnet 5.5，機械性替換委派 Haiku 5.5；同一 checkout 一次一個改檔代理
@@ -577,3 +577,4 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 |---|---|---|---|---|
 | 規劃 | 主代理 | 本檔第一版 | DocNarrativeGuard、VersionRoundGuard 12 通過 | — |
 | 複檢 | 主代理 | 依程式面、處理人、管理者、整體四個角度修訂；每個定案項目補上可測試的驗收 | 同上 | 修正 9 項設計、補 6 項使用者角度的缺漏（見「多角度複檢」） |
+| A | 主代理 | 新增 `builtin-security-audit-log-cleared-1102-eventlog`（來源樣式 `Eventlog`）、種子 v12；**同根因一併修**：滅跡關聯錨點原本也只認 `Security-Auditing`，改為兼認 `Eventlog` 的 1102（`CorrelationAnalyzer`），否則 A1-a 的「滅跡關聯成立」做不到 | A1-a～e 通過（I5 移除已知差異、新增 I5c 關聯情境、三個分類測試）；A1-f 突變新規則事件編號 → I5 轉紅，還原；A2 新增 v11→v12 升級案例；A3 DETECTION-SPEC 加列（RULES-SPEC 無逐條清單）；定向 625 通過 | RULES-SPEC 不列逐條規則，A3 只需改 DETECTION-SPEC |

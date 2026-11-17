@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -73,6 +73,35 @@ public class RuleAdminServiceTests
         LikelyCauses = new List<string> { "設定錯誤" },
         NextSteps = new List<string> { "檢查設定檔" }
     };
+
+    // ── 種子升級：v11 → v12（新增 Eventlog 來源的 1102 規則） ───────────────
+
+    [Fact]
+    public void 種子v11升級到v12_提示升級且套用後多出Eventlog1102規則_既有自訂不變()
+    {
+        const string newId = "builtin-security-audit-log-cleared-1102-eventlog";
+        const string oldId = "builtin-security-audit-log-cleared-1102";
+        var v11 = KnownIssueSeed.CreateRules().Where(r => r.Id != newId).ToList();
+        _seeds.Sync(v11, seedVersion: 11);
+        var customized = KnownIssueSeed.CreateRules().Where(r => r.Id != newId).ToList();
+        var oldIndex = customized.FindIndex(r => r.Id == oldId);
+        customized[oldIndex] = customized[oldIndex].CloneForSeedOverwrite(enabled: false); // 站台自訂：停用舊樣式那條
+        _rules.Content = new RuleFileContent { SeedVersion = 11, Rules = customized };
+        var service = Create();
+
+        var status = service.GetImportStatus();
+        Assert.True(status.HasUpdate);
+        Assert.Equal(11, status.CurrentSeedVersion);
+        Assert.Equal(12, status.LatestSeedVersion);
+
+        var result = service.ApplyImport(overwriteBuiltin: false);
+
+        Assert.Equal(1, result.Added);
+        var rules = _rules.Content.Rules;
+        var added = Assert.Single(rules, r => r.Id == newId);
+        Assert.Equal("Eventlog", added.SourcePattern);
+        Assert.False(rules.Single(r => r.Id == oldId).Enabled);
+    }
 
     // ── 四層保護 ─────────────────────────────────────────────────────────────
 

@@ -31,7 +31,8 @@ public static class KnownIssueSeed
     /// v8 新增預設停用的磁碟可用空間趨勢規則，使用獨立 PrtgDiskTrendThresholds 暫定門檻。
     /// v9 新增 CPU、記憶體與磁碟資源壓力規則；磁碟兩小時低水位使用獨立規則，不受磁碟趨勢 28 日啟用守門。
     /// v11 新增預設停用的記憶體／CPU／Ping 趨勢規則
-    public const int Version = 11;
+    /// v12 新增來源樣式 Eventlog 的 1102 稽核清除規則（1102 真實發出者是 Microsoft-Windows-Eventlog）
+    public const int Version = 12;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -305,6 +306,20 @@ public static class KnownIssueSeed
                     "若為攻擊，追查來源並考慮加強防護；若為誤鎖，依正常流程解鎖" } },
         new() { Id = "builtin-security-audit-log-cleared-1102", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Security-Auditing", EventIds = new[] { 1102 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Description = "安全稽核日誌被清除——入侵者滅跡的典型行為，應立即調查",
+                PlainExplanation = "伺服器的安全稽核日誌被清除了——這是攻擊者入侵後常見的滅跡行為。",
+                Impact = "日誌被清除代表清除時間點之前的活動紀錄已經遺失，會嚴重影響後續的入侵調查與鑑識工作。",
+                LikelyCauses = new[] { "入侵者取得管理權限後清除紀錄以掩蓋行蹤",
+                    "管理員的正常維運操作（如日誌歸檔前清空）——需確認是否為預期行為", "自動化的日誌管理工具設定" },
+                NextSteps = new[] { "立即確認是否為已知的管理操作（誰在什麼時候執行的）",
+                    "若無法確認來源，視為入侵事件立即啟動調查程序",
+                    "檢查該時間點前後是否有其他異常活動（其他主機的登入、權限異動等）",
+                    "確認是否有其他日誌來源（如集中式 SIEM）保留了被清除前的紀錄" } },
+        // 1102 的真實發出者是 Microsoft-Windows-Eventlog；上一條保留 Security-Auditing 樣式，避免收集器標成該來源的站台退步。
+        // 兩條同義規則並存，拿到正式環境樣本後刪掉用不到的那一條（共同子字串 Microsoft-Windows- 會吃到別的提供者的 1102）。
+        new() { Id = "builtin-security-audit-log-cleared-1102-eventlog", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Eventlog", EventIds = new[] { 1102 },
                 Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "安全稽核日誌被清除——入侵者滅跡的典型行為，應立即調查",
                 PlainExplanation = "伺服器的安全稽核日誌被清除了——這是攻擊者入侵後常見的滅跡行為。",

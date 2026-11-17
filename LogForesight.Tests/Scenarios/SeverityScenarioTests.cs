@@ -315,9 +315,29 @@ public sealed partial class SeverityScenarioTests
         var s = NewScenario("I5", "稽核紀錄被清除 1102 一筆（真實來源 Microsoft-Windows-Eventlog）");
         s.Day(1, d => d.Events(Win, new[] { AuditCleared1102(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30), "admin1") }));
         ExpectRisk(s, 1, RiskLevels.High);
-        // 已知差異 E4-I5：實際 低、預期 高：真實 1102 的來源是 Microsoft-Windows-Eventlog，builtin-security-audit-log-cleared-1102 的來源樣式是 Security-Auditing，對不上，落入「未知來源 Low」
-        Known(s, "I5", 1);
         RunAndAssert(s);
+
+        // 命中重大規則且只計一次（兩條同義 1102 規則不得對同一筆各計一次）
+        var issues = ScenarioDriver.Run(s).Day(1).Issues.Where(i => i.Host == Win && i.Label.Contains("1102", StringComparison.Ordinal)).ToList();
+        var issue = Assert.Single(issues);
+        Assert.True(issue.ElevatesDayRisk);
+        Assert.Equal(1, issue.Count);
+    }
+
+    /// <summary>真實來源的 1102 加同日帳號建立：滅跡關聯成立（錨點不看來源名，但要先被規則判成安全事件）</summary>
+    [Fact]
+    public void I5_真實來源的1102加同日帳號建立_滅跡關聯成立()
+    {
+        var s = NewScenario("I5c", "1102（Microsoft-Windows-Eventlog）＋同日 4720");
+        s.Day(1, d => d.Events(Win, new[]
+        {
+            AuditCleared1102(TimeSpan.FromHours(2), "admin1"),
+            AccountCreated4720(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(5), "admin1", "svc-x"),
+        }));
+        ExpectRisk(s, 1, RiskLevels.High);
+        var result = ScenarioDriver.Run(s);
+        result.AssertExpectations();
+        Assert.Contains(result.Day(1).Alerts, a => a.Host == Win && a.Kind == "關聯" && a.Text.Contains("【滅跡】", StringComparison.Ordinal) && !a.Suppressed);
     }
 
     /// <summary>對照：把 1102 的來源改成規則假定的 Security-Auditing，同一規則就命中並判高（證明差異出在來源名不一致）。</summary>

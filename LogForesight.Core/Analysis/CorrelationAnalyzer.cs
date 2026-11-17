@@ -50,6 +50,7 @@ internal static class CorrelationAnalyzer
     internal static readonly int[] PersistenceSecurityIds = { 4697, 4698 };
     internal static readonly int[] AuditTamperIds = { 1102, 4719, 4907 };
     internal static readonly int[] AuditTamperAnchorIds = { 1102, 4719 };
+    internal const int AuditLogClearedId = 1102;
     internal static readonly int[] PermissionChangeIds = { 4670, 4703, 4704, 4705, 4717, 4718 };
     internal static readonly int[] DiskErrorIds = { 7, 11, 51, 52, 153 };
     internal static readonly int[] NtfsErrorIds = { 55, 98, 130, 140, 141 };
@@ -188,7 +189,8 @@ internal static class CorrelationAnalyzer
 
         // 錨點只認 1102／4719；4907 在 patch 日必然出現，不當錨點也不算「其他安全事件」。
         // 「其他安全事件」須 Severity > Low 且達門檻——RDP 收集規則（Low）本身非告警。
-        var auditTamper = Find("Security-Auditing", AuditTamperAnchorIds);
+        // 1102 的真實發出者是 Microsoft-Windows-Eventlog，與種子規則兩種來源樣式對齊（KnownIssueSeed v12）。
+        var auditTamper = Find("Security-Auditing", AuditTamperAnchorIds) ?? Find("Eventlog", AuditLogClearedId);
         if (auditTamper != null && issues.Any(i =>
                 i != auditTamper &&
                 i.Category == IssueCategory.Security &&
