@@ -22,12 +22,14 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
 
     private readonly Func<LfDbContext> _contextFactory;
     private readonly EfJsonLogStore _logStore;
+    private readonly TimeProvider _clock;
     private readonly object _logLock = new();
 
-    public EfRecordHandlingStore(Func<LfDbContext> contextFactory, EfJsonLogStore logStore)
+    public EfRecordHandlingStore(Func<LfDbContext> contextFactory, EfJsonLogStore logStore, TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
         _logStore = logStore;
+        _clock = clock ?? TimeProvider.System;
     }
 
     // ── 快照 ────────────────────────────────────────────────────────────────
@@ -146,10 +148,10 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
         }
     }
 
-    private static string PrepareAndSerialize(RecordHandlingLog log, long logId)
+    private string PrepareAndSerialize(RecordHandlingLog log, long logId)
     {
         log.LogId = logId;
-        if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
+        if (log.CreatedAt == default) log.CreatedAt = _clock.LocalNow();
         return JsonSerializer.Serialize(log, LfJsonOptions.Compact);
     }
 
@@ -212,7 +214,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
     internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<long>(_contextFactory,
             (ctx, take) => ctx.RecordHandlings
@@ -236,7 +238,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     {
         lock (_logLock)
         {
-            return _logStore.Prune(DateTime.Today.AddDays(-retentionDays));
+            return _logStore.Prune(_clock.LocalToday().AddDays(-retentionDays));
         }
     }
 

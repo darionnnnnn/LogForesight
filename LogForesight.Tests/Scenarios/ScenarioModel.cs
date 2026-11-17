@@ -101,6 +101,7 @@ public sealed class DayPlan
     internal List<(string Host, IReadOnlyList<ScenarioEvent> Events)> EventSets { get; } = new();
     internal List<ScenarioAction> ActionList { get; } = new();
     internal List<ScenarioProbe> ProbeList { get; } = new();
+    internal List<Action<ScenarioSite, ScenarioActionContext>> InspectList { get; } = new();
     internal List<Action<LogForesight.Core.Models.SystemSettings>> SettingChanges { get; } = new();
 
     public int Day { get; }
@@ -128,6 +129,16 @@ public sealed class DayPlan
     public DayPlan Probe(string name, string actor, Func<ScenarioActionContext, string> url)
     {
         ProbeList.Add(new ScenarioProbe(name, actor, url));
+        return this;
+    }
+
+    /// <summary>
+    /// 當天人為動作做完後，直接檢視站台內部狀態（store、DbContext）。只給情境自身的測試用：
+    /// 例如驗證假時鐘撥到第 N 天後，建單、稽核、回覆時間確實落在第 N 天。回呼不得改動站台資料。
+    /// </summary>
+    public DayPlan Inspect(Action<ScenarioSite, ScenarioActionContext> inspect)
+    {
+        InspectList.Add(inspect);
         return this;
     }
 

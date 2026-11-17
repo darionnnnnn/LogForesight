@@ -48,8 +48,13 @@ public static class ServiceCollectionExtensions
         var storage = settings.Storage;
         var dataRoot = storage.ResolveDataRoot();
 
+        // 交辦、靜音、觀察中的「現在」「今天」一律取自 TimeProvider（可替換時鐘）：正式站台用系統時鐘，行為不變；
+        // 用 TryAdd 讓測試先註冊的假時鐘不被蓋掉
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+            .TryAddSingleton<TimeProvider>(services, TimeProvider.System);
+
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
-        services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
+        services.AddSingleton(sp => new StorageBackend(storage, dataRoot) { Clock = sp.GetRequiredService<TimeProvider>() });
         // 慢操作統計每行程一份、由 StorageBackend 持有；服務層要自行埋點（例如報表範圍篩選）時注入同一份
         services.AddSingleton(sp => sp.GetRequiredService<StorageBackend>().Performance);
         services.AddSingleton(sp => new HostDayWorkflowStore(sp.GetRequiredService<StorageBackend>()));
@@ -64,10 +69,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));
         services.AddSingleton<IHostGroupStore>(sp => new HostGroupStore(sp.GetRequiredService<StorageBackend>().Blob("host_groups")));
         services.AddSingleton<IGroupAccessStore>(sp => new GroupAccessStore(sp.GetRequiredService<StorageBackend>().Blob("group_access")));
-        services.AddSingleton<AuditLogStore>(sp => new AuditLogStore(sp.GetRequiredService<StorageBackend>().LogStore("audit")));
+        services.AddSingleton<AuditLogStore>(sp => new AuditLogStore(sp.GetRequiredService<StorageBackend>().LogStore("audit"), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IImportLogStore>(sp => new ImportLogStore(sp.GetRequiredService<StorageBackend>().LogStore("import_logs")));
         services.AddSingleton<ISentinelStore>(sp => new SentinelStore(sp.GetRequiredService<StorageBackend>().Blob("sentinels")));
-        services.AddSingleton<IIssueOwnerStore>(sp => new IssueOwnerStore(sp.GetRequiredService<StorageBackend>().Blob("issue_owners")));
+        services.AddSingleton<IIssueOwnerStore>(sp => new IssueOwnerStore(sp.GetRequiredService<StorageBackend>().Blob("issue_owners"), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<SetupWizardStateStore>(sp => new SetupWizardStateStore(sp.GetRequiredService<StorageBackend>().Blob("setup_wizard_state")));
         services.AddSingleton<ISystemSettingsStore>(sp => new SystemSettingsStore(sp.GetRequiredService<StorageBackend>().Blob("system_settings")));
         services.AddSingleton<IUserDisplayNameService, UserDisplayNameService>();
@@ -132,7 +137,7 @@ public static class ServiceCollectionExtensions
 
         // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
         services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
-        services.AddSingleton(sp => new WorkOrderOutboxStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey)));
+        services.AddSingleton(sp => new WorkOrderOutboxStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey), sp.GetRequiredService<TimeProvider>()));
 
         // 每使用者偏好（回饋第 50 輪 C-4，目前只有個人常用語）：獨立 blob，不進使用者清單
         services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));
@@ -380,7 +385,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIssueExclusionSource>(sp => new IssueExclusionProvider(
             sp.GetRequiredService<IIssueOwnerStore>(),
             sp.GetRequiredService<DataVersionStamp>(),
-            () => DateTime.Today));
+            // 「今天」取自可替換時鐘（與交辦、靜音、觀察中的其他判斷同一個來源）
+            () => sp.GetRequiredService<TimeProvider>().LocalToday()));
         services.AddSingleton<SummaryCache>();
         services.AddSingleton<ICacheStatistics>(sp => sp.GetRequiredService<SummaryCache>());
         // 「下一筆未處理」捷徑清單的跨請求快取（回饋四十五輪 B2）：同樣是 Singleton

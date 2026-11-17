@@ -18,10 +18,12 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     internal const int CodeMaxLength = 30;
 
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly TimeProvider _clock;
 
-    public EfWorkOrderStore(Func<LfDbContext> contextFactory)
+    public EfWorkOrderStore(Func<LfDbContext> contextFactory, TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>供同組件的背景整併共用同一個連線工廠（不另開 StorageBackend 工廠方法，避免掛上啟動路徑）</summary>
@@ -94,7 +96,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     public long Insert(WorkOrder order)
     {
-        order.UpdatedAt = DateTime.Now;
+        order.UpdatedAt = _clock.LocalNow();
         var row = new WorkOrderRow();
         CopyToRow(order, row);
 
@@ -108,7 +110,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     public void Save(WorkOrder order)
     {
-        var now = DateTime.Now;
+        var now = _clock.LocalNow();
         var row = new WorkOrderRow { WorkOrderId = order.WorkOrderId };
         CopyToRow(order, row);
 
@@ -195,7 +197,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
 
         // 單一 GROUP BY：看板一次要數幾十張單，逐張數就是 N 次往返
-        return BuildCountMembersQuery(ctx, ids).ToList().ToDictionary(r => r.WorkOrderId, r => new WorkOrderMemberCounts
+        return BuildCountMembersQuery(ctx, ids, _clock).ToList().ToDictionary(r => r.WorkOrderId, r => new WorkOrderMemberCounts
         {
             Total = r.Total,
             Active = r.Active,
@@ -210,9 +212,9 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>成員計數的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids)
+    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids, TimeProvider? clock = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
         return ctx.IssueCases.AsNoTracking()
             .Where(c => c.WorkOrderId != null && ids.Contains(c.WorkOrderId.Value))
             .GroupBy(c => c.WorkOrderId!.Value)
@@ -249,7 +251,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         WorkOrderQueries.Validate(q);
         using var ctx = _contextFactory();
 
-        var filtered = BuildOrderFilterQuery(ctx, q, DateTime.Today);
+        var filtered = BuildOrderFilterQuery(ctx, q, _clock.LocalToday());
         var total = filtered.Count();
         var rows = ApplyOrderSort(ctx, filtered, q.Sort)
             .Skip((q.Page - 1) * q.PageSize)
@@ -343,7 +345,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
 
         // 單一查詢：進行中單依處理人分組，成員數以關聯子查詢併進同一句 SQL
-        return BuildLoadBoardQuery(ctx).ToList();
+        return BuildLoadBoardQuery(ctx, _clock).ToList();
     }
 
     public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys)
@@ -351,16 +353,16 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
 
         // 單一查詢：沒有進行中單時分組為空，回全 0
-        return BuildHandlerSummaryQuery(ctx, handlerId, pausedKeys).FirstOrDefault() ?? new WorkOrderHandlerSummary();
+        return BuildHandlerSummaryQuery(ctx, handlerId, pausedKeys, _clock).FirstOrDefault() ?? new WorkOrderHandlerSummary();
     }
 
     /// <summary>
     /// 處理人摘要的查詢本體（抽出供兩後端 SQL 翻譯測試）；形狀同 <see cref="BuildLoadBoardQuery"/>。
     /// 暫停單（組合鍵在 <paramref name="pausedKeys"/> 內）不計入四個既有數字，含成員子查詢。
     /// </summary>
-    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId, IReadOnlyCollection<string> pausedKeys)
+    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId, IReadOnlyCollection<string> pausedKeys, TimeProvider? clock = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
         var keys = pausedKeys.Distinct().ToList();
 
         // 逾期條件與 WorkOrderQueries.IsOverdue 同義。
@@ -405,9 +407,9 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>負載看板的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx)
+    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx, TimeProvider? clock = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
         var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
 
         // 母體＝進行中單＋近 7 日結案單，依處理人分組；進行中類計數以條件聚合、成員類以關聯子查詢併進同一句 SQL。
@@ -440,7 +442,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal int PruneClosed(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<long>(_contextFactory,
             (ctx, take) => ctx.WorkOrders
@@ -472,7 +474,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal int PruneOpenOrderEvents(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         // 「比這筆新的事件」：時間較晚，或同時間但 EventId 較大（同一時間多筆時仍有確定的先後）
         IQueryable<long> Prunable(LfDbContext ctx) => ctx.WorkOrderEvents

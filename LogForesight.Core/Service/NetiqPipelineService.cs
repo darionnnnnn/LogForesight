@@ -914,7 +914,7 @@ public class NetiqPipelineService
             }
 
             HostDayPostProcessor.AttachCase(_caseCoordinator, _dispatch, target.HostName, date, record.TopIssues, logContext,
-                _workflow, target.HostId, record.RecordId);
+                _workflow, target.HostId, record.RecordId, _backend.Clock);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(

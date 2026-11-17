@@ -40,6 +40,8 @@ public class WorkOrderQueryService
     /// <summary>「靜音到期恢復」的回看天數：最近一個已結束區間的迄日落在 [今天−7, 今天−1]</summary>
     private const int ResumedWindowDays = 7;
 
+    private readonly TimeProvider _clock;
+
     public WorkOrderQueryService(
         IWorkOrderStore orders,
         IIssueCaseStore cases,
@@ -52,8 +54,10 @@ public class WorkOrderQueryService
         IUserDisplayNameService displayNames,
         IIssueExclusionSource exclusions,
         IUserGroupStore userGroups,
-        IAnalysisRecordQuery records)
+        IAnalysisRecordQuery records,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _userGroups = userGroups;
         _records = records;
         _orders = orders;
@@ -195,7 +199,7 @@ public class WorkOrderQueryService
     {
         var order = Authorize(id);
         if (!_currentUser.Has(Capability.Assign)) return;
-        _orders.MarkAdminSeen(order.WorkOrderId, DateTime.Now);
+        _orders.MarkAdminSeen(order.WorkOrderId, _clock.LocalNow());
     }
 
     public List<HandlerGroupOptionDto> ListHandlerGroups() =>
@@ -270,7 +274,7 @@ public class WorkOrderQueryService
         var hostIdByKey = hosts
             .GroupBy(h => HostNameKey.Of(h.HostName))
             .ToDictionary(g => g.Key, g => g.First().HostId);
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
 
         var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
@@ -333,10 +337,10 @@ public class WorkOrderQueryService
             .ToList();
         if (targets.Count == 0) return;
 
-        var from = DateTime.Today.AddDays(-29);
+        var from = _clock.LocalToday().AddDays(-29);
         var findings = _records.QueryDiskTrendEvidence(
                 targets.Select(x => (x.Member.HostId!.Value, x.Sensor)).Distinct().Take(100).ToArray(),
-                from, DateTime.Today)
+                from, _clock.LocalToday())
             .Where(x => x.HostId > 0 && targets.Any(t => t.Member.HostId == x.HostId
                 && string.Equals(t.Sensor, x.SensorId, StringComparison.Ordinal)))
             .GroupBy(x => (x.HostId, Sensor: x.SensorId))
@@ -502,7 +506,7 @@ public class WorkOrderQueryService
         dto.LastAppendedAt = o.LastAppendedAt;
         dto.LastReplyAt = o.LastReplyAt;
         dto.UnrepliedDays = o.LastReplyAt == null && o.ClosedAt == null
-            ? (DateTime.Today - o.CreatedAt.Date).Days
+            ? (_clock.LocalToday() - o.CreatedAt.Date).Days
             : null;
         dto.UnreadReply = o.HasUnreadReply;
         dto.ClosedAt = o.ClosedAt;

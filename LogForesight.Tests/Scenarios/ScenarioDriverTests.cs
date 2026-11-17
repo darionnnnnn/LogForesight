@@ -59,6 +59,54 @@ public sealed class ScenarioDriverTests : IClassFixture<ScenarioDriverTests.Mini
         public void Dispose() { }
     }
 
+    /// <summary>T1：假時鐘撥到第 N 天後，建單時間、稽核時間、回覆時間都等於該天的執行時刻（資料日隔天 09:00），不是真實時間</summary>
+    [Fact]
+    public void 假時鐘撥到第N天_建單_稽核_回覆時間都是假時鐘的時間()
+    {
+        var created = new List<(DateTime Order, List<DateTime> Events, DateTime ExpectedDay1)>();
+        var day3 = new List<(DateTime? OrderReplyAt, List<DateTime> Events, List<DateTime> Audits, DateTime Expected)>();
+
+        var scenario = new Scenario("假時鐘第N天")
+            .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+            .WithUser(new UserSpec("admin1", UserRole.Admin))
+            .WithUser(new UserSpec("handler1") { AuthorizedHostGroups = new[] { "G1" }, InDispatchPool = true })
+            .Day(1, d => d
+                .Events("HOST-A", ScenarioEvents.DiskErrors(12))
+                .Inspect((site, ctx) =>
+                {
+                    var order = Assert.Single(OrderRef.AllOrders(site.Get<IWorkOrderStore>()));
+                    created.Add((order.CreatedAt, site.Get<IWorkOrderStore>().ListEvents(order.WorkOrderId).Select(e => e.CreatedAt).ToList(),
+                        ctx.DataDateOf(1).AddDays(1).AddHours(9)));
+                }))
+            .Day(3, d => d
+                .Act(ScenarioActions.Reply("handler1", OrderRef.ForHandler("handler1"), "resolved", "已更換硬碟"))
+                .Inspect((site, ctx) =>
+                {
+                    var store = site.Get<IWorkOrderStore>();
+                    var order = Assert.Single(OrderRef.AllOrders(store));
+                    var audits = site.Get<AuditLogStore>()
+                        .Query(new AuditQuery { Actions = new() { AuditActions.HandlingStatus }, Page = 1, PageSize = 50 }).Items
+                        .Select(a => a.OccurredAt).ToList();
+                    day3.Add((order.LastReplyAt, store.ListEvents(order.WorkOrderId).Where(e => e.CreatedAt.Date == ctx.DataDateOf(3).AddDays(1).Date)
+                        .Select(e => e.CreatedAt).ToList(), audits, ctx.DataDateOf(3).AddDays(1).AddHours(9)));
+                }))
+            .Days(3);
+
+        ScenarioDriver.Run(scenario);
+
+        var first = Assert.Single(created);
+        Assert.Equal(first.ExpectedDay1, first.Order);
+        Assert.NotEmpty(first.Events);
+        Assert.All(first.Events, e => Assert.Equal(first.ExpectedDay1, e));
+
+        var third = Assert.Single(day3);
+        Assert.Equal(third.Expected, third.OrderReplyAt);
+        Assert.NotEmpty(third.Events);
+        Assert.All(third.Events, e => Assert.Equal(third.Expected, e));
+        var audit = Assert.Single(third.Audits);
+        Assert.Equal(third.Expected, audit);
+    }
+
     [Fact]
     public void 最小情境_第1天高風險_夜間派工建單並入通知佇列()
     {

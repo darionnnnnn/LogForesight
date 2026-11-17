@@ -36,12 +36,16 @@ public class IssueOwnerAdminService
     /// <summary>問題設定 DTO 附帶的靜音歷程筆數（新到舊）</summary>
     public const int MuteHistoryLimit = 10;
 
+    private readonly TimeProvider _clock;
+
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
         ICurrentUser currentUser, IUserDisplayNameService displayNameService,
         IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _permissionVersion = permissionVersion;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
@@ -80,7 +84,7 @@ public class IssueOwnerAdminService
     /// 依主機數由多到少排序（影響面大的問題排前面，符合「今天該先處理哪個」的既有排序哲學）。</summary>
     public List<RecentIssueOptionDto> RecentIssues()
     {
-        var to = DateTime.Today;
+        var to = _clock.LocalToday();
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         var owned = _issueOwners.GetAll()
             .Select(r => IssueProfile.KeyOf(r.SourceName, r.EventId))
@@ -164,7 +168,7 @@ public class IssueOwnerAdminService
             throw DomainException.Validation("請填寫機房結論的原因——這是代全體下結論的操作，理由要留在紀錄裡。");
 
         var beforeStatus = _issueOwners.Get(sourceName, eventId)?.ConclusionStatus;
-        var concludedAt = DateTime.Now;
+        var concludedAt = _clock.LocalNow();
 
         var saved = _issueOwners.Update(sourceName, eventId, p =>
         {
@@ -234,7 +238,7 @@ public class IssueOwnerAdminService
         var sourceName = source?.Trim() ?? "";
         if (sourceName.Length == 0) throw DomainException.Validation("請指定問題來源（Source）。");
 
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
         if (request.Days.HasValue == request.Until.HasValue)
             throw DomainException.Validation("請在「靜音天數」與「靜音至（日期）」之間擇一指定。");
 
@@ -270,7 +274,7 @@ public class IssueOwnerAdminService
         if (closeOrders && !(_currentUser.Capabilities.Contains(Capability.Assign) && _currentUser.Capabilities.Contains(Capability.Handle)))
             throw DomainException.Forbidden("代為結案進行中的交辦單需要同時具備指派與處理權限。");
 
-        var now = DateTime.Now;
+        var now = _clock.LocalNow();
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
         var extended = false;
         MuteInterval interval = null!;
@@ -355,7 +359,7 @@ public class IssueOwnerAdminService
     {
         EnsureMaintain();
 
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
         var existing = _issueOwners.Get(source, eventId);
         var current = existing == null ? null : IssueProfile.CurrentMute(existing, today);
         if (existing == null || current == null)
@@ -413,7 +417,7 @@ public class IssueOwnerAdminService
 
     private Dictionary<(string SourceUpper, int EventId), (int HostCount, DateTime LastSeen)> RecentAggregatesByKey()
     {
-        var to = DateTime.Today;
+        var to = _clock.LocalToday();
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         // 靜音不排除：靜音中的問題要選得到、看得到近況，才能解除
         return _issueAggregates.Aggregate(IssueExclusion.None, from, to, null)
@@ -455,7 +459,7 @@ public class IssueOwnerAdminService
                 ? null
                 : _users.FindByAccount(rule.ConcludedByAccount)?.DisplayName,
             AutoApply = rule.AutoApply,
-            CurrentMute = IssueProfile.CurrentMute(rule, DateTime.Today) is { } current ? ToMuteDto(current) : null,
+            CurrentMute = IssueProfile.CurrentMute(rule, _clock.LocalToday()) is { } current ? ToMuteDto(current) : null,
             MuteHistory = rule.Mutes
                 .OrderByDescending(m => m.From).ThenByDescending(m => m.At)
                 .Take(MuteHistoryLimit)

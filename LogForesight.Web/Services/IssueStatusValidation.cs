@@ -12,20 +12,22 @@ public static class IssueStatusValidation
     /// 處理人回覆交辦單專用：不得把問題設回「未處理」（會清空案件卻留在單內）。
     /// 要退回請由管理者處理；其餘規則與 <see cref="Validate"/> 相同。
     /// </summary>
-    public static void ValidateReply(string status, DateTime? dueDate, string? note)
+    public static void ValidateReply(string status, DateTime? dueDate, string? note, TimeProvider? clock = null)
     {
         if (status == IssueHandlingStatuses.Open)
             throw DomainException.Validation("回覆不能把問題設回「未處理」；要退回請由管理者處理。");
 
-        Validate(status, dueDate, clearing: false, note);
+        Validate(status, dueDate, clearing: false, note, clock);
     }
 
-    public static void Validate(string status, DateTime? dueDate, bool clearing, string? note)
+    public static void Validate(string status, DateTime? dueDate, bool clearing, string? note, TimeProvider? clock = null)
     {
+        var today = (clock ?? TimeProvider.System).LocalToday();
+
         if (!clearing && !IssueHandlingStatuses.IsValid(status))
             throw DomainException.Validation($"未知的問題處理狀態「{status}」。");
 
-        if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
+        if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < today)
             throw DomainException.Validation("預計完成日不可早於今天。");
 
         // 無法處理必填原因（回饋十八輪批次G）：admin 收到上報通知要看得出「為什麼處理不了」
@@ -45,9 +47,9 @@ public static class IssueStatusValidation
         {
             if (!dueDate.HasValue)
                 throw DomainException.Validation("標記為觀察中時必須指定觀察至日期。");
-            if (dueDate.Value.Date < DateTime.Today)
+            if (dueDate.Value.Date < today)
                 throw DomainException.Validation("觀察至日期不可早於今天。");
-            if (dueDate.Value.Date > DateTime.Today.AddDays(90))
+            if (dueDate.Value.Date > today.AddDays(90))
                 throw DomainException.Validation("觀察至日期不可超過 90 天。");
         }
     }

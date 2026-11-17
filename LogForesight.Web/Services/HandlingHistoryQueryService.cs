@@ -32,6 +32,8 @@ public class HandlingHistoryQueryService
     private readonly IUserDisplayNameService _displayNameService;
     private readonly IIssueExclusionSource _exclusions;
 
+    private readonly TimeProvider _clock;
+
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -44,8 +46,10 @@ public class HandlingHistoryQueryService
         HandlingProgressCalculator progress,
         IIssueAggregateQuery aggregateQuery,
         IUserDisplayNameService displayNameService,
-        IIssueExclusionSource exclusions)
+        IIssueExclusionSource exclusions,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _store = store;
         _issueStore = issueStore;
         _cases = cases;
@@ -283,7 +287,7 @@ public class HandlingHistoryQueryService
         }
 
         var sqlTodo = _aggregateQuery.AggregateDayTodo(
-            exclusion, from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today, riskLevels);
+            exclusion, from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, _clock.LocalToday(), riskLevels);
 
         var todo = new HandlingTodoDto
         {
@@ -383,9 +387,9 @@ public class HandlingHistoryQueryService
             // 逾期兩層都看：日層級 DueDate 過期且未結案，或任一問題層級「處理中」過期
             // （與問題查詢清單的 IsOverdue 同一套語意，來源同為 DayHandlingDerivation.HasOverdueIssue）
             var dayOverdue = handling?.DueDate.HasValue == true &&
-                             handling.DueDate.Value.Date < DateTime.Today &&
+                             handling.DueDate.Value.Date < _clock.LocalToday() &&
                              progress.IsUnresolved;
-            var overdue = dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today, exclusion, record.Date);
+            var overdue = dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, _clock.LocalToday(), exclusion, record.Date);
 
             result.Add(new ClassifiedDay(record, external, overdue));
         }
@@ -464,8 +468,8 @@ public class HandlingHistoryQueryService
             if (host == null || !visibleHostIds.Contains(host.HostId)) continue;
 
             var isOverdue = (c.Status == IssueHandlingStatuses.InProgress &&
-                              c.DueDate.HasValue && c.DueDate.Value.Date < DateTime.Today) ||
-                             IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, DateTime.Today);
+                              c.DueDate.HasValue && c.DueDate.Value.Date < _clock.LocalToday()) ||
+                             IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, _clock.LocalToday());
 
             // 依問題視角（§7）的分組鍵與「回覆處理狀態」端點的參數，自 IssueKey 反解
             var signature = IssueSignatureKey.TryParseSignature(c.IssueKey);
@@ -500,7 +504,7 @@ public class HandlingHistoryQueryService
     private List<HandlerDayItemDto> BuildHandlerDayItems(
         long userId, IReadOnlySet<long> visibleHostIds, bool includeResolvedDays, IssueExclusion exclusion)
     {
-        var cutoff = DateTime.Today.AddDays(-30);
+        var cutoff = _clock.LocalToday().AddDays(-30);
         var items = new List<HandlerDayItemDto>();
 
         foreach (var handling in _store.GetByHandler(userId))
@@ -516,8 +520,8 @@ public class HandlingHistoryQueryService
             if (!unresolved && (!includeResolvedDays || handling.Date.Date < cutoff)) continue;
 
             var forDayIssues = _issueStore.GetForDay(host.HostName, handling.Date);
-            var isOverdue = (handling.DueDate.HasValue && handling.DueDate.Value.Date < DateTime.Today && unresolved) ||
-                            DayHandlingDerivation.HasOverdueIssue(forDayIssues, DateTime.Today, exclusion, handling.Date);
+            var isOverdue = (handling.DueDate.HasValue && handling.DueDate.Value.Date < _clock.LocalToday() && unresolved) ||
+                            DayHandlingDerivation.HasOverdueIssue(forDayIssues, _clock.LocalToday(), exclusion, handling.Date);
 
             items.Add(new HandlerDayItemDto
             {

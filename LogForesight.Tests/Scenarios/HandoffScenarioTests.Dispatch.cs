@@ -10,6 +10,7 @@ public sealed partial class HandoffScenarioTests
     private static Scenario BuildMore(string key) => key switch
     {
         "S3" => BuildS3(),
+        "S3提醒" => BuildS3Reminder(),
         "S4" => BuildContinuation("S4 處理人被停用", ContinuationKind.Disabled),
         "S5" => BuildContinuation("S5 處理人暫停接單", ContinuationKind.Paused),
         "S6" => BuildContinuation("S6 處理人的主機授權被移除", ContinuationKind.NoAccess),
@@ -18,6 +19,8 @@ public sealed partial class HandoffScenarioTests
         "S7換負責人" => BuildS7Owner(),
         "S8" => BuildS8(),
         "S9" => BuildS9(),
+        "S9恢復" => BuildS9Resumed(),
+        "S9迄日" => BuildS9MuteEnd(),
         "S10" => BuildS10(),
         _ => BuildEdge(key)
     };
@@ -44,6 +47,16 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S3.d2.escalated-list", 2, "上報中的單可在總覽以「上報中」篩出", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
         .Expect(Check("S3.d4.still-listed", 4, "管理者一直沒處理，第 4 天仍可篩出（沒有被漏掉）", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
         .Expect(Check("S3.d4.unread-badge", 4, "管理者未開啟前，側欄徽章持續提示（未讀回覆 1）", "1", d => d.Probe("admin-unread").Int("count").ToString()));
+
+    /// <summary>
+    /// S3 的提醒預期：處理人第 2 天回報「無法處理」，管理者一直沒處理，超過數天（暫定 3 天）後管理者應收到提醒。
+    /// 提醒功能目前不存在（通知種類沒有提醒、沒有掃「上報中逾 N 天」的邏輯），所以第 4 天管理者的通知佇列沒有任何新項目；
+    /// 照第一階段慣例寫成應有行為並列入已知差異 E3-S3-1，提醒做出來時這一項會轉紅、要求從清單移除。
+    /// </summary>
+    internal static Scenario BuildS3Reminder() => BuildS3()
+        .Expect(Check("S3.d4.admin-reminder", 4, "上報後管理者一直沒處理，超過數天後通知佇列有給管理者的提醒", "有提醒",
+            d => Outbox(d, "admin1") > 0 ? "有提醒" : "沒有任何提醒"))
+        .KnownDifference("E3-S3-1", "S3.d4.admin-reminder");
 
     // ── S4／S5／S6：處理人被停用／暫停接單／主機授權被移除後，新主機是否仍續掛進他的單 ──────────
 
@@ -308,6 +321,50 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S9.d3.handler-informed", 3, "恢復時處理人知道（通知佇列有他的新通知）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
         .KnownDifference("E3-S9-1", "S9.d2.handler-informed")
         .KnownDifference("E3-S9-2", "S9.d3.handler-informed");
+
+    // ── S9 補充：靜音恢復紀錄與迄日邊界（需要假時鐘讓第 N 天之間真的隔了 N 天）──────────
+
+    private const string ResumedFilterUrl = "api/work-orders?status=active&resumedFromMute=true&pageSize=100";
+
+    /// <summary>第 2 天靜音 5 天、第 4 天解除：解除後「只看自靜音恢復」找得到這張單，靜音期間找不到</summary>
+    internal static Scenario BuildS9Resumed() => new Scenario("S9 解除後只看自靜音恢復")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d.Act(ScenarioActions.Mute("admin1", Disk, DiskId, 5, "維修窗口", "pause")))
+        .Day(3, d => d.Probe("resumed", "admin1", ResumedFilterUrl))
+        .Day(4, d => d
+            .Act(ScenarioActions.Unmute("admin1", Disk, DiskId))
+            .Probe("resumed", "admin1", ResumedFilterUrl)
+            .Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100"))
+        .Days(4)
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S9r.d3.muting-not-resumed", 3, "靜音中（尚未解除）「只看自靜音恢復」不列這張單", "0", d => d.Probe("resumed").Items("items").Count.ToString()))
+        .Expect(Expect.ActionStatus(4, 0, 200))
+        .Expect(Check("S9r.d4.resumed-found", 4, "第 4 天解除後，「只看自靜音恢復」找得到這張單", "1", d =>
+            RowOf(d.Probe("resumed"), OrderOf(d, "h1").OrderId) is { } ? "1" : d.Probe("resumed").Items("items").Count.ToString()))
+        .Expect(Check("S9r.d4.resumed-mark", 4, "總覽的列標出恢復日（有恢復日、不再是暫停）", "有/否", d =>
+        {
+            var row = RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId);
+            return row is { } r ? $"{(string.IsNullOrEmpty(r.Str("resumedFromMuteAt")) ? "無" : "有")}/{Flag(r.Flag("paused"))}" : "（總覽沒有這張單）";
+        }));
+
+    /// <summary>第 2 天靜音 2 天（迄日＝第 3 天）：迄日當天仍靜音，隔天（第 4 天）不再靜音</summary>
+    internal static Scenario BuildS9MuteEnd() => new Scenario("S9 靜音迄日邊界")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d.Act(ScenarioActions.Mute("admin1", Disk, DiskId, 2, "維修窗口", "pause")))
+        .Day(3, d => d.Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100"))
+        .Day(4, d => d.Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100"))
+        .Days(4)
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S9e.d3.still-muted", 3, "靜音迄日（第 3 天）當天仍靜音", "是", d =>
+            RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId) is { } r ? Flag(r.Flag("paused")) : "（總覽沒有這張單）"))
+        .Expect(Check("S9e.d4.not-muted", 4, "迄日隔天（第 4 天）不再靜音", "否", d =>
+            RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId) is { } r ? Flag(r.Flag("paused")) : "（總覽沒有這張單）"));
 
     // ── S10：靜音（代為結案）→ 解除 → 問題再出現 ──────────────────────────────
 

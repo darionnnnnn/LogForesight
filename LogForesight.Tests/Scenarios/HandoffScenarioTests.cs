@@ -10,8 +10,9 @@ namespace LogForesight.Tests.Scenarios;
 /// 與預期不同的列入已知差異（鍵 E3-S{情境}-{序號}）。看不到的東西（例如「管理者被主動告知」）
 /// 斷言「存在告知管道」：通知佇列、寄出的信、徽章 API 或清單篩選找得到。
 ///
-/// 模擬限制：驅動器逐日推進的是分析的資料日；建單、稽核、靜音起算、期限驗證用的 <c>DateTime.Now</c> 不會前進，
-/// 所以「第 N 天」之間真實時間沒有流逝（S3、S9 的恢復紀錄、S13 無法以情境模擬，見各測試的說明）。
+/// 時間：交辦、靜音、觀察中的「現在」「今天」取自站台 DI 的 <see cref="TimeProvider"/>，驅動器每天開始前把假時鐘撥到
+/// 該天的執行當天（資料日隔天 09:00），所以建單、稽核、靜音起算、期限驗證與到期判定都隨「第 N 天」前進。
+/// S3 的提醒功能尚未存在，照現況列已知差異 E3-S3-1。
 /// </summary>
 [Collection("NLogGlobalConfig")]
 public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenarioTests.Fixture>
@@ -212,10 +213,8 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [Fact]
     public void S3_無法處理後管理者未處理() => R("S3").AssertExpectations();
 
-    [Fact(Skip = "S3 的「超過數天（暫定 3 天）仍未處理時管理者收到提醒」依真實時間：上報時間、經過日數都由正式碼的 DateTime.Now 決定，" +
-                 "驅動器逐日推進的是資料日、真實時間不會前進；API 也沒有可把上報時間改到過去的入口。無法以情境模擬，改以程式碼核對：" +
-                 "WorkOrderOutboxKinds 沒有提醒種類、夜間流程與背景服務沒有掃「上報中逾 N 天」的邏輯（見評估記錄 E3 判定）。")]
-    public void S3_上報超過數天未處理_管理者收到提醒() { }
+    [Fact]
+    public void S3_上報超過數天未處理_管理者收到提醒() => R("S3提醒").AssertExpectations();
 
     [Fact]
     public void S4_處理人被停用() => R("S4").AssertExpectations();
@@ -241,10 +240,11 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [Fact]
     public void S9_靜音暫停再解除() => R("S9").AssertExpectations();
 
-    [Fact(Skip = "S9 的「解除後『只看自靜音恢復』找得到」無法以情境模擬：靜音起日與解除日都是正式碼的 DateTime.Today，" +
-                 "逐日情境的『第 N 天』之間真實日期相同，設定與解除落在同一個真實日，依規格（WEB-SPEC §9.4b）整段區間刪除、不留恢復紀錄；" +
-                 "API 也沒有把區間起日設在過去的入口。恢復紀錄的判定由 WorkOrderQueryService 單元測試負責。")]
-    public void S9_解除後只看自靜音恢復找得到() { }
+    [Fact]
+    public void S9_解除後只看自靜音恢復找得到() => R("S9恢復").AssertExpectations();
+
+    [Fact]
+    public void S9_靜音迄日當天仍靜音_隔天不靜音() => R("S9迄日").AssertExpectations();
 
     [Fact]
     public void S10_靜音代為結案後再出現() => R("S10").AssertExpectations();
@@ -262,12 +262,10 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     public void S12_兩位管理者操作同一張單() => R("S12").AssertExpectations();
 
     [Fact]
-    public void S13_期限不可設在過去_所以到期情境無法模擬() => R("S13前置").AssertExpectations();
+    public void S13_期限不可設在過去() => R("S13前置").AssertExpectations();
 
-    [Fact(Skip = "S13 的「觀察中到期後列入逾期篩選，處理人與管理者看得到」無法以情境模擬：逾期判定是『期限早於今天（DateTime.Today）』，" +
-                 "而回覆、改期限、建單的 API 一律拒絕把期限設在今天以前（S13 前置情境的三個 400 即證據），逐日推進也不會讓真實日期前進。" +
-                 "逾期判定由 WorkOrderQueries.IsOverdue 與 WorkOrderQueryServiceTests（直接寫入過去期限）負責。")]
-    public void S13_觀察中到期後列入逾期篩選() { }
+    [Fact]
+    public void S13_觀察中到期後列入逾期篩選() => R("S13到期").AssertExpectations();
 
     [Fact]
     public void S14_處理人沒有email() => R("S14處理人無email").AssertExpectations();
@@ -364,6 +362,7 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [InlineData("S2改派")]
     [InlineData("S2代為結案")]
     [InlineData("S3")]
+    [InlineData("S3提醒")]
     [InlineData("S4")]
     [InlineData("S5")]
     [InlineData("S6")]
@@ -372,12 +371,15 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [InlineData("S7換負責人")]
     [InlineData("S8")]
     [InlineData("S9")]
+    [InlineData("S9恢復")]
+    [InlineData("S9迄日")]
     [InlineData("S10")]
     [InlineData("S11無派工池")]
     [InlineData("S11全部暫停")]
     [InlineData("S11都看不到")]
     [InlineData("S12")]
     [InlineData("S13前置")]
+    [InlineData("S13到期")]
     [InlineData("S14處理人無email")]
     [InlineData("S14管理者無email")]
     [InlineData("S15")]

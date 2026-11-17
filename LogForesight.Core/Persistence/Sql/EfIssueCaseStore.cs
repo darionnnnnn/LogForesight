@@ -22,10 +22,12 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly TimeProvider _clock;
 
-    public EfIssueCaseStore(Func<LfDbContext> contextFactory)
+    public EfIssueCaseStore(Func<LfDbContext> contextFactory, TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public IssueCase? GetOpen(string hostName, string issueKey)
@@ -336,7 +338,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 
         if (q.HostNameKeys == null)
         {
-            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today);
+            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday());
             var total = all.Count();
             var rows = all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId).Skip(skip).Take(q.PageSize).ToList();
             return (rows.Select(ToModel).ToList(), total);
@@ -346,7 +348,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var matched = new List<(string HostNameKey, string CaseId)>();
         foreach (var batch in keys.Chunk(HostBatchSize))
         {
-            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today)
+            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday())
                 .Where(c => batch.Contains(c.HostNameKey))
                 .Select(c => new { c.HostNameKey, c.CaseId })
                 .ToList()
@@ -450,7 +452,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
     internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<string>(_contextFactory,
             (ctx, take) => ctx.IssueCases

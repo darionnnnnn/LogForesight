@@ -57,6 +57,8 @@ public class WorkOrderBoardService
     private readonly MailNotificationService _mail;
     private readonly int _maxOccurrences;
 
+    private readonly TimeProvider _clock;
+
     public WorkOrderBoardService(
         IWorkOrderStore orders,
         IIssueCaseStore cases,
@@ -76,9 +78,10 @@ public class WorkOrderBoardService
         ICurrentUser currentUser,
         IAuditService audit,
         IUserDisplayNameService displayNames,
-        MailNotificationService mail)
+        MailNotificationService mail,
+        TimeProvider? clock = null)
         : this(orders, cases, users, userGroups, hosts, hostGroups, rules, suppressions, query, aggregates, candidates, issueOwners,
-            noiseMarks, settings, coordinator, currentUser, audit, displayNames, mail, DefaultMaxOccurrences)
+            noiseMarks, settings, coordinator, currentUser, audit, displayNames, mail, DefaultMaxOccurrences, clock)
     {
     }
 
@@ -103,8 +106,10 @@ public class WorkOrderBoardService
         IAuditService audit,
         IUserDisplayNameService displayNames,
         MailNotificationService mail,
-        int maxOccurrences)
+        int maxOccurrences,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _orders = orders;
         _cases = cases;
         _users = users;
@@ -255,7 +260,7 @@ public class WorkOrderBoardService
         if (trial.TooLarge)
             throw DomainException.Validation($"期間內尚未派出的問題出現點超過 {_maxOccurrences} 筆，請縮小期間後再派工。");
 
-        var actor = _currentUser.ToWorkOrderActor();
+        var actor = _currentUser.ToWorkOrderActor(_clock);
 
         // 掛單與建單都依（處理人, 問題）分組；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單
         var groups = trial.Gaps
@@ -410,7 +415,7 @@ public class WorkOrderBoardService
     /// </summary>
     private Trial RunTrial(DateTime? from, DateTime? to)
     {
-        var periodTo = (to ?? DateTime.Today.AddDays(-1)).Date;
+        var periodTo = (to ?? _clock.LocalToday().AddDays(-1)).Date;
         var periodFrom = (from ?? periodTo.AddDays(-(DefaultPeriodDays - 1))).Date;
         if (periodFrom > periodTo)
             throw DomainException.Validation("起日不可晚於迄日。");
@@ -440,7 +445,7 @@ public class WorkOrderBoardService
 
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;
         settings.AutoDispatchEnabled = true;
-        var now = DateTime.Now;
+        var now = _clock.LocalNow();
         var ctx = DispatchContext.Build(_candidates.Build(), _issueOwners, _orders, _cases, _noiseMarks, settings, now);
         ctx.PreloadDismissed(candidates.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
 

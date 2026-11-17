@@ -23,7 +23,12 @@ public interface IIssueOwnerStore
 /// 其他 webdata store 同模式（JsonBlobCollection 提供原子讀改寫）。</summary>
 public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStore
 {
-    public IssueOwnerStore(EfJsonBlobStore blob) : base(blob) { }
+    private readonly TimeProvider _clock;
+
+    public IssueOwnerStore(EfJsonBlobStore blob, TimeProvider? clock = null) : base(blob)
+    {
+        _clock = clock ?? TimeProvider.System;
+    }
 
     public List<IssueProfile> GetAll() => Read();
 
@@ -36,7 +41,7 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
         return Mutate(items =>
         {
             var existing = items.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
-            var now = DateTime.Now;
+            var now = _clock.LocalNow();
 
             if (existing == null)
             {
@@ -74,7 +79,7 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
                 items.Add(row);
             }
             apply(row);
-            row.UpdatedAt = DateTime.Now;
+            row.UpdatedAt = _clock.LocalNow();
             // Mutate 每次都從 blob 反序列化出全新物件，回傳的列不會與 store 內部共用參考
             return row;
         });

@@ -239,8 +239,11 @@ public static class HostDayPostProcessor
 
     public static bool AttachCase(
         IssueCaseCoordinator caseCoordinator, NightlyDispatch dispatch, string hostName, DateTime date,
-        List<LogIssueSignature> topIssues, string logContext = "", HostDayWorkflowService? workflow = null, long hostId = 0, long parentRecordId = 0)
+        List<LogIssueSignature> topIssues, string logContext = "", HostDayWorkflowService? workflow = null, long hostId = 0, long parentRecordId = 0,
+        TimeProvider? clock = null)
     {
+        // 掛接與夜間派工寫下的時間取自可替換時鐘（省略＝系統時鐘）
+        var now = (clock ?? TimeProvider.System).LocalNow();
         var version = workflow?.CaptureDeliveryVersion(hostId, date, parentRecordId);
         var hasWorkflow = workflow != null && hostId > 0 && version != null;
         var deliveryIssues = topIssues;
@@ -259,7 +262,7 @@ public static class HostDayPostProcessor
         }
         try
         {
-            var attach = caseCoordinator.AttachNewDay(hostName, date, deliveryIssues, DateTime.Now);
+            var attach = caseCoordinator.AttachNewDay(hostName, date, deliveryIssues, now);
             if (attach.AttachedCount > 0)
                 Log.Info("{Context}{Date:yyyy-MM-dd} 案件掛接：掛入 {Count} 個問題", logContext, date, attach.AttachedCount);
 
@@ -280,7 +283,7 @@ public static class HostDayPostProcessor
                 }
 
             // 掛接剩下的問題交給夜間派工（負責人規則、續掛、自動派工）
-            dispatch.DispatchDay(hostName, date, attach.Unassigned, DateTime.Now,
+            dispatch.DispatchDay(hostName, date, attach.Unassigned, now,
                 hasWorkflow ? outcome =>
                 {
                     if (!IsTerminalDispatchOutcome(outcome)) retryableDispatchOutcome = true;

@@ -9,8 +9,11 @@ public class WorkOrderOutboxStore : JsonBlobSingleton<WorkOrderOutbox>
     public const string BlobKey = "work_order_outbox";
     public const int MaxItems = 20_000;
 
-    public WorkOrderOutboxStore(EfJsonBlobStore blob) : base(blob)
+    private readonly TimeProvider _clock;
+
+    public WorkOrderOutboxStore(EfJsonBlobStore blob, TimeProvider? clock = null) : base(blob)
     {
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>加入單一待寄項目，見 <see cref="Enqueue(IReadOnlyCollection{WorkOrderOutboxItem})"/>。</summary>
@@ -27,7 +30,7 @@ public class WorkOrderOutboxStore : JsonBlobSingleton<WorkOrderOutbox>
         if (items.Count == 0) return 0;
         foreach (var item in items)
         {
-            if (item.EnqueuedAt == default) item.EnqueuedAt = DateTime.Now;
+            if (item.EnqueuedAt == default) item.EnqueuedAt = _clock.LocalNow();
         }
 
         int dropped = 0;

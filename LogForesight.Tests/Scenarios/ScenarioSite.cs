@@ -10,6 +10,24 @@ using Microsoft.Extensions.Hosting;
 
 namespace LogForesight.Tests.Scenarios;
 
+/// <summary>
+/// 情境用的假時鐘：只在驅動器明確撥動時才前進，其餘時間凍結。站台內交辦、靜音、觀察中的「現在」「今天」都取自它，
+/// 這樣「第 N 天」的人為動作與夜間派工寫下的時間才會落在第 N 天。本地時區沿用 <see cref="TimeZoneInfo.Local"/>，
+/// 與正式站台換算「本地今天」的規則一致。
+/// </summary>
+public sealed class ScenarioClock : TimeProvider
+{
+    private DateTimeOffset _utcNow = DateTimeOffset.UtcNow;
+
+    public override DateTimeOffset GetUtcNow() => _utcNow;
+
+    public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
+
+    /// <summary>把時鐘撥到指定的本地時刻</summary>
+    public void SetLocal(DateTime local) =>
+        _utcNow = new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Local)).ToUniversalTime();
+}
+
 /// <summary>人為動作打 HTTP API 的結果；失敗（4xx／5xx）照樣是一筆結果，不會讓情境中斷</summary>
 public sealed record ActionHttpResult(int StatusCode, string? ErrorCode, string? Message, string? Body = null);
 
@@ -55,6 +73,9 @@ public sealed class ScenarioSite : IDisposable
     /// <summary>站台目前為止寄出的信（依寄出順序）；寄送由站台自己的服務執行，傳輸層換成記錄用替身</summary>
     public IReadOnlyList<SentMailRecord> SentMail => _mailSender.Snapshot();
 
+    /// <summary>站台使用的假時鐘（已取代 DI 的 <see cref="TimeProvider"/>）；驅動器每天開始前把它撥到該天的執行日</summary>
+    public ScenarioClock Clock { get; } = new();
+
     public IServiceProvider Services => _factory.Services;
 
     public T Get<T>() where T : notnull => _factory.Services.GetRequiredService<T>();
@@ -79,6 +100,8 @@ public sealed class ScenarioSite : IDisposable
                 builder.ConfigureTestServices(services =>
                 {
                     services.RemoveAll<IHostedService>();
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider>(Clock);
                     services.RemoveAll<LogForesight.Web.Services.Mail.ISmtpMailSender>();
                     services.AddSingleton<LogForesight.Web.Services.Mail.ISmtpMailSender>(_mailSender);
                 });

@@ -14,6 +14,7 @@ public sealed partial class HandoffScenarioTests
         "S11都看不到" => BuildS11("no_visibility"),
         "S12" => BuildS12(),
         "S13前置" => BuildS13(),
+        "S13到期" => BuildS13Due(),
         "S14處理人無email" => BuildS14Handler(),
         "S14管理者無email" => BuildS14Admins(),
         "S15" => BuildS15(),
@@ -114,6 +115,35 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S13.d2.create-past", 2, "建單帶過去的預計完成日：被拒（400）", "400", d => d.Actions[2].StatusCode.ToString()))
         .Expect(Check("S13.d2.observing-future", 2, "觀察至設在未來：成功並記為觀察中", "200/observing", d =>
             $"{d.Actions[3].StatusCode}/{string.Join(",", OrderOf(d, "h1").Members.Select(m => m.Status).Distinct())}"));
+
+    /// <summary>
+    /// 觀察中到期：處理人第 2 天回覆觀察中、期限設成當天（今天可設）；期限當天不算到期，
+    /// 隔天（第 3 天）起算到期，列入逾期篩選，處理人與管理者都看得到。
+    /// 第 N 天的「今天」＝資料日隔天，最後一天（第 4 天）的今天是真實今天，所以第 2 天的今天＝真實今天 − 2。
+    /// </summary>
+    internal static Scenario BuildS13Due() => new Scenario("S13 觀察中到期")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d
+            .Act(ScenarioActions.ReplyWithDue("h1", OrderRef.ForHandler("h1"), "observing", DateTime.Today.AddDays(-2), "先觀察到今天"))
+            .Probe("admin-overdue", "admin1", "api/work-orders?status=overdue&pageSize=100")
+            .Probe("h1-overdue", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?status=overdue&pageSize=100"))
+        .Day(3, d => d
+            .Probe("admin-overdue", "admin1", "api/work-orders?status=overdue&pageSize=100")
+            .Probe("h1-overdue", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?status=overdue&pageSize=100"))
+        .Day(4, d => d
+            .Probe("admin-overdue", "admin1", "api/work-orders?status=overdue&pageSize=100")
+            .Probe("h1-overdue", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?status=overdue&pageSize=100"))
+        .Days(4)
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S13d.d2.due-today-not-overdue", 2, "觀察期限是今天：不算到期（管理者與處理人的逾期篩選都沒有）", "0/0", d =>
+            $"{d.Probe("admin-overdue").Items("items").Count}/{d.Probe("h1-overdue").Items("items").Count}"))
+        .Expect(Check("S13d.d3.due-yesterday-overdue", 3, "觀察期限是昨天：算到期，管理者與處理人的逾期篩選都找得到", "1/1", d =>
+            $"{d.Probe("admin-overdue").Items("items").Count}/{d.Probe("h1-overdue").Items("items").Count}"))
+        .Expect(Check("S13d.d4.still-overdue", 4, "再隔一天仍列在逾期篩選", "1/1", d =>
+            $"{d.Probe("admin-overdue").Items("items").Count}/{d.Probe("h1-overdue").Items("items").Count}"));
 
     // ── S14：沒有 email ─────────────────────────────────────────────────────
 

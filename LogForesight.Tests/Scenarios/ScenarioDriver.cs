@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using LogForesight.Core.Time;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Services.Mail;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,8 +18,10 @@ namespace LogForesight.Tests.Scenarios;
 ///
 /// 時間：<c>NetiqPipelineService</c> 的 <c>runToday</c> 可注入，所以「第 N 天」對應的資料日是
 /// 「執行當天為錨點、第 1 天＝錨點往前 TotalDays 天」，最後一天的資料日是昨天；輸出一律用「第 N 天」。
-/// 正式碼內部仍有 <c>DateTime.Now</c>（建單時間、稽核時間、靜音天數起算、回覆時間等）不能注入，
-/// 這些時間戳都是真實時間，驅動器不輸出它們。
+/// 交辦、靜音、觀察中的「現在」「今天」（建單時間、稽核時間、靜音天數起算、回覆時間、到期判定等）取自站台 DI 的
+/// <see cref="TimeProvider"/>，情境站台以 <see cref="ScenarioClock"/> 取代它；每一天開始前驅動器把時鐘撥到
+/// 該天的「執行當天」（資料日的隔天）09:00，所以夜間派工與人為動作寫下的時間都落在第 N 天。
+/// 範圍外的流程（分析、PRTG、排程）仍讀真實時鐘，驅動器不輸出那些時間。
 /// </summary>
 public static class ScenarioDriver
 {
@@ -44,6 +47,8 @@ public static class ScenarioDriver
         {
             scenario.Plans.TryGetValue(day, out var plan);
             var dataDate = DataDateOf(day);
+            // 假時鐘撥到第 N 天的執行當天（資料日隔天）09:00：夜間派工與當天的人為動作共用同一個「現在」
+            site.Clock.SetLocal(dataDate.AddDays(1).AddHours(9));
             tracker.BeginDay();
             foreach (var change in plan?.SettingChanges ?? new List<Action<SystemSettings>>())
                 site.Get<ISystemSettingsStore>().Update(change);
@@ -61,6 +66,9 @@ public static class ScenarioDriver
                 var result = await action.RunAsync(context);
                 actionResults.Add(new ActionResultView(action.Actor, action.Describe(), result.StatusCode, result.ErrorCode, result.Message, result.Body));
             }
+
+            foreach (var inspect in plan?.InspectList ?? new List<Action<ScenarioSite, ScenarioActionContext>>())
+                inspect(site, context);
 
             // 上報信等即時通知是 fire-and-forget；替身寄送是同步完成的，留一小段讓背景續行收尾
             if (actionResults.Count > 0) await Task.Delay(30);
@@ -264,7 +272,7 @@ public static class ScenarioDriver
         var workOrderStore = backend.WorkOrderStore();
         var issueCaseStore = backend.IssueCaseStore();
         var dispatchContext = DispatchContext.Build(
-            candidatePool, issueOwners, workOrderStore, issueCaseStore, site.Get<INoiseMarkStore>(), systemSettings, DateTime.Now);
+            candidatePool, issueOwners, workOrderStore, issueCaseStore, site.Get<INoiseMarkStore>(), systemSettings, site.Clock.LocalNow());
         var coordinator = new WorkOrderCoordinator(
             workOrderStore, issueCaseStore, backend.IssueHandlingStore(), caseCoordinator, backend.RecordHandlingStore(), hostStore);
         var nightlyDispatch = new NightlyDispatch(coordinator, dispatchContext, hostStore);
@@ -279,7 +287,7 @@ public static class ScenarioDriver
 
         var result = await pipeline.RunAsync(HostListSelection.FromStore(hostStore, sentinelStore), trendWindowDays: 14);
 
-        var summary = nightlyDispatch.FlushRun(DateTime.Now);
+        var summary = nightlyDispatch.FlushRun(site.Clock.LocalNow());
         // 與 SchedulerHostedService 同一步：夜間派工的結果入通知佇列（寄送由背景服務負責，這裡不寄）
         if (summary.PerHandler.Count > 0) site.Get<MailNotificationService>().EnqueueNightlyDispatch(summary);
 

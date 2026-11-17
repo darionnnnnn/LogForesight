@@ -37,14 +37,18 @@ public class WorkOrderReplyService
     /// </summary>
     private readonly MailNotificationService _mail;
 
+    private readonly TimeProvider _clock;
+
     public WorkOrderReplyService(
         WorkOrderCoordinator coordinator,
         IWorkOrderStore orders,
         IIssueCaseStore cases,
         ICurrentUser currentUser,
         IAuditService audit,
-        MailNotificationService mail)
+        MailNotificationService mail,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _coordinator = coordinator;
         _orders = orders;
         _cases = cases;
@@ -58,7 +62,7 @@ public class WorkOrderReplyService
         var order = RequireOwnActive(id);
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = _currentUser.ToWorkOrderActor();
+        var actor = _currentUser.ToWorkOrderActor(_clock);
         var newlyEscalated = NewlyEscalatedHosts(id, req.CaseIds, req.Status);
         var result = Guard(() => _coordinator.Reply(id, req.CaseIds, req.Status, req.Note, req.DueDate, actor));
 
@@ -90,7 +94,7 @@ public class WorkOrderReplyService
         var orders = ids.Select(RequireOwnActive).ToList();
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = _currentUser.ToWorkOrderActor();
+        var actor = _currentUser.ToWorkOrderActor(_clock);
         var statusText = HandlingTextHelpers.IssueStatusText(req.Status);
 
         var succeeded = new List<WorkOrder>();
@@ -164,13 +168,13 @@ public class WorkOrderReplyService
     {
         var order = RequireOwnActive(id);
         var dueDate = req.DueDate?.Date;
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
         if (dueDate < today)
             throw DomainException.Validation("期限不可早於今天。");
         if (dueDate > today.AddDays(MaxDueDateDays))
             throw DomainException.Validation($"期限最多只能設在 {MaxDueDateDays} 天內。");
 
-        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor()));
+        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor(_clock)));
         if (changed)
         {
             _audit.Record(
@@ -198,8 +202,8 @@ public class WorkOrderReplyService
     }
 
     /// <summary>狀態驗證走共用規則；處理人回覆不得選「未處理」</summary>
-    private static void ValidateStatus(string status, DateTime? dueDate, string? note) =>
-        IssueStatusValidation.ValidateReply(status, dueDate, note);
+    private void ValidateStatus(string status, DateTime? dueDate, string? note) =>
+        IssueStatusValidation.ValidateReply(status, dueDate, note, _clock);
 
     /// <summary>
     /// 寫入前讀成員舊狀態，只算「新」轉入 escalated 的主機（原本就是 escalated 的不重複通知）。

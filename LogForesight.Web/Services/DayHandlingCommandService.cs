@@ -51,6 +51,8 @@ public class DayHandlingCommandService
     private readonly IIssueCaseStore? _cases;
     private readonly IIssueExclusionSource? _exclusions;
 
+    private readonly TimeProvider _clock;
+
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -69,8 +71,10 @@ public class DayHandlingCommandService
         IIssueOwnerStore? issueOwners = null,
         INoiseMarkStore? noiseMarks = null,
         IIssueCaseStore? cases = null,
-        IIssueExclusionSource? exclusions = null)
+        IIssueExclusionSource? exclusions = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _noiseMarks = noiseMarks;
         _cases = cases;
         _exclusions = exclusions;
@@ -129,12 +133,12 @@ public class DayHandlingCommandService
         if (!HandlingStatuses.IsValid(request.Status))
             throw DomainException.Validation($"未知的處理狀態「{request.Status}」。");
 
-        if (request.DueDate.HasValue && request.DueDate.Value.Date < DateTime.Today)
+        if (request.DueDate.HasValue && request.DueDate.Value.Date < _clock.LocalToday())
             throw DomainException.Validation("預計完成日不可早於今天。");
 
         // 必填說明（無法處理／不處理）與問題層級同一份規則：日層級值域是問題層級的子集，
         // 上面已擋掉日層級不存在的狀態，這裡只借用共用驗證的其餘條件
-        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing: false, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing: false, request.Note, _clock);
 
         var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousStatus = existing.Status;
@@ -143,7 +147,7 @@ public class DayHandlingCommandService
         existing.Status = request.Status;
         existing.Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
         existing.DueDate = request.DueDate;
-        existing.UpdatedAt = DateTime.Now;
+        existing.UpdatedAt = _clock.LocalNow();
 
         _store.Save(existing);
 
@@ -194,10 +198,10 @@ public class DayHandlingCommandService
             ? new List<DayOrderRetraction>()
             : _workOrders.RetractDayAssignments(
                 host.HostName, record.TopIssues.Select(i => IssueSignatureKey.For(i)).ToList(),
-                DayAssignCancelledReason, _currentUser.ToWorkOrderActor()).ToList();
+                DayAssignCancelledReason, _currentUser.ToWorkOrderActor(_clock)).ToList();
 
         existing.HandlerId = handlerId;
-        existing.UpdatedAt = DateTime.Now;
+        existing.UpdatedAt = _clock.LocalNow();
 
         // 指派給人卻還是「未處理」語意上矛盾，自動推進到處理中；
         // 已結案的狀態不動（改派結案問題可能是為了補資料）
@@ -417,7 +421,7 @@ public class DayHandlingCommandService
     private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders, Dictionary<string, int> SkippedByReason) BuildCasesForDay(
         WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
     {
-        var actor = _currentUser.ToWorkOrderActor();
+        var actor = _currentUser.ToWorkOrderActor(_clock);
         var created = 0;
         var reassigned = 0;
         var skippedHandlerIds = new HashSet<long>();
@@ -473,7 +477,7 @@ public class DayHandlingCommandService
             HostName = hostName,
             Date = date.Date,
             Status = HandlingStatuses.Open,
-            UpdatedAt = DateTime.Now
+            UpdatedAt = _clock.LocalNow()
         };
 
         var host = _hosts.FindByName(hostName);
@@ -550,7 +554,7 @@ public class DayHandlingCommandService
             ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
             ActorAccount = _currentUser.Account,
             Action = action,
-            CreatedAt = DateTime.Now
+            CreatedAt = _clock.LocalNow()
         });
     }
 
@@ -607,7 +611,7 @@ public class DayHandlingCommandService
             HandlerAccount = handler?.Account,
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
             IsOverdue = handling?.DueDate.HasValue == true &&
-                        handling.DueDate.Value.Date < DateTime.Today &&
+                        handling.DueDate.Value.Date < _clock.LocalToday() &&
                         HandlingStatuses.Unresolved.Contains(handling.Status),
             Note = handling?.Note,
             UpdatedAt = handling?.UpdatedAt,
