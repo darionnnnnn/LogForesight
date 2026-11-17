@@ -182,3 +182,26 @@ E1-15（畫面）、E1-16（信件）依指示不在本段。
 | 「我的交辦」顯示條件 | 有處理能力的人 | 另排除救援帳號 serverAdmin（`hideForServerAdmin`），只寫在 AI 版 |
 | 管理者提醒信的段落名稱 | 管理者提醒 | 信件段落【管理者提醒】，隨交辦摘要時刻寄出，不是即時信 |
 | 靜音對話框附註 | （未提及） | `issue-mute-modal.js:210` 寫「結案後這些主機之後再出現同一個問題不會自動派工（不再打擾）」，但程式傳 `blocksRedispatch: false`（`IssueOwnerAdminService.cs:314`），實際靜音結束後會重新派工。說明書依程式行為寫，AI 版已註明與附註不一致；建議另修該句畫面文字 |
+
+## G-4 獨立複核
+
+唯讀代理（Sonnet）以 `git diff 30603165..HEAD -- LogForesight.Web/HelpContent` 的新增行逐句核對，未讀本表。約 255 條主張：正確約 238、錯誤 5、含糊 9；三處畫面文字皆正確。14 條全部依程式修正：
+
+| 判定 | 位置 | 修正 | 程式依據 |
+|---|---|---|---|
+| 錯誤 | 10-scheduler.md | 憑證訊息照實際輸出「下列憑證無法解密：…；相關取數會略過或失敗」 | `CredentialPreflight.cs:51` |
+| 錯誤 | 15-reports.md | 刪「資料落後」列（落後時必有資料日，畫面一律寫「資料至 MM/DD」）；「資料至」列改寫 | `ReportService.cs:251`、`reports.js:355` |
+| 錯誤 | 15-reports.md | 主機排行補第二排序鍵「有關聯訊號的日數」 | `RecordStatsBuilder` 的 `ThenByDescending(CorrelationDays)` |
+| 錯誤 | 14-faq.md | 「IP 衝突」改為「IP 衝突：今晚不會輪巡」（單寫 IP 衝突的那台照常查詢） | `hosts.js:436` |
+| 錯誤 | 07-suppression.ai.md | 抑制捷徑只在關聯訊號與兩類量突增旁，重點問題列沒有 | `record-detail.js:2172`、`:2251` |
+| 含糊 | 04-record-detail 兩版 | 頻率異常只有「整體錯誤量突增」「安全稽核事件量突增」有抑制鈕 | 同上 |
+| 含糊 | 04-record-detail.md | 補約 1600 像素以上右欄預設展開、可按「收合 ›」 | `side-rail.js:71` |
+| 含糊 | 16-issue-owners.md | 補「沒有問題負責人時才寄給主機負責人」 | `MailNotificationService` 逐主機日擇一 |
+| 含糊 | 05-handling.ai.md | 可點的是「不再打擾 N 台」，引號句是滑鼠提示 | `work-orders.js:91`、`:592` |
+| 含糊 | 02-dashboard.ai.md | 待派工卡有指派能力一律顯示、0 也顯示 | `DashboardService.cs:133` |
+| 含糊 | 02-dashboard.md | 「M 項告警」是紅色警示項目（重大、逾期、未回報） | `dashboard.js:414-419,451` |
+| 含糊 | 04-record-detail.ai.md | 補跑在「立即執行」的「執行模式」下拉 | `Runs.cshtml:399` |
+| 含糊 | 17-netiq.ai.md | 掃描是建立工作後輪詢 `scan/{jobId}`、可取消 | `netiq-import-wizard.js:258,278` |
+| 含糊 | 04-record-detail.ai.md | 有 AI 結論時狀態徽章在結論列 | `record-detail.js:536-537` |
+
+主代理抽驗代理判定「正確」的 10 條，全部相符：提醒間隔預設 3（`SystemSettings.cs:362`）；首次回補 120 天（`:199`）；一窗口 2 趟、空資料複查 3 趟（`ScheduleCalculator.cs:186,192`）；已處理不擋派工（`WorkOrderCommandService.cs:405`）；選人三層（`WorkOrderDispatcher.SelectHandler`）；成對異動 50 對（`HostDayPostProcessor.cs:477`）；稽核近 90 天（`audit.js:176`）；站台網址格式（`MailLinks.cs:44-49`）；報表重試加倍封頂 15 分鐘（`reports-wall.js:15-26`）；主管與開發人員沒有「我的交辦」（`RoleCapabilityMap`、`layout.js`）。另外，錯誤 5 條與趨勢抑制、NetIQ 輪詢兩條含糊由主代理讀程式確認後才改。
