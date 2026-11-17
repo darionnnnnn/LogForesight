@@ -93,7 +93,8 @@ public class WorkOrderDigestTests : IDisposable
         return id;
     }
 
-    private void Enqueue(string kind, long workOrderId, long recipientId, DateTime at, bool immediate = false)
+    private void Enqueue(string kind, long workOrderId, long recipientId, DateTime at, bool immediate = false,
+        string? reason = null, string? status = null, bool blocksRedispatch = false, DateTime? until = null)
     {
         _outbox.Enqueue(new WorkOrderOutboxItem
         {
@@ -102,7 +103,11 @@ public class WorkOrderDigestTests : IDisposable
             RecipientUserId = recipientId,
             EnqueuedAt = at,
             ActorAccount = "admin",
-            Immediate = immediate
+            Immediate = immediate,
+            Reason = reason,
+            Status = status,
+            BlocksRedispatch = blocksRedispatch,
+            Until = until
         });
     }
 
@@ -534,5 +539,65 @@ public class WorkOrderDigestTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Contains("說明：TLS 握手失敗", sent.Message.Body);
+    }
+
+    // ── 處理人知會（第 76-2 輪 C1）：新種類同一位處理人同時段合併成一封 ──────────────
+
+    [Fact]
+    public async Task C1_同一人同一時段三種新通知_寄一封且三則都在內()
+    {
+        var id1 = SeedOrder("Schannel 36888", 2, _alice.UserId);
+        var id2 = SeedOrder("DCOM 10016", 1, _alice.UserId);
+        var id3 = SeedOrder("Disk 153", 1, _alice.UserId);
+        var until = new DateTime(2026, 10, 25);
+        Enqueue(WorkOrderOutboxKinds.AdminClosed, id1, _alice.UserId, At(0, 13), reason: "備品停產", status: IssueHandlingStatuses.WontFix, blocksRedispatch: true);
+        Enqueue(WorkOrderOutboxKinds.MutePaused, id2, _alice.UserId, At(0, 13, 5), reason: "維修窗口", until: until);
+        Enqueue(WorkOrderOutboxKinds.MuteResumed, id3, _alice.UserId, At(0, 13, 10));
+
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(0, 23, 59));
+        Assert.Empty(_sender.Sent);
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(1, 8));
+
+        var sent = Assert.Single(_sender.Sent);
+        var body = sent.Message.Body;
+        Assert.Contains("【代為結案】", body);
+        Assert.Contains("結案狀態：不處理", body);
+        Assert.Contains("原因：備品停產", body);
+        Assert.Contains("不會重新派工", body);
+        Assert.Contains("【靜音暫停】", body);
+        Assert.Contains("靜音至 2026-10-25", body);
+        Assert.Contains("到期自動恢復", body);
+        Assert.Contains("【靜音恢復】", body);
+        Assert.Contains($"單號 {id1}", body);
+        Assert.Contains($"單號 {id2}", body);
+        Assert.Contains($"單號 {id3}", body);
+        Assert.Contains("代為結案 1", sent.Message.Subject);
+        Assert.Empty(_outbox.Get().Items);
+    }
+
+    [Fact]
+    public async Task C1_代為結案未勾選不再派工_內文寫明再出現會重新派工()
+    {
+        var id = SeedOrder("Disk 153", 1, _alice.UserId);
+        Enqueue(WorkOrderOutboxKinds.AdminClosed, id, _alice.UserId, At(0, 13), reason: "已更換", status: IssueHandlingStatuses.Resolved);
+
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(1, 8));
+
+        var body = Assert.Single(_sender.Sent).Message.Body;
+        Assert.Contains("結案狀態：已處理", body);
+        Assert.Contains("會重新派工", body);
+        Assert.DoesNotContain("不會重新派工", body);
+    }
+
+    [Fact]
+    public void C長度_通知原因超過上限_截斷且不擲例外()
+    {
+        var id = SeedOrder("Disk 153", 1, _alice.UserId);
+        var ex = Record.Exception(() => _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, _alice.UserId, 999, "admin",
+            reason: new string('因', 5000), status: IssueHandlingStatuses.WontFix));
+
+        Assert.Null(ex);
+        var item = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxItem.ReasonMaxLength, item.Reason!.Length);
     }
 }

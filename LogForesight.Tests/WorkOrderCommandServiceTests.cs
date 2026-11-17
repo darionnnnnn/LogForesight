@@ -1000,7 +1000,7 @@ public class WorkOrderCommandServiceTests : IDisposable
     }
 
     [Fact]
-    public void AdminClose_不寄信()
+    public void AdminClose_入列一則代為結案通知給處理人()
     {
         _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
 
@@ -1017,7 +1017,13 @@ public class WorkOrderCommandServiceTests : IDisposable
             Reason = "管理員代為結案"
         });
 
-        Assert.Empty(_outbox.Get().Items);
+        // 第 76-2 輪 C1：代為結案通知處理人（已處理＝問題再出現會重新派工）
+        var item = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxKinds.AdminClosed, item.Kind);
+        Assert.Equal(alice.UserId, item.RecipientUserId);
+        Assert.Equal(IssueHandlingStatuses.Resolved, item.Status);
+        Assert.Equal("管理員代為結案", item.Reason);
+        Assert.False(item.BlocksRedispatch);
     }
 
     // ── 權限標註 ─────────────────────────────────────────────────────────────

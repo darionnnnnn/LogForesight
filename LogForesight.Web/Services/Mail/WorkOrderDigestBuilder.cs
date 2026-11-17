@@ -8,7 +8,7 @@ internal sealed record WorkOrderDigestOrder(long WorkOrderId, string IssueLabel,
     IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate);
 
 /// <summary>
-/// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消／退回」五段，空段不輸出。
+/// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段，空段不輸出。
 /// 單的內容（問題、主機、期限）由呼叫端在寄送當下讀好傳入，這裡不碰任何儲存。
 /// </summary>
 internal static class WorkOrderDigestBuilder
@@ -25,7 +25,15 @@ internal static class WorkOrderDigestBuilder
 
         var returned = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Returned).OrderBy(r => r.Item.WorkOrderId).ToList();
 
+        var adminClosed = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.AdminClosed).OrderBy(r => r.Item.WorkOrderId).ToList();
+        var mutePaused = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.MutePaused).OrderBy(r => r.Item.WorkOrderId).ToList();
+        var muteResumed = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.MuteResumed).OrderBy(r => r.Item.WorkOrderId).ToList();
+
         var subjectSummary = $"新交辦 {created.Count} 張、新增成員 {appended.Count} 張、移交 {transferred.Count}、取消 {cancelled.Count}、退回 {returned.Count}";
+        // 新種類有才列，沒有時標題與既有寫法相同
+        if (adminClosed.Count > 0) subjectSummary += $"、代為結案 {adminClosed.Count}";
+        if (mutePaused.Count > 0) subjectSummary += $"、靜音暫停 {mutePaused.Count}";
+        if (muteResumed.Count > 0) subjectSummary += $"、靜音恢復 {muteResumed.Count}";
 
         var body = new StringBuilder();
         AppendSection(body, "【新交辦】", created);
@@ -33,6 +41,9 @@ internal static class WorkOrderDigestBuilder
         AppendSection(body, "【移交】", transferred);
         AppendSection(body, "【取消】", cancelled);
         AppendSection(body, "【退回】", returned);
+        AppendSection(body, "【代為結案】", adminClosed);
+        AppendSection(body, "【靜音暫停】", mutePaused);
+        AppendSection(body, "【靜音恢復】", muteResumed);
         body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
         return (subjectSummary, body.ToString());
     }
@@ -59,6 +70,21 @@ internal static class WorkOrderDigestBuilder
                     break;
                 case WorkOrderOutboxKinds.Returned:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}，由 {item.ActorAccount} 退回：{item.Reason}");
+                    break;
+                case WorkOrderOutboxKinds.AdminClosed:
+                    body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
+                    body.AppendLine($"    由 {item.ActorAccount} 代為結案，結案狀態：{StatusText(item.Status)}。");
+                    AppendReason(body, item);
+                    body.AppendLine($"    {RedispatchText(item)}");
+                    break;
+                case WorkOrderOutboxKinds.MutePaused:
+                    body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
+                    body.AppendLine($"    由 {item.ActorAccount} 設定靜音{UntilText(item)}，這張單暫停處理，到期自動恢復。");
+                    AppendReason(body, item);
+                    break;
+                case WorkOrderOutboxKinds.MuteResumed:
+                    body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
+                    body.AppendLine($"    由 {item.ActorAccount} 提前解除靜音，這張單已恢復，請繼續處理。");
                     break;
                 case WorkOrderOutboxKinds.Cancelled:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
@@ -99,6 +125,27 @@ internal static class WorkOrderDigestBuilder
         if (!string.IsNullOrWhiteSpace(order.PlainExplanation)) body.AppendLine($"    說明：{order.PlainExplanation}");
         if (!string.IsNullOrWhiteSpace(order.Note)) body.AppendLine($"    交辦說明：{order.Note}");
         if (order.DueDate.HasValue) body.AppendLine($"    期限：{order.DueDate.Value:yyyy-MM-dd}");
+    }
+
+    private static string StatusText(string? status) => status switch
+    {
+        IssueHandlingStatuses.Resolved => "已處理",
+        IssueHandlingStatuses.WontFix => "不處理",
+        IssueHandlingStatuses.FalsePositive => "誤報",
+        IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        _ => status ?? "已結案"
+    };
+
+    private static string UntilText(WorkOrderOutboxItem item) =>
+        item.Until.HasValue ? $"至 {item.Until.Value:yyyy-MM-dd}" : "";
+
+    /// <summary>問題再出現會不會重新派工：勾選「之後不再自動派工」＝不會；靜音造成的結案＝靜音期間不會、迄日後會；其餘會。</summary>
+    private static string RedispatchText(WorkOrderOutboxItem item)
+    {
+        if (item.BlocksRedispatch) return "問題再出現時：不會重新派工（已勾選之後不再自動派工）。";
+        if (item.Until.HasValue)
+            return $"問題再出現時：靜音期間（至 {item.Until.Value:yyyy-MM-dd}）不會派工，靜音結束後再出現會重新派工。";
+        return "問題再出現時：會重新派工。";
     }
 
     private static void AppendReason(StringBuilder body, WorkOrderOutboxItem item)

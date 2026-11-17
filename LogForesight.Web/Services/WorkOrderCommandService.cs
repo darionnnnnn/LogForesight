@@ -318,7 +318,7 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases
             });
 
-        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId, immediate: req.NotifyNow);
+        NotifyMovedTarget(result, handler.UserId, immediate: req.NotifyNow);
         NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId, immediate: req.NotifyNow);
 
         return ToMoveResult(id, result, handler);
@@ -343,7 +343,7 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases, CaseIds = req.CaseIds
             });
 
-        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId);
+        NotifyMovedTarget(result, handler.UserId);
         NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId);
 
         return ToMoveResult(id, result, handler);
@@ -411,6 +411,10 @@ public class WorkOrderCommandService
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId });
+
+        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）
+        _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, result.HandlerId, _currentUser.UserId, _currentUser.Account,
+            reason: reason, status: req.Status, blocksRedispatch: blocksRedispatch);
 
         return new WorkOrderCloseResultDto
         {
@@ -648,6 +652,16 @@ public class WorkOrderCommandService
     private void NotifyHandler(string kind, long workOrderId, long recipientUserId, string? reason = null, bool immediate = false)
     {
         _mail.EnqueueWorkOrderNotice(kind, workOrderId, recipientUserId, _currentUser.UserId, _currentUser.Account, reason: reason, immediate: immediate);
+    }
+
+    /// <summary>改派／拆出後通知目標處理人：新建的單是「建立」，併入目標處理人既有的單是「追加」（帶移入台數）。</summary>
+    private void NotifyMovedTarget(WorkOrderMoveResult result, long targetHandlerId, bool immediate = false)
+    {
+        if (result.MergedIntoExisting)
+            _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Appended, result.TargetWorkOrderId, targetHandlerId,
+                _currentUser.UserId, _currentUser.Account, memberDelta: result.MovedCases, immediate: immediate);
+        else
+            NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, targetHandlerId, immediate: immediate);
     }
 
     private WorkOrder GetOrder(long id) =>

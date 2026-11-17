@@ -477,7 +477,7 @@ public static class ScenarioDriver
             foreach (var p in fresh) _seenOutbox.Add(p.Key);
             return fresh.Select(p => p.Value)
                 .Select(i => new OutboxItemView(phase, i.Kind, users.GetValueOrDefault(i.RecipientUserId, $"user#{i.RecipientUserId}"),
-                    i.WorkOrderId, i.MemberDelta, i.ActorAccount))
+                    i.WorkOrderId, i.MemberDelta, i.ActorAccount, i.Reason, i.Status, i.Until, i.BlocksRedispatch))
                 .OrderBy(i => i.WorkOrderId).ThenBy(i => i.Kind, StringComparer.Ordinal).ThenBy(i => i.Recipient, StringComparer.Ordinal)
                 .ToList();
         }

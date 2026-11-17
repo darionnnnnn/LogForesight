@@ -38,7 +38,8 @@ public sealed record OrderView(
     IReadOnlyList<OrderMemberView> Members);
 
 /// <summary><see cref="Phase"/>：分析（夜間分析與派工階段）／動作（人為動作階段）</summary>
-public sealed record OutboxItemView(string Phase, string Kind, string Recipient, long WorkOrderId, int MemberDelta, string Actor);
+public sealed record OutboxItemView(string Phase, string Kind, string Recipient, long WorkOrderId, int MemberDelta, string Actor,
+    string? Reason = null, string? Status = null, DateTime? Until = null, bool BlocksRedispatch = false);
 
 public sealed record AuditItemView(string Phase, string Account, string Action, string Result, string Summary);
 

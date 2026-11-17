@@ -337,7 +337,7 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S18.d2.old-order", 2, "原單標轉出（推導為已結案 moved）", "已結案(moved)", d => OrderOf(d, "h1").State))
         .Expect(Check("S18.d2.old-readonly", 2, "原處理人仍可唯讀開啟原單（200、標示為原處理人檢視）", "200/是", d =>
             $"{d.Probe("h1-old-order").StatusCode}/{Flag(d.Probe("h1-old-order").Data is { } x && x.Flag("viewerIsPreviousHandler"))}"))
-        .Expect(Check("S18.d2.new-handler-notified", 2, "新處理人（目標單）收到通知", "有通知", d => Outbox(d, "h2") > 0 ? "有通知" : "沒有任何通知"))
+        .Expect(Check("S18.d2.new-handler-notified", 2, "新處理人（目標單）收到的是追加，不是建立", "appended", d => OutboxKinds(d, "h2")))
         .Expect(Check("S18.d2.old-handler-notified", 2, "原處理人收到轉出通知", "transferred", d => OutboxKinds(d, "h1")))
         .Expect(Check("S18.d2.badges", 2, "徽章：原處理人 0 張、目標處理人仍 1 張", "0/1", d =>
             $"{d.Probe("h1-badge").Int("activeWorkOrders")}/{d.Probe("h2-badge").Int("activeWorkOrders")}"));

@@ -443,9 +443,11 @@ public class MailNotificationService
     /// 交辦通知入列（取代即時單發）。MailEnabled 或 MailNotifyWorkOrders 關閉時不入列；收件人就是操作者時不入列。
     /// </summary>
     public void EnqueueWorkOrderNotice(string kind, long workOrderId, long recipientUserId, long actorUserId, string actorAccount,
-        int memberDelta = 0, string? reason = null, bool immediate = false)
+        int memberDelta = 0, string? reason = null, bool immediate = false,
+        string? status = null, bool blocksRedispatch = false, DateTime? until = null)
         => EnqueueWorkOrderNotices(
-            new[] { new WorkOrderNoticeRequest(kind, workOrderId, recipientUserId, memberDelta, reason, immediate) }, actorUserId, actorAccount);
+            new[] { new WorkOrderNoticeRequest(kind, workOrderId, recipientUserId, memberDelta, reason, immediate, status, blocksRedispatch, until) },
+            actorUserId, actorAccount);
 
     /// <summary>
     /// 多筆一次入列：outbox 是單一 blob，每次 Enqueue 都整份讀寫，建單迴圈（日層級指派、立即派工）要先收集再呼叫一次。
@@ -470,7 +472,10 @@ public class MailNotificationService
                     EnqueuedAt = now,
                     ActorAccount = actorAccount ?? "",
                     MemberDelta = n.MemberDelta,
-                    Reason = n.Reason,
+                    Reason = WorkOrderOutboxItem.ClampReason(n.Reason),
+                    Status = n.Status,
+                    BlocksRedispatch = n.BlocksRedispatch,
+                    Until = n.Until,
                     Immediate = n.Immediate,
                     NoEmail = false
                 })
@@ -2517,4 +2522,5 @@ public sealed record EscalationNotice(string IssueLabel, string HostLabel, strin
 
 /// <summary>一筆交辦通知的入列參數（操作者由呼叫端統一帶入，見 <see cref="MailNotificationService.EnqueueWorkOrderNotices"/>）</summary>
 public readonly record struct WorkOrderNoticeRequest(
-    string Kind, long WorkOrderId, long RecipientUserId, int MemberDelta = 0, string? Reason = null, bool Immediate = false);
+    string Kind, long WorkOrderId, long RecipientUserId, int MemberDelta = 0, string? Reason = null, bool Immediate = false,
+    string? Status = null, bool BlocksRedispatch = false, DateTime? Until = null);

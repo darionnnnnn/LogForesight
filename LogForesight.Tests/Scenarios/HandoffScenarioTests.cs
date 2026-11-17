@@ -72,6 +72,11 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
 
     private static int Outbox(DayResult d, string recipient) => d.OutboxAdded.Count(o => o.Recipient == recipient);
 
+    /// <summary>某人當天新增的通知內容：種類:結案狀態:原因:迄日:是否擋住之後派工（逐則以「/」相接）</summary>
+    private static string OutboxDetail(DayResult d, string recipient) =>
+        string.Join("/", d.OutboxAdded.Where(o => o.Recipient == recipient)
+            .Select(o => $"{o.Kind}:{o.Status}:{o.Reason}:{o.Until:yyyy-MM-dd}:{o.BlocksRedispatch}"));
+
     private static string OutboxKinds(DayResult d, string recipient) =>
         string.Join(",", d.OutboxAdded.Where(o => o.Recipient == recipient).Select(o => o.Kind).OrderBy(k => k, StringComparer.Ordinal));
 
@@ -177,8 +182,7 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
                     .Days(3)
                     .Expect(Expect.ActionStatus(3, 0, 200))
                     .Expect(Check("S2.d3.state", 3, "代為結案後單已結案", "已結案(admin_closed)", d => OrderOf(d, "h1").State))
-                    .Expect(Check("S2.d3.handler-notified", 3, "處理人通知佇列有這次結案的通知（任何種類）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
-                    .KnownDifference("E3-S2-1", "S2.d3.handler-notified");
+                    .Expect(Check("S2.d3.handler-notified", 3, "處理人通知佇列有一則代為結案通知，含狀態、原因與再出現是否重新派工（未勾選＝會）", "admin_closed:wont_fix:備品停產，不處理::False", d => OutboxDetail(d, "h1")));
                 break;
         }
 
@@ -294,7 +298,7 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [Fact]
     public void S18_改派併入目標單() => R("S18").AssertExpectations();
 
-    // ── 三個已確認缺口的直接重現（不經預期機制，直接斷言現況；缺口修掉時這些會紅，同步移除已知差異）──────────
+    // ── 已確認缺口的直接重現（不經預期機制，直接斷言現況；缺口修掉時這些會紅，同步移除已知差異）──────────
 
     [Fact]
     public void S10_靜音代為結案後解除_問題再出現時照常派工()
@@ -309,12 +313,12 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     }
 
     [Fact]
-    public void 直接重現_S2_代為結案後處理人通知佇列沒有任何一筆()
+    public void 直接重現_S2_代為結案後處理人通知佇列有一筆代為結案()
     {
         var d3 = R("S2代為結案").Day(3);
         Assert.True(d3.Actions[0].Succeeded);
         Assert.StartsWith("已結案", OrderOf(d3, "h1").State);
-        Assert.Empty(d3.OutboxAdded);
+        Assert.Equal("admin_closed", Assert.Single(d3.OutboxAdded).Kind);
         Assert.Empty(d3.MailsSent);
     }
 

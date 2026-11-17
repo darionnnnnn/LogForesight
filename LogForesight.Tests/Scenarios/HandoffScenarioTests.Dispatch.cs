@@ -414,13 +414,11 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S9.d2.handler-list-excludes", 2, "處理人清單預設排除暫停的單", "0", d => d.Probe("h1-default").Items("items").Count.ToString()))
         .Expect(Check("S9.d2.handler-badge", 2, "處理人徽章不計暫停單（進行中 0）、另列暫停 1", "0/1", d =>
             $"{d.Probe("h1-badge").Int("activeWorkOrders")}/{d.Probe("h1-badge").Int("pausedWorkOrders")}"))
-        .Expect(Check("S9.d2.handler-informed", 2, "暫停時處理人知道（通知佇列有他的新通知）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
+        .Expect(Check("S9.d2.handler-informed", 2, "暫停時處理人有一則暫停通知，含靜音迄日（第 2 天起 3 天）與原因", $"mute_paused::維修窗口:{DateTime.Today.AddDays(-1 + 2):yyyy-MM-dd}:False", d => OutboxDetail(d, "h1")))
         .Expect(Expect.ActionStatus(3, 0, 200))
         .Expect(Check("S9.d3.resumed-paused-flag", 3, "解除後單不再是暫停", "否", d => RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId) is { } r ? Flag(r.Flag("paused")) : "（總覽沒有這張單）"))
         .Expect(Check("S9.d3.handler-list-back", 3, "解除後處理人清單恢復列出", "1", d => d.Probe("h1-default").Items("items").Count.ToString()))
-        .Expect(Check("S9.d3.handler-informed", 3, "恢復時處理人知道（通知佇列有他的新通知）", "有通知", d => Outbox(d, "h1") > 0 ? "有通知" : "沒有任何通知"))
-        .KnownDifference("E3-S9-1", "S9.d2.handler-informed")
-        .KnownDifference("E3-S9-2", "S9.d3.handler-informed");
+        .Expect(Check("S9.d3.handler-informed", 3, "提前解除時處理人有一則恢復通知", "mute_resumed", d => OutboxKinds(d, "h1")));
 
     // ── S9 補充：靜音恢復紀錄與迄日邊界（需要假時鐘讓第 N 天之間真的隔了 N 天）──────────
 
@@ -461,6 +459,9 @@ public sealed partial class HandoffScenarioTests
         .Day(4, d => d.Probe("admin-all", "admin1", "api/work-orders?status=active&pageSize=100"))
         .Days(4)
         .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S9e.d2.paused-notice", 2, "靜音當天處理人只有一則暫停通知", "mute_paused", d => OutboxKinds(d, "h1")))
+        .Expect(Check("S9e.d3.no-notice", 3, "迄日當天沒有新通知", "", d => OutboxKinds(d, "h1")))
+        .Expect(Check("S9e.d4.no-expire-notice", 4, "靜音自然到期（迄日隔天）不發通知", "", d => OutboxKinds(d, "h1")))
         .Expect(Check("S9e.d3.still-muted", 3, "靜音迄日（第 3 天）當天仍靜音", "是", d =>
             RowOf(d.Probe("admin-all"), OrderOf(d, "h1").OrderId) is { } r ? Flag(r.Flag("paused")) : "（總覽沒有這張單）"))
         .Expect(Check("S9e.d4.not-muted", 4, "迄日隔天（第 4 天）不再靜音", "否", d =>
@@ -482,6 +483,8 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S10.d1.setup", 1, "前置：第 1 天派給 h1", "h1", d => HolderOf(d, "HOST-A")))
         .Expect(Expect.ActionStatus(2, 0, 200))
         .Expect(Check("S10.d2.closed", 2, "代為結案：單已結案", "已結案(admin_closed)", d => OrderOf(d, "h1").State))
+        .Expect(Check("S10.d2.only-closed-notice", 2, "靜音並代為結案：處理人只有結案一則（不另發暫停），帶靜音迄日與原因",
+            $"admin_closed:wont_fix:靜音：維修窗口:{DateTime.Today.AddDays(-2 + 2):yyyy-MM-dd}:False", d => OutboxDetail(d, "h1")))
         .Expect(Check("S10.d3.muted-skip", 3, "靜音期間再出現不派工（muted）", "skipped:muted", d => Decision(d, "HOST-A")))
         .Expect(Expect.ActionStatus(3, 0, 200))
         .Expect(Check("S10.d4.dispatch-again", 4, "解除後問題再出現時照常派工", "delivered", d => Decision(d, "HOST-A")))
