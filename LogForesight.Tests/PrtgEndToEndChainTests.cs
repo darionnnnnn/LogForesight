@@ -627,6 +627,13 @@ public sealed class PrtgEndToEndChainTests : IDisposable
         Assert.True(console.Any("寫入/更新 0 個感測器"));
         Assert.Equal(5, store.GetAllDevices().Count);
         Assert.Equal(_server.Messages.Count, store.GetStateChanges(Day, Today.AddDays(1)).Count);
+
+        // C16：同步仍算完成，但結果多一則「感測器全部回空」警告（保護行為不變，只出聲）；正常那一趟沒有警告
+        Assert.Empty(first.Warnings);
+        var warning = Assert.Single(second.Warnings);
+        Assert.Equal(PrtgSyncWarning.SensorsAllEmpty, warning.Code);
+        Assert.Contains("沒有回傳任何感測器", warning.Message);
+        Assert.True(console.Any("[警告]"), "主控台也要看得到警告");
     }
 
     /// <summary>單台裝置回空：其餘裝置照常刷新、空的那台給一趟寬限，不被當成已刪除。</summary>
@@ -645,6 +652,8 @@ public sealed class PrtgEndToEndChainTests : IDisposable
         Assert.Equal(MatchedSensors.Length, store.GetAllSensors().Count);
         Assert.Equal(3, store.GetAllSensors().Count(s => s.DeviceObjid == DbDevice));
         Assert.True(console.Any("先保留一趟"), "回 0 顆的裝置應出聲說明寬限：\n" + string.Join("\n", console.Lines));
+        // 只有單台回空不是「全部回空」：不附警告
+        Assert.DoesNotContain(second.Warnings, w => w.Code == PrtgSyncWarning.SensorsAllEmpty);
     }
 
     /// <summary>權限縮小到只剩 2 台（本趟沒出現的 3 台超過鏡像一半）：一台都不刪，鏡像、對應、範圍維持。</summary>
@@ -665,8 +674,10 @@ public sealed class PrtgEndToEndChainTests : IDisposable
         Assert.Equal(MatchedSensors.Length, store.GetAllSensors().Count);
         Assert.Equal(_server.Messages.Count, store.GetStateChanges(Day, Today.AddDays(1)).Count);
         Assert.Equal(MatchedDevices.Order(), ComputeScope().DeviceObjids.Order());
-        // 同步本身仍算完成（沒有階段失敗）；是否該把「權限縮小」顯示成警告是另一個問題（見回報）
+        // 同步本身仍算完成（沒有階段失敗）
         Assert.True(second.Success, second.ErrorMessage);
+        // 這一趟觸發安全保險、一台都沒清：不是「已對應主機的裝置被清除」，不附這則警告
+        Assert.DoesNotContain(second.Warnings, w => w.Code == PrtgSyncWarning.MappedDevicesPurged);
     }
 
     /// <summary>
@@ -692,6 +703,11 @@ public sealed class PrtgEndToEndChainTests : IDisposable
         Assert.DoesNotContain(store.GetAllSensors(), s => s.DeviceObjid == WebDevice);
         Assert.Equal(7, store.GetAllSensors().Count);
         Assert.True(console.Any("已清除 2 台 PRTG 端已不存在的裝置"));
+
+        // C16：被清除的兩台裡有已對應主機的裝置 → 同步結果多一則警告（清除規則不變：上面的鏡像斷言與修正前相同）
+        var warning = Assert.Single(second.Warnings, w => w.Code == PrtgSyncWarning.MappedDevicesPurged);
+        Assert.Contains("已對應主機的 PRTG 裝置", warning.Message);
+        Assert.True(warning.Message.Length <= PrtgSyncWarning.MaxMessageLength);
     }
 
     /// <summary>

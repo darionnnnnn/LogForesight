@@ -239,6 +239,7 @@ public class PrtgStructureSyncService
             LastMappedHosts = last?.MapMappedHosts,
             LastUnmappedHosts = last?.MapUnmappedHosts,
             LastNameMismatch = last?.MapNameMismatch,
+            LastWarnings = last?.Warnings.Select(w => w.Message).ToList() ?? new List<string>(),
             LastSource = last?.Source
         };
     }

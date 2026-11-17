@@ -1,4 +1,5 @@
 using System.Reflection;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -143,6 +144,7 @@ public class HealthService
             return new HealthDetailDto
             {
                 Status = HealthStatuses.Down,
+                StatusReasons = HealthAttention.Evaluate(new HealthAttentionInput { StorageDown = true }, DateTime.Now).ToList(),
                 Version = Version,
                 StorageOk = false,
                 StorageError = storageError,
@@ -188,19 +190,50 @@ public class HealthService
         var cryptoDecryptFailure = CryptoHelper.DecryptFailureSeen;
 
         // 「慢操作占比過高」或「首見日合併連續失敗達上限」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
-        // 因此獨立成 degraded 狀態，而不是併進 ok。排程資料過期且未確認靜音時亦視為 degraded（任務 A-3）
+        // 因此獨立成 degraded 狀態，而不是併進 ok。排程資料過期且未確認靜音時亦視為 degraded（任務 A-3）。
+        // 整體狀態的判定只有 HealthAttention.Evaluate 一份：原因清單為空＝ok，否則 degraded；
+        // 健康頁頂端與導覽告示列讀的都是這份原因清單，不各自再算。
         var memoryWarning = memoryRatio >= DegradedMemoryUsageRatio;
-        var degraded = (performance.TotalOperations > 0 &&
-                       performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
-                       || firstSeenFailed
-                       || (freshness.Stale && !freshness.Acked)
-                       || prtgSnapshot?.Warning == true
-                       || memoryWarning
-                       || cryptoKeyMismatch || cryptoDecryptFailure;
+        var recovery = _recoveryService?.GetWaitingSummary();
+        var retentionFailure = RetentionPruner.LastFailure(_backend);
+        var prtgSyncWarnings = prtgEnabled ? ReadPrtgSyncWarnings() : Array.Empty<PrtgSyncWarning>();
+        var suspendedRecipients = _mail.GetSuspendedRecipients();
+        var reasons = HealthAttention.Evaluate(new HealthAttentionInput
+        {
+            SlowOperationsHigh = performance.TotalOperations > 0 &&
+                                 performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent,
+            FirstSeenFailed = firstSeenFailed,
+            ScheduleStaleAndNotAcked = freshness.Stale && !freshness.Acked,
+            PrtgSnapshotWarning = prtgSnapshot?.Warning == true,
+            PrtgSnapshotMessage = prtgSnapshot?.Message,
+            MemoryWarning = memoryWarning,
+            CryptoKeyMismatch = cryptoKeyMismatch,
+            CryptoDecryptFailure = cryptoDecryptFailure,
+            Migrations = new[]
+            {
+                new MigrationHealth("處理狀態", migration.State, migration.StartedAt, migration.LastError),
+                new MigrationHealth("權限異動", permMigration.State, permMigration.StartedAt, permMigration.LastError)
+            },
+            PrtgFreshnessSuspicious = prtgEnabled
+                ? PrtgFreshnessDto.FromStore(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)))
+                    .Where(f => f.Suspicious)
+                    .Select(f => (PrtgFreshnessLabel(f.Category), f.ZeroStreak))
+                    .ToList()
+                : Array.Empty<(string, int)>(),
+            HostDayRecoveryNeedsAttention = recovery?.NeedsAttention ?? 0,
+            LastRunSucceeded = runSnapshot.LastOutcome?.Success,
+            SuspendedMailRecipients = suspendedRecipients,
+            RetentionFailure = retentionFailure,
+            PrtgSyncWarnings = prtgSyncWarnings
+        }, DateTime.Now);
+        var degraded = reasons.Count > 0;
 
         return new HealthDetailDto
         {
             Status = degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
+            StatusReasons = reasons.ToList(),
+            RetentionFailedSegments = retentionFailure?.Segments.ToList() ?? new List<string>(),
+            PrtgSyncWarnings = prtgSyncWarnings.Select(w => w.Message).ToList(),
             Version = Version,
             BuildShaKnown = BuildVersion.Current.ShaKnown,
             LocalHostDisabled = IsLocalHostDisabled(),
@@ -272,12 +305,12 @@ public class HealthService
             IssueFirstSeenSeedFailures = firstSeenProgress?.Failures ?? 0,
             IssueFirstSeenSeedError = firstSeenProgress?.LastError,
 
-            SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
+            SuspendedMailRecipients = suspendedRecipients,
             MailContributionLedger = _mail.GetContributionLedgerStatus(),
 
             // 主機日恢復：目前仍在等待的列（含排隊等逐列恢復的）與其中需要人看的列（內容無效、主機編號無效、超過單列上限）
-            HostDayRecovery = _recoveryService?.GetWaitingSummary() is { } recovery
-                ? new HostDayRecoveryHealthDto { Waiting = recovery.Waiting, NeedsAttention = recovery.NeedsAttention, ByReason = recovery.ByReason.ToDictionary(pair => pair.Key, pair => pair.Value) }
+            HostDayRecovery = recovery is { } waiting
+                ? new HostDayRecoveryHealthDto { Waiting = waiting.Waiting, NeedsAttention = waiting.NeedsAttention, ByReason = waiting.ByReason.ToDictionary(pair => pair.Key, pair => pair.Value) }
                 : null,
 
             CryptoKeySource = CryptoHelper.KeySource,
@@ -288,6 +321,42 @@ public class HealthService
             Memory = memory,
             MemoryWarning = memoryWarning
         };
+    }
+
+    /// <summary>
+    /// 導覽告示列用的精簡結果：整體狀態與原因清單，與 <see cref="GetDetail"/> 同一份判定。
+    /// 內容與使用者無關（全站狀態），授權在控制器（Maintain 或 DevMonitor）。
+    /// </summary>
+    public HealthAttentionDto GetAttention()
+    {
+        var detail = GetDetail();
+        return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+    }
+
+    /// <summary>PRTG 擷取紀錄類別的中文名（與前端 <c>prtgFreshnessLabel</c> 同一份對照；未知類別原樣）</summary>
+    private static string PrtgFreshnessLabel(string category) => category switch
+    {
+        PrtgFreshnessStore.Devices => "裝置",
+        PrtgFreshnessStore.Sensors => "感測器",
+        PrtgFreshnessStore.StateChanges => "狀態變更",
+        PrtgFreshnessStore.Snapshot => "即時快照",
+        PrtgFreshnessStore.Values => "歷史數值",
+        _ => category
+    };
+
+    /// <summary>最近一次 PRTG 同步結果的警告；讀不到就當沒有（只是補充資訊，不讓健康頁失敗）。</summary>
+    private IReadOnlyList<PrtgSyncWarning> ReadPrtgSyncWarnings()
+    {
+        try
+        {
+            return new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)).GetOrNull()?.Warnings
+                   ?? new List<PrtgSyncWarning>();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Text.Json.JsonException
+                                      or Microsoft.EntityFrameworkCore.DbUpdateException or System.Data.Common.DbException)
+        {
+            return Array.Empty<PrtgSyncWarning>();
+        }
     }
 
     private PrtgSnapshotHealthDto? BuildPrtgSnapshotHealth(bool enabled, string? fetchStrategy, DateTime now)

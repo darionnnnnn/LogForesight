@@ -1164,6 +1164,19 @@ public sealed class EfPrtgStore
         return total;
     }
 
+    /// <summary>本趟全站裝置同步沒刷新到的裝置（<c>SyncedAt &lt; syncStartedAt</c>），只讀；供清除前判定警告，不改變清除條件。</summary>
+    public List<(long Objid, string Name)> GetDevicesNotSyncedSince(DateTime syncStartedAt)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PrtgDevices.AsNoTracking()
+            .Where(d => d.SyncedAt < syncStartedAt)
+            .OrderBy(d => d.Objid)
+            .Select(d => new { d.Objid, d.Name })
+            .ToList()
+            .Select(d => (d.Objid, d.Name))
+            .ToList();
+    }
+
     /// <summary>
     /// 清除本趟全站裝置同步沒刷新到的鏡像列（<c>SyncedAt &lt; syncStartedAt</c>），即 PRTG 端已不存在的裝置。
     /// 只動 <c>lf_prtg_devices</c>；人工對應、主機對應、感測器、狀態變更與數值表一律不碰。

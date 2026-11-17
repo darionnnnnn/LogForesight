@@ -745,8 +745,11 @@ function freshnessReason(freshness, canMaintain) {
 }
 
 /**
- * 排程資料過期告示：只有能處理它的人（Maintain／DevMonitor）才查，進頁查一次、不輪詢。
- * 過期且尚未確認靜音時顯示一條；其餘情況向協調器移除。
+ * 健康告示：只有能處理它的人（Maintain／DevMonitor）才查，進頁查一次、不輪詢；其他角色不發任何請求。
+ * 兩件事各自獨立、取不到就當沒有：
+ *  - 排程資料過期且尚未確認靜音 → 原本那一條（含聯絡人、憑證與確認靜音連結）；
+ *  - 整體狀態不是正常（`/api/health/attention`，判定只在後端一份）→ 多列原因清單。
+ * 「排程資料過期」這個原因由上面那一條說得更完整，清單裡不重複列。兩者都沒有就向協調器移除。
  */
 async function loadHealthBanner(user) {
     if (!hasCapability(user, 'Maintain') && !hasCapability(user, 'DevMonitor')) {
@@ -754,14 +757,13 @@ async function loadHealthBanner(user) {
         return;
     }
 
-    let freshness;
-    try {
-        freshness = await api.get('/api/health/freshness', { silent: true });
-    } catch {
-        registerAlert('health', null);
-        return;
-    }
-    if (!freshness?.stale || freshness.acked) {
+    const [freshness, attention] = await Promise.all([
+        api.get('/api/health/freshness', { silent: true }).catch(() => null),
+        api.get('/api/health/attention', { silent: true }).catch(() => null)
+    ]);
+    const stale = Boolean(freshness?.stale) && !freshness.acked;
+    const reasons = (Array.isArray(attention?.reasons) ? attention.reasons : []).filter(r => r?.key !== 'freshness' && r?.text);
+    if (!stale && reasons.length === 0) {
         registerAlert('health', null);
         return;
     }
@@ -771,18 +773,24 @@ async function loadHealthBanner(user) {
     bar.setAttribute('role', 'status');
 
     const text = document.createElement('span');
-    const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
-    const reason = freshnessReason(freshness, hasCapability(user, 'Maintain'));
-    const contacts = !hasCapability(user, 'Maintain') && freshness.adminContacts?.length
-        ? `請聯絡：${freshness.adminContacts.join('、')}。`
-        : '';
-    text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。${reason.text}${contacts}`;
+    const reason = stale ? freshnessReason(freshness, hasCapability(user, 'Maintain')) : { text: '', credential: false };
+    if (stale) {
+        const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
+        const contacts = !hasCapability(user, 'Maintain') && freshness.adminContacts?.length
+            ? `請聯絡：${freshness.adminContacts.join('、')}。`
+            : '';
+        text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。${reason.text}${contacts}`;
+    } else {
+        text.textContent = `系統狀態需要注意（${reasons.length} 項）。`;
+    }
+    bar.appendChild(text);
 
-    const runsLink = document.createElement('a');
-    runsLink.href = appUrl('/runs');
-    runsLink.textContent = '查看排程作業';
-
-    bar.append(text, runsLink);
+    if (stale) {
+        const runsLink = document.createElement('a');
+        runsLink.href = appUrl('/runs');
+        runsLink.textContent = '查看排程作業';
+        bar.appendChild(runsLink);
+    }
 
     // 憑證要到各自的維護頁重新輸入；那兩頁需要 Maintain，只有 DevMonitor 的人改看聯絡人
     if (reason.credential && hasCapability(user, 'Maintain')) {
@@ -794,12 +802,24 @@ async function loadHealthBanner(user) {
         }
     }
 
-    // 確認靜音在設定頁、需要 Maintain：只有 DevMonitor 的人看得到告示，但不給他進不去的連結
+    // 確認靜音與系統健康頁都在設定頁、需要 Maintain：只有 DevMonitor 的人看得到告示，但不給他進不去的連結
     if (hasCapability(user, 'Maintain')) {
-        const ackLink = document.createElement('a');
-        ackLink.href = appUrl('/admin/settings#health');
-        ackLink.textContent = '確認並靜音';
-        bar.appendChild(ackLink);
+        const healthLink = document.createElement('a');
+        healthLink.href = appUrl('/admin/settings#health');
+        healthLink.textContent = stale ? '確認並靜音' : '查看系統健康';
+        bar.appendChild(healthLink);
+    }
+
+    if (reasons.length > 0) {
+        const list = document.createElement('ul');
+        list.className = 'w-100 mb-0 ps-3';
+        list.setAttribute('data-health-reasons', '1');
+        for (const r of reasons) {
+            const item = document.createElement('li');
+            item.textContent = r.text;
+            list.appendChild(item);
+        }
+        bar.appendChild(list);
     }
     registerAlert('health', bar);
 }

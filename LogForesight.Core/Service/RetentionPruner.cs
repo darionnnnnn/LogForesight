@@ -12,6 +12,10 @@ namespace LogForesight.Core.Service;
 /// （<see cref="AnalysisOrchestrator.RunRetentionOnlyAsync"/>）共用這一份——
 /// 只依附分析執行的話，排程停用或錯過窗口的日子保留期就等於沒有生效。
 /// 執行完把當天日期記進 <c>retention_state</c> blob，排程輪詢據此判斷今天是否還要補做。
+///
+/// **各段獨立**：每一段（歷史紀錄、詳情、執行歷程…）各自包在 <see cref="Run"/> 內的 <c>Segment</c>，
+/// 一段擲例外只記那一段、其餘照常執行；失敗的段名回傳給呼叫端（執行紀錄的保留階段據此標為部分完成），
+/// 並寫進 <c>retention_state</c> 讓健康整體狀態看得到，全部成功的一趟才清掉失敗記錄。
 /// </summary>
 public static class RetentionPruner
 {
@@ -20,13 +24,29 @@ public static class RetentionPruner
     internal const string StateBlobKey = "retention_state";
 
     /// <param name="batchRunStore">執行紀錄 store；初始化失敗時為 null（沿用分析執行原本的語意：執行歷程本次不清）</param>
-    public static void Run(StorageBackend backend, RetentionOptions retention, IRunConsole console, BatchRunStore? batchRunStore)
+    /// <returns>各段的結果；<see cref="RetentionRunResult.FailedSegments"/> 非空代表有段失敗（其餘段已照常執行）</returns>
+    public static RetentionRunResult Run(StorageBackend backend, RetentionOptions retention, IRunConsole console, BatchRunStore? batchRunStore)
     {
         // 風險 log 暫存（清除用；分析路徑另有自己的實例，兩者都是無狀態的真表 store）
         var riskyEventStore = backend.RiskyEventStore();
 
         // 任一清除步驟失敗就不記「今天已執行」，讓排程隔天（或下次輪詢）重試
-        var anyFailed = false;
+        var failedSegments = new List<string>();
+
+        // 一段一個獨立的失敗邊界：擲例外只記段名與記錄檔，不中斷後面的段。
+        // 取消訊號不是失敗，穿透給上層（這裡的清除本身沒有取消點，保持原行為）。
+        void Segment(string name, Action body)
+        {
+            try
+            {
+                body();
+            }
+            catch (Exception ex)
+            {
+                failedSegments.Add(name);
+                Log.Warn(ex, "保留清除「{0}」失敗（其餘各段照常執行，不影響本次分析）：{1}", name, ex.Message);
+            }
+        }
 
         // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
         //
@@ -43,13 +63,16 @@ public static class RetentionPruner
         // **順序不可反**：先清詳情再刪列，等於為即將被刪的列白做一次 UPDATE。
         var allHostRecords = backend.RecordStore();
 
-        var pruned = allHostRecords.Prune(retention.RetentionDays);
-        if (pruned > 0)
+        Segment("歷史紀錄", () =>
         {
-            console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
-        }
+            var pruned = allHostRecords.Prune(retention.RetentionDays);
+            if (pruned > 0)
+            {
+                console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
+            }
+        });
 
-        try
+        Segment("紀錄詳情", () =>
         {
             var detailPruned = allHostRecords.PruneDetails(retention.RawEventRetentionDays);
             if (detailPruned > 0)
@@ -71,46 +94,48 @@ public static class RetentionPruner
                           $"預估還需約 {estimatedRuns} 次執行清完。";
                 console.WriteLine($"  ℹ {msg}");
             }
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "詳情清除或積壓申報失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
-        // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
-        try
+        // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）；五件事各自獨立，一件失敗不連累其餘
+        Segment("執行歷程與匯入紀錄", () =>
         {
             var runLogPruned = (batchRunStore?.Prune(retention.RunLogRetentionDays) ?? 0) +
                                 new ImportLogStore(backend.LogStore("import_logs")).Prune(retention.RunLogRetentionDays);
             if (runLogPruned > 0)
                 console.WriteLine($"已清除 {runLogPruned} 筆超過 {retention.RunLogRetentionDays} 天的執行歷程／匯入紀錄。");
+        });
 
+        Segment("稽核紀錄", () =>
+        {
             var auditPruned = new AuditLogStore(backend.LogStore("audit")).Prune(retention.AuditRetentionDays);
             if (auditPruned > 0)
                 console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
+        });
 
+        Segment("NetIQ 最新取數狀態", () =>
+        {
             var netiqAttemptsPruned = NetiqSourceAttempt.Prune(backend, retention.RetentionDays);
             if (netiqAttemptsPruned > 0)
                 console.WriteLine($"已清除 {netiqAttemptsPruned} 筆超過 {retention.RetentionDays} 天的 NetIQ 最新取數狀態。");
+        });
 
-            // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
-            // 跟稽核紀錄同一個保留天數
+        // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
+        // 跟稽核紀錄同一個保留天數
+        Segment("權限異動紀錄", () =>
+        {
             var permPruned = backend.PermissionChanges()
                 .Prune(retention.AuditRetentionDays);
             if (permPruned > 0)
                 console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");
+        });
 
-            // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
+        // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
+        Segment("風險 log 暫存", () =>
+        {
             var riskyEventPruned = riskyEventStore.Prune(retention.RawEventRetentionDays);
             if (riskyEventPruned > 0)
                 console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RawEventRetentionDays} 天的風險 log 暫存。");
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
         // 1b-2. 清理處理狀態三表與處理歷程（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
         //
@@ -122,7 +147,7 @@ public static class RetentionPruner
         //   問題／日處理狀態 → RetentionDays（跟著分析紀錄，它們是紀錄的附屬狀態）
         //   已結案的案件     → RetentionDays（同上，但判準是結案時間，不是事件日期）
         //   處理歷程         → AuditRetentionDays（追責證據，性質接近稽核）
-        try
+        Segment("處理狀態與處理歷程", () =>
         {
             var issueHandlingPruned = backend.IssueHandlingStore().Prune(retention.RetentionDays);
             var recordHandlingStore = backend.RecordHandlingStore();
@@ -141,28 +166,18 @@ public static class RetentionPruner
             var handlingLogPruned = recordHandlingStore.PruneLogs(retention.AuditRetentionDays);
             if (handlingLogPruned > 0)
                 console.WriteLine($"已清除 {handlingLogPruned} 筆超過 {retention.AuditRetentionDays} 天的處理歷程。");
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
         // 1c. 清理過期的報告全文（風險／週檢／權限異動）——保留期是獨立設定
         // ReportRetentionDays，但上限受 RetentionDays 約束（見 RuntimeSettingsResolver）
-        try
+        Segment("報告全文", () =>
         {
             var reportsPruned = backend.ReportStore().Prune(retention.ReportRetentionDays);
             if (reportsPruned > 0)
                 console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告全文（風險／週檢／權限異動）。");
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "報告全文清理失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
-        try
+        Segment("PRTG 鏡像資料", () =>
         {
             var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
             using (var ctx = backend.CreateContext())
@@ -175,24 +190,14 @@ public static class RetentionPruner
             }
             if (prtgPruned > 0)
                 console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
-        try
+        Segment("AI 診斷傾印檔", () =>
         {
             var diagPruned = FilePromptDumper.Prune(retention.RunLogRetentionDays);
             if (diagPruned > 0)
                 console.WriteLine($"已清除 {diagPruned} 個超過 {retention.RunLogRetentionDays} 天的 AI 診斷傾印檔。");
-        }
-        catch (Exception ex)
-        {
-            anyFailed = true;
-            Log.Warn(ex, "AI 診斷傾印檔清理失敗（不影響本次分析）：{0}", ex.Message);
-        }
+        });
 
         // 記錄今天已執行保留清除：排程輪詢看到今天已做過就不再單獨補做
         try
@@ -201,16 +206,52 @@ public static class RetentionPruner
             // 只封存結果明確的郵件意圖；結果不明或混合的保留，避免重寄或漏寄。
             var retiredIntents = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
                 .PruneTerminalUrgentIntents(retention.RetentionDays, DateTime.UtcNow);
-            if (!anyFailed)
-                stateStore.Update(s => s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd"));
-            else
-                Log.Warn("保留清除有步驟失敗，不記錄今日已執行，留待下次重試");
+            var failureNames = failedSegments.ToList();
+            stateStore.Update(s =>
+            {
+                if (failureNames.Count == 0)
+                {
+                    s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd");
+                    // 一趟全部成功才清掉失敗記錄：健康整體狀態據此判斷「保留清除失敗」是否已排除
+                    s.LastFailureAt = null;
+                    s.LastFailedSegments = new List<string>();
+                }
+                else
+                {
+                    s.LastFailureAt = DateTime.Now;
+                    s.LastFailedSegments = failureNames;
+                }
+            });
+            if (failureNames.Count > 0)
+                Log.Warn("保留清除有 {0} 段失敗（{1}），不記錄今日已執行，留待下次重試", failureNames.Count, string.Join("、", failureNames));
             if (retiredIntents > 0)
                 console.WriteLine($"已封存 {retiredIntents} 筆超過 {Math.Max(90, retention.RetentionDays)} 天且結果明確的郵件意圖。");
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "保留清除執行日期記錄失敗：{0}", ex.Message);
+        }
+
+        return new RetentionRunResult(failedSegments);
+    }
+
+    /// <summary>
+    /// 最近一次有段失敗的保留清除：失敗時間與段名；最近一趟全部成功（或從未失敗）回 null。
+    /// 健康整體狀態的「保留清除失敗」唯一來源。讀取失敗回 null，不讓健康頁因此失敗。
+    /// </summary>
+    public static RetentionFailure? LastFailure(StorageBackend backend)
+    {
+        try
+        {
+            var state = new RetentionStateStore(backend.Blob(StateBlobKey)).Get();
+            return state.LastFailureAt is { } at && state.LastFailedSegments.Count > 0
+                ? new RetentionFailure(at, state.LastFailedSegments.ToList())
+                : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Text.Json.JsonException or DbUpdateException or System.Data.Common.DbException)
+        {
+            Log.Warn(ex, "讀取保留清除失敗記錄失敗：{0}", ex.Message);
+            return null;
         }
     }
 
@@ -229,6 +270,14 @@ public static class RetentionPruner
     {
         [JsonPropertyName("lastRunDate")]
         public string? LastRunDate { get; set; }
+
+        /// <summary>最近一次有段失敗的時間；之後有一趟全部成功就清空</summary>
+        [JsonPropertyName("lastFailureAt")]
+        public DateTime? LastFailureAt { get; set; }
+
+        /// <summary>最近一次失敗的段名（人讀的短名稱）</summary>
+        [JsonPropertyName("lastFailedSegments")]
+        public List<string> LastFailedSegments { get; set; } = new();
     }
 
     private sealed class RetentionStateStore : JsonBlobSingleton<RetentionState>
@@ -236,3 +285,15 @@ public static class RetentionPruner
         public RetentionStateStore(EfJsonBlobStore blob) : base(blob) { }
     }
 }
+
+/// <summary>一趟保留清除的結果：失敗的段名（空＝全部成功）。</summary>
+public sealed record RetentionRunResult(IReadOnlyList<string> FailedSegments)
+{
+    public bool Succeeded => FailedSegments.Count == 0;
+
+    /// <summary>執行紀錄階段的說明（成功為 null）；段名是固定短名稱，不含例外原文。</summary>
+    public string? Note => Succeeded ? null : $"{FailedSegments.Count} 段清除失敗：{string.Join("、", FailedSegments)}";
+}
+
+/// <summary>最近一次保留清除失敗的時間與段名。</summary>
+public sealed record RetentionFailure(DateTime At, IReadOnlyList<string> Segments);

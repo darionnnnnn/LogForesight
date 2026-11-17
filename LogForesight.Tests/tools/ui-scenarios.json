@@ -1729,6 +1729,111 @@
     ]
   },
   {
+    "name": "設定-健康-需要注意",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "degraded",
+            "statusReasons": [
+              {
+                "key": "retention",
+                "text": "保留清除有 2 段失敗（歷史紀錄、報告全文），其餘段已照常執行。"
+              },
+              {
+                "key": "lastRun",
+                "text": "最近一趟分析執行失敗。"
+              },
+              {
+                "key": "prtgDevicesPurged",
+                "text": "有 3 台已對應主機的 PRTG 裝置本趟沒出現在 PRTG 回應中，已從鏡像清除（WIN-APP01 (Ping)、WIN-DB01 (Ping)、LINUX-EDGE-01 (SNMP) 等）。若不是在 PRTG 端刪除，請檢查 PRTG 帳號權限與查詢範圍。"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-overall [data-reason-key]",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const rows = document.querySelectorAll('#health-overall [data-reason-key]'); if (rows.length !== 3) return `原因應列 3 行，實際 ${rows.length}`; const note = document.querySelector('#health-overall .lf-status-note--warning'); if (!note) return '頂端缺少警告型狀態訊息'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "設定-健康-正常",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "ok",
+            "statusReasons": []
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-overall .lf-status-note--success",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "return document.querySelector('#health-overall [data-health-reasons]') ? '正常時不應顯示原因清單' : null;"
+      }
+    ]
+  },
+  {
+    "name": "導覽告示-健康原因",
+    "role": "ui-admin",
+    "path": "/runs",
+    "steps": [
+      {
+        "patchApi": {
+          "/api/health/attention": {
+            "status": "degraded",
+            "reasons": [
+              {
+                "key": "retention",
+                "text": "保留清除有 2 段失敗（歷史紀錄、報告全文），其餘段已照常執行。"
+              },
+              {
+                "key": "prtgSensorsEmpty",
+                "text": "範圍內 12 台裝置的感測器查詢都成功，卻沒有回傳任何感測器，鏡像不清除、維持上次內容；請檢查 PRTG 帳號權限與查詢設定。"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#lf-health-banner [data-health-reasons]",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const items = document.querySelectorAll('#lf-health-banner [data-health-reasons] li'); if (items.length !== 2) return `告示應列 2 項原因，實際 ${items.length}`; return null;"
+      }
+    ]
+  },
+  {
     "name": "設定-頁籤-guard",
     "role": "ui-admin",
     "path": "/admin/settings#guard",

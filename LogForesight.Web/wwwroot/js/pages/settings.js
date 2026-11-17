@@ -686,12 +686,14 @@ async function loadHealthTab({ refresh = false } = {}) {
     try {
         detail = await fetchHealthDetail({ refresh });
     } catch {
+        document.getElementById('health-overall')?.replaceChildren();
         renderError(document.getElementById('health-freshness'), {
             message: '無法載入系統健康資訊', onRetry: () => loadHealthTab({ refresh: true })
         });
         await setupGuideTask;
         return;
     }
+    renderHealthOverall(detail);
     renderBuildInfo(detail);
     renderFreshness(detail.scheduleFreshness);
     renderPrtgSnapshotHealth(detail.prtgSnapshot);
@@ -699,6 +701,38 @@ async function loadHealthTab({ refresh = false } = {}) {
     renderBackgroundJobs(detail);
     renderMemoryHealth(detail.memory, detail.memoryWarning);
     await Promise.all([loadLoginThrottle(), setupGuideTask]);
+}
+
+/**
+ * 健康頁頂端：整體狀態與原因清單。原因來自後端唯一的判定（detail.statusReasons，HealthAttention.Evaluate），
+ * 這裡不重算。正常時只有一則「系統狀態正常」，不顯示原因清單；需要注意時一則警告（down 為錯誤）加每項一行。
+ * 原因文字走 textContent（含 PRTG 回傳的裝置名稱等外部字串）。
+ */
+function renderHealthOverall(detail) {
+    const host = document.getElementById('health-overall');
+    if (!host) return;
+    const reasons = Array.isArray(detail?.statusReasons) ? detail.statusReasons : [];
+    if (detail?.status === 'ok' && reasons.length === 0) {
+        host.replaceChildren(statusNote('success', '系統狀態正常'));
+        return;
+    }
+    const down = detail?.status === 'down';
+    const children = [statusNote(down ? 'error' : 'warning',
+        down ? '系統目前無法正常運作' : `系統需要注意（${formatNumber(reasons.length)} 項）`)];
+    if (reasons.length > 0) {
+        const list = document.createElement('ul');
+        list.className = 'list-unstyled mt-2 mb-0';
+        list.setAttribute('data-health-reasons', '1');
+        for (const reason of reasons) {
+            const item = document.createElement('li');
+            item.className = 'mb-1 lf-list-row';
+            item.setAttribute('data-reason-key', reason.key ?? '');
+            item.textContent = reason.text ?? '';
+            list.appendChild(item);
+        }
+        children.push(list);
+    }
+    host.replaceChildren(...children);
 }
 
 /** 版本與站台主機狀態：判斷「站台到底部署了哪一版」只看這一行 */
@@ -934,6 +968,16 @@ function renderBackgroundJobs(detail) {
             status: `${withError(detail.issueFirstSeenSeedState, detail.issueFirstSeenSeedError)}，失敗 ${formatNumber(detail.issueFirstSeenSeedFailures ?? 0)} 次`
         },
         { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
+        {
+            item: '最近一趟分析',
+            status: detail.lastRunSucceeded === false ? '失敗' : detail.lastRunSucceeded === true ? '成功' : '站台啟動後尚未執行'
+        },
+        {
+            item: '保留清除',
+            status: (detail.retentionFailedSegments ?? []).length > 0
+                ? `最近一次有段失敗：${detail.retentionFailedSegments.join('、')}`
+                : '正常'
+        },
         { item: '密碼欄位加密', status: cryptoStatus(detail) }
     ];
     if (detail.hostDayRecovery) rows.push({ item: '主機日恢復', status: hostDayRecoveryStatus(detail.hostDayRecovery) });
@@ -948,6 +992,11 @@ function renderBackgroundJobs(detail) {
                 ? suspicious.map(f => `${prtgFreshnessLabel(f.category)} 連續 ${f.zeroStreak} 次取得 0 筆`).join('、')
                 : '正常'
         });
+    }
+    // PRTG 同步警告：未啟用時後端回空清單、不加這列
+    if (Array.isArray(detail.prtgFreshness)) {
+        const warnings = detail.prtgSyncWarnings ?? [];
+        rows.push({ item: 'PRTG 同步警告', status: warnings.length > 0 ? warnings.join('；') : '無' });
     }
     renderTable(document.getElementById('health-background'), {
         columns: [{ key: 'item', title: '項目' }, { key: 'status', title: '狀態' }],

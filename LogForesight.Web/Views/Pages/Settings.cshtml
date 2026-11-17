@@ -531,15 +531,19 @@
     @* 系統健康：切到本頁籤（或 #health 深連結進站）才載入 /api/health/detail。
        整頁在 settings-form 內，按鈕一律 type="button"，避免觸發表單送出 *@
     <div class="d-none" data-panel="health">
+        @* 整體狀態與原因清單（頂端）：資料來自 detail.statusReasons，判定唯一在後端 HealthAttention。
+           每張卡片以 data-health-alert 宣告它的警示對應哪些原因種類（none＝不會出現警示樣式），
+           HealthAttentionGuardTests 比對這份宣告與 HealthAttentionKeys，新增會亮警示的卡片必須併進清單 *@
+        <div class="mb-3" id="health-overall" role="status"></div>
         <p class="lf-text-meta mb-3" id="health-build" role="status"></p>
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="prtgSnapshot">
             <div class="lf-card__header"><h2 class="lf-card__title">PRTG 快照</h2></div>
             <div class="lf-card__body">
                 <div id="health-prtg-snapshot" role="status" aria-live="polite"></div>
                 <p class="mb-0 mt-2"><a href="@Url.Content("~/admin/prtg#mirror")">前往 PRTG 維護頁檢查鏡像</a></p>
             </div>
         </div>
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="freshness">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">排程資料新鮮度</h2>
             </div>
@@ -555,7 +559,7 @@
             </div>
         </div>
 
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="memory">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">記憶體</h2>
             </div>
@@ -565,7 +569,7 @@
             </div>
         </div>
 
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="slowQueries">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">慢查詢</h2>
             </div>
@@ -574,7 +578,7 @@
             </div>
         </div>
 
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="firstSeen,crypto,migration,prtgFreshness,hostDayRecovery,lastRun,mailSuspended,retention,prtgSensorsEmpty,prtgDevicesPurged">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">背景工作</h2>
             </div>
@@ -584,7 +588,7 @@
         </div>
 
         @* 登入暫停：登入節流擋下的帳號與 IP（站台重啟即清空），可手動解除 *@
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="none">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">登入暫停</h2>
             </div>
@@ -593,7 +597,7 @@
             </div>
         </div>
 
-        <div class="lf-card mb-3">
+        <div class="lf-card mb-3" data-health-alert="none">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">初始設定</h2>
             </div>

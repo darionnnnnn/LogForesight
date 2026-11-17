@@ -152,6 +152,7 @@ POST	/api/handling/issue-cases/bulk-close	C=Assign&Handle;A=-	-	-	-	IssueBulkClo
 GET	/api/handling/issue-cases/close-preview	C=Assign&Handle;A=-	-	-	-	IssueBulkCloseController
 GET	/api/handling/last-note	C=-;A=Handle	-	-	-	IssueNoteController
 GET	/api/health	C=-;A=-	anonymous	-	-	HealthController
+GET	/api/health/attention	C=-;A=DevMonitor|Maintain	-	-	-	HealthController
 GET	/api/health/detail	C=-;A=Maintain	-	-	-	HealthController
 GET	/api/health/freshness	C=-;A=-	-	-	-	HealthController
 POST	/api/health/freshness-ack	C=-;A=Maintain	-	-	-	HealthController

@@ -85,6 +85,7 @@ public static class PrtgStructureSyncRunner
                 progress: (stage, done, total) => progress?.Invoke(stage, done, total));
 
             syncResult = fetchResult;
+            status.Warnings = fetchResult.Warnings.Select(w => PrtgSyncWarning.Create(w.Code, w.Message)).ToList();
             status.Devices = fetchResult.Devices;
             status.Sensors = fetchResult.Sensors;
             syncFailures = fetchResult.Failures;

@@ -294,6 +294,11 @@ internal static class PrtgDailyPipeline
                     {
                         runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
                     }
+                    // 警告（已在 PrtgSyncWarning.Create 截斷）：同步算完成，但保護生效或結果異常，要在執行紀錄看得到
+                    foreach (var warning in fetchResult.Warnings)
+                    {
+                        runRecorder.Milestone($"PRTG 同步警告：{warning.Message}");
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -1321,6 +1326,7 @@ internal static class PrtgDailyPipeline
             MapMappedHosts = mapResult.MappedHosts,
             MapUnmappedHosts = mapResult.UnmappedHosts,
             MapNameMismatch = mapResult.NameMismatch,
+            Warnings = fetchResult.Warnings.Select(w => PrtgSyncWarning.Create(w.Code, w.Message)).ToList(),
             Source = PrtgStructureSyncStatus.SourceNightly
         };
     }

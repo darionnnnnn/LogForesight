@@ -582,8 +582,9 @@ public class AnalysisOrchestrator
                 permissionPhase.Complete(permissionCheck.PlatformUnsupported ? RunPhaseOutcomes.Skipped : RunPhaseOutcomes.Success);
 
                 var retentionPhase = runRecorder.Phase(RunTimingPhases.Retention);
-                RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
-                retentionPhase.Complete(RunPhaseOutcomes.Success);
+                var retentionResult = RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
+                // 有段失敗時階段標為部分完成（其餘段已照常執行），段名進階段說明；不再永遠寫成功
+                retentionPhase.Complete(retentionResult.Succeeded ? RunPhaseOutcomes.Success : RunPhaseOutcomes.Partial, retentionResult.Note);
 
                 var yesterday = runToday.AddDays(-1);
 

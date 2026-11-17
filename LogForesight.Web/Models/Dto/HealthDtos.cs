@@ -31,9 +31,30 @@ public class SlowOperationDto
     public DateTime LastAt { get; set; }
 }
 
+/// <summary>
+/// 導覽告示列用的整體狀態：<see cref="Status"/> 不是 ok 時 <see cref="Reasons"/> 逐項一句中文。
+/// 需 <c>Maintain</c> 或 <c>DevMonitor</c>；與 <see cref="HealthDetailDto.StatusReasons"/> 是同一份判定。
+/// </summary>
+public class HealthAttentionDto
+{
+    /// <summary>ok｜degraded｜down</summary>
+    public string Status { get; set; } = string.Empty;
+
+    public IReadOnlyList<LogForesight.Web.Services.HealthReason> Reasons { get; set; } = Array.Empty<LogForesight.Web.Services.HealthReason>();
+}
+
 /// <summary>維運診斷用的完整健康資訊（需 <c>Maintain</c>）</summary>
 public class HealthDetailDto : HealthDto
 {
+    /// <summary>最近一次保留清除失敗的段名（全部成功或從未失敗為空清單）；背景工作表的「保留清除」列用</summary>
+    public List<string> RetentionFailedSegments { get; set; } = new();
+
+    /// <summary>最近一次 PRTG 同步結果的警告文字；PRTG 未啟用或沒有警告為空清單</summary>
+    public List<string> PrtgSyncWarnings { get; set; } = new();
+
+    /// <summary>整體狀態不是 ok 的原因（每項一句中文）；ok 時為空清單。判定唯一在 HealthAttention.Evaluate。</summary>
+    public List<LogForesight.Web.Services.HealthReason> StatusReasons { get; set; } = new();
+
     /// <summary>建置時有沒有取得 commit；false 時無法從版本判斷站台部署了哪一版</summary>
     public bool BuildShaKnown { get; set; }
 
