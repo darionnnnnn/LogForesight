@@ -84,7 +84,7 @@ public sealed class DispatchContext
 
     public static DispatchContext Build(
         DispatchCandidatePool pool, IIssueOwnerStore issueOwners, IWorkOrderStore orders, IIssueCaseStore cases,
-        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now)
+        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now, IReadOnlyCollection<string>? disabledHostKeys = null)
     {
         var allProfiles = issueOwners.GetAll();
 
@@ -97,7 +97,8 @@ public sealed class DispatchContext
         var activeOrders = new Dictionary<(string SourceKey, int EventId), List<WorkOrder>>();
         foreach (var order in orders.GetAllActive()) AddToIndex(activeOrders, order);
 
-        var loads = orders.LoadBoard().ToDictionary(l => l.HandlerId, l => (l.ActiveMembers, l.ActiveWorkOrders));
+        // 停用主機上的成員不算負載（與徽章、負載看板同一口徑）
+        var loads = orders.LoadBoard(disabledHostKeys).ToDictionary(l => l.HandlerId, l => (l.ActiveMembers, l.ActiveWorkOrders));
 
         var noiseByHost = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var mark in noiseMarks.GetAll())
@@ -232,19 +233,27 @@ public sealed class DispatchContext
         }
     }
 
-    /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案者</summary>
-    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+    /// <summary>
+    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的未取消案件，以不處理類狀態（<see cref="IssueHandlingStatuses.Dismissals"/>）結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者。
+    /// 回傳的是那件案件本身（待派頁的恢復清單要顯示先前結案狀態、並對它寫回欄位）；閘門只取它的鍵（<see cref="DismissedKeys"/>）。
+    /// </summary>
+    internal static List<IssueCase> DismissedCases(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
+            // 已取消的案件不是處理人的判定（管理者對被擋主機手動建單又取消，取消案件不能把閘門解除），取最新時略過
+            .Where(c => !c.Cancelled)
             .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
             .Select(g => g.OrderByDescending(c => c.CreatedAt)
                 .ThenByDescending(c => c.UpdatedAt)
                 .ThenBy(c => c.IssueKey, StringComparer.Ordinal)
                 .ThenBy(c => c.CaseId, StringComparer.Ordinal)
                 .First())
-            .Where(c => c.Status is IssueHandlingStatuses.WontFix
-                or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
-            .Select(c => c.IssueKey)
-            .ToHashSet(IssueSignatureKeyComparer.Instance);
+            .Where(c => IssueHandlingStatuses.Dismissals.Contains(c.Status))
+            .Where(c => c.BlocksRedispatch != false)
+            .ToList();
+
+    /// <summary>被「不再打擾」擋住的問題鍵集合；判定走 <see cref="DismissedCases"/>，沒有第二份條件</summary>
+    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+        DismissedCases(casesOfHost).Select(c => c.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)
@@ -278,6 +287,9 @@ public sealed class DispatchContext
 
     internal IssueProfile? ProfileFor(string source, int eventId) =>
         _profiles.GetValueOrDefault(IssueProfile.KeyOf(source, eventId));
+
+    /// <summary>脈絡內全部進行中的單（含本趟登記的）；趟末整理續掛停止標示用</summary>
+    internal IEnumerable<WorkOrder> AllActiveOrders() => _activeOrders.Values.SelectMany(list => list);
 
     internal IReadOnlyList<WorkOrder> ActiveOrdersFor(string source, int eventId) =>
         _activeOrders.TryGetValue(IssueKeyOf(source, eventId), out var list) ? list : Array.Empty<WorkOrder>();

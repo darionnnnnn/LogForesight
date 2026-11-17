@@ -49,16 +49,23 @@ public class DataConsistencyJ2Tests : IDisposable
     /// <summary>主機在群組 5、處理人 11 的群組續掛單；建好派工脈絡（脈絡快照看到這張單是進行中、處理人 11）</summary>
     private (NightlyDispatch Dispatch, long OrderId) ArrangeAutoAttachOrder()
     {
-        _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 5 } });
+        var host = _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 5 } });
         var orderId = _orders.Insert(new WorkOrder
         {
             SourceName = Source, EventId = EventId, HandlerId = 11, Origin = WorkOrderOrigins.Manual,
             ScopeKind = WorkOrderScopes.Groups, ScopeGroupIds = new List<long> { 5 }, AutoAttach = true,
             CreatedAt = DateTime.Today.AddDays(-3)
         });
+        // 續掛只給「在候選人快照內且看得到這台主機」的處理人（批次 D 派工資格單一判定）：11 是原處理人，22 是途中改派的對象
+        var visible = new HashSet<long> { host.HostId };
         var pool = new DispatchCandidatePool
         {
-            ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
+            ByUserId = new Dictionary<long, DispatchCandidate>
+            {
+                [11] = new() { UserId = 11, Account = "h11", VisibleHostIds = visible },
+                [22] = new() { UserId = 22, Account = "h22", VisibleHostIds = visible }
+            },
+            PoolMemberCount = 0, ActivePoolMemberCount = 0
         };
         var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, DateTime.Now);
         return (new NightlyDispatch(_coordinator, ctx, _hosts), orderId);
@@ -87,7 +94,7 @@ public class DataConsistencyJ2Tests : IDisposable
     {
         var (dispatch, orderId) = ArrangeAutoAttachOrder();
 
-        _coordinator.AdminClose(orderId, IssueHandlingStatuses.Resolved, "管理者結案", Admin);
+        _coordinator.AdminClose(orderId, IssueHandlingStatuses.Resolved, "管理者結案", Admin, blocksRedispatch: false);
         dispatch.DispatchDay("SRV-01", DateTime.Today, new[] { Issue() }, DateTime.Now);
 
         Assert.Null(_cases.GetOpen("SRV-01", IssueKey));

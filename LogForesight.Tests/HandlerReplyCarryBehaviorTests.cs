@@ -24,6 +24,8 @@ public class HandlerReplyCarryBehaviorTests
     [NodeTheory]
     [InlineData("nextMultiHostReplyCarriesStatusAndNoteOnce")]
     [InlineData("manualReplyClearsCarryFromExpandedPanel")]
+    [InlineData("singleActiveOnDisabledHostOpensSingleReply")]
+    [InlineData("oneActivePlusOneDisabledExpandsMemberPanel")]
     public void 下一張回覆carry行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

@@ -783,9 +783,8 @@ public class WorkOrderCommandServiceTests : IDisposable
         var (orderId, _) = CreateOneOrder("HOST-A");
         _audit.Entries.Clear();
 
-        var error = Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
 
-        Assert.Equal(ApiErrorCodes.ValidationFailed, error.Code);
         Assert.Empty(_audit.Entries);
         Assert.DoesNotContain(_orderStore.ListEvents(orderId), e => e.Action == WorkOrderEventActions.Returned);
     }
@@ -823,8 +822,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         Escalate("HOST-A");
         _service.Cancel(orderId, new CancelWorkOrderRequest { Reason = "誤派" });
 
-        Assert.Equal(ApiErrorCodes.ValidationFailed,
-            Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" })).Code);
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
     }
 
     [Fact]
@@ -838,6 +836,22 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(WorkOrderCloseReasons.AdminClosed, _orderStore.Get(orderId)!.ClosedReason);
         Assert.All(MembersOf(orderId), c => Assert.Equal(IssueHandlingStatuses.Resolved, c.Status));
         Assert.Equal(orderId.ToString(), SingleAudit(AuditActions.WorkOrderAdminClose).TargetId);
+    }
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix, true, true)]
+    [InlineData(IssueHandlingStatuses.WontFix, false, false)]
+    [InlineData(IssueHandlingStatuses.FalsePositive, true, true)]
+    [InlineData(IssueHandlingStatuses.KnownNoise, false, false)]
+    [InlineData(IssueHandlingStatuses.Resolved, true, false)]   // B3-c：已處理時忽略勾選
+    [InlineData(IssueHandlingStatuses.Resolved, false, false)]
+    public void 代為結案_B1_案件欄位依勾選寫入_已處理一律為否(string status, bool block, bool expected)
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = status, Reason = "r", BlockRedispatch = block });
+
+        Assert.All(MembersOf(orderId), c => Assert.Equal(expected, c.BlocksRedispatch));
     }
 
     // ── 郵件通知 ─────────────────────────────────────────────────────────────
@@ -984,7 +998,7 @@ public class WorkOrderCommandServiceTests : IDisposable
     }
 
     [Fact]
-    public void AdminClose_不寄信()
+    public void AdminClose_入列一則代為結案通知給處理人()
     {
         _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
 
@@ -1001,7 +1015,13 @@ public class WorkOrderCommandServiceTests : IDisposable
             Reason = "管理員代為結案"
         });
 
-        Assert.Empty(_outbox.Get().Items);
+        // 第 76-2 輪 C1：代為結案通知處理人（已處理＝問題再出現會重新派工）
+        var item = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxKinds.AdminClosed, item.Kind);
+        Assert.Equal(alice.UserId, item.RecipientUserId);
+        Assert.Equal(IssueHandlingStatuses.Resolved, item.Status);
+        Assert.Equal("管理員代為結案", item.Reason);
+        Assert.False(item.BlocksRedispatch);
     }
 
     // ── 權限標註 ─────────────────────────────────────────────────────────────

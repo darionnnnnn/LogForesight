@@ -26,6 +26,7 @@ public class UserAdminService
     private readonly PermissionVersionStamp _permissionVersion;
     private readonly IRecordHandlingStore _handlings;
     private readonly ISystemSettingsStore _settings;
+    private readonly IWorkOrderStore? _workOrders;
 
     public UserAdminService(
         IUserStore users,
@@ -39,8 +40,10 @@ public class UserAdminService
         IUserDisplayNameService userDisplayNames,
         PermissionVersionStamp permissionVersion,
         IRecordHandlingStore handlings,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IWorkOrderStore? workOrders = null)
     {
+        _workOrders = workOrders;
         _permissionVersion = permissionVersion;
         _users = users;
         _groups = groups;
@@ -233,8 +236,14 @@ public class UserAdminService
             targetId: user.UserId.ToString(),
             detail: new { user.Account, user.DisplayName, user.Email, user.Active });
 
-        return ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId), _users.GetLastLogins());
+        var dto = ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId), _users.GetLastLogins());
+        // 停用帳號後單仍在他名下：回應帶進行中單數，畫面提示並連到已篩選的交辦總覽
+        dto.ActiveWorkOrders = ActiveWorkOrderCount(user.UserId);
+        return dto;
     }
+
+    /// <summary>處理人名下進行中的交辦單數（含暫停單）；沒有交辦單資料來源的組裝回 0</summary>
+    private int ActiveWorkOrderCount(long userId) => _workOrders?.GetActiveByHandler(userId).Count ?? 0;
 
     public UserDto SetUserGroups(long userId, IEnumerable<long> groupIds)
     {
@@ -372,7 +381,8 @@ public class UserAdminService
         DispatchPaused = user.DispatchPaused
     };
 
-    public void SetDispatchPaused(long userId, bool paused)
+    /// <returns>這位處理人名下進行中的交辦單數（暫停接單不動既有單，回應讓畫面提示管理者）</returns>
+    public int SetDispatchPaused(long userId, bool paused)
     {
         var user = _users.Get(userId)
                    ?? throw DomainException.NotFound("找不到這個使用者，可能已被刪除。");
@@ -385,5 +395,7 @@ public class UserAdminService
             targetKind: "user",
             targetId: userId.ToString(),
             detail: new { Paused = paused });
+
+        return ActiveWorkOrderCount(userId);
     }
 }

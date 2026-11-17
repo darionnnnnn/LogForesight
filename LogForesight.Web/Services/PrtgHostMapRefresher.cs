@@ -64,7 +64,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
         catch (Exception ex)
         {
             Log.Warn(ex, "重算今日 PRTG 對應失敗");
-            return $"重算今日 PRTG 對應失敗: {ex.Message}";
+            return "重算今日 PRTG 對應失敗；詳細原因見記錄檔。";
         }
     }
 
@@ -116,7 +116,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
         catch (Exception ex)
         {
             Log.Warn(ex, "PRTG 主機對應規則升級失敗");
-            return $"PRTG 主機對應規則升級失敗：{ex.Message}（舊對應可能只刪了一部分；下次啟動會接著完成，或先執行一次「同步結構與對應」）";
+            return $"PRTG 主機對應規則升級失敗（原文見記錄檔）（舊對應可能只刪了一部分；下次啟動會接著完成，或先執行一次「同步結構與對應」）";
         }
     }
 

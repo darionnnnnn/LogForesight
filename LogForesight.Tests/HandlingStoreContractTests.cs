@@ -926,6 +926,50 @@ public class HandlingStoreContractTests : IDisposable
     }
 
     [Fact]
+    public void 案件_授與查詢排除取消的案件_結案的保留()
+    {
+        var store = Cases();
+        var cancelled = NewCase("c1", "SRV-01", "System|Disk|153|1", 42);
+        cancelled.Status = IssueHandlingStatuses.Open;
+        cancelled.ClosedAt = DateTime.Now;
+        cancelled.Cancelled = true;
+        store.Save(cancelled);
+        var closed = NewCase("c2", "SRV-02", "System|Ntfs|55|1", 42);
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now;
+        store.Save(closed);
+        // 同一台主機一件取消、一件進行中
+        var cancelled3 = NewCase("c3", "SRV-03", "System|Disk|153|1", 42);
+        cancelled3.ClosedAt = DateTime.Now;
+        cancelled3.Cancelled = true;
+        store.Save(cancelled3);
+        store.Save(NewCase("c4", "SRV-03", "System|Cpu|100|1", 42));
+
+        Assert.False(store.HasCaseOnHost(42, "SRV-01"));
+        Assert.Empty(store.IssueKeysOnHost(42, "SRV-01"));
+        Assert.True(store.HasCaseOnHost(42, "SRV-02"));
+        Assert.True(store.HasCaseOnHost(42, "SRV-03"));
+        Assert.Equal(new[] { "System|Cpu|100|1" }, store.IssueKeysOnHost(42, "SRV-03"));
+        Assert.Equal(new[] { "SRV-02", "SRV-03" }, store.HostNamesWithCases(42).OrderBy(h => h).ToArray());
+    }
+
+    [Fact]
+    public void 案件_BlocksRedispatch三態往返()
+    {
+        var store = Cases();
+        foreach (var (id, value) in new (string, bool?)[] { ("n", null), ("f", false), ("t", true) })
+        {
+            var c = NewCase(id, "SRV-01", "k-" + id, 42);
+            c.BlocksRedispatch = value;
+            store.Save(c);
+        }
+
+        Assert.Null(store.GetByHandler(42).Single(c => c.CaseId == "n").BlocksRedispatch);
+        Assert.False(store.GetByHandler(42).Single(c => c.CaseId == "f").BlocksRedispatch);
+        Assert.True(store.GetByHandler(42).Single(c => c.CaseId == "t").BlocksRedispatch);
+    }
+
+    [Fact]
     public void 案件_HostNamesWithCases_含已結案且排除他人()
     {
         var store = Cases();

@@ -27,8 +27,12 @@ public class AuditService : IAuditService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
-    public AuditService(AuditLogStore store, ICurrentUser currentUser, IHttpContextAccessor httpContextAccessor)
+    private readonly TimeProvider _clock;
+
+    public AuditService(AuditLogStore store, ICurrentUser currentUser, IHttpContextAccessor httpContextAccessor,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _store = store;
         _currentUser = currentUser;
         _httpContextAccessor = httpContextAccessor;
@@ -40,7 +44,7 @@ public class AuditService : IAuditService
     {
         Append(new AuditEntry
         {
-            OccurredAt = DateTime.Now,
+            OccurredAt = _clock.LocalNow(),
             UserId = _currentUser.IsAuthenticated && _currentUser.UserId > 0 ? _currentUser.UserId : null,
             Account = _currentUser.IsAuthenticated ? _currentUser.Account : "(anonymous)",
             Action = action,
@@ -57,7 +61,7 @@ public class AuditService : IAuditService
     {
         Append(new AuditEntry
         {
-            OccurredAt = DateTime.Now,
+            OccurredAt = _clock.LocalNow(),
             UserId = userId,
             Account = account,
             Action = action,
@@ -72,7 +76,7 @@ public class AuditService : IAuditService
     {
         Append(new AuditEntry
         {
-            OccurredAt = DateTime.Now,
+            OccurredAt = _clock.LocalNow(),
             UserId = null,
             Account = AuditActions.SystemAccount,
             Action = action,

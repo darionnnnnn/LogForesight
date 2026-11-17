@@ -19,10 +19,14 @@ namespace LogForesight.Web.Controllers.Api;
 public class WorkOrderBoardController : ControllerBase
 {
     private readonly WorkOrderBoardService _service;
+    private readonly DismissedIssueService _dismissed;
+    private readonly AdminReminderService _reminders;
 
-    public WorkOrderBoardController(WorkOrderBoardService service)
+    public WorkOrderBoardController(WorkOrderBoardService service, DismissedIssueService dismissed, AdminReminderService reminders)
     {
         _service = service;
+        _dismissed = dismissed;
+        _reminders = reminders;
     }
 
     [HttpGet("load-board")]
@@ -32,4 +36,18 @@ public class WorkOrderBoardController : ControllerBase
     [HttpGet("gaps")]
     public ApiResponse<GapsDto> Gaps([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int page = 1) =>
         ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page));
+
+    /// <summary>
+    /// 管理者提醒的三類筆數與明細（上報逾期未處理、本趟派不出去、上報沒有收件人）；與夜間的管理者摘要信同一個彙整函式，
+    /// 郵件總開關關閉時交辦總覽靠這支端點顯示。
+    /// </summary>
+    [SkipDataVersionBump]
+    [HttpGet("admin-reminders")]
+    public ApiResponse<AdminReminderDto> AdminReminders() =>
+        ApiResponse<AdminReminderDto>.Ok(_reminders.Compute());
+
+    /// <summary>被「不再打擾」擋住、不再自動派工的項目（依問題分組、分頁）；可見範圍同待派頁</summary>
+    [HttpGet("dismissed")]
+    public ApiResponse<DismissedListDto> Dismissed([FromQuery] int page = 1) =>
+        ApiResponse<DismissedListDto>.Ok(_dismissed.GetList(page));
 }

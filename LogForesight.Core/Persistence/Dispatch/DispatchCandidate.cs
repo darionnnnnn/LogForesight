@@ -22,7 +22,10 @@ public sealed class DispatchCandidate
     /// <summary>屬於任一「啟用中」且 <see cref="UserGroup.DispatchPool"/>＝true 的使用者群組</summary>
     public bool InPool { get; init; }
 
-    /// <summary>可見主機；只為 InPool 且未暫停者計算，其餘為空集合</summary>
+    /// <summary>
+    /// 派工用的可見主機（群組授權、主機負責人、問題負責人所到之處；<b>不含案件授與</b>——案件授與只讓處理人打開自己的處理紀錄）。
+    /// 只為「未暫停，且在派工池或有可續掛單」者計算，其餘為空集合。資格判斷只經 <see cref="WorkOrderDispatcher"/> 的單一函式。
+    /// </summary>
     public IReadOnlySet<long> VisibleHostIds { get; init; } = new HashSet<long>();
 }
 

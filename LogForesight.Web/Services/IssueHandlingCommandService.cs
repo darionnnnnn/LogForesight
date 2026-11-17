@@ -44,6 +44,8 @@ public class IssueHandlingCommandService
     private readonly IssueOwnerAdminService _issueOwnerAdmin;
     private readonly IUserDisplayNameService _displayNameService;
 
+    private readonly TimeProvider _clock;
+
     public IssueHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -61,8 +63,10 @@ public class IssueHandlingCommandService
         UserCapabilityResolver capabilities,
         IssueOwnerAdminService issueOwnerAdmin,
         IUserDisplayNameService displayNameService,
-        MailNotificationService? mail = null)
+        MailNotificationService? mail = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _capabilities = capabilities;
         _store = store;
         _issueStore = issueStore;
@@ -105,7 +109,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note, _clock);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(IssueSignatureKey.For(i), request.IssueKey))
@@ -118,7 +122,7 @@ public class IssueHandlingCommandService
         var previousStatus = _issueStore.GetForDay(host.HostName, date)
             .FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, request.IssueKey))?.Status;
 
-        var caseSync = ApplyIssueStatus(host, date, request.IssueKey, HandlingTextHelpers.IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
+        var caseSync = ApplyIssueStatus(host, date, request.IssueKey, HandlingTextHelpers.IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, _clock.LocalNow());
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
@@ -155,7 +159,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note);
+        IssueStatusValidation.Validate(request.Status, request.DueDate, clearing, request.Note, _clock);
 
         // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
@@ -167,7 +171,7 @@ public class IssueHandlingCommandService
             throw DomainException.Validation("找不到任何勾選的問題，可能紀錄已更新，請重新整理。");
 
         // 逐問題各寫一列歷程（D4：批次勾 N 項就要留下 N 列，不做彙總）——見 ApplyIssueStatus 內的 AppendIssueLog。
-        // 整批共用同一個 occurredAt（不是逐次呼叫 DateTime.Now）：前端 timeline 靠「同一操作者＋
+        // 整批共用同一個 occurredAt（不是逐次呼叫 _clock.LocalNow()）：前端 timeline 靠「同一操作者＋
         // 同一時間戳」把這批列視覺分組成一塊，時間戳若逐次取值會因執行順序產生極小差異而分不了組
         // 先整批檢查再開始寫（§8）：中途才發現有一個問題是別人的案件，前面幾筆已經落盤，
         // 使用者會得到「一半成功一半失敗」的狀態，比整批擋下來難收拾得多
@@ -192,7 +196,7 @@ public class IssueHandlingCommandService
         var newlyEscalatedKeys = appliedKeys.Where(k =>
             !previousStatusByKey.TryGetValue(k, out var prev) || prev != IssueHandlingStatuses.Escalated).ToList();
 
-        var occurredAt = DateTime.Now;
+        var occurredAt = _clock.LocalNow();
         var totalSyncedDays = 0;
         foreach (var issueKey in appliedKeys)
         {
@@ -343,7 +347,7 @@ public class IssueHandlingCommandService
                 HostName = host.HostName,
                 IssueKey = issueKey,
                 MarkedByAccount = _currentUser.Account,
-                MarkedAt = DateTime.Now,
+                MarkedAt = _clock.LocalNow(),
                 Note = trimmedNote
             });
         }
@@ -446,7 +450,7 @@ public class IssueHandlingCommandService
         }
 
         // 整批共用同一個時間戳：前端 timeline 靠「同操作者＋同時間戳」把一次操作分組成一塊
-        var occurredAt = DateTime.Now;
+        var occurredAt = _clock.LocalNow();
         var updatedDays = 0;
 
         foreach (var (host, days, _) in targets)

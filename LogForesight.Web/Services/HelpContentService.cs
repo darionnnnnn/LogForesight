@@ -11,9 +11,12 @@ namespace LogForesight.Web.Services;
 /// （目前只有啟動精靈）沒有 Markdown 內容，Content 恆為空字串。
 /// <paramref name="AiContent"/>（回饋二十七輪作業 G）：AI 問答專用的詳細版原文，
 /// manifest 有填 aiFile 時才有值；要餵給 AI 的內容一律走 <see cref="ContentForAi"/>，
-/// 不要直接讀這個欄位。</summary>
+/// 不要直接讀這個欄位。
+/// <paramref name="Requires"/>（第 76-2 輪批次 F）：章節可見所需的能力清單，**任一**命中即可見
+/// （與頁面 <c>[Permission]</c> 多個能力的 OR 語意相同）；null 表示公開章節。
+/// 能力名稱在載入時就驗證過必為 <see cref="Capability"/> 成員。</summary>
 public record HelpChapter(string Id, string Title, string Content, List<string> Keywords, List<string> Related, string Icon,
-    string Type = "markdown", string? Href = null, string AiContent = "", string? Requires = null)
+    string Type = "markdown", string? Href = null, string AiContent = "", IReadOnlyList<string>? Requires = null)
 {
     /// <summary>實際餵給 AI 的內容：沒有 AI 版時 fallback 成使用者版。
     /// **fallback 只寫在這裡一處**——寫在載入端的話，任何直接建構 HelpChapter 的地方
@@ -41,7 +44,7 @@ public class HelpContentService
     {
         return Chapters
             .Where(c => !(hideSetupWizard && c.Id == "setup-wizard"))
-            .Where(c => c.Requires == null || (Enum.TryParse<Capability>(c.Requires, out var required) && capabilities.Contains(required)))
+            .Where(c => c.Requires == null || c.Requires.Any(name => Enum.TryParse<Capability>(name, out var required) && capabilities.Contains(required)))
             .ToList();
     }
 
@@ -88,7 +91,7 @@ public class HelpContentService
             if (entry.Type == "link")
             {
                 chapters.Add(new HelpChapter(entry.Id, entry.Title, "", entry.Keywords, entry.Related, entry.Icon,
-                    entry.Type, entry.Href, AiContent: "", Requires: entry.Requires));
+                    entry.Type, entry.Href, AiContent: "", Requires: ParseRequires(entry.Id, entry.Requires)));
                 continue;
             }
 
@@ -113,9 +116,46 @@ public class HelpContentService
             }
 
             chapters.Add(new HelpChapter(entry.Id, entry.Title, content,
-                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href, AiContent: aiContent, Requires: entry.Requires));
+                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href, AiContent: aiContent, Requires: ParseRequires(entry.Id, entry.Requires)));
         }
         return chapters;
+    }
+
+    /// <summary>
+    /// 解析 manifest 的 requires：接受單一字串（既有寫法）或字串陣列（任一能力即可見）。
+    /// **能力名稱不存在就丟例外**，不是靜默當成「誰都看不到」——打錯字的章節會從手冊無聲消失，
+    /// 沒有人會發現；載入失敗則由守門測試立刻轉紅。
+    /// </summary>
+    internal static IReadOnlyList<string>? ParseRequires(string chapterId, JsonElement? element)
+    {
+        if (element is not { } value || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
+
+        var names = new List<string>();
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                names.Add(value.GetString() ?? "");
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String)
+                        throw new InvalidOperationException($"操作說明書章節 {chapterId} 的 requires 陣列只能放能力名稱字串。");
+                    names.Add(item.GetString() ?? "");
+                }
+                break;
+            default:
+                throw new InvalidOperationException($"操作說明書章節 {chapterId} 的 requires 只能是能力名稱或能力名稱陣列。");
+        }
+
+        if (names.Count == 0)
+            throw new InvalidOperationException($"操作說明書章節 {chapterId} 的 requires 是空陣列（要公開請直接省略 requires）。");
+        foreach (var name in names)
+        {
+            if (!Enum.GetNames<Capability>().Contains(name, StringComparer.Ordinal))
+                throw new InvalidOperationException($"操作說明書章節 {chapterId} 的 requires 寫了不存在的能力名稱「{name}」。");
+        }
+        return names;
     }
 
     /// <summary>用尾碼比對找內嵌資源，不寫死組件的根命名空間前綴——MSBuild 產生的資源名稱
@@ -147,8 +187,9 @@ public class HelpContentService
         /// <see cref="File"/> 的內容——使用者版與 AI 版分離是加值，不是每章的必要條件。</summary>
         public string? AiFile { get; set; }
 
-        /// <summary>選填：章節所需的 Capability 名稱（例："Maintain"）。未指定表示公開章節，登入者皆可見。</summary>
-        public string? Requires { get; set; }
+        /// <summary>選填：章節所需的 Capability 名稱，單一字串（"Maintain"）或字串陣列（["DevMonitor","Maintain"]，
+        /// 任一能力即可見，與頁面 [Permission] 的 OR 語意相同）。未指定表示公開章節，登入者皆可見。</summary>
+        public JsonElement? Requires { get; set; }
     }
 
     private class ManifestRoot

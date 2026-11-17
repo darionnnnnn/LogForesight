@@ -65,6 +65,8 @@ public class AuditQueryService
         [AuditActions.WorkOrderReturn] = "退回處理人",
         [AuditActions.WorkOrderDueDate] = "修改交辦單期限",
         [AuditActions.WorkOrderAutoDispatchRun] = "立即派工",
+        [AuditActions.WorkOrderDismissRestore] = "恢復自動派工",
+        [AuditActions.EscalationNoRecipient] = "上報信沒有收件人",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
         [AuditActions.PermConfirmSuspicious] = "標記權限異動可疑",

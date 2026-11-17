@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -300,7 +301,7 @@ public class WorkOrderCoordinatorTests
     public void Create_空成員擲ArgumentException()
     {
         var w = new World();
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Create(Request(Alice)));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Create(Request(Alice)));
         Assert.Empty(w.Orders.All);
     }
 
@@ -308,7 +309,7 @@ public class WorkOrderCoordinatorTests
     public void Create_主機不存在擲InvalidOperationException()
     {
         var w = new World();
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Create(Request(Alice, "NOPE")));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Create(Request(Alice, "NOPE")));
     }
 
     [Fact]
@@ -332,7 +333,7 @@ public class WorkOrderCoordinatorTests
         var id = w.AddOrder(Alice);
         w.Coordinator.RecomputeClosure(id, T0);
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Append(id, new List<WorkOrderMember> { Member("H1") }, false, Actor()));
     }
 
@@ -473,7 +474,7 @@ public class WorkOrderCoordinatorTests
         var a = w.AddCase("a", "H1", Alice, id);
         w.AddCase("done", "H2", Alice, id, closedAt: T0.AddHours(-1));
 
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Split(id, new[] { "a", "done" }, Carol, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "a", "done" }, Carol, Actor()));
 
         Assert.Equal(Alice, a.HandlerId);
         Assert.Equal(id, a.WorkOrderId);
@@ -483,14 +484,34 @@ public class WorkOrderCoordinatorTests
     }
 
     [Fact]
+    public void Split_選到不在本單的成員_訊息用主機名稱與重新整理提示_不外露案件編號()
+    {
+        var w = new World();
+        var id = w.AddOrder(Alice);
+        w.AddCase("a", "H1", Alice, id);
+        w.AddCase("0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33", "H2-DONE", Alice, id, closedAt: T0.AddHours(-1));
+
+        var known = Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.Split(id, new[] { "a", "0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33" }, Carol, Actor()));
+        Assert.Contains("H2-DONE", known.Message);
+        Assert.Contains("請重新整理成員清單", known.Message);
+        Assert.DoesNotContain("0f8e6d2c", known.Message);
+
+        // 查不到案件（已被清除）時不寫識別碼，只提示重新整理
+        var unknown = Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "ghost-id" }, Carol, Actor()));
+        Assert.DoesNotContain("ghost-id", unknown.Message);
+        Assert.Contains("請重新整理成員清單", unknown.Message);
+    }
+
+    [Fact]
     public void Split_空清單與同處理人擲例外()
     {
         var w = new World();
         var id = w.AddOrder(Alice);
         w.AddCase("a", "H1", Alice, id);
 
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Split(id, Array.Empty<string>(), Carol, Actor()));
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Split(id, new[] { "a" }, Alice, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, Array.Empty<string>(), Carol, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "a" }, Alice, Actor()));
     }
 
     // ── Cancel ───────────────────────────────────────────────────────────────
@@ -541,7 +562,7 @@ public class WorkOrderCoordinatorTests
     {
         var w = new World();
         var id = w.AddOrder(Alice);
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Cancel(id, "  ", Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Cancel(id, "  ", Actor()));
     }
 
     // ── AdminClose ───────────────────────────────────────────────────────────
@@ -553,10 +574,10 @@ public class WorkOrderCoordinatorTests
         w.AddHostDays("H1", D2);
         var id = w.Coordinator.Create(Request(Alice, "H1")).WorkOrderId;
 
-        Assert.Throws<ArgumentException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor(), blocksRedispatch: false));
 
         var later = T0.AddHours(1);
-        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "已換硬碟", Actor(later));
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "已換硬碟", Actor(later), blocksRedispatch: false);
 
         Assert.Equal(1, result.ClosedCases);
         var c = w.Cases.GetByWorkOrder(id, 0, 10).Single();
@@ -580,6 +601,48 @@ public class WorkOrderCoordinatorTests
         foreach (var h in new[] { "H1", "H2", "H3" }) w.AddHostDays(h, D2);
         var id = w.Coordinator.Create(Request(Alice, "H1", "H2", "H3")).WorkOrderId;
         return (w, id, w.Cases.GetByWorkOrder(id, 0, 10));
+    }
+
+    [Fact]
+    public void Reply_上報起算時間_轉進設值_重複上報不重設_轉出清空()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1");
+        Assert.Null(h1.EscalatedAt);
+
+        var t1 = T0.AddHours(1);
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "無法處理", null, Actor(t1));
+        Assert.Equal(t1, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+
+        // 本來就是 escalated，再回覆一次 escalated：上報起算時間不重設
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "還是不行", null, Actor(t1.AddDays(2)));
+        Assert.Equal(t1, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+
+        // 轉出 escalated 清空；之後再上報是新的起算時間
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "處理中", null, Actor(t1.AddDays(3)));
+        Assert.Null(w.Cases.Get(h1.CaseId)!.EscalatedAt);
+        var t4 = t1.AddDays(4);
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "又不行", null, Actor(t4));
+        Assert.Equal(t4, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+    }
+
+    [Fact]
+    public void IssueCase_ApplyStatus_只有狀態轉換動它_其他欄位更新不動上報時間()
+    {
+        var c = new IssueCase { Status = IssueHandlingStatuses.InProgress };
+        var t = new DateTime(2026, 11, 1, 9, 0, 0);
+        c.ApplyStatus(IssueHandlingStatuses.Escalated, t);
+        Assert.Equal(t, c.EscalatedAt);
+
+        // 夜間掛接只改最後掛接日與更新時間，不碰上報時間
+        c.LastLinkedDate = t.Date.AddDays(5);
+        c.UpdatedAt = t.AddDays(5);
+        Assert.Equal(t, c.EscalatedAt);
+
+        c.ApplyStatus(IssueHandlingStatuses.Escalated, t.AddDays(5));
+        Assert.Equal(t, c.EscalatedAt);
+        c.ApplyStatus(IssueHandlingStatuses.Resolved, t.AddDays(6));
+        Assert.Null(c.EscalatedAt);
     }
 
     [Fact]
@@ -648,7 +711,7 @@ public class WorkOrderCoordinatorTests
         var rowBefore = w.Row("H1", D2)!;
         var orderBefore = w.Orders.Get(id)!;
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Reply(id, new[] { h1.CaseId, foreign.CaseId }, IssueHandlingStatuses.Resolved, "x", null, Actor(T0.AddHours(1))));
 
         Assert.Equal(IssueHandlingStatuses.InProgress, h1.Status);
@@ -669,7 +732,7 @@ public class WorkOrderCoordinatorTests
     public void Reply_不支援狀態擲ArgumentException()
     {
         var (w, id, _) = ThreeHostOrder();
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Reply(id, null, "bogus", null, null, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Reply(id, null, "bogus", null, null, Actor()));
     }
 
     // ── CloseEmptyDispatchOrder ─────────────────────────────────────────────

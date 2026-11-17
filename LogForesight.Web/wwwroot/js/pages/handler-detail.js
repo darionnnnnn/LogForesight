@@ -32,7 +32,7 @@ import {
 import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
-import { statusBadgeMeta, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -91,11 +91,14 @@ async function load() {
     currentUser = user;
     isSelf = user?.userId === userId;
     canReply = isSelf && hasCapability(user, 'Handle');
-    // 自己的頁在側欄與頁頭都叫「我的交辦」；看別人的頁才是「處理人員工作頁」
-    if (isSelf) {
-        const topbarTitle = document.querySelector('.lf-topbar__title');
-        if (topbarTitle) topbarTitle.textContent = '我的交辦';
-        document.title = document.title.replace('處理人員工作頁', '我的交辦');
+    // 頁面標題（自己的頁「我的交辦」、看別人的頁「處理人員工作頁」）由伺服器端 PagesController 決定，這裡不改
+
+    // 自己的頁、卻沒有處理能力（Manager、Dev 等）：說明原因，不要讓人以為是「沒有被指派的工作」
+    if (isSelf && !hasCapability(user, 'Handle')) {
+        kpiEl.replaceChildren();
+        advancedEl.classList.add('d-none');
+        renderNoHandleCapability(ordersEl);
+        return;
     }
 
     // 只有 Handle 的人看別人的處理人頁，後端 API 會 403；先擋下來給說明，不讓頁面停在載入中
@@ -124,6 +127,15 @@ async function load() {
     if (targetOrderId && !isNaN(targetOrderId)) {
         await locateOrder(targetOrderId);
     }
+}
+
+/** 自己的角色沒有處理能力：交辦單只會派給有處理能力的人，這頁因此不會有內容 */
+function renderNoHandleCapability(container) {
+    renderEmpty(container, {
+        title: '你的角色沒有處理能力',
+        hint: '交辦單只會派給有處理能力的人，所以這裡不會有內容。需要處理交辦時，請管理者調整你的群組角色。',
+        icon: 'lock'
+    });
 }
 
 /** 無權檢視他人處理人頁：說明原因並帶回自己的交辦 */
@@ -193,9 +205,12 @@ function renderHeader(data) {
     const name = document.createElement('strong');
     const displayName = formatUserName(data.displayName, data.account);
     name.textContent = data.active ? displayName : `${displayName}（已停用）`;
-    renderPageHeader(document.getElementById('page-header'), {
-        subtitle: data.active ? [name] : [name, ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。']
-    });
+    const subtitle = data.active ? [name] : [name, ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。'];
+    // 暫停接單：本人與管理者都要看得到，否則處理人不知道自己為什麼沒有新的自動派工
+    if (data.handlerPaused === true) {
+        subtitle.push(' ', statusBadge('目前暫停接單', 'warning', { title: '目前暫停接單：不會收到新的自動派工；既有交辦單不受影響。' }), ' 不會收到新的自動派工。');
+    }
+    renderPageHeader(document.getElementById('page-header'), { subtitle });
 }
 
 function renderKpi(data) {
@@ -324,7 +339,7 @@ function expandOrderRow(workOrderId, carry = null) {
 
 function selectOrder(row) {
     selectedOrderIds.add(row.workOrderId);
-    selectedOrderMeta.set(row.workOrderId, { active: row.counts.active, issueLabel: row.issueLabel });
+    selectedOrderMeta.set(row.workOrderId, { active: replyableCount(row.counts), issueLabel: row.issueLabel });
 }
 
 function unselectOrder(id) {
@@ -335,7 +350,7 @@ function unselectOrder(id) {
 /** 勾選中的單的台數與問題名稱：本頁的用最新列，不在本頁的用勾選當下記的那份 */
 function selectedInfo(id) {
     const row = orderRowsById.get(id);
-    return row ? { active: row.counts.active, issueLabel: row.issueLabel } : selectedOrderMeta.get(id);
+    return row ? { active: replyableCount(row.counts), issueLabel: row.issueLabel } : selectedOrderMeta.get(id);
 }
 
 function renderOrders(data) {
@@ -558,6 +573,7 @@ replyOrdersBtn.addEventListener('click', () => {
     const aiContext = labels.size === 1 && onlyLabel ? { issueLabel: onlyLabel, hostCount: hosts } : { hostCount: hosts };
 
     openWorkOrderReplyModal({
+        multiTarget: workOrderIds.length > 1 || hosts > 1,
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
@@ -587,11 +603,11 @@ replyOrdersBtn.addEventListener('click', () => {
 // ── 列上的「回覆」與下一張 ─────────────────────────────────────────────────
 
 /**
- * 列上的「回覆」：只剩一台進行中 → 直接開單張回覆彈窗；多台 → 展開成員面板讓人勾選這次處理好的主機。
+ * 列上的「回覆」：只剩一台進行中（含停用主機上的進行中——成員清單與回覆端點都涵蓋它，不能只看 counts.active） → 直接開單張回覆彈窗；多台 → 展開成員面板讓人勾選這次處理好的主機。
  * carry＝由「送出並回覆下一張」帶過來的上一張內容（沿用狀態、可帶入說明）。
  */
 async function replyOrder(row, carry) {
-    if (row.counts.active === 1) {
+    if (replyableCount(row.counts) === 1) {
         const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
         let member;
         try {
@@ -623,7 +639,7 @@ function openSingleReply(row, member, carry) {
     let closedNow = false;
     openWorkOrderReplyModal({
         title: `回覆交辦單 #${row.workOrderId}`,
-        targetText: `主機 ${member.hostName}`,
+        targetText: `主機 ${member.hostName}${member.hostDisabled ? '（主機已停用）' : ''}`,
         draftKey: `order:${row.workOrderId}:cases:${member.caseId}`,
         aiContext: { issueLabel: row.issueLabel, hostCount: 1 },
         reuseIssueKey: member.issueKey || null,
@@ -889,12 +905,21 @@ function buildMemberPanel(row, cell, carry = null) {
                 title: '主機',
                 truncate: true,
                 render: item => {
-                    if (!item.hostId) return roleText('lf-text-title', item.hostName || '');
-                    const a = document.createElement('a');
-                    a.href = appUrl('/hosts/' + item.hostId);
-                    a.className = 'lf-text-title';
-                    a.textContent = item.hostName || '';
-                    return a;
+                    let name;
+                    if (!item.hostId) {
+                        name = roleText('lf-text-title', item.hostName || '');
+                    } else {
+                        name = document.createElement('a');
+                        name.href = appUrl('/hosts/' + item.hostId);
+                        name.className = 'lf-text-title';
+                        name.textContent = item.hostName || '';
+                    }
+                    // 停用主機上的進行中成員也可回覆，但不計入台數：標出來（寫法同交辦單詳情的成員表，結案成員不標）
+                    if (!item.hostDisabled || item.closedAt) return name;
+                    const wrap = document.createElement('div');
+                    wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
+                    wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
+                    return wrap;
                 }
             },
             {
@@ -957,6 +982,7 @@ function buildMemberPanel(row, cell, carry = null) {
 
         openWorkOrderReplyModal({
             title: `回覆交辦單 #${row.workOrderId}`,
+            multiTarget: caseIds.length > 1,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
             draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
             aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },

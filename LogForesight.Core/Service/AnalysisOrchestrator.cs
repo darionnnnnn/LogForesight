@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using LogForesight.Core.Time;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -116,6 +117,9 @@ internal sealed record AnalysisRunContext(
 {
     /// <summary>本趟的「今天」（趟首取一次）：跨午夜時本機、NetIQ、PRTG 才是同一個目標日</summary>
     public DateTime Today { get; init; } = DateTime.Today;
+
+    /// <summary>交辦路徑（掛接案件、夜間派工收尾）的時間來源：取自本趟的 StorageBackend，與各 store 同一個時鐘</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
 }
 
 /// <summary>
@@ -582,8 +586,9 @@ public class AnalysisOrchestrator
                 permissionPhase.Complete(permissionCheck.PlatformUnsupported ? RunPhaseOutcomes.Skipped : RunPhaseOutcomes.Success);
 
                 var retentionPhase = runRecorder.Phase(RunTimingPhases.Retention);
-                RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
-                retentionPhase.Complete(RunPhaseOutcomes.Success);
+                var retentionResult = RetentionPruner.Run(backend, retention, runConsole, batchRunStore, ct);
+                // 有段失敗時階段標為部分完成（其餘段已照常執行），段名進階段說明；不再永遠寫成功
+                retentionPhase.Complete(retentionResult.Succeeded ? RunPhaseOutcomes.Success : RunPhaseOutcomes.Partial, retentionResult.Note);
 
                 var yesterday = runToday.AddDays(-1);
 
@@ -650,7 +655,8 @@ public class AnalysisOrchestrator
                 {
                     dispatchContext = DispatchContext.Build(
                         candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
-                        new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now);
+                        new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, backend.Clock.LocalNow(),
+                        WorkOrderQueries.DisabledHostKeys(hostStore.GetAll()));
                 }
                 catch (Exception ex)
                 {
@@ -668,7 +674,8 @@ public class AnalysisOrchestrator
                     riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch,
                     new HostDayWorkflowService(new HostDayWorkflowStore(backend)), systemSettings.PrtgEnabled)
                 {
-                    Today = runToday
+                    Today = runToday,
+                    Clock = backend.Clock
                 };
 
                 // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
@@ -763,7 +770,7 @@ public class AnalysisOrchestrator
                     var dispatchPhase = runRecorder.Phase(RunTimingPhases.Dispatch);
                     try
                     {
-                        var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
+                        var dispatchSummary = runCtx.Dispatch.FlushRun(backend.Clock.LocalNow());
                         runCtx.Result.DispatchSummary = dispatchSummary;
                         // 走 console 才進得了執行紀錄（Log.Info 不進）；管理者隔天要從這一行看出「昨晚派了什麼、為什麼沒派」
                         runConsole.WriteLine("\n" + NightlyDispatch.DescribeSummary(dispatchSummary));
@@ -1195,7 +1202,7 @@ public class AnalysisOrchestrator
                     // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
                     // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
                     HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, currentHost, date, record.TopIssues,
-                        workflow: workflow, hostId: currentHostId, parentRecordId: record.RecordId);
+                        workflow: workflow, hostId: currentHostId, parentRecordId: record.RecordId, clock: ctx.Clock);
                     HostDayPostProcessor.ReplaceRiskyEvents(
                         riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 

@@ -223,7 +223,7 @@ const cases = {
             sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: 'success', prtgSupplementEligible: true }),
             '資料來源：NetIQ（最近一次取數：成功；可再補 PRTG 資料）');
         const saved = sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: null, prtgSupplementEligible: false });
-        assert(saved.includes('已保存的分析結果'));
+        assert(saved.includes('已儲存的分析結果'));
         assert(saved.includes('不能再補 PRTG 資料，原分析保留；請核對來源或補跑 NetIQ'));
         assert(sourceLine({ logSource: 'Prtg' }).startsWith('資料來源：PRTG（當日沒有日誌分析'), 'PRTG 當日的說明併進同一句');
         const unknown = sourceLine({ logSource: 'Netiq', latestNetiqAttemptStatus: 'weird', prtgSupplementEligible: true });

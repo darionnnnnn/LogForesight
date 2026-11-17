@@ -287,7 +287,7 @@ public sealed class PrtgClient : IDisposable
                 var sanitized = StripSecrets(ex.Message);
                 // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
                 // 訊息字串是在地化的，比對它遲早會錯。
-                throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
+                throw TransportFailure("連線 PRTG 伺服器失敗", sanitized, ex);
             }
 
             using (resp)
@@ -295,7 +295,7 @@ public sealed class PrtgClient : IDisposable
                 Checkpoint(ct);
                 if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
-                    throw FailCredentials("PRTG 帳號或密碼錯誤。", (int)resp.StatusCode);
+                    throw FailCredentials(PrtgFailureText.ForCredential(true), (int)resp.StatusCode);
                 }
 
                 if (!resp.IsSuccessStatusCode)
@@ -320,7 +320,7 @@ public sealed class PrtgClient : IDisposable
                 catch (Exception ex)
                 {
                     var sanitized = StripSecrets(ex.Message);
-                    throw new PrtgClientException($"讀取 PRTG passhash 回應失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
+                    throw TransportFailure("讀取 PRTG passhash 回應失敗", sanitized, ex);
                 }
 
                 var trimmed = text.Trim();
@@ -372,9 +372,37 @@ public sealed class PrtgClient : IDisposable
     }
 
     private static PrtgClientException EmptyPageException() => new(
-        "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
-        "不是認證錯誤（認證錯誤會回 HTTP 401）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
-        kind: PrtgFailureKind.EmptyPage);
+        PrtgFailureText.ServerGaveUp, kind: PrtgFailureKind.EmptyPage);
+
+    /// <summary>傳輸層失敗：依種類（逾時／連不上）給中文說明，底層英文原文（已遮蔽憑證）附在後面。</summary>
+    private static PrtgClientException TransportFailure(string stage, string sanitizedOriginal, Exception ex)
+    {
+        var kind = ClassifyTransportFailure(ex);
+        return new PrtgClientException(
+            $"{stage}：{PrtgFailureText.WithOriginal(PrtgFailureText.ForTransport(kind), sanitizedOriginal)}", ex, kind);
+    }
+
+    /// <summary>讀 400 等錯誤回應的本文（最多 64 KB、讀不到回空字串；不吞呼叫端取消）。</summary>
+    private static async Task<string> ReadErrorBodyAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        try
+        {
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var buffer = new byte[64 * 1024];
+            var total = 0;
+            int read;
+            while (total < buffer.Length && (read = await stream.ReadAsync(buffer.AsMemory(total), ct)) > 0) total += read;
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, total);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     /// <summary>PRTG 的空白「OK」頁：73 bytes、<c>class="no-content"</c>、內文只有 OK。登入頁與其他 HTML 不算。</summary>
     internal static bool IsEmptyOkPage(string trimmedBody) =>
@@ -506,7 +534,7 @@ public sealed class PrtgClient : IDisposable
             var sanitized = StripSecrets(ex.Message);
             // 帶上 InnerException：呼叫端要分辨「逾時」與「連不上」只能靠原始例外型別，
             // 訊息字串是在地化的，比對它遲早會錯。
-            throw new PrtgClientException($"連線 PRTG 伺服器失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
+            throw TransportFailure("連線 PRTG 伺服器失敗", sanitized, ex);
         }
 
         using (resp)
@@ -514,9 +542,7 @@ public sealed class PrtgClient : IDisposable
             Checkpoint(ct);
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                var message = _usesUsernameAuth
-                    ? "PRTG 帳號憑證無效或權限不足。"
-                    : "PRTG API token 無效或權限不足。";
+                var message = PrtgFailureText.ForCredential(_usesUsernameAuth);
 
                 // 只有 401 才黏：它代表「這組憑證不被接受」，重試不會成功且會累加帳號鎖定計數。
                 // 403 不黏——那可能是單一物件的授權不足（其他 sensor 仍讀得到），
@@ -531,7 +557,11 @@ public sealed class PrtgClient : IDisposable
 
             if (!resp.IsSuccessStatusCode)
             {
-                throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}",
+                // 400 時 PRTG 會在本文（XML 的 <error> 或 HTML）說明哪裡不對，帶出來才知道怎麼改
+                var detail = resp.StatusCode == HttpStatusCode.BadRequest
+                    ? StripSecrets(PrtgFailureText.ExtractServerError(await ReadErrorBodyAsync(resp, ct)))
+                    : null;
+                throw new PrtgClientException(PrtgFailureText.ForHttpStatus((int)resp.StatusCode, detail),
                     kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode, retryAfter: ReadRetryAfter(resp));
             }
 
@@ -566,7 +596,7 @@ public sealed class PrtgClient : IDisposable
             catch (Exception ex)
             {
                 var sanitized = StripSecrets(ex.Message);
-                throw new PrtgClientException($"讀取 PRTG 回應內容失敗：{sanitized}", ex, ClassifyTransportFailure(ex));
+                throw TransportFailure("讀取 PRTG 回應內容失敗", sanitized, ex);
             }
 
             var trimmed = text.Trim();

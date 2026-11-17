@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Web.Models;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
@@ -23,9 +24,9 @@ public sealed class PrtgEffectivenessService
     {
         var end = (through ?? DateTime.Today).Date;
         var start = (from ?? end.AddDays(-(DefaultWindowDays - 1))).Date;
-        if (start > end) throw new ArgumentException("起始日期不可晚於結束日期。");
+        if (start > end) throw DomainException.Validation("起始日期不可晚於結束日期。");
         var days = (end - start).Days + 1;
-        if (days > MaxWindowDays) throw new ArgumentOutOfRangeException(nameof(from), $"日期範圍最多 {MaxWindowDays} 天。");
+        if (days > MaxWindowDays) throw DomainException.Validation($"日期範圍最多 {MaxWindowDays} 天。");
         var endExclusive = end.AddDays(1);
 
         using var ctx = _contextFactory();

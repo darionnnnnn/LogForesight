@@ -1578,3 +1578,10 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-chart-probe { position: absolute; visibility: hidden; pointer-events: none; }
 .lf-chart-probe__text { font-size: var(--lf-chart-text-size); }
 .lf-chart-probe__tooltip { font-size: var(--lf-chart-tooltip-size); }
+
+/* 告示列（flex）裡的連結是獨立的 flex 子項，不適用行內文字連結的 WCAG 2.5.8 例外：點擊區至少 24px 高 */
+.alert.d-flex > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: max(24px, 1.5rem);
+}

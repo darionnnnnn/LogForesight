@@ -133,6 +133,19 @@ public class WorkOrderReplyServiceTests : IDisposable
         Assert.Equal($"回覆交辦單 #{id}「disk 153」：2 台標為「已處理」", entry.Summary);
     }
 
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix)]
+    [InlineData(IssueHandlingStatuses.KnownNoise)]
+    [InlineData(IssueHandlingStatuses.Resolved)]
+    public void 處理人回覆結案_B1_案件欄位維持空值(string status)
+    {
+        var id = CreateOrder(_alice, 153, "H1");
+
+        Service(As(_alice, Capability.Handle)).Reply(id, new WorkOrderReplyRequest { Status = status, Note = "回覆" });
+
+        Assert.Null(Member(id, "H1").BlocksRedispatch);
+    }
+
     [Fact]
     public void 非處理人_一般使用者_Forbidden零寫入()
     {
@@ -195,11 +208,30 @@ public class WorkOrderReplyServiceTests : IDisposable
             Assert.Throws<DomainException>(() => svc.Reply(closed, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Resolved })).Code);
 
         var id = CreateOrder(_alice, 154, "H1");
-        Assert.Equal(ApiErrorCodes.ValidationFailed,
-            Assert.Throws<DomainException>(() => svc.Reply(id, new WorkOrderReplyRequest
-            {
-                CaseIds = new List<string> { "not-a-member" }, Status = IssueHandlingStatuses.Resolved
-            })).Code);
+        // 協調器的規則例外原樣往上，由 ApiExceptionFilter 轉 400（ApiExceptionFilterTests）
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => svc.Reply(id, new WorkOrderReplyRequest
+        {
+            CaseIds = new List<string> { "not-a-member" }, Status = IssueHandlingStatuses.Resolved
+        }));
+    }
+
+    [Fact]
+    public void 批次回覆_某張單已結案或改派_訊息帶單號並提示取消勾選_單張回覆不帶提示()
+    {
+        var svc = Service(As(_alice, Capability.Handle));
+        var ok = CreateOrder(_alice, 153, "H1");
+        var closed = CreateOrder(_alice, 154, "H1");
+        _coordinator.Cancel(closed, "不做了", new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now });
+
+        var error = Assert.Throws<DomainException>(() => svc.ReplyMany(new WorkOrderReplyManyRequest
+        {
+            WorkOrderIds = new List<long> { ok, closed }, Status = IssueHandlingStatuses.Resolved
+        }));
+        Assert.Contains($"#{closed}", error.Message);
+        Assert.Contains("取消勾選", error.Message);
+
+        var single = Assert.Throws<DomainException>(() => svc.Reply(closed, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Resolved }));
+        Assert.DoesNotContain("取消勾選", single.Message);
     }
 
     [Fact]

@@ -42,6 +42,8 @@ public class RecordListQueryService
     private readonly IIssueOwnerStore? _issueOwners;
     private readonly IKnownIssueRuleStore? _rules;
 
+    private readonly TimeProvider _clock;
+
     public RecordListQueryService(
         IRecordRepository repository,
         IHostStore hosts,
@@ -58,8 +60,10 @@ public class RecordListQueryService
         NextUnhandledSequenceCache nextUnhandledCache,
         IIssueExclusionSource exclusions,
         IIssueOwnerStore? issueOwners = null,
-        IKnownIssueRuleStore? rules = null)
+        IKnownIssueRuleStore? rules = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _repository = repository;
         _hosts = hosts;
         _users = users;
@@ -222,7 +226,7 @@ public class RecordListQueryService
     /// 記錄查詢在呼叫端沒指定起始日期、且沒有處理狀態類篩選時的缺省下界（回饋四十五輪 B2）：
     /// 昨天（分析錨點，分析永遠只產到昨天）往前 <see cref="DefaultLookbackDays"/> 天。
     /// </summary>
-    private static DateTime DefaultLookbackStart() => DateTime.Today.AddDays(-1).AddDays(-DefaultLookbackDays);
+    private DateTime DefaultLookbackStart() => _clock.LocalToday().AddDays(-1).AddDays(-DefaultLookbackDays);
 
     /// <summary>缺省回望天數：與主機詳情頁的天數上限同值（DashboardController 的
     /// <c>Math.Clamp(days, 7, 90)</c>）——那裡是行內字面值、沒有具名常數可共用，
@@ -631,7 +635,7 @@ public class RecordListQueryService
             // 距今天數以分析資料的錨點（昨天）為準，不是真實今天（回饋十九輪批次C）：
             // 分析永遠只產到昨天，用真實今天算會讓「昨天發生的問題」顯示成「1 天前」，
             // 跟儀表板／報表的口徑（IssueRankingBuilder 同一批次的修法）對不起來
-            DaysSinceLastSeen = Math.Max(0, (DateTime.Today.AddDays(-1) - aggregate.LastSeen.Date).Days),
+            DaysSinceLastSeen = Math.Max(0, (_clock.LocalToday().AddDays(-1) - aggregate.LastSeen.Date).Days),
             ElevatesDayRisk = aggregate.ElevatesDayRisk,
 
             KnownIssue = latestKnownIssue,
@@ -701,8 +705,8 @@ public class RecordListQueryService
     /// 分析永遠只產出到昨天，前端也一律以昨天為終點送出——預設用今天不會多查到任何紀錄
     /// （今天的紀錄不存在），但會讓基準線窗口（IssueBaselineCalculator.Window 以 to 為錨）
     /// 右移一天、實際只有 29 天樣本，與儀表板／報表的「vs 基準」數字對不起來。</summary>
-    private static (DateTime From, DateTime To) ResolveDateRange(RecordSearchRequest request) =>
-        (request.From ?? DateTime.MinValue, request.To ?? DateTime.Today.AddDays(-1));
+    private (DateTime From, DateTime To) ResolveDateRange(RecordSearchRequest request) =>
+        (request.From ?? DateTime.MinValue, request.To ?? _clock.LocalToday().AddDays(-1));
 
     /// <summary>
     /// SQL 聚合查詢共用的 RiskLevels／Categories／MinSeverity 解析（回饋十九輪批次E2）：
@@ -894,7 +898,7 @@ public class RecordListQueryService
     /// （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）。
     /// Search 的分頁快速路徑與完整路徑各自傳入自己那份 handlings/issueHandlings，共用同一份判定。
     /// </summary>
-    private static bool ComputeIsOverdue(
+    private bool ComputeIsOverdue(
         DailyAnalysisRecord record,
         List<RecordHandling> handlings,
         List<IssueHandling> issueHandlings,
@@ -904,10 +908,10 @@ public class RecordListQueryService
     {
         var handling = FindHandling(handlings, lookup, record);
         var dayOverdue = handling?.DueDate.HasValue == true &&
-                         handling.DueDate.Value.Date < DateTime.Today &&
+                         handling.DueDate.Value.Date < _clock.LocalToday() &&
                          progress(record).IsUnresolved;
         return dayOverdue ||
-               DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), DateTime.Today, exclusion, record.Date);
+               DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), _clock.LocalToday(), exclusion, record.Date);
     }
 
     /// <summary>該紀錄當日的問題層級標記（以現行主機名稱為鍵，同 HostNameOf 的合併語意）</summary>

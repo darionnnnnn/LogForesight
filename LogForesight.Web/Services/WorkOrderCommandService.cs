@@ -22,6 +22,7 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class WorkOrderCommandService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
     private const int PreviewPageSize = 100;
     private const int NoAccessListLimit = 50;
     private const int NoteMaxLength = 1000;
@@ -49,6 +50,8 @@ public class WorkOrderCommandService
     private readonly IUserDisplayNameService _displayNames;
     private readonly MailNotificationService _mail;
 
+    private readonly TimeProvider _clock;
+
     public WorkOrderCommandService(
         RecordListQueryService query,
         IIssueAggregateQuery aggregates,
@@ -63,8 +66,10 @@ public class WorkOrderCommandService
         ICurrentUser currentUser,
         IAuditService audit,
         IUserDisplayNameService displayNames,
-        MailNotificationService mail)
+        MailNotificationService mail,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _query = query;
         _aggregates = aggregates;
         _coordinator = coordinator;
@@ -143,7 +148,7 @@ public class WorkOrderCommandService
         if (plan.Hosts.All(h => h.Resolved.Members.Count == 0))
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
 
-        var actor = _currentUser.ToWorkOrderActor();
+        var actor = _currentUser.ToWorkOrderActor(_clock);
         var scopeKind = req.ScopeKind;
         var scopeGroupIds = scopeKind == WorkOrderScopes.Groups ? req.GroupIds!.Distinct().ToList() : new List<long>();
         // 手動排除過主機就不續掛：被排除的主機之後再出現會被續掛加回，與排除的意圖矛盾
@@ -154,7 +159,7 @@ public class WorkOrderCommandService
         var daySyncPending = 0;
         foreach (var allocation in plan.Allocations)
         {
-            var outcome = Guard(() => _coordinator.Create(new WorkOrderCreateRequest
+            var outcome = _coordinator.Create(new WorkOrderCreateRequest
             {
                 Source = plan.Source, EventId = plan.EventId, IssueLabel = plan.IssueLabel,
                 HandlerId = allocation.Handler.UserId, Origin = WorkOrderOrigins.Manual,
@@ -163,7 +168,7 @@ public class WorkOrderCommandService
                 ReassignConflicts = req.ReassignConflicts,
                 Members = allocation.Hosts.SelectMany(h => h.Effective).ToList(),
                 Actor = actor
-            }));
+            });
 
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
@@ -259,7 +264,7 @@ public class WorkOrderCommandService
         if (members.Count == 0)
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
 
-        var outcome = Guard(() => _coordinator.Append(id, members, req.ReassignConflicts, _currentUser.ToWorkOrderActor()));
+        var outcome = _coordinator.Append(id, members, req.ReassignConflicts, _currentUser.ToWorkOrderActor(_clock));
         var noiseExcluded = resolved.Count(r => r.NoiseExcluded);
 
         _audit.Record(
@@ -300,7 +305,7 @@ public class WorkOrderCommandService
         if (handler.UserId == order.HandlerId)
             throw DomainException.Validation($"{NameOf(handler)} 已經是這張交辦單的處理人。");
 
-        var result = Guard(() => _coordinator.Reassign(id, handler.UserId, _currentUser.ToWorkOrderActor()));
+        var result = _coordinator.Reassign(id, handler.UserId, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderReassign,
@@ -314,7 +319,7 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases
             });
 
-        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId, immediate: req.NotifyNow);
+        NotifyMovedTarget(result, handler.UserId, immediate: req.NotifyNow);
         NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId, immediate: req.NotifyNow);
 
         return ToMoveResult(id, result, handler);
@@ -325,7 +330,7 @@ public class WorkOrderCommandService
         var order = GetOrder(id);
         var handler = ResolveActiveHandler(req.HandlerId);
 
-        var result = Guard(() => _coordinator.Split(id, req.CaseIds, handler.UserId, _currentUser.ToWorkOrderActor()));
+        var result = _coordinator.Split(id, req.CaseIds, handler.UserId, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderSplit,
@@ -339,7 +344,7 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases, CaseIds = req.CaseIds
             });
 
-        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId);
+        NotifyMovedTarget(result, handler.UserId);
         NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId);
 
         return ToMoveResult(id, result, handler);
@@ -350,7 +355,7 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "取消交辦單要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.Cancel(id, reason, _currentUser.ToWorkOrderActor()));
+        var result = _coordinator.Cancel(id, reason, _currentUser.ToWorkOrderActor(_clock));
 
         _audit.Record(
             action: AuditActions.WorkOrderCancel,
@@ -373,7 +378,7 @@ public class WorkOrderCommandService
         var note = RequireReason(req.Note, "退回處理人要填說明。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.Return(id, _currentUser.ToWorkOrderActor(), note));
+        var result = _coordinator.Return(id, _currentUser.ToWorkOrderActor(_clock), note);
 
         _audit.Record(
             action: AuditActions.WorkOrderReturn,
@@ -397,7 +402,9 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "代為結案要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor()));
+        // 「已處理」不是不處理類，勾選值一律忽略；只有不處理類且勾選才擋住之後的派工
+        var blocksRedispatch = req.Status != IssueHandlingStatuses.Resolved && req.BlockRedispatch;
+        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch);
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
@@ -405,6 +412,10 @@ public class WorkOrderCommandService
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId });
+
+        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）
+        _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, result.HandlerId, _currentUser.UserId, _currentUser.Account,
+            reason: reason, status: req.Status, blocksRedispatch: blocksRedispatch);
 
         return new WorkOrderCloseResultDto
         {
@@ -427,7 +438,7 @@ public class WorkOrderCommandService
             throw DomainException.Validation("交辦範圍為主機群組時，請至少選擇一個主機群組。");
         if (req.Note is { Length: > NoteMaxLength })
             throw DomainException.Validation($"說明不可超過 {NoteMaxLength} 字。");
-        if (req.DueDate is { } due && due.Date < DateTime.Today)
+        if (req.DueDate is { } due && due.Date < _clock.LocalToday())
             throw DomainException.Validation("預計完成日不可早於今天。");
 
         var users = _users.GetAll();
@@ -494,7 +505,7 @@ public class WorkOrderCommandService
         // 5. 分派（以主機為單位；主機已依名稱升冪）
         var assignedMembers = candidates.ToDictionary(c => c.UserId, _ => 0);
         var loads = req.AssignMode == AssignGroup && req.SplitMode == SplitByLoad
-            ? _orders.LoadBoard().ToDictionary(l => l.HandlerId, l => l.ActiveMembers)
+            ? _orders.LoadBoard(WorkOrderQueries.DisabledHostKeys(_hosts.GetAll())).ToDictionary(l => l.HandlerId, l => l.ActiveMembers)
             : new Dictionary<long, int>();
         var allocationIndex = 0;
         foreach (var host in withMembers)
@@ -644,6 +655,16 @@ public class WorkOrderCommandService
         _mail.EnqueueWorkOrderNotice(kind, workOrderId, recipientUserId, _currentUser.UserId, _currentUser.Account, reason: reason, immediate: immediate);
     }
 
+    /// <summary>改派／拆出後通知目標處理人：新建的單是「建立」，併入目標處理人既有的單是「追加」（帶移入台數）。</summary>
+    private void NotifyMovedTarget(WorkOrderMoveResult result, long targetHandlerId, bool immediate = false)
+    {
+        if (result.MergedIntoExisting)
+            _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Appended, result.TargetWorkOrderId, targetHandlerId,
+                _currentUser.UserId, _currentUser.Account, memberDelta: result.MovedCases, immediate: immediate);
+        else
+            NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, targetHandlerId, immediate: immediate);
+    }
+
     private WorkOrder GetOrder(long id) =>
         _orders.Get(id) ?? throw DomainException.NotFound($"找不到交辦單 {id}。");
 
@@ -663,23 +684,6 @@ public class WorkOrderCommandService
         if (trimmed.Length > ReasonMaxLength)
             throw DomainException.Validation($"原因不可超過 {ReasonMaxLength} 字。");
         return trimmed;
-    }
-
-    /// <summary>協調器以 ArgumentException／InvalidOperationException 表達資料不符，轉成使用者看得懂的驗證錯誤</summary>
-    private static T Guard<T>(Func<T> action)
-    {
-        try
-        {
-            return action();
-        }
-        catch (ArgumentException ex)
-        {
-            throw DomainException.Validation(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            throw DomainException.Validation(ex.Message);
-        }
     }
 
     private WorkOrderMoveResultDto ToMoveResult(long id, WorkOrderMoveResult result, WebUser handler) => new()

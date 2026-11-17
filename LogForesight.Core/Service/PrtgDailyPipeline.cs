@@ -294,6 +294,11 @@ internal static class PrtgDailyPipeline
                     {
                         runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
                     }
+                    // 警告（已在 PrtgSyncWarning.Create 截斷）：同步算完成，但保護生效或結果異常，要在執行紀錄看得到
+                    foreach (var warning in fetchResult.Warnings)
+                    {
+                        runRecorder.Milestone($"PRTG 同步警告：{warning.Message}");
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -745,14 +750,14 @@ internal static class PrtgDailyPipeline
                             {
                                 appendedHosts++;
                                 corroboratedCount += hostCorroborated;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ", clock: backend.Clock);
                             }
                             // 當日沒有任何紀錄（沒有日誌分析）：PRTG 自己成立一筆主機日，日誌分析晚到時原地更新為該來源。
                             else if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AppendPrtgOnlyIfAbsent(
                                          hostId, hostName, day, hostFindings, useAi)))
                             {
                                 prtgOnlyHosts++;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ", clock: backend.Clock);
                             }
                             else pendingHosts++;
                         }
@@ -1321,6 +1326,7 @@ internal static class PrtgDailyPipeline
             MapMappedHosts = mapResult.MappedHosts,
             MapUnmappedHosts = mapResult.UnmappedHosts,
             MapNameMismatch = mapResult.NameMismatch,
+            Warnings = fetchResult.Warnings.Select(w => PrtgSyncWarning.Create(w.Code, w.Message)).ToList(),
             Source = PrtgStructureSyncStatus.SourceNightly
         };
     }

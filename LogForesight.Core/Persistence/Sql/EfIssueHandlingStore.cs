@@ -25,11 +25,14 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly Func<LfDbContext> _contextFactory;
     private readonly SqlPerformanceMonitor? _performance;
+    private readonly TimeProvider _clock;
 
-    public EfIssueHandlingStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
+    public EfIssueHandlingStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null,
+        TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
         _performance = performance;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public List<IssueHandling> GetForDay(string hostName, DateTime date)
@@ -244,7 +247,7 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
                     IssueKey = handling.IssueKey,
                     // 首次寫入時間（回饋十九輪批次B）：只在新增這一列時落，Apply() 更新既有列
                     // 不會覆寫它——語意同 UpdatedAt 對比，一個答「第一次」一個答「最近一次」
-                    CreatedAt = DateTime.Now
+                    CreatedAt = _clock.LocalNow()
                 };
                 ctx.IssueHandlings.Add(row);
                 candidates.Add(row);
@@ -320,7 +323,7 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
     /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
     internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<long>(_contextFactory,
             (ctx, take) => ctx.IssueHandlings

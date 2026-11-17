@@ -27,6 +27,12 @@ public class UserDto
 
     /// <summary>暫停接單：夜間自動派工跳過此人</summary>
     public bool DispatchPaused { get; set; }
+
+    /// <summary>
+    /// 這位處理人名下進行中的交辦單數。只在「儲存使用者」的回應填入（停用帳號後畫面據此提示要改派或結案），
+    /// 清單與詳情不帶（恆為 0）。
+    /// </summary>
+    public int ActiveWorkOrders { get; set; }
 }
 
 /// <summary>
@@ -134,6 +140,13 @@ public class SetUserGroupsRequest
 public class SetUserDispatchPausedRequest
 {
     public bool Paused { get; set; }
+}
+
+/// <summary>暫停或恢復接單的回應：畫面在暫停且進行中單數不為 0 時提示管理者</summary>
+public class SetUserDispatchPausedResultDto
+{
+    /// <summary>這位處理人名下進行中的交辦單數（暫停接單不影響既有單，單仍在他名下）</summary>
+    public int ActiveWorkOrders { get; set; }
 }
 
 /// <summary>

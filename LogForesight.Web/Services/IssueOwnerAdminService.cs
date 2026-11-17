@@ -1,6 +1,7 @@
 ﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services.Mail;
 using NLog;
 
 namespace LogForesight.Web.Services;
@@ -27,6 +28,7 @@ public class IssueOwnerAdminService
     private readonly IWorkOrderStore _workOrders;
     private readonly WorkOrderCoordinator _workOrderCoordinator;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly MailNotificationService? _mail;
 
     /// <summary>靜音天數上限（含自訂截止日距今天的上限）</summary>
     public const int MaxMuteDays = 365;
@@ -36,12 +38,17 @@ public class IssueOwnerAdminService
     /// <summary>問題設定 DTO 附帶的靜音歷程筆數（新到舊）</summary>
     public const int MuteHistoryLimit = 10;
 
+    private readonly TimeProvider _clock;
+
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
         ICurrentUser currentUser, IUserDisplayNameService displayNameService,
         IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion,
+        TimeProvider? clock = null, MailNotificationService? mail = null)
     {
+        _mail = mail;
+        _clock = clock ?? TimeProvider.System;
         _permissionVersion = permissionVersion;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
@@ -80,7 +87,7 @@ public class IssueOwnerAdminService
     /// 依主機數由多到少排序（影響面大的問題排前面，符合「今天該先處理哪個」的既有排序哲學）。</summary>
     public List<RecentIssueOptionDto> RecentIssues()
     {
-        var to = DateTime.Today;
+        var to = _clock.LocalToday();
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         var owned = _issueOwners.GetAll()
             .Select(r => IssueProfile.KeyOf(r.SourceName, r.EventId))
@@ -164,7 +171,7 @@ public class IssueOwnerAdminService
             throw DomainException.Validation("請填寫機房結論的原因——這是代全體下結論的操作，理由要留在紀錄裡。");
 
         var beforeStatus = _issueOwners.Get(sourceName, eventId)?.ConclusionStatus;
-        var concludedAt = DateTime.Now;
+        var concludedAt = _clock.LocalNow();
 
         var saved = _issueOwners.Update(sourceName, eventId, p =>
         {
@@ -234,7 +241,7 @@ public class IssueOwnerAdminService
         var sourceName = source?.Trim() ?? "";
         if (sourceName.Length == 0) throw DomainException.Validation("請指定問題來源（Source）。");
 
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
         if (request.Days.HasValue == request.Until.HasValue)
             throw DomainException.Validation("請在「靜音天數」與「靜音至（日期）」之間擇一指定。");
 
@@ -270,13 +277,14 @@ public class IssueOwnerAdminService
         if (closeOrders && !(_currentUser.Capabilities.Contains(Capability.Assign) && _currentUser.Capabilities.Contains(Capability.Handle)))
             throw DomainException.Forbidden("代為結案進行中的交辦單需要同時具備指派與處理權限。");
 
-        var now = DateTime.Now;
+        var now = _clock.LocalNow();
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
         var extended = false;
         MuteInterval interval = null!;
 
         // 在靜音寫入前固定本次對象；權限與請求驗證失敗時仍維持零寫入。
-        var ordersToClose = closeOrders ? _workOrders.GetActiveByIssue(sourceName, eventId).ToList() : new List<WorkOrder>();
+        var activeOrders = _workOrders.GetActiveByIssue(sourceName, eventId).ToList();
+        var ordersToClose = closeOrders ? activeOrders : new List<WorkOrder>();
         // 原子更新：在 store 的互斥區塊內讀「當下」的靜音清單再改，只動 Mutes 與 UpdatedByAccount，
         // 結論與負責人不會被先寫的另一位管理者的欄位還原
         var saved = _issueOwners.Update(sourceName, eventId, p =>
@@ -303,12 +311,12 @@ public class IssueOwnerAdminService
             {
                 try
                 {
-                    _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor);
+                    _workOrderCoordinator.AdminClose(order.WorkOrderId, IssueHandlingStatuses.WontFix, "靜音：" + reason, actor, blocksRedispatch: false);
                 }
                 catch (Exception ex)
                 {
                     closeOutcome.FailedWorkOrderId = order.WorkOrderId;
-                    closeOutcome.FailureMessage = ex is DomainException ? ex.Message : "代為結案時發生未預期的錯誤。";
+                    closeOutcome.FailureMessage = ex is DomainException or LogForesight.Core.Persistence.WorkOrderRuleException ? ex.Message : "代為結案時發生未預期的錯誤。";
                     closeOutcome.NotProcessed = ordersToClose.SkipWhile(o => o.WorkOrderId != order.WorkOrderId)
                         .Skip(1).Select(o => o.WorkOrderId).ToList();
                     Log.Error(ex, "靜音問題 {0}/{1} 代為結案停在交辦單 #{2}", sourceName, eventId, order.WorkOrderId);
@@ -326,6 +334,16 @@ public class IssueOwnerAdminService
         }
 
         var closedCount = closeOutcome?.Succeeded.Count ?? 0;
+
+        // 通知處理人：結案成功的單發代為結案（帶靜音迄日）；其餘仍進行中的單（只暫停，或代為結案中途失敗而沒處理到的）
+        // 發暫停一則（帶迄日與到期自動恢復）——處理人才知道這張單暫停了而不是被結案
+        var closedIds = closeOutcome?.Succeeded.ToHashSet() ?? new HashSet<long>();
+        var notices = activeOrders.Select(o => closedIds.Contains(o.WorkOrderId)
+            ? new WorkOrderNoticeRequest(WorkOrderOutboxKinds.AdminClosed, o.WorkOrderId, o.HandlerId,
+                Reason: "靜音：" + reason, Status: IssueHandlingStatuses.WontFix, Until: interval.To)
+            : new WorkOrderNoticeRequest(WorkOrderOutboxKinds.MutePaused, o.WorkOrderId, o.HandlerId,
+                Reason: reason, Until: interval.To));
+        _mail?.EnqueueWorkOrderNotices(notices.ToList(), _currentUser.UserId, _currentUser.Account);
 
         _audit.Record(
             action: AuditActions.IssueMute,
@@ -355,7 +373,7 @@ public class IssueOwnerAdminService
     {
         EnsureMaintain();
 
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
         var existing = _issueOwners.Get(source, eventId);
         var current = existing == null ? null : IssueProfile.CurrentMute(existing, today);
         if (existing == null || current == null)
@@ -379,6 +397,12 @@ public class IssueOwnerAdminService
             p.Mutes = mutes;
             p.UpdatedByAccount = _currentUser.Account;
         });
+
+        // 提前解除：通知這個問題進行中交辦單的處理人已恢復（靜音自然到期不通知）
+        _mail?.EnqueueWorkOrderNotices(
+            _workOrders.GetActiveByIssue(existing.SourceName, existing.EventId)
+                .Select(o => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.MuteResumed, o.WorkOrderId, o.HandlerId)).ToList(),
+            _currentUser.UserId, _currentUser.Account);
 
         _audit.Record(
             action: AuditActions.IssueUnmute,
@@ -413,7 +437,7 @@ public class IssueOwnerAdminService
 
     private Dictionary<(string SourceUpper, int EventId), (int HostCount, DateTime LastSeen)> RecentAggregatesByKey()
     {
-        var to = DateTime.Today;
+        var to = _clock.LocalToday();
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         // 靜音不排除：靜音中的問題要選得到、看得到近況，才能解除
         return _issueAggregates.Aggregate(IssueExclusion.None, from, to, null)
@@ -455,7 +479,7 @@ public class IssueOwnerAdminService
                 ? null
                 : _users.FindByAccount(rule.ConcludedByAccount)?.DisplayName,
             AutoApply = rule.AutoApply,
-            CurrentMute = IssueProfile.CurrentMute(rule, DateTime.Today) is { } current ? ToMuteDto(current) : null,
+            CurrentMute = IssueProfile.CurrentMute(rule, _clock.LocalToday()) is { } current ? ToMuteDto(current) : null,
             MuteHistory = rule.Mutes
                 .OrderByDescending(m => m.From).ThenByDescending(m => m.At)
                 .Take(MuteHistoryLimit)

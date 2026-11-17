@@ -40,6 +40,9 @@ public class WorkOrderQueryService
     /// <summary>「靜音到期恢復」的回看天數：最近一個已結束區間的迄日落在 [今天−7, 今天−1]</summary>
     private const int ResumedWindowDays = 7;
 
+    private readonly TimeProvider _clock;
+    private readonly UserCapabilityResolver? _capabilities;
+
     public WorkOrderQueryService(
         IWorkOrderStore orders,
         IIssueCaseStore cases,
@@ -52,8 +55,12 @@ public class WorkOrderQueryService
         IUserDisplayNameService displayNames,
         IIssueExclusionSource exclusions,
         IUserGroupStore userGroups,
-        IAnalysisRecordQuery records)
+        IAnalysisRecordQuery records,
+        TimeProvider? clock = null,
+        UserCapabilityResolver? capabilities = null)
     {
+        _capabilities = capabilities;
+        _clock = clock ?? TimeProvider.System;
         _userGroups = userGroups;
         _records = records;
         _orders = orders;
@@ -94,6 +101,7 @@ public class WorkOrderQueryService
         dto.DisplayName = _displayNames.Of(user.DisplayName);
         dto.Account = user.Account;
         dto.Active = user.Active;
+        dto.HandlerPaused = user.DispatchPaused;
         // 檢視者自己的可見主機數：只用在本人頁的空狀態分流（側欄徽章不需要，不算）
         // 只經案件授與看得到的主機也算「有授權」：只算群組授權會把這種人誤判成「尚未被授權任何主機」
         dto.VisibleHostCount = _visibility.GetVisibleHostIds().Count + _visibility.GetCaseGrantHostNames().Count;
@@ -109,7 +117,8 @@ public class WorkOrderQueryService
 
     private HandlerSummaryDto SummaryOf(long userId)
     {
-        var s = _orders.HandlerSummary(userId, _exclusions.Current().CurrentlyMutedCompositeKeys);
+        // 停用主機上的成員不算待辦（與負載看板、總覽同一口徑）
+        var s = _orders.HandlerSummary(userId, _exclusions.Current().CurrentlyMutedCompositeKeys, DisabledHostKeys());
         return new HandlerSummaryDto
         {
             ActiveWorkOrders = s.ActiveWorkOrders, ActiveMembers = s.ActiveMembers,
@@ -141,11 +150,16 @@ public class WorkOrderQueryService
         var pageSize = req.PageSize < 1 ? DefaultPageSize : Math.Min(req.PageSize, WorkOrderQueries.MaxOrderPageSize);
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
+        var disabledKeys = DisabledHostKeys();
 
         IReadOnlyCollection<long>? handlerIds = req.HandlerId.HasValue ? new[] { req.HandlerId.Value } : null;
         if (req.HandlerInactive)
         {
-            var inactive = users.Values.Where(u => !u.Active).Select(u => u.UserId).ToHashSet();
+            // 與續掛停止原因 handler_inactive 同義（處理人已停用，或已不具處理能力——派工端以不在候選人快照判定）：
+            // 帳號停用，或解析出的能力不含 Handle。測試組裝沒注入解析器時只看帳號停用
+            var inactive = users.Values
+                .Where(u => !u.Active || (_capabilities != null && !_capabilities.Resolve(u).Contains(Capability.Handle)))
+                .Select(u => u.UserId).ToHashSet();
             handlerIds = handlerIds == null ? inactive : handlerIds.Where(inactive.Contains).ToList();
         }
         if (req.GroupId.HasValue)
@@ -166,12 +180,13 @@ public class WorkOrderQueryService
             Page = page,
             PageSize = pageSize,
             PausedKeys = exclusion.CurrentlyMutedCompositeKeys,
+            ExcludedHostKeys = disabledKeys,
             PausedMode = pausedMode,
             OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null,
             UnreadOnly = req.UnreadOnly
         });
 
-        var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList());
+        var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList(), disabledKeys);
         var rules = KnownIssueCatalog.ResolveRules(_rules);
 
         return new WorkOrderListDto
@@ -195,7 +210,7 @@ public class WorkOrderQueryService
     {
         var order = Authorize(id);
         if (!_currentUser.Has(Capability.Assign)) return;
-        _orders.MarkAdminSeen(order.WorkOrderId, DateTime.Now);
+        _orders.MarkAdminSeen(order.WorkOrderId, _clock.LocalNow());
     }
 
     public List<HandlerGroupOptionDto> ListHandlerGroups() =>
@@ -211,7 +226,8 @@ public class WorkOrderQueryService
     {
         var order = Authorize(id);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
-        var counts = _orders.CountMembers(new[] { id });
+        var allHosts = _hosts.GetAll();
+        var counts = _orders.CountMembers(new[] { id }, WorkOrderQueries.DisabledHostKeys(allHosts));
         var rules = KnownIssueCatalog.ResolveRules(_rules);
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
 
@@ -228,8 +244,35 @@ public class WorkOrderQueryService
             && _currentUser.Has(Capability.Handle) && order.ClosedAt == null;
         dto.ViewerIsPreviousHandler = order.PreviousHandlerId == _currentUser.UserId;
         dto.ViewerCanAssign = _currentUser.Has(Capability.Assign);
+        dto.HandlerUnseenMemberCount = order.ClosedAt == null
+            ? HandlerUnseenMembers(order, counts.TryGetValue(id, out var c) ? c.Active : 0, allHosts)
+            : 0;
         return dto;
     }
+
+    /// <summary>
+    /// 處理人目前看不到的進行中成員台數：進行中且不在已停用主機上的成員（<paramref name="activeCount"/>）減去落在處理人可見主機上的。
+    /// 讀取時計算、不存欄位；可見範圍用 <see cref="IVisibilityService.GetVisibleHostIdsFor"/>（群組授權、主機負責人、問題負責人，
+    /// 不含案件授與——與夜間派工的候選人快照同一規則，「看不到」就是「新主機不會再續掛給他」）。
+    /// </summary>
+    private int HandlerUnseenMembers(WorkOrder order, int activeCount, IReadOnlyCollection<WebHost> hosts)
+    {
+        if (activeCount == 0) return 0;
+
+        var visible = _visibility.GetVisibleHostIdsFor(order.HandlerId);
+        var visibleKeys = hosts.Where(h => h.Active && visible.Contains(h.HostId))
+            .Select(h => HostNameKey.Of(h.HostName)).Distinct().ToList();
+        var seen = visibleKeys.Count == 0
+            ? 0
+            : _cases.QueryMembers(new WorkOrderMemberQuery
+            {
+                WorkOrderId = order.WorkOrderId, Status = WorkOrderQueries.StatusActive, HostNameKeys = visibleKeys, Page = 1, PageSize = 1
+            }).Total;
+        return Math.Max(0, activeCount - seen);
+    }
+
+    /// <summary>已停用主機的 host_name_key：徽章、處理人摘要、總覽台數共用的排除集合</summary>
+    private IReadOnlyCollection<string> DisabledHostKeys() => WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
 
     public WorkOrderMemberPageDto Members(long id, string status, int page, int pageSize)
     {
@@ -267,10 +310,11 @@ public class WorkOrderQueryService
             hidden = unfiltered - total;
         }
 
+        var disabledKeys = WorkOrderQueries.DisabledHostKeys(hosts).ToHashSet();
         var hostIdByKey = hosts
             .GroupBy(h => HostNameKey.Of(h.HostName))
             .ToDictionary(g => g.Key, g => g.First().HostId);
-        var today = DateTime.Today;
+        var today = _clock.LocalToday();
 
         var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
@@ -282,8 +326,10 @@ public class WorkOrderQueryService
                     ? $"/records/{evidenceHostId}/{c.PrtgEvidence.RecordDate:yyyy-MM-dd}" : null,
                 HostId = hostIdByKey.TryGetValue(HostNameKey.Of(c.HostName), out var hostId) ? hostId : null,
                 HostName = c.HostName,
+                HostDisabled = disabledKeys.Contains(HostNameKey.Of(c.HostName)),
                 IssueKey = c.IssueKey,
                 Status = c.Status,
+                Note = string.IsNullOrWhiteSpace(c.Note) ? null : c.Note,
                 DueDate = c.DueDate,
                 Overdue = WorkOrderQueries.IsOverdue(c, today),
                 FirstLinkedDate = c.FirstLinkedDate,
@@ -333,10 +379,10 @@ public class WorkOrderQueryService
             .ToList();
         if (targets.Count == 0) return;
 
-        var from = DateTime.Today.AddDays(-29);
+        var from = _clock.LocalToday().AddDays(-29);
         var findings = _records.QueryDiskTrendEvidence(
                 targets.Select(x => (x.Member.HostId!.Value, x.Sensor)).Distinct().Take(100).ToArray(),
-                from, DateTime.Today)
+                from, _clock.LocalToday())
             .Where(x => x.HostId > 0 && targets.Any(t => t.Member.HostId == x.HostId
                 && string.Equals(t.Sensor, x.SensorId, StringComparison.Ordinal)))
             .GroupBy(x => (x.HostId, Sensor: x.SensorId))
@@ -492,9 +538,16 @@ public class WorkOrderQueryService
         dto.Origin = o.Origin;
         dto.ScopeKind = o.ScopeKind;
         dto.AutoAttach = o.AutoAttach;
+        if (o.ClosedAt == null && o.ContinuationStoppedReason != null)
+        {
+            dto.ContinuationStopped = true;
+            dto.ContinuationStoppedReason = o.ContinuationStoppedReason;
+            dto.ContinuationStoppedLabel = ContinuationStopReasons.LabelOf(o.ContinuationStoppedReason);
+            dto.ContinuationStoppedAt = o.ContinuationStoppedAt;
+        }
         dto.Counts = new WorkOrderCountsDto
         {
-            Total = c.Total, Active = c.Active, Closed = c.Closed, InProgress = c.InProgress, Observing = c.Observing,
+            Total = c.Total, Active = c.Active, ActiveOnDisabledHosts = c.ActiveOnDisabledHosts, Closed = c.Closed, InProgress = c.InProgress, Observing = c.Observing,
             Open = c.Open, Escalated = c.Escalated, Overdue = c.Overdue, DaySyncPending = c.DaySyncPending
         };
         dto.DueDate = o.DueDate;
@@ -502,7 +555,7 @@ public class WorkOrderQueryService
         dto.LastAppendedAt = o.LastAppendedAt;
         dto.LastReplyAt = o.LastReplyAt;
         dto.UnrepliedDays = o.LastReplyAt == null && o.ClosedAt == null
-            ? (DateTime.Today - o.CreatedAt.Date).Days
+            ? (_clock.LocalToday() - o.CreatedAt.Date).Days
             : null;
         dto.UnreadReply = o.HasUnreadReply;
         dto.ClosedAt = o.ClosedAt;

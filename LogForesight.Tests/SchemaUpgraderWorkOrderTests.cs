@@ -15,7 +15,7 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private static readonly string[] NewCaseColumns =
-        { "work_order_id", "source_key", "source_name", "event_id", "day_sync_pending", "cancelled" };
+        { "work_order_id", "source_key", "source_name", "event_id", "day_sync_pending", "cancelled", "blocks_redispatch" };
 
     private static readonly string[] NewCaseIndexes =
         { "IX_lf_issue_cases_work_order_closed", "IX_lf_issue_cases_issue_closed", "IX_lf_issue_cases_day_sync_pending" };
@@ -81,6 +81,129 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上案件blocks_redispatch可空欄_既有列為NULL()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN blocks_redispatch");
+            Assert.DoesNotContain("blocks_redispatch", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+            ctx.Database.ExecuteSqlRaw(
+                "INSERT INTO lf_issue_cases (case_id, host_name, host_name_key, issue_key, issue_label, status, handler_id, " +
+                "first_linked_date, last_linked_date, created_at, created_by_account, updated_at, day_sync_pending, cancelled) " +
+                "VALUES ('legacy', 'SRV-01', 'SRV-01', 'k', 'l', 'wont_fix', 1, '2026-01-01', '2026-01-01', '2026-01-01', 'a', '2026-01-01', 0, 0)");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);   // 重跑冪等
+
+        using var check = _fx.NewContext();
+        Assert.Contains("blocks_redispatch", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+        var legacy = new EfIssueCaseStore(_fx.NewContext).GetByHandler(1).Single(c => c.CaseId == "legacy");
+        Assert.Null(legacy.BlocksRedispatch);
+    }
+
+    [Fact]
+    public void Upgrade補上案件escalated_at可空欄_既有已上報未結案列以updated_at回填_重跑冪等()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN escalated_at");
+            Assert.DoesNotContain("escalated_at", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+            ctx.Database.ExecuteSqlRaw(
+                "INSERT INTO lf_issue_cases (case_id, host_name, host_name_key, issue_key, issue_label, status, handler_id, " +
+                "first_linked_date, last_linked_date, created_at, created_by_account, updated_at, day_sync_pending, cancelled) " +
+                "VALUES ('legacy-esc', 'SRV-01', 'SRV-01', 'k', 'l', 'escalated', 1, '2026-01-01', '2026-01-01', '2026-01-01', 'a', '2026-01-01', 0, 0)");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+
+        using var check = _fx.NewContext();
+        Assert.Contains("escalated_at", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+        var store = new EfIssueCaseStore(_fx.NewContext);
+        var legacy = store.GetByHandler(1).Single(c => c.CaseId == "legacy-esc");
+        Assert.Equal(new DateTime(2026, 1, 1), legacy.EscalatedAt);   // 回填為 updated_at（細節見回填專測）
+
+        // 新建的案件帶上報時間：寫得進、讀得回
+        var at = new DateTime(2026, 11, 2, 8, 30, 0);
+        store.Save(new IssueCase
+        {
+            CaseId = "new-esc", HostName = "SRV-02", IssueKey = "k2", IssueLabel = "l2", Status = IssueHandlingStatuses.Escalated, HandlerId = 1,
+            FirstLinkedDate = at.Date, LastLinkedDate = at.Date, CreatedAt = at, CreatedByAccount = "a", UpdatedAt = at, EscalatedAt = at
+        });
+        Assert.Equal(at, store.GetByHandler(1).Single(c => c.CaseId == "new-esc").EscalatedAt);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出escalated_at欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.IssueCases.Where(c => c.EscalatedAt != null).ToQueryString();
+
+        Assert.Contains("[escalated_at]", sql);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出blocks_redispatch欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.IssueCases.Where(c => c.BlocksRedispatch == false).ToQueryString();
+
+        Assert.Contains("[blocks_redispatch]", sql);
+    }
+
+    [Fact]
+    public void Upgrade補上交辦單續掛停止兩欄_既有單為NULL_重跑冪等()
+    {
+        var legacyStore = new EfWorkOrderStore(_fx.NewContext);
+        var legacyId = legacyStore.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 154, IssueLabel = "Disk 154", HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "a", CreatedAt = DateTime.Now
+        });
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN continuation_stopped_reason");
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN continuation_stopped_at");
+            var columns = Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')");
+            Assert.DoesNotContain("continuation_stopped_reason", columns);
+            Assert.DoesNotContain("continuation_stopped_at", columns);
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) Assert.Null(Record.Exception(() => SchemaUpgrader.Upgrade(ctx)));
+
+        using var check = _fx.NewContext();
+        var after = Query(check, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')");
+        Assert.Contains("continuation_stopped_reason", after);
+        Assert.Contains("continuation_stopped_at", after);
+        var legacy = new EfWorkOrderStore(_fx.NewContext).Get(legacyId)!;
+        Assert.Null(legacy.ContinuationStoppedReason);
+        Assert.Null(legacy.ContinuationStoppedAt);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出續掛停止欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.WorkOrders.Where(w => w.ContinuationStoppedReason != null).Select(w => w.ContinuationStoppedAt).ToQueryString();
+
+        Assert.Contains("[continuation_stopped_reason]", sql);
+        Assert.Contains("[continuation_stopped_at]", sql);
+        Assert.Contains("continuation_stopped_reason nvarchar(30) NULL", SchemaUpgrader.SqlServerCreateWorkOrders);
+        Assert.Contains("continuation_stopped_at datetime2 NULL", SchemaUpgrader.SqlServerCreateWorkOrders);
+    }
+
+    [Fact]
     public void Upgrade補上交辦單previous_handler_id可空欄_既有單為NULL()
     {
         using (var ctx = _fx.NewContext())
@@ -141,6 +264,39 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
         var seen = new DateTime(2026, 10, 3, 10, 0, 0);
         store.MarkAdminSeen(id, seen);
         Assert.Equal(seen, store.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void Upgrade補escalated_at時_升級前已上報未結案的成員以updated_at回填_其他列不動_重跑冪等()
+    {
+        var day = new DateTime(2026, 9, 1, 8, 0, 0);
+        var snapshot = new DateTime(2026, 9, 3, 9, 30, 0);
+        using (var ctx = _fx.NewContext())
+        {
+            IssueCaseRow Row(string id, string status, DateTime? closedAt) => new()
+            {
+                CaseId = id, HostName = "h", HostNameKey = "H" + id, IssueKey = "k" + id, IssueLabel = "x", Status = status,
+                FirstLinkedDate = day, LastLinkedDate = day, CreatedAt = day, CreatedByAccount = "a",
+                UpdatedAt = snapshot, ClosedAt = closedAt
+            };
+            ctx.IssueCases.Add(Row("esc-open", "escalated", null));
+            ctx.IssueCases.Add(Row("esc-closed", "escalated", snapshot));
+            ctx.IssueCases.Add(Row("open", "open", null));
+            ctx.SaveChanges();
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN escalated_at");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        // 回填後夜間掛接把 updated_at 往後推，不得影響已回填的 escalated_at；重跑也不得再回填
+        using (var ctx = _fx.NewContext())
+            ctx.Database.ExecuteSqlRaw("UPDATE lf_issue_cases SET updated_at = '2026-09-20 00:00:00'");
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+
+        using var check = _fx.NewContext();
+        var rows = check.IssueCases.AsNoTracking().ToDictionary(r => r.CaseId);
+        Assert.Equal(snapshot, rows["esc-open"].EscalatedAt);
+        Assert.Null(rows["esc-closed"].EscalatedAt);
+        Assert.Null(rows["open"].EscalatedAt);
     }
 
     [Fact]

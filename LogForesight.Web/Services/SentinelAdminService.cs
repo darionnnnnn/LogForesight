@@ -10,6 +10,8 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class SentinelAdminService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
@@ -238,7 +240,12 @@ public class SentinelAdminService
         }
         catch (SentinelClientException ex)
         {
-            return new TestSentinelConnectionResultDto { Success = false, Message = ex.Message };
+            Log.Warn(ex, "測試 Sentinel 連線失敗（{0}）", server.Name);
+            // 位址格式錯誤的訊息只含使用者自己填的值與修正方式，照原文給；其餘可能夾帶回應本文，給固定說明
+            var message = ex.SafeCode == SentinelClientException.InvalidBaseUrlCode
+                ? ex.Message
+                : "測試連線失敗：請檢查位址、連接埠、帳密與憑證；詳細原因見記錄檔。";
+            return new TestSentinelConnectionResultDto { Success = false, Message = message };
         }
     }
 

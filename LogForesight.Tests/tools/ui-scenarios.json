@@ -110,6 +110,52 @@
     "path": "/handlers/3"
   },
   {
+    "name": "主管-我的交辦無處理能力說明",
+    "role": "ui-manager",
+    "path": "/handlers/2",
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list .lf-empty__title",
+          "text": "你的角色沒有處理能力",
+          "notText": "目前沒有被指派的工作"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#lf-nav a[href$=\"/handlers/2\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "開發維運-我的交辦無處理能力說明",
+    "role": "ui-dev",
+    "path": "/handlers/12",
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list .lf-empty__title",
+          "text": "你的角色沒有處理能力",
+          "notText": "目前沒有被指派的工作"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#lf-nav a[href$=\"/handlers/12\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
     "name": "處理人-交辦單",
     "role": "ui-handler",
     "path": "/work-orders/1"
@@ -585,6 +631,21 @@
         }
       },
       {
+        "waitFor": "#wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn-outline-primary",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn-outline-secondary",
+          "visible": true
+        }
+      },
+      {
         "click": "#wo-tabs [data-tab=\"muted\"]"
       },
       {
@@ -625,9 +686,46 @@
         }
       },
       {
+        "waitFor": "#wo-dismissed .lf-empty, #wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn",
+          "count": 0
+        }
+      },
+      {
         "assert": {
           "sel": "#wo-muted-list",
           "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-不再自動派工",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed-card",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .lf-table-aligned table",
+          "visible": true
         }
       }
     ]
@@ -1151,6 +1249,47 @@
     ]
   },
   {
+    "name": "互動-交辦單詳情-代為結案後果說明",
+    "role": "ui-admin",
+    "path": "fixture:work-order.mass",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('#wo-actions button')].find(x => x.textContent.includes('代為結案')); if (!b) return '找不到代為結案按鈕'; b.click(); return null;"
+      },
+      {
+        "waitFor": ".modal.show #wo-close-status"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-block",
+          "visible": false
+        }
+      },
+      {
+        "select": [
+          "#wo-close-status",
+          "wont_fix"
+        ]
+      },
+      {
+        "waitFor": ".modal.show #wo-close-block"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-consequence",
+          "visible": true,
+          "text": "未啟用交辦單通知，請自行告知處理人"
+        }
+      },
+      {
+        "evalAssert": "const c = document.getElementById('wo-close-block'); const w = c.closest('.form-check'); return w && !w.classList.contains('d-none') && !c.checked ? null : '不處理時應出現且預設不勾的停派勾選框';"
+      }
+    ]
+  },
+  {
     "name": "互動-排程作業-天數頁籤排序與展開",
     "role": "ui-admin",
     "path": "fixture:page.runs",
@@ -1632,6 +1771,111 @@
       {
         "waitFor": "#health-freshness *",
         "timeout": 20000
+      }
+    ]
+  },
+  {
+    "name": "設定-健康-需要注意",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "degraded",
+            "statusReasons": [
+              {
+                "key": "retention",
+                "text": "保留清除有 2 段失敗（歷史紀錄、報告全文），其餘段已照常執行。"
+              },
+              {
+                "key": "lastRun",
+                "text": "最近一趟分析執行失敗。"
+              },
+              {
+                "key": "prtgDevicesPurged",
+                "text": "有 3 台已對應主機的 PRTG 裝置本趟沒出現在 PRTG 回應中，已從鏡像清除（WIN-APP01 (Ping)、WIN-DB01 (Ping)、LINUX-EDGE-01 (SNMP) 等）。若不是在 PRTG 端刪除，請檢查 PRTG 帳號權限與查詢範圍。"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-overall [data-reason-key]",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const rows = document.querySelectorAll('#health-overall [data-reason-key]'); if (rows.length !== 3) return `原因應列 3 行，實際 ${rows.length}`; const note = document.querySelector('#health-overall .lf-status-note--warning'); if (!note) return '頂端缺少警告型狀態訊息'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "設定-健康-正常",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "ok",
+            "statusReasons": []
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-overall .lf-status-note--success",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "return document.querySelector('#health-overall [data-health-reasons]') ? '正常時不應顯示原因清單' : null;"
+      }
+    ]
+  },
+  {
+    "name": "導覽告示-健康原因",
+    "role": "ui-admin",
+    "path": "/runs",
+    "steps": [
+      {
+        "patchApi": {
+          "/api/health/attention": {
+            "status": "degraded",
+            "reasons": [
+              {
+                "key": "retention",
+                "text": "保留清除有 2 段失敗（歷史紀錄、報告全文），其餘段已照常執行。"
+              },
+              {
+                "key": "prtgSensorsEmpty",
+                "text": "範圍內 12 台裝置的感測器查詢都成功，卻沒有回傳任何感測器，鏡像不清除、維持上次內容；請檢查 PRTG 帳號權限與查詢設定。"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#lf-health-banner [data-health-reasons]",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const items = document.querySelectorAll('#lf-health-banner [data-health-reasons] li'); if (items.length !== 2) return `告示應列 2 項原因，實際 ${items.length}`; return null;"
       }
     ]
   },
@@ -4519,6 +4763,311 @@
       },
       {
         "evalAssert": "const eff = document.getElementById('view-effectiveness'); const q = new URLSearchParams(location.search); return !eff.classList.contains('d-none') && q.get('view') === 'effectiveness' && !q.has('display') ? null : ('離開後應回到處理成效且網址只剩 view：' + location.search);"
+      }
+    ]
+  },
+  {
+    "name": "設定-下拉選值後儲存並保留",
+    "role": "ui-admin",
+    "path": "/admin/settings#mail",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "select": [
+          "#mail-min-risk-level",
+          "中以上"
+        ]
+      },
+      {
+        "click": "#settings-save"
+      },
+      {
+        "waitFor": "#settings-save-status .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#settings-save-status .lf-status-note",
+          "visible": true,
+          "text": "已儲存設定"
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "[data-panel=\"mail\"]:not(.d-none)"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "evalAssert": "const v = document.getElementById('mail-min-risk-level').value; return v === '中' ? null : ('重新載入後應保留「中」，實際為 ' + v);"
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-停用主機成員不計入台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.disabled-host",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "text": "不計入處理人的台數"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-members",
+          "text": "主機已停用"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-members .lf-badge",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-續掛已停止",
+    "role": "ui-admin",
+    "path": "fixture:work-order.continuation-stopped",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "visible": true,
+          "text": "續掛已停止"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "text": "續掛已停止（"
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-處理人看不到台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.unseen",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "text": "處理人目前看不到 1 台"
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-都看得到時不顯示看不到台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.ui-handler",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "notText": "處理人目前看不到"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦總覽-續掛已停止與停用主機標示",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-list",
+          "text": "續掛已停止："
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-list",
+          "text": "主機已停用 1"
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦總覽-管理者提醒區",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-reminders .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "上報超過 3 天沒人處理：1 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "派不出去的問題：2 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "沒有任何收件人的單：1 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders > ul > li",
+          "count": 3
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-提醒明細展開",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-reminders .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders .lf-disclosure-target.d-none",
+          "visible": false
+        }
+      },
+      {
+        "evalAssert": "const bs = [...document.querySelectorAll('#wo-reminders .lf-disclosure')]; if (bs.length < 2) return '提醒區每類應有展開鈕，實際 ' + bs.length; bs.forEach(b => b.click()); return null;"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "Ui-Unassignable-Issue EventId 8630"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "彙整於"
+        }
+      },
+      {
+        "evalAssert": "const a = document.querySelector('#wo-reminders .lf-disclosure-target a[href*=\"/work-orders/\"]'); return a ? null : '上報明細的單號應連到交辦單';"
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦單詳情-代為結案含停用主機",
+    "role": "ui-admin",
+    "path": "fixture:work-order.disabled-host",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('#wo-actions button')].find(x => x.textContent.includes('代為結案')); if (!b) return '找不到代為結案按鈕'; b.click(); return null;"
+      },
+      {
+        "waitFor": ".modal.show #wo-close-status"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form button[type=submit]",
+          "text": "代為結案 2 台"
+        }
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-consequence",
+          "text": "含已停用主機 1 台"
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-同步警告",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-structure-sync-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/settings/prtg-structure-sync/status": {
+            "isRunning": false,
+            "lastCompletedAt": "2026-11-16T02:00:00",
+            "lastSuccess": true,
+            "lastSensors": 12,
+            "lastSource": "nightly",
+            "lastWarnings": [
+              "本次同步 PRTG 回傳的感測器全部為空，已保留原有鏡像。",
+              "已對應主機的裝置 SRV-DB-01 在 PRTG 已被清除。"
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#prtg-structure-sync-warnings .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-structure-sync-warnings",
+          "text": "SRV-DB-01"
+        }
+      }
+    ]
+  },
+  {
+    "name": "處理人-暫停接單標記",
+    "role": "ui-admin",
+    "path": "fixture:handler.ui-paused",
+    "steps": [
+      {
+        "waitFor": "main .lf-card"
+      },
+      {
+        "evalAssert": "return document.querySelector('.lf-page-header')?.textContent.includes('目前暫停接單') ? null : '頁頭沒有「目前暫停接單」標記';"
       }
     ]
   }

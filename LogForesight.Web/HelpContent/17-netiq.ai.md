@@ -72,7 +72,7 @@
 - `#scan-sentinel-select`：Sentinel 下拉選單，過濾僅列出啟用且帳密齊備者（`active && canDiscover`）。此篩選只看欄位非空，密碼無法解密的 Sentinel 仍會列出，按「掃描匯入」才由後端回錯誤「Sentinel「名稱」的密碼無法解密（金鑰檔與資料庫不相符），無法主動掃描。請到「設定」分頁編輯該 Sentinel 重新輸入密碼。」；診斷分頁的下拉則已在名稱後標「（密碼無法解密）」，執行診斷時輸出「密碼無法解密…略過」。夜間取數對這台不建連線、不送請求，轄下主機計失敗主機日。
 - `#scan-subnet-input`：網段輸入框（必填，支援前綴如 `192.168.0` 或 CIDR `192.168.0.0/24`）。
 - 掃描前可選「掃描粒度」（「每段 254 台（預設）」／「每段 62 台（最細）」；事件量大的網段選細粒度可避免安靜主機被吵雜主機擠掉，代價是掃描較久）與「併發」（「單一查詢（預設）」／「同時 2 個查詢」／「同時 3 個查詢」）。
-- 點擊「掃描匯入」呼叫 `POST /api/admin/netiq/scan`，取得 `NetiqScanResultDto` 並開啟精靈 Modal `#netiq-wizard-modal`。
+- 點選「掃描匯入」呼叫 `POST /api/admin/netiq/scan` 建立掃描工作（回傳 `jobId`），再輪詢 `GET /api/admin/netiq/scan/{jobId}` 取得 `NetiqScanResultDto`（可取消），並開啟精靈 Modal `#netiq-wizard-modal`。
 
 ### 2. 掃描匯入精靈 Modal（`#netiq-wizard-modal`）
 - **步驟一：網段主機勾選（`#wizard-pane-subnets`）**：
@@ -107,13 +107,13 @@
 - `#probe-sample-ip`：樣本 Windows IP（選填，用於核對主機歸屬鍵、頻道覆蓋、時間邊界）。
 - `#probe-sample-linux-ip`：樣本 Linux IP（選填）。
 - `#probe-start`：「執行診斷」按鈕。
-  - 點擊後呼叫 `POST /api/admin/netiq/probe/start`，將按鈕設為 disabled。
+  - 點選後呼叫 `POST /api/admin/netiq/probe/start`，將按鈕設為 disabled。
   - 背景啟動非同步診斷工作，前端啟動輪詢（每 2 秒向 `GET /api/admin/netiq/probe/status` 查詢狀態）。
 
 ### 2. 狀態與輸出
 - `#probe-state`：顯示執行狀態與進度訊息（執行中顯示 Spinner 與最新步驟訊息；完成後顯示上次執行時間與成功/錯誤狀態）。
 - `#probe-output`：唯讀 `<textarea>`，以等寬字體顯示診斷詳細輸出日誌（自動捲動至底部）。
-- `#probe-copy`：「複製」按鈕，點擊將診斷輸出內容複製至剪貼簿。
+- `#probe-copy`：「複製」按鈕，點選將診斷輸出內容複製至剪貼簿。
 
 ## 常見問答與邊界狀況（Q&A）
 

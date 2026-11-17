@@ -201,6 +201,8 @@ public class PrtgBackfillConsole : IRunConsole
 /// </summary>
 public class PrtgBackfillService : IPrtgBackfillTail
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     public const int SelectedBackfillMaxHosts = 5;
     public const int SelectedBackfillMaxDays = 7;
     public const string FullBackfillPreviewContractVersion = "prtg-full-backfill-preview-v1";
@@ -644,7 +646,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         catch (Exception ex)
         {
-            console.WriteLine($"指定主機回填發生未預期錯誤：{ex.Message}");
+            Log.Warn(ex, "指定主機回填發生未預期錯誤");
+            console.WriteLine("指定主機回填發生未預期錯誤；詳細原因見記錄檔。");
         }
         finally
         {
@@ -801,9 +804,10 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         catch (Exception ex)
         {
-            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            Log.Warn(ex, "初始化 PRTG 連線失敗");
+            _state.AppendLine($"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}");
             _state.FinishRun(false, cancelled: false);
-            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            error = $"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}";
             return false;
         }
 
@@ -903,7 +907,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         catch (Exception ex)
         {
-            console.WriteLine($"回填過程發生未預期錯誤：{ex.Message}");
+            Log.Warn(ex, "回填過程發生未預期錯誤");
+            console.WriteLine("回填過程發生未預期錯誤；詳細原因見記錄檔。");
             success = false;
         }
         finally

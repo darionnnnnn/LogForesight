@@ -67,3 +67,25 @@ export function pollWhile(fn, intervalMs) {
         },
     };
 }
+
+/**
+ * 進行中保護：包住一個會 await 之後才開對話框的入口。上一次呼叫還沒結束時，
+ * 重複觸發直接忽略（回傳 undefined），不會再開第二個對話框（Bootstrap 5.3 不支援疊開）。
+ * 不論成功或擲例外，結束後都解除。
+ *
+ * @template {(...args: any[]) => Promise<any>} F
+ * @param {F} fn
+ * @returns {F}
+ */
+export function exclusive(fn) {
+    let running = false;
+    return /** @type {F} */ (async function (...args) {
+        if (running) return undefined;
+        running = true;
+        try {
+            return await fn.apply(this, args);
+        } finally {
+            running = false;
+        }
+    });
+}

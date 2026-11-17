@@ -21,6 +21,7 @@ public class AuditPage : PagedResult<AuditEntry>
 public class AuditLogStore
 {
     private readonly EfJsonLogStore _log;
+    private readonly TimeProvider _clock;
     private readonly object _lock = new();
     private long _lastId;
     private bool _tailUnreadable;
@@ -35,9 +36,10 @@ public class AuditLogStore
     /// <summary>有篩選條件但沒有起日時代為套用的回看天數：否則每次篩選都整表讀回記憶體</summary>
     public const int DefaultRangeDays = 90;
 
-    public AuditLogStore(EfJsonLogStore log)
+    public AuditLogStore(EfJsonLogStore log, TimeProvider? clock = null)
     {
         _log = log;
+        _clock = clock ?? TimeProvider.System;
         // 續號起點以尾端反向 seek 取得、不整表讀回：這是 Singleton store 的建構式，
         // 整表讀等於站台啟動時同步讀回全部稽核列並逐行解析
         _lastId = _log.ProbeMaxId<AuditEntry>(e => e.AuditId, BatchRunStore.IdProbeLines, "稽核紀錄", JsonOptions,
@@ -51,7 +53,7 @@ public class AuditLogStore
             if (_tailUnreadable)
                 throw new InvalidDataException("稽核紀錄尾端全部無法解析，沒有耐久計數器可安全續號；拒絕新增稽核列。");
             entry.AuditId = ++_lastId;
-            if (entry.OccurredAt == default) entry.OccurredAt = DateTime.Now;
+            if (entry.OccurredAt == default) entry.OccurredAt = _clock.LocalNow();
 
             _log.AppendLine(JsonSerializer.Serialize(entry, JsonOptions));
         }
@@ -90,7 +92,7 @@ public class AuditLogStore
         {
             query = new AuditQuery
             {
-                From = DateTime.Today.AddDays(-DefaultRangeDays),
+                From = _clock.LocalToday().AddDays(-DefaultRangeDays),
                 To = query.To,
                 UserId = query.UserId,
                 Actions = query.Actions,
@@ -129,7 +131,7 @@ public class AuditLogStore
                         string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/archive/HISTORY.md P0-3）</summary>
-    public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
+    public int Prune(int retentionDays) => _log.Prune(_clock.LocalToday().AddDays(-retentionDays));
 
     private static bool Matches(AuditEntry entry, AuditQuery query)
     {

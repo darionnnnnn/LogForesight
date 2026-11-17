@@ -178,7 +178,7 @@
                                 <input class="form-check-input" type="checkbox" id="prtg-clear-passhash" />
                                 <label class="form-check-label" for="prtg-clear-passhash">清除目前的 passhash</label>
                             </div>
-                            <div class="form-text">LogForesight 不會保存密碼，也不會替你換取 passhash。</div>
+                            <div class="form-text">LogForesight 不會儲存密碼，也不會替你換取 passhash。</div>
                         </div>
                     </div>
                 </div>
@@ -357,15 +357,15 @@
                     <span class="lf-text-meta" id="prtg-monitoring-host-batch-status" role="status" aria-live="polite"></span>
                 </div>
                 <div id="prtg-monitoring-hosts" class="border rounded p-2 mb-2 lf-scroll-md" aria-label="監看主機"></div>
-                <div class="lf-text-meta mb-1">已保存主機（包含停用、合併或已移除的舊項目）。移除舊項目不會自動移除 sensor，請在下方另行核對。</div>
-                <label class="form-label" for="prtg-monitoring-saved-host-search">搜尋已保存主機</label>
+                <div class="lf-text-meta mb-1">已儲存主機（包含停用、合併或已移除的舊項目）。移除舊項目不會自動移除 sensor，請在下方另行核對。</div>
+                <label class="form-label" for="prtg-monitoring-saved-host-search">搜尋已儲存主機</label>
                 <input class="form-control mb-2" id="prtg-monitoring-saved-host-search" maxlength="128" autocomplete="off" />
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-saved-host-prev" type="button">上一頁</button>
                     <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-saved-host-next" type="button">下一頁</button>
                     <span class="lf-text-meta" id="prtg-monitoring-saved-host-page-info"></span>
                 </div>
-                <div id="prtg-monitoring-saved-hosts" class="border rounded p-2 mb-3 lf-scroll-md" aria-label="已保存主機管理"></div>
+                <div id="prtg-monitoring-saved-hosts" class="border rounded p-2 mb-3 lf-scroll-md" aria-label="已儲存主機管理"></div>
                 <label class="form-label" for="prtg-monitoring-sensor-search">搜尋所選主機的 sensor</label>
                 <input class="form-control mb-2" id="prtg-monitoring-sensor-search" maxlength="128" autocomplete="off" />
                 <div class="d-flex align-items-center gap-2 mb-2">
@@ -412,7 +412,7 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-snapshot-diagnostics-retry">重新載入</button>
         </div>
         <div class="lf-card__body">
-            <p class="lf-text-meta">只讀站內已保存資料，不會呼叫 PRTG。無目標或資料未知不代表健康。</p>
+            <p class="lf-text-meta">只讀站內已儲存資料，不會呼叫 PRTG。無目標或資料未知不代表健康。</p>
             <div id="prtg-snapshot-diagnostics" aria-live="polite" aria-atomic="false"></div>
         </div>
     </section>
@@ -445,6 +445,7 @@
                         請先儲存 PRTG 位址與認證，才能同步結構與對應。
                     </div>
                     <div class="small mt-2" id="prtg-structure-sync-status">上次同步：載入中…</div>
+                    <div class="mt-2" id="prtg-structure-sync-warnings"></div>
                     <div class="lf-text-meta" id="prtg-structure-sync-progress"></div>
                 </div>
                 <div id="prtg-mirror-stats-error"></div>
@@ -466,7 +467,7 @@
                     </div>
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="lf-text-meta">最新歷史數據時間</div>
+                            <div class="lf-text-meta">最新歷史資料時間</div>
                             <div class="lf-text-label" id="prtg-mirror-last-value-at">數值：-</div>
                             <div class="lf-text-label" id="prtg-mirror-last-state-change-at">狀態變更：-</div>
                             <div class="lf-text-label" id="prtg-mirror-snapshot">數值快照：-</div>
@@ -801,7 +802,7 @@
                 <button type="button" class="btn btn-sm btn-outline-danger" id="prtg-import-abandon-btn" disabled>放棄保留傳輸</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-import-forget-btn" disabled>清除此頁續傳紀錄</button>
             </div>
-            <div class="form-text">匯入會將診斷包隔離保存，正式監控資料與判定不變。</div>
+            <div class="form-text">匯入會將診斷包隔離儲存，正式監控資料與判定不變。</div>
         </div>
     </details>
 </div>

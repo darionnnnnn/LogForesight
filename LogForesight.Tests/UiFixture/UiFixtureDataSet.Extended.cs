@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Tests;
@@ -22,6 +24,7 @@ public sealed partial class UiFixtureDataSet
     private void BuildExtended()
     {
         WriteExtraWorkOrders();
+        WriteDismissedCases();
         WriteIssueProfiles();
         WriteBatchRuns();
         WriteAudit();
@@ -92,6 +95,26 @@ public sealed partial class UiFixtureDataSet
         cases.Add(NewCase("uicase-paused", win, "Ui-Muted-Issue", 8620, IssueHandlingStatuses.InProgress, UserIds["ui-handler"], paused,
             yesterday.AddDays(-1), yesterday.AddDays(5)));
 
+        // 停用主機：兩個進行中成員，其中一台（UI-DISABLED-HOST）已停用——不計入處理人台數、成員列標「主機已停用」
+        var disabledHostOrder = Order("disabled-host", "ui-paused", "Ui-DisabledHost-Issue", 8630, "其中一台主機已停用。", yesterday.AddDays(4), now.AddHours(-30));
+        cases.Add(NewCase("uicase-disabledhost-a", win, "Ui-DisabledHost-Issue", 8630, IssueHandlingStatuses.InProgress, UserIds["ui-paused"], disabledHostOrder,
+            yesterday.AddDays(-1), yesterday.AddDays(4)));
+        cases.Add(NewCase("uicase-disabledhost-b", _hosts["disabled"].HostName, "Ui-DisabledHost-Issue", 8630, IssueHandlingStatuses.InProgress,
+            UserIds["ui-paused"], disabledHostOrder, yesterday.AddDays(-1), yesterday.AddDays(4)));
+
+        // 續掛已停止：處理人（ui-disabled）已停用，夜間派工擋下續掛並標原因
+        var stopped = Order("continuation-stopped", "ui-disabled", "Ui-ContinuationStopped-Issue", 8640, null, yesterday.AddDays(6), now.AddDays(-1));
+        cases.Add(NewCase("uicase-stopped", win, "Ui-ContinuationStopped-Issue", 8640, IssueHandlingStatuses.InProgress, UserIds["ui-disabled"], stopped,
+            yesterday.AddDays(-1), yesterday.AddDays(6)));
+        orders.SetContinuationStops(new[] { new ContinuationStopUpdate(stopped, ContinuationStopReasons.HandlerInactive, now.AddHours(-8)) });
+
+        // 處理人看不到部分主機：ui-same-b 的群組看不到 UI-NOGROUP-WIN（沒有任何主機群組）→ 詳情頁首「處理人目前看不到 1 台」
+        var unseen = Order("unseen", "ui-same-b", "Ui-Unseen-Issue", 8650, null, yesterday.AddDays(5), now.AddHours(-12));
+        cases.Add(NewCase("uicase-unseen-a", win, "Ui-Unseen-Issue", 8650, IssueHandlingStatuses.InProgress, UserIds["ui-same-b"], unseen,
+            yesterday.AddDays(-1), yesterday.AddDays(5)));
+        cases.Add(NewCase("uicase-unseen-b", _hosts["no-group"].HostName, "Ui-Unseen-Issue", 8650, IssueHandlingStatuses.Open, UserIds["ui-same-b"], unseen,
+            yesterday.AddDays(-1)));
+
         // 200 個成員：40 台 × 5 種 EntryType（同一問題在不同主機、不同登錄類型各算一個成員）
         var mass = Order("mass", "ui-handler", "Ui-Mass-Issue", 8800, "全站一起處理的問題，成員很多。", yesterday.AddDays(10), now.AddHours(-6));
         var entryTypes = new[] { LogEntryType.Error, LogEntryType.Warning, LogEntryType.Information, LogEntryType.SuccessAudit, LogEntryType.FailureAudit };
@@ -119,7 +142,63 @@ public sealed partial class UiFixtureDataSet
         cases.Add(NewCase("uicase-longnote", win, "Ui-LongNote-Issue", 8900, IssueHandlingStatuses.InProgress, UserIds["ui-handler-long"], longOrder,
             yesterday.AddDays(-1), yesterday.AddDays(3), note: UiFixtureText.RepeatTo("案件備註也很長，", 400)));
 
+        // 管理者提醒區（C-2）：上報中的成員已逾 3 天沒人處理，且上報信沒有收件人、最近一趟夜間派工有派不出去的問題
+        var escalatedCase = cases.First(c => c.CaseId == "uicase-escalated");
+        escalatedCase.UpdatedAt = now.AddDays(-6);
+        escalatedCase.EscalatedAt = now.AddDays(-6);
         Backend.IssueCaseStore().SaveMany(cases);
+        new MailNotifyStateStore(Backend.Blob("mail_notify_state")).Update(s =>
+        {
+            s.NoRecipientEscalations.Add(new NoRecipientEscalation { WorkOrderId = escalated, At = now.AddDays(-6) });
+            s.LastUnassignable.Add(new UnassignableIssue { IssueLabel = "Ui-Unassignable-Issue EventId 8630", Reason = "no_pool", Hosts = 3 });
+            s.LastUnassignable.Add(new UnassignableIssue { IssueLabel = "Ui-Dismissed-Single EventId 8710", Reason = "all_paused", Hosts = 1 });
+            s.LastUnassignableAt = now.AddHours(-9);
+        });
+    }
+
+    // ── 被「不再打擾」擋住的項目（待派頁「不再自動派工」區）────────────────────
+
+    /// <summary>
+    /// 兩個問題被擋住：Ui-Dismissed-Noise 多台（含超長主機名、三種不處理類狀態、欄位空值與 true 各有）、
+    /// Ui-Dismissed-Single 單台。另寫兩件不該列出的案件：已恢復（欄位 false）與已處理（resolved）。
+    /// 結案的人與日期寫進處理歷程（清單從歷程讀）。
+    /// </summary>
+    private void WriteDismissedCases()
+    {
+        var now = DateTime.Now;
+        var yesterday = Yesterday;
+        var cases = new List<IssueCase>();
+        var logs = new List<RecordHandlingLog>();
+
+        void Dismissed(string hostKey, string source, int eventId, string status, string actor, int daysAgo, bool? blocks = null)
+        {
+            var host = _hosts[hostKey].HostName;
+            var closedAt = now.AddDays(-daysAgo);
+            var c = NewCase($"uidismissed-{hostKey}-{eventId}", host, source, eventId, status, UserIds[actor], 0,
+                yesterday.AddDays(-daysAgo - 1), closedAt: closedAt, note: "評估後不處理。");
+            c.WorkOrderId = null;
+            c.BlocksRedispatch = blocks;
+            cases.Add(c);
+            logs.Add(new RecordHandlingLog
+            {
+                HostName = host, Date = c.LastLinkedDate, Status = status, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel,
+                ActorId = UserIds[actor], ActorAccount = actor, Action = HandlingActions.StatusChange, CreatedAt = closedAt
+            });
+        }
+
+        var noise = new[] { "bulk01", "bulk02", "bulk03", "bulk04", "long63", "fqdn-long" };
+        var statuses = new[] { IssueHandlingStatuses.WontFix, IssueHandlingStatuses.FalsePositive, IssueHandlingStatuses.KnownNoise };
+        for (var i = 0; i < noise.Length; i++)
+            Dismissed(noise[i], "Ui-Dismissed-Noise", 8700, statuses[i % statuses.Length], i % 2 == 0 ? "ui-handler" : "ui-admin", 3 + i,
+                blocks: i == 1 ? true : null);
+        Dismissed("win", "Ui-Dismissed-Single", 8710, IssueHandlingStatuses.WontFix, "ui-handler", 2);
+
+        // 不該列出：管理者已恢復（欄位 false）、已處理
+        Dismissed("fin", "Ui-Dismissed-Noise", 8700, IssueHandlingStatuses.WontFix, "ui-admin", 6, blocks: false);
+        Dismissed("fqdn", "Ui-Dismissed-Noise", 8700, IssueHandlingStatuses.Resolved, "ui-handler", 5);
+
+        Backend.IssueCaseStore().SaveMany(cases);
+        Backend.RecordHandlingStore().AppendLogs(logs);
     }
 
     // ── 問題負責與靜音 ──────────────────────────────────────────────────────
@@ -648,7 +727,10 @@ public sealed partial class UiFixtureDataSet
         foreach (var (key, title) in new[]
                  {
                      ("closed", "交辦單：已結案"), ("escalated", "交辦單：上報中（成員無法處理）"), ("paused", "交辦單：暫停（問題靜音中）"),
-                     ("mass", "交辦單：200 個成員"), ("long-note", "交辦單：超長說明")
+                     ("mass", "交辦單：200 個成員"), ("long-note", "交辦單：超長說明"),
+                     ("disabled-host", "交辦單：成員主機已停用（不計入台數、成員列標記）"),
+                     ("continuation-stopped", "交辦單：續掛已停止（處理人已停用）"),
+                     ("unseen", "交辦單：處理人目前看不到 1 台")
                  })
             Scenarios.Add(new UiFixtureScenario($"work-order.{key}", title, $"/work-orders/{WorkOrderIds[key]}"));
         Scenarios.Add(new UiFixtureScenario("work-order.unreplied", "交辦單：未回覆（尚無任何回覆）", $"/work-orders/{WorkOrderIds["ui-handler"]}"));

@@ -35,6 +35,58 @@ public class UserAdminServiceTests
         new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts),
         new UserDisplayNameService(_settings), TestPermissionStamps.Shared, _history, _settings);
 
+    private UserAdminService CreateWith(IWorkOrderStore orders) => new(
+        _users, _groups, _hosts, _hostGroups, _cases,
+        new VisibilityService(
+            FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
+            _users, _groups, _access, _hosts, _cases, _settings),
+        _audit,
+        new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts),
+        new UserDisplayNameService(_settings), TestPermissionStamps.Shared, _history, _settings, orders);
+
+    private static WorkOrder OrderOf(long handlerId, string source, int eventId, DateTime? closed = null) => new()
+    {
+        SourceName = source, EventId = eventId, IssueLabel = $"{source} {eventId}", HandlerId = handlerId,
+        Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "admin",
+        CreatedAt = DateTime.Today.AddHours(-1), ClosedAt = closed
+    };
+
+    [Fact]
+    public void 停用帳號_回應帶進行中單數_已結案不算_0張時為0()
+    {
+        var orders = new FakeWorkOrderStore(_cases);
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "處理人", Active = true });
+        var service = CreateWith(orders);
+
+        // 沒有任何單：回 0，畫面不提示
+        Assert.Equal(0, service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false }).ActiveWorkOrders);
+
+        orders.Insert(OrderOf(user.UserId, "disk", 1));
+        orders.Insert(OrderOf(user.UserId, "disk", 2));
+        orders.Insert(OrderOf(user.UserId, "disk", 3, closed: DateTime.Now));
+        orders.Insert(OrderOf(user.UserId + 1, "disk", 4));
+
+        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false });
+
+        Assert.False(saved.Active);
+        Assert.Equal(2, saved.ActiveWorkOrders);
+    }
+
+    [Fact]
+    public void 暫停接單_回傳進行中單數_恢復時同樣回傳()
+    {
+        var orders = new FakeWorkOrderStore(_cases);
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "處理人", Active = true });
+        var service = CreateWith(orders);
+        Assert.Equal(0, service.SetDispatchPaused(user.UserId, true));
+
+        orders.Insert(OrderOf(user.UserId, "disk", 1));
+
+        Assert.Equal(1, service.SetDispatchPaused(user.UserId, true));
+        Assert.True(_users.Get(user.UserId)!.DispatchPaused);
+        Assert.Equal(1, service.SetDispatchPaused(user.UserId, false));
+    }
+
     [Fact]
     public void 改派歷程只認明確原處理人_不受案件最近掛接日移動影響()
     {

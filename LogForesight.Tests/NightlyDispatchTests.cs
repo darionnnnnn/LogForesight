@@ -381,7 +381,10 @@ public class NightlyDispatchTests
     [Fact]
     public void 人工群組續掛單_主機群組含5_掛入該單不建新單()
     {
-        AddHost("SRV-01", 5);
+        var host = AddHost("SRV-01", 5);
+        // 續掛要求處理人符合資格（啟用、有處理能力、未暫停、看得到這台）：不在派工池也可以
+        _candidates.Add(new DispatchCandidate { UserId = 11, Account = "handler11", InPool = false,
+            VisibleHostIds = new HashSet<long> { host.HostId } });
         var manualId = _orders.Insert(new WorkOrder
         {
             SourceName = Source, EventId = EventId, HandlerId = 11, Origin = WorkOrderOrigins.Manual,
@@ -493,7 +496,9 @@ public class NightlyDispatchTests
     [Fact]
     public void FlushRun_彙總列帶問題名稱_新建單與掛入既有單都有()
     {
-        AddHost("SRV-01", 5);
+        var host = AddHost("SRV-01", 5);
+        _candidates.Add(new DispatchCandidate { UserId = 11, Account = "handler11", InPool = false,
+            VisibleHostIds = new HashSet<long> { host.HostId } });
         var existingOrder = new WorkOrder
         {
             SourceName = Source, EventId = EventId, IssueLabel = "Disk 153 既有單", HandlerId = 11,

@@ -496,7 +496,7 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／`lf_work_orders`（僅已結案，事件 `lf_work_order_events` 隨單刪；進行中的單永不清） |
+| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案；處理人判定的不處理類、未取消、`blocks_redispatch` 不為 false，且同主機同問題沒有較新的已結案未取消案件者保留，它是「不再打擾」閘門的依據）／`lf_work_orders`（僅已結案，事件 `lf_work_order_events` 隨單刪；進行中的單永不清） |
 | `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
@@ -509,6 +509,10 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 `ReportRetentionDays`／`PrtgRetentionDays`）在讀取端（`RuntimeSettingsResolver`）另行收斂：
 合法值與 `RetentionDays` 取小；超出範圍的值回退為「內建預設與 `RetentionDays` 取小」——
 只回退不收斂的話，預設值本身就可能大於調短後的 `RetentionDays`，反而違反上限。
+
+**各段獨立執行**：`RetentionPruner.Run` 把清除分成歷史紀錄、紀錄詳情、執行歷程與匯入紀錄、稽核紀錄、NetIQ 最新取數狀態、權限異動紀錄、風險 log 暫存、處理狀態與處理歷程、報告全文、PRTG 鏡像資料、AI 診斷傾印檔十一段，
+每段各自包在失敗邊界內，一段擲例外只記那一段，其餘照常執行。回傳 `RetentionRunResult.FailedSegments`：分析執行的「保留期清除」階段在有段失敗時標為部分完成（階段說明列段名），全部成功才標成功。
+結果同時寫進 `retention_state` blob：`lastRunDate` 只在全部成功時更新，有段失敗時不更新（失敗那段等隔天重試；同日輪詢不重試，行程重啟除外）；`lastFailureAt` 與 `lastFailedSegments` 記下最近一次失敗，一趟全部成功才清空，系統健康的整體狀態（`retention`）讀這份。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
 NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只對跑分析的那台機器生效
@@ -738,6 +742,10 @@ lf_issue_cases                                       -- 問題案件：一台主
   day_sync_pending   bool NOT NULL DEFAULT 0         -- 逐日列尚待背景同步
   day_sync_intent    text NULL                       -- 待同步的意圖（狀態、操作者、時間、模式，JSON）
   cancelled          bool NOT NULL DEFAULT 0         -- 因取消交辦而結案；同步時把案件寫出的非結案日子改回明確未處理
+  blocks_redispatch  bool NULL                       -- 這次結案是否擋住之後的派工：靜音代為結案寫 0、管理者代為結案依勾選（「已處理」寫 0）；
+                                                     -- 處理人回覆與升級前舊資料為 NULL，NULL 視為擋（只有 0 不擋）
+  escalated_at       datetime NULL                   -- 狀態轉進 escalated（無法處理）的時間；轉出清空、已是 escalated 再回覆不重設、夜間掛接不動；
+                                                     -- 加欄的那次升級，以當下 updated_at 回填仍在上報中的成員；其餘舊資料為 NULL（管理者提醒退回用 updated_at 起算）
   prtg_evidence_json text NULL                       -- 案件的最小 PRTG 證據；父分析精簡或重建後仍可查
 
 lf_work_orders                                       -- 交辦單：一個問題 × 一批主機 × 一位處理人
@@ -760,6 +768,9 @@ lf_work_orders                                       -- 交辦單：一個問題
   last_appended_at   timestamp NULL                  -- 最近加入成員時間
   last_reply_at      timestamp NULL                  -- 處理人最近回覆時間；null＝未回覆
   admin_seen_at      timestamp NULL                  -- 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）
+  continuation_stopped_reason nvarchar(30) NULL      -- 續掛已停止的原因：handler_inactive | handler_paused | host_not_visible；null＝沒有被擋；
+                                                     -- 夜間派工以單句 UPDATE 寫入（整列 Save 不寫、不動 updated_at）
+  continuation_stopped_at     timestamp NULL         -- 最近一次續掛被擋的夜間派工時間；原因為 null 時一律 null
   closed_at          timestamp NULL                  -- 快取：全部成員結案時落盤
   closed_reason      nvarchar(30) NULL               -- all_closed | moved | cancelled | admin_closed
   updated_at         timestamp NOT NULL              -- 併發權杖

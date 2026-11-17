@@ -103,6 +103,11 @@ public class MailNotificationService
     private readonly IIssueCaseStore _issueCases;
     private readonly IKnownIssueRuleStore _ruleStore;
 
+    private readonly TimeProvider _clock;
+
+    /// <summary>上報信沒有收件人時寫系統稽核用；可為 null（測試不注入時只記 log）</summary>
+    private readonly AuditLogStore? _audit;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -121,8 +126,11 @@ public class MailNotificationService
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null,
-        HostDayWorkflowService? workflow = null, int acceptedMailContributionLimit = 12_000)
+        HostDayWorkflowService? workflow = null, int acceptedMailContributionLimit = 12_000,
+        TimeProvider? clock = null, AuditLogStore? audit = null)
     {
+        _clock = clock ?? TimeProvider.System;
+        _audit = audit;
         if (acceptedMailContributionLimit < 1) throw new ArgumentOutOfRangeException(nameof(acceptedMailContributionLimit));
         _acceptedMailContributionLimit = acceptedMailContributionLimit;
         _settingsStore = settingsStore;
@@ -185,7 +193,7 @@ public class MailNotificationService
                 var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settingsStore.Get()))!;
                 var settingsFingerprint = HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
                 var mailContextFingerprint = MailContextFingerprint(settings);
-                var to = DateTime.Today.AddDays(-1);
+                var to = _clock.LocalToday().AddDays(-1);
                 var from = to.AddDays(-(NotifyLookbackDays - 1));
                 var notificationDays = new List<NotificationWorkflowRecord>();
                 Dictionary<string, HostDayWorkflowVersion>? mailVersions = _workflow == null ? null : new(StringComparer.Ordinal);
@@ -319,12 +327,13 @@ public class MailNotificationService
     /// acceptance and the durable sent key prove delivery. This is read-only; it never infers
     /// formal PRTG acceptance or changes the stored outbox.
     /// </summary>
-    public static string EffectiveUrgentStatusForRead(MailUrgentIntent intent, IReadOnlySet<string> urgentSentKeys)
+    public static string EffectiveUrgentStatusForRead(MailUrgentIntent intent, IReadOnlySet<string> urgentSentKeys,
+        TimeProvider? clock = null)
     {
         if (intent.Status != "no-qualified-recipient" || !urgentSentKeys.Contains(intent.Key) || intent.Recipients.Count == 0)
             return intent.Status;
 
-        var nowUtc = DateTime.UtcNow;
+        var nowUtc = (clock ?? TimeProvider.System).UtcNow();
         var allRecipientsAccepted = intent.Recipients.All(pair => pair.Value == "smtp-accepted" &&
             HasCurrentSmtpAcceptance(intent, pair.Key, nowUtc));
         return allRecipientsAccepted ? "smtp-accepted" : intent.Status;
@@ -405,10 +414,11 @@ public class MailNotificationService
             if (recipients.Count == 0)
             {
                 Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
+                RecordEscalationWithoutRecipient(notice);
                 return;
             }
 
-            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+            var dateText = _clock.LocalToday().ToString("yyyy-MM-dd");
             var statsLine = $"負責人回覆無法處理：{notice.IssueLabel}";
             var subject = ExpandTemplate(settings.MailSubjectTemplate, notice.HostLabel, dateText, "-", "問題上報", statsLine);
 
@@ -423,8 +433,12 @@ public class MailNotificationService
             }
             body.AppendLine();
             if (notice.WorkOrderId is { } workOrderId)
-                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台『交辦單』頁檢視，可改派或代為結案）");
-            body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
+            {
+                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台的「{MailLinks.WorkOrdersName}」頁開啟該單，可改派或代為結案）");
+                AppendSiteLink(body, settings, MailLinks.WorkOrderPath(workOrderId), "交辦單連結");
+            }
+            body.AppendLine($"請至站台的「{MailLinks.RecordsName}」頁（依問題視角）檢視並處理。");
+            AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
 
             await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
         }
@@ -435,12 +449,95 @@ public class MailNotificationService
     }
 
     /// <summary>
+    /// 上報信沒有任何收件人：當下寫一筆系統稽核（含單號），並把單記進「沒有收件人」清單，之後由
+    /// <see cref="AdminReminderService"/> 彙整給管理者（交辦總覽顯示、夜間進摘要）。記錄失敗只記 log。
+    /// </summary>
+    private void RecordEscalationWithoutRecipient(EscalationNotice notice)
+    {
+        try
+        {
+            var now = _clock.LocalNow();
+            var target = notice.WorkOrderId is { } id ? $"交辦單號 {id}" : "（問題層級上報，沒有交辦單）";
+            _audit?.Append(new AuditEntry
+            {
+                OccurredAt = now,
+                UserId = null,
+                Account = AuditActions.SystemAccount,
+                Action = AuditActions.EscalationNoRecipient,
+                TargetKind = notice.WorkOrderId.HasValue ? "work_order" : null,
+                TargetId = notice.WorkOrderId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Summary = $"上報信沒有任何收件人（管理者都沒有 email）：{target}，問題 {notice.IssueLabel}，回覆人 {notice.ActorAccount}",
+                Result = AuditResult.Failed
+            });
+
+            if (notice.WorkOrderId is { } workOrderId)
+            {
+                _state.Update(s =>
+                {
+                    if (s.NoRecipientEscalations.Any(e => e.WorkOrderId == workOrderId)) return;
+                    s.NoRecipientEscalations.Add(new NoRecipientEscalation { WorkOrderId = workOrderId, At = now });
+                    // 上限：超過時丟最舊的（單早已被處理的機率最高）
+                    if (s.NoRecipientEscalations.Count > MailNotifyState.NoRecipientEscalationLimit)
+                        s.NoRecipientEscalations.RemoveRange(0, s.NoRecipientEscalations.Count - MailNotifyState.NoRecipientEscalationLimit);
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 記錄「上報信沒有收件人」失敗（不影響狀態變更本身）");
+        }
+    }
+
+    /// <summary>
+    /// 管理者提醒入列：每位收件人一筆 <see cref="WorkOrderOutboxKinds.AdminReminder"/>，進同一套每人摘要。
+    /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
+    /// </summary>
+    public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail,
+        IReadOnlyList<ReminderDetailItem>? detailItems = null)
+    {
+        try
+        {
+            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient == 0) return false;
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return false;
+
+            var now = _clock.LocalNow();
+            var items = recipientUserIds.Select(id => new WorkOrderOutboxItem
+            {
+                Kind = WorkOrderOutboxKinds.AdminReminder,
+                WorkOrderId = 0,
+                RecipientUserId = id,
+                EnqueuedAt = now,
+                ActorAccount = "system",
+                ReminderEscalated = escalated,
+                ReminderUnassignable = unassignable,
+                ReminderNoRecipient = noRecipient,
+                Detail = WorkOrderOutboxItem.ClampDetail(detail),
+                ReminderItems = detailItems is { Count: > 0 }
+                    ? detailItems.Take(WorkOrderOutboxItem.ReminderItemsMaxCount).Select(i => i.Clamped()).ToList()
+                    : null
+            }).ToList();
+
+            var dropped = _outbox.Enqueue(items);
+            if (dropped > 0) Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 管理者提醒入列失敗（不影響夜間派工本身）");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 交辦通知入列（取代即時單發）。MailEnabled 或 MailNotifyWorkOrders 關閉時不入列；收件人就是操作者時不入列。
     /// </summary>
     public void EnqueueWorkOrderNotice(string kind, long workOrderId, long recipientUserId, long actorUserId, string actorAccount,
-        int memberDelta = 0, string? reason = null, bool immediate = false)
+        int memberDelta = 0, string? reason = null, bool immediate = false,
+        string? status = null, bool blocksRedispatch = false, DateTime? until = null)
         => EnqueueWorkOrderNotices(
-            new[] { new WorkOrderNoticeRequest(kind, workOrderId, recipientUserId, memberDelta, reason, immediate) }, actorUserId, actorAccount);
+            new[] { new WorkOrderNoticeRequest(kind, workOrderId, recipientUserId, memberDelta, reason, immediate, status, blocksRedispatch, until) },
+            actorUserId, actorAccount);
 
     /// <summary>
     /// 多筆一次入列：outbox 是單一 blob，每次 Enqueue 都整份讀寫，建單迴圈（日層級指派、立即派工）要先收集再呼叫一次。
@@ -454,7 +551,7 @@ public class MailNotificationService
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
 
-            var now = DateTime.Now;
+            var now = _clock.LocalNow();
             var items = notices
                 .Where(n => n.RecipientUserId != actorUserId)
                 .Select(n => new WorkOrderOutboxItem
@@ -465,7 +562,10 @@ public class MailNotificationService
                     EnqueuedAt = now,
                     ActorAccount = actorAccount ?? "",
                     MemberDelta = n.MemberDelta,
-                    Reason = n.Reason,
+                    Reason = WorkOrderOutboxItem.ClampReason(n.Reason),
+                    Status = n.Status,
+                    BlocksRedispatch = n.BlocksRedispatch,
+                    Until = n.Until,
                     Immediate = n.Immediate,
                     NoEmail = false
                 })
@@ -496,7 +596,7 @@ public class MailNotificationService
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
 
             // 一趟夜間派工一次入列：逐筆入列會讓整份 outbox blob 重寫上百次
-            var now = DateTime.Now;
+            var now = _clock.LocalNow();
             var items = summary.PerHandler
                 .Where(pair => pair.Value != null)
                 .SelectMany(pair => pair.Value.Select(line => new WorkOrderOutboxItem
@@ -638,6 +738,8 @@ public class MailNotificationService
             .OrderBy(i => i.EnqueuedAt)
             .Select(i =>
             {
+                // 管理者提醒不屬於任何一張單，內容已在入列時組好
+                if (i.Kind == WorkOrderOutboxKinds.AdminReminder) return (Item: i, Order: (WorkOrderDigestOrder?)null);
                 if (!orderCache.TryGetValue(i.WorkOrderId, out var order))
                 {
                     order = LoadDigestOrder(i.WorkOrderId, getRules);
@@ -647,7 +749,7 @@ public class MailNotificationService
             })
             .ToList();
 
-        var (subjectSummary, text) = WorkOrderDigestBuilder.Build(rows);
+        var (subjectSummary, text) = WorkOrderDigestBuilder.Build(rows, settings.SiteBaseUrl, recipientId);
         var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", type, subjectSummary);
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
@@ -664,8 +766,23 @@ public class MailNotificationService
         var order = _workOrders.Get(workOrderId);
         if (order == null) return null;
 
-        var hostCount = _issueCases.CountByWorkOrder(workOrderId);
-        var hostNames = _issueCases.GetByWorkOrder(workOrderId, 0, 20).Select(c => c.HostName).ToList();
+        // 台數與主機名單與畫面同口徑：進行中成員、排除已停用主機（WorkOrderQueries.DisabledHostKeys 是唯一一份）
+        var disabledKeys = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
+        var hostCount = _workOrders.CountMembers(new[] { workOrderId }, disabledKeys).TryGetValue(workOrderId, out var counts) ? counts.Active : 0;
+        var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
+        // 查詢就帶進行中條件，已結案的成員不佔名額；停用主機仍在查詢後濾掉，所以逐頁取到湊滿 20 台或取完
+        var hostNames = new List<string>();
+        for (var page = 1; hostNames.Count < 20; page++)
+        {
+            var members = _issueCases.QueryMembers(new WorkOrderMemberQuery
+            {
+                WorkOrderId = workOrderId, Status = WorkOrderQueries.StatusActive, Page = page, PageSize = 200
+            });
+            hostNames.AddRange(members.Items
+                .Where(c => !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName)))
+                .Select(c => c.HostName).Take(20 - hostNames.Count));
+            if (members.Items.Count < 200 || page * 200 >= members.Total) break;
+        }
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);
@@ -676,7 +793,7 @@ public class MailNotificationService
     public async Task SendTestAsync(SmtpConnectionSpec connection, string from, List<string> recipients,
         string subjectTemplate, string bodyIntro, CancellationToken ct = default)
     {
-        var subject = ExpandTemplate(subjectTemplate, "測試", DateTime.Today.ToString("yyyy-MM-dd"), "-", "測試", "這是一封測試郵件");
+        var subject = ExpandTemplate(subjectTemplate, "測試", _clock.LocalToday().ToString("yyyy-MM-dd"), "-", "測試", "這是一封測試郵件");
         var bodyBuilder = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(bodyIntro)) bodyBuilder.AppendLine(bodyIntro).AppendLine();
         bodyBuilder.AppendLine("這是 LogForesight 的測試郵件，收到即代表 SMTP 設定正確可用。");
@@ -712,7 +829,7 @@ public class MailNotificationService
         // （查詢逾時等）最壞就是啟用前的歷史紀錄被補寄一輪，不能反過來弄掛設定儲存本身。
         try
         {
-            var to = DateTime.Today.AddDays(-1);
+            var to = _clock.LocalToday().AddDays(-1);
             var from = to.AddDays(-(NotifyLookbackDays - 1));
             var keys = _records.ListHostDates(from, to)
                 .Select(h => $"{h.HostId}|{h.Date:yyyy-MM-dd}")
@@ -965,7 +1082,7 @@ public class MailNotificationService
             var count = (view.ApprovedRecords ?? qualifying).Count(record => summaryKeys.Contains(RecordKey(record)) &&
                 RiskLevels.Rank(record.RiskLevel) >= RiskLevels.Rank(settings.MailMinRiskLevel));
             var statsLine = $"執行摘要：{count} 台主機達 {settings.MailMinRiskLevel} 風險以上";
-            var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", DateTime.Today.ToString("yyyy-MM-dd"),
+            var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", _clock.LocalToday().ToString("yyyy-MM-dd"),
                 settings.MailMinRiskLevel, "執行摘要", statsLine);
             var (rows, issueScope) = BuildRecipientIssueRows(issueRowsCache, "summary", view.Recipient ?? string.Empty,
                 from, to, view.VisibleHostIds, view.IssueScope);
@@ -1059,7 +1176,7 @@ public class MailNotificationService
         var state = _state.Get();
         _state.Update(s =>
         {
-            var cutoff = DateTime.UtcNow.AddDays(-Math.Max(14, settings.RetentionDays));
+            var cutoff = _clock.UtcNow().AddDays(-Math.Max(14, settings.RetentionDays));
             foreach (var key in s.UrgentOutbox.Where(p => p.Value.RecordDate < cutoff.Date &&
                          (p.Value.Status is "smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
                      .Select(p => p.Key).ToArray())
@@ -1083,17 +1200,17 @@ public class MailNotificationService
                     s.UrgentOutbox[key] = intent = new MailUrgentIntent
                     {
                         Key = key, HostId = record.HostId, ParentRecordId = record.RecordId,
-                        RecordDate = record.Date, CreatedAtUtc = DateTime.UtcNow,
+                        RecordDate = record.Date, CreatedAtUtc = _clock.UtcNow(),
                         SettingsRevision = settings.Revision, ProblemKeys = record.TopIssues.Select(i => i.EventKey).ToList()
                     };
                 if (intent.ParentRecordId == 0 && intent.Key == key)
                     intent.ParentRecordId = record.RecordId;
                 if (intent.CreatedAtUtc == default)
-                    intent.CreatedAtUtc = intent.UpdatedAtUtc == default ? DateTime.UtcNow : intent.UpdatedAtUtc;
+                    intent.CreatedAtUtc = intent.UpdatedAtUtc == default ? _clock.UtcNow() : intent.UpdatedAtUtc;
                 intent.WaitingReasonCode = null;
                 intent.WaitingSinceUtc = null;
                 if (intent.Status != "smtp-accepted") intent.Status = "pending";
-                intent.UpdatedAtUtc = DateTime.UtcNow;
+                intent.UpdatedAtUtc = _clock.UtcNow();
                 foreach (var email in order.Where(e => views[e].Detail?.Any(r => r.HostId == record.HostId && r.Date == record.Date) == true))
                     if (intent.Recipients.GetValueOrDefault(email) is not
                         ("smtp-accepted" or "sending-result-unknown" or "failed-or-unknown"))
@@ -1220,7 +1337,7 @@ public class MailNotificationService
                             : expected.All(e => success.GetValueOrDefault(e) ||
                                 intent.Recipients.GetValueOrDefault(e) == "smtp-accepted" ||
                                 intent.SmtpAcceptedAtUtc.ContainsKey(e)) ? "smtp-accepted" : "pending";
-                        intent.UpdatedAtUtc = DateTime.UtcNow;
+                        intent.UpdatedAtUtc = _clock.UtcNow();
                     }
                 });
             }, recheck: (email, view) => Recheck(email, view),
@@ -1239,7 +1356,7 @@ public class MailNotificationService
                         {
                             intent.Recipients[email] = "sending-result-unknown";
                             if (intent.Status != "smtp-accepted") intent.Status = "pending";
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
+                            intent.UpdatedAtUtc = _clock.UtcNow();
                         }
                 });
                 TrackWorkflowMail("urgent", detail, email, null, views, mailVersions, mailContextFingerprint);
@@ -1262,8 +1379,8 @@ public class MailNotificationService
                     {
                         var complete = attemptedUrgentRendered.GetValueOrDefault(email)?.IsComplete != false;
                         intent.Recipients[email] = accepted ? complete ? "smtp-accepted" : "not-sent" : "failed-or-unknown";
-                        if (accepted && complete) intent.SmtpAcceptedAtUtc[email] = DateTime.UtcNow;
-                        intent.UpdatedAtUtc = DateTime.UtcNow;
+                        if (accepted && complete) intent.SmtpAcceptedAtUtc[email] = _clock.UtcNow();
+                        intent.UpdatedAtUtc = _clock.UtcNow();
                     }
                 });
             },
@@ -1302,7 +1419,7 @@ public class MailNotificationService
                     set.Add(key);
                 }
             }
-            var cutoff = DateTime.Today.AddDays(-settings.RetentionDays);
+            var cutoff = _clock.LocalToday().AddDays(-settings.RetentionDays);
             set.RemoveWhere(key => IsBeforeCutoff(key, cutoff));
         });
     }
@@ -1398,7 +1515,7 @@ public class MailNotificationService
                     if (reservationId.Length > 0) _state.ReleasePreparedMailContributionReservation(reservationId);
                     throw;
                 }
-                if (reservationId.Length > 0 && !_state.MarkMailContributionAttemptStarted(reservationId, DateTime.UtcNow))
+                if (reservationId.Length > 0 && !_state.MarkMailContributionAttemptStarted(reservationId, _clock.UtcNow()))
                 {
                     _state.ReleasePreparedMailContributionReservation(reservationId);
                     recipientSuccess[email] = false;
@@ -1420,7 +1537,7 @@ public class MailNotificationService
                             MailSendOutcome.DefinitelyRejected => MailContributionReservationOutcome.DefinitelyRejected,
                             _ => MailContributionReservationOutcome.Unknown
                         };
-                        if (!_state.CompleteMailContributionReservation(reservationId, reservationOutcome, DateTime.UtcNow))
+                        if (!_state.CompleteMailContributionReservation(reservationId, reservationOutcome, _clock.UtcNow()))
                             throw new InvalidOperationException("mail-contribution-reservation-completion-failed");
                     }
                 }
@@ -1485,12 +1602,17 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(statsLine);
 
-        if (issueRows == null) return body.ToString();
+        if (issueRows == null)
+        {
+            AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
+            return body.ToString();
+        }
 
         body.AppendLine();
         AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
         body.AppendLine();
-        body.AppendLine("如需查看逐主機逐日明細，請至站台的問題查詢頁。");
+        body.AppendLine($"如需查看逐主機逐日明細，請至站台的「{MailLinks.RecordsName}」頁。");
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
         return body.ToString();
     }
 
@@ -1505,11 +1627,22 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(windowText);
 
-        if (issueRows == null) return body.ToString();
-
-        body.AppendLine();
-        AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
+        if (issueRows != null)
+        {
+            body.AppendLine();
+            AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
+        }
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
         return body.ToString();
+    }
+
+    /// <summary>
+    /// 站台連結行：設定了站台網址才寫，連結一律由 <see cref="MailLinks.Build"/> 組出（信件服務內不自行相接網址）。
+    /// 沒設定時什麼都不寫，信件與未設定時完全相同。
+    /// </summary>
+    private static void AppendSiteLink(StringBuilder body, SystemSettings settings, string relativePath, string label)
+    {
+        if (MailLinks.Build(settings.SiteBaseUrl, relativePath) is { } link) body.AppendLine($"{label}：{link}");
     }
 
     /// <summary>
@@ -1524,7 +1657,7 @@ public class MailNotificationService
         SystemSettings settings, string globalStatsLine, List<DailyAnalysisRecord>? detail,
         List<MailIssueRow>? issueRows, int issueRowTotal, MailContext ctx)
     {
-        var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+        var dateText = _clock.LocalToday().ToString("yyyy-MM-dd");
         var records = detail ?? new List<DailyAnalysisRecord>();
 
         if (records.Count == 0)
@@ -1533,7 +1666,8 @@ public class MailNotificationService
             var subj = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, RiskLevels.High, "高風險即時通知", globalStatsLine);
             var b = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) b.AppendLine(settings.MailBodyIntro).AppendLine();
-            b.AppendLine($"{globalStatsLine}，詳情請至站台檢視。");
+            b.AppendLine($"{globalStatsLine}，詳情請至站台的「{MailLinks.RecordsName}」頁檢視。");
+            AppendSiteLink(b, settings, MailLinks.RecordsPath, "問題查詢連結");
             return (subj, b.ToString());
         }
 
@@ -1564,8 +1698,11 @@ public class MailNotificationService
         }
         if (ordered.Count > UrgentBodyLineLimit)
         {
-            body.AppendLine($"  ……其餘 {ordered.Count - UrgentBodyLineLimit} 筆請至站台的問題查詢頁檢視。");
+            body.AppendLine($"  ……其餘 {ordered.Count - UrgentBodyLineLimit} 筆請至站台的「{MailLinks.RecordsName}」頁檢視。");
         }
+        body.AppendLine();
+        body.AppendLine($"完整內容請至站台的「{MailLinks.RecordsName}」頁。");
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
 
         // 判定依據（RiskBasis）不再附上——內容廣泛化（回饋十七輪批次B-3）
 
@@ -1991,7 +2128,7 @@ public class MailNotificationService
         var occupied = GetOccupiedMailContributionKeys().Count;
         var reservations = ledger.MailContributionReservations.Values;
         // 已逾時的 reserved 下一次預約時會被清掉，不算佔用中的預約（共用 store 的單一常數）
-        var reservedAfter = DateTime.UtcNow - MailNotifyStateStore.PreparedMailReservationLifetime;
+        var reservedAfter = _clock.UtcNow() - MailNotifyStateStore.PreparedMailReservationLifetime;
         lock (_ledgerFullLock)
             return new LogForesight.Web.Models.Dto.MailContributionLedgerDto
             {
@@ -2069,7 +2206,7 @@ public class MailNotificationService
                 keys.Add(AcceptedMailContributionKey(kind, recipient, item.HostId, item.Date,
                     item.ParentAndDecision, item.IssueEvidenceJson));
         }
-        var reservationId = _state.TryReserveMailContributionKeys(keys.ToArray(), DateTime.UtcNow,
+        var reservationId = _state.TryReserveMailContributionKeys(keys.ToArray(), _clock.UtcNow(),
             _acceptedMailContributionLimit);
         if (reservationId is null)
         {
@@ -2082,7 +2219,7 @@ public class MailNotificationService
                 bool warn;
                 lock (_ledgerFullLock)
                 {
-                    var nowUtc = DateTime.UtcNow;
+                    var nowUtc = _clock.UtcNow();
                     _ledgerLastFullAtUtc = nowUtc;
                     _ledgerLastFullRecipient = recipient;
                     warn = !_ledgerFullWarnedAtUtc.TryGetValue(recipient, out var lastWarn) || nowUtc - lastWarn >= LedgerFullWarnInterval;
@@ -2266,7 +2403,7 @@ public class MailNotificationService
             foreach (var (email, view) in views.Where(pair => pair.Value.Detail == null))
             {
                 if (!intent.Recipients.TryGetValue(email, out var recipientStatus) || recipientStatus != "smtp-accepted" ||
-                    !HasCurrentSmtpAcceptance(intent, email, DateTime.UtcNow))
+                    !HasCurrentSmtpAcceptance(intent, email, _clock.UtcNow()))
                     continue;
                 TrackWorkflowMail("urgent", [record], email, true, views, versions, mailContextFingerprint);
             }
@@ -2280,7 +2417,7 @@ public class MailNotificationService
         var state = _state.Get();
         var migrated = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         var heldLegacy = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        var now = DateTime.UtcNow;
+        var now = _clock.UtcNow();
         foreach (var record in records)
         {
             var recordKey = RecordKey(record);
@@ -2512,4 +2649,5 @@ public sealed record EscalationNotice(string IssueLabel, string HostLabel, strin
 
 /// <summary>一筆交辦通知的入列參數（操作者由呼叫端統一帶入，見 <see cref="MailNotificationService.EnqueueWorkOrderNotices"/>）</summary>
 public readonly record struct WorkOrderNoticeRequest(
-    string Kind, long WorkOrderId, long RecipientUserId, int MemberDelta = 0, string? Reason = null, bool Immediate = false);
+    string Kind, long WorkOrderId, long RecipientUserId, int MemberDelta = 0, string? Reason = null, bool Immediate = false,
+    string? Status = null, bool BlocksRedispatch = false, DateTime? Until = null);

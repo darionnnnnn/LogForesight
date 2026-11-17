@@ -15,6 +15,13 @@ export const MAX_DUE_DATE_DAYS = 90;
 
 export function statusMeta(value) { return HANDLING_STATUSES.find(s => s.value === value) ?? null; }
 
+/**
+ * 結案但沒有修好的三態（不處理、誤報、已知雜訊）：結案後同一台主機的同一個問題再出現時，
+ * 預設會重新派工；處理人回覆這三態會讓該問題之後不再派給任何人，管理者代為結案可自選是否停派。
+ * 與後端 DispatchContext 的停派判斷同一組狀態，改一邊要改另一邊。
+ */
+export function isNoFixClosure(value) { return value === 'wont_fix' || value === 'false_positive' || value === 'known_noise'; }
+
 /** 依條件取出目錄的子集（各頁的「只列結案類」「只列可回覆的」等篩選一律走這裡，不再寫死值與名稱） */
 export function statusesWhere(predicate) { return HANDLING_STATUSES.filter(predicate); }
 
@@ -25,4 +32,13 @@ export function statusVariant(value) { return statusMeta(value)?.variant ?? 'sec
 export function statusBadgeMeta(value) {
     const meta = statusMeta(value);
     return meta ? { label: meta.shortLabel, variant: meta.variant } : null;
+}
+
+/**
+ * 一張單「處理人可回覆的進行中台數」：進行中（counts.active）加上停用主機上的進行中（counts.activeOnDisabledHosts）。
+ * counts.active 不含停用主機，但回覆端點與成員清單（status=active）都涵蓋它們，
+ * 所以判斷「只剩一台」與回覆彈窗的台數要用這個合計，否則停用主機會被漏算而抓錯主機。
+ */
+export function replyableCount(counts) {
+    return (counts?.active ?? 0) + (counts?.activeOnDisabledHosts ?? 0);
 }

@@ -33,9 +33,15 @@ public sealed class DispatchDecision
     /// </summary>
     public string? Step { get; init; }
 
+    /// <summary>本次決策中被擋下的續掛：不論最後由誰接手（或沒人接），都要把原單標示「續掛已停止」</summary>
+    public IReadOnlyList<BlockedContinuation> BlockedContinuations { get; internal set; } = Array.Empty<BlockedContinuation>();
+
     /// <summary>⑥ 自動派工選中的處理人正是這台主機這個問題最近 30 天內以 resolved 結案的處理人（延續性偏好命中）＝復發</summary>
     public bool Recurrence { get; init; }
 }
+
+/// <summary>被擋下的一筆續掛（單、處理人、<see cref="ContinuationStopReasons"/> 原因代碼）</summary>
+public sealed record BlockedContinuation(long WorkOrderId, long HandlerId, string Reason);
 
 /// <summary>
 /// 派工決策純函式：給定一趟執行的 <see cref="DispatchContext"/>，判斷一個（主機, 問題）
@@ -60,6 +66,9 @@ public static class WorkOrderDispatcher
     public const string NoCandidateAllPaused = "all_paused";
     public const string NoCandidateNoVisibility = "no_visibility";
 
+    /// <summary>資格不符的原因：不在派工池（只有自動派工要求在池內，不會寫進單）</summary>
+    internal const string IneligibleNotInPool = "not_in_pool";
+
     public static DispatchDecision Decide(DispatchContext ctx, WebHost host, LogIssueSignature issue, DateTime recordDate)
     {
         // 派工脈絡建立失敗：本趟不派工，不查任何資料
@@ -78,11 +87,20 @@ public static class WorkOrderDispatcher
 
         var activeOrders = ctx.ActiveOrdersFor(issue.Source, issue.EventId);
 
-        // ④ 續掛：可續掛且範圍涵蓋此主機的進行中單，取處理人負載最輕者（進行中成員數→單數），
-        //    同分才取建立最晚者。群組分攤會產生同問題多張可續掛單，只取建立最晚者會把新主機全掛給同一人；
-        //    本趟決策經 Commit 累計負載，同一趟多台新主機會自然分散。
-        var attachable = activeOrders
-            .Where(o => o.AutoAttach && ScopeCovers(o, host))
+        // ④ 續掛：可續掛且範圍涵蓋此主機、處理人符合資格（啟用、有處理能力、未暫停、看得到這台）的進行中單，
+        //    取處理人負載最輕者（進行中成員數→單數），同分才取建立最晚者。群組分攤會產生同問題多張可續掛單，
+        //    只取建立最晚者會把新主機全掛給同一人；本趟決策經 Commit 累計負載，同一趟多台新主機會自然分散。
+        //    資格不符的單不續掛、記進 BlockedContinuations，決策往下走 ⑤⑥（被擋與否不影響其他單與後續步驟）。
+        var blocked = new List<BlockedContinuation>();
+        var attachableOrders = new List<WorkOrder>();
+        foreach (var order in activeOrders.Where(o => o.AutoAttach && ScopeCovers(o, host)))
+        {
+            var reason = IneligibleReason(ctx, order.HandlerId, host, requirePool: false);
+            if (reason == null) attachableOrders.Add(order);
+            else blocked.Add(new BlockedContinuation(order.WorkOrderId, order.HandlerId, reason));
+        }
+
+        var attachable = attachableOrders
             .OrderBy(o => ctx.LoadOf(o.HandlerId).ActiveMembers)
             .ThenBy(o => ctx.LoadOf(o.HandlerId).ActiveWorkOrders)
             .ThenByDescending(o => o.CreatedAt)
@@ -90,35 +108,35 @@ public static class WorkOrderDispatcher
             .FirstOrDefault();
         if (attachable != null)
         {
-            return new DispatchDecision
+            return WithBlocked(new DispatchDecision
             {
                 Kind = DispatchDecisionKind.AttachTo,
                 WorkOrderId = attachable.WorkOrderId,
                 HandlerId = attachable.HandlerId,
                 Step = StepAttach
-            };
+            }, blocked);
         }
 
-        // ⑤ 問題負責人（不要求在派工池、不檢查可見主機）
+        // ⑤ 問題負責人（基本資格；不要求在派工池、不檢查可見主機——管理者明確指定的負責人，系統不替他判斷看不看得到）
         var profile = ctx.ProfileFor(issue.Source, issue.EventId);
         if (profile != null)
         {
             var owners = profile.OwnerUserIds
                 .Distinct()
-                .Where(id => ctx.Pool.ByUserId.TryGetValue(id, out var c) && !c.Paused)
+                .Where(id => IneligibleReason(ctx, id, null, requirePool: false) == null)
                 .ToList();
             if (owners.Count > 0)
             {
                 var ownerId = SelectHandler(ctx, owners, issue.Source, issue.EventId, continuityHandlerId: null);
-                return AssignTo(ownerId, activeOrders, WorkOrderOrigins.OwnerRule, false);
+                return WithBlocked(AssignTo(ownerId, activeOrders, WorkOrderOrigins.OwnerRule, false), blocked);
             }
         }
 
-        // ⑥ 自動派工
-        if (!ctx.AutoDispatchEnabled) return Skip(SkipDisabled);
+        // ⑥ 自動派工（基本資格＋在派工池＋看得到這台）
+        if (!ctx.AutoDispatchEnabled) return WithBlocked(Skip(SkipDisabled), blocked);
 
         var candidates = ctx.Pool.ByUserId.Values
-            .Where(c => c.InPool && !c.Paused && c.VisibleHostIds.Contains(host.HostId))
+            .Where(c => IneligibleReason(ctx, c.UserId, host, requirePool: true) == null)
             .Select(c => c.UserId)
             .ToList();
         if (candidates.Count == 0)
@@ -126,18 +144,43 @@ public static class WorkOrderDispatcher
             var detail = ctx.Pool.PoolMemberCount == 0 ? NoCandidateNoPool
                 : ctx.Pool.ActivePoolMemberCount == 0 ? NoCandidateAllPaused
                 : NoCandidateNoVisibility;
-            return new DispatchDecision
+            return WithBlocked(new DispatchDecision
             {
                 Kind = DispatchDecisionKind.Skip,
                 SkipReason = SkipNoCandidate,
                 NoCandidateDetail = detail
-            };
+            }, blocked);
         }
 
         var continuityHandlerId = ctx.ContinuityHandlerFor(host.HostName, issue.Source, issue.EventId);
         var handlerId = SelectHandler(ctx, candidates, issue.Source, issue.EventId, continuityHandlerId);
         var recurrence = continuityHandlerId == handlerId;
-        return AssignTo(handlerId, activeOrders, WorkOrderOrigins.AutoDispatch, recurrence);
+        return WithBlocked(AssignTo(handlerId, activeOrders, WorkOrderOrigins.AutoDispatch, recurrence), blocked);
+    }
+
+    private static DispatchDecision WithBlocked(DispatchDecision decision, List<BlockedContinuation> blocked)
+    {
+        if (blocked.Count > 0) decision.BlockedContinuations = blocked;
+        return decision;
+    }
+
+    /// <summary>
+    /// 「這個人現在能不能接這個問題」的唯一判定（續掛、問題負責人、自動派工共用）。符合資格回 null，否則回原因代碼：
+    /// <list type="bullet">
+    /// <item>不在候選人快照（已停用，或不具處理能力）→ <see cref="ContinuationStopReasons.HandlerInactive"/></item>
+    /// <item>暫停接單 → <see cref="ContinuationStopReasons.HandlerPaused"/></item>
+    /// <item><paramref name="requirePool"/>（只有自動派工）且不在派工池 → <see cref="IneligibleNotInPool"/></item>
+    /// <item><paramref name="mustSee"/> 非 null（續掛、自動派工）且看不到該主機 → <see cref="ContinuationStopReasons.HostNotVisible"/></item>
+    /// </list>
+    /// 「問題負責人」路徑傳 <c>mustSee: null</c>：管理者明確指定的負責人不檢查可見主機（刻意設計）。
+    /// </summary>
+    internal static string? IneligibleReason(DispatchContext ctx, long userId, WebHost? mustSee, bool requirePool)
+    {
+        if (!ctx.Pool.ByUserId.TryGetValue(userId, out var candidate)) return ContinuationStopReasons.HandlerInactive;
+        if (candidate.Paused) return ContinuationStopReasons.HandlerPaused;
+        if (requirePool && !candidate.InPool) return IneligibleNotInPool;
+        if (mustSee != null && !candidate.VisibleHostIds.Contains(mustSee.HostId)) return ContinuationStopReasons.HostNotVisible;
+        return null;
     }
 
     private static bool ScopeCovers(WorkOrder order, WebHost host) => order.ScopeKind switch

@@ -521,6 +521,45 @@ public class VisibilityServiceTests
     }
 
     [Fact]
+    public void 案件授與_B6d_同主機一件取消一件進行中_仍看得到且只看得到進行中那個問題()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c-cancelled", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.Open, ClosedAt = DateTime.Now, Cancelled = true
+        });
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c-active", HostName = xxHost.HostName, IssueKey = "App|cpu|77|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress
+        });
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        Assert.True(service.IsCaseGrantOnly(xxHost.HostId));
+        var restriction = service.GetIssueKeyRestriction(xxHost.HostId);
+        Assert.NotNull(restriction);
+        Assert.Equal(new[] { "App|cpu|77|1" }, restriction!.ToArray());
+    }
+
+    [Fact]
+    public void 案件授與_只剩取消的案件_沒有授與()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c-cancelled", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.Open, ClosedAt = DateTime.Now, Cancelled = true
+        });
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        Assert.False(service.IsCaseGrantOnly(xxHost.HostId));
+        Assert.Empty(service.GetCaseGrantHostNames());
+    }
+
+    [Fact]
     public void 案件授與_不載入使用者全部案件且同主機只查一次()
     {
         var (user, _, xxHost) = SetupTwoDepartments();

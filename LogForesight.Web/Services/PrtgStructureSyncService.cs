@@ -239,6 +239,7 @@ public class PrtgStructureSyncService
             LastMappedHosts = last?.MapMappedHosts,
             LastUnmappedHosts = last?.MapUnmappedHosts,
             LastNameMismatch = last?.MapNameMismatch,
+            LastWarnings = last?.Warnings.Select(w => w.Message).ToList() ?? new List<string>(),
             LastSource = last?.Source
         };
     }
@@ -365,11 +366,12 @@ public class PrtgStructureSyncService
         }
         catch (Exception ex)
         {
-            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            Log.Warn(ex, "初始化 PRTG 連線失敗");
+            _state.AppendLine($"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}");
             _cts = null;
             cts.Dispose();
             _state.EndRun(false);
-            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            error = $"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}";
             return false;
         }
 
@@ -405,7 +407,7 @@ public class PrtgStructureSyncService
                     parentOwnsRun: _state.OwnsRun);
 
                 Persist(status);
-                operation.CompletedStage("結構同步結果已保存");
+                operation.CompletedStage("結構同步結果已儲存");
                 success = status.Success;
                 failure = status.ErrorMessage;
                 if (success) _versionStamp.Bump();
@@ -429,22 +431,24 @@ public class PrtgStructureSyncService
         }
         catch (Exception ex)
         {
-            console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
+            Log.Error(ex, "PRTG 結構同步發生未預期錯誤");
+            console.WriteLine("同步過程發生未預期錯誤；詳細原因見記錄檔。");
             success = false;
-            failure = ex.Message;
+            failure = "同步過程發生未預期錯誤；詳細原因見記錄檔。";
             try
             {
                 Persist(new PrtgStructureSyncStatus
                 {
                     CompletedAt = DateTime.Now,
                     Success = false,
-                    ErrorMessage = ex.Message,
+                    ErrorMessage = failure,
                     MapDate = DateTime.Today
                 });
             }
             catch (Exception persistEx)
             {
-                console.WriteLine($"保存失敗狀態時發生錯誤：{persistEx.Message}");
+                Log.Warn(persistEx, "PRTG 結構同步：儲存失敗狀態時發生錯誤");
+                console.WriteLine("儲存失敗狀態時發生錯誤；詳細原因見記錄檔。");
             }
         }
         finally

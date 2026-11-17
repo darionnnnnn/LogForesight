@@ -237,4 +237,44 @@ public class HelpContentServiceTests
 
         Assert.True(problems.Count == 0, "說明書使用者版與 AI 版 H1 不同步：\n" + string.Join("\n", problems));
     }
+    // ── 第 76-2 輪批次 F2：章節條件支援「任一能力」 ────────────────────────────
+
+    private static HashSet<LogForesight.Web.Auth.Capability> Caps(params LogForesight.Web.Auth.Capability[] caps) => new(caps);
+
+    [Fact]
+    public void F2a_兩個能力的章節_有其中一個就看得到_都沒有就看不到且連結被剪除()
+    {
+        var scheduler = _service.Chapters.Single(c => c.Id == "scheduler");
+        Assert.Equal(new[] { "DevMonitor", "Maintain" }, scheduler.Requires);
+
+        foreach (var only in new[] { LogForesight.Web.Auth.Capability.DevMonitor, LogForesight.Web.Auth.Capability.Maintain })
+        {
+            var manual = _service.GetManual(Caps(only));
+            Assert.Contains(manual.Chapters, c => c.Id == "scheduler");
+            // 公開章節的相關連結仍指到排程章
+            Assert.Contains("scheduler", manual.Chapters.Single(c => c.Id == "faq").Related);
+        }
+
+        var none = _service.GetManual(Caps(LogForesight.Web.Auth.Capability.Handle, LogForesight.Web.Auth.Capability.ViewAll));
+        Assert.DoesNotContain(none.Chapters, c => c.Id == "scheduler");
+        Assert.DoesNotContain("scheduler", none.Chapters.Single(c => c.Id == "faq").Related);
+        Assert.All(none.Chapters, c => Assert.DoesNotContain("scheduler", c.Related));
+    }
+
+    [Fact]
+    public void F2b_Dev看得到排程章_Manager與Dev看不到權限異動章_稽核章要ViewAudit()
+    {
+        var dev = LogForesight.Web.Auth.RoleCapabilityMap.For(LogForesight.Core.Models.UserRole.Dev);
+        var manager = LogForesight.Web.Auth.RoleCapabilityMap.For(LogForesight.Core.Models.UserRole.Manager);
+        Assert.Contains(_service.GetManual(dev).Chapters, c => c.Id == "scheduler");
+        Assert.DoesNotContain(_service.GetManual(manager).Chapters, c => c.Id == "scheduler");
+        Assert.DoesNotContain(_service.GetManual(dev).Chapters, c => c.Id == "permission-changes");
+        Assert.DoesNotContain(_service.GetManual(manager).Chapters, c => c.Id == "permission-changes");
+
+        Assert.Equal(new[] { "ConfirmPermission" }, _service.Chapters.Single(c => c.Id == "permission-changes").Requires);
+        Assert.Equal(new[] { "ViewAudit" }, _service.Chapters.Single(c => c.Id == "audit").Requires);
+        // 只有 Maintain（沒有 ViewAudit）看不到稽核章；救援帳號有 Maintain＋ViewAudit
+        Assert.DoesNotContain(_service.GetManual(Caps(LogForesight.Web.Auth.Capability.Maintain)).Chapters, c => c.Id == "audit");
+        Assert.Contains(_service.GetManual(LogForesight.Web.Auth.RoleCapabilityMap.ForServerAdmin()).Chapters, c => c.Id == "audit");
+    }
 }

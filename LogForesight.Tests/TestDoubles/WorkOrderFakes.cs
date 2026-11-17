@@ -92,6 +92,17 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         if (index >= 0) _orders[index].AdminSeenAt = seenAt;
     }
 
+    public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
+    {
+        foreach (var u in updates)
+        {
+            var index = _orders.FindIndex(o => o.WorkOrderId == u.WorkOrderId);
+            if (index < 0) continue;
+            _orders[index].ContinuationStoppedReason = u.Reason;
+            _orders[index].ContinuationStoppedAt = u.Reason == null ? null : u.At;
+        }
+    }
+
     public int CountUnreadReplies() => _orders.Count(o => o.HasUnreadReply);
 
     public virtual void AppendEvent(WorkOrderEvent evt)
@@ -108,7 +119,10 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     public List<WorkOrderEvent> ListEvents(long workOrderId) =>
         _events.Where(e => e.WorkOrderId == workOrderId).OrderBy(e => e.CreatedAt).ThenBy(e => e.EventId).ToList();
 
-    public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds)
+    private static bool Excluded(IssueCase c, IReadOnlyCollection<string>? keys) =>
+        keys != null && keys.Contains(HostNameKey.Of(c.HostName));
+
+    public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         var result = new Dictionary<long, WorkOrderMemberCounts>();
         foreach (var id in workOrderIds.Distinct())
@@ -116,17 +130,20 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             var members = _cases.GetByWorkOrder(id, 0, int.MaxValue);
             // 同 EF 版 GROUP BY：零成員的單不出現在結果裡
             if (members.Count == 0) continue;
-            var active = members.Count(c => c.ClosedAt == null);
+            var live = members.Where(c => !Excluded(c, excludedHostKeys)).ToList();
+            var active = live.Count(c => c.ClosedAt == null);
+            var onDisabled = members.Count(c => c.ClosedAt == null && Excluded(c, excludedHostKeys));
             result[id] = new WorkOrderMemberCounts
             {
                 Total = members.Count,
                 Active = active,
-                Closed = members.Count - active,
-                Escalated = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
-                InProgress = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
-                Observing = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
-                Open = members.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
-                Overdue = members.Count(c => WorkOrderQueries.IsOverdue(c, DateTime.Today)),
+                ActiveOnDisabledHosts = onDisabled,
+                Closed = members.Count - active - onDisabled,
+                Escalated = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
+                InProgress = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
+                Observing = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
+                Open = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
+                Overdue = live.Count(c => WorkOrderQueries.IsOverdue(c, DateTime.Today)),
                 DaySyncPending = members.Count(c => c.DaySyncPending)
             };
         }
@@ -151,7 +168,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         if (q.UnreadOnly) query = query.Where(o => o.HasUnreadReply);
 
         List<IssueCase> ActiveMembers(WorkOrder o) =>
-            _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Where(c => c.ClosedAt == null).ToList();
+            _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Where(c => c.ClosedAt == null && !Excluded(c, q.ExcludedHostKeys)).ToList();
 
         query = q.Status switch
         {
@@ -188,7 +205,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>同 EF 版：母體＝進行中單＋近 7 日結案單，依處理人分組</summary>
-    public List<HandlerLoad> LoadBoard()
+    public List<HandlerLoad> LoadBoard(IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         var today = DateTime.Today;
         var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
@@ -200,7 +217,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
                 var active = g.Where(o => o.ClosedAt == null).ToList();
                 var activeMembers = active
                     .SelectMany(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue))
-                    .Where(c => c.ClosedAt == null)
+                    .Where(c => c.ClosedAt == null && !Excluded(c, excludedHostKeys))
                     .ToList();
                 return new HandlerLoad
                 {
@@ -222,14 +239,14 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         && keys.Contains(IssueExclusion.CompositeKey(o.SourceName, o.EventId.Value));
 
     /// <summary>同 EF 版：只算該處理人的進行中單（排除暫停單）；沒有進行中單回全 0</summary>
-    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys)
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys, IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         var today = DateTime.Today;
         var all = _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).ToList();
         var active = all.Where(o => !KeyIn(o, pausedKeys)).ToList();
         var members = active
             .SelectMany(o => _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue))
-            .Where(c => c.ClosedAt == null)
+            .Where(c => c.ClosedAt == null && !Excluded(c, excludedHostKeys))
             .ToList();
         return new WorkOrderHandlerSummary
         {
@@ -281,6 +298,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         HandlerId = o.HandlerId, PreviousHandlerId = o.PreviousHandlerId, Origin = o.Origin, ScopeKind = o.ScopeKind, ScopeGroupIds = o.ScopeGroupIds.ToList(),
         AutoAttach = o.AutoAttach, Note = o.Note, DueDate = o.DueDate, CreatedById = o.CreatedById,
         CreatedByAccount = o.CreatedByAccount, CreatedAt = o.CreatedAt, LastAppendedAt = o.LastAppendedAt,
-        LastReplyAt = o.LastReplyAt, AdminSeenAt = o.AdminSeenAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
+        LastReplyAt = o.LastReplyAt, AdminSeenAt = o.AdminSeenAt,
+        ContinuationStoppedReason = o.ContinuationStoppedReason, ContinuationStoppedAt = o.ContinuationStoppedAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
     };
 }

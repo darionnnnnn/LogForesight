@@ -22,10 +22,12 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly TimeProvider _clock;
 
-    public EfIssueCaseStore(Func<LfDbContext> contextFactory)
+    public EfIssueCaseStore(Func<LfDbContext> contextFactory, TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public IssueCase? GetOpen(string hostName, string issueKey)
@@ -96,7 +98,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var key = HostNameKey.Of(hostName);
         using var ctx = _contextFactory();
         return ctx.IssueCases.AsNoTracking()
-            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key);
+            .Any(c => c.HandlerId == handlerId && c.HostNameKey == key && !c.Cancelled);
     }
 
     public HashSet<string> IssueKeysOnHost(long handlerId, string hostName)
@@ -104,7 +106,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var key = HostNameKey.Of(hostName);
         using var ctx = _contextFactory();
         var keys = ctx.IssueCases.AsNoTracking()
-            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key)
+            .Where(c => c.HandlerId == handlerId && c.HostNameKey == key && !c.Cancelled)
             .Select(c => c.IssueKey)
             .ToList();
         return new HashSet<string>(keys, IssueSignatureKeyComparer.Instance);
@@ -114,7 +116,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     {
         using var ctx = _contextFactory();
         return ctx.IssueCases.AsNoTracking()
-            .Where(c => c.HandlerId == handlerId)
+            .Where(c => c.HandlerId == handlerId && !c.Cancelled)
             .Select(c => c.HostName)
             .Distinct()
             .OrderBy(h => h)
@@ -246,6 +248,8 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.DaySyncPending = issueCase.DaySyncPending;
         row.DaySyncIntent = issueCase.DaySyncIntent == null ? null : SerializeIntent(issueCase.DaySyncIntent);
         row.Cancelled = issueCase.Cancelled;
+        row.BlocksRedispatch = issueCase.BlocksRedispatch;
+        row.EscalatedAt = issueCase.EscalatedAt;
 
         if (row.SourceKey != null) return;
         var parsed = EfWorkOrderStore.ParseIssueColumns(row.IssueKey);
@@ -336,7 +340,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 
         if (q.HostNameKeys == null)
         {
-            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today);
+            var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday());
             var total = all.Count();
             var rows = all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId).Skip(skip).Take(q.PageSize).ToList();
             return (rows.Select(ToModel).ToList(), total);
@@ -346,7 +350,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var matched = new List<(string HostNameKey, string CaseId)>();
         foreach (var batch in keys.Chunk(HostBatchSize))
         {
-            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, DateTime.Today)
+            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday())
                 .Where(c => batch.Contains(c.HostNameKey))
                 .Select(c => new { c.HostNameKey, c.CaseId })
                 .ToList()
@@ -444,24 +448,38 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// 用日期把它清掉等於幫忙把爛帳藏起來。
     ///
     /// 結案時間才是案件自己的生命週期終點，也才是「可以忘記了」的正確判準。
+    /// 例外：處理人判定的不處理類且仍是該鍵最新案件者不過期（見 <see cref="Expired"/>）。
     /// </summary>
     public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
 
     /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
     internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<string>(_contextFactory,
-            (ctx, take) => ctx.IssueCases
-                .Where(c => c.ClosedAt != null && c.ClosedAt < cutoff)
+            (ctx, take) => Expired(ctx, cutoff)
                 .OrderBy(c => c.ClosedAt)
                 .Select(c => c.CaseId)
                 .Take(take)
                 .ToList(),
             (ctx, ids) => ctx.IssueCases.Where(c => ids.Contains(c.CaseId)).ExecuteDelete(),
-            ctx => ctx.IssueCases.Count(c => c.ClosedAt != null && c.ClosedAt < cutoff),
+            ctx => Expired(ctx, cutoff).Count(),
             "已結案的問題案件", maxRows, batchSize);
+    }
+
+    /// <summary>
+    /// 可清除的已結案案件：結案早於 cutoff，**但**保留「處理人判定的不處理類且仍是該（主機, 問題）最新案件」——
+    /// 這種案件是「不再打擾」閘門與待派頁恢復清單的依據（判定見 DispatchContext.DismissedCases：不處理類狀態、BlocksRedispatch 不是 false、
+    /// 該鍵最新的未取消案件），刪掉它問題會重新派工、也從恢復清單消失。以 NOT EXISTS 較新的同鍵未取消且已結案案件表達（較新案件仍進行中不算取代：它之後若被取消，閘門就要靠這筆），兩個後端都能翻譯。
+    /// </summary>
+    internal static IQueryable<IssueCaseRow> Expired(LfDbContext ctx, DateTime cutoff)
+    {
+        var dismissals = IssueHandlingStatuses.Dismissals;
+        return ctx.IssueCases.Where(c => c.ClosedAt != null && c.ClosedAt < cutoff
+            && !(dismissals.Contains(c.Status) && !c.Cancelled && c.BlocksRedispatch != false
+                 && !ctx.IssueCases.Any(n => n.HostNameKey == c.HostNameKey && n.IssueKey == c.IssueKey
+                                             && !n.Cancelled && n.ClosedAt != null && n.CreatedAt > c.CreatedAt)));
     }
 
     private static IssueCase ToModel(IssueCaseRow row) => new()
@@ -488,7 +506,9 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         DaySyncIntent = row.DaySyncIntent == null
             ? null
             : JsonSerializer.Deserialize<CaseDayIntent>(row.DaySyncIntent, LfJsonOptions.Compact),
-        Cancelled = row.Cancelled
+        Cancelled = row.Cancelled,
+        BlocksRedispatch = row.BlocksRedispatch,
+        EscalatedAt = row.EscalatedAt
     };
 
     /// <summary>意圖的序列化單點：寫入與「未變更才清」的比對必須用同一份選項，否則字串永遠不相等</summary>

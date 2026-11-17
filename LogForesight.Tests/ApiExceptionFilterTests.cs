@@ -53,6 +53,83 @@ public class ApiExceptionFilterTests
         l.StartsWith("Warn|") || l.StartsWith("Error|") || l.StartsWith("Fatal|");
 
     [Fact]
+    public void 協調器規則例外_回400驗證錯誤與原中文訊息_不記Error()
+    {
+        var ctx = NewContext(new LogForesight.Core.Persistence.WorkOrderRuleException("交辦單 1 已結案。"), aborted: false);
+        var logs = RunFilter(ctx);
+
+        var result = Assert.IsType<ObjectResult>(ctx.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        var body = Assert.IsType<ApiResponse<object>>(result.Value);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, body.Error!.Code);
+        Assert.Equal("交辦單 1 已結案。", body.Error.Message);
+        Assert.DoesNotContain(logs, l => l.StartsWith("Error|") || l.StartsWith("Fatal|"));
+    }
+
+    [Fact]
+    public void 框架層InvalidOperationException仍是500固定說明_原文不外洩()
+    {
+        var ctx = NewContext(new InvalidOperationException("Sequence contains no elements"), aborted: false);
+        RunFilter(ctx);
+
+        var result = Assert.IsType<ObjectResult>(ctx.Result);
+        Assert.Equal(StatusCodes.Status500InternalServerError, result.StatusCode);
+        Assert.DoesNotContain("Sequence", Assert.IsType<ApiResponse<object>>(result.Value).Error!.Message);
+    }
+
+    [Fact]
+    public void NetiqDiscoveryException回400_PrtgScopeConflictException回409()
+    {
+        var discovery = NewContext(new LogForesight.Web.Services.NetiqDiscoveryException("網段格式不正確。"), aborted: false);
+        RunFilter(discovery);
+        Assert.Equal(StatusCodes.Status400BadRequest, Assert.IsType<ObjectResult>(discovery.Result).StatusCode);
+
+        var conflict = NewContext(new LogForesight.Core.Persistence.Sql.PrtgScopeConflictException(), aborted: false);
+        RunFilter(conflict);
+        Assert.Equal(StatusCodes.Status409Conflict, Assert.IsType<ObjectResult>(conflict.Result).StatusCode);
+    }
+
+    /// <summary>
+    /// 守門：<see cref="UserFacingMessage"/> 登錄的專屬例外型別，過濾器都要有對應的 arm（否則訊息雖標為可給使用者看，
+    /// 沒被服務層攔下時會變成 500 固定說明）。目前沒有例外理由；真有不需要對應的型別要在這裡明列並寫理由。
+    /// </summary>
+    [Fact]
+    public void UserFacingMessage登錄的型別在ApiExceptionFilter都有對應()
+    {
+        var registered = (IEnumerable<Type>)typeof(UserFacingMessage)
+            .GetField("RegisteredTypes", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetValue(null)!;
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        var filterSource = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Filters", "ApiExceptionFilter.cs"));
+        var exempt = new Dictionary<Type, string>();
+
+        var missing = registered
+            .Where(t => !exempt.ContainsKey(t) && !HasSwitchArm(filterSource, t.Name))
+            .Select(t => t.FullName).ToList();
+        Assert.True(missing.Count == 0, "以下已登錄為使用者可見的例外型別在 ApiExceptionFilter 沒有對應 arm：\n" + string.Join("\n", missing));
+    }
+
+    /// <summary>過濾器 switch 的型別 pattern arm：「型別名 變數 =&gt;」。先剝掉註解，註解裡提到型別名不算有對應。</summary>
+    private static bool HasSwitchArm(string source, string typeName)
+    {
+        var code = System.Text.RegularExpressions.Regex.Replace(source, @"//[^\n]*|/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        return System.Text.RegularExpressions.Regex.IsMatch(code, @"(?<![\w])" + System.Text.RegularExpressions.Regex.Escape(typeName) + @"\s+\w+\s*(when\s[^=]*)?=>");
+    }
+
+    [Fact]
+    public void Switch對應判定_只在註解出現型別名時比不到_真正的arm比得到()
+    {
+        const string onlyComment = "// FooException foo => (400)\n/// <see cref=\"FooException\"/> FooException \nvar x = 1;";
+        Assert.False(HasSwitchArm(onlyComment, "FooException"));
+        const string realArm = "context.Exception switch\n{\n    LogForesight.Core.FooException foo => (400, \"x\", foo.Message),\n    _ => (500, \"y\", \"z\")\n};";
+        Assert.True(HasSwitchArm(realArm, "FooException"));
+        const string withWhen = "OperationCanceledException when ok => (1)";
+        Assert.True(HasSwitchArm("BarException bar when ok => (1)", "BarException"));
+        Assert.False(HasSwitchArm(withWhen, "FooException"));
+    }
+
+    [Fact]
     public void RequestAborted已取消_回499且不記Warn以上()
     {
         var ctx = NewContext(new OperationCanceledException(), aborted: true);

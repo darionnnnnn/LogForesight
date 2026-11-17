@@ -4,7 +4,9 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
-import { statusesWhere, statusBadgeMeta } from '../core/handling-statuses.js';
+import { statusesWhere, statusBadgeMeta, isNoFixClosure, replyableCount } from '../core/handling-statuses.js';
+import { mailNotifyText } from '../core/mail-notify.js';
+import { exclusive } from '../core/async-guards.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -23,7 +25,7 @@ import {
     icon,
     candidatesToUserOptions
 } from '../core/ui.js';
-import { metaLine, roleText, disclosure, fact } from '../core/elements.js';
+import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
 
@@ -152,6 +154,49 @@ function renderBadges(detail) {
     badgesEl.replaceChildren(...badges);
 }
 
+/** 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標） */
+function renderMemberHostCell(item) {
+    const name = item.hostId ? document.createElement('a') : roleText('lf-text-title', item.hostName || '');
+    if (item.hostId) {
+        name.href = appUrl('/hosts/' + item.hostId);
+        name.className = 'lf-text-title';
+        name.textContent = item.hostName || '';
+    }
+    // 停用主機上的進行中成員不計入處理人的台數：成員列標出來，管理者才知道為什麼數字對不上
+    if (!item.hostDisabled || item.closedAt) return name;
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
+    wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
+    return wrap;
+}
+
+/** 檢視者是管理側（具 Assign 或 ViewAll）：處理人視角不顯示寫給管理者的標示 */
+function viewerIsAdminLike() {
+    return hasCapability(currentUser, 'Assign') || hasCapability(currentUser, 'ViewAll');
+}
+
+/**
+ * 成員台數旁的補充事實（有值才出現）：停用主機上的成員不計入左邊的台數，處理人目前看不到的台數是讀取時算的。
+ * 兩者都是 0 時回空陣列，頁首不多一個字。
+ */
+function memberGapFacts(detail) {
+    const facts = [];
+    const disabled = detail.counts?.activeOnDisabledHosts ?? 0;
+    if (disabled > 0) facts.push(fact('主機已停用', `${disabled} 台（不計入處理人的台數）`));
+    // 「處理人看不到」是寫給管理者的訊息：處理人本人看了只會困惑（他無從處理），只對具 Assign／ViewAll 的檢視者出現
+    const unseen = detail.handlerUnseenMemberCount ?? 0;
+    if (unseen > 0 && viewerIsAdminLike()) facts.push(fact('處理人目前看不到', `${unseen} 台`));
+    return facts;
+}
+
+/** 續掛已停止：只在後端標了 continuationStopped（進行中單）時出現，顯示原因的顯示名稱 */
+function continuationStopNote(detail) {
+    if (!detail.continuationStopped || !viewerIsAdminLike()) return null;   // 說明是寫給管理者的（恢復資格是管理動作）
+    const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
+    const when = detail.continuationStoppedAt ? `（${formatDate(detail.continuationStoppedAt)}）` : '';
+    return statusNote('info', `續掛已停止${when}：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
+}
+
 /**
  * 頁首卡（DESIGN-SYSTEM §8.5）：單號與問題為主標，狀態與來源同一列，管理動作在右側；
  * 判斷層（處理人、成員、期限、最近回覆）收成一行 metaLine，
@@ -203,9 +248,13 @@ function renderHeader(detail) {
     nodes.push(metaLine([
         handlerWrap,
         fact('成員', membersText),
+        ...memberGapFacts(detail),
         fact('期限', detail.dueDate ? formatDate(detail.dueDate) : '—'),
         fact('最近回覆', lastReplyText)
     ]));
+
+    const stopNote = continuationStopNote(detail);
+    if (stopNote) nodes.push(stopNote);
 
     // 範圍
     const scopeKindLower = String(detail.scopeKind).toLowerCase();
@@ -240,16 +289,37 @@ function renderHeader(detail) {
 
 // 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
-function openAdminCloseModal() {
+/**
+ * 勾選框與後果說明指稱的對象（同一份，兩處不各拼一份）：台數含停用主機；
+ * 只有單一問題的單（有 source）才能說「這個問題」，多問題單改指稱主機上的問題。
+ */
+function blockTargetText(activeCount, singleIssue) {
+    const hosts = activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機';
+    return singleIssue ? `${hosts}的這個問題` : `${hosts}上的問題`;
+}
+
+async function buildAdminCloseModal() {
+    // 結案通知要不要寄取決於交辦單通知開關：依實際設定說明，不承諾不一定寄出的信；讀不到設定就用中性句
+    const mailSettings = await getDisplaySettings();
+    // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
+    const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
+    const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
     const body = document.createElement('div');
     const form = document.createElement('form');
 
     const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label';
+    statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '結案狀態';
+    statusLabel.htmlFor = 'wo-close-status';
 
+    // 不預選：代為結案影響整張單，結案狀態要管理者自己選一次
     const statusSelect = document.createElement('select');
+    statusSelect.id = 'wo-close-status';
     statusSelect.className = 'form-select form-select-sm mb-3';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '請選擇結案狀態';
+    statusSelect.appendChild(placeholder);
     const closeStatuses = statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }));
     for (const opt of closeStatuses) {
         const option = document.createElement('option');
@@ -257,23 +327,76 @@ function openAdminCloseModal() {
         option.textContent = opt.label;
         statusSelect.appendChild(option);
     }
+    statusSelect.value = '';
+
+    // 停派勾選：只有不處理類才有意義（結案為已處理時後端忽略）；預設不勾，改選別的狀態時值清掉
+    const blockWrap = document.createElement('div');
+    blockWrap.className = 'form-check mb-3 d-none';
+    const blockInput = document.createElement('input');
+    blockInput.type = 'checkbox';
+    blockInput.id = 'wo-close-block';
+    blockInput.className = 'form-check-input';
+    blockInput.checked = false;
+    const blockLabel = document.createElement('label');
+    blockLabel.className = 'form-check-label';
+    blockLabel.htmlFor = 'wo-close-block';
+    const targetText = blockTargetText(activeCount, !!currentDetail?.source);
+    blockLabel.textContent = `${targetText}之後不再自動派工`;
+    blockWrap.append(blockInput, blockLabel);
+
+    // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
+    const consequence = document.createElement('div');
+    consequence.className = 'mb-3';
+    consequence.id = 'wo-close-consequence';
 
     const reasonLabel = document.createElement('label');
-    reasonLabel.className = 'form-label';
+    reasonLabel.className = 'form-label lf-text-label';
     reasonLabel.textContent = '結案原因（必填）';
+    reasonLabel.htmlFor = 'wo-close-reason';
 
     const reasonInput = document.createElement('textarea');
+    reasonInput.id = 'wo-close-reason';
     reasonInput.className = 'form-control form-control-sm mb-3';
     reasonInput.rows = 3;
     reasonInput.required = true;
 
-    const submitBtn = button('確定結案', { variant: 'primary', size: null, type: 'submit' });
+    const submitBtn = button(`代為結案 ${activeCount} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
+    const actions = document.createElement('div');
+    actions.className = 'lf-form-actions d-flex justify-content-end';
+    actions.appendChild(submitBtn);
 
-    form.append(statusLabel, statusSelect, reasonLabel, reasonInput, submitBtn);
+    function renderConsequence() {
+        const notifyText = mailNotifyText(mailSettings, '處理人會在下一封交辦摘要收到結案通知', '目前未啟用交辦單通知，請自行告知處理人');
+        const notes = [statusNote('info', `${notifyText}。` + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        if (isNoFixClosure(statusSelect.value)) {
+            notes.push(statusNote('warning', blockInput.checked
+                ? `已勾選：${targetText}之後不會再自動派工。`
+                : `未勾選：${targetText}之後再出現時會重新派工。不想再收到，請勾選上方選項，或改用靜音。`));
+        }
+        consequence.replaceChildren(...notes);
+    }
+    function syncState() {
+        const noFix = isNoFixClosure(statusSelect.value);
+        blockWrap.classList.toggle('d-none', !noFix);
+        if (!noFix) blockInput.checked = false;
+        renderConsequence();
+        submitBtn.disabled = !statusSelect.value || !reasonInput.value.trim();
+    }
+    statusSelect.addEventListener('change', syncState);
+    blockInput.addEventListener('change', renderConsequence);
+    reasonInput.addEventListener('input', syncState);
+    syncState();
+
+    form.append(statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
         const reason = reasonInput.value.trim();
+        if (!statusSelect.value) {
+            toast('請選擇結案狀態', 'warning');
+            statusSelect.focus();
+            return;
+        }
         if (!reason) {
             toast('請填寫結案原因', 'warning');
             reasonInput.focus();
@@ -284,7 +407,8 @@ function openAdminCloseModal() {
         try {
             const res = await api.post(`/api/work-orders/${workOrderId}/admin-close`, {
                 status: statusSelect.value,
-                reason
+                reason,
+                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked
             });
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
             toast(`已代為結案 ${res.closedCases} 台`, 'success');
@@ -297,6 +421,9 @@ function openAdminCloseModal() {
     body.appendChild(form);
     showDetailModal({ title: '代為結案', body });
 }
+
+/** 設定請求回來前再按一次不會疊開第二個對話框 */
+const openAdminCloseModal = exclusive(buildAdminCloseModal);
 
 /** 以本單的回覆端點回覆指定成員；成功後重新載入本頁 */
 function openMemberReply(caseIds, targetText) {
@@ -330,7 +457,8 @@ function renderActions(detail, user) {
         // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
         // 處理人在這一頁最常做的事：頁面唯一的實心主要按鈕（管理動作是一般次要按鈕，處理人看不到）
         const replyBtn = button('回覆這張單', { variant: 'primary', size: null, onClick: async () => {
-            const activeCount = detail.counts.active;
+            // 含停用主機上的進行中成員：成員清單與回覆端點都涵蓋它們（與處理人工作頁同一個算法）
+            const activeCount = replyableCount(detail.counts);
             if (activeCount === 0) {
                 toast('這張單已沒有進行中的主機', 'info');
                 return;
@@ -395,10 +523,7 @@ function renderActions(detail, user) {
     // 退回處理人：處理人把成員標成「無法處理」後，管理者可附說明把這些成員退回同一位處理人（改回處理中）
     if ((detail.counts?.escalated ?? 0) > 0 && !detail.closedAt) {
         const returnBtn = button('退回處理人', { size: null, opens: 'dialog', onClick: async () => {
-            const { mailWorkOrdersEnabled } = await getDisplaySettings();
-            const notifyText = mailWorkOrdersEnabled
-                ? '處理人會在下一封交辦摘要收到退回通知。'
-                : '目前未啟用交辦通知，請自行告知處理人。';
+            const notifyText = mailNotifyText(await getDisplaySettings(), '處理人會在下一封交辦摘要收到退回通知', '目前未啟用交辦通知，請自行告知處理人') + '。';
             const note = await confirmActionWithReason({
                 title: '退回處理人',
                 message: `把這張單中標為「無法處理」的主機退回處理人，狀態改回處理中。${notifyText}`,
@@ -423,11 +548,8 @@ function renderActions(detail, user) {
 
     // 取消交辦按鈕
     const cancelBtn = button('取消交辦', { variant: 'outline-danger', size: null, opens: 'dialog', onClick: async () => {
-        // 交辦通知預設關閉：依 mailWorkOrdersEnabled 說實話，避免承諾一封不會寄的信
-        const { mailWorkOrdersEnabled } = await getDisplaySettings();
-        const notifyText = mailWorkOrdersEnabled
-            ? '處理人會在下一封交辦摘要收到取消通知。'
-            : '目前未啟用交辦通知，請自行告知處理人。';
+        // 交辦通知預設關閉：依設定說實話，避免承諾一封不會寄的信；讀不到設定就用中性句
+        const notifyText = mailNotifyText(await getDisplaySettings(), '處理人會在下一封交辦摘要收到取消通知', '目前未啟用交辦通知，請自行告知處理人') + '。';
         const reason = await confirmActionWithReason({
             title: '取消交辦',
             message: `取消後這張單的進行中主機會調回未處理，${notifyText}`,
@@ -561,16 +683,7 @@ function renderMembers(data) {
         {
             title: '主機',
             truncate: true,
-            render: item => {
-                if (item.hostId) {
-                    const a = document.createElement('a');
-                    a.href = appUrl('/hosts/' + item.hostId);
-                    a.className = 'lf-text-title';
-                    a.textContent = item.hostName || '';
-                    return a;
-                }
-                return roleText('lf-text-title', item.hostName || '');
-            }
+            render: item => renderMemberHostCell(item)
         },
         {
             title: '狀態',
@@ -606,8 +719,16 @@ function renderMembers(data) {
                 if (item.closedAt) notes.push(`結案 ${formatDateTime(item.closedAt)}`);
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex flex-column align-items-start gap-1';
-                const noteText = notes.join('、') || (item.relatedWorkOrderId ? '' : '—');
+                const noteText = notes.join('、') || ((item.relatedWorkOrderId || item.note) ? '' : '—');
                 if (noteText) wrap.appendChild(roleText('lf-text-meta', noteText));
+                // 處理人回覆時寫的說明：上報中的成員這就是上報原因，管理者要處理時第一眼就要看到
+                if (item.note) {
+                    const reason = item.status === 'escalated' ? '上報原因' : '處理說明';
+                    const noteRow = document.createElement('div');
+                    noteRow.className = 'lf-text-meta text-wrap';
+                    noteRow.append(roleText('lf-text-label', reason), ' ', item.note);
+                    wrap.appendChild(noteRow);
+                }
                 if (item.relatedWorkOrderId) {
                     const link = document.createElement('a');
                     link.href = appUrl('/work-orders/' + item.relatedWorkOrderId);

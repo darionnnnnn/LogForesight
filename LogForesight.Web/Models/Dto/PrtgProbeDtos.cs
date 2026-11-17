@@ -494,6 +494,8 @@ public class PrtgStructureSyncStatusDto
     public int? LastMappedHosts { get; set; }
     public int? LastUnmappedHosts { get; set; }
     public int? LastNameMismatch { get; set; }
+    /// <summary>最近一次同步的警告文字（感測器全部回空、已對應主機的裝置被清除）；沒有為空清單</summary>
+    public List<string> LastWarnings { get; set; } = new();
     public string? LastSource { get; set; }
 }
 

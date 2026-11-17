@@ -224,6 +224,9 @@ public class AdminCloseWorkOrderRequest
     public string Status { get; set; } = string.Empty;
     [StringLength(1000, ErrorMessage = "說明不可超過 1000 字")]
     public string? Reason { get; set; }
+
+    /// <summary>結案狀態是不處理類時，是否讓這台主機的這個問題之後不再自動派工；結案狀態為「已處理」時忽略</summary>
+    public bool BlockRedispatch { get; set; }
 }
 
 /// <summary>退回處理人：說明必填（長度與空白由服務層驗證）</summary>
@@ -266,7 +269,7 @@ public class WorkOrderListRequest
     /// <summary><c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c></summary>
     public string Status { get; set; } = "active";
 
-    /// <summary>true＝只列處理人已停用的單</summary>
+    /// <summary>true＝只列處理人已停用或已失去處理能力的單（與續掛停止原因 <c>handler_inactive</c> 同義）</summary>
     public bool HandlerInactive { get; set; }
 
     /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>
@@ -305,6 +308,9 @@ public class WorkOrderCountsDto
 {
     public int Total { get; set; }
     public int Active { get; set; }
+
+    /// <summary>進行中、但主機已停用的成員數；不計入 <see cref="Active"/> 與各狀態數</summary>
+    public int ActiveOnDisabledHosts { get; set; }
     public int Closed { get; set; }
     public int InProgress { get; set; }
     public int Observing { get; set; }
@@ -331,6 +337,19 @@ public class WorkOrderRowDto
     public string Origin { get; set; } = string.Empty;
     public string ScopeKind { get; set; } = string.Empty;
     public bool AutoAttach { get; set; }
+
+    /// <summary>進行中且夜間派工曾因處理人不符資格而擋下續掛（<c>WorkOrder.ContinuationStoppedReason</c> 非 null）</summary>
+    public bool ContinuationStopped { get; set; }
+
+    /// <summary>續掛已停止的原因代碼：handler_inactive／handler_paused／host_not_visible；沒有被擋為 null</summary>
+    public string? ContinuationStoppedReason { get; set; }
+
+    /// <summary>原因的顯示名稱（<c>ContinuationStopReasons.LabelOf</c>）</summary>
+    public string? ContinuationStoppedLabel { get; set; }
+
+    /// <summary>最近一次續掛被擋的夜間派工時間</summary>
+    public DateTime? ContinuationStoppedAt { get; set; }
+
     public WorkOrderCountsDto Counts { get; set; } = new();
     public DateTime? DueDate { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -387,6 +406,12 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     /// <summary>檢視者是最近一次被改派走的原處理人（只能唯讀檢視）</summary>
     public bool ViewerIsPreviousHandler { get; set; }
     public bool ViewerCanAssign { get; set; }
+
+    /// <summary>
+    /// 進行中的成員裡，處理人目前看不到的台數（讀取時以處理人的可見範圍計算、不存欄位；規則同夜間派工的可見主機，不含案件授與，
+    /// 不含已停用主機）。0＝處理人都看得到；單已結案恆為 0。
+    /// </summary>
+    public int HandlerUnseenMemberCount { get; set; }
 }
 
 public class WorkOrderMemberDto
@@ -400,8 +425,17 @@ public class WorkOrderMemberDto
     public long? HostId { get; set; }
 
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>這台主機已停用：進行中時不計入處理人的台數（徽章、負載看板、總覽）；重新啟用後恢復計入</summary>
+    public bool HostDisabled { get; set; }
     public string IssueKey { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 處理人回覆時寫的說明（上報時就是上報原因）；沒有說明為 null。
+    /// 成員清單已依檢視者的可見範圍過濾，說明不會洩漏到看不到的主機。
+    /// </summary>
+    public string? Note { get; set; }
     public DateTime? DueDate { get; set; }
     public bool Overdue { get; set; }
     public DateTime FirstLinkedDate { get; set; }
@@ -513,6 +547,75 @@ public class GapRowDto
 
     /// <summary>no_visibility 主機所屬的主機群組名稱（去重、最多 10 個）</summary>
     public List<string> UnseenHostGroups { get; set; } = new();
+}
+
+/// <summary>待派頁「不再自動派工」清單：被「不再打擾」閘門擋住的（主機, 問題），依問題分組、依問題組分頁</summary>
+public class DismissedListDto
+{
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+
+    /// <summary>問題組總數（分頁依據）</summary>
+    public int Total { get; set; }
+
+    /// <summary>被擋住的主機總台數（去重）</summary>
+    public int TotalHosts { get; set; }
+
+    public List<DismissedGroupDto> Groups { get; set; } = new();
+}
+
+public class DismissedGroupDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+    public string? PlainExplanation { get; set; }
+
+    /// <summary>此問題被擋住的台數</summary>
+    public int Hosts { get; set; }
+
+    public List<DismissedRowDto> Rows { get; set; } = new();
+}
+
+public class DismissedRowDto
+{
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>單筆恢復用：問題簽章鍵（不透明字串，原樣回送）</summary>
+    public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>先前結案狀態：wont_fix／false_positive／known_noise</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>結案的人（顯示名稱）；讀不到處理歷程時為 null</summary>
+    public string? ClosedBy { get; set; }
+
+    public DateTime? ClosedAt { get; set; }
+}
+
+/// <summary>恢復單一（主機, 問題）</summary>
+public class RestoreDismissedRequest
+{
+    [Required]
+    public string HostName { get; set; } = string.Empty;
+
+    [Required]
+    public string IssueKey { get; set; } = string.Empty;
+}
+
+/// <summary>恢復整個問題</summary>
+public class RestoreDismissedIssueRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+}
+
+public class DismissedRestoreResultDto
+{
+    /// <summary>恢復的主機（案件）數</summary>
+    public int Restored { get; set; }
 }
 
 public class GapSuggestionDto
@@ -643,6 +746,9 @@ public class HandlerSummaryDto
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; set; }
+
+    /// <summary>這位處理人目前暫停接單（自動派工排除他）；處理人工作頁頁頭標記用，側欄徽章不填</summary>
+    public bool HandlerPaused { get; set; }
 
     /// <summary>檢視者自己的可見主機數（處理人工作頁空狀態分流用；側欄徽章不填，恆為 0）</summary>
     public int VisibleHostCount { get; set; }

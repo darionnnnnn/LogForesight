@@ -16,6 +16,9 @@ public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges,
     /// <summary>裝置鏡像本趟是否成功更新（同 scopeProvider 收到的引數）</summary>
     public bool DevicesRefreshed { get; init; }
 
+    /// <summary>本趟的警告（感測器全部回空、已對應主機的裝置被清除）；不算失敗、不改變任何清除條件。</summary>
+    public IReadOnlyList<PrtgSyncWarning> Warnings { get; init; } = Array.Empty<PrtgSyncWarning>();
+
     /// <summary>失敗階段的原因（與 <see cref="Failures"/> 一一對應、依發生順序）；畫面與逐日說明用。</summary>
     public IReadOnlyList<string> StageFailures { get; init; } = Array.Empty<string>();
 
@@ -210,6 +213,14 @@ public sealed class PrtgFetchService
             stageFailures.Add(message.Trim());
             _console.WriteLine(message);
         }
+        // 警告：保護生效或結果異常但不算階段失敗。文字只經 PrtgSyncWarning.Create 截斷後才進結果與主控台。
+        var warnings = new List<PrtgSyncWarning>();
+        void Warn(string code, string message)
+        {
+            var warning = PrtgSyncWarning.Create(code, message);
+            warnings.Add(warning);
+            _console.WriteLine($"[警告] ⚠ {warning.Message}");
+        }
         var sensorTargets = new List<(long Objid, bool Paused)>();
         var devicesRefreshed = false;
         // 取數範圍：階段 2 只同步範圍內裝置的感測器、階段 3 只查範圍內裝置的狀態變更；null＝計算失敗（兩階段都略過、不清除）
@@ -294,6 +305,8 @@ public sealed class PrtgFetchService
             {
                 try
                 {
+                    // 清除前先記下「待清除且已對應主機」的裝置（清除後就查不到了）；只讀取，不改變清除條件
+                    var mappedStale = FindMappedStaleDevices(devicesSyncStartedAt);
                     var stale = _store.DeleteDevicesNotSyncedSince(devicesSyncStartedAt);
                     if (stale.SkippedBySafety)
                     {
@@ -302,6 +315,13 @@ public sealed class PrtgFetchService
                     else if (stale.Deleted > 0)
                     {
                         _console.WriteLine($"[階段 1/4] 已清除 {stale.Deleted} 台 PRTG 端已不存在的裝置。");
+                        if (mappedStale.Count > 0)
+                        {
+                            var names = string.Join("、", mappedStale.Take(3).Select(d => PrtgSyncWarning.Truncate(d.Name, 40)));
+                            Warn(PrtgSyncWarning.MappedDevicesPurged,
+                                $"有 {mappedStale.Count} 台已對應主機的 PRTG 裝置本趟沒出現在 PRTG 回應中，已從鏡像清除（{names}{(mappedStale.Count > 3 ? " 等" : "")}）。" +
+                                "若不是在 PRTG 端刪除，請檢查 PRTG 帳號權限與查詢範圍。");
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -347,6 +367,10 @@ public sealed class PrtgFetchService
                         sensorsCount = written;
                         sensorTargets = targets;
                         _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, new StageOutcome(written, 0, true, null))}。");
+                        // 查詢全部成功卻一顆感測器都沒回：多半是帳號權限或查詢設定問題。保護照舊（sensorsRefreshed 仍由寫入數判定），只出聲。
+                        if (written == 0 && failedDevices.Count == 0)
+                            Warn(PrtgSyncWarning.SensorsAllEmpty,
+                                $"範圍內 {scopeDevices.Count} 台裝置的感測器查詢都成功，卻沒有回傳任何感測器，鏡像不清除、維持上次內容；請檢查 PRTG 帳號權限與查詢設定。");
                         if (failedDevices.Count > 0)
                         {
                             var shown = string.Join("、", failedDevices.OrderBy(id => id).Take(5));
@@ -372,6 +396,9 @@ public sealed class PrtgFetchService
                         sensorsCount = outcome.Written;
                         sensorTargets = targets;
                         _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
+                        if (outcome.Converged && sensorsCount == 0)
+                            Warn(PrtgSyncWarning.SensorsAllEmpty,
+                                $"範圍內 {scopeDevices.Count} 台裝置的感測器查詢已收斂，卻沒有回傳任何感測器，鏡像不清除、維持上次內容；請檢查 PRTG 帳號權限與查詢設定。");
                         if (!outcome.Converged)
                         {
                             historyAffectingFailure = true;
@@ -544,8 +571,32 @@ public sealed class PrtgFetchService
             PendingSensorDevices = pendingSensorDevices,
             PendingMessageDevices = pendingMessageDevices,
             Scope = scope,
-            DevicesRefreshed = devicesRefreshed
+            DevicesRefreshed = devicesRefreshed,
+            Warnings = warnings
         };
+    }
+
+    /// <summary>
+    /// 本趟沒刷新到、且在最近一次主機對應中是 ok 的裝置（含人工對應）。只讀；讀取失敗不影響清除，回空清單。
+    /// 對應讀的是「最近一次對應」（維護頁同一條讀取），不是某日的歷史對應。
+    /// </summary>
+    private List<(long Objid, string Name)> FindMappedStaleDevices(DateTime syncStartedAt)
+    {
+        try
+        {
+            var stale = _store.GetDevicesNotSyncedSince(syncStartedAt);
+            if (stale.Count == 0) return stale;
+            var mapped = _store.GetLatestHostMap()
+                .Where(r => r.MapStatus == PrtgMapStatus.Ok)
+                .Select(r => r.DeviceObjid)
+                .ToHashSet();
+            return stale.Where(d => mapped.Contains(d.Objid)).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn(ex, "判定已對應主機的待清除裝置失敗，本趟不附警告：{0}", ex.Message);
+            return new List<(long Objid, string Name)>();
+        }
     }
 
     /// <summary>

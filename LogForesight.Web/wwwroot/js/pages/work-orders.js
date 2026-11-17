@@ -17,6 +17,7 @@ import {
     renderEmpty,
     bindTabs,
     button,
+    linkButton,
     toast,
     confirmAction,
     confirmAndClearMute,
@@ -27,10 +28,14 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
-import { roleText, filterDisclosure } from '../core/elements.js';
+import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
+import { statusBadgeMeta } from '../core/handling-statuses.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
+
+// 管理者提醒區（頁籤列上方；三類都是 0 時不顯示）
+const remindersContainer = document.getElementById('wo-reminders');
 
 // 進行中頁籤
 const activeStatusSelect = document.getElementById('wo-status');
@@ -56,6 +61,12 @@ const gapsAutoDispatchBtn = document.getElementById('wo-auto-dispatch');
 const gapsNoteEl = document.getElementById('wo-gaps-note');
 const gapsContainer = document.getElementById('wo-gaps');
 const gapsPagerContainer = document.getElementById('wo-gaps-pager');
+
+// 待派頁籤下方的「不再自動派工」區（被「不再打擾」擋住的項目與恢復）
+const dismissedCard = document.getElementById('wo-dismissed-card');
+const dismissedCountEl = document.getElementById('wo-dismissed-count');
+const dismissedContainer = document.getElementById('wo-dismissed');
+const dismissedPagerContainer = document.getElementById('wo-dismissed-pager');
 
 // 靜音中頁籤
 const mutedTabItem = document.getElementById('wo-muted-tab-item');
@@ -94,6 +105,11 @@ let filterLabelSpan = null;
 if (hasUrlFilter) {
     if (activeStatusSelect) {
         activeStatusSelect.value = 'all';
+        // 連結可帶 status 指定狀態（例如停用處理人後的「查看進行中的單」帶 status=active）
+        const urlStatus = urlParams.get('status');
+        if (urlStatus && Array.from(activeStatusSelect.options ?? []).some(o => o.value === urlStatus)) {
+            activeStatusSelect.value = urlStatus;
+        }
     }
     const toolbar = activeStatusSelect?.closest('.d-flex');
     if (toolbar && toolbar.parentElement) {
@@ -111,7 +127,20 @@ if (hasUrlFilter) {
     }
 }
 
-/** 在「只看處理人已停用」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
+// 只帶 status（例如提醒區的「上報中」連結）：預選狀態下拉，其餘篩選維持預設
+if (!hasUrlFilter && activeStatusSelect) {
+    const urlStatus = urlParams.get('status');
+    if (urlStatus && Array.from(activeStatusSelect.options ?? []).some(o => o.value === urlStatus)) {
+        activeStatusSelect.value = urlStatus;
+    }
+}
+
+// 連結帶 handlerInactive=1 就預先勾選「處理人離職或停用」篩選
+if (activeHandlerInactiveCheckbox && urlParams.get('handlerInactive') === '1') {
+    activeHandlerInactiveCheckbox.checked = true;
+}
+
+/** 在「只看處理人已停用或失去處理能力」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
 function createUnreadOnlyCheckbox() {
     const wrap = document.createElement('div');
     wrap.className = 'form-check mb-0';
@@ -177,6 +206,7 @@ let currentUser = null;
 const loadedTabs = new Set();
 let activePage = 1;
 let gapsPage = 1;
+let dismissedPage = 1;
 
 // ── 進行中頁籤 ─────────────────────────────────────────────────────────────
 
@@ -216,6 +246,13 @@ async function loadActive() {
     }
     renderActiveTable(data);
     loadedTabs.add('active');
+}
+
+/** 續掛已停止（夜間派工擋下了續掛）：只有進行中且後端標了 continuationStopped 的單才有；原因用後端給的顯示名稱 */
+function continuationStoppedBadge(r) {
+    if (!r.continuationStopped) return null;
+    const label = r.continuationStoppedLabel || r.continuationStoppedReason || '';
+    return statusBadge(`續掛已停止：${label}`, 'warning', { title: '夜間派工不再把新主機續掛進這張單；處理人恢復資格後，之後新出現的主機照常續掛。' });
 }
 
 function renderActiveTable(data) {
@@ -271,6 +308,8 @@ function renderActiveTable(data) {
                 if (counts.open > 0) parts.push(`未處理 ${counts.open}`);
                 if (counts.escalated > 0) parts.push(`上報 ${counts.escalated}`);
                 if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
+                // 停用主機上的進行中成員不計入左邊的台數（與處理人徽章、負載看板同一口徑）
+                if (counts.activeOnDisabledHosts > 0) parts.push(`主機已停用 ${counts.activeOnDisabledHosts}`);
 
                 if (parts.length > 0) {
                     const sub = document.createElement('div');
@@ -342,6 +381,8 @@ function renderActiveTable(data) {
                     if (!r.paused && !r.resumedFromMuteAt) {
                         wrap.appendChild(statusBadge('進行中', 'primary'));
                     }
+                    const stopped = continuationStoppedBadge(r);
+                    if (stopped) wrap.appendChild(stopped);
                 }
                 return wrap;
             }
@@ -440,7 +481,7 @@ function renderLoadBoardTable(data) {
     renderTable(loadContainer, {
         columns,
         rows,
-        empty: { title: '尚無資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料。' }
+        empty: { title: '尚無處理人負載資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料。' }
     });
 }
 
@@ -537,7 +578,7 @@ function renderGapsTable(data) {
                     for (const [code, count] of Object.entries(r.excluded)) {
                         if (count > 0) {
                             const label = EXCLUDED_LABELS[code] || code;
-                            lines.push(`${label} ${count} 台`);
+                            lines.push({ code, text: `${label} ${count} 台` });
                         }
                     }
                 }
@@ -545,9 +586,22 @@ function renderGapsTable(data) {
                     return document.createTextNode('—');
                 }
                 const wrap = document.createElement('div');
-                for (const text of lines) {
+                for (const { code, text } of lines) {
                     const line = document.createElement('div');
-                    line.textContent = text;
+                    if (code === 'gate_dismissed' || code === 'gateDismissed') {
+                        // 不再打擾的台數可點：捲到頁面下方的恢復清單
+                        const link = document.createElement('button');
+                        link.type = 'button';
+                        link.className = 'lf-nav-item lf-nav-item--inline';
+                        link.textContent = text;
+                        link.title = '到「不再自動派工」清單查看與恢復';
+                        link.addEventListener('click', () => {
+                            dismissedCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        });
+                        line.appendChild(link);
+                    } else {
+                        line.textContent = text;
+                    }
                     wrap.appendChild(line);
                 }
                 return wrap;
@@ -569,6 +623,144 @@ function renderGapsTable(data) {
             guardLoad(gapsContainer, loadGaps);
         }
     });
+}
+
+// ── 不再自動派工（待派頁籤下方）──────────────────────────────────────────────
+
+async function loadDismissed() {
+    renderLoading(dismissedContainer, 3);
+    let data = await api.get(`/api/work-orders/dismissed?page=${dismissedPage}`);
+    // 恢復後最後一頁清空：退回新的最後一頁
+    if ((data.groups || []).length === 0 && data.total > 0 && dismissedPage > 1) {
+        dismissedPage = Math.ceil(data.total / (data.pageSize || 1));
+        data = await api.get(`/api/work-orders/dismissed?page=${dismissedPage}`);
+    }
+    renderDismissed(data, hasCapability(currentUser, 'Assign'));
+}
+
+/** 就地重載這一區 */
+async function reloadDismissed() {
+    await guardLoad(dismissedContainer, loadDismissed);
+}
+
+function renderDismissed(data, canRestore) {
+    dismissedContainer.replaceChildren();
+    dismissedPagerContainer.replaceChildren();
+    const groups = data.groups || [];
+    dismissedCountEl.textContent = data.total > 0 ? `共 ${data.total} 個問題、${data.totalHosts} 台` : '';
+
+    if (groups.length === 0) {
+        renderEmpty(dismissedContainer, {
+            title: '沒有不再自動派工的問題',
+            hint: '目前沒有被判定為不處理、誤報或已知雜訊而停止自動派工的問題。'
+        });
+        return;
+    }
+
+    if (!canRestore) {
+        const readOnly = roleText('lf-text-meta', '只有系統管理員可以處理或恢復。');
+        readOnly.classList.add('d-block', 'mb-3');
+        dismissedContainer.appendChild(readOnly);
+    }
+
+    for (const group of groups) {
+        const section = document.createElement('div');
+        section.className = 'mb-4';
+
+        const head = document.createElement('div');
+        head.className = 'd-flex flex-wrap align-items-start justify-content-between gap-2 mb-2';
+        const title = document.createElement('div');
+        title.appendChild(renderIssueCell(group.issueLabel, group.plainExplanation));
+        title.appendChild(roleText('lf-text-meta', `${group.hosts} 台`));
+        head.appendChild(title);
+        if (canRestore) {
+            head.appendChild(button('整個問題恢復', {
+                variant: 'outline-secondary',
+                onClick: () => restoreDismissedIssue(group)
+            }));
+        }
+        section.appendChild(head);
+
+        const tableHost = document.createElement('div');
+        tableHost.className = 'lf-table-aligned';
+        section.appendChild(tableHost);
+        const columns = [
+            { title: '主機', className: 'text-nowrap', truncate: true, render: row => row.hostName },
+            {
+                title: '先前結案狀態',
+                className: 'lf-col-nowrap lf-col-w-md',
+                render: row => {
+                    const meta = statusBadgeMeta(row.status);
+                    return statusBadge(meta ? meta.label : row.status, meta ? meta.variant : 'secondary');
+                }
+            },
+            { title: '結案的人', render: row => row.closedBy || '—' },
+            {
+                title: '日期',
+                className: 'lf-col-nowrap lf-col-w-md',
+                render: row => row.closedAt ? roleText('lf-text-data', formatDate(row.closedAt)) : document.createTextNode('—')
+            }
+        ];
+        if (canRestore) {
+            columns.push({
+                title: '',
+                className: 'lf-col-nowrap lf-col-w-md text-end',
+                render: row => button('恢復', {
+                    variant: 'outline-primary',
+                    onClick: () => restoreDismissedRow(group, row)
+                })
+            });
+        }
+        renderTable(tableHost, {
+            columns,
+            rows: group.rows,
+            caption: `${group.issueLabel} 不再自動派工的主機`
+        });
+        dismissedContainer.appendChild(section);
+    }
+
+    renderPagination(dismissedPagerContainer, {
+        page: data.page,
+        totalPages: Math.ceil(data.total / (data.pageSize || 1)),
+        onPage: newPage => {
+            dismissedPage = newPage;
+            guardLoad(dismissedContainer, loadDismissed);
+        }
+    });
+}
+
+async function restoreDismissedRow(group, row) {
+    const confirmed = await confirmAction({
+        title: '恢復自動派工',
+        message: `主機 ${row.hostName} 的「${group.issueLabel}」恢復後，下一次夜間派工會重新判斷要不要派給處理人。確定恢復？`,
+        confirmText: '確定恢復',
+        confirmVariant: 'primary'
+    });
+    if (!confirmed) return;
+    try {
+        await api.post('/api/work-orders/dismissed/restore', { hostName: row.hostName, issueKey: row.issueKey });
+        toast(`已恢復 ${row.hostName} 的「${group.issueLabel}」`, 'success');
+        await reloadDismissed();
+    } catch {
+        // 錯誤訊息已由 api.js 顯示 toast
+    }
+}
+
+async function restoreDismissedIssue(group) {
+    const confirmed = await confirmAction({
+        title: '恢復整個問題的自動派工',
+        message: `「${group.issueLabel}」目前有 ${group.hosts} 台不再自動派工，全部恢復後，下一次夜間派工會重新判斷。確定恢復？`,
+        confirmText: '確定全部恢復',
+        confirmVariant: 'primary'
+    });
+    if (!confirmed) return;
+    try {
+        const res = await api.post('/api/work-orders/dismissed/restore-issue', { source: group.source, eventId: group.eventId });
+        toast(`已恢復「${group.issueLabel}」${res.restored} 台`, 'success');
+        await reloadDismissed();
+    } catch {
+        // 錯誤訊息已由 api.js 顯示 toast
+    }
 }
 
 // ── 靜音中頁籤 ─────────────────────────────────────────────────────────────
@@ -649,7 +841,7 @@ function reloadMuted() {
 
 function renderMutedTable(rows, pausedCounts) {
     if (rows.length === 0) {
-        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題', hint: '目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可在問題詳情中設定靜音。' });
+        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題', hint: '目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可到左側「系統管理 > 問題負責與靜音」頁，或在問題查詢的「依問題」視角，對問題設定靜音。' });
         return;
     }
 
@@ -739,6 +931,90 @@ async function removeMute(r) {
 
 // ── 頁籤切換與事件綁定 ─────────────────────────────────────────────────────
 
+// ── 管理者提醒區 ───────────────────────────────────────────────────────────
+
+/**
+ * 提醒區（第 76-2 輪批次 C-2）：上報逾期未處理、本趟派不出去、上報時沒有收件人三類，數字與夜間的管理者摘要信
+ * 同一個彙整函式（GET api/work-orders/admin-reminders）。三類都是 0 時整區不顯示；有數字時每類一行「N 筆」並連到對應位置。
+ */
+function renderReminders(data) {
+    remindersContainer.replaceChildren();
+    if (!data) return;
+    const escalated = data.escalatedCount ?? 0;
+    const unassignable = data.unassignableCount ?? 0;
+    const noRecipient = data.noRecipientCount ?? 0;
+    if (escalated + unassignable + noRecipient === 0) return;
+
+    remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
+    // 沒有 Assign 的檢視者（主管、開發人員）只能看：不用行動語氣，直說誰能處理
+    if (!hasCapability(currentUser, 'Assign')) {
+        remindersContainer.appendChild(roleText('lf-text-meta', '只有系統管理員可以處理或恢復。'));
+    }
+    // 設定為 0＝不寄提醒信，但這裡照常顯示：特殊值語意，常駐說明
+    if ((data.reminderDays ?? 1) === 0) {
+        remindersContainer.appendChild(statusNote('info', '提醒信已關閉（設定為 0），此處仍會顯示。'));
+    }
+    const list = document.createElement('ul');
+    list.className = 'list-unstyled mt-2 mb-0';
+    // 每類一行（說明＋連結）；有明細就多一顆預設收合的揭露鈕，明細只列前幾筆（筆數是全部）
+    const addRow = (text, linkText, href, detailLabel, detailItems, total) => {
+        const item = document.createElement('li');
+        item.className = 'd-flex flex-wrap align-items-center gap-2 mb-1 lf-list-row';
+        const label = document.createElement('span');
+        label.textContent = text;
+        item.appendChild(label);
+        item.appendChild(linkButton(linkText, href));
+        if (detailItems && detailItems.length > 0) {
+            const detail = document.createElement('ul');
+            detail.className = 'list-unstyled w-100 mb-1 ms-3';
+            for (const entry of detailItems) {
+                const line = document.createElement('li');
+                line.className = 'd-flex flex-wrap align-items-center gap-2';
+                for (const node of entry) line.appendChild(node);
+                detail.appendChild(line);
+            }
+            if (total > detailItems.length) {
+                const more = document.createElement('li');
+                more.textContent = `只列前 ${formatNumber(detailItems.length)} 筆，共 ${formatNumber(total)} 筆`;
+                detail.appendChild(more);
+            }
+            item.appendChild(disclosure(detailLabel, detail));
+            item.appendChild(detail);
+        }
+        list.appendChild(item);
+    };
+    const span = t => { const e = document.createElement('span'); e.textContent = t; return e; };
+    const orderLink = id => linkButton(`單號 ${id}`, appUrl('/work-orders/' + id));
+    if (escalated > 0) {
+        const rows = (data.escalated ?? []).map(e => [orderLink(e.workOrderId), span(`${e.issueLabel}　${e.hostName}　上報 ${e.days} 天`)]);
+        addRow(`上報超過 ${data.thresholdDays} 天沒人處理：${formatNumber(escalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated',
+            '看是哪些', rows, escalated);
+    }
+    if (unassignable > 0) {
+        const at = data.unassignableAt ? `（彙整於 ${formatDateTime(data.unassignableAt)}）` : '';
+        const rows = (data.unassignable ?? []).map(u => [span(`${u.issueLabel}　${UNASSIGNABLE_LABELS[u.reason] ?? u.reason}　${formatNumber(u.hosts)} 台`)]);
+        addRow(`最近一次夜間派工派不出去的問題：${formatNumber(unassignable)} 筆${at}`, '看待派', appUrl('/work-orders') + '#gaps',
+            '看是哪些', rows, unassignable);
+    }
+    if (noRecipient > 0) {
+        const first = (data.noRecipient ?? [])[0];
+        const rows = (data.noRecipient ?? []).map(n => [orderLink(n.workOrderId), span(n.issueLabel)]);
+        addRow(`上報信沒有任何收件人的單：${formatNumber(noRecipient)} 筆`, first ? `看單號 ${first.workOrderId}` : '看上報中的單',
+            first ? appUrl('/work-orders/' + first.workOrderId) : appUrl('/work-orders') + '?status=escalated',
+            '看是哪些', rows, noRecipient);
+    }
+    remindersContainer.appendChild(list);
+}
+
+async function loadReminders() {
+    try {
+        renderReminders(await api.get('/api/work-orders/admin-reminders'));
+    } catch {
+        // 提醒區是補充資訊：取不到就不顯示，不擋頁面其餘功能（錯誤訊息已由 api.js 顯示）
+        remindersContainer.replaceChildren();
+    }
+}
+
 function loadTab(tabName) {
     if (tabName === 'active') {
         guardLoad(activeListContainer, loadActive);
@@ -746,6 +1022,8 @@ function loadTab(tabName) {
         guardLoad(loadContainer, loadLoadBoard);
     } else if (tabName === 'gaps') {
         guardLoad(gapsContainer, loadGaps);
+        dismissedPage = 1;
+        guardLoad(dismissedContainer, loadDismissed);
     } else if (tabName === 'muted') {
         guardLoad(mutedContainer, loadMuted);
     }
@@ -837,8 +1115,10 @@ gapsAutoDispatchBtn.addEventListener('click', async () => {
 async function init() {
     currentUser = await getCurrentUser();
 
+    // 立即派工是業務動作（建單），能力是 Assign；Maintain 含不能看業務資料的救援帳號，不該看到這顆鈕
+    if (hasCapability(currentUser, 'Assign')) gapsAutoDispatchBtn.classList.remove('d-none');
+
     if (hasCapability(currentUser, 'Maintain')) {
-        gapsAutoDispatchBtn.classList.remove('d-none');
         mutedTabItem?.classList.remove('d-none');
         // 頁籤標題要帶數字，所以在 bindTabs 之前先取一次；失敗時標題維持「靜音中」，進頁籤再重試
         try {
@@ -856,6 +1136,7 @@ async function init() {
     await loadHandlerGroups();
 
     bindTabs(tabsEl, { hash: true, onChange: handleTabChange });
+    loadReminders();
 
     const activeBtn = tabsEl.querySelector('[data-tab].active');
     const initialTab = activeBtn ? activeBtn.dataset.tab : 'active';

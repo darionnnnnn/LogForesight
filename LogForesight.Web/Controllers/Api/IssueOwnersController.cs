@@ -29,11 +29,12 @@ public class IssueOwnersController : ControllerBase
     /// <summary>按需讀取此問題最近的靜音操作，只回傳白名單欄位，不開放一般稽核明細。</summary>
     [HttpGet("{source}/{eventId:int}/mute-history")]
     public ApiResponse<List<IssueMuteActionDto>> MuteHistory(string source, int eventId,
-        [FromServices] AuditLogStore audit, [FromServices] ISystemSettingsStore settings)
+        [FromServices] AuditLogStore audit, [FromServices] ISystemSettingsStore settings,
+        [FromServices] TimeProvider? clock = null)
     {
         var rows = audit.Query(new AuditQuery
         {
-            From = DateTime.Today.AddDays(-Math.Max(1, settings.Get().AuditRetentionDays)),
+            From = (clock ?? TimeProvider.System).LocalToday().AddDays(-Math.Max(1, settings.Get().AuditRetentionDays)),
             TargetKind = "issue_owner", TargetId = $"{source}/{eventId}",
             Actions = new() { AuditActions.IssueMute, AuditActions.IssueUnmute },
             Result = AuditResult.Ok, PageSize = 10

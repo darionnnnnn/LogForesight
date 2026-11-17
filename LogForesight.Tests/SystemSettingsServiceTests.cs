@@ -15,6 +15,7 @@ namespace LogForesight.Tests;
 /// P0-3：<see cref="SystemSettingsService"/> 新增的 RunLogRetentionDays／AuditRetentionDays 欄位
 /// 走完整條 Update → Get 路徑（實測曾手改多處 wiring，這類機械式串接最容易漏一處）。
 /// </summary>
+[Collection("NLogGlobalConfig")]
 public class SystemSettingsServiceTests : IDisposable
 {
     private readonly FakeSystemSettingsStore _store = new();
@@ -213,6 +214,29 @@ public class SystemSettingsServiceTests : IDisposable
         var notObject = ValidRequest();
         notObject.AiExtraRequestFieldsJson = "[1, 2, 3]";
         Assert.Throws<DomainException>(() => service.Update(notObject));
+    }
+
+    /// <summary>E1-a／E1-b／E1-c：JSON 解析錯誤的原文（行號、位置、輸入片段）不外洩，記錄檔有原文；物件規則的領域訊息原樣回</summary>
+    [Fact]
+    public void Update_額外請求欄位JSON錯誤_回應不含解析原文_記錄檔含原文()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.AiExtraRequestFieldsJson = """{"path": C:\secret\x.db, "url": http://10.0.0.1/api}""";
+        using var capture = NLogCapture.For(typeof(SystemSettingsService));
+
+        var error = Assert.Throws<DomainException>(() => service.Update(request));
+
+        Assert.Contains("不是合法的 JSON", error.Message);
+        Assert.DoesNotContain("LineNumber", error.Message);
+        Assert.DoesNotContain("BytePositionInLine", error.Message);
+        Assert.DoesNotContain("secret", error.Message);
+        Assert.Contains(capture.Logs, l => l.Contains("LineNumber") || l.Contains("JsonReaderException") || l.Contains("JsonException"));
+
+        // E1-c：領域例外訊息原樣
+        var notObject = ValidRequest();
+        notObject.AiExtraRequestFieldsJson = "[1, 2, 3]";
+        Assert.Contains("必須是 JSON 物件", Assert.Throws<DomainException>(() => service.Update(notObject)).Message);
     }
 
     [Fact]
@@ -1042,6 +1066,83 @@ public class SystemSettingsServiceTests : IDisposable
 
         var ex = Assert.Throws<DomainException>(() => Create().Update(request));
         Assert.Contains("交辦摘要時刻至少一組、最多四組", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(31)]
+    public void Update_管理者提醒間隔超出範圍被拒(int days)
+    {
+        var request = ValidMailRequest();
+        request.EscalationReminderDays = days;
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("管理者提醒間隔天數必須介於 0~30", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void Update_管理者提醒間隔存檔後讀得回來(int days)
+    {
+        var request = ValidMailRequest();
+        request.EscalationReminderDays = days;
+
+        var service = Create();
+        var saved = service.Update(request);
+        Assert.Equal(days, saved.EscalationReminderDays);
+        Assert.Equal(days, _store.Get().EscalationReminderDays);
+    }
+
+    [Fact]
+    public void Get_管理者提醒間隔預設三天()
+    {
+        Assert.Equal(3, Create().Get().EscalationReminderDays);
+    }
+
+    [Theory]
+    [InlineData("ftp://x")]
+    [InlineData("x.example")]
+    [InlineData("https://x.example/l f")]
+    [InlineData("https://x.example/lf?a=1")]
+    [InlineData("https://")]
+    public void Update_站台網址不合法被拒並說明格式(string value)
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = value;
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("http:// 或 https://", ex.Message);
+        Assert.Contains("https://srv.example.com/lf", ex.Message);
+    }
+
+    [Fact]
+    public void Update_站台網址帶結尾斜線存成去斜線_連結不出現雙斜線()
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = "  https://x.example/lf/  ";
+
+        var saved = Create().Update(request);
+
+        Assert.Equal("https://x.example/lf", saved.SiteBaseUrl);
+        Assert.Equal("https://x.example/lf", _store.Get().SiteBaseUrl);
+        var link = MailLinks.Build("https://x.example/lf/", "/work-orders/5");
+        Assert.Equal("https://x.example/lf/work-orders/5", link);
+        Assert.DoesNotContain("//work", link);
+        Assert.Equal("https://x.example/lf/handlers/3", MailLinks.Build(_store.Get().SiteBaseUrl, MailLinks.MyWorkOrdersPath(3)));
+    }
+
+    [Fact]
+    public void Update_站台網址留空合法_連結為null()
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = "";
+
+        Assert.Equal("", Create().Update(request).SiteBaseUrl);
+        Assert.Null(MailLinks.Build("", "records"));
+        Assert.Null(MailLinks.Build(null, "records"));
     }
 
     [Fact]
@@ -2649,6 +2750,17 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PrtgFetchStrategy_不合法時訊息是顯示名稱_E4()
+    {
+        var service = Create();
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        { ExpectedRevision = _store.Get().Revision, PrtgFetchStrategy = "turbo" }));
+        Assert.Contains("「保守」或「激進」", ex.Message);
+        Assert.DoesNotContain("conservative", ex.Message);
+        Assert.DoesNotContain("aggressive", ex.Message);
+    }
+
+    [Fact]
     public void PrtgFetchStrategy_UpdatePrtg未送該鍵時沿用既有值()
     {
         var service = Create();
@@ -2673,7 +2785,7 @@ public class SystemSettingsServiceTests : IDisposable
         req.PrtgFetchStrategy = "turbo";
 
         var ex = Assert.Throws<DomainException>(() => service.Update(req));
-        Assert.Contains("conservative", ex.Message);
+        Assert.Contains("「保守」或「激進」", ex.Message);
     }
 
     [Fact]
@@ -2684,7 +2796,7 @@ public class SystemSettingsServiceTests : IDisposable
         { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = "turbo"
         }));
-        Assert.Contains("conservative", ex.Message);
+        Assert.Contains("「保守」或「激進」", ex.Message);
     }
 
     [Fact]

@@ -86,11 +86,11 @@ public class AdminController : ControllerBase
         ApiResponse<UserDto>.Ok(_users.SetUserGroups(userId, request.GroupIds));
 
     [HttpPut("users/{userId:long}/dispatch-paused")]
-    public ApiResponse SetDispatchPaused(long userId, [FromBody] SetUserDispatchPausedRequest request)
-    {
-        _users.SetDispatchPaused(userId, request.Paused);
-        return ApiResponse.Ok();
-    }
+    public ApiResponse<SetUserDispatchPausedResultDto> SetDispatchPaused(long userId, [FromBody] SetUserDispatchPausedRequest request) =>
+        ApiResponse<SetUserDispatchPausedResultDto>.Ok(new SetUserDispatchPausedResultDto
+        {
+            ActiveWorkOrders = _users.SetDispatchPaused(userId, request.Paused)
+        });
 
     // ── 使用者群組 ───────────────────────────────────────────────────────────
 

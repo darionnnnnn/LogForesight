@@ -9,6 +9,8 @@
     <span id="rule-import-banner-text"></span>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="rule-import-preview-btn">預覽差異</button>
 </div>
+@* 套用內建規則升級後的驗證警告（非阻斷，由 rules.js 填入） *@
+<div id="rule-import-warnings"></div>
 
 <ul class="nav nav-tabs mb-3" id="rule-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="rules" data-platform="windows" type="button">Windows規則</button></li>
@@ -129,7 +131,7 @@
                         </div>
                         <div class="form-text mb-0">
                             停用後原規則保留可隨時恢復；不停用的話新規則會被原規則遮蔽而不會生效。
-                            若剛剛點擊「驗證」看到遮蔽警告，儲存後會自動解決，不需要手動處理。
+                            若剛剛點選「驗證」看到遮蔽警告，儲存後會自動解決，不需要手動處理。
                         </div>
                     </div>
 

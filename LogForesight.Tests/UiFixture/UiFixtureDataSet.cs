@@ -211,6 +211,12 @@ public sealed partial class UiFixtureDataSet : IDisposable
         User("ui-paused", "暫停接單的使用者", new[] { ops });
         User("ui-nogroup", "沒有任何群組的使用者", Array.Empty<long>());
         User("ui-hostile", Hostile.DisplayName, new[] { ops });
+        // 角色旅程用（第 76 輪 E0-c）：一定要接在最後，前面帳號的 UserId 被情境網址引用（/handlers/3）。
+        // ui-dev：內建 dev 群組（看全部、排程監看，沒有處理能力）。
+        // ui-owner：沒有任何群組、只因主機負責人而隱含 User 能力（負責主機在下方 Host 段指派）。
+        // serverAdmin 救援帳號不必建：appsettings 的 svc-lfadmin 在 Stub 模式免密碼即可登入。
+        User("ui-dev", "介面測試開發維運", new[] { UserGroupIds["dev"] });
+        User("ui-owner", "介面測試主機負責人", Array.Empty<long>(), email: "ui-owner@example.test");
         _userStore.SetDispatchPaused(UserIds["ui-paused"], true);
     }
 
@@ -323,7 +329,8 @@ public sealed partial class UiFixtureDataSet : IDisposable
         Host("silent", "UI-SILENT-HOST", groups: new[] { dmz }, lastReport: DateTime.Today.AddDays(-21).AddHours(3),
             createdDaysAgo: 120, display: "靜默未回報的主機");
         Host("linux", "ui-linux-web01", WebHost.OsLinux, groups: new[] { rackA }, ip: "10.10.2.30", role: "Linux 網站主機");
-        Host("linux2", "ui-linux-db01", WebHost.OsLinux, groups: new[] { dmz }, ip: "10.20.2.31", tier: WebHost.TierTest);
+        Host("linux2", "ui-linux-db01", WebHost.OsLinux, groups: new[] { dmz }, ip: "10.20.2.31", tier: WebHost.TierTest,
+            owners: new[] { UserIds["ui-owner"] });   // 隱含處理人唯一的入口（E0-c）
         // 只有 PRTG：主機日紀錄全部來自 PRTG finding（LogSource=Prtg），沒有日誌事件
         Host("prtg", "UI-PRTG-SW01", groups: new[] { dmz }, ip: "10.20.9.1", role: "核心交換器（只由 PRTG 監控）");
         Host("local", "UI-LOCAL-HOST", source: "local", groups: new[] { rackA });

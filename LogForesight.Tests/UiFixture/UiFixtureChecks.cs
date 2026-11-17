@@ -462,6 +462,20 @@ internal sealed class UiFixtureChecks
             var all = c._hosts.GetAll().Count(h => h.Active);
             True(viewer.Count > 0 && viewer.Count < handler.Count && handler.Count < all, $"可見主機數應 檢視者({viewer.Count}) < 處理人({handler.Count}) < 全部({all})");
         },
+        ["使用者.開發維運角色"] = c =>
+        {
+            var dev = c.Capabilities("ui-dev");
+            Assert.Contains(Capability.ViewAll, dev);
+            Assert.Contains(Capability.DevMonitor, dev);
+            Assert.DoesNotContain(Capability.Handle, dev);
+        },
+        ["使用者.隱含處理人只靠主機負責人"] = c =>
+        {
+            // 群組角色為空（能力只來自主機負責人的隱含 User 角色，由 UserCapabilityResolver 在站台端加上）
+            Assert.Empty(c.User("ui-owner").GroupIds);
+            Assert.Empty(c.Capabilities("ui-owner"));
+            Assert.Contains(c.User("ui-owner").UserId, c.Host("linux2").OwnerUserIds);
+        },
         ["使用者.長顯示名稱"] = c => True(c.User("ui-handler-long").DisplayName.Length > 30, "顯示名稱應超長"),
         ["使用者.停用"] = c => Assert.False(c.User("ui-disabled").Active),
         ["使用者.暫停接單"] = c => Assert.True(c.User("ui-paused").DispatchPaused),
@@ -500,7 +514,37 @@ internal sealed class UiFixtureChecks
             Assert.True(IssueProfile.IsMutedOn(p!, DateTime.Today), "問題應在靜音中");
         },
         ["交辦單.未回覆"] = c => Assert.Null(c.Order("ui-same-b").LastReplyAt),
+        ["交辦單.停用主機成員"] = c =>
+        {
+            var hosts = c._hosts.GetAll();
+            var members = c.CasesOf(c.Order("disabled-host").WorkOrderId);
+            var disabledKeys = WorkOrderQueries.DisabledHostKeys(hosts);
+            Assert.Contains(members, m => disabledKeys.Contains(HostNameKey.Of(m.HostName)) && m.ClosedAt == null);
+            Assert.Contains(members, m => !disabledKeys.Contains(HostNameKey.Of(m.HostName)) && m.ClosedAt == null);
+        },
+        ["交辦單.續掛已停止"] = c =>
+        {
+            var o = c.Order("continuation-stopped");
+            Assert.Equal(ContinuationStopReasons.HandlerInactive, o.ContinuationStoppedReason);
+            Assert.Null(o.ClosedAt);
+        },
+        ["交辦單.處理人看不到部分主機"] = c =>
+        {
+            var o = c.Order("unseen");
+            var hosts = c._hosts.GetAll();
+            var noGroup = hosts.Single(h => h.HostName == "UI-NOGROUP-WIN");
+            Assert.Empty(noGroup.GroupIds);
+            Assert.Contains(c.CasesOf(o.WorkOrderId), m => m.HostName == noGroup.HostName && m.ClosedAt == null);
+        },
         ["交辦單.成員200台"] = c => Assert.Equal(200, c._d.Backend.IssueCaseStore().CountByWorkOrder(c._d.WorkOrderIds["mass"])),
+        ["交辦單.不再自動派工"] = c =>
+        {
+            var cases = c._d.Backend.IssueCaseStore().GetMany(c._hosts.GetAll().Select(h => h.HostName).ToList());
+            var blocked = cases.GroupBy(x => x.HostName, StringComparer.OrdinalIgnoreCase)
+                .SelectMany(g => DispatchContext.DismissedCases(g)).ToList();
+            True(blocked.Count(x => x.IssueLabel.Contains("8700", StringComparison.Ordinal)) == 6, "Ui-Dismissed-Noise 應有 6 台被擋住（含超長主機名）");
+            True(blocked.Count(x => x.IssueLabel.Contains("8710", StringComparison.Ordinal)) == 1, "Ui-Dismissed-Single 應有 1 台被擋住");
+        },
         ["交辦單.超長說明"] = c => True((c.Order("long-note").Note?.Length ?? 0) > 500, $"備註應超過 500 字（實得 {c.Order("long-note").Note?.Length}）"),
 
         // ═══ A-0c：規則與問題負責 ═══

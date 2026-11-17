@@ -339,6 +339,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.DaySyncPending).HasColumnName("day_sync_pending");
             e.Property(x => x.Cancelled).HasColumnName("cancelled");
+            e.Property(x => x.BlocksRedispatch).HasColumnName("blocks_redispatch");
+            e.Property(x => x.EscalatedAt).HasColumnName("escalated_at");
             e.Property(x => x.DaySyncIntent).HasColumnName("day_sync_intent");
             e.HasIndex(x => new { x.WorkOrderId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_work_order_closed");
             e.HasIndex(x => new { x.SourceKey, x.EventId, x.ClosedAt }).HasDatabaseName("IX_lf_issue_cases_issue_closed");
@@ -368,6 +370,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.LastAppendedAt).HasColumnName("last_appended_at");
             e.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
             e.Property(x => x.AdminSeenAt).HasColumnName("admin_seen_at");
+            e.Property(x => x.ContinuationStoppedReason).HasColumnName("continuation_stopped_reason").HasMaxLength(30);
+            e.Property(x => x.ContinuationStoppedAt).HasColumnName("continuation_stopped_at");
             e.Property(x => x.ClosedAt).HasColumnName("closed_at");
             e.Property(x => x.ClosedReason).HasColumnName("closed_reason").HasMaxLength(30);
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
@@ -963,6 +967,10 @@ public class IssueCaseRow
     public bool DaySyncPending { get; set; }
     public bool Cancelled { get; set; }
 
+    /// <summary>這次結案是否擋住之後的派工；null＝未指定（視為擋）</summary>
+    public bool? BlocksRedispatch { get; set; }
+    public DateTime? EscalatedAt { get; set; }
+
     /// <summary>待背景同步的逐日寫入意圖（CaseDayIntent 的 JSON）；null＝無待同步</summary>
     public string? DaySyncIntent { get; set; }
 }
@@ -997,6 +1005,11 @@ public class WorkOrderRow
 
     /// <summary>具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；null＝從未開啟</summary>
     public DateTime? AdminSeenAt { get; set; }
+
+    /// <summary>續掛已停止的原因代碼（<see cref="ContinuationStopReasons"/>）；null＝沒有被擋</summary>
+    public string? ContinuationStoppedReason { get; set; }
+
+    public DateTime? ContinuationStoppedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }
     public DateTime UpdatedAt { get; set; }

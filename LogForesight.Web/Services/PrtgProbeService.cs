@@ -142,6 +142,8 @@ public class PrtgProbeConsole : IRunConsole
 /// </summary>
 public class PrtgProbeService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly ISystemSettingsStore _settings;
     private readonly PrtgProbeRunState _state;
     // 必要相依，不設預設值：探測與回填會打同一台 PRTG，這道互斥是保護。
@@ -257,9 +259,10 @@ public class PrtgProbeService
         }
         catch (Exception ex)
         {
-            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            Log.Warn(ex, "初始化 PRTG 連線失敗");
+            _state.AppendLine($"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}");
             _state.FinishRun(false, false);
-            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            error = $"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}";
             return false;
         }
 
@@ -308,7 +311,8 @@ public class PrtgProbeService
                         }
                         catch (Exception ex)
                         {
-                            console.WriteLine($"站台對照發生未預期錯誤：{ex.Message}");
+                            Log.Warn(ex, "站台對照發生未預期錯誤");
+                            console.WriteLine("站台對照發生未預期錯誤；詳細原因見記錄檔。");
                         }
                     }
                     // Some best-effort sub-stages can catch ordinary exceptions. Recheck the
@@ -334,7 +338,8 @@ public class PrtgProbeService
             }
             catch (Exception ex)
             {
-                console.WriteLine($"探測過程發生未預期錯誤：{ex.Message}");
+                Log.Warn(ex, "探測過程發生未預期錯誤");
+                console.WriteLine("探測過程發生未預期錯誤；詳細原因見記錄檔。");
                 success = false;
             }
             finally

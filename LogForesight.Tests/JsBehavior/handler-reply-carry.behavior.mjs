@@ -28,7 +28,21 @@ function extractFunction(declaration) {
     throw new Error(`production 函式未閉合：${declaration}`);
 }
 
-function makeContext() {
+// 「可回覆台數」的 production 判定（core/handling-statuses.js）：切出本體執行，不在測試裡重寫
+const statusesSource = fs.readFileSync(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'handling-statuses.js'), 'utf8').replaceAll('\r\n', '\n');
+function extractFrom(source, declaration) {
+    const start = source.indexOf(declaration);
+    assert(start >= 0, `找不到 production 函式：${declaration}`);
+    const open = source.indexOf('{', start);
+    let depth = 0;
+    for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++;
+        else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+    }
+    throw new Error(`production 函式未閉合：${declaration}`);
+}
+
+function makeContext(members) {
     const dom = installDom();
     const createElement = dom.newElement;
     const originalCreateElement = document.createElement;
@@ -51,8 +65,12 @@ function makeContext() {
     const expandOrderRow = extractFunction('function expandOrderRow(');
     const replyOrder = extractFunction('async function replyOrder(');
     const buildMemberPanel = extractFunction('function buildMemberPanel(');
+    const openSingleReply = extractFunction('function openSingleReply(');
 
+    const replyableCountSource = extractFrom(statusesSource, 'export function replyableCount(').replace('export function', 'function');
     const code = `
+${replyableCountSource}
+let lastMembersUrl = null;
 const pendingReplyCarry = new Map();
 const rows = new Map();
 let loadPromise = Promise.resolve();
@@ -66,9 +84,10 @@ const MEMBER_STATUS_OPTIONS = [{ value: 'active', label: '進行中' }];
 const MEMBER_STATUS_META = { active: { label: '進行中', variant: 'success' } };
 // 成員狀態徽章改由 core/handling-statuses.js 的 statusBadgeMeta 衍生；替身以同一份對照回應
 const statusBadgeMeta = status => MEMBER_STATUS_META[status] ?? null;
+const memberItems = ${JSON.stringify(members ?? [{ caseId: 501, issueKey: 'issue-a', hostName: 'SRV-A', status: 'active', closedAt: null }])};
 const api = {
-    get: async () => ({
-        items: [{ caseId: 501, issueKey: 'issue-a', hostName: 'SRV-A', status: 'active', closedAt: null }],
+    get: async url => ({
+        items: (lastMembersUrl = url, memberItems),
         page: 1,
         pageSize: 20,
         total: 1,
@@ -106,6 +125,8 @@ const openWorkOrderReplyModal = options => { lastModal = options; };
 const orderRowEl = workOrderId => rows.get(workOrderId)?.tr ?? null;
 const expandOrderRow = ${expandOrderRow.toString().replace(/^function expandOrderRow/, 'function expandOrderRow')};
 const buildMemberPanel = ${buildMemberPanel.toString().replace(/^function buildMemberPanel/, 'function buildMemberPanel')};
+const openNextOrder = () => { };
+const openSingleReply = ${openSingleReply};
 const replyOrder = ${replyOrder.toString().replace(/^async function replyOrder/, 'async function replyOrder')};
 
 function renderTable(container, { columns, rows: items }) {
@@ -158,7 +179,8 @@ function waitForLoad() { return loadPromise; }
 function getPanel(row) { return rows.get(row.workOrderId).cell.querySelector('.handler-wo-member-panel'); }
 function getLastModal() { return lastModal; }
 function clearLastModal() { lastModal = null; }
-return { expandOrderRow, replyOrder, pendingReplyCarry, register, waitForLoad, getPanel, getLastModal, clearLastModal };
+function getMembersUrl() { return lastMembersUrl; }
+return { getMembersUrl, expandOrderRow, replyOrder, pendingReplyCarry, register, waitForLoad, getPanel, getLastModal, clearLastModal };
 `;
 
     return new Function('document', 'Node', 'path', code)(document, Node, path);
@@ -212,7 +234,43 @@ async function manualReplyClearsCarryFromExpandedPanel() {
     assert.equal(context.getLastModal().previousNote, null, '手動回覆不可沿用上一張說明');
 }
 
+// 只剩一台進行中、而且在停用主機上：counts.active 是 0，但回覆端點與成員清單都涵蓋它——要當單台直接開回覆，標題寫對台
+async function singleActiveOnDisabledHostOpensSingleReply() {
+    const context = makeContext([{ caseId: 601, issueKey: 'issue-d', hostName: 'SRV-OFF', hostDisabled: true, status: 'active', closedAt: null }]);
+    const row = { workOrderId: 60, counts: { active: 0, activeOnDisabledHosts: 1, total: 1 }, issueLabel: '問題 D' };
+    context.register(row);
+
+    await context.replyOrder(row, null);
+
+    const modal = context.getLastModal();
+    assert(modal, '停用主機上只剩一台進行中時應直接開單台回覆彈窗');
+    assert(modal.targetText.includes('SRV-OFF'), `彈窗對象應是那台主機：${modal.targetText}`);
+    assert(modal.targetText.includes('主機已停用'), `對象說明應標出主機已停用：${modal.targetText}`);
+    assert.equal(modal.multiTarget, undefined, '單台回覆不用複數說法');
+}
+
+// 一台正常加一台停用：實際會送出 2 台，不能被當成「只剩一台」而抓到第一筆就回覆
+async function oneActivePlusOneDisabledExpandsMemberPanel() {
+    const context = makeContext([
+        { caseId: 701, issueKey: 'issue-e', hostName: 'SRV-ON', status: 'active', closedAt: null },
+        { caseId: 702, issueKey: 'issue-e', hostName: 'SRV-OFF', hostDisabled: true, status: 'active', closedAt: null }
+    ]);
+    const row = { workOrderId: 70, counts: { active: 1, activeOnDisabledHosts: 1, total: 2 }, issueLabel: '問題 E' };
+    context.register(row);
+
+    await context.replyOrder(row, null);
+    await context.waitForLoad();
+
+    assert.equal(context.getLastModal(), null, '兩台都可回覆時不可直接開單台彈窗');
+    const panel = context.getPanel(row);
+    assert(panel, '應展開成員面板讓人勾選');
+    assert(panel.textContent.includes('主機已停用'), '成員面板的停用主機列要標「主機已停用」');
+    assert.equal((panel.textContent.match(/主機已停用/g) || []).length, 1, '只有停用主機那一列有標記');
+}
+
 const cases = {
+    singleActiveOnDisabledHostOpensSingleReply,
+    oneActivePlusOneDisabledExpandsMemberPanel,
     nextMultiHostReplyCarriesStatusAndNoteOnce,
     manualReplyClearsCarryFromExpandedPanel
 };

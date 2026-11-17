@@ -148,7 +148,7 @@ internal sealed class ScaleServices
             _mail);
 
         var candidates = new DispatchCandidateSource(
-            users, userGroups, Hosts, access, issueOwners, aggregates, settingsStore);
+            users, userGroups, Hosts, access, issueOwners, aggregates, settingsStore, WorkOrderStore);
 
         WorkOrderBoard = new WorkOrderBoardService(
             WorkOrderStore,

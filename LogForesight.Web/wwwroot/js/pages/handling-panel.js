@@ -14,7 +14,9 @@ import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, renderChips, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
-import { statusMeta, statusesWhere, statusVariant } from '../core/handling-statuses.js';
+import { statusMeta, statusesWhere, statusVariant, isNoFixClosure } from '../core/handling-statuses.js';
+import { noFixConsequenceText } from './issue-status-reply.js';
+import { statusNote } from '../core/elements.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
@@ -576,6 +578,12 @@ function handlingForm() {
     ruleHint.appendChild(ruleLink);
     form.appendChild(ruleHint);
 
+    // 不處理類的後果（與處理人回覆表單同一句）：選到才顯示，免得人以為只是換個標籤
+    const noFixNote = statusNote('warning', noFixConsequenceText({ multiIssues: batchMode && selection.size > 1 }));
+    noFixNote.classList.add('mb-3', 'd-none');
+    noFixNote.dataset.role = 'no-fix-note';
+    form.appendChild(noFixNote);
+
     // 說明：label 單獨一列（updateFieldsForStatus 會改它的文字，工具列不可放進 label 節點）
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label lf-text-label mb-1';
@@ -648,6 +656,7 @@ function handlingForm() {
         observeWrap.classList.toggle('d-none', selectedStatus !== 'observing');
         forgetNoiseWrap.classList.toggle('d-none', selectedStatus !== 'open');
         ruleHint.classList.toggle('d-none', !(selectedStatus === 'false_positive' && state.options.canMaintainRules));
+        noFixNote.classList.toggle('d-none', !isNoFixClosure(selectedStatus));
 
         const field = noteFieldOf(selectedStatus);
         noteLabel.textContent = field.label;

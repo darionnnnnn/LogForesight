@@ -57,6 +57,16 @@ public class WorkOrder
     public DateTime? AdminSeenAt { get; set; }
 
     /// <summary>
+    /// 續掛已停止的原因（<see cref="ContinuationStopReasons"/> 短代碼）：夜間派工要把新主機續掛進這張單，
+    /// 卻因處理人不符資格而被擋時寫入；null＝沒有被擋。由夜間派工以單句 UPDATE 寫入（<c>IWorkOrderStore.SetContinuationStops</c>），
+    /// 整列 <c>Save</c> 不會寫回，也不動併發權杖。
+    /// </summary>
+    public string? ContinuationStoppedReason { get; set; }
+
+    /// <summary>最近一次續掛被擋的夜間派工時間；<see cref="ContinuationStoppedReason"/> 為 null 時一律為 null</summary>
+    public DateTime? ContinuationStoppedAt { get; set; }
+
+    /// <summary>
     /// 未讀回覆（管理者尚未看過處理人的最新回覆）的唯一定義：進行中、有回覆，且最近回覆晚於「最近開啟時間（沒開過則取建立時間）」。
     /// SQL 端的同義條件在 <c>EfWorkOrderStore.UnreadReplyPredicate</c>，兩處互相對應、改一處必改另一處。
     /// </summary>
@@ -104,6 +114,27 @@ public static class WorkOrderOrigins
     public const string DayAssign = "day_assign";
 }
 
+/// <summary>續掛被擋的原因代碼與顯示名稱（唯一一份對照）</summary>
+public static class ContinuationStopReasons
+{
+    /// <summary>處理人已停用，或已不具處理能力（不在候選人快照內）</summary>
+    public const string HandlerInactive = "handler_inactive";
+
+    /// <summary>處理人暫停接單</summary>
+    public const string HandlerPaused = "handler_paused";
+
+    /// <summary>處理人看不到這台新主機</summary>
+    public const string HostNotVisible = "host_not_visible";
+
+    public static string? LabelOf(string? code) => code switch
+    {
+        HandlerInactive => "處理人已停用或失去處理能力",
+        HandlerPaused => "處理人暫停接單",
+        HostNotVisible => "處理人看不到新主機",
+        _ => null
+    };
+}
+
 /// <summary>交辦單的主機範圍種類</summary>
 public static class WorkOrderScopes
 {
@@ -148,8 +179,14 @@ public sealed class WorkOrderMemberCounts
 {
     public int Total { get; init; }
 
-    /// <summary>進行中（closed_at IS NULL）</summary>
+    /// <summary>
+    /// 進行中（closed_at IS NULL）。呼叫端傳入停用主機集合時，停用主機上的進行中成員不計入這裡，
+    /// 也不計入下面的各狀態與逾期數，改計於 <see cref="ActiveOnDisabledHosts"/>。
+    /// </summary>
     public int Active { get; init; }
+
+    /// <summary>進行中、但主機已停用的成員數（呼叫端沒有傳停用主機集合時恆為 0）</summary>
+    public int ActiveOnDisabledHosts { get; init; }
 
     public int Closed { get; init; }
 
@@ -209,6 +246,12 @@ public sealed class WorkOrderQuery
 
     /// <summary>true＝只列有未讀回覆的單（判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
     public bool UnreadOnly { get; init; }
+
+    /// <summary>
+    /// 已停用主機的 host_name_key（大寫）集合：「有上報成員」「有逾期成員」兩種狀態條件與「成員數」排序都不計入這些主機上的成員，
+    /// 與清單列上的成員數字同一口徑。null＝不排除。
+    /// </summary>
+    public IReadOnlyCollection<string>? ExcludedHostKeys { get; init; }
 }
 
 /// <summary>交辦單清單查詢結果</summary>
@@ -281,6 +324,21 @@ public static class WorkOrderQueries
 
     public const int MaxOrderPageSize = 100;
     public const int MaxMemberPageSize = 200;
+
+    /// <summary>
+    /// 「已停用主機」的 host_name_key 集合（唯一一份）：徽章、處理人摘要、負載看板、交辦總覽與派工負載的台數都用它排除成員。
+    /// 同名鍵若還有啟用中的主機就不算停用。
+    /// </summary>
+    public static IReadOnlyCollection<string> DisabledHostKeys(IEnumerable<WebHost> hosts)
+    {
+        var all = hosts.ToList();
+        var active = all.Where(h => h.Active).Select(h => LogForesight.Core.Persistence.Sql.HostNameKey.Of(h.HostName)).ToHashSet();
+        return all.Where(h => !h.Active)
+            .Select(h => LogForesight.Core.Persistence.Sql.HostNameKey.Of(h.HostName))
+            .Where(k => !active.Contains(k))
+            .Distinct()
+            .ToList();
+    }
 
     /// <summary>成員逾期：進行中、期限非空且早於今天、狀態為 in_progress 或 observing</summary>
     public static bool IsOverdue(IssueCase c, DateTime today) =>

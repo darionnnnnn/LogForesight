@@ -477,7 +477,7 @@ function sourceLine(detail) {
         return '資料來源：PRTG（當日沒有日誌分析；之後補到日誌分析會更新為同一筆紀錄並保留這些 PRTG 問題）';
     }
     const state = detail.latestNetiqAttemptStatus == null
-        ? '已保存的分析結果'
+        ? '已儲存的分析結果'
         : `最近一次取數：${netiqAttemptStatusName(detail.latestNetiqAttemptStatus)}`;
     const supplement = detail.prtgSupplementEligible
         ? '可再補 PRTG 資料'
@@ -1690,7 +1690,7 @@ function evidencePanel(issue) {
         // 面板有其他佐證但沒有來源觀測：明講「沒保存」，讀的人才分得出「沒有」與「漏顯示」；
         // 只為這一句不另開面板（四區皆無的列維持不可展開）
         if (sections.length > 0 && !(issue.sourceObservations || []).length) {
-            add('來源觀測', metaLine(['未保存可核對的來源觀測', issue.sourceObservationsTruncated ? '清單已截斷' : null]));
+            add('來源觀測', metaLine(['未儲存可核對的來源觀測', issue.sourceObservationsTruncated ? '清單已截斷' : null]));
         }
     }
     if (sections.length === 0) return null;
@@ -2546,7 +2546,7 @@ async function loadReports() {
     riskReportPendingNotice.hidden = currentDetail.riskReportPending !== true;
     riskReportPendingNotice.textContent = currentDetail.hasReport
         ? '風險報告待補，背景自動重試；舊報告仍保留。'
-        : '風險報告待補，背景自動重試；目前沒有已保存的報告。';
+        : '風險報告待補，背景自動重試；目前沒有已儲存的報告。';
     // 兩份報告各自可有可無，分開請求；任一份查無或失敗（已過保留期、暫時錯誤）都只讓該份顯示為空，
     // 不得拖垮整個 load（否則 setupNextUnhandled 也不會跑）
     const [risk, checkup] = await Promise.all([

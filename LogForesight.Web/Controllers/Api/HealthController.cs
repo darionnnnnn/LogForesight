@@ -83,6 +83,14 @@ public class HealthController : ControllerBase
     public ApiResponse<HealthDetailDto> Detail() => ApiResponse<HealthDetailDto>.Ok(_health.GetDetail());
 
     /// <summary>
+    /// 整體狀態與原因清單（導覽告示列用）：Maintain 或 DevMonitor 才讀得到——原因含遷移錯誤、收件人等維運資訊。
+    /// 判定與 <c>detail</c> 的 <c>statusReasons</c> 是同一份（<see cref="HealthAttention"/>）。
+    /// </summary>
+    [HttpGet("attention")]
+    [Permission(Capability.Maintain, Capability.DevMonitor)]
+    public ApiResponse<HealthAttentionDto> Attention() => ApiResponse<HealthAttentionDto>.Ok(_health.GetAttention());
+
+    /// <summary>
     /// 排程資料新鮮度（任務 A-3）：任何已登入使用者可讀。
     /// 只在 Stale && !Acked 且檢視者沒有 Maintain 時填入 admin 群組成員的顯示名稱，其餘為空清單。
     /// </summary>

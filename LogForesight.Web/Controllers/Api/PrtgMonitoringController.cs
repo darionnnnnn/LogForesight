@@ -160,7 +160,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             SensorEligibilityChecksForEstimateAndSave = selectedSensors.Length,
             MinimumCataloguePageRequests = hostPages + sensorPages,
             MinimumQueryWork = hostPages + sensorPages + validationQueries + 2,
-            QueryCost = "下限採完整 host/sensor 目錄頁數加估算與保存各一次的精確 sensor 範圍重驗，及兩項 SQL 候選計數；不代表實際 SQL 命令數、執行時間、磁碟容量或未測硬體吞吐保證。" }));
+            QueryCost = "下限採完整 host/sensor 目錄頁數加估算與儲存各一次的精確 sensor 範圍重驗，及兩項 SQL 候選計數；不代表實際 SQL 命令數、執行時間、磁碟容量或未測硬體吞吐保證。" }));
     }
 
     /// <summary>
@@ -238,7 +238,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var status = host is null ? "missing" : host.MergedInto.HasValue ? "merged" :
             !host.Active ? "inactive" : host.Source != "netiq" ? "not-netiq" :
             !visible.Contains(id) ? "not-visible" : "eligible";
-        return new PrtgSavedHost(id, host?.HostName ?? $"已保存主機 #{id}", status);
+        return new PrtgSavedHost(id, host?.HostName ?? $"已儲存主機 #{id}", status);
     }
 
     private R01PageToken CaptureFence(PrtgMonitoringPolicy policy, IReadOnlySet<long> visible,
@@ -289,7 +289,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         error = null;
         if (!TryReadToken(text, out token) || token!.Kind != "fence")
         {
-            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidToken, "目錄版本權杖無效或已逾期，請重新載入。"));
+            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidToken, "清單的版本標記無效或已逾期，請重新載入。"));
             return false;
         }
         return true;

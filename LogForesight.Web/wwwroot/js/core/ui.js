@@ -16,7 +16,8 @@
 import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
-import { api } from './api.js';
+import { api, getDisplaySettings } from './api.js';
+import { mailNotifyText } from './mail-notify.js';
 // 同一個循環 import 安全模式：elements.js 也 import 本檔的 icon()，雙方都只在函式體內使用
 import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
@@ -1172,7 +1173,10 @@ export function renderChips(container, { items, attr, activeValues, multi = true
 }
 
 /** 空狀態（§8.6-5）：不留白畫面，要說明「接下來該做什麼」 */
-export function renderEmpty(container, { title = '尚無資料', hint = '', icon: iconName = 'inbox' } = {}) {
+export function renderEmpty(container, { title, hint = '', icon: iconName = 'inbox' } = {}) {
+    // 標題必填：全站規定空狀態要寫明「是什麼資料」為空（沒有篩選寫「尚無＿＿」、篩選後寫「沒有符合條件的＿＿」），
+    // 不提供泛用預設值；漏給的呼叫端在主控台出聲，畫面退回不指名的說法
+    if (!title) console.warn('renderEmpty：未提供 title，請寫明是什麼資料為空');
     const el = document.createElement('div');
     el.className = 'lf-empty';
 
@@ -1185,7 +1189,7 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
 
     const titleEl = document.createElement('div');
     titleEl.className = 'lf-empty__title';
-    titleEl.textContent = title;
+    titleEl.textContent = title || '目前沒有可顯示的項目';
     el.appendChild(titleEl);
 
     if (hint) {
@@ -1819,9 +1823,13 @@ export async function loadRunHint(hintEl) {
  * 取消或失敗回 false（錯誤已由 api.js 顯示）；成功後的重整動作由呼叫的頁面自己接手。
  */
 export async function confirmAndClearMute(rule) {
+    // 恢復通知要不要寄取決於交辦單通知開關：依設定說明，不承諾不一定寄出的信
+    const notifyText = mailNotifyText(await getDisplaySettings(),
+        '進行中交辦單的處理人會在下一封交辦摘要收到恢復通知',
+        '目前未啟用交辦單通知，進行中交辦單的處理人不會收到恢復通知，請自行告知');
     const confirmed = await confirmAction({
         title: '解除靜音',
-        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
+        message: `解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。${notifyText}；已代為結案的單不會重開。`,
         confirmText: '解除',
         confirmVariant: 'danger'
     });

@@ -202,23 +202,23 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為11()
+    public void 種子版本為12()
     {
-        Assert.Equal(11, KnownIssueSeed.Version);
+        Assert.Equal(12, KnownIssueSeed.Version);
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共12條_總計104條()
+    public void 規則總數正確_Windows共65條_Linux共28條_PRTG共12條_總計105條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
         var linux = rules.Where(r => r.Platform == "linux").ToList();
         var prtg = rules.Where(r => r.Platform == "prtg").ToList();
 
-        Assert.Equal(64, windows.Count);
+        Assert.Equal(65, windows.Count);
         Assert.Equal(28, linux.Count);
         Assert.Equal(12, prtg.Count);
-        Assert.Equal(104, rules.Count);
+        Assert.Equal(105, rules.Count);
     }
 
     [Fact]
@@ -234,6 +234,37 @@ public class KnownIssueCatalogTests : IDisposable
         };
 
         Assert.All(expectedIds, id => Assert.Contains(id, KnownIssueCatalog.SecurityAuditWatchlist));
+    }
+
+    [Theory]
+    [InlineData("Microsoft-Windows-Eventlog", "builtin-security-audit-log-cleared-1102-eventlog")]
+    [InlineData("Microsoft-Windows-Security-Auditing", "builtin-security-audit-log-cleared-1102")]
+    public void 稽核清除1102_真實來源與既有樣式都命中重大規則(string source, string expectedId)
+    {
+        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
+        var rule = KnownIssueCatalog.FindRule(source, 1102);
+        Assert.NotNull(rule);
+        Assert.Equal(expectedId, rule!.Id);
+        Assert.True(rule.ElevatesDayRisk);
+        Assert.Equal(IssueSeverity.High, rule.Severity);
+    }
+
+    [Fact]
+    public void Eventlog來源的104仍由104規則命中_不被1102新規則吃掉()
+    {
+        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
+        var rule = KnownIssueCatalog.FindRule("Microsoft-Windows-Eventlog", 104);
+        Assert.NotNull(rule);
+        Assert.Equal("builtin-security-system-log-cleared-104", rule!.Id);
+    }
+
+    [Fact]
+    public void 別的提供者的1102不命中稽核清除規則()
+    {
+        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
+        var rule = KnownIssueCatalog.FindRule("Microsoft-Windows-Kernel-Power", 1102);
+        Assert.True(rule is null || !rule.Id.StartsWith("builtin-security-audit-log-cleared-1102", StringComparison.Ordinal),
+            $"Kernel-Power 的 1102 不應命中稽核清除規則，實際命中 {rule?.Id}");
     }
 
     [Fact]

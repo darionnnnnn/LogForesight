@@ -3,12 +3,13 @@
  */
 
 import { roleText } from '../core/elements.js';
-import { api } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
     renderPagination, sortRows, loadPageSize, savePageSize
 } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
+import { appUrl } from '../core/paths.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -202,6 +203,31 @@ function renderLastLogin(lastLoginAt) {
     return roleText('lf-text-data', formatDateTime(lastLoginAt));
 }
 
+/**
+ * 停用帳號或暫停接單後，這個人名下還有進行中的交辦單（單不會自動轉走）：
+ * 提示張數並連到已篩選的交辦總覽（該處理人、進行中），讓管理者改派或結案。0 張時不提示。
+ */
+async function notifyActiveWorkOrders(user, count, action) {
+    const n = Number(count) || 0;
+    if (n <= 0) return;
+    const message = `${user.account} 名下還有 ${n} 張進行中的交辦單，${action}後這些單仍在他名下`;
+    // 交辦總覽只有具 Assign 或 ViewAll 的人進得去（例如救援帳號就沒有）：進不去就不附連結，改請人通知系統管理員
+    let me = null;
+    try {
+        me = await getCurrentUser();
+    } catch {
+        // 取不到就當作沒有能力：寧可少一個連結，也不給進不去的連結
+    }
+    if (!hasCapability(me, 'Assign') && !hasCapability(me, 'ViewAll')) {
+        toast(`${message}。請通知系統管理員改派或結案`, 'warning', 12000);
+        return;
+    }
+    const params = new URLSearchParams({ handlerId: String(user.userId), status: 'active' });
+    toast(message, 'warning', 12000, {
+        link: { href: `${appUrl('/work-orders')}?${params}`, text: '到交辦總覽改派或結案' }
+    });
+}
+
 function renderDispatchPausedToggle(user) {
     const wrap = document.createElement('div');
     wrap.className = 'form-check m-0';
@@ -223,9 +249,10 @@ function renderDispatchPausedToggle(user) {
         const next = input.checked;
         input.disabled = true;
         try {
-            await api.put(`/api/admin/users/${user.userId}/dispatch-paused`, { paused: next }, { silent: true });
+            const result = await api.put(`/api/admin/users/${user.userId}/dispatch-paused`, { paused: next }, { silent: true });
             user.dispatchPaused = next;
             toast('已更新暫停接單設定');
+            if (next) notifyActiveWorkOrders(user, result?.activeWorkOrders, '暫停接單');
         } catch (error) {
             input.checked = !next;
             toast(error.message, 'danger');
@@ -339,6 +366,7 @@ form.addEventListener('submit', async event => {
         await api.put(`/api/admin/users/${saved.userId}/groups`, { groupIds: selectedGroupIds });
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');
+        if (editingUser?.active && !active) notifyActiveWorkOrders(saved, saved.activeWorkOrders, '停用');
         modal.hide();
         await guardLoad(listContainer, load);
     } catch {

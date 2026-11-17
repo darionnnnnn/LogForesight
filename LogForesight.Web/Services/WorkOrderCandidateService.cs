@@ -27,11 +27,15 @@ public sealed class WorkOrderCandidateService
     private readonly IUserDisplayNameService _displayNames;
     private readonly UserCapabilityResolver _capabilities;
 
+    private readonly TimeProvider _clock;
+
     public WorkOrderCandidateService(
         IUserStore users, IUserGroupStore userGroups, IHostStore hosts, IGroupAccessStore access,
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, ISystemSettingsStore settings,
-        IIssueCaseStore cases, IWorkOrderStore orders, IUserDisplayNameService displayNames)
+        IIssueCaseStore cases, IWorkOrderStore orders, IUserDisplayNameService displayNames,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _users = users;
         _userGroups = userGroups;
         _hosts = hosts;
@@ -55,7 +59,7 @@ public sealed class WorkOrderCandidateService
             .ToHashSet();
 
         var recentHandlers = RecentHandlersOfSameIssue(req);
-        var loads = _orders.LoadBoard().ToDictionary(l => l.HandlerId, l => l.ActiveMembers);
+        var loads = _orders.LoadBoard(WorkOrderQueries.DisabledHostKeys(_hosts.GetAll())).ToDictionary(l => l.HandlerId, l => l.ActiveMembers);
 
         // 主機快照只取一次：IHostStore 多載每次都重讀整份主機 blob，乘上候選人數就是每開一次窗讀幾十份
         var hostSnapshot = requested.Count > 0 ? _hosts.CapturePrtgSnapshot() : null;
@@ -103,7 +107,7 @@ public sealed class WorkOrderCandidateService
         if (req == null || string.IsNullOrWhiteSpace(req.Source) || req.EventId == null) return handlers;
 
         var sourceKey = WorkOrderIssueKey.SourceKeyOf(req.Source);
-        foreach (var c in _cases.GetResolvedSince(DateTime.Today.AddDays(-DispatchContext.ContinuityDays)))
+        foreach (var c in _cases.GetResolvedSince(_clock.LocalToday().AddDays(-DispatchContext.ContinuityDays)))
         {
             if (c.HandlerId == null || c.SourceName == null || c.EventId != req.EventId) continue;
             if (WorkOrderIssueKey.SourceKeyOf(c.SourceName) == sourceKey) handlers.Add(c.HandlerId.Value);

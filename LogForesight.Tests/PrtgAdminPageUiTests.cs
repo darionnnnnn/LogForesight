@@ -61,7 +61,7 @@ public sealed class PrtgAdminPageUiTests
     public void 尚未計算的空狀態只寫一處_不在四張校準卡各重複一份()
     {
         var view = View();
-        Assert.DoesNotContain("尚未執行判定查詢，請點擊上方", view);
+        Assert.DoesNotContain("尚未執行判定查詢，請點選上方", view);
         Assert.Contains("id=\"calibration-empty\"", view);
         // 首次啟用的順序由頁首「啟用準備」清單負責（帶連結），連線頁籤不再另列一份把表單往下擠
         Assert.DoesNotContain("prtg-setup-empty", view);

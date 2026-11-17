@@ -37,6 +37,13 @@ public class StorageBackend
     /// <summary>暫存恢復佇列使用的資料根目錄；業務資料仍以 SQL 為準。</summary>
     public string DataRoot => _dataRoot;
 
+    /// <summary>
+    /// 交辦、靜音、觀察中這條路徑的時鐘：本類別建出的案件／處理／交辦／處理歷程 store 都用它判斷「現在」「今天」。
+    /// 預設系統時鐘（行為不變）；站台由 DI 注入同一個 <see cref="TimeProvider"/>，情境測試可換成可撥動的假時鐘。
+    /// 以 init 設定、不加建構式參數，才不必改動既有的建構點。
+    /// </summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
     /// <summary>目前是否為 Sqlite 後端（建構時依設定決定；健康頁記憶體詳情用）。</summary>
     public bool IsSqlite { get; }
 
@@ -295,14 +302,14 @@ public class StorageBackend
     // 這三個過去是 Blob("issue_handling") 等整份型 store，現在走真表；
     // 介面不變，呼叫端與 DI 註冊只換建構方式。
 
-    public EfIssueHandlingStore IssueHandlingStore() => new(_dbFactory, Performance);
+    public EfIssueHandlingStore IssueHandlingStore() => new(_dbFactory, Performance, Clock);
 
-    public EfIssueCaseStore IssueCaseStore() => new(_dbFactory);
+    public EfIssueCaseStore IssueCaseStore() => new(_dbFactory, Clock);
 
     /// <summary>交辦單 store（↔ lf_work_orders ＋ lf_work_order_events）</summary>
-    public EfWorkOrderStore WorkOrderStore() => new(_dbFactory);
+    public EfWorkOrderStore WorkOrderStore() => new(_dbFactory, Clock);
 
-    public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
+    public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"), Clock);
 
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
     public PermissionChangeStore PermissionChanges() => new(_dbFactory, Performance);

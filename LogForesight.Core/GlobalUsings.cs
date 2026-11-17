@@ -5,3 +5,4 @@ global using LogForesight.Core.Models;
 global using LogForesight.Core.Persistence;
 global using LogForesight.Core.Persistence.Sql;
 global using LogForesight.Core.Service;
+global using LogForesight.Core.Time;

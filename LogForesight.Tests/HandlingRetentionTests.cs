@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -135,6 +136,99 @@ public class HandlingRetentionTests : IDisposable
         Assert.Equal(3, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
         Assert.Equal(2, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
         Assert.Equal(0, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
+    }
+
+    private IssueCase DismissCase(string caseId, string host, string status, int closedDaysAgo, int createdDaysAgo,
+        bool? blocks = null, bool cancelled = false, string issueKey = "System|Svc|1|1") => new()
+    {
+        CaseId = caseId, HostName = host, IssueKey = issueKey, IssueLabel = "Svc 1", Status = status,
+        ClosedAt = DateTime.Now.AddDays(-closedDaysAgo),
+        FirstLinkedDate = DateTime.Today.AddDays(-createdDaysAgo), LastLinkedDate = DateTime.Today.AddDays(-createdDaysAgo),
+        CreatedAt = DateTime.Now.AddDays(-createdDaysAgo), UpdatedAt = DateTime.Now.AddDays(-closedDaysAgo),
+        CreatedByAccount = "admin", BlocksRedispatch = blocks, Cancelled = cancelled
+    };
+
+    /// <summary>處理人判定的不處理類維持不過期：清除若刪掉最新那筆，閘門就找不到它、問題會重新派工，也從恢復清單消失。</summary>
+    [Fact]
+    public void 案件清理_該鍵最新的不處理案件保留_被較新案件取代的舊案件與BlocksRedispatch為false的照刪()
+    {
+        var store = Cases();
+        // 最新的不處理類（blocks 為 null＝預設擋）：保留
+        store.Save(DismissCase("latest-wontfix", "SRV-A", IssueHandlingStatuses.WontFix, closedDaysAgo: 200, createdDaysAgo: 300));
+        store.Save(DismissCase("latest-noise", "SRV-A2", IssueHandlingStatuses.KnownNoise, closedDaysAgo: 200, createdDaysAgo: 300, blocks: true));
+        // 同鍵有較新案件（已處理）：較舊的不處理案件已不影響閘門，照刪；較新的已處理案件也過期照刪
+        store.Save(DismissCase("superseded-old", "SRV-B", IssueHandlingStatuses.WontFix, closedDaysAgo: 250, createdDaysAgo: 400));
+        store.Save(DismissCase("superseded-new", "SRV-B", IssueHandlingStatuses.Resolved, closedDaysAgo: 200, createdDaysAgo: 300));
+        // 明確標記不擋再派工：照刪
+        store.Save(DismissCase("not-blocking", "SRV-C", IssueHandlingStatuses.WontFix, closedDaysAgo: 200, createdDaysAgo: 300, blocks: false));
+        // 已處理類（一般結案）：照刪
+        store.Save(DismissCase("resolved", "SRV-D", IssueHandlingStatuses.Resolved, closedDaysAgo: 200, createdDaysAgo: 300));
+
+        var removed = store.Prune(retentionDays: 120);
+
+        Assert.Equal(4, removed);
+        Assert.NotNull(store.Get("latest-wontfix"));
+        Assert.NotNull(store.Get("latest-noise"));
+        Assert.Null(store.Get("superseded-old"));
+        Assert.Null(store.Get("superseded-new"));
+        Assert.Null(store.Get("not-blocking"));
+        Assert.Null(store.Get("resolved"));
+    }
+
+    [Fact]
+    public void 案件清理_較新案件進行中時不處理案件保留_較新案件已結案才算取代()
+    {
+        var store = Cases();
+        store.Save(DismissCase("held", "SRV-H", IssueHandlingStatuses.WontFix, closedDaysAgo: 200, createdDaysAgo: 300));
+        var open = DismissCase("newer-open", "SRV-H", IssueHandlingStatuses.InProgress, closedDaysAgo: 0, createdDaysAgo: 100);
+        open.ClosedAt = null;
+        store.Save(open);
+
+        Assert.Equal(0, store.Prune(retentionDays: 120));
+        Assert.NotNull(store.Get("held"));
+
+        // 較新案件結案（最近結案、不過期）後才算取代：舊的不處理案件照刪
+        var closed = store.Get("newer-open")!;
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now.AddDays(-5);
+        store.Save(closed);
+
+        Assert.Equal(1, store.Prune(retentionDays: 120));
+        Assert.Null(store.Get("held"));
+        Assert.NotNull(store.Get("newer-open"));
+    }
+
+    [Fact]
+    public void 案件清理_保留的不處理案件經分批與上限仍不被刪_且計數不含它()
+    {
+        var store = Cases();
+        store.Save(DismissCase("keep", "SRV-K", IssueHandlingStatuses.FalsePositive, closedDaysAgo: 200, createdDaysAgo: 300));
+        for (var i = 0; i < 3; i++)
+            store.Save(DismissCase($"gone{i}", $"SRV-{i}", IssueHandlingStatuses.Resolved, closedDaysAgo: 200, createdDaysAgo: 300));
+
+        Assert.Equal(3, store.Prune(retentionDays: 120, maxRows: 10, batchSize: 2));
+        Assert.Equal(0, store.Prune(retentionDays: 120, maxRows: 10, batchSize: 2));
+        Assert.NotNull(store.Get("keep"));
+    }
+
+    [Fact]
+    public void 案件清理_保留判定在SQLServer與SQLite都翻成EXISTS子查詢()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;").Options;
+        using var sqlServer = new LfDbContext(options);
+        using var sqlite = _fixture.NewContext();
+
+        foreach (var sql in new[]
+                 {
+                     EfIssueCaseStore.Expired(sqlServer, DateTime.Today).ToQueryString(),
+                     EfIssueCaseStore.Expired(sqlite, DateTime.Today).ToQueryString()
+                 })
+        {
+            // 子查詢翻成 EXISTS（外層以 NOT 包住保留條件）
+            Assert.Contains("EXISTS (", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("closed_at", sql, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     // ── handling_log（G4）───────────────────────────────────────────────────

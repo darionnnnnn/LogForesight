@@ -5,6 +5,9 @@ namespace LogForesight.Core.Persistence;
 /// store 只管持久化：建單、改派、結案推導等協調邏輯不在這裡。
 /// 「進行中」一律指 <see cref="WorkOrder.ClosedAt"/> == null；問題來源比對不分大小寫（source_key 正規化大寫）。
 /// </summary>
+/// <summary>續掛停止欄位的一筆更新（<see cref="IWorkOrderStore.SetContinuationStops"/>）</summary>
+public sealed record ContinuationStopUpdate(long WorkOrderId, string? Reason, DateTime At);
+
 public interface IWorkOrderStore
 {
     WorkOrder? Get(long workOrderId);
@@ -35,6 +38,12 @@ public interface IWorkOrderStore
     /// </summary>
     void MarkAdminSeen(long workOrderId, DateTime seenAt);
 
+    /// <summary>
+    /// 批次寫入續掛停止欄位（每張單一句 UPDATE）：<see cref="ContinuationStopUpdate.Reason"/> 為 null 即清除（停止時間一併清掉）。
+    /// 不動 UpdatedAt，不與其他寫入互搶併發權杖；單不存在時略過。
+    /// </summary>
+    void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates);
+
     /// <summary>有未讀回覆的單數（SQL 端 COUNT，判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
     int CountUnreadReplies();
 
@@ -43,8 +52,11 @@ public interface IWorkOrderStore
     /// <summary>依 CreatedAt 升冪</summary>
     List<WorkOrderEvent> ListEvents(long workOrderId);
 
-    /// <summary>一次查詢（GROUP BY work_order_id）取得多張單的成員計數；ids 為空回空字典</summary>
-    Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds);
+    /// <summary>
+    /// 一次查詢（GROUP BY work_order_id）取得多張單的成員計數；ids 為空回空字典。
+    /// <paramref name="excludedHostKeys"/> 為已停用主機的 host_name_key（大寫）：其進行中成員不計入進行中與各狀態數，改計於 ActiveOnDisabledHosts；null＝不排除。
+    /// </summary>
+    Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null);
 
     /// <summary>
     /// 交辦單清單（篩選／排序／分頁）：狀態條件以 EXISTS 子查詢表達、不把成員拉回記憶體；
@@ -52,8 +64,11 @@ public interface IWorkOrderStore
     /// </summary>
     WorkOrderPage QueryOrders(WorkOrderQuery q);
 
-    /// <summary>一次查詢取得每位「有進行中交辦單或近 7 日有結案單」的處理人負載</summary>
-    List<HandlerLoad> LoadBoard();
+    /// <summary>
+    /// 一次查詢取得每位「有進行中交辦單或近 7 日有結案單」的處理人負載。
+    /// <paramref name="excludedHostKeys"/>（已停用主機的 host_name_key）上的成員不計入成員數與逾期成員數；null＝不排除。
+    /// </summary>
+    List<HandlerLoad> LoadBoard(IReadOnlyCollection<string>? excludedHostKeys = null);
 
     /// <summary>
     /// 單一處理人的進行中摘要（我的交辦清單與側欄徽章）：單一查詢；沒有進行中單回全 0。
@@ -61,7 +76,8 @@ public interface IWorkOrderStore
     /// 四個既有數字（含成員子查詢）一律排除暫停單（組合鍵在 <paramref name="pausedKeys"/> 內的進行中單），
     /// 暫停單另計於 <see cref="WorkOrderHandlerSummary.PausedWorkOrders"/>。
     /// </summary>
-    WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys);
+    /// <remarks><paramref name="excludedHostKeys"/>（已停用主機的 host_name_key）上的成員不計入成員數與逾期成員數；null＝不排除。</remarks>
+    WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys, IReadOnlyCollection<string>? excludedHostKeys = null);
 
     /// <summary>
     /// 進行中、但底下已沒有任何進行中案件的單（含零成員），依 work_order_id 升冪取前 <paramref name="take"/> 筆。

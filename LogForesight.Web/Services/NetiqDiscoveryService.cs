@@ -142,11 +142,12 @@ public class NetiqDiscoveryService
                 // （都記為 failed 並帶訊息），故不分開接——背景工作只要保證例外不逸出。
                 catch (Exception ex)
                 {
+                    Log.Warn(ex, "NetIQ 探索作業失敗");
                     lock (job)
                     {
                         job.Status = "failed";
                         job.Stage = "失敗";
-                        job.Error = ex.Message;
+                        job.Error = UserFacingMessage.For(ex, "探索作業發生未預期的錯誤，詳細原因見記錄檔。");
                         job.FinishedAt = DateTime.Now;
                     }
                 }

@@ -46,6 +46,12 @@ public class WorkOrderDispatcherTests
             VisibleHostIds = visibleHostIds.ToHashSet()
         });
 
+    /// <summary>有可續掛單的處理人：不在派工池、啟用且未暫停、看得到主機 1 與 2（續掛要求處理人符合資格）</summary>
+    private void Continuers(params long[] userIds)
+    {
+        foreach (var id in userIds) Candidate(id, "u" + id, inPool: false, visibleHostIds: new long[] { 1, 2 });
+    }
+
     private DispatchCandidatePool Pool() => new()
     {
         ByUserId = _candidates.ToDictionary(c => c.UserId),
@@ -236,6 +242,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_範圍All命中()
     {
+        Continuers(9);
         var id = Order(9);
         AssertAttach(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), id, 9);
     }
@@ -286,6 +293,7 @@ public class WorkOrderDispatcherTests
     public void 順序_可續掛單優先於負責人()
     {
         Candidate(7, "owner", inPool: false);
+        Continuers(9);
         Owners(7);
         var id = Order(9);
 
@@ -317,11 +325,98 @@ public class WorkOrderDispatcherTests
     public void 續掛_Groups範圍與主機群組有交集才命中()
     {
         _settings.AutoDispatchEnabled = false;
+        Continuers(9);
         var id = Order(9, WorkOrderScopes.Groups, scopeGroupIds: 5);
         var ctx = Build();
 
         AssertAttach(WorkOrderDispatcher.Decide(ctx, Host(1, "SRV-01", 5, 6), Issue(), DateTime.Today), id, 9);
         AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(2, "SRV-02", 7), Issue(), DateTime.Today), WorkOrderDispatcher.SkipDisabled);
+    }
+
+    // ── 派工資格（IneligibleReason）：續掛、問題負責人、自動派工共用 ─────────────────
+
+    private static string[] StopReasons(DispatchDecision d) => d.BlockedContinuations.Select(b => b.Reason).ToArray();
+
+    [Fact]
+    public void 資格_續掛處理人不在候選快照_視為停用_往下走自動派工()
+    {
+        Candidate(2, "b", visibleHostIds: 1);
+        var blockedOrder = Order(9);   // 9 不在候選快照＝已停用（或失去處理能力）
+
+        var d = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+
+        AssertCreate(d, 2, WorkOrderOrigins.AutoDispatch);
+        var blocked = Assert.Single(d.BlockedContinuations);
+        Assert.Equal(new BlockedContinuation(blockedOrder, 9, ContinuationStopReasons.HandlerInactive), blocked);
+    }
+
+    [Fact]
+    public void 資格_續掛處理人暫停接單_往下走問題負責人()
+    {
+        Candidate(9, "nine", inPool: false, paused: true, visibleHostIds: 1);
+        Candidate(7, "owner", inPool: false);
+        Owners(7);
+        Order(9);
+
+        var d = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+
+        AssertCreate(d, 7, WorkOrderOrigins.OwnerRule);
+        Assert.Equal(new[] { ContinuationStopReasons.HandlerPaused }, StopReasons(d));
+    }
+
+    [Fact]
+    public void 資格_續掛處理人看不到這台_只擋這台_看得到的另一台照常續掛()
+    {
+        Candidate(9, "nine", inPool: false, visibleHostIds: 1);
+        var id = Order(9);
+        var ctx = Build();
+
+        AssertAttach(WorkOrderDispatcher.Decide(ctx, Host(1, "SRV-01"), Issue(), DateTime.Today), id, 9);
+        var unseen = WorkOrderDispatcher.Decide(ctx, Host(2, "SRV-02"), Issue(), DateTime.Today);
+
+        AssertSkip(unseen, WorkOrderDispatcher.SkipNoCandidate, WorkOrderDispatcher.NoCandidateNoPool);
+        Assert.Equal(new[] { ContinuationStopReasons.HostNotVisible }, StopReasons(unseen));
+    }
+
+    [Fact]
+    public void 資格_都沒人接時決策帶著被擋的續掛_沒被擋的決策為空清單()
+    {
+        Candidate(9, "nine", inPool: false, paused: true);
+        Order(9);
+        _settings.AutoDispatchEnabled = false;
+
+        var d = WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today);
+
+        AssertSkip(d, WorkOrderDispatcher.SkipDisabled);
+        Assert.Single(d.BlockedContinuations);
+    }
+
+    [Fact]
+    public void 資格_沒有可續掛單時決策的被擋清單為空()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+
+        Assert.Empty(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today).BlockedContinuations);
+    }
+
+    [Fact]
+    public void 資格_問題負責人看不到這台仍派給他_刻意設計()
+    {
+        Candidate(7, "owner", inPool: false, visibleHostIds: 99);
+        Owners(7);
+
+        AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 7, WorkOrderOrigins.OwnerRule);
+    }
+
+    [Fact]
+    public void 資格_自動派工要求在派工池且看得到_暫停與不在池都不選()
+    {
+        Candidate(1, "a", inPool: false, visibleHostIds: 1);       // 看得到但不在池
+        Candidate(2, "b", paused: true, visibleHostIds: 1);        // 在池但暫停
+        Candidate(3, "c", visibleHostIds: 99);                     // 在池但看不到這台
+        Candidate(4, "d", visibleHostIds: 1);
+
+        AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 4, WorkOrderOrigins.AutoDispatch);
     }
 
     [Fact]
@@ -343,6 +438,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_兩張可續掛取建立較晚者()
     {
+        Continuers(8, 9, 10);
         var older = Order(8, createdAt: DateTime.Today.AddDays(-2));
         var newer = Order(9, createdAt: DateTime.Today.AddDays(-1));
         Order(10, createdAt: DateTime.Today.AddDays(-3));
@@ -354,6 +450,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_建立時間相同取單號大者()
     {
+        Continuers(8, 9);
         var at = DateTime.Today.AddDays(-1);
         Order(8, createdAt: at);
         var larger = Order(9, createdAt: at);
@@ -364,6 +461,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_多張可續掛單取負載最輕者()
     {
+        Continuers(1, 2);
         Load(1, members: 10, workOrders: 1);
         Load(2, members: 2, workOrders: 1);
         var lighter = Order(2, createdAt: DateTime.Today.AddDays(-2));
@@ -376,6 +474,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_負載相同取建立最晚者()
     {
+        Continuers(1, 2);
         Load(1, members: 3, workOrders: 1);
         Load(2, members: 3, workOrders: 1);
         Order(1, createdAt: DateTime.Today.AddDays(-2));
@@ -387,6 +486,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void 續掛_同一趟多台依累計負載分散()
     {
+        Continuers(1, 2);
         var orderA = Order(1, createdAt: DateTime.Today.AddDays(-2));
         var orderB = Order(2, createdAt: DateTime.Today.AddDays(-1));
         var ctx = Build();
@@ -660,6 +760,62 @@ public class WorkOrderDispatcherTests
         AssertCreate(WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today), 1, WorkOrderOrigins.AutoDispatch);
     }
 
+    private void ClosedCaseBlocking(string hostName, string issueKey, string status, bool? blocks) =>
+        _cases.Save(new IssueCase
+        {
+            CaseId = "blk" + (++_caseSeq), HostName = hostName, IssueKey = issueKey, HandlerId = 9,
+            Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today.AddDays(-1), BlocksRedispatch = blocks
+        });
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix, true)]
+    [InlineData(IssueHandlingStatuses.FalsePositive, true)]
+    [InlineData(IssueHandlingStatuses.KnownNoise, true)]
+    [InlineData(IssueHandlingStatuses.Resolved, false)]
+    public void 閘門4_B2a_處理人回覆三種不處理類擋_已處理不擋(string status, bool blocked)
+    {
+        // 處理人回覆不寫欄位，維持 null
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today } };
+
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+    }
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix)]
+    [InlineData(IssueHandlingStatuses.FalsePositive)]
+    [InlineData(IssueHandlingStatuses.KnownNoise)]
+    public void 閘門4_B2b_欄位為否的不處理類不擋(string status)
+    {
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = false } };
+
+        Assert.Empty(DispatchContext.DismissedKeys(cases));
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void 閘門4_B2c_舊資料空值與勾選的不處理類擋(bool? blocks, bool blocked)
+    {
+        var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = IssueHandlingStatuses.WontFix, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = blocks } };
+
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+    }
+
+    /// <summary>B2-d 夜間派工側：三個問題（空值／否／是）的判定，與日層級指派預覽那條測試用同一組資料</summary>
+    [Fact]
+    public void 閘門4_B2d_夜間派工對空值否是三件的判定()
+    {
+        ClosedCaseBlocking("SRV-01", "k-null", IssueHandlingStatuses.WontFix, null);
+        ClosedCaseBlocking("SRV-01", "k-false", IssueHandlingStatuses.WontFix, false);
+        ClosedCaseBlocking("SRV-01", "k-true", IssueHandlingStatuses.KnownNoise, true);
+        var ctx = Build();
+
+        Assert.True(ctx.IsDismissed("SRV-01", "k-null"));
+        Assert.False(ctx.IsDismissed("SRV-01", "k-false"));
+        Assert.True(ctx.IsDismissed("SRV-01", "k-true"));
+    }
+
     [Fact]
     public void 閘門4_續掛單也受不再打擾約束()
     {
@@ -723,6 +879,7 @@ public class WorkOrderDispatcherTests
     [Fact]
     public void Step_各分支填入命中步驟()
     {
+        Continuers(9);
         Order(9);
         Assert.Equal(WorkOrderDispatcher.StepAttach, WorkOrderDispatcher.Decide(Build(), Host(), Issue(), DateTime.Today).Step);
     }

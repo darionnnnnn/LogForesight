@@ -365,6 +365,9 @@ internal static class SchemaUpgrader
             "IX_lf_work_orders_active_handler_issue", "handler_id, source_key, event_id", WorkOrderActiveIssueFilter);
         // 最近一次被改派走的處理人（唯讀存取）；既有單為 NULL
         AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "previous_handler_id", isSqlite ? "INTEGER NULL" : "bigint NULL");
+        // 續掛已停止的原因與最近一次被擋的時間（夜間派工寫入）；既有單為 NULL＝沒有被擋
+        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "continuation_stopped_reason", isSqlite ? "TEXT NULL" : "nvarchar(30) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "continuation_stopped_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         // 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；既有單為 NULL，判定時退回建立時間
         if (AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "admin_seen_at", isSqlite ? "TEXT NULL" : "datetime2 NULL"))
         {
@@ -386,6 +389,16 @@ internal static class SchemaUpgrader
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "blocks_redispatch", isSqlite ? "INTEGER NULL" : "bit NULL");
+        if (AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "escalated_at", isSqlite ? "TEXT NULL" : "datetime2 NULL"))
+        {
+            // 升級前已上報、未結案的成員：以升級當下的 updated_at 當上報起算日。
+            // 不回填的話管理者提醒退回用 updated_at 起算，而夜間掛接每天把它推到最新，提醒對這批永遠不觸發；
+            // 只在加欄成功的這一次執行，之後 updated_at 再動也不影響（兩個後端語法相同）
+            ctx.Database.ExecuteSqlRaw(
+                "UPDATE lf_issue_cases SET escalated_at = updated_at " +
+                "WHERE status = 'escalated' AND closed_at IS NULL AND escalated_at IS NULL");
+        }
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "prtg_evidence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
@@ -713,6 +726,8 @@ internal static class SchemaUpgrader
             last_appended_at TEXT NULL,
             last_reply_at TEXT NULL,
             admin_seen_at TEXT NULL,
+            continuation_stopped_reason TEXT NULL,
+            continuation_stopped_at TEXT NULL,
             closed_at TEXT NULL,
             closed_reason TEXT NULL,
             updated_at TEXT NOT NULL
@@ -740,6 +755,8 @@ internal static class SchemaUpgrader
             last_appended_at datetime2 NULL,
             last_reply_at datetime2 NULL,
             admin_seen_at datetime2 NULL,
+            continuation_stopped_reason nvarchar(30) NULL,
+            continuation_stopped_at datetime2 NULL,
             closed_at datetime2 NULL,
             closed_reason nvarchar(30) NULL,
             updated_at datetime2 NOT NULL

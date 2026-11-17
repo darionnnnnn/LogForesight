@@ -18,10 +18,12 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     internal const int CodeMaxLength = 30;
 
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly TimeProvider _clock;
 
-    public EfWorkOrderStore(Func<LfDbContext> contextFactory)
+    public EfWorkOrderStore(Func<LfDbContext> contextFactory, TimeProvider? clock = null)
     {
         _contextFactory = contextFactory;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>供同組件的背景整併共用同一個連線工廠（不另開 StorageBackend 工廠方法，避免掛上啟動路徑）</summary>
@@ -94,7 +96,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     public long Insert(WorkOrder order)
     {
-        order.UpdatedAt = DateTime.Now;
+        order.UpdatedAt = _clock.LocalNow();
         var row = new WorkOrderRow();
         CopyToRow(order, row);
 
@@ -108,7 +110,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     public void Save(WorkOrder order)
     {
-        var now = DateTime.Now;
+        var now = _clock.LocalNow();
         var row = new WorkOrderRow { WorkOrderId = order.WorkOrderId };
         CopyToRow(order, row);
 
@@ -120,6 +122,9 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         entry.Property(x => x.UpdatedAt).OriginalValue = order.UpdatedAt;
         // admin_seen_at 由 MarkAdminSeen 以單句 UPDATE 寫入、刻意不動併發權杖；整列 Save 不得用呼叫端讀到的舊值把它蓋回去
         entry.Property(x => x.AdminSeenAt).IsModified = false;
+        // 續掛停止欄位同理：只由夜間派工的 SetContinuationStops 寫入
+        entry.Property(x => x.ContinuationStoppedReason).IsModified = false;
+        entry.Property(x => x.ContinuationStoppedAt).IsModified = false;
         row.UpdatedAt = now;
 
         ctx.SaveChanges();
@@ -131,6 +136,21 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
         ctx.WorkOrders.Where(w => w.WorkOrderId == workOrderId)
             .ExecuteUpdate(s => s.SetProperty(w => w.AdminSeenAt, seenAt));
+    }
+
+    public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
+    {
+        if (updates.Count == 0) return;
+        using var ctx = _contextFactory();
+        foreach (var u in updates)
+        {
+            var reason = ColumnClamp.Clamp(u.Reason, CodeMaxLength);
+            var at = reason == null ? (DateTime?)null : u.At;
+            ctx.WorkOrders.Where(w => w.WorkOrderId == u.WorkOrderId)
+                .ExecuteUpdate(s => s
+                    .SetProperty(w => w.ContinuationStoppedReason, reason)
+                    .SetProperty(w => w.ContinuationStoppedAt, at));
+        }
     }
 
     public int CountUnreadReplies()
@@ -187,7 +207,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             .ToList();
     }
 
-    public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds)
+    public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         if (workOrderIds.Count == 0) return new Dictionary<long, WorkOrderMemberCounts>();
 
@@ -195,11 +215,12 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
 
         // 單一 GROUP BY：看板一次要數幾十張單，逐張數就是 N 次往返
-        return BuildCountMembersQuery(ctx, ids).ToList().ToDictionary(r => r.WorkOrderId, r => new WorkOrderMemberCounts
+        return BuildCountMembersQuery(ctx, ids, _clock, excludedHostKeys).ToList().ToDictionary(r => r.WorkOrderId, r => new WorkOrderMemberCounts
         {
             Total = r.Total,
             Active = r.Active,
-            Closed = r.Total - r.Active,
+            ActiveOnDisabledHosts = r.ActiveOnDisabledHosts,
+            Closed = r.Total - r.Active - r.ActiveOnDisabledHosts,
             Escalated = r.Escalated,
             InProgress = r.InProgress,
             Observing = r.Observing,
@@ -210,9 +231,12 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>成員計數的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids)
+    internal static IQueryable<MemberCountRow> BuildCountMembersQuery(LfDbContext ctx, List<long> ids, TimeProvider? clock = null,
+        IReadOnlyCollection<string>? excludedHostKeys = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
+        // 停用主機上的進行中成員不算「進行中」：與徽章、負載看板同一口徑
+        var excluded = (excludedHostKeys ?? Array.Empty<string>()).Distinct().ToList();
         return ctx.IssueCases.AsNoTracking()
             .Where(c => c.WorkOrderId != null && ids.Contains(c.WorkOrderId.Value))
             .GroupBy(c => c.WorkOrderId!.Value)
@@ -220,12 +244,13 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
             {
                 WorkOrderId = g.Key,
                 Total = g.Count(),
-                Active = g.Count(c => c.ClosedAt == null),
-                Escalated = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated),
-                InProgress = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
-                Observing = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
-                Open = g.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
-                Overdue = g.Count(c => c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                Active = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey)),
+                ActiveOnDisabledHosts = g.Count(c => c.ClosedAt == null && excluded.Contains(c.HostNameKey)),
+                Escalated = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.Escalated),
+                InProgress = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.InProgress),
+                Observing = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.Observing),
+                Open = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.Open),
+                Overdue = g.Count(c => c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.DueDate != null && c.DueDate < today
                                        && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing)),
                 DaySyncPending = g.Count(c => c.DaySyncPending)
             });
@@ -236,6 +261,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         public long WorkOrderId { get; init; }
         public int Total { get; init; }
         public int Active { get; init; }
+        public int ActiveOnDisabledHosts { get; init; }
         public int Escalated { get; init; }
         public int InProgress { get; init; }
         public int Observing { get; init; }
@@ -249,9 +275,9 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         WorkOrderQueries.Validate(q);
         using var ctx = _contextFactory();
 
-        var filtered = BuildOrderFilterQuery(ctx, q, DateTime.Today);
+        var filtered = BuildOrderFilterQuery(ctx, q, _clock.LocalToday());
         var total = filtered.Count();
-        var rows = ApplyOrderSort(ctx, filtered, q.Sort)
+        var rows = ApplyOrderSort(ctx, filtered, q.Sort, q.ExcludedHostKeys)
             .Skip((q.Page - 1) * q.PageSize)
             .Take(q.PageSize)
             .ToList();
@@ -266,6 +292,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     internal static IQueryable<WorkOrderRow> BuildOrderFilterQuery(LfDbContext ctx, WorkOrderQuery q, DateTime today)
     {
         var query = ctx.WorkOrders.AsNoTracking();
+        var excluded = (q.ExcludedHostKeys ?? Array.Empty<string>()).Distinct().ToList();
 
         if (q.HandlerIds != null)
         {
@@ -305,10 +332,10 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         {
             WorkOrderQueries.StatusActive => query.Where(w => w.ClosedAt == null),
             WorkOrderQueries.StatusEscalated => query.Where(w => w.ClosedAt == null
-                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
                                            && c.Status == IssueHandlingStatuses.Escalated)),
             WorkOrderQueries.StatusOverdue => query.Where(w => w.ClosedAt == null
-                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
                                            && c.DueDate != null && c.DueDate < today
                                            && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing))),
             WorkOrderQueries.StatusUnreplied => query.Where(w => w.ClosedAt == null && w.LastReplyAt == null),
@@ -318,10 +345,17 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>排序：同值一律再依 work_order_id 降冪，分頁才穩定</summary>
-    private static IQueryable<WorkOrderRow> ApplyOrderSort(LfDbContext ctx, IQueryable<WorkOrderRow> query, string sort) => sort switch
+    private static IQueryable<WorkOrderRow> ApplyOrderSort(LfDbContext ctx, IQueryable<WorkOrderRow> query, string sort,
+        IReadOnlyCollection<string>? excludedHostKeys = null)
+    {
+        var excluded = (excludedHostKeys ?? Array.Empty<string>()).Distinct().ToList();
+        return ApplyOrderSortCore(ctx, query, sort, excluded);
+    }
+
+    private static IQueryable<WorkOrderRow> ApplyOrderSortCore(LfDbContext ctx, IQueryable<WorkOrderRow> query, string sort, List<string> excluded) => sort switch
     {
         WorkOrderQueries.SortMembersDesc => query
-            .OrderByDescending(w => ctx.IssueCases.Count(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null))
+            .OrderByDescending(w => ctx.IssueCases.Count(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null && !excluded.Contains(c.HostNameKey)))
             .ThenByDescending(w => w.WorkOrderId),
         // 未回覆的單在前、依建立時間升冪；已回覆的排後（同樣依建立時間升冪）
         WorkOrderQueries.SortUnrepliedOldest => query
@@ -338,30 +372,32 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     /// 負載若在靜音期間瞬間歸零、到期又跳回，看板與自動派工的負載計算都會跟著抖動；
     /// 而派工 ⓪ 已不會為靜音問題建單，不會因此多派。
     /// </remarks>
-    public List<HandlerLoad> LoadBoard()
+    public List<HandlerLoad> LoadBoard(IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         using var ctx = _contextFactory();
 
         // 單一查詢：進行中單依處理人分組，成員數以關聯子查詢併進同一句 SQL
-        return BuildLoadBoardQuery(ctx).ToList();
+        return BuildLoadBoardQuery(ctx, _clock, excludedHostKeys).ToList();
     }
 
-    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys)
+    public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys, IReadOnlyCollection<string>? excludedHostKeys = null)
     {
         using var ctx = _contextFactory();
 
         // 單一查詢：沒有進行中單時分組為空，回全 0
-        return BuildHandlerSummaryQuery(ctx, handlerId, pausedKeys).FirstOrDefault() ?? new WorkOrderHandlerSummary();
+        return BuildHandlerSummaryQuery(ctx, handlerId, pausedKeys, _clock, excludedHostKeys).FirstOrDefault() ?? new WorkOrderHandlerSummary();
     }
 
     /// <summary>
     /// 處理人摘要的查詢本體（抽出供兩後端 SQL 翻譯測試）；形狀同 <see cref="BuildLoadBoardQuery"/>。
     /// 暫停單（組合鍵在 <paramref name="pausedKeys"/> 內）不計入四個既有數字，含成員子查詢。
     /// </summary>
-    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId, IReadOnlyCollection<string> pausedKeys)
+    internal static IQueryable<WorkOrderHandlerSummary> BuildHandlerSummaryQuery(LfDbContext ctx, long handlerId, IReadOnlyCollection<string> pausedKeys, TimeProvider? clock = null,
+        IReadOnlyCollection<string>? excludedHostKeys = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
         var keys = pausedKeys.Distinct().ToList();
+        var excluded = (excludedHostKeys ?? Array.Empty<string>()).Distinct().ToList();
 
         // 逾期條件與 WorkOrderQueries.IsOverdue 同義。
         // 「非暫停」寫成 source_key 或 event_id 為 null、或組合鍵不在集合內——先擋 null，NOT IN 才不會遇到 NULL 語意
@@ -377,12 +413,12 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 PausedWorkOrders = g.Count(w => w.SourceKey != null && w.EventId != null
                     && keys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString())),
                 ActiveMembers = ctx.IssueCases.Count(c =>
-                    c.ClosedAt == null &&
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
                         && (o.SourceKey == null || o.EventId == null
                             || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
                 OverdueMembers = ctx.IssueCases.Count(c =>
-                    c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.DueDate != null && c.DueDate < today
                     && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
                         && (o.SourceKey == null || o.EventId == null
@@ -405,9 +441,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
     }
 
     /// <summary>負載看板的查詢本體（抽出供兩後端 SQL 翻譯測試）</summary>
-    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx)
+    internal static IQueryable<HandlerLoad> BuildLoadBoardQuery(LfDbContext ctx, TimeProvider? clock = null,
+        IReadOnlyCollection<string>? excludedHostKeys = null)
     {
-        var today = DateTime.Today;
+        var today = (clock ?? TimeProvider.System).LocalToday();
+        var excluded = (excludedHostKeys ?? Array.Empty<string>()).Distinct().ToList();
         var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
 
         // 母體＝進行中單＋近 7 日結案單，依處理人分組；進行中類計數以條件聚合、成員類以關聯子查詢併進同一句 SQL。
@@ -423,10 +461,10 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 ClosedLast7Days = g.Count(w => w.ClosedAt != null),
                 OldestActiveCreatedAt = g.Min(w => w.ClosedAt == null ? (DateTime?)w.CreatedAt : null),
                 ActiveMembers = ctx.IssueCases.Count(c =>
-                    c.ClosedAt == null &&
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key)),
                 OverdueMembers = ctx.IssueCases.Count(c =>
-                    c.ClosedAt == null && c.DueDate != null && c.DueDate < today
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.DueDate != null && c.DueDate < today
                     && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key))
             });
@@ -440,7 +478,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal int PruneClosed(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         return BatchedPrune.Run<long>(_contextFactory,
             (ctx, take) => ctx.WorkOrders
@@ -472,7 +510,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal int PruneOpenOrderEvents(int retentionDays, int maxRows, int batchSize)
     {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var cutoff = _clock.LocalToday().AddDays(-retentionDays);
 
         // 「比這筆新的事件」：時間較晚，或同時間但 EventId 較大（同一時間多筆時仍有確定的先後）
         IQueryable<long> Prunable(LfDbContext ctx) => ctx.WorkOrderEvents
@@ -512,6 +550,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         row.LastAppendedAt = order.LastAppendedAt;
         row.LastReplyAt = order.LastReplyAt;
         row.AdminSeenAt = order.AdminSeenAt;
+        row.ContinuationStoppedReason = ColumnClamp.Clamp(order.ContinuationStoppedReason, CodeMaxLength);
+        row.ContinuationStoppedAt = order.ContinuationStoppedAt;
         row.ClosedAt = order.ClosedAt;
         row.ClosedReason = ColumnClamp.Clamp(order.ClosedReason, CodeMaxLength);
         row.UpdatedAt = order.UpdatedAt;
@@ -539,6 +579,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         LastAppendedAt = row.LastAppendedAt,
         LastReplyAt = row.LastReplyAt,
         AdminSeenAt = row.AdminSeenAt,
+        ContinuationStoppedReason = row.ContinuationStoppedReason,
+        ContinuationStoppedAt = row.ContinuationStoppedAt,
         ClosedAt = row.ClosedAt,
         ClosedReason = row.ClosedReason,
         UpdatedAt = row.UpdatedAt

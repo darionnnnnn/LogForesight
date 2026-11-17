@@ -193,7 +193,7 @@ function renderServerAdminGuide() {
     for (const [strongText, rest] of [
         ['要檢視業務資料（儀表板／問題查詢／報表）：', '請以具 admin 權限的帳號登入。測試模式下可用帳號 demo-admin（顯示名稱「測試管理員」）直接登入，免密碼。'],
         ['要指派正式管理者：', '到左側「系統管理 › 使用者」新增或編輯帳號，將對象加入 admin 群組後，即可用該帳號登入操作全站。'],
-        ['正式環境：', '請將 Auth:Provider 改為 Ldap 並依 docs/WEB-SPEC.md §5／§6.2 設定，本測試管理員不會在正式模式下建立。']
+        ['正式環境：', '請把設定檔 appsettings.json 的 Auth:Provider 設為 Ad，再到左側「系統管理 › 設定」的「AD 驗證」頁籤填入 AD 連線資料；本測試管理員不會在正式模式下建立。']
     ]) {
         const li = document.createElement('li');
         li.className = 'mb-2';

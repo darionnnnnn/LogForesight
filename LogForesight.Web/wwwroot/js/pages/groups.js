@@ -632,7 +632,8 @@ function renderMembersPreview(preview) {
             { title: 'IP', render: c => c.ipAddress ?? '' },
             { title: '現有群組', render: c => currentGroupsCell(c) }
         ],
-        rows: preview.candidates
+        rows: preview.candidates,
+        empty: { title: '沒有符合條件的主機', hint: '請調整條件後重新預覽。' }
     });
 
     removeField.classList.toggle('d-none', preview.inOtherGroupsCount === 0);

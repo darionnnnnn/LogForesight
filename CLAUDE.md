@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,090 通過／12 略過**、macOS **10,082 通過／20 略過**，全量 Windows 約 8 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 macOS **10,544 通過／21 略過**、Windows **10,553 通過／12 略過**，全量 Windows 約 8 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -128,6 +128,14 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要以「逐行找到標籤、取到行尾」擷取 Windows 事件欄位：NetIQ／Sentinel 的訊息主體是單行（欄位間是連續空白、同一個標籤會出現多次），
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
+- 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
+  管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。
+- 不要把例外的 `.Message` 放進回應、DTO 或維護主控台：一律 `UserFacingMessage.For(ex, 備用說明)`，原文只進記錄檔。交辦協調器給使用者看的規則違反擲 `WorkOrderRuleException`，
+  新的專屬例外型別要同時登錄 `UserFacingMessage` 並在 `ApiExceptionFilter` 加對應（`UserFacingMessageGuardTests`、`ApiExceptionFilterTests` 守門）——
+  框架層例外（EF／LINQ）的英文原文含實體名與路徑，轉成領域例外就是外洩。
+- 不要另寫一份「系統要不要注意」的判斷：健康整體狀態只由 `HealthAttention.Evaluate` 決定，健康頁與導覽告示共用；健康頁新增警示卡要宣告 `data-health-alert` 並併入原因清單（`HealthAttentionGuardTests` 守門）。
+- 不要另寫「不再打擾」的判定或不處理類狀態清單：閘門只在 `DispatchContext.DismissedCases`（最近一筆未取消案件、不處理類、`BlocksRedispatch` 不為 false），狀態清單只在 `IssueHandlingStatuses.Dismissals`；
+  資料保留清除（`EfIssueCaseStore.Expired`）依同一定義保留仍有效的案件——兩邊定義分岔，處理人判定的不處理就會在保留期後悄悄失效。
 - 不要拿版本號判斷站台部署了哪個 commit：版本號在同一個修訂內不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.70.0+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。

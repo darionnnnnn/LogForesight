@@ -131,6 +131,9 @@ public class SystemSettingsDto
     public string MailSubjectTemplate { get; set; } = "";
     public string MailBodyIntro { get; set; } = "";
 
+    /// <summary>站台網址（信件連結前綴，含子應用程式路徑）；空白＝信件不附連結</summary>
+    public string SiteBaseUrl { get; set; } = "";
+
     /// <summary>每日／週報彙總期間內無達門檻風險日時是否略過寄送（回饋十七輪批次A-4）</summary>
     public bool MailDigestSkipEmpty { get; set; }
 
@@ -139,6 +142,9 @@ public class SystemSettingsDto
 
     /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
     public List<string> MailWorkOrderDigestTimes { get; set; } = new();
+
+    /// <summary>管理者提醒間隔天數（上報逾這麼多天沒人處理的成員，夜間派工結束後進管理者摘要）；0＝不提醒</summary>
+    public int EscalationReminderDays { get; set; }
 
     /// <summary>夜間自動派工總開關：夜間分析後自動指派交辦單處理人</summary>
     public bool AutoDispatchEnabled { get; set; }
@@ -432,12 +438,20 @@ public class UpdateSystemSettingsRequest
     [StringLength(2000)]
     public string MailBodyIntro { get; set; } = "";
 
+    /// <summary>站台網址（信件連結前綴，含子應用程式路徑）；空白＝信件不附連結。格式由服務層驗證</summary>
+    [StringLength(500, ErrorMessage = "站台網址最多 500 字")]
+    public string SiteBaseUrl { get; set; } = "";
+
     public bool MailDigestSkipEmpty { get; set; }
 
     public bool MailNotifyWorkOrders { get; set; }
 
     /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
     public List<string> MailWorkOrderDigestTimes { get; set; } = new();
+
+    /// <summary>管理者提醒間隔天數；0＝不提醒。沒帶這個欄位時沿用預設 3 天</summary>
+    [Range(0, SystemSettings.MaxEscalationReminderDays, ErrorMessage = "管理者提醒間隔天數必須介於 0~30 天")]
+    public int EscalationReminderDays { get; set; } = SystemSettings.DefaultEscalationReminderDays;
 
     public bool AutoDispatchEnabled { get; set; }
 

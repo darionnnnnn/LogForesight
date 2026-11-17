@@ -923,7 +923,7 @@ async function renderIssueOccurrences(cell, group) {
         rows: result.items,
         // 展開列整列點擊與列尾「去處理」同一個意圖：帶 handle 讓詳情頁展開處理狀態
         rowHref: r => recordDetailUrl(r.hostId, r.date, { handle: true }),
-        empty: { title: '沒有資料', hint: '請調整篩選條件或日期區間。' }
+        empty: { title: '沒有符合條件的主機日', hint: '請調整篩選條件或日期區間。' }
     });
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）

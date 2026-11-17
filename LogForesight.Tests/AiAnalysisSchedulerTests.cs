@@ -971,7 +971,9 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-PROVIDER-ERROR" } }, date)!.AiPending);
         var workflowState = workflow.Get(1, date)!;
         Assert.Equal(WorkflowLegState.Failed, workflowState.Ai);
-        Assert.Equal("provider connection reset", workflowState.AiFailure);
+        // 供應商例外原文（可能含位址）不進工作流狀態，給固定說明；原文在記錄檔
+        Assert.DoesNotContain("provider connection reset", workflowState.AiFailure);
+        Assert.Contains("詳細原因見記錄檔", workflowState.AiFailure);
         var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
         Assert.Equal(1, aiRun.AiFailures);
     }

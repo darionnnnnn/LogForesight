@@ -53,6 +53,39 @@ public class MailNotifyState
 
     /// <summary>交辦摘要時刻（HH:mm）→ 該時刻最後寄出的日期（yyyy-MM-dd）；同一天同一時刻只寄一次。</summary>
     public Dictionary<string, string> WorkOrderDigestLastSentSlots { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>管理者提醒的去重：成員案件 CaseId（或「wo:單號」）→ 上次提醒的日期（yyyy-MM-dd）。
+    /// 同一個成員每 <see cref="SystemSettings.EscalationReminderDays"/> 天至多提醒一次；不再逾期的鍵每趟清掉。</summary>
+    public Dictionary<string, string> AdminReminderLastSent { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>上報時沒有任何收件人的交辦單（上報信寄不出去）；單結案或不再有上報成員時從彙整結果消失（讀取時濾掉），最多留 <see cref="NoRecipientEscalationLimit"/> 筆</summary>
+    public List<NoRecipientEscalation> NoRecipientEscalations { get; set; } = new();
+
+    public const int NoRecipientEscalationLimit = 200;
+
+    /// <summary>派不出去的問題清單（每趟夜間派工以（IssueLabel, Reason）為鍵合併；連續兩個日曆日的執行都沒再觀察到的項目移除；沒有時為空清單）</summary>
+    public List<UnassignableIssue> LastUnassignable { get; set; } = new();
+
+    /// <summary>最近一次夜間派工彙整派不出去清單的時間（本地時間）；null＝尚未跑過</summary>
+    public DateTime? LastUnassignableAt { get; set; }
+}
+
+/// <summary>上報時沒有任何收件人的單</summary>
+public sealed class NoRecipientEscalation
+{
+    public long WorkOrderId { get; set; }
+    public DateTime At { get; set; }
+}
+
+/// <summary>夜間派工派不出去的一個問題：原因為 no_pool／all_paused／no_visibility 之一</summary>
+public sealed class UnassignableIssue
+{
+    public string IssueLabel { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public int Hosts { get; set; }
+
+    /// <summary>最近一次被某趟派工觀察到的時間（本地時間）；舊資料為 null，視同 <see cref="MailNotifyState.LastUnassignableAt"/>。</summary>
+    public DateTime? ObservedAt { get; set; }
 }
 
 public sealed class MailContributionReservation
