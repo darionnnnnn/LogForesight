@@ -128,6 +128,14 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要以「逐行找到標籤、取到行尾」擷取 Windows 事件欄位：NetIQ／Sentinel 的訊息主體是單行（欄位間是連續空白、同一個標籤會出現多次），
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
+- 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
+  管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。
+- 不要把例外的 `.Message` 放進回應、DTO 或維護主控台：一律 `UserFacingMessage.For(ex, 備用說明)`，原文只進記錄檔。交辦協調器給使用者看的規則違反擲 `WorkOrderRuleException`，
+  新的專屬例外型別要同時登錄 `UserFacingMessage` 並在 `ApiExceptionFilter` 加對應（`UserFacingMessageGuardTests`、`ApiExceptionFilterTests` 守門）——
+  框架層例外（EF／LINQ）的英文原文含實體名與路徑，轉成領域例外就是外洩。
+- 不要另寫一份「系統要不要注意」的判斷：健康整體狀態只由 `HealthAttention.Evaluate` 決定，健康頁與導覽告示共用；健康頁新增警示卡要宣告 `data-health-alert` 並併入原因清單（`HealthAttentionGuardTests` 守門）。
+- 不要另寫「不再打擾」的判定或不處理類狀態清單：閘門只在 `DispatchContext.DismissedCases`（最近一筆未取消案件、不處理類、`BlocksRedispatch` 不為 false），狀態清單只在 `IssueHandlingStatuses.Dismissals`；
+  資料保留清除（`EfIssueCaseStore.Expired`）依同一定義保留仍有效的案件——兩邊定義分岔，處理人判定的不處理就會在保留期後悄悄失效。
 - 不要拿版本號判斷站台部署了哪個 commit：版本號在同一個修訂內不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.70.0+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。

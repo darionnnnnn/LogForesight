@@ -23,6 +23,12 @@ public sealed class WorkOrderOutboxItem
     public int ReminderNoRecipient { get; set; }     // 上報時沒有任何收件人的單數
     public string? Detail { get; set; }              // 三類的明細文字（寫入前截到 DetailMaxLength）
 
+    /// <summary>管理者提醒的結構化明細（成員鍵＋顯示文字）；信件依（類別, 鍵）去重。只有文字的舊項目為 null，組信時退回逐行處理。</summary>
+    public List<ReminderDetailItem>? ReminderItems { get; set; }
+
+    /// <summary>結構化明細項目數上限（超過時只留前面的項目，類別總數仍在每個項目的 Total）</summary>
+    public const int ReminderItemsMaxCount = 60;
+
     /// <summary>明細欄寫入佇列的長度上限；超過時截斷、不擲例外</summary>
     public const int DetailMaxLength = 4000;
 
@@ -34,6 +40,35 @@ public sealed class WorkOrderOutboxItem
 
     public static string? ClampReason(string? reason) =>
         reason is { Length: > ReasonMaxLength } ? reason[..ReasonMaxLength] : reason;
+}
+
+/// <summary>管理者提醒的一個明細項目。Key：上報＝案件識別；沒有收件人＝單號；派不出去＝問題標籤＋原因。</summary>
+public sealed class ReminderDetailItem
+{
+    public const string CategoryEscalated = "escalated";
+    public const string CategoryUnassignable = "unassignable";
+    public const string CategoryNoRecipient = "no_recipient";
+
+    public const int KeyMaxLength = 200;
+    public const int TextMaxLength = 300;
+    public const int HeadingMaxLength = 100;
+    public const int UnitMaxLength = 20;
+
+    public string Category { get; set; } = "";
+    public string Key { get; set; } = "";
+    public string Text { get; set; } = "";           // 顯示的一行（不含縮排）
+    public int Total { get; set; }                   // 入列當下該類的總數（明細只列前面幾行時用來寫「…等共 N」）
+    public string Heading { get; set; } = "";        // 該類段落標題，例如「【上報後逾 3 天沒人處理】」
+    public string Unit { get; set; } = "";           // 計數單位，例如「個成員」
+
+    private static string Clamp(string v, int max) => v.Length > max ? v[..max] : v;
+
+    public ReminderDetailItem Clamped() => new()
+    {
+        Category = Category, Total = Total,
+        Key = Clamp(Key, KeyMaxLength), Text = Clamp(Text, TextMaxLength),
+        Heading = Clamp(Heading, HeadingMaxLength), Unit = Clamp(Unit, UnitMaxLength)
+    };
 }
 
 public static class WorkOrderOutboxKinds

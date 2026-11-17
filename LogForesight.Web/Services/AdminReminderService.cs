@@ -14,7 +14,7 @@ namespace LogForesight.Web.Services;
 /// <see cref="Compute"/>——不寫第二份計算。
 /// <list type="number">
 /// <item>上報（無法處理）超過 N 天（<see cref="SystemSettings.EscalationReminderDays"/>）仍沒人處理的成員，依案件上報時間（EscalatedAt，舊資料退回最後更新日）起算；</item>
-/// <item>最近一趟夜間派工派不出去的問題（<see cref="MailNotifyState.LastUnassignable"/>，每趟整份取代）；</item>
+/// <item>最近一趟夜間派工派不出去的問題（<see cref="MailNotifyState.LastUnassignable"/>，每趟合併）；</item>
 /// <item>上報時沒有任何收件人的單（<see cref="MailNotificationService"/> 上報當下記下）。</item>
 /// </list>
 /// 信件走同一套每人摘要（通知佇列新種類 <see cref="WorkOrderOutboxKinds.AdminReminder"/>），收件人＝上報信的收件人規則
@@ -30,7 +30,10 @@ public sealed class AdminReminderService
     internal const int OverviewItemLimit = 50;
 
     /// <summary>信件明細每類最多列幾行</summary>
-    private const int MailLineLimit = 20;
+    internal const int MailLineLimit = 20;
+
+    /// <summary>派不出去的項目連續幾個日曆日沒再被觀察到就移除</summary>
+    internal const int UnassignableUnobservedDays = 1;
 
     private const string UnassignableStateKey = "unassignable";
     private const int OrderPageSize = 100;
@@ -171,16 +174,9 @@ public sealed class AdminReminderService
     }
 
     /// <summary>
-    /// 本趟派工結果可以拿來「取代派不出去清單」的條件：只有涵蓋全部主機日的那一趟——全量執行（<see cref="RunScope.Full"/>）、
-    /// 且不是同窗口續跑、不是 NetIQ 帳本複查。這三類之外的趟（只跑本機、只跑指定主機、續跑、複查）的
-    /// <see cref="NightlyDispatchSummary.Unassignable"/> 只含該次處理到的部分，整份取代會把沒處理到、仍派不出去的問題從提醒清掉；
-    /// 不符時回 null，清單維持上一次完整趟的結果（排程與手動觸發共用這一處判定）。
-    /// </summary>
-    public static NightlyDispatchSummary? SummaryForUnassignableList(RunRequest request, NightlyDispatchSummary? summary)
-        => request.Scope == RunScope.Full && !request.NetiqLedgerRetryOnly && !request.ContinuesWindow ? summary : null;
-
-    /// <summary>
-    /// 夜間派工結束後呼叫（排程與情境驅動器共用同一個入口）：先記下本趟派不出去的問題，再彙整、入列給管理者。
+    /// 夜間派工結束後呼叫（排程與情境驅動器共用同一個入口）：先把本趟派不出去的問題合併進清單，再彙整、入列給管理者。
+    /// 合併以（標籤, 原因）為鍵：本趟觀察到的寫入或更新，沒觀察到的保留；任何範圍的趟（全量、只跑部分主機、續跑、複查）都適用，
+    /// 連續兩個日曆日的執行都沒再觀察到的項目才移除（<see cref="UnassignableUnobservedDays"/>）。
     /// <paramref name="summary"/> 為 null（這趟沒有派工結果）時不動派不出去的清單，其餘照常。
     /// </summary>
     public void RunAfterNightly(NightlyDispatchSummary? summary)
@@ -190,12 +186,11 @@ public sealed class AdminReminderService
             var today = _clock.LocalToday();
             if (summary != null)
             {
+                var now = _clock.LocalNow();
                 _state.Update(s =>
                 {
-                    s.LastUnassignable = summary.Unassignable
-                        .Select(u => new UnassignableIssue { IssueLabel = u.IssueLabel, Reason = u.Reason, Hosts = u.Hosts })
-                        .ToList();
-                    s.LastUnassignableAt = _clock.LocalNow();
+                    s.LastUnassignable = MergeUnassignable(s.LastUnassignable, s.LastUnassignableAt, summary.Unassignable, now);
+                    s.LastUnassignableAt = now;
                 });
             }
 
@@ -218,7 +213,7 @@ public sealed class AdminReminderService
 
             var queued = recipients.Count > 0 &&
                          _mail.EnqueueAdminReminders(recipients, result.MailEscalatedCount, mailUnassignable, result.MailNoRecipientCount,
-                             FormatMailDetail(result, mailUnassignable > 0));
+                             FormatMailDetail(result, mailUnassignable > 0), BuildMailItems(result, mailUnassignable > 0));
 
             _state.Update(s =>
             {
@@ -248,6 +243,32 @@ public sealed class AdminReminderService
         }
     }
 
+    /// <summary>
+    /// 合併派不出去清單：本趟觀察到的以（標籤, 原因）為鍵寫入或更新（同一個日曆日已有觀察時台數取較大者，部分趟不把台數蓋小），
+    /// 沒觀察到的保留；觀察日早於（今天 − <see cref="UnassignableUnobservedDays"/>）的移除。舊資料的 ObservedAt 為 null，退回 <paramref name="lastAt"/>。
+    /// </summary>
+    internal static List<UnassignableIssue> MergeUnassignable(
+        IEnumerable<UnassignableIssue> existing, DateTime? lastAt, IEnumerable<NightlyUnassignableIssue> observed, DateTime now)
+    {
+        var merged = new Dictionary<(string, string), UnassignableIssue>();
+        foreach (var e in existing)
+            merged[(e.IssueLabel, e.Reason)] = new UnassignableIssue
+            {
+                IssueLabel = e.IssueLabel, Reason = e.Reason, Hosts = e.Hosts, ObservedAt = e.ObservedAt ?? lastAt
+            };
+        foreach (var o in observed)
+        {
+            var key = (o.IssueLabel, o.Reason);
+            var hosts = merged.TryGetValue(key, out var prior) && prior.ObservedAt?.Date == now.Date
+                ? Math.Max(prior.Hosts, o.Hosts)
+                : o.Hosts;
+            merged[key] = new UnassignableIssue { IssueLabel = o.IssueLabel, Reason = o.Reason, Hosts = hosts, ObservedAt = now };
+        }
+        var cutoff = now.Date.AddDays(-UnassignableUnobservedDays);
+        // 沒有任何時間可依據（ObservedAt 與 lastAt 都是 null）的項目保留，下一趟寫入時才有觀察時間
+        return merged.Values.Where(u => u.ObservedAt == null || u.ObservedAt.Value.Date >= cutoff).ToList();
+    }
+
     private static bool IsDue(MailNotifyState state, string key, DateTime today, int days)
     {
         if (!state.AdminReminderLastSent.TryGetValue(key, out var raw)) return true;
@@ -269,6 +290,34 @@ public sealed class AdminReminderService
     };
 
     /// <summary>信件內文：只列「這次要提醒」的明細（逾期成員與沒有收件人的單依間隔過濾，派不出去的問題整份列）</summary>
+    internal static List<ReminderDetailItem> BuildMailItems(AdminReminderResult result, bool includeUnassignable)
+    {
+        var dto = result.Dto;
+        var items = new List<ReminderDetailItem>();
+        var escalated = result.EscalatedAll.Where(e => e.DueForMail).ToList();
+        items.AddRange(escalated.Take(MailLineLimit).Select(e => new ReminderDetailItem
+        {
+            Category = ReminderDetailItem.CategoryEscalated, Key = e.CaseId, Total = escalated.Count,
+            Text = $"單號 {e.WorkOrderId}：{e.IssueLabel}（{e.HostName}），已上報 {e.Days} 天",
+            Heading = $"【上報後逾 {dto.ReminderDays} 天沒人處理】", Unit = "個成員"
+        }));
+        if (includeUnassignable && dto.UnassignableCount > 0)
+            items.AddRange(dto.Unassignable.Take(MailLineLimit).Select(u => new ReminderDetailItem
+            {
+                Category = ReminderDetailItem.CategoryUnassignable, Key = $"{u.IssueLabel}|{u.Reason}", Total = dto.UnassignableCount,
+                Text = $"{u.IssueLabel}：{ReasonText(u.Reason)}（{u.Hosts} 台）",
+                Heading = "【本趟派不出去的問題】", Unit = "項"
+            }));
+        var noRecipient = result.NoRecipientAll.Where(e => e.DueForMail).ToList();
+        items.AddRange(noRecipient.Take(MailLineLimit).Select(n => new ReminderDetailItem
+        {
+            Category = ReminderDetailItem.CategoryNoRecipient, Key = NoRecipientKey(n.WorkOrderId), Total = noRecipient.Count,
+            Text = $"單號 {n.WorkOrderId}：{n.IssueLabel}（上報信寄不出去，請確認管理者的 email）",
+            Heading = "【上報時沒有任何收件人的單】", Unit = "張"
+        }));
+        return items;
+    }
+
     internal static string FormatMailDetail(AdminReminderResult result, bool includeUnassignable)
     {
         var dto = result.Dto;

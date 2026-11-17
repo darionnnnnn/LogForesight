@@ -63,10 +63,10 @@ public class MailNotifyState
 
     public const int NoRecipientEscalationLimit = 200;
 
-    /// <summary>最近一趟夜間派工派不出去的問題（每趟結束時整份取代；沒有時為空清單）</summary>
+    /// <summary>派不出去的問題清單（每趟夜間派工以（IssueLabel, Reason）為鍵合併；連續兩個日曆日的執行都沒再觀察到的項目移除；沒有時為空清單）</summary>
     public List<UnassignableIssue> LastUnassignable { get; set; } = new();
 
-    /// <summary>最近一趟夜間派工彙整的時間（本地時間）；null＝尚未跑過</summary>
+    /// <summary>最近一次夜間派工彙整派不出去清單的時間（本地時間）；null＝尚未跑過</summary>
     public DateTime? LastUnassignableAt { get; set; }
 }
 
@@ -83,6 +83,9 @@ public sealed class UnassignableIssue
     public string IssueLabel { get; set; } = "";
     public string Reason { get; set; } = "";
     public int Hosts { get; set; }
+
+    /// <summary>最近一次被某趟派工觀察到的時間（本地時間）；舊資料為 null，視同 <see cref="MailNotifyState.LastUnassignableAt"/>。</summary>
+    public DateTime? ObservedAt { get; set; }
 }
 
 public sealed class MailContributionReservation

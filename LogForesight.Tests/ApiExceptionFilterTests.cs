@@ -105,9 +105,28 @@ public class ApiExceptionFilterTests
         var exempt = new Dictionary<Type, string>();
 
         var missing = registered
-            .Where(t => !exempt.ContainsKey(t) && !filterSource.Contains(t.Name + " ", StringComparison.Ordinal))
+            .Where(t => !exempt.ContainsKey(t) && !HasSwitchArm(filterSource, t.Name))
             .Select(t => t.FullName).ToList();
         Assert.True(missing.Count == 0, "以下已登錄為使用者可見的例外型別在 ApiExceptionFilter 沒有對應 arm：\n" + string.Join("\n", missing));
+    }
+
+    /// <summary>過濾器 switch 的型別 pattern arm：「型別名 變數 =&gt;」。先剝掉註解，註解裡提到型別名不算有對應。</summary>
+    private static bool HasSwitchArm(string source, string typeName)
+    {
+        var code = System.Text.RegularExpressions.Regex.Replace(source, @"//[^\n]*|/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        return System.Text.RegularExpressions.Regex.IsMatch(code, @"(?<![\w])" + System.Text.RegularExpressions.Regex.Escape(typeName) + @"\s+\w+\s*(when\s[^=]*)?=>");
+    }
+
+    [Fact]
+    public void Switch對應判定_只在註解出現型別名時比不到_真正的arm比得到()
+    {
+        const string onlyComment = "// FooException foo => (400)\n/// <see cref=\"FooException\"/> FooException \nvar x = 1;";
+        Assert.False(HasSwitchArm(onlyComment, "FooException"));
+        const string realArm = "context.Exception switch\n{\n    LogForesight.Core.FooException foo => (400, \"x\", foo.Message),\n    _ => (500, \"y\", \"z\")\n};";
+        Assert.True(HasSwitchArm(realArm, "FooException"));
+        const string withWhen = "OperationCanceledException when ok => (1)";
+        Assert.True(HasSwitchArm("BarException bar when ok => (1)", "BarException"));
+        Assert.False(HasSwitchArm(withWhen, "FooException"));
     }
 
     [Fact]

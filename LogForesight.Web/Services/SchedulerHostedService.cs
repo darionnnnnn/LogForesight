@@ -421,12 +421,11 @@ public class SchedulerHostedService : BackgroundService
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
     internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null, string? windowNote = null,
-        (DateTime Start, DateTime End)? window = null, bool netiqLedgerRetryOnly = false, bool continuesWindow = false) =>
+        (DateTime Start, DateTime End)? window = null, bool netiqLedgerRetryOnly = false) =>
         new()
         {
             Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote, WindowNote = windowNote,
-            WindowInstanceStart = window?.Start, WindowEnd = window?.End, NetiqLedgerRetryOnly = netiqLedgerRetryOnly,
-            ContinuesWindow = continuesWindow
+            WindowInstanceStart = window?.Start, WindowEnd = window?.End, NetiqLedgerRetryOnly = netiqLedgerRetryOnly
         };
 
     /// <summary>
@@ -439,7 +438,7 @@ public class SchedulerHostedService : BackgroundService
             ? $"本趟為窗口內空資料複查（上一趟 #{previous.RunId} 留下：{resume.Describe()}）"
             : $"本趟為窗口內續跑（第 {runNumber} 趟，上一趟 #{previous.RunId} 留下：{resume.Describe()}）";
         // 排程請求只有 ComposeScheduledRequest 一個組裝點：這裡不逐欄重抄（漏抄的欄位會靜默失效）
-        return ComposeScheduledRequest(null, note, window, netiqLedgerRetryOnly: resume.OnlyEmptyPending, continuesWindow: true);
+        return ComposeScheduledRequest(null, note, window, netiqLedgerRetryOnly: resume.OnlyEmptyPending);
     }
 
     /// <summary>續跑這一趟是實例內第幾趟（已有排程取數趟數＋1）。</summary>
@@ -485,7 +484,6 @@ public class SchedulerHostedService : BackgroundService
         CatchUpNote = request.CatchUpNote,
         WindowNote = request.WindowNote,
         NetiqLedgerRetryOnly = request.NetiqLedgerRetryOnly,
-        ContinuesWindow = request.ContinuesWindow,
         CatchUpDeadline = request.CatchUpDeadline,
         WindowInstanceStart = request.WindowInstanceStart,
         WindowEnd = request.WindowEnd,
@@ -614,8 +612,8 @@ public class SchedulerHostedService : BackgroundService
             }
 
             // 夜間派工結束後的管理者提醒（C-2）：彙整上報逾期、派不出去、上報沒有收件人三類，進管理者的交辦摘要；
-            // 內部自行 try/catch 到底，不影響本次執行的成敗判定。dispatchSummary 為 null（這趟沒有派工結果）或不是涵蓋全部主機日的那一趟（非全量、同窗口續跑、帳本複查）時不動派不出去的清單（見 SummaryForUnassignableList）。
-            _adminReminders?.RunAfterNightly(AdminReminderService.SummaryForUnassignableList(effectiveRequest, dispatchSummary));
+            // 內部自行 try/catch 到底，不影響本次執行的成敗判定。dispatchSummary 為 null（這趟沒有派工結果）時不動派不出去的清單；任何範圍的趟都以合併方式更新。
+            _adminReminders?.RunAfterNightly(dispatchSummary);
         });
 
         return await startSignal.Task;

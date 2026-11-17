@@ -608,7 +608,7 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 - **體檢建議看的地方**：
   1. 派工決策：`DispatchContext.DismissedCases`、`WorkOrderDispatcher.IneligibleReason`／`SelectHandler`、`WorkOrderCoordinator.AdminClose`（`BlocksRedispatch` 寫入點三處）。
   2. 新欄位與升級：`blocks_redispatch`、`continuation_stopped_reason/_at`、`escalated_at`（加欄時回填）；SQL Server 只以查詢翻譯確認，未連實機。
-  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 與交辦服務的 `Guard`；殘餘風險是 PRTG 範圍估算、清除工作、排程與 PRTG 監看 409 共 6 處仍把 Core 例外訊息轉成領域例外（已列 BACKLOG；逐處分類見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`）。
+  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 由 `ApiExceptionFilter` 對應 400；殘餘風險是 PRTG 範圍估算、清除工作、排程與 PRTG 監看 409 共 6 處仍把 Core 例外訊息轉成領域例外（已列 BACKLOG；逐處分類見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`）。
   4. 通知：`WorkOrderDigestBuilder` 八段＋管理者提醒、`AdminReminderService.Compute`／`RunAfterNightly`、`MailLinks`。
   5. 健康整體狀態：`HealthAttention.Evaluate` 與 30 秒告示快取。
   6. 說明書：逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`。
@@ -623,6 +623,9 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 - [ ] 升級後到待派頁檢查「不再打擾」清單，恢復先前被靜音代為結案卡住的主機。
 - [ ] 告知管理者：代為結案選不處理類且不勾選時，問題再出現會重新派工。
 - [ ] 設定「站台網址」，信件才會有連結。
+- [ ] SQL Server 站台升級後確認：`lf_issue_cases` 的 `blocks_redispatch`、`escalated_at` 與 `lf_work_orders` 的 `continuation_stopped_reason`／`_at` 已建立；`escalated_at` 已回填上報中的成員；保留清除第一次執行沒有例外（新欄位與清除條件只以查詢翻譯驗過，未連實際 SQL Server）。
+- [ ] 升級前以不處理類結案的舊案件視同停派，會列在待派頁「不再自動派工」區；請管理者檢視後決定是否恢復。
+- [ ] 升級後系統健康可能出現原本沒有的「需要注意」（整體狀態納入保留清除、排程、PRTG 同步警告等條件），導覽告示會列出原因，屬預期。
 - [ ] 已開郵件與交辦單通知的站台：升級後第一夜起 admin 群組會收到管理者提醒信，內容含升級前就累積的上報逾期成員；不想收信可把「管理者提醒間隔」設 0（交辦總覽的提醒區仍會顯示）。
 - [ ] （沿用第一階段）開發站台的 PRTG 快照在第 75 輪之後是否恢復。
 

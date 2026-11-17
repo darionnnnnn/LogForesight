@@ -471,7 +471,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// <summary>
     /// 可清除的已結案案件：結案早於 cutoff，**但**保留「處理人判定的不處理類且仍是該（主機, 問題）最新案件」——
     /// 這種案件是「不再打擾」閘門與待派頁恢復清單的依據（判定見 DispatchContext.DismissedCases：不處理類狀態、BlocksRedispatch 不是 false、
-    /// 該鍵最新的未取消案件），刪掉它問題會重新派工、也從恢復清單消失。以 NOT EXISTS 較新的同鍵未取消案件表達，兩個後端都能翻譯。
+    /// 該鍵最新的未取消案件），刪掉它問題會重新派工、也從恢復清單消失。以 NOT EXISTS 較新的同鍵未取消且已結案案件表達（較新案件仍進行中不算取代：它之後若被取消，閘門就要靠這筆），兩個後端都能翻譯。
     /// </summary>
     internal static IQueryable<IssueCaseRow> Expired(LfDbContext ctx, DateTime cutoff)
     {
@@ -479,7 +479,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return ctx.IssueCases.Where(c => c.ClosedAt != null && c.ClosedAt < cutoff
             && !(dismissals.Contains(c.Status) && !c.Cancelled && c.BlocksRedispatch != false
                  && !ctx.IssueCases.Any(n => n.HostNameKey == c.HostNameKey && n.IssueKey == c.IssueKey
-                                             && !n.Cancelled && n.CreatedAt > c.CreatedAt)));
+                                             && !n.Cancelled && n.ClosedAt != null && n.CreatedAt > c.CreatedAt)));
     }
 
     private static IssueCase ToModel(IssueCaseRow row) => new()

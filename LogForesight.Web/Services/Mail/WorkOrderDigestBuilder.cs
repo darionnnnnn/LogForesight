@@ -90,8 +90,22 @@ internal static class WorkOrderDigestBuilder
     {
         if (reminders.Count == 0) return;
         body.AppendLine("【管理者提醒】");
-        body.AppendLine($"  上報逾期未處理 {reminders.Sum(r => r.Item.ReminderEscalated)} 個成員、本趟派不出去 {reminders.Sum(r => r.Item.ReminderUnassignable)} 項、上報時沒有收件人 {reminders.Sum(r => r.Item.ReminderNoRecipient)} 張單。");
-        var detail = MergeReminderDetails(reminders.Select(r => r.Item.Detail));
+        // 有結構化明細的以（類別, 成員鍵）去重；只有文字的舊項目退回逐行合併
+        var structured = reminders.Where(r => r.Item.ReminderItems is { Count: > 0 }).Select(r => r.Item).ToList();
+        var legacy = reminders.Where(r => r.Item.ReminderItems is not { Count: > 0 }).Select(r => r.Item).ToList();
+        var merged = MergeReminderItems(structured);
+        int CountOf(string category) => merged.FirstOrDefault(m => m.Category == category)?.Count ?? 0;
+        var escalatedCount = CountOf(ReminderDetailItem.CategoryEscalated) + legacy.Sum(i => i.ReminderEscalated);
+        var unassignableCount = CountOf(ReminderDetailItem.CategoryUnassignable) + legacy.Sum(i => i.ReminderUnassignable);
+        var noRecipientCount = CountOf(ReminderDetailItem.CategoryNoRecipient) + legacy.Sum(i => i.ReminderNoRecipient);
+        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單。");
+        foreach (var section in merged)
+        {
+            body.AppendLine($"  {section.Heading}共 {section.Count} {section.Unit}");
+            foreach (var line in section.Lines) body.AppendLine("    " + line);
+            if (section.Count > section.Lines.Count) body.AppendLine($"    …等共 {section.Count} {section.Unit}");
+        }
+        var detail = MergeReminderDetails(legacy.Select(i => i.Detail));
         if (!string.IsNullOrWhiteSpace(detail))
         {
             foreach (var line in detail.Split('\n'))
@@ -102,8 +116,44 @@ internal static class WorkOrderDigestBuilder
         body.AppendLine();
     }
 
+    internal sealed record MergedReminderSection(string Category, string Heading, string Unit, int Count, List<string> Lines);
+
     /// <summary>
-    /// 合併多筆提醒的明細文字（格式見 AdminReminderService.FormatMailDetail：「【標題】共 N 單位」後接縮排明細行，可能有「…等 N」截斷行）。
+    /// 結構化明細合併：依（類別, 成員鍵）去重，同鍵保留最新入列的文字；每類計數＝去重後的項目數，
+    /// 任一筆的該類總數更大（明細被截斷）時取最大總數。每類最多列 <see cref="AdminReminderService.MailLineLimit"/> 行。
+    /// </summary>
+    internal static List<MergedReminderSection> MergeReminderItems(IEnumerable<WorkOrderOutboxItem> items)
+    {
+        var order = new[] { ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient };
+        var byKey = new Dictionary<(string, string), (ReminderDetailItem Item, int Seq)>();
+        var maxTotal = new Dictionary<string, int>();
+        var heading = new Dictionary<string, (string Heading, string Unit)>();
+        var seq = 0;
+        foreach (var outbox in items.OrderBy(i => i.EnqueuedAt))
+        {
+            foreach (var item in outbox.ReminderItems!)
+            {
+                var key = (item.Category, item.Key);
+                byKey[key] = (item, byKey.TryGetValue(key, out var prior) ? prior.Seq : seq++);
+                maxTotal[item.Category] = Math.Max(maxTotal.GetValueOrDefault(item.Category), item.Total);
+                heading[item.Category] = (item.Heading, item.Unit);
+            }
+        }
+
+        var result = new List<MergedReminderSection>();
+        foreach (var category in order.Concat(byKey.Keys.Select(k => k.Item1).Except(order).Distinct()))
+        {
+            var rows = byKey.Where(kv => kv.Key.Item1 == category).Select(kv => kv.Value).OrderBy(v => v.Seq).ToList();
+            if (rows.Count == 0) continue;
+            var count = Math.Max(rows.Count, maxTotal.GetValueOrDefault(category));
+            result.Add(new MergedReminderSection(category, heading[category].Heading, heading[category].Unit, count,
+                rows.Take(AdminReminderService.MailLineLimit).Select(r => r.Item.Text).ToList()));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 合併多筆提醒的明細文字（只有文字的舊項目用；格式見 AdminReminderService.FormatMailDetail：「【標題】共 N 單位」後接縮排明細行，可能有「…等 N」截斷行）。
     /// 只有一筆時原文回傳；多筆時同標題併成一段，明細行去重，標題計數＝去重後的行數（段內有「…等」截斷行時行數不等於筆數，改用各段計數加總）。
     /// 去重只擋「完全相同的行」（同一趟派不出去清單在不同趟重複的情形）。
     /// </summary>
@@ -209,8 +259,18 @@ internal static class WorkOrderDigestBuilder
         body.AppendLine();
     }
 
+    internal const string NoActiveHostsText = "成員已結案、移出或主機已停用";
+
     private static void AppendOrderDetail(StringBuilder body, WorkOrderOutboxItem item, WorkOrderDigestOrder order)
     {
+        // 台數只算進行中且未停用的主機：寄出前成員已全數結案、移出或主機已停用時，不寫「0 台」也不列主機行
+        if (order.HostCount == 0)
+        {
+            body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}（{NoActiveHostsText}）");
+            if (!string.IsNullOrWhiteSpace(order.Note)) body.AppendLine($"    交辦說明：{order.Note}");
+            return;
+        }
+
         body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}（{order.HostCount} 台）");
 
         if (item.Kind == WorkOrderOutboxKinds.Appended)

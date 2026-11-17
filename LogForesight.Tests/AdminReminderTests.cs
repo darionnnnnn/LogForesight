@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
@@ -21,51 +22,116 @@ public sealed class AdminReminderTests
         Detail = detail
     };
 
-    [Theory]
-    [InlineData(RunScope.Full, false, false, true)]
-    [InlineData(RunScope.LocalOnly, false, false, false)]
-    [InlineData(RunScope.NetiqHosts, false, false, false)]
-    [InlineData(RunScope.Full, true, false, false)]   // NetIQ 帳本複查趟
-    [InlineData(RunScope.Full, false, true, false)]   // 同窗口續跑
-    public void 派不出去清單只有涵蓋全部主機日的那一趟才被取代(RunScope scope, bool ledgerRetry, bool continues, bool replaces)
+    private sealed class MutableClock(DateTime localNow) : TimeProvider
     {
-        var summary = new NightlyDispatchSummary
+        private DateTime _local = localNow;
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
+        public void Set(DateTime localNow) => _local = localNow;
+        public override DateTimeOffset GetUtcNow() =>
+            new(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(_local, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero);
+    }
+
+    private static (AdminReminderService Service, MailNotifyStateStore State, MutableClock Clock, EfSqliteFixture Fx) NewUnassignableService(DateTime now)
+    {
+        var fx = new EfSqliteFixture();
+        var settings = new FakeSystemSettingsStore();
+        var hosts = new FakeHostStore();
+        var users = new FakeUserStore();
+        var groups = new FakeUserGroupStore();
+        var cases = new FakeIssueCaseStore();
+        var orders = new FakeWorkOrderStore(cases);
+        var state = new MailNotifyStateStore(fx.Blob("mail_notify_state"));
+        var mail = new MailNotificationService(
+            settings, new FakeSmtpMailSender(), hosts, users, groups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), new FakeHandlingStore(), state,
+            new ScheduleFreshnessService(
+                new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
+                new ScheduleOptionsStore(fx.Blob("schedule_options"))),
+            new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey)), orders, cases, new FakeRuleStore(), new FakeIssueOwnerStore());
+        var clock = new MutableClock(now);
+        return (new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, clock: clock), state, clock, fx);
+    }
+
+    private static NightlyDispatchSummary Summary(params (string Label, string Reason, int Hosts)[] items) => new()
+    {
+        Unassignable = items.Select(i => new NightlyUnassignableIssue(i.Label, i.Reason, i.Hosts)).ToList()
+    };
+
+    [Fact]
+    public void 派不出去清單_部分趟的空結果不清掉既有項目()
+    {
+        var (service, state, _, fx) = NewUnassignableService(new DateTime(2026, 11, 17, 23, 0, 0));
+        using var _fx = fx;
+        service.RunAfterNightly(Summary(("disk 154", "no_pool", 3), ("ntfs 55", "all_paused", 1)));
+
+        service.RunAfterNightly(Summary());
+
+        Assert.Equal(new[] { "disk 154", "ntfs 55" }, state.Get().LastUnassignable.Select(u => u.IssueLabel).OrderBy(x => x).ToArray());
+    }
+
+    [Fact]
+    public void 派不出去清單_同鍵更新台數_同日部分趟不把台數蓋小()
+    {
+        var (service, state, clock, fx) = NewUnassignableService(new DateTime(2026, 11, 17, 23, 0, 0));
+        using var _fx = fx;
+        service.RunAfterNightly(Summary(("disk 154", "no_pool", 5)));
+
+        clock.Set(new DateTime(2026, 11, 17, 23, 30, 0));
+        service.RunAfterNightly(Summary(("disk 154", "no_pool", 2)));
+        Assert.Equal(5, Assert.Single(state.Get().LastUnassignable).Hosts);
+
+        clock.Set(new DateTime(2026, 11, 18, 23, 0, 0));
+        service.RunAfterNightly(Summary(("disk 154", "no_pool", 2)));
+        Assert.Equal(2, Assert.Single(state.Get().LastUnassignable).Hosts);
+
+        // 同標籤不同原因是兩個項目
+        service.RunAfterNightly(Summary(("disk 154", "all_paused", 1)));
+        Assert.Equal(2, state.Get().LastUnassignable.Count);
+    }
+
+    [Fact]
+    public void 派不出去清單_連續兩個日曆日沒再觀察到才移除_一天內保留()
+    {
+        var (service, state, clock, fx) = NewUnassignableService(new DateTime(2026, 11, 17, 23, 0, 0));
+        using var _fx = fx;
+        service.RunAfterNightly(Summary(("disk 154", "no_pool", 3)));
+
+        clock.Set(new DateTime(2026, 11, 18, 23, 0, 0));
+        service.RunAfterNightly(Summary());
+        Assert.Single(state.Get().LastUnassignable);
+
+        clock.Set(new DateTime(2026, 11, 19, 23, 0, 0));
+        service.RunAfterNightly(Summary());
+        Assert.Empty(state.Get().LastUnassignable);
+    }
+
+    [Fact]
+    public void 派不出去清單_舊資料沒有ObservedAt_不擲例外_依LastUnassignableAt判斷()
+    {
+        var (service, state, clock, fx) = NewUnassignableService(new DateTime(2026, 11, 19, 23, 0, 0));
+        using var _fx = fx;
+        void Seed(DateTime lastAt) => state.Update(s =>
         {
-            Unassignable = new[] { new NightlyUnassignableIssue("磁碟 154", "無候選人", 1) }
-        };
-        var request = new RunRequest { Scope = scope, NetiqLedgerRetryOnly = ledgerRetry, ContinuesWindow = continues };
+            s.LastUnassignable = new List<UnassignableIssue> { new() { IssueLabel = "old 1", Reason = "no_pool", Hosts = 1, ObservedAt = null } };
+            s.LastUnassignableAt = lastAt;
+        });
 
-        var passed = AdminReminderService.SummaryForUnassignableList(request, summary);
+        Seed(new DateTime(2026, 11, 18, 23, 0, 0));
+        service.RunAfterNightly(Summary());
+        Assert.Single(state.Get().LastUnassignable);   // 11/18 不早於 11/18，保留
 
-        if (replaces) Assert.Same(summary, passed);
-        else Assert.Null(passed);
-        Assert.Null(AdminReminderService.SummaryForUnassignableList(request, null));
+        Seed(new DateTime(2026, 11, 17, 23, 0, 0));
+        service.RunAfterNightly(Summary());
+        Assert.Empty(state.Get().LastUnassignable);    // 11/17 早於 11/18，移除
     }
 
     [Fact]
-    public void 排程組出來的續跑與複查請求都被判成非完整趟_首趟是完整趟()
-    {
-        var start = new DateTime(2026, 11, 17, 22, 0, 0);
-        var first = SchedulerHostedService.ComposeScheduledRequest(null, "note", (start, start.AddHours(2)));
-        Assert.NotNull(AdminReminderService.SummaryForUnassignableList(first, new NightlyDispatchSummary()));
-
-        var ledger = SchedulerHostedService.ComposeScheduledRequest(null, "note", (start, start.AddHours(2)), netiqLedgerRetryOnly: true);
-        Assert.Null(AdminReminderService.SummaryForUnassignableList(ledger, new NightlyDispatchSummary()));
-
-        // ComposeEffectiveRequest 逐欄重建，續跑旗標漏抄會讓判定靜默失效
-        var cont = SchedulerHostedService.ComposeScheduledRequest(null, "note", (start, start.AddHours(2)), continuesWindow: true);
-        var effective = SchedulerHostedService.ComposeEffectiveRequest(cont, new ScheduleOptions());
-        Assert.True(effective.ContinuesWindow);
-        Assert.Null(AdminReminderService.SummaryForUnassignableList(effective, new NightlyDispatchSummary()));
-    }
-
-    [Fact]
-    public void 排程的管理者提醒呼叫點經範圍判定_不直接傳本趟結果()
+    public void 排程的管理者提醒呼叫點直接傳本趟結果_不再依請求形狀判斷()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
         var source = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", "SchedulerHostedService.cs"));
-        Assert.Contains("RunAfterNightly(AdminReminderService.SummaryForUnassignableList(", source);
+        Assert.Contains("RunAfterNightly(dispatchSummary)", source);
     }
 
     [Fact]
@@ -138,6 +204,65 @@ public sealed class AdminReminderTests
 
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(body, "disk 7：派工池沒有人").Count);
         Assert.Contains("【本趟派不出去的問題】共 1 項", body);
+    }
+
+    private static ReminderDetailItem Esc(string caseId, string text, int total) => new()
+    {
+        Category = ReminderDetailItem.CategoryEscalated, Key = caseId, Text = text, Total = total,
+        Heading = "【上報後逾 3 天沒人處理】", Unit = "個成員"
+    };
+
+    private static WorkOrderOutboxItem StructuredReminder(DateTime at, int escalated, params ReminderDetailItem[] items)
+    {
+        var item = Reminder(escalated, 0, 0, null);
+        item.EnqueuedAt = at;
+        item.ReminderItems = items.ToList();
+        return item;
+    }
+
+    [Fact]
+    public void 同一成員隔天又入列_只列一次取最新文字_計數為1()
+    {
+        var day1 = StructuredReminder(new DateTime(2026, 11, 16, 23, 0, 0), 1, Esc("case-1", "單號 5：disk 153（HOST-A），已上報 4 天", 1));
+        var day2 = StructuredReminder(new DateTime(2026, 11, 17, 23, 0, 0), 1, Esc("case-1", "單號 5：disk 153（HOST-A），已上報 5 天", 1));
+        var (_, body) = WorkOrderDigestBuilder.Build(new[] { (day2, (WorkOrderDigestOrder?)null), (day1, (WorkOrderDigestOrder?)null) });
+
+        Assert.Contains("上報逾期未處理 1 個成員", body);
+        Assert.Contains("【上報後逾 3 天沒人處理】共 1 個成員", body);
+        Assert.Contains("已上報 5 天", body);
+        Assert.DoesNotContain("已上報 4 天", body);
+        Assert.DoesNotContain("…等", body);
+    }
+
+    [Fact]
+    public void 截斷筆與未截斷筆合併_取最大總數_截斷行在段落結尾()
+    {
+        var truncated = StructuredReminder(new DateTime(2026, 11, 16, 23, 0, 0), 25,
+            Enumerable.Range(1, 20).Select(n => Esc($"c{n}", $"單號 {n}：x（H{n}），已上報 4 天", 25)).ToArray());
+        var small = StructuredReminder(new DateTime(2026, 11, 17, 23, 0, 0), 3,
+            Enumerable.Range(1, 3).Select(n => Esc($"c{n}", $"單號 {n}：x（H{n}），已上報 5 天", 3)).ToArray());
+        var (_, body) = WorkOrderDigestBuilder.Build(new[] { (truncated, (WorkOrderDigestOrder?)null), (small, (WorkOrderDigestOrder?)null) });
+
+        Assert.Contains("上報逾期未處理 25 個成員", body);
+        Assert.Contains("【上報後逾 3 天沒人處理】共 25 個成員", body);
+        Assert.Contains("…等共 25 個成員", body);
+        Assert.Equal(20, System.Text.RegularExpressions.Regex.Matches(body, "單號 \\d+：x").Count);
+        var truncLine = body.IndexOf("…等共 25", StringComparison.Ordinal);
+        Assert.True(truncLine > body.LastIndexOf("單號 20：x", StringComparison.Ordinal));
+        Assert.Contains("單號 1：x（H1），已上報 5 天", body);
+    }
+
+    [Fact]
+    public void 只有文字的舊項目與結構化項目同封_都照常寄()
+    {
+        var legacy = Reminder(0, 1, 0, "【本趟派不出去的問題】共 1 項\n  disk 7：派工池沒有人（3 台）");
+        legacy.EnqueuedAt = legacy.EnqueuedAt.AddDays(-1);
+        var structured = StructuredReminder(new DateTime(2026, 11, 17, 9, 0, 0), 1, Esc("case-1", "單號 5：disk 153（HOST-A），已上報 4 天", 1));
+        var (_, body) = WorkOrderDigestBuilder.Build(new[] { (legacy, (WorkOrderDigestOrder?)null), (structured, (WorkOrderDigestOrder?)null) });
+
+        Assert.Contains("上報逾期未處理 1 個成員、本趟派不出去 1 項", body);
+        Assert.Contains("disk 7：派工池沒有人（3 台）", body);
+        Assert.Contains("單號 5：disk 153", body);
     }
 
     [Fact]

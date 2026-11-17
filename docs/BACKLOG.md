@@ -36,7 +36,7 @@
   760 以上，儲存量靠 `RawEventRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
   詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
 - **多執行個體排程仍不支援**：日紀錄已有主機日程序內鎖及 `write_revision` 持久併發權杖，過期 JSON 提交會失敗；重建父列使用新 RecordId，補追加重新核對父資格。這些不等於跨程序工作租約。若需多實例主動排程，另定租約與工作重試契約，不可僅因資料列有版本就同時啟動兩個排程器。
-- **其他 Web 服務仍把 Core 的 InvalidOperation／Argument 例外訊息直接給使用者**：交辦類已改擲 `WorkOrderRuleException`、`Guard` 只轉它；`PrtgScopeEstimateController`（2 處）、`PrtgScopePurgeJobsController`（2 處）、`ScheduleController`（1 處）與 `PrtgMonitoringController` 的 409 仍依「Core 自擲中文」的假設轉成領域例外，範圍內若混入框架層例外，英文原文會外傳。
+- **其他 Web 服務仍把 Core 的 InvalidOperation／Argument 例外訊息直接給使用者**：交辦類已改擲 `WorkOrderRuleException`，由 `ApiExceptionFilter` 對應 400；`PrtgScopeEstimateController`（2 處）、`PrtgScopePurgeJobsController`（2 處）、`ScheduleController`（1 處）與 `PrtgMonitoringController` 的 409 仍依「Core 自擲中文」的假設轉成領域例外，範圍內若混入框架層例外，英文原文會外傳。
   **觸發時機**：上述路徑出現英文錯誤訊息的回報，或下次改到這些控制器時，比照交辦類改擲專屬例外型別（逐處盤點見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md` 第 3 節）。
 - **停用主機排除條件在聚合查詢重複展開**：`EfWorkOrderStore` 的成員計數、負載看板、處理人摘要與排序各自帶一份停用主機鍵清單（SQL Server 以 OPENJSON 展開），各請求也各自重算 `WorkOrderQueries.DisabledHostKeys`；派工候選人快照（待派頁試跑也會建）另為有可續掛單的處理人逐人計算可見主機。停用主機為 0 或少量時沒有影響，未在 3000 台、數百停用主機下量測。
   **觸發時機**：交辦總覽、處理人頁或待派頁載入變慢時，先以 `ToQueryString` 與實跑比對停用鍵 0 與 500 個的耗時，再決定改子查詢或請求內快取。
@@ -657,7 +657,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **`alert-*` 遷移成共用元件**：44 處提示框已在樣式層統一（說明類中性底、警示類淡底＋細環），標記不必動。**觸發時機**：需要提示框有統一的圖示或關閉行為時。
 - **快捷期間按鈕組不是切換卻是分段控制外觀**：問題查詢、權限異動、報表的「昨日／近 7 天…」點了只填日期、刻意不留選中態（`core/date-range.js`），但 `.btn-group` 一律畫成凹槽，看起來像「都沒選」的分段控制。**觸發時機**：下一輪做篩選工具列時一起決定（快捷期間會收進日期下拉）。
 - **輸入框旁的按鈕接縫較深**：`input-group` 以 -1px 讓兩條邊框重疊，邊線改成半透明後重疊處顏色加倍（PRTG 主機指派搜尋等）。未量到像素差，外觀影響小。**觸發時機**：下一輪篩選工具列統一輸入與按鈕的組合時。
-- **未勾選的勾選框與開關邊界很淡（既有，本輪略淡）**：邊線對白底約 1.2:1。**觸發時機**：使用者反映找不到勾選框，或做無障礙稽核時；改用 `--lf-border-strong` 以上的邊線。
+- **未勾選的勾選框與開關邊界很淡**：邊線對白底約 1.2:1。**觸發時機**：使用者反映找不到勾選框，或做無障礙稽核時；改用 `--lf-border-strong` 以上的邊線。
 - **舊的 Bootstrap 徽章寫法**：JS 約 16 處、PRTG 維護頁約 10 處 `badge bg-*`／`text-bg-*`，不在標記形式（DESIGN-SYSTEM §8.8）內。**觸發時機**：動到這些頁面時改成 `statusBadge`。
 - **切換群組統一補 `aria-pressed`**：分段控制同時認 `.active` 與 `aria-pressed`；多數 `.btn-group` 只切換 `.active`，讀屏念不出選中。改的時候集中在 `core/date-range.js` 的 `setActiveChip` 與各頁切換函式。
 - **高風險日逐日色條（未排期）**：對照稿在儀表板「高風險日」卡下方提案一排七格逐日色條，需要後端提供逐日層級。**觸發時機**：使用者希望 KPI 帶趨勢。

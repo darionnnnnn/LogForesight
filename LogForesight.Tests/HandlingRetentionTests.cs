@@ -176,6 +176,29 @@ public class HandlingRetentionTests : IDisposable
     }
 
     [Fact]
+    public void 案件清理_較新案件進行中時不處理案件保留_較新案件已結案才算取代()
+    {
+        var store = Cases();
+        store.Save(DismissCase("held", "SRV-H", IssueHandlingStatuses.WontFix, closedDaysAgo: 200, createdDaysAgo: 300));
+        var open = DismissCase("newer-open", "SRV-H", IssueHandlingStatuses.InProgress, closedDaysAgo: 0, createdDaysAgo: 100);
+        open.ClosedAt = null;
+        store.Save(open);
+
+        Assert.Equal(0, store.Prune(retentionDays: 120));
+        Assert.NotNull(store.Get("held"));
+
+        // 較新案件結案（最近結案、不過期）後才算取代：舊的不處理案件照刪
+        var closed = store.Get("newer-open")!;
+        closed.Status = IssueHandlingStatuses.Resolved;
+        closed.ClosedAt = DateTime.Now.AddDays(-5);
+        store.Save(closed);
+
+        Assert.Equal(1, store.Prune(retentionDays: 120));
+        Assert.Null(store.Get("held"));
+        Assert.NotNull(store.Get("newer-open"));
+    }
+
+    [Fact]
     public void 案件清理_保留的不處理案件經分批與上限仍不被刪_且計數不含它()
     {
         var store = Cases();

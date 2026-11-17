@@ -492,7 +492,8 @@ public class MailNotificationService
     /// 管理者提醒入列：每位收件人一筆 <see cref="WorkOrderOutboxKinds.AdminReminder"/>，進同一套每人摘要。
     /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
     /// </summary>
-    public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail)
+    public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail,
+        IReadOnlyList<ReminderDetailItem>? detailItems = null)
     {
         try
         {
@@ -511,7 +512,10 @@ public class MailNotificationService
                 ReminderEscalated = escalated,
                 ReminderUnassignable = unassignable,
                 ReminderNoRecipient = noRecipient,
-                Detail = WorkOrderOutboxItem.ClampDetail(detail)
+                Detail = WorkOrderOutboxItem.ClampDetail(detail),
+                ReminderItems = detailItems is { Count: > 0 }
+                    ? detailItems.Take(WorkOrderOutboxItem.ReminderItemsMaxCount).Select(i => i.Clamped()).ToList()
+                    : null
             }).ToList();
 
             var dropped = _outbox.Enqueue(items);
@@ -766,9 +770,19 @@ public class MailNotificationService
         var disabledKeys = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
         var hostCount = _workOrders.CountMembers(new[] { workOrderId }, disabledKeys).TryGetValue(workOrderId, out var counts) ? counts.Active : 0;
         var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
-        var hostNames = _issueCases.GetByWorkOrder(workOrderId, 0, 200)
-            .Where(c => c.ClosedAt == null && !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName)))
-            .Select(c => c.HostName).Take(20).ToList();
+        // 查詢就帶進行中條件，已結案的成員不佔名額；停用主機仍在查詢後濾掉，所以逐頁取到湊滿 20 台或取完
+        var hostNames = new List<string>();
+        for (var page = 1; hostNames.Count < 20; page++)
+        {
+            var members = _issueCases.QueryMembers(new WorkOrderMemberQuery
+            {
+                WorkOrderId = workOrderId, Status = WorkOrderQueries.StatusActive, Page = page, PageSize = 200
+            });
+            hostNames.AddRange(members.Items
+                .Where(c => !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName)))
+                .Select(c => c.HostName).Take(20 - hostNames.Count));
+            if (members.Items.Count < 200 || page * 200 >= members.Total) break;
+        }
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);

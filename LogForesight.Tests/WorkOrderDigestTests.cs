@@ -163,6 +163,49 @@ public class WorkOrderDigestTests : IDisposable
         Assert.DoesNotContain("host-02", body);
     }
 
+    [Fact]
+    public async Task A4_成員全數結案或主機全停用_信裡不寫0台也不列主機行_改註原因()
+    {
+        var id = SeedOrder("Schannel 36888", 2, _alice.UserId);
+        _cases.Save(new IssueCase
+        {
+            CaseId = $"case-{id}-01", HostName = "host-01", IssueKey = $"key-{id}", IssueLabel = "Schannel 36888",
+            WorkOrderId = id, Status = IssueHandlingStatuses.Resolved, ClosedAt = D
+        });
+        _hosts.Upsert(new WebHost { HostName = "host-02", Active = false });
+        Enqueue(WorkOrderOutboxKinds.Created, id, _alice.UserId, At(0, 11, 30));
+
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(0, 12));
+
+        var body = Assert.Single(_sender.Sent).Message.Body;
+        Assert.Contains($"單號 {id}：Schannel 36888（成員已結案、移出或主機已停用）", body);
+        Assert.DoesNotContain("0 台", body);
+        Assert.DoesNotContain("主機：", body);
+    }
+
+    [Fact]
+    public async Task A5_已結案成員很多時_主機名單仍列出進行中的主機()
+    {
+        var id = _orders.Insert(new WorkOrder { IssueLabel = "Schannel 36888", HandlerId = _alice.UserId, CreatedAt = D });
+        for (var i = 1; i <= 230; i++)
+        {
+            var open = i > 227;
+            _cases.Save(new IssueCase
+            {
+                CaseId = $"case-{id}-{i:D3}", HostName = $"h-{i:D3}", IssueKey = $"key-{id}", IssueLabel = "Schannel 36888",
+                WorkOrderId = id, Status = open ? IssueHandlingStatuses.Open : IssueHandlingStatuses.Resolved,
+                ClosedAt = open ? null : D
+            });
+        }
+        Enqueue(WorkOrderOutboxKinds.Created, id, _alice.UserId, At(0, 11, 30));
+
+        await _mail.CheckAndSendWorkOrderDigestAsync(At(0, 12));
+
+        var body = Assert.Single(_sender.Sent).Message.Body;
+        Assert.Contains("（3 台）", body);
+        Assert.Contains("主機：h-228、h-229、h-230", body);
+    }
+
     // ── (b) 時刻之後入列的等下一個時刻 ──────────────────────────────────────
 
     [Fact]
