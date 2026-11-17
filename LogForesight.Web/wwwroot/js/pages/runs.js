@@ -1465,7 +1465,7 @@ function applyScheduleStatus(status) {
     // 執行完自動刷新總表（docs/archive/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，
     // 使用者不必手動重新整理才看得到剛跑完的這趟（手動與排程觸發都經過這條輪詢，天然涵蓋兩者）
     if (wasScheduleRunning && !status.isRunning) {
-        toast('執行已結束，執行總表已刷新', 'info');
+        toast('執行已結束，執行總表已更新', 'info');
         currentSummaryPage = 1;   // 重設回最新頁，讓使用者一眼看到剛跑完的結果
         reloadRuns();
     }

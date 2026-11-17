@@ -299,4 +299,118 @@ public class HandlerFacingWordingUiTests
         Assert.True(violations.Count == 0,
             "郵件文案不得含「案件」（改用「交辦」）：\n" + string.Join("\n", violations));
     }
+    // ── 第 76-2 輪 G6：陸詞守門（保存、刷新、數據、點擊）──────────────────────────
+    // 範圍是 LogForesight.Web 內使用者看得到的文字：JS 字串字面量、Razor view 的非註解文字、
+    // HelpContent 的 .md／manifest.json、C# 字串字面量。程式碼註解是開發者用語，不列入（WEB-SPEC §8.6a）。
+    // 台灣用語：點擊→點選、保存→儲存／保留、刷新→重新整理／更新、數據→資料／數值。
+    // 白名單：目前沒有任何例外；若日後必須保留，逐項寫「相對路徑 → 理由」。
+    private static readonly string[] MainlandTerms = { "保存", "刷新", "數據", "點擊" };
+
+    private static readonly Dictionary<string, string> MainlandWhitelist = new(StringComparer.Ordinal);
+
+    /// <summary>移除 cshtml 中 &lt;script&gt; 區塊內的 // 行註解與 /* */ 註解（保留換行；字串內的斜線由 JS 字串抽取處理）</summary>
+    internal static string StripCshtmlScriptComments(string src)
+    {
+        return Regex.Replace(src, @"(<script\b[^>]*>)(.*?)(</script>)", m =>
+        {
+            var body = m.Groups[2].Value;
+            var kept = new StringBuilder();
+            var lines = body.Split('\n');
+            foreach (var l in lines)
+            {
+                var literals = ExtractStringLiterals(l);
+                // 逐行：註解之外只留字串字面量內容與其餘非註解文字；以抽取結果重組即可
+                kept.Append(string.Join(" ", literals.Select(x => x.Text))).Append('\n');
+            }
+
+            return m.Groups[1].Value + kept + m.Groups[3].Value;
+        }, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>單一檔案的掃描：回傳含四個詞之一的「相對路徑:行 內容」</summary>
+    internal static List<string> ScanMainlandTerms(string kind, string relative, string content)
+    {
+        var hits = new List<string>();
+        switch (kind)
+        {
+            case "js":
+                foreach (var (line, text) in ExtractStringLiterals(content))
+                    foreach (var w in MainlandTerms.Where(text.Contains))
+                        hits.Add($"{relative}:{line} 「{w}」 {text.Trim()}");
+                break;
+            case "cs":
+                foreach (var w in MainlandTerms)
+                    hits.AddRange(FindWord(StripCSharpComments(content), relative, w));
+                break;
+            case "cshtml":
+                var view = StripCshtmlScriptComments(StripCshtmlComments(content));
+                foreach (var w in MainlandTerms)
+                    hits.AddRange(FindWord(view, relative, w));
+                break;
+            default: // md、json：全文都是使用者可見文字；md 內的 HTML 註解不算
+                var doc = Regex.Replace(content, @"<!--.*?-->", m => Regex.Replace(m.Value, @"[^\r\n]", " "), RegexOptions.Singleline);
+                foreach (var w in MainlandTerms)
+                    hits.AddRange(FindWord(doc, relative, w));
+                break;
+        }
+
+        return hits;
+    }
+
+    [Fact]
+    public void 陸詞守門能抓到四個詞且不誤抓註解()
+    {
+        foreach (var w in MainlandTerms)
+        {
+            Assert.NotEmpty(ScanMainlandTerms("js", "x.js", $"const a = '請{w}這裡';"));
+            Assert.NotEmpty(ScanMainlandTerms("js", "x.js", $"const a = `請{w}${{n}}`;"));
+            Assert.NotEmpty(ScanMainlandTerms("cs", "X.cs", $"var m = \"請{w}這裡\";"));
+            Assert.NotEmpty(ScanMainlandTerms("cshtml", "X.cshtml", $"<p>請{w}這裡</p>"));
+            Assert.NotEmpty(ScanMainlandTerms("cshtml", "X.cshtml", $"<script>\nconst a = '請{w}';\n</script>"));
+            Assert.NotEmpty(ScanMainlandTerms("md", "x.md", $"# 標題\n\n請{w}這裡。"));
+
+            // 註解內的詞不得被抓（證明註解排除生效）
+            Assert.Empty(ScanMainlandTerms("js", "x.js", $"// 請{w}\n/* 請{w} */\nconst a = '正常';"));
+            Assert.Empty(ScanMainlandTerms("cs", "X.cs", $"// 請{w}\n/// 請{w}\n/* 請{w} */\nvar m = \"正常\";"));
+            Assert.Empty(ScanMainlandTerms("cshtml", "X.cshtml", $"@* 請{w} *@\n<!-- 請{w} -->\n<p>正常</p>\n<script>\n// 請{w}\nconst a = '正常';\n</script>"));
+            Assert.Empty(ScanMainlandTerms("md", "x.md", $"<!-- 請{w} -->\n正常"));
+        }
+    }
+
+    [Fact]
+    public void Web使用者可見文字不得出現陸詞()
+    {
+        var web = Path.Combine(FindRepoRoot(), "LogForesight.Web");
+        static bool Skip(string p) => p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
+            || p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+            || p.Contains($"{Path.DirectorySeparatorChar}lib{Path.DirectorySeparatorChar}")
+            || p.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}");
+
+        var targets = new List<(string Kind, string Path)>();
+        foreach (var (pattern, kind, root) in new[]
+        {
+            ("*.js", "js", Path.Combine(web, "wwwroot", "js")),
+            ("*.cs", "cs", web),
+            ("*.cshtml", "cshtml", web),
+            ("*.md", "md", Path.Combine(web, "HelpContent")),
+            ("*.json", "md", Path.Combine(web, "HelpContent")),
+        })
+        {
+            foreach (var p in Directory.GetFiles(root, pattern, SearchOption.AllDirectories).Where(p => !Skip(p)))
+                targets.Add((kind, p));
+        }
+
+        Assert.True(targets.Count > 200, "掃描範圍異常偏小：" + targets.Count);
+
+        var violations = new List<string>();
+        foreach (var (kind, path) in targets)
+        {
+            var relative = Path.GetRelativePath(web, path).Replace('\\', '/');
+            if (MainlandWhitelist.ContainsKey(relative)) continue;
+            violations.AddRange(ScanMainlandTerms(kind, relative, File.ReadAllText(path)));
+        }
+
+        Assert.True(violations.Count == 0,
+            "使用者可見文字不得含陸詞（保存→儲存／保留、刷新→重新整理／更新、數據→資料／數值、點擊→點選）：\n" + string.Join("\n", violations));
+    }
 }

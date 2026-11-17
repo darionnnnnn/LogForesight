@@ -311,7 +311,7 @@ function bindEvents() {
 /** 尚未計算時只顯示一處空狀態，四張卡在第一次計算開始後才出現。 */
 function renderCalibrationEmpty() {
     const empty = document.getElementById('calibration-empty');
-    if (empty) renderEmpty(empty, { title: '尚未執行判定查詢', hint: '請點擊上方「重新計算」。' });
+    if (empty) renderEmpty(empty, { title: '尚未執行判定查詢', hint: '請點選上方「重新計算」。' });
 }
 
 function showCards() {

@@ -252,10 +252,10 @@ const cases = {
         reset();
         const panel = fns.evidencePanel(baseIssue({ loginFailureDetails: [failure('alice')], sourceObservationsTruncated: true }));
         assert.deepEqual(labelsOf(panel), ['登入失敗明細', '來源觀測']);
-        assert(allText(panel).includes('未保存可核對的來源觀測'));
+        assert(allText(panel).includes('未儲存可核對的來源觀測'));
         assert(allText(panel).includes('清單已截斷'));
         // 有觀測時不出現這一句
-        assert(!allText(fns.evidencePanel(baseIssue({ sourceObservations: obs(1) }))).includes('未保存'));
+        assert(!allText(fns.evidencePanel(baseIssue({ sourceObservations: obs(1) }))).includes('未儲存'));
     },
     evidencePanelNoneReturnsNull() {
         reset();

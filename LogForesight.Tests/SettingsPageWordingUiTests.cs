@@ -53,7 +53,7 @@ public class SettingsPageWordingUiTests
     [InlineData("不可大於歷史資料保留天數")]
     [InlineData("會佔用資料庫空間")]
     // 資源守門
-    [InlineData("資源數據取自 PRTG")]
+    [InlineData("資源數值取自 PRTG")]
     [InlineData("超過後放行並警告")]
     [InlineData("留空＝自動偵測")]
     // 郵件

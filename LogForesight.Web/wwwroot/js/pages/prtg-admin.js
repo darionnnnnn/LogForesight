@@ -594,7 +594,7 @@ function bindFullBackfill() {
         try {
             const confirmed = await confirmAction({
                 title: '確認全量歷史回填',
-                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。${skipText}` +
+                message: `全量依目前儲存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。${skipText}` +
                     `共享配額時間下界 ${Math.ceil(preview.historicQuotaLowerBoundSeconds / 60)} 分鐘，不含來源延遲；狀態變更另有 ${formatNumber(preview.stateChangeObjects)} 個對象，分頁成本未知。` +
                     '預覽五分鐘有效；設定、範圍、歷史紀錄或對應變更時必須重新預覽。',
                 confirmText: '確認並開始', confirmVariant: 'danger'
@@ -2891,8 +2891,8 @@ function bindPrtgDataTransfer() {
                     show(`${labels[phase]}：${formatNumber(done)} / ${formatNumber(total)} 位元組${pending ? `；識別碼 ${pending.transferId}` : ''}`);
                 }
             });
-            show(`診斷包已隔離保存，正式監控資料與判定未變更。識別碼 ${data.transferId}；${formatNumber(data.receivedBytes)} 位元組已通過完整性驗證。`, 'success');
-            toast('診斷包已隔離保存', 'success');
+            show(`診斷包已隔離儲存，正式監控資料與判定未變更。識別碼 ${data.transferId}；${formatNumber(data.receivedBytes)} 位元組已通過完整性驗證。`, 'success');
+            toast('診斷包已隔離儲存', 'success');
             savePending(null);
             if (importFile) importFile.value = '';
         } catch (error) {
@@ -3494,7 +3494,7 @@ if (monitoringForm) {
         const labels = { eligible: '可選', inactive: '已停用', merged: '已合併', 'not-netiq': '非 NetIQ', 'not-visible': '目前不可見', missing: '目錄已移除' };
         for (const host of rows) {
             const label = document.createElement('label'); label.className = 'd-flex align-items-center gap-2 py-1';
-            const remove = makeButton('移除', { variant: 'outline-danger' }); remove.setAttribute('aria-label', `移除已保存主機 ${host.hostId}`);
+            const remove = makeButton('移除', { variant: 'outline-danger' }); remove.setAttribute('aria-label', `移除已儲存主機 ${host.hostId}`);
             remove.disabled = !monitoring?.canEdit;
             remove.addEventListener('click', () => {
                 hostSelection.delete(Number(host.hostId));
@@ -3509,10 +3509,10 @@ if (monitoringForm) {
         const start = filtered.length ? savedHostPageIndex * 100 + 1 : 0;
         const end = rows.length ? Math.min(start + rows.length - 1, filtered.length) : 0;
         document.getElementById('prtg-monitoring-saved-host-page-info').textContent =
-            `已保存主機 ${start}–${end}／${filtered.length}；共 ${savedHostRows.length} 筆`;
+            `已儲存主機 ${start}–${end}／${filtered.length}；共 ${savedHostRows.length} 筆`;
         document.getElementById('prtg-monitoring-saved-host-prev').disabled = savedHostPageIndex === 0;
         document.getElementById('prtg-monitoring-saved-host-next').disabled = savedHostPageIndex + 1 >= pageCount;
-        if (!rows.length) savedHostBox.textContent = '沒有符合搜尋條件的已保存主機。';
+        if (!rows.length) savedHostBox.textContent = '沒有符合搜尋條件的已儲存主機。';
     }
     async function loadMonitoringHostPage(reset = false) {
         cancelMonitoringPageRequest('host');
@@ -3544,7 +3544,7 @@ if (monitoringForm) {
     function resetMonitoringSensorPages() { sensorCursors = [null]; sensorPageIndex = 0; sensorPage = null; }
     function showSensorError(error) {
         sensorBox.textContent = error.status === 403
-            ? '所選主機含目前無法選取的項目；請核對已保存主機及已選 sensor 清單，明確移除失效項目後重新估算。'
+            ? '所選主機含目前無法選取的項目；請核對已儲存主機及已選 sensor 清單，明確移除失效項目後重新估算。'
             : `sensor 目錄載入失敗：${error.message}`;
     }
     function renderMonitoringSensors() {
@@ -3647,7 +3647,7 @@ if (monitoringForm) {
             hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));
             sensorSelection.clear(); monitoring.sensorIds.forEach(id => sensorSelection.add(Number(id)));
             if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > 3000)
-                throw new Error('已保存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
+                throw new Error('已儲存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
             savedHostRows = Array.isArray(monitoring.savedHosts) ? monitoring.savedHosts.slice() : [];
             savedHostPageIndex = 0; selectedSensorPageIndex = 0;
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = !monitoring.canEdit;
@@ -3661,7 +3661,7 @@ if (monitoringForm) {
             try { await loadMonitoringHostPage(true); }
             catch (error) {
                 if (sequence === monitoringLoadSequence && initializedDraftVersion === draftVersion)
-                    hostSelect.textContent = `主機目錄載入失敗：${error.message}；已保存選取仍可核對。`;
+                    hostSelect.textContent = `主機目錄載入失敗：${error.message}；已儲存選取仍可核對。`;
             }
             if (sequence !== monitoringLoadSequence || initializedDraftVersion !== draftVersion) return null;
             renderSavedHosts();
@@ -3746,14 +3746,14 @@ if (monitoringForm) {
             const requestFingerprint = scopeFingerprint(request);
             if (!request.estimateToken || estimateFingerprint !== requestFingerprint) {
                 const estimate = await estimateScope();
-                if (!estimate) throw new Error('範圍在估算期間已變更，未送出保存。');
+                if (!estimate) throw new Error('範圍在估算期間已變更，未送出儲存。');
             }
             request = monitoringRequest();
             if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(request))
-                throw new Error('範圍在估算期間已變更，未送出保存。');
+                throw new Error('範圍在估算期間已變更，未送出儲存。');
             const putRequest = monitoringRequest();
             if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(putRequest))
-                throw new Error('範圍在保存前已變更，未送出保存。');
+                throw new Error('範圍在儲存前已變更，未送出儲存。');
             const savedRevision = await api.put('/api/prtg/monitoring', putRequest);
             if (requestVersion === draftVersion && requestFingerprint === scopeFingerprint(monitoringRequest())) {
                 await loadMonitoring();
@@ -3763,7 +3763,7 @@ if (monitoringForm) {
                     baselineFingerprint = scopeFingerprint({ ...putRequest, revision: savedRevision });
                 }
                 invalidateEstimate();
-                status.textContent = '已保存送出時的範圍；送出期間表單又有變更，草稿已保留。請重新估算目前草稿，再保存。';
+                status.textContent = '已儲存送出時的範圍；送出期間表單又有變更，草稿已保留。請重新估算目前草稿，再儲存。';
             }
         } catch (error) {
             if (submitDraftVersion === null || submitDraftVersion === draftVersion)

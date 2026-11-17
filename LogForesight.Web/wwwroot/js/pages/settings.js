@@ -373,7 +373,7 @@ function renderAiUsage(usage) {
 
 /**
  * 用 renderTable 渲染近 30 天明細表格。
- * days 為空時 renderTable 呼叫 renderEmpty，顯示「尚無資料」。
+ * days 為空時 renderTable 呼叫 renderEmpty，顯示「尚無 AI 呼叫紀錄」。
  */
 function renderAiUsageDaysTable(days) {
     const container = document.getElementById('ai-usage-days-table');
@@ -388,7 +388,7 @@ function renderAiUsageDaysTable(days) {
             { key: 'totalTokens',      title: '總計 tokens',     className: 'text-end', render: r => formatNumber(r.totalTokens) }
         ],
         rows: days,
-        empty: { title: '尚無資料', hint: '目前沒有任何 AI 呼叫紀錄。' }
+        empty: { title: '尚無 AI 呼叫紀錄', hint: '目前沒有任何 AI 呼叫紀錄。' }
     });
 }
 
@@ -1093,7 +1093,8 @@ function renderMemoryHealth(memory, memoryWarning) {
             { title: '命中率', className: 'text-end', render: c => formatHitRate(c.hits, c.misses) }
         ],
         rows: Array.isArray(m.caches) ? m.caches : [],
-        caption: '快取統計'
+        caption: '快取統計',
+        empty: { title: '尚無快取統計', hint: '目前沒有已登記的快取。' }
     });
 }
 

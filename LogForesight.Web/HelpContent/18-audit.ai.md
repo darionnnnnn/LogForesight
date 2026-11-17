@@ -14,7 +14,7 @@
 - **架構原則**：
   1. **Append-Only**：介面僅提供新增與分頁查詢，無任何更新（Update）或刪除（Delete）路徑，確保稽核紀錄不可竄改。
   2. **僅記寫入與身分事件**：不記錄一般的資料讀取與頁面瀏覽，防止稽核日誌膨脹為存取流量日誌。
-  3. **帳號冗餘保存**：`Account` 欄位以字串形式冗餘存儲，即使關聯之使用者日後被更名、停用或刪除，稽核紀錄仍能獨立判讀。系統自動觸發之行為固定存儲為 `(system)`（`AuditActions.SystemAccount`）。
+  3. **帳號冗餘儲存**：`Account` 欄位以字串形式冗餘存儲，即使關聯之使用者日後被更名、停用或刪除，稽核紀錄仍能獨立判讀。系統自動觸發之行為固定存儲為 `(system)`（`AuditActions.SystemAccount`）。
   4. **事前摘要生成**：在操作發生並寫入紀錄的當下，由後端組裝好人讀的白話中文摘要（`Summary`），不依賴查詢時自 `DetailJson` 推算。
   5. **敏感資料遮蔽**：使用者密碼、探索密碼、AI API 金鑰等敏感欄位絕不記入 `DetailJson`，僅保留「是否變動」等布林標記。
 - **欄位定義**：
@@ -104,7 +104,7 @@
   - `Failed`（失敗）
 - `button[type="submit"]`：「查詢」按鈕。
 - `#btn-denied`：「只看被拒的存取」快捷切換按鈕。
-  - 點擊時將 `#audit-result` 在 `Denied` 與全部（`""`）之間切換，並自動同步自身的 `.active` 樣式。
+  - 點選時將 `#audit-result` 在 `Denied` 與全部（`""`）之間切換，並自動同步自身的 `.active` 樣式。
   - 當從 URL 帶入參數（如儀表板登入失敗/被拒卡片下鑽 `/audit?result=Denied`）或手動變更下拉選單為 `Denied` 時，按鈕亦會自動呈現 active 狀態。
 
 ### 2. 清單表格（`#audit-list`）
@@ -119,7 +119,7 @@
      - `failed`（失敗）：`lf-badge--warning` 黃色徽章，顯示「失敗」。
   5. `內容`（`summaryCell`）：
      - 顯示白話中文摘要 `entry.summary`。
-     - 若該筆紀錄包含 `detailJson`，「內容」欄的白話摘要（粗體主標）下方顯示「詳細」展開鈕（箭頭加文字，`disclosure`，展開前後標籤不變、以箭頭與 `aria-expanded` 表示狀態）。點擊可展開摺疊的 `<pre class="report-text lf-text-data">` 區塊，顯示美化排版後的 JSON 異動前後欄位差異。
+     - 若該筆紀錄包含 `detailJson`，「內容」欄的白話摘要（粗體主標）下方顯示「詳細」展開鈕（箭頭加文字，`disclosure`，展開前後標籤不變、以箭頭與 `aria-expanded` 表示狀態）。點選可展開摺疊的 `<pre class="report-text lf-text-data">` 區塊，顯示美化排版後的 JSON 異動前後欄位差異。
   6. `來源 IP`：發起請求之客戶端 IP 位址（`ipAddress`）。
 - 無資料狀態：顯示「沒有符合條件的稽核紀錄」，提示「請調整日期區間或動作條件。」。
 

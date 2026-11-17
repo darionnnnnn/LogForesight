@@ -1172,7 +1172,10 @@ export function renderChips(container, { items, attr, activeValues, multi = true
 }
 
 /** 空狀態（§8.6-5）：不留白畫面，要說明「接下來該做什麼」 */
-export function renderEmpty(container, { title = '尚無資料', hint = '', icon: iconName = 'inbox' } = {}) {
+export function renderEmpty(container, { title, hint = '', icon: iconName = 'inbox' } = {}) {
+    // 標題必填：全站規定空狀態要寫明「是什麼資料」為空（沒有篩選寫「尚無＿＿」、篩選後寫「沒有符合條件的＿＿」），
+    // 不提供泛用預設值；漏給的呼叫端在主控台出聲，畫面退回不指名的說法
+    if (!title) console.warn('renderEmpty：未提供 title，請寫明是什麼資料為空');
     const el = document.createElement('div');
     el.className = 'lf-empty';
 
@@ -1185,7 +1188,7 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
 
     const titleEl = document.createElement('div');
     titleEl.className = 'lf-empty__title';
-    titleEl.textContent = title;
+    titleEl.textContent = title || '目前沒有可顯示的項目';
     el.appendChild(titleEl);
 
     if (hint) {

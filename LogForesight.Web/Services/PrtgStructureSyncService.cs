@@ -407,7 +407,7 @@ public class PrtgStructureSyncService
                     parentOwnsRun: _state.OwnsRun);
 
                 Persist(status);
-                operation.CompletedStage("結構同步結果已保存");
+                operation.CompletedStage("結構同步結果已儲存");
                 success = status.Success;
                 failure = status.ErrorMessage;
                 if (success) _versionStamp.Bump();
@@ -447,8 +447,8 @@ public class PrtgStructureSyncService
             }
             catch (Exception persistEx)
             {
-                Log.Warn(persistEx, "PRTG 結構同步：保存失敗狀態時發生錯誤");
-                console.WriteLine("保存失敗狀態時發生錯誤；詳細原因見記錄檔。");
+                Log.Warn(persistEx, "PRTG 結構同步：儲存失敗狀態時發生錯誤");
+                console.WriteLine("儲存失敗狀態時發生錯誤；詳細原因見記錄檔。");
             }
         }
         finally

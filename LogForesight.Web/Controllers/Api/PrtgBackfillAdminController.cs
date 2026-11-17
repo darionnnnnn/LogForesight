@@ -349,7 +349,7 @@ public class PrtgBackfillAdminController : ControllerBase
     private void RequireRecordedSelectedPrtgBackfillAccess(IReadOnlySet<long>? selectedHostIds)
     {
         if (!HasRecordedSelectedPrtgBackfillAccess(selectedHostIds))
-            throw DomainException.Forbidden("無法確認指定回填保存的主機範圍，拒絕讀取或停止。");
+            throw DomainException.Forbidden("無法確認指定回填儲存的主機範圍，拒絕讀取或停止。");
     }
 
     private bool HasRecordedSelectedPrtgBackfillAccess(IReadOnlySet<long>? selectedHostIds)

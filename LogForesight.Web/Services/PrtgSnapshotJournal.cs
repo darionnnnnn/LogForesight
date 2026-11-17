@@ -952,5 +952,5 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         string.Equals(stored, currentLegacyBinding, StringComparison.Ordinal);
 
     private static InvalidDataException AmbiguousLegacyBinding() => new(
-        "快照 journal 的舊版來源 binding 已變更且無法由保存的 opaque hash 判定原因；原資料已保留，需核對後復原，拒絕重標或自動重播。");
+        "快照 journal 的舊版來源 binding 已變更且無法由儲存的 opaque hash 判定原因；原資料已保留，需核對後復原，拒絕重標或自動重播。");
 }

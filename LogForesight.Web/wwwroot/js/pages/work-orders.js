@@ -481,7 +481,7 @@ function renderLoadBoardTable(data) {
     renderTable(loadContainer, {
         columns,
         rows,
-        empty: { title: '尚無資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料。' }
+        empty: { title: '尚無處理人負載資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料。' }
     });
 }
 
@@ -835,7 +835,7 @@ function reloadMuted() {
 
 function renderMutedTable(rows, pausedCounts) {
     if (rows.length === 0) {
-        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題', hint: '目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可在問題詳情中設定靜音。' });
+        renderEmpty(mutedContainer, { title: '目前沒有靜音中的問題', hint: '目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可到左側「系統管理 > 問題負責與靜音」頁，或在問題查詢的「依問題」視角，對問題設定靜音。' });
         return;
     }
 

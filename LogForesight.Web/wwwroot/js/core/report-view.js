@@ -89,9 +89,9 @@ function pre(report) {
 
 function evidenceVersionNotice(report) {
     const messages = {
-        current: '此報告的已保存 PRTG 證據版本與目前主機日存檔相符。這只是存檔比對，不代表目前授權或即時狀態。',
-        stale: '此報告的已保存 PRTG 證據版本與目前主機日存檔不同；請以分析紀錄詳情中的目前存檔證據為準。',
-        unknown: '此報告沒有可核對的已保存 PRTG 證據版本；版本狀態未知。'
+        current: '此報告的已儲存 PRTG 證據版本與目前主機日存檔相符。這只是存檔比對，不代表目前授權或即時狀態。',
+        stale: '此報告的已儲存 PRTG 證據版本與目前主機日存檔不同；請以分析紀錄詳情中的目前存檔證據為準。',
+        unknown: '此報告沒有可核對的已儲存 PRTG 證據版本；版本狀態未知。'
     };
     const message = Object.prototype.hasOwnProperty.call(messages, report.prtgEvidenceVersionStatus)
         ? messages[report.prtgEvidenceVersionStatus]
