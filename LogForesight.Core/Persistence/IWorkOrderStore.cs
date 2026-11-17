@@ -5,6 +5,9 @@ namespace LogForesight.Core.Persistence;
 /// store 只管持久化：建單、改派、結案推導等協調邏輯不在這裡。
 /// 「進行中」一律指 <see cref="WorkOrder.ClosedAt"/> == null；問題來源比對不分大小寫（source_key 正規化大寫）。
 /// </summary>
+/// <summary>續掛停止欄位的一筆更新（<see cref="IWorkOrderStore.SetContinuationStops"/>）</summary>
+public sealed record ContinuationStopUpdate(long WorkOrderId, string? Reason, DateTime At);
+
 public interface IWorkOrderStore
 {
     WorkOrder? Get(long workOrderId);
@@ -34,6 +37,12 @@ public interface IWorkOrderStore
     /// 單不存在時什麼都不做。
     /// </summary>
     void MarkAdminSeen(long workOrderId, DateTime seenAt);
+
+    /// <summary>
+    /// 批次寫入續掛停止欄位（每張單一句 UPDATE）：<see cref="ContinuationStopUpdate.Reason"/> 為 null 即清除（停止時間一併清掉）。
+    /// 不動 UpdatedAt，不與其他寫入互搶併發權杖；單不存在時略過。
+    /// </summary>
+    void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates);
 
     /// <summary>有未讀回覆的單數（SQL 端 COUNT，判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
     int CountUnreadReplies();

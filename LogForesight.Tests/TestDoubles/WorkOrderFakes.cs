@@ -92,6 +92,17 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         if (index >= 0) _orders[index].AdminSeenAt = seenAt;
     }
 
+    public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
+    {
+        foreach (var u in updates)
+        {
+            var index = _orders.FindIndex(o => o.WorkOrderId == u.WorkOrderId);
+            if (index < 0) continue;
+            _orders[index].ContinuationStoppedReason = u.Reason;
+            _orders[index].ContinuationStoppedAt = u.Reason == null ? null : u.At;
+        }
+    }
+
     public int CountUnreadReplies() => _orders.Count(o => o.HasUnreadReply);
 
     public virtual void AppendEvent(WorkOrderEvent evt)
@@ -281,6 +292,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         HandlerId = o.HandlerId, PreviousHandlerId = o.PreviousHandlerId, Origin = o.Origin, ScopeKind = o.ScopeKind, ScopeGroupIds = o.ScopeGroupIds.ToList(),
         AutoAttach = o.AutoAttach, Note = o.Note, DueDate = o.DueDate, CreatedById = o.CreatedById,
         CreatedByAccount = o.CreatedByAccount, CreatedAt = o.CreatedAt, LastAppendedAt = o.LastAppendedAt,
-        LastReplyAt = o.LastReplyAt, AdminSeenAt = o.AdminSeenAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
+        LastReplyAt = o.LastReplyAt, AdminSeenAt = o.AdminSeenAt,
+        ContinuationStoppedReason = o.ContinuationStoppedReason, ContinuationStoppedAt = o.ContinuationStoppedAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
     };
 }

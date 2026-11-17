@@ -17,9 +17,18 @@ public class DispatchCandidateSourceTests
     private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly FakeIssueAggregateQuery _aggregates = new();
     private readonly FakeSystemSettingsStore _settings = new();
+    private readonly FakeWorkOrderStore _orders = new(new FakeIssueCaseStore());
 
     private DispatchCandidateSource Source() =>
-        new(_users, _groups, _hosts, _access, _issueOwners, _aggregates, _settings);
+        new(_users, _groups, _hosts, _access, _issueOwners, _aggregates, _settings, _orders);
+
+    private void ContinuableOrder(long handlerId, bool autoAttach = true) =>
+        _orders.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 153, IssueLabel = "Disk 153", HandlerId = handlerId,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.All, AutoAttach = autoAttach,
+            CreatedByAccount = "a", CreatedAt = DateTime.Now
+        });
 
     private UserGroup Group(string name, UserRole role, bool pool, bool active = true) =>
         _groups.Upsert(new UserGroup { GroupName = name, Role = role, DispatchPool = pool, Active = active });
@@ -108,6 +117,61 @@ public class DispatchCandidateSourceTests
         Assert.Empty(candidate.VisibleHostIds);
         Assert.Equal(1, pool.PoolMemberCount);
         Assert.Equal(0, pool.ActivePoolMemberCount);
+    }
+
+    /// <summary>D3：不在派工池、但有可續掛單的處理人也要算可見主機，看得到的新主機才續掛得進去</summary>
+    [Fact]
+    public void 不在池內但有可續掛單的處理人也計算可見主機()
+    {
+        var dept = Group("dept", UserRole.User, pool: false);
+        var host = _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 10 } });
+        _hosts.Upsert(new WebHost { HostName = "SRV-02", GroupIds = new List<long> { 11 } });
+        _access.SetForUserGroup(dept.GroupId, new long[] { 10 });
+        var handler = User("h", groupIds: dept.GroupId);
+        ContinuableOrder(handler.UserId);
+
+        var candidate = Source().Build().ByUserId[handler.UserId];
+
+        Assert.False(candidate.InPool);
+        Assert.Equal(new[] { host.HostId }, candidate.VisibleHostIds.ToArray());
+    }
+
+    [Fact]
+    public void 不在池內且沒有可續掛單的處理人可見主機仍為空()
+    {
+        var dept = Group("dept", UserRole.User, pool: false);
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 10 } });
+        _access.SetForUserGroup(dept.GroupId, new long[] { 10 });
+        var handler = User("h", groupIds: dept.GroupId);
+        ContinuableOrder(handler.UserId, autoAttach: false);
+
+        Assert.Empty(Source().Build().ByUserId[handler.UserId].VisibleHostIds);
+    }
+
+    [Fact]
+    public void 暫停的處理人即使有可續掛單可見主機仍為空()
+    {
+        var dept = Group("dept", UserRole.User, pool: false);
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 10 } });
+        _access.SetForUserGroup(dept.GroupId, new long[] { 10 });
+        var handler = User("h", paused: true, groupIds: dept.GroupId);
+        ContinuableOrder(handler.UserId);
+
+        Assert.Empty(Source().Build().ByUserId[handler.UserId].VisibleHostIds);
+    }
+
+    /// <summary>
+    /// D2：案件授與（處理人曾被交辦該主機的問題）不是派工用的可見主機。案件授與的來源是案件表（<c>HasCaseOnHost</c>），
+    /// 候選人快照只從群組授權、主機負責人、問題負責人算可見主機——結構上不相依案件儲存與 <c>VisibilityService</c>，
+    /// 有人把案件授與加進來就得先改建構子，這個守門會紅。
+    /// </summary>
+    [Fact]
+    public void 候選人快照不相依案件儲存與VisibilityService_案件授與進不來()
+    {
+        var parameterTypes = typeof(DispatchCandidateSource).GetConstructors().Single().GetParameters().Select(p => p.ParameterType).ToList();
+
+        Assert.DoesNotContain(parameterTypes, t => t.Name.Contains("CaseStore", StringComparison.Ordinal));
+        Assert.DoesNotContain(parameterTypes, t => t.Name.Contains("VisibilityService", StringComparison.Ordinal));
     }
 
     [Fact]

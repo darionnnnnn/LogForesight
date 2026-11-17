@@ -334,6 +334,19 @@ public class WorkOrderRowDto
     public string Origin { get; set; } = string.Empty;
     public string ScopeKind { get; set; } = string.Empty;
     public bool AutoAttach { get; set; }
+
+    /// <summary>進行中且夜間派工曾因處理人不符資格而擋下續掛（<c>WorkOrder.ContinuationStoppedReason</c> 非 null）</summary>
+    public bool ContinuationStopped { get; set; }
+
+    /// <summary>續掛已停止的原因代碼：handler_inactive／handler_paused／host_not_visible；沒有被擋為 null</summary>
+    public string? ContinuationStoppedReason { get; set; }
+
+    /// <summary>原因的顯示名稱（<c>ContinuationStopReasons.LabelOf</c>）</summary>
+    public string? ContinuationStoppedLabel { get; set; }
+
+    /// <summary>最近一次續掛被擋的夜間派工時間</summary>
+    public DateTime? ContinuationStoppedAt { get; set; }
+
     public WorkOrderCountsDto Counts { get; set; } = new();
     public DateTime? DueDate { get; set; }
     public DateTime CreatedAt { get; set; }

@@ -365,6 +365,9 @@ internal static class SchemaUpgrader
             "IX_lf_work_orders_active_handler_issue", "handler_id, source_key, event_id", WorkOrderActiveIssueFilter);
         // 最近一次被改派走的處理人（唯讀存取）；既有單為 NULL
         AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "previous_handler_id", isSqlite ? "INTEGER NULL" : "bigint NULL");
+        // 續掛已停止的原因與最近一次被擋的時間（夜間派工寫入）；既有單為 NULL＝沒有被擋
+        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "continuation_stopped_reason", isSqlite ? "TEXT NULL" : "nvarchar(30) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "continuation_stopped_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         // 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；既有單為 NULL，判定時退回建立時間
         if (AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "admin_seen_at", isSqlite ? "TEXT NULL" : "datetime2 NULL"))
         {
@@ -714,6 +717,8 @@ internal static class SchemaUpgrader
             last_appended_at TEXT NULL,
             last_reply_at TEXT NULL,
             admin_seen_at TEXT NULL,
+            continuation_stopped_reason TEXT NULL,
+            continuation_stopped_at TEXT NULL,
             closed_at TEXT NULL,
             closed_reason TEXT NULL,
             updated_at TEXT NOT NULL
@@ -741,6 +746,8 @@ internal static class SchemaUpgrader
             last_appended_at datetime2 NULL,
             last_reply_at datetime2 NULL,
             admin_seen_at datetime2 NULL,
+            continuation_stopped_reason nvarchar(30) NULL,
+            continuation_stopped_at datetime2 NULL,
             closed_at datetime2 NULL,
             closed_reason nvarchar(30) NULL,
             updated_at datetime2 NOT NULL

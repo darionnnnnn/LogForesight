@@ -76,6 +76,7 @@ public class WorkOrderQueryServiceTests
         public long Insert(WorkOrder order) => _inner.Insert(order);
         public void Save(WorkOrder order) => _inner.Save(order);
         public void MarkAdminSeen(long workOrderId, DateTime seenAt) => _inner.MarkAdminSeen(workOrderId, seenAt);
+        public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates) => _inner.SetContinuationStops(updates);
         public int CountUnreadReplies() => _inner.CountUnreadReplies();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);

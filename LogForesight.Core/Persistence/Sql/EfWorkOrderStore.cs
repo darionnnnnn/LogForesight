@@ -122,6 +122,9 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         entry.Property(x => x.UpdatedAt).OriginalValue = order.UpdatedAt;
         // admin_seen_at 由 MarkAdminSeen 以單句 UPDATE 寫入、刻意不動併發權杖；整列 Save 不得用呼叫端讀到的舊值把它蓋回去
         entry.Property(x => x.AdminSeenAt).IsModified = false;
+        // 續掛停止欄位同理：只由夜間派工的 SetContinuationStops 寫入
+        entry.Property(x => x.ContinuationStoppedReason).IsModified = false;
+        entry.Property(x => x.ContinuationStoppedAt).IsModified = false;
         row.UpdatedAt = now;
 
         ctx.SaveChanges();
@@ -133,6 +136,21 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
         ctx.WorkOrders.Where(w => w.WorkOrderId == workOrderId)
             .ExecuteUpdate(s => s.SetProperty(w => w.AdminSeenAt, seenAt));
+    }
+
+    public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
+    {
+        if (updates.Count == 0) return;
+        using var ctx = _contextFactory();
+        foreach (var u in updates)
+        {
+            var reason = ColumnClamp.Clamp(u.Reason, CodeMaxLength);
+            var at = reason == null ? (DateTime?)null : u.At;
+            ctx.WorkOrders.Where(w => w.WorkOrderId == u.WorkOrderId)
+                .ExecuteUpdate(s => s
+                    .SetProperty(w => w.ContinuationStoppedReason, reason)
+                    .SetProperty(w => w.ContinuationStoppedAt, at));
+        }
     }
 
     public int CountUnreadReplies()
@@ -514,6 +532,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         row.LastAppendedAt = order.LastAppendedAt;
         row.LastReplyAt = order.LastReplyAt;
         row.AdminSeenAt = order.AdminSeenAt;
+        row.ContinuationStoppedReason = ColumnClamp.Clamp(order.ContinuationStoppedReason, CodeMaxLength);
+        row.ContinuationStoppedAt = order.ContinuationStoppedAt;
         row.ClosedAt = order.ClosedAt;
         row.ClosedReason = ColumnClamp.Clamp(order.ClosedReason, CodeMaxLength);
         row.UpdatedAt = order.UpdatedAt;
@@ -541,6 +561,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         LastAppendedAt = row.LastAppendedAt,
         LastReplyAt = row.LastReplyAt,
         AdminSeenAt = row.AdminSeenAt,
+        ContinuationStoppedReason = row.ContinuationStoppedReason,
+        ContinuationStoppedAt = row.ContinuationStoppedAt,
         ClosedAt = row.ClosedAt,
         ClosedReason = row.ClosedReason,
         UpdatedAt = row.UpdatedAt

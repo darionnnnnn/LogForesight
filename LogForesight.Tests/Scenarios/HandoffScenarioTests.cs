@@ -226,6 +226,15 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     public void S6_處理人的主機授權被移除() => R("S6").AssertExpectations();
 
     [Fact]
+    public void S4_停用後同一夜無人接手_進待派並帶原因() => R("S4無人接手").AssertExpectations();
+
+    [Fact]
+    public void S4_停用後同一夜由問題負責人接手() => R("S4問題負責人").AssertExpectations();
+
+    [Fact]
+    public void S5_恢復接單後下一夜新主機續掛_被擋期間派給別人的不追回() => R("S5恢復").AssertExpectations();
+
+    [Fact]
     public void S7_主機停用() => R("S7主機停用").AssertExpectations();
 
     [Fact]
@@ -312,15 +321,15 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [Theory]
     [InlineData("S4")]
     [InlineData("S5")]
-    public void 直接重現_S4_S5_處理人停用或暫停後_新主機仍被續掛進他的單(string key)
+    public void S4_S5_處理人停用或暫停後_新主機不續掛進他的單_改派給其他候選人(string key)
     {
         var result = R(key);
         Assert.True(result.Day(2).Actions[0].Succeeded);
         var d3 = result.Day(3);
-        Assert.Equal("h1", HolderOf(d3, "HOST-B"));
-        Assert.Equal("h1", HolderOf(d3, "HOST-C"));
-        Assert.Contains(d3.OutboxAdded, o => o.Kind == WorkOrderOutboxKinds.Appended && o.Recipient == "h1");
-        Assert.DoesNotContain(d3.Orders, o => o.Handler == "h2");
+        Assert.Equal("h2", HolderOf(d3, "HOST-B"));
+        Assert.Equal("h2", HolderOf(d3, "HOST-C"));
+        Assert.DoesNotContain(d3.OutboxAdded, o => o.Kind == WorkOrderOutboxKinds.Appended && o.Recipient == "h1");
+        Assert.Contains(d3.OutboxAdded, o => o.Recipient == "h2");
     }
 
     /// <summary>每個情境只在第一次被讀取時才跑（一次約 1 秒）；各情境互相獨立</summary>

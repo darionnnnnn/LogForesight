@@ -14,6 +14,9 @@ public sealed partial class HandoffScenarioTests
         "S4" => BuildContinuation("S4 處理人被停用", ContinuationKind.Disabled),
         "S5" => BuildContinuation("S5 處理人暫停接單", ContinuationKind.Paused),
         "S6" => BuildContinuation("S6 處理人的主機授權被移除", ContinuationKind.NoAccess),
+        "S4無人接手" => BuildContinuation("S4 停用後無人接手", ContinuationKind.Disabled, ContinuationVariant.NoTaker),
+        "S4問題負責人" => BuildContinuation("S4 停用後由問題負責人接手", ContinuationKind.Disabled, ContinuationVariant.OwnerTakes),
+        "S5恢復" => BuildContinuation("S5 恢復接單後續掛", ContinuationKind.Paused, ContinuationVariant.Recover),
         "S7主機停用" => BuildS7Disabled(),
         "S7改群組" => BuildS7Regroup(),
         "S7換負責人" => BuildS7Owner(),
@@ -31,7 +34,7 @@ public sealed partial class HandoffScenarioTests
         "B6取消" => BuildCancelRevokesGrant(),
         "B6結案" => BuildClosedKeepsGrant(),
         "B6改派" => BuildReassignRevokesGrant(),
-        _ => BuildEdge(key)
+        _ => BuildEligibility(key)
     };
 
     private static string OrderUrl(ScenarioActionContext ctx, string handler) =>
@@ -71,11 +74,21 @@ public sealed partial class HandoffScenarioTests
 
     internal enum ContinuationKind { Disabled, Paused, NoAccess }
 
+    /// <summary>Base＝h2 為備援候選人；NoTaker＝沒有任何人能接；OwnerTakes＝問題負責人 h2；Recover＝處理人隔天恢復資格再有新主機</summary>
+    internal enum ContinuationVariant { Base, NoTaker, OwnerTakes, Recover }
+
+    private static string StopReasonOf(ContinuationKind kind) => kind switch
+    {
+        ContinuationKind.Disabled => ContinuationStopReasons.HandlerInactive,
+        ContinuationKind.Paused => ContinuationStopReasons.HandlerPaused,
+        _ => ContinuationStopReasons.HostNotVisible
+    };
+
     /// <summary>
     /// 第 1 天夜間派工把 HOST-A 的單建給 h1，管理者把單的範圍擴為 G1 並開續掛（併入同處理人同問題的單，範圍取聯集）；
     /// 第 2 天處理人狀態變化；第 3 天 HOST-B、HOST-C 同問題首次出現。續掛（④）與自動派工（⑥）各自該怎麼走由預期決定。
     /// </summary>
-    internal static Scenario BuildContinuation(string name, ContinuationKind kind)
+    internal static Scenario BuildContinuation(string name, ContinuationKind kind, ContinuationVariant variant = ContinuationVariant.Base)
     {
         var s = new Scenario(name)
             .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
@@ -83,7 +96,6 @@ public sealed partial class HandoffScenarioTests
             .WithHost(new HostSpec("HOST-C") { Groups = new[] { "G1" } })
             .WithUser(Admin("admin1"))
             .WithUser(Handler("h1", new[] { "G1" }))
-            .WithUser(Handler("h2", new[] { "G1" }))
             // 第 1 天關閉自動派工：HOST-A 的問題先不派，由管理者以「G1 範圍＋續掛」建單給 h1（夜間建的單一律指定主機、不續掛）；
             // 第 2 天起開啟自動派工，第 3 天新主機出現時續掛（④）與自動派工（⑥）才各自面對處理人狀態
             .WithSettings(new ScenarioSettings { AutoDispatchEnabled = false })
@@ -95,12 +107,18 @@ public sealed partial class HandoffScenarioTests
             .Expect(Check("setup.autoattach", 1, "前置：h1 的單已是 G1 範圍且開續掛", "是/Groups", d =>
                 $"{Flag(d.Probe("detail").Data is { } x && x.Flag("autoAttach"))}/{d.Probe("detail").Data?.Str("scopeKind")}"));
 
+        if (variant != ContinuationVariant.NoTaker) s.WithUser(Handler("h2", new[] { "G1" }));
+        if (variant == ContinuationVariant.Recover) s.WithHost(new HostSpec("HOST-D") { Groups = new[] { "G1" } });
+
         switch (kind)
         {
             case ContinuationKind.Disabled:
                 s.Day(2, d => d
                     .Setting(x => x.AutoDispatchEnabled = true)
                     .Act(ScenarioActions.DisableUser("admin1", "h1"))
+                    .Act(variant == ContinuationVariant.OwnerTakes
+                        ? new[] { ScenarioActions.SetIssueOwners("admin1", Disk, DiskId, "h2") }
+                        : Array.Empty<ScenarioAction>())
                     .Probe("inactive-list", "admin1", "api/work-orders?status=active&handlerInactive=true&pageSize=100")
                     .Probe("load-board", "admin1", "api/work-orders/load-board"))
                     .Expect(Expect.ActionStatus(2, 0, 200))
@@ -145,28 +163,80 @@ public sealed partial class HandoffScenarioTests
             {
                 d.Events("HOST-A", ScenarioEvents.DiskErrors(12))
                     .Events("HOST-B", ScenarioEvents.DiskErrors(12))
-                    .Events("HOST-C", ScenarioEvents.DiskErrors(12));
+                    .Events("HOST-C", ScenarioEvents.DiskErrors(12))
+                    .Probe("order-detail", "admin1", ctx => OrderUrl(ctx, "h1"))
+                    .Probe("order-list", "admin1", "api/work-orders?status=active&pageSize=100")
+                    .Probe("gaps", "admin1", Gaps);
                 if (kind == ContinuationKind.Paused)
                     d.Act(ScenarioActions.Reply("h1", OrderRef.ForHandler("h1"), "in_progress", "處理中"));
+                if (variant == ContinuationVariant.Recover)
+                    d.Act(ScenarioActions.SetDispatchPaused("admin1", "h1", false));
             })
-            .Days(3)
+            .Days(variant == ContinuationVariant.Recover ? 4 : 3)
             .Expect(Check($"{name[..2]}.d3.h1-order-members", 3, "之後的夜間派工不再把新主機續掛進原處理人的單（單內只剩 HOST-A）", "HOST-A", d =>
                 string.Join(",", OrderOf(d, "h1").Members.Select(m => m.Host))))
-            .Expect(Check($"{name[..2]}.d3.no-new-order", 3, "h1 不再收到新派工（第 3 天沒有新建給 h1 的單）", "0", d => d.NewOrders.Count(o => o.Handler == "h1").ToString()))
-            .Expect(Check($"{name[..2]}.d3.b-holder", 3, "HOST-B 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-B")))
-            .Expect(Check($"{name[..2]}.d3.c-holder", 3, "HOST-C 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-C")));
+            .Expect(Check($"{name[..2]}.d3.no-new-order", 3, "h1 不再收到新派工（第 3 天沒有新建給 h1 的單）", "0", d => d.NewOrders.Count(o => o.Handler == "h1").ToString()));
 
-        // 續掛（④）只看單是否可續掛與範圍涵蓋，不看處理人狀態：新主機照樣掛進原處理人的單（評估記錄 E3-03）
         var tag = name[..2];
-        var continuationId = kind == ContinuationKind.Paused ? "E3-S5-1" : $"E3-{tag}-2";
-        s.KnownDifference(continuationId, $"{tag}.d3.h1-order-members")
-            .KnownDifference(continuationId, $"{tag}.d3.b-holder")
-            .KnownDifference(continuationId, $"{tag}.d3.c-holder");
+        var stopReason = StopReasonOf(kind);
+
+        // 續掛被擋後往下走：由問題負責人、自動派工接手；都沒有人才進待派並帶原因
+        switch (variant)
+        {
+            case ContinuationVariant.NoTaker:
+                s.Expect(Check($"{tag}.d3.b-deferred", 3, "沒有任何人能接：HOST-B、HOST-C 延後進待派（無候選人）", "deferred:no_candidate/deferred:no_candidate", d =>
+                        $"{Decision(d, "HOST-B")}/{Decision(d, "HOST-C")}"))
+                    .Expect(Check($"{tag}.d3.gaps-reason", 3, "待派頁帶原因：派工池沒有人（停用的 h1 不在候選人內）", "no_pool", d =>
+                        d.Probe("gaps").Items("rows").Where(r => r.Str("source") == Disk && r.Int("eventId") == DiskId)
+                            .SelectMany(r => r.GetProperty("unassignable").EnumerateArray()).Select(u => u.Str("reason")).FirstOrDefault() ?? "（待派頁沒有這個問題）"));
+                break;
+            case ContinuationVariant.OwnerTakes:
+                s.Expect(Expect.ActionStatus(2, 1, 200))
+                    .Expect(Check($"{tag}.d3.owner-takes", 3, "續掛被擋後由問題負責人 h2 接手（單來源是問題負責人規則）", "h2/h2/owner_rule", d =>
+                        $"{HolderOf(d, "HOST-B")}/{HolderOf(d, "HOST-C")}/{d.NewOrders.Select(o => o.Origin).FirstOrDefault()}"));
+                break;
+            default:
+                s.Expect(Check($"{tag}.d3.b-holder", 3, "HOST-B 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-B")))
+                    .Expect(Check($"{tag}.d3.c-holder", 3, "HOST-C 的新問題改由其他候選人（h2）接手", "h2", d => HolderOf(d, "HOST-C")));
+                break;
+        }
+
+        // D4-b：交辦單詳情與交辦總覽讀得到「續掛已停止」與原因
+        s.Expect(Check($"{tag}.d3.stopped-detail", 3, "交辦單詳情標示續掛已停止與原因（含顯示名稱）", $"True/{stopReason}/有名稱", d =>
+            {
+                var data = d.Probe("order-detail").Data;
+                return $"{data?.Flag("continuationStopped")}/{data?.Str("continuationStoppedReason")}/{(string.IsNullOrEmpty(data?.Str("continuationStoppedLabel")) ? "無名稱" : "有名稱")}";
+            }))
+            .Expect(Check($"{tag}.d3.stopped-list", 3, "交辦總覽的列同樣標示續掛已停止與原因", $"True/{stopReason}", d =>
+                RowOf(d.Probe("order-list"), OrderOf(d, "h1").OrderId) is { } row
+                    ? $"{row.Flag("continuationStopped")}/{row.Str("continuationStoppedReason")}"
+                    : "（總覽沒有這張單）"));
+
         if (kind == ContinuationKind.Disabled) s.KnownDifference("E3-S4-1", "S4.d2.admin-warned");
         if (kind == ContinuationKind.NoAccess) s.KnownDifference("E3-S6-1", "S6.d2.admin-sees-gap");
 
         if (kind == ContinuationKind.Paused)
             s.Expect(Check("S5.d3.existing-reply", 3, "暫停接單者既有單照常可回覆", "200", d => d.Actions[0].StatusCode.ToString()));
+
+        // D4-c：恢復接單後，下一夜新主機續掛；被擋期間已派給別人的仍在別人那裡
+        if (variant == ContinuationVariant.Recover)
+        {
+            s.Day(4, d => d
+                    .Events("HOST-A", ScenarioEvents.DiskErrors(12))
+                    .Events("HOST-B", ScenarioEvents.DiskErrors(12))
+                    .Events("HOST-C", ScenarioEvents.DiskErrors(12))
+                    .Events("HOST-D", ScenarioEvents.DiskErrors(12))
+                    .Probe("order-detail", "admin1", ctx => OrderUrl(ctx, "h1"))
+                    .Probe("order-list", "admin1", "api/work-orders?status=active&pageSize=100"))
+                .Expect(Expect.ActionStatus(3, 1, 200))
+                .Expect(Check("S5r.d4.d-continued", 4, "恢復接單後下一夜的新主機 HOST-D 續掛進 h1 的單", "HOST-A,HOST-D", d =>
+                    string.Join(",", OrderOf(d, "h1").Members.Select(m => m.Host).OrderBy(h => h, StringComparer.Ordinal))))
+                .Expect(Check("S5r.d4.others-stay", 4, "被擋期間已派給 h2 的 HOST-B、HOST-C 仍在 h2 那裡，不追回", "h2/h2", d =>
+                    $"{HolderOf(d, "HOST-B")}/{HolderOf(d, "HOST-C")}"))
+                .Expect(Check("S5r.d4.stop-cleared", 4, "續掛成功後「續掛已停止」標示清掉（詳情與總覽）", "False/False", d =>
+                    $"{d.Probe("order-detail").Data?.Flag("continuationStopped")}/" +
+                    $"{(RowOf(d.Probe("order-list"), OrderOf(d, "h1").OrderId) is { } row ? row.Flag("continuationStopped").ToString() : "（總覽沒有這張單）")}"));
+        }
 
         return s;
     }

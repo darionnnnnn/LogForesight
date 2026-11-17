@@ -762,6 +762,9 @@ lf_work_orders                                       -- 交辦單：一個問題
   last_appended_at   timestamp NULL                  -- 最近加入成員時間
   last_reply_at      timestamp NULL                  -- 處理人最近回覆時間；null＝未回覆
   admin_seen_at      timestamp NULL                  -- 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）
+  continuation_stopped_reason nvarchar(30) NULL      -- 續掛已停止的原因：handler_inactive | handler_paused | host_not_visible；null＝沒有被擋；
+                                                     -- 夜間派工以單句 UPDATE 寫入（整列 Save 不寫、不動 updated_at）
+  continuation_stopped_at     timestamp NULL         -- 最近一次續掛被擋的夜間派工時間；原因為 null 時一律 null
   closed_at          timestamp NULL                  -- 快取：全部成員結案時落盤
   closed_reason      nvarchar(30) NULL               -- all_closed | moved | cancelled | admin_closed
   updated_at         timestamp NOT NULL              -- 併發權杖

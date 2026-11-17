@@ -496,6 +496,13 @@ public class WorkOrderQueryService
         dto.Origin = o.Origin;
         dto.ScopeKind = o.ScopeKind;
         dto.AutoAttach = o.AutoAttach;
+        if (o.ClosedAt == null && o.ContinuationStoppedReason != null)
+        {
+            dto.ContinuationStopped = true;
+            dto.ContinuationStoppedReason = o.ContinuationStoppedReason;
+            dto.ContinuationStoppedLabel = ContinuationStopReasons.LabelOf(o.ContinuationStoppedReason);
+            dto.ContinuationStoppedAt = o.ContinuationStoppedAt;
+        }
         dto.Counts = new WorkOrderCountsDto
         {
             Total = c.Total, Active = c.Active, Closed = c.Closed, InProgress = c.InProgress, Observing = c.Observing,

@@ -286,6 +286,9 @@ public sealed class DispatchContext
     internal IssueProfile? ProfileFor(string source, int eventId) =>
         _profiles.GetValueOrDefault(IssueProfile.KeyOf(source, eventId));
 
+    /// <summary>脈絡內全部進行中的單（含本趟登記的）；趟末整理續掛停止標示用</summary>
+    internal IEnumerable<WorkOrder> AllActiveOrders() => _activeOrders.Values.SelectMany(list => list);
+
     internal IReadOnlyList<WorkOrder> ActiveOrdersFor(string source, int eventId) =>
         _activeOrders.TryGetValue(IssueKeyOf(source, eventId), out var list) ? list : Array.Empty<WorkOrder>();
 

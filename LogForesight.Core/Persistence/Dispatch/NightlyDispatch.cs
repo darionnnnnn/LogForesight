@@ -48,6 +48,10 @@ public sealed class NightlyDispatch
     private readonly Dictionary<long, long> _handlerByOrder = new();
     private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
+    /// <summary>本趟被擋下的續掛：單 → 原因代碼（<see cref="ContinuationStopReasons"/>）</summary>
+    private readonly Dictionary<long, string> _blockedByOrder = new();
+    /// <summary>本趟成功續掛過的單</summary>
+    private readonly HashSet<long> _continuedOrders = new();
     /// <summary>寫入當下才發現的途中變動（單已結案／已改派），趟末併入 SkipCounts</summary>
     private readonly Dictionary<string, int> _midrunCounts = new(StringComparer.Ordinal);
 
@@ -99,6 +103,7 @@ public sealed class NightlyDispatch
         {
                 var relatedWarningOrderId = _ctx.ActiveWarningOrderForSensor(hostName, issue);
                 var decision = WorkOrderDispatcher.Decide(_ctx, host, issue, date.Date);
+                foreach (var blocked in decision.BlockedContinuations) _blockedByOrder[blocked.WorkOrderId] = blocked.Reason;
                 // Keep each trend finding/case intact, but an active same-host, same-sensor Warning
                 // already gives the handler an actionable order. Do this after normal gates so
                 // mute, suppression, ownership and dismissal retain their existing precedence.
@@ -160,7 +165,7 @@ public sealed class NightlyDispatch
 
             for (var i = 0; i < members.Count; i++)
             {
-                var (issue, workOrderId, plannedHandlerId, _) = members[i];
+                var (issue, workOrderId, plannedHandlerId, step) = members[i];
                 if (writtenHandlers[i] is not long handlerId)
                 {
                     if (writeOutcome.ExistingOpenIndexes.Contains(i))
@@ -174,6 +179,7 @@ public sealed class NightlyDispatch
                     continue;
                 }
                 Report(onResult, issue, "delivered");
+                if (step == WorkOrderDispatcher.StepAttach) _continuedOrders.Add(workOrderId);
                 _ctx.InvalidateCasesFor(hostName);
                 if (handlerId != plannedHandlerId)
                     _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
@@ -271,6 +277,8 @@ public sealed class NightlyDispatch
                 _createdOrders.Remove(emptyOrderId);
             }
 
+            FlushContinuationStops(occurredAt);
+
             var perHandler = _handlerByOrder
                 .Where(p => _createdOrders.Contains(p.Key) || _addedByOrder.ContainsKey(p.Key))
                 .GroupBy(p => p.Value)
@@ -302,7 +310,49 @@ public sealed class NightlyDispatch
             _createdOrders.Clear();
             _labelByOrder.Clear();
             _midrunCounts.Clear();
+            _blockedByOrder.Clear();
+            _continuedOrders.Clear();
             return summary;
         }
+    }
+
+    /// <summary>
+    /// 趟末整理「續掛已停止」標示（在 <see cref="DispatchContext.Gate"/> 內呼叫）：
+    /// 本趟被擋的單寫入原因與時間（同單被擋與成功並存時以被擋為準——仍有新主機掛不進去）；
+    /// 本趟成功續掛且沒被擋的單清除標示；處理人已恢復基本資格（啟用、有處理能力、未暫停）而本趟沒被擋的單，
+    /// 若標示是「已停用」「暫停接單」也一併清除（「看不到新主機」要等下一次成功續掛才清）。
+    /// 標示只是提示，寫入失敗只記警告，不讓整趟派工失敗。
+    /// </summary>
+    private void FlushContinuationStops(DateTime occurredAt)
+    {
+        var updates = new List<ContinuationStopUpdate>();
+        var orders = _ctx.AllActiveOrders().GroupBy(o => o.WorkOrderId).ToDictionary(g => g.Key, g => g.First());
+
+        foreach (var (orderId, reason) in _blockedByOrder.OrderBy(p => p.Key))
+        {
+            updates.Add(new ContinuationStopUpdate(orderId, reason, occurredAt));
+            if (orders.TryGetValue(orderId, out var order))
+            {
+                order.ContinuationStoppedReason = reason;
+                order.ContinuationStoppedAt = occurredAt;
+            }
+        }
+
+        foreach (var order in orders.Values.Where(o => o.ContinuationStoppedReason != null && !_blockedByOrder.ContainsKey(o.WorkOrderId))
+                     .OrderBy(o => o.WorkOrderId).ToList())
+        {
+            var recovered = _continuedOrders.Contains(order.WorkOrderId)
+                || (order.ContinuationStoppedReason is ContinuationStopReasons.HandlerInactive or ContinuationStopReasons.HandlerPaused
+                    && WorkOrderDispatcher.IneligibleReason(_ctx, order.HandlerId, null, requirePool: false) == null);
+            if (!recovered) continue;
+
+            updates.Add(new ContinuationStopUpdate(order.WorkOrderId, null, occurredAt));
+            order.ContinuationStoppedReason = null;
+            order.ContinuationStoppedAt = null;
+        }
+
+        if (updates.Count == 0) return;
+        try { _coordinator.RecordContinuationStops(updates); }
+        catch (Exception ex) { Log.Warn(ex, "夜間派工：寫入續掛已停止標示失敗（{Count} 張單），不影響本趟派工結果。", updates.Count); }
     }
 }

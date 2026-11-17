@@ -643,6 +643,13 @@ public class WorkOrderCoordinator
         });
     }
 
+    /// <summary>夜間派工一趟結束：寫入（或清除）續掛停止標示；只寫標示欄位，不動單的其他欄位與併發權杖</summary>
+    public void RecordContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
+    {
+        if (updates.Count == 0) return;
+        _orders.SetContinuationStops(updates);
+    }
+
     private static WorkOrderActor NightlyActor(DateTime occurredAt) =>
         new() { ActorId = null, ActorAccount = AuditActions.SystemAccount, OccurredAt = occurredAt };
 

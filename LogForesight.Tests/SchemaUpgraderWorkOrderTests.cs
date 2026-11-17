@@ -115,6 +115,51 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上交辦單續掛停止兩欄_既有單為NULL_重跑冪等()
+    {
+        var legacyStore = new EfWorkOrderStore(_fx.NewContext);
+        var legacyId = legacyStore.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 154, IssueLabel = "Disk 154", HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "a", CreatedAt = DateTime.Now
+        });
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN continuation_stopped_reason");
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN continuation_stopped_at");
+            var columns = Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')");
+            Assert.DoesNotContain("continuation_stopped_reason", columns);
+            Assert.DoesNotContain("continuation_stopped_at", columns);
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) Assert.Null(Record.Exception(() => SchemaUpgrader.Upgrade(ctx)));
+
+        using var check = _fx.NewContext();
+        var after = Query(check, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')");
+        Assert.Contains("continuation_stopped_reason", after);
+        Assert.Contains("continuation_stopped_at", after);
+        var legacy = new EfWorkOrderStore(_fx.NewContext).Get(legacyId)!;
+        Assert.Null(legacy.ContinuationStoppedReason);
+        Assert.Null(legacy.ContinuationStoppedAt);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出續掛停止欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.WorkOrders.Where(w => w.ContinuationStoppedReason != null).Select(w => w.ContinuationStoppedAt).ToQueryString();
+
+        Assert.Contains("[continuation_stopped_reason]", sql);
+        Assert.Contains("[continuation_stopped_at]", sql);
+        Assert.Contains("continuation_stopped_reason nvarchar(30) NULL", SchemaUpgrader.SqlServerCreateWorkOrders);
+        Assert.Contains("continuation_stopped_at datetime2 NULL", SchemaUpgrader.SqlServerCreateWorkOrders);
+    }
+
+    [Fact]
     public void Upgrade補上交辦單previous_handler_id可空欄_既有單為NULL()
     {
         using (var ctx = _fx.NewContext())
