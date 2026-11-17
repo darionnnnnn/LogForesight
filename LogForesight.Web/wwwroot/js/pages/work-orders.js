@@ -28,7 +28,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
-import { roleText, filterDisclosure, statusNote } from '../core/elements.js';
+import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
 
 // DOM 元素
@@ -940,27 +940,58 @@ function renderReminders(data) {
     if (escalated + unassignable + noRecipient === 0) return;
 
     remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
+    // 設定為 0＝不寄提醒信，但這裡照常顯示：特殊值語意，常駐說明
+    if ((data.reminderDays ?? 1) === 0) {
+        remindersContainer.appendChild(statusNote('info', '提醒信已關閉（設定為 0），此處仍會顯示。'));
+    }
     const list = document.createElement('ul');
     list.className = 'list-unstyled mt-2 mb-0';
-    const addRow = (text, linkText, href) => {
+    // 每類一行（說明＋連結）；有明細就多一顆預設收合的揭露鈕，明細只列前幾筆（筆數是全部）
+    const addRow = (text, linkText, href, detailLabel, detailItems, total) => {
         const item = document.createElement('li');
         item.className = 'd-flex flex-wrap align-items-center gap-2 mb-1 lf-list-row';
         const label = document.createElement('span');
         label.textContent = text;
         item.appendChild(label);
         item.appendChild(linkButton(linkText, href));
+        if (detailItems && detailItems.length > 0) {
+            const detail = document.createElement('ul');
+            detail.className = 'list-unstyled w-100 mb-1 ms-3';
+            for (const entry of detailItems) {
+                const line = document.createElement('li');
+                line.className = 'd-flex flex-wrap align-items-center gap-2';
+                for (const node of entry) line.appendChild(node);
+                detail.appendChild(line);
+            }
+            if (total > detailItems.length) {
+                const more = document.createElement('li');
+                more.textContent = `只列前 ${formatNumber(detailItems.length)} 筆，共 ${formatNumber(total)} 筆`;
+                detail.appendChild(more);
+            }
+            item.appendChild(disclosure(detailLabel, detail));
+            item.appendChild(detail);
+        }
         list.appendChild(item);
     };
+    const span = t => { const e = document.createElement('span'); e.textContent = t; return e; };
+    const orderLink = id => linkButton(`單號 ${id}`, appUrl('/work-orders/' + id));
     if (escalated > 0) {
-        addRow(`上報超過 ${data.thresholdDays} 天沒人處理：${formatNumber(escalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated');
+        const rows = (data.escalated ?? []).map(e => [orderLink(e.workOrderId), span(`${e.issueLabel}　${e.hostName}　上報 ${e.days} 天`)]);
+        addRow(`上報超過 ${data.thresholdDays} 天沒人處理：${formatNumber(escalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated',
+            '看是哪些', rows, escalated);
     }
     if (unassignable > 0) {
-        addRow(`最近一次夜間派工派不出去的問題：${formatNumber(unassignable)} 筆`, '看待派', appUrl('/work-orders') + '#gaps');
+        const at = data.unassignableAt ? `（彙整於 ${formatDateTime(data.unassignableAt)}）` : '';
+        const rows = (data.unassignable ?? []).map(u => [span(`${u.issueLabel}　${UNASSIGNABLE_LABELS[u.reason] ?? u.reason}　${formatNumber(u.hosts)} 台`)]);
+        addRow(`最近一次夜間派工派不出去的問題：${formatNumber(unassignable)} 筆${at}`, '看待派', appUrl('/work-orders') + '#gaps',
+            '看是哪些', rows, unassignable);
     }
     if (noRecipient > 0) {
         const first = (data.noRecipient ?? [])[0];
+        const rows = (data.noRecipient ?? []).map(n => [orderLink(n.workOrderId), span(n.issueLabel)]);
         addRow(`上報信沒有任何收件人的單：${formatNumber(noRecipient)} 筆`, first ? `看單號 ${first.workOrderId}` : '看上報中的單',
-            first ? appUrl('/work-orders/' + first.workOrderId) : appUrl('/work-orders') + '?status=escalated');
+            first ? appUrl('/work-orders/' + first.workOrderId) : appUrl('/work-orders') + '?status=escalated',
+            '看是哪些', rows, noRecipient);
     }
     remindersContainer.appendChild(list);
 }

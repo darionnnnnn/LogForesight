@@ -24,6 +24,8 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseOpensWithoutPreselection")]
     [InlineData("adminCloseBlockCheckboxOnlyForNoFix")]
     [InlineData("adminCloseExplainsConsequences")]
+    [InlineData("adminCloseCountsMembersOnDisabledHosts")]
+    [InlineData("continuationStopNoteShowsDate")]
     [InlineData("adminCloseSendsBlockRedispatch")]
     [InlineData("adminCloseRefusesWithoutStatus")]
     [InlineData("replyFormShowsNoFixNoteOnlyForNoFix")]

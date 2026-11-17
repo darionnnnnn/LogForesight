@@ -185,7 +185,8 @@ function memberGapFacts(detail) {
 function continuationStopNote(detail) {
     if (!detail.continuationStopped) return null;
     const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
-    return statusNote('info', `續掛已停止：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
+    const when = detail.continuationStoppedAt ? `（${formatDate(detail.continuationStoppedAt)}）` : '';
+    return statusNote('info', `續掛已停止${when}：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
 }
 
 /**
@@ -281,7 +282,9 @@ function renderHeader(detail) {
 // 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
 function openAdminCloseModal() {
-    const activeCount = currentDetail?.counts?.active ?? 0;
+    // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
+    const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
+    const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
     const body = document.createElement('div');
     const form = document.createElement('form');
 
@@ -343,7 +346,7 @@ function openAdminCloseModal() {
     actions.appendChild(submitBtn);
 
     function renderConsequence() {
-        const notes = [statusNote('info', '處理人會收到結案通知。')];
+        const notes = [statusNote('info', '處理人會收到結案通知。' + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
         if (isNoFixClosure(statusSelect.value)) {
             notes.push(statusNote('warning', blockInput.checked
                 ? '已勾選：這台主機的這個問題之後不會再自動派工。'

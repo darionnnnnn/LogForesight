@@ -19,6 +19,9 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [InlineData("work-orders-reminders.behavior.mjs", "allThreeClassesShowRowsWithLinks")]
     [InlineData("work-orders-reminders.behavior.mjs", "onlyNonZeroClassIsListed")]
     [InlineData("work-orders-reminders.behavior.mjs", "rerenderClearsPreviousContent")]
+    [InlineData("work-orders-reminders.behavior.mjs", "detailListsAreCollapsedAndLinked")]
+    [InlineData("work-orders-reminders.behavior.mjs", "unassignableAtNullAndTruncationNote")]
+    [InlineData("work-orders-reminders.behavior.mjs", "reminderDaysZeroShowsPersistentNote")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFetchesEndpointAndRenders")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFailureLeavesAreaEmpty")]
     public void 管理者提醒區的production行為(string scriptName, string caseName)

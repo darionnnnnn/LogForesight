@@ -2924,6 +2924,8 @@ function renderStructureSyncStatus(status) {
     renderSetupSummary();
     const statusEl = document.getElementById('prtg-structure-sync-status');
     const progressEl = document.getElementById('prtg-structure-sync-progress');
+    const warningsEl = document.getElementById('prtg-structure-sync-warnings');
+    warningsEl?.replaceChildren();
     const btn = document.getElementById('prtg-structure-sync-btn');
     const cancelBtn = document.getElementById('prtg-structure-sync-cancel-btn');
     if (!statusEl || !progressEl || !btn) return;
@@ -2960,6 +2962,10 @@ function renderStructureSyncStatus(status) {
 
     const when = formatDateTime(status.lastCompletedAt);
     const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
+    // 最近一次同步的警告（感測器全部回空、已對應主機的裝置被清除）：逐條列出，文字一律 textContent（外部字串）
+    for (const warning of status.lastWarnings ?? []) {
+        warningsEl?.appendChild(statusNote('warning', warning));
+    }
     if (status.lastSuccess) {
         statusEl.textContent =
             `上次同步：${when}${sourceLabel}　監看感測器 ${status.lastSensors ?? 0}；${prtgHostMapSummary(status)}`;

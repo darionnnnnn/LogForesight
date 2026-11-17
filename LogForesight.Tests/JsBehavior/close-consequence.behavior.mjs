@@ -54,7 +54,7 @@ const textOf = node => node.textContent;
 const notes = root => all(root).filter(n => n.classList?.contains('lf-status-note'));
 
 // ── 代為結案對話框 ───────────────────────────────────────────────
-function openAdminClose(activeCount = 3) {
+function openAdminClose(activeCount = 3, onDisabled = 0) {
     const env = makeEnv();
     const source = read('pages', 'work-order-detail.js');
     const fn = extract(source, 'function openAdminCloseModal(');
@@ -62,7 +62,7 @@ function openAdminClose(activeCount = 3) {
     const run = new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
         'currentDetail', 'workOrderId', 'reloadAll', `${fn}\nreturn openAdminCloseModal;`)(
         env.button, env.statusNote, catalog.statusesWhere, catalog.isNoFixClosure, env.showDetailModal, api,
-        (m, t) => env.toasts.push({ m, t }), () => () => { }, { counts: { active: activeCount } }, 7, async () => { });
+        (m, t) => env.toasts.push({ m, t }), () => () => { }, { counts: { active: activeCount, activeOnDisabledHosts: onDisabled } }, 7, async () => { });
     run();
     const body = env.shown[0].body;
     const form = body.children[0];
@@ -129,6 +129,29 @@ const cases = {
         assert.ok(!notes(m.consequence).some(n => n.classList.contains('lf-status-note--warning')), '已處理沒有警示');
         assert.ok(notes(m.consequence).map(textOf).join('').includes('處理人會收到'), '已處理也要說處理人會收到通知');
         assert.ok(textOf(m.submit).includes('代為結案 5 台'), `確認鈕要含台數：${textOf(m.submit)}`);
+    },
+    // 單上只剩停用主機的進行中成員：後端仍會結案它們，按鈕台數不能是 0，後果說明帶出停用台數
+    async adminCloseCountsMembersOnDisabledHosts() {
+        const m = openAdminClose(0, 2);
+        assert.ok(textOf(m.submit).includes('代為結案 2 台'), `只剩停用主機時台數不是 0：${textOf(m.submit)}`);
+        m.pick('resolved');
+        assert.ok(notes(m.consequence).map(textOf).join('').includes('含已停用主機 2 台'));
+        const mixed = openAdminClose(3, 1);
+        assert.ok(textOf(mixed.submit).includes('代為結案 4 台'));
+        const none = openAdminClose(3, 0);
+        none.pick('resolved');
+        assert.ok(!notes(none.consequence).map(textOf).join('').includes('已停用主機'));
+    },
+    // 續掛已停止的提示帶停止日期；沒有日期就不寫括號
+    async continuationStopNoteShowsDate() {
+        const env = makeEnv();
+        const fn = extract(read('pages', 'work-order-detail.js'), 'function continuationStopNote(');
+        const run = new Function('statusNote', 'formatDate', `${fn}\nreturn continuationStopNote;`)(env.statusNote, v => `D:${v}`);
+        const withDate = run({ continuationStopped: true, continuationStoppedLabel: '處理人停用', continuationStoppedAt: '2026-11-03T02:00:00' });
+        assert.ok(textOf(withDate).includes('續掛已停止（D:2026-11-03T02:00:00）：處理人停用'), textOf(withDate));
+        const without = run({ continuationStopped: true, continuationStoppedLabel: '處理人停用', continuationStoppedAt: null });
+        assert.ok(textOf(without).includes('續掛已停止：處理人停用'));
+        assert.equal(run({ continuationStopped: false }), null);
     },
     // B5-a：送出請求帶 blockRedispatch
     async adminCloseSendsBlockRedispatch() {

@@ -4852,6 +4852,12 @@
           "visible": true,
           "text": "續掛已停止"
         }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "text": "續掛已停止（"
+        }
       }
     ]
   },
@@ -4943,8 +4949,111 @@
       },
       {
         "assert": {
-          "sel": "#wo-reminders li",
+          "sel": "#wo-reminders > ul > li",
           "count": 3
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-提醒明細展開",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-reminders .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders .lf-disclosure-target.d-none",
+          "visible": false
+        }
+      },
+      {
+        "evalAssert": "const bs = [...document.querySelectorAll('#wo-reminders .lf-disclosure')]; if (bs.length < 2) return '提醒區每類應有展開鈕，實際 ' + bs.length; bs.forEach(b => b.click()); return null;"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "Ui-Unassignable-Issue EventId 8630"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "彙整於"
+        }
+      },
+      {
+        "evalAssert": "const a = document.querySelector('#wo-reminders .lf-disclosure-target a[href*=\"/work-orders/\"]'); return a ? null : '上報明細的單號應連到交辦單';"
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦單詳情-代為結案含停用主機",
+    "role": "ui-admin",
+    "path": "fixture:work-order.disabled-host",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('#wo-actions button')].find(x => x.textContent.includes('代為結案')); if (!b) return '找不到代為結案按鈕'; b.click(); return null;"
+      },
+      {
+        "waitFor": ".modal.show #wo-close-status"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form button[type=submit]",
+          "text": "代為結案 2 台"
+        }
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-consequence",
+          "text": "含已停用主機 1 台"
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-PRTG維護-同步警告",
+    "role": "ui-admin",
+    "path": "/admin/prtg#mirror",
+    "widths": [
+      375,
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-structure-sync-card"
+      },
+      {
+        "patchApi": {
+          "/api/admin/settings/prtg-structure-sync/status": {
+            "isRunning": false,
+            "lastCompletedAt": "2026-11-16T02:00:00",
+            "lastSuccess": true,
+            "lastSensors": 12,
+            "lastSource": "nightly",
+            "lastWarnings": [
+              "本次同步 PRTG 回傳的感測器全部為空，已保留原有鏡像。",
+              "已對應主機的裝置 SRV-DB-01 在 PRTG 已被清除。"
+            ]
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#prtg-structure-sync-warnings .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#prtg-structure-sync-warnings",
+          "text": "SRV-DB-01"
         }
       }
     ]

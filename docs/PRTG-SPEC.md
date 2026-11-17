@@ -193,7 +193,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 **同步警告**（`PrtgSyncWarning`，同步仍算完成、只出聲，不改任何清除條件）：
 - `sensors-all-empty`：範圍非空，感測器階段查詢全部成功（逐台模式無失敗裝置、全站分頁模式已收斂），卻沒有寫入任何感測器。感測器鏡像照舊不清除。
 - `mapped-devices-purged`：裝置過期清除實際刪了裝置，且其中有在最近一次主機對應中是 `ok`（含人工對應）的裝置；訊息列前 3 台名稱。超過鏡像一半而觸發安全保險、一台都沒刪時不附。
-警告進三處：`FetchDayAsync` 的 `PrtgFetchResult.Warnings`、同步結果狀態（`PrtgStructureSyncStatus.Warnings`，手動與夜間成功寫入的狀態都帶；`prtg-structure-sync/status` 的 `lastWarnings`）、夜間執行紀錄的重要紀錄（「PRTG 同步警告：…」）。
+警告進三處：`FetchDayAsync` 的 `PrtgFetchResult.Warnings`、同步結果狀態（`PrtgStructureSyncStatus.Warnings`，手動與夜間成功寫入的狀態都帶；`prtg-structure-sync/status` 的 `lastWarnings`，PRTG 維護頁在同步狀態下方以 warning 逐條列出）、夜間執行紀錄的重要紀錄（「PRTG 同步警告：…」）。
 文字含 PRTG 回傳的裝置名稱，由 `PrtgSyncWarning.Create` 唯一截斷到 300 字再進任何欄位。健康整體狀態讀最近一次同步結果的警告（WEB-SPEC 系統健康頁籤），下一次同步沒有警告時隨狀態覆寫而消失。
 
 範圍 ≤ 500 台（`PerDeviceSensorFetchLimit`）逐台查感測器，超過時全站分頁再濾。白天新進範圍的裝置由快照服務的範圍補抓帶進鏡像（§3b）。
