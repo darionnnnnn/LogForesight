@@ -51,7 +51,14 @@ public sealed class PrtgSelectedBackfillServiceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        // TryStartSelected 啟動的背景回填可能在測試結束後還寫了一筆進暫存目錄（全量負載下曾見
+        // 「Directory not empty」）；暫存目錄刪不掉不影響斷言，重試幾次後放棄，不讓收尾把通過的案例轉紅
+        for (var attempt = 0; attempt < 5 && Directory.Exists(_directory); attempt++)
+        {
+            try { Directory.Delete(_directory, recursive: true); }
+            catch (IOException) { Thread.Sleep(100); }
+            catch (UnauthorizedAccessException) { Thread.Sleep(100); }
+        }
     }
 
     private PrtgSelectedBackfillRequest Request(DateTime day) => new()

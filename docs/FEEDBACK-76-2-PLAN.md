@@ -1,6 +1,6 @@
 # 回饋第 76 輪第二階段規劃：交辦串接、通知與文字
 
-> 狀態：實作中——A、T、B、D、C、E、F、G 已完成並推送；**Z 未開始**，接續方式見「接續作業」（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；待使用者確認的兩項依預設：勾選框預設不勾、E1-01 留第 77 輪）
+> 狀態：實作中——A～G 與 Z（Z1～Z8）已完成並推送；**待換模型體檢**（見「體檢交接」），體檢後才收尾歸檔、併 dev，接續方式見「接續作業」（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；待使用者確認的兩項依預設：勾選框預設不勾、E1-01 留第 77 輪）
 > 基準：`feature/feedback-76`@f11d2080（macOS 10,193 通過／23 略過，1.0.76.0）
 > 來源：第一階段評估報告 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（101 條發現、12 個同根因群組）；第一階段規劃見 `docs/FEEDBACK-76-PLAN.md`
 > 實作方式：主代理規劃與驗收；跨檔實作委派 Sonnet 5.5，機械性替換委派 Haiku 5.5；同一 checkout 一次一個改檔代理
@@ -567,7 +567,7 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 本節給在另一台電腦或新工作階段接手的人：照順序做，不需要讀本機的代理記憶。
 
 ### 現況（2026-11-17）
-- 分支 `feature/feedback-76-2`，已完成：A、T、B（B-1～B-3）、D（D-1～D-2）、C（C-1～C-4）、E（E-1～E-2）、F、G（G-1～G-4，2026-11-17），下一步是批次 Z；每段的改法、驗收與落差寫在本檔末「執行紀錄」。
+- 分支 `feature/feedback-76-2`，已完成：A、T、B（B-1～B-3）、D（D-1～D-2）、C（C-1～C-4）、E（E-1～E-2）、F、G（G-1～G-4）、Z（Z1～Z8，2026-11-17），下一步是換模型體檢；每段的改法、驗收與落差寫在本檔末「執行紀錄」。
 - 最近一次全量：Windows **10,463 通過／12 略過**（12 筆是規模壓測）；macOS 尚未跑。`CLAUDE.md` 的基線數字還是舊的，Z 批再更新。
 - 版號仍是 `1.0.76.0`；本輪自查修正的修訂遞增留到 Z 批（`VersionRoundGuardTests` 只守第三碼）。
 - 已知的負載偶發（單獨重跑皆綠，與本輪改動無關）：`PrtgTransferControllerTests` 的 Kestrel 案例、`PrtgValueFetchRetryServiceTests.兩條並行工作同時失敗時暫停不疊加_只拉起一次`、`PrtgEndToEndChainTests.逾時_取消訊號讓不回應的請求離開`。
@@ -598,6 +598,41 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 - 以時間判斷的功能，先查有沒有別的流程會更新那個時間欄（夜間掛接會更新案件的 `UpdatedAt`）。
 - 改到派工決策、資料表、DI 或共用流程的段落直接跑全量；定向篩選曾漏掉 `DataConsistency` 讓紅燈上了遠端。
 - 每段驗收後在本檔「執行紀錄」補一列再提交。
+
+## 終檢對照（Z1）
+
+| 批次 | 驗收列 | 結果 |
+|---|---|---|
+| A | A1-a～f、A2、A3 | 全部通過；A3 只需改 DETECTION-SPEC（RULES-SPEC 不列逐條規則） |
+| T | T1～T4-c、T5-a～c、T6 | 全部通過；S3、S9、S13 不再略過 |
+| B | B1-a～b、B2-a～f、B3-a～c、B4-a～g、B5-a～d、B6-a～d | 全部通過；B6-a「清單沒有」以服務層驗 |
+| D | D1-a～g、D2-a～b、D3、D4-a～c、D5、D6-a～c、D7～D9 | 通過；**D2-a 前提不成立**（派工候選人本來就不含案件授與），改以「候選人來源不得相依案件儲存」結構守門 |
+| C | C1～C16 各子項 | 全部通過 |
+| E | E1-a～c、E2、E3、E4、E5-a～d、E6-a～b | 通過；E1-c 為 Windows 專屬測試，macOS 略過；**E4 對應端點只做 HostAdmin 與設定兩處**，其餘由守門二字面檢查涵蓋 |
+| F | F1-a～d、F2-a～c、F3～F5 | 全部通過 |
+| G | G1～G7、G-獨立複核 | 通過；G6 依 WEB-SPEC §8.6a 註解不列入；複核找到的 14 條全部修正 |
+| Z | Z2 | 交辦情境沒有已知差異；嚴重度只剩 E4-02～07 對應的 11 個鍵（H2、H4、H8、H9、H10、H12、I3、I4、I6、N2、N3） |
+| Z | Z3 | 文件 5 條、程式碼 14 條：修 4＋8 條，1＋4 條依文件紀律或列 BACKLOG（見執行紀錄 Z-修 1） |
+| Z | Z4 | 三個沒有前端消費點的欄位已補；兩個新設定皆有消費端與說明書段落 |
+| Z | Z5 | 改到的頁面五個寬度六項皆 0；全部情境 `quick` 矩陣 400 格中 2 格失敗，與第一階段相同（T-01：詢問AI標題列滑過、報表總覽 1920 寬捲軸），沒有新增 |
+| Z | Z6 | macOS 全量 10,497 通過／21 略過（12 規模壓測、9 個 Windows 專屬；比預期 20 多 1 筆，是 E-1 新增的 Windows 專屬測試）；Windows VM 本批未跑 |
+| Z | Z7、Z8 | CLAUDE.md 基線、BACKLOG（下一輪預定群組＋延後 5 項）已更新；版號 1.0.76.1 |
+
+## 體檢交接（Z9）
+
+實作方到此停止；換模型體檢後才做收尾、歸檔與併 dev。
+
+- **分支與版本**：`feature/feedback-76-2`，版號 1.0.76.1；基準 `10ff66b2`（規劃定稿）。
+- **體檢建議看的地方**：
+  1. 派工決策：`DispatchContext.DismissedCases`、`WorkOrderDispatcher.IneligibleReason`／`SelectHandler`、`WorkOrderCoordinator.AdminClose`（`BlocksRedispatch` 寫入點三處）。
+  2. 新欄位與升級：`blocks_redispatch`、`continuation_stopped_reason/_at`、`escalated_at`（加欄時回填）；SQL Server 只以查詢翻譯確認，未連實機。
+  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 與交辦服務的 `Guard`；殘餘風險是其他 Web 服務把 Core 的 InvalidOperation／Argument 例外轉成領域例外的 9 處。
+  4. 通知：`WorkOrderDigestBuilder` 八段＋管理者提醒、`AdminReminderService.Compute`／`RunAfterNightly`、`MailLinks`。
+  5. 健康整體狀態：`HealthAttention.Evaluate` 與 30 秒告示快取。
+  6. 說明書：逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`。
+- **已知負載偶發（單獨重跑皆綠）**：`PrtgTransferControllerTests` Kestrel 案例、`PrtgValueFetchRetryServiceTests` 並行暫停、`PrtgEndToEndChainTests` 逾時取消、`PrtgBackfillRunnerTests.跨日回填時sensor進度換日重設不累加`（配額時間斷言）。
+- **未驗證**：Windows 全量（終檢新增的測試尚未在 Windows 跑）；正式環境事項見下節。
+- **收尾待辦（體檢後）**：本檔 `git mv` 進 `docs/archive/` 並補索引；`docs/drafts/FEEDBACK-76-EVIDENCE.md` 與 G 逐條表的去留；併 dev 需使用者同意。
 
 ## 交接確認事項（需要正式環境，不算驗收）
 
@@ -634,3 +669,4 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 | G-4（獨立複核） | Sonnet 唯讀複核、主代理修正與抽驗 | 唯讀代理不讀核對表，逐句核對 G-1～G-3 改過的說明書新增行與三處畫面文字：約 255 條主張，錯誤 5、含糊 9；主代理讀程式確認後全部修正（逐條見 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`「G-4」節） | 修正後說明書定向含 UiTests 401 通過（句長守門抓到 2 句修正時變長，已拆句）；主代理抽驗代理判定正確的 10 條，全部相符 | 修正後未再派第二輪複核代理：14 條修正逐條以程式行確認，風險集中在已驗證的範圍；04 章側軌斷點兩版不矛盾，使用者版補 1600 像素預設展開 |
 | Z-修 1（審查發現：後端） | 文件與程式碼兩份獨立審查（Sonnet 唯讀）；後端修正 Sonnet 實作、主代理驗收 | 文件審查 5 條：`BlocksRedispatch` 寫入點補待派頁恢復、信件逐段內容改精確、滅跡關聯錨點與 Eventlog 104 補 1102 雙來源、提醒端點補兩個欄位（RULES-SPEC 種子沿革依文件紀律不補）。程式碼審查 14 條中修 8 條：成效端點超範圍改回 400；`escalated_at` 加欄時以當下 `updated_at` 回填仍上報的成員（否則夜間掛接每天推進 `UpdatedAt`，舊資料永不提醒）；新增 `WorkOrderRuleException`（19 個擲出點），`Guard` 只轉它、框架例外記錄後回 500；健康告示行程內快取 30 秒（`HealthService` 為單例）；保留清除只在取消權杖已取消時重擲 OCE、意圖封存獨立 try；兩條管線的掛接與派工改用 `backend.Clock`；派不出去清單只在全量執行取代；站台網址拒絕帳密段。4 條低優先進 BACKLOG（兩處查詢量、整列儲存覆寫、感測器全空判定） | 每項新測試修前紅（第 4 項效能、第 5、7 項新函式為編譯紅）修後綠；主代理讀 Guard 與快取差異、確認 `HealthService` 單例；**全量 10,489 通過／0 失敗／21 略過** | 第 6 項兩個管線檔有與交辦無關的系統時鐘，整檔納入守門會紅，改以呼叫點掃描守門；BACKLOG 的輪次字樣被 DocNarrativeGuard 擋下，改為「下一輪預定」 |
 | Z-修 2（審查發現：前端） | Sonnet 實作、主代理驗收 | 代為結案台數改為進行中加停用主機上的進行中（後端 `AdminCloseLocked` 結案全部進行中成員），有停用主機時後果說明加「含已停用主機 N 台」；Z4 補三個前端消費點：續掛已停止帶日期（`continuationStoppedAt`）、提醒區每類「看是哪些」明細與彙整時間、提醒間隔 0 的常駐說明（`escalated`／`unassignable`／`unassignableAt`／`reminderDays`）、PRTG 維護頁同步狀態下逐條列出 `lastWarnings`；說明書兩版與 WEB-SPEC、PRTG-SPEC 同步 | 行為測試 8 案（突變台數改回只算進行中 → 轉紅）；量測：交辦總覽、交辦單、交辦-詳情、PRTG維護、問題負責與靜音（含靜音視窗附註變長）五個寬度六項皆 0，新增 3 個互動情境；全量 10,496 通過、1 筆 `PrtgBackfillRunnerTests.跨日回填…`（配額限速時間斷言）負載下偶發，單獨重跑三次皆綠 | 只剩停用主機的單由行為測試覆蓋，UI 資料集沒做這種單；新增負載偶發一筆（本段未動 PRTG 回填） |
+| Z（終檢） | 主代理 | Z1 對照、Z2 已知差異、Z4 跨批 grep、Z5 全部情境 quick 矩陣、Z6 全量、Z7 文件、Z8 版號 1.0.76.1、Z9 體檢交接節（見上方兩節） | quick 矩陣 2 格失敗與第一階段相同；最後一次全量 10,496 通過／1 失敗／21 略過，失敗為 `PrtgSelectedBackfillServiceTests` 收尾刪暫存目錄時背景回填仍在寫（Directory not empty），單獨重跑三次皆綠 | 收尾改為重試刪除、刪不掉不轉紅；量測站台結束時子行程 dotnet 殘留占 5099，已手動結束 |
