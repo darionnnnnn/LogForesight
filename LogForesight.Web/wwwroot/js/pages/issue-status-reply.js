@@ -11,7 +11,8 @@
 import { api, getCurrentUser } from '../core/api.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck, button as makeButton } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
-import { statusMeta, statusesWhere, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { statusMeta, statusesWhere, isNoFixClosure, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { statusNote } from '../core/elements.js';
 import { todayLocal, toLocalDateString } from '../core/format.js';
 
 /**
@@ -65,7 +66,14 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     if (initialStatus && STATUS_OPTIONS.some(option => option.value === initialStatus)) {
         statusSelect.value = initialStatus;
     }
-    form.append(statusLabel, statusSelect);
+    // 選到不處理類時說明後果：這是處理人單方面的決定，之後不會再派給任何人（管理者代為結案才有「是否停派」可選）
+    const noFixNote = statusNote('warning', '這台主機的這個問題之後不會再派給任何人；需要恢復請找管理者。');
+    noFixNote.classList.add('mb-3');
+    noFixNote.classList.add('d-none');
+    noFixNote.id = 'wo-reply-no-fix-note';
+    statusSelect.addEventListener('change', () => noFixNote.classList.toggle('d-none', !isNoFixClosure(statusSelect.value)));
+    noFixNote.classList.toggle('d-none', !isNoFixClosure(statusSelect.value));
+    form.append(statusLabel, statusSelect, noFixNote);
 
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label lf-text-label';

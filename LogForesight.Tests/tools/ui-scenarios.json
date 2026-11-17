@@ -1203,6 +1203,47 @@
     ]
   },
   {
+    "name": "互動-交辦單詳情-代為結案後果說明",
+    "role": "ui-admin",
+    "path": "fixture:work-order.mass",
+    "steps": [
+      {
+        "waitFor": "#wo-actions button"
+      },
+      {
+        "evalAssert": "const b = [...document.querySelectorAll('#wo-actions button')].find(x => x.textContent.includes('代為結案')); if (!b) return '找不到代為結案按鈕'; b.click(); return null;"
+      },
+      {
+        "waitFor": ".modal.show #wo-close-status"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-block",
+          "visible": false
+        }
+      },
+      {
+        "select": [
+          "#wo-close-status",
+          "wont_fix"
+        ]
+      },
+      {
+        "waitFor": ".modal.show #wo-close-block"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show #wo-close-consequence",
+          "visible": true,
+          "text": "處理人會收到"
+        }
+      },
+      {
+        "evalAssert": "const c = document.getElementById('wo-close-block'); const w = c.closest('.form-check'); return w && !w.classList.contains('d-none') && !c.checked ? null : '不處理時應出現且預設不勾的停派勾選框';"
+      }
+    ]
+  },
+  {
     "name": "互動-排程作業-天數頁籤排序與展開",
     "role": "ui-admin",
     "path": "fixture:page.runs",

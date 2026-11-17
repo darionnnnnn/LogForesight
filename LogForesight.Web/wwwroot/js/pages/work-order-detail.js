@@ -4,7 +4,7 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
-import { statusesWhere, statusBadgeMeta } from '../core/handling-statuses.js';
+import { statusesWhere, statusBadgeMeta, isNoFixClosure } from '../core/handling-statuses.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -23,7 +23,7 @@ import {
     icon,
     candidatesToUserOptions
 } from '../core/ui.js';
-import { metaLine, roleText, disclosure, fact } from '../core/elements.js';
+import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
 
@@ -241,15 +241,23 @@ function renderHeader(detail) {
 // 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
 function openAdminCloseModal() {
+    const activeCount = currentDetail?.counts?.active ?? 0;
     const body = document.createElement('div');
     const form = document.createElement('form');
 
     const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label';
+    statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '結案狀態';
+    statusLabel.htmlFor = 'wo-close-status';
 
+    // 不預選：代為結案影響整張單，結案狀態要管理者自己選一次
     const statusSelect = document.createElement('select');
+    statusSelect.id = 'wo-close-status';
     statusSelect.className = 'form-select form-select-sm mb-3';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '請選擇結案狀態';
+    statusSelect.appendChild(placeholder);
     const closeStatuses = statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }));
     for (const opt of closeStatuses) {
         const option = document.createElement('option');
@@ -257,23 +265,74 @@ function openAdminCloseModal() {
         option.textContent = opt.label;
         statusSelect.appendChild(option);
     }
+    statusSelect.value = '';
+
+    // 停派勾選：只有不處理類才有意義（結案為已處理時後端忽略）；預設不勾，改選別的狀態時值清掉
+    const blockWrap = document.createElement('div');
+    blockWrap.className = 'form-check mb-3 d-none';
+    const blockInput = document.createElement('input');
+    blockInput.type = 'checkbox';
+    blockInput.id = 'wo-close-block';
+    blockInput.className = 'form-check-input';
+    blockInput.checked = false;
+    const blockLabel = document.createElement('label');
+    blockLabel.className = 'form-check-label';
+    blockLabel.htmlFor = 'wo-close-block';
+    blockLabel.textContent = `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}的這個問題之後不再自動派工`;
+    blockWrap.append(blockInput, blockLabel);
+
+    // 後果說明：處理人一定會收到通知；不處理類再依勾選說明問題再出現時會怎樣
+    const consequence = document.createElement('div');
+    consequence.className = 'mb-3';
+    consequence.id = 'wo-close-consequence';
 
     const reasonLabel = document.createElement('label');
-    reasonLabel.className = 'form-label';
+    reasonLabel.className = 'form-label lf-text-label';
     reasonLabel.textContent = '結案原因（必填）';
+    reasonLabel.htmlFor = 'wo-close-reason';
 
     const reasonInput = document.createElement('textarea');
+    reasonInput.id = 'wo-close-reason';
     reasonInput.className = 'form-control form-control-sm mb-3';
     reasonInput.rows = 3;
     reasonInput.required = true;
 
-    const submitBtn = button('確定結案', { variant: 'primary', size: null, type: 'submit' });
+    const submitBtn = button(`代為結案 ${activeCount} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
+    const actions = document.createElement('div');
+    actions.className = 'lf-form-actions d-flex justify-content-end';
+    actions.appendChild(submitBtn);
 
-    form.append(statusLabel, statusSelect, reasonLabel, reasonInput, submitBtn);
+    function renderConsequence() {
+        const notes = [statusNote('info', '處理人會收到結案通知。')];
+        if (isNoFixClosure(statusSelect.value)) {
+            notes.push(statusNote('warning', blockInput.checked
+                ? '已勾選：這台主機的這個問題之後不會再自動派工。'
+                : '未勾選：這個問題之後再出現時會重新派工。不想再收到，請勾選上方選項，或改用靜音。'));
+        }
+        consequence.replaceChildren(...notes);
+    }
+    function syncState() {
+        const noFix = isNoFixClosure(statusSelect.value);
+        blockWrap.classList.toggle('d-none', !noFix);
+        if (!noFix) blockInput.checked = false;
+        renderConsequence();
+        submitBtn.disabled = !statusSelect.value || !reasonInput.value.trim();
+    }
+    statusSelect.addEventListener('change', syncState);
+    blockInput.addEventListener('change', renderConsequence);
+    reasonInput.addEventListener('input', syncState);
+    syncState();
+
+    form.append(statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
         const reason = reasonInput.value.trim();
+        if (!statusSelect.value) {
+            toast('請選擇結案狀態', 'warning');
+            statusSelect.focus();
+            return;
+        }
         if (!reason) {
             toast('請填寫結案原因', 'warning');
             reasonInput.focus();
@@ -284,7 +343,8 @@ function openAdminCloseModal() {
         try {
             const res = await api.post(`/api/work-orders/${workOrderId}/admin-close`, {
                 status: statusSelect.value,
-                reason
+                reason,
+                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked
             });
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
             toast(`已代為結案 ${res.closedCases} 台`, 'success');

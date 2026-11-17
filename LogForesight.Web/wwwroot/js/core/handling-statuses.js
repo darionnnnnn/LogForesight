@@ -15,6 +15,13 @@ export const MAX_DUE_DATE_DAYS = 90;
 
 export function statusMeta(value) { return HANDLING_STATUSES.find(s => s.value === value) ?? null; }
 
+/**
+ * 結案但沒有修好的三態（不處理、誤報、已知雜訊）：結案後同一台主機的同一個問題再出現時，
+ * 預設會重新派工；處理人回覆這三態會讓該問題之後不再派給任何人，管理者代為結案可自選是否停派。
+ * 與後端 DispatchContext 的停派判斷同一組狀態，改一邊要改另一邊。
+ */
+export function isNoFixClosure(value) { return value === 'wont_fix' || value === 'false_positive' || value === 'known_noise'; }
+
 /** 依條件取出目錄的子集（各頁的「只列結案類」「只列可回覆的」等篩選一律走這裡，不再寫死值與名稱） */
 export function statusesWhere(predicate) { return HANDLING_STATUSES.filter(predicate); }
 
