@@ -259,9 +259,10 @@ public class PrtgProbeService
         }
         catch (Exception ex)
         {
-            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            Log.Warn(ex, "初始化 PRTG 連線失敗");
+            _state.AppendLine($"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}");
             _state.FinishRun(false, false);
-            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            error = $"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}";
             return false;
         }
 

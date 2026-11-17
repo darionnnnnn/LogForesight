@@ -98,7 +98,7 @@ public class IssueCaseCoordinator
         if (openCase == null) return new CaseSyncResult(Applied: false, SyncedDayCount: 0, CaseClosed: false);
 
         var host = _hosts.FindByName(hostName)
-                   ?? throw new InvalidOperationException($"IssueCaseCoordinator：找不到主機「{hostName}」。");
+                   ?? throw new InvalidOperationException($"找不到主機「{hostName}」。");
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
@@ -675,7 +675,7 @@ public class IssueCaseCoordinator
                 row.CaseId = current!.CaseId;
                 break;
             default:
-                throw new InvalidOperationException($"IssueCaseCoordinator：不支援的逐日同步模式「{intent.Mode}」。");
+                throw new InvalidOperationException($"不支援的逐日同步模式「{intent.Mode}」。");
         }
         return row;
     }

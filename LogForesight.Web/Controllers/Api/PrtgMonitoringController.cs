@@ -289,7 +289,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         error = null;
         if (!TryReadToken(text, out token) || token!.Kind != "fence")
         {
-            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidToken, "目錄版本權杖無效或已逾期，請重新載入。"));
+            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidToken, "清單的版本標記無效或已逾期，請重新載入。"));
             return false;
         }
         return true;

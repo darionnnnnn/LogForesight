@@ -13,7 +13,6 @@ public class UserFacingMessageGuardTests
 {
     private const string DomainOnly = "只捕捉專屬／已登錄型別，訊息是該型別自己寫好的中文";
     private const string SelfAuthored = "捕捉範圍僅限單一呼叫、該呼叫自擲的中文業務訊息（非框架例外）";
-    private const string ForE5 = "PRTG 連線失敗種類對照與原文處理列在批次 E-2（E5），該批統一收斂";
 
     private static readonly Regex MessageUse = new(
         @"\b(?:ex|exception|[A-Za-z]*Ex|workflowError|error|domain|conflict|busy|transfer|deidentification)\.Message\b",
@@ -49,9 +48,6 @@ public class UserFacingMessageGuardTests
         ("Services/NetiqDirectoryClient.cs", "throw new NetiqDiscoveryException(ex.Message)", "NormalizeSubnetPrefix 自擲的中文輸入格式訊息；" + SelfAuthored),
         ("Services/NetiqDiscoveryService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（NetiqDiscoveryException，內含的底層例外已改成固定說明）"),
         ("Services/PrtgBackfillService.cs", "error = ex.Message", "只捕捉 DomainException"),
-        ("Services/PrtgBackfillService.cs", "初始化 PRTG 連線失敗", ForE5),
-        ("Services/PrtgProbeService.cs", "初始化 PRTG 連線失敗", ForE5),
-        ("Services/PrtgStructureSyncService.cs", "初始化 PRTG 連線失敗", ForE5),
         ("Services/PrtgDiagnosticExportActionResult.cs", "error is PrtgTransferStoreException ? error.Message", "先判型別為已登錄的專屬例外才用原訊息，其餘給固定說明"),
         ("Services/PrtgSnapshotHostedService.cs", "InvalidDataException or PrtgSnapshotJournalLockedException => ex.Message", "兩種例外都是 PrtgSnapshotJournal 自己寫的中文（不含路徑）；其餘型別給固定說明"),
         ("Services/WorkOrderCommandService.cs", "throw DomainException.Validation(ex.Message)", "WorkOrderCoordinator／store 自擲的中文業務訊息；" + SelfAuthored),
@@ -148,5 +144,65 @@ public class UserFacingMessageGuardTests
         Assert.Empty(Scan("Services/FooService.cs", "Log.Warn(ex, \"失敗：{0}\", ex.Message);"));
         // 規則小幫手的寫法不是 .Message 取用
         Assert.Empty(Scan("Services/FooService.cs", "var m = UserFacingMessage.For(ex, \"請稍後再試。\");"));
+    }
+
+    // ───────── 守門二（批次 E-2）：給使用者的訊息字面不得以「英文識別字＋冒號」開頭 ─────────
+
+    /// <summary>
+    /// 掃描範圍：LogForesight.Core 與 LogForesight.Web 的 *.cs（排除 bin／obj）中，下列寫法的第一個字串字面——
+    /// <c>DomainException(</c>／<c>DomainException.Xxx(</c>、<c>Fail(碼, "…")</c>、<c>new XxxException("…")</c>、<c>Message = "…"</c>。
+    /// 命中條件：字面開頭是英文識別字加全形冒號，或半形冒號加空白（類別名前綴，例如「FooService：失敗」）。
+    /// 設定鍵（<c>Storage:Xxx</c>）與格式標記（<c>enc:v1</c>）的半形冒號後沒有空白，不命中。
+    /// </summary>
+    private static readonly Regex MessageLiteral = new(
+        @"(?:DomainException(?:\.\w+)?\(|\bFail\([^"");]*,\s*|new\s+\w*Exception\(|\bMessage\s*=\s*)\$?@?""([^""]*)""",
+        RegexOptions.Compiled);
+
+    private static readonly Regex ClassPrefix = new(@"^[A-Za-z][A-Za-z0-9_]*(?:：|: )", RegexOptions.Compiled);
+
+    private static IEnumerable<string> PrefixedMessages(string content) =>
+        MessageLiteral.Matches(content).Select(m => m.Groups[1].Value).Where(t => ClassPrefix.IsMatch(t));
+
+    private static IEnumerable<(string Rel, string Content)> CoreAndWebSources()
+    {
+        var root = FindRepoRoot();
+        foreach (var project in new[] { "LogForesight.Core", "LogForesight.Web" })
+            foreach (var path in Directory.EnumerateFiles(Path.Combine(root, project), "*.cs", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(root, path).Replace('\\', '/');
+                if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
+                yield return (rel, File.ReadAllText(path));
+            }
+    }
+
+    [Fact]
+    public void 守門二_Core與Web給使用者的訊息不以英文識別字加冒號開頭()
+    {
+        var violations = CoreAndWebSources()
+            .SelectMany(f => PrefixedMessages(f.Content).Select(t => $"{f.Rel}  {t}")).ToList();
+        Assert.True(violations.Count == 0, "訊息不要以類別名前綴開頭（給使用者的訊息只講事情）：\n" + string.Join("\n", violations));
+    }
+
+    [Fact]
+    public void 守門二_反例_類別名前綴命中_一般中文句不命中()
+    {
+        Assert.Single(PrefixedMessages("throw new InvalidOperationException(\"FooService：失敗\");"));
+        Assert.Single(PrefixedMessages("throw DomainException.Validation($\"FooService：交辦單 {id} 已結案。\");"));
+        Assert.Single(PrefixedMessages("return Fail(ApiErrorCodes.NotFound, \"BarStore: not found\");"));
+        Assert.Single(PrefixedMessages("var r = new Dto { Message = \"Baz：壞了\" };"));
+        Assert.Empty(PrefixedMessages("throw new InvalidOperationException(\"交辦單 3 已結案。\");"));
+        Assert.Empty(PrefixedMessages("throw new InvalidOperationException($\"Storage:SqliteCacheSizeKb 必須大於 0\");"));
+        Assert.Empty(PrefixedMessages("throw new CryptographicException(\"enc:v2 密文長度不足。\");"));
+    }
+
+    /// <summary>E4：給使用者的訊息不出現內部代碼（core／standard／test、conservative／aggressive、目錄版本權杖）</summary>
+    [Fact]
+    public void 守門二_訊息字面不含內部代碼()
+    {
+        var internalCode = new Regex(@"core、standard|standard 或 test|conservative 或 aggressive|目錄版本權杖", RegexOptions.Compiled);
+        var violations = CoreAndWebSources()
+            .SelectMany(f => MessageLiteral.Matches(f.Content).Select(m => (f.Rel, Text: m.Groups[1].Value)))
+            .Where(x => internalCode.IsMatch(x.Text)).Select(x => $"{x.Rel}  {x.Text}").ToList();
+        Assert.True(violations.Count == 0, "訊息直接寫了內部代碼，改成畫面上的顯示名稱：\n" + string.Join("\n", violations));
     }
 }

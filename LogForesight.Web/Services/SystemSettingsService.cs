@@ -1137,7 +1137,7 @@ public class SystemSettingsService : ISystemSettingsService
         if (strategy == null) return;
 
         if (!PrtgFetchStrategy.IsValid(strategy))
-            throw DomainException.Validation("PRTG 取數策略只能是 conservative 或 aggressive。");
+            throw DomainException.Validation("PRTG 取數策略只能是「保守」或「激進」。");
     }
 
     /// <summary>

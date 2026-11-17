@@ -580,8 +580,11 @@ public sealed class PrtgEndToEndChainTests : IDisposable
         Assert.Contains("階段失敗", second.ErrorMessage);
         Assert.InRange(stopwatch.Elapsed.TotalSeconds, 0.5, 20);       // 約等於逾時秒數，不是無限等待
         Assert.True(console.Any("裝置結構同步失敗"), "輸出應說明裝置階段失敗：\n" + string.Join("\n", console.Lines));
-        // 現況：輸出的原因是 HttpClient 的英文訊息「The operation was canceled.」，沒有「逾時」字樣（見回報）；
-        // 失敗種類則有正確分類為 Timeout（分頁重試與暫停閘靠它判斷）。
+        // E5-a：輸出的原因是依失敗種類寫好的中文逾時說明，英文原文只附在後面，不當主句
+        Assert.True(console.Lines.Any(l => l.Contains("逾時")), "輸出應說明是逾時：\n" + string.Join("\n", console.Lines));
+        Assert.DoesNotContain(console.Lines, l => l.TrimStart().StartsWith("The operation was canceled", StringComparison.OrdinalIgnoreCase)
+            || l.Contains("失敗：The ", StringComparison.Ordinal));
+        // 失敗種類也要正確分類為 Timeout（分頁重試與暫停閘靠它判斷）。
         using (var client = PrtgClientFactory.Create(_settingsStore.Get(), null, _budget))
         {
             var timeout = await Assert.ThrowsAsync<PrtgClientException>(() =>

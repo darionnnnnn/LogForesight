@@ -366,11 +366,12 @@ public class PrtgStructureSyncService
         }
         catch (Exception ex)
         {
-            _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            Log.Warn(ex, "初始化 PRTG 連線失敗");
+            _state.AppendLine($"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}");
             _cts = null;
             cts.Dispose();
             _state.EndRun(false);
-            error = $"初始化 PRTG 連線失敗：{ex.Message}";
+            error = $"初始化 PRTG 連線失敗：{PrtgFailureText.ForInit(ex)}";
             return false;
         }
 

@@ -2750,6 +2750,17 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PrtgFetchStrategy_不合法時訊息是顯示名稱_E4()
+    {
+        var service = Create();
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        { ExpectedRevision = _store.Get().Revision, PrtgFetchStrategy = "turbo" }));
+        Assert.Contains("「保守」或「激進」", ex.Message);
+        Assert.DoesNotContain("conservative", ex.Message);
+        Assert.DoesNotContain("aggressive", ex.Message);
+    }
+
+    [Fact]
     public void PrtgFetchStrategy_UpdatePrtg未送該鍵時沿用既有值()
     {
         var service = Create();
@@ -2774,7 +2785,7 @@ public class SystemSettingsServiceTests : IDisposable
         req.PrtgFetchStrategy = "turbo";
 
         var ex = Assert.Throws<DomainException>(() => service.Update(req));
-        Assert.Contains("conservative", ex.Message);
+        Assert.Contains("「保守」或「激進」", ex.Message);
     }
 
     [Fact]
@@ -2785,7 +2796,7 @@ public class SystemSettingsServiceTests : IDisposable
         { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = "turbo"
         }));
-        Assert.Contains("conservative", ex.Message);
+        Assert.Contains("「保守」或「激進」", ex.Message);
     }
 
     [Fact]

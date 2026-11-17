@@ -377,6 +377,9 @@ public class HostAdminServiceTests : IDisposable
             Create().SaveHost(new SaveHostRequest { HostName = "SRV-01", Tier = "gold" }));
 
         Assert.Contains("gold", ex.Message);
+        // E4：訊息講畫面上的顯示名稱，不講內部代碼
+        Assert.Contains("「核心」、「一般」或「測試」", ex.Message);
+        Assert.DoesNotContain("standard", ex.Message);
     }
 
     [Fact]

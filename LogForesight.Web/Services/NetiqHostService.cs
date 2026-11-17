@@ -97,7 +97,7 @@ public class NetiqHostService : INetiqHostService
         if (!string.IsNullOrWhiteSpace(request.Tier))
         {
             tier = WebHost.NormalizeTier(request.Tier)
-                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受 core、standard 或 test。");
+                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受「核心」、「一般」或「測試」。");
         }
 
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
@@ -151,7 +151,7 @@ public class NetiqHostService : INetiqHostService
         if (!string.IsNullOrWhiteSpace(request.Tier))
         {
             tier = WebHost.NormalizeTier(request.Tier)
-                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受 core、standard 或 test。");
+                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受「核心」、「一般」或「測試」。");
         }
 
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
