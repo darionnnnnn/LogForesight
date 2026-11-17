@@ -36,8 +36,10 @@ const NAV_SECTIONS = [
         label: '監控作業',
         items: [
             // 動態 href：連到「自己」的處理人工作頁——處理人每天的起點，擺在第一位。
-            // ServerAdmin 帳號 userId=0，沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
-            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
+            // ServerAdmin 帳號 userId=0，沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）。
+            // 條件是 Handle（處理能力）：Manager、Dev 沒有，進去只會看到空清單；只靠主機／問題負責人取得處理能力的人，
+            // 後端登入時已把隱含的 User 角色算進 /api/auth/me 的 capabilities，前端用同一份能力判斷即可
+            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: 'Handle', hideForServerAdmin: true },
             { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
             { href: '/records', label: '問題查詢', icon: 'search', requires: null },
             { href: '/work-orders', label: '交辦總覽', icon: 'inbox', requires: ['Assign', 'ViewAll'] },
@@ -131,6 +133,19 @@ function bindMobileMenu() {
     });
 }
 
+/**
+ * 導覽項目對這位使用者可不可見。requires 可以是單一能力字串，也可以是能力陣列（任一命中即可見，見「排程作業」）；
+ * 只是顯示層的方便，真正的防線在後端。獨立成函式讓行為測試能直接執行 production 判斷。
+ */
+function navItemVisible(item, user) {
+    if (item.requires) {
+        const needed = Array.isArray(item.requires) ? item.requires : [item.requires];
+        if (!needed.some(cap => hasCapability(user, cap))) return false;
+    }
+    if (user.isServerAdmin && (BUSINESS_PAGES.includes(item.resolvedHref) || item.hideForServerAdmin)) return false;
+    return true;
+}
+
 function renderNav(user) {
     const nav = document.getElementById('lf-nav');
     if (!nav) return;
@@ -145,15 +160,7 @@ function renderNav(user) {
             ...item,
             resolvedHref: typeof item.href === 'function' ? item.href(user) : item.href
         }));
-        const visible = resolved.filter(item => {
-            // requires 可以是單一能力字串，也可以是能力陣列（任一命中即可見，見上方「排程作業」）
-            if (item.requires) {
-                const needed = Array.isArray(item.requires) ? item.requires : [item.requires];
-                if (!needed.some(cap => hasCapability(user, cap))) return false;
-            }
-            if (user.isServerAdmin && (BUSINESS_PAGES.includes(item.resolvedHref) || item.hideForServerAdmin)) return false;
-            return true;
-        });
+        const visible = resolved.filter(item => navItemVisible(item, user));
         if (visible.length === 0) continue;   // 整組不可見就連標題一起省略
 
         const itemsWrap = document.createElement('div');

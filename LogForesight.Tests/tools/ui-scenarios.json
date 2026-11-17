@@ -110,6 +110,52 @@
     "path": "/handlers/3"
   },
   {
+    "name": "主管-我的交辦無處理能力說明",
+    "role": "ui-manager",
+    "path": "/handlers/2",
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list .lf-empty__title",
+          "text": "你的角色沒有處理能力",
+          "notText": "目前沒有被指派的工作"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#lf-nav a[href$=\"/handlers/2\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "開發維運-我的交辦無處理能力說明",
+    "role": "ui-dev",
+    "path": "/handlers/12",
+    "steps": [
+      {
+        "waitFor": "#handler-wo-list .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#handler-wo-list .lf-empty__title",
+          "text": "你的角色沒有處理能力",
+          "notText": "目前沒有被指派的工作"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#lf-nav a[href$=\"/handlers/12\"]",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
     "name": "處理人-交辦單",
     "role": "ui-handler",
     "path": "/work-orders/1"

@@ -298,7 +298,8 @@ public sealed partial class HandoffScenarioTests
             .Probe("mgr-summary", "mgr1", ctx => $"api/handlers/{ctx.UserId("mgr1")}/work-orders/summary")
             .Probe("dev-summary", "dev1", ctx => $"api/handlers/{ctx.UserId("dev1")}/work-orders/summary")
             .Probe("mgr-list", "mgr1", ctx => $"api/handlers/{ctx.UserId("mgr1")}/work-orders?pageSize=100")
-            .Probe("mgr-badge", "mgr1", "api/handlers/me/badge"))
+            .Probe("mgr-badge", "mgr1", "api/handlers/me/badge")
+            .Probe("admin-views-mgr-page", "admin1", ctx => $"handlers/{ctx.UserId("mgr1")}"))
         .Days(1)
         .Expect(Check("S17.page-shell", 1, "頁面殼對 Manager、Dev 都回 200（不會 403/500）", "200/200", d => $"{d.Probe("mgr-page").StatusCode}/{d.Probe("dev-page").StatusCode}"))
         .Expect(Check("S17.api-empty", 1, "資料端點回 200 且沒有被派單（空清單、摘要為 0）", "200/200/0/0", d =>
@@ -310,7 +311,15 @@ public sealed partial class HandoffScenarioTests
             var explained = ReadWebFile("wwwroot", "js", "pages", "handler-detail.js").Contains("沒有處理能力", StringComparison.Ordinal);
             return navHidden || explained ? "有處置" : $"沒有處置（導覽條件：{NavRequirement("我的交辦")}，頁面無角色說明）";
         }))
-        .KnownDifference("E3-S17-1", "S17.nav-or-explain");
+        // F5：分頁標題由伺服器端給——自己的頁是「我的交辦」，看別人的頁是處理人頁的名稱
+        .Expect(Check("S17.title-self", 1, "Manager 開自己的頁：HTML 標題是「我的交辦」", "我的交辦", d => TitleOf(d.Probe("mgr-page"))))
+        .Expect(Check("S17.title-other", 1, "管理者開別人的處理人頁：HTML 標題是處理人頁的名稱", "處理人員工作頁", d => TitleOf(d.Probe("admin-views-mgr-page"))));
+
+    private static string TitleOf(ProbeView probe)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(probe.Body ?? "", @"<title>\s*(?<t>[^<]*?)\s+-\s");
+        return m.Success ? System.Net.WebUtility.HtmlDecode(m.Groups["t"].Value) : "（讀不到標題）";
+    }
 
     private static string NavRequirement(string label)
     {

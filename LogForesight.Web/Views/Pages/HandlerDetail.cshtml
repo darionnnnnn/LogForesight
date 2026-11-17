@@ -1,5 +1,5 @@
 ﻿@{
-    ViewData["Title"] = "處理人員工作頁";
+    ViewData["Title"] ??= "處理人員工作頁";   // PagesController 依檢視者決定（自己的頁是「我的交辦」）
 }
 
 <div id="handler-detail" data-user-id="@ViewData["UserId"]">

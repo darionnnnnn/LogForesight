@@ -38,7 +38,8 @@ public class HelpAndHistoryTests
         foreach (var restricted in content.Chapters.Where(c => c.Requires != null))
             Assert.DoesNotContain(restricted.Id, ids);
         Assert.All(manual.Chapters, chapter => Assert.All(chapter.Related, id => Assert.Contains(id, ids)));
-        Assert.Equal(content.Chapters.Count, content.GetManual(new HashSet<Capability> { Capability.Maintain }).Chapters.Count);
+        // 全部能力＝所有章節（權限異動檢核要 ConfirmPermission、稽核紀錄要 ViewAudit，單有 Maintain 不夠）
+        Assert.Equal(content.Chapters.Count, content.GetManual(RoleCapabilityMap.For(UserRole.Admin)).Chapters.Count);
     }
 
     [Fact]

@@ -91,11 +91,14 @@ async function load() {
     currentUser = user;
     isSelf = user?.userId === userId;
     canReply = isSelf && hasCapability(user, 'Handle');
-    // 自己的頁在側欄與頁頭都叫「我的交辦」；看別人的頁才是「處理人員工作頁」
-    if (isSelf) {
-        const topbarTitle = document.querySelector('.lf-topbar__title');
-        if (topbarTitle) topbarTitle.textContent = '我的交辦';
-        document.title = document.title.replace('處理人員工作頁', '我的交辦');
+    // 頁面標題（自己的頁「我的交辦」、看別人的頁「處理人員工作頁」）由伺服器端 PagesController 決定，這裡不改
+
+    // 自己的頁、卻沒有處理能力（Manager、Dev 等）：說明原因，不要讓人以為是「沒有被指派的工作」
+    if (isSelf && !hasCapability(user, 'Handle')) {
+        kpiEl.replaceChildren();
+        advancedEl.classList.add('d-none');
+        renderNoHandleCapability(ordersEl);
+        return;
     }
 
     // 只有 Handle 的人看別人的處理人頁，後端 API 會 403；先擋下來給說明，不讓頁面停在載入中
@@ -124,6 +127,15 @@ async function load() {
     if (targetOrderId && !isNaN(targetOrderId)) {
         await locateOrder(targetOrderId);
     }
+}
+
+/** 自己的角色沒有處理能力：交辦單只會派給有處理能力的人，這頁因此不會有內容 */
+function renderNoHandleCapability(container) {
+    renderEmpty(container, {
+        title: '你的角色沒有處理能力',
+        hint: '交辦單只會派給有處理能力的人，所以這裡不會有內容。需要處理交辦時，請管理者調整你的群組角色。',
+        icon: 'lock'
+    });
 }
 
 /** 無權檢視他人處理人頁：說明原因並帶回自己的交辦 */

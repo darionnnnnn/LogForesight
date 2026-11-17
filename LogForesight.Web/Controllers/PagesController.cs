@@ -44,9 +44,11 @@ public class PagesController : Controller
     /// <summary>處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：頁殼不限能力；資料端點只放行本人或具 Assign／ViewAll
     /// （WEB-SPEC §9.4a），其他人開到的是「只能檢視自己的交辦」空狀態</summary>
     [HttpGet("/handlers/{userId:long}")]
-    public IActionResult HandlerDetail(long userId)
+    public IActionResult HandlerDetail(long userId, [FromServices] ICurrentUser currentUser)
     {
         ViewData["UserId"] = userId;
+        // 分頁標題與頁頭由伺服器端給：自己的頁叫「我的交辦」（與側欄一致），看別人的頁才是處理人員工作頁
+        ViewData["Title"] = currentUser.IsAuthenticated && currentUser.UserId == userId ? "我的交辦" : "處理人員工作頁";
         return View();
     }
 
