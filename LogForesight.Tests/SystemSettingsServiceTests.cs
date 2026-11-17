@@ -15,6 +15,7 @@ namespace LogForesight.Tests;
 /// P0-3：<see cref="SystemSettingsService"/> 新增的 RunLogRetentionDays／AuditRetentionDays 欄位
 /// 走完整條 Update → Get 路徑（實測曾手改多處 wiring，這類機械式串接最容易漏一處）。
 /// </summary>
+[Collection("NLogGlobalConfig")]
 public class SystemSettingsServiceTests : IDisposable
 {
     private readonly FakeSystemSettingsStore _store = new();
@@ -213,6 +214,29 @@ public class SystemSettingsServiceTests : IDisposable
         var notObject = ValidRequest();
         notObject.AiExtraRequestFieldsJson = "[1, 2, 3]";
         Assert.Throws<DomainException>(() => service.Update(notObject));
+    }
+
+    /// <summary>E1-a／E1-b／E1-c：JSON 解析錯誤的原文（行號、位置、輸入片段）不外洩，記錄檔有原文；物件規則的領域訊息原樣回</summary>
+    [Fact]
+    public void Update_額外請求欄位JSON錯誤_回應不含解析原文_記錄檔含原文()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.AiExtraRequestFieldsJson = """{"path": C:\secret\x.db, "url": http://10.0.0.1/api}""";
+        using var capture = NLogCapture.For(typeof(SystemSettingsService));
+
+        var error = Assert.Throws<DomainException>(() => service.Update(request));
+
+        Assert.Contains("不是合法的 JSON", error.Message);
+        Assert.DoesNotContain("LineNumber", error.Message);
+        Assert.DoesNotContain("BytePositionInLine", error.Message);
+        Assert.DoesNotContain("secret", error.Message);
+        Assert.Contains(capture.Logs, l => l.Contains("LineNumber") || l.Contains("JsonReaderException") || l.Contains("JsonException"));
+
+        // E1-c：領域例外訊息原樣
+        var notObject = ValidRequest();
+        notObject.AiExtraRequestFieldsJson = "[1, 2, 3]";
+        Assert.Contains("必須是 JSON 物件", Assert.Throws<DomainException>(() => service.Update(notObject)).Message);
     }
 
     [Fact]

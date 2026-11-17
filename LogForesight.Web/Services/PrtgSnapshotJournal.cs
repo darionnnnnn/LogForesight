@@ -5,6 +5,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Models;
 
 namespace LogForesight.Web.Services;
 
@@ -33,6 +34,8 @@ internal sealed record PrtgSnapshotJournalInspection(bool IntegrityOk, string? F
 /// <summary>單一快照工作者的復原檔。先落盤再提交 SQL；SQL 批次鍵處理提交後當機的重播。</summary>
 internal sealed class PrtgSnapshotJournal : IDisposable
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     internal const int MaxRows = 200_000;
     internal const long MaxBytes = 64 * 1024 * 1024;
     internal const int ReplayDays = 30;
@@ -818,7 +821,15 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
             {
-                return new PrtgSnapshotJournalInspection(false, ex.Message, 0, 0, null, null);
+                Log.Warn(ex, "PRTG 快照待寫檔完整性檢查失敗");
+                var failure = ex switch
+                {
+                    JsonException => "復原檔格式不完整或已損壞",
+                    UnauthorizedAccessException => "服務帳號無法存取復原目錄",
+                    InvalidDataException => UserFacingMessage.For(ex, "復原檔內容不符預期"),
+                    _ => "本機待寫檔案無法讀寫"
+                };
+                return new PrtgSnapshotJournalInspection(false, failure, 0, 0, null, null);
             }
         }
     }

@@ -11,6 +11,8 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class NetiqProbeService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly ISentinelStore _sentinels;
     private readonly NetiqOptionsStore _netiqOptions;
     private readonly NetiqProbeRunState _state;
@@ -76,7 +78,8 @@ public class NetiqProbeService
             }
             catch (Exception ex)
             {
-                console.WriteLine($"探測過程發生未預期錯誤：{ex.Message}");
+                Log.Warn(ex, "探測過程發生未預期錯誤");
+                console.WriteLine("探測過程發生未預期錯誤；詳細原因見記錄檔。");
             }
             finally
             {

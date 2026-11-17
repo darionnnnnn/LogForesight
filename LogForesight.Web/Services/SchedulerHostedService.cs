@@ -563,14 +563,14 @@ public class SchedulerHostedService : BackgroundService
                 // 站台停機或使用者停止造成的取消，不是未預期錯誤
                 Log.Info("觸發來源 {Trigger} 的執行已被取消", effectiveRequest.Trigger);
                 startSignal.TrySetResult(false);
-                outcome = new RunOutcome(false, ex.Message, effectiveRequest.Trigger ?? "manual", DateTime.Now);
+                outcome = new RunOutcome(false, "執行已取消。", effectiveRequest.Trigger ?? "manual", DateTime.Now);
             }
             catch (Exception ex)
             {
                 // orchestrator 內部已有全域 catch，會走到這裡的是執行環境層級的意外（儲存初始化失敗等）
                 Log.Error(ex, "觸發來源 {Trigger} 的執行發生未預期錯誤", effectiveRequest.Trigger);
                 startSignal.TrySetResult(false);
-                outcome = new RunOutcome(false, ex.Message, effectiveRequest.Trigger ?? "manual", DateTime.Now);
+                outcome = new RunOutcome(false, "執行發生未預期的錯誤；詳細原因見記錄檔。", effectiveRequest.Trigger ?? "manual", DateTime.Now);
             }
             finally
             {

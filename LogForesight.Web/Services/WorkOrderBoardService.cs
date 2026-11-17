@@ -318,7 +318,7 @@ public class WorkOrderBoardService
                 failedGroups.Add(new AutoDispatchFailedGroupDto
                 {
                     HandlerId = group.Key.HandlerId, Source = first.Issue.Source, EventId = first.Issue.EventId,
-                    Hosts = groupHosts, Message = ex.Message
+                    Hosts = groupHosts, Message = UserFacingMessage.For(ex, "建立交辦單時發生未預期的錯誤，詳細原因見記錄檔。")
                 });
                 continue;
             }

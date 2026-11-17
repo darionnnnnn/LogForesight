@@ -528,7 +528,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
         await WaitIdleAsync(service);
 
         Assert.False(service.GetStatus().LastSuccess);
-        Assert.Contains("sentinel 讀取失敗", service.GetStatus().LastErrorMessage);
+        // 一般例外的原文不進狀態（會顯示在維護頁），只給固定說明；原文在記錄檔
+        Assert.DoesNotContain("sentinel 讀取失敗", service.GetStatus().LastErrorMessage);
+        Assert.Contains("詳細原因見記錄檔", service.GetStatus().LastErrorMessage);
     }
 
     private sealed class RulesBumpingHandler(StorageBackend backend) : HttpMessageHandler

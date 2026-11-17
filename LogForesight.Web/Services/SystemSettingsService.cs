@@ -62,6 +62,8 @@ public interface ISystemSettingsService
 
 public class SystemSettingsService : ISystemSettingsService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）。docs/archive/HISTORY.md #1
     /// （B1 三級化）：Critical 不再是可選層級，舊設定殘留的 "Critical" 由 NormalizeLegacySeverities
     /// 讀取時正規化為 "High"。</summary>
@@ -244,7 +246,8 @@ public class SystemSettingsService : ISystemSettingsService
             }
             catch (System.Text.Json.JsonException ex)
             {
-                throw DomainException.Validation($"「AI 額外請求欄位」不是合法的 JSON：{ex.Message}");
+                Log.Info(ex, "AI 額外請求欄位 JSON 解析失敗");
+                throw DomainException.Validation("「AI 額外請求欄位」不是合法的 JSON，請檢查括號、引號與逗號（例如 {\"rep_pen\": 1.3}）。");
             }
         }
 
@@ -813,7 +816,8 @@ public class SystemSettingsService : ISystemSettingsService
         }
         catch (Exception ex)
         {
-            return new TestAdConnectionResultDto { Success = false, Message = $"測試連線失敗：{ex.Message}" };
+            Log.Warn(ex, "測試 AD 連線失敗");
+            return new TestAdConnectionResultDto { Success = false, Message = "測試連線失敗：請檢查網域控制站位址、連接埠與搜尋設定；詳細原因見記錄檔。" };
         }
     }
 
@@ -851,7 +855,8 @@ public class SystemSettingsService : ISystemSettingsService
         }
         catch (Exception ex)
         {
-            return new TestMailResultDto { Success = false, Message = $"測試寄信失敗：{ex.Message}" };
+            Log.Warn(ex, "測試寄信失敗");
+            return new TestMailResultDto { Success = false, Message = "測試寄信失敗：請檢查郵件伺服器位址、連接埠、加密與寄件帳號；詳細原因見記錄檔。" };
         }
     }
 
@@ -950,10 +955,11 @@ public class SystemSettingsService : ISystemSettingsService
         }
         catch (Exception ex)
         {
+            Log.Warn(ex, "測試 PRTG 連線失敗");
             return new TestPrtgConnectionResultDto
             {
                 Success = false,
-                Message = $"測試連線失敗：{ex.Message}"
+                Message = "測試連線失敗：請檢查 PRTG 位址、連接埠與認證設定；詳細原因見記錄檔。"
             };
         }
     }

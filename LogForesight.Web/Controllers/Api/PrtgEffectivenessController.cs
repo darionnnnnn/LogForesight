@@ -29,10 +29,6 @@ public sealed class PrtgEffectivenessController : ControllerBase
     {
         if (!_currentUser.HasViewAll())
             return Forbid(); // 此舊統計以全站資源為分母；受限角色使用已授權的試點證據包。
-        try { return ApiResponse<PrtgEffectivenessSummary>.Ok(_service.Get(from, through)); }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(ApiResponse<PrtgEffectivenessSummary>.Fail(ApiErrorCodes.ValidationFailed, ex.Message));
-        }
+        return ApiResponse<PrtgEffectivenessSummary>.Ok(_service.Get(from, through));
     }
 }

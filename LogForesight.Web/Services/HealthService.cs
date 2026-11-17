@@ -22,6 +22,8 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class HealthService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly StorageBackend _backend;
     private readonly SchedulerRunState _runState;
     private readonly TopIssueBackfiller _backfiller;
@@ -500,7 +502,8 @@ public class HealthService
         catch (Exception ex)
         {
             // 訊息只給 Maintain 看得到的 detail 端點（見類別註解），liveness 不回傳
-            error = ex.Message;
+            Log.Warn(ex, "健康檢查：資料庫可達性探測失敗");
+            error = "資料庫讀取失敗；詳細原因見記錄檔。";
             return false;
         }
     }

@@ -592,7 +592,7 @@ public class AiAnalysisHostedService : BackgroundService
                                         catch (Exception workflowError)
                                         {
                                             CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
-                                                workflowError.Message);
+                                                "AI 判定版本檢查失敗；詳細原因見記錄檔。");
                                             Log.Warn(workflowError, "AI version guard failed; refusing to risk writing a stale result");
                                             continue;
                                         }
@@ -662,7 +662,8 @@ public class AiAnalysisHostedService : BackgroundService
                             catch (Exception ex)
                             {
                                 // AI 呼叫失敗：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批。
-                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, ex.Message);
+                                CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                    "AI 分析失敗；詳細原因見記錄檔。");
                                 Interlocked.Increment(ref counters.Failed);
                                 Log.Warn(ex, "主機 {Host} {Date:yyyy-MM-dd} AI 分析失敗，維持待補：{Msg}",
                                     record.Host, record.Date, ex.Message);
@@ -751,7 +752,8 @@ public class AiAnalysisHostedService : BackgroundService
         {
             // 這裡在 TriggerRunAsync 的 try/finally 之外，EndRun 不會被呼叫；
             // 不在此釋放閘門會讓 IsRunning 永遠為 true，直到站台重啟。
-            _runState.EndRun(false, $"強制重新分析的整批重標失敗：{ex.Message}");
+            Log.Error(ex, "強制重新分析的整批重標失敗");
+            _runState.EndRun(false, "強制重新分析的整批重標失敗；詳細原因見記錄檔。");
             throw;
         }
     }

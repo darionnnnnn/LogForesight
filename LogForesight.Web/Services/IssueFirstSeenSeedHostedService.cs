@@ -72,7 +72,7 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
                         catch (Exception ex)
                         {
                             Progress.Failures++;
-                            Progress.LastError = ex.Message;
+                            Progress.LastError = "合併失敗；詳細原因見記錄檔。";
                             Progress.State = IssueFirstSeenSeedStates.Failed;
                             Log.Error(ex, "[SQL] lf_issue_first_seen 冪等合併失敗（第 {Failures}/{Max} 次）：{Msg}",
                                 Progress.Failures, MaxRetries, ex.Message);

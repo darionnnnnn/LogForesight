@@ -21,6 +21,7 @@ namespace LogForesight.Tests;
 /// <see cref="RecordListQueryService"/>，交辦單與案件 store 用記憶體替身、協調器用真的。
 /// 候選人池以手組快照替身帶入（Web 端規則另由 DispatchCandidateSourceTests 驗）。
 /// </summary>
+[Collection("NLogGlobalConfig")]
 public class WorkOrderBoardServiceTests : IDisposable
 {
     private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
@@ -728,11 +729,57 @@ public class WorkOrderBoardServiceTests : IDisposable
         Assert.Equal(2, result.AssignedMembers);
         var failed = Assert.Single(result.FailedGroups);
         Assert.Equal((h.UserId, "ntfs", 55, 1), (failed.HandlerId, failed.Source, failed.EventId, failed.Hosts));
-        Assert.Contains("注入", failed.Message);
+        // 一般例外的原文不給使用者（給寫好的中文說明），原文進記錄檔
+        Assert.DoesNotContain("注入", failed.Message);
+        Assert.Contains("記錄檔", failed.Message);
         Assert.NotNull(_caseStore.GetOpen("HOST-B", KeyOf(Disk())));
         Assert.Null(_caseStore.GetOpen("HOST-A", KeyOf(Ntfs())));
         var entry = Assert.Single(_audit.Entries);
         Assert.Contains("失敗 1 組", entry.Summary);
+    }
+
+    private WorkOrderBoardService NewFailingDispatch(Exception failure)
+    {
+        var failing = new ThrowingOrderStore(_caseStore) { FailSource = "*", Failure = failure };
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
+        var coordinator = new WorkOrderCoordinator(failing, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var host = AddHost("HOST-A", null, Disk(), Ntfs());
+        Candidate(h, inPool: true, host.HostId);
+        return new WorkOrderBoardService(
+            failing, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
+            _candidates, _issueOwners, _noiseMarks, _settingsStore, coordinator,
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
+    }
+
+    /// <summary>E1-a／E1-b：一般例外（訊息含檔案路徑與網址）→ 回應不含原文，記錄檔含原文</summary>
+    [Fact]
+    public void 立即派工_一般例外_回應不含路徑與網址_記錄檔含原文()
+    {
+        var service = NewFailingDispatch(new IOException(@"寫入 C:\secret\x.db 失敗，來源 http://10.0.0.1/api"));
+        using var capture = NLogCapture.For(typeof(WorkOrderBoardService));
+
+        var result = service.RunAutoDispatch(null, null);
+
+        Assert.NotEmpty(result.FailedGroups);
+        foreach (var failed in result.FailedGroups)
+        {
+            Assert.DoesNotContain(@"C:\secret", failed.Message);
+            Assert.DoesNotContain("10.0.0.1", failed.Message);
+        }
+        Assert.Contains(capture.Logs, l => l.Contains(@"C:\secret\x.db") && l.Contains("http://10.0.0.1/api"));
+    }
+
+    /// <summary>E1-c：領域例外的訊息原樣回給使用者</summary>
+    [Fact]
+    public void 立即派工_領域例外_訊息原樣回給使用者()
+    {
+        var service = NewFailingDispatch(DomainException.Conflict("這個問題已有進行中的交辦單。"));
+
+        var result = service.RunAutoDispatch(null, null);
+
+        Assert.All(result.FailedGroups, f => Assert.Equal("這個問題已有進行中的交辦單。", f.Message));
     }
 
     [Fact]
@@ -764,10 +811,12 @@ public class WorkOrderBoardServiceTests : IDisposable
 
         public string FailSource { get; init; } = string.Empty;
 
+        public Exception Failure { get; init; } = new InvalidOperationException("注入的建單失敗");
+
         public override long Insert(WorkOrder order)
         {
             if (FailSource == "*" || string.Equals(order.SourceName, FailSource, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("注入的建單失敗");
+                throw Failure;
             return base.Insert(order);
         }
     }

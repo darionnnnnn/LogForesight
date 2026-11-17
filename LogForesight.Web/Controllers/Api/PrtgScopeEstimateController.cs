@@ -275,7 +275,8 @@ public class PrtgScopeEstimateController : ControllerBase
                 {
                     // 直接查 PRTG 失敗（連不上、認證錯、逾時）就退回鏡像，並把原因說出來——
                     // 靜默退回會讓使用者以為「PRTG 上真的沒有這些裝置」。
-                    console.WriteLine($"[PRTG資源守門] 直接查詢 PRTG 失敗（{liveEx.Message}），改用本機鏡像資料。");
+                    Log.Warn(liveEx, "PRTG 資源守門直接查詢失敗，改用本機鏡像資料");
+                    console.WriteLine($"[PRTG資源守門] 直接查詢 PRTG 失敗（{UserFacingMessage.For(liveEx, "連不上、認證失敗或逾時；原文見記錄檔")}），改用本機鏡像資料。");
                     targets = PrtgResourceGuardTargets.Resolve(
                         new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
                         _addressResolver, ignoreOverride: forceAuto);
@@ -292,10 +293,11 @@ public class PrtgScopeEstimateController : ControllerBase
         catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             // 釋放交給下面的 finally，這裡不重複做
+            Log.Warn(ex, "PRTG 資源守門解析受監看目標失敗");
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
                 Success = false,
-                ErrorMessage = $"解析受監看目標失敗：{ex.Message}",
+                ErrorMessage = $"解析受監看目標失敗：{UserFacingMessage.For(ex, "請確認 PRTG 連線與鏡像資料；原文見記錄檔")}",
                 Source = source,
                 AutoDetectedAt = autoDetectedAt,
                 Warnings = console.Messages,
@@ -354,10 +356,11 @@ public class PrtgScopeEstimateController : ControllerBase
         }
         catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
+            Log.Warn(ex, "PRTG 資源守門預覽失敗");
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
                 Success = false,
-                ErrorMessage = $"PRTG 預覽失敗：{ex.Message}",
+                ErrorMessage = $"PRTG 預覽失敗：{UserFacingMessage.For(ex, "連不上、認證失敗或逾時；原文見記錄檔")}",
                 Source = source,
                 AutoDetectedAt = autoDetectedAt,
                 Warnings = console.Messages,

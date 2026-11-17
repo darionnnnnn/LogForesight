@@ -134,7 +134,7 @@ public sealed class PrtgEffectivenessServiceTests
     {
         using var fixture = new EfSqliteFixture();
         var service = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore());
-        Assert.Throws<ArgumentException>(() => service.Get(new DateTime(2026, 9, 2), new DateTime(2026, 9, 1)));
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.Get(new DateTime(2026, 9, 2), new DateTime(2026, 9, 1)));
         Assert.Throws<ArgumentOutOfRangeException>(() => service.Get(new DateTime(2025, 1, 1), new DateTime(2026, 9, 1)));
     }
 

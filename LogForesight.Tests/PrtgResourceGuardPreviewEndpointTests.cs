@@ -16,6 +16,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
+[Collection("NLogGlobalConfig")]
 public class PrtgResourceGuardPreviewEndpointTests : IDisposable
 {
     private readonly string _dir;
@@ -190,6 +191,30 @@ public class PrtgResourceGuardPreviewEndpointTests : IDisposable
         Assert.NotNull(res.Data);
         Assert.Equal("mirror-fallback", res.Data!.Source);
         Assert.Contains(res.Data.Warnings, w => w.Contains("直接查詢 PRTG 失敗"));
+    }
+
+    /// <summary>E1-a／E1-b：直接查 PRTG 失敗退回鏡像時，回應的警告不含連線例外原文（位址），原文進記錄檔</summary>
+    [Fact]
+    public async Task 直接查PRTG失敗_回應警告不含例外原文_記錄檔含原文()
+    {
+        var store = new SystemSettingsStore(_backend.Blob("system_settings"));
+        store.Update(s =>
+        {
+            s.PrtgUrl = "https://secret-prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgResourceGuardSensorObjids = new List<string>();
+        });
+        using var capture = NLogCapture.For(typeof(PrtgScopeEstimateController));
+
+        var res = await _controller.PreviewPrtgResourceGuard(CancellationToken.None);
+
+        Assert.Contains(res.Data!.Warnings, w => w.Contains("直接查詢 PRTG 失敗"));
+        // 例外原文（含位址）不進直接查詢失敗那一行；其餘警告是站台自己對使用者設定值的說明
+        Assert.DoesNotContain(res.Data.Warnings, w => w.Contains("直接查詢 PRTG 失敗") && w.Contains("secret-prtg"));
+        Assert.DoesNotContain("secret-prtg", res.Data.ErrorMessage ?? "");
+        Assert.Contains(capture.Logs, l => l.Contains("secret-prtg"));
     }
 
     private HttpListener StartSilentServer(out int port)

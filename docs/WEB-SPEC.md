@@ -556,6 +556,13 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
   多人同時操作是正常情境不是故障；風險日詳情的處理面板收到 409 後自動重載當日資料。
+- **例外訊息不外洩**：只有領域例外（`DomainException`，以及 `ApiExceptionFilter` 已登錄的專屬型別：
+  `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`、`PrtgTransferStoreException`、`PrtgScopeConflictException`、
+  `RunExportDeidentificationException`、`NetiqDiscoveryException`）的訊息可以給使用者；其他例外（IO、網路、JSON、SQL、HttpClient 等）的原文可能含檔案路徑、網址或連線字串，
+  回應與畫面只給寫好的中文說明，原文只進 NLog。規則只有一處：`UserFacingMessage.For(ex, 備用說明)`（`LogForesight.Web/Models/UserFacingMessage.cs`）——
+  領域例外回原訊息，其餘回備用說明；呼叫端自己用 `Log.Warn(ex, …)` 寫原文。`UserFacingMessageGuardTests` 掃 `LogForesight.Web`：把例外 `.Message`
+  放進回應、DTO、`Fail(`、`DomainException(` 或維護主控台的寫法只能出現在測試內附理由的白名單，白名單項目對不到程式碼也算失敗。
+  新增例外型別要交給 Filter 對應時，同時登錄進 `UserFacingMessage`。
 - **409 另外兩種語意（執行類端點）**：「被另一個執行互斥擋下」（取數執行中不放行手動 AI、
   回填與結構同步／環境探測互斥）與「沒有可停止的對象」（停止類端點找不到進行中的執行）
   一律回 409，不是 400。分界線是「你送錯了」（400，例如天數不合法、服務未設定）

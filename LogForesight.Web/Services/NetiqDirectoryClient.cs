@@ -161,6 +161,8 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 /// </summary>
 public class SentinelRestDirectoryClient : INetiqDirectoryClient
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     /// <summary>單次掃描可展開的最大分段數。/16 在 /24 粒度是 256 段（在預算內掃得完）；
     /// /16 配 /26 會展開 1024 段、**刻意被此上限擋下**——細粒度的用途是「已知某個 /24
     /// 特別吵時針對它掃」，不是拿來掃整個 /16。更寬的輸入已由
@@ -547,7 +549,8 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         }
         catch (SentinelClientException ex)
         {
-            throw new NetiqDiscoveryException($"掃描 Sentinel「{server.Name}」失敗：{ex.Message}", ex);
+            Log.Warn(ex, "掃描 Sentinel「{0}」失敗", server.Name);
+            throw new NetiqDiscoveryException($"掃描 Sentinel「{server.Name}」失敗，請檢查位址、帳密與連線；原文見記錄檔。", ex);
         }
         finally
         {
@@ -580,9 +583,10 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         }
         catch (SentinelClientException ex)
         {
+            Log.Warn(ex, "讀取 ESM 事件來源目錄失敗，改用事件掃描");
             warnings.Add(
                 "已開啟「以 ESM 事件來源目錄探索」，但這個帳號讀不到目錄" +
-                $"（{ex.Message}），本次已改用事件掃描。" +
+                "（原文見記錄檔），本次已改用事件掃描。" +
                 "請確認該帳號具備 ESM 唯讀權限，或關閉此開關。");
             return null;
         }

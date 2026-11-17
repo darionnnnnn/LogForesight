@@ -106,6 +106,9 @@ public class SentinelClientException : Exception
 {
     public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed") : base(message, inner) => SafeCode = safeCode;
     public string SafeCode { get; }
+
+    /// <summary>位址未設定或格式不正確：訊息只含使用者自己填的位址與修正方式，可直接顯示給操作者</summary>
+    public const string InvalidBaseUrlCode = "invalid-base-url";
 }
 
 /// <summary>
@@ -154,7 +157,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         SentinelClientReadLimits? readLimits = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
-            throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。");
+            throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。", safeCode: SentinelClientException.InvalidBaseUrlCode);
 
         // 連線位址格式在這裡就擋下，而不是等送出請求時才炸：BaseUrl 是自由文字欄位，
         // 少打 https://（「sentinel.corp.local:8443」）之類的輸入極常見，而 HttpClient 對它們擲的是
@@ -167,7 +170,8 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         {
             throw new SentinelClientException(
                 $"Sentinel「{server.Name}」的連線位址格式不正確：「{server.BaseUrl}」。" +
-                "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。");
+                "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。",
+                safeCode: SentinelClientException.InvalidBaseUrlCode);
         }
 
         _server = server;

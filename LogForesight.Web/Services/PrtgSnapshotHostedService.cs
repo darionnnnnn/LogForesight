@@ -985,7 +985,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         catch (Exception ex)
         {
             // WriteOutput 的 Warn 會同時寫 Log.Warn
-            WriteOutput($"[PRTG快照] 新進取數範圍裝置的感測器補抓失敗（不影響本輪快照）：{ex.Message}", LogLevel.Warn);
+            Log.Warn(ex, $"[PRTG快照] 新進取數範圍裝置的感測器補抓失敗（不影響本輪快照）");
+            WriteOutput($"[PRTG快照] 新進取數範圍裝置的感測器補抓失敗（不影響本輪快照）；詳細原因見記錄檔。");
         }
 
         return newlyBackfilled;
@@ -1026,7 +1027,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            WriteOutput($"[PRTG快照] 狀態補抓佇列處理失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
+            Log.Warn(ex, $"[PRTG快照] 狀態補抓佇列處理失敗（不影響快照）");
+            WriteOutput($"[PRTG快照] 狀態補抓佇列處理失敗（不影響快照）；詳細原因見記錄檔。");
         }
     }
 
@@ -1119,7 +1121,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             catch (Exception ex)
             {
                 store.RetryRecentStateChange(lease, DateTime.UtcNow);
-                WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓失敗（不影響快照）：{ex.Message}", LogLevel.Warn);
+                Log.Warn(ex, $"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓失敗（不影響快照）");
+                WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓失敗（不影響快照）；詳細原因見記錄檔。");
             }
             finally
             {
@@ -1233,7 +1236,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            WriteOutput($"[PRTG快照] 查詢守門覆寫清單感測器的所在裝置失敗（不影響本輪快照）：{ex.Message}", LogLevel.Warn);
+            Log.Warn(ex, $"[PRTG快照] 查詢守門覆寫清單感測器的所在裝置失敗（不影響本輪快照）");
+            WriteOutput($"[PRTG快照] 查詢守門覆寫清單感測器的所在裝置失敗（不影響本輪快照）；詳細原因見記錄檔。");
         }
 
         return devices;
@@ -1412,7 +1416,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 Log.Warn(ex, "PRTG 快照待寫檔手動封存失敗，維持停止並保留原檔");
-                throw DomainException.Conflict("封存失敗，待寫檔維持原狀：" + ex.Message);
+                throw DomainException.Conflict("封存失敗，待寫檔維持原狀；請檢查磁碟空間、檔案鎖定與服務帳號權限（原文見記錄檔）。");
             }
         }
     }
@@ -1536,7 +1540,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 {
                     foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
                         RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
-                    var msg = $"快照樣本寫入資料庫失敗，{_pendingRows} 列留待下次重試：{ex.Message}";
+                    var msg = $"快照樣本寫入資料庫失敗，{_pendingRows} 列留待下次重試（詳細原因見記錄檔）。";
                     WriteOutput(msg, LogLevel.Warn);
                     Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
                     break;

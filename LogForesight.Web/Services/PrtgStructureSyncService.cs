@@ -430,22 +430,24 @@ public class PrtgStructureSyncService
         }
         catch (Exception ex)
         {
-            console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
+            Log.Error(ex, "PRTG 結構同步發生未預期錯誤");
+            console.WriteLine("同步過程發生未預期錯誤；詳細原因見記錄檔。");
             success = false;
-            failure = ex.Message;
+            failure = "同步過程發生未預期錯誤；詳細原因見記錄檔。";
             try
             {
                 Persist(new PrtgStructureSyncStatus
                 {
                     CompletedAt = DateTime.Now,
                     Success = false,
-                    ErrorMessage = ex.Message,
+                    ErrorMessage = failure,
                     MapDate = DateTime.Today
                 });
             }
             catch (Exception persistEx)
             {
-                console.WriteLine($"保存失敗狀態時發生錯誤：{persistEx.Message}");
+                Log.Warn(persistEx, "PRTG 結構同步：保存失敗狀態時發生錯誤");
+                console.WriteLine("保存失敗狀態時發生錯誤；詳細原因見記錄檔。");
             }
         }
         finally
