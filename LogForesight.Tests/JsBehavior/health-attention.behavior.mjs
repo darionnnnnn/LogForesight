@@ -170,6 +170,19 @@ const cases = {
         assert.ok(bar().textContent.includes('請聯絡系統管理員'), '沒有 Maintain 的人看到原因後要有下一步');
     },
 
+    // 主文已寫出「請聯絡：A、B。」就不再多一行「請聯絡系統管理員。」；主文沒有聯絡人才補
+    async bannerContactLineNotRepeatedWhenMainTextHasContacts() {
+        const stale = { stale: true, acked: false, lastSuccessAt: 'x', adminContacts: ['王小明', '林小華'] };
+        const withContacts = bannerEnv({ capabilities: ['DevMonitor'], freshness: stale, attention: { status: 'degraded', reasons } });
+        await withContacts.load({});
+        const node = withContacts.bar();
+        assert.ok(node.children[0].textContent.includes('請聯絡：王小明、林小華。'));
+        assert.ok(!node.textContent.includes('請聯絡系統管理員'), '主文已有聯絡人，不可再多一行');
+        const without = bannerEnv({ capabilities: ['DevMonitor'], freshness: { ...stale, adminContacts: [] }, attention: { status: 'degraded', reasons } });
+        await without.load({});
+        assert.ok(without.bar().textContent.includes('請聯絡系統管理員'), '沒有聯絡人時仍補下一步');
+    },
+
     // 有 Maintain 的人有連結可處理，不多寫「請聯絡」
     async bannerMaintainHasNoContactLine() {
         const { load, bar } = bannerEnv({ capabilities: ['Maintain'], attention: { status: 'degraded', reasons } });

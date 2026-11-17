@@ -31,6 +31,13 @@ public class CloseConsequenceBehaviorTests
     [InlineData("replyFormShowsNoFixNoteOnlyForNoFix")]
     [InlineData("adminCloseNotifyTextFollowsMailSetting")]
     [InlineData("adminCloseCheckboxWordingForMultiIssueOrder")]
+    [InlineData("adminCloseConsequenceNamesSameTargetAsCheckbox")]
+    [InlineData("adminCloseUnknownMailSettingUsesNeutralText")]
+    [InlineData("adminCloseIgnoresRepeatTriggerWhileLoading")]
+    [InlineData("actionsReplyCountsMembersOnDisabledHosts")]
+    [InlineData("actionsNotifyTextFollowsMailSettingThreeStates")]
+    [InlineData("clearMuteNotifyTextFollowsMailSettingThreeStates")]
+    [InlineData("muteModalNotifyTextThreeStatesAndRepeatTrigger")]
     public void 結案後果說明行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

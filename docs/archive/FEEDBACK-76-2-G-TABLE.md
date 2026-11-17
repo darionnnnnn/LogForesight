@@ -1,6 +1,6 @@
 # 第 76-2 輪批次 G 逐條核對表
 
-本表記錄批次 G 第二段（G-2）的修改：依據 `docs/drafts/FEEDBACK-76-EVIDENCE.md` 的 E1-03～14（錯誤）與 E1-17～34（含糊與缺漏）。
+本表記錄批次 G 第二段（G-2）的修改：依據 `docs/archive/FEEDBACK-76-EVIDENCE.md` 的 E1-03～14（錯誤）與 E1-17～34（含糊與缺漏）。
 檔案欄寫章號，「使用者版」是 `NN-*.md`，「AI 版」是 `NN-*.ai.md`。程式位置的行號是本次核對時的現況。
 新句子的完整文字見 `LogForesight.Web/HelpContent/`，此表只摘重點。
 

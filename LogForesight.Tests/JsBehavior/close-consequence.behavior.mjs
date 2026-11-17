@@ -16,6 +16,9 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 const read = (...p) => fs.readFileSync(path.join(jsRoot, ...p), 'utf8').replaceAll('\r\n', '\n').replace(/^﻿+/, '');
 const catalog = await import(pathToFileURL(path.join(jsRoot, 'core', 'handling-statuses.js')).href);
+const { mailNotifyText } = await import(pathToFileURL(path.join(jsRoot, 'core', 'mail-notify.js')).href);
+const { exclusive } = await import(pathToFileURL(path.join(jsRoot, 'core', 'async-guards.js')).href);
+const NEUTRAL = '依「交辦單通知」設定而定';
 
 function extract(source, declaration) {
     const start = source.indexOf(declaration);
@@ -27,6 +30,18 @@ function extract(source, declaration) {
         else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
     }
     throw new Error(`production 函式未閉合：${declaration}`);
+}
+
+function extractLine(source, startsWith) {
+    const line = source.split('\n').find(l => l.startsWith(startsWith));
+    assert(line, `找不到 production 敘述：${startsWith}`);
+    return line;
+}
+
+function deferred() {
+    let resolve;
+    const promise = new Promise(r => { resolve = r; });
+    return { promise, resolve };
 }
 
 function makeEnv() {
@@ -54,15 +69,24 @@ const textOf = node => node.textContent;
 const notes = root => all(root).filter(n => n.classList?.contains('lf-status-note'));
 
 // ── 代為結案對話框 ───────────────────────────────────────────────
-async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security' } = {}) {
-    const env = makeEnv();
+function loadAdminClose(env, { settings, currentDetail, getDisplaySettings }) {
     const source = read('pages', 'work-order-detail.js');
-    const fn = extract(source, 'async function openAdminCloseModal(');
-    const api = { post: async (url, payload) => { env.posts.push({ url, payload }); return { closedCases: activeCount }; } };
-    const run = new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
-        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', `${fn}\nreturn openAdminCloseModal;`)(
+    const fn = extract(source, 'async function buildAdminCloseModal(');
+    const wiring = extractLine(source, 'const openAdminCloseModal = ');
+    const blockTargetText = extract(source, 'function blockTargetText(');
+    const api = { post: async (url, payload) => { env.posts.push({ url, payload }); return { closedCases: 1 }; } };
+    return new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
+        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', 'mailNotifyText', 'exclusive',
+        `${blockTargetText}\n${fn}\n${wiring}\nreturn openAdminCloseModal;`)(
         env.button, env.statusNote, catalog.statusesWhere, catalog.isNoFixClosure, env.showDetailModal, api,
-        (m, t) => env.toasts.push({ m, t }), () => () => { }, { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled } }, 7, async () => { }, async () => ({ mailWorkOrdersEnabled: mail }));
+        (m, t) => env.toasts.push({ m, t }), () => () => { }, currentDetail, 7, async () => { },
+        getDisplaySettings ?? (async () => settings), mailNotifyText, exclusive);
+}
+
+async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security', settings } = {}) {
+    const env = makeEnv();
+    const detail = { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled } };
+    const run = loadAdminClose(env, { settings: settings ?? { mailWorkOrdersEnabled: mail }, currentDetail: detail });
     await run();
     const body = env.shown[0].body;
     const form = body.children[0];
@@ -78,6 +102,42 @@ async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, is
         write(text) { this.reason.value = text; this.reason.dispatch('input'); },
         tick() { this.block.dispatch('change'); },
         async send() { await form.listeners.submit[0]({ preventDefault() { } }); }
+    };
+}
+
+// ── 交辦單詳情動作列（renderActions）─────────────────────────────
+function loadActions({ counts, settings = { mailWorkOrdersEnabled: true } }) {
+    const env = makeEnv();
+    const source = read('pages', 'work-order-detail.js');
+    const fn = extract(source, 'function renderActions(');
+    const optional = extract(source, 'function blockTargetText(');
+    const actionsContainer = document.createElement('div');
+    const memberStatusSelect = { value: '' };
+    const opened = [];
+    const confirms = [];
+    const api = {
+        get: async url => (url.includes('/members?') ? { items: [{ caseId: 55, hostName: 'HOST-D' }] } : {}),
+        post: async () => ({})
+    };
+    const detail = {
+        viewerCanReply: true, viewerCanAssign: true, closedAt: null, handlerId: 1, source: 'Security',
+        counts: { total: 1, ...counts }
+    };
+    const run = new Function('actionsContainer', 'button', 'toast', 'memberStatusSelect', 'selectedCaseIds', 'guardLoad', 'loadMembersOnly', 'membersContainer',
+        'api', 'workOrderId', 'openMemberReply', 'hasCapability', 'openSelectHandlerModal', 'loadedMemberHosts', 'reloadAll', 'confirmActionWithReason', 'withBusy',
+        'getDisplaySettings', 'mailNotifyText', 'replyableCount', 'appUrl', 'location', 'openAdminCloseModal',
+        `let memberPage = 1;\n${optional}\n${fn}\nreturn renderActions;`)(
+        actionsContainer, env.button, (m, t) => env.toasts.push({ m, t }), memberStatusSelect, new Set(), async (_c, f) => f(), async () => { },
+        { scrollIntoView() { } }, api, 7, (caseIds, targetText) => opened.push({ caseIds, targetText }), () => true, () => { }, new Map(), async () => { },
+        async options => { confirms.push(options); return null; }, () => () => { }, async () => settings, mailNotifyText, catalog.replyableCount, p => p, {}, async () => { });
+    run(detail, {});
+    return {
+        env, opened, confirms, memberStatusSelect, toasts: env.toasts,
+        async click(label) {
+            const btn = all(actionsContainer).find(n => n.tagName === 'BUTTON' && n.textContent.includes(label));
+            assert.ok(btn, `找不到按鈕：${label}`);
+            await btn.listeners.click[0]();
+        }
     };
 }
 
@@ -174,8 +234,69 @@ const cases = {
         const text = textOf(multi.blockWrap);
         assert.ok(text.includes('這 3 台主機上的問題之後不再自動派工'), text);
         assert.ok(!text.includes('這個問題'));
+        multi.pick('wont_fix');
+        const consequence = notes(multi.consequence).map(textOf).join('｜');
+        assert.ok(consequence.includes('這 3 台主機上的問題之後再出現時會重新派工') && !consequence.includes('這個問題'), consequence);
         const one = await openAdminClose(1, 0, { issueSource: null });
         assert.ok(textOf(one.blockWrap).includes('這台主機上的問題之後不再自動派工'));
+    },
+    // 後果說明與勾選框指稱同一個對象（單台／多台、單一問題／多問題）：不寫死「這台主機的這個問題」
+    async adminCloseConsequenceNamesSameTargetAsCheckbox() {
+        const consequenceOf = m => notes(m.consequence).map(textOf).join('｜');
+        const single = await openAdminClose(3, 0, { issueSource: 'Security' });
+        single.pick('wont_fix');
+        assert.ok(consequenceOf(single).includes('未勾選：這 3 台主機的這個問題之後再出現時會重新派工'), consequenceOf(single));
+        single.block.checked = true;
+        single.tick();
+        assert.ok(consequenceOf(single).includes('已勾選：這 3 台主機的這個問題之後不會再自動派工'), consequenceOf(single));
+
+        const multi = await openAdminClose(3, 0, { issueSource: null });
+        multi.pick('wont_fix');
+        assert.ok(consequenceOf(multi).includes('未勾選：這 3 台主機上的問題之後再出現時會重新派工'), consequenceOf(multi));
+        multi.block.checked = true;
+        multi.tick();
+        const checked = consequenceOf(multi);
+        assert.ok(checked.includes('已勾選：這 3 台主機上的問題之後不會再自動派工'), checked);
+        assert.ok(!checked.includes('這個問題'), '多問題單不指稱「這個問題」');
+
+        const one = await openAdminClose(1, 0, { issueSource: null });
+        one.pick('wont_fix');
+        assert.ok(consequenceOf(one).includes('未勾選：這台主機上的問題之後再出現時會重新派工'), consequenceOf(one));
+        one.block.checked = true;
+        one.tick();
+        assert.ok(consequenceOf(one).includes('已勾選：這台主機上的問題之後不會再自動派工'), consequenceOf(one));
+        // 台數含停用主機：後果說明與勾選框同一個台數
+        const disabled = await openAdminClose(1, 2, { issueSource: 'Security' });
+        disabled.pick('wont_fix');
+        assert.ok(consequenceOf(disabled).includes('未勾選：這 3 台主機的這個問題'), consequenceOf(disabled));
+        assert.ok(textOf(disabled.blockWrap).includes('這 3 台主機的這個問題'));
+    },
+    // 設定讀不到（沒有 mailWorkOrdersEnabled）：中性句，不說「未啟用」、也不承諾會收到
+    async adminCloseUnknownMailSettingUsesNeutralText() {
+        const m = await openAdminClose(3, 0, { settings: { visibleDayRiskLevels: ['高'] } });
+        m.pick('resolved');
+        const text = notes(m.consequence).map(textOf).join('');
+        assert.ok(text.includes(NEUTRAL), text);
+        assert.ok(!text.includes('未啟用'), '讀不到設定不可說未啟用');
+        assert.ok(!text.includes('會在下一封'), '讀不到設定不可承諾會寄信');
+    },
+    // 設定請求回來前再按一次：只開一個對話框；開完之後可以再開
+    async adminCloseIgnoresRepeatTriggerWhileLoading() {
+        const env = makeEnv();
+        const gate = deferred();
+        let settingsCalls = 0;
+        const run = loadAdminClose(env, {
+            currentDetail: { source: 'Security', counts: { active: 2, activeOnDisabledHosts: 0 } },
+            getDisplaySettings: async () => { settingsCalls++; await gate.promise; return { mailWorkOrdersEnabled: true }; }
+        });
+        const first = run();
+        const second = run();
+        gate.resolve();
+        await Promise.all([first, second]);
+        assert.equal(env.shown.length, 1, '等待期間的重複觸發要被忽略');
+        assert.equal(settingsCalls, 1);
+        await run();
+        assert.equal(env.shown.length, 2, '第一個開完後可以再開');
     },
     // B5-a：送出請求帶 blockRedispatch
     async adminCloseSendsBlockRedispatch() {
@@ -210,6 +331,106 @@ const cases = {
         m.write('原因');
         await m.send();
         assert.equal(m.env.posts.length, 0);
+    },
+
+    // 「回覆這張單」台數含停用主機：只剩停用主機上的一台時直接開回覆；一啟用加一停用要走多台的勾選流程
+    async actionsReplyCountsMembersOnDisabledHosts() {
+        const run = async counts => {
+            const h = loadActions({ counts });
+            await h.click('回覆這張單');
+            return h;
+        };
+        const onlyDisabled = await run({ active: 0, activeOnDisabledHosts: 1 });
+        assert.deepEqual(onlyDisabled.opened, [{ caseIds: [55], targetText: '主機 HOST-D' }], '只剩停用主機的一台要開單台回覆');
+        assert.ok(!onlyDisabled.toasts.some(t => t.m.includes('已沒有進行中')), '不可被擋成沒有進行中的主機');
+
+        const mixed = await run({ active: 1, activeOnDisabledHosts: 1 });
+        assert.equal(mixed.opened.length, 0, '兩台合計是多台，不直接開單台回覆');
+        assert.equal(mixed.memberStatusSelect.value, 'active');
+        assert.ok(mixed.toasts.some(t => t.m.includes('勾選這次處理好的主機')), JSON.stringify(mixed.toasts));
+
+        const single = await run({ active: 1, activeOnDisabledHosts: 0 });
+        assert.equal(single.opened.length, 1);
+
+        const none = await run({ active: 0, activeOnDisabledHosts: 0 });
+        assert.equal(none.opened.length, 0);
+        assert.deepEqual(none.toasts.map(t => t.m), ['這張單已沒有進行中的主機']);
+    },
+    // 退回處理人、取消交辦：設定三態各說各的話；讀不到不說「未啟用」
+    async actionsNotifyTextFollowsMailSettingThreeStates() {
+        for (const [label, expectOn] of [['退回處理人', '下一封交辦摘要收到退回通知'], ['取消交辦', '下一封交辦摘要收到取消通知']]) {
+            const on = loadActions({ counts: { active: 1, escalated: 1 }, settings: { mailWorkOrdersEnabled: true } });
+            await on.click(label);
+            assert.ok(on.confirms[0].message.includes(expectOn), on.confirms[0].message);
+            const off = loadActions({ counts: { active: 1, escalated: 1 }, settings: { mailWorkOrdersEnabled: false } });
+            await off.click(label);
+            assert.ok(off.confirms[0].message.includes('目前未啟用交辦通知，請自行告知處理人'), off.confirms[0].message);
+            const unknown = loadActions({ counts: { active: 1, escalated: 1 }, settings: { visibleDayRiskLevels: ['高'] } });
+            await unknown.click(label);
+            const message = unknown.confirms[0].message;
+            assert.ok(message.includes(NEUTRAL), message);
+            assert.ok(!message.includes('未啟用') && !message.includes('下一封'), `${label}：讀不到設定不可承諾也不可否認：${message}`);
+        }
+    },
+    // 解除靜音：三態
+    async clearMuteNotifyTextFollowsMailSettingThreeStates() {
+        const source = read('core', 'ui.js');
+        const fn = extract(source, 'export async function confirmAndClearMute(').replace(/^export /, '');
+        const run = async settings => {
+            const messages = [];
+            const f = new Function('getDisplaySettings', 'mailNotifyText', 'confirmAction', 'api', 'toast', `${fn}\nreturn confirmAndClearMute;`)(
+                async () => settings, mailNotifyText, async ({ message }) => { messages.push(message); return false; }, {}, () => { });
+            await f({ sourceName: 'S', eventId: 1 });
+            return messages[0];
+        };
+        const on = await run({ mailWorkOrdersEnabled: true });
+        assert.ok(on.includes('下一封交辦摘要收到恢復通知'), on);
+        const off = await run({ mailWorkOrdersEnabled: false });
+        assert.ok(off.includes('目前未啟用交辦單通知'), off);
+        const unknown = await run({ visibleDayRiskLevels: ['高'] });
+        assert.ok(unknown.includes(NEUTRAL), unknown);
+        assert.ok(!unknown.includes('未啟用') && !unknown.includes('下一封'), unknown);
+    },
+    // 靜音對話框：代為結案附註的三態，以及設定請求回來前重複觸發只開一個
+    async muteModalNotifyTextThreeStatesAndRepeatTrigger() {
+        const build = (settings, gate) => {
+            const env = makeEnv();
+            const source = read('pages', 'issue-mute-modal.js');
+            const fn = [
+                extract(source, 'function muteEndDate('), extract(source, 'function dateOnly('), extract(source, 'async function loadActiveOrders('),
+                extract(source, 'async function buildIssueMuteModal('),
+                extractLine(source, 'export const openIssueMuteModal = ').replace(/^export /, '')
+            ].join('\n');
+            const api = { get: async () => ({ total: 1, items: [{ counts: { active: 2 } }] }), put: async () => ({}) };
+            const user = { capabilities: ['Assign', 'Handle'] };
+            const run = new Function('api', 'getCurrentUser', 'hasCapability', 'getDisplaySettings', 'button', 'statusNote', 'showDetailModal', 'toast', 'withBusy',
+                'formatDateTime', 'toLocalDateString', 'mailNotifyText', 'exclusive', 'DURATION_OPTIONS', 'MIN_DAYS', 'MAX_DAYS', 'DEFAULT_CUSTOM_DAYS',
+                `${fn}\nreturn openIssueMuteModal;`)(
+                api, async () => user, () => true,
+                async () => { if (gate) await gate.promise; return settings; },
+                env.button, env.statusNote, env.showDetailModal, () => { }, () => () => { },
+                v => String(v), () => '2026-01-01', mailNotifyText, exclusive,
+                [{ label: '1 天', days: 1 }, { label: '1 週', days: 7 }, { label: '自訂', days: null }], 1, 365, 30);
+            return { env, run };
+        };
+        const noteOf = async settings => {
+            const { env, run } = build(settings);
+            await run({ source: 'Security', eventId: 1, issueLabel: 'L' });
+            return all(env.shown[0].body).filter(n => n.classList?.contains('form-text')).map(textOf).join('｜');
+        };
+        assert.ok((await noteOf({ mailWorkOrdersEnabled: true })).includes('處理人會在下一封交辦摘要收到通知'));
+        assert.ok((await noteOf({ mailWorkOrdersEnabled: false })).includes('目前未啟用交辦單通知，請自行告知處理人'));
+        const unknown = await noteOf({});
+        assert.ok(unknown.includes(NEUTRAL), unknown);
+        assert.ok(!unknown.includes('未啟用') && !unknown.includes('下一封'), unknown);
+
+        const gate = deferred();
+        const { env, run } = build({ mailWorkOrdersEnabled: true }, gate);
+        const a = run({ source: 'Security', eventId: 1, issueLabel: 'L' });
+        const b = run({ source: 'Security', eventId: 1, issueLabel: 'L' });
+        gate.resolve();
+        await Promise.all([a, b]);
+        assert.equal(env.shown.length, 1, '等待期間的重複觸發要被忽略');
     },
 
     // B5-b：回覆表單的不處理類說明行

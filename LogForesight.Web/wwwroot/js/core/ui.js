@@ -17,6 +17,7 @@ import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api, getDisplaySettings } from './api.js';
+import { mailNotifyText } from './mail-notify.js';
 // 同一個循環 import 安全模式：elements.js 也 import 本檔的 icon()，雙方都只在函式體內使用
 import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
@@ -1823,10 +1824,9 @@ export async function loadRunHint(hintEl) {
  */
 export async function confirmAndClearMute(rule) {
     // 恢復通知要不要寄取決於交辦單通知開關：依設定說明，不承諾不一定寄出的信
-    const { mailWorkOrdersEnabled } = await getDisplaySettings();
-    const notifyText = mailWorkOrdersEnabled
-        ? '進行中交辦單的處理人會在下一封交辦摘要收到恢復通知'
-        : '目前未啟用交辦單通知，進行中交辦單的處理人不會收到恢復通知，請自行告知';
+    const notifyText = mailNotifyText(await getDisplaySettings(),
+        '進行中交辦單的處理人會在下一封交辦摘要收到恢復通知',
+        '目前未啟用交辦單通知，進行中交辦單的處理人不會收到恢復通知，請自行告知');
     const confirmed = await confirmAction({
         title: '解除靜音',
         message: `解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。${notifyText}；已代為結案的單不會重開。`,

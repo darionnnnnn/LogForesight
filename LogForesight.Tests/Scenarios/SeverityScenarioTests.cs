@@ -6,7 +6,7 @@ using static LogForesight.Tests.Scenarios.SeverityEvents;
 namespace LogForesight.Tests.Scenarios;
 
 /// <summary>
-/// 第 76 輪 E4：規則嚴重度情境庫（26 個典型日）。預期定稿在 <c>docs/drafts/FEEDBACK-76-EVIDENCE.md</c>
+/// 第 76 輪 E4：規則嚴重度情境庫（26 個典型日）。預期定稿在 <c>docs/archive/FEEDBACK-76-EVIDENCE.md</c>
 /// 「E4 規則嚴重度 → 預期標註」表（H1～H12、I1～I11、N1～N4），這裡照表寫成預期、不改預期。
 /// 用預設種子規則（<c>KnownIssueSeed</c>）與預設門檻，事件照真實格式合成；實際與預期不一致的列入已知差異，
 /// 鍵 <c>E4-{情境編號}</c>。多日情境每個被標註的天各一個預期。

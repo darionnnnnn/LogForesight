@@ -1,8 +1,8 @@
 # 回饋第 76 輪第二階段規劃：交辦串接、通知與文字
 
-> 狀態：實作中——A～G 與 Z（Z1～Z8）已完成並推送；**待換模型體檢**（見「體檢交接」），體檢後才收尾歸檔、併 dev，接續方式見「接續作業」（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；兩項待確認事項依預設：勾選框預設不勾、E1-01 留第 77 輪）
+> 狀態：全案完成——A～G、Z 與換模型體檢修正皆已併入 dev（Opus 5.5 實作與自查、Fable 5.2 換模型體檢；兩項待確認事項依預設：勾選框預設不勾、E1-01 留下一輪）
 > 基準：`feature/feedback-76`@f11d2080（macOS 10,193 通過／23 略過，1.0.76.0）
-> 來源：第一階段評估報告 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（101 條發現、12 個同根因群組）；第一階段規劃見 `docs/FEEDBACK-76-PLAN.md`
+> 來源：第一階段評估報告 `docs/archive/FEEDBACK-76-EVIDENCE.md`（101 條發現、12 個同根因群組）；第一階段規劃見 `docs/archive/FEEDBACK-76-PLAN.md`
 > 實作方式：主代理規劃與驗收；跨檔實作委派 Sonnet 5.5，機械性替換委派 Haiku 5.5；同一 checkout 一次一個改檔代理
 > 畫面相關一律套用 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md` 為基準
 
@@ -602,19 +602,19 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 
 ## 體檢交接（Z9）
 
-實作方到此停止；換模型體檢後才做收尾、歸檔與併 dev。
+實作：Opus 5.5（主代理）加 Sonnet 5.5 委派，並做了自查（終檢審查、規劃對照、三角度自我體檢）。體檢：Fable 5.2，結果見文末「體檢輪修正」。
 
 - **分支與版本**：`feature/feedback-76-2`，版號 1.0.76.1；基準 `10ff66b2`（規劃定稿）。
 - **體檢建議看的地方**：
   1. 派工決策：`DispatchContext.DismissedCases`、`WorkOrderDispatcher.IneligibleReason`／`SelectHandler`、`WorkOrderCoordinator.AdminClose`（`BlocksRedispatch` 寫入點三處）。
   2. 新欄位與升級：`blocks_redispatch`、`continuation_stopped_reason/_at`、`escalated_at`（加欄時回填）；SQL Server 只以查詢翻譯確認，未連實機。
-  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 由 `ApiExceptionFilter` 對應 400；殘餘風險是 PRTG 範圍估算、清除工作、排程與 PRTG 監看 409 共 6 處仍把 Core 例外訊息轉成領域例外（已列 BACKLOG；逐處分類見 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`）。
+  3. 例外不外洩：`UserFacingMessage`、`WorkOrderRuleException` 由 `ApiExceptionFilter` 對應 400；殘餘風險是 PRTG 範圍估算、清除工作、排程與 PRTG 監看 409 共 6 處仍把 Core 例外訊息轉成領域例外（已列 BACKLOG；逐處分類見 `docs/archive/FEEDBACK-76-2-E-TABLE.md`）。
   4. 通知：`WorkOrderDigestBuilder` 八段＋管理者提醒、`AdminReminderService.Compute`／`RunAfterNightly`、`MailLinks`。
   5. 健康整體狀態：`HealthAttention.Evaluate` 與 30 秒告示快取。
-  6. 說明書：逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`。
+  6. 說明書：逐條表 `docs/archive/FEEDBACK-76-2-G-TABLE.md`。
 - **已知負載偶發（單獨重跑皆綠）**：`PrtgTransferControllerTests` Kestrel 案例、`PrtgValueFetchRetryServiceTests` 並行暫停、`PrtgEndToEndChainTests` 逾時取消、`PrtgBackfillRunnerTests.跨日回填時sensor進度換日重設不累加`（配額時間斷言）。
 - **未驗證**：正式環境事項見下節。Windows VM 全量已跑（`f4fc4dcf`，10,538 通過／0 失敗／12 略過）。
-- **收尾待辦（體檢後）**：本檔 `git mv` 進 `docs/archive/` 並補索引；`docs/drafts/FEEDBACK-76-EVIDENCE.md` 與 G 逐條表的去留；併 dev 需使用者同意。
+- **收尾**：體檢後兩份規劃檔與評估記錄、G 逐條表、E 分類表一併歸檔到 `docs/archive/` 並補索引，併入 dev。
 
 ## 交接確認事項（需要正式環境，不算驗收）
 
@@ -650,12 +650,52 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 | E-2（前綴、代碼、PRTG） | Sonnet 實作、主代理驗收 | 拿掉 `WorkOrderCoordinator：` 22 處、`IssueCaseCoordinator：` 2 處；內部代碼改顯示名稱（核心／一般／測試、保守／激進、「清單的版本標記」）；`Core/PrtgFailureText` 為 PRTG 失敗說明唯一對照（逾時、連不上、認證、伺服器放棄、400 帶 `<error>` 並截斷與遮蔽憑證），初始化失敗三處改用 `ForInit` 並移除守門一的三項暫留白名單；守門二（英文識別字＋冒號開頭、內部代碼字面） | E3、E4、E5-a～d、E6-b 通過；**全量 10,463 通過／12 略過** | E4「對應端點各一例」只做到 HostAdmin 與設定兩處，NetIQ 分級與 PRTG 清單版本訊息靠守門二字面檢查涵蓋 |
 | F（導覽與說明權限） | Sonnet 實作、主代理驗收 | 「我的交辦」導覽 `requires: 'Handle'`（`UserCapabilityResolver` 已把主機／問題負責人隱含的處理能力算進 claim）；導覽判斷抽成 `navItemVisible`；沒有處理能力開自己的頁顯示「你的角色沒有處理能力」；說明章節 `requires` 接受字串或陣列（任一命中），不存在的能力名載入即失敗；排程、權限異動、稽核三章條件對齊頁面；六章標題以導覽名稱開頭；處理人頁標題由伺服器給 | F1-a～d、F2-a～c、F3（突變稽核章條件 → 轉紅）、F4（突變標題 → 轉紅）、F5 通過；移除 `E3-S17-1`；量測：無處理能力說明 2、處理人頁 13、說明書 3 個情境五個寬度六項皆 0；定向 1,848 通過 | 守門檢查「標題以導覽名稱開頭」，比「含」嚴：hosts、settings 原標題已含導覽名稱，只比「含」會形同虛設 |
 | G-1（畫面文字與用詞） | Sonnet 實作、主代理驗收 | G 批拆四段：G-1 畫面文字與用詞守門／G-2 說明書錯誤與含糊／G-3 A～F 新行為寫進說明書／G-4 獨立複核。G-1：靜音空狀態指到「系統管理 > 問題負責與靜音」與依問題視角（E1-15）；`renderEmpty` 拿掉「尚無資料」預設、漏給標題時主控台出聲，三個已知點與兩處依賴預設的表格補具體標題（E1-42）；救援帳號說明改為 `Auth:Provider` 設 `Ad` 與「AD 驗證」頁籤（E2-09）；「保存、刷新、數據、點擊」在使用者可見文字替換約 96 行，`HandlerFacingWordingUiTests` 新增陸詞守門（JS 字串、C# 去註解、cshtml 去註解、說明書兩版、manifest；白名單為空） | G5-a～c grep 通過；G6-a 守門零命中；G6-b 反例四詞六種格式皆抓到、九種註解皆不誤抓；突變在 JS 字串加回「點擊」→ 轉紅，還原；G6-c 同步 5 處斷言（設定頁後果句、PRTG 判定查詢、兩個行為測試、靜音空狀態）；定向 987 通過 | 依 WEB-SPEC §8.6a 註解不列入用詞規範，只替換使用者可見文字；主代理把靜音空狀態的導覽分隔符改成全站多數的「>」 |
-| G-2（說明書錯誤與含糊） | Sonnet 實作、主代理驗收 | E1-03～14 錯誤、E1-17～34 含糊與缺漏改到使用者版與 AI 版（24 章、44 檔）；逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`（錯誤 25 列、含糊約 55 列，一列多事拆子列；G3 兩版一致節；報告與現況不符節） | G1 錯誤原句片語 grep 零命中；G2 逐條表附程式位置；G3 E1-04、06、10、11、26、27 兩版並列；G7 定向 401 通過；主代理抽驗立即派工與靜音頁籤權限（`RoleCapabilityMap`、`work-orders.js` 的 Maintain）、選人三層優先序（`WorkOrderDispatcher.SelectHandler`）、八種狀態，皆相符 | 報告與現況不符 4 條照程式寫（E1-30 實為「有篩選卻沒給起日」查近 90 天）；04 章兩版側軌斷點說法不一（不在報告內），留 G-4 複核 |
+| G-2（說明書錯誤與含糊） | Sonnet 實作、主代理驗收 | E1-03～14 錯誤、E1-17～34 含糊與缺漏改到使用者版與 AI 版（24 章、44 檔）；逐條表 `docs/archive/FEEDBACK-76-2-G-TABLE.md`（錯誤 25 列、含糊約 55 列，一列多事拆子列；G3 兩版一致節；報告與現況不符節） | G1 錯誤原句片語 grep 零命中；G2 逐條表附程式位置；G3 E1-04、06、10、11、26、27 兩版並列；G7 定向 401 通過；主代理抽驗立即派工與靜音頁籤權限（`RoleCapabilityMap`、`work-orders.js` 的 Maintain）、選人三層優先序（`WorkOrderDispatcher.SelectHandler`）、八種狀態，皆相符 | 報告與現況不符 4 條照程式寫（E1-30 實為「有篩選卻沒給起日」查近 90 天）；04 章兩版側軌斷點說法不一（不在報告內），留 G-4 複核 |
 | G-3（A～F 新行為） | Sonnet 實作、主代理驗收 | 八項行為寫進 05、06、12、13、14、16 兩章、19、22 的使用者版與 AI 版；逐條表加「G-3」節（11 列、28 個關鍵詞 grep 清單、6 列落差）。**同批修畫面缺陷**：靜音對話框「代為結案」附註寫「不會自動派工（不再打擾）」，實際靜音結案傳 `blocksRedispatch: false`（定案 2：系統動作造成的結案不觸發），改為「靜音結束後問題再出現會重新自動派工」 | G4 每個關鍵詞在說明書與程式皆命中；主代理抽看 05、12、16 我的交辦新增段落對照程式（恢復鈕 `Assign`、提醒間隔 0～30、站台網址格式）；附註無測試斷言；定向 1,070 通過 | 與摘要不符照程式寫：併入既有單的信件段落叫「新增成員」；靜音恢復只在提前解除時發；提醒信需郵件總開關與交辦單通知都開。靜音對話框文字變長，五寬度量測併入 Z5 |
-| G-4（獨立複核） | Sonnet 唯讀複核、主代理修正與抽驗 | 唯讀代理不讀核對表，逐句核對 G-1～G-3 改過的說明書新增行與三處畫面文字：約 255 條主張，錯誤 5、含糊 9；主代理讀程式確認後全部修正（逐條見 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`「G-4」節） | 修正後說明書定向含 UiTests 401 通過（句長守門抓到 2 句修正時變長，已拆句）；主代理抽驗代理判定正確的 10 條，全部相符 | 修正後未再派第二輪複核代理：14 條修正逐條以程式行確認，風險集中在已驗證的範圍；04 章側軌斷點兩版不矛盾，使用者版補 1600 像素預設展開 |
+| G-4（獨立複核） | Sonnet 唯讀複核、主代理修正與抽驗 | 唯讀代理不讀核對表，逐句核對 G-1～G-3 改過的說明書新增行與三處畫面文字：約 255 條主張，錯誤 5、含糊 9；主代理讀程式確認後全部修正（逐條見 `docs/archive/FEEDBACK-76-2-G-TABLE.md`「G-4」節） | 修正後說明書定向含 UiTests 401 通過（句長守門抓到 2 句修正時變長，已拆句）；主代理抽驗代理判定正確的 10 條，全部相符 | 修正後未再派第二輪複核代理：14 條修正逐條以程式行確認，風險集中在已驗證的範圍；04 章側軌斷點兩版不矛盾，使用者版補 1600 像素預設展開 |
 | Z-修 1（審查發現：後端） | 文件與程式碼兩份獨立審查（Sonnet 唯讀）；後端修正 Sonnet 實作、主代理驗收 | 文件審查 5 條：`BlocksRedispatch` 寫入點補待派頁恢復、信件逐段內容改精確、滅跡關聯錨點與 Eventlog 104 補 1102 雙來源、提醒端點補兩個欄位（RULES-SPEC 種子沿革依文件紀律不補）。程式碼審查 14 條中修 8 條：成效端點超範圍改回 400；`escalated_at` 加欄時以當下 `updated_at` 回填仍上報的成員（否則夜間掛接每天推進 `UpdatedAt`，舊資料永不提醒）；新增 `WorkOrderRuleException`（19 個擲出點），`Guard` 只轉它、框架例外記錄後回 500；健康告示行程內快取 30 秒（`HealthService` 為單例）；保留清除只在取消權杖已取消時重擲 OCE、意圖封存獨立 try；兩條管線的掛接與派工改用 `backend.Clock`；派不出去清單只在全量執行取代；站台網址拒絕帳密段。4 條低優先進 BACKLOG（兩處查詢量、整列儲存覆寫、感測器全空判定） | 每項新測試修前紅（第 4 項效能、第 5、7 項新函式為編譯紅）修後綠；主代理讀 Guard 與快取差異、確認 `HealthService` 單例；**全量 10,489 通過／0 失敗／21 略過** | 第 6 項兩個管線檔有與交辦無關的系統時鐘，整檔納入守門會紅，改以呼叫點掃描守門；BACKLOG 的輪次字樣被 DocNarrativeGuard 擋下，改為「下一輪預定」 |
 | Z-修 2（審查發現：前端） | Sonnet 實作、主代理驗收 | 代為結案台數改為進行中加停用主機上的進行中（後端 `AdminCloseLocked` 結案全部進行中成員），有停用主機時後果說明加「含已停用主機 N 台」；Z4 補三個前端消費點：續掛已停止帶日期（`continuationStoppedAt`）、提醒區每類「看是哪些」明細與彙整時間、提醒間隔 0 的常駐說明（`escalated`／`unassignable`／`unassignableAt`／`reminderDays`）、PRTG 維護頁同步狀態下逐條列出 `lastWarnings`；說明書兩版與 WEB-SPEC、PRTG-SPEC 同步 | 行為測試 8 案（突變台數改回只算進行中 → 轉紅）；量測：交辦總覽、交辦單、交辦-詳情、PRTG維護、問題負責與靜音（含靜音視窗附註變長）五個寬度六項皆 0，新增 3 個互動情境；全量 10,496 通過、1 筆 `PrtgBackfillRunnerTests.跨日回填…`（配額限速時間斷言）負載下偶發，單獨重跑三次皆綠 | 只剩停用主機的單由行為測試覆蓋，UI 資料集沒做這種單；新增負載偶發一筆（本段未動 PRTG 回填） |
 | Z（終檢） | 主代理 | Z1 對照、Z2 已知差異、Z4 跨批 grep、Z5 全部情境 quick 矩陣、Z6 全量、Z7 文件、Z8 版號 1.0.76.1、Z9 體檢交接節（見上方兩節） | quick 矩陣 2 格失敗與第一階段相同；最後一次全量 10,496 通過／1 失敗／21 略過，失敗為 `PrtgSelectedBackfillServiceTests` 收尾刪暫存目錄時背景回填仍在寫（Directory not empty），單獨重跑三次皆綠 | 收尾改為重試刪除、刪不掉不轉紅；量測站台結束時子行程 dotnet 殘留占 5099，已手動結束 |
 | 規劃對照程式 | 兩個唯讀代理（A/T/B/D、C/E/F/G）逐條讀程式與測試核對、主代理處置 | 沒有未實作項目。補齊：D2-a 行為測試（只靠案件授與的主機不進候選人可見主機、群組授權照常）；B6-a 以處理人摘要 `visibleHostCount` 表達取消收回授與（取消前 1、後 0）；G 第二輪唯讀複核只看 G-4 修正段落，**錯誤 0、含糊 0**；D 定案 2 補註問題負責人範圍；BACKLOG 保留清除一條與 DB-SPEC 措辭依現況修正；本檔已完成的「待使用者確認」「下一步」段落移除 | D2-a 突變擴大可見集合 → 轉紅；B6-a 突變拿掉 `HostNamesWithCases` 的 `!c.Cancelled` → 只有新斷言轉紅（詳情 404 走另一個查詢，證明新斷言才有鑑別力）；相關 378 通過；Windows VM 全量 10,506 通過／0 失敗／12 略過 | E2 分類表與 E-前置清單沒有書面留存，下一段補 |
-| E 逐處分類補檔 | Sonnet 依 `bf80e179`、`69e13774`、`c42c5302` 回溯、主代理抽驗 | 新增 `docs/drafts/FEEDBACK-76-2-E-TABLE.md`：E2 母體 79 列（修改 44、保留 35，另 21 行純記錄檔附錄）、E-前置 29 列、Z 批影響 8 列；82＝修改前 Controllers 與 Services 含 `ex.Message` 的行數（主代理以 `git grep` 重現 82），92＝再加 `Auth/` 與記錄檔行 | 回溯發現 E-1 漏改一處行為：成效端點超範圍從 400 退成 500 而測試仍綠（已在 Z-修 1 修正並補端點測試）；前端沒有任何地方比對後端訊息 | 「修改 25 處、白名單 34 項」無法由歷史精確重現（實數 38 行、33 條），已在表內寫明；6 處殘餘例外轉換列入 BACKLOG |
+| E 逐處分類補檔 | Sonnet 依 `bf80e179`、`69e13774`、`c42c5302` 回溯、主代理抽驗 | 新增 `docs/archive/FEEDBACK-76-2-E-TABLE.md`：E2 母體 79 列（修改 44、保留 35，另 21 行純記錄檔附錄）、E-前置 29 列、Z 批影響 8 列；82＝修改前 Controllers 與 Services 含 `ex.Message` 的行數（主代理以 `git grep` 重現 82），92＝再加 `Auth/` 與記錄檔行 | 回溯發現 E-1 漏改一處行為：成效端點超範圍從 400 退成 500 而測試仍綠（已在 Z-修 1 修正並補端點測試）；前端沒有任何地方比對後端訊息 | 「修改 25 處、白名單 34 項」無法由歷史精確重現（實數 38 行、33 條），已在表內寫明；6 處殘餘例外轉換列入 BACKLOG |
 | 收尾前自我體檢 | 三個唯讀代理（處理人與主機負責人、管理端各角色、上帝視角）、主代理逐條讀程式確認；修正 R1 後端、R2 前端與說明書（Sonnet 實作、主代理驗收） | 約 34 條發現，確認屬實的修正：**提醒漏寄**（同一時段多筆管理者提醒只取最後一筆，改為合併）；**續跑與帳本複查趟清空派不出去清單**（`RunRequest.ContinuesWindow`，只有首趟全量取代）；**保留清除悄悄解除處理人判定的不處理**（違反定案 2；`Expired` 保留該鍵最新的有效不處理案件，不處理類定義收斂到 `IssueHandlingStatuses.Dismissals`）；取消的案件不再解除閘門；`WorkOrderRuleException` 交給 `ApiExceptionFilter`（刪兩份 Guard，補過濾器與登錄型別一致的守門）；批次回覆併發衝突給中文訊息；錯誤訊息不含案件識別碼；靜音中的問題不催提醒、靜音代為結案失敗時補發暫停；信件結尾依種類、退回與取消補說明、台數排除停用主機；立即派工改 `Assign`（路由基準只差一列）；健康頁算出新結果同步告示快取；停用篩選與續掛原因同口徑；`AdminReminderDto` 拆出內部型別。前端：**處理人回覆可能落到停用主機**（`replyableCount`）；通知句依交辦單通知開關；多問題單勾選框；救援帳號不附進不去的連結；風險日詳情處理面板補不處理類後果；單複數；管理者標示不對處理人顯示；處理人頁頭「目前暫停接單」（摘要直接帶 `HandlerPaused`）；dev 告示補聯絡；解除靜音的後果；規則升級橫幅說明與畫面內警告；唯讀角色提示；說明書兩版與規格文件同步 | 各項新測試修前紅修後綠（R1 第 6、10、12 項為推論或無法先紅，已註明）；回覆台數突變轉紅；量測：交辦總覽、交辦單、交辦-詳情、處理人、問題負責與靜音、使用者、規則、風險日詳情五個寬度六項皆 0；macOS 全量 10,529 通過／0 失敗／21 略過 | 未修列 BACKLOG：取消或移交後成員主機死連結（需後端可見旗標）、停用主機排除條件與候選人可見主機的查詢量（未量測）；處理面板、解除靜音、規則警告區的新文字只有量測與既有守門覆蓋，未補行為測試 |
+
+## 體檢輪修正（Fable 5.2，2026-11-18）
+
+體檢方與實作方不同模型。範圍以三個自查修正提交（`c42c5302`、`ebdfdfa7`、`87ce1cb2`）為主——它們沒被任何獨立視角看過；
+A～G 定案逐條對照與自查前的逐檔審查已由實作方做過，不重查。三區唯讀掃描（後端、前端、文件；Sonnet 5.5，規則檔要求探針與「已實測／推論」標註），
+主代理讀程式確認後處置。共 25 條：後端 9、前端 7、文件 9。
+
+### 後端
+| 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|
+| `AdminReminderService`、`SchedulerHostedService`、`RunRequest` | 自查把「整份取代派不出去清單」的條件改成依請求形狀（全量、非續跑、非帳本複查）；但清單只含本趟實際處理到的主機日——首趟中斷、白天手動全量但沒有待處理日、只補缺漏、多窗口的後續窗口都符合條件，清單被清空或停在殘缺值 | 改為每趟合併：以（問題, 原因）為鍵寫入或更新，連續兩個日曆日的執行沒再觀察到才移除；刪除 `SummaryForUnassignableList` 與 `RunRequest.ContinuesWindow` | `AdminReminderTests.派不出去清單_部分趟的空結果不清掉既有項目`、`_同鍵更新台數_同日部分趟不把台數蓋小`、`_連續兩個日曆日沒再觀察到才移除_一天內保留`、`_舊資料沒有ObservedAt…` |
+| `WorkOrderDigestBuilder`、`WorkOrderOutbox` | 自查的提醒合併以整行字串去重：寄送失敗隔天重寄時，同一成員因「已上報 N 天」不同被列兩次、計數灌水；截斷行夾在段落中間（探針重現） | 入列時帶結構化項目（類別、成員鍵、文字、該類總數），組信依鍵去重、同鍵留最新；舊佇列項目照常寄 | `同一成員隔天又入列_只列一次取最新文字_計數為1`、`截斷筆與未截斷筆合併…`、`只有文字的舊項目與結構化項目同封…` |
+| `EfIssueCaseStore.Expired` | 被保留的不處理案件，在同鍵有較新的進行中案件時仍會被清除；該新單之後被取消，閘門就解除（與「取消不解除閘門」衝突） | 只有較新、未取消且已結案的案件才算取代 | `HandlingRetentionTests.案件清理_較新案件進行中時不處理案件保留_較新案件已結案才算取代` |
+| `MailNotificationService.LoadDigestOrder`、`WorkOrderDigestBuilder` | 台數改排除停用主機後，新交辦在寄出前已被取消或全數結案時信裡寫「（0 台）」；先取 200 筆再過濾讓主機名單少於台數 | 0 台改註「成員已結案、移出或主機已停用」；改以進行中條件查詢 | `WorkOrderDigestTests.A4_…`、`A5_…` |
+| `ApiExceptionFilterTests` | 「登錄型別都有過濾器對應」的守門以字串包含比對，註解出現型別名也會通過 | 去註解後比對實際的 switch 對應，加反例 | `Switch對應判定_只在註解出現型別名時比不到…` |
+
+未修（低，已記 BACKLOG 或無後果）：被保留案件的處理歷程過了稽核保留天數後「結案的人」為空；`CreatedAt` 完全相同的兩筆同鍵案件兩筆都保留。
+
+### 前端
+| 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|
+| `work-order-detail.js`「回覆這張單」 | 自查新增的 `replyableCount` 只套到處理人工作頁；詳情頁仍用不含停用主機的台數——只剩停用主機一台時被擋、一啟用一停用時只回覆第一筆（探針重現） | 改用 `replyableCount` | `actionsReplyCountsMembersOnDisabledHosts` |
+| 同檔代為結案後果說明 | 勾選框依台數與是否單一問題變化，後果說明仍寫死「這台主機的這個問題」（探針重現） | 抽 `blockTargetText` 兩處共用 | `adminCloseConsequenceNamesSameTargetAsCheckbox` |
+| 五處通知句 | 設定讀不到時被當成關閉，寫「未啟用交辦單通知」 | `core/mail-notify.js` 三態，讀不到用中性句 | `…ThreeStates` 四案 |
+| 代為結案、靜音對話框 | 改成先讀設定再開後，連點會疊開兩個對話框 | `async-guards.js` 的 `exclusive` | `adminCloseIgnoresRepeatTriggerWhileLoading` 等 |
+| `layout.js` 健康告示 | 主文已寫聯絡人時又多一行「請聯絡系統管理員」 | 已有聯絡人就不補 | `bannerContactLineNotRepeatedWhenMainTextHasContacts` |
+| `rules.js` 套用後警告 | 警告常駐到下一次套用 | 規則清單重新載入時清掉 | `RulesImportWarningsBehaviorTests` 兩案 |
+| `ui-scenarios.json` | 自查把斷言放寬成只比「處理人」，通知開或關都命中 | 改比資料集設定下的完整片語 | 量測情境 |
+
+### 文件
+BACKLOG 與體檢交接仍提到已刪除的 `Guard`；WEB-SPEC 同段留著「只列最新一筆」「每趟整份取代」舊句；站台網址拒絕內嵌帳密沒寫進規格與說明書；
+CLAUDE.md 缺本輪四條紅線（可替換時鐘、例外訊息、健康整體狀態、不再打擾判定）；README 升級注意事項漏本版；交接確認事項缺 SQL Server 升級確認等三項；
+BACKLOG 一處輪次字眼；`16-issue-owners.ai.md` 一句過度宣稱；DESIGN-SYSTEM 補空狀態標題必填。全部已修。
+
+規劃比對：A～G 定案、繞過路徑、改動清單逐條有對應實作，「明確不做」沒有混入。版號 1.0.76.2。
+測試：macOS 全量 10,544 通過／0 失敗／21 略過；Windows（103 VM）全量 __WIN__。
+
+## 終檢輪
+
+__FINAL__

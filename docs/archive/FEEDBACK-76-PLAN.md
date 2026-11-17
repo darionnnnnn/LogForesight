@@ -1,6 +1,6 @@
 # 回饋第 76 輪規劃：使用者角度總體檢
 
-> 狀態：第一階段（取得評估依據）完成，評估報告見 `docs/drafts/FEEDBACK-76-EVIDENCE.md`；第二階段（優化）規劃見 `docs/FEEDBACK-76-2-PLAN.md`
+> 狀態：全案完成（第一階段取得評估依據；第二階段實作與體檢完成後一併歸檔），評估報告見 `docs/archive/FEEDBACK-76-EVIDENCE.md`；第二階段（優化）規劃見 `docs/archive/FEEDBACK-76-2-PLAN.md`
 > 基準：dev@11d643d3（macOS 10,082 通過／20 略過，1.0.75.2）
 > 來源：使用者 2026-11-16 指示——從使用者角度檢查每個流程的細節：（1）說明書與畫面說明文字是否精確；（2）各角色流程是否順手；（3）使用者與管理者之間的串接能否應付各種情境；（4）規則在實際場景是否高估或低估嚴重度；另外自行補充其他面向。以測試資料與模擬流程實際操作並記錄，作為評估依據；再以整體專案角度規劃優化。
 > 實作方式：主代理規劃與驗收；跨檔實作與情境撰寫委派 Sonnet 5.5，機械性核對委派 Haiku 5.5；同一 checkout 一次一個改檔代理，唯讀核對可並行（skills `subagent-verification-policy/LOCAL.md`）
@@ -22,7 +22,7 @@
 
 ## 評估記錄格式
 
-記錄寫在 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（不放 `docs/` 主目錄：那裡只放現行事實，`DocNarrativeGuardTests` 也會掃；收尾時與本檔一起歸檔）。每條一列：
+記錄寫在 `docs/archive/FEEDBACK-76-EVIDENCE.md`（不放 `docs/` 主目錄：那裡只放現行事實，`DocNarrativeGuardTests` 也會掃；收尾時與本檔一起歸檔）。每條一列：
 
 | 欄位 | 內容 |
 |---|---|
@@ -69,7 +69,7 @@
 
 ### 改動
 1. `Directory.Build.props` 版號改 `1.0.76.0`（`VersionRoundGuardTests` 守第三碼）。
-2. 本規劃檔、`docs/drafts/FEEDBACK-76-EVIDENCE.md` 骨架（記錄格式、各批章節、已知事實段）。
+2. 本規劃檔、`docs/archive/FEEDBACK-76-EVIDENCE.md` 骨架（記錄格式、各批章節、已知事實段）。
 3. 開輪時已核對的三個缺口先登錄（見 E3 的「已確認」）。
 
 ### 驗收

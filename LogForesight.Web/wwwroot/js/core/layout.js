@@ -781,11 +781,13 @@ async function loadHealthBanner(user) {
 
     const text = document.createElement('span');
     const reason = stale ? freshnessReason(freshness, hasCapability(user, 'Maintain')) : { text: '', credential: false };
+    let mainTextHasContacts = false;
     if (stale) {
         const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
         const contacts = !hasCapability(user, 'Maintain') && freshness.adminContacts?.length
             ? `請聯絡：${freshness.adminContacts.join('、')}。`
             : '';
+        mainTextHasContacts = contacts !== '';
         text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。${reason.text}${contacts}`;
     } else {
         text.textContent = `系統狀態需要注意（${reasons.length} 項）。`;
@@ -827,8 +829,8 @@ async function loadHealthBanner(user) {
             list.appendChild(item);
         }
         bar.appendChild(list);
-        // 沒有 Maintain 的人（開發人員）進不了系統健康頁，只看得到原因：補上下一步，免得看完不知道找誰
-        if (!hasCapability(user, 'Maintain')) {
+        // 沒有 Maintain 的人（開發人員）進不了系統健康頁，只看得到原因：補上下一步，免得看完不知道找誰；主文已列出聯絡人就不重複
+        if (!hasCapability(user, 'Maintain') && !mainTextHasContacts) {
             const contact = document.createElement('div');
             contact.className = 'w-100';
             contact.setAttribute('data-health-contact', '1');

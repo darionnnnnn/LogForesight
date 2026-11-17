@@ -4,7 +4,9 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
-import { statusesWhere, statusBadgeMeta, isNoFixClosure } from '../core/handling-statuses.js';
+import { statusesWhere, statusBadgeMeta, isNoFixClosure, replyableCount } from '../core/handling-statuses.js';
+import { mailNotifyText } from '../core/mail-notify.js';
+import { exclusive } from '../core/async-guards.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -287,9 +289,18 @@ function renderHeader(detail) {
 
 // 處理人回覆的入口在處理人工作頁（/handlers/{id}），詳情頁只放管理動作
 
-async function openAdminCloseModal() {
-    // 結案通知要不要寄取決於交辦單通知開關：依實際設定說明，不承諾不一定寄出的信
-    const { mailWorkOrdersEnabled } = await getDisplaySettings();
+/**
+ * 勾選框與後果說明指稱的對象（同一份，兩處不各拼一份）：台數含停用主機；
+ * 只有單一問題的單（有 source）才能說「這個問題」，多問題單改指稱主機上的問題。
+ */
+function blockTargetText(activeCount, singleIssue) {
+    const hosts = activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機';
+    return singleIssue ? `${hosts}的這個問題` : `${hosts}上的問題`;
+}
+
+async function buildAdminCloseModal() {
+    // 結案通知要不要寄取決於交辦單通知開關：依實際設定說明，不承諾不一定寄出的信；讀不到設定就用中性句
+    const mailSettings = await getDisplaySettings();
     // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
     const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
     const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
@@ -329,11 +340,8 @@ async function openAdminCloseModal() {
     const blockLabel = document.createElement('label');
     blockLabel.className = 'form-check-label';
     blockLabel.htmlFor = 'wo-close-block';
-    // 只有單一問題的單（有 source）才能說「這個問題」；多問題單改指稱主機上的問題
-    const singleIssue = !!currentDetail?.source;
-    blockLabel.textContent = singleIssue
-        ? `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}的這個問題之後不再自動派工`
-        : `${activeCount > 1 ? `這 ${activeCount} 台主機` : '這台主機'}上的問題之後不再自動派工`;
+    const targetText = blockTargetText(activeCount, !!currentDetail?.source);
+    blockLabel.textContent = `${targetText}之後不再自動派工`;
     blockWrap.append(blockInput, blockLabel);
 
     // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
@@ -358,11 +366,12 @@ async function openAdminCloseModal() {
     actions.appendChild(submitBtn);
 
     function renderConsequence() {
-        const notes = [statusNote('info', (mailWorkOrdersEnabled ? '處理人會在下一封交辦摘要收到結案通知。' : '目前未啟用交辦單通知，請自行告知處理人。') + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        const notifyText = mailNotifyText(mailSettings, '處理人會在下一封交辦摘要收到結案通知', '目前未啟用交辦單通知，請自行告知處理人');
+        const notes = [statusNote('info', `${notifyText}。` + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
         if (isNoFixClosure(statusSelect.value)) {
             notes.push(statusNote('warning', blockInput.checked
-                ? '已勾選：這台主機的這個問題之後不會再自動派工。'
-                : '未勾選：這個問題之後再出現時會重新派工。不想再收到，請勾選上方選項，或改用靜音。'));
+                ? `已勾選：${targetText}之後不會再自動派工。`
+                : `未勾選：${targetText}之後再出現時會重新派工。不想再收到，請勾選上方選項，或改用靜音。`));
         }
         consequence.replaceChildren(...notes);
     }
@@ -413,6 +422,9 @@ async function openAdminCloseModal() {
     showDetailModal({ title: '代為結案', body });
 }
 
+/** 設定請求回來前再按一次不會疊開第二個對話框 */
+const openAdminCloseModal = exclusive(buildAdminCloseModal);
+
 /** 以本單的回覆端點回覆指定成員；成功後重新載入本頁 */
 function openMemberReply(caseIds, targetText) {
     openWorkOrderReplyModal({
@@ -445,7 +457,8 @@ function renderActions(detail, user) {
         // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
         // 處理人在這一頁最常做的事：頁面唯一的實心主要按鈕（管理動作是一般次要按鈕，處理人看不到）
         const replyBtn = button('回覆這張單', { variant: 'primary', size: null, onClick: async () => {
-            const activeCount = detail.counts.active;
+            // 含停用主機上的進行中成員：成員清單與回覆端點都涵蓋它們（與處理人工作頁同一個算法）
+            const activeCount = replyableCount(detail.counts);
             if (activeCount === 0) {
                 toast('這張單已沒有進行中的主機', 'info');
                 return;
@@ -510,10 +523,7 @@ function renderActions(detail, user) {
     // 退回處理人：處理人把成員標成「無法處理」後，管理者可附說明把這些成員退回同一位處理人（改回處理中）
     if ((detail.counts?.escalated ?? 0) > 0 && !detail.closedAt) {
         const returnBtn = button('退回處理人', { size: null, opens: 'dialog', onClick: async () => {
-            const { mailWorkOrdersEnabled } = await getDisplaySettings();
-            const notifyText = mailWorkOrdersEnabled
-                ? '處理人會在下一封交辦摘要收到退回通知。'
-                : '目前未啟用交辦通知，請自行告知處理人。';
+            const notifyText = mailNotifyText(await getDisplaySettings(), '處理人會在下一封交辦摘要收到退回通知', '目前未啟用交辦通知，請自行告知處理人') + '。';
             const note = await confirmActionWithReason({
                 title: '退回處理人',
                 message: `把這張單中標為「無法處理」的主機退回處理人，狀態改回處理中。${notifyText}`,
@@ -538,11 +548,8 @@ function renderActions(detail, user) {
 
     // 取消交辦按鈕
     const cancelBtn = button('取消交辦', { variant: 'outline-danger', size: null, opens: 'dialog', onClick: async () => {
-        // 交辦通知預設關閉：依 mailWorkOrdersEnabled 說實話，避免承諾一封不會寄的信
-        const { mailWorkOrdersEnabled } = await getDisplaySettings();
-        const notifyText = mailWorkOrdersEnabled
-            ? '處理人會在下一封交辦摘要收到取消通知。'
-            : '目前未啟用交辦通知，請自行告知處理人。';
+        // 交辦通知預設關閉：依設定說實話，避免承諾一封不會寄的信；讀不到設定就用中性句
+        const notifyText = mailNotifyText(await getDisplaySettings(), '處理人會在下一封交辦摘要收到取消通知', '目前未啟用交辦通知，請自行告知處理人') + '。';
         const reason = await confirmActionWithReason({
             title: '取消交辦',
             message: `取消後這張單的進行中主機會調回未處理，${notifyText}`,

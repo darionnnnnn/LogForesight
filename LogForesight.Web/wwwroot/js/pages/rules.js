@@ -81,6 +81,8 @@ ruleTabsEl.addEventListener('click', event => {
 });
 
 async function load() {
+    // 套用內建規則升級後的驗證警告只在「那一次套用」有意義：規則清單重新載入（儲存、刪除…）就清掉，不整頁常駐
+    clearRuleImportWarnings();
     renderLoading(document.getElementById('rule-list'), 8);
 
     [rules, suppressions] = await Promise.all([
@@ -1506,6 +1508,10 @@ function importActionBadge(action, text) {
     return span;
 }
 
+function clearRuleImportWarnings() {
+    document.getElementById('rule-import-warnings')?.replaceChildren();
+}
+
 /** 套用後的驗證警告：清單逐條列出（textContent），沒有警告就清空這個區塊 */
 function renderRuleImportWarnings(warnings) {
     const box = document.getElementById('rule-import-warnings');
@@ -1525,7 +1531,7 @@ function renderRuleImportWarnings(warnings) {
     box.replaceChildren(note, list);
 }
 
-document.getElementById('rule-import-apply-btn').addEventListener('click', async () => {
+async function applyRuleImport() {
     const overwrite = document.getElementById('rule-import-overwrite').checked;
     const applyButton = document.getElementById('rule-import-apply-btn');
     const restore = withBusy(applyButton, '套用中');
@@ -1538,18 +1544,21 @@ document.getElementById('rule-import-apply-btn').addEventListener('click', async
         );
         toast('規則變更只影響之後的分析；如需回溯套用到過去的日子，請至「排程作業」頁使用「立即執行」的重新分析模式。', 'info');
 
-        // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版：
-        // 留在頁面上方的說明區（純文字），管理者不必打開瀏覽器主控台就能看
-        renderRuleImportWarnings(result.warnings);
         ruleImportModal.hide();
         await checkRuleImportStatus();
         await load();
+        // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版：
+        // 留在頁面上方的說明區（純文字），管理者不必打開瀏覽器主控台就能看；
+        // 要在套用後那次重新載入之後才畫（load 會清掉舊警告），下一次重新載入再清掉
+        renderRuleImportWarnings(result.warnings);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
         restore();
     }
-});
+}
+
+document.getElementById('rule-import-apply-btn').addEventListener('click', applyRuleImport);
 
 checkRuleImportStatus();
 renderAlertToolsTable(document.getElementById('suppression-alert-tools'));

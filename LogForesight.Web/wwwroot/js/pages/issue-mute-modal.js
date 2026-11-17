@@ -13,6 +13,8 @@
 import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { toast, withBusy, showDetailModal, button } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
+import { mailNotifyText } from '../core/mail-notify.js';
+import { exclusive } from '../core/async-guards.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 /** 前五顆快捷時長；自訂以 days: null 表示，選中時才顯示天數輸入 */
@@ -72,7 +74,7 @@ async function loadActiveOrders(source, eventId) {
  * @param {{to: string, reason: string, byAccount: string}|null} [options.currentMute] 目前靜音區間；有值＝這次是延長
  * @param {() => void} [options.onApplied] 套用成功後的重新載入
  */
-export async function openIssueMuteModal({ source, eventId, issueLabel, currentMute, onApplied }) {
+async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, onApplied }) {
     // 呼叫端都是 click 監聽（沒有人接這個 Promise），失敗要在這裡收掉
     let user;
     try {
@@ -83,7 +85,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     const canClose = hasCapability(user, 'Assign') && hasCapability(user, 'Handle');
     const activeOrders = await loadActiveOrders(source, eventId);
     // 結案通知要不要寄取決於交辦單通知開關：依設定說明，不承諾不一定寄出的信
-    const { mailWorkOrdersEnabled } = await getDisplaySettings();
+    const mailSettings = await getDisplaySettings();
 
     const isExtend = !!currentMute;
     const actionText = isExtend ? '延長靜音' : '靜音問題';
@@ -209,7 +211,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
         if (canClose) {
             const closeNote = document.createElement('div');
             closeNote.className = 'form-text';
-            closeNote.textContent = `代為結案：這些交辦單以「不處理」結案，${mailWorkOrdersEnabled ? '處理人會在下一封交辦摘要收到通知' : '目前未啟用交辦單通知，請自行告知處理人'}；靜音期間不派工，靜音結束後問題再出現會重新自動派工`;
+            closeNote.textContent = `代為結案：這些交辦單以「不處理」結案，${mailNotifyText(mailSettings, '處理人會在下一封交辦摘要收到通知', '目前未啟用交辦單通知，請自行告知處理人')}；靜音期間不派工，靜音結束後問題再出現會重新自動派工`;
             section.appendChild(closeNote);
         }
 
@@ -277,3 +279,6 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     body.appendChild(form);
     showDetailModal({ title: `${actionText}：${issueLabel}`, body });
 }
+
+/** 靜音 modal 的唯一入口：前置資料請求回來前再觸發會被忽略，不會疊開第二個對話框 */
+export const openIssueMuteModal = exclusive(buildIssueMuteModal);

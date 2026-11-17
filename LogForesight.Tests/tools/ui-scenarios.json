@@ -1281,7 +1281,7 @@
         "assert": {
           "sel": ".modal.show #wo-close-consequence",
           "visible": true,
-          "text": "處理人"
+          "text": "未啟用交辦單通知，請自行告知處理人"
         }
       },
       {

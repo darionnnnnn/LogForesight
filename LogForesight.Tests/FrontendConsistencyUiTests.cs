@@ -474,7 +474,8 @@ public class FrontendConsistencyUiTests
         }
 
         Assert.Contains("/work-orders/", ReadJs("pages", "records.js"));
-        Assert.Contains("mailWorkOrdersEnabled", ReadJs("pages", "work-order-detail.js"));
+        Assert.Contains("mailNotifyText", ReadJs("pages", "work-order-detail.js"));
+        Assert.Contains("mailWorkOrdersEnabled", ReadJs("core", "mail-notify.js"));
     }
 
     [Fact]
