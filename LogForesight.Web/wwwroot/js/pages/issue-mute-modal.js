@@ -207,7 +207,7 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
         if (canClose) {
             const closeNote = document.createElement('div');
             closeNote.className = 'form-text';
-            closeNote.textContent = '代為結案：結案後這些主機之後再出現同一個問題不會自動派工（不再打擾），需要時請手動交辦';
+            closeNote.textContent = '代為結案：這些交辦單以「不處理」結案並通知處理人；靜音期間不派工，靜音結束後問題再出現會重新自動派工';
             section.appendChild(closeNote);
         }
 
