@@ -433,8 +433,12 @@ public class MailNotificationService
             }
             body.AppendLine();
             if (notice.WorkOrderId is { } workOrderId)
-                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台『交辦單』頁檢視，可改派或代為結案）");
-            body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
+            {
+                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台的「{MailLinks.WorkOrdersName}」頁開啟該單，可改派或代為結案）");
+                AppendSiteLink(body, settings, MailLinks.WorkOrderPath(workOrderId), "交辦單連結");
+            }
+            body.AppendLine($"請至站台的「{MailLinks.RecordsName}」頁（依問題視角）檢視並處理。");
+            AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
 
             await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
         }
@@ -741,7 +745,7 @@ public class MailNotificationService
             })
             .ToList();
 
-        var (subjectSummary, text) = WorkOrderDigestBuilder.Build(rows);
+        var (subjectSummary, text) = WorkOrderDigestBuilder.Build(rows, settings.SiteBaseUrl, recipientId);
         var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", type, subjectSummary);
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
@@ -1579,12 +1583,17 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(statsLine);
 
-        if (issueRows == null) return body.ToString();
+        if (issueRows == null)
+        {
+            AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
+            return body.ToString();
+        }
 
         body.AppendLine();
         AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
         body.AppendLine();
-        body.AppendLine("如需查看逐主機逐日明細，請至站台的問題查詢頁。");
+        body.AppendLine($"如需查看逐主機逐日明細，請至站台的「{MailLinks.RecordsName}」頁。");
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
         return body.ToString();
     }
 
@@ -1599,11 +1608,22 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(windowText);
 
-        if (issueRows == null) return body.ToString();
-
-        body.AppendLine();
-        AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
+        if (issueRows != null)
+        {
+            body.AppendLine();
+            AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
+        }
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
         return body.ToString();
+    }
+
+    /// <summary>
+    /// 站台連結行：設定了站台網址才寫，連結一律由 <see cref="MailLinks.Build"/> 組出（信件服務內不自行相接網址）。
+    /// 沒設定時什麼都不寫，信件與未設定時完全相同。
+    /// </summary>
+    private static void AppendSiteLink(StringBuilder body, SystemSettings settings, string relativePath, string label)
+    {
+        if (MailLinks.Build(settings.SiteBaseUrl, relativePath) is { } link) body.AppendLine($"{label}：{link}");
     }
 
     /// <summary>
@@ -1627,7 +1647,8 @@ public class MailNotificationService
             var subj = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, RiskLevels.High, "高風險即時通知", globalStatsLine);
             var b = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) b.AppendLine(settings.MailBodyIntro).AppendLine();
-            b.AppendLine($"{globalStatsLine}，詳情請至站台檢視。");
+            b.AppendLine($"{globalStatsLine}，詳情請至站台的「{MailLinks.RecordsName}」頁檢視。");
+            AppendSiteLink(b, settings, MailLinks.RecordsPath, "問題查詢連結");
             return (subj, b.ToString());
         }
 
@@ -1658,8 +1679,11 @@ public class MailNotificationService
         }
         if (ordered.Count > UrgentBodyLineLimit)
         {
-            body.AppendLine($"  ……其餘 {ordered.Count - UrgentBodyLineLimit} 筆請至站台的問題查詢頁檢視。");
+            body.AppendLine($"  ……其餘 {ordered.Count - UrgentBodyLineLimit} 筆請至站台的「{MailLinks.RecordsName}」頁檢視。");
         }
+        body.AppendLine();
+        body.AppendLine($"完整內容請至站台的「{MailLinks.RecordsName}」頁。");
+        AppendSiteLink(body, settings, MailLinks.RecordsPath, "問題查詢連結");
 
         // 判定依據（RiskBasis）不再附上——內容廣泛化（回饋十七輪批次B-3）
 

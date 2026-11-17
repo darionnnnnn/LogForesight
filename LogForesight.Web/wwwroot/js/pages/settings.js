@@ -598,6 +598,7 @@ function renderMailFields(settings) {
 
     document.getElementById('mail-subject-template').value = settings.mailSubjectTemplate ?? '';
     document.getElementById('mail-body-intro').value = settings.mailBodyIntro ?? '';
+    document.getElementById('site-base-url').value = settings.siteBaseUrl ?? '';
     document.getElementById('mail-digest-skip-empty').checked = settings.mailDigestSkipEmpty;
     document.getElementById('mail-notify-work-orders').checked = !!settings.mailNotifyWorkOrders;
     document.getElementById('mail-work-order-digest-times').value = (settings.mailWorkOrderDigestTimes || []).join(', ');
@@ -1559,6 +1560,7 @@ function bindForm() {
                 mailUrgentEnabled,
                 mailSubjectTemplate: document.getElementById('mail-subject-template').value.trim(),
                 mailBodyIntro: document.getElementById('mail-body-intro').value.trim(),
+                siteBaseUrl: document.getElementById('site-base-url').value.trim(),
                 mailDigestSkipEmpty: document.getElementById('mail-digest-skip-empty').checked,
                 mailNotifyWorkOrders: document.getElementById('mail-notify-work-orders').checked,
                 mailWorkOrderDigestTimes: document.getElementById('mail-work-order-digest-times').value.split(',').map(s => s.trim()).filter(Boolean),

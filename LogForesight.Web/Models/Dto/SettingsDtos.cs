@@ -131,6 +131,9 @@ public class SystemSettingsDto
     public string MailSubjectTemplate { get; set; } = "";
     public string MailBodyIntro { get; set; } = "";
 
+    /// <summary>站台網址（信件連結前綴，含子應用程式路徑）；空白＝信件不附連結</summary>
+    public string SiteBaseUrl { get; set; } = "";
+
     /// <summary>每日／週報彙總期間內無達門檻風險日時是否略過寄送（回饋十七輪批次A-4）</summary>
     public bool MailDigestSkipEmpty { get; set; }
 
@@ -434,6 +437,10 @@ public class UpdateSystemSettingsRequest
 
     [StringLength(2000)]
     public string MailBodyIntro { get; set; } = "";
+
+    /// <summary>站台網址（信件連結前綴，含子應用程式路徑）；空白＝信件不附連結。格式由服務層驗證</summary>
+    [StringLength(500, ErrorMessage = "站台網址最多 500 字")]
+    public string SiteBaseUrl { get; set; } = "";
 
     public bool MailDigestSkipEmpty { get; set; }
 

@@ -859,6 +859,15 @@
                 <label for="mail-body-intro" class="form-label">信件開頭（選填）</label>
                 <textarea class="form-control" id="mail-body-intro" rows="2" placeholder="純文字，會加在信件內容最前面"></textarea>
             </div>
+            <div class="mb-3">
+                <label for="site-base-url" class="form-label">站台網址（選填）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="填了之後，信件會附上可直接點開的連結（我的交辦、交辦單、交辦總覽、問題查詢）。站台掛在 IIS 子應用程式時要含子路徑。不填則信件不附連結。連結只依這裡的設定組出，不取自瀏覽器的網址。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+                <input type="text" class="form-control lf-mono" id="site-base-url" maxlength="500" autocomplete="off" placeholder="https://lf.example.com 或 https://srv.example.com/lf" />
+                <div class="form-text">須為 http:// 或 https:// 開頭的完整網址，不可含空白；結尾斜線會自動去掉。</div>
+            </div>
 
             <hr />
 

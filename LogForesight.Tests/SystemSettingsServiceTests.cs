@@ -1077,6 +1077,50 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(3, Create().Get().EscalationReminderDays);
     }
 
+    [Theory]
+    [InlineData("ftp://x")]
+    [InlineData("x.example")]
+    [InlineData("https://x.example/l f")]
+    [InlineData("https://x.example/lf?a=1")]
+    [InlineData("https://")]
+    public void Update_站台網址不合法被拒並說明格式(string value)
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = value;
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("http:// 或 https://", ex.Message);
+        Assert.Contains("https://srv.example.com/lf", ex.Message);
+    }
+
+    [Fact]
+    public void Update_站台網址帶結尾斜線存成去斜線_連結不出現雙斜線()
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = "  https://x.example/lf/  ";
+
+        var saved = Create().Update(request);
+
+        Assert.Equal("https://x.example/lf", saved.SiteBaseUrl);
+        Assert.Equal("https://x.example/lf", _store.Get().SiteBaseUrl);
+        var link = MailLinks.Build("https://x.example/lf/", "/work-orders/5");
+        Assert.Equal("https://x.example/lf/work-orders/5", link);
+        Assert.DoesNotContain("//work", link);
+        Assert.Equal("https://x.example/lf/handlers/3", MailLinks.Build(_store.Get().SiteBaseUrl, MailLinks.MyWorkOrdersPath(3)));
+    }
+
+    [Fact]
+    public void Update_站台網址留空合法_連結為null()
+    {
+        var request = ValidMailRequest();
+        request.SiteBaseUrl = "";
+
+        Assert.Equal("", Create().Update(request).SiteBaseUrl);
+        Assert.Null(MailLinks.Build("", "records"));
+        Assert.Null(MailLinks.Build(null, "records"));
+    }
+
     [Fact]
     public void Get_交辦摘要時刻預設值為八點與十二點()
     {

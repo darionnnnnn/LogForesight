@@ -74,6 +74,7 @@ public static class SettingsAuditProjection
             s.MailUrgentEnabled,
             s.MailSubjectTemplate,
             s.MailBodyIntro,
+            s.SiteBaseUrl,
             s.MailDigestSkipEmpty,
             s.MailNotifyWorkOrders,
             s.MailWorkOrderDigestTimes,

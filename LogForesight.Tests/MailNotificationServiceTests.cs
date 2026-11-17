@@ -2533,6 +2533,107 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(state.UrgentSentKeys);
     }
 
+    // ── 站台網址與信件連結（第 76-2 輪批次 C-3）──────────────────────────────
+
+    private const string SiteUrl = "https://x.example/lf";
+
+    /// <summary>四種批次／即時信（上報、高風險、執行摘要、每日／每週）各寄一封，回傳 (種類, 內文)</summary>
+    private async Task<List<(string Kind, string Body)>> SendEveryMailKindAsync(string siteBaseUrl)
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "ops", Email = "ops@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        var today = DateTime.Today;
+        var weekday = today.DayOfWeek.ToString();
+        var results = new List<(string, string)>();
+
+        async Task<string> Capture(Func<MailNotificationService, Task> act, Action<SystemSettings> cfg)
+        {
+            _sender.Sent.Clear();
+            EnableMail(s => { s.SiteBaseUrl = siteBaseUrl; s.MailMinRiskLevel = RiskLevels.Medium; cfg(s); });
+            await act(Create());
+            return Assert.Single(_sender.Sent).Message.Body;
+        }
+
+        results.Add(("上報信", await Capture(m => m.NotifyEscalationAsync(new EscalationNotice("disk 7", "host1", "user1", "無法修", 42)), _ => { })));
+        results.Add(("高風險信", await Capture(m => m.NotifyAfterRunAsync(), s => s.MailUrgentEnabled = true)));
+        _sender.Sent.Clear();
+        results.Add(("執行摘要", await Capture(m => m.NotifyAfterRunAsync(), s => { s.MailUrgentEnabled = false; s.MailOnRunCompleted = true; })));
+        results.Add(("每日摘要", await Capture(m => m.CheckAndSendDailyWeeklyAsync(today.AddHours(9)),
+            s => { s.MailOnRunCompleted = false; s.MailDailyEnabled = true; s.MailDailyTime = "08:00"; })));
+        results.Add(("每週摘要", await Capture(m => m.CheckAndSendDailyWeeklyAsync(today.AddHours(9)),
+            s => { s.MailDailyEnabled = false; s.MailWeeklyEnabled = true; s.MailWeeklyDayOfWeek = weekday; s.MailWeeklyTime = "08:00"; })));
+        return results;
+    }
+
+    /// <summary>C8-a：站台網址填了，上報信、高風險信、執行摘要、每日、每週各一封，內文都含以站台網址開頭的連結</summary>
+    [Fact]
+    public async Task C8a_站台網址有填_每種信件內文含以子路徑開頭的連結()
+    {
+        var mails = await SendEveryMailKindAsync(SiteUrl);
+
+        Assert.Equal(5, mails.Count);
+        foreach (var (kind, body) in mails)
+            Assert.True(body.Contains(SiteUrl + "/"), $"{kind}沒有以 {SiteUrl}/ 開頭的連結：\n{body}");
+        Assert.Contains($"{SiteUrl}/work-orders/42", mails[0].Body);      // 上報信連到該交辦單
+        foreach (var (kind, body) in mails.Skip(1))
+            Assert.Contains($"{SiteUrl}/records", body);                    // 其餘連到問題查詢
+    }
+
+    /// <summary>C8-b：沒填站台網址，每種信件內文都不含 http</summary>
+    [Fact]
+    public async Task C8b_站台網址沒填_每種信件內文不含http()
+    {
+        var mails = await SendEveryMailKindAsync("");
+
+        Assert.Equal(5, mails.Count);
+        foreach (var (kind, body) in mails)
+            Assert.False(body.Contains("http", StringComparison.OrdinalIgnoreCase), $"{kind}不該含連結：\n{body}");
+    }
+
+    /// <summary>C11：上報信與高風險信寫的頁面名稱等於 layout.js 的導覽文字；上報信不再用舊名稱「交辦單」頁</summary>
+    [Fact]
+    public async Task C11_上報信與高風險信的頁面名稱等於導覽文字()
+    {
+        var mails = await SendEveryMailKindAsync("");
+        var layout = File.ReadAllText(Path.Combine(MailLinksGuardRoot.Find(), "LogForesight.Web", "wwwroot", "js", "core", "layout.js"));
+
+        foreach (var name in new[] { MailLinks.MyWorkOrdersName, MailLinks.WorkOrdersName, MailLinks.RecordsName })
+            Assert.Contains($"label: '{name}'", layout);
+
+        var escalation = mails.Single(m => m.Kind == "上報信").Body;
+        Assert.Contains($"「{MailLinks.WorkOrdersName}」", escalation);
+        Assert.Contains($"「{MailLinks.RecordsName}」", escalation);
+        Assert.DoesNotContain("『交辦單』", escalation);
+        Assert.Contains($"「{MailLinks.RecordsName}」", mails.Single(m => m.Kind == "高風險信").Body);
+    }
+
+    private sealed class MailLinksGuardRoot
+    {
+        public static string Find()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+            return dir?.FullName ?? throw new DirectoryNotFoundException("找不到專案根目錄");
+        }
+    }
+
+    /// <summary>C8-c：信件服務內組網址的程式只在共用函式——Services/Mail 除 MailLinks.cs 外沒有任何 http 字樣（註解除外）</summary>
+    [Fact]
+    public void C8c_信件服務內只有MailLinks碰網址()
+    {
+        var dir = Path.Combine(MailLinksGuardRoot.Find(), "LogForesight.Web", "Services", "Mail");
+        var offenders = Directory.GetFiles(dir, "*.cs")
+            .Where(f => Path.GetFileName(f) != "MailLinks.cs")
+            .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (File: Path.GetFileName(f), Line: i + 1, Text: line.Trim())))
+            .Where(x => !x.Text.StartsWith("//") && x.Text.Contains("http", StringComparison.OrdinalIgnoreCase))
+            .Select(x => $"{x.File}:{x.Line} {x.Text}")
+            .ToList();
+
+        Assert.True(offenders.Count == 0, "信件服務不得自行組網址，請改用 MailLinks.Build：\n" + string.Join("\n", offenders));
+    }
+
     private sealed class FixedVisibility(IHostStore hosts, params long[] visibleIds) : IVisibilityService
     {
         private readonly HashSet<long> _visibleIds = visibleIds.ToHashSet();

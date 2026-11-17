@@ -401,6 +401,8 @@ public class RunExportDeidentifierTests
     [InlineData("Settings.PrtgUrl")]
     [InlineData("Settings.PrtgUrl.Host")]
     [InlineData("Settings.AiBaseUrl")]
+    [InlineData("Settings.SiteBaseUrl")]
+    [InlineData("Settings.SiteBaseUrl.Host")]
     [InlineData("Settings.SmtpServer")]
     [InlineData("Settings.SmtpAccount")]
     [InlineData("Settings.MailFrom")]
@@ -456,6 +458,8 @@ public class RunExportDeidentifierTests
             "Settings.ServerDescription" => (Src(settings: Cfg(s => s.ServerDescription = "Acme primary server")), "Acme primary server", "domain"),
             "Settings.PrtgUrl" => (Src(settings: Cfg(s => s.PrtgUrl = "https://prtg.acme.example/")), "https://prtg.acme.example/", "url"),
             "Settings.PrtgUrl.Host" => (Src(settings: Cfg(s => s.PrtgUrl = "https://prtg.acme.example/")), "prtg.acme.example", "domain"),
+            "Settings.SiteBaseUrl" => (Src(settings: Cfg(s => s.SiteBaseUrl = "https://lf.acme.example/lf")), "https://lf.acme.example/lf", "url"),
+            "Settings.SiteBaseUrl.Host" => (Src(settings: Cfg(s => s.SiteBaseUrl = "https://lf.acme.example/lf")), "lf.acme.example", "domain"),
             "Settings.AiBaseUrl" => (Src(settings: Cfg(s => s.AiBaseUrl = "http://ai.acme.example:8080")), "http://ai.acme.example:8080", "url"),
             "Settings.SmtpServer" => (Src(settings: Cfg(s => s.SmtpServer = "smtp.acme.example")), "smtp.acme.example", "domain"),
             "Settings.SmtpAccount" => (Src(settings: Cfg(s => s.SmtpAccount = "mailer")), "mailer", "user"),

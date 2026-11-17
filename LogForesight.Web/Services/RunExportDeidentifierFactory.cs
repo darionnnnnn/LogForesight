@@ -124,7 +124,7 @@ public sealed record DeidentifierSettings
         return new DeidentifierSettings
         {
             Names = names,
-            Urls = new List<string?> { s.PrtgUrl, s.AiBaseUrl },
+            Urls = new List<string?> { s.PrtgUrl, s.AiBaseUrl, s.SiteBaseUrl },
             Domains = domains,
             Accounts = new List<string?> { s.SmtpAccount, s.PrtgUsername, s.UpdatedByAccount },
             Emails = emails

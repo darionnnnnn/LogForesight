@@ -16,7 +16,11 @@ internal static class WorkOrderDigestBuilder
     /// <summary>主機名單最多列幾台，超過寫「…等 N 台」。</summary>
     private const int HostListLimit = 20;
 
-    internal static (string SubjectSummary, string Body) Build(IReadOnlyList<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> rows)
+    /// <param name="rows">待寄項目與寄送當下的單內容</param>
+    /// <param name="siteBaseUrl">設定的站台網址；沒填（null／空白）時信件不含任何連結</param>
+    /// <param name="recipientUserId">收件人的使用者編號，用來組「我的交辦」連結</param>
+    internal static (string SubjectSummary, string Body) Build(IReadOnlyList<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> rows,
+        string? siteBaseUrl = null, long recipientUserId = 0)
     {
         var created = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Created).OrderBy(r => r.Item.WorkOrderId).ToList();
         var appended = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Appended).OrderBy(r => r.Item.WorkOrderId).ToList();
@@ -47,13 +51,27 @@ internal static class WorkOrderDigestBuilder
         AppendSection(body, "【代為結案】", adminClosed);
         AppendSection(body, "【靜音暫停】", mutePaused);
         AppendSection(body, "【靜音恢復】", muteResumed);
-        AppendReminders(body, reminders);
-        if (rows.Count > reminders.Count) body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
+        AppendReminders(body, reminders, siteBaseUrl);
+        if (rows.Count > reminders.Count)
+        {
+            if (created.Count > 0)
+                body.AppendLine("新交辦請回覆處理狀態：開啟單後依實際情形標示處理中、已處理或無法處理（無法處理請寫明原因）。");
+            body.AppendLine($"請至站台的「{MailLinks.MyWorkOrdersName}」檢視上列單號。");
+            // 取消通知也連到「我的交辦」：取消後主機已調回未處理，不連到已收回授與的單或主機
+            AppendLink(body, MailLinks.Build(siteBaseUrl, MailLinks.MyWorkOrdersPath(recipientUserId)));
+        }
         return (subjectSummary, body.ToString());
     }
 
     /// <summary>管理者提醒：同一位收件人同一時段有多筆時只列最新一筆（內容是當時的整份彙整，後一筆涵蓋前一筆）</summary>
-    private static void AppendReminders(StringBuilder body, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> reminders)
+    /// <summary>連結為 null（沒設站台網址）時什麼都不寫，信件與未設定時完全相同</summary>
+    private static void AppendLink(StringBuilder body, string? link)
+    {
+        if (link != null) body.AppendLine($"連結：{link}");
+    }
+
+    private static void AppendReminders(StringBuilder body, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> reminders,
+        string? siteBaseUrl)
     {
         if (reminders.Count == 0) return;
         var latest = reminders[^1].Item;
@@ -64,7 +82,8 @@ internal static class WorkOrderDigestBuilder
             foreach (var line in latest.Detail.Split('\n'))
                 body.AppendLine("  " + line.TrimEnd('\r'));
         }
-        body.AppendLine("  請至站台的「交辦總覽」檢視：上報中篩選、待派頁籤與對應的單。");
+        body.AppendLine($"  請至站台的「{MailLinks.WorkOrdersName}」檢視：上報中篩選、待派頁籤與對應的單。");
+        if (MailLinks.Build(siteBaseUrl, MailLinks.WorkOrdersPath) is { } link) body.AppendLine($"  連結：{link}");
         body.AppendLine();
     }
 

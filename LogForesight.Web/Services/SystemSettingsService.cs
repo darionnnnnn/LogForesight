@@ -321,6 +321,9 @@ public class SystemSettingsService : ISystemSettingsService
             }
         }
 
+        if (!MailLinks.TryNormalize(request.SiteBaseUrl, out _, out var siteBaseUrlError))
+            throw DomainException.Validation(siteBaseUrlError!);
+
         if (request.EscalationReminderDays < 0 || request.EscalationReminderDays > SystemSettings.MaxEscalationReminderDays)
             throw DomainException.Validation($"管理者提醒間隔天數必須介於 0~{SystemSettings.MaxEscalationReminderDays} 天，0 表示不提醒。");
 
@@ -448,6 +451,8 @@ public class SystemSettingsService : ISystemSettingsService
                 ? new SystemSettings().MailSubjectTemplate
                 : request.MailSubjectTemplate.Trim();
             s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
+            MailLinks.TryNormalize(request.SiteBaseUrl, out var siteBaseUrl, out _);
+            s.SiteBaseUrl = siteBaseUrl;
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
             s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
             s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).ToList();
@@ -1360,6 +1365,7 @@ public class SystemSettingsService : ISystemSettingsService
         MailUrgentEnabled = s.MailUrgentEnabled,
         MailSubjectTemplate = s.MailSubjectTemplate,
         MailBodyIntro = s.MailBodyIntro,
+        SiteBaseUrl = s.SiteBaseUrl,
         MailDigestSkipEmpty = s.MailDigestSkipEmpty,
         MailNotifyWorkOrders = s.MailNotifyWorkOrders,
         MailWorkOrderDigestTimes = s.MailWorkOrderDigestTimes is { Count: > 0 }

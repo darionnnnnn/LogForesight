@@ -346,6 +346,12 @@ public class SystemSettings
     public List<string> MailWorkOrderDigestTimes { get; set; } = new() { "08:00", "12:00" };
 
     /// <summary>
+    /// 站台網址（含子應用程式路徑，例 https://lf.example.com/lf）：信件連結的前綴；空白＝信件不附連結。
+    /// 只取自這個設定，不取自請求標頭。消費端：<c>MailLinks</c>（信件服務）。
+    /// </summary>
+    public string SiteBaseUrl { get; set; } = "";
+
+    /// <summary>
     /// 管理者提醒的間隔天數：上報（無法處理）超過這麼多天沒人處理的成員，在夜間派工結束後進管理者的交辦摘要；
     /// 同一個成員每這麼多天至多提醒一次。0＝不提醒（管理者提醒信一律不寄，交辦總覽的提醒區照常顯示）。
     /// 消費端：<c>AdminReminderService</c>。
