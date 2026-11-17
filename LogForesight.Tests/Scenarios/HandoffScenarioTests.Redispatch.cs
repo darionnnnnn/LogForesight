@@ -134,16 +134,24 @@ public sealed partial class HandoffScenarioTests
         .Day(2, d => d
             .Act(ScenarioActions.SetUserHostAccess("admin1", "h1"))
             .Probe("h1-hosts", "h1", "api/hosts")
+            .Probe("h1-summary", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders/summary")
             .Probe("h1-detail", "h1", ctx => HandlingUrl(ctx, "HOST-A")))
         .Day(3, d => d
             .Act(ScenarioActions.Cancel("admin1", OrderRef.ForHandler("h1"), "管理者取消"))
             .Probe("h1-hosts", "h1", "api/hosts")
+            .Probe("h1-summary", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders/summary")
             .Probe("h1-detail", "h1", ctx => HandlingUrl(ctx, "HOST-A")))
         .Days(3)
         .Expect(Check("B6a.d1.setup", 1, "前置：第 1 天派給 h1", "h1", d => HolderOf(d, "HOST-A")))
         .Expect(Check("B6a.d2.granted", 2, "前置：移除群組授權後，案件授與讓 h1 打得開 HOST-A 的處理紀錄（一般主機清單不列案件授與主機）", "0/200",
             d => $"{HostNames(d.Probe("h1-hosts")).Count}/{d.Probe("h1-detail").StatusCode}"))
+        // 一般主機清單本來就不列只靠案件授與的主機（恆為 0，沒有鑑別力）；處理人摘要的可見主機數會把案件授與算進去
+        // （HostNamesWithCases 排除已取消的案件），取消前 1、取消後 0，才是「清單面」有鑑別力的斷言
+        .Expect(Check("B6a.d2.summary-counts-grant", 2, "前置：處理人摘要的可見主機數含案件授與（群組授權已移除）", "1",
+            d => d.Probe("h1-summary").Int("visibleHostCount").ToString()))
         .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("B6a.d3.summary-revoked", 3, "取消交辦後，處理人摘要的可見主機數回到 0（已取消的案件不再授與）", "0",
+            d => d.Probe("h1-summary").Int("visibleHostCount").ToString()))
         .Expect(Check("B6a.d3.revoked", 3, "取消交辦後，h1 下一個請求詳情 404（清單本來就不列案件授與主機）", "0/404",
             d => $"{HostNames(d.Probe("h1-hosts")).Count}/{d.Probe("h1-detail").StatusCode}"));
 

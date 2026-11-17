@@ -174,6 +174,38 @@ public class DispatchCandidateSourceTests
         Assert.DoesNotContain(parameterTypes, t => t.Name.Contains("VisibilityService", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// D2 行為面：處理人對某主機有進行中案件（案件授與成立，<c>VisibilityService</c> 看得到），
+    /// 但沒有該主機的群組授權、不是主機負責人、不是問題負責人——候選人快照的可見主機不得含它；
+    /// 有群組授權的主機照常在內。
+    /// </summary>
+    [Fact]
+    public void 只靠案件授與看得到的主機不進候選人可見主機_群組授權的照常進入()
+    {
+        var dept = Group("dept", UserRole.User, pool: true);
+        var granted = _hosts.Upsert(new WebHost { HostName = "SRV-01", GroupIds = new List<long> { 10 } });
+        var caseOnly = _hosts.Upsert(new WebHost { HostName = "SRV-02", GroupIds = new List<long> { 11 } });
+        _access.SetForUserGroup(dept.GroupId, new long[] { 10 });
+        var member = User("m", groupIds: dept.GroupId);
+
+        // 前提：案件授與成立——同一份資料用 VisibilityService 看，SRV-02 確實是案件授與的主機
+        var cases = new FakeIssueCaseStore();
+        cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = caseOnly.HostName, IssueKey = "Disk|disk|153|1",
+            HandlerId = member.UserId, Status = IssueHandlingStatuses.InProgress
+        });
+        var visibility = new VisibilityService(FakeCurrentUser.ForUser(member.UserId), _users, _groups, _access, _hosts,
+            cases, _settings, _issueOwners, _aggregates);
+        Assert.True(visibility.IsCaseGrantOnly(caseOnly.HostId));
+        Assert.Contains(caseOnly.HostName, visibility.GetCaseGrantHostNames());
+
+        var candidate = Source().Build().ByUserId[member.UserId];
+
+        Assert.DoesNotContain(caseOnly.HostId, candidate.VisibleHostIds);
+        Assert.Contains(granted.HostId, candidate.VisibleHostIds);
+    }
+
     [Fact]
     public void 池成員可見主機等於HostVisibilityResolver直接算的結果()
     {
