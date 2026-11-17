@@ -140,7 +140,7 @@ public class WorkOrderBoardService
     /// </summary>
     public LoadBoardDto GetLoadBoard(long? userGroupId)
     {
-        var loads = _orders.LoadBoard().ToDictionary(l => l.HandlerId);
+        var loads = _orders.LoadBoard(WorkOrderQueries.DisabledHostKeys(_hosts.GetAll())).ToDictionary(l => l.HandlerId);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var poolGroupIds = _userGroups.GetAll()
             .Where(g => g.Active && g.DispatchPool)
@@ -446,7 +446,8 @@ public class WorkOrderBoardService
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;
         settings.AutoDispatchEnabled = true;
         var now = _clock.LocalNow();
-        var ctx = DispatchContext.Build(_candidates.Build(), _issueOwners, _orders, _cases, _noiseMarks, settings, now);
+        var ctx = DispatchContext.Build(_candidates.Build(), _issueOwners, _orders, _cases, _noiseMarks, settings, now,
+            WorkOrderQueries.DisabledHostKeys(_hosts.GetAll()));
         ctx.PreloadDismissed(candidates.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
 
         // 抑制：清單與規則各讀一次；每台主機的生效中抑制算一次（純記憶體）

@@ -152,6 +152,42 @@ function renderBadges(detail) {
     badgesEl.replaceChildren(...badges);
 }
 
+/** 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標） */
+function renderMemberHostCell(item) {
+    const name = item.hostId ? document.createElement('a') : roleText('lf-text-title', item.hostName || '');
+    if (item.hostId) {
+        name.href = appUrl('/hosts/' + item.hostId);
+        name.className = 'lf-text-title';
+        name.textContent = item.hostName || '';
+    }
+    // 停用主機上的進行中成員不計入處理人的台數：成員列標出來，管理者才知道為什麼數字對不上
+    if (!item.hostDisabled || item.closedAt) return name;
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
+    wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
+    return wrap;
+}
+
+/**
+ * 成員台數旁的補充事實（有值才出現）：停用主機上的成員不計入左邊的台數，處理人目前看不到的台數是讀取時算的。
+ * 兩者都是 0 時回空陣列，頁首不多一個字。
+ */
+function memberGapFacts(detail) {
+    const facts = [];
+    const disabled = detail.counts?.activeOnDisabledHosts ?? 0;
+    if (disabled > 0) facts.push(fact('主機已停用', `${disabled} 台（不計入處理人的台數）`));
+    const unseen = detail.handlerUnseenMemberCount ?? 0;
+    if (unseen > 0) facts.push(fact('處理人目前看不到', `${unseen} 台`));
+    return facts;
+}
+
+/** 續掛已停止：只在後端標了 continuationStopped（進行中單）時出現，顯示原因的顯示名稱 */
+function continuationStopNote(detail) {
+    if (!detail.continuationStopped) return null;
+    const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
+    return statusNote('info', `續掛已停止：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
+}
+
 /**
  * 頁首卡（DESIGN-SYSTEM §8.5）：單號與問題為主標，狀態與來源同一列，管理動作在右側；
  * 判斷層（處理人、成員、期限、最近回覆）收成一行 metaLine，
@@ -203,9 +239,13 @@ function renderHeader(detail) {
     nodes.push(metaLine([
         handlerWrap,
         fact('成員', membersText),
+        ...memberGapFacts(detail),
         fact('期限', detail.dueDate ? formatDate(detail.dueDate) : '—'),
         fact('最近回覆', lastReplyText)
     ]));
+
+    const stopNote = continuationStopNote(detail);
+    if (stopNote) nodes.push(stopNote);
 
     // 範圍
     const scopeKindLower = String(detail.scopeKind).toLowerCase();
@@ -621,16 +661,7 @@ function renderMembers(data) {
         {
             title: '主機',
             truncate: true,
-            render: item => {
-                if (item.hostId) {
-                    const a = document.createElement('a');
-                    a.href = appUrl('/hosts/' + item.hostId);
-                    a.className = 'lf-text-title';
-                    a.textContent = item.hostName || '';
-                    return a;
-                }
-                return roleText('lf-text-title', item.hostName || '');
-            }
+            render: item => renderMemberHostCell(item)
         },
         {
             title: '狀態',
@@ -666,8 +697,16 @@ function renderMembers(data) {
                 if (item.closedAt) notes.push(`結案 ${formatDateTime(item.closedAt)}`);
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex flex-column align-items-start gap-1';
-                const noteText = notes.join('、') || (item.relatedWorkOrderId ? '' : '—');
+                const noteText = notes.join('、') || ((item.relatedWorkOrderId || item.note) ? '' : '—');
                 if (noteText) wrap.appendChild(roleText('lf-text-meta', noteText));
+                // 處理人回覆時寫的說明：上報中的成員這就是上報原因，管理者要處理時第一眼就要看到
+                if (item.note) {
+                    const reason = item.status === 'escalated' ? '上報原因' : '處理說明';
+                    const noteRow = document.createElement('div');
+                    noteRow.className = 'lf-text-meta text-wrap';
+                    noteRow.append(roleText('lf-text-label', reason), ' ', item.note);
+                    wrap.appendChild(noteRow);
+                }
                 if (item.relatedWorkOrderId) {
                     const link = document.createElement('a');
                     link.href = appUrl('/work-orders/' + item.relatedWorkOrderId);

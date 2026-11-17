@@ -101,6 +101,11 @@ let filterLabelSpan = null;
 if (hasUrlFilter) {
     if (activeStatusSelect) {
         activeStatusSelect.value = 'all';
+        // 連結可帶 status 指定狀態（例如停用處理人後的「查看進行中的單」帶 status=active）
+        const urlStatus = urlParams.get('status');
+        if (urlStatus && Array.from(activeStatusSelect.options ?? []).some(o => o.value === urlStatus)) {
+            activeStatusSelect.value = urlStatus;
+        }
     }
     const toolbar = activeStatusSelect?.closest('.d-flex');
     if (toolbar && toolbar.parentElement) {
@@ -116,6 +121,11 @@ if (hasUrlFilter) {
         hintRow.appendChild(clearLink);
         toolbar.parentElement.insertBefore(hintRow, toolbar);
     }
+}
+
+// 連結帶 handlerInactive=1 就預先勾選「處理人離職或停用」篩選
+if (activeHandlerInactiveCheckbox && urlParams.get('handlerInactive') === '1') {
+    activeHandlerInactiveCheckbox.checked = true;
 }
 
 /** 在「只看處理人已停用」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
@@ -226,6 +236,13 @@ async function loadActive() {
     loadedTabs.add('active');
 }
 
+/** 續掛已停止（夜間派工擋下了續掛）：只有進行中且後端標了 continuationStopped 的單才有；原因用後端給的顯示名稱 */
+function continuationStoppedBadge(r) {
+    if (!r.continuationStopped) return null;
+    const label = r.continuationStoppedLabel || r.continuationStoppedReason || '';
+    return statusBadge(`續掛已停止：${label}`, 'warning', { title: '夜間派工不再把新主機續掛進這張單；處理人恢復資格後，之後新出現的主機照常續掛。' });
+}
+
 function renderActiveTable(data) {
     const columns = [
         {
@@ -279,6 +296,8 @@ function renderActiveTable(data) {
                 if (counts.open > 0) parts.push(`未處理 ${counts.open}`);
                 if (counts.escalated > 0) parts.push(`上報 ${counts.escalated}`);
                 if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
+                // 停用主機上的進行中成員不計入左邊的台數（與處理人徽章、負載看板同一口徑）
+                if (counts.activeOnDisabledHosts > 0) parts.push(`主機已停用 ${counts.activeOnDisabledHosts}`);
 
                 if (parts.length > 0) {
                     const sub = document.createElement('div');
@@ -350,6 +369,8 @@ function renderActiveTable(data) {
                     if (!r.paused && !r.resumedFromMuteAt) {
                         wrap.appendChild(statusBadge('進行中', 'primary'));
                     }
+                    const stopped = continuationStoppedBadge(r);
+                    if (stopped) wrap.appendChild(stopped);
                 }
                 return wrap;
             }

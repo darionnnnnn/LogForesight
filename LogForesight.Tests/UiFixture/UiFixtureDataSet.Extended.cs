@@ -93,6 +93,26 @@ public sealed partial class UiFixtureDataSet
         cases.Add(NewCase("uicase-paused", win, "Ui-Muted-Issue", 8620, IssueHandlingStatuses.InProgress, UserIds["ui-handler"], paused,
             yesterday.AddDays(-1), yesterday.AddDays(5)));
 
+        // 停用主機：兩個進行中成員，其中一台（UI-DISABLED-HOST）已停用——不計入處理人台數、成員列標「主機已停用」
+        var disabledHostOrder = Order("disabled-host", "ui-paused", "Ui-DisabledHost-Issue", 8630, "其中一台主機已停用。", yesterday.AddDays(4), now.AddHours(-30));
+        cases.Add(NewCase("uicase-disabledhost-a", win, "Ui-DisabledHost-Issue", 8630, IssueHandlingStatuses.InProgress, UserIds["ui-paused"], disabledHostOrder,
+            yesterday.AddDays(-1), yesterday.AddDays(4)));
+        cases.Add(NewCase("uicase-disabledhost-b", _hosts["disabled"].HostName, "Ui-DisabledHost-Issue", 8630, IssueHandlingStatuses.InProgress,
+            UserIds["ui-paused"], disabledHostOrder, yesterday.AddDays(-1), yesterday.AddDays(4)));
+
+        // 續掛已停止：處理人（ui-disabled）已停用，夜間派工擋下續掛並標原因
+        var stopped = Order("continuation-stopped", "ui-disabled", "Ui-ContinuationStopped-Issue", 8640, null, yesterday.AddDays(6), now.AddDays(-1));
+        cases.Add(NewCase("uicase-stopped", win, "Ui-ContinuationStopped-Issue", 8640, IssueHandlingStatuses.InProgress, UserIds["ui-disabled"], stopped,
+            yesterday.AddDays(-1), yesterday.AddDays(6)));
+        orders.SetContinuationStops(new[] { new ContinuationStopUpdate(stopped, ContinuationStopReasons.HandlerInactive, now.AddHours(-8)) });
+
+        // 處理人看不到部分主機：ui-same-b 的群組看不到 UI-NOGROUP-WIN（沒有任何主機群組）→ 詳情頁首「處理人目前看不到 1 台」
+        var unseen = Order("unseen", "ui-same-b", "Ui-Unseen-Issue", 8650, null, yesterday.AddDays(5), now.AddHours(-12));
+        cases.Add(NewCase("uicase-unseen-a", win, "Ui-Unseen-Issue", 8650, IssueHandlingStatuses.InProgress, UserIds["ui-same-b"], unseen,
+            yesterday.AddDays(-1), yesterday.AddDays(5)));
+        cases.Add(NewCase("uicase-unseen-b", _hosts["no-group"].HostName, "Ui-Unseen-Issue", 8650, IssueHandlingStatuses.Open, UserIds["ui-same-b"], unseen,
+            yesterday.AddDays(-1)));
+
         // 200 個成員：40 台 × 5 種 EntryType（同一問題在不同主機、不同登錄類型各算一個成員）
         var mass = Order("mass", "ui-handler", "Ui-Mass-Issue", 8800, "全站一起處理的問題，成員很多。", yesterday.AddDays(10), now.AddHours(-6));
         var entryTypes = new[] { LogEntryType.Error, LogEntryType.Warning, LogEntryType.Information, LogEntryType.SuccessAudit, LogEntryType.FailureAudit };
@@ -694,7 +714,10 @@ public sealed partial class UiFixtureDataSet
         foreach (var (key, title) in new[]
                  {
                      ("closed", "交辦單：已結案"), ("escalated", "交辦單：上報中（成員無法處理）"), ("paused", "交辦單：暫停（問題靜音中）"),
-                     ("mass", "交辦單：200 個成員"), ("long-note", "交辦單：超長說明")
+                     ("mass", "交辦單：200 個成員"), ("long-note", "交辦單：超長說明"),
+                     ("disabled-host", "交辦單：成員主機已停用（不計入台數、成員列標記）"),
+                     ("continuation-stopped", "交辦單：續掛已停止（處理人已停用）"),
+                     ("unseen", "交辦單：處理人目前看不到 1 台")
                  })
             Scenarios.Add(new UiFixtureScenario($"work-order.{key}", title, $"/work-orders/{WorkOrderIds[key]}"));
         Scenarios.Add(new UiFixtureScenario("work-order.unreplied", "交辦單：未回覆（尚無任何回覆）", $"/work-orders/{WorkOrderIds["ui-handler"]}"));

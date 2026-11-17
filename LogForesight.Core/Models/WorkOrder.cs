@@ -181,8 +181,14 @@ public sealed class WorkOrderMemberCounts
 {
     public int Total { get; init; }
 
-    /// <summary>進行中（closed_at IS NULL）</summary>
+    /// <summary>
+    /// 進行中（closed_at IS NULL）。呼叫端傳入停用主機集合時，停用主機上的進行中成員不計入這裡，
+    /// 也不計入下面的各狀態與逾期數，改計於 <see cref="ActiveOnDisabledHosts"/>。
+    /// </summary>
     public int Active { get; init; }
+
+    /// <summary>進行中、但主機已停用的成員數（呼叫端沒有傳停用主機集合時恆為 0）</summary>
+    public int ActiveOnDisabledHosts { get; init; }
 
     public int Closed { get; init; }
 
@@ -242,6 +248,12 @@ public sealed class WorkOrderQuery
 
     /// <summary>true＝只列有未讀回覆的單（判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
     public bool UnreadOnly { get; init; }
+
+    /// <summary>
+    /// 已停用主機的 host_name_key（大寫）集合：「有上報成員」「有逾期成員」兩種狀態條件與「成員數」排序都不計入這些主機上的成員，
+    /// 與清單列上的成員數字同一口徑。null＝不排除。
+    /// </summary>
+    public IReadOnlyCollection<string>? ExcludedHostKeys { get; init; }
 }
 
 /// <summary>交辦單清單查詢結果</summary>
@@ -314,6 +326,21 @@ public static class WorkOrderQueries
 
     public const int MaxOrderPageSize = 100;
     public const int MaxMemberPageSize = 200;
+
+    /// <summary>
+    /// 「已停用主機」的 host_name_key 集合（唯一一份）：徽章、處理人摘要、負載看板、交辦總覽與派工負載的台數都用它排除成員。
+    /// 同名鍵若還有啟用中的主機就不算停用。
+    /// </summary>
+    public static IReadOnlyCollection<string> DisabledHostKeys(IEnumerable<WebHost> hosts)
+    {
+        var all = hosts.ToList();
+        var active = all.Where(h => h.Active).Select(h => LogForesight.Core.Persistence.Sql.HostNameKey.Of(h.HostName)).ToHashSet();
+        return all.Where(h => !h.Active)
+            .Select(h => LogForesight.Core.Persistence.Sql.HostNameKey.Of(h.HostName))
+            .Where(k => !active.Contains(k))
+            .Distinct()
+            .ToList();
+    }
 
     /// <summary>成員逾期：進行中、期限非空且早於今天、狀態為 in_progress 或 observing</summary>
     public static bool IsOverdue(IssueCase c, DateTime today) =>

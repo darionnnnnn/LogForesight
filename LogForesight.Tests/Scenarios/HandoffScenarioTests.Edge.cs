@@ -186,6 +186,24 @@ public sealed partial class HandoffScenarioTests
             d.AuditAdded.Any(a => a.Action != AuditActions.HandlingStatus) ? "有記錄" : "沒有任何記錄"))
         .KnownDifference("E3-S14-1", "S14b.d2.undelivered-record");
 
+    // ── 進行中台數的五個出口（D6：五處數字一致）──────────────────────────────────
+
+    /// <summary>登記五個出口的探針：總覽列、負載看板、處理人摘要、處理人清單列、徽章（徽章也是儀表板「我的待辦」的來源）</summary>
+    private static DayPlan ProbeFivePlaces(DayPlan d) => d
+        .Probe("admin-list", "admin1", "api/work-orders?status=all&pageSize=100")
+        .Probe("load-board", "admin1", "api/work-orders/load-board")
+        .Probe("handler-summary", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders/summary")
+        .Probe("handler-list", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?status=all&pageSize=100")
+        .Probe("badge", "h1", "api/handlers/me/badge");
+
+    /// <summary>五個出口的進行中台數，依序：總覽列／負載看板／處理人摘要／處理人清單列／徽章</summary>
+    private static string FivePlaces(DayResult d)
+    {
+        int Active(ProbeView p) => p.Items("items").Select(r => r.GetProperty("counts").Int("active")).FirstOrDefault();
+        var board = d.Probe("load-board").Items("rows").FirstOrDefault(r => r.Str("name").Contains("h1", StringComparison.Ordinal)).Int("activeMembers");
+        return $"{Active(d.Probe("admin-list"))}/{board}/{d.Probe("handler-summary").Int("activeMembers")}/{Active(d.Probe("handler-list"))}/{d.Probe("badge").Int("activeMembers")}";
+    }
+
     // ── S15：同一問題多台、部分處理 ────────────────────────────────────────────
 
     internal static Scenario BuildS15() => new Scenario("S15 多台部分處理")
@@ -206,7 +224,10 @@ public sealed partial class HandoffScenarioTests
             .Probe("handler-list", "h1", ctx => $"api/handlers/{ctx.UserId("h1")}/work-orders?status=all&pageSize=100")
             .Probe("badge", "h1", "api/handlers/me/badge")
             .Probe("detail", "admin1", ctx => $"api/work-orders/{OrderRef.Id(1).Resolve(ctx)}"))
-        .Days(2)
+        // D6：未結案的 HOST-C 停用後五處都不再計入；重新啟用後一起恢復
+        .Day(3, d => ProbeFivePlaces(d.Act(ScenarioActions.SetHostActive("admin1", "HOST-C", false))))
+        .Day(4, d => ProbeFivePlaces(d.Act(ScenarioActions.SetHostActive("admin1", "HOST-C", true))))
+        .Days(4)
         .Expect(Check("S15.d1.setup", 1, "前置：三台都在 h1 的同一張單", "3", d => OrderOf(d, "h1").Members.Count.ToString()))
         .Expect(Expect.ActionStatus(2, 0, 200))
         .Expect(Check("S15.d2.state", 2, "有任一成員未結案時單為進行中", "進行中", d => OrderOf(d, "h1").State))
@@ -219,7 +240,14 @@ public sealed partial class HandoffScenarioTests
             return $"{Active(d.Probe("admin-list"))}/{board}/{d.Probe("handler-summary").Int("activeMembers")}/{Active(d.Probe("handler-list"))}/{d.Probe("badge").Int("activeMembers")}";
         }))
         .Expect(Check("S15.d2.total", 2, "總覽列與處理人清單列的成員總數一致", "3/3", d =>
-            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}/{d.Probe("handler-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}"));
+            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}/{d.Probe("handler-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}"))
+        .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("S15.d3.disabled-host", 3, "未結案的那台停用後，五處進行中台數都扣掉它（總覽列／負載看板／處理人摘要／處理人清單列／徽章）", "0/0/0/0/0", FivePlaces))
+        .Expect(Check("S15.d3.total-kept", 3, "停用不改變成員總數，總覽列另標「主機已停用」台數", "3/1", d =>
+            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}/" +
+            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("activeOnDisabledHosts")).FirstOrDefault()}"))
+        .Expect(Expect.ActionStatus(4, 0, 200))
+        .Expect(Check("S15.d4.re-enabled", 4, "主機重新啟用後五處台數一起恢復", "1/1/1/1/1", FivePlaces));
 
     // ── S16：問題負責人與自動派工同時適用 ─────────────────────────────────────
 

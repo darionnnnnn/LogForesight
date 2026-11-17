@@ -4658,5 +4658,110 @@
         "evalAssert": "const v = document.getElementById('mail-min-risk-level').value; return v === '中' ? null : ('重新載入後應保留「中」，實際為 ' + v);"
       }
     ]
+  },
+  {
+    "name": "交辦-詳情-停用主機成員不計入台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.disabled-host",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "text": "不計入處理人的台數"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-members",
+          "text": "主機已停用"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-members .lf-badge",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-續掛已停止",
+    "role": "ui-admin",
+    "path": "fixture:work-order.continuation-stopped",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "visible": true,
+          "text": "續掛已停止"
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-處理人看不到台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.unseen",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "text": "處理人目前看不到 1 台"
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦-詳情-都看得到時不顯示看不到台數",
+    "role": "ui-admin",
+    "path": "fixture:work-order.ui-handler",
+    "steps": [
+      {
+        "waitFor": "#wo-members tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-header",
+          "notText": "處理人目前看不到"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-header .lf-status-note",
+          "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "交辦總覽-續掛已停止與停用主機標示",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-list",
+          "text": "續掛已停止："
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-list",
+          "text": "主機已停用 1"
+        }
+      }
+    ]
   }
 ]

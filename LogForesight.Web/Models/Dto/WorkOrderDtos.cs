@@ -308,6 +308,9 @@ public class WorkOrderCountsDto
 {
     public int Total { get; set; }
     public int Active { get; set; }
+
+    /// <summary>進行中、但主機已停用的成員數；不計入 <see cref="Active"/> 與各狀態數</summary>
+    public int ActiveOnDisabledHosts { get; set; }
     public int Closed { get; set; }
     public int InProgress { get; set; }
     public int Observing { get; set; }
@@ -403,6 +406,12 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     /// <summary>檢視者是最近一次被改派走的原處理人（只能唯讀檢視）</summary>
     public bool ViewerIsPreviousHandler { get; set; }
     public bool ViewerCanAssign { get; set; }
+
+    /// <summary>
+    /// 進行中的成員裡，處理人目前看不到的台數（讀取時以處理人的可見範圍計算、不存欄位；規則同夜間派工的可見主機，不含案件授與，
+    /// 不含已停用主機）。0＝處理人都看得到；單已結案恆為 0。
+    /// </summary>
+    public int HandlerUnseenMemberCount { get; set; }
 }
 
 public class WorkOrderMemberDto
@@ -416,8 +425,17 @@ public class WorkOrderMemberDto
     public long? HostId { get; set; }
 
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>這台主機已停用：進行中時不計入處理人的台數（徽章、負載看板、總覽）；重新啟用後恢復計入</summary>
+    public bool HostDisabled { get; set; }
     public string IssueKey { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 處理人回覆時寫的說明（上報時就是上報原因）；沒有說明為 null。
+    /// 成員清單已依檢視者的可見範圍過濾，說明不會洩漏到看不到的主機。
+    /// </summary>
+    public string? Note { get; set; }
     public DateTime? DueDate { get; set; }
     public bool Overdue { get; set; }
     public DateTime FirstLinkedDate { get; set; }

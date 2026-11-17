@@ -37,6 +37,16 @@ public sealed partial class HandoffScenarioTests
         _ => BuildEligibility(key)
     };
 
+    /// <summary>停用使用者或暫停接單的回應裡的進行中單數（<c>activeWorkOrders</c>，可能在回應本體或其 data 內）</summary>
+    private static string ActiveWorkOrdersOf(ActionResultView action)
+    {
+        if (string.IsNullOrEmpty(action.Body)) return "（沒有回應本體）";
+        using var doc = JsonDocument.Parse(action.Body);
+        var root = doc.RootElement;
+        var data = root.TryGetProperty("data", out var inner) && inner.ValueKind == JsonValueKind.Object ? inner : root;
+        return data.TryGetProperty("activeWorkOrders", out var n) ? n.GetInt32().ToString() : "（回應沒有 activeWorkOrders）";
+    }
+
     private static string OrderUrl(ScenarioActionContext ctx, string handler) =>
         $"api/work-orders/{OrderRef.ForHandler(handler).Resolve(ctx)}";
 
@@ -50,6 +60,8 @@ public sealed partial class HandoffScenarioTests
         .Day(2, d => d
             .Act(ScenarioActions.Reply("h1", OrderRef.ForHandler("h1"), "escalated", "備品缺貨，無法自行更換"))
             .Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100")
+            .Probe("admin-members", "admin1", ctx => OrderUrl(ctx, "h1") + "/members?pageSize=50")
+            .Probe("admin-timeline", "admin1", ctx => OrderUrl(ctx, "h1") + "/timeline")
             .Probe("admin-unread", "admin1", "api/work-orders/unread-count"))
         .Day(3, d => d.Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100"))
         .Day(4, d => d
@@ -57,6 +69,15 @@ public sealed partial class HandoffScenarioTests
             .Probe("admin-unread", "admin1", "api/work-orders/unread-count"))
         .Days(4)
         .Expect(Check("S3.d2.escalated-list", 2, "上報中的單可在總覽以「上報中」篩出", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
+        .Expect(Expect.ActionStatus(2, 0, 200))
+        .Expect(Check("S3.d2.reason-in-members", 2, "經真實上報流程後，詳情的成員資料含上報狀態與處理人寫的上報原因（D9）", "escalated/備品缺貨，無法自行更換", d =>
+        {
+            var m = d.Probe("admin-members").Items("items").FirstOrDefault();
+            return m.ValueKind == JsonValueKind.Object ? $"{m.Str("status")}/{m.Str("note")}" : "（成員清單是空的）";
+        }))
+        .Expect(Check("S3.d2.reason-in-timeline", 2, "時間軸的回覆事件也帶上報原因", "是", d =>
+            Flag(d.Probe("admin-timeline").Data is { ValueKind: JsonValueKind.Array } events
+                && events.EnumerateArray().Any(e => (e.Str("note") ?? "").Contains("備品缺貨，無法自行更換", StringComparison.Ordinal)))))
         .Expect(Check("S3.d4.still-listed", 4, "管理者一直沒處理，第 4 天仍可篩出（沒有被漏掉）", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
         .Expect(Check("S3.d4.unread-badge", 4, "管理者未開啟前，側欄徽章持續提示（未讀回覆 1）", "1", d => d.Probe("admin-unread").Int("count").ToString()));
 
@@ -105,7 +126,9 @@ public sealed partial class HandoffScenarioTests
                 .Probe("detail", "admin1", ctx => OrderUrl(ctx, "h1")))
             .Expect(Expect.ActionStatus(1, 0, 200))
             .Expect(Check("setup.autoattach", 1, "前置：h1 的單已是 G1 範圍且開續掛", "是/Groups", d =>
-                $"{Flag(d.Probe("detail").Data is { } x && x.Flag("autoAttach"))}/{d.Probe("detail").Data?.Str("scopeKind")}"));
+                $"{Flag(d.Probe("detail").Data is { } x && x.Flag("autoAttach"))}/{d.Probe("detail").Data?.Str("scopeKind")}"))
+            .Expect(Check("setup.unseen-zero", 1, "前置：h1 看得到單上的所有主機 → 詳情的「處理人看不到台數」為 0", "0", d =>
+                (d.Probe("detail").Data?.Int("handlerUnseenMemberCount") ?? -1).ToString()));
 
         if (variant != ContinuationVariant.NoTaker) s.WithUser(Handler("h2", new[] { "G1" }));
         if (variant == ContinuationVariant.Recover) s.WithHost(new HostSpec("HOST-D") { Groups = new[] { "G1" } });
@@ -122,10 +145,8 @@ public sealed partial class HandoffScenarioTests
                     .Probe("inactive-list", "admin1", "api/work-orders?status=active&handlerInactive=true&pageSize=100")
                     .Probe("load-board", "admin1", "api/work-orders/load-board"))
                     .Expect(Expect.ActionStatus(2, 0, 200))
-                    .Expect(Check("S4.d2.admin-warned", 2, "停用當下提醒管理者此人有進行中單（回應、通知佇列或信件其一提到張數）", "有提醒", d =>
-                        d.Actions[0].Body?.Contains("進行中", StringComparison.Ordinal) == true
-                        || d.Actions[0].Body?.Contains("workOrder", StringComparison.OrdinalIgnoreCase) == true
-                        || Outbox(d, "admin1") > 0 || d.MailsSent.Any(m => m.To.Contains("admin1@scenario.test")) ? "有提醒" : "沒有任何提醒"))
+                    .Expect(Check("S4.d2.admin-warned", 2, "停用當下的回應帶此人進行中單數（畫面據此提示並連到交辦總覽）", "1", d =>
+                        ActiveWorkOrdersOf(d.Actions[0])))
                     .Expect(Check("S4.d2.inactive-filter", 2, "既有單可由「只看處理人已停用」找到", "1", d => d.Probe("inactive-list").Items("items").Count.ToString()))
                     .Expect(Check("S4.d2.load-board", 2, "負載看板標示 h1 已停用", "否", d =>
                         Flag(d.Probe("load-board").Items("rows").Any(r => r.Str("name").Contains("h1", StringComparison.Ordinal) && r.Flag("active")))));
@@ -136,6 +157,8 @@ public sealed partial class HandoffScenarioTests
                     .Act(ScenarioActions.SetDispatchPaused("admin1", "h1", true))
                     .Probe("load-board", "admin1", "api/work-orders/load-board"))
                     .Expect(Expect.ActionStatus(2, 0, 200))
+                    .Expect(Check("S5.d2.pause-response", 2, "暫停接單的回應帶此人進行中單數（既有單仍在他名下）", "1", d =>
+                        ActiveWorkOrdersOf(d.Actions[0])))
                     .Expect(Check("S5.d2.load-board", 2, "負載看板標示 h1 暫停接單", "是", d =>
                         Flag(d.Probe("load-board").Items("rows").Any(r => r.Str("name").Contains("h1", StringComparison.Ordinal) && r.Flag("paused")))));
                 break;
@@ -150,12 +173,8 @@ public sealed partial class HandoffScenarioTests
                     .Expect(Check("S6.d2.handler-still-opens", 2, "處理人仍開得到被交辦的單", "200", d => d.Probe("h1-detail").StatusCode.ToString()))
                     .Expect(Check("S6.d2.handler-sees-member", 2, "處理人在單上仍看得到被交辦的主機（案件授與）", "HOST-A", d =>
                         string.Join(",", d.Probe("h1-members").Items("items").Select(i => i.Str("hostName")))))
-                    .Expect(Check("S6.d2.admin-sees-gap", 2, "管理者在單上看得到「處理人看不到 N 台」", "有", d =>
-                    {
-                        var body = d.Probe("admin-detail").Body ?? "";
-                        return new[] { "noaccess", "cannotsee", "invisible", "unseen", "handlerhidden", "hiddenfromhandler" }
-                            .Any(k => body.Contains(k, StringComparison.OrdinalIgnoreCase)) ? "有" : "沒有";
-                    }));
+                    .Expect(Check("S6.d2.admin-sees-gap", 2, "管理者在單上看得到「處理人目前看不到 N 台」（只剩案件授與的 HOST-A，N＝1）", "1", d =>
+                        (d.Probe("admin-detail").Data?.Int("handlerUnseenMemberCount") ?? -1).ToString()));
                 break;
         }
 
@@ -212,8 +231,6 @@ public sealed partial class HandoffScenarioTests
                     ? $"{row.Flag("continuationStopped")}/{row.Str("continuationStoppedReason")}"
                     : "（總覽沒有這張單）"));
 
-        if (kind == ContinuationKind.Disabled) s.KnownDifference("E3-S4-1", "S4.d2.admin-warned");
-        if (kind == ContinuationKind.NoAccess) s.KnownDifference("E3-S6-1", "S6.d2.admin-sees-gap");
 
         if (kind == ContinuationKind.Paused)
             s.Expect(Check("S5.d3.existing-reply", 3, "暫停接單者既有單照常可回覆", "200", d => d.Actions[0].StatusCode.ToString()));
@@ -248,31 +265,36 @@ public sealed partial class HandoffScenarioTests
         .WithHost(new HostSpec("HOST-B") { Groups = new[] { "G1" } })
         .WithUser(Admin("admin1"))
         .WithUser(Handler("h1", new[] { "G1" }))
-        .Day(1, d => d
+        .Day(1, d => ProbeFivePlaces(d
             .Events("HOST-A", ScenarioEvents.DiskErrors(12))
-            .Events("HOST-B", ScenarioEvents.DiskErrors(12))
-            .Probe("badge", "h1", "api/handlers/me/badge")
-            .Probe("load-board", "admin1", "api/work-orders/load-board"))
-        .Day(2, d => d
-            .Act(ScenarioActions.SetHostActive("admin1", "HOST-B", false))
-            .Probe("badge", "h1", "api/handlers/me/badge")
-            .Probe("load-board", "admin1", "api/work-orders/load-board")
+            .Events("HOST-B", ScenarioEvents.DiskErrors(12))))
+        .Day(2, d => ProbeFivePlaces(d
+            .Act(ScenarioActions.SetHostActive("admin1", "HOST-B", false)))
             .Probe("members", "admin1", ctx => OrderUrl(ctx, "h1") + "/members?pageSize=50"))
-        .Days(2)
+        .Day(3, d => ProbeFivePlaces(d
+            .Act(ScenarioActions.SetHostActive("admin1", "HOST-B", true)))
+            .Probe("members", "admin1", ctx => OrderUrl(ctx, "h1") + "/members?pageSize=50"))
+        .Days(3)
         .Expect(Check("S7a.d1.badge", 1, "前置：停用前 h1 手上 2 台", "2", d => d.Probe("badge").Int("activeMembers").ToString()))
         .Expect(Expect.ActionStatus(2, 0, 200))
         .Expect(Check("S7a.d2.badge", 2, "停用主機上的進行中成員不再算處理人的待辦（徽章台數）", "1", d => d.Probe("badge").Int("activeMembers").ToString()))
         .Expect(Check("S7a.d2.load-board", 2, "負載看板的進行中台數同步扣除", "1", d =>
             d.Probe("load-board").Items("rows").FirstOrDefault(r => r.Str("name").Contains("h1", StringComparison.Ordinal)).Int("activeMembers").ToString()))
-        .Expect(Check("S7a.d2.reason-visible", 2, "管理者在單的成員表看得到該台被排除的原因（成員資料帶主機停用標記）", "有", d =>
+        .Expect(Check("S7a.d2.five-places", 2, "五處進行中台數一致且都不含停用主機（總覽列／負載看板／處理人摘要／處理人清單列／徽章）", "1/1/1/1/1", FivePlaces))
+        .Expect(Check("S7a.d2.overview-disabled", 2, "總覽列的成員總數不變（2），另標主機已停用 1 台", "2/1", d =>
+            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("total")).FirstOrDefault()}/" +
+            $"{d.Probe("admin-list").Items("items").Select(r => r.GetProperty("counts").Int("activeOnDisabledHosts")).FirstOrDefault()}"))
+        .Expect(Check("S7a.d2.reason-visible", 2, "管理者在單的成員表看得到該台被排除的原因（HOST-B 帶主機已停用標記、HOST-A 沒有）", "HOST-B/HOST-A=否", d =>
         {
-            var hostB = d.Probe("members").Items("items").FirstOrDefault(i => i.Str("hostName") == "HOST-B");
-            return hostB.ValueKind == JsonValueKind.Object && hostB.EnumerateObject().Any(p => p.Name.Contains("active", StringComparison.OrdinalIgnoreCase)
-                && !p.Name.Equals("overdue", StringComparison.OrdinalIgnoreCase)) ? "有" : "沒有";
+            var items = d.Probe("members").Items("items");
+            var marked = items.Where(i => i.Flag("hostDisabled")).Select(i => i.Str("hostName"));
+            var a = items.FirstOrDefault(i => i.Str("hostName") == "HOST-A");
+            return $"{string.Join(",", marked)}/HOST-A={Flag(a.ValueKind == JsonValueKind.Object && a.Flag("hostDisabled"))}";
         }))
-        .KnownDifference("E3-S7-1", "S7a.d2.badge")
-        .KnownDifference("E3-S7-2", "S7a.d2.load-board")
-        .KnownDifference("E3-S7-3", "S7a.d2.reason-visible");
+        .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("S7a.d3.five-places", 3, "主機重新啟用後五處台數一起恢復計入", "2/2/2/2/2", FivePlaces))
+        .Expect(Check("S7a.d3.flag-cleared", 3, "重新啟用後成員列不再標主機已停用", "0", d =>
+            d.Probe("members").Items("items").Count(i => i.Flag("hostDisabled")).ToString()));
 
     internal static Scenario BuildS7Regroup() => new Scenario("S7 主機改群組")
         .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })

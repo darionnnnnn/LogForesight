@@ -500,7 +500,7 @@ public class WorkOrderCommandService
         // 5. 分派（以主機為單位；主機已依名稱升冪）
         var assignedMembers = candidates.ToDictionary(c => c.UserId, _ => 0);
         var loads = req.AssignMode == AssignGroup && req.SplitMode == SplitByLoad
-            ? _orders.LoadBoard().ToDictionary(l => l.HandlerId, l => l.ActiveMembers)
+            ? _orders.LoadBoard(WorkOrderQueries.DisabledHostKeys(_hosts.GetAll())).ToDictionary(l => l.HandlerId, l => l.ActiveMembers)
             : new Dictionary<long, int>();
         var allocationIndex = 0;
         foreach (var host in withMembers)

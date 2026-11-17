@@ -59,7 +59,7 @@ public sealed class WorkOrderCandidateService
             .ToHashSet();
 
         var recentHandlers = RecentHandlersOfSameIssue(req);
-        var loads = _orders.LoadBoard().ToDictionary(l => l.HandlerId, l => l.ActiveMembers);
+        var loads = _orders.LoadBoard(WorkOrderQueries.DisabledHostKeys(_hosts.GetAll())).ToDictionary(l => l.HandlerId, l => l.ActiveMembers);
 
         // 主機快照只取一次：IHostStore 多載每次都重讀整份主機 blob，乘上候選人數就是每開一次窗讀幾十份
         var hostSnapshot = requested.Count > 0 ? _hosts.CapturePrtgSnapshot() : null;

@@ -953,4 +953,116 @@ public class WorkOrderStoreTests : IDisposable
             Assert.Contains("source_key", sql);
         }
     }
+
+    // ── 停用主機的成員不計入台數（第 76-2 輪批次 D-2）──────────────────────────────
+
+    private static readonly string[] DisabledKeys = { "OFF" };
+
+    /// <summary>h1、h2 在啟用主機上；"off" 的 HostNameKey 是 OFF，視為停用主機</summary>
+    private long SeedMixed(EfWorkOrderStore store)
+    {
+        var id = store.Insert(NewOrder(1, "A", 1));
+        AddCase("h1", id, IssueHandlingStatuses.InProgress, null);
+        AddCase("h2", id, IssueHandlingStatuses.Escalated, null);
+        AddCase("off", id, IssueHandlingStatuses.Escalated, null);
+        AddCase("off2", id, IssueHandlingStatuses.Resolved, DateTime.Now);
+        return id;
+    }
+
+    [Fact]
+    public void CountMembers_停用主機上的進行中成員不計入進行中與各狀態_改計ActiveOnDisabledHosts()
+    {
+        var store = Store();
+        var id = SeedMixed(store);
+
+        var all = store.CountMembers(new[] { id })[id];
+        var excluded = store.CountMembers(new[] { id }, DisabledKeys)[id];
+
+        Assert.Equal((4, 3, 0, 2), (all.Total, all.Active, all.ActiveOnDisabledHosts, all.Escalated));
+        Assert.Equal((4, 2, 1, 1), (excluded.Total, excluded.Active, excluded.ActiveOnDisabledHosts, excluded.Escalated));
+        Assert.Equal(1, excluded.Closed);
+        Assert.Equal(1, excluded.InProgress);
+    }
+
+    [Fact]
+    public void LoadBoard與HandlerSummary_停用主機上的成員不計入_重新啟用即恢復()
+    {
+        var store = Store();
+        SeedMixed(store);
+
+        Assert.Equal(3, store.LoadBoard().Single().ActiveMembers);
+        Assert.Equal(2, store.LoadBoard(DisabledKeys).Single().ActiveMembers);
+        Assert.Equal(3, store.HandlerSummary(1, Array.Empty<string>()).ActiveMembers);
+        Assert.Equal(2, store.HandlerSummary(1, Array.Empty<string>(), DisabledKeys).ActiveMembers);
+        // 主機重新啟用＝停用集合變空，台數馬上回來
+        Assert.Equal(3, store.LoadBoard(Array.Empty<string>()).Single().ActiveMembers);
+        // 單本身仍是進行中的單：只扣成員台數
+        Assert.Equal(1, store.LoadBoard(DisabledKeys).Single().ActiveWorkOrders);
+    }
+
+    [Fact]
+    public void QueryOrders_上報狀態篩選與成員數排序不計停用主機()
+    {
+        var store = Store();
+        var onlyOff = store.Insert(NewOrder(1, "A", 1));
+        AddCase("off", onlyOff, IssueHandlingStatuses.Escalated, null);
+        var normal = store.Insert(NewOrder(1, "B", 2));
+        AddCase("h1", normal, IssueHandlingStatuses.Escalated, null);
+
+        var withoutExclusion = store.QueryOrders(new WorkOrderQuery { Status = WorkOrderQueries.StatusEscalated });
+        var excluded = store.QueryOrders(new WorkOrderQuery { Status = WorkOrderQueries.StatusEscalated, ExcludedHostKeys = DisabledKeys });
+
+        Assert.Equal(2, withoutExclusion.Total);
+        Assert.Equal(new[] { normal }, excluded.Items.Select(o => o.WorkOrderId));
+    }
+
+    [Fact]
+    public void 停用主機計數_EF與替身同資料一致()
+    {
+        var ef = Store();
+        var efId = SeedMixed(ef);
+
+        var cases = new FakeIssueCaseStore();
+        var fake = new FakeWorkOrderStore(cases);
+        var fakeId = fake.Insert(NewOrder(1, "A", 1));
+        foreach (var (host, status, closed) in new[]
+                 {
+                     ("h1", IssueHandlingStatuses.InProgress, (DateTime?)null), ("h2", IssueHandlingStatuses.Escalated, null),
+                     ("off", IssueHandlingStatuses.Escalated, null), ("off2", IssueHandlingStatuses.Resolved, DateTime.Now)
+                 })
+            cases.Save(new IssueCase
+            {
+                CaseId = host, HostName = host, IssueKey = "System|Disk|153|1", IssueLabel = "Disk 153", Status = status,
+                HandlerId = 1, CreatedAt = DateTime.Now, CreatedByAccount = "admin", UpdatedAt = DateTime.Now,
+                ClosedAt = closed, WorkOrderId = fakeId, FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today
+            });
+
+        var e = ef.CountMembers(new[] { efId }, DisabledKeys)[efId];
+        var f = fake.CountMembers(new[] { fakeId }, DisabledKeys)[fakeId];
+        Assert.Equal((e.Total, e.Active, e.ActiveOnDisabledHosts, e.Closed, e.Escalated), (f.Total, f.Active, f.ActiveOnDisabledHosts, f.Closed, f.Escalated));
+        Assert.Equal(ef.LoadBoard(DisabledKeys).Single().ActiveMembers, fake.LoadBoard(DisabledKeys).Single().ActiveMembers);
+        Assert.Equal(ef.HandlerSummary(1, Array.Empty<string>(), DisabledKeys).ActiveMembers,
+            fake.HandlerSummary(1, Array.Empty<string>(), DisabledKeys).ActiveMembers);
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void 停用主機排除兩後端都翻譯成SQL(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+        var keys = new[] { "OFF", "GONE" };
+
+        var count = EfWorkOrderStore.BuildCountMembersQuery(ctx, new List<long> { 1 }, null, keys).ToQueryString();
+        var board = EfWorkOrderStore.BuildLoadBoardQuery(ctx, null, keys).ToQueryString();
+        var summary = EfWorkOrderStore.BuildHandlerSummaryQuery(ctx, 1, new[] { "DISK#153" }, null, keys).ToQueryString();
+        var filter = EfWorkOrderStore.BuildOrderFilterQuery(ctx,
+            new WorkOrderQuery { Status = WorkOrderQueries.StatusOverdue, ExcludedHostKeys = keys }, DateTime.Today).ToQueryString();
+
+        foreach (var sql in new[] { count, board, summary, filter })
+            Assert.Contains("host_name_key", sql);
+    }
 }

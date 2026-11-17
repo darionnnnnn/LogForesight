@@ -84,7 +84,7 @@ public sealed class DispatchContext
 
     public static DispatchContext Build(
         DispatchCandidatePool pool, IIssueOwnerStore issueOwners, IWorkOrderStore orders, IIssueCaseStore cases,
-        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now)
+        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now, IReadOnlyCollection<string>? disabledHostKeys = null)
     {
         var allProfiles = issueOwners.GetAll();
 
@@ -97,7 +97,8 @@ public sealed class DispatchContext
         var activeOrders = new Dictionary<(string SourceKey, int EventId), List<WorkOrder>>();
         foreach (var order in orders.GetAllActive()) AddToIndex(activeOrders, order);
 
-        var loads = orders.LoadBoard().ToDictionary(l => l.HandlerId, l => (l.ActiveMembers, l.ActiveWorkOrders));
+        // 停用主機上的成員不算負載（與徽章、負載看板同一口徑）
+        var loads = orders.LoadBoard(disabledHostKeys).ToDictionary(l => l.HandlerId, l => (l.ActiveMembers, l.ActiveWorkOrders));
 
         var noiseByHost = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var mark in noiseMarks.GetAll())

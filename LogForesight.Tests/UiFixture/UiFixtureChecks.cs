@@ -514,6 +514,28 @@ internal sealed class UiFixtureChecks
             Assert.True(IssueProfile.IsMutedOn(p!, DateTime.Today), "問題應在靜音中");
         },
         ["交辦單.未回覆"] = c => Assert.Null(c.Order("ui-same-b").LastReplyAt),
+        ["交辦單.停用主機成員"] = c =>
+        {
+            var hosts = c._hosts.GetAll();
+            var members = c.CasesOf(c.Order("disabled-host").WorkOrderId);
+            var disabledKeys = WorkOrderQueries.DisabledHostKeys(hosts);
+            Assert.Contains(members, m => disabledKeys.Contains(HostNameKey.Of(m.HostName)) && m.ClosedAt == null);
+            Assert.Contains(members, m => !disabledKeys.Contains(HostNameKey.Of(m.HostName)) && m.ClosedAt == null);
+        },
+        ["交辦單.續掛已停止"] = c =>
+        {
+            var o = c.Order("continuation-stopped");
+            Assert.Equal(ContinuationStopReasons.HandlerInactive, o.ContinuationStoppedReason);
+            Assert.Null(o.ClosedAt);
+        },
+        ["交辦單.處理人看不到部分主機"] = c =>
+        {
+            var o = c.Order("unseen");
+            var hosts = c._hosts.GetAll();
+            var noGroup = hosts.Single(h => h.HostName == "UI-NOGROUP-WIN");
+            Assert.Empty(noGroup.GroupIds);
+            Assert.Contains(c.CasesOf(o.WorkOrderId), m => m.HostName == noGroup.HostName && m.ClosedAt == null);
+        },
         ["交辦單.成員200台"] = c => Assert.Equal(200, c._d.Backend.IssueCaseStore().CountByWorkOrder(c._d.WorkOrderIds["mass"])),
         ["交辦單.不再自動派工"] = c =>
         {

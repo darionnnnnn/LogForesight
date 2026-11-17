@@ -650,7 +650,8 @@ public class AnalysisOrchestrator
                 {
                     dispatchContext = DispatchContext.Build(
                         candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
-                        new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now);
+                        new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, DateTime.Now,
+                        WorkOrderQueries.DisabledHostKeys(hostStore.GetAll()));
                 }
                 catch (Exception ex)
                 {

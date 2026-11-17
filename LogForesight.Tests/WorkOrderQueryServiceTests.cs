@@ -80,10 +80,10 @@ public class WorkOrderQueryServiceTests
         public int CountUnreadReplies() => _inner.CountUnreadReplies();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
-        public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds) => _inner.CountMembers(workOrderIds);
+        public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null) => _inner.CountMembers(workOrderIds, excludedHostKeys);
         public WorkOrderPage QueryOrders(WorkOrderQuery q) => _inner.QueryOrders(q);
-        public List<HandlerLoad> LoadBoard() => _inner.LoadBoard();
-        public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys) => _inner.HandlerSummary(handlerId, pausedKeys);
+        public List<HandlerLoad> LoadBoard(IReadOnlyCollection<string>? excludedHostKeys = null) => _inner.LoadBoard(excludedHostKeys);
+        public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys, IReadOnlyCollection<string>? excludedHostKeys = null) => _inner.HandlerSummary(handlerId, pausedKeys, excludedHostKeys);
         public List<long> FindActiveWithoutActiveMembers(int take) => _inner.FindActiveWithoutActiveMembers(take);
         public int PruneClosed(int retentionDays) => _inner.PruneClosed(retentionDays);
     }
@@ -1083,6 +1083,80 @@ public class WorkOrderQueryServiceTests
 
         Assert.False(_orders.Get(replyEqualsCreated)!.HasUnreadReply);
         Assert.Equal(0, Service(As(_bob.UserId, Capability.Assign)).UnreadCount().Count);
+    }
+
+    // ── 停用主機（第 76-2 輪批次 D-2）──────────────────────────────────────────
+
+    private void SetHostActive(string name, bool active)
+    {
+        var host = _hosts.FindByName(name)!;
+        host.Active = active;
+        _hosts.Upsert(host);
+    }
+
+    [Fact]
+    public void 停用主機_摘要與總覽台數不含它_成員列標記_重新啟用後恢復()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "HOST-A", IssueHandlingStatuses.InProgress);
+        AddMember(id, "HOST-B", IssueHandlingStatuses.Escalated);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+        Assert.Equal(2, svc.HandlerSummary(_alice.UserId).ActiveMembers);
+
+        SetHostActive("HOST-B", false);
+
+        Assert.Equal(1, svc.HandlerSummary(_alice.UserId).ActiveMembers);
+        Assert.Equal(1, svc.MyBadge().ActiveMembers);
+        var row = Assert.Single(svc.ListForHandler(_alice.UserId, new WorkOrderListRequest { Status = "all" }).Items);
+        Assert.Equal((2, 1, 1, 0), (row.Counts.Total, row.Counts.Active, row.Counts.ActiveOnDisabledHosts, row.Counts.Escalated));
+        var detail = svc.Get(id);
+        Assert.Equal(1, detail.Counts.ActiveOnDisabledHosts);
+        var members = svc.Members(id, "all", 1, 50).Items;
+        Assert.Equal(new[] { "HOST-B" }, members.Where(m => m.HostDisabled).Select(m => m.HostName));
+
+        SetHostActive("HOST-B", true);
+
+        Assert.Equal(2, svc.HandlerSummary(_alice.UserId).ActiveMembers);
+        Assert.DoesNotContain(svc.Members(id, "all", 1, 50).Items, m => m.HostDisabled);
+        Assert.Equal(0, svc.Get(id).Counts.ActiveOnDisabledHosts);
+    }
+
+    // ── 處理人看不到的台數（D8）────────────────────────────────────────────────
+
+    [Fact]
+    public void 詳情_處理人看不到的台數以讀取時的可見範圍計算_都看得到為0()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "HOST-A", IssueHandlingStatuses.InProgress);
+        AddMember(id, "HOST-B", IssueHandlingStatuses.Open);
+        var closedMember = AddMember(id, "HOST-C", IssueHandlingStatuses.Resolved, closed: DateTime.Now);
+        var a = _hosts.FindByName("HOST-A")!.HostId;
+        var b = _hosts.FindByName("HOST-B")!.HostId;
+        var c = _hosts.FindByName("HOST-C")!.HostId;
+
+        // 處理人（visibility 替身對任何人都回這份集合）看得到 A、B → 0；已結案成員不算
+        Assert.Equal(0, Service(As(_stranger.UserId, Capability.Assign), a, b, c).Get(id).HandlerUnseenMemberCount);
+        // 只看得到 A → B 看不到＝1
+        Assert.Equal(1, Service(As(_stranger.UserId, Capability.Assign), a).Get(id).HandlerUnseenMemberCount);
+        // 什麼都看不到 → 兩台進行中都看不到＝2（HOST-C 已結案不算）
+        Assert.Equal(2, Service(As(_stranger.UserId, Capability.Assign)).Get(id).HandlerUnseenMemberCount);
+        Assert.NotNull(closedMember);
+    }
+
+    [Fact]
+    public void 詳情_停用主機與已結案單不算進處理人看不到的台數()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "HOST-A", IssueHandlingStatuses.InProgress);
+        AddMember(id, "HOST-B", IssueHandlingStatuses.Open);
+        SetHostActive("HOST-B", false);
+        var a = _hosts.FindByName("HOST-A")!.HostId;
+
+        // 看得到 A；B 已停用不計入台數 → 0
+        Assert.Equal(0, Service(As(_stranger.UserId, Capability.Assign), a).Get(id).HandlerUnseenMemberCount);
+
+        var closedId = AddOrder(_bob.UserId, "other", 7, closed: DateTime.Now);
+        Assert.Equal(0, Service(As(_stranger.UserId, Capability.Assign)).Get(closedId).HandlerUnseenMemberCount);
     }
 
     [Fact]
