@@ -1,6 +1,6 @@
 # 回饋第 76 輪第二階段規劃：交辦串接、通知與文字
 
-> 狀態：實作中（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；待使用者確認的兩項依預設：勾選框預設不勾、E1-01 留第 77 輪）
+> 狀態：實作中——A、T、B、D、C、E、F 已完成並推送；**G、Z 未開始**，接續方式見「接續作業」（分支 `feature/feedback-76-2`，自 `feature/feedback-76` 切出；待使用者確認的兩項依預設：勾選框預設不勾、E1-01 留第 77 輪）
 > 基準：`feature/feedback-76`@f11d2080（macOS 10,193 通過／23 略過，1.0.76.0）
 > 來源：第一階段評估報告 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（101 條發現、12 個同根因群組）；第一階段規劃見 `docs/FEEDBACK-76-PLAN.md`
 > 實作方式：主代理規劃與驗收；跨檔實作委派 Sonnet 5.5，機械性替換委派 Haiku 5.5；同一 checkout 一次一個改檔代理
@@ -561,6 +561,43 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 
 1. **管理者代為結案的「不再派工」做成勾選框（預設不勾）**。先前建議是「一律不觸發」；勾選框讓管理者確實想擋時不必繞去設靜音。
 2. **儀表板「24 小時登入失敗」下鑽條件不一致（E1-01）是否提前到本輪**。它把密碼錯誤這類登入失敗藏起來，修法小；預設照原定留第 77 輪。
+
+## 接續作業（換機或換工作階段）
+
+本節給在另一台電腦或新工作階段接手的人：照順序做，不需要讀本機的代理記憶。
+
+### 現況（2026-11-17）
+- 分支 `feature/feedback-76-2`，最後一個提交是批次 F（`6bc9b7ff`）。已完成：A、T、B（B-1～B-3）、D（D-1～D-2）、C（C-1～C-4）、E（E-1～E-2）、F，每段的改法、驗收與落差寫在本檔末「執行紀錄」。
+- 最近一次全量：Windows **10,463 通過／12 略過**（12 筆是規模壓測）；macOS 尚未跑。`CLAUDE.md` 的基線數字還是舊的，Z 批再更新。
+- 版號仍是 `1.0.76.0`；本輪自查修正的修訂遞增留到 Z 批（`VersionRoundGuardTests` 只守第三碼）。
+- 已知的負載偶發（單獨重跑皆綠，與本輪改動無關）：`PrtgTransferControllerTests` 的 Kestrel 案例、`PrtgValueFetchRetryServiceTests.兩條並行工作同時失敗時暫停不疊加_只拉起一次`、`PrtgEndToEndChainTests.逾時_取消訊號讓不回應的請求離開`。
+
+### 下一步
+1. **批次 G**（說明書、AI 參考指引與畫面文字）：照本檔「批次 G」定案與驗收做。逐條依據在 `docs/drafts/FEEDBACK-76-EVIDENCE.md`（E1-03～34、E1-15、E1-42、E1-44、E2-09）。G 的定案 4 要寫進說明書的 A～F 新行為與畫面上的實際文字：
+   - 1102 規則：規則維護頁的升級橫幅（種子 v12），新規則 `builtin-security-audit-log-cleared-1102-eventlog`。
+   - 代為結案：不預選狀態、選不處理類才出現「這台主機（多台時這 N 台主機）的這個問題之後不再自動派工」勾選框（預設不勾）、後果說明、「代為結案 N 台」；處理人回覆選不處理類時的說明行。
+   - 待派頁「不再自動派工」區：依問題分組，可單筆或整個問題恢復，需要指派權限（`Assign`）。
+   - 續掛停止：交辦單詳情與總覽的「續掛已停止：原因」；停用主機的「主機已停用」標記與不計入台數；「處理人目前看不到 N 台」；停用或暫停處理人時的進行中單數提示。
+   - 通知：處理人新收到的代為結案、靜音暫停、靜音恢復三種；併入既有單改為「追加」；管理者提醒（上報超過 N 天、派不出去、上報沒有收件人）與交辦總覽的提醒區；設定「管理者提醒間隔」（`EscalationReminderDays`，預設 3，0＝不寄）。
+   - 設定「站台網址」（`SiteBaseUrl`）與信件連結。
+   - 健康整體狀態：健康頁頂端與導覽健康告示列出原因。
+   - 「我的交辦」只顯示給有處理能力的人；沒有處理能力的人開自己的頁會看到原因說明。
+2. **批次 Z**：照本檔「批次 Z」Z1～Z9。Z2 的交辦部分已達成：情境檔已沒有 `E3-` 已知差異（grep 只剩 `ScenarioDriverTests` 兩處 `E3-01`，那是驅動器自測已知差異機制用的假資料，不算）；`SeverityScenarioTests` 剩 E4-02～07 對應的鍵，留第 77 輪。Z9：實作方只寫體檢交接節就停，換模型體檢後才收尾歸檔、併 dev。
+
+### 驗收工具速記
+- 建置與測試：根目錄 `dotnet build LogForesight.sln`、`dotnet test LogForesight.Tests [--no-build] --filter "…"`；全量 Windows 約 12 分鐘。
+- 說明書批次定向：`dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide|FullyQualifiedName~Wording|FullyQualifiedName~UiTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~BehaviorTests|FullyQualifiedName~ApiTimeout|FullyQualifiedName~DocNarrativeGuard"`。
+- 畫面量測（DESIGN-SYSTEM §8.7）：
+  1. 產生資料集：`LF_UI_FIXTURE=<目錄> dotnet test LogForesight.Tests --no-build --filter "FullyQualifiedName~UiFixtureDataSetTests"`（資料日期相對當天，隔天要重產）。
+  2. 在 `LogForesight.Tests/tools` 起站台：`node ui-serve.mjs --fixture <目錄>/ai --port 5099`。
+  3. 量測：`node ui-shots.mjs --base http://localhost:5099 --scenarios ui-scenarios.json --fixture <目錄>/ai --out <輸出> --matrix widths --only "<情境名子字串>" --no-fail`，合計六項皆 0 才算過。
+  4. 量完關掉站台與命令列含 `--headless` 的 msedge，再跑 `dotnet test`（殘留會讓行為測試逾時假紅）。
+
+### 本輪實作時的注意事項
+- 委派產出要自己驗：檔案編碼一律 UTF-8（本輪曾有檔案被寫成 Big5）、權限屬性要對照 `RoleCapabilityMap`（`Maintain` 含不能看業務資料的救援帳號 serverAdmin，業務動作用 `Assign`）。
+- 以時間判斷的功能，先查有沒有別的流程會更新那個時間欄（夜間掛接會更新案件的 `UpdatedAt`）。
+- 改到派工決策、資料表、DI 或共用流程的段落直接跑全量；定向篩選曾漏掉 `DataConsistency` 讓紅燈上了遠端。
+- 每段驗收後在本檔「執行紀錄」補一列再提交。
 
 ## 交接確認事項（需要正式環境，不算驗收）
 
