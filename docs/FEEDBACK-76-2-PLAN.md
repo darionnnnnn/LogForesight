@@ -613,7 +613,7 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
   5. 健康整體狀態：`HealthAttention.Evaluate` 與 30 秒告示快取。
   6. 說明書：逐條表 `docs/drafts/FEEDBACK-76-2-G-TABLE.md`。
 - **已知負載偶發（單獨重跑皆綠）**：`PrtgTransferControllerTests` Kestrel 案例、`PrtgValueFetchRetryServiceTests` 並行暫停、`PrtgEndToEndChainTests` 逾時取消、`PrtgBackfillRunnerTests.跨日回填時sensor進度換日重設不累加`（配額時間斷言）。
-- **未驗證**：正式環境事項見下節。Windows VM 全量已跑（`8023a365`，全綠）。
+- **未驗證**：正式環境事項見下節。Windows VM 全量已跑（`f4fc4dcf`，10,538 通過／0 失敗／12 略過）。
 - **收尾待辦（體檢後）**：本檔 `git mv` 進 `docs/archive/` 並補索引；`docs/drafts/FEEDBACK-76-EVIDENCE.md` 與 G 逐條表的去留；併 dev 需使用者同意。
 
 ## 交接確認事項（需要正式環境，不算驗收）
