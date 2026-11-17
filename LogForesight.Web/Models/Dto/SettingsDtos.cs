@@ -140,6 +140,9 @@ public class SystemSettingsDto
     /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
     public List<string> MailWorkOrderDigestTimes { get; set; } = new();
 
+    /// <summary>管理者提醒間隔天數（上報逾這麼多天沒人處理的成員，夜間派工結束後進管理者摘要）；0＝不提醒</summary>
+    public int EscalationReminderDays { get; set; }
+
     /// <summary>夜間自動派工總開關：夜間分析後自動指派交辦單處理人</summary>
     public bool AutoDispatchEnabled { get; set; }
 
@@ -438,6 +441,10 @@ public class UpdateSystemSettingsRequest
 
     /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
     public List<string> MailWorkOrderDigestTimes { get; set; } = new();
+
+    /// <summary>管理者提醒間隔天數；0＝不提醒。沒帶這個欄位時沿用預設 3 天</summary>
+    [Range(0, SystemSettings.MaxEscalationReminderDays, ErrorMessage = "管理者提醒間隔天數必須介於 0~30 天")]
+    public int EscalationReminderDays { get; set; } = SystemSettings.DefaultEscalationReminderDays;
 
     public bool AutoDispatchEnabled { get; set; }
 

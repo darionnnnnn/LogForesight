@@ -84,4 +84,24 @@ public class IssueCase
     /// 與恢復動作（false）會寫；處理人回覆與升級前的舊資料維持 null，null 視為擋（<c>!= false</c> 才擋）。
     /// </summary>
     public bool? BlocksRedispatch { get; set; }
+
+    /// <summary>
+    /// 狀態轉進 escalated（處理人回報「無法處理」）的時間；轉出 escalated 清為 null，已是 escalated 再回覆一次不重設。
+    /// 夜間掛接不動它（掛接會更新 <see cref="UpdatedAt"/>，不能拿來算「上報多久了」）。升級前的舊資料為 null，
+    /// 管理者提醒退回用 <see cref="UpdatedAt"/> 起算。唯一寫入點是 <see cref="ApplyStatus"/>。
+    /// </summary>
+    public DateTime? EscalatedAt { get; set; }
+
+    /// <summary>
+    /// 套用新狀態並維護 <see cref="EscalatedAt"/>（所有狀態轉換都走這裡）：轉進 escalated 設為 <paramref name="at"/>；
+    /// 本來就是 escalated 不重設；轉出 escalated 清為 null。
+    /// </summary>
+    public void ApplyStatus(string status, DateTime at)
+    {
+        var wasEscalated = Status == IssueHandlingStatuses.Escalated;
+        var isEscalated = status == IssueHandlingStatuses.Escalated;
+        if (isEscalated && !wasEscalated) EscalatedAt = at;
+        else if (!isEscalated) EscalatedAt = null;
+        Status = status;
+    }
 }

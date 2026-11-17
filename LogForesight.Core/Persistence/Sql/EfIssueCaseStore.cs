@@ -249,6 +249,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.DaySyncIntent = issueCase.DaySyncIntent == null ? null : SerializeIntent(issueCase.DaySyncIntent);
         row.Cancelled = issueCase.Cancelled;
         row.BlocksRedispatch = issueCase.BlocksRedispatch;
+        row.EscalatedAt = issueCase.EscalatedAt;
 
         if (row.SourceKey != null) return;
         var parsed = EfWorkOrderStore.ParseIssueColumns(row.IssueKey);
@@ -492,7 +493,8 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             ? null
             : JsonSerializer.Deserialize<CaseDayIntent>(row.DaySyncIntent, LfJsonOptions.Compact),
         Cancelled = row.Cancelled,
-        BlocksRedispatch = row.BlocksRedispatch
+        BlocksRedispatch = row.BlocksRedispatch,
+        EscalatedAt = row.EscalatedAt
     };
 
     /// <summary>意圖的序列化單點：寫入與「未變更才清」的比對必須用同一份選項，否則字串永遠不相等</summary>

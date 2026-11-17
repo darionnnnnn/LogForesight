@@ -732,7 +732,7 @@ public class WorkOrderCoordinator
         foreach (var member in members)
         {
             member.Cancelled = true;
-            member.Status = IssueHandlingStatuses.Open;
+            member.ApplyStatus(IssueHandlingStatuses.Open, actor.OccurredAt);
             member.Note = null;
             member.DueDate = null;
             member.ClosedAt = actor.OccurredAt;
@@ -944,7 +944,7 @@ public class WorkOrderCoordinator
 
         foreach (var member in members)
         {
-            member.Status = status;
+            member.ApplyStatus(status, actor.OccurredAt);
             member.Note = effectiveNote;
             member.DueDate = effectiveDueDate;
             member.UpdatedAt = actor.OccurredAt;

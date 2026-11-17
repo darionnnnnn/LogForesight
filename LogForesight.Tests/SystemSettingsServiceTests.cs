@@ -1044,6 +1044,39 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Contains("交辦摘要時刻至少一組、最多四組", ex.Message);
     }
 
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(31)]
+    public void Update_管理者提醒間隔超出範圍被拒(int days)
+    {
+        var request = ValidMailRequest();
+        request.EscalationReminderDays = days;
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("管理者提醒間隔天數必須介於 0~30", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void Update_管理者提醒間隔存檔後讀得回來(int days)
+    {
+        var request = ValidMailRequest();
+        request.EscalationReminderDays = days;
+
+        var service = Create();
+        var saved = service.Update(request);
+        Assert.Equal(days, saved.EscalationReminderDays);
+        Assert.Equal(days, _store.Get().EscalationReminderDays);
+    }
+
+    [Fact]
+    public void Get_管理者提醒間隔預設三天()
+    {
+        Assert.Equal(3, Create().Get().EscalationReminderDays);
+    }
+
     [Fact]
     public void Get_交辦摘要時刻預設值為八點與十二點()
     {

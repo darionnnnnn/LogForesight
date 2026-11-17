@@ -583,6 +583,48 @@ public class WorkOrderCoordinatorTests
     }
 
     [Fact]
+    public void Reply_上報起算時間_轉進設值_重複上報不重設_轉出清空()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1");
+        Assert.Null(h1.EscalatedAt);
+
+        var t1 = T0.AddHours(1);
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "無法處理", null, Actor(t1));
+        Assert.Equal(t1, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+
+        // 本來就是 escalated，再回覆一次 escalated：上報起算時間不重設
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "還是不行", null, Actor(t1.AddDays(2)));
+        Assert.Equal(t1, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+
+        // 轉出 escalated 清空；之後再上報是新的起算時間
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "處理中", null, Actor(t1.AddDays(3)));
+        Assert.Null(w.Cases.Get(h1.CaseId)!.EscalatedAt);
+        var t4 = t1.AddDays(4);
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Escalated, "又不行", null, Actor(t4));
+        Assert.Equal(t4, w.Cases.Get(h1.CaseId)!.EscalatedAt);
+    }
+
+    [Fact]
+    public void IssueCase_ApplyStatus_只有狀態轉換動它_其他欄位更新不動上報時間()
+    {
+        var c = new IssueCase { Status = IssueHandlingStatuses.InProgress };
+        var t = new DateTime(2026, 11, 1, 9, 0, 0);
+        c.ApplyStatus(IssueHandlingStatuses.Escalated, t);
+        Assert.Equal(t, c.EscalatedAt);
+
+        // 夜間掛接只改最後掛接日與更新時間，不碰上報時間
+        c.LastLinkedDate = t.Date.AddDays(5);
+        c.UpdatedAt = t.AddDays(5);
+        Assert.Equal(t, c.EscalatedAt);
+
+        c.ApplyStatus(IssueHandlingStatuses.Escalated, t.AddDays(5));
+        Assert.Equal(t, c.EscalatedAt);
+        c.ApplyStatus(IssueHandlingStatuses.Resolved, t.AddDays(6));
+        Assert.Null(c.EscalatedAt);
+    }
+
+    [Fact]
     public void Reply_部分結案_單仍進行中_再回覆其餘_單all_closed()
     {
         var (w, id, cases) = ThreeHostOrder();

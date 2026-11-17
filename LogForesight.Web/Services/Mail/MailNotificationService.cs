@@ -105,6 +105,9 @@ public class MailNotificationService
 
     private readonly TimeProvider _clock;
 
+    /// <summary>上報信沒有收件人時寫系統稽核用；可為 null（測試不注入時只記 log）</summary>
+    private readonly AuditLogStore? _audit;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -124,9 +127,10 @@ public class MailNotificationService
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null,
         HostDayWorkflowService? workflow = null, int acceptedMailContributionLimit = 12_000,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null, AuditLogStore? audit = null)
     {
         _clock = clock ?? TimeProvider.System;
+        _audit = audit;
         if (acceptedMailContributionLimit < 1) throw new ArgumentOutOfRangeException(nameof(acceptedMailContributionLimit));
         _acceptedMailContributionLimit = acceptedMailContributionLimit;
         _settingsStore = settingsStore;
@@ -410,6 +414,7 @@ public class MailNotificationService
             if (recipients.Count == 0)
             {
                 Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
+                RecordEscalationWithoutRecipient(notice);
                 return;
             }
 
@@ -436,6 +441,83 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 問題上報通知處理失敗（不影響狀態變更本身）");
+        }
+    }
+
+    /// <summary>
+    /// 上報信沒有任何收件人：當下寫一筆系統稽核（含單號），並把單記進「沒有收件人」清單，之後由
+    /// <see cref="AdminReminderService"/> 彙整給管理者（交辦總覽顯示、夜間進摘要）。記錄失敗只記 log。
+    /// </summary>
+    private void RecordEscalationWithoutRecipient(EscalationNotice notice)
+    {
+        try
+        {
+            var now = _clock.LocalNow();
+            var target = notice.WorkOrderId is { } id ? $"交辦單號 {id}" : "（問題層級上報，沒有交辦單）";
+            _audit?.Append(new AuditEntry
+            {
+                OccurredAt = now,
+                UserId = null,
+                Account = AuditActions.SystemAccount,
+                Action = AuditActions.EscalationNoRecipient,
+                TargetKind = notice.WorkOrderId.HasValue ? "work_order" : null,
+                TargetId = notice.WorkOrderId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Summary = $"上報信沒有任何收件人（管理者都沒有 email）：{target}，問題 {notice.IssueLabel}，回覆人 {notice.ActorAccount}",
+                Result = AuditResult.Failed
+            });
+
+            if (notice.WorkOrderId is { } workOrderId)
+            {
+                _state.Update(s =>
+                {
+                    if (s.NoRecipientEscalations.Any(e => e.WorkOrderId == workOrderId)) return;
+                    s.NoRecipientEscalations.Add(new NoRecipientEscalation { WorkOrderId = workOrderId, At = now });
+                    // 上限：超過時丟最舊的（單早已被處理的機率最高）
+                    if (s.NoRecipientEscalations.Count > MailNotifyState.NoRecipientEscalationLimit)
+                        s.NoRecipientEscalations.RemoveRange(0, s.NoRecipientEscalations.Count - MailNotifyState.NoRecipientEscalationLimit);
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 記錄「上報信沒有收件人」失敗（不影響狀態變更本身）");
+        }
+    }
+
+    /// <summary>
+    /// 管理者提醒入列：每位收件人一筆 <see cref="WorkOrderOutboxKinds.AdminReminder"/>，進同一套每人摘要。
+    /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
+    /// </summary>
+    public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail)
+    {
+        try
+        {
+            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient == 0) return false;
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return false;
+
+            var now = _clock.LocalNow();
+            var items = recipientUserIds.Select(id => new WorkOrderOutboxItem
+            {
+                Kind = WorkOrderOutboxKinds.AdminReminder,
+                WorkOrderId = 0,
+                RecipientUserId = id,
+                EnqueuedAt = now,
+                ActorAccount = "system",
+                ReminderEscalated = escalated,
+                ReminderUnassignable = unassignable,
+                ReminderNoRecipient = noRecipient,
+                Detail = WorkOrderOutboxItem.ClampDetail(detail)
+            }).ToList();
+
+            var dropped = _outbox.Enqueue(items);
+            if (dropped > 0) Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 管理者提醒入列失敗（不影響夜間派工本身）");
+            return false;
         }
     }
 
@@ -648,6 +730,8 @@ public class MailNotificationService
             .OrderBy(i => i.EnqueuedAt)
             .Select(i =>
             {
+                // 管理者提醒不屬於任何一張單，內容已在入列時組好
+                if (i.Kind == WorkOrderOutboxKinds.AdminReminder) return (Item: i, Order: (WorkOrderDigestOrder?)null);
                 if (!orderCache.TryGetValue(i.WorkOrderId, out var order))
                 {
                     order = LoadDigestOrder(i.WorkOrderId, getRules);

@@ -44,6 +44,7 @@ public sealed partial class HandoffScenarioTests
             {
                 d.Events("HOST-A", ScenarioEvents.DiskErrors(12))
                     .Probe("gaps", "admin1", Gaps)
+                    .Probe("overview", "admin1", "api/work-orders/admin-reminders")
                     .Probe("admin-unread", "admin1", "api/work-orders/unread-count");
             })
             .Day(2, d =>
@@ -59,11 +60,22 @@ public sealed partial class HandoffScenarioTests
             .Expect(Check("S11.d1.gaps-row", 1, "待派頁籤列出這個問題並帶無法派出的原因", reason, d =>
                 d.Probe("gaps").Items("rows").Where(r => r.Str("source") == Disk && r.Int("eventId") == DiskId)
                     .SelectMany(r => r.GetProperty("unassignable").EnumerateArray()).Select(u => u.Str("reason")).FirstOrDefault() ?? "（待派頁沒有這個問題）"))
-            .Expect(Check("S11.d1.admin-told", 1, "管理者被主動告知（通知佇列、信件或徽章其一）", "有告知管道", d =>
-                Outbox(d, "admin1") > 0 || d.MailsSent.Any(m => m.To.Contains("admin1@scenario.test")) || d.Probe("admin-unread").Int("count") > 0
-                    ? "有告知管道" : "沒有任何告知管道"))
+            .Expect(Check("S11.d1.admin-told", 1, "管理者被主動告知：通知佇列有管理者提醒，帶派不出去 1 項與原因", "1/" + reason + "文字", d =>
+            {
+                var r = RemindersOf(d, "admin1").FirstOrDefault();
+                if (r == null) return "沒有任何管理者提醒";
+                var reasonText = reason switch
+                {
+                    "no_pool" => "派工池沒有人",
+                    "all_paused" => "派工池的人全部暫停接單",
+                    _ => "池內的人都看不到這些主機"
+                };
+                var ok = r.Unassignable == 1 && r.Detail is { } t && t.Contains("disk 153", StringComparison.Ordinal) && t.Contains(reasonText, StringComparison.Ordinal);
+                return ok ? $"1/{reason}文字" : $"{r.Unassignable}/{r.Detail}";
+            }))
+            .Expect(Check("S11.d1.overview", 1, "交辦總覽的端點同一份數字：派不出去 1", "1", d => d.Probe("overview").Int("unassignableCount").ToString()))
             .Expect(Check("S11.d2.retry", 2, "隔天問題仍在時再試一次（第 2 天同樣走過派工並記為無候選人）", "deferred:no_candidate", d => Decision(d, "HOST-A")))
-            .KnownDifference("E3-S11-1", "S11.d1.admin-told");
+            ;
         if (resumes)
             s.Expect(Check("S11.d3.retry-delivers", 3, "管理者恢復 h1 接單後，再隔天問題仍在：再試一次就派出（建單給 h1）", "delivered/h1", d =>
                 $"{Decision(d, "HOST-A")}/{HolderOf(d, "HOST-A")}"));
@@ -176,15 +188,23 @@ public sealed partial class HandoffScenarioTests
         .Day(2, d => d
             .Act(ScenarioActions.Reply("h1", OrderRef.ForHandler("h1"), "escalated", "備品缺貨，無法自行更換"))
             .Probe("admin-unread", "admin1", "api/work-orders/unread-count")
-            .Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100"))
-        .Days(2)
+            .Probe("admin-escalated", "admin1", "api/work-orders?status=escalated&pageSize=100")
+            .Probe("overview", "admin1", "api/work-orders/admin-reminders"))
+        .Day(3, d => d.Probe("overview", "admin1", "api/work-orders/admin-reminders"))
+        .Days(3)
         .Expect(Expect.ActionStatus(2, 0, 200))
         .Expect(Check("S14b.d2.no-mail", 2, "沒有任何管理者有 email：上報信寄不出去", "0", d => d.MailsSent.Count.ToString()))
         .Expect(Check("S14b.d2.badge", 2, "站內徽章照常提示上報的回覆", "1", d => d.Probe("admin-unread").Int("count").ToString()))
         .Expect(Check("S14b.d2.escalated-listed", 2, "管理者在站內以「上報中」篩得到這張單", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
-        .Expect(Check("S14b.d2.undelivered-record", 2, "有地方記錄「這次上報沒有人收到信」並讓管理者在站內看得到（稽核或通知記錄）", "有記錄", d =>
-            d.AuditAdded.Any(a => a.Action != AuditActions.HandlingStatus) ? "有記錄" : "沒有任何記錄"))
-        .KnownDifference("E3-S14-1", "S14b.d2.undelivered-record");
+        .Expect(Check("S14b.d2.undelivered-record", 2, "上報信沒有收件人：當下寫一筆稽核，含單號", "1/是", d =>
+        {
+            var rows = d.AuditAdded.Where(a => a.Action == AuditActions.EscalationNoRecipient).ToList();
+            return $"{rows.Count}/{Flag(rows.Count == 1 && rows[0].Summary.Contains("交辦單號 1", StringComparison.Ordinal))}";
+        }))
+        .Expect(Check("S14b.d2.overview", 2, "交辦總覽的端點列出「上報沒有收件人」的單（單號 1）", "1/1", d =>
+            $"{d.Probe("overview").Int("noRecipientCount")}/{d.Probe("overview").Items("noRecipient").FirstOrDefault().Long("workOrderId")}"))
+        .Expect(Check("S14b.d3.no-reminder-mail", 3, "沒有任何管理者有 email：不入列、不寄信，總覽仍顯示", "0/1", d =>
+            $"{ReminderCount(d, "admin1")}/{d.Probe("overview").Int("noRecipientCount")}"));
 
     // ── 進行中台數的五個出口（D6：五處數字一致）──────────────────────────────────
 

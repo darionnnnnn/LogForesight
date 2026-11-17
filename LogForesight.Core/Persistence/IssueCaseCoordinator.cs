@@ -137,7 +137,7 @@ public class IssueCaseCoordinator
 
         var closing = !clearing && IssueHandlingStatuses.IsClosed(status);
 
-        openCase.Status = effectiveStatus;
+        openCase.ApplyStatus(effectiveStatus, occurredAt);
         openCase.Note = effectiveNote;
         openCase.DueDate = effectiveDueDate;
         openCase.UpdatedAt = occurredAt;

@@ -321,6 +321,9 @@ public class SystemSettingsService : ISystemSettingsService
             }
         }
 
+        if (request.EscalationReminderDays < 0 || request.EscalationReminderDays > SystemSettings.MaxEscalationReminderDays)
+            throw DomainException.Validation($"管理者提醒間隔天數必須介於 0~{SystemSettings.MaxEscalationReminderDays} 天，0 表示不提醒。");
+
         var aiProvider = AiProviders.Normalize(request.AiProvider);
         var matchedProvider = ValidAiProviders.FirstOrDefault(p => string.Equals(p, aiProvider, StringComparison.OrdinalIgnoreCase));
         if (matchedProvider == null)
@@ -448,6 +451,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
             s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
             s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).ToList();
+            s.EscalationReminderDays = request.EscalationReminderDays;
             s.AutoDispatchEnabled = request.AutoDispatchEnabled;
 
             // PRTG 監控系統設定（PRTG 第 1 輪批次B）
@@ -1361,6 +1365,7 @@ public class SystemSettingsService : ISystemSettingsService
         MailWorkOrderDigestTimes = s.MailWorkOrderDigestTimes is { Count: > 0 }
             ? s.MailWorkOrderDigestTimes.ToList()
             : new List<string> { "08:00", "12:00" },
+        EscalationReminderDays = s.EscalationReminderDays,
         AutoDispatchEnabled = s.AutoDispatchEnabled,
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         // PRTG 監控系統設定

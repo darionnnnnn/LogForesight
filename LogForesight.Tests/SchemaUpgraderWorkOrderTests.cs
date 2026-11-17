@@ -103,6 +103,50 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上案件escalated_at可空欄_既有列為NULL_重跑冪等()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN escalated_at");
+            Assert.DoesNotContain("escalated_at", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+            ctx.Database.ExecuteSqlRaw(
+                "INSERT INTO lf_issue_cases (case_id, host_name, host_name_key, issue_key, issue_label, status, handler_id, " +
+                "first_linked_date, last_linked_date, created_at, created_by_account, updated_at, day_sync_pending, cancelled) " +
+                "VALUES ('legacy-esc', 'SRV-01', 'SRV-01', 'k', 'l', 'escalated', 1, '2026-01-01', '2026-01-01', '2026-01-01', 'a', '2026-01-01', 0, 0)");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+
+        using var check = _fx.NewContext();
+        Assert.Contains("escalated_at", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
+        var store = new EfIssueCaseStore(_fx.NewContext);
+        var legacy = store.GetByHandler(1).Single(c => c.CaseId == "legacy-esc");
+        Assert.Null(legacy.EscalatedAt);
+
+        // 新建的案件帶上報時間：寫得進、讀得回
+        var at = new DateTime(2026, 11, 2, 8, 30, 0);
+        store.Save(new IssueCase
+        {
+            CaseId = "new-esc", HostName = "SRV-02", IssueKey = "k2", IssueLabel = "l2", Status = IssueHandlingStatuses.Escalated, HandlerId = 1,
+            FirstLinkedDate = at.Date, LastLinkedDate = at.Date, CreatedAt = at, CreatedByAccount = "a", UpdatedAt = at, EscalatedAt = at
+        });
+        Assert.Equal(at, store.GetByHandler(1).Single(c => c.CaseId == "new-esc").EscalatedAt);
+    }
+
+    [Fact]
+    public void SqlServer查詢帶出escalated_at欄位()
+    {
+        var options = new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlServer("Server=.;Database=x;Trusted_Connection=True").Options;
+        using var ctx = new LfDbContext(options);
+
+        var sql = ctx.IssueCases.Where(c => c.EscalatedAt != null).ToQueryString();
+
+        Assert.Contains("[escalated_at]", sql);
+    }
+
+    [Fact]
     public void SqlServer查詢帶出blocks_redispatch欄位()
     {
         var options = new DbContextOptionsBuilder<LfDbContext>()

@@ -601,6 +601,7 @@ function renderMailFields(settings) {
     document.getElementById('mail-digest-skip-empty').checked = settings.mailDigestSkipEmpty;
     document.getElementById('mail-notify-work-orders').checked = !!settings.mailNotifyWorkOrders;
     document.getElementById('mail-work-order-digest-times').value = (settings.mailWorkOrderDigestTimes || []).join(', ');
+    document.getElementById('escalation-reminder-days').value = settings.escalationReminderDays ?? 3;
     document.getElementById('auto-dispatch-enabled').checked = !!settings.autoDispatchEnabled;
     document.getElementById('mail-test-result').replaceChildren();
 
@@ -1561,6 +1562,7 @@ function bindForm() {
                 mailDigestSkipEmpty: document.getElementById('mail-digest-skip-empty').checked,
                 mailNotifyWorkOrders: document.getElementById('mail-notify-work-orders').checked,
                 mailWorkOrderDigestTimes: document.getElementById('mail-work-order-digest-times').value.split(',').map(s => s.trim()).filter(Boolean),
+                escalationReminderDays: readNumber('escalation-reminder-days'),
                 autoDispatchEnabled: document.getElementById('auto-dispatch-enabled').checked,
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),

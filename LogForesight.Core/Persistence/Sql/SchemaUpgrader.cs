@@ -390,6 +390,7 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "blocks_redispatch", isSqlite ? "INTEGER NULL" : "bit NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "escalated_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "prtg_evidence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",

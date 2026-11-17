@@ -99,6 +99,9 @@ public static class AuditActions
     public const string WorkOrderReturn = "work_order_return";
     public const string WorkOrderAutoDispatchRun = "work_order_auto_dispatch_run";
     public const string WorkOrderDismissRestore = "work_order_dismiss_restore";
+
+    /// <summary>上報（無法處理）時沒有任何管理者收件人，上報信寄不出去（系統帳號寫入，含單號）</summary>
+    public const string EscalationNoRecipient = "escalation_no_recipient";
     public const string WorkOrderDueDate = "work_order_due_date";
 
     // 權限異動確認

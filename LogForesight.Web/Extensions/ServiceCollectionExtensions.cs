@@ -492,6 +492,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IIssueExclusionSource>()));
         services.AddSingleton<MailNotificationService>();
+        // 管理者提醒彙整（C-2）：夜間派工結束後入列、交辦總覽讀同一個彙整函式
+        services.AddSingleton<AdminReminderService>();
         services.AddSingleton(sp => new PrtgMonitoringPolicyStore(
             sp.GetRequiredService<StorageBackend>().Blob(PrtgMonitoringPolicyStore.BlobKey)));
 

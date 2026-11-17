@@ -17,6 +17,18 @@ public sealed class WorkOrderOutboxItem
     public bool Immediate { get; set; }              // 立即通知：交辦／改派勾「立即通知處理人」時為 true，輪詢時不等摘要時刻單獨寄出
     public bool NoEmail { get; set; }                // 收件人沒有 email（寄送段標記）
 
+    // 以下三個計數與 Detail 只有 AdminReminder 用：寫入當下算好，信件照這個內容出，總覽顯示的是同一個彙整函式的當下結果
+    public int ReminderEscalated { get; set; }       // 上報逾期未處理的成員數
+    public int ReminderUnassignable { get; set; }    // 本趟派不出去的問題數
+    public int ReminderNoRecipient { get; set; }     // 上報時沒有任何收件人的單數
+    public string? Detail { get; set; }              // 三類的明細文字（寫入前截到 DetailMaxLength）
+
+    /// <summary>明細欄寫入佇列的長度上限；超過時截斷、不擲例外</summary>
+    public const int DetailMaxLength = 4000;
+
+    public static string? ClampDetail(string? detail) =>
+        detail is { Length: > DetailMaxLength } ? detail[..DetailMaxLength] : detail;
+
     /// <summary>原因欄寫入佇列的長度上限（與取消、退回、靜音原因的輸入上限一致）；超過時截斷、不擲例外。</summary>
     public const int ReasonMaxLength = 500;
 
@@ -42,6 +54,12 @@ public static class WorkOrderOutboxKinds
 
     /// <summary>管理者提前解除靜音：通知處理人已恢復（靜音自然到期不通知）</summary>
     public const string MuteResumed = "mute_resumed";
+
+    /// <summary>
+    /// 管理者提醒（夜間派工結束後彙整）：上報逾 N 天未處理的成員、本趟派不出去的問題、上報時沒有任何收件人的單。
+    /// 收件人是管理者；不屬於任何一張單（<see cref="WorkOrderOutboxItem.WorkOrderId"/> 為 0），內容放在 <see cref="WorkOrderOutboxItem.Detail"/>。
+    /// </summary>
+    public const string AdminReminder = "admin_reminder";
 }
 
 public sealed class WorkOrderOutbox

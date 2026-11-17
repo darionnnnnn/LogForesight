@@ -77,6 +77,7 @@ public static class SettingsAuditProjection
             s.MailDigestSkipEmpty,
             s.MailNotifyWorkOrders,
             s.MailWorkOrderDigestTimes,
+            s.EscalationReminderDays,
             s.AutoDispatchEnabled,
             s.PrtgEnabled,
             PrtgUrl = UrlSecrets.Mask(s.PrtgUrl),

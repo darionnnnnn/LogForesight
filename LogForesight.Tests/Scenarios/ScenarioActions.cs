@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Models.Dto;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -432,6 +433,28 @@ public static class ScenarioActions
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
             ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/hosts/{ctx.HostId(host)}/groups",
                 new SetIdsRequest { Ids = groups.Select(ctx.HostGroupId).ToList() });
+    }
+
+    /// <summary>管理者在設定頁改「管理者提醒間隔天數」：讀目前設定、只改這一欄、整份存回（與設定頁同一支 API）</summary>
+    public static ScenarioAction SetEscalationReminderDays(string actor, int days) => new SetEscalationReminderDaysAction(actor, days);
+
+    private sealed class SetEscalationReminderDaysAction(string actor, int days) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"設定頁把管理者提醒間隔改為 {days} 天";
+        internal override async Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
+        {
+            var got = await ctx.Site.SendAsync(Actor, HttpMethod.Get, "api/admin/settings");
+            if (got.StatusCode != 200 || got.Body == null) return got;
+            using var doc = System.Text.Json.JsonDocument.Parse(got.Body);
+            var data = doc.RootElement.GetProperty("data").GetRawText();
+            var request = System.Text.Json.JsonSerializer.Deserialize<UpdateSystemSettingsRequest>(
+                data, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+            request.ExpectedRevision = doc.RootElement.GetProperty("data").GetProperty("revision").GetString();
+            // 測試站台的設定存檔沒有帶網路層重試次數（出廠值 3 由設定頁表單補上），這裡照設定頁補成出廠值
+            if (request.AiRetryCount < 1) request.AiRetryCount = new SystemSettings().AiRetryCount;
+            request.EscalationReminderDays = days;
+            return await ctx.Site.SendAsync(Actor, HttpMethod.Put, "api/admin/settings", request);
+        }
     }
 
     private sealed class SetDispatchPausedAction(string actor, string account, bool paused) : ScenarioAction(actor)

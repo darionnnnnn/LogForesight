@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using LogForesight.Core.Time;
 using LogForesight.Web.Auth;
+using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -69,6 +70,10 @@ public static class ScenarioDriver
 
             foreach (var inspect in plan?.InspectList ?? new List<Action<ScenarioSite, ScenarioActionContext>>())
                 inspect(site, context);
+
+            // 當天寄出到期的交辦摘要（驗證管理者摘要信的內文；寄送時刻取當天 13:00，涵蓋 08:00／12:00 兩個時刻）
+            if (plan?.SendDigest == true)
+                await site.Get<MailNotificationService>().CheckAndSendWorkOrderDigestAsync(site.Clock.LocalNow().Date.AddHours(13));
 
             // 上報信等即時通知是 fire-and-forget；替身寄送是同步完成的，留一小段讓背景續行收尾
             if (actionResults.Count > 0) await Task.Delay(30);
@@ -290,6 +295,8 @@ public static class ScenarioDriver
         var summary = nightlyDispatch.FlushRun(site.Clock.LocalNow());
         // 與 SchedulerHostedService 同一步：夜間派工的結果入通知佇列（寄送由背景服務負責，這裡不寄）
         if (summary.PerHandler.Count > 0) site.Get<MailNotificationService>().EnqueueNightlyDispatch(summary);
+        // 與 SchedulerHostedService 同一步：夜間派工結束後的管理者提醒（上報逾期、派不出去、上報沒有收件人）
+        site.Get<AdminReminderService>().RunAfterNightly(summary);
 
         foreach (var client in clients.Values) await client.DisposeAsync();
 
@@ -477,7 +484,8 @@ public static class ScenarioDriver
             foreach (var p in fresh) _seenOutbox.Add(p.Key);
             return fresh.Select(p => p.Value)
                 .Select(i => new OutboxItemView(phase, i.Kind, users.GetValueOrDefault(i.RecipientUserId, $"user#{i.RecipientUserId}"),
-                    i.WorkOrderId, i.MemberDelta, i.ActorAccount, i.Reason, i.Status, i.Until, i.BlocksRedispatch))
+                    i.WorkOrderId, i.MemberDelta, i.ActorAccount, i.Reason, i.Status, i.Until, i.BlocksRedispatch,
+                    i.Detail, i.ReminderEscalated, i.ReminderUnassignable, i.ReminderNoRecipient))
                 .OrderBy(i => i.WorkOrderId).ThenBy(i => i.Kind, StringComparer.Ordinal).ThenBy(i => i.Recipient, StringComparer.Ordinal)
                 .ToList();
         }

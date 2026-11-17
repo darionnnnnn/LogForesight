@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Tests;
@@ -140,7 +142,18 @@ public sealed partial class UiFixtureDataSet
         cases.Add(NewCase("uicase-longnote", win, "Ui-LongNote-Issue", 8900, IssueHandlingStatuses.InProgress, UserIds["ui-handler-long"], longOrder,
             yesterday.AddDays(-1), yesterday.AddDays(3), note: UiFixtureText.RepeatTo("案件備註也很長，", 400)));
 
+        // 管理者提醒區（C-2）：上報中的成員已逾 3 天沒人處理，且上報信沒有收件人、最近一趟夜間派工有派不出去的問題
+        var escalatedCase = cases.First(c => c.CaseId == "uicase-escalated");
+        escalatedCase.UpdatedAt = now.AddDays(-6);
+        escalatedCase.EscalatedAt = now.AddDays(-6);
         Backend.IssueCaseStore().SaveMany(cases);
+        new MailNotifyStateStore(Backend.Blob("mail_notify_state")).Update(s =>
+        {
+            s.NoRecipientEscalations.Add(new NoRecipientEscalation { WorkOrderId = escalated, At = now.AddDays(-6) });
+            s.LastUnassignable.Add(new UnassignableIssue { IssueLabel = "Ui-Unassignable-Issue EventId 8630", Reason = "no_pool", Hosts = 3 });
+            s.LastUnassignable.Add(new UnassignableIssue { IssueLabel = "Ui-Dismissed-Single EventId 8710", Reason = "all_paused", Hosts = 1 });
+            s.LastUnassignableAt = now.AddHours(-9);
+        });
     }
 
     // ── 被「不再打擾」擋住的項目（待派頁「不再自動派工」區）────────────────────

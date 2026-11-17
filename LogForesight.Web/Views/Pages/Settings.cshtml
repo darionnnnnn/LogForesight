@@ -835,6 +835,15 @@
                 <input type="text" class="form-control lf-input-narrow" id="mail-work-order-digest-times" placeholder="08:00, 12:00" />
                 <div class="form-text">以逗號分隔，最多四組。</div>
             </div>
+            <div class="mb-3">
+                <label for="escalation-reminder-days" class="form-label">管理者提醒間隔（天）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="處理人回覆「無法處理」後超過這麼多天沒人處理，夜間派工結束後會把這些成員、當晚派不出去的問題、上報信沒有收件人的單，彙整進管理者的交辦摘要信。同一個成員每隔這麼多天最多提醒一次。填 0 表示不寄提醒信；交辦總覽的提醒區照常顯示。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+                <input type="number" class="form-control lf-maxw-sm" id="escalation-reminder-days" min="0" max="30" required />
+                <div class="form-text">預設 3 天，0＝不寄提醒信。需開啟交辦單通知才會寄出。</div>
+            </div>
 
             <hr />
 

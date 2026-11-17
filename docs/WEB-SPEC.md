@@ -1682,6 +1682,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 為空。沒有重開：案件結案後不會回到進行中，同問題再出現是新案件、新單。詳情頁逐筆標記讓全部成員結案時，
 結案由背景同步服務每輪掃描補上。
 
+**管理者提醒區**（頁籤列上方 `#wo-reminders`）：三類——上報超過 N 天沒人處理的成員、最近一趟夜間派工派不出去的問題、上報信沒有任何收件人的單——任一類不是 0 時顯示一則 warning `statusNote`「有項目需要管理者處理」，下方每類一行（`lf-list-row`）寫「N 筆」並附連結：上報逾期連到 `?status=escalated`（進行中頁籤的「上報中」篩選）、派不出去連到 `#gaps`（待派頁籤）、沒有收件人連到第一張單的詳情；三類都是 0 或端點失敗時整區不顯示。資料來自 `GET api/work-orders/admin-reminders`（`Assign`／`ViewAll`），與夜間管理者摘要信由同一個彙整函式 `AdminReminderService.Compute` 算出，不受郵件總開關與提醒間隔影響（郵件關閉時這是唯一管道）；N＝0 時逾期仍以出廠 3 天判定。
+
 **總覽頁四頁籤**（`bindTabs` 啟用網址 hash，外部可直接連到 `#load`／`#gaps`／`#muted`）：
 - **進行中**：交辦單清單——單號｜問題｜處理人（停用／暫停接單徽章）｜成員（台數、狀態彙總、逐日同步中台數）｜
   逾期｜未回覆｜未讀回覆（有則顯示「有新回覆」淡色徽章）｜期限｜來源｜建立｜最近新增（最近一次加入成員的時間）｜狀態。篩選：狀態（進行中／上報中／有逾期／未回覆／已結案／全部）、
@@ -1825,7 +1827,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
 
-**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消、退回、代為結案、靜音暫停、靜音恢復，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段（退回段每張單一行：單號 N：{問題}，由 {操作者} 退回：{說明}；後三段空段不輸出、標題只在有時才列）。管理者代為結案通知該單處理人，內容帶結案狀態、原因與「問題再出現時會不會重新派工」（勾選之後不再自動派工＝不會；未勾選或已處理＝會）；靜音造成的暫停通知處理人，帶靜音迄日與「到期自動恢復」，靜音連同代為結案時只發結案那一則（帶靜音迄日，靜音期間不派工、迄日後再出現會重新派工）；管理者提前解除靜音通知處理人已恢復，靜音自然到期不通知。改派或拆出併入目標處理人既有的單時，目標處理人收到的是「新增成員」（帶移入台數），不是「新交辦」。通知原因寫入佇列前截到 500 字。新三種的段落之外，其餘各段每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時。收件人是目前操作者時不入列；收件人停用或不存在時項目移除。站台沒有對外網址設定，信末寫「請至站台的『我的交辦』檢視上列單號」。
+**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消、退回、代為結案、靜音暫停、靜音恢復，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段（退回段每張單一行：單號 N：{問題}，由 {操作者} 退回：{說明}；後三段空段不輸出、標題只在有時才列）。管理者代為結案通知該單處理人，內容帶結案狀態、原因與「問題再出現時會不會重新派工」（勾選之後不再自動派工＝不會；未勾選或已處理＝會）；靜音造成的暫停通知處理人，帶靜音迄日與「到期自動恢復」，靜音連同代為結案時只發結案那一則（帶靜音迄日，靜音期間不派工、迄日後再出現會重新派工）；管理者提前解除靜音通知處理人已恢復，靜音自然到期不通知。改派或拆出併入目標處理人既有的單時，目標處理人收到的是「新增成員」（帶移入台數），不是「新交辦」。通知原因寫入佇列前截到 500 字。新三種的段落之外，其餘各段每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時；上報時沒有任何收件人（admin 群組成員都沒有 email）時，當下寫一筆系統稽核 `escalation_no_recipient`（含交辦單號），並把單記進「沒有收件人」清單（`MailNotifyState.NoRecipientEscalations`，單結案或不再有上報成員後不再計入）。**管理者提醒**：每趟夜間派工結束後（排程與情境驅動器同一個入口 `AdminReminderService.RunAfterNightly`），彙整三類——上報超過 `EscalationReminderDays` 天沒人處理的成員（依案件的上報時間 `EscalatedAt` 起算（狀態轉進 escalated 時寫入、轉出清空、夜間掛接不動；升級前舊資料退回最後更新日），大於 N 天才算）、本趟派不出去的問題（夜間派工結果的 `no_candidate`，依問題＋原因彙整台數，每趟整份取代，存 `LastUnassignable`）、上報時沒有任何收件人的單；任一類不是 0 就為每位有 email 的 admin 群組成員各入列一筆 `admin_reminder`（不屬於任何單，帶三類筆數與明細文字，明細寫入前截到 4000 字），進同一套每人摘要，信分一段「【管理者提醒】」並指向「交辦總覽」。同一個成員（案件）每 N 天至多提醒一次，上次提醒日記在 `MailNotifyState.AdminReminderLastSent`（沒入列任何收件人時不記，不再逾期的鍵每趟清掉）；派不出去的問題每天至多入列一次。`MailEnabled`、`MailNotifyWorkOrders` 任一關閉、N＝0 或沒有任何有 email 的管理者時不入列；同一位管理者同時段有多筆提醒時信內只列最新一筆。收件人是目前操作者時不入列；收件人停用或不存在時項目移除。站台沒有對外網址設定，信末寫「請至站台的『我的交辦』檢視上列單號」。
 
 **API**（`api/work-orders`）：
 | 端點 | 能力 | 說明 |
@@ -1836,6 +1838,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
 | `GET load-board?groupId`／`gaps?from&to&page` | `Assign`／`ViewAll` | 負載看板、待派試跑 |
+| `GET admin-reminders` | `Assign`／`ViewAll` | 管理者提醒三類的筆數與明細：`escalatedCount`／`unassignableCount`／`noRecipientCount`、`thresholdDays`、`any`；明細 `escalated`（`workOrderId`、`issueLabel`、`hostName`、`days`）、`unassignable`（`issueLabel`、`reason`、`hosts`）、`noRecipient`（`workOrderId`、`issueLabel`），每類最多 50 筆 |
 | `GET dismissed?page` | `Assign`／`ViewAll` | 被「不再打擾」擋住的項目（依問題分組、每頁 50 組）；每列含 `hostName`、`issueKey`、`status`、`closedBy`、`closedAt` |
 | `POST dismissed/restore { hostName, issueKey }`／`dismissed/restore-issue { source, eventId }` | `Assign` | 恢復單筆／整個問題的自動派工；稽核 `work_order_dismiss_restore`；沒被擋住回 404 |
 | `POST auto-dispatch { from, to }` | `Maintain` | 立即派工；稽核 `work_order_auto_dispatch_run` |
@@ -2589,7 +2592,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      無事的信同時是系統存活訊號）＋標題模板
      （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
      已暫停寄送的收件人清單（見下方）＋「交辦單通知（建立／改派／取消與夜間摘要）」開關
-     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複）。
+     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
      同頁籤末段是**自動派工**：「夜間分析後自動派工」開關（`AutoDispatchEnabled`，預設關）、三條常駐說明
      （候選人：派工池群組成員，排除暫停接單、看不到該主機的人；負載：進行中交辦單的進行中成員數，挑最輕的人；
      不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾）、
@@ -3376,7 +3379,7 @@ DB-SPEC 沒有 `lf_user_host_map` 與 `lf_users.is_admin`（可見範圍與管�
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
 | `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
-| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 45 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
+| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、管理者提醒的上次提醒日（`AdminReminderLastSent`）、上報信沒有收件人的單（`NoRecipientEscalations`，最多 200 筆）與最近一趟派不出去的問題（`LastUnassignable`）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 45 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬；交辦單成員） | Web＋批次 |

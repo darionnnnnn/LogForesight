@@ -17,6 +17,7 @@ import {
     renderEmpty,
     bindTabs,
     button,
+    linkButton,
     toast,
     confirmAction,
     confirmAndClearMute,
@@ -27,11 +28,14 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
-import { roleText, filterDisclosure } from '../core/elements.js';
+import { roleText, filterDisclosure, statusNote } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
+
+// 管理者提醒區（頁籤列上方；三類都是 0 時不顯示）
+const remindersContainer = document.getElementById('wo-reminders');
 
 // 進行中頁籤
 const activeStatusSelect = document.getElementById('wo-status');
@@ -120,6 +124,14 @@ if (hasUrlFilter) {
         hintRow.appendChild(labelSpan);
         hintRow.appendChild(clearLink);
         toolbar.parentElement.insertBefore(hintRow, toolbar);
+    }
+}
+
+// 只帶 status（例如提醒區的「上報中」連結）：預選狀態下拉，其餘篩選維持預設
+if (!hasUrlFilter && activeStatusSelect) {
+    const urlStatus = urlParams.get('status');
+    if (urlStatus && Array.from(activeStatusSelect.options ?? []).some(o => o.value === urlStatus)) {
+        activeStatusSelect.value = urlStatus;
     }
 }
 
@@ -913,6 +925,55 @@ async function removeMute(r) {
 
 // ── 頁籤切換與事件綁定 ─────────────────────────────────────────────────────
 
+// ── 管理者提醒區 ───────────────────────────────────────────────────────────
+
+/**
+ * 提醒區（第 76-2 輪批次 C-2）：上報逾期未處理、本趟派不出去、上報時沒有收件人三類，數字與夜間的管理者摘要信
+ * 同一個彙整函式（GET api/work-orders/admin-reminders）。三類都是 0 時整區不顯示；有數字時每類一行「N 筆」並連到對應位置。
+ */
+function renderReminders(data) {
+    remindersContainer.replaceChildren();
+    if (!data) return;
+    const escalated = data.escalatedCount ?? 0;
+    const unassignable = data.unassignableCount ?? 0;
+    const noRecipient = data.noRecipientCount ?? 0;
+    if (escalated + unassignable + noRecipient === 0) return;
+
+    remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
+    const list = document.createElement('ul');
+    list.className = 'list-unstyled mt-2 mb-0';
+    const addRow = (text, linkText, href) => {
+        const item = document.createElement('li');
+        item.className = 'd-flex flex-wrap align-items-center gap-2 mb-1 lf-list-row';
+        const label = document.createElement('span');
+        label.textContent = text;
+        item.appendChild(label);
+        item.appendChild(linkButton(linkText, href));
+        list.appendChild(item);
+    };
+    if (escalated > 0) {
+        addRow(`上報超過 ${data.thresholdDays} 天沒人處理：${formatNumber(escalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated');
+    }
+    if (unassignable > 0) {
+        addRow(`最近一次夜間派工派不出去的問題：${formatNumber(unassignable)} 筆`, '看待派', appUrl('/work-orders') + '#gaps');
+    }
+    if (noRecipient > 0) {
+        const first = (data.noRecipient ?? [])[0];
+        addRow(`上報信沒有任何收件人的單：${formatNumber(noRecipient)} 筆`, first ? `看單號 ${first.workOrderId}` : '看上報中的單',
+            first ? appUrl('/work-orders/' + first.workOrderId) : appUrl('/work-orders') + '?status=escalated');
+    }
+    remindersContainer.appendChild(list);
+}
+
+async function loadReminders() {
+    try {
+        renderReminders(await api.get('/api/work-orders/admin-reminders'));
+    } catch {
+        // 提醒區是補充資訊：取不到就不顯示，不擋頁面其餘功能（錯誤訊息已由 api.js 顯示）
+        remindersContainer.replaceChildren();
+    }
+}
+
 function loadTab(tabName) {
     if (tabName === 'active') {
         guardLoad(activeListContainer, loadActive);
@@ -1032,6 +1093,7 @@ async function init() {
     await loadHandlerGroups();
 
     bindTabs(tabsEl, { hash: true, onChange: handleTabChange });
+    loadReminders();
 
     const activeBtn = tabsEl.querySelector('[data-tab].active');
     const initialTab = activeBtn ? activeBtn.dataset.tab : 'active';

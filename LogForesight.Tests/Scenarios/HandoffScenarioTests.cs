@@ -12,7 +12,7 @@ namespace LogForesight.Tests.Scenarios;
 ///
 /// 時間：交辦、靜音、觀察中的「現在」「今天」取自站台 DI 的 <see cref="TimeProvider"/>，驅動器每天開始前把假時鐘撥到
 /// 該天的執行當天（資料日隔天 09:00），所以建單、稽核、靜音起算、期限驗證與到期判定都隨「第 N 天」前進。
-/// S3 的提醒功能尚未存在，照現況列已知差異 E3-S3-1。
+/// S3 的管理者提醒（批次 C-2）以假時鐘逐日驗證間隔。
 /// </summary>
 [Collection("NLogGlobalConfig")]
 public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenarioTests.Fixture>
@@ -221,6 +221,21 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     public void S3_上報超過數天未處理_管理者收到提醒() => R("S3提醒").AssertExpectations();
 
     [Fact]
+    public void C6a_上報後問題每天再出現_提醒間隔仍從上報日起算() => R("S3提醒每天再出現").AssertExpectations();
+
+    [Fact]
+    public void C6b_提醒間隔為0_永不提醒但總覽照常顯示() => R("S3提醒關閉").AssertExpectations();
+
+    [Fact]
+    public void C5c_郵件總開關關閉_不寄信但總覽端點仍回數字() => R("S3郵件關閉").AssertExpectations();
+
+    [Fact]
+    public void C6c_設定頁改間隔_存檔後下一夜照新值() => R("S3改設定").AssertExpectations();
+
+    [Fact]
+    public void C5b_三類都是0_不入列不寄信_總覽端點全0() => R("C2全無").AssertExpectations();
+
+    [Fact]
     public void S4_處理人被停用() => R("S4").AssertExpectations();
 
     [Fact]
@@ -376,6 +391,11 @@ public sealed partial class HandoffScenarioTests : IClassFixture<HandoffScenario
     [InlineData("S2代為結案")]
     [InlineData("S3")]
     [InlineData("S3提醒")]
+    [InlineData("S3提醒每天再出現")]
+    [InlineData("S3提醒關閉")]
+    [InlineData("S3郵件關閉")]
+    [InlineData("S3改設定")]
+    [InlineData("C2全無")]
     [InlineData("S4")]
     [InlineData("S5")]
     [InlineData("S6")]

@@ -345,6 +345,19 @@ public class SystemSettings
     /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組。</summary>
     public List<string> MailWorkOrderDigestTimes { get; set; } = new() { "08:00", "12:00" };
 
+    /// <summary>
+    /// 管理者提醒的間隔天數：上報（無法處理）超過這麼多天沒人處理的成員，在夜間派工結束後進管理者的交辦摘要；
+    /// 同一個成員每這麼多天至多提醒一次。0＝不提醒（管理者提醒信一律不寄，交辦總覽的提醒區照常顯示）。
+    /// 消費端：<c>AdminReminderService</c>。
+    /// </summary>
+    public int EscalationReminderDays { get; set; } = DefaultEscalationReminderDays;
+
+    /// <summary>EscalationReminderDays 的出廠預設</summary>
+    public const int DefaultEscalationReminderDays = 3;
+
+    /// <summary>EscalationReminderDays 的上限（天）</summary>
+    public const int MaxEscalationReminderDays = 30;
+
     /// <summary>持久設定版本；舊資料為 legacy，成功儲存後換新識別。</summary>
     public string Revision { get; set; } = "legacy";
 

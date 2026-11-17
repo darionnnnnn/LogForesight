@@ -11,6 +11,11 @@ public sealed partial class HandoffScenarioTests
     {
         "S3" => BuildS3(),
         "S3提醒" => BuildS3Reminder(),
+        "S3提醒每天再出現" => BuildS3Reminder(recurring: true),
+        "S3提醒關閉" => BuildS3Reminder(days: 0),
+        "S3郵件關閉" => BuildS3MailOff(),
+        "S3改設定" => BuildS3ChangeSetting(),
+        "C2全無" => BuildReminderNone(),
         "S4" => BuildContinuation("S4 處理人被停用", ContinuationKind.Disabled),
         "S5" => BuildContinuation("S5 處理人暫停接單", ContinuationKind.Paused),
         "S6" => BuildContinuation("S6 處理人的主機授權被移除", ContinuationKind.NoAccess),
@@ -81,15 +86,88 @@ public sealed partial class HandoffScenarioTests
         .Expect(Check("S3.d4.still-listed", 4, "管理者一直沒處理，第 4 天仍可篩出（沒有被漏掉）", "1", d => d.Probe("admin-escalated").Items("items").Count.ToString()))
         .Expect(Check("S3.d4.unread-badge", 4, "管理者未開啟前，側欄徽章持續提示（未讀回覆 1）", "1", d => d.Probe("admin-unread").Int("count").ToString()));
 
+    /// <summary>某人當天新增的管理者提醒（通知佇列種類 admin_reminder）</summary>
+    private static List<OutboxItemView> RemindersOf(DayResult d, string recipient) =>
+        d.OutboxAdded.Where(o => o.Kind == WorkOrderOutboxKinds.AdminReminder && o.Recipient == recipient).ToList();
+
+    private static string ReminderCount(DayResult d, string recipient) => RemindersOf(d, recipient).Count.ToString();
+
     /// <summary>
-    /// S3 的提醒預期：處理人第 2 天回報「無法處理」，管理者一直沒處理，超過數天（暫定 3 天）後管理者應收到提醒。
-    /// 提醒功能目前不存在（通知種類沒有提醒、沒有掃「上報中逾 N 天」的邏輯），所以第 4 天管理者的通知佇列沒有任何新項目；
-    /// 照第一階段慣例寫成應有行為並列入已知差異 E3-S3-1，提醒做出來時這一項會轉紅、要求從清單移除。
+    /// S3 的提醒（C-2）：處理人第 2 天回報「無法處理」，管理者一直沒處理。間隔 N（預設 3）天：
+    /// 上報後第 3 天不提醒、第 4 天（情境第 6 天）提醒、第 5～6 天不重複、第 7 天（情境第 9 天）再提醒；N＝0 永不提醒。
+    /// 情境第 6 天寄出摘要，驗證管理者摘要信的內文。
     /// </summary>
-    internal static Scenario BuildS3Reminder() => BuildS3()
-        .Expect(Check("S3.d4.admin-reminder", 4, "上報後管理者一直沒處理，超過數天後通知佇列有給管理者的提醒", "有提醒",
-            d => Outbox(d, "admin1") > 0 ? "有提醒" : "沒有任何提醒"))
-        .KnownDifference("E3-S3-1", "S3.d4.admin-reminder");
+    internal static Scenario BuildS3Reminder(int days = SystemSettings.DefaultEscalationReminderDays, bool recurring = false)
+    {
+        var s = BuildS3().Days(9)
+            .WithSettings(new ScenarioSettings { Customize = x => x.EscalationReminderDays = days })
+            .Day(6, d => d.SendDigests().Probe("overview", "admin1", "api/work-orders/admin-reminders"));
+        // 持續發生的問題：上報後每天夜間都再出現，夜間掛接每天更新案件的最後更新時間，上報起算日不得被它歸零
+        if (recurring)
+            for (var day = 3; day <= 9; day++) s.Day(day, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)));
+        // 情境第 N 天＝上報後第 N-2 天：第 3 天（上報後 1）～第 5 天（上報後 3）不提醒；第 6 天（4）提醒；第 7、8 天不重複；第 9 天（7）再提醒
+        for (var day = 3; day <= 9; day++)
+        {
+            var expected = days > 0 && day is 6 or 9 ? "1" : "0";
+            s.Expect(Check($"S3.d{day}.reminder", day, $"提醒間隔 {days} 天：情境第 {day} 天（上報後第 {day - 2} 天）的管理者提醒數", expected,
+                d => ReminderCount(d, "admin1")));
+        }
+        if (days > 0)
+        {
+            s.Expect(Check("S3.d6.reminder-counts", 6, "第 6 天的提醒帶三類筆數（上報逾期 1、派不出去 0、沒有收件人 0）", "1/0/0", d =>
+                    RemindersOf(d, "admin1") is { Count: 1 } r ? $"{r[0].Escalated}/{r[0].Unassignable}/{r[0].NoRecipient}" : "（沒有提醒）"))
+                .Expect(Check("S3.d6.reminder-detail", 6, "第 6 天的提醒明細列出單號、問題、主機與已上報天數", "是", d =>
+                    Flag(RemindersOf(d, "admin1").FirstOrDefault()?.Detail is { } t
+                         && t.Contains("單號 1", StringComparison.Ordinal) && t.Contains("HOST-A", StringComparison.Ordinal)
+                         && t.Contains("已上報 4 天", StringComparison.Ordinal) && t.Contains("共 1 個成員", StringComparison.Ordinal))))
+                .Expect(Check("S3.d6.digest-mail", 6, "管理者摘要信含該類的筆數與明細，標題標明管理者提醒", "是", d =>
+                {
+                    var mail = d.MailsSent.FirstOrDefault(m => m.To.Contains("admin1@scenario.test"));
+                    return Flag(mail != null && mail.Subject.Contains("管理者提醒", StringComparison.Ordinal)
+                                && mail.Body.Contains("上報逾期未處理 1 個成員", StringComparison.Ordinal)
+                                && mail.Body.Contains("單號 1：", StringComparison.Ordinal) && mail.Body.Contains("HOST-A", StringComparison.Ordinal));
+                }))
+                .Expect(Check("S3.d6.overview", 6, "交辦總覽的端點與信件同一份數字：上報逾期 1", "1", d => d.Probe("overview").Int("escalatedCount").ToString()));
+        }
+        else
+        {
+            s.Expect(Check("S3.d6.overview-still", 6, "N＝0 不寄提醒信，但交辦總覽的端點仍回上報逾期 1（以預設 3 天判定逾期）", "1", d => d.Probe("overview").Int("escalatedCount").ToString()));
+        }
+        return s;
+    }
+
+    /// <summary>郵件總開關關閉：不入列、不寄信，但交辦總覽的端點仍回三類數字（C5-c）</summary>
+    internal static Scenario BuildS3MailOff() => BuildS3().Days(6)
+        .WithSettings(new ScenarioSettings { Customize = x => x.MailEnabled = false })
+        .Day(6, d => d.SendDigests().Probe("overview", "admin1", "api/work-orders/admin-reminders"))
+        .Expect(Check("S3off.d6.no-reminder", 6, "郵件總開關關閉：第 6 天沒有任何管理者提醒入列", "0", d => ReminderCount(d, "admin1")))
+        .Expect(Check("S3off.d6.no-mail", 6, "郵件總開關關閉：不寄任何信", "0", d => d.MailsSent.Count.ToString()))
+        .Expect(Check("S3off.d6.overview", 6, "郵件關閉時交辦總覽的端點仍回上報逾期 1", "1", d => d.Probe("overview").Int("escalatedCount").ToString()));
+
+    /// <summary>設定頁改間隔天數，存檔後下一夜照新值（C6-c）：第 3 天把 3 改成 1，原本第 6 天才提醒、改成第 4 天就提醒</summary>
+    internal static Scenario BuildS3ChangeSetting() => BuildS3().Days(5)
+        .Day(3, d => d.Act(ScenarioActions.SetEscalationReminderDays("admin1", 1)))
+        .Expect(Expect.ActionStatus(3, 0, 200))
+        .Expect(Check("S3set.d3.before", 3, "改設定前（間隔 3 天）第 3 天沒有提醒", "0", d => ReminderCount(d, "admin1")))
+        .Expect(Check("S3set.d4.next-night", 4, "存檔後下一夜照新值（間隔 1 天）：上報後第 2 天就提醒", "1", d => ReminderCount(d, "admin1")))
+        .Expect(Check("S3set.d5.every-day", 5, "間隔 1 天：隔天再提醒一次", "1", d => ReminderCount(d, "admin1")));
+
+    /// <summary>三類都是 0（C5-b）：派工順利、沒有人上報 → 不入列、不寄信，交辦總覽的端點三類都是 0（畫面不顯示提醒區）</summary>
+    internal static Scenario BuildReminderNone() => new Scenario("C2 三類都是 0")
+        .WithHost(new HostSpec("HOST-A") { Groups = new[] { "G1" } })
+        .WithUser(Admin("admin1"))
+        .WithUser(Handler("h1", new[] { "G1" }))
+        .Day(1, d => d.Events("HOST-A", ScenarioEvents.DiskErrors(12)))
+        .Day(2, d => d.SendDigests().Probe("overview", "admin1", "api/work-orders/admin-reminders"))
+        .Days(2)
+        .Expect(Check("C2none.d1.no-reminder", 1, "三類都是 0：沒有管理者提醒入列", "0", d => ReminderCount(d, "admin1")))
+        .Expect(Check("C2none.d2.no-reminder", 2, "三類都是 0：第 2 天也沒有", "0", d => ReminderCount(d, "admin1")))
+        .Expect(Check("C2none.d2.no-admin-mail", 2, "三類都是 0：管理者沒有收到信", "0", d => d.MailsSent.Count(m => m.To.Contains("admin1@scenario.test")).ToString()))
+        .Expect(Check("C2none.d2.overview-zero", 2, "交辦總覽的端點三類都是 0、any 為 false", "0/0/0/False", d =>
+        {
+            var p = d.Probe("overview");
+            return $"{p.Int("escalatedCount")}/{p.Int("unassignableCount")}/{p.Int("noRecipientCount")}/{p.Data?.Flag("any")}";
+        }));
 
     // ── S4／S5／S6：處理人被停用／暫停接單／主機授權被移除後，新主機是否仍續掛進他的單 ──────────
 

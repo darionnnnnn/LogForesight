@@ -41,6 +41,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Func<DateTime, CancellationToken, Task> _sendDailyWeeklyMail;
     private readonly Func<DateTime, CancellationToken, Task> _sendWorkOrderDigest;
+    private readonly AdminReminderService? _adminReminders;
 
     /// <summary>站台啟動後讓其餘啟動流程先完成的等待時間（測試可縮短）</summary>
     internal TimeSpan StartupDelay { get; init; } = TimeSpan.FromSeconds(10);
@@ -59,8 +60,10 @@ public class SchedulerHostedService : BackgroundService
         IHostApplicationLifetime lifetime,
         DataVersionStamp dataVersion,
         Func<DateTime, CancellationToken, Task>? sendDailyWeeklyMail = null,
-        Func<DateTime, CancellationToken, Task>? sendWorkOrderDigest = null)
+        Func<DateTime, CancellationToken, Task>? sendWorkOrderDigest = null,
+        AdminReminderService? adminReminders = null)
     {
+        _adminReminders = adminReminders;
         // 寄信入口可注入，測試才能驗證「先判斷窗口、後寄信」的順序；預設包 _mail 的兩個方法
         _sendDailyWeeklyMail = sendDailyWeeklyMail ?? ((t, ct) => mail.CheckAndSendDailyWeeklyAsync(t, ct));
         _sendWorkOrderDigest = sendWorkOrderDigest ?? ((t, ct) => mail.CheckAndSendWorkOrderDigestAsync(t, ct));
@@ -607,6 +610,10 @@ public class SchedulerHostedService : BackgroundService
             {
                 _mail.EnqueueNightlyDispatch(dispatchSummary);
             }
+
+            // 夜間派工結束後的管理者提醒（C-2）：彙整上報逾期、派不出去、上報沒有收件人三類，進管理者的交辦摘要；
+            // 內部自行 try/catch 到底，不影響本次執行的成敗判定。dispatchSummary 為 null（這趟沒有派工結果）時不動派不出去的清單。
+            _adminReminders?.RunAfterNightly(dispatchSummary);
         });
 
         return await startSignal.Task;

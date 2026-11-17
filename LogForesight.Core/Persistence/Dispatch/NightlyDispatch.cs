@@ -14,7 +14,13 @@ public sealed class NightlyDispatchSummary
     /// <summary>處理人 → 本趟有新建或新增成員的單</summary>
     public IReadOnlyDictionary<long, IReadOnlyList<NightlyDispatchOrderLine>> PerHandler { get; init; }
         = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>();
+
+    /// <summary>本趟派不出去的問題（無候選人，依問題＋原因彙整台數）；管理者提醒用</summary>
+    public IReadOnlyList<NightlyUnassignableIssue> Unassignable { get; init; } = Array.Empty<NightlyUnassignableIssue>();
 }
+
+/// <summary>夜間派工派不出去的問題：<paramref name="Reason"/> 是 no_pool／all_paused／no_visibility</summary>
+public sealed record NightlyUnassignableIssue(string IssueLabel, string Reason, int Hosts);
 
 /// <summary>夜間派工彙總的一張單</summary>
 public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel)
@@ -54,6 +60,8 @@ public sealed class NightlyDispatch
     private readonly HashSet<long> _continuedOrders = new();
     /// <summary>寫入當下才發現的途中變動（單已結案／已改派），趟末併入 SkipCounts</summary>
     private readonly Dictionary<string, int> _midrunCounts = new(StringComparer.Ordinal);
+    /// <summary>本趟派不出去：（問題, 原因）→ 主機名集合（同主機多日只算一台）</summary>
+    private readonly Dictionary<(string Issue, string Reason), HashSet<string>> _unassignable = new();
 
     public NightlyDispatch(WorkOrderCoordinator coordinator, DispatchContext ctx, IHostStore hosts)
     {
@@ -122,6 +130,13 @@ public sealed class NightlyDispatch
                 {
                     case DispatchDecisionKind.Skip:
                         _ctx.Commit(decision, issue.Source, issue.EventId);
+                        if (decision.SkipReason == WorkOrderDispatcher.SkipNoCandidate)
+                        {
+                            var key = ($"{issue.Source} {issue.EventId}", decision.NoCandidateDetail ?? WorkOrderDispatcher.NoCandidateNoPool);
+                            if (!_unassignable.TryGetValue(key, out var hostSet))
+                                _unassignable[key] = hostSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            hostSet.Add(hostName);
+                        }
                         var terminal = decision.SkipReason is WorkOrderDispatcher.SkipMuted or WorkOrderDispatcher.SkipSuppressed or
                             WorkOrderDispatcher.SkipNoise or WorkOrderDispatcher.SkipSeverity or WorkOrderDispatcher.SkipDismissed or WorkOrderDispatcher.SkipDisabled;
                         Report(onResult, issue, terminal ? "skipped" : "deferred", decision.SkipReason);
@@ -301,7 +316,11 @@ public sealed class NightlyDispatch
                 CreatedOrders = _createdOrders.Count,
                 AttachedMembers = _addedByOrder.Values.Sum(),
                 SkipCounts = skipCounts,
-                PerHandler = perHandler
+                PerHandler = perHandler,
+                Unassignable = _unassignable
+                    .OrderBy(p => p.Key.Issue, StringComparer.Ordinal).ThenBy(p => p.Key.Reason, StringComparer.Ordinal)
+                    .Select(p => new NightlyUnassignableIssue(p.Key.Issue, p.Key.Reason, p.Value.Count))
+                    .ToList()
             };
 
             _addedByOrder.Clear();
@@ -310,6 +329,7 @@ public sealed class NightlyDispatch
             _createdOrders.Clear();
             _labelByOrder.Clear();
             _midrunCounts.Clear();
+            _unassignable.Clear();
             _blockedByOrder.Clear();
             _continuedOrders.Clear();
             return summary;

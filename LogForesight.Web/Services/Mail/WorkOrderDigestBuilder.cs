@@ -29,11 +29,14 @@ internal static class WorkOrderDigestBuilder
         var mutePaused = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.MutePaused).OrderBy(r => r.Item.WorkOrderId).ToList();
         var muteResumed = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.MuteResumed).OrderBy(r => r.Item.WorkOrderId).ToList();
 
+        var reminders = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.AdminReminder).OrderBy(r => r.Item.EnqueuedAt).ToList();
+
         var subjectSummary = $"新交辦 {created.Count} 張、新增成員 {appended.Count} 張、移交 {transferred.Count}、取消 {cancelled.Count}、退回 {returned.Count}";
         // 新種類有才列，沒有時標題與既有寫法相同
         if (adminClosed.Count > 0) subjectSummary += $"、代為結案 {adminClosed.Count}";
         if (mutePaused.Count > 0) subjectSummary += $"、靜音暫停 {mutePaused.Count}";
         if (muteResumed.Count > 0) subjectSummary += $"、靜音恢復 {muteResumed.Count}";
+        if (reminders.Count > 0) subjectSummary = rows.Count == reminders.Count ? "管理者提醒" : subjectSummary + "、管理者提醒";
 
         var body = new StringBuilder();
         AppendSection(body, "【新交辦】", created);
@@ -44,8 +47,25 @@ internal static class WorkOrderDigestBuilder
         AppendSection(body, "【代為結案】", adminClosed);
         AppendSection(body, "【靜音暫停】", mutePaused);
         AppendSection(body, "【靜音恢復】", muteResumed);
-        body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
+        AppendReminders(body, reminders);
+        if (rows.Count > reminders.Count) body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
         return (subjectSummary, body.ToString());
+    }
+
+    /// <summary>管理者提醒：同一位收件人同一時段有多筆時只列最新一筆（內容是當時的整份彙整，後一筆涵蓋前一筆）</summary>
+    private static void AppendReminders(StringBuilder body, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> reminders)
+    {
+        if (reminders.Count == 0) return;
+        var latest = reminders[^1].Item;
+        body.AppendLine("【管理者提醒】");
+        body.AppendLine($"  上報逾期未處理 {latest.ReminderEscalated} 個成員、本趟派不出去 {latest.ReminderUnassignable} 項、上報時沒有收件人 {latest.ReminderNoRecipient} 張單。");
+        if (!string.IsNullOrWhiteSpace(latest.Detail))
+        {
+            foreach (var line in latest.Detail.Split('\n'))
+                body.AppendLine("  " + line.TrimEnd('\r'));
+        }
+        body.AppendLine("  請至站台的「交辦總覽」檢視：上報中篩選、待派頁籤與對應的單。");
+        body.AppendLine();
     }
 
     private static void AppendSection(StringBuilder body,

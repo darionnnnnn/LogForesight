@@ -4763,5 +4763,39 @@
         }
       }
     ]
+  },
+  {
+    "name": "交辦總覽-管理者提醒區",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-reminders .lf-status-note"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "上報超過 3 天沒人處理：1 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "派不出去的問題：2 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "沒有任何收件人的單：1 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders li",
+          "count": 3
+        }
+      }
+    ]
   }
 ]

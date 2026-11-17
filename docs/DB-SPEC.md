@@ -740,6 +740,8 @@ lf_issue_cases                                       -- 問題案件：一台主
   cancelled          bool NOT NULL DEFAULT 0         -- 因取消交辦而結案；同步時把案件寫出的非結案日子改回明確未處理
   blocks_redispatch  bool NULL                       -- 這次結案是否擋住之後的派工：靜音代為結案寫 0、管理者代為結案依勾選（「已處理」寫 0）；
                                                      -- 處理人回覆與升級前舊資料為 NULL，NULL 視為擋（只有 0 不擋）
+  escalated_at       datetime NULL                   -- 狀態轉進 escalated（無法處理）的時間；轉出清空、已是 escalated 再回覆不重設、夜間掛接不動；
+                                                     -- 升級前舊資料為 NULL（管理者提醒退回用 updated_at 起算）
   prtg_evidence_json text NULL                       -- 案件的最小 PRTG 證據；父分析精簡或重建後仍可查
 
 lf_work_orders                                       -- 交辦單：一個問題 × 一批主機 × 一位處理人

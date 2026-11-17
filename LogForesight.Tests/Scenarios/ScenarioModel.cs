@@ -142,6 +142,15 @@ public sealed class DayPlan
         return this;
     }
 
+    internal bool SendDigest { get; private set; }
+
+    /// <summary>當天人為動作之後，把通知佇列裡到期的交辦摘要寄出（替身寄送，內容進當天的 <c>MailsSent</c>）</summary>
+    public DayPlan SendDigests()
+    {
+        SendDigest = true;
+        return this;
+    }
+
     /// <summary>當天的人為動作，依宣告順序執行（在當天分析與派工之後）</summary>
     public DayPlan Act(params ScenarioAction[] actions)
     {
