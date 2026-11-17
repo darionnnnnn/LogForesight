@@ -436,7 +436,7 @@ false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時�
 （resolved 除外——修好後再出現是新事件，重新交辦）。`BlocksRedispatch` 只有三處會寫：靜音代為結案寫 false；
 管理者代為結案依請求的 `BlockRedispatch`（結案狀態為已處理時一律寫 false）；處理人回覆與升級前的舊資料維持 null，
 null 視為擋。它是派工閘門之一，對續掛、負責人、自動派工一律適用（§9.4b）；唯一判定是
-`DispatchContext.DismissedKeys`，夜間派工與日層級指派共用。
+`DispatchContext.DismissedKeys`（取自 `DismissedCases`），夜間派工、日層級指派與待派頁的恢復清單共用。
 負責人之後被移除時既有案件不回收；已分析過的歷史日子不回頭補建。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
 多一個判斷來源）。「解除結論」只清空 `IssueProfile` 上的結論欄位，已寫入的 `IssueHandling`
 列不回溯（誠實留痕，不假裝從沒發生過）。
@@ -1702,6 +1702,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `tooLarge` 要求縮小期間（上限算尚未派出的出現點）。**畫面數字＝按「立即派工」會發生的事**：
   「立即派工」（`Maintain`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；建單依處理人、問題與
   決策來源分組，來源（問題負責人規則／自動派工）與備註比照夜間派工；部分問題失敗時逐組回報、稽核一定寫。
+- **不再自動派工**（待派頁籤下方的卡片，標頭 `lf-text-label` 眉標，右側帶「共 N 個問題、M 台」）：列出被「不再打擾」閘門擋住的（主機, 問題），
+  依問題分組（台數多的在前），每組一個標頭列（問題名稱與台數；有 `Assign` 時右側一顆「整個問題恢復」）與一張表——主機｜先前結案狀態（不處理／誤報／已知雜訊徽章）｜
+  結案的人｜日期｜「恢復」（有 `Assign` 時）；每頁 50 個問題組，0 筆時顯示「沒有不再自動派工的問題」。待派清單「已排除」欄的「不再打擾 N 台」可點，捲到這一區。
+  恢復前以 `confirmAction`（主要色確認鈕）寫出主機（或台數）與問題，成功後 toast 並就地重載這一區。
+  資料與判定：`GET api/work-orders/dismissed?page`（`Assign`／`ViewAll`，可見範圍同待派頁）對可見主機逐台呼叫 `DispatchContext.DismissedCases`
+  ——`DismissedKeys` 也是用它取鍵，所以清單與夜間派工、日層級指派是同一份判定，沒有第二份條件。「結案的人、日期」不另存欄位：日期取案件結案時間，
+  人從處理歷程（同主機、同問題、同狀態、時間最貼近結案時間的一列的操作者）讀，歷程尚待背景同步時退回案件上待寫入的意圖，都沒有顯示「—」。
+  恢復端點（能力 `Assign`；不用 `Maintain`，救援帳號沒有業務資料檢視）：`POST api/work-orders/dismissed/restore { hostName, issueKey }`（單筆）、
+  `POST api/work-orders/dismissed/restore-issue { source, eventId }`（整個問題，只處理可見主機）；動作只把那件最新案件的 `BlocksRedispatch` 寫成 false
+  （不建案、不改狀態與結案時間），目前沒被擋住或看不到該主機回 404；稽核 `work_order_dismiss_restore`，摘要含主機與問題（整個問題含台數）。
+  恢復後下一趟夜間派工照常判斷；處理人之後再回不處理是新案件（欄位空值），閘門重新生效。
 - **靜音中**（只有 `Maintain` 看得到；沒有該能力時頁籤與面板從 DOM 移除，`#muted` 不生效）：
   目前靜音中的問題，依到期日升冪——問題｜靜音至｜剩餘天數｜起始日｜原因｜設定者｜暫停中交辦單（前 20 個問題
   逐一查張數）｜「延長」「解除」（兩者都開視窗，按鈕帶 `aria-haspopup="dialog"`）。頁籤標題帶數字「靜音中（N）」。
@@ -1804,6 +1815,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
 | `GET load-board?groupId`／`gaps?from&to&page` | `Assign`／`ViewAll` | 負載看板、待派試跑 |
+| `GET dismissed?page` | `Assign`／`ViewAll` | 被「不再打擾」擋住的項目（依問題分組、每頁 50 組）；每列含 `hostName`、`issueKey`、`status`、`closedBy`、`closedAt` |
+| `POST dismissed/restore { hostName, issueKey }`／`dismissed/restore-issue { source, eventId }` | `Assign` | 恢復單筆／整個問題的自動派工；稽核 `work_order_dismiss_restore`；沒被擋住回 404 |
 | `POST auto-dispatch { from, to }` | `Maintain` | 立即派工；稽核 `work_order_auto_dispatch_run` |
 | `POST preview`／`POST` | `Assign` | 交辦預覽與建單（同一 request 形狀） |
 | `POST {id}/append`／`reassign`／`split`／`cancel` | `Assign` | 單操作；取消原因必填 |

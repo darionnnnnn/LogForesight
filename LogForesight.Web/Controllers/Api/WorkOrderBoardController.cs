@@ -19,10 +19,12 @@ namespace LogForesight.Web.Controllers.Api;
 public class WorkOrderBoardController : ControllerBase
 {
     private readonly WorkOrderBoardService _service;
+    private readonly DismissedIssueService _dismissed;
 
-    public WorkOrderBoardController(WorkOrderBoardService service)
+    public WorkOrderBoardController(WorkOrderBoardService service, DismissedIssueService dismissed)
     {
         _service = service;
+        _dismissed = dismissed;
     }
 
     [HttpGet("load-board")]
@@ -32,4 +34,9 @@ public class WorkOrderBoardController : ControllerBase
     [HttpGet("gaps")]
     public ApiResponse<GapsDto> Gaps([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int page = 1) =>
         ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page));
+
+    /// <summary>被「不再打擾」擋住、不再自動派工的項目（依問題分組、分頁）；可見範圍同待派頁</summary>
+    [HttpGet("dismissed")]
+    public ApiResponse<DismissedListDto> Dismissed([FromQuery] int page = 1) =>
+        ApiResponse<DismissedListDto>.Ok(_dismissed.GetList(page));
 }

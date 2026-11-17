@@ -22,6 +22,7 @@ public sealed partial class UiFixtureDataSet
     private void BuildExtended()
     {
         WriteExtraWorkOrders();
+        WriteDismissedCases();
         WriteIssueProfiles();
         WriteBatchRuns();
         WriteAudit();
@@ -120,6 +121,51 @@ public sealed partial class UiFixtureDataSet
             yesterday.AddDays(-1), yesterday.AddDays(3), note: UiFixtureText.RepeatTo("案件備註也很長，", 400)));
 
         Backend.IssueCaseStore().SaveMany(cases);
+    }
+
+    // ── 被「不再打擾」擋住的項目（待派頁「不再自動派工」區）────────────────────
+
+    /// <summary>
+    /// 兩個問題被擋住：Ui-Dismissed-Noise 多台（含超長主機名、三種不處理類狀態、欄位空值與 true 各有）、
+    /// Ui-Dismissed-Single 單台。另寫兩件不該列出的案件：已恢復（欄位 false）與已處理（resolved）。
+    /// 結案的人與日期寫進處理歷程（清單從歷程讀）。
+    /// </summary>
+    private void WriteDismissedCases()
+    {
+        var now = DateTime.Now;
+        var yesterday = Yesterday;
+        var cases = new List<IssueCase>();
+        var logs = new List<RecordHandlingLog>();
+
+        void Dismissed(string hostKey, string source, int eventId, string status, string actor, int daysAgo, bool? blocks = null)
+        {
+            var host = _hosts[hostKey].HostName;
+            var closedAt = now.AddDays(-daysAgo);
+            var c = NewCase($"uidismissed-{hostKey}-{eventId}", host, source, eventId, status, UserIds[actor], 0,
+                yesterday.AddDays(-daysAgo - 1), closedAt: closedAt, note: "評估後不處理。");
+            c.WorkOrderId = null;
+            c.BlocksRedispatch = blocks;
+            cases.Add(c);
+            logs.Add(new RecordHandlingLog
+            {
+                HostName = host, Date = c.LastLinkedDate, Status = status, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel,
+                ActorId = UserIds[actor], ActorAccount = actor, Action = HandlingActions.StatusChange, CreatedAt = closedAt
+            });
+        }
+
+        var noise = new[] { "bulk01", "bulk02", "bulk03", "bulk04", "long63", "fqdn-long" };
+        var statuses = new[] { IssueHandlingStatuses.WontFix, IssueHandlingStatuses.FalsePositive, IssueHandlingStatuses.KnownNoise };
+        for (var i = 0; i < noise.Length; i++)
+            Dismissed(noise[i], "Ui-Dismissed-Noise", 8700, statuses[i % statuses.Length], i % 2 == 0 ? "ui-handler" : "ui-admin", 3 + i,
+                blocks: i == 1 ? true : null);
+        Dismissed("win", "Ui-Dismissed-Single", 8710, IssueHandlingStatuses.WontFix, "ui-handler", 2);
+
+        // 不該列出：管理者已恢復（欄位 false）、已處理
+        Dismissed("fin", "Ui-Dismissed-Noise", 8700, IssueHandlingStatuses.WontFix, "ui-admin", 6, blocks: false);
+        Dismissed("fqdn", "Ui-Dismissed-Noise", 8700, IssueHandlingStatuses.Resolved, "ui-handler", 5);
+
+        Backend.IssueCaseStore().SaveMany(cases);
+        Backend.RecordHandlingStore().AppendLogs(logs);
     }
 
     // ── 問題負責與靜音 ──────────────────────────────────────────────────────

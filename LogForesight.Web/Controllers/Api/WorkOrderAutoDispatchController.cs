@@ -15,10 +15,7 @@ public class WorkOrderAutoDispatchController : ControllerBase
 {
     private readonly WorkOrderBoardService _service;
 
-    public WorkOrderAutoDispatchController(WorkOrderBoardService service)
-    {
-        _service = service;
-    }
+    public WorkOrderAutoDispatchController(WorkOrderBoardService service) => _service = service;
 
     [HttpPost("auto-dispatch")]
     public ApiResponse<AutoDispatchResultDto> AutoDispatch([FromBody] AutoDispatchRequest request) =>

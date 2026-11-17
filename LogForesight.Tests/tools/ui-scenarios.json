@@ -585,6 +585,21 @@
         }
       },
       {
+        "waitFor": "#wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn-outline-primary",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn-outline-secondary",
+          "visible": true
+        }
+      },
+      {
         "click": "#wo-tabs [data-tab=\"muted\"]"
       },
       {
@@ -625,9 +640,46 @@
         }
       },
       {
+        "waitFor": "#wo-dismissed .lf-empty, #wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .btn",
+          "count": 0
+        }
+      },
+      {
         "assert": {
           "sel": "#wo-muted-list",
           "count": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-交辦總覽-不再自動派工",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      {
+        "waitFor": "#wo-list tbody tr"
+      },
+      {
+        "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "waitFor": "#wo-dismissed tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed-card",
+          "visible": true
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-dismissed .lf-table-aligned table",
+          "visible": true
         }
       }
     ]

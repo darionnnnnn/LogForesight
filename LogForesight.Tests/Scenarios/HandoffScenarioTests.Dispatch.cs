@@ -24,6 +24,10 @@ public sealed partial class HandoffScenarioTests
         "S10" => BuildS10(),
         "B3不勾" => BuildAdminCloseRedispatch("B3 代為結案不勾選", block: false),
         "B3勾選" => BuildAdminCloseRedispatch("B3 代為結案勾選", block: true),
+        "B4恢復單筆" => BuildRestoreOne(),
+        "B4整個問題" => BuildRestoreIssue(),
+        "B4再回不處理" => BuildRestoreThenDismissAgain(),
+        "B4無權限" => BuildRestoreForbidden(),
         "B6取消" => BuildCancelRevokesGrant(),
         "B6結案" => BuildClosedKeepsGrant(),
         "B6改派" => BuildReassignRevokesGrant(),
@@ -262,6 +266,7 @@ public sealed partial class HandoffScenarioTests
             {
                 foreach (var h in hosts) d.Events(h, ScenarioEvents.DiskErrors(12));
                 d.Probe("gaps", "admin1", Gaps);
+                d.Probe("dismissed", "admin1", "api/work-orders/dismissed");
             })
             .Days(3)
             .Expect(Check("S8.d1.setup", 1, "前置：四台都派給 z1（a1 暫停接單）", "z1:4", d => $"z1:{d.Orders.Where(o => o.Handler == "z1").Sum(o => o.Members.Count)}"))
@@ -276,19 +281,17 @@ public sealed partial class HandoffScenarioTests
             .Expect(Check("S8.d3.gaps-count", 3, "待派頁看得到「不再打擾」排除了 3 台", "3", d =>
                 d.Probe("gaps").Items("rows").Where(r => r.Str("source") == Disk && r.Int("eventId") == DiskId)
                     .Sum(r => r.TryGetProperty("excluded", out var ex) && ex.TryGetProperty("gate_dismissed", out var n) ? n.GetInt32() : 0).ToString()))
-            .Expect(Check("S8.d3.gaps-lists-hosts", 3, "待派頁列出被「不再打擾」排除的主機（HOST-B、HOST-C、HOST-D），管理者才知道要恢復哪幾台", "有", d =>
+            .Expect(Check("S8.d3.dismissed-lists-hosts", 3, "待派頁的「不再自動派工」清單列出被排除的主機（HOST-B、HOST-C、HOST-D），管理者才知道要恢復哪幾台", "HOST-B,HOST-C,HOST-D", d =>
+                string.Join(",", DismissedRows(d.Probe("dismissed")).Select(r => r.Str("hostName")).OrderBy(h => h, StringComparer.Ordinal))))
+            .Expect(Check("S8.d3.dismissed-says-why", 3, "清單帶出先前結案狀態（不處理、誤報、已知雜訊），已處理的不列", "false_positive,known_noise,wont_fix", d =>
+                string.Join(",", DismissedRows(d.Probe("dismissed")).Select(r => r.Str("status")).OrderBy(x => x, StringComparer.Ordinal))))
+            .Expect(Check("S8.d3.dismissed-fields", 3, "每列有問題、結案的人（處理人 z1）與結案日期", "disk 153/有/有", d =>
             {
-                var body = d.Probe("gaps").Body ?? "";
-                return new[] { "HOST-B", "HOST-C", "HOST-D" }.All(h => body.Contains(h, StringComparison.Ordinal)) ? "有" : "沒有";
-            }))
-            .Expect(Check("S8.d3.gaps-says-why", 3, "待派頁或問題頁說明「因先前結案為 X 而不派工」（帶出結案狀態）", "有", d =>
-            {
-                var body = d.Probe("gaps").Body ?? "";
-                return new[] { "wont_fix", "false_positive", "known_noise", "不處理", "誤報", "已知雜訊" }
-                    .Any(k => body.Contains(k, StringComparison.Ordinal)) ? "有" : "沒有";
-            }))
-            .KnownDifference("E3-S8-1", "S8.d3.gaps-lists-hosts")
-            .KnownDifference("E3-S8-2", "S8.d3.gaps-says-why");
+                var group = d.Probe("dismissed").Items("groups").Single();
+                var row = group.GetProperty("rows").EnumerateArray().First(r => r.Str("hostName") == "HOST-B");
+                return $"{group.Str("issueLabel")}/{(row.Str("closedBy").Contains("z1", StringComparison.Ordinal) ? "有" : "沒有")}"
+                       + $"/{(string.IsNullOrEmpty(row.Str("closedAt")) ? "沒有" : "有")}";
+            }));
         return s;
     }
 

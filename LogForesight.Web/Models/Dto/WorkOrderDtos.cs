@@ -518,6 +518,75 @@ public class GapRowDto
     public List<string> UnseenHostGroups { get; set; } = new();
 }
 
+/// <summary>待派頁「不再自動派工」清單：被「不再打擾」閘門擋住的（主機, 問題），依問題分組、依問題組分頁</summary>
+public class DismissedListDto
+{
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+
+    /// <summary>問題組總數（分頁依據）</summary>
+    public int Total { get; set; }
+
+    /// <summary>被擋住的主機總台數（去重）</summary>
+    public int TotalHosts { get; set; }
+
+    public List<DismissedGroupDto> Groups { get; set; } = new();
+}
+
+public class DismissedGroupDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+    public string? PlainExplanation { get; set; }
+
+    /// <summary>此問題被擋住的台數</summary>
+    public int Hosts { get; set; }
+
+    public List<DismissedRowDto> Rows { get; set; } = new();
+}
+
+public class DismissedRowDto
+{
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>單筆恢復用：問題簽章鍵（不透明字串，原樣回送）</summary>
+    public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>先前結案狀態：wont_fix／false_positive／known_noise</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>結案的人（顯示名稱）；讀不到處理歷程時為 null</summary>
+    public string? ClosedBy { get; set; }
+
+    public DateTime? ClosedAt { get; set; }
+}
+
+/// <summary>恢復單一（主機, 問題）</summary>
+public class RestoreDismissedRequest
+{
+    [Required]
+    public string HostName { get; set; } = string.Empty;
+
+    [Required]
+    public string IssueKey { get; set; } = string.Empty;
+}
+
+/// <summary>恢復整個問題</summary>
+public class RestoreDismissedIssueRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+}
+
+public class DismissedRestoreResultDto
+{
+    /// <summary>恢復的主機（案件）數</summary>
+    public int Restored { get; set; }
+}
+
 public class GapSuggestionDto
 {
     public long HandlerId { get; set; }

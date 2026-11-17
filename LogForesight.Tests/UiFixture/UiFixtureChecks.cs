@@ -515,6 +515,14 @@ internal sealed class UiFixtureChecks
         },
         ["交辦單.未回覆"] = c => Assert.Null(c.Order("ui-same-b").LastReplyAt),
         ["交辦單.成員200台"] = c => Assert.Equal(200, c._d.Backend.IssueCaseStore().CountByWorkOrder(c._d.WorkOrderIds["mass"])),
+        ["交辦單.不再自動派工"] = c =>
+        {
+            var cases = c._d.Backend.IssueCaseStore().GetMany(c._hosts.GetAll().Select(h => h.HostName).ToList());
+            var blocked = cases.GroupBy(x => x.HostName, StringComparer.OrdinalIgnoreCase)
+                .SelectMany(g => DispatchContext.DismissedCases(g)).ToList();
+            True(blocked.Count(x => x.IssueLabel.Contains("8700", StringComparison.Ordinal)) == 6, "Ui-Dismissed-Noise 應有 6 台被擋住（含超長主機名）");
+            True(blocked.Count(x => x.IssueLabel.Contains("8710", StringComparison.Ordinal)) == 1, "Ui-Dismissed-Single 應有 1 台被擋住");
+        },
         ["交辦單.超長說明"] = c => True((c.Order("long-note").Note?.Length ?? 0) > 500, $"備註應超過 500 字（實得 {c.Order("long-note").Note?.Length}）"),
 
         // ═══ A-0c：規則與問題負責 ═══

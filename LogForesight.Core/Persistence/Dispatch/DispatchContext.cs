@@ -232,8 +232,11 @@ public sealed class DispatchContext
         }
     }
 
-    /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者</summary>
-    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+    /// <summary>
+    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者。
+    /// 回傳的是那件案件本身（待派頁的恢復清單要顯示先前結案狀態、並對它寫回欄位）；閘門只取它的鍵（<see cref="DismissedKeys"/>）。
+    /// </summary>
+    internal static List<IssueCase> DismissedCases(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
             .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
             .Select(g => g.OrderByDescending(c => c.CreatedAt)
@@ -244,8 +247,11 @@ public sealed class DispatchContext
             .Where(c => c.Status is IssueHandlingStatuses.WontFix
                 or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
             .Where(c => c.BlocksRedispatch != false)
-            .Select(c => c.IssueKey)
-            .ToHashSet(IssueSignatureKeyComparer.Instance);
+            .ToList();
+
+    /// <summary>被「不再打擾」擋住的問題鍵集合；判定走 <see cref="DismissedCases"/>，沒有第二份條件</summary>
+    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+        DismissedCases(casesOfHost).Select(c => c.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)

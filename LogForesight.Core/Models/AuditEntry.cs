@@ -98,6 +98,7 @@ public static class AuditActions
     public const string WorkOrderAdminClose = "work_order_admin_close";
     public const string WorkOrderReturn = "work_order_return";
     public const string WorkOrderAutoDispatchRun = "work_order_auto_dispatch_run";
+    public const string WorkOrderDismissRestore = "work_order_dismiss_restore";
     public const string WorkOrderDueDate = "work_order_due_date";
 
     // 權限異動確認

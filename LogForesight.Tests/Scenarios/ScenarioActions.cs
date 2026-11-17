@@ -179,6 +179,14 @@ public static class ScenarioActions
     public static ScenarioAction Cancel(string actor, OrderRef order, string? reason = null) =>
         new CancelAction(actor, order, reason);
 
+    /// <summary>待派頁「不再自動派工」：恢復單一（主機, 問題）。問題簽章鍵由站台目前被擋住的案件解析</summary>
+    public static ScenarioAction RestoreDismissed(string actor, string host, string source, int eventId) =>
+        new RestoreDismissedAction(actor, host, source, eventId);
+
+    /// <summary>待派頁「不再自動派工」：恢復整個問題</summary>
+    public static ScenarioAction RestoreDismissedIssue(string actor, string source, int eventId) =>
+        new RestoreDismissedIssueAction(actor, source, eventId);
+
     /// <summary>設定問題靜音（Source＋EventId）。<paramref name="existingOrders"/>：pause（不動既有單）或 close</summary>
     public static ScenarioAction Mute(string actor, string source, int eventId, int days, string reason, string existingOrders = "pause") =>
         new MuteAction(actor, source, eventId, days, reason, existingOrders);
@@ -357,6 +365,27 @@ public static class ScenarioActions
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
             ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.Resolve(ctx)}/admin-close",
                 new AdminCloseWorkOrderRequest { Status = status, Reason = reason, BlockRedispatch = blockRedispatch });
+    }
+
+    private sealed class RestoreDismissedAction(string actor, string host, string source, int eventId) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"恢復自動派工：{host} 的 {source} EventId {eventId}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
+        {
+            var blocked = DispatchContext.DismissedCases(ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { host }))
+                .FirstOrDefault(c => string.Equals(c.SourceName, source, StringComparison.OrdinalIgnoreCase) && c.EventId == eventId)
+                ?? throw new ScenarioUnresolvedException($"{host} 的 {source} EventId {eventId} 目前沒有被擋住");
+            return ctx.Site.SendAsync(Actor, HttpMethod.Post, "api/work-orders/dismissed/restore",
+                new RestoreDismissedRequest { HostName = host, IssueKey = blocked.IssueKey });
+        }
+    }
+
+    private sealed class RestoreDismissedIssueAction(string actor, string source, int eventId) : ScenarioAction(actor)
+    {
+        public override string Describe() => $"恢復整個問題的自動派工：{source} EventId {eventId}";
+        internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx) =>
+            ctx.Site.SendAsync(Actor, HttpMethod.Post, "api/work-orders/dismissed/restore-issue",
+                new RestoreDismissedIssueRequest { Source = source, EventId = eventId });
     }
 
     private sealed class CancelAction(string actor, OrderRef order, string? reason) : ScenarioAction(actor)
