@@ -567,7 +567,7 @@ Windows VM 可用時加跑全量，不可用不擋交接（寫明未跑）。
 本節給在另一台電腦或新工作階段接手的人：照順序做，不需要讀本機的代理記憶。
 
 ### 現況（2026-11-17）
-- 分支 `feature/feedback-76-2`，最後一個提交是批次 F（`6bc9b7ff`）。已完成：A、T、B（B-1～B-3）、D（D-1～D-2）、C（C-1～C-4）、E（E-1～E-2）、F，每段的改法、驗收與落差寫在本檔末「執行紀錄」。
+- 分支 `feature/feedback-76-2`，已完成：A、T、B（B-1～B-3）、D（D-1～D-2）、C（C-1～C-4）、E（E-1～E-2）、F、G（G-1～G-4，2026-11-17），下一步是批次 Z；每段的改法、驗收與落差寫在本檔末「執行紀錄」。
 - 最近一次全量：Windows **10,463 通過／12 略過**（12 筆是規模壓測）；macOS 尚未跑。`CLAUDE.md` 的基線數字還是舊的，Z 批再更新。
 - 版號仍是 `1.0.76.0`；本輪自查修正的修訂遞增留到 Z 批（`VersionRoundGuardTests` 只守第三碼）。
 - 已知的負載偶發（單獨重跑皆綠，與本輪改動無關）：`PrtgTransferControllerTests` 的 Kestrel 案例、`PrtgValueFetchRetryServiceTests.兩條並行工作同時失敗時暫停不疊加_只拉起一次`、`PrtgEndToEndChainTests.逾時_取消訊號讓不回應的請求離開`。
