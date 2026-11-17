@@ -612,8 +612,8 @@ public class SchedulerHostedService : BackgroundService
             }
 
             // 夜間派工結束後的管理者提醒（C-2）：彙整上報逾期、派不出去、上報沒有收件人三類，進管理者的交辦摘要；
-            // 內部自行 try/catch 到底，不影響本次執行的成敗判定。dispatchSummary 為 null（這趟沒有派工結果）時不動派不出去的清單。
-            _adminReminders?.RunAfterNightly(dispatchSummary);
+            // 內部自行 try/catch 到底，不影響本次執行的成敗判定。dispatchSummary 為 null（這趟沒有派工結果）或非全量執行時不動派不出去的清單（非全量的結果只含該次範圍，見 SummaryForUnassignableList）。
+            _adminReminders?.RunAfterNightly(AdminReminderService.SummaryForUnassignableList(effectiveRequest.Scope, dispatchSummary));
         });
 
         return await startSignal.Task;

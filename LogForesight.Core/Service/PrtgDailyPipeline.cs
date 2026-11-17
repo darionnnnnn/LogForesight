@@ -750,14 +750,14 @@ internal static class PrtgDailyPipeline
                             {
                                 appendedHosts++;
                                 corroboratedCount += hostCorroborated;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ", clock: backend.Clock);
                             }
                             // 當日沒有任何紀錄（沒有日誌分析）：PRTG 自己成立一筆主機日，日誌分析晚到時原地更新為該來源。
                             else if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AppendPrtgOnlyIfAbsent(
                                          hostId, hostName, day, hostFindings, useAi)))
                             {
                                 prtgOnlyHosts++;
-                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ", clock: backend.Clock);
                             }
                             else pendingHosts++;
                         }

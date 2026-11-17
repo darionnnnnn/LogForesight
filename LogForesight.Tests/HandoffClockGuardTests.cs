@@ -114,4 +114,34 @@ public class HandoffClockGuardTests
             "範圍內只有 ClockExtensions 可以呼叫 GetLocalNow／GetUtcNow，其餘改呼叫共用函式：" + string.Join("、", offenders));
         Assert.Contains("GetLocalNow", File.ReadAllText(Path.Combine(root, "LogForesight.Core/Time/ClockExtensions.cs")));
     }
+
+    /// <summary>
+    /// 分析與 PRTG 管線整檔有與交辦無關的 DateTime.Now（計時、檢查時間），無法整檔納入 <see cref="Scope"/>；
+    /// 改守「交辦呼叫點」：呼叫 AttachCase 必須傳 clock、呼叫 DispatchContext.Build／FlushRun 不得直接讀真實時鐘。
+    /// </summary>
+    [Fact]
+    public void 管線的交辦呼叫點一律傳入時鐘()
+    {
+        var root = FindRepoRoot();
+        var offenders = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(Path.Combine(root, "LogForesight.Core", "Service"), "*.cs"))
+        {
+            var text = File.ReadAllText(path);
+            foreach (var (name, needsClock) in new[] { ("HostDayPostProcessor.AttachCase(", true), ("DispatchContext.Build(", false), (".FlushRun(", false) })
+            {
+                var from = 0;
+                while ((from = text.IndexOf(name, from, StringComparison.Ordinal)) >= 0)
+                {
+                    var end = text.IndexOf(';', from);
+                    var call = text.Substring(from, end - from);
+                    var bad = needsClock ? !Regex.IsMatch(call, @"\bclock\s*:|,\s*\w+\.Clock\s*\)") : DirectClock.IsMatch(call);
+                    if (bad) offenders.Add($"{Path.GetFileName(path)}:{text.Take(from).Count(c => c == '\n') + 1} {name}");
+                    from = end;
+                }
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "交辦呼叫點漏接 backend.Clock（或直接讀真實時鐘）：" + string.Join("、", offenders));
+    }
 }

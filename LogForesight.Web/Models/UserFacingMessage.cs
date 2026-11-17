@@ -17,6 +17,7 @@ public static class UserFacingMessage
         typeof(DomainException),
         typeof(LogForesight.Core.Persistence.ConcurrentUpdateException),
         typeof(LogForesight.Core.Persistence.PrtgScopePurgeBusyException),
+        typeof(LogForesight.Core.Persistence.WorkOrderRuleException),
         typeof(LogForesight.Core.Persistence.Sql.PrtgTransferStoreException),
         typeof(LogForesight.Core.Persistence.Sql.PrtgScopeConflictException),
         typeof(LogForesight.Web.Services.RunExportDeidentificationException),

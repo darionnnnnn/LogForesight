@@ -96,7 +96,7 @@ public class WorkOrderCoordinator
     private WorkOrderMemberOutcome CreateLocked(WorkOrderCreateRequest req)
     {
         if (req.Members.Count == 0)
-            throw new ArgumentException("交辦單至少要有一個成員。", nameof(req));
+            throw new WorkOrderRuleException("交辦單至少要有一個成員。");
 
         var actor = req.Actor;
 
@@ -205,7 +205,7 @@ public class WorkOrderCoordinator
     private (WorkOrderMemberOutcome Outcome, HashSet<long> SourceOrders) MembersInto(WorkOrder order, List<WorkOrderMember> members, bool reassignConflicts, WorkOrderActor actor)
     {
         if (order.SourceName == null || order.EventId == null)
-            throw new InvalidOperationException($"交辦單 {order.WorkOrderId} 不是單一問題單，不能以問題成員追加。");
+            throw new WorkOrderRuleException($"交辦單 {order.WorkOrderId} 不是單一問題單，不能以問題成員追加。");
 
         var source = order.SourceName;
         var eventId = order.EventId.Value;
@@ -273,12 +273,12 @@ public class WorkOrderCoordinator
         foreach (var member in members)
         {
             if (!knownHosts.Contains(member.HostName))
-                throw new InvalidOperationException($"找不到主機「{member.HostName}」。");
+                throw new WorkOrderRuleException($"找不到主機「{member.HostName}」。");
 
             var parsed = IssueSignatureKey.TryParseSignature(member.IssueKey);
             if (parsed == null || parsed.Value.EventId != eventId
                 || !SourceKeyComparer.Instance.Equals(parsed.Value.Source, source))
-                throw new InvalidOperationException(
+                throw new WorkOrderRuleException(
                     $"成員「{member.HostName}」的問題簽章與交辦單 {orderLabel} 的問題不符。");
         }
     }
@@ -428,11 +428,11 @@ public class WorkOrderCoordinator
     private WorkOrderMoveResult SplitLocked(long workOrderId, IReadOnlyCollection<string> caseIds, long newHandlerId, WorkOrderActor actor)
     {
         if (caseIds.Count == 0)
-            throw new ArgumentException("拆單至少要選一個案件。", nameof(caseIds));
+            throw new WorkOrderRuleException("拆單至少要選一個案件。");
 
         var order = GetActive(workOrderId);
         if (newHandlerId == order.HandlerId)
-            throw new InvalidOperationException("拆單的新處理人與目前處理人相同。");
+            throw new WorkOrderRuleException("拆單的新處理人與目前處理人相同。");
 
         var selected = SelectMembers(workOrderId, caseIds);
 
@@ -682,7 +682,7 @@ public class WorkOrderCoordinator
     private WorkOrderCloseResult CancelLocked(long workOrderId, string reason, WorkOrderActor actor)
     {
         if (string.IsNullOrWhiteSpace(reason))
-            throw new ArgumentException("取消交辦單要填原因。", nameof(reason));
+            throw new WorkOrderRuleException("取消交辦單要填原因。");
 
         var order = GetActive(workOrderId);
         var members = ActiveMembers(workOrderId);
@@ -706,12 +706,12 @@ public class WorkOrderCoordinator
     private WorkOrderReturnResult ReturnLocked(long workOrderId, WorkOrderActor actor, string note)
     {
         if (string.IsNullOrWhiteSpace(note))
-            throw new ArgumentException("退回處理人要填說明。", nameof(note));
+            throw new WorkOrderRuleException("退回處理人要填說明。");
 
         var order = GetActive(workOrderId);
         var members = ActiveMembers(workOrderId).Where(c => c.Status == IssueHandlingStatuses.Escalated).ToList();
         if (members.Count == 0)
-            throw new InvalidOperationException($"交辦單 {workOrderId} 沒有處於「無法處理」的成員可退回。");
+            throw new WorkOrderRuleException($"交辦單 {workOrderId} 沒有處於「無法處理」的成員可退回。");
 
         // 退回只改狀態與說明，不動成員原本的預計完成日（逾期判定要繼續有效）：
         // ApplyStatus 的期限是整批同一個值，依期限分組逐批套用
@@ -759,7 +759,7 @@ public class WorkOrderCoordinator
         string hostName, IReadOnlyCollection<string> issueKeys, string reason, WorkOrderActor actor)
     {
         if (string.IsNullOrWhiteSpace(reason))
-            throw new ArgumentException("收回日層級交辦單要填原因。", nameof(reason));
+            throw new WorkOrderRuleException("收回日層級交辦單要填原因。");
         lock (OrderMutationLock) return RetractDayAssignmentsLocked(hostName, issueKeys, reason, actor);
     }
 
@@ -811,9 +811,9 @@ public class WorkOrderCoordinator
     private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch)
     {
         if (!IssueHandlingStatuses.IsClosed(status))
-            throw new ArgumentException($"代為結案的狀態「{status}」不是結案類。", nameof(status));
+            throw new WorkOrderRuleException($"代為結案的狀態「{status}」不是結案類。");
         if (string.IsNullOrWhiteSpace(reason))
-            throw new ArgumentException("代為結案要填原因。", nameof(reason));
+            throw new WorkOrderRuleException("代為結案要填原因。");
 
         var order = GetActive(workOrderId);
         var members = ActiveMembers(workOrderId);
@@ -838,7 +838,7 @@ public class WorkOrderCoordinator
     private WorkOrderReplyResult ReplyLocked(long workOrderId, IReadOnlyCollection<string>? caseIds, string status, string? note, DateTime? dueDate, WorkOrderActor actor)
     {
         if (!IssueHandlingStatuses.IsValid(status))
-            throw new ArgumentException($"不支援的處理狀態「{status}」。", nameof(status));
+            throw new WorkOrderRuleException($"不支援的處理狀態「{status}」。");
 
         GetActive(workOrderId);
         var members = caseIds == null || caseIds.Count == 0
@@ -881,7 +881,7 @@ public class WorkOrderCoordinator
         var changed = UpdateOrder(workOrderId, o =>
         {
             if (o.ClosedAt != null)
-                throw new InvalidOperationException($"交辦單 #{workOrderId} 已結案，無法修改期限。");
+                throw new WorkOrderRuleException($"交辦單 #{workOrderId} 已結案，無法修改期限。");
             previous = o.DueDate;
             if (o.DueDate?.Date == newDate) return false;
             o.DueDate = newDate;
@@ -1085,9 +1085,9 @@ public class WorkOrderCoordinator
     private WorkOrder GetActive(long workOrderId)
     {
         var order = _orders.Get(workOrderId)
-                    ?? throw new InvalidOperationException($"找不到交辦單 {workOrderId}。");
+                    ?? throw new WorkOrderRuleException($"找不到交辦單 {workOrderId}。");
         if (order.ClosedAt != null)
-            throw new InvalidOperationException($"交辦單 {workOrderId} 已結案。");
+            throw new WorkOrderRuleException($"交辦單 {workOrderId} 已結案。");
         return order;
     }
 
@@ -1112,7 +1112,7 @@ public class WorkOrderCoordinator
         foreach (var caseId in caseIds.Distinct(StringComparer.Ordinal))
         {
             if (!byId.TryGetValue(caseId, out var member))
-                throw new InvalidOperationException($"案件 {caseId} 不是交辦單 {workOrderId} 的進行中成員。");
+                throw new WorkOrderRuleException($"案件 {caseId} 不是交辦單 {workOrderId} 的進行中成員。");
             selected.Add(member);
         }
         return selected;
@@ -1142,7 +1142,7 @@ public class WorkOrderCoordinator
         for (var attempt = 0; ; attempt++)
         {
             var fresh = _orders.Get(workOrderId)
-                        ?? throw new InvalidOperationException($"找不到交辦單 {workOrderId}。");
+                        ?? throw new WorkOrderRuleException($"找不到交辦單 {workOrderId}。");
             if (!mutate(fresh)) return false;
             try
             {

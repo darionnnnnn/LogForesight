@@ -103,7 +103,7 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
-    public void Upgrade補上案件escalated_at可空欄_既有列為NULL_重跑冪等()
+    public void Upgrade補上案件escalated_at可空欄_既有已上報未結案列以updated_at回填_重跑冪等()
     {
         using (var ctx = _fx.NewContext())
         {
@@ -122,7 +122,7 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
         Assert.Contains("escalated_at", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_issue_cases')"));
         var store = new EfIssueCaseStore(_fx.NewContext);
         var legacy = store.GetByHandler(1).Single(c => c.CaseId == "legacy-esc");
-        Assert.Null(legacy.EscalatedAt);
+        Assert.Equal(new DateTime(2026, 1, 1), legacy.EscalatedAt);   // 回填為 updated_at（細節見回填專測）
 
         // 新建的案件帶上報時間：寫得進、讀得回
         var at = new DateTime(2026, 11, 2, 8, 30, 0);
@@ -264,6 +264,39 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
         var seen = new DateTime(2026, 10, 3, 10, 0, 0);
         store.MarkAdminSeen(id, seen);
         Assert.Equal(seen, store.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void Upgrade補escalated_at時_升級前已上報未結案的成員以updated_at回填_其他列不動_重跑冪等()
+    {
+        var day = new DateTime(2026, 9, 1, 8, 0, 0);
+        var snapshot = new DateTime(2026, 9, 3, 9, 30, 0);
+        using (var ctx = _fx.NewContext())
+        {
+            IssueCaseRow Row(string id, string status, DateTime? closedAt) => new()
+            {
+                CaseId = id, HostName = "h", HostNameKey = "H" + id, IssueKey = "k" + id, IssueLabel = "x", Status = status,
+                FirstLinkedDate = day, LastLinkedDate = day, CreatedAt = day, CreatedByAccount = "a",
+                UpdatedAt = snapshot, ClosedAt = closedAt
+            };
+            ctx.IssueCases.Add(Row("esc-open", "escalated", null));
+            ctx.IssueCases.Add(Row("esc-closed", "escalated", snapshot));
+            ctx.IssueCases.Add(Row("open", "open", null));
+            ctx.SaveChanges();
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_issue_cases DROP COLUMN escalated_at");
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        // 回填後夜間掛接把 updated_at 往後推，不得影響已回填的 escalated_at；重跑也不得再回填
+        using (var ctx = _fx.NewContext())
+            ctx.Database.ExecuteSqlRaw("UPDATE lf_issue_cases SET updated_at = '2026-09-20 00:00:00'");
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+
+        using var check = _fx.NewContext();
+        var rows = check.IssueCases.AsNoTracking().ToDictionary(r => r.CaseId);
+        Assert.Equal(snapshot, rows["esc-open"].EscalatedAt);
+        Assert.Null(rows["esc-closed"].EscalatedAt);
+        Assert.Null(rows["open"].EscalatedAt);
     }
 
     [Fact]

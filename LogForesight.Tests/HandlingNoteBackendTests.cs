@@ -190,8 +190,8 @@ public class HandlingNoteBackendTests : IDisposable
         var b = CreateOrder(154, "H2");
         var c = CreateOrder(155, "H3");
         _orders.FailOnReplyOf = b;
-        // InvalidOperationException 經 Guard 轉成 DomainException；一般例外走未預期分支
-        _orders.Failure = domainLike ? new InvalidOperationException("注入的寫入失敗") : new Exception("內部細節");
+        // WorkOrderRuleException 經 Guard 轉成 DomainException；其餘例外（含框架層 InvalidOperationException）走未預期分支
+        _orders.Failure = domainLike ? new LogForesight.Core.Persistence.WorkOrderRuleException("注入的寫入失敗") : new Exception("內部細節");
 
         var result = Service().ReplyMany(new WorkOrderReplyManyRequest
         {

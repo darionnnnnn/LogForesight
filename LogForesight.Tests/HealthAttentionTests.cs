@@ -217,6 +217,32 @@ public class HealthAttentionServiceWiringTests : IDisposable
     }
 
     [Fact]
+    public void GetAttention_三十秒內第二次不重算_過期後重算()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgEnabled = true);
+        var syncStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
+        var service = NewService();
+        var clock = new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc);
+        service.UtcNowOverride = () => clock;
+
+        Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
+
+        // 診斷來源改變後，快取存活期內仍回前一份（沒有重算）
+        syncStore.Update(s =>
+        {
+            s.CompletedAt = DateTime.Now;
+            s.Success = true;
+            s.Warnings = new List<PrtgSyncWarning> { PrtgSyncWarning.Create(PrtgSyncWarning.SensorsAllEmpty, "範圍內的感測器全部回空") };
+        });
+        clock = clock.AddSeconds(29);
+        Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
+
+        // 過期後重算，看到新狀態
+        clock = clock.AddSeconds(2);
+        Assert.Equal(HealthStatuses.Degraded, service.GetAttention().Status);
+    }
+
+    [Fact]
     public void PRTG未啟用_舊的同步警告不影響整體狀態()
     {
         new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)).Update(s =>

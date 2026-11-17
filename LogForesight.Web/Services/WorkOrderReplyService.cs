@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -237,20 +238,25 @@ public class WorkOrderReplyService
             _currentUser.Account, note, workOrderId));
     }
 
-    /// <summary>協調器的資料驗證例外（成員不屬於本單、已結案等）轉成 400</summary>
+    /// <summary>
+    /// 協調器的規則違反（<see cref="WorkOrderRuleException"/>：成員不屬於本單、已結案、缺原因等）轉成 400。
+    /// 其他 ArgumentException／InvalidOperationException 可能來自框架層（EF／LINQ，英文內部細節），
+    /// 記錄後原樣往上拋，由 ApiExceptionFilter 回 500 與固定說明，不把原文給使用者
+    /// </summary>
     private static T Guard<T>(Func<T> action)
     {
         try
         {
             return action();
         }
-        catch (ArgumentException ex)
+        catch (WorkOrderRuleException ex)
         {
             throw DomainException.Validation(ex.Message);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            throw DomainException.Validation(ex.Message);
+            Log.Warn(ex, "交辦單操作擲出非規則例外（不轉成使用者訊息）");
+            throw;
         }
     }
 }

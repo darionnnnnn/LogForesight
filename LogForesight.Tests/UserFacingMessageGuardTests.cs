@@ -44,14 +44,14 @@ public class UserFacingMessageGuardTests
         ("Program.cs", "\"啟動失敗：\" + ex.Message", "啟動期寫到主控台給部署人員，站台尚未提供任何 API"),
         ("Services/SentinelAdminService.cs", "? ex.Message", "只有 SafeCode＝invalid-base-url（位址未設定或格式不正確）才給原文，訊息只含使用者自己填的位址與修正方式"),
         ("Services/Import/ImportService.cs", "CSV 解析失敗：{ex.Message}", "CsvParseException 的訊息是 CsvParser 自己寫的中文（行號與欄位名），不含路徑"),
-        ("Services/IssueOwnerAdminService.cs", "ex is DomainException ? ex.Message", "先判型別為領域例外才用原訊息，其餘給固定說明"),
+        ("Services/IssueOwnerAdminService.cs", "ex is DomainException or LogForesight.Core.Persistence.WorkOrderRuleException ? ex.Message", "先判型別為領域例外或已登錄的 WorkOrderRuleException 才用原訊息，其餘給固定說明"),
         ("Services/NetiqDirectoryClient.cs", "throw new NetiqDiscoveryException(ex.Message)", "NormalizeSubnetPrefix 自擲的中文輸入格式訊息；" + SelfAuthored),
         ("Services/NetiqDiscoveryService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（NetiqDiscoveryException，內含的底層例外已改成固定說明）"),
         ("Services/PrtgBackfillService.cs", "error = ex.Message", "只捕捉 DomainException"),
         ("Services/PrtgDiagnosticExportActionResult.cs", "error is PrtgTransferStoreException ? error.Message", "先判型別為已登錄的專屬例外才用原訊息，其餘給固定說明"),
         ("Services/PrtgSnapshotHostedService.cs", "InvalidDataException or PrtgSnapshotJournalLockedException => ex.Message", "兩種例外都是 PrtgSnapshotJournal 自己寫的中文（不含路徑）；其餘型別給固定說明"),
-        ("Services/WorkOrderCommandService.cs", "throw DomainException.Validation(ex.Message)", "WorkOrderCoordinator／store 自擲的中文業務訊息；" + SelfAuthored),
-        ("Services/WorkOrderReplyService.cs", "throw DomainException.Validation(ex.Message)", "WorkOrderCoordinator／store 自擲的中文業務訊息；" + SelfAuthored),
+        ("Services/WorkOrderCommandService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（只捕捉 WorkOrderRuleException；其餘例外記錄後往上拋）"),
+        ("Services/WorkOrderReplyService.cs", "throw DomainException.Validation(ex.Message)", DomainOnly + "（只捕捉 WorkOrderRuleException；其餘例外記錄後往上拋）"),
         ("Services/WorkOrderReplyService.cs", "ex is DomainException ? ex.Message", "先判型別為領域例外才用原訊息，其餘給固定說明"),
     };
 

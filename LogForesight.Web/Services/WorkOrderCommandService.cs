@@ -22,6 +22,7 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class WorkOrderCommandService
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
     private const int PreviewPageSize = 100;
     private const int NoAccessListLimit = 50;
     private const int NoteMaxLength = 1000;
@@ -685,20 +686,25 @@ public class WorkOrderCommandService
         return trimmed;
     }
 
-    /// <summary>協調器以 ArgumentException／InvalidOperationException 表達資料不符，轉成使用者看得懂的驗證錯誤</summary>
+    /// <summary>
+    /// 協調器的規則違反（<see cref="WorkOrderRuleException"/>：成員不屬於本單、已結案、缺原因等）轉成 400。
+    /// 其他 ArgumentException／InvalidOperationException 可能來自框架層（EF／LINQ，英文內部細節），
+    /// 記錄後原樣往上拋，由 ApiExceptionFilter 回 500 與固定說明，不把原文給使用者
+    /// </summary>
     private static T Guard<T>(Func<T> action)
     {
         try
         {
             return action();
         }
-        catch (ArgumentException ex)
+        catch (WorkOrderRuleException ex)
         {
             throw DomainException.Validation(ex.Message);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            throw DomainException.Validation(ex.Message);
+            Log.Warn(ex, "交辦單操作擲出非規則例外（不轉成使用者訊息）");
+            throw;
         }
     }
 

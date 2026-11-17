@@ -119,6 +119,54 @@ public class RetentionPrunerTests : IDisposable
     }
 
     [Fact]
+    public void 一段擲逾時型OCE且權杖未取消_記為該段失敗而非取消()
+    {
+        var failed = new List<string>();
+        RetentionPruner.RunSegment("甲", () => throw new TaskCanceledException("逾時"), failed, CancellationToken.None);
+        Assert.Equal(new[] { "甲" }, failed);
+    }
+
+    [Fact]
+    public void 一段擲OCE且權杖已取消_重新擲出_不記為段失敗()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var failed = new List<string>();
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            RetentionPruner.RunSegment("甲", () => cts.Token.ThrowIfCancellationRequested(), failed, cts.Token));
+        Assert.Empty(failed);
+    }
+
+    [Fact]
+    public void 郵件意圖封存擲例外_保留清除狀態仍照常寫入()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-retention-intent-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var backend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "retention.db")}" }, dir);
+            // 郵件狀態 blob 寫成壞掉的 JSON，使封存步驟擲例外
+            using (var ctx = backend.CreateContext())
+                ctx.Database.ExecuteSqlRaw(
+                    "INSERT OR REPLACE INTO lf_blobs (blob_key, content, updated_at, version) VALUES ({0}, {1}, '2026-11-17 00:00:00', 1)",
+                    MailNotifyStateStore.BlobKey, "{not json");
+            Assert.ThrowsAny<Exception>(() =>
+                new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey)).PruneTerminalUrgentIntents(90, DateTime.UtcNow));
+
+            var result = RetentionPruner.Run(backend, new RetentionOptions(), new NullConsole(), batchRunStore: null);
+
+            Assert.True(result.Succeeded, result.Note);
+            Assert.Equal(DateTime.Today, RetentionPruner.LastRunDate(backend));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public void 過期匯入診斷包清理_保留policy_blob()
     {
         var directory = Path.Combine(Path.GetTempPath(), "lf-retention-prtg-" + Guid.NewGuid());

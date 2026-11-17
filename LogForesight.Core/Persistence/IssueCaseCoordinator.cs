@@ -98,7 +98,7 @@ public class IssueCaseCoordinator
         if (openCase == null) return new CaseSyncResult(Applied: false, SyncedDayCount: 0, CaseClosed: false);
 
         var host = _hosts.FindByName(hostName)
-                   ?? throw new InvalidOperationException($"找不到主機「{hostName}」。");
+                   ?? throw new WorkOrderRuleException($"找不到主機「{hostName}」。");
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;

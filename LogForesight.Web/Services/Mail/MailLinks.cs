@@ -32,7 +32,7 @@ public static class MailLinks
 
     /// <summary>
     /// 驗證並正規化站台網址（去頭尾空白與結尾斜線）。空白視為「沒填」（合法、結果為空字串）。
-    /// 必須是 http／https 的完整絕對網址；含空白字元、ftp://、只有主機名（x.example）、帶查詢字串或片段都拒絕。
+    /// 必須是 http／https 的完整絕對網址；含空白字元、ftp://、只有主機名（x.example）、帶查詢字串、片段或內嵌帳密（user@host）都拒絕。
     /// </summary>
     public static bool TryNormalize(string? raw, out string normalized, out string? error)
     {
@@ -45,6 +45,7 @@ public static class MailLinks
             || !Uri.TryCreate(text, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
             || string.IsNullOrEmpty(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo)
             || !text.StartsWith(uri.Scheme + "://", StringComparison.OrdinalIgnoreCase)
             || text.Contains('?') || text.Contains('#'))
         {

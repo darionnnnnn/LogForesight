@@ -46,6 +46,19 @@ public sealed class MailLinksTests
         Assert.StartsWith(Base + "/", body[body.IndexOf("https://", StringComparison.Ordinal)..]);
     }
 
+    /// <summary>站台網址不得內嵌帳密（https://user@host、user:pass@host）：信件連結會把它原樣帶給收件人</summary>
+    [Theory]
+    [InlineData("https://user@lf.example.com")]
+    [InlineData("https://user:secret@lf.example.com/lf")]
+    [InlineData("http://:secret@lf.example.com")]
+    public void 站台網址含帳密_拒絕(string raw)
+    {
+        Assert.False(MailLinks.TryNormalize(raw, out var normalized, out var error));
+        Assert.Equal("", normalized);
+        Assert.Equal(MailLinks.FormatHint, error);
+        Assert.Null(MailLinks.Build(raw, "work-orders"));
+    }
+
     /// <summary>C8-a（管理者提醒）：連到交辦總覽</summary>
     [Fact]
     public void C8a_管理者提醒連到交辦總覽()

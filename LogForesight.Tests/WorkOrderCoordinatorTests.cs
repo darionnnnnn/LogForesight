@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -300,7 +301,7 @@ public class WorkOrderCoordinatorTests
     public void Create_空成員擲ArgumentException()
     {
         var w = new World();
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Create(Request(Alice)));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Create(Request(Alice)));
         Assert.Empty(w.Orders.All);
     }
 
@@ -308,7 +309,7 @@ public class WorkOrderCoordinatorTests
     public void Create_主機不存在擲InvalidOperationException()
     {
         var w = new World();
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Create(Request(Alice, "NOPE")));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Create(Request(Alice, "NOPE")));
     }
 
     [Fact]
@@ -332,7 +333,7 @@ public class WorkOrderCoordinatorTests
         var id = w.AddOrder(Alice);
         w.Coordinator.RecomputeClosure(id, T0);
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Append(id, new List<WorkOrderMember> { Member("H1") }, false, Actor()));
     }
 
@@ -473,7 +474,7 @@ public class WorkOrderCoordinatorTests
         var a = w.AddCase("a", "H1", Alice, id);
         w.AddCase("done", "H2", Alice, id, closedAt: T0.AddHours(-1));
 
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Split(id, new[] { "a", "done" }, Carol, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "a", "done" }, Carol, Actor()));
 
         Assert.Equal(Alice, a.HandlerId);
         Assert.Equal(id, a.WorkOrderId);
@@ -489,8 +490,8 @@ public class WorkOrderCoordinatorTests
         var id = w.AddOrder(Alice);
         w.AddCase("a", "H1", Alice, id);
 
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Split(id, Array.Empty<string>(), Carol, Actor()));
-        Assert.Throws<InvalidOperationException>(() => w.Coordinator.Split(id, new[] { "a" }, Alice, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, Array.Empty<string>(), Carol, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "a" }, Alice, Actor()));
     }
 
     // ── Cancel ───────────────────────────────────────────────────────────────
@@ -541,7 +542,7 @@ public class WorkOrderCoordinatorTests
     {
         var w = new World();
         var id = w.AddOrder(Alice);
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Cancel(id, "  ", Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Cancel(id, "  ", Actor()));
     }
 
     // ── AdminClose ───────────────────────────────────────────────────────────
@@ -553,7 +554,7 @@ public class WorkOrderCoordinatorTests
         w.AddHostDays("H1", D2);
         var id = w.Coordinator.Create(Request(Alice, "H1")).WorkOrderId;
 
-        Assert.Throws<ArgumentException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor(), blocksRedispatch: false));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.AdminClose(id, IssueHandlingStatuses.InProgress, "x", Actor(), blocksRedispatch: false));
 
         var later = T0.AddHours(1);
         var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "已換硬碟", Actor(later), blocksRedispatch: false);
@@ -690,7 +691,7 @@ public class WorkOrderCoordinatorTests
         var rowBefore = w.Row("H1", D2)!;
         var orderBefore = w.Orders.Get(id)!;
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Reply(id, new[] { h1.CaseId, foreign.CaseId }, IssueHandlingStatuses.Resolved, "x", null, Actor(T0.AddHours(1))));
 
         Assert.Equal(IssueHandlingStatuses.InProgress, h1.Status);
@@ -711,7 +712,7 @@ public class WorkOrderCoordinatorTests
     public void Reply_不支援狀態擲ArgumentException()
     {
         var (w, id, _) = ThreeHostOrder();
-        Assert.Throws<ArgumentException>(() => w.Coordinator.Reply(id, null, "bogus", null, null, Actor()));
+        Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Reply(id, null, "bogus", null, null, Actor()));
     }
 
     // ── CloseEmptyDispatchOrder ─────────────────────────────────────────────

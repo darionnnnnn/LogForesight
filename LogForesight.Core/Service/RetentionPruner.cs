@@ -23,9 +23,31 @@ public static class RetentionPruner
 
     internal const string StateBlobKey = "retention_state";
 
+    /// <summary>
+    /// 單一段的失敗邊界。只有「OperationCanceledException 且取消權杖已取消」才是取消、重新擲出；
+    /// HttpClient／資料庫逾時擲的 TaskCanceledException 也是 OCE，那是這一段失敗，照常記段名。
+    /// </summary>
+    internal static void RunSegment(string name, Action body, List<string> failedSegments, CancellationToken ct)
+    {
+        try
+        {
+            body();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            failedSegments.Add(name);
+            Log.Warn(ex, "保留清除「{0}」失敗（其餘各段照常執行，不影響本次分析）：{1}", name, ex.Message);
+        }
+    }
+
     /// <param name="batchRunStore">執行紀錄 store；初始化失敗時為 null（沿用分析執行原本的語意：執行歷程本次不清）</param>
     /// <returns>各段的結果；<see cref="RetentionRunResult.FailedSegments"/> 非空代表有段失敗（其餘段已照常執行）</returns>
-    public static RetentionRunResult Run(StorageBackend backend, RetentionOptions retention, IRunConsole console, BatchRunStore? batchRunStore)
+    public static RetentionRunResult Run(StorageBackend backend, RetentionOptions retention, IRunConsole console, BatchRunStore? batchRunStore,
+        CancellationToken ct = default)
     {
         // 風險 log 暫存（清除用；分析路徑另有自己的實例，兩者都是無狀態的真表 store）
         var riskyEventStore = backend.RiskyEventStore();
@@ -34,19 +56,8 @@ public static class RetentionPruner
         var failedSegments = new List<string>();
 
         // 一段一個獨立的失敗邊界：擲例外只記段名與記錄檔，不中斷後面的段。
-        // 取消訊號不是失敗，穿透給上層（這裡的清除本身沒有取消點，保持原行為）。
-        void Segment(string name, Action body)
-        {
-            try
-            {
-                body();
-            }
-            catch (Exception ex)
-            {
-                failedSegments.Add(name);
-                Log.Warn(ex, "保留清除「{0}」失敗（其餘各段照常執行，不影響本次分析）：{1}", name, ex.Message);
-            }
-        }
+        // 取消訊號不是失敗，穿透給上層（判定見 RunSegment）。
+        void Segment(string name, Action body) => RunSegment(name, body, failedSegments, ct);
 
         // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
         //
@@ -199,13 +210,28 @@ public static class RetentionPruner
                 console.WriteLine($"已清除 {diagPruned} 個超過 {retention.RunLogRetentionDays} 天的 AI 診斷傾印檔。");
         });
 
+        // 郵件意圖封存：與「今天已執行」狀態各自獨立的失敗邊界——前者擲例外不得讓後者不寫入
+        // （否則排程每次輪詢都以為今天沒做過、反覆補做，健康頁也看不到本趟的失敗段）
+        var retiredIntents = 0;
+        try
+        {
+            // 只封存結果明確的郵件意圖；結果不明或混合的保留，避免重寄或漏寄。
+            retiredIntents = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
+                .PruneTerminalUrgentIntents(retention.RetentionDays, DateTime.UtcNow);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "郵件意圖封存失敗（不影響保留清除狀態記錄）：{0}", ex.Message);
+        }
+
         // 記錄今天已執行保留清除：排程輪詢看到今天已做過就不再單獨補做
         try
         {
             var stateStore = new RetentionStateStore(backend.Blob(StateBlobKey));
-            // 只封存結果明確的郵件意圖；結果不明或混合的保留，避免重寄或漏寄。
-            var retiredIntents = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
-                .PruneTerminalUrgentIntents(retention.RetentionDays, DateTime.UtcNow);
             var failureNames = failedSegments.ToList();
             stateStore.Update(s =>
             {
@@ -224,13 +250,18 @@ public static class RetentionPruner
             });
             if (failureNames.Count > 0)
                 Log.Warn("保留清除有 {0} 段失敗（{1}），不記錄今日已執行，留待下次重試", failureNames.Count, string.Join("、", failureNames));
-            if (retiredIntents > 0)
-                console.WriteLine($"已封存 {retiredIntents} 筆超過 {Math.Max(90, retention.RetentionDays)} 天且結果明確的郵件意圖。");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "保留清除執行日期記錄失敗：{0}", ex.Message);
         }
+
+        if (retiredIntents > 0)
+            console.WriteLine($"已封存 {retiredIntents} 筆超過 {Math.Max(90, retention.RetentionDays)} 天且結果明確的郵件意圖。");
 
         return new RetentionRunResult(failedSegments);
     }

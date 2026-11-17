@@ -316,7 +316,7 @@ public class IssueOwnerAdminService
                 catch (Exception ex)
                 {
                     closeOutcome.FailedWorkOrderId = order.WorkOrderId;
-                    closeOutcome.FailureMessage = ex is DomainException ? ex.Message : "代為結案時發生未預期的錯誤。";
+                    closeOutcome.FailureMessage = ex is DomainException or LogForesight.Core.Persistence.WorkOrderRuleException ? ex.Message : "代為結案時發生未預期的錯誤。";
                     closeOutcome.NotProcessed = ordersToClose.SkipWhile(o => o.WorkOrderId != order.WorkOrderId)
                         .Skip(1).Select(o => o.WorkOrderId).ToList();
                     Log.Error(ex, "靜音問題 {0}/{1} 代為結案停在交辦單 #{2}", sourceName, eventId, order.WorkOrderId);

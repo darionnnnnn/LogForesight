@@ -331,9 +331,38 @@ public class HealthService
     /// </summary>
     public HealthAttentionDto GetAttention()
     {
+        var now = (UtcNowOverride ?? (() => DateTime.UtcNow))();
+        lock (_attentionLock)
+        {
+            if (_attentionCache != null && now - _attentionCachedAt < AttentionCacheTtl && now >= _attentionCachedAt)
+                return _attentionCache;
+        }
+
+        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖
         var detail = GetDetail();
-        return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        var fresh = new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        lock (_attentionLock)
+        {
+            _attentionCache = fresh;
+            _attentionCachedAt = now;
+        }
+        return fresh;
     }
+
+    /// <summary>
+    /// 告示列結果的行程內快取存活時間。導覽 <c>loadHealthBanner</c> 每進一頁就打一次，
+    /// 沒有快取等於每次換頁跑一輪完整診斷（DB 探測、PRTG 新鮮度等）。
+    /// 快取鍵不含使用者／可見主機：內容是同一份全站健康狀態，與呼叫者無關（授權在控制器，見上），
+    /// 所以單一份快取不會把 A 看得到的東西端給 B；設定與狀態變動最多延遲這段時間反映在告示列。
+    /// </summary>
+    private static readonly TimeSpan AttentionCacheTtl = TimeSpan.FromSeconds(30);
+
+    private readonly object _attentionLock = new();
+    private HealthAttentionDto? _attentionCache;
+    private DateTime _attentionCachedAt;
+
+    /// <summary>測試用：替換 <see cref="GetAttention"/> 快取的時間來源（正式碼不設，用 UTC 現在）。</summary>
+    internal Func<DateTime>? UtcNowOverride { get; set; }
 
     /// <summary>PRTG 擷取紀錄類別的中文名（與前端 <c>prtgFreshnessLabel</c> 同一份對照；未知類別原樣）</summary>
     private static string PrtgFreshnessLabel(string category) => category switch

@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
 using Xunit;
@@ -19,6 +20,33 @@ public sealed class AdminReminderTests
         ReminderNoRecipient = noRecipient,
         Detail = detail
     };
+
+    [Theory]
+    [InlineData(RunScope.Full, true)]
+    [InlineData(RunScope.LocalOnly, false)]
+    [InlineData(RunScope.NetiqHosts, false)]
+    public void 派不出去清單只有全量執行才被本趟結果取代(RunScope scope, bool replaces)
+    {
+        var summary = new NightlyDispatchSummary
+        {
+            Unassignable = new[] { new NightlyUnassignableIssue("磁碟 154", "無候選人", 1) }
+        };
+
+        var passed = AdminReminderService.SummaryForUnassignableList(scope, summary);
+
+        if (replaces) Assert.Same(summary, passed);
+        else Assert.Null(passed);
+        Assert.Null(AdminReminderService.SummaryForUnassignableList(scope, null));
+    }
+
+    [Fact]
+    public void 排程的管理者提醒呼叫點經範圍判定_不直接傳本趟結果()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        var source = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", "SchedulerHostedService.cs"));
+        Assert.Contains("RunAfterNightly(AdminReminderService.SummaryForUnassignableList(", source);
+    }
 
     [Fact]
     public void 管理者摘要含三類筆數與明細_標題標明管理者提醒_不附處理人的我的交辦句()

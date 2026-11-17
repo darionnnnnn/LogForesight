@@ -390,7 +390,15 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "cancelled",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "blocks_redispatch", isSqlite ? "INTEGER NULL" : "bit NULL");
-        AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "escalated_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        if (AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "escalated_at", isSqlite ? "TEXT NULL" : "datetime2 NULL"))
+        {
+            // 升級前已上報、未結案的成員：以升級當下的 updated_at 當上報起算日。
+            // 不回填的話管理者提醒退回用 updated_at 起算，而夜間掛接每天把它推到最新，提醒對這批永遠不觸發；
+            // 只在加欄成功的這一次執行，之後 updated_at 再動也不影響（兩個後端語法相同）
+            ctx.Database.ExecuteSqlRaw(
+                "UPDATE lf_issue_cases SET escalated_at = updated_at " +
+                "WHERE status = 'escalated' AND closed_at IS NULL AND escalated_at IS NULL");
+        }
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "day_sync_intent", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_issue_cases", "prtg_evidence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",

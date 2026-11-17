@@ -155,6 +155,14 @@ public sealed class AdminReminderService
     }
 
     /// <summary>
+    /// 本趟派工結果可以拿來「取代派不出去清單」的條件：只有全量執行（<see cref="RunScope.Full"/>）。
+    /// 非全量（只跑本機、只跑指定主機）的 <see cref="NightlyDispatchSummary.Unassignable"/> 只含該次範圍，
+    /// 整份取代會把範圍外仍派不出去的問題從提醒清掉；非全量回 null，清單維持上一次全量的結果（排程與手動觸發共用這一處判定）。
+    /// </summary>
+    public static NightlyDispatchSummary? SummaryForUnassignableList(RunScope scope, NightlyDispatchSummary? summary)
+        => scope == RunScope.Full ? summary : null;
+
+    /// <summary>
     /// 夜間派工結束後呼叫（排程與情境驅動器共用同一個入口）：先記下本趟派不出去的問題，再彙整、入列給管理者。
     /// <paramref name="summary"/> 為 null（這趟沒有派工結果）時不動派不出去的清單，其餘照常。
     /// </summary>

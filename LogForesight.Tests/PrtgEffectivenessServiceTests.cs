@@ -135,7 +135,8 @@ public sealed class PrtgEffectivenessServiceTests
         using var fixture = new EfSqliteFixture();
         var service = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore());
         Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.Get(new DateTime(2026, 9, 2), new DateTime(2026, 9, 1)));
-        Assert.Throws<ArgumentOutOfRangeException>(() => service.Get(new DateTime(2025, 1, 1), new DateTime(2026, 9, 1)));
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => service.Get(new DateTime(2025, 1, 1), new DateTime(2026, 9, 1)));
+        Assert.Contains("日期範圍最多", ex.Message);
     }
 
     [Fact]
@@ -198,6 +199,41 @@ public sealed class PrtgEffectivenessServiceTests
             var response = Assert.IsType<ApiResponse<PrtgEffectivenessSummary>>(result.Value);
             Assert.True(response.Success);
             Assert.Equal(0, response.Data!.PrtgFindings);
+        }
+        finally
+        {
+            if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Endpoint_日期範圍超過上限_經ApiExceptionFilter回400與中文訊息而非500()
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), "lf-prtg-effectiveness-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataRoot);
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite",
+                ConnectionString = $"Data Source={Path.Combine(dataRoot, "test.db") }"
+            }, dataRoot);
+            var user = FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll);
+            var controller = new PrtgEffectivenessController(backend, new FakeIssueOwnerStore(), user);
+
+            var thrown = Assert.Throws<DomainException>(() => controller.Get(new DateTime(2025, 1, 1), new DateTime(2026, 9, 1)));
+
+            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            var actionContext = new Microsoft.AspNetCore.Mvc.ActionContext(http,
+                new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor());
+            var ctx = new Microsoft.AspNetCore.Mvc.Filters.ExceptionContext(actionContext,
+                new List<Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata>()) { Exception = thrown };
+            new ApiExceptionFilter().OnException(ctx);
+
+            var objectResult = Assert.IsType<ObjectResult>(ctx.Result);
+            Assert.Equal(400, objectResult.StatusCode);
+            var body = Assert.IsType<ApiResponse<object>>(objectResult.Value);
+            Assert.Contains("日期範圍最多", body.Error!.Message);
         }
         finally
         {
