@@ -386,7 +386,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 ### 監看政策（可選縮圈）
 
-blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 3,000、sensor 最多 15,000）。兩份清單都空＝全部已對應主機與其 sensor。
+blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 10,000、sensor 最多 15,000；數字只在 `ScaleLimits`，讀取回應帶 `MaxHosts`／`MaxSensors` 給前端，`ScaleLimitsGuardTests` 守門）。兩份清單都空＝全部已對應主機與其 sensor。
 - **主機清單有值**：每日管線本趟的主機範圍＝清單 ∩ 本趟要求的主機 ∩ 啟用、未合併且 `Source=netiq` 的主機（`PrtgDailyPipeline.SelectActivePilotHostIds`）；
   本機（local）來源主機與停用、合併的主機不在其中，全部被濾掉時範圍為空集合（本趟只處理 0 台）。縮圈後的範圍是 partial：不清感測器鏡像、不做範圍外清除（§3c）。
 - **sensor 清單有值**：狀態型與數值型規則的評估母體、以及快照目標（§3b）只留清單內的 sensor；`silent` 是裝置層判定，不受限；觸發式數值取數（§3a）不依 sensor 清單縮圈。

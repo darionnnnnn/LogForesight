@@ -189,7 +189,7 @@ public class BulkScaleGateTests : IDisposable
 
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
         Assert.Contains("符合條件的項目超過 5,000 筆", ex.Message);
-        Assert.Contains("請縮小篩選範圍後再批次結案", ex.Message);
+        Assert.Contains("依主機群組篩選後分次批次結案", ex.Message);
         // 預覽走同一份規劃，同樣擋下，不回傳被截斷的半套結果
         var preview = Assert.Throws<DomainException>(() => _service.PreviewBulkClose("DistributedCOM", 10016, null, null));
         Assert.Equal(ApiErrorCodes.ValidationFailed, preview.Code);

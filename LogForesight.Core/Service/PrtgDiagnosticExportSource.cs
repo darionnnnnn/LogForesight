@@ -9,6 +9,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -28,7 +29,7 @@ public sealed class PrtgDiagnosticExportSource
     private const long MaximumRawRowBytes = 9L * 1024 * 1024;
     private const int MaximumBlobValueBytes = MaximumRowBytes * 2;
     private const int MaximumPolicyCharacters = MaximumRowBytes;
-    private const int MaximumPolicySensors = 15000;
+    private const int MaximumPolicySensors = ScaleLimits.MaxPolicySensors;
     private const int MaximumSerializerScratchBytes = MaximumRowBytes * 4;
 
     private static readonly string[] ArrayProperties =

@@ -422,15 +422,20 @@ public class WorkOrderBoardService
 
         var scope = _query.ResolveIssueScope(new RecordSearchRequest { From = periodFrom, To = periodTo });
         // 靜音不排除（不用 scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
-        var issues = _aggregates.Aggregate(IssueExclusion.None, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels)
-            .Select(a => (a.Source, a.EventId))
-            .ToList();
-        // 靜音不排除：理由同上
-        var occurrences = _aggregates.LatestOccurrences(
-            IssueExclusion.None, issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
+        var aggregates = _aggregates.Aggregate(IssueExclusion.None, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
+        var issues = aggregates.Select(a => (a.Source, a.EventId)).ToList();
 
         var openKeys = _cases.GetOpenKeys().Select(x => (x.HostNameKey, x.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
+
+        // 載入逐出現點的原始列之前先用聚合的主機數估下界：每個（主機, 問題）至少一個出現點，每個進行中案件最多扣掉一個，
+        // 下界已超過上限就一定超過——不必把整期出現點讀進記憶體（3000 台時是數十萬列）才得到 TooLarge。下界沒超過時照原本精算。
+        var lowerBound = aggregates.Sum(a => (long)a.HostCount) - openKeys.Count;
+        if (lowerBound > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
+
+        // 靜音不排除：理由同上
+        var occurrences = _aggregates.LatestOccurrences(
+            IssueExclusion.None, issues, scope.From, scope.To, scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
 
         var candidates = occurrences

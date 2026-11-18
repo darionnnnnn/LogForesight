@@ -111,8 +111,9 @@ public class WorkOrderBoardServiceTests : IDisposable
             Assert.Contains(items, item => item.WorkOrderId == order.WorkOrderId);
     }
 
-    private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences) => new(
-        _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
+    private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences,
+        IIssueAggregateQuery? aggregates = null) => new(
+        _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, aggregates ?? _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
         FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences);
 
@@ -439,6 +440,27 @@ public class WorkOrderBoardServiceTests : IDisposable
         Assert.Equal(1, _caseStore.GetOpenKeysCalls);
         Assert.Throws<DomainException>(() => Service(maxOccurrences: 1).RunAutoDispatch(null, null));
         Assert.Equal(2, Service(maxOccurrences: 2).GetGaps(null, null, 1).Rows.Single().GapHosts);
+    }
+
+    /// <summary>
+    /// 下界（聚合的主機數總和－進行中案件數）已超過上限時，不把整期出現點讀進記憶體（第 77 輪 E-3）；
+    /// 下界沒超過時仍照原本精算（見下一個案例：進行中案件扣掉後剛好不超過）。
+    /// </summary>
+    [Fact]
+    public void 待派_下界已超過上限_不載入逐出現點()
+    {
+        AddHost("HOST-A");
+        AddHost("HOST-B");
+        var (aggregates, counter) = ReportServiceTests.CountingProxy<IIssueAggregateQuery>.Wrap(_aggregates);
+
+        var dto = Service(maxOccurrences: 1, aggregates: aggregates).GetGaps(null, null, 1);
+
+        Assert.True(dto.TooLarge);
+        Assert.Equal(0, counter.Calls.GetValueOrDefault(nameof(IIssueAggregateQuery.LatestOccurrences)));
+
+        counter.Calls.Clear();
+        Assert.False(Service(maxOccurrences: 2, aggregates: aggregates).GetGaps(null, null, 1).TooLarge);
+        Assert.Equal(1, counter.Calls.GetValueOrDefault(nameof(IIssueAggregateQuery.LatestOccurrences)));
     }
 
     [Fact]

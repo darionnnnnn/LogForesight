@@ -82,6 +82,23 @@ public class HostAdminServiceTests : IDisposable
         }
     }
 
+    /// <summary>全選上限與站台主機上限同源（第 77 輪 E-4）：剛好上限不截斷、上限加一截斷並回報總數。</summary>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    public void 全選上限邊界兩側(int over, bool truncated)
+    {
+        for (var i = 0; i < LogForesight.Core.Models.ScaleLimits.MaxHosts + over; i++)
+            _hosts.Upsert(new WebHost { HostName = $"bulk-{i:D5}" });
+
+        var result = Create().MatchingHostIds(new HostSearchRequest());
+
+        Assert.Equal(truncated, result.Truncated);
+        Assert.Equal(LogForesight.Core.Models.ScaleLimits.MaxHosts + over, result.Total);
+        Assert.Equal(LogForesight.Core.Models.ScaleLimits.MaxHosts, result.HostIds.Count);
+        Assert.Equal(HostAdminService.MaxSelectAllHosts, LogForesight.Core.Models.ScaleLimits.MaxHosts);
+    }
+
     private HostAdminService Create(PermissionVersionStamp? permissionVersion = null) => new(
         _hosts,
         _groups,

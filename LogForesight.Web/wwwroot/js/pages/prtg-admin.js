@@ -3303,9 +3303,14 @@ if (monitoringForm) {
     }
     document.getElementById('prtg-monitoring-preview').addEventListener('click', () => previewScope(true));
     function sameIdSet(left, right) { return left.size === right.size && [...left].every(id => right.has(id)); }
+    /** 選取上限只由後端回傳（ScaleLimits）；還沒載入時視為 0，任何選取都不會被接受 */
+    function monitoringLimit(kind) {
+        const value = kind === 'host' ? monitoring?.maxHosts : monitoring?.maxSensors;
+        return Number.isSafeInteger(value) && value > 0 ? value : 0;
+    }
     function commitHostSelection(next) {
-        if (next.size > 3000) {
-            hostBatchStatus.textContent = '主機選取超過 3,000 台上限；未變更選取。';
+        if (next.size > monitoringLimit('host')) {
+            hostBatchStatus.textContent = `主機選取超過 ${formatNumber(monitoringLimit('host'))} 台上限；未變更選取。`;
             renderMonitoringHosts();
             return null;
         }
@@ -3317,8 +3322,8 @@ if (monitoringForm) {
         return added;
     }
     function commitSensorSelection(next) {
-        if (next.size > 15000) {
-            sensorBatchStatus.textContent = 'sensor 選取超過 15,000 顆上限；未變更選取。';
+        if (next.size > monitoringLimit('sensor')) {
+            sensorBatchStatus.textContent = `sensor 選取超過 ${formatNumber(monitoringLimit('sensor'))} 顆上限；未變更選取。`;
             renderMonitoringSensors();
             return null;
         }
@@ -3333,7 +3338,7 @@ if (monitoringForm) {
         const isHost = kind === 'host';
         const rows = isHost ? hostPage?.rows || [] : sensorPage?.rows || [];
         const current = isHost ? hostSelection : sensorSelection;
-        const maximum = isHost ? 3000 : 15000;
+        const maximum = monitoringLimit(kind);
         const proposed = new Set(current);
         for (const row of rows) {
             const id = Number(isHost ? row.hostId : row.sensorId);
@@ -3388,7 +3393,7 @@ if (monitoringForm) {
         const isHost = kind === 'host';
         const searchInput = isHost ? hostSearch : sensorSearch;
         const statusBox = isHost ? hostBatchStatus : sensorBatchStatus;
-        const maximum = isHost ? 3000 : 15000;
+        const maximum = monitoringLimit(kind);
         const batch = {
             kind, sequence: ++selectionBatchSequence, draftVersion,
             revision: monitoring.revision, catalogueToken: monitoring.catalogueToken,
@@ -3652,8 +3657,8 @@ if (monitoringForm) {
             estimateToken = null; estimateFingerprint = null;
             hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));
             sensorSelection.clear(); monitoring.sensorIds.forEach(id => sensorSelection.add(Number(id)));
-            if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > 3000)
-                throw new Error('已儲存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
+            if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > monitoringLimit('host'))
+                throw new Error(`已儲存主機超過 ${formatNumber(monitoringLimit('host'))} 筆修復清單上限；拒絕部分載入。`);
             savedHostRows = Array.isArray(monitoring.savedHosts) ? monitoring.savedHosts.slice() : [];
             savedHostPageIndex = 0; selectedSensorPageIndex = 0;
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = !monitoring.canEdit;

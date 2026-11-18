@@ -233,11 +233,11 @@ public class HostAdminService
     }
 
     /// <summary>
-    /// 單次「全選」的上限。取捨：體檢 X3 的實際情境是「一個網段 500 台」，2000 綽綽有餘；
+    /// 單次「全選」的上限，與站台主機上限同一個數（<see cref="ScaleLimits.MaxHosts"/>）：3000 台站台要一次改全部時不必分批。
     /// 上限存在的理由是讓請求主體與單次寫入量有界，超過時明確告知要分批，
     /// 而不是讓一次操作把整個機房掃進去卻沒人知道範圍。
     /// </summary>
-    public const int MaxSelectAllHosts = 2000;
+    public const int MaxSelectAllHosts = ScaleLimits.MaxHosts;
 
     private IEnumerable<WebHost> FilterHosts(HostSearchRequest request)
     {

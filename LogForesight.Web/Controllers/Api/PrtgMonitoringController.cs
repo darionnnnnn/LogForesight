@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.DataProtection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -21,9 +22,11 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
     IVisibilityService visibility, ICurrentUser user, IAuditService audit,
     IDataProtectionProvider protection) : ControllerBase
 {
-    private const int HostLimit = 3000;
-    private const int SensorLimit = 15000;
+    private const int HostLimit = ScaleLimits.MaxHosts;
+    private const int SensorLimit = ScaleLimits.MaxPolicySensors;
     private const int PageSize = 100;
+    /// <summary>請求本身就帶這麼多 sensor 時以「不支援的容量」回絕（與超過上限分開回報）。</summary>
+    private const int UnsupportedSensorCount = SensorLimit * 2;
     private const string TokenPurpose = "LogForesight.PrtgMonitoring.R01.v1";
 
     [HttpGet]
@@ -36,7 +39,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if ((visible.Count == 0 && !canViewAll) || policy.HostIds.Any(visibility.IsCaseGrantOnly) ||
             (!canViewAll && !policy.HostIds.All(visible.Contains))) return Forbid();
         if (policy.HostIds.Count > HostLimit)
-            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "既有主機範圍超過 3,000 筆；已拒絕回傳不完整修復清單。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"既有主機範圍超過 {ScaleLimits.MaxHosts.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆；已拒絕回傳不完整修復清單。"));
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var savedHosts = policy.HostIds.Distinct().Order().Select(id => DescribeSavedHost(sourceSnapshot, visible, id)).ToArray();
         var store = backend.PrtgStore();
@@ -49,6 +52,8 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             HostIds = policy.HostIds.ToArray(), SensorIds = policy.SensorIds.ToArray(),
             SavedHosts = savedHosts, CanEdit = canViewAll || policy.HostIds.All(visible.Contains), SelectedHostCount = policy.HostIds.Count,
             SelectedSensorCount = policy.SensorIds.Count, CatalogueToken = ProtectToken(fence),
+            // 上限只在 ScaleLimits 一處；前端選取與載入檢查讀這兩個值，不另寫數字
+            MaxHosts = HostLimit, MaxSensors = SensorLimit,
             HostCursor = ProtectToken(fence with { Kind = "hosts", Search = "", Offset = 0, HostHash = HashIds([]) }) }));
     }
 
@@ -319,8 +324,9 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
     [HttpGet("preview")]
     public IActionResult Preview([FromQuery] DateTime? day = null, [FromQuery] int offset = 0, [FromQuery] int limit = 100)
     {
-        if (offset < 0 || offset > 30000 || limit is < 1 or > PageSize || day > DateTime.Today)
-            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "預覽日期不可在未來；每頁最多 100 筆，頁面位置不得超過 30,000。"));
+        if (offset < 0 || offset > ScaleLimits.MaxPreviewOffset || limit is < 1 or > PageSize || day > DateTime.Today)
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed,
+                $"預覽日期不可在未來；每頁最多 100 筆，頁面位置不得超過 {ScaleLimits.MaxPreviewOffset.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}。"));
         var targetDay = (day ?? DateTime.Today.AddDays(-1)).Date;
         var sourceSnapshot = hosts.CapturePrtgSnapshot();
         var visible = VisibleHostIds(sourceSnapshot);
@@ -432,25 +438,25 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             request.HostIds.Distinct().Count() > HostLimit)
         {
             code = ApiErrorCodes.ScopeLimitExceeded;
-            reason = "主機清單最多 3,000 個有效且去重的 ID（空＝全部已對應主機）；超出會拒絕，不會截斷。";
+            reason = $"主機清單最多 {ScaleLimits.MaxHosts.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 個有效且去重的 ID（空＝全部已對應主機）；超出會拒絕，不會截斷。";
             return false;
         }
-        if (request.SensorIds.Count > SensorLimit && request.SensorIds.Count < 30000)
+        if (request.SensorIds.Count > SensorLimit && request.SensorIds.Count < UnsupportedSensorCount)
         {
             code = ApiErrorCodes.ScopeLimitExceeded;
-            reason = "sensor 清單上限為 15,000；擴量至 30,000 尚不支援，清單不會截斷。";
+            reason = $"sensor 清單上限為 {ScaleLimits.MaxPolicySensors.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}；更大的範圍尚不支援，清單不會截斷。";
             return false;
         }
-        if (request.SensorIds.Count >= 30000)
+        if (request.SensorIds.Count >= UnsupportedSensorCount)
         {
             code = ApiErrorCodes.UnsupportedCapacity;
-            reason = "30,000 顆 sensor 的擴量範圍目前不支援；請縮小至 15,000 顆以內。";
+            reason = $"這麼多 sensor 的範圍目前不支援；請縮小至 {ScaleLimits.MaxPolicySensors.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 顆以內。";
             return false;
         }
         if (request.SensorIds.Any(id => id <= 0) || request.SensorIds.Distinct().Count() > SensorLimit)
         {
             code = ApiErrorCodes.ScopeLimitExceeded;
-            reason = "sensor 清單最多 15,000 個有效且去重的 ID（空＝不限）；超出範圍會拒絕，不會截斷。";
+            reason = $"sensor 清單最多 {ScaleLimits.MaxPolicySensors.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 個有效且去重的 ID（空＝不限）；超出範圍會拒絕，不會截斷。";
             return false;
         }
         if (request.SensorIds.Count > 0 && request.HostIds.Count == 0)

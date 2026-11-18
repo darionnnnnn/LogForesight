@@ -446,7 +446,7 @@ public class IssueHandlingCommandService
         {
             throw DomainException.Validation(
                 $"本次將寫入 {plannedDays:N0} 筆（{targets.Count:N0} 台主機），超過單次上限 {MaxBulkCloseDayWrites:N0} 筆。" +
-                "請縮小日期區間或改用更精確的問題條件，分次執行。");
+                "請縮小日期區間、依主機群組篩選或改用更精確的問題條件，分次執行。");
         }
 
         // 整批共用同一個時間戳：前端 timeline 靠「同操作者＋同時間戳」把一次操作分組成一塊
@@ -525,7 +525,7 @@ public class IssueHandlingCommandService
         // 不載入、不截斷（截斷會讓「到底影響了哪些」不可知）
         if (_repository.QueryPage(Filter(), 1, 1).Total > MaxBulkCloseDayWrites)
             throw new DomainException(ApiErrorCodes.ValidationFailed,
-                $"符合條件的項目超過 {MaxBulkCloseDayWrites.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆，請縮小篩選範圍後再批次結案");
+                $"符合條件的項目超過 {MaxBulkCloseDayWrites.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆，請縮小日期區間或依主機群組篩選後分次批次結案");
         var records = _repository.Query(Filter());
         var lookup = new HostLookup(_hosts.GetAll());
 
