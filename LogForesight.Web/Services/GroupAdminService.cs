@@ -276,9 +276,10 @@ public class GroupAdminService
 
         var wantedIds = request.HostIds.Distinct().ToHashSet();
 
-        var added = _hosts.MutateBatch(list =>
+        var (changed, addedCount) = _hosts.MutateBatch(list =>
         {
             var names = new List<string>();
+            var newlyAdded = 0;
             IEnumerable<WebHost> targets = request.AllMatching
                 ? MatchHosts(list, request.Pattern, request.Query)
                 : list.Where(h => wantedIds.Contains(h.HostId));
@@ -287,27 +288,32 @@ public class GroupAdminService
             {
                 if (host.MergedInto != null) continue;   // 墓碑列略過（防前端送過期資料）
                 // 已在本群組：一般加入時略過；勾了「移出原群組」時仍要處理（把它從其他群組移出），勾選與全部加入同一條規則
-                if (host.GroupIds.Contains(hostGroupId) && !request.RemoveFromOthers) continue;
+                var wasMember = host.GroupIds.Contains(hostGroupId);
+                if (wasMember && !request.RemoveFromOthers) continue;
 
                 // removeFromOthers：只保留本目標群組；否則在既有群組上追加本群組
-                host.GroupIds = request.RemoveFromOthers
+                var next = request.RemoveFromOthers
                     ? new List<long> { hostGroupId }
                     : host.GroupIds.Concat(new[] { hostGroupId }).Distinct().ToList();
+                if (wasMember && next.Count == host.GroupIds.Count) continue;   // 本來就只在本群組：沒有變動
+                host.GroupIds = next;
                 names.Add(host.HostName);
+                if (!wasMember) newlyAdded++;
             }
 
-            return names;
+            return (names, newlyAdded);
         });
+        var movedCount = changed.Count - addedCount;
 
         _audit.Record(
             action: AuditActions.HostUpdate,
-            summary: $"批次加入主機群組「{group.GroupName}」：{added.Count} 台" +
-                     (request.RemoveFromOthers ? "（並移出原群組）" : ""),
+            summary: $"批次加入主機群組「{group.GroupName}」：加入 {addedCount} 台" +
+                     (request.RemoveFromOthers ? $"（並移出原群組；另有 {movedCount} 台原已在本群組、只移出其他群組）" : ""),
             targetKind: "group",
             targetId: group.GroupId.ToString(),
-            detail: new { group.GroupName, request.RemoveFromOthers, Hosts = added });
+            detail: new { group.GroupName, request.RemoveFromOthers, Hosts = changed });
 
-        return new AddHostGroupMembersResultDto { AddedCount = added.Count };
+        return new AddHostGroupMembersResultDto { AddedCount = addedCount, MovedFromOthersCount = movedCount };
     }
 
     public PagedResult<HostGroupMemberDto> GetMembers(long hostGroupId, int page = 1, int pageSize = 50)

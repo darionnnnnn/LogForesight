@@ -54,7 +54,7 @@ public sealed class PrtgDiagnosticExportSource
         if (sourcePolicy.SensorIds.Count > MaximumPolicySensors ||
             sourcePolicy.SensorIds.Any(sensorId => sensorId <= 0) ||
             sourcePolicy.SensorIds.Distinct().Count() != sourcePolicy.SensorIds.Count)
-            throw new InvalidDataException("來源 policy sensor 範圍超過 15,000 筆，或含有重複／非正識別碼。");
+            throw new InvalidDataException($"來源 policy sensor 範圍超過 {MaximumPolicySensors:N0} 筆，或含有重複／非正識別碼。");
         if (context.Database.CurrentTransaction == null)
             throw new InvalidOperationException("匯出 source 必須使用呼叫端持有的一致性資料庫交易。");
 

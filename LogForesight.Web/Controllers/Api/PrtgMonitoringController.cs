@@ -75,14 +75,14 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
         if (eligible.Count > HostLimit)
-            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 可選主機超過 3,000 台；目前操作已拒絕，未截斷候選範圍。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"NetIQ 可選主機超過 {HostLimit:N0} 台；目前操作已拒絕，未截斷候選範圍。"));
         var store = backend.PrtgStore();
         if (!FenceMatches(token!, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "主機、映射或可見範圍已變更；請重新載入目錄。"));
         var page = store.GetMonitoringHostPage(eligible.Keys.ToArray(), token!.Search, token.Offset, PageSize,
             string.IsNullOrWhiteSpace(cursor) ? null : token.Total);
         if (!FenceMatches(token, Store().Get(), VisibleHostIds(sourceSnapshot), store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "目錄在查詢期間已變更，請重新查詢。"));
         if (page.Total > HostLimit)
-            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "目錄主機超過 3,000 台；請縮小範圍後重試。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"目錄主機超過 {HostLimit:N0} 台；請縮小範圍後重試。"));
         var names = eligible;
         var rows = page.Rows.Select(r => new { r.HostId, HostName = names.TryGetValue(r.HostId, out var host) ? host.HostName : r.HostName }).ToArray();
         var nextOffset = token.Offset + rows.Length;
@@ -98,7 +98,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (NormalizeSearch(request.Search).Length > 128 || request.Offset > 100000)
             return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "搜尋文字最多 128 個字元，頁面位置超出上限。"));
         if (request.HostIds is null || request.HostIds.Count is < 1 or > HostLimit || request.Offset < 0)
-            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "所選主機需為 1 至 3,000 台，頁面位置無效。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, $"所選主機需為 1 至 {HostLimit:N0} 台，頁面位置無效。"));
         R01PageToken? token;
         if (string.IsNullOrWhiteSpace(request.Cursor))
         {
@@ -139,7 +139,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var visible = VisibleHostIds(sourceSnapshot);
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
-        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
+        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"NetIQ 主機超過 {HostLimit:N0} 台，已拒絕完整目錄。"));
         if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
         if (!TryReadFence(request.CatalogueToken, out var fence, out var error)) return error!;
         var store = backend.PrtgStore();
@@ -185,7 +185,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var sourceSnapshot = hosts.CapturePrtgSnapshot();
         var visible = VisibleHostIds(sourceSnapshot);
         var eligible = EligibleHosts(sourceSnapshot, visible).Hosts;
-        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
+        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"NetIQ 主機超過 {HostLimit:N0} 台，已拒絕完整目錄。"));
         if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
         var store = backend.PrtgStore();
         if (!FenceMatches(estimate, Store().Get(), visible, store) || estimate.HostVersion != sourceSnapshot.Version)
@@ -334,7 +334,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var allHosts = sourceSnapshot.Hosts;
         var eligibleCount = allHosts.Count(h => visible.Contains(h.HostId) && h.Active && h.MergedInto == null && h.Source == "netiq");
         if (eligibleCount > HostLimit)
-            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "可見 NetIQ 範圍超過 3,000 台；評估預覽已拒絕，不會回傳部分結果。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"可見 NetIQ 範圍超過 {HostLimit:N0} 台；評估預覽已拒絕，不會回傳部分結果。"));
         var fullScope = visible.Count > 0 && eligibleCount > 0 && allHosts.All(h => visible.Contains(h.HostId));
         var visibleNetiqHosts = allHosts.Where(h => visible.Contains(h.HostId) && h.Active && h.MergedInto == null && h.Source == "netiq")
             .Select(h => h.HostId).ToArray();

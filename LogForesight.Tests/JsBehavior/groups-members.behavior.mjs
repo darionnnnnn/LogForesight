@@ -19,10 +19,10 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
 
 /** 載入 groups.js；members 以頁碼對應該頁資料，posts 記下所有 POST */
-function load({ pages, previewResult = null }) {
+function load({ pages, previewResult = null, failPages = new Set(), delays = {} }) {
     const src = fs.readFileSync(path.join(jsRoot, 'pages', 'groups.js'), 'utf8').replaceAll('\r\n', '\n');
     const imports = src.match(/^import .*;$/gm) ?? [];
-    assert.equal(imports.length, 4, 'groups.js 的匯入行數變了，替身要跟著檢查');
+    assert.equal(imports.length, 5, 'groups.js 的匯入行數變了，替身要跟著檢查');
     const body = src.replace(/^import .*;$/gm, '');
 
     const els = new Map();
@@ -37,7 +37,7 @@ function load({ pages, previewResult = null }) {
         querySelectorAll: () => [],
         createElement: tag => document.createElement(tag)
     };
-    const spy = { posts: [], gets: [], pagers: new Map(), confirms: 0 };
+    const spy = { posts: [], gets: [], pagers: new Map(), confirms: 0, errors: [] };
     const stubs = {
         document: fakeDocument,
         bootstrap: { Modal: class { show() { } hide() { } } },
@@ -45,6 +45,8 @@ function load({ pages, previewResult = null }) {
             get: async url => {
                 spy.gets.push(url);
                 const page = Number(new URLSearchParams(url.split('?')[1]).get('page'));
+                if (delays[page]) await delays[page];
+                if (url.includes('/members?') && failPages.has(page)) throw new Error('boom');
                 if (url.includes('/members?')) return pages[page];
                 return [];
             },
@@ -55,6 +57,8 @@ function load({ pages, previewResult = null }) {
             }
         },
         renderTable: () => { }, renderLoading: () => { }, renderEmpty: () => { }, toast: () => { },
+        renderError: (container, opts) => spy.errors.push(opts),
+        createSeqGuard: () => { let latest = 0; return { next: () => ++latest, isCurrent: seq => seq === latest }; },
         confirmAction: async () => { spy.confirms++; return true; },
         withBusy: () => () => { },
         bindTabs: () => { }, checkboxList: () => { }, button: () => dom.newElement('button'),
@@ -82,6 +86,35 @@ const tickBox = (container, hostId) => {
 };
 
 const cases = {
+    // 目前成員載入失敗：顯示錯誤與重試（不是卡在骨架列）；重試成功後畫出成員
+    async currentMembersLoadFailureShowsRetry() {
+        const failPages = new Set([1]);
+        const pages = { 1: { items: [{ hostId: 1, hostName: 'A', ipAddress: '10.0.0.1', otherGroupCount: 0 }], total: 1, page: 1, pageSize: 50 } };
+        const { loadCurrentMembers, spy } = load({ pages, failPages });
+        await loadCurrentMembers(7, 1);
+        assert.equal(spy.errors.length, 1, '失敗要顯示錯誤');
+        assert.equal(typeof spy.errors[0].onRetry, 'function', '要有重試');
+        failPages.clear();
+        await spy.errors[0].onRetry();
+        assert.equal(spy.errors.length, 1, '重試成功不再顯示錯誤');
+    },
+
+    // 連點換頁：先發的第 1 頁晚回來，不得覆蓋後發的第 2 頁（失敗也不得蓋掉）
+    async staleCurrentMembersResponseIsDropped() {
+        let release;
+        const slow = new Promise(resolve => { release = resolve; });
+        const pages = {
+            1: { items: [], total: 60, page: 1, pageSize: 50 },
+            2: { items: [{ hostId: 52, hostName: 'B', ipAddress: '10.0.1.2', otherGroupCount: 0 }], total: 60, page: 2, pageSize: 50 }
+        };
+        const { loadCurrentMembers, spy } = load({ pages, failPages: new Set([1]), delays: { 1: slow } });
+        const first = loadCurrentMembers(7, 1);
+        await loadCurrentMembers(7, 2);
+        release();
+        await first;
+        assert.equal(spy.errors.length, 0, '過期的失敗回應不得蓋掉較新的結果');
+    },
+
     async currentMembersSelectionSurvivesPaging() {
         const { openMembersModal, el, spy } = load({
             pages: {

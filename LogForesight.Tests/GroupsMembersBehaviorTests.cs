@@ -15,6 +15,8 @@ public class GroupsMembersBehaviorTests
 
     [NodeTheory]
     [InlineData("currentMembersSelectionSurvivesPaging")]
+    [InlineData("currentMembersLoadFailureShowsRetry")]
+    [InlineData("staleCurrentMembersResponseIsDropped")]
     [InlineData("previewWithZeroMatchesDisablesBothApplyButtons")]
     public void 主機群組成員行為(string caseName)
     {

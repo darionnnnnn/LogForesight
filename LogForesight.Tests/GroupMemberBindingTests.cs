@@ -226,8 +226,9 @@ public class GroupMemberBindingTests
 
         Assert.Equal(1, _hosts.MutateBatchAttempts - before);
         Assert.Equal(0, _hosts.SetGroupsCalls);
-        // removeFromOthers：已在群組的 h3 也走一次（只保留目標群組，與逐台語意相同）；墓碑與查無略過
-        Assert.Equal(3, added.AddedCount);
+        // removeFromOthers：h3 原本就只在目標群組、沒有變動，不計；墓碑與查無略過
+        Assert.Equal(2, added.AddedCount);
+        Assert.Equal(0, added.MovedFromOthersCount);
         Assert.Equal(new[] { target }, _hosts.Get(h1.HostId)!.GroupIds);
         Assert.Equal(new[] { target }, _hosts.Get(h2.HostId)!.GroupIds);
         Assert.Empty(_hosts.Get(tomb.HostId)!.GroupIds);
@@ -280,8 +281,14 @@ public class GroupMemberBindingTests
 
         var all = service.AddMembers(target, new AddHostGroupMembersRequest { AllMatching = true, Pattern = "10.1.3.0/24", RemoveFromOthers = true });
 
-        Assert.Equal(1, all.AddedCount);
+        // 原本就在本群組：不算新加入，記為「只移出其他群組」
+        Assert.Equal(0, all.AddedCount);
+        Assert.Equal(1, all.MovedFromOthersCount);
         Assert.Equal(new[] { target }, _hosts.Get(both.HostId)!.GroupIds);
+        // 已經只在本群組：沒有任何變動、兩個數字都是 0
+        var again = service.AddMembers(target, new AddHostGroupMembersRequest { AllMatching = true, Pattern = "10.1.3.0/24", RemoveFromOthers = true });
+        Assert.Equal(0, again.AddedCount);
+        Assert.Equal(0, again.MovedFromOthersCount);
 
         // 勾選路徑同一條規則
         var picked = AddHost("SRV02", "10.1.4.12", target, other);

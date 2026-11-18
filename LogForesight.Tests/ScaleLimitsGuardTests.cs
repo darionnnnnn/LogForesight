@@ -25,9 +25,23 @@ public sealed class ScaleLimitsGuardTests
     [InlineData("LogForesight.Web/Services/HostAdminService.cs")]
     public void 上限使用處沒有自己的數字(string file)
     {
-        var code = Regex.Replace(File.ReadAllText(Path.Combine(Root(), file)), @"//.*|/\*.*?\*/", "", RegexOptions.Singleline);
+        // 先剝區塊註解（可跨行），再逐行剝 // 註解；兩者不能合成一條 Singleline，否則 //.* 會從第一個註解吃到檔尾、守門恆綠
+        var code = Regex.Replace(File.ReadAllText(Path.Combine(Root(), file)), @"/\*.*?\*/", "", RegexOptions.Singleline);
+        code = Regex.Replace(code, @"//[^
+]*", "");
+        // 語意不同的獨立數字：近期狀態佇列容量（以裝置計）、診斷匯出數值分頁大小
+        code = Regex.Replace(code, @"const int (RecentStateChangeQueueCapacity|ValuePageSize) = [\d_]+;", "");
+        Assert.True(code.Length > 1000, $"{file} 剝掉註解後只剩 {code.Length} 字元，剝除規則有誤");
         // 3000／15000／30000 與 2000（主機全選舊值）以任何寫法出現都算
         Assert.DoesNotMatch(new Regex(@"(?<![\d_.])(3[,_]?000|15[,_]?000|30[,_]?000|2[,_]?000)(?![\d_])"), code);
+    }
+
+    /// <summary>頁面提示的上限數字由前端依 API 回傳填入，view 不得寫死</summary>
+    [Fact]
+    public void 監看範圍頁面提示沒有寫死上限()
+    {
+        var view = File.ReadAllText(Path.Combine(Root(), "LogForesight.Web/Views/Pages/Prtg.cshtml"));
+        Assert.DoesNotMatch(new Regex(@"(?<![\d_.])(3[,_]?000|15[,_]?000|10[,_]?000)(?![\d_])\s*(台|顆)"), view);
     }
 
     [Fact]

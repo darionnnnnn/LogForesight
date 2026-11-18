@@ -85,6 +85,13 @@ public class IssueOwnedHostIdsCache : ICacheStatistics
         // factory 在鎖外執行：那支聚合查詢很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只算一次（同 SummaryCache）
         var shared = _flight.Run(key, () =>
         {
+            // 前一個同鍵合併可能剛寫入並結束：再看一次，避免緊接著重算（同 SummaryCache）
+            lock (_lock)
+            {
+                if (_seenVersion == version && _entries.TryGetValue(key, out var fresh)
+                    && (_now() - fresh.CachedAt).TotalSeconds < TtlSeconds)
+                    return fresh.HostIds;
+            }
             var value = new HashSet<long>(factory());
             lock (_lock)
             {

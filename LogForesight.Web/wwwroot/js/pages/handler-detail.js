@@ -33,6 +33,7 @@ import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -1023,14 +1024,20 @@ function pagerFor(box) {
 }
 
 /** part：'cases'／'days' 只重畫該表；省略則兩張都畫（首次展開、切換已結案、就地刷新） */
+/** 案件與風險日各一個請求序號：同一張表連點換頁時只畫最後一次；換其中一張不作廢另一張的請求 */
+const workloadSeq = { cases: createSeqGuard(), days: createSeqGuard() };
+
 async function loadAdvanced(part) {
     advancedLoaded = true;
-    const doCases = part !== 'days';
-    const doDays = part !== 'cases';
-    if (doCases) renderLoading(casesEl, 3);
-    if (doDays) renderLoading(daysEl, 3);
+    const casesSeq = part !== 'days' ? workloadSeq.cases.next() : 0;
+    const daysSeq = part !== 'cases' ? workloadSeq.days.next() : 0;
+    if (casesSeq) renderLoading(casesEl, 3);
+    if (daysSeq) renderLoading(daysEl, 3);
     const query = `includeResolvedDays=${includeResolvedDays}&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
     const workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+    const doCases = casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq);
+    const doDays = daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq);
+    if (!doCases && !doDays) return;
 
     // 資料變少後頁碼可能超出範圍（例如最後一頁的案件剛結案）：退到最後一頁重取一次
     const casesLast = Math.max(1, Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE));

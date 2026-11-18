@@ -105,7 +105,8 @@ public class ActionableSnapshotCache : ICacheStatistics
                 if (countMiss) _misses++;
                 return null;
             }
-            _hits++;
+            // 合併內的二次查詢（countMiss＝false）已記過一次未命中，不再記命中，否則同一請求會被算成一次未命中加一次命中
+            if (countMiss) _hits++;
             _entries[key] = entry with { LastAccess = now };
             return entry.Items;
         }

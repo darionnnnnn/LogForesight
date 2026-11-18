@@ -852,7 +852,7 @@ lf_blobs                                             -- 整份 JSON 型 store，
 `lf_blobs` 每一列存一整份 JSON（key＝store 名稱）。`hosts`／`host_groups`／`group_access`
 三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
 會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
-`JsonBlobCollection` 對這三份啟用讀取快取；`users` 也使用版本探測式快取，
+`JsonBlobCollection` 對這三份與已知雜訊記憶（`noise_marks`，風險日詳情每次開啟都讀）啟用讀取快取；`users` 也使用版本探測式快取，
 避免每個授權檢查都重新反序列化整份使用者清單。
 單一物件型的 `JsonBlobSingleton` 家族（`system_settings`、`schedule_options`、`netiq_options`、
 `prtg_sync_status` 等）不走快取——每份都小，且讀取端不在請求熱路徑上。

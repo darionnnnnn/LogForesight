@@ -114,6 +114,12 @@ public class PrtgDeviceIndexCache : ICacheStatistics
         // 讀表與建索引在鎖外做：全表讀取很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只建一次（同 SummaryCache）
         return _flight.Run(key, () =>
         {
+            // 前一個同鍵合併可能剛寫入並結束：再看一次，避免緊接著重建（同 SummaryCache）
+            lock (_lock)
+            {
+                if (_entries.TryGetValue(key, out var fresh) && (_now() - fresh.CachedAt).TotalSeconds < TtlSeconds)
+                    return fresh.Index;
+            }
             var index = new PrtgDeviceIndex(loadDevices());
             lock (_lock)
             {

@@ -907,6 +907,14 @@ async function renderIssueOccurrences(cell, group, page = 1) {
         return;
     }
 
+    // 換頁期間資料變少、原頁已不存在：退回最後一頁
+    // 只在要求的頁碼真的超過最後一頁時退一次（退到的那頁必小於原頁碼，不會反覆重打）
+    const lastPage = Math.ceil(result.total / result.pageSize);
+    if (!result.items.length && lastPage >= 1 && page > lastPage) {
+        renderIssueOccurrences(cell, group, lastPage);
+        return;
+    }
+
     if (!result.items.length) {
         renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日', hint: '可能因目前的篩選條件或權限限制未包含此問題的主機日，可調整篩選或切換至明細視角。' });
         return;

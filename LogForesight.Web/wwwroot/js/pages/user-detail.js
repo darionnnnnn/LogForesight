@@ -13,6 +13,7 @@ import { appUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderError, renderPagination, kpiStrip, guardLoad, linkButton } from '../core/ui.js';
 import { metaLine, roleText, statusNote, fact } from '../core/elements.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge, statusText, dueCell } from '../core/format.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const root = document.getElementById('user-detail');
 const userId = Number(root.dataset.userId);
@@ -176,8 +177,13 @@ function renderKpi(detail, workload) {
 /** 可見主機每頁台數 */
 const VISIBLE_HOSTS_PAGE_SIZE = 20;
 
+/** 可見主機與進行中項目各一個請求序號：連點換頁時只畫最後一次的結果 */
+const visibleHostsSeq = createSeqGuard();
+const workloadSeq = createSeqGuard();
+
 /** 可見主機清單：伺服器端分頁（授權到大群組的人可見數千台） */
 async function loadVisibleHosts(page) {
+    const seq = visibleHostsSeq.next();
     const container = document.getElementById('user-visible-hosts');
     let pager = document.getElementById('user-visible-hosts-pager');
     if (!pager) {
@@ -191,9 +197,10 @@ async function loadVisibleHosts(page) {
     try {
         result = await api.get(`/api/admin/users/${userId}/visible-hosts?page=${page}&pageSize=${VISIBLE_HOSTS_PAGE_SIZE}`);
     } catch {
-        renderError(container, { message: '載入可見主機失敗', onRetry: () => loadVisibleHosts(page) });
+        if (visibleHostsSeq.isCurrent(seq)) renderError(container, { message: '載入可見主機失敗', onRetry: () => loadVisibleHosts(page) });
         return;
     }
+    if (!visibleHostsSeq.isCurrent(seq)) return;
     renderVisibleHosts(result.items, result.total);
     renderPagination(pager, {
         page: result.page,
@@ -240,13 +247,17 @@ let daysPage = 1;
 /** 換頁後重打 workload 並只重畫進行中區塊（KPI 以全部項目計，不受分頁影響，不重畫） */
 async function reloadWorkload({ casesPage: nextCases = casesPage, daysPage: nextDays = daysPage }) {
     const container = document.getElementById('user-open-work');
+    const seq = workloadSeq.next();
     try {
         const workload = await api.get(workloadUrl(nextCases, nextDays));
+        if (!workloadSeq.isCurrent(seq)) return;
         casesPage = nextCases;
         daysPage = nextDays;
         renderOpenWork(workload);
     } catch {
-        renderError(container, { message: '載入進行中項目失敗', onRetry: () => reloadWorkload({ casesPage: nextCases, daysPage: nextDays }) });
+        if (workloadSeq.isCurrent(seq)) {
+            renderError(container, { message: '載入進行中項目失敗', onRetry: () => reloadWorkload({ casesPage: nextCases, daysPage: nextDays }) });
+        }
     }
 }
 

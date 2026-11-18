@@ -2543,7 +2543,9 @@ async function activateSelectedBackfillHost(hostName) {
         return;
     }
     selectedBackfillHostIds.add(id);
+    // 選取變了：舊預覽作廢，與勾選框改變時同一個處理（「開始補值」要等重新預覽）
     selectedBackfillPreview = null;
+    document.getElementById('prtg-selected-backfill-start').disabled = true;
     if (search) search.value = '';
     await backfillSearcher.run('');
     renderSelectedBackfillHosts();
@@ -3647,6 +3649,9 @@ if (monitoringForm) {
             if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
             monitoring = response; draftVersion++; estimateSequence++;
             hostPageSequence++; sensorPageSequence++;
+            // 上限數字只來自後端（ScaleLimits），頁面不寫死
+            document.getElementById('prtg-monitoring-selection-limits').textContent =
+                `最多選取 ${formatNumber(monitoringLimit('host'))} 台主機與 ${formatNumber(monitoringLimit('sensor'))} 顆 sensor；超過上限會明確拒絕，不會截斷。`;
             const initializedDraftVersion = draftVersion;
             estimateToken = null; estimateFingerprint = null;
             hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));

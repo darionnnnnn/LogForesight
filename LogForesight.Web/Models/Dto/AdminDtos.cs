@@ -311,7 +311,11 @@ public class HostGroupMemberDto
 /// <summary>加入成員的結果：實際加入的台數（略過的不計）</summary>
 public class AddHostGroupMembersResultDto
 {
+    /// <summary>這次新加入本群組的台數（原本就在本群組的不算）</summary>
     public int AddedCount { get; set; }
+
+    /// <summary>勾「移出原群組」時，原本就在本群組、這次只被移出其他群組的台數</summary>
+    public int MovedFromOthersCount { get; set; }
 }
 
 public class RemoveHostGroupMembersRequest
