@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+﻿﻿using System.Text.Json;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Web.Services;
@@ -76,6 +76,36 @@ internal sealed class PrtgSnapshotDiagnosticsStore
             // 與文件同一個截止點清掉記憶體這份：站台長期不重啟時，過了保留期的時段不會再被比對，留著只會一直長
             var cutoff = at.Date.AddDays(-retentionDays);
             _recordedSkips.RemoveWhere(x => x.Hour < cutoff);
+        }
+    }
+
+    /// <summary>
+    /// 一輪快照的嘗試數與成功數一次寫入（等同對同一小時逐批呼叫 <c>attempt</c>／<c>success</c>）：
+    /// 整份診斷 blob 只讀改寫一次。<paramref name="targets"/> 取最大值，與逐批記錄相同。
+    /// </summary>
+    internal void RecordBatchCounts(DateTime at, int attempts, int successes, int targets)
+    {
+        if (attempts < 0 || successes < 0) throw new ArgumentOutOfRangeException(nameof(attempts));
+        var hour = new DateTime(at.Year, at.Month, at.Day, at.Hour, 0, 0);
+        var retentionDays = Math.Clamp(_retentionDays(), 1, RetentionDays);
+        lock (_gate)
+        {
+            _blob.MutateWithContext((_, raw) =>
+            {
+                var doc = Read(raw);
+                var row = doc.Hours.FirstOrDefault(x => x.Hour == hour);
+                if (row == null) { row = new PrtgSnapshotDiagnosticHour { Hour = hour }; doc.Hours.Add(row); }
+                row.Targets = Math.Max(row.Targets, targets);
+                row.Attempts += attempts;
+                row.Successes += successes;
+                var cutoff = at.Date.AddDays(-retentionDays);
+                doc.Hours.RemoveAll(x => x.Hour < cutoff);
+                Validate(doc);
+                var serialized = JsonSerializer.Serialize(doc);
+                if (serialized.Length > MaximumDocumentCharacters)
+                    throw new InvalidDataException("snapshot-diagnostics-document-cap-exceeded");
+                return (serialized, true);
+            }, MaximumDocumentCharacters, enforceCurrentUtf8ByteCap: false);
         }
     }
 

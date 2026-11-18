@@ -2153,11 +2153,12 @@ public sealed class CalibrationService
             var emptyNames = new Dictionary<long, string>();
             var magnitudeLookups = PrtgSensorLookups.Build(magnitudeInputs);
             var formalLookups = PrtgSensorLookups.Build(formalInputs);
+            // 逐日兩天窗口：每個日曆日只讀一次、sensor 篩選下推（selected 非空：外層已要求 statuses.Count > 0）
+            var stateChangeWindow = new PrtgStateChangeWindow(_prtgStore, selected);
             for (var day = from; day <= to; day = day.AddDays(1))
             {
                 if (mapsByDay.TryGetValue(day, out var dayMaps) && dayMaps.Count > 0) coveredDays.Add(day);
-                var changes = _prtgStore.GetStateChanges(day.AddDays(-1), day.AddDays(1))
-                    .Where(change => selected.Contains(change.SensorObjid)).ToList();
+                var changes = stateChangeWindow.ForDay(day);
                 if (changes.Count == 0) continue;
                 foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, magnitudeInputs, lowRules,
                              emptyNames, emptyNames, includeSilent: false, lookups: magnitudeLookups))

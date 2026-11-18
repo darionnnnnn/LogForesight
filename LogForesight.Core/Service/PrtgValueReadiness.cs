@@ -24,11 +24,13 @@ public static class PrtgValueReadiness
 
     public static PrtgValueReadinessSummary Compute(PrtgValueAssessment assessment,
         IReadOnlyDictionary<long, long> deviceToHost, IReadOnlySet<long> evaluationHostIds,
-        IReadOnlySet<long> policySensorIds, DateOnly completedDay, CancellationToken ct)
+        IReadOnlySet<long> policySensorIds, DateOnly completedDay, CancellationToken ct,
+        IEnumerable<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)>? sensorMirror = null)
     {
         ct.ThrowIfCancellationRequested();
 
-        var mirror = assessment.SensorMirror()
+        // 呼叫端已讀出鏡像時沿用（每日路徑一趟只讀一次）；不傳則自己讀
+        var mirror = (sensorMirror ?? assessment.SensorMirror())
             .Where(s => s.Category != null && Categories.Contains(s.Category.Trim()));
 
         var candidates = PrtgValueAssessment.Candidates(

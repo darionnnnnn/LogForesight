@@ -1,4 +1,4 @@
-﻿using System.Net;
+﻿﻿using System.Net;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
@@ -3318,5 +3318,235 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.True(requests >= 1);
         Assert.Null(service.GetStatus().JournalStopCode);
         Assert.NotNull(service.GetStatus().LastSuccessAt);
+    }
+
+    // ---- 第 78 輪批次 4：快照診斷一輪寫一次、業務範圍同一週期只算一次 ----
+
+    private const string SnapshotDiagnosticsBlobKey = "prtg_snapshot_diagnostics_v1";
+
+    /// <summary>以反射呼叫私有的 FetchFilteredAsync（一輪分批取樣），讓診斷寫入次數可以單獨量測。</summary>
+    private static async Task InvokeFetchFilteredAsync(PrtgSnapshotHostedService service, SystemSettings settings,
+        IReadOnlyList<long> targets, DateTime now, CancellationToken ct)
+    {
+        var type = typeof(PrtgSnapshotHostedService);
+        var tally = Activator.CreateInstance(type.GetNestedType("SnapshotTally", System.Reflection.BindingFlags.NonPublic)!)!;
+        var task = (Task)type.GetMethod("FetchFilteredAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, new object[] { settings, targets, now, tally, ct })!;
+        await task;
+    }
+
+    private (long Version, PrtgSnapshotDiagnosticHour? Hour) ReadSnapshotDiagnostics(DateTime now)
+    {
+        var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+        var version = _backend.Blob(SnapshotDiagnosticsBlobKey).ReadVersion();
+        var row = new PrtgSnapshotDiagnosticsStore(_backend.Blob(SnapshotDiagnosticsBlobKey)).ReadHours()
+            .FirstOrDefault(h => h.Hour == hour);
+        return (version, row);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task 診斷_一輪十批_嘗試與成功數與逐批記錄相同且整份blob只讀改寫一次(int failedBatches)
+    {
+        SetupTargetSensors(ManyTargets(1001, 1000));
+        var failing = Enumerable.Range(0, failedBatches).Select(i => 1001L + i * 300).ToHashSet();
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            return Task.FromResult(FilterObjids(url).Any(failing.Contains)
+                ? JsonResponse("{}", HttpStatusCode.InternalServerError)
+                : FilteredValues(url));
+        };
+        var service = CreateService();
+        var now = DateTime.Now;
+        var targets = Enumerable.Range(1001, 1000).Select(i => (long)i).ToList();
+        var before = ReadSnapshotDiagnostics(now).Version;
+
+        await InvokeFetchFilteredAsync(service, _settingsStore.Get(), targets, now, CancellationToken.None);
+
+        var (after, hour) = ReadSnapshotDiagnostics(now);
+        Assert.NotNull(hour);
+        Assert.Equal(10, hour!.Attempts);
+        Assert.Equal(10 - failedBatches, hour.Successes);
+        Assert.Equal(1000, hour.Targets);
+        Assert.Equal(1, after - before);   // 逐批記錄時是 20 次
+    }
+
+    [Fact]
+    public async Task 診斷_輪中途取消_已嘗試的批次仍在輪末一次寫入()
+    {
+        SetupTargetSensors(ManyTargets(1001, 1000));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var seen = 0;
+        _stubHandler.OnSend = async (req, token) =>
+        {
+            if (Interlocked.Increment(ref seen) == 5)
+            {
+                cancellation.Cancel();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            return FilteredValues(req.RequestUri!.ToString());
+        };
+        var service = CreateService();
+        var now = DateTime.Now;
+        var targets = Enumerable.Range(1001, 1000).Select(i => (long)i).ToList();
+        var before = ReadSnapshotDiagnostics(now).Version;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            InvokeFetchFilteredAsync(service, _settingsStore.Get(), targets, now, cancellation.Token));
+
+        var (after, hour) = ReadSnapshotDiagnostics(now);
+        Assert.NotNull(hour);
+        Assert.InRange(hour!.Attempts, 5, 10);
+        Assert.InRange(hour.Successes, 1, hour.Attempts - 1);   // 取消的那一批有嘗試、沒有成功
+        Assert.Equal(1000, hour.Targets);
+        Assert.Equal(1, after - before);
+    }
+
+    [Fact]
+    public async Task 診斷_沒有任何批次時不寫入()
+    {
+        var service = CreateService();
+        var now = DateTime.Now;
+        var before = ReadSnapshotDiagnostics(now).Version;
+
+        await InvokeFetchFilteredAsync(service, _settingsStore.Get(), new List<long>(), now, CancellationToken.None);
+
+        Assert.Equal(before, ReadSnapshotDiagnostics(now).Version);
+    }
+
+    [Fact]
+    public void 診斷_RecordBatchCounts與逐批Record_文件內容相同()
+    {
+        var at = new DateTime(2026, 11, 17, 10, 30, 0);
+        var perBatch = new PrtgSnapshotDiagnosticsStore(_backend.Blob("diag_per_batch"));
+        for (var i = 0; i < 7; i++) perBatch.Record(at, "attempt", targets: 321);
+        for (var i = 0; i < 5; i++) perBatch.Record(at, "success", targets: 321);
+        var aggregated = new PrtgSnapshotDiagnosticsStore(_backend.Blob("diag_aggregated"));
+        aggregated.RecordBatchCounts(at, 7, 5, 321);
+
+        var expected = perBatch.ReadHours().Single();
+        var actual = aggregated.ReadHours().Single();
+        Assert.Equal(expected.Hour, actual.Hour);
+        Assert.Equal((expected.Attempts, expected.Successes, expected.Targets, expected.Skips, expected.WriteFailures, expected.Sampled),
+            (actual.Attempts, actual.Successes, actual.Targets, actual.Skips, actual.WriteFailures, actual.Sampled));
+        // 疊加在既有小時上：與逐批記錄的累計相同
+        perBatch.Record(at, "attempt", targets: 400);
+        aggregated.RecordBatchCounts(at, 1, 0, 400);
+        Assert.Equal((perBatch.ReadHours().Single().Attempts, perBatch.ReadHours().Single().Targets),
+            (aggregated.ReadHours().Single().Attempts, aggregated.ReadHours().Single().Targets));
+    }
+
+    /// <summary>
+    /// 同一週期內對帳前、領取前各取一次業務範圍：三個版本都沒變時只算一次；
+    /// 第一次之後主機清單、主機對應或範圍（人工對應）有變，第二次重算。
+    /// </summary>
+    [Theory]
+    [InlineData("none", 1)]
+    [InlineData("hostmap", 2)]
+    public async Task 業務範圍_同一週期版本不變只算一次_有變就重算(string change, int expectedComputes)
+    {
+        SetupTargetSensors(ManyTargets(1001, 50));
+        var changed = 0;
+        _stubHandler.OnSend = (req, _) =>
+        {
+            // 快照批次執行期間（兩次取業務範圍之間）發生的變更
+            if (Interlocked.Exchange(ref changed, 1) == 0)
+            {
+                switch (change)
+                {
+                    case "hostmap":
+                        _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today.AddDays(-3), new[]
+                        {
+                            new PrtgHostMapRow { DeviceObjid = 10, HostId = 1, HostName = "Server-01", Ip = "192.168.1.10",
+                                MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today.AddDays(-3) }
+                        });
+                        break;
+                }
+            }
+            return Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
+        };
+        var service = CreateService();
+
+        await service.TickAsync();
+
+        Assert.Equal(expectedComputes, service.BusinessScopeComputeCount);
+    }
+
+    /// <summary>主機清單或範圍版本（人工對應）改變時，第二次取業務範圍要重算（這兩種變更在真實週期裡會先讓整輪作業中止，所以直接呼叫）。</summary>
+    [Theory]
+    [InlineData("hosts")]
+    [InlineData("manualmap")]
+    [InlineData("none")]
+    public void 業務範圍_主機清單或人工對應變更後重算_未變時沿用(string change)
+    {
+        SetupTargetSensors(ManyTargets(1001, 5));
+        var service = CreateService();
+        var store = _backend.PrtgStore();
+        var compute = typeof(PrtgSnapshotHostedService).GetMethod("ComputeBusinessScopeDevices",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        HashSet<long> Call() => (HashSet<long>)compute.Invoke(service, new object[] { store })!;
+
+        var first = Call();
+        switch (change)
+        {
+            case "hosts":
+                _hostStore.Upsert(new WebHost { HostName = "Server-Extra", IpAddress = "192.168.1.77", Active = true });
+                break;
+            case "manualmap":
+                store.UpsertManualMap(new PrtgManualMapRow { DeviceObjid = 77, HostId = 1, CreatedBy = "test", CreatedAt = DateTime.Now });
+                break;
+        }
+        var second = Call();
+
+        Assert.Equal(change == "none" ? 1 : 2, service.BusinessScopeComputeCount);
+        Assert.Equal(change == "none", ReferenceEquals(first, second));
+        if (change == "manualmap") Assert.Contains(77L, second);   // 重算後看得到新的人工對應
+    }
+
+    /// <summary>只讓 <see cref="DataVersion"/> 可被推進的主機清單包裝：驗證版本比對各維度獨立生效（真實 HostStore 的版本與範圍版本同步變動）。</summary>
+    private sealed class BumpableHostStore(IHostStore inner) : IHostStore
+    {
+        public long Bump { get; set; }
+        public long DataVersion => inner.DataVersion + Bump;
+        public List<WebHost> GetAll() => inner.GetAll();
+        public PrtgHostSnapshot CapturePrtgSnapshot() => inner.CapturePrtgSnapshot();
+        public WebHost? Get(long hostId) => inner.Get(hostId);
+        public WebHost? FindByName(string hostName) => inner.FindByName(hostName);
+        public WebHost Upsert(WebHost host) => inner.Upsert(host);
+        public WebHost Touch(string hostName, DateTime reportedAt, string source = "local") => inner.Touch(hostName, reportedAt, source);
+        public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt) => inner.TouchNetiq(hostId, displayName, reportedAt);
+        public void SetGroups(long hostId, IEnumerable<long> groupIds) => inner.SetGroups(hostId, groupIds);
+        public void SetHighVolume(long hostId, bool isHighVolume) => inner.SetHighVolume(hostId, isHighVolume);
+        public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace) =>
+            inner.SetGroupsBatch(hostIds, groupIds, replace);
+        public void SetOwners(long hostId, IEnumerable<long> userIds) => inner.SetOwners(hostId, userIds);
+        public void Merge(long sourceHostId, long targetHostId) => inner.Merge(sourceHostId, targetHostId);
+        public void Unmerge(long hostId) => inner.Unmerge(hostId);
+        public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => inner.MutateBatch(mutation);
+        public void MutateBatch(Action<List<WebHost>> mutation) => inner.MutateBatch(mutation);
+    }
+
+    [Fact]
+    public void 業務範圍_主機清單版本單獨改變也重算()
+    {
+        SetupTargetSensors(ManyTargets(1001, 5));
+        var hosts = new BumpableHostStore(_hostStore);
+        var service = new PrtgSnapshotHostedService(_settingsStore, _backend, _schedulerRunState, _structureSync, _backfill,
+            hosts, new FakeSentinelStore(), _probeState, _lifetime, TimeSpan.FromSeconds(60));
+        _services.Add(service);
+        var compute = typeof(PrtgSnapshotHostedService).GetMethod("ComputeBusinessScopeDevices",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var store = _backend.PrtgStore();
+
+        compute.Invoke(service, new object[] { store });
+        compute.Invoke(service, new object[] { store });
+        Assert.Equal(1, service.BusinessScopeComputeCount);   // 版本都沒變：沿用
+
+        hosts.Bump++;                                          // 只有主機清單版本變
+        compute.Invoke(service, new object[] { store });
+        Assert.Equal(2, service.BusinessScopeComputeCount);
     }
 }

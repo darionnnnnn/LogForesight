@@ -1336,6 +1336,20 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 只取裝置編號與名稱（每日路徑的 deviceNames 用；不讀標籤與群組路徑）。同編號多列時取第一筆，
+    /// 與「<see cref="GetAllDevices"/> 後依 Objid 分組取第一筆」同義。
+    /// </summary>
+    public Dictionary<long, string> GetDeviceIdNames()
+    {
+        using var __perf = _performance.Measure("prtg:GetDeviceIdNames");
+        using var ctx = _contextFactory();
+        var rows = ctx.PrtgDevices.AsNoTracking().Select(d => new { d.Objid, d.Name }).ToList();
+        var result = new Dictionary<long, string>(rows.Count);
+        foreach (var row in rows) result.TryAdd(row.Objid, row.Name);
+        return result;
+    }
+
+    /// <summary>
     /// 依 objid 集合取得 PRTG 裝置名稱（唯讀查詢，單次查詢；對不到的 objid 不在結果內）。
     /// </summary>
     public Dictionary<long, string> GetDeviceNamesByObjids(IReadOnlyCollection<long> objids)
@@ -2090,6 +2104,36 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
+
+    /// <summary>
+    /// 規則評估專用的狀態變更讀取：範圍 [<paramref name="fromInclusive"/>, <paramref name="toExclusive"/>)，
+    /// 依 sensor、時間排序；<paramref name="sensorIds"/> 非 null 時把篩選下推到查詢條件（null＝不限）。
+    /// 只含規則評估所需欄位（<c>SensorObjid</c>、<c>ChangedAt</c>、<c>Status</c>），
+    /// <b>不可作為其他用途的輸入</b>——訊息、前一狀態、品質等欄位都是預設值。
+    /// </summary>
+    public List<PrtgStateChangeRow> GetStateChangesForRuleEvaluation(
+        DateTime fromInclusive, DateTime toExclusive, IReadOnlyCollection<long>? sensorIds)
+    {
+        using var __perf = _performance.Measure("prtg:GetStateChangesForRuleEvaluation");
+        if (sensorIds is { Count: 0 }) return [];
+        using var ctx = _contextFactory();
+        var query = ctx.PrtgStateChanges
+            .AsNoTracking()
+            .Where(r => r.ChangedAt >= fromInclusive && r.ChangedAt < toExclusive);
+        if (sensorIds != null)
+        {
+            var ids = sensorIds.Distinct().ToList();
+            query = query.Where(r => ids.Contains(r.SensorObjid));
+        }
+        return query
+            .OrderBy(r => r.SensorObjid)
+            .ThenBy(r => r.ChangedAt)
+            .ThenBy(r => r.Id)
+            .Select(r => new { r.SensorObjid, r.ChangedAt, r.Status })
+            .ToList()
+            .Select(r => new PrtgStateChangeRow { SensorObjid = r.SensorObjid, ChangedAt = r.ChangedAt, Status = r.Status })
+            .ToList();
+    }
 
     /// <summary>取得未暫停 sensor 的現況狀態（規則評估用）：objid、device、status、type、name、category。</summary>
     public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> GetSensorStatuses()

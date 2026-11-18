@@ -368,6 +368,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private async Task ScopeRefreshTickAsync(CancellationToken ct, bool prepareBeforeFirstSample)
     {
+        BeginScopeCycle();
         var settings = _settingsStore.Get();
         if (!settings.PrtgEnabled) return;
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings)) return;
@@ -484,6 +485,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     internal virtual async Task TickAsync(CancellationToken ct = default)
     {
+        BeginScopeCycle();
         var settings = _settingsStore.Get();
         // 新樣本保存採集時的涵蓋率；此值也供尚未帶涵蓋率的程序內累積列結算使用。
         _expectedSamplesPerHour = ExpectedSamplesPerHour(settings);
@@ -709,64 +711,75 @@ public class PrtgSnapshotHostedService : BackgroundService
         var requested = 0;
         Exception? lastError = null;
 
-        var client = GetClient(settings);
-        var window = TimeSpan.FromMinutes(Math.Max(1, PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
-        using var roundDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        roundDeadline.CancelAfter(window);
+        // 嘗試數與成功數在記憶體累計、輪末（含例外與取消）一次寫入診斷，不逐批整份讀改寫 blob。
+        // 已知差異：輪中途查看診斷頁時，本輪的嘗試數要到輪末才出現；行程在輪中途崩潰時該輪的嘗試數不記入（診斷本來就是盡力而為）。
+        var attempts = 0;
+        var successes = 0;
         try
         {
-            await Parallel.ForEachAsync(Enumerable.Range(0, batchCount), new ParallelOptions
+            var client = GetClient(settings);
+            var window = TimeSpan.FromMinutes(Math.Max(1, PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
+            using var roundDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            roundDeadline.CancelAfter(window);
+            try
             {
-                MaxDegreeOfParallelism = MaximumConcurrentSnapshotBatches,
-                CancellationToken = roundDeadline.Token
-            }, async (batchIndex, batchToken) =>
+                await Parallel.ForEachAsync(Enumerable.Range(0, batchCount), new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = MaximumConcurrentSnapshotBatches,
+                    CancellationToken = roundDeadline.Token
+                }, async (batchIndex, batchToken) =>
+                {
+                    var batch = targets.Skip(batchIndex * batchSize).Take(batchSize).ToList();
+                    try
+                    {
+                        Interlocked.Increment(ref attempts);
+                        var json = await client.GetBoundedJsonAsync(PrtgSnapshotTargetResolver.BuildSnapshotRelativeUrl(batch),
+                            MaximumSnapshotBatchResponseBytes, batchToken);
+                        // count=batch+1 是哨兵：回應不是恰好要求的那一組 objid（例如 PRTG 忽略 filter_objid 回整站）就整批不收。
+                        PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
+                        Interlocked.Increment(ref successes);
+                        ParseAndCheckpoint(json, now, tally, batch.ToHashSet());
+                        Interlocked.Add(ref requested, batch.Count);
+                    }
+                    catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (JournalWriteException) { throw; }
+                    catch (Exception ex)
+                    {
+                        Interlocked.Increment(ref failedBatches);
+                        lastError = ex;
+                    }
+                });
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && roundDeadline.IsCancellationRequested)
             {
-                var batch = targets.Skip(batchIndex * batchSize).Take(batchSize).ToList();
-                try
-                {
-                    RecordDiagnostic(now, "attempt", targets: targets.Count);
-                    var json = await client.GetBoundedJsonAsync(PrtgSnapshotTargetResolver.BuildSnapshotRelativeUrl(batch),
-                        MaximumSnapshotBatchResponseBytes, batchToken);
-                    // count=batch+1 是哨兵：回應不是恰好要求的那一組 objid（例如 PRTG 忽略 filter_objid 回整站）就整批不收。
-                    PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
-                    RecordDiagnostic(now, "success", targets: targets.Count);
-                    ParseAndCheckpoint(json, now, tally, batch.ToHashSet());
-                    Interlocked.Add(ref requested, batch.Count);
-                }
-                catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (JournalWriteException) { throw; }
-                catch (Exception ex)
-                {
-                    Interlocked.Increment(ref failedBatches);
-                    lastError = ex;
-                }
-            });
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested && roundDeadline.IsCancellationRequested)
-        {
-            RecordDiagnostic(now, "skip", "snapshot-window-incomplete", targets.Count,
-                reasonCode: "snapshot-window-incomplete");
-            throw new PrtgClientException($"PRTG 快照未能在一個採樣間隔（{window.TotalMinutes:0} 分鐘）內完成；已取得的批次保留，未完成的 sensor 本小時涵蓋率會偏低。");
-        }
+                RecordDiagnostic(now, "skip", "snapshot-window-incomplete", targets.Count,
+                    reasonCode: "snapshot-window-incomplete");
+                throw new PrtgClientException($"PRTG 快照未能在一個採樣間隔（{window.TotalMinutes:0} 分鐘）內完成；已取得的批次保留，未完成的 sensor 本小時涵蓋率會偏低。");
+            }
 
-        if (failedBatches == batchCount && lastError != null)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(lastError).Throw();
-        }
+            if (failedBatches == batchCount && lastError != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(lastError).Throw();
+            }
 
-        if (failedBatches > 0)
-        {
-            WriteOutput($"[PRTG快照] {failedBatches} 批查詢失敗，其餘已取得", LogLevel.Warn);
-        }
+            if (failedBatches > 0)
+            {
+                WriteOutput($"[PRTG快照] {failedBatches} 批查詢失敗，其餘已取得", LogLevel.Warn);
+            }
 
-        // 取不齊只比對成功的批次：失敗批次已在上一行出聲，不重複算成「缺」
-        var received = tally.Matched;
-        if (received < requested)
+            // 取不齊只比對成功的批次：失敗批次已在上一行出聲，不重複算成「缺」
+            var received = tally.Matched;
+            if (received < requested)
+            {
+                WriteOutput($"[PRTG快照] 要求 {requested} 顆、取回 {received} 顆，缺 {requested - received} 顆（感測器可能已在 PRTG 刪除或改變，下次結構同步後自動修正）", LogLevel.Warn);
+            }
+        }
+        finally
         {
-            WriteOutput($"[PRTG快照] 要求 {requested} 顆、取回 {received} 顆，缺 {requested - received} 顆（感測器可能已在 PRTG 刪除或改變，下次結構同步後自動修正）", LogLevel.Warn);
+            RecordDiagnosticBatchCounts(now, Volatile.Read(ref attempts), Volatile.Read(ref successes), targets.Count);
         }
     }
 
@@ -1157,7 +1170,40 @@ public class PrtgSnapshotHostedService : BackgroundService
     private static string ScopeVersionHash(string revision) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(revision)));
 
+    /// <summary>同一個執行週期內業務範圍的計算結果與當時的三個版本（見 <see cref="ComputeBusinessScopeDevices"/>）。</summary>
+    private sealed record BusinessScopeCacheEntry(long HostsVersion, long HostMapRevision, string ScopeRevision, HashSet<long> Devices);
+
+    private BusinessScopeCacheEntry? _cycleBusinessScope;
+    private int _businessScopeComputeCount;
+
+    /// <summary>測試用：本實例實際計算業務範圍（不含沿用）的次數。</summary>
+    internal int BusinessScopeComputeCount => Volatile.Read(ref _businessScopeComputeCount);
+
+    /// <summary>新的執行週期開始：不沿用上一個週期的業務範圍（版本相同時也重算一次，讓週期之間不互相依賴）。</summary>
+    private void BeginScopeCycle() => _cycleBusinessScope = null;
+
+    /// <summary>
+    /// 同一週期內（對帳前、領取前各呼叫一次）版本不變就沿用第一次的結果：主機清單版本、
+    /// 主機對應版本（正式日映射寫入遞增）、範圍版本（人工對應、Sentinel、監看政策等，含主機清單）三者都相同才沿用，
+    /// 任何一個不同就重算。版本先於資料讀取：兩次讀之間有寫入時，記下的是較舊的版本，下一次必然不符而重算。
+    /// 兩階段對帳是刻意分開的狀態機，這裡只共用範圍的計算結果，不合併、不省略對帳。
+    /// 回傳的集合呼叫端只讀不改。
+    /// </summary>
     private HashSet<long> ComputeBusinessScopeDevices(EfPrtgStore store)
+    {
+        var hostsVersion = _hosts.DataVersion;
+        var hostMapRevision = store.ReadHostMapDataRevision();
+        var scopeRevision = _scopeRevisionReader.Read();
+        if (_cycleBusinessScope is { } cached && cached.HostsVersion == hostsVersion &&
+            cached.HostMapRevision == hostMapRevision && cached.ScopeRevision == scopeRevision)
+            return cached.Devices;
+        var devices = ComputeBusinessScopeDevicesCore(store);
+        Interlocked.Increment(ref _businessScopeComputeCount);
+        _cycleBusinessScope = new BusinessScopeCacheEntry(hostsVersion, hostMapRevision, scopeRevision, devices);
+        return devices;
+    }
+
+    private HashSet<long> ComputeBusinessScopeDevicesCore(EfPrtgStore store)
     {
         // 持久化近期狀態交接沿用 PrtgScopeDevices 的已對應／衝突／人工業務裝置範圍，但排除僅供守門使用的裝置。
         // 不呼叫停用守門的 Compute：該路徑仍會掃描全部鏡像感測器，以尋找守門裝置並保留其資料列。
@@ -1693,6 +1739,13 @@ public class PrtgSnapshotHostedService : BackgroundService
         string? reasonCode = null)
     {
         try { _diagnosticsStore.Record(at, outcome, reason, targets, sampled, reasonCode); }
+        catch (Exception ex) { Log.Warn(ex, "PRTG 快照診斷統計寫入失敗（不影響取樣）"); }
+    }
+
+    private void RecordDiagnosticBatchCounts(DateTime at, int attempts, int successes, int targets)
+    {
+        if (attempts == 0 && successes == 0) return;
+        try { _diagnosticsStore.RecordBatchCounts(at, attempts, successes, targets); }
         catch (Exception ex) { Log.Warn(ex, "PRTG 快照診斷統計寫入失敗（不影響取樣）"); }
     }
 
