@@ -51,7 +51,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   第三碼由 `VersionRoundGuardTests` 守門，第四碼在收尾時檢查。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
 - **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕與分段控制、寬度、判斷層／佐證層、共用元件一覽、§8.8 標記與顏色訊號）為基準，不必再問。
-  字級只引用 `--lf-font-size-*` 字階或文字角色類別、不寫數值，根字級交給瀏覽器與「小／中／大」偏好（DESIGN-SYSTEM §3a，`FontScaleGuardUiTests` 守門）。
+  字級只引用 `--lf-font-size-*` 字階或文字角色類別、不寫數值，根字級交給瀏覽器與「小／中／大／特大／最大」偏好（DESIGN-SYSTEM §3a，`FontScaleGuardUiTests` 守門）。
   驗收用 UI 資料集＋截圖量測工具（DESIGN-SYSTEM §8.7）：改到的頁面在五個寬度下六項量測為 0 才算完成；樣式表是 `wwwroot/css/` 的 base／components／layout／pages 四層，唯一引用點 `Views/Shared/_Styles.cshtml`。
   表格欄寬照 DESIGN-SYSTEM §8.4a（短值欄 `lf-col-nowrap`、留一欄吸收、同卡多表 `lf-table-aligned`）；無框品牌色按鈕只放表格列、分段控制與清單列（`lf-list-row`），按鈕角色與「每個範圍至多一顆主要按鈕」由 `tools/ui-global-asserts.json` 在每個量測情境檢查。
   修版面缺陷先寫會紅的量測斷言、在未修正的建置確認它紅再修——六項量測抓不到欄位起點不一致、孤立元素這類版面關係。

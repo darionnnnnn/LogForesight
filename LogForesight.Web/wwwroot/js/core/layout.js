@@ -10,6 +10,7 @@ import { appUrl, appPath } from './paths.js';
 import { icon, button, linkButton } from './ui.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 import { safeStorage } from './storage.js';
+import { normalizeFontScale } from './font-scale.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
 import { startBadgePolling } from './badges.js';
@@ -353,12 +354,12 @@ function bindLogout(user) {
 }
 
 /**
- * 字級偏好（小／中／大）：套在 <html> 的 data-font-scale 上，乘進根字級的縮放倍率
+ * 字級偏好（小／中／大／特大／最大）：套在 <html> 的 data-font-scale 上，乘進根字級的縮放倍率
  * （見樣式表）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
  * 回來才縮放造成閃動。中＝預設，不覆寫倍率。
  */
 function initFontScale() {
-    applyFontScale(safeStorage.get('lf.fontScale') || 'medium');
+    applyFontScale(normalizeFontScale(safeStorage.get('lf.fontScale')));
 
     const group = document.getElementById('lf-font-scale');
     if (!group) return;
@@ -366,8 +367,9 @@ function initFontScale() {
     group.addEventListener('click', event => {
         const button = event.target.closest('[data-scale]');
         if (!button) return;
-        applyFontScale(button.dataset.scale);
-        safeStorage.set('lf.fontScale', button.dataset.scale);
+        const scale = normalizeFontScale(button.dataset.scale);
+        applyFontScale(scale);
+        safeStorage.set('lf.fontScale', scale);
     });
 }
 

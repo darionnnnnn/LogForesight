@@ -273,6 +273,9 @@ html {
 /* 使用者字級偏好（存 localStorage，由 layout.js 套在 <html> 上）。中＝預設不覆寫 */
 :root[data-font-scale="small"] { --lf-font-scale: .875; }
 :root[data-font-scale="large"] { --lf-font-scale: 1.125; }
+/* 特大、最大：給 2K 以上螢幕。最大在 1600px 以上保證版面完整，較窄時可能需要橫向捲動（說明書有寫） */
+:root[data-font-scale="xlarge"] { --lf-font-scale: 1.25; }
+:root[data-font-scale="xxlarge"] { --lf-font-scale: 1.5; }
 
 body {
     background: var(--lf-content-bg);

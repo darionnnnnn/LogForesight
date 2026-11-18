@@ -1368,6 +1368,8 @@ a.lf-badge:hover { text-decoration: underline; }
 .lf-w-lg { width: 12rem; }
 
 /* 最小寬度（工具列欄位） */
+/* 下拉選單選項名稱很長（群組名）時允許縮到容器寬度內，配合外層 mw-100；不加的話 flex 項目以最長選項為最小寬度撐破卡片 */
+.lf-shrink { min-width: 0; }
 .lf-minw-xs { min-width: 7.5rem; }
 .lf-minw-sm { min-width: 10rem; }
 .lf-minw-md { min-width: 11.25rem; }
