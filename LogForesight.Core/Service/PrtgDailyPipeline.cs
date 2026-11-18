@@ -150,8 +150,10 @@ internal static class PrtgDailyPipeline
                 prtgConsole.WriteLine($"[PRTG資源守門] 自動偵測未完成（{ex.Message}），本趟不守門，取數照常進行。");
             }
 
+            // 同一個讀取器實例供每次檢查點使用：有版本快取（每次仍探測版本，版本變了才重讀整份）
+            var checkpointSettings = new SystemSettingsStore(backend.Blob("system_settings"));
             using var operationScope = new PrtgOperationScope(systemSettings,
-                () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
+                () => checkpointSettings.Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
             operation = operationScope;
             ct = operationScope.Token;
             operationScope.Checkpoint();

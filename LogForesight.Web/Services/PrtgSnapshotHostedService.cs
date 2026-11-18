@@ -149,6 +149,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     private static readonly IRunConsole SilentConsole = new SilentRunConsole();
 
     private readonly IHostStore _hosts;
+    /// <summary>全服務共用一個讀取器：內部快取以資料庫版本為鍵、內容是純鏡像結構，與使用者無關，跨週期共用安全；
+    /// 每個週期不再重算主機指紋（版本變了才重算）。讀取器內部以鎖保護，多執行緒呼叫安全。</summary>
+    private readonly PrtgScopeRevisionReader _scopeRevisionReader;
     private readonly ISentinelStore _sentinels;
     private readonly PrtgProbeRunState _probeState;
     internal Action? BeforeOperationScopeCapture { get; set; }
@@ -223,6 +226,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         _settingsStore = systemSettingsStore ?? throw new ArgumentNullException(nameof(systemSettingsStore));
         _backend = storageBackend ?? throw new ArgumentNullException(nameof(storageBackend));
         _journal = new PrtgSnapshotJournal(_backend);
+        _scopeRevisionReader = new PrtgScopeRevisionReader(_backend, _hosts);
         _schedulerRunState = schedulerRunState ?? throw new ArgumentNullException(nameof(schedulerRunState));
         _structureSync = structureSyncService ?? throw new ArgumentNullException(nameof(structureSyncService));
         _backfill = backfillService ?? throw new ArgumentNullException(nameof(backfillService));
@@ -420,7 +424,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             _operationCheckpoint?.Invoke();
             var currentQueueContextMatches = queueContext is not null &&
                 queueContext.SourceIdentityHash == SourceIdentityHash(settings) &&
-                queueContext.ScopeVersionHash == ScopeVersionHash(new PrtgScopeRevisionReader(_backend, _hosts).Read()) &&
+                queueContext.ScopeVersionHash == ScopeVersionHash(_scopeRevisionReader.Read()) &&
                 queueContext.LocalToday == Now().Date;
             if (!currentQueueContextMatches)
             {
@@ -457,7 +461,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
     {
         using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent,
-            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "快照與範圍補抓");
+            _scopeRevisionReader.ReadRawSemantic, "快照與範圍補抓");
         _operationCheckpoint = operation.Checkpoint;
         try
         {
@@ -1014,7 +1018,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         var store = _backend.PrtgStore();
         var businessDeviceObjids = ComputeBusinessScopeDevices(store);
         var sourceIdentityHash = SourceIdentityHash(settings);
-        var scopeRevision = new PrtgScopeRevisionReader(_backend, _hosts).Read();
+        var scopeRevision = _scopeRevisionReader.Read();
         var scopeVersionHash = ScopeVersionHash(scopeRevision);
         var localToday = Now().Date;
         return new RecentStateChangeScopeContext(businessDeviceObjids, sourceIdentityHash,
@@ -1037,7 +1041,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         var store = _backend.PrtgStore();
         var businessDeviceObjids = ComputeBusinessScopeDevices(store);
         var sourceIdentityHash = SourceIdentityHash(settings);
-        var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
+        var scopeReader = _scopeRevisionReader;
         var scopeRevision = scopeReader.Read();
         var scopeVersionHash = ScopeVersionHash(scopeRevision);
         var localToday = Now().Date;

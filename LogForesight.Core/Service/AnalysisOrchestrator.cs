@@ -489,7 +489,8 @@ public class AnalysisOrchestrator
                     backend.RecordHandlingStore(),
                     backend.RecordStore(),
                     hostStore,
-                    new IssueOwnerStore(backend.Blob("issue_owners")));
+                    // 夜間每個有問題的主機日都會讀問題負責人清單：包裝成一趟只整份讀一次
+                    new PerRunIssueOwnerStore(new IssueOwnerStore(backend.Blob("issue_owners"))));
 
                 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
                 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
