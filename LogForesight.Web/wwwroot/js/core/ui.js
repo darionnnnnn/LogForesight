@@ -22,6 +22,7 @@ import { mailNotifyText } from './mail-notify.js';
 import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
 import { safeStorage } from './storage.js';
+import { createSeqGuard } from './async-guards.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -1563,20 +1564,80 @@ export function candidatesToUserOptions(candidates) {
 }
 
 /**
+ * 主機伺服器端搜尋（唯一一份「debounce＋請求序號」）：打 `GET /api/admin/hosts`（該端點本來就是
+ * 伺服器端分頁），只取回前 `pageSize`（預設 50）筆命中結果。搜尋式下拉與 PRTG 維護頁的勾選清單共用，
+ * 慢回應不會蓋掉較新的結果（序號比對，丟棄過期回應）。
+ *
+ * @param {object} opts
+ *   platform  'windows' | 'linux' | null（null＝不限作業系統，不帶 os 參數）
+ *   status    /api/admin/hosts 的 status 篩選（例 'assignable'＝啟用且未合併），null＝不帶
+ *   delay     輸入後等待毫秒數（debounce），預設 300
+ *   pageSize  每次取回筆數，預設 50
+ *   onResult  (result: PagedResult, keyword) => void，只在仍是最新請求時呼叫
+ *   onError   (error) => void，同上
+ * @returns {{ search: (keyword: string) => void, run: (keyword: string) => Promise<object|null>,
+ *             setPlatform: (platform: string|null) => void, cancel: () => void }}
+ * run 回傳該次結果；失敗或已被更新的請求取代時回傳 null。
+ */
+export function createHostSearcher({ platform = null, status = null, delay = 300, pageSize = 50, onResult, onError } = {}) {
+    const seq = createSeqGuard();
+    let timer = null;
+    let currentPlatform = platform;
+
+    async function run(keyword) {
+        clearTimeout(timer);
+        timer = null;
+        const id = seq.next(); // 只採用「目前為止最新發出」的請求結果
+        const params = new URLSearchParams({ query: keyword, pageSize: String(pageSize) });
+        if (currentPlatform) params.set('os', currentPlatform);
+        if (status) params.set('status', status);
+        try {
+            const result = await api.get(`/api/admin/hosts?${params.toString()}`, { silent: true });
+            if (!seq.isCurrent(id)) return null; // 更新的請求已發出，這筆是過期回應，丟棄
+            onResult?.(result, keyword);
+            return result;
+        } catch (error) {
+            if (!seq.isCurrent(id)) return null;
+            onError?.(error);
+            return null;
+        }
+    }
+
+    return {
+        search(keyword) {
+            clearTimeout(timer);
+            timer = setTimeout(() => run(keyword), delay);
+        },
+        run,
+        setPlatform(newPlatform) { currentPlatform = newPlatform; },
+        cancel() {
+            clearTimeout(timer);
+            timer = null;
+            seq.next(); // 讓在途請求變成過期
+        }
+    };
+}
+
+/**
  * 伺服器端搜尋型主機選取器（回饋十五輪 R2）：取代「一次拉單頁上限 200 筆」的做法——
  * 2000 台規模下這個上限讓 90% 的主機選不到，而且失敗方式是靜默的（下拉裡就是沒有那台）。
  * 與 {@link searchableUserSelect} 的差異是查詢方式：使用者清單通常不大，可以整批載入後
- * 純前端篩選；主機清單量級不同，改成輸入時 debounce 打 /api/admin/hosts（該端點本來就是
- * 伺服器端分頁，這裡只是多帶 query／os 兩個既有參數），只取回前 50 筆命中結果。
+ * 純前端篩選；主機清單量級不同，改成輸入時 debounce 打 /api/admin/hosts（見 {@link createHostSearcher}），
+ * 只取回前 50 筆命中結果。
  *
  * @param {object} opts
- *   platform     'windows' | 'linux'，對應 /api/admin/hosts 的 os 參數
- *   selectedHost 預選主機（{ hostName, displayName } 或 null）
- *   onChange     select 值變更時回呼（帶新的 hostName 字串）
- * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement,
+ *   platform     'windows' | 'linux'，對應 /api/admin/hosts 的 os 參數；null＝不限（預設 'windows'）
+ *   selectedHost 預選主機（{ hostName, displayName, hostId } 或 null）
+ *   onChange     select 值變更時回呼（帶新的值字串）
+ *   valueField   選項值取哪個欄位：'hostName'（預設）或 'hostId'
+ *   showIp       選項文字附 IP（預設 false）
+ *   status       /api/admin/hosts 的 status 篩選（預設不帶）
+ *   delay        debounce 毫秒數（預設 300）
+ * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement, search: HTMLInputElement,
  *             reset: (platform: string, selectedHost?: object|null) => void }}
  */
-export function searchableHostSelect({ platform = 'windows', selectedHost = null, onChange } = {}) {
+export function searchableHostSelect({ platform = 'windows', selectedHost = null, onChange,
+    valueField = 'hostName', showIp = false, status = null, delay = 300 } = {}) {
     const outer = document.createElement('div');
 
     const wrap = document.createElement('div');
@@ -1597,21 +1658,20 @@ export function searchableHostSelect({ platform = 'windows', selectedHost = null
     wrap.append(search, select);
     outer.append(wrap, hint);
 
-    let currentPlatform = platform;
-    let currentValue = selectedHost?.hostName ?? '';
+    const keyOf = host => String(host[valueField] ?? '');
+    let currentValue = selectedHost ? keyOf(selectedHost) : '';
     // 目前選中的主機——即使最新一次搜尋結果沒有它也保留這個選項，否則一打字就把
     // select.value 靜默改掉（同 searchableUserSelect 保留目前選中人的理由）
     let pinned = selectedHost;
     let lastShown = [];
-    let debounceTimer = null;
-    let requestSeq = 0; // 避免慢回應蓋掉快回應：只採用「目前為止最新發出」的那個請求結果
 
     function optionLabel(host) {
-        return host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
+        const name = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
+        return showIp && host.ipAddress ? `${name} (${host.ipAddress})` : name;
     }
 
     function renderOptions(hosts, total) {
-        lastShown = pinned && !hosts.some(h => h.hostName === pinned.hostName) ? [pinned, ...hosts] : hosts;
+        lastShown = pinned && !hosts.some(h => keyOf(h) === keyOf(pinned)) ? [pinned, ...hosts] : hosts;
 
         select.replaceChildren();
         const placeholder = document.createElement('option');
@@ -1620,7 +1680,7 @@ export function searchableHostSelect({ platform = 'windows', selectedHost = null
         select.appendChild(placeholder);
         for (const host of lastShown) {
             const opt = document.createElement('option');
-            opt.value = host.hostName;
+            opt.value = keyOf(host);
             opt.textContent = optionLabel(host);
             select.appendChild(opt);
         }
@@ -1630,43 +1690,33 @@ export function searchableHostSelect({ platform = 'windows', selectedHost = null
             : total > hosts.length ? `共 ${total} 台，輸入關鍵字縮小範圍` : `共 ${total} 台`;
     }
 
-    async function runSearch(keyword) {
-        const seq = ++requestSeq;
-        try {
-            const result = await api.get(
-                `/api/admin/hosts?query=${encodeURIComponent(keyword)}&os=${encodeURIComponent(currentPlatform)}&pageSize=50`,
-                { silent: true });
-            if (seq !== requestSeq) return; // 更新的請求已發出，這筆是過期回應，丟棄
-            renderOptions(result.items, result.total);
-        } catch {
-            if (seq !== requestSeq) return;
-            hint.textContent = '主機清單載入失敗，可稍後重試';
-        }
-    }
-
-    search.addEventListener('input', () => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => runSearch(search.value.trim()), 300);
+    const searcher = createHostSearcher({
+        platform, status, delay,
+        onResult: result => renderOptions(result.items, result.total),
+        onError: () => { hint.textContent = '主機清單載入失敗，可稍後重試'; }
     });
+
+    search.addEventListener('input', () => searcher.search(search.value.trim()));
     select.addEventListener('change', () => {
         currentValue = select.value;
-        pinned = lastShown.find(h => h.hostName === currentValue) ?? null;
+        pinned = lastShown.find(h => keyOf(h) === currentValue) ?? null;
         onChange?.(currentValue);
     });
 
-    runSearch('');
+    searcher.run('');
 
     return {
         element: outer,
         getValue: () => select.value,
         select,
+        search,
         // 平台切換時重置（Windows／Linux 規則各自的主機清單不同，見 rules.js 的抑制 modal）
         reset(newPlatform, newSelectedHost = null) {
-            currentPlatform = newPlatform;
-            currentValue = newSelectedHost?.hostName ?? '';
+            searcher.setPlatform(newPlatform);
+            currentValue = newSelectedHost ? keyOf(newSelectedHost) : '';
             pinned = newSelectedHost;
             search.value = '';
-            runSearch('');
+            searcher.run('');
         }
     };
 }
