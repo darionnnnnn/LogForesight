@@ -529,10 +529,13 @@ public class NetiqPipelineService
                 // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史。
                 // 同一天內的批次彼此主機不重疊（Chunk 保證每台主機只落在一個批次裡），
                 // 這層批次間平行是安全的：不會有同一台主機同時被兩個批次處理。
+                // 日期 → 該日要查的主機計畫：計畫階段後一次建好，不在每個日期對所有主機的缺日清單線性比對
+                var plansByDate = PlansByMissingDate(plans, p => p.MissingDates);
+
                 foreach (var date in allDates)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
+                    var hostsNeedingDate = plansByDate.TryGetValue(date, out var needing) ? needing.ToList() : new List<HostPlan>();   // 複本：後續分批不動共用清單
 
                     // 高流量主機跨日記憶（回饋十四輪 B1）：曾在單獨查詢下仍截斷的主機直接讓它
                     // 單獨成一批，不必每天都從整批大小重新二分收斂到它（見 RunBatchDayAsync
@@ -959,6 +962,23 @@ public class NetiqPipelineService
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
             return "failed";
         }
+    }
+
+    /// <summary>
+    /// 日期 → 該日有缺漏的計畫清單。每個日期內的順序是輸入順序（與逐日 <c>plans.Where(p =&gt; p.MissingDates.Contains(date))</c>
+    /// 相同）；同一計畫的缺日清單即使有重複日期，也只進該日清單一次。
+    /// </summary>
+    internal static Dictionary<DateTime, List<TPlan>> PlansByMissingDate<TPlan>(
+        IEnumerable<TPlan> plans, Func<TPlan, IEnumerable<DateTime>> missingDatesOf)
+    {
+        var byDate = new Dictionary<DateTime, List<TPlan>>();
+        foreach (var plan in plans)
+            foreach (var missing in missingDatesOf(plan).Distinct())
+            {
+                if (!byDate.TryGetValue(missing, out var list)) byDate[missing] = list = new List<TPlan>();
+                list.Add(plan);
+            }
+        return byDate;
     }
 
     /// <summary>

@@ -198,6 +198,7 @@ public class IssueCaseCoordinator
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
+        var logsToAppend = new List<RecordHandlingLog>();   // 歷程累積後一次寫（內容與順序同逐筆寫入）
         foreach (var issue in issues)
         {
             var key = IssueSignatureKey.For(issue);
@@ -217,7 +218,7 @@ public class IssueCaseCoordinator
                     ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
                 });
 
-                _handlingLog.AppendLog(new RecordHandlingLog
+                logsToAppend.Add(new RecordHandlingLog
                 {
                     HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
                     Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
@@ -250,7 +251,7 @@ public class IssueCaseCoordinator
                     ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
                 });
 
-                _handlingLog.AppendLog(new RecordHandlingLog
+                logsToAppend.Add(new RecordHandlingLog
                 {
                     HostName = hostName, Date = date, Status = profile.ConclusionStatus!, IssueKey = key,
                     IssueLabel = issue.SourceEventLabel, Note = note,
@@ -261,6 +262,7 @@ public class IssueCaseCoordinator
             }
         }
 
+        if (logsToAppend.Count > 0) _handlingLog.AppendLogs(logsToAppend);
         _issueHandlings.SaveMany(toSave);
         _cases.SaveMany(ReloadCasesForAttach(casesToSave, occurredAt));
 

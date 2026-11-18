@@ -75,4 +75,74 @@ public class HostStoreLookupTests : IDisposable
 
         Assert.Single(_store.GetAll());
     }
+
+    // ── 第 78 輪批次 2a（2-3）：索引綁在快照上，語意與線性 FirstOrDefault 相同 ──────────────
+
+    private void AddRaw(long id, string name) =>
+        _store.MutateBatch(hosts => hosts.Add(new WebHost { HostId = id, HostName = name, Source = "netiq", Active = true }));
+
+    [Fact]
+    public void 同名多台取清單中第一台_名稱不分大小寫()
+    {
+        AddRaw(10, "Dup-Host");
+        AddRaw(11, "DUP-HOST");
+        AddRaw(12, "other");
+
+        Assert.Equal(10, _store.FindByName("dup-host")!.HostId);
+        Assert.Equal(10, _store.FindByName("DUP-HOST")!.HostId);
+        Assert.Equal(12, _store.FindByName("OTHER")!.HostId);
+        Assert.Null(_store.FindByName("missing"));
+    }
+
+    [Fact]
+    public void 同編號兩筆取第一筆()
+    {
+        AddRaw(7, "first");
+        AddRaw(7, "second");
+
+        Assert.Equal("first", _store.Get(7)!.HostName);
+        Assert.Null(_store.Get(8));
+    }
+
+    [Fact]
+    public void 別的實例寫入後下一次查找看得到新內容()
+    {
+        AddRaw(1, "a");
+        Assert.Null(_store.FindByName("late"));
+        Assert.Null(_store.Get(2));
+
+        var other = new HostStore(_backend.Blob("hosts"));   // 另一個實例（等同別的請求或行程）
+        other.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 2, HostName = "late", Source = "netiq", Active = true });
+            hosts.Single(h => h.HostId == 1).HostName = "renamed";
+        });
+
+        Assert.Equal(2, _store.FindByName("LATE")!.HostId);
+        Assert.Equal("late", _store.Get(2)!.HostName);
+        Assert.Null(_store.FindByName("a"));
+        Assert.Equal("renamed", _store.Get(1)!.HostName);
+    }
+
+    [Fact]
+    public void 一千台連查一千次_索引只建一次且版本變動才重建()
+    {
+        _store.MutateBatch(hosts =>
+        {
+            for (var i = 1; i <= 1000; i++)
+                hosts.Add(new WebHost { HostId = i, HostName = $"srv-{i:0000}", Source = "netiq", Active = true });
+        });
+
+        var before = _store.LookupIndexBuilds;
+        for (var i = 1; i <= 1000; i++)
+        {
+            Assert.Equal($"srv-{i:0000}", _store.Get(i)!.HostName);
+            if (i % 2 == 0) Assert.Equal(i, _store.FindByName($"SRV-{i:0000}")!.HostId);
+        }
+        Assert.Equal(1, _store.LookupIndexBuilds - before);
+
+        _store.MutateBatch(hosts => hosts.Add(new WebHost { HostId = 1001, HostName = "extra", Source = "netiq", Active = true }));
+        Assert.Equal(1001, _store.FindByName("extra")!.HostId);
+        Assert.Equal(2, _store.LookupIndexBuilds - before);
+    }
 }
