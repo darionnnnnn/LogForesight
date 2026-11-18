@@ -19,8 +19,15 @@ public record PrtgProbeSnapshot(
 /// </summary>
 public class PrtgProbeRunState
 {
+    /// <summary>輸出保留的開頭行數；超過後只留最新 <see cref="OutputTailCapacity"/> 行並標出略過數（比照執行紀錄的頭 1500／尾 500）。</summary>
+    internal const int OutputHeadLimit = 1500;
+    internal const int OutputTailCapacity = 500;
+
     private readonly object _lock = new();
+    // 回填、結構同步的逐裝置輸出隨範圍成長，3000 台時可達數十萬行；這是 singleton 且每次輪詢都複製整份，必須有界
     private readonly List<string> _output = new();
+    private readonly Queue<string> _outputTail = new();
+    private int _outputSkipped;
 
     private bool _isRunning;
     private DateTime? _startedAt;
@@ -90,6 +97,8 @@ public class PrtgProbeRunState
             _success = null;
             _latestMessage = null;
             _output.Clear();
+            _outputTail.Clear();
+            _outputSkipped = 0;
             return true;
         }
     }
@@ -99,7 +108,16 @@ public class PrtgProbeRunState
         lock (_lock)
         {
             if (!_isRunning) return;
-            _output.Add(message);
+            if (_output.Count < OutputHeadLimit) _output.Add(message);
+            else
+            {
+                _outputTail.Enqueue(message);
+                if (_outputTail.Count > OutputTailCapacity)
+                {
+                    _outputTail.Dequeue();
+                    _outputSkipped++;
+                }
+            }
             if (!string.IsNullOrWhiteSpace(message)) _latestMessage = message;
         }
     }
@@ -120,8 +138,18 @@ public class PrtgProbeRunState
         {
             return new PrtgProbeSnapshot(
                 _isRunning, _startedAt, _completedAt, _success,
-                _latestMessage, _output.ToList(), _cancelled);
+                _latestMessage, OutputLines(), _cancelled);
         }
+    }
+
+    /// <summary>開頭＋（有略過時）一行略過說明＋最新的尾段；呼叫端須持鎖。</summary>
+    private List<string> OutputLines()
+    {
+        var lines = new List<string>(_output.Count + _outputTail.Count + 1);
+        lines.AddRange(_output);
+        if (_outputSkipped > 0) lines.Add($"……中間略過 {_outputSkipped:N0} 行，只保留開頭 {OutputHeadLimit:N0} 行與最新 {OutputTailCapacity:N0} 行……");
+        lines.AddRange(_outputTail);
+        return lines;
     }
 }
 
