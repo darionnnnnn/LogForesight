@@ -2279,7 +2279,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   新到舊。**刻意不用稽核表反查**：稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
   誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現於此（那次改派記在該主機的
   處理歷程 `case_reassign`）。案件屬於交辦單時多一欄「所屬交辦單」（`#單號` 連到 §9.4b 詳情，沒有值時整欄不顯示）。
-- API：`GET api/admin/users/{id}/detail`（基本資料＋群組＋能力＋可見主機＋被指派歷程）
+- API：`GET api/admin/users/{id}/detail`（基本資料＋群組＋能力＋可見主機數 `VisibleHostCount`＋被指派歷程）；可見主機清單走 `GET api/admin/users/{id}/visible-hosts?page=&pageSize=`（依主機名排序、伺服器端分頁，每頁 20 台，含可見來源）
   ＋前端另打 `api/handlers/{id}/workload`。
 
 ### 9.9 `/admin/imports` 資料匯入（`Maintain`）

@@ -54,7 +54,8 @@ public class UserDetailDto
     public List<string> Capabilities { get; set; } = new();
 
     /// <summary>此人（不是檢視者）看得到的主機，含來源標示</summary>
-    public List<UserVisibleHostDto> VisibleHosts { get; set; } = new();
+    /// <summary>看得到的主機數；清單本身走分頁端點 <c>GET api/admin/users/{id}/visible-hosts</c></summary>
+    public int VisibleHostCount { get; set; }
 
     /// <summary>
     /// 被指派歷程：以問題案件（<c>IssueCase</c>）為事實來源，新到舊。

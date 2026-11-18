@@ -72,6 +72,11 @@ public class AdminController : ControllerBase
     public ApiResponse<UserDetailDto> GetUserDetail(long userId) =>
         ApiResponse<UserDetailDto>.Ok(_users.GetUserDetail(userId));
 
+    /// <summary>使用者看得到的主機（含可見來源），伺服器端分頁</summary>
+    [HttpGet("users/{userId:long}/visible-hosts")]
+    public ApiResponse<PagedResult<UserVisibleHostDto>> GetUserVisibleHosts(long userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
+        ApiResponse<PagedResult<UserVisibleHostDto>>.Ok(_users.GetVisibleHosts(userId, page, pageSize));
+
     [HttpPost("users")]
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));

@@ -10,7 +10,7 @@
 
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl, recordDetailUrl } from '../core/paths.js';
-import { renderTable, renderLoading, kpiStrip, guardLoad, linkButton } from '../core/ui.js';
+import { renderTable, renderLoading, renderError, renderPagination, kpiStrip, guardLoad, linkButton } from '../core/ui.js';
 import { metaLine, roleText, statusNote, fact } from '../core/elements.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge, statusText, dueCell } from '../core/format.js';
 
@@ -41,7 +41,7 @@ async function load() {
 
     renderHeader(detail);
     renderKpi(detail, workload);
-    renderVisibleHosts(detail.visibleHosts);
+    loadVisibleHosts(1);
     renderOpenWork(workload);
     renderClosedWork(detail.assignmentHistory);
     renderAssignmentHistory(detail.assignmentHistory);
@@ -133,7 +133,7 @@ function renderKpi(detail, workload) {
     const noScope = viewerHasNoBusinessScope();
 
     const cards = [
-        { value: detail.visibleHosts.length, label: '可見主機' },
+        { value: detail.visibleHostCount, label: '可見主機' },
         // 這兩張來自 workload（檢視者範圍），與左右兩張的母體不同，必須講出來
         { value: workload.openCaseCount, label: '處理中案件', hint: scopeNote, viewerScoped: true },
         { value: detail.assignmentHistory.filter(h => h.closed && h.status !== 'reassigned').length, label: '已結案案件' },
@@ -165,8 +165,37 @@ function renderKpi(detail, workload) {
     container.appendChild(col);
 }
 
-function renderVisibleHosts(hosts) {
-    document.getElementById('visible-host-count').textContent = `共 ${hosts.length} 台`;
+/** 可見主機每頁台數 */
+const VISIBLE_HOSTS_PAGE_SIZE = 20;
+
+/** 可見主機清單：伺服器端分頁（授權到大群組的人可見數千台） */
+async function loadVisibleHosts(page) {
+    const container = document.getElementById('user-visible-hosts');
+    let pager = document.getElementById('user-visible-hosts-pager');
+    if (!pager) {
+        pager = document.createElement('nav');
+        pager.id = 'user-visible-hosts-pager';
+        pager.className = 'mt-2';
+        container.after(pager);
+    }
+    renderLoading(container, 3);
+    let result;
+    try {
+        result = await api.get(`/api/admin/users/${userId}/visible-hosts?page=${page}&pageSize=${VISIBLE_HOSTS_PAGE_SIZE}`);
+    } catch {
+        renderError(container, { message: '載入可見主機失敗', onRetry: () => loadVisibleHosts(page) });
+        return;
+    }
+    renderVisibleHosts(result.items, result.total);
+    renderPagination(pager, {
+        page: result.page,
+        totalPages: Math.ceil(result.total / result.pageSize),
+        onPage: next => loadVisibleHosts(next)
+    });
+}
+
+function renderVisibleHosts(hosts, total) {
+    document.getElementById('visible-host-count').textContent = `共 ${formatNumber(total)} 台`;
 
     renderTable(document.getElementById('user-visible-hosts'), {
         columns: [

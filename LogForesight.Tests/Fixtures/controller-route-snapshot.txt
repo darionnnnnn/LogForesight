@@ -130,6 +130,7 @@ POST	/api/admin/users/batch	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/users/{userId:long}/detail	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/dispatch-paused	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/groups	C=Maintain;A=-	-	-	-	AdminController
+GET	/api/admin/users/{userId:long}/visible-hosts	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/ai/chat	C=-;A=-	-	-	skipbump	AiController
 GET	/api/ai/interpret-issue	C=-;A=-	-	-	-	AiController
 GET	/api/ai/query-summary	C=-;A=-	-	-	-	AiController

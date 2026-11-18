@@ -276,17 +276,42 @@ public class UserAdminServiceTests
     {
         var user = SetupVisibilityFixture();
 
-        var detail = Create().GetUserDetail(user.UserId);
+        var service = Create();
+        var hosts = service.GetVisibleHosts(user.UserId, 1, 50).Items;
 
-        Assert.Equal(new[] { "SRV-A", "SRV-B" }, detail.VisibleHosts.Select(h => h.HostName));
+        Assert.Equal(new[] { "SRV-A", "SRV-B" }, hosts.Select(h => h.HostName));
+        Assert.Equal(2, service.GetUserDetail(user.UserId).VisibleHostCount);
 
-        var viaGroup = detail.VisibleHosts.Single(h => h.HostName == "SRV-A");
+        var viaGroup = hosts.Single(h => h.HostName == "SRV-A");
         Assert.True(viaGroup.ViaGroup);
         Assert.False(viaGroup.ViaOwner);
 
-        var viaOwner = detail.VisibleHosts.Single(h => h.HostName == "SRV-B");
+        var viaOwner = hosts.Single(h => h.HostName == "SRV-B");
         Assert.True(viaOwner.ViaOwner);
         Assert.False(viaOwner.ViaGroup);
+    }
+
+    /// <summary>可見主機分頁（第 77 輪 F-2）：總數正確、第二頁接續第一頁、詳情回應不再帶清單</summary>
+    [Fact]
+    public void 可見主機分頁_總數與接續_詳情只帶總數()
+    {
+        var user = SetupVisibilityFixture();
+        var hostGroup = _hostGroups.GetAll().Single();
+        for (var i = 0; i < 5; i++)
+            _hosts.Upsert(new WebHost { HostName = $"SRV-Z{i}", GroupIds = new List<long> { hostGroup.GroupId } });
+        var service = Create();
+
+        var page1 = service.GetVisibleHosts(user.UserId, 1, 3);
+        var page2 = service.GetVisibleHosts(user.UserId, 2, 3);
+        var page3 = service.GetVisibleHosts(user.UserId, 3, 3);
+
+        Assert.Equal(7, page1.Total);
+        Assert.Equal(3, page1.Items.Count);
+        var all = page1.Items.Concat(page2.Items).Concat(page3.Items).Select(h => h.HostName).ToList();
+        Assert.Equal(7, all.Distinct().Count());
+        Assert.Equal(all.OrderBy(x => x, StringComparer.OrdinalIgnoreCase), all);
+        Assert.Equal(7, service.GetUserDetail(user.UserId).VisibleHostCount);
+        Assert.Null(typeof(UserDetailDto).GetProperty("VisibleHosts"));
     }
 
     /// <summary>兩條路徑可同時成立時兩顆徽章都要亮——拿掉負責人身分是否仍看得到，靠這個判斷</summary>
@@ -298,7 +323,7 @@ public class UserAdminServiceTests
         srvA.OwnerUserIds = new List<long> { user.UserId };
         _hosts.Upsert(srvA);
 
-        var host = Create().GetUserDetail(user.UserId).VisibleHosts.Single(h => h.HostName == "SRV-A");
+        var host = Create().GetVisibleHosts(user.UserId, 1, 50).Items.Single(h => h.HostName == "SRV-A");
 
         Assert.True(host.ViaGroup);
         Assert.True(host.ViaOwner);
@@ -398,7 +423,8 @@ public class UserAdminServiceTests
 
         var detail = Create().GetUserDetail(user.UserId);
 
-        Assert.Empty(detail.VisibleHosts);
+        Assert.Equal(0, detail.VisibleHostCount);
+        Assert.Empty(Create().GetVisibleHosts(user.UserId, 1, 50).Items);
         Assert.Empty(detail.Capabilities);
         Assert.Single(detail.AssignmentHistory);
     }
