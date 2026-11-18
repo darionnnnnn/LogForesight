@@ -15,6 +15,8 @@
 4. **必讀**：`CLAUDE.md`（地圖與「不要做」）、本檔、`docs/drafts/ENV-PROBE-PLAN.md`（環境探測輪草案）；要追第 77 輪的來龍去脈才開 `docs/archive/FEEDBACK-77-PLAN.md`（量測紀錄、執行紀錄、體檢輪修正、併 dev 後補修）。
 5. **流程**：一輪一份規劃（`docs/FEEDBACK-N-PLAN.md`），使用者確認後才實作；每段驗證通過就 commit 並 push 到該輪分支；實作完成後換模型體檢，再併 dev。規劃與委派的細則在使用者的 skills repo（`plan-before-dev`、`project-lifecycle`、`project-closeout`）。
 6. **不可帶過來的假設**：開發機的耗時不代表正式主機；不在開發機模擬 3000 台。瓶頸以指令計數、查詢計畫、留存量、可回收性這類與機器快慢無關的方法確認。
+7. **不在版控、也不需要的本機檔**：`LogForesight.Web/appsettings.Development.json`（各機自建；版控內的 `appsettings.json` 已內建公開測試值與 Stub 驗證，可直接開發，見 README 設定段）、`.claude/`（各機的工具設定）、`presentations/`、`.gemini-tasks/`（舊輪次的委派規格）。已以乾淨 clone 確認：只靠版控內容即可建置並通過測試。
+8. **skills 與記憶**：規劃與收尾 skill 的最新內容在 skills repo 的 `dev` 分支（`main` 落後、兩者待使用者整合），另一台電腦先依 `skills-sync` 同步到 `dev`；原電腦的 Claude 對話記憶不會跟著走，接手需要的資訊都寫在本檔與 `docs/archive/FEEDBACK-77-PLAN.md`。
 
 ## 第 77 輪交接（開輪輸入）
 
