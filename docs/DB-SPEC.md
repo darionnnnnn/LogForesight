@@ -192,6 +192,9 @@ docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
   `SampleMessages` 清空、`KeyDetails`／`KeyAccounts`／`KeyIps` 設為 null，但**不動這一欄**）
   ——殘留憑證的跨日確認要讀歷史紀錄的這個欄位，一併精簡掉就會靜默廢掉跨日確認制。
   **要動精簡策略前先看這一條。**
+  精簡只動 `TopIssues` 內的範例訊息與帳號／IP 彙總；紀錄的頂層欄位全部保留，包含告警的結構化對應（`TrendAlertRefs`／`CorrelationAlertRefs`）
+  與已抑制的告警（`SuppressedTrendAlerts`／`SuppressedCorrelationAlerts`）——告警被抑制的日子通常就是低風險日。
+  `RecordStorageShaperTests` 以反射逐欄比對，fixture 的清單欄位必須放內容（空清單對空清單比不出漏複製）。
 - `LogIssueSignature.KeyAccounts`／`KeyIps`（`List<string>?`，非 Security／RDP 頻道為 null）：
   與 `KeyDetails` 同一批訊息抽出的**完整**帳號集合與來源 IP 集合（去重保序、各封頂 200）。
   `KeyDetails` 是給人看的摘要（只列前 5 個加省略號），這兩欄才是資料契約——4740 帳號交叉

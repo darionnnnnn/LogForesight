@@ -165,6 +165,10 @@ public class RecordStorageShaperTests
             AuditEventCount = 1,
             TrendAlerts = new List<string> { "trend-alert" },
             CorrelationAlerts = new List<string> { "corr-alert" },
+            TrendAlertRefs = new List<TrendAlertRef> { new() { Text = "trend-alert", IssueKey = "System|disk|153|Error" } },
+            CorrelationAlertRefs = new List<CorrelationAlertRef> { new() { Text = "corr-alert", PatternId = "pattern-1" } },
+            SuppressedTrendAlerts = new List<string> { "suppressed-trend" },
+            SuppressedCorrelationAlerts = new List<string> { "suppressed-corr" },
             RiskLevel = "低",
             RiskBasis = "rule:disk EventId 153",
             HiddenIssueCount = 2,
@@ -203,6 +207,10 @@ public class RecordStorageShaperTests
             var defaultValue = prop.GetValue(defaults);
             Assert.False(Equals(fixtureValue, defaultValue),
                 $"fixture 的 {prop.Name} 仍是預設值——請在本測試的 original 物件裡設定非預設值，欄位保留比對才有效力");
+            // 清單欄位的預設值是「新的空清單」：兩個空清單不是同一個物件，上面的 Equals 會把它當成非預設，
+            // 之後的保留比對又是空對空——沒放內容的清單欄位漏複製也比不出來（已抑制的告警兩欄因此漏網）
+            if (fixtureValue is System.Collections.ICollection collection)
+                Assert.True(collection.Count > 0, $"fixture 的 {prop.Name} 是空集合——請放至少一筆，漏複製才比得出來");
         }
 
         var shaped = RecordStorageShaper.ForStorage(original);
