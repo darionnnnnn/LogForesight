@@ -299,6 +299,16 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
         AssertNoFullScan(plan, "lf_top_issues");
     }
 
+    /// <summary>依問題視角展開列：單一問題的逐主機日，以 (event_id, record_date) 等索引定位，不掃整張 lf_top_issues</summary>
+    [Fact]
+    public void IssueAggregateQuery_IssueHostDays_走索引()
+    {
+        var aggregates = _backend.IssueAggregateQuery(new HostStore(_backend.Blob("plan_hosts")));
+        var plan = PlanOf(() => aggregates.IssueHostDays(
+            IssueExclusion.None, "DiskSrc", 103, Today.AddDays(-(Days - 1)), Today, null));
+        AssertNoFullScan(plan, "lf_top_issues");
+    }
+
     [Fact]
     public void RecordHandlingStore_GetMany_走索引()
     {

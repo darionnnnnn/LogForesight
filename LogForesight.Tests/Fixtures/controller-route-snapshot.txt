@@ -198,6 +198,7 @@ GET	/api/records	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-date	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-host	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-issue	C=-;A=-	-	-	-	RecordsController
+GET	/api/records/issue-hosts	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/next-unhandled	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/{hostId:long}/{date}	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/{hostId:long}/{date}/handling	C=-;A=-	-	-	-	HandlingController

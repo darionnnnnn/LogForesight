@@ -576,10 +576,7 @@ public class RecordListQueryService
         // 同主機多顆 PRTG sensor、Linux 同程式命中不同規則各自一筆。每台主機取**最差狀態**
         // （未處理 > 處理中 > 已處理，列舉順序即嚴重順序）——只要還有一筆未處理，這台就還沒處理完；
         // 取「最近出現那筆」會讓晚出現且已處理的 sensor 把另一顆未處理的蓋掉。同狀態時取最近出現者
-        var perHost = occurrences
-            .GroupBy(o => o.Host.HostId)
-            .Select(g => g.OrderBy(o => o.Status).ThenByDescending(o => o.Occurrence.LastSeen).First())
-            .ToList();
+        var perHost = WorstPerHost(occurrences).Values.ToList();
 
         int unhandled = 0, processing = 0, resolvedCount = 0;
         var handlerIds = new HashSet<long>();
@@ -812,6 +809,78 @@ public class RecordListQueryService
     }
 
     /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
+    /// <summary>每台主機取最差狀態的那一筆（未處理 ＞ 處理中 ＞ 已處理；同狀態取最近出現）——依問題列與展開列共用同一條規則。</summary>
+    private static Dictionary<long, ResolvedOccurrence> WorstPerHost(IEnumerable<ResolvedOccurrence> occurrences) =>
+        occurrences
+            .GroupBy(o => o.Host.HostId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(o => o.Status).ThenByDescending(o => o.Occurrence.LastSeen).First());
+
+    /// <summary>展開列最多列出幾個日期標籤；其餘以「另有 N 天」連到明細視角</summary>
+    public const int IssueHostDateTagLimit = 14;
+
+    /// <summary>
+    /// 依問題視角的展開列（WEB-SPEC §10）：某個問題的受影響主機，一台一列。母體與該問題那一列相同
+    /// （<see cref="ResolveIssueScope"/> 的可見主機、靜音、可見嚴重度與日風險等級），所以各列天數加總＝該列主機日數、列數＝該列主機數。
+    /// 依主機分組後在伺服器端分頁；處理概況只對當頁主機判定（同 <see cref="SearchByIssue"/> 的規則：每台取最差狀態）。
+    /// </summary>
+    public PagedResult<IssueHostRowDto> SearchIssueHosts(RecordSearchRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Source) || request.EventId is not int eventId)
+            throw DomainException.Validation("請指定問題的來源與事件 ID。");
+
+        var scope = ResolveIssueScope(request);
+        var days = _aggregates.IssueHostDays(scope.Exclusion, request.Source, eventId, scope.From, scope.To,
+            scope.HostIds, scope.VisibleSeverities, scope.DayRiskLevels);
+        var hosts = _hosts.GetAll().ToDictionary(h => h.HostId);
+
+        // 排序：出現天數多的在前（越可能是持續性問題）；同天數以最近出現日新的在前；再同以主機名
+        var groups = days
+            .Where(d => hosts.ContainsKey(d.HostId))
+            .GroupBy(d => d.HostId)
+            .Select(g => (Host: hosts[g.Key], Days: g.OrderByDescending(d => d.Date).ToList()))
+            .OrderByDescending(g => g.Days.Count)
+            .ThenByDescending(g => g.Days[0].Date)
+            .ThenBy(g => g.Host.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
+        var pageGroups = groups.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
+        var worst = pageGroups.Count == 0
+            ? new Dictionary<long, ResolvedOccurrence>()
+            : WorstPerHost(_statusResolver.Resolve(
+                _aggregates.LatestOccurrences(scope.Exclusion, new[] { (request.Source, eventId) }, scope.From, scope.To,
+                    pageGroups.Select(g => g.Host.HostId).ToList(), scope.VisibleSeverities, scope.DayRiskLevels),
+                scope.From, scope.To));
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
+
+        var items = pageGroups.Select(g =>
+        {
+            worst.TryGetValue(g.Host.HostId, out var resolved);
+            var handler = resolved?.OpenCase?.HandlerId is long handlerId ? usersById.GetValueOrDefault(handlerId) : null;
+            return new IssueHostRowDto
+            {
+                HostId = g.Host.HostId,
+                HostName = g.Host.HostName,
+                DayCount = g.Days.Count,
+                LastSeen = g.Days[0].Date.ToString("yyyy-MM-dd"),
+                OngoingAtPeriodEnd = g.Days[0].Date == scope.To.Date,
+                Dates = g.Days.Take(IssueHostDateTagLimit).Select(d => d.Date.ToString("yyyy-MM-dd")).ToList(),
+                MoreDays = Math.Max(0, g.Days.Count - IssueHostDateTagLimit),
+                MaxSeverity = LegacySeverityRank.ToSeverity(g.Days.Max(d => d.SeverityRank)).ToString(),
+                Status = resolved?.Status switch
+                {
+                    HostIssueStatus.Processing => HandlingStatuses.InProgress,
+                    HostIssueStatus.Resolved => HandlingStatuses.Resolved,
+                    _ => HandlingStatuses.Open
+                },
+                HandlerName = handler == null ? null : _displayNameService.WithAccount(handler.DisplayName, handler.Account)
+            };
+        }).ToList();
+
+        return new PagedResult<IssueHostRowDto> { Items = items, Page = page, PageSize = pageSize, Total = groups.Count };
+    }
+
     private static PagedResult<T> Paginate<T>(List<T> items, RecordSearchRequest request)
     {
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);

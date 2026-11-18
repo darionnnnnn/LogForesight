@@ -57,6 +57,7 @@ internal class RecordQueryServiceFacade
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request) => _list.SearchByHost(request);
     public PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request) => _list.SearchByDate(request);
     public IssueSearchResultDto SearchByIssue(RecordSearchRequest request) => _list.SearchByIssue(request);
+    public PagedResult<IssueHostRowDto> SearchIssueHosts(RecordSearchRequest request) => _list.SearchIssueHosts(request);
     public List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request) => _list.ClusterSignatures(request);
 
     public RecordDetailDto GetDetail(long hostId, DateTime date) => _detail.GetDetail(hostId, date);

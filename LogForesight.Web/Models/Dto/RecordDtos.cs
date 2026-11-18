@@ -213,6 +213,36 @@ public class IssueGroupDto
 }
 
 /// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>
+/// <summary>依問題視角展開列的一列：這個問題在一台主機上的出現情形（<c>GET api/records/issue-hosts</c>）</summary>
+public class IssueHostRowDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>期間內有這個問題的天數（合併主機的同一天只算一天）</summary>
+    public int DayCount { get; set; }
+
+    public string LastSeen { get; set; } = string.Empty;
+
+    /// <summary>最近出現日＝期間最後一天（畫面標「仍在發生」）</summary>
+    public bool OngoingAtPeriodEnd { get; set; }
+
+    /// <summary>出現日（新到舊），最多 <c>RecordListQueryService.IssueHostDateTagLimit</c> 個</summary>
+    public List<string> Dates { get; set; } = new();
+
+    /// <summary>超過標籤上限沒列出的天數</summary>
+    public int MoreDays { get; set; }
+
+    /// <summary>期間內這個問題在這台主機的最高嚴重度</summary>
+    public string MaxSeverity { get; set; } = string.Empty;
+
+    /// <summary>處理概況（open／in_progress／resolved），同依問題列的判定：這台主機取最差狀態</summary>
+    public string Status { get; set; } = HandlingStatuses.Open;
+
+    /// <summary>進行中案件的處理人（顯示名稱(帳號)）；沒有案件為 null</summary>
+    public string? HandlerName { get; set; }
+}
+
 public class IssueGroupHandlerDto
 {
     public long HandlerId { get; set; }

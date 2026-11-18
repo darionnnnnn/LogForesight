@@ -446,30 +446,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        exclusion = exclusion.ForRange(f, t);
         var aliasIndex = AliasIndex();
-        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
         var sourceKeyReady = _sourceKeyReady();
-
         var wanted = issues.Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
-        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
-
-        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
-            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
-
-        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
-
-        // 母體與 Aggregate 一致：依問題視角的「共 N 台主機（去重）」與處理概況都由這裡來，
-        // 少了這道就會出現「列表限縮在可見日風險、主機數卻含被隱藏的日子」
-        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
-
-        if (hostIds != null)
-        {
-            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
-            q = q.Where(x => expanded.Contains(x.HostId));
-        }
+        var q = IssueRows(ctx, exclusion, wanted, f, t, hostIds, visibleSeverities, riskLevels, aliasIndex, sourceKeyReady);
 
         // 目標範圍就是呼叫端已經算出的少數幾種問題，不是整份表——與 HostIdsFor 同一個規模假設
         var rows = q
@@ -508,6 +490,68 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
         _performance?.Record("issues:LatestOccurrences", sw.ElapsedMilliseconds);
 
+        return result;
+    }
+
+    /// <summary>
+    /// 指定問題的 lf_top_issues 列，套與 <see cref="Aggregate"/> 相同的母體：靜音排除、期間、可見嚴重度、日風險等級、可見主機（含別名）。
+    /// <see cref="LatestOccurrences"/> 與 <see cref="IssueHostDays"/> 共用——兩者的主機數才會與依問題視角那一列一致。
+    /// 回傳的查詢只以 event_id 粗篩，來源比對要在記憶體以 <paramref name="wanted"/> 完成（來源鍵可能尚未回填）。
+    /// </summary>
+    private IQueryable<TopIssueRow> IssueRows(LfDbContext ctx, IssueExclusion exclusion,
+        IReadOnlySet<(string Source, int EventId)> wanted, DateTime f, DateTime t, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlySet<string>? riskLevels, HostAliasIndex aliasIndex, bool sourceKeyReady)
+    {
+        exclusion = exclusion.ForRange(f, t);
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        // 母體與 Aggregate 一致：依問題視角的「共 N 台主機（去重）」與處理概況都由這裡來，
+        // 少了這道就會出現「列表限縮在可見日風險、主機數卻含被隱藏的日子」
+        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
+
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
+        }
+        return q;
+    }
+
+    public List<IssueHostDay> IssueHostDays(
+        IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<IssueHostDay>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
+        var wanted = new HashSet<(string Source, int EventId)> { (WantedKey(source, sourceKeyReady), eventId) };
+
+        using var ctx = _contextFactory();
+        // 只取 (主機, 日, 嚴重度) 三欄並在 SQL 端去重：讀回量以「這一個問題」的主機日為界，與主機總數、其他問題無關
+        var rows = IssueRows(ctx, exclusion, wanted, f, t, hostIds, visibleSeverities, riskLevels, aliasIndex, sourceKeyReady)
+            .Select(x => new { x.HostId, x.RecordDate, x.SourceKey, x.SourceName, x.SeverityRank })
+            .Distinct()
+            .ToList()
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), eventId)));
+
+        // 合併主機：別名與存活主機同一天各有一筆時只算一天
+        var result = rows
+            .GroupBy(x => (HostId: Surviving(aliasIndex, x.HostId), x.RecordDate))
+            .Select(g => new IssueHostDay(g.Key.HostId, g.Key.RecordDate, g.Max(x => x.SeverityRank)))
+            .ToList();
+
+        _performance?.Record("issues:IssueHostDays", sw.ElapsedMilliseconds);
         return result;
     }
 

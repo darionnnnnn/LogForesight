@@ -15,6 +15,18 @@
     "path": "/records"
   },
   {
+    "name": "互動-問題查詢-依問題展開依主機合併",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      { "waitFor": "#record-list tbody tr.lf-row-expandable" },
+      { "click": "#record-list tbody tr.lf-row-expandable" },
+      { "waitFor": "#record-list .lf-row-detail tbody tr" },
+      { "assert": { "sel": "#record-list .lf-row-detail a.lf-chip", "visible": true } },
+      { "assert": { "sel": "#record-list .lf-row-detail", "text": "台主機" } }
+    ]
+  },
+  {
     "name": "交辦總覽",
     "role": "ui-admin",
     "path": "/work-orders"

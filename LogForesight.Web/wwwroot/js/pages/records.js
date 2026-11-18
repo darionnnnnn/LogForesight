@@ -877,31 +877,33 @@ function renderIssueView() {
     });
 }
 
+/** 展開列每頁幾台主機 */
+const ISSUE_HOSTS_PAGE_SIZE = 20;
+
 /**
- * 依問題視角的列展開（§10）：列出該問題目前查詢範圍內的受影響主機×日期，每列直連該主機
- * 該日的風險日詳情。重用明細端點（/api/records，全角色、可見範圍已過濾），不另建 API。
+ * 依問題視角的列展開（§10）：這個問題的受影響主機，一台一列——看得出哪台已經連續多天。
+ * 母體與該列相同（後端 issue-hosts 沿用依問題視角的篩選與可見範圍），各列天數加總＝該列主機日數。
+ * 日期標籤各連到該主機該日的風險日詳情並展開處理狀態；伺服器端分頁。
  */
-async function renderIssueOccurrences(cell, group) {
+async function renderIssueOccurrences(cell, group, page = 1) {
     cell.replaceChildren();
     const wrap = document.createElement('div');
     wrap.className = 'p-2';
     renderLoading(wrap, 3);
     cell.appendChild(wrap);
 
-    const filters = collectFilters();
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(buildQueryString(collectFilters(), 1));
+    ['view', 'sort', 'dir', 'page'].forEach(key => params.delete(key));
     params.set('source', group.source);
     params.set('eventId', String(group.eventId));
-    if (filters.from) params.set('from', filters.from);
-    if (filters.to) params.set('to', filters.to);
-    params.set('riskLevels', '高,中,低');   // 問題的出現橫跨各風險層級，不套當前風險 chip
-    params.set('pageSize', '100');
+    params.set('pageSize', String(ISSUE_HOSTS_PAGE_SIZE));
+    if (page > 1) params.set('page', String(page));
 
     let result;
     try {
-        result = await api.get(`/api/records?${params}`, { silent: true });
+        result = await api.get(`/api/records/issue-hosts?${params}`, { silent: true });
     } catch {
-        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group) });
+        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group, page) });
         return;
     }
 
@@ -914,37 +916,68 @@ async function renderIssueOccurrences(cell, group) {
     renderTable(inner, {
         columns: [
             { title: '主機', truncate: true, render: r => roleText('lf-text-title', r.hostName) },
-            { title: '日期', render: r => roleText('lf-text-data text-nowrap', r.date) },
-            { title: '風險', render: r => riskBadge(r.riskLevel) },
-            { title: '處理狀態', render: r => handlingCell(r) },
-            { title: '處理人', render: r => handlerCell(r) },
-            { title: '', className: 'text-end', render: r => goHandleLink(r) }
+            { title: '天數', className: 'text-end lf-col-nowrap', render: r => issueHostDaysCell(r) },
+            { title: '出現日', render: r => issueHostDateTags(r, group) },
+            { title: '最高嚴重度', className: 'lf-col-nowrap', render: r => severityBadge(r.maxSeverity) },
+            { title: '處理概況', className: 'lf-col-nowrap', render: r => handlingBadge(r.status) },
+            { title: '處理人', render: r => r.handlerName ? roleText('lf-text-meta', r.handlerName) : '' },
+            { title: '', className: 'text-end', render: r => linkButton('去處理', appUrl(recordDetailUrl(r.hostId, r.lastSeen, { handle: true }))) }
         ],
         rows: result.items,
-        // 展開列整列點擊與列尾「去處理」同一個意圖：帶 handle 讓詳情頁展開處理狀態
-        rowHref: r => recordDetailUrl(r.hostId, r.date, { handle: true }),
-        empty: { title: '沒有符合條件的主機日', hint: '請調整篩選條件或日期區間。' }
+        // 整列點擊與列尾「去處理」同一個意圖：到最近出現那一天並展開處理狀態；日期標籤是各自的連結
+        rowHref: r => recordDetailUrl(r.hostId, r.lastSeen, { handle: true }),
+        empty: { title: '沒有符合條件的主機', hint: '請調整篩選條件或日期區間。' }
     });
 
-    // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
-    const foot = document.createElement('div');
-    foot.className = 'lf-text-meta mt-2 d-flex align-items-center flex-wrap gap-2';
-    if (result.total > result.items.length) {
-        const truncNote = document.createElement('span');
-        truncNote.textContent = `共 ${formatNumber(result.total)} 筆（不套用風險層級篩選），僅顯示前 ${result.items.length} 筆。`;
-        foot.appendChild(truncNote);
-    }
+    const pager = document.createElement('div');
+    renderPagination(pager, {
+        page: result.page,
+        totalPages: Math.ceil(result.total / result.pageSize),
+        onPage: next => renderIssueOccurrences(cell, group, next)
+    });
+
+    // 保留「切到明細視角看全部」的出口
+    // 一段文字裡的行內連結（不用 flex：flex 子項不算行內，點擊區要另滿 24px）
+    const foot = document.createElement('p');
+    foot.className = 'lf-text-meta mt-2 mb-0';
     const allLink = document.createElement('a');
     allLink.href = detailForIssue(group);
     allLink.textContent = '在明細視角檢視這個問題的全部風險日 →';
-    foot.appendChild(allLink);
+    foot.append(`共 ${formatNumber(result.total)} 台主機。`, allLink);
 
-    wrap.replaceChildren(inner, foot);
+    wrap.replaceChildren(inner, pager, foot);
 }
 
-/** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
-function goHandleLink(record) {
-    return linkButton('去處理', appUrl(recordDetailUrl(record.hostId, record.date, { handle: true })));
+/** 「天數」格：天數；最近出現日是期間最後一天時接「仍在發生」 */
+function issueHostDaysCell(row) {
+    const box = document.createElement('div');
+    box.className = 'd-flex flex-column align-items-end';
+    box.appendChild(roleText('lf-text-data', formatNumber(row.dayCount)));
+    if (row.ongoingAtPeriodEnd) box.appendChild(roleText('lf-text-meta text-nowrap', '仍在發生'));
+    return box;
+}
+
+/** 出現日標籤（新到舊）：各連到該日詳情並展開處理狀態；超過上限的以「另有 N 天」連到明細視角（鎖定這台主機） */
+function issueHostDateTags(row, group) {
+    const box = document.createElement('div');
+    box.className = 'd-flex flex-wrap gap-1';
+    for (const date of row.dates) {
+        const tag = document.createElement('a');
+        tag.className = 'lf-chip lf-mono';
+        tag.href = appUrl(recordDetailUrl(row.hostId, date, { handle: true }));
+        tag.textContent = date;
+        box.appendChild(tag);
+    }
+    if (row.moreDays > 0) {
+        const params = new URLSearchParams(detailForIssue(group).slice(1));
+        params.set('hostIds', String(row.hostId));
+        const more = document.createElement('a');
+        more.className = 'lf-chip';
+        more.href = `?${params}`;
+        more.textContent = `另有 ${formatNumber(row.moreDays)} 天`;
+        box.appendChild(more);
+    }
+    return box;
 }
 
 /**

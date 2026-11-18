@@ -491,6 +491,170 @@ public class RecordQueryServiceSearchTests : IDisposable
         EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = severity
     };
 
+    // ── 依問題視角展開列：一台主機一列（第 77 輪批次 B）───────────────────────
+
+    private static RecordSearchRequest IssueHosts(int page = 1, int pageSize = 50) =>
+        new() { Source = "disk", EventId = 153, Page = page, PageSize = pageSize };
+
+    [Fact]
+    public void IssueHosts_同主機多日合併成一列_天數與日期正確()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var issue = DiskIssue();
+        AddRecord(a, Yesterday.AddDays(-2), "高", issues: new[] { issue });
+        AddRecord(a, Yesterday, "高", issues: new[] { issue });
+        AddRecord(b, Yesterday.AddDays(-1), "中", issues: new[] { DiskIssue(IssueSeverity.Medium) });
+
+        var result = _service.SearchIssueHosts(IssueHosts());
+
+        Assert.Equal(2, result.Total);
+        var first = result.Items[0];
+        Assert.Equal("HOST-A", first.HostName);
+        Assert.Equal(2, first.DayCount);
+        Assert.Equal(new[] { Yesterday.ToString("yyyy-MM-dd"), Yesterday.AddDays(-2).ToString("yyyy-MM-dd") }, first.Dates);
+        Assert.Equal("High", first.MaxSeverity);
+        var second = result.Items[1];
+        Assert.Equal(1, second.DayCount);
+        Assert.Equal("Medium", second.MaxSeverity);
+    }
+
+    /// <summary>與依問題那一列對帳：列數＝主機數、各列天數加總＝主機日數（同一組篩選下）</summary>
+    [Fact]
+    public void IssueHosts_與依問題列對帳_主機數與主機日數一致()
+    {
+        var issue = DiskIssue();
+        for (var h = 0; h < 5; h++)
+        {
+            var host = AddHost($"HOST-{h}");
+            for (var d = 0; d <= h; d++) AddRecord(host, Yesterday.AddDays(-d), d % 2 == 0 ? "高" : "中", issues: new[] { issue });
+        }
+        AddRecord(AddHost("OTHER"), Yesterday, "高", issues: new[] { Issue("cpu", 9, IssueSeverity.High, IssueCategory.Hardware) });
+
+        var group = _service.SearchByIssue(new RecordSearchRequest()).Items.Single(g => g.EventId == 153);
+        var rows = _service.SearchIssueHosts(IssueHosts(pageSize: 2));
+        var all = Enumerable.Range(1, 3).SelectMany(p => _service.SearchIssueHosts(IssueHosts(p, 2)).Items).ToList();
+
+        Assert.Equal(group.HostCount, rows.Total);
+        Assert.Equal(group.HostCount, all.Count);
+        Assert.Equal(group.DayCount, all.Sum(r => r.DayCount));
+        // 分頁接續：無重複無遺漏；排序天數多者在前
+        Assert.Equal(all.Count, all.Select(r => r.HostId).Distinct().Count());
+        Assert.Equal(all.Select(r => r.DayCount).OrderByDescending(x => x), all.Select(r => r.DayCount));
+    }
+
+    [Fact]
+    public void IssueHosts_同天數依最近出現日再依主機名排序()
+    {
+        var issue = DiskIssue();
+        AddRecord(AddHost("HOST-B"), Yesterday, "高", issues: new[] { issue });
+        AddRecord(AddHost("HOST-A"), Yesterday, "高", issues: new[] { issue });
+        AddRecord(AddHost("HOST-C"), Yesterday.AddDays(-3), "高", issues: new[] { issue });
+
+        var names = _service.SearchIssueHosts(IssueHosts()).Items.Select(r => r.HostName).ToList();
+
+        Assert.Equal(new[] { "HOST-A", "HOST-B", "HOST-C" }, names);
+    }
+
+    [Fact]
+    public void IssueHosts_日期標籤上限_十四與十五天兩側()
+    {
+        var issue = DiskIssue();
+        var fourteen = AddHost("HOST-14");
+        var fifteen = AddHost("HOST-15");
+        for (var d = 0; d < 14; d++) AddRecord(fourteen, Yesterday.AddDays(-d), "高", issues: new[] { issue });
+        for (var d = 0; d < 15; d++) AddRecord(fifteen, Yesterday.AddDays(-d), "高", issues: new[] { issue });
+
+        var rows = _service.SearchIssueHosts(new RecordSearchRequest
+        {
+            Source = "disk", EventId = 153, From = Yesterday.AddDays(-20), To = Yesterday
+        }).Items.ToDictionary(r => r.HostName);
+
+        Assert.Equal(14, rows["HOST-14"].Dates.Count);
+        Assert.Equal(0, rows["HOST-14"].MoreDays);
+        Assert.Equal(14, rows["HOST-15"].Dates.Count);
+        Assert.Equal(1, rows["HOST-15"].MoreDays);
+        Assert.Equal(15, rows["HOST-15"].DayCount);
+        Assert.True(rows["HOST-15"].OngoingAtPeriodEnd);
+    }
+
+    [Fact]
+    public void IssueHosts_處理概況三態與處理人同依問題列()
+    {
+        var processingHost = AddHost("HOST-P");
+        var resolvedHost = AddHost("HOST-R");
+        var unhandledHost = AddHost("HOST-U");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
+        var issue = DiskIssue();
+        AddRecord(processingHost, Yesterday, "高", issues: new[] { issue });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = processingHost.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+        AddRecord(resolvedHost, Yesterday, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = resolvedHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        AddRecord(unhandledHost, Yesterday, "高", issues: new[] { issue });
+
+        var rows = _service.SearchIssueHosts(IssueHosts()).Items.ToDictionary(r => r.HostName);
+
+        Assert.Equal(HandlingStatuses.InProgress, rows["HOST-P"].Status);
+        Assert.Contains("小陳", rows["HOST-P"].HandlerName);
+        Assert.Equal(HandlingStatuses.Resolved, rows["HOST-R"].Status);
+        Assert.Equal(HandlingStatuses.Open, rows["HOST-U"].Status);
+        Assert.Null(rows["HOST-U"].HandlerName);
+    }
+
+    /// <summary>合併主機：墓碑與存活主機同一天各有一筆時只算一天、只出現一列（掛在存活主機名下）</summary>
+    [Fact]
+    public void IssueHosts_合併主機同一天只算一天()
+    {
+        var alive = AddHost("HOST-NEW");
+        var tomb = AddHost("HOST-OLD");
+        var issue = DiskIssue();
+        AddRecord(alive, Yesterday, "高", issues: new[] { issue });
+        AddRecord(tomb, Yesterday, "高", issues: new[] { issue });
+        AddRecord(tomb, Yesterday.AddDays(-1), "高", issues: new[] { issue });
+        tomb.MergedInto = alive.HostId;
+        tomb.Active = false;
+        _hosts.Upsert(tomb);
+
+        var row = Assert.Single(_service.SearchIssueHosts(IssueHosts()).Items);
+
+        Assert.Equal(alive.HostId, row.HostId);
+        Assert.Equal(2, row.DayCount);
+    }
+
+    [Fact]
+    public void IssueHosts_主機篩選只列範圍內主機()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var issue = DiskIssue();
+        AddRecord(a, Yesterday, "高", issues: new[] { issue });
+        AddRecord(b, Yesterday, "高", issues: new[] { issue });
+
+        var result = _service.SearchIssueHosts(new RecordSearchRequest { Source = "disk", EventId = 153, HostIds = new List<long> { a.HostId } });
+
+        Assert.Equal(1, result.Total);
+        Assert.Equal("HOST-A", Assert.Single(result.Items).HostName);
+    }
+
+    [Fact]
+    public void IssueHosts_沒指定問題時拒絕_沒有出現時回空()
+    {
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() => _service.SearchIssueHosts(new RecordSearchRequest()));
+        var empty = _service.SearchIssueHosts(IssueHosts());
+        Assert.Equal(0, empty.Total);
+        Assert.Empty(empty.Items);
+    }
+
     [Fact]
     public void SearchByIssue_依主機數與嚴重度分組彙總()
     {

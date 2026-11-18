@@ -49,6 +49,11 @@ public class RecordsController : ControllerBase
     /// 回傳型別必須寫 <see cref="IssueSearchResultDto"/> 而不是父型別 <c>PagedResult</c>：
     /// JSON 依**宣告型別**序列化，寫父型別會把子型別獨有的欄位（去重主機數、靜音未列出數）
     /// 靜默吊掉——服務層回傳值正確、單元測試也綠，只有實際打 API 才看得出來。</summary>
+    /// <summary>依問題視角的展開列：某個問題（source＋eventId）的受影響主機，一台一列、伺服器端分頁；其餘篩選同依問題視角。</summary>
+    [HttpGet("issue-hosts")]
+    public ApiResponse<PagedResult<IssueHostRowDto>> IssueHosts([FromQuery] RecordQuery query) =>
+        ApiResponse<PagedResult<IssueHostRowDto>>.Ok(_list.SearchIssueHosts(BuildRequest(query, RecordView.ByIssue)));
+
     [HttpGet("by-issue")]
     public ApiResponse<IssueSearchResultDto> ByIssue([FromQuery] RecordQuery query) =>
         ApiResponse<IssueSearchResultDto>.Ok(_list.SearchByIssue(BuildRequest(query, RecordView.ByIssue)));

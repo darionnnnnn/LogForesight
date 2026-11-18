@@ -22,7 +22,7 @@ public class ErrorStateUiTests
         Assert.Contains("button.addEventListener('click', () => onRetry())", ui);
 
         var records = Read("LogForesight.Web/wwwroot/js/pages/records.js");
-        Assert.Contains("onRetry: () => renderIssueOccurrences(cell, group)", records);
+        Assert.Contains("onRetry: () => renderIssueOccurrences(cell, group, page)", records);
         Assert.DoesNotContain("renderEmpty(wrap, { title: '載入受影響主機失敗'", records);
 
         var runs = Read("LogForesight.Web/wwwroot/js/pages/runs.js");
