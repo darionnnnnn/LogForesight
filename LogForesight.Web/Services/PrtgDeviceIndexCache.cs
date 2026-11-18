@@ -87,6 +87,7 @@ public class PrtgDeviceIndexCache : ICacheStatistics
     private long _misses;
     private long _evictions;
     private readonly Dictionary<string, (PrtgDeviceIndex Index, DateTime CachedAt)> _entries = new();
+    private readonly SingleFlight _flight = new();
 
     public PrtgDeviceIndexCache(Func<DateTime>? now = null)
     {
@@ -110,21 +111,21 @@ public class PrtgDeviceIndexCache : ICacheStatistics
             _misses++;
         }
 
-        // 讀表與建索引刻意在鎖外做：全表讀取很慢，握著鎖算會讓其他請求全部排隊
-        // （同 SummaryCache 的既有取捨：同時進來的請求可能各建一次，結果相同）
-        var index = new PrtgDeviceIndex(loadDevices());
-
-        lock (_lock)
+        // 讀表與建索引在鎖外做：全表讀取很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只建一次（同 SummaryCache）
+        return _flight.Run(key, () =>
         {
-            if (_entries.Count >= MaxEntries)
+            var index = new PrtgDeviceIndex(loadDevices());
+            lock (_lock)
             {
-                _evictions += _entries.Count;
-                _entries.Clear();
+                if (_entries.Count >= MaxEntries)
+                {
+                    _evictions += _entries.Count;
+                    _entries.Clear();
+                }
+                _entries[key] = (index, _now());
             }
-            _entries[key] = (index, _now());
-        }
-
-        return index;
+            return index;
+        });
     }
 
     /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>

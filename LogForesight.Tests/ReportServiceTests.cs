@@ -1093,9 +1093,10 @@ public class ReportServiceTests : IDisposable
 
         Assert.Equal(1, repoCount.Calls.GetValueOrDefault("QueryLightweight"));
         // 日層級與問題層級處理表：範圍過濾（兩期共用）載入 1 次，加上 Handling 待辦統計（GetTodo）自己載入 1 次；
-        // 改動前是兩期各載 1 次再加待辦 1 次共 3 次。案件表只有範圍過濾會載，維持 1 次。
+        // 改動前是兩期各載 1 次再加待辦 1 次共 3 次。案件表只有範圍過濾會載，維持 1 次，且只讀進行中案件（不讀回已結案）。
         Assert.Equal(2, handlingCount.Calls.GetValueOrDefault("GetMany"));
         Assert.Equal(2, issueCount.Calls.GetValueOrDefault("GetMany"));
-        Assert.Equal(1, caseCount.Calls.GetValueOrDefault("GetMany"));
+        Assert.Equal(1, caseCount.Calls.GetValueOrDefault("GetOpenMany"));
+        Assert.Equal(0, caseCount.Calls.GetValueOrDefault("GetMany"));
     }
 }

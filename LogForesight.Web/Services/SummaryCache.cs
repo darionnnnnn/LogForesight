@@ -50,6 +50,8 @@ public class SummaryCache : ICacheStatistics
     private long _misses;
     private long _evictions;
     private readonly Dictionary<string, (object Payload, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
+    private readonly SingleFlight _flight = new();
+    private DateTime _lastSweep = DateTime.MinValue;
 
     public SummaryCache(DataVersionStamp stamp, Func<DateTime>? now = null)
     {
@@ -65,33 +67,63 @@ public class SummaryCache : ICacheStatistics
     public T GetOrAdd<T>(string key, Func<T> factory) where T : class
     {
         var version = _stamp.Current;
+        if (TryHit(key, version, countMiss: true) is T hit) return hit;
 
+        // factory 在鎖外執行：聚合查詢很慢，握著鎖算會讓其他請求全部排隊。
+        // 同鍵並發只算一次（SingleFlight）：等著的請求拿同一份；排在後面才進來的先再看一次快取
+        return _flight.Run(key + "|" + version, () =>
+        {
+            if (TryHit(key, version, countMiss: false) is T again) return again;
+            var value = factory();
+            lock (_lock)
+            {
+                var now = _now();
+                if (!_entries.ContainsKey(key)) EvictForInsert(now, version);
+                _entries[key] = (value, now, version, now);
+            }
+            return value;
+        });
+    }
+
+    /// <summary>命中回內容、未命中回 null；同時順手釋放過期條目（每個 TTL 週期最多掃一次）。</summary>
+    private object? TryHit(string key, long version, bool countMiss)
+    {
         lock (_lock)
         {
             var now = _now();
+            SweepIfDue(now, version);
             if (_entries.TryGetValue(key, out var entry)
                 && entry.Version == version
                 && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
             {
                 _hits++;
                 _entries[key] = entry with { LastAccess = now };
-                return (T)entry.Payload;
+                return entry.Payload;
             }
-            _misses++;
+            if (countMiss) _misses++;
+            return null;
         }
+    }
 
-        // factory 刻意在鎖外執行：聚合查詢很慢，握著鎖算會讓其他請求全部排隊。
-        // 代價是同時進來的請求可能各算一次，結果相同、最後一個寫入為準。
-        var value = factory();
+    /// <summary>
+    /// 讀取時順手清掉逾時與舊版本的條目（呼叫端須持鎖）：只在「新增且已滿」時才清的話，
+    /// 尖峰過後沒人再新增，過期內容會一直佔著記憶體。每個 TTL 週期最多掃一次，掃描量是條目上限 256 筆。
+    /// </summary>
+    private void SweepIfDue(DateTime now, long version)
+    {
+        if ((now - _lastSweep).TotalSeconds < TtlSeconds) return;
+        _lastSweep = now;
+        RemoveStale(now, version);
+    }
 
-        lock (_lock)
-        {
-            var now = _now();
-            if (!_entries.ContainsKey(key)) EvictForInsert(now, version);
-            _entries[key] = (value, now, version, now);
-        }
-
-        return value;
+    private void RemoveStale(DateTime now, long version)
+    {
+        var expired = _entries
+            .Where(e => e.Value.Version != version || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
+            .Select(e => e.Key)
+            .ToList();
+        foreach (var k in expired) _entries.Remove(k);
+        _evictions += expired.Count;
     }
 
     /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除已過期（逾時或版本已推進、再也命不中）的項目，
@@ -100,12 +132,7 @@ public class SummaryCache : ICacheStatistics
     {
         if (_entries.Count < MaxEntries) return;
 
-        var expired = _entries
-            .Where(e => e.Value.Version != version || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in expired) _entries.Remove(k);
-        _evictions += expired.Count;
+        RemoveStale(now, version);
 
         while (_entries.Count >= MaxEntries)
         {

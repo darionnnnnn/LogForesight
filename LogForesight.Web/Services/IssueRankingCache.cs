@@ -32,6 +32,8 @@ public class IssueRankingCache : ICacheStatistics
 
     private readonly Func<DateTime> _now;
     private readonly object _lock = new();
+    private readonly SingleFlight _flight = new();
+    private DateTime _lastSweep = DateTime.MinValue;
     private readonly Dictionary<string, (List<IssueRankingDto> Items, DateTime CachedAt, DateTime LastAccess, long Version)> _entries = new();
 
     private readonly DataVersionStamp _versionStamp;
@@ -71,16 +73,36 @@ public class IssueRankingCache : ICacheStatistics
 
     /// <summary>命中直接回傳快取內的清單（不複製）：型別是唯讀，呼叫端不能改到共用清單；
     /// 需要變動請自行 ToList()。</summary>
-    public IReadOnlyList<IssueRankingDto>? TryGet(string key)
+    public IReadOnlyList<IssueRankingDto>? TryGet(string key) => TryGet(key, countMiss: true);
+
+    /// <summary>
+    /// 取快取；未命中時呼叫 <paramref name="compute"/> 算一次並以 <paramref name="version"/> 寫入。
+    /// 同鍵並發只算一次（<see cref="SingleFlight"/>）——結果超過元素上限不入快取時尤其重要：
+    /// 否則每個並發請求都各算一整份。
+    /// </summary>
+    public IReadOnlyList<IssueRankingDto> GetOrAdd(string key, long version, Func<List<IssueRankingDto>> compute)
+    {
+        if (TryGet(key, countMiss: true) is { } hit) return hit;
+        return _flight.Run<IReadOnlyList<IssueRankingDto>>(key, () =>
+        {
+            if (TryGet(key, countMiss: false) is { } again) return again;
+            var items = compute();
+            Set(key, items, version);
+            return items;
+        });
+    }
+
+    private IReadOnlyList<IssueRankingDto>? TryGet(string key, bool countMiss)
     {
         lock (_lock)
         {
-            if (!_entries.TryGetValue(key, out var entry)) { _misses++; return null; }
             var now = _now();
+            SweepIfDue(now);
+            if (!_entries.TryGetValue(key, out var entry)) { if (countMiss) _misses++; return null; }
             if ((now - entry.CachedAt).TotalSeconds >= TtlSeconds)
             {
                 RemoveEntry(key);
-                _misses++;
+                if (countMiss) _misses++;
                 return null;
             }
             _hits++;
@@ -124,6 +146,23 @@ public class IssueRankingCache : ICacheStatistics
             _elements += copy.Count;
             EvictForElements(key);
         }
+    }
+
+    /// <summary>
+    /// 讀取時順手釋放逾時與舊版本的條目（呼叫端須持鎖）：只在寫入新鍵時才清的話，尖峰過後沒人再寫入，
+    /// 最多 20 萬元素的過期內容會一直佔著記憶體。每個 TTL 週期最多掃一次。
+    /// </summary>
+    private void SweepIfDue(DateTime now)
+    {
+        if ((now - _lastSweep).TotalSeconds < TtlSeconds) return;
+        _lastSweep = now;
+        var current = _versionStamp.Current;
+        var stale = _entries
+            .Where(e => e.Value.Version != current || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
+            .Select(e => e.Key)
+            .ToList();
+        foreach (var k in stale) RemoveEntry(k);
+        _evictions += stale.Count;
     }
 
     /// <summary>移除條目並同步元素總數（呼叫端須持鎖）。</summary>
