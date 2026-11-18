@@ -141,9 +141,10 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 只掃新列補新組合、並在新列日期更早時修正既有組合（回補會寫入日期更早的新列）；
 全表掃描的修正段只在初次回補跑一次，之後由 `issue_first_seen_full_done` 旗標擋掉。
 
-`lf_issue_first_seen` 寫入時 insert-if-absent、已存在時只在新日期較早才更新（並行寫入
-撞唯一鍵時視為正常情況，改走條件式 UPDATE 補寫，不是需要中止分析的錯誤——見
-`EfAnalysisRecordStore.UpsertFirstSeen`）。鍵刻意用 `(source_key, event_id)`，不含
+`lf_issue_first_seen` 寫入時 insert-if-absent、已存在時只在新日期較早才更新：一個主機日以一道查詢取出已存在的鍵，
+較早日期以條件式 UPDATE 合併、新鍵以多列 INSERT（每段 100 列）寫入，往返數不隨問題數成長。批次 INSERT 失敗（含並行寫入
+撞唯一鍵）時整段降級為逐筆，撞鍵者改走條件式 UPDATE 補寫，某個鍵失敗只影響那個鍵，不是需要中止分析的錯誤——見
+`EfAnalysisRecordStore.UpsertFirstSeen`。鍵刻意用 `(source_key, event_id)`，不含
 `log_name`/`entry_type`：首見的語意是「這個問題」（依問題視角的分組鍵），不是某個完整
 簽章第一次出現。
 

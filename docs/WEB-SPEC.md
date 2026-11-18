@@ -2939,7 +2939,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 
 ### 9.9e-1 PRTG 快照診斷、趨勢規則試算與使用效果（`Maintain`）
 
-- **快照診斷**：鏡像狀態頁以持久嘗試／寫入計數加上 `PeriodStart` 索引的 SQL 聚合，診斷最近 24 個完整小時已落盤的 quality 與 coverage；不呼叫 PRTG。
+- **快照診斷**：鏡像狀態頁以持久嘗試／寫入計數加上 `PeriodStart` 索引的 SQL 聚合，診斷最近 24 個完整小時已落盤的 quality 與 coverage；不呼叫 PRTG。一輪快照的嘗試與成功批數在記憶體累計、輪末（含取消）一次寫入診斷 blob，輪中途查看時本輪的計數尚未出現。
   聚合沒有逐 sensor 識別，不能證實每顆 sensor 100% coverage。系統健康 `GET api/health/detail` 另呈現最近兩小時摘要（資料庫探測失敗時回最小 Down DTO）。
   待寫檔無法使用時小時狀態為 `stopped`（名稱「已停止：待寫檔無法使用」，目標數顯示「未知」），不顯示「無目標」；系統健康 PRTG 快照卡在保守策略下 `stopped` 或 `no-recent-success`（目標非空卻超過 6 小時沒有成功取樣）時警示並併入整體狀態，判定單一入口 `PrtgSnapshotAlert.Evaluate`。
 - **指定主機回填**：可選主機與日期區間，先預覽資料量與估計請求數，再開始、查詢或停止；只補數值，不追溯建立舊日 finding 或交辦。
