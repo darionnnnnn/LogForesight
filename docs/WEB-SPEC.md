@@ -3253,7 +3253,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
   `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每個資料日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
-    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點列就地展開**該資料日逐主機狀態，§2——懶載入 `onRowExpand`，`GET api/runs/day/{資料日}`，各列排序/分頁狀態獨立、可同時展開多天）。
+    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點列就地展開**該資料日逐主機狀態，§2——懶載入 `onRowExpand`，`GET api/runs/day/{資料日}?page=&pageSize=&sort=&dir=`，排序與分頁在後端（`RunMonitorService.GetDayDetailPage`；排序鍵 hostName／status／workflowComplete／daysAnalyzed／errorCount，沒跑過的值排最前、降冪為整體反轉），工作流各腿狀態只讀當頁主機，以「整體工作流」排序時才讀全部；各列排序／分頁狀態獨立、可同時展開多天）。
     **列是資料日**（`Date`，表頭「資料日」）：主機狀態、PRTG 都是這一天的資料，之後任何一趟補跑都歸在同一列。
     排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetail`。
     **今天處理的那一列**：今天已有取數趟時，第 1 頁多一列（資料日＝昨天，`IsToday`，執行中再帶 `InProgress`），日期旁標「今日處理」（執行中為「今日處理・執行中」），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。

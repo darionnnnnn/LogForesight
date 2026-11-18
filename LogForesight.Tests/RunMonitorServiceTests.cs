@@ -198,6 +198,73 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("stuck", Assert.Single(detail, row => row.HostName == stuckHost.HostName).Status);
     }
 
+    // ── 單日逐主機的伺服器端分頁（第 77 輪 F-1）──────────────────────────────
+
+    [Fact]
+    public void 單日逐主機分頁_一頁筆數與工作流讀取次數不隨主機數成長()
+    {
+        var dir = Path.Combine(_attemptDir, "wf");
+        Directory.CreateDirectory(dir);
+        // 工作流 blob 以原始 ADO 指令讀（不經 EF 攔截器），所以用後端效能監控的操作總數計：每讀一台主機日就是一次操作
+        var wfBackend = new StorageBackend(new StorageSettings
+        {
+            Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "wf.db")}"
+        }, dir);
+        long Measure(Action action)
+        {
+            var before = wfBackend.Performance.Snapshot().TotalOperations;
+            action();
+            return wfBackend.Performance.Snapshot().TotalOperations - before;
+        }
+        var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
+            workflow: new HostDayWorkflowService(new HostDayWorkflowStore(wfBackend)));
+        var dataDate = DateTime.Today.AddDays(-1);
+
+        for (var i = 0; i < 40; i++) _hosts.Upsert(new WebHost { HostName = $"10.1.0.{i}", Source = "netiq" });
+        PagedResult<LogForesight.Web.Models.Dto.RunDayHostStatusDto>? small = null;
+        var fewReads = Measure(() => small = service.GetDayDetailPage(dataDate, 1, 20, null, null));
+        for (var i = 40; i < 200; i++) _hosts.Upsert(new WebHost { HostName = $"10.1.0.{i}", Source = "netiq" });
+        PagedResult<LogForesight.Web.Models.Dto.RunDayHostStatusDto>? large = null;
+        var manyReads = Measure(() => large = service.GetDayDetailPage(dataDate, 1, 20, null, null));
+
+        Assert.Equal(40, small!.Total);
+        Assert.Equal(200, large!.Total);
+        Assert.Equal(20, small.Items.Count);
+        Assert.Equal(20, large.Items.Count);
+        Assert.Equal(20, fewReads);
+        Assert.Equal(fewReads, manyReads);
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public void 單日逐主機分頁_排序與原本前端同語意_分頁接續()
+    {
+        for (var i = 0; i < 7; i++) _hosts.Upsert(new WebHost { HostName = $"srv-{i}", Source = "netiq" });
+        var withRecord = _hosts.Upsert(new WebHost { HostName = "srv-x", Source = "netiq" });
+        Records().Append(Rec(withRecord.HostId, withRecord.HostName, DateTime.Today.AddDays(-1)));
+        var service = Create();
+        var dataDate = DateTime.Today.AddDays(-1);
+
+        var asc = service.GetDayDetailPage(dataDate, 1, 100, "hostName", "asc").Items.Select(r => r.HostName).ToList();
+        Assert.Equal(asc.OrderBy(x => x, StringComparer.Ordinal), asc);
+        var desc = service.GetDayDetailPage(dataDate, 1, 100, "hostName", "desc").Items.Select(r => r.HostName).ToList();
+        Assert.Equal(asc.AsEnumerable().Reverse(), desc);
+
+        // 狀態排序：字串遞增（none 在 success 之前），降冪整體反轉
+        var byStatus = service.GetDayDetailPage(dataDate, 1, 100, "status", "desc").Items;
+        Assert.Equal("success", byStatus[0].Status);
+
+        var page1 = service.GetDayDetailPage(dataDate, 1, 3, null, null).Items.Select(r => r.HostName);
+        var page2 = service.GetDayDetailPage(dataDate, 2, 3, null, null).Items.Select(r => r.HostName);
+        var page3 = service.GetDayDetailPage(dataDate, 3, 3, null, null).Items.Select(r => r.HostName);
+        Assert.Equal(asc, page1.Concat(page2).Concat(page3));
+
+        // 不認得的排序鍵退回主機名
+        Assert.Equal(asc, service.GetDayDetailPage(dataDate, 1, 100, "bogus", null).Items.Select(r => r.HostName));
+        // 舊的整份清單（GetDayDetail）內容不變
+        Assert.Equal(asc.Count, service.GetDayDetail(dataDate).Count);
+    }
+
     [Fact]
     public void NetIQ主機_昨日有分析紀錄_今日列為成功()
     {

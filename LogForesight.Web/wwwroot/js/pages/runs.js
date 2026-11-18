@@ -410,21 +410,20 @@ function failedHostsCell(summary) {
     return wrap;
 }
 
+// 排序在後端（RunMonitorService.GetDayDetailPage），這裡只宣告可排序的鍵
 const DAY_DETAIL_COLUMNS = [
-    { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, truncate: true, render: h => h.hostName },
-    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
+    { title: '主機', sortKey: 'hostName', truncate: true, render: h => h.hostName },
+    { title: '狀態', sortKey: 'status', render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
     {
-        title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
+        title: '整體工作流', sortKey: 'workflowComplete',
         render: h => workflowSummaryCell(h)
     },
     {
         title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc',
-        sortValue: h => h.runId != null ? h.daysAnalyzed : -1,
         render: h => h.runId != null ? String(h.daysAnalyzed) : ''
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
-        sortValue: h => h.runId != null ? h.errorCount : -1,
         render: h => h.runId != null ? `${h.warnCount} / ${h.errorCount}` : ''
     },
     { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
@@ -451,9 +450,8 @@ function workflowSummaryCell(host) {
 }
 
 /**
- * 日期列就地展開（§2）：懶載入該天每台主機的狀態，render 進展開列。
- * 每個日期各持有獨立的排序/分頁狀態（允許同時展開多天，互不干擾）——
- * 2000 台規模下曾整表一次 render，這裡沿用本地排序＋分頁（資料一次取回，不重打 API）。
+ * 日期列就地展開（§2）：該天每台主機的狀態，render 進展開列。
+ * 排序與分頁在後端（3000 台時整份回傳約數 MB）；每個日期各持有獨立的排序／分頁狀態，允許同時展開多天、互不干擾。
  */
 async function renderDayDetailInto(cell, date) {
     cell.replaceChildren();
@@ -462,47 +460,47 @@ async function renderDayDetailInto(cell, date) {
     pagerEl.className = 'mt-2';
     cell.append(listEl, pagerEl);
 
-    renderLoading(listEl, 6);
-
-    let hosts;
-    try {
-        hosts = await api.get(`/api/runs/day/${date}`);
-    } catch {
-        renderError(listEl, { message: '載入當日明細失敗', onRetry: () => renderDayDetailInto(cell, date) });
-        return;
-    }
-
     const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail') };
+    let sequence = 0;
 
-    function render() {
-        const sorted = sortRows(hosts, DAY_DETAIL_COLUMNS, state.sort);
-        const totalPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
-        if (state.page > totalPages) state.page = totalPages;
-        const pageRows = sorted.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
+    async function loadDayPage() {
+        const mine = ++sequence;
+        renderLoading(listEl, 6);
+        const params = new URLSearchParams({
+            page: String(state.page), pageSize: String(state.pageSize), sort: state.sort.key, dir: state.sort.dir
+        });
+        let result;
+        try {
+            result = await api.get(`/api/runs/day/${date}?${params}`);
+        } catch {
+            if (mine === sequence) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
+            return;
+        }
+        if (mine !== sequence) return;   // 連點排序或換頁時，只畫最後一次的結果
 
         renderTable(listEl, {
             columns: DAY_DETAIL_COLUMNS,
-            rows: pageRows,
+            rows: result.items,
             sort: state.sort,
-            onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; render(); },
+            onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; loadDayPage(); },
             empty: { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
         });
 
         renderPagination(pagerEl, {
-            page: state.page,
-            totalPages: hosts.length ? totalPages : 0,
-            onPage: page => { state.page = page; render(); },
+            page: result.page,
+            totalPages: result.total ? Math.ceil(result.total / result.pageSize) : 0,
+            onPage: page => { state.page = page; loadDayPage(); },
             pageSize: state.pageSize,
             onPageSize: size => {
                 state.pageSize = size;
                 savePageSize('runs-day-detail', size);
                 state.page = 1;
-                render();
+                loadDayPage();
             }
         });
     }
 
-    render();
+    await loadDayPage();
 }
 
 function statusBadgeCell(status, note = null) {

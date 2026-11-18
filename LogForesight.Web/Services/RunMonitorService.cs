@@ -265,7 +265,42 @@ public class RunMonitorService
     }
 
     /// <summary>總表某一列（資料日 <paramref name="dataDate"/>）的逐主機狀態；內部以排程處理日（隔天）計算，與總表同一套換算。</summary>
-    public List<RunDayHostStatusDto> GetDayDetail(DateTime dataDate)
+    public List<RunDayHostStatusDto> GetDayDetail(DateTime dataDate) =>
+        BuildDayRows(dataDate, withWorkflow: true).Select(r => r.Dto).ToList();
+
+    /// <summary>
+    /// 單日逐主機狀態的一頁（執行總表展開某日）：排序與分頁在伺服器端，工作流狀態只讀當頁主機——
+    /// 3000 台時整份回傳約數 MB、逐台讀工作流是 3000 次往返。排序鍵與語意同前端原本的表頭排序
+    /// （null／沒跑過的排最前、降冪為整體反轉）；以「整體工作流」排序時才需要讀全部主機的工作流。
+    /// </summary>
+    public PagedResult<RunDayHostStatusDto> GetDayDetailPage(DateTime dataDate, int? page, int? pageSize, string? sort, string? dir)
+    {
+        var sortKey = sort is "status" or "workflowComplete" or "daysAnalyzed" or "errorCount" ? sort : "hostName";
+        var rows = BuildDayRows(dataDate, withWorkflow: sortKey == "workflowComplete");
+        IEnumerable<RunDayHostStatusDto> ordered = sortKey switch
+        {
+            "status" => rows.Select(r => r.Dto).OrderBy(d => d.Status, StringComparer.Ordinal),
+            "workflowComplete" => rows.Select(r => r.Dto).OrderBy(d => d.WorkflowComplete is { } c ? (c ? 1 : 0) : -1),
+            "daysAnalyzed" => rows.Select(r => r.Dto).OrderBy(d => d.RunId != null ? d.DaysAnalyzed : -1),
+            "errorCount" => rows.Select(r => r.Dto).OrderBy(d => d.RunId != null ? d.ErrorCount : -1),
+            _ => rows.Select(r => r.Dto).OrderBy(d => d.HostName, StringComparer.Ordinal)
+        };
+        var list = ordered.ToList();
+        if (string.Equals(dir, "desc", StringComparison.OrdinalIgnoreCase)) list.Reverse();
+
+        var (p, size) = Paging.Normalize(page ?? 1, pageSize ?? 20);
+        var items = list.Skip((p - 1) * size).Take(size).ToList();
+        if (sortKey != "workflowComplete")
+        {
+            var hostIds = rows.ToDictionary(r => r.Dto, r => r.Host.HostId, ReferenceEqualityComparer.Instance);
+            var recordDate = dataDate.Date;
+            foreach (var dto in items)
+                if (hostIds[dto] is var hostId && hostId > 0) ApplyWorkflow(dto, _workflow?.Get(hostId, recordDate));
+        }
+        return new PagedResult<RunDayHostStatusDto> { Items = items, Page = p, PageSize = size, Total = list.Count };
+    }
+
+    private List<(HostRef Host, RunDayHostStatusDto Dto)> BuildDayRows(DateTime dataDate, bool withWorkflow)
     {
         var date = dataDate.Date.AddDays(1);
         // GetRecentRuns 的窗口是 [Today-days+1, Today]；用「到這天為止經過的天數」當窗口大小，
@@ -293,8 +328,7 @@ public class RunMonitorService
             var cell = host.Source == "netiq"
                 ? NetiqCell(host, date, recordDates, attempts, attemptsAvailable, runsById)
                 : LocalCell(host, dateStr, dayRuns, date, recordDates, localEnabled);
-            var workflow = host.HostId > 0 ? _workflow?.Get(host.HostId, date.AddDays(-1)) : null;
-            return new RunDayHostStatusDto
+            var dto = new RunDayHostStatusDto
             {
                 HostName = host.HostName,
                 Status = cell.Status,
@@ -307,24 +341,31 @@ public class RunMonitorService
                 AiFailures = cell.AiFailures,
                 RunCount = cell.RunCount,
                 Legacy = cell.Legacy,
-                StatusNote = NetiqStatusNote(host, recordDate, histories, recheckNote),
-                DecisionVersion = workflow?.DecisionVersion,
-                ParentWorkflowState = workflow?.Parent.ToString().ToLowerInvariant(),
-                PrtgWorkflowState = workflow?.Prtg.ToString().ToLowerInvariant(),
-                PrtgReadinessState = workflow?.PrtgReadinessState,
-                WorkflowRecoveryState = workflow?.IsRecoveryWaiting == true ? "waiting" : null,
-                WorkflowRecoveryReason = workflow?.RecoveryWaitingReason,
-                AiWorkflowState = workflow?.Ai.ToString().ToLowerInvariant(),
-                CaseWorkflowState = workflow?.CaseState.ToString().ToLowerInvariant(),
-                MailWorkflowState = workflow == null ? null :
-                    !workflow.MailPlanClosed ? "pending" :
-                    workflow.MailIntents.Length == 0 ? "none" :
-                    workflow.MailIsComplete ? "smtp-accepted" :
-                    workflow.MailFailedParts.Length > 0 || workflow.MailDeliveredParts.Length > 0 ? "partial" : "pending",
-                WorkflowComplete = workflow?.IsComplete,
-                WorkflowOutcome = workflow?.WorkflowOutcome
+                StatusNote = NetiqStatusNote(host, recordDate, histories, recheckNote)
             };
+            if (withWorkflow && host.HostId > 0) ApplyWorkflow(dto, _workflow?.Get(host.HostId, recordDate));
+            return (host, dto);
         }).ToList();
+    }
+
+    /// <summary>主機日工作流的各腿狀態填進列（沒有工作流紀錄時維持 null）</summary>
+    private static void ApplyWorkflow(RunDayHostStatusDto dto, HostDayWorkflowState? workflow)
+    {
+        if (workflow == null) return;
+        dto.DecisionVersion = workflow.DecisionVersion;
+        dto.ParentWorkflowState = workflow.Parent.ToString().ToLowerInvariant();
+        dto.PrtgWorkflowState = workflow.Prtg.ToString().ToLowerInvariant();
+        dto.PrtgReadinessState = workflow.PrtgReadinessState;
+        dto.WorkflowRecoveryState = workflow.IsRecoveryWaiting ? "waiting" : null;
+        dto.WorkflowRecoveryReason = workflow.RecoveryWaitingReason;
+        dto.AiWorkflowState = workflow.Ai.ToString().ToLowerInvariant();
+        dto.CaseWorkflowState = workflow.CaseState.ToString().ToLowerInvariant();
+        dto.MailWorkflowState = !workflow.MailPlanClosed ? "pending" :
+            workflow.MailIntents.Length == 0 ? "none" :
+            workflow.MailIsComplete ? "smtp-accepted" :
+            workflow.MailFailedParts.Length > 0 || workflow.MailDeliveredParts.Length > 0 ? "partial" : "pending";
+        dto.WorkflowComplete = workflow.IsComplete;
+        dto.WorkflowOutcome = workflow.WorkflowOutcome;
     }
 
     /// <summary>NetIQ 主機沒有個別 <see cref="BatchRun"/>（管線只登記彙總的一筆，見類別註解），
