@@ -18,30 +18,6 @@ namespace LogForesight.Tests;
 /// </summary>
 public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.PlanFixture>
 {
-    /// <summary>記錄 SELECT 語句與參數（名稱＋值），EXPLAIN 時要以同名參數重放</summary>
-    internal sealed class SqlRecorder : DbCommandInterceptor
-    {
-        private readonly object _gate = new();
-        public List<(string Sql, List<(string Name, object? Value)> Parameters)> Commands { get; } = new();
-
-        public override InterceptionResult<DbDataReader> ReaderExecuting(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
-        {
-            lock (_gate)
-                Commands.Add((command.CommandText,
-                    command.Parameters.Cast<DbParameter>().Select(p => (p.ParameterName, p.Value)).ToList()));
-            return base.ReaderExecuting(command, eventData, result);
-        }
-
-        public void Clear() { lock (_gate) Commands.Clear(); }
-
-        public List<(string Sql, List<(string Name, object? Value)> Parameters)> Selects()
-        {
-            lock (_gate)
-                return Commands.Where(c => c.Sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-    }
-
     private static readonly Regex AliasPattern = new(
         @"(?:FROM|JOIN)\s+""(\w+)""\s+AS\s+""(\w+)""", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -63,7 +39,7 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
     {
         internal readonly string _directory = Path.Combine(Path.GetTempPath(), "lf-plan-guard-" + Guid.NewGuid().ToString("N"));
         internal readonly string _dbPath;
-        internal readonly SqlRecorder _recorder = new();
+        internal readonly SqlCommandRecorder _recorder = new();
         internal readonly StorageBackend _backend;
         internal readonly EfAnalysisRecordStore _records;
 
@@ -193,7 +169,7 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
         _output = output;
     }
 
-    private SqlRecorder _recorder => _fx._recorder;
+    private SqlCommandRecorder _recorder => _fx._recorder;
     private string _dbPath => _fx._dbPath;
     private StorageBackend _backend => _fx._backend;
     private EfAnalysisRecordStore _records => _fx._records;
