@@ -67,7 +67,7 @@ public class IssueRankingCache : ICacheStatistics
     {
         var hosts = visibleHostIds == null
             ? "*"
-            : string.Join(",", visibleHostIds.OrderBy(id => id));
+            : VisibleHostKeyPart.Of(visibleHostIds);
         return $"v{version}|{from:yyyyMMdd}|{to:yyyyMMdd}|{totalHosts}|{exclusionToken}|{hosts}";
     }
 

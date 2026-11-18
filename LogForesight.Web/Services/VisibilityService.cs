@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Core.Persistence;
@@ -199,21 +200,21 @@ public class VisibilityService : IVisibilityService
         // ViewAll（dev / manager / admin）：全部啟用中的主機
         if (_currentUser.Has(Capability.ViewAll))
         {
-            _cached = allHosts.Select(h => h.HostId).ToHashSet();
+            _cached = allHosts.Select(h => h.HostId).ToFrozenSet();
             return _cached;
         }
 
         // serverAdmin 沒有 ViewAll，也沒有任何主機——它是維護帳號，不看業務資料
         if (_currentUser.IsServerAdmin || !_currentUser.IsAuthenticated)
         {
-            _cached = new HashSet<long>();
+            _cached = FrozenSet<long>.Empty;
             return _cached;
         }
 
         var user = _users.Get(_currentUser.UserId);
         if (user == null || !user.Active)
         {
-            _cached = new HashSet<long>();
+            _cached = FrozenSet<long>.Empty;
             return _cached;
         }
 
@@ -231,7 +232,8 @@ public class VisibilityService : IVisibilityService
         // 收尾交集由 Resolver 內完成（即使跨請求快取命中也限制在這份快照的存活主機內）
         var visible = HostVisibilityResolver.GetVisibleHostIds(
             snapshot, _users, _userGroups, _access, user.UserId, viewAll: false, issueOwnedHostIds);
-        _cached = visible;
+        // 凍結成不可變集合：快取鍵片段（VisibleHostKeyPart）只對 FrozenSet 以物件參考記憶
+        _cached = visible as FrozenSet<long> ?? visible.ToFrozenSet();
         return _cached;
     }
 

@@ -45,6 +45,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Auth.ServerAdminAuthenticator._failures"] = "只記設定中的救援帳號，鍵數為 1",
         ["LogForesight.Web.Configuration.WebAppSettings.KnownDevSecrets"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.ActionableSnapshotCache._entries"] = "256 條目＋20 萬元素上限；讀取時每個 TTL 週期釋放過期與舊版本",
+        ["LogForesight.Web.Services.VisibleHostKeyPart.Memo"] = "ConditionalWeakTable：鍵（可見主機集合物件）被回收時條目自動消失；只記憶 IReadOnlySet",
         ["LogForesight.Web.Services.AiInsightService.KnownCategories"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.AiInsightService.KnownRisks"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.AuditQueryService.ActionNames"] = "常數查找表：型別初始化時建好，之後只讀",
@@ -89,6 +90,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         typeof(SortedDictionary<,>), typeof(SortedSet<>), typeof(LinkedList<>), typeof(SortedList<,>),
         typeof(System.Collections.Concurrent.ConcurrentDictionary<,>), typeof(System.Collections.Concurrent.ConcurrentQueue<>),
         typeof(System.Collections.Concurrent.ConcurrentBag<>), typeof(System.Collections.Concurrent.ConcurrentStack<>),
+        typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>),
     ];
 
     private static bool IsMutableCollection(Type t) =>

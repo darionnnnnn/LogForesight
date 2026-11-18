@@ -61,7 +61,7 @@ public class SummaryCache : ICacheStatistics
 
     /// <summary>組鍵：用途＋條件＋可見範圍。主機 id 排序後串起，順序不同的同一集合是同一鍵。</summary>
     public static string KeyOf(string scope, string parameters, IReadOnlyCollection<long> visibleHostIds) =>
-        $"{scope}|{parameters}|{string.Join(",", visibleHostIds.OrderBy(id => id))}";
+        $"{scope}|{parameters}|{VisibleHostKeyPart.Of(visibleHostIds)}";
 
     /// <summary>取快取；未命中（不存在／逾時／版本已推進）時呼叫 factory 算一次並存起來。</summary>
     public T GetOrAdd<T>(string key, Func<T> factory) where T : class

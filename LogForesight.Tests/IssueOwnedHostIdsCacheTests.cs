@@ -246,7 +246,8 @@ public class IssueOwnedHostIdsCacheTests
         _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
 
         var first = NewRequest(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
-        ((HashSet<long>)first).Add(999);
+        // 回傳的是不可變集合：呼叫端無法竄改，嘗試修改直接被拒絕
+        Assert.Throws<NotSupportedException>(() => ((ICollection<long>)first).Add(999));
 
         var second = NewRequest(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
 

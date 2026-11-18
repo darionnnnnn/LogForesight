@@ -117,8 +117,9 @@ public class JsonBlobSingletonCacheTests : IDisposable
     [Fact]
     public void 未開啟快取的子類_每次Get都讀DB()
     {
-        var store = new ScheduleOptionsStore(Blob("schedule_options"));
-        store.Update(o => o.Enabled = true);
+        // 範例用一個仍未開快取的子類（排程選項已開啟版本快取）
+        var store = new NetiqOptionsStore(Blob("netiq_options"));
+        store.Update(o => o.BackfillDays = 3);
         _sql.Clear();
 
         store.Get();
