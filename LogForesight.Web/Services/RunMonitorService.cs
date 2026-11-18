@@ -202,9 +202,10 @@ public class RunMonitorService
             }
 
             if (isToday) summary.PendingSummary = BuildPendingSummary(runs, today);
-            if (date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) && summary.RecheckCount > 0 && scheduleOptions.Enabled &&
-                ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) is { } recheckAt)
-                summary.RecheckAt = recheckAt.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+            // 複查說明只寫在「還在進行的那一天」：過去的列留著待複查，代表當天沒排進窗口，寫時刻沒有意義（與逐主機明細同一判定）
+            if (date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) && summary.RecheckCount > 0)
+                summary.RecheckNote = RecheckTiming(scheduleOptions.Enabled,
+                    scheduleOptions.Enabled ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
             var catchUp = CatchUpRuns(runs, runsById, attempts, hosts, dataDate.Date);
             summary.CatchUpStartedAt = catchUp.Take(MaxCatchUpRuns).ToList();
             summary.CatchUpMore = Math.Max(0, catchUp.Count - MaxCatchUpRuns);
@@ -359,11 +360,16 @@ public class RunMonitorService
         return NetiqAttemptStatus.IsTruncated(history.LatestStatus) ? "已放棄自動重查，請手動補跑" : "今天的自動重查已用完，明天會再試";
     }
 
-    /// <summary>空資料待複查的說明：排程未啟用、同窗口內排得進（寫時刻）、排不進（等下一窗口）三種；時刻只由 NextEmptyRecheckAt 算。</summary>
+    /// <summary>空資料待複查何時再查：排程未啟用、同窗口內排得進（寫時刻）、排不進（等下一窗口）三種；時刻只由 NextEmptyRecheckAt 算。
+    /// 總表「空資料待複查」欄直接用它（欄名已說明是空資料），逐主機明細用 <see cref="EmptyRecheckNote"/>。</summary>
+    internal static string RecheckTiming(bool scheduleEnabled, DateTime? recheckAt) =>
+        !scheduleEnabled ? "排程未啟用，不會自動複查"
+        : recheckAt is { } at ? $"約 {at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)} 複查"
+        : "下一窗口複查";
+
+    /// <summary>逐主機明細的狀態說明：「空資料，」＋<see cref="RecheckTiming"/>。</summary>
     internal static string EmptyRecheckNote(bool scheduleEnabled, DateTime? recheckAt) =>
-        !scheduleEnabled ? "空資料，排程未啟用，不會自動複查"
-        : recheckAt is { } at ? $"空資料，約 {at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)} 複查"
-        : "空資料，下一窗口複查";
+        "空資料，" + RecheckTiming(scheduleEnabled, recheckAt);
 
     private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
         HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,

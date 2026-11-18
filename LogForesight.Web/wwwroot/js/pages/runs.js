@@ -324,6 +324,7 @@ function renderSummary(summaryPage) {
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => notRunCell(s) },
+            { title: '空資料待複查', className: 'text-end', render: s => recheckCell(s) },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
@@ -368,12 +369,18 @@ function setBarProgress(barEl, percent) {
 }
 
 function notRunCell(s) {
-    const base = s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
-    if (!(s.recheckCount > 0)) return base;
-    const recheck = `空資料待複查 ${s.recheckCount}` + (s.recheckAt ? `（約 ${s.recheckAt} 複查）` : '');
-    if (s.notRunCount === 0) return document.createTextNode(recheck);
-    const wrap = document.createElement('span');
-    wrap.append(base, `＋${recheck}`);
+    return s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
+}
+
+/** 「空資料待複查」格：台數；還在進行的那一天下方寫何時再查（後端 RecheckTiming 產生，不在這裡組字） */
+function recheckCell(s) {
+    const count = countCell(s.recheckCount, 'recheck');
+    if (!(s.recheckCount > 0) || !s.recheckNote) return count;
+    const wrap = document.createElement('div');
+    const note = document.createElement('div');
+    note.className = 'lf-text-meta text-nowrap';
+    note.textContent = s.recheckNote;
+    wrap.append(count, note);
     return wrap;
 }
 

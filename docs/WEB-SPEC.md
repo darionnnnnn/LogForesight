@@ -2019,7 +2019,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 > 圖表區 `flex:1`、兩列依 5：6 分配 → 每張卡的 `.lf-chart` 填滿卡片。
 > Chart.js 本就 `responsive + maintainAspectRatio:false`，容器多高圖就多高，圖表程式碼不寫死像素高度。
 > 實作要點：canvas 絕對定位（否則 canvas 高度回饋撐大容器形成震盪）、
-> 圖表下限用 **px 不用 rem**（rem 會隨字級偏好與瀏覽器字級設定放大，選「大」字級反而逼出捲軸）、
+> 圖表下限用 **px 不用 rem**（rem 會隨字級偏好與瀏覽器字級設定放大，選較大字級反而逼出捲軸）、
 > 兩列用 CSS grid 而不是 Bootstrap `.row`（`.row` 的負 margin 直接當 flex 子項會讓高度算錯、多出幾像素的捲軸）。
 > `.lf-content` 用 `overflow:auto` 而非 `hidden`：視窗矮到觸發下限時仍捲得到，不會被裁掉。
 > ≤ 991px 單欄、自然捲動；列印整組解除高度綁定（圖固定 230px）。這兩組解除規則寫在 `pages.css` 報表區的畫面規則之後
@@ -2103,7 +2103,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - **離開**：Esc；滑鼠移動時右上角出現「離開大螢幕」鈕（3 秒沒動作淡出、鍵盤聚焦時一直可見、`prefers-reduced-motion` 時直接顯示／隱藏）；
     由按鈕進入且已開全螢幕時，瀏覽器自己的退出全螢幕（`fullscreenchange` 且 `fullscreenElement` 為 null）也一併離開，由網址直接進入的不受影響。
     離開時移除網址的 `display` 參數、移除 `<html>` 類別、仍在全螢幕就 `exitFullscreen()`、停止自動更新並以一般模式重繪（恢復下鑽與工具列）。
-  - **字級**：`--lf-wall-scale` ＝ `innerHeight / 1080`、下限 1，視窗改變時重算；根字級 `18px × 倍率`（蓋過使用者的小／中／大字級偏好），第一排數字 `64px × 倍率`
+  - **字級**：`--lf-wall-scale` ＝ `innerHeight / 1080`、下限 1，視窗改變時重算；根字級 `18px × 倍率`（蓋過使用者的字級偏好），第一排數字 `64px × 倍率`
     （以 CSS 像素計：視窗高 1080 為 64px、2160 為 128px；作業系統縮放 200% 的 4K 螢幕 CSS 高度是 1080，數字是 64px、實體大小相同）。圖表文字由 `--lf-chart-text-size`／`--lf-chart-tooltip-size` 在大螢幕模式改指 sm／base（1080 高時座標 15.75px），隨根字級放大；倍率改變時重繪（DESIGN-SYSTEM §3a）。
   - **自動更新**：上一次載入**完成後**（成功或失敗）15 分鐘（`WALL_REFRESH_MS`，暫定）才排下一次，`setTimeout` 鏈、同時只有一個請求（`busy` ＋ `loadReport` 序號守門）；
     快捷期間每次以目前選的天數重算起訖（跨午夜自然前進一天），自訂日期固定；分頁不可見時不發請求，回到可見時若距上次完成已逾間隔就立刻載入一次、否則照原排程；
@@ -3254,8 +3254,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetail`。
     **今天處理的那一列**：今天已有取數趟時，第 1 頁多一列（資料日＝昨天，`IsToday`，執行中再帶 `InProgress`），日期旁標「今日處理」（執行中為「今日處理・執行中」），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
     **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
-    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格（數字用次要文字色，圖例色塊維持淺灰）：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」；今天的列在同一窗口排得進複查時接「（約 HH:mm 複查）」（`RecheckAt`）。主機明細說明與續跑規則同一判定：
-    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote` 寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
+    計入 `RecheckCount`、不計入 `NotRunCount`，在獨立的「空資料待複查」欄（緊接「未執行」，表頭說明寫明它不是漏跑）。「未執行」格只放未執行數（數字用次要文字色，圖例色塊維持淺灰）：今天的列寫「N（尚未處理）」、其他日期只寫 N。
+    「空資料待複查」格寫台數；「還在進行的那一天」的列在數字下方寫何時再查（`RecheckNote`，由 `RunMonitorService.RecheckTiming` 產生：「約 HH:mm 複查」／「下一窗口複查」／「排程未啟用，不會自動複查」），過去的列只寫台數。主機明細說明與續跑規則同一判定：
+    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote`（「空資料，」＋`RecheckTiming`）寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
     今天的格子且窗口內排得進「空資料，約 HH:mm 複查」（時刻只由 `ScheduleCalculator.NextEmptyRecheckAt` 算）、其餘「空資料，下一窗口複查」。「還在進行的那一天」由 `ScheduleCalculator.LiveRunDay` 判定（跨午夜窗口過了午夜仍是開跑日那一列）。空資料待複查不受自動重查上限限制，不會出現已用完文字。
     **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
     異常中斷寫「最後一趟異常中斷」，否則 `RunResume.HasWork` 時寫「最後一趟結束時尚有：」＋`Describe()`；顯示在「執行時間」格第二行之後。

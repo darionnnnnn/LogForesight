@@ -519,7 +519,7 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
-    public void 今日列_有待複查且同窗口排得進_RecheckAt是上一趟結束加60分()
+    public void 今日列_有待複查且同窗口排得進_說明寫上一趟結束加60分()
     {
         // 窗口以「現在」為準動態建立（前 30 分到後 3 小時），測試不靠固定時刻
         var now = DateTime.Now;
@@ -546,11 +546,11 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal(1, today.RecheckCount);
         var due = started.AddMinutes(2).AddMinutes(60);   // 上一趟結束＋60 分
         var expected = due < now ? now : due;
-        Assert.Equal(expected.ToString("HH:mm"), today.RecheckAt);
+        Assert.Equal($"約 {expected:HH:mm} 複查", today.RecheckNote);
     }
 
     [Fact]
-    public void 今日列_排程未啟用時沒有RecheckAt()
+    public void 今日列_排程未啟用時寫不會自動複查()
     {
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.9.22", Source = "netiq" });
         NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
@@ -560,7 +560,36 @@ public class RunMonitorServiceTests : IDisposable
             .GetDaySummaries(1, 1, 1)[^1];
 
         Assert.Equal(1, today.RecheckCount);
-        Assert.Null(today.RecheckAt);
+        Assert.Equal("排程未啟用，不會自動複查", today.RecheckNote);
+    }
+
+    /// <summary>使用者回報的情境：在窗口外手動跑、兩台回空——排不出同窗口時刻，寫「下一窗口複查」；過去的列只有台數。</summary>
+    [Fact]
+    public void 今日列_窗口外跑出待複查_寫下一窗口複查_過去的列沒有說明()
+    {
+        var now = DateTime.Now;
+        // 窗口放在「現在」之後兩小時起一小時：現在一定不在窗口內（跨午夜時跳過）
+        var start = now.AddHours(2);
+        if (start.Date != now.Date || start.AddHours(1).Date != now.Date) return;
+        Options().Update(o => { o.Enabled = true; o.Windows = new List<ScheduleWindow> { new() { Start = start.ToString("HH:mm"), End = start.AddHours(1).ToString("HH:mm") } }; });
+
+        var a = _hosts.Upsert(new WebHost { HostName = "10.0.9.31", Source = "netiq" });
+        var b = _hosts.Upsert(new WebHost { HostName = "10.0.9.32", Source = "netiq" });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { a.HostId, b.HostId }, DateTime.Today.AddDays(-1), 1, NetiqAttemptStatus.EmptyOnce);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { a.HostId }, DateTime.Today.AddDays(-2), 1, NetiqAttemptStatus.EmptyOnce);
+        AddTodayRun(1);
+
+        var rows = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, backend: _attemptBackend)
+            .GetDaySummaries(2, 1, 2);
+        var today = rows[^1];
+        var past = rows[^2];
+
+        Assert.True(today.IsToday);
+        Assert.Equal(2, today.RecheckCount);
+        Assert.Equal(0, today.NotRunCount);
+        Assert.Equal("下一窗口複查", today.RecheckNote);
+        Assert.Equal(1, past.RecheckCount);
+        Assert.Null(past.RecheckNote);
     }
 
     [Theory]
@@ -572,6 +601,8 @@ public class RunMonitorServiceTests : IDisposable
     {
         DateTime? recheckAt = at == null ? null : DateTime.Today.Add(TimeSpan.Parse(at));
         Assert.Equal(expected, RunMonitorService.EmptyRecheckNote(enabled, recheckAt));
+        // 總表欄位用的是同一句話去掉「空資料，」：兩處文字只有一個產生點
+        Assert.Equal(expected["空資料，".Length..], RunMonitorService.RecheckTiming(enabled, recheckAt));
     }
 
     private long AddTodayRun(int minuteOffset, int? netiqDaysFailed = null, bool interrupted = false)
