@@ -576,9 +576,16 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// （受限時是展開別名後的集合，不受限時是全部主機）。有被合併的主機時，同一台實體機器合併前後的兩個
     /// host_id 必須先解析成存活主機再取最近一次，那一步只能在記憶體做。
     /// </summary>
-    private static bool CanReduceOccurrencesOnServer(AliasIndexSnapshot snapshot, IReadOnlyCollection<long>? hostIds, bool sourceKeyReady)
+    private static bool CanReduceOccurrencesOnServer(AliasIndexSnapshot snapshot, IReadOnlyCollection<long>? hostIds, bool sourceKeyReady) =>
+        sourceKeyReady && NoMergedHostsInScope(snapshot, hostIds);
+
+    /// <summary>
+    /// 本次查詢範圍內沒有任何一台被合併的主機（受限時是展開別名後的集合，不受限時是全部主機）——**判斷只寫這一處**，
+    /// <see cref="LatestOccurrences"/> 與依日期視角（<see cref="AggregateByDate"/>）共用：成立時 host_id 本身就是存活主機，
+    /// 「依（存活主機, 日期）去重」與「host_id 解析成存活主機」都不會改變結果，可以直接在查詢端分組。
+    /// </summary>
+    private static bool NoMergedHostsInScope(AliasIndexSnapshot snapshot, IReadOnlyCollection<long>? hostIds)
     {
-        if (!sourceKeyReady) return false;
         if (hostIds == null) return !snapshot.AnyMerged;
         foreach (var id in ExpandToAliasIds(snapshot.Index, hostIds))
             if ((snapshot.Index.Surviving(id)?.HostId ?? id) != id) return false;
@@ -1273,10 +1280,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
         if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
 
-        var stats = qRecords.Select(r => new { r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable }).ToList();
-        var highRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.High);
-        var mediumRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.Medium);
-        var coverageGapDays = stats.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
+        var counts = CountRiskDays(qRecords);
+        var highRiskDays = counts.High;
+        var mediumRiskDays = counts.Medium;
+        var coverageGapDays = counts.CoverageGap;
 
         var affectedHosts = qRecords.Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
             .Select(r => r.HostId)
@@ -1310,11 +1317,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>
     /// 本期＋前期 KPI 的合併查詢（回饋二十七輪作業 F3，覆寫介面的預設實作）。
     ///
-    /// 逐期呼叫 <see cref="AggregateReportKpi"/> 是每期 3 個查詢（stats 載入、受影響主機
-    /// DISTINCT、TotalIssues Count），兩期共 6 次往返＋兩次 context/索引 setup。這裡收斂成：
-    /// 一次載入兩期的 stats 列（含 HostId，受影響主機數直接在記憶體算，省掉 DISTINCT 查詢）
-    /// ＋每期一次 TotalIssues Count＝3 次往返。兩期以 OR 條件合併載入而不是拉整段連續區間——
-    /// 對比去年同期時兩期相隔一年，拉連續區間會多載一整年的無關列。
+    /// 兩期共用同一個 context 與別名索引（一次請求只建一份），每期的風險日計數在查詢端用 COUNT 加條件取得
+    /// （單列結果，不把主機日整批讀回），再加受影響主機的相異 host_id 與問題數兩個查詢。
     ///
     /// 契約＝與逐期呼叫逐欄位相同（riskLevels／visibleSeverities／主機合併去重語意一致），
     /// 由等值測試釘住。
@@ -1343,30 +1347,22 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         using var ctx = _contextFactory();
 
-        var qBoth = ctx.DailyRecords.AsNoTracking()
-            .Where(r => (r.RecordDate >= f1 && r.RecordDate <= t1) || (r.RecordDate >= f2 && r.RecordDate <= t2));
-        if (expanded != null) qBoth = qBoth.Where(r => expanded.Contains(r.HostId));
-        if (riskLevels != null) qBoth = qBoth.Where(r => riskLevels.Contains(r.RiskLevel));
-
-        var stats = qBoth
-            .Select(r => new { r.RecordDate, r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable, r.HostId })
-            .ToList();
-
         ReportKpiAggregate BuildPeriod(DateTime pf, DateTime pt, IssueExclusion periodExclusion)
         {
-            var rows = stats.Where(s => s.RecordDate >= pf && s.RecordDate <= pt).ToList();
-            var highRiskDays = rows.Count(r => r.RiskLevel == RiskLevels.High);
-            var mediumRiskDays = rows.Count(r => r.RiskLevel == RiskLevels.Medium);
-            var coverageGapDays = rows.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
-            var affectedHosts = rows
-                .Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
-                .Select(r => Surviving(aliasIndex, r.HostId))
-                .Distinct()
-                .Count();
-
             var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= pf && r.RecordDate <= pt);
             if (expanded != null) qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
             if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+            // 風險日計數在查詢端（每期一個單列結果）；受影響主機數與單期版同一做法：
+            // 查詢端取相異 host_id 後在記憶體解析合併主機——不再把兩期的每個主機日整批讀回
+            var counts = CountRiskDays(qRecords);
+            var affectedHosts = qRecords.Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
+                .Select(r => r.HostId)
+                .Distinct()
+                .ToList()
+                .Select(h => Surviving(aliasIndex, h))
+                .Distinct()
+                .Count();
 
             var qIssues = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), periodExclusion, sourceKeyReady).Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
             if (expanded != null) qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
@@ -1377,7 +1373,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             }
             if (visibleRanks != null) qIssues = qIssues.Where(x => visibleRanks.Contains(x.SeverityRank));
 
-            return new ReportKpiAggregate(qIssues.Count(), highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
+            return new ReportKpiAggregate(qIssues.Count(), counts.High, counts.Medium, affectedHosts, counts.CoverageGap);
         }
 
         var current = BuildPeriod(f1, t1, currentExclusion);
@@ -1823,7 +1819,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = from.Date;
         var t = to.Date;
         exclusion = exclusion.ForRange(f, t);
-        var aliasIndex = AliasIndex();
+        var snapshot = AliasSnapshot();
+        var aliasIndex = snapshot.Index;
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
         var sourceKeyReady = _sourceKeyReady();
 
@@ -1846,6 +1843,40 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 同 RecordRepository.ApplySeverityVisibility 只砍 TopIssues、不排除整筆紀錄／不動
         // RiskLevel 的既有原則，高/中/低風險日分桶因此不受這個設定影響
         if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        // 範圍內沒有被合併的主機、而且同一識別同一天沒有兩列：每個主機日只有一列，
+        // 「依（存活主機, 日期）去重取較高風險」不會改變任何結果，每日計數與風險類型清單直接在查詢端分組，
+        // 讀回的列數是天數（與類別數），不隨主機數成長；否則走原本的路徑（要在記憶體把合併前後的識別併起來）
+        if (NoMergedHostsInScope(snapshot, hostIds) && !HasDuplicateHostDay(recordsQuery))
+        {
+            // 風險類型清單的母體要跟著日風險篩選收斂：允許的紀錄＝已套用全部篩選的日紀錄（子查詢，不物化成集合）
+            if (riskLevels != null)
+            {
+                var allowedRecordIds = recordsQuery.Select(r => r.RecordId);
+                issuesQuery = issuesQuery.Where(x => allowedRecordIds.Contains(x.RecordId));
+            }
+
+            var dayCategories = CategoriesByDate(issuesQuery);
+            var serverResult = BuildDayRiskCountsQuery(recordsQuery)
+                .ToList()
+                .OrderBy(x => x.Date)
+                .Select(x => new DateRiskAggregate
+                {
+                    Date = x.Date,
+                    HighRiskHosts = x.High,
+                    MediumRiskHosts = x.Medium,
+                    LowRiskHosts = x.Low,
+                    CorrelationHosts = x.Correlation,
+                    HostCount = x.Total,
+                    Categories = dayCategories.TryGetValue(x.Date, out var serverCats) ? serverCats : Array.Empty<string>()
+                })
+                .ToList();
+
+            Log.Debug("[SQL] IssueAggregate.AggregateByDate（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，查詢端）→ {Count} 天、{Ms}ms",
+                f, t, serverResult.Count, sw.ElapsedMilliseconds);
+            _performance?.Record("issues:AggregateByDate", sw.ElapsedMilliseconds);
+            return serverResult;
+        }
 
         // 輕量列（不含 ContentJson／Headline），量級＝期間天數 × 可見主機數，不是整份 blob
         var rows = recordsQuery
@@ -2053,19 +2084,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     /// <summary>依日期分組的風險類型清單，依「最高嚴重度、問題數」排序
-    /// （<see cref="CategoryAggregator"/> 同一套規則的 SQL 端等價物）</summary>
+    /// （<see cref="CategoryAggregator"/> 同一套規則的 SQL 端等價物）。
+    /// 在查詢端依（日期, 類別）分組取最高嚴重度與問題數，讀回的列數是（日期 × 類別數），不是問題列數；
+    /// 最高嚴重度先取原始等級的最大值再正規化，與逐列正規化後取最大值相同（正規化對等級單調）。</summary>
     private static Dictionary<DateTime, IReadOnlyList<string>> CategoriesByDate(IQueryable<TopIssueRow> issuesQuery)
     {
-        return issuesQuery
-            .Select(x => new { x.RecordDate, x.Category, x.SeverityRank })
+        return BuildCategoryDayQuery(issuesQuery)
             .ToList()
-            .GroupBy(x => new { x.RecordDate, x.Category })
             .Select(g => new
             {
-                g.Key.RecordDate,
-                g.Key.Category,
-                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.SeverityRank)),
-                IssueCount = g.Count()
+                g.RecordDate,
+                g.Category,
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.MaxRank),
+                IssueCount = g.Count
             })
             .GroupBy(x => x.RecordDate)
             .ToDictionary(
@@ -2075,6 +2106,47 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     .ThenByDescending(x => x.IssueCount)
                     .Select(x => x.Category)
                     .ToList());
+    }
+
+    internal sealed record CategoryDayRow(DateTime RecordDate, string Category, int MaxRank, int Count);
+
+    /// <summary>（日期, 類別）分組：最高嚴重度原始等級與問題數（兩個 provider 都翻得出來的單層 GROUP BY）。</summary>
+    internal static IQueryable<CategoryDayRow> BuildCategoryDayQuery(IQueryable<TopIssueRow> issuesQuery) =>
+        issuesQuery
+            .GroupBy(x => new { x.RecordDate, x.Category })
+            .Select(g => new CategoryDayRow(g.Key.RecordDate, g.Key.Category, g.Max(x => x.SeverityRank), g.Count()));
+
+    internal sealed record DayRiskCountRow(DateTime Date, int High, int Medium, int Low, int Correlation, int Total);
+
+    /// <summary>每日各風險等級計數、關聯旗標與主機日數（查詢端 COUNT 加條件）。</summary>
+    internal static IQueryable<DayRiskCountRow> BuildDayRiskCountsQuery(IQueryable<DailyRecordRow> recordsQuery) =>
+        recordsQuery
+            .GroupBy(r => r.RecordDate)
+            .Select(g => new DayRiskCountRow(
+                g.Key,
+                g.Count(r => r.RiskLevel == RiskLevels.High),
+                g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                g.Count(r => r.RiskLevel == RiskLevels.Low),
+                g.Count(r => r.HasCorrelation),
+                g.Count()));
+
+    /// <summary>同一識別（host_id）同一天有沒有兩列以上——有的話「依（存活主機, 日期）去重」會改變計數，不能在查詢端分組。</summary>
+    internal static bool HasDuplicateHostDay(IQueryable<DailyRecordRow> recordsQuery) =>
+        recordsQuery.GroupBy(r => new { r.HostId, r.RecordDate }).Any(g => g.Count() > 1);
+
+    /// <summary>風險日計數：高／中風險日數與資料涵蓋缺口日數（查詢端 COUNT 加條件）；沒有任何列時全為 0。</summary>
+    internal sealed record RiskDayCounts(int High, int Medium, int CoverageGap);
+
+    internal static RiskDayCounts CountRiskDays(IQueryable<DailyRecordRow> records)
+    {
+        var row = records
+            .GroupBy(_ => 1)
+            .Select(g => new RiskDayCounts(
+                g.Count(r => r.RiskLevel == RiskLevels.High),
+                g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                g.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false)))
+            .FirstOrDefault();
+        return row ?? new RiskDayCounts(0, 0, 0);
     }
 
     /// <summary>wanted 集合的比對鍵：就緒時與存檔鍵同為「截 255 再大寫」，未就緒沿用 source_name 大寫。</summary>

@@ -1444,6 +1444,78 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    public List<DailyAnalysisRecord> QueryDayStatusLightweight(RecordQueryFilter filter)
+    {
+        // 問題層級條件要靠問題列在記憶體覆核，無法省掉問題子表：沿用完整的輕量查詢
+        if (filter.Categories is { Count: > 0 } || filter.MinSeverity.HasValue || filter.EventId.HasValue ||
+            !string.IsNullOrWhiteSpace(filter.Source))
+            return QueryLightweight(filter);
+
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var rows = q
+            .Select(r => new
+            {
+                r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.AiAnalyzed, r.AiPending,
+                r.AiDegradedAttempts, r.DetailPruned, r.LogSource
+            })
+            .ToList();
+
+        var records = rows.Select(r => new DailyAnalysisRecord
+        {
+            HostId = r.HostId,
+            Host = r.HostName,
+            Date = r.RecordDate,
+            RiskLevel = r.RiskLevel,
+            AiAnalyzed = r.AiAnalyzed,
+            AiPending = r.AiPending,
+            AiDegradedAttempts = r.AiDegradedAttempts,
+            DetailPruned = r.DetailPruned,
+            LogSource = (AnalysisLogSource)r.LogSource
+        });
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        // 與 QueryLightweight 同一套覆核與排序
+        var result = records
+            .Where(r => RecordFilterMatcher.Matches(r, filter))
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Debug("[SQL] QueryDayStatusLightweight（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ DB {Rows} 列、篩後 {Result} 筆、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryDayStatusLightweight", sw.ElapsedMilliseconds);
+        return result;
+    }
+
+    public int? CountLightweightAtLeast(RecordQueryFilter filter)
+    {
+        // 問題層級條件在 QueryLightweight 還會於記憶體端以 lightweight 問題列覆核，無法保證與 SQL 的 EXISTS 逐位相同
+        if (filter.Categories is { Count: > 0 } || filter.MinSeverity.HasValue || filter.EventId.HasValue ||
+            !string.IsNullOrWhiteSpace(filter.Source))
+            return null;
+
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        if (filter.Hosts != null)
+        {
+            // 與 HostMatcher 一致：有 host_id 的列只認 host_id；host_id=0 的舊列要在記憶體以名稱比對，這裡不計入（下界）
+            var ids = filter.Hosts.Select(k => k.HostId).Where(id => id != 0).ToList();
+            q = q.Where(r => r.HostId != 0 && ids.Contains(r.HostId));
+        }
+        var count = q.Count();
+        Log.Debug("[SQL] CountLightweightAtLeast（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ {Count} 列、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:CountLightweightAtLeast", sw.ElapsedMilliseconds);
+        return count;
+    }
+
     public List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take)
     {
         if (take is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(take));

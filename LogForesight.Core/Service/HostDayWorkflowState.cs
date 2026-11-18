@@ -121,6 +121,63 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
         return JsonSerializer.Deserialize<HostDayWorkflowState>(raw, LfJsonOptions.Pretty);
     }
 
+    /// <summary>批次讀取每段的鍵數上限：一段一次查詢，3000 台約 6 次往返，而不是 3000 次。</summary>
+    internal const int GetManyChunkSize = 500;
+
+    /// <summary>
+    /// 一次讀多個主機日的工作流（分段，每段至多 <see cref="GetManyChunkSize"/> 個鍵）；沒有紀錄（或內容為空白）的鍵不在結果裡，
+    /// 與 <see cref="Get"/> 回 null 相同。反序列化與單筆 <see cref="Get"/> 一致；超過 <see cref="MaxMetadataChars"/>、
+    /// 含 NUL 或其他單筆讀取會特別處理的列，改走單筆 <see cref="Get"/>——大小檢查與擲出的例外因此與單筆讀取完全相同。
+    /// 批次查詢本身失敗（型別不符等非預期的儲存形狀）時，該段逐筆退回單筆讀取，不改變結果，只是慢。
+    /// </summary>
+    public Dictionary<(long HostId, DateTime Date), HostDayWorkflowState> GetMany(
+        IEnumerable<(long HostId, DateTime Date)> keys)
+    {
+        var result = new Dictionary<(long HostId, DateTime Date), HostDayWorkflowState>();
+        var distinct = keys.Select(k => (k.HostId, Date: k.Date.Date)).Distinct().ToList();
+        foreach (var chunk in distinct.Chunk(GetManyChunkSize))
+        {
+            var byBlobKey = chunk.ToDictionary(k => "workflow_" + Key(k.HostId, k.Date));
+            var wanted = byBlobKey.Keys.ToList();
+            List<(string BlobKey, string? Text)> rows;
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                using var ctx = backend.CreateContext();
+                // 超過上限的內容在資料庫端就以 NULL 取代，不把大型內容傳回來
+                rows = ctx.Blobs.AsNoTracking()
+                    .Where(row => wanted.Contains(row.BlobKey))
+                    .Select(row => new { row.BlobKey, Text = row.Content.Length <= MaxMetadataChars ? row.Content : null })
+                    .AsEnumerable()
+                    .Select(row => (row.BlobKey, row.Text))
+                    .ToList();
+                backend.Performance.Record("blob:workflow_*:GetMany", sw.ElapsedMilliseconds);
+            }
+            catch (Exception ex) when (ex is InvalidCastException or System.Data.Common.DbException or InvalidOperationException)
+            {
+                foreach (var key in chunk)
+                    if (Get(key.HostId, key.Date) is { } state) result[key] = state;
+                continue;
+            }
+
+            foreach (var (blobKey, text) in rows)
+            {
+                var key = byBlobKey[blobKey];
+                // 超限、含 NUL（SQLite 的 length 會在 NUL 截斷）、UTF-8 位元組數超限：交給單筆讀取，行為與例外都相同
+                if (text == null || text.Length > MaxMetadataChars || text.Contains('\0') ||
+                    Encoding.UTF8.GetByteCount(text) > MaxMetadataChars)
+                {
+                    if (Get(key.HostId, key.Date) is { } single) result[key] = single;
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                var state = JsonSerializer.Deserialize<HostDayWorkflowState>(text, LfJsonOptions.Pretty);
+                if (state != null) result[key] = state;
+            }
+        }
+        return result;
+    }
+
     public HostDayWorkflowKeyPage GetExistingHostDaysPage(string? afterKey, int limit)
     {
         if (limit is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(limit));
@@ -929,6 +986,10 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     }
 
     public HostDayWorkflowState? Get(long hostId, DateTime date) => store.Get(hostId, date);
+
+    /// <summary>一次讀多個主機日的工作流（見 <see cref="HostDayWorkflowStore.GetMany"/>）。</summary>
+    public Dictionary<(long HostId, DateTime Date), HostDayWorkflowState> GetMany(IEnumerable<(long HostId, DateTime Date)> keys) =>
+        store.GetMany(keys);
 
     public bool IsRecoveryWaiting(long hostId, DateTime date, long recordId)
     {

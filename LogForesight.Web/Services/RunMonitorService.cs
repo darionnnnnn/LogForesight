@@ -324,7 +324,14 @@ public class RunMonitorService
         var recheckNote = EmptyRecheckNote(scheduleOptions.Enabled,
             date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
 
-        return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runsIndex, host.HostName, dateStr))).Select(host =>
+        var shown = hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runsIndex, host.HostName, dateStr))).ToList();
+        // 以整體工作流排序時要每台主機的工作流：分段批次讀取（3000 台約 6 次往返），不是逐台各一次；
+        // 其他排序不需要全部主機的工作流，維持只讀當頁（見 GetDayDetailPage）
+        var workflows = withWorkflow && _workflow != null
+            ? _workflow.GetMany(shown.Where(host => host.HostId > 0).Select(host => (host.HostId, recordDate)))
+            : null;
+
+        return shown.Select(host =>
         {
             var dayRuns = RunsForHostOnDate(runsIndex, host.HostName, dateStr);
             var cell = host.Source == "netiq"
@@ -345,7 +352,8 @@ public class RunMonitorService
                 Legacy = cell.Legacy,
                 StatusNote = NetiqStatusNote(host, recordDate, histories, recheckNote)
             };
-            if (withWorkflow && host.HostId > 0) ApplyWorkflow(dto, _workflow?.Get(host.HostId, recordDate));
+            if (workflows != null && host.HostId > 0)
+                ApplyWorkflow(dto, workflows.TryGetValue((host.HostId, recordDate.Date), out var workflow) ? workflow : null);
             return (host, dto);
         }).ToList();
     }

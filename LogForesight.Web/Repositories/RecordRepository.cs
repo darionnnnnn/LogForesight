@@ -39,6 +39,14 @@ public interface IRecordRepository
     List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter);
 
     /// <summary>
+    /// <see cref="QueryLightweight"/> 以相同篩選（同一套可見範圍與日風險等級顯示設定）會回傳的筆數下界；
+    /// 只做一次計數、不載入紀錄內容，供候選上限檢查在整批載入前先擋下。
+    /// 保證 <c>下界 ≤ QueryLightweight(filter).Count</c>；null＝無法預先判斷（呼叫端退回載入後再檢查）。
+    /// 不修改傳入的 <paramref name="filter"/>。預設實作回傳 null。
+    /// </summary>
+    int? CountLightweightAtLeast(RecordQueryFilter filter) => null;
+
+    /// <summary>
     /// 分頁查詢（已套用目前登入者的可見範圍）——docs/archive/HISTORY.md P1-2。
     /// 可下推的條件盡量在 SQL 端完成排序與分頁，見 <see cref="IAnalysisRecordQuery.QueryPage"/>。
     /// </summary>
@@ -85,6 +93,19 @@ public class RecordRepository : IRecordRepository
         ApplyVisibility(filter);
         if (!TryApplyDayRiskVisibility(filter)) return new List<DailyAnalysisRecord>();
         return ApplySeverityVisibility(_records.QueryLightweight(filter));
+    }
+
+    public int? CountLightweightAtLeast(RecordQueryFilter filter)
+    {
+        // 與 QueryLightweight 同一個咽喉（可見範圍＋日風險等級顯示設定），作用在副本上，不動呼叫端的 filter
+        var probe = new RecordQueryFilter
+        {
+            Hosts = filter.Hosts, From = filter.From, To = filter.To, RiskLevels = filter.RiskLevels,
+            Categories = filter.Categories, MinSeverity = filter.MinSeverity, EventId = filter.EventId, Source = filter.Source
+        };
+        ApplyVisibility(probe);
+        if (!TryApplyDayRiskVisibility(probe)) return 0;
+        return _records.CountLightweightAtLeast(probe);
     }
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
