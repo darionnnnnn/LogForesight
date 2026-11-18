@@ -1055,9 +1055,15 @@ public static class HostDayWorkflowFingerprint
 {
     public static string ForParentRecord(LogForesight.Core.Models.DailyAnalysisRecord record)
     {
+        // 以「實際寫進資料庫的樣子」計算：分析當下拿記憶體裡的完整紀錄算一次，AI 排程與工作流復原拿讀回的紀錄再算一次；
+        // 低風險日寫入時會精簡（RecordStorageShaper），不先套同一份精簡規則的話兩次指紋必然不同，
+        // 已完成的 PRTG 腿會被當成「父紀錄變了」重設回等待、整體停在「PRTG 待補」。精簡規則冪等，對讀回的紀錄再套一次不變。
+        // 精簡投影不帶 RecordId（由資料列決定），身分要從原物件取
+        var recordId = record.RecordId;
+        record = LogForesight.Core.Persistence.RecordStorageShaper.ForStorage(record);
         var input = JsonSerializer.Serialize(new
         {
-            record.RecordId,
+            RecordId = recordId,
             record.HostId,
             record.Host,
             Date = record.Date.Date,
