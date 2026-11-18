@@ -2642,6 +2642,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      去重（`SummarySentKeys` 的語意是「尚未摘要過的達門檻主機日」）。
      每日／週報窗口的 `To = 昨天`，語意對齊「今天以前發生了什麼」。
 
+     **去重鍵只看信件內容**：鍵裡的內容指紋（`HostDayWorkflowFingerprint.ForMailContent`）不含「AI 已分析」「AI 待補」「詳情已清除」三個狀態旗標——AI 寫回只翻轉這些旗標，信件內容沒變，不重寄也不留下待送項目；風險等級、問題清單、告警仍納入，AI 上調風險等級視為內容變更、重新通知。升級前存下的鍵由 `LegacyKeySent` 以三旗標八種組合辨認（升級滿 14 天回望期後可移除）。
+
+     **待送項目的出口**：即時通知 `UrgentOutbox` 的終態為 `smtp-accepted`、`cancelled-formal-revoked`、`no-qualified-recipient`、`superseded`（判定單一出口 `MailNotifyStateStore.IsTerminalUrgentStatus`）。每趟正常算出本趟候選後，非終態且鍵不在候選裡的項目（紀錄編號改變、滑出回望期、紀錄已刪除）標為 `superseded`（已被取代）；即時通知或郵件總開關停用時，全部非終態項目標為 `superseded`；讀取紀錄失敗、例外或取消的那一趟不清理。同一把鍵之後又被算出時照常回到 `pending`。`superseded` 項目不論收件人狀態都算完全終態，超過保留期隨 `PruneTerminalUrgentIntents` 移除。
+
+     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）在有非終態項目時才重跑整套通知；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
+
      **收件人可見範圍過濾**：三路信件都改成雙層內容——
      全站統計行（數字，不含主機名，所有收件人都看得到）＋收件人自己可見範圍內的內容（僅解析
      得到帳號、且該帳號可見範圍涵蓋的主機；`IVisibilityService.GetVisibleHostIdsFor` 同一套

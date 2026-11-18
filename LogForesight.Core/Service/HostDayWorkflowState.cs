@@ -1117,6 +1117,21 @@ public static class HostDayWorkflowFingerprint
     public static string ForRecord(LogForesight.Core.Models.DailyAnalysisRecord record) =>
         ForRecordWithIdentity(record, record.RecordId);
 
+    /// <summary>
+    /// 郵件去重用的內容指紋：與 <see cref="ForRecord"/> 同一份欄位，但 AI 已分析、AI 待補、詳情已清除
+    /// 三個與信件內容無關的狀態旗標固定為 false（AI 寫回只翻轉這些旗標，不得讓已寄的鍵失效）。
+    /// 風險等級、問題清單、告警等仍納入。
+    /// </summary>
+    public static string ForMailContent(LogForesight.Core.Models.DailyAnalysisRecord record) =>
+        ForRecordWithIdentity(record, record.RecordId, aiAnalyzed: false, aiPending: false, detailPruned: false);
+
+    /// <summary>
+    /// 舊算法的郵件內容指紋（三個旗標用指定值），只供升級辨認舊鍵。升級滿 14 天回望期後可移除。
+    /// </summary>
+    public static string ForRecordWithFlags(LogForesight.Core.Models.DailyAnalysisRecord record,
+        bool aiAnalyzed, bool aiPending, bool detailPruned) =>
+        ForRecordWithIdentity(record, record.RecordId, aiAnalyzed, aiPending, detailPruned);
+
     /// <summary>Full report renderer input with SQL identity normalized for pre-Append drafts; includes the four narrative fields rendered verbatim.</summary>
     public static string ForReportInput(LogForesight.Core.Models.DailyAnalysisRecord record) =>
         HashParts([ForRecordWithIdentity(record, 0), JsonSerializer.Serialize(new[]
@@ -1124,7 +1139,8 @@ public static class HostDayWorkflowFingerprint
             record.Headline, record.Summary, record.TrendAssessment, record.Action, record.Brief
         })]);
 
-    private static string ForRecordWithIdentity(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId)
+    private static string ForRecordWithIdentity(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId,
+        bool? aiAnalyzed = null, bool? aiPending = null, bool? detailPruned = null)
     {
         var input = JsonSerializer.Serialize(new
         {
@@ -1154,9 +1170,9 @@ public static class HostDayWorkflowFingerprint
             record.UncoveredChecks,
             record.ScreenedTailCount,
             record.ScreeningNotes,
-            record.AiAnalyzed,
-            record.AiPending,
-            record.DetailPruned
+            AiAnalyzed = aiAnalyzed ?? record.AiAnalyzed,
+            AiPending = aiPending ?? record.AiPending,
+            DetailPruned = detailPruned ?? record.DetailPruned
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
     }

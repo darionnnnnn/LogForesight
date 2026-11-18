@@ -3791,7 +3791,8 @@ if (operationsStatus) {
         retry: '寫入或派工待重試', invalid: '證據無效', 'smtp-accepted': 'SMTP 已接受',
         'no-qualified-recipient': '無合格收件人', 'sending-result-unknown': '寄送結果未知',
         'failed-or-unknown': '未收到 SMTP 確認，可能已送達；重試可能重複',
-        'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出' };
+        'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出',
+        superseded: '已被取代，不再寄送', 'cancelled-formal-revoked': '已取消' };
     async function showOperations() {
         const button = document.getElementById('prtg-operations-refresh');
         button.disabled = true;

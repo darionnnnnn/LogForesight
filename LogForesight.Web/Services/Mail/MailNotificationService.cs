@@ -71,6 +71,16 @@ public class MailNotificationService
     /// <summary>NotifyAfterRunAsync 的序列化 gate（本類別是 Singleton，見其內的說明）</summary>
     private readonly SemaphoreSlim _notifyGate = new(1, 1);
 
+    /// <summary>重試退避上限：沒有進度時間隔 1→2→4→8→16→30 分鐘封頂（暫定值）。</summary>
+    private static readonly TimeSpan RetryBackoffMax = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan RetryBackoffMin = TimeSpan.FromMinutes(1);
+
+    /// <summary>重試退避狀態，只放記憶體（本類別是 singleton）：下次允許時間、目前間隔、記下的設定版次。</summary>
+    private readonly object _retryLock = new();
+    private DateTime _retryNextUtc = DateTime.MinValue;
+    private TimeSpan _retryInterval = RetryBackoffMin;
+    private string? _retryRevision;
+
     private readonly ISystemSettingsStore _settingsStore;
     private readonly ISmtpMailSender _sender;
     private readonly IHostStore _hosts;
@@ -175,6 +185,18 @@ public class MailNotificationService
     /// </summary>
     public async Task NotifyAfterRunAsync(CancellationToken ct = default)
     {
+        // 取數結束觸發的入口不受退避影響；成功跑完一次就讓重試退避回到 1 分鐘。
+        if (await NotifyAfterRunCoreAsync(ct))
+            lock (_retryLock)
+            {
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = _clock.UtcNow();
+            }
+    }
+
+    /// <summary>通知主流程；回傳是否正常跑完（例外或取消回 false）。</summary>
+    private async Task<bool> NotifyAfterRunCoreAsync(CancellationToken ct)
+    {
         try
         {
             // 序列化 gate（回饋十六輪體檢）：通知移出執行鎖（批次A-4）後，前一輪的寄信還在
@@ -265,10 +287,14 @@ public class MailNotificationService
                             requiredLanes.Count > 0 ? "recipient-plan-evaluated" : currentSettings.MailEnabled ? "below-threshold-or-not-required" : "disabled");
                     }
                 }
+                // 即時通知停用：待送項目不會再被寄出，標為「已被取代」讓重試不再空轉；
+                // 重新啟用後回望期內仍未寄的主機日會照常重新建立並寄出。
+                if (!settings.MailEnabled || !settings.MailUrgentEnabled)
+                    SupersedeUrgentOutbox(null);
                 if (!settings.MailEnabled || !settings.MailOnRunCompleted && !settings.MailUrgentEnabled)
                 {
                     ClosePlans();
-                    return;
+                    return true;
                 }
                 // RiskLevels 下推（回饋十八輪批次A）：兩路門檻不同——摘要用 MailMinRiskLevel（可能低到
                 // 中），緊急只要 High。取聯集下推、記憶體判定不變（見 SendRunSummaryAsync／
@@ -295,7 +321,7 @@ public class MailNotificationService
                 }
                 ct.ThrowIfCancellationRequested();
                 ClosePlans();
-
+                return true;
             }
             finally
             {
@@ -305,7 +331,29 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 執行結束後的通知處理失敗（不影響分析結果本身）");
+            return false;
         }
+    }
+
+    /// <summary>
+    /// 把非終態、且鍵不在 <paramref name="liveKeys"/> 的即時通知待送項目標為 <c>superseded</c>（已被取代）。
+    /// <paramref name="liveKeys"/> 為 null 代表全部非終態項目（即時通知停用）。沒有要改的就不寫。
+    /// </summary>
+    private void SupersedeUrgentOutbox(IReadOnlySet<string>? liveKeys)
+    {
+        var state = _state.Get();
+        if (!state.UrgentOutbox.Any(p => !MailNotifyStateStore.IsTerminalUrgentStatus(p.Value.Status) &&
+                (liveKeys == null || !liveKeys.Contains(p.Key)))) return;
+        _state.Update(s =>
+        {
+            foreach (var pair in s.UrgentOutbox)
+            {
+                if (MailNotifyStateStore.IsTerminalUrgentStatus(pair.Value.Status)) continue;
+                if (liveKeys != null && liveKeys.Contains(pair.Key)) continue;
+                pair.Value.Status = "superseded";
+                pair.Value.UpdatedAtUtc = _clock.UtcNow();
+            }
+        });
     }
 
     /// <summary>
@@ -317,9 +365,49 @@ public class MailNotificationService
     public async Task RetryPendingUrgentAsync(CancellationToken ct = default)
     {
         if (!_state.Get().UrgentOutbox.Values.Any(i =>
-                i.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
+                !MailNotifyStateStore.IsTerminalUrgentStatus(i.Status) ||
                 IsRetryableLegacyNoQualifiedIntent(i))) return;
-        await NotifyAfterRunAsync(ct);
+
+        // 退避：沒有進度的整套重跑間隔加倍，設定版次改變即回到 1 分鐘。
+        var now = _clock.UtcNow();
+        var revision = _settingsStore.Get().Revision;
+        lock (_retryLock)
+        {
+            if (!string.Equals(_retryRevision, revision, StringComparison.Ordinal))
+            {
+                _retryRevision = revision;
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = now;
+            }
+            if (now < _retryNextUtc) return;
+        }
+
+        var (terminalBefore, acceptedBefore) = CountUrgentProgress();
+        await NotifyAfterRunCoreAsync(ct);
+        var (terminalAfter, acceptedAfter) = CountUrgentProgress();
+        var progressed = terminalAfter > terminalBefore || acceptedAfter > acceptedBefore;
+        var after = _clock.UtcNow();
+        lock (_retryLock)
+        {
+            if (progressed)
+            {
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = after + RetryBackoffMin;
+            }
+            else
+            {
+                _retryNextUtc = after + _retryInterval;
+                _retryInterval = TimeSpan.FromTicks(Math.Min(_retryInterval.Ticks * 2, RetryBackoffMax.Ticks));
+            }
+        }
+    }
+
+    /// <summary>退避用的進度量測：終態項目數與已被 SMTP 接受的收件人狀態數。</summary>
+    private (int Terminal, int Accepted) CountUrgentProgress()
+    {
+        var outbox = _state.Get().UrgentOutbox.Values.ToList();
+        return (outbox.Count(i => MailNotifyStateStore.IsTerminalUrgentStatus(i.Status)),
+            outbox.Sum(i => i.Recipients.Values.Count(v => v == "smtp-accepted")));
     }
 
     /// <summary>
@@ -1060,6 +1148,7 @@ public class MailNotificationService
         {
             var key = WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint);
             return !state.SummarySentKeys.Contains(key) &&
+                !LegacyKeySent("summary", record, mailVersions, candidateViews, mailContextFingerprint, state.SummarySentKeys) &&
                 (mailVersions == null || !mailVersions.TryGetValue(RecordKey(record), out var version) || version.ParentRecordId != record.RecordId
                     ? !state.SummarySentKeys.Contains(RecordKey(record))
                     : true);
@@ -1178,7 +1267,7 @@ public class MailNotificationService
         {
             var cutoff = _clock.UtcNow().AddDays(-Math.Max(14, settings.RetentionDays));
             foreach (var key in s.UrgentOutbox.Where(p => p.Value.RecordDate < cutoff.Date &&
-                         (p.Value.Status is "smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
+                         MailNotifyStateStore.IsTerminalUrgentStatus(p.Value.Status))
                      .Select(p => p.Key).ToArray())
                 s.UrgentOutbox.Remove(key);
         });
@@ -1186,7 +1275,11 @@ public class MailNotificationService
         var (_, candidateViews) = ResolvePerRecipient(settings, candidates, ctx);
         string IntentKey(DailyAnalysisRecord record) =>
             UrgentRecordKey(record, mailVersions, candidateViews, mailContextFingerprint);
-        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r))).ToList();
+        // 本趟正常算到這一步才清理：不再對應現行紀錄的待送項目標為「已被取代」
+        // （讀取失敗或例外時不會執行到這裡）。
+        SupersedeUrgentOutbox(candidates.Select(IntentKey).ToHashSet(StringComparer.Ordinal));
+        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r)) &&
+            !LegacyKeySent("urgent", r, mailVersions, candidateViews, mailContextFingerprint, state.UrgentSentKeys)).ToList();
         if (pending.Count == 0) return;
         var (order, views) = ResolvePerRecipient(settings, pending, ctx);
         MigrateLegacyAcceptedNetIqContributions("urgent", pending, views, mailVersions);
@@ -2016,7 +2109,7 @@ public class MailNotificationService
 
     private static string RecordKey(DailyAnalysisRecord record) => $"{record.HostId}|{record.Date:yyyy-MM-dd}";
 
-    private string MailContextFingerprint(SystemSettings settings)
+    internal string MailContextFingerprint(SystemSettings settings)
     {
         var policyRevision = _prtgMonitoring?.Get().Revision.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
         var scopeRevision = _prtgBackend == null ? "none" : new PrtgScopeRevisionReader(_prtgBackend, _hosts).Read();
@@ -2029,13 +2122,31 @@ public class MailNotificationService
         return HostDayWorkflowFingerprint.HashParts([messageSettings, policyRevision, scopeRevision]);
     }
 
+    /// <summary>
+    /// 升級相容：舊算法的去重鍵含 AI 已分析／AI 待補／詳情已清除三個旗標的當時實際值，
+    /// 這裡窮舉 8 種組合，任一把已在已寄集合就視為已寄，避免升級後把回望期內已寄的主機日重寄。
+    /// 升級滿 14 天回望期後可移除（同 <c>LegacyParentFingerprint</c> 的做法）。
+    /// </summary>
+    private static bool LegacyKeySent(string lane, DailyAnalysisRecord record,
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, IReadOnlyDictionary<string, RecipientView>? views,
+        string? mailContextFingerprint, IReadOnlySet<string> sentKeys)
+    {
+        if (sentKeys.Count == 0) return false;
+        for (var bits = 0; bits < 8; bits++)
+        {
+            var legacy = ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0);
+            if (sentKeys.Contains(WorkflowRecordKey(lane, record, versions, views, mailContextFingerprint, legacy))) return true;
+        }
+        return false;
+    }
+
     private static string WorkflowRecordKey(string lane, DailyAnalysisRecord record,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, IReadOnlyDictionary<string, RecipientView>? views = null,
-        string? mailContextFingerprint = null)
+        string? mailContextFingerprint = null, (bool AiAnalyzed, bool AiPending, bool DetailPruned)? legacyFlags = null)
     {
         var key = RecordKey(record);
         if (versions == null || !versions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) return key;
-        var content = WorkflowMailIntent(lane, record, version, mailContextFingerprint);
+        var content = WorkflowMailIntent(lane, record, version, mailContextFingerprint, legacyFlags);
         var recipients = views == null ? string.Empty : string.Join("|", views
             .Where(view => view.Value.Detail == null || view.Value.Detail.Any(item => RecordKey(item) == key))
             .Select(view => view.Key.Trim().ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2045,13 +2156,15 @@ public class MailNotificationService
     }
 
     private static string WorkflowMailIntent(string kind, DailyAnalysisRecord record, HostDayWorkflowVersion version,
-        string? mailContextFingerprint)
+        string? mailContextFingerprint, (bool AiAnalyzed, bool AiPending, bool DetailPruned)? legacyFlags = null)
     {
         var fingerprint = HostDayWorkflowFingerprint.HashParts([
             kind, record.RecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             version.ParentRecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             version.DecisionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            HostDayWorkflowFingerprint.ForRecord(record), PrtgFindingMapper.Fingerprint(record.TopIssues), mailContextFingerprint ?? "legacy-context"]);
+            legacyFlags is { } f
+                ? HostDayWorkflowFingerprint.ForRecordWithFlags(record, f.AiAnalyzed, f.AiPending, f.DetailPruned)
+                : HostDayWorkflowFingerprint.ForMailContent(record), PrtgFindingMapper.Fingerprint(record.TopIssues), mailContextFingerprint ?? "legacy-context"]);
         return $"{kind}:{fingerprint}";
     }
 

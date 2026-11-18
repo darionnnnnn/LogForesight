@@ -199,10 +199,14 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
         });
     }
 
+    /// <summary>即時通知待送項目的終態：已被 SMTP 接受、正式取消、無合格收件人、已被取代。</summary>
+    public static bool IsTerminalUrgentStatus(string status) =>
+        status is "smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient" or "superseded";
+
     private static bool IsFullyTerminal(MailUrgentIntent intent)
     {
-        if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
-            return false;
+        if (intent.Status == "superseded") return true;   // 已被取代：不論收件人狀態都可清除
+        if (!IsTerminalUrgentStatus(intent.Status)) return false;
         return intent.Recipients.Values.All(status => status is "smtp-accepted" or "cancelled-formal-revoked");
     }
 }
