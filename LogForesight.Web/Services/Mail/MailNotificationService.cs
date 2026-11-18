@@ -821,6 +821,9 @@ public class MailNotificationService
         }
 
         var orderCache = new Dictionary<long, WorkOrderDigestOrder?>();
+        // 停用主機鍵整封摘要只讀一次（每張單各讀一次主機清單是重複工作）；沒有需要載入單的項目就不讀
+        var disabledKeysLazy = new Lazy<IReadOnlyCollection<string>>(
+            () => WorkOrderQueries.DisabledHostKeys(_hosts.GetAll()));
         var rows = items
             .Select(kv => kv.Value)
             .OrderBy(i => i.EnqueuedAt)
@@ -830,7 +833,7 @@ public class MailNotificationService
                 if (i.Kind == WorkOrderOutboxKinds.AdminReminder) return (Item: i, Order: (WorkOrderDigestOrder?)null);
                 if (!orderCache.TryGetValue(i.WorkOrderId, out var order))
                 {
-                    order = LoadDigestOrder(i.WorkOrderId, getRules);
+                    order = LoadDigestOrder(i.WorkOrderId, getRules, disabledKeysLazy.Value);
                     orderCache[i.WorkOrderId] = order;
                 }
                 return (Item: i, Order: order);
@@ -849,13 +852,13 @@ public class MailNotificationService
         }
     }
 
-    private WorkOrderDigestOrder? LoadDigestOrder(long workOrderId, Func<List<KnownIssueRule>> getRules)
+    private WorkOrderDigestOrder? LoadDigestOrder(
+        long workOrderId, Func<List<KnownIssueRule>> getRules, IReadOnlyCollection<string> disabledKeys)
     {
         var order = _workOrders.Get(workOrderId);
         if (order == null) return null;
 
         // 台數與主機名單與畫面同口徑：進行中成員、排除已停用主機（WorkOrderQueries.DisabledHostKeys 是唯一一份）
-        var disabledKeys = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
         var hostCount = _workOrders.CountMembers(new[] { workOrderId }, disabledKeys).TryGetValue(workOrderId, out var counts) ? counts.Active : 0;
         var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
         // 查詢就帶進行中條件，已結案的成員不佔名額；停用主機仍在查詢後濾掉，所以逐頁取到湊滿 20 台或取完

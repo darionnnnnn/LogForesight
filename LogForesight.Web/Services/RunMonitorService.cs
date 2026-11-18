@@ -118,6 +118,7 @@ public class RunMonitorService
         var recordDates = _records.ListHostDates(recordFrom, recordTo, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordFrom, recordTo, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
+        var runsIndex = new RunsByHostDay(runs);   // 天數 × 主機數的查找一次建好
 
         var hosts = AllHosts(runs);
         var scheduleOptions = _scheduleOptions.Get();
@@ -179,7 +180,7 @@ public class RunMonitorService
 
             foreach (var host in hosts)
             {
-                var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
+                var dayRuns = RunsForHostOnDate(runsIndex, host.HostName, dateStr);
                 if (!CountsOnDate(host, dayRuns)) continue;
                 summary.TotalHosts++;
                 var status = StatusOf(host, dayRuns, date, recordDates, localEnabled, attempts, attemptsAvailable, runsById);
@@ -315,6 +316,7 @@ public class RunMonitorService
         var recordDates = _records.ListHostDates(recordDate, recordDate, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
+        var runsIndex = new RunsByHostDay(runs);
         var histories = ReadHistories(recordDate);
         var scheduleOptions = _scheduleOptions.Get();
         // 複查時刻只對「還在進行的那一天」的格子有意義（過去的格子留著待複查，代表當天沒排進窗口）；
@@ -322,9 +324,9 @@ public class RunMonitorService
         var recheckNote = EmptyRecheckNote(scheduleOptions.Enabled,
             date.Date == ScheduleCalculator.LiveRunDay(DateTime.Now, scheduleOptions.Windows) ? ScheduleCalculator.NextEmptyRecheckAt(DateTime.Now, scheduleOptions.Windows, runs) : null);
 
-        return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runs, host.HostName, dateStr))).Select(host =>
+        return hosts.Where(host => CountsOnDate(host, RunsForHostOnDate(runsIndex, host.HostName, dateStr))).Select(host =>
         {
-            var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
+            var dayRuns = RunsForHostOnDate(runsIndex, host.HostName, dateStr);
             var cell = host.Source == "netiq"
                 ? NetiqCell(host, date, recordDates, attempts, attemptsAvailable, runsById)
                 : LocalCell(host, dateStr, dayRuns, date, recordDates, localEnabled);
@@ -526,11 +528,40 @@ public class RunMonitorService
         };
     }
 
-    private static List<BatchRun> RunsForHostOnDate(List<BatchRun> runs, string hostName, string dateStr) =>
-        runs.Where(r => string.Equals(r.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-                        r.StartedAt.ToString("yyyy-MM-dd") == dateStr)
-            .OrderByDescending(r => r.StartedAt)
-            .ToList();
+    /// <summary>
+    /// 以（主機名不分大小寫, 處理日字串）為鍵的執行紀錄查找表，清單內依開始時間由新到舊（穩定排序，同時間維持來源順序）。
+    /// 日期鍵與舊做法相同：<c>StartedAt.ToString("yyyy-MM-dd")</c>（處理日，不是資料日）。
+    /// </summary>
+    private sealed class RunsByHostDay
+    {
+        private sealed class KeyComparer : IEqualityComparer<(string Host, string Day)>
+        {
+            public bool Equals((string Host, string Day) a, (string Host, string Day) b) =>
+                string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase) && a.Day == b.Day;
+            public int GetHashCode((string Host, string Day) k) =>
+                HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(k.Host ?? ""), k.Day);
+        }
+
+        private readonly Dictionary<(string Host, string Day), List<BatchRun>> _map = new(new KeyComparer());
+
+        public RunsByHostDay(List<BatchRun> runs)
+        {
+            foreach (var run in runs)
+            {
+                var key = (run.HostName, run.StartedAt.ToString("yyyy-MM-dd"));
+                if (!_map.TryGetValue(key, out var list)) _map[key] = list = new List<BatchRun>();
+                list.Add(run);
+            }
+            foreach (var key in _map.Keys.ToList())
+                _map[key] = _map[key].OrderByDescending(r => r.StartedAt).ToList();
+        }
+
+        public List<BatchRun> Get(string hostName, string dateStr) =>
+            _map.TryGetValue((hostName, dateStr), out var list) ? list : new List<BatchRun>();
+    }
+
+    private static List<BatchRun> RunsForHostOnDate(RunsByHostDay index, string hostName, string dateStr) =>
+        index.Get(hostName, dateStr);
 
     private string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 

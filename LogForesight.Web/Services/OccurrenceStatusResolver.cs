@@ -51,19 +51,55 @@ public class OccurrenceStatusResolver
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var today = DateTime.Today;   // 觀察到期／逾期比對真實時鐘，不是分析錨點（見批次C 的既有教訓）
 
+        // 每主機的查找表（案件：問題鍵；處理列：問題鍵＋日期）。同鍵多筆只收清單順序中的第一筆，
+        // 與原本 FirstOrDefault 取到的相同；問題鍵比對仍由 IssueSignatureKeyComparer 決定。
+        var casesIndex = new Dictionary<string, Dictionary<string, IssueCase>>(StringComparer.OrdinalIgnoreCase);
+        var rowsIndex = new Dictionary<string, Dictionary<(DateTime Day, string Key), IssueHandling>>(StringComparer.OrdinalIgnoreCase);
+        var keyComparer = IssueSignatureKeyComparer.Instance;
+
         var result = new List<ResolvedOccurrence>();
         foreach (var occurrence in occurrences)
         {
             if (!hostsById.TryGetValue(occurrence.HostId, out var host)) continue;
 
-            var openCase = openCasesByHost.TryGetValue(host.HostName, out var cases)
-                ? cases.FirstOrDefault(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, occurrence.IssueKey))
-                : null;
+            IssueCase? openCase = null;
+            if (openCasesByHost.TryGetValue(host.HostName, out var cases))
+            {
+                if (occurrence.IssueKey == null)
+                    openCase = cases.FirstOrDefault(c => keyComparer.Equals(c.IssueKey, occurrence.IssueKey));
+                else
+                {
+                    if (!casesIndex.TryGetValue(host.HostName, out var byKey))
+                    {
+                        byKey = new Dictionary<string, IssueCase>(keyComparer);
+                        foreach (var c in cases)
+                            if (c.IssueKey != null) byKey.TryAdd(c.IssueKey, c);
+                        casesIndex[host.HostName] = byKey;
+                    }
+                    byKey.TryGetValue(occurrence.IssueKey, out openCase);
+                }
+            }
             var rows = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var hostRows)
                 ? hostRows
                 : null;
-            var handling = rows?.FirstOrDefault(h =>
-                h.Date.Date == occurrence.LastSeen.Date && IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, occurrence.IssueKey));
+            IssueHandling? handling = null;
+            if (rows != null)
+            {
+                if (occurrence.IssueKey == null)
+                    handling = rows.FirstOrDefault(h =>
+                        h.Date.Date == occurrence.LastSeen.Date && keyComparer.Equals(h.IssueKey, occurrence.IssueKey));
+                else
+                {
+                    if (!rowsIndex.TryGetValue(host.HostName, out var byDayKey))
+                    {
+                        byDayKey = new Dictionary<(DateTime Day, string Key), IssueHandling>(new DayKeyComparer());
+                        foreach (var h in rows)
+                            if (h.IssueKey != null) byDayKey.TryAdd((h.Date.Date, h.IssueKey), h);
+                        rowsIndex[host.HostName] = byDayKey;
+                    }
+                    byDayKey.TryGetValue((occurrence.LastSeen.Date, occurrence.IssueKey), out handling);
+                }
+            }
 
             var inheritedFalsePositive = false;
             if (handling == null && rows != null)
@@ -83,6 +119,14 @@ public class OccurrenceStatusResolver
         }
 
         return result;
+    }
+
+    private sealed class DayKeyComparer : IEqualityComparer<(DateTime Day, string Key)>
+    {
+        public bool Equals((DateTime Day, string Key) a, (DateTime Day, string Key) b) =>
+            a.Day == b.Day && IssueSignatureKeyComparer.Instance.Equals(a.Key, b.Key);
+        public int GetHashCode((DateTime Day, string Key) k) =>
+            HashCode.Combine(k.Day, IssueSignatureKeyComparer.Instance.GetHashCode(k.Key));
     }
 }
 
