@@ -136,7 +136,8 @@ public class IssueRankingBuilder
             // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
             // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
             // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
-            var previous = _aggregates.Aggregate(exclusion, previousFrom, previousTo, visibleHostIds)
+            // 前一期只用得到主機數與總次數，走輕量聚合
+            var previous = _aggregates.AggregateHostTotals(exclusion, previousFrom, previousTo, visibleHostIds)
                 .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
             var current = _aggregates.Aggregate(exclusion, from, to, visibleHostIds);
@@ -145,7 +146,7 @@ public class IssueRankingBuilder
     }
 
     private List<IssueRankingDto> BuildFromAggregates(
-        IssueExclusion exclusion, List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueAggregate> previous,
+        IssueExclusion exclusion, List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueHostTotals> previous,
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
         IReadOnlyCollection<WebHost>? hostSnapshot, int periodDays)
     {
