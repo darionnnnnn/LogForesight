@@ -150,7 +150,7 @@ public class HandlingHistoryQueryService
         var to = actionable.Max(r => r.Date);
         var handlings = _store.GetMany(hostNames, from, to);
         var issueHandlings = _issueStore.GetMany(hostNames, from, to);
-        var openCases = _cases.GetMany(hostNames).Where(c => c.ClosedAt == null && c.HandlerId.HasValue).ToList();
+        var openCases = _cases.GetOpenMany(hostNames).Where(c => c.HandlerId.HasValue).ToList();
 
         // 迴圈外先建索引：3000 台 × 366 天下，迴圈內線性搜尋是 10^10 次字串比對。
         // 鍵一律走 HostNameKey.Of——原本是 OrdinalIgnoreCase 比對，改用字典後若自己寫大小寫

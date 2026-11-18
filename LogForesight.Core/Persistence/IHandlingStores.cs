@@ -101,6 +101,12 @@ public interface IIssueCaseStore
     /// <summary>多台主機的全部案件（含已結案，供依問題視角彙總／處理人工作頁）</summary>
     List<IssueCase> GetMany(IEnumerable<string> hostNames);
 
+    /// <summary>
+    /// 多台主機的進行中案件。已結案案件在保留期內不清除，3000 台時遠多於進行中的；只要進行中的呼叫端用這個，
+    /// 不要取回全部再自己濾（正式實作在 SQL 端過濾）。
+    /// </summary>
+    List<IssueCase> GetOpenMany(IEnumerable<string> hostNames) => GetMany(hostNames).Where(c => c.ClosedAt == null).ToList();
+
     /// <summary>指定處理人名下的全部進行中案件（處理人員工作頁，docs/archive/FEEDBACK-4-PLAN.md §6）</summary>
     List<IssueCase> GetOpenByHandler(long userId);
 

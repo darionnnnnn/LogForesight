@@ -298,7 +298,7 @@ public class RecordListQueryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return _cases.GetMany(hostNames).Where(c => c.ClosedAt == null).ToList();
+        return _cases.GetOpenMany(hostNames);
     }
 
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request)

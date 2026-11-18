@@ -10,6 +10,7 @@ public sealed class PrtgHostSnapshot
     public const int MaximumRows = 250_000;
 
     private readonly ReadOnlyCollection<PrtgHostSnapshotEntry> _hosts;
+    private readonly Dictionary<long, PrtgHostSnapshotEntry> _byId;
 
     public long Version { get; }
     public IReadOnlyList<PrtgHostSnapshotEntry> Hosts => _hosts;
@@ -18,9 +19,12 @@ public sealed class PrtgHostSnapshot
     {
         Version = version;
         _hosts = hosts.AsReadOnly();
+        // 正數編號在建立時已保證唯一；0 與負數（未存檔的舊列）可能重複，查找時退回依序找第一筆
+        _byId = hosts.Where(host => host.HostId > 0).ToDictionary(host => host.HostId);
     }
 
-    public PrtgHostSnapshotEntry? Find(long hostId) => _hosts.FirstOrDefault(host => host.HostId == hostId);
+    public PrtgHostSnapshotEntry? Find(long hostId) =>
+        hostId > 0 ? _byId.GetValueOrDefault(hostId) : _hosts.FirstOrDefault(host => host.HostId == hostId);
 
     /// <summary>Compatibility adapter for test doubles: inspect objects directly without serializing an unbounded blob.</summary>
     internal static PrtgHostSnapshot FromWebHosts(IEnumerable<WebHost> hosts, long version)

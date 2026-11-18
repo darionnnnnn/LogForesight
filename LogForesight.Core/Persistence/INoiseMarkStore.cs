@@ -24,13 +24,15 @@ public interface INoiseMarkStore
 
 public class NoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 {
-    public NoiseMarkStore(EfJsonBlobStore blob) : base(blob) { }
+    // 版本快取：風險日詳情每次開啟都讀它，主機越多整份越大；寫入（Mutate）另外反序列化，不會改到快取裡的物件。
+    // 讀取端（詳情、派工脈絡、交辦建立）都只讀不改。
+    public NoiseMarkStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     public List<NoiseMark> GetForHost(string hostName) =>
-        Read().Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();
+        ReadSnapshot().Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();
 
     public NoiseMark? Get(string hostName, string issueKey) =>
-        Read().FirstOrDefault(m => Same(m, hostName, issueKey));
+        ReadSnapshot().FirstOrDefault(m => Same(m, hostName, issueKey));
 
     public List<NoiseMark> GetAll() => Read();
 

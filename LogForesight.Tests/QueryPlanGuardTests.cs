@@ -252,6 +252,14 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
     }
 
     [Fact]
+    public void AnalysisRecordStore_GetOne_走索引()
+    {
+        // 單筆主機日讀取：條件是日期＋主機編號（或 host_id＝0 的舊列），應由 (host_id, record_date) 或 record_date 索引定位
+        var plan = PlanOf(() => _records.GetOne(new[] { new HostKey { HostId = 7, HostName = "host-07" } }, Today.AddDays(-2)));
+        AssertNoFullScan(plan, "lf_daily_records");
+    }
+
+    [Fact]
     public void AnalysisRecordStore_QueryLightweight_走索引()
     {
         // 另有一道讀 lf_top_issues 的 SELECT（依 record_id 取問題），本案只斷言主表 lf_daily_records

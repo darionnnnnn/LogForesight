@@ -429,8 +429,8 @@ public class WorkOrderQueryService
         if (activeOrders.Count == 0) return result;
 
         var hostNames = pageCases.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var activeCases = _cases.GetMany(hostNames)
-            .Where(c => c.ClosedAt == null && c.HandlerId == order.HandlerId
+        var activeCases = _cases.GetOpenMany(hostNames)
+            .Where(c => c.HandlerId == order.HandlerId
                 && c.WorkOrderId.HasValue && activeOrders.ContainsKey(c.WorkOrderId.Value))
             .ToList();
 

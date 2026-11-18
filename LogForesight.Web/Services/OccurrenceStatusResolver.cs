@@ -44,8 +44,7 @@ public class OccurrenceStatusResolver
         var handlingsByHost = _issueHandlings.GetMany(hostNames, queryFrom, to)
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var openCasesByHost = _cases.GetMany(hostNames)
-            .Where(c => c.ClosedAt == null)
+        var openCasesByHost = _cases.GetOpenMany(hostNames)
             .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
