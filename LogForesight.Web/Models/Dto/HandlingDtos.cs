@@ -577,6 +577,10 @@ public class HandlerWorkloadDto
     public int UnresolvedDayCount { get; set; }
     public int OverdueCount { get; set; }
 
+    /// <summary>分頁前、篩選後的案件／風險日筆數（Cases／Days 只放當頁）</summary>
+    public int CasesTotal { get; set; }
+    public int DaysTotal { get; set; }
+
     /// <summary>名下進行中案件（資料以檢視者的可見範圍過濾）</summary>
     public List<HandlerCaseItemDto> Cases { get; set; } = new();
 

@@ -67,6 +67,8 @@ const MEMBER_STATUS_OPTIONS = [
 const MEMBER_PAGE_SIZE = 50;
 
 let includeResolvedDays = false;
+let casesPage = 1;                // 進階檢視兩張表各自的伺服器分頁頁碼，互不影響
+let daysPage = 1;
 let currentUser = null;
 let isSelf = false;                // 檢視自己的頁
 let canReply = false;              // 本人檢視自己的頁且具 Handle
@@ -1007,13 +1009,54 @@ function buildMemberPanel(row, cell, carry = null) {
 
 // ── 進階檢視：依主機、被指派的風險日（第一次展開才載入）──────────────────
 
-async function loadAdvanced() {
+/** 進階檢視每頁筆數（沿用後端預設 20）。兩表共用一支 workload 請求、各自帶頁碼，換頁只重畫被換的那張 */
+const WORKLOAD_PAGE_SIZE = 20;
+
+/** 表格下方的分頁列容器，第一次用到才建立（不動 cshtml） */
+function pagerFor(box) {
+    if (!box._pager) {
+        box._pager = document.createElement('nav');
+        box._pager.className = 'mt-2';
+        box.after(box._pager);
+    }
+    return box._pager;
+}
+
+/** part：'cases'／'days' 只重畫該表；省略則兩張都畫（首次展開、切換已結案、就地刷新） */
+async function loadAdvanced(part) {
     advancedLoaded = true;
-    renderLoading(casesEl, 3);
-    renderLoading(daysEl, 3);
-    const workload = await api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`);
-    renderCases(workload.cases);
-    renderDays(workload.days);
+    const doCases = part !== 'days';
+    const doDays = part !== 'cases';
+    if (doCases) renderLoading(casesEl, 3);
+    if (doDays) renderLoading(daysEl, 3);
+    const query = `includeResolvedDays=${includeResolvedDays}&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
+    const workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+
+    // 資料變少後頁碼可能超出範圍（例如最後一頁的案件剛結案）：退到最後一頁重取一次
+    const casesLast = Math.max(1, Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE));
+    const daysLast = Math.max(1, Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE));
+    if ((doCases && casesPage > casesLast) || (doDays && daysPage > daysLast)) {
+        casesPage = Math.min(casesPage, casesLast);
+        daysPage = Math.min(daysPage, daysLast);
+        return loadAdvanced(part);
+    }
+
+    if (doCases) {
+        renderCases(workload.cases);
+        renderPagination(pagerFor(casesEl), {
+            page: casesPage,
+            totalPages: Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE),
+            onPage: next => { casesPage = next; guardLoad(casesEl, () => loadAdvanced('cases')); }
+        });
+    }
+    if (doDays) {
+        renderDays(workload.days);
+        renderPagination(pagerFor(daysEl), {
+            page: daysPage,
+            totalPages: Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE),
+            onPage: next => { daysPage = next; guardLoad(daysEl, () => loadAdvanced('days')); }
+        });
+    }
 }
 
 function renderCases(cases) {
@@ -1114,6 +1157,8 @@ pausedCheckbox.addEventListener('change', onOrderFilterChange);
 
 document.getElementById('toggle-resolved-days').addEventListener('change', event => {
     includeResolvedDays = event.target.checked;
+    casesPage = 1;
+    daysPage = 1;
     guardLoad([casesEl, daysEl], loadAdvanced);
 });
 

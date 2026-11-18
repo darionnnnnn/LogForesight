@@ -25,6 +25,14 @@ const userId = Number(root.dataset.userId);
  */
 let currentUser = null;
 
+/** 進行中案件／未結案風險日每頁筆數（沿用後端預設 20）；兩表各自帶自己的頁碼 */
+const WORKLOAD_PAGE_SIZE = 20;
+
+/** 未結案的判定在後端（unresolvedOnly，沿用 DTO 的 IsUnresolved 來源），前端不再自行過濾 */
+function workloadUrl(casesPage, daysPage) {
+    return `/api/handlers/${userId}/workload?unresolvedOnly=true&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
+}
+
 async function load() {
     renderLoading(document.getElementById('user-visible-hosts'), 3);
     renderLoading(document.getElementById('user-open-work'), 3);
@@ -34,7 +42,7 @@ async function load() {
     // 兩支端點平行取：detail 查無此人會 404，workload 也會，錯誤由 api.js 統一顯示
     const [detail, workload, me] = await Promise.all([
         api.get(`/api/admin/users/${userId}/detail`),
-        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=true`),
+        api.get(workloadUrl(1, 1)),
         getCurrentUser()
     ]);
     currentUser = me;
@@ -225,6 +233,23 @@ function visibilitySourceCell(host) {
     return wrap;
 }
 
+/** 兩表各自的頁碼；換其中一張的頁只改該頁碼，另一張維持原頁（共用一次請求、兩個頁碼都帶） */
+let casesPage = 1;
+let daysPage = 1;
+
+/** 換頁後重打 workload 並只重畫進行中區塊（KPI 以全部項目計，不受分頁影響，不重畫） */
+async function reloadWorkload({ casesPage: nextCases = casesPage, daysPage: nextDays = daysPage }) {
+    const container = document.getElementById('user-open-work');
+    try {
+        const workload = await api.get(workloadUrl(nextCases, nextDays));
+        casesPage = nextCases;
+        daysPage = nextDays;
+        renderOpenWork(workload);
+    } catch {
+        renderError(container, { message: '載入進行中項目失敗', onRetry: () => reloadWorkload({ casesPage: nextCases, daysPage: nextDays }) });
+    }
+}
+
 function renderOpenWork(workload) {
     const container = document.getElementById('user-open-work');
     container.replaceChildren();
@@ -244,11 +269,14 @@ function renderOpenWork(workload) {
     scopeNote.classList.add('d-block', 'px-3', 'pt-3');
     container.appendChild(scopeNote);
 
-    const casesTitle = sectionLabel(`進行中案件（${workload.cases.length}）`);
+    const casesTitle = sectionLabel(`進行中案件（${formatNumber(workload.casesTotal)}）`);
     container.appendChild(casesTitle);
 
     const casesBox = document.createElement('div');
     container.appendChild(casesBox);
+    const casesPager = document.createElement('nav');
+    casesPager.className = 'mt-2';
+    container.appendChild(casesPager);
     renderTable(casesBox, {
         columns: [
             { title: '主機', truncate: true, render: c => roleText('lf-text-title', c.hostName) },
@@ -261,15 +289,20 @@ function renderOpenWork(workload) {
         rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`,
         empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
     });
+    renderPagination(casesPager, {
+        page: casesPage,
+        totalPages: Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE),
+        onPage: next => reloadWorkload({ casesPage: next })
+    });
 
-    // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留後端標為未結案的。
-    // 判定由後端 HandlingStatuses.Unresolved 算好放在 isUnresolved，前端不自己維護狀態集合；
-    // 欄位缺失（舊快取或漏填）時視為未結案，寧可多列也不要把待處理的日子藏起來。
-    const openDays = workload.days.filter(d => d.isUnresolved !== false);
-    container.appendChild(sectionLabel(`未結案風險日（${openDays.length}）`));
+    // 未結案風險日：後端以 unresolvedOnly 篩好並分頁，daysTotal 為篩選後、分頁前的筆數
+    container.appendChild(sectionLabel(`未結案風險日（${formatNumber(workload.daysTotal)}）`));
 
     const daysBox = document.createElement('div');
     container.appendChild(daysBox);
+    const daysPager = document.createElement('nav');
+    daysPager.className = 'mt-2';
+    container.appendChild(daysPager);
     renderTable(daysBox, {
         columns: [
             { title: '日期', render: d => roleText('lf-text-data', d.date) },
@@ -278,9 +311,14 @@ function renderOpenWork(workload) {
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
         ],
-        rows: openDays,
+        rows: workload.days,
         rowHref: d => recordDetailUrl(d.hostId, d.date, { handle: true }),
         empty: { title: '目前沒有未結案的風險日', hint: '所有指派的風險日皆已結案，或尚未被指派任何風險日。' }
+    });
+    renderPagination(daysPager, {
+        page: daysPage,
+        totalPages: Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE),
+        onPage: next => reloadWorkload({ daysPage: next })
     });
 }
 

@@ -1674,7 +1674,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   預計完成／逾期，「顯示近 30 天已結案」切換預設關。
 - API：`GET api/handlers/{userId}/work-orders?status=&sort=&paused=&page=&pageSize=`（本人或 `Assign`／`ViewAll`）、
   `GET api/handlers/{userId}/work-orders/summary`、`GET api/handlers/me/badge`（側欄徽章，單一聚合）、
-  `GET api/handlers/{userId}/workload`（被指派的風險日與依主機頁籤；查無此人回 404）。
+  `GET api/handlers/{userId}/workload?includeResolvedDays=&casesPage=&daysPage=&pageSize=&unresolvedOnly=`（被指派的風險日與依主機頁籤；查無此人回 404）。
+  案件與風險日各自伺服器端分頁（每頁預設 20），回 `CasesTotal`／`DaysTotal`；`OpenCaseCount`、`UnresolvedDayCount`、`OverdueCount` 一律以全部項目計算，不受分頁影響。
+  `unresolvedOnly=true` 時風險日只列未結案（判定沿用每個日項目的 `isUnresolved`）。
   側欄徽章顯示進行中台數，有逾期時轉警示色，`title` 寫「進行中 N 張／M 台；逾期 K 台／未回覆 J 張」。
   側欄的兩顆徽章（「我的交辦」進行中台數、「交辦總覽」未讀回覆單數，後者具 `Assign` 或 `ViewAll` 才有、0 不顯示）
   由 `core/badges.js` 的單一計時器每 60 秒刷新；分頁隱藏時不打 API，回到前景立即刷新一次；失敗靜默、沿用上次的數字。
@@ -2276,7 +2278,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **KPI**：可見主機／處理中案件／已結案案件／逾期（案件＝交辦單成員，§9.4b）。
 - **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
   **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。欄序為主機／IP／作業系統／可見來源／群組：短值欄收緊，群組放最後當吸收欄（DESIGN-SYSTEM §8.4a）。
-- **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
+- **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true&unresolvedOnly=true`（兩張表各自分頁），
   **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress`／`escalated` 判定，由後端在每個日項目回 `isUnresolved`
   （`HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態），前端不另維護一份集合。
 - **被指派歷程**：以 `IssueCase` 為事實來源（建案時間／交辦者／主機／問題／目前狀態／涵蓋區間），
