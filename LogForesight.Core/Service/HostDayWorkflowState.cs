@@ -188,6 +188,39 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
         return updated;
     }
 
+    /// <summary>
+    /// 與 <see cref="Update"/> 相同的鎖、交易與大小檢查，但套用 <paramref name="change"/> 後序列化內容與原內容相同就不寫入
+    /// （比較發生在 <c>UpdatedAt</c> 改動之前）。列不存在時仍會建立。
+    /// </summary>
+    public HostDayWorkflowState UpdateIfChanged(long hostId, DateTime date, Action<HostDayWorkflowState> change)
+    {
+        var blob = Blob(hostId, date);
+        var mutex = WorkflowMutex(hostId, date);
+        HostDayWorkflowState? updated = null;
+        var acquired = mutex.RunExclusive(() =>
+        {
+            updated = blob.MutateWithContext((_, raw) =>
+            {
+                if (raw != null && (raw.Length > MaxMetadataChars || Encoding.UTF8.GetByteCount(raw) > MaxMetadataChars))
+                    throw new InvalidDataException("Host-day workflow metadata exceeded its size limit.");
+                var state = string.IsNullOrWhiteSpace(raw)
+                    ? new HostDayWorkflowState { HostId = hostId, Date = date.Date }
+                    : JsonSerializer.Deserialize<HostDayWorkflowState>(raw, LfJsonOptions.Pretty) ?? throw new InvalidDataException("Host-day workflow metadata is invalid.");
+                change(state);
+                var unchanged = JsonSerializer.Serialize(state, LfJsonOptions.Pretty);
+                if (raw != null && StringComparer.Ordinal.Equals(raw, unchanged))
+                    return (raw, state);
+                state.UpdatedAt = DateTime.Now;
+                var json = JsonSerializer.Serialize(state, LfJsonOptions.Pretty);
+                if (json.Length > MaxMetadataChars || Encoding.UTF8.GetByteCount(json) > MaxMetadataChars)
+                    throw new InvalidDataException("Host-day workflow metadata exceeded its size limit.");
+                return (json, state);
+            }, maxCurrentCharacters: MaxMetadataChars, skipUnchangedContent: true);
+        }, TimeSpan.FromSeconds(30), runActionWhenNotAcquired: false);
+        if (!acquired || updated is null) throw new TimeoutException("Could not acquire the host-day workflow write lock.");
+        return updated;
+    }
+
     /// <summary>Atomically applies recovery only while the authoritative SQL parent still has the captured revision.</summary>
     internal bool TryUpdateForRecovery(long hostId, DateTime date, long recordId, long capturedWriteRevision,
         Action<HostDayWorkflowState> change)
@@ -573,16 +606,31 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         }).AiResultVersion == inputVersion && success;
 
     public HostDayWorkflowState RecordCaseIntents(long hostId, DateTime date, IEnumerable<string> intents, HostDayWorkflowVersion? expectedVersion = null) =>
+        store.Update(hostId, date, state => ApplyCaseIntents(state, intents, expectedVersion));
+
+    private static void ApplyCaseIntents(HostDayWorkflowState state, IEnumerable<string> intents, HostDayWorkflowVersion? expectedVersion)
+    {
+        if (expectedVersion != null && !MatchesVersion(state, expectedVersion)) return;
+        state.CasePlanClosed = true;
+        var hashed = intents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId);
+        var combined = state.CaseIntents.Concat(hashed).Distinct(StringComparer.Ordinal).ToArray();
+        if (combined.Length > 64) state.CaseTrackingIncomplete = true;
+        state.CaseIntents = combined.Take(64).ToArray();
+        state.CaseState = state.CaseTrackingIncomplete ? WorkflowLegState.Degraded :
+            state.CaseIntents.Length == 0 ? WorkflowLegState.Succeeded : WorkflowLegState.Deferred;
+    }
+
+    /// <summary>
+    /// 一次更新內依序套用 <see cref="RecordCaseIntents"/> 與 <see cref="RecordCaseResults"/> 的同一段邏輯
+    /// （沒有任何案件的主機日：兩次的輸入都是空集合，合成一次讀改寫）。
+    /// </summary>
+    public HostDayWorkflowState RecordCaseIntentsAndResults(long hostId, DateTime date, IEnumerable<string> intents,
+        IEnumerable<string> expectedIntents, IEnumerable<string> deliveredIntents, IEnumerable<string> failedIntents,
+        HostDayWorkflowVersion? expectedVersion = null) =>
         store.Update(hostId, date, state =>
         {
-            if (expectedVersion != null && !MatchesVersion(state, expectedVersion)) return;
-            state.CasePlanClosed = true;
-            var hashed = intents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId);
-            var combined = state.CaseIntents.Concat(hashed).Distinct(StringComparer.Ordinal).ToArray();
-            if (combined.Length > 64) state.CaseTrackingIncomplete = true;
-            state.CaseIntents = combined.Take(64).ToArray();
-            state.CaseState = state.CaseTrackingIncomplete ? WorkflowLegState.Degraded :
-                state.CaseIntents.Length == 0 ? WorkflowLegState.Succeeded : WorkflowLegState.Deferred;
+            ApplyCaseIntents(state, intents, expectedVersion);
+            ApplyCaseResults(state, expectedIntents, deliveredIntents, failedIntents, expectedVersion);
         });
 
     public HostDayWorkflowState RecordCaseDelivery(long hostId, DateTime date, bool delivered) =>
@@ -611,24 +659,27 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
 
     public HostDayWorkflowState RecordCaseResults(long hostId, DateTime date,
         IEnumerable<string> expectedIntents, IEnumerable<string> deliveredIntents, IEnumerable<string> failedIntents, HostDayWorkflowVersion? expectedVersion = null) =>
-        store.Update(hostId, date, state =>
-        {
-            if (expectedVersion != null && !MatchesVersion(state, expectedVersion)) return;
-            state.CasePlanClosed = true;
-            var expected = expectedIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToArray();
-            var delivered = deliveredIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToHashSet(StringComparer.Ordinal);
-            var failed = failedIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToHashSet(StringComparer.Ordinal);
-            var combined = state.CaseIntents.Concat(expected).Distinct(StringComparer.Ordinal).ToArray();
-            if (combined.Length > 64 || delivered.Count > 64 || failed.Count > 64) state.CaseTrackingIncomplete = true;
-            state.CaseIntents = combined.Take(64).ToArray();
-            var expectedSet = state.CaseIntents.ToHashSet(StringComparer.Ordinal);
-            var deliveredNow = delivered.Where(expectedSet.Contains).Except(failed, StringComparer.Ordinal).ToArray();
-            state.CaseDeliveredIntents = Merge(state.CaseDeliveredIntents, deliveredNow, 64);
-            state.CaseFailedIntents = Merge(state.CaseFailedIntents.Except(deliveredNow, StringComparer.Ordinal),
-                failed.Where(expectedSet.Contains).Except(state.CaseDeliveredIntents, StringComparer.Ordinal), 64);
-            state.CaseState = state.CaseTrackingIncomplete ? WorkflowLegState.Degraded : state.CaseFailedIntents.Length > 0 ? WorkflowLegState.Failed :
-                state.CaseIsComplete ? WorkflowLegState.Succeeded : WorkflowLegState.Deferred;
-        });
+        store.Update(hostId, date, state => ApplyCaseResults(state, expectedIntents, deliveredIntents, failedIntents, expectedVersion));
+
+    private static void ApplyCaseResults(HostDayWorkflowState state,
+        IEnumerable<string> expectedIntents, IEnumerable<string> deliveredIntents, IEnumerable<string> failedIntents, HostDayWorkflowVersion? expectedVersion)
+    {
+        if (expectedVersion != null && !MatchesVersion(state, expectedVersion)) return;
+        state.CasePlanClosed = true;
+        var expected = expectedIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToArray();
+        var delivered = deliveredIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToHashSet(StringComparer.Ordinal);
+        var failed = failedIntents.Where(value => !string.IsNullOrWhiteSpace(value)).Select(CaseIntentId).ToHashSet(StringComparer.Ordinal);
+        var combined = state.CaseIntents.Concat(expected).Distinct(StringComparer.Ordinal).ToArray();
+        if (combined.Length > 64 || delivered.Count > 64 || failed.Count > 64) state.CaseTrackingIncomplete = true;
+        state.CaseIntents = combined.Take(64).ToArray();
+        var expectedSet = state.CaseIntents.ToHashSet(StringComparer.Ordinal);
+        var deliveredNow = delivered.Where(expectedSet.Contains).Except(failed, StringComparer.Ordinal).ToArray();
+        state.CaseDeliveredIntents = Merge(state.CaseDeliveredIntents, deliveredNow, 64);
+        state.CaseFailedIntents = Merge(state.CaseFailedIntents.Except(deliveredNow, StringComparer.Ordinal),
+            failed.Where(expectedSet.Contains).Except(state.CaseDeliveredIntents, StringComparer.Ordinal), 64);
+        state.CaseState = state.CaseTrackingIncomplete ? WorkflowLegState.Degraded : state.CaseFailedIntents.Length > 0 ? WorkflowLegState.Failed :
+            state.CaseIsComplete ? WorkflowLegState.Succeeded : WorkflowLegState.Deferred;
+    }
 
     public HostDayWorkflowState RecordDispatchOutcome(long hostId, DateTime date, NightlyDispatchItemOutcome outcome, HostDayWorkflowVersion? expectedVersion = null)
     {
@@ -667,7 +718,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     public HostDayWorkflowState RecordMail(long hostId, DateTime date, IEnumerable<string> intents,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts,
         IEnumerable<string> deliveredParts, IEnumerable<string> failedParts, HostDayWorkflowVersion? expectedVersion = null) =>
-        store.Update(hostId, date, state =>
+        // 內容沒變就不寫（工作流的 UpdatedAt 沒有讀取端）：郵件收尾每趟對已接受的收據重投影，多數時候是同一份內容
+        store.UpdateIfChanged(hostId, date, state =>
         {
             if (expectedVersion != null && !MatchesVersion(state, expectedVersion)) return;
             var incomingIntents = intents.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).ToArray();
@@ -736,39 +788,62 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     /// parts survive retries; removed recipients or changed content no longer count toward this version.</summary>
     public HostDayWorkflowState ReplaceMailPlan(long hostId, DateTime date, string lane,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version) =>
-        store.Update(hostId, date, state =>
+        store.Update(hostId, date, state => ApplyReplaceMailPlan(state, lane, expectedParts, version));
+
+    /// <summary>
+    /// 郵件收尾專用的 <see cref="ReplaceMailPlan"/>：計畫內容（意圖、預期部分、已送與失敗部分、追蹤不完整旗標）沒有改變時，
+    /// 保留原本的結案旗標與原因而不寫入。只供緊接著會呼叫 <see cref="CloseMailPlanIfChanged"/> 的收尾流程使用——
+    /// 結案會依計畫內容重新算出結案旗標與原因，與先設成未結案再結案的最終狀態相同。
+    /// </summary>
+    public HostDayWorkflowState ReplaceMailPlanIfChanged(long hostId, DateTime date, string lane,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version) =>
+        store.UpdateIfChanged(hostId, date, state =>
         {
-            if (!MatchesVersion(state, version)) return;
-            var prefix = lane + ":";
-            var previous = state.MailIntents.Where(intent => intent.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
-            var replacements = expectedParts.Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal))
-                .Take(4).ToDictionary(pair => pair.Key, pair => pair.Value
-                    .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).Take(32).ToArray(), StringComparer.Ordinal);
-            if (expectedParts.Count > 4 || expectedParts.Any(pair => pair.Value.Count > 32)) state.MailTrackingIncomplete = true;
-            foreach (var intent in previous.Except(replacements.Keys, StringComparer.Ordinal))
-            {
-                state.MailIntents = state.MailIntents.Where(value => value != intent).ToArray();
-                state.MailExpectedPartsByIntent.Remove(intent);
-                state.MailDeliveredPartsByIntent.Remove(intent);
-                state.MailFailedPartsByIntent.Remove(intent);
-            }
-            foreach (var (intent, expected) in replacements)
-            {
-                if (!state.MailIntents.Contains(intent, StringComparer.Ordinal))
-                {
-                    if (state.MailIntents.Length >= 4) { state.MailTrackingIncomplete = true; continue; }
-                    state.MailIntents = state.MailIntents.Append(intent).ToArray();
-                }
-                state.MailExpectedPartsByIntent[intent] = expected;
-                state.MailDeliveredPartsByIntent[intent] = (state.MailDeliveredPartsByIntent.GetValueOrDefault(intent) ?? [])
-                    .Where(expected.Contains).Distinct(StringComparer.Ordinal).Take(32).ToArray();
-                state.MailFailedPartsByIntent[intent] = (state.MailFailedPartsByIntent.GetValueOrDefault(intent) ?? [])
-                    .Where(expected.Contains).Except(state.MailDeliveredPartsByIntent[intent], StringComparer.Ordinal)
-                    .Distinct(StringComparer.Ordinal).Take(32).ToArray();
-            }
-            state.MailPlanClosed = false;
-            state.MailPlanReason = null;
+            var closed = state.MailPlanClosed;
+            var reason = state.MailPlanReason;
+            var before = JsonSerializer.Serialize(state, LfJsonOptions.Pretty);
+            ApplyReplaceMailPlan(state, lane, expectedParts, version);
+            var replaced = (state.MailPlanClosed, state.MailPlanReason);
+            state.MailPlanClosed = closed;
+            state.MailPlanReason = reason;
+            if (StringComparer.Ordinal.Equals(before, JsonSerializer.Serialize(state, LfJsonOptions.Pretty))) return;
+            (state.MailPlanClosed, state.MailPlanReason) = replaced;
         });
+
+    private static void ApplyReplaceMailPlan(HostDayWorkflowState state, string lane,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version)
+    {
+        if (!MatchesVersion(state, version)) return;
+        var prefix = lane + ":";
+        var previous = state.MailIntents.Where(intent => intent.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+        var replacements = expectedParts.Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Take(4).ToDictionary(pair => pair.Key, pair => pair.Value
+                .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).Take(32).ToArray(), StringComparer.Ordinal);
+        if (expectedParts.Count > 4 || expectedParts.Any(pair => pair.Value.Count > 32)) state.MailTrackingIncomplete = true;
+        foreach (var intent in previous.Except(replacements.Keys, StringComparer.Ordinal))
+        {
+            state.MailIntents = state.MailIntents.Where(value => value != intent).ToArray();
+            state.MailExpectedPartsByIntent.Remove(intent);
+            state.MailDeliveredPartsByIntent.Remove(intent);
+            state.MailFailedPartsByIntent.Remove(intent);
+        }
+        foreach (var (intent, expected) in replacements)
+        {
+            if (!state.MailIntents.Contains(intent, StringComparer.Ordinal))
+            {
+                if (state.MailIntents.Length >= 4) { state.MailTrackingIncomplete = true; continue; }
+                state.MailIntents = state.MailIntents.Append(intent).ToArray();
+            }
+            state.MailExpectedPartsByIntent[intent] = expected;
+            state.MailDeliveredPartsByIntent[intent] = (state.MailDeliveredPartsByIntent.GetValueOrDefault(intent) ?? [])
+                .Where(expected.Contains).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+            state.MailFailedPartsByIntent[intent] = (state.MailFailedPartsByIntent.GetValueOrDefault(intent) ?? [])
+                .Where(expected.Contains).Except(state.MailDeliveredPartsByIntent[intent], StringComparer.Ordinal)
+                .Distinct(StringComparer.Ordinal).Take(32).ToArray();
+        }
+        state.MailPlanClosed = false;
+        state.MailPlanReason = null;
+    }
 
     public bool HasAcceptedMailPart(long hostId, DateTime date, HostDayWorkflowVersion version,
         string intent, string part)
@@ -793,7 +868,11 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     }
 
     public HostDayWorkflowState CloseMailPlan(long hostId, DateTime date, HostDayWorkflowVersion version,
-        IReadOnlyCollection<string> requiredLanes, string reason) => store.Update(hostId, date, state =>
+        IReadOnlyCollection<string> requiredLanes, string reason) =>
+        store.Update(hostId, date, state => ApplyCloseMailPlan(state, version, requiredLanes, reason));
+
+    private static void ApplyCloseMailPlan(HostDayWorkflowState state, HostDayWorkflowVersion version,
+        IReadOnlyCollection<string> requiredLanes, string reason)
     {
         if (!MatchesVersion(state, version)) return;
         state.MailRequiredLanes = requiredLanes.Distinct(StringComparer.Ordinal).ToArray();
@@ -803,7 +882,22 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 state.MailExpectedPartsByIntent.TryGetValue(intent, out var expected) && expected.Length > 0));
         state.MailPlanClosed = state.MailRequiredLanes.Length == 0 || hasQualifiedParts;
         state.MailPlanReason = state.MailPlanClosed ? reason : "no-qualified-recipient-or-current-receipt";
-    });
+    }
+
+    /// <summary>
+    /// 郵件收尾：一次更新內依序把「不需要的通道」換成空計畫、再結案（與 <see cref="ReplaceMailPlan"/>、
+    /// <see cref="CloseMailPlan"/> 逐步呼叫同一段邏輯）。版本不符時不改任何東西；套用後內容與原本相同就不寫入。
+    /// </summary>
+    public HostDayWorkflowState CloseMailPlanIfChanged(long hostId, DateTime date, HostDayWorkflowVersion version,
+        IReadOnlyCollection<string> requiredLanes, string reason) =>
+        store.UpdateIfChanged(hostId, date, state =>
+        {
+            if (!MatchesVersion(state, version)) return;
+            var empty = new Dictionary<string, IReadOnlyCollection<string>>();
+            if (!requiredLanes.Contains("summary")) ApplyReplaceMailPlan(state, "summary", empty, version);
+            if (!requiredLanes.Contains("urgent")) ApplyReplaceMailPlan(state, "urgent", empty, version);
+            ApplyCloseMailPlan(state, version, requiredLanes, reason);
+        });
 
     private static bool MatchesVersion(HostDayWorkflowState state, HostDayWorkflowVersion version) =>
         state.Parent == WorkflowLegState.Succeeded && !state.IsRecoveryWaiting &&

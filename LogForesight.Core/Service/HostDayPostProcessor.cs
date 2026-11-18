@@ -251,9 +251,20 @@ public static class HostDayPostProcessor
         var expectedCaseKeys = deliveryIssues.Select(IssueSignatureKey.For).Distinct(StringComparer.Ordinal).ToArray();
         var workflowTrackingFailed = false;
         var retryableDispatchOutcome = false;
+        // 沒有任何問題的主機日：意圖與結果的輸入都是空集合，合成一次更新（少一次讀改寫）；
+        // 有問題的主機日維持原本兩段（結果要等掛接完才知道）。
+        var caseResultsRecorded = false;
         if (hasWorkflow)
         {
-            try { workflow!.RecordCaseIntents(hostId, date, expectedCaseKeys, version); }
+            try
+            {
+                if (expectedCaseKeys.Length == 0)
+                {
+                    workflow!.RecordCaseIntentsAndResults(hostId, date, expectedCaseKeys, expectedCaseKeys, [], [], version);
+                    caseResultsRecorded = true;
+                }
+                else workflow!.RecordCaseIntents(hostId, date, expectedCaseKeys, version);
+            }
             catch (Exception ex)
             {
                 workflowTrackingFailed = true;
@@ -266,7 +277,7 @@ public static class HostDayPostProcessor
             if (attach.AttachedCount > 0)
                 Log.Info("{Context}{Date:yyyy-MM-dd} 案件掛接：掛入 {Count} 個問題", logContext, date, attach.AttachedCount);
 
-            if (hasWorkflow)
+            if (hasWorkflow && !caseResultsRecorded)
                 try
                 {
                     // CaseAttach/FleetApply side effects are complete only for signatures that the
