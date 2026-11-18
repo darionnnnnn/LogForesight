@@ -39,6 +39,7 @@ public sealed class NetiqHostDayTimingCollector : INetiqHostDayTimingCollector
                 _run.Finalized = true;
                 _run.P95Milliseconds = null;
                 _run.CompletedAtUtc ??= DateTimeOffset.UtcNow;
+                _run.ReleaseDetail();
                 return;
             }
             _run = new RunSamples(runId, Stopwatch.GetTimestamp());
@@ -147,6 +148,8 @@ public sealed class NetiqHostDayTimingCollector : INetiqHostDayTimingCollector
                 var sorted = _run.Durations.Order().ToArray();
                 _run.P95Milliseconds = sorted[Math.Clamp((int)Math.Ceiling(sorted.Length * 0.95) - 1, 0, sorted.Length - 1)];
             }
+            // 收集器是 singleton：結束後只留計數與 p95，逐主機日明細（最多 60 萬列）不留到下一趟開始
+            _run.ReleaseDetail();
         }
     }
 
@@ -156,19 +159,19 @@ public sealed class NetiqHostDayTimingCollector : INetiqHostDayTimingCollector
         {
             if (_run is null || runId.HasValue && _run.RunId != runId.Value) return null;
             var complete = _run.Finalized && _run.PipelineCompleted && _run.Expected > 0 &&
-                !_run.Incomplete && !_run.Overflow && _run.Rows.Count == _run.Expected &&
-                _run.Durations.Count == _run.Expected;
+                !_run.Incomplete && !_run.Overflow && _run.Observed == _run.Expected &&
+                _run.DurationSamples == _run.Expected;
             var p95 = complete ? _run.P95Milliseconds : null;
             return new NetiqHostDayTimingSnapshot(
                 _run.RunId,
                 !_run.Finalized ? "running" : complete ? "complete" : "incomplete",
                 _run.Expected,
-                _run.Rows.Count,
+                _run.Observed,
                 _run.Committed,
                 _run.SourceFailed,
                 _run.Unknown,
                 _run.Duplicates,
-                _run.Durations.Count,
+                _run.DurationSamples,
                 _run.Overflow,
                 p95,
                 _run.StartedAtUtc,
@@ -197,8 +200,21 @@ public sealed class NetiqHostDayTimingCollector : INetiqHostDayTimingCollector
         public bool PipelineCompleted { get; set; }
         public bool Finalized { get; set; }
         public double? P95Milliseconds { get; set; }
-        public Dictionary<HostDay, Outcome> Rows { get; } = new();
-        public List<double> Durations { get; } = new();
+        public Dictionary<HostDay, Outcome> Rows { get; private set; } = new();
+        public List<double> Durations { get; private set; } = new();
+        private int? _observedAtRelease;
+        private int? _durationsAtRelease;
+        public int Observed => _observedAtRelease ?? Rows.Count;
+        public int DurationSamples => _durationsAtRelease ?? Durations.Count;
+
+        /// <summary>結束後丟掉逐主機日明細，只留計數；之後的記錄因 Finalized 一律被拒，不會再寫進來。</summary>
+        public void ReleaseDetail()
+        {
+            _observedAtRelease ??= Rows.Count;
+            _durationsAtRelease ??= Durations.Count;
+            Rows = new();
+            Durations = new();
+        }
     }
 }
 
