@@ -43,8 +43,9 @@ public class RunDaySummaryDto
     /// <summary>NetIQ 回空資料、等複查一次的主機數：不是漏跑，不計入 <see cref="NotRunCount"/></summary>
     public int RecheckCount { get; set; }
 
-    /// <summary>今天列限定：有待複查時，同一窗口內預計的複查時刻（HH:mm，<see cref="LogForesight.Core.Service.ScheduleCalculator.NextEmptyRecheckAt"/>）；排不進窗口或其他列為 null</summary>
-    public string? RecheckAt { get; set; }
+    /// <summary>還在進行的那一天限定（<see cref="LogForesight.Core.Service.ScheduleCalculator.LiveRunDay"/>）：有待複查時何時再查
+    /// （「約 HH:mm 複查」／「下一窗口複查」／「排程未啟用，不會自動複查」，產生點只有 <c>RunMonitorService.RecheckTiming</c>）；其他列為 null</summary>
+    public string? RecheckNote { get; set; }
 
     /// <summary>今天列限定：最後一趟取數結束時尚有的待補事項（或「最後一趟異常中斷」）；其他列與無待補時為 null</summary>
     public string? PendingSummary { get; set; }

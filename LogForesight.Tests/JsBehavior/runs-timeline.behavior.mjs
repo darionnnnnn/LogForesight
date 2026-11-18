@@ -257,7 +257,7 @@ const cases = {
         assert.equal(renderDayTimingCell(ai, { inProgress: true }), dayTimingText(ai));
     },
 
-    // 總表「未執行」格：未執行與空資料待複查並列的四種組合（切出 runs.js 的 notRunCell／countCell 本體執行）
+    // 總表「未執行」與「空資料待複查」兩欄各自獨立（切出 runs.js 的 notRunCell／recheckCell／countCell 本體執行）
     notRunCellCombos() {
         const src = fs.readFileSync(path.join(jsRoot, 'pages', 'runs.js'), 'utf8');
         const extract = decl => {
@@ -271,19 +271,22 @@ const cases = {
             }
             throw new Error(`未閉合 ${decl}`);
         };
-        const STATUS_META = { none: { color: '--lf-gray-200' } };
-        const notRunCell = new Function('document', 'STATUS_META',
-            `${extract('function notRunCell')}\n${extract('function countCell')}\nreturn notRunCell;`)(document, STATUS_META);
+        const STATUS_META = { none: { color: '--lf-gray-200' }, recheck: { color: '--lf-info' } };
+        const [notRunCell, recheckCell] = new Function('document', 'STATUS_META',
+            `${extract('function notRunCell')}
+${extract('function recheckCell')}
+${extract('function countCell')}
+return [notRunCell, recheckCell];`)(document, STATUS_META);
         const text = cell => typeof cell === 'string' ? cell : cell.textContent;
-        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 0 })), '3（尚未處理）');
-        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2 })), '3（尚未處理）＋空資料待複查 2');
-        assert.equal(text(notRunCell({ isToday: false, notRunCount: 1, recheckCount: 2 })), '1＋空資料待複查 2');
-        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 2 })), '空資料待複查 2');
-        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 0 })), '');
-        // 今日列在同一窗口排得進複查時接預計時刻；沒有時刻（排不進、其他日期）就只寫台數
-        assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: '02:00' })), '空資料待複查 2（約 02:00 複查）');
-        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2, recheckAt: '02:00' })), '3（尚未處理）＋空資料待複查 2（約 02:00 複查）');
-        assert.equal(text(notRunCell({ isToday: true, notRunCount: 0, recheckCount: 2, recheckAt: null })), '空資料待複查 2');
+        // 「未執行」只算未執行：空資料待複查在自己的欄，不再接在這一格
+        assert.equal(text(notRunCell({ isToday: true, notRunCount: 3, recheckCount: 2 })), '3（尚未處理）');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 1, recheckCount: 2 })), '1');
+        assert.equal(text(notRunCell({ isToday: false, notRunCount: 0, recheckCount: 2 })), '');
+        // 「空資料待複查」：0 為空；有說明（還在進行的那一天）時數字下方接說明
+        assert.equal(text(recheckCell({ recheckCount: 0, recheckNote: null })), '');
+        assert.equal(text(recheckCell({ recheckCount: 2, recheckNote: null })), '2');
+        assert.equal(text(recheckCell({ recheckCount: 2, recheckNote: '下一窗口複查' })), '2下一窗口複查');
+        assert.equal(text(recheckCell({ recheckCount: 2, recheckNote: '約 02:00 複查' })), '2約 02:00 複查');
     },
 
     // 「未執行」的數字用次要文字色：圖例色塊的淺灰（gray-200）在白底上看不見；色塊顏色不變

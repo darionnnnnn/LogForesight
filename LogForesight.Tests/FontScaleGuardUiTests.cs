@@ -51,11 +51,35 @@ public sealed class FontScaleGuardUiTests
     }
 
     [Fact]
-    public void 偏好倍率是小八七點五中一百大一一二點五()
+    public void 偏好倍率是小八七點五中一百大一一二點五特大一二五最大一五()
     {
         var css = ReadCss("base.css");
         Assert.Equal(".875", Declaration(RuleBody(css, ":root[data-font-scale=\"small\"]"), "--lf-font-scale"));
         Assert.Equal("1.125", Declaration(RuleBody(css, ":root[data-font-scale=\"large\"]"), "--lf-font-scale"));
+        Assert.Equal("1.25", Declaration(RuleBody(css, ":root[data-font-scale=\"xlarge\"]"), "--lf-font-scale"));
+        Assert.Equal("1.5", Declaration(RuleBody(css, ":root[data-font-scale=\"xxlarge\"]"), "--lf-font-scale"));
+    }
+
+    /// <summary>
+    /// 級距清單只有一份（core/font-scale.js）：頂列按鈕與樣式表規則都要對得上它。
+    /// 漏一邊的後果都是靜默的——多一顆按鈕沒有樣式規則，點了字級不變；清單少一級，那顆按鈕被正規化成「中」。
+    /// </summary>
+    [Fact]
+    public void 字級級距的按鈕樣式與正規化清單一致()
+    {
+        var root = Path.GetDirectoryName(Path.GetDirectoryName(CssDir()))!;
+        var js = File.ReadAllText(Path.Combine(root, "wwwroot", "js", "core", "font-scale.js"), Encoding.UTF8);
+        var listMatch = Regex.Match(js, @"FONT_SCALES\s*=\s*\[([^\]]*)\]");
+        Assert.True(listMatch.Success, "font-scale.js 找不到 FONT_SCALES");
+        var list = Regex.Matches(listMatch.Groups[1].Value, "'([a-z]+)'").Select(m => m.Groups[1].Value).ToList();
+
+        var layout = File.ReadAllText(Path.Combine(root, "Views", "Shared", "_Layout.cshtml"), Encoding.UTF8);
+        var buttons = Regex.Matches(layout, @"data-scale=""([a-z]+)""").Select(m => m.Groups[1].Value).ToList();
+        Assert.Equal(list, buttons);
+
+        var css = ReadCss("base.css");
+        var rules = Regex.Matches(css, @":root\[data-font-scale=""([a-z]+)""\]").Select(m => m.Groups[1].Value).ToList();
+        Assert.Equal(list.Where(s => s != "medium").ToList(), rules);
     }
 
     private static readonly string[] Steps = ["xs", "sm", "base", "lg", "xl", "2xl", "stat"];

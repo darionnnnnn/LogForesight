@@ -33,6 +33,7 @@ import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -67,6 +68,8 @@ const MEMBER_STATUS_OPTIONS = [
 const MEMBER_PAGE_SIZE = 50;
 
 let includeResolvedDays = false;
+let casesPage = 1;                // 進階檢視兩張表各自的伺服器分頁頁碼，互不影響
+let daysPage = 1;
 let currentUser = null;
 let isSelf = false;                // 檢視自己的頁
 let canReply = false;              // 本人檢視自己的頁且具 Handle
@@ -1007,13 +1010,68 @@ function buildMemberPanel(row, cell, carry = null) {
 
 // ── 進階檢視：依主機、被指派的風險日（第一次展開才載入）──────────────────
 
-async function loadAdvanced() {
+/** 進階檢視每頁筆數（沿用後端預設 20）。兩表共用一支 workload 請求、各自帶頁碼，換頁只重畫被換的那張 */
+const WORKLOAD_PAGE_SIZE = 20;
+
+/** 表格下方的分頁列容器，第一次用到才建立（不動 cshtml） */
+function pagerFor(box) {
+    if (!box._pager) {
+        box._pager = document.createElement('nav');
+        box._pager.className = 'mt-2';
+        box.after(box._pager);
+    }
+    return box._pager;
+}
+
+/** part：'cases'／'days' 只重畫該表；省略則兩張都畫（首次展開、切換已結案、就地刷新） */
+/** 案件與風險日各一個請求序號：同一張表連點換頁時只畫最後一次；換其中一張不作廢另一張的請求 */
+const workloadSeq = { cases: createSeqGuard(), days: createSeqGuard() };
+
+async function loadAdvanced(part) {
     advancedLoaded = true;
-    renderLoading(casesEl, 3);
-    renderLoading(daysEl, 3);
-    const workload = await api.get(`/api/handlers/${userId}/workload?includeResolvedDays=${includeResolvedDays}`);
-    renderCases(workload.cases);
-    renderDays(workload.days);
+    const casesSeq = part !== 'days' ? workloadSeq.cases.next() : 0;
+    const daysSeq = part !== 'cases' ? workloadSeq.days.next() : 0;
+    if (casesSeq) renderLoading(casesEl, 3);
+    if (daysSeq) renderLoading(daysEl, 3);
+    const query = `includeResolvedDays=${includeResolvedDays}&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
+    const stillWanted = () => (casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq)) || (daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq));
+    let workload;
+    try {
+        workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+    } catch (error) {
+        // 過期請求的失敗不處理：往上丟會讓 guardLoad 把較新請求已畫好的表換成「載入失敗」
+        if (!stillWanted()) return;
+        throw error;
+    }
+    const doCases = casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq);
+    const doDays = daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq);
+    if (!doCases && !doDays) return;
+
+    // 資料變少後頁碼可能超出範圍（例如最後一頁的案件剛結案）：退到最後一頁重取一次
+    const casesLast = Math.max(1, Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE));
+    const daysLast = Math.max(1, Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE));
+    if ((doCases && casesPage > casesLast) || (doDays && daysPage > daysLast)) {
+        casesPage = Math.min(casesPage, casesLast);
+        daysPage = Math.min(daysPage, daysLast);
+        return loadAdvanced(part);
+    }
+
+    if (doCases) {
+        renderCases(workload.cases);
+        renderPagination(pagerFor(casesEl), {
+            page: casesPage,
+            totalPages: Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE),
+            onPage: next => { casesPage = next; guardLoad(casesEl, () => loadAdvanced('cases')); }
+        });
+    }
+    if (doDays) {
+        renderDays(workload.days);
+        renderPagination(pagerFor(daysEl), {
+            page: daysPage,
+            totalPages: Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE),
+            onPage: next => { daysPage = next; guardLoad(daysEl, () => loadAdvanced('days')); }
+        });
+    }
 }
 
 function renderCases(cases) {
@@ -1114,6 +1172,8 @@ pausedCheckbox.addEventListener('change', onOrderFilterChange);
 
 document.getElementById('toggle-resolved-days').addEventListener('change', event => {
     includeResolvedDays = event.target.checked;
+    casesPage = 1;
+    daysPage = 1;
     guardLoad([casesEl, daysEl], loadAdvanced);
 });
 

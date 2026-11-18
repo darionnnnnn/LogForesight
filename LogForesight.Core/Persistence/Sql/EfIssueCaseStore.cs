@@ -60,17 +60,19 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .ToList();
     }
 
-    public List<IssueCase> GetMany(IEnumerable<string> hostNames)
+    public List<IssueCase> GetMany(IEnumerable<string> hostNames) => ForHosts(hostNames, openOnly: false);
+
+    public List<IssueCase> GetOpenMany(IEnumerable<string> hostNames) => ForHosts(hostNames, openOnly: true);
+
+    private List<IssueCase> ForHosts(IEnumerable<string> hostNames, bool openOnly)
     {
         var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
         if (keys.Count == 0) return new List<IssueCase>();
 
         using var ctx = _contextFactory();
-        return ctx.IssueCases.AsNoTracking()
-            .Where(c => keys.Contains(c.HostNameKey))
-            .ToList()
-            .Select(ToModel)
-            .ToList();
+        var query = ctx.IssueCases.AsNoTracking().Where(c => keys.Contains(c.HostNameKey));
+        if (openOnly) query = query.Where(c => c.ClosedAt == null);
+        return query.ToList().Select(ToModel).ToList();
     }
 
     public List<IssueCase> GetOpenByHandler(long userId)

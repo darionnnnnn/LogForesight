@@ -72,6 +72,11 @@ public class AdminController : ControllerBase
     public ApiResponse<UserDetailDto> GetUserDetail(long userId) =>
         ApiResponse<UserDetailDto>.Ok(_users.GetUserDetail(userId));
 
+    /// <summary>使用者看得到的主機（含可見來源），伺服器端分頁</summary>
+    [HttpGet("users/{userId:long}/visible-hosts")]
+    public ApiResponse<PagedResult<UserVisibleHostDto>> GetUserVisibleHosts(long userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
+        ApiResponse<PagedResult<UserVisibleHostDto>>.Ok(_users.GetVisibleHosts(userId, page, pageSize));
+
     [HttpPost("users")]
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));
@@ -147,11 +152,6 @@ public class AdminController : ControllerBase
 
         return ApiResponse<PagedResult<HostDto>>.Ok(_hosts.GetHosts(request));
     }
-
-    /// <summary>取得全部活躍主機的簡易選項清單（供指派下拉等用途，不分頁）</summary>
-    [HttpGet("hosts/all")]
-    public ApiResponse<List<HostOptionDto>> GetAllActiveHosts() =>
-        ApiResponse<List<HostOptionDto>>.Ok(_hosts.GetAllActiveHostOptions());
 
     /// <summary>
     /// 「全選符合目前篩選的主機」（體檢 X3）：與清單頁共用同一組篩選參數與同一份篩選實作，
@@ -298,14 +298,15 @@ public class AdminController : ControllerBase
 
     /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
     [HttpPost("host-groups/{groupId:long}/members")]
-    public ApiResponse<HostGroupMemberPreviewDto> AddMembers(
+    public ApiResponse<AddHostGroupMembersResultDto> AddMembers(
         long groupId, [FromBody] AddHostGroupMembersRequest request) =>
-        ApiResponse<HostGroupMemberPreviewDto>.Ok(_groups.AddMembers(groupId, request));
+        ApiResponse<AddHostGroupMembersResultDto>.Ok(_groups.AddMembers(groupId, request));
 
-    /// <summary>「目前成員」頁籤：本群組現有成員清單</summary>
+    /// <summary>「目前成員」頁籤：本群組現有成員清單（伺服器分頁，依 IP 排序）</summary>
     [HttpGet("host-groups/{groupId:long}/members")]
-    public ApiResponse<List<HostGroupMemberDto>> GetMembers(long groupId) =>
-        ApiResponse<List<HostGroupMemberDto>>.Ok(_groups.GetMembers(groupId));
+    public ApiResponse<PagedResult<HostGroupMemberDto>> GetMembers(
+        long groupId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50) =>
+        ApiResponse<PagedResult<HostGroupMemberDto>>.Ok(_groups.GetMembers(groupId, page, pageSize));
 
     /// <summary>把選定主機移出群組</summary>
     [HttpPost("host-groups/{groupId:long}/members/remove")]

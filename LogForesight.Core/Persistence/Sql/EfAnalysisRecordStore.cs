@@ -1963,9 +1963,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     {
         if (hosts.Count == 0) return null;
 
+        // 只讀傳入主機的列與 host_id＝0 的舊列：HostMatcher 對 host_id 非 0 的列只認 id、為 0 才比名稱，
+        // 所以這個條件與「讀整日再比對」結果完全相同，但不必把當天其他主機的整份內容讀回反序列化（3000 台時是整日 3000 列）
+        var hostIds = hosts.Select(h => h.HostId).Where(id => id != 0).Distinct().ToList();
         using var ctx = _contextFactory();
         var sameDay = ctx.DailyRecords
-            .Where(r => r.RecordDate == date.Date)
+            .Where(r => r.RecordDate == date.Date && (r.HostId == 0 || hostIds.Contains(r.HostId)))
             .ToList()
             .Select(Deserialize)
             .ToList();

@@ -18,30 +18,6 @@ namespace LogForesight.Tests;
 /// </summary>
 public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.PlanFixture>
 {
-    /// <summary>記錄 SELECT 語句與參數（名稱＋值），EXPLAIN 時要以同名參數重放</summary>
-    internal sealed class SqlRecorder : DbCommandInterceptor
-    {
-        private readonly object _gate = new();
-        public List<(string Sql, List<(string Name, object? Value)> Parameters)> Commands { get; } = new();
-
-        public override InterceptionResult<DbDataReader> ReaderExecuting(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
-        {
-            lock (_gate)
-                Commands.Add((command.CommandText,
-                    command.Parameters.Cast<DbParameter>().Select(p => (p.ParameterName, p.Value)).ToList()));
-            return base.ReaderExecuting(command, eventData, result);
-        }
-
-        public void Clear() { lock (_gate) Commands.Clear(); }
-
-        public List<(string Sql, List<(string Name, object? Value)> Parameters)> Selects()
-        {
-            lock (_gate)
-                return Commands.Where(c => c.Sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-    }
-
     private static readonly Regex AliasPattern = new(
         @"(?:FROM|JOIN)\s+""(\w+)""\s+AS\s+""(\w+)""", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -63,7 +39,7 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
     {
         internal readonly string _directory = Path.Combine(Path.GetTempPath(), "lf-plan-guard-" + Guid.NewGuid().ToString("N"));
         internal readonly string _dbPath;
-        internal readonly SqlRecorder _recorder = new();
+        internal readonly SqlCommandRecorder _recorder = new();
         internal readonly StorageBackend _backend;
         internal readonly EfAnalysisRecordStore _records;
 
@@ -193,7 +169,7 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
         _output = output;
     }
 
-    private SqlRecorder _recorder => _fx._recorder;
+    private SqlCommandRecorder _recorder => _fx._recorder;
     private string _dbPath => _fx._dbPath;
     private StorageBackend _backend => _fx._backend;
     private EfAnalysisRecordStore _records => _fx._records;
@@ -276,6 +252,14 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
     }
 
     [Fact]
+    public void AnalysisRecordStore_GetOne_走索引()
+    {
+        // 單筆主機日讀取：條件是日期＋主機編號（或 host_id＝0 的舊列），應由 (host_id, record_date) 或 record_date 索引定位
+        var plan = PlanOf(() => _records.GetOne(new[] { new HostKey { HostId = 7, HostName = "host-07" } }, Today.AddDays(-2)));
+        AssertNoFullScan(plan, "lf_daily_records");
+    }
+
+    [Fact]
     public void AnalysisRecordStore_QueryLightweight_走索引()
     {
         // 另有一道讀 lf_top_issues 的 SELECT（依 record_id 取問題），本案只斷言主表 lf_daily_records
@@ -312,6 +296,16 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
         var severities = new HashSet<IssueSeverity>(Enum.GetValues<IssueSeverity>());
         var plan = PlanOf(() => aggregates.AggregateByCategory(
             IssueExclusion.None, Today.AddDays(-(Days - 1)), Today, null, severities));
+        AssertNoFullScan(plan, "lf_top_issues");
+    }
+
+    /// <summary>依問題視角展開列：單一問題的逐主機日，以 (event_id, record_date) 等索引定位，不掃整張 lf_top_issues</summary>
+    [Fact]
+    public void IssueAggregateQuery_IssueHostDays_走索引()
+    {
+        var aggregates = _backend.IssueAggregateQuery(new HostStore(_backend.Blob("plan_hosts")));
+        var plan = PlanOf(() => aggregates.IssueHostDays(
+            IssueExclusion.None, "DiskSrc", 103, Today.AddDays(-(Days - 1)), Today, null));
         AssertNoFullScan(plan, "lf_top_issues");
     }
 

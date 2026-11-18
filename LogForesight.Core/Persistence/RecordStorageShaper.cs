@@ -20,6 +20,16 @@ internal static class RecordStorageShaper
             return record;
         }
 
+        return Compact(record);
+    }
+
+    /// <summary>
+    /// 精簡投影本身（不看風險等級）：<see cref="ForStorage"/> 對低風險日套用它；工作流父指紋對**每一筆**都以它計算——
+    /// 同一筆紀錄的風險等級會在寫入後跨界（PRTG finding 把低風險日上調、事後複核下調），指紋若跟著「當下是不是低」
+    /// 決定要不要精簡，記憶體裡的完整內容與資料庫裡寫入當下的形狀就會算出不同指紋。冪等：對精簡過的紀錄再套一次內容不變。
+    /// </summary>
+    public static DailyAnalysisRecord Compact(DailyAnalysisRecord record)
+    {
         return new DailyAnalysisRecord
         {
             Date = record.Date,

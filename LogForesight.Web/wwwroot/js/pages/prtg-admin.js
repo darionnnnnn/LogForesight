@@ -10,7 +10,8 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
-    collectLines, renderTable, renderError, renderUpdatedAt, button as makeButton, headerWithHelp
+    collectLines, renderTable, renderError, renderUpdatedAt, button as makeButton, headerWithHelp,
+    createHostSearcher, searchableHostSelect
 } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
@@ -300,6 +301,10 @@ let selectedBackfillTimer = null;
 let selectedBackfillPreview = null;
 const selectedBackfillHostIds = new Set();
 let pendingBackfillHostId = null;
+// 指定主機回補的勾選清單：只持有「本次搜尋命中（最多 50 台）」與「已勾選者」，不載入全部主機
+let backfillSearcher = null;
+let backfillSearchResult = { items: [], total: 0 };
+const backfillSeenHosts = new Map(); // hostId → 主機資料，讓已勾選者即使不在本次命中也永遠列出
 
 function selectedBackfillRequest() {
     return {
@@ -318,20 +323,23 @@ function selectedBackfillFormError(request) {
     return null;
 }
 
-function renderSelectedBackfillHosts(hosts) {
+function renderSelectedBackfillHosts() {
     const root = document.getElementById('prtg-selected-backfill-hosts');
     if (!root) return;
     root.replaceChildren();
-    const query = document.getElementById('prtg-selected-backfill-search')?.value.trim().toLocaleLowerCase() ?? '';
-    const filtered = (hosts || []).filter(host => `${host.hostName ?? ''} ${host.ipAddress ?? ''}`.toLocaleLowerCase().includes(query));
-    if (!filtered.length) {
+    const query = document.getElementById('prtg-selected-backfill-search')?.value.trim() ?? '';
+    // 命中的主機在前，已勾選但不在本次命中的接在後面（永遠列出，才取消得掉）
+    const rows = [...backfillSearchResult.items];
+    for (const id of selectedBackfillHostIds) {
+        if (!rows.some(host => String(host.hostId) === id) && backfillSeenHosts.has(id)) rows.push(backfillSeenHosts.get(id));
+    }
+    if (!rows.length) {
         const empty = document.createElement('span');
         empty.className = 'lf-text-meta';
-        empty.textContent = hosts?.length ? '沒有符合的主機。' : '沒有可選的已儲存主機。';
+        empty.textContent = query ? '沒有符合的主機。' : '沒有可選的已儲存主機。';
         root.appendChild(empty);
-        return;
     }
-    for (const host of filtered) {
+    for (const host of rows) {
         const id = String(host.hostId);
         const label = document.createElement('label');
         label.className = 'form-check d-flex gap-2 align-items-start py-1';
@@ -347,12 +355,18 @@ function renderSelectedBackfillHosts(hosts) {
             selectedBackfillPreview = null;
             document.getElementById('prtg-selected-backfill-start').disabled = true;
             document.getElementById('prtg-selected-backfill-selection').textContent = `已選 ${selectedBackfillHostIds.size} / 5 台`;
-            renderSelectedBackfillHosts(cachedHosts || []);
+            renderSelectedBackfillHosts();
         });
         const name = document.createElement('span');
         name.textContent = `${host.hostName || '未命名主機'}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
         label.append(checkbox, name);
         root.appendChild(label);
+    }
+    if (backfillSearchResult.total > backfillSearchResult.items.length) {
+        const more = document.createElement('div');
+        more.className = 'lf-text-meta pt-1';
+        more.textContent = `共 ${formatNumber(backfillSearchResult.total)} 台符合，只列出前 ${formatNumber(backfillSearchResult.items.length)} 台；請輸入更多關鍵字縮小範圍。`;
+        root.appendChild(more);
     }
     document.getElementById('prtg-selected-backfill-selection').textContent = `已選 ${selectedBackfillHostIds.size} / 5 台`;
 }
@@ -415,7 +429,21 @@ async function refreshSelectedBackfillStatus() {
 function bindSelectedBackfill() {
     const hostSearch = document.getElementById('prtg-selected-backfill-search');
     if (!hostSearch) return;
-    hostSearch.addEventListener('input', () => renderSelectedBackfillHosts(cachedHosts || []));
+    // 搜尋一律打伺服器（共用 createHostSearcher：debounce＋請求序號）；只取啟用且未合併的主機
+    backfillSearcher = createHostSearcher({
+        status: 'assignable', delay: 250, pageSize: 50,
+        onResult: result => {
+            backfillSearchResult = { items: result.items || [], total: result.total || 0 };
+            for (const host of backfillSearchResult.items) backfillSeenHosts.set(String(host.hostId), host);
+            renderSelectedBackfillHosts();
+        },
+        onError: error => {
+            const root = document.getElementById('prtg-selected-backfill-hosts');
+            root.replaceChildren();
+            root.appendChild(statusNote('error', `無法載入主機清單：${error?.message || '請重新整理頁面重試。'}`));
+        }
+    });
+    hostSearch.addEventListener('input', () => backfillSearcher.search(hostSearch.value.trim()));
     hostSearch.addEventListener('keydown', event => {
         if (event.key === 'ArrowDown') document.querySelector('#prtg-selected-backfill-hosts input:not(:disabled)')?.focus();
     });
@@ -425,14 +453,8 @@ function bindSelectedBackfill() {
             document.getElementById('prtg-selected-backfill-start').disabled = true;
         });
     }
-    api.get('/api/admin/hosts/all', { silent: true }).then(hosts => {
-        cachedHosts = hosts || [];
+    backfillSearcher.run('').then(() => {
         if (pendingBackfillHostId != null) activateSelectedBackfillHost(pendingBackfillHostId);
-        renderSelectedBackfillHosts(cachedHosts);
-    }).catch(error => {
-        const root = document.getElementById('prtg-selected-backfill-hosts');
-        root.replaceChildren();
-        root.appendChild(statusNote('error', `無法載入主機清單：${error?.message || '請重新整理頁面重試。'}`));
     });
     document.getElementById('prtg-selected-backfill-preview').addEventListener('click', async event => {
         const request = selectedBackfillRequest();
@@ -1854,7 +1876,7 @@ function renderManualMaps(items) {
 }
 
 let assignModal = null;
-let cachedHosts = null;
+let assignHostWidget = null; // 無候選主機時的搜尋式主機下拉（有候選主機時為 null，走固定的候選 select）
 let currentAssignItem = null;
 let currentFixedHostId = null;
 
@@ -1879,41 +1901,37 @@ async function openAssignModal(item) {
     const deviceChoiceEl = document.getElementById('prtg-assign-device-choice');
     const hostFixedEl = document.getElementById('prtg-assign-host-fixed');
     const hostSelect = document.getElementById('prtg-assign-host');
+    const hostSearchBox = document.getElementById('prtg-assign-host-search');
     const hostSelectGroup = document.getElementById('prtg-assign-host-select-group');
+    const hostLabel = hostSelectGroup?.querySelector('label');
 
     deviceChoiceEl.replaceChildren();
     deviceChoiceEl.classList.add('d-none');
+    hostFixedEl.replaceChildren();
+    hostFixedEl.classList.add('d-none');
+    if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
 
     const candidates = item.candidateHosts || [];
+    assignHostWidget = null;
+    hostSearchBox?.replaceChildren();
 
     // 依候選主機數量決定目標主機顯示
     if (candidates.length === 0) {
-        hostFixedEl.replaceChildren();
-        hostFixedEl.classList.add('d-none');
-        if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
-
-        hostSelect.replaceChildren(new Option('載入中…', ''));
+        // 沒有候選：關鍵字搜尋全站主機（伺服器端，最多 50 筆），選取值是 hostId
+        assignHostWidget = searchableHostSelect({ platform: null, status: 'assignable', valueField: 'hostId', showIp: true, delay: 250 });
+        assignHostWidget.select.id = 'prtg-assign-host-lookup';
+        assignHostWidget.search.setAttribute('aria-label', '搜尋目標主機');
+        hostSearchBox.appendChild(assignHostWidget.element);
+        hostSearchBox.classList.remove('d-none');
+        hostSelect.classList.add('d-none');
+        if (hostLabel) hostLabel.htmlFor = 'prtg-assign-host-lookup';
         assignModal.show();
-
-        try {
-            cachedHosts = await api.get('/api/admin/hosts/all', { silent: true });
-            hostSelect.innerHTML = '<option value="">請選擇主機…</option>';
-            for (const host of (cachedHosts || [])) {
-                const option = document.createElement('option');
-                option.value = String(host.hostId);
-                option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
-                hostSelect.appendChild(option);
-            }
-        } catch {
-            hostSelect.innerHTML = '<option value="">無法載入主機清單</option>';
-            toast('載入主機清單失敗', 'danger');
-        }
     } else {
-        hostFixedEl.replaceChildren();
-        hostFixedEl.classList.add('d-none');
-        if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
+        hostSearchBox?.classList.add('d-none');
+        hostSelect.classList.remove('d-none');
+        if (hostLabel) hostLabel.htmlFor = 'prtg-assign-host';
 
-        hostSelect.innerHTML = '<option value="">請選擇主機…</option>';
+        hostSelect.replaceChildren(new Option('請選擇主機…', ''));
         for (const host of candidates) {
             const option = document.createElement('option');
             option.value = String(host.hostId);
@@ -2074,7 +2092,7 @@ function bindAssignForm() {
 
         let targetHostId = currentFixedHostId;
         if (!targetHostId) {
-            const hostSelectVal = document.getElementById('prtg-assign-host').value;
+            const hostSelectVal = assignHostWidget ? assignHostWidget.getValue() : document.getElementById('prtg-assign-host').value;
             if (!hostSelectVal) {
                 toast('請選擇目標主機', 'warning');
                 return;
@@ -2111,41 +2129,22 @@ function bindAssignForm() {
     });
 }
 
-function populateBatchHostSelect(selectEl, hosts) {
-    if (!selectEl) return;
-    const currentVal = selectEl.value;
-    selectEl.innerHTML = '<option value="">請選擇目標主機…</option>';
-    for (const host of hosts) {
-        const option = document.createElement('option');
-        option.value = String(host.hostId);
-        option.textContent = `${host.hostName}${host.ipAddress ? ` (${host.ipAddress})` : ''}`;
-        if (currentVal && option.value === currentVal) {
-            option.selected = true;
-        }
-        selectEl.appendChild(option);
-    }
-}
-
-async function ensureBatchHostsLoaded() {
-    const hostSelect = document.getElementById('prtg-conflict-batch-host');
-    if (!hostSelect) return;
-    if (cachedHosts && cachedHosts.length > 0) {
-        populateBatchHostSelect(hostSelect, cachedHosts);
-        return;
-    }
-    try {
-        cachedHosts = await api.get('/api/admin/hosts/all', { silent: true });
-        populateBatchHostSelect(hostSelect, cachedHosts || []);
-    } catch {
-        hostSelect.innerHTML = '<option value="">載入主機清單失敗</option>';
-    }
-}
-
 function bindConflictBatchControls() {
     // 全選 checkbox 在表頭，隨每次 renderConflicts 重建並自帶 change 處理（buildConflictSelectAll）
 
     const submitBtn = document.getElementById('prtg-conflict-batch-submit');
-    const hostSelect = document.getElementById('prtg-conflict-batch-host');
+    // 目標主機：搜尋式下拉（伺服器端搜尋、最多 50 筆），選取值是 hostId
+    // 靜態的 select 只是未啟用 JS 時的佔位，載入後換成搜尋式下拉並接手同一個 id（label for 照舊指向它）
+    const hostPlaceholder = document.getElementById('prtg-conflict-batch-host');
+    let hostSelect = null;
+    if (hostPlaceholder) {
+        const widget = searchableHostSelect({ platform: null, status: 'assignable', valueField: 'hostId', showIp: true, delay: 250 });
+        widget.element.classList.add('lf-minw-md', 'mw-100');
+        hostPlaceholder.replaceWith(widget.element);
+        widget.select.id = 'prtg-conflict-batch-host';
+        widget.search.setAttribute('aria-label', '搜尋目標主機');
+        hostSelect = widget.select;
+    }
     const noteInput = document.getElementById('prtg-conflict-batch-note');
 
     if (submitBtn) {
@@ -2525,35 +2524,33 @@ function bindPrtgMirror() {
 let prtgProbePollTimer = null;
 
 
-function activateSelectedBackfillHost(hostName) {
-    const name = String(hostName || '');
-    const normalized = name.trim().toLocaleLowerCase();
-    const host = (cachedHosts || []).find(item => String(item.hostName || '').trim().toLocaleLowerCase() === normalized);
-    if (!host) {
-        pendingBackfillHostId = name;
-        const search = document.getElementById('prtg-selected-backfill-search');
-        if (search) search.value = name;
-    }
-    else {
-        pendingBackfillHostId = null;
-        const id = String(host.hostId);
-        if (!selectedBackfillHostIds.has(id) && selectedBackfillHostIds.size >= 5) {
-            toast('已選滿 5 台主機；請先取消一台再加入這台。', 'warning');
-            const search = document.getElementById('prtg-selected-backfill-search');
-            if (search) search.value = host.hostName || '';
-            renderSelectedBackfillHosts(cachedHosts || []);
-            document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
-            return;
-        }
-        if (!selectedBackfillHostIds.has(id)) selectedBackfillHostIds.add(id);
-        const search = document.getElementById('prtg-selected-backfill-search');
-        if (search) search.value = '';
-        renderSelectedBackfillHosts(cachedHosts || []);
-    }
+async function activateSelectedBackfillHost(hostName) {
+    const name = String(hostName || '').trim();
+    const normalized = name.toLocaleLowerCase();
+    const search = document.getElementById('prtg-selected-backfill-search');
+    pendingBackfillHostId = name;
+    if (search) search.value = name;
     document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
-    if (!host) renderSelectedBackfillHosts(cachedHosts || []);
-    else [...document.querySelectorAll('#prtg-selected-backfill-hosts input[type="checkbox"]')]
-        .find(item => item.value === String(host.hostId))?.focus();
+    // 以名稱向伺服器查一次（同一個搜尋器，結果同時就是清單的命中列）
+    const result = await backfillSearcher?.run(name);
+    if (!result) return; // 失敗（清單已顯示錯誤）或已被更新的搜尋取代
+    const host = (result.items || []).find(item => String(item.hostName || '').trim().toLocaleLowerCase() === normalized);
+    if (!host) return; // 找不到：保留 pending 與搜尋框內的名稱，清單顯示「沒有符合的主機」
+    pendingBackfillHostId = null;
+    const id = String(host.hostId);
+    if (!selectedBackfillHostIds.has(id) && selectedBackfillHostIds.size >= 5) {
+        toast('已選滿 5 台主機；請先取消一台再加入這台。', 'warning');
+        return;
+    }
+    selectedBackfillHostIds.add(id);
+    // 選取變了：舊預覽作廢，與勾選框改變時同一個處理（「開始補值」要等重新預覽）
+    selectedBackfillPreview = null;
+    document.getElementById('prtg-selected-backfill-start').disabled = true;
+    if (search) search.value = '';
+    await backfillSearcher.run('');
+    renderSelectedBackfillHosts();
+    [...document.querySelectorAll('#prtg-selected-backfill-hosts input[type="checkbox"]')]
+        .find(item => item.value === id)?.focus();
 }
 
 function renderPrtgProbeStatus(status) {
@@ -3163,7 +3160,6 @@ function init() {
     initValueReadiness();
     Promise.allSettled([
         loadSettings(),
-        ensureBatchHostsLoaded(),
         refreshPrtgMirror(),
         loadSnapshotDiagnostics(),
         refreshAcceptanceAi(),
@@ -3303,9 +3299,14 @@ if (monitoringForm) {
     }
     document.getElementById('prtg-monitoring-preview').addEventListener('click', () => previewScope(true));
     function sameIdSet(left, right) { return left.size === right.size && [...left].every(id => right.has(id)); }
+    /** 選取上限只由後端回傳（ScaleLimits）；還沒載入時視為 0，任何選取都不會被接受 */
+    function monitoringLimit(kind) {
+        const value = kind === 'host' ? monitoring?.maxHosts : monitoring?.maxSensors;
+        return Number.isSafeInteger(value) && value > 0 ? value : 0;
+    }
     function commitHostSelection(next) {
-        if (next.size > 3000) {
-            hostBatchStatus.textContent = '主機選取超過 3,000 台上限；未變更選取。';
+        if (next.size > monitoringLimit('host')) {
+            hostBatchStatus.textContent = `主機選取超過 ${formatNumber(monitoringLimit('host'))} 台上限；未變更選取。`;
             renderMonitoringHosts();
             return null;
         }
@@ -3317,8 +3318,8 @@ if (monitoringForm) {
         return added;
     }
     function commitSensorSelection(next) {
-        if (next.size > 15000) {
-            sensorBatchStatus.textContent = 'sensor 選取超過 15,000 顆上限；未變更選取。';
+        if (next.size > monitoringLimit('sensor')) {
+            sensorBatchStatus.textContent = `sensor 選取超過 ${formatNumber(monitoringLimit('sensor'))} 顆上限；未變更選取。`;
             renderMonitoringSensors();
             return null;
         }
@@ -3333,7 +3334,7 @@ if (monitoringForm) {
         const isHost = kind === 'host';
         const rows = isHost ? hostPage?.rows || [] : sensorPage?.rows || [];
         const current = isHost ? hostSelection : sensorSelection;
-        const maximum = isHost ? 3000 : 15000;
+        const maximum = monitoringLimit(kind);
         const proposed = new Set(current);
         for (const row of rows) {
             const id = Number(isHost ? row.hostId : row.sensorId);
@@ -3388,7 +3389,7 @@ if (monitoringForm) {
         const isHost = kind === 'host';
         const searchInput = isHost ? hostSearch : sensorSearch;
         const statusBox = isHost ? hostBatchStatus : sensorBatchStatus;
-        const maximum = isHost ? 3000 : 15000;
+        const maximum = monitoringLimit(kind);
         const batch = {
             kind, sequence: ++selectionBatchSequence, draftVersion,
             revision: monitoring.revision, catalogueToken: monitoring.catalogueToken,
@@ -3648,12 +3649,15 @@ if (monitoringForm) {
             if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
             monitoring = response; draftVersion++; estimateSequence++;
             hostPageSequence++; sensorPageSequence++;
+            // 上限數字只來自後端（ScaleLimits），頁面不寫死
+            document.getElementById('prtg-monitoring-selection-limits').textContent =
+                `最多選取 ${formatNumber(monitoringLimit('host'))} 台主機與 ${formatNumber(monitoringLimit('sensor'))} 顆 sensor；超過上限會明確拒絕，不會截斷。`;
             const initializedDraftVersion = draftVersion;
             estimateToken = null; estimateFingerprint = null;
             hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));
             sensorSelection.clear(); monitoring.sensorIds.forEach(id => sensorSelection.add(Number(id)));
-            if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > 3000)
-                throw new Error('已儲存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
+            if (Array.isArray(monitoring.savedHosts) && monitoring.savedHosts.length > monitoringLimit('host'))
+                throw new Error(`已儲存主機超過 ${formatNumber(monitoringLimit('host'))} 筆修復清單上限；拒絕部分載入。`);
             savedHostRows = Array.isArray(monitoring.savedHosts) ? monitoring.savedHosts.slice() : [];
             savedHostPageIndex = 0; selectedSensorPageIndex = 0;
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = !monitoring.canEdit;

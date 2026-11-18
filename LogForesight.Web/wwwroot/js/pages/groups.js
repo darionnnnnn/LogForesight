@@ -4,7 +4,9 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, renderError, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad, renderPagination } from '../core/ui.js';
+import { createSeqGuard } from '../core/async-guards.js';
+import { formatNumber } from '../core/format.js';
 import { roleText, statusNote } from '../core/elements.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
@@ -15,8 +17,11 @@ let userGroups = [];
 let hostGroups = [];
 let matrix = null;
 let editing = null;         // { kind: 'user' | 'host', group }
-let membersState = null;    // { groupId, groupName, mode, candidates }
-let currentMembers = [];    // 「目前成員」頁籤目前載入的成員（供移除時算未分組警示）
+const MEMBERS_PAGE_SIZE = 50;   // 成員清單與加入預覽的伺服器分頁筆數
+let membersState = null;    // { groupId, groupName, mode, query, preview }
+let currentMembers = { items: [], page: 1, pageSize: MEMBERS_PAGE_SIZE, total: 0 };   // 「目前成員」目前這一頁
+let selectedCurrent = new Map();   // 目前成員勾選（hostId → otherGroupCount），跨頁保留
+let selectedAdd = new Set();       // 加入預覽勾選（hostId），跨頁保留
 
 // ── 分頁切換 ─────────────────────────────────────────────────────────────────
 
@@ -426,7 +431,9 @@ bindTabs(document.getElementById('members-tabs'), {
 });
 
 function openMembersModal(group) {
-    membersState = { groupId: group.groupId, groupName: group.groupName, mode: 'cidr', candidates: [] };
+    membersState = { groupId: group.groupId, groupName: group.groupName, mode: 'cidr', query: null, preview: null };
+    selectedCurrent = new Map();
+    selectedAdd = new Set();
     document.getElementById('members-group-name').textContent = group.groupName;
 
     // 每次開啟固定回到「目前成員」頁籤，並重置「加入成員」頁籤的殘留狀態
@@ -443,34 +450,70 @@ function openMembersModal(group) {
     setMembersMode('cidr');
     document.getElementById('members-summary').textContent = '';
     document.getElementById('members-preview').replaceChildren();
+    document.getElementById('members-pager').replaceChildren();
     document.getElementById('members-remove-field').classList.add('d-none');
     document.getElementById('members-remove-others').checked = false;
-    document.getElementById('members-apply').disabled = true;
+    // 上一個群組還在途的預覽作廢：不然它回來時會畫進這個群組的視窗
+    previewSeq.next();
+    updateMembersApplyState();
 
-    loadCurrentMembers(group.groupId);
+    // 目前成員區先清空：這個群組載入失敗時不得留著上一個群組的台數、分頁與可按的移出鈕
+    document.getElementById('current-members-summary').textContent = '';
+    document.getElementById('current-members-pager').replaceChildren();
+    document.getElementById('current-members-remove').disabled = true;
+    document.getElementById('current-members-warning').replaceChildren();
+
+    loadCurrentMembers(group.groupId, 1);
     membersModal.show();
 }
 
-// ── 目前成員（依 /24 分組，勾選移出） ───────────────────────────────────────
+// ── 目前成員（伺服器分頁，頁內依 /24 分組，勾選跨頁保留） ─────────────────────
 
-async function loadCurrentMembers(groupId) {
-    renderLoading(document.getElementById('current-members-list'), 3);
-    currentMembers = await api.get(`/api/admin/host-groups/${groupId}/members`);
-    document.getElementById('current-members-summary').textContent = `共 ${currentMembers.length} 台`;
+/** 目前成員與加入預覽各一個請求序號：連點換頁或換群組時，只畫最後一次的結果 */
+const currentMembersSeq = createSeqGuard();
+const previewSeq = createSeqGuard();
+
+async function loadCurrentMembers(groupId, page = 1) {
+    const container = document.getElementById('current-members-list');
+    const seq = currentMembersSeq.next();
+    renderLoading(container, 3);
+    let result;
+    try {
+        result = await api.get(`/api/admin/host-groups/${groupId}/members?page=${page}&pageSize=${MEMBERS_PAGE_SIZE}`, { silent: true });
+        // 移出後原頁可能已不存在：退回最後一頁
+        if (result.items.length === 0 && result.total > 0 && page > 1) {
+            const lastPage = Math.ceil(result.total / result.pageSize);
+            result = await api.get(`/api/admin/host-groups/${groupId}/members?page=${lastPage}&pageSize=${MEMBERS_PAGE_SIZE}`, { silent: true });
+        }
+    } catch {
+        if (currentMembersSeq.isCurrent(seq)) {
+            renderError(container, { message: '載入目前成員失敗', onRetry: () => loadCurrentMembers(groupId, page) });
+        }
+        return;
+    }
+    if (!currentMembersSeq.isCurrent(seq)) return;
+    currentMembers = result;
     renderCurrentMembers();
 }
 
 function renderCurrentMembers() {
     const container = document.getElementById('current-members-list');
+    const items = currentMembers.items;
 
-    if (currentMembers.length === 0) {
+    renderPagination(document.getElementById('current-members-pager'), {
+        page: currentMembers.page,
+        totalPages: Math.ceil(currentMembers.total / currentMembers.pageSize),
+        onPage: page => loadCurrentMembers(membersState.groupId, page)
+    });
+
+    if (items.length === 0) {
         renderEmpty(container, { title: '尚無成員', hint: '用「加入成員」頁籤依網段或關鍵字加入主機。' });
         updateCurrentMembersState();
         return;
     }
 
     const bySubnet = new Map();
-    for (const member of currentMembers) {
+    for (const member of items) {
         const cidr = slash24(member.ipAddress);
         if (!bySubnet.has(cidr)) bySubnet.set(cidr, []);
         bySubnet.get(cidr).push(member);
@@ -484,7 +527,9 @@ function renderCurrentMembers() {
 
         const summary = document.createElement('summary');
         summary.className = 'px-2 py-1 lf-text-meta lf-pointer';
-        summary.textContent = `${cidr}（${members.length} 台）`;
+        // 分頁時同一網段可能跨頁：數字只代表本頁，避免看成兩個網段各有幾台
+        const onePage = currentMembers.total <= items.length;
+        summary.textContent = `${cidr}（${onePage ? '' : '本頁 '}${formatNumber(members.length)} 台）`;
         details.appendChild(summary);
 
         const body = document.createElement('div');
@@ -512,7 +557,13 @@ function currentMemberRow(member) {
     box.type = 'checkbox';
     box.className = 'form-check-input lf-current-member';
     box.dataset.hostId = String(member.hostId);
-    box.addEventListener('change', updateCurrentMembersState);
+    box.checked = selectedCurrent.has(member.hostId);
+    box.addEventListener('change', () => {
+        // 勾選存在記憶體：跨頁保留，連同 otherGroupCount（切頁後仍能算「將未分組」）
+        if (box.checked) selectedCurrent.set(member.hostId, member.otherGroupCount);
+        else selectedCurrent.delete(member.hostId);
+        updateCurrentMembersState();
+    });
     row.appendChild(box);
 
     const name = document.createElement('span');
@@ -528,27 +579,25 @@ function currentMemberRow(member) {
     return row;
 }
 
-function selectedCurrentMemberIds() {
-    return Array.from(document.querySelectorAll('#current-members-list input.lf-current-member:checked'))
-        .map(box => Number(box.dataset.hostId));
-}
-
 function updateCurrentMembersState() {
-    const selectedIds = new Set(selectedCurrentMemberIds());
-    document.getElementById('current-members-remove').disabled = selectedIds.size === 0;
+    document.getElementById('current-members-remove').disabled = selectedCurrent.size === 0;
 
-    const ungroupCount = currentMembers.filter(m => selectedIds.has(m.hostId) && m.otherGroupCount === 0).length;
+    const selectedText = selectedCurrent.size > 0 ? `，已選 ${formatNumber(selectedCurrent.size)} 台` : '';
+    document.getElementById('current-members-summary').textContent =
+        `共 ${formatNumber(currentMembers.total)} 台${selectedText}`;
+
+    const ungroupCount = [...selectedCurrent.values()].filter(count => count === 0).length;
     document.getElementById('current-members-warning').replaceChildren(
-        ...(ungroupCount > 0 ? [statusNote('warning', `${ungroupCount} 台將變未分組（只有 admin 看得到）`)] : []));
+        ...(ungroupCount > 0 ? [statusNote('warning', `${formatNumber(ungroupCount)} 台將變未分組（只有 admin 看得到）`)] : []));
 }
 
 document.getElementById('current-members-remove').addEventListener('click', async () => {
-    const hostIds = selectedCurrentMemberIds();
+    const hostIds = [...selectedCurrent.keys()];
     if (hostIds.length === 0) return;
 
     const confirmed = await confirmAction({
         title: '移出主機群組成員',
-        message: `將把 ${hostIds.length} 台主機移出「${membersState.groupName}」，其餘主機群組不受影響。`,
+        message: `將把 ${formatNumber(hostIds.length)} 台主機移出「${membersState.groupName}」，其餘主機群組不受影響。`,
         confirmText: '移出'
     });
     if (!confirmed) return;
@@ -557,8 +606,9 @@ document.getElementById('current-members-remove').addEventListener('click', asyn
     const restore = withBusy(button, '移出中');
     try {
         await api.post(`/api/admin/host-groups/${membersState.groupId}/members/remove`, { hostIds });
-        toast(`已移出 ${hostIds.length} 台主機`, 'success');
-        await loadCurrentMembers(membersState.groupId);
+        toast(`已移出 ${formatNumber(hostIds.length)} 台主機`, 'success');
+        selectedCurrent.clear();
+        await loadCurrentMembers(membersState.groupId, currentMembers.page);
         await guardLoad(groupLoadContainers(), load);   // 群組清單的主機數要跟著更新
     } catch {
         // 錯誤已由 api.js 顯示
@@ -567,7 +617,7 @@ document.getElementById('current-members-remove').addEventListener('click', asyn
     }
 });
 
-// ── 批次加入成員（網段／關鍵字）─────────────────────────────────────────────
+// ── 批次加入成員（網段／關鍵字，伺服器分頁預覽）─────────────────────────────
 
 const membersInput = document.getElementById('members-input');
 
@@ -598,33 +648,50 @@ async function searchMembers() {
         return;
     }
 
-    const body = membersState.mode === 'cidr' ? { pattern: value } : { query: value };
+    // 新條件＝新的預覽：勾選清空（舊條件的勾選不該帶進新結果）
+    selectedAdd = new Set();
+    membersState.query = membersState.mode === 'cidr' ? { pattern: value } : { query: value };
+    // 條件已換、結果還沒回來：舊預覽的台數不得配新條件送出「全部加入」
+    membersState.preview = null;
+    updateMembersApplyState();
+    await loadPreviewPage(1);
+}
+
+async function loadPreviewPage(page) {
+    const seq = previewSeq.next();
     try {
-        const preview = await api.post(`/api/admin/host-groups/${membersState.groupId}/members/preview`, body);
-        membersState.candidates = preview.candidates;
+        const preview = await api.post(
+            `/api/admin/host-groups/${membersState.groupId}/members/preview`,
+            { ...membersState.query, page, pageSize: MEMBERS_PAGE_SIZE });
+        if (!previewSeq.isCurrent(seq)) return;
+        membersState.preview = preview;
         renderMembersPreview(preview);
     } catch {
-        // 錯誤已由 api.js 顯示（含網段格式錯誤）
+        if (!previewSeq.isCurrent(seq)) return;
+        // 錯誤已由 api.js 顯示（含網段格式錯誤）；舊結果一併清掉，不留下看起來仍可勾選的表格
+        membersState.preview = null;
+        document.getElementById('members-preview').replaceChildren();
+        document.getElementById('members-pager').replaceChildren();
+        hideRemoveOthers();
+        updateMembersApplyState();
     }
 }
 
 function renderMembersPreview(preview) {
     const summary = document.getElementById('members-summary');
-    const applyBtn = document.getElementById('members-apply');
     const removeField = document.getElementById('members-remove-field');
+    const pager = document.getElementById('members-pager');
 
-    if (preview.candidates.length === 0) {
-        summary.textContent = '沒有命中任何主機。';
+    if (preview.matchCount === 0) {
+        summary.textContent = '沒有命中任何主機。請調整網段或關鍵字後重新查找；沒有命中就沒有可加入的主機。';
         document.getElementById('members-preview').replaceChildren();
-        applyBtn.disabled = true;
-        removeField.classList.add('d-none');
+        pager.replaceChildren();
+        hideRemoveOthers();
+        updateMembersApplyState();
         return;
     }
 
-    summary.textContent = `命中 ${preview.matchCount} 台` +
-        (preview.inOtherGroupsCount > 0 ? `，其中 ${preview.inOtherGroupsCount} 台已屬其他群組` : '');
-
-    // 已在本群組的預設不勾且不可選；其餘預設勾選
+    // 勾選存在 selectedAdd：預設不勾，避免使用者以為已全選；換頁後回來仍保留
     renderTable(document.getElementById('members-preview'), {
         columns: [
             { title: '', className: 'text-center', render: c => memberCheckbox(c) },
@@ -636,8 +703,21 @@ function renderMembersPreview(preview) {
         empty: { title: '沒有符合條件的主機', hint: '請調整條件後重新預覽。' }
     });
 
-    removeField.classList.toggle('d-none', preview.inOtherGroupsCount === 0);
+    renderPagination(pager, {
+        page: preview.page,
+        totalPages: Math.ceil(preview.matchCount / preview.pageSize),
+        onPage: next => loadPreviewPage(next)
+    });
+
+    if (preview.inOtherGroupsCount === 0) hideRemoveOthers();
+    else removeField.classList.remove('d-none');
     updateMembersApplyState();
+}
+
+/** 沒有主機屬其他群組時收起「移出原群組」並取消勾選：看不到的勾選不得跟著送出 */
+function hideRemoveOthers() {
+    document.getElementById('members-remove-field').classList.add('d-none');
+    document.getElementById('members-remove-others').checked = false;
 }
 
 function memberCheckbox(candidate) {
@@ -645,10 +725,14 @@ function memberCheckbox(candidate) {
     box.type = 'checkbox';
     box.className = 'form-check-input';
     box.dataset.hostId = String(candidate.hostId);
-    box.checked = !candidate.alreadyInTarget;
+    box.checked = !candidate.alreadyInTarget && selectedAdd.has(candidate.hostId);
     box.disabled = candidate.alreadyInTarget;
     box.title = candidate.alreadyInTarget ? '已在本群組' : '';
-    box.addEventListener('change', updateMembersApplyState);
+    box.addEventListener('change', () => {
+        if (box.checked) selectedAdd.add(candidate.hostId);
+        else selectedAdd.delete(candidate.hostId);
+        updateMembersApplyState();
+    });
     return box;
 }
 
@@ -671,25 +755,46 @@ function currentGroupsCell(candidate) {
     return wrap;
 }
 
-function selectedHostIds() {
-    return Array.from(document.querySelectorAll('#members-preview input[type="checkbox"]:checked:not(:disabled)'))
-        .map(box => Number(box.dataset.hostId));
+/** 「全部加入」實際會加的台數：命中數扣掉已在本群組的 */
+function addableMatchCount() {
+    const preview = membersState.preview;
+    return preview ? Math.max(0, preview.matchCount - preview.alreadyInTargetCount) : 0;
 }
 
 function updateMembersApplyState() {
-    document.getElementById('members-apply').disabled = selectedHostIds().length === 0;
+    const preview = membersState.preview;
+    const applyBtn = document.getElementById('members-apply');
+    const allBtn = document.getElementById('members-apply-all');
+    const addable = addableMatchCount();
+
+    applyBtn.textContent = `加入勾選的 ${formatNumber(selectedAdd.size)} 台`;
+    applyBtn.disabled = selectedAdd.size === 0;
+    allBtn.textContent = `全部加入符合條件的 ${formatNumber(addable)} 台`;
+    allBtn.disabled = addable === 0;
+
+    if (!preview || preview.matchCount === 0) return;
+    document.getElementById('members-summary').textContent =
+        `命中 ${formatNumber(preview.matchCount)} 台` +
+        (preview.inOtherGroupsCount > 0 ? `，其中 ${formatNumber(preview.inOtherGroupsCount)} 台已屬其他群組` : '') +
+        `；已勾選 ${formatNumber(selectedAdd.size)} 台`;
 }
 
-document.getElementById('members-apply').addEventListener('click', async () => {
-    const hostIds = selectedHostIds();
-    if (hostIds.length === 0) return;
+async function submitAddMembers(button, busyText, body, confirmMessage) {
+    if (confirmMessage) {
+        const confirmed = await confirmAction({
+            title: '加入主機群組成員',
+            message: confirmMessage,
+            confirmText: '加入'
+        });
+        if (!confirmed) return;
+    }
 
     const removeFromOthers = document.getElementById('members-remove-others').checked;
-    const button = document.getElementById('members-apply');
-    const restore = withBusy(button, '加入中');
+    const restore = withBusy(button, busyText);
     try {
-        await api.post(`/api/admin/host-groups/${membersState.groupId}/members`, { hostIds, removeFromOthers });
-        toast(`已將 ${hostIds.length} 台主機加入群組`, 'success');
+        const result = await api.post(`/api/admin/host-groups/${membersState.groupId}/members`, { ...body, removeFromOthers });
+        const moved = result.movedFromOthersCount > 0 ? `；另有 ${formatNumber(result.movedFromOthersCount)} 台原已在本群組，已移出其他群組` : '';
+        toast(`已將 ${formatNumber(result.addedCount)} 台主機加入群組${moved}`, 'success');
         membersModal.hide();
         await guardLoad(groupLoadContainers(), load);
     } catch {
@@ -697,6 +802,24 @@ document.getElementById('members-apply').addEventListener('click', async () => {
     } finally {
         restore();
     }
+}
+
+document.getElementById('members-apply').addEventListener('click', () => {
+    if (selectedAdd.size === 0) return;
+    submitAddMembers(document.getElementById('members-apply'), '加入中', { hostIds: [...selectedAdd] });
+});
+
+document.getElementById('members-apply-all').addEventListener('click', () => {
+    const addable = addableMatchCount();
+    if (addable === 0) return;
+    // 後端以同一條件重新比對：預覽後才新增的符合主機也會一併加入
+    submitAddMembers(
+        document.getElementById('members-apply-all'), '加入中',
+        { allMatching: true, ...membersState.query },
+        `將把符合條件、尚未在「${membersState.groupName}」的 ${formatNumber(addable)} 台主機全部加入（以送出當下的比對結果為準）。` +
+        (document.getElementById('members-remove-others').checked
+            ? '已勾選「移出原群組」：符合條件的主機（含原本就在本群組的）都會從其他群組移出。'
+            : ''));
 });
 
 function roleBadge(role) {

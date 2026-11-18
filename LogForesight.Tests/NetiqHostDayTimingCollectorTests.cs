@@ -8,6 +8,40 @@ public sealed class NetiqHostDayTimingCollectorTests
 {
     private static long TicksForMs(double milliseconds) => (long)Math.Round(milliseconds * Stopwatch.Frequency / 1000d);
 
+    /// <summary>收集器是 singleton：逐主機日明細（最多 60 萬列）在趟結束後要能被回收，只留計數與 p95（第 77 輪 M-1）。</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void 結束後逐主機日明細可被回收_計數與p95不變(bool viaComplete)
+    {
+        var collector = new NetiqHostDayTimingCollector();
+        collector.Begin(61);
+        collector.AddPlanned(61, 100);
+        for (var i = 1; i <= 100; i++)
+            collector.RecordCommitted(61, i, new DateTime(2026, 10, 1), TicksForMs(i));
+
+        var detail = MemoryProbe.Track(() => DetailOf(collector));
+        if (viaComplete) collector.Complete(61, pipelineCompleted: true);
+        else collector.Begin(61);   // 同一趟重入：標為不完整並結束
+
+        Assert.True(MemoryProbe.IsCollected(detail), "結束後仍持有逐主機日明細");
+        var read = collector.Read(61)!;
+        Assert.Equal(100, read.ObservedHostDays);
+        Assert.Equal(100, read.DurationSampleCount);
+        if (viaComplete) Assert.Equal(95, read.P95Milliseconds!.Value, precision: 2);
+        else Assert.Null(read.P95Milliseconds);
+
+        // 結束後的記錄一律被拒，不會寫進新的空集合
+        collector.RecordCommitted(61, 999, new DateTime(2026, 10, 1), TicksForMs(1));
+        Assert.Equal(100, collector.Read(61)!.ObservedHostDays);
+    }
+
+    private static object DetailOf(NetiqHostDayTimingCollector collector)
+    {
+        var run = typeof(NetiqHostDayTimingCollector).GetField("_run", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(collector)!;
+        return run.GetType().GetProperty("Rows")!.GetValue(run)!;
+    }
+
     [Fact]
     public void Read_usesExactNearestRankP95OnlyAfterTerminalRun()
     {

@@ -324,6 +324,7 @@ function renderSummary(summaryPage) {
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => notRunCell(s) },
+            { title: '空資料待複查', className: 'text-end', render: s => recheckCell(s) },
             { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
             { title: '失敗主機', render: s => failedHostsCell(s) }
@@ -368,12 +369,18 @@ function setBarProgress(barEl, percent) {
 }
 
 function notRunCell(s) {
-    const base = s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
-    if (!(s.recheckCount > 0)) return base;
-    const recheck = `空資料待複查 ${s.recheckCount}` + (s.recheckAt ? `（約 ${s.recheckAt} 複查）` : '');
-    if (s.notRunCount === 0) return document.createTextNode(recheck);
-    const wrap = document.createElement('span');
-    wrap.append(base, `＋${recheck}`);
+    return s.isToday && s.notRunCount > 0 ? `${s.notRunCount}（尚未處理）` : countCell(s.notRunCount, 'none');
+}
+
+/** 「空資料待複查」格：台數；還在進行的那一天下方寫何時再查（後端 RecheckTiming 產生，不在這裡組字） */
+function recheckCell(s) {
+    const count = countCell(s.recheckCount, 'recheck');
+    if (!(s.recheckCount > 0) || !s.recheckNote) return count;
+    const wrap = document.createElement('div');
+    const note = document.createElement('div');
+    note.className = 'lf-text-meta text-nowrap';
+    note.textContent = s.recheckNote;
+    wrap.append(count, note);
     return wrap;
 }
 
@@ -403,21 +410,20 @@ function failedHostsCell(summary) {
     return wrap;
 }
 
+// 排序在後端（RunMonitorService.GetDayDetailPage），這裡只宣告可排序的鍵
 const DAY_DETAIL_COLUMNS = [
-    { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, truncate: true, render: h => h.hostName },
-    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
+    { title: '主機', sortKey: 'hostName', truncate: true, render: h => h.hostName },
+    { title: '狀態', sortKey: 'status', render: h => statusBadgeCell(h.status, h.statusNote ?? (h.legacy ? '無階段資料（升級前紀錄）' : null)) },
     {
-        title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
+        title: '整體工作流', sortKey: 'workflowComplete',
         render: h => workflowSummaryCell(h)
     },
     {
         title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc',
-        sortValue: h => h.runId != null ? h.daysAnalyzed : -1,
         render: h => h.runId != null ? String(h.daysAnalyzed) : ''
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
-        sortValue: h => h.runId != null ? h.errorCount : -1,
         render: h => h.runId != null ? `${h.warnCount} / ${h.errorCount}` : ''
     },
     { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
@@ -444,58 +450,79 @@ function workflowSummaryCell(host) {
 }
 
 /**
- * 日期列就地展開（§2）：懶載入該天每台主機的狀態，render 進展開列。
- * 每個日期各持有獨立的排序/分頁狀態（允許同時展開多天，互不干擾）——
- * 2000 台規模下曾整表一次 render，這裡沿用本地排序＋分頁（資料一次取回，不重打 API）。
+ * 日期列就地展開（§2）：該天每台主機的狀態，render 進展開列。
+ * 排序與分頁在後端（3000 台時整份回傳約數 MB）；每個日期各持有獨立的排序／分頁狀態，允許同時展開多天、互不干擾。
  */
 async function renderDayDetailInto(cell, date) {
     cell.replaceChildren();
     const listEl = document.createElement('div');
     const pagerEl = document.createElement('nav');
     pagerEl.className = 'mt-2';
-    cell.append(listEl, pagerEl);
 
-    renderLoading(listEl, 6);
+    const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail'), status: '' };
+    let sequence = 0;
 
-    let hosts;
-    try {
-        hosts = await api.get(`/api/runs/day/${date}`);
-    } catch {
-        renderError(listEl, { message: '載入當日明細失敗', onRetry: () => renderDayDetailInto(cell, date) });
-        return;
+    // 狀態篩選（後端篩、總數跟著變）：3000 台時要找「這天失敗的那幾台」不必翻頁；換狀態回到第 1 頁
+    const bar = document.createElement('div');
+    bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
+    const statusLabel = document.createElement('label');
+    statusLabel.className = 'lf-text-label text-nowrap';
+    statusLabel.textContent = '狀態';
+    const statusSelect = document.createElement('select');
+    statusSelect.className = 'form-select form-select-sm w-auto';
+    statusSelect.id = `runs-day-status-${date}`;
+    statusLabel.htmlFor = statusSelect.id;
+    for (const [value, label] of [['', '全部'], ...Object.entries(STATUS_META).map(([key, meta]) => [key, meta.label])]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        statusSelect.appendChild(option);
     }
+    statusSelect.addEventListener('change', () => { state.status = statusSelect.value; state.page = 1; loadDayPage(); });
+    bar.append(statusLabel, statusSelect);
+    cell.append(bar, listEl, pagerEl);
 
-    const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail') };
-
-    function render() {
-        const sorted = sortRows(hosts, DAY_DETAIL_COLUMNS, state.sort);
-        const totalPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
-        if (state.page > totalPages) state.page = totalPages;
-        const pageRows = sorted.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
+    async function loadDayPage() {
+        const mine = ++sequence;
+        renderLoading(listEl, 6);
+        const params = new URLSearchParams({
+            page: String(state.page), pageSize: String(state.pageSize), sort: state.sort.key, dir: state.sort.dir
+        });
+        if (state.status) params.set('status', state.status);
+        let result;
+        try {
+            result = await api.get(`/api/runs/day/${date}?${params}`);
+        } catch {
+            if (mine === sequence) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
+            return;
+        }
+        if (mine !== sequence) return;   // 連點排序或換頁時，只畫最後一次的結果
 
         renderTable(listEl, {
             columns: DAY_DETAIL_COLUMNS,
-            rows: pageRows,
+            rows: result.items,
             sort: state.sort,
-            onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; render(); },
-            empty: { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
+            onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; loadDayPage(); },
+            empty: state.status
+                ? { title: '這天沒有這個狀態的主機', hint: '可把「狀態」改回「全部」查看這天的所有主機。' }
+                : { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
         });
 
         renderPagination(pagerEl, {
-            page: state.page,
-            totalPages: hosts.length ? totalPages : 0,
-            onPage: page => { state.page = page; render(); },
+            page: result.page,
+            totalPages: result.total ? Math.ceil(result.total / result.pageSize) : 0,
+            onPage: page => { state.page = page; loadDayPage(); },
             pageSize: state.pageSize,
             onPageSize: size => {
                 state.pageSize = size;
                 savePageSize('runs-day-detail', size);
                 state.page = 1;
-                render();
+                loadDayPage();
             }
         });
     }
 
-    render();
+    await loadDayPage();
 }
 
 function statusBadgeCell(status, note = null) {

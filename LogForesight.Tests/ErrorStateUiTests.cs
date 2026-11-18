@@ -22,11 +22,11 @@ public class ErrorStateUiTests
         Assert.Contains("button.addEventListener('click', () => onRetry())", ui);
 
         var records = Read("LogForesight.Web/wwwroot/js/pages/records.js");
-        Assert.Contains("onRetry: () => renderIssueOccurrences(cell, group)", records);
+        Assert.Contains("onRetry: () => renderIssueOccurrences(cell, group, page, filterQuery)", records);
         Assert.DoesNotContain("renderEmpty(wrap, { title: '載入受影響主機失敗'", records);
 
         var runs = Read("LogForesight.Web/wwwroot/js/pages/runs.js");
-        Assert.Contains("onRetry: () => renderDayDetailInto(cell, date)", runs);
+        Assert.Contains("renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() })", runs);
         Assert.Contains("onRetry: () => showDetail(runId, body)", runs);
         Assert.Contains("if (!retryBody) showDetailModal", runs);
         Assert.DoesNotContain("renderEmpty(body, { title: '載入執行詳情失敗'", runs);

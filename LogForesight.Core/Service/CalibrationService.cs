@@ -348,7 +348,7 @@ public sealed class CalibrationService
 {
     private static readonly SemaphoreSlim CalibrationCaptureAdmission = new(1, 1);
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
-    private const int MaxPolicySensorsForCalibration = 15000;
+    private const int MaxPolicySensorsForCalibration = ScaleLimits.MaxPolicySensors;
     private const int CalibrationSensorTypeMaxChars = 128;
     private const int CalibrationSensorStatusMaxChars = 64;
     private const int CalibrationCategoryMaxChars = 64;

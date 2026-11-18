@@ -314,6 +314,7 @@ device 分組鍵用解析層結果。IP 排除清單的儲存鍵是純語法值�
 ## 6. 環境探測（probe）
 
 維護頁「環境探測」頁籤提供兩種共用狀態與停止鈕的探測，結果只存在記憶體，可複製或下載（輸出可能含主機名、IP，分享前遮蔽）。
+探測、回填與結構同步的逐行輸出共用同一份有界緩衝：保留開頭 1,500 行與最新 500 行，中間以一行標出略過行數；結束後保留同一份內容，下一趟開始時清空。
 探測不檢查 `PrtgEnabled`。這是全站診斷：輸出包含不在主機清單內的裝置（§1 的例外之一，頁籤用途區明示）。
 
 **完整環境探測**（唯讀、背景執行，標頭含 InformationalVersion）：版本；device／sensor 總數；sensor type 分布與內建分類；群組樹；
@@ -386,7 +387,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 ### 監看政策（可選縮圈）
 
-blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 3,000、sensor 最多 15,000）。兩份清單都空＝全部已對應主機與其 sensor。
+blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 10,000、sensor 最多 15,000；數字只在 `ScaleLimits`，讀取回應帶 `MaxHosts`／`MaxSensors` 給前端，`ScaleLimitsGuardTests` 守門）。兩份清單都空＝全部已對應主機與其 sensor。
 - **主機清單有值**：每日管線本趟的主機範圍＝清單 ∩ 本趟要求的主機 ∩ 啟用、未合併且 `Source=netiq` 的主機（`PrtgDailyPipeline.SelectActivePilotHostIds`）；
   本機（local）來源主機與停用、合併的主機不在其中，全部被濾掉時範圍為空集合（本趟只處理 0 台）。縮圈後的範圍是 partial：不清感測器鏡像、不做範圍外清除（§3c）。
 - **sensor 清單有值**：狀態型與數值型規則的評估母體、以及快照目標（§3b）只留清單內的 sensor；`silent` 是裝置層判定，不受限；觸發式數值取數（§3a）不依 sensor 清單縮圈。

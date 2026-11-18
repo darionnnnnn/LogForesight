@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -13,7 +14,8 @@ namespace LogForesight.Core.Persistence.Sql;
 internal static class PrtgSqlServerIdScope
 {
     private const int InlineIdThreshold = 256;
-    private const int MaximumIdCount = 15000;
+    // 主機與 sensor 清單共用這個暫存表上限：取兩者較大的，任一清單合法時都放得下
+    private const int MaximumIdCount = ScaleLimits.MaxHosts > ScaleLimits.MaxPolicySensors ? ScaleLimits.MaxHosts : ScaleLimits.MaxPolicySensors;
     private const string HostTable = "#PrtgReadinessHostIds";
     private const string SensorTable = "#PrtgReadinessSensorIds";
 

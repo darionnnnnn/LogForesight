@@ -1405,4 +1405,75 @@ public class IssueAggregateQueryTests : IDisposable
         var emptyHosts = Query().IssueHostDayCount(IssueExclusion.None, "disk", 153, d0, d2, Array.Empty<long>(), null, null);
         Assert.Equal(0, emptyHosts);
     }
+    // ── 依問題展開列的主機日（第 77 輪 B-3、B-4、B-7）────────────────────────
+
+    private void SeedIssueHostDays(DateTime d0)
+    {
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Low, Issue("disk", 153));
+        Add(2, "B", d0, RiskLevels.Medium, Issue("disk", 153));
+        Add(3, "C", d0.AddDays(1), RiskLevels.High, Issue("disk", 153));
+        Add(4, "D", d0, RiskLevels.High, Issue("cpu", 100));
+    }
+
+    public static TheoryData<string[]?> RiskFilters => new() { null, new[] { RiskLevels.High }, new[] { RiskLevels.High, RiskLevels.Medium } };
+
+    /// <summary>B-4：同一組日風險篩選下，展開列的主機數與主機日數等於依問題那一列；換篩選後仍成立</summary>
+    [Theory]
+    [MemberData(nameof(RiskFilters))]
+    public void IssueHostDays_與依問題列同母體_換日風險篩選仍一致(string[]? risks)
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        SeedIssueHostDays(d0);
+        var riskSet = risks?.ToHashSet();
+
+        var days = Query().IssueHostDays(IssueExclusion.None, "disk", 153, d0, d0.AddDays(1), null, riskLevels: riskSet);
+        var row = Query().Aggregate(IssueExclusion.None, d0, d0.AddDays(1), null, riskLevels: riskSet).Single(a => a.EventId == 153);
+
+        Assert.Equal(row.HostCount, days.Select(d => d.HostId).Distinct().Count());
+        Assert.Equal(row.DayCount, days.Count);
+    }
+
+    /// <summary>B-3：被靜音的那幾天不計，與依問題列同一份排除；看不到的主機不出現、空可見集合＝零結果</summary>
+    [Fact]
+    public void IssueHostDays_靜音日不計_可見範圍外不出現()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        SeedIssueHostDays(d0);
+        var muteSecondDay = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "disk", EventId = 153, Mutes = new List<MuteInterval> { new() { From = d0.AddDays(1), To = d0.AddDays(1), Reason = "測試" } } }
+        }, d0.AddDays(10));
+
+        var muted = Query().IssueHostDays(muteSecondDay, "disk", 153, d0, d0.AddDays(1), null);
+        var row = Query().Aggregate(muteSecondDay, d0, d0.AddDays(1), null).Single(a => a.EventId == 153);
+
+        Assert.Equal(new long[] { 1, 2 }, muted.Select(d => d.HostId).OrderBy(x => x).ToArray());
+        Assert.All(muted, d => Assert.Equal(d0, d.Date));
+        Assert.Equal(row.DayCount, muted.Count);
+
+        var visible = Query().IssueHostDays(IssueExclusion.None, "disk", 153, d0, d0.AddDays(1), new long[] { 1, 3 });
+        Assert.Equal(new long[] { 1, 3 }, visible.Select(d => d.HostId).Distinct().OrderBy(x => x).ToArray());
+        Assert.Empty(Query().IssueHostDays(IssueExclusion.None, "disk", 153, d0, d0.AddDays(1), Array.Empty<long>()));
+    }
+
+    /// <summary>B-7：讀回量以「這個問題」的主機日為界——多出 50 台只有別的問題的主機，讀取呼叫次數不變</summary>
+    [Fact]
+    public void IssueHostDays_讀回量與沒有這個問題的主機數無關()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        for (var h = 1; h <= 10; h++)
+            for (var d = 0; d < 5; d++) Add(h, $"H{h}", d0.AddDays(d), RiskLevels.High, Issue("disk", 153), Issue("cpu", 100));
+        var recorder = new SqlCommandRecorder();
+        var query = new EfIssueAggregateQuery(() => new LfDbContext(new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite(_fx.NewContext().Database.GetDbConnection()).AddInterceptors(recorder).Options), _hosts);
+
+        var (_, before) = recorder.Measure(() => Assert.Equal(50, query.IssueHostDays(IssueExclusion.None, "disk", 153, d0, d0.AddDays(4), null).Count));
+        for (var h = 11; h <= 60; h++)
+            for (var d = 0; d < 5; d++) Add(h, $"H{h}", d0.AddDays(d), RiskLevels.High, Issue("cpu", 100));
+        var (_, after) = recorder.Measure(() => Assert.Equal(50, query.IssueHostDays(IssueExclusion.None, "disk", 153, d0, d0.AddDays(4), null).Count));
+
+        Assert.Equal(before, after);
+        Assert.True(after <= 50 + 5, $"讀取呼叫 {after} 次，應以這個問題的 50 個主機日為界");
+    }
 }

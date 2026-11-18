@@ -26,10 +26,13 @@ public class HandlersController : ControllerBase
     }
 
     [HttpGet("{userId:long}/workload")]
-    public ApiResponse<HandlerWorkloadDto> Workload(long userId, [FromQuery] bool includeResolvedDays = false)
+    public ApiResponse<HandlerWorkloadDto> Workload(long userId, [FromQuery] bool includeResolvedDays = false,
+        [FromQuery] int casesPage = 1, [FromQuery] int daysPage = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] bool unresolvedOnly = false)
     {
         _workOrders.AuthorizeHandlerView(userId);
-        return ApiResponse<HandlerWorkloadDto>.Ok(_service.GetHandlerWorkload(userId, includeResolvedDays));
+        return ApiResponse<HandlerWorkloadDto>.Ok(_service.GetHandlerWorkload(
+            userId, includeResolvedDays, casesPage, daysPage, pageSize, unresolvedOnly));
     }
 
     [HttpGet("{userId:long}/work-orders")]

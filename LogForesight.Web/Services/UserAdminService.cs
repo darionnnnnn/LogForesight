@@ -103,32 +103,12 @@ public class UserAdminService
         // ActiveUserMiddleware 逐請求 401），列出「他可以標記處理狀態」是誤導；
         // 與下方可見主機為空同一個判斷，畫面上兩者要一致。停用的判斷依 resolver 的
         // 契約由呼叫端負責（登入路徑不需要它，這裡的「顯示為無能力」是本頁的呈現語意）。
-        var ownedHostIds = _visibility.GetOwnedHostIdsFor(userId);
         var capabilities = user.Active
             ? _capabilities.Resolve(user)
             : (IReadOnlySet<Capability>)new HashSet<Capability>();
 
-        // 兩條路徑分開問（§2b）：一台主機可能既是他負責的、部門群組也被授權，
-        // 「為什麼看得到」因此是兩個獨立的是非題，不是二選一
-        var groupVisibleHostIds = _visibility.GetGroupVisibleHostIdsFor(userId);
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
-        var hostGroupsById = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
-
-        var visibleHosts = ownedHostIds.Union(groupVisibleHostIds)
-            .Where(hostsById.ContainsKey)
-            .Select(id => hostsById[id])
-            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
-            .Select(h => new UserVisibleHostDto
-            {
-                HostId = h.HostId,
-                HostName = h.HostName,
-                IpAddress = h.IpAddress,
-                Os = h.Os,
-                GroupNames = NameFormat.ResolveNames(h.GroupIds, hostGroupsById, g => g.GroupName),
-                ViaOwner = ownedHostIds.Contains(h.HostId),
-                ViaGroup = groupVisibleHostIds.Contains(h.HostId)
-            })
-            .ToList();
+        var visibleHostCount = VisibleHostsOf(userId, hostsById).Count;
 
         return new UserDetailDto
         {
@@ -143,9 +123,46 @@ public class UserAdminService
                 MemberCount = _users.GetAll().Count(u => u.GroupIds.Contains(g.GroupId))
             }).ToList(),
             Capabilities = capabilities.Select(c => c.ToString()).OrderBy(c => c).ToList(),
-            VisibleHosts = visibleHosts,
+            VisibleHostCount = visibleHostCount,
             AssignmentHistory = BuildAssignmentHistory(userId, hostsById)
         };
+    }
+
+    /// <summary>
+    /// 被查看者看得到的主機（含「為什麼看得到」），依主機名排序、伺服器端分頁——授權到大群組的人可見 3000 台，
+    /// 整份放進詳情回應約半 MB 且前端一次畫完。可見範圍規則同 <see cref="GetUserDetail"/>（停用帳號為空）。
+    /// </summary>
+    public PagedResult<UserVisibleHostDto> GetVisibleHosts(long userId, int page, int pageSize)
+    {
+        if (_users.Get(userId) is null) throw DomainException.NotFound("找不到這個使用者，可能已被刪除。");
+        var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
+        var hosts = VisibleHostsOf(userId, hostsById);
+        var (p, size) = Paging.Normalize(page, pageSize);
+        var hostGroupsById = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
+        var items = hosts.Skip((p - 1) * size).Take(size).Select(x => new UserVisibleHostDto
+        {
+            HostId = x.Host.HostId,
+            HostName = x.Host.HostName,
+            IpAddress = x.Host.IpAddress,
+            Os = x.Host.Os,
+            GroupNames = NameFormat.ResolveNames(x.Host.GroupIds, hostGroupsById, g => g.GroupName),
+            ViaOwner = x.ViaOwner,
+            ViaGroup = x.ViaGroup
+        }).ToList();
+        return new PagedResult<UserVisibleHostDto> { Items = items, Page = p, PageSize = size, Total = hosts.Count };
+    }
+
+    /// <summary>兩條路徑分開問（§2b）：一台可能既是他負責的、部門群組也被授權，「為什麼看得到」是兩個獨立的是非題</summary>
+    private List<(WebHost Host, bool ViaOwner, bool ViaGroup)> VisibleHostsOf(long userId, IReadOnlyDictionary<long, WebHost> hostsById)
+    {
+        var ownedHostIds = _visibility.GetOwnedHostIdsFor(userId);
+        var groupVisibleHostIds = _visibility.GetGroupVisibleHostIdsFor(userId);
+        return ownedHostIds.Union(groupVisibleHostIds)
+            .Where(hostsById.ContainsKey)
+            .Select(id => hostsById[id])
+            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => (h, ownedHostIds.Contains(h.HostId), groupVisibleHostIds.Contains(h.HostId)))
+            .ToList();
     }
 
     private List<UserAssignmentHistoryDto> BuildAssignmentHistory(long userId, IReadOnlyDictionary<long, WebHost> hostsById)

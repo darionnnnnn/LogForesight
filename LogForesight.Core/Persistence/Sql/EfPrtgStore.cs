@@ -1253,7 +1253,9 @@ public sealed class EfPrtgStore
                 var preserve = preserveDeviceObjids.ToList();
                 stale = stale.Where(s => !preserve.Contains(s.DeviceObjid));
             }
-            var grace = graceDeviceObjids.Take(DeviceQueryBatchSize).ToArray();
+            // 寬限清單不截斷：一晚超過一批（500 台）同時回空時，截斷會讓超出的裝置整台感測器照刪——
+            // 正是寬限要防的情況。清單以單一 JSON 參數傳入（EF 8 基本型別集合），不受參數個數上限影響
+            var grace = graceDeviceObjids.Distinct().ToArray();
             var kept = grace.Length == 0 ? 0 : stale.Count(s => grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince);
             var toDelete = grace.Length == 0 ? stale : stale.Where(s => !(grace.Contains(s.DeviceObjid) && s.SyncedAt >= graceSince));
             var deleted = 0;
@@ -2129,7 +2131,7 @@ public sealed class EfPrtgStore
     public PrtgMonitoringSensorPage GetMonitoringSensorPage(
         DateTime mapDate, IReadOnlyCollection<long> hostIds, string? search, int offset, int take, int? knownTotal = null)
     {
-        if (hostIds.Count > 3000 || offset < 0 || take is < 1 or > 100)
+        if (hostIds.Count > ScaleLimits.MaxHosts || offset < 0 || take is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(take), "範圍清單或頁面大小超出上限。");
         if (hostIds.Count == 0) return new PrtgMonitoringSensorPage(0, []);
         var hosts = hostIds.Distinct().ToArray();
@@ -2162,7 +2164,7 @@ public sealed class EfPrtgStore
     public int CountValidMonitoringSensors(DateTime mapDate, IReadOnlyCollection<long> hostIds,
         IReadOnlyCollection<long> sensorIds)
     {
-        if (hostIds.Count > 3000 || sensorIds.Count > 15000)
+        if (hostIds.Count > ScaleLimits.MaxHosts || sensorIds.Count > ScaleLimits.MaxPolicySensors)
             throw new ArgumentOutOfRangeException(nameof(sensorIds), "範圍清單超出上限。");
         if (hostIds.Count == 0 || sensorIds.Count == 0) return 0;
         return PrtgSqlServerIdScope.Execute(_contextFactory, hostIds, sensorIds,
@@ -2193,7 +2195,7 @@ public sealed class EfPrtgStore
     public PrtgMonitoringEvaluationPage GetMonitoringEvaluationPage(
         DateTime? mapDate, IReadOnlyCollection<long> visibleHostIds, bool fullScope, int offset, int take)
     {
-        if (offset < 0 || offset > 30000 || take is < 1 or > 100)
+        if (offset < 0 || offset > ScaleLimits.MaxPreviewOffset || take is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(take), "預覽頁面超出上限。");
         if (visibleHostIds.Count == 0 && !fullScope) return new PrtgMonitoringEvaluationPage(0, []);
         using var ctx = _contextFactory();
@@ -2243,7 +2245,7 @@ public sealed class EfPrtgStore
     public PrtgMonitoringHostPage GetMonitoringHostPage(
         IReadOnlyCollection<long> eligibleHostIds, string? search, int offset, int take, int? knownTotal = null)
     {
-        if (eligibleHostIds.Count > 3000 || offset < 0 || take is < 1 or > 100)
+        if (eligibleHostIds.Count > ScaleLimits.MaxHosts || offset < 0 || take is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(take), "範圍清單或頁面大小超出上限。");
         if (eligibleHostIds.Count == 0) return new PrtgMonitoringHostPage(null, 0, []);
         var ids = eligibleHostIds.Distinct().ToArray();

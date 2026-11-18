@@ -14,12 +14,22 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public long DataVersion => CurrentVersion;
 
+    /// <summary>最近一次擷取的快照：快照不可變，版本相同就直接共用（可見範圍每個請求都要它，3000 台時整份約 4 MB）。</summary>
+    private volatile PrtgHostSnapshot? _prtgSnapshot;
+
     public PrtgHostSnapshot CapturePrtgSnapshot()
     {
+        // 先探版本（只讀一個整數欄）：主機清單是授權可見範圍的來源，不能用 TTL，只能以版本判斷能不能共用
+        var cached = _prtgSnapshot;
+        if (cached != null && cached.Version == CurrentVersion) return cached;
+
         var (hosts, version, _) = ReadBoundedValueWithVersion(PrtgHostSnapshot.MaximumTextCharacters);
         if (hosts.Count > PrtgHostSnapshot.MaximumRows)
             throw new InvalidDataException($"Host catalogue exceeds {PrtgHostSnapshot.MaximumRows} rows.");
-        return PrtgHostSnapshot.FromBoundedWebHosts(hosts, version);
+        // 版本取自同一次讀取，不是上面探到的值：兩次讀之間可能又被寫過，配錯版本就永遠不會更新
+        var snapshot = PrtgHostSnapshot.FromBoundedWebHosts(hosts, version);
+        _prtgSnapshot = snapshot;
+        return snapshot;
     }
 
     public PrtgHostSnapshot CapturePrtgSnapshot(LogForesight.Core.Service.PrtgCalibrationCaptureBudget budget)

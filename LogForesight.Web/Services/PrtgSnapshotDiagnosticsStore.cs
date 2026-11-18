@@ -73,7 +73,16 @@ internal sealed class PrtgSnapshotDiagnosticsStore
             }, MaximumDocumentCharacters, enforceCurrentUtf8ByteCap: false);
             if (outcome == "skip" && !string.IsNullOrWhiteSpace(skipKey))
                 _recordedSkips.Add((hour, skipKey));
+            // 與文件同一個截止點清掉記憶體這份：站台長期不重啟時，過了保留期的時段不會再被比對，留著只會一直長
+            var cutoff = at.Date.AddDays(-retentionDays);
+            _recordedSkips.RemoveWhere(x => x.Hour < cutoff);
         }
+    }
+
+    /// <summary>測試用：記憶體中「本小時已記過的略過原因」筆數。</summary>
+    internal int RecordedSkipCount
+    {
+        get { lock (_gate) return _recordedSkips.Count; }
     }
 
     private void LoadRecordedSkips()

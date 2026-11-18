@@ -217,7 +217,7 @@
             <div class="d-flex align-items-center gap-1">
                 <h2 class="lf-card__title">執行總表</h2>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" aria-label="執行總表說明"
-                        data-bs-content="每列是一個資料日（事件發生的那一天），主機狀態與 PRTG 都是這一天的資料；之後補跑也歸在同一列。「執行日與時間」是隔天排程處理的那一天與耗時，被別天補跑時多一行「另於…補跑」。今天已執行時最上方是今天處理的那一列（標「今日處理」），其中「尚未處理」不是漏跑。">
+                        data-bs-content="每列是一個資料日（事件發生的那一天），主機狀態與 PRTG 都是這一天的資料；之後補跑也歸在同一列。「執行日與時間」是隔天排程處理的那一天與耗時，被別天補跑時多一行「另於…補跑」。今天已執行時最上方是今天處理的那一列（標「今日處理」），其中「尚未處理」不是漏跑；「空資料待複查」也不是漏跑，是來源這天查回 0 筆，系統會自動再查一次。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
             </div>

@@ -39,11 +39,12 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 macOS **10,544 通過／21 略過**、Windows **10,553 通過／12 略過**，全量 Windows 約 8 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,708 通過／12 略過**、macOS **10,699 通過／21 略過**（由 Windows 結果扣掉 9 筆 Windows 專屬案例推得，以 CI 結果為準），全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
-  後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；
+  後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；新增或搬動端點、在 `IIssueAggregateQuery` 加方法時加跑 `Authorization|ControllerRouteSnapshot|IssueExclusionTests`（授權涵蓋清單與介面反射守門，名稱與被改的服務無關，定向篩選掃不到）；
+  全量裡單一 Node 行為案例約 5 秒逾時而其餘全綠時，單獨重跑該測試類，通過即為負載下的偶發；
   `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **版號**：`1.0.<輪次>.<修訂>`，規則寫在 `Directory.Build.props` 註解。開新一輪的第一個提交就把輪次改成該輪 `FEEDBACK-N-PLAN` 的 N、修訂歸 0；
@@ -51,7 +52,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   第三碼由 `VersionRoundGuardTests` 守門，第四碼在收尾時檢查。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
 - **畫面工作**：凡是跟畫面有關（頁面、元件、版面、配色、間距、互動、無障礙）一律套 `ui-ux-pro-max`，以 `docs/DESIGN-SYSTEM.md`（v3：§8 文字角色、揭露、按鈕與分段控制、寬度、判斷層／佐證層、共用元件一覽、§8.8 標記與顏色訊號）為基準，不必再問。
-  字級只引用 `--lf-font-size-*` 字階或文字角色類別、不寫數值，根字級交給瀏覽器與「小／中／大」偏好（DESIGN-SYSTEM §3a，`FontScaleGuardUiTests` 守門）。
+  字級只引用 `--lf-font-size-*` 字階或文字角色類別、不寫數值，根字級交給瀏覽器與「小／中／大／特大／最大」偏好（DESIGN-SYSTEM §3a，`FontScaleGuardUiTests` 守門）。
   驗收用 UI 資料集＋截圖量測工具（DESIGN-SYSTEM §8.7）：改到的頁面在五個寬度下六項量測為 0 才算完成；樣式表是 `wwwroot/css/` 的 base／components／layout／pages 四層，唯一引用點 `Views/Shared/_Styles.cshtml`。
   表格欄寬照 DESIGN-SYSTEM §8.4a（短值欄 `lf-col-nowrap`、留一欄吸收、同卡多表 `lf-table-aligned`）；無框品牌色按鈕只放表格列、分段控制與清單列（`lf-list-row`），按鈕角色與「每個範圍至多一顆主要按鈕」由 `tools/ui-global-asserts.json` 在每個量測情境檢查。
   修版面缺陷先寫會紅的量測斷言、在未修正的建置確認它紅再修——六項量測抓不到欄位起點不一致、孤立元素這類版面關係。
@@ -91,6 +92,8 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要新增鍵沒涵蓋授權維度的快取：跨請求快取的鍵必須含可見主機集合（或 userId）與資料版本戳，
   少一維就是把 A 看得到的東西端給 B；快取內容若與使用者無關（純鏡像結構）要在註解明講理由。
   版本戳在背景寫入執行中不推進，所以有版本戳的快取仍要保留短 TTL 當上限（`IssueRankingCache`、`ActionableSnapshotCache` 即此形狀）。
+  未命中時的計算一律經 `SingleFlight`（同鍵並發只算一次，結果過大進不了快取時也一樣），否則多人同時開儀表板會各算一整份疊加；
+  singleton 與 static 上新增的可變集合要在 `LongLivedCollectionGuardTests` 登錄上限或清除時機，站台以月計不重啟，沒有出口的集合就是慢速洩漏。
 - 不要在 Core 複製可見範圍或處理能力規則：兩者依賴 Web 的 `RoleCapabilityMap`，派工候選人由 Web 的
   `IDispatchCandidateSource` 每趟算好快照交給 Core。複製一份就是兩套規則，改一邊另一邊靜默失準。
 - 不要建出不屬於交辦單的進行中案件：任何建案路徑（交辦、日層級指派、夜間派工）一律經 `WorkOrderCoordinator`。
@@ -114,7 +117,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在不可信範圍做清除：外部查詢未收斂、回傳空資料、權限縮小、範圍異常縮小、沒有成功對應
   或沒有成功寫入時，不得清除 PRTG 鏡像、狀態或數值資料；資源守門使用的裝置／sensor 需保留。
 - 不要把執行總表的列當成執行日：`RunDaySummaryDto.Date`、`GET api/runs/day/{date}`、診斷匯出 `dailyHealth.date` 都是**資料日**（事件發生的那一天），處理日在 `RunDate`。
-  換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetail`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
+  換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetailPage`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
 - 不要讓排程觸發判定各寫一套：所有排程觸發查詢走單一查詢點，明確排除 `BatchRun.JobType == ai`；
   AI 背景工作不算取數排程的新鮮度，也不能被用來補足排程成功判定。
 - 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。
@@ -127,6 +130,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在測試 `new PrtgRequestBudget()`：真時鐘的配額會讓全量並行的測試彼此排隊到逾時，一律 `new PrtgRequestBudget(new AcceleratedPrtgClock())`（`PrtgRequestBudget.Shared` 在測試組件載入時已換成加速時鐘）。也不要讓並行寫入共用 `EfSqliteFixture` 那一條記憶體連線，並行案例用檔案型 DB。
 - 不要以「逐行找到標籤、取到行尾」擷取 Windows 事件欄位：NetIQ／Sentinel 的訊息主體是單行（欄位間是連續空白、同一個標籤會出現多次），
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
+- 不要讓工作流父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）吃到會隨儲存形狀改變的內容：分析當下以記憶體的完整紀錄算、AI 排程與工作流復原以資料庫讀回的紀錄再算，
+  兩次不同就會把已完成的 PRTG、AI、郵件腿當成「父紀錄變了」重設，主機日停在「PRTG 待補」。指紋一律以 `RecordStorageShaper.Compact` 的投影計算、與風險等級無關
+  （低風險日寫入時會精簡，風險等級又會在寫入後跨界）；改精簡投影的欄位或指紋內容時，還原路徑要能認得上一版算法（`LegacyParentFingerprint` 的做法），否則升級當下全部既有列重設一次。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
 - 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
   管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。

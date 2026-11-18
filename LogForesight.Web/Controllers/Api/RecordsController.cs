@@ -53,6 +53,11 @@ public class RecordsController : ControllerBase
     public ApiResponse<IssueSearchResultDto> ByIssue([FromQuery] RecordQuery query) =>
         ApiResponse<IssueSearchResultDto>.Ok(_list.SearchByIssue(BuildRequest(query, RecordView.ByIssue)));
 
+    /// <summary>依問題視角的展開列：某個問題（source＋eventId）的受影響主機，一台一列、伺服器端分頁；其餘篩選同依問題視角。</summary>
+    [HttpGet("issue-hosts")]
+    public ApiResponse<PagedResult<IssueHostRowDto>> IssueHosts([FromQuery] RecordQuery query) =>
+        ApiResponse<PagedResult<IssueHostRowDto>>.Ok(_list.SearchIssueHosts(BuildRequest(query, RecordView.ByIssue)));
+
     /// <summary>
     /// 依視角的支援矩陣把查詢參數組成請求：不支援的處理狀態類條件即使 URL 帶了也不傳給服務
     /// （前端同樣不送、不顯示該條件，見 records.js 的 viewSupports）。

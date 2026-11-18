@@ -1506,6 +1506,28 @@ public class EfPrtgStoreTests : IDisposable
         Assert.Equal(1, ctx.PrtgStateChanges.Count());
     }
 
+    /// <summary>一晚超過一批（500 台）裝置同時回空：寬限期內全部保留，不能只保留前 500 台（第 77 輪 E-1）。</summary>
+    [Fact]
+    public void DeleteSensorsNotSyncedSince_寬限裝置超過一批仍全部保留_寬限期外照刪()
+    {
+        var store = CreateStore();
+        var synced = DateTime.Now.AddHours(-2);
+        var now = DateTime.Now;
+        var devices = Enumerable.Range(1, 650).Select(i => (long)i).ToList();
+        store.UpsertSensors(devices.Select(d => new PrtgSensorRow
+        {
+            Objid = 100_000 + d, DeviceObjid = d, Name = $"S-{d}", SensorType = "ping"
+        }).ToList(), synced);
+
+        var (deleted, kept) = store.DeleteSensorsNotSyncedSince(now, devices, graceSince: synced.AddMinutes(-1), Array.Empty<long>());
+        Assert.Equal(0, deleted);
+        Assert.Equal(650, kept);
+
+        var (deletedLater, keptLater) = store.DeleteSensorsNotSyncedSince(now, devices, graceSince: synced.AddMinutes(1), Array.Empty<long>());
+        Assert.Equal(650, deletedLater);
+        Assert.Equal(0, keptLater);
+    }
+
     [Fact]
     public void PRTG聚合查詢_區間邊界_界外資料不計入()
     {

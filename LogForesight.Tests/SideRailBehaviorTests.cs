@@ -86,12 +86,12 @@ public sealed class SideRailBehaviorTests
             Assert.Contains("recordDetailUrl(", js);
             Assert.Contains("{ handle: true }", js);
         }
-        Assert.Contains("recordDetailUrl(record.hostId, record.date, { handle: true })", PageJs("records.js"));
+        Assert.Contains("recordDetailUrl(row.hostId, date, { handle: true })", PageJs("records.js"));
         Assert.Contains("recordDetailUrl(next.hostId, next.date, { handle: true })", PageJs("record-detail.js"));
         Assert.Contains("rowHref: d => recordDetailUrl(d.hostId, d.date, { handle: true })", PageJs("handler-detail.js"));
         Assert.Contains("rowHref: d => recordDetailUrl(d.hostId, d.date, { handle: true })", PageJs("user-detail.js"));
         // 展開列整列點擊與「進行中的交辦」列點擊都是去處理意圖，不得退回手組網址
-        Assert.Contains("rowHref: r => recordDetailUrl(r.hostId, r.date, { handle: true })", PageJs("records.js"));
+        Assert.Contains("rowHref: r => recordDetailUrl(r.hostId, r.lastSeen, { handle: true })", PageJs("records.js"));
         Assert.Contains("rowHref: c => recordDetailUrl(c.hostId, c.lastLinkedDate, { handle: true })", PageJs("handler-detail.js"));
         Assert.DoesNotContain("rowHref: r => `/records/${r.hostId}/${r.date}`,", PageJs("records.js"));
         Assert.DoesNotContain("rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`", PageJs("handler-detail.js"));

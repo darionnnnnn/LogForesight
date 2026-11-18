@@ -98,6 +98,9 @@ public static class ReadMatrix
             // 依日期彙總只回數字：完整可見的主機數必須等於該身分看得到的高風險主機數（多算＝洩漏了不可見主機的存在）
             GlobalNeedle = id => id.Vis.Values.Count(v => v == Visibility.Full) is var n and > 0 ? $"\"highRiskHosts\":{n}" : null },
         new() { Key = "GET /api/records/by-issue", Scope = RowScope.Global, Query = RecordRange, Positive = new[] { IssueA } },
+        // 依問題展開的逐主機列：以該主機獨有的問題查，看不到的主機回 200 空清單（不得帶出主機名）
+        new() { Key = "GET /api/records/issue-hosts", Scope = RowScope.HostSoft, Query = "from={from}&to={to}&source={src}&eventId={eventId}",
+            Positive = new[] { Host } },
         new() { Key = "GET /api/records/next-unhandled", Scope = RowScope.HostSoft, Query = "hostId={hostId}&date={date}",
             // 回應只有 {hostId, date}、沒有哨兵：回傳的 hostId 必須落在該身分完整可見的主機編號內（或 data 為 null）
             ResponseCheck = (id, _, hosts, body) =>

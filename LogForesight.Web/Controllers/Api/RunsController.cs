@@ -71,14 +71,17 @@ public class RunsController : ControllerBase
         });
     }
 
+    /// <summary>總表某一列（資料日）的逐主機狀態，伺服器端排序與分頁（sort：hostName／status／workflowComplete／daysAnalyzed／errorCount；dir：asc／desc；status：只列該狀態）</summary>
     [HttpGet("day/{date}")]
-    public ApiResponse<List<RunDayHostStatusDto>> DayDetail(string date)
+    public ApiResponse<PagedResult<RunDayHostStatusDto>> DayDetail(string date, [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null, [FromQuery] string? sort = null, [FromQuery] string? dir = null,
+        [FromQuery] string? status = null)
     {
         if (!DateTime.TryParseExact(date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.None, out var parsed))
             throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
 
-        return ApiResponse<List<RunDayHostStatusDto>>.Ok(_service.GetDayDetail(parsed));
+        return ApiResponse<PagedResult<RunDayHostStatusDto>>.Ok(_service.GetDayDetailPage(parsed, page, pageSize, sort, dir, status));
     }
 
     [HttpGet("{runId:long}")]

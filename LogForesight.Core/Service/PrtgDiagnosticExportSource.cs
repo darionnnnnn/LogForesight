@@ -9,6 +9,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -28,7 +29,7 @@ public sealed class PrtgDiagnosticExportSource
     private const long MaximumRawRowBytes = 9L * 1024 * 1024;
     private const int MaximumBlobValueBytes = MaximumRowBytes * 2;
     private const int MaximumPolicyCharacters = MaximumRowBytes;
-    private const int MaximumPolicySensors = 15000;
+    private const int MaximumPolicySensors = ScaleLimits.MaxPolicySensors;
     private const int MaximumSerializerScratchBytes = MaximumRowBytes * 4;
 
     private static readonly string[] ArrayProperties =
@@ -53,7 +54,7 @@ public sealed class PrtgDiagnosticExportSource
         if (sourcePolicy.SensorIds.Count > MaximumPolicySensors ||
             sourcePolicy.SensorIds.Any(sensorId => sensorId <= 0) ||
             sourcePolicy.SensorIds.Distinct().Count() != sourcePolicy.SensorIds.Count)
-            throw new InvalidDataException("來源 policy sensor 範圍超過 15,000 筆，或含有重複／非正識別碼。");
+            throw new InvalidDataException($"來源 policy sensor 範圍超過 {MaximumPolicySensors:N0} 筆，或含有重複／非正識別碼。");
         if (context.Database.CurrentTransaction == null)
             throw new InvalidOperationException("匯出 source 必須使用呼叫端持有的一致性資料庫交易。");
 

@@ -193,21 +193,6 @@ public class HostAdminService
         };
     }
 
-    /// <summary>取得全部活躍主機的簡易選項清單（指派下拉用，不分頁）</summary>
-    public List<HostOptionDto> GetAllActiveHostOptions()
-    {
-        return _hosts.GetAll()
-            .Where(h => h.Active && h.MergedInto == null)
-            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
-            .Select(h => new HostOptionDto
-            {
-                HostId = h.HostId,
-                HostName = h.HostName,
-                IpAddress = h.IpAddress
-            })
-            .ToList();
-    }
-
     /// <summary>
     /// 「全選符合目前篩選的主機」（體檢 X3）。
     ///
@@ -233,11 +218,11 @@ public class HostAdminService
     }
 
     /// <summary>
-    /// 單次「全選」的上限。取捨：體檢 X3 的實際情境是「一個網段 500 台」，2000 綽綽有餘；
+    /// 單次「全選」的上限，與站台主機上限同一個數（<see cref="ScaleLimits.MaxHosts"/>）：3000 台站台要一次改全部時不必分批。
     /// 上限存在的理由是讓請求主體與單次寫入量有界，超過時明確告知要分批，
     /// 而不是讓一次操作把整個機房掃進去卻沒人知道範圍。
     /// </summary>
-    public const int MaxSelectAllHosts = 2000;
+    public const int MaxSelectAllHosts = ScaleLimits.MaxHosts;
 
     private IEnumerable<WebHost> FilterHosts(HostSearchRequest request)
     {
@@ -294,6 +279,8 @@ public class HostAdminService
                 "silent" => filtered.Where(h => IsSilent(h, DateTime.Now)),
                 "ungrouped" => filtered.Where(h => h.Active && h.MergedInto == null && h.GroupIds.Count == 0),
                 "inactive" => filtered.Where(h => !h.Active),
+                // 指派下拉與勾選清單用：啟用且未合併（合併進別台的主機不是指派目標）
+                "assignable" => filtered.Where(h => h.Active && h.MergedInto == null),
                 _ => filtered
             };
         }

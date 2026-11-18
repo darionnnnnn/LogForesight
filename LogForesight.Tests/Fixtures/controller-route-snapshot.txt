@@ -28,7 +28,6 @@ POST	/api/admin/host-groups/{groupId:long}/members/preview	C=Maintain;A=-	-	-	sk
 POST	/api/admin/host-groups/{groupId:long}/members/remove	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/hosts	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/hosts	C=Maintain;A=-	-	-	-	AdminController
-GET	/api/admin/hosts/all	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/hosts/groups/batch	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/hosts/ids	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/hosts/merge	C=Maintain;A=-	-	-	-	AdminController
@@ -130,6 +129,7 @@ POST	/api/admin/users/batch	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/users/{userId:long}/detail	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/dispatch-paused	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/groups	C=Maintain;A=-	-	-	-	AdminController
+GET	/api/admin/users/{userId:long}/visible-hosts	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/ai/chat	C=-;A=-	-	-	skipbump	AiController
 GET	/api/ai/interpret-issue	C=-;A=-	-	-	-	AiController
 GET	/api/ai/query-summary	C=-;A=-	-	-	-	AiController
@@ -198,6 +198,7 @@ GET	/api/records	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-date	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-host	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/by-issue	C=-;A=-	-	-	-	RecordsController
+GET	/api/records/issue-hosts	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/next-unhandled	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/{hostId:long}/{date}	C=-;A=-	-	-	-	RecordsController
 GET	/api/records/{hostId:long}/{date}/handling	C=-;A=-	-	-	-	HandlingController

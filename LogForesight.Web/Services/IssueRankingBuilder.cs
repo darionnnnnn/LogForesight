@@ -122,28 +122,26 @@ public class IssueRankingBuilder
         // 使用者在兩頁間切換時同一組聚合幾秒內會被整套重算——短 TTL 內直接沿用
         var cacheVersion = _cache?.Version ?? 0;
         var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(cacheVersion, from, to, visibleHostIds, totalHosts, exclusion.CacheToken);
-        if (cacheKey != null)
+        return cacheKey == null
+            ? Compute()
+            : _cache!.GetOrAdd(cacheKey, cacheVersion, Compute);
+
+        List<IssueRankingDto> Compute()
         {
-            var cached = _cache!.TryGet(cacheKey);
-            if (cached != null) return cached;
+            var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
+
+            // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
+            var previousTo = from.Date.AddDays(-1);
+            var previousFrom = previousTo.AddDays(-periodDays + 1);
+            // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
+            // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
+            // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
+            var previous = _aggregates.Aggregate(exclusion, previousFrom, previousTo, visibleHostIds)
+                .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
+
+            var current = _aggregates.Aggregate(exclusion, from, to, visibleHostIds);
+            return BuildFromAggregates(exclusion, current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
         }
-
-        var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
-
-        // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
-        var previousTo = from.Date.AddDays(-1);
-        var previousFrom = previousTo.AddDays(-periodDays + 1);
-        // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
-        // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
-        // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
-        var previous = _aggregates.Aggregate(exclusion, previousFrom, previousTo, visibleHostIds)
-            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
-
-        var current = _aggregates.Aggregate(exclusion, from, to, visibleHostIds);
-        var result = BuildFromAggregates(exclusion, current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
-
-        if (cacheKey != null) _cache!.Set(cacheKey, result, cacheVersion);
-        return result;
     }
 
     private List<IssueRankingDto> BuildFromAggregates(

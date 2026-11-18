@@ -343,7 +343,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     public void 超過完整範圍上限明確拒絕而不截斷()
     {
         var controller = Controller();
-        var tooManyHosts = Request(); tooManyHosts.HostIds = Enumerable.Range(1, 3001).Select(x => (long)x).ToList();
+        var tooManyHosts = Request(); tooManyHosts.HostIds = Enumerable.Range(1, LogForesight.Core.Models.ScaleLimits.MaxHosts + 1).Select(x => (long)x).ToList();
         Assert.IsType<BadRequestObjectResult>(controller.Estimate(tooManyHosts));
 
         var tooManySensors = Request(); tooManySensors.SensorIds = Enumerable.Range(1, 15001).Select(x => (long)x).ToList();
@@ -355,6 +355,28 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         var unsupportedExpansion = Request(); unsupportedExpansion.SensorIds = Enumerable.Range(1, 30000).Select(x => (long)x).ToList();
         var result = Assert.IsType<BadRequestObjectResult>(controller.Estimate(unsupportedExpansion));
         Assert.Contains("unsupported_capacity", JsonSerializer.Serialize(result.Value));
+    }
+
+    /// <summary>
+    /// 上限邊界兩側（第 77 輪 E-2）：剛好上限通過數量檢查（之後因主機不可見被拒，不是 400），上限加一回 400；
+    /// 讀取時把上限回給前端，前端不另寫數字。
+    /// </summary>
+    [Fact]
+    public void 主機上限邊界兩側_讀取回傳上限值()
+    {
+        var controller = Controller();
+        var atLimit = Request(); atLimit.HostIds = Enumerable.Range(1, LogForesight.Core.Models.ScaleLimits.MaxHosts).Select(x => (long)x).ToList();
+        Assert.IsNotType<BadRequestObjectResult>(Estimate(controller, atLimit));
+
+        var overLimit = Request(); overLimit.HostIds = Enumerable.Range(1, LogForesight.Core.Models.ScaleLimits.MaxHosts + 1).Select(x => (long)x).ToList();
+        var rejected = Assert.IsType<BadRequestObjectResult>(Estimate(controller, overLimit));
+        Assert.Contains("scope_limit_exceeded", JsonSerializer.Serialize(rejected.Value));
+
+        var ok = Assert.IsType<OkObjectResult>(controller.Get());
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var data = document.RootElement.GetProperty("Data");
+        Assert.Equal(LogForesight.Core.Models.ScaleLimits.MaxHosts, data.GetProperty("MaxHosts").GetInt32());
+        Assert.Equal(LogForesight.Core.Models.ScaleLimits.MaxPolicySensors, data.GetProperty("MaxSensors").GetInt32());
     }
 
     [Fact]

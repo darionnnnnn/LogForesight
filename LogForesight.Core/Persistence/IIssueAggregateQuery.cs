@@ -134,6 +134,15 @@ public interface IIssueAggregateQuery
         IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
+    /// 單一問題在期間內的（存活主機, 日）清單，每列帶該日這個問題的最高嚴重度；母體與 <see cref="Aggregate"/> 相同
+    /// （依問題視角展開列用：各主機天數加總＝該列主機日數，主機數＝該列主機數）。
+    /// </summary>
+    List<IssueHostDay> IssueHostDays(
+        IssueExclusion exclusion, string source, int eventId, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null) => throw new NotSupportedException();
+
+    /// <summary>
     /// 期間內出現在「可行動」風險日（高／中）上的每個 (存活主機, 完整簽章) 最近一次出現快照
     /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
     /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
@@ -318,6 +327,9 @@ public sealed record TrendAggregate(DateTime Date, int HighRisk, int MediumRisk,
 /// SQL 端推導出的風險日處理狀態（不含墓碑主機）。
 /// </summary>
 public sealed record DayHandlingProjection(long HostId, DateTime Date, string DayStatus, bool HasHandler);
+
+/// <summary>單一問題的一個（存活主機, 日）出現，<see cref="SeverityRank"/> 為該日這個問題的最高嚴重度</summary>
+public sealed record IssueHostDay(long HostId, DateTime Date, int SeverityRank);
 
 /// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
 public sealed class IssueDailyHostCount

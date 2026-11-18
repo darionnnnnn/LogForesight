@@ -151,7 +151,8 @@ public class MemorySnapshotTests
         for (var i = 0; i < 257; i++) cache.Set($"k{i}", new List<IssueRankingDto>());
         var st = cache.GetStatistics();
         Assert.Equal(256, st.Entries);
-        Assert.Equal(1, st.Evictions);
+        // 逾時的 "old" 在讀取時由掃描釋放（計一次逐出），之後滿了再逐出一次
+        Assert.Equal(2, st.Evictions);
     }
 
     [Fact]

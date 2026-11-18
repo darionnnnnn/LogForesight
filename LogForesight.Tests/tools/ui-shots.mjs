@@ -11,11 +11,12 @@
 //
 // 用法：
 //   node ui-shots.mjs --base http://localhost:5099 --scenarios scenarios.json --out <目錄>
-//     [--fixture <資料集目錄>] [--matrix full|widths|quick|screens] [--only 情境名稱子字串] [--edge <msedge.exe>] [--font-default <px>] [--no-fail]
+//     [--fixture <資料集目錄>] [--matrix full|widths|quick|screens|fontscale] [--only 情境名稱子字串] [--edge <msedge.exe>] [--font-default <px>] [--no-fail]
 // 情境檔格式見 ui-scenarios.json；--fixture 另讀資料集產生的 ui-fixture-scenarios.json（路徑含相對今天的日期，不進版控）。
 // 情境的 widths 項目可寫數字（寬度，視窗高度取 --height）或 { width, height }（指定視窗高度，量一屏內看完的頁）。
 // 矩陣：full＝五個寬度＋375／1280 的小、大字級；widths＝五個寬度、字級中；quick＝1280 一格；
-//   screens＝FHD 1920×1080、2K 2560×1440、4K 3840×2160 三種螢幕（視窗高度跟著螢幕，字級中）。
+//   screens＝FHD 1920×1080、2K 2560×1440、4K 3840×2160 三種螢幕（視窗高度跟著螢幕，字級中）；
+//   fontscale＝特大在五個寬度、最大在 1280／1920／2560（最大只保證 1600px 以上，1280 用來確認較窄時仍可操作）。
 // 輸出 <out>/summary.json、<out>/<情境>/<寬>-<字級>[-print].png（整頁）與 <寬>-<字級>-first.png（首屏，即視窗看到的範圍）。
 // --font-default：模擬使用者把瀏覽器預設字級改成指定 px（驗證頁面尊重瀏覽器字級設定）。
 // 整頁截圖先把視窗撐到整頁高度再拍，不用 captureBeyondViewport：後者在截圖當下改變版面尺寸，
@@ -81,6 +82,10 @@ const FULL_MATRIX = [
 ];
 const WIDTHS_MATRIX = [375, 768, 1280, 1920, 2560].map(width => ({ width, scale: 'medium' }));
 const QUICK_MATRIX = [{ width: 1280, scale: 'medium' }];
+const FONTSCALE_MATRIX = [
+    ...[375, 768, 1280, 1920, 2560].map(width => ({ width, scale: 'xlarge' })),
+    ...[1280, 1920, 2560].map(width => ({ width, scale: 'xxlarge' }))
+];
 const SCREENS_MATRIX = [[1920, 1080], [2560, 1440], [3840, 2160]].map(([width, height]) => ({ width, height, scale: 'medium' }));
 const VIEWPORT_HEIGHT = Number(args.height) || 900;   // --height 800 之類：量「一屏內看完」的頁（報表）
 const MAX_SHOT_HEIGHT = 16000;
@@ -558,7 +563,7 @@ function safeName(name) {
 }
 
 async function main() {
-    const matrix = { quick: QUICK_MATRIX, widths: WIDTHS_MATRIX, screens: SCREENS_MATRIX }[args.matrix] || FULL_MATRIX;
+    const matrix = { quick: QUICK_MATRIX, widths: WIDTHS_MATRIX, screens: SCREENS_MATRIX, fontscale: FONTSCALE_MATRIX }[args.matrix] || FULL_MATRIX;
     mkdirSync(outDir, { recursive: true });
     const results = [];
     const roles = [...new Set(scenarios.map(s => s.role || 'ui-admin'))];

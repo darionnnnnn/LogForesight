@@ -1169,7 +1169,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **篩選支援矩陣**（`RecordQuerySupport` 單一出處，前端 `viewSupports` 對應）：明細支援處理狀態、逾期、未指派；依問題支援處理狀態與未指派；依主機、依日期三者皆不支援（彙總視角套用處理篩選需全撈處理資料）。目前視角不支援的條件**不送出、不顯示標籤**，條件列改顯示「目前的檢視不支援：…（切回明細可套用）」；值保留在網址，切回支援的視角自動恢復。`hostIds`／`groupIds` 給了卻沒有任何合法數字回 400，不當成未指定。
 - **依問題視角的處理**：狀態 chip 篩「處理概況」三態（`by-issue` 的 `statuses`，
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
-  受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
+  受影響主機，**一台一列**（`GET api/records/issue-hosts`，見下方依問題視角段）。
   列內動作依能力出現，依固定優先序排：**回覆處理狀態**（處理人清單含自己且具 `Handle`）→ **交辦**（`Assign`，建交辦單，見下方）→
   **統一標記**（`Assign`＋`Handle`）→ **靜音**（`Maintain`，§9.4b）。兩個以內全部橫排在列上；三個以上第一個留在列上、其餘收進「更多」下拉選單
   （以 fixed 定位跳出表格容器的裁切；展開中的固定格提到最上層；選單項先把焦點交回「更多」再開視窗；點選單不觸發整列展開）。動作欄因此窄到 FHD 下整張表不需水平捲動。
@@ -1240,8 +1240,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   具 `Maintain` 時「N 個問題靜音中」連到 `/work-orders#muted`。**控制器宣告回傳型別必須是
   `IssueSearchResultDto` 而不是父型別**：JSON 依宣告型別序列化，寫父型別會把這兩個欄位靜默吃掉
   （服務層測試看不到），由序列化守門測試釘住。
-  點列就地展開出現明細（固定 `pageSize=100`，超過時明講「共 N 筆，僅顯示前 100 筆」並給
-  明細視角出口）；主機數欄呈現「N 台 / M 主機日」兩個數字（`HostCount`／`DayCount`）。
+  點列就地展開受影響主機（`GET api/records/issue-hosts?source=&eventId=`＋同一組篩選，`RecordListQueryService.SearchIssueHosts`）：
+  一台主機一列，欄位為天數（最近出現日＝期間最後一天時標「仍在發生」）、出現日標籤（新到舊最多 14 個，各連到該日風險日詳情並展開處理狀態；
+  其餘寫「另有 N 天」連到鎖定該主機的明細視角）、最高嚴重度、處理概況（每台取最差狀態，同列上的規則）、處理人；整列與列尾「去處理」
+  到最近出現那一天（處理概況是逐主機彙總、沒有逐日狀態，所以不指向「最近未處理日」；該日詳情的處理面板可往前追）。母體與該問題那一列相同（`IIssueAggregateQuery.IssueHostDays` 與 `LatestOccurrences` 共用同一套靜音、可見嚴重度、
+  日風險等級與可見主機條件），所以列數＝該列主機數、各列天數加總＝該列主機日數；合併主機的同一天只算一天。查詢只回（主機, 日, 嚴重度）三欄、在記憶體依主機分組後分頁（每頁 20 台，換頁會重讀該問題的主機日；讀回量以「這個問題」的主機日為界，與主機總數、其他問題無關），
+  處理概況只對當頁主機判定；篩選條件在展開當下讀一次，換頁與重試沿用（表單之後被改但沒送出時，同一列的各頁仍是同一組條件）；頁尾保留明細視角出口。主機數欄呈現「N 台 / M 主機日」兩個數字（`HostCount`／`DayCount`）。
   狀態 chip／逾期篩選此視角停用。
   **交辦**（`Assign`）：modal 以目前篩選條件（問題、期間、篩選列選的主機與主機群組、日風險母體）請後端
   解析主機集合，前端不送解析結果、不設台數上限。**範圍由篩選推導**：選了主機→指定主機；否則選了主機群組→
@@ -1670,7 +1674,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   預計完成／逾期，「顯示近 30 天已結案」切換預設關。
 - API：`GET api/handlers/{userId}/work-orders?status=&sort=&paused=&page=&pageSize=`（本人或 `Assign`／`ViewAll`）、
   `GET api/handlers/{userId}/work-orders/summary`、`GET api/handlers/me/badge`（側欄徽章，單一聚合）、
-  `GET api/handlers/{userId}/workload`（被指派的風險日與依主機頁籤；查無此人回 404）。
+  `GET api/handlers/{userId}/workload?includeResolvedDays=&casesPage=&daysPage=&pageSize=&unresolvedOnly=`（被指派的風險日與依主機頁籤；查無此人回 404）。
+  案件與風險日各自伺服器端分頁（每頁預設 20），回 `CasesTotal`／`DaysTotal`；`OpenCaseCount`、`UnresolvedDayCount`、`OverdueCount` 一律以全部項目計算，不受分頁影響。
+  `unresolvedOnly=true` 時風險日只列未結案（判定沿用每個日項目的 `isUnresolved`）。
   側欄徽章顯示進行中台數，有逾期時轉警示色，`title` 寫「進行中 N 張／M 台；逾期 K 台／未回覆 J 張」。
   側欄的兩顆徽章（「我的交辦」進行中台數、「交辦總覽」未讀回覆單數，後者具 `Assign` 或 `ViewAll` 才有、0 不顯示）
   由 `core/badges.js` 的單一計時器每 60 秒刷新；分頁隱藏時不打 API，回到前景立即刷新一次；失敗靜默、沿用上次的數字。
@@ -1713,7 +1719,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   套閘門、可見範圍與選人，依問題分組回：待派台數｜建議處理人｜無法派出（原因 `no_pool`／`no_visibility`
   （列出無人看得到的主機群組）／`all_paused`）｜已排除（閘門計數）。試跑一律視為自動派工開啟、不模擬 ① 與 ③。抑制以「規則可能命中」
   逐主機判定（`KnownIssueCatalog.RuleMayHit`，可能多擋、不會少擋）。候選出現點超過 20000 筆回
-  `tooLarge` 要求縮小期間（上限算尚未派出的出現點）。**畫面數字＝按「立即派工」會發生的事**：
+  `tooLarge` 要求縮小期間（上限算尚未派出的出現點）；讀逐出現點原始列之前先以聚合的主機數總和減進行中案件數估下界，下界已超過就直接回 `tooLarge`，不必先把整期出現點讀進記憶體。**畫面數字＝按「立即派工」會發生的事**：
   「立即派工」（`Assign`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；建單依處理人、問題與
   決策來源分組，來源（問題負責人規則／自動派工）與備註比照夜間派工；部分問題失敗時逐組回報、稽核一定寫。
 - **不再自動派工**（待派頁籤下方的卡片，標頭 `lf-text-label` 眉標，右側帶「共 N 個問題、M 台」）：列出被「不再打擾」閘門擋住的（主機, 問題），
@@ -2019,7 +2025,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 > 圖表區 `flex:1`、兩列依 5：6 分配 → 每張卡的 `.lf-chart` 填滿卡片。
 > Chart.js 本就 `responsive + maintainAspectRatio:false`，容器多高圖就多高，圖表程式碼不寫死像素高度。
 > 實作要點：canvas 絕對定位（否則 canvas 高度回饋撐大容器形成震盪）、
-> 圖表下限用 **px 不用 rem**（rem 會隨字級偏好與瀏覽器字級設定放大，選「大」字級反而逼出捲軸）、
+> 圖表下限用 **px 不用 rem**（rem 會隨字級偏好與瀏覽器字級設定放大，選較大字級反而逼出捲軸）、
 > 兩列用 CSS grid 而不是 Bootstrap `.row`（`.row` 的負 margin 直接當 flex 子項會讓高度算錯、多出幾像素的捲軸）。
 > `.lf-content` 用 `overflow:auto` 而非 `hidden`：視窗矮到觸發下限時仍捲得到，不會被裁掉。
 > ≤ 991px 單欄、自然捲動；列印整組解除高度綁定（圖固定 230px）。這兩組解除規則寫在 `pages.css` 報表區的畫面規則之後
@@ -2103,7 +2109,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - **離開**：Esc；滑鼠移動時右上角出現「離開大螢幕」鈕（3 秒沒動作淡出、鍵盤聚焦時一直可見、`prefers-reduced-motion` 時直接顯示／隱藏）；
     由按鈕進入且已開全螢幕時，瀏覽器自己的退出全螢幕（`fullscreenchange` 且 `fullscreenElement` 為 null）也一併離開，由網址直接進入的不受影響。
     離開時移除網址的 `display` 參數、移除 `<html>` 類別、仍在全螢幕就 `exitFullscreen()`、停止自動更新並以一般模式重繪（恢復下鑽與工具列）。
-  - **字級**：`--lf-wall-scale` ＝ `innerHeight / 1080`、下限 1，視窗改變時重算；根字級 `18px × 倍率`（蓋過使用者的小／中／大字級偏好），第一排數字 `64px × 倍率`
+  - **字級**：`--lf-wall-scale` ＝ `innerHeight / 1080`、下限 1，視窗改變時重算；根字級 `18px × 倍率`（蓋過使用者的字級偏好），第一排數字 `64px × 倍率`
     （以 CSS 像素計：視窗高 1080 為 64px、2160 為 128px；作業系統縮放 200% 的 4K 螢幕 CSS 高度是 1080，數字是 64px、實體大小相同）。圖表文字由 `--lf-chart-text-size`／`--lf-chart-tooltip-size` 在大螢幕模式改指 sm／base（1080 高時座標 15.75px），隨根字級放大；倍率改變時重繪（DESIGN-SYSTEM §3a）。
   - **自動更新**：上一次載入**完成後**（成功或失敗）15 分鐘（`WALL_REFRESH_MS`，暫定）才排下一次，`setTimeout` 鏈、同時只有一個請求（`busy` ＋ `loadReport` 序號守門）；
     快捷期間每次以目前選的天數重算起訖（跨午夜自然前進一天），自訂日期固定；分頁不可見時不發請求，回到可見時若距上次完成已逾間隔就立刻載入一次、否則照原排程；
@@ -2244,6 +2250,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （仍是原屬某台已移除 Sentinel 的孤兒，掃描精靈據此認出），**人工重新啟用才清除**孤兒標記。
 - **群組頁畫面層級（設計系統 v3）**：群組名稱是列的主體（`lf-text-title`）；主機群組列尾的「成員」按鈕（`opens: 'dialog'`）開成員視窗（群組名稱本身不可點）；
   群組編輯視窗的名稱未填、成員查找未填、移出後將未分組的提醒都用 `statusNote`（警告型），授權矩陣標題列不再重複「勾選＝…」（本文已有）。
+  成員視窗兩個頁籤都是伺服器端分頁（每頁 50 台）：「目前成員」依 IP 數值排序（無 IP 排最後）、頁內依 /24 分組，勾選存在記憶體、跨頁保留並顯示「已選 N 台」；
+  「加入成員」的預覽回 `MatchCount`／`InOtherGroupsCount`／`AlreadyInTargetCount` 與當頁候選，預設不勾，兩個動作——「加入勾選的 N 台」與
+  「全部加入符合條件的 M 台」（M＝命中扣掉已在本群組；送 `allMatching`＋原條件，後端在同一次寫入內重新比對，預覽後才新增的符合主機也會加入）。
+  加入與移出都在一次主機清單讀改寫內完成（`IHostStore.MutateBatch`），勾了「移出原群組」時已在本群組的主機也會被移出其他群組（兩種加入方式同一條規則，確認視窗會寫明）。
+  回應 `AddedCount`＝新加入本群組的台數、`MovedFromOthersCount`＝原已在本群組、這次只被移出其他群組的台數；群組沒有變動的主機兩者都不計、不寫入。
+  目前成員與加入預覽的請求都有序號守門（連點換頁或換群組時只畫最後一次結果），目前成員載入失敗顯示錯誤與重試，預覽失敗時清掉舊結果。
 - 群組：三頁籤——使用者群組（builtin admin/manager 鎖刪除與 role；**派工池**欄為切換開關、切換即存，
   內建群組 disabled，`PUT api/admin/groups/{id}/dispatch-pool`）、主機群組、
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
@@ -2268,14 +2280,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **KPI**：可見主機／處理中案件／已結案案件／逾期（案件＝交辦單成員，§9.4b）。
 - **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
   **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。欄序為主機／IP／作業系統／可見來源／群組：短值欄收緊，群組放最後當吸收欄（DESIGN-SYSTEM §8.4a）。
-- **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
+- **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true&unresolvedOnly=true`（兩張表各自分頁），
   **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress`／`escalated` 判定，由後端在每個日項目回 `isUnresolved`
   （`HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態），前端不另維護一份集合。
 - **被指派歷程**：以 `IssueCase` 為事實來源（建案時間／交辦者／主機／問題／目前狀態／涵蓋區間），
   新到舊。**刻意不用稽核表反查**：稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
   誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現於此（那次改派記在該主機的
   處理歷程 `case_reassign`）。案件屬於交辦單時多一欄「所屬交辦單」（`#單號` 連到 §9.4b 詳情，沒有值時整欄不顯示）。
-- API：`GET api/admin/users/{id}/detail`（基本資料＋群組＋能力＋可見主機＋被指派歷程）
+- API：`GET api/admin/users/{id}/detail`（基本資料＋群組＋能力＋可見主機數 `VisibleHostCount`＋被指派歷程）；可見主機清單走 `GET api/admin/users/{id}/visible-hosts?page=&pageSize=`（依主機名排序、伺服器端分頁，每頁 20 台，含可見來源）
   ＋前端另打 `api/handlers/{id}/workload`。
 
 ### 9.9 `/admin/imports` 資料匯入（`Maintain`）
@@ -2896,8 +2908,9 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
   **IP 排除清單**（見 docs/PRTG-SPEC.md §4b）。
   衝突清單每列標示型別徽章：**IP 對多主機**（要從候選主機中挑一台）與名稱退路的 **hostname 多主機**（PRTG-SPEC §4），指派 modal 依型別分岔——
   不同衝突要做的事不同，混在同一個介面會讓人選錯。
-  指派用的主機清單走**不分頁端點** `GET api/admin/hosts/all`（只回 id／name／ip，Maintain）：
-  一般主機列表的 `pageSize` 被後端夾成最多 200，拿它取全部主機會讓超過的主機選不到且畫面無提示。
+  指派用的主機（衝突批次指派下拉、無候選主機時的指派 modal 下拉、指定主機回補勾選清單）一律伺服器端搜尋：
+  `GET api/admin/hosts?query&status=assignable&pageSize=50`（`assignable`＝啟用且未合併），輸入後 250ms 送出、慢回應以請求序號丟棄（`core/ui.js` 的 `createHostSearcher`）；
+  回補勾選清單只列本次命中（最多 50 台）與已勾選者，超過時提示縮小條件。
   摘要下方是**未對應主機**清單（主機、IP、原因；原因為衝突時附「到衝突清單處理」），每列「指派 PRTG 裝置」開依主機指派 modal
   （主機唯讀、搜尋框預設帶主機 IP、結果最多 20 筆可選、超過時提示縮小條件），0 台顯示「全部主機都已對應到 PRTG 裝置。」；
   其後是預設收合的「名稱不一致（主機名稱可能已變更）」，0 筆整區隱藏。PRTG 端有、主機清單沒有的 device 不列。取數與規則仍只認 `ok` 的對應。
@@ -3249,13 +3262,14 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
   `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每個資料日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
-    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點列就地展開**該資料日逐主機狀態，§2——懶載入 `onRowExpand`，`GET api/runs/day/{資料日}`，各列排序/分頁狀態獨立、可同時展開多天）。
+    未執行計數、空資料待複查計數＋失敗主機清單）＋單日主機明細（**點列就地展開**該資料日逐主機狀態，§2——懶載入 `onRowExpand`，`GET api/runs/day/{資料日}?page=&pageSize=&sort=&dir=&status=`，排序、狀態篩選與分頁在後端（`RunMonitorService.GetDayDetailPage`；排序鍵 hostName／status／workflowComplete／daysAnalyzed／errorCount，沒跑過的值排最前、降冪為整體反轉；`status` 只列該狀態、總數跟著篩選，展開區上方的「狀態」下拉選單帶入，換狀態回到第 1 頁），工作流各腿狀態只讀當頁主機，以「整體工作流」排序時才讀全部；各列排序／篩選／分頁狀態獨立、可同時展開多天）。
     **列是資料日**（`Date`，表頭「資料日」）：主機狀態、PRTG 都是這一天的資料，之後任何一趟補跑都歸在同一列。
-    排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetail`。
+    排程處理日是資料日的隔天（`RunDate`），「執行日與時間」欄以它開頭；`RunMonitorService` 內部仍以處理日 D 計算（NetIQ／本機核對 D-1），輸出時標成資料日，換算只在 `GetDaySummaries` 與 `GetDayDetailPage`。
     **今天處理的那一列**：今天已有取數趟時，第 1 頁多一列（資料日＝昨天，`IsToday`，執行中再帶 `InProgress`），日期旁標「今日處理」（執行中為「今日處理・執行中」），不佔 `days`、`TotalDays` 不含它；今天還沒處理到的主機是「尚未處理」，不是漏跑。今天沒有趟就不出現。
     **空資料待複查**：NetIQ 帳本最新狀態為 `EmptyOnce` 的主機日，主機狀態值是 `recheck`（畫面「空資料待複查」），
-    計入 `RecheckCount`、不計入 `NotRunCount`；「未執行」格（數字用次要文字色，圖例色塊維持淺灰）：今天的列寫「N（尚未處理）」、其他日期只寫 N，有空資料待複查時接「＋空資料待複查 M」，未執行為 0 時只寫「空資料待複查 M」；今天的列在同一窗口排得進複查時接「（約 HH:mm 複查）」（`RecheckAt`）。主機明細說明與續跑規則同一判定：
-    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote` 寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
+    計入 `RecheckCount`、不計入 `NotRunCount`，在獨立的「空資料待複查」欄（緊接「未執行」，表頭說明寫明它不是漏跑）。「未執行」格只放未執行數（數字用次要文字色，圖例色塊維持淺灰）：今天的列寫「N（尚未處理）」、其他日期只寫 N。
+    「空資料待複查」格寫台數；「還在進行的那一天」的列在數字下方寫何時再查（`RecheckNote`，由 `RunMonitorService.RecheckTiming` 產生：「約 HH:mm 複查」／「下一窗口複查」／「排程未啟用，不會自動複查」），過去的列只寫台數。主機明細說明與續跑規則同一判定：
+    自動重查還沒用完（`NetiqAttemptStatus.AutoRetryExhausted` 為 false）時依 `RunMonitorService.EmptyRecheckNote`（「空資料，」＋`RecheckTiming`）寫三種之一——排程未啟用「空資料，排程未啟用，不會自動複查」、
     今天的格子且窗口內排得進「空資料，約 HH:mm 複查」（時刻只由 `ScheduleCalculator.NextEmptyRecheckAt` 算）、其餘「空資料，下一窗口複查」。「還在進行的那一天」由 `ScheduleCalculator.LiveRunDay` 判定（跨午夜窗口過了午夜仍是開跑日那一列）。空資料待複查不受自動重查上限限制，不會出現已用完文字。
     **今日列「最後一趟結束時尚有」**（`PendingSummary`，只在 `IsToday`）：今天還有尚未結束且未判定異常中斷的取數趟時不顯示；否則取今天開跑、已結束或已判定異常中斷的最後一趟取數趟；
     異常中斷寫「最後一趟異常中斷」，否則 `RunResume.HasWork` 時寫「最後一趟結束時尚有：」＋`Describe()`；顯示在「執行時間」格第二行之後。

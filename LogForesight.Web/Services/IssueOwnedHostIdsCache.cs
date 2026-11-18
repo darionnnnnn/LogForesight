@@ -38,6 +38,7 @@ public class IssueOwnedHostIdsCache : ICacheStatistics
     private long _misses;
     private long _evictions;
     private readonly Dictionary<string, (HashSet<long> HostIds, DateTime CachedAt, DateTime LastAccess)> _entries = new();
+    private readonly SingleFlight _flight = new();
 
     /// <summary>上一次看到的版本戳：版本一推進，所有舊鍵都已經死掉（鍵含版本戳），
     /// 直接整批清掉，免得死條目佔著上限。</summary>
@@ -81,18 +82,27 @@ public class IssueOwnedHostIdsCache : ICacheStatistics
             _misses++;
         }
 
-        // factory 刻意在鎖外執行：那支聚合查詢很慢，握著鎖算會讓其他請求全部排隊
-        // （同 SummaryCache 的既有取捨：同時進來的請求可能各算一次，結果相同）
-        var value = factory();
-
-        lock (_lock)
+        // factory 在鎖外執行：那支聚合查詢很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只算一次（同 SummaryCache）
+        var shared = _flight.Run(key, () =>
         {
-            var now = _now();
-            if (!_entries.ContainsKey(key)) EvictForInsert(now);
-            _entries[key] = (new HashSet<long>(value), now, now);
-        }
+            // 前一個同鍵合併可能剛寫入並結束：再看一次，避免緊接著重算（同 SummaryCache）
+            lock (_lock)
+            {
+                if (_seenVersion == version && _entries.TryGetValue(key, out var fresh)
+                    && (_now() - fresh.CachedAt).TotalSeconds < TtlSeconds)
+                    return fresh.HostIds;
+            }
+            var value = new HashSet<long>(factory());
+            lock (_lock)
+            {
+                var now = _now();
+                if (!_entries.ContainsKey(key)) EvictForInsert(now);
+                _entries[key] = (value, now, now);
+            }
+            return value;
+        });
 
-        return new HashSet<long>(value);
+        return new HashSet<long>(shared);
     }
 
     /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除逾時項目，仍滿就逐筆移除最後存取時間最舊的一筆。

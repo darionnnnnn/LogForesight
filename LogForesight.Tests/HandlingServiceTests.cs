@@ -1901,6 +1901,87 @@ public class HandlingServiceTests : IDisposable
         Assert.Single(withResolved.Days);
     }
 
+    /// <summary>FEEDBACK-77 F-5：Cases／Days 伺服器端分頁，計數與 Total 的口徑</summary>
+    [Fact]
+    public void 工作頁_案件分頁_Total與計數不受分頁影響_三頁接續無重複()
+    {
+        var service = Create(Capability.Assign, Capability.Handle);
+        for (var i = 0; i < 5; i++)
+        {
+            var day = Today.AddDays(-50 - i);
+            _repository.AddRecord(_host.HostName, day, Issue("disk", 200 + i));
+            service.Assign(_host.HostId, day, _other.UserId);
+        }
+
+        var p1 = service.GetHandlerWorkload(_other.UserId, false, casesPage: 1, pageSize: 2);
+        var p2 = service.GetHandlerWorkload(_other.UserId, false, casesPage: 2, pageSize: 2);
+        var p3 = service.GetHandlerWorkload(_other.UserId, false, casesPage: 3, pageSize: 2);
+
+        Assert.All(new[] { p1, p2, p3 }, w =>
+        {
+            Assert.Equal(5, w.CasesTotal);
+            Assert.Equal(5, w.OpenCaseCount);
+            Assert.Equal(5, w.DaysTotal);
+            Assert.Equal(5, w.UnresolvedDayCount);
+        });
+        Assert.Equal(2, p1.Cases.Count);
+        Assert.Equal(2, p2.Cases.Count);
+        Assert.Single(p3.Cases);
+        var labels = p1.Cases.Concat(p2.Cases).Concat(p3.Cases).Select(c => c.IssueLabel).ToList();
+        Assert.Equal(5, labels.Distinct().Count());
+        // Days 頁碼獨立：casesPage 不影響 Days 第 1 頁
+        Assert.Equal(p1.Days.Select(d => d.Date), p3.Days.Select(d => d.Date));
+    }
+
+    [Fact]
+    public void 工作頁_unresolvedOnly只回未結案風險日_UnresolvedDayCount不受影響()
+    {
+        var openDay = Today.AddDays(-50);
+        var doneDay = Today.AddDays(-5);
+        var a = Issue("disk", 153);
+        var b = Issue("disk", 154);
+        _repository.AddRecord(_host.HostName, openDay, a);
+        _repository.AddRecord(_host.HostName, doneDay, b);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, openDay, _other.UserId);
+        service.Assign(_host.HostId, doneDay, _other.UserId);
+        service.SetIssueStatus(_host.HostId, doneDay, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(b),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        var all = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+        Assert.Equal(2, all.DaysTotal);
+
+        var only = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: true, unresolvedOnly: true);
+        var day = Assert.Single(only.Days);
+        Assert.True(day.IsUnresolved);
+        Assert.Equal(openDay.ToString("yyyy-MM-dd"), day.Date);
+        Assert.Equal(1, only.DaysTotal);
+        Assert.Equal(all.UnresolvedDayCount, only.UnresolvedDayCount);
+    }
+
+    [Fact]
+    public void 工作頁_不帶分頁參數_回第一頁且不超過預設頁大小()
+    {
+        var service = Create(Capability.Assign, Capability.Handle);
+        for (var i = 0; i < 23; i++)
+        {
+            var day = Today.AddDays(-20 - i);
+            _repository.AddRecord(_host.HostName, day, Issue("disk", 300 + i));
+            service.Assign(_host.HostId, day, _other.UserId);
+        }
+
+        var workload = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false);
+
+        Assert.Equal(20, workload.Cases.Count);
+        Assert.Equal(20, workload.Days.Count);
+        Assert.Equal(23, workload.CasesTotal);
+        Assert.Equal(23, workload.DaysTotal);
+        Assert.Equal(23, workload.OpenCaseCount);
+    }
+
     /// <summary>資料以檢視者的可見範圍過濾——被看者的交辦項目在檢視者看不到的主機上時不列出</summary>
     [Fact]
     public void 工作頁_資料以檢視者可見範圍過濾()

@@ -342,7 +342,7 @@
             <p class="lf-text-meta">不選任何主機與 sensor＝評估全部已對應主機與其 sensor。指定 sensor 時須同時勾選所屬主機。改 PRTG 連線位址只會重算對應，不會影響既有數值歷史。</p>
             <form id="prtg-monitoring-form">
                 <label class="form-label" for="prtg-monitoring-host-search">搜尋主機（勾選狀態會跨頁保留）</label>
-                <p class="lf-text-meta" id="prtg-monitoring-selection-limits">最多選取 3,000 台主機與 15,000 顆 sensor；超過上限會明確拒絕，不會截斷。</p>
+                <p class="lf-text-meta" id="prtg-monitoring-selection-limits">超過選取上限會明確拒絕，不會截斷。</p>
                 <input class="form-control mb-2" id="prtg-monitoring-host-search" maxlength="128" autocomplete="off" />
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-host-prev" type="button">上一頁</button>
@@ -823,6 +823,7 @@
                         <select class="form-select form-select-sm" id="prtg-assign-host">
                             <option value="">請選擇主機…</option>
                         </select>
+                        <div class="d-none" id="prtg-assign-host-search"></div>
                     </div>
                     <div class="mb-3">
                         <label for="prtg-assign-note" class="form-label">備註（選填）</label>

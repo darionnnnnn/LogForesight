@@ -561,7 +561,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
-    public void 指派用主機清單_只回活躍主機且依名稱排序()
+    public void 主機搜尋status_assignable_只回活躍且未合併主機並依名稱排序()
     {
         var hostStore = new HostStore(_backend.Blob("hosts"));
         hostStore.Upsert(new WebHost { HostId = 1, HostName = "Z-Server", IpAddress = "10.0.1.1", Active = true });
@@ -591,13 +591,17 @@ public class PrtgHostMapEndpointTests : IDisposable
             new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
             snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
-        var list = service.GetAllActiveHostOptions();
+        var page = service.GetHosts(new HostSearchRequest { Status = "assignable", Page = 1, PageSize = 50 });
 
-        Assert.Equal(2, list.Count);
-        Assert.Equal("A-Server", list[0].HostName);
-        Assert.Equal(2, list[0].HostId);
-        Assert.Equal("Z-Server", list[1].HostName);
-        Assert.Equal(1, list[1].HostId);
+        Assert.Equal(2, page.Total);
+        Assert.Equal("A-Server", page.Items[0].HostName);
+        Assert.Equal(2, page.Items[0].HostId);
+        Assert.Equal("Z-Server", page.Items[1].HostName);
+        Assert.Equal(1, page.Items[1].HostId);
+
+        // 關鍵字同樣在伺服器端篩選（PRTG 維護頁的搜尋框打的就是這個）
+        var byKeyword = service.GetHosts(new HostSearchRequest { Status = "assignable", Query = "10.0.1.1", Page = 1, PageSize = 50 });
+        Assert.Equal(new[] { "Z-Server" }, byKeyword.Items.Select(h => h.HostName).ToArray());
     }
 
     [Fact]
