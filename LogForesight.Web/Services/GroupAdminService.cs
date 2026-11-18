@@ -221,62 +221,83 @@ public class GroupAdminService
         var group = _hostGroups.Get(hostGroupId)
                     ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
 
-        var matched = MatchHosts(request);
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
+        var matched = MatchHosts(_hosts.GetAll(), request.Pattern, request.Query);
         var groupsById = _hostGroups.GetAll().ToDictionary(g => g.GroupId, g => g.GroupName);
 
-        var candidates = matched
-            .Select(h =>
-            {
-                // 現有群組排除「本目標群組」——那不是「已屬其他群組」，另以 AlreadyInTarget 表達
-                var otherGroups = NameFormat.ResolveNames(
-                    h.GroupIds.Where(id => id != hostGroupId), groupsById, name => name);
+        // 排序鍵與計數都只看群組 id，不必為全部命中主機建 DTO；只有當頁才解析群組名稱
+        bool InOthers(WebHost h) => h.GroupIds.Any(id => id != hostGroupId);
 
-                return new HostGroupMemberCandidateDto
-                {
-                    HostId = h.HostId,
-                    HostName = h.HostName,
-                    IpAddress = h.IpAddress,
-                    CurrentGroups = otherGroups,
-                    InOtherGroups = otherGroups.Count > 0,
-                    AlreadyInTarget = h.GroupIds.Contains(hostGroupId)
-                };
-            })
-            .OrderByDescending(c => c.InOtherGroups)   // 已屬其他群組的排前面，需要留意的先看到
-            .ThenBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+        var pageHosts = matched
+            .OrderByDescending(InOthers)   // 已屬其他群組的排前面，需要留意的先看到
+            .ThenBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToList();
+
+        var candidates = pageHosts.Select(h =>
+        {
+            // 現有群組排除「本目標群組」——那不是「已屬其他群組」，另以 AlreadyInTarget 表達
+            var otherGroups = NameFormat.ResolveNames(
+                h.GroupIds.Where(id => id != hostGroupId), groupsById, name => name);
+
+            return new HostGroupMemberCandidateDto
+            {
+                HostId = h.HostId,
+                HostName = h.HostName,
+                IpAddress = h.IpAddress,
+                CurrentGroups = otherGroups,
+                InOtherGroups = otherGroups.Count > 0,
+                AlreadyInTarget = h.GroupIds.Contains(hostGroupId)
+            };
+        }).ToList();
 
         return new HostGroupMemberPreviewDto
         {
             GroupId = group.GroupId,
             GroupName = group.GroupName,
-            MatchCount = candidates.Count,
-            InOtherGroupsCount = candidates.Count(c => c.InOtherGroups),
+            MatchCount = matched.Count,
+            InOtherGroupsCount = matched.Count(InOthers),
+            AlreadyInTargetCount = matched.Count(h => h.GroupIds.Contains(hostGroupId)),
+            Page = page,
+            PageSize = pageSize,
             Candidates = candidates
         };
     }
 
-    public HostGroupMemberPreviewDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request)
+    /// <summary>
+    /// 加入成員：一次 <see cref="IHostStore.MutateBatch{TResult}"/> 完成全部變更（3000 台也只有一次整份讀改寫）。
+    /// <see cref="AddHostGroupMembersRequest.AllMatching"/> 為 true 時在同一次讀改寫內以條件重新比對。
+    /// </summary>
+    public AddHostGroupMembersResultDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request)
     {
         var group = _hostGroups.Get(hostGroupId)
                     ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
 
-        var wanted = request.HostIds.Distinct().ToList();
-        var added = new List<string>();
+        var wantedIds = request.HostIds.Distinct().ToHashSet();
 
-        foreach (var hostId in wanted)
+        var added = _hosts.MutateBatch(list =>
         {
-            var host = _hosts.Get(hostId);
-            if (host == null || host.MergedInto != null) continue;   // 查無或墓碑列略過（防前端送過期資料）
-            if (host.GroupIds.Contains(hostGroupId) && !request.RemoveFromOthers) continue;
+            var names = new List<string>();
+            IEnumerable<WebHost> targets = request.AllMatching
+                ? MatchHosts(list, request.Pattern, request.Query)
+                : list.Where(h => wantedIds.Contains(h.HostId));
 
-            // removeFromOthers：只保留本目標群組；否則在既有群組上追加本群組
-            var newGroups = request.RemoveFromOthers
-                ? new List<long> { hostGroupId }
-                : host.GroupIds.Concat(new[] { hostGroupId }).Distinct().ToList();
+            foreach (var host in targets.ToList())
+            {
+                if (host.MergedInto != null) continue;   // 墓碑列略過（防前端送過期資料）
+                // 已在本群組：一般加入時略過；勾了「移出原群組」時仍要處理（把它從其他群組移出），勾選與全部加入同一條規則
+                if (host.GroupIds.Contains(hostGroupId) && !request.RemoveFromOthers) continue;
 
-            _hosts.SetGroups(hostId, newGroups);
-            added.Add(host.HostName);
-        }
+                // removeFromOthers：只保留本目標群組；否則在既有群組上追加本群組
+                host.GroupIds = request.RemoveFromOthers
+                    ? new List<long> { hostGroupId }
+                    : host.GroupIds.Concat(new[] { hostGroupId }).Distinct().ToList();
+                names.Add(host.HostName);
+            }
+
+            return names;
+        });
 
         _audit.Record(
             action: AuditActions.HostUpdate,
@@ -286,18 +307,26 @@ public class GroupAdminService
             targetId: group.GroupId.ToString(),
             detail: new { group.GroupName, request.RemoveFromOthers, Hosts = added });
 
-        // 回傳套用後的最新預覽（同一組主機），讓前端就地反映結果
-        return PreviewMembers(hostGroupId, new HostGroupMemberQueryRequest());
+        return new AddHostGroupMembersResultDto { AddedCount = added.Count };
     }
 
-    public List<HostGroupMemberDto> GetMembers(long hostGroupId)
+    public PagedResult<HostGroupMemberDto> GetMembers(long hostGroupId, int page = 1, int pageSize = 50)
     {
         var group = _hostGroups.Get(hostGroupId)
                     ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
 
-        return _hosts.GetAll()
+        (page, pageSize) = Paging.Normalize(page, pageSize);
+
+        var members = _hosts.GetAll()
             .Where(h => h.MergedInto == null && h.GroupIds.Contains(hostGroupId))
-            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // 依 IP 數值排序（無 IP 或非 IPv4 的排最後），再依主機名
+        var items = members
+            .OrderBy(h => IpSortKey(h.IpAddress))
+            .ThenBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(h => new HostGroupMemberDto
             {
                 HostId = h.HostId,
@@ -306,6 +335,28 @@ public class GroupAdminService
                 OtherGroupCount = h.GroupIds.Count(id => id != hostGroupId)
             })
             .ToList();
+
+        return new PagedResult<HostGroupMemberDto>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            Total = members.Count
+        };
+    }
+
+    /// <summary>IPv4 轉可排序的數值；無法解析者排最後</summary>
+    private static long IpSortKey(string? ip)
+    {
+        var parts = (ip ?? "").Split('.');
+        if (parts.Length != 4) return long.MaxValue;
+        long key = 0;
+        foreach (var part in parts)
+        {
+            if (!byte.TryParse(part, out var octet)) return long.MaxValue;
+            key = key * 256 + octet;
+        }
+        return key;
     }
 
     public void RemoveMembers(long hostGroupId, IEnumerable<long> hostIds)
@@ -313,15 +364,20 @@ public class GroupAdminService
         var group = _hostGroups.Get(hostGroupId)
                     ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
 
-        var removed = new List<string>();
-        foreach (var hostId in hostIds.Distinct())
-        {
-            var host = _hosts.Get(hostId);
-            if (host == null || !host.GroupIds.Contains(hostGroupId)) continue;   // 查無或早已不在此群組，安靜略過
+        var wanted = hostIds.Distinct().ToHashSet();
 
-            _hosts.SetGroups(hostId, host.GroupIds.Where(id => id != hostGroupId));
-            removed.Add(host.HostName);
-        }
+        // 一次 MutateBatch：查無或早已不在此群組的主機安靜略過
+        var removed = _hosts.MutateBatch(list =>
+        {
+            var names = new List<string>();
+            foreach (var host in list.Where(h => wanted.Contains(h.HostId)))
+            {
+                if (!host.GroupIds.Contains(hostGroupId)) continue;
+                host.GroupIds = host.GroupIds.Where(id => id != hostGroupId).Distinct().ToList();
+                names.Add(host.HostName);
+            }
+            return names;
+        });
 
         if (removed.Count == 0) return;
 
@@ -337,21 +393,21 @@ public class GroupAdminService
     /// 依網段或關鍵字命中主機。墓碑列（已併入其他主機）一律排除——它們不該再被指派群組。
     /// 網段與 IP 欄位比對；關鍵字同時比對 HostName 與 IpAddress（NetIQ 主機名即 IP）。
     /// </summary>
-    private List<WebHost> MatchHosts(HostGroupMemberQueryRequest request)
+    private static List<WebHost> MatchHosts(IEnumerable<WebHost> all, string? pattern, string? queryText)
     {
-        var hosts = _hosts.GetAll().Where(h => h.MergedInto == null);
+        var hosts = all.Where(h => h.MergedInto == null);
 
-        if (!string.IsNullOrWhiteSpace(request.Pattern))
+        if (!string.IsNullOrWhiteSpace(pattern))
         {
-            var range = CidrMatcher.Parse(request.Pattern)
+            var range = CidrMatcher.Parse(pattern)
                         ?? throw DomainException.Validation(
-                            $"「{request.Pattern}」不是有效的網段（可用 192.168.0.0/24、192.168.0.* 或單一 IP）。");
+                            $"「{pattern}」不是有效的網段（可用 192.168.0.0/24、192.168.0.* 或單一 IP）。");
             return hosts.Where(h => CidrMatcher.Matches(range, h.IpAddress)).ToList();
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Query))
+        if (!string.IsNullOrWhiteSpace(queryText))
         {
-            var q = request.Query.Trim();
+            var q = queryText.Trim();
             return hosts
                 .Where(h => h.HostName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                             (h.IpAddress ?? "").Contains(q, StringComparison.OrdinalIgnoreCase))

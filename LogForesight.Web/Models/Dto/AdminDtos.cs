@@ -241,6 +241,12 @@ public class HostGroupMemberQueryRequest
 
     /// <summary>關鍵字：比對 hostname 或 IP（Pattern 與 Query 擇一）</summary>
     public string? Query { get; set; }
+
+    /// <summary>預覽的頁碼（從 1 起算）</summary>
+    public int Page { get; set; } = 1;
+
+    /// <summary>預覽每頁筆數（預設 50）</summary>
+    public int PageSize { get; set; } = 50;
 }
 
 /// <summary>預覽命中的主機——含現有群組（顯性通知已屬其他群組）與是否已在目標群組</summary>
@@ -260,12 +266,32 @@ public class HostGroupMemberPreviewDto
     public string GroupName { get; set; } = string.Empty;
     public int MatchCount { get; set; }
     public int InOtherGroupsCount { get; set; }
+
+    /// <summary>命中的主機中已在本群組的台數（前端算「全部加入」實際會加幾台）</summary>
+    public int AlreadyInTargetCount { get; set; }
+
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+
+    /// <summary>只含當頁</summary>
     public List<HostGroupMemberCandidateDto> Candidates { get; set; } = new();
 }
 
 public class AddHostGroupMembersRequest
 {
     public List<long> HostIds { get; set; } = new();
+
+    /// <summary>
+    /// true＝忽略 <see cref="HostIds"/>，以 <see cref="Pattern"/>／<see cref="Query"/> 重新比對，
+    /// 加入所有尚未在群組的命中主機（預覽之後才新增的符合主機也會被加入）
+    /// </summary>
+    public bool AllMatching { get; set; }
+
+    /// <summary>AllMatching 的比對條件：網段（與預覽同語意）</summary>
+    public string? Pattern { get; set; }
+
+    /// <summary>AllMatching 的比對條件：關鍵字（與預覽同語意）</summary>
+    public string? Query { get; set; }
 
     /// <summary>同時把這些主機移出其原本所屬的其他主機群組（預設否，僅加入）</summary>
     public bool RemoveFromOthers { get; set; }
@@ -280,6 +306,12 @@ public class HostGroupMemberDto
 
     /// <summary>扣除本群組後，此主機仍隸屬的其他群組數；0 代表移除後會變成未分組</summary>
     public int OtherGroupCount { get; set; }
+}
+
+/// <summary>加入成員的結果：實際加入的台數（略過的不計）</summary>
+public class AddHostGroupMembersResultDto
+{
+    public int AddedCount { get; set; }
 }
 
 public class RemoveHostGroupMembersRequest

@@ -298,14 +298,15 @@ public class AdminController : ControllerBase
 
     /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
     [HttpPost("host-groups/{groupId:long}/members")]
-    public ApiResponse<HostGroupMemberPreviewDto> AddMembers(
+    public ApiResponse<AddHostGroupMembersResultDto> AddMembers(
         long groupId, [FromBody] AddHostGroupMembersRequest request) =>
-        ApiResponse<HostGroupMemberPreviewDto>.Ok(_groups.AddMembers(groupId, request));
+        ApiResponse<AddHostGroupMembersResultDto>.Ok(_groups.AddMembers(groupId, request));
 
-    /// <summary>「目前成員」頁籤：本群組現有成員清單</summary>
+    /// <summary>「目前成員」頁籤：本群組現有成員清單（伺服器分頁，依 IP 排序）</summary>
     [HttpGet("host-groups/{groupId:long}/members")]
-    public ApiResponse<List<HostGroupMemberDto>> GetMembers(long groupId) =>
-        ApiResponse<List<HostGroupMemberDto>>.Ok(_groups.GetMembers(groupId));
+    public ApiResponse<PagedResult<HostGroupMemberDto>> GetMembers(
+        long groupId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50) =>
+        ApiResponse<PagedResult<HostGroupMemberDto>>.Ok(_groups.GetMembers(groupId, page, pageSize));
 
     /// <summary>把選定主機移出群組</summary>
     [HttpPost("host-groups/{groupId:long}/members/remove")]

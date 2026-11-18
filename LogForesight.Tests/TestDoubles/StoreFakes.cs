@@ -109,8 +109,12 @@ internal class FakeHostStore : IHostStore
         return existing;
     }
 
+    /// <summary>SetGroups 被呼叫的次數（真實 store 每次都是一次整份 blob 讀改寫）</summary>
+    public int SetGroupsCalls { get; private set; }
+
     public void SetGroups(long hostId, IEnumerable<long> groupIds)
     {
+        SetGroupsCalls++;
         var host = Get(hostId);
         if (host != null) host.GroupIds = groupIds.Distinct().ToList();
     }

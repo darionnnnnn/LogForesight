@@ -124,6 +124,7 @@
                 <section data-panel="current">
                     <div id="current-members-summary" class="lf-text-meta mb-2"></div>
                     <div id="current-members-list"></div>
+                    <div id="current-members-pager" class="mt-2"></div>
                 </section>
 
                 <section data-panel="add" class="d-none">
@@ -139,6 +140,7 @@
 
                     <div id="members-summary" class="lf-text-meta mb-2"></div>
                     <div id="members-preview"></div>
+                    <div id="members-pager" class="mt-2"></div>
 
                     <div class="form-check mt-3 d-none" id="members-remove-field">
                         <input class="form-check-input" type="checkbox" id="members-remove-others" />
@@ -154,8 +156,9 @@
                 <button type="button" class="btn btn-danger" id="current-members-remove" disabled>移出選取主機</button>
             </div>
             <div class="modal-footer d-none" id="members-footer-add">
-                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" id="members-apply" disabled>加入選取主機</button>
+                <button type="button" class="btn btn-outline-secondary me-auto" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-outline-secondary" id="members-apply-all" disabled>全部加入符合條件的台數</button>
+                <button type="button" class="btn btn-primary" id="members-apply" disabled>加入勾選的主機</button>
             </div>
         </div>
     </div>
