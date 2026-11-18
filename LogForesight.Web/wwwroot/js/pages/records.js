@@ -884,15 +884,16 @@ const ISSUE_HOSTS_PAGE_SIZE = 20;
  * 依問題視角的列展開（§10）：這個問題的受影響主機，一台一列——看得出哪台已經連續多天。
  * 母體與該列相同（後端 issue-hosts 沿用依問題視角的篩選與可見範圍），各列天數加總＝該列主機日數。
  * 日期標籤各連到該主機該日的風險日詳情並展開處理狀態；伺服器端分頁。
+ * 篩選條件在展開當下讀一次（filterQuery），換頁與重試沿用——表單之後被改但沒送出時，同一列的各頁仍是同一組條件。
  */
-async function renderIssueOccurrences(cell, group, page = 1) {
+async function renderIssueOccurrences(cell, group, page = 1, filterQuery = buildQueryString(collectFilters(), 1)) {
     cell.replaceChildren();
     const wrap = document.createElement('div');
     wrap.className = 'p-2';
     renderLoading(wrap, 3);
     cell.appendChild(wrap);
 
-    const params = new URLSearchParams(buildQueryString(collectFilters(), 1));
+    const params = new URLSearchParams(filterQuery);
     ['view', 'sort', 'dir', 'page'].forEach(key => params.delete(key));
     params.set('source', group.source);
     params.set('eventId', String(group.eventId));
@@ -903,7 +904,7 @@ async function renderIssueOccurrences(cell, group, page = 1) {
     try {
         result = await api.get(`/api/records/issue-hosts?${params}`, { silent: true });
     } catch {
-        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group, page) });
+        renderError(wrap, { message: '載入受影響主機失敗', onRetry: () => renderIssueOccurrences(cell, group, page, filterQuery) });
         return;
     }
 
@@ -911,7 +912,7 @@ async function renderIssueOccurrences(cell, group, page = 1) {
     // 只在要求的頁碼真的超過最後一頁時退一次（退到的那頁必小於原頁碼，不會反覆重打）
     const lastPage = Math.ceil(result.total / result.pageSize);
     if (!result.items.length && lastPage >= 1 && page > lastPage) {
-        renderIssueOccurrences(cell, group, lastPage);
+        renderIssueOccurrences(cell, group, lastPage, filterQuery);
         return;
     }
 
@@ -941,7 +942,7 @@ async function renderIssueOccurrences(cell, group, page = 1) {
     renderPagination(pager, {
         page: result.page,
         totalPages: Math.ceil(result.total / result.pageSize),
-        onPage: next => renderIssueOccurrences(cell, group, next)
+        onPage: next => renderIssueOccurrences(cell, group, next, filterQuery)
     });
 
     // 保留「切到明細視角看全部」的出口

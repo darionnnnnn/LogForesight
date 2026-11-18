@@ -18,6 +18,8 @@ public class GroupsMembersBehaviorTests
     [InlineData("currentMembersLoadFailureShowsRetry")]
     [InlineData("staleCurrentMembersResponseIsDropped")]
     [InlineData("previewWithZeroMatchesDisablesBothApplyButtons")]
+    [InlineData("stalePreviewDoesNotLeakIntoNextGroup")]
+    [InlineData("hiddenRemoveOthersIsUncheckedAndApplyAllWaitsForNewPreview")]
     public void 主機群組成員行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

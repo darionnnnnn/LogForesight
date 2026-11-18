@@ -808,7 +808,6 @@ public class RecordListQueryService
         return parts.Count > 0 ? string.Join("／", parts) : "—";
     }
 
-    /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
     /// <summary>每台主機取最差狀態的那一筆（未處理 ＞ 處理中 ＞ 已處理；同狀態取最近出現）——依問題列與展開列共用同一條規則。</summary>
     private static Dictionary<long, ResolvedOccurrence> WorstPerHost(IEnumerable<ResolvedOccurrence> occurrences) =>
         occurrences
@@ -881,6 +880,7 @@ public class RecordListQueryService
         return new PagedResult<IssueHostRowDto> { Items = items, Page = page, PageSize = pageSize, Total = groups.Count };
     }
 
+    /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
     private static PagedResult<T> Paginate<T>(List<T> items, RecordSearchRequest request)
     {
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);

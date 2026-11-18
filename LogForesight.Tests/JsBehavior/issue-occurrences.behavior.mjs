@@ -27,14 +27,15 @@ const extract = decl => {
 
 /** 載入被測函式；替身的呼叫記錄在回傳的 spy 上 */
 function load({ apiResult = null } = {}) {
-    const spy = { detailCalls: [], urls: [], empties: [], tables: [], pagers: [] };
+    // from：表單目前的起日（案例可在展開後改它，模擬使用者改了欄位但還沒送出）
+    const spy = { detailCalls: [], urls: [], empties: [], tables: [], pagers: [], from: '2026-11-01' };
     const stubs = {
         document,
         appUrl: p => p,
         // 回傳可辨識的字串，同時把參數記下來供斷言
         recordDetailUrl: (hostId, date, opts) => { spy.detailCalls.push({ hostId, date, opts }); return `/records/${hostId}/${date}`; },
         // 後端問題視角的查詢字串含 view／sort／dir／page：展開請求必須把它們剝掉
-        buildQueryString: () => 'view=issues&sort=count&dir=desc&page=3&from=2026-11-01',
+        buildQueryString: () => `view=issues&sort=count&dir=desc&page=3&from=${spy.from}`,
         collectFilters: () => ({}),
         formatNumber: n => String(n),
         renderLoading: () => { },
@@ -125,6 +126,19 @@ const cases = {
         assert.equal(spy.pagers[0].totalPages, 3);
         await spy.pagers[0].onPage(2);
         assert.equal(new URLSearchParams(spy.urls[1].split('?')[1]).get('page'), '2');
+    },
+
+    // 展開後表單被改但沒送出：換頁仍用展開當下的篩選（同一列的各頁不得混用兩組條件）
+    async pagingKeepsFiltersFromExpansion() {
+        const { renderIssueOccurrences, spy } = load({
+            apiResult: { items: [{ hostId: 1, hostName: 'h', dates: [], moreDays: 0, lastSeen: '2026-11-01', dayCount: 1 }], total: 45, page: 1, pageSize: 20 }
+        });
+        await renderIssueOccurrences(document.createElement('div'), group);
+        spy.from = '2026-10-01';
+        await spy.pagers[0].onPage(2);
+        const q = new URLSearchParams(spy.urls[1].split('?')[1]);
+        assert.equal(q.get('page'), '2');
+        assert.equal(q.get('from'), '2026-11-01', '換頁要沿用展開當下的篩選');
     },
 
     occurrencesDoesNotCallDetailEndpoint() {

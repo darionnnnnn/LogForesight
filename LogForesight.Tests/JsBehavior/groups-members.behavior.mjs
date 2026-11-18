@@ -189,6 +189,69 @@ const cases = {
         assert.equal(allBtn.disabled, true, '全部加入符合條件的');
         assert.ok(summary.textContent.includes('沒有命中任何主機'), summary.textContent);
         assert.ok(allBtn.textContent.includes('0 台'), allBtn.textContent);
+    },
+
+    // 換群組：上一個群組還在途的預覽晚回來，不得畫進新群組的視窗（按鈕不可按、摘要不顯示命中數）
+    async stalePreviewDoesNotLeakIntoNextGroup() {
+        let release;
+        const slow = new Promise(resolve => { release = resolve; });
+        const { openMembersModal, el } = load({
+            pages: { 1: pageOf(1, []) },
+            previewResult: async () => {
+                await slow;
+                return { matchCount: 120, alreadyInTargetCount: 0, inOtherGroupsCount: 0, candidates: [], page: 1, pageSize: 50 };
+            }
+        });
+        openMembersModal(group);
+        await settle();
+        el('#members-input').value = '10.0.0.0/24';
+        const pending = el('#members-search').listeners.click[0]();
+        openMembersModal({ groupId: 8, groupName: '另一群', hostCount: 0 });
+        await settle();
+        release();
+        await pending;
+        assert.equal(el('#members-apply-all').disabled, true, '舊群組的預覽不得讓新群組的「全部加入」可按');
+        assert.ok(!el('#members-summary').textContent.includes('命中'), el('#members-summary').textContent);
+    },
+
+    // 「移出原群組」欄位隱藏時要一併取消勾選；新搜尋在途時「全部加入」停用（舊台數不得配新條件送出）
+    async hiddenRemoveOthersIsUncheckedAndApplyAllWaitsForNewPreview() {
+        let release;
+        const slow = new Promise(resolve => { release = resolve; });
+        const candidates = [{ hostId: 11, hostName: 'a', ipAddress: '10.0.0.11', alreadyInTarget: false, currentGroups: ['X'] }];
+        const { openMembersModal, el, spy } = load({
+            pages: { 1: pageOf(1, []) },
+            previewResult: async body => {
+                if (body.pattern === 'q1') return { matchCount: 5, alreadyInTargetCount: 0, inOtherGroupsCount: 1, candidates, page: 1, pageSize: 50 };
+                await slow;
+                return { matchCount: 8, alreadyInTargetCount: 0, inOtherGroupsCount: 0, candidates, page: 1, pageSize: 50 };
+            }
+        });
+        openMembersModal(group);
+        await settle();
+        const allBtn = el('#members-apply-all');
+        const removeOthers = el('#members-remove-others');
+        const search = () => el('#members-search').listeners.click[0]();
+
+        el('#members-input').value = 'q1';
+        await search();
+        assert.equal(allBtn.disabled, false);
+        removeOthers.checked = true;
+
+        el('#members-input').value = 'q2';
+        const pending = search();
+        await settle();
+        assert.equal(allBtn.disabled, true, '新搜尋在途時不得用舊台數送出新條件');
+        release();
+        await pending;
+        assert.equal(allBtn.disabled, false);
+        assert.equal(removeOthers.checked, false, '欄位隱藏時勾選要一併取消');
+
+        await allBtn.listeners.click[0]();
+        const post = spy.posts.find(p => p.url.endsWith('/members'));
+        assert.ok(post, '沒有送出加入請求');
+        assert.equal(post.body.removeFromOthers, false);
+        assert.equal(post.body.pattern, 'q2');
     }
 };
 

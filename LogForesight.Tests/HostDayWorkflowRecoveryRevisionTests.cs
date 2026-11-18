@@ -176,6 +176,40 @@ public sealed class HostDayWorkflowRecoveryRevisionTests : IDisposable
         Assert.Equal(WorkflowLegState.Disabled, workflow.Get(record.HostId, day)!.Prtg);
     }
 
+    /// <summary>
+    /// 升級相容（第 77 輪批次 G）：升級前存的是舊算法的父指紋。復原讀到中風險列時要認得它——
+    /// 不重設 PRTG 腿、不推進版本，並把存的指紋換成新算法的值。
+    /// </summary>
+    [Fact]
+    public void Recovery_recognizesLegacyParentFingerprint_withoutResettingPrtg()
+    {
+        var day = new DateTime(2026, 10, 5);
+        _backend.RecordStore().Append(new DailyAnalysisRecord
+        {
+            HostId = 97, Host = "legacy-fp", Date = day, RiskLevel = RiskLevels.Medium,
+            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = "success",
+            LatestNetiqAttemptAtUtc = DateTime.UtcNow.AddMinutes(-10), AuditEventCount = 0,
+            TopIssues = [new LogIssueSignature { LogName = "System", Source = "Disk", EventId = 7, Count = 1, SampleMessages = ["bad block"] }]
+        });
+        var record = Assert.Single(_backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10).Records);
+        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprint(record);
+        Assert.NotEqual(legacy, HostDayWorkflowFingerprint.ForParentRecord(record));
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        workflow.ParentSucceeded(record.HostId, record.Host, day, record.LatestNetiqAttemptAtUtc?.ToString("O"),
+            record.AuditEventCount, legacy, true, false, parentRecordId: record.RecordId);
+        workflow.SetPrtg(record.HostId, day, WorkflowLegState.Succeeded, evidenceReady: true);
+        var before = workflow.Get(record.HostId, day)!.DecisionVersion;
+        var page = _backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10);
+
+        Assert.True(workflow.ReconcileAuthorityRecord(record,
+            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: true, aiEnabled: false));
+
+        var after = workflow.Get(record.HostId, day)!;
+        Assert.Equal(WorkflowLegState.Succeeded, after.Prtg);
+        Assert.Equal(before, after.DecisionVersion);
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(record), after.DecisionFingerprint);
+    }
+
     private DailyAnalysisRecord AppendAndReadParent(long hostId, DateTime day, string host)
     {
         _backend.RecordStore().Append(new DailyAnalysisRecord

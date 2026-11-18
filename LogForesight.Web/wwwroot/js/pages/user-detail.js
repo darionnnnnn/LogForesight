@@ -201,6 +201,12 @@ async function loadVisibleHosts(page) {
         return;
     }
     if (!visibleHostsSeq.isCurrent(seq)) return;
+    // 資料變少後頁碼可能超出範圍：退到最後一頁重取一次
+    const lastPage = Math.ceil(result.total / result.pageSize);
+    if (!result.items.length && lastPage >= 1 && page > lastPage) {
+        await loadVisibleHosts(lastPage);
+        return;
+    }
     renderVisibleHosts(result.items, result.total);
     renderPagination(pager, {
         page: result.page,
@@ -248,11 +254,19 @@ let daysPage = 1;
 async function reloadWorkload({ casesPage: nextCases = casesPage, daysPage: nextDays = daysPage }) {
     const container = document.getElementById('user-open-work');
     const seq = workloadSeq.next();
+    // 頁碼在送出前就記下：兩張表連續換頁時，後一次請求要帶著前一次剛換的頁碼（否則前一次被序號作廢後頁碼就丟了）
+    casesPage = nextCases;
+    daysPage = nextDays;
     try {
         const workload = await api.get(workloadUrl(nextCases, nextDays));
         if (!workloadSeq.isCurrent(seq)) return;
-        casesPage = nextCases;
-        daysPage = nextDays;
+        // 資料變少後頁碼可能超出範圍：退到最後一頁重取一次（退到的頁必小於原頁碼）
+        const casesLast = Math.max(1, Math.ceil(workload.casesTotal / WORKLOAD_PAGE_SIZE));
+        const daysLast = Math.max(1, Math.ceil(workload.daysTotal / WORKLOAD_PAGE_SIZE));
+        if (nextCases > casesLast || nextDays > daysLast) {
+            await reloadWorkload({ casesPage: Math.min(nextCases, casesLast), daysPage: Math.min(nextDays, daysLast) });
+            return;
+        }
         renderOpenWork(workload);
     } catch {
         if (workloadSeq.isCurrent(seq)) {

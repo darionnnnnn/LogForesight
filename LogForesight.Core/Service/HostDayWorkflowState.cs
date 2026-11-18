@@ -373,7 +373,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
 
     public HostDayWorkflowState ParentSucceeded(long hostId, string hostName, DateTime date, string? runId,
         int eventCount, string decisionFingerprint, bool prtgEnabled, bool aiEnabled, DateTime? now = null,
-        bool trackTouched = true, bool preserveMissingCompletionTime = false, long? parentRecordId = null)
+        bool trackTouched = true, bool preserveMissingCompletionTime = false, long? parentRecordId = null,
+        string? equivalentFingerprint = null)
     {
         if (trackTouched)
         {
@@ -391,7 +392,10 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             if (parentRecordId.HasValue) state.ParentRecordId = parentRecordId;
             state.Parent = WorkflowLegState.Succeeded;
             state.ParentEventCount = Math.Max(0, eventCount);
-            var changed = parentIdentityChanged || !string.Equals(state.DecisionFingerprint, decisionFingerprint, StringComparison.Ordinal);
+            // equivalentFingerprint：同一份內容以舊算法算出的指紋（升級前存下的列）；認得它就不算父紀錄改變，下面照樣換成新指紋
+            var sameDecision = string.Equals(state.DecisionFingerprint, decisionFingerprint, StringComparison.Ordinal)
+                || (equivalentFingerprint != null && string.Equals(state.DecisionFingerprint, equivalentFingerprint, StringComparison.Ordinal));
+            var changed = parentIdentityChanged || !sameDecision;
             if (changed)
                 state.ParentCompletedAt = now ?? (preserveMissingCompletionTime ? null : DateTime.Now);
             else if (state.ParentCompletedAt == null && now.HasValue)
@@ -548,7 +552,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 ? parentAt.Kind == DateTimeKind.Utc ? parentAt.ToLocalTime() : parentAt
                 : null,
             trackTouched: false, preserveMissingCompletionTime: true,
-            parentRecordId: record.RecordId > 0 ? record.RecordId : null);
+            parentRecordId: record.RecordId > 0 ? record.RecordId : null,
+            equivalentFingerprint: HostDayWorkflowFingerprint.LegacyParentFingerprint(record));
 
     public bool IsCurrentAiVersion(long hostId, DateTime date, long inputVersion)
     {
@@ -910,7 +915,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         state.ParentRecordId = record.RecordId;
         state.Parent = WorkflowLegState.Succeeded;
         state.ParentEventCount = Math.Max(0, record.AuditEventCount);
-        var changed = identityChanged || !StringComparer.Ordinal.Equals(state.DecisionFingerprint, fingerprint);
+        var changed = identityChanged || !(StringComparer.Ordinal.Equals(state.DecisionFingerprint, fingerprint)
+            || StringComparer.Ordinal.Equals(state.DecisionFingerprint, HostDayWorkflowFingerprint.LegacyParentFingerprint(record)));
         if (changed) state.ParentCompletedAt = parentAt;
         else if (state.ParentCompletedAt == null && parentAt.HasValue) state.ParentCompletedAt = parentAt;
         state.DecisionFingerprint = fingerprint;
@@ -1053,14 +1059,25 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
 
 public static class HostDayWorkflowFingerprint
 {
-    public static string ForParentRecord(LogForesight.Core.Models.DailyAnalysisRecord record)
+    /// <summary>
+    /// 父紀錄指紋。分析當下拿記憶體裡的完整紀錄算一次，AI 排程與工作流復原拿資料庫讀回的紀錄再算一次，兩次必須相同——
+    /// 否則已完成的 PRTG 腿會被當成「父紀錄變了」重設回等待、整體停在「PRTG 待補」。
+    /// 所以一律以精簡投影（<see cref="LogForesight.Core.Persistence.RecordStorageShaper.Compact"/>）計算、與風險等級無關：
+    /// 低風險日寫入時會精簡，而同一筆的風險等級會在寫入後跨界，內容形狀因此不能進指紋。
+    /// </summary>
+    public static string ForParentRecord(LogForesight.Core.Models.DailyAnalysisRecord record) =>
+        ParentFingerprint(LogForesight.Core.Persistence.RecordStorageShaper.Compact(record), record.RecordId);
+
+    /// <summary>
+    /// 舊算法（直接以傳入內容計算）的指紋，只供還原路徑辨認升級前存下的列：中風險以上的列資料庫內容是完整的，
+    /// 舊指紋對得上就不算父紀錄改變，並順手換成 <see cref="ForParentRecord"/> 的值。不得用來寫入新列。
+    /// </summary>
+    public static string LegacyParentFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record) =>
+        ParentFingerprint(record, record.RecordId);
+
+    /// <summary>精簡投影不帶 RecordId（由資料列決定），身分由呼叫端從原物件取</summary>
+    private static string ParentFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId)
     {
-        // 以「實際寫進資料庫的樣子」計算：分析當下拿記憶體裡的完整紀錄算一次，AI 排程與工作流復原拿讀回的紀錄再算一次；
-        // 低風險日寫入時會精簡（RecordStorageShaper），不先套同一份精簡規則的話兩次指紋必然不同，
-        // 已完成的 PRTG 腿會被當成「父紀錄變了」重設回等待、整體停在「PRTG 待補」。精簡規則冪等，對讀回的紀錄再套一次不變。
-        // 精簡投影不帶 RecordId（由資料列決定），身分要從原物件取
-        var recordId = record.RecordId;
-        record = LogForesight.Core.Persistence.RecordStorageShaper.ForStorage(record);
         var input = JsonSerializer.Serialize(new
         {
             RecordId = recordId,

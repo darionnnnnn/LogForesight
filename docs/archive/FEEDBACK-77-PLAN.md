@@ -1,6 +1,6 @@
 # 回饋第 77 輪規劃
 
-> 狀態：實作完成，待換模型體檢（分支 feature/feedback-77）
+> 狀態：全案完成，已併 dev（Opus 5.5 實作與自查、Fable 5.2 換模型體檢；1.0.77.2）
 > 基準：dev@be0f16f3（1.0.76.2；Windows 10,553 通過／12 略過、macOS 10,544 通過／21 略過）
 > 來源：使用者回饋四項（站台 1.0.75.2 截圖與診斷匯出）＋ 3000 台規模盤點＋記憶體洩漏與膨脹盤點
 > 範圍：規模盤點分兩輪——本輪做硬上限、每請求整份重讀、一次回全部主機的清單、記憶體洩漏與膨脹；聚合改寫與背景吞吐在第 78 輪（草案 `docs/drafts/FEEDBACK-78-PLAN.md`）。
@@ -417,8 +417,8 @@ F-1 至 F-5 各一段；F-1 在批次 C 之後。每段改動前 grep 測試專�
 - 第三個寫入點：AI 排程（`AiAnalysisHostedService` 補跑前的 `RestoreFromRecord`）與工作流復原以**資料庫讀回的紀錄**重算父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）。
 - 低風險日寫入時經 `RecordStorageShaper` 精簡（範例訊息、KeyDetails／帳號／IP、抑制的趨勢與關聯警示被省略），分析當下以記憶體完整紀錄算的指紋與讀回後算的不同。
   `ParentSucceeded` 判定「父紀錄變了」→ PRTG 腿在 `PrtgFingerprint` 為空時重設為等待（PRTG 管線對帳不帶證據指紋，所以一律為空），郵件腿與 AI 腿也一起重設。之後沒有任何路徑再寫 PRTG 腿，整體停在「仍有待補・PRTG 待補」。
-- 修法：父指紋以儲存形狀計算（先套同一份精簡規則，規則冪等；身分 `RecordId` 取原物件）。中風險以上不精簡，指紋不變。
-- 升級影響：舊列存的若是分析當下的指紋，第一次還原時仍會重設一次（與現況相同，不會更糟）；已卡在「PRTG 待補」的過去主機日不會自動回復，下一趟涵蓋到該日時才會重寫。
+- 修法：父指紋一律以精簡投影計算（`RecordStorageShaper.Compact`，與風險等級無關；規則冪等，身分 `RecordId` 取原物件）。只在低風險才精簡的做法不夠——同一筆的風險等級會在寫入後跨界（PRTG finding 把低風險日上調、事後複核下調），記憶體的完整內容與資料庫寫入當下的形狀仍會算出不同指紋（換模型體檢以探針重現，見「體檢輪修正」）。
+- 升級影響：還原路徑（AI 排程的 `RestoreFromRecord`、工作流復原）同時認得舊算法的指紋（`LegacyParentFingerprint`）並換成新值——中風險以上的列資料庫內容是完整的，舊指紋對得上，不重設任何腿；升級前以完整內容算指紋、寫入時被精簡的低風險列對不上，第一次還原時仍會重設一次（與修正前相同，不會更糟）。已卡在「PRTG 待補」的過去主機日不會自動回復。
 - 順手發現、本輪不改：低風險日精簡時省略 `SuppressedTrendAlerts`／`SuppressedCorrelationAlerts`，詳情頁的「已抑制的警示」在低風險日讀回後是空的。是否刻意待使用者確認（記入 BACKLOG）。
 
 ### 驗收
@@ -553,4 +553,29 @@ F-1 至 F-5 各一段；F-1 在批次 C 之後。每段改動前 grep 測試專�
 - **工作流修正（批次 G）**：修正前已卡在「PRTG 待補」的過去主機日不會自動回復（BACKLOG 有觸發條件）。
 - **待使用者確認**：低風險日精簡省略已抑制警示是否刻意（BACKLOG）。
 - **體檢建議重點**：F-3 加入成員兩種方式的「移出原群組」規則、B 的母體與列上一致、G 的父指紋改動對既有工作流列的第一次還原、F-1b 新增的狀態下拉。
+- **實作與體檢模型**：實作與實作方自查為 Opus 5.5；換模型體檢為 Fable 5.2。
 
+## 體檢輪修正
+
+Fable 5.2 換模型體檢：規劃逐條比對由體檢方親做；三區唯讀審查（背景流程與資料生命週期／權限與 API 契約／前端操作流程，Sonnet 5.5）各附探針，發現逐條重驗。區 2 沒有跑探針，其回報只當線索，由體檢方親驗。
+
+1. **批次 G 的修法只涵蓋「風險一直是低」**（`HostDayWorkflowState.cs` 的 `ForParentRecord`、`RecordStorageShaper.cs`）。症狀：本機路徑先追加 PRTG finding（低→中）再算父指紋，記憶體是完整內容、資料庫是寫入當下精簡過的內容，指紋不同，AI 排程還原時把已完成的 PRTG 腿重設回等待——正是批次 G 要修的症狀，而「PRTG 把低風險日上調」是最典型的情境（區 1 探針：`fpEqual=False`、`prtg Succeeded→Waiting`）。修法：指紋一律以精簡投影計算；精簡投影抽成 `Compact`，`ForStorage` 仍只對低風險日套用。為避免升級時既有的中高風險列被當成父紀錄改變，`ParentSucceeded` 加 `equivalentFingerprint`、`RestoreFromRecord` 與復原的 `ApplyRecoveredParentSuccess` 認得舊算法指紋並換新。迴歸：`WorkflowParentFingerprintRoundTripTests` 風險跨界三例（低→中、低→高、中→低）與「升級前的舊指紋」一例、`HostDayWorkflowRecoveryRevisionTests.Recovery_recognizesLegacyParentFingerprint_withoutResettingPrtg`；三個突變（退回依風險決定精簡、拿掉還原路徑的舊指紋、拿掉復原路徑的舊指紋）轉紅。
+2. **使用者詳情兩張表連續換頁，前一次換的頁被吃掉**（`user-detail.js` 的 `reloadWorkload`）。症狀：案件表換到第 2 頁（回應慢）後立刻換風險日第 3 頁，第二次請求用的是還沒提交的案件頁碼 1，第一次回應又被序號作廢，畫面停在案件第 1 頁——出在實作方自查剛加的序號守門。修法：頁碼在送出前記下。迴歸：`workload-paging.behavior.mjs` 的 `userDetailConsecutivePagingKeepsBothPages`。
+3. **處理人詳情過期請求的失敗蓋掉較新的成功畫面**（`handler-detail.js` 的 `loadAdvanced`）。症狀：第 2 頁慢且失敗、第 3 頁已畫出，晚到的例外經 `guardLoad` 把表換成「載入失敗」。修法：過期請求的失敗在函式內吞掉，最新請求的失敗照常往上丟。迴歸：`handlerDetailStaleFailureDoesNotReplaceNewerPage`、`handlerDetailCurrentFailureStillShowsError`（兩側）。
+4. **群組成員視窗換群組時，上一個群組在途的預覽畫進新群組**（`groups.js` 的 `openMembersModal`）。症狀：B 群組的視窗顯示 A 的「命中 120 台」且「全部加入」可按（送出時條件為空、後端回空集合，是空操作）。修法：開啟時作廢在途預覽，並清掉目前成員區的摘要、分頁與移出鈕（新群組載入失敗時不留上一個群組的台數）。迴歸：`stalePreviewDoesNotLeakIntoNextGroup`。
+5. **「移出原群組」欄位隱藏後勾選仍生效；新搜尋在途時「全部加入」用舊台數配新條件**（`groups.js`）。修法：欄位隱藏時一併取消勾選（`hideRemoveOthers`）；送出新搜尋時先作廢舊預覽、兩顆加入鈕停用到結果回來。迴歸：`hiddenRemoveOthersIsUncheckedAndApplyAllWaitsForNewPreview`（三個突變各自轉紅）。
+6. **問題查詢展開換頁改用表單目前的值**（`records.js` 的 `renderIssueOccurrences`）。症狀：展開後改了起日但沒送出，第 2 頁用新起日、第 1 頁用舊起日，同一列混用兩組條件。修法：篩選在展開當下讀一次，換頁、重試與頁碼回退沿用。迴歸：`pagingKeepsFiltersFromExpansion`。頁碼回退另改為只在頁碼真的超過最後一頁時退一次（原寫法在後端持續回空時會反覆重打）。
+7. **使用者詳情三張分頁表沒有頁碼超出範圍的回退**（`user-detail.js`）：資料變少後停在「沒有資料」但標題寫 N 筆。修法：退到最後一頁重取一次。迴歸：`userDetailPageBeyondLastFallsBackOnce`。
+8. **極大頁碼的位移溢位**（`Paging.Normalize`，既有共用寫法、本輪六個新分頁端點沿用）：`(page - 1) × pageSize` 溢位成負數時 `Skip` 當成 0、回第 1 頁。修法：頁碼上限夾在不溢位的範圍。迴歸：`PagingTests`。
+9. 註解錯位：`RecordListQueryService` 的「彙總視角的分頁」summary 被插在新函式上方，移回 `Paginate`。
+
+查證後不成立或不改：`GetVisibleHosts` 註解「停用帳號為空」屬實（`HostVisibilityResolver` 對停用帳號回空集合）；待派頁超限訊息在欄位缺值時顯示空白（後端一律回數字）；執行總表重畫時展開區收合為既有行為；狀態篩選為 0 筆時分頁列隱藏（狀態下拉仍在，可改回「全部」）。
+
+驗證：體檢修正後全量測試結果見「終檢輪」。
+
+## 終檢輪
+
+- **全量測試**（Windows，體檢修正後的樹）：10,701 通過／7 失敗／12 略過（總計 10,720，約 14.5 分）。七個失敗：一個是 `ErrorStateUiTests` 斷言的重試字串要跟著體檢修正 6 更新（重試現在帶展開當下的篩選）；其餘六個是負載下的 Node 行為案例逾時（五個約 5 秒、一個登錄守門列案例逾時）。更新斷言後重跑這些類別與全部行為測試 648／648 通過。基線 **10,708 通過／12 略過**（第 76 輪 10,553，本輪淨增 155）。
+- **併入後不重跑全量**：全量之後只改了一行測試斷言與文件（基線數字、歸檔、本節）；dev 自分支起點沒有移動，併入後的樹與這棵樹相同。文件守門（`DocNarrativeGuardTests`、`HelpContentServiceTests`、`HelpWritingGuide`、`VersionRoundGuardTests`）在最終的樹上另跑一次通過。
+- **文件稽核**：現行文件本輪新增內容無輪次敘事；WEB-SPEC（展開換頁的篩選來源、群組回應欄位）、CLAUDE.md（父指紋規則、快取與長駐集合、測試指引與基線）、BACKLOG（順延項附觸發條件）與程式一致。
+- 終檢無新發現。

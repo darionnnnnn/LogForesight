@@ -1034,7 +1034,15 @@ async function loadAdvanced(part) {
     if (casesSeq) renderLoading(casesEl, 3);
     if (daysSeq) renderLoading(daysEl, 3);
     const query = `includeResolvedDays=${includeResolvedDays}&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
-    const workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+    const stillWanted = () => (casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq)) || (daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq));
+    let workload;
+    try {
+        workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+    } catch (error) {
+        // 過期請求的失敗不處理：往上丟會讓 guardLoad 把較新請求已畫好的表換成「載入失敗」
+        if (!stillWanted()) return;
+        throw error;
+    }
     const doCases = casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq);
     const doDays = daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq);
     if (!doCases && !doDays) return;

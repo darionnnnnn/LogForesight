@@ -39,11 +39,12 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 macOS **10,544 通過／21 略過**、Windows **10,553 通過／12 略過**，全量 Windows 約 8 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,708 通過／12 略過**、macOS **10,699 通過／21 略過**（由 Windows 結果扣掉 9 筆 Windows 專屬案例推得，以 CI 結果為準），全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
-  後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；
+  後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；新增或搬動端點、在 `IIssueAggregateQuery` 加方法時加跑 `Authorization|ControllerRouteSnapshot|IssueExclusionTests`（授權涵蓋清單與介面反射守門，名稱與被改的服務無關，定向篩選掃不到）；
+  全量裡單一 Node 行為案例約 5 秒逾時而其餘全綠時，單獨重跑該測試類，通過即為負載下的偶發；
   `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **版號**：`1.0.<輪次>.<修訂>`，規則寫在 `Directory.Build.props` 註解。開新一輪的第一個提交就把輪次改成該輪 `FEEDBACK-N-PLAN` 的 N、修訂歸 0；
@@ -129,6 +130,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在測試 `new PrtgRequestBudget()`：真時鐘的配額會讓全量並行的測試彼此排隊到逾時，一律 `new PrtgRequestBudget(new AcceleratedPrtgClock())`（`PrtgRequestBudget.Shared` 在測試組件載入時已換成加速時鐘）。也不要讓並行寫入共用 `EfSqliteFixture` 那一條記憶體連線，並行案例用檔案型 DB。
 - 不要以「逐行找到標籤、取到行尾」擷取 Windows 事件欄位：NetIQ／Sentinel 的訊息主體是單行（欄位間是連續空白、同一個標籤會出現多次），
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
+- 不要讓工作流父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）吃到會隨儲存形狀改變的內容：分析當下以記憶體的完整紀錄算、AI 排程與工作流復原以資料庫讀回的紀錄再算，
+  兩次不同就會把已完成的 PRTG、AI、郵件腿當成「父紀錄變了」重設，主機日停在「PRTG 待補」。指紋一律以 `RecordStorageShaper.Compact` 的投影計算、與風險等級無關
+  （低風險日寫入時會精簡，風險等級又會在寫入後跨界）；改精簡投影的欄位或指紋內容時，還原路徑要能認得上一版算法（`LegacyParentFingerprint` 的做法），否則升級當下全部既有列重設一次。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
 - 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
   管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。

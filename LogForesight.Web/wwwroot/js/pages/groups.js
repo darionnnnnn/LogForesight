@@ -453,7 +453,15 @@ function openMembersModal(group) {
     document.getElementById('members-pager').replaceChildren();
     document.getElementById('members-remove-field').classList.add('d-none');
     document.getElementById('members-remove-others').checked = false;
+    // 上一個群組還在途的預覽作廢：不然它回來時會畫進這個群組的視窗
+    previewSeq.next();
     updateMembersApplyState();
+
+    // 目前成員區先清空：這個群組載入失敗時不得留著上一個群組的台數、分頁與可按的移出鈕
+    document.getElementById('current-members-summary').textContent = '';
+    document.getElementById('current-members-pager').replaceChildren();
+    document.getElementById('current-members-remove').disabled = true;
+    document.getElementById('current-members-warning').replaceChildren();
 
     loadCurrentMembers(group.groupId, 1);
     membersModal.show();
@@ -643,6 +651,9 @@ async function searchMembers() {
     // 新條件＝新的預覽：勾選清空（舊條件的勾選不該帶進新結果）
     selectedAdd = new Set();
     membersState.query = membersState.mode === 'cidr' ? { pattern: value } : { query: value };
+    // 條件已換、結果還沒回來：舊預覽的台數不得配新條件送出「全部加入」
+    membersState.preview = null;
+    updateMembersApplyState();
     await loadPreviewPage(1);
 }
 
@@ -661,7 +672,7 @@ async function loadPreviewPage(page) {
         membersState.preview = null;
         document.getElementById('members-preview').replaceChildren();
         document.getElementById('members-pager').replaceChildren();
-        document.getElementById('members-remove-field').classList.add('d-none');
+        hideRemoveOthers();
         updateMembersApplyState();
     }
 }
@@ -675,7 +686,7 @@ function renderMembersPreview(preview) {
         summary.textContent = '沒有命中任何主機。請調整網段或關鍵字後重新查找；沒有命中就沒有可加入的主機。';
         document.getElementById('members-preview').replaceChildren();
         pager.replaceChildren();
-        removeField.classList.add('d-none');
+        hideRemoveOthers();
         updateMembersApplyState();
         return;
     }
@@ -698,8 +709,15 @@ function renderMembersPreview(preview) {
         onPage: next => loadPreviewPage(next)
     });
 
-    removeField.classList.toggle('d-none', preview.inOtherGroupsCount === 0);
+    if (preview.inOtherGroupsCount === 0) hideRemoveOthers();
+    else removeField.classList.remove('d-none');
     updateMembersApplyState();
+}
+
+/** 沒有主機屬其他群組時收起「移出原群組」並取消勾選：看不到的勾選不得跟著送出 */
+function hideRemoveOthers() {
+    document.getElementById('members-remove-field').classList.add('d-none');
+    document.getElementById('members-remove-others').checked = false;
 }
 
 function memberCheckbox(candidate) {

@@ -18,6 +18,7 @@ public class IssueOccurrencesBehaviorTests
     [InlineData("fifteenthDayBecomesMoreLink")]
     [InlineData("occurrencesEmptyShowsEmptyState")]
     [InlineData("occurrencesRequestUsesIssueHostsEndpoint")]
+    [InlineData("pagingKeepsFiltersFromExpansion")]
     [InlineData("occurrencesDoesNotCallDetailEndpoint")]
     public void 問題查詢展開行為(string caseName)
     {

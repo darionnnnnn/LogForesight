@@ -61,6 +61,64 @@ public sealed class WorkflowParentFingerprintRoundTripTests : IDisposable
         Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(atAnalysis), HostDayWorkflowFingerprint.ForParentRecord(persisted));
     }
 
+    /// <summary>
+    /// 風險等級在寫入之後跨界（體檢區 1 探針重現）：本機路徑先追加 PRTG finding（低→中）再算父指紋，
+    /// 記憶體是完整內容、資料庫是寫入當下精簡過的內容；指紋不得因「當下風險是不是低」而不同。
+    /// 反方向（中→低，例如事後的風險複核）同理：資料庫留著完整內容、風險已是低。
+    /// </summary>
+    [Theory]
+    [InlineData(RiskLevels.Low, RiskLevels.Medium)]
+    [InlineData(RiskLevels.Low, RiskLevels.High)]
+    [InlineData(RiskLevels.Medium, RiskLevels.Low)]
+    public void 寫入後風險等級跨界_父指紋不變_PRTG腿不被重設(string storedAs, string laterRisk)
+    {
+        var hostId = 7710 + Array.IndexOf(new[] { RiskLevels.Medium, RiskLevels.High, RiskLevels.Low }, laterRisk)
+            + (storedAs == RiskLevels.Medium ? 10 : 0);
+        var (atAnalysis, persisted) = Persist(hostId, storedAs);
+        // 兩邊同步變更風險等級：記憶體物件內容不變（完整），資料庫讀回的內容維持寫入當下的形狀
+        atAnalysis.RiskLevel = laterRisk;
+        persisted.RiskLevel = laterRisk;
+
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(atAnalysis), HostDayWorkflowFingerprint.ForParentRecord(persisted));
+
+        var workflow = Workflow();
+        workflow.ParentSucceeded(hostId, atAnalysis.Host, atAnalysis.Date, "run-1", 3,
+            HostDayWorkflowFingerprint.ForParentRecord(atAnalysis), prtgEnabled: true, aiEnabled: true,
+            parentRecordId: atAnalysis.RecordId);
+        workflow.SetPrtg(hostId, atAnalysis.Date, WorkflowLegState.Succeeded, evidenceReady: true);
+        var before = workflow.Get(hostId, atAnalysis.Date)!.DecisionVersion;
+
+        workflow.RestoreFromRecord(persisted, aiEnabled: true);
+
+        var after = workflow.Get(hostId, atAnalysis.Date)!;
+        Assert.Equal(WorkflowLegState.Succeeded, after.Prtg);
+        Assert.Equal(before, after.DecisionVersion);
+    }
+
+    /// <summary>
+    /// 升級相容：升級前存的是舊算法（完整內容）的指紋。中風險以上的列資料庫內容就是完整的，
+    /// 還原時要認得舊指紋、不重設任何腿，並把存的指紋換成新的（第二次還原走一般比對）。
+    /// </summary>
+    [Fact]
+    public void 升級前的舊指紋_中風險列還原時不重設並換成新指紋()
+    {
+        var (atAnalysis, persisted) = Persist(7730, RiskLevels.Medium);
+        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprint(atAnalysis);
+        Assert.NotEqual(legacy, HostDayWorkflowFingerprint.ForParentRecord(atAnalysis));
+        var workflow = Workflow();
+        workflow.ParentSucceeded(7730, atAnalysis.Host, atAnalysis.Date, "run-1", 3, legacy,
+            prtgEnabled: true, aiEnabled: true, parentRecordId: atAnalysis.RecordId);
+        workflow.SetPrtg(7730, atAnalysis.Date, WorkflowLegState.Succeeded, evidenceReady: true);
+        var before = workflow.Get(7730, atAnalysis.Date)!.DecisionVersion;
+
+        workflow.RestoreFromRecord(persisted, aiEnabled: true);
+
+        var after = workflow.Get(7730, atAnalysis.Date)!;
+        Assert.Equal(WorkflowLegState.Succeeded, after.Prtg);
+        Assert.Equal(before, after.DecisionVersion);
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(persisted), after.DecisionFingerprint);
+    }
+
     /// <summary>G-1／G-3：NetIQ 完成、PRTG 管線對帳記成功之後，AI 排程以讀回的紀錄還原，PRTG 腿不得退回等待</summary>
     [Fact]
     public void PRTG對帳成功後_AI排程還原不會把PRTG腿退回待補()
