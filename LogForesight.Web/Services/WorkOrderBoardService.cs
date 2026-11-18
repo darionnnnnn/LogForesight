@@ -198,7 +198,9 @@ public class WorkOrderBoardService
             Page = page,
             From = trial.Scope.From,
             To = trial.Scope.To,
-            TooLarge = trial.TooLarge
+            TooLarge = trial.TooLarge,
+            PendingAtLeast = trial.TooLarge ? trial.PendingAtLeast : 0,
+            MaxOccurrences = _maxOccurrences
         };
         if (trial.TooLarge) return dto;
 
@@ -258,7 +260,7 @@ public class WorkOrderBoardService
     {
         var trial = RunTrial(from, to);
         if (trial.TooLarge)
-            throw DomainException.Validation($"期間內尚未派出的問題出現點超過 {_maxOccurrences} 筆，請縮小期間後再派工。");
+            throw DomainException.Validation($"期間內尚未派出的問題出現點至少 {trial.PendingAtLeast:N0} 筆，超過上限 {_maxOccurrences:N0} 筆，請縮小期間後再派工。");
 
         var actor = _currentUser.ToWorkOrderActor(_clock);
 
@@ -431,7 +433,7 @@ public class WorkOrderBoardService
         // 載入逐出現點的原始列之前先用聚合的主機數估下界：每個（主機, 問題）至少一個出現點，每個進行中案件最多扣掉一個，
         // 下界已超過上限就一定超過——不必把整期出現點讀進記憶體（3000 台時是數十萬列）才得到 TooLarge。下界沒超過時照原本精算。
         var lowerBound = aggregates.Sum(a => (long)a.HostCount) - openKeys.Count;
-        if (lowerBound > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
+        if (lowerBound > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>(), lowerBound);
 
         // 靜音不排除：理由同上
         var occurrences = _aggregates.LatestOccurrences(
@@ -446,7 +448,7 @@ public class WorkOrderBoardService
             .ThenBy(x => x.Occurrence.IssueKey, StringComparer.Ordinal)
             .ToList();
 
-        if (candidates.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>());
+        if (candidates.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>(), candidates.Count);
 
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;
         settings.AutoDispatchEnabled = true;
@@ -507,7 +509,7 @@ public class WorkOrderBoardService
             gaps.Add(new GapDecision(host, issue, occurrence.IssueKey, occurrence.LastSeen, decision));
         }
 
-        return new Trial(scope, TooLarge: false, gaps);
+        return new Trial(scope, TooLarge: false, gaps, candidates.Count);
     }
 
     /// <summary>依問題彙總試跑決策（待派清單的列與立即派工的無法派計數共用）</summary>
@@ -567,7 +569,8 @@ public class WorkOrderBoardService
 
     private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision);
 
-    private sealed record Trial(IssueScope Scope, bool TooLarge, List<GapDecision> Gaps);
+    /// <summary><paramref name="PendingAtLeast"/>：尚未派出的出現點數；以下界判定超限時是下界（實際至少這麼多）</summary>
+    private sealed record Trial(IssueScope Scope, bool TooLarge, List<GapDecision> Gaps, long PendingAtLeast);
 
     private sealed record IssueSummary(
         string Source,

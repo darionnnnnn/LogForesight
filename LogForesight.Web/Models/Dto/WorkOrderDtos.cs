@@ -523,6 +523,12 @@ public class GapsDto
     /// <summary>出現點超過上限：不做試跑，請縮小期間</summary>
     public bool TooLarge { get; set; }
 
+    /// <summary>超過上限時尚未派出的出現點數（以下界判定時為「至少」）；未超過時為 0</summary>
+    public long PendingAtLeast { get; set; }
+
+    /// <summary>試跑的出現點上限，讓超限訊息能寫出數量與上限</summary>
+    public int MaxOccurrences { get; set; }
+
     public DateTime From { get; set; }
     public DateTime To { get; set; }
 }

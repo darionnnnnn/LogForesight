@@ -503,7 +503,7 @@ async function loadGaps() {
     if (data.to) gapsToInput.value = formatDate(data.to);
 
     if (data.tooLarge) {
-        gapsNoteEl.textContent = '期間內尚未派出的出現點過多，請縮小期間';
+        gapsNoteEl.textContent = `期間內尚未派出的出現點至少 ${formatNumber(data.pendingAtLeast)} 個，超過上限 ${formatNumber(data.maxOccurrences)} 個，請縮小期間`;
         gapsContainer.replaceChildren();
         gapsPagerContainer.replaceChildren();
         loadedTabs.add('gaps');

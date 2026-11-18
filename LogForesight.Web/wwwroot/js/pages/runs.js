@@ -458,10 +458,29 @@ async function renderDayDetailInto(cell, date) {
     const listEl = document.createElement('div');
     const pagerEl = document.createElement('nav');
     pagerEl.className = 'mt-2';
-    cell.append(listEl, pagerEl);
 
-    const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail') };
+    const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail'), status: '' };
     let sequence = 0;
+
+    // 狀態篩選（後端篩、總數跟著變）：3000 台時要找「這天失敗的那幾台」不必翻頁；換狀態回到第 1 頁
+    const bar = document.createElement('div');
+    bar.className = 'd-flex flex-wrap align-items-center gap-2 mb-2';
+    const statusLabel = document.createElement('label');
+    statusLabel.className = 'lf-text-label text-nowrap';
+    statusLabel.textContent = '狀態';
+    const statusSelect = document.createElement('select');
+    statusSelect.className = 'form-select form-select-sm w-auto';
+    statusSelect.id = `runs-day-status-${date}`;
+    statusLabel.htmlFor = statusSelect.id;
+    for (const [value, label] of [['', '全部'], ...Object.entries(STATUS_META).map(([key, meta]) => [key, meta.label])]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        statusSelect.appendChild(option);
+    }
+    statusSelect.addEventListener('change', () => { state.status = statusSelect.value; state.page = 1; loadDayPage(); });
+    bar.append(statusLabel, statusSelect);
+    cell.append(bar, listEl, pagerEl);
 
     async function loadDayPage() {
         const mine = ++sequence;
@@ -469,6 +488,7 @@ async function renderDayDetailInto(cell, date) {
         const params = new URLSearchParams({
             page: String(state.page), pageSize: String(state.pageSize), sort: state.sort.key, dir: state.sort.dir
         });
+        if (state.status) params.set('status', state.status);
         let result;
         try {
             result = await api.get(`/api/runs/day/${date}?${params}`);
@@ -483,7 +503,9 @@ async function renderDayDetailInto(cell, date) {
             rows: result.items,
             sort: state.sort,
             onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; loadDayPage(); },
-            empty: { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
+            empty: state.status
+                ? { title: '這天沒有這個狀態的主機', hint: '可把「狀態」改回「全部」查看這天的所有主機。' }
+                : { title: '這天沒有任何主機資料', hint: '目前查無該日主機分析資料。需要回補時，可按「立即執行」並設定回望天數。' }
         });
 
         renderPagination(pagerEl, {

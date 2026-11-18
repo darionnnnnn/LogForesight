@@ -114,7 +114,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在不可信範圍做清除：外部查詢未收斂、回傳空資料、權限縮小、範圍異常縮小、沒有成功對應
   或沒有成功寫入時，不得清除 PRTG 鏡像、狀態或數值資料；資源守門使用的裝置／sensor 需保留。
 - 不要把執行總表的列當成執行日：`RunDaySummaryDto.Date`、`GET api/runs/day/{date}`、診斷匯出 `dailyHealth.date` 都是**資料日**（事件發生的那一天），處理日在 `RunDate`。
-  換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetail`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
+  換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetailPage`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
 - 不要讓排程觸發判定各寫一套：所有排程觸發查詢走單一查詢點，明確排除 `BatchRun.JobType == ai`；
   AI 背景工作不算取數排程的新鮮度，也不能被用來補足排程成功判定。
 - 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。

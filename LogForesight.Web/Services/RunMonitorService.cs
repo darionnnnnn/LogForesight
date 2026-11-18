@@ -80,7 +80,7 @@ public class RunMonitorService
     /// 每頁內部維持舊→新排序（前端 reverse 顯示）。
     /// 每列是一個資料日 R（<see cref="RunDaySummaryDto.Date"/>）。下面的迴圈以排程處理日 D＝R+1 計算——
     /// NetIQ／本機狀態本來就核對 D-1、執行時間就是 D 當天開跑的趟——輸出時把列標成 R，
-    /// PRTG 也取 R 的逐日統計，整列同一天（第 73 輪 F）。日期換算只在這個方法與 <see cref="GetDayDetail"/>。
+    /// PRTG 也取 R 的逐日統計，整列同一天（第 73 輪 F）。日期換算只在這個方法與 <see cref="GetDayDetailPage"/>。
     /// </summary>
     /// <param name="days">總天數（已 Clamp）</param>
     /// <param name="page">頁碼（1 起算）</param>
@@ -264,19 +264,19 @@ public class RunMonitorService
         return resume.HasWork ? "最後一趟結束時尚有：" + resume.Describe() : null;
     }
 
-    /// <summary>總表某一列（資料日 <paramref name="dataDate"/>）的逐主機狀態；內部以排程處理日（隔天）計算，與總表同一套換算。</summary>
-    public List<RunDayHostStatusDto> GetDayDetail(DateTime dataDate) =>
-        BuildDayRows(dataDate, withWorkflow: true).Select(r => r.Dto).ToList();
-
     /// <summary>
     /// 單日逐主機狀態的一頁（執行總表展開某日）：排序與分頁在伺服器端，工作流狀態只讀當頁主機——
     /// 3000 台時整份回傳約數 MB、逐台讀工作流是 3000 次往返。排序鍵與語意同前端原本的表頭排序
     /// （null／沒跑過的排最前、降冪為整體反轉）；以「整體工作流」排序時才需要讀全部主機的工作流。
+    /// <paramref name="status"/> 只列該狀態的主機（總數跟著篩選）；不帶時列全部。
+    /// 內部以排程處理日（隔天）計算、輸出標資料日，與總表同一套換算。
     /// </summary>
-    public PagedResult<RunDayHostStatusDto> GetDayDetailPage(DateTime dataDate, int? page, int? pageSize, string? sort, string? dir)
+    public PagedResult<RunDayHostStatusDto> GetDayDetailPage(DateTime dataDate, int? page, int? pageSize, string? sort, string? dir,
+        string? status = null)
     {
         var sortKey = sort is "status" or "workflowComplete" or "daysAnalyzed" or "errorCount" ? sort : "hostName";
         var rows = BuildDayRows(dataDate, withWorkflow: sortKey == "workflowComplete");
+        if (!string.IsNullOrEmpty(status)) rows = rows.Where(r => r.Dto.Status == status).ToList();
         IEnumerable<RunDayHostStatusDto> ordered = sortKey switch
         {
             "status" => rows.Select(r => r.Dto).OrderBy(d => d.Status, StringComparer.Ordinal),

@@ -440,6 +440,12 @@ public class WorkOrderBoardServiceTests : IDisposable
         Assert.Equal(1, _caseStore.GetOpenKeysCalls);
         Assert.Throws<DomainException>(() => Service(maxOccurrences: 1).RunAutoDispatch(null, null));
         Assert.Equal(2, Service(maxOccurrences: 2).GetGaps(null, null, 1).Rows.Single().GapHosts);
+
+        // 超限訊息要寫得出數量與上限（E-3b）
+        Assert.Equal(2, dto.PendingAtLeast);
+        Assert.Equal(1, dto.MaxOccurrences);
+        Assert.Contains("至少 2 筆", Assert.Throws<DomainException>(() => Service(maxOccurrences: 1).RunAutoDispatch(null, null)).Message);
+        Assert.Equal(0, Service(maxOccurrences: 2).GetGaps(null, null, 1).PendingAtLeast);
     }
 
     /// <summary>
