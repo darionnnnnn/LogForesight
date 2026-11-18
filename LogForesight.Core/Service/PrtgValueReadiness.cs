@@ -37,10 +37,12 @@ public static class PrtgValueReadiness
         var allRows = new List<PrtgValueAssessmentRow>(candidates.Count);
         // 最新日對應在分頁迴圈外只算一次（沒有候選就不查）
         (DateTime? MapDate, List<PrtgHostMapRow> Rows)? newestHostMap = candidates.Count > 0 ? assessment.ResolveNewestHostMap(completedDay) : null;
+        var okHostMapDates = candidates.Count > 0 ? assessment.ResolveOkHostMapDates(completedDay, WindowDays) : null;
         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
         {
             ct.ThrowIfCancellationRequested();
-            var evaluated = assessment.AssessPage(page, completedDay, WindowDays, RequiredDays, newestHostMap: newestHostMap);
+            var evaluated = assessment.AssessPage(page, completedDay, WindowDays, RequiredDays, newestHostMap: newestHostMap,
+                okHostMapDates: okHostMapDates);
             allRows.AddRange(evaluated);
         }
 

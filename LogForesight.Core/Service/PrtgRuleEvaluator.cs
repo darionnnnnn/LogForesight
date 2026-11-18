@@ -37,6 +37,26 @@ public sealed record PrtgSensorStatusInput(
     string SensorType,
     string? Category);
 
+/// <summary>
+/// 由 sensor 現況建立的分類與類型對照表（<c>GroupBy(Objid).First()</c>）。每日路徑對每個回望日呼叫
+/// <see cref="PrtgRuleEvaluator.Evaluate"/>，輸入相同，呼叫端在迴圈外建一次傳入；不傳則每次自己建。
+/// </summary>
+public sealed class PrtgSensorLookups
+{
+    public IReadOnlyDictionary<long, string?> Categories { get; }
+    public IReadOnlyDictionary<long, string> Types { get; }
+
+    private PrtgSensorLookups(IReadOnlyDictionary<long, string?> categories, IReadOnlyDictionary<long, string> types)
+    {
+        Categories = categories;
+        Types = types;
+    }
+
+    public static PrtgSensorLookups Build(IReadOnlyList<PrtgSensorStatusInput> sensorStatuses) =>
+        new(sensorStatuses.GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().Category),
+            sensorStatuses.GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().SensorType));
+}
+
 /// <summary>PRTG 規則評估結果，附帶同代碼多條啟用規則之警告清單與同裝置折疊筆數</summary>
 public sealed class PrtgEvaluationResult : List<PrtgFinding>
 {
@@ -75,14 +95,14 @@ public static class PrtgRuleEvaluator
         IReadOnlyList<KnownIssueRule> rules,
         IReadOnlyDictionary<long, string> sensorNames,
         IReadOnlyDictionary<long, string> deviceNames,
-        bool includeSilent = true)
+        bool includeSilent = true,
+        PrtgSensorLookups? lookups = null)
     {
         var findings = new List<PrtgFinding>();
         var duplicateWarnings = new List<string>();
 
-        var sensorCategories = sensorStatuses
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().Category);
+        lookups ??= PrtgSensorLookups.Build(sensorStatuses);
+        var sensorCategories = lookups.Categories;
 
         // 同「代碼＋適用分類」有多條規則：挑選時一律取 Id 字典序最小，這裡每組警告一次。
         // 刻意在評估前對整份規則清單判定，而不是等某顆 sensor 用到才警告——規則庫設定有歧義這件事
@@ -135,9 +155,7 @@ public static class PrtgRuleEvaluator
         var dayStart = day.Date;
         var dayEnd = dayStart.AddDays(1);
 
-        var sensorTypes = sensorStatuses
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().SensorType);
+        var sensorTypes = lookups.Types;
 
         string GetDeviceName(long devId) =>
             deviceNames.TryGetValue(devId, out var name) && !string.IsNullOrWhiteSpace(name)
@@ -362,31 +380,63 @@ public static class PrtgRuleEvaluator
             && sensorCategories.TryGetValue(sensorObjid.Value, out var category)
             && string.Equals(category, PrtgSensorCategories.Availability, StringComparison.OrdinalIgnoreCase);
 
-        var mergedTotal = 0;
-        var deviceIds = findings.Select(f => f.DeviceObjid).Distinct().ToList();
-        foreach (var deviceObjid in deviceIds)
+        // 先依裝置分組（保留原清單位置），每個裝置只掃自己的 finding；輸出內容與順序與逐裝置掃整份清單相同。
+        var byDevice = new Dictionary<long, List<int>>();
+        var deviceOrder = new List<long>();
+        for (var i = 0; i < findings.Count; i++)
         {
-            var anchor = findings
-                .Where(f => f.DeviceObjid == deviceObjid
-                            && string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase)
-                            && IsAvailability(f.SensorObjid))
-                .OrderBy(f => f.SensorObjid!.Value)
-                .FirstOrDefault();
-            if (anchor is null)
-            {
-                continue;
-            }
+            var device = findings[i].DeviceObjid;
+            if (!byDevice.TryGetValue(device, out var list)) { byDevice[device] = list = []; deviceOrder.Add(device); }
+            list.Add(i);
+        }
 
-            var removed = findings.RemoveAll(f => f.DeviceObjid == deviceObjid
-                && (string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(f.RuleCode, RuleFlapping, StringComparison.OrdinalIgnoreCase))
-                && !IsAvailability(f.SensorObjid));
+        var mergedTotal = 0;
+        HashSet<int>? removedIndexes = null;
+        Dictionary<int, PrtgFinding>? replacements = null;
+        foreach (var deviceObjid in deviceOrder)
+        {
+            var indexes = byDevice[deviceObjid];
+            int? anchorIndex = null;
+            foreach (var index in indexes)
+            {
+                var f = findings[index];
+                if (!string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase) || !IsAvailability(f.SensorObjid)) continue;
+                // 取 sensor objid 最小者；相同時保留較早出現的（等同穩定排序後取第一筆）
+                if (anchorIndex is null || f.SensorObjid!.Value < findings[anchorIndex.Value].SensorObjid!.Value) anchorIndex = index;
+            }
+            if (anchorIndex is null) continue;
+
+            var removed = 0;
+            foreach (var index in indexes)
+            {
+                var f = findings[index];
+                if ((string.Equals(f.RuleCode, RuleDown, StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(f.RuleCode, RuleFlapping, StringComparison.OrdinalIgnoreCase))
+                    && !IsAvailability(f.SensorObjid))
+                {
+                    (removedIndexes ??= []).Add(index);
+                    removed++;
+                }
+            }
             if (removed > 0)
             {
-                var index = findings.IndexOf(anchor);
-                findings[index] = anchor with { Detail = $"{anchor.Detail}；同裝置另有 {removed} 顆 sensor 同時 Down 或震盪（已合併）" };
+                var anchor = findings[anchorIndex.Value];
+                (replacements ??= [])[anchorIndex.Value] =
+                    anchor with { Detail = $"{anchor.Detail}；同裝置另有 {removed} 顆 sensor 同時 Down 或震盪（已合併）" };
                 mergedTotal += removed;
             }
+        }
+
+        if (removedIndexes is not null)
+        {
+            var rebuilt = new List<PrtgFinding>(findings.Count - removedIndexes.Count);
+            for (var i = 0; i < findings.Count; i++)
+            {
+                if (removedIndexes.Contains(i)) continue;
+                rebuilt.Add(replacements!.TryGetValue(i, out var replaced) ? replaced : findings[i]);
+            }
+            findings.Clear();
+            findings.AddRange(rebuilt);
         }
 
         return mergedTotal;

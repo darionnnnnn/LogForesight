@@ -526,9 +526,11 @@ public class RuleAdminService
             .Select(h => h.HostId).ToHashSet();
         var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, day, evaluationHostIds),
             evaluationHostIds, new HashSet<long>(), PrtgSensorCategories.Disk);
+        // 有效對應日期與頁無關，迴圈外只查一次
+        var okHostMapDates = candidates.Count > 0 ? _valueAssessment.ResolveOkHostMapDates(day, thresholds.RecentWindowDays) : null;
         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
         {
-            if (_valueAssessment.AssessPage(page, day, thresholds.RecentWindowDays, thresholds.MinimumValidDays)
+            if (_valueAssessment.AssessPage(page, day, thresholds.RecentWindowDays, thresholds.MinimumValidDays, okHostMapDates: okHostMapDates)
                 .Any(row => row.Reason == PrtgValueReason.Ready && row.Semantic == PrtgValueSemantic.DiskPercentFree))
                 return;
         }
@@ -571,9 +573,11 @@ public class RuleAdminService
             .Select(h => h.HostId).ToHashSet();
         var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, day, evaluationHostIds),
             evaluationHostIds, new HashSet<long>(), category);
+        // 有效對應日期與頁無關，迴圈外只查一次
+        var okHostMapDates = candidates.Count > 0 ? _valueAssessment.ResolveOkHostMapDates(day, thresholds.WindowDays) : null;
         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
         {
-            if (_valueAssessment.AssessPage(page, day, thresholds.WindowDays, thresholds.MinimumValidDays)
+            if (_valueAssessment.AssessPage(page, day, thresholds.WindowDays, thresholds.MinimumValidDays, okHostMapDates: okHostMapDates)
                 .Any(row => row.Reason == PrtgValueReason.Ready && row.Semantic == expectedSemantic.Value))
                 return;
         }

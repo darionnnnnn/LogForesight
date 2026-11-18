@@ -408,6 +408,8 @@ internal static class PrtgDailyPipeline
             var sensorStatuses = allSensors
                 .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category))
                 .ToList();
+            // 分類／類型對照表只取決於 sensorStatuses，每個回望日輸入相同，迴圈外建一次
+            var sensorLookups = PrtgSensorLookups.Build(sensorStatuses);
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
@@ -467,7 +469,7 @@ internal static class PrtgDailyPipeline
                         .ToList();
                     var findings = PrtgRuleEvaluator.Evaluate(
                         day, changes, sensorToDevice, sensorStatuses, prtgRules,
-                        sensorNames, deviceNames, includeSilent: day == newest);
+                        sensorNames, deviceNames, includeSilent: day == newest, lookups: sensorLookups);
                     foreach (var warning in findings.DuplicateRuleWarnings)
                     {
                         if (reportedDuplicateRuleWarnings.Add(warning))
@@ -551,12 +553,16 @@ internal static class PrtgDailyPipeline
                     var reasons = new Dictionary<PrtgValueReason, int>();
                     var added = 0;
                     var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
+                    // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+                    var okHostMapDates = candidates.Count > 0
+                        ? assessment.ResolveOkHostMapDates(completedDay, diskThresholds.RecentWindowDays) : null;
                     foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                     {
                         operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                         var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                         foreach (var row in assessment.AssessPage(page, completedDay,
-                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay, newestHostMap))
+                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay, newestHostMap,
+                                     okHostMapDates))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                             var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -612,12 +618,16 @@ internal static class PrtgDailyPipeline
                         var reasons = new Dictionary<PrtgValueReason, int>();
                         var added = 0;
                         var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
+                        // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+                        var okHostMapDates = candidates.Count > 0
+                            ? assessment.ResolveOkHostMapDates(completedDay, thresholds.WindowDays) : null;
                         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                         {
                             operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                             var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                             foreach (var row in assessment.AssessPage(page, completedDay,
-                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay, newestHostMap))
+                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay, newestHostMap,
+                                         okHostMapDates))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                                 var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -1194,10 +1204,14 @@ internal static class PrtgDailyPipeline
                 .Where(s => wantedObjids.Contains(s.SensorObjid)).ToList();
             var completedDay = DateOnly.FromDateTime(day);
             var evidenceBySensor = new Dictionary<long, PrtgSteadyEvidence>();
+            // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+            var okHostMapDates = sensors.Count > 0
+                ? assessment.ResolveOkHostMapDates(completedDay, PrtgRuleCatalog.SteadyWarningWindowDays) : null;
             foreach (var page in sensors.Chunk(PrtgValueAssessment.PageSize))
             {
                 ct.ThrowIfCancellationRequested();
-                foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1))
+                foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1,
+                           okHostMapDates: okHostMapDates))
                 {
                     if (PrtgSteadyEvidence.FromRow(row, completedDay) is { } evidence) evidenceBySensor[row.Sensor.SensorObjid] = evidence;
                 }

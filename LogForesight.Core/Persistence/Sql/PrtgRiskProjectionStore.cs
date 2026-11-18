@@ -17,7 +17,12 @@ public sealed class PrtgRiskProjectionStore(Func<LfDbContext> contextFactory)
             rows.Count(r => r.RiskReviewStatus == "revised"));
     }
 
-    public int RunBatch(IReadOnlyCollection<long>? visibleHostIds = null, int batchSize = 100)
+    /// <summary>處理過的候選數（迴圈終止條件用）。</summary>
+    public int RunBatch(IReadOnlyCollection<long>? visibleHostIds = null, int batchSize = 100) =>
+        RunBatchDetailed(visibleHostIds, batchSize).Processed;
+
+    /// <summary>同時回報處理過的候選數與實際改寫 <c>ContentJson</c> 的列數（後者大於 0 才需推進資料版本戳）。</summary>
+    public PrtgRiskBatchResult RunBatchDetailed(IReadOnlyCollection<long>? visibleHostIds = null, int batchSize = 100)
     {
         if (batchSize is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(batchSize));
         using var probe = contextFactory();
@@ -25,13 +30,16 @@ public sealed class PrtgRiskProjectionStore(Func<LfDbContext> contextFactory)
         if (visibleHostIds != null) query = query.Where(r => visibleHostIds.Contains(r.HostId));
         var candidates = query.OrderBy(r => r.RecordId).Select(r => new { r.RecordId, r.HostId, r.RecordDate }).Take(batchSize).ToList();
         var count = 0;
+        var rewritten = 0;
         foreach (var candidate in candidates)
         {
             lock (EfAnalysisRecordStore.LockFor(candidate.HostId, candidate.RecordDate))
             {
                 using var strategyContext = contextFactory();
+                var contentRewritten = false;
                 strategyContext.Database.CreateExecutionStrategy().Execute(() =>
                 {
+                    contentRewritten = false; // 執行策略重試時重算
                     using var ctx = contextFactory();
                     using var tx = ctx.Database.BeginTransaction();
                     var row = ctx.DailyRecords.SingleOrDefault(r => r.RecordId == candidate.RecordId);
@@ -53,16 +61,20 @@ public sealed class PrtgRiskProjectionStore(Func<LfDbContext> contextFactory)
                         row.AiAnalyzed = record.AiAnalyzed;
                         row.AiPending = record.AiPending;
                         row.RiskReviewStatus = record.RiskReview!.Status;
+                        contentRewritten = true;
                     }
                     row.RiskProjectionVersion = PrtgHistoricalRiskReview.Version;
                     ctx.SaveChanges();
                     tx.Commit();
                 });
                 count++;
+                if (contentRewritten) rewritten++;
             }
         }
-        return count;
+        return new PrtgRiskBatchResult(count, rewritten);
     }
 }
+
+public sealed record PrtgRiskBatchResult(int Processed, int ContentRewritten);
 
 public sealed record PrtgRiskReviewCounts(int UncheckedRecords, int PendingReviewRecords, int RevisedRecords);

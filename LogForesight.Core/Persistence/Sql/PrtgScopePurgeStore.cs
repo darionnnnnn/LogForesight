@@ -485,6 +485,8 @@ public sealed class PrtgScopePurgeStore
     private static (List<long> CandidateIds, long Cursor) ReadCandidatePage(LfDbContext ctx, bool values,
         long after, long watermark, IReadOnlySet<long> candidateSensors)
     {
+        // 候選感測器為空時不可能有可刪列：游標直接到水位線、不逐頁讀表（其餘檢查與交易流程照舊）。
+        if (candidateSensors.Count == 0) return (new(), watermark);
         var rows = values
             ? ctx.PrtgValues.AsNoTracking().Where(x => x.Id > after && x.Id <= watermark).OrderBy(x => x.Id)
                 .Select(x => new PurgeSourceRow(x.Id, x.SensorObjid)).Take(BatchSize).ToList()

@@ -2151,6 +2151,8 @@ public sealed class CalibrationService
                     PrtgRuleCode = code, PrtgThreshold = 1
                 }).ToList();
             var emptyNames = new Dictionary<long, string>();
+            var magnitudeLookups = PrtgSensorLookups.Build(magnitudeInputs);
+            var formalLookups = PrtgSensorLookups.Build(formalInputs);
             for (var day = from; day <= to; day = day.AddDays(1))
             {
                 if (mapsByDay.TryGetValue(day, out var dayMaps) && dayMaps.Count > 0) coveredDays.Add(day);
@@ -2158,7 +2160,7 @@ public sealed class CalibrationService
                     .Where(change => selected.Contains(change.SensorObjid)).ToList();
                 if (changes.Count == 0) continue;
                 foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, magnitudeInputs, lowRules,
-                             emptyNames, emptyNames, includeSilent: false))
+                             emptyNames, emptyNames, includeSilent: false, lookups: magnitudeLookups))
                 {
                     if (samples.Count >= MaxMagnitudeSamplesForCalibration) { capacityExceeded = true; break; }
                     samples.Add(new CalibrationRuleMagnitudeRow(finding.RuleCode, day, finding.DeviceObjid, finding.SensorObjid,
@@ -2166,7 +2168,7 @@ public sealed class CalibrationService
                 }
                 if (capacityExceeded) break;
                 foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, formalInputs, allRules,
-                             emptyNames, emptyNames, includeSilent: false))
+                             emptyNames, emptyNames, includeSilent: false, lookups: formalLookups))
                 {
                     totalHits++;
                     if (finding.RuleCode == PrtgRuleEvaluator.RuleDown) downHits++;
