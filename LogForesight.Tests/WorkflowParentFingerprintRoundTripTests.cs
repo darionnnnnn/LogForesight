@@ -62,6 +62,32 @@ public sealed class WorkflowParentFingerprintRoundTripTests : IDisposable
     }
 
     /// <summary>
+    /// 低風險日寫入真實 store 後讀回：已抑制的告警與告警的結構化對應都還在
+    /// （抑制後那天通常就是低風險日，這幾欄在精簡時被丟掉的話，詳情頁「已抑制的告警」在最需要的日子是空的）。
+    /// </summary>
+    [Fact]
+    public void 低風險日寫入後讀回_已抑制的告警與告警對應仍在()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        var key = new HostKey { HostId = 7740, HostName = "G-7740" };
+        var store = new EfAnalysisRecordStore(_fixture.NewContext, "sqlite-in-memory", key);
+        var record = LowRiskRecord(7740, key.HostName, day);
+        record.TrendAlerts = new List<string> { "trend" };
+        record.TrendAlertRefs = new List<TrendAlertRef> { new() { Text = "trend", IssueKey = "System|Disk|7|Warning" } };
+        record.CorrelationAlertRefs = new List<CorrelationAlertRef> { new() { Text = "corr", PatternId = "pattern-1" } };
+        store.Append(record);
+
+        var persisted = store.GetOne(new[] { key }, day)!;
+
+        Assert.Equal(new[] { "suppressed trend" }, persisted.SuppressedTrendAlerts);
+        Assert.Equal(new[] { "suppressed correlation" }, persisted.SuppressedCorrelationAlerts);
+        Assert.Equal("System|Disk|7|Warning", Assert.Single(persisted.TrendAlertRefs).IssueKey);
+        Assert.Equal("pattern-1", Assert.Single(persisted.CorrelationAlertRefs).PatternId);
+        Assert.Empty(Assert.Single(persisted.TopIssues).SampleMessages);   // 仍是精簡過的紀錄
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(record), HostDayWorkflowFingerprint.ForParentRecord(persisted));
+    }
+
+    /// <summary>
     /// 風險等級在寫入之後跨界（體檢區 1 探針重現）：本機路徑先追加 PRTG finding（低→中）再算父指紋，
     /// 記憶體是完整內容、資料庫是寫入當下精簡過的內容；指紋不得因「當下風險是不是低」而不同。
     /// 反方向（中→低，例如事後的風險複核）同理：資料庫留著完整內容、風險已是低。

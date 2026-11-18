@@ -44,6 +44,14 @@ internal static class RecordStorageShaper
             AuditEventCount = record.AuditEventCount,
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
+            // 告警的結構化對應與「已抑制的告警」：體積只有文字與鍵，而且**正是低風險日最需要它們的時候**——
+            // 告警被抑制後那一天通常就降成低風險，漏抄的話詳情頁「已抑制的告警」在這些日子是空的
+            // （抑制關的是「要不要吵」不是「要不要記」），告警也點不到對應的問題、模式說明與「抑制此模式」出口消失；
+            // PRTG 佐證判定與歷史風險複核同樣讀這幾欄。
+            TrendAlertRefs = record.TrendAlertRefs,
+            CorrelationAlertRefs = record.CorrelationAlertRefs,
+            SuppressedTrendAlerts = record.SuppressedTrendAlerts,
+            SuppressedCorrelationAlerts = record.SuppressedCorrelationAlerts,
             RiskLevel = record.RiskLevel,
             PrtgBaselineRiskLevel = record.PrtgBaselineRiskLevel,
             PrtgBaselineRiskBasis = record.PrtgBaselineRiskBasis,

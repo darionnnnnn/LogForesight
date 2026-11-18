@@ -579,3 +579,10 @@ Fable 5.2 換模型體檢：規劃逐條比對由體檢方親做；三區唯讀�
 - **併入後不重跑全量**：全量之後只改了一行測試斷言與文件（基線數字、歸檔、本節）；dev 自分支起點沒有移動，併入後的樹與這棵樹相同。文件守門（`DocNarrativeGuardTests`、`HelpContentServiceTests`、`HelpWritingGuide`、`VersionRoundGuardTests`）在最終的樹上另跑一次通過。
 - **文件稽核**：現行文件本輪新增內容無輪次敘事；WEB-SPEC（展開換頁的篩選來源、群組回應欄位）、CLAUDE.md（父指紋規則、快取與長駐集合、測試指引與基線）、BACKLOG（順延項附觸發條件）與程式一致。
 - 終檢無新發現。
+
+## 併 dev 後補修（1.0.77.3）
+
+- **低風險日精簡漏抄四個欄位**（使用者問「省略已抑制的警示是不是刻意的」後查證）：`SuppressedTrendAlerts`、`SuppressedCorrelationAlerts`、`TrendAlertRefs`、`CorrelationAlertRefs` 在同一個提交加入（2026-08-11），該提交沒有動到 `RecordStorageShaper`，之後也從未被加進投影——不是刻意。影響：告警被抑制後那天通常降成低風險，詳情頁「已抑制的告警」正好在這些日子是空的；告警點不到對應問題、模式說明與「抑制此模式」出口消失；PRTG 成效的佐證日數少算低風險日。修法：四欄加進 `Compact`（體積只有文字與鍵）。升級前寫入的低風險紀錄已無這些內容，無法回補。
+- **反射守門為何沒抓到**：`RecordStorageShaperTests` 的 fixture 自我檢查以 `Equals` 比預設值，清單的預設值是新的空清單（不同物件），被判成「非預設」；保留比對又是空對空。改為清單欄位必須非空，修好後立刻抓到這四欄。
+- 迴歸：反射守門 fixture 補四欄；`WorkflowParentFingerprintRoundTripTests.低風險日寫入後讀回_已抑制的告警與告警對應仍在`（真實 store 往返、父指紋仍一致）；四欄各自拿掉皆轉紅。全量 10,709 通過／12 略過（0 失敗）。
+
