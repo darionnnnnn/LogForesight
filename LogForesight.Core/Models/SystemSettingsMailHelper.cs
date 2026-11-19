@@ -30,6 +30,18 @@ public static class SystemSettingsMailHelper
         return System.Net.Mail.MailAddress.TryCreate(address.Trim(), out _);
     }
 
+    /// <summary>
+    /// 單一、不帶顯示名稱的電子郵件位址（使用者信箱用）。<see cref="IsValidEmail"/> 接受 "Bob &lt;a@x&gt;" 這類寫法；
+    /// 使用者信箱會直接交給 <c>MailMessage.To.Add</c>，它會把逗號分隔的字串拆成多位收件人，所以這裡要求解析後的位址與原字串完全相同。
+    /// </summary>
+    public static bool IsSingleBareAddress(string? address)
+    {
+        var trimmed = address?.Trim();
+        return !string.IsNullOrEmpty(trimmed)
+            && System.Net.Mail.MailAddress.TryCreate(trimmed, out var parsed)
+            && string.Equals(parsed.Address, trimmed, StringComparison.Ordinal);
+    }
+
     /// <summary>取得正規化後的所有有效收件人位址</summary>
     public static List<string> GetValidRecipients(IEnumerable<string>? recipients) =>
         NormalizeRecipients(recipients)

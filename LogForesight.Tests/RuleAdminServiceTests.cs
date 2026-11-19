@@ -791,6 +791,34 @@ public class RuleAdminServiceTests
         Assert.Equal(string.Empty, dto.RuleId);
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-3, false)]
+    [InlineData(366, false)]
+    [InlineData(1, true)]
+    [InlineData(365, true)]
+    public void 抑制天數_邊界兩側(int days, bool accepted)
+    {
+        var service = Create();
+        var request = new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature,
+            SignatureKey = IssueSignatureKey.For("Application", "App", 1000, LogForesight.Core.Models.LogEntryType.Error),
+            TargetLabel = "Application / App EventId 1000", Scope = SuppressionScopes.Host, Host = "SRV-01",
+            Reason = "測試", Days = days
+        };
+        if (accepted)
+        {
+            service.AddSuppression(request);
+            Assert.Single(service.GetSuppressions());
+        }
+        else
+        {
+            Assert.Contains("抑制天數", Assert.Throws<DomainException>(() => service.AddSuppression(request)).Message);
+            Assert.Empty(service.GetSuppressions());
+        }
+    }
+
     [Fact]
     public void Signature目標_缺簽章鍵時被拒()
     {

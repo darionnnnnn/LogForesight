@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
+using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
@@ -297,15 +298,17 @@ public class SystemSettingsService : ISystemSettingsService
             if (!SystemSettingsMailHelper.IsValidEmail(recipient))
                 throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
         }
+        if (request.MailSubjectTemplate is { } subjectTemplate && subjectTemplate.IndexOfAny(new[] { '\r', '\n' }) >= 0)
+            throw DomainException.Validation("郵件主旨樣板不可包含換行。");
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
             throw DomainException.Validation("郵件摘要門檻不合法。");
-        if (request.MailDailyEnabled && !TimeSpan.TryParse(request.MailDailyTime, out _))
+        if (request.MailDailyEnabled && !InputParsing.TryParseClockTime(request.MailDailyTime, out _))
             throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm。");
         if (request.MailWeeklyEnabled)
         {
-            if (!TimeSpan.TryParse(request.MailWeeklyTime, out _))
+            if (!InputParsing.TryParseClockTime(request.MailWeeklyTime, out _))
                 throw DomainException.Validation("每週摘要時刻格式不合法，請用 HH:mm。");
-            if (!Enum.TryParse<DayOfWeek>(request.MailWeeklyDayOfWeek, ignoreCase: true, out _))
+            if (!InputParsing.TryParseDefinedEnum<DayOfWeek>(request.MailWeeklyDayOfWeek, out _))
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
         if (request.MailNotifyWorkOrders)
@@ -317,7 +320,7 @@ public class SystemSettingsService : ISystemSettingsService
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var x in times)
             {
-                if (string.IsNullOrWhiteSpace(x) || !TimeSpan.TryParseExact(x, @"hh\:mm", CultureInfo.InvariantCulture, out _))
+                if (string.IsNullOrWhiteSpace(x) || !InputParsing.TryParseClockTime(x, out _))
                     throw DomainException.Validation($"交辦摘要時刻『{x}』格式不合法，請用 HH:mm");
                 if (!seen.Add(x))
                     throw DomainException.Validation("交辦摘要時刻不可重複");

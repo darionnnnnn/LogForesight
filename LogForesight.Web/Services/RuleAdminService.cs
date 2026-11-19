@@ -777,6 +777,9 @@ public class RuleAdminService
     /// </summary>
     public void AddSuppression(AddSuppressionRequest request)
     {
+        // 天數範圍與問題靜音一致：0 或負數會建出立即過期的抑制（稽核卻寫「N 天後到期」），過大的值讓 AddDays 擲例外變 500
+        if (request.Days is { } days && (days < 1 || days > IssueOwnerAdminService.MaxMuteDays))
+            throw DomainException.Validation($"抑制天數須介於 1～{IssueOwnerAdminService.MaxMuteDays} 天，或留空表示永久。");
         if (!SuppressionTargetTypes.IsValid(request.TargetType))
             throw DomainException.Validation($"不合法的抑制目標型別「{request.TargetType}」。");
         if (string.IsNullOrWhiteSpace(request.Reason))

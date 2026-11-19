@@ -120,12 +120,13 @@ public class WorkOrderCommandServiceTests : IDisposable
 
     private static CreateWorkOrderRequest Single(long handlerId) => new()
     {
-        Source = "disk", EventId = 153, AssignMode = "single", HandlerId = handlerId, ScopeKind = WorkOrderScopes.Hosts
+        // 不限主機（全部可見主機）用 All；Hosts 必須帶主機清單（批次 C5）
+        Source = "disk", EventId = 153, AssignMode = "single", HandlerId = handlerId, ScopeKind = WorkOrderScopes.All
     };
 
     private static CreateWorkOrderRequest Group(long groupId, string splitMode) => new()
     {
-        Source = "disk", EventId = 153, AssignMode = "group", GroupId = groupId, SplitMode = splitMode, ScopeKind = WorkOrderScopes.Hosts
+        Source = "disk", EventId = 153, AssignMode = "group", GroupId = groupId, SplitMode = splitMode, ScopeKind = WorkOrderScopes.All
     };
 
     private IssueCase? OpenCase(string hostName, LogIssueSignature? issue = null) =>
@@ -196,6 +197,34 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Null(OpenCase("HOST-D"));
         Assert.Equal("HOST-B", Assert.Single(result.Skipped).HostName);
         Assert.Equal(1, result.NoiseExcludedHosts);
+    }
+
+    [Fact]
+    public void 指定主機範圍沒選主機_拒絕且不建任何案件()
+    {
+        AddHost("HOST-A");
+        AddHost("HOST-B");
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var request = Single(handler.UserId);
+        request.ScopeKind = WorkOrderScopes.Hosts;
+        request.HostIds = new List<long>();
+
+        Assert.Contains("至少選擇一台主機", Assert.Throws<DomainException>(() => _service.Create(request)).Message);
+        Assert.Empty(_fixture.NewContext().IssueCases);
+    }
+
+    [Fact]
+    public void 指定主機範圍選一台_只對那台建案()
+    {
+        var a = AddHost("HOST-A");
+        AddHost("HOST-B");
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var request = Single(handler.UserId);
+        request.ScopeKind = WorkOrderScopes.Hosts;
+        request.HostIds = new List<long> { a.HostId };
+
+        var order = Assert.Single(_service.Create(request).Orders);
+        Assert.All(MembersOf(order.WorkOrderId), c => Assert.Equal("HOST-A", c.HostName));
     }
 
     [Fact]

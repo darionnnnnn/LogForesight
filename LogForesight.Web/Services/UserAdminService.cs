@@ -229,6 +229,8 @@ public class UserAdminService
         if (string.IsNullOrWhiteSpace(account))
             throw DomainException.Validation("帳號不可為空。");
 
+        if (!string.IsNullOrWhiteSpace(request.Email) && !SystemSettingsMailHelper.IsSingleBareAddress(request.Email))
+            throw DomainException.Validation($"Email「{request.Email.Trim()}」不是單一的電子郵件位址（不可含逗號、分號或顯示名稱）。");
         var existing = _users.FindByAccount(account);
         var isNew = existing == null;
 

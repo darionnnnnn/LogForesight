@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -39,7 +40,7 @@ public class AuditController : ControllerBase
             From = parsedFrom,
             // 結束日期含當天：使用者選「到 7/21」的意思是包含 7/21 全天，
             // 不做這個處理的話當天的紀錄會全部查不到
-            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            To = parsedTo is { } toDate ? InputParsing.EndOfDay(toDate) : null,
             UserId = userId,
             TargetKind = targetKind,
             Ascending = dir == "asc",

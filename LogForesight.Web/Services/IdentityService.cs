@@ -162,8 +162,12 @@ public class IdentityService
             ? adInfo.DisplayName
             : null;
 
-        var newEmail = user.Email == null && !string.IsNullOrWhiteSpace(adInfo.Email)
-            ? adInfo.Email
+        // AD 的 mail 屬性同樣不保證是單一位址：不合格就不帶入（記一行警告），不讓它變成會拆成多位收件人的字串
+        var adEmailUsable = SystemSettingsMailHelper.IsSingleBareAddress(adInfo.Email);
+        if (!string.IsNullOrWhiteSpace(adInfo.Email) && !adEmailUsable)
+            Log.Warn("[AD] 帳號 {0} 的 mail 屬性不是單一電子郵件位址，未帶入使用者信箱", user.Account);
+        var newEmail = user.Email == null && adEmailUsable
+            ? adInfo.Email!.Trim()
             : null;
 
         if (newDisplayName == null && newEmail == null) return user;

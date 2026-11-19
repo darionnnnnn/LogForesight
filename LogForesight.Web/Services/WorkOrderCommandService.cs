@@ -436,6 +436,9 @@ public class WorkOrderCommandService
             throw DomainException.Validation($"不支援的交辦範圍「{req.ScopeKind}」。");
         if (req.ScopeKind == WorkOrderScopes.Groups && req.GroupIds is not { Count: > 0 })
             throw DomainException.Validation("交辦範圍為主機群組時，請至少選擇一個主機群組。");
+        // 主機範圍沒選主機時，下游的範圍解析會把「沒指定」當成「不限」而對全部可見主機建案
+        if (req.ScopeKind == WorkOrderScopes.Hosts && req.HostIds is not { Count: > 0 })
+            throw DomainException.Validation("交辦範圍為指定主機時，請至少選擇一台主機。");
         if (req.Note is { Length: > NoteMaxLength })
             throw DomainException.Validation($"說明不可超過 {NoteMaxLength} 字。");
         if (req.DueDate is { } due && due.Date < _clock.LocalToday())

@@ -457,11 +457,11 @@ public class MailNotificationService
             var to = now.Date.AddDays(-1);
             var dailyFrom = to;
             var weeklyFrom = to.AddDays(-6);
-            var dailyDue = settings.MailDailyEnabled && TimeSpan.TryParse(settings.MailDailyTime, out var dailyTime) &&
+            var dailyDue = settings.MailDailyEnabled && InputParsing.TryParseClockTime(settings.MailDailyTime, out var dailyTime) &&
                 now.TimeOfDay >= dailyTime && _state.Get().LastDailySentDate != today;
             var weeklyDue = settings.MailWeeklyEnabled &&
-                Enum.TryParse<DayOfWeek>(settings.MailWeeklyDayOfWeek, ignoreCase: true, out var weeklyDay) &&
-                now.DayOfWeek == weeklyDay && TimeSpan.TryParse(settings.MailWeeklyTime, out var weeklyTime) &&
+                InputParsing.TryParseDefinedEnum<DayOfWeek>(settings.MailWeeklyDayOfWeek, out var weeklyDay) &&
+                now.DayOfWeek == weeklyDay && InputParsing.TryParseClockTime(settings.MailWeeklyTime, out var weeklyTime) &&
                 now.TimeOfDay >= weeklyTime && _state.Get().LastWeeklySentDate != today;
             if (dailyDue)
             {
@@ -764,7 +764,7 @@ public class MailNotificationService
             var dueSlots = new List<(string Key, TimeSpan Time)>();
             foreach (var raw in settings.MailWorkOrderDigestTimes ?? new List<string>())
             {
-                if (!TimeSpan.TryParse(raw, out var t)) continue;
+                if (!InputParsing.TryParseClockTime(raw, out var t)) continue;
                 var key = t.ToString(@"hh\:mm");
                 if (dueSlots.Any(s => s.Key == key)) continue;
                 if (now.TimeOfDay >= t && !(sentSlots.TryGetValue(key, out var last) && last == dateText))
@@ -1006,14 +1006,26 @@ public class MailNotificationService
             : CryptoHelper.TryDecrypt(settings.SmtpPasswordEnc, out var smtpPassword) ? smtpPassword
             : null);
 
-    private static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary) =>
-        template
-            .Replace("{site}", WebBrandName)
-            .Replace("{host}", host)
-            .Replace("{date}", date)
-            .Replace("{risk}", risk)
-            .Replace("{type}", type)
-            .Replace("{summary}", summary);
+    private static readonly System.Text.RegularExpressions.Regex TemplateToken = new(
+        @"\{(site|host|date|risk|type|summary)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 單趟展開：只替換樣板裡原本就有的佔位符。逐一 Replace 會讓已代入的值再被展開（主機名含「{summary}」時被換成摘要），
+    /// 換行一律換成空白——MailMessage.Subject 遇到 CR/LF 會擲例外，整封信寄不出去。
+    /// </summary>
+    internal static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary)
+    {
+        var expanded = TemplateToken.Replace(template, m => m.Groups[1].Value switch
+        {
+            "site" => WebBrandName,
+            "host" => host,
+            "date" => date,
+            "risk" => risk,
+            "type" => type,
+            _ => summary
+        });
+        return expanded.Replace('\r', ' ').Replace('\n', ' ');
+    }
 
     /// <summary>品牌名稱走系統設定（外觀分頁），不是這個服務的職責範圍——郵件主旨的 {site} 直接
     /// 用固定產品名，品牌自訂的套用範圍留在畫面顯示層，避免這裡多依賴一份設定讀取</summary>

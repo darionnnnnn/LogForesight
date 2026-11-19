@@ -217,6 +217,7 @@ public class HealthService
         var suspendedRecipients = _mail.GetSuspendedRecipients();
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
+            InvalidMailSchedules = InvalidMailSchedules(healthSettings),
             SlowOperationsHigh = performance.TotalOperations > 0 &&
                                  performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent,
             FirstSeenFailed = firstSeenFailed,
@@ -553,6 +554,20 @@ public class HealthService
             return false;
         }
     }
+
+    /// <summary>已啟用的郵件摘要裡，時刻或星期解析不了的項目（與寄送端同一個解析函式）</summary>
+    internal static IReadOnlyList<string> InvalidMailSchedules(LogForesight.Core.Models.SystemSettings settings)
+    {
+        var invalid = new List<string>();
+        if (!settings.MailEnabled) return invalid;
+        if (settings.MailDailyEnabled && !InputParsing.TryParseClockTime(settings.MailDailyTime, out _)) invalid.Add("每日摘要時刻");
+        if (settings.MailWeeklyEnabled && (!InputParsing.TryParseClockTime(settings.MailWeeklyTime, out _)
+                || !InputParsing.TryParseDefinedEnum<DayOfWeek>(settings.MailWeeklyDayOfWeek, out _)))
+            invalid.Add("每週摘要時刻或星期");
+        if (settings.MailNotifyWorkOrders && (settings.MailWorkOrderDigestTimes ?? new List<string>()).Any(x => !InputParsing.TryParseClockTime(x, out _)))
+            invalid.Add("交辦摘要時刻");
+        return invalid;
+    }
 }
 
 public static class HealthStatuses
@@ -560,4 +575,5 @@ public static class HealthStatuses
     public const string Ok = "ok";
     public const string Degraded = "degraded";
     public const string Down = "down";
+
 }
