@@ -51,6 +51,9 @@ public sealed class HealthAttentionInput
     public bool MemoryWarning { get; init; }
     public bool CryptoKeyMismatch { get; init; }
     public bool CryptoDecryptFailure { get; init; }
+
+    /// <summary>站台模式下沒有可用的站台金鑰：密碼類設定存不進去（加密被拒）</summary>
+    public bool CryptoKeyUnavailable { get; init; }
     public IReadOnlyList<MigrationHealth> Migrations { get; init; } = Array.Empty<MigrationHealth>();
 
     /// <summary>PRTG 擷取新鮮度可疑的類別（中文名與連續 0 筆次數）；PRTG 未啟用時為空</summary>
@@ -101,7 +104,9 @@ public static class HealthAttention
         }
         if (input.MemoryWarning)
             Add(HealthAttentionKeys.Memory, ".NET 記憶體已接近上限，排程可能因記憶體不足中止。");
-        if (input.CryptoKeyMismatch)
+        if (input.CryptoKeyUnavailable)
+            Add(HealthAttentionKeys.Crypto, "站台金鑰檔無法使用，密碼類設定暫時存不進去；請確認站台帳號對資料目錄的 keys 資料夾有讀寫權限。");
+        else if (input.CryptoKeyMismatch)
             Add(HealthAttentionKeys.Crypto, "密碼欄位的加密金鑰與資料庫記錄不符，已儲存的密碼可能解不開。");
         else if (input.CryptoDecryptFailure)
             Add(HealthAttentionKeys.Crypto, "有密碼欄位解不開，該欄位會被當成未設定。");

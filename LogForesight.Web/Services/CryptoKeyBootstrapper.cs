@@ -21,7 +21,8 @@ public static class CryptoKeyBootstrapper
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     internal const string FingerprintBlobKey = "crypto_key_fingerprint";
-    private const string MutexName = "LogForesight-CryptoKeyBootstrap";
+    // Global\ 前綴：Windows 服務（session 0）與互動登入的主控台／IIS 工作者在不同工作階段，沒有前綴時各自有一把同名鎖，互斥失效
+    internal const string MutexName = @"Global\LogForesight-CryptoKeyBootstrap";
     private static readonly TimeSpan MutexTimeout = TimeSpan.FromSeconds(30);
 
     internal const string MutexNameForTests = MutexName;
@@ -316,13 +317,13 @@ public static class CryptoKeyBootstrapper
         {
             Directory.CreateDirectory(dir);
             var key = RandomNumberGenerator.GetBytes(32);
-            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            // 建立的當下就是限縮後的權限：先建後收的話，寫入到收權限之間金鑰檔以預設權限（常見 644）存在
+            using (var stream = CreateRestrictedKeyFile(path))
             using (var writer = new StreamWriter(stream))
             {
                 writer.Write(Convert.ToBase64String(key));
             }
             Log.Info("[Crypto] 已產生站台專屬金鑰檔 {0}（請與資料庫備份分開、一併備份）。", path);
-            RestrictAcl(path);
         }
         catch (IOException) when (File.Exists(path))
         {
@@ -335,39 +336,34 @@ public static class CryptoKeyBootstrapper
     }
 
     /// <summary>
-    /// Windows 上把金鑰檔 ACL 限縮為「目前執行身分＋Administrators 完全控制、移除繼承」；
-    /// 非 Windows（macOS／Linux）改設檔案模式 600（僅擁有者可讀寫）。失敗只 Warn。
+    /// 以限縮後的權限建立金鑰檔（不存在才建，已存在擲 IOException 交給呼叫端沿用）：
+    /// Unix 以建檔模式 600 建立；Windows 建檔時就帶「目前執行身分＋Administrators、不繼承」的 ACL。
     /// </summary>
-    private static void RestrictAcl(string path)
+    internal static FileStream CreateRestrictedKeyFile(string path)
     {
-        if (!OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows())
         {
-            try
-            {
-                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "[Crypto] 無法將金鑰檔 {0} 的檔案模式設為 600（不影響運作，建議手動 chmod 600）。", path);
-            }
-            return;
+            return new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.Write | FileSystemRights.ReadPermissions,
+                FileShare.None, bufferSize: 4096, FileOptions.None, RestrictedSecurity());
         }
+        return new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite
+        });
+    }
 
-        try
-        {
-            var security = new FileSecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            var current = WindowsIdentity.GetCurrent().User!;
-            security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(
-                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                FileSystemRights.FullControl, AccessControlType.Allow));
-            new FileInfo(path).SetAccessControl(security);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "[Crypto] 無法限縮金鑰檔 {0} 的存取權限（不影響運作，建議手動設定只允許站台帳號與系統管理員讀取）。", path);
-        }
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static FileSecurity RestrictedSecurity()
+    {
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
+        return security;
     }
 
     private static string? ReadFingerprint(string? content)

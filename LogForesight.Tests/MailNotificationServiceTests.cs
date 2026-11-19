@@ -1762,7 +1762,10 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Contains("目前靜音中的問題（共 1 個，到期後恢復告警）：", sent.Message.Body);
-        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}｜原因：更換硬碟｜設定者：alice", sent.Message.Body);
+        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}", sent.Message.Body);
+        // 第 79 輪批次 G13：管理者填的原因與設定者帳號不寄給收件人
+        Assert.DoesNotContain("更換硬碟", sent.Message.Body);
+        Assert.DoesNotContain("alice", sent.Message.Body);
         Assert.DoesNotContain("DCOM/10016", sent.Message.Body);
         Assert.DoesNotContain("已排查完畢", sent.Message.Body);
     }

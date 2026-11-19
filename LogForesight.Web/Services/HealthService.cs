@@ -218,6 +218,7 @@ public class HealthService
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
+            CryptoKeyUnavailable = LogForesight.Core.CryptoHelper.SiteKeyUnavailable,
             SlowOperationsHigh = performance.TotalOperations > 0 &&
                                  performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent,
             FirstSeenFailed = firstSeenFailed,

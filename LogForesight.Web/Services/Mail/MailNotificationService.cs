@@ -1994,7 +1994,8 @@ public class MailNotificationService
         }
 
         // 週報附目前靜音中的問題（回饋第 47 輪 E-1）：不限窗口——「目前靜音中」是當下狀態。
-        // 這是全站資訊，不受可見範圍過濾（同 unresolvedLine 的既有取捨，所有收件人一律看得到）。
+        // 靜音以問題為單位、不綁主機，所有收件人看到同一份清單；只列問題與到期日——
+        // 管理者填的原因是自由文字、設定者是帳號，會寄給低權限收件人與共用信箱，留在站台上看。
         // _issueOwners 為既有可選相依，null 表示測試未注入或未啟用。
         string? mutedSection = null;
         if (isWeekly && _issueOwners != null)
@@ -2010,7 +2011,8 @@ public class MailNotificationService
             {
                 var lines = new List<string> { $"目前靜音中的問題（共 {muted.Count} 個，到期後恢復告警）：" };
                 lines.AddRange(muted.Select(x =>
-                    $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}｜原因：{x.Mute.Reason}｜設定者：{x.Mute.ByAccount}"));
+                    $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}"));
+                lines.Add("  （靜音原因與設定者請至站台的問題負責與靜音頁查看）");
                 mutedSection = string.Join(Environment.NewLine, lines);
             }
         }

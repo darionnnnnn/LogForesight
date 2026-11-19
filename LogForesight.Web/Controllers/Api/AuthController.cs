@@ -68,6 +68,7 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     // 匿名端點：帳號與密碼各上限 256 字，正常本文遠小於 4 KB；不設上限時任何人都能塞到 Kestrel 預設的 30 MB 再被反序列化
     [RequestSizeLimit(LoginRequestMaxBytes)]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(LoginRateLimit.PolicyName)]
     public ActionResult<ApiResponse<CurrentUserDto>> Login([FromBody] LoginRequest request)
     {
         var now = DateTime.Now;

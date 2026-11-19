@@ -165,3 +165,29 @@ public class LoginRequestSizeHttpTests
         Assert.NotEqual(HttpStatusCode.RequestEntityTooLarge, normalStatus);
     }
 }
+
+/// <summary>登入並行上限與安全標頭（第 79 輪批次 G15、G16）</summary>
+[Collection(AuthorizationHttpCollection.Name)]
+public class LoginConcurrencyAndHeadersHttpTests
+{
+    private readonly AuthorizationHttpFixture _fx;
+    public LoginConcurrencyAndHeadersHttpTests(AuthorizationHttpFixture fx) => _fx = fx;
+
+    [Fact]
+    public void 登入端點套用並行上限政策()
+    {
+        var attribute = typeof(LogForesight.Web.Controllers.Api.AuthController).GetMethod("Login")!
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute), inherit: false)
+            .Cast<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>().Single();
+        Assert.Equal(LogForesight.Web.Filters.LoginRateLimit.PolicyName, attribute.PolicyName);
+    }
+
+    [Fact]
+    public async Task 並行上限內的登入照常處理()
+    {
+        var tasks = Enumerable.Range(0, LogForesight.Web.Filters.LoginRateLimit.ConcurrentLogins)
+            .Select(_ => _fx.SendAsync(_fx.Anonymous, HttpMethod.Post, "/api/auth/login", body: new { account = "nobody", password = "x" }));
+        var results = await Task.WhenAll(tasks);
+        Assert.All(results, r => Assert.NotEqual(HttpStatusCode.TooManyRequests, r.Status));
+    }
+}

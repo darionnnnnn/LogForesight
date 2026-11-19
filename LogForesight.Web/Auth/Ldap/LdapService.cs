@@ -72,19 +72,46 @@ public sealed class LdapService
         using (root)
         {
             if (status != LdapAuthStatus.Success || root == null) return default;
-
-            using var searcher = new DirectorySearcher(root, BuildFilter(userId))
-            {
-                ClientTimeout = SearchTimeout,
-                ServerTimeLimit = SearchTimeout,
-                SizeLimit = 1
-            };
-            var result = searcher.FindOne();
-            if (result == null) return default;
-
-            using var entry = result.GetDirectoryEntry();
-            return projector(entry);
+            return Search(root, userId, projector);
         }
+    }
+
+    /// <summary>
+    /// 驗證帳密並在同一次 bind 內取得使用者屬性（登入用）。屬性查詢失敗不影響驗證結果，<paramref name="userInfo"/> 留 null。
+    /// 先驗證再呼叫 <see cref="GetUser"/> 會對 AD 連 bind 兩次：AD 慢的時候每次登入多占一倍的時間與連線。
+    /// </summary>
+    public LdapAuthStatus AuthenticateWithUser(string userId, string password, out LdapUserInfo? userInfo)
+    {
+        userInfo = null;
+        var status = Authenticate(userId, password, out var root);
+        using (root)
+        {
+            if (status != LdapAuthStatus.Success || root == null) return status;
+            try
+            {
+                userInfo = Search(root, userId, BuildUserInfo);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "AD 驗證成功但查詢使用者屬性失敗（帳號 {0}），略過自動補資料", userId);
+            }
+        }
+        return status;
+    }
+
+    private TResult? Search<TResult>(DirectoryEntry root, string userId, Func<DirectoryEntry, TResult> projector)
+    {
+        using var searcher = new DirectorySearcher(root, BuildFilter(userId))
+        {
+            ClientTimeout = SearchTimeout,
+            ServerTimeLimit = SearchTimeout,
+            SizeLimit = 1
+        };
+        var result = searcher.FindOne();
+        if (result == null) return default;
+
+        using var entry = result.GetDirectoryEntry();
+        return projector(entry);
     }
 
     private LdapUserInfo BuildUserInfo(DirectoryEntry entry)

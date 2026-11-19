@@ -82,13 +82,6 @@ public class IdentityService
                     Capabilities: RoleCapabilityMap.ForServerAdmin(),
                     IsServerAdmin: true));
 
-            case ServerAdminLoginResult.LockedOut:
-                var remaining = _serverAdmin.LockedUntil(account);
-                var remainingMinutes = Math.Ceiling(remaining?.TotalMinutes ?? 0);
-                Log.Warn("serverAdmin 帳號鎖定中，登入被拒（帳號：{0}，剩餘 {1} 分鐘）", account, remainingMinutes);
-                _audit.RecordAuth(AuditActions.LoginFailed, account, null, "serverAdmin 帳號鎖定中，登入被拒", AuditResult.Denied);
-                return LoginOutcome.Fail($"此帳號因連續登入失敗已鎖定，請於 {remainingMinutes} 分鐘後再試。");
-
             case ServerAdminLoginResult.WrongPassword:
                 Log.Info("serverAdmin 密碼錯誤：{0}", account);
                 _audit.RecordAuth(AuditActions.LoginFailed, account, null, "serverAdmin 密碼錯誤", AuditResult.Failed);

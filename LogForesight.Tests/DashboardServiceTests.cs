@@ -738,6 +738,23 @@ public class DashboardServiceTests : IDisposable
         Assert.Null(plain2.GetSummary(7).PendingDispatch);
         Assert.NotNull(assigner2.GetSummary(7).PendingDispatch);
     }
+
+    /// <summary>
+    /// 第 79 輪批次 G14：快取鍵含 ViewAll 維度（待確認權限異動的計數依它分支）。
+    /// 同一組可見主機下，有 ViewAll 與沒有的兩人各自一筆快取，第二人不會命中第一人的那筆。
+    /// </summary>
+    [Fact]
+    public void GetSummary_同可見主機下ViewAll與非ViewAll不共用快取()
+    {
+        var cache = new SummaryCache(new DataVersionStamp());
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        ServiceFor(FakeCurrentUser.WithCapabilities(Capability.ViewAll), cache, PagedGaps(calls)).GetSummary(7);
+        ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), cache, PagedGaps(calls)).GetSummary(7);
+
+        var stats = cache.GetStatistics();
+        Assert.Equal(2, stats.Entries);
+        Assert.Equal(0, stats.Hits);
+    }
 }
 
 /// <summary>

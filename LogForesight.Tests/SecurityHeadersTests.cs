@@ -84,6 +84,9 @@ public sealed class SecurityHeadersTests
             Assert.Equal("nosniff", Assert.Single(response.Headers.GetValues("X-Content-Type-Options")));
             Assert.Equal("strict-origin-when-cross-origin", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
             Assert.Equal("DENY", Assert.Single(response.Headers.GetValues("X-Frame-Options")));
+            // 第 79 輪批次 G16
+            Assert.Contains("camera=()", Assert.Single(response.Headers.GetValues("Permissions-Policy")));
+            Assert.Equal("same-origin", Assert.Single(response.Headers.GetValues("Cross-Origin-Opener-Policy")));
         }
     }
 

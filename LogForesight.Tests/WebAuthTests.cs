@@ -303,7 +303,7 @@ public class ServerAdminAuthenticatorTests
     private const string Account = "svc-lfadmin";
     private const string Password = "Test-Only-P@ssw0rd";
 
-    private static ServerAdminAuthenticator Create(int maxAttempts = 5, int lockoutMinutes = 15) =>
+    private static ServerAdminAuthenticator Create() =>
         new(new WebAppSettings
         {
             Auth = new AuthSettings
@@ -311,9 +311,7 @@ public class ServerAdminAuthenticatorTests
                 ServerAdmin = new ServerAdminSettings
                 {
                     Account = Account,
-                    PasswordHash = PasswordHasher.Hash(Password),
-                    MaxFailedAttempts = maxAttempts,
-                    LockoutMinutes = lockoutMinutes
+                    PasswordHash = PasswordHasher.Hash(Password)
                 }
             }
         });
@@ -363,38 +361,29 @@ public class ServerAdminAuthenticatorTests
     [Fact]
     public void Stub模式_先前失敗不影響免密碼登入()
     {
-        var auth = Create(maxAttempts: 2);
+        var auth = Create();
         auth.TryLogin(Account, "wrong");   // 需密碼模式下的一次失敗
 
         Assert.Equal(ServerAdminLoginResult.Success,
             auth.TryLogin(Account, null, requiresPassword: false));
     }
 
+    /// <summary>
+    /// 第 79 輪批次 G10：救援帳號不另設第二套鎖定（防暴力破解交給 LoginThrottle）：
+    /// 連續輸錯後輸對仍可登入，否則匿名者輸錯幾次就能把 AD 停擺時唯一的救援入口鎖死。
+    /// </summary>
     [Fact]
-    public void 連續失敗達門檻_觸發鎖定()
+    public void 連續失敗後正確密碼仍可登入_鎖定交由登入節流()
     {
-        var auth = Create(maxAttempts: 3);
-
-        Assert.Equal(ServerAdminLoginResult.WrongPassword, auth.TryLogin(Account, "wrong"));
-        Assert.Equal(ServerAdminLoginResult.WrongPassword, auth.TryLogin(Account, "wrong"));
-        Assert.Equal(ServerAdminLoginResult.LockedOut, auth.TryLogin(Account, "wrong"));
-    }
-
-    /// <summary>鎖定期間即使密碼正確也要拒絕，否則鎖定形同虛設</summary>
-    [Fact]
-    public void 鎖定期間_正確密碼仍被拒()
-    {
-        var auth = Create(maxAttempts: 2);
-        auth.TryLogin(Account, "wrong");
-        auth.TryLogin(Account, "wrong");
-
-        Assert.Equal(ServerAdminLoginResult.LockedOut, auth.TryLogin(Account, Password));
+        var auth = Create();
+        for (var i = 0; i < 10; i++) Assert.Equal(ServerAdminLoginResult.WrongPassword, auth.TryLogin(Account, "wrong"));
+        Assert.Equal(ServerAdminLoginResult.Success, auth.TryLogin(Account, Password));
     }
 
     [Fact]
     public void 成功登入_清除先前的失敗計數()
     {
-        var auth = Create(maxAttempts: 3);
+        var auth = Create();
         auth.TryLogin(Account, "wrong");
         auth.TryLogin(Account, "wrong");
 

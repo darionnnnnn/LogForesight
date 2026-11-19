@@ -94,6 +94,24 @@ try
     builder.Services.AddLogForesightServices();
 
     builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+    // 登入端點的並行上限：AD 不回應時每個登入請求會占住執行緒到逾時，輪換帳號就能繞過依帳號計的節流把執行緒耗盡。
+    // 超過上限（含佇列）回 429 信封
+    builder.Services.AddRateLimiter(options =>
+    {
+        Microsoft.AspNetCore.RateLimiting.RateLimiterOptionsExtensions.AddConcurrencyLimiter(options, LoginRateLimit.PolicyName, limiter =>
+        {
+            limiter.PermitLimit = LoginRateLimit.ConcurrentLogins;
+            limiter.QueueLimit = LoginRateLimit.QueuedLogins;
+            limiter.QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst;
+        });
+        options.OnRejected = async (context, cancellationToken) =>
+        {
+            context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            await context.HttpContext.Response.WriteAsJsonAsync(
+                LogForesight.Web.Models.ApiResponse<object>.Fail(LogForesight.Web.Models.ApiErrorCodes.RateLimited, "登入請求過多，請稍後再試。"),
+                cancellationToken);
+        };
+    });
     builder.Services.AddControllersWithViews(options =>
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
@@ -219,6 +237,7 @@ try
         }
     });
     app.UseRouting();
+    app.UseRateLimiter();
 
     app.UseAuthentication();
     app.UseMiddleware<ActiveUserMiddleware>();   // 停用帳號即時生效（§6.3），必須在驗證之後
@@ -322,6 +341,8 @@ public static class DataVersionStampPolicy
 /// </summary>
 public static class SecurityHeadersPolicy
 {
+    internal const string PermissionsPolicyValue = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()";
+
     /// <summary>
     /// 組出 CSP 政策字串（單行）。inline script 一律要帶 <paramref name="nonce"/>；
     /// <c>img-src</c> 含 <c>data:</c> 是因為 bootstrap 的 data:image/svg+xml 與品牌 logo 的 data URI。
@@ -361,6 +382,10 @@ public static class SecurityHeadersPolicy
                 // 用索引子覆寫而不是 Headers.Add：下游若也設了同名標頭不致擲例外
                 response.Headers["X-Content-Type-Options"] = "nosniff";
                 response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+                // 站台不使用相機、麥克風、定位、付款等瀏覽器能力：一律關閉，被注入的內容也拿不到
+                response.Headers["Permissions-Policy"] = PermissionsPolicyValue;
+                // 與其他來源的視窗隔離（防 window.opener 被跨站頁面操作）
+                response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
                 if (frameValue != null) response.Headers["X-Frame-Options"] = frameValue;
                 if (cspPolicy != null)
                     response.Headers[cspMode == CspMode.Enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only"] = cspPolicy;

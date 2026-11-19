@@ -236,11 +236,6 @@ public class ServerAdminSettings
 
     /// <summary>PBKDF2 雜湊（--hash-password 產生）。不存明文：設定檔會進備份與複本，明文會跟著擴散</summary>
     public string PasswordHash { get; set; } = "";
-
-    /// <summary>連續失敗幾次後鎖定。本地帳號不受 AD 帳戶鎖定原則保護，必須自帶防暴力破解</summary>
-    public int MaxFailedAttempts { get; set; } = 5;
-
-    public int LockoutMinutes { get; set; } = 15;
 }
 
 

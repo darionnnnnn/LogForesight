@@ -28,7 +28,7 @@ public static class CryptoHelper
 {
     private const string PrefixV1 = "enc:v1:";
     private const string PrefixV2 = "enc:v2:";
-    private const string EnvVarName = "LF_CRYPTO_KEY";
+    internal const string EnvVarName = "LF_CRYPTO_KEY";
     private const int NonceSize = 12;
     private const int TagSize = 16;
 
@@ -91,7 +91,28 @@ public static class CryptoHelper
     }
 
     /// <summary>加密明碼，回傳 <c>enc:v2:</c> 密文。空字串／null 回空字串（無密碼不必加密）。</summary>
-    public static string Encrypt(string? plaintext) => EncryptWith(CurrentKey(), plaintext);
+    public static string Encrypt(string? plaintext)
+    {
+        // 站台模式（已設定金鑰檔路徑）卻落到內嵌金鑰：代表金鑰檔建不起來或讀不到。內嵌金鑰等於公開，
+        // 用它加密新密碼就是把密碼交給任何拿得到原始碼的人——拒絕並說明，不靜默退回（解密不受影響）
+        if (SiteKeyUnavailable && !string.IsNullOrEmpty(plaintext))
+            throw new CryptoKeyUnavailableException();
+        return EncryptWith(CurrentKey(), plaintext);
+    }
+
+    /// <summary>站台模式下沒有可用的站台金鑰（既沒有環境變數也沒有金鑰檔），只剩內嵌金鑰；供加密拒絕與健康頁使用</summary>
+    public static bool SiteKeyUnavailable
+    {
+        get
+        {
+            lock (StateLock)
+            {
+                if (_keyFilePath == null) return false;
+                EnsureResolved();
+                return _cachedSource == "embedded";
+            }
+        }
+    }
 
     /// <summary>
     /// 解密 <see cref="Encrypt"/> 產生的密文（v1／v2）。不是本 Helper 格式的值擲 <see cref="InvalidOperationException"/>；
@@ -391,4 +412,11 @@ public static class CryptoHelper
             return false;
         }
     }
+}
+
+/// <summary>站台金鑰無法使用時拒絕加密（見 <see cref="CryptoHelper.Encrypt"/>）；訊息可直接顯示給管理者</summary>
+public sealed class CryptoKeyUnavailableException : InvalidOperationException
+{
+    public CryptoKeyUnavailableException()
+        : base("站台金鑰檔無法使用（未建立或沒有讀取權限），暫時無法儲存密碼類設定；請確認站台執行帳號對資料目錄的 keys 資料夾有讀寫權限後重新啟動。") { }
 }

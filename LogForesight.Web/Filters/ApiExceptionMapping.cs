@@ -36,6 +36,12 @@ public static class ApiExceptionMapping
                 ApiErrorCodes.Conflict,
                 busy.Message),
 
+            // 站台金鑰無法使用：不是使用者輸入的錯，是站台環境問題，回 503 並原樣顯示處理方式
+            LogForesight.Core.CryptoKeyUnavailableException keyUnavailable => (
+                StatusCodes.Status503ServiceUnavailable,
+                ApiErrorCodes.ServiceUnavailable,
+                keyUnavailable.Message),
+
             // 協調器自己判定的規則違反（成員不屬於本單、已結案、缺原因……）：訊息是協調器寫好的中文，回 400。
             // 所有呼叫協調器的路徑（交辦、回覆、看板建單、處理面板）共用這一處，服務層不各抄一份 try/catch
             LogForesight.Core.Persistence.WorkOrderRuleException rule => (

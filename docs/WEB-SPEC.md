@@ -153,8 +153,7 @@ LogForesight.Web/
   "Auth": {
     // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;環境不是 Development 時啟動會被擋下）
     "Provider": "Stub",
-    // MaxFailedAttempts（預設 5）連續失敗幾次鎖定、LockoutMinutes（預設 15）鎖定分鐘數
-    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>", "MaxFailedAttempts": 5, "LockoutMinutes": 15 }
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
   "AllowedHosts": "*"
 }
@@ -261,9 +260,8 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
   輪替 SOP：產生新雜湊填入 `PasswordHash` 後重啟站台即可，產生指令
   （`LogForesight.Web.exe --hash-password`）提供；已簽發的 JWT 最長 8 小時自然失效。
-- **Web 端鎖定**：serverAdmin 連續 5 次登入失敗鎖定 15 分鐘（`Auth.ServerAdmin.MaxFailedAttempts`／`LockoutMinutes`，記憶體計數）——
-  它是本地帳號、**不受 AD 帳戶鎖定原則保護**，必須自帶防暴力破解；一般 AD 帳號沒有這種連續失敗鎖定，
-  只受下方的登入節流與 AD 原則約束。**此鎖定只在驗密碼的 Provider（正式 Ad）下有意義**；
+- **防暴力破解**：serverAdmin 與一般帳號一樣只受下方的登入節流約束（依帳號與來源 IP 計失敗，可在畫面上手動解除），
+  不另設第二套鎖定——兩套疊加時，匿名者輸錯幾次就能把 AD 停擺時唯一的救援入口鎖死，而那時沒有其他管理者能登入解除。
   `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
 - 全部操作照常稽核（account=設定的帳號名、user_id NULL）；儀表板登入失敗卡對它的
   失敗嘗試同樣可見。
