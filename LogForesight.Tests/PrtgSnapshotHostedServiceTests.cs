@@ -1494,6 +1494,71 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TickAsync_取樣途中目標快取被重設_流量類仍依同輪類型表換算()
+    {
+        SetupTargetSensors(new[] { (211L, "SNMP Traffic 64bit"), (212L, "Ping") });
+        var json = "{\"treesize\":2,\"sensors\":[" +
+                   "{\"objid\":211,\"lastvalue_raw\":100,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}," +
+                   "{\"objid\":212,\"lastvalue_raw\":100,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}" +
+                   "]}";
+        var service = CreateService();
+        _stubHandler.OnSend = (_, _) =>
+        {
+            // 目標已解析、回應尚未處理時，請求執行緒要求重設（清掉目標與類型表）
+            service.RequestScopeRefresh();
+            return Task.FromResult(JsonResponse(json));
+        };
+
+        await service.TickAsync();
+
+        var rows = service.Accumulator.DrainAll(1, DateTime.Now);
+        Assert.Equal(6000.0, rows.Single(r => r.SensorObjid == 211).AvgValue);
+        Assert.Equal(100.0, rows.Single(r => r.SensorObjid == 212).AvgValue);
+    }
+
+    [Fact]
+    public void 目標解析_類型表與目標來自同一份讀取_重設後下一次才整份換新()
+    {
+        SetupTargetSensors(new[] { (221L, "SNMP Traffic 64bit") });
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var now = DateTime.Now;
+
+        Assert.Equal(new long[] { 221 }, service.ResolveTargets(settings, now, out var types));
+        Assert.Equal("SNMP Traffic 64bit", types[221]);
+
+        service.RequestScopeRefresh();
+        // 已取得的類型表不受重設影響（本輪換算用的是這一份）
+        Assert.Equal("SNMP Traffic 64bit", types[221]);
+        Assert.Equal(new long[] { 221 }, service.ResolveTargets(settings, now, out var next));
+        Assert.Equal("SNMP Traffic 64bit", next[221]);
+    }
+
+    [Fact]
+    public void 結構同步完成後_同一小時內下一次解析就採用新的感測器集合()
+    {
+        SetupTargetSensors(new[] { (231L, "Ping") });
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var now = DateTime.Now;
+        Assert.Equal(new long[] { 231 }, service.ResolveTargets(settings, now));
+
+        // 結構同步把新感測器寫進鏡像（監看政策也納入它）
+        SetupTargetSensors(new[] { (231L, "Ping"), (232L, "Ping") });
+
+        // 沒有結構同步完成：同小時沿用快取，不整表重算
+        Assert.Equal(new long[] { 231 }, service.ResolveTargets(settings, now));
+
+        _structureSync.RecordCompletion();
+
+        Assert.Equal(new long[] { 231, 232 }, service.ResolveTargets(settings, now).OrderBy(x => x).ToArray());
+        // 同一次完成只重算一次
+        var count = service.TargetRefreshCount;
+        service.ResolveTargets(settings, now);
+        Assert.Equal(count, service.TargetRefreshCount);
+    }
+
+    [Fact]
     public async Task TickAsync_Interval無法解析_以60秒計且記錄警告()
     {
         SetupTargetSensors(new[] { (301L, "SNMP Traffic 64bit") });
@@ -2608,14 +2673,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
         Assert.NotNull(dir);
         var source = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", "PrtgSnapshotHostedService.cs"));
-        foreach (var field in new[] { "_sensorTypes", "_targetObjids" })
+        foreach (var field in new[] { "_targetState" })
         {
             var unsafeDeref = System.Text.RegularExpressions.Regex.Matches(source,
                 field + @"(?!\s*(=|\?\.|\?\?))\s*\.(?!\s*$)");
             Assert.True(unsafeDeref.Count == 0,
                 $"{field} 不得直接解參考（請先取區域副本）：{string.Join(" | ", unsafeDeref.Select(m => source.Substring(m.Index, Math.Min(40, source.Length - m.Index))))}");
         }
-        Assert.DoesNotContain("_sensorTypes != null &&", source);
     }
 
     [Fact]
@@ -3302,6 +3366,41 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(0, service.Accumulator.SampleCount);
         Assert.Null(service.GetStatus().JournalStopCode);
         Assert.True(RestoreJournal(service, _settingsStore.Get()));
+    }
+
+    [Fact]
+    public void 重啟後來源位址已變更且待寫檔有樣本_停止原因為可封存的source_changed()
+    {
+        var now = DateTime.Today.AddHours(12);
+        // 上一個行程以舊位址寫入樣本；重啟前管理者把 PrtgUrl 改成新位址
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        _settingsStore.Update(s => s.PrtgUrl = "https://prtg-new.example.com");
+        var service = CreateService();
+        service.Now = () => now;
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, service.GetStatus().JournalStopCode);
+        Assert.True(service.GetJournalPreview().CanArchive);
+        var result = service.ArchiveJournalManually();
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, result.StopCode);
+        Assert.Equal(1, result.Rows);
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+    }
+
+    [Fact]
+    public void 重啟後來源位址未變更_沿用待寫檔樣本不停止()
+    {
+        var now = DateTime.Today.AddHours(12);
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        var service = CreateService();
+        service.Now = () => now;
+
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.Equal(1, service.Accumulator.SampleCount);
+        Assert.Empty(ArchiveDirectories(ArchiveRoot));
     }
 
     [Fact]

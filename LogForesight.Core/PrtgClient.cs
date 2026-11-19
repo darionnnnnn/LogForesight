@@ -616,10 +616,9 @@ public sealed class PrtgClient : IDisposable
 
             if (expectJson && trimmed.StartsWith('<'))
             {
-                var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
-                var sanitized = StripSecrets(head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " "));
+                // 不夾帶回應原文：登入頁可能含主機名、使用者名稱等資訊，訊息會進探測輸出與記錄
                 throw new PrtgClientException(
-                    $"PRTG 回傳 HTML 而非 JSON（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）：{sanitized}");
+                    "PRTG 回傳 HTML 而非 JSON，回應不是預期格式（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）。");
             }
 
             transportTimer?.Stop();

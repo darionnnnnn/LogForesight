@@ -50,6 +50,8 @@ public static class PrtgProbeRunner
         allOk &= await StepAsync(console, 1, "版本與連線", async () =>
         {
             var json = await client.GetJsonAsync("/api/status.json?id=0", ct);
+            if (!IsJsonText(json))
+                throw new InvalidOperationException("PRTG 回應不是預期格式（不是 JSON），請確認連線位址與認證資訊。");
             var version = ExtractVersion(json);
             if (!string.IsNullOrWhiteSpace(version))
             {
@@ -937,6 +939,20 @@ public static class PrtgProbeRunner
                 return prop.GetRawText();
         }
         return null;
+    }
+
+    /// <summary>回應內文是否為可解析的 JSON（只判格式，不回傳也不記錄原文）。</summary>
+    private static bool IsJsonText(string text)
+    {
+        try
+        {
+            using var _ = JsonDocument.Parse(text);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static string? ExtractVersion(string json)

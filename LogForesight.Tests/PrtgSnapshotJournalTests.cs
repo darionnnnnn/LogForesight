@@ -375,6 +375,51 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
         Assert.Equal(126, recovered.Load("source", now)!.Accumulator.Count);
     }
 
+    private static int GenerationDirectoryCount(PrtgSnapshotJournal journal) =>
+        Directory.GetDirectories(Path.GetDirectoryName(journal.FilePath)!, "checkpoint.g.*").Length;
+
+    [Fact]
+    public void 世代發布在切換前失敗_連續重試不累積自己建立的目錄與暫存manifest()
+    {
+        var now = DateTime.Today;
+        using var journal = new PrtgSnapshotJournal(_backend);
+        journal.Load("source", now);
+        journal.EnableIncremental("source", now);
+        var before = GenerationDirectoryCount(journal);
+        Assert.Equal(1, before);
+        // 別人的目錄（例如另一個舊代）不屬於本次發布，清理自己的失敗時不得被連帶刪除
+        var foreignDir = Path.Combine(Path.GetDirectoryName(journal.FilePath)!, "checkpoint.g." + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(foreignDir);
+
+        journal.FaultPoint = point => { if (point == "before-generation-switch") throw new IOException("simulated no space"); };
+        for (var i = 0; i < 5; i++)
+            Assert.Throws<IOException>(() => journal.EnableIncremental("other-source", now));
+
+        Assert.Equal(before + 1, GenerationDirectoryCount(journal));
+        Assert.True(Directory.Exists(foreignDir));
+        Assert.False(File.Exists(journal.ManifestFilePath + ".tmp"));
+        journal.FaultPoint = null;
+        Directory.Delete(foreignDir);
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        Assert.Empty(recovered.Load("source", now)!.Accumulator);
+    }
+
+    [Fact]
+    public void 世代發布在切換後才失敗_新代已是現行代不得被清掉()
+    {
+        var now = DateTime.Today;
+        using var journal = new PrtgSnapshotJournal(_backend);
+        journal.Load("source", now);
+        journal.EnableIncremental("source", now);
+        journal.FaultPoint = point => { if (point == "after-generation-switch") throw new IOException("simulated interruption"); };
+
+        Assert.Throws<IOException>(() => journal.EnableIncremental("other-source", now));
+
+        journal.FaultPoint = null;
+        using var recovered = new PrtgSnapshotJournal(_backend);
+        Assert.Equal("other-source", recovered.Load("other-source", now)!.SourceEndpoint);
+    }
+
     [Fact]
     public void V2snapshot超過100000列_遷移拆成多個有界segments()
     {

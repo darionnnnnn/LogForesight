@@ -121,6 +121,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal TimeSpan ScopeWorkBudget { get; set; } = TimeSpan.FromSeconds(30);
 
     private DateTime? _targetRefreshHour;
+
+    /// <summary>上次看到的結構同步完成次數；變了就重算快照目標。</summary>
+    private int _seenStructureSyncCompletions;
     /// <summary>
     /// 目標快取被重設的世代：每個重設點 +1。<see cref="RefreshTargets"/> 開始時記下世代，結束時若世代已變
     /// （請求執行緒在重算期間呼叫了 <see cref="RequestScopeRefresh"/>）就不標本小時已算過，下一個 tick 再算一次；
@@ -134,13 +137,18 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// </summary>
     private string? _targetFingerprint;
 
-    /// <summary>守門監看的 sensor objid；與 <see cref="_targetObjids"/> 同一個週期刷新，守門停用時為空。</summary>
+    /// <summary>守門監看的 sensor objid；與 <see cref="_targetState"/> 同一個週期刷新，守門停用時為空。</summary>
     private IReadOnlyList<long>? _guardSensorObjids;
 
     /// <summary>測試鉤子：<see cref="RefreshTargets"/> 實際執行的次數。</summary>
     internal int TargetRefreshCount { get; private set; }
-    private HashSet<long>? _targetObjids;
-    private Dictionary<long, string>? _sensorTypes;
+    /// <summary>
+    /// 目標集合與感測器類型表是同一次讀取的結果，合成一個不可變物件整份替換／清除：
+    /// 分開存會讓重設點在「解析目標」與「換算流量」之間清掉類型表，流量型感測器就以原始值入庫。
+    /// </summary>
+    private sealed record TargetState(HashSet<long> Targets, IReadOnlyDictionary<long, string> SensorTypes);
+
+    private TargetState? _targetState;
 
 
     /// <summary>每輪範圍補抓最多處理的裝置數（由 objid 小到大），其餘留給下一輪。</summary>
@@ -288,7 +296,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             PendingSamples: _accumulator.SampleCount + pendingRows,
             LastSkipReason: _lastSkipReason,
             JournalStopCode: _journalStopCode,
-            TargetCount: _targetObjids?.Count,
+            TargetCount: _targetState?.Targets.Count,
             StartedAt: StartedAt);
     }
 
@@ -608,7 +616,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     private void NoteSkip(string reasonCode, string reason, bool trackPause = true, int? targetCount = null)
     {
         _lastSkipReason = reason;
-        RecordDiagnostic(Now(), "skip", reason, targetCount ?? _targetObjids?.Count ?? 0, reasonCode: reasonCode);
+        RecordDiagnostic(Now(), "skip", reason, targetCount ?? _targetState?.Targets.Count ?? 0, reasonCode: reasonCode);
         if (trackPause) _skipSince ??= Now();
         else _skipSince = null;
     }
@@ -644,7 +652,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private async Task<bool> ExecuteSnapshotAsync(SystemSettings settings, DateTime now, CancellationToken ct)
     {
-        var targets = ResolveTargets(settings, now);
+        var targets = ResolveTargets(settings, now, out var sensorTypes);
         if (targets.Count == 0)
             NoteSkip("snapshot-empty-scope-idle", "目前快照範圍為空（取數範圍為空：沒有已對應主機的白名單 sensor）；本輪未發出 PRTG 請求。", trackPause: false, targetCount: 0);
         lock (_pendingWrite)
@@ -656,7 +664,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 return true;
             }
         }
-        var tally = new SnapshotTally();
+        var tally = new SnapshotTally { SensorTypes = sensorTypes };
         if (targets.Count > 0)
         {
             await FetchFilteredAsync(settings, targets, now, tally, ct);
@@ -681,7 +689,19 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 型別在取數白名單內的未暫停 sensor，加上資源守門監看的 sensor；監看政策的 sensor 清單非空時再縮圈。
     /// </summary>
     internal IReadOnlyList<long> ResolveTargets(SystemSettings settings, DateTime now)
+        => ResolveTargets(settings, now, out _);
+
+    /// <summary>同 <see cref="ResolveTargets(SystemSettings, DateTime)"/>，並回傳與目標同一份讀取的感測器類型表（本輪換算用）。</summary>
+    internal IReadOnlyList<long> ResolveTargets(SystemSettings settings, DateTime now,
+        out IReadOnlyDictionary<long, string> sensorTypes)
     {
+        // 結構同步完成後鏡像的感測器集合已變：立即重算，下一輪就採用新集合（不等整點）。
+        var completions = _structureSync.CompletionCount;
+        if (completions != _seenStructureSyncCompletions)
+        {
+            _seenStructureSyncCompletions = completions;
+            InvalidateTargets();
+        }
         var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
         // 只在「尚未算過／換小時／輸入指紋變了」時整表重算；其餘 tick 沿用快取。
         // 重設點把 _targetRefreshHour 設 null，所以第一個 tick 與跳過數小時後的 tick 一定會刷新。
@@ -689,9 +709,11 @@ public class PrtgSnapshotHostedService : BackgroundService
         // 先取一次欄位：另一條執行緒的 RequestScopeRefresh 隨時可能把它清成 null。
         // 清掉了就重算並用這次算出的結果，不能把 null 當成「範圍為空」——那會讓這一輪記下嘗試卻沒採樣，
         // 整個採樣週期被吃掉（主機管理改 IP 時就會呼叫重設）。
-        var targetObjids = _targetObjids;
-        if (targetObjids == null || _targetRefreshHour != currentHour || _targetFingerprint != fingerprint)
-            RefreshTargets(settings, now, currentHour, fingerprint, out targetObjids);
+        var state = _targetState;
+        if (state == null || _targetRefreshHour != currentHour || _targetFingerprint != fingerprint)
+            RefreshTargets(settings, now, currentHour, fingerprint, out state);
+        sensorTypes = state.SensorTypes;
+        var targetObjids = state.Targets;
         var guardSensors = _guardSensorObjids ?? Array.Empty<long>();
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         return PrtgSnapshotTargetResolver.SelectEffectiveTargets(targetObjids, policy, guardSensors);
@@ -863,10 +885,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         double intervalSeconds = ParseIntervalSeconds(intervalStr, ref tally.UnparsedIntervals);
 
         double sampleValue;
-        // RequestScopeRefresh 會在請求執行緒把 _sensorTypes 設 null；先取區域副本再判斷，避免判 null 與取值之間 NRE。
-        var sensorTypes = _sensorTypes;
-        if (sensorTypes != null &&
-            sensorTypes.TryGetValue(objid.Value, out var sensorType) &&
+        // 類型表隨本輪目標一起解析（tally 帶著），重設點清快取不影響本輪換算。
+        if (tally.SensorTypes.TryGetValue(objid.Value, out var sensorType) &&
             PrtgVolumeSensorTypes.IsVolume(sensorType))
         {
             sampleValue = lastValueRaw.Value * 3600.0 / intervalSeconds;
@@ -888,6 +908,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         public int Matched;
         public int Added;
         public int UnparsedIntervals;
+        public IReadOnlyDictionary<long, string> SensorTypes = new Dictionary<long, string>();
     }
 
     internal sealed record RecentStateChangeScopeContext(
@@ -1594,7 +1615,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 catch (Exception ex)
                 {
                     foreach (var hourGroup in pending.Rows.GroupBy(row => row.PeriodStart))
-                        RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetObjids?.Count ?? 0, hourGroup.Count());
+                        RecordDiagnostic(hourGroup.Key, "write-failure", "database-write-failed", _targetState?.Targets.Count ?? 0, hourGroup.Count());
                     var msg = $"快照樣本寫入資料庫失敗，{_pendingRows} 列留待下次重試（詳細原因見記錄檔）。";
                     WriteOutput(msg, LogLevel.Warn);
                     Log.Error(ex, "PRTG 快照樣本寫入資料庫失敗");
@@ -1608,13 +1629,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     private void InvalidateTargets()
     {
         _targetRefreshHour = null;
-        _targetObjids = null;
-        _sensorTypes = null;
+        _targetState = null;
         Interlocked.Increment(ref _targetResetGeneration);
     }
 
     private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour, string fingerprint,
-        out HashSet<long> targets)
+        out TargetState state)
     {
         TargetRefreshCount++;
         var generation = Volatile.Read(ref _targetResetGeneration);
@@ -1630,10 +1650,9 @@ public class PrtgSnapshotHostedService : BackgroundService
             .Distinct()
             .ToList();
 
-        targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds).ToHashSet();
-        _targetObjids = targets;
-
-        _sensorTypes = store.GetSensorTypes();
+        var targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds).ToHashSet();
+        state = new TargetState(targets, store.GetSensorTypes());
+        _targetState = state;
 
         _guardSensorObjids = settings.PrtgResourceGuardEnabled
             ? PrtgResourceGuardTargets.Resolve(new PrtgMirrorGuardSource(store), settings,

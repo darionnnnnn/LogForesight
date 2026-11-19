@@ -63,8 +63,6 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Services.PrtgSnapshotHostedService._confirmedEmptyDevices"] = "已確認沒有感測器的裝置；上限是取數範圍內的裝置數，結構同步寫過鏡像後清空",
         ["LogForesight.Web.Services.PrtgSnapshotHostedService._overrideObjidsNotFound"] = "人工指定但鏡像找不到的 objid；上限是人工指定數，結構同步寫過鏡像後清空",
         ["LogForesight.Web.Services.PrtgSnapshotHostedService._pendingWrite"] = "待寫入的快照批次；由待寫檔（PrtgSnapshotJournal）的 20 萬列／64 MiB 上限約束",
-        ["LogForesight.Web.Services.PrtgSnapshotHostedService._sensorTypes"] = "感測器類型對照；每次刷新整份替換，大小＝鏡像感測器數",
-        ["LogForesight.Web.Services.PrtgSnapshotHostedService._targetObjids"] = "本週期的快照目標；每次刷新整份替換，大小＝目標感測器數",
         ["LogForesight.Web.Services.RunExportDeidentifier.FileExtensions"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.RunExportDeidentifier.KeepDomains"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.RunExportDeidentifier.KeepPrincipals"] = "常數查找表：型別初始化時建好，之後只讀",
