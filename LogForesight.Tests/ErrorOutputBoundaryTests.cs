@@ -138,3 +138,30 @@ public class ModelBindingMessageHttpTests
         Assert.DoesNotContain("The value", body);
     }
 }
+
+/// <summary>匿名登入端點的請求大小上限（第 79 輪批次 C8）</summary>
+[Collection(AuthorizationHttpCollection.Name)]
+public class LoginRequestSizeHttpTests
+{
+    private readonly AuthorizationHttpFixture _fx;
+    public LoginRequestSizeHttpTests(AuthorizationHttpFixture fx) => _fx = fx;
+
+    [Fact]
+    public async Task 超過上限的登入請求在讀取本文前被拒_正常大小照常處理()
+    {
+        var oversized = new StringContent("{\"account\":\"" + new string('a', 8192) + "\",\"password\":\"x\"}",
+            System.Text.Encoding.UTF8, "application/json");
+        // TestServer 沒有實作請求本文大小的功能介面，上限只在 Kestrel／IIS 上由框架執行；
+        // 這裡驗兩件事：端點宣告了上限，以及超大請求不會被當成正常登入處理（DTO 的長度上限同樣擋下）
+        var limit = typeof(LogForesight.Web.Controllers.Api.AuthController).GetMethod("Login")!
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute), inherit: false)
+            .Cast<Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute>().Single();
+        Assert.NotNull(limit);
+        var (status, _, _) = await _fx.SendAsync(_fx.Anonymous, HttpMethod.Post, "/api/auth/login", content: oversized);
+        Assert.True(status is HttpStatusCode.RequestEntityTooLarge or HttpStatusCode.BadRequest, status.ToString());
+
+        var (normalStatus, _, _) = await _fx.SendAsync(_fx.Anonymous, HttpMethod.Post, "/api/auth/login",
+            body: new { account = "nobody", password = "wrong" });
+        Assert.NotEqual(HttpStatusCode.RequestEntityTooLarge, normalStatus);
+    }
+}

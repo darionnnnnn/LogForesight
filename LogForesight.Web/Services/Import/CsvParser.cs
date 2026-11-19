@@ -54,11 +54,9 @@ public class CsvParseException : Exception
 }
 
 /// <summary>
-/// CSV 解析（docs/WEB-SPEC.md §9.9）。
-///
-/// 自己寫而不引套件：規格很小（逗號分隔、雙引號包覆、標題列），
-/// 但需求很具體——UTF-8 BOM 容錯、行號要能對回原始檔案、欄位名不分大小寫。
-/// 引入套件再包一層轉接的成本並不比這幾十行低。
+/// CSV 解析（docs/WEB-SPEC.md §9.9），以框架內建的 <see cref="Microsoft.VisualBasic.FileIO.TextFieldParser"/> 切欄：
+/// 雙引號包覆、"" 跳脫、跨行的引號欄位（Excel 儲存格內換行）都由它處理，不再自己寫字元流。
+/// 這裡只負責本專案的需求：UTF-8 BOM 容錯、行號對回原始檔案、欄位名不分大小寫、列數上限在讀取當下就擋。
 /// </summary>
 public static class CsvParser
 {
@@ -67,14 +65,20 @@ public static class CsvParser
         // detectEncodingFromByteOrderMarks：Excel 另存的 CSV 幾乎都帶 BOM，
         // 不處理的話第一個欄位名會多出一個看不見的字元，變成「找不到 account 欄位」
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var parser = new Microsoft.VisualBasic.FileIO.TextFieldParser(reader)
+        {
+            TextFieldType = Microsoft.VisualBasic.FileIO.FieldType.Delimited,
+            HasFieldsEnclosedInQuotes = true,
+            // 不在這裡去空白：欄位值的空白由 CsvRow.Get 處理，引號內刻意保留的空白不能被吃掉
+            TrimWhiteSpace = false
+        };
+        parser.SetDelimiters(",");
 
-        var lines = new List<string>();
-        while (reader.ReadLine() is { } line) lines.Add(line);
-
-        if (lines.Count == 0)
+        var headerFields = ReadRecord(parser, out _);
+        if (headerFields == null)
             throw new CsvParseException("檔案是空的。");
 
-        var headers = SplitLine(lines[0]).Select(h => h.Trim()).ToList();
+        var headers = headerFields.Select(h => h.Trim()).ToList();
         if (headers.Count == 0 || headers.All(string.IsNullOrWhiteSpace))
             throw new CsvParseException("找不到標題列（第一行必須是欄位名稱）。");
 
@@ -86,76 +90,36 @@ public static class CsvParser
             throw new CsvParseException($"標題列有重複的欄位名稱：{string.Join("、", duplicated)}。");
 
         var table = new CsvTable { Headers = headers };
-
-        for (var i = 1; i < lines.Count; i++)
+        while (ReadRecord(parser, out var lineNumber) is { } fields)
         {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+            if (fields.All(string.IsNullOrWhiteSpace)) continue;
 
+            // 讀到第 maxRows + 1 列就停：不先把整份檔案讀進記憶體再檢查
             if (table.Rows.Count >= maxRows)
                 throw new CsvParseException($"資料列數超過上限 {maxRows} 列，請分批匯入。");
 
-            var fields = SplitLine(lines[i]);
-            var row = new CsvRow { LineNumber = i + 1 };
-
+            var row = new CsvRow { LineNumber = (int)lineNumber };
             for (var c = 0; c < headers.Count; c++)
-                row.Values[headers[c]] = c < fields.Count ? fields[c] : string.Empty;
-
+                row.Values[headers[c]] = c < fields.Length ? fields[c] : string.Empty;
             table.Rows.Add(row);
         }
 
         return table;
     }
 
-    /// <summary>
-    /// 單行切欄。支援雙引號包覆（欄位值可含逗號）與 "" 跳脫的雙引號本身。
-    /// 不支援跨行的引號欄位——Event Log 訊息不會進 CSV，實務上用不到，
-    /// 支援它要改成字元流解析，複雜度不成比例。
-    /// </summary>
-    private static List<string> SplitLine(string line)
+    /// <summary>讀下一筆紀錄；回傳 null 表示檔案結束。<paramref name="lineNumber"/> 是這筆紀錄起始的原始行號（從 1 起）。</summary>
+    private static string[]? ReadRecord(Microsoft.VisualBasic.FileIO.TextFieldParser parser, out long lineNumber)
     {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-
-        for (var i = 0; i < line.Length; i++)
+        lineNumber = parser.LineNumber;
+        if (parser.EndOfData) return null;
+        try
         {
-            var c = line[i];
-
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"')
-                    {
-                        current.Append('"');
-                        i++;
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    current.Append(c);
-                }
-            }
-            else if (c == '"')
-            {
-                inQuotes = true;
-            }
-            else if (c == ',')
-            {
-                fields.Add(current.ToString());
-                current.Clear();
-            }
-            else
-            {
-                current.Append(c);
-            }
+            lineNumber = parser.LineNumber;
+            return parser.ReadFields();
         }
-
-        fields.Add(current.ToString());
-        return fields;
+        catch (Microsoft.VisualBasic.FileIO.MalformedLineException ex)
+        {
+            throw new CsvParseException($"第 {ex.LineNumber} 行的引號沒有成對結束，請檢查該行的雙引號。");
+        }
     }
 }

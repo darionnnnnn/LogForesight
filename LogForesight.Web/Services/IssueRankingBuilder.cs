@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -298,7 +299,7 @@ public class IssueRankingBuilder
             // 那套排序看不出「這個問題今天特別該優先處理」。同分時仍以嚴重度→主機數→總次數
             // 為次要排序鍵，確保排序穩定、不會因為 SQL 回傳順序不保證而每次跑出不同順位
             .OrderByDescending(i => i.PriorityScore)
-            .ThenByDescending(i => Enum.TryParse<IssueSeverity>(i.MaxSeverity, out var s) ? (int)s : -1)
+            .ThenByDescending(i => InputParsing.TryParseDefinedEnum<IssueSeverity>(i.MaxSeverity, out var s) ? (int)s : -1)
             .ThenByDescending(i => i.HostCount)
             .ThenByDescending(i => i.TotalCount)
             .ToList();

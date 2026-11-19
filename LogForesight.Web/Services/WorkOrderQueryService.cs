@@ -146,8 +146,7 @@ public class WorkOrderQueryService
         if (!WorkOrderQueries.PausedModes.Contains(pausedMode))
             throw DomainException.Validation($"不支援的暫停篩選「{req.Paused}」。");
 
-        var page = Math.Max(1, req.Page);
-        var pageSize = req.PageSize < 1 ? DefaultPageSize : Math.Min(req.PageSize, WorkOrderQueries.MaxOrderPageSize);
+        var (page, pageSize) = Paging.Normalize(req.Page, req.PageSize < 1 ? DefaultPageSize : req.PageSize, WorkOrderQueries.MaxOrderPageSize);
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var disabledKeys = DisabledHostKeys();
@@ -280,8 +279,7 @@ public class WorkOrderQueryService
         if (!WorkOrderQueries.MemberStatuses.Contains(status))
             throw DomainException.Validation($"不支援的成員狀態篩選「{status}」。");
 
-        page = Math.Max(1, page);
-        pageSize = pageSize < 1 ? DefaultMemberPageSize : Math.Min(pageSize, WorkOrderQueries.MaxMemberPageSize);
+        (page, pageSize) = Paging.Normalize(page, pageSize < 1 ? DefaultMemberPageSize : pageSize, WorkOrderQueries.MaxMemberPageSize);
 
         var hosts = _hosts.GetAll();
         var filtered = !_currentUser.Has(Capability.ViewAll) && order.HandlerId != _currentUser.UserId;

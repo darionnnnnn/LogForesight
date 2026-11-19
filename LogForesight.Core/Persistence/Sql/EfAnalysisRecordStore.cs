@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 ﻿using System.Diagnostics;
 using System.Data;
 using System.Linq.Expressions;
@@ -2100,7 +2101,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 // RecordRepository.NormalizeLegacySeverity 因此看不到 Critical——「重大」標記必須同時補上
                 // （與 EfIssueAggregateQuery 的 ForcesElevate 同一條規則），否則舊資料的重大日會漏標
                 Severity = LegacySeverityRank.ToSeverity(t.SeverityRank),
-                Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
+                Category = InputParsing.TryParseDefinedEnum<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
                 ElevatesDayRisk = t.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(t.SeverityRank),
                 KnownIssue = t.KnownIssue
             }).ToList());

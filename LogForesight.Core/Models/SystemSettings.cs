@@ -388,7 +388,7 @@ public class SystemSettings
     public HashSet<IssueSeverity> ParseUnhandledSeverities() =>
         UnhandledSeverities
             .Select(s => s == "Critical" ? "High" : s)
-            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
+            .Select(s => InputParsing.TryParseDefinedEnum<IssueSeverity>(s, out var severity) ? severity : (IssueSeverity?)null)
             .Where(s => s.HasValue)
             .Select(s => s!.Value)
             .ToHashSet();

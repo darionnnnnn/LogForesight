@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
@@ -80,7 +81,7 @@ public class HttpContextCurrentUser : ICurrentUser
 
         foreach (var claim in principal.FindAll(JwtTokenService.CapabilityClaim))
         {
-            if (Enum.TryParse<Capability>(claim.Value, out var capability))
+            if (InputParsing.TryParseDefinedEnum<Capability>(claim.Value, out var capability))
                 result.Add(capability);
         }
         return result;

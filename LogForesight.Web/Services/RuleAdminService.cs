@@ -189,6 +189,8 @@ public class RuleAdminService
 
     public RuleValidationDto ValidateRule(SaveRuleRequest request)
     {
+        // 編號一律先去空白再比對：比對與儲存若一邊去、一邊沒去，「custom-x 」會繞過重複檢查存出兩條同編號規則
+        request.Id = request.Id?.Trim() ?? string.Empty;
         var content = LoadContent();
         var candidate = BuildRule(request, content.Rules
             .FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase)));
@@ -223,6 +225,7 @@ public class RuleAdminService
 
     public RuleDto SaveRule(SaveRuleRequest request)
     {
+        request.Id = request.Id?.Trim() ?? string.Empty;
         var content = LoadContent();
         var existing = content.Rules
             .FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase));
@@ -1032,10 +1035,10 @@ public class RuleAdminService
 
     private KnownIssueRule BuildRule(SaveRuleRequest request, KnownIssueRule? existing)
     {
-        if (!Enum.TryParse<IssueCategory>(request.Category, ignoreCase: true, out var category))
+        if (!InputParsing.TryParseDefinedEnum<IssueCategory>(request.Category, out var category))
             throw DomainException.Validation($"未知的類別「{request.Category}」。");
 
-        if (!Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var severity))
+        if (!InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var severity))
             throw DomainException.Validation($"未知的嚴重度「{request.Severity}」。");
 
         // Platform 一經建立不可變更（哪個分頁新增就是哪個平台）：既有規則沿用原值，
@@ -1044,7 +1047,9 @@ public class RuleAdminService
         {
             "linux" => "linux",
             "prtg" => "prtg",
-            _ => "windows"
+            null or "" or "windows" => "windows",
+            // 白名單外的值不靜默改成 windows：那會讓 RuleValidator 永遠看不到壞值
+            _ => throw DomainException.Validation($"不支援的規則平台「{request.Platform}」，只能是 windows、linux 或 prtg。")
         });
 
         return new KnownIssueRule

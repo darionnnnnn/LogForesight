@@ -51,7 +51,7 @@ public class AuditController : ControllerBase
         query.Actions = ParseStrings(actions);
 
         if (!string.IsNullOrWhiteSpace(result) &&
-            Enum.TryParse<AuditResult>(result, ignoreCase: true, out var auditResult))
+            InputParsing.TryParseDefinedEnum<AuditResult>(result, out var auditResult))
         {
             query.Result = auditResult;
         }

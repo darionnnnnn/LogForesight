@@ -92,7 +92,7 @@ public class WorkOrderCommandService
     {
         var plan = Plan(req);
 
-        var page = Math.Max(1, req.Page);
+        var (page, _) = Paging.Normalize(req.Page, PreviewPageSize, PreviewPageSize);
         var hosts = plan.Hosts
             .Skip((page - 1) * PreviewPageSize)
             .Take(PreviewPageSize)

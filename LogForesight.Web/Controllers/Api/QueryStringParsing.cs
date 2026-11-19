@@ -10,15 +10,22 @@ namespace LogForesight.Web.Controllers.Api;
 /// </summary>
 internal static class QueryStringParsing
 {
-    /// <summary>逗號分隔的整數清單；空白／全空白回 null（表示「未指定」）</summary>
-    public static List<long>? ParseLongs(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? null
-            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(s => long.TryParse(s, out var value) ? value : (long?)null)
-                .Where(v => v.HasValue)
-                .Select(v => v!.Value)
-                .ToList();
+    /// <summary>
+    /// 逗號分隔的整數清單；空白／全空白回 null（表示「未指定」）。有任何一段不是整數就回 400：
+    /// 默默丟掉壞的片段會讓「1,x,3」變成「1,3」，全壞時更會變成空清單或「未指定」——篩選條件靜默失效。
+    /// </summary>
+    public static List<long>? ParseLongs(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return null;
+        var values = new List<long>();
+        foreach (var part in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!long.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                throw DomainException.Validation($"「{Truncate(part)}」不是有效的編號。");
+            values.Add(value);
+        }
+        return values;
+    }
 
     /// <summary>逗號分隔的字串清單；空白／全空白回 null（表示「未指定」）</summary>
     public static List<string>? ParseStrings(string? csv) =>
@@ -52,8 +59,9 @@ internal static class QueryStringParsing
         bool throwOnReversed = false,
         int? maxDays = null)
     {
-        var from = ParseDate(fromStr) ?? fromDefault;
-        var to   = ParseDate(toStr)   ?? toDefault;
+        // 空白＝未指定、套用預設；有填但格式不對就回 400，不能靜默當成未指定（使用者以為篩了日期，其實沒有）
+        var from = ParseOptionalDate(fromStr) ?? fromDefault;
+        var to   = ParseOptionalDate(toStr)   ?? toDefault;
 
         if (from.HasValue && to.HasValue && from.Value > to.Value)
         {
@@ -72,4 +80,10 @@ internal static class QueryStringParsing
 
         return (from, to);
     }
+
+    /// <summary>空白回 null（未指定）；有填但不是 yyyy-MM-dd 就丟 Validation</summary>
+    public static DateTime? ParseOptionalDate(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : ParseRequiredDate(value);
+
+    private static string Truncate(string value) => value.Length <= 32 ? value : value[..32] + "…";
 }

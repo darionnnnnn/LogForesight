@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using System.Reflection;
 using System.Text.Json;
 using LogForesight.Web.Auth;
@@ -44,7 +45,7 @@ public class HelpContentService
     {
         return Chapters
             .Where(c => !(hideSetupWizard && c.Id == "setup-wizard"))
-            .Where(c => c.Requires == null || c.Requires.Any(name => Enum.TryParse<Capability>(name, out var required) && capabilities.Contains(required)))
+            .Where(c => c.Requires == null || c.Requires.Any(name => InputParsing.TryParseDefinedEnum<Capability>(name, out var required) && capabilities.Contains(required)))
             .ToList();
     }
 

@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Services;
 
 namespace LogForesight.Web.Repositories;
@@ -147,7 +148,7 @@ public class RecordRepository : IRecordRepository
     {
         if (visible == null) return null;
         return visible
-            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
+            .Select(s => InputParsing.TryParseDefinedEnum<IssueSeverity>(s, out var severity) ? severity : (IssueSeverity?)null)
             .Where(s => s.HasValue)
             .Select(s => s!.Value)
             .ToHashSet();

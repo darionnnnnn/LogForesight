@@ -191,7 +191,7 @@ public class WorkOrderBoardService
     public GapsDto GetGaps(DateTime? from, DateTime? to, int page)
     {
         var trial = RunTrial(from, to);
-        page = Math.Max(1, page);
+        (page, _) = Paging.Normalize(page, GapPageSize, GapPageSize);
 
         var dto = new GapsDto
         {

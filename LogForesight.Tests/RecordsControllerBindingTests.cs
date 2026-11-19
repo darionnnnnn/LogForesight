@@ -263,8 +263,6 @@ public class RecordsControllerBindingTests
             "QueryPage|hosts={h1},{h2}|from=2026-10-01|to=2026-10-05|risk=中,高|cat=Hardware,Storage|sev=High|event=7|src=Disk|sort=date|asc=True|page=2|size=25" },
         new object[] { "Search", "hostIds={h1},{h2}&from=2026-10-01&to=2026-10-05",
             "QueryPage|hosts={h1},{h2}|from=2026-10-01|to=2026-10-05|risk=-|cat=-|sev=-|event=-|src=-|sort=-|asc=False|page=1|size=50" },
-        new object[] { "Search", "from=not-a-date&to=2026-10-05",
-            "QueryPage|hosts=-|from={lookback}|to=2026-10-05|risk=-|cat=-|sev=-|event=-|src=-|sort=-|asc=False|page=1|size=50" },
         new object[] { "Search", "from=2026-10-09&to=2026-10-01",
             "QueryPage|hosts=-|from=2026-10-01|to=2026-10-09|risk=-|cat=-|sev=-|event=-|src=-|sort=-|asc=False|page=1|size=50" },
         new object[] { "Search", "from=2026-10-01&to=2026-10-05&dir=ASC",
@@ -288,8 +286,6 @@ public class RecordsControllerBindingTests
             "AggregateByHost|hosts={h1},{h2}|from=2026-10-01|to=2026-10-05|risk=中,高|cat=Hardware,Storage|event=7|src=Disk|sev=High" },
         new object[] { "ByHost", "hostIds={h1},{h2}&from=2026-10-01&to=2026-10-05",
             "AggregateByHost|hosts={h1},{h2}|from=2026-10-01|to=2026-10-05|risk=-|cat=-|event=-|src=-|sev=-" },
-        new object[] { "ByHost", "from=not-a-date&to=2026-10-05",
-            "AggregateByHost|hosts={all}|from=0001-01-01|to=2026-10-05|risk=-|cat=-|event=-|src=-|sev=-" },
         new object[] { "ByHost", "from=2026-10-09&to=2026-10-01",
             "AggregateByHost|hosts={all}|from=2026-10-01|to=2026-10-09|risk=-|cat=-|event=-|src=-|sev=-" },
         // 依主機不支援 overdue／statuses／unassigned：帶了也被忽略，與不帶時送給聚合查詢的參數完全相同
@@ -303,8 +299,6 @@ public class RecordsControllerBindingTests
             "AggregateByDate|hosts={h1},{h2}|from=2026-10-01|to=2026-10-05|risk=中,高|cat=Hardware,Storage|event=7|src=Disk|sev=High" },
         new object[] { "ByDate", "from=2026-10-01&to=2026-10-05&overdue=true&unassigned=true",
             "AggregateByDate|hosts={all}|from=2026-10-01|to=2026-10-05|risk=-|cat=-|event=-|src=-|sev=-" },
-        new object[] { "ByDate", "from=not-a-date&to=2026-10-05",
-            "AggregateByDate|hosts={all}|from=0001-01-01|to=2026-10-05|risk=-|cat=-|event=-|src=-|sev=-" },
 
         // 依問題（ByIssue）：聚合查詢只看得到主機與期間（其餘條件在服務層後段篩選）
         new object[] { "ByIssue", Full + "&statuses=open&unassigned=true",
@@ -326,6 +320,30 @@ public class RecordsControllerBindingTests
         Assert.Equal(Expand(expected, rig, LookbackStart()), Summarize(rig, endpoint));
     }
 
+    /// <summary>有填但格式不對的日期回 400，不再靜默當成「未指定」（批次 C7）</summary>
+    [Theory]
+    [InlineData("Search", "from=not-a-date&to=2026-10-05")]
+    [InlineData("ByHost", "from=not-a-date&to=2026-10-05")]
+    [InlineData("ByDate", "from=2026-10-01&to=2026-13-40")]
+    public void 日期格式錯誤_回驗證錯誤且不查詢(string endpoint, string query)
+    {
+        var rig = Rig.Create();
+        var ex = Assert.Throws<DomainException>(() => Invoke(rig, endpoint, query));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Empty(rig.Repo.Calls);
+        Assert.Empty(rig.Aggregates.Calls);
+    }
+
+    [Theory]
+    [InlineData("Search", "hostIds=1,x,3")]
+    [InlineData("ByHost", "hostIds=1,x,3")]
+    public void 主機參數混入壞片段_整個請求回驗證錯誤而非靜默丟掉(string endpoint, string query)
+    {
+        var rig = Rig.Create();
+        Assert.Contains("不是有效的編號", Assert.Throws<DomainException>(() => Invoke(rig, endpoint, query)).Message);
+        Assert.Empty(rig.Repo.Calls);
+    }
+
     [Theory]
     [InlineData("Search", "hostIds=abc")]
     [InlineData("ByHost", "hostIds=abc")]
@@ -338,7 +356,8 @@ public class RecordsControllerBindingTests
         var ex = Assert.Throws<DomainException>(() => Invoke(rig, endpoint, query));
 
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Contains("主機／群組參數格式不正確", ex.Message);
+        // 任何一段不是整數就回 400（批次 C7）；全空的清單由控制器的補防線擋下
+        Assert.True(ex.Message.Contains("不是有效的編號") || ex.Message.Contains("主機／群組參數格式不正確"), ex.Message);
         Assert.Empty(rig.Repo.Calls);
         Assert.Empty(rig.Aggregates.Calls);
     }

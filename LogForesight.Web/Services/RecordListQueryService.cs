@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -569,7 +570,7 @@ public class RecordListQueryService
         };
 
     private static int SeverityRank(string severity) =>
-        Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
+        InputParsing.TryParseDefinedEnum<IssueSeverity>(severity, out var s) ? (int)s : -1;
 
     /// <summary>
     /// 單一問題分組的彙總 DTO（回饋十九輪批次E1，SQL 聚合結果版）。處理概況三態已由
@@ -735,14 +736,14 @@ public class RecordListQueryService
             var parsed = new HashSet<IssueCategory>();
             foreach (var name in request.Categories)
             {
-                if (Enum.TryParse<IssueCategory>(name, ignoreCase: true, out var category)) parsed.Add(category);
+                if (InputParsing.TryParseDefinedEnum<IssueCategory>(name, out var category)) parsed.Add(category);
             }
             if (parsed.Count > 0) categories = parsed;
         }
 
         IssueSeverity? minSeverity = null;
         if (!string.IsNullOrWhiteSpace(request.Severity) &&
-            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var parsedSeverity))
+            InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var parsedSeverity))
         {
             minSeverity = parsedSeverity;
         }
@@ -789,7 +790,7 @@ public class RecordListQueryService
         // 嚴重度門檻（報表「類別×嚴重度」下鑽用，docs/WEB-SPEC.md）：語意同 RecordQueryFilter.MinSeverity
         // 「紀錄中任一問題簽章達到此嚴重度」，這裡的等價物是「問題期間內最高嚴重度達到門檻」
         int? minSeverityRank = !string.IsNullOrWhiteSpace(request.Severity) &&
-            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity)
+            InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var minSeverity)
             ? (int)minSeverity
             : null;
 
@@ -1103,7 +1104,7 @@ public class RecordListQueryService
         }
 
         if (!string.IsNullOrWhiteSpace(request.Severity) &&
-            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity))
+            InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var minSeverity))
         {
             aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
         }
@@ -1165,14 +1166,14 @@ public class RecordListQueryService
             var categories = new List<IssueCategory>();
             foreach (var name in request.Categories)
             {
-                if (Enum.TryParse<IssueCategory>(name, ignoreCase: true, out var category))
+                if (InputParsing.TryParseDefinedEnum<IssueCategory>(name, out var category))
                     categories.Add(category);
             }
             if (categories.Count > 0) filter.Categories = categories;
         }
 
         if (!string.IsNullOrWhiteSpace(request.Severity) &&
-            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var severity))
+            InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var severity))
         {
             filter.MinSeverity = severity;
         }

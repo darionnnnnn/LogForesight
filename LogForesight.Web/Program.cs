@@ -98,6 +98,8 @@ try
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
         options.Filters.Add<ApiExceptionFilter>();
+        // 請求 DTO 的字串與集合沒有宣告上限時套用預設上限（批次 C14）
+        options.Filters.Add<DefaultInputLimitsFilter>();
         ChineseModelBindingMessages.Apply(options);
     });
 

@@ -63,6 +63,8 @@ public static class LegacySeverityRank
     }
 }
 
+/// <remarks>陣列與比對字串屬性收到 null（直接改 DB 的 blob、舊版匯入檔）時一律轉成空值：
+/// 驗證器與比對端都把它們當成非 null 使用，一條壞規則不能讓整批驗證擲例外。</remarks>
 public class KnownIssueRule
 {
     // ── 規則管理欄位（規則外部化，見 docs/RULES-SPEC.md）─────────────────────
@@ -98,8 +100,8 @@ public class KnownIssueRule
     /// init 預設值就是「windows」——不需要額外的載入期正規化程式碼。</summary>
     public string Platform { get; init; } = "windows";
 
-    public string SourcePattern { get; init; } = string.Empty;
-    public int[] EventIds { get; init; } = Array.Empty<int>();
+    public string SourcePattern { get; init => field = value ?? string.Empty; } = string.Empty;
+    public int[] EventIds { get; init => field = value ?? Array.Empty<int>(); } = Array.Empty<int>();
 
     // ── Linux 專用比對欄位（docs/LINUX-RULES.md §1.1/§1.2）─────────────────
     // Windows 規則（Platform="windows"）這三欄恆空；Linux 規則的 SourcePattern/EventIds/
@@ -109,16 +111,16 @@ public class KnownIssueRule
 
     /// <summary>Linux：syslog identifier／process 名稱比對（如 sshd、sudo、kernel），
     /// 語意與 SourcePattern 相同（不分大小寫 Contains）。</summary>
-    public string ProgramPattern { get; init; } = string.Empty;
+    public string ProgramPattern { get; init => field = value ?? string.Empty; } = string.Empty;
 
     /// <summary>Linux：Sentinel 正規化事件名比對（collector 有做正規化的環境用這條路，
     /// 不需要另外比對訊息內容，最穩定）。可空——只靠 ProgramPattern+MessagePatterns 的規則不填。</summary>
-    public string EventNamePattern { get; init; } = string.Empty;
+    public string EventNamePattern { get; init => field = value ?? string.Empty; } = string.Empty;
 
     /// <summary>Linux：訊息子字串清單，OR 語意、不分大小寫 Contains，任一命中即算。
     /// 空陣列＝不看訊息內容，ProgramPattern 命中就算（如帳號異動類事件）。
     /// 刻意用子字串而非 regex——人工在 Web 頁維護時所見即所得，見 docs/LINUX-RULES.md §1.2。</summary>
-    public string[] MessagePatterns { get; init; } = Array.Empty<string>();
+    public string[] MessagePatterns { get; init => field = value ?? Array.Empty<string>(); } = Array.Empty<string>();
 
     // ── PRTG 專用比對欄位 ───────────────────────────────────────────
     /// <summary>PRTG 規則代碼（狀態、磁碟趨勢或資源壓力 rule）。僅 platform=prtg 使用。</summary>
@@ -175,10 +177,10 @@ public class KnownIssueRule
     public string Impact { get; init; } = string.Empty;
 
     /// <summary>常見原因，依可能性高低排序</summary>
-    public string[] LikelyCauses { get; init; } = Array.Empty<string>();
+    public string[] LikelyCauses { get; init => field = value ?? Array.Empty<string>(); } = Array.Empty<string>();
 
     /// <summary>具體處置步驟</summary>
-    public string[] NextSteps { get; init; } = Array.Empty<string>();
+    public string[] NextSteps { get; init => field = value ?? Array.Empty<string>(); } = Array.Empty<string>();
 
     // ── 修改追蹤（2026-07-21 Web 規則維護頁新增）──────────────────────────
     // null = 從未被人改過。用途有二：規則清單標示「已修改的 builtin」，

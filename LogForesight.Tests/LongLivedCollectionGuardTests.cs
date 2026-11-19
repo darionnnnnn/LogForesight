@@ -20,6 +20,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
     /// <summary>欄位（型別完整名稱.欄位名）→ 上限或清除時機。</summary>
     private static readonly Dictionary<string, string> Registry = new(StringComparer.Ordinal)
     {
+        ["LogForesight.Web.Filters.DefaultInputLimitsFilter.UnboundedProperties"] = "以請求 DTO 型別為鍵的反射快取；型別數量固定（程式碼內定義），不隨請求成長",
         ["LogForesight.Core.Analysis.LinuxAuthParser.LoginFailureRuleIds"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Core.Analysis.SentinelQueryBuilder.LinuxNoisyPrograms"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Core.CryptoHelper.ReportedFailures"] = "每種解密失敗只報一次的標記；鍵是憑證名稱（數量有限），重新載入金鑰時清空",

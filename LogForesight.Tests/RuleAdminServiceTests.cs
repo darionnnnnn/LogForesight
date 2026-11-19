@@ -791,6 +791,35 @@ public class RuleAdminServiceTests
         Assert.Equal(string.Empty, dto.RuleId);
     }
 
+    [Fact]
+    public void 規則編號尾端帶空白_視為同一條_不會存出兩條同編號規則()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        service.SaveRule(ValidRequest("custom-dup "));
+        Assert.Single(service.GetRules(), r => r.Id == "custom-dup");
+    }
+
+    [Fact]
+    public void 白名單外的平台被拒_不靜默改成windows()
+    {
+        var request = ValidRequest("custom-platform");
+        request.Platform = "solaris";
+        Assert.Contains("不支援的規則平台", Assert.Throws<DomainException>(() => Create().SaveRule(request)).Message);
+    }
+
+    [Fact]
+    public void 規則的陣列欄位收到null_轉成空值_驗證不擲例外()
+    {
+        var rule = System.Text.Json.JsonSerializer.Deserialize<KnownIssueRule>(
+            """{"Id":"custom-null","LikelyCauses":null,"NextSteps":null,"EventIds":null,"MessagePatterns":null,"ProgramPattern":null}""")!;
+        Assert.Empty(rule.LikelyCauses);
+        Assert.Empty(rule.EventIds);
+        Assert.Equal(string.Empty, rule.ProgramPattern);
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { rule });
+        Assert.Single(outcome.SkippedRules);
+    }
+
     [Theory]
     [InlineData(0, false)]
     [InlineData(-3, false)]

@@ -35,7 +35,7 @@ public class ReportsController : ControllerBase
         var toDefault = DateTime.Today.AddDays(-1);
         var (fromDate, toDate) = ParseDateRange(
             from, to,
-            fromDefault: (ParseDate(to) ?? toDefault).AddDays(-29),
+            fromDefault: (ParseOptionalDate(to) ?? toDefault).AddDays(-29),
             toDefault: toDefault,
             throwOnReversed: true,
             maxDays: 366);

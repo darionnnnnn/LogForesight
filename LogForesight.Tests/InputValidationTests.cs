@@ -70,3 +70,53 @@ public class InputValidationTests
         Assert.Empty(HealthService.InvalidMailSchedules(disabled));
     }
 }
+
+/// <summary>請求 DTO 的預設輸入上限（第 79 輪批次 C14）：沒宣告上限的欄位由全域 filter 套預設值</summary>
+public class DefaultInputLimitsTests
+{
+    private sealed class Sample
+    {
+        public string? Free { get; set; }
+        [System.ComponentModel.DataAnnotations.StringLength(10)] public string? Declared { get; set; }
+        public List<long>? Ids { get; set; }
+    }
+
+    private static void Run(object argument)
+    {
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        var action = new Microsoft.AspNetCore.Mvc.ActionContext(http, new Microsoft.AspNetCore.Routing.RouteData(),
+            new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor());
+        var context = new Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext(action,
+            new List<Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata>(), new Dictionary<string, object?> { ["request"] = argument }, controller: null!);
+        new LogForesight.Web.Filters.DefaultInputLimitsFilter().OnActionExecuting(context);
+    }
+
+    [Fact]
+    public void 未宣告上限的欄位只看類型_有宣告的交給自己的屬性()
+    {
+        var names = LogForesight.Web.Filters.DefaultInputLimitsFilter.FindUnbounded(typeof(Sample)).Select(p => p.Name).ToList();
+        Assert.Contains("Free", names);
+        Assert.Contains("Ids", names);
+        Assert.DoesNotContain("Declared", names);
+    }
+
+    [Fact]
+    public void 字串剛好在預設上限通過_多一字被拒()
+    {
+        var limit = LogForesight.Web.Filters.DefaultInputLimitsFilter.DefaultMaxStringLength;
+        var request = new LogForesight.Web.Models.Dto.WorkOrderCandidatesRequest { Source = new string('x', limit) };
+        Run(request);
+        request.Source = new string('x', limit + 1);
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() => Run(request));
+    }
+
+    [Fact]
+    public void 集合剛好在預設上限通過_多一筆被拒()
+    {
+        var limit = LogForesight.Web.Filters.DefaultInputLimitsFilter.DefaultMaxCollectionCount;
+        var request = new LogForesight.Web.Models.Dto.WorkOrderCandidatesRequest { HostIds = Enumerable.Range(0, limit).Select(i => (long)i).ToList() };
+        Run(request);
+        request.HostIds.Add(-1);
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() => Run(request));
+    }
+}
