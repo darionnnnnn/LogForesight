@@ -505,7 +505,7 @@ public static class KnownIssueCatalog
             bool programMatch = !string.IsNullOrEmpty(rule.ProgramPattern) &&
                 program.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase) &&
                 (rule.MessagePatterns.Length == 0 ||
-                 rule.MessagePatterns.Any(p => message.Contains(p, StringComparison.OrdinalIgnoreCase)));
+                 rule.MessagePatterns.Any(p => MessagePatternHits(message, p)));
 
             if (eventNameMatch || programMatch)
             {
@@ -515,6 +515,15 @@ public static class KnownIssueCatalog
 
         return null;
     }
+
+    /// <summary>
+    /// 訊息片語的本地比對：不分大小寫的子字串，但訊息視為前面有一個空白，
+    /// 讓以空白開頭的片語（如 <c>" Ban "</c>）表示「詞首邊界」——能命中訊息開頭的 Ban、
+    /// 又不會命中 Unban 的結尾（子字串比對下 <c>"Ban "</c> 會吃到 <c>"Unban "</c>）。
+    /// 沒有前導空白的片語行為不變。下推到 Sentinel 的整詞片語本來就不會命中 Unban。
+    /// </summary>
+    internal static bool MessagePatternHits(string message, string pattern) =>
+        (" " + message).Contains(pattern, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>用規則表為聚合後的事件簽章標記類別、嚴重度與命中的規則 Id</summary>
     public static void Classify(LogIssueSignature signature)

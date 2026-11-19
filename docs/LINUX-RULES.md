@@ -64,6 +64,8 @@ Linux 事件命中一條規則 ＝
 - **遮蔽偵測按平台分區**：Windows 規則永遠不會遮蔽 Linux 規則，反之亦然。Linux 分區內，
   排在後面的規則若其 program 比對範圍被前面啟用規則的 `ProgramPattern` 涵蓋（前者是後者的
   子字串）且前面那條 `MessagePatterns` 為空（不看訊息＝全吃），判為永不命中。
+- **下推落差警告**：片語頭或尾是更長詞的片段（如 `Fail`）時警告，因為本地子字串會命中、Sentinel 整詞片語取不到；
+  只警告、規則照樣可存（見 RULES-SPEC）。
 
 ### 欄位長度上限（`RuleSchemaLimits`）
 
@@ -110,7 +112,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 |---|---|---|---|
 | sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；單日 ≥10 次視為暴力破解 | High |
 | sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
-| sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
+| sudo | authentication failure(s) / incorrect password attempt(s)（單複數都列，下推的整詞片語才取得到） | sudo 提權驗證失敗（≥5 次） | Medium |
 | su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
 | `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
 | `usermod` | （不看訊息） | 帳號屬性修改 | High |
@@ -123,7 +125,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 | `mdadm` | DegradedArray／Fail event／FailSpare event | 軟體 RAID 陣列降級或成員失效 | 高（重大） |
 | `kernel` | Link is Down／NETDEV WATCHDOG | 網卡斷線或傳輸逾時（≥3 次） | Medium |
 | `crontab` | REPLACE／BEGIN EDIT | 排程被編輯 — 持久化手法（對齊 Windows 4698 語意） | Medium |
-| `fail2ban` | Ban | 來源被封鎖 — **收集用**，與 ssh 暴力破解規則互為佐證；對外主機日常有量故為 Low | Low |
+| `fail2ban` | ` Ban `（詞首邊界，不命中 Unban） | 來源被封鎖 — **收集用**，與 ssh 暴力破解規則互為佐證；對外主機日常有量故為 Low | Low |
 | `rsyslogd` | begin to drop messages／suspended | **日誌管線掉訊息 ＝ 監控盲區**（log 遺失會讓其他偵測失效） | Medium |
 | gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
 | auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |

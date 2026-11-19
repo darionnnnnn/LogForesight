@@ -500,6 +500,14 @@ key 出現在行首或空白之後、其後緊接半形或全形冒號；value �
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
+**資訊等級明列清單**（`ChannelPolicy.InformationalAllowList`，`ChannelCatalog` 內，不是設定）：
+本機 System／Application 頻道只收錯誤與警告，但「安裝新服務 7045」「事件日誌清除 104」的提供者中繼資料等級是資訊，
+所以以（提供者樣式＋事件編號）明列：Service Control Manager 7045、EventLog（含 Microsoft-Windows-Eventlog）104。
+Security 另明列 Eventlog／Security-Auditing 的 1102，停用或刪除任一條 1102 規則都不影響本機收取。
+清單內的資訊等級事件被收錄並照一般規則比對；清單外一律不收，清單為空時等同純頻道政策。
+刻意不由規則的事件編號推導：NTFS 98 等同編號在資訊等級是每天都有的健康訊息，整個編號收會變成假告警。
+新增項目前先在 Windows 上以 `EventProviderMetadataWindowsTests` 讀提供者中繼資料確認等級與訊息樣板（僅 Windows 執行）。
+
 #### Linux syslog（Sentinel 取數＋SSH 攻擊鏈關聯）
 
 Linux 規則以 `ProgramPattern`（syslog identifier 子字串）＋`MessagePatterns`（訊息子字串 OR）
@@ -522,7 +530,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
 | 伺服器角色描述 | `Program.cs` 的 `ServerDescription`（自行填寫） | 同一事件在 AD 網域控制站和一般檔案伺服器上的嚴重性不同 |
 | 稽核事件總量趨勢 | `TrendAnalyzer` 獨立比對（4625 等稽核事件不計入錯誤數） | 安全事件總量暴增時即使個別簽章不顯眼也會告警 |
 
-**標籤值擷取邊界**：帳號、登入類型、狀態碼、工作站、來源位址等欄位依標籤擷取，標籤在整則訊息中的每個出現處都會處理。Sentinel／NetIQ 送來的 Windows 事件訊息主體是單行，欄位間以 2～4 個空白分隔，冒號有半形與全形，所以值從標籤後第一個非空白字元起，讀到換行、tab、連續兩個以上空白或訊息結尾為止，值內單一空白保留。值以冒號結尾（欄位為空、讀到下一個標籤）、長度超過 128 字或為 `-` 一律視為空值。同名標籤出現多次（例如 4625 的「主旨」與「登入失敗的帳戶」各有一個帳戶名稱）時取最後一個非空值；`Status` 不會讀到 `Sub Status`（「狀態」不會讀到「子狀態」）的值。
+**標籤值擷取邊界**：帳號、登入類型、狀態碼、工作站、來源位址等欄位依標籤擷取，標籤在整則訊息中的每個出現處都會處理。Sentinel／NetIQ 送來的 Windows 事件訊息主體是單行，欄位間以 2～4 個空白分隔，冒號有半形與全形，所以值從標籤後第一個非空白字元起，讀到換行、tab、連續兩個以上空白或訊息結尾為止，值內單一空白保留。值以冒號結尾（欄位為空、讀到下一個標籤）或為 `-` 一律視為空值；長度超過 128 字時，帳號類標籤截到 128 字後保留（切點落在代理對中間時往內退一個字元），其他標籤視為空值。同名標籤出現多次（例如 4625 的「主旨」與「登入失敗的帳戶」各有一個帳戶名稱）時取最後一個非空值；`Status` 不會讀到 `Sub Status`（「狀態」不會讀到「子狀態」）的值。
 
 > 注意：classic EventLog API 讀取新式 **Critical 等級**事件（如 Kernel-Power 41）時，
 > `EntryType` 可能為 0（列舉中沒有 Critical 值）。程式已特別納入這類事件並計入錯誤數，

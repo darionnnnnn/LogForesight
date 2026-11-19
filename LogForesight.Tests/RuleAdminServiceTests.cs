@@ -92,7 +92,7 @@ public class RuleAdminServiceTests
         var status = service.GetImportStatus();
         Assert.True(status.HasUpdate);
         Assert.Equal(11, status.CurrentSeedVersion);
-        Assert.Equal(12, status.LatestSeedVersion);
+        Assert.Equal(KnownIssueSeed.Version, status.LatestSeedVersion);
 
         var result = service.ApplyImport(overwriteBuiltin: false);
 

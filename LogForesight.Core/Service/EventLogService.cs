@@ -192,7 +192,7 @@ public class EventLogService
                         }
 
                         var entryType = EventRecordMapper.MapEntryType(record.Level, record.Keywords, isAuditChannel);
-                        if (!ShouldInclude(policy, entryType, record.Id, securityExtraEventIds))
+                        if (!ShouldInclude(policy, entryType, record.ProviderName ?? string.Empty, record.Id, securityExtraEventIds))
                         {
                             continue;
                         }
@@ -297,7 +297,7 @@ public class EventLogService
                 int eventId = (int)(entry.InstanceId & 0xFFFF);
                 var entryType = EventRecordMapper.FromClassic(entry.EntryType);
 
-                if (!ShouldInclude(policy, entryType, eventId, securityExtraEventIds))
+                if (!ShouldInclude(policy, entryType, entry.Source ?? string.Empty, eventId, securityExtraEventIds))
                 {
                     continue;
                 }
@@ -417,11 +417,17 @@ public class EventLogService
         return chunks;
     }
 
-    private static bool ShouldInclude(ChannelPolicy policy, LogEntryType type, int eventId, int[]? securityExtraEventIds)
+    internal static bool ShouldInclude(ChannelPolicy policy, LogEntryType type, string source, int eventId, int[]? securityExtraEventIds)
     {
         // Critical 等級事件 EntryType 為 0（LogEntryType 列舉沒有 Critical 值，見 EventRecordMapper），
         // 這類事件最嚴重，所有頻道一律收，絕不能被過濾掉
         if (type is LogEntryType.Error or LogEntryType.Warning || (int)type == 0)
+        {
+            return true;
+        }
+
+        // 明列清單（提供者＋事件編號）：資訊等級也收，清單外的資訊等級事件不受影響
+        if (policy.IsInformationalAllowed(source, eventId))
         {
             return true;
         }
