@@ -33,6 +33,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Core.Service.HostDayPostProcessor.PermissionChangeEventTypes"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Core.Service.HostDayWorkflowService._touched"] = "分析主流程每趟新建一個實例、趟結束即可回收；站台常駐實例只在還原路徑寫入且不追蹤（trackTouched: false）",
         ["LogForesight.Core.Service.PermissionChangeExtractor.KnownMultiWordKeys"] = "常數查找表：型別初始化時建好，之後只讀",
+        ["LogForesight.Core.Service.RunLogCapture.Sinks"] = "進行中的執行紀錄 recorder（逐實例識別→分派委派）；Finish／Dispose／結束失敗都會移除，數量等於同時進行中的執行數（取數與 AI 各一趟）",
         ["LogForesight.Core.Service.PrtgAddressResolver._cache"] = "位址解析快取上限 1 萬筆，正快取 5 分鐘、負快取 60 秒",
         ["LogForesight.Core.Service.PrtgLegacyJsonTransferValidator+StreamingParser.ArrayProperties"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Core.Service.PrtgOperationScope.Active"] = "進行中的 PRTG 操作範圍；每個範圍以 using／finally 結束時移除",

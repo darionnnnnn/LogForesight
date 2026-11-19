@@ -114,9 +114,6 @@ public class LfDbContext : DbContext
 
     private void LogSkipped(IEnumerable<(string Entity, string Column, int Length, int Max)> skipped)
     {
-        // 執行紀錄的 NLog target 會寫同一個資料庫：呼叫端已開明確交易時，在交易內記執行紀錄會互鎖，
-        // 這時只寫到檔案與主控台（暫停執行紀錄擷取），不開交易時才一併記進執行紀錄。
-        using var _ = Database.CurrentTransaction is null ? null : BatchRunRecorder.SuppressCapture();
         foreach (var g in skipped.GroupBy(x => (x.Entity, x.Column)))
             Log.Warn("資料庫寫入略過 {Count} 筆：{Entity}.{Column} 是鍵／索引欄，長度（最長 {Length}）超過上限 {Max}，截斷會與其他鍵撞號，該筆不寫入",
                 g.Count(), g.Key.Entity, g.Key.Column, g.Max(x => x.Length), g.First().Max);

@@ -104,7 +104,7 @@ public static class NetiqSourceAttempt
                             var previous = ParsePreviousReceipt(row.Length, row.Line, receipt, date, out var corruption);
                             if (previous == null)
                             {
-                                // 警告留到交易提交後再記：執行紀錄的 NLog target 會寫同一個資料庫，交易中記 log 會與自己的寫入鎖互等
+                                // 警告留到交易提交後再記：執行策略可能重跑整段 lambda，交易內直接記會在重試時重複
                                 repaired.Add((key, corruption, receipt.HostId));
                                 line = JsonSerializer.Serialize(receipt.AfterPrevious(null));
                                 var repair = new LogLineRow { Seq = row.Seq, LogKey = key, Line = line, CreatedAt = DateTime.Now };

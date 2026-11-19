@@ -257,7 +257,7 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void 明確交易內略過鍵欄超長_警告不進執行紀錄擷取()
+    public void 明確交易內略過鍵欄超長_警告照常分派給執行紀錄()
     {
         using var fx = new EfSqliteFixture();
         using var ctx = fx.NewContext();
@@ -265,27 +265,27 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
         row.LogKey = new string('x', Max(ctx, nameof(LogLineRow), nameof(LogLineRow.LogKey)) + 1);
         ctx.Add(row);
 
-        // 交易內記 log 會讓執行紀錄 target 回頭寫同一個資料庫；這裡以一個「帶執行紀錄範圍的 target」驗證不被擷取。
-        var scoped = new List<string>();
-        var target = new MethodCallTarget("lf-scope-" + Guid.NewGuid().ToString("N"),
-            (logEvent, _) => { if (ScopeContext.TryGetProperty("lf_run_scope", out var v) && v?.ToString() == "token") scoped.Add(logEvent.FormattedMessage); });
-        var config = LogManager.Configuration ??= new LoggingConfiguration();
-        config.AddTarget(target);
-        config.AddRule(NLog.LogLevel.Warn, NLog.LogLevel.Fatal, target, ContextLogger);
-        LogManager.ReconfigExistingLoggers();
+        // 常駐 target 只做記憶體內的分派與入佇列、不寫庫，交易內記 log 不會與交易互鎖，所以不再暫停擷取。
+        // 以登記一個帶識別的分派委派驗證：交易內的警告確實送進該識別的 recorder。
+        RunLogCapture.EnsureInstalled();
+        var token = "tx-" + Guid.NewGuid().ToString("N");
+        var dispatched = new List<string>();
+        RunLogCapture.Register(token, e => { lock (dispatched) dispatched.Add(e.FormattedMessage); });
         try
         {
-            using var scope = ScopeContext.PushProperty("lf_run_scope", "token");
+            using var scope = ScopeContext.PushProperty("lf_run_scope", token);
             using var tx = ctx.Database.BeginTransaction();
             ctx.SaveChanges();
             tx.Commit();
-            Assert.Empty(scoped);
         }
         finally
         {
-            config.RemoveTarget(target.Name);
-            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
-            LogManager.ReconfigExistingLoggers();
+            RunLogCapture.Unregister(token);
+        }
+        lock (dispatched)
+        {
+            var message = Assert.Single(dispatched);
+            Assert.Contains("LogLineRow.LogKey", message);
         }
     }
 

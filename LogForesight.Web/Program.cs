@@ -126,6 +126,9 @@ try
 
     var app = builder.Build();
 
+    // 執行紀錄的常駐 NLog target：全行程一個，啟動時裝一次（recorder 建構時也會冪等補裝）
+    RunLogCapture.EnsureInstalled();
+
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())
     {

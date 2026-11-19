@@ -83,9 +83,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   objid 是發出訊息的 sensor，同一天一顆 sensor 有很多列——拿它去重會靜默丟掉第二筆以後）；
   單次大 `count` 不一定取得齊（少於 `treesize` 就是被截斷，不比對就是靜默少一半）。
   去重鍵要對到該表真正的唯一鍵，單發大查詢一律比對 `treesize` 並在取不齊時出聲。
-- 不要讓兩個 `BatchRunRecorder` 共用可碰撞的識別：附掛／卸除 NLog target 必須取全域設定的互斥鎖，
-  target 名稱與 scope 屬性要帶**逐實例**識別碼、不能只用 RunId——取數與 AI 排程本來就能並行，
-  兩個 recorder 同時活著時先掛的那趟會被後來者的重設抹掉，執行紀錄靜默變成「這趟沒有任何警告」。
+- 不要在執行期增減執行紀錄的 NLog target 或規則，也不要讓 recorder 共用可碰撞的識別：全行程只有 `RunLogCapture` 安裝的一個常駐 target，
+  各 `BatchRunRecorder` 以 `ScopeContext` 的逐實例識別碼（不是 RunId）登記並被分派，沒有識別、識別為空字串或已登出的事件一律不處理；
+  target 的 `Write` 只做記憶體內計數與入該 recorder 的有界佇列，寫庫在背景執行緒、`Finish` 前排空，不得在記錄路徑上同步呼叫資料庫。
 - 不要拿 `/api/run-activity` 的 `isRunning` 當互斥判斷：它是「取數或 AI 任一在跑」的聯集，只能決定
   告示出不出現；判斷某個動作現在能不能做一律看 `isFetchRun`（後端只在取數執行中擋主機更新，
   AI 單獨在跑時那個動作是允許的）。

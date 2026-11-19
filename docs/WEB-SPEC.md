@@ -3576,15 +3576,23 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
 
 ### 執行紀錄只收自己這趟的事件
 
-`BatchRunRecorder` 掛的 NLog target 註冊的是**全行程 Warn 以上**規則。夜間批次一跑就是數小時，
-這期間站台仍在服務——不過濾的話，使用者開頁面觸發的慢 SQL、儀表板互動 AI 的逾時、
+執行紀錄的 NLog target（`RunLogCapture` 的 `RunLogTarget`）是**全行程唯一的常駐 target**，掛一條 Warn 以上規則：
+站台啟動時（`Program.cs`）安裝一次，`BatchRunRecorder` 建構時冪等補裝，之後全域設定的規則數與 target 數不隨執行增減。
+夜間批次一跑就是數小時，這期間站台仍在服務——不過濾的話，使用者開頁面觸發的慢 SQL、儀表板互動 AI 的逾時、
 AI 分析排程的失敗，全都會被記進「這趟取數執行」的執行詳情，並讓它被判成「有警告」。
 
-因此 recorder 建立時推入 `ScopeContext.PushProperty("lf_run_scope", token)`（`token` 是該 recorder 實例的 GUID 識別碼，
-不是 runId——不同 store 可能配出相同 runId），
-target 的 `Write` **只收 scope 內識別碼相符的事件**，其餘丟棄
-（完整診斷仍在 `logs\logforesight.log`）。同一行程同時有取數與 AI 兩個 recorder 時各認各的，
-target 名稱也帶 runId 與識別碼以免互相移除。
+因此 recorder 建立時登記自己（`RunLogCapture.Register(token, …)`）並推入 `ScopeContext.PushProperty("lf_run_scope", token)`
+（`token` 是該 recorder 實例的 GUID 識別碼，不是 runId——不同 store 可能配出相同 runId），
+target 的 `Write` 依 scope 識別碼分派給對應的 recorder，**沒有識別、識別為空字串、識別未登記或已登出的事件一律丟棄**
+（完整診斷仍在 `logs\logforesight.log`）。同一行程同時有取數與 AI 兩個 recorder 時各認各的；範圍內以
+`Task.Run`、`Parallel.ForEachAsync` 開出的工作沿 `AsyncLocal` 繼承識別，警告進同一趟。
+
+**寫入與記錄解耦**：`Write` 只在記錄的執行緒上做記憶體內的 `WarnCount`／`ErrorCount` 計數並把事件放進該 recorder 的
+有界佇列（`RunLogQueue`，未寫出的擷取事件上限 2000 筆），由專屬背景執行緒依序寫庫——記錄呼叫不等資料庫，
+所以交易內、持鎖中記警告不會與寫入互鎖。里程碑與執行輸出等 recorder 親自寫的行走同一條佇列（保有先後順序，不受上限約束）。
+`Finish` 在寫結束列前停止收件並排空佇列，回傳時所有已記錄的行都已落庫；結束後才記的事件不收。
+佇列滿時新來的擷取事件被丟棄並累計（計數不受影響，只少診斷行），寫入端補一筆 Warn 說明
+（logger `RunLogCapture`，「寫入佇列已滿……有 N 筆警告以上紀錄沒有寫進這趟執行紀錄」），並計入該趟 `WarnCount`。
 
 > **`ScopeContext` 是 `AsyncLocal`：只沿非同步呼叫鏈往下傳，不會往上傳。**
 > recorder 因此**必須在涵蓋整趟執行的方法本體內建構**（現況是 `AnalysisOrchestrator.RunAsync`）。
