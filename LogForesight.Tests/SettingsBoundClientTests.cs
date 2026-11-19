@@ -1,4 +1,5 @@
 using LogForesight.Web.Services;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -96,29 +97,6 @@ public class SettingsBoundClientTests
         public void Dispose() => Interlocked.Increment(ref DisposeCount);
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
-    {
-        private readonly List<(ManualTimer Timer, TimeSpan Due)> _timers = new();
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            var timer = new ManualTimer(callback, state);
-            _timers.Add((timer, dueTime));
-            return timer;
-        }
-        public TimeSpan? LastDue => _timers.Count == 0 ? null : _timers[^1].Due;
-        /// <summary>觸發所有尚未釋放的計時器。</summary>
-        public void FireAll() { foreach (var (t, _) in _timers.ToList()) t.Fire(); }
-    }
-
-    private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
-    {
-        private bool _disposed;
-        public void Fire() { if (!_disposed) callback(state); }
-        public bool Change(TimeSpan dueTime, TimeSpan period) => true;
-        public void Dispose() => _disposed = true;
-        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
-    }
-
     [Fact]
     public void 立即釋放模式_設定改變後舊客戶端被釋放且新的沒被釋放()
     {
@@ -149,18 +127,18 @@ public class SettingsBoundClientTests
     [Fact]
     public void 寬限期內不釋放_到期才釋放()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new FakeTimeProvider();
         var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
         var first = binding.Get("a")!;
         binding.Get("b");
 
-        Assert.Equal(TimeSpan.FromMinutes(2), clock.LastDue);
-        Assert.Equal(0, first.DisposeCount);   // 進行中的請求還在用它，不能立刻釋放
+        clock.Advance(TimeSpan.FromMinutes(2) - TimeSpan.FromSeconds(1));
+        Assert.Equal(0, first.DisposeCount);   // 寬限期內：進行中的請求還在用它，不能立刻釋放
 
-        clock.FireAll();
+        clock.Advance(TimeSpan.FromSeconds(1));
 
-        Assert.Equal(1, first.DisposeCount);
-        clock.FireAll();
+        Assert.Equal(1, first.DisposeCount);   // 剛好到期就釋放
+        clock.Advance(TimeSpan.FromMinutes(10));
         Assert.Equal(1, first.DisposeCount);   // 只釋放一次
     }
 
@@ -179,7 +157,7 @@ public class SettingsBoundClientTests
     [Fact]
     public void Dispose立即釋放目前的與寬限期中的舊客戶端_之後可重新建立()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new FakeTimeProvider();
         var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
         var first = binding.Get("a")!;
         var second = binding.Get("b")!;

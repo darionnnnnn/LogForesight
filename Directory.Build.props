@@ -17,6 +17,12 @@
     <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>
   <!--
+    分析規則升為建置錯誤的清單在根目錄 .editorconfig（正式碼；測試專案另行放寬）：CA2100／EF1002／EF1003（SQL 指令字串串接，
+    值一律走參數）、CA5394（不安全亂數）、CA1310（文化相關字串比對）、CA5359（憑證驗證一律放行）。
+    理由：這幾類問題在測試環境看不出來（SQLite 較寬鬆、測試不走真實憑證與文化），等到正式環境才爆，所以交給編譯器擋；
+    合法使用處以 [SuppressMessage(…, Justification = "…")] 附理由放行，不在 .editorconfig 整檔關掉。
+  -->
+  <!--
     禁用 API 以符號比對（BannedSymbols.txt），別名、using static、換行寫法都擋得住；字串掃描守門擋不住這些。
     合法的使用處以 [SuppressMessage("ApiDesign", "RS0030", Justification = "…")] 附理由放行，不用白名單檔。
   -->

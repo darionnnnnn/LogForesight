@@ -26,7 +26,8 @@ let selectedAdd = new Set();       // 加入預覽勾選（hostId），跨頁保
 
 // ── 分頁切換 ─────────────────────────────────────────────────────────────────
 
-bindTabs(document.getElementById('group-tabs'));
+// 頁籤名稱各自唯一，網址 #user-groups／#host-groups／#access 直接開啟對應頁籤；成員對話框那組（members-tabs）不吃頁面 hash
+bindTabs(document.getElementById('group-tabs'), { hash: true });
 
 // ── 載入與渲染 ───────────────────────────────────────────────────────────────
 

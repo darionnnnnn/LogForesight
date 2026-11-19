@@ -41,9 +41,8 @@ public sealed class PrtgEffectivenessService
             .Select(m => m.DeviceObjid);
         var okSensors = ctx.PrtgSensors.AsNoTracking().Where(s => okDevices.Contains(s.DeviceObjid)).Select(s => s.Objid);
         var lowCoverageSampledHours = ctx.PrtgValues.AsNoTracking()
+            .Where(PrtgValueRowUsability.SampledLowCoverage)
             .Count(v => v.PeriodStart >= start && v.PeriodStart < endExclusive
-                && v.Quality == PrtgDataQuality.Sampled
-                && v.Coverage < PrtgValueUsability.SampledMinCoverage
                 && okSensors.Contains(v.SensorObjid));
         var recordIds = findingQuery.Select(i => i.RecordId).Distinct().OrderBy(id => id)
             .Take(MaxPayloadRecords + 1).ToArray();

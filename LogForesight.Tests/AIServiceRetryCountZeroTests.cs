@@ -81,6 +81,33 @@ public sealed class AIServiceRetryCountZeroTests
         Assert.Equal(1, handler.RequestCount);
     }
 
+    /// <summary>E4：回應超過整包讀取上限回失敗結果並說明、不重試（重試次數 3 也只打一次）；未超限正常（邊界兩側）。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 回應超過讀取上限_回失敗說明且不重試_未超限正常(bool oversize)
+    {
+        var handler = new ScriptedHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"accepted\"}}],\"pad\":\"" + new string('x', oversize ? 8192 : 1) + "\"}",
+                Encoding.UTF8, "application/json")
+        }));
+        var service = new AIService(Settings(retryCount: 3), handler, NullAiRequestGate.Instance, maxResponseBytes: 1024);
+
+        var response = await service.ChatAsync("status check");
+
+        Assert.Equal(1, handler.RequestCount);
+        if (!oversize)
+        {
+            Assert.True(response.Success, response.Error);
+            return;
+        }
+        Assert.False(response.Success);
+        Assert.Contains("上限", response.Error ?? string.Empty);
+        Assert.Contains("不會改變", response.Error ?? string.Empty);
+    }
+
     private static AiSettings Settings(int retryCount) => new()
     {
         BaseUrl = "http://localhost:1",

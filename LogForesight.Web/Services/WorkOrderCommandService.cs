@@ -568,7 +568,7 @@ public class WorkOrderCommandService
             .Select(g => new WorkOrderConflictDto
             {
                 HandlerId = g.Key,
-                HandlerName = usersById.TryGetValue(g.Key, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, g.Key),
+                HandlerName = NameFormat.UserLabel(_displayNames, usersById.GetValueOrDefault(g.Key)),
                 HostCount = g.Count()
             })
             .OrderBy(c => c.HandlerName, StringComparer.OrdinalIgnoreCase)
@@ -615,7 +615,7 @@ public class WorkOrderCommandService
             // 依 id 記住已算過的名稱：略過主機清單逐台取原處理人名稱，顯示名稱規則每次都讀系統設定
             NameOf = id => nameCache.TryGetValue(id, out var cached)
                 ? cached
-                : nameCache[id] = usersById.TryGetValue(id, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, id)
+                : nameCache[id] = NameFormat.UserLabel(_displayNames, usersById.GetValueOrDefault(id))
         };
     }
 

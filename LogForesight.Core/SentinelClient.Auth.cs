@@ -36,6 +36,7 @@ public sealed partial class SentinelClient
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
+            if (ResponseTooLarge(ex) is { } tooLarge) throw tooLarge;
             if (CertificateRejection(ex) is { } rejection)
                 throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗：{rejection}", ex,
                     SentinelClientException.CertificateRejectedCode);
@@ -109,6 +110,7 @@ public sealed partial class SentinelClient
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
+            if (ResponseTooLarge(ex) is { } tooLarge) throw tooLarge;
             if (CertificateRejection(ex) is { } rejection)
                 throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗：{rejection}", ex,
                     SentinelClientException.CertificateRejectedCode);

@@ -124,7 +124,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   外部來源（PRTG、NetIQ…）沒有長度保證，超長在 SQL Server 端會讓整批寫入一起擲截斷例外、
   SQLite 端卻靜默通過——兩個後端行為分岔，測試環境永遠看不到，正式機才爆。
 - 不要另 new 一個不帶閘道的 `AIService`：所有 AI 呼叫一律經全站 `IAiRequestGate`（互動優先、背景上限隨 `AiConcurrency`），
-  建構點都要帶 `gate:`（`AiRequestGateTests` 掃 `new AIService(`）。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
+  `AIService` 的建構子都把閘道列為必填，漏帶就編譯不過。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
   `AIService` 內有逐實例的請求佇列，共用一個等於把全輪串成單線、`AiConcurrency` 形同失效（設定一輪只解析一次即可，實例每分片一個）。
   AI 待補順序與閒置原因各只有一份判定（`SelectNextBatch`、`BlockingIdleReason`），不要在控制器或畫面再算一次。
 - 不要在測試 `new PrtgRequestBudget()`：真時鐘的配額會讓全量並行的測試彼此排隊到逾時，一律 `new PrtgRequestBudget(new AcceleratedPrtgClock())`（`PrtgRequestBudget.Shared` 在測試組件載入時已換成加速時鐘）。也不要讓並行寫入共用 `EfSqliteFixture` 那一條記憶體連線，並行案例用檔案型 DB。

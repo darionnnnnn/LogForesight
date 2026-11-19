@@ -499,7 +499,7 @@ public class MailNotificationService
             if (!settings.MailEnabled) return;
 
             var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                .Select(EligibleEmail)
+                .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
                 .Where(e => e != null)
                 .Select(e => e!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1012,6 +1012,18 @@ public class MailNotificationService
         return user.Email!.Trim();
     }
 
+    /// <summary>
+    /// 同 <see cref="EligibleEmail"/>，但啟用中、信箱有填卻不是單一位址時記一行警告（依路徑標示），
+    /// 讓收件人被靜默略過的原因查得到；停用帳號是正常略過，不警告。
+    /// </summary>
+    internal static string? EligibleEmailOrWarn(WebUser? user, string path)
+    {
+        var email = EligibleEmail(user);
+        if (email == null && user is { Active: true } && !string.IsNullOrWhiteSpace(user.Email))
+            Log.Warn("[Mail] {Path}：使用者 {UserId} 的信箱不是單一電子郵件位址，略過此收件人。", path, user.UserId);
+        return email;
+    }
+
     private static readonly System.Text.RegularExpressions.Regex TemplateToken = new(
         @"\{(site|host|date|risk|type|summary)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -1115,7 +1127,7 @@ public class MailNotificationService
 
                 foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
-                    var email = EligibleEmail(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId));
+                    var email = EligibleEmailOrWarn(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId), "主機負責人通知");
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
 
                     if (!views.TryGetValue(email, out var existing))

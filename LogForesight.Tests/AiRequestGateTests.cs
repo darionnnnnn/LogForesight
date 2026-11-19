@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using System.Reflection;
@@ -169,31 +168,6 @@ public sealed class AiRequestGateTests
     }
 
     [Fact]
-    public void 正式程式碼每個AIService建構都帶全站閘道()
-    {
-        var root = FindRepoRoot();
-        var sources = new[] { "LogForesight.Core", "LogForesight.Web" }
-            .SelectMany(dir => Directory.EnumerateFiles(Path.Combine(root, dir), "*.cs", SearchOption.AllDirectories))
-            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
-                           !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"));
-
-        var calls = new List<string>();
-        foreach (var path in sources)
-        {
-            var text = File.ReadAllText(path);
-            foreach (Match match in Regex.Matches(text, @"new AIService\("))
-            {
-                var end = text.IndexOf(';', match.Index);
-                var call = text[match.Index..end];
-                calls.Add($"{Path.GetFileName(path)}: {(call.Contains("gate:") ? "ok" : "缺 gate")}");
-            }
-        }
-
-        Assert.NotEmpty(calls);
-        Assert.All(calls, call => Assert.EndsWith("ok", call));
-    }
-
-    [Fact]
     public void 正式DI解析的三個AI消費端拿到全站閘道而非不節流替身()
     {
         var settings = new WebAppSettings();
@@ -250,14 +224,6 @@ public sealed class AiRequestGateTests
         public CancellationToken ApplicationStopping => CancellationToken.None;
         public CancellationToken ApplicationStopped => CancellationToken.None;
         public void StopApplication() { }
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
-        Assert.NotNull(dir);
-        return dir!.FullName;
     }
 
     private static AiSettings Settings() => new()

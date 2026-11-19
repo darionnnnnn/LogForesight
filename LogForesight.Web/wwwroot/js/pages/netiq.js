@@ -16,7 +16,7 @@ import { copyText } from '../core/clipboard.js';
 import { readNumberFields } from '../core/number-field.js';
 import { setFieldError, clearFieldError } from '../core/field-errors.js';
 
-bindTabs(document.getElementById('netiq-tabs'));
+bindTabs(document.getElementById('netiq-tabs'), { hash: true });
 initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
 
 // ── Sentinel 清單與編輯 ──────────────────────────────────────────────────────

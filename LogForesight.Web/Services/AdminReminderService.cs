@@ -204,7 +204,7 @@ public sealed class AdminReminderService
             if (settings.EscalationReminderDays > 0 && settings.MailEnabled && settings.MailNotifyWorkOrders && mailTotal > 0)
             {
                 recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                    .Where(u => !string.IsNullOrWhiteSpace(u.Email))
+                    .Where(u => MailNotificationService.EligibleEmailOrWarn(u, "管理者提醒") != null)
                     .Select(u => u.UserId)
                     .Distinct()
                     .OrderBy(id => id)

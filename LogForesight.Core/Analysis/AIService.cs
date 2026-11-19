@@ -138,6 +138,10 @@ public class AIService : IAiService, IDisposable
     /// <summary>強制格式啟用狀態的跨呼叫記憶（取自閘道，建構時取一次；見 <see cref="AiGrammarMemory"/>）</summary>
     private readonly AiGrammarMemory _grammarMemory;
 
+    /// <summary>整包讀取的回應上限；超過時回失敗結果並說明，不重試（<see cref="HttpResponseLimit"/>）</summary>
+    internal const long DefaultMaxResponseBytes = 16L * 1024 * 1024;
+    private readonly long _maxResponseBytes;
+
     public AIService(AiSettings settings, IAiRequestGate gate, IPromptDumper? dumper = null,
         IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
         : this(settings, CreateDefaultHandler(), gate, dumper, usageMeter, lane)
@@ -145,8 +149,10 @@ public class AIService : IAiService, IDisposable
     }
 
     internal AIService(AiSettings settings, HttpMessageHandler handler, IAiRequestGate gate,
-        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
+        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background,
+        long maxResponseBytes = DefaultMaxResponseBytes)
     {
+        _maxResponseBytes = maxResponseBytes;
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
         _gate = gate ?? throw new ArgumentNullException(nameof(gate));
@@ -156,7 +162,7 @@ public class AIService : IAiService, IDisposable
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
             // AI 回應是幾 KB 到數百 KB 的 JSON：設上限，異常回應（代理錯誤頁、失控的串流）不能一次吃掉站台記憶體
-            MaxResponseContentBufferSize = 16L * 1024 * 1024,
+            MaxResponseContentBufferSize = maxResponseBytes,
             // 固定用 HTTP/1.1，不讓 .NET 嘗試 HTTP/2 協商——llama.cpp server 本身只說 HTTP/1.1，
             // 但長時間生成（本模型單次常見 60~80 秒）中途，某些反向代理/負載平衡器對 HTTP/2
             // 雙向串流處理不完整時容易在回應途中被切斷（症狀："The response ended
@@ -238,7 +244,7 @@ public class AIService : IAiService, IDisposable
 
     /// <summary>值得重試的 HTTP 失敗：沒有狀態碼（連線層）、5xx、408、429</summary>
     internal static bool IsTransientHttpFailure(HttpRequestException ex) =>
-        ex.HttpRequestError != HttpRequestError.SecureConnectionError && ex.StatusCode switch
+        ex.HttpRequestError != HttpRequestError.SecureConnectionError && !HttpResponseLimit.IsExceeded(ex) && ex.StatusCode switch
     {
         null => true,
         System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests => true,
@@ -426,7 +432,10 @@ public class AIService : IAiService, IDisposable
             var emptyInfo = ex is EmptyAiResponseException ? lastCallInfo : null;
             return new AiResponse
             {
-                Success = false, Error = ex.Message,
+                Success = false,
+                Error = HttpResponseLimit.IsExceeded(ex)
+                    ? $"AI 回應超過 {HttpResponseLimit.MegabytesText(_maxResponseBytes)} 上限，已放棄（重試不會改變結果）。"
+                    : ex.Message,
                 PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
                 ResponseChars = emptyInfo?.ResponseChars,
                 PromptTokens = emptyInfo?.PromptTokens, CompletionTokens = emptyInfo?.CompletionTokens,

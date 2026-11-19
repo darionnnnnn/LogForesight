@@ -66,7 +66,7 @@ public sealed class DiskFreeTrendRuleEditorUiTests
         Assert.Contains("日期範圍需為 1–730 個已完成日", js);
         Assert.Contains("through.setDate(through.getDate() - 1)", js);
         Assert.Contains("through.setHours(12, 0, 0, 0)", js);
-        Assert.Contains("diskPreviewOffset += Number", js);
+        Assert.Contains("diskPreviewOffset += limit", js);
         Assert.Contains("error?.message", js);
         Assert.Contains("clearDiskPreview('範圍已變更，請重新試算。')", js);
         Assert.Contains("result.candidateCount", js);

@@ -112,6 +112,9 @@ public class SentinelClientException : Exception
 
     /// <summary>伺服器憑證被拒（指紋不符或不被信任）；訊息只含本系統的說明與伺服器出示的指紋，可直接顯示</summary>
     public const string CertificateRejectedCode = "certificate-rejected";
+
+    /// <summary>回應超過整包讀取上限（<c>MaxResponseContentBufferSize</c>）；重試不會變，訊息只含本系統的說明與上限，可直接顯示</summary>
+    public const string ResponseTooLargeCode = "response-too-large";
 }
 
 /// <summary>
@@ -150,6 +153,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private readonly NetiqOptions _settings;
     private readonly HttpClient _http;
     private readonly SentinelClientReadLimits? _readLimits;
+    private readonly long _maxResponseBytes;
     private int _httpRequestCount;
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly ResiliencePipeline _retryPipeline;
@@ -158,7 +162,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private bool _disposed;
 
     public SentinelClient(SentinelServer server, NetiqOptions settings, HttpMessageHandler? handler = null,
-        SentinelClientReadLimits? readLimits = null)
+        SentinelClientReadLimits? readLimits = null, long? maxResponseBytes = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。", safeCode: SentinelClientException.InvalidBaseUrlCode);
@@ -179,6 +183,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         }
 
         _server = server;
+        _maxResponseBytes = maxResponseBytes ?? MaxResponseBytes;
         _baseUri = parsed;
         _settings = settings;
         readLimits?.Validate();
@@ -199,7 +204,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         {
             Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1)),
             // 整包讀取的回應上限：異常回應或代理錯誤頁不能一次吃掉站台記憶體（探測模式另有更小的有界讀取）
-            MaxResponseContentBufferSize = MaxResponseBytes
+            MaxResponseContentBufferSize = _maxResponseBytes
         };
 
         // AllowInvalidCertificates 是顯式逃生門而非靜默放行（AppSettings 註解的承諾）：
@@ -229,9 +234,10 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     {
         var pipelineBuilder = new ResiliencePipelineBuilder();
         if (settings.RetryCount <= 0) return pipelineBuilder.Build();
-        // 憑證被拒（SecureConnectionError）重試也不會變，不重試
+        // 憑證被拒（SecureConnectionError）與回應超過上限（ConfigurationLimitExceeded）重試也不會變，不重試
         var predicate = new PredicateBuilder()
-            .Handle<HttpRequestException>(ex => ex.HttpRequestError != HttpRequestError.SecureConnectionError)
+            .Handle<HttpRequestException>(ex => ex.HttpRequestError != HttpRequestError.SecureConnectionError
+                && !HttpResponseLimit.IsExceeded(ex))
             .Handle<SentinelTransientException>();
         if (retryTimeouts) predicate = predicate.Handle<TaskCanceledException>();
         pipelineBuilder.AddRetry(new RetryStrategyOptions
@@ -269,6 +275,14 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private string? CertificateRejection(Exception ex) =>
         ex is HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError }
             ? _certificateTrust?.LastRejection
+            : null;
+
+    /// <summary>回應超量時的可顯示例外；不是超量回 null</summary>
+    private SentinelClientException? ResponseTooLarge(Exception ex) =>
+        HttpResponseLimit.IsExceeded(ex)
+            ? new SentinelClientException(
+                $"Sentinel「{_server.Name}」的回應超過 {HttpResponseLimit.MegabytesText(_maxResponseBytes)} 上限，已放棄（重試不會改變結果），請縮小查詢範圍。",
+                ex, SentinelClientException.ResponseTooLargeCode)
             : null;
 
     private string BaseUrl => _server.BaseUrl.TrimEnd('/');

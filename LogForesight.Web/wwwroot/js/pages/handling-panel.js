@@ -540,6 +540,8 @@ function handlingForm() {
     form.appendChild(observeWrap);
 
     function observeUntilDate() {
+        // 刻意用 `Number(x) || 預設`：空欄位（Number('') 為 0）與 0 都不是合法觀察天數，一律沿用預設 7 天，
+        // 不像必填欄位要擋下送出（空值＝沿用預設，與 core/number-field.js 的必填讀取是兩種語意）
         const days = Math.min(90, Math.max(1, Number(observeInput.value) || 7));
         const target = new Date();
         target.setDate(target.getDate() + days);

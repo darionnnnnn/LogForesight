@@ -73,7 +73,7 @@ public class AuthController : ControllerBase
 
         // 本地救援帳號（serverAdmin）豁免 IP 維度，只看帳號維度：AD 掛掉時它是唯一入口，
         // 不能因為同一個 IP（例如共用跳板機、NAT 出口）上其他人的失敗而被連坐擋在門外。
-        // 它自己的連續失敗鎖定仍由 ServerAdminAuthenticator 負責，兩道並存。
+        // 它的連續失敗鎖定只由登入節流（下方帳號維度）負責。
         var isServerAdmin = string.Equals(account.Trim(), _settings.Auth.ServerAdmin.Account.Trim(),
             StringComparison.OrdinalIgnoreCase);
         var ip = isServerAdmin ? null : HttpContext.Connection.RemoteIpAddress;

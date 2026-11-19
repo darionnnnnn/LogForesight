@@ -364,8 +364,7 @@ public sealed class PrtgClient : IDisposable
     /// 連線被拒是 <see cref="HttpRequestError.ConnectionError"/>、逾時是 TaskCanceledException，都不會落進這裡。
     /// 不比對訊息字串：訊息本地化或框架改版不會讓判定靜默失效。
     /// </summary>
-    internal static bool IsOverCapacity(HttpRequestException ex) =>
-        ex.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded;
+    internal static bool IsOverCapacity(HttpRequestException ex) => HttpResponseLimit.IsExceeded(ex);
 
     /// <summary>
     /// 讀 <c>Retry-After</c>：秒數格式直接取，日期格式用 <see cref="_timeProvider"/> 換算成從現在起的長度。

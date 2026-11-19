@@ -82,6 +82,8 @@ public class OwnerCsvImporter : ICsvImporter
                 .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            // 管理者匯入預覽：刻意保留帶 id 的已刪除顯示（OrDeleted），管理者要靠 id 查出是哪個帳號被刪；
+            // 處理人等一般使用者畫面一律用 NameFormat.UserLabel／UserNameOnly（SingleExitConvergenceTests 守門）
             var beforeNames = host.OwnerUserIds
                 .Select(id => NameFormat.OrDeleted(_users.Get(id)?.Account, id))
                 .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)

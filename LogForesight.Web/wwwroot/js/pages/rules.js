@@ -71,6 +71,8 @@ renderPageHeader(document.getElementById('page-header'), {
 
 // Windows／Linux／PRTG 規則三個頁籤共用 data-tab="rules"（同一個 data-panel）：
 // bindTabs 負責切換與鍵盤操作；平台由頁籤按鈕的 data-platform 帶出，點擊與方向鍵切換都經 onChange。
+// 刻意不開 hash 同步：三個平台頁籤共用 data-tab="rules"，hash 只能寫成 #rules、表達不出平台，
+// 重新整理或 hashchange 會一律退回 Windows 頁籤（TabHashUiTests 守門）。
 bindTabs(document.getElementById('rule-tabs'), {
     onChange: (_name, btn) => {
         const platform = btn.dataset.platform;
@@ -874,13 +876,16 @@ async function runDiskPreview(event) {
 
 document.getElementById('rule-disk-preview-run').addEventListener('click', runDiskPreview);
 diskPreviewPrevious.addEventListener('click', event => {
-    const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+    // 空欄位不當成 0（readNumberField 回 null）：偏移量不動，交給 runDiskPreview 在欄位上標錯
+    const limit = readNumberField('rule-disk-preview-limit', { integer: true });
+    if (limit === null) { runDiskPreview(event); return; }
     if (diskPreviewOffset < limit) return;
     diskPreviewOffset -= limit;
     runDiskPreview(event);
 });
 diskPreviewNext.addEventListener('click', event => {
-    diskPreviewOffset += Number(document.getElementById('rule-disk-preview-limit').value);
+    const limit = readNumberField('rule-disk-preview-limit', { integer: true });
+    if (limit !== null) diskPreviewOffset += limit;
     runDiskPreview(event);
 });
 

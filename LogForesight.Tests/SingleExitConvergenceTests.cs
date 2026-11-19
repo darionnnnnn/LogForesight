@@ -173,7 +173,7 @@ public class PrtgValueRowUsabilityTests
     {
         var offenders = ConvergenceScan.Offenders(
             new Regex(@"PrtgDataQuality\.Sampled\s*&&[^;]{0,80}SampledMinCoverage", RegexOptions.CultureInvariant),
-            "PrtgValueRowUsability.cs", "PrtgEffectivenessService.cs");
+            "PrtgValueRowUsability.cs");
         Assert.True(offenders.Count == 0, "這些檔案自己寫了可用列判定，請改用 PrtgValueRowUsability：\n  " + string.Join("\n  ", offenders));
     }
 }
@@ -315,6 +315,24 @@ public class SmallExitConvergenceTests
         var user = new WebUser { UserId = 5, Account = "amy", DisplayName = "艾咪" };
         Assert.Equal("艾咪(amy)", NameFormat.UserLabel(names, user));
         Assert.Equal("艾咪", NameFormat.UserNameOnly(names, user));
+    }
+
+    private static readonly Regex OrDeletedCall = new(@"NameFormat\.OrDeleted\(", RegexOptions.CultureInvariant);
+
+    [Fact]
+    public void 使用者情境不呼叫OrDeleted_只有管理者匯入預覽與主機名稱例外()
+    {
+        // OrDeleted 帶 id，只留給管理者看的匯入預覽（OwnerCsvImporter）與主機名稱（HostAdminService）；
+        // 處理人、交辦單等使用者畫面一律走 UserLabel／UserNameOnly（顯示「（已刪除）」不帶 id）
+        var offenders = ConvergenceScan.Offenders(OrDeletedCall, "NameFormat.cs", "OwnerCsvImporter.cs", "HostAdminService.cs");
+        Assert.True(offenders.Count == 0, "這些檔案在使用者情境呼叫 NameFormat.OrDeleted，請改用 UserLabel／UserNameOnly：\n  " + string.Join("\n  ", offenders));
+    }
+
+    [Fact]
+    public void 使用者情境不呼叫OrDeleted_守門樣式抓得到反例()
+    {
+        Assert.Matches(OrDeletedCall, "HandlerName = NameFormat.OrDeleted(null, g.Key),");
+        Assert.DoesNotMatch(OrDeletedCall, "HandlerName = NameFormat.UserLabel(names, null),");
     }
 
     [Fact]
