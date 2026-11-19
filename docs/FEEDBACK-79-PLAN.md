@@ -794,3 +794,6 @@
 | A6 | 主代理 | 完成 | 範圍改成檔名樣式後立刻抓到 `CaseDaySyncHostedService` 直讀時鐘；修正後通過 | 「撥動假時鐘時結案時間跟著假時鐘」以守門涵蓋（該檔不得直讀時鐘），`SweepClosures` 的時間參數語意已有既有測試 |
 | A7 | 主代理 | 完成 | 判準六個反例皆紅、兩個字面值放行；在 `dashboard.js` 放入串接寫法守門變紅，備份還原後位元組相同 | 全站唯一非字面值的 `innerHTML` 是 `withBusy` 的還原：改為保存原子節點並防重入。三處動態語意色類別改走 `statusNote`／`statusBadge`，新增守門 |
 | A8～A9 | 主代理 | 完成 | 暫時引入有弱點的套件，還原以 NU1902 失敗；移除後恢復 | CI 加最小權限、逾時、鎖定檔還原；`CLAUDE.md` 三條紅線改指向編譯期設定並新增 SQL 串接一條 |
+| B1／B2／B4 | 主代理 | 完成 | 錯誤出口、授權、路由快照、健康告示定向 745 筆；突變拿掉狀態碼信封時整站 404／405 兩筆變紅 | 對應表抽成 `ApiExceptionMapping` 一份，MVC filter 保留為 MVC 內的轉接（既有 15 筆 filter 測試不必重寫），中介層階段由新的 `IExceptionHandler` 套用。新增 `method_not_allowed`／`payload_too_large`／`unsupported_media_type` |
+| B3／B5 | 主代理 | 完成 | 定向 684＋292 筆；突變把永久失敗判定改回接受通用例外時對應測試變紅 | 新增專屬型別：`PrtgScopePurgeRuleException`（16 處擲出點）、`SubnetPrefixFormatException`（另有 NetIQ 探索三處同型 catch 一併收窄）、`PrtgDeviceResponseRejectedException`、`PrtgLegacyPackageInvalidException`（錯誤碼改屬性，`InvalidDataException` 是密封類別故繼承 `Exception`）。監看範圍改擲 `DomainException.Conflict`。超量判定改用 `HttpRequestError.ConfigurationLimitExceeded`（先實測三種情況）。探測結論改列舉，站台對照的同型寫法一併改 |
+| 既有缺陷 | 主代理 | 完成 | 待 CI 的 Windows 結果 | 規劃提交的 CI 顯示 dev 上就有 10 筆 Windows 失敗：golden 檔以多行原始字串存預期摘要，Windows checkout 轉成 CRLF。`.gitattributes` 讓 `*Golden*.cs` 一律 `eol=lf` |

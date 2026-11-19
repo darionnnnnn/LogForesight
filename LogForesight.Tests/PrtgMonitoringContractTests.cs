@@ -6,6 +6,7 @@ using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
+using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
@@ -104,7 +105,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
         var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var initial = store.Get();
         Assert.Equal(new long[] { 1 }, initial.HostIds);
-        Assert.IsType<ConflictObjectResult>(Save(Controller(), Request()));
+        Assert.Equal(ApiErrorCodes.Conflict, Assert.Throws<DomainException>(() => Save(Controller(), Request())).Code);
         Assert.Equal(initial.Revision, store.Get().Revision);
         var clear = Request(initial.Revision); clear.HostIds = []; clear.SensorIds = [];
         Assert.IsType<OkObjectResult>(Save(Controller(), clear));
@@ -315,7 +316,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         visible.Snapshots.Clear();
         visible.RevokeAtSnapshotRead = visible.SnapshotReadCount + 3; // PUT initial capture、post-query fence、政策交易 callback
 
-        Assert.IsType<ConflictObjectResult>(controller.Put(request));
+        Assert.Equal(ApiErrorCodes.Conflict, Assert.Throws<DomainException>(() => controller.Put(request)).Code);
 
         var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
         Assert.Equal(policyBlob.Content, after.Content);

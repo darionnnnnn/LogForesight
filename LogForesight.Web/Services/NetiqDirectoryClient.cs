@@ -81,7 +81,7 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
         {
             normalized = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix);
         }
-        catch (ArgumentException ex)
+        catch (SubnetPrefixFormatException ex)
         {
             throw new NetiqDiscoveryException(ex.Message);
         }
@@ -304,7 +304,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                     $"網段範圍過大（展開後共 {segments.Count} 個分段，超過單次掃描上限 {MaxSegments} 個），請縮小輸入範圍或改用較粗的掃描粒度。");
             }
         }
-        catch (ArgumentException ex)
+        catch (SubnetPrefixFormatException ex)
         {
             throw new NetiqDiscoveryException(ex.Message);
         }

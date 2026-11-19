@@ -145,19 +145,19 @@ public sealed class PrtgTransferControllerTests
         Assert.Contains("legacy-v1-unmanifested", result.ResultManifestJson, StringComparison.Ordinal);
 
         var malformedV2 = Encoding.UTF8.GetBytes("""{"FormatVersion":2,"Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[]}""");
-        var malformed = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+        var malformed = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(malformedV2), CancellationToken.None));
-        Assert.StartsWith("legacy_v2_shape_invalid:", malformed.Message, StringComparison.Ordinal);
+        Assert.Equal("legacy_v2_shape_invalid", malformed.Code);
 
         var missingVersionV2 = Encoding.UTF8.GetBytes("""{"Purpose":"diagnostic-only","Devices":[],"Sensors":[],"StateChanges":[],"Values":[],"HostMaps":[],"ManualMaps":[],"SourcePolicy":null,"Observations":[],"Timelines":[],"SemanticEvidence":[],"SemanticResults":[]}""");
-        var missingVersion = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+        var missingVersion = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(missingVersionV2), CancellationToken.None));
-        Assert.StartsWith("format_version_required:", missingVersion.Message, StringComparison.Ordinal);
+        Assert.Equal("format_version_required", missingVersion.Code);
 
         var duplicate = Encoding.UTF8.GetBytes("""{"FormatVersion":1,"formatversion":2,"Devices":[]}""");
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+        var exception = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(duplicate), CancellationToken.None));
-        Assert.StartsWith("duplicate_root_property:", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("duplicate_root_property", exception.Code);
     }
 
     [Fact]
@@ -270,10 +270,10 @@ public sealed class PrtgTransferControllerTests
 
     private static async Task AssertManifestRejected(byte[] bytes, string code)
     {
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+        var exception = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() =>
             new PrtgLegacyJsonTransferValidator().ValidateAsync(1,
                 (_, _) => Task.FromResult(bytes), CancellationToken.None));
-        Assert.StartsWith(code + ":", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(code, exception.Code);
     }
 
     [Fact]
@@ -283,13 +283,13 @@ public sealed class PrtgTransferControllerTests
         var formal = Encoding.UTF8.GetBytes("""{"FormatVersion":2,"Purpose":"formal","Devices":[]}""");
         var wrongRow = Encoding.UTF8.GetBytes("""{"FormatVersion":2,"Devices":[{"Objid":"not-an-id","Name":"host"}]}""");
 
-        var purposeError = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+        var purposeError = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(formal), CancellationToken.None));
-        Assert.StartsWith("purpose_rejected:", purposeError.Message, StringComparison.Ordinal);
+        Assert.Equal("purpose_rejected", purposeError.Code);
 
-        var shapeError = await Assert.ThrowsAsync<InvalidDataException>(() => validator.ValidateAsync(1,
+        var shapeError = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() => validator.ValidateAsync(1,
             (_, _) => Task.FromResult(wrongRow), CancellationToken.None));
-        Assert.StartsWith("row_shape_invalid:", shapeError.Message, StringComparison.Ordinal);
+        Assert.Equal("row_shape_invalid", shapeError.Code);
     }
 
     [Fact]

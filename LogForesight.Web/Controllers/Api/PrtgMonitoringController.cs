@@ -196,27 +196,23 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         // 查詢後再核一次：估算後被撤回的可見權限不能趁查詢期間保存。
         if (!FenceMatches(estimate, Store().Get(), VisibleHostIds(sourceSnapshot), store))
             return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "估算後可見範圍或目錄已變更；請重新估算。"));
-        try
+        var result = Store().Update(p =>
         {
-            var result = Store().Update(p =>
-            {
-                // 政策交易內以同一份主機快照重算可見範圍，與估算時的可見範圍不同就拒絕保存。
-                var saveVisible = VisibleHostIds(sourceSnapshot);
-                if (HashIds(saveVisible) != estimate.VisibleHash)
-                    throw new InvalidOperationException("估算後可見範圍已變更；請重新估算。");
-                if (p.Revision != request.Revision || p.HostIds.Any(visibility.IsCaseGrantOnly) ||
-                    (!user.Has(Capability.ViewAll) && !p.HostIds.All(saveVisible.Contains)))
-                    throw new InvalidOperationException("設定已變更或含不可見主機；重新載入後再修改。");
-                p.HostIds = selectedHosts.ToList();
-                p.SensorIds = selectedSensors.ToList();
-                p.Revision = Guid.NewGuid().ToString("N");
-            });
-            audit.Record("prtg_monitoring_confirm",
-                $"儲存 PRTG 監看範圍：主機 {(selectedHosts.Length == 0 ? "全部已對應" : selectedHosts.Length + " 台")}、sensor {(selectedSensors.Length == 0 ? "不限" : selectedSensors.Length + " 顆")}。",
-                "prtg", result.Revision);
-            return Ok(ApiResponse<string>.Ok(result.Revision));
-        }
-        catch (InvalidOperationException ex) { return Conflict(ApiResponse.Fail(ApiErrorCodes.Conflict, ex.Message)); }
+            // 政策交易內以同一份主機快照重算可見範圍，與估算時的可見範圍不同就拒絕保存。
+            var saveVisible = VisibleHostIds(sourceSnapshot);
+            if (HashIds(saveVisible) != estimate.VisibleHash)
+                throw DomainException.Conflict("估算後可見範圍已變更；請重新估算。");
+            if (p.Revision != request.Revision || p.HostIds.Any(visibility.IsCaseGrantOnly) ||
+                (!user.Has(Capability.ViewAll) && !p.HostIds.All(saveVisible.Contains)))
+                throw DomainException.Conflict("設定已變更或含不可見主機；重新載入後再修改。");
+            p.HostIds = selectedHosts.ToList();
+            p.SensorIds = selectedSensors.ToList();
+            p.Revision = Guid.NewGuid().ToString("N");
+        });
+        audit.Record("prtg_monitoring_confirm",
+            $"儲存 PRTG 監看範圍：主機 {(selectedHosts.Length == 0 ? "全部已對應" : selectedHosts.Length + " 台")}、sensor {(selectedSensors.Length == 0 ? "不限" : selectedSensors.Length + " 顆")}。",
+            "prtg", result.Revision);
+        return Ok(ApiResponse<string>.Ok(result.Revision));
     }
 
     private PrtgMonitoringPolicyStore Store() => new(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));

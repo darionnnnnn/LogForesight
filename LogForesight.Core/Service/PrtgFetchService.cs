@@ -745,12 +745,12 @@ public sealed class PrtgFetchService
                     {
                         // 補抓完整前不寫鏡像；取消後仍能由「尚無 sensor」辨識並重試。
                         if (staged.Count + batch.Count > 15_000)
-                            throw new InvalidOperationException("單一裝置補抓超過 15,000 個 sensor，已拒絕提交不完整鏡像。");
+                            throw new PrtgDeviceResponseRejectedException("單一裝置補抓超過 15,000 個 sensor，已拒絕提交不完整鏡像。");
                         foreach (var row in batch)
                             stagedTextBytes += 2L * (row.Name.Length + (row.SensorType?.Length ?? 0) +
                                 (row.Tags?.Length ?? 0) + (row.Unit?.Length ?? 0) + (row.Status?.Length ?? 0));
                         if (stagedTextBytes > 8L * 1024 * 1024)
-                            throw new InvalidOperationException("單一裝置補抓文字超過 8 MiB，已拒絕提交不完整鏡像。");
+                            throw new PrtgDeviceResponseRejectedException("單一裝置補抓文字超過 8 MiB，已拒絕提交不完整鏡像。");
                         staged.AddRange(batch);
                         deviceRows += batch.Count;
                         return;
@@ -916,11 +916,13 @@ public sealed class PrtgFetchService
     /// PRTG 明確回「這個請求不成立」的 4xx（如裝置已刪除的 404；401／403 是憑證問題、429 是限流，修好就能補），
     /// 以及這台的分頁確定性不收斂（回應形狀不對、頁數或鏡像保護上限）。逾時、傳輸、5xx、憑證與未知失敗都還值得下個窗口再試。
     /// </summary>
-    private static bool IsPermanentFailure(Exception failure) => failure switch
+    // 只認專屬型別：通用的 InvalidOperationException 也會來自本機寫入（連線已關、並行操作），
+    // 那是暫時性失敗，當成永久就會讓那台裝置的資料缺口永遠不補。
+    internal static bool IsPermanentFailure(Exception failure) => failure switch
     {
         PrtgClientException { Kind: PrtgFailureKind.HttpStatus, StatusCode: >= 400 and < 500 and not (401 or 403 or 429) } => true,
         PrtgClientException => false,
-        PrtgPagingNotConvergedException or InvalidOperationException => true,
+        PrtgPagingNotConvergedException or PrtgDeviceResponseRejectedException => true,
         _ => false
     };
 
@@ -976,7 +978,7 @@ public sealed class PrtgFetchService
             mapper: el =>
             {
                 if (strictScope && !scopeDevices.Contains(GetLongProperty(el, "parentid") ?? 0))
-                    throw new InvalidOperationException("感測器補抓回應包含要求裝置之外的資料，拒絕提交或標記為空。");
+                    throw new PrtgDeviceResponseRejectedException("感測器補抓回應包含要求裝置之外的資料，拒絕提交或標記為空。");
                 return MapSensorRow(el, scopeDevices, syncedAt);
             },
             onBatch: onBatch,
@@ -2062,4 +2064,13 @@ public sealed class PrtgFetchService
         }
         return null;
     }
+}
+
+/// <summary>
+/// 這台裝置的 PRTG 回應被本機保護規則拒收（超過鏡像上限、含要求範圍外的資料）：再試結果也一樣，不進待補。
+/// 與通用 <see cref="InvalidOperationException"/> 分開，後者可能是本機寫入的暫時性失敗。
+/// </summary>
+internal sealed class PrtgDeviceResponseRejectedException : Exception
+{
+    public PrtgDeviceResponseRejectedException(string message) : base(message) { }
 }

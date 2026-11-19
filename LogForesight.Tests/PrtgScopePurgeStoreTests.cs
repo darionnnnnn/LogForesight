@@ -246,9 +246,9 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
     {
         SeedRows();
         var wrongActor = Preview();
-        Assert.Throws<InvalidOperationException>(() => Accept(wrongActor, actor: 8));
-        Assert.Throws<InvalidOperationException>(() => Accept(wrongActor, permissionRevision: 4));
-        Assert.Throws<InvalidOperationException>(() => _jobs.Accept(wrongActor.JobId, 7, 3, null, Fingerprint, Now.AddMinutes(6)));
+        Assert.ThrowsAny<InvalidOperationException>(() => Accept(wrongActor, actor: 8));
+        Assert.ThrowsAny<InvalidOperationException>(() => Accept(wrongActor, permissionRevision: 4));
+        Assert.ThrowsAny<InvalidOperationException>(() => _jobs.Accept(wrongActor.JobId, 7, 3, null, Fingerprint, Now.AddMinutes(6)));
 
         var fresh = Preview();
         Assert.Equal("accepted", Accept(fresh).Status);
@@ -280,7 +280,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
             revision.Version++;
             context.SaveChanges();
         }
-        Assert.Throws<InvalidOperationException>(() => _jobs.CreatePreview(7, 3, null, Fingerprint,
+        Assert.ThrowsAny<InvalidOperationException>(() => _jobs.CreatePreview(7, 3, null, Fingerprint,
             Keep, 1, Now, expectedScopeFenceJson: computedFence));
 
         var stalePreview = Preview();
@@ -291,7 +291,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
             revision!.Version++;
             context.SaveChanges();
         }
-        Assert.Throws<InvalidOperationException>(() => Accept(stalePreview));
+        Assert.ThrowsAny<InvalidOperationException>(() => Accept(stalePreview));
 
         var now = DateTimeOffset.UtcNow;
         var preview = _jobs.CreatePreview(7, 3, null, Fingerprint, Keep, 1, now);
@@ -459,7 +459,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
     {
         SeedRows();
         var preview = Preview(actor: 0, authFingerprint: "admin-config-1");
-        Assert.Throws<InvalidOperationException>(() => Accept(preview, actor: 0, authFingerprint: "admin-config-2"));
+        Assert.ThrowsAny<InvalidOperationException>(() => Accept(preview, actor: 0, authFingerprint: "admin-config-2"));
         var accepted = Accept(preview, actor: 0, authFingerprint: "admin-config-1");
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();

@@ -371,7 +371,7 @@ public class SentinelQueryBuilderTests
     [Fact]
     public void BuildSubnetProbeFilter_非法網段仍擲ArgumentException()
     {
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.BuildSubnetProbeFilter("10"));
+        Assert.ThrowsAny<ArgumentException>(() => SentinelQueryBuilder.BuildSubnetProbeFilter("10"));
     }
 
     [Theory]
@@ -379,14 +379,14 @@ public class SentinelQueryBuilderTests
     [InlineData("   ")]
     public void NormalizeSubnetPrefix_空白輸入擲例外(string input)
     {
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+        Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
     }
 
     [Fact]
     public void NormalizeSubnetPrefix_單段前綴太籠統擲例外()
     {
         // 只有一段等同「查所有 10.x.x.x」，量級與全站同一數量級
-        var ex = Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10"));
+        var ex = Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10"));
         Assert.Contains("太籠統", ex.Message);
     }
 
@@ -394,7 +394,7 @@ public class SentinelQueryBuilderTests
     public void NormalizeSubnetPrefix_完整四段IP不帶CIDR時擲例外()
     {
         // 這是探索「網段」的功能，不是查單一台主機——repip:x.x.x.x.* 語法上也不合法
-        var ex = Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.1.2.5"));
+        var ex = Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.1.2.5"));
         Assert.Contains("單一 IP", ex.Message);
     }
 
@@ -404,7 +404,7 @@ public class SentinelQueryBuilderTests
     [InlineData("10.1.2.0/abc")]  // 非數字
     public void NormalizeSubnetPrefix_不支援的CIDR遮罩擲例外(string input)
     {
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+        Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
     }
 
     [Theory]
@@ -415,14 +415,14 @@ public class SentinelQueryBuilderTests
     [InlineData("10.1.2; DROP")]  // 注入嘗試——白名單天然免疫，這裡驗證確實被擋下而不是被靜默接受
     public void NormalizeSubnetPrefix_格式不正確擲例外(string input)
     {
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+        Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
     }
 
     [Fact]
     public void NormalizeSubnetPrefix_CIDR位元數大於實際段數時擲例外()
     {
         // /24 需要 3 段，只給 2 段
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.1/24"));
+        Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.1/24"));
     }
 
     // ── 真實種子規則表的結構性驗證（自已退場的 console selftest RunSentinelQueryChecks
@@ -526,7 +526,7 @@ public class SentinelQueryBuilderTests
     [InlineData("")]                 // 空字串
     public void ExpandToSlash24Prefixes_不合法輸入擲ArgumentException(string input)
     {
-        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.ExpandToSlash24Prefixes(input));
+        Assert.ThrowsAny<ArgumentException>(() => SentinelQueryBuilder.ExpandToSlash24Prefixes(input));
     }
 
     // ── ExpandToSegments（粒度展開，task-B2b-step1）───────────────────────────

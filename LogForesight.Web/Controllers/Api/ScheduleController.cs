@@ -471,7 +471,7 @@ public class ScheduleController : ControllerBase
         {
             normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(segment);
         }
-        catch (ArgumentException ex)
+        catch (SubnetPrefixFormatException ex)
         {
             throw DomainException.Validation(ex.Message);
         }

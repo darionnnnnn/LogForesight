@@ -1293,7 +1293,7 @@ public sealed class EfPrtgStore
         const int maximumCapturedSensors = 100_000;
         const int queryBatchSize = 500;
         if (candidateSensorObjids.Count > maximumCapturedSensors)
-            throw new InvalidOperationException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
+            throw new PrtgScopePurgeRuleException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
         if (topDevices < 0) throw new ArgumentOutOfRangeException(nameof(topDevices));
 
         using var __perf = _performance.Measure("prtg:PreviewOutOfScopeFrozenCandidates");

@@ -351,13 +351,13 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
-    /// 回應超過 <see cref="MaxResponseBytes"/> 時 HttpClient 擲的例外：HttpRequestException、沒有 InnerException、
-    /// 訊息帶著上限位元組數。逾時是 TaskCanceledException、連線失敗帶 InnerException（SocketException／IOException），
-    /// 兩者都不會落進這裡——超量與逾時／連線失敗是兩種訊息。
+    /// 回應超過 <see cref="MaxResponseBytes"/>（<c>MaxResponseContentBufferSize</c>）時 HttpClient 擲的例外。
+    /// 以框架提供的錯誤分類判斷：超量回 <see cref="HttpRequestError.ConfigurationLimitExceeded"/>，
+    /// 連線被拒是 <see cref="HttpRequestError.ConnectionError"/>、逾時是 TaskCanceledException，都不會落進這裡。
+    /// 不比對訊息字串：訊息本地化或框架改版不會讓判定靜默失效。
     /// </summary>
-    private static bool IsOverCapacity(HttpRequestException ex) =>
-        ex.InnerException == null &&
-        ex.Message.Contains(MaxResponseBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    internal static bool IsOverCapacity(HttpRequestException ex) =>
+        ex.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded;
 
     /// <summary>
     /// 讀 <c>Retry-After</c>：秒數格式直接取，日期格式用 <see cref="_timeProvider"/> 換算成從現在起的長度。

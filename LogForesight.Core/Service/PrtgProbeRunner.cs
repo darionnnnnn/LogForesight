@@ -400,9 +400,12 @@ public static class PrtgProbeRunner
             string order;
             if (isMessages)
             {
-                var (dtText, dtMonotonic) = DescribeDatetimeMonotonicity(rows0);
-                order = dtMonotonic ? "依時間排序" : dtText.StartsWith("無法判定", StringComparison.Ordinal)
-                    ? "時間欄位無法解析" : "⚠ 順序不依時間（可能漏列）";
+                order = DescribeDatetimeMonotonicity(rows0).Order switch
+                {
+                    TimeOrder.Increasing or TimeOrder.Decreasing => "依時間排序",
+                    TimeOrder.Unparseable => "時間欄位無法解析",
+                    _ => "⚠ 順序不依時間（可能漏列）"
+                };
             }
             else
             {
@@ -527,22 +530,22 @@ public static class PrtgProbeRunner
     /// 回傳空集合＝無資料；含下層感測器 objid＝可用；全部都是裝置自身＝只有裝置訊息；
     /// 其餘＝回了不屬於該裝置的 objid。站台對照與 9d-5 共用。
     /// </summary>
-    internal static string JudgeDeviceMessagesScope(long deviceObjid, IReadOnlySet<long> childSensorObjids, IReadOnlyList<long> returnedObjids)
+    internal static DeviceMessagesScope JudgeDeviceMessagesScope(long deviceObjid, IReadOnlySet<long> childSensorObjids, IReadOnlyList<long> returnedObjids)
     {
-        if (returnedObjids.Count == 0)
-        {
-            return "無資料，無法判定";
-        }
-        if (returnedObjids.Any(id => childSensorObjids.Contains(id)))
-        {
-            return "✓ 含下層感測器訊息";
-        }
-        if (returnedObjids.All(id => id == deviceObjid))
-        {
-            return "✗ 只有裝置自身——狀態變更取數需改為逐感測器";
-        }
-        return "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）";
+        if (returnedObjids.Count == 0) return DeviceMessagesScope.NoData;
+        if (returnedObjids.Any(id => childSensorObjids.Contains(id))) return DeviceMessagesScope.IncludesSensors;
+        if (returnedObjids.All(id => id == deviceObjid)) return DeviceMessagesScope.DeviceOnly;
+        return DeviceMessagesScope.ForeignObjids;
     }
+
+    /// <summary>判定的顯示文字（只用於輸出；結論一律依列舉判斷，不比對文字）</summary>
+    internal static string DescribeDeviceMessagesScope(DeviceMessagesScope verdict) => verdict switch
+    {
+        DeviceMessagesScope.NoData => "無資料，無法判定",
+        DeviceMessagesScope.IncludesSensors => "✓ 含下層感測器訊息",
+        DeviceMessagesScope.DeviceOnly => "✗ 只有裝置自身——狀態變更取數需改為逐感測器",
+        _ => "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）"
+    };
 
     /// <summary>
     /// 9d-5：逐物件查詢驗證——驗證以單一裝置查詢 sensors 與 messages 是否生效、
@@ -561,7 +564,7 @@ public static class PrtgProbeRunner
             return;
         }
 
-        var bVerdicts = new List<string>();
+        var bVerdicts = new List<DeviceMessagesScope>();
         var bElapsedList = new List<double>();
         List<long>? firstDeviceSensors = null;
         var firstDeviceId = sampleDeviceIds[0];
@@ -618,7 +621,7 @@ public static class PrtgProbeRunner
 
                 var verdictB = JudgeDeviceMessagesScope(deviceId, subSet, rowsB);
 
-                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {verdictB}");
+                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {DescribeDeviceMessagesScope(verdictB)}");
 
                 bVerdicts.Add(verdictB);
                 bElapsedList.Add(swB.Elapsed.TotalMilliseconds);
@@ -634,12 +637,12 @@ public static class PrtgProbeRunner
         }
 
         // (c) 結論行
-        if (bVerdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
+        if (bVerdicts.Contains(DeviceMessagesScope.IncludesSensors))
         {
             var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
             console.WriteLine($"     9d-5：結論 ✓ 逐裝置查詢狀態變更可用（平均每台 {avgMs:F0} ms）");
         }
-        else if (bVerdicts.Any(v => v.StartsWith("✗", StringComparison.Ordinal)))
+        else if (bVerdicts.Contains(DeviceMessagesScope.DeviceOnly))
         {
             var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
             console.WriteLine($"     9d-5：結論 ✗ 逐裝置查詢只回裝置自身訊息，狀態變更取數需改為逐感測器（平均每台 {avgMs:F0} ms）");
@@ -768,17 +771,18 @@ public static class PrtgProbeRunner
     /// 頁內 datetime 是否單調（非遞增或非遞減）。有任一筆解析失敗就不下判斷，
     /// 不能拿部分可解析的子集去證明「順序沒問題」。
     /// </summary>
-    private static (string Text, bool Monotonic) DescribeDatetimeMonotonicity(List<PagingRow> rows)
+    private static (string Text, TimeOrder Order) DescribeDatetimeMonotonicity(List<PagingRow> rows)
     {
         var times = new List<DateTime>();
         var failed = 0;
         foreach (var r in rows)
         {
-            if (DateTime.TryParse(r.DatetimeText, out var dt)) times.Add(dt);
+            if (DateTime.TryParse(r.DatetimeText, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var dt)) times.Add(dt);
             else failed++;
         }
 
-        if (failed > 0) return ($"無法判定（datetime 解析失敗 {failed} 筆）", false);
+        if (failed > 0) return ($"無法判定（datetime 解析失敗 {failed} 筆）", TimeOrder.Unparseable);
 
         var nonIncreasing = true;
         var nonDecreasing = true;
@@ -788,9 +792,9 @@ public static class PrtgProbeRunner
             if (times[i] < times[i - 1]) nonDecreasing = false;
         }
 
-        if (nonIncreasing) return ("是（遞減）", true);
-        if (nonDecreasing) return ("是（遞增）", true);
-        return ("否（不單調）", false);
+        if (nonIncreasing) return ("是（遞減）", TimeOrder.Decreasing);
+        if (nonDecreasing) return ("是（遞增）", TimeOrder.Increasing);
+        return ("否（不單調）", TimeOrder.NotMonotonic);
     }
 
     /// <summary>取前 200 字並把換行與 Tab 換成空白，讓診斷行維持單行。</summary>
@@ -969,3 +973,9 @@ public static class PrtgProbeRunner
         return true;
     }
 }
+
+/// <summary>「以裝置 id 查 messages」的判定結果（站台對照與 9d-5 共用）</summary>
+internal enum DeviceMessagesScope { NoData, IncludesSensors, DeviceOnly, ForeignObjids }
+
+/// <summary>messages 回傳列的時間順序</summary>
+internal enum TimeOrder { Increasing, Decreasing, NotMonotonic, Unparseable }

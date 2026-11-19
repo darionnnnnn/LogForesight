@@ -72,14 +72,14 @@ public sealed class PrtgScopePurgeStore
             LockScopeMutationGate(ctx);
             PauseExpiredOwner(ctx, now, exceptJobId: null);
             if (expectedScopeFenceJson != null && !LockScopeFence(ctx, expectedScopeFenceJson))
-                throw new InvalidOperationException("監看範圍在計算期間已變更，請重新預覽。");
+                throw new PrtgScopePurgeRuleException("監看範圍在計算期間已變更，請重新預覽。");
             if (previousJobId != null)
             {
                 var previous = ctx.PrtgScopePurgeJobs.AsNoTracking().SingleOrDefault(x => x.JobId == previousJobId);
                 if (previous == null || previous.ActorId != actorId || previous.Source != "manual" || previous.Status != "stopped"
                     || !string.Equals(previous.AuthFingerprint, authFingerprint, StringComparison.Ordinal)
                     || previous.DeletedValues + previous.DeletedStateChanges == 0)
-                    throw new InvalidOperationException("前次部分清除作業不存在或不屬於目前操作者。");
+                    throw new PrtgScopePurgeRuleException("前次部分清除作業不存在或不屬於目前操作者。");
             }
             var row = NewJob(ctx, actorId, null, "manual", "preview", fingerprint, keepSet,
                 monitoredDevices, permissionRevision, authFingerprint, now);
@@ -107,7 +107,7 @@ public sealed class PrtgScopePurgeStore
             var existing = ctx.PrtgScopePurgeJobs.SingleOrDefault(x => x.Source == "automatic" && x.ParentJobId == parentJobId);
             if (existing != null) { tx.Commit(); return existing; }
             if (expectedScopeFenceJson != null && !LockScopeFence(ctx, expectedScopeFenceJson))
-                throw new InvalidOperationException("監看範圍在計算期間已變更，拒絕自動清除。");
+                throw new PrtgScopePurgeRuleException("監看範圍在計算期間已變更，拒絕自動清除。");
             var occupied = ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.ActiveOwner == "active");
             if (occupied) throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。");
             var row = NewJob(ctx, actorId: 0, parentJobId, "automatic", "accepted", fingerprint,
@@ -127,7 +127,7 @@ public sealed class PrtgScopePurgeStore
         int monitoredDevices, long permissionRevision, string? authFingerprint, DateTimeOffset now)
     {
         if (keepSet.Count > MaximumCapturedIds)
-            throw new InvalidOperationException($"保留集合超過預覽上限 {MaximumCapturedIds}，未建立清除作業。");
+            throw new PrtgScopePurgeRuleException($"保留集合超過預覽上限 {MaximumCapturedIds}，未建立清除作業。");
         var valueWatermark = ctx.PrtgValues.Select(x => (long?)x.Id).Max() ?? 0;
         var stateWatermark = ctx.PrtgStateChanges.Select(x => (long?)x.Id).Max() ?? 0;
         var candidateSensors = CaptureCandidateSensorIds(ctx, keepSet, valueWatermark, stateWatermark);
@@ -160,12 +160,12 @@ public sealed class PrtgScopePurgeStore
     {
         using var ctx = _contextFactory();
         var row = ctx.PrtgScopePurgeJobs.AsNoTracking().SingleOrDefault(x => x.JobId == jobId && x.ActorId == actorId)
-            ?? throw new InvalidOperationException("預覽不存在或不屬於目前操作者。");
+            ?? throw new PrtgScopePurgeRuleException("預覽不存在或不屬於目前操作者。");
         if (row.Source != "manual" || row.Status != "preview")
-            throw new InvalidOperationException("預覽已不在可檢視狀態，請重新預覽。");
+            throw new PrtgScopePurgeRuleException("預覽已不在可檢視狀態，請重新預覽。");
         var ids = JsonSerializer.Deserialize<HashSet<long>>(row.CandidateSensorIdsJson) ?? new();
         if (ids.Count > MaximumCapturedIds)
-            throw new InvalidOperationException("預覽候選集合超過安全上限，請重新預覽。");
+            throw new PrtgScopePurgeRuleException("預覽候選集合超過安全上限，請重新預覽。");
         return new PrtgScopePurgePreviewBoundary(ids, row.ValuesWatermark, row.StateChangesWatermark);
     }
 
@@ -214,21 +214,21 @@ public sealed class PrtgScopePurgeStore
             LockScopeMutationGate(ctx);
             PauseExpiredOwner(ctx, now, exceptJobId: null);
             var row = ctx.PrtgScopePurgeJobs.SingleOrDefault(x => x.JobId == previewId)
-                ?? throw new InvalidOperationException("預覽不存在或已失效，請重新預覽。");
-            if (row.ActorId != actorId) throw new InvalidOperationException("預覽操作者不符。");
+                ?? throw new PrtgScopePurgeRuleException("預覽不存在或已失效，請重新預覽。");
+            if (row.ActorId != actorId) throw new PrtgScopePurgeRuleException("預覽操作者不符。");
             if (row.Status is "accepted" or "running" or "paused" or "complete")
             {
                 tx.Commit();
                 return row; // Same accepted preview is an idempotency key.
             }
             if (row.Status != "preview" || now.UtcDateTime - row.AcceptedAtUtc > PreviewLifetime)
-                throw new InvalidOperationException("預覽已逾期，請重新預覽。");
+                throw new PrtgScopePurgeRuleException("預覽已逾期，請重新預覽。");
             if (!LockScopeFence(ctx, row.ScopeFenceJson))
-                throw new InvalidOperationException("監看範圍或對應在預覽後已變更，請重新預覽。");
+                throw new PrtgScopePurgeRuleException("監看範圍或對應在預覽後已變更，請重新預覽。");
             if (row.PermissionRevision != permissionRevision || row.AuthFingerprint != authFingerprint)
-                throw new InvalidOperationException("權限已變更，請重新預覽。");
+                throw new PrtgScopePurgeRuleException("權限已變更，請重新預覽。");
             if (!string.Equals(row.ScopeFingerprint, expectedFingerprint, StringComparison.Ordinal))
-                throw new InvalidOperationException("監看範圍或對應已變更，請重新預覽。");
+                throw new PrtgScopePurgeRuleException("監看範圍或對應已變更，請重新預覽。");
 
             // The unique nullable slot is a database-enforced cross-process mutex.
             var occupied = ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.ActiveOwner == "active");
@@ -260,11 +260,11 @@ public sealed class PrtgScopePurgeStore
             using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
             LockScopeMutationGate(ctx);
             var row = ctx.PrtgScopePurgeJobs.SingleOrDefault(x => x.JobId == jobId)
-                ?? throw new InvalidOperationException("清除作業不存在。");
+                ?? throw new PrtgScopePurgeRuleException("清除作業不存在。");
             if (row.Revision != expectedRevision) { tx.Commit(); return row; }
             if (row.Status == "complete" || row.Status == "stopped") { tx.Commit(); return row; }
             if (row.Status is not ("accepted" or "running" or "paused"))
-                throw new InvalidOperationException("清除作業尚未接受。");
+                throw new PrtgScopePurgeRuleException("清除作業尚未接受。");
             if (row.Source == "automatic" && ownershipCheck == null)
             {
                 row.Status = "paused"; row.ActiveOwner = null; row.LeaseExpiresAtUtc = null;
@@ -540,7 +540,7 @@ public sealed class PrtgScopePurgeStore
                 {
                     candidate.Add(sensorId);
                     if (candidate.Count > MaximumCapturedIds)
-                        throw new InvalidOperationException($"候選感測器超過預覽上限 {MaximumCapturedIds}，未建立清除作業。");
+                        throw new PrtgScopePurgeRuleException($"候選感測器超過預覽上限 {MaximumCapturedIds}，未建立清除作業。");
                 }
             cursor = page[^1];
         }
