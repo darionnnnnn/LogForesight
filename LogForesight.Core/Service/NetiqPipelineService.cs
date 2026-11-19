@@ -888,60 +888,36 @@ public class NetiqPipelineService
             {
                 plan.Store.Append(record);
             }
-            // Formal-parent qualification consumers still read this existing metadata; retain that contract.
-            if (dataIncomplete)
-                _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
-            else
-                _hostDayTiming?.RecordCommitted(_runRecorder.RunId, target.HostId, date, Stopwatch.GetTimestamp() - timingStarted);
-            timingRecorded = true;
-
-            try
-            {
-                _workflow?.ParentSucceeded(target.HostId, target.HostName, date, _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    events.Count, HostDayWorkflowFingerprint.ForParentRecord(record), _prtgEnabled, _useAi,
-                    parentRecordId: record.RecordId > 0 ? record.RecordId : null);
-            }
-            catch (Exception workflowError)
-            {
-                Log.Warn(workflowError, "NetIQ 主機日 workflow metadata 寫入失敗，不影響已保存的分析紀錄");
-            }
-
-            result.AddAnalyzed();
-            _runRecorder.RecordDayAnalyzed();
-
-            // 問題案件批次逐日掛接、風險 log 暫存：與本機路徑同一個失敗邊界哲學，任一步失敗
-            // 只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）。兩者只依賴
-            // TopIssues 與 events，AI 不會改動這兩者，所以留在統計段——不必等 AI 完成才能做。
+            // 落庫後的後續處理一律走單一入口（順序與失敗邊界見 HostDayPostProcessor.RunAsync，本機路徑共用）。
+            // 案件掛接、風險 log 暫存、權限異動只依賴 TopIssues 與 events，AI 不會改動，所以留在統計段。
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
-
-            // PRTG finding 追加：**必須排在案件掛接之前**，案件掛接吃的是記憶體裡的
-            // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
-            HostDayPostProcessor.AttachPrtgFindings(
-                _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
-            if (!needsAi)
-                await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, events, ct);
-
-            try
+            await HostDayPostProcessor.RunAsync(new HostDayPostRequest
             {
-                // PRTG 腿與每日管線同一個判準：該日評估完整跑完＝成功，否則等待（停用時 ParentSucceeded 已記為停用）。
-                if (_prtgEnabled && _prtgFindings.IsPublished(date))
+                Record = record, HostId = target.HostId, HostName = target.HostName, Date = date,
+                Events = events, EventCount = events.Count,
+                RunId = _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                LogContext = logContext, PrtgEnabled = _prtgEnabled, AiConfigured = _useAi, NeedsAi = needsAi,
+                PrtgFindings = _prtgFindings, Store = plan.Store, Workflow = _workflow,
+                CaseCoordinator = _caseCoordinator, Dispatch = _dispatch, Clock = _backend.Clock,
+                RiskyEventStore = _riskyEventStore, RawEventRetentionDays = _rawEventRetentionDays,
+                PermissionChangeStore = _permissionChangeStore, PermissionHostDayClaims = _permissionHostDayClaims,
+                HostOs = target.Os, PermissionMappings = _permissionMappings,
+                // Formal-parent qualification consumers still read this existing metadata; retain that contract.
+                RecordTiming = () =>
                 {
-                    var evaluated = _prtgFindings.IsEvaluated(date);
-                    _workflow?.SetPrtg(target.HostId, date, evaluated ? WorkflowLegState.Succeeded : WorkflowLegState.Waiting,
-                        evidenceReady: evaluated, failure: evaluated ? null : "prtg-day-not-evaluated");
+                    if (dataIncomplete)
+                        _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
+                    else
+                        _hostDayTiming?.RecordCommitted(_runRecorder.RunId, target.HostId, date, Stopwatch.GetTimestamp() - timingStarted);
+                    timingRecorded = true;
+                },
+                FinalizeNonAiReport = token => analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, events, token),
+                RecordResult = () =>
+                {
+                    result.AddAnalyzed();
+                    _runRecorder.RecordDayAnalyzed();
                 }
-            }
-            catch (Exception workflowError)
-            {
-                Log.Warn(workflowError, "NetIQ PRTG workflow metadata 寫入失敗，不影響已保存的分析紀錄");
-            }
-
-            HostDayPostProcessor.AttachCase(_caseCoordinator, _dispatch, target.HostName, date, record.TopIssues, logContext,
-                _workflow, target.HostId, record.RecordId, _backend.Clock);
-            HostDayPostProcessor.ReplaceRiskyEvents(
-                _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
-            HostDayPostProcessor.RecordPermissionChanges(
-                _permissionChangeStore, _permissionHostDayClaims, target.HostName, target.Os, events, date, logContext, _permissionMappings);
+            }, ct);
 
             // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（零事件不更新，沿用既有「未回報」機制，
             // 判定見 HostAdminService.IsSilent）——零事件也 Touch 的話，

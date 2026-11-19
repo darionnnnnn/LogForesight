@@ -87,6 +87,90 @@ public static class HostDayPostProcessor
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>
+    /// 測試用的步驟觀察點：<see cref="RunAsync"/> 每進入一個步驟就通知一次（含該路徑不適用而短路的步驟），
+    /// 兩條路徑因此一定回報同一串順序。以 AsyncLocal 隔離平行測試；正式程式不設定。
+    /// </summary>
+    internal static readonly AsyncLocal<Action<HostDayPostStep>?> StepObserver = new();
+
+    /// <summary>
+    /// 主機日「分析紀錄落庫之後」的後續處理——本機路徑與 NetIQ 路徑唯一的入口，步驟順序只有這一種：
+    /// <list type="number">
+    /// <item><see cref="HostDayPostStep.RecordTiming"/>：計時紀錄（NetIQ 路徑才有，本機路徑為空）。</item>
+    /// <item><see cref="HostDayPostStep.RegisterParent"/>：工作流父紀錄登記。指紋用
+    /// <see cref="HostDayWorkflowFingerprint.ForParentRecord"/>，不含 PRTG 併入的問題與佐證，
+    /// 所以排在 PRTG 併入之前也不會與日後復原算出的值不同；紀錄已落庫就先登記，之後任一步失敗不會留下「有紀錄、工作流不知道」。</item>
+    /// <item><see cref="HostDayPostStep.AttachPrtgFindings"/>：併入 PRTG finding，**必須在案件掛接、結果計數之前**
+    /// （案件吃記憶體的 TopIssues、計數吃上調後的風險與報告參照）。</item>
+    /// <item><see cref="HostDayPostStep.FinalizeNonAiReport"/>：不需要 AI 的日子在 PRTG 併入後補定案報告。</item>
+    /// <item><see cref="HostDayPostStep.RecordPrtgLeg"/>：工作流 PRTG 腿（該日評估完整跑完＝成功，否則等待）。</item>
+    /// <item><see cref="HostDayPostStep.RecordResult"/>：結果計數與本日完成回報（吃併入後的風險等級與報告參照）。</item>
+    /// <item><see cref="HostDayPostStep.AttachCase"/>：問題案件掛接與夜間派工。</item>
+    /// <item><see cref="HostDayPostStep.ReplaceRiskyEvents"/>：風險 log 暫存。</item>
+    /// <item><see cref="HostDayPostStep.RecordPermissionChanges"/>：權限異動（只有 NetIQ 提供資料）。</item>
+    /// </list>
+    /// 失敗邊界：RegisterParent、RecordPrtgLeg 失敗只記警告；AttachPrtgFindings、AttachCase、ReplaceRiskyEvents、
+    /// RecordPermissionChanges 各自內部已攔截；RecordTiming、FinalizeNonAiReport、RecordResult 的例外往上拋，
+    /// 由呼叫端依各自的失敗語意處理（NetIQ 記為該主機日失敗、本機整段失敗）。
+    /// </summary>
+    public static async Task RunAsync(HostDayPostRequest r, CancellationToken ct = default)
+    {
+        void Enter(HostDayPostStep step) => StepObserver.Value?.Invoke(step);
+        var record = r.Record;
+
+        Enter(HostDayPostStep.RecordTiming);
+        r.RecordTiming?.Invoke();
+
+        Enter(HostDayPostStep.RegisterParent);
+        try
+        {
+            r.Workflow?.ParentSucceeded(r.HostId, r.HostName, r.Date, r.RunId, r.EventCount,
+                HostDayWorkflowFingerprint.ForParentRecord(record), r.PrtgEnabled, r.AiConfigured,
+                parentRecordId: record.RecordId > 0 ? record.RecordId : null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 主機日 workflow metadata 寫入失敗，不影響已保存的分析紀錄", r.LogContext, r.Date);
+        }
+
+        Enter(HostDayPostStep.AttachPrtgFindings);
+        AttachPrtgFindings(r.PrtgFindings, r.Store, record, r.HostId, r.AiConfigured, r.LogContext);
+
+        Enter(HostDayPostStep.FinalizeNonAiReport);
+        if (!r.NeedsAi && r.FinalizeNonAiReport != null) await r.FinalizeNonAiReport(ct);
+
+        Enter(HostDayPostStep.RecordPrtgLeg);
+        try
+        {
+            // PRTG 腿與每日管線同一個判準：該日評估完整跑完＝成功，否則等待（停用時 ParentSucceeded 已記為停用）。
+            if (r.PrtgEnabled && r.PrtgFindings.IsPublished(r.Date))
+            {
+                var evaluated = r.PrtgFindings.IsEvaluated(r.Date);
+                r.Workflow?.SetPrtg(r.HostId, r.Date, evaluated ? WorkflowLegState.Succeeded : WorkflowLegState.Waiting,
+                    evidenceReady: evaluated, failure: evaluated ? null : "prtg-day-not-evaluated");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} PRTG workflow metadata 寫入失敗，不影響已保存的分析紀錄", r.LogContext, r.Date);
+        }
+
+        Enter(HostDayPostStep.RecordResult);
+        r.RecordResult?.Invoke();
+
+        Enter(HostDayPostStep.AttachCase);
+        AttachCase(r.CaseCoordinator, r.Dispatch, r.HostName, r.Date, record.TopIssues, r.LogContext,
+            r.Workflow, r.HostId, record.RecordId, r.Clock);
+
+        Enter(HostDayPostStep.ReplaceRiskyEvents);
+        ReplaceRiskyEvents(r.RiskyEventStore, r.RawEventRetentionDays, r.Date, record.TopIssues, r.Events, r.HostId, r.LogContext);
+
+        Enter(HostDayPostStep.RecordPermissionChanges);
+        if (r.PermissionChangeStore != null && r.PermissionHostDayClaims != null)
+            RecordPermissionChanges(r.PermissionChangeStore, r.PermissionHostDayClaims, r.HostName, r.HostOs, r.Events,
+                r.Date, r.LogContext, r.PermissionMappings);
+    }
+
+    /// <summary>
     /// NetIQ Windows Security 權限異動事件與中文類型對應（放在單一常數點）。
     /// 各 EventId 意義：
     ///   - 4728: 已將成員新增到安全性全域群組 (A member was added to a security-enabled global group)
@@ -586,4 +670,75 @@ public static class HostDayPostProcessor
             PairCount = pairCount
         };
     }
+}
+
+/// <summary>主機日落庫後續處理的步驟（順序即 <see cref="HostDayPostProcessor.RunAsync"/> 的執行順序）</summary>
+public enum HostDayPostStep
+{
+    RecordTiming,
+    RegisterParent,
+    AttachPrtgFindings,
+    FinalizeNonAiReport,
+    RecordPrtgLeg,
+    RecordResult,
+    AttachCase,
+    ReplaceRiskyEvents,
+    RecordPermissionChanges
+}
+
+/// <summary>
+/// <see cref="HostDayPostProcessor.RunAsync"/> 的輸入：兩條路徑共用的資料，加上少數路徑專屬的掛鉤
+/// （<see cref="RecordTiming"/>、<see cref="RecordResult"/>、<see cref="FinalizeNonAiReport"/> 的實作各路徑不同，
+/// 順序由處理器決定）。權限異動欄位為空＝本機路徑，該步驟不動作。
+/// </summary>
+public sealed class HostDayPostRequest
+{
+    public required DailyAnalysisRecord Record { get; init; }
+    public required long HostId { get; init; }
+    public required string HostName { get; init; }
+    public required DateTime Date { get; init; }
+    public required List<EventLogEntryData> Events { get; init; }
+
+    /// <summary>該主機日取得的事件數（工作流父紀錄的事件數）</summary>
+    public required int EventCount { get; init; }
+
+    /// <summary>執行識別（工作流父紀錄的 ParentRunId）</summary>
+    public required string RunId { get; init; }
+
+    /// <summary>NetIQ 路徑帶 Sentinel／IP 供除錯定位，本機路徑為空字串</summary>
+    public string LogContext { get; init; } = string.Empty;
+
+    public required bool PrtgEnabled { get; init; }
+
+    /// <summary>AI 判讀是否已設定（影響 PRTG 上調風險後是否標待補 AI，也是工作流父紀錄的 AI 腿設定）</summary>
+    public required bool AiConfigured { get; init; }
+
+    /// <summary>落庫時這一天是否已標為待 AI 分析（true＝報告留給 AI 排程，不在此補定案報告）</summary>
+    public required bool NeedsAi { get; init; }
+
+    public required PrtgFindingsRegistry PrtgFindings { get; init; }
+    public required IAnalysisRecordStore Store { get; init; }
+    public HostDayWorkflowService? Workflow { get; init; }
+    public required IssueCaseCoordinator CaseCoordinator { get; init; }
+    public required NightlyDispatch Dispatch { get; init; }
+
+    /// <summary>掛接與夜間派工寫下的時間所用的時鐘（省略＝系統時鐘）</summary>
+    public TimeProvider? Clock { get; init; }
+
+    public IRiskyEventStore? RiskyEventStore { get; init; }
+    public required int RawEventRetentionDays { get; init; }
+
+    public PermissionChangeStore? PermissionChangeStore { get; init; }
+    public ConcurrentDictionary<string, byte>? PermissionHostDayClaims { get; init; }
+    public string HostOs { get; init; } = WebHost.OsWindows;
+    public PermissionFieldMappings? PermissionMappings { get; init; }
+
+    /// <summary>計時紀錄（NetIQ 路徑才有）</summary>
+    public Action? RecordTiming { get; init; }
+
+    /// <summary>不需要 AI 時，PRTG 併入後補定案報告</summary>
+    public Func<CancellationToken, Task>? FinalizeNonAiReport { get; init; }
+
+    /// <summary>結果計數與本日完成回報（各路徑的統計物件不同）</summary>
+    public Action? RecordResult { get; init; }
 }

@@ -156,6 +156,7 @@ public class WorkOrderCommandService
 
         var orders = new List<WorkOrderCreatedDto>();
         var raceSkipped = new List<WorkOrderConflict>();
+        var overlong = new List<WorkOrderOverlongDto>();
         var daySyncPending = 0;
         foreach (var allocation in plan.Allocations)
         {
@@ -172,6 +173,7 @@ public class WorkOrderCommandService
 
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
+            overlong.AddRange(OverlongDtos(outcome));
             if (outcome.WorkOrderId == 0) continue;
 
             orders.Add(new WorkOrderCreatedDto
@@ -233,6 +235,7 @@ public class WorkOrderCommandService
         {
             Orders = orders,
             Skipped = skipped,
+            OverlongSkipped = overlong,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             DaySyncPendingCases = daySyncPending,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
@@ -241,6 +244,14 @@ public class WorkOrderCommandService
             HandlerHasNoEmail = plan.Allocations.Any(a => string.IsNullOrWhiteSpace(a.Handler.Email))
         };
     }
+
+    /// <summary>協調器略過的超長問題鍵，轉成給使用者看的說明（只含主機、長度與上限，不含例外原文）</summary>
+    private static List<WorkOrderOverlongDto> OverlongDtos(WorkOrderMemberOutcome outcome) =>
+        outcome.SkippedOverlong.Select(o => new WorkOrderOverlongDto
+        {
+            HostName = o.HostName,
+            Message = $"主機「{o.HostName}」的問題簽章過長（{o.KeyLength} 字，上限 {o.MaxLength} 字），未建立案件。"
+        }).ToList();
 
     // ── 單一單的操作 ─────────────────────────────────────────────────────────
 
@@ -292,6 +303,7 @@ public class WorkOrderCommandService
             LinkedExisting = outcome.LinkedExisting,
             Reassigned = outcome.Reassigned,
             SkippedConflicts = outcome.SkippedConflicts.Count,
+            OverlongSkipped = OverlongDtos(outcome),
             NoiseExcludedHosts = noiseExcluded,
             IgnoredHosts = ignored,
             DaySyncPendingCases = outcome.DaySync.PendingCases

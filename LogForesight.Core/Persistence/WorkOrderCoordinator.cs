@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NLog;
 
 namespace LogForesight.Core.Persistence;
 
@@ -19,6 +20,8 @@ namespace LogForesight.Core.Persistence;
 /// </summary>
 public class WorkOrderCoordinator
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     /// <summary>取單成員的分頁大小（暫定）</summary>
     private const int MemberPageSize = 500;
 
@@ -108,7 +111,7 @@ public class WorkOrderCoordinator
             ValidateMembers(req.Members, req.Source, req.EventId, "（未建立）");
             return new WorkOrderMemberOutcome
             {
-                WorkOrderId = 0, CreatedOrder = false, SkippedConflicts = preview.Skipped,
+                WorkOrderId = 0, CreatedOrder = false, SkippedConflicts = preview.Skipped, SkippedOverlong = preview.Overlong,
                 DaySync = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0)
             };
         }
@@ -213,7 +216,10 @@ public class WorkOrderCoordinator
         ValidateMembers(members, source, eventId, order.WorkOrderId.ToString());
         var plan = ClassifyMembers(members, source, eventId, order.HandlerId, order.WorkOrderId, reassignConflicts);
 
-        var outcome = new WorkOrderMemberOutcome { WorkOrderId = order.WorkOrderId, SkippedConflicts = plan.Skipped };
+        var outcome = new WorkOrderMemberOutcome
+        {
+            WorkOrderId = order.WorkOrderId, SkippedConflicts = plan.Skipped, SkippedOverlong = plan.Overlong
+        };
         var sourceOrders = new HashSet<long>();
 
         var newCases = new List<IssueCase>(plan.New.Count);
@@ -285,7 +291,8 @@ public class WorkOrderCoordinator
 
     /// <summary>成員分類的結果：只讀不寫（案件物件尚未被修改）</summary>
     private sealed record MemberPlan(
-        List<WorkOrderMember> New, List<IssueCase> Relink, List<IssueCase> Reassign, List<WorkOrderConflict> Skipped)
+        List<WorkOrderMember> New, List<IssueCase> Relink, List<IssueCase> Reassign, List<WorkOrderConflict> Skipped,
+        List<WorkOrderOverlongMember> Overlong)
     {
         public int EffectiveCount => New.Count + Relink.Count + Reassign.Count;
     }
@@ -301,12 +308,27 @@ public class WorkOrderCoordinator
         foreach (var openCase in _cases.GetOpenMany(members.Select(m => m.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source, eventId))
             existingByKey.TryAdd((openCase.HostName, openCase.IssueKey), openCase);
 
-        var plan = new MemberPlan(new List<WorkOrderMember>(), new List<IssueCase>(), new List<IssueCase>(), new List<WorkOrderConflict>());
+        var plan = new MemberPlan(new List<WorkOrderMember>(), new List<IssueCase>(), new List<IssueCase>(), new List<WorkOrderConflict>(),
+            new List<WorkOrderOverlongMember>());
         var seen = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
 
         foreach (var member in members)
         {
             if (!seen.Add((member.HostName, member.IssueKey))) continue;
+
+            // 問題鍵超過欄位上限：案件與逐日處理列的 store 都會拒寫（截斷會撞鍵），在分類就排除，
+            // 才不會替沒有落庫的案件寫處理紀錄、也不會把它算進成員數與事件
+            if (IssueKeyLimit.Exceeds(member.IssueKey, out var maxLength))
+            {
+                Log.Warn("[交辦] 問題鍵超過 {Max} 字（{Len}），不建立案件：{Host} {Key}",
+                    maxLength, member.IssueKey.Length, member.HostName, member.IssueKey[..Math.Min(80, member.IssueKey.Length)]);
+                plan.Overlong.Add(new WorkOrderOverlongMember
+                {
+                    HostName = member.HostName, IssueLabel = member.IssueLabel,
+                    KeyLength = member.IssueKey.Length, MaxLength = maxLength
+                });
+                continue;
+            }
 
             if (!existingByKey.TryGetValue((member.HostName, member.IssueKey), out var existing))
             {
@@ -588,6 +610,14 @@ public class WorkOrderCoordinator
             }
 
             var key = IssueSignatureKey.For(issue);
+            // 超長的鍵 store 會拒寫：不建案件也不寫逐日列與處理紀錄（回報為未寫入，與無有效單同一個出口）
+            if (IssueKeyLimit.Exceeds(key, out var keyMax))
+            {
+                Log.Warn("[交辦] 夜間派工的問題鍵超過 {Max} 字（{Len}），不建立案件：{Host} {Date:yyyy-MM-dd}",
+                    keyMax, key.Length, host.HostName, day);
+                written.Add(null);
+                continue;
+            }
             // 同批重複的鍵也算：第一件建出後第二件不可再插第二件進行中案件
             if (!openKeys.Add(key))
             {

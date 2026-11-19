@@ -1183,44 +1183,27 @@ public class AnalysisOrchestrator
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun, deferNonAiReport: true);
-                    var hadAiPending = record.AiPending;
-                    // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
-                    // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
-                    // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
-                    HostDayPostProcessor.AttachPrtgFindings(
-                        prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
-                    if (!hadAiPending)
-                        await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, logs, ct);
-                    try
+                    // 落庫後的後續處理一律走單一入口（順序與失敗邊界見 HostDayPostProcessor.RunAsync，NetIQ 路徑共用）：
+                    // PRTG finding 併入必須在案件掛接與結果計數之前，任一步失敗只記警告、不擋分析主流程。
+                    await HostDayPostProcessor.RunAsync(new HostDayPostRequest
                     {
-                        workflow?.ParentSucceeded(currentHostId, currentHost, date, runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            logs.Count, HostDayWorkflowFingerprint.ForParentRecord(record), prtgEnabled: prtgEnabled,
-                            aiEnabled: localUseAi, parentRecordId: record.RecordId > 0 ? record.RecordId : null);
-                        // PRTG 腿與每日管線同一個判準：該日評估完整跑完＝成功，否則等待（停用時 ParentSucceeded 已記為停用）。
-                        if (prtgEnabled && prtgFindings.IsPublished(date))
+                        Record = record, HostId = currentHostId, HostName = currentHost, Date = date,
+                        Events = logs, EventCount = logs.Count,
+                        RunId = runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        PrtgEnabled = prtgEnabled, AiConfigured = localUseAi, NeedsAi = record.AiPending,
+                        PrtgFindings = prtgFindings, Store = historyService, Workflow = workflow,
+                        CaseCoordinator = caseCoordinator, Dispatch = dispatch, Clock = ctx.Clock,
+                        RiskyEventStore = riskyEventStore, RawEventRetentionDays = retention.RawEventRetentionDays,
+                        FinalizeNonAiReport = token => analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, logs, token),
+                        RecordResult = () =>
                         {
-                            var evaluated = prtgFindings.IsEvaluated(date);
-                            workflow?.SetPrtg(currentHostId, date, evaluated ? WorkflowLegState.Succeeded : WorkflowLegState.Waiting,
-                                evidenceReady: evaluated, failure: evaluated ? null : "prtg-day-not-evaluated");
+                            result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
+                            runRecorder.RecordDayAnalyzed();
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warn(ex, "主機日 workflow metadata 寫入失敗，不影響分析成果");
-                    }
-
-                    result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
-
-                    // 問題案件批次逐日掛接（2.4）、風險 log 暫存：任一步失敗只記警告，
-                    // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
-                    HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, currentHost, date, record.TopIssues,
-                        workflow: workflow, hostId: currentHostId, parentRecordId: record.RecordId, clock: ctx.Clock);
-                    HostDayPostProcessor.ReplaceRiskyEvents(
-                        riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
+                    }, ct);
 
                     dayStopwatch.Stop();
                     elapsedByDate[date] = dayStopwatch.Elapsed;
-                    runRecorder.RecordDayAnalyzed();
 
                     PrintResult(console, record, verbose: date == yesterday);
                     console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");

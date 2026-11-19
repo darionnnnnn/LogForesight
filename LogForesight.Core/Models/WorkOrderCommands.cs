@@ -67,6 +67,20 @@ public sealed class WorkOrderConflict
     public long? HandlerId { get; set; }
 }
 
+/// <summary>成員處理時略過的超長問題鍵：簽章長度超過案件／逐日處理列欄位上限，不建立案件也不寫處理紀錄</summary>
+public sealed class WorkOrderOverlongMember
+{
+    public string HostName { get; set; } = string.Empty;
+
+    public string IssueLabel { get; set; } = string.Empty;
+
+    /// <summary>該成員問題鍵的實際長度</summary>
+    public int KeyLength { get; set; }
+
+    /// <summary>欄位長度上限（取案件與逐日處理列兩者較小者）</summary>
+    public int MaxLength { get; set; }
+}
+
 /// <summary>建單／追加的結果</summary>
 public sealed class WorkOrderMemberOutcome
 {
@@ -83,6 +97,9 @@ public sealed class WorkOrderMemberOutcome
     public int Reassigned { get; set; }
 
     public List<WorkOrderConflict> SkippedConflicts { get; set; } = new();
+
+    /// <summary>問題鍵超過欄位上限而未建立案件的成員（不截斷：截斷後的鍵會撞到別筆或永遠對不上）</summary>
+    public List<WorkOrderOverlongMember> SkippedOverlong { get; set; } = new();
 
     public CaseDaySubmitResult DaySync { get; set; }
 }

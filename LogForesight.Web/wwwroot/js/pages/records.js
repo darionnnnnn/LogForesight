@@ -2057,6 +2057,13 @@ function renderWorkOrderForm(body, group, users, groups) {
                 toast(`${result.skipped.length} 台略過（已由他人處理中）`, 'warning');
             }
 
+            if (result.overlongSkipped && result.overlongSkipped.length > 0) {
+                // 訊息由後端組好（主機、長度、上限）；最多列 3 筆，其餘以件數帶過
+                const shown = result.overlongSkipped.slice(0, 3).map(o => o.message);
+                const rest = result.overlongSkipped.length - shown.length;
+                toast(shown.join('') + (rest > 0 ? `另有 ${rest} 台同樣未建立。` : ''), 'warning');
+            }
+
             if (result.assigneeCannotHandle && result.assigneeCannotHandle.length > 0) {
                 for (const a of result.assigneeCannotHandle) {
                     toast(`${a.handlerName} 沒有處理權限（${a.hostCount} 台）`, 'warning');
