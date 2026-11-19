@@ -88,6 +88,121 @@ public class SettingsBoundClientTests
         Assert.Equal(2, factoryCalls);
     }
 
+    // ───────── H7：被換掉的舊客戶端要釋放（寬限期後；PRTG 這類單一迴圈使用者可立即） ─────────
+
+    private sealed class Disposable : IDisposable
+    {
+        public int DisposeCount;
+        public void Dispose() => Interlocked.Increment(ref DisposeCount);
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private readonly List<(ManualTimer Timer, TimeSpan Due)> _timers = new();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ManualTimer(callback, state);
+            _timers.Add((timer, dueTime));
+            return timer;
+        }
+        public TimeSpan? LastDue => _timers.Count == 0 ? null : _timers[^1].Due;
+        /// <summary>觸發所有尚未釋放的計時器。</summary>
+        public void FireAll() { foreach (var (t, _) in _timers.ToList()) t.Fire(); }
+    }
+
+    private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private bool _disposed;
+        public void Fire() { if (!_disposed) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+        public void Dispose() => _disposed = true;
+        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+    }
+
+    [Fact]
+    public void 立即釋放模式_設定改變後舊客戶端被釋放且新的沒被釋放()
+    {
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), disposeGrace: TimeSpan.Zero);
+
+        var first = binding.Get("a")!;
+        Assert.Equal(0, first.DisposeCount);
+        var second = binding.Get("b")!;
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(0, second.DisposeCount);
+    }
+
+    [Fact]
+    public void 設定不變時不重建也不釋放()
+    {
+        var factoryCalls = 0;
+        var binding = new SettingsBoundClient<string, Disposable>(_ => { factoryCalls++; return new Disposable(); }, disposeGrace: TimeSpan.Zero);
+
+        var first = binding.Get("a")!;
+        binding.Get("a");
+        binding.Get("a");
+
+        Assert.Equal(1, factoryCalls);
+        Assert.Equal(0, first.DisposeCount);
+    }
+
+    [Fact]
+    public void 寬限期內不釋放_到期才釋放()
+    {
+        var clock = new ManualTimeProvider();
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
+        var first = binding.Get("a")!;
+        binding.Get("b");
+
+        Assert.Equal(TimeSpan.FromMinutes(2), clock.LastDue);
+        Assert.Equal(0, first.DisposeCount);   // 進行中的請求還在用它，不能立刻釋放
+
+        clock.FireAll();
+
+        Assert.Equal(1, first.DisposeCount);
+        clock.FireAll();
+        Assert.Equal(1, first.DisposeCount);   // 只釋放一次
+    }
+
+    [Fact]
+    public void 設定改成未設定時舊客戶端同樣被釋放()
+    {
+        var binding = new SettingsBoundClient<string, Disposable>(
+            snapshot => snapshot.Length == 0 ? null : new Disposable(), disposeGrace: TimeSpan.Zero);
+        var first = binding.Get("a")!;
+
+        Assert.Null(binding.Get(""));
+
+        Assert.Equal(1, first.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose立即釋放目前的與寬限期中的舊客戶端_之後可重新建立()
+    {
+        var clock = new ManualTimeProvider();
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
+        var first = binding.Get("a")!;
+        var second = binding.Get("b")!;
+
+        binding.Dispose();
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(1, second.DisposeCount);
+        Assert.Null(binding.Current);
+        var third = binding.Get("b")!;
+        Assert.NotSame(second, third);
+        Assert.Equal(0, third.DisposeCount);
+    }
+
+    [Fact]
+    public void 不可釋放的客戶端換掉時不受影響()
+    {
+        var binding = new SettingsBoundClient<string, object>(_ => new object(), disposeGrace: TimeSpan.Zero);
+        var first = binding.Get("a");
+        var second = binding.Get("b");
+        Assert.NotSame(first, second);
+    }
+
     private sealed record AdSnapshot(List<string> Servers)
     {
         public bool Equals(AdSnapshot? other) => other != null && Servers.SequenceEqual(other.Servers);

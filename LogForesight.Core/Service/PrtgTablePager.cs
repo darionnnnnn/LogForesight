@@ -1,5 +1,7 @@
 using System.Text.Json;
 using NLog;
+using Polly;
+using Polly.Retry;
 
 namespace LogForesight.Core.Service;
 
@@ -45,13 +47,11 @@ internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRo
 
 /// <summary>
 /// 分頁讀取的等待重試選項（傳入即開啟；<c>null</c>＝不重試，維持單次失敗即擲出的既有行為）。
-/// 次數與延遲是 <see cref="PrtgTablePager.RetryDelays"/> 的固定常數，這裡只放可注入的「等待」動作。
+/// 次數與延遲是 <see cref="PrtgTablePager.RetryDelays"/> 的固定常數，這裡只放可注入的時間來源。
 /// </summary>
-/// <param name="Delay">等待函式，預設 <see cref="Task.Delay(TimeSpan, CancellationToken)"/>；測試注入零等待並記錄收到的時間長度。</param>
-internal sealed record PrtgPagerRetry(Func<TimeSpan, CancellationToken, Task>? Delay = null)
-{
-    internal Task WaitAsync(TimeSpan span, CancellationToken ct) => Delay != null ? Delay(span, ct) : PrtgTablePager.DefaultWait(span, ct);
-}
+/// <param name="Clock">重試等待用的時間提供者（Polly 的 <c>TimeProvider</c>）；省略時取 PRTG 用戶端的配額時鐘
+/// （正式環境真的等，測試的共用配額池是加速時鐘）。單元測試注入可記錄等待長度的時間提供者。</param>
+internal sealed record PrtgPagerRetry(TimeProvider? Clock = null);
 
 /// <summary>
 /// PRTG table.json 的唯一分頁實作。所有需要翻頁讀取 PRTG 表格的路徑都走這裡，
@@ -76,12 +76,6 @@ internal static class PrtgTablePager
     /// 次數是整個 pager 執行共用，不是每頁各 2 次——頁數可達數百，每頁各算會讓一個壞掉的 PRTG 把同步拖成數小時。
     /// </summary>
     internal static readonly IReadOnlyList<TimeSpan> RetryDelays = [TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60)];
-
-    /// <summary>
-    /// 沒有注入等待函式時的預設等待（真的等）。唯一用途是讓測試組件在載入時換成零等待：
-    /// 夜間管線、結構同步與回填的整合測試會連到不可達的位址，真的等 15＋60 秒會讓每個案例慢數分鐘。正式碼不替換它。
-    /// </summary>
-    internal static Func<TimeSpan, CancellationToken, Task> DefaultWait { get; set; } = Task.Delay;
 
     /// <summary>每翻這麼多頁寫一行執行輸出：大型環境要翻數百頁，沒有輸出時「慢」與「卡死」看起來一樣。</summary>
     private const int ConsoleEveryPages = 5;
@@ -127,7 +121,7 @@ internal static class PrtgTablePager
         PrtgPagerRetry? retry = null)
     {
         rowKey ??= DefaultRowKey;
-        var retriesUsed = 0;
+        var retryPipeline = retry == null ? null : BuildRetryPipeline(client, retry, content);
 
         var offset = 0;
         var totalMapped = 0;
@@ -152,25 +146,9 @@ internal static class PrtgTablePager
 
             // 重試只包「請求本身」：回應尚未解析、也沒有任何狀態被改動，重送一次與第一次等價；
             // 計數用的觀察者（PrtgClient.TableRequestSent）在每次真的送出時各觸發一次，重送本來就是一次新請求。
-            string json;
-            while (true)
-            {
-                try
-                {
-                    json = await client.GetJsonAsync(query, ct);
-                    break;
-                }
-                catch (PrtgClientException ex) when (retry != null && retriesUsed < RetryDelays.Count &&
-                                                      !ct.IsCancellationRequested && IsRetryable(ex))
-                {
-                    var delay = RetryDelays[retriesUsed];
-                    retriesUsed++;
-                    // 只寫 Info：PRTG 慢的夜晚不該讓趟次變成「有警告」；重試用盡後的最終失敗照舊由呼叫端記錄。
-                    Log.Info("[PRTG] {Content} 讀取失敗（{Reason}），{Seconds} 秒後進行第 {Attempt}/{Max} 次重試",
-                        content, ex.Message, (int)delay.TotalSeconds, retriesUsed, RetryDelays.Count);
-                    await retry.WaitAsync(delay, ct);
-                }
-            }
+            var json = retryPipeline == null
+                ? await client.GetJsonAsync(query, ct)
+                : await retryPipeline.ExecuteAsync(async token => await client.GetJsonAsync(query, token), ct);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -305,6 +283,37 @@ internal static class PrtgTablePager
         }
 
         return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly) { TreeSizeShort = treeSizeShort };
+    }
+
+    /// <summary>
+    /// 一次 <see cref="FetchAsync{T}"/> 執行用的重試管線（Polly）：可重試的失敗等 <see cref="RetryDelays"/> 的下一格再送。
+    /// 次數額度由管線內的計數共用整個執行（頁數可達數百，每頁各算會讓壞掉的 PRTG 把同步拖成數小時），
+    /// 所以 Polly 的 <c>MaxRetryAttempts</c> 只是上限、真正的判定在 ShouldHandle。
+    /// 取消：呼叫端的 <paramref name="ct"/> 已取消時 Polly 不重試、直接擲 <see cref="OperationCanceledException"/>
+    /// （等待中被取消也一樣）；只有「OCE 且 ct 已取消」才是使用者取消，這裡不攔也不改寫。
+    /// </summary>
+    private static ResiliencePipeline<string> BuildRetryPipeline(PrtgClient client, PrtgPagerRetry retry, string content)
+    {
+        var clock = retry.Clock
+            ?? (client.Budget?.Clock is { } budgetClock ? new PrtgClockTimeProvider(budgetClock) : TimeProvider.System);
+        var retriesUsed = 0;
+        return new ResiliencePipelineBuilder<string> { TimeProvider = clock }
+            .AddRetry(new RetryStrategyOptions<string>
+            {
+                MaxRetryAttempts = RetryDelays.Count,
+                ShouldHandle = args => ValueTask.FromResult(
+                    args.Outcome.Exception is PrtgClientException ex && retriesUsed < RetryDelays.Count && IsRetryable(ex)),
+                DelayGenerator = _ => ValueTask.FromResult<TimeSpan?>(RetryDelays[Math.Min(retriesUsed, RetryDelays.Count - 1)]),
+                OnRetry = args =>
+                {
+                    retriesUsed++;
+                    // 只寫 Info：PRTG 慢的夜晚不該讓趟次變成「有警告」；重試用盡後的最終失敗照舊由呼叫端記錄。
+                    Log.Info("[PRTG] {Content} 讀取失敗（{Reason}），{Seconds} 秒後進行第 {Attempt}/{Max} 次重試",
+                        content, args.Outcome.Exception?.Message, (int)args.RetryDelay.TotalSeconds, retriesUsed, RetryDelays.Count);
+                    return default;
+                }
+            })
+            .Build();
     }
 
     /// <summary>

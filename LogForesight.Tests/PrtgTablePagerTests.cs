@@ -521,14 +521,41 @@ public class PrtgTablePagerTests
     private static HttpResponseMessage TimeoutNow() =>
         throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
 
+    /// <summary>
+    /// 可記錄等待長度的時間提供者：Polly 的重試等待是 <c>CreateTimer</c>，這裡記下到期時間並（預設）立即觸發；
+    /// <see cref="HoldTimers"/> 時永不觸發，只有取消能讓等待結束。
+    /// </summary>
+    internal sealed class RecordingTimeProvider : TimeProvider
+    {
+        public List<TimeSpan> Delays { get; } = new();
+        public bool HoldTimers { get; set; }
+        public Action? OnTimerCreated { get; set; }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (Delays) Delays.Add(dueTime);
+            OnTimerCreated?.Invoke();
+            var timer = new NoopTimer();
+            if (!HoldTimers) ThreadPool.QueueUserWorkItem(_ => callback(state));
+            return timer;
+        }
+
+        private sealed class NoopTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class RetryRig : IDisposable
     {
         private readonly PrtgClient _client;
         public ScriptedHandler Handler { get; }
-        public List<TimeSpan> Delays { get; } = new();
+        /// <summary>重試等待用的時間提供者（Polly）：記錄每次等待的長度，預設立即放行。</summary>
+        public RecordingTimeProvider Clock { get; } = new();
+        public List<TimeSpan> Delays => Clock.Delays;
         public List<long> Written { get; } = new();
-        public CancellationToken? LastDelayToken { get; private set; }
-        public Func<TimeSpan, CancellationToken, Task>? DelayOverride { get; set; }
 
         public RetryRig(Func<int, HttpResponseMessage> script, string authMode = PrtgAuthModes.Token)
         {
@@ -541,14 +568,7 @@ public class PrtgTablePagerTests
 
         public Task<PrtgPagerResult> RunAsync(bool retry = true, int pageSize = 5, CancellationToken ct = default)
         {
-            PrtgPagerRetry? options = retry
-                ? new PrtgPagerRetry((span, token) =>
-                {
-                    lock (Delays) Delays.Add(span);
-                    LastDelayToken = token;
-                    return DelayOverride?.Invoke(span, token) ?? Task.CompletedTask;
-                })
-                : null;
+            PrtgPagerRetry? options = retry ? new PrtgPagerRetry(Clock) : null;
             return PrtgTablePager.FetchAsync<long>(
                 _client, new TestConsole(), "devices", "objid", null,
                 mapper: el => el.GetProperty("objid").GetInt64(),
@@ -710,15 +730,12 @@ public class PrtgTablePagerTests
     {
         using var rig = new RetryRig(_ => TimeoutNow());
         using var cts = new CancellationTokenSource();
-        rig.DelayOverride = async (_, token) =>
-        {
-            cts.Cancel();
-            await Task.Delay(Timeout.Infinite, token);
-        };
+        // 等待永不到期；第一次進入等待就取消，管線必須在等待中離開並擲 OCE
+        rig.Clock.HoldTimers = true;
+        rig.Clock.OnTimerCreated = cts.Cancel;
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => rig.RunAsync(ct: cts.Token));
 
-        Assert.Equal(cts.Token, rig.LastDelayToken);
         Assert.Equal(1, rig.Handler.Count);
         Assert.Single(rig.Delays);
     }

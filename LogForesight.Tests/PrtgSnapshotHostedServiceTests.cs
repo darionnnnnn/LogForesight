@@ -2949,12 +2949,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         SetupScopeWithoutPending("9001");
         var service = CreateService();
         var purposes = new List<(string Url, PrtgRequestPurpose Purpose)>();
-        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         _stubHandler.OnSend = (request, _) =>
         {
             var url = request.RequestUri!.ToString();
-            purposes.Add((url, Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose));
+            purposes.Add((url, Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose));
             if (IsParentLookupUrl(url)) return Task.FromResult(JsonResponse(
                 "{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":77}]}"));
             if (IsBackfillUrl(url)) return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
@@ -2986,14 +2984,12 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.Now = () => today.AddHours(12);
         var purposes = new List<PrtgRequestPurpose>();
         var snapshotPurposes = new List<PrtgRequestPurpose>();
-        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         _stubHandler.OnSend = (request, _) =>
         {
             if (request.RequestUri!.ToString().Contains("columns=" + PrtgSnapshotTargetResolver.SnapshotColumns, StringComparison.Ordinal))
-                snapshotPurposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+                snapshotPurposes.Add(Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose);
             if (request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal))
-                purposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+                purposes.Add(Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose);
             return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[],\"messages\":[]}"));
         };
         await service.ScopeRefreshTickAsync();
@@ -3151,6 +3147,42 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.NotNull(status.LastSuccessAt);
         Assert.Equal(0, status.ConsecutiveFailures);
         Assert.Single(SnapshotUrls());
+    }
+
+    // ---- H7：設定指紋改變才換 client，換掉的舊 client 釋放 ----
+
+    private PrtgClient InvokeGetClient(PrtgSnapshotHostedService service, SystemSettings settings) =>
+        (PrtgClient)typeof(PrtgSnapshotHostedService)
+            .GetMethod("GetClient", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, [settings, PrtgRequestPurpose.Snapshot])!;
+
+    [Fact]
+    public async Task 設定指紋不變時重用同一個client_指紋改變才換新並釋放舊的()
+    {
+        var service = CreateService();
+        var created = new List<PrtgClient>();
+        service.ClientFactory = () =>
+        {
+            var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
+            created.Add(client);
+            return client;
+        };
+        var settings = _settingsStore.Get();
+
+        var first = InvokeGetClient(service, settings);
+        var again = InvokeGetClient(service, _settingsStore.Get());
+        Assert.Same(first, again);
+        Assert.Single(created);
+
+        settings.PrtgTimeoutSeconds += 1;   // 指紋的一部分
+        var replaced = InvokeGetClient(service, settings);
+
+        Assert.NotSame(first, replaced);
+        Assert.Equal(2, created.Count);
+        // 舊 client 已釋放：再送請求，底層 HttpClient 擲 ObjectDisposedException（PrtgClient 包成連線失敗）
+        var disposed = await Assert.ThrowsAsync<PrtgClientException>(() => first.GetJsonAsync("api/table.json?content=devices", CancellationToken.None));
+        Assert.IsType<ObjectDisposedException>(disposed.InnerException?.InnerException ?? disposed.InnerException);
+        Assert.Same(replaced, service.CurrentClient);
     }
 
     // ---- 第 75 輪 G-4：待寫檔停擺的自動封存、手動封存與診斷 ----

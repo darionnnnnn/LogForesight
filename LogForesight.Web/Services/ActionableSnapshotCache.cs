@@ -13,10 +13,9 @@ namespace LogForesight.Web.Services;
 /// 故保留 TTL 作為上限。鍵含可見主機集合不得串味。
 /// </summary>
 /// <remarks>
-/// 版本清除、元素總數上限、單筆超限與統計計數的邏輯與 <see cref="IssueRankingCache"/> 逐行相同、只差條目型別——
-/// 改這裡的逐出規則要同步改那邊（兩個 tuple 型別各異，暫不抽共用基底，見 BACKLOG）。
+/// 快取機制在 <see cref="BoundedTtlCache{T}"/>，這裡只負責組鍵與型別形狀。
 /// </remarks>
-public class ActionableSnapshotCache : ICacheStatistics
+public class ActionableSnapshotCache : BoundedTtlCache<List<ResolvedOccurrence>>
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由。</summary>
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
@@ -24,36 +23,15 @@ public class ActionableSnapshotCache : ICacheStatistics
     /// <summary>條目上限：同 <see cref="IssueRankingCache"/>——滿了逐筆淘汰（先清過期、再清最久沒被存取的）。</summary>
     private const int MaxEntries = 256;
 
-    private readonly Func<DateTime> _now;
-    private readonly object _lock = new();
-    private readonly SingleFlight _flight = new();
-    private DateTime _lastSweep = DateTime.MinValue;
-    private readonly Dictionary<string, (List<ResolvedOccurrence> Items, DateTime CachedAt, DateTime LastAccess, long Version)> _entries = new();
-
-    private readonly DataVersionStamp _versionStamp;
-
-    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
-    private long _hits;
-    private long _misses;
-    private long _evictions;
-    private long _oversizeRejected;
-
-    /// <summary>目前所有條目的元素總數（Items.Count 加總）；增刪條目時同步更新，須在 _lock 內存取。</summary>
-    private long _elements;
-
-    private readonly long _maxElements;
-
-    /// <param name="maxElements">元素總數上限（暫定 20 萬）：條目數上限擋不住「少數條目各自極大」，
-    /// 這是以元素數近似的記憶體上限；單筆超限不快取，總數超限淘汰最久沒存取的條目。</param>
+    /// <param name="maxElements">元素總數上限（暫定 20 萬），語意同 <see cref="IssueRankingCache"/>。</param>
     public ActionableSnapshotCache(DataVersionStamp versionStamp, Func<DateTime>? now = null, long maxElements = 200_000)
+        : base("ActionableSnapshotCache", TtlSeconds, MaxEntries, maxElements, l => l.Count,
+            () => versionStamp.Current, now, l => new List<ResolvedOccurrence>(l))
     {
-        _versionStamp = versionStamp;
-        _maxElements = maxElements;
-        _now = now ?? (() => DateTime.Now);
     }
 
     /// <summary>目前資料版本；呼叫端組鍵時傳給 <see cref="KeyOf"/>。</summary>
-    public long Version => _versionStamp.Current;
+    public long Version => CurrentVersion;
 
     /// <summary>組鍵：資料版本戳＋區間＋可見主機＋日風險等級＋可見嚴重度＋靜音排除（<see cref="IssueExclusion.CacheToken"/>）——
     /// 日風險等級與可見嚴重度來自系統設定，設定變更後 TTL 內的殘影與其他快取一致，可接受；
@@ -73,150 +51,12 @@ public class ActionableSnapshotCache : ICacheStatistics
 
     /// <summary>命中直接回傳快取內的清單（不複製）：型別是唯讀，呼叫端不能改到共用清單；
     /// 需要變動請自行 ToList()。</summary>
-    public IReadOnlyList<ResolvedOccurrence>? TryGet(string key) => TryGet(key, countMiss: true);
+    public IReadOnlyList<ResolvedOccurrence>? TryGet(string key) => Lookup(key, version: null);
 
-    /// <summary>
-    /// 取快取；未命中時呼叫 <paramref name="compute"/> 算一次並以 <paramref name="version"/> 寫入。
-    /// 同鍵並發只算一次（<see cref="SingleFlight"/>）——結果超過元素上限不入快取時尤其重要：
-    /// 否則每個並發請求都各算一整份。
-    /// </summary>
-    public IReadOnlyList<ResolvedOccurrence> GetOrAdd(string key, long version, Func<List<ResolvedOccurrence>> compute)
-    {
-        if (TryGet(key, countMiss: true) is { } hit) return hit;
-        return _flight.Run<IReadOnlyList<ResolvedOccurrence>>(key, () =>
-        {
-            if (TryGet(key, countMiss: false) is { } again) return again;
-            var items = compute();
-            Set(key, items, version);
-            return items;
-        });
-    }
+    /// <summary>取快取；未命中時呼叫 <paramref name="compute"/> 算一次並以 <paramref name="version"/> 寫入（同鍵並發只算一次）。</summary>
+    public IReadOnlyList<ResolvedOccurrence> GetOrAdd(string key, long version, Func<List<ResolvedOccurrence>> compute) =>
+        GetOrCompute(key, version, compute);
 
-    private IReadOnlyList<ResolvedOccurrence>? TryGet(string key, bool countMiss)
-    {
-        lock (_lock)
-        {
-            var now = _now();
-            SweepIfDue(now);
-            if (!_entries.TryGetValue(key, out var entry)) { if (countMiss) _misses++; return null; }
-            if ((now - entry.CachedAt).TotalSeconds >= TtlSeconds)
-            {
-                RemoveEntry(key);
-                if (countMiss) _misses++;
-                return null;
-            }
-            // 合併內的二次查詢（countMiss＝false）已記過一次未命中，不再記命中，否則同一請求會被算成一次未命中加一次命中
-            if (countMiss) _hits++;
-            _entries[key] = entry with { LastAccess = now };
-            return entry.Items;
-        }
-    }
-
-    /// <param name="version">組鍵時用的資料版本（<see cref="KeyOf"/> 的第一個參數）；條目以它標記版本，
-    /// 計算期間版本若已前進就不寫入（舊版本的結果不會再被命中）。省略時視為目前版本。</param>
-    public void Set(string key, List<ResolvedOccurrence> items, long? version = null)
-    {
-        lock (_lock)
-        {
-            // 單筆就超過總上限：不寫入，呼叫端照常使用自己算出的結果；
-            // 同鍵若有舊條目一併移除，避免之後命中與這次查詢不一致的舊結果
-            if (items.Count > _maxElements)
-            {
-                _oversizeRejected++;
-                if (_entries.Remove(key, out var stale)) { _elements -= stale.Items.Count; _evictions++; }
-                return;
-            }
-
-            var now = _now();
-            var current = _versionStamp.Current;
-            // 計算期間資料版本已前進：這份結果屬於舊版本，鍵也是舊版本，之後不會再被命中，不必佔位
-            if (version is { } keyVersion && keyVersion != current) return;
-            if (_entries.TryGetValue(key, out var existing))
-            {
-                _elements -= existing.Items.Count;
-            }
-            else
-            {
-                // 版本一變舊版整批釋放（不等滿了才清），再走既有的過期／LRU 騰位
-                EvictStaleVersions(current);
-                EvictForInsert(now);
-            }
-
-            var copy = new List<ResolvedOccurrence>(items);
-            _entries[key] = (copy, now, now, current);
-            _elements += copy.Count;
-            EvictForElements(key);
-        }
-    }
-
-    /// <summary>
-    /// 讀取時順手釋放逾時與舊版本的條目（呼叫端須持鎖）：只在寫入新鍵時才清的話，尖峰過後沒人再寫入，
-    /// 最多 20 萬元素的過期內容會一直佔著記憶體。每個 TTL 週期最多掃一次。
-    /// </summary>
-    private void SweepIfDue(DateTime now)
-    {
-        if ((now - _lastSweep).TotalSeconds < TtlSeconds) return;
-        _lastSweep = now;
-        var current = _versionStamp.Current;
-        var stale = _entries
-            .Where(e => e.Value.Version != current || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in stale) RemoveEntry(k);
-        _evictions += stale.Count;
-    }
-
-    /// <summary>移除條目並同步元素總數（呼叫端須持鎖）。</summary>
-    private void RemoveEntry(string key)
-    {
-        if (_entries.Remove(key, out var removed)) _elements -= removed.Items.Count;
-    }
-
-    /// <summary>寫入新鍵前移除所有非目前版本的條目（呼叫端須持鎖），計入逐出。</summary>
-    private void EvictStaleVersions(long version)
-    {
-        var stale = _entries.Where(e => e.Value.Version != version).Select(e => e.Key).ToList();
-        foreach (var k in stale) RemoveEntry(k);
-        _evictions += stale.Count;
-    }
-
-    /// <summary>元素總數超過上限時，逐筆移除最後存取最舊的條目，直到不超過上限；不移除剛寫入的那筆（呼叫端須持鎖）。</summary>
-    private void EvictForElements(string justWritten)
-    {
-        while (_elements > _maxElements)
-        {
-            var victim = _entries.Where(e => e.Key != justWritten).MinBy(e => e.Value.LastAccess);
-            if (victim.Key == null) break;
-            RemoveEntry(victim.Key);
-            _evictions++;
-        }
-    }
-
-    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除逾時項目，仍滿就逐筆移除最後存取時間最舊的一筆。</summary>
-    private void EvictForInsert(DateTime now)
-    {
-        if (_entries.Count < MaxEntries) return;
-
-        var expired = _entries
-            .Where(e => (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in expired) RemoveEntry(k);
-        _evictions += expired.Count;
-
-        while (_entries.Count >= MaxEntries)
-        {
-            RemoveEntry(_entries.MinBy(e => e.Value.LastAccess).Key);
-            _evictions++;
-        }
-    }
-
-    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
-    public CacheStatisticsSnapshot GetStatistics()
-    {
-        lock (_lock)
-        {
-            return new CacheStatisticsSnapshot("ActionableSnapshotCache", _entries.Count, _elements, _hits, _misses, _evictions, _oversizeRejected);
-        }
-    }
+    /// <param name="version">組鍵時用的資料版本（<see cref="KeyOf"/> 的第一個參數）；計算期間版本若已前進就不寫入。省略時視為目前版本。</param>
+    public void Set(string key, List<ResolvedOccurrence> items, long? version = null) => Store(key, items, version);
 }

@@ -111,9 +111,14 @@ public sealed class PrtgFetchService
     private readonly bool _retryTransientPaging;
 
     /// <summary>
-    /// 等待重試的等待函式（測試注入零等待；null＝真的等）。表格分頁的重試與數值取數的共用暫停閘共用這一個注入點。
+    /// 數值取數共用暫停閘的等待函式（測試注入零等待並記錄長度；null＝走 <see cref="PrtgWait"/>，與請求配額同一個時鐘）。
+    /// 表格分頁的重試不走這裡，它用 Polly 的時間提供者（<see cref="PrtgPagerRetry"/>）。
     /// </summary>
     internal Func<TimeSpan, CancellationToken, Task>? RetryDelay { get; init; }
+
+    /// <summary>預設等待：PRTG 用戶端的配額時鐘（正式環境真的等；測試的共用配額池是加速時鐘），沒有配額時用 <see cref="TimeSource"/>。</summary>
+    private Task PrtgWait(TimeSpan span, CancellationToken ct) =>
+        _client.Budget?.Clock is { } clock ? clock.DelayAsync(span, ct) : Task.Delay(span, TimeSource, ct);
 
     /// <summary>
     /// 暫停與停損訊號（phase, done, total）。跟進度回呼分開：回填與結構同步把進度回呼的數字直接當進度條，
@@ -876,7 +881,7 @@ public sealed class PrtgFetchService
         }
 
         var session = new PauseSession(new PrtgValueFetchRetryPolicy(ValueFetchJitter),
-            new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource));
+            new PauseGate(RetryDelay ?? PrtgWait, TimeSource));
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var sync = new object();
         var pending = new List<long>();
@@ -1337,7 +1342,7 @@ public sealed class PrtgFetchService
 
         var run = new ValueFetchRun(day, activeSensors, new PauseSession(
             new PrtgValueFetchRetryPolicy(ValueFetchJitter),
-            new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource)));
+            new PauseGate(RetryDelay ?? PrtgWait, TimeSource)));
 
         try
         {
@@ -2003,7 +2008,7 @@ public sealed class PrtgFetchService
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
             rowKey: rowKey, stopAfterPage: stopAfterPage,
             // 逐台路徑由共用暫停閘負責等待（RunDevicesWithPauseAsync）；這裡再等一次就是兩層退避疊加
-            retry: _retryTransientPaging && allowPagerRetry ? new PrtgPagerRetry(RetryDelay) : null);
+            retry: _retryTransientPaging && allowPagerRetry ? new PrtgPagerRetry() : null);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

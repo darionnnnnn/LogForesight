@@ -357,9 +357,20 @@ public class HealthService
                 return _attentionCache;
         }
 
-        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖（GetDetail 算完會順手更新快取）
-        var detail = GetDetail();
-        return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖（GetDetail 算完會順手更新快取）。
+        // 同時進來的請求合併成一次診斷（SingleFlight）：換頁時導覽列、儀表板同時問，不各跑一輪完整診斷。
+        return _attentionFlight.Run("attention", () =>
+        {
+            // 前一個合併可能剛寫入快取並結束：再看一次，避免緊接著重算
+            lock (_attentionLock)
+            {
+                var again = _clock.UtcNow();
+                if (_attentionCache != null && again - _attentionCachedAt < AttentionCacheTtl && again >= _attentionCachedAt)
+                    return _attentionCache;
+            }
+            var detail = GetDetail();
+            return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        });
     }
 
     private void StoreAttention(HealthDetailDto detail)
@@ -382,6 +393,7 @@ public class HealthService
     private static readonly TimeSpan AttentionCacheTtl = TimeSpan.FromSeconds(30);
 
     private readonly object _attentionLock = new();
+    private readonly SingleFlight _attentionFlight = new();
     private HealthAttentionDto? _attentionCache;
     private DateTime _attentionCachedAt;
 

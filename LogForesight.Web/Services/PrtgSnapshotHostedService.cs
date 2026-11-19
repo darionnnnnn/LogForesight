@@ -186,10 +186,13 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     internal Func<PrtgClient>? ClientFactory { get; set; }
 
-    /// <summary>目前重用中的 PRTG client 與建立它時的設定指紋（見 <see cref="GetClient"/>）</summary>
-    private PrtgClient? _client;
+    /// <summary>重用中的 PRTG client：設定指紋不同才換新的、換掉的舊 client 立即釋放（見 <see cref="GetClient"/>）。
+    /// 只由 ExecuteAsync 的單一迴圈使用，換 client 時沒有進行中的請求，所以不需要寬限期。</summary>
+    private readonly SettingsBoundClient<PrtgClientSnapshot, PrtgClient> _clientBinding;
     private Action? _operationCheckpoint;
-    private string? _clientFingerprint;
+
+    /// <summary>目前重用中的 client（診斷與測試讀取；不觸發重建）。</summary>
+    internal PrtgClient? CurrentClient => _clientBinding.Current;
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
@@ -227,6 +230,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         IHostApplicationLifetime lifetime,
         TimeSpan pollInterval)
     {
+        _clientBinding = new SettingsBoundClient<PrtgClientSnapshot, PrtgClient>(
+            snapshot => CreateClient(snapshot.Settings), disposeGrace: TimeSpan.Zero);
         _pollInterval = pollInterval;
         _hosts = hostStore ?? throw new ArgumentNullException(nameof(hostStore));
         _probeState = probeState ?? throw new ArgumentNullException(nameof(probeState));
@@ -489,7 +494,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         finally
         {
             _operationCheckpoint = null;
-            if (_client != null) _client.OperationCheckpoint = null;
+            if (_clientBinding.Current is { } client) client.OperationCheckpoint = null;
         }
     }
 
@@ -1174,7 +1179,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             }
             finally
             {
-                if (_client != null) _client.OperationCheckpoint = _operationCheckpoint;
+                if (_clientBinding.Current is { } client) client.OperationCheckpoint = _operationCheckpoint;
             }
         }
     }
@@ -1840,18 +1845,18 @@ public class PrtgSnapshotHostedService : BackgroundService
             settings.PrtgIgnoreSslErrors ? "1" : "0",
             settings.PrtgTrustedCertificateSha256 ?? string.Empty);
 
-        if (_client == null || _clientFingerprint != fingerprint)
-        {
-            var created = CreateClient(settings);
-            created.RequestPurpose = purpose;
-            _client?.Dispose();
-            _client = created;
-            _clientFingerprint = fingerprint;
-        }
+        var client = _clientBinding.Get(new PrtgClientSnapshot(fingerprint, settings))!;
         // Scope discovery and messages use the general purpose; refresh it on every use of the cached client.
-        _client.RequestPurpose = purpose;
-        _client.OperationCheckpoint = _operationCheckpoint;
-        return _client;
+        client.RequestPurpose = purpose;
+        client.OperationCheckpoint = _operationCheckpoint;
+        return client;
+    }
+
+    /// <summary>設定指紋相同就視為同一個 client；<see cref="Settings"/> 只供建立新 client 時使用，不參與比對。</summary>
+    private sealed record PrtgClientSnapshot(string Fingerprint, SystemSettings Settings)
+    {
+        public bool Equals(PrtgClientSnapshot? other) => other != null && Fingerprint == other.Fingerprint;
+        public override int GetHashCode() => Fingerprint.GetHashCode();
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -1869,12 +1874,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         else _ = ExecuteTask.ContinueWith(_ => _journal.Dispose(), TaskScheduler.Default);
     }
 
-    private void DisposeClient()
-    {
-        _client?.Dispose();
-        _client = null;
-        _clientFingerprint = null;
-    }
+    private void DisposeClient() => _clientBinding.Dispose();
 
     internal virtual PrtgClient CreateClient(SystemSettings settings)
     {

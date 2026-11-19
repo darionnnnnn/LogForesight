@@ -19,7 +19,7 @@ namespace LogForesight.Web.Services;
 ///
 /// 存的是**輕量序列**（只有 hostId 與 date），不是清單 DTO——呼叫端只需要組一個連結。
 /// </summary>
-public class NextUnhandledSequenceCache : ICacheStatistics
+public class NextUnhandledSequenceCache : BoundedTtlCache<List<(long HostId, string Date)>>
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由。</summary>
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
@@ -28,21 +28,9 @@ public class NextUnhandledSequenceCache : ICacheStatistics
     /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空。</summary>
     private const int MaxEntries = 256;
 
-    private readonly DataVersionStamp _stamp;
-    private readonly Func<DateTime> _now;
-    private readonly object _lock = new();
-    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
-    private long _hits;
-    private long _misses;
-    private long _evictions;
-    private readonly Dictionary<string, (List<(long HostId, string Date)> Items, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
-    private readonly SingleFlight _flight = new();
-    private DateTime _lastSweep = DateTime.MinValue;
-
     public NextUnhandledSequenceCache(DataVersionStamp stamp, Func<DateTime>? now = null)
+        : base("NextUnhandledSequenceCache", TtlSeconds, MaxEntries, long.MaxValue, l => l.Count, () => stamp.Current, now)
     {
-        _stamp = stamp;
-        _now = now ?? (() => DateTime.Now);
     }
 
     /// <summary>組鍵：可見主機集合＋可見嚴重度＋可見日風險等級。主機 id 與字串都先排序，
@@ -58,84 +46,11 @@ public class NextUnhandledSequenceCache : ICacheStatistics
         return $"{sevs}|{risks}|{hosts}";
     }
 
-    /// <summary>取快取；未命中（不存在／逾時／版本已推進）時呼叫 factory 算一次並存起來。
-    /// 回傳**副本**——呼叫端不得改到共用清單。</summary>
+    /// <summary>取快取；未命中（不存在／逾時／版本已推進）時呼叫 factory 算一次並存起來（同鍵並發只算一次）。
+    /// 回傳**副本**——快取裡的清單不外流，呼叫端不得改到共用清單。</summary>
     public List<(long HostId, string Date)> GetOrAdd(string key, Func<List<(long HostId, string Date)>> factory)
     {
-        var version = _stamp.Current;
-        if (TryHit(key, version, countMiss: true) is { } hit) return new List<(long, string)>(hit);
-
-        // factory 在鎖外執行；同鍵並發只算一次（同 SummaryCache）。快取裡的清單不外流，回傳一律給副本
-        var shared = _flight.Run(key + "|" + version, () =>
-        {
-            if (TryHit(key, version, countMiss: false) is { } again) return again;
-            var value = new List<(long HostId, string Date)>(factory());
-            lock (_lock)
-            {
-                var now = _now();
-                if (!_entries.ContainsKey(key)) EvictForInsert(now, version);
-                _entries[key] = (value, now, version, now);
-            }
-            return value;
-        });
+        var shared = GetOrCompute(key, CurrentVersion, () => new List<(long HostId, string Date)>(factory()));
         return new List<(long, string)>(shared);
-    }
-
-    /// <summary>命中回共用清單（呼叫端須複製）、未命中回 null；同時順手釋放過期條目（每個 TTL 週期最多掃一次，同 SummaryCache）。</summary>
-    private List<(long HostId, string Date)>? TryHit(string key, long version, bool countMiss)
-    {
-        lock (_lock)
-        {
-            var now = _now();
-            if ((now - _lastSweep).TotalSeconds >= TtlSeconds)
-            {
-                _lastSweep = now;
-                RemoveStale(now, version);
-            }
-            if (_entries.TryGetValue(key, out var entry)
-                && entry.Version == version
-                && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
-            {
-                _hits++;
-                _entries[key] = entry with { LastAccess = now };
-                return entry.Items;
-            }
-            if (countMiss) _misses++;
-            return null;
-        }
-    }
-
-    private void RemoveStale(DateTime now, long version)
-    {
-        var expired = _entries
-            .Where(e => e.Value.Version != version || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in expired) _entries.Remove(k);
-        _evictions += expired.Count;
-    }
-
-    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除已過期（逾時或版本已推進、再也命不中）的項目，
-    /// 仍滿就逐筆移除最後存取時間最舊的一筆。</summary>
-    private void EvictForInsert(DateTime now, long version)
-    {
-        if (_entries.Count < MaxEntries) return;
-
-        RemoveStale(now, version);
-
-        while (_entries.Count >= MaxEntries)
-        {
-            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
-            _evictions++;
-        }
-    }
-
-    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
-    public CacheStatisticsSnapshot GetStatistics()
-    {
-        lock (_lock)
-        {
-            return new CacheStatisticsSnapshot("NextUnhandledSequenceCache", _entries.Count, _entries.Values.Sum(e => (long)e.Items.Count), _hits, _misses, _evictions, 0);
-        }
     }
 }

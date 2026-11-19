@@ -184,7 +184,8 @@ public sealed class CacheMemoryBoundTests
         Assert.Equal(1, cache.GetStatistics().Entries);
     }
 
-    /// <summary>六個跨請求快取的未命中路徑都經 SingleFlight：新增快取或改寫時漏接會在這裡紅。</summary>
+    /// <summary>六個跨請求快取都繼承唯一的快取基底（未命中路徑經 SingleFlight 只寫在基底），
+    /// 自己不再持有字典：新增快取或改寫時另起一套手寫快取會在這裡紅。</summary>
     [Theory]
     [InlineData("SummaryCache.cs")]
     [InlineData("NextUnhandledSequenceCache.cs")]
@@ -196,7 +197,11 @@ public sealed class CacheMemoryBoundTests
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
-        var src = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", file));
-        Assert.Contains("_flight.Run", src);
+        var services = Path.Combine(dir!.FullName, "LogForesight.Web", "Services");
+        var src = File.ReadAllText(Path.Combine(services, file));
+        Assert.Contains(": BoundedTtlCache<", src);
+        Assert.DoesNotContain("_entries", src);
+        Assert.DoesNotContain("_flight", src);
+        Assert.Contains("_flight.Run", File.ReadAllText(Path.Combine(services, "BoundedTtlCache.cs")));
     }
 }

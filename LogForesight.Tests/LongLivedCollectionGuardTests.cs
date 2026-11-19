@@ -45,7 +45,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Auth.LoginThrottle._ips"] = "上限 1 萬個鍵（MaxKeys），每次呼叫清過期",
         ["LogForesight.Web.Auth.RevokedTokens._revoked"] = "每次撤銷清掉全部已過期項；不設筆數上限——上限會讓被撤銷的 token 重新可用。量＝token 效期內的登出次數",
         ["LogForesight.Web.Configuration.WebAppSettings.KnownDevSecrets"] = "常數查找表：型別初始化時建好，之後只讀",
-        ["LogForesight.Web.Services.ActionableSnapshotCache._entries"] = "256 條目＋20 萬元素上限；讀取時每個 TTL 週期釋放過期與舊版本",
+        ["LogForesight.Web.Services.BoundedTtlCache`1._entries"] = "跨請求快取（問題排行、可行動快照、儀表板整包、下一筆未處理、問題負責主機、PRTG 裝置索引共用）：條目數上限 64～256＋元素總數上限（有設定者）；滿了先清逾時再逐筆清最久沒存取；讀取時每個 TTL 週期釋放過期與舊版本，寫入新鍵時整批釋放舊版",
         ["LogForesight.Web.Services.VisibleHostKeyPart.Memo"] = "ConditionalWeakTable：鍵（可見主機集合物件）被回收時條目自動消失；只記憶 IReadOnlySet",
         ["LogForesight.Web.Services.AiInsightService.KnownCategories"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.AiInsightService.KnownRisks"] = "常數查找表：型別初始化時建好，之後只讀",
@@ -53,12 +53,8 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Services.HostDayWorkflowRecoveryHostedService._oversized"] = "列被讀到後保留 2 天（InMemoryRetention），走完一次深層巡掃才丟；巡掃預算見第 78 輪批次 O",
         ["LogForesight.Web.Services.HostDayWorkflowRecoveryHostedService._waiting"] = "同 _oversized：保留 2 天並等一次深層巡掃",
         ["LogForesight.Web.Services.Import.ImportService.Pending"] = "預覽暫存 30 分鐘，新預覽或套用時清過期；單筆受 ImportMaxRows 限制，只有管理者可上傳",
-        ["LogForesight.Web.Services.IssueOwnedHostIdsCache._entries"] = "256 條目；版本推進時整批清空",
-        ["LogForesight.Web.Services.IssueRankingCache._entries"] = "256 條目＋20 萬元素上限；讀取時每個 TTL 週期釋放過期與舊版本",
         ["LogForesight.Web.Services.Mail.MailNotificationService._ledgerFullWarnedAtUtc"] = "每種帳本已滿只警告一次的時間戳；寫入時移除過期項",
-        ["LogForesight.Web.Services.NextUnhandledSequenceCache._entries"] = "256 條目；讀取時每個 TTL 週期釋放過期與舊版本",
         ["LogForesight.Web.Services.PrtgBackfillService._fullPreviews"] = "上限 128 筆，建立時清過期",
-        ["LogForesight.Web.Services.PrtgDeviceIndexCache._entries"] = "條目數上限（MaxEntries），滿了整批清空；TTL 短",
         ["LogForesight.Web.Services.PrtgProbeRunState._output"] = "開頭最多 1,500 行（OutputHeadLimit），新一趟開始時清空",
         ["LogForesight.Web.Services.PrtgProbeRunState._outputTail"] = "最新 500 行環形保留（OutputTailCapacity），新一趟開始時清空",
         ["LogForesight.Web.Services.PrtgSnapshotHostedService._confirmedEmptyDevices"] = "已確認沒有感測器的裝置；上限是取數範圍內的裝置數，結構同步寫過鏡像後清空",
@@ -80,7 +76,6 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Services.SentinelEventFetchService.Cache"] = "上限 512 筆、每筆最多 50 則訊息、TTL 10 分鐘，滿了整批清",
         ["LogForesight.Web.Services.SetupReadinessService.OldSevenStepIds"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.SetupReadinessService.StepDefinitionsById"] = "常數查找表：型別初始化時建好，之後只讀",
-        ["LogForesight.Web.Services.SummaryCache._entries"] = "256 條目；讀取時每個 TTL 週期釋放過期與舊版本",
     };
 
     private static readonly Type[] MutableCollectionDefinitions =
