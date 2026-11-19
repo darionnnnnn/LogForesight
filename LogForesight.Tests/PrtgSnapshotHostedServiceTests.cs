@@ -1933,15 +1933,18 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
         service.RequestScopeRefresh();
         await service.StartAsync(CancellationToken.None);
+        // 每輪採樣都會寫本機日誌（含落盤）：Windows CI 全量時比 macOS 慢數倍，5 秒不夠；
+        // 範圍更新與採樣交錯的競態已在正式碼修掉（ResolveTargets），這裡放寬的只是慢機器的時間
+        var roundBudget = TimeSpan.FromSeconds(30);
         try
         {
-            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true);
+            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true, roundBudget);
             for (var round = 1; round <= 3; round++)
             {
                 var expected = initial.AddMinutes(round * 15);
                 Interlocked.Exchange(ref clockTicks, expected.Ticks);
                 service.RequestScopeRefresh();
-                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected);
+                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected, roundBudget);
                 Assert.Equal(round, SnapshotUrls().Count);
             }
             Assert.True(_structureSync.IsRunning);
