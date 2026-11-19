@@ -155,6 +155,8 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
             }
             catch (Exception ex) when (ex is InvalidCastException or System.Data.Common.DbException or InvalidOperationException)
             {
+                // 退回逐筆讀取不改變結果，但整段變成每個主機日一次往返——要留下紀錄，否則只會看到畫面變慢
+                LogManager.GetCurrentClassLogger().Warn(ex, "工作流批次讀取失敗，這一段 {Count} 個主機日退回逐筆讀取", chunk.Length);
                 foreach (var key in chunk)
                     if (Get(key.HostId, key.Date) is { } state) result[key] = state;
                 continue;
