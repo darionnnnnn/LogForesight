@@ -737,6 +737,7 @@ function renderPrtgFields(settings) {
     syncPrtgAuthFields();
 
     document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
+    document.getElementById('prtg-trusted-cert').value = settings.prtgTrustedCertificateSha256 ?? '';
     document.getElementById('prtg-timeout-seconds').value = settings.prtgTimeoutSeconds ?? 60;
     document.getElementById('prtg-fetch-concurrency').value = settings.prtgFetchConcurrency ?? 2;
     document.getElementById('prtg-backfill-days').value = settings.prtgBackfillDays ?? 30;
@@ -929,6 +930,24 @@ function bindScopeControls() {
 }
 
 
+/** 測試連線回報的伺服器憑證指紋（http 連線或 TLS 前就失敗時沒有）：長字串，放在可任意斷行的容器 */
+function presentedFingerprint(sha256) {
+    if (!sha256) return null;
+    const line = document.createElement('div');
+    line.className = 'lf-text-meta lf-break-anywhere mt-1';
+    line.append('伺服器出示的憑證指紋：');
+    const value = document.createElement('span');
+    value.className = 'lf-text-data';
+    value.textContent = sha256;
+    line.append(value);
+    return line;
+}
+
+/** 與後端 ServerCertificateTrust.TryNormalize 同一套寫法，只用來比對「是否等於已存值」 */
+function normalizeFingerprint(value) {
+    return (value ?? '').replace(/[:\s-]/g, '').toUpperCase();
+}
+
 function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
     if (!button) return;
@@ -951,6 +970,7 @@ function bindPrtgTest() {
                 passhash: document.getElementById('prtg-passhash')?.value || null,
                 apiToken: document.getElementById('prtg-api-token').value || null,
                 ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
+                trustedCertificateSha256: document.getElementById('prtg-trusted-cert').value.trim(),
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value) || 60
             }, { silent: true });
 
@@ -965,13 +985,15 @@ function bindPrtgTest() {
                 && !document.getElementById('prtg-clear-password')?.checked
                 && !document.getElementById('prtg-clear-passhash')?.checked
                 && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
+                && normalizeFingerprint(document.getElementById('prtg-trusted-cert')?.value) === (saved.prtgTrustedCertificateSha256 ?? '')
                 && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
             let text = result.elapsedMs != null
                 ? `${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${result.message}`;
             if (result.success && !matchesSaved) text += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
             resultEl.className = '';
-            resultEl.replaceChildren(statusNote(result.success ? 'success' : 'error', text));
+            resultEl.replaceChildren(...[statusNote(result.success ? 'success' : 'error', text),
+                presentedFingerprint(result.presentedCertificateSha256)].filter(Boolean));
         } catch (error) {
             resultEl.className = '';
             resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
@@ -1072,6 +1094,7 @@ function bindParamsForm() {
                 prtgEnabled: enabled,
                 prtgFetchStrategy: fetchStrategy,
                 prtgIgnoreSslErrors: ignoreSsl,
+                prtgTrustedCertificateSha256: document.getElementById('prtg-trusted-cert').value.trim(),
                 prtgTimeoutSeconds: timeoutSeconds,
                 prtgFetchConcurrency: fetchConcurrency,
                 prtgBackfillDays: backfillDays,

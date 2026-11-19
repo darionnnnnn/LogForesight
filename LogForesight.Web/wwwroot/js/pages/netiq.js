@@ -184,9 +184,9 @@ document.getElementById('sentinel-test-connection').addEventListener('click', as
             password: password || null
         });
 
-        resultEl.replaceChildren(result.success
+        resultEl.replaceChildren(...[result.success
             ? statusNote('success', `${result.message}（耗時 ${result.elapsedMs}ms）`)
-            : statusNote('error', result.message));
+            : statusNote('error', result.message), presentedFingerprint(result.presentedCertificateSha256)].filter(Boolean));
     } catch {
         // 輸入不合法（如既有 Sentinel 找不到）由 api.js 以 toast 顯示；此處不用另外處理
     } finally {
@@ -242,6 +242,7 @@ async function loadOptions() {
     document.getElementById('opt-timeout').value = options.timeoutSeconds;
     document.getElementById('opt-retry-count').value = options.retryCount;
     document.getElementById('opt-allow-invalid-certs').checked = options.allowInvalidCertificates;
+    document.getElementById('opt-trusted-cert').value = options.trustedCertificateSha256 ?? '';
     document.getElementById('opt-backfill-days').value = options.backfillDays;
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
     document.getElementById('opt-max-parallel-queries').value = options.maxParallelQueriesPerServer;
@@ -265,6 +266,19 @@ async function loadOptions() {
     renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
 }
 
+/** 測試連線回報的伺服器憑證指紋（http 連線或 TLS 前就失敗時沒有）：長字串，放在可任意斷行的容器 */
+function presentedFingerprint(sha256) {
+    if (!sha256) return null;
+    const line = document.createElement('div');
+    line.className = 'lf-text-meta lf-break-anywhere mt-1';
+    line.append('伺服器出示的憑證指紋：');
+    const value = document.createElement('span');
+    value.className = 'lf-text-data';
+    value.textContent = sha256;
+    line.append(value);
+    return line;
+}
+
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
     event.preventDefault();
 
@@ -278,6 +292,7 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
             timeoutSeconds: Number(document.getElementById('opt-timeout').value),
             retryCount: Number(document.getElementById('opt-retry-count').value),
             allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
+            trustedCertificateSha256: document.getElementById('opt-trusted-cert').value.trim(),
             backfillDays: Number(document.getElementById('opt-backfill-days').value),
             maxParallelServers: Number(document.getElementById('opt-max-parallel-servers').value),
             maxParallelQueriesPerServer: Number(document.getElementById('opt-max-parallel-queries').value),
@@ -288,6 +303,8 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
         // 重新套用（含離線示範徽章）——儲存後徽章要即時反映
         document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
         document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
+        // 指紋存成正規化寫法（大寫、無分隔），欄位換成實際存入的值
+        document.getElementById('opt-trusted-cert').value = options.trustedCertificateSha256 ?? '';
         renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
     } catch {
         // 錯誤已由 api.js 顯示

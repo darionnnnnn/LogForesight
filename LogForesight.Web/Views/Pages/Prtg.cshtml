@@ -256,8 +256,14 @@
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="prtg-ignore-ssl" />
                             <label class="form-check-label" for="prtg-ignore-ssl">忽略憑證錯誤</label>
-                            <div class="form-text">僅在 PRTG 使用自簽憑證的內網環境啟用。</div>
+                            <div class="form-text">沒填信任指紋時才生效；建議改填下方的憑證指紋。</div>
                         </div>
+                    </div>
+                    <div class="col-12">
+                        <label for="prtg-trusted-cert" class="form-label">信任的憑證指紋（SHA-256）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="憑證更新後指紋會改變，要把新的指紋貼回這裡；把簽發的 CA 憑證裝進這台主機的作業系統，就不必填也不必維護。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
+                        <input type="text" class="form-control lf-text-data" id="prtg-trusted-cert" autocomplete="off" spellcheck="false" maxlength="200" aria-describedby="prtg-trusted-cert-help" />
+                        <div class="form-text" id="prtg-trusted-cert-help">PRTG 使用自簽憑證時填寫。按「測試連線」會顯示伺服器出示的指紋，核對後貼上；可含冒號或空白。</div>
                     </div>
                     <div class="col-md-6">
                         <label for="prtg-timeout-seconds" class="form-label">請求逾時（秒）</label>
