@@ -109,6 +109,9 @@ public class SentinelClientException : Exception
 
     /// <summary>位址未設定或格式不正確：訊息只含使用者自己填的位址與修正方式，可直接顯示給操作者</summary>
     public const string InvalidBaseUrlCode = "invalid-base-url";
+
+    /// <summary>伺服器憑證被拒（指紋不符或不被信任）；訊息只含本系統的說明與伺服器出示的指紋，可直接顯示</summary>
+    public const string CertificateRejectedCode = "certificate-rejected";
 }
 
 /// <summary>
@@ -182,7 +185,14 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         _readLimits = readLimits;
 
         var ownsHandler = handler == null;
-        var actualHandler = handler ?? CreateDefaultHandler(settings);
+        if (!ServerCertificateTrust.TryNormalize(settings.TrustedCertificateSha256, out _))
+            throw new SentinelClientException("Sentinel 信任的憑證指紋格式不正確，應為 64 個十六進位字元的 SHA-256。",
+                safeCode: "invalid-certificate-pin");
+        // 注入的 handler（測試）不經憑證判定；自建時一律掛上，探測才拿得到伺服器出示的指紋
+        _certificateTrust = handler == null
+            ? new ServerCertificateTrust(settings.TrustedCertificateSha256, settings.AllowInvalidCertificates)
+            : null;
+        var actualHandler = handler ?? OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), _certificateTrust!.Validate);
         if (_readLimits is not null && actualHandler is SocketsHttpHandler boundedHandler)
             boundedHandler.AllowAutoRedirect = false;
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
@@ -194,7 +204,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
 
         // AllowInvalidCertificates 是顯式逃生門而非靜默放行（AppSettings 註解的承諾）：
         // 每個 client 建立時記一筆 Info（不是每次連線——那會洗版），讓 log 看得出這台是誰在裸奔
-        if (ownsHandler && settings.AllowInvalidCertificates)
+        if (ownsHandler && settings.AllowInvalidCertificates && _certificateTrust!.PinnedSha256 is null)
         {
             if (_readLimits is null)
                 Log.Info("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
@@ -219,8 +229,9 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     {
         var pipelineBuilder = new ResiliencePipelineBuilder();
         if (settings.RetryCount <= 0) return pipelineBuilder.Build();
+        // 憑證被拒（SecureConnectionError）重試也不會變，不重試
         var predicate = new PredicateBuilder()
-            .Handle<HttpRequestException>()
+            .Handle<HttpRequestException>(ex => ex.HttpRequestError != HttpRequestError.SecureConnectionError)
             .Handle<SentinelTransientException>();
         if (retryTimeouts) predicate = predicate.Handle<TaskCanceledException>();
         pipelineBuilder.AddRetry(new RetryStrategyOptions
@@ -249,8 +260,16 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     /// <summary>整包讀取的回應上限（Sentinel 一頁事件數百 KB 到數 MB）</summary>
     internal const long MaxResponseBytes = 128L * 1024 * 1024;
 
-    private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings) =>
-        OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), settings.AllowInvalidCertificates ? (_, _, _, _) => true : null);
+    private readonly ServerCertificateTrust? _certificateTrust;
+
+    /// <summary>最近一次連線時 Sentinel 出示的憑證指紋（SHA-256；http 連線或還沒連過為 null）</summary>
+    public string? PresentedCertificateSha256 => _certificateTrust?.LastPresentedSha256;
+
+    /// <summary>憑證被拒時可直接顯示的原因；不是憑證問題回 null</summary>
+    private string? CertificateRejection(Exception ex) =>
+        ex is HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError }
+            ? _certificateTrust?.LastRejection
+            : null;
 
     private string BaseUrl => _server.BaseUrl.TrimEnd('/');
     private string AuthTokensUrl => $"{BaseUrl}/SentinelAuthServices/auth/tokens";

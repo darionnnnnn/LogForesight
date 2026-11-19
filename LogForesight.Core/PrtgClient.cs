@@ -131,7 +131,8 @@ public sealed class PrtgClient : IDisposable
         string passwordOrEmpty,
         string passhashOrEmpty,
         PrtgRequestBudget? budget = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        string? trustedCertificateSha256 = null)
     {
         Budget = budget ?? PrtgRequestBudget.Shared;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -171,7 +172,11 @@ public sealed class PrtgClient : IDisposable
         _password = passwordOrEmpty ?? string.Empty;
 
         var ownsHandler = handler == null;
-        var actualHandler = handler ?? CreateDefaultHandler(ignoreSslErrors);
+        if (!ServerCertificateTrust.TryNormalize(trustedCertificateSha256, out _))
+            throw new PrtgClientException("PRTG 信任的憑證指紋格式不正確，應為 64 個十六進位字元的 SHA-256。");
+        // 注入的 handler（測試）不經憑證判定；自建時一律掛上，探測才拿得到伺服器出示的指紋
+        _certificateTrust = handler == null ? new ServerCertificateTrust(trustedCertificateSha256, ignoreSslErrors) : null;
+        var actualHandler = handler ?? OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), _certificateTrust!.Validate);
         Handler = actualHandler;
 
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
@@ -186,7 +191,7 @@ public sealed class PrtgClient : IDisposable
             Log.Warn("[PRTG] 連線位址是 http://，認證資訊會以明文傳送；正式環境請改用 https://");
         }
 
-        if (ownsHandler && ignoreSslErrors)
+        if (ownsHandler && ignoreSslErrors && _certificateTrust!.PinnedSha256 is null)
         {
             Log.Info("[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）");
         }
@@ -195,8 +200,13 @@ public sealed class PrtgClient : IDisposable
     internal static bool UsesPlainHttpWithCredentials(Uri baseUri, string token, bool usesUsernameAuth) =>
         baseUri.Scheme == Uri.UriSchemeHttp && (usesUsernameAuth || !string.IsNullOrWhiteSpace(token));
 
-    private static HttpMessageHandler CreateDefaultHandler(bool ignoreSslErrors) =>
-        OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), ignoreSslErrors ? (_, _, _, _) => true : null);
+    private readonly ServerCertificateTrust? _certificateTrust;
+
+    /// <summary>最近一次連線時 PRTG 出示的憑證指紋（SHA-256；http 連線或還沒連過為 null）</summary>
+    public string? PresentedCertificateSha256 => _certificateTrust?.LastPresentedSha256;
+
+    /// <summary>最近一次連線憑證被拒的原因（本系統的中文說明，可直接顯示）；沒有被拒為 null</summary>
+    public string? CertificateRejection => _certificateTrust?.LastRejection;
 
     /// <summary>
     /// 測試 PRTG 連線：呼叫 sensors 端點取得最少資料以驗證連線位址與認證資訊有效性。
@@ -373,8 +383,12 @@ public sealed class PrtgClient : IDisposable
         PrtgFailureText.ServerGaveUp, kind: PrtgFailureKind.EmptyPage);
 
     /// <summary>傳輸層失敗：依種類（逾時／連不上）給中文說明，底層英文原文（已遮蔽憑證）附在後面。</summary>
-    private static PrtgClientException TransportFailure(string stage, string sanitizedOriginal, Exception ex)
+    private PrtgClientException TransportFailure(string stage, string sanitizedOriginal, Exception ex)
     {
+        // 憑證被拒：原文只會說 SSL 連線失敗，指明是指紋不符或憑證不被信任；重試不會改變結果
+        if (ex is HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError } &&
+            _certificateTrust?.LastRejection is { } rejection)
+            return new PrtgClientException($"{stage}：{rejection}", ex, PrtgFailureKind.Other);
         var kind = ClassifyTransportFailure(ex);
         return new PrtgClientException(
             $"{stage}：{PrtgFailureText.WithOriginal(PrtgFailureText.ForTransport(kind), sanitizedOriginal)}", ex, kind);

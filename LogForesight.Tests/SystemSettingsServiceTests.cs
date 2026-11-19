@@ -2429,6 +2429,37 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PRTG信任指紋_正規化後存入_不送沿用_空字串清除_格式不對拒收()
+    {
+        var service = Create();
+        const string Hex = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+
+        var colon = string.Join(":", Enumerable.Range(0, 32).Select(i => Hex.Substring(i * 2, 2))).ToLowerInvariant();
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = colon
+        });
+        Assert.Equal(Hex, saved.PrtgTrustedCertificateSha256);
+        Assert.Equal(Hex, _store.Get().PrtgTrustedCertificateSha256);
+
+        var untouched = service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision });
+        Assert.Equal(Hex, untouched.PrtgTrustedCertificateSha256);
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = "AB:CD"
+        }));
+        Assert.Contains("憑證指紋格式不正確", ex.Message);
+        Assert.Equal(Hex, _store.Get().PrtgTrustedCertificateSha256);
+
+        var cleared = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = ""
+        });
+        Assert.Equal("", cleared.PrtgTrustedCertificateSha256);
+    }
+
+    [Fact]
     public void Update_不送PRTG參數時六個值全部維持原樣()
     {
         var service = Create();

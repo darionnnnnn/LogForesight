@@ -227,25 +227,35 @@ public class SentinelAdminService
 
         // 建構子也在 try 內：位址格式不正確是 SentinelClient 建構期就擋下的（不是連線期），
         // 而那同樣是「測試連線」該回報的結果之一，不該變成 500
+        SentinelClient? client = null;
         try
         {
-            await using var client = new SentinelClient(server, queryOptions);
+            client = new SentinelClient(server, queryOptions);
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestSentinelConnectionResultDto
             {
                 Success = true,
                 Message = "連線成功。",
-                ElapsedMs = (long)elapsed.TotalMilliseconds
+                ElapsedMs = (long)elapsed.TotalMilliseconds,
+                PresentedCertificateSha256 = client.PresentedCertificateSha256
             };
         }
         catch (SentinelClientException ex)
         {
             Log.Warn(ex, "測試 Sentinel 連線失敗（{0}）", server.Name);
-            // 位址格式錯誤的訊息只含使用者自己填的值與修正方式，照原文給；其餘可能夾帶回應本文，給固定說明
-            var message = ex.SafeCode == SentinelClientException.InvalidBaseUrlCode
+            // 位址格式錯誤與憑證被拒的訊息只含使用者自己填的值、本系統的說明與伺服器出示的指紋，照原文給；
+            // 其餘可能夾帶回應本文，給固定說明
+            var message = ex.SafeCode is SentinelClientException.InvalidBaseUrlCode or SentinelClientException.CertificateRejectedCode
                 ? ex.Message
                 : "測試連線失敗：請檢查位址、連接埠、帳密與憑證；詳細原因見記錄檔。";
-            return new TestSentinelConnectionResultDto { Success = false, Message = message };
+            return new TestSentinelConnectionResultDto
+            {
+                Success = false, Message = message, PresentedCertificateSha256 = client?.PresentedCertificateSha256
+            };
+        }
+        finally
+        {
+            if (client != null) await client.DisposeAsync();
         }
     }
 

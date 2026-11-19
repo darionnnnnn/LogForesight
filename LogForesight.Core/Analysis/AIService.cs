@@ -236,6 +236,15 @@ public class AIService : IAiService, IDisposable
         _retryPipeline = retryPipelineBuilder.Build();
     }
 
+    /// <summary>值得重試的 HTTP 失敗：沒有狀態碼（連線層）、5xx、408、429</summary>
+    internal static bool IsTransientHttpFailure(HttpRequestException ex) =>
+        ex.HttpRequestError != HttpRequestError.SecureConnectionError && ex.StatusCode switch
+    {
+        null => true,
+        System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests => true,
+        var code => (int)code >= 500
+    };
+
     /// <summary>
     /// 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
     /// 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
@@ -245,14 +254,6 @@ public class AIService : IAiService, IDisposable
     /// 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
     /// 相對生成時間微乎其微，直接停用連線池換取穩定性划算。**不要改回預設的連線池。**
     /// </summary>
-    /// <summary>值得重試的 HTTP 失敗：沒有狀態碼（連線層）、5xx、408、429</summary>
-    internal static bool IsTransientHttpFailure(HttpRequestException ex) => ex.StatusCode switch
-    {
-        null => true,
-        System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests => true,
-        var code => (int)code >= 500
-    };
-
     private static HttpMessageHandler CreateDefaultHandler() => OutboundHttp.CreateHandler(TimeSpan.Zero);
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>

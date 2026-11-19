@@ -325,7 +325,8 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | `MaxResultsPerJob` | 100,000 | 1–10,000,000 | 單一 job 最多回傳筆數（`max-results`），超過標記截斷 |
 | `TimeoutSeconds` | 120 | 1–3,600 | 單次 HTTP 逾時，同時是 job 輪詢至終態的完成期限（§3） |
 | `RetryCount` | 3 | 0–20 | Polly 重試：503／逾時／網路錯誤重試，4xx 不重試 |
-| `AllowInvalidCertificates` | false | — | 自簽憑證環境的顯式逃生門，啟用即 WARN |
+| `AllowInvalidCertificates` | false | — | 自簽憑證環境的顯式逃生門，啟用即 WARN；有填信任指紋時不生效，沒填時健康頁列為需要注意 |
+| `TrustedCertificateSha256` | 空 | SHA-256 | 信任的 Sentinel 憑證指紋，套用於全部 Sentinel。有填時只接受指紋相符的憑證；不符時連線失敗（`certificate-rejected`，不重試）並附伺服器出示的指紋。判定在 `ServerCertificateTrust`；測試連線回傳伺服器出示的指紋 |
 | `BackfillDays` | 1 | 1–365 | 每台主機每次執行最多回補幾天；實際上限＝歷史資料保留天數（不超過 365）；首次與非首次一律套用同一值，缺漏日不自動自癒 |
 | `MaxParallelServers` | 2 | 1–3 | 同時處理幾台 Sentinel；1＝完全依序；上限是行程架構常數，既有存值超過時讀取夾住 |
 | `MaxParallelQueriesPerServer` | 1 | 1–4 | 單台 Sentinel 內同時開幾條批次查詢（client pool 大小）；與 `MaxParallelServers` 的乘積決定夜間分析的 DB 連線池上限 |

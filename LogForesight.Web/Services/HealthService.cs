@@ -218,6 +218,8 @@ public class HealthService
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
+            UnpinnedCertificateBypass = UnpinnedCertificateBypass(healthSettings,
+                new NetiqOptionsStore(_backend.Blob("netiq_options")).Get()),
             CryptoKeyUnavailable = LogForesight.Core.CryptoHelper.SiteKeyUnavailable,
             SlowOperationsHigh = performance.TotalOperations > 0 &&
                                  performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent,
@@ -557,6 +559,19 @@ public class HealthService
     }
 
     /// <summary>已啟用的郵件摘要裡，時刻或星期解析不了的項目（與寄送端同一個解析函式）</summary>
+    /// <summary>開了忽略憑證錯誤又沒填指紋的連線；PRTG 未啟用時不算（不會連線）</summary>
+    internal static IReadOnlyList<string> UnpinnedCertificateBypass(
+        LogForesight.Core.Models.SystemSettings settings, NetiqOptions netiq)
+    {
+        var names = new List<string>();
+        if (settings.PrtgEnabled &&
+            ServerCertificateTrust.IsUnpinnedBypass(settings.PrtgTrustedCertificateSha256, settings.PrtgIgnoreSslErrors))
+            names.Add("PRTG");
+        if (ServerCertificateTrust.IsUnpinnedBypass(netiq.TrustedCertificateSha256, netiq.AllowInvalidCertificates))
+            names.Add("Sentinel");
+        return names;
+    }
+
     internal static IReadOnlyList<string> InvalidMailSchedules(LogForesight.Core.Models.SystemSettings settings)
     {
         var invalid = new List<string>();

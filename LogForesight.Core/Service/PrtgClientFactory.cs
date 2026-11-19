@@ -35,7 +35,8 @@ public static class PrtgClientFactory
             passwordOrEmpty: password,
             passhashOrEmpty: passhash,
             budget: budget ?? PrtgRequestBudget.Shared,
-            timeProvider: timeProvider ?? TimeProvider.System);
+            timeProvider: timeProvider ?? TimeProvider.System,
+            trustedCertificateSha256: settings.PrtgTrustedCertificateSha256);
     }
 
     /// <summary>

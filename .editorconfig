@@ -11,8 +11,8 @@ dotnet_diagnostic.EF1003.severity = error
 dotnet_diagnostic.CA5394.severity = error
 # 文化相關的字串比對（StartsWith／EndsWith／IndexOf 的字串多載）
 dotnet_diagnostic.CA1310.severity = error
-# 憑證驗證一律放行：批次 E 改成指紋驗證後升為錯誤
-dotnet_diagnostic.CA5359.severity = warning
+# 憑證驗證一律放行：自簽憑證改用指紋設定（ServerCertificateTrust）
+dotnet_diagnostic.CA5359.severity = error
 
 [LogForesight.Tests/**.cs]
 # 測試以 Random 產生測試資料、以字串組 SQL 驗證查詢計畫，不是安全用途

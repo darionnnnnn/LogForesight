@@ -359,7 +359,8 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `PrtgAuthMode` | `token` | `token`／`password`／`passhash`（§6a） |
 | `PrtgApiTokenEnc`／`PrtgPasswordEnc`／`PrtgPasshashEnc` | — | 密文（AES-256-CBC），write-only |
 | `PrtgUsername` | — | password 與 passhash 共用 |
-| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 Info（刻意設定的提醒，不計入趟次警告） |
+| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 Info（刻意設定的提醒，不計入趟次警告）；有填信任指紋時不生效，沒填時健康頁列為需要注意 |
+| `PrtgTrustedCertificateSha256` | 空 | 信任的憑證指紋（SHA-256，存成大寫十六進位；可貼含冒號或空白的寫法）。有填時只接受指紋相符的憑證，不看憑證鏈與主機名稱；不符時連線失敗訊息指明指紋不符並附伺服器出示的指紋。判定在 `ServerCertificateTrust`；測試連線回傳伺服器出示的指紋（`presentedCertificateSha256`） |
 | `PrtgTimeoutSeconds`／`PrtgFetchConcurrency`／`PrtgBackfillDays` | 60／2／30 | 單次逾時（5–600）、併發上限（1–8）、回填天數（1–365） |
 | `PrtgRetentionDays` | 180 | 鏡像保留天數（規則見 DB-SPEC 保留策略） |
 | `PrtgSensorTypeWhitelist` | 7 種 type | 要擷取數值的 type（留空＝不限）。出廠：`Ping`、`SNMP Disk Free`、`SNMP CPU Load`、`SNMP Memory` 與網卡、多碟可用空間等分析型 type；Traffic 不列入。只管數值取數與快照，不影響規則母體 |

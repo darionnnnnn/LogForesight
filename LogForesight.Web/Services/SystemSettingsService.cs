@@ -155,6 +155,7 @@ public class SystemSettingsService : ISystemSettingsService
         var before = _store.Get();
         var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
+        var prtgPin = NormalizeCertificatePin(request.PrtgTrustedCertificateSha256);
 
         var severities = NormalizeSeverities(request.UnhandledSeverities);
         if (severities.Count == 0)
@@ -476,6 +477,7 @@ public class SystemSettingsService : ISystemSettingsService
                 password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
             if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (prtgPin != null) s.PrtgTrustedCertificateSha256 = prtgPin;
             if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
             if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
@@ -554,6 +556,7 @@ public class SystemSettingsService : ISystemSettingsService
         var before = _store.Get();
         var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
+        var prtgPin = NormalizeCertificatePin(request.PrtgTrustedCertificateSha256);
 
         var effectiveRetentionDays = before.RetentionDays;
         var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
@@ -615,6 +618,7 @@ public class SystemSettingsService : ISystemSettingsService
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
             if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
             if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (prtgPin != null) s.PrtgTrustedCertificateSha256 = prtgPin;
             if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
             if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
@@ -657,6 +661,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgAuthMode,
                     before.PrtgUsername,
                     before.PrtgIgnoreSslErrors,
+                    before.PrtgTrustedCertificateSha256,
                     before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency,
                     before.PrtgBackfillDays,
@@ -685,6 +690,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgAuthMode,
                     saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors,
+                    saved.PrtgTrustedCertificateSha256,
                     saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency,
                     saved.PrtgBackfillDays,
@@ -933,10 +939,14 @@ public class SystemSettingsService : ISystemSettingsService
             targetId: "prtg_test",
             detail: new { Url = UrlSecrets.Mask(url), AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
 
+        if (!ServerCertificateTrust.TryNormalize(request.TrustedCertificateSha256, out var testPin))
+            throw DomainException.Validation(NetiqOptionsService.CertificatePinFormatMessage);
+
+        PrtgClient? client = null;
         try
         {
             // 此處不走 PrtgClientFactory，因為測試連線使用的是表單當下的值（尚未存檔的設定），而非已儲存的 SystemSettings
-            using var client = new PrtgClient(
+            client = new PrtgClient(
                 baseUrl: url,
                 tokenOrEmpty: token,
                 timeoutSeconds: request.TimeoutSeconds,
@@ -946,24 +956,34 @@ public class SystemSettingsService : ISystemSettingsService
                 usernameOrEmpty: username,
                 passwordOrEmpty: password,
                 passhashOrEmpty: passhash,
-                budget: PrtgBudget);
+                budget: PrtgBudget,
+                trustedCertificateSha256: testPin);
 
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestPrtgConnectionResultDto
             {
                 Success = true,
                 Message = "連線成功。",
-                ElapsedMs = (long)elapsed.TotalMilliseconds
+                ElapsedMs = (long)elapsed.TotalMilliseconds,
+                PresentedCertificateSha256 = client.PresentedCertificateSha256
             };
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "測試 PRTG 連線失敗");
+            // 憑證被拒的說明是本系統的文字（只含伺服器出示的指紋），照給；其餘原文可能夾帶回應內容，給固定說明
             return new TestPrtgConnectionResultDto
             {
                 Success = false,
-                Message = "測試連線失敗：請檢查 PRTG 位址、連接埠與認證設定；詳細原因見記錄檔。"
+                Message = client?.CertificateRejection is { } rejection
+                    ? $"測試連線失敗：{rejection}"
+                    : "測試連線失敗：請檢查 PRTG 位址、連接埠與認證設定；詳細原因見記錄檔。",
+                PresentedCertificateSha256 = client?.PresentedCertificateSha256
             };
+        }
+        finally
+        {
+            client?.Dispose();
         }
     }
 
@@ -1036,6 +1056,15 @@ public class SystemSettingsService : ISystemSettingsService
     /// 位址欄位不得夾帶密碼／金鑰參數：位址會進稽核、例外訊息與回應，夾在網址上的憑證會沿著這些路徑外流。
     /// 判定規則只有 <see cref="UrlSecrets.ContainsSecret"/> 一份，這裡只負責擲出統一訊息。
     /// </summary>
+    /// <summary>信任指紋：null＝本次未提供（回 null，沿用）；空白＝清除（回空字串）；格式不對擲驗證錯誤</summary>
+    private static string? NormalizeCertificatePin(string? input)
+    {
+        if (input == null) return null;
+        if (!ServerCertificateTrust.TryNormalize(input, out var pin))
+            throw DomainException.Validation(NetiqOptionsService.CertificatePinFormatMessage);
+        return pin ?? "";
+    }
+
     internal static void RejectSecretQuery(string? url)
     {
         if (UrlSecrets.ContainsSecret(url))
@@ -1393,6 +1422,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgHasPassword = !string.IsNullOrEmpty(s.PrtgPasswordEnc),
         PrtgHasPasshash = !string.IsNullOrEmpty(s.PrtgPasshashEnc),
         PrtgIgnoreSslErrors = s.PrtgIgnoreSslErrors,
+        PrtgTrustedCertificateSha256 = s.PrtgTrustedCertificateSha256,
         PrtgTimeoutSeconds = s.PrtgTimeoutSeconds,
         PrtgFetchConcurrency = s.PrtgFetchConcurrency,
         PrtgBackfillDays = s.PrtgBackfillDays,

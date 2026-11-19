@@ -15,6 +15,8 @@ public class NetiqOptionsDto
     public int TimeoutSeconds { get; set; }
     public int RetryCount { get; set; }
     public bool AllowInvalidCertificates { get; set; }
+    /// <summary>信任的 Sentinel 憑證指紋（SHA-256）；空字串＝沒設</summary>
+    public string TrustedCertificateSha256 { get; set; } = "";
     public int BackfillDays { get; set; }
     public int MaxParallelServers { get; set; }
     public int MaxParallelQueriesPerServer { get; set; }
@@ -304,6 +306,10 @@ public class UpdateNetiqOptionsRequest
     public int RetryCount { get; set; }
 
     public bool AllowInvalidCertificates { get; set; }
+
+    /// <summary>null＝沿用既有值；空字串＝清除。格式見 <c>ServerCertificateTrust.TryNormalize</c></summary>
+    [StringLength(200)]
+    public string? TrustedCertificateSha256 { get; set; }
 
     /// <summary>正式環境的預期值是 1（只查前一天）；上限見
     /// <see cref="NetiqOptions.MaxBackfillDaysLimit"/>——回望窗口與趨勢基線窗口是兩件事</summary>

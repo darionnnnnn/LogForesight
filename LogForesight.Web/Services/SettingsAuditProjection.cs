@@ -85,6 +85,7 @@ public static class SettingsAuditProjection
             s.PrtgAuthMode,
             s.PrtgUsername,
             s.PrtgIgnoreSslErrors,
+            s.PrtgTrustedCertificateSha256,
             s.PrtgTimeoutSeconds,
             s.PrtgFetchConcurrency,
             s.PrtgBackfillDays,

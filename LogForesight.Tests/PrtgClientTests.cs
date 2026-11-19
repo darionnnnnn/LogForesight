@@ -323,9 +323,12 @@ public class PrtgClientTests
         Assert.NotNull(socketHandler.SslOptions.RemoteCertificateValidationCallback);
         Assert.True(socketHandler.SslOptions.RemoteCertificateValidationCallback!(null!, null!, null!, System.Net.Security.SslPolicyErrors.None));
 
+        // 沒開放行：一律掛驗證函式（為了記下伺服器出示的指紋），但判定照系統結果——有錯誤就拒絕
         using var clientNoSsl = new PrtgClient(ValidUrl, SampleToken, 30, false, null, PrtgAuthModes.Token, "", "", "");
         var noSslHandler = Assert.IsType<SocketsHttpHandler>(clientNoSsl.Handler);
-        Assert.Null(noSslHandler.SslOptions.RemoteCertificateValidationCallback);
+        var strict = noSslHandler.SslOptions.RemoteCertificateValidationCallback!;
+        Assert.True(strict(null!, null!, null!, System.Net.Security.SslPolicyErrors.None));
+        Assert.False(strict(null!, null!, null!, System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors));
     }
 
     [Fact]

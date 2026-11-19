@@ -50,6 +50,9 @@ public class NetiqOptionsService
         return options;
     }
 
+    internal const string CertificatePinFormatMessage =
+        "憑證指紋格式不正確：請貼上 SHA-256 指紋（64 個十六進位字元，可含冒號或空白）。";
+
     public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {
         var before = _store.Get();
@@ -63,6 +66,9 @@ public class NetiqOptionsService
         if (request.UseOfflineDemoData && _env.IsProduction())
             throw DomainException.Validation("正式環境不允許開啟「離線示範資料」（那是固定台數的假資料，不是真實 Sentinel 掃描）。");
 
+        if (!ServerCertificateTrust.TryNormalize(request.TrustedCertificateSha256, out var pin))
+            throw DomainException.Validation(CertificatePinFormatMessage);
+
         var saved = _store.Update(o =>
         {
             o.QueryDelayMs = request.QueryDelayMs;
@@ -71,6 +77,7 @@ public class NetiqOptionsService
             o.TimeoutSeconds = request.TimeoutSeconds;
             o.RetryCount = request.RetryCount;
             o.AllowInvalidCertificates = request.AllowInvalidCertificates;
+            if (request.TrustedCertificateSha256 != null) o.TrustedCertificateSha256 = pin ?? "";
             o.BackfillDays = request.BackfillDays;
             o.MaxParallelServers = request.MaxParallelServers;
             o.MaxParallelQueriesPerServer = request.MaxParallelQueriesPerServer;

@@ -1813,7 +1813,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             settings.PrtgPasshashEnc ?? string.Empty,
             settings.PrtgApiTokenEnc ?? string.Empty,
             settings.PrtgTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            settings.PrtgIgnoreSslErrors ? "1" : "0");
+            settings.PrtgIgnoreSslErrors ? "1" : "0",
+            settings.PrtgTrustedCertificateSha256 ?? string.Empty);
 
         if (_client == null || _clientFingerprint != fingerprint)
         {

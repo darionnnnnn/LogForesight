@@ -140,6 +140,7 @@ public sealed class PrtgOperationScope : IDisposable
         a.PrtgPasswordEnc == b.PrtgPasswordEnc &&
         a.PrtgPasshashEnc == b.PrtgPasshashEnc &&
         a.PrtgIgnoreSslErrors == b.PrtgIgnoreSslErrors &&
+        a.PrtgTrustedCertificateSha256 == b.PrtgTrustedCertificateSha256 &&
         a.PrtgTimeoutSeconds == b.PrtgTimeoutSeconds &&
         a.PrtgFetchConcurrency == b.PrtgFetchConcurrency &&
         a.PrtgBackfillDays == b.PrtgBackfillDays &&

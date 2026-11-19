@@ -28,11 +28,13 @@ public static class HealthAttentionKeys
     public const string Retention = "retention";
     public const string PrtgSensorsEmpty = "prtgSensorsEmpty";
     public const string PrtgDevicesPurged = "prtgDevicesPurged";
+    public const string CertificateTrust = "certificateTrust";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
         Storage, SlowQueries, FirstSeen, Freshness, PrtgSnapshot, Memory, Crypto,
-        Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged
+        Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged,
+        CertificateTrust
     };
 }
 
@@ -69,6 +71,9 @@ public sealed class HealthAttentionInput
     /// <summary>已啟用的郵件摘要中，時刻或星期無法解析的項目名稱（例如「每日摘要時刻」）；這種設定的效果是摘要永不寄出</summary>
     public IReadOnlyList<string> InvalidMailSchedules { get; init; } = Array.Empty<string>();
     public RetentionFailure? RetentionFailure { get; init; }
+
+    /// <summary>開了「忽略憑證錯誤」卻沒填信任指紋的連線（例如「PRTG」「Sentinel」）：任何憑證都會被接受</summary>
+    public IReadOnlyList<string> UnpinnedCertificateBypass { get; init; } = Array.Empty<string>();
 
     /// <summary>最近一次 PRTG 同步結果的警告；PRTG 未啟用時為空</summary>
     public IReadOnlyList<PrtgSyncWarning> PrtgSyncWarnings { get; init; } = Array.Empty<PrtgSyncWarning>();
@@ -137,6 +142,9 @@ public static class HealthAttention
             var more = input.SuspendedMailRecipients.Count > 3 ? $" 等 {input.SuspendedMailRecipients.Count} 位" : "";
             Add(HealthAttentionKeys.MailSuspended, $"郵件收件人因連續寄送失敗被暫停：{shown}{more}。");
         }
+        if (input.UnpinnedCertificateBypass.Count > 0)
+            Add(HealthAttentionKeys.CertificateTrust,
+                $"{string.Join("、", input.UnpinnedCertificateBypass)}開了「忽略憑證錯誤」且沒有填信任的憑證指紋，任何憑證都會被接受；請在連線設定填入伺服器的憑證指紋。");
         if (input.InvalidMailSchedules.Count > 0)
             Add(HealthAttentionKeys.MailSuspended, $"郵件設定的{string.Join("、", input.InvalidMailSchedules)}格式不合法，這些摘要不會寄出；請到郵件設定修正為 HH:mm。");
         if (input.RetentionFailure is { } retention)

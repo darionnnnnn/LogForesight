@@ -53,6 +53,7 @@ public class HealthAttentionTests
         {
             PrtgSyncWarnings = new[] { PrtgSyncWarning.Create(PrtgSyncWarning.MappedDevicesPurged, "已對應主機的裝置被清除") }
         }, "已對應主機的裝置被清除"),
+        [HealthAttentionKeys.CertificateTrust] = (new() { UnpinnedCertificateBypass = new[] { "Sentinel" } }, "Sentinel開了「忽略憑證錯誤」"),
     };
 
     public static IEnumerable<object[]> AllKeys() => HealthAttentionKeys.All.Select(k => new object[] { k });

@@ -93,6 +93,9 @@ public class TestSentinelConnectionRequest
 
 public class TestSentinelConnectionResultDto
 {
+    /// <summary>Sentinel 出示的憑證指紋（SHA-256）；http 連線或連不上 TLS 前就失敗時為 null</summary>
+    public string? PresentedCertificateSha256 { get; set; }
+
     public bool Success { get; set; }
 
     /// <summary>成功時為「連線成功」，失敗時為可直接顯示的原因（不含密碼）。</summary>

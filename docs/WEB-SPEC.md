@@ -2475,7 +2475,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   **整體狀態只有一份判定**：`HealthAttention.Evaluate`（`Services/HealthAttention.cs`）收 `HealthService.GetDetail` 已讀到的事實，回傳原因清單（每項 `key` 加一句中文 `text`）；清單為空＝`ok`，否則 `degraded`（資料庫連不上時最小 DTO 為 `down`，原因 `storage`）。
   `GET api/health/detail` 的 `status` 與 `statusReasons` 都來自這裡，不另算。原因種類（`HealthAttentionKeys`）：`storage` 資料庫連不上、`slowQueries` 慢操作占比過高、`firstSeen` 首見日合併連續失敗、`freshness` 排程資料過期且未確認靜音、`prtgSnapshot` PRTG 快照警示、`memory` 記憶體接近上限、
   `crypto` 金鑰不符或有密文解不開、`migration` 遷移卡死（處理狀態或權限異動遷移尚未完成，且有失敗訊息或開始後超過 30 分鐘）、`prtgFreshness` PRTG 擷取新鮮度可疑、`hostDayRecovery` 主機日恢復有需要人看的列、`lastRun` 最近一趟分析失敗（站台啟動後的最近一趟，行程記憶）、
-  `mailSuspended` 郵件收件人因連續寄送失敗被暫停、`retention` 最近一次保留清除有段失敗（`retention_state` blob 的 `lastFailedSegments`，一趟全部成功才清掉）、`prtgSensorsEmpty`／`prtgDevicesPurged` 最近一次 PRTG 同步結果的兩種警告（PRTG-SPEC §3c；PRTG 未啟用時不計）。
+  `mailSuspended` 郵件收件人因連續寄送失敗被暫停、`retention` 最近一次保留清除有段失敗（`retention_state` blob 的 `lastFailedSegments`，一趟全部成功才清掉）、`prtgSensorsEmpty`／`prtgDevicesPurged` 最近一次 PRTG 同步結果的兩種警告（PRTG-SPEC §3c；PRTG 未啟用時不計）、`certificateTrust` PRTG 或 Sentinel 開了忽略憑證錯誤卻沒填信任指紋（PRTG 未啟用時不計）。
   頂端顯示：正常時只有一則「系統狀態正常」（`statusNote` success），不顯示原因清單；需要注意時一則 warning `statusNote`「系統需要注意（N 項）」加每項一行（`lf-list-row`，`data-reason-key`，文字走 `textContent`）；`down` 為 error 型。
   健康頁每張卡片以 `data-health-alert` 宣告它的警示對應哪些原因種類（`none`＝不出現警示樣式），`HealthAttentionGuardTests` 比對這份宣告與 `HealthAttentionKeys`：新增會亮警示的卡片必須併進清單。
   **導覽健康告示**（`layout.js` 的 `loadHealthBanner`）：只有具 Maintain 或 DevMonitor 能力的人進頁查一次、不輪詢，其他角色不發請求；並行讀 `GET api/health/freshness` 與 `GET api/health/attention`（`Maintain`／`DevMonitor` 任一，回 `status` 與 `reasons`，與 detail 同一份判定；結果在行程內快取 30 秒，內容是全站狀態、與呼叫者無關），各自失敗當作沒有。

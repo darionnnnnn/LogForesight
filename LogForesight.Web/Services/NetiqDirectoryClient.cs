@@ -319,7 +319,8 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             MaxResultsPerJob = CoverageTargetResults,
             TimeoutSeconds = InteractiveTimeoutSeconds,
             RetryCount = baseOptions.RetryCount,
-            AllowInvalidCertificates = baseOptions.AllowInvalidCertificates
+            AllowInvalidCertificates = baseOptions.AllowInvalidCertificates,
+            TrustedCertificateSha256 = baseOptions.TrustedCertificateSha256
         };
 
         var budgetSeconds = totalBudgetSecondsOverride is > 0
