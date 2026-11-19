@@ -1,5 +1,6 @@
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -505,7 +506,7 @@ public class WorkOrderCommandService
         if (withMembers.Count > 0)
         {
             foreach (var group in _cases.GetOpenMany(withMembers.Select(h => h.Resolved.Host.HostName).ToList(), source, eventId)
-                .GroupBy(c => (c.HostName.ToUpperInvariant(), c.IssueKey), HostIssueSignatureKeyComparer.Instance))
+                .GroupBy(c => (HostNameKey.Of(c.HostName), c.IssueKey), HostIssueSignatureKeyComparer.Instance))
             {
                 existing[group.Key] = group
                     .OrderByDescending(c => c.UpdatedAt)
@@ -515,7 +516,7 @@ public class WorkOrderCommandService
             }
         }
         IssueCase? ExistingOf(WorkOrderMember m) =>
-            existing.TryGetValue((m.HostName.ToUpperInvariant(), m.IssueKey), out var c) ? c : null;
+            existing.TryGetValue((HostNameKey.Of(m.HostName), m.IssueKey), out var c) ? c : null;
 
         // 5. 分派（以主機為單位；主機已依名稱升冪）
         var assignedMembers = candidates.ToDictionary(c => c.UserId, _ => 0);
@@ -632,7 +633,7 @@ public class WorkOrderCommandService
 
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
         var noise = _noiseMarks.GetAll()
-            .Select(m => (m.HostName.ToUpperInvariant(), m.IssueKey))
+            .Select(m => (HostNameKey.Of(m.HostName), m.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
         var label = $"{source} {eventId}";
 
@@ -651,7 +652,7 @@ public class WorkOrderCommandService
                     .OrderBy(o => o.IssueKey, StringComparer.Ordinal)
                     .ToList();
                 var kept = all
-                    .Where(o => !noise.Contains((host.HostName.ToUpperInvariant(), o.IssueKey)))
+                    .Where(o => !noise.Contains((HostNameKey.Of(host.HostName), o.IssueKey)))
                     .Select(o => new WorkOrderMember
                     {
                         HostName = host.HostName, IssueKey = o.IssueKey, IssueLabel = label, TriggerDate = o.LastSeen

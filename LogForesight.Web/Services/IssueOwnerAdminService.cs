@@ -460,7 +460,7 @@ public class IssueOwnerAdminService
             DisplayLabel = FormatDisplayLabel(rule.SourceName, rule.EventId),
             OwnerUserIds = rule.OwnerUserIds,
             OwnerNames = rule.OwnerUserIds
-                .Select(id => usersById.TryGetValue(id, out var u) ? _displayNameService.WithAccount(u.DisplayName, u.Account) : $"(已刪除:{id})")
+                .Select(id => NameFormat.UserLabel(_displayNameService, usersById.GetValueOrDefault(id)))
                 .ToList(),
             Note = rule.Note,
             UpdatedAt = rule.UpdatedAt,

@@ -100,7 +100,7 @@ public class HandlingHistoryQueryService
     private string ResolveHandlerName(long userId)
     {
         var user = _users.Get(userId);
-        return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
+        return NameFormat.UserLabel(_displayNameService, user);
     }
 
     /// <summary>報表顯示範圍（§5）：單選過濾——一個母體對應一組明確語意。</summary>

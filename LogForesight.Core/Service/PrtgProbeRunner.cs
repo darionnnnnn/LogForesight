@@ -104,24 +104,24 @@ public static class PrtgProbeRunner
             var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit,lastvalue,parentid,status&count=50000", ct);
             var parsedSensors = ParseTable(senTableJson, "sensors", el =>
             {
-                var type = GetStringProperty(el, "type");
+                var type = PrtgJson.GetString(el, "type");
                 if (string.IsNullOrWhiteSpace(type)) return null;
-                var unit = GetStringProperty(el, "unit");
+                var unit = PrtgJson.GetString(el, "unit");
                 if (string.IsNullOrWhiteSpace(unit))
                 {
-                    unit = ExtractUnitFromLastValue(GetStringProperty(el, "lastvalue"));
+                    unit = ExtractUnitFromLastValue(PrtgJson.GetString(el, "lastvalue"));
                 }
                 int? parentId = null;
-                if (int.TryParse(GetStringProperty(el, "parentid"), out var pid))
+                if (int.TryParse(PrtgJson.GetString(el, "parentid"), out var pid))
                 {
                     parentId = pid;
                 }
                 long? objid = null;
-                if (long.TryParse(GetStringProperty(el, "objid"), out var oid))
+                if (long.TryParse(PrtgJson.GetString(el, "objid"), out var oid))
                 {
                     objid = oid;
                 }
-                return new SensorTypeSample(type, unit, parentId, objid, GetStringProperty(el, "status"));
+                return new SensorTypeSample(type, unit, parentId, objid, PrtgJson.GetString(el, "status"));
             });
 
             if (parsedSensors.CorruptedCount > 0)
@@ -205,7 +205,7 @@ public static class PrtgProbeRunner
             var grpJson = await client.GetJsonAsync("/api/table.json?content=groups&columns=objid,group&count=1000", ct);
             var parsedGroups = ParseTable(grpJson, "groups", el =>
             {
-                var grp = GetStringProperty(el, "group");
+                var grp = PrtgJson.GetString(el, "group");
                 return grp;
             });
 
@@ -239,9 +239,9 @@ public static class PrtgProbeRunner
             var devHostJson = await client.GetJsonAsync("/api/table.json?content=devices&columns=objid,device,host,group&count=50000", ct);
             var parsedDevHosts = ParseTable(devHostJson, "devices", el =>
             {
-                var host = GetStringProperty(el, "host");
+                var host = PrtgJson.GetString(el, "host");
                 int? objid = null;
-                if (int.TryParse(GetStringProperty(el, "objid"), out var oid))
+                if (int.TryParse(PrtgJson.GetString(el, "objid"), out var oid))
                 {
                     objid = oid;
                 }
@@ -464,7 +464,7 @@ public static class PrtgProbeRunner
             {
                 foreach (var channel in channels.EnumerateArray())
                 {
-                    if (GetStringProperty(channel, "objid") == "0") { primary = channel.Clone(); break; }
+                    if (PrtgJson.GetString(channel, "objid") == "0") { primary = channel.Clone(); break; }
                 }
             }
             if (primary is not { } row)
@@ -472,8 +472,8 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     {type}（sensor {sample.Objid}）：⚠ 頻道表沒有頻道 0；對照語意 {semantic}，取值會選錯頻道，請回報");
                 return;
             }
-            var name = GetStringProperty(row, "name") ?? "（無名稱）";
-            var rawText = GetStringProperty(row, "lastvalue_raw");
+            var name = PrtgJson.GetString(row, "name") ?? "（無名稱）";
+            var rawText = PrtgJson.GetString(row, "lastvalue_raw");
             var plausible = double.TryParse(rawText, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var raw) && PrtgValueSemantics.IsPlausible(semantic, raw);
             console.WriteLine($"     {type}（sensor {sample.Objid}）：頻道 0「{name}」＝{rawText ?? "無值"}；對照語意 {semantic}；" +
@@ -580,7 +580,7 @@ public static class PrtgProbeRunner
                 var jsonA = await client.GetJsonAsync($"/api/table.json?content=sensors&columns=objid&count=5000&id={deviceId}", ct);
                 swA.Stop();
 
-                var parsedA = ParseTable(jsonA, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+                var parsedA = ParseTable(jsonA, "sensors", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, null) : null);
                 var rowsA = parsedA.Rows.Select(r => r.Objid).ToList();
                 var expectedSet = sensorSamples
                     .Where(s => s.ParentId.HasValue && (long)s.ParentId.Value == deviceId && s.Objid.HasValue)
@@ -614,7 +614,7 @@ public static class PrtgProbeRunner
                 var jsonB = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={deviceId}&filter_drel=7days", ct);
                 swB.Stop();
 
-                var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+                var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, PrtgJson.GetString(el, "datetime")) : null);
                 var rowsB = parsedB.Rows.Select(r => r.Objid).ToList();
                 var subSet = rowsA.ToHashSet();
                 var nB = rowsB.Count;
@@ -670,7 +670,7 @@ public static class PrtgProbeRunner
             var jsonD = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={firstSensorId}&filter_drel=7days", ct);
             swD.Stop();
 
-            var parsedD = ParseTable(jsonD, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+            var parsedD = ParseTable(jsonD, "messages", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, PrtgJson.GetString(el, "datetime")) : null);
             console.WriteLine($"     9d-5：感測器 objid={firstSensorId} 逐感測器取狀態變更 耗時 {swD.Elapsed.TotalMilliseconds:F0} ms、回傳 {parsedD.Rows.Count} 筆");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -695,7 +695,7 @@ public static class PrtgProbeRunner
             var jsonE = await client.GetBoundedJsonAsync(url + "&count=" + (r + 1), 512 * 1024, ct);
             swE.Stop();
 
-            var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+            var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, null) : null);
             var rowsE = parsedE.Rows.Select(r => r.Objid).ToList();
             var n = rowsE.Count;
             using var rawBatch = JsonDocument.Parse(jsonE, new JsonDocumentOptions { MaxDepth = 32 });
@@ -763,8 +763,8 @@ public static class PrtgProbeRunner
     {
         var columns = withDatetime ? "objid,datetime" : "objid";
         var json = await client.GetJsonAsync($"/api/table.json?content={content}&columns={columns}&count={count}&start={start}{extraQuery}", ct);
-        var parsed = ParseTable(json, content, el => long.TryParse(GetStringProperty(el, "objid"), out var id)
-            ? new PagingRow(id, GetStringProperty(el, "datetime"))
+        var parsed = ParseTable(json, content, el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id)
+            ? new PagingRow(id, PrtgJson.GetString(el, "datetime"))
             : null);
         return parsed.Rows;
     }
@@ -927,19 +927,6 @@ public static class PrtgProbeRunner
         return new TableParseResult<T>(list, corrupted, treesize);
     }
 
-    private static string? GetStringProperty(JsonElement el, string propertyName)
-    {
-        if (el.TryGetProperty(propertyName, out var prop))
-        {
-            if (prop.ValueKind == JsonValueKind.String)
-                return prop.GetString();
-            if (prop.ValueKind == JsonValueKind.Number)
-                return prop.GetRawText();
-            if (prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False)
-                return prop.GetRawText();
-        }
-        return null;
-    }
 
     /// <summary>回應內文是否為可解析的 JSON（只判格式，不回傳也不記錄原文）。</summary>
     private static bool IsJsonText(string text)

@@ -16,6 +16,12 @@ public static class NetiqAttemptStatus
     /// <summary>沒有舊紀錄、來源回 0 筆且未截斷：可能是真安靜，也可能是 Sentinel 暫時沒資料。不寫父紀錄、下一趟再查一次，第二次仍空才定案。</summary>
     public const string EmptyOnce = "empty-once";
 
+    /// <summary>
+    /// 讀取端的哨兵值，不是可寫入的狀態（不在 <see cref="Known"/>）：帳本回執的 RunId 無效時
+    /// <see cref="NetiqSourceAttempt.ReadLatest"/> 以它標示「這筆狀態不可信」，預覽補跑範圍時據此拒絕，不當成任何一種重查狀態。
+    /// </summary>
+    public const string Unknown = "unknown";
+
     /// <summary>每天自動重查的上限（失敗、停止、空資料）：隔天歸零，服務恢復後會自動補回。</summary>
     public const int MaxAutoRetriesPerDay = 2;
 

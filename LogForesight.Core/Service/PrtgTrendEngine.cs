@@ -229,8 +229,8 @@ public static class PrtgTrendEngine
         }
 
         var baselineSlice = earlierSlice.TakeLast(28).ToArray();
-        var baseline = Median(baselineSlice.Select(x => x.Value).ToList());
-        var recent = Median(recentSlice.Select(x => x.Value).ToList());
+        var baseline = SampleStatistics.Median(baselineSlice.Select(x => x.Value)) ?? 0;
+        var recent = SampleStatistics.Median(recentSlice.Select(x => x.Value)) ?? 0;
 
         var slope = TheilSenSlope(windowPoints);
         var worseningSlope = slope;
@@ -305,7 +305,7 @@ public static class PrtgTrendEngine
                 }
             }
         }
-        return Median(slopes);
+        return SampleStatistics.Median(slopes) ?? 0;
     }
 
     internal static double WorseningRatio(IReadOnlyList<(DateOnly Day, double Value)> points, PrtgTrendDirection direction)
@@ -326,14 +326,6 @@ public static class PrtgTrendEngine
             ? deltas.Count(x => x > 0)
             : deltas.Count(x => x < 0);
         return worseningCount / (double)deltas.Count;
-    }
-
-    internal static double Median(List<double> values)
-    {
-        if (values.Count == 0) return 0;
-        values.Sort();
-        var middle = values.Count / 2;
-        return values.Count % 2 == 0 ? (values[middle - 1] + values[middle]) / 2.0 : values[middle];
     }
 
     private static PrtgTrendResult? Preprocess(

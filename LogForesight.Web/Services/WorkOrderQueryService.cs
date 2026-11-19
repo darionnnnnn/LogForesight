@@ -21,7 +21,6 @@ public class WorkOrderQueryService
 {
     private const int DefaultPageSize = 20;
     private const int DefaultMemberPageSize = 50;
-    private const string DeletedName = "（已刪除）";
     private const string SystemActorName = "系統";
 
     private readonly IWorkOrderStore _orders;
@@ -236,7 +235,7 @@ public class WorkOrderQueryService
         dto.ScopeGroups = order.ScopeGroupIds.Select(gid => new WorkOrderScopeGroupDto
         {
             GroupId = gid,
-            GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : DeletedName
+            GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : NameFormat.Deleted
         }).ToList();
         dto.ViewerIsHandler = order.HandlerId == _currentUser.UserId;
         dto.ViewerCanReply = order.HandlerId == _currentUser.UserId
@@ -599,5 +598,5 @@ public class WorkOrderQueryService
             .ToList();
 
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
-        users.TryGetValue(userId, out var user) ? _displayNames.WithAccount(user.DisplayName, user.Account) : DeletedName;
+        NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));
 }

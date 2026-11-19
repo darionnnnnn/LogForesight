@@ -370,4 +370,4 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | `failed`、`stopped` | 失敗或被停止 | 是，每天 2 趟 |
 | `empty-once` | 沒有舊紀錄且回 0 筆，尚未定案（不寫分析紀錄） | 是，下一趟再查一次 |
 
-判定唯一來源是 `NetiqAttemptStatus`。
+判定唯一來源是 `NetiqAttemptStatus`。狀態字串一律用其常數（`NetiqAttemptStatusLiteralGuardTests` 掃描字面值）；`Unknown` 是讀取端哨兵（回執 RunId 無效時由 `ReadLatest` 標示），不在可寫入清單、不算重查。

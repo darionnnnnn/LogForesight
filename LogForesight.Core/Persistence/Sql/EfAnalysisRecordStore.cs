@@ -88,7 +88,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var q = ctx.DailyRecords.AsQueryable();
         if (_ownerHost == null) return q;
         var id = _ownerHost.HostId;
-        var name = _ownerHost.HostName.ToUpperInvariant();
+        var name = HostNameKey.Of(_ownerHost.HostName);
         return q.Where(r => (id != 0 && r.HostId == id) || r.HostName.ToUpper() == name);
     }
 

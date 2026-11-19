@@ -1051,13 +1051,13 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 state.RecoveryWaitingWriteRevision is { } waitingRevision && waitingRevision <= capturedWriteRevision)
                 ClearRecoveryWaiting(state);
             if (IsRecoveryStateCurrent(state, record, prtgEnabled, aiEnabled)) return;
-            if (record.LatestNetiqAttemptStatus == "failed")
+            if (record.LatestNetiqAttemptStatus == NetiqAttemptStatus.Failed)
                 ApplyRecoveredParentFailure(state, record);
             else
                 ApplyRecoveredParentSuccess(state, record, prtgEnabled, aiEnabled);
 
             // PRTG 腿由每日評估直接寫入（PrtgDailyPipeline）；恢復只校正停用與不合格父紀錄，不重判 PRTG。
-            if (record.LatestNetiqAttemptStatus != "failed")
+            if (record.LatestNetiqAttemptStatus != NetiqAttemptStatus.Failed)
             {
                 if (!prtgEnabled)
                 {
@@ -1201,7 +1201,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     private static bool IsRecoveryStateCurrent(HostDayWorkflowState state,
         LogForesight.Core.Models.DailyAnalysisRecord record, bool prtgEnabled, bool aiEnabled)
     {
-        var failed = record.LatestNetiqAttemptStatus == "failed";
+        var failed = record.LatestNetiqAttemptStatus == NetiqAttemptStatus.Failed;
         var fingerprint = failed ? HostDayWorkflowFingerprint.ForRecord(record) : HostDayWorkflowFingerprint.ForParentRecord(record);
         if (state.Parent != (failed ? WorkflowLegState.Failed : WorkflowLegState.Succeeded) ||
             state.ParentRecordId != record.RecordId ||

@@ -23,7 +23,7 @@ public class DailyAnalysisRecord
 
     /// <summary>NetIQ 分析產生、或只因 PRTG 而建立、且保有詳情的主機日可接受 PRTG 補充。</summary>
     public bool CanSupplementWithPrtg() => !DetailPruned && (LogSource == AnalysisLogSource.Prtg ||
-        LogSource == AnalysisLogSource.Netiq && (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success"));
+        LogSource == AnalysisLogSource.Netiq && (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == LogForesight.Core.Service.NetiqAttemptStatus.Success));
 
     /// <summary>
     /// 產生本筆紀錄的主機 PK（↔ lf_daily_records.host_id）。**這是紀錄與主機的關聯鍵**——

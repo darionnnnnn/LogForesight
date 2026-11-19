@@ -57,7 +57,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 `paused`（暫停的 sensor 整段不抓）與 `untrusted`（尚無判定來源）是保留常數，不會寫入。
 
 - 同一（sensor, 小時）：`ok` 覆蓋 `sampled`；`sampled` 對既有 `sampled` 以 coverage 加權合併，既有為 `ok` 時不動。快照批次 ID 與 `lf_prtg_sampled_batches` 同交易提交，重試不重複合併。
-- **可用列**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（`PrtgValueUsability.SampledMinCoverage`）。校準（§11）、數值評估（§9b）只認可用列。
+- **可用列**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（`PrtgValueUsability.SampledMinCoverage`）。校準（§11）、數值評估（§9b）只認可用列。資料庫端的可用列判定只定義在 `PrtgValueRowUsability.Usable`（一棵 `Expression`，SQLite 與 SQL Server 共用；投影內以 `IsUsable` 等標記呼叫、查詢送出前 `ExpandPrtgUsability()` 展開）；PRTG 回應 JSON 欄位讀取只走 `PrtgJson.GetString`／`GetLong`（字串、數字、布林皆容錯，欄位缺席回 null）。
 - `lf_prtg_state_changes.quality` 一律寫 `ok`（狀態變更沒有品質判定依據）。
 
 ## 3. 擷取

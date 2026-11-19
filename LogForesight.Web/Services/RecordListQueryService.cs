@@ -1085,29 +1085,11 @@ public class RecordListQueryService
         // 卡片數字才等於下鑽進來的筆數
         var aggregates = _aggregates.Aggregate(_exclusions.Current(), from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
 
-        if (request.EventId.HasValue)
-            aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
-
-        if (!string.IsNullOrWhiteSpace(request.Source))
-            aggregates = aggregates.Where(a => SourceKeyComparer.Instance.Equals(a.Source, request.Source)).ToList();
-
-        if (request.Categories is { Count: > 0 } wantedCategories)
-        {
-            var allowedCategories = wantedCategories.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            aggregates = aggregates.Where(a => allowedCategories.Contains(a.Category)).ToList();
-        }
-
-        if (request.RiskLevels is { Count: > 0 } riskLevels)
-        {
-            var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
-            aggregates = aggregates.Where(a => allowedSeverities.Contains(LegacySeverityRank.ToSeverity(a.MaxSeverityRank))).ToList();
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Severity) &&
-            InputParsing.TryParseDefinedEnum<IssueSeverity>(request.Severity, out var minSeverity))
-        {
-            aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
-        }
+        // 後段篩選與主清單共用 IssuePostFilter，不另寫一份
+        var postFilter = IssuePostFilter(request);
+        aggregates = aggregates
+            .Where(a => postFilter((a.Source, a.EventId, a.Category, a.MaxSeverityRank)))
+            .ToList();
 
         return aggregates
             // 只保留跨主機的——單台出現的不叫「共通」，AI 歸納那些沒有價值
@@ -1117,7 +1099,7 @@ public class RecordListQueryService
                 Source = a.Source,
                 EventId = a.EventId,
                 HostCount = a.HostCount,
-                TotalCount = (int)a.TotalCount
+                TotalCount = (int)Math.Min(a.TotalCount, int.MaxValue)
             })
             .OrderByDescending(c => c.HostCount)
             .ThenByDescending(c => c.TotalCount)

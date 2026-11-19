@@ -1603,9 +1603,9 @@ public class RunExportServiceTests
     [Fact]
     public void 中位數與P95_空樣本為null_偶數取平均_小數四位()
     {
-        Assert.Null(RunExportService.Median(Array.Empty<double>()));
+        Assert.Null(RunExportService.RoundedMedian(Array.Empty<double>()));
         Assert.Null(RunExportService.Percentile95(Array.Empty<double>()));
-        Assert.Equal(2.5, RunExportService.Median(new[] { 4.0, 1.0, 2.0, 3.0 }));
+        Assert.Equal(2.5, RunExportService.RoundedMedian(new[] { 4.0, 1.0, 2.0, 3.0 }));
         Assert.Equal(19.0, RunExportService.Percentile95(Enumerable.Range(1, 20).Select(x => (double)x).ToList()));
         Assert.Equal(0.3333, RunExportService.Round4(1.0 / 3));
         Assert.Equal(0.0, RunExportService.Round4(double.NaN));

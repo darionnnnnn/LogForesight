@@ -1300,8 +1300,8 @@ public class PrtgSnapshotHostedService : BackgroundService
                     {
                         foreach (var el in arr.EnumerateArray())
                         {
-                            var objid = ReadLong(el, "objid");
-                            var parent = ReadLong(el, "parentid");
+                            var objid = PrtgJson.GetLong(el, "objid");
+                            var parent = PrtgJson.GetLong(el, "parentid");
                             // 只認本批要求的 objid：PRTG 忽略 filter 時會回整站，不能把無關裝置拉進來
                             if (!objid.HasValue || !parent.HasValue || !batch.Contains(objid.Value)) continue;
                             found.Add(objid.Value);
@@ -1329,13 +1329,6 @@ public class PrtgSnapshotHostedService : BackgroundService
         return devices;
     }
 
-    private static long? ReadLong(JsonElement el, string name)
-    {
-        if (!el.TryGetProperty(name, out var prop)) return null;
-        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var num)) return num;
-        if (prop.ValueKind == JsonValueKind.String && long.TryParse(prop.GetString(), out var str)) return str;
-        return null;
-    }
 
     /// <summary>取數範圍與補抓過程的輸出在這條路徑上不需要（守門偵測警告不該洗進快照執行輸出）。</summary>
     private sealed class SilentRunConsole : IRunConsole

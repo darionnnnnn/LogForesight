@@ -169,7 +169,7 @@ internal static class PrtgTablePager
             // 沒有這個欄位時維持 0，進度軌顯示不定進度但仍有分子。
             if (treeSize == 0)
             {
-                var parsedTreeSize = GetLongProperty(root, "treesize");
+                var parsedTreeSize = PrtgJson.GetLong(root, "treesize");
                 if (parsedTreeSize is > 0 and <= int.MaxValue)
                 {
                     treeSize = (int)parsedTreeSize.Value;
@@ -329,17 +329,6 @@ internal static class PrtgTablePager
     };
 
     /// <summary>預設列鍵：objid。devices 與 sensors 的 objid 是主鍵，這對它們成立。</summary>
-    private static string? DefaultRowKey(JsonElement el) => GetLongProperty(el, "objid")?.ToString();
+    private static string? DefaultRowKey(JsonElement el) => PrtgJson.GetLong(el, "objid")?.ToString();
 
-    private static long? GetLongProperty(JsonElement el, string propName)
-    {
-        if (el.TryGetProperty(propName, out var prop))
-        {
-            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var val))
-                return val;
-            if (prop.ValueKind == JsonValueKind.String && long.TryParse(prop.GetString(), out var parsed))
-                return parsed;
-        }
-        return null;
-    }
 }

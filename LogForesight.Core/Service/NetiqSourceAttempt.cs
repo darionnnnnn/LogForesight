@@ -129,7 +129,7 @@ public static class NetiqSourceAttempt
                     }
                     ctx.SaveChanges();
                     ctx.ChangeTracker.Clear();
-                    if (status != "success")
+                    if (status != NetiqAttemptStatus.Success)
                     {
                         // Keep the receipt and parent eligibility in the same transaction, including
                         // across 500-host ledger chunks. SQL isolation and WriteRevision also fence
@@ -152,7 +152,7 @@ public static class NetiqSourceAttempt
                                     throw new JsonException("NetIQ parent contains duplicate attempt metadata properties.");
                                 // Preserve the existing parent retry contract: cancellation is a
                                 // failed fetch for qualification, while the durable receipt says stopped.
-                                PatchParentAttempt(ctx, parent, status == "stopped" ? "failed" : status, at);
+                                PatchParentAttempt(ctx, parent, status == NetiqAttemptStatus.Stopped ? NetiqAttemptStatus.Failed : status, at);
                             }
                             cursor = parents[^1].RecordId;
                             if (parents.Count < 16) break;
@@ -322,7 +322,7 @@ public static class NetiqSourceAttempt
                     row.LogKey != LogKey(receipt.Date.Date, receipt.HostId) || receipt.AttemptAtUtc.Kind != DateTimeKind.Utc ||
                     receipt.AttemptAtUtc > DateTime.UtcNow.AddMinutes(5))
                     throw new InvalidDataException("NetIQ attempt ledger contains an invalid or unknown receipt.");
-                if (receipt.RunId <= 0) receipt = receipt with { Status = "unknown" };
+                if (receipt.RunId <= 0) receipt = receipt with { Status = NetiqAttemptStatus.Unknown };
                 latest[(receipt.HostId, date)] = receipt;
             }
         }

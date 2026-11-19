@@ -1302,13 +1302,6 @@ public sealed class CalibrationService
 
         // 每晚量級的散布：只看「有幾晚」無法判斷取數規模是否穩定
         // （14 晚每晚 3 個 sensor 與 14 晚每晚 800 個，對校準的意義完全不同）
-        static int Median(List<int> values)
-        {
-            if (values.Count == 0) return 0;
-            var sorted = values.OrderBy(v => v).ToList();
-            return sorted[sorted.Count / 2];
-        }
-
         var sensorCounts = withValues.Select(m => m.SensorCount).ToList();
         var rowCounts = withValues.Select(m => m.TotalCount).ToList();
         var okTotal = withValues.Sum(m => m.OkCount);
@@ -1369,10 +1362,10 @@ public sealed class CalibrationService
                 ["DaysWithValues"] = daysWithValues,
                 ["WindowDays"] = CalibrationConstants.TriggeredMagnitudeWindowDays,
                 ["SensorsPerNightMin"] = sensorCounts.DefaultIfEmpty(0).Min(),
-                ["SensorsPerNightMedian"] = Median(sensorCounts),
+                ["SensorsPerNightMedian"] = SampleStatistics.Median(sensorCounts) ?? 0.0,
                 ["SensorsPerNightMax"] = sensorCounts.DefaultIfEmpty(0).Max(),
                 ["RowsPerNightMin"] = rowCounts.DefaultIfEmpty(0).Min(),
-                ["RowsPerNightMedian"] = Median(rowCounts),
+                ["RowsPerNightMedian"] = SampleStatistics.Median(rowCounts) ?? 0.0,
                 ["RowsPerNightMax"] = rowCounts.DefaultIfEmpty(0).Max(),
                 ["OkRatio"] = Math.Round(okRatio, 3),
                 ["UsableRatio"] = Math.Round(usableRatio, 3),
@@ -2251,15 +2244,6 @@ public sealed class CalibrationService
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{anchor:O}|{settingsStamp}|{sensorStamp}|{evidenceFingerprint}")));
     }
 
-    /// <summary>最近秩位法（nearest-rank）的索引：第 ceil(fraction × N) 個值（0 起算後減 1），夾在 [0, N-1]。兩個分位數方法共用這一份。</summary>
-    private static int NearestRankIndex(int count, double fraction)
-    {
-        var rank = (int)Math.Ceiling(fraction * count);
-        if (rank < 1) rank = 1;
-        if (rank > count) rank = count;
-        return rank - 1;
-    }
-
     private static bool IsCalibrationKnownStatus(string? status) =>
         PrtgSensorStatuses.IsUp(status) || PrtgSensorStatuses.IsDown(status) ||
         PrtgSensorStatuses.IsWarning(status) ||
@@ -2271,11 +2255,11 @@ public sealed class CalibrationService
 
     /// <summary>最近秩位法（nearest-rank）：第 ceil(p × N) 個值，p 為 0～1。樣本為空時由呼叫端保證不會進來。</summary>
     private static int Percentile(List<int> sortedValues, double p) =>
-        sortedValues[NearestRankIndex(sortedValues.Count, p)];
+        sortedValues[SampleStatistics.NearestRankIndex(sortedValues.Count, p)];
 
     /// <summary>最近秩位法（nearest-rank）：P(p) = sorted[ceil(p / 100.0 * n) - 1]，p 為 0～100；n == 0 時為 null。</summary>
     private static double? Percentile(List<double> sortedValues, double p) =>
-        sortedValues.Count == 0 ? null : sortedValues[NearestRankIndex(sortedValues.Count, p / 100.0)];
+        sortedValues.Count == 0 ? null : sortedValues[SampleStatistics.NearestRankIndex(sortedValues.Count, p / 100.0)];
 
     /// <summary>母體標準差（除以 n）；n == 0 時為 null。</summary>
     private static double? CalculatePopulationStdDev(IReadOnlyList<double> values, double? mean)

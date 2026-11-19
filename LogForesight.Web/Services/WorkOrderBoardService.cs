@@ -33,7 +33,6 @@ public class WorkOrderBoardService
     private const int GapPageSize = 50;
     private const int DefaultPeriodDays = 7;
     private const int UnseenHostGroupLimit = 10;
-    private const string DeletedName = "（已刪除）";
     private const string TargetKind = "work_order";
 
     private readonly IWorkOrderStore _orders;
@@ -565,7 +564,7 @@ public class WorkOrderBoardService
     private static string LabelOf(string source, int eventId) => $"{source} {eventId}";
 
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
-        users.TryGetValue(userId, out var user) ? _displayNames.WithAccount(user.DisplayName, user.Account) : DeletedName;
+        NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));
 
     private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision);
 

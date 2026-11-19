@@ -730,7 +730,7 @@ public sealed class PrtgFetchService
             extraQuery: null,
             mapper: el =>
             {
-                var objid = GetLongProperty(el, "objid");
+                var objid = PrtgJson.GetLong(el, "objid");
                 if (!objid.HasValue) return null;
 
                 return new PrtgDeviceRow
@@ -739,11 +739,11 @@ public sealed class PrtgFetchService
                     // 一般字串欄的截斷由存檔時的 PrepareForSave 依模型統一處理。
                     // Ip 是索引欄：存檔時超長會整列不寫（裝置就從鏡像消失），所以這裡先依模型截斷、讓裝置照常入庫；
                     // 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
-                    Name = GetStringProperty(el, "device") ?? string.Empty,
-                    GroupPath = GetStringProperty(el, "group") ?? string.Empty,
-                    Ip = ColumnClamp.ClampFor<PrtgDeviceRow>(GetStringProperty(el, "host"), nameof(PrtgDeviceRow.Ip)),
-                    Tags = GetStringProperty(el, "tags"),
-                    Status = GetStringProperty(el, "status"),
+                    Name = PrtgJson.GetString(el, "device") ?? string.Empty,
+                    GroupPath = PrtgJson.GetString(el, "group") ?? string.Empty,
+                    Ip = ColumnClamp.ClampFor<PrtgDeviceRow>(PrtgJson.GetString(el, "host"), nameof(PrtgDeviceRow.Ip)),
+                    Tags = PrtgJson.GetString(el, "tags"),
+                    Status = PrtgJson.GetString(el, "status"),
                     DependencyObjid = ParseDependency(el),
                     Paused = ParsePaused(el),
                     SyncedAt = syncedAt,
@@ -1035,7 +1035,7 @@ public sealed class PrtgFetchService
             extraQuery: extraQuery,
             mapper: el =>
             {
-                if (strictScope && !scopeDevices.Contains(GetLongProperty(el, "parentid") ?? 0))
+                if (strictScope && !scopeDevices.Contains(PrtgJson.GetLong(el, "parentid") ?? 0))
                     throw new PrtgDeviceResponseRejectedException("感測器補抓回應包含要求裝置之外的資料，拒絕提交或標記為空。");
                 return MapSensorRow(el, scopeDevices, syncedAt);
             },
@@ -1049,10 +1049,10 @@ public sealed class PrtgFetchService
     /// <summary>sensors 表單列轉鏡像列（唯一一份 mapper）；parentid 不在取數範圍內的列回 null（不寫入）。</summary>
     private static PrtgSensorRow? MapSensorRow(JsonElement el, IReadOnlySet<long> scopeDevices, DateTime syncedAt)
     {
-        var objid = GetLongProperty(el, "objid");
+        var objid = PrtgJson.GetLong(el, "objid");
         if (!objid.HasValue) return null;
 
-        var parentid = GetLongProperty(el, "parentid") ?? 0;
+        var parentid = PrtgJson.GetLong(el, "parentid") ?? 0;
         if (!scopeDevices.Contains(parentid)) return null;
 
         return new PrtgSensorRow
@@ -1060,11 +1060,11 @@ public sealed class PrtgFetchService
             Objid = objid.Value,
             DeviceObjid = parentid,
             // 截斷理由同 device mapper：SensorType 是索引欄，先依模型截斷讓感測器照常入庫，其餘交給 PrepareForSave
-            Name = GetStringProperty(el, "sensor") ?? string.Empty,
-            SensorType = ColumnClamp.ClampFor<PrtgSensorRow>(GetStringProperty(el, "type"), nameof(PrtgSensorRow.SensorType)) ?? string.Empty,
-            Tags = GetStringProperty(el, "tags"),
-            Unit = GetStringProperty(el, "unit"),
-            Status = GetStringProperty(el, "status"),
+            Name = PrtgJson.GetString(el, "sensor") ?? string.Empty,
+            SensorType = ColumnClamp.ClampFor<PrtgSensorRow>(PrtgJson.GetString(el, "type"), nameof(PrtgSensorRow.SensorType)) ?? string.Empty,
+            Tags = PrtgJson.GetString(el, "tags"),
+            Unit = PrtgJson.GetString(el, "unit"),
+            Status = PrtgJson.GetString(el, "status"),
             ThresholdsJson = null,
             DependencyObjid = ParseDependency(el),
             Paused = ParsePaused(el),
@@ -1148,7 +1148,7 @@ public sealed class PrtgFetchService
                         return null;
                     }
 
-                    var sensorObjid = GetLongProperty(el, "objid");
+                    var sensorObjid = PrtgJson.GetLong(el, "objid");
                     if (!sensorObjid.HasValue) return null;
 
                     inRangeRows++;
@@ -1156,9 +1156,9 @@ public sealed class PrtgFetchService
                     {
                         SensorObjid = sensorObjid.Value,
                         ChangedAt = changedAt,
-                        Status = GetStringProperty(el, "status") ?? string.Empty,
+                        Status = PrtgJson.GetString(el, "status") ?? string.Empty,
                         PrevStatus = null,
-                        Message = GetStringProperty(el, "message"),
+                        Message = PrtgJson.GetString(el, "message"),
                         Quality = PrtgDataQuality.Ok,
                         CreatedAt = now
                     };
@@ -1185,8 +1185,8 @@ public sealed class PrtgFetchService
                 // messages 的 objid 是「發出訊息的 sensor」而不是訊息自己的 id：
                 // 同一天同一顆 sensor 會有很多列。列鍵要與 lf_prtg_state_changes 的去重鍵
                 //（sensor_objid + changed_at）一致，否則每顆 sensor 只會留下第一筆狀態變更。
-                rowKey: el => GetStringProperty(el, "objid") is { } id
-                    ? id + "|" + (GetStringProperty(el, "datetime") ?? string.Empty)
+                rowKey: el => PrtgJson.GetString(el, "objid") is { } id
+                    ? id + "|" + (PrtgJson.GetString(el, "datetime") ?? string.Empty)
                     : null,
                 // 提早停止的判斷只看本頁，閉包不帶跨頁／跨物件狀態
                 stopAfterPage: pageElements =>
@@ -1958,7 +1958,7 @@ public sealed class PrtgFetchService
     {
         fromString = false;
         if (TryReadRawUtcAsLocal(el, "datetime_raw", out changedAt)) return true;
-        fromString = TryParseDisplayTime(GetStringProperty(el, "datetime"), out changedAt);
+        fromString = TryParseDisplayTime(PrtgJson.GetString(el, "datetime"), out changedAt);
         return fromString;
     }
 
@@ -2071,17 +2071,6 @@ public sealed class PrtgFetchService
         return null;
     }
 
-    private static long? GetLongProperty(JsonElement el, string propName)
-    {
-        if (el.TryGetProperty(propName, out var prop))
-        {
-            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var val))
-                return val;
-            if (prop.ValueKind == JsonValueKind.String && long.TryParse(prop.GetString(), out var parsed))
-                return parsed;
-        }
-        return null;
-    }
 
 
     /// <summary>
@@ -2109,19 +2098,6 @@ public sealed class PrtgFetchService
         return drel == null ? $"id={objid}" : $"id={objid}&filter_drel={drel}";
     }
 
-    private static string? GetStringProperty(JsonElement el, string propName)
-    {
-        if (el.TryGetProperty(propName, out var prop))
-        {
-            if (prop.ValueKind == JsonValueKind.String)
-                return prop.GetString();
-            if (prop.ValueKind == JsonValueKind.Number)
-                return prop.GetRawText();
-            if (prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                return prop.GetRawText();
-        }
-        return null;
-    }
 }
 
 /// <summary>
