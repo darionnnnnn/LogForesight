@@ -8,6 +8,7 @@
  */
 
 import { api } from '../core/api.js';
+import { readNumberField, readNumberFields } from '../core/number-field.js';
 import { prtgCategoryLabel } from '../core/prtg-sensor-categories.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
@@ -699,23 +700,23 @@ function collectRule() {
         prtgThreshold: platform === 'prtg' && document.getElementById('rule-prtg-code').value !== 'disk_free_trend' && !isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
         prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null,
         prtgDiskTrendThresholds: platform === 'prtg' && document.getElementById('rule-prtg-code').value === 'disk_free_trend' ? {
-            lowWaterPercent: Number(document.getElementById('rule-prtg-trend-low-water').value),
-            minimumDeclinePercentagePointsPerDay: Number(document.getElementById('rule-prtg-trend-decline').value),
-            maximumDaysToDepletion: Number(document.getElementById('rule-prtg-trend-depletion').value),
-            maximumDaysToLowWater: Number(document.getElementById('rule-prtg-trend-low-water-days').value),
-            minimumValidDays: Number(document.getElementById('rule-prtg-trend-min-days').value),
-            recentWindowDays: Number(document.getElementById('rule-prtg-trend-window').value),
-            minimumDecliningDayRatio: Number(document.getElementById('rule-prtg-trend-ratio').value) / 100
+            lowWaterPercent: readNumberField('rule-prtg-trend-low-water'),
+            minimumDeclinePercentagePointsPerDay: readNumberField('rule-prtg-trend-decline'),
+            maximumDaysToDepletion: readNumberField('rule-prtg-trend-depletion'),
+            maximumDaysToLowWater: readNumberField('rule-prtg-trend-low-water-days'),
+            minimumValidDays: readNumberField('rule-prtg-trend-min-days'),
+            recentWindowDays: readNumberField('rule-prtg-trend-window'),
+            minimumDecliningDayRatio: percentToRatio('rule-prtg-trend-ratio')
         } : null,
         prtgTrendThresholds: platform === 'prtg' && isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? {
-            windowDays: Number(document.getElementById('rule-prtg-vtrend-window').value),
-            minimumValidDays: Number(document.getElementById('rule-prtg-vtrend-min-days').value),
-            minimumSlopePerDay: Number(document.getElementById('rule-prtg-vtrend-slope').value),
-            minimumWorseningDayRatio: Number(document.getElementById('rule-prtg-vtrend-ratio').value) / 100,
-            targetValue: Number(document.getElementById('rule-prtg-vtrend-target').value),
-            horizonDays: Number(document.getElementById('rule-prtg-vtrend-horizon').value),
-            recentDays: Number(document.getElementById('rule-prtg-vtrend-recent').value),
-            baselineMultiplier: Number(document.getElementById('rule-prtg-vtrend-multiplier').value)
+            windowDays: readNumberField('rule-prtg-vtrend-window'),
+            minimumValidDays: readNumberField('rule-prtg-vtrend-min-days'),
+            minimumSlopePerDay: readNumberField('rule-prtg-vtrend-slope'),
+            minimumWorseningDayRatio: percentToRatio('rule-prtg-vtrend-ratio'),
+            targetValue: readNumberField('rule-prtg-vtrend-target'),
+            horizonDays: readNumberField('rule-prtg-vtrend-horizon'),
+            recentDays: readNumberField('rule-prtg-vtrend-recent'),
+            baselineMultiplier: readNumberField('rule-prtg-vtrend-multiplier')
         } : null,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
@@ -727,6 +728,12 @@ function collectRule() {
         likelyCauses: splitLines(document.getElementById('rule-causes').value),
         nextSteps: splitLines(document.getElementById('rule-steps').value)
     };
+}
+
+/** 百分比欄位（畫面以 % 輸入）轉成後端的 0～1 比例；沒填回 null，不當成 0 */
+function percentToRatio(id) {
+    const percent = readNumberField(id);
+    return percent === null ? null : percent / 100;
 }
 
 function splitLines(text) {
@@ -792,7 +799,10 @@ async function runDiskPreview(event) {
     if (thresholdError) { toast(thresholdError, 'warning'); return; }
     const daysInput = document.getElementById('rule-disk-preview-days');
     const limitInput = document.getElementById('rule-disk-preview-limit');
-    const days = Number(daysInput.value), limit = Number(limitInput.value), offset = diskPreviewOffset;
+    const days = readNumberField(daysInput, { required: true, integer: true });
+    const limit = readNumberField(limitInput, { required: true, integer: true });
+    if (days === null || limit === null) return;   // 空欄位已在欄位上標錯，不當成 0 往下算
+    const offset = diskPreviewOffset;
     if (!Number.isInteger(days) || days < 1 || days > 730 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
         toast('日期範圍需為 1–730 個已完成日，每頁配對數需為 1–100。', 'warning'); return;
     }
@@ -895,8 +905,19 @@ document.getElementById('rule-modal').addEventListener('shown.bs.modal', () => {
     document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', !isAnyTrendRuleCode(document.getElementById('rule-prtg-code').value));
 });
 
+/** 趨勢門檻欄位全是必填：沒填的欄位標出錯誤（不當成 0），回傳提示文字；全有值回 null */
+function missingThresholdMessage(ids) {
+    const { ok } = readNumberFields(Object.fromEntries(ids.map(id => [id, { source: id, message: '請輸入數值' }])));
+    return ok ? null : '趨勢門檻有欄位沒填，請補齊後再繼續。';
+}
+
 function diskTrendThresholdError() {
     if (document.getElementById('rule-prtg-code').value !== 'disk_free_trend') return null;
+    const missing = missingThresholdMessage([
+        'rule-prtg-trend-low-water', 'rule-prtg-trend-decline', 'rule-prtg-trend-depletion', 'rule-prtg-trend-low-water-days',
+        'rule-prtg-trend-min-days', 'rule-prtg-trend-window', 'rule-prtg-trend-ratio'
+    ]);
+    if (missing) return missing;
     const values = [
         ['rule-prtg-trend-low-water', 0, 100, '低水位必須介於 0–100%。'],
         ['rule-prtg-trend-decline', Number.MIN_VALUE, 100, '最低下降速度必須大於 0 且不超過 100 百分點／日。'],
@@ -918,6 +939,11 @@ function diskTrendThresholdError() {
 
 function valueTrendThresholdError() {
     if (!isTrendRuleCode(document.getElementById('rule-prtg-code').value)) return null;
+    const missing = missingThresholdMessage([
+        'rule-prtg-vtrend-window', 'rule-prtg-vtrend-min-days', 'rule-prtg-vtrend-slope', 'rule-prtg-vtrend-ratio',
+        'rule-prtg-vtrend-target', 'rule-prtg-vtrend-horizon', 'rule-prtg-vtrend-recent', 'rule-prtg-vtrend-multiplier'
+    ]);
+    if (missing) return missing;
     const windowDays = Number(document.getElementById('rule-prtg-vtrend-window').value);
     const minDays = Number(document.getElementById('rule-prtg-vtrend-min-days').value);
     const slope = Number(document.getElementById('rule-prtg-vtrend-slope').value);
@@ -1000,8 +1026,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
     const restore = withBusy(saveButton, '儲存中');
     const draft = collectRule();
     if (draft.platform === 'prtg' && draft.prtgRuleCode === 'disk_free_trend' && draft.enabled) {
-        const days = Number(document.getElementById('rule-disk-preview-days').value);
-        const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+        const days = readNumberField('rule-disk-preview-days', { required: true, integer: true });
+        const limit = readNumberField('rule-disk-preview-limit', { required: true, integer: true });
+        if (days === null || limit === null) { restore(); return; }
         const through = new Date();
         through.setDate(through.getDate() - 1);
         through.setHours(12, 0, 0, 0);
@@ -1020,8 +1047,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         });
         if (!previewResult) { restore(); return; }
     } else if (draft.platform === 'prtg' && isTrendRuleCode(draft.prtgRuleCode) && draft.enabled) {
-        const days = Number(document.getElementById('rule-disk-preview-days').value);
-        const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+        const days = readNumberField('rule-disk-preview-days', { required: true, integer: true });
+        const limit = readNumberField('rule-disk-preview-limit', { required: true, integer: true });
+        if (days === null || limit === null) { restore(); return; }
         const through = new Date();
         through.setDate(through.getDate() - 1);
         through.setHours(12, 0, 0, 0);

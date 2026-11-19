@@ -12,6 +12,7 @@
  */
 
 import { api, hasCapability } from './api.js';
+import { pollWhile } from './async-guards.js';
 
 const REFRESH_INTERVAL_MS = 60000;
 
@@ -26,14 +27,9 @@ export function startBadgePolling(user) {
     if (started) return;
     started = true;
 
-    const refresh = () => refreshBadges(user);
-    setInterval(() => {
-        if (!document.hidden) refresh();
-    }, REFRESH_INTERVAL_MS);
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) refresh();
-    });
-    refresh();
+    // 背景分頁暫停、回到前景立即刷新一次，都由共用輪詢出口處理
+    pollWhile(() => refreshBadges(user), REFRESH_INTERVAL_MS, { pauseWhenHidden: true });
+    refreshBadges(user);
 }
 
 async function refreshBadges(user) {

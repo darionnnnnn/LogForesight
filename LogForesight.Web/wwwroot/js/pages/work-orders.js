@@ -30,6 +30,7 @@ import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, work
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
+import { compareText } from '../core/collation.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -823,7 +824,7 @@ async function loadMuted() {
     }
 
     const rows = muted.slice().sort((a, b) =>
-        String(a.currentMute.to ?? '').localeCompare(String(b.currentMute.to ?? '')));
+        compareText(a.currentMute.to, b.currentMute.to));
 
     const counts = await Promise.all(rows.slice(0, MUTED_PAUSED_LOOKUP_LIMIT)
         .map(r => fetchPausedCount(r.sourceName, r.eventId)));

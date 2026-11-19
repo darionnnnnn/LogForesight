@@ -17,6 +17,8 @@ import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { metaLine, disclosure, statusNote } from '../core/elements.js';
 import { reportCard } from '../core/report-view.js';
 import { statusesWhere, statusVariant } from '../core/handling-statuses.js';
+import { copyText } from '../core/clipboard.js';
+import { escapeSelectorValue } from '../core/selectors.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -449,12 +451,9 @@ function briefBlock(text) {
     // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
     const p = document.createElement('p');
     copy.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(p.textContent);
-            toast('已複製', 'success');
-        } catch {
-            toast('無法複製，請手動選取文字', 'warning');
-        }
+        const copied = await copyText(p.textContent);
+        if (copied.ok) toast('已複製', 'success');
+        else toast(`無法複製：${copied.reason}`, 'warning');
     });
     head.appendChild(copy);
     wrap.appendChild(head);
@@ -2333,7 +2332,7 @@ function renderCategories(detail) {
  * （例如只有 Low 問題、而 Low 被關掉），提示使用者放寬篩選，而不是靜默沒反應。
  */
 function scrollToCategory(category) {
-    const section = document.querySelector(`.lf-issue-group[data-category="${category}"]`);
+    const section = document.querySelector(`.lf-issue-group[data-category="${escapeSelectorValue(category)}"]`);
     if (!section) {
         toast('這一類的問題目前被嚴重度篩選隱藏了，請在上方放寬篩選。', 'info');
         return;

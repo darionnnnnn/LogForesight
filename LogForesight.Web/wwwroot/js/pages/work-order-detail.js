@@ -28,6 +28,7 @@ import {
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
+import { copyText } from '../core/clipboard.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -943,12 +944,9 @@ memberCsvBtn.addEventListener('click', async () => {
         }
 
         const csvContent = rows.join('\r\n');
-        try {
-            await navigator.clipboard.writeText(csvContent);
-            toast(`已複製 ${allItems.length} 台`, 'success');
-        } catch {
-            toast('瀏覽器不允許寫入剪貼簿', 'danger');
-        }
+        const copied = await copyText(csvContent);
+        if (copied.ok) toast(`已複製 ${allItems.length} 台`, 'success');
+        else toast(`複製失敗：${copied.reason}`, 'danger');
     } catch {
         // api.js 已跳出錯誤提示
     } finally {

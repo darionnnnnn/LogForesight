@@ -23,6 +23,7 @@ import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
 import { safeStorage } from './storage.js';
 import { createSeqGuard } from './async-guards.js';
+import { compareText } from './collation.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -622,7 +623,7 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
 
 /**
  * 通用資訊 modal（骨架抽自 confirmAction，避免第三份動態 modal 複本）：純檢視用途，
- * 沒有確認/取消語意，只有一個關閉鈕。body 收 DOM 節點而非 HTML 字串——內容常來自
+ * 沒有確認/取消語意，只有一個關閉鈕。回傳 `{ close(), element }`，close() 以 Bootstrap 的 hide 關閉（走一般關閉流程，onClose 與焦點歸還照常）。body 收 DOM 節點而非 HTML 字串——內容常來自
  * 事件原始訊息等攻擊者可控字串，維持 textContent 純文字組裝原則（S7）。
  * size 可傳 'modal-lg' 等 Bootstrap modal-dialog 尺寸 class；fullscreen 為 true 時改用
  * modal-fullscreen（兩者擇一，同時傳入以 fullscreen 優先）。
@@ -683,6 +684,8 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
         if (opener instanceof HTMLElement && document.contains(opener)) opener.focus();
     });
     modal.show();
+    // 回傳關閉方法：頁面在送出成功後呼叫 close()，不必模擬點擊 [data-bs-dismiss] 按鈕
+    return { close: () => modal.hide(), element: el };
 }
 
 /**
@@ -1111,6 +1114,8 @@ export function sortRows(rows, columns, sort) {
         if (va == null && vb == null) return 0;
         if (va == null) return -1;
         if (vb == null) return 1;
+        // 兩邊都是字串走語系比較（中文順序、"9" 排在 "10" 前）；其餘（數字、日期物件）維持原比較
+        if (typeof va === 'string' && typeof vb === 'string') return compareText(va, vb);
         if (va < vb) return -1;
         if (va > vb) return 1;
         return 0;
@@ -1502,7 +1507,7 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
         const ap = pinned.has(a.displayName) ? 0 : 1;
         const bp = pinned.has(b.displayName) ? 0 : 1;
         if (serverOrdered) return ap - bp;
-        return ap - bp || a.displayName.localeCompare(b.displayName, 'zh-TW');
+        return ap - bp || compareText(a.displayName, b.displayName);
     });
 
     let currentValue = selectedId != null ? String(selectedId) : '';

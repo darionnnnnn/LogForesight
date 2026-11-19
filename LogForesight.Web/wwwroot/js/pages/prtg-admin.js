@@ -21,6 +21,7 @@ import { toScopeSelectValue, prtgScopeInapplicableText, prtgHostMapSummary } fro
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
+import { copyText } from '../core/clipboard.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
@@ -2694,12 +2695,9 @@ function bindPrtgProbe() {
     });
 
     copyButton.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(outputEl.value);
-            toast('已複製探測輸出', 'success');
-        } catch {
-            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-        }
+        const copied = await copyText(outputEl.value);
+        if (copied.ok) toast('已複製探測輸出', 'success');
+        else toast(`複製失敗：${copied.reason}`, 'danger');
     });
     downloadButton?.addEventListener('click', () => {
         if (!outputEl.value || downloadButton.disabled) return;

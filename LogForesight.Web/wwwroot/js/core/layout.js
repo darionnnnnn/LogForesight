@@ -14,6 +14,7 @@ import { normalizeFontScale } from './font-scale.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
 import { startBadgePolling } from './badges.js';
+import { pollWhile } from './async-guards.js';
 import { clearAllDraftsForUser } from './note-editor.js';
 
 /**
@@ -101,7 +102,7 @@ async function init() {
     renderCurrentUser(user);
     bindLogout(user);
     initHelpPopovers();
-    refreshRunActivity();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
+    startRunActivityPolling();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）
     loadHealthBanner(user);
     loadSetupGuide(user);
 
@@ -655,18 +656,25 @@ const RUN_ACTIVITY_EVENT = 'lf:run-activity';
  * 分析與網站跑在同一個行程，一跑就是數小時，期間**整站**回應變慢——只有儀表板看得到
  * 原因等於沒有配套：使用者可能正停在問題查詢或報表頁，看到的只是「這頁壞了」。
  *
- * 自我重新排程而不是固定 setInterval：下一次的間隔要看這一次的狀態（執行中 30 秒、
- * 閒置 60 秒）。閒置只降頻、**不停掉**——停掉的話停在同一頁不動的使用者永遠等不到
- * 下一次執行的告示（原儀表板版本會停，是因為當時只有那一頁在看）。
+ * 走共用輪詢出口 pollWhile：下一次的間隔看這一次的狀態（執行中 30 秒、閒置 60 秒）；
+ * 連續失敗時退避（最多 5 分鐘），成功一次就回到基本間隔；背景分頁暫停，回到前景立即補一次。
+ * 閒置只降頻、**不停掉**——停掉的話停在同一頁不動的使用者永遠等不到下一次執行的告示
+ * （原儀表板版本會停，是因為當時只有那一頁在看）。
  */
+const RUN_ACTIVITY_ACTIVE_MS = 30000;
+const RUN_ACTIVITY_IDLE_MS = 60000;
+const RUN_ACTIVITY_BACKOFF_MAX_MS = 300000;
+
 async function refreshRunActivity() {
     let activity = null;
+    let failure = null;
     try {
         activity = await api.get('/api/run-activity', { silent: true });
-    } catch {
+    } catch (err) {
         // 純加值資訊，失敗就當作沒在跑，畫面上不留錯誤訊息；
-        // 刻意不做任何停掉輪詢的事——偶發失敗不代表執行結束。
+        // 刻意不做任何停掉輪詢的事——偶發失敗不代表執行結束，只交給 pollWhile 計失敗退避。
         activity = null;
+        failure = err;
     }
 
     renderRunActivity(activity);
@@ -678,7 +686,17 @@ async function refreshRunActivity() {
     window.lfRunActivity = activity;
     window.dispatchEvent(new CustomEvent(RUN_ACTIVITY_EVENT, { detail: activity }));
 
-    setTimeout(refreshRunActivity, activity?.isRunning ? 30000 : 60000);
+    if (failure) throw failure;
+    return activity;
+}
+
+/** 立即取一次，之後交給共用輪詢出口（見 refreshRunActivity 說明） */
+function startRunActivityPolling() {
+    refreshRunActivity().catch(() => { /* 失敗已當作沒在跑呈現；退避由輪詢出口計 */ });
+    pollWhile(
+        refreshRunActivity,
+        ({ lastResult }) => (lastResult?.isRunning ? RUN_ACTIVITY_ACTIVE_MS : RUN_ACTIVITY_IDLE_MS),
+        { pauseWhenHidden: true, backoffMaxMs: RUN_ACTIVITY_BACKOFF_MAX_MS });
 }
 
 /**

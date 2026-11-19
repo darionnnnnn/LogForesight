@@ -112,6 +112,11 @@ class FakeNode {
     setAttribute(name, value) { this.attributes[name] = String(value); }
     setAttributeNS(_ns, name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name] ?? null; }
+    removeAttribute(name) { delete this.attributes[name]; }
+    // id 屬性與 setAttribute('id') 同步（真瀏覽器行為；欄位錯誤的 aria-describedby 靠它配對）
+    get id() { return this.attributes.id ?? ''; }
+    set id(value) { this.attributes.id = String(value); }
+    focus() { this.focused = true; }
     addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
     dispatch(type) { (this.listeners[type] || []).forEach(h => h()); }
 

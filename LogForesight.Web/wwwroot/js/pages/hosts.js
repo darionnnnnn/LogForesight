@@ -14,6 +14,7 @@ import { statusNote, roleText } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { compareText } from '../core/collation.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
@@ -754,7 +755,7 @@ function selectedIds(containerId) {
  * 不是即時最新值，但這裡的視窗極短（勾完就套用），可接受。
  */
 function openBatchGroupsModal() {
-    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+    const hosts = [...selectedHosts.values()].sort((a, b) => compareText(a.hostName, b.hostName));
 
     document.getElementById('batch-groups-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
     const list = document.getElementById('batch-groups-hosts');
@@ -785,7 +786,7 @@ function openBatchGroupsModal() {
  * 與現有分級徽章，套用前先看得到「會動到誰」。
  */
 function openBatchTierModal() {
-    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+    const hosts = [...selectedHosts.values()].sort((a, b) => compareText(a.hostName, b.hostName));
 
     document.getElementById('batch-tier-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
     const list = document.getElementById('batch-tier-hosts');
@@ -809,7 +810,7 @@ function openBatchTierModal() {
  * 頂部列出已勾選主機與現有負責人，使用者多選沿用編輯主機的 checkboxList（可篩選、只列啟用中）。
  */
 function openBatchOwnersModal() {
-    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+    const hosts = [...selectedHosts.values()].sort((a, b) => compareText(a.hostName, b.hostName));
 
     document.getElementById('batch-owners-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
     const list = document.getElementById('batch-owners-hosts');

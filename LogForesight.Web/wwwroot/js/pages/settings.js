@@ -15,6 +15,7 @@ import {
     prtgFreshnessLabel, statusBadge, toLocalDateString
 } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
+import { readNumberField } from '../core/number-field.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -1719,12 +1720,15 @@ function bindMailTest() {
             resultEl.replaceChildren(statusNote('warning', '請至少輸入一位收件人。'));
             return;
         }
+        // 埠號清空不能被當成 0 送出：欄位標錯並停下
+        const smtpPort = readNumberField('smtp-port', { required: true, integer: true, message: '請輸入 SMTP 埠號' });
+        if (smtpPort === null) return;
 
         const restore = withBusy(button, '寄送中');
         try {
             const result = await api.post('/api/admin/settings/mail-test', {
                 smtpServer: document.getElementById('smtp-server').value.trim(),
-                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpPort,
                 smtpUseTls: document.getElementById('smtp-use-tls').checked,
                 smtpAccount: document.getElementById('smtp-account').value.trim(),
                 smtpPassword: document.getElementById('smtp-password').value || null,

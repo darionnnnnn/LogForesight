@@ -22,7 +22,7 @@ const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
 function load({ pages, previewResult = null, failPages = new Set(), delays = {} }) {
     const src = fs.readFileSync(path.join(jsRoot, 'pages', 'groups.js'), 'utf8').replaceAll('\r\n', '\n');
     const imports = src.match(/^import .*;$/gm) ?? [];
-    assert.equal(imports.length, 5, 'groups.js 的匯入行數變了，替身要跟著檢查');
+    assert.equal(imports.length, 6, 'groups.js 的匯入行數變了，替身要跟著檢查');
     const body = src.replace(/^import .*;$/gm, '');
 
     const els = new Map();
@@ -65,6 +65,7 @@ function load({ pages, previewResult = null, failPages = new Set(), delays = {} 
         guardLoad: () => { },
         renderPagination: (container, opts) => spy.pagers.set(container, opts),
         formatNumber: n => String(n),
+        compareText: (a, b) => String(a).localeCompare(String(b)),
         roleText: (cls, text) => { const n = dom.newElement('span'); n.textContent = text; return n; },
         statusNote: (type, text) => { const n = dom.newElement('div'); n.textContent = text; return n; }
     };

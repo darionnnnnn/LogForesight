@@ -29,6 +29,8 @@ import { openIssueStatusReplyModal } from './issue-status-reply.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { bindRangeChips } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { copyText } from '../core/clipboard.js';
+import { compareText } from '../core/collation.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -2104,7 +2106,7 @@ function categoryBadges(categories) {
     const active = new Set(activeChips('filter-category-chips', 'category'));
     const wrap = document.createElement('span');
     const sorted = [...(categories ?? [])].sort((a, b) =>
-        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || a.localeCompare(b)
+        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || compareText(a, b)
     );
     for (const category of sorted) {
         const badge = document.createElement('span');
@@ -2175,12 +2177,9 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
     const lines = [csvHeader().join(',')];
     for (const item of lastResult.items) lines.push(csvRow(item).join(','));
 
-    try {
-        await navigator.clipboard.writeText(lines.join('\r\n'));
-        toast(`已複製 ${lastResult.items.length} 筆資料`, 'success');
-    } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-    }
+    const copied = await copyText(lines.join('\r\n'));
+    if (copied.ok) toast(`已複製 ${lastResult.items.length} 筆資料`, 'success');
+    else toast(`複製失敗：${copied.reason}`, 'danger');
 });
 
 function csvHeader() {

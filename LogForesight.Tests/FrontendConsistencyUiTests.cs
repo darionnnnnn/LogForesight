@@ -540,17 +540,18 @@ public class FrontendConsistencyUiTests
     }
 
     /// <summary>
-    /// 側欄徽章輪詢（回饋第 56 輪）：全站唯一的徽章計時器在 core/badges.js，
+    /// 側欄徽章輪詢（回饋第 56 輪）：全站唯一的徽章計時器在 core/badges.js（走 pollWhile），
     /// 且分頁隱藏時暫停、回到前景立即刷新；各頁不得另開計時器、訂閱 lf:badges 即可。
     /// </summary>
     [Fact]
-    public void 徽章輪詢_badges_js恰一個setInterval且含visibilitychange_各頁不另開計時器()
+    public void 徽章輪詢_badges_js恰一個pollWhile且背景分頁暫停_各頁不另開計時器()
     {
         const string timerCall = "setInterval(";
         var badges = ReadJs("core", "badges.js");
-        Assert.Single(Regex.Matches(badges, Regex.Escape(timerCall)));
-        Assert.Contains("visibilitychange", badges);
-        Assert.Contains("document.hidden", badges);
+        // 全站唯一的徽章計時器走共用輪詢出口 pollWhile（背景分頁暫停、回前景立即刷新由它處理）
+        Assert.Single(Regex.Matches(badges, Regex.Escape("pollWhile(")));
+        Assert.Contains("pauseWhenHidden: true", badges);
+        Assert.DoesNotContain(timerCall, badges);
         Assert.Contains("'lf:badges'", badges);
         Assert.Contains("/api/work-orders/unread-count", badges);
         Assert.Contains("/api/handlers/me/badge", badges);

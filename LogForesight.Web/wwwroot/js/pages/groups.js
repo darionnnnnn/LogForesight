@@ -8,6 +8,7 @@ import { renderTable, renderLoading, renderEmpty, renderError, toast, confirmAct
 import { createSeqGuard } from '../core/async-guards.js';
 import { formatNumber } from '../core/format.js';
 import { roleText, statusNote } from '../core/elements.js';
+import { compareText } from '../core/collation.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
@@ -520,7 +521,7 @@ function renderCurrentMembers() {
     }
 
     container.replaceChildren();
-    for (const [cidr, members] of [...bySubnet.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const [cidr, members] of [...bySubnet.entries()].sort((a, b) => compareText(a[0], b[0]))) {
         const details = document.createElement('details');
         details.className = 'mb-2 border rounded';
         details.open = true;

@@ -11,6 +11,7 @@ import { appUrl } from '../core/paths.js';
 import { toast, withBusy, guardLoad, button, linkButton } from '../core/ui.js';
 import { roleText, statusNote } from '../core/elements.js';
 import { statusBadge } from '../core/format.js';
+import { currentHashId, findByData } from '../core/selectors.js';
 
 const stepsContainer = document.getElementById('setup-steps');
 let status = null;
@@ -149,9 +150,9 @@ async function load() {
     render();
 
     // 深連結（§ URL 反映狀態）：重整或分享網址時捲到同一步
-    const hashId = location.hash.replace(/^#/, '');
+    const hashId = currentHashId();
     if (hashId) {
-        const target = document.querySelector(`[data-step-row="${hashId}"]`);
+        const target = findByData('step-row', hashId);
         target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
 }
@@ -361,7 +362,7 @@ function renderAdInlineForm(step) {
             await load();
             const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
             if (nextIncomplete) {
-                const target = document.querySelector(`[data-step-row="${nextIncomplete.id}"]`);
+                const target = findByData('step-row', nextIncomplete.id);
                 target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }
         } catch (err) {
@@ -533,7 +534,7 @@ function renderMailInlineForm(step) {
             await load();
             const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
             if (nextIncomplete) {
-                const target = document.querySelector(`[data-step-row="${nextIncomplete.id}"]`);
+                const target = findByData('step-row', nextIncomplete.id);
                 target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }
         } catch (err) {
@@ -647,7 +648,7 @@ function renderAiInlineForm(step) {
                 await load();
                 const nextIncomplete = status?.steps?.find(s => !s.done && !s.skipped) || status?.steps?.find(s => !s.done);
                 if (nextIncomplete) {
-                    const target = document.querySelector(`[data-step-row="${nextIncomplete.id}"]`);
+                    const target = findByData('step-row', nextIncomplete.id);
                     target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 }
             } else {
@@ -708,8 +709,7 @@ function renderSettledCard() {
 }
 
 window.addEventListener('hashchange', () => {
-    const hashId = location.hash.replace(/^#/, '');
-    document.querySelector(`[data-step-row="${hashId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    findByData('step-row', currentHashId())?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 });
 
 guardLoad(stepsContainer, load);

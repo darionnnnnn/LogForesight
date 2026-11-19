@@ -390,6 +390,13 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 詳情頁側軌按鈕摘要 | `side-rail.js` `setSummary(key, 短摘要, 完整文字)`：直式按鈕只放得下約十個字，完整文字放提示 |
 | KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary`：只有 `danger` 上色；`warning` 數字維持文字色、標籤前一顆警示色圓點；`secondary`（零或無事）淡化 |
 | 狀態、層級、旗標標記 | `format.js` `statusBadge`／`severityBadge`／`riskBadge`／`elevatesBadge`（形式見 §8.8） |
+| 複製文字到剪貼簿 | `clipboard.js` `copyText(文字)` → `{ ok, method }`／`{ ok: false, reason }`：優先 `navigator.clipboard`，http 等非安全來源退回隱藏 textarea＋`execCommand('copy')`；失敗時把 `reason` 顯示給使用者，頁面不直接呼叫 `navigator.clipboard` |
+| 欄位錯誤（紅框＋訊息，含 `aria-invalid`、`aria-describedby`、訊息 id） | `field-errors.js` `setFieldError(欄位, 文字, { feedback })`／`clearFieldError(欄位)` |
+| 讀數字欄位（空欄位不當成 0） | `number-field.js` `readNumberField(欄位或 id, { required, integer, message })` 空值回 `null`、必填時標欄位錯誤；一組欄位用 `readNumberFields({ 鍵: 欄位 })` 回 `{ ok, values }`；填 0 回 0 |
+| 網址 hash 或資料字串進 CSS 選擇器 | `selectors.js` `currentHashId()`、`findByData(名稱, 值, root)`、`escapeSelectorValue(值)`：值經跳脫、找不到回 `null`、不擲例外 |
+| 文字排序 | `collation.js` `compareText(a, b)`（`Intl.Collator('zh-Hant', { numeric: true })`：中文依語系、"9" 排在 "10" 前）；`sortRows` 的字串欄位已使用 |
+| 狀態輪詢 | `async-guards.js` `pollWhile(fn, 間隔或 (ctx) => 間隔, { pauseWhenHidden, backoffMaxMs })`：間隔可依上一輪結果（`ctx.lastResult`、`ctx.failures`）重算；`pauseWhenHidden` 在背景分頁暫停、回前景立即補一次；`backoffMaxMs` 讓連續失敗時退避。導覽列的徽章與執行中告示都走它 |
+| 對話框（唯讀詳情） | `ui.js` `showDetailModal({ title, body, size, fullscreen, onClose })` 回傳 `{ close(), element }`；頁面以 `close()` 關閉，不模擬點擊 `data-bs-dismiss` 按鈕 |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。

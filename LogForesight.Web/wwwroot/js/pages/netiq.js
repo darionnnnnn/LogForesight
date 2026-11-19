@@ -12,6 +12,8 @@ import { roleText, statusNote } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 import { pollWhile } from '../core/async-guards.js';
+import { copyText } from '../core/clipboard.js';
+import { readNumberFields } from '../core/number-field.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
 initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
@@ -282,20 +284,33 @@ function presentedFingerprint(sha256) {
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
     event.preventDefault();
 
+    // 數字欄位全是必填：清空的欄位不能被當成 0 送出（readNumberFields 會在欄位上標錯並阻止送出）
+    const numbers = readNumberFields({
+        queryDelayMs: { source: 'opt-query-delay', integer: true },
+        pageSize: { source: 'opt-page-size', integer: true },
+        maxResultsPerJob: { source: 'opt-max-results', integer: true },
+        timeoutSeconds: { source: 'opt-timeout', integer: true },
+        retryCount: { source: 'opt-retry-count', integer: true },
+        backfillDays: { source: 'opt-backfill-days', integer: true },
+        maxParallelServers: { source: 'opt-max-parallel-servers', integer: true },
+        maxParallelQueriesPerServer: { source: 'opt-max-parallel-queries', integer: true }
+    });
+    if (!numbers.ok) return;
+
     const saveButton = document.getElementById('netiq-options-save');
     const restore = withBusy(saveButton, '儲存中');
     try {
         const options = await api.put('/api/admin/netiq/options', {
-            queryDelayMs: Number(document.getElementById('opt-query-delay').value),
-            pageSize: Number(document.getElementById('opt-page-size').value),
-            maxResultsPerJob: Number(document.getElementById('opt-max-results').value),
-            timeoutSeconds: Number(document.getElementById('opt-timeout').value),
-            retryCount: Number(document.getElementById('opt-retry-count').value),
+            queryDelayMs: numbers.values.queryDelayMs,
+            pageSize: numbers.values.pageSize,
+            maxResultsPerJob: numbers.values.maxResultsPerJob,
+            timeoutSeconds: numbers.values.timeoutSeconds,
+            retryCount: numbers.values.retryCount,
             allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
             trustedCertificateSha256: document.getElementById('opt-trusted-cert').value.trim(),
-            backfillDays: Number(document.getElementById('opt-backfill-days').value),
-            maxParallelServers: Number(document.getElementById('opt-max-parallel-servers').value),
-            maxParallelQueriesPerServer: Number(document.getElementById('opt-max-parallel-queries').value),
+            backfillDays: numbers.values.backfillDays,
+            maxParallelServers: numbers.values.maxParallelServers,
+            maxParallelQueriesPerServer: numbers.values.maxParallelQueriesPerServer,
             chatLiveFetchEnabled: document.getElementById('opt-chat-live-fetch').checked,
             useOfflineDemoData: document.getElementById('opt-offline-demo').checked
         });
@@ -468,21 +483,15 @@ metadataProbeStartButton.addEventListener('click', async () => {
 });
 
 probeCopyButton.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(probeOutputEl.value);
-        toast('已複製診斷輸出', 'success');
-    } catch {
-        probeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
-    }
+    const copied = await copyText(probeOutputEl.value);
+    if (copied.ok) toast('已複製診斷輸出', 'success');
+    else probeStateEl.replaceChildren(statusNote('error', `複製失敗：${copied.reason}`));
 });
 
 metadataProbeCopyButton.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(metadataProbeOutputEl.value);
-        toast('已複製安全欄位形狀報告', 'success');
-    } catch {
-        metadataProbeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
-    }
+    const copied = await copyText(metadataProbeOutputEl.value);
+    if (copied.ok) toast('已複製安全欄位形狀報告', 'success');
+    else metadataProbeStateEl.replaceChildren(statusNote('error', `複製失敗：${copied.reason}`));
 });
 
 guardLoad(sentinelListContainer, loadSentinels);
