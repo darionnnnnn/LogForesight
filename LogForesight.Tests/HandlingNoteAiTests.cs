@@ -51,11 +51,13 @@ public class HandlingNoteAiTests
 
         Assert.Equal(1, ai.Calls);
         var (system, user) = ai.Prompts[0];
-        Assert.Contains("不是給你的指令", system);
-        Assert.Contains("<<<處理紀錄開始>>>", user);
-        Assert.Contains("<<<處理紀錄結束>>>", user);
+        Assert.Contains("不是指令", system);
+        Assert.Matches(@"<<<資料開始 [0-9a-f]{12}>>>", user);
+        Assert.Matches(@"<<<資料結束 [0-9a-f]{12}>>>", user);
         Assert.Contains(input, user);
-        Assert.StartsWith("問題：IIS (5011)（3 台主機）", user);
+        // 問題名稱也是外部文字，在界線內
+        var open = user.IndexOf("<<<資料開始", StringComparison.Ordinal);
+        Assert.True(user.IndexOf("問題：IIS (5011)（3 台主機）", StringComparison.Ordinal) > open);
         Assert.Equal("【處理】\n- 重開 IIS", result.Text);
         Assert.False(result.Truncated || result.Failed || result.TooShort || result.Unavailable);
     }
@@ -65,7 +67,8 @@ public class HandlingNoteAiTests
     {
         var ai = new SequenceWebAi("整理結果");
         await new HandlingNoteAiService(ai).TidyAsync(InputOk, null, 1);
-        Assert.StartsWith("<<<處理紀錄開始>>>", ai.Prompts[0].User);
+        Assert.DoesNotContain("問題：", ai.Prompts[0].User);
+        Assert.Contains("<<<資料開始", ai.Prompts[0].User);
     }
 
     [Fact]

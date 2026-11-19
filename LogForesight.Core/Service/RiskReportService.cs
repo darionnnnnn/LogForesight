@@ -34,7 +34,7 @@ public class RiskReportService
 
     private static string DeepDiveSystemPromptFor(string? hostOs) =>
         "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
-        "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
+        "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptDataFence.SystemNotice + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
@@ -240,17 +240,18 @@ public class RiskReportService
 
         var logLines = rawLogs.Select(l => FormatRawLog(l, maxMessageLength: 300)).ToList();
 
-        var sb = new StringBuilder(head.ToString());
+        // 頭部（問題清單含事件訊息、全局脈絡含 AI 敘事）與原始 log 全是外部文字，累加進 body 後整段經 PromptDataFence 包住
+        var body = new StringBuilder(head.ToString());
         int included = logLines.Count;
         bool truncated = false;
 
         if (logLines.Count > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("【相關原始 log】（依時間排序，可觀察事件先後順序與關聯）");
+            body.AppendLine();
+            body.AppendLine("【相關原始 log】（依時間排序，可觀察事件先後順序與關聯）");
 
-            // 留給截斷註記與 footer 的餘裕，避免算到剛好卡在邊界
-            int budget = MaxDeepDivePromptChars - head.Length - footer.Length - 200;
+            // 留給資料界線（聲明＋前後標記約 150 字）、截斷註記與 footer 的餘裕，避免算到剛好卡在邊界
+            int budget = MaxDeepDivePromptChars - head.Length - footer.Length - 400;
             int used = 0;
             included = 0;
             foreach (var line in logLines)
@@ -260,18 +261,20 @@ public class RiskReportService
                     truncated = true;
                     break;
                 }
-                sb.AppendLine(line);
+                body.AppendLine(line);
                 used += line.Length;
                 included++;
             }
 
             if (truncated)
             {
-                sb.AppendLine($"（原始 log 因 prompt 長度上限已截斷，僅列出 {included}/{logLines.Count} 筆；問題清單與統計數字不受影響）");
+                body.AppendLine($"（原始 log 因 prompt 長度上限已截斷，僅列出 {included}/{logLines.Count} 筆；問題清單與統計數字不受影響）");
                 Log.Warn("{Date:yyyy-MM-dd}【{Category}】深入分析原始 log 因 {Limit} 字元上限截斷：{Included}/{Total} 筆",
                     record.Date, category, MaxDeepDivePromptChars, included, logLines.Count);
             }
         }
+        var sb = new StringBuilder();
+        sb.Append(new PromptDataFence().Wrap(body.ToString()));
         sb.Append(footer);
 
         var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPromptFor(_hostOs), maxTokens: _deepDiveMaxTokens,
