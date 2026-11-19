@@ -537,7 +537,10 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `auth_failed` | 401 | 登入帳密錯誤 |
   | `auth_expired` | 401 | 登入逾期 |
   | `forbidden` | 403 | 沒有權限 |
-  | `not_found` | 404 | 資源不存在 |
+  | `not_found` | 404 | 資源不存在（含 `/api` 下找不到的路由） |
+  | `method_not_allowed` | 405 | 該路由不支援這個 HTTP 方法 |
+  | `payload_too_large` | 413 | 請求本文超過上限 |
+  | `unsupported_media_type` | 415 | 請求的內容格式不受支援 |
   | `conflict` | 409 | 樂觀鎖衝突、執行互斥、PRTG 範圍外清除作業佔用範圍寫入 |
   | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
   | `server_error` | 500 | 未預期例外 |
@@ -549,7 +552,9 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
-- **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
+- **例外處理單點化**：例外→(狀態, 錯誤碼, 訊息) 的對應表只有 `ApiExceptionMapping` 一份；MVC 內由 `ApiExceptionFilter` 套用，
+  MVC 以外（中介層、驗證、路由階段）由 `ApiExceptionHandler`（`IExceptionHandler`）套用，只接 `/api` 請求，頁面請求轉 `/error`。
+  `/api` 下沒有本文的 403／404／405／413／415 由 `ApiStatusEnvelope` 補成信封。對應表把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯；去識別化失敗另有專屬例外 `RunExportDeidentificationException`，訊息與屬性只含來源名稱與殘留類別次數、不含原值。
   **樂觀鎖衝突另有一支**：處理狀態三表以

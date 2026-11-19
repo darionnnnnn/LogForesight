@@ -93,6 +93,7 @@ try
     builder.Services.AddLogForesightAuth(settings);
     builder.Services.AddLogForesightServices();
 
+    builder.Services.AddExceptionHandler<ApiExceptionHandler>();
     builder.Services.AddControllersWithViews(options =>
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
@@ -190,9 +191,13 @@ try
     // 驗證、停用帳號、搬移閘門、CSRF）之前，401／403／503 與靜態檔回應才都帶得到。
     app.Use(SecurityHeadersPolicy.Middleware(settings.Server.FrameOptions, settings.Server.ResolveCspMode(app.Environment.EnvironmentName)));
 
+    // 例外出口：/api 請求由 ApiExceptionHandler 回信封（含中介層、驗證階段的例外）；頁面請求轉 /error。
+    // 所有環境一致，開發環境也不回框架的例外頁給 API 呼叫端。
+    app.UseExceptionHandler(new ExceptionHandlerOptions { ExceptionHandlingPath = "/error" });
+    // /api 下沒有本文的 404／405／413／415／403 補成信封（頁面請求不受影響）
+    app.UseStatusCodePages(LogForesight.Web.Filters.ApiStatusEnvelope.WriteAsync);
     if (!app.Environment.IsDevelopment())
     {
-        app.UseExceptionHandler("/error");
         app.UseHsts();
     }
 

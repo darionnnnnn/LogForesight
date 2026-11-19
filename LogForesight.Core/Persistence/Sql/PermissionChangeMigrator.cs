@@ -111,7 +111,7 @@ public sealed class PermissionChangeMigrator
             _stateStore.Update(s =>
             {
                 s.State = PermissionChangeMigrationState.Pending;
-                s.LastError = ex.Message;
+                s.LastError = MigrationFailureText.For(ex);
             });
             throw;
         }

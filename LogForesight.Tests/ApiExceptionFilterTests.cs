@@ -101,7 +101,7 @@ public class ApiExceptionFilterTests
             .GetValue(null)!;
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
-        var filterSource = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Filters", "ApiExceptionFilter.cs"));
+        var filterSource = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Filters", "ApiExceptionMapping.cs"));
         var exempt = new Dictionary<Type, string>();
 
         var missing = registered
