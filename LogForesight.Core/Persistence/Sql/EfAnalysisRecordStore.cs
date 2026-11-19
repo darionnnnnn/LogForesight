@@ -371,6 +371,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
     }
 
+    // 批次新增走原生 INSERT（不經 PrepareForSave），所以來源名稱在這裡依模型截斷；逐筆降級走 SaveChanges 也共用這個出口
     private static IssueFirstSeenRow NewFirstSeenRow(string sourceKey, int eventId, string source, DateTime date) =>
         new() { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date };
 
@@ -960,10 +961,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return new TopIssueRow
         {
             RecordId = recordId,
+            // 索引欄：存檔時超長會整列不寫（這個問題就從當日紀錄消失），先依模型截斷讓它照常入庫
             SourceName = ColumnClamp.ClampFor<TopIssueRow>(issue.Source, nameof(TopIssueRow.SourceName))!,
             SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
-            Category = ColumnClamp.ClampFor<TopIssueRow>(issue.Category.ToString(), nameof(TopIssueRow.Category))!,
+            Category = issue.Category.ToString(),
             SeverityRank = (int)issue.Severity,
             // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
             // 類別彙總另由 CategoryAggregator 在查詢時聚合、不在此入庫（WEB-SPEC §10.3），
@@ -972,10 +974,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             RecordDate = recordDate.Date,
             EventCount = issue.Count,
             ElevatesDayRisk = issue.ElevatesDayRisk,
-            LogName = ColumnClamp.ClampFor<TopIssueRow>(issue.LogName, nameof(TopIssueRow.LogName))!,
+            LogName = issue.LogName,
             EntryType = (int)issue.EntryType,
-            KnownIssue = ColumnClamp.ClampFor<TopIssueRow>(issue.KnownIssue, nameof(TopIssueRow.KnownIssue)),
-            EventKey = ColumnClamp.ClampFor<TopIssueRow>(issue.EventKey, nameof(TopIssueRow.EventKey))!,
+            KnownIssue = issue.KnownIssue,
+            EventKey = issue.EventKey,
             SourceObservationsJson = sourceObservationsJson,
             SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };

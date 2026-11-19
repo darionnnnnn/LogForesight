@@ -166,7 +166,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
                 HostName = issueCase.HostName,
                 HostNameKey = HostNameKey.Of(issueCase.HostName),
                 IssueKey = issueCase.IssueKey,
-                IssueLabel = ColumnClamp.ClampFor<IssueCaseRow>(issueCase.IssueLabel, nameof(IssueCaseRow.IssueLabel))!,
+                IssueLabel = issueCase.IssueLabel,
                 CreatedAt = issueCase.CreatedAt,
                 CreatedByAccount = issueCase.CreatedByAccount
             };
@@ -214,7 +214,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
                     HostName = issueCase.HostName,
                     HostNameKey = HostNameKey.Of(issueCase.HostName),
                     IssueKey = issueCase.IssueKey,
-                    IssueLabel = ColumnClamp.ClampFor<IssueCaseRow>(issueCase.IssueLabel, nameof(IssueCaseRow.IssueLabel))!,
+                    IssueLabel = issueCase.IssueLabel,
                     CreatedAt = issueCase.CreatedAt,
                     CreatedByAccount = issueCase.CreatedByAccount
                 };

@@ -731,14 +731,14 @@ public sealed class PrtgFetchService
                 return new PrtgDeviceRow
                 {
                     Objid = objid.Value,
-                    // 有長度上限的字串欄一律先截斷（上限與 LfDbContext 的 HasMaxLength 對齊）：
-                    // PRTG 沒有長度保證，SQL Server 端超長會讓整批 500 筆一起寫入失敗、SQLite 靜默通過。
-                    // Ip 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
-                    Name = ColumnClamp.Clamp(GetStringProperty(el, "device"), 255) ?? string.Empty,
-                    GroupPath = ColumnClamp.Clamp(GetStringProperty(el, "group"), 512) ?? string.Empty,
-                    Ip = ColumnClamp.Clamp(GetStringProperty(el, "host"), 64),
+                    // 一般字串欄的截斷由存檔時的 PrepareForSave 依模型統一處理。
+                    // Ip 是索引欄：存檔時超長會整列不寫（裝置就從鏡像消失），所以這裡先依模型截斷、讓裝置照常入庫；
+                    // 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
+                    Name = GetStringProperty(el, "device") ?? string.Empty,
+                    GroupPath = GetStringProperty(el, "group") ?? string.Empty,
+                    Ip = ColumnClamp.ClampFor<PrtgDeviceRow>(GetStringProperty(el, "host"), nameof(PrtgDeviceRow.Ip)),
                     Tags = GetStringProperty(el, "tags"),
-                    Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64),
+                    Status = GetStringProperty(el, "status"),
                     DependencyObjid = ParseDependency(el),
                     Paused = ParsePaused(el),
                     SyncedAt = syncedAt,
@@ -1054,12 +1054,12 @@ public sealed class PrtgFetchService
         {
             Objid = objid.Value,
             DeviceObjid = parentid,
-            // 截斷理由同 device mapper（上限對齊 LfDbContext）
-            Name = ColumnClamp.Clamp(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
-            SensorType = ColumnClamp.Clamp(GetStringProperty(el, "type"), 128) ?? string.Empty,
+            // 截斷理由同 device mapper：SensorType 是索引欄，先依模型截斷讓感測器照常入庫，其餘交給 PrepareForSave
+            Name = GetStringProperty(el, "sensor") ?? string.Empty,
+            SensorType = ColumnClamp.ClampFor<PrtgSensorRow>(GetStringProperty(el, "type"), nameof(PrtgSensorRow.SensorType)) ?? string.Empty,
             Tags = GetStringProperty(el, "tags"),
-            Unit = ColumnClamp.Clamp(GetStringProperty(el, "unit"), 64),
-            Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64),
+            Unit = GetStringProperty(el, "unit"),
+            Status = GetStringProperty(el, "status"),
             ThresholdsJson = null,
             DependencyObjid = ParseDependency(el),
             Paused = ParsePaused(el),
@@ -1151,7 +1151,7 @@ public sealed class PrtgFetchService
                     {
                         SensorObjid = sensorObjid.Value,
                         ChangedAt = changedAt,
-                        Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64) ?? string.Empty,
+                        Status = GetStringProperty(el, "status") ?? string.Empty,
                         PrevStatus = null,
                         Message = GetStringProperty(el, "message"),
                         Quality = PrtgDataQuality.Ok,

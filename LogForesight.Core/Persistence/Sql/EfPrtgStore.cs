@@ -2637,8 +2637,8 @@ public sealed class EfPrtgStore
             if (existing != null)
             {
                 existing.HostId = row.HostId;
-                existing.CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy));
-                existing.Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note));
+                existing.CreatedBy = row.CreatedBy;
+                existing.Note = row.Note;
                 // CreatedAt 保持原值
             }
             else
@@ -2647,8 +2647,8 @@ public sealed class EfPrtgStore
                 {
                     DeviceObjid = row.DeviceObjid,
                     HostId = row.HostId,
-                    CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy)),
-                    Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note)),
+                    CreatedBy = row.CreatedBy,
+                    Note = row.Note,
                     CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
                 };
                 ctx.PrtgManualMaps.Add(newRow);
@@ -2678,9 +2678,8 @@ public sealed class EfPrtgStore
         if (row == null) return;
         var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
         if (normIp == null) return;
-        normIp = ColumnClamp.Clamp(normIp, 64)!;
-        var note = ColumnClamp.Clamp(row.Note, 512);
-        var createdBy = ColumnClamp.Clamp(row.CreatedBy, 64);
+        var note = row.Note;
+        var createdBy = row.CreatedBy;
 
         WriteScopeChange(ctx =>
         {

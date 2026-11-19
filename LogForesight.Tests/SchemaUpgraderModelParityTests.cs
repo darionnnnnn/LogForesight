@@ -8,7 +8,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// SQL Server 手寫冪等 DDL（<see cref="SchemaUpgrader"/>）對 EF 模型的守門：
 /// 基表 4 張由 EnsureCreated 從模型建，其餘 20 張另有手寫 DDL；兩邊各自維護，欄位增減漏改一邊
-/// 只有在真實 SQL Server 才會爆。這裡只比「欄名集合」與「每欄 NULL／NOT NULL」，不比型別。
+/// 只有在真實 SQL Server 才會爆。這裡比「欄名集合」與「每欄 NULL／NOT NULL」；型別與長度由 <see cref="SchemaUpgraderTypeParityTests"/> 比對。
 /// 模型以 UseSqlServer 建立但不連線。
 /// </summary>
 public sealed class SchemaUpgraderModelParityTests
@@ -118,7 +118,9 @@ public sealed class SchemaUpgraderModelParityTests
         Assert.False(cols["e"]);
     }
 
-    private static string RepoRoot()
+    internal static string NormalizeType(string type) => Regex.Replace(type, @"\s+", "").ToLowerInvariant();
+
+    internal static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
@@ -143,7 +145,11 @@ public sealed class SchemaUpgraderModelParityTests
     }
 
     /// <summary>解析 CREATE TABLE 括號內的欄位定義：欄名 → 是否可為 NULL。略過 CONSTRAINT／PRIMARY KEY／FOREIGN KEY／UNIQUE／CHECK／INDEX 行。</summary>
-    private static Dictionary<string, bool> ParseColumns(string ddl)
+    internal static Dictionary<string, bool> ParseColumns(string ddl) =>
+        ParseColumnDefs(ddl).ToDictionary(kv => kv.Key, kv => kv.Value.Nullable, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>同 <see cref="ParseColumns"/>，另帶出欄位型別（小寫、去空白，例如 <c>nvarchar(255)</c>、<c>bigint</c>、<c>text</c>）。</summary>
+    internal static Dictionary<string, (string Type, bool Nullable)> ParseColumnDefs(string ddl)
     {
         var open = ddl.IndexOf('(');
         Assert.True(open > 0, "DDL 找不到左括號");
@@ -173,16 +179,16 @@ public sealed class SchemaUpgraderModelParityTests
         parts.Add(ddl[start..end]);
 
         var skip = new Regex(@"^(CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|INDEX)\b", RegexOptions.IgnoreCase);
-        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, (string, bool)>(StringComparer.OrdinalIgnoreCase);
         foreach (var raw in parts)
         {
             var part = raw.Trim();
             if (part.Length == 0 || skip.IsMatch(part)) continue;
-            var m = Regex.Match(part, @"^\[?(?<name>[A-Za-z_][A-Za-z0-9_]*)\]?\s+\S");
+            var m = Regex.Match(part, @"^\[?(?<name>[A-Za-z_][A-Za-z0-9_]*)\]?\s+(?<type>[A-Za-z0-9]+(?:\s*\([^)]*\))?)");
             Assert.True(m.Success, $"無法解析欄位定義：{part}");
             var notNull = Regex.IsMatch(part, @"\bNOT\s+NULL\b", RegexOptions.IgnoreCase);
             var nullable = !notNull;
-            result[m.Groups["name"].Value] = nullable;
+            result[m.Groups["name"].Value] = (NormalizeType(m.Groups["type"].Value), nullable);
         }
         return result;
     }

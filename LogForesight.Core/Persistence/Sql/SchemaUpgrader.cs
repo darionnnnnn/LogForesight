@@ -705,7 +705,7 @@ internal static class SchemaUpgrader
         ctx.Database.ExecuteSqlRaw(BuildFilteredUniqueIndexSql(table, indexName, columns, filter));
     }
 
-    private const string SqliteCreateWorkOrders = """
+    internal const string SqliteCreateWorkOrders = """
         CREATE TABLE lf_work_orders (
             work_order_id INTEGER NOT NULL CONSTRAINT PK_lf_work_orders PRIMARY KEY AUTOINCREMENT,
             source_name TEXT NULL,
@@ -763,7 +763,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateWorkOrderEvents = """
+    internal const string SqliteCreateWorkOrderEvents = """
         CREATE TABLE lf_work_order_events (
             event_id INTEGER NOT NULL CONSTRAINT PK_lf_work_order_events PRIMARY KEY AUTOINCREMENT,
             work_order_id INTEGER NOT NULL,
@@ -1171,7 +1171,7 @@ internal static class SchemaUpgrader
         return IssueFirstSeenSeedMergeOutcome.Completed;
     }
 
-    private const string SqliteCreateIssueHandling = """
+    internal const string SqliteCreateIssueHandling = """
         CREATE TABLE lf_issue_handling (
             id INTEGER NOT NULL CONSTRAINT PK_lf_issue_handling PRIMARY KEY AUTOINCREMENT,
             host_name TEXT NOT NULL,
@@ -1205,7 +1205,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateIssueCases = """
+    internal const string SqliteCreateIssueCases = """
         CREATE TABLE lf_issue_cases (
             case_id TEXT NOT NULL CONSTRAINT PK_lf_issue_cases PRIMARY KEY,
             host_name TEXT NOT NULL,
@@ -1245,7 +1245,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateRecordHandling = """
+    internal const string SqliteCreateRecordHandling = """
         CREATE TABLE lf_record_handling (
             id INTEGER NOT NULL CONSTRAINT PK_lf_record_handling PRIMARY KEY AUTOINCREMENT,
             host_name TEXT NOT NULL,
@@ -1273,7 +1273,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateRiskyEventsTable = """
+    internal const string SqliteCreateRiskyEventsTable = """
         CREATE TABLE lf_risky_events (
             id INTEGER NOT NULL CONSTRAINT PK_lf_risky_events PRIMARY KEY AUTOINCREMENT,
             host_id INTEGER NOT NULL,
@@ -1307,7 +1307,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateIssueFirstSeen = """
+    internal const string SqliteCreateIssueFirstSeen = """
         CREATE TABLE lf_issue_first_seen (
             source_key TEXT NOT NULL,
             event_id INTEGER NOT NULL,
@@ -1327,7 +1327,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePermissionChanges = """
+    internal const string SqliteCreatePermissionChanges = """
         CREATE TABLE lf_permission_changes (
             id INTEGER NOT NULL CONSTRAINT PK_lf_permission_changes PRIMARY KEY AUTOINCREMENT,
             change_id TEXT NOT NULL,
@@ -1386,7 +1386,7 @@ internal static class SchemaUpgrader
     // 報告全文。content 不設長度上限：報告是人看的完整敘事，長度不可預期
     // （設上限在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時的截斷例外）。
     // 主鍵在 SQLite 必須是 INTEGER（rowid），不能寫 bigint。
-    private const string SqliteCreateReports = """
+    internal const string SqliteCreateReports = """
         CREATE TABLE lf_reports (
             report_id INTEGER NOT NULL CONSTRAINT PK_lf_reports PRIMARY KEY AUTOINCREMENT,
             host_id INTEGER NOT NULL,
@@ -1416,7 +1416,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgDevices = """
+    internal const string SqliteCreatePrtgDevices = """
         CREATE TABLE lf_prtg_devices (
             objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_devices PRIMARY KEY,
             name TEXT NOT NULL,
@@ -1446,7 +1446,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgSensors = """
+    internal const string SqliteCreatePrtgSensors = """
         CREATE TABLE lf_prtg_sensors (
             objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_sensors PRIMARY KEY,
             device_objid INTEGER NOT NULL,
@@ -1484,7 +1484,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgStateChanges = """
+    internal const string SqliteCreatePrtgStateChanges = """
         CREATE TABLE lf_prtg_state_changes (
             id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_state_changes PRIMARY KEY AUTOINCREMENT,
             sensor_objid INTEGER NOT NULL,
@@ -1510,7 +1510,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgValues = """
+    internal const string SqliteCreatePrtgValues = """
         CREATE TABLE lf_prtg_values (
             id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_values PRIMARY KEY AUTOINCREMENT,
             sensor_objid INTEGER NOT NULL,
@@ -1538,7 +1538,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgSampledBatches = """
+    internal const string SqliteCreatePrtgSampledBatches = """
         CREATE TABLE lf_prtg_sampled_batches (
             batch_id TEXT NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
             created_at TEXT NOT NULL
@@ -1552,7 +1552,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgHostMap = """
+    internal const string SqliteCreatePrtgHostMap = """
         CREATE TABLE lf_prtg_host_map (
             map_date TEXT NOT NULL,
             device_objid INTEGER NOT NULL,
@@ -1580,7 +1580,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgManualMap = """
+    internal const string SqliteCreatePrtgManualMap = """
         CREATE TABLE lf_prtg_manual_map (
             device_objid INTEGER NOT NULL,
             host_id INTEGER NOT NULL,
@@ -1776,7 +1776,7 @@ internal static class SchemaUpgrader
         if (needsRepair == 1) ctx.Database.ExecuteSqlRaw(SqlServerFixPrtgManualMapIdentityDdl);
     }
 
-    private const string SqliteCreatePrtgIpExcludes = """
+    internal const string SqliteCreatePrtgIpExcludes = """
         CREATE TABLE lf_prtg_ip_excludes (
             ip TEXT NOT NULL,
             note TEXT NULL,

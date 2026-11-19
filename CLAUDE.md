@@ -120,7 +120,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetailPage`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
 - 不要讓排程觸發判定各寫一套：所有排程觸發查詢走單一查詢點，明確排除 `BatchRun.JobType == ai`；
   AI 背景工作不算取數排程的新鮮度，也不能被用來補足排程成功判定。
-- 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。
+- 不要把外部系統回傳的字串直接寫進有長度上限的欄位——一律依 `HasMaxLength` 截斷：經 `SaveChanges` 的由 `LfDbContext.PrepareForSave` 統一處理（鍵／索引欄超長該筆不寫），`ExecuteUpdate`／原生 SQL 繞過它，要在寫入處呼叫 `ColumnClamp.ClampFor`（同一個代理對安全的 `TextTruncation.SafeCut`），不寫字面值長度。
   外部來源（PRTG、NetIQ…）沒有長度保證，超長在 SQL Server 端會讓整批寫入一起擲截斷例外、
   SQLite 端卻靜默通過——兩個後端行為分岔，測試環境永遠看不到，正式機才爆。
 - 不要另 new 一個不帶閘道的 `AIService`：所有 AI 呼叫一律經全站 `IAiRequestGate`（互動優先、背景上限隨 `AiConcurrency`），

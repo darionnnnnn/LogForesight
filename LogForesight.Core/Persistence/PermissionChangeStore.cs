@@ -81,18 +81,18 @@ public class PermissionChangeStore
             {
                 ChangeId = change.ChangeId,
                 DedupeKey = change.DedupeKey(),
-                HostName = ColumnClamp.ClampFor<PermissionChangeRow>(change.HostName, nameof(PermissionChangeRow.HostName))!,
+                HostName = change.HostName,
                 HostNameKey = HostNameKey.Of(change.HostName),
                 DetectedAt = change.DetectedAt,
                 CreatedAt = now,
-                Target = ColumnClamp.ClampFor<PermissionChangeRow>(change.Target, nameof(PermissionChangeRow.Target))!,
-                ChangeType = ColumnClamp.ClampFor<PermissionChangeRow>(change.ChangeType, nameof(PermissionChangeRow.ChangeType))!,
+                Target = change.Target,
+                ChangeType = change.ChangeType,
                 Category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category,
                 IsPrivilegedTarget = change.IsPrivilegedTarget,
-                InitiatorAccount = ColumnClamp.ClampFor<PermissionChangeRow>(change.InitiatorAccount, nameof(PermissionChangeRow.InitiatorAccount))!,
-                TargetAccount = ColumnClamp.ClampFor<PermissionChangeRow>(change.TargetAccount, nameof(PermissionChangeRow.TargetAccount))!,
-                ObjectType = ColumnClamp.ClampFor<PermissionChangeRow>(change.ObjectType, nameof(PermissionChangeRow.ObjectType))!,
-                ProcessName = ColumnClamp.ClampFor<PermissionChangeRow>(change.ProcessName, nameof(PermissionChangeRow.ProcessName))!,
+                InitiatorAccount = change.InitiatorAccount,
+                TargetAccount = change.TargetAccount,
+                ObjectType = change.ObjectType,
+                ProcessName = change.ProcessName,
                 CoveredFrom = change.CoveredFrom,
                 CoveredTo = change.CoveredTo,
                 PairCount = change.PairCount,
@@ -100,7 +100,7 @@ public class PermissionChangeStore
                 AfterValue = change.After ?? string.Empty,
                 AlertText = change.AlertText ?? string.Empty,
                 RawText = change.RawText,
-                Source = ColumnClamp.ClampFor<PermissionChangeRow>(string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source, nameof(PermissionChangeRow.Source))!,
+                Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
                 EventId = change.EventId,
                 Status = PermissionConfirmStatuses.Pending
             };
@@ -125,7 +125,7 @@ public class PermissionChangeStore
 
         if (existing != null)
         {
-            existing.Target = ColumnClamp.ClampFor<PermissionChangeRow>(change.Target, nameof(PermissionChangeRow.Target))!;
+            existing.Target = change.Target;
             existing.AlertText = change.AlertText ?? string.Empty;
             // 涵蓋區間與對數會隨當日新事件變動，與說明文字同屬描述性欄位，一起更新
             existing.CoveredFrom = change.CoveredFrom;
@@ -142,18 +142,18 @@ public class PermissionChangeStore
         {
             ChangeId = change.ChangeId,
             DedupeKey = dedupeKey,
-            HostName = ColumnClamp.ClampFor<PermissionChangeRow>(change.HostName, nameof(PermissionChangeRow.HostName))!,
+            HostName = change.HostName,
             HostNameKey = HostNameKey.Of(change.HostName),
             DetectedAt = change.DetectedAt,
             CreatedAt = DateTime.Now,
-            Target = ColumnClamp.ClampFor<PermissionChangeRow>(change.Target, nameof(PermissionChangeRow.Target))!,
-            ChangeType = ColumnClamp.ClampFor<PermissionChangeRow>(change.ChangeType, nameof(PermissionChangeRow.ChangeType))!,
+            Target = change.Target,
+            ChangeType = change.ChangeType,
             Category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category,
             IsPrivilegedTarget = change.IsPrivilegedTarget,
-            InitiatorAccount = ColumnClamp.ClampFor<PermissionChangeRow>(change.InitiatorAccount, nameof(PermissionChangeRow.InitiatorAccount))!,
-            TargetAccount = ColumnClamp.ClampFor<PermissionChangeRow>(change.TargetAccount, nameof(PermissionChangeRow.TargetAccount))!,
-            ObjectType = ColumnClamp.ClampFor<PermissionChangeRow>(change.ObjectType, nameof(PermissionChangeRow.ObjectType))!,
-            ProcessName = ColumnClamp.ClampFor<PermissionChangeRow>(change.ProcessName, nameof(PermissionChangeRow.ProcessName))!,
+            InitiatorAccount = change.InitiatorAccount,
+            TargetAccount = change.TargetAccount,
+            ObjectType = change.ObjectType,
+            ProcessName = change.ProcessName,
             CoveredFrom = change.CoveredFrom,
             CoveredTo = change.CoveredTo,
             PairCount = change.PairCount,
@@ -161,7 +161,7 @@ public class PermissionChangeStore
             AfterValue = change.After ?? string.Empty,
             AlertText = change.AlertText ?? string.Empty,
             RawText = change.RawText,
-            Source = ColumnClamp.ClampFor<PermissionChangeRow>(string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source, nameof(PermissionChangeRow.Source))!,
+            Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
             EventId = change.EventId,
             Status = PermissionConfirmStatuses.Pending
         });
@@ -509,6 +509,11 @@ public class PermissionChangeStore
     {
         var ids = changeIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
         if (ids.Count == 0) return 0;
+
+        // ExecuteUpdate 不經 SaveChanges，PrepareForSave 的截斷管不到：有長度上限的帳號欄位在這裡依模型截斷
+        // （狀態只接受 PermissionConfirmStatuses 的常數；確認備註欄沒有長度上限）。
+        confirmedByAccount = ColumnClamp.ClampFor<PermissionChangeRow>(
+            confirmedByAccount, nameof(PermissionChangeRow.ConfirmedByAccount))!;
 
         using var ctx = _contextFactory();
         return ctx.PermissionChanges
