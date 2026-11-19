@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -22,16 +23,14 @@ public sealed class AdminReminderTests
         Detail = detail
     };
 
-    private sealed class MutableClock(DateTime localNow) : TimeProvider
+    private static FakeTimeProvider LocalClock(DateTime localNow)
     {
-        private DateTime _local = localNow;
-        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
-        public void Set(DateTime localNow) => _local = localNow;
-        public override DateTimeOffset GetUtcNow() =>
-            new(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(_local, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero);
+        var clock = new FakeTimeProvider(new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localNow, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero));
+        clock.SetLocalTimeZone(TimeZoneInfo.Local);
+        return clock;
     }
 
-    private static (AdminReminderService Service, MailNotifyStateStore State, MutableClock Clock, EfSqliteFixture Fx) NewUnassignableService(DateTime now)
+    private static (AdminReminderService Service, MailNotifyStateStore State, FakeTimeProvider Clock, EfSqliteFixture Fx) NewUnassignableService(DateTime now)
     {
         var fx = new EfSqliteFixture();
         var settings = new FakeSystemSettingsStore();
@@ -48,7 +47,7 @@ public sealed class AdminReminderTests
                 new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
                 new ScheduleOptionsStore(fx.Blob("schedule_options"))),
             new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey)), orders, cases, new FakeRuleStore(), new FakeIssueOwnerStore());
-        var clock = new MutableClock(now);
+        var clock = LocalClock(now);
         return (new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, clock: clock), state, clock, fx);
     }
 
@@ -76,11 +75,11 @@ public sealed class AdminReminderTests
         using var _fx = fx;
         service.RunAfterNightly(Summary(("disk 154", "no_pool", 5)));
 
-        clock.Set(new DateTime(2026, 11, 17, 23, 30, 0));
+        clock.SetUtcNow(LocalClock(new DateTime(2026, 11, 17, 23, 30, 0)).GetUtcNow());
         service.RunAfterNightly(Summary(("disk 154", "no_pool", 2)));
         Assert.Equal(5, Assert.Single(state.Get().LastUnassignable).Hosts);
 
-        clock.Set(new DateTime(2026, 11, 18, 23, 0, 0));
+        clock.SetUtcNow(LocalClock(new DateTime(2026, 11, 18, 23, 0, 0)).GetUtcNow());
         service.RunAfterNightly(Summary(("disk 154", "no_pool", 2)));
         Assert.Equal(2, Assert.Single(state.Get().LastUnassignable).Hosts);
 
@@ -96,11 +95,11 @@ public sealed class AdminReminderTests
         using var _fx = fx;
         service.RunAfterNightly(Summary(("disk 154", "no_pool", 3)));
 
-        clock.Set(new DateTime(2026, 11, 18, 23, 0, 0));
+        clock.SetUtcNow(LocalClock(new DateTime(2026, 11, 18, 23, 0, 0)).GetUtcNow());
         service.RunAfterNightly(Summary());
         Assert.Single(state.Get().LastUnassignable);
 
-        clock.Set(new DateTime(2026, 11, 19, 23, 0, 0));
+        clock.SetUtcNow(LocalClock(new DateTime(2026, 11, 19, 23, 0, 0)).GetUtcNow());
         service.RunAfterNightly(Summary());
         Assert.Empty(state.Get().LastUnassignable);
     }

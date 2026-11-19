@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
@@ -127,13 +128,6 @@ public class PrtgValueFetchRetryPolicyTests
 
     // ───────── PauseGate ─────────
 
-    private sealed class ManualClock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 11, 4, 0, 0, 0, TimeSpan.Zero);
-        public override DateTimeOffset GetUtcNow() => _now;
-        public void Advance(TimeSpan span) => _now += span;
-    }
-
     [Fact]
     public async Task 閘沒有拉起時WaitAsync立即完成()
     {
@@ -226,7 +220,7 @@ public class PrtgValueFetchRetryPolicyTests
     [Fact]
     public async Task 總暫停以時鐘量實際長度_不是排定長度()
     {
-        var clock = new ManualClock();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 0, 0, 0, TimeSpan.Zero));
         var gate = new PauseGate((span, _) => { clock.Advance(span); return Task.CompletedTask; }, clock);
 
         await gate.RaiseAsync(S(15), CancellationToken.None);
@@ -262,13 +256,6 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
 
     // ───────── 測試替身 ─────────
 
-    private sealed class ManualClock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 11, 4, 0, 0, 0, TimeSpan.Zero);
-        public override DateTimeOffset GetUtcNow() => _now;
-        public void Advance(TimeSpan span) => _now += span;
-    }
-
     private sealed class TestConsole : IRunConsole
     {
         private readonly object _lock = new();
@@ -298,7 +285,7 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
         public ConcurrentQueue<string> Events { get; } = new();
         public ConcurrentDictionary<long, int> Attempts { get; } = new();
         public List<TimeSpan> Delays { get; } = new();
-        public ManualClock Clock { get; } = new();
+        public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 11, 4, 0, 0, 0, TimeSpan.Zero));
         public TestConsole Console { get; } = new();
         public Func<long, int, HttpResponseMessage> Respond { get; set; } = (_, _) => Ok();
         /// <summary>回應前先等的非同步關卡（讓兩條並行工作的請求同時在途）；null＝不等。</summary>

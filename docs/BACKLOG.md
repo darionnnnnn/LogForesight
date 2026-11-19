@@ -609,6 +609,11 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 ## 設計面債務（未排期）
 
 - **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`HandlingController`（24 個）、`AdminController`（18 個）、`RulesController`（10 個）、`AuditController`（9 個）仍逐參數宣告。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
+- **重複但行為一致的小處，改了沒有可觀察差別（四項合併記錄）**：
+  - 雜湊轉十六進位：各處以一行式（`Convert.ToHexString(...)`／`ToLowerInvariant()` 組合）各寫一份，輸出一致。**觸發時機**：第三種輸出格式（大小寫、分隔）出現，或任一處與其他處結果分岔時，收成單一 helper。
+  - 背景服務啟動延遲：各背景服務各自寫啟動後的等待時間與取消處理，語意相同。**觸發時機**：新增背景服務，或需要統一調整／設定化啟動延遲時，抽共用基底或 helper。
+  - blob 版本遞增：版本化 blob 各自寫「讀版本、比對、寫回新版本」的遞增流程，行為相同。**觸發時機**：新增第四個以上的版本化 blob，或遞增流程需要加互斥／重試時，收成共用出口。
+  - Core 的時鐘注入形式：Core 內各類別接收 `TimeProvider` 的建構式形狀（必填、選填預設 `TimeProvider.System`、屬性）不一致，行為相同。**觸發時機**：把時鐘注入擴到交辦、靜音、觀察中以外的路徑時，統一成一種形狀並補守門測試。
 - **`KnownIssueCatalog` 的 static 可變狀態改實例化**：`Rules`／`SecurityAuditWatchlist`／
   `ChannelWatchlists` 是三個獨立的 static 可變屬性，`RuleBootstrapper.Run` 呼叫
   `Initialize(...)` 依序覆寫——非原子（理論上讀者可能讀到 Rules 已更新但 Watchlist 還沒

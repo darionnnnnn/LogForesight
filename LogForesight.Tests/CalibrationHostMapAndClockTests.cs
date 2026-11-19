@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -46,17 +47,18 @@ public sealed class CalibrationHostMapAndClockTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private sealed class FixedLocalClock(DateTime localNow) : TimeProvider
+    private static FakeTimeProvider LocalClock(DateTime localNow)
     {
-        public override DateTimeOffset GetUtcNow() => new DateTimeOffset(DateTime.SpecifyKind(localNow, DateTimeKind.Local)).ToUniversalTime();
-        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
+        var clock = new FakeTimeProvider(new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localNow, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero));
+        clock.SetLocalTimeZone(TimeZoneInfo.Local);
+        return clock;
     }
 
     private CalibrationService Service(DateTime localNow)
     {
         CalibrationService.ClearAssessmentCache();
         return new CalibrationService(_fx.NewContext, new EfPrtgStore(_fx.NewContext),
-            new EfIssueAggregateQuery(_fx.NewContext, _hostStore), _settingsStore, _ruleStore, clock: new FixedLocalClock(localNow));
+            new EfIssueAggregateQuery(_fx.NewContext, _hostStore), _settingsStore, _ruleStore, clock: LocalClock(localNow));
     }
 
     private void Map(DateTime day, string status)

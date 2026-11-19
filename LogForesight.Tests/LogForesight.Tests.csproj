@@ -17,6 +17,7 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
         <!-- 授權矩陣：真 JWT＋真路由＋真 VisibilityService 的站台組裝測試（LogForesight.Tests/Authorization） -->
         <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+        <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     </ItemGroup>
 
     <ItemGroup>

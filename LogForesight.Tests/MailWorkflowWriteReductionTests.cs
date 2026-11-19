@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -35,12 +36,13 @@ public class MailWorkflowWriteReductionTests : IDisposable
     // 固定時鐘與日期：預期摘要含日期（意圖鍵、主旨），用真實「昨天」會讓測試只在錄製當天通過（自查修正）
     private static readonly DateTime Today = new(2026, 11, 18);
     private static readonly DateTime Yesterday = Today.AddDays(-1);
-    private readonly FixedClock _clock = new(new DateTimeOffset(Today.AddHours(12), TimeZoneInfo.Local.GetUtcOffset(Today.AddHours(12))));
+    private readonly FakeTimeProvider _clock = NewClock(new DateTimeOffset(Today.AddHours(12), TimeZoneInfo.Local.GetUtcOffset(Today.AddHours(12))));
 
-    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    private static FakeTimeProvider NewClock(DateTimeOffset now)
     {
-        public override DateTimeOffset GetUtcNow() => now.ToUniversalTime();
-        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
+        var clock = new FakeTimeProvider(now.ToUniversalTime());
+        clock.SetLocalTimeZone(TimeZoneInfo.Local);
+        return clock;
     }
 
     public MailWorkflowWriteReductionTests()

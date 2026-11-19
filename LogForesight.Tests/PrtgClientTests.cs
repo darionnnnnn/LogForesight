@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 ﻿using System.Net;
 using System.Text;
 using LogForesight.Core;
@@ -1213,11 +1214,6 @@ public class PrtgClientTests
 
     // ───────── Retry-After（第 63-2 輪批次 H-1）：標頭交給 HttpResponseMessage.Headers 解析，例外帶出從現在起的長度 ─────────
 
-    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
-
     private static async Task<PrtgClientException> FailWithAsync(HttpStatusCode code, Action<HttpResponseMessage>? decorate,
         TimeProvider? clock = null)
     {
@@ -1252,7 +1248,7 @@ public class PrtgClientTests
         var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
         var ex = await FailWithAsync(HttpStatusCode.ServiceUnavailable,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(90)),
-            new FixedClock(now));
+            new FakeTimeProvider(now));
 
         Assert.Equal(TimeSpan.FromSeconds(90), ex.RetryAfter);
     }
@@ -1263,7 +1259,7 @@ public class PrtgClientTests
         var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
         var past = await FailWithAsync(HttpStatusCode.TooManyRequests,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(-30)),
-            new FixedClock(now));
+            new FakeTimeProvider(now));
         var zero = await FailWithAsync(HttpStatusCode.TooManyRequests,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero));
 

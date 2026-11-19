@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
@@ -130,7 +131,7 @@ public sealed class SingleFlightMissTests
         {
             var cache = new CountingCache();
             cache.Release.Set();
-            var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 19, 10, 0, 0, TimeSpan.Zero));
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 19, 10, 0, 0, TimeSpan.Zero));
             var freshness = new ScheduleFreshnessService(
                 new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
                 new ScheduleOptionsStore(_backend.Blob("schedule_options")));
@@ -153,11 +154,5 @@ public sealed class SingleFlightMissTests
             Assert.Equal(2, cache.Calls);
         }
 
-        private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
-        {
-            private DateTimeOffset _now = start;
-            public void Advance(TimeSpan span) => _now += span;
-            public override DateTimeOffset GetUtcNow() => _now;
-        }
     }
 }

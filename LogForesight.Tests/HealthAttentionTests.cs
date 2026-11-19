@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -168,13 +169,6 @@ public class HealthAttentionServiceWiringTests : IDisposable
         new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
         new ScheduleOptionsStore(_backend.Blob("schedule_options")));
 
-    /// <summary>可手動撥動的假時鐘（告示快取存活期的測試用）</summary>
-    private sealed class ManualClock(DateTime utcNow) : TimeProvider
-    {
-        public DateTime UtcNowValue { get; set; } = utcNow;
-        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(UtcNowValue, DateTimeKind.Utc));
-    }
-
     private HealthService NewService(TimeProvider? clock = null)
     {
         var freshness = NewFreshnessService();
@@ -229,7 +223,7 @@ public class HealthAttentionServiceWiringTests : IDisposable
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgEnabled = true);
         var syncStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
-        var clock = new ManualClock(new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc));
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 17, 8, 0, 0, TimeSpan.Zero));
         var service = NewService(clock);
 
         Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
@@ -241,11 +235,11 @@ public class HealthAttentionServiceWiringTests : IDisposable
             s.Success = true;
             s.Warnings = new List<PrtgSyncWarning> { PrtgSyncWarning.Create(PrtgSyncWarning.SensorsAllEmpty, "範圍內的感測器全部回空") };
         });
-        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(29);
+        clock.Advance(TimeSpan.FromSeconds(29));
         Assert.Equal(HealthStatuses.Ok, service.GetAttention().Status);
 
         // 過期後重算，看到新狀態
-        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(2);
+        clock.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(HealthStatuses.Degraded, service.GetAttention().Status);
     }
 
@@ -260,13 +254,13 @@ public class HealthAttentionServiceWiringTests : IDisposable
             s.Success = true;
             s.Warnings = new List<PrtgSyncWarning> { PrtgSyncWarning.Create(PrtgSyncWarning.SensorsAllEmpty, "範圍內的感測器全部回空") };
         });
-        var clock = new ManualClock(new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc));
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 17, 8, 0, 0, TimeSpan.Zero));
         var service = NewService(clock);
         Assert.Equal(HealthStatuses.Degraded, service.GetAttention().Status);
 
         // 問題排除後使用者開健康頁：健康頁已正常，告示列（同一個行程內的快取）不能再掛 30 秒
         syncStore.Update(s => s.Warnings = new List<PrtgSyncWarning>());
-        clock.UtcNowValue = clock.UtcNowValue.AddSeconds(5);
+        clock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal(HealthStatuses.Ok, service.GetDetail().Status);
 
         var attention = service.GetAttention();
