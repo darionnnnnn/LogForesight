@@ -2754,15 +2754,15 @@ public class CalibrationControllerTests : IDisposable
     }
 
     [Fact]
-    public void 校準端點_無ViewAll狀態與匯出皆回403()
+    public void 校準端點_狀態與匯出皆宣告須全站檢視()
     {
-        var controller = CreateController(currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
-        var status = Assert.IsType<ObjectResult>(controller.GetStatus());
-        Assert.Equal(StatusCodes.Status403Forbidden, status.StatusCode);
-        var export = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
-        Assert.Equal(StatusCodes.Status403Forbidden, export.StatusCode);
-        var serverAdmin = CreateController(currentUser: FakeCurrentUser.ServerAdmin());
-        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(serverAdmin.GetStatus()).StatusCode);
+        // 拒絕由 [RequireViewAll] filter 執行（403 信封與稽核見錯誤出口測試，路由快照守住宣告）；
+        // 直接呼叫 action 不經過 filter，所以這裡驗宣告本身
+        foreach (var name in new[] { nameof(CalibrationController.GetStatus), nameof(CalibrationController.Export) })
+        {
+            var method = typeof(CalibrationController).GetMethod(name)!;
+            Assert.NotNull(method.GetCustomAttributes(typeof(LogForesight.Web.Filters.RequireViewAllAttribute), inherit: true).SingleOrDefault());
+        }
     }
 
     [Fact]

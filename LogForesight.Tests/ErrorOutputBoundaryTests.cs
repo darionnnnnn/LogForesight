@@ -120,3 +120,21 @@ public class ErrorOutputBoundaryHttpTests
         Assert.Contains(ApiErrorCodes.MethodNotAllowed, body);
     }
 }
+
+/// <summary>模型繫結失敗的信封訊息是中文（第 79 輪批次 B8）</summary>
+[Collection(AuthorizationHttpCollection.Name)]
+public class ModelBindingMessageHttpTests
+{
+    private readonly AuthorizationHttpFixture _fx;
+    public ModelBindingMessageHttpTests(AuthorizationHttpFixture fx) => _fx = fx;
+
+    [Fact]
+    public async Task 查詢參數型別錯誤回中文訊息()
+    {
+        var (status, body) = await _fx.GetAsync(_fx.Admin, "/api/runs/summary?days=abc");
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Contains(ApiErrorCodes.ValidationFailed, body);
+        Assert.DoesNotContain("is not valid", body);
+        Assert.DoesNotContain("The value", body);
+    }
+}

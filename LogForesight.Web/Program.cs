@@ -98,6 +98,7 @@ try
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
         options.Filters.Add<ApiExceptionFilter>();
+        ChineseModelBindingMessages.Apply(options);
     });
 
     // DTO 驗證失敗也要回統一信封，否則前端拿不到欄位訊息（§7.2）

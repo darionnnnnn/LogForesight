@@ -93,7 +93,23 @@ public static class ApiExceptionMapping
         };
 
         LogOutcome(exception, httpContext, status, code, message);
+        if (status == StatusCodes.Status403Forbidden) AuditDenied(httpContext, message);
         return (status, code, message);
+    }
+
+    /// <summary>
+    /// 權限不足的嘗試一律寫稽核（與 PermissionFilter 相同的動作代碼）：action 內與 RequireViewAll 擲出的拒絕
+    /// 都經過這裡，不必各自記得寫。單元測試的 DefaultHttpContext 沒有服務容器時略過。
+    /// </summary>
+    private static void AuditDenied(HttpContext httpContext, string message)
+    {
+        var audit = httpContext.RequestServices?.GetService(typeof(LogForesight.Web.Services.IAuditService)) as LogForesight.Web.Services.IAuditService;
+        audit?.Record(
+            action: LogForesight.Core.Models.AuditActions.AccessDenied,
+            summary: $"權限不足：{httpContext.Request.Method} {httpContext.Request.Path}（{message}）",
+            targetKind: "auth",
+            targetId: httpContext.Request.Path.Value ?? string.Empty,
+            result: LogForesight.Core.Models.AuditResult.Denied);
     }
 
     private static void LogOutcome(Exception exception, HttpContext httpContext, int status, string code, string message)

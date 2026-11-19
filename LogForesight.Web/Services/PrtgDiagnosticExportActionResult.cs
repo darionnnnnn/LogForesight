@@ -85,10 +85,19 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
                 detail: new { result.Counts, result.TotalBytes, result.Sha256BeforeManifest });
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
         {
+            // 用戶端斷線：沒人收回應
             if (response.HasStarted) context.HttpContext.Abort();
             else response.StatusCode = 499;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            // 45 分鐘期限到：不是使用者取消，以逾時回應（已開始串流就只能中止連線，下載端會看到不完整）
+            context.HttpContext.RequestServices.GetService<ILogger<PrtgDiagnosticExportActionResult>>()?
+                .LogWarning("PRTG diagnostic export exceeded its deadline; response started: {ResponseStarted}", response.HasStarted);
+            if (response.HasStarted) context.HttpContext.Abort();
+            else response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         }
         catch (Exception error)
         {

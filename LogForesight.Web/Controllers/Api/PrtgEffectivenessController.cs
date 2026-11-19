@@ -23,12 +23,12 @@ public sealed class PrtgEffectivenessController : ControllerBase
         _currentUser = currentUser;
     }
 
+    // 此舊統計以全站資源為分母；受限角色使用已授權的試點證據包
     [HttpGet]
+    [RequireViewAll("此統計以全站資源為分母，須由可檢視全部主機的管理者查看；受限角色請使用試點證據包。")]
     public ActionResult<ApiResponse<PrtgEffectivenessSummary>> Get([FromQuery] DateTime? from = null,
         [FromQuery] DateTime? through = null)
     {
-        if (!_currentUser.HasViewAll())
-            return Forbid(); // 此舊統計以全站資源為分母；受限角色使用已授權的試點證據包。
         return ApiResponse<PrtgEffectivenessSummary>.Ok(_service.Get(from, through));
     }
 }

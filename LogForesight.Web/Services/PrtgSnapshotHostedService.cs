@@ -686,12 +686,15 @@ public class PrtgSnapshotHostedService : BackgroundService
         // 只在「尚未算過／換小時／輸入指紋變了」時整表重算；其餘 tick 沿用快取。
         // 重設點把 _targetRefreshHour 設 null，所以第一個 tick 與跳過數小時後的 tick 一定會刷新。
         var fingerprint = ComputeTargetFingerprint(settings);
-        if (_targetRefreshHour != currentHour || _targetFingerprint != fingerprint)
-            RefreshTargets(settings, now, currentHour, fingerprint);
+        // 先取一次欄位：另一條執行緒的 RequestScopeRefresh 隨時可能把它清成 null。
+        // 清掉了就重算並用這次算出的結果，不能把 null 當成「範圍為空」——那會讓這一輪記下嘗試卻沒採樣，
+        // 整個採樣週期被吃掉（主機管理改 IP 時就會呼叫重設）。
+        var targetObjids = _targetObjids;
+        if (targetObjids == null || _targetRefreshHour != currentHour || _targetFingerprint != fingerprint)
+            RefreshTargets(settings, now, currentHour, fingerprint, out targetObjids);
         var guardSensors = _guardSensorObjids ?? Array.Empty<long>();
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var targetObjids = _targetObjids;
-        return PrtgSnapshotTargetResolver.SelectEffectiveTargets(targetObjids ?? new HashSet<long>(), policy, guardSensors);
+        return PrtgSnapshotTargetResolver.SelectEffectiveTargets(targetObjids, policy, guardSensors);
     }
 
     /// <summary>
@@ -1128,7 +1131,9 @@ public class PrtgSnapshotHostedService : BackgroundService
                     WriteOutput($"[PRTG快照] 裝置 {lease.Item.DeviceObjid} 狀態補抓未收斂，保留佇列稍後重試。", LogLevel.Warn);
                 }
             }
-            catch (OperationCanceledException)
+            // 只有本輪或站台真的取消才中止整輪；HttpClient 逾時也是 OperationCanceledException，
+            // 那是單一裝置的失敗，落到下面的一般失敗處理、繼續下一個 lease
+            catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
             {
                 store.RetryRecentStateChange(lease, DateTime.UtcNow, TimeSpan.FromSeconds(15));
                 for (var pendingIndex = leaseIndex + 1; pendingIndex < leases.Count; pendingIndex++)
@@ -1608,7 +1613,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         Interlocked.Increment(ref _targetResetGeneration);
     }
 
-    private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour, string fingerprint)
+    private int RefreshTargets(SystemSettings settings, DateTime now, DateTime currentHour, string fingerprint,
+        out HashSet<long> targets)
     {
         TargetRefreshCount++;
         var generation = Volatile.Read(ref _targetResetGeneration);
@@ -1624,8 +1630,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             .Distinct()
             .ToList();
 
-        var targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds);
-        _targetObjids = targets.ToHashSet();
+        targets = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, okDeviceIds).ToHashSet();
+        _targetObjids = targets;
 
         _sensorTypes = store.GetSensorTypes();
 

@@ -13,8 +13,8 @@ GET	/admin/users	C=-;A=Maintain	-	-	-	PagesController
 GET	/admin/users/{userId:long}	C=-;A=Maintain	-	-	-	PagesController
 GET	/api/admin/access	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/access/{userGroupId:long}	C=Maintain;A=-	-	-	-	AdminController
-GET	/api/admin/calibration/export	C=Maintain;A=-	-	-	-	CalibrationController
-GET	/api/admin/calibration/status	C=Maintain;A=-	-	-	-	CalibrationController
+GET	/api/admin/calibration/export	C=Maintain;A=-	-	viewall	-	CalibrationController
+GET	/api/admin/calibration/status	C=Maintain;A=-	-	viewall	-	CalibrationController
 GET	/api/admin/groups	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/groups	C=Maintain;A=-	-	-	-	AdminController
 DELETE	/api/admin/groups/{groupId:long}	C=Maintain;A=-	-	-	-	AdminController
@@ -182,7 +182,7 @@ GET	/api/permission-changes/report	C=-;A=ConfirmPermission	-	-	-	PermissionChang
 PUT	/api/permission-changes/{changeId}/confirm	C=-;A=ConfirmPermission	-	-	-	PermissionChangesController
 GET	/api/prtg-snapshot-diagnostics	C=Maintain;A=-	-	-	-	PrtgSnapshotDiagnosticsController
 POST	/api/prtg-snapshot-diagnostics/archive-journal	C=Maintain;A=-	-	viewall	-	PrtgSnapshotDiagnosticsController
-GET	/api/prtg/effectiveness	C=Maintain;A=-	-	-	-	PrtgEffectivenessController
+GET	/api/prtg/effectiveness	C=Maintain;A=-	-	viewall	-	PrtgEffectivenessController
 GET	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController
 PUT	/api/prtg/monitoring	C=Maintain;A=-	-	-	-	PrtgMonitoringController
 POST	/api/prtg/monitoring/estimate	C=Maintain;A=-	-	-	skipbump	PrtgMonitoringController

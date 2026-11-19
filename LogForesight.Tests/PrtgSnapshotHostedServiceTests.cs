@@ -424,6 +424,41 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 狀態補抓一台逾時_其餘裝置照常補抓_不中止整輪()
+    {
+        // 第 79 輪批次 B7：逾時（權杖未取消）是單一裝置的失敗，不能被當成使用者取消而放掉其餘 lease
+        const long slowDevice = 711, nextDevice = 712;
+        SeedManualBusinessDevice(slowDevice);
+        SeedManualBusinessDevice(nextDevice);
+        SetupOkDevices(new long[] { 10 });
+        SeedCurrentMappedSensors();
+        var today = DateTime.Today;
+        SeedCompletedMappedQueueRows(today);
+        var store = _backend.PrtgStore();
+        foreach (var device in new[] { slowDevice, nextDevice })
+            store.UpsertSensorsAndEnqueueRecentStateChanges(
+                new[] { new PrtgSensorRow { Objid = device * 10, DeviceObjid = device, Name = "Ping", SensorType = "ping" } },
+                DateTime.Now, NewRecentStateQueueItem(device, today));
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("content=messages", StringComparison.Ordinal) && url.Contains($"id={slowDevice}", StringComparison.Ordinal))
+                throw new TaskCanceledException("模擬 HttpClient 逾時");
+            return Task.FromResult(JsonResponse(url.Contains("content=messages", StringComparison.Ordinal)
+                ? "{\"treesize\":0,\"messages\":[]}" : "{\"treesize\":0,\"sensors\":[]}"));
+        };
+        var service = CreateService();
+        service.Now = () => today.AddHours(12);
+        await service.ScopeRefreshTickAsync();
+
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal) &&
+            url.Contains($"id={nextDevice}", StringComparison.Ordinal));
+        var queue = store.ReadRecentStateChangeQueue();
+        Assert.NotNull(Assert.Single(queue, item => item.DeviceObjid == nextDevice).CompletedAtUtc);
+        Assert.Null(Assert.Single(queue, item => item.DeviceObjid == slowDevice).CompletedAtUtc);
+    }
+
+    [Fact]
     public async Task Queue資格按businessDevice映射列_同host多device含conflict_排除guardOnly()
     {
         var hostA = _hostStore.Upsert(new WebHost { HostName = "queue-map-a", Active = true });

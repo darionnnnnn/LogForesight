@@ -52,10 +52,9 @@ public class CalibrationController : ControllerBase
     /// 匯出端同樣強制重算（<c>WithExportPackage</c> 以同一有界快照產生摘要與明細，docs/PRTG-SPEC.md §11）。
     /// </summary>
     [HttpGet("status")]
+    [RequireViewAll(ForbiddenMessage)]
     public IActionResult GetStatus()
     {
-        if (!_currentUser.HasViewAll())
-            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
         try
         {
             // 狀態是小 DTO，直接回 Ok；與匯出的互斥由服務層 CalibrationCaptureAdmission 負責，
@@ -75,12 +74,11 @@ public class CalibrationController : ControllerBase
     /// 匯出校準數值封裝包為 JSON 檔案
     /// </summary>
     [HttpGet("export")]
+    [RequireViewAll(ForbiddenMessage)]
     public IActionResult Export(
         [FromQuery(Name = "override")] bool isOverride = false,
         [FromQuery(Name = "detail")] string? detail = null)
     {
-        if (!_currentUser.HasViewAll())
-            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
         if (!RequestAdmission.Wait(0))
             return CapacityResponse(StatusCodes.Status503ServiceUnavailable, ApiErrorCodes.CaptureBusy, "另一個校準資料擷取或匯出正在執行，請稍後重試。");
         BoundedMemoryStream? buffer = null;

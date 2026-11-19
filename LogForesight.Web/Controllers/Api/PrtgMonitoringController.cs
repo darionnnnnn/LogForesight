@@ -37,7 +37,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var visible = VisibleHostIds(sourceSnapshot);
         var canViewAll = user.Has(Capability.ViewAll);
         if ((visible.Count == 0 && !canViewAll) || policy.HostIds.Any(visibility.IsCaseGrantOnly) ||
-            (!canViewAll && !policy.HostIds.All(visible.Contains))) return Forbid();
+            (!canViewAll && !policy.HostIds.All(visible.Contains))) throw DomainException.Forbidden(OutOfScopeHostsMessage);
         if (policy.HostIds.Count > HostLimit)
             return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"既有主機範圍超過 {ScaleLimits.MaxHosts.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆；已拒絕回傳不完整修復清單。"));
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
@@ -113,7 +113,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
         if (request.HostIds.Distinct().Count() != request.HostIds.Count || request.HostIds.Any(id => !eligible.ContainsKey(id)))
-            return Forbid();
+            throw DomainException.Forbidden(OutOfScopeHostsMessage);
         var store = backend.PrtgStore();
         if (!FenceMatches(token, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "目錄或授權已變更；請重新查詢。"));
         var mapDate = token.MapDate;
@@ -140,7 +140,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
         if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"NetIQ 主機超過 {HostLimit:N0} 台，已拒絕完整目錄。"));
-        if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
+        if (selectedHosts.Any(id => !eligible.ContainsKey(id))) throw DomainException.Forbidden(OutOfScopeHostsMessage);
         if (!TryReadFence(request.CatalogueToken, out var fence, out var error)) return error!;
         var store = backend.PrtgStore();
         if (!FenceMatches(fence!, Store().Get(), visible, store) || fence!.HostVersion != sourceSnapshot.Version)
@@ -186,7 +186,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var visible = VisibleHostIds(sourceSnapshot);
         var eligible = EligibleHosts(sourceSnapshot, visible).Hosts;
         if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, $"NetIQ 主機超過 {HostLimit:N0} 台，已拒絕完整目錄。"));
-        if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
+        if (selectedHosts.Any(id => !eligible.ContainsKey(id))) throw DomainException.Forbidden(OutOfScopeHostsMessage);
         var store = backend.PrtgStore();
         if (!FenceMatches(estimate, Store().Get(), visible, store) || estimate.HostVersion != sourceSnapshot.Version)
             return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "估算後可見範圍或目錄已變更；請重新估算。"));
@@ -214,6 +214,8 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             "prtg", result.Revision);
         return Ok(ApiResponse<string>.Ok(result.Revision));
     }
+
+    private const string OutOfScopeHostsMessage = "所選主機包含您無權檢視或尚未對應的主機，請重新載入後再選。";
 
     private PrtgMonitoringPolicyStore Store() => new(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
 
