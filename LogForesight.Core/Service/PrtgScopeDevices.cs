@@ -218,6 +218,13 @@ public static class PrtgScopePurge
         return null;
     }
 
+    /// <summary>
+    /// 規則 4：本趟主機對應要有成功的列。對應整批失敗時範圍仍可能由較早一份有效對應算出來、看起來正常，
+    /// 但「本趟的鏡像能不能歸戶」沒有被證實，不在這種狀態下刪資料。回傳擋下的原因；null＝可清。
+    /// </summary>
+    public static string? CheckMapping(int mappedDevices) =>
+        mappedDevices > 0 ? null : "本趟主機對應沒有任何成功的對應，無法確認鏡像能歸戶，本次不清除範圍外資料；請先檢查對應結果。";
+
     /// <summary>清除時要留下的裝置＝監看裝置 ∪ 保留裝置</summary>
     public static IReadOnlySet<long> KeepSet(PrtgScopeResult scope)
     {
@@ -230,14 +237,34 @@ public static class PrtgScopePurge
     /// 結構同步全部成功後的自動清除。呼叫端只在同步全部成功時呼叫；這裡再檢查三道保護。
     /// 清除失敗不擲出（只輸出），不影響同步結果。回傳是否實際執行了清除。
     /// </summary>
+    /// <param name="mappedDevices">本趟主機對應成功的裝置數（自動＋人工）；0 時不清</param>
     public static bool RunAfterStructureSync(EfPrtgStore store, PrtgScopeResult? scope, bool devicesRefreshed,
-        string verifiedParentJobId, IRunConsole console, CancellationToken cancellationToken = default,
+        int mappedDevices, string verifiedParentJobId, IRunConsole console, CancellationToken cancellationToken = default,
         Func<bool>? parentOwnsRun = null)
     {
         var reason = CheckScope(scope, devicesRefreshed);
         if (reason != null)
         {
             console.WriteLine($"[範圍外清除] {reason}，本次不清除範圍外的數值與狀態變更。");
+            return false;
+        }
+
+        var mapping = CheckMapping(mappedDevices);
+        if (mapping != null)
+        {
+            console.WriteLine($"[範圍外清除] ⚠ {mapping}");
+            try
+            {
+                store.ScopeBaseline().Update(b =>
+                {
+                    b.BlockedReason = mapping;
+                    b.BlockedAt = DateTime.Now;
+                });
+            }
+            catch (Exception ex)
+            {
+                console.WriteLine($"[範圍外清除] 擋下原因寫入失敗：{ex.Message}");
+            }
             return false;
         }
 

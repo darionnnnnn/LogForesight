@@ -372,7 +372,7 @@ internal static class PrtgDailyPipeline
                         new PrtgAddressResolver(), hostIds: null);
                 }
                 PrtgScopePurge.RunAfterStructureSync(backend.PrtgStore(), finalScope, fetchResult.DevicesRefreshed,
-                    parentRunId.ToString(System.Globalization.CultureInfo.InvariantCulture), prtgConsole, ct,
+                    mapResult.Ok + mapResult.Manual, parentRunId.ToString(System.Globalization.CultureInfo.InvariantCulture), prtgConsole, ct,
                     () => runRecorder.OwnsRun(parentRunId));
             }
 

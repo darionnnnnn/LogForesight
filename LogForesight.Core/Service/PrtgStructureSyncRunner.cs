@@ -188,7 +188,7 @@ public static class PrtgStructureSyncRunner
                         console, resolver, hostIds: null)
                     : syncResult.Scope;
                 PrtgScopePurge.RunAfterStructureSync(prtgStore, finalScope, syncResult.DevicesRefreshed,
-                    verifiedParentJobId ?? string.Empty, console, ct,
+                    mapResult.Ok + mapResult.Manual, verifiedParentJobId ?? string.Empty, console, ct,
                     verifiedParentJobId == null || parentOwnsRun == null ? null : () => parentOwnsRun(verifiedParentJobId));
             }
         }

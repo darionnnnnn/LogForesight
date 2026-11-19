@@ -319,7 +319,8 @@ public class PrtgScopeProtectionTests : IDisposable
         new object[] { "partial" },
         new object[] { "縮小超過門檻" },
         new object[] { "無基準" },
-        new object[] { "裝置鏡像未更新" }
+        new object[] { "裝置鏡像未更新" },
+        new object[] { "對應全失敗" }
     };
 
     [Theory]
@@ -344,7 +345,7 @@ public class PrtgScopeProtectionTests : IDisposable
         var before = Counts();
         var console = new TestConsole();
 
-        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: protection != "裝置鏡像未更新",
+        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: protection != "裝置鏡像未更新", mappedDevices: protection == "對應全失敗" ? 0 : 1,
             verifiedParentJobId: "scope-test-parent", console, CancellationToken.None, () => true);
 
         Assert.False(purged);
@@ -357,6 +358,25 @@ public class PrtgScopeProtectionTests : IDisposable
         }
         if (protection == "無基準")
             Assert.False(Store.ScopeBaseline().Get().HasBaseline);
+        if (protection == "對應全失敗")
+        {
+            Assert.Contains("沒有任何成功的對應", Store.ScopeBaseline().Get().BlockedReason);
+            Assert.Contains(console.Lines, l => l.Contains("沒有任何成功的對應"));
+        }
+    }
+
+    [Fact]
+    public void 範圍外清除_資源守門啟用且本趟對應全失敗時不清除()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var scope = Compute(Settings(guardEnabled: true), hostIds: null);
+        SetBaseline(scope.DeviceObjids.Count);
+        var before = Counts();
+
+        Assert.False(PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true, mappedDevices: 0,
+            "scope-test-parent", new TestConsole(), CancellationToken.None, () => true));
+        Assert.Equal(before, Counts());
     }
 
     [Fact]
@@ -367,7 +387,7 @@ public class PrtgScopeProtectionTests : IDisposable
         var scope = Compute(Settings(guardEnabled: false), hostIds: null);
         SetBaseline(scope.DeviceObjids.Count + 50); // 恰等於門檻不擋
 
-        Assert.True(PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true,
+        Assert.True(PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true, mappedDevices: 1,
             "scope-test-parent", new TestConsole(), CancellationToken.None, () => true));
     }
 
@@ -381,7 +401,7 @@ public class PrtgScopeProtectionTests : IDisposable
         Store.ScopeBaseline().Update(b => b.BlockedReason = "舊的擋下原因");
         var startedAt = DateTime.Now;
 
-        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true,
+        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true, mappedDevices: 1,
             "scope-test-parent", new TestConsole(), CancellationToken.None, () => true);
 
         Assert.True(purged);
@@ -442,7 +462,7 @@ public class PrtgScopeProtectionTests : IDisposable
         cancellation.Cancel();
 
         Assert.Throws<OperationCanceledException>(() => PrtgScopePurge.RunAfterStructureSync(Store, scope,
-            devicesRefreshed: true, "cancelled-parent", new TestConsole(), cancellation.Token, () => true));
+            devicesRefreshed: true, mappedDevices: 1, "cancelled-parent", new TestConsole(), cancellation.Token, () => true));
 
         using var context = _backend.CreateContext();
         var job = context.PrtgScopePurgeJobs.Single(x => x.ParentJobId == "cancelled-parent");

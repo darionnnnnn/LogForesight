@@ -403,7 +403,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
         var ownershipChecks = 0;
         var console = new TestConsole();
 
-        var completed = PrtgScopePurge.RunAfterStructureSync(_prtg, scope, devicesRefreshed: true,
+        var completed = PrtgScopePurge.RunAfterStructureSync(_prtg, scope, devicesRefreshed: true, mappedDevices: 1,
             verifiedParentJobId: "verified-parent-77", console: console, cancellationToken: CancellationToken.None,
             parentOwnsRun: () => ++ownershipChecks <= 3);
 
