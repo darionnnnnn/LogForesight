@@ -851,6 +851,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     /// 郵件收尾專用的 <see cref="ReplaceMailPlan"/>：計畫內容（意圖、預期部分、已送與失敗部分、追蹤不完整旗標）沒有改變時，
     /// 保留原本的結案旗標與原因而不寫入。只供緊接著會呼叫 <see cref="CloseMailPlanIfChanged"/> 的收尾流程使用——
     /// 結案會依計畫內容重新算出結案旗標與原因，與先設成未結案再結案的最終狀態相同。
+    /// 例外路徑的差異：兩步之間若擲例外而沒走到結案，逐步呼叫會留下「未結案」，這裡保留原本的結案狀態
+    /// （下一趟收尾會照常重算）。
     /// </summary>
     public HostDayWorkflowState ReplaceMailPlanIfChanged(long hostId, DateTime date, string lane,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version) =>

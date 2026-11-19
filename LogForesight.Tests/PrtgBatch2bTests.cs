@@ -71,6 +71,30 @@ public sealed class PrtgBatch2bTests
         Assert.Equal(4, new PrtgRiskProjectionStore(fx2.NewContext).RunBatch());
     }
 
+    /// <summary>
+    /// 自查補強：詳情已清除的列重評後狀態變成 unavailable（屬於待重評，儀表板待重評天數會多 1），
+    /// 內容沒有改寫也必須算成會影響快取的變動；由未檢查變成已檢查（current）則不算。
+    /// </summary>
+    [Fact]
+    public void A2_待重評狀態改變也算變動_未檢查變已檢查不算()
+    {
+        using var fx = new EfSqliteFixture();
+        PrtgBatch2bScenarios.SeedRisk(fx.NewContext, 2, legacyLast: false);
+        using (var ctx = fx.NewContext())
+        {
+            ctx.DailyRecords.Add(new DailyRecordRow
+            {
+                HostId = 2001, HostName = "PRUNED", RecordDate = new DateTime(2026, 1, 9), RiskLevel = "中",
+                ContentJson = string.Empty, DetailPruned = true, CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+        var result = new PrtgRiskProjectionStore(fx.NewContext).RunBatchDetailed();
+        Assert.Equal(new PrtgRiskBatchResult(3, 1), result);
+        using var read = fx.NewContext();
+        Assert.Equal("unavailable", read.DailyRecords.Single(r => r.HostId == 2001).RiskReviewStatus);
+    }
+
     private sealed class Env : IDisposable
     {
         public string Dir { get; } = Path.Combine(Path.GetTempPath(), "lf-2b-risk-" + Guid.NewGuid().ToString("N"));

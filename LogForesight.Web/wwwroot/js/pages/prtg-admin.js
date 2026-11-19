@@ -3813,7 +3813,9 @@ if (operationsStatus) {
                 const row = document.createElement('li');
                 row.textContent = `主機 #${intent.hostId}｜${intent.recordDate.slice(0, 10)}｜${labels[intent.status] || intent.status}｜` +
                     `通知設定採用 ${intent.adoptedSettingsRevision || '未知'} → 期望 ${intent.expectedSettingsRevision}｜` +
-                    intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、');
+                    // 已被取代的項目不再寄送，收件人當時的狀態沒有意義（避免同列出現「等待重試」）
+                    (intent.status === 'superseded' ? '不再追蹤收件人' :
+                        intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、'));
                 list.append(row);
             }
             if (!list.childElementCount) operationsStatus.textContent = '可見範圍內尚無通知意圖。';

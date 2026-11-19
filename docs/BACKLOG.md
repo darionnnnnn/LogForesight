@@ -592,6 +592,9 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：需先在實機查「`host_id` 不同但同名」的列數，再決定加 `host_name_key` 欄位，或只對 `host_id=0` 舊列做名稱備援。
 - **PRTG 側與 NetIQ 目錄掃描仍以無條件 `catch (OperationCanceledException)` 判斷取消**（`PrtgDailyPipeline`、`PrtgScopeDevices`、`PrtgStructureSyncRunner`、`PrtgSnapshotHostedService`、`NetiqDiscoveryService`）：`PrtgClient` 與 `NetiqDirectoryClient` 已把 ct 未取消的逾時轉成非取消例外，目前不會把逾時誤判成使用者停止。**觸發時機**：在這些路徑新增不經這兩個用戶端的 HTTP 呼叫時，改用「OCE 且 ct 已取消」判斷（樣板見 `PrtgScopeEstimateController`）。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
+- **別名展開的主機集合在 EF 查詢中被內嵌成常值**：`EfIssueAggregateQuery.ExpandToAliasIds` 回傳 `HashSet<long>`，EF Core 8 會把每個識別寫成 SQL 常值（3,000 台約 65 KB 的查詢文字，執行計畫無法共用）；
+  `LatestOccurrences` 查詢端分組的兩段查詢各帶一份。改回傳 `List<long>` 會變成單一 JSON 參數（SQL Server 走 OPENJSON，需相容性層級 130 以上）。**觸發時機**：SQL Server 慢查詢清單出現這類查詢或計畫快取膨脹。
+- **SQL Server 不分大小寫定序下的出現點分組**：`LatestOccurrences` 查詢端分組與既有的 `ActionableOccurrences` 一樣在 SQL 端以 `EventKey` 分組；SQL Server 預設定序不分大小寫，只差大小寫的 `EventKey` 會併成一個出現點（SQLite 與記憶體路徑分開）。**觸發時機**：確認正式環境為 SQL Server 時一併核對定序。
 - **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
 
 ## 設計面債務（未排期）

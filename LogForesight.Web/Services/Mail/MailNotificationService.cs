@@ -287,10 +287,6 @@ public class MailNotificationService
                             requiredLanes.Count > 0 ? "recipient-plan-evaluated" : currentSettings.MailEnabled ? "below-threshold-or-not-required" : "disabled");
                     }
                 }
-                // 即時通知停用：待送項目不會再被寄出，標為「已被取代」讓重試不再空轉；
-                // 重新啟用後回望期內仍未寄的主機日會照常重新建立並寄出。
-                if (!settings.MailEnabled || !settings.MailUrgentEnabled)
-                    SupersedeUrgentOutbox(null);
                 if (!settings.MailEnabled || !settings.MailOnRunCompleted && !settings.MailUrgentEnabled)
                 {
                     ClosePlans();
@@ -316,8 +312,12 @@ public class MailNotificationService
 
                 if (settings.MailUrgentEnabled)
                 {
+                    // 有工作流時，取不到版本的主機日（恢復等待中、父紀錄未完成）這趟不判斷其待送項目是否已被取代
+                    var unresolvedHostDays = mailVersions == null ? new HashSet<string>(StringComparer.Ordinal)
+                        : notificationDays.Select(day => $"{day.HostId}|{day.Date:yyyy-MM-dd}")
+                            .Where(key => !mailVersions.ContainsKey(key)).ToHashSet(StringComparer.Ordinal);
                     await SendUrgentNotificationsAsync(settings, records, ctx, from, to, ct, mailVersions, mailContextFingerprint,
-                        settingsFingerprint, intentMemo);
+                        settingsFingerprint, intentMemo, unresolvedHostDays);
                 }
                 ct.ThrowIfCancellationRequested();
                 ClosePlans();
@@ -336,23 +336,21 @@ public class MailNotificationService
     }
 
     /// <summary>
-    /// 把非終態、且鍵不在 <paramref name="liveKeys"/> 的即時通知待送項目標為 <c>superseded</c>（已被取代）。
-    /// <paramref name="liveKeys"/> 為 null 代表全部非終態項目（即時通知停用）。沒有要改的就不寫。
+    /// 把非終態、且鍵不在 <paramref name="liveKeys"/> 的即時通知待送項目標為 <c>superseded</c>（已被取代）。沒有要改的就不寫。
+    /// <paramref name="unresolvedHostDays"/>（<c>hostId|yyyy-MM-dd</c>）是本趟暫時取不到工作流版本的主機日（恢復等待中、父紀錄未完成）：
+    /// 它們的鍵這趟算不出來，不代表已不對應現行紀錄，這趟不動，等狀態恢復後再判斷。
+    /// 不改 <c>UpdatedAtUtc</c>：維護頁依它排序取前 100 筆，大量轉成已被取代時不能把仍在處理的項目擠出清單。
     /// </summary>
-    private void SupersedeUrgentOutbox(IReadOnlySet<string>? liveKeys)
+    private void SupersedeUrgentOutbox(IReadOnlySet<string> liveKeys, IReadOnlySet<string> unresolvedHostDays)
     {
-        var state = _state.Get();
-        if (!state.UrgentOutbox.Any(p => !MailNotifyStateStore.IsTerminalUrgentStatus(p.Value.Status) &&
-                (liveKeys == null || !liveKeys.Contains(p.Key)))) return;
+        bool Stale(MailUrgentIntent intent, string key) =>
+            !MailNotifyStateStore.IsTerminalUrgentStatus(intent.Status) && !liveKeys.Contains(key) &&
+            !unresolvedHostDays.Contains($"{intent.HostId}|{intent.RecordDate:yyyy-MM-dd}");
+        if (!_state.Get().UrgentOutbox.Any(p => Stale(p.Value, p.Key))) return;
         _state.Update(s =>
         {
             foreach (var pair in s.UrgentOutbox)
-            {
-                if (MailNotifyStateStore.IsTerminalUrgentStatus(pair.Value.Status)) continue;
-                if (liveKeys != null && liveKeys.Contains(pair.Key)) continue;
-                pair.Value.Status = "superseded";
-                pair.Value.UpdatedAtUtc = _clock.UtcNow();
-            }
+                if (Stale(pair.Value, pair.Key)) pair.Value.Status = "superseded";
         });
     }
 
@@ -364,13 +362,20 @@ public class MailNotificationService
     /// </summary>
     public async Task RetryPendingUrgentAsync(CancellationToken ct = default)
     {
-        if (!_state.Get().UrgentOutbox.Values.Any(i =>
-                !MailNotifyStateStore.IsTerminalUrgentStatus(i.Status) ||
+        // 會被重跑處理的項目才觸發：非終態且尚未記為已寄（已寄的鍵不會再進待送清單，重跑對它沒有作用——
+        // 例如只填信箱的收件人部分寄送失敗時，本趟只要有一封成功就記為已寄，項目卻維持待送）。
+        var outbox = _state.Get();
+        if (!outbox.UrgentOutbox.Values.Any(i =>
+                !MailNotifyStateStore.IsTerminalUrgentStatus(i.Status) && !outbox.UrgentSentKeys.Contains(i.Key) ||
                 IsRetryableLegacyNoQualifiedIntent(i))) return;
+
+        // 郵件或即時通知停用時不重跑：待送項目保留原狀，重新啟用後下一分鐘就照常重試補寄。
+        var settings = _settingsStore.Get();
+        if (!settings.MailEnabled || !settings.MailUrgentEnabled) return;
 
         // 退避：沒有進度的整套重跑間隔加倍，設定版次改變即回到 1 分鐘。
         var now = _clock.UtcNow();
-        var revision = _settingsStore.Get().Revision;
+        var revision = settings.Revision;
         lock (_retryLock)
         {
             if (!string.Equals(_retryRevision, revision, StringComparison.Ordinal))
@@ -1260,7 +1265,8 @@ public class MailNotificationService
     private async Task SendUrgentNotificationsAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions = null, string? mailContextFingerprint = null,
-        string? expectedSettingsFingerprint = null, MailIntentMemo? memo = null)
+        string? expectedSettingsFingerprint = null, MailIntentMemo? memo = null,
+        IReadOnlySet<string>? unresolvedHostDays = null)
     {
         records = RemovePrtgLanesTransiently(records);
         // 固定本輪起點，避免 store 回傳共用物件時設定修改連帶改掉比較基準。
@@ -1281,7 +1287,8 @@ public class MailNotificationService
             UrgentRecordKey(record, mailVersions, candidateViews, mailContextFingerprint, memo);
         // 本趟正常算到這一步才清理：不再對應現行紀錄的待送項目標為「已被取代」
         // （讀取失敗或例外時不會執行到這裡）。
-        SupersedeUrgentOutbox(candidates.Select(IntentKey).ToHashSet(StringComparer.Ordinal));
+        SupersedeUrgentOutbox(candidates.Select(IntentKey).ToHashSet(StringComparer.Ordinal),
+            unresolvedHostDays ?? new HashSet<string>(StringComparer.Ordinal));
         var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r)) &&
             !LegacyKeySent("urgent", r, mailVersions, candidateViews, mailContextFingerprint, state.UrgentSentKeys)).ToList();
         if (pending.Count == 0) return;
@@ -2136,6 +2143,9 @@ public class MailNotificationService
         string? mailContextFingerprint, IReadOnlySet<string> sentKeys)
     {
         if (sentKeys.Count == 0) return false;
+        // 沒有工作流版本時鍵是 hostId|date，與旗標無關，呼叫端已比對過
+        if (versions == null || !versions.TryGetValue(RecordKey(record), out var version) || version.ParentRecordId != record.RecordId)
+            return false;
         for (var bits = 0; bits < 8; bits++)
         {
             var legacy = ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0);

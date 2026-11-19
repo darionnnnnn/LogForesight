@@ -191,7 +191,8 @@ public class MailNotificationServiceTestsSupersede : IDisposable
 
         switch (how)
         {
-            case "recordId": record.RecordId = 4002; break;
+            // 真實的重跑會在寫入新紀錄後立刻更新工作流的父紀錄；只改編號而工作流沒跟上屬於暫時狀態（另有測試）
+            case "recordId": record.RecordId = 4002; _workflow.RestoreFromRecord(record, aiEnabled: true, prtgEnabled: false); break;
             case "expired": record.Date = DateTime.Today.AddDays(-20); break;
             case "deleted": RemoveRecord(record); break;
         }
@@ -248,8 +249,12 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         Assert.Single(NonTerminal());
     }
 
+    /// <summary>
+    /// 自查修正：停用即時通知不把待送項目標成已被取代——否則重新啟用後重試入口沒有非終態項目可觸發，
+    /// 要等下一趟取數才補寄。停用期間重試不重跑；重新啟用後下一分鐘的重試就補寄。
+    /// </summary>
     [Fact]
-    public async Task 即時通知停用_待送項目標為已被取代_重新啟用後未寄的主機日寄出()
+    public async Task 即時通知停用期間不重跑_待送項目保留_重新啟用後下一分鐘重試補寄()
     {
         EnableMail(summaryLane: false);
         SeedRecord();
@@ -260,14 +265,66 @@ public class MailNotificationServiceTestsSupersede : IDisposable
 
         _settingsStore.Update(s => s.MailUrgentEnabled = false);
         await service.NotifyAfterRunAsync();
-        Assert.Empty(NonTerminal());
-        Assert.Contains(_state.Get().UrgentOutbox.Values, i => i.Status == "superseded");
+        Assert.Single(NonTerminal());
+        Assert.DoesNotContain(_state.Get().UrgentOutbox.Values, i => i.Status == "superseded");
+        var before = QueryCount;
+        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(5);
+        await service.RetryPendingUrgentAsync();
+        Assert.Equal(before, QueryCount);   // 停用期間重試不重跑整套
 
         _sender.ThrowOnSend = null;
         _settingsStore.Update(s => s.MailUrgentEnabled = true);
-        await service.NotifyAfterRunAsync();
+        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(1);
+        await service.RetryPendingUrgentAsync();
         Assert.Single(_sender.Sent);
         Assert.Empty(NonTerminal());
+    }
+
+    /// <summary>
+    /// 自查修正：主機日暫時取不到工作流版本（父紀錄失敗、恢復等待中）的那一趟，算不出它的鍵，
+    /// 不代表待送項目已不對應現行紀錄，不得標成已被取代。
+    /// </summary>
+    [Fact]
+    public async Task 工作流版本暫時取不到的主機日_待送項目不被標為已被取代()
+    {
+        EnableMail(summaryLane: false);
+        var record = SeedRecord();
+        var service = Create();
+        _sender.ThrowOnSend = new InvalidOperationException("smtp down");
+        await service.NotifyAfterRunAsync();
+        Assert.Single(NonTerminal());
+
+        _workflow.ParentFailed(record.HostId, record.Host, record.Date, "probe");
+        await service.NotifyAfterRunAsync();
+
+        Assert.Single(NonTerminal());
+        Assert.DoesNotContain(_state.Get().UrgentOutbox.Values, i => i.Status == "superseded");
+    }
+
+    /// <summary>
+    /// 自查修正：鍵已記為已寄但項目仍待送（只填信箱的收件人部分失敗），重跑不會再寄它，
+    /// 重試入口不得因它每 30 分鐘空轉一次。
+    /// </summary>
+    [Fact]
+    public async Task 已記為已寄的待送項目不觸發重試()
+    {
+        EnableMail(summaryLane: false);
+        _settingsStore.Update(s => s.MailRecipients = new List<string> { "a@test.local", "b@test.local" });
+        SeedRecord();
+        var service = Create();
+        _sender.ThrowOnSendForRecipient = "b@test.local";
+        await service.NotifyAfterRunAsync();
+        var state = _state.Get();
+        var pending = Assert.Single(NonTerminal());
+        Assert.Contains(pending.Key, state.UrgentSentKeys);
+
+        var before = QueryCount;
+        for (var i = 0; i < 3; i++)
+        {
+            _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(31);
+            await service.RetryPendingUrgentAsync();
+        }
+        Assert.Equal(before, QueryCount);
     }
 
     /// <summary>每分鐘呼叫一次重試，回傳實際重跑（有寄信嘗試）的分鐘。每分鐘清掉收件人連續失敗計數，
@@ -307,7 +364,9 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         _sender.ThrowOnSendForRecipient = "b@test.local";
         var after = new List<int>();
         minute = RunRetryMinutes(service, 40, after, minute);
-        Assert.Equal(new[] { 122, 123, 124, 126, 130, 138 }, after);     // 122 有進度、1 分鐘後重跑；其後沒有進度，間隔 1、2、4、8
+        // 122 有進度（a 寄成功）。只填信箱的收件人只要有一封成功就把鍵記為已寄，b 之後不會再被寄，
+        // 項目雖維持待送，重試入口不再因它空轉（自查修正）
+        Assert.Equal(new[] { 122 }, after);
     }
 
     [Fact]

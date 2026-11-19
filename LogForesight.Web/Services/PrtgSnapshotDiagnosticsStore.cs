@@ -1,4 +1,4 @@
-﻿﻿using System.Text.Json;
+﻿using System.Text.Json;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Web.Services;

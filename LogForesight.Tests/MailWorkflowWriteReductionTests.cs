@@ -32,7 +32,16 @@ public class MailWorkflowWriteReductionTests : IDisposable
     private readonly HostDayWorkflowService _workflow;
     private readonly MailNotifyStateStore _state;
 
-    private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
+    // 固定時鐘與日期：預期摘要含日期（意圖鍵、主旨），用真實「昨天」會讓測試只在錄製當天通過（自查修正）
+    private static readonly DateTime Today = new(2026, 11, 18);
+    private static readonly DateTime Yesterday = Today.AddDays(-1);
+    private readonly FixedClock _clock = new(new DateTimeOffset(Today.AddHours(12), TimeZoneInfo.Local.GetUtcOffset(Today.AddHours(12))));
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now.ToUniversalTime();
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Local;
+    }
 
     public MailWorkflowWriteReductionTests()
     {
@@ -54,7 +63,7 @@ public class MailWorkflowWriteReductionTests : IDisposable
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, new FakeHandlingStore(), _state, _freshness,
             new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()),
             new FakeIssueCaseStore(), new FakeRuleStore(), new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(),
-            workflow: _workflow);
+            workflow: _workflow, clock: _clock);
 
     private void Configure(string scenario)
     {
@@ -115,12 +124,12 @@ public class MailWorkflowWriteReductionTests : IDisposable
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())))[..16];
     }
 
-    // 改動前（HEAD cefb4470）實測的摘要；改動後必須逐項相同。
+    // 改動前（cefb4470，固定時鐘 2026-11-18）實測的摘要；改動後必須逐項相同。
     private static readonly Dictionary<string, string> Golden = new()
     {
-        ["both-recipient"] = "C4863D3A14E1EAB3",
-        ["both-norecipient"] = "747CB2F5F8A58A5E",
-        ["disabled"] = "97A159C96A2E615E",
+        ["both-recipient"] = "939712BF9BF1D09F",
+        ["both-norecipient"] = "18AB4E3E7BCEFE63",
+        ["disabled"] = "FA1881780A51143F",
     };
 
     [Theory]
@@ -174,7 +183,7 @@ public class MailWorkflowWriteReductionTests : IDisposable
         Assert.Equal(0, writes[2]);
     }
 
-    private const string GoldenA3 = "7E045605EBD70DD2";
+    private const string GoldenA3 = "225A5601B9064DB8";
 
     /// <summary>A5：一次通知內，同一通道、同一筆紀錄物件的郵件內容意圖只算一次（其餘為記憶命中）。</summary>
     [Fact]

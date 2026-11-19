@@ -183,7 +183,9 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
     /// <summary>
     /// Removes only fully terminal urgent intents once their parent date is beyond the effective
     /// record-retention horizon. This releases old shard references for the formal-mail retention
-    /// consumer; unknown delivery outcomes and mixed recipient states remain durable.
+    /// consumer; unknown delivery outcomes and mixed recipient states remain durable, except for
+    /// superseded intents (no longer matching any current record), which are removable regardless
+    /// of their recipient states.
     /// </summary>
     public int PruneTerminalUrgentIntents(int recordRetentionDays, DateTime nowUtc)
     {

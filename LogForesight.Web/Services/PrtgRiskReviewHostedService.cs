@@ -21,8 +21,8 @@ public sealed class PrtgRiskReviewHostedService(StorageBackend backend, Backgrou
                 {
                     var batch = store.RunBatchDetailed();
                     changed = batch.Processed;
-                    // 只有內容實際被改寫才使讀取快取失效；僅更新版本欄不推進。
-                    if (batch.ContentRewritten > 0) dataVersion.Bump();
+                    // 畫面看得到的欄位（內容或重評狀態）有變才使讀取快取失效；只更新投影版本欄不推進。
+                    if (batch.VisibleChanged > 0) dataVersion.Bump();
                 }, stoppingToken), stoppingToken);
                 if (changed == 0) return;
                 await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
