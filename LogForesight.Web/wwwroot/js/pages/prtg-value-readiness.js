@@ -1,7 +1,7 @@
 import { api } from '../core/api.js';
 import { prtgCategoryShort } from '../core/prtg-sensor-categories.js';
 import { formatDate, formatNumber } from '../core/format.js';
-import { guardLoad, renderSpinner, renderTable, button } from '../core/ui.js';
+import { guardLoad, renderSpinner, renderTable, button, showTab } from '../core/ui.js';
 import { compareText } from '../core/collation.js';
 
 /**
@@ -177,7 +177,7 @@ export function initValueReadiness() {
 
     refreshBtn?.addEventListener('click', () => load());
     backfillBtn?.addEventListener('click', () => {
-        document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
+        showTab('prtg-tabs', 'selected-backfill');
     });
 
     prevBtn?.addEventListener('click', () => {

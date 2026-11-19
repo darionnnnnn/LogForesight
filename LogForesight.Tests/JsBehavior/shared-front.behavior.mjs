@@ -71,6 +71,61 @@ function field(id, value) {
     return input;
 }
 
+
+// ── 頁籤替身（I3）──────────────────────────────────────────────────────────
+
+/** 可控的 Bootstrap Tab：只模擬 show() 的結果（切 active、發 shown.bs.tab 事件） */
+function makeTabsEnv({ names, panelNames, hash = '', extraPanels = [] }) {
+    const listeners = {};
+    const instances = new Map();
+    const classSet = () => {
+        const set = new Set();
+        return { set, contains: name => set.has(name), toggle: (name, force) => { const on = force === undefined ? !set.has(name) : !!force; if (on) set.add(name); else set.delete(name); return on; }, add: n => set.add(n), remove: n => set.delete(n) };
+    };
+    const node = dataset => {
+        const attrs = {};
+        const el = { dataset, id: '', classList: classSet(), setAttribute(n, v) { if (n === 'id') el.id = String(v); else attrs[n] = String(v); }, getAttribute(n) { return n === 'id' ? (el.id || null) : (attrs[n] ?? null); } };
+        return el;
+    };
+    const buttons = names.map(name => node({ tab: name }));
+    buttons[0].classList.add('active');
+    const uniquePanels = panelNames ?? names;
+    const panels = uniquePanels.map((name, index) => { const p = node({ panel: name }); if (index > 0) p.classList.add('d-none'); return p; });
+    const allPanels = [...panels, ...extraPanels.map(name => node({ panel: name }))];
+    const tabsEl = {
+        id: 'demo-tabs',
+        parentElement: { querySelectorAll: () => allPanels },
+        querySelectorAll: () => buttons,
+        addEventListener(type, handler) { listeners[type] = handler; },
+    };
+    globalThis.bootstrap.Tab = {
+        getOrCreateInstance(btn) {
+            if (!instances.has(btn)) {
+                instances.set(btn, {
+                    show() {
+                        if (btn.classList.contains('active')) return;
+                        for (const other of buttons) other.classList.remove('active');
+                        btn.classList.add('active');
+                        listeners['shown.bs.tab']?.({ target: btn });
+                    },
+                });
+            }
+            return instances.get(btn);
+        },
+    };
+    const replaced = [];
+    const hashListeners = [];
+    globalThis.location = { hash, pathname: '/', search: '', href: '' };
+    globalThis.history = { replaceState: (_s, _t, url) => replaced.push(url) };
+    window.history = globalThis.history;
+    window.addEventListener = (type, handler) => { if (type === 'hashchange') hashListeners.push(handler); };
+    return {
+        tabsEl, buttons, panels, allPanels, instances, replaced,
+        userShow: key => (typeof key === 'number' ? buttons[key] : buttons.find(b => b.dataset.tab === key)) && globalThis.bootstrap.Tab.getOrCreateInstance(typeof key === 'number' ? buttons[key] : buttons.find(b => b.dataset.tab === key)).show(),
+        fireHashChange: () => hashListeners.forEach(h => h()),
+    };
+}
+
 const cases = {
     // I1 剪貼簿
     async 安全環境走clipboard複製成功() {
@@ -299,6 +354,126 @@ const cases = {
         const rows = [{ n: 10 }, { n: 9 }, { n: 2 }];
         const asc = ui.sortRows(rows, columns, { key: 'n', dir: 'asc' }).map(r => r.n).join(',');
         expectEqual(asc, '2,9,10', '數字升冪');
+    },
+
+    // I2 整列導向：列內真連結＋延伸點擊區，列保有 <tr> 語意
+    整列連結放在第一個沒有互動元素的儲存格() {
+        window.addEventListener ||= () => {};   // renderTable 的捲動提示會監聽 resize
+        const container = dom.newElement('div');
+        const link = text => { const a = dom.newElement('a'); a.textContent = text; return a; };
+        ui.renderTable(container, {
+            columns: [
+                { key: 'name', title: '名稱', render: r => link(r.name) },
+                { key: 'ip', title: 'IP' },
+            ],
+            rows: [{ name: '甲', ip: '10.0.0.1', id: 7 }],
+            rowHref: r => `/hosts/${r.id}`,
+        });
+        const tr = container.find(n => n.tagName === 'TR' && n.classList.contains('lf-row-link'));
+        assert(tr, '要有整列連結的列');
+        assert(tr.getAttribute('role') === null, '列不可被改成 button 角色');
+        assert(tr.getAttribute('tabindex') === null, '列本身不進 Tab 順序，焦點在連結上');
+        const anchor = tr.find(n => n.classList.contains('lf-row-link__anchor'));
+        assert(anchor && anchor.tagName === 'A', '要有真正的 <a>');
+        expectEqual(anchor.getAttribute('href'), '/lf/hosts/7', '連結用 appUrl 組');
+        expectEqual(anchor._parent._parent, tr, '第一格有既有連結，延伸連結放進第二格（IP 欄）');
+        expectEqual(anchor.textContent, '10.0.0.1', '可見文字就是連結名稱');
+    },
+
+    整列連結每格都有互動元素時放空連結並帶名稱() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        const button = text => { const b = dom.newElement('button'); b.textContent = text; return b; };
+        ui.renderTable(container, {
+            columns: [{ key: 'a', title: 'A', render: r => button(r.a) }, { key: 'b', title: 'B', render: r => button(r.b) }],
+            rows: [{ a: '一', b: '二' }],
+            rowHref: () => '/x',
+        });
+        const anchor = container.find(n => n.classList.contains('lf-row-link__anchor'));
+        assert(anchor, '仍要有整列連結');
+        expectEqual(anchor.children.length, 0, '不包住既有按鈕');
+        expectEqual(anchor.getAttribute('aria-label'), '一', '以首格文字當連結名稱');
+    },
+
+    沒有rowHref時不產生整列連結() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        ui.renderTable(container, { columns: [{ key: 'a', title: 'A' }], rows: [{ a: '1' }], rowHref: () => null });
+        assert(!container.find(n => n.classList.contains('lf-row-link__anchor')), '回 null 不放連結');
+        assert(!container.find(n => n.classList.contains('lf-row-link')), '不加 lf-row-link');
+    },
+
+    // I3 頁籤：Bootstrap Tab 外掛＋hash 同步
+    頁籤配上外掛屬性並建立外掛實例() {
+        const env = makeTabsEnv({ names: ['a', 'b'] });
+        ui.bindTabs(env.tabsEl);
+        for (const btn of env.buttons) {
+            expectEqual(btn.getAttribute('data-bs-toggle'), 'tab', 'data-bs-toggle');
+            const panel = env.panels.find(p => p.dataset.panel === btn.dataset.tab);
+            expectEqual(btn.getAttribute('data-bs-target'), '#' + panel.id, 'data-bs-target 指到面板 id');
+            expectEqual(btn.getAttribute('aria-controls'), panel.id, 'aria-controls');
+            assert(btn.id, '按鈕要有 id，面板的 aria-labelledby 才指得到');
+        }
+        expectEqual(env.instances.size, 2, '每顆按鈕都建立外掛實例（角色與方向鍵由外掛提供）');
+    },
+
+    切換頁籤時同步面板與標籤與回呼與hash() {
+        const env = makeTabsEnv({ names: ['a', 'b'] });
+        const changes = [];
+        ui.bindTabs(env.tabsEl, { hash: true, onChange: name => changes.push(name) });
+        env.userShow('b');
+        expectEqual(env.panels[0].classList.contains('d-none'), true, '舊面板隱藏');
+        expectEqual(env.panels[1].classList.contains('d-none'), false, '新面板顯示');
+        expectEqual(env.panels[1].getAttribute('aria-labelledby'), env.buttons[1].id, '面板標籤指向目前頁籤');
+        expectEqual(changes.join(','), 'b', 'onChange');
+        expectEqual(env.replaced.join(','), '#b', 'replaceState 同步 hash');
+    },
+
+    網址hash指到頁籤時開啟對應頁籤() {
+        const env = makeTabsEnv({ names: ['a', 'b'], hash: '#b' });
+        const changes = [];
+        ui.bindTabs(env.tabsEl, { hash: true, onChange: name => changes.push(name) });
+        expectEqual(env.buttons[1].classList.contains('active'), true, '依 hash 切到 b');
+        expectEqual(changes.join(','), 'b', 'onChange');
+    },
+
+    網址hash指到目前頁籤時仍呼叫一次回呼() {
+        const env = makeTabsEnv({ names: ['a', 'b'], hash: '#a' });
+        const changes = [];
+        ui.bindTabs(env.tabsEl, { hash: true, onChange: name => changes.push(name) });
+        expectEqual(changes.join(','), 'a', '預設頁籤被 hash 指到時頁面仍要載入它');
+        expectEqual(env.replaced.length, 0, '沒有切換就不改網址');
+    },
+
+    網址hash含特殊字元時不擲例外且不切換() {
+        const env = makeTabsEnv({ names: ['a', 'b'], hash: '#b"]' });
+        ui.bindTabs(env.tabsEl, { hash: true });
+        expectEqual(env.buttons[0].classList.contains('active'), true, '停在預設頁籤');
+    },
+
+    hashchange時跟著切頁籤() {
+        const env = makeTabsEnv({ names: ['a', 'b'] });
+        ui.bindTabs(env.tabsEl, { hash: true });
+        globalThis.location.hash = '#b';
+        env.fireHashChange();
+        expectEqual(env.buttons[1].classList.contains('active'), true, 'hashchange 後切到 b');
+    },
+
+    多顆頁籤共用同一面板時標籤跟著目前頁籤() {
+        const env = makeTabsEnv({ names: ['rules', 'rules', 'other'], panelNames: ['rules', 'other'] });
+        const seen = [];
+        ui.bindTabs(env.tabsEl, { onChange: (name, btn) => seen.push(btn.id) });
+        env.userShow(1);
+        expectEqual(env.panels[0].getAttribute('aria-labelledby'), env.buttons[1].id, '共用面板的標籤指向實際點的那顆');
+        expectEqual(seen[0], env.buttons[1].id, 'onChange 帶出按鈕');
+    },
+
+    只認配得到按鈕的面板() {
+        const env = makeTabsEnv({ names: ['a', 'b'], extraPanels: ['current'] });
+        ui.bindTabs(env.tabsEl);
+        env.userShow('b');
+        const extra = env.allPanels.find(p => p.dataset.panel === 'current');
+        expectEqual(extra.classList.contains('d-none'), false, '別組頁籤的面板不受影響');
     },
 
     // I4 對話框關閉方法

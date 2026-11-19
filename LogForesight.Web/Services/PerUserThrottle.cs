@@ -26,10 +26,10 @@ public class SlidingWindowThrottle<TKey> where TKey : notnull
         _maxKeys = maxKeys;
     }
 
-    /// <summary>還在額度內就記一次並回 true；超過回 false（不記）</summary>
     /// <summary>全表掃描次數（測試用：驗證滿載時不會每次呼叫都掃）</summary>
     internal int SweepCount { get; private set; }
 
+    /// <summary>還在額度內就記一次並回 true；超過回 false（不記）</summary>
     public bool TryAcquire(TKey key, DateTime nowUtc) => TryAcquire(key, nowUtc, out _);
 
     /// <summary>

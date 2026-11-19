@@ -16,6 +16,7 @@ import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
 import { bindRangeChips } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { roleText } from '../core/elements.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
@@ -216,13 +217,12 @@ function renderCategoryChips() {
 }
 
 function clearSubnetError() {
-    if (subnetInput) subnetInput.classList.remove('is-invalid');
+    if (subnetInput) clearFieldError(subnetInput);
     if (subnetFeedback) subnetFeedback.textContent = '';
 }
 
 function showSubnetError(message) {
-    if (subnetInput) subnetInput.classList.add('is-invalid');
-    if (subnetFeedback) subnetFeedback.textContent = message || '網段格式錯誤';
+    if (subnetInput) setFieldError(subnetInput, message || '網段格式錯誤', { feedback: subnetFeedback ?? undefined });
 }
 
 /**

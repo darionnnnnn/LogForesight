@@ -1338,11 +1338,11 @@ function openBulkCloseModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入受影響主機…');
 
-    showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
-    loadBulkCloseForm(group, body);
+    const modal = showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadBulkCloseForm(group, body, modal);
 }
 
-async function loadBulkCloseForm(group, body) {
+async function loadBulkCloseForm(group, body, modal) {
     const filters = collectFilters();
     const params = new URLSearchParams({ source: group.source, eventId: String(group.eventId) });
     if (filters.from) params.set('from', filters.from);
@@ -1357,10 +1357,10 @@ async function loadBulkCloseForm(group, body) {
         return;
     }
 
-    renderBulkCloseForm(body, group, preview);
+    renderBulkCloseForm(body, group, preview, modal);
 }
 
-function renderBulkCloseForm(body, group, preview) {
+function renderBulkCloseForm(body, group, preview, modal) {
     body.replaceChildren();
 
     const targets = preview.hosts.filter(h => !h.skipReason && h.dayCount > 0);
@@ -1497,7 +1497,7 @@ function renderBulkCloseForm(body, group, preview) {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
             }
 
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal.close();
             // 影響範圍的追溯出口（體檢 X6）：批次寫入沒有復原機制，至少要查得到影響了哪些。
             // 導向依問題視角並鎖定同一個問題與期間，剛寫入的結論就在那裡逐台可查
             showBulkCloseTraceLink(result);
@@ -1554,11 +1554,11 @@ function openWorkOrderModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入中…');
 
-    showDetailModal({ title: `交辦：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
-    loadWorkOrderForm(group, body);
+    const modal = showDetailModal({ title: `交辦：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadWorkOrderForm(group, body, modal);
 }
 
-async function loadWorkOrderForm(group, body) {
+async function loadWorkOrderForm(group, body, modal) {
     let users, groups;
     try {
         // 人選走派工人選端點（啟用且具 Handle，附看得到幾台／暫停／最近處理過）；
@@ -1580,7 +1580,7 @@ async function loadWorkOrderForm(group, body) {
         return;
     }
 
-    renderWorkOrderForm(body, group, users, groups);
+    renderWorkOrderForm(body, group, users, groups, modal);
 }
 
 /** 交辦範圍由頁面篩選推導：有選主機→Hosts；否則有選主機群組→Groups；都沒有→All（payload 與畫面共用） */
@@ -1602,14 +1602,14 @@ function workOrderScopeText(scopeKind, filters) {
     return '全站（依目前篩選的期間）';
 }
 
-function renderWorkOrderForm(body, group, users, groups) {
+function renderWorkOrderForm(body, group, users, groups, modal) {
     body.replaceChildren();
 
     const filters = collectFilters();
     let assignMode = 'single';
     const excludedHostIds = new Set();
     let currentPage = 1;
-    let previewRequestId = 0;
+    const previewGuard = createSeqGuard();
     let isFetchingPreview = false;
     let pendingFetch = null;
 
@@ -1857,18 +1857,18 @@ function renderWorkOrderForm(body, group, users, groups) {
             do {
                 const fetchPage = pendingFetch !== null ? pendingFetch : page;
                 pendingFetch = null;
-                const currentRequestId = ++previewRequestId;
+                const currentRequestId = previewGuard.next();
                 const payload = buildWorkOrderPayload(fetchPage);
                 if (payload.assignMode === 'single' && !payload.handlerId) break;
                 if (payload.assignMode === 'group' && !payload.groupId) break;
 
                 try {
                     const preview = await api.post('/api/work-orders/preview', payload, { silent: true });
-                    if (currentRequestId === previewRequestId) {
+                    if (previewGuard.isCurrent(currentRequestId)) {
                         renderPreview(preview);
                     }
                 } catch (error) {
-                    if (currentRequestId === previewRequestId) {
+                    if (previewGuard.isCurrent(currentRequestId)) {
                         summaryWrap.replaceChildren();
                         summaryWrap.appendChild(statusNote('error', error?.message || '預覽失敗'));
                     }
@@ -2076,7 +2076,7 @@ function renderWorkOrderForm(body, group, users, groups) {
                 toast(`${result.assigneeNoAccessTotal} 台不在對方的檢視範圍（對方仍可經由交辦看到被交辦的問題）`, 'warning');
             }
 
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal.close();
             search();
         } catch {
             // 錯誤訊息已由 api.js 顯示

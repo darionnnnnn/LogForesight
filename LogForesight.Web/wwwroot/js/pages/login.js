@@ -6,6 +6,7 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { withBusy } from '../core/ui.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { initBrandAlign } from '../core/brand-align.js';
 import { isSafeReturnUrl } from '../core/safe-return-url.js';
 
@@ -44,11 +45,10 @@ form.addEventListener('submit', async event => {
 
     const account = accountInput.value.trim();
     if (!account) {
-        accountInput.classList.add('is-invalid');
-        document.getElementById('account-error').textContent = '請輸入帳號';
+        setFieldError(accountInput, '請輸入帳號', { feedback: document.getElementById('account-error') });
         return;
     }
-    accountInput.classList.remove('is-invalid');
+    clearFieldError(accountInput);
 
     const restore = withBusy(submitButton, '登入中');
     try {

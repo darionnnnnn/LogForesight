@@ -235,7 +235,7 @@ function renderKpi(data) {
 // ── 交辦單清單 ─────────────────────────────────────────────────────────────
 
 /** 交辦單清單的請求序號（同 work-orders.js）：慢回來的舊請求不可蓋掉新篩選的結果 */
-let ordersLoadSeq = 0;
+const ordersGuard = createSeqGuard();
 
 function ordersUrl() {
     const pageSize = loadPageSize('handler-work-orders');
@@ -251,11 +251,11 @@ function ordersUrl() {
 }
 
 async function loadOrders() {
-    const seq = ++ordersLoadSeq;
+    const seq = ordersGuard.next();
     renderLoading(ordersEl, 5);
 
     const data = await api.get(ordersUrl());
-    if (seq !== ordersLoadSeq) return;
+    if (!ordersGuard.isCurrent(seq)) return;
     renderOrders(data);
 }
 
@@ -269,17 +269,17 @@ async function refreshAfterReply({ keepExpandedId = null } = {}) {
     if (keepExpandedId != null) expanded.add(keepExpandedId);
     const scrollY = window.scrollY;
 
-    const seq = ++ordersLoadSeq;
+    const seq = ordersGuard.next();
     let [summaryData, data] = await Promise.all([
         api.get(`/api/handlers/${userId}/work-orders/summary`),
         api.get(ordersUrl())
     ]);
-    if (seq !== ordersLoadSeq) return;
+    if (!ordersGuard.isCurrent(seq)) return;
     // 目前這一頁因結案而清空、但前面還有單：退回第一頁重取，否則會顯示「沒有進行中的交辦單」且不畫分頁
     if ((data.items || []).length === 0 && orderPage > 1) {
         orderPage = 1;
         data = await api.get(ordersUrl());
-        if (seq !== ordersLoadSeq) return;
+        if (!ordersGuard.isCurrent(seq)) return;
     }
 
     summary = summaryData;

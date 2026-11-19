@@ -17,6 +17,7 @@ import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant, isNoFixClosure } from '../core/handling-statuses.js';
 import { noFixConsequenceText } from './issue-status-reply.js';
 import { statusNote } from '../core/elements.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
@@ -634,13 +635,12 @@ function handlingForm() {
     }
 
     function showNoteError(message) {
-        noteFeedback.textContent = message;
-        noteInput.classList.add('is-invalid');
+        setFieldError(noteInput, message, { feedback: noteFeedback });
         noteInput.focus();
     }
 
     form.addEventListener('input', () => {
-        noteInput.classList.remove('is-invalid');
+        clearFieldError(noteInput);
         saveFormDraft();
     });
     form.addEventListener('change', saveFormDraft);
@@ -660,7 +660,7 @@ function handlingForm() {
 
         const field = noteFieldOf(selectedStatus);
         noteLabel.textContent = field.label;
-        noteInput.classList.remove('is-invalid');
+        clearFieldError(noteInput);
     }
 
     // 共用 renderChips（單選）：節點只建一次，點選只切換 .active 與 aria-pressed，鍵盤焦點不會掉

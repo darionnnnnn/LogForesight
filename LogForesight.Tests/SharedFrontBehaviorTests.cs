@@ -50,6 +50,17 @@ public class SharedFrontBehaviorTests
     [InlineData("sortRows字串欄位用語系比較")]
     [InlineData("sortRows數字欄位維持數值比較")]
     [InlineData("對話框回傳關閉方法並呼叫hide")]
+    [InlineData("整列連結放在第一個沒有互動元素的儲存格")]
+    [InlineData("整列連結每格都有互動元素時放空連結並帶名稱")]
+    [InlineData("沒有rowHref時不產生整列連結")]
+    [InlineData("頁籤配上外掛屬性並建立外掛實例")]
+    [InlineData("切換頁籤時同步面板與標籤與回呼與hash")]
+    [InlineData("網址hash指到頁籤時開啟對應頁籤")]
+    [InlineData("網址hash指到目前頁籤時仍呼叫一次回呼")]
+    [InlineData("網址hash含特殊字元時不擲例外且不切換")]
+    [InlineData("hashchange時跟著切頁籤")]
+    [InlineData("多顆頁籤共用同一面板時標籤跟著目前頁籤")]
+    [InlineData("只認配得到按鈕的面板")]
     public void 前端共用出口行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

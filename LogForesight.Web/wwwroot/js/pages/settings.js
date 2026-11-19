@@ -6,7 +6,7 @@
 import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
-    toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
+    toast, withBusy, trackUnsaved, bindTabs, showTab, icon, confirmAction, renderTable, collectLines,
     guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt, button as uiButton
 } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
@@ -16,6 +16,7 @@ import {
 } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { readNumberField } from '../core/number-field.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -1315,7 +1316,7 @@ function collectSeverities() {
 function activateTabForElement(el) {
     const panelName = el?.closest('[data-panel]')?.dataset.panel;
     if (!panelName) return;
-    document.querySelector(`#settings-tabs [data-tab="${panelName}"]`)?.click();
+    showTab('settings-tabs', panelName);
 }
 
 /**
@@ -1343,24 +1344,13 @@ function findInvalidNumberFields(form) {
     return invalid;
 }
 
-function clearFieldError(el) {
-    el.classList.remove('is-invalid');
-    if (el.nextElementSibling?.classList.contains('lf-field-error')) el.nextElementSibling.remove();
-}
-
 /**
  * 欄位錯誤的呈現（§6b 表單驗證錯誤）：每個欄位紅框＋下方 invalid-feedback，
  * 切到第一個錯誤欄位所在的頁籤（收合在「進階設定」裡就展開）並 focus，toast 只留一則摘要。
  */
 function showFieldErrors(errors) {
     for (const { el, message } of errors) {
-        clearFieldError(el);
-        el.classList.add('is-invalid');
-        const feedback = document.createElement('div');
-        feedback.className = 'invalid-feedback lf-field-error';
-        feedback.setAttribute('role', 'alert');
-        feedback.textContent = message;
-        el.after(feedback);
+        setFieldError(el, message);
         el.addEventListener('input', () => clearFieldError(el), { once: true });
     }
     const first = errors[0].el;

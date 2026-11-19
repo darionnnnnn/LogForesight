@@ -9,7 +9,7 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, saveBlobAsFile } fr
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar, button
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, showTab, applyBackfillDaysLimit, setSpinnerText, cssVar, button
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
@@ -460,7 +460,7 @@ async function renderDayDetailInto(cell, date) {
     pagerEl.className = 'mt-2';
 
     const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail'), status: '' };
-    let sequence = 0;
+    const dayPageGuard = createSeqGuard();
 
     // 狀態篩選（後端篩、總數跟著變）：3000 台時要找「這天失敗的那幾台」不必翻頁；換狀態回到第 1 頁
     const bar = document.createElement('div');
@@ -483,7 +483,7 @@ async function renderDayDetailInto(cell, date) {
     cell.append(bar, listEl, pagerEl);
 
     async function loadDayPage() {
-        const mine = ++sequence;
+        const mine = dayPageGuard.next();
         renderLoading(listEl, 6);
         const params = new URLSearchParams({
             page: String(state.page), pageSize: String(state.pageSize), sort: state.sort.key, dir: state.sort.dir
@@ -493,10 +493,10 @@ async function renderDayDetailInto(cell, date) {
         try {
             result = await api.get(`/api/runs/day/${date}?${params}`);
         } catch {
-            if (mine === sequence) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
+            if (dayPageGuard.isCurrent(mine)) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
             return;
         }
-        if (mine !== sequence) return;   // 連點排序或換頁時，只畫最後一次的結果
+        if (!dayPageGuard.isCurrent(mine)) return;   // 連點排序或換頁時，只畫最後一次的結果
 
         renderTable(listEl, {
             columns: DAY_DETAIL_COLUMNS,
@@ -977,9 +977,9 @@ document.getElementById('run-errors-level')?.addEventListener('change', (event) 
     reloadErrors();
 });
 
-// 提示列的按鈕：切到「執行紀錄」頁籤（走 bindTabs 的點擊機制，同步更新 hash）
+// 提示列的按鈕：切到「執行紀錄」頁籤（走 showTab，與使用者點頁籤同一條路：同步更新 hash）
 document.getElementById('run-errors-notice-go')?.addEventListener('click', () => {
-    document.querySelector('#runs-tabs [data-tab="list"]')?.click();
+    showTab('runs-tabs', 'list');
 });
 
 // ── 匯出分析資料（批次D）：需要 ViewAll；範圍就是目前選的天數 ──────────────────────────
@@ -1291,11 +1291,12 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
 });
 
 // 執行中／閒置輪詢間隔不同（docs/archive/FEEDBACK-8-PLAN.md #2）：執行中要讓進度條「看得出在動」，
-// 閒置時沒有進度可看，維持原本的低頻率即可。自我重新排程（而非 setInterval）方便依上一次
-// 拿到的狀態決定下一輪間隔。
+// 閒置時沒有進度可看，維持原本的低頻率即可。走共用輪詢 pollWhile：間隔函式依上一次
+// 拿到的狀態決定下一輪，背景分頁暫停、回前景立即補一次。
 let wasScheduleRunning = false;
 let wasAiScheduleRunning = false;
-let scheduleStatusTimer = null;
+let scheduleAnyRunning = false;   // 取數或 AI 排程任一在跑：決定下一輪輪詢間隔
+let scheduleStatusPoll = null;
 
 async function refreshScheduleStatus() {
     let status = null;
@@ -1315,11 +1316,9 @@ async function refreshScheduleStatus() {
         }
         if (aiStatus) applyAiScheduleStatus(aiStatus);
     } finally {
-        // 任一 apply 擲例外也要排下一輪，否則常駐輪詢整條靜默死亡
-        clearTimeout(scheduleStatusTimer);
-        const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
-        const interval = isAnyRunning ? 3000 : 10000;
-        scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
+        // 任一 apply 擲例外也要記下狀態並確保常駐輪詢存在（pollWhile 吞例外續排），否則常駐輪詢整條靜默死亡
+        scheduleAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
+        scheduleStatusPoll ??= pollWhile(refreshScheduleStatus, () => (scheduleAnyRunning ? 3000 : 10000), { pauseWhenHidden: true });
     }
     return status;
 }
@@ -1386,13 +1385,13 @@ function applyPrtgOperationalStatus(status) {
  * 開始時間／已耗時（回饋十七輪批次F-2）：後端 status.startedAt 早就有了，只是畫面上原本
  * 只顯示「執行中」，看不出何時開始、跑了多久。每秒本地計時（不是等輪詢間隔才更新，執行中
  * 輪詢是 3 秒一次，數字跳動會不夠即時），輪詢回來時用 status.startedAt 重設一次校正飄移
- * （分頁背景分頁、系統睡眠都可能讓 setInterval 累積誤差）。
+ * （分頁背景分頁、系統睡眠都可能讓計時累積誤差）。
  */
-const elapsedTimers = new Map();
+const elapsedTicks = new Map();
 
 /**
  * 已耗時計時器：取數排程與 AI 排程各有一個顯示元素，行為完全相同，
- * 因此共用同一份實作，以元素 id 為鍵各自持有自己的 interval。
+ * 因此共用同一份實作，以元素 id 為鍵各自持有自己的輪詢控制代碼。
  */
 function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     const el = document.getElementById(elementId);
@@ -1402,18 +1401,18 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     // 值本身在 lf-kv 列裡，要顯示／隱藏的是整列（標籤＋值），不是值本身
     (document.getElementById(`${elementId}-row`) ?? el).classList.remove('d-none');
 
-    clearInterval(elapsedTimers.get(elementId));
+    elapsedTicks.get(elementId)?.stop();
     function tick() {
         const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
         el.textContent = `${formatDuration(seconds)}（開始於 ${formatDateTime(startedAt)}）`;
     }
     tick();
-    elapsedTimers.set(elementId, setInterval(tick, 1000));
+    elapsedTicks.set(elementId, pollWhile(tick, 1000));
 }
 
 function stopElapsedTicker(elementId = 'schedule-elapsed') {
-    clearInterval(elapsedTimers.get(elementId));
-    elapsedTimers.delete(elementId);
+    elapsedTicks.get(elementId)?.stop();
+    elapsedTicks.delete(elementId);
     const el = document.getElementById(elementId);
     (document.getElementById(`${elementId}-row`) ?? el)?.classList.add('d-none');
 }

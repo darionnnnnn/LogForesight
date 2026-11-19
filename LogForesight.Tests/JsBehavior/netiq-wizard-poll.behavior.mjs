@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pollWhile } from '../../LogForesight.Web/wwwroot/js/core/async-guards.js';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const wizardPath = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js', 'pages', 'netiq-import-wizard.js');
@@ -41,10 +42,13 @@ function makeContext(responses) {
             return next;
         }
     };
-    const factory = new Function('api', 'toast', 'setTimeout', 'clearTimeout', 'wizardModal', 'renderScanProgress',
+    // 共用輪詢 pollWhile 以全域 setTimeout 排程：換成可控計時器，tick() 一次推進一輪
+    globalThis.setTimeout = fn => { timers.push(fn); return fn; };
+    globalThis.clearTimeout = fn => { const index = timers.indexOf(fn); if (index >= 0) timers.splice(index, 1); };
+    const factory = new Function('api', 'toast', 'pollWhile', 'wizardModal', 'renderScanProgress',
         'onCompleted', `
         let currentJobId = null;
-        let pollTimer = null;
+        let pollHandle = null;
         let wizardScan = null, wizardServer = null;
         const wizardPrimaryButton = { disabled: true };
         const renderCoverageNote = () => onCompleted();
@@ -56,8 +60,7 @@ function makeContext(responses) {
     const exported = factory(
         api,
         (message, kind) => state.toasts.push({ message, kind }),
-        fn => { timers.push(fn); return timers.length; },
-        () => {},
+        pollWhile,
         { hide: () => { state.hidden++; } },
         () => { state.rendered++; },
         () => { state.completed++; });

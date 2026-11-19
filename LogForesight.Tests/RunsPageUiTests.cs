@@ -710,8 +710,8 @@ public class RunsPageUiTests
         Assert.False(string.IsNullOrWhiteSpace(refresh), "擷取不到 refreshScheduleStatus 主體");
         var finallyIndex = refresh.IndexOf("finally", StringComparison.Ordinal);
         Assert.True(finallyIndex >= 0, "refreshScheduleStatus 必須用 try/finally 確保排下一輪");
-        var scheduleIndex = refresh.IndexOf("setTimeout(refreshScheduleStatus", StringComparison.Ordinal);
-        Assert.True(scheduleIndex > finallyIndex, "排下一輪的 setTimeout 必須在 finally 區塊內");
+        var scheduleIndex = refresh.IndexOf("pollWhile(refreshScheduleStatus", StringComparison.Ordinal);
+        Assert.True(scheduleIndex > finallyIndex, "確保常駐輪詢存在的 pollWhile 必須在 finally 區塊內");
     }
 
     /// <summary>執行總表換頁：序號守門避免舊回應蓋掉新頁，失敗要有失敗態而不是骨架列永留。</summary>

@@ -14,6 +14,7 @@ import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js'
 import { pollWhile } from '../core/async-guards.js';
 import { copyText } from '../core/clipboard.js';
 import { readNumberFields } from '../core/number-field.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
 initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
@@ -137,7 +138,7 @@ function openSentinelModal(sentinel) {
             : '留空＝此 Sentinel 無法主動掃描。';
     document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
     for (const id of ['sentinel-name', 'sentinel-base-url', 'sentinel-username', 'sentinel-password']) {
-        document.getElementById(id).classList.remove('is-invalid');       // 也不留上一次缺欄位的紅框
+        clearFieldError(document.getElementById(id));       // 也不留上一次缺欄位的紅框
     }
 
     sentinelModal.show();
@@ -153,9 +154,9 @@ function flagMissingField(inputId, message) {
     document.getElementById('sentinel-test-result').replaceChildren(statusNote('warning', message));
     const input = document.getElementById(inputId);
     if (!input) return;
-    input.classList.add('is-invalid');
+    setFieldError(input, message);
     input.addEventListener('input', () => {
-        input.classList.remove('is-invalid');
+        clearFieldError(input);
         document.getElementById('sentinel-test-result').replaceChildren();
     }, { once: true });
     input.focus();

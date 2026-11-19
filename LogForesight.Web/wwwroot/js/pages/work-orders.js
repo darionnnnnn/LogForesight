@@ -31,6 +31,7 @@ import { openIssueMuteModal } from './issue-mute-modal.js';
 import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
 import { compareText } from '../core/collation.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -212,10 +213,10 @@ let dismissedPage = 1;
 // ── 進行中頁籤 ─────────────────────────────────────────────────────────────
 
 /** 進行中清單的請求序號：篩選連續改動時，慢回來的舊請求不可蓋掉新篩選的結果 */
-let activeLoadSeq = 0;
+const activeGuard = createSeqGuard();
 
 async function loadActive() {
-    const seq = ++activeLoadSeq;
+    const seq = activeGuard.next();
     renderLoading(activeListContainer, 5);
 
     const status = activeStatusSelect.value;
@@ -241,7 +242,7 @@ async function loadActive() {
     if (activeGroupSelect.value) params.set('groupId', activeGroupSelect.value);
 
     const data = await api.get(`/api/work-orders?${params}`);
-    if (seq !== activeLoadSeq) return;
+    if (!activeGuard.isCurrent(seq)) return;
     if (filterHandlerId) {
         updateFilterLabel(data?.items?.length > 0 ? data.items[0].handlerName : null);
     }

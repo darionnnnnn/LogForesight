@@ -61,7 +61,7 @@ function load({ pages, previewResult = null, failPages = new Set(), delays = {} 
         createSeqGuard: () => { let latest = 0; return { next: () => ++latest, isCurrent: seq => seq === latest }; },
         confirmAction: async () => { spy.confirms++; return true; },
         withBusy: () => () => { },
-        bindTabs: () => { }, checkboxList: () => { }, button: () => dom.newElement('button'),
+        bindTabs: () => ({ show() { } }), checkboxList: () => { }, button: () => dom.newElement('button'),
         guardLoad: () => { },
         renderPagination: (container, opts) => spy.pagers.set(container, opts),
         formatNumber: n => String(n),

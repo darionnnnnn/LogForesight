@@ -9,6 +9,7 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck, button as makeButton } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, isNoFixClosure, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
@@ -53,6 +54,7 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false }
  * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
  */
 export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false }) {
+    let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const body = document.createElement('div');
     const form = document.createElement('form');
     form.noValidate = true;   // 超過字數的 customValidity 走下方手動驗證，不跳原生泡泡
@@ -117,16 +119,12 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         errorEl: noteError
     });
     noteInput.addEventListener('input', () => {
-        if (noteInput.value.trim()) {
-            noteInput.classList.remove('is-invalid');
-            noteError.textContent = '';
-        }
+        if (noteInput.value.trim()) clearFieldError(noteInput);
     });
     function syncNoteField() {
         const meta = statusMeta(statusSelect.value);
         noteLabel.textContent = meta ? meta.noteLabel : '處理說明';
-        noteInput.classList.remove('is-invalid');
-        noteError.textContent = '';
+        clearFieldError(noteInput);
     }
     statusSelect.addEventListener('change', syncNoteField);
     syncNoteField();
@@ -188,23 +186,19 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         const errors = [];
         if (meta?.noteRequired && !noteInput.value.trim()) {
             const reasonText = meta.noteLabel.replace(/（.*）$/, '');
-            noteInput.classList.add('is-invalid');
-            noteError.textContent = `標記為「${meta.shortLabel}」時請填寫${reasonText}`;
+            setFieldError(noteInput, `標記為「${meta.shortLabel}」時請填寫${reasonText}`, { feedback: noteError });
             errors.push(noteInput);
         } else if (!noteInput.checkValidity()) {
-            noteInput.classList.add('is-invalid');
-            noteError.textContent = noteInput.validationMessage;   // 超過字數上限（attachNoteEditor 設的）
+            setFieldError(noteInput, noteInput.validationMessage, { feedback: noteError });   // 超過字數上限（attachNoteEditor 設的）
             errors.push(noteInput);
         }
         if (!dueCheck.validate()) errors.push(dueInput);
         else if (needsDue() && dueInput.value > dueMax) {
-            dueInput.classList.add('is-invalid');
-            dueError.textContent = `預計完成日最多只能設在 ${MAX_DUE_DATE_DAYS} 天內`;
+            setFieldError(dueInput, `預計完成日最多只能設在 ${MAX_DUE_DATE_DAYS} 天內`, { feedback: dueError });
             errors.push(dueInput);
         }
         if (statusSelect.value === 'observing' && !dueInput.value) {
-            dueInput.classList.add('is-invalid');
-            dueError.textContent = '標記為「觀察中」時請指定觀察至日期';
+            setFieldError(dueInput, '標記為「觀察中」時請指定觀察至日期', { feedback: dueError });
             errors.push(dueInput);
         }
         if (errors.length > 0) {
@@ -235,16 +229,16 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         closeConfirmed = true;
         // 下一張等這個彈窗完全關閉才開：兩個 modal 的淡出／淡入交疊時，前一個收尾會拿掉頁面的捲動鎖定
         if (goNext) modalEl.addEventListener('hidden.bs.modal', () => onNext(payload), { once: true });
-        body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+        modal?.close();
         onApplied?.();
     }
 
     body.appendChild(form);
-    showDetailModal({ title, body });
+    modal = showDetailModal({ title, body });
 
     // 關閉保護（DESIGN-SYSTEM §6b）：Esc／點遮罩／關閉鈕都走 hide.bs.modal，說明欄有字時先問
     let closeConfirmed = false;
-    const modalEl = body.closest('.modal');
+    const modalEl = modal.element;
     modalEl?.addEventListener('hide.bs.modal', async event => {
         if (closeConfirmed || !noteInput.value.trim()) return;
         event.preventDefault();
@@ -255,7 +249,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         });
         if (!confirmed) return;
         closeConfirmed = true;
-        bootstrap.Modal.getInstance(modalEl)?.hide();
+        modal.close();
     });
 }
 

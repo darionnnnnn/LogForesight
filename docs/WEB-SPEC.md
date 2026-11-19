@@ -2374,7 +2374,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
   掃描精靈結果的 `Warnings` 也顯著標示「示範資料」（誤認 bug 的既有防線）。
 - **頁面分頁化**：
-  現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 手作頁籤模式）——Sentinel 清單與連線
+  現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 頁籤模式）——Sentinel 清單與連線
   節流參數在「設定」。
 - **「匯入」分頁**：掃描匯入自「資料匯入」頁整批搬來
   ——Sentinel 的設定與掃描是同一件事的兩半，分在兩頁會讓「補完探索帳密之後要去哪裡掃」
@@ -2464,8 +2464,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   表單標籤一律是 `form-label`（標籤在欄位上方，各寬度一致）。離開頁面的未儲存提醒仍是瀏覽器原生 `beforeunload`，量測工具以派送事件斷言它已掛上。
 - **頁籤化**：設定項目多且長，
   九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
-  （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
-  `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
+  （沿用規則頁既有的 `ui.js` `bindTabs` 頁籤模式，由 Bootstrap Tab 外掛提供角色與方向鍵；非作用中頁籤需在初始 HTML 就帶
+  `d-none`——`bindTabs` 只在切換時更新面板顯示，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
   （`.lf-settings-footer`，`position: sticky; bottom: 0`），任何頁籤／捲動位置都看得到，不必
   捲到頁尾。表單本身有 `novalidate`，`required`/`min`/`max` 不會攔截原生送出——既有的 JS 層
@@ -2881,7 +2881,7 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
 三個來源都只在載入時讀一次，段內「重新確認」鈕重抓三者。
 全項確認也只表示設定與最近一次結果，資料涵蓋另見就緒度與使用效果；逐步劇本見 docs/PRTG-SPEC.md §13。
 
-六個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
+六個頁籤（`ui.js` 的 `bindTabs`，非作用中頁籤初始 HTML 自帶 `d-none`）。
 `bindTabs` 的 `{ hash: true }` 選項讓切換同步網址 hash（`history.replaceState`，
 不塞瀏覽歷史）、進站時依 hash 啟用對應頁籤；校準匯出與資料搬運藏在第四個頁籤裡，跨頁指路需要直達：
 

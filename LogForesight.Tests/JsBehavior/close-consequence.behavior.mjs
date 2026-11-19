@@ -56,7 +56,7 @@ function makeEnv() {
     const { statusNote } = loadElements(dom);
     const button = loadButton(dom);
     const shown = [];
-    const showDetailModal = ({ title, body }) => { body.closest = () => null; shown.push({ title, body }); };
+    const showDetailModal = ({ title, body }) => { body.closest = () => null; shown.push({ title, body }); return { close() { }, element: null }; };
     const posts = [];
     const toasts = [];
     return { dom, statusNote, button, shown, showDetailModal, posts, toasts };
@@ -442,11 +442,11 @@ const cases = {
         const editor = { setValue() { }, clearDraft() { } };
         const noFixConsequenceText = new Function(`${extract(source, 'export function noFixConsequenceText(').replace(/^export /, '')}\nreturn noFixConsequenceText;`)();
         const run = new Function('STATUS_OPTIONS', 'noFixConsequenceText', 'statusNote', 'isNoFixClosure', 'statusMeta', 'makeButton', 'attachNoteEditor',
-            'showDetailModal', 'bindPastDateCheck', 'confirmAction', 'withBusy', 'toast', 'todayLocal', 'toLocalDateString', 'MAX_DUE_DATE_DAYS',
+            'showDetailModal', 'bindPastDateCheck', 'confirmAction', 'withBusy', 'toast', 'todayLocal', 'toLocalDateString', 'MAX_DUE_DATE_DAYS', 'setFieldError', 'clearFieldError',
             `${fn}\nreturn openWorkOrderReplyModal;`)(
             statusOptions, noFixConsequenceText, env.statusNote, catalog.isNoFixClosure, catalog.statusMeta, env.button, () => editor,
             env.showDetailModal, () => ({ validate: () => true }), async () => true, () => () => { }, () => { },
-            () => '2026-01-01', () => '2026-04-01', 90);
+            () => '2026-01-01', () => '2026-04-01', 90, () => { }, () => { });
         const open = (extra = {}) => {
             env.shown.length = 0;
             run({ title: 't', targetText: '本單 3 台', draftKey: 'k', submit: async () => { }, ...extra });

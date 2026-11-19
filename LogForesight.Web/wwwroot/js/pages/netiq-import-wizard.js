@@ -8,8 +8,10 @@
  */
 
 import { api } from '../core/api.js';
+import { pollWhile } from '../core/async-guards.js';
 import { renderTable, renderLoading, renderSpinner, toast, withBusy, guardLoad, button } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
 
@@ -161,7 +163,7 @@ let wizardPane = 'subnets';       // 'subnets' | 'groups' | 'done'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
-let pollTimer = null;
+let pollHandle = null;   // pollWhile 的控制代碼
 let currentJobId = null;
 
 /**
@@ -171,9 +173,9 @@ let currentJobId = null;
  *   會去啟動新掃描並吃到後端「已有掃描進行中」，使用者被鎖到工作自然結束為止。
  */
 function stopPolling(forget = true) {
-    if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
+    if (pollHandle) {
+        pollHandle.stop();
+        pollHandle = null;
     }
     if (forget) {
         currentJobId = null;
@@ -272,17 +274,19 @@ function startPolling(jobId, { resume = false } = {}) {
 
     // 連續失敗計數：單次暫時性錯誤（網路、5xx、逾時）不放棄，後端掃描仍在跑，丟掉 jobId 會讓使用者被鎖到工作結束
     let consecutiveFailures = 0;
+    // pollWhile 的約定：回傳 false 即停止輪詢；例外一律在這裡處理（連續失敗計數），不外擲
     const poll = async () => {
-        if (currentJobId !== jobId) return;
+        if (currentJobId !== jobId) return false;
         try {
             const job = await api.get(`/api/admin/netiq/scan/${jobId}`, { silent: true });
-            if (currentJobId !== jobId) return;
+            if (currentJobId !== jobId) return false;
             consecutiveFailures = 0;
 
             if (job.status === 'running') {
                 renderScanProgress(jobId, job.stage, job.hostsFound);
-                pollTimer = setTimeout(poll, 2000);
-            } else if (job.status === 'completed') {
+                return true;
+            }
+            if (job.status === 'completed') {
                 stopPolling();
                 wizardScan = job.result;
                 // 續看情境：結果屬於啟動掃描當下的 Sentinel，精靈標題不能跟著重開時的新選擇走
@@ -300,8 +304,9 @@ function startPolling(jobId, { resume = false } = {}) {
                 stopPolling();
                 wizardModal.hide();
             }
+            return false;   // 其餘（含未知）狀態不續排
         } catch (error) {
-            if (currentJobId !== jobId) return;
+            if (currentJobId !== jobId) return false;
             // 後端對「掃描工作不存在或已逾期」回 HTTP 400＋validation_failed（亦相容 404／not_found）；
             // 只有這種明確回應才放棄工作，其餘錯誤累計連續失敗次數
             const jobGone = (error?.status === 400 && error?.code === 'validation_failed')
@@ -310,20 +315,20 @@ function startPolling(jobId, { resume = false } = {}) {
                 if (error.message) toast(error.message, 'danger');
                 stopPolling();
                 wizardModal.hide();
-                return;
+                return false;
             }
             consecutiveFailures += 1;
             if (consecutiveFailures >= 3) {
                 toast('暫時無法取得掃描進度，請稍後重新開啟精靈', 'danger');
                 stopPolling(false);
                 wizardModal.hide();
-                return;
+                return false;
             }
-            pollTimer = setTimeout(poll, 2000);
+            return true;
         }
     };
 
-    pollTimer = setTimeout(poll, 2000);
+    pollHandle = pollWhile(poll, 2000);
 }
 
 async function openWizard(sentinel, subnetPrefix, granularity = '24', concurrency = 1) {
@@ -637,17 +642,11 @@ async function renderGroupAssignment() {
 }
 
 function clearAssignmentError(row) {
-    for (const el of row.querySelectorAll('.is-invalid')) el.classList.remove('is-invalid');
-    row.querySelector('.invalid-feedback')?.remove();
+    for (const el of row.querySelectorAll('select, input')) clearFieldError(el);
 }
 
 function markAssignmentError(row, field, message) {
-    field.classList.add('is-invalid');
-    const feedback = document.createElement('div');
-    feedback.className = 'invalid-feedback d-block';
-    feedback.setAttribute('role', 'alert');
-    feedback.textContent = message;
-    field.after(feedback);
+    setFieldError(field, message).classList.add('d-block');
 }
 
 /**

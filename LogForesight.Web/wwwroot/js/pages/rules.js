@@ -17,6 +17,7 @@ import {
 } from '../core/ui.js';
 import { statusNote, roleText } from '../core/elements.js';
 import { categoryName, severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText, CATEGORY_NAMES, SEVERITY_ORDER, severityCell } from '../core/format.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
 const chipFilters = {
@@ -68,17 +69,17 @@ renderPageHeader(document.getElementById('page-header'), {
     }
 });
 
-const ruleTabsEl = document.getElementById('rule-tabs');
-bindTabs(ruleTabsEl);
-// Windows規則／Linux規則兩個 tab 共用 data-tab="rules"（同一個 data-panel），
-// bindTabs 只負責切換面板顯示；平台切換靠這裡另外偵測 data-platform。
-ruleTabsEl.addEventListener('click', event => {
-    const btn = event.target.closest('[data-platform]');
-    if (!btn) return;
-    currentPlatform = btn.dataset.platform;
-    updateSearchPlaceholder();
-    rulePage = 1;
-    renderRules();
+// Windows／Linux／PRTG 規則三個頁籤共用 data-tab="rules"（同一個 data-panel）：
+// bindTabs 負責切換與鍵盤操作；平台由頁籤按鈕的 data-platform 帶出，點擊與方向鍵切換都經 onChange。
+bindTabs(document.getElementById('rule-tabs'), {
+    onChange: (_name, btn) => {
+        const platform = btn.dataset.platform;
+        if (!platform || platform === currentPlatform) return;
+        currentPlatform = platform;
+        updateSearchPlaceholder();
+        rulePage = 1;
+        renderRules();
+    }
 });
 
 async function load() {
@@ -761,12 +762,12 @@ const diskPreviewPrevious = document.getElementById('rule-disk-preview-previous'
 const diskPreviewNext = document.getElementById('rule-disk-preview-next');
 let diskPreviewOffset = 0;
 let diskPreviewHasResult = false;
-let diskPreviewRequestId = 0;
+const diskPreviewGuard = createSeqGuard();
 let diskPreviewFingerprint = '';
 let latestDiskPreview = null;
 
 function clearDiskPreview(message = '') {
-    diskPreviewRequestId++;
+    diskPreviewGuard.next();
     diskPreviewHasResult = false;
     diskPreviewFingerprint = '';
     latestDiskPreview = null;
@@ -813,7 +814,7 @@ async function runDiskPreview(event) {
     from.setDate(from.getDate() - (days - 1));
     const requestBody = { fromDate: dateText(from), throughDate: dateText(through), offset, limit, rule: collectRule() };
     const fingerprint = JSON.stringify(requestBody);
-    const requestId = ++diskPreviewRequestId;
+    const requestId = diskPreviewGuard.next();
     const restore = withBusy(document.getElementById('rule-disk-preview-run'), '試算中');
     diskPreviewHasResult = false;
     diskPreviewSummary.textContent = '正在計算未儲存草稿…';
@@ -822,7 +823,7 @@ async function runDiskPreview(event) {
     diskPreviewNext.disabled = true;
     try {
         const result = await api.post('/api/rules/disk-trend-preview', requestBody);
-        if (requestId !== diskPreviewRequestId) return;
+        if (!diskPreviewGuard.isCurrent(requestId)) return;
         const latest = result.latestPreviewAt ? formatDateTime(result.latestPreviewAt) : '—';
         const candidateCount = Number(result.candidateCount ?? 0);
         const assessedCount = Number(result.assessedCount ?? (result.rows ?? []).length);
@@ -863,7 +864,7 @@ async function runDiskPreview(event) {
         }
         diskPreviewResults.appendChild(list);
     } catch (error) {
-        if (requestId !== diskPreviewRequestId) return;
+        if (!diskPreviewGuard.isCurrent(requestId)) return;
         diskPreviewSummary.textContent = error?.message || '目前無法完成預覽，請稍後再試。';
         diskPreviewPage.textContent = '尚未試算';
     } finally {
