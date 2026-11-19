@@ -617,10 +617,13 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// </summary>
     private void NoteSkip(string reasonCode, string reason, bool trackPause = true, int? targetCount = null)
     {
-        _lastSkipReason = reason;
-        RecordDiagnostic(Now(), "skip", reason, targetCount ?? _targetState?.Targets.Count ?? 0, reasonCode: reasonCode);
-        if (trackPause) _skipSince ??= Now();
+        // 時鐘只讀一次，且先更新暫停起點再公開跳過原因：狀態讀取端（畫面、測試）看到原因時，起點必須已經記好。
+        // 反過來的話，中間那筆診斷寫入（會落盤）期間時鐘若已前進，起點會被記成較晚的時刻，維護讓出的期限跟著往後推。
+        var now = Now();
+        if (trackPause) _skipSince ??= now;
         else _skipSince = null;
+        _lastSkipReason = reason;
+        RecordDiagnostic(now, "skip", reason, targetCount ?? _targetState?.Targets.Count ?? 0, reasonCode: reasonCode);
     }
 
     /// <summary>

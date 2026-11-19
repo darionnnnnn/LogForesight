@@ -456,11 +456,11 @@ public static class RuleValidator
     /// 詞表只用來警告、不影響規則是否可存，所以刻意保守——詞表外的片段不警告。
     /// 不從種子片語推導：種子裡的 <c>Fail event</c>（mdadm）會讓 <c>Fail</c> 變成「已知完整詞」而漏警告。
     /// </summary>
-    private static readonly HashSet<string> PushdownVocabulary = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly System.Collections.Frozen.FrozenSet<string> PushdownVocabulary = System.Collections.Frozen.FrozenSet.ToFrozenSet(new[]
     {
         "failed", "invalid", "accepted", "incorrect", "denied", "refused", "rejected", "expired",
         "exceeded", "terminated", "disconnected", "banned", "unban", "unbanned", "password", "passwords"
-    };
+    }, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>內建種子的 Linux 片語（已在正式環境下推驗證過）；使用者規則寫了一模一樣的片語不警告
     /// （例如種子的 <c>predicted to fail</c> 以 fail 結尾，與單獨的 <c>Fail</c> 在字面上分不開）。</summary>
@@ -512,7 +512,7 @@ public static class RuleValidator
     }
 
     /// <summary>片語哪一端是更長詞的片段；兩端都完整回傳 null。</summary>
-    private static string? FragmentSide(string pattern, HashSet<string> vocabulary)
+    private static string? FragmentSide(string pattern, IReadOnlySet<string> vocabulary)
     {
         if (char.IsLetterOrDigit(pattern[^1]))
         {
