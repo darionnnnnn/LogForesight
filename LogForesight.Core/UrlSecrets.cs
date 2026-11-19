@@ -27,7 +27,8 @@ public static class UrlSecrets
         "access_token", "refresh_token", "client_secret", "token", "secret"
     ];
 
-    private static readonly HashSet<string> SecretNameSet = new(SecretNames, StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Collections.Frozen.FrozenSet<string> SecretNameSet =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(SecretNames, StringComparer.OrdinalIgnoreCase);
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 

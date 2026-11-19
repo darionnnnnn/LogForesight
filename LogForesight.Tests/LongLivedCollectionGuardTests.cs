@@ -43,7 +43,6 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Auth.LoginThrottle._accounts"] = "上限 1 萬個鍵（MaxKeys），每次呼叫清過期",
         ["LogForesight.Web.Auth.LoginThrottle._ips"] = "上限 1 萬個鍵（MaxKeys），每次呼叫清過期",
         ["LogForesight.Web.Auth.RevokedTokens._revoked"] = "每次撤銷清掉全部已過期項；不設筆數上限——上限會讓被撤銷的 token 重新可用。量＝token 效期內的登出次數",
-        ["LogForesight.Web.Auth.ServerAdminAuthenticator._failures"] = "只記設定中的救援帳號，鍵數為 1",
         ["LogForesight.Web.Configuration.WebAppSettings.KnownDevSecrets"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.ActionableSnapshotCache._entries"] = "256 條目＋20 萬元素上限；讀取時每個 TTL 週期釋放過期與舊版本",
         ["LogForesight.Web.Services.VisibleHostKeyPart.Memo"] = "ConditionalWeakTable：鍵（可見主機集合物件）被回收時條目自動消失；只記憶 IReadOnlySet",

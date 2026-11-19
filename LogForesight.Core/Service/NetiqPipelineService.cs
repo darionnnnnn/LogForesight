@@ -852,9 +852,9 @@ public class NetiqPipelineService
         // 全部共用既有實例，不重複建構。
         // hostGroupIds（回饋十三輪 F）：抑制的 Group 範圍判定要知道這台主機的群組成員資格，
         // 回饋十四輪 A3 改讀計畫階段已解析好的 plan.GroupIds，不再每主機日查一次 HostStore。
-        var analysisService = new LogAnalysisService(
+        var analysisService = AnalysisServiceFactory.Create(
             _eventLogService, _aiService, plan.Store, _suppressionStore,
-            target.RoleDesc, _reportService, target.HostName, target.HostId,
+            _reportService, target.RoleDesc, target.HostName, target.HostId,
             hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot,
             logSource: AnalysisLogSource.Netiq, hostOs: target.Os);
 

@@ -296,10 +296,26 @@ public class AiAnalysisHostedService : BackgroundService
             // AI 執行也進執行紀錄（批次D 定案）：逐筆視角可辨識「AI 分析」作業與其件數；
             // 主機×日總表以 JobType 排除它（RunMonitorService）。
             var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
-            using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
-            _runState.SetCurrentBatchRunId(recorder.RunId);
-            recorder.RecordMemory(true, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
-            var aiPhase = recorder.Phase(RunTimingPhases.Ai);
+            // 記錄器建構（或開頭的登記）擲例外時，TryBeginRun 已取得的執行中旗標必須在此放掉，
+            // 否則之後每次觸發都回「已有執行進行中」，直到站台重啟。
+            BatchRunRecorder? createdRecorder = null;
+            BatchRunRecorder.PhaseScope aiPhase;
+            try
+            {
+                createdRecorder = CreateRunRecorder(args, trigger, runCts.Token);
+                _runState.SetCurrentBatchRunId(createdRecorder.RunId);
+                createdRecorder.RecordMemory(true, MemorySnapshot.Capture(_storageBackend.TryReadSqliteHeap, () => NLog.LogManager.Configuration?.LoggingRules.Count));
+                aiPhase = createdRecorder.Phase(RunTimingPhases.Ai);
+            }
+            catch (Exception ex)
+            {
+                createdRecorder?.Dispose();
+                var message = RunFailureReasons.Describe(ex);
+                Log.Error(ex, "AI 分析建立執行紀錄失敗，本輪放棄：{Msg}", message);
+                _runState.EndRun(false, message);
+                return;
+            }
+            using var recorder = createdRecorder;
 
             try
             {
@@ -364,6 +380,10 @@ public class AiAnalysisHostedService : BackgroundService
 
         return await startSignal.Task;
     }
+
+    /// <summary>建立本輪的執行紀錄器；獨立成方法讓測試能模擬建構失敗。</summary>
+    internal virtual BatchRunRecorder CreateRunRecorder(string[] args, string trigger, CancellationToken ct) =>
+        new(_batchRuns, Environment.MachineName, args, trigger, ct, jobType: BatchRun.JobTypeAi);
 
     /// <summary>
     /// 一輪結束後更新無進度退避：停止的一輪不算（不改連續次數）；手動觸發有進度才解除、沒進度不進入退避
@@ -475,6 +495,7 @@ public class AiAnalysisHostedService : BackgroundService
         // 只釋放這一輪自己建的實例；建構子注入的（測試用）歸注入端管
         var ownsAiService = _injectedAiService is null;
         var hostOsMap = new HostOsLookup(BuildHostOsMap);
+        var roundAiSettings = ResolveAiSettings();
 
         // 待補總數：只在迴圈開頭實查一次，之後以「本批前總數 - 本批完成數」估算
         // （CountPendingAi 在實機要 7～15 秒，不再每批查兩次）。
@@ -527,7 +548,7 @@ public class AiAnalysisHostedService : BackgroundService
                     var shardAiService = aiServiceFactory();
                     try
                     {
-                        var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, shardAiService, hostOsMap);
+                        var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, shardAiService, hostOsMap, roundAiSettings);
 
                         // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
                         foreach (var record in group)
@@ -768,12 +789,12 @@ public class AiAnalysisHostedService : BackgroundService
     }
 
     private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore,
-        IAiService aiService, HostOsLookup hostOsMap)
+        IAiService aiService, HostOsLookup hostOsMap, AiSettings aiSettings)
     {
         var riskyEventStore = _storageBackend.RiskyEventStore();
         // 主機作業系統：輪中新增的主機查不到時補讀一次主機表（每輪最多一次），仍查不到才預設 Windows
         var hostOs = hostOsMap.Resolve(hostKey.HostId);
-        var reportService = new RiskReportService(aiService, _storageBackend.ReportStore(),
+        var reportService = AnalysisServiceFactory.CreateReportService(aiService, _storageBackend.ReportStore(), aiSettings,
             ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))),
             hostOs: hostOs);
         // 包裝層包在外面（含 DI 注入的規則頁 store）：AI 補寫報告的已抑制段也要看得到靜音項目
@@ -781,17 +802,25 @@ public class AiAnalysisHostedService : BackgroundService
             _suppressionStore ?? new SuppressionStore(_storageBackend.Blob("suppressions")),
             new IssueOwnerStore(_storageBackend.Blob("issue_owners")));
 
-        return new LogAnalysisService(
+        return AnalysisServiceFactory.Create(
             new EventLogService(),
             aiService,
             hostStore,
             suppressionStore,
+            reportService,
             serverDescription: "",
-            reportService: reportService,
             host: hostKey.HostName,
             hostId: hostKey.HostId,
             riskyEventStore: riskyEventStore,
             hostOs: hostOs);
+    }
+
+    /// <summary>解析目前生效的 AI 設定（系統設定覆寫後）；每輪一次，報告服務的深入分析 MaxTokens 也取自這份。</summary>
+    private AiSettings ResolveAiSettings()
+    {
+        var settings = new AppSettings();
+        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+        return settings.Ai;
     }
 
     /// <summary>
@@ -800,9 +829,8 @@ public class AiAnalysisHostedService : BackgroundService
     /// </summary>
     internal virtual Func<IAiService> ResolveAiServiceFactory()
     {
-        var settings = new AppSettings();
-        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
-        return () => new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
+        var aiSettings = ResolveAiSettings();
+        return () => new AIService(aiSettings, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
             gate: _aiGate);
     }
 }

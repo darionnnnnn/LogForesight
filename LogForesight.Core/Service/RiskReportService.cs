@@ -41,6 +41,9 @@ public class RiskReportService
     private readonly IAiService _aiService;
     private readonly string? _hostOs;
     private readonly int _deepDiveMaxTokens;
+
+    /// <summary>深入分析呼叫的 token 上限（工廠組裝驗證用）</summary>
+    internal int DeepDiveMaxTokens => _deepDiveMaxTokens;
     private readonly Func<IReadOnlyList<KnownIssueRule>>? _ruleProvider;
 
     /// <param name="ruleProvider">由組裝端注入「目前生效規則清單」（從規則儲存讀取）。處置參考以簽章的

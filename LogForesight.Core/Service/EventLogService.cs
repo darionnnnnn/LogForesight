@@ -128,9 +128,12 @@ public class EventLogService
     /// <param name="keep">可選的事件過濾：通過 <see cref="ShouldInclude"/> 的事件建成物件後再問一次，
     /// 回 false 的不進結果清單（暫時物件立即可回收）。供只需要一小部分事件的補掃避免整天事件常駐記憶體；
     /// null＝全留，其餘行為（不完整判定、頻道狀態）不變。</param>
+    /// <param name="ct">取消權杖：進入時與逐筆迴圈檢查，取消時擲 <see cref="OperationCanceledException"/>
+    /// （不當成讀取失敗吞掉，也不回「讀取失敗」的假結果）。</param>
     public EventLogScanResult ScanRange(DateTime startDate, DateTime endDateExclusive, string logName,
-        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         // 注入的委派分析器看不懂，故同時以 OperatingSystem.IsWindows() 讓 CA1416 通過。
         if (!_isWindows() || !OperatingSystem.IsWindows())
         {
@@ -138,15 +141,15 @@ public class EventLogService
             return new EventLogScanResult { Entries = new(), Complete = false, ReadFailed = true, PlatformUnsupported = true };
         }
 
-        return ScanRangeWindows(startDate, endDateExclusive, logName, securityExtraEventIds, keep);
+        return ScanRangeWindows(startDate, endDateExclusive, logName, securityExtraEventIds, keep, ct);
     }
 
     [SupportedOSPlatform("windows")]
     private EventLogScanResult ScanRangeWindows(DateTime startDate, DateTime endDateExclusive, string logName,
-        int[]? securityExtraEventIds, Func<EventLogEntryData, bool>? keep)
+        int[]? securityExtraEventIds, Func<EventLogEntryData, bool>? keep, CancellationToken ct)
         => ClassicApiLogs.Contains(logName)
-            ? ScanRangeClassic(startDate, endDateExclusive, logName, securityExtraEventIds, keep)
-            : ScanRangeModern(startDate, endDateExclusive, logName, securityExtraEventIds, keep);
+            ? ScanRangeClassic(startDate, endDateExclusive, logName, securityExtraEventIds, keep, ct)
+            : ScanRangeModern(startDate, endDateExclusive, logName, securityExtraEventIds, keep, ct);
 
     /// <summary>
     /// 新式 Operational 頻道（Defender/RDP）的 EventLogReader 掃描。這些頻道沒有遷移前的歷史，
@@ -154,7 +157,7 @@ public class EventLogService
     /// </summary>
     [SupportedOSPlatform("windows")]
     private EventLogScanResult ScanRangeModern(DateTime startDate, DateTime endDateExclusive, string logName,
-        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null, CancellationToken ct = default)
     {
         var logs = new List<EventLogEntryData>();
         var policy = ChannelCatalog.Resolve(logName);
@@ -180,6 +183,7 @@ public class EventLogService
             {
                 for (EventRecord? record = reader.ReadEvent(); record != null; record = reader.ReadEvent())
                 {
+                    ct.ThrowIfCancellationRequested();
                     using (record)
                     {
                         if (record.TimeCreated is not { } time || time < startDate || time >= endDateExclusive)
@@ -219,6 +223,11 @@ public class EventLogService
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 使用者取消不是讀取故障：往上傳，由呼叫端標為已停止
+            throw;
+        }
         catch (EventLogNotFoundException ex)
         {
             // 頻道在本機不存在（未安裝 Defender、未啟用 RDP 角色等）——屬預期，不是故障、不觸發 DataIncomplete。
@@ -254,7 +263,7 @@ public class EventLogService
     /// </summary>
     [SupportedOSPlatform("windows")]
     private EventLogScanResult ScanRangeClassic(DateTime startDate, DateTime endDateExclusive, string logName,
-        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null)
+        int[]? securityExtraEventIds = null, Func<EventLogEntryData, bool>? keep = null, CancellationToken ct = default)
     {
         var logs = new List<EventLogEntryData>();
         var policy = ChannelCatalog.Resolve(logName);
@@ -272,6 +281,7 @@ public class EventLogService
 
             for (; i >= 0; i--)
             {
+                ct.ThrowIfCancellationRequested();
                 var entry = eventLog.Entries[i];
 
                 if (entry.TimeGenerated < scanFloor)
@@ -336,6 +346,11 @@ public class EventLogService
 
             return new EventLogScanResult { Entries = logs, Complete = complete, EarliestAvailable = earliestAvailable };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 使用者取消不是讀取故障：往上傳，由呼叫端標為已停止
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warn(ex, ReadFailureTemplate(ex), logName);
@@ -348,10 +363,11 @@ public class EventLogService
     /// 供回補流程判斷哪些日期的統計不完整（DataIncomplete）、Security 是否可讀（SecurityLogAvailable）。
     /// </summary>
     public async Task<MultiSourceScanResult> ScanRangeFromAllAsync(
-        DateTime startDate, DateTime endDateExclusive, string[]? logNames = null)
+        DateTime startDate, DateTime endDateExclusive, string[]? logNames = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var names = logNames ?? DefaultLogNames;
-        var tasks = names.Select(name => Task.Run(() => (name, result: ScanRange(startDate, endDateExclusive, name))));
+        var tasks = names.Select(name => Task.Run(() => (name, result: ScanRange(startDate, endDateExclusive, name, ct: ct)), ct));
         var results = await Task.WhenAll(tasks);
 
         return new MultiSourceScanResult

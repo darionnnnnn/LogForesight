@@ -77,8 +77,10 @@ internal class WeeklyCheckupService
     /// <param name="useAi">false＝AI 未設定（docs/archive/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
     /// （本來就不呼叫 AI）；有訊號時不嘗試呼叫，回傳 Completed=false 讓呼叫端沿用既有
     /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
-    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true)
+    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true,
+        CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         // 週檢是「日誌分析過的日子」的回顧：只有 PRTG 訊號的主機日（當日沒有日誌分析）不算分析天數、
         // 也不拿它的風險觸發 AI 敘事（docs/PRTG-SPEC.md §9）
         var window = _historyReader.ReadRecent(checkupDate, intervalDays)
@@ -124,7 +126,8 @@ internal class WeeklyCheckupService
         var prompt = BuildPrompt(checkupDate, window, serverDescription, lastCheckup);
 
         var result = await _aiService.ChatJsonAsync<WeeklyCheckupAiResult>(prompt, SystemPrompt,
-            validate: r => r.Conclusion.Length > 0, maxTokens: MaxOutputTokens, label: $"checkup-{checkupDate:yyyyMMdd}");
+            validate: r => r.Conclusion.Length > 0, maxTokens: MaxOutputTokens, label: $"checkup-{checkupDate:yyyyMMdd}", ct: ct);
+        ct.ThrowIfCancellationRequested();
 
         var outcome = new WeeklyCheckupResult { CheckupDate = checkupDate };
 
@@ -153,6 +156,7 @@ internal class WeeklyCheckupService
             ? SuppressionFilter.ActiveForHost(allSuppressions, Environment.MachineName, _hostGroupIds, DateTime.Now)
             : new List<RuleSuppression>();
         var content = BuildReportText(checkupDate, window, outcome, activeSuppressions, allSuppressions);
+        ct.ThrowIfCancellationRequested();
         outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup,
             host ?? new HostKey { HostName = Environment.MachineName }, fileName, content);
 

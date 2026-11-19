@@ -466,10 +466,10 @@ public class AnalysisOrchestrator
                 var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
                 var historyService = backend.RecordStore(ownerHost);
 
-                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens,
+                var reportService = AnalysisServiceFactory.CreateReportService(aiService, reportSink, settings.Ai,
                     () => KnownIssueCatalog.ResolveRules(ruleStore));
-                var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
-                    settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
+                var analysisService = AnalysisServiceFactory.Create(eventLogService, aiService, historyService, suppressionStore,
+                    reportService, settings.Analysis.ServerDescription, currentHost, currentHostId,
                     hostGroupIds: currentHostGroupIds, logSource: AnalysisLogSource.Local);
                 // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
                 // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
@@ -797,8 +797,19 @@ public class AnalysisOrchestrator
                     var checkupPhase = runRecorder.Phase(RunTimingPhases.Checkup);
                     runConsole.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
                     var checkupStopwatch = Stopwatch.StartNew();
-                    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
-                        settings.Analysis.ServerDescription, host: new HostKey { HostId = currentHostId, HostName = currentHost }, useAi: useAi);
+                    WeeklyCheckupResult checkup;
+                    try
+                    {
+                        checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
+                            settings.Analysis.ServerDescription, host: new HostKey { HostId = currentHostId, HostName = currentHost },
+                            useAi: useAi, ct: ct);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        // 使用者取消：體檢階段標為已停止（不寫入歷史，下次執行自動補跑），再往上交給整趟的取消處理
+                        checkupPhase.Complete(RunPhaseOutcomes.Stopped);
+                        throw;
+                    }
 
                     if (!checkup.Completed)
                     {
@@ -1089,7 +1100,7 @@ public class AnalysisOrchestrator
                 ChannelAvailability channelAvailability;
                 bool? securityAvailable;
                 {
-                    var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
+                    var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames, ct);
                     logsByDate = scanResult.Entries
                         .GroupBy(l => l.TimeGenerated.Date)
                         .ToDictionary(g => g.Key, g => g.ToList());
