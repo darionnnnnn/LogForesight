@@ -86,6 +86,14 @@ public class LfDbContext : DbContext
                 if (entry.State == EntityState.Modified && entry.Entity is DailyRecordRow daily)
                     daily.WriteRevision = checked(entry.OriginalValues.GetValue<long>(nameof(DailyRecordRow.WriteRevision)) + 1);
 
+                // 去重鍵雜湊欄：所有寫入路徑（append／upsert／遷移）都經 SaveChanges，在這一處統一補，不會漏
+                if (entry.Entity is PermissionChangeRow permRow &&
+                    (entry.State == EntityState.Added || entry.Property(nameof(PermissionChangeRow.DedupeKey)).IsModified))
+                {
+                    entry.Property(nameof(PermissionChangeRow.DedupeKeyHash)).CurrentValue =
+                        PermissionChangeDedupeHash.Of(permRow.DedupeKey);
+                }
+
                 foreach (var col in PlanFor(entry.Metadata))
                 {
                     var prop = entry.Property(col.Name);
@@ -555,6 +563,8 @@ public class LfDbContext : DbContext
             // 最長可達約 790 字元。設成 nvarchar(512) 在 SQLite 上（TEXT 無長度）測不出來，
             // 到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。不要改回加長度。
             e.Property(x => x.DedupeKey).HasColumnName("dedupe_key");
+            // 去重鍵的 SHA-256 十六進位（固定 64 字元，可建索引）；舊列為 NULL，由背景回填補齊
+            e.Property(x => x.DedupeKeyHash).HasColumnName("dedupe_key_hash").HasMaxLength(64);
             e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
             e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
             e.Property(x => x.DetectedAt).HasColumnName("detected_at");
@@ -589,8 +599,10 @@ public class LfDbContext : DbContext
             e.Property(x => x.ConfirmedAt).HasColumnName("confirmed_at");
             e.Property(x => x.ConfirmNote).HasColumnName("confirm_note");
 
-            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeysForHost 走
-            // (host_name_key, detected_at) 複合索引後才投影這一欄），而它又長到不適合當索引鍵。
+            // dedupe_key 本身太長不適合當索引鍵（nvarchar(max)）；以條件查詢它的四個方法改走固定長度的
+            // dedupe_key_hash 一般索引（不加唯一約束，雜湊相同仍會再比對原鍵）。
+            // GetDedupeKeysForHost 走 (host_name_key, detected_at) 複合索引後才投影 dedupe_key。
+            e.HasIndex(x => x.DedupeKeyHash).HasDatabaseName("IX_lf_permission_changes_dedupe_key_hash");
             e.HasIndex(x => x.ChangeId).IsUnique().HasDatabaseName("IX_lf_permission_changes_change_id");
             e.HasIndex(x => new { x.Status, x.DetectedAt }).HasDatabaseName("IX_lf_permission_changes_status_detected_at");
             e.HasIndex(x => x.DetectedAt).HasDatabaseName("IX_lf_permission_changes_detected_at");
@@ -1156,6 +1168,10 @@ public class PermissionChangeRow
     public long Id { get; set; }
     public string ChangeId { get; set; } = string.Empty;
     public string DedupeKey { get; set; } = string.Empty;
+
+    /// <summary><see cref="DedupeKey"/> 的 SHA-256 十六進位（小寫 64 字元）。寫入時由 <c>LfDbContext.PrepareForSave</c> 統一計算；
+    /// 升級前的既有列為 null，回填完成（<c>PermissionChangeDedupeBackfiller.Ready</c>）前查詢不依賴它。</summary>
+    public string? DedupeKeyHash { get; set; }
     public string HostName { get; set; } = string.Empty;
     public string HostNameKey { get; set; } = string.Empty;
     public DateTime DetectedAt { get; set; }

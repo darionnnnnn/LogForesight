@@ -24,6 +24,13 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
     public static IEnumerable<object[]> NonKeyColumns() => Columns(keyOrIndex: false);
     public static IEnumerable<object[]> KeyOrIndexColumns() => Columns(keyOrIndex: true);
 
+    /// <summary>寫入時由 <c>PrepareForSave</c> 依另一欄計算的衍生欄：呼叫端設的值一律被覆寫，沒有「超長」的情境，不納入逐欄的長度案例
+    /// （覆寫行為見 <see cref="衍生欄_寫入時一律被重新計算_呼叫端設的值無效"/>）。</summary>
+    private static readonly HashSet<(string Entity, string Column)> DerivedColumns = new()
+    {
+        (nameof(PermissionChangeRow), nameof(PermissionChangeRow.DedupeKeyHash)),
+    };
+
     private static IEnumerable<object[]> Columns(bool keyOrIndex)
     {
         using var fx = new EfSqliteFixture();
@@ -31,6 +38,7 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
         foreach (var e in ctx.Model.GetEntityTypes())
             foreach (var p in e.GetProperties())
                 if (p.ClrType == typeof(string) && p.GetMaxLength() is not null
+                    && !DerivedColumns.Contains((e.ClrType.Name, p.Name))
                     && (p.IsKey() || p.IsIndex() || p.IsForeignKey()) == keyOrIndex)
                     yield return [e.ClrType.Name, p.Name];
     }
@@ -234,6 +242,21 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
         Assert.Single(rows.Where(r => GetColumn(r, column) == goodValue));
         Assert.DoesNotContain(rows, r => GetColumn(r, column)?.StartsWith('b') == true);
         Assert.Contains(logs, l => l.StartsWith("Warn|") && l.Contains($"{entityName}.{column}"));
+    }
+
+    [Fact]
+    public void 衍生欄_寫入時一律被重新計算_呼叫端設的值無效()
+    {
+        using var fx = new EfSqliteFixture();
+        using var ctx = fx.NewContext();
+        var row = (PermissionChangeRow)Build(ctx, EntityOf(ctx, nameof(PermissionChangeRow)), 1);
+        row.DedupeKey = "k1";
+        row.DedupeKeyHash = new string('x', 500);   // 超長且錯誤：會被覆寫，不會被當成超長索引欄丟棄
+        ctx.Add(row);
+        ctx.SaveChanges();
+
+        using var read = fx.NewContext();
+        Assert.Equal(PermissionChangeDedupeHash.Of("k1"), read.PermissionChanges.AsNoTracking().Single().DedupeKeyHash);
     }
 
     [Fact]

@@ -300,6 +300,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   id                   bigint PK IDENTITY
   change_id            nvarchar(64) NOT NULL            -- GUID("N")，對外識別用；唯一性由下方索引保證（DDL 無 UNIQUE 子句）
   dedupe_key           nvarchar(max) NOT NULL           -- 主機|事件時間Ticks|EventId|告警文字
+  dedupe_key_hash      nvarchar(64) NULL                -- dedupe_key 的 SHA-256 小寫十六進位（固定 64 字元）；升級前的既有列為 NULL，由背景回填補齊
   host_name            nvarchar(255) NOT NULL           -- 非正規化字串，不是 FK
   host_name_key        nvarchar(255) NOT NULL           -- 不分大小寫比對用的正規化鍵
   detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
@@ -328,7 +329,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   confirm_note         nvarchar(max) NULL
 
 索引：change_id 唯一；(status, detected_at)；detected_at；(host_name_key, detected_at)；
-      (category, status)；created_at
+      (category, status)；created_at；dedupe_key_hash（一般索引，不加唯一約束）
 ```
 
 **確認狀態與異動同列，不另建表。** 三個理由：狀態要能在 SQL 端篩選；批次核准要能做成
@@ -339,12 +340,22 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
 用 `created_at`。反例：NetIQ 重跑一個 100 天前的主機日，寫出的列 `detected_at` 是 100 天前、
 `created_at` 是現在——依 `detected_at` 清理的話這批剛補出來的待辦會立刻消失。**不要改回去。**
 
-**`dedupe_key` 不設長度上限也不建索引。** 它由「主機名(≤255)｜Ticks(19)｜EventId｜
+**`dedupe_key` 不設長度上限、不直接建索引，另存固定長度雜湊 `dedupe_key_hash`。** 它由「主機名(≤255)｜Ticks(19)｜EventId｜
 AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不
 出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」；而 SQL Server 非叢集索引鍵
-上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。沒有任何查詢以
-它為條件：跨執行去重走 `GetDedupeKeysForHost`，以 `(host_name_key, detected_at)` 複合索引
-篩出該主機該批時間區間的列後才投影這一欄——索引不存在也不影響效能。
+上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。
+以它為條件的四個方法（`PermissionChangeStore` 的 `UpsertByDedupeKey`、`DeleteByDedupeKeys`、
+`ExistsByDedupeKey`、`DeleteByDedupeKey`）改查 `dedupe_key_hash`：SHA-256 完整 32 bytes 的小寫十六進位（64 字元，
+`PermissionChangeDedupeHash.Of` 是唯一計算出口），查詢命中雜湊後**仍比對原鍵**，所以不靠雜湊單獨判定相等（SQL Server 預設不分大小寫的定序下，
+雜湊路徑比原鍵路徑嚴格：只差大小寫的告警文字不再被當成同一筆，與記憶體內去重 `StringComparer.Ordinal` 一致）。
+跨執行去重走 `GetDedupeKeysForHost`，以 `(host_name_key, detected_at)` 複合索引篩出該主機該批時間區間的列後才投影 `dedupe_key`，不受影響。
+
+**雜湊欄的寫入與回填。**
+- 寫入：所有寫入路徑（批次、彙總列 upsert、舊資料遷移）都經 `SaveChanges`，由 `LfDbContext.PrepareForSave` 在寫入點統一計算；新列不會是 NULL。
+- 回填：`PermissionChangeDedupeBackfiller` 在背景（併入 `TopIssueBackfillHostedService` 的共用閘、重試與資料版本推進，與問題聚合回填互不阻擋）每批 500 列、每批一個交易補齊舊列，中斷後下次啟動接續；
+  補到沒有 NULL 才寫版本化 blob `permission_changes_dedupe_hash_done` 並發布就緒旗標。
+- 就緒閘門：`PermissionChangeDedupeBackfiller.Ready` 只升不降（`StorageBackend.PermissionChanges()` 建的 store 一律依它切換）。就緒前四個方法走原鍵比對（全表掃描、結果與就緒後相同），就緒後走雜湊索引。
+  啟動快判 `TryFastReady` 先看完成標記，再以索引可 seek 的 `dedupe_key_hash IS NULL` EXISTS 判定，不 `Count()` 全表；標記存在即不再掃資料列。
 
 **升級路徑**：舊部署的資料在 log key `perm_changes`（JSONL）與 blob key `perm_confirms`，
 由 `PermissionChangeMigrator` 背景搬移。它有**自己的**遷移狀態（blob key
@@ -646,7 +657,7 @@ Schema 演進採「只增不改」：新版本只加欄位（nullable 或有預�
 > 讀取端據此分辨「尚未同步」與「同步過但零筆」，不可用零值代表未執行。
 
 > 交辦通知的待寄項目存在 `lf_blobs` 的 `work_order_outbox`（單一物件型，與 `mail_notify_state` 分開以免撐爆單列上限；
-> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；寄送規則見 WEB-SPEC §9.4b「通知」。
+> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；超過上限丟棄最舊項目時記警告，並寫入 `work_order_outbox_drops`（見 blob 清單）供健康整體狀態使用；寄送規則見 WEB-SPEC §9.4b「通知」。
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／
@@ -937,6 +948,8 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 | `prtg_resource_guard_autodetect` | `PrtgResourceGuardAutoDetect`（夜間自動偵測寫；設定頁預覽讀） | `DetectedAt`、`Objids`；清單等於它才算自動偵測結果 |
 | `prtg_recent_stateq_*` | `EfPrtgStore.RecentStateChangeQueuePrefix`（快照服務） | 近期狀態變更待辦 |
 | `prtg_import_diagnostic_*` | 舊版遺留，已無寫入端；`RetentionPruner` 每輪最多清 100 份 | 舊版隔離診斷匯入 |
+| `permission_changes_dedupe_hash_done` | `PermissionChangeDedupeBackfiller.Run`（回填完成且無 NULL 時寫；啟動快判讀） | 權限異動去重鍵雜湊欄回填完成標記（版本字串）；存在即不再掃 `lf_permission_changes`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
+| `work_order_outbox_drops` | `WorkOrderOutboxDropStore`（`WorkOrderOutboxStore` 丟棄項目時寫；健康頁讀） | 交辦 outbox 超過上限丟棄的紀錄：近期累計筆數與最近一次丟棄時間；與 outbox 分開，健康頁讀它不必反序列化整份 outbox |
 | `risky_events_source_key_done` | `TopIssueBackfiller.RunRiskySourceKeys`（回填完成且無 NULL 時寫；啟動時讀） | 風險事件來源鍵回填完成標記（版本字串）；存在即不再掃 `lf_risky_events`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
 
 - `lf_blobs.version` 同時作快取版本與 EF 併發權杖；`system_settings` JSON 的 `revision` 每次成功更新換 GUID（舊資料為 `legacy`），API 的預期版本在 `Mutate` 內比對。

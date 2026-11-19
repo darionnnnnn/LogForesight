@@ -38,10 +38,36 @@ public class PermissionChangeStore
     /// </summary>
     private readonly SqlPerformanceMonitor? _performance;
 
-    public PermissionChangeStore(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
+    /// <summary>
+    /// 去重鍵雜湊欄是否已回填完成（<see cref="PermissionChangeDedupeBackfiller.Ready"/>，只升不降）。
+    /// 未就緒（含測試未傳入）時依去重鍵的四個方法走原鍵比對；就緒後改走雜湊索引並再比對原鍵。
+    /// </summary>
+    private readonly Func<bool> _dedupeHashReady;
+
+    public PermissionChangeStore(
+        Func<LfDbContext> contextFactory,
+        SqlPerformanceMonitor? performance = null,
+        Func<bool>? dedupeHashReady = null)
     {
         _contextFactory = contextFactory;
         _performance = performance;
+        _dedupeHashReady = dedupeHashReady ?? (() => false);
+    }
+
+    /// <summary>以單一去重鍵找列：<paramref name="useHash"/> 走 (dedupe_key_hash 索引 ＋ 原鍵比對)，否則走原鍵比對；兩條路徑結果相同。</summary>
+    internal static IQueryable<PermissionChangeRow> ByDedupeKey(IQueryable<PermissionChangeRow> source, string dedupeKey, bool useHash)
+    {
+        if (!useHash) return source.Where(r => r.DedupeKey == dedupeKey);
+        var hash = PermissionChangeDedupeHash.Of(dedupeKey);
+        return source.Where(r => r.DedupeKeyHash == hash && r.DedupeKey == dedupeKey);
+    }
+
+    /// <summary>以一組去重鍵找列，規則同 <see cref="ByDedupeKey"/>。</summary>
+    internal static IQueryable<PermissionChangeRow> ByDedupeKeys(IQueryable<PermissionChangeRow> source, List<string> dedupeKeys, bool useHash)
+    {
+        if (!useHash) return source.Where(r => dedupeKeys.Contains(r.DedupeKey));
+        var hashes = dedupeKeys.Select(PermissionChangeDedupeHash.Of).ToList();
+        return source.Where(r => hashes.Contains(r.DedupeKeyHash!) && dedupeKeys.Contains(r.DedupeKey));
     }
 
     /// <summary>單次 SaveChanges 的列數上限（回饋三十四輪 A4）：一台吵雜的 DC 一天可達數萬則，
@@ -121,7 +147,7 @@ public class PermissionChangeStore
     public void UpsertByDedupeKey(PermissionChangeRecord change, string dedupeKey)
     {
         using var ctx = _contextFactory();
-        var existing = ctx.PermissionChanges.FirstOrDefault(r => r.DedupeKey == dedupeKey);
+        var existing = ByDedupeKey(ctx.PermissionChanges, dedupeKey, _dedupeHashReady()).FirstOrDefault();
 
         if (existing != null)
         {
@@ -181,9 +207,7 @@ public class PermissionChangeStore
         if (keys.Count == 0) return 0;
 
         using var ctx = _contextFactory();
-        return ctx.PermissionChanges
-            .Where(r => keys.Contains(r.DedupeKey))
-            .ExecuteDelete();
+        return ByDedupeKeys(ctx.PermissionChanges, keys, _dedupeHashReady()).ExecuteDelete();
     }
 
     /// <summary>某去重鍵是否已有列（供彙總列判斷「這天先前已看過完整的例行同步」使用）。</summary>
@@ -191,7 +215,7 @@ public class PermissionChangeStore
     {
         using var __perf = _performance.Measure("permchange:ExistsByDedupeKey");
         using var ctx = _contextFactory();
-        return ctx.PermissionChanges.AsNoTracking().Any(r => r.DedupeKey == dedupeKey);
+        return ByDedupeKey(ctx.PermissionChanges.AsNoTracking(), dedupeKey, _dedupeHashReady()).Any();
     }
 
     /// <summary>
@@ -202,7 +226,7 @@ public class PermissionChangeStore
     public bool DeleteByDedupeKey(string dedupeKey)
     {
         using var ctx = _contextFactory();
-        var existing = ctx.PermissionChanges.FirstOrDefault(r => r.DedupeKey == dedupeKey);
+        var existing = ByDedupeKey(ctx.PermissionChanges, dedupeKey, _dedupeHashReady()).FirstOrDefault();
         if (existing == null) return false;
 
         ctx.PermissionChanges.Remove(existing);
@@ -457,7 +481,7 @@ public class PermissionChangeStore
     /// 取代「開跑時把整個查詢窗的去重鍵全部載進記憶體」的做法——正式環境權限異動每日近十萬筆，
     /// 回望天數一拉大就是千萬筆鍵、數 GB 記憶體，且整趟執行都不釋放。
     /// 查詢走既有的 (host_name_key, detected_at) 複合索引，**不以 dedupe_key 為條件**
-    /// （該欄無索引且在 SqlServer 上是 nvarchar(max)，會全表掃描）。
+    /// （該欄在 SqlServer 上是 nvarchar(max)，不能直接建索引）。
     /// </summary>
     /// <param name="from">起（含）</param>
     /// <param name="toInclusive">迄（含）——呼叫端以本批紀錄的最早／最晚偵測時間為界</param>

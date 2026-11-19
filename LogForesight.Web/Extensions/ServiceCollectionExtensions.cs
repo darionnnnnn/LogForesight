@@ -114,6 +114,9 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IHostStore>(),
                 () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
+        // 與 StorageBackend.PermissionChanges() 內的就緒旗標是同一個實例
+        services.AddSingleton<PermissionChangeDedupeBackfiller>(sp =>
+            sp.GetRequiredService<StorageBackend>().PermissionChangeDedupeBackfiller());
         services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
@@ -137,7 +140,11 @@ public static class ServiceCollectionExtensions
 
         // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
         services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
-        services.AddSingleton(sp => new WorkOrderOutboxStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new WorkOrderOutboxDropStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxDropStore.BlobKey)));
+        services.AddSingleton(sp => new WorkOrderOutboxStore(
+            sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<WorkOrderOutboxDropStore>()));
 
         // 每使用者偏好（回饋第 50 輪 C-4，目前只有個人常用語）：獨立 blob，不進使用者清單
         services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));

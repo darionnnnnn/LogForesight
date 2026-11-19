@@ -9,11 +9,16 @@ public class WorkOrderOutboxStore : JsonBlobSingleton<WorkOrderOutbox>
     public const string BlobKey = "work_order_outbox";
     public const int MaxItems = 20_000;
 
-    private readonly TimeProvider _clock;
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
-    public WorkOrderOutboxStore(EfJsonBlobStore blob, TimeProvider? clock = null) : base(blob)
+    private readonly TimeProvider _clock;
+    private readonly WorkOrderOutboxDropStore? _drops;
+
+    /// <param name="drops">丟棄紀錄（健康整體狀態的來源）；正式站台一律傳入，丟棄時由這裡記一筆，三個呼叫端不必各自記。</param>
+    public WorkOrderOutboxStore(EfJsonBlobStore blob, TimeProvider? clock = null, WorkOrderOutboxDropStore? drops = null) : base(blob)
     {
         _clock = clock ?? TimeProvider.System;
+        _drops = drops;
     }
 
     /// <summary>加入單一待寄項目，見 <see cref="Enqueue(IReadOnlyCollection{WorkOrderOutboxItem})"/>。</summary>
@@ -61,6 +66,14 @@ public class WorkOrderOutboxStore : JsonBlobSingleton<WorkOrderOutbox>
                 }
             }
         });
+
+        // 丟棄紀錄寫失敗不能讓入列失敗（項目已經入列）；記錄檔留痕，健康狀態少一次提示
+        if (dropped > 0)
+        {
+            Log.Warn("[Mail] 交辦 outbox 超過上限 {Max} 筆，已移除 {Dropped} 筆最舊的待寄項目", MaxItems, dropped);
+            try { _drops?.Record(dropped, _clock.LocalNow()); }
+            catch (Exception ex) { Log.Warn(ex, "[Mail] 交辦 outbox 丟棄紀錄寫入失敗（已丟棄 {Dropped} 筆）", dropped); }
+        }
 
         return dropped;
     }

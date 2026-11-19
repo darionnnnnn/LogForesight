@@ -55,6 +55,7 @@ public class HealthAttentionTests
             PrtgSyncWarnings = new[] { PrtgSyncWarning.Create(PrtgSyncWarning.MappedDevicesPurged, "已對應主機的裝置被清除") }
         }, "已對應主機的裝置被清除"),
         [HealthAttentionKeys.CertificateTrust] = (new() { UnpinnedCertificateBypass = new[] { "Sentinel" } }, "Sentinel開了「忽略憑證錯誤」"),
+        [HealthAttentionKeys.OutboxDropped] = (new() { OutboxRecentDropped = 3, OutboxLastDroppedAt = Now.AddDays(-1) }, "丟棄了 3 筆"),
     };
 
     public static IEnumerable<object[]> AllKeys() => HealthAttentionKeys.All.Select(k => new object[] { k });
@@ -77,6 +78,19 @@ public class HealthAttentionTests
         Assert.Equal(key, reason.Key);
         Assert.Contains(textPart, reason.Text);
         Assert.EndsWith("。", reason.Text);   // 每個原因一句中文
+    }
+
+    [Fact]
+    public void 交辦通知丟棄_滿七天前仍提示_超過七天消失_沒有丟棄不提示()
+    {
+        HealthAttentionInput Input(int dropped, DateTime? at) => new() { OutboxRecentDropped = dropped, OutboxLastDroppedAt = at };
+
+        // 邊界：剛好七天仍在窗口內；多一秒就消失
+        Assert.Single(HealthAttention.Evaluate(Input(2, Now - HealthAttention.OutboxDropRecentWindow), Now));
+        Assert.Empty(HealthAttention.Evaluate(Input(2, Now - HealthAttention.OutboxDropRecentWindow - TimeSpan.FromSeconds(1)), Now));
+        // 從未丟棄、或筆數為 0（即使時間在窗口內）都不提示
+        Assert.Empty(HealthAttention.Evaluate(Input(0, null), Now));
+        Assert.Empty(HealthAttention.Evaluate(Input(0, Now), Now));
     }
 
     [Fact]
@@ -178,6 +192,47 @@ public class HealthAttentionServiceWiringTests : IDisposable
             new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)),
             new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
         return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock);
+    }
+
+    private static WorkOrderOutboxItem OutboxItem(int i) => new()
+    {
+        Kind = WorkOrderOutboxKinds.Created, WorkOrderId = i, RecipientUserId = 1, ActorAccount = "admin"
+    };
+
+    [Fact]
+    public void 交辦通知佇列剛好塞滿_沒有丟棄_整體狀態正常()
+    {
+        var store = new WorkOrderOutboxStore(
+            _backend.Blob(WorkOrderOutboxStore.BlobKey), null, new WorkOrderOutboxDropStore(_backend.Blob(WorkOrderOutboxDropStore.BlobKey)));
+
+        var dropped = store.Enqueue(Enumerable.Range(1, WorkOrderOutboxStore.MaxItems).Select(OutboxItem).ToList());
+
+        Assert.Equal(0, dropped);
+        var detail = NewService().GetDetail();
+        Assert.DoesNotContain(detail.StatusReasons, r => r.Key == HealthAttentionKeys.OutboxDropped);
+        Assert.Equal(HealthStatuses.Ok, detail.Status);
+    }
+
+    [Fact]
+    public void 交辦通知佇列塞滿再加一筆_丟棄最舊一筆並讓整體狀態需要注意_超過七天後恢復()
+    {
+        var drops = new WorkOrderOutboxDropStore(_backend.Blob(WorkOrderOutboxDropStore.BlobKey));
+        var store = new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey), null, drops);
+        store.Enqueue(Enumerable.Range(1, WorkOrderOutboxStore.MaxItems).Select(OutboxItem).ToList());
+
+        var dropped = store.Enqueue(OutboxItem(WorkOrderOutboxStore.MaxItems + 1));
+
+        Assert.Equal(1, dropped);
+        var detail = NewService().GetDetail();
+        Assert.Equal(HealthStatuses.Degraded, detail.Status);
+        var reason = Assert.Single(detail.StatusReasons, r => r.Key == HealthAttentionKeys.OutboxDropped);
+        Assert.Contains("丟棄了 1 筆", reason.Text);
+
+        // 把最近一次丟棄時間撥到八天前：條件消失，狀態恢復
+        drops.Update(s => s.LastDroppedAt = DateTime.Now.AddDays(-8));
+        var later = NewService().GetDetail();
+        Assert.DoesNotContain(later.StatusReasons, r => r.Key == HealthAttentionKeys.OutboxDropped);
+        Assert.Equal(HealthStatuses.Ok, later.Status);
     }
 
     [Fact]

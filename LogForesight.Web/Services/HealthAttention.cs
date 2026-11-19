@@ -29,12 +29,13 @@ public static class HealthAttentionKeys
     public const string PrtgSensorsEmpty = "prtgSensorsEmpty";
     public const string PrtgDevicesPurged = "prtgDevicesPurged";
     public const string CertificateTrust = "certificateTrust";
+    public const string OutboxDropped = "outboxDropped";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
         Storage, SlowQueries, FirstSeen, Freshness, PrtgSnapshot, Memory, Crypto,
         Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged,
-        CertificateTrust
+        CertificateTrust, OutboxDropped
     };
 }
 
@@ -75,6 +76,11 @@ public sealed class HealthAttentionInput
     /// <summary>開了「忽略憑證錯誤」卻沒填信任指紋的連線（例如「PRTG」「Sentinel」）：任何憑證都會被接受</summary>
     public IReadOnlyList<string> UnpinnedCertificateBypass { get; init; } = Array.Empty<string>();
 
+    /// <summary>交辦 outbox 近期丟棄的筆數與最近一次丟棄時間（本地時間）；從未丟棄為 0／null。
+    /// 是否「近期」由 <see cref="HealthAttention.Evaluate"/> 以 <see cref="HealthAttention.OutboxDropRecentWindow"/> 判定。</summary>
+    public int OutboxRecentDropped { get; init; }
+    public DateTime? OutboxLastDroppedAt { get; init; }
+
     /// <summary>最近一次 PRTG 同步結果的警告；PRTG 未啟用時為空</summary>
     public IReadOnlyList<PrtgSyncWarning> PrtgSyncWarnings { get; init; } = Array.Empty<PrtgSyncWarning>();
 }
@@ -88,6 +94,9 @@ public static class HealthAttention
 {
     /// <summary>遷移從開始起超過這段時間仍未完成（或有失敗訊息）就視為卡死</summary>
     internal static readonly TimeSpan MigrationStuckAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>交辦 outbox 丟棄後，這段時間內仍列入整體狀態（與 <c>WorkOrderOutboxDropStore.RecentWindow</c> 同值）</summary>
+    internal static readonly TimeSpan OutboxDropRecentWindow = LogForesight.Core.Persistence.WorkOrderOutboxDropStore.RecentWindow;
 
     public static IReadOnlyList<HealthReason> Evaluate(HealthAttentionInput input, DateTime now)
     {
@@ -149,6 +158,10 @@ public static class HealthAttention
             Add(HealthAttentionKeys.MailSuspended, $"郵件設定的{string.Join("、", input.InvalidMailSchedules)}格式不合法，這些摘要不會寄出；請到郵件設定修正為 HH:mm。");
         if (input.RetentionFailure is { } retention)
             Add(HealthAttentionKeys.Retention, $"保留清除有 {retention.Segments.Count} 段失敗（{string.Join("、", retention.Segments)}），其餘段已照常執行。");
+
+        if (input.OutboxRecentDropped > 0 && input.OutboxLastDroppedAt is { } droppedAt && now - droppedAt <= OutboxDropRecentWindow)
+            Add(HealthAttentionKeys.OutboxDropped,
+                $"交辦通知佇列已滿，近期丟棄了 {input.OutboxRecentDropped} 筆最舊的待寄通知（最近一次 {droppedAt:MM/dd HH:mm}）；請檢查郵件是否停擺。");
 
         foreach (var warning in input.PrtgSyncWarnings)
         {

@@ -215,6 +215,7 @@ public class HealthService
         var retentionFailure = RetentionPruner.LastFailure(_backend);
         var prtgSyncWarnings = prtgEnabled ? ReadPrtgSyncWarnings() : Array.Empty<PrtgSyncWarning>();
         var suspendedRecipients = _mail.GetSuspendedRecipients();
+        var outboxDrops = new WorkOrderOutboxDropStore(_backend.Blob(WorkOrderOutboxDropStore.BlobKey)).Get();
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
@@ -245,6 +246,8 @@ public class HealthService
             LastRunSucceeded = runSnapshot.LastOutcome?.Success,
             SuspendedMailRecipients = suspendedRecipients,
             RetentionFailure = retentionFailure,
+            OutboxRecentDropped = outboxDrops.RecentDropped,
+            OutboxLastDroppedAt = outboxDrops.LastDroppedAt,
             PrtgSyncWarnings = prtgSyncWarnings
         }, DateTime.Now);
         var degraded = reasons.Count > 0;

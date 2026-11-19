@@ -312,7 +312,14 @@ public class StorageBackend
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"), Clock);
 
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
-    public PermissionChangeStore PermissionChanges() => new(_dbFactory, Performance);
+    public PermissionChangeStore PermissionChanges() =>
+        new(_dbFactory, Performance, () => PermissionChangeDedupeBackfiller().Ready);
+
+    /// <summary>權限異動去重鍵雜湊欄的背景回填與就緒旗標；全站同一個實例（旗標只升不降，所有 store 共用）。</summary>
+    public PermissionChangeDedupeBackfiller PermissionChangeDedupeBackfiller() =>
+        LazyInitializer.EnsureInitialized(ref _permissionChangeDedupeBackfiller, () => new PermissionChangeDedupeBackfiller(_dbFactory));
+
+    private PermissionChangeDedupeBackfiller? _permissionChangeDedupeBackfiller;
 
     /// <summary>報告全文 store（↔ lf_reports）：同時是 <see cref="IReportSink"/> 與
     /// <see cref="IReportReader"/> 的實作</summary>

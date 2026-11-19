@@ -611,8 +611,8 @@ public class MailNotificationService
                     : null
             }).ToList();
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0) Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
+            // 超過上限的丟棄由 WorkOrderOutboxStore 統一記警告與健康狀態，呼叫端不必各記一次
+            _outbox.Enqueue(items);
             return true;
         }
         catch (Exception ex)
@@ -665,11 +665,7 @@ public class MailNotificationService
                 .ToList();
             if (items.Count == 0) return;
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0)
-            {
-                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
-            }
+            _outbox.Enqueue(items);
         }
         catch (Exception ex)
         {
@@ -704,11 +700,7 @@ public class MailNotificationService
                 }))
                 .ToList();
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0)
-            {
-                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
-            }
+            _outbox.Enqueue(items);
         }
         catch (Exception ex)
         {

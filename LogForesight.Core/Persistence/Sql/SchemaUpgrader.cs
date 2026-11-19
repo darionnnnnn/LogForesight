@@ -253,6 +253,13 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "raw_text",
             isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
 
+        // 去重鍵的固定長度雜湊與一般索引。舊列保留 NULL，由 PermissionChangeDedupeBackfiller 背景分批補齊；
+        // 補齊前四個依去重鍵查詢的方法仍走原鍵比對。
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "dedupe_key_hash",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_dedupe_key_hash", "dedupe_key_hash");
+
         // 報告全文（↔ lf_reports）：三種報告（風險／週檢／權限異動）的完整內容。
         // 唯一索引即 upsert 的判定鍵，**含 host_name**：host_id = 0 是「主機尚未登記」的哨兵值
         // 而不是一台主機，只用 host_id 會讓兩台都還沒登記成功的主機在同一天互相覆蓋。
