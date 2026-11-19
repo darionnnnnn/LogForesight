@@ -132,7 +132,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
 - 不要讓工作流父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）吃到會隨儲存形狀改變的內容：分析當下以記憶體的完整紀錄算、AI 排程與工作流復原以資料庫讀回的紀錄再算，
   兩次不同就會把已完成的 PRTG、AI、郵件腿當成「父紀錄變了」重設，主機日停在「PRTG 待補」。指紋一律以 `RecordStorageShaper.Compact` 的投影計算、與風險等級無關
-  （低風險日寫入時會精簡，風險等級又會在寫入後跨界）；改精簡投影的欄位或指紋內容時，還原路徑要能認得上一版算法（`LegacyParentFingerprint` 的做法），否則升級當下全部既有列重設一次。
+  （低風險日寫入時會精簡，風險等級又會在寫入後跨界），也不含 NetIQ 嘗試狀態與時間（帳本會在批次結束時回寫）；改精簡投影的欄位或指紋內容時，還原路徑要能認得先前各版算法（`LegacyParentFingerprints` 的做法），否則升級當下全部既有列重設一次。
 - 不要讓郵件去重鍵吃到與信件內容無關的狀態：`WorkflowMailIntent` 一律用 `HostDayWorkflowFingerprint.ForMailContent`（AI 已分析／AI 待補／詳情已清除固定為 false），改回 `ForRecord` 就是 AI 寫回後重寄、或留下永遠待送的即時通知項目讓重試空轉。
   即時通知待送項目的終態只在 `MailNotifyStateStore.IsTerminalUrgentStatus` 判定；標成 `superseded` 只限「鍵已不對應本趟候選且該主機日取得到工作流版本」，停用即時通知時不標（重試入口改為不重跑），否則重新啟用後要等下一趟取數才補寄。
 - 不要讓快取鍵的可見主機片段記憶可變集合：`VisibleHostKeyPart` 只對 `FrozenSet<long>` 以物件參考記憶（`VisibilityService.GetVisibleHostIds` 回傳它）；`HashSet` 雖實作 `IReadOnlySet` 但可被修改，這段字串是授權維度。

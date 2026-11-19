@@ -192,7 +192,7 @@ public sealed class HostDayWorkflowRecoveryRevisionTests : IDisposable
             TopIssues = [new LogIssueSignature { LogName = "System", Source = "Disk", EventId = 7, Count = 1, SampleMessages = ["bad block"] }]
         });
         var record = Assert.Single(_backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10).Records);
-        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprint(record);
+        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprints(record)[1];
         Assert.NotEqual(legacy, HostDayWorkflowFingerprint.ForParentRecord(record));
         var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
         workflow.ParentSucceeded(record.HostId, record.Host, day, record.LatestNetiqAttemptAtUtc?.ToString("O"),
