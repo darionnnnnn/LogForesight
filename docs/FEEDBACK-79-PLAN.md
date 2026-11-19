@@ -1,6 +1,6 @@
 # FEEDBACK 第 79 輪規劃：重複造輪子與單點補丁總體檢
 
-> 狀態：規劃完成，待使用者確認後開工（本檔不含任何程式邏輯改動）
+> 狀態：實作完成（feature/feedback-79），待換模型體檢；尚未併 dev
 > 基準：dev@f8e787a4（1.0.78.2；測試基線 Windows 10,985 通過／12 略過、macOS 10,976 通過／21 略過）
 > 來源：使用者要求以整體流程角度盤點「有現成元件或官方解法卻自己寫、涵蓋不足」與「頭痛醫頭的防禦條件」，資安相關從嚴；發現的 bug 一併在本輪處理。
 > 盤點方式：四輪共 22 個唯讀 subagent 分區讀碼，後端每個檔案至少有一個 subagent 從第一行讀到最後一行；主代理抽核影響大的主張。前端完成資安普查（`innerHTML`／連結／URL 組裝全數命中逐一讀碼），七個頁面大檔未逐行讀完，於批次 I 實作時逐頁處理。
@@ -828,3 +828,13 @@
 | I2／I3／I5／I9 | Sonnet 子代理實作、主代理驗收與量測 | 完成 | 前端定向 1,116 筆；突變「列內連結類別錯誤」2 筆轉紅；I9：13 組受影響情境量測，hscroll／overflow／stuck／assert 全 0，主機組 target 4 格（交辦單詳情停用主機成員的主機名連結 22px）修正後重量為 0；儀表板 console 13 格是量測連跑同一使用者觸發自動 AI 節流（HTTP 429），單獨跑為 0，節流計數本輪未改 | I2：`attachRowLink` 把列內第一個非互動格包成真 `<a>`，以 `::after` 延伸點擊區，列保有 `<tr>` 語意；可展開列（rowDetail）維持 button 角色。I3：`bindTabs` 改用 Bootstrap Tab 外掛（角色、方向鍵、Home／End 由外掛管理），hash 同步保留；修正 groups 頁手寫切換會隱藏成員對話框面板的缺陷；permission-changes 的狀態篩選沒有 panel，未套用頁籤。I5：序號改 `createSeqGuard` 13 處、輪詢改 `pollWhile` 3 處、對話框關閉改 `close()` 6 處、欄位錯誤改 `setFieldError` 10 處；守門 `SharedExitGuardUiTests`。主代理另修：交辦詳情主機格改用 `lf-meta-line`、PerUserThrottle 註解錯位 |
 | L1～L10 | Sonnet 子代理實作、主代理驗收 | 完成 | 全量 macOS 11,779 過／27 略過／0 失敗（子代理）；主代理定向 1,566 筆、locked-mode 還原通過；突變「不比對工作階段版號」6 筆轉紅；路由快照基準未重產 | 內建 Cookie Authentication（`lf_session`、HttpOnly、SameSite=Strict、滑動到期沿用 `Jwt:ExpireHours`、24 小時絕對上限以 cookie 內登入起點判斷）。`CookieSessionEvents.ValidatePrincipal` 檢查啟用、工作階段版號、絕對上限，權限版號不符時就地更新並續發。工作階段版號存使用者 JSON blob（serverAdmin 另存 blob），登出與啟用轉停用時遞增。Data Protection 金鑰環存資料目錄 `dataprotection\`、權限限縮、固定 ApplicationName。舊 `lf_auth` cookie 由中介層清除。Secure 跟隨請求並認 `X-Forwarded-Proto`（終止 TLS 的反向代理）。JwtBearer 套件、token 服務、撤銷表、換發中介層移除；Jwt 區段只留 ExpireHours、CookieName。Windows 的 ACL 斷言待 CI |
 | CI 追蹤 | 主代理 | 進行中 | Windows CI：golden 換行修正後只剩快照迴圈 1 筆；macOS 全綠 | 快照迴圈那筆在競態修正後，Windows CI（全量約 22 分鐘，約 macOS 的 7 倍慢）仍逾時。根因已排除，剩每輪的本機日誌落盤在慢機器上超過 5 秒；只對這一筆放寬到 30 秒 |
+
+## 體檢交接
+
+- 範圍：批次 P、A、B、C、G、E、J、F、K、D、H、M、N、I、L 全部實作，逐段提交並推送到 `feature/feedback-79`；每段的驗收、突變與落差見上方執行紀錄。
+- 收官全量（同一個 commit `9bbce9e9`）：macOS 本機 11,779 通過／27 略過／0 失敗；CI Windows 11,794 通過／12 略過／0 失敗、CI macOS 11,779 通過／27 略過。與基準（Windows 10,985／12、macOS 10,976／21）相比，新增約 800 筆測試；macOS 多出的 6 筆略過是 `[WindowsFact]`（F1 事件提供者中繼資料 4 筆、L6 金鑰目錄權限等）。
+- Windows CI 自 G 段起「快照迴圈」測試每次失敗的根因已修（`NoteSkip` 暫停起點與跳過原因的寫入順序競態）；之後 Windows CI 只出現過一次單一 Node 行為案例 5 秒逾時（負載下偶發）。
+- 未在正式環境驗證：SQL Server（D7、D8、J8、N1 只驗到 EF 翻譯）、真實 PRTG／Sentinel 的憑證指紋（以自建自簽 HTTPS 伺服器實測）、Data Protection 金鑰目錄在 IIS 服務帳號下的權限（L6 的 Windows ACL 斷言只在 CI 跑）、Cookie 驗證在 IIS 子 Application 與反向代理後的實際行為。見上方「正式站台實測清單」。
+- 上線影響：升級後全員需重新登入一次（L）；本機來源主機會開始出現「安裝新服務 7045」等告警（F2）；校準匯出的每夜中位數偶數晚數改為平均（H3）。
+- 版號維持 1.0.79.0（實作輪第一個提交已設），體檢修正時再加修訂。
+
