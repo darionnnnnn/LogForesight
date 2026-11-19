@@ -94,9 +94,18 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     // ── 寫入 ─────────────────────────────────────────────────────────────────
 
-    public void Append(DailyAnalysisRecord record)
+    public void Append(DailyAnalysisRecord record) => AppendCore(record, replaceDay: false);
+
+    /// <summary>
+    /// 單日取代：刪該日舊列（主列＋問題子列，範圍與 <see cref="DeleteDays"/> 相同）與寫新列在同一個交易內，
+    /// 寫入擲例外時整個交易回復、舊資料原封不動。持有該主機日鎖，寫入修訂號與 PRTG 追加／AI 附掛等讀改寫路徑的互斥語意同 <see cref="Append"/>。
+    /// </summary>
+    public void ReplaceDay(DailyAnalysisRecord record) => AppendCore(record, replaceDay: true);
+
+    private void AppendCore(DailyAnalysisRecord record, bool replaceDay)
     {
         var sw = Stopwatch.StartNew();
+        var replacedRows = 0;
         var shaped = RecordStorageShaper.ForStorage(record);
         long appendedRecordId = 0;
         // 同主機日已有「只因 PRTG 建立」的紀錄時，日誌分析晚到要原地更新那一列（record id 不變：
@@ -119,6 +128,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             carriedPrtgFindings = null;
             carriedAiPending = false;
+            replacedRows = replaceDay ? DeleteOwnedDayInTransaction(ctx, shaped.Date) : 0;
             var prtgOnly = shaped.LogSource == AnalysisLogSource.Prtg ? null : ctx.DailyRecords
                 .FirstOrDefault(r => r.HostId == shaped.HostId && r.RecordDate == shaped.Date.Date &&
                     r.LogSource == (short)AnalysisLogSource.Prtg);
@@ -201,8 +211,24 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
         UpsertFirstSeen(shaped);
 
-        Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
-            shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);
+        Log.Info("[SQL] {Op} 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，取代舊列 {Replaced}，{Ms}ms",
+            replaceDay ? "ReplaceDay" : "Append", shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count,
+            replacedRows, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>在呼叫端已開啟的交易內刪除此 store 擁有者在該日的主列與問題子列（先子後主，不依賴 FK cascade）；回傳刪除的主列數。</summary>
+    private int DeleteOwnedDayInTransaction(LfDbContext ctx, DateTime date)
+    {
+        var day = date.Date;
+        var total = 0;
+        while (true)
+        {
+            var recordIds = OwnedRows(ctx).Where(r => r.RecordDate == day)
+                .OrderBy(r => r.RecordId).Select(r => r.RecordId).Take(PruneBatchSize).ToList();
+            if (recordIds.Count == 0) return total;
+            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+        }
     }
 
     /// <summary>新列與原地更新共用的欄位填寫（抽出欄必須與 ContentJson 同步）。</summary>

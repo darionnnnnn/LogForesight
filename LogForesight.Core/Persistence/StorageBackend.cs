@@ -327,7 +327,7 @@ public class StorageBackend
         IIssueAggregateQuery issueQuery,
         ISystemSettingsStore settingsStore,
         IKnownIssueRuleStore ruleStore) =>
-        new(_dbFactory, PrtgStore(), issueQuery, settingsStore, ruleStore);
+        new(_dbFactory, PrtgStore(), issueQuery, settingsStore, ruleStore, clock: Clock);
 
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），

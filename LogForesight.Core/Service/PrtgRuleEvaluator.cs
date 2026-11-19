@@ -96,7 +96,8 @@ public static class PrtgRuleEvaluator
         IReadOnlyDictionary<long, string> sensorNames,
         IReadOnlyDictionary<long, string> deviceNames,
         bool includeSilent = true,
-        PrtgSensorLookups? lookups = null)
+        PrtgSensorLookups? lookups = null,
+        DateTime? asOf = null)
     {
         var findings = new List<PrtgFinding>();
         var duplicateWarnings = new List<string>();
@@ -154,6 +155,8 @@ public static class PrtgRuleEvaluator
 
         var dayStart = day.Date;
         var dayEnd = dayStart.AddDays(1);
+        // 評估時刻落在這一天之內（評估日就是今天）時，持續 Down 只算到評估時刻；過去日與未指定時算到當日結束。
+        var downEnd = asOf is { } evaluatedAt && evaluatedAt > dayStart && evaluatedAt < dayEnd ? evaluatedAt : dayEnd;
 
         var sensorTypes = lookups.Types;
 
@@ -189,7 +192,7 @@ public static class PrtgRuleEvaluator
             // 1. 持續 Down（RuleDown）
             if (SelectRule(RuleDown, sensorCategory) is { } downRule)
             {
-                var relevantChanges = allSensorChanges.Where(c => c.ChangedAt < dayEnd).ToList();
+                var relevantChanges = allSensorChanges.Where(c => c.ChangedAt < downEnd).ToList();
                 if (relevantChanges.Count > 0)
                 {
                     var lastChange = relevantChanges[relevantChanges.Count - 1];
@@ -203,7 +206,7 @@ public static class PrtgRuleEvaluator
 
                         var enteredDownAt = relevantChanges[downStartIndex].ChangedAt;
                         var effectiveStart = enteredDownAt < dayStart ? dayStart : enteredDownAt;
-                        var durationMinutes = (int)(dayEnd - effectiveStart).TotalMinutes;
+                        var durationMinutes = Math.Max(0, (int)(downEnd - effectiveStart).TotalMinutes);
 
                         if (durationMinutes >= downRule.PrtgThreshold)
                         {

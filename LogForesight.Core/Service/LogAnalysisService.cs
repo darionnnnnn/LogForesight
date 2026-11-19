@@ -178,10 +178,13 @@ public class LogAnalysisService
     {
         if (replaceExisting)
         {
-            _historyService.DeleteDays(new[] { targetDate.Date });
+            // 刪舊日與寫新日同一個交易：寫入失敗時舊紀錄仍在
+            _historyService.ReplaceDay(record);
         }
-
-        _historyService.Append(record);
+        else
+        {
+            _historyService.Append(record);
+        }
 
         Log.Info("完成分析 {Date:yyyy-MM-dd}：風險={Risk}, 錯誤={Errors}, 警告={Warnings}, 稽核={Audit}, " +
                  "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告參照={ReportFile}",

@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models.Dto;
@@ -692,6 +693,34 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(0, bruteforceIssue.EventId);
         Assert.Equal(10, bruteforceIssue.Count);
         Assert.Equal(IssueSeverity.High, bruteforceIssue.Severity);
+    }
+
+    [Fact]
+    public async Task 帳本某主機日的回執損毀_該台自癒覆寫_兩台都照常分析不計入失敗()
+    {
+        var sentinel = AddSentinel();
+        var a = AddLinuxHost(sentinel, "10.0.0.8", "HOST-L1");
+        var b = AddLinuxHost(sentinel, "10.0.0.9", "HOST-L2");
+        var yesterday = DateTime.Today.AddDays(-1);
+        using (var ctx = _backend.CreateContext())
+        {
+            ctx.LogLines.Add(new LogLineRow { LogKey = NetiqSourceAttempt.LogKey(yesterday, b.HostId), Line = "{malformed", CreatedAt = DateTime.Now });
+            ctx.SaveChanges();
+        }
+        _client.Responder = _ =>
+        {
+            var events = new[] { "10.0.0.8", "10.0.0.9" }
+                .SelectMany(ip => Enumerable.Range(0, 10).Select(i => LinuxBruteforceEvent(ip, i))).ToArray();
+            return new SentinelSearchResult { Events = events, Found = events.Length, State = SentinelJobState.Completed };
+        };
+
+        var result = await MakePipeline(useAi: false).RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(2, result.HostDaysAnalyzed);
+        Assert.Equal(0, result.HostsFailed);
+        var ledger = NetiqSourceAttempt.ReadLatest(_backend, yesterday, yesterday); // 損毀列已覆寫，讀取不再擲例外
+        Assert.Equal(NetiqAttemptStatus.Success, ledger[(a.HostId, yesterday)].Status);
+        Assert.Equal(NetiqAttemptStatus.Success, ledger[(b.HostId, yesterday)].Status);
     }
 
     /// <summary>

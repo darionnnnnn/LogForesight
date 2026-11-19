@@ -236,7 +236,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 刪除一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本，與保留期清除同一套保護。
 鏡像沒有裝置、今天沒有任何主機對上、重算期間人工對應／IP 排除持續變動（範圍版本前後不一致，最多重算三次）或任何一步失敗時不刪、不記版本，下次啟動再試（`PrtgHostMapRefresher.TryApplyRuleUpgrade`）。
 `PrtgEnabled` 關閉時不執行，之後啟用要等下次啟動。升級刪除舊對應後，校準（§11）的「狀態變更涵蓋天數」要從升級日重新累積。
-校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收。
+校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收；某日採哪份對應與規則歸戶同一個選法（只採含 ok 列的整份對應，`EfPrtgStore.FindOkHostMapDateOnOrBefore` 是 `GetHostMapForDay` 往回找的那一段），最新一份全是 unmatched 時採較早那份有效對應。
 
 ### 位址怎麼比對
 
@@ -585,6 +585,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
   感測器摘要、type 輪廓（24 小時曲線，資料庫端聚合）、規則門檻（逐日命中、以最低門檻重評的 magnitude 樣本與 P50／P90／P99、`CurrentRules`）、
   數值取得量級、殘留判定指標（不含帳號名稱，與正式判定共用 `ResidualCredentialDetector.EvaluateMetrics`）。`detail=summary` 只匯出摘要。
   第 4 版新增：值型基線 `KeyMetrics` 的 `SnapshotLastSuccessAt`、`SnapshotConsecutiveFailures`、`SnapshotStopReason`、`SnapshotBackingOff`（讓匯出檔自己回答「快照為什麼沒資料」；`SnapshotStopReason` 是待寫檔停止碼，沒有停止時是快照目前的跳過原因）；殘留候選的 `RecurringGroupCount`、`RecurringGroupShare`（最大組以外跨日重現 ≥ 2 天的組數與其明細占比）；warning 樣本的 `ValueChange7d`（近 7 日已用百分比變化，算不到為 null）。舊欄位名稱與意義不變。
+- 規則門檻重放的「現在」取自注入的時鐘（`StorageBackend.Clock`）：評估日是今天時，當日仍 Down 的持續分鐘只算到評估時刻（`PrtgRuleEvaluator.Evaluate` 的 `asOf`），不算到午夜；過去日照算到當日結束。每日管線不傳 `asOf`。
 - 匯出閘門：四項皆達「可用」才解鎖，否則勾「仍要匯出」覆寫；兩者都寫稽核。
 
 **使用效果**（維護頁頁籤，`PrtgEffectivenessService`）：期間內 PRTG finding 數、低涵蓋取樣小時、建立的案件與交辦、已回覆、已抑制、靜音 profile、

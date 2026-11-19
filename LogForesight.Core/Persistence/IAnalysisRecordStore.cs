@@ -45,6 +45,12 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// <summary>寫入每日分析紀錄。契約：append-only，且不保證同日去重——去重由呼叫端以 <see cref="IAnalysisRecordReader.HasRecord"/> 防護</summary>
     void Append(DailyAnalysisRecord record);
 
+    /// <summary>
+    /// 交易式的單日取代：刪除此 store 擁有者在 <c>record.Date</c> 那天的舊列（範圍與 <see cref="DeleteDays"/> 相同）並寫入新紀錄，
+    /// 兩者在同一個資料庫交易內——寫入失敗時舊資料仍在。重跑覆蓋既有日期時一律用它，不要分開呼叫 DeleteDays 與 <see cref="Append"/>。
+    /// </summary>
+    void ReplaceDay(DailyAnalysisRecord record);
+
     /// <summary>清除超過保留天數的舊紀錄，回傳清除筆數</summary>
     int Prune(int retentionDays);
 

@@ -475,6 +475,7 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 （`OwnedRows` 範圍）在指定日期上的分析紀錄，回傳刪除的主列筆數。規則更新後重新分析舊日子時，
 在寫入新結果前呼叫（見 [WEB-SPEC.md](WEB-SPEC.md) §10.9）。
 
+- **交易式單日取代**：重跑覆蓋既有日期一律用 `IAnalysisRecordStore.ReplaceDay(record)`——刪該日舊列（範圍同上）與寫新列在同一個交易內（包在 execution strategy 裡，SQLite 與 SQL Server 同一份程式），寫入擲例外時舊資料原封不動；持有該主機日鎖，寫入修訂號與 `Append` 同語意。NetIQ 路徑與本機路徑都走它，不要再分開呼叫 `DeleteDays` 與 `Append`。
 - **刪除範圍**：`lf_daily_records` 主列＋`lf_top_issues` 子列。類別彙總／告警／深入分析目前寫在
   `content_json` 內（尚未各自成表），隨主列一併消失；`lf_risky_events` 每日寫入本就是 `ReplaceDay`，
   重跑時自然覆蓋，不需另刪。
@@ -1143,7 +1144,7 @@ lf_prtg_transfer_chunks                              -- 診斷包原始片段
 
 ### NetIQ 最新取數嘗試帳本
 
-NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。不新增 Daily 父列，也不代替父資格。
+NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。寫入時某主機日的最新一列損毀（超大、無法解析、主機或日期對不上、狀態未知）只影響該主機日：記警告並以本次回執覆寫同一列（累計截斷／重查計數從本次重新起算），同批其餘主機照常寫入，讀取端因此不再被該列擋住。呼叫端（`NetiqPipelineService.TryRecordAttempt`）對帳本寫入失敗只記警告，不把整台 Sentinel 記成失敗，也不重複計入已分析主機日的失敗。不新增 Daily 父列，也不代替父資格。
 
 RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 CreatedAt 判保留期；每批 5,000、單輪最多 200,000，剩餘留後續輪次。更新與讀取保留原 NetIQ 判定內容、案件與人工回覆，父日的 LatestNetiqAttemptStatus 同步標示失敗或 retained-incomplete，使正式補強 consumer 等待。狀態帳本的 3,000 主機 provider 驗證不代表完整 PRTG 容量／180日保留通過。
 

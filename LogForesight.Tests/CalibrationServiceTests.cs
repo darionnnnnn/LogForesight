@@ -273,11 +273,11 @@ public class CalibrationServiceTests : IDisposable
             Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability",
             Status = "Up", Paused = false
         }], now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow
-        {
-            MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1",
-            MapStatus = PrtgMapStatus.Ok, CreatedAt = now
-        }]);
+        // 第二台裝置讓這一天的整份對應含 ok 列（只採含 ok 列的整份對應）；下面把裝置 10 那一列改成超長
+        store.ReplaceHostMapForDate(anchor, [
+            new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now },
+            new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 11, HostId = 2, HostName = "HOST-2", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        ]);
         store.UpsertValues([new PrtgValueRow
         {
             SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50,

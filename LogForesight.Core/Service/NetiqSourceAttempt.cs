@@ -18,6 +18,7 @@ public static class NetiqSourceAttempt
     private const int MaxLineChars = 4096;
     private static IReadOnlySet<string> KnownStatuses => NetiqAttemptStatus.Known;
     private static readonly object WriteLock = new();
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
     /// <param name="TruncatedRuns">累計幾趟結果為截斷類（帳本每個主機日只留最新一列，累計要跟著回執走；舊資料缺欄為 0）</param>
     /// <param name="RetryRuns"><paramref name="RetryDay"/> 那天有幾趟需要重查</param>
@@ -71,12 +72,14 @@ public static class NetiqSourceAttempt
         if (at > DateTime.UtcNow.AddMinutes(5)) throw new ArgumentOutOfRangeException(nameof(attemptAtUtc), "Attempt timestamp cannot be in the future.");
         var ids = hostIds.Where(id => id > 0).Distinct().ToArray();
         if (ids.Length == 0) return; // e.g. recorder startup without an assigned run ID; never block source processing.
+        var repaired = new List<(string Key, string Reason, long HostId)>();
         lock (WriteLock)
         {
             using var probe = backend.CreateContext();
             var strategy = probe.Database.CreateExecutionStrategy();
             strategy.Execute(() =>
             {
+                repaired.Clear();
                 using var ctx = backend.CreateContext();
                 using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
                 foreach (var idChunk in ids.Chunk(500))
@@ -95,12 +98,22 @@ public static class NetiqSourceAttempt
                         var line = JsonSerializer.Serialize(receipt.AfterPrevious(null));
                         if (existing.TryGetValue(key, out var row))
                         {
-                            if (row.Length > MaxLineChars) throw new InvalidDataException("NetIQ attempt ledger receipt is oversized.");
-                            Receipt? previous;
-                            try { previous = JsonSerializer.Deserialize<Receipt>(row.Line); }
-                            catch (JsonException ex) { throw new InvalidDataException("NetIQ attempt ledger contains malformed data.", ex); }
-                            if (previous == null || !KnownStatuses.Contains(previous.Status) || previous.HostId != receipt.HostId || previous.Date.Date != date)
-                                throw new InvalidDataException("NetIQ attempt ledger contains an invalid or unknown receipt.");
+                            // 這一列損毀（過長、無法解析、主機或日期對不上、狀態未知）只影響這一個主機日：
+                            // 記警告後以這次的回執覆寫同一列（累計截斷／重查計數從這次重新起算，多重查最多一趟），
+                            // 其餘主機照常寫入。跳過不寫的話這列永遠壞著，ReadLatest／ReadHistory 讀該日會一直擲例外。
+                            var previous = ParsePreviousReceipt(row.Length, row.Line, receipt, date, out var corruption);
+                            if (previous == null)
+                            {
+                                // 警告留到交易提交後再記：執行紀錄的 NLog target 會寫同一個資料庫，交易中記 log 會與自己的寫入鎖互等
+                                repaired.Add((key, corruption, receipt.HostId));
+                                line = JsonSerializer.Serialize(receipt.AfterPrevious(null));
+                                var repair = new LogLineRow { Seq = row.Seq, LogKey = key, Line = line, CreatedAt = DateTime.Now };
+                                ctx.Attach(repair);
+                                ctx.Entry(repair).Property(entity => entity.Line).IsModified = true;
+                                ctx.Entry(repair).Property(entity => entity.CreatedAt).IsModified = true;
+                                acceptedHostIds.Add(receipt.HostId);
+                                continue;
+                            }
                             if (previous.RunId > receipt.RunId || (previous.RunId == receipt.RunId && previous.AttemptAtUtc > receipt.AttemptAtUtc)) continue;
                             line = JsonSerializer.Serialize(receipt.AfterPrevious(previous));
                             var update = new LogLineRow { Seq = row.Seq, LogKey = key, Line = line, CreatedAt = DateTime.Now };
@@ -149,6 +162,24 @@ public static class NetiqSourceAttempt
                 tx.Commit();
             });
         }
+        foreach (var (key, reason, hostId) in repaired)
+            Log.Warn("NetIQ 嘗試帳本 {Key} 的最新一列損毀（{Reason}），已以本次回執覆寫（主機 {HostId}）", key, reason, hostId);
+    }
+
+    /// <summary>解析帳本最新一列；損毀回 null 並說明原因（呼叫端覆寫該列）。</summary>
+    private static Receipt? ParsePreviousReceipt(int length, string line, Receipt incoming, DateTime date, out string reason)
+    {
+        reason = string.Empty;
+        if (length > MaxLineChars) { reason = "oversized"; return null; }
+        Receipt? previous;
+        try { previous = JsonSerializer.Deserialize<Receipt>(line); }
+        catch (JsonException) { reason = "malformed"; return null; }
+        if (previous == null || !KnownStatuses.Contains(previous.Status) || previous.HostId != incoming.HostId || previous.Date.Date != date)
+        {
+            reason = "invalid or unknown receipt";
+            return null;
+        }
+        return previous;
     }
 
     private sealed class ParentMetadataRow

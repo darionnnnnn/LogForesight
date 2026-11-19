@@ -3,6 +3,7 @@ using System.Data;
 using System.Data.Common;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
+using LogForesight.Core.Time;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using Microsoft.EntityFrameworkCore;
@@ -161,7 +162,7 @@ public sealed class CalibrationRuleThresholdDataset
     public List<PrtgRuleHitAggregate> DailyRuleHits { get; init; } = new();
     public List<CalibrationPrtgRuleThresholdInfo> CurrentRules { get; init; } = new();
     public int MagnitudeSemanticsVersion { get; init; } = 3;
-    public string MagnitudeBasis { get; init; } = "state-change-messages-v1; Down Magnitude is minutes still Down at the end of the day (clipped to the day); Warning is daily cumulative minutes; Flapping is daily Down-to-Up transitions.";
+    public string MagnitudeBasis { get; init; } = "state-change-messages-v1; Down Magnitude is minutes still Down at the end of the day (clipped to the day; for today, up to the evaluation time); Warning is daily cumulative minutes; Flapping is daily Down-to-Up transitions.";
     public string FormalEvaluationScope { get; init; } = "state-change-messages";
     public List<string> FormalEvaluationSupportedRuleCodes { get; init; } = new()
     {
@@ -363,6 +364,8 @@ public sealed class CalibrationService
     private readonly IKnownIssueRuleStore _ruleStore;
     private readonly string _backendCacheIdentity;
     private readonly PrtgCalibrationCaptureLimits _captureLimits;
+    /// <summary>「今天」「現在」的唯一來源（規則重放的評估時刻與預設錨點日）；正式站台為系統時鐘。</summary>
+    private readonly TimeProvider _clock;
 
     /// <summary>
     /// 快照服務目前狀態的讀取點（Core 不認識 Web 的快照服務，由 Web 組裝時注入）；沒接上時四個快照欄位回預設值。
@@ -375,8 +378,10 @@ public sealed class CalibrationService
         IIssueAggregateQuery issueQuery,
         ISystemSettingsStore settingsStore,
         IKnownIssueRuleStore ruleStore,
-        PrtgCalibrationCaptureLimits? captureLimits = null)
+        PrtgCalibrationCaptureLimits? captureLimits = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _contextFactory = contextFactory ?? throw new ArgumentNullException(nameof(contextFactory));
         _prtgStore = prtgStore ?? throw new ArgumentNullException(nameof(prtgStore));
         _issueQuery = issueQuery ?? throw new ArgumentNullException(nameof(issueQuery));
@@ -430,7 +435,7 @@ public sealed class CalibrationService
         using var budget = new PrtgCalibrationCaptureBudget();
         try
         {
-            var anchorDate = (anchor ?? DateTime.Today).Date;
+            var anchorDate = (anchor ?? _clock.LocalToday()).Date;
             var settings = _settingsStore.Get();
             var from = anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
             var toExclusive = anchorDate.AddDays(1);
@@ -456,7 +461,7 @@ public sealed class CalibrationService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var anchorDate = DateTime.Today;
+            var anchorDate = _clock.LocalToday();
             var settings = _settingsStore.Get();
             var capture = _prtgStore.CaptureCalibrationData(anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1)),
                 anchorDate.AddDays(1), settings.PrtgSensorTypeWhitelist, anchorDate, _captureLimits, cancellationToken, budget);
@@ -593,7 +598,7 @@ public sealed class CalibrationService
     private CalibrationExportPackage BuildExportPackageCore(DateTime? anchor, bool summaryOnly,
         CancellationToken cancellationToken, PrtgCalibrationCaptureBudget budget)
     {
-        var anchorDate = (anchor ?? DateTime.Today).Date;
+        var anchorDate = (anchor ?? _clock.LocalToday()).Date;
         var now = DateTime.Now;
         var settings = _settingsStore.Get();
         var valueBaselineFrom = anchorDate.AddDays(-(CalibrationConstants.ValueBaselineWindowDays - 1));
@@ -1930,13 +1935,11 @@ public sealed class CalibrationService
         var deviceIds = sensorStatuses.Select(s => s.DeviceObjid).Distinct().ToArray();
         for (var day = from.Date; day <= to.Date; day = day.AddDays(1))
         {
-            var cutoff = day.Date.AddDays(-29);
             using var ctx = _contextFactory();
-            // 刻意不走 EfPrtgStore.FindLatestHostMapDate 的「往後沿用」（docs/PRTG-SPEC.md §4、§11）：校準以「那天已有對應」
+            // 與規則歸戶同一個選法（EfPrtgStore.FindOkHostMapDateOnOrBefore：只採含 ok 列的整份對應）。
+            // 刻意不接 FindHostMapDateForDay 的「往後沿用」（docs/PRTG-SPEC.md §4、§11）：校準以「那天已有對應」
             // 作為 PRTG 資料當天確實在收的證據來判斷資料量夠不夠；沿用之後的對應會把還沒收資料的日子算成涵蓋，讓門檻誤判為可用。
-            var latestDate = ctx.PrtgHostMaps.AsNoTracking()
-                .Where(m => m.MapDate >= cutoff && m.MapDate <= day.Date)
-                .Max(m => (DateTime?)m.MapDate);
+            var latestDate = EfPrtgStore.FindOkHostMapDateOnOrBefore(ctx, day, PrtgHostMapLookup.LatestLookbackDays);
             if (latestDate == null)
             {
                 rowsByDay[day] = [];
@@ -2124,9 +2127,11 @@ public sealed class CalibrationService
             if (!forceRefresh && _cachedRuleMagnitudeAnalysis is { } cached && cached.SourceFingerprint == sourceFingerprint && DateTime.Now - _cachedRuleMagnitudeAt < CacheTtl)
                 return cached;
 
-        var capturedNow = DateTimeOffset.Now;
+        var capturedNow = _clock.GetLocalNow();
         var anchorDayEnd = new DateTimeOffset(DateTime.SpecifyKind(anchor.Date.AddDays(1), DateTimeKind.Local));
-        var evaluationAsOf = anchor.Date < DateTime.Today ? anchorDayEnd : capturedNow;
+        var evaluationAsOf = anchor.Date < _clock.LocalToday() ? anchorDayEnd : capturedNow;
+        // 評估日是今天時，當日的持續 Down 只算到評估時刻；過去日照算到當日結束
+        DateTime? dayAsOf = anchor.Date < _clock.LocalToday() ? null : capturedNow.DateTime;
         var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
             $"{sourceFingerprint}|asof:{evaluationAsOf:O}")));
         var explanations = new List<string>();
@@ -2163,7 +2168,8 @@ public sealed class CalibrationService
                 var changes = stateChangeWindow.ForDay(day);
                 if (changes.Count == 0) continue;
                 foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, magnitudeInputs, lowRules,
-                             emptyNames, emptyNames, includeSilent: false, lookups: magnitudeLookups))
+                             emptyNames, emptyNames, includeSilent: false, lookups: magnitudeLookups,
+                             asOf: day == to ? dayAsOf : null))
                 {
                     if (samples.Count >= MaxMagnitudeSamplesForCalibration) { capacityExceeded = true; break; }
                     samples.Add(new CalibrationRuleMagnitudeRow(finding.RuleCode, day, finding.DeviceObjid, finding.SensorObjid,
@@ -2171,7 +2177,8 @@ public sealed class CalibrationService
                 }
                 if (capacityExceeded) break;
                 foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, formalInputs, allRules,
-                             emptyNames, emptyNames, includeSilent: false, lookups: formalLookups))
+                             emptyNames, emptyNames, includeSilent: false, lookups: formalLookups,
+                             asOf: day == to ? dayAsOf : null))
                 {
                     totalHits++;
                     if (finding.RuleCode == PrtgRuleEvaluator.RuleDown) downHits++;

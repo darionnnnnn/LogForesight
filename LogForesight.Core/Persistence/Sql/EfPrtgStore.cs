@@ -1564,7 +1564,8 @@ public sealed class EfPrtgStore
         if (sensors.Count != sensorCount)
             throw CalibrationCapacity("PRTG sensor mirror 在擷取期間變更，請重試。");
 
-        var mapDate = FindLatestHostMapDate(ctx, PrtgHostMapLookup.LatestLookbackDays, mapAnchor);
+        // 與規則歸戶同一個選法（只採含 ok 列的整份對應）；最新一份全是 unmatched 時採較早那份有效對應
+        var mapDate = FindHostMapDateForDay(ctx, mapAnchor, PrtgHostMapLookup.LatestLookbackDays);
         var maps = new List<PrtgHostMapRow>();
         if (mapDate.HasValue)
         {
@@ -2410,10 +2411,20 @@ public sealed class EfPrtgStore
     {
         if (lookbackDays <= 0) return null;
         var dayDate = day.Date;
-        var cutoff = dayDate.AddDays(-(lookbackDays - 1));
-        var onOrBefore = BuildOkMapDatesQuery(ctx.PrtgHostMaps, cutoff, dayDate).Max(d => (DateTime?)d);
+        var onOrBefore = FindOkHostMapDateOnOrBefore(ctx, dayDate, lookbackDays);
         if (onOrBefore != null) return onOrBefore;
         return BuildOkMapDatesQuery(ctx.PrtgHostMaps, dayDate.AddDays(1), DateTime.Today).Min(d => (DateTime?)d);
+    }
+
+    /// <summary>
+    /// (day - lookbackDays, day]（含 day）內「含 ok 列」的最晚對應日期；不往後沿用。
+    /// <see cref="FindHostMapDateForDay"/> 的第一段，也是校準「那天已有對應」判斷的唯一取法（兩邊才會選到同一份）。
+    /// </summary>
+    internal static DateTime? FindOkHostMapDateOnOrBefore(LfDbContext ctx, DateTime day, int lookbackDays)
+    {
+        if (lookbackDays <= 0) return null;
+        var dayDate = day.Date;
+        return BuildOkMapDatesQuery(ctx.PrtgHostMaps, dayDate.AddDays(-(lookbackDays - 1)), dayDate).Max(d => (DateTime?)d);
     }
 
     /// <summary>[from, to]（含）內「含 ok 列」的對應日期（可重複）；供 <see cref="GetHostMapForDay"/> 取 Max／Min。</summary>
