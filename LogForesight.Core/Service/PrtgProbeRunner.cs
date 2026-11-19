@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -265,7 +266,7 @@ public static class PrtgProbeRunner
                 if (string.IsNullOrWhiteSpace(d.Host)) continue;
                 withHost++;
                 var normalized = PrtgAddress.Normalize(d.Host);
-                if (normalized != null && IPAddress.TryParse(normalized, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
+                if (normalized != null && IpSyntax.TryParse(normalized, out var ip) && ip!.AddressFamily == AddressFamily.InterNetwork)
                 {
                     ipv4Count++;
                 }

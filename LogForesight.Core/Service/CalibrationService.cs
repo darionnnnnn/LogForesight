@@ -1399,6 +1399,7 @@ public sealed class CalibrationService
             _previousTempStore = previousTempStore;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "temp_store 的值是同一連線先前以 PRAGMA 讀回的整數")]
         public static CalibrationReadSnapshot Begin(LfDbContext context)
         {
             var connection = context.Database.GetDbConnection();
@@ -1464,6 +1465,7 @@ public sealed class CalibrationService
             catch (CalibrationCapacityException) { throw; }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "temp_store 的值是同一連線先前以 PRAGMA 讀回的整數")]
         public void Dispose()
         {
             _transaction.Dispose();

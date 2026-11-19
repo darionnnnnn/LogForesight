@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <RunSettingsFilePath>$(MSBuildThisFileDirectory)test.runsettings</RunSettingsFilePath>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
@@ -10,15 +10,18 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-        <PackageReference Include="xunit" Version="2.9.2" />
-        <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="xunit" />
+        <PackageReference Include="xunit.runner.visualstudio" />
         <!-- SQL 後端合約測試以 SQLite in-memory 跑同一組案例（provider 中立驗證，正式環境為 SqlServer） -->
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
         <!-- 授權矩陣：真 JWT＋真路由＋真 VisibilityService 的站台組裝測試（LogForesight.Tests/Authorization） -->
-        <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     </ItemGroup>
 
+    <ItemGroup>
+        <AdditionalFiles Include="BannedSymbols.txt" />
+    </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\LogForesight.Core\LogForesight.Core.csproj" />
         <ProjectReference Include="..\LogForesight.Web\LogForesight.Web.csproj" />

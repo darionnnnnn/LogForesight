@@ -28,7 +28,7 @@ LogForesight.Core/     Web 共用的類別庫（分析邏輯的所在地）
 └── Service/            AnalysisOrchestrator（分析主流程單一入口）、排程計算、NetIQ 機房分析
                          pipeline、體檢——Web 排程與立即執行皆呼叫同一份
 
-LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC，.NET 8）：
+LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC，.NET 10）：
 │                       排程設定＋立即執行（AnalysisOrchestrator 的呼叫端）、儀表板、問題查詢、
 │                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動檢核
 │                       （表格＋篩選/排序/分頁，可依類別批次核准，見 docs/WEB-SPEC.md §9.5）、
@@ -794,7 +794,12 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 
 站台可以掛在 IIS 網站底下的 Application，網址帶前綴（`http://host/LogForesight/...`）：
 
-1. 主機安裝 **ASP.NET Core Hosting Bundle**（IIS 要靠它託管 .NET 8 應用程式）。
+1. 主機安裝 **ASP.NET Core 10 Hosting Bundle**（IIS 要靠它託管 .NET 10 應用程式）。從 .NET 8 版升級時要**先裝再部署**：
+   沒裝就部署，瀏覽器會看到 IIS 的「HTTP Error 500.31 - Failed to load ASP.NET Core runtime」，
+   事件檢視器記錄找不到 `Microsoft.NETCore.App` 10.0。裝完 Hosting Bundle 要重啟 IIS（`iisreset`）才會生效。
+   主機不能安裝執行階段時，改用自帶執行階段的發行方式（輸出目錄較大，但不依賴主機上的執行階段）：
+   `dotnet publish LogForesight.Web -c Release -r win-x64 --self-contained true`。
+   退回 .NET 8 版的舊發行目錄不需要移除 .NET 10 的 Hosting Bundle（兩版可並存）。
 2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。在 git 工作目錄內建置才會帶 commit，部署後到「設定 > 系統健康」核對版本（顯示「建置時未取得版本識別」就分不出部署了哪一版）。
 3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
 4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
@@ -850,7 +855,7 @@ SQLite 使用 WAL 日誌模式（`Storage:SqliteWal`，預設 true）：資料�
 
 正式環境是 Windows；macOS 可以開發、建置、跑測試與啟動站台。
 
-需要 .NET 8 SDK 與 Node.js 22.7 以上（前端行為測試用，Homebrew 安裝即可）。Windows 開發機的 Node 下限相同。
+需要 .NET 10 SDK 與 Node.js 22.7 以上（前端行為測試用，Homebrew 安裝即可）。Windows 開發機的 Node 下限相同。
 
 SDK 用 `dotnet-install` 裝在 `~/.dotnet` 時，要自己把它加進 PATH：
 

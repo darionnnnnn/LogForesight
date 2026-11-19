@@ -37,6 +37,8 @@ public static class IpSyntax
     /// 嚴格版的 <c>IPAddress.TryParse</c>：含 ':' 視為 IPv6 交給框架判定；否則必須先通過
     /// <see cref="IsStrictIpv4"/> 才解析，簡寫與十六進位寫法一律回 false。
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ApiDesign", "RS0030",
+        Justification = "唯一允許呼叫 IPAddress.TryParse 的地方：先以 IsStrictIpv4 擋掉簡寫與十六進位寫法")]
     public static bool TryParse(string? value, out IPAddress? address)
     {
         address = null;

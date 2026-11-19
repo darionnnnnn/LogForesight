@@ -16,7 +16,7 @@ import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDa
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
-import { disclosure } from '../core/elements.js';
+import { disclosure, statusNote } from '../core/elements.js';
 
 /* 色值於執行期讀樣式表語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
@@ -2098,8 +2098,8 @@ function updateRerunModeUI() {
         }
     } else {
         if (warningEl) {
-            warningEl.className = `alert alert-${config.variant} py-2 px-3 mb-3`;
-            warningEl.textContent = config.consequence;
+            warningEl.className = 'mb-3';
+            warningEl.replaceChildren(statusNote(config.variant === 'danger' ? 'error' : 'warning', config.consequence));
             warningEl.hidden = false;
         }
     }

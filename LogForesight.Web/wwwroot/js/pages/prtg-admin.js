@@ -2762,10 +2762,18 @@ function bindPrtgDataTransfer() {
     let operationBusy = false;
     let pending = null;
     let storageKey = null;
+    // 結果訊息走共用出口：失敗／成功用 statusNote（含圖示與 role），一般進度用說明文字角色
     const show = (message, style = 'muted') => {
         if (!importResult) return;
-        importResult.className = `small mb-2 text-${style}`;
-        importResult.textContent = message;
+        importResult.className = 'mb-2';
+        if (style === 'muted') {
+            const text = document.createElement('span');
+            text.className = 'lf-text-meta';
+            text.textContent = message;
+            importResult.replaceChildren(text);
+        } else {
+            importResult.replaceChildren(statusNote(style === 'danger' ? 'error' : style, message));
+        }
     };
     const savePending = value => {
         pending = value;

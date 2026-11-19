@@ -2061,8 +2061,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處。
     /// **排除 detail_pruned（體檢輪）**：詳情已清的列 ContentJson 是空字串，AI 輸入無法重建，
     /// 掛在待補集合裡只會被反覆撿起又失敗（或以殘根做出垃圾分析）。</summary>
-    private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query) =>
-        query.Where(r => r.AiPending && !r.DetailPruned);
+    // 以參數比較而不是直接寫 r.AiPending && !r.DetailPruned：EF Core 10 對 SQLite 把布林欄翻成裸欄位
+    // （WHERE "ai_pending" AND NOT "detail_pruned"），SQLite 規劃器無法拿裸欄位走 (ai_pending, …) 索引而整表掃描；
+    // 寫成與參數比較才會翻成 = @p，可走索引（QueryPlanGuardTests 守住）。SQL Server 兩種寫法都會翻成 = 比較，沒有差別。
+    // 必須是區域變數（閉包欄位才會被參數化）；常數與 static readonly 會被內嵌後化簡回裸欄位。
+    private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query)
+    {
+        var pending = true;
+        var pruned = false;
+        return query.Where(r => r.AiPending == pending && r.DetailPruned == pruned);
+    }
 
     private static Dictionary<long, List<LogIssueSignature>> LoadLightweightIssues(LfDbContext ctx, HashSet<long> recordIds)
     {

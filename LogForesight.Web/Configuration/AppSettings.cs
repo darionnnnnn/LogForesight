@@ -99,7 +99,7 @@ public class WebAppSettings
 
         foreach (var proxy in Server.TrustedProxies)
         {
-            if (!System.Net.IPAddress.TryParse((proxy ?? "").Trim(), out _))
+            if (!LogForesight.Core.Models.IpSyntax.TryParse(proxy, out _))
                 errors.Add($"Server:TrustedProxies 含有不是 IP 位址的值「{proxy}」（只能填反向代理的 IP，例如 10.0.0.5）。");
         }
 

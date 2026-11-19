@@ -2,7 +2,7 @@
 
 LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event Log／Linux syslog），
 以確定性規則／趨勢／關聯層**提早發現硬體故障前兆與入侵跡象**；地端小模型只把結論翻成白話。
-唯一的執行與查詢介面是 `LogForesight.Web`（ASP.NET Core MVC，.NET 8）。
+唯一的執行與查詢介面是 `LogForesight.Web`（ASP.NET Core MVC，.NET 10）。
 
 這份檔案是**地圖不是百科**：先在這裡定位，再開對應文件。別把規劃內容寫回 README。
 
@@ -148,13 +148,13 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   資料保留清除（`EfIssueCaseStore.Expired`）依同一定義保留仍有效的案件——兩邊定義分岔，處理人判定的不處理就會在保留期後悄悄失效。
 - 不要拿版本號判斷站台部署了哪個 commit：版本號在同一個修訂內不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.70.0+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
-- 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
+- 不要用 `IPAddress.TryParse`／`Parse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`。由編譯器以符號比對禁用（根目錄 `BannedSymbols.txt`，`RS0030` 是建置錯誤），合法使用處以 `[SuppressMessage]` 附理由放行。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
   Core 擲給 Web 需要特定狀態碼的錯誤，用專屬例外型別交給 `ApiExceptionFilter` 對應（如 `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`），不要在控制器比對例外訊息字串。
 - 不要拿 `FileShare.Read` 當跨行程鎖：Unix 上 .NET 以 `flock` 模擬共用模式，只有 `FileShare.None` 是獨佔，其他值兩個持有者都會成功，Windows 上測不出來。
-- 不要對測試的 `HttpListener` 先 `Stop` 再 `Dispose`：Unix 上第二次會重新綁 port，被平行測試占走就擲例外，Windows 測不出來；一律用 `Close`（`PlatformGuardTests` 守門）。
+- 不要對測試的 `HttpListener` 呼叫 `Stop`：Unix 上 `Dispose` 會重新綁 port，被平行測試占走就擲例外，Windows 測不出來；一律用 `Close`（`LogForesight.Tests/BannedSymbols.txt` 禁用）。
 - 不要在測試傳 node 實驗旗標：會隨大版本移除，一移除就是整批行為測試同時紅（`NodeRuntimeTests` 守門）。版本下限只在 `NodeRuntime.MinimumVersion` 判定。
-- 不要在正式碼或測試用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
+- 不要在正式碼用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點（`BannedSymbols.txt` 禁用）。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
 - 不要在 `showDetailModal` 開著時再開一個：Bootstrap 5.3 不支援疊開，內層關閉後背景可捲動、外層焦點鎖定失效。已在 modal 內的次要選擇用就地面板（樣板：`chat-panel.js` 的「指定問題」）。
 - 詢問 AI 的焦點只由 `ChatFocusResolver` 決定（確定性規則、整詞比對、不呼叫 AI 做路由），整日摘要只取自 `GetDetail` 回傳的 DTO——另讀紀錄會把案件授與檢視範圍外的整日敘事帶進 prompt。
 - 不要在頁面現場拼文字樣式、按鈕類別，也不要寫設計系統外的中斷點與按鈕變體：`text-danger|text-warning|text-success`、`small text-muted`、`btn-link`、
@@ -167,6 +167,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   （「已儲存設定」不能掛在已經又改過的表單上）。
 - 不要新增不帶 nonce 的 inline script：CSP 只放行每請求 nonce，漏帶的腳本在正式環境被瀏覽器擋掉（`CspPolicyGuardTests` 掃所有 view）。
   同理不要在 view 或 JS 字串寫 `style=` 屬性與 inline 事件屬性；動態樣式用 `classList` 或 `style.setProperty`。
+- 不要新增 SQL 指令字串串接：值一律走參數，表名等常數插入要在使用處以 `[SuppressMessage("Security", "CA2100", Justification = …)]` 附理由。`CA2100`／`EF1002`／`EF1003`／`CA5394`／`CA1310` 在根目錄 `.editorconfig` 是建置錯誤；新規則升成錯誤前先確認零命中。
 - 不要在 `runtimeconfig.template.json` 加白名單外的 `System.GC.*` 鍵：runtime 對認不得的鍵靜默忽略，錯鍵看起來有設定、實際沒生效（`System.GC.Conserve` 沉默了 32 輪）；鍵名進 `RuntimeConfigGuardTests` 白名單，生效值由啟動 log 與健康頁記憶體卡用 `GC.GetConfigurationVariables()` 讀回。讀回時 `GCHeapHardLimitPercent` 未設是值 0 不是缺鍵，判斷有無硬上限要看「值 > 0」。
 - 不要用「是不是 `OperationCanceledException`」判斷使用者取消：HttpClient 逾時擲的 `TaskCanceledException` 也是 OCE，只有「OCE 且 ct 已取消」才是取消（樣板見 `PrtgScopeEstimateController`）。
 - 新增 `*.behavior.mjs` 案例要同時在 C# `InlineData` 登錄，前端行為測試一律經 `NodeRuntime.RunOrFail` 執行（`NodeRuntimeTests` 守門兩件事）。

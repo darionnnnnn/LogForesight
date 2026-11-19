@@ -49,6 +49,29 @@ public sealed class DesignSystemGuardUiTests
 
     internal static readonly Regex BtnLink = new(@"\bbtn-link\b", RegexOptions.Compiled);
 
+    /// <summary>
+    /// 頁面模組以樣板字串拼出語意色類別（text-${x}、alert-${x}、text-bg-${x}、btn-${x}、bg-${x}）：
+    /// 字面比對的守門看不到拼出來的類別名，等於繞過上面三條。語意色一律走 core 的 statusNote／statusBadge／button。
+    /// </summary>
+    internal static readonly Regex DynamicSemanticClass = new(@"\b(?:text-bg|text|alert|btn|bg)-\$\{", RegexOptions.Compiled);
+
+    [Fact]
+    public void 頁面模組不得以樣板字串拼語意色類別()
+    {
+        var pages = Path.Combine(WebRoot(), "wwwroot", "js", "pages");
+        var offenders = Directory.GetFiles(pages, "*.js", SearchOption.AllDirectories)
+            .Where(f => DynamicSemanticClass.IsMatch(File.ReadAllText(f)))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.True(offenders.Count == 0, "改用 statusNote／statusBadge／button：" + string.Join("、", offenders));
+    }
+
+    [Theory]
+    [InlineData("el.className = `small text-${style}`;")]
+    [InlineData("el.className = `alert alert-${v} py-2`;")]
+    [InlineData("b.className = `badge text-bg-${x}`;")]
+    public void 動態語意色判準抓得到三種寫法(string js) => Assert.Matches(DynamicSemanticClass, js);
+
     [Fact]
     public void 不得以btn_link當按鈕樣式() =>
         AssertNone(Files("wwwroot/js", "*.js").Concat(Files("Views", "*.cshtml")), BtnLink, "btn-link");

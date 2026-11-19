@@ -7,7 +7,7 @@
 > 第 10 節補齊欄位定義，同樣遵守 DB-SPEC 的雙 DB 可移植規則）；規則庫的 DB 映射見
 > [RULES-SPEC.md](RULES-SPEC.md)。
 >
-> 專案：`LogForesight.Web`（.NET 8 MVC）。
+> 專案：`LogForesight.Web`（.NET 10 MVC）。
 
 ## 1. 技術決策總表
 

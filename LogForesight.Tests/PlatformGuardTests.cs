@@ -87,23 +87,15 @@ public class PlatformGuardTests : IDisposable
         Assert.Null(WindowsPlatform.SkipReason(isWindows: true));
     }
 
+    /// <summary>
+    /// Unix 的 HttpListener 是 .NET 自己實作：Stop 後 Dispose 會再綁一次 port，被平行測試占走就擲例外，
+    /// Windows 走 http.sys 測不出來。禁用由編譯器執行（LogForesight.Tests/BannedSymbols.txt）；這裡守住清單本身。
+    /// </summary>
     [Fact]
-    public void 測試的HttpListener不得先Stop再Dispose()
+    public void 測試專案的禁用清單涵蓋HttpListenerStop()
     {
-        // Unix 的 HttpListener 是 .NET 自己實作：Stop 後 Dispose 會再綁一次 port，
-        // 該 port 已被平行測試拿走就擲 Address already in use。Windows 走 http.sys 測不出來，一律用 Close。
-        var root = Path.Combine(FindRepoRoot(), "LogForesight.Tests");
-        var stopCall = "listener." + "Stop()";
-        var sep = Path.DirectorySeparatorChar;
-
-        var offenders = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains($"{sep}bin{sep}") && !f.Contains($"{sep}obj{sep}"))
-            .Where(f => File.ReadAllText(f) is var text && text.Contains("HttpListener", StringComparison.Ordinal)
-                && text.Contains(stopCall, StringComparison.Ordinal))
-            .Select(f => Path.GetRelativePath(root, f))
-            .ToList();
-
-        Assert.True(offenders.Count == 0, "下列測試檔對 HttpListener 呼叫 Stop，請改用 Close：" + string.Join("、", offenders));
+        var lines = File.ReadAllLines(Path.Combine(FindRepoRoot(), "LogForesight.Tests", "BannedSymbols.txt"));
+        Assert.Contains(lines, line => line.Split(';')[0] == "M:System.Net.HttpListener.Stop");
     }
 
     private static string FindRepoRoot()

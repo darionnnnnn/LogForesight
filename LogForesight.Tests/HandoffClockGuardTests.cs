@@ -6,8 +6,9 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 守門：交辦、靜音、觀察中這條路徑的「現在」「今天」只能取自 <see cref="TimeProvider"/>（經 <c>ClockExtensions</c>），
 /// 範圍內的檔案不得直接讀真實時鐘，否則情境驅動器的假時鐘介入不了、到期與起算日又退回依真實時間。
-/// 範圍清單寫在這裡；新增屬於這條路徑的檔案要有意識地加進清單。範圍外（分析、PRTG、排程等）不受此限。
-/// 一次性回填 <c>WorkOrderBackfiller</c> 不在範圍內（只在升級時跑一次，不參與日常到期判定）。
+/// 範圍＝明列清單 ∪ 依檔名樣式自動納入的檔案（<see cref="NamePatterns"/>）：新增的交辦、派工、靜音、案件日同步類檔案
+/// 不必有人記得加清單就會被掃到（<c>CaseDaySyncHostedService</c> 曾因不在清單內而直接讀時鐘）。範圍外（分析、PRTG、排程等）不受此限。
+/// 一次性回填 <c>WorkOrderBackfiller</c>／<c>WorkOrderBackfillHostedService</c> 不在範圍內（只在升級時跑一次，不參與日常到期判定）。
 /// </summary>
 public class HandoffClockGuardTests
 {
@@ -90,16 +91,56 @@ public class HandoffClockGuardTests
         Assert.Empty(DirectClockLines("    // " + line));
     }
 
+    /// <summary>依檔名自動納入範圍的樣式（只看檔名，不含路徑）</summary>
+    internal static readonly Regex NamePatterns = new(
+        @"^(WorkOrder|CaseDay|Dispatch|NightlyDispatch|IssueCase|IssueOwner|DayHandling|IssueHandling|RecordHandling|Dismissed|MuteAware|EfWorkOrder|EfIssueCase|EfIssueHandling|EfRecordHandling).*\.cs$",
+        RegexOptions.Compiled);
+
+    /// <summary>不納入的檔名（一次性回填，見類別說明）</summary>
+    private static readonly HashSet<string> NameExclusions = new(StringComparer.Ordinal)
+    {
+        "WorkOrderBackfiller.cs", "WorkOrderBackfillHostedService.cs"
+    };
+
+    private static readonly string[] ScannedDirectories =
+    {
+        "LogForesight.Web/Services", "LogForesight.Web/Controllers/Api",
+        "LogForesight.Core/Persistence", "LogForesight.Core/Persistence/Sql", "LogForesight.Core/Persistence/Dispatch"
+    };
+
+    /// <summary>實際掃描的檔案：明列清單 ∪ 掃描目錄內檔名符合樣式者</summary>
+    internal static IReadOnlyList<string> EffectiveScope(string root)
+    {
+        var set = new SortedSet<string>(Scope, StringComparer.Ordinal);
+        foreach (var dir in ScannedDirectories)
+            foreach (var path in Directory.EnumerateFiles(Path.Combine(root, dir), "*.cs", SearchOption.TopDirectoryOnly))
+            {
+                var name = Path.GetFileName(path);
+                if (NamePatterns.IsMatch(name) && !NameExclusions.Contains(name)) set.Add(dir + "/" + name);
+            }
+        return set.ToList();
+    }
+
+    [Theory]
+    [InlineData("CaseDaySyncHostedService.cs", true)]
+    [InlineData("WorkOrderSomethingNew.cs", true)]
+    [InlineData("WorkOrderBackfiller.cs", false)]
+    [InlineData("PrtgFetchService.cs", false)]
+    public void 檔名樣式會自動納入新的交辦類檔案(string name, bool expected)
+    {
+        Assert.Equal(expected, NamePatterns.IsMatch(name) && !NameExclusions.Contains(name));
+    }
+
     [Fact]
     public void 範圍內的檔案不得直接讀真實時鐘()
     {
         var root = FindRepoRoot();
         var offenders = new List<string>();
         foreach (var rel in Scope)
+            Assert.True(File.Exists(Path.Combine(root, rel)), $"範圍清單的檔案不存在：{rel}（改名或搬動後請同步更新清單）");
+        foreach (var rel in EffectiveScope(root))
         {
-            var path = Path.Combine(root, rel);
-            Assert.True(File.Exists(path), $"範圍清單的檔案不存在：{rel}（改名或搬動後請同步更新清單）");
-            foreach (var line in DirectClockLines(File.ReadAllText(path))) offenders.Add($"{rel}:{line}");
+            foreach (var line in DirectClockLines(File.ReadAllText(Path.Combine(root, rel)))) offenders.Add($"{rel}:{line}");
         }
 
         Assert.True(offenders.Count == 0,
@@ -111,7 +152,7 @@ public class HandoffClockGuardTests
     {
         var root = FindRepoRoot();
         var offenders = new List<string>();
-        foreach (var rel in Scope)
+        foreach (var rel in EffectiveScope(root))
             foreach (var line in MatchLines(File.ReadAllText(Path.Combine(root, rel)), ProviderRead)) offenders.Add($"{rel}:{line}");
 
         Assert.True(offenders.Count == 0,

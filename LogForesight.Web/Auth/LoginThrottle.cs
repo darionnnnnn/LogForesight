@@ -124,8 +124,8 @@ public class LoginThrottle
         lock (_lock)
         {
             var removed = _accounts.Remove(NormalizeAccount(key));
-            if (IPAddress.TryParse(key.Trim(), out var ip))
-                removed |= _ips.Remove(IpKey(ip));
+            if (LogForesight.Core.Models.IpSyntax.TryParse(key, out var ip))
+                removed |= _ips.Remove(IpKey(ip!));
             return removed;
         }
     }
@@ -207,7 +207,7 @@ public class LoginThrottle
     {
         if (ip == null || IPAddress.IsLoopback(ip)) return null;
         var key = IpKey(ip);
-        return IPAddress.IsLoopback(IPAddress.Parse(key)) ? null : key;
+        return LogForesight.Core.Models.IpSyntax.TryParse(key, out var normalized) && IPAddress.IsLoopback(normalized!) ? null : key;
     }
 
     private static string IpKey(IPAddress ip) =>

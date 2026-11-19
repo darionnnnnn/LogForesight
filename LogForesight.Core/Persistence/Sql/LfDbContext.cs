@@ -25,6 +25,23 @@ public class LfDbContext : DbContext
 
     public LfDbContext(DbContextOptions<LfDbContext> options) : base(options) { }
 
+    /// <summary>
+    /// 參數化集合（<c>ids.Contains(x)</c>）一律翻成單一 JSON 參數（SQL Server 的 OPENJSON、SQLite 的 json_each）。
+    /// EF Core 10 起預設改成每個元素一個參數；SQL Server 單一指令最多 2,100 個參數，
+    /// 而本專案有數千個 id 的清單查詢——SQLite 的上限高得多，測試環境看不到，正式機才會擲例外。
+    /// 放在這裡而不是各個 UseSqlite／UseSqlServer 呼叫點：正式後端與上百個測試建立點都經過同一個內容類別，
+    /// 測試才會量到與正式機相同的 SQL。
+    /// </summary>
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        var relational = optionsBuilder.Options.Extensions
+            .OfType<Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension>()
+            .FirstOrDefault();
+        if (relational is null || relational.ParameterizedCollectionMode == ParameterTranslationMode.Parameter) return;
+        ((Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsBuilderInfrastructure)optionsBuilder)
+            .AddOrUpdateExtension(relational.WithUseParameterizedCollectionMode(ParameterTranslationMode.Parameter));
+    }
+
     private void AdvanceDailyRevisions()
     {
         ChangeTracker.DetectChanges();

@@ -1808,7 +1808,11 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
 
 /** 送出中的按鈕狀態：disable 防連點（§8.6-6） */
 export function withBusy(button, busyText) {
-    const original = button.innerHTML;
+    // 已在忙碌中再呼叫：不重複保存（否則保存到的是 spinner，還原後按鈕文字就不見了）
+    if (button.dataset.lfBusy === '1') return () => {};
+    button.dataset.lfBusy = '1';
+    // 保存原本的子節點（含文字節點）而不是 innerHTML 字串：還原時放回同一批節點，不經 HTML 解析
+    const original = Array.from(button.childNodes);
     button.disabled = true;
     if (busyText) {
         // DOM 組裝：busyText 走文字節點，不當 HTML 解析
@@ -1818,7 +1822,8 @@ export function withBusy(button, busyText) {
     }
     return () => {
         button.disabled = false;
-        button.innerHTML = original;
+        delete button.dataset.lfBusy;
+        if (busyText) button.replaceChildren(...original);
     };
 }
 

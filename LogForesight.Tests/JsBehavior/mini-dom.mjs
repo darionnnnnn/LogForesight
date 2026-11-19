@@ -56,6 +56,7 @@ class FakeNode {
 
     set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
+    get childNodes() { return this.children; }
 
     // 真瀏覽器的 appendChild／append 是「搬移」：節點已在別的父節點下時先移除，否則同一節點會在兩處出現
     appendChild(child) { this._detach(child); this.children.push(child); if (child) child._parent = this; return child; }

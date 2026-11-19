@@ -372,10 +372,13 @@ internal static class ForwardedHeadersSetup
         {
             ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
         };
-        forwarded.KnownNetworks.Clear();
+        forwarded.KnownIPNetworks.Clear();
         forwarded.KnownProxies.Clear();
+        // 值已在啟動前檢查（AppSettings.Validate）以 IpSyntax 驗過；這裡解析失敗代表繞過了檢查，直接停機比靜默略過安全
         foreach (var proxy in trustedProxies)
-            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
+            forwarded.KnownProxies.Add(LogForesight.Core.Models.IpSyntax.TryParse(proxy, out var address)
+                ? address!
+                : throw new InvalidOperationException($"Server:TrustedProxies 含有不是 IP 位址的值「{proxy}」"));
         return forwarded;
     }
 }

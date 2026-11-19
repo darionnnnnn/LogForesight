@@ -286,7 +286,7 @@ public class HandlingStoreContractTests : IDisposable
 
         using (var ctx = _fx.NewContext())
         {
-            Microsoft.EntityFrameworkCore.RelationalQueryableExtensions.ExecuteUpdate(
+            Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ExecuteUpdate(
                 ctx.IssueCases.Where(c => c.CaseId == "c1"),
                 s => s.SetProperty(c => c.WorkOrderId, (long?)77));
         }

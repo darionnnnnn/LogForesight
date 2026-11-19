@@ -7,8 +7,12 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
+    timeout-minutes: 60
     # 正式環境是 Windows（讀 Event Log、AD 驗證），這裡跑得到那些 Windows 專屬路徑；
     # macOS 守 Unix 語意差異（檔案鎖、路徑、時區），Windows 專屬案例在那邊顯示為略過
     strategy:
@@ -22,13 +26,16 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          global-json-file: global.json
 
       # 釘大版本，不跟 runner image 漂移；下限見 LogForesight.Tests/NodeRuntime.cs
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - run: dotnet build --configuration Release
+      # 鎖定檔模式：還原結果必須與提交的 packages.lock.json 相同，間接相依不會在 CI 悄悄漂移
+      - run: dotnet restore --locked-mode
+
+      - run: dotnet build --configuration Release --no-restore
 
       - run: dotnet test --configuration Release --no-build

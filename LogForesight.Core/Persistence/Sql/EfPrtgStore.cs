@@ -1424,6 +1424,7 @@ public sealed class EfPrtgStore
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "temp_store 的值是同一連線先前以 PRAGMA 讀回的整數")]
     private PrtgCalibrationDataCapture CaptureCalibrationDataCore(DateTime fromInclusive, DateTime toExclusive,
         IReadOnlyCollection<string>? sensorTypeWhitelist, DateTime mapAnchor, PrtgCalibrationCaptureLimits limits,
         CancellationToken cancellationToken, PrtgCalibrationCaptureBudget operationBudget)
@@ -1673,6 +1674,7 @@ public sealed class EfPrtgStore
         private bool _ownsConnection;
         private bool _disposed;
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名是類別內產生的 temp 表常數，id 走 @idsJson 參數")]
         private CalibrationSensorIdScope(LfDbContext context, IReadOnlyCollection<long> ids, string scopeName)
         {
             _context = context;
@@ -1729,6 +1731,7 @@ public sealed class EfPrtgStore
         internal static CalibrationSensorIdScope Create(LfDbContext context, IReadOnlyCollection<long> ids,
             string scopeName = "SelectedSensor") => new(context, ids, scopeName);
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名是類別內產生的 temp 表常數")]
         public void Dispose()
         {
             if (_disposed) return;

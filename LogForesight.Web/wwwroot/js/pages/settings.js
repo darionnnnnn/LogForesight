@@ -753,10 +753,10 @@ function renderPrtgSnapshotHealth(snapshot) {
         host.replaceChildren();
         return;
     }
-    const badge = document.createElement('span');
-    badge.className = `badge text-bg-${snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'secondary'} me-2`;
     const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停', stopped: '已停止：待寫檔無法使用', 'no-recent-success': '逾時無成功取樣' };
-    badge.textContent = labels[snapshot.state] ?? '待確認';
+    const badge = statusBadge(labels[snapshot.state] ?? '待確認',
+        snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'neutral');
+    badge.classList.add('me-2');
     const message = document.createElement('span');
     message.textContent = snapshot.message ?? '';
     const children = [badge, message];

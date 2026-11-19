@@ -27,7 +27,7 @@ public class AIServiceExtraRequestFieldsTests
     /// 炸掉的那個欄位形態，<c>GetRawText()</c> 對它呼叫必定擲例外。
     /// </summary>
     [Fact]
-    public void ConfigurationBinder_把純量ExtraRequestField綁成Undefined元素()
+    public void ConfigurationBinder_純量ExtraRequestField在現行執行階段綁成合法數值()
     {
         var json = """
             {
@@ -51,10 +51,12 @@ public class AIServiceExtraRequestFieldsTests
         Assert.NotNull(aiSettings!.ExtraRequestFields);
         // 巢狀物件：binder 綁得出合法 JsonElement
         Assert.Equal(JsonValueKind.Object, aiSettings.ExtraRequestFields!["chat_template_kwargs"].ValueKind);
-        // 純量值：binder 只能產生 Undefined，對它呼叫 GetRawText() 必炸——這正是事故重現
+        // 純量值：.NET 8 的 binder 會產生 Undefined（事故當時的形態，GetRawText() 必炸）；
+        // .NET 10 起綁得出合法數值。建構子的 Undefined 防線（下一個測試）仍保留，因為設定改由 DB 的 JSON 文字解析，
+        // 不經 binder，壞值來源不只這一種。這條斷言記錄框架行為：哪天又變回 Undefined，這裡會先紅。
         var scalar = aiSettings.ExtraRequestFields["rep_pen"];
-        Assert.Equal(JsonValueKind.Undefined, scalar.ValueKind);
-        Assert.Throws<InvalidOperationException>(() => scalar.GetRawText());
+        Assert.Equal(JsonValueKind.Number, scalar.ValueKind);
+        Assert.Equal("1.3", scalar.GetRawText());
     }
 
     /// <summary>

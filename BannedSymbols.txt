@@ -1,0 +1,5 @@
+T:System.Diagnostics.EventLogEntryType;用 LogEntryType；唯一轉換點是 EventRecordMapper.FromClassic（該型別的組件標 Windows 專屬）
+M:System.Net.IPAddress.TryParse(System.String,System.Net.IPAddress@);用 IpSyntax.TryParse：框架會把 10.1、12345 解成別台主機的位址
+M:System.Net.IPAddress.TryParse(System.ReadOnlySpan{System.Char},System.Net.IPAddress@);用 IpSyntax.TryParse
+M:System.Net.IPAddress.Parse(System.String);用 IpSyntax.TryParse
+M:System.Net.IPAddress.Parse(System.ReadOnlySpan{System.Char});用 IpSyntax.TryParse

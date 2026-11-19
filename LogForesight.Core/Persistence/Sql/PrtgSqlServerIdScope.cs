@@ -101,6 +101,7 @@ internal static class PrtgSqlServerIdScope
             ? _context.Database.SqlQueryRaw<long>($"SELECT [Id] AS [Value] FROM {SensorTable}")
             : null;
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名與索引名是類別內常數，id 走 @idsJson 參數")]
         private void CreateTable(string tableName, string indexName, IReadOnlyCollection<long> ids)
         {
             using var command = _connection.CreateCommand();
@@ -120,6 +121,7 @@ internal static class PrtgSqlServerIdScope
             command.ExecuteNonQuery();
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名是類別內常數")]
         public void Dispose()
         {
             if (_disposed) return;

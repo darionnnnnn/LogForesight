@@ -16,4 +16,23 @@
     <!-- 平台專屬 API 呼叫一律視為錯誤：不得用 NoWarn／#pragma 壓制 -->
     <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>
+  <!--
+    禁用 API 以符號比對（BannedSymbols.txt），別名、using static、換行寫法都擋得住；字串掃描守門擋不住這些。
+    合法的使用處以 [SuppressMessage("ApiDesign", "RS0030", Justification = "…")] 附理由放行，不用白名單檔。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <!-- 正式碼的清單只套用 Core 與 Web：測試以 IPAddress.Parse("10.0.0.5") 建構固定位址是合理用法；
+         測試專案另有自己的清單（LogForesight.Tests/BannedSymbols.txt） -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(MSBuildProjectName)' != 'LogForesight.Tests'" />
+  </ItemGroup>
+  <PropertyGroup>
+    <WarningsAsErrors>$(WarningsAsErrors);RS0030</WarningsAsErrors>
+    <!-- 安全類分析規則全開（預設多數不啟用）；個別規則的嚴重度在根目錄 .editorconfig -->
+    <AnalysisModeSecurity>All</AnalysisModeSecurity>
+    <!-- 相依弱點稽核涵蓋間接相依，有已知弱點即還原失敗（不是只出警告） -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
 </Project>

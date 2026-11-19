@@ -332,17 +332,61 @@ public class FrontendConsistencyUiTests
         foreach (var dir in dirs)
             Assert.True(Directory.Exists(dir), $"找不到目錄: {dir}");
 
-        // 整檔比對（不逐行）：跨行樣板字串也要抓；涵蓋 +=、outerHTML 與 insertAdjacentHTML
-        var pattern = new Regex(@"((inner|outer)HTML\s*\+?=\s*|insertAdjacentHTML\s*\([^`]*)`[^`]*\$\{", RegexOptions.Singleline);
         var offenders = dirs
             .SelectMany(dir => Directory.GetFiles(dir, "*.js", SearchOption.AllDirectories))
-            .Select(f => (file: Path.GetRelativePath(JsDir(), f), text: File.ReadAllText(f)))
-            .Where(x => pattern.IsMatch(x.text))
-            .Select(x => x.file)
+            .SelectMany(f => HtmlSinkViolations(File.ReadAllText(f)).Select(v => $"{Path.GetRelativePath(JsDir(), f)}：{v}"))
             .ToList();
 
         Assert.Empty(offenders);
     }
+
+    /// <summary>
+    /// 允許清單式判準：HTML 字串寫入點（innerHTML／outerHTML 指派、insertAdjacentHTML、document.write）
+    /// 只接受不含插值的字串字面值。字串串接、變數、函式回傳值、含 ${} 的樣板一律算違規——
+    /// 只比對「樣板字串含插值」的舊判準擋不住 el.innerHTML = '&lt;b&gt;' + name 與 el.innerHTML = html。
+    /// </summary>
+    internal static List<string> HtmlSinkViolations(string js)
+    {
+        var hits = new List<string>();
+        var sink = new Regex(@"(?:\b(?:inner|outer)HTML\s*\+?=|\binsertAdjacentHTML\s*\(\s*[^,]+,|\bdocument\.write(?:ln)?\s*\()\s*", RegexOptions.Compiled);
+        foreach (Match m in sink.Matches(js))
+        {
+            var rest = js.Substring(m.Index + m.Length);
+            if (!IsPlainLiteralExpression(rest)) hits.Add(js.Substring(m.Index, Math.Min(60, js.Length - m.Index)).Split('\n')[0]);
+        }
+        return hits;
+    }
+
+    /// <summary>從 rest 開頭讀一個字串字面值，且字面值之後直接是 ; ) 或換行（不得再串接）</summary>
+    private static bool IsPlainLiteralExpression(string rest)
+    {
+        if (rest.Length == 0 || rest[0] is not ('\'' or '"' or '`')) return false;
+        var quote = rest[0];
+        var i = 1;
+        for (; i < rest.Length; i++)
+        {
+            if (rest[i] == '\\') { i++; continue; }
+            if (quote == '`' && rest[i] == '$' && i + 1 < rest.Length && rest[i + 1] == '{') return false;
+            if (rest[i] == quote) break;
+        }
+        if (i >= rest.Length) return false;
+        var after = rest.Substring(i + 1).TrimStart(' ', '\t');
+        return after.Length == 0 || after[0] is ';' or ')' or '\n' or '\r' or ',';
+    }
+
+    [Theory]
+    [InlineData("el.innerHTML = '<b>' + name;")]
+    [InlineData("el.innerHTML = html;")]
+    [InlineData("el.innerHTML = `<b>${name}</b>`;")]
+    [InlineData("el.outerHTML += build();")]
+    [InlineData("el.insertAdjacentHTML('beforeend', html);")]
+    [InlineData("document.write(x);")]
+    public void C7_判準抓得到串接變數與插值三種寫法(string js) => Assert.NotEmpty(HtmlSinkViolations(js));
+
+    [Theory]
+    [InlineData("li.innerHTML = '<span class=\"page-link\">…</span>';")]
+    [InlineData("el.innerHTML = `\n  <div class=\"x\"></div>\n`;")]
+    public void C7_判準放行不含插值的字面值(string js) => Assert.Empty(HtmlSinkViolations(js));
 
     [Fact]
     public void D3_主機頁狀態徽章涵蓋四種PRTG提示()

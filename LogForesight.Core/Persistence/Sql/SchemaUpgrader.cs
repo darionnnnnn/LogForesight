@@ -519,7 +519,7 @@ internal static class SchemaUpgrader
     {
         var result = new List<IndexShape>();
         var rows = ctx.Database.SqlQueryRaw<string>(
-            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list('" + table + "')").ToList();
+            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list({0})", table).ToList();
         foreach (var row in rows)
         {
             var parts = row.Split('|');
@@ -527,7 +527,7 @@ internal static class SchemaUpgrader
             if (parts[2] != "0" || name.StartsWith("sqlite_autoindex_", StringComparison.OrdinalIgnoreCase)) continue;
 
             var columns = ctx.Database.SqlQueryRaw<string>(
-                "SELECT ifnull(name, '') AS Value FROM pragma_index_info('" + name + "') ORDER BY seqno").ToList();
+                "SELECT ifnull(name, '') AS Value FROM pragma_index_info({0}) ORDER BY seqno", name).ToList();
             if (columns.Count == 0 || columns.Any(c => c.Length == 0)) continue;
             result.Add(new IndexShape(name, parts[1] == "1", string.Join(",", columns)));
         }
@@ -1862,7 +1862,7 @@ internal static class SchemaUpgrader
     private static bool ColumnExists(LfDbContext ctx, bool isSqlite, string table, string column)
     {
         var names = isSqlite
-            ? ctx.Database.SqlQueryRaw<string>("SELECT name FROM pragma_table_info('" + table + "')").ToList()
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM pragma_table_info({0})", table).ToList()
             : ctx.Database.SqlQueryRaw<string>(
                 "SELECT COLUMN_NAME AS Value FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = {0}", table).ToList();
         return names.Contains(column, StringComparer.OrdinalIgnoreCase);
@@ -1872,7 +1872,7 @@ internal static class SchemaUpgrader
     private static bool IndexExists(LfDbContext ctx, bool isSqlite, string table, string indexName)
     {
         var names = isSqlite
-            ? ctx.Database.SqlQueryRaw<string>("SELECT name FROM pragma_index_list('" + table + "')").ToList()
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM pragma_index_list({0})", table).ToList()
             : ctx.Database.SqlQueryRaw<string>(
                 "SELECT i.name AS Value FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id WHERE t.name = {0}", table).ToList();
         return names.Contains(indexName, StringComparer.OrdinalIgnoreCase);

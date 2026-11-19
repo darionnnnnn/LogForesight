@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
@@ -23,26 +23,25 @@
       不收錄：批次 CLI 專屬類別（SelfTestRunner／RuleImporter／NetiqProbeCli）與 Program.cs，
               那些仍是批次 exe 的職責，Web 不需要也不應該引用。
 
-      TargetFramework 為 net8.0（可在 macOS／Linux 建置）：LogIssueSignature.EntryType 使用自訂的
+      TargetFramework 為 net10.0（可在 macOS／Linux 建置）：LogIssueSignature.EntryType 使用自訂的
       LogEntryType（成員名稱與整數值同 System.Diagnostics.EventLogEntryType，序列化與 DB 契約不變）；
       只有讀取真實 Windows 事件的 EventRecordMapper 轉換點才碰 EventLogEntryType，且帶 Windows 平台標註。
       Windows 專屬 API 一律由 CA1416 守門（Directory.Build.props 視為錯誤）。
     -->
     <ItemGroup>
-        <PackageReference Include="NLog" Version="6.1.4" />
-        <PackageReference Include="OpenCC" Version="0.1.0" />
-        <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.0" />
-        <PackageReference Include="Polly" Version="8.7.0" />
+        <PackageReference Include="NLog" />
+        <PackageReference Include="OpenCC" />
+        <PackageReference Include="System.Diagnostics.EventLog" />
+        <PackageReference Include="Polly" />
         <!-- PermissionMonitorService（本機 Administrators 群組比對／ACL 讀取，2026-07-31 隨
              Service/ 搬入）需要 -->
-        <PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.0" />
-        <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+        <PackageReference Include="System.DirectoryServices.AccountManagement" />
         <!-- SQL 後端（docs/DB-PLAN.md、SCALE-2000-PLAN §4）。EF Core LINQ 保持 provider 中立：
              正式環境用 SqlServer，測試用 SQLite 跑同一組合約測試，語意逐位一致 -->
-        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.10" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
         <!-- Sqlite 是測試/開發環境的後端（Type="Sqlite"）：真資料庫、單一 .db 檔，取代 JSONL 檔案 -->
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     </ItemGroup>
 
     <ItemGroup>

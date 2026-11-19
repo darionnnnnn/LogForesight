@@ -1893,6 +1893,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var clockTicks = initial.Ticks;
         var service = CreateService(pollInterval: TimeSpan.FromMilliseconds(10));
         service.Now = () => new DateTime(Interlocked.Read(ref clockTicks));
+        // 每輪的範圍補抓有真實時間預算（預設 30 秒），比等待上限長；全量負載下補抓變慢時迴圈會卡在補抓裡，
+        // 採樣輪不到。與同檔其他真實迴圈案例一致設為 2 秒。
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
         service.RequestScopeRefresh();
         await service.StartAsync(CancellationToken.None);
         try

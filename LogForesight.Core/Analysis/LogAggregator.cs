@@ -314,7 +314,7 @@ internal static class LogAggregator
 
             foreach (var (_, value) in EnumerateLabelValues(message, AccountLabels, null))
             {
-                if (value.Length == 0 || value == "-" || value.EndsWith("$"))
+                if (value.Length == 0 || value == "-" || value.EndsWith('$'))
                 {
                     continue;
                 }
@@ -327,7 +327,7 @@ internal static class LogAggregator
                 if (slash >= 0 && slash + 1 < value.Length)
                 {
                     var bare = value[(slash + 1)..];
-                    if (bare.Length > 0 && !bare.EndsWith("$"))
+                    if (bare.Length > 0 && !bare.EndsWith('$'))
                     {
                         accounts.Add(bare);
                     }

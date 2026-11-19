@@ -1,0 +1,23 @@
+# 分析規則嚴重度（批次 A）。規則升成錯誤前先確認現有程式碼零命中或已逐處附理由壓制；
+# 壓制一律用 [SuppressMessage(..., Justification = "…")] 寫在使用處，不在這裡整檔關掉。
+root = true
+
+[*.cs]
+# SQL 指令字串串接：值一律走參數；表名等常數插入要在使用處附理由壓制
+dotnet_diagnostic.CA2100.severity = error
+dotnet_diagnostic.EF1002.severity = error
+dotnet_diagnostic.EF1003.severity = error
+# 不安全的亂數（用於安全用途時）
+dotnet_diagnostic.CA5394.severity = error
+# 文化相關的字串比對（StartsWith／EndsWith／IndexOf 的字串多載）
+dotnet_diagnostic.CA1310.severity = error
+# 憑證驗證一律放行：批次 E 改成指紋驗證後升為錯誤
+dotnet_diagnostic.CA5359.severity = warning
+
+[LogForesight.Tests/**.cs]
+# 測試以 Random 產生測試資料、以字串組 SQL 驗證查詢計畫，不是安全用途
+dotnet_diagnostic.CA5394.severity = none
+dotnet_diagnostic.CA2100.severity = none
+dotnet_diagnostic.EF1002.severity = none
+dotnet_diagnostic.EF1003.severity = none
+dotnet_diagnostic.CA1310.severity = suggestion
