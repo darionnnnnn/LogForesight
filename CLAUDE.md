@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,709 通過／12 略過**、macOS **10,700 通過／21 略過**（由 Windows 結果扣掉 9 筆 Windows 專屬案例推得，以 CI 結果為準），全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,985 通過／12 略過**、macOS **10,976 通過／21 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -136,7 +136,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要讓郵件去重鍵吃到與信件內容無關的狀態：`WorkflowMailIntent` 一律用 `HostDayWorkflowFingerprint.ForMailContent`（AI 已分析／AI 待補／詳情已清除固定為 false），改回 `ForRecord` 就是 AI 寫回後重寄、或留下永遠待送的即時通知項目讓重試空轉。
   即時通知待送項目的終態只在 `MailNotifyStateStore.IsTerminalUrgentStatus` 判定；標成 `superseded` 只限「鍵已不對應本趟候選且該主機日取得到工作流版本」，停用即時通知時不標（重試入口改為不重跑），否則重新啟用後要等下一趟取數才補寄。
 - 不要讓快取鍵的可見主機片段記憶可變集合：`VisibleHostKeyPart` 只對 `FrozenSet<long>` 以物件參考記憶（`VisibilityService.GetVisibleHostIds` 回傳它）；`HashSet` 雖實作 `IReadOnlySet` 但可被修改，這段字串是授權維度。
-- 不要讓測試的預期摘要（golden）依賴真實的「今天」：摘要裡含日期（意圖鍵、主旨）時要用固定時鐘與固定日期，否則只在錄製當天會過。
+- 不要讓測試的預期摘要（golden）依賴真實的「今天」：摘要裡含日期（意圖鍵、主旨）時要用固定時鐘與固定日期，否則只在錄製當天會過。換行同理：摘要由 `AppendLine`、縮排 JSON 或郵件本文組成時，比對前把 CRLF 正規化成 LF，否則只在錄製的那個平台會過。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
 - 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
   管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。

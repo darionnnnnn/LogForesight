@@ -566,6 +566,7 @@
 **修正**
 - `RecordRepository.CountLightweightAtLeast` 以逐欄複製的篩選副本計數；篩選型別日後新增欄位而副本沒跟著複製時，計數母體會比實際載入的大，「下界」不再成立、使用者會被上限誤擋，而且沒有任何測試會紅。補守門測試 `RecordQueryFilterCopyGuardTests`（釘住欄位清單與副本的複製欄位）。
 - `HostDayWorkflowStore.GetMany` 批次查詢失敗時靜默退回逐筆讀取：結果不變，但整段變成每個主機日一次往返而沒有任何紀錄。補一行警告記錄。
+- 對帳測試的摘要換行隨平台：`PrtgBatch2bTests`、`PrtgBatch4BaselineTests`、`PrtgBatch4CalibrationBaselineTests`、`PrtgBatch4CalibrationReadTests`、`Batch2cTests`、`HostDayPostProcessorWorkflowWriteTests`、`MailWorkflowWriteReductionTests` 共 18 筆在 Windows 失敗——摘要以 `AppendLine`、縮排 JSON 或郵件本文組成，Windows 上換行是 CRLF，預期摘要是在 macOS 錄的 LF。正式程式碼的行為沒有差異；實作輪與兩次自查只跑過 macOS 所以沒看到。五個測試檔在比對前把 CRLF 正規化成 LF，`CLAUDE.md` 的預期摘要規則補上換行一項。
 
 **讀過、確認成立**
 - 查詢端取最近一次（5-1）：分組鍵的字串欄位都是必填欄、來源鍵在就緒後不為空，以出現點鍵加日期相等的 join 不會漏列；來源名最小值仍在記憶體以同一個比較取得。
@@ -577,11 +578,11 @@
 
 **不改、記入 BACKLOG**：無新增（SQL Server 定序下的出現點分組、別名集合內嵌常值兩條已在 BACKLOG）。
 
-**驗證**：兩個平台的全量結果見「終檢輪」。
+**驗證**：全量 Windows 10,985 通過／12 略過、macOS 10,976 通過／21 略過，無失敗。
 
 ## 終檢輪
 
-併入前在最終的樹跑全量（兩個平台），dev 自分支起點沒有移動，併入後的樹與跑過全量的樹相同，不重跑。終檢無新發現。
+Windows 全量第一次跑出 18 筆失敗（見「體檢輪修正」第三條），修正後在該提交重跑全綠；macOS 全量在修正前的樹跑過，修正只動五個測試檔的換行正規化（在 macOS 是空操作），以定向 63 筆確認、不重跑全量。之後的提交只改文件，跑文件守門的定向測試。dev 自分支起點沒有移動，併入後的樹與分支相同，不重跑。除上述一條外終檢無新發現。
 
 ## 體檢交接
 
