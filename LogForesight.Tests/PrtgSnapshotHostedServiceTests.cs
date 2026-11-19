@@ -2003,13 +2003,16 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var roundBudget = TimeSpan.FromSeconds(30);
         try
         {
-            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true, roundBudget);
+            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true, roundBudget,
+                () => Describe(service, "等待結構同步略過"));
             for (var round = 1; round <= 3; round++)
             {
                 var expected = initial.AddMinutes(round * 15);
                 Interlocked.Exchange(ref clockTicks, expected.Ticks);
                 service.RequestScopeRefresh();
-                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected, roundBudget);
+                var currentRound = round;
+                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected, roundBudget,
+                    () => Describe(service, $"第 {currentRound} 輪採樣（期望 {expected:O}）"));
                 Assert.Equal(round, SnapshotUrls().Count);
             }
             Assert.True(_structureSync.IsRunning);
@@ -2312,12 +2315,22 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.DoesNotContain(Outputs(service), line => line.Contains("補抓已達期限"));
     }
 
-    private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null)
+    private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null, Func<string>? diagnostics = null)
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (!ready() && deadline.Elapsed < (timeout ?? TimeSpan.FromSeconds(5)))
             await Task.Delay(10);
-        Assert.True(ready(), "服務迴圈沒有在有界等待內完成預期採樣。");
+        Assert.True(ready(), "服務迴圈沒有在有界等待內完成預期採樣。" + (diagnostics == null ? "" : Environment.NewLine + diagnostics()));
+    }
+
+    /// <summary>逾時時印出服務狀態與最後幾行輸出：只在特定平台重現的失敗，CI 記錄要看得出卡在哪一步</summary>
+    private static string Describe(PrtgSnapshotHostedService service, string step)
+    {
+        var status = service.GetStatus();
+        var tail = Outputs(service).TakeLast(15);
+        return $"步驟：{step}；LastSuccessAt={status.LastSuccessAt:O}；LastSkipReason={status.LastSkipReason}；" +
+               $"ConsecutiveFailures={status.ConsecutiveFailures}；PendingSamples={status.PendingSamples}；JournalStopCode={status.JournalStopCode}；TargetCount={status.TargetCount}{Environment.NewLine}" +
+               "最後輸出：" + Environment.NewLine + string.Join(Environment.NewLine, tail);
     }
 
     // ── 分批快照與範圍補抓 ──

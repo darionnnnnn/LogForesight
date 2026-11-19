@@ -353,6 +353,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             catch (Exception ex)
             {
                 Log.Error(ex, "PRTG 數值快照輪詢發生未預期錯誤（不影響下次輪詢）");
+                // 輸出區也留一行（例外型別，不含原文）：這種錯誤每輪重複時狀態停在上一個跳過原因，只看狀態會以為是在等維護作業
+                Console?.WriteLine($"[PRTG快照] 輪詢發生未預期錯誤（{ex.GetType().Name}），詳見記錄檔；下一輪再試。");
             }
 
             try
