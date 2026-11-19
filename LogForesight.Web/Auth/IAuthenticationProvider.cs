@@ -20,7 +20,7 @@ public record CredentialCheckResult(bool Success, string? FailureReason = null, 
 /// 不查使用者資料、不判斷是否停用、不算能力——那些是 IdentityService 的職責（SRP）。
 ///
 /// 這層抽象存在的理由：驗證方式會換（測試期 Stub → 正式 AD LDAP），
-/// 但登入流程的其餘部分（查使用者、算能力、簽 JWT、寫稽核）完全不變。
+/// 但登入流程的其餘部分（查使用者、算能力、建立登入 cookie、寫稽核）完全不變。
 /// 換 Provider 時開放封閉原則生效——新增實作、不改既有流程。
 /// </summary>
 public interface IAuthenticationProvider

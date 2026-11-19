@@ -1,6 +1,7 @@
 using System.Text;
 using LogForesight.Core.Service;
 using LogForesight.Web;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
@@ -139,6 +140,10 @@ try
             scope.ServiceProvider.GetRequiredService<ISystemSettingsStore>(),
             scope.ServiceProvider.GetRequiredService<ISentinelStore>());
 
+        // Data Protection 金鑰環目錄（登入 cookie 與分頁游標的金鑰）：啟動時就建立並限縮權限，
+        // 建不起來（帳號沒有寫入權限）就停止啟動，不要拖到第一個人登入才 500
+        DataProtectionKeyRing.Prepare(DataProtectionKeyRing.KeyDirectory(dataRoot));
+
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
 
@@ -242,8 +247,10 @@ try
     app.UseRouting();
     app.UseRateLimiter();
 
+    // 清掉改用內建 Cookie Authentication 之前的舊登入 cookie（只在請求帶著舊名稱時動作）
+    app.UseMiddleware<LegacyAuthCookieMiddleware>(settings.Jwt.CookieName);
+    // 停用、登出、權限變更即時生效（§6.3）由 Cookie 驗證的 ValidatePrincipal 逐請求處理，不再有獨立中介層
     app.UseAuthentication();
-    app.UseMiddleware<ActiveUserMiddleware>();   // 停用帳號即時生效（§6.3），必須在驗證之後
     app.UseAuthorization();
     // 處理狀態搬移中擋下寫入（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
     // 位置有要求：在 UseAuthorization 之後（不擋登入），在 CsrfHeaderMiddleware 之前

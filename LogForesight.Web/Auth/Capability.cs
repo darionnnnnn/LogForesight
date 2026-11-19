@@ -5,7 +5,7 @@ namespace LogForesight.Web.Auth;
 ///
 /// 能力回答的是「你能不能用這個功能」，**不回答「你能看哪些主機的資料」**——
 /// 後者是資料範圍，由 Service 層的 IVisibilityService 每次請求即時解析。
-/// 兩者刻意分開：能力進 JWT（效期內固定），範圍不進（群組異動即時生效）。
+/// 兩者刻意分開：能力進登入 cookie（版本號變動才更新），範圍不進（群組異動即時生效）。
 /// </summary>
 public enum Capability
 {

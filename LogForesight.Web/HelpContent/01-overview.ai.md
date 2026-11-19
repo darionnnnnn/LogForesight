@@ -6,8 +6,8 @@
 - **存取權限**：公開（匿名可存取 `/login` 與 `/api/auth/options`），其餘業務頁面均需通過身分驗證。
 - **後端端點**：
   - 登入驗證選項：`GET /api/auth/options`，回傳當前設定之身分驗證提供者類型（`Provider`）與是否需要密碼（`RequiresPassword`）。
-  - 登入請求：`POST /api/auth/login`，接收 `{ account, password }`，驗證成功後簽發 JWT 寫入 HttpOnly Cookie，並回傳 `CurrentUserDto`。
-  - 登出請求：`POST /api/auth/logout`，清除身分驗證 Cookie，並記錄登出稽核日誌。
+  - 登入請求：`POST /api/auth/login`，接收 `{ account, password }`，驗證成功後建立登入 Cookie（內建 Cookie Authentication，名稱 `lf_session`，HttpOnly），並回傳 `CurrentUserDto`。
+  - 登出請求：`POST /api/auth/logout`，遞增該使用者的工作階段版號（該使用者所有裝置上既有的登入 Cookie 一併失效，重啟站台也不復活）、清除 Cookie，並記錄登出稽核日誌。
   - 目前身分查詢：`GET /api/auth/me`，回傳當前登入者之使用者 ID、帳號、顯示名稱、是否為救援管理員（`IsServerAdmin`）、能力清單（`Capabilities`）與是否需要管理員初始設定（`NeedsAdminSetup`）。
 
 ## 系統定位與監控架構
@@ -34,10 +34,11 @@ LogForesight 是一套專注於主機安全性與穩定性前兆偵測的分析�
   - 這種設計是刻意的資安防護，確保救援帳號僅用於修復系統設定、排程與使用者帳號，不能用來窺探一般主機的業務安全日誌。
 
 ### 3. Session 與安全性防護
-- **JWT Cookie 安全標記**：
-  - `HttpOnly`：前端 JavaScript 無法讀取 Token，有效防範 XSS 攻擊竊取身分憑證。
+- **登入時限**：閒置時限由 `Jwt:ExpireHours` 決定（預設 8 小時，站台管理者可調），有操作就滑動延長；連續登入另有 24 小時絕對上限（程式常數）。時限到、被登出或帳號被停用時，下一個 API 請求回 401（`auth_expired`），頁面請求導回登入頁。群組或權限異動不會登出使用者：下一個請求就地更新能力。站台升級那次所有人會被登出一次。
+- **登入 Cookie 安全標記**：
+  - `HttpOnly`：前端 JavaScript 無法讀取 Cookie，有效防範 XSS 攻擊竊取身分憑證。
   - `SameSite=Strict`：瀏覽器在跨站請求時一律不發送此 Cookie，構成 CSRF 防護的第一道防線。
-  - `Secure`：限制僅在 HTTPS 加密通道傳輸（若部署於 IIS 子路徑亦依全站設定自動調整）。
+  - `Secure`：連線是 HTTPS（或反向代理標示 HTTPS）時才附上，HTTP 直連仍可登入；部署於 IIS 子路徑時 Cookie 路徑自動跟隨該路徑。
 
 ## 角色與能力體系（Role & Capabilities）
 

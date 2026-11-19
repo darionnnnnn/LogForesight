@@ -54,24 +54,23 @@ public class HandlerLandingTests : IDisposable
     private static AuthController LoginController(FakeUserStore users, FakeUserGroupStore groups)
     {
         var settings = new WebAppSettings();
-        settings.Jwt.SecretKey = new string('k', 64);
         settings.Auth.ServerAdmin.Account = "serverAdmin";
         var hosts = new FakeHostStore();
         var audit = new RecordingAuditService();
         var provider = new StubAuthenticationProvider();
         var identity = new IdentityService(users, groups, hosts, provider,
             new ServerAdminAuthenticator(settings), audit, new UserCapabilityResolver(groups, hosts));
-        return new AuthController(identity, new JwtTokenService(settings, TestPermissionStamps.Shared), provider,
+        return new AuthController(identity, new RecordingSessionSigner(), provider,
             FakeCurrentUser.Anonymous(), audit, settings,
-            new UserDisplayNameService(new FakeSystemSettingsStore()), new LoginThrottle(), new RevokedTokens())
+            new UserDisplayNameService(new FakeSystemSettingsStore()), new LoginThrottle())
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
     }
 
-    private static JsonElement LoginJson(AuthController controller, string account)
+    private static async Task<JsonElement> LoginJson(AuthController controller, string account)
     {
-        var result = controller.Login(new LoginRequest { Account = account });
+        var result = await controller.Login(new LoginRequest { Account = account });
         var ok = Assert.IsType<OkObjectResult>(result.Result);
         // 以宣告型別序列化（與 MVC 輸出一致），確認欄位真的出現在回應 JSON
         var json = JsonSerializer.Serialize(ok.Value, typeof(ApiResponse<CurrentUserDto>), WebJson);
@@ -79,27 +78,27 @@ public class HandlerLandingTests : IDisposable
     }
 
     [Fact]
-    public void 登入API_只有Handle的使用者_回應landingPath為自己的工作頁()
+    public async Task 登入API_只有Handle的使用者_回應landingPath為自己的工作頁()
     {
         var users = new FakeUserStore();
         var groups = new FakeUserGroupStore();
         var group = groups.Upsert(new UserGroup { GroupName = "OO部門", Role = UserRole.User });   // User 角色＝Handle＋ConfirmPermission
         var user = users.Upsert(new WebUser { Account = "DOMAIN\\handler", GroupIds = new List<long> { group.GroupId } });
 
-        var data = LoginJson(LoginController(users, groups), "DOMAIN\\handler");
+        var data = await LoginJson(LoginController(users, groups), "DOMAIN\\handler");
 
         Assert.Equal($"/handlers/{user.UserId}", data.GetProperty("landingPath").GetString());
     }
 
     [Fact]
-    public void 登入API_管理者_回應landingPath為儀表板()
+    public async Task 登入API_管理者_回應landingPath為儀表板()
     {
         var users = new FakeUserStore();
         var groups = new FakeUserGroupStore();
         var admin = groups.Upsert(new UserGroup { GroupName = "管理", Role = UserRole.Admin });
         users.Upsert(new WebUser { Account = "DOMAIN\\admin", GroupIds = new List<long> { admin.GroupId } });
 
-        var data = LoginJson(LoginController(users, groups), "DOMAIN\\admin");
+        var data = await LoginJson(LoginController(users, groups), "DOMAIN\\admin");
 
         Assert.Equal("/", data.GetProperty("landingPath").GetString());
     }

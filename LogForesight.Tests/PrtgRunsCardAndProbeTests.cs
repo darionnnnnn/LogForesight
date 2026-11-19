@@ -292,7 +292,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             User = new ClaimsPrincipal(new ClaimsIdentity(new[]
             {
                 new Claim(ClaimTypes.Name, "test-admin"),
-                new Claim(JwtTokenService.AccountClaim, "test-admin")
+                new Claim(AuthClaims.Account, "test-admin")
             }, "TestAuth"))
         };
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };

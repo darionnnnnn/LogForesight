@@ -235,7 +235,7 @@ public class PrtgHostMappingAdminController : ControllerBase
         if (host == null || !host.Active || host.MergedInto != null)
             throw DomainException.Validation("指定的主機不存在或已停用。");
 
-        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        var createdBy = User?.FindFirst(AuthClaims.Account)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
 
         var store = _backend.PrtgStore();
@@ -313,7 +313,7 @@ public class PrtgHostMappingAdminController : ControllerBase
         if (unknownIds.Count > 0)
             throw DomainException.Validation($"指定的一或多個 PRTG 裝置不存在於裝置鏡像中：{string.Join(", ", unknownIds)}。");
 
-        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        var createdBy = User?.FindFirst(AuthClaims.Account)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
 
         var expectedScopeRevision = RequireScopeRevision(request.ExpectedScopeRevision);
@@ -451,7 +451,7 @@ public class PrtgHostMappingAdminController : ControllerBase
                     ? "IP 位址不能為空白。"
                     : $"「{request!.Ip.Trim()}」不是有效的 IP 位址。");
 
-        var createdBy = User?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? User?.Identity?.Name;
+        var createdBy = User?.FindFirst(AuthClaims.Account)?.Value ?? User?.Identity?.Name;
         if (string.IsNullOrWhiteSpace(createdBy)) createdBy = null;
 
         var store = _backend.PrtgStore();

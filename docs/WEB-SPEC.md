@@ -19,8 +19,8 @@
 | 4 | 設計原則 | 使用者便利性優先、維護成本最小化（詳見 §8.6 的具體規範，不是口號）；視覺設計服務於「快速抓到問題」（§8.2 視覺層級三原則） |
 | 5 | 資料傳遞 | **View 不經 Model 傳資料**：MVC Controller 只回傳頁面殼（View），資料一律由前端 fetch 呼叫 API Controller 取得（JSON） |
 | 6 | 分層 | Controllers / Models / Services / Repositories / Auth / Filters / Configuration（§4） |
-| 7 | 授權 | Middleware（JWT 驗證身分）＋ ActionFilter（能力檢查）＋ Service 層（資料範圍過濾），三層各司其職（§6、§7） |
-| 8 | 驗證方式 | **JWT，存放於 HttpOnly Cookie**（不放 localStorage，決策理由見 §6.1） |
+| 7 | 授權 | Cookie 驗證（登入 cookie 識別身分、逐請求驗證）＋ ActionFilter（能力檢查）＋ Service 層（資料範圍過濾），三層各司其職（§6、§7） |
+| 8 | 驗證方式 | **內建 Cookie Authentication，票證存放於 HttpOnly Cookie**（不放 localStorage，決策理由見 §6.1） |
 | 9 | 組態 | 全部參數集中 `appsettings.json`，程式以強型別 `WebAppSettings` 類別取得（§5） |
 | 10 | DI | 內建 DI 容器，介面註冊表見 §4.3；一律建構式注入，不用 Service Locator |
 | 11 | 圖表套件 | **Chart.js v4（MIT）**，自架於 wwwroot/lib、經 `core/charts.js` 單點包裝（選型評估與排除清單見 §8.3） |
@@ -98,9 +98,9 @@ LogForesight.Web/
 ├── Services/                     -- 業務規則層：多數直接是具體類別（如 HandlingService）；
 │                                     僅有測試假件依賴的介面（IVisibilityService 等）與其實作同資料夾
 ├── Repositories/                 -- 資料存取層：目前只有 RecordRepository（分析紀錄查詢，強制套用可見範圍）；儀表板聚合在 DashboardService
-├── Auth/                         -- IAuthenticationProvider、StubAuthenticationProvider、JwtTokenService、RoleCapabilityMap
+├── Auth/                         -- IAuthenticationProvider、StubAuthenticationProvider、CookieSessionEvents（逐請求驗證）、SessionVersionStore、DataProtectionKeyRing、RoleCapabilityMap
 ├── Filters/                      -- PermissionAttribute/Filter、ApiExceptionFilter
-├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）
+├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）、LegacyAuthCookieMiddleware（清舊名稱 cookie）
 ├── Views/                        -- 頁面殼（.cshtml 內不寫業務邏輯、不用 ViewModel 帶資料）
 └── wwwroot/
     ├── css/                      -- 主題與元件樣式四層：base／components／layout／pages（§8.2）
@@ -129,7 +129,8 @@ LogForesight.Web/
 | `WebAppSettings` | 組態綁定單例 | Singleton |
 | Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
 | `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ad）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
-| `JwtTokenService` | 直接注入具體類別（`IJwtTokenService` 介面因測試零引用，簡化重構時已移除） | Singleton |
+| `ISessionSigner` | `CookieSessionSigner`（登入建立 cookie、登出遞增工作階段版號並清 cookie；controller 只依賴這個介面） | Singleton |
+| `SessionVersionStore`／`SessionPrincipalFactory` | 工作階段版號的讀寫（一般使用者存在 `WebUser.SessionVersion`，serverAdmin 存 blob `server_admin_session_version`）／cookie 主體的建構 | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
 | `IAuditService` | `AuditService` | Scoped |
@@ -147,9 +148,10 @@ LogForesight.Web/
   // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 每個元素只接受單一 IP（反向代理叢集逐台列出，不支援 CIDR）；
   // FrameOptions 空字串＝不送 X-Frame-Options；Csp 為 Off | ReportOnly | Enforce（不分大小寫），留空＝Development 用 ReportOnly、其餘環境用 Enforce（§6.5）
   "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY", "Csp": "" },
-  // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
-  // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
-  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8, "CookieName": "lf_auth" },
+  // PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
+  // 正式環境務必以環境變數 Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
+  // Jwt 區段是登入 cookie 的設定（區段名稱沿用；cookie 由 Data Protection 加密簽章，沒有簽章金鑰設定）：ExpireHours＝閒置時限。
+  "Jwt": { "ExpireHours": 8, "CookieName": "lf_session" },
   "Auth": {
     // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;環境不是 Development 時啟動會被擋下）
     "Provider": "Stub",
@@ -181,10 +183,10 @@ LogForesight.Web/
   **不在程式中直接讀 `IConfiguration`**——組態鍵名只存在於 `AppSettings.cs` 一處，改名不會有魔法字串漏網。
   `Storage` 區段的型別 `StorageSettings` 定義在 Core。
 - **啟動時驗證**：`WebAppSettings.Validate(strict, environmentName)` 檢查：`Storage.Type` 受支援、
-  `Jwt.SecretKey` 非空且至少 32 bytes、`Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
+  `Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
   `Auth.ServerAdmin` 帳號與雜湊非空且雜湊為 PBKDF2 格式、`Server.TrustedProxies` 每項為 IP、
   `Server.PathBase`／`FrameOptions`／`Csp` 值合法；`strict`（環境不是 `Development`）時另擋下公開已知的測試
-  SecretKey／PasswordHash 與 `Auth.Provider=Stub`。
+  PasswordHash 與 `Auth.Provider=Stub`。
   不合格直接 fail fast 拋例外，不讓站台帶病啟動——設定錯誤要顯性化。
 - **新增設定必須有消費端**：「有設定無行為」是本專案紅線（無消費端的 `Ui:DefaultPageSize` 即屬此類）。
   新增可調整項目時預設放 DB 設定頁，只有啟動前提才進 appsettings。
@@ -193,10 +195,10 @@ LogForesight.Web/
   JSON 檔，預設）／`SqlServer`（正式環境，2000 台量級）。**全部資料**（分析紀錄＋webdata）
   走資料庫。Web 的 `appsettings.Development.json` 同樣預設 `Type=Sqlite`（驗證與正式相同的
   SQL 語意）；正式部署改 `SqlServer`。
-- `Jwt.SecretKey` / `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
+- `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
-  （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
+  （`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
   `Ad`（舊值 `Ldap` 視同 `Ad`；`Provider=Stub` 且環境不是 `Development` 時
   啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
   想覆寫本機測試值可用 `appsettings.Development.json`（gitignore）。
@@ -205,17 +207,25 @@ LogForesight.Web/
 
 ## 6. 身分驗證
 
-### 6.1 決策：JWT 放 HttpOnly Cookie
+### 6.1 決策：內建 Cookie Authentication，票證放 HttpOnly Cookie
 
-- **瀏覽器（View→API）**：登入成功後簽發 JWT，寫入 **HttpOnly、Secure、SameSite=Strict** 的
-  Cookie（名稱 `lf_auth`）。前端 JS **接觸不到 token**（HttpOnly），fetch 同源自動帶上，
-  避免 localStorage 存 token 的 XSS 竊取面。View（MVC 頁面殼）與 API 走同一張 Cookie、
-  同一套驗證管線——頁面殼本身也要求已驗證（未登入直接 302 到登入頁，而不是空殼進來再被 API 401）。
-- **建議以 HTTPS 提供服務**；內網自簽或企業 CA 憑證皆可。Cookie 的 `Secure` 旗標
-  **跟隨當次請求的 `Request.IsHttps`**（`Auth/AuthCookie.cs`），不是寫死 `true`：寫死時
-  HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
+- **瀏覽器（View→API）**：登入成功後以 ASP.NET Core 內建 Cookie Authentication 建立登入 cookie
+  （名稱 `lf_session`，**HttpOnly、SameSite=Strict**，`Secure` 見下）。票證由 Data Protection 加密簽章，
+  前端 JS **接觸不到**（HttpOnly），fetch 同源自動帶上，避免 localStorage 存放的 XSS 竊取面。
+  View（MVC 頁面殼）與 API 走同一張 Cookie、同一套驗證管線——頁面殼本身也要求已驗證
+  （未登入直接 302 到登入頁，而不是空殼進來再被 API 401）。沒有 bearer 用戶端，不接受 `Authorization` 標頭。
+- **建議以 HTTPS 提供服務**；內網自簽或企業 CA 憑證皆可。Cookie 的 `Secure` 旗標**跟隨請求**
+  （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
+  寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
-  HTTPS 下行為與寫死 `true` 完全相同。
+- **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
+  （同一台主機的正式／測試兩個子站台互不覆蓋）。
+- **Data Protection 金鑰環**存在 `{DataRoot}\dataprotection\`（`Auth/DataProtectionKeyRing.cs`），
+  應用名稱固定為 `LogForesight`（不隨部署路徑變動）；啟動時建立目錄並限縮權限（Unix 目錄 700、檔案 600；
+  Windows 移除繼承、只留執行帳號與 SYSTEM），建不起來就停止啟動。登入 cookie 與 PRTG 分頁游標都靠它。
+  **金鑰環遺失的後果只是全員重新登入與舊分頁游標失效，不影響資料，不必備份。**
+- **舊名稱 cookie**（`lf_auth`，改用內建驗證前的格式）不被讀成登入；請求帶著它時，`LegacyAuthCookieMiddleware`
+  在回應清掉它（根路徑與掛載前綴兩個 Path 都清）。
 
 ### 6.2 登入流程與 Claims
 
@@ -226,7 +236,7 @@ LogForesight.Web/
       Stub 實作：`IUserStore` 的 `users` JSON blob 有該帳號且 active 即通過（password 忽略）——僅供開發/前期測試
       正式：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
         bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
-  → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
+  → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 建立登入 cookie（`ISessionSigner.SignInAsync`）
   → 稽核 login / login_failed（§11）
 ```
 
@@ -259,7 +269,7 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
   讓它能確認排程活著；風險日、問題內容與診斷匯出（`RequireViewAll`）仍然進不去。
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
   輪替 SOP：產生新雜湊填入 `PasswordHash` 後重啟站台即可，產生指令
-  （`LogForesight.Web.exe --hash-password`）提供；已簽發的 JWT 最長 8 小時自然失效。
+  （`LogForesight.Web.exe --hash-password`）提供；已建立的登入 cookie 受閒置時限與 24 小時絕對上限約束，自然失效。
 - **防暴力破解**：serverAdmin 與一般帳號一樣只受下方的登入節流約束（依帳號與來源 IP 計失敗，可在畫面上手動解除），
   不另設第二套鎖定——兩套疊加時，匿名者輸錯幾次就能把 AD 停擺時唯一的救援入口鎖死，而那時沒有其他管理者能登入解除。
   `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
@@ -293,13 +303,12 @@ AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及�
 （相容既有含 `\` 的本地帳號）。登入請求的帳號與密碼各上限 256 字。登入後導回的 `returnUrl` 只接受站內相對路徑，
 含 tab、換行字元或 `//`、`\`、`://` 一律拒絕（`core/safe-return-url.js`）。
 
-JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`srvadm`（serverAdmin 標記）、`pv`（簽發時的
-`PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
-`IVisibilityService` 即時解析。`ActiveUserMiddleware` 對一般使用者每個請求都從 `IUserStore` 檢查帳號仍為 active；
-serverAdmin 不在 `IUserStore`，不做這項檢查；一般使用者另比對 token 的 `pv` 與 `PermissionVersionStamp`，版本不符就重算能力、
-無感換發 token，並替換本請求的 principal。
-主機停用或合併造成的隱含授權變更也會推進同一權限版本。換發沿用原工作階段的 `jti` 與 `exp`（不延長登入期），
-寫入 Cookie 的 token 與本請求替換的 principal 使用同一個 `jti`。
+登入 cookie 的 Claims（`AuthClaims`）：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`srvadm`（serverAdmin 標記）、
+`pv`（簽發時的 `PermissionVersionStamp`）、`sv`（簽發時的工作階段版號）、`sst`（這次登入的起點，Unix 秒）。
+**能力進 cookie、主機授權範圍不進 cookie**——範圍每次請求由 `IVisibilityService` 即時解析。
+逐請求驗證在 `CookieSessionEvents.ValidatePrincipal`（細節見 §6.3）。一般使用者的 `pv` 與 `PermissionVersionStamp` 不符時，
+重算能力並**就地更新主體**（`ReplacePrincipal`）、續發 cookie（`ShouldRenew`），後段的授權判斷與 `ICurrentUser` 立即讀到新能力；
+更新保留原本的 `sst` 與 `sv`。主機停用或合併造成的隱含授權變更也會推進同一權限版本。
 
 **上次登入時間**：登入成功時 `IdentityService` 呼叫 `IUserStore.TouchLogin`，寫入
 `user_last_login` blob；讀取時優先使用該 blob，舊使用者資料中的 `WebUser.LastLoginAt` 僅作唯讀
@@ -310,14 +319,26 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
 
 ### 6.3 逾期與登出
 
-- 效期 `Jwt.ExpireHours`（預設 8 小時），不做 refresh token（內網工具，過期重登入即可）。
-- **停用即時生效**：`ActiveUserMiddleware` 逐請求查 `IUserStore` 的 active 狀態，停用或不存在的帳號立即 401，
-  不等 token 自然過期。群組、使用者、主機停用／合併等影響能力或可見範圍的異動推進 `PermissionVersionStamp`；
-  下一個請求發現 `pv` 不符時，重算能力並依 §6.2 契約換發 token。
-- API 收到過期/無效 token → 401 ＋ 信封 error code `auth_expired`；前端攔截後導向登入頁。
+- **閒置時限** `Jwt.ExpireHours`（預設 8 小時，設定鍵沿用），**滑動延長**：有活動就把到期往後推（過半後的請求續發 cookie），
+  閒置超過就登出。**絕對上限 24 小時**（程式常數 `SessionCookie.AbsoluteLifetime`）：不論多活躍，自登入（`sst`）起超過 24 小時一律重新登入。
+  不做 refresh token（內網工具，過期重登入即可）。時間取自注入的 `TimeProvider`。
+- **逐請求驗證**（`CookieSessionEvents.ValidatePrincipal`，每個請求都跑，serverAdmin 只做第 2、3 項）：
+  1. 使用者仍存在且啟用——停用或不存在立即失效，不等 cookie 到期；
+  2. cookie 的 `sv` 等於使用者目前的**工作階段版號**——不同即失效；
+  3. 超過 24 小時絕對上限即失效；
+  4. `pv` 與 `PermissionVersionStamp` 不同——重算能力、就地更新、續發（不是踢出登入：群組編輯很頻繁，不能每改一次就讓全員重登）。
+  缺少或無法解析 `sub`／`sv`／`sst` 的 cookie 視為無效。失效時清除 cookie；原因（已停用／已登出／已逾期）記在請求內，
+  供下一步的 401 信封顯示。
+- **工作階段版號**是使用者層級的登入失效手段：一般使用者存在 `WebUser.SessionVersion`（隨使用者資料持久化，**重啟不失效**；
+  舊資料缺欄＝0，回滾到舊版時欄位被忽略），serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`。
+  登出時遞增（`IUserStore.BumpSessionVersion`／`SessionVersionStore.Bump`），啟用轉停用時 `UserStore.Upsert` 也遞增
+  （停用後再啟用，停用前簽發的 cookie 不復活）；`Upsert` 其餘情況不覆寫此欄。遞增的效果是該使用者**所有裝置**上既有的 cookie 一併失效。
+- **未登入的回應**（`CookieSessionEvents.RedirectToLogin`，依路徑區分）：`/api` 回 401 ＋ 信封 error code `auth_expired`
+  （不轉址；被拒絕的原因帶進信封訊息），前端攔截後導向登入頁；頁面請求 302 到 `{PathBase}/login?returnUrl=…`
+  （`returnUrl` 是站內路徑、不含前綴）。已登入但無權限回 403（`/api` 由狀態碼信封補本文）。
   稽核動作碼 `session_expired` 保留於對照表，目前沒有寫入點。
-- `POST /api/auth/logout`：以目前 JWT 的 `jti` 加入行程內 `RevokedTokens`，保留到該 token 原本的 `exp`，再清除 Cookie＋稽核
-  `logout`；只清 Cookie 不足以阻止已被複製的 token 重放。行程重啟會清空撤銷清單，剩餘效期仍由 JWT `exp` 結束。
+- `POST /api/auth/logout`：稽核 `logout`、遞增工作階段版號、清除 Cookie。只清 Cookie 不足以阻止已被複製的 cookie 重放，
+  遞增版號才讓它在剩餘效期內也失效。
 
 ### 6.4 CSRF 防護
 
@@ -355,7 +376,7 @@ SameSite=Strict 已擋跨站帶 Cookie；再加一層防禦深度：`CsrfHeaderM
 
 | 層 | 機制 | 回答的問題 |
 |---|---|---|
-| 1. Middleware | JWT Bearer 驗證（自 Cookie 取 token） | 你是誰？（未登入 → 401） |
+| 1. Cookie 驗證 | 內建 Cookie Authentication ＋ `CookieSessionEvents` 逐請求驗證 | 你是誰？（未登入 → 401） |
 | 2. ActionFilter | `[Permission(Capability.X)]` 讀 `cap` claim | 你能不能用這個功能？（不足 → 403 ＋稽核 `denied`） |
 | 3. Service | `IVisibilityService.GetVisibleHostIds()` | 你能看哪些主機的資料？（查詢一律先過濾） |
 
@@ -389,9 +410,9 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
 **不含 `ViewAll`**。理由：負責人匯入（owners.csv）會自動建立沒有群組的帳號，沒有這一段的話
 對方登入後看得到自己負責的主機、卻連處理狀態都標不了，被交辦也回覆不了——「有可見範圍
-無處置能力」是半套。能力進 JWT；負責人變動會推進權限版本，下一次請求重算能力並無感刷新
-原工作階段的 token（可見範圍則即時生效）。
-停用帳號由登入與 `ActiveUserMiddleware`（逐請求 401）攔截，`UserCapabilityResolver` 本身不檢查停用（見 §6.3）。
+無處置能力」是半套。能力進登入 cookie；負責人變動會推進權限版本，下一次請求重算能力並就地更新
+原工作階段的主體（可見範圍則即時生效）。
+停用帳號由登入與 `CookieSessionEvents`（逐請求 401）攔截，`UserCapabilityResolver` 本身不檢查停用（見 §6.3）。
 
 **負責人路徑**：第 3 層的授權鏈**擴充為聯集**——
 `WebHost.OwnerUserIds` 含此人的（啟用中）主機直接可見，與群組授權同級（整台可見，
@@ -476,7 +497,7 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
    （處理面板每次載入都先讀它再決定要不要給批次表單），但只回識別與 `canHandle`，整天的狀態、處理人、期限、備註、負責人一律不帶。
    端到端驗收見 `LogForesight.Tests/CaseGrantVisibilityTests.cs`（刻意串真實服務，不用替身）。
 
-**授權測試**（`LogForesight.Tests/Authorization/`）：以 `WebApplicationFactory<Program>` 起真站台（Stub 登入、真的 JWT、`PermissionFilter` 與 `VisibilityService`），
+**授權測試**（`LogForesight.Tests/Authorization/`）：以 `WebApplicationFactory<Program>` 起真站台（Stub 登入、真的登入 cookie、`PermissionFilter` 與 `VisibilityService`），
 六種身分（兩位受限使用者、案件授與者、管理者、serverAdmin、匿名）× 四台主機（含停用）各放獨一無二的哨兵字串：
 讀取矩陣斷言受限者對未授權主機直取 404、清單不含哨兵；寫入矩陣斷言被拒且資料前後逐欄相同；角色閘門從每個 action 的 `[Permission]`／`[RequireViewAll]` 推算預期並逐條驗 403；
 快取分鍵、匿名端點恰為 6 條、`FallbackPolicy` 要求登入各有守門。涵蓋守門要求每個 action 都在讀取矩陣、寫入矩陣、有能力標註或附理由的豁免清單其中之一——新增端點沒登錄就紅。
@@ -2120,7 +2141,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     快捷期間每次以目前選的天數重算起訖（跨午夜自然前進一天），自訂日期固定；分頁不可見時不發請求，回到可見時若距上次完成已逾間隔就立刻載入一次、否則照原排程；
     自動更新與縮放重繪不顯示骨架列、不做進場動畫（首次載入照現行）。
   - **更新失敗**：保留畫面上的資料，標頭列以 `lf-text-alert` 寫「更新失敗，目前是 HH:mm 的資料」，1 分鐘後重試、連續失敗逐次加倍到 15 分鐘封頂（`wallWaitMs`），成功後訊息消失、回到 15 分鐘一輪；首次載入就失敗時沿用全頁錯誤狀態，同樣 1 分鐘後重試（電視開機時站台常常還沒好）。工具列與標頭列的條件文字只讀「載入成功時記下的快捷期間與比較模式」，不讀輸入欄——改了還沒按套用的條件不會被重繪畫成已套用。
-    大螢幕模式下 `api.get` 一律 `silent`，不跳 toast。登入逾期（`Jwt:ExpireHours`，預設 8 小時，全站生效）沿用 401 導回登入頁並記住帶 `display=wall` 的原網址，沒有長效登入。
+    大螢幕模式下 `api.get` 一律 `silent`，不跳 toast。登入逾期（閒置 `Jwt:ExpireHours`，預設 8 小時，全站生效；連續登入最長 24 小時）沿用 401 導回登入頁並記住帶 `display=wall` 的原網址，沒有長效登入。
   - **結構**：狀態機與排程在 `wwwroot/js/pages/reports-wall.js`（`createWall(deps)`，視窗、文件、網址、計時器與取數／重繪皆注入，行為測試以假時鐘驅動）；`reports.js` 只接頁面元素
     （標頭列、離開鈕、字級變數、圖表轉接）與取數。
 

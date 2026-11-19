@@ -92,7 +92,6 @@ public class UserDisplayNameServiceTests
         services.AddLogging();
 
         var settings = new WebAppSettings();
-        settings.Jwt.SecretKey = new string('k', 64);
 
         var settingsStore = new FakeSystemSettingsStore();
         settingsStore.Update(s => s.AccountDisplayRules = "^([^ ]+).* => $1");

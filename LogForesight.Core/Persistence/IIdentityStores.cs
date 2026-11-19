@@ -47,6 +47,12 @@ public interface IUserStore
     /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
     /// 這裡是它的唯一寫入點</summary>
     void SetDispatchPaused(long userId, bool paused);
+
+    /// <summary>
+    /// 遞增工作階段版號並回傳新值（登出用）；找不到使用者回 0。<see cref="Upsert"/> 不覆寫這個欄位
+    /// （停用時由 Upsert 內部遞增，見實作），否則編輯使用者會把已登出的 cookie 復活。
+    /// </summary>
+    long BumpSessionVersion(long userId);
 }
 
 /// <summary>

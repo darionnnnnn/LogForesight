@@ -5,7 +5,7 @@ namespace LogForesight.Core.Persistence;
 /// <summary>
 /// <see cref="IUserStore"/> 的實作（blob key=users，整份型；最後登入時間另存 blob key=user_last_login）。
 ///
-/// 開快取：清單頁逐列、<c>ActiveUserMiddleware</c> 每個請求都會查使用者，不快取就是每次重讀＋反序列化整份清單。
+/// 開快取：清單頁逐列、Cookie 驗證（<c>CookieSessionEvents</c>）每個請求都會查使用者，不快取就是每次重讀＋反序列化整份清單。
 /// 最後登入時間因此搬出使用者清單——每次登入都改寫整份清單會讓版本前進、快取在登入尖峰反覆失效。
 /// 快取回傳的是共用物件：呼叫端不得就地修改（要改先複製）。
 /// </summary>
@@ -47,6 +47,10 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
             // LastLoginAt 刻意不覆寫：唯一寫入點是 TouchLogin。Upsert 的呼叫端
             // （admin 編輯、負責人匯入）建的是不帶登入時間的物件，照抄會把真實登入時間
             // 清成 null，讓使用者清單的「最近登入」每編輯一次就歸零。
+            //
+            // SessionVersion 同樣不抄：唯一的遞增點是 BumpSessionVersion 與下面「啟用轉停用」。
+            // 停用當下遞增，之後即使重新啟用，停用前簽發的 cookie 也不會復活。
+            if (existing.Active && !user.Active) existing.SessionVersion++;
             existing.Account = user.Account;
             existing.DisplayName = user.DisplayName;
             existing.Email = user.Email;
@@ -83,6 +87,15 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
         string.IsNullOrWhiteSpace(json)
             ? new Dictionary<long, DateTime>()
             : JsonSerializer.Deserialize<Dictionary<long, DateTime>>(json, LfJsonOptions.Compact) ?? new Dictionary<long, DateTime>();
+
+    public long BumpSessionVersion(long userId)
+    {
+        return Mutate(users =>
+        {
+            var user = users.FirstOrDefault(u => u.UserId == userId);
+            return user == null ? 0 : ++user.SessionVersion;
+        });
+    }
 
     /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
     /// 這裡是它的唯一寫入點</summary>

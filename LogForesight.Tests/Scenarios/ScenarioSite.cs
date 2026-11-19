@@ -92,7 +92,6 @@ public sealed class ScenarioSite : IDisposable
             SetEnv("Storage__DataRoot", _dataRoot);
             SetEnv("Storage__ConnectionString", "");
             SetEnv("Auth__Provider", "Stub");
-            SetEnv("Jwt__SecretKey", "scenario-driver-test-secret-key-0123456789-abcdefghijklmnop");
 
             _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             {
@@ -142,9 +141,9 @@ public sealed class ScenarioSite : IDisposable
     {
         using var response = await _client.PostAsJsonAsync("api/auth/login", new { account, password = "" });
         if (response.StatusCode != HttpStatusCode.OK) return false;
-        var cookie = response.Headers.GetValues("Set-Cookie").FirstOrDefault(c => c.StartsWith("lf_auth=", StringComparison.Ordinal));
+        var cookie = AuthTestKit.ReadSessionCookiePair(response);
         if (string.IsNullOrEmpty(cookie)) return false;
-        _tokens[account] = cookie.Split(';')[0]["lf_auth=".Length..];
+        _tokens[account] = cookie;
         return true;
     }
 
@@ -152,7 +151,7 @@ public sealed class ScenarioSite : IDisposable
     public async Task<ActionHttpResult> SendAsync(string account, HttpMethod method, string url, object? body = null)
     {
         using var request = new HttpRequestMessage(method, url);
-        if (_tokens.TryGetValue(account, out var token)) request.Headers.Add("Cookie", "lf_auth=" + token);
+        if (_tokens.TryGetValue(account, out var token)) request.Headers.Add("Cookie", token);
         if (body != null) request.Content = JsonContent.Create(body);
         using var response = await _client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();

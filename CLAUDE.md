@@ -57,7 +57,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   表格欄寬照 DESIGN-SYSTEM §8.4a（短值欄 `lf-col-nowrap`、留一欄吸收、同卡多表 `lf-table-aligned`）；無框品牌色按鈕只放表格列、分段控制與清單列（`lf-list-row`），按鈕角色與「每個範圍至多一顆主要按鈕」由 `tools/ui-global-asserts.json` 在每個量測情境檢查。
   修版面缺陷先寫會紅的量測斷言、在未修正的建置確認它紅再修——六項量測抓不到欄位起點不一致、孤立元素這類版面關係。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
-  `appsettings.json` 只留啟動與安全前提（Storage/Jwt/Auth）。**新增設定必須有消費端**——
+  `appsettings.json` 只留啟動與安全前提（Storage/Jwt〔登入 cookie 時限〕/Auth）。**新增設定必須有消費端**——
   「有設定無行為」是本專案紅線。
 - **文件紀律（現行 vs 歷程）**：`docs/` 主目錄只放**現行事實**，`docs/archive/` 放**過程記錄**。
   - 讀取：預設只讀現行文件；`docs/archive/` 非必要不讀，要查時先看它的 `README.md` 索引再開單一檔案。

@@ -189,7 +189,6 @@ public sealed class AuthorizationHttpFixture : IDisposable
             SetEnv("Storage__DataRoot", _dataRoot);
             SetEnv("Storage__ConnectionString", "");
             SetEnv("Auth__Provider", "Stub");
-            SetEnv("Jwt__SecretKey", "authz-matrix-test-secret-key-0123456789-abcdefghijklmnop");
 
             _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             {
@@ -480,9 +479,9 @@ public sealed class AuthorizationHttpFixture : IDisposable
                 .GetAwaiter().GetResult();
             Assert.True(response.StatusCode == HttpStatusCode.OK,
                 $"登入 {id.Name}（{id.Account}）失敗：{(int)response.StatusCode} {response.Content.ReadAsStringAsync().GetAwaiter().GetResult()}");
-            var cookie = response.Headers.GetValues("Set-Cookie").FirstOrDefault(c => c.StartsWith("lf_auth=", StringComparison.Ordinal));
-            Assert.False(string.IsNullOrEmpty(cookie), $"登入 {id.Name} 沒有回 lf_auth Cookie");
-            id.Token = cookie!.Split(';')[0]["lf_auth=".Length..];
+            var cookie = AuthTestKit.ReadSessionCookiePair(response);
+            Assert.False(string.IsNullOrEmpty(cookie), $"登入 {id.Name} 沒有回登入 Cookie");
+            id.Token = cookie;   // 「名稱=值」整組，之後原樣放進 Cookie 標頭
         }
     }
 
@@ -490,7 +489,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
     public async Task<(HttpStatusCode Status, string Body)> GetAsync(IdentityFx identity, string url)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        if (identity.Token != null) request.Headers.Add("Cookie", "lf_auth=" + identity.Token);
+        if (identity.Token != null) request.Headers.Add("Cookie", identity.Token);
         using var response = await _client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         return (response.StatusCode, body);
@@ -501,7 +500,7 @@ public sealed class AuthorizationHttpFixture : IDisposable
         IdentityFx identity, HttpMethod method, string url, object? body = null, HttpContent? content = null)
     {
         using var request = new HttpRequestMessage(method, url);
-        if (identity.Token != null) request.Headers.Add("Cookie", "lf_auth=" + identity.Token);
+        if (identity.Token != null) request.Headers.Add("Cookie", identity.Token);
         if (content != null) request.Content = content;
         else if (body != null) request.Content = JsonContent.Create(body);
         using var response = await _client.SendAsync(request);

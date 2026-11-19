@@ -5,9 +5,9 @@ using LogForesight.Web.Configuration;
 namespace LogForesight.Web.Services;
 
 /// <summary>登入結果。失敗訊息一律是可直接顯示的中文，且**不區分「查無帳號」與「密碼錯誤」**（避免帳號列舉）</summary>
-public record LoginOutcome(bool Success, TokenIdentity? Identity, string? ErrorMessage)
+public record LoginOutcome(bool Success, SessionIdentity? Identity, string? ErrorMessage)
 {
-    public static LoginOutcome Ok(TokenIdentity identity) => new(true, identity, null);
+    public static LoginOutcome Ok(SessionIdentity identity) => new(true, identity, null);
 
     public static LoginOutcome Fail(string message) => new(false, null, message);
 }
@@ -16,7 +16,7 @@ public record LoginOutcome(bool Success, TokenIdentity? Identity, string? ErrorM
 /// 登入流程的業務層（docs/WEB-SPEC.md §6.2）。
 ///
 /// 職責邊界：**憑證驗證交給 IAuthenticationProvider**（Stub/AD 各自實作），
-/// 這裡負責驗證通過之後的事——查使用者、檢查停用、算能力、組出 token 身分。
+/// 這裡負責驗證通過之後的事——查使用者、檢查停用、算能力、組出登入身分。
 /// 換驗證方式時這個類別完全不需要修改，這正是把 Provider 抽出去的目的。
 /// </summary>
 public class IdentityService
@@ -75,7 +75,7 @@ public class IdentityService
             case ServerAdminLoginResult.Success:
                 Log.Info("serverAdmin 本地救援帳號登入成功：{0}", account);
                 _audit.RecordAuth(AuditActions.Login, account, null, "serverAdmin 本地救援帳號登入成功", AuditResult.Ok);
-                return LoginOutcome.Ok(new TokenIdentity(
+                return LoginOutcome.Ok(new SessionIdentity(
                     UserId: 0,
                     Account: account,
                     DisplayName: $"{account}（系統維護）",
@@ -118,7 +118,7 @@ public class IdentityService
         // 上次登入時間（§3）：只有這一個寫入點。serverAdmin 不經這裡（它不在 lf_users）
         _users.TouchLogin(user.UserId, DateTime.Now);
 
-        var identity = CreateTokenIdentity(user);
+        var identity = CreateSessionIdentity(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
             $"登入成功（{_provider.Name}）", AuditResult.Ok);
 
@@ -126,12 +126,12 @@ public class IdentityService
     }
 
     /// <summary>
-    /// 一般使用者的 token 身分（能力當下重算）。登入與 ActiveUserMiddleware 的權限版本換發共用這一份，
-    /// 兩條路徑簽出來的 token 內容才不會漂移。
+    /// 一般使用者的登入身分（能力當下重算）。登入與 cookie 驗證的權限版本就地更新共用這一份，
+    /// 兩條路徑算出來的身分內容才不會漂移。
     /// </summary>
-    public TokenIdentity CreateTokenIdentity(WebUser user)
+    public SessionIdentity CreateSessionIdentity(WebUser user)
     {
-        // 先讀版號、後算能力（見 TokenIdentity.PermissionVersion）
+        // 先讀版號、後算能力（見 SessionIdentity.PermissionVersion）
         var version = _permissionVersion?.Current;
         return new(
             UserId: user.UserId,
@@ -188,7 +188,8 @@ public class IdentityService
             Active = user.Active,
             GroupIds = user.GroupIds.ToList(),
             LastLoginAt = user.LastLoginAt,
-            DispatchPaused = user.DispatchPaused
+            DispatchPaused = user.DispatchPaused,
+            SessionVersion = user.SessionVersion
         };
         var saved = _users.Upsert(updated);
 

@@ -38,7 +38,7 @@ LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC�
 │                       郵件通知（SMTP，執行摘要/每日每週彙總/高風險即時三路觸發；高風險即時按
 │                       收件人聚合一人一次執行一封，寄成功才標記、失敗自動補寄、連續失敗熔斷）、
 │                       操作說明書＋AI 問答（僅 Maintain，實驗性）。
-│                       群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
+│                       群組制授權（部門↔主機群組）＋內建 Cookie Authentication（HttpOnly Cookie）。
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
 │                       儲存後端二選一（Sqlite 預設/SqlServer，見 docs/WEB-SPEC.md §10.5）
 └── （appsettings.json 已內含開箱即測的測試登入：demo-admin＝全功能測試管理員（自動 seed）、
@@ -102,6 +102,13 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 ## 升級注意事項
 
 **升級到本版之前，先到「系統管理 > 設定」確認各項資料保留天數。**
+
+**登入改用 ASP.NET Core 內建 Cookie Authentication**：
+- **升級後所有人會被登出一次**，重新登入即可。舊的登入 cookie（名稱 `lf_auth`）不再被讀取，下一次請求時會被清掉。
+- **回滾到舊版後，使用者重新登入即可**。使用者資料多出的 `SessionVersion` 欄位，舊版讀取時會忽略。
+- 登入時限：`Jwt:ExpireHours`（預設 8 小時）改為「閒置時限」，有操作就延長；連續登入另有 24 小時絕對上限（程式常數）。登出與停用帳號即時生效，登出後該帳號所有裝置上的登入一併失效。
+- `Jwt:SecretKey`、`Jwt:Issuer`、`Jwt:Audience` 已不使用，環境變數 `Jwt__SecretKey` 可以刪除（留著不影響啟動）。
+- 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。
 
 **內建規則升級到 v12（稽核記錄清除 1102）**：實際環境的 1102 事件來源是 `Eventlog`，新版多一條對應規則。既有站台要到「系統管理 > 規則維護」套用升級橫幅，新規則才會生效。
 
@@ -616,7 +623,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 {
   "Server": { "PathBase": "" },
   "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },
-  "Jwt": { "SecretKey": "<測試值，正式環境以環境變數覆寫>", "ExpireHours": 8 },
+  "Jwt": { "ExpireHours": 8, "CookieName": "lf_session" },
   "Auth": {
     "Provider": "Stub",
     "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值>" }
@@ -631,7 +638,8 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點與診斷 log 的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
-| `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
+| `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
+| `Jwt.CookieName` | `lf_session` | 登入 cookie 名稱。舊版的 `lf_auth` 不再使用，請求帶著它時會被清除 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
 | `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
 
@@ -656,6 +664,7 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 | `Storage:SqliteWal` | `true`（僅 SQLite） | 備份時包含 `.db`、`-wal`、`-shm`；需要回退時設為 `false` 並重啟 |
 | `Storage:SqliteCacheSizeKb`／`SqliteMmapSizeBytes`／`SqliteSoftHeapLimitBytes` | 留空＝`65536`（每條連線 page cache 上限 64 MB）／`1073741824`（1 GB 記憶體對映）／不設軟上限（僅 SQLite） | 不需要；「系統健康 > 記憶體」卡的 SQLite 堆峰值偏高時再調小 cache 或設軟上限。可用應用程式集區環境變數 `Storage__SqliteCacheSizeKb` 等覆寫（不必改發行目錄內的檔案）；改完重啟，軟上限由有值改回不設也要重啟才解除。SqlServer 後端填了會在 web.log 警示並忽略 |
 | `Server:TrustedProxies` | 空清單 | 使用反向代理且要按來源 IP 節流登入時，填入可信代理的 IP |
+| Data Protection 金鑰環 `dataprotection\` | 首次啟動自動建立 | 不必備份；遺失只會讓全員重新登入 |
 | 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
 | 處理說明常用語 | 每人未設定時使用全站預設（出廠為空） | 管理者可在設定頁填全站預設；個人可自行儲存常用語 |
 | 排程新鮮度確認期限 | 未確認 | 過期告示需管理者在「設定 > 系統健康」確認並設定靜音期限 |
@@ -736,8 +745,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 
 | 環境變數 | 對應設定 | 用途 |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | — | 正式站台設為 `Production`（未設定時預設就是 Production）。`WebAppSettings.Validate()` 的 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只有 `Development` 放行，其餘任何值都會擋下啟動 |
-| `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
+| `ASPNETCORE_ENVIRONMENT` | — | 正式站台設為 `Production`（未設定時預設就是 Production）。`WebAppSettings.Validate()` 的 fail-fast 檢查（Stub 驗證、已知測試雜湊黑名單）只有 `Development` 放行，其餘任何值都會擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
 | `LF_CRYPTO_KEY` | — | 密碼欄位（Sentinel、PRTG、SMTP、AI API 金鑰）加密用（base64、解碼後需恰為 32 bytes）。**選填**：未設定時站台第一次啟動會自動產生金鑰檔 `Storage:DataRoot\keys\lf-crypto.key`（見下方「密碼欄位的金鑰檔」）。有設定時以環境變數為準、不產生金鑰檔 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
@@ -765,6 +773,16 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
   仍不足以讓舊版讀新格式——降版後需在設定頁重新輸入各密碼欄位。升級前請先備份資料庫。
 - 資料搬運（PRTG 維護頁的匯出／匯入）不含任何密碼欄位，不受金鑰影響。
 
+### 登入 cookie 與 Data Protection 金鑰環
+
+登入 cookie 是內建 Cookie Authentication 的加密票證，由 Data Protection 加密簽章；PRTG 監控的分頁游標也用同一個金鑰環。
+
+- 金鑰環存在 `Storage:DataRoot\dataprotection\`，應用名稱固定為 `LogForesight`，不隨部署路徑變動。
+- 啟動時建立並限縮權限：Unix 目錄 700、檔案 600；Windows 移除繼承，只留執行帳號與 SYSTEM。建不起來（執行帳號沒有寫入權限）會中止啟動。
+- **遺失的後果只是全員重新登入與舊分頁游標失效，不影響資料，不必備份。** 與加密金鑰檔 `keys\lf-crypto.key` 不同，後者遺失會讓資料庫裡的密碼欄位解不開。
+- 多個站台實例共用同一個資料庫時，各自有各自的 `DataRoot`，登入 cookie 不互通（本來就是各站台自己登入）。
+- Cookie 的 `Secure` 旗標跟隨請求：HTTPS（或反向代理帶 `X-Forwarded-Proto: https`）才附上，HTTP 直連仍可登入。Path 跟著站台掛載路徑，IIS 子 Application 不需另外設定。
+
 ### 登入不了時的診斷順序
 
 「帳號密碼確定正確卻登不進去」有好幾種成因，畫面上看起來都很像。照這個順序查最快：
@@ -774,10 +792,11 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
    多半是靜態檔路徑或瀏覽器快取住舊檔）。此時密碼欄也不會出現。
 2. **F12 > Network 有沒有發出 `POST api/auth/login`**：沒有＝同上；
    回 401＝帳號或密碼問題（往下第 4 步）；回 200 卻仍被打回登入頁＝往下第 3 步。
-3. **Cookie 沒被瀏覽器接受**：檢查回應的 `Set-Cookie lf_auth` 有沒有出現、旗標是否合理
+3. **Cookie 沒被瀏覽器接受**：檢查回應的 `Set-Cookie lf_session` 有沒有出現、旗標是否合理
    （`Secure` 只在 HTTPS 或有 `X-Forwarded-Proto: https` 時才會加）。
-   站台每次登入／登出都會自動清掉舊版遺留的 `Path=/` cookie，正常不必請使用者手動清；
+   請求若帶著舊版的 `lf_auth` cookie，站台會在回應清掉它，正常不必請使用者手動清；
    若 `Set-Cookie` 正常送出而瀏覽器仍不帶回，才需要清一次瀏覽器 cookie 排除殘留。
+   剛重新部署或資料目錄被清空後，所有人被登出一次屬預期（金鑰環重建）。
 4. **看 `logs/web.log`**：serverAdmin 的登入成功／密碼錯誤／鎖定都會留紀錄（站台「稽核查詢」
    頁的 `login`／`login_failed` 是另一條獨立紀錄，兩邊都可查）。
    兩邊都完全沒有紀錄＝請求根本沒到後端，回到第 1 步。

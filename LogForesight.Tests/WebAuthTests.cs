@@ -5,40 +5,34 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-public class AuthCookieTests
+public class SessionCookieSecureFlagTests
 {
-    [Fact]
-    public void HTTP請求_CookieOptions的Secure為False()
+    private static HttpRequest Request(bool https, string? forwardedProto = null)
     {
         var context = new DefaultHttpContext();
-        context.Request.IsHttps = false;
-
-        var options = AuthCookie.Options(context.Request, null);
-
-        Assert.False(options.Secure);
+        context.Request.IsHttps = https;
+        if (forwardedProto != null) context.Request.Headers["X-Forwarded-Proto"] = forwardedProto;
+        return context.Request;
     }
 
     [Fact]
-    public void HTTPS請求_CookieOptions的Secure為True()
+    public void HTTP請求_Secure為False()
     {
-        var context = new DefaultHttpContext();
-        context.Request.IsHttps = true;
+        Assert.False(SessionCookie.IsSecureConnection(Request(https: false)));
+    }
 
-        var options = AuthCookie.Options(context.Request, null);
-
-        Assert.True(options.Secure);
+    [Fact]
+    public void HTTPS請求_Secure為True()
+    {
+        Assert.True(SessionCookie.IsSecureConnection(Request(https: true)));
     }
 
     /// <summary>反向代理終止 TLS 後以 HTTP 轉發時 IsHttps 是 false，只看它會讓走 HTTPS 的
-    /// 使用者拿到沒有 Secure 旗標的 token cookie——那是安全降級，必須認 X-Forwarded-Proto。</summary>
+    /// 使用者拿到沒有 Secure 旗標的登入 cookie——那是安全降級，必須認 X-Forwarded-Proto。</summary>
     [Fact]
     public void 反向代理轉發的HTTPS請求_Secure仍為True()
     {
-        var context = new DefaultHttpContext();
-        context.Request.IsHttps = false;
-        context.Request.Headers["X-Forwarded-Proto"] = "https";
-
-        Assert.True(AuthCookie.Options(context.Request, null).Secure);
+        Assert.True(SessionCookie.IsSecureConnection(Request(https: false, "https")));
     }
 
     /// <summary>多層代理會把 X-Forwarded-Proto 累加成逗號清單，最靠近使用者的是第一段——
@@ -46,28 +40,81 @@ public class AuthCookieTests
     [Fact]
     public void 多層代理的XForwardedProto清單_取第一段判定()
     {
-        var context = new DefaultHttpContext();
-        context.Request.IsHttps = false;
-        context.Request.Headers["X-Forwarded-Proto"] = "https, http";
-
-        Assert.True(AuthCookie.Options(context.Request, null).Secure);
+        Assert.True(SessionCookie.IsSecureConnection(Request(https: false, "https, http")));
     }
 
-    /// <summary>刪除舊 Path=/ Cookie 是另一處手寫的 CookieOptions，Secure 判定必須與寫入端一致——
-    /// 不一致時 HTTP 部署下刪不掉舊 token，殘留的舊 token 會覆寫新 token，使用者重登也救不回來。</summary>
     [Fact]
-    public void HTTP請求_刪除舊根路徑Cookie的Secure也為False()
+    public void 代理標示HTTP_Secure為False()
+    {
+        Assert.False(SessionCookie.IsSecureConnection(Request(https: false, "http")));
+    }
+
+    /// <summary>cookie 的 Path 用編碼後形式：瀏覽器 path-match 比對的是請求 URL 的編碼後路徑</summary>
+    [Theory]
+    [InlineData("", "/")]
+    [InlineData("/LogForesight", "/LogForesight")]
+    public void CookiePath_跟掛載路徑走(string pathBase, string expected)
     {
         var context = new DefaultHttpContext();
-        context.Request.IsHttps = false;
-        context.Request.PathBase = "/LogForesight";
+        context.Request.PathBase = pathBase;
+        Assert.Equal(expected, SessionCookie.CookiePath(context.Request));
+    }
 
-        AuthCookie.Delete(context.Response, context.Request, "lf_auth");
+    [Fact]
+    public void CookiePath_使用編碼後形式()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.PathBase = "/日誌預警";
+
+        var path = SessionCookie.CookiePath(context.Request);
+
+        Assert.DoesNotContain("日", path);
+        Assert.StartsWith("/%", path);
+    }
+}
+
+/// <summary>舊版 JWT cookie（名稱 lf_auth）的清除：只在請求帶著舊名稱時動作</summary>
+public class LegacyAuthCookieMiddlewareTests
+{
+    private static async Task<DefaultHttpContext> Run(string pathBase, bool https, string? cookieHeader, string currentName = "lf_session")
+    {
+        var context = new DefaultHttpContext();
+        context.Request.PathBase = pathBase;
+        context.Request.IsHttps = https;
+        if (cookieHeader != null) context.Request.Headers.Cookie = cookieHeader;
+        var middleware = new LogForesight.Web.Middleware.LegacyAuthCookieMiddleware(_ => Task.CompletedTask, currentName);
+        await middleware.InvokeAsync(context);
+        return context;
+    }
+
+    [Fact]
+    public async Task 請求帶舊名稱cookie_回應清掉它_子路徑與根路徑兩個Path都刪()
+    {
+        var context = await Run("/LogForesight", https: false, "lf_auth=eyJhbGciOi.old");
 
         var setCookies = context.Response.Headers["Set-Cookie"].ToString();
+        Assert.Contains("lf_auth=;", setCookies);
         Assert.Contains("path=/LogForesight", setCookies, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("path=/;", setCookies, StringComparison.OrdinalIgnoreCase);
+        // HTTP 請求的 Secure 判定與寫入端一致，否則刪不掉
         Assert.DoesNotContain("secure", setCookies, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task 請求沒有舊名稱cookie_不動作()
+    {
+        var context = await Run("", https: true, "lf_session=abc");
+
+        Assert.True(Microsoft.Extensions.Primitives.StringValues.IsNullOrEmpty(context.Response.Headers.SetCookie));
+    }
+
+    /// <summary>邊界：管理者把 CookieName 設成舊名稱時，那張就是現行 cookie，不能被清掉</summary>
+    [Fact]
+    public async Task 現行名稱就是舊名稱_不清除()
+    {
+        var context = await Run("", https: true, "lf_auth=abc", currentName: "lf_auth");
+
+        Assert.True(Microsoft.Extensions.Primitives.StringValues.IsNullOrEmpty(context.Response.Headers.SetCookie));
     }
 }
 
@@ -227,13 +274,12 @@ public class RoleCapabilityMapTests
 /// <summary>P0-2：已提交進版控的公開測試金鑰／雜湊，不得帶著上 Production</summary>
 public class WebAppSettingsValidationTests
 {
-    private const string KnownDevSecretKey = "bge6V8SsJu6GRuYYyVniemo/XhAJ4J3kis3sqSDai5gluW9wmA2Vnd4opTbXBTxo";
     private const string KnownDevPasswordHash = "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M=";
 
     /// <summary>其餘欄位皆合格的基準設定，僅金鑰/雜湊/環境由呼叫端覆寫</summary>
     private static WebAppSettings Baseline() => new()
     {
-        Jwt = new JwtSettings { SecretKey = KnownDevSecretKey, ExpireHours = 8 },
+        Jwt = new SessionSettings { ExpireHours = 8 },
         Auth = new AuthSettings
         {
             Provider = "Ldap",
@@ -241,15 +287,6 @@ public class WebAppSettingsValidationTests
         },
         Storage = new StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory }
     };
-
-    [Fact]
-    public void Production且用已知SecretKey_啟動失敗()
-    {
-        var settings = Baseline();
-
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(strict: true, "Production"));
-        Assert.Contains("Jwt:SecretKey", ex.Message);
-    }
 
     [Fact]
     public void Production且用已知PasswordHash_啟動失敗()
@@ -275,12 +312,28 @@ public class WebAppSettingsValidationTests
     public void Production且已覆寫成非已知值_通過()
     {
         var settings = Baseline();
-        settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
         settings.Auth.ServerAdmin.PasswordHash = PasswordHasher.Hash("Production-Overridden-P@ssw0rd");
 
         // 意圖：Production 已覆寫成非已知值不擲例外
         var ex = Record.Exception(() => settings.Validate(strict: true, "Production"));
         Assert.Null(ex);
+    }
+
+    /// <summary>登入閒置時限的邊界：0 不合格、1 合格（0 會讓登入 cookie 一建立就過期）</summary>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    [InlineData(1, true)]
+    public void ExpireHours必須大於0(int hours, bool valid)
+    {
+        var settings = Baseline();
+        settings.Jwt.ExpireHours = hours;
+        settings.Auth.ServerAdmin.PasswordHash = PasswordHasher.Hash("Any-P@ssw0rd-1");
+
+        var ex = Record.Exception(() => settings.Validate(strict: false, "Development"));
+
+        if (valid) Assert.Null(ex);
+        else Assert.Contains("Jwt:ExpireHours", Assert.IsType<InvalidOperationException>(ex).Message);
     }
 
     [Fact]

@@ -491,7 +491,7 @@ public class IdentityServiceTests
             new LogForesight.Web.Auth.UserCapabilityResolver(bumpingGroups, _hosts, _issueOwners), stamp);
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\toctou", DisplayName = "t", Active = true });
 
-        var identity = service.CreateTokenIdentity(user);
+        var identity = service.CreateSessionIdentity(user);
 
         Assert.True(stamp.Current > before, "測試前提：解析途中確實遞增了版號");
         Assert.Equal(before, identity.PermissionVersion);

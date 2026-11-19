@@ -13,37 +13,34 @@ namespace LogForesight.Web.Controllers.Api;
 /// 登入/登出/取得目前身分（docs/WEB-SPEC.md §9.0）。
 ///
 /// Controller 的職責僅止於「HTTP ↔ DTO 轉換與呼叫 Service」——
-/// 驗證邏輯在 IdentityService、token 簽發在 JwtTokenService、稽核在 IAuditService。
+/// 驗證邏輯在 IdentityService、登入 cookie 的簽發與撤銷在 ISessionSigner、稽核在 IAuditService。
 /// </summary>
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
     private readonly IdentityService _identity;
-    private readonly JwtTokenService _tokens;
+    private readonly ISessionSigner _session;
     private readonly IAuthenticationProvider _provider;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly WebAppSettings _settings;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly LoginThrottle _throttle;
-    private readonly RevokedTokens _revoked;
 
     public AuthController(
         IdentityService identity,
-        JwtTokenService tokens,
+        ISessionSigner session,
         IAuthenticationProvider provider,
         ICurrentUser currentUser,
         IAuditService audit,
         WebAppSettings settings,
         IUserDisplayNameService userDisplayNames,
-        LoginThrottle throttle,
-        RevokedTokens revoked)
+        LoginThrottle throttle)
     {
         _throttle = throttle;
-        _revoked = revoked;
         _identity = identity;
-        _tokens = tokens;
+        _session = session;
         _provider = provider;
         _currentUser = currentUser;
         _audit = audit;
@@ -69,7 +66,7 @@ public class AuthController : ControllerBase
     // 匿名端點：帳號與密碼各上限 256 字，正常本文遠小於 4 KB；不設上限時任何人都能塞到 Kestrel 預設的 30 MB 再被反序列化
     [RequestSizeLimit(LoginRequestMaxBytes)]
     [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(LoginRateLimit.PolicyName)]
-    public ActionResult<ApiResponse<CurrentUserDto>> Login([FromBody] LoginRequest request)
+    public async Task<ActionResult<ApiResponse<CurrentUserDto>>> Login([FromBody] LoginRequest request)
     {
         var now = DateTime.Now;
         var account = request.Account ?? string.Empty;
@@ -111,20 +108,17 @@ public class AuthController : ControllerBase
 
         _throttle.RecordSuccess(throttleKey);
 
-        var token = _tokens.CreateToken(outcome.Identity);
-        var expires = _tokens.ExpiresAt();
-
-        // HttpOnly：前端 JS 讀不到 token（XSS 也偷不走）
+        // HttpOnly：前端 JS 讀不到 cookie（XSS 也偷不走）
         // SameSite=Strict：跨站請求不帶上這張 Cookie，這是 CSRF 的第一層防線
-        // Secure：只走 HTTPS。內網也必須是 HTTPS，否則 Cookie 在網路上是明文
-        AuthCookie.Append(Response, Request, _settings.Jwt.CookieName, token, expires);
+        // Secure：連線是 HTTPS（或代理標示 HTTPS）時才掛；內網正式環境應走 HTTPS，否則 Cookie 在網路上是明文
+        await _session.SignInAsync(HttpContext, outcome.Identity);
 
         return Ok(ApiResponse<CurrentUserDto>.Ok(ToDto(outcome.Identity)));
     }
 
     [SkipDataVersionBump]
     [HttpPost("logout")]
-    public ApiResponse Logout()
+    public async Task<ApiResponse> Logout()
     {
         if (_currentUser.IsAuthenticated)
         {
@@ -132,17 +126,9 @@ public class AuthController : ControllerBase
                 _currentUser.UserId > 0 ? _currentUser.UserId : null, "登出", AuditResult.Ok);
         }
 
-        // 登出撤銷：只刪 cookie 的話，事先被複製走的 token 在剩餘效期內仍可重放
-        var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
-        if (jti != null)
-        {
-            var exp = long.TryParse(User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Exp)?.Value, out var seconds)
-                ? DateTimeOffset.FromUnixTimeSeconds(seconds)
-                : _tokens.ExpiresAt();   // 讀不到到期時間就以最長效期保守記住
-            _revoked.Revoke(jti, exp);
-        }
-
-        AuthCookie.Delete(Response, Request, _settings.Jwt.CookieName);
+        // 登出撤銷：只刪 cookie 的話，事先被複製走的 cookie 在剩餘效期內仍可重放；
+        // 遞增使用者的工作階段版號（持久化），既有 cookie 一律失效，重啟也不復活
+        await _session.SignOutAsync(HttpContext, _currentUser.UserId, _currentUser.IsServerAdmin);
         return ApiResponse.Ok();
     }
 
@@ -160,7 +146,7 @@ public class AuthController : ControllerBase
             LandingPath = LandingPathFor(_currentUser.UserId, _currentUser.IsServerAdmin, _currentUser.Capabilities)
         });
 
-    private CurrentUserDto ToDto(TokenIdentity identity) => new()
+    private CurrentUserDto ToDto(SessionIdentity identity) => new()
     {
         UserId = identity.UserId,
         Account = identity.Account,

@@ -112,10 +112,10 @@ public class LoginThrottleTests
         public readonly RecordingAuditService Audit = new();
         public readonly FakeAuthenticationProvider Provider = new() { ResultToReturn = CredentialCheckResult.Fail("bad") };
         public readonly WebAppSettings Settings = new();
+        public readonly RecordingSessionSigner Signer = new();
 
         public Harness()
         {
-            Settings.Jwt.SecretKey = new string('k', 64);
             Settings.Auth.ServerAdmin.Account = "serverAdmin";
         }
 
@@ -126,9 +126,9 @@ public class LoginThrottleTests
             var hosts = new FakeHostStore();
             var identity = new IdentityService(users, groups, hosts, Provider,
                 new ServerAdminAuthenticator(Settings), Audit, new UserCapabilityResolver(groups, hosts));
-            var controller = new AuthController(identity, new JwtTokenService(Settings, TestPermissionStamps.Shared), Provider,
+            var controller = new AuthController(identity, Signer, Provider,
                 FakeCurrentUser.Anonymous(), Audit, Settings,
-                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle, new RevokedTokens());
+                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle);
             var http = new DefaultHttpContext();
             http.Connection.RemoteIpAddress = ip;
             controller.ControllerContext = new ControllerContext { HttpContext = http };
@@ -140,16 +140,16 @@ public class LoginThrottleTests
         (r.Result as IStatusCodeActionResult)?.StatusCode;
 
     [Fact]
-    public void 被擋時回429且不呼叫身分驗證_同一次暫停連擋3次只寫1筆稽核()
+    public async Task 被擋時回429且不呼叫身分驗證_同一次暫停連擋3次只寫1筆稽核()
     {
         var h = new Harness();
         for (var i = 0; i < 10; i++)
-            Assert.Equal(401, StatusOf(h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" })));
+            Assert.Equal(401, StatusOf(await h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" })));
         Assert.Equal(10, h.Provider.VerifyCalls);
 
         for (var i = 0; i < 3; i++)
         {
-            var r = h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" });
+            var r = await h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" });
             Assert.Equal(429, StatusOf(r));
             var body = (LogForesight.Web.Models.ApiResponse<CurrentUserDto>)((ObjectResult)r.Result!).Value!;
             Assert.StartsWith("登入嘗試次數過多，請於 ", body.Error!.Message);
@@ -157,22 +157,24 @@ public class LoginThrottleTests
 
         Assert.Equal(10, h.Provider.VerifyCalls);
         Assert.Single(h.Audit.Entries, e => e.Action == AuditActions.LoginThrottled);
+        Assert.Empty(h.Signer.SignedIn);   // 失敗與被擋的登入都不建立登入 cookie
     }
 
     [Fact]
-    public void IP已被擋時_serverAdmin仍會進到身分驗證()
+    public async Task IP已被擋時_serverAdmin仍會進到身分驗證()
     {
         var h = new Harness();
         h.Provider.RequiresPasswordValue = false; // Stub 模式：serverAdmin 免密碼即成功
         for (var i = 0; i < 50; i++) h.Throttle.RecordFailure($"u{i}", Ip1, DateTime.Now);
         Assert.True(h.Throttle.IsBlocked("anyone", Ip1, DateTime.Now, out _));
 
-        var blocked = h.Controller(Ip1).Login(new LoginRequest { Account = "anyone", Password = "x" });
+        var blocked = await h.Controller(Ip1).Login(new LoginRequest { Account = "anyone", Password = "x" });
         Assert.Equal(429, StatusOf(blocked));
         Assert.Equal(0, h.Provider.VerifyCalls);
 
-        var r = h.Controller(Ip1).Login(new LoginRequest { Account = "SERVERADMIN", Password = "" });
+        var r = await h.Controller(Ip1).Login(new LoginRequest { Account = "SERVERADMIN", Password = "" });
         Assert.Equal(200, StatusOf(r));
+        Assert.Single(h.Signer.SignedIn, i => i.IsServerAdmin);   // 成功才建立登入 cookie；被擋與失敗都沒有
         Assert.Contains(h.Audit.Entries, e => e.Action == AuditActions.Login && e.Account == "SERVERADMIN");
     }
 }

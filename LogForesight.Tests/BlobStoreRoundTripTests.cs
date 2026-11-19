@@ -208,6 +208,31 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.False(Users().Get(original.UserId)!.DispatchPaused);
     }
 
+    /// <summary>工作階段版號：Upsert 不覆寫；登出遞增；啟用轉停用遞增（停用後再啟用，舊 cookie 不復活）</summary>
+    [Fact]
+    public void 使用者_工作階段版號_編輯不覆寫_登出與停用遞增()
+    {
+        var original = Users().Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "原名", Active = true });
+        Assert.Equal(0, original.SessionVersion);
+
+        Assert.Equal(1, Users().BumpSessionVersion(original.UserId));
+        Assert.Equal(2, Users().BumpSessionVersion(original.UserId));
+
+        // 編輯（不帶版號的物件）不得把版號洗回 0
+        Users().Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "新名", Active = true });
+        Assert.Equal(2, Users().Get(original.UserId)!.SessionVersion);
+
+        // 啟用轉停用遞增；停用中再存一次、再啟用都不再遞增（只有「轉」那一刻算）
+        Users().Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "新名", Active = false });
+        Assert.Equal(3, Users().Get(original.UserId)!.SessionVersion);
+        Users().Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "新名", Active = false });
+        Users().Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "新名", Active = true });
+        Assert.Equal(3, Users().Get(original.UserId)!.SessionVersion);
+
+        // 找不到使用者回 0、不擲例外
+        Assert.Equal(0, Users().BumpSessionVersion(99999));
+    }
+
     private static void AssertUserFieldsMatch(WebUser expected, WebUser actual)
     {
         Assert.Equal(expected.Account, actual.Account);

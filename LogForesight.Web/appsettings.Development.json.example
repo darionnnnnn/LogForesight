@@ -20,11 +20,6 @@
     //   長時間測試建議把 DataRoot 指到 OneDrive 之外（如 "C:\\LogForesightData-dev"）。
     "DataRoot": ""
   },
-  "Jwt": {
-    // HMAC-SHA256 簽章金鑰，至少 32 bytes。可用 PowerShell 產生：
-    // [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }))
-    "SecretKey": "<至少 32 bytes 的隨機字串>"
-  },
   "Auth": {
     "Provider": "Stub",
     "ServerAdmin": {

@@ -12,10 +12,9 @@ using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Import;
 using LogForesight.Web.Services.Mail;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 
 namespace LogForesight.Web.Extensions;
 
@@ -160,17 +159,17 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>驗證與授權：JWT（存於 HttpOnly Cookie）＋ 能力解析</summary>
+    /// <summary>驗證與授權：內建 Cookie Authentication（HttpOnly Cookie）＋ 能力解析</summary>
     public static IServiceCollection AddLogForesightAuth(this IServiceCollection services, WebAppSettings settings)
     {
         services.AddHttpContextAccessor();
-        services.AddSingleton<JwtTokenService>();
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+            .TryAddSingleton<TimeProvider>(services, TimeProvider.System);
         services.AddSingleton<ServerAdminAuthenticator>();
         services.AddSingleton<LoginThrottle>();   // 行程內節流狀態，必須是 Singleton 才跨請求累計
-        // 權限版本號與登出撤銷清單都是跨請求共享狀態，必須是 Singleton
+        // 權限版本號是跨請求共享狀態，必須是 Singleton
         services.AddSingleton<PermissionVersionStamp>(sp =>
             new PermissionVersionStamp(sp.GetRequiredService<StorageBackend>().Blob(PermissionVersionStamp.BlobKey)));
-        services.AddSingleton<RevokedTokens>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
@@ -192,62 +191,36 @@ public static class ServiceCollectionExtensions
             return SelectAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback, OperatingSystem.IsWindows);
         });
 
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
+        // 內建 Cookie Authentication（docs/WEB-SPEC.md §6.1）：cookie 內是 Data Protection 加密簽章的票證，
+        // 逐請求驗證（停用、工作階段版號、權限版本、24 小時絕對上限）在 CookieSessionEvents。
+        services.AddAuthentication(SessionCookie.Scheme)
+            .AddCookie(SessionCookie.Scheme, options =>
             {
-                // 關閉 claim 名稱映射：預設行為會把 unique_name 之類的短名稱改寫成
-                // WS-Federation 的長 URI，造成「寫進去的 claim 名字」與「讀出來的名字」不同。
-                // 關掉之後 JwtTokenService 寫什麼名字就讀什麼名字，不需要記憶對照關係。
-                options.MapInboundClaims = false;
-
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    NameClaimType = JwtTokenService.DisplayNameClaim,
-                    RoleClaimType = JwtTokenService.CapabilityClaim,
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer = settings.Jwt.Issuer,
-                    ValidAudience = settings.Jwt.Audience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(settings.Jwt.SecretKey)),
-                    ClockSkew = TimeSpan.FromMinutes(1)
-                };
-
-                options.Events = new JwtBearerEvents
-                {
-                    // token 放在 HttpOnly Cookie 而不是 Authorization 標頭：
-                    // 前端 JS 讀不到 token，XSS 就偷不走它（§6.1）
-                    OnMessageReceived = context =>
-                    {
-                        if (context.Request.Cookies.TryGetValue(settings.Jwt.CookieName, out var token))
-                            context.Token = token;
-                        return Task.CompletedTask;
-                    },
-
-                    // 未驗證時 API 與頁面要有不同待遇：
-                    // API 回 401 讓前端攔截後導頁；頁面直接 302，使用者不會先看到空殼再被踢出去
-                    OnChallenge = async context =>
-                    {
-                        context.HandleResponse();
-
-                        if (context.Request.Path.StartsWithSegments("/api"))
-                        {
-                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                            context.Response.ContentType = "application/json";
-                            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
-                                ApiErrorCodes.AuthExpired, "登入已逾期，請重新登入。"));
-                        }
-                        else
-                        {
-                            // Request.Path 已扣掉掛載前綴，returnUrl 存的是 app 內路徑
-                            // （前端用 appUrl 還原）；轉址目標本身要補回前綴才到得了登入頁
-                            var returnUrl = Uri.EscapeDataString(context.Request.Path + context.Request.QueryString);
-                            context.Response.Redirect($"{context.Request.PathBase}/login?returnUrl={returnUrl}");
-                        }
-                    }
-                };
+                options.Cookie.Name = settings.Jwt.CookieName;
+                // HttpOnly：前端 JS 讀不到；SameSite=Strict：跨站請求不帶，CSRF 的第一層防線
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SameSite = SameSiteMode.Strict;
+                // 跟隨請求：http 與 https 都要能登入（Secure 旗標另認 X-Forwarded-Proto，見 CookieSessionEvents）。
+                // Path 不設定：框架預設用請求的 PathBase，站台掛在 IIS 子 Application 時 cookie 路徑正確。
+                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                options.Cookie.IsEssential = true;
+                // 閒置時限（設定鍵 Jwt:ExpireHours 沿用）＋ 滑動延長；連續登入的絕對上限見 SessionCookie.AbsoluteLifetime
+                options.ExpireTimeSpan = TimeSpan.FromHours(settings.Jwt.ExpireHours);
+                options.SlidingExpiration = true;
+                options.EventsType = typeof(CookieSessionEvents);
+                // 代理終止 TLS 時 IsHttps 為 false：Secure 旗標另認 X-Forwarded-Proto（寫入、續發、刪除都經這個管理員）
+                options.CookieManager = new ForwardedSecureCookieManager();
             });
+        // 時間一律取自注入的 TimeProvider（假時鐘測試要能撥動到期與絕對上限）
+        services.AddOptions<CookieAuthenticationOptions>(SessionCookie.Scheme)
+            .Configure<TimeProvider>((options, clock) => options.TimeProvider = clock);
+        services.AddTransient<CookieSessionEvents>();
+        services.AddSingleton<SessionPrincipalFactory>();
+        services.AddSingleton<ISessionSigner, CookieSessionSigner>();
+        services.AddSingleton<SessionVersionStore>(sp => new SessionVersionStore(
+            sp.GetRequiredService<IUserStore>(),
+            sp.GetRequiredService<StorageBackend>().Blob(SessionVersionStore.ServerAdminBlobKey)));
+        services.AddLogForesightDataProtection(settings.Storage.ResolveDataRoot());
 
         services.AddAuthorization(options =>
         {

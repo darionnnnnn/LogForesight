@@ -680,6 +680,17 @@ public class HandlingStoreContractTests : IDisposable
         Assert.Equal(new[] { ("SRV-01", "k1"), ("SRV-02", "k2") }, all);
     }
 
+    /// <summary>回滾相容的另一側：舊版寫的使用者 blob 沒有 SessionVersion，讀進來是 0；新版寫入的欄位舊版讀取時被忽略（多餘欄位不影響反序列化）</summary>
+    [Fact]
+    public void 使用者blob缺SessionVersion反序列化為0_多出的欄位被忽略()
+    {
+        _fx.Blob("users").Mutate(_ => ("[{\"UserId\":1,\"Account\":\"a\",\"Active\":true},{\"UserId\":2,\"Account\":\"b\",\"Active\":true,\"SessionVersion\":7,\"FutureField\":1}]", 0));
+
+        var users = new UserStore(_fx.Blob("users"), _fx.Blob("users_last_login")).GetAll();
+        Assert.Equal(0, users.Single(u => u.UserId == 1).SessionVersion);
+        Assert.Equal(7, users.Single(u => u.UserId == 2).SessionVersion);
+    }
+
     [Fact]
     public void 舊使用者blob缺DispatchPaused反序列化為false()
     {

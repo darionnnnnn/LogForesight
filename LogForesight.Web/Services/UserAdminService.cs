@@ -100,7 +100,7 @@ public class UserAdminService
         // 能力來自 UserCapabilityResolver（單一事實來源，體檢 H1 抽出）——這裡原本有
         // 第三份「群組角色聯集 ∪ 負責人隱含 User 角色」的複本，H3 就是複本漂移壞掉的。
         // **停用帳號一律顯示為無能力**：它連登入都進不來（IdentityService 擋、
-        // ActiveUserMiddleware 逐請求 401），列出「他可以標記處理狀態」是誤導；
+        // CookieSessionEvents 逐請求 401），列出「他可以標記處理狀態」是誤導；
         // 與下方可見主機為空同一個判斷，畫面上兩者要一致。停用的判斷依 resolver 的
         // 契約由呼叫端負責（登入路徑不需要它，這裡的「顯示為無能力」是本頁的呈現語意）。
         var capabilities = user.Active

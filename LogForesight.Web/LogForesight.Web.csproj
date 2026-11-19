@@ -15,7 +15,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
         <PackageReference Include="NLog.Web.AspNetCore" />
         <!-- AD 帳密驗證（LdapAuthenticationProvider／Auth/Ldap）。Windows 專屬，非 Windows 由呼叫端守門 -->
         <PackageReference Include="System.DirectoryServices.AccountManagement" />

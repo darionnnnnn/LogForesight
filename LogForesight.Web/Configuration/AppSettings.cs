@@ -16,21 +16,21 @@ namespace LogForesight.Web.Configuration;
 public class WebAppSettings
 {
     /// <summary>
-    /// 已提交進版控、公開已知的測試值（appsettings.json 的預設 SecretKey／PasswordHash）。
-    /// Production 帶著這組值啟動＝所有 JWT 都可被外人偽造、serverAdmin 密碼形同公開——
+    /// 已提交進版控、公開已知的測試值（appsettings.json 的預設 PasswordHash）。
+    /// Production 帶著這組值啟動＝serverAdmin 密碼形同公開——
     /// 這道清單只擋「忘了用環境變數覆寫」的疏忽，不是額外的機密保護層。
     /// **未來再提交任何測試用金鑰／雜湊，記得同步加進這裡。**
     /// </summary>
     private static readonly HashSet<string> KnownDevSecrets = new(StringComparer.Ordinal)
     {
-        "bge6V8SsJu6GRuYYyVniemo/XhAJ4J3kis3sqSDai5gluW9wmA2Vnd4opTbXBTxo", // Jwt:SecretKey（appsettings.json）
         "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M=" // Auth:ServerAdmin:PasswordHash（appsettings.json，明文＝LogForesight-dev）
     };
 
     /// <summary>儲存後端。型別取自 Core，與批次 exe 共用同一份欄位定義</summary>
     public StorageSettings Storage { get; set; } = new();
 
-    public JwtSettings Jwt { get; set; } = new();
+    /// <summary>登入 cookie 設定（區段名稱沿用 <c>Jwt</c>，見 <see cref="SessionSettings"/>）</summary>
+    public SessionSettings Jwt { get; set; } = new();
 
     public AuthSettings Auth { get; set; } = new();
 
@@ -46,7 +46,7 @@ public class WebAppSettings
     /// <summary>
     /// 啟動時的組態驗證：不合格直接拋例外中止啟動（fail fast），不讓站台帶病執行。
     /// 沿用批次端「設定錯誤要顯性化」的原則——設定寫錯時最糟的結果是「看起來正常但行為不對」，
-    /// 例如 SecretKey 空白會讓 JWT 簽章失效、DataRoot 指錯會讓整站看起來沒有任何資料。
+    /// 例如 ExpireHours 寫成 0 會讓登入立刻失效、DataRoot 指錯會讓整站看起來沒有任何資料。
     /// </summary>
     /// <param name="strict">
     /// 是否擋下出廠公開值與 Stub。呼叫端傳「環境不是 Development」：只有 Development 放行，
@@ -63,13 +63,6 @@ public class WebAppSettings
         if (!Storage.IsValidType)
             errors.Add($"Storage:Type「{Storage.Type}」不受支援，僅允許 " +
                        $"{string.Join(" / ", StorageSettings.ValidTypes)}。");
-
-        if (string.IsNullOrWhiteSpace(Jwt.SecretKey))
-            errors.Add("Jwt:SecretKey 未設定（正式環境請用環境變數 Jwt__SecretKey 或 user-secrets 提供，不要進版控）。");
-        else if (System.Text.Encoding.UTF8.GetByteCount(Jwt.SecretKey) < 32)
-            errors.Add("Jwt:SecretKey 長度不足：HMAC-SHA256 簽章金鑰至少需要 32 bytes。");
-        else if (strict && KnownDevSecrets.Contains(Jwt.SecretKey))
-            errors.Add(envPrefix + "Jwt:SecretKey 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Jwt__SecretKey 設定另一組隨機字串）。" + devHint);
 
         if (Jwt.ExpireHours <= 0)
             errors.Add("Jwt:ExpireHours 必須大於 0。");
@@ -194,20 +187,20 @@ public class ServerSettings
     }
 }
 
-public class JwtSettings
+/// <summary>
+/// 登入 cookie 的設定。組態區段名稱沿用 <c>Jwt</c>（<see cref="WebAppSettings.Jwt"/>）以免改名讓既有部署的
+/// 環境變數 <c>Jwt__ExpireHours</c> 靜默失效；內容已不含任何簽章金鑰——cookie 由 Data Protection 加密簽章。
+/// </summary>
+public class SessionSettings
 {
-    public string Issuer { get; set; } = "LogForesight";
-
-    public string Audience { get; set; } = "LogForesight.Web";
-
-    /// <summary>HMAC-SHA256 簽章金鑰（≥32 bytes）。**不進版控**：正式環境用環境變數 Jwt__SecretKey 覆寫</summary>
-    public string SecretKey { get; set; } = "";
-
-    /// <summary>Token 效期（小時）。不做 refresh token——內網工具，過期重新登入即可</summary>
+    /// <summary>
+    /// 閒置時限（小時）：有活動就滑動延長，閒置超過這段時間登出。連續登入另有 24 小時絕對上限
+    /// （<see cref="SessionCookie.AbsoluteLifetime"/>，固定常數）。不做 refresh token——內網工具，過期重新登入即可
+    /// </summary>
     public int ExpireHours { get; set; } = 8;
 
-    /// <summary>存放 JWT 的 Cookie 名稱（HttpOnly + Secure + SameSite=Strict，前端 JS 讀不到）</summary>
-    public string CookieName { get; set; } = "lf_auth";
+    /// <summary>存放登入狀態的 Cookie 名稱（HttpOnly + SameSite=Strict，前端 JS 讀不到）。與舊版 JWT cookie 的名稱不同，見 <see cref="SessionCookie.LegacyCookieName"/></summary>
+    public string CookieName { get; set; } = "lf_session";
 }
 
 public class AuthSettings
