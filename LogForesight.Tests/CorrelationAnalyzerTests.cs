@@ -276,6 +276,41 @@ public class CorrelationAnalyzerTests
     }
 
     [Fact]
+    public void 暴力破解RDP得手_舊紀錄只有KeyDetails的IPv4與新紀錄KeyIps可比對()
+    {
+        // 舊紀錄（沒有結構化 KeyIps）走字串 fallback；新紀錄走 KeyIps。IPv4 兩側寫法必須相同。
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(2個): 198.51.100.1, 203.0.113.7");
+        var rdp = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+            IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7");
+        rdp.KeyIps = new List<string> { "203.0.113.7" };
+
+        var findings = CorrelationAnalyzer.Detect(
+            new List<LogIssueSignature> { rdp }, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
+
+        Assert.Contains(findings, f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
+    [Fact]
+    public void 暴力破解RDP得手_舊紀錄KeyDetails的IPv6與新紀錄KeyIps可比對_不同位址不命中()
+    {
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(1個): 2001:db8::7");
+        var same = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+            IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 2001:db8::7");
+        same.KeyIps = new List<string> { "2001:db8::7" };
+        var other = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+            IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 2001:db8::8");
+        other.KeyIps = new List<string> { "2001:db8::8" };
+        var history = new List<DailyAnalysisRecord> { yesterdayBrute };
+
+        Assert.Contains(CorrelationAnalyzer.Detect(new List<LogIssueSignature> { same }, history, DateTime.Today),
+            f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+        Assert.DoesNotContain(CorrelationAnalyzer.Detect(new List<LogIssueSignature> { other }, history, DateTime.Today),
+            f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
+    [Fact]
     public void 暴力破解RDP得手_第6個以後的來源IP也能比對到()
     {
         // KeyDetails 顯示字串只列前 5 個 IP，交集落在第 6 個時單靠字串永遠比對不到。

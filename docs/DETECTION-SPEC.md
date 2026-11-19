@@ -138,6 +138,10 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
   顯示字串——那裡只列前 5 個帳號，第 6 個以後永遠比對不到；`KeyAccounts` 為 null（舊資料）
   時才退回字串剖析。同理【暴力破解→RDP 得手】的來源 IP 交集讀 `KeyIps`
   （欄位定義見 docs/DB-SPEC.md 的 ContentJson 一節）
+  **IP 擷取只有一個入口 `IpExtractor`**（`LogForesight.Core/Models/IpExtractor.cs`，是不是位址由 `IpSyntax` 判定）：Windows 訊息的帳號／IP 彙總、
+  失敗明細的來源位址、跨日 `KeyDetails` 退回剖析、Linux sshd 解析都走它。支援 IPv4 與 IPv6（含壓縮與 `::ffff:` 映射）；
+  IPv4 保留原字串、映射位址還原成 IPv4 本體，其餘 IPv6 為小寫壓縮寫法並去掉區域識別，所以舊紀錄的 IPv4 與新紀錄可直接比對；
+  `999.1.1.1`、時間字串（`12:30:45`）、程式識別字（`Foo::Bar`）不是位址；迴路與未指定位址（`127.0.0.1`、`0.0.0.0`、`::1`、`::`）不進彙總
   （殘留重試必然反覆鎖定帳號）。
 - 判定依據以白話字串 `ResidualCredentialBasis` 呈現於風險日詳情頁、風險報告與 AI prompt
   （AI 不知道判定結果的話，會把系統已判定為殘留的東西敘述成暴力破解，兩邊互相矛盾）。

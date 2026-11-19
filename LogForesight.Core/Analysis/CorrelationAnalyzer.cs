@@ -395,9 +395,6 @@ internal static class CorrelationAnalyzer
         return findings;
     }
 
-    private static readonly System.Text.RegularExpressions.Regex Ipv4Regex =
-        new(@"\b\d{1,3}(\.\d{1,3}){3}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-
     /// <summary>
     /// 簽章的來源 IP 集合：優先讀未截斷的結構化欄位 <c>KeyIps</c>；
     /// 為 null（舊 ContentJson）時才退回剖析 <c>KeyDetails</c> 顯示字串。
@@ -411,9 +408,9 @@ internal static class CorrelationAnalyzer
             ? ExtractIps(issue.KeyDetails)
             : Enumerable.Empty<string>());
 
-    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址（舊資料 fallback）。</summary>
+    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出位址（IPv4／IPv6，走 IpExtractor；舊資料 fallback）。</summary>
     private static IEnumerable<string> ExtractIps(string keyDetails) =>
-        Ipv4Regex.Matches(keyDetails).Select(m => m.Value);
+        IpExtractor.ExtractAll(keyDetails);
 
     /// <summary>依 FirstSeen (HH:mm) 判斷 later 是否在 earlier 之後開始發生，無法解析時回傳 false（不做臆測）</summary>
     private static bool HappenedAfter(LogIssueSignature later, LogIssueSignature earlier) =>

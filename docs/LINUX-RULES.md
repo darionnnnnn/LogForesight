@@ -111,7 +111,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 | program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
 |---|---|---|---|
 | sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；單日 ≥10 次視為暴力破解 | High |
-| sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
+| sshd | Accepted（整詞；任何認證方式：password、publickey、keyboard-interactive/pam、gssapi-with-mic 等） | SSH 登入成功 | **Low（收集用，非告警）** |
 | sudo | authentication failure(s) / incorrect password attempt(s)（單複數都列，下推的整詞片語才取得到） | sudo 提權驗證失敗（≥5 次） | Medium |
 | su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
 | `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
@@ -202,7 +202,7 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 `HeavyBruteforceThreshold`，與規則本身的 `CountThreshold` 各自獨立設定，比照 Windows
 關聯層慣例）＋`builtin-linux-ssh-accept` 簽章存在時，從兩組事件各自抽取 (user, ip)——失敗面以
 `LinuxAuthParser.TryParseAuthFailure` 解析 Failed password／Invalid user／pam authentication failure 三類行
-（pam 行沒有 rhost 只是不貢獻 IP，不算解析失敗），成功面以 Accepted 行——再找交集，並套用與 Windows 版相同的
+（pam 行沒有 rhost 只是不貢獻 IP，不算解析失敗），成功面以 `LinuxAuthParser.TryParseAccepted` 解析 Accepted 行（認證方式不設限）——再找交集，並套用與 Windows 版相同的
 時序條件（該帳號／IP 當日最晚成功時間 ≥ 最早失敗時間；成功早於失敗的不算得手）：
 
 - **交集有命中** → 精確比對成功，High／`ElevatesDayRisk=true` 告警
@@ -212,7 +212,11 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 
 暴力破解訊息格式（四輪 probe 實證定案）：
 `Failed password for invalid user {user} from {ip} port {port} ssh2`，`invalid user` 為
-可選段（合法帳號密碼錯誤時不會出現這段）。
+可選段（合法帳號密碼錯誤時不會出現這段）。成功登入格式為
+`Accepted {method} for {user} from {ip} port {port} ssh2`，`{method}` 任何值皆可。
+
+位址欄（`{ip}`，pam 行的 `rhost=` 同）一律經 `IpExtractor.Normalize`：支援 IPv4 與 IPv6（含壓縮寫法與 `::ffff:` 映射，
+映射位址還原成 IPv4 本體，壓縮與完整寫法視為同一位址）；`999.1.1.1`、簡寫、主機名稱不是位址，該行的位址為空、帳號照常取得。
 
 其餘 Windows 面的組合模式（帳號異動鏈／新服務鏈／儲存連鎖等）目前**不適用於 Linux 主機**，
 `UncoveredChecks` 會明講「關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項」——與

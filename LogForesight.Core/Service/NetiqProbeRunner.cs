@@ -226,6 +226,13 @@ public static class NetiqProbeRunner
                 }
             });
 
+            // 7b：正式取數的投影不含 dun／tuid；這一步只回報「能不能投影、內容是什麼形狀」，
+            // 不動 SentinelFieldMap.Q1ProjectionFields。失敗只讓這一步標 ✗，不影響其餘步驟。
+            ok &= await Step(console, "7b", "dun／tuid 投影（rv40:4625，近 24h、1 筆，正式投影加 dun,tuid）——只回報欄位可否投影與內容形狀，不輸出值", async () =>
+            {
+                await ProbeDunTuidProjectionAsync(client, now, console, ct);
+            });
+
             if (string.IsNullOrWhiteSpace(sampleLinuxIp))
             {
                 console.WriteLine("   [8] Linux 主機樣本：略過（未提供樣本 IP）");
@@ -496,6 +503,75 @@ public static class NetiqProbeRunner
 
         console.WriteLine();
         return ok;
+    }
+
+    /// <summary>dun／tuid 投影探測的結論（供測試與輸出共用）。</summary>
+    internal enum DunTuidVerdict { HasValue, NoValue, Rejected, NoEvent }
+
+    /// <summary>
+    /// 以「正式投影＋dun、tuid」查一筆 4625，只印欄位形狀：有值（長度與字元類型）、無值（缺席或空白）、
+    /// 欄位被拒（HTTP 4xx 或 job 以非成功狀態結束）。**不輸出任何欄位值**——帳號、SID 等實際內容不進診斷輸出。
+    /// 解析用 RawFields：預設的欄位過濾只留正式投影清單內的欄位，dun／tuid 會被濾掉而永遠看起來是「無值」。
+    /// 其他錯誤（連線、認證）照常往外擲，由 Step 標為失敗。
+    /// </summary>
+    internal static async Task<DunTuidVerdict> ProbeDunTuidProjectionAsync(
+        SentinelClient client, DateTimeOffset now, IRunConsole console, CancellationToken ct)
+    {
+        var fields = SentinelFieldMap.Q1ProjectionFields.Concat(new[] { "dun", "tuid" }).ToList();
+        SentinelSearchResult result;
+        try
+        {
+            result = await client.SearchAsync(new SentinelSearchRequest(
+                "rv40:4625", now.AddHours(-24), now, Fields: fields, MaxResults: 1, RawFields: true), ct);
+        }
+        catch (SentinelClientException ex) when (ex.Message.Contains("HTTP 4", StringComparison.Ordinal))
+        {
+            var code = System.Text.RegularExpressions.Regex.Match(ex.Message, @"HTTP (4\d\d)").Groups[1].Value;
+            console.WriteLine($"     結論：欄位被拒（HTTP {code}）——伺服器不接受含 dun／tuid 的投影。");
+            return DunTuidVerdict.Rejected;
+        }
+        catch (SentinelClientException ex) when (ex.Message.Contains("非成功狀態", StringComparison.Ordinal))
+        {
+            console.WriteLine("     結論：欄位被拒（查詢工作以非成功狀態結束）——伺服器不接受含 dun／tuid 的投影，或權限不足。");
+            return DunTuidVerdict.Rejected;
+        }
+
+        var evt = result.Events.FirstOrDefault();
+        if (evt is null)
+        {
+            console.WriteLine($"     found={result.Found}，近 24h 沒有取回 4625 事件，無法判定 dun／tuid 是否有值（可放大時間範圍重跑）。");
+            return DunTuidVerdict.NoEvent;
+        }
+
+        var anyValue = false;
+        foreach (var name in new[] { "dun", "tuid" })
+        {
+            if (evt.Fields.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) && value.Trim() != "-")
+            {
+                anyValue = true;
+                console.WriteLine($"     {name}：有值（長度 {value.Length}，形狀 {ValueShape(value)}）");
+            }
+            else
+            {
+                console.WriteLine($"     {name}：無值（回應沒有這個欄位或內容為空）");
+            }
+        }
+
+        console.WriteLine(anyValue
+            ? "     結論：dun／tuid 可投影，至少一個欄位有值。"
+            : "     結論：dun／tuid 可投影，但這筆事件兩個欄位都沒有值。");
+        return anyValue ? DunTuidVerdict.HasValue : DunTuidVerdict.NoValue;
+    }
+
+    /// <summary>只描述字元組成，不回傳內容本身。</summary>
+    private static string ValueShape(string value)
+    {
+        var v = value.Trim();
+        if (Guid.TryParse(v, out _)) return "guid";
+        if (v.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase) && v.All(c => char.IsAsciiLetterOrDigit(c) || c == '-')) return "sid";
+        if (v.All(char.IsAsciiDigit)) return "digits";
+        if (v.All(char.IsAsciiHexDigit)) return "hex";
+        return "text";
     }
 
     private static Task<bool> Step(IRunConsole console, int index, string title, Func<Task> action) =>

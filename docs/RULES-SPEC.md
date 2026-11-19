@@ -135,6 +135,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 下推到 Sentinel 是整詞片語。啟用中的 Linux 規則若片語頭或尾是某個更長詞的片段（例如 `Fail` 對 `Failed password`），
 本地會命中、Sentinel 取不到，驗證會警告。判斷依據是一份保守的常見 syslog 詞表（`RuleValidator.PushdownVocabulary`，詞表外的片段不警告；與內建種子相同的片語視為已驗證）；已是完整詞、
 或片語以空白起訖表示詞界者不警告。本地比對把訊息視為前面有一個空白，所以 `" Ban "` 能命中開頭的 Ban、不會命中 Unban。
+內建種子的 sshd 成功登入規則片語是整詞 `Accepted`（涵蓋任何認證方式，下推整詞片語取得到所有 Accepted 行）；種子內容有變就遞增 `KnownIssueSeed.Version`（目前 14）。
 
 ## 儲存後端與 Interface
 

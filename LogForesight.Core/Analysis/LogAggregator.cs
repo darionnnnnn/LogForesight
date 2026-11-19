@@ -190,8 +190,6 @@ public class LogIssueSignature
 
 internal static class LogAggregator
 {
-    private static readonly Regex Ipv4Regex = new(@"\b\d{1,3}(\.\d{1,3}){3}\b", RegexOptions.Compiled);
-
     /// <summary>
     /// Security 與 RDP 事件訊息中帳號欄位的標籤（中英文系統皆支援）。
     /// "Account Name:" 為 Security 4625/4624；"User:" 為 TerminalServices 工作階段事件（21/25/1149）。
@@ -304,11 +302,11 @@ internal static class LogAggregator
 
         foreach (var message in rawMessages)
         {
-            foreach (Match m in Ipv4Regex.Matches(message))
+            foreach (var ip in IpExtractor.ExtractAll(message))
             {
-                if (m.Value != "127.0.0.1" && m.Value != "0.0.0.0")
+                if (ip is not ("127.0.0.1" or "0.0.0.0" or "::1" or "::"))
                 {
-                    ips.Add(m.Value);
+                    ips.Add(ip);
                 }
             }
 
@@ -608,10 +606,10 @@ internal static class LogAggregator
         }
 
         var trimmed = raw.Trim();
-        var match = Ipv4Regex.Match(trimmed);
-        if (match.Success)
+        var found = IpExtractor.First(trimmed);
+        if (found != null)
         {
-            return match.Value;
+            return found;
         }
 
         if (trimmed.StartsWith("::ffff:", StringComparison.OrdinalIgnoreCase))

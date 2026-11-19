@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Analysis;
 
@@ -31,7 +32,7 @@ internal static class LinuxAuthParser
     /// （<see cref="SentinelEventMapper"/> 保留原文，前綴存在與否不影響這裡的比對）。
     /// </summary>
     internal static readonly Regex FailedPasswordRegex = new(
-        @"Failed password for (?:invalid user )?(?<user>\S+) from (?<ip>\d{1,3}(?:\.\d{1,3}){3}) port \d+",
+        @"Failed password for (?:invalid user )?(?<user>\S+) from (?<ip>" + IpExtractor.TokenPattern + @") port \d+",
         RegexOptions.Compiled);
 
     /// <summary>
@@ -42,11 +43,30 @@ internal static class LinuxAuthParser
     /// 試點階段用真實環境核對即可，不值得為了這一行再跑一輪 probe。
     /// </summary>
     internal static readonly Regex AcceptedRegex = new(
-        @"Accepted (?:password|publickey) for (?<user>\S+) from (?<ip>\d{1,3}(?:\.\d{1,3}){3}) port \d+",
+        @"\bAccepted (?<method>\S+) for (?<user>\S+) from (?<ip>" + IpExtractor.TokenPattern + @") port \d+",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// 解析 sshd 成功登入行。認證方式不設限（password、publickey、keyboard-interactive/pam、
+    /// gssapi-with-mic、hostbased…都算）；位址欄經 <see cref="IpExtractor.Normalize"/>，
+    /// 不是合法位址（如 999.1.1.1、主機名稱）時 <paramref name="ip"/> 為空字串、帳號照樣取得。
+    /// </summary>
+    public static bool TryParseAccepted(string message, out string user, out string ip)
+    {
+        user = string.Empty;
+        ip = string.Empty;
+        if (string.IsNullOrWhiteSpace(message)) return false;
+
+        var m = AcceptedRegex.Match(message);
+        if (!m.Success) return false;
+
+        user = m.Groups["user"].Value;
+        ip = IpExtractor.Normalize(m.Groups["ip"].Value) ?? string.Empty;
+        return true;
+    }
+
     private static readonly Regex InvalidUserRegex = new(
-        @"\bInvalid user (?<user>\S+) from (?<ip>\d{1,3}(?:\.\d{1,3}){3})",
+        @"\bInvalid user (?<user>\S+) from (?<ip>" + IpExtractor.TokenPattern + @")",
         RegexOptions.Compiled);
 
     private static readonly Regex PamUnixAuthRegex = new(
@@ -84,7 +104,7 @@ internal static class LinuxAuthParser
         if (mFailed.Success)
         {
             user = mFailed.Groups["user"].Value;
-            ip = mFailed.Groups["ip"].Value;
+            ip = IpExtractor.Normalize(mFailed.Groups["ip"].Value) ?? string.Empty;
             reasonCode = mFailed.Value.Contains("invalid user", StringComparison.OrdinalIgnoreCase)
                 ? "unknown_user"
                 : "bad_password";
@@ -96,7 +116,7 @@ internal static class LinuxAuthParser
         if (mInvalid.Success)
         {
             user = mInvalid.Groups["user"].Value;
-            ip = mInvalid.Groups["ip"].Value;
+            ip = IpExtractor.Normalize(mInvalid.Groups["ip"].Value) ?? string.Empty;
             reasonCode = "unknown_user";
             return true;
         }
@@ -109,7 +129,8 @@ internal static class LinuxAuthParser
             {
                 user = userMatches[^1].Groups["user"].Value;
                 var rhostMatch = PamRhostRegex.Match(message);
-                ip = rhostMatch.Success ? rhostMatch.Groups["rhost"].Value : string.Empty;
+                var rhost = rhostMatch.Success ? rhostMatch.Groups["rhost"].Value : string.Empty;
+                ip = IpExtractor.Normalize(rhost) ?? rhost;
                 reasonCode = "bad_password";
                 return true;
             }
