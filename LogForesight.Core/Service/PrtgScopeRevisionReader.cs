@@ -7,7 +7,14 @@ using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Service;
 
-/// <summary>只追蹤影響 PRTG 範圍的主機欄位；NetIQ 更新回報時間不應中止 PRTG。</summary>
+/// <summary>
+/// 只追蹤影響 PRTG 範圍的主機欄位；NetIQ 更新回報時間不應中止 PRTG。
+/// <para>
+/// 內部快取（主機／Sentinel／監看政策縮圈指紋）都以資料庫版本為鍵、內容是純鏡像結構，與使用者無關，
+/// 可跨週期、跨請求共用同一個實例；所有讀取都在 <c>_gate</c> 內進行，多執行緒呼叫安全。
+/// 可變欄位只有字串與版本號，沒有集合。
+/// </para>
+/// </summary>
 public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore hosts)
 {
     private readonly object _gate = new();
@@ -15,6 +22,8 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     private string _hostFingerprint = "";
     private long _sentinelVersion = -1;
     private string _sentinelFingerprint = "";
+    private long _policyVersion = -1;
+    private string _policyRawFingerprint = "";
 
     private const string HostsBlobKey = "hosts";
     private const string SentinelsBlobKey = "sentinels";
@@ -32,20 +41,10 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     /// 長時間取值工作（快照、範圍補抓）的範圍柵欄：結構範圍＋監看政策的主機／sensor 縮圈。
     /// 不含整份政策的 blob 版本，政策裡與縮圈無關的編輯不會打斷進行中的取值。
     /// </summary>
-    public string ReadRawSemantic()
-    {
-        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var rawScope = JsonSerializer.Serialize(new
-        {
-            HostIds = policy.HostIds.Order().ToArray(),
-            SensorIds = policy.SensorIds.Order().ToArray()
-        });
-        var rawFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawScope)));
-        return $"{ReadStructural()}:{rawFingerprint}";
-    }
+    public string ReadRawSemantic() => ReadCore(includePolicyRevision: false, includeRules: false, includeRawPolicy: true);
 
     // includeRules=false 時規則版本欄位固定填 0：範圍計算與回填都不讀規則，存規則不應中止進行中的工作。
-    private string ReadCore(bool includePolicyRevision, bool includeRules)
+    private string ReadCore(bool includePolicyRevision, bool includeRules, bool includeRawPolicy = false)
     {
         lock (_gate)
         {
@@ -93,9 +92,28 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
                     .OrderBy(s => s.SentinelId).Select(s => new { s.SentinelId, s.Active, s.BaseUrl }));
                 _sentinelVersion = sentinelVersion;
             }
+            var rawSuffix = "";
+            if (includeRawPolicy)
+            {
+                // 政策縮圈指紋以政策 blob 版本快取：版本沒變沿用，變了才重讀整份政策。
+                // 版本在讀內容前取得（同主機指紋）；有競爭時至多下個安全點重算。
+                var rawVersion = versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey);
+                if (rawVersion != _policyVersion)
+                {
+                    var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    var rawScope = JsonSerializer.Serialize(new
+                    {
+                        HostIds = policy.HostIds.Order().ToArray(),
+                        SensorIds = policy.SensorIds.Order().ToArray()
+                    });
+                    _policyRawFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawScope)));
+                    _policyVersion = rawVersion;
+                }
+                rawSuffix = $":{_policyRawFingerprint}";
+            }
             var policyVersion = includePolicyRevision ? versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey) : 0;
             var rulesVersion = includeRules ? versions.GetValueOrDefault(RulesBlobKey) : 0;
-            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{rulesVersion}:{_sentinelFingerprint}:{_hostFingerprint}";
+            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{rulesVersion}:{_sentinelFingerprint}:{_hostFingerprint}{rawSuffix}";
         }
     }
 }

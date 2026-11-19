@@ -38,7 +38,7 @@ public sealed class PrtgRiskReviewController(StorageBackend backend, IVisibility
     {
         var hosts = visibility.GetVisibleHostIds().Where(id => !visibility.IsCaseGrantOnly(id)).ToArray();
         var store = new PrtgRiskProjectionStore(backend.CreateContext);
-        if (store.RunBatch(hosts) > 0) dataVersion.Bump();
+        if (store.RunBatchDetailed(hosts).VisibleChanged > 0) dataVersion.Bump();
         return ApiResponse<PrtgRiskReviewCounts>.Ok(store.Counts(hosts));
     }
 }

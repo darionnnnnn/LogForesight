@@ -24,6 +24,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Core.Analysis.SentinelQueryBuilder.LinuxNoisyPrograms"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Core.CryptoHelper.ReportedFailures"] = "每種解密失敗只報一次的標記；鍵是憑證名稱（數量有限），重新載入金鑰時清空",
         ["LogForesight.Core.Models.PrtgVolumeSensorTypes.Types"] = "常數查找表：型別初始化時建好，之後只讀",
+        ["LogForesight.Core.Persistence.PerRunIssueOwnerStore._cached"] = "夜間協調器每趟新建一個包裝、趟結束即可回收；只留整份問題負責人清單一份，Update／Delete 後丟棄",
         ["LogForesight.Core.Persistence.Sql.SchemaUpgrader.UpgraderIndexNames"] = "結構升級建立的索引名稱；數量固定（程式碼內的索引定義），不隨資料成長",
         ["LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor._topSlow"] = "最慢操作只留前 10 筆（TopSlowCapacity）",
         ["LogForesight.Core.Service.EventLogService.ClassicApiLogs"] = "常數查找表：型別初始化時建好，之後只讀",
@@ -44,6 +45,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         ["LogForesight.Web.Auth.ServerAdminAuthenticator._failures"] = "只記設定中的救援帳號，鍵數為 1",
         ["LogForesight.Web.Configuration.WebAppSettings.KnownDevSecrets"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.ActionableSnapshotCache._entries"] = "256 條目＋20 萬元素上限；讀取時每個 TTL 週期釋放過期與舊版本",
+        ["LogForesight.Web.Services.VisibleHostKeyPart.Memo"] = "ConditionalWeakTable：鍵（可見主機集合物件）被回收時條目自動消失；只記憶 IReadOnlySet",
         ["LogForesight.Web.Services.AiInsightService.KnownCategories"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.AiInsightService.KnownRisks"] = "常數查找表：型別初始化時建好，之後只讀",
         ["LogForesight.Web.Services.AuditQueryService.ActionNames"] = "常數查找表：型別初始化時建好，之後只讀",
@@ -88,6 +90,7 @@ public sealed class LongLivedCollectionGuardTests(ITestOutputHelper output)
         typeof(SortedDictionary<,>), typeof(SortedSet<>), typeof(LinkedList<>), typeof(SortedList<,>),
         typeof(System.Collections.Concurrent.ConcurrentDictionary<,>), typeof(System.Collections.Concurrent.ConcurrentQueue<>),
         typeof(System.Collections.Concurrent.ConcurrentBag<>), typeof(System.Collections.Concurrent.ConcurrentStack<>),
+        typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>),
     ];
 
     private static bool IsMutableCollection(Type t) =>

@@ -2642,6 +2642,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      去重（`SummarySentKeys` 的語意是「尚未摘要過的達門檻主機日」）。
      每日／週報窗口的 `To = 昨天`，語意對齊「今天以前發生了什麼」。
 
+     **去重鍵只看信件內容**：鍵裡的內容指紋（`HostDayWorkflowFingerprint.ForMailContent`）不含「AI 已分析」「AI 待補」「詳情已清除」三個狀態旗標——AI 寫回只翻轉這些旗標，信件內容沒變，不重寄也不留下待送項目；風險等級、問題清單、告警仍納入，AI 上調風險等級視為內容變更、重新通知。升級前存下的鍵由 `LegacyKeySent` 以三旗標八種組合辨認；工作流帳本裡升級前的郵件意圖，由收尾規劃以同一套辨認（`LegacyMailPartMap`）把已收部分接到新意圖，郵件腿不會因升級而退回未完成（兩者升級滿 14 天回望期後可移除）。
+
+     **待送項目的出口**：即時通知 `UrgentOutbox` 的終態為 `smtp-accepted`、`cancelled-formal-revoked`、`no-qualified-recipient`、`superseded`（判定單一出口 `MailNotifyStateStore.IsTerminalUrgentStatus`）。每趟正常算出本趟候選後，非終態且鍵不在候選裡的項目（紀錄編號改變、滑出回望期、紀錄已刪除）標為 `superseded`（已被取代，不改更新時間）；該主機日這趟取不到工作流版本（父紀錄未完成、恢復等待中）時不判斷；讀取紀錄失敗、例外或取消的那一趟不清理。同一把鍵之後又被算出時照常回到 `pending`。`superseded` 項目不論收件人狀態都算完全終態，超過保留期隨 `PruneTerminalUrgentIntents` 移除；維護頁的通知處理狀態對它不列收件人狀態。
+
+     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）只在有「非終態且尚未記為已寄」的項目、且郵件與即時通知都啟用時才重跑整套通知（停用期間待送項目保留，重新啟用後下一分鐘補寄）；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
+
      **收件人可見範圍過濾**：三路信件都改成雙層內容——
      全站統計行（數字，不含主機名，所有收件人都看得到）＋收件人自己可見範圍內的內容（僅解析
      得到帳號、且該帳號可見範圍涵蓋的主機；`IVisibilityService.GetVisibleHostIdsFor` 同一套
@@ -2933,7 +2939,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 
 ### 9.9e-1 PRTG 快照診斷、趨勢規則試算與使用效果（`Maintain`）
 
-- **快照診斷**：鏡像狀態頁以持久嘗試／寫入計數加上 `PeriodStart` 索引的 SQL 聚合，診斷最近 24 個完整小時已落盤的 quality 與 coverage；不呼叫 PRTG。
+- **快照診斷**：鏡像狀態頁以持久嘗試／寫入計數加上 `PeriodStart` 索引的 SQL 聚合，診斷最近 24 個完整小時已落盤的 quality 與 coverage；不呼叫 PRTG。一輪快照的嘗試與成功批數在記憶體累計、輪末（含取消）一次寫入診斷 blob，輪中途查看時本輪的計數尚未出現。
   聚合沒有逐 sensor 識別，不能證實每顆 sensor 100% coverage。系統健康 `GET api/health/detail` 另呈現最近兩小時摘要（資料庫探測失敗時回最小 Down DTO）。
   待寫檔無法使用時小時狀態為 `stopped`（名稱「已停止：待寫檔無法使用」，目標數顯示「未知」），不顯示「無目標」；系統健康 PRTG 快照卡在保守策略下 `stopped` 或 `no-recent-success`（目標非空卻超過 6 小時沒有成功取樣）時警示並併入整體狀態，判定單一入口 `PrtgSnapshotAlert.Evaluate`。
 - **指定主機回填**：可選主機與日期區間，先預覽資料量與估計請求數，再開始、查詢或停止；只補數值，不追溯建立舊日 finding 或交辦。
@@ -3168,7 +3174,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 尚未啟用／仍要開始」。**連線根本沒設定的站台不提示**——每次手動執行都被問一次只會讓人麻痺，
   而「連線填好了卻忘了開擷取」才是真的會讓人白跑一晚的狀態。提示不分執行範圍：
   網段範圍的手動執行一樣會走 PRTG 日路徑（它只看設定不看範圍）。前端只是提前問，
-  後端短路行為不變。PRTG 已啟用、範圍為全部主機且回望天數大於 1 時**再問一次**：激進策略提示「會對 N 天的觸發主機逐顆查詢歷史值、可能耗時數小時並明顯增加 PRTG 負載」並建議縮小天數或改保守；保守策略開「PRTG 回望範圍」確認框：說明會補齊 N 天的狀態變更與規則評估，並有預設勾選的「一併補齊這 N 天的 PRTG 逐小時數值」（`includePrtgValues`，後端在同一趟結束前接續回填，docs/PRTG-SPEC.md §5）——勾選框旁顯示 `GET api/admin/settings/prtg-estimate` 的估算（全部已對應主機 N 台、sensor M 顆、約 K 次查詢、至少 T 分鐘；網段範圍只算該網段），估算回來前「仍要開始」停用並標「估算中…」，查詢達 2,000 次預設不勾，不能補（白名單為空、沒有 sensor）時停用勾選並說明。指定主機更新的 PRTG 只處理昨天，不問）、**「分析本機主機」開關**：停用後排程與立即執行
+  後端短路行為不變。PRTG 已啟用、範圍為全部主機且回望天數大於 1 時**再問一次**：激進策略提示「會對 N 天的觸發主機逐顆查詢歷史值、可能耗時數小時並明顯增加 PRTG 負載」並建議縮小天數或改保守；保守策略開「PRTG 回望範圍」確認框：說明會補齊 N 天的狀態變更與規則評估，並有預設勾選的「一併補齊這 N 天的 PRTG 逐小時數值」（`includePrtgValues`，後端在同一趟結束前接續回填，docs/PRTG-SPEC.md §5）——勾選框旁顯示 `GET api/admin/settings/prtg-estimate` 的估算（全部已對應主機 N 台、sensor M 顆、約 K 次查詢、至少 T 分鐘（取併發估算與 historicdata 配額下界較大者）；網段範圍只算該網段），估算回來前「仍要開始」停用並標「估算中…」，查詢達 2,000 次預設不勾，不能補（白名單為空、沒有 sensor）時停用勾選並說明。指定主機更新的 PRTG 只處理昨天，不問）、**「分析本機主機」開關**：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」

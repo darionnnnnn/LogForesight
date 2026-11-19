@@ -65,7 +65,7 @@ public class ActionableSnapshotCache : ICacheStatistics
         IReadOnlyCollection<string>? visibleSeverities,
         string exclusionToken)
     {
-        var hosts = visibleHostIds == null ? "*" : string.Join(",", visibleHostIds.OrderBy(id => id));
+        var hosts = visibleHostIds == null ? "*" : VisibleHostKeyPart.Of(visibleHostIds);
         var risks = riskLevels == null ? "*" : string.Join(",", riskLevels.OrderBy(r => r, StringComparer.Ordinal));
         var sevs = visibleSeverities == null ? "*" : string.Join(",", visibleSeverities.OrderBy(s => s, StringComparer.Ordinal));
         return $"v{version}|{from:yyyyMMdd}|{to:yyyyMMdd}|{risks}|{sevs}|{exclusionToken}|{hosts}";

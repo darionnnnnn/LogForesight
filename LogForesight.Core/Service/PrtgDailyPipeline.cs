@@ -150,8 +150,10 @@ internal static class PrtgDailyPipeline
                 prtgConsole.WriteLine($"[PRTG資源守門] 自動偵測未完成（{ex.Message}），本趟不守門，取數照常進行。");
             }
 
+            // 同一個讀取器實例供每次檢查點使用：有版本快取（每次仍探測版本，版本變了才重讀整份）
+            var checkpointSettings = new SystemSettingsStore(backend.Blob("system_settings"));
             using var operationScope = new PrtgOperationScope(systemSettings,
-                () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
+                () => checkpointSettings.Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
             operation = operationScope;
             ct = operationScope.Token;
             operationScope.Checkpoint();
@@ -397,9 +399,8 @@ internal static class PrtgDailyPipeline
             var sensorNames = allSensors
                 .GroupBy(s => s.Objid)
                 .ToDictionary(g => g.Key, g => g.First().SensorName);
-            var deviceNames = prtgStore.GetAllDevices()
-                .GroupBy(d => d.Objid)
-                .ToDictionary(g => g.Key, g => g.First().Name);
+            // 只取編號與名稱（同編號多列取第一筆），不整列讀裝置鏡像的標籤與群組路徑
+            var deviceNames = prtgStore.GetDeviceIdNames();
 
             var sensorToDevice = allSensors
                 .GroupBy(s => s.Objid)
@@ -408,6 +409,8 @@ internal static class PrtgDailyPipeline
             var sensorStatuses = allSensors
                 .Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category))
                 .ToList();
+            // 分類／類型對照表只取決於 sensorStatuses，每個回望日輸入相同，迴圈外建一次
+            var sensorLookups = PrtgSensorLookups.Build(sensorStatuses);
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
@@ -425,6 +428,9 @@ internal static class PrtgDailyPipeline
                 .Select(h => h.HostId).ToHashSet();
             // 監看政策的 sensor 清單是可選縮圈：空＝不限。silent 是裝置層判定，看的是整台裝置，不受此清單限制。
             var policySensorIds = monitoringPolicy.SensorIds.ToHashSet();
+            // 狀態變更滑動窗口：逐日評估要前一天＋當天，相鄰回望日共用一天，每個日曆日只讀一次；
+            // 監看政策的 sensor 清單（空＝不限）下推到查詢條件。
+            var stateChangeWindow = new PrtgStateChangeWindow(prtgStore, policySensorIds);
 
             // 兩段式：處理最新一天的當下，較舊日期的 finding 還沒評估也還沒寫進資料庫，
             // 跨日判定只查資料庫會少算。所以先對全部日期評估並歸戶（不發佈），再逐日標註、抑制、發佈、追加。
@@ -462,12 +468,10 @@ internal static class PrtgDailyPipeline
                         continue;
                     }
 
-                    var changes = prtgStore.GetStateChanges(day.AddDays(-1), day.AddDays(1))
-                        .Where(change => policySensorIds.Count == 0 || policySensorIds.Contains(change.SensorObjid))
-                        .ToList();
+                    var changes = stateChangeWindow.ForDay(day);
                     var findings = PrtgRuleEvaluator.Evaluate(
                         day, changes, sensorToDevice, sensorStatuses, prtgRules,
-                        sensorNames, deviceNames, includeSilent: day == newest);
+                        sensorNames, deviceNames, includeSilent: day == newest, lookups: sensorLookups);
                     foreach (var warning in findings.DuplicateRuleWarnings)
                     {
                         if (reportedDuplicateRuleWarnings.Add(warning))
@@ -523,9 +527,10 @@ internal static class PrtgDailyPipeline
                 {
                     var readinessAssessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var readinessDay = DateOnly.FromDateTime(newest);
+                    // 感測器鏡像沿用開頭那一份：本趟評估期間不會再寫入感測器鏡像（取數與清除都在上面完成）
                     var readiness = PrtgValueReadiness.Compute(readinessAssessment,
                         readinessAssessment.DeviceToHostOn(readinessDay, readinessDay, evaluationHostIds), evaluationHostIds,
-                        policySensorIds, readinessDay, ct);
+                        policySensorIds, readinessDay, ct, allSensors);
                     prtgConsole.WriteLine(PrtgValueReadiness.FormatLine(readiness));
                 }
                 catch (OperationCanceledException) { throw; }
@@ -546,17 +551,21 @@ internal static class PrtgDailyPipeline
                 {
                     var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var completedDay = DateOnly.FromDateTime(newest);
-                    var candidates = assessment.Candidates(newestPlan.DeviceToHost, evaluationHostIds, policySensorIds,
-                        PrtgSensorCategories.Disk);
+                    var candidates = PrtgValueAssessment.Candidates(allSensors, newestPlan.DeviceToHost, evaluationHostIds,
+                        policySensorIds, PrtgSensorCategories.Disk);
                     var reasons = new Dictionary<PrtgValueReason, int>();
                     var added = 0;
                     var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
+                    // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+                    var okHostMapDates = candidates.Count > 0
+                        ? assessment.ResolveOkHostMapDates(completedDay, diskThresholds.RecentWindowDays) : null;
                     foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                     {
                         operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                         var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                         foreach (var row in assessment.AssessPage(page, completedDay,
-                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay, newestHostMap))
+                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay, newestHostMap,
+                                     okHostMapDates))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                             var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -608,16 +617,21 @@ internal static class PrtgDailyPipeline
                     {
                         var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                         var completedDay = DateOnly.FromDateTime(newest);
-                        var candidates = assessment.Candidates(trendPlan.DeviceToHost, evaluationHostIds, policySensorIds, category);
+                        var candidates = PrtgValueAssessment.Candidates(allSensors, trendPlan.DeviceToHost, evaluationHostIds,
+                            policySensorIds, category);
                         var reasons = new Dictionary<PrtgValueReason, int>();
                         var added = 0;
                         var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
+                        // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+                        var okHostMapDates = candidates.Count > 0
+                            ? assessment.ResolveOkHostMapDates(completedDay, thresholds.WindowDays) : null;
                         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                         {
                             operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                             var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                             foreach (var row in assessment.AssessPage(page, completedDay,
-                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay, newestHostMap))
+                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay, newestHostMap,
+                                         okHostMapDates))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                                 var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -709,7 +723,7 @@ internal static class PrtgDailyPipeline
                     }
 
                     var steadyEvidence = BuildSteadyEvidence(daySignatures, history, day, plan.DeviceToHost,
-                        evaluationHostIds, prtgStore, semanticOverrides, ct);
+                        evaluationHostIds, prtgStore, semanticOverrides, ct, allSensors);
                     var crossDay = PrtgCrossDay.ApplyDetailed(daySignatures, history, day, steadyEvidence);
                     var (escalatedCount, chronicCount, steadyCount) = (crossDay.Escalated, crossDay.Chronic, crossDay.SteadyDowngraded);
 
@@ -1175,7 +1189,8 @@ internal static class PrtgDailyPipeline
     internal static IReadOnlyDictionary<string, PrtgSteadyEvidence> BuildSteadyEvidence(
         IReadOnlyList<LogIssueSignature> daySignatures, IReadOnlyDictionary<string, HashSet<DateTime>> history, DateTime day,
         IReadOnlyDictionary<long, long> deviceToHost, IReadOnlySet<long> evaluationHostIds,
-        EfPrtgStore prtgStore, IReadOnlyDictionary<string, PrtgValueSemantic> semanticOverrides, CancellationToken ct)
+        EfPrtgStore prtgStore, IReadOnlyDictionary<string, PrtgValueSemantic> semanticOverrides, CancellationToken ct,
+        List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)>? sensorMirror = null)
     {
         var result = new Dictionary<string, PrtgSteadyEvidence>(StringComparer.Ordinal);
         try
@@ -1189,15 +1204,19 @@ internal static class PrtgDailyPipeline
             if (wantedObjids.Count == 0 || deviceToHost.Count == 0) return result;
 
             var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
-            var sensors = PrtgValueAssessment.Candidates(assessment.SensorMirror(), deviceToHost, evaluationHostIds,
+            var sensors = PrtgValueAssessment.Candidates(sensorMirror ?? assessment.SensorMirror(), deviceToHost, evaluationHostIds,
                     new HashSet<long>())
                 .Where(s => wantedObjids.Contains(s.SensorObjid)).ToList();
             var completedDay = DateOnly.FromDateTime(day);
             var evidenceBySensor = new Dictionary<long, PrtgSteadyEvidence>();
+            // 有效對應日期與頁無關，迴圈外只查一次（以迴圈開始時的今天為準）
+            var okHostMapDates = sensors.Count > 0
+                ? assessment.ResolveOkHostMapDates(completedDay, PrtgRuleCatalog.SteadyWarningWindowDays) : null;
             foreach (var page in sensors.Chunk(PrtgValueAssessment.PageSize))
             {
                 ct.ThrowIfCancellationRequested();
-                foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1))
+                foreach (var row in assessment.AssessPage(page, completedDay, PrtgRuleCatalog.SteadyWarningWindowDays, 1,
+                           okHostMapDates: okHostMapDates))
                 {
                     if (PrtgSteadyEvidence.FromRow(row, completedDay) is { } evidence) evidenceBySensor[row.Sensor.SensorObjid] = evidence;
                 }
@@ -1329,5 +1348,60 @@ internal static class PrtgDailyPipeline
             Warnings = fetchResult.Warnings.Select(w => PrtgSyncWarning.Create(w.Code, w.Message)).ToList(),
             Source = PrtgStructureSyncStatus.SourceNightly
         };
+    }
+}
+
+/// <summary>
+/// 規則評估的狀態變更滑動窗口：評估某日需要「前一天＋當天」兩天份（前導狀態判定跨午夜持續 Down），
+/// 相鄰兩個回望日共用一天。這裡每個日曆日只對資料庫讀一次，交給評估器的仍是兩天份、
+/// 排序（依 sensor、再依時間）與整份讀兩天完全相同。
+/// 記憶體最多同時留兩個日曆日的列（處理完的日子隨即釋放；讀新的一天時瞬間三天），
+/// 不超過原本單次兩天份的 1.5 倍。由近到遠、由遠到近或不連續的日期都能用，只是不連續時沒有共用可省。
+/// 讀回的列只含規則評估所需欄位（見 <see cref="EfPrtgStore.GetStateChangesForRuleEvaluation"/>），不可作為其他用途的輸入。
+/// </summary>
+internal sealed class PrtgStateChangeWindow
+{
+    private readonly Func<DateTime, DateTime, IReadOnlyCollection<long>?, List<PrtgStateChangeRow>> _load;
+    private readonly IReadOnlyCollection<long>? _sensorIds;
+    private readonly Dictionary<DateTime, List<PrtgStateChangeRow>> _days = new();
+
+    /// <param name="load">讀 [from, to) 範圍的狀態變更（已依 sensor、時間排序），並依第三個參數篩選 sensor（null＝不限）。</param>
+    /// <param name="sensorIds">null 或空＝不限（與監看政策「空＝不限」同義）。</param>
+    public PrtgStateChangeWindow(
+        Func<DateTime, DateTime, IReadOnlyCollection<long>?, List<PrtgStateChangeRow>> load,
+        IReadOnlyCollection<long>? sensorIds)
+    {
+        _load = load;
+        _sensorIds = sensorIds is { Count: > 0 } ? sensorIds : null;
+    }
+
+    public PrtgStateChangeWindow(EfPrtgStore store, IReadOnlyCollection<long>? sensorIds)
+        : this(store.GetStateChangesForRuleEvaluation, sensorIds) { }
+
+    /// <summary>目前仍留在記憶體的日曆日數（測試與守門用）。</summary>
+    internal int ResidentDays => _days.Count;
+
+    /// <summary>取 [day-1, day+1) 的列：前一天＋當天，依 sensor、再依時間排序。</summary>
+    public List<PrtgStateChangeRow> ForDay(DateTime day)
+    {
+        var current = day.Date;
+        var previous = current.AddDays(-1);
+        var previousRows = Day(previous);
+        var currentRows = Day(current);
+        // 處理完的日子釋放：只留這兩天，下一個回望日不論往近或往遠都能沿用其中一天
+        foreach (var key in _days.Keys.Where(k => k != previous && k != current).ToList()) _days.Remove(key);
+        // 兩天各自已排序；串接後以穩定排序合併，同 sensor 同時間時前一天的列在前
+        return previousRows.Concat(currentRows)
+            .OrderBy(r => r.SensorObjid)
+            .ThenBy(r => r.ChangedAt)
+            .ToList();
+    }
+
+    private List<PrtgStateChangeRow> Day(DateTime date)
+    {
+        if (_days.TryGetValue(date, out var rows)) return rows;
+        rows = _load(date, date.AddDays(1), _sensorIds);
+        _days[date] = rows;
+        return rows;
     }
 }

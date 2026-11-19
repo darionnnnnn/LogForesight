@@ -255,15 +255,30 @@ public sealed class PrtgValueAssessment
     }
 
     /// <summary>
+    /// 觀察窗內「至少一列 ok」的對應日期集合。只取決於 <paramref name="completedDay"/>、<paramref name="windowDays"/> 與今天，與頁無關；
+    /// 分頁迴圈的呼叫端在迴圈外算一次，經 <see cref="AssessPage"/> 的 <c>okHostMapDates</c> 傳入。
+    /// 「今天」以呼叫當下為準（迴圈開始時），跨午夜時等同第一頁的結果。
+    /// </summary>
+    public HashSet<DateTime> ResolveOkHostMapDates(DateOnly completedDay, int windowDays)
+    {
+        var windowStart = completedDay.AddDays(-(windowDays - 1)).ToDateTime(TimeOnly.MinValue);
+        var windowEnd = completedDay.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        var today = DateTime.Today;
+        var mapsEnd = today.AddDays(1) > windowEnd ? today.AddDays(1) : windowEnd;
+        return _store.GetOkHostMapDates(windowStart.AddDays(-MapLookbackDays), mapsEnd);
+    }
+
+    /// <summary>
     /// 評估一頁候選（≤ <see cref="PageSize"/> 顆）在 <paramref name="completedDay"/> 往回 <paramref name="windowDays"/> 日的數值。
     /// <paramref name="newest"/> 為本次評估的最新已完成日（省略＝<paramref name="completedDay"/>）；
     /// 最新日整天沒有 ok 對應時借 <see cref="ResolveHostMapRows"/> 的退路，其餘情況（含最新日有 ok）逐 device 走 <see cref="PrtgHostMapLookup"/>。
     /// <paramref name="newestHostMap"/> 為呼叫端已用 <see cref="ResolveNewestHostMap"/> 算好的最新日對應（分頁迴圈外算一次）；
-    /// 不傳則本頁自己算（舊行為）。
+    /// 不傳則本頁自己算（舊行為）。<paramref name="okHostMapDates"/> 同理，由 <see cref="ResolveOkHostMapDates"/> 在迴圈外算好。
     /// </summary>
     public IReadOnlyList<PrtgValueAssessmentRow> AssessPage(IReadOnlyList<PrtgValueSensor> sensors,
         DateOnly completedDay, int windowDays, int requiredDays, DateOnly? newest = null,
-        (DateTime? MapDate, List<PrtgHostMapRow> Rows)? newestHostMap = null)
+        (DateTime? MapDate, List<PrtgHostMapRow> Rows)? newestHostMap = null,
+        IReadOnlySet<DateTime>? okHostMapDates = null)
     {
         if (sensors.Count > PageSize)
             throw new ArgumentOutOfRangeException(nameof(sensors), $"每頁最多 {PageSize} 顆 sensor。");
@@ -283,7 +298,7 @@ public sealed class PrtgValueAssessment
         // 全是 unmatched／conflict 的那一份代表那次對應沒成功，先排除；單一 device 在成功的整份對應裡
         // 是 unmatched／conflict 則是它的真實狀態，保留給 PrtgHostMapLookup.Select。
         var mapsFrom = windowStart.AddDays(-MapLookbackDays);
-        var okDates = _store.GetOkHostMapDates(mapsFrom, mapsEnd);
+        IReadOnlySet<DateTime> okDates = okHostMapDates ?? _store.GetOkHostMapDates(mapsFrom, mapsEnd);
         var mapsByDevice = _store.GetReadinessMaps(known.Select(s => s.DeviceObjid).Distinct().ToArray(),
                 mapsFrom, mapsEnd)
             .Where(m => okDates.Contains(m.MapDate))

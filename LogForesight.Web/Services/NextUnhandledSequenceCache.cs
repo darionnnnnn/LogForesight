@@ -52,7 +52,7 @@ public class NextUnhandledSequenceCache : ICacheStatistics
         IReadOnlyCollection<string>? visibleSeverities,
         IReadOnlyCollection<string>? visibleDayRiskLevels)
     {
-        var hosts = string.Join(",", visibleHostIds.OrderBy(id => id));
+        var hosts = VisibleHostKeyPart.Of(visibleHostIds);
         var sevs = visibleSeverities == null ? "*" : string.Join(",", visibleSeverities.OrderBy(s => s, StringComparer.Ordinal));
         var risks = visibleDayRiskLevels == null ? "*" : string.Join(",", visibleDayRiskLevels.OrderBy(r => r, StringComparer.Ordinal));
         return $"{sevs}|{risks}|{hosts}";

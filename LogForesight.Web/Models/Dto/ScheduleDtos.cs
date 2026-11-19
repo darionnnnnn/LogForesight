@@ -318,7 +318,7 @@ public class PrtgValuesEstimateDto
     /// <summary>感測器數 × 天數（每顆每天一次 historicdata 查詢）</summary>
     public long Queries { get; set; }
 
-    /// <summary>以併發設定與每次查詢平均 1.5 秒粗估的分鐘數</summary>
+    /// <summary>估算分鐘數：取「查詢數 × 平均 1.5 秒 ÷ 併發設定」與「historicdata 任一 60 秒最多 5 次的配額下界（<c>PrtgFullBackfillPlan.QuotaLowerBoundSeconds</c>）」換算分鐘（皆無條件進位）兩者較大者；不含回應延遲</summary>
     public int Minutes { get; set; }
 
     /// <summary>查詢次數達到提醒門檻：確認框的勾選預設不勾</summary>

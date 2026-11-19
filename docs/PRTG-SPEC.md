@@ -486,7 +486,7 @@ PRTG finding 追加時判定（`PrtgCorroboration`），寫進 `CorrelationAlert
 | `prtg-capacity-corroborated` | `srv` 2013 | disk 分類的 warning |
 | `prtg-outage-corroborated` | Kernel-Power 41／EventLog 6008 | availability 分類的 down 或 flapping |
 
-冪等；模式被抑制時文字進 `SuppressedCorrelationAlerts`。歷史弱佐證由 `PrtgRiskReviewHostedService` 背景分批修訂。
+冪等；模式被抑制時文字進 `SuppressedCorrelationAlerts`。歷史弱佐證由 `PrtgRiskReviewHostedService` 背景分批修訂；只有該批有列的內容實際被改寫時才推進資料版本戳（只更新投影版本欄的批次不讓查詢快取失效）。
 
 ### 未回報主機的 PRTG 提示
 

@@ -81,6 +81,21 @@ public interface IIssueAggregateQuery
         IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
+    /// 每個問題（Source＋EventId）只算主機數與總次數的輕量聚合：母體條件與 <see cref="Aggregate"/> 完全相同
+    /// （靜音排除、期間、可見主機、可見嚴重度、日風險等級），欄位只留 <see cref="IssueHostTotals"/> 的四個。
+    /// 供「前一期對比」使用——前一期只用得到主機數、總次數與「是否存在」，不需要期間跨度、類別、簽章這些欄位，
+    /// 沒必要為它多讀那幾趟。預設實作以 <see cref="Aggregate"/> 投影，既有替身不必改；
+    /// SQL 實作覆寫成只讀必要欄位的版本，兩者的結果必須逐欄相同。
+    /// </summary>
+    List<IssueHostTotals> AggregateHostTotals(
+        IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null) =>
+        Aggregate(exclusion, from, to, hostIds, visibleSeverities, riskLevels)
+            .Select(a => new IssueHostTotals(a.Source, a.EventId, a.HostCount, a.TotalCount))
+            .ToList();
+
+    /// <summary>
     /// 「N 個靜音中的問題未列出」計數：<see cref="IssueExclusion.CurrentlyMuted"/> 裡，在期間內、
     /// 可見主機、可見嚴重度、日風險等級母體下至少有一列的相異問題數。篩選與 <see cref="Aggregate"/> 同一套；
     /// <paramref name="hostIds"/> 為空集合或沒有目前靜音中的問題時回 0。
@@ -453,3 +468,6 @@ public sealed record MutedIssueSummary(string Source, int EventId, string Catego
 
 public sealed record DayTodoAggregate(
     int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);
+
+/// <summary>一個問題的主機數與總次數（<see cref="IIssueAggregateQuery.AggregateHostTotals"/> 的回傳列）</summary>
+public sealed record IssueHostTotals(string Source, int EventId, int HostCount, long TotalCount);

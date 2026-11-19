@@ -35,12 +35,16 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
     private readonly StorageBackend? _backend;
     private readonly ISystemSettingsStore _settings;
     private readonly IPrtgAddressResolver _addressResolver;
+    // 同一個主機清單讀取器重複使用：HostStore 以資料庫版本快取（每次仍探測版本，清單被修改後下次即讀到新內容），
+    // 兩次重算之間清單沒變就不必整份冷讀（3000 台約 4 MB）。
+    private readonly HostStore? _hostStore;
 
     public PrtgHostMapRefresher(ISystemSettingsStore settings, IPrtgAddressResolver addressResolver, StorageBackend? backend = null)
     {
         _settings = settings;
         _addressResolver = addressResolver;
         _backend = backend;
+        _hostStore = backend == null ? null : new HostStore(backend.Blob("hosts"));
     }
 
     /// <summary>
@@ -55,9 +59,8 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
         {
             if (!_settings.Get().PrtgEnabled) return null;
 
-            var hostStore = new HostStore(_backend.Blob("hosts"));
             var mapper = new PrtgHostMapper(
-                _backend.PrtgStore(), hostStore, new SilentRunConsole(), _addressResolver);
+                _backend.PrtgStore(), _hostStore!, new SilentRunConsole(), _addressResolver);
             mapper.MapForDate(DateTime.Today);
             return null;
         }

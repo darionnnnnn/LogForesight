@@ -86,7 +86,7 @@ public class DashboardService
         // 可見主機集合相同、能力不同的兩人共用同一筆就會把待派數端給無權者，或讓有權者看不到卡
         var canAssign = _currentUser.Has(Auth.Capability.Assign);
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|{exclusion.CacheToken}", visibleHosts.Select(h => h.HostId).ToList()),
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|{exclusion.CacheToken}", _visibility.GetVisibleHostIds()),
             () => BuildSummary(days, visibleHosts, exclusion, canAssign));
     }
 

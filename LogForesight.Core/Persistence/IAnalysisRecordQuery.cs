@@ -81,6 +81,24 @@ public interface IAnalysisRecordQuery
     /// </summary>
     List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter);
 
+    /// <summary>
+    /// <see cref="QueryLightweight"/> 以相同篩選會回傳的筆數**下界**，只做一次計數查詢、不載入任何紀錄內容；
+    /// 供「候選數超過上限就拒絕」的呼叫端在整批載入之前先擋下。保證 <c>下界 ≤ QueryLightweight(filter).Count</c>：
+    /// 只計入 SQL 條件與記憶體端覆核必然相同的列（日期、風險等級、以 host_id 歸戶的主機）；
+    /// 帶問題層級條件（類別／最低嚴重度／事件／來源）時記憶體端還會再覆核，不能保證相同，回傳 null＝無法預先判斷。
+    /// 預設實作回傳 null（呼叫端退回「載入後再檢查」）。
+    /// </summary>
+    int? CountLightweightAtLeast(RecordQueryFilter filter) => null;
+
+    /// <summary>
+    /// <see cref="QueryLightweight"/> 的「只要日層級狀態」版本：篩選與排序完全相同，但只投影
+    /// 主機、日期、風險等級、AI 狀態與資料來源這幾個欄位，**不讀問題子表**（<see cref="DailyAnalysisRecord.TopIssues"/> 為空）。
+    /// 供只看「這一天有沒有紀錄、要不要補跑」的呼叫端使用（例如執行前預覽）。
+    /// 帶問題層級條件（類別／最低嚴重度／事件／來源）時需要問題列才能覆核，退回 <see cref="QueryLightweight"/>。
+    /// 預設實作直接呼叫 <see cref="QueryLightweight"/>。
+    /// </summary>
+    List<DailyAnalysisRecord> QueryDayStatusLightweight(RecordQueryFilter filter) => QueryLightweight(filter);
+
     /// <summary>Keyset-paged authoritative rows for resumable workflow reconstruction; SQL caps each JSON prefix.</summary>
     WorkflowRecoveryPage QueryWorkflowRecoveryPage(DateTime from, DateTime to, long afterRecordId, int take) =>
         throw new NotSupportedException("This record query does not support workflow recovery paging.");

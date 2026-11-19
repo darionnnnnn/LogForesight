@@ -238,10 +238,10 @@ public class ScheduleController : ControllerBase
         var lookback = Math.Clamp(backfillDays ?? defaultBackfill, 1, effectiveLimit);
         var from = DateTime.Today.AddDays(-lookback);
         var to = DateTime.Today.AddDays(-1);
-        // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，
-        // Query 會反序列化整份分析內容，三千台 × 14 天在預覽這種互動路徑上代價過高
+        // 走日層級輕量查詢：這裡只需要主機／日期／風險等級／AI 狀態／資料來源，
+        // 不讀問題子表（QueryLightweight 連每筆紀錄的問題列都載入，三千台 × 14 天在預覽這種互動路徑上代價過高）
         // 只有 PRTG finding 的主機日仍是待日誌分析的缺日，不算進「回望窗口已有紀錄」
-        var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to })
+        var recentRecords = _records.QueryDayStatusLightweight(new RecordQueryFilter { From = from, To = to })
             .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
 
         HashSet<long> retryAttemptHostIds = new();

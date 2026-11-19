@@ -196,7 +196,10 @@ public class PrtgScopeEstimateController : ControllerBase
             Hosts = okRows.Select(row => row.HostId!.Value).Distinct().Count(),
             Sensors = sensors,
             Queries = queries,
-            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60),
+            // 依併發算出的分鐘數，與 historicdata「任一 60 秒最多 5 次」配額下界換算的分鐘數，取較大者
+            Minutes = (int)Math.Max(
+                Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60),
+                Math.Ceiling(PrtgFullBackfillPlan.QuotaLowerBoundSeconds(queries) / 60.0)),
             Large = queries >= LargeBackfillQueryThreshold,
             BlockedReason = blocked
         });

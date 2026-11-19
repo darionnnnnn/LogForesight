@@ -57,11 +57,55 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
     }
 
     // 單筆查找走不複製的快照（回饋三十四輪 A5）：呼叫點在逐主機迴圈裡，
-    // 3682 台規模下每查一台就複製整份清單純粹是 GC 壓力
-    public WebHost? Get(long hostId) => ReadSnapshot().FirstOrDefault(h => h.HostId == hostId);
+    // 3682 台規模下每查一台就複製整份清單純粹是 GC 壓力。
+    // 索引只綁在快照物件上（以參考比對）：版本變動時 ReadSnapshot 回傳新物件，索引隨之重建，不跨版本沿用。
+    // 重複的編號或名稱取清單中第一筆（TryAdd 保留先到者），與線性 FirstOrDefault 結果相同。
+    private sealed class HostLookupIndex
+    {
+        public HostLookupIndex(IReadOnlyList<WebHost> source)
+        {
+            Source = source;
+            ById = new Dictionary<long, WebHost>(source.Count);
+            ByName = new Dictionary<string, WebHost>(source.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var h in source)
+            {
+                ById.TryAdd(h.HostId, h);
+                if (h.HostName != null) ByName.TryAdd(h.HostName, h);
+            }
+        }
 
-    public WebHost? FindByName(string hostName) =>
-        ReadSnapshot().FirstOrDefault(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+        public IReadOnlyList<WebHost> Source { get; }
+        public Dictionary<long, WebHost> ById { get; }
+        public Dictionary<string, WebHost> ByName { get; }
+    }
+
+    private volatile HostLookupIndex? _lookupIndex;
+    private int _lookupIndexBuilds;
+
+    /// <summary>索引累計建立次數（測試用，證明同一份快照只建一次）。</summary>
+    internal int LookupIndexBuilds => Volatile.Read(ref _lookupIndexBuilds);
+
+    private HostLookupIndex IndexFor(IReadOnlyList<WebHost> snapshot)
+    {
+        var index = _lookupIndex;
+        if (index != null && ReferenceEquals(index.Source, snapshot)) return index;
+        index = new HostLookupIndex(snapshot);
+        Interlocked.Increment(ref _lookupIndexBuilds);
+        _lookupIndex = index;
+        return index;
+    }
+
+    public WebHost? Get(long hostId) =>
+        IndexFor(ReadSnapshot()).ById.GetValueOrDefault(hostId);
+
+    public WebHost? FindByName(string hostName)
+    {
+        var snapshot = ReadSnapshot();
+        // 名稱為 null 時索引無法以 null 為鍵，維持原本的線性語意
+        if (hostName == null)
+            return snapshot.FirstOrDefault(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+        return IndexFor(snapshot).ByName.GetValueOrDefault(hostName);
+    }
 
     public WebHost Upsert(WebHost host)
     {

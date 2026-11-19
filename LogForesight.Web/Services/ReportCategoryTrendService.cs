@@ -11,10 +11,13 @@ namespace LogForesight.Web.Services;
 /// 報表「類型趨勢」（WEB-SPEC §9.6）：類別 × 時間桶的問題日熱度表。
 /// 問題日＝主機 × 問題簽章 × 紀錄日（同一主機同一天同一問題只算一次）。
 /// 套可見範圍、顯示設定（嚴重度與風險等級，皆由 <see cref="IRecordRepository.QueryLightweight"/> 套用）與靜音排除，
-/// 不套 handlingScope。一次查詢、記憶體彙總。
+/// 不套 handlingScope。依日期分段查詢、記憶體彙總。
 /// </summary>
 public class ReportCategoryTrendService
 {
+    /// <summary>分段載入的天數（見 <see cref="Build"/>）</summary>
+    private const int SegmentDays = 7;
+
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
@@ -59,34 +62,44 @@ public class ReportCategoryTrendService
             _systemSettings.GetVisibleDayRiskLevels(), _systemSettings.GetVisibleSeverities());
         if (nothingVisible) return dto;
 
-        var records = _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to });
-        if (records.Count == 0) return dto;
-
         var lookup = new HostLookup(_hosts.GetAll());
-
-        // (類別, 桶) → 問題日去重集合與最高嚴重度
-        var seen = new HashSet<(string Host, string IssueKey, DateTime Date)>(new DayKeyComparer());
         var cells = new Dictionary<IssueCategory, (int[] Counts, IssueSeverity?[] Max)>();
-        foreach (var record in records)
+
+        // 依日期分段載入（每段 SegmentDays 天、連續不重疊、以日期為界），逐段累計後丟棄該段紀錄，
+        // 單次請求的記憶體尖峰由「整期（上限 366 天）所有主機日」降為「一段的量」。
+        // 與整期一次載入等價：累計只依各筆紀錄本身與「（主機, 問題鍵, 日期）」去重——去重鍵含日期，
+        // 不同日期段之間不會互相影響，所以每段各自一份 seen 即可；HostLookup、靜音判斷與分桶對每筆紀錄獨立。
+        // 仍走同一個 QueryLightweight（可見範圍、日風險與嚴重度顯示規則不在這裡重寫），篩選條件除 From／To 外完全相同。
+        for (var start = from; start <= to; start = start.AddDays(SegmentDays))
         {
-            var date = record.Date.Date;
-            var bucket = ReportBucketing.IndexOf(buckets, date);
-            if (bucket < 0) continue;
-            var host = lookup.For(record)?.HostName ?? record.Host;
+            var end = start.AddDays(SegmentDays - 1);
+            if (end > to) end = to;
+            var records = _repository.QueryLightweight(new RecordQueryFilter { From = start, To = end });
+            if (records.Count == 0) continue;
 
-            foreach (var issue in record.TopIssues)
+            // (主機, 問題, 日期) 去重集合；日期不跨段，所以逐段重建
+            var seen = new HashSet<(string Host, string IssueKey, DateTime Date)>(new DayKeyComparer());
+            foreach (var record in records)
             {
-                if (exclusion.IsMuted(issue.Source, issue.EventId, date)) continue;
-                var issueKey = IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey);
-                if (!seen.Add((host, issueKey, date))) continue;
+                var date = record.Date.Date;
+                var bucket = ReportBucketing.IndexOf(buckets, date);
+                if (bucket < 0) continue;
+                var host = lookup.For(record)?.HostName ?? record.Host;
 
-                if (!cells.TryGetValue(issue.Category, out var cell))
+                foreach (var issue in record.TopIssues)
                 {
-                    cell = (new int[buckets.Count], new IssueSeverity?[buckets.Count]);
-                    cells[issue.Category] = cell;
+                    if (exclusion.IsMuted(issue.Source, issue.EventId, date)) continue;
+                    var issueKey = IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey);
+                    if (!seen.Add((host, issueKey, date))) continue;
+
+                    if (!cells.TryGetValue(issue.Category, out var cell))
+                    {
+                        cell = (new int[buckets.Count], new IssueSeverity?[buckets.Count]);
+                        cells[issue.Category] = cell;
+                    }
+                    cell.Counts[bucket]++;
+                    if (cell.Max[bucket] is not { } current || issue.Severity > current) cell.Max[bucket] = issue.Severity;
                 }
-                cell.Counts[bucket]++;
-                if (cell.Max[bucket] is not { } current || issue.Severity > current) cell.Max[bucket] = issue.Severity;
             }
         }
 

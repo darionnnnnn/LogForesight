@@ -7,7 +7,7 @@ namespace LogForesight.Core.Persistence;
 /// </summary>
 public class ScheduleOptionsStore : JsonBlobSingleton<ScheduleOptions>
 {
-    public ScheduleOptionsStore(EfJsonBlobStore blob) : base(blob) { }
+    public ScheduleOptionsStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     protected override void Touch(ScheduleOptions value) => value.UpdatedAt = DateTime.Now;
 }

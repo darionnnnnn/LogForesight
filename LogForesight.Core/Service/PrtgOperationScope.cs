@@ -54,13 +54,16 @@ public sealed class PrtgOperationScope : IDisposable
         Token.ThrowIfCancellationRequested();
         var current = _read();
         // 不以 UpdatedAt 相同跳過比較：同時儲存／匯入也可能保留相同時間。
+        // 短路求值維持原樣：設定已變時不讀範圍（scopeRead 保持 null，Publish 自行處理）
+        string? scopeRead = null;
         if (EnabledStateInvalid(current) || !SameSettings(_initial, current) ||
-            ScopeChanged())
+            ScopeChanged(out scopeRead))
         {
             Interlocked.Exchange(ref _settingsChanged, 1);
             _cancel.Cancel();
         }
-        Publish(current, SettingsChanged ? "已取消：設定或範圍變更" : "執行中");
+        // 沿用本次檢查剛讀到的範圍字串，不在 Publish 內再讀一次（同一次檢查不重複讀同一份資料）
+        Publish(current, SettingsChanged ? "已取消：設定或範圍變更" : "執行中", scopeRead);
         Token.ThrowIfCancellationRequested();
     }
 
@@ -68,12 +71,14 @@ public sealed class PrtgOperationScope : IDisposable
         !current.PrtgEnabled && (_requireEnabled || _initial.PrtgEnabled) ||
         _cancelOnEnabledChange && current.PrtgEnabled != _initial.PrtgEnabled;
 
-    private bool ScopeChanged()
+    private bool ScopeChanged(out string? read)
     {
+        read = null;
         if (_readScope == null) return false;
         lock (_scopeGate)
         {
             var current = _readScope();
+            read = current;
             if (!_scopeCaptured)
             {
                 _initialScope = current;
@@ -103,10 +108,10 @@ public sealed class PrtgOperationScope : IDisposable
         }
         }
     }
-    private void Publish(SystemSettings current, string state)
+    private void Publish(SystemSettings current, string state, string? scopeAlreadyRead = null)
     {
         static string Hash(string? value) => value == null ? "尚未讀取" : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-        var scope = _scopeCaptured ? _readScope?.Invoke() : null;
+        var scope = _scopeCaptured ? scopeAlreadyRead ?? _readScope?.Invoke() : null;
         var changed = !SameSettings(_initial, current) || EnabledStateInvalid(current) ||
             _scopeCaptured && scope != _initialScope;
         Versions[_id] = new(_id, _kind, _startedAt, _disposed ? DateTimeOffset.UtcNow : null,

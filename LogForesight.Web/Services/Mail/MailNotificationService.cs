@@ -71,6 +71,16 @@ public class MailNotificationService
     /// <summary>NotifyAfterRunAsync 的序列化 gate（本類別是 Singleton，見其內的說明）</summary>
     private readonly SemaphoreSlim _notifyGate = new(1, 1);
 
+    /// <summary>重試退避上限：沒有進度時間隔 1→2→4→8→16→30 分鐘封頂（暫定值）。</summary>
+    private static readonly TimeSpan RetryBackoffMax = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan RetryBackoffMin = TimeSpan.FromMinutes(1);
+
+    /// <summary>重試退避狀態，只放記憶體（本類別是 singleton）：下次允許時間、目前間隔、記下的設定版次。</summary>
+    private readonly object _retryLock = new();
+    private DateTime _retryNextUtc = DateTime.MinValue;
+    private TimeSpan _retryInterval = RetryBackoffMin;
+    private string? _retryRevision;
+
     private readonly ISystemSettingsStore _settingsStore;
     private readonly ISmtpMailSender _sender;
     private readonly IHostStore _hosts;
@@ -175,6 +185,18 @@ public class MailNotificationService
     /// </summary>
     public async Task NotifyAfterRunAsync(CancellationToken ct = default)
     {
+        // 取數結束觸發的入口不受退避影響；成功跑完一次就讓重試退避回到 1 分鐘。
+        if (await NotifyAfterRunCoreAsync(ct))
+            lock (_retryLock)
+            {
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = _clock.UtcNow();
+            }
+    }
+
+    /// <summary>通知主流程；回傳是否正常跑完（例外或取消回 false）。</summary>
+    private async Task<bool> NotifyAfterRunCoreAsync(CancellationToken ct)
+    {
         try
         {
             // 序列化 gate（回饋十六輪體檢）：通知移出執行鎖（批次A-4）後，前一輪的寄信還在
@@ -193,6 +215,8 @@ public class MailNotificationService
                 var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settingsStore.Get()))!;
                 var settingsFingerprint = HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
                 var mailContextFingerprint = MailContextFingerprint(settings);
+                // 郵件內容意圖的記憶只活在這一次通知呼叫內（區域變數往下傳，不放欄位、static 或紀錄物件）。
+                var intentMemo = new MailIntentMemo(IntentComputedProbe);
                 var to = _clock.LocalToday().AddDays(-1);
                 var from = to.AddDays(-(NotifyLookbackDays - 1));
                 var notificationDays = new List<NotificationWorkflowRecord>();
@@ -243,32 +267,30 @@ public class MailNotificationService
                     var (_, urgentViews) = ResolvePerRecipient(currentSettings, urgentRecords, currentContext, includeSuspended: true);
                     MigrateLegacyAcceptedNetIqContributions("summary", summaryRecords, summaryViews, mailVersions);
                     MigrateLegacyAcceptedNetIqContributions("urgent", urgentRecords, urgentViews, mailVersions);
-                    PlanWorkflowMail("summary", summaryRecords, summaryViews, mailVersions, mailContextFingerprint);
-                    PlanWorkflowMail("urgent", urgentRecords, urgentViews, mailVersions, mailContextFingerprint);
-                    TrackAcceptedContributionWorkflow("summary", summaryViews, mailVersions, mailContextFingerprint);
-                    TrackAcceptedContributionWorkflow("urgent", urgentViews, mailVersions, mailContextFingerprint);
+                    PlanWorkflowMail("summary", summaryRecords, summaryViews, mailVersions, mailContextFingerprint, intentMemo, closingPass: true);
+                    PlanWorkflowMail("urgent", urgentRecords, urgentViews, mailVersions, mailContextFingerprint, intentMemo, closingPass: true);
+                    TrackAcceptedContributionWorkflow("summary", summaryViews, mailVersions, mailContextFingerprint, intentMemo);
+                    TrackAcceptedContributionWorkflow("urgent", urgentViews, mailVersions, mailContextFingerprint, intentMemo);
                     TrackDurableUrgentStatisticsReceipts(urgentRecords, urgentViews, mailVersions,
-                        mailContextFingerprint, currentSettings);
+                        mailContextFingerprint, currentSettings, intentMemo);
+                    var summaryKeys = summaryRecords.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
+                    var urgentKeys = urgentRecords.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
                     foreach (var day in notificationDays)
                     {
                         var key = $"{day.HostId}|{day.Date:yyyy-MM-dd}";
                         if (mailVersions == null || !mailVersions.TryGetValue(key, out var version)) continue;
-                        if (_workflow!.CaptureDeliveryVersion(day.HostId, day.Date, version.ParentRecordId) != version) continue;
                         var requiredLanes = new List<string>();
-                        if (summaryRecords.Any(record => RecordKey(record) == key)) requiredLanes.Add("summary");
-                        if (urgentRecords.Any(record => RecordKey(record) == key)) requiredLanes.Add("urgent");
-                        if (!requiredLanes.Contains("summary"))
-                            _workflow.ReplaceMailPlan(day.HostId, day.Date, "summary", new Dictionary<string, IReadOnlyCollection<string>>(), version);
-                        if (!requiredLanes.Contains("urgent"))
-                            _workflow.ReplaceMailPlan(day.HostId, day.Date, "urgent", new Dictionary<string, IReadOnlyCollection<string>>(), version);
-                        _workflow.CloseMailPlan(day.HostId, day.Date, version, requiredLanes,
+                        if (summaryKeys.Contains(key)) requiredLanes.Add("summary");
+                        if (urgentKeys.Contains(key)) requiredLanes.Add("urgent");
+                        // 版本比對與「不需要的通道換空計畫＋結案」在同一次更新內完成；已是目標狀態就不寫入。
+                        _workflow!.CloseMailPlanIfChanged(day.HostId, day.Date, version, requiredLanes,
                             requiredLanes.Count > 0 ? "recipient-plan-evaluated" : currentSettings.MailEnabled ? "below-threshold-or-not-required" : "disabled");
                     }
                 }
                 if (!settings.MailEnabled || !settings.MailOnRunCompleted && !settings.MailUrgentEnabled)
                 {
                     ClosePlans();
-                    return;
+                    return true;
                 }
                 // RiskLevels 下推（回饋十八輪批次A）：兩路門檻不同——摘要用 MailMinRiskLevel（可能低到
                 // 中），緊急只要 High。取聯集下推、記憶體判定不變（見 SendRunSummaryAsync／
@@ -285,17 +307,21 @@ public class MailNotificationService
                 if (settings.MailOnRunCompleted)
                 {
                     await SendRunSummaryAsync(settings, records, ctx, from, to, ct, mailVersions, mailContextFingerprint,
-                        settingsFingerprint);
+                        settingsFingerprint, intentMemo);
                 }
 
                 if (settings.MailUrgentEnabled)
                 {
+                    // 有工作流時，取不到版本的主機日（恢復等待中、父紀錄未完成）這趟不判斷其待送項目是否已被取代
+                    var unresolvedHostDays = mailVersions == null ? new HashSet<string>(StringComparer.Ordinal)
+                        : notificationDays.Select(day => $"{day.HostId}|{day.Date:yyyy-MM-dd}")
+                            .Where(key => !mailVersions.ContainsKey(key)).ToHashSet(StringComparer.Ordinal);
                     await SendUrgentNotificationsAsync(settings, records, ctx, from, to, ct, mailVersions, mailContextFingerprint,
-                        settingsFingerprint);
+                        settingsFingerprint, intentMemo, unresolvedHostDays);
                 }
                 ct.ThrowIfCancellationRequested();
                 ClosePlans();
-
+                return true;
             }
             finally
             {
@@ -305,7 +331,27 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 執行結束後的通知處理失敗（不影響分析結果本身）");
+            return false;
         }
+    }
+
+    /// <summary>
+    /// 把非終態、且鍵不在 <paramref name="liveKeys"/> 的即時通知待送項目標為 <c>superseded</c>（已被取代）。沒有要改的就不寫。
+    /// <paramref name="unresolvedHostDays"/>（<c>hostId|yyyy-MM-dd</c>）是本趟暫時取不到工作流版本的主機日（恢復等待中、父紀錄未完成）：
+    /// 它們的鍵這趟算不出來，不代表已不對應現行紀錄，這趟不動，等狀態恢復後再判斷。
+    /// 不改 <c>UpdatedAtUtc</c>：維護頁依它排序取前 100 筆，大量轉成已被取代時不能把仍在處理的項目擠出清單。
+    /// </summary>
+    private void SupersedeUrgentOutbox(IReadOnlySet<string> liveKeys, IReadOnlySet<string> unresolvedHostDays)
+    {
+        bool Stale(MailUrgentIntent intent, string key) =>
+            !MailNotifyStateStore.IsTerminalUrgentStatus(intent.Status) && !liveKeys.Contains(key) &&
+            !unresolvedHostDays.Contains($"{intent.HostId}|{intent.RecordDate:yyyy-MM-dd}");
+        if (!_state.Get().UrgentOutbox.Any(p => Stale(p.Value, p.Key))) return;
+        _state.Update(s =>
+        {
+            foreach (var pair in s.UrgentOutbox)
+                if (Stale(pair.Value, pair.Key)) pair.Value.Status = "superseded";
+        });
     }
 
     /// <summary>
@@ -316,10 +362,57 @@ public class MailNotificationService
     /// </summary>
     public async Task RetryPendingUrgentAsync(CancellationToken ct = default)
     {
-        if (!_state.Get().UrgentOutbox.Values.Any(i =>
-                i.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
+        // 會被重跑處理的項目才觸發：非終態且尚未記為已寄（已寄的鍵不會再進待送清單，重跑對它沒有作用——
+        // 例如只填信箱的收件人部分寄送失敗時，本趟只要有一封成功就記為已寄，項目卻維持待送）。
+        var outbox = _state.Get();
+        if (!outbox.UrgentOutbox.Values.Any(i =>
+                !MailNotifyStateStore.IsTerminalUrgentStatus(i.Status) && !outbox.UrgentSentKeys.Contains(i.Key) ||
                 IsRetryableLegacyNoQualifiedIntent(i))) return;
-        await NotifyAfterRunAsync(ct);
+
+        // 郵件或即時通知停用時不重跑：待送項目保留原狀，重新啟用後下一分鐘就照常重試補寄。
+        var settings = _settingsStore.Get();
+        if (!settings.MailEnabled || !settings.MailUrgentEnabled) return;
+
+        // 退避：沒有進度的整套重跑間隔加倍，設定版次改變即回到 1 分鐘。
+        var now = _clock.UtcNow();
+        var revision = settings.Revision;
+        lock (_retryLock)
+        {
+            if (!string.Equals(_retryRevision, revision, StringComparison.Ordinal))
+            {
+                _retryRevision = revision;
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = now;
+            }
+            if (now < _retryNextUtc) return;
+        }
+
+        var (terminalBefore, acceptedBefore) = CountUrgentProgress();
+        await NotifyAfterRunCoreAsync(ct);
+        var (terminalAfter, acceptedAfter) = CountUrgentProgress();
+        var progressed = terminalAfter > terminalBefore || acceptedAfter > acceptedBefore;
+        var after = _clock.UtcNow();
+        lock (_retryLock)
+        {
+            if (progressed)
+            {
+                _retryInterval = RetryBackoffMin;
+                _retryNextUtc = after + RetryBackoffMin;
+            }
+            else
+            {
+                _retryNextUtc = after + _retryInterval;
+                _retryInterval = TimeSpan.FromTicks(Math.Min(_retryInterval.Ticks * 2, RetryBackoffMax.Ticks));
+            }
+        }
+    }
+
+    /// <summary>退避用的進度量測：終態項目數與已被 SMTP 接受的收件人狀態數。</summary>
+    private (int Terminal, int Accepted) CountUrgentProgress()
+    {
+        var outbox = _state.Get().UrgentOutbox.Values.ToList();
+        return (outbox.Count(i => MailNotifyStateStore.IsTerminalUrgentStatus(i.Status)),
+            outbox.Sum(i => i.Recipients.Values.Count(v => v == "smtp-accepted")));
     }
 
     /// <summary>
@@ -733,6 +826,9 @@ public class MailNotificationService
         }
 
         var orderCache = new Dictionary<long, WorkOrderDigestOrder?>();
+        // 停用主機鍵整封摘要只讀一次（每張單各讀一次主機清單是重複工作）；沒有需要載入單的項目就不讀
+        var disabledKeysLazy = new Lazy<IReadOnlyCollection<string>>(
+            () => WorkOrderQueries.DisabledHostKeys(_hosts.GetAll()));
         var rows = items
             .Select(kv => kv.Value)
             .OrderBy(i => i.EnqueuedAt)
@@ -742,7 +838,7 @@ public class MailNotificationService
                 if (i.Kind == WorkOrderOutboxKinds.AdminReminder) return (Item: i, Order: (WorkOrderDigestOrder?)null);
                 if (!orderCache.TryGetValue(i.WorkOrderId, out var order))
                 {
-                    order = LoadDigestOrder(i.WorkOrderId, getRules);
+                    order = LoadDigestOrder(i.WorkOrderId, getRules, disabledKeysLazy.Value);
                     orderCache[i.WorkOrderId] = order;
                 }
                 return (Item: i, Order: order);
@@ -761,13 +857,13 @@ public class MailNotificationService
         }
     }
 
-    private WorkOrderDigestOrder? LoadDigestOrder(long workOrderId, Func<List<KnownIssueRule>> getRules)
+    private WorkOrderDigestOrder? LoadDigestOrder(
+        long workOrderId, Func<List<KnownIssueRule>> getRules, IReadOnlyCollection<string> disabledKeys)
     {
         var order = _workOrders.Get(workOrderId);
         if (order == null) return null;
 
         // 台數與主機名單與畫面同口徑：進行中成員、排除已停用主機（WorkOrderQueries.DisabledHostKeys 是唯一一份）
-        var disabledKeys = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
         var hostCount = _workOrders.CountMembers(new[] { workOrderId }, disabledKeys).TryGetValue(workOrderId, out var counts) ? counts.Active : 0;
         var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
         // 查詢就帶進行中條件，已結案的成員不佔名額；停用主機仍在查詢後濾掉，所以逐頁取到湊滿 20 台或取完
@@ -1050,7 +1146,7 @@ public class MailNotificationService
     private async Task SendRunSummaryAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions = null, string? mailContextFingerprint = null,
-        string? expectedSettingsFingerprint = null)
+        string? expectedSettingsFingerprint = null, MailIntentMemo? memo = null)
     {
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var state = _state.Get();
@@ -1058,8 +1154,9 @@ public class MailNotificationService
         var (_, candidateViews) = ResolvePerRecipient(settings, candidates, ctx);
         var qualifying = candidates.Where(record =>
         {
-            var key = WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint);
+            var key = WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint, memo: memo);
             return !state.SummarySentKeys.Contains(key) &&
+                !LegacyKeySent("summary", record, mailVersions, candidateViews, mailContextFingerprint, state.SummarySentKeys) &&
                 (mailVersions == null || !mailVersions.TryGetValue(RecordKey(record), out var version) || version.ParentRecordId != record.RecordId
                     ? !state.SummarySentKeys.Contains(RecordKey(record))
                     : true);
@@ -1068,7 +1165,7 @@ public class MailNotificationService
 
         var (order, views) = ResolvePerRecipient(settings, qualifying, ctx);
         MigrateLegacyAcceptedNetIqContributions("summary", qualifying, views, mailVersions);
-        PlanWorkflowMail("summary", qualifying, views, mailVersions, mailContextFingerprint);
+        PlanWorkflowMail("summary", qualifying, views, mailVersions, mailContextFingerprint, memo);
         if (order.Count == 0) return;
 
         var settingsFingerprint = expectedSettingsFingerprint ?? HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
@@ -1103,8 +1200,9 @@ public class MailNotificationService
             if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint ||
                 !currentSettings.MailEnabled || !currentSettings.MailOnRunCompleted) return null;
             var currentRisk = RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel);
+            var qualifyingKeys = qualifying.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
             var currentRecords = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = currentRisk })
-                .Where(record => qualifying.Any(candidate => RecordKey(candidate) == RecordKey(record)) && CurrentWorkflowVersion(record, mailVersions))
+                .Where(record => qualifyingKeys.Contains(RecordKey(record)) && CurrentWorkflowVersion(record, mailVersions))
                 .ToList();
             var allowedIssueKeys = qualifying.ToDictionary(RecordKey,
                 record => record.TopIssues.Select(issue => issue.EventKey).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
@@ -1117,14 +1215,14 @@ public class MailNotificationService
             if (live.Detail == null)
             {
                 var unresolvedStats = qualifying.Where(record => CurrentWorkflowVersion(record, mailVersions) &&
-                    !IsWorkflowMailPartAccepted("summary", email, record, mailVersions, mailContextFingerprint)).ToList();
+                    !IsWorkflowMailPartAccepted("summary", email, record, mailVersions, mailContextFingerprint, memo)).ToList();
                 if (original.Detail != null || (!recordingOutcome && unresolvedStats.Count == 0)) return null;
                 var (statsRows, filteredStatsScope) = BuildRecipientIssueRows(issueRowsCache, "summary", email,
                     from, to, live.VisibleHostIds, issueScope);
                 return live with { IssueScope = filteredStatsScope };
             }
             var candidatesNow = live.Detail ?? new List<DailyAnalysisRecord>();
-            var unresolved = recordingOutcome ? candidatesNow : FilterUnresolvedWorkflowMail("summary", email, new RecipientView(candidatesNow, live.VisibleHostIds), mailVersions, mailContextFingerprint);
+            var unresolved = recordingOutcome ? candidatesNow : FilterUnresolvedWorkflowMail("summary", email, new RecipientView(candidatesNow, live.VisibleHostIds), mailVersions, mailContextFingerprint, memo);
             var (rows, filteredIssueScope) = BuildRecipientIssueRows(issueRowsCache, "summary", email, from, to,
                 live.VisibleHostIds, issueScope);
             if (original.Detail is { Count: > 0 } && unresolved.Count == 0) return null;
@@ -1133,9 +1231,9 @@ public class MailNotificationService
         }
 
         await SendPerRecipientAsync(settings, order, views, BuildMessage,
-            record => WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint), ct,
+            record => WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint, memo: memo), ct,
             onComplete: (success, coverage) => MarkSent(settings, qualifying, success, coverage, s => s.SummarySentKeys,
-                record => WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint)),
+                record => WorkflowRecordKey("summary", record, mailVersions, candidateViews, mailContextFingerprint, memo: memo)),
             onRecipientStarting: (email, detail) =>
             {
                 attemptedSummaryDetails[email] = detail?.Select(item => qualifying.FirstOrDefault(record => record.RecordId == item.RecordId && RecordKey(record) == RecordKey(item)) ?? item).ToList() ?? qualifying;
@@ -1149,8 +1247,8 @@ public class MailNotificationService
                         ? attempted.All(record => CurrentWorkflowVersion(record, mailVersions))
                         : attempted.All(record => checkedView.Detail.Any(live =>
                             RecordKey(live) == RecordKey(record) && live.RecordId == record.RecordId &&
-                            SameWorkflowMailContent("summary", live, record, mailVersions, mailContextFingerprint)))) )
-                    TrackWorkflowMail("summary", attempted, email, success, views, mailVersions, mailContextFingerprint);
+                            SameWorkflowMailContent("summary", live, record, mailVersions, mailContextFingerprint, memo)))) )
+                    TrackWorkflowMail("summary", attempted, email, success, views, mailVersions, mailContextFingerprint, memo);
             },
             recheck: (email, view) => Recheck(email, view),
             reserveMailContributions: email => TryReserveRenderedMailContributions("summary", email,
@@ -1167,7 +1265,8 @@ public class MailNotificationService
     private async Task SendUrgentNotificationsAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions = null, string? mailContextFingerprint = null,
-        string? expectedSettingsFingerprint = null)
+        string? expectedSettingsFingerprint = null, MailIntentMemo? memo = null,
+        IReadOnlySet<string>? unresolvedHostDays = null)
     {
         records = RemovePrtgLanesTransiently(records);
         // 固定本輪起點，避免 store 回傳共用物件時設定修改連帶改掉比較基準。
@@ -1178,19 +1277,24 @@ public class MailNotificationService
         {
             var cutoff = _clock.UtcNow().AddDays(-Math.Max(14, settings.RetentionDays));
             foreach (var key in s.UrgentOutbox.Where(p => p.Value.RecordDate < cutoff.Date &&
-                         (p.Value.Status is "smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
+                         MailNotifyStateStore.IsTerminalUrgentStatus(p.Value.Status))
                      .Select(p => p.Key).ToArray())
                 s.UrgentOutbox.Remove(key);
         });
         var candidates = records.Where(QualifiesForUrgentRisk).ToList();
         var (_, candidateViews) = ResolvePerRecipient(settings, candidates, ctx);
         string IntentKey(DailyAnalysisRecord record) =>
-            UrgentRecordKey(record, mailVersions, candidateViews, mailContextFingerprint);
-        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r))).ToList();
+            UrgentRecordKey(record, mailVersions, candidateViews, mailContextFingerprint, memo);
+        // 本趟正常算到這一步才清理：不再對應現行紀錄的待送項目標為「已被取代」
+        // （讀取失敗或例外時不會執行到這裡）。
+        SupersedeUrgentOutbox(candidates.Select(IntentKey).ToHashSet(StringComparer.Ordinal),
+            unresolvedHostDays ?? new HashSet<string>(StringComparer.Ordinal));
+        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r)) &&
+            !LegacyKeySent("urgent", r, mailVersions, candidateViews, mailContextFingerprint, state.UrgentSentKeys)).ToList();
         if (pending.Count == 0) return;
         var (order, views) = ResolvePerRecipient(settings, pending, ctx);
         MigrateLegacyAcceptedNetIqContributions("urgent", pending, views, mailVersions);
-        PlanWorkflowMail("urgent", pending, views, mailVersions, mailContextFingerprint);
+        PlanWorkflowMail("urgent", pending, views, mailVersions, mailContextFingerprint, memo);
         _state.Update(s =>
         {
             foreach (var record in pending)
@@ -1262,7 +1366,7 @@ public class MailNotificationService
             if (liveView.Detail == null)
             {
                 var unresolvedStats = pending.Where(record => CurrentWorkflowVersion(record, mailVersions) &&
-                    !IsWorkflowMailPartAccepted("urgent", email, record, mailVersions, mailContextFingerprint)).ToList();
+                    !IsWorkflowMailPartAccepted("urgent", email, record, mailVersions, mailContextFingerprint, memo)).ToList();
                 if (original.Detail != null || (!recordingOutcome && unresolvedStats.Count == 0)) return null;
                 var (statsRows, filteredStatsScope) = BuildRecipientIssueRows(issueRowsCache, "urgent", email,
                     from, to, liveView.VisibleHostIds, issueScope);
@@ -1285,7 +1389,7 @@ public class MailNotificationService
                 })
                 .Where(QualifiesForUrgentRisk)
                 .ToList();
-            var liveFiltered = recordingOutcome ? detail : FilterUnresolvedWorkflowMail("urgent", email, new RecipientView(detail, visible), mailVersions, mailContextFingerprint);
+            var liveFiltered = recordingOutcome ? detail : FilterUnresolvedWorkflowMail("urgent", email, new RecipientView(detail, visible), mailVersions, mailContextFingerprint, memo);
             var (liveRows, filteredIssueScope) = BuildRecipientIssueRows(issueRowsCache, "urgent", email, from, to,
                 visible, issueScope);
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
@@ -1359,7 +1463,7 @@ public class MailNotificationService
                             intent.UpdatedAtUtc = _clock.UtcNow();
                         }
                 });
-                TrackWorkflowMail("urgent", detail, email, null, views, mailVersions, mailContextFingerprint);
+                TrackWorkflowMail("urgent", detail, email, null, views, mailVersions, mailContextFingerprint, memo);
             },
             onRecipientResult: (email, accepted) =>
             {
@@ -1370,8 +1474,8 @@ public class MailNotificationService
                         ? attempted.All(record => CurrentWorkflowVersion(record, mailVersions))
                         : attempted.All(record => checkedView.Detail.Any(live =>
                             RecordKey(live) == RecordKey(record) && live.RecordId == record.RecordId &&
-                            SameWorkflowMailContent("urgent", live, record, mailVersions, mailContextFingerprint)))) )
-                    TrackWorkflowMail("urgent", attempted, email, accepted, views, mailVersions, mailContextFingerprint);
+                            SameWorkflowMailContent("urgent", live, record, mailVersions, mailContextFingerprint, memo)))) )
+                    TrackWorkflowMail("urgent", attempted, email, accepted, views, mailVersions, mailContextFingerprint, memo);
                 _state.Update(s =>
                 {
                     foreach (var intent in (attemptedKeys.GetValueOrDefault(email) ?? new()).Select(k => s.UrgentOutbox[k])
@@ -1395,8 +1499,8 @@ public class MailNotificationService
 
     private static string UrgentRecordKey(DailyAnalysisRecord record,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions = null,
-        IReadOnlyDictionary<string, RecipientView>? views = null, string? mailContextFingerprint = null) =>
-        WorkflowRecordKey("urgent", record, versions, views, mailContextFingerprint);
+        IReadOnlyDictionary<string, RecipientView>? views = null, string? mailContextFingerprint = null, MailIntentMemo? memo = null) =>
+        WorkflowRecordKey("urgent", record, versions, views, mailContextFingerprint, memo: memo);
 
     /// <summary>涵蓋此 record 的收件人全部成功才標記；coverage 為空（沒有任何收件人可見這台
     /// 主機的明細）的 record 隨「本輪至少一封信寄成功」一併標記，否則會永遠卡在 pending
@@ -2016,7 +2120,7 @@ public class MailNotificationService
 
     private static string RecordKey(DailyAnalysisRecord record) => $"{record.HostId}|{record.Date:yyyy-MM-dd}";
 
-    private string MailContextFingerprint(SystemSettings settings)
+    internal string MailContextFingerprint(SystemSettings settings)
     {
         var policyRevision = _prtgMonitoring?.Get().Revision.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
         var scopeRevision = _prtgBackend == null ? "none" : new PrtgScopeRevisionReader(_prtgBackend, _hosts).Read();
@@ -2029,13 +2133,52 @@ public class MailNotificationService
         return HostDayWorkflowFingerprint.HashParts([messageSettings, policyRevision, scopeRevision]);
     }
 
+    /// <summary>
+    /// 升級相容：舊算法的去重鍵含 AI 已分析／AI 待補／詳情已清除三個旗標的當時實際值，
+    /// 這裡窮舉 8 種組合，任一把已在已寄集合就視為已寄，避免升級後把回望期內已寄的主機日重寄。
+    /// 升級滿 14 天回望期後可移除（同 <c>LegacyParentFingerprint</c> 的做法）。
+    /// </summary>
+    private static bool LegacyKeySent(string lane, DailyAnalysisRecord record,
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, IReadOnlyDictionary<string, RecipientView>? views,
+        string? mailContextFingerprint, IReadOnlySet<string> sentKeys)
+    {
+        if (sentKeys.Count == 0) return false;
+        // 沒有工作流版本時鍵是 hostId|date，與旗標無關，呼叫端已比對過
+        if (versions == null || !versions.TryGetValue(RecordKey(record), out var version) || version.ParentRecordId != record.RecordId)
+            return false;
+        for (var bits = 0; bits < 8; bits++)
+        {
+            var legacy = ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0);
+            if (sentKeys.Contains(WorkflowRecordKey(lane, record, versions, views, mailContextFingerprint, legacy))) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 升級相容：<paramref name="legacyIntent"/> 是這筆紀錄以舊算法（三個狀態旗標取任一組合）算出的郵件意圖時，
+    /// 回傳每位收件人「舊部分 → 新部分」的對照；不是就回 null。升級滿 14 天回望期後可移除（同 <see cref="LegacyKeySent"/>）。
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? LegacyMailPartMap(string kind, DailyAnalysisRecord record,
+        HostDayWorkflowVersion version, string? mailContextFingerprint, string currentIntent,
+        IReadOnlyCollection<string> recipientHashes, string legacyIntent)
+    {
+        for (var bits = 0; bits < 8; bits++)
+        {
+            var flags = ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0);
+            if (!StringComparer.Ordinal.Equals(WorkflowMailIntent(kind, record, version, mailContextFingerprint, flags), legacyIntent)) continue;
+            return recipientHashes.ToDictionary(hash => WorkflowMailPart(legacyIntent, hash), hash => WorkflowMailPart(currentIntent, hash),
+                StringComparer.Ordinal);
+        }
+        return null;
+    }
+
     private static string WorkflowRecordKey(string lane, DailyAnalysisRecord record,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, IReadOnlyDictionary<string, RecipientView>? views = null,
-        string? mailContextFingerprint = null)
+        string? mailContextFingerprint = null, (bool AiAnalyzed, bool AiPending, bool DetailPruned)? legacyFlags = null, MailIntentMemo? memo = null)
     {
         var key = RecordKey(record);
         if (versions == null || !versions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) return key;
-        var content = WorkflowMailIntent(lane, record, version, mailContextFingerprint);
+        var content = WorkflowMailIntent(lane, record, version, mailContextFingerprint, legacyFlags, memo: memo);
         var recipients = views == null ? string.Empty : string.Join("|", views
             .Where(view => view.Value.Detail == null || view.Value.Detail.Any(item => RecordKey(item) == key))
             .Select(view => view.Key.Trim().ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2044,14 +2187,48 @@ public class MailNotificationService
         return $"{key}|parent:{version.ParentRecordId}|decision:{version.DecisionVersion}|content:{content}|route:{route}|{lane}";
     }
 
-    private static string WorkflowMailIntent(string kind, DailyAnalysisRecord record, HostDayWorkflowVersion version,
-        string? mailContextFingerprint)
+    /// <summary>
+    /// 一次通知呼叫內的郵件內容意圖記憶：同一筆紀錄物件（以參考比對）、同一通道與版本、同一郵件情境指紋只算一次。
+    /// 執行期間沒有任何路徑就地修改已取得的紀錄（改寫一律在 <c>JsonSerializer</c> 複本上、建出後才交給呼叫端），
+    /// 因此記憶不會過期；只在 <see cref="NotifyAfterRunCoreAsync"/> 內建立並以參數往下傳。
+    /// </summary>
+    internal sealed class MailIntentMemo(Action<string, DailyAnalysisRecord, bool>? probe = null)
     {
+        private readonly Dictionary<DailyAnalysisRecord, Dictionary<(string Kind, long Parent, long Decision, string? Context), string>> _byRecord =
+            new(ReferenceEqualityComparer.Instance);
+
+        public string GetOrAdd(string kind, DailyAnalysisRecord record, HostDayWorkflowVersion version,
+            string? context, Func<string> compute)
+        {
+            if (!_byRecord.TryGetValue(record, out var inner))
+                _byRecord[record] = inner = new();
+            var key = (kind, version.ParentRecordId, version.DecisionVersion, context);
+            if (inner.TryGetValue(key, out var cached))
+            {
+                probe?.Invoke(kind, record, true);
+                return cached;
+            }
+            probe?.Invoke(kind, record, false);
+            return inner[key] = compute();
+        }
+    }
+
+    /// <summary>測試注入點：每次取得郵件內容意圖時回報（通道、紀錄物件、是否命中記憶）。正式環境為 null。</summary>
+    internal Action<string, DailyAnalysisRecord, bool>? IntentComputedProbe { get; set; }
+
+    private static string WorkflowMailIntent(string kind, DailyAnalysisRecord record, HostDayWorkflowVersion version,
+        string? mailContextFingerprint, (bool AiAnalyzed, bool AiPending, bool DetailPruned)? legacyFlags = null, MailIntentMemo? memo = null)
+    {
+        if (memo != null && legacyFlags == null)
+            return memo.GetOrAdd(kind, record, version, mailContextFingerprint,
+                () => WorkflowMailIntent(kind, record, version, mailContextFingerprint));
         var fingerprint = HostDayWorkflowFingerprint.HashParts([
             kind, record.RecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             version.ParentRecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             version.DecisionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            HostDayWorkflowFingerprint.ForRecord(record), PrtgFindingMapper.Fingerprint(record.TopIssues), mailContextFingerprint ?? "legacy-context"]);
+            legacyFlags is { } f
+                ? HostDayWorkflowFingerprint.ForRecordWithFlags(record, f.AiAnalyzed, f.AiPending, f.DetailPruned)
+                : HostDayWorkflowFingerprint.ForMailContent(record), PrtgFindingMapper.Fingerprint(record.TopIssues), mailContextFingerprint ?? "legacy-context"]);
         return $"{kind}:{fingerprint}";
     }
 
@@ -2059,13 +2236,13 @@ public class MailNotificationService
         SHA256.HashData(Encoding.UTF8.GetBytes(intent + "|recipient|" + normalizedRecipient)));
 
     private bool IsWorkflowMailPartAccepted(string kind, string recipient, DailyAnalysisRecord record,
-        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint)
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint, MailIntentMemo? memo = null)
     {
         var key = RecordKey(record);
         if (_workflow == null || versions == null || !versions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId)
             return false;
         var recipientHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(recipient.Trim().ToLowerInvariant())));
-        var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint);
+        var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint, memo: memo);
         return _workflow.HasAcceptedMailPart(record.HostId, record.Date, version, intent,
             WorkflowMailPart(intent, recipientHash));
     }
@@ -2080,20 +2257,20 @@ public class MailNotificationService
     }
 
     private static bool SameWorkflowMailContent(string lane, DailyAnalysisRecord left, DailyAnalysisRecord right,
-        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint)
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint, MailIntentMemo? memo = null)
     {
         if (versions == null) return true;
         var key = RecordKey(left);
         return RecordKey(right) == key && versions.TryGetValue(key, out var version) &&
             version.ParentRecordId == left.RecordId && version.ParentRecordId == right.RecordId &&
-            WorkflowMailIntent(lane, left, version, mailContextFingerprint) == WorkflowMailIntent(lane, right, version, mailContextFingerprint);
+            WorkflowMailIntent(lane, left, version, mailContextFingerprint, memo: memo) == WorkflowMailIntent(lane, right, version, mailContextFingerprint, memo: memo);
     }
 
     private List<DailyAnalysisRecord> FilterUnresolvedWorkflowMail(string kind, string recipient,
-        RecipientView view, IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint)
+        RecipientView view, IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint, MailIntentMemo? memo = null)
     {
         var candidates = view.Detail ?? new List<DailyAnalysisRecord>();
-        var unresolved = candidates.Where(record => !IsWorkflowMailPartAccepted(kind, recipient, record, versions, mailContextFingerprint)).ToList();
+        var unresolved = candidates.Where(record => !IsWorkflowMailPartAccepted(kind, recipient, record, versions, mailContextFingerprint, memo)).ToList();
         return FilterAcceptedMailContributions(kind, recipient, unresolved, versions);
     }
 
@@ -2305,31 +2482,37 @@ public class MailNotificationService
 
     private void PlanWorkflowMail(string kind, List<DailyAnalysisRecord> records,
         IReadOnlyDictionary<string, RecipientView> views, IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions,
-        string? mailContextFingerprint)
+        string? mailContextFingerprint, MailIntentMemo? memo = null, bool closingPass = false)
     {
         if (_workflow == null || mailVersions == null) return;
         foreach (var record in records)
         {
             var key = RecordKey(record);
             if (!mailVersions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) continue;
-            var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint);
+            var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint, memo: memo);
             // A null detail is an intentional statistics-only recipient. Its message still
             // includes the global aggregate containing this record, so SMTP acceptance must
             // satisfy the generic mail leg even though it has no per-host detail coverage.
-            var expectedParts = views.Where(view => view.Value.Detail == null ||
+            var recipientHashes = views.Where(view => view.Value.Detail == null ||
                     view.Value.Detail.Any(item => RecordKey(item) == key))
-                .Select(view => WorkflowMailPart(intent, Convert.ToHexString(SHA256.HashData(
-                    Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant())))))
+                .Select(view => Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant()))))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            var expectedParts = recipientHashes.Select(hash => WorkflowMailPart(intent, hash))
                 .Distinct(StringComparer.Ordinal).ToArray();
             var expected = expectedParts.Length == 0
                 ? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
                 : new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal) { [intent] = expectedParts };
-            _workflow.ReplaceMailPlan(record.HostId, record.Date, kind, expected, version);
+            // 收尾流程（closingPass）緊接著會依計畫內容重新結案：計畫沒變就不寫
+            // 升級相容：帳本裡是同一份內容的舊算法意圖時，把已收部分接到新意圖（只在帳本缺本次意圖時才算，見 LegacyMailPartMap）
+            if (closingPass) _workflow.ReplaceMailPlanIfChanged(record.HostId, record.Date, kind, expected, version,
+                legacy => LegacyMailPartMap(kind, record, version, mailContextFingerprint, intent, recipientHashes, legacy));
+            else _workflow.ReplaceMailPlan(record.HostId, record.Date, kind, expected, version);
         }
     }
 
     private void TrackAcceptedContributionWorkflow(string kind, IReadOnlyDictionary<string, RecipientView> views,
-        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint)
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, string? mailContextFingerprint, MailIntentMemo? memo = null)
     {
         if (_workflow is null || versions is null) return;
         var accepted = _state.Get().AcceptedMailContributionReceipts;
@@ -2341,13 +2524,13 @@ public class MailNotificationService
                     accepted.ContainsKey(AcceptedMailContributionKey(kind, recipient, record, issue, versions)))).ToList();
             // Reproject only exact per-issue SMTP receipts into the current generic plan.
             // No claim, formal PRTG fact, or acceptance for an undisplayed issue is created.
-            TrackWorkflowMail(kind, complete, recipient, true, views, versions, mailContextFingerprint);
+            TrackWorkflowMail(kind, complete, recipient, true, views, versions, mailContextFingerprint, memo);
         }
     }
 
     private void TrackWorkflowMail(string kind, List<DailyAnalysisRecord>? records, string recipient, bool? accepted,
         IReadOnlyDictionary<string, RecipientView> views, IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions,
-        string? mailContextFingerprint)
+        string? mailContextFingerprint, MailIntentMemo? memo = null)
     {
         if (_workflow == null || records == null || records.Count == 0 || accepted == null) return;
         var recipientKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(recipient.Trim().ToLowerInvariant())));
@@ -2357,7 +2540,7 @@ public class MailNotificationService
             {
                 var key = RecordKey(record);
                 if (mailVersions == null || !mailVersions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) continue;
-                var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint);
+                var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint, memo: memo);
                 var part = WorkflowMailPart(intent, recipientKey);
                 var expected = views.Where(view => view.Value.Detail == null ||
                         view.Value.Detail.Any(item => RecordKey(item) == key))
@@ -2382,7 +2565,7 @@ public class MailNotificationService
     private void TrackDurableUrgentStatisticsReceipts(List<DailyAnalysisRecord> records,
         IReadOnlyDictionary<string, RecipientView> views,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions,
-        string? mailContextFingerprint, SystemSettings settings)
+        string? mailContextFingerprint, SystemSettings settings, MailIntentMemo? memo = null)
     {
         if (_workflow == null || versions == null || records.Count == 0) return;
         var state = _state.Get();
@@ -2392,7 +2575,7 @@ public class MailNotificationService
             if (!versions.TryGetValue(recordKey, out var version) || version.ParentRecordId != record.RecordId ||
                 _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId) != version)
                 continue;
-            var intentKey = UrgentRecordKey(record, versions, views, mailContextFingerprint);
+            var intentKey = UrgentRecordKey(record, versions, views, mailContextFingerprint, memo);
             if (!state.UrgentOutbox.TryGetValue(intentKey, out var intent) || intent.Key != intentKey ||
                 intent.HostId != record.HostId || intent.RecordDate.Date != record.Date.Date ||
                 intent.ParentRecordId != record.RecordId || intent.SettingsRevision != settings.Revision ||
@@ -2405,7 +2588,7 @@ public class MailNotificationService
                 if (!intent.Recipients.TryGetValue(email, out var recipientStatus) || recipientStatus != "smtp-accepted" ||
                     !HasCurrentSmtpAcceptance(intent, email, _clock.UtcNow()))
                     continue;
-                TrackWorkflowMail("urgent", [record], email, true, views, versions, mailContextFingerprint);
+                TrackWorkflowMail("urgent", [record], email, true, views, versions, mailContextFingerprint, memo);
             }
         }
     }

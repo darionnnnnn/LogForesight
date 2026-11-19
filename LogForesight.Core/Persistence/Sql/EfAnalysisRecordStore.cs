@@ -260,60 +260,127 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// <summary>
     /// 機房首見日 insert-if-absent，取較早的日期為準（回饋十九輪批次B）。
     ///
+    /// 一個主機日只查一次：一道查詢取出這批鍵中已存在的列，已存在且較晚者以一道條件式 UPDATE
+    /// （first_seen &gt; 本日才更新）合併處理，不存在者批次 INSERT——往返數不隨問題數線性成長。
+    ///
     /// 平行處理多台主機（NetIQ MaxParallelServers）時，兩台主機可能同時第一次寫入同一個
-    /// 新問題——insert 可能撞唯一鍵。這裡當一般情況處理（catch 後改走「取較早日期」的
-    /// 更新），不是異常：先查是否已存在，不存在才嘗試新增；新增撞鍵或已存在時，
-    /// 改成「較早的日期才更新」的條件式 UPDATE，不會被較晚出現的紀錄覆蓋掉更早的首見日。
+    /// 新問題——批次 INSERT 可能撞唯一鍵。這裡當一般情況處理：整批回復後逐筆降級，
+    /// 每個鍵各自嘗試新增，撞鍵者改走「較早日期才更新」的條件式 UPDATE，某個鍵失敗只影響那個鍵。
     /// </summary>
     private void UpsertFirstSeen(DailyAnalysisRecord shaped)
     {
         var date = shaped.Date.Date;
+        var pairs = new List<(string SourceKey, int EventId, string Source)>();
+        var seenPairs = new HashSet<(string, int)>();
         foreach (var (source, eventId) in shaped.TopIssues.Select(i => (i.Source, i.EventId)).Distinct())
         {
             var sourceKey = WorkOrderIssueKey.SourceKeyOf(source);
+            // 不同來源字串可能收斂成同一個存檔鍵：先出現者建列（與逐筆處理時先到先建相同）
+            if (seenPairs.Add((sourceKey, eventId))) pairs.Add((sourceKey, eventId, source));
+        }
+        if (pairs.Count == 0) return;
+
+        // 一次查出這批鍵中已存在的列（鍵數多時分段，避免參數上限）
+        var existing = new Dictionary<(string, int), DateTime>();
+        using (var ctx = _contextFactory())
+        {
+            foreach (var chunk in pairs.Select(p => p.SourceKey).Distinct().Chunk(500))
+            {
+                var keys = chunk.ToList();
+                foreach (var row in ctx.IssueFirstSeen.AsNoTracking().Where(f => keys.Contains(f.SourceKey))
+                             .Select(f => new { f.SourceKey, f.EventId, f.FirstSeen }).ToList())
+                    if (seenPairs.Contains((row.SourceKey, row.EventId))) existing[(row.SourceKey, row.EventId)] = row.FirstSeen;
+            }
+        }
+
+        // 已存在且本日較早：合併成條件式 UPDATE（仍帶 first_seen > 本日，讀到寫之間被別人改早也不會被蓋回較晚）
+        var toUpdate = pairs.Where(p => existing.TryGetValue((p.SourceKey, p.EventId), out var seen) && seen > date).ToList();
+        foreach (var chunk in toUpdate.Chunk(100))
+        {
+            using var ctx = _contextFactory();
+            var args = new List<object?> { date };
+            var clauses = new List<string>();
+            foreach (var p in chunk)
+            {
+                clauses.Add($"(source_key = {{{args.Count}}} AND event_id = {{{args.Count + 1}}})");
+                args.Add(p.SourceKey);
+                args.Add(p.EventId);
+            }
+            ctx.Database.ExecuteSqlInterpolated(System.Runtime.CompilerServices.FormattableStringFactory.Create(
+                "UPDATE lf_issue_first_seen SET first_seen = {0} WHERE first_seen > {0} AND (" + string.Join(" OR ", clauses) + ")",
+                args.ToArray()));
+        }
+
+        var toInsert = pairs.Where(p => !existing.ContainsKey((p.SourceKey, p.EventId))).ToList();
+
+        // 多列 INSERT 一道指令寫入一段（SQLite 的 EF 批次是逐列一道指令，所以不走 AddRange；
+        // 每段 100 列＝400 個參數，在 SQL Server 的 2100 參數與 1000 列上限內）
+        foreach (var chunk in toInsert.Chunk(100))
+        {
             try
             {
                 using var ctx = _contextFactory();
-                if (ctx.IssueFirstSeen.Any(f => f.SourceKey == sourceKey && f.EventId == eventId))
+                var args = new List<object?>();
+                var rows = new List<string>();
+                foreach (var p in chunk)
                 {
-                    // 已存在：只有新日期更早才更新，一句 SQL 完成、不必先讀出來比較
-                    ctx.Database.ExecuteSqlInterpolated($"""
-                        UPDATE lf_issue_first_seen SET first_seen = {date}
-                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
-                        """);
-                    continue;
+                    var row = NewFirstSeenRow(p.SourceKey, p.EventId, p.Source, date);
+                    rows.Add($"({{{args.Count}}}, {{{args.Count + 1}}}, {{{args.Count + 2}}}, {{{args.Count + 3}}})");
+                    args.Add(row.SourceKey);
+                    args.Add(row.EventId);
+                    args.Add(row.SourceName);
+                    args.Add(row.FirstSeen);
                 }
+                ctx.Database.ExecuteSqlInterpolated(System.Runtime.CompilerServices.FormattableStringFactory.Create(
+                    "INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen) VALUES " + string.Join(", ", rows),
+                    args.ToArray()));
+            }
+            catch (Exception batchEx) when (batchEx is DbUpdateException or Microsoft.Data.Sqlite.SqliteException or Microsoft.Data.SqlClient.SqlException)
+            {
+                // 單一 INSERT 指令本身是原子的：撞鍵或其他寫入錯誤整段回復，改逐筆降級，錯誤只影響各自的鍵
+                Log.Debug("[SQL] IssueFirstSeen 批次新增失敗（{Count} 個鍵），逐筆降級：{Msg}", chunk.Length, batchEx.Message);
+                foreach (var p in chunk) InsertFirstSeenOne(shaped.Host, date, p.SourceKey, p.EventId, p.Source);
+            }
+        }
+    }
 
-                ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
-                    { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date });
-                ctx.SaveChanges();
-            }
-            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+    private static IssueFirstSeenRow NewFirstSeenRow(string sourceKey, int eventId, string source, DateTime date) =>
+        new() { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date };
+
+    /// <summary>逐筆降級路徑：新增這個鍵；撞唯一鍵改走較早日期更新，其他寫入錯誤只記警告。</summary>
+    private void InsertFirstSeenOne(string host, DateTime date, string sourceKey, int eventId, string source)
+    {
+        try
+        {
+            using var ctx = _contextFactory();
+            ctx.IssueFirstSeen.Add(NewFirstSeenRow(sourceKey, eventId, source, date));
+            ctx.SaveChanges();
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
+            // 不是需要中止分析的錯誤
+            Log.Debug("[SQL] IssueFirstSeen 新增撞鍵（{Source}/{EventId}），改走較早日期更新：{Msg}",
+                source, eventId, ex.Message);
+            try
             {
-                // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
-                // 不是需要中止分析的錯誤
-                Log.Debug("[SQL] IssueFirstSeen 新增撞鍵（{Source}/{EventId}），改走較早日期更新：{Msg}",
-                    source, eventId, ex.Message);
-                try
-                {
-                    using var ctx = _contextFactory();
-                    ctx.Database.ExecuteSqlInterpolated($"""
-                        UPDATE lf_issue_first_seen SET first_seen = {date}
-                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
-                        """);
-                }
-                catch (Exception retryEx)
-                {
-                    Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
-                }
+                using var ctx = _contextFactory();
+                ctx.Database.ExecuteSqlInterpolated($"""
+                    UPDATE lf_issue_first_seen SET first_seen = {date}
+                    WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
+                    """);
             }
-            catch (DbUpdateException ex)
+            catch (Exception retryEx)
             {
-                // 非唯一鍵的寫入錯誤：此時主交易已提交，首見日只是輔助的呈現資料——
-                // 擲出去會讓呼叫端把已寫入的主機日判為失敗，所以只記警告、繼續處理下一個問題
-                Log.Warn(ex, "[SQL] IssueFirstSeen 寫入失敗（主機 {Host}、日期 {Date:yyyy-MM-dd}、{Source}/{EventId}），這個問題的首見日這次先不更新：{Msg}",
-                    shaped.Host, date, source, eventId, ex.Message);
+                Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
             }
+        }
+        catch (DbUpdateException ex)
+        {
+            // 非唯一鍵的寫入錯誤：此時主交易已提交，首見日只是輔助的呈現資料——
+            // 擲出去會讓呼叫端把已寫入的主機日判為失敗，所以只記警告、繼續處理下一個問題
+            Log.Warn(ex, "[SQL] IssueFirstSeen 寫入失敗（主機 {Host}、日期 {Date:yyyy-MM-dd}、{Source}/{EventId}），這個問題的首見日這次先不更新：{Msg}",
+                host, date, source, eventId, ex.Message);
         }
     }
 
@@ -1375,6 +1442,78 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
         _performance?.Record("records:QueryLightweight", sw.ElapsedMilliseconds);
         return result;
+    }
+
+    public List<DailyAnalysisRecord> QueryDayStatusLightweight(RecordQueryFilter filter)
+    {
+        // 問題層級條件要靠問題列在記憶體覆核，無法省掉問題子表：沿用完整的輕量查詢
+        if (filter.Categories is { Count: > 0 } || filter.MinSeverity.HasValue || filter.EventId.HasValue ||
+            !string.IsNullOrWhiteSpace(filter.Source))
+            return QueryLightweight(filter);
+
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var rows = q
+            .Select(r => new
+            {
+                r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.AiAnalyzed, r.AiPending,
+                r.AiDegradedAttempts, r.DetailPruned, r.LogSource
+            })
+            .ToList();
+
+        var records = rows.Select(r => new DailyAnalysisRecord
+        {
+            HostId = r.HostId,
+            Host = r.HostName,
+            Date = r.RecordDate,
+            RiskLevel = r.RiskLevel,
+            AiAnalyzed = r.AiAnalyzed,
+            AiPending = r.AiPending,
+            AiDegradedAttempts = r.AiDegradedAttempts,
+            DetailPruned = r.DetailPruned,
+            LogSource = (AnalysisLogSource)r.LogSource
+        });
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        // 與 QueryLightweight 同一套覆核與排序
+        var result = records
+            .Where(r => RecordFilterMatcher.Matches(r, filter))
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Debug("[SQL] QueryDayStatusLightweight（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ DB {Rows} 列、篩後 {Result} 筆、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryDayStatusLightweight", sw.ElapsedMilliseconds);
+        return result;
+    }
+
+    public int? CountLightweightAtLeast(RecordQueryFilter filter)
+    {
+        // 問題層級條件在 QueryLightweight 還會於記憶體端以 lightweight 問題列覆核，無法保證與 SQL 的 EXISTS 逐位相同
+        if (filter.Categories is { Count: > 0 } || filter.MinSeverity.HasValue || filter.EventId.HasValue ||
+            !string.IsNullOrWhiteSpace(filter.Source))
+            return null;
+
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        if (filter.Hosts != null)
+        {
+            // 與 HostMatcher 一致：有 host_id 的列只認 host_id；host_id=0 的舊列要在記憶體以名稱比對，這裡不計入（下界）
+            var ids = filter.Hosts.Select(k => k.HostId).Where(id => id != 0).ToList();
+            q = q.Where(r => r.HostId != 0 && ids.Contains(r.HostId));
+        }
+        var count = q.Count();
+        Log.Debug("[SQL] CountLightweightAtLeast（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ {Count} 列、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:CountLightweightAtLeast", sw.ElapsedMilliseconds);
+        return count;
     }
 
     public List<NotificationWorkflowRecord> QueryNotificationWorkflowPage(DateTime from, DateTime to, long afterRecordId, int take)

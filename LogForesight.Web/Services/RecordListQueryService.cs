@@ -44,6 +44,9 @@ public class RecordListQueryService
 
     private readonly TimeProvider _clock;
 
+    /// <summary>實際生效的候選上限：正式組裝一律是 <see cref="HandlingFilterCandidateLimit"/>，測試可注入較小的值（不必建五萬筆資料）。</summary>
+    private readonly int _handlingFilterCandidateLimit;
+
     public RecordListQueryService(
         IRecordRepository repository,
         IHostStore hosts,
@@ -61,9 +64,11 @@ public class RecordListQueryService
         IIssueExclusionSource exclusions,
         IIssueOwnerStore? issueOwners = null,
         IKnownIssueRuleStore? rules = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        int? handlingFilterCandidateLimit = null)
     {
         _clock = clock ?? TimeProvider.System;
+        _handlingFilterCandidateLimit = handlingFilterCandidateLimit ?? HandlingFilterCandidateLimit;
         _repository = repository;
         _hosts = hosts;
         _users = users;
@@ -117,7 +122,7 @@ public class RecordListQueryService
         {
             var paged = _repository.QueryPage(filter, page, pageSize, request.SortKey, request.Ascending);
             var pageLookup = new HostLookup(_hosts.GetAll());
-            var pageHandlings = LoadHandlings(paged.Items, pageLookup);
+            var pageHandlings = new HandlingIndex(LoadHandlings(paged.Items, pageLookup), CountProbes);
             var pageIssueHandlings = LoadIssueHandlings(paged.Items, pageLookup);
             var pageOpenCases = LoadOpenCases(paged.Items, pageLookup);
             var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
@@ -144,10 +149,17 @@ public class RecordListQueryService
         // 未指定風險等級時只查高／中風險日（與前端 DEFAULT_RISKS 一致），
         // 避免 API 呼叫端沒帶時把含低風險的整個保留期整批撈回
         filter.RiskLevels ??= new[] { RiskLevels.High, RiskLevels.Medium };
-        var records = _repository.QueryLightweight(filter);
-        if (enforceCandidateLimit && records.Count > HandlingFilterCandidateLimit)
+        // 候選上限先以一次計數擋下（同一套可見範圍與顯示設定，不載入任何紀錄內容）；計數是下界，
+        // 超過上限就一定超過，不超過（或無法預先判斷）才整批載入，載入後仍照原樣檢查
+        if (enforceCandidateLimit && _repository.CountLightweightAtLeast(filter) is { } atLeast &&
+            atLeast > _handlingFilterCandidateLimit)
         {
-            throw DomainException.Validation($"符合條件的主機日超過 {HandlingFilterCandidateLimit:N0} 筆，請縮小日期範圍或主機範圍。");
+            throw CandidateLimitExceeded();
+        }
+        var records = _repository.QueryLightweight(filter);
+        if (enforceCandidateLimit && records.Count > _handlingFilterCandidateLimit)
+        {
+            throw CandidateLimitExceeded();
         }
 
         // 紀錄 → 存活主機的索引：合併過的主機，舊識別下的紀錄要歸到存活主機，
@@ -156,7 +168,7 @@ public class RecordListQueryService
 
         // 處理狀態存在另外兩份資料（日層級 handling.json、問題層級 issue_handling.json），
         // 各一次撈起來在記憶體 join——逐筆查會變成 N 次檔案解析。日狀態由兩者推導（方案 B）
-        var handlings = LoadHandlings(records, lookup);
+        var handlings = new HandlingIndex(LoadHandlings(records, lookup), CountProbes);
         var issueHandlings = LoadIssueHandlings(records, lookup);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
@@ -221,6 +233,9 @@ public class RecordListQueryService
             Total = ordered.Count
         };
     }
+
+    private DomainException CandidateLimitExceeded() =>
+        DomainException.Validation($"符合條件的主機日超過 {_handlingFilterCandidateLimit:N0} 筆，請縮小日期範圍或主機範圍。");
 
     /// <summary>
     /// 記錄查詢在呼叫端沒指定起始日期、且沒有處理狀態類篩選時的缺省下界（回饋四十五輪 B2）：
@@ -929,7 +944,7 @@ public class RecordListQueryService
     /// 行為與直接呼叫 <see cref="DeriveProgress"/> 完全相同，只是同一筆不再算第二次。
     /// </summary>
     private Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> MemoizedProgress(
-        List<RecordHandling> dayHandlings,
+        HandlingIndex dayHandlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
@@ -948,7 +963,7 @@ public class RecordListQueryService
     /// <summary>單筆紀錄的日狀態推導（方案 B）：日層級狀態 + 當日問題層級標記，走 DayHandlingDerivation 單點規則</summary>
     private DayHandlingDerivation.DayProgress DeriveProgress(
         DailyAnalysisRecord record,
-        List<RecordHandling> dayHandlings,
+        HandlingIndex dayHandlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
@@ -969,7 +984,7 @@ public class RecordListQueryService
     /// </summary>
     private bool ComputeIsOverdue(
         DailyAnalysisRecord record,
-        List<RecordHandling> handlings,
+        HandlingIndex handlings,
         List<IssueHandling> issueHandlings,
         HostLookup lookup,
         Func<DailyAnalysisRecord, DayHandlingDerivation.DayProgress> progress,
@@ -1002,11 +1017,56 @@ public class RecordListQueryService
     private static string HostNameOf(HostLookup lookup, DailyAnalysisRecord record) =>
         lookup.For(record)?.HostName ?? record.Host;
 
-    private static RecordHandling? FindHandling(
-        List<RecordHandling> handlings, HostLookup lookup, DailyAnalysisRecord record) =>
-        handlings.FirstOrDefault(h =>
-            string.Equals(h.HostName, HostNameOf(lookup, record), StringComparison.OrdinalIgnoreCase) &&
-            h.Date.Date == record.Date.Date);
+    /// <summary>
+    /// 紀錄對應的日層級處理列：以現行主機名稱（不分大小寫）＋日期比對，同一鍵有多筆時取處理列清單順序中的第一筆。
+    /// 查找表在 <see cref="HandlingIndex"/> 建一次，每筆紀錄一次雜湊查找，不再對每筆紀錄線性掃描全部處理列。
+    /// </summary>
+    private static RecordHandling? FindHandling(HandlingIndex handlings, HostLookup lookup, DailyAnalysisRecord record) =>
+        handlings.Find(HostNameOf(lookup, record), record.Date.Date);
+
+    /// <summary>本服務實例至今為處理列比對做過幾次檢視（建查找表時每列一次、每次查找一次）。
+    /// 契約是「與紀錄數 × 處理列數無關」，沒有可觀測手段就無法守住——internal 僅供測試觀察，正式碼不消費它。</summary>
+    internal long HandlingProbeCount => Interlocked.Read(ref _handlingProbes);
+
+    private long _handlingProbes;
+
+    private void CountProbes(int n) => Interlocked.Add(ref _handlingProbes, n);
+
+    /// <summary>
+    /// 日層級處理列的查找表：（主機名稱不分大小寫, 日期）→ 清單順序中的第一筆。
+    /// 同一鍵有多筆時 <see cref="Dictionary{TKey,TValue}.TryAdd"/> 保留先加入的，與 <c>FirstOrDefault</c> 取到的相同。
+    /// </summary>
+    private sealed class HandlingIndex
+    {
+        private readonly Dictionary<(string Host, DateTime Date), RecordHandling> _byKey =
+            new(HandlingKeyComparer.Instance);
+        private readonly Action<int> _probe;
+
+        public HandlingIndex(List<RecordHandling> handlings, Action<int> probe)
+        {
+            _probe = probe;
+            foreach (var h in handlings)
+                if (h.HostName != null) _byKey.TryAdd((h.HostName, h.Date.Date), h);
+            _probe(handlings.Count);
+        }
+
+        public RecordHandling? Find(string hostName, DateTime date)
+        {
+            _probe(1);
+            return _byKey.TryGetValue((hostName, date), out var h) ? h : null;
+        }
+    }
+
+    private sealed class HandlingKeyComparer : IEqualityComparer<(string Host, DateTime Date)>
+    {
+        public static readonly HandlingKeyComparer Instance = new();
+
+        public bool Equals((string Host, DateTime Date) x, (string Host, DateTime Date) y) =>
+            x.Date == y.Date && string.Equals(x.Host, y.Host, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Host, DateTime Date) key) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.Host), key.Date);
+    }
 
     /// <summary>
     /// 跨主機同簽章聚類（AI 歸納用，回饋十九輪批次E6）：欄位是 <see cref="IssueAggregate"/>
@@ -1066,7 +1126,7 @@ public class RecordListQueryService
 
     /// <summary>未指派（§5/§10）：日層級無處理人且無進行中案件涵蓋當日任一問題——與清單處理人欄
     /// 的案件 fallback（ToListItem）同語意，只是這裡回布林用於過濾。</summary>
-    private bool IsUnassigned(DailyAnalysisRecord record, HostLookup lookup, List<RecordHandling> handlings, List<IssueCase> openCases)
+    private bool IsUnassigned(DailyAnalysisRecord record, HostLookup lookup, HandlingIndex handlings, List<IssueCase> openCases)
     {
         if (FindHandling(handlings, lookup, record)?.HandlerId != null) return false;
         if (record.TopIssues.Count == 0) return true;

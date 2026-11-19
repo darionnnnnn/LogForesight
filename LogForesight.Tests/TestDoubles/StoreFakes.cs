@@ -441,6 +441,8 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 
     public void Add(DailyAnalysisRecord record) => _records.Add(record);
 
+    public bool Remove(DailyAnalysisRecord record) => _records.Remove(record);
+
     public List<DiskTrendEvidenceRecord> QueryDiskTrendEvidence(
         IReadOnlyCollection<(long HostId, string SensorId)> hostSensors, DateTime from, DateTime to) =>
         hostSensors.SelectMany(pair => _records

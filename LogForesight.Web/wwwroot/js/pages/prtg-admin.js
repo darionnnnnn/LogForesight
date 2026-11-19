@@ -3791,7 +3791,8 @@ if (operationsStatus) {
         retry: '寫入或派工待重試', invalid: '證據無效', 'smtp-accepted': 'SMTP 已接受',
         'no-qualified-recipient': '無合格收件人', 'sending-result-unknown': '寄送結果未知',
         'failed-or-unknown': '未收到 SMTP 確認，可能已送達；重試可能重複',
-        'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出' };
+        'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出',
+        superseded: '已被取代，不再寄送', 'cancelled-formal-revoked': '已取消' };
     async function showOperations() {
         const button = document.getElementById('prtg-operations-refresh');
         button.disabled = true;
@@ -3812,7 +3813,9 @@ if (operationsStatus) {
                 const row = document.createElement('li');
                 row.textContent = `主機 #${intent.hostId}｜${intent.recordDate.slice(0, 10)}｜${labels[intent.status] || intent.status}｜` +
                     `通知設定採用 ${intent.adoptedSettingsRevision || '未知'} → 期望 ${intent.expectedSettingsRevision}｜` +
-                    intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、');
+                    // 已被取代的項目不再寄送，收件人當時的狀態沒有意義（避免同列出現「等待重試」）
+                    (intent.status === 'superseded' ? '不再追蹤收件人' :
+                        intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、'));
                 list.append(row);
             }
             if (!list.childElementCount) operationsStatus.textContent = '可見範圍內尚無通知意圖。';

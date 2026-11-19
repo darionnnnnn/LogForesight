@@ -80,7 +80,7 @@ public class MailIssueDigest
         var previousFrom = previousTo.AddDays(-periodDays + 1);
         // 鍵正規化成大寫（回饋二十輪 I）：Aggregate 輸出的 Source 是該期間內任一個原始寫法，
         // 本期與前期可能取到不同大小寫，用原始字串當鍵會讓前期對比靜默落空
-        var previous = _aggregates.Aggregate(
+        var previous = _aggregates.AggregateHostTotals(
             exclusion, previousFrom, previousTo, visibleHostIds,
             visibleSeverities: visibleSeverities, riskLevels: riskLevels)
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
