@@ -78,7 +78,7 @@ internal static class Batch2cScenarios
                 sb.AppendLine($"detail(D{offset},{sort},{dir},p{page})=" + Normalize(JsonSerializer.Serialize(result)));
             }
         }
-        return sb.ToString().TrimEnd();
+        return sb.ToString().Replace("\r\n", "\n").TrimEnd();   // 換行固定為 LF，摘要不隨平台改變
     }
 
     // ── 2-10 處理狀態推導 ─────────────────────────────────────────
@@ -129,7 +129,7 @@ internal static class Batch2cScenarios
         foreach (var item in resolver.Resolve(occurrences, day, day))
             sb.AppendLine($"{item.Host.HostName}|{item.Occurrence.IssueKey}|{item.Status}|case={item.OpenCase?.CaseId}|" +
                           $"handling={item.Handling?.Status}/{item.Handling?.Note}|inherited={item.InheritedFalsePositive}");
-        return sb.ToString().TrimEnd();
+        return sb.ToString().Replace("\r\n", "\n").TrimEnd();   // 換行固定為 LF，摘要不隨平台改變
     }
 
     // ── 2-11 交辦摘要 ─────────────────────────────────────────────
@@ -183,6 +183,6 @@ internal static class Batch2cScenarios
         hosts.ResetCallCounts();
         await mail.CheckAndSendWorkOrderDigestAsync(d.AddHours(12));
         var sent = Assert.Single(sender.Sent);
-        return (sent.Message.Body, hosts.GetAllCallCount);
+        return (sent.Message.Body.Replace("\r\n", "\n"), hosts.GetAllCallCount);
     }
 }

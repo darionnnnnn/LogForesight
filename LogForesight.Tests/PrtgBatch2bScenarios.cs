@@ -316,7 +316,7 @@ internal static class PrtgBatch2bScenarios
             sb.AppendLine(FormatFindings(PrtgRuleEvaluator.Evaluate(current, shifted, sensorToDevice, statuses, rules,
                 new Dictionary<long, string>(), new Dictionary<long, string>(), includeSilent: d == 0, lookups: lookups)));
         }
-        return sb.ToString();
+        return sb.ToString().Replace("\r\n", "\n");   // 換行固定為 LF，摘要不隨平台改變
     }
 
     // ---------- A2：歷史弱佐證 ----------

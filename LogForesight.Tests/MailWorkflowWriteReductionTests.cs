@@ -121,7 +121,7 @@ public class MailWorkflowWriteReductionTests : IDisposable
         }
         foreach (var (_, m) in _sender.Sent)
             sb.Append("MAIL:").Append(string.Join(",", m.To.OrderBy(x => x))).Append('|').AppendLine(m.Subject);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())))[..16];
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString().Replace("\r\n", "\n"))))[..16];   // 換行固定為 LF，摘要不隨平台改變
     }
 
     // 改動前（cefb4470，固定時鐘 2026-11-18）實測的摘要；改動後必須逐項相同。

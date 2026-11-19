@@ -64,7 +64,8 @@ public sealed class HostDayPostProcessorWorkflowWriteTests : IDisposable
 
     private string StateJson(WebHost host) => Timestamp.Replace(
         System.Text.Json.JsonSerializer.Serialize(_workflow.Get(host.HostId, _day), LfJsonOptions.Pretty), "\"T\"")
-        .Replace($"\"HostId\": {host.HostId},", "\"HostId\": H,");
+        .Replace($"\"HostId\": {host.HostId},", "\"HostId\": H,")
+        .Replace("\r\n", "\n");   // 縮排 JSON 的換行隨平台，摘要固定用 LF
 
     private static string Digest(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16];

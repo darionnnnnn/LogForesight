@@ -201,7 +201,7 @@ internal sealed class PrtgBatch4Rig : IDisposable
                 foreach (var sig in registry.For(host.HostId, day).OrderBy(s => s.EventKey, StringComparer.Ordinal))
                     sb.AppendLine($"D-{(Newest - day).Days}|{host.HostName}|{sig.EventKey}|{sig.Severity}|{sig.ElevatesDayRisk}|" +
                                   Normalize(string.Join(" ## ", sig.SampleMessages)));
-        return sb.ToString();
+        return sb.ToString().Replace("\r\n", "\n");   // 換行固定為 LF，摘要不隨平台改變
     }
 
     /// <summary>把訊息裡的絕對日期換成相對最新日的天數，簽名才不隨執行日改變。</summary>
@@ -275,6 +275,6 @@ internal sealed class PrtgBatch4Rig : IDisposable
             sb.AppendLine($"sample|{s.RuleCode}|D-{(anchor - s.Date).Days}|{s.DeviceObjid}|{s.SensorObjid}|{s.Magnitude}");
         foreach (var h in dataset.FormalCurrentHitCounts)
             sb.AppendLine($"hit|{JsonSerializer.Serialize(h)}");
-        return sb.ToString();
+        return sb.ToString().Replace("\r\n", "\n");   // 換行固定為 LF，摘要不隨平台改變
     }
 }
