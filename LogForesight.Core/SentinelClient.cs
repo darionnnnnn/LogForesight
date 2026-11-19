@@ -150,6 +150,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private int _httpRequestCount;
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly ResiliencePipeline _retryPipeline;
+    private readonly ResiliencePipeline _createJobPipeline;
     private string? _token;
     private bool _disposed;
 
@@ -186,7 +187,9 @@ public sealed partial class SentinelClient : ISentinelSearchClient
             boundedHandler.AllowAutoRedirect = false;
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
         {
-            Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1))
+            Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1)),
+            // 整包讀取的回應上限：異常回應或代理錯誤頁不能一次吃掉站台記憶體（探測模式另有更小的有界讀取）
+            MaxResponseContentBufferSize = MaxResponseBytes
         };
 
         // AllowInvalidCertificates 是顯式逃生門而非靜默放行（AppSettings 註解的承諾）：
@@ -206,43 +209,48 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         // 要求 MaxRetryAttempts >= 1，傳 0 會在建構子就擲 ValidationException（「NetIQ 維護」頁的
         // 失敗重試次數 min=0，管理員填 0 是合理的「不要重試」，卻會讓每一次 SentinelClient 建構
         // 直接爆掉）；夾到 1 則是靜默違背設定值。不加策略才真的等於「不重試」。
-        var pipelineBuilder = new ResiliencePipelineBuilder();
-        if (settings.RetryCount > 0)
-        {
-            pipelineBuilder.AddRetry(new RetryStrategyOptions
-            {
-                MaxRetryAttempts = settings.RetryCount,
-                Delay = TimeSpan.FromSeconds(1),
-                BackoffType = DelayBackoffType.Exponential,
-                ShouldHandle = new PredicateBuilder()
-                    .Handle<HttpRequestException>()
-                    .Handle<TaskCanceledException>()
-                    .Handle<SentinelTransientException>(),
-                OnRetry = args =>
-                {
-                    if (_readLimits is null)
-                        Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
-                            _server.Name, args.AttemptNumber + 1, settings.RetryCount);
-                    else
-                        Log.Warn("Bounded metadata probe retry {Attempt}/{Total}; details withheld",
-                            args.AttemptNumber + 1, settings.RetryCount);
-                    return default;
-                }
-            });
-        }
-        _retryPipeline = pipelineBuilder.Build();
+        _retryPipeline = BuildRetryPipeline(settings, retryTimeouts: true);
+        // 建立搜尋工作（POST）不是冪等的：逾時代表伺服器可能已經建了工作，重送會多一個殘留工作佔用名額。
+        // 只重試確定沒建成的（連線失敗、5xx），逾時不重送
+        _createJobPipeline = BuildRetryPipeline(settings, retryTimeouts: false);
     }
 
-    private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings)
+    private ResiliencePipeline BuildRetryPipeline(NetiqOptions settings, bool retryTimeouts)
     {
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
-        if (settings.AllowInvalidCertificates)
+        var pipelineBuilder = new ResiliencePipelineBuilder();
+        if (settings.RetryCount <= 0) return pipelineBuilder.Build();
+        var predicate = new PredicateBuilder()
+            .Handle<HttpRequestException>()
+            .Handle<SentinelTransientException>();
+        if (retryTimeouts) predicate = predicate.Handle<TaskCanceledException>();
+        pipelineBuilder.AddRetry(new RetryStrategyOptions
         {
-            // Sentinel 常見以自簽憑證部署；啟用時的 WARN 由建構子負責（每 client 一筆，不在這裡重複）
-            handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
-        }
-        return handler;
+            MaxRetryAttempts = settings.RetryCount,
+            Delay = TimeSpan.FromSeconds(1),
+            BackoffType = DelayBackoffType.Exponential,
+            // 多個主機分批同時失敗時錯開重試時間
+            UseJitter = true,
+            ShouldHandle = predicate,
+            OnRetry = args =>
+            {
+                if (_readLimits is null)
+                    Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
+                        _server.Name, args.AttemptNumber + 1, settings.RetryCount);
+                else
+                    Log.Warn("Bounded metadata probe retry {Attempt}/{Total}; details withheld",
+                        args.AttemptNumber + 1, settings.RetryCount);
+                return default;
+            }
+        });
+        return pipelineBuilder.Build();
     }
+
+    // Sentinel 常見以自簽憑證部署；啟用略過驗證時的 WARN 由建構子負責（每 client 一筆，不在這裡重複）
+    /// <summary>整包讀取的回應上限（Sentinel 一頁事件數百 KB 到數 MB）</summary>
+    internal const long MaxResponseBytes = 128L * 1024 * 1024;
+
+    private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings) =>
+        OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), settings.AllowInvalidCertificates ? (_, _, _, _) => true : null);
 
     private string BaseUrl => _server.BaseUrl.TrimEnd('/');
     private string AuthTokensUrl => $"{BaseUrl}/SentinelAuthServices/auth/tokens";

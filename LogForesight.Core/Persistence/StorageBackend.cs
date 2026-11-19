@@ -438,12 +438,20 @@ public class StorageBackend
         return new SqlConnectionStringBuilder(connectionString) { MaxPoolSize = maxPoolSize.Value }.ConnectionString;
     }
 
-    /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>
-    private static string MaskConnectionString(string cs)
+    /// <summary>
+    /// 連線字串遮罩：log 與 Location 顯示用，不外流密碼。
+    /// 以官方建構器解析——密碼可用引號包住並含分號（<c>Password="a;b"</c>），自己以分號切段會把後半段當成別的鍵留下
+    /// </summary>
+    internal static string MaskConnectionString(string cs)
     {
-        var parts = cs.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            .Where(p => !p.TrimStart().StartsWith("Password", StringComparison.OrdinalIgnoreCase) &&
-                        !p.TrimStart().StartsWith("Pwd", StringComparison.OrdinalIgnoreCase));
-        return string.Join(";", parts);
+        SqlConnectionStringBuilder builder;
+        try { builder = new SqlConnectionStringBuilder(cs); }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or KeyNotFoundException)
+        {
+            // 解析不了就整段不顯示：寧可少一行說明，也不冒險把殘段印出來
+            return "連線字串格式無法解析";
+        }
+        builder.Remove("Password");
+        return builder.ConnectionString;
     }
 }

@@ -80,9 +80,12 @@ public sealed class RunExportDeidentifier : IRunExportMasker
 
     private static readonly Regex BasicRx = new(@"(?<k>\bBasic\s+)(?<v>[A-Za-z0-9+/]{8,}={0,2})", OptI, RegexTimeout);
 
+    // 機敏參數名只有 UrlSecrets.SecretNames 一份（網址遮蔽與這裡共用）
+    private static readonly string SecretNameAlternation = string.Join("|", UrlSecrets.SecretNames.Select(Regex.Escape));
+
     // 密鑰類參數名＝值（URL 查詢字串、設定行、JSON 片段都涵蓋）。值為引號包起來的整段，或到空白／分隔符為止
     private static readonly Regex SecretKvRx = new(
-        @"(?<k>(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])?(?:password|passwd|pwd|passphrase|passhash|apitoken|api_key|api-key|apikey|access_token|refresh_token|client_secret|token|secret)(?:[_.-]?(?:enc|hash|value|key))?[""']?[ \t]*[=:][ \t]*)(?<v>""[^""\r\n]*""|'[^'\r\n]*'|[^\s&;,""')\]]+)",
+        @"(?<k>(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])?(?:" + SecretNameAlternation + @")(?:[_.-]?(?:enc|hash|value|key))?[""']?[ \t]*[=:][ \t]*)(?<v>""[^""\r\n]*""|'[^'\r\n]*'|[^\s&;,""')\]]+)",
         OptI, RegexTimeout);
 
     private static readonly Regex UrlRx = new(

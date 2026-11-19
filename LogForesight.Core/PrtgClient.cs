@@ -180,25 +180,23 @@ public sealed class PrtgClient : IDisposable
             MaxResponseContentBufferSize = MaxResponseBytes
         };
 
+        // PRTG 的認證放在查詢字串裡，走 http:// 等於每個請求都以明文送出 token／帳密
+        if (UsesPlainHttpWithCredentials(parsed, _token, _usesUsernameAuth))
+        {
+            Log.Warn("[PRTG] 連線位址是 http://，認證資訊會以明文傳送；正式環境請改用 https://");
+        }
+
         if (ownsHandler && ignoreSslErrors)
         {
             Log.Info("[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）");
         }
     }
 
-    private static HttpMessageHandler CreateDefaultHandler(bool ignoreSslErrors)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            AllowAutoRedirect = false
-        };
-        if (ignoreSslErrors)
-        {
-            handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
-        }
-        return handler;
-    }
+    internal static bool UsesPlainHttpWithCredentials(Uri baseUri, string token, bool usesUsernameAuth) =>
+        baseUri.Scheme == Uri.UriSchemeHttp && (usesUsernameAuth || !string.IsNullOrWhiteSpace(token));
+
+    private static HttpMessageHandler CreateDefaultHandler(bool ignoreSslErrors) =>
+        OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), ignoreSslErrors ? (_, _, _, _) => true : null);
 
     /// <summary>
     /// 測試 PRTG 連線：呼叫 sensors 端點取得最少資料以驗證連線位址與認證資訊有效性。

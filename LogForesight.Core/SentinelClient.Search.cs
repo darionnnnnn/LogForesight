@@ -122,7 +122,7 @@ public sealed partial class SentinelClient
         var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Post, EventSearchCollectionUrl)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
-        }, ct);
+        }, ct, idempotent: false);
 
         using (resp)
         {
@@ -134,7 +134,7 @@ public sealed partial class SentinelClient
             }
 
             if (resp.Headers.Location != null)
-                return resp.Headers.Location.ToString();
+                return ResolveHref(resp.Headers.Location.OriginalString);
 
             var raw = await ReadResponseBodyAsync(resp, ct);
             var href = TryExtractHrefFromBody(raw);
@@ -146,9 +146,17 @@ public sealed partial class SentinelClient
                         : "Sentinel probe received a malformed job response.",
                     safeCode: "malformed-response");
             }
-            return href;
+            return ResolveHref(href);
         }
     }
+
+    /// <summary>
+    /// 回應給的位址（工作位址、結果頁）以站台位址解析成絕對網址。相對位址字串不能直接交給
+    /// <see cref="HttpRequestMessage"/>：Unix 上 <c>/path</c> 會被當成 <c>file:///path</c>。
+    /// 指向別台主機的絕對網址照樣回傳，由 <c>SendHttpAsync</c> 的同源檢查拒絕
+    /// </summary>
+    private string ResolveHref(string href) =>
+        Uri.TryCreate(_baseUri, href, out var resolved) ? resolved.ToString() : href;
 
     private static string? TryExtractHrefFromBody(string json)
     {
@@ -213,7 +221,8 @@ public sealed partial class SentinelClient
             }
 
             var json = await ReadResponseBodyAsync(resp, ct);
-            return ParseJobStatus(json);
+            var status = ParseJobStatus(json);
+            return status.ResultsHref is null ? status : status with { ResultsHref = ResolveHref(status.ResultsHref) };
         }
     }
 

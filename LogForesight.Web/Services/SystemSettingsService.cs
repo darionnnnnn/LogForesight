@@ -1034,12 +1034,12 @@ public class SystemSettingsService : ISystemSettingsService
 
     /// <summary>
     /// 位址欄位不得夾帶密碼／金鑰參數：位址會進稽核、例外訊息與回應，夾在網址上的憑證會沿著這些路徑外流。
-    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecretQuery"/> 一份，這裡只負責擲出統一訊息。
+    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecret"/> 一份，這裡只負責擲出統一訊息。
     /// </summary>
     internal static void RejectSecretQuery(string? url)
     {
-        if (UrlSecrets.ContainsSecretQuery(url))
-            throw DomainException.Validation("網址不可包含密碼或金鑰參數，請改填專用的密碼／金鑰欄位。");
+        if (UrlSecrets.ContainsSecret(url))
+            throw DomainException.Validation("網址不可包含帳密、密碼或金鑰參數，請改填專用的帳號／密碼／金鑰欄位。");
     }
 
     private static bool IsValidHttpUrl(string? url) =>

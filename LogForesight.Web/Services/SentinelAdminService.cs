@@ -101,7 +101,7 @@ public class SentinelAdminService
             targetKind: "sentinel",
             targetId: saved.SentinelId.ToString(),
             // 密碼欄位絕不進稽核——即使是「有沒有改」這個布林都不留，避免旁敲側擊
-            detail: new { saved.Name, saved.BaseUrl, saved.Username });
+            detail: new { saved.Name, BaseUrl = UrlSecrets.Mask(saved.BaseUrl), saved.Username });
 
         return ToDto(saved, HostCount(saved.SentinelId));
     }

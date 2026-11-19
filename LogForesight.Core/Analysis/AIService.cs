@@ -155,6 +155,8 @@ public class AIService : IAiService, IDisposable
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
+            // AI 回應是幾 KB 到數百 KB 的 JSON：設上限，異常回應（代理錯誤頁、失控的串流）不能一次吃掉站台記憶體
+            MaxResponseContentBufferSize = 16L * 1024 * 1024,
             // 固定用 HTTP/1.1，不讓 .NET 嘗試 HTTP/2 協商——llama.cpp server 本身只說 HTTP/1.1，
             // 但長時間生成（本模型單次常見 60~80 秒）中途，某些反向代理/負載平衡器對 HTTP/2
             // 雙向串流處理不完整時容易在回應途中被切斷（症狀："The response ended
@@ -211,8 +213,12 @@ public class AIService : IAiService, IDisposable
                 MaxRetryAttempts = settings.RetryCount,
                 Delay = TimeSpan.FromSeconds(settings.RetryDelaySeconds),
                 BackoffType = DelayBackoffType.Exponential,
+                // 多個背景分片同時失敗時錯開重試時間，不在同一刻一起打回去
+                UseJitter = true,
                 ShouldHandle = new PredicateBuilder()
-                    .Handle<HttpRequestException>()
+                    // 只重試會好的：連線層失敗（沒有狀態碼）、伺服器錯誤、逾時與限流。
+                    // 400（prompt 超過 context）、401／403（金鑰錯）、404（端點錯）重試幾次結果都一樣，只是白等退避時間
+                    .Handle<HttpRequestException>(ex => IsTransientHttpFailure(ex))
                     // HttpClient.Timeout 逾時丟的 TaskCanceledException 其 InnerException 是
                     // TimeoutException——這種不重試：地端模型逾時多半是「這個 prompt 就是跑不完」，
                     // 重試只是再等一次同樣長的時間（最壞＝逾時×(重試次數+1)＋退避）。
@@ -239,11 +245,15 @@ public class AIService : IAiService, IDisposable
     /// 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
     /// 相對生成時間微乎其微，直接停用連線池換取穩定性划算。**不要改回預設的連線池。**
     /// </summary>
-    private static HttpMessageHandler CreateDefaultHandler() =>
-        new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.Zero
-        };
+    /// <summary>值得重試的 HTTP 失敗：沒有狀態碼（連線層）、5xx、408、429</summary>
+    internal static bool IsTransientHttpFailure(HttpRequestException ex) => ex.StatusCode switch
+    {
+        null => true,
+        System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests => true,
+        var code => (int)code >= 500
+    };
+
+    private static HttpMessageHandler CreateDefaultHandler() => OutboundHttp.CreateHandler(TimeSpan.Zero);
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。

@@ -136,11 +136,11 @@ public class SecurityHardeningTests
     [Fact]
     public void UrlSecrets_偵測與遮罩()
     {
-        Assert.True(UrlSecrets.ContainsSecretQuery("https://prtg/api?passhash=123&username=a"));
-        Assert.True(UrlSecrets.ContainsSecretQuery("https://x/?a=1&API_KEY=zz"));
-        Assert.False(UrlSecrets.ContainsSecretQuery("https://prtg/"));
-        Assert.False(UrlSecrets.ContainsSecretQuery("https://prtg/token/path?user=a"));
-        Assert.False(UrlSecrets.ContainsSecretQuery(null));
+        Assert.True(UrlSecrets.ContainsSecret("https://prtg/api?passhash=123&username=a"));
+        Assert.True(UrlSecrets.ContainsSecret("https://x/?a=1&API_KEY=zz"));
+        Assert.False(UrlSecrets.ContainsSecret("https://prtg/"));
+        Assert.False(UrlSecrets.ContainsSecret("https://prtg/token/path?user=a"));
+        Assert.False(UrlSecrets.ContainsSecret(null));
 
         var masked = UrlSecrets.Mask("https://prtg/api?passhash=123&username=a");
         Assert.DoesNotContain("123", masked);
@@ -168,7 +168,7 @@ public class SecurityHardeningTests
             PrtgUrl = "https://prtg.corp.local/api/table.json?username=a&PassHash=123456"
         }));
 
-        Assert.Contains("網址不可包含密碼或金鑰參數", ex.Message);
+        Assert.Contains("網址不可包含帳密、密碼或金鑰參數", ex.Message);
         Assert.DoesNotContain("PassHash=123456", store.Get().PrtgUrl);
     }
 
