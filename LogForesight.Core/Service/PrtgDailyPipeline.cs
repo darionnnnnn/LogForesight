@@ -79,6 +79,8 @@ internal static class PrtgDailyPipeline
         PrtgFetchResult? fetchResult = null;
         // 沿用同步時續補後仍沒完成的裝置；null＝這趟沒有續補
         (IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages)? refillDevices = null;
+        // 續補各階段的失敗原因：階段擲例外時該階段的待補裝置原樣保留、整趟標部分完成，規則評估照常執行
+        var refillFailures = new List<string>();
 
         // 趨勢評估的失敗外殼：取消穿透；其他例外記 Log 與主控台，並把類別記到整趟與最新日（任一類失敗＝Partial）。
         // 評估本體各類自行保留（閾值型別、finding 建構與規則選取不同）；規則缺失或沒有候選 sensor 不是失敗，不會進到這裡。
@@ -214,8 +216,9 @@ internal static class PrtgDailyPipeline
 
             // 1. 結構同步＋狀態變更只做一次（區間覆蓋 oldest.AddDays(-1) 到今天，目標日為 newest）
             // 2. PRTG 主機對應重算只對 newest，在 scopeProvider 裡做（裝置同步之後、感測器同步之前）：
-            //    一律重算：鏡像在同步失敗時不會縮小（upsert 只增不減、過期清除只在裝置階段完整成功後才做），
-            //    拿既有鏡像重算是安全的，且能反映白天主機主檔的異動。裝置未更新時只多印一行說明。
+            //    與手動同步共用判定（PrtgHostMapper.ShouldRecompute）：只有裝置結構本趟成功更新才重算；
+            //    未更新就不產生新的一份對應，之後讀對應照 GetHostMapForDay 採用最近一份有效對應。
+            //    白天主機主檔的異動由 PrtgHostMapRefresher 重算今天的對應。
             //    FetchDayAsync 各階段自帶 catch，取消以外幾乎不會整個擲出；真的擲出而 provider 沒被呼叫時
             //    mapResult 為 null，不另外補做對應。
             PrtgHostMapResult? mapResult = null;
@@ -236,8 +239,41 @@ internal static class PrtgDailyPipeline
                     var refillMessage = $"PRTG 續補上一趟的待補裝置：感測器 {toRefill.Sensors.Count} 台、狀態變更 {toRefill.Messages.Count} 台。";
                     prtgConsole.WriteLine(refillMessage);
                     runRecorder.Milestone(refillMessage);
-                    refillDevices = await fetchService.FetchPendingDevicesAsync(toRefill.Sensors, toRefill.Messages,
-                        days.Min().AddDays(-1), systemSettings.PrtgFetchConcurrency, ct, (stage, done, total) => progress?.Report(stage, done, total));
+                    // 待補清單是上一趟留下的，範圍可能已縮小：以「當前」取數範圍現算（只讀本機鏡像與主機主檔）後取交集，
+                    // 範圍外的裝置不發請求（docs/PRTG-SPEC.md §3c）。範圍算不出來時整段不補、待補清單原樣保留，不退回全部補。
+                    PrtgScopeResult? refillScope = null;
+                    try
+                    {
+                        var refillStore = backend.PrtgStore();
+                        refillScope = PrtgScopeDevices.Compute(refillStore, hostStore, new PrtgMirrorGuardSource(refillStore),
+                            systemSettings, new SentinelStore(backend.Blob("sentinels")).GetAll(), prtgConsole,
+                            new PrtgAddressResolver(), hostIds, includeGuardInPartial: requestedHostIds == null);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "PRTG 續補的取數範圍計算失敗，本趟不續補");
+                        var scopeFailure = $"[續補] ✗ 取數範圍計算失敗，本趟不續補、待補清單保留：{ex.Message}";
+                        prtgConsole.WriteLine(scopeFailure);
+                        refillFailures.Add(scopeFailure);
+                    }
+                    if (refillScope != null)
+                    {
+                        var refilled = await fetchService.FetchPendingDevicesAsync(toRefill.Sensors, toRefill.Messages,
+                            days.Min().AddDays(-1), systemSettings.PrtgFetchConcurrency, ct, refillScope.DeviceObjids,
+                            (stage, done, total) => progress?.Report(stage, done, total));
+                        refillDevices = (refilled.Sensors, refilled.Messages);
+                        refillFailures.AddRange(refilled.StageFailures);
+                    }
+                    else
+                    {
+                        refillDevices = (toRefill.Sensors, toRefill.Messages);
+                    }
+                    foreach (var failure in refillFailures)
+                        runRecorder.Milestone($"PRTG 續補階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
                 }
             }
             else
@@ -251,24 +287,28 @@ internal static class PrtgDailyPipeline
                         {
                             var mirrorStore = backend.PrtgStore();
                             var resolver = new PrtgAddressResolver();
-                            if (!devicesRefreshed && !skipStructureSync)
+                            // 與手動「同步結構與對應」共用同一個判定：裝置結構本趟沒成功更新就不產生新的一份對應
+                            if (PrtgHostMapper.ShouldRecompute(devicesRefreshed))
                             {
-                                prtgConsole.WriteLine("  ⚠ 裝置結構本趟未成功更新，主機對應依既有鏡像重算。");
+                                try
+                                {
+                                    var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
+                                    mapResult = hostMapper.MapForDate(newest);
+                                    runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    throw;
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
+                                    prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+                                }
                             }
-                            try
+                            else if (!skipStructureSync)
                             {
-                                var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
-                                mapResult = hostMapper.MapForDate(newest);
-                                runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                throw;
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
-                                prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+                                prtgConsole.WriteLine($"  ⚠ {PrtgHostMapper.SkipRecomputeNotice}");
                             }
                             var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
                             var scope = PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
@@ -325,8 +365,10 @@ internal static class PrtgDailyPipeline
                     : fetchResult is { Failures: > 0 } ? RunPhaseOutcomes.Partial
                     : RunPhaseOutcomes.Success,
                 reuseSyncFrom is { } syncFrom ? $"沿用本日 {syncFrom:HH:mm}" : null);
+            // 手動同步剛成功（skipStructureSync）時對應由那趟做過，本趟沒有新的一份對應是預期的
             sourceSynced = reuseSyncFrom != null
-                || (requestedHostIds == null && !syncFailed && fetchResult is { HistoryAffectingFailure: false } && mapResult != null);
+                || (requestedHostIds == null && !syncFailed && fetchResult is { HistoryAffectingFailure: false }
+                    && (mapResult != null || skipStructureSync));
             operationScope.CompletedStage("來源同步已返回（詳見成功／失敗狀態）");
 
             operationScope.Checkpoint();
@@ -1000,7 +1042,7 @@ internal static class PrtgDailyPipeline
                     {
                         var s = dayStates[day];
                         var failedSensors = s.Triggered?.FailedSensors ?? 0;
-                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || hasPending || s.TrendFailedLabels.Count > 0,
+                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || hasPending || refillFailures.Count > 0 || s.TrendFailedLabels.Count > 0,
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         if (s.TrendFailedLabels.Count > 0 && outcome == BatchRun.PrtgOutcomePartial)
                             note = $"{string.Join("、", s.TrendFailedLabels)}趨勢證據未完整；尚未完成風險判定。";
@@ -1017,7 +1059,7 @@ internal static class PrtgDailyPipeline
                             // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更階段擲例外（下一趟成功即收斂）。
                             // 永久失敗（裝置已刪除的 404）不在待補內：重評治不好，標了只會讓「待補評估」永遠掛著
                             // 有待補裝置時這天的評估少了那幾台的資料，補齊後要重評，否則畫面會是「已評估」卻缺資料
-                            NeedsReevaluation: syncFailed || historyAffectingFailure || hasPending || !prtgFindings.IsEvaluated(day),
+                            NeedsReevaluation: syncFailed || historyAffectingFailure || hasPending || refillFailures.Count > 0 || !prtgFindings.IsEvaluated(day),
                             SourceSynced: sourceSynced,
                             // 沿用趟記的是來源那趟實際同步的時刻，第三個窗口才不會把「沿用的時間」當成同步時間
                             SourceSyncedAt: sourceSynced ? reuseSyncFrom ?? syncStartedAt : null,

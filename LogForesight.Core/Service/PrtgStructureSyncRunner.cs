@@ -56,7 +56,7 @@ public static class PrtgStructureSyncRunner
                 mapDate, concurrency, ct,
                 devicesRefreshed =>
                 {
-                    if (devicesRefreshed)
+                    if (PrtgHostMapper.ShouldRecompute(devicesRefreshed))
                     {
                         try
                         {
@@ -77,7 +77,7 @@ public static class PrtgStructureSyncRunner
                     }
                     else
                     {
-                        console.WriteLine("結構同步沒有取得任何裝置（未進行主機對應，既有對應結果保持不變）");
+                        console.WriteLine($"結構同步沒有取得任何裝置。{PrtgHostMapper.SkipRecomputeNotice}");
                     }
                     return PrtgScopeDevices.Compute(prtgStore, hostStore, guardSource, settings, sentinels, console, resolver, hostIds: null);
                 },

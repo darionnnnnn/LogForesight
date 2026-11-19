@@ -1252,7 +1252,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1), syncStructure: false);
 
         // 結構端點零請求；paused 的 902 不抓；synced_at 未被改寫（回填不得汙染「最後結構同步時間」）
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
@@ -3232,7 +3232,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
         var service = RetryingService(client, store, (_, _) => Task.CompletedTask);
 
-        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None);
+        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None, new long[] { 1, 2, 3 });
 
         Assert.Empty(left.Sensors);
         Assert.Empty(left.Messages);

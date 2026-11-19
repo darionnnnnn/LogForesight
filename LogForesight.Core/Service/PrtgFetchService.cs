@@ -52,6 +52,12 @@ public sealed record PrtgStateChangeRangeResult(
     public IReadOnlyList<long> PendingDevices { get; init; } = Array.Empty<long>();
 }
 
+/// <summary>同日續補結果：仍待補的裝置（只含當前範圍內者）與各階段失敗原因（階段失敗時該階段的待補裝置原樣保留）。</summary>
+internal sealed record PrtgPendingRefillResult(
+    IReadOnlyList<long> Sensors,
+    IReadOnlyList<long> Messages,
+    IReadOnlyList<string> StageFailures);
+
 /// <summary>範圍補抓結果：寫入的感測器數、取得失敗的裝置、查詢成功但 PRTG 端一顆感測器都沒有的裝置。</summary>
 public sealed record PrtgSensorBackfillResult(
     int SensorsWritten,
@@ -249,10 +255,14 @@ public sealed class PrtgFetchService
             // 不同步結構時沒有新的裝置鏡像，provider 收到 false。放在「鏡像沒有感測器」的提早返回之前：
             // 夜間在手動同步剛完成時也走這條路，對應仍要照做，不能因鏡像沒有感測器就被略過。
             ResolveScope();
-            sensorTargets = _store.GetSensorTargets();
+            // 鏡像可能留有範圍外的感測器（範圍縮小後尚未清除）：取數目標一律與當前範圍取交集；範圍計算失敗（scope 為 null）時不取任何數值
+            var mirrorTargetCount = _store.GetSensorTargets().Count;
+            sensorTargets = scope == null
+                ? new List<(long Objid, bool Paused)>()
+                : _store.GetSensorTargets(scope.DeviceObjids);
             // 只有要取數值（歷史回填）時才因鏡像沒有感測器而提早返回；夜間沿用手動同步剛更新的鏡像時
             // （fetchValues 為 false）取數範圍可能本來就是空的，狀態變更階段自己會說明並略過，不該被這裡報成失敗。
-            if (sensorTargets.Count == 0 && fetchValues)
+            if (mirrorTargetCount == 0 && fetchValues)
             {
                 // 鏡像還沒有任何 sensor（例如剛設定完就按回填、每日擷取一次都沒跑過）。
                 // 不計失敗的話，接下來每一天都是「0 個 sensor 可抓 → 0 筆 → 無失敗」，
@@ -602,29 +612,72 @@ public sealed class PrtgFetchService
     /// <summary>
     /// 同日續跑：只補上一趟沒完成的裝置（感測器與狀態變更），已完成的不重查。不做過期清除：
     /// 只刷新了這幾台，其餘裝置「沒刷新到」不代表已刪除。回傳仍沒完成的裝置。
+    /// <para>
+    /// 待補清單是上一趟留下的，範圍可能已縮小（主機被移出清單、對應失效）：<paramref name="scopeDeviceObjids"/>（必填，
+    /// 呼叫端以 <see cref="PrtgScopeDevices.Compute"/> 現算）與待補清單取交集，範圍外的裝置不發任何請求、也不再列為待補（docs/PRTG-SPEC.md §3c）。
+    /// </para>
+    /// <para>
+    /// 兩個階段（感測器、狀態變更）各自隔離：某一階段擲例外時，該階段的待補裝置原樣保留（下次還會補）、
+    /// 原因記入 <see cref="PrtgPendingRefillResult.StageFailures"/>，另一階段照常執行。取消（例外是 OCE 且 <paramref name="ct"/> 已取消）照常往外拋；
+    /// HttpClient 逾時的 <see cref="TaskCanceledException"/> 不是取消，算階段失敗。
+    /// </para>
     /// </summary>
-    internal async Task<(IReadOnlyList<long> Sensors, IReadOnlyList<long> Messages)> FetchPendingDevicesAsync(
+    internal async Task<PrtgPendingRefillResult> FetchPendingDevicesAsync(
         IReadOnlyList<long> sensorDevices, IReadOnlyList<long> messageDevices, DateTime stateChangesFrom,
-        int concurrency, CancellationToken ct, Action<string, int, int>? progress = null)
+        int concurrency, CancellationToken ct, IReadOnlyCollection<long> scopeDeviceObjids,
+        Action<string, int, int>? progress = null)
     {
+        ArgumentNullException.ThrowIfNull(scopeDeviceObjids);
+        var scopeSet = scopeDeviceObjids as ISet<long> ?? scopeDeviceObjids.ToHashSet();
+        var inScopeSensors = sensorDevices.Where(scopeSet.Contains).Distinct().ToList();
+        var inScopeMessages = messageDevices.Where(scopeSet.Contains).Distinct().ToList();
+        var dropped = sensorDevices.Union(messageDevices).Count(id => !scopeSet.Contains(id));
+        if (dropped > 0)
+            _console.WriteLine($"[續補] {dropped} 台待補裝置已不在目前的取數範圍內，不補、也不再列為待補。");
+
+        var stageFailures = new List<string>();
         IReadOnlyList<long> leftSensors = Array.Empty<long>();
-        if (sensorDevices.Count > 0)
+        if (inScopeSensors.Count > 0)
         {
-            var (written, _, _, _, pending) = await FetchSensorsForDevicesAsync(sensorDevices, concurrency, DateTime.Now, ct, progress);
-            leftSensors = pending;
-            _console.WriteLine($"[續補] 感測器：{sensorDevices.Count} 台待補，寫入／更新 {written} 個，仍待補 {pending.Count} 台。");
-            if (written > 0) _store.ApplyAutoCategories(_categoryOverrides);
+            try
+            {
+                var (written, _, _, _, pending) = await FetchSensorsForDevicesAsync(inScopeSensors, concurrency, DateTime.Now, ct, progress);
+                leftSensors = pending;
+                _console.WriteLine($"[續補] 感測器：{inScopeSensors.Count} 台待補，寫入／更新 {written} 個，仍待補 {pending.Count} 台。");
+                if (written > 0) _store.ApplyAutoCategories(_categoryOverrides);
+            }
+            catch (Exception ex) when (!IsUserCancellation(ex, ct))
+            {
+                leftSensors = inScopeSensors;
+                var message = $"[續補] ✗ 感測器補取失敗，{inScopeSensors.Count} 台維持待補：{ex.Message}";
+                stageFailures.Add(message);
+                _console.WriteLine(message);
+            }
         }
 
         IReadOnlyList<long> leftMessages = Array.Empty<long>();
-        if (messageDevices.Count > 0)
+        if (inScopeMessages.Count > 0)
         {
-            var range = await FetchStateChangesRangeAsync(stateChangesFrom, DateTime.Today, messageDevices, concurrency, ct, progress);
-            leftMessages = range.PendingDevices;
-            _console.WriteLine($"[續補] 狀態變更：{messageDevices.Count} 台待補，新增 {range.TotalWritten} 筆，仍待補 {leftMessages.Count} 台。");
+            try
+            {
+                var range = await FetchStateChangesRangeAsync(stateChangesFrom, DateTime.Today, inScopeMessages, concurrency, ct, progress);
+                leftMessages = range.PendingDevices;
+                _console.WriteLine($"[續補] 狀態變更：{inScopeMessages.Count} 台待補，新增 {range.TotalWritten} 筆，仍待補 {leftMessages.Count} 台。");
+            }
+            catch (Exception ex) when (!IsUserCancellation(ex, ct))
+            {
+                leftMessages = inScopeMessages;
+                var message = $"[續補] ✗ 狀態變更補取失敗，{inScopeMessages.Count} 台維持待補：{ex.Message}";
+                stageFailures.Add(message);
+                _console.WriteLine(message);
+            }
         }
-        return (leftSensors, leftMessages);
+        return new PrtgPendingRefillResult(leftSensors, leftMessages, stageFailures);
     }
+
+    /// <summary>只有「OCE 且 ct 已取消」才是使用者取消；HttpClient 逾時的 TaskCanceledException 也是 OCE，但 ct 沒取消。</summary>
+    private static bool IsUserCancellation(Exception ex, CancellationToken ct) =>
+        ex is OperationCanceledException && ct.IsCancellationRequested;
 
     /// <summary>
     /// 只擷取指定 sensor 的當日 hourly 數值（觸發式取數用）。

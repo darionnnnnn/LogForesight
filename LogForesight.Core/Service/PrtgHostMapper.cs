@@ -38,6 +38,17 @@ public sealed class PrtgHostMapper
     }
 
     /// <summary>
+    /// 本趟結構同步後「要不要重算主機對應」的唯一判定（夜間與手動「同步結構與對應」共用，docs/PRTG-SPEC.md §4）：
+    /// 只有裝置結構本趟成功更新（<c>devicesRefreshed</c>＝階段 1 無例外、已收斂、寫入數大於 0）才重算；
+    /// 否則不產生新的一份對應——對著半套、空的或沒更新的鏡像算，只會把既有結果洗成 unmatched。
+    /// 之後讀對應時仍照 <see cref="EfPrtgStore.GetHostMapForDay"/> 採用最近一份有效對應。
+    /// </summary>
+    public static bool ShouldRecompute(bool devicesRefreshed) => devicesRefreshed;
+
+    /// <summary>不重算時印的說明（夜間與手動共用同一句）。</summary>
+    public const string SkipRecomputeNotice = "裝置結構本趟未成功更新，未進行主機對應，沿用最近一份有效的既有對應。";
+
+    /// <summary>
     /// 執行指定日期的主機對應作業。
     /// </summary>
     /// <param name="mapDate">目標日期（只取 Date 部分）</param>

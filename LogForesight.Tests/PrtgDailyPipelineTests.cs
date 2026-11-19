@@ -450,14 +450,14 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
             hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
-            reusePending: (new long[] { 501 }, new long[] { 502 }));
+            reusePending: (new long[] { 1 }, new long[] { 1 }));
 
         Assert.DoesNotContain(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
         Assert.Contains(console.Lines, l => l.Contains("續補上一趟的待補裝置"));
         ctx.RunRecorder.Finish(0);
         var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
-        Assert.Equal(new long[] { 501 }, stat.PendingSensorDevices);
-        Assert.Equal(new long[] { 502 }, stat.PendingMessageDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingMessageDevices);
         Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
         Assert.Contains("台待補", stat.Note);
         Assert.True(stat.NeedsReevaluation);
@@ -478,15 +478,15 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
             hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
-            reusePending: (new long[] { 501 }, new long[] { 502 })));
+            reusePending: (new long[] { 1 }, new long[] { 1 })));
 
         ctx.RunRecorder.Finish(1);
         var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
         // 同步沒壞：下一窗口照樣沿用、只補這兩台；寫成未同步會整段重做
         Assert.True(stat.SourceSynced);
         Assert.Equal(DateTime.Today.AddHours(1), stat.SourceSyncedAt);
-        Assert.Equal(new long[] { 501 }, stat.PendingSensorDevices);
-        Assert.Equal(new long[] { 502 }, stat.PendingMessageDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingMessageDevices);
         Assert.Contains("作業已取消", stat.Note);
     }
 
@@ -502,6 +502,104 @@ public class PrtgDailyPipelineTests : IDisposable
         ctx.RunRecorder.Finish(0);
         var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!;
         Assert.False(run.PrtgDays!.Single().SourceSynced);
+    }
+
+    /// <summary>續補待補清單只留當前取數範圍內的裝置：範圍外的不補、也不再列為待補（範圍兩側各一案）。</summary>
+    [Fact]
+    public async Task 沿用同步續補_待補清單與當前範圍取交集_範圍外的裝置被捨棄且範圍內的保留()
+    {
+        var (_, day, hostStore) = SeedDownSensorForYesterday();
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(x => x.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
+            reusePending: (new long[] { 1, 9999 }, new long[] { 1, 8888 }));
+
+        ctx.RunRecorder.Finish(0);
+        var stat = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!.PrtgDays!.Single();
+        // 連不上 PRTG：範圍內的 1 補不到、仍待補；範圍外的 9999／8888 不再出現
+        Assert.Equal(new long[] { 1 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingMessageDevices);
+        Assert.Contains(console.Lines, l => l.Contains("不在目前的取數範圍內"));
+    }
+
+    [Fact]
+    public async Task 沿用同步續補_主機被移出範圍後待補清單清空_不再續補也不標部分完成()
+    {
+        var (_, day, hostStore) = SeedDownSensorForYesterday();
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(x => x.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
+        // 範圍縮小：最近一份對應裡這台裝置不再是 ok（改成 unmatched），它不再屬於取數範圍
+        _backend.PrtgStore().ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow { MapDate = day, DeviceObjid = 1, MapStatus = PrtgMapStatus.Unmatched, CreatedAt = DateTime.Now }
+        });
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
+            reusePending: (new long[] { 1 }, new long[] { 1 }));
+
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!;
+        var stat = run.PrtgDays!.Single();
+        Assert.Empty(stat.PendingSensorDevices ?? Array.Empty<long>());
+        Assert.Empty(stat.PendingMessageDevices ?? Array.Empty<long>());
+        Assert.Equal(RunPhaseOutcomes.Success, run.Phases!.Single(p => p.Key == RunTimingPhases.PrtgSync).Outcome);
+    }
+
+    /// <summary>
+    /// 續補的取數範圍算不出來：不續補、待補清單原樣保留、整趟標部分完成，規則評估照常執行（不退回「全部補」）。
+    /// </summary>
+    [Fact]
+    public async Task 沿用同步續補_範圍計算失敗時待補清單保留且標部分完成_規則評估照常執行()
+    {
+        var (host, day, innerHostStore) = SeedDownSensorForYesterday();
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(x => x.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
+        var hostStore = new ScopeBreakingHostStore(innerHostStore);
+        var (ctx, console, _, registry) = CreateContext();
+        // 續補開始前才讓範圍計算（讀主機主檔）失敗：之前的步驟照常
+        console.OnWriteLine = line => { if (line.Contains("續補上一趟的待補裝置")) hostStore.Armed = true; };
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1),
+            reusePending: (new long[] { 1 }, new long[] { 1 }));
+
+        Assert.Contains(console.Lines, l => l.Contains("取數範圍計算失敗，本趟不續補"));
+        // 規則評估照常執行
+        Assert.True(registry.IsEvaluated(day));
+        Assert.NotEmpty(registry.For(host.HostId, day));
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!;
+        var stat = run.PrtgDays!.Single();
+        Assert.Equal(new long[] { 1 }, stat.PendingSensorDevices);
+        Assert.Equal(new long[] { 1 }, stat.PendingMessageDevices);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
+        Assert.True(stat.NeedsReevaluation);
+        Assert.Equal(RunPhaseOutcomes.Partial, run.Phases!.Single(p => p.Key == RunTimingPhases.PrtgSync).Outcome);
+    }
+
+    /// <summary>啟動（Armed）後 GetAll 擲例外，其餘轉送：用來讓續補的取數範圍計算失敗、其他步驟不受影響。</summary>
+    private sealed class ScopeBreakingHostStore(IHostStore inner) : IHostStore
+    {
+        public bool Armed { get; set; }
+        public List<WebHost> GetAll() => Armed ? throw new InvalidOperationException("主機主檔暫時讀不到") : inner.GetAll();
+        public PrtgHostSnapshot CapturePrtgSnapshot() => inner.CapturePrtgSnapshot();
+        public long DataVersion => inner.DataVersion;
+        public WebHost? Get(long hostId) => inner.Get(hostId);
+        public WebHost? FindByName(string hostName) => inner.FindByName(hostName);
+        public WebHost Upsert(WebHost host) => inner.Upsert(host);
+        public WebHost Touch(string hostName, DateTime reportedAt, string source = "local") => inner.Touch(hostName, reportedAt, source);
+        public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt) => inner.TouchNetiq(hostId, displayName, reportedAt);
+        public void SetGroups(long hostId, IEnumerable<long> groupIds) => inner.SetGroups(hostId, groupIds);
+        public void SetHighVolume(long hostId, bool isHighVolume) => inner.SetHighVolume(hostId, isHighVolume);
+        public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace) =>
+            inner.SetGroupsBatch(hostIds, groupIds, replace);
+        public void SetOwners(long hostId, IEnumerable<long> userIds) => inner.SetOwners(hostId, userIds);
+        public void Merge(long sourceHostId, long targetHostId) => inner.Merge(sourceHostId, targetHostId);
+        public void Unmerge(long hostId) => inner.Unmerge(hostId);
+        public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => inner.MutateBatch(mutation);
+        public void MutateBatch(Action<List<WebHost>> mutation) => inner.MutateBatch(mutation);
     }
 
     private void EnableUnreachablePrtg() =>
@@ -617,8 +715,9 @@ public class PrtgDailyPipelineTests : IDisposable
         // 等完之後**真的沒有重新爬結構**：結構同步的第一階段會印「開始同步 PRTG 裝置結構鏡像」，
         // 跳過時走的是讀鏡像那條路，完全不進那三個階段。
         Assert.DoesNotContain(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
-        // 但對應照做（對昨天）——跳過的只有結構同步這一步
-        Assert.Contains(console.Lines, l => l.Contains("對應完成"));
+        // 鏡像剛由手動同步更新並做過對應：本趟沒有新的裝置結構，不另產生新的一份對應
+        Assert.DoesNotContain(console.Lines, l => l.Contains("對應完成"));
+        Assert.Empty(_backend.PrtgStore().GetHostMapForDate(DateTime.Today.AddDays(-1)));
     }
 
     /// <summary>閘門閒置（或根本沒接上）時行為與沒有這個機制時完全相同。</summary>
@@ -663,9 +762,9 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
 
-    /// <summary>裝置結構本趟沒有成功更新：仍依既有鏡像重算最新日對應並說明。</summary>
+    /// <summary>裝置結構本趟沒有成功更新：不產生新的一份對應，之後仍採用最近一份有效對應（與手動同步同一判定）。</summary>
     [Fact]
-    public async Task 裝置同步失敗時仍依既有鏡像重算對應()
+    public async Task 裝置同步失敗時不產生新的對應_最近一份有效對應仍被採用()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -683,20 +782,35 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var (ctx, console, _, _) = CreateContext();
         var newest = DateTime.Today.AddDays(-1);
+        // 先前一次成功的對應（三天前）：本趟沒有新的一份，讀取時仍要採用它
+        var older = newest.AddDays(-2);
+        _backend.PrtgStore().ReplaceHostMapForDate(older, new[]
+        {
+            new PrtgHostMapRow { MapDate = older, DeviceObjid = 77, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }
+        });
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
             new[] { newest }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: null);
 
-        Assert.Contains(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
-        var row = Assert.Single(_backend.PrtgStore().GetHostMapForDate(newest), r => r.DeviceObjid == 77);
-        Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
-        Assert.Equal(host.HostId, row.HostId);
+        Assert.Contains(console.Lines, l => l.Contains(PrtgHostMapper.SkipRecomputeNotice));
+        Assert.Empty(_backend.PrtgStore().GetHostMapForDate(newest));
+        var (mapDate, rows) = _backend.PrtgStore().GetHostMapForDay(newest, PrtgHostMapLookup.LookbackDays);
+        Assert.Equal(older, mapDate);
+        Assert.Equal(host.HostId, Assert.Single(rows, r => r.DeviceObjid == 77).HostId);
     }
 
-    /// <summary>手動同步剛成功更新鏡像（本趟跳過結構同步）：仍要重算對應，不印沿用訊息。</summary>
+    /// <summary>對照組：裝置結構本趟成功更新時照常重算最新日對應（判定的另一側）。</summary>
     [Fact]
-    public async Task 跳過結構同步時仍重算對應()
+    public void 裝置結構成功更新時才重算對應_共用判定兩側()
+    {
+        Assert.True(PrtgHostMapper.ShouldRecompute(devicesRefreshed: true));
+        Assert.False(PrtgHostMapper.ShouldRecompute(devicesRefreshed: false));
+    }
+
+    /// <summary>手動同步剛成功更新鏡像（本趟跳過結構同步）：對應已由那趟做過，本趟不另產生新的一份，也不印「未成功更新」。</summary>
+    [Fact]
+    public async Task 跳過結構同步時不另產生新的對應()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -715,8 +829,9 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
             new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
 
-        Assert.Contains(console.Lines, l => l.Contains("對應完成"));
-        Assert.DoesNotContain(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("對應完成"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains(PrtgHostMapper.SkipRecomputeNotice));
+        Assert.Empty(_backend.PrtgStore().GetHostMapForDate(DateTime.Today.AddDays(-1)));
     }
 
     /// <summary>
@@ -1186,8 +1301,12 @@ public class PrtgDailyPipelineTests : IDisposable
             new PrtgStateChangeRow { SensorObjid = 7101, ChangedAt = day.Date.AddHours(2), Status = "Down" },
             new PrtgStateChangeRow { SensorObjid = 7201, ChangedAt = day.Date.AddHours(3), Status = "Down" }
         });
-        MapDeviceToHost(day, 71, host);
-        MapDeviceToHost(day, 72, host);
+        // 同一天的對應整份替換：兩台裝置要在同一次寫入
+        prtgStore.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow { MapDate = day, DeviceObjid = 71, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now },
+            new PrtgHostMapRow { MapDate = day, DeviceObjid = 72, HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }
+        });
         SeedNetiqParent(host, day);
         var (ctx, _, _, registry) = CreateContext();
 

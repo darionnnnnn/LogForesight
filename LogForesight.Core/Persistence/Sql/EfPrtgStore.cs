@@ -2092,6 +2092,26 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 取得所屬裝置在 <paramref name="scopeDeviceObjids"/>（必填）內的 sensor 的 objid 與暫停狀態。
+    /// 不同步結構的取數路徑（回填）用：鏡像可能留有範圍外的 sensor，取數目標必須與當前取數範圍取交集（docs/PRTG-SPEC.md §3c）。
+    /// </summary>
+    public List<(long Objid, bool Paused)> GetSensorTargets(IReadOnlyCollection<long> scopeDeviceObjids)
+    {
+        ArgumentNullException.ThrowIfNull(scopeDeviceObjids);
+        using var __perf = _performance.Measure("prtg:GetSensorTargetsInScope");
+        // 範圍以單一集合參數交給資料庫過濾（LfDbContext 設定集合參數模式），不把整份鏡像讀進記憶體
+        var scope = scopeDeviceObjids.Distinct().ToArray();
+        if (scope.Length == 0) return new List<(long, bool)>();
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking()
+            .Where(s => scope.Contains(s.DeviceObjid))
+            .Select(s => new { s.Objid, s.Paused })
+            .AsEnumerable()
+            .Select(s => (s.Objid, s.Paused))
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得指定期間的狀態變更（依 sensor 與時間排序）。判定「跨午夜持續 Down」時，
     /// 呼叫端可把起點往前一天以取得前導狀態。
     /// </summary>
