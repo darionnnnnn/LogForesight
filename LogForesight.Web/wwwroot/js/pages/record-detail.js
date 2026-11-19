@@ -490,6 +490,7 @@ function renderHeader(detail) {
 
     const card = document.createElement('div');
     card.className = 'lf-card';
+    // 案件授與檢視不帶整日風險等級與事件數（只給被交辦的問題），這三項不顯示
     if (detail.riskLevel === '高') card.classList.add('lf-card--critical');
     else if (detail.riskLevel === '中') card.classList.add('lf-card--warning');
 
@@ -524,7 +525,8 @@ function renderHeader(detail) {
     // 沒有明確依據（舊紀錄／低風險日）時給通用說明，不留使用者自己猜
     const riskBasisTitle = detail.riskBasisText ??
         '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
-    top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
+    top.append(hostLink, dateSpan);
+    if (!detail.caseGrantOnly) top.appendChild(riskBadge(detail.riskLevel, { title: riskBasisTitle }));
 
     // AI 狀態徽章：有結論列就放結論列（由 aiSummaryBlock 收下），沒有才留在第一行
     const aiBadge = aiStatusBadge(detail);
@@ -548,9 +550,9 @@ function renderHeader(detail) {
     const facts = metaLine([
         ...identityFacts(detail),
         detail.logSource ? sourceLine(detail) : null,
-        stat('錯誤', detail.errorCount),
-        stat('警告', detail.warningCount),
-        stat('稽核事件', detail.auditEventCount),
+        detail.caseGrantOnly ? null : stat('錯誤', detail.errorCount),
+        detail.caseGrantOnly ? null : stat('警告', detail.warningCount),
+        detail.caseGrantOnly ? null : stat('稽核事件', detail.auditEventCount),
         detail.hostRoleDesc ? `主機角色：${detail.hostRoleDesc}` : null
     ], { className: 'lf-entity-head__facts' });
     if (facts) body.appendChild(facts);

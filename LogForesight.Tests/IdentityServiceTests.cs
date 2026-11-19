@@ -474,4 +474,38 @@ public class IdentityServiceTests
         Assert.Equal("自訂顯示名稱", saved.DisplayName);
         Assert.Equal("wang@corp.local", saved.Email);
     }
+
+    /// <summary>
+    /// 第 79 輪批次 G1：能力解析途中權限版號被遞增時，token 必須帶「解析前」的版號，
+    /// 下一個請求才會因版號不符而重算；帶新版號配舊能力就再也不會換發。
+    /// </summary>
+    [Fact]
+    public void 能力解析途中版號遞增_權杖帶解析前的版號()
+    {
+        using var fx = new EfSqliteFixture();
+        var stamp = new PermissionVersionStamp(new LogForesight.Core.Persistence.Sql.EfJsonBlobStore(fx.NewContext, PermissionVersionStamp.BlobKey));
+        var before = stamp.Current;
+        var bumpingGroups = new BumpOnReadGroups(_groups, () => stamp.Bump());
+        var service = new IdentityService(_users, bumpingGroups, _hosts, new StubAuthenticationProvider(),
+            new ServerAdminAuthenticator(new WebAppSettings()), _audit,
+            new LogForesight.Web.Auth.UserCapabilityResolver(bumpingGroups, _hosts, _issueOwners), stamp);
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\toctou", DisplayName = "t", Active = true });
+
+        var identity = service.CreateTokenIdentity(user);
+
+        Assert.True(stamp.Current > before, "測試前提：解析途中確實遞增了版號");
+        Assert.Equal(before, identity.PermissionVersion);
+    }
+
+    private sealed class BumpOnReadGroups(IUserGroupStore inner, Action onRead) : IUserGroupStore
+    {
+        private bool _bumped;
+        private void Hook() { if (_bumped) return; _bumped = true; onRead(); }
+        public List<UserGroup> GetAll() { Hook(); return inner.GetAll(); }
+        public UserGroup? Get(long groupId) { Hook(); return inner.Get(groupId); }
+        public UserGroup? FindByName(string groupName) => inner.FindByName(groupName);
+        public UserGroup Upsert(UserGroup group) => inner.Upsert(group);
+        public void SetDispatchPool(long groupId, bool inPool) => inner.SetDispatchPool(groupId, inPool);
+        public void Delete(long groupId) => inner.Delete(groupId);
+    }
 }

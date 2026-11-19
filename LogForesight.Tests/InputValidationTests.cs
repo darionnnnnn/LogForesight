@@ -120,3 +120,23 @@ public class DefaultInputLimitsTests
         Assert.Throws<LogForesight.Web.Models.DomainException>(() => Run(request));
     }
 }
+
+/// <summary>郵件收件人資格的單一出口（第 79 輪批次 G3）</summary>
+public class MailRecipientEligibilityTests
+{
+    [Theory]
+    [InlineData(true, "a@example.com", "a@example.com")]
+    [InlineData(true, " a@example.com ", "a@example.com")]
+    [InlineData(false, "a@example.com", null)]
+    [InlineData(true, "a@example.com,b@example.com", null)]
+    [InlineData(true, "", null)]
+    public void 只有啟用中且信箱為單一位址的使用者收得到信(bool active, string email, string? expected)
+    {
+        var user = new LogForesight.Core.Models.WebUser { Account = "u", Active = active, Email = email };
+        Assert.Equal(expected, LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmail(user));
+    }
+
+    [Fact]
+    public void 找不到使用者時不寄() =>
+        Assert.Null(LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmail(null));
+}

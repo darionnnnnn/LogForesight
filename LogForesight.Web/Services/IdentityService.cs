@@ -39,6 +39,7 @@ public class IdentityService
 
     /// <summary>能力解析的單一事實來源（見 <see cref="ResolveCapabilities"/>）</summary>
     private readonly UserCapabilityResolver _capabilities;
+    private readonly PermissionVersionStamp? _permissionVersion;
 
     public IdentityService(
         IUserStore users,
@@ -47,9 +48,11 @@ public class IdentityService
         IAuthenticationProvider provider,
         ServerAdminAuthenticator serverAdmin,
         IAuditService audit,
-        UserCapabilityResolver capabilities)
+        UserCapabilityResolver capabilities,
+        PermissionVersionStamp? permissionVersion = null)
     {
         _capabilities = capabilities;
+        _permissionVersion = permissionVersion;
         _users = users;
         _groups = groups;
         _hosts = hosts;
@@ -133,12 +136,18 @@ public class IdentityService
     /// 一般使用者的 token 身分（能力當下重算）。登入與 ActiveUserMiddleware 的權限版本換發共用這一份，
     /// 兩條路徑簽出來的 token 內容才不會漂移。
     /// </summary>
-    public TokenIdentity CreateTokenIdentity(WebUser user) => new(
-        UserId: user.UserId,
-        Account: user.Account,
-        DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
-        Capabilities: ResolveCapabilities(user),
-        IsServerAdmin: false);
+    public TokenIdentity CreateTokenIdentity(WebUser user)
+    {
+        // 先讀版號、後算能力（見 TokenIdentity.PermissionVersion）
+        var version = _permissionVersion?.Current;
+        return new(
+            UserId: user.UserId,
+            Account: user.Account,
+            DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
+            Capabilities: ResolveCapabilities(user),
+            IsServerAdmin: false,
+            PermissionVersion: version);
+    }
 
     /// <summary>
     /// AD 登入自動補顯示名稱與 Email（docs/archive/HISTORY.md #8）：批次新增使用者

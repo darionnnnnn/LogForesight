@@ -7,12 +7,17 @@ using Microsoft.IdentityModel.Tokens;
 namespace LogForesight.Web.Auth;
 
 /// <summary>登入成功後要寫進 token 的身分資訊</summary>
+/// <param name="PermissionVersion">
+/// 解析 <paramref name="Capabilities"/> 之前讀到的權限版號。必須先讀版號、後算能力：反過來的話，兩步之間若有人改了權限，
+/// token 會蓋上新版號卻帶舊能力，之後版號相符就不再換發，舊能力一直用到下次異動。null＝簽發時才讀（沒有能力解析的路徑）。
+/// </param>
 public record TokenIdentity(
     long UserId,
     string Account,
     string DisplayName,
     IReadOnlySet<Capability> Capabilities,
-    bool IsServerAdmin);
+    bool IsServerAdmin,
+    long? PermissionVersion = null);
 
 public sealed record IssuedToken(
     string Token,
@@ -66,7 +71,7 @@ public class JwtTokenService
             new(AccountClaim, identity.Account),
             new(DisplayNameClaim, identity.DisplayName),
             new(JwtRegisteredClaimNames.Jti, jti ?? Guid.NewGuid().ToString()),
-            new(PermissionVersionClaim, _permissionVersion.Current.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            new(PermissionVersionClaim, (identity.PermissionVersion ?? _permissionVersion.Current).ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
 
         foreach (var capability in identity.Capabilities)

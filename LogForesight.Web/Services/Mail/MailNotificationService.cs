@@ -499,9 +499,9 @@ public class MailNotificationService
             if (!settings.MailEnabled) return;
 
             var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                .Select(u => u.Email)
-                .Where(e => !string.IsNullOrWhiteSpace(e))
-                .Select(e => e!.Trim())
+                .Select(EligibleEmail)
+                .Where(e => e != null)
+                .Select(e => e!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (recipients.Count == 0)
@@ -751,7 +751,7 @@ public class MailNotificationService
             // 處理人之後補上 email 的不清（下面的摘要時刻會把它寄出）
             var stale = _outbox.Get().Items
                 .Where(kv => kv.Value.NoEmail && kv.Value.EnqueuedAt < staleBefore &&
-                    !(users.TryGetValue(kv.Value.RecipientUserId, out var owner) && owner.Active && !string.IsNullOrWhiteSpace(owner.Email)))
+                    !(users.TryGetValue(kv.Value.RecipientUserId, out var owner) && EligibleEmail(owner) != null))
                 .Select(kv => kv.Key).ToList();
             if (stale.Count > 0)
             {
@@ -809,8 +809,11 @@ public class MailNotificationService
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(user.Email))
+        var recipientEmail = EligibleEmail(user);
+        if (recipientEmail == null)
         {
+            if (!string.IsNullOrWhiteSpace(user.Email))
+                Log.Warn("[Mail] 處理人 {UserId} 的信箱不是單一電子郵件位址，交辦通知暫不寄出。", user.UserId);
             // 保留項目並標記，供派工畫面提示；立即項目改走摘要時刻（之後補上 email 仍會寄出）
             _outbox.Update(o =>
             {
@@ -851,7 +854,7 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.Append(text);
 
-        if (await SendSafeAsync(settings, new List<string> { user.Email.Trim() }, subject, body.ToString(), ct))
+        if (await SendSafeAsync(settings, new List<string> { recipientEmail }, subject, body.ToString(), ct))
         {
             _outbox.Update(o => { foreach (var k in keys) o.Items.Remove(k); });
         }
@@ -1006,6 +1009,17 @@ public class MailNotificationService
             : CryptoHelper.TryDecrypt(settings.SmtpPasswordEnc, out var smtpPassword) ? smtpPassword
             : null);
 
+    /// <summary>
+    /// 使用者能不能收信、收到哪個位址：啟用中且信箱是單一位址才回傳（去空白後），否則 null。
+    /// 所有以使用者信箱寄信的路徑（管理員、主機負責人、交辦處理人）共用這一個判定——
+    /// 主機負責人路徑原本沒檢查停用，停用的負責人仍會收到含主機名與日期的高風險通知。
+    /// </summary>
+    internal static string? EligibleEmail(WebUser? user)
+    {
+        if (user is not { Active: true } || !SystemSettingsMailHelper.IsSingleBareAddress(user.Email)) return null;
+        return user.Email!.Trim();
+    }
+
     private static readonly System.Text.RegularExpressions.Regex TemplateToken = new(
         @"\{(site|host|date|risk|type|summary)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -1109,7 +1123,7 @@ public class MailNotificationService
 
                 foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
-                    var email = ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId)?.Email;
+                    var email = EligibleEmail(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId));
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
 
                     if (!views.TryGetValue(email, out var existing))

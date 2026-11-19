@@ -1860,6 +1860,55 @@ public class HandlingServiceTests : IDisposable
     }
 
     /// <summary>
+    /// 第 79 輪批次 G4：檢視者在某台主機只被授與部分問題時，看他人的工作量只列被授與的案件，
+    /// 日層級項目（整台主機當天的狀態）不列；沒有限制時全部列出。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void 工作頁_案件授與的主機只列被授與的問題(bool restricted)
+    {
+        var day = Today.AddDays(-51);
+        var a = Issue("disk", 153);
+        var b = Issue("ntfs", 55);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _other.UserId);
+
+        IReadOnlySet<string>? grant = restricted ? new HashSet<string> { IssueSignatureKey.For(a) } : null;
+        var visibility = new RestrictionVisibility(new AlwaysVisibleService(_hosts), _host.HostId, grant);
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle);
+        var viewer = new HandlingServiceFacade(store: _handlings, issueStore: _issueHandlings, cases: _cases,
+            caseCoordinator: _caseCoordinator, noiseMarks: _noiseMarks, repository: _repository, hosts: _hosts, users: _users,
+            visibility: visibility, currentUser: currentUser, audit: _audit, settings: _settings, groups: null, issueOwners: _issueOwners);
+
+        var workload = viewer.GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+
+        Assert.Equal(restricted ? 1 : 2, workload.Cases.Count);
+        if (restricted)
+        {
+            Assert.Equal(153, Assert.Single(workload.Cases).EventId);
+            Assert.Empty(workload.Days);
+        }
+        else
+        {
+            Assert.NotEmpty(workload.Days);
+        }
+    }
+
+    private sealed class RestrictionVisibility(IVisibilityService inner, long hostId, IReadOnlySet<string>? grant) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => inner.GetVisibleHostIds();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => inner.GetVisibleHostIdsFor(userId);
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => inner.GetOwnedHostIdsFor(userId);
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => inner.GetGroupVisibleHostIdsFor(userId);
+        public List<WebHost> GetVisibleHosts() => inner.GetVisibleHosts();
+        public void EnsureVisible(long id) => inner.EnsureVisible(id);
+        public IReadOnlyList<string> GetCaseGrantHostNames() => inner.GetCaseGrantHostNames();
+        public bool IsCaseGrantOnly(long id) => grant != null && id == hostId;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => id == hostId ? grant : null;
+    }
+
+    /// <summary>
     /// 工作頁「依問題」視角（docs/archive/FEEDBACK-11-PLAN.md §7）在前端分組，靠的是這兩個欄位：
     /// 沒有它們就分不了組，「回覆處理狀態」也送不出參數（端點吃 source＋eventId）。
     /// </summary>
