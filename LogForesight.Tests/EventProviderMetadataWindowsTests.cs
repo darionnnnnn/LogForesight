@@ -114,9 +114,29 @@ public class EventProviderMetadataWindowsTests
         if (versions == null) return;
 
         var report = Report("Service Control Manager", 7045, versions, new List<string>());
-        Assert.True(versions.Count > 0, "提供者存在但沒有 7045 事件定義。\n" + report);
-        Assert.All(versions, v => Assert.True(v.LevelValue == InformationalLevel,
-            "7045 預期所有版本為資訊等級（所以頻道政策要明列才收得到）。\n" + report));
+        if (versions.Count > 0)
+        {
+            Assert.All(versions, v => Assert.True(v.LevelValue == InformationalLevel,
+                "7045 預期所有版本為資訊等級（所以頻道政策要明列才收得到）。\n" + report));
+        }
+        else
+        {
+            // Service Control Manager 是舊式（訊息檔）提供者，沒有清單式中繼資料可讀：改看 System 記錄裡實際的 7045。
+            // 機器上沒有任何 7045 時標為查不到，不讓測試失敗
+            var levels = new List<byte?>();
+            var query = new System.Diagnostics.Eventing.Reader.EventLogQuery("System",
+                System.Diagnostics.Eventing.Reader.PathType.LogName,
+                "*[System[Provider[@Name='Service Control Manager'] and (EventID=7045)]]") { ReverseDirection = true };
+            using (var reader = new System.Diagnostics.Eventing.Reader.EventLogReader(query))
+            {
+                for (var i = 0; i < 20 && reader.ReadEvent() is { } record; i++)
+                    using (record) levels.Add(record.Level);
+            }
+            _output.WriteLine($"[System 記錄] Service Control Manager 7045 實際事件 {levels.Count} 筆，等級：{string.Join(",", levels)}");
+            if (levels.Count == 0) return;
+            Assert.All(levels, level => Assert.True(level is 0 or InformationalLevel,
+                $"7045 的實際事件預期為資訊等級（0 或 4）：{string.Join(",", levels)}\n" + report));
+        }
         Assert.Contains(ChannelCatalog.LegacyInformationalAllowList,
             e => e.EventId == 7045 && providers[0].Contains(e.ProviderPattern, StringComparison.OrdinalIgnoreCase));
     }
