@@ -11,9 +11,9 @@ internal static class ColumnClamp
 {
     private static readonly Lazy<Dictionary<(Type Entity, string Property), int>> Limits = new(BuildLimits);
 
-    /// <summary>超過上限取前 <paramref name="maxLength"/> 字元；null 與未超長原樣回傳。</summary>
+    /// <summary>超過上限取前 <paramref name="maxLength"/> 字元（代理對安全，見 <see cref="TextTruncation.SafeCut"/>）；null 與未超長原樣回傳。</summary>
     public static string? Clamp(string? value, int maxLength) =>
-        value != null && value.Length > maxLength ? value[..maxLength] : value;
+        value == null ? null : TextTruncation.SafeCut(value, maxLength);
 
     /// <summary>該實體屬性的 <c>MaxLength</c>；未設定上限或查無屬性回 null。</summary>
     public static int? For<TEntity>(string propertyName) =>

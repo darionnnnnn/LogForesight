@@ -735,13 +735,8 @@ internal static class LogAggregator
                 return string.Empty;
             }
             // 帳號類標籤：超長值截到上限後保留（帳號不能因為長就從集合與噴灑計數消失）。
-            // 切點落在代理對中間時往內退一個字元，避免留下不合法的 UTF-16。
-            int cut = MaxLabelValueLength;
-            if (char.IsHighSurrogate(value[cut - 1]))
-            {
-                cut--;
-            }
-            value = value[..cut].TrimEnd();
+            // 切點落在代理對中間時往內退一個字元（TextTruncation.SafeCut），避免留下不合法的 UTF-16。
+            value = TextTruncation.SafeCut(value, MaxLabelValueLength).TrimEnd();
         }
         return value;
     }

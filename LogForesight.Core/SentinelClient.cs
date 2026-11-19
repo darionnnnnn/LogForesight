@@ -275,7 +275,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private string AuthTokensUrl => $"{BaseUrl}/SentinelAuthServices/auth/tokens";
     private string EventSearchCollectionUrl => $"{BaseUrl}/SentinelRESTServices/objects/event-search";
 
-    private static string Truncate(string s, int max = 300) => s.Length <= max ? s : s[..max] + "…(截斷)";
+    private static string Truncate(string s, int max = 300) => TextTruncation.SafeCut(s, max, "…(截斷)");
 
     /// <summary>僅用於觸發 Polly 重試的內部標記例外，不對外流出</summary>
     private sealed class SentinelTransientException : Exception;

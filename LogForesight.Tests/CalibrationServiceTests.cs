@@ -1847,10 +1847,13 @@ public class CalibrationServiceTests : IDisposable
             ctx.TopIssues.Add(new TopIssueRow
             {
                 RecordId = record.RecordId, HostId = 1, RecordDate = anchor, LogName = "PRTG",
-                SourceName = "PRTG:down", EventId = 0, EventKey = new string('x', 256),
+                SourceName = "PRTG:down", EventId = 0, EventKey = "x",
                 Category = "Service", SeverityRank = 2
             });
             ctx.SaveChanges();
+            // 模擬舊版 SQLite 留下的超長列：SaveChanges 會依欄位上限截斷，要用批次更新繞過。
+            var longKey = new string('x', 256);
+            ctx.TopIssues.ExecuteUpdate(u => u.SetProperty(t => t.EventKey, longKey));
         }
 
         foreach (var summaryOnly in new[] { false, true })
@@ -2505,10 +2508,12 @@ public class CalibrationServiceTests : IDisposable
         Assert.NotEmpty(validPackage.ValueBaselines);
         Assert.NotEmpty(validPackage.ValueSensorSummaries);
 
-        store.UpsertSensors(new List<PrtgSensorRow>
+        // 模擬舊版 SQLite 留下的超長單位：UpsertSensors 走 SaveChanges 會依欄位上限截斷，要用批次更新繞過。
+        using (var ctx = _fx.NewContext())
         {
-            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = new string('u', 65), Paused = false }
-        }, now.AddMinutes(1));
+            var longUnit = new string('u', 65);
+            ctx.PrtgSensors.Where(x => x.Objid == 1001).ExecuteUpdate(u => u.SetProperty(x => x.Unit, longUnit));
+        }
 
         var exception = Assert.ThrowsAny<InvalidOperationException>(
             () => service.BuildExportPackage(anchor, summaryOnly));

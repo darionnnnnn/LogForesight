@@ -1615,11 +1615,11 @@ public class RunExportServiceTests
     public void 截斷與清理_不從代理對中間切開_孤立代理字元被替換()
     {
         var text = new string('a', 4) + "😀😀";
-        var cut = RunExportService.Cut(text, 5);   // 第 5 字是高代理，往內退一個
+        var cut = TextTruncation.SafeCutEllipsis(text, 5);   // 第 5 字是高代理，往內退一個
         Assert.Equal("aaaa…", cut);
         Assert.Equal("ab\uFFFDc", RunExportService.Clean("ab\uD83Dc"));
         Assert.Equal("😀", RunExportService.Clean("😀"));
-        Assert.Equal("短", RunExportService.Cut("短", 10));
+        Assert.Equal("短", TextTruncation.SafeCutEllipsis("短", 10));
     }
 
     [Theory]

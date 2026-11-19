@@ -61,13 +61,11 @@ public sealed class ReminderDetailItem
     public string Heading { get; set; } = "";        // 該類段落標題，例如「【上報後逾 3 天沒人處理】」
     public string Unit { get; set; } = "";           // 計數單位，例如「個成員」
 
-    private static string Clamp(string v, int max) => v.Length > max ? v[..max] : v;
-
     public ReminderDetailItem Clamped() => new()
     {
         Category = Category, Total = Total,
-        Key = Clamp(Key, KeyMaxLength), Text = Clamp(Text, TextMaxLength),
-        Heading = Clamp(Heading, HeadingMaxLength), Unit = Clamp(Unit, UnitMaxLength)
+        Key = TextTruncation.SafeCut(Key, KeyMaxLength), Text = TextTruncation.SafeCut(Text, TextMaxLength),
+        Heading = TextTruncation.SafeCut(Heading, HeadingMaxLength), Unit = TextTruncation.SafeCut(Unit, UnitMaxLength)
     };
 }
 

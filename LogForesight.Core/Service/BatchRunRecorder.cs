@@ -52,6 +52,12 @@ public class BatchRunRecorder : IDisposable
     /// </summary>
     private const string ScopeKey = "lf_run_scope";
 
+    /// <summary>
+    /// 暫時讓目前流程內的 log 不被任何執行紀錄 target 擷取（仍照常寫到檔案與主控台）。
+    /// 給「已在資料庫交易內、記 log 會讓執行紀錄寫入與交易互鎖」的呼叫點用。
+    /// </summary>
+    internal static IDisposable SuppressCapture() => ScopeContext.PushProperty(ScopeKey, string.Empty);
+
     /// <summary>這個 recorder 實例的識別碼（見 <see cref="ScopeKey"/>）</summary>
     private readonly string _scopeToken = Guid.NewGuid().ToString("N");
 

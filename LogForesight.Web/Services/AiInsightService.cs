@@ -456,7 +456,7 @@ public class AiInsightService
             if (PromptBudget.EstimateTokens(text[..mid]) <= maxTokens) lo = mid;
             else hi = mid - 1;
         }
-        return text[..lo];
+        return TextTruncation.SafeCut(text, lo);
     }
 
     // ── AI 回應契約（內部）──────────────────────────────────────────────────
@@ -490,6 +490,5 @@ public class IssueClusterDto
 
 internal static class StringTruncateExtensions
 {
-    public static string Truncate(this string value, int max) =>
-        value.Length <= max ? value : value[..max];
+    public static string Truncate(this string value, int max) => TextTruncation.SafeCut(value, max);
 }

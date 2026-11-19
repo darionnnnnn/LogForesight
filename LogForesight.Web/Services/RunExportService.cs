@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
@@ -292,15 +293,6 @@ public sealed class RunExportService : IRunExportService
         return Round4(sorted[Math.Clamp(rank, 1, sorted.Count) - 1]);
     }
 
-    /// <summary>截到 <paramref name="max"/> 字，不從代理對中間切開；被截掉時結尾補「…」</summary>
-    internal static string Cut(string s, int max)
-    {
-        if (s.Length <= max) return s;
-        var cut = max;
-        if (cut > 0 && char.IsHighSurrogate(s[cut - 1])) cut--;
-        return s[..cut] + "…";
-    }
-
     /// <summary>孤立的代理字元（遭截斷的 emoji 等）換成 U+FFFD，否則 JSON 序列化會擲例外</summary>
     internal static string Clean(string s)
     {
@@ -442,7 +434,7 @@ public sealed class RunExportService : IRunExportService
         /// <summary>自由文字：先遮罩，再清掉孤立代理字元</summary>
         private string Text(string? value) => Clean(_m.Mask(value));
 
-        private string TextCut(string? value, int max) => Cut(Text(value), max);
+        private string TextCut(string? value, int max) => TextTruncation.SafeCutEllipsis(Text(value), max);
 
         private string VersionLabel(string? raw)
         {
@@ -730,12 +722,12 @@ public sealed class RunExportService : IRunExportService
 
             if (g.Samples.Count < _l.SamplesPerGroup)
             {
-                var sample = Cut(masked, _l.SampleChars);
+                var sample = TextTruncation.SafeCutEllipsis(masked, _l.SampleChars);
                 if (!g.Samples.Contains(sample, StringComparer.Ordinal)) g.Samples.Add(sample);
             }
 
             if (g.Stack == null && !string.IsNullOrWhiteSpace(exceptionText))
-                g.Stack = Cut(Clean(_m.MaskStack(exceptionText)), _l.StackChars);
+                g.Stack = TextTruncation.SafeCutEllipsis(Clean(_m.MaskStack(exceptionText)), _l.StackChars);
 
             TrackRecent(g, l.LoggedAt, l.RunId);
         }

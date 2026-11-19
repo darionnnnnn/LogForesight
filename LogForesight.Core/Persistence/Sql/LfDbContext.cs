@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -42,23 +46,91 @@ public class LfDbContext : DbContext
             .AddOrUpdateExtension(relational.WithUseParameterizedCollectionMode(ParameterTranslationMode.Parameter));
     }
 
-    private void AdvanceDailyRevisions()
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 各實體型別的字串長度上限欄位清單，以 EF 的 <see cref="IEntityType"/> 為鍵（弱參考：模型被回收時條目自動消失；
+    /// 型別數量固定，不隨資料成長）。鍵欄／索引欄由模型的鍵、索引與外鍵定義推導，不手寫清單。
+    /// </summary>
+    private static readonly ConditionalWeakTable<IEntityType, StringColumn[]> StringColumnPlans = new();
+
+    private sealed record StringColumn(string Name, int MaxLength, bool IsKeyOrIndex);
+
+    private static StringColumn[] PlanFor(IEntityType entityType) => StringColumnPlans.GetValue(entityType, static et =>
+        et.GetProperties()
+            .Where(p => p.ClrType == typeof(string) && p.GetMaxLength() is not null)
+            .Select(p => new StringColumn(p.Name, p.GetMaxLength()!.Value,
+                p.IsKey() || p.IsIndex() || p.IsForeignKey()))
+            .ToArray());
+
+    /// <summary>
+    /// 寫入前的單一處理點：推進每日紀錄的寫入版本，並依模型的 <c>HasMaxLength</c> 處理字串欄位。
+    /// 非鍵欄超長就截斷（代理對安全，<see cref="TextTruncation.SafeCut"/>）；鍵欄與索引欄超長不能截斷
+    /// （截斷會與別的鍵撞號或永遠對不上），該筆改為 Detached 不寫入，其餘筆照常寫入。
+    /// SQL Server 超長字串會讓整批寫入擲截斷例外、SQLite 卻靜默通過，這裡讓兩個後端行為一致。
+    /// Added 處理全部欄位，Modified 只處理實際被修改的欄位；不產生額外的資料庫指令。
+    /// </summary>
+    private void PrepareForSave()
     {
         ChangeTracker.DetectChanges();
-        foreach (var entry in ChangeTracker.Entries<DailyRecordRow>())
-            if (entry.State == EntityState.Modified)
-                entry.Entity.WriteRevision = checked(entry.Property(r => r.WriteRevision).OriginalValue + 1);
+        var autoDetect = ChangeTracker.AutoDetectChangesEnabled;
+        List<(EntityEntry Entry, string Column, int Length, int Max)>? skipped = null;
+        try
+        {
+            // 已手動 DetectChanges；迴圈內不要讓 Entries() 再掃一次。
+            ChangeTracker.AutoDetectChangesEnabled = false;
+            foreach (var entry in ChangeTracker.Entries())
+            {
+                if (entry.State is not (EntityState.Added or EntityState.Modified)) continue;
+
+                if (entry.State == EntityState.Modified && entry.Entity is DailyRecordRow daily)
+                    daily.WriteRevision = checked(entry.OriginalValues.GetValue<long>(nameof(DailyRecordRow.WriteRevision)) + 1);
+
+                foreach (var col in PlanFor(entry.Metadata))
+                {
+                    var prop = entry.Property(col.Name);
+                    if (entry.State == EntityState.Modified && !prop.IsModified) continue;
+                    if (prop.CurrentValue is not string text || text.Length <= col.MaxLength) continue;
+
+                    if (!col.IsKeyOrIndex)
+                    {
+                        prop.CurrentValue = TextTruncation.SafeCut(text, col.MaxLength);
+                        continue;
+                    }
+                    (skipped ??= new()).Add((entry, col.Name, text.Length, col.MaxLength));
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
+
+        if (skipped is null) return;
+        foreach (var (entry, _, _, _) in skipped) entry.State = EntityState.Detached;
+        LogSkipped(skipped.Select(x => (x.Entry.Metadata.ClrType.Name, x.Column, x.Length, x.Max)));
+    }
+
+    private void LogSkipped(IEnumerable<(string Entity, string Column, int Length, int Max)> skipped)
+    {
+        // 執行紀錄的 NLog target 會寫同一個資料庫：呼叫端已開明確交易時，在交易內記執行紀錄會互鎖，
+        // 這時只寫到檔案與主控台（暫停執行紀錄擷取），不開交易時才一併記進執行紀錄。
+        using var _ = Database.CurrentTransaction is null ? null : BatchRunRecorder.SuppressCapture();
+        foreach (var g in skipped.GroupBy(x => (x.Entity, x.Column)))
+            Log.Warn("資料庫寫入略過 {Count} 筆：{Entity}.{Column} 是鍵／索引欄，長度（最長 {Length}）超過上限 {Max}，截斷會與其他鍵撞號，該筆不寫入",
+                g.Count(), g.Key.Entity, g.Key.Column, g.Max(x => x.Length), g.First().Max);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        AdvanceDailyRevisions();
+        PrepareForSave();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        AdvanceDailyRevisions();
+        PrepareForSave();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
