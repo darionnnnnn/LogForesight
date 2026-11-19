@@ -25,11 +25,13 @@ public class MailNotificationServiceTestsSupersede : IDisposable
     private readonly EfSqliteFixture _fx = new();
     private readonly ScheduleFreshnessService _freshness;
     private readonly string _workflowRoot = Path.Combine(Path.GetTempPath(), "lf-mail-supersede-" + Guid.NewGuid().ToString("N"));
+    private readonly HostDayWorkflowStore _workflowStore;
     private readonly HostDayWorkflowService _workflow;
     private readonly MailNotifyStateStore _state;
     private readonly ManualClock _clock = new(DateTime.UtcNow);
 
-    private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
+    /// <summary>以服務使用的同一個時鐘算「昨天」：兩個時鐘來源在本機午夜那一瞬間可能差一天。</summary>
+    private DateTime Yesterday => _clock.GetLocalNow().Date.AddDays(-1);
 
     private sealed class ManualClock(DateTime utcNow) : TimeProvider
     {
@@ -42,7 +44,8 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         var batchRuns = new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs"));
         _freshness = new ScheduleFreshnessService(batchRuns, new ScheduleOptionsStore(_fx.Blob("schedule_options")));
         var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, _workflowRoot);
-        _workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        _workflowStore = new HostDayWorkflowStore(backend);
+        _workflow = new HostDayWorkflowService(_workflowStore);
         _state = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
         _countingRecords = DispatchProxy.Create<IAnalysisRecordQuery, ThrowingQueryProxy>();
         ((ThrowingQueryProxy)(object)_countingRecords).Inner = _records;
@@ -170,6 +173,81 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         Assert.Single(_sender.Sent);
         Assert.Single(_sender.Attempts);
         Assert.Empty(NonTerminal());
+    }
+
+    /// <summary>
+    /// 升級前寄出的主機日，工作流帳本存的也是舊算法的郵件意圖。只用信箱收信（沒有逐主機明細）時，
+    /// 升級後的收尾不得讓郵件腿從完成退回未完成：舊意圖的已收部分要接到新意圖上。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 升級前工作流帳本是舊意圖_只用信箱收信_郵件腿維持完成(bool summaryLane)
+    {
+        var lane = summaryLane ? "summary" : "urgent";
+        EnableMail(summaryLane);
+        var record = SeedRecord(aiPending: true);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+        Assert.True(_workflow.Get(record.HostId, record.Date)!.MailIsComplete);
+
+        var version = _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId, out _)!;
+        var ctx = service.MailContextFingerprint(_settingsStore.Get());
+        var oldIntent = lane + ":" + HostDayWorkflowFingerprint.HashParts([
+            lane, record.RecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.ParentRecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.DecisionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            HostDayWorkflowFingerprint.ForRecordWithFlags(record, false, true, false),
+            PrtgFindingMapper.Fingerprint(record.TopIssues), ctx]);
+        static string Part(string intent, string email) => System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(intent + "|recipient|" + System.Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(email))))));
+
+        // 工作流帳本改寫成升級前的形狀：意圖與其部分都用舊算法
+        _workflowStore.Update(record.HostId, record.Date, state =>
+        {
+            var newIntent = state.MailIntents.Single(i => i.StartsWith(lane + ":", StringComparison.Ordinal));
+            Assert.NotEqual(oldIntent, newIntent);
+            string Map(string part) => part == Part(newIntent, "ops@test.local") ? Part(oldIntent, "ops@test.local") : part;
+            state.MailIntents = state.MailIntents.Select(i => i == newIntent ? oldIntent : i).ToArray();
+            foreach (var dict in new[] { state.MailExpectedPartsByIntent, state.MailDeliveredPartsByIntent, state.MailFailedPartsByIntent })
+                if (dict.Remove(newIntent, out var parts)) dict[oldIntent] = parts.Select(Map).ToArray();
+            state.MailDeliveredParts = state.MailDeliveredParts.Select(Map).ToArray();
+        });
+        Assert.True(_workflow.Get(record.HostId, record.Date)!.MailIsComplete);
+
+        // 已寄鍵與待送項目也改寫成舊算法（同上一個測試）
+        string Convert(string key)
+        {
+            var parts = key.Split('|');
+            var route = parts.First(p => p.StartsWith("route:", StringComparison.Ordinal));
+            return LegacyKey(service, lane, record, version, route["route:".Length..], ctx, false, true, false);
+        }
+        _state.Update(s =>
+        {
+            var set = summaryLane ? s.SummarySentKeys : s.UrgentSentKeys;
+            var converted = set.Select(Convert).ToList();
+            set.Clear();
+            foreach (var key in converted) set.Add(key);
+            if (!summaryLane)
+            {
+                var outbox = s.UrgentOutbox.Values.ToList();
+                s.UrgentOutbox.Clear();
+                foreach (var intent in outbox) { intent.Key = Convert(intent.Key); s.UrgentOutbox[intent.Key] = intent; }
+            }
+        });
+
+        // 升級後 AI 寫回：旗標翻轉，信件內容不變
+        record.AiAnalyzed = true;
+        record.AiPending = false;
+        await service.NotifyAfterRunAsync();
+
+        Assert.Single(_sender.Sent);
+        var after = _workflow.Get(record.HostId, record.Date)!;
+        Assert.True(after.MailIsComplete);
+        Assert.DoesNotContain(oldIntent, after.MailIntents);
+        Assert.Single(after.MailIntents, i => i.StartsWith(lane + ":", StringComparison.Ordinal));
     }
 
     /// <summary>郵件情境指紋：與寄信路徑同一個方法（internal，測試專案可見）。</summary>

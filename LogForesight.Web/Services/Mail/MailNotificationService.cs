@@ -2154,6 +2154,24 @@ public class MailNotificationService
         return false;
     }
 
+    /// <summary>
+    /// 升級相容：<paramref name="legacyIntent"/> 是這筆紀錄以舊算法（三個狀態旗標取任一組合）算出的郵件意圖時，
+    /// 回傳每位收件人「舊部分 → 新部分」的對照；不是就回 null。升級滿 14 天回望期後可移除（同 <see cref="LegacyKeySent"/>）。
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? LegacyMailPartMap(string kind, DailyAnalysisRecord record,
+        HostDayWorkflowVersion version, string? mailContextFingerprint, string currentIntent,
+        IReadOnlyCollection<string> recipientHashes, string legacyIntent)
+    {
+        for (var bits = 0; bits < 8; bits++)
+        {
+            var flags = ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0);
+            if (!StringComparer.Ordinal.Equals(WorkflowMailIntent(kind, record, version, mailContextFingerprint, flags), legacyIntent)) continue;
+            return recipientHashes.ToDictionary(hash => WorkflowMailPart(legacyIntent, hash), hash => WorkflowMailPart(currentIntent, hash),
+                StringComparer.Ordinal);
+        }
+        return null;
+    }
+
     private static string WorkflowRecordKey(string lane, DailyAnalysisRecord record,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions, IReadOnlyDictionary<string, RecipientView>? views = null,
         string? mailContextFingerprint = null, (bool AiAnalyzed, bool AiPending, bool DetailPruned)? legacyFlags = null, MailIntentMemo? memo = null)
@@ -2475,16 +2493,20 @@ public class MailNotificationService
             // A null detail is an intentional statistics-only recipient. Its message still
             // includes the global aggregate containing this record, so SMTP acceptance must
             // satisfy the generic mail leg even though it has no per-host detail coverage.
-            var expectedParts = views.Where(view => view.Value.Detail == null ||
+            var recipientHashes = views.Where(view => view.Value.Detail == null ||
                     view.Value.Detail.Any(item => RecordKey(item) == key))
-                .Select(view => WorkflowMailPart(intent, Convert.ToHexString(SHA256.HashData(
-                    Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant())))))
+                .Select(view => Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant()))))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            var expectedParts = recipientHashes.Select(hash => WorkflowMailPart(intent, hash))
                 .Distinct(StringComparer.Ordinal).ToArray();
             var expected = expectedParts.Length == 0
                 ? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
                 : new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal) { [intent] = expectedParts };
             // 收尾流程（closingPass）緊接著會依計畫內容重新結案：計畫沒變就不寫
-            if (closingPass) _workflow.ReplaceMailPlanIfChanged(record.HostId, record.Date, kind, expected, version);
+            // 升級相容：帳本裡是同一份內容的舊算法意圖時，把已收部分接到新意圖（只在帳本缺本次意圖時才算，見 LegacyMailPartMap）
+            if (closingPass) _workflow.ReplaceMailPlanIfChanged(record.HostId, record.Date, kind, expected, version,
+                legacy => LegacyMailPartMap(kind, record, version, mailContextFingerprint, intent, recipientHashes, legacy));
             else _workflow.ReplaceMailPlan(record.HostId, record.Date, kind, expected, version);
         }
     }

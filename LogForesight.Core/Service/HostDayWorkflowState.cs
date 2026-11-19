@@ -854,13 +854,21 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     /// 例外路徑的差異：兩步之間若擲例外而沒走到結案，逐步呼叫會留下「未結案」，這裡保留原本的結案狀態
     /// （下一趟收尾會照常重算）。
     /// </summary>
+    /// <param name="legacyPartMap">
+    /// 升級相容（郵件內容指紋改用 <see cref="HostDayWorkflowFingerprint.ForMailContent"/>）：帳本裡這個通道只有別的意圖、
+    /// 沒有本次的意圖時才呼叫，傳入那個舊意圖；呼叫端判定它是同一份信件內容的舊算法意圖就回傳「舊部分 → 新部分」對照，
+    /// 舊意圖的已收與失敗部分接到新意圖上（否則只用信箱收信的已寄主機日會從完成退回未完成）；不是就回 null。
+    /// 升級滿 14 天郵件回望期後可移除（同 <c>LegacyKeySent</c>）。
+    /// </param>
     public HostDayWorkflowState ReplaceMailPlanIfChanged(long hostId, DateTime date, string lane,
-        IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version) =>
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version,
+        Func<string, IReadOnlyDictionary<string, string>?>? legacyPartMap = null) =>
         store.UpdateIfChanged(hostId, date, state =>
         {
             var closed = state.MailPlanClosed;
             var reason = state.MailPlanReason;
             var before = JsonSerializer.Serialize(state, LfJsonOptions.Pretty);
+            CarryOverLegacyMailIntent(state, lane, expectedParts, version, legacyPartMap);
             ApplyReplaceMailPlan(state, lane, expectedParts, version);
             var replaced = (state.MailPlanClosed, state.MailPlanReason);
             state.MailPlanClosed = closed;
@@ -868,6 +876,31 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             if (StringComparer.Ordinal.Equals(before, JsonSerializer.Serialize(state, LfJsonOptions.Pretty))) return;
             (state.MailPlanClosed, state.MailPlanReason) = replaced;
         });
+
+    /// <summary>把同一份信件內容的舊算法意圖改名成本次意圖，已收與失敗部分依對照換成新部分（見 <see cref="ReplaceMailPlanIfChanged"/>）。</summary>
+    private static void CarryOverLegacyMailIntent(HostDayWorkflowState state, string lane,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version,
+        Func<string, IReadOnlyDictionary<string, string>?>? legacyPartMap)
+    {
+        if (legacyPartMap == null || !MatchesVersion(state, version)) return;
+        var prefix = lane + ":";
+        var current = expectedParts.Keys.FirstOrDefault(key => key.StartsWith(prefix, StringComparison.Ordinal));
+        if (current == null || state.MailIntents.Contains(current, StringComparer.Ordinal)) return;
+        foreach (var legacy in state.MailIntents.Where(intent => intent.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+        {
+            var map = legacyPartMap(legacy);
+            if (map == null) continue;
+            string[] Remap(string[]? parts) => (parts ?? []).Where(map.ContainsKey).Select(part => map[part])
+                .Distinct(StringComparer.Ordinal).ToArray();
+            state.MailIntents = state.MailIntents.Select(intent => intent == legacy ? current : intent).ToArray();
+            state.MailDeliveredPartsByIntent[current] = Remap(state.MailDeliveredPartsByIntent.GetValueOrDefault(legacy));
+            state.MailFailedPartsByIntent[current] = Remap(state.MailFailedPartsByIntent.GetValueOrDefault(legacy));
+            state.MailExpectedPartsByIntent.Remove(legacy);
+            state.MailDeliveredPartsByIntent.Remove(legacy);
+            state.MailFailedPartsByIntent.Remove(legacy);
+            return;
+        }
+    }
 
     private static void ApplyReplaceMailPlan(HostDayWorkflowState state, string lane,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> expectedParts, HostDayWorkflowVersion version)

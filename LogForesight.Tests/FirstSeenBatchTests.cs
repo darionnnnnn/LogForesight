@@ -165,7 +165,7 @@ public sealed class FirstSeenBatchTests : IDisposable
             using var barrier = new Barrier(2);
             var tasks = new[]
             {
-                Task.Run(() => { barrier.SignalAndWait(); storeA.Append(Rec(1, Today.AddDays(-round * 0), Issue(source, round + 1))); }),
+                Task.Run(() => { barrier.SignalAndWait(); storeA.Append(Rec(1, Today, Issue(source, round + 1))); }),
                 Task.Run(() => { barrier.SignalAndWait(); storeB.Append(Rec(2, early, Issue(source, round + 1))); })
             };
             Task.WaitAll(tasks);

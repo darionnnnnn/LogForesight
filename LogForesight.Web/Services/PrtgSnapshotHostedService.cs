@@ -888,7 +888,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     internal sealed record RecentStateChangeScopeContext(
-        HashSet<long> BusinessDeviceObjids,
+        IReadOnlySet<long> BusinessDeviceObjids,
         string SourceIdentityHash,
         string ScopeVersionHash,
         DateTime LocalToday,
@@ -1171,7 +1171,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(revision)));
 
     /// <summary>同一個執行週期內業務範圍的計算結果與當時的三個版本（見 <see cref="ComputeBusinessScopeDevices"/>）。</summary>
-    private sealed record BusinessScopeCacheEntry(long HostsVersion, long HostMapRevision, string ScopeRevision, HashSet<long> Devices);
+    private sealed record BusinessScopeCacheEntry(long HostsVersion, long HostMapRevision, string ScopeRevision, IReadOnlySet<long> Devices);
 
     private BusinessScopeCacheEntry? _cycleBusinessScope;
     private int _businessScopeComputeCount;
@@ -1187,9 +1187,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 主機對應版本（正式日映射寫入遞增）、範圍版本（人工對應、Sentinel、監看政策等，含主機清單）三者都相同才沿用，
     /// 任何一個不同就重算。版本先於資料讀取：兩次讀之間有寫入時，記下的是較舊的版本，下一次必然不符而重算。
     /// 兩階段對帳是刻意分開的狀態機，這裡只共用範圍的計算結果，不合併、不省略對帳。
-    /// 回傳的集合呼叫端只讀不改。
+    /// 回傳唯讀型別：同一週期內兩個呼叫端共用同一個集合。
     /// </summary>
-    private HashSet<long> ComputeBusinessScopeDevices(EfPrtgStore store)
+    private IReadOnlySet<long> ComputeBusinessScopeDevices(EfPrtgStore store)
     {
         var hostsVersion = _hosts.DataVersion;
         var hostMapRevision = store.ReadHostMapDataRevision();
