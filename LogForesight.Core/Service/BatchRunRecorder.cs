@@ -547,12 +547,6 @@ public class BatchRunRecorder : IDisposable
             Log.Warn("執行紀錄寫入佇列 30 秒內沒有排空，結束列照常寫出（部分診斷行可能缺漏）");
     }
 
-    /// <summary>等目前已入佇列的診斷行都寫完（測試與需要即時讀回的呼叫端用）</summary>
-    internal bool FlushLogs() => _queue?.Flush(TimeSpan.FromSeconds(30)) ?? true;
-
-    /// <summary>佇列累計丟棄的擷取事件數</summary>
-    internal long DroppedLogCount => _queue?.DroppedTotal ?? 0;
-
     [ThreadStatic]
     private static bool _writingRow;
 

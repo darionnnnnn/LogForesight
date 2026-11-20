@@ -298,7 +298,7 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 以使用者帳密向 AD bind 驗證（AD 未設定時 fallback 為 `UnconfiguredAdAuthenticationProvider`）；
 AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流（`LoginThrottle`：5 分鐘滑動窗口內
 同一帳號失敗 10 次或同一來源 IP 失敗 50 次即暫停 5 分鐘，計數鍵上限 1 萬個；暫停期間回 429 `rate_limited`），
-命中門檻時不再呼叫 AD，減少密碼噴灑觸發網域鎖定。
+命中門檻時不呼叫 AD，減少密碼噴灑觸發網域鎖定。
 目錄服務無回應時 AD bind 會占住執行緒到逾時，因此**呼叫 Provider 這一步**有並行上限（`DirectoryVerifyGate`：同時 8 個、再排最多 32 個，滿了回 429 `rate_limited`「目錄服務忙碌，請稍後再試。」，不計入失敗節流）；上限不加在端點，serverAdmin 救援帳號不經 Provider、不受影響。迴路位址與未知來源不計入 IP 維度。
 救援帳號豁免 IP 維度（不受共用 IP 門檻連坐），只看帳號維度，仍受本身鎖定限制。
 帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
@@ -2717,7 +2717,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
      `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。
 
-     **記憶體（`Memory`、`MemoryWarning`）**：`/api/health/detail` 的 `Memory` 為 `MemorySnapshotDto`，欄位 `CapturedAt`、`WorkingSetBytes`、`PeakWorkingSetBytes`、`PrivateBytes`、`PeakPagedBytes`、`ManagedHeapBytes`、`GcHeapSizeBytes`、`GcCommittedBytes`、`GcFragmentedBytes`、`LohSizeBytes`、`HardLimitBytes`、`Gen2Collections`、`IsServerGc`、`GcConserveMemory`、`GcHeapHardLimitPercent`、`SqliteHeapBytes`、`SqliteHeapHighwaterBytes`、`NlogRuleCount`、`HardLimitUsagePercent` 與 `Caches[]`（快取名稱、條目、元素、命中、未命中、淘汰、超大拒收）。
+     **記憶體（`Memory`、`MemoryWarning`）**：`/api/health/detail` 的 `Memory` 為 `MemorySnapshotDto`，欄位 `CapturedAt`、`WorkingSetBytes`、`PeakWorkingSetBytes`、`PrivateBytes`、`PeakPagedBytes`、`ManagedHeapBytes`、`GcHeapSizeBytes`、`GcCommittedBytes`、`GcFragmentedBytes`、`LohSizeBytes`、`HardLimitBytes`、`Gen2Collections`、`IsServerGc`、`GcConserveMemory`、`GcHeapHardLimitPercent`、`SqliteHeapBytes`、`SqliteHeapHighwaterBytes`、`NlogRuleCount`、`HardLimitUsagePercent` 與 `Caches[]`（快取名稱、條目、元素、命中、未命中、淘汰、超大拒收）。`NlogRuleCount` 在常駐 target 下恆為常數，用途是偵測執行期誤增規則（數字變動就代表有程式動態掛載了 NLog 規則）。
      數值單位為 bytes，除 `CapturedAt`、`Gen2Collections`、`IsServerGc` 與 `Caches` 外皆可為 null：第一次 GC 前讀不到的項目、非 Sqlite 的 SQLite 堆、provider 尚未初始化時為 null。儲存探測失敗時仍會填（記憶體讀取不碰資料庫）。`MemoryWarning` 為託管堆占上限比例達 85% 時為真，並使整體狀態為 `degraded`。
 
      **資料層慢查詢（`TopSlowOperations`）**：除了總操作數／慢操作數／門檻（2000ms）與單一最慢值，
@@ -3577,7 +3577,7 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
   併入 PRTG finding → 不需要 AI 時補定案報告 → 工作流 PRTG 腿 → 結果計數 → 案件掛接與夜間派工 → 風險 log 暫存 → 權限異動（NetIQ 才有）。
   PRTG 併入必須在案件掛接與結果計數之前（案件吃記憶體的 TopIssues，計數吃上調後的風險與報告參照）；
   父紀錄登記、PRTG 腿、案件掛接、風險 log 暫存、權限異動失敗只記警告，不使已保存的分析紀錄作廢。
-  `HostDayPostProcessorOrderTests` 以步驟觀察點與原始碼守門確保兩條路徑不再各自呼叫這些步驟。
+  `HostDayPostProcessorOrderTests` 以步驟觀察點與原始碼守門確保這些步驟只由 `HostDayPostProcessor.RunAsync` 依固定順序呼叫。
 - **不會被刪除的東西**：處理狀態（`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`）、
   首見日（`lf_issue_first_seen`）、郵件已寄鍵。處理狀態的鍵是 `(host, date, issue_key)`，
   重跑後同一個問題自動接回既有結論；新規則不再產生該問題時，該處理列成為孤兒列保留在歷史中。

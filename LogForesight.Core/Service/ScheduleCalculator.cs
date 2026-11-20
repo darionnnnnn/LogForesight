@@ -97,12 +97,15 @@ public static class ScheduleCalculator
         return new ScheduleValidationResult { IsValid = errors.Count == 0, Errors = errors };
     }
 
-    /// <summary>解析 HH:mm 為當天分鐘數（0~1439）；格式不合法回 false</summary>
+    /// <summary>
+    /// 解析 HH:mm 為當天分鐘數（0~1439）；格式不合法回 false。窗口字串原樣存檔並以字串序排序，
+    /// 所以只接受已是正規 HH:mm 的值（<c>1:00</c> 或前後空白雖可被 <see cref="InputParsing.TryParseClockTime"/> 解析，這裡仍拒絕）。
+    /// </summary>
     public static bool TryParseMinutes(string hhmm, out int minutes)
     {
         minutes = 0;
-        if (!TimeSpan.TryParseExact(hhmm ?? "", @"hh\:mm", null, out var ts)) return false;
-        if (ts.Ticks < 0 || ts.TotalMinutes >= 1440) return false;
+        if (!InputParsing.TryParseClockTime(hhmm, out var ts)) return false;
+        if (InputParsing.NormalizeClockTime(hhmm) != hhmm) return false;
         minutes = (int)ts.TotalMinutes;
         return true;
     }

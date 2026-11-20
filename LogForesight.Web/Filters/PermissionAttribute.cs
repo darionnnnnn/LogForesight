@@ -59,7 +59,7 @@ public class PermissionFilter : IAuthorizationFilter
 
         // API 回信封讓前端處理；頁面導向說明頁——瀏覽器直接開一個沒權限的網址時
         // 看到一坨 JSON 是很差的體驗，而且看不出「是沒權限還是壞掉了」
-        if (context.HttpContext.Request.Path.StartsWithSegments("/api"))
+        if (ApiStatusEnvelope.IsApiRequest(context.HttpContext.Request))
         {
             context.Result = new ObjectResult(
                 ApiResponse<object>.Fail(ApiErrorCodes.Forbidden, "您沒有使用這項功能的權限。"))

@@ -156,7 +156,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   有期限內樣本時維持停止，PRTG 維護頁鏡像狀態提供「封存舊待寫資料並重新開始」（`POST api/prtg-snapshot-diagnostics/archive-journal`，`Maintain`＋`ViewAll`；只對 `database-mismatch`、`source-changed` 開放，其他原因回 409），
   確認對話寫出會放棄的筆數、時間範圍與封存位置；不提供強制寫進目前資料庫。封存夾不自動清理，確認不需要重播後可手動刪除。
   `source-changed` 在兩種情況出現：執行中改了 PRTG 位址而記憶體還有樣本，以及重啟時待寫檔記載的來源位址指紋與目前設定不同且檔內有樣本（位址沒變則照舊沿用）。
-  待寫檔發布新世代失敗（容量不足、寫入錯誤）時，只清除本次自己建立的世代目錄與暫存 manifest，不動其他世代；新世代指標切換成功後不再清除。
+  待寫檔發布新世代失敗（容量不足、寫入錯誤）時，只清除本次自己建立的世代目錄與暫存 manifest，不動其他世代；新世代指標切換成功後，世代目錄與 manifest 即為正式內容、不會被清除。
   **不再靜默**：待寫檔停止時診斷小時狀態為 `stopped`（目標數未知記 -1、顯示「未知」，不再顯示「無目標」）；系統健康 PRTG 快照卡在保守策略下「停止」立即警示、「目標非空卻超過 6 小時沒有成功取樣」（從啟動與最近成功取晚者起算）也警示，判定單一入口 `PrtgSnapshotAlert.Evaluate`；
   PRTG 維護頁頁首「啟用準備」多「數值快照」一項；夜間輸出改寫為「取數策略為保守，但數值快照已停止（原因：…），今晚沒有數值來源」並列為警告。
 - 每輪通過前置條件後補抓「範圍內但鏡像沒有感測器」的裝置（每輪最多 50 台，§3c），守門覆寫清單中鏡像找不到的 sensor 所在裝置排最前。
@@ -181,7 +181,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 **取數目標一律與當前範圍取交集**：
 - 不同步結構的路徑（回填）：sensor 清單讀鏡像，但只取所屬裝置在範圍內者（`EfPrtgStore.GetSensorTargets(scopeDeviceObjids)`，範圍參數必填）；範圍算不出來時不取任何數值。鏡像裡留著的範圍外 sensor 不發請求。
-- 同日續補（`FetchPendingDevicesAsync`）：待補清單是上一趟留下的，續補前以 `PrtgScopeDevices.Compute` 現算範圍（範圍參數必填），清單與範圍取交集；範圍外的裝置不發請求、也不再列為待補。範圍算不出來時整段不補、待補清單原樣保留。
+- 同日續補（`FetchPendingDevicesAsync`）：待補清單是上一趟留下的，續補前以 `PrtgScopeDevices.Compute` 現算範圍（範圍參數必填），清單與範圍取交集；範圍外的裝置不發請求、也不列為待補。範圍算不出來時整段不補、待補清單原樣保留。
 - 續補的感測器、狀態變更兩階段各自隔離：某階段擲例外時該階段的待補裝置原樣保留、整趟標部分完成，規則評估照常執行；使用者取消（例外為 OCE 且取消訊號已觸發）照常往外拋，HttpClient 逾時不算取消。
 
 **人工對應的裝置不在鏡像**（PRTG 端已刪除該裝置）：不入範圍，執行輸出印「人工對應的裝置 #N 已不在 PRTG 鏡像，未納入取數範圍」，
@@ -588,6 +588,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 - 匯出檔：自描述 JSON（`FormatVersion` 4），`MagnitudeSemanticsVersion=3`、`FormalEvaluationScope=state-change-messages`；含值型基線（56 天逐日聚合）、
   感測器摘要、type 輪廓（24 小時曲線，資料庫端聚合）、規則門檻（逐日命中、以最低門檻重評的 magnitude 樣本與 P50／P90／P99、`CurrentRules`）、
   數值取得量級、殘留判定指標（不含帳號名稱，與正式判定共用 `ResidualCredentialDetector.EvaluateMetrics`）。`detail=summary` 只匯出摘要。
+- 數值取得量級的每夜中位數欄位（`SensorsPerNightMedian`、`RowsPerNightMedian`）是小數：偶數晚數取中間兩值平均，外部讀取程式要以小數讀取。
   第 4 版新增：值型基線 `KeyMetrics` 的 `SnapshotLastSuccessAt`、`SnapshotConsecutiveFailures`、`SnapshotStopReason`、`SnapshotBackingOff`（讓匯出檔自己回答「快照為什麼沒資料」；`SnapshotStopReason` 是待寫檔停止碼，沒有停止時是快照目前的跳過原因）；殘留候選的 `RecurringGroupCount`、`RecurringGroupShare`（最大組以外跨日重現 ≥ 2 天的組數與其明細占比）；warning 樣本的 `ValueChange7d`（近 7 日已用百分比變化，算不到為 null）。舊欄位名稱與意義不變。
 - 規則門檻重放的「現在」取自注入的時鐘（`StorageBackend.Clock`）：評估日是今天時，當日仍 Down 的持續分鐘只算到評估時刻（`PrtgRuleEvaluator.Evaluate` 的 `asOf`），不算到午夜；過去日照算到當日結束。每日管線不傳 `asOf`。
 - 匯出閘門：四項皆達「可用」才解鎖，否則勾「仍要匯出」覆寫；兩者都寫稽核。

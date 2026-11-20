@@ -105,9 +105,9 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 
 **登入改用 ASP.NET Core 內建 Cookie Authentication**：
 - **升級後所有人會被登出一次**，重新登入即可。舊的登入 cookie（名稱 `lf_auth`）不再被讀取，下一次請求時會被清掉。
-- **回滾到舊版後，使用者重新登入即可**。使用者資料多出的 `SessionVersion` 欄位，舊版讀取時會忽略。
+- **回滾到舊版的前提**：舊版驗證登入需要 `Jwt:SecretKey`（環境變數 `Jwt__SecretKey` 或設定檔），所以該設定仍在才能回滾；回滾後全員重新登入一次。使用者資料多出的 `SessionVersion` 欄位，舊版讀取時會忽略。
 - 登入時限：`Jwt:ExpireHours`（預設 8 小時）改為「閒置時限」，有操作就延長；連續登入另有 24 小時絕對上限（程式常數）。登出與停用帳號即時生效，登出後該帳號所有裝置上的登入一併失效。
-- `Jwt:SecretKey`、`Jwt:Issuer`、`Jwt:Audience` 已不使用，環境變數 `Jwt__SecretKey` 可以刪除（留著不影響啟動）。
+- `Jwt:SecretKey`、`Jwt:Issuer`、`Jwt:Audience` 已不使用，環境變數 `Jwt__SecretKey` 請先保留，確認新版穩定、不會再回滾之後再刪除（留著不影響啟動）。
 - 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。
 
 **內建規則升級到 v12（稽核記錄清除 1102）**：實際環境的 1102 事件來源是 `Eventlog`，新版多一條對應規則。既有站台要到「系統管理 > 規則維護」套用升級橫幅，新規則才會生效。
@@ -641,7 +641,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 | `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
 | `Jwt.CookieName` | `lf_session` | 登入 cookie 名稱。舊版的 `lf_auth` 不再使用，請求帶著它時會被清除 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
-| `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
+| `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。連續失敗的鎖定由登入節流負責，設定檔不含 `MaxFailedAttempts`／`LockoutMinutes`，既有設定鍵可刪、留著無作用。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
 
 **其餘設定都在 Web 的「系統管理 > 設定」頁（資料庫）**，改完即時生效、不必重啟站台：
 AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲罰、額外請求欄位）、
@@ -763,7 +763,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
   只要還有一筆解不開就不會更新，警示會留著。PRTG 目前認證方式以外的舊密文（例如改用 passhash 後留下的舊密碼）不算，切回該方式時才要重新輸入。
 - **`DataRoot` 放在部署目錄之外，或把 `keys\` 排除在清除範圍**：金鑰檔預設在 `Storage:DataRoot`（未設定時等於執行檔目錄）下，
   重新部署若清空整個目錄，金鑰檔會一起消失，下次啟動又默默產生新金鑰，所有憑證都解不開（log 會寫「金鑰檔遺失」）。
-  IIS 部署用「先清空再複製」的流程時尤其要注意。
+  IIS 部署用「先清空再複製」的流程時尤其要注意：排除清單要同時含 `keys\` 與 `dataprotection\`（或把 `DataRoot` 放在部署目錄之外）；`dataprotection\` 遺失只造成全員重新登入。
 - **共用同一個資料庫的多個站台必須共用同一把金鑰**（同一份金鑰檔或同一個 `LF_CRYPTO_KEY`）；各自產生金鑰會互相讓對方的憑證解不開，
   且資料庫只記錄一個指紋，站台之間會互相判定不相符。
 - **權限**：金鑰檔的存取權限會限縮為「建立它的帳號＋Administrators」。請讓站台第一次啟動就用正式的執行帳號
@@ -779,6 +779,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 
 - 金鑰環存在 `Storage:DataRoot\dataprotection\`，應用名稱固定為 `LogForesight`，不隨部署路徑變動。
 - 啟動時建立並限縮權限：Unix 目錄 700、檔案 600；Windows 移除繼承，只留執行帳號與 SYSTEM。建不起來（執行帳號沒有寫入權限）會中止啟動。
+- **既有目錄的權限屬於別的帳號時啟動會失敗**（例如先用管理者帳號手動跑過站台）：錯誤訊息會帶目錄路徑與目前的執行身分；刪除該目錄（只造成全員重新登入）或重設權限給執行帳號後重啟即可。
 - **遺失的後果只是全員重新登入與舊分頁游標失效，不影響資料，不必備份。** 與加密金鑰檔 `keys\lf-crypto.key` 不同，後者遺失會讓資料庫裡的密碼欄位解不開。
 - 多個站台實例共用同一個資料庫時，各自有各自的 `DataRoot`，登入 cookie 不互通（本來就是各站台自己登入）。
 - Cookie 的 `Secure` 旗標跟隨請求：HTTPS（或反向代理帶 `X-Forwarded-Proto: https`）才附上，HTTP 直連仍可登入。Path 跟著站台掛載路徑，IIS 子 Application 不需另外設定。
@@ -817,7 +818,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
    沒裝就部署，瀏覽器會看到 IIS 的「HTTP Error 500.31 - Failed to load ASP.NET Core runtime」，
    事件檢視器記錄找不到 `Microsoft.NETCore.App` 10.0。裝完 Hosting Bundle 要重啟 IIS（`iisreset`）才會生效。
    主機不能安裝執行階段時，改用自帶執行階段的發行方式（輸出目錄較大，但不依賴主機上的執行階段）：
-   `dotnet publish LogForesight.Web -c Release -r win-x64 --self-contained true`。
+   `dotnet publish LogForesight.Web -c Release -r win-x64 --self-contained true`。IIS 仍需安裝 ASP.NET Core Module（Hosting Bundle 的一部分）。
    退回 .NET 8 版的舊發行目錄不需要移除 .NET 10 的 Hosting Bundle（兩版可並存）。
 2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。在 git 工作目錄內建置才會帶 commit，部署後到「設定 > 系統健康」核對版本（顯示「建置時未取得版本識別」就分不出部署了哪一版）。
 3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
