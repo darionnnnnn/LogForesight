@@ -58,8 +58,6 @@
   760 以上，儲存量靠 `RawEventRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
   詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
 - **多執行個體排程仍不支援**：日紀錄已有主機日程序內鎖及 `write_revision` 持久併發權杖，過期 JSON 提交會失敗；重建父列使用新 RecordId，補追加重新核對父資格。這些不等於跨程序工作租約。若需多實例主動排程，另定租約與工作重試契約，不可僅因資料列有版本就同時啟動兩個排程器。
-- **其他 Web 服務仍把 Core 的 InvalidOperation／Argument 例外訊息直接給使用者**：交辦類已改擲 `WorkOrderRuleException`，由 `ApiExceptionFilter` 對應 400；`PrtgScopeEstimateController`（2 處）、`PrtgScopePurgeJobsController`（2 處）、`ScheduleController`（1 處）與 `PrtgMonitoringController` 的 409 仍依「Core 自擲中文」的假設轉成領域例外，範圍內若混入框架層例外，英文原文會外傳。
-  **觸發時機**：上述路徑出現英文錯誤訊息的回報，或下次改到這些控制器時，比照交辦類改擲專屬例外型別（逐處盤點見 `docs/archive/FEEDBACK-76-2-E-TABLE.md` 第 3 節）。
 - **停用主機排除條件在聚合查詢重複展開**：`EfWorkOrderStore` 的成員計數、負載看板、處理人摘要與排序各自帶一份停用主機鍵清單（SQL Server 以 OPENJSON 展開），各請求也各自重算 `WorkOrderQueries.DisabledHostKeys`；派工候選人快照（待派頁試跑也會建）另為有可續掛單的處理人逐人計算可見主機。停用主機為 0 或少量時沒有影響，未在 3000 台、數百停用主機下量測。
   **觸發時機**：交辦總覽、處理人頁或待派頁載入變慢時，先以 `ToQueryString` 與實跑比對停用鍵 0 與 500 個的耗時，再決定改子查詢或請求內快取。
 - **處理人看已取消或已移交的單時，成員主機名仍是連結**：該主機若只靠那張單的案件授與才看得到，取消或移交後點進去是無權頁面。成員 DTO 只有 `HostId`，檢視者是該單處理人時後端不依可見範圍過濾成員，前端無從判斷。
@@ -181,7 +179,6 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
 
 ### 前端小幅收斂（不影響正確性）
 
-- 複製到剪貼簿的寫法有 7 處各自實作（報告卡、重點速報、問題查詢、NetIQ、PRTG 維護、交辦單詳情），可抽成 `core/ui.js` 的共用函式。
 - `recordDetailUrl` 與報告卡的行為案例目前放在側軌相關的測試類別，可搬到各自主題的類別。
 - 處理面板儲存、指派或衝突重載後整個面板重繪，鍵盤焦點會回到頁首；可在重繪後把焦點設到面板標題。
 - 排程作業、PRTG 維護、PRTG 校準、設定、規則維護、儀表板仍有實心 Bootstrap 徽章（`badge bg-*`、`text-bg-*`，約 25 處；排程作業的「失敗」是實心紅），與其他頁的淡色 `lf-badge` 風格不一致。改走 `format.js` 的淡色徽章工廠，並在 `DesignSystemGuardUiTests` 加一條禁用 `\bbadge (bg|text-bg)-`。
@@ -215,7 +212,7 @@ PRTG 配額在測試組件一律用加速時鐘（`AcceleratedPrtgClock`，含 `
 
 ### 測試的時鐘與時區抽象
 
-約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。交辦、靜音、觀察中三條路徑用可替換的 `TimeProvider`（`Core/Time/ClockExtensions`，`HandoffClockGuardTests` 守門），其餘約 380 處仍直接讀系統時鐘。
+約 165 個測試檔（約 1,000 處）直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。交辦、靜音、觀察中三條路徑用可替換的 `TimeProvider`（`Core/Time/ClockExtensions`，`HandoffClockGuardTests` 守門），其餘約 380 處仍直接讀系統時鐘。測試替身多數已用官方 `FakeTimeProvider`；手寫的只留需要記錄計時器到期、依讀取次數推進或往回撥時鐘的幾個。
 **觸發時機**：非 Windows 平台出現跨日界或 DST 相關的偶發紅燈時，再抽時鐘與固定時區。
 
 ### Linux 平台差異
@@ -594,7 +591,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
   **觸發時機**：展開某日或換頁明顯變慢時，把當天的主機列以版本為鍵快取。
 - **待派試跑的下界在孤兒主機或無法解析的問題鍵時會偏高**：下界不扣掉主機清單查不到與問題鍵解析失敗的出現點，邊界時會偏向回「太多」（保守）。
   **觸發時機**：使用者回報期間不大卻顯示超過上限時，查 `lf_top_issues` 是否有主機清單已無的 host_id。
-- **父指紋每次重算都做一次精簡投影，還原路徑另算一次舊算法的指紋**：工作流復原逐筆比對時成本隨主機日數成長（投影內有逐筆來源觀測的序列化）；舊算法只為辨認升級前存下的列。
+- **父指紋每次重算都做一次精簡投影，還原路徑另算先前兩版算法的指紋**：工作流復原逐筆比對時成本隨主機日數成長（投影內有逐筆來源觀測的序列化）；舊算法（`LegacyParentFingerprints`）只為辨認升級前存下的列。
   **觸發時機**：復原服務單趟耗時明顯增加時量測；站台升級滿一個保留期（舊指紋的列都已換新）後可移除舊算法那一次。
 - **建單改背景作業**：4000 台 × 10 天建單同步段約 2.2 秒、預覽約 0.8 秒，目前同步完成。**觸發時機**：建單同步段超過 30 秒。
 - **背景服務與前景共用連線池**：`PrtgSnapshotHostedService`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`PrtgRiskReviewHostedService` 注入站台的 `StorageBackend`，與前景請求共用連線池（只有分析主流程自建獨立池）。SQLite 本來就停用連線池；SQL Server 預設池 100，四支服務峰值約 15 條。**觸發時機**：系統健康頁或 SQL Server 端出現連線池耗盡／等待連線逾時。修法：以 keyed DI 註冊第二個 `StorageBackend` 給這四支服務，並逐一核對快照 journal 綁定與跨實例快取都以版本戳為鍵。
@@ -608,7 +605,21 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 
 ## 設計面債務（未排期）
 
-- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`HandlingController`（24 個）、`AdminController`（18 個）、`RulesController`（10 個）、`AuditController`（9 個）仍逐參數宣告。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
+- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`AdminController`（20 個）、`AuditController`（9 個）、`RulesController`（7 個）仍逐參數宣告（`HandlingController` 已收斂）。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
+- **評估過、刻意維持現狀的替換**（各附觸發時機）：
+  - `SchemaUpgrader` 換成版本化遷移：無法在真實 SQL Server 驗證。**觸發時機**：有 SQL Server 測試環境（見下方容器測試），或升級步驟需要不可逆的資料轉換時。
+  - `PrtgSnapshotJournal` 換成 SQLite 佇列：現行待寫檔正確且有完整性檢查。**觸發時機**：待寫檔出現效能或損壞問題時。
+  - 前端 `mini-dom` 換成 jsdom、引入 ESLint：要引入 npm 工具鏈。**觸發時機**：行為測試因 `mini-dom` 缺方法而需要大量補實作時。
+  - 授權 filter 換成 ASP.NET policy：沒有安全收益，只是寫法不同。**觸發時機**：需要資源型授權（依物件判定）時。
+  - LDAP 改用 `System.DirectoryServices.Protocols`：沒有 AD 測試環境。**觸發時機**：要支援 Linux 部署，或現行元件出現相容問題時。
+  - NetIQ 嘗試帳本改成父紀錄欄位；交辦 outbox 等三個 blob 佇列改資料表：沒有實際問題的證據，屬資料表變更。**觸發時機**：佇列 blob 讀寫在健康頁慢操作中出現，或 outbox 丟棄告示（`outboxDropped`）反覆出現時。
+  - 密文綁定所屬欄位（防止把 A 欄的密文貼到 B 欄）：需要全庫重新加密。**觸發時機**：資安稽核要求，或下次更換加密格式時一併做。
+  - PRTG 認證改用標頭（不放查詢字串）：沒有實機可驗 PRTG 支援的標頭形式。**觸發時機**：取得可測試的 PRTG 實機時。
+  - 權限異動去重鍵加唯一約束：既有重複列要先清，並行重複的風險低。**觸發時機**：健康頁或對帳發現去重鍵重複列時。
+  - SQL Server 容器測試：macOS 開發機執行不了。**觸發時機**：CI 加入 Windows 或 Linux 的 SQL Server 服務容器時；屆時補 J8、D7、D8、N1 的實際連線驗證。
+- **詢問 AI 現場事件的快取是手寫靜態字典**：`SentinelEventFetchService` 以靜態 `ConcurrentDictionary` 快取（TTL 10 分、滿了整批清、不經 `SingleFlight`），沒改用 `BoundedTtlCache`：它刻意在搶不到全站併發旗標時直接跳過、不排隊，且要能存「0 筆」結果，與同步合併的語意不合。鍵是主機、日期、來源與事件編號，不含使用者，依賴呼叫端先套可見範圍。**觸發時機**：詢問 AI 的併發上限調高、或新增不經 `RiskyEventLookupService` 的呼叫端時，先確認可見範圍再評估收斂。
+- **正式碼的行內切字串仍約 55 處**：截斷方法已收成 `TextTruncation.SafeCut` 一份，但顯示與診斷用的 `Substring(0, …)`／`[..N]` 行內切片沒有改走它，切點落在代理字元中間時會留下半個字。`TruncationSourceGuardTests` 以「檔案→次數」基準表擋住新增。**觸發時機**：改到含這類切片的檔案時順手改用 `SafeCut`，並同步降低基準表的次數。
+- **偵測行為變更，等資料再決定**：`ResidualCredentialDetector` 的降級條件、暴力破解錨點擴到 4771／4776、正式取數投影加 `dun`／`tuid`，都會改變告警，沒有實機資料可驗證對錯。**觸發時機**：NetIQ 探測步驟 7b 回報 `dun`／`tuid` 可投影且有值，並有校準匯出可比對時。
 - **重複但行為一致的小處，改了沒有可觀察差別（四項合併記錄）**：
   - 雜湊轉十六進位：各處以一行式（`Convert.ToHexString(...)`／`ToLowerInvariant()` 組合）各寫一份，輸出一致。**觸發時機**：第三種輸出格式（大小寫、分隔）出現，或任一處與其他處結果分岔時，收成單一 helper。
   - 背景服務啟動延遲：各背景服務各自寫啟動後的等待時間與取消處理，語意相同。**觸發時機**：新增背景服務，或需要統一調整／設定化啟動延遲時，抽共用基底或 helper。
@@ -651,9 +662,8 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
   `IsRunning` 與兩個時間戳，其餘（有無 CTS、有無 Trigger、`EndRun` 參數、`Snapshot` 型別）各不相同，
   抽出來是個空殼而呼叫端仍要各自處理鎖與重設。真正的風險（多組進度欄位要兩處手動重設）已由
   `SchedulerRunState` 的三軌值型別解決。除非再多出兩個以上同型的狀態物件，否則不要再提。
-- **並行負載下的不穩定測試**：全量 `dotnet test` 偶有一條紅、單獨重跑即綠，已觀察到四條：
+- **並行負載下的不穩定測試**：全量 `dotnet test` 偶有一條紅、單獨重跑即綠，已觀察到三條：
   `SentinelRestDirectoryClientTests.多段預算用盡回部分結果與警告_不擲例外`、
-  `BatchRunRecorderScopeTests.Scope外的Warn不會被記錄`、
   `AiAnalysisSchedulerTests.ScheduleController_Ai端點_狀態查詢_立即執行與停止`、
   `NetiqScanConcurrencyChainTests`（整類）。共通點是時間預算或跨測試共享狀態，在測試平行度高、
   機器同時有其他建置時才出現。處理方向是把時間相關斷言改成可注入時鐘、共享狀態改成每測試獨立實例，
@@ -685,10 +695,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 
 - **報表頁 1280×800 仍需在內容區內捲動約 30px**：視窗高 900 以上（含 1920×1080）一屏放得下；800 高時差約 30px（初始設定橫幅還在時約 100px）。差距來自圖表的可讀性下限 130px（DESIGN-SYSTEM §6a）：再壓圖表就看不清楚，選擇讓內容區捲動而不是把卡片壓扁。**觸發時機**：使用者回報小螢幕筆電看報表要捲動時，考慮矮視窗收合 KPI 副標或把處理進度併入 KPI。量測用 `ui-shots.mjs --height 800`，看 summary 的 `contentOverflowY`。
 
-- **前端輪詢：`pollWhile` 不做背景分頁降頻與失敗退避**：`core/async-guards.js` 的 `pollWhile` 以固定間隔輪詢（目前用於排程作業頁、PRTG 維護頁、NetIQ 維護頁，間隔 2～10 秒），
-  不看 `document.hidden`、也不因連續失敗拉長間隔：背景分頁照常輪詢，站台卡住時每個間隔仍打一次（上一輪結束才排下一輪，不會疊加在途請求）。
-  目前使用者少、輪詢頁都是維護頁，刻意未做。**觸發時機**：輪詢頁開給多人長時間掛著而站台負載可見上升，或新增面向一般使用者的輪詢頁時——
-  在 `pollWhile` 一處加 `visibilitychange` 降頻與連續失敗退避（`core/badges.js` 已有「隱藏不打、回前景立即刷新」的做法可參照）。
+- **前端輪詢：維護頁的輪詢未啟用背景暫停與失敗退避**：`core/async-guards.js` 的 `pollWhile` 已支援間隔函式、`pauseWhenHidden` 與 `backoffMaxMs`，導覽列徽章、導覽執行告示與排程狀態輪詢已啟用；PRTG 維護頁、NetIQ 維護頁與排程作業頁其餘輪詢沒帶這兩個選項。目前使用者少、輪詢頁都是維護頁。**觸發時機**：維護頁開給多人長時間掛著而站台負載可見上升時，替這些呼叫補上選項。
 - **資料完整度在窗口排不進複查時會把安靜主機算成缺漏**：回 0 筆的主機要等複查（上一趟結束＋60 分）才寫紀錄；排程窗口短到排不進複查時，這些主機當天沒有紀錄、報表「資料完整度」會顯示缺漏直到下一個窗口定案。**觸發時機**：使用者回報窗口很短的站台每天都顯示缺漏時，考慮把「帳本為待複查」的主機日從缺漏排除。
 - **複查趟的里程碑數字**：只掃帳本主機的複查趟，「已完成跳過 N 台」只數帳本內的主機、延後的主機日也算進跳過，數字與一般趟不可比（僅顯示用）。
 - **報表大螢幕模式的深色主題（未排期）**：大螢幕模式（WEB-SPEC §9.6）目前只有淺色，戰情中心夜間環境下偏亮。
@@ -852,8 +859,6 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **SQLite 後端下多執行緒同時寫 `lf_prtg_values` 可能踩寫鎖**：階段 4 的併發 task 各自開
   DbContext 寫入，`PrtgFetchConcurrency` 設 2~3 時在 SQLite 上可能出現 `database is locked`。
   正式環境是 SQL Server，SQLite 是測試與小型部署用；真的遇到時把數值寫入收斂成單一寫入者。
-- **PRTG 取數與探測的 JSON 解析輔助仍有重複**：`PrtgFetchService`、`PrtgProbeRunner`、`PrtgResourceGuardProbe` 各自維護 `GetStringProperty` 及相關相依性判定；若後續格式／判定調整，需同步檢查三處。
-
 - **「併發下 passhash 只換一次」的測試只斷言請求計數**，沒斷言多個併發請求拿到同一組 passhash。
 
 ## 升級期一次性機制與退場條件
@@ -868,6 +873,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 | `TopIssueBackfiller`（來源鍵回填與首見日重整） | 問題聚合：`source_key` 無 NULL、首見日重整旗標存在、無未回填聚合欄（啟動快判，進背景閘門前即就緒）；風險事件：`risky_events_source_key_done` 旗標 | 所有站台回填完成後 |
 | `IssueFirstSeenSeedHostedService`（首見日種子合併） | 合併回報 Skipped／Completed；進度為行程內狀態，失敗重試 3 次 | 所有站台升級後 |
 | `WorkOrderBackfiller`／`DailyRecordBackfiller` | 回填版本達現行值 | 所有站台回填完成後 |
+| `PermissionChangeDedupeBackfiller`（權限異動去重鍵雜湊欄回填） | `permission_changes_dedupe_hash_done` 旗標 | 所有站台回填完成後；移除時一併拿掉就緒前以原鍵比對的查詢路徑 |
 | `SchemaUpgrader.RemoveRetiredPrtgBlobs`、SQL Server 人工對應自增欄位修正、`rule_id` 長度放寬 | 每次啟動皆冪等執行 | 所有站台升級到含該修正的版本後 |
 
 `CaseDaySyncHostedService` 是常駐的逐日同步迴圈，不是升級期機制，不列入本表。

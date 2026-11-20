@@ -829,6 +829,32 @@
 | L1～L10 | Sonnet 子代理實作、主代理驗收 | 完成 | 全量 macOS 11,779 過／27 略過／0 失敗（子代理）；主代理定向 1,566 筆、locked-mode 還原通過；突變「不比對工作階段版號」6 筆轉紅；路由快照基準未重產 | 內建 Cookie Authentication（`lf_session`、HttpOnly、SameSite=Strict、滑動到期沿用 `Jwt:ExpireHours`、24 小時絕對上限以 cookie 內登入起點判斷）。`CookieSessionEvents.ValidatePrincipal` 檢查啟用、工作階段版號、絕對上限，權限版號不符時就地更新並續發。工作階段版號存使用者 JSON blob（serverAdmin 另存 blob），登出與啟用轉停用時遞增。Data Protection 金鑰環存資料目錄 `dataprotection\`、權限限縮、固定 ApplicationName。舊 `lf_auth` cookie 由中介層清除。Secure 跟隨請求並認 `X-Forwarded-Proto`（終止 TLS 的反向代理）。JwtBearer 套件、token 服務、撤銷表、換發中介層移除；Jwt 區段只留 ExpireHours、CookieName。Windows 的 ACL 斷言待 CI |
 | CI 追蹤 | 主代理 | 進行中 | Windows CI：golden 換行修正後只剩快照迴圈 1 筆；macOS 全綠 | 快照迴圈那筆在競態修正後，Windows CI（全量約 22 分鐘，約 macOS 的 7 倍慢）仍逾時。根因已排除，剩每輪的本機日誌落盤在慢機器上超過 5 秒；只對這一筆放寬到 30 秒 |
 
+## 完成度核對
+
+實作完成後以七個唯讀 subagent 依本檔逐項比對程式碼與測試（不採信執行紀錄的自述），結論：沒有任何改動項完全未實作；有缺口的項目分三段補齊（程式與文件缺口、P～C／G／J 驗收測試、D～N／I／L 驗收測試），補驗收測試時另找到並修正兩個缺陷（中介層例外的 /api 請求回 HTML 錯誤頁、415 回 ProblemDetails）。
+
+以下是規劃文字與實作不同、經判斷以實作為準的項目：
+
+| 項目 | 規劃寫 | 實作與理由 |
+|---|---|---|
+| C6 | 迄日改半開區間 | 改用 `InputParsing.EndOfDay`（當天最後一個 tick）做 ≤ 比較，結果等價；兩個時間欄位在 SQL Server 模型是 `datetime2`，沒有進位到次日的風險（已有測試斷言） |
+| C10 | 含 null 欄位的規則標為不合格 | null 陣列轉成空集合、不標不合格，其他規則照常驗證；匯入檔少一個欄位不該讓整條規則被擋 |
+| C11 | 獨立一項 | 併入 G10（救援帳號只留登入節流一套鎖定，兩個設定移除） |
+| C14 | 反射掃描守門 | 全域 `DefaultInputLimitsFilter` 對所有請求套上字串與集合上限，新增端點自動涵蓋，比守門更強 |
+| G11 | 非救援帳號跑等價雜湊 | 不做：一般帳號走 AD 網路驗證，假雜湊拉不平時間差 |
+| G13 | 週報靜音原因依收件人可見範圍過濾 | 週報一律不寄靜音原因與設定者：靜音不綁主機，可見範圍套不上 |
+| H1 | 七份手寫快取 | 實際六份，已收成 `BoundedTtlCache<T>`；詢問 AI 現場事件的靜態快取刻意不收（搶不到旗標就跳過、要能存 0 筆），理由記入 BACKLOG |
+| H7 | 三份手寫的用戶端重建 | `SettingsBoundClient` 早已存在，只有 PRTG 快照手寫，改用並補上換掉時釋放 |
+| H8 | 保留等待時間依伺服器指示 | 分頁器重構前後都是固定 15／60 秒、不讀 Retry-After；這次只換成 Polly，沒有新增讀取伺服器指示的行為 |
+| H9 | 七個手寫假時鐘零命中 | 16 個手寫 `TimeProvider` 中 12 個改用 `FakeTimeProvider`；保留 4 個，分別需要記錄計時器到期時間並立即觸發、依讀取次數推進、往回撥時鐘，官方替身做不到 |
+| I1 | 六處剪貼簿 | 實際七處，全數改用 `core/clipboard.js` |
+| I3 | 七頁帶 hash 開啟對應頁籤 | 六頁開啟；規則頁三個平台頁籤共用同一個頁籤名稱，hash 無法區分平台，刻意不開 |
+| M3 | 規則數追蹤一併移除 | `NlogRuleCount` 欄位保留：動態掛載移除後它恆為常數，橫跨 DTO、健康頁與匯出，留著當「規則沒有洩漏」的偵測點 |
+| D3 | 繞過 SaveChanges 的三到四處 | 七處：另含四個非唯一索引欄（問題來源名稱、風險事件來源、PRTG 裝置 IP、感測器類型）在寫入處先截斷，否則依統一機制整列不寫、問題或裝置消失 |
+| D9 | 既有的五千筆效能守門 | 專案原本沒有，本輪新寫 |
+
+本機無法驗證、仍待正式站台或 CI：SQL Server 實機（J8、D7、D8、N1 只驗到 EF 翻譯）、Windows 的金鑰目錄 ACL（只在 CI 跑）、真實 PRTG／Sentinel 的憑證指紋、IIS 子 Application 與反向代理後的登入 cookie、LDAP 一次登入只 bind 一次。見「正式站台實測清單」。
+
 ## 體檢交接
 
 - 範圍：批次 P、A、B、C、G、E、J、F、K、D、H、M、N、I、L 全部實作，逐段提交並推送到 `feature/feedback-79`；每段的驗收、突變與落差見上方執行紀錄。
