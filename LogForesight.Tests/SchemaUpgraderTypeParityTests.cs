@@ -187,6 +187,49 @@ public sealed class SchemaUpgraderTypeParityTests
         }
     }
 
+    // ── D8 守門：有手寫建表語句的表都要在 Cases 內，不能新增一張表卻漏了型別／長度對帳 ──
+
+    private static readonly Regex CreateTablePattern = new(
+        @"CREATE\s+TABLE\s+(?:dbo\.)?\[?(?<table>lf_[A-Za-z0-9_]+)\]?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>升級器原始碼中出現手寫 <c>CREATE TABLE</c> 的表名（去重；含重建表用的語句）。</summary>
+    private static List<string> HandwrittenDdlTables(string upgraderSource) =>
+        CreateTablePattern.Matches(upgraderSource).Select(m => m.Groups["table"].Value.ToLowerInvariant())
+            .Distinct().OrderBy(t => t, StringComparer.Ordinal).ToList();
+
+    /// <summary>有手寫建表語句、模型也有、卻不在對帳案例清單內的表。</summary>
+    private static List<string> UncoveredTables(string upgraderSource, IEnumerable<string> coveredTables)
+    {
+        using var ctx = new LfDbContext(SqliteOptions());
+        var modelTables = ctx.Model.GetEntityTypes().Select(e => e.GetTableName()!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var covered = coveredTables.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return HandwrittenDdlTables(upgraderSource).Where(t => modelTables.Contains(t) && !covered.Contains(t)).ToList();
+    }
+
+    [Fact]
+    public void 有手寫建表語句的表都在型別對帳案例內()
+    {
+        var source = UpgraderSource();
+        var tables = HandwrittenDdlTables(source);
+        Assert.True(tables.Count >= 20, $"只掃到 {tables.Count} 張手寫建表的表，掃描規則可能已失效");
+
+        var uncovered = UncoveredTables(source, Cases().Select(c => (string)c[0]));
+        Assert.True(uncovered.Count == 0,
+            "下列表在 SchemaUpgrader 有手寫建表語句，卻不在 SchemaUpgraderTypeParityTests.Cases：" + string.Join("、", uncovered));
+    }
+
+    [Fact]
+    public void 新增手寫建表語句卻沒加入案例時守門變紅_反例()
+    {
+        var source = UpgraderSource() + "\n        CREATE TABLE lf_work_orders_extra (id bigint)\n        CREATE TABLE dbo.lf_prtg_devices (id bigint)\n";
+        // lf_work_orders_extra 不在模型：不計；lf_prtg_devices 在 Cases：不計。拿掉 Cases 內的 lf_prtg_devices 後才會被點名
+        var covered = Cases().Select(c => (string)c[0]).Where(t => t != "lf_prtg_devices");
+        Assert.Equal(new[] { "lf_prtg_devices" }, UncoveredTables(source, covered));
+        // 模型內存在的表被新增了手寫語句、且不在清單：以既有基表 lf_daily_records 代表「新加的一張表」
+        var withNewTable = UpgraderSource() + "\n        CREATE TABLE lf_daily_records (id bigint)\n";
+        Assert.Contains("lf_daily_records", UncoveredTables(withNewTable, Cases().Select(c => (string)c[0])));
+    }
+
     [Fact]
     public void 型別解析器取得長度_括號內逗號_與max()
     {

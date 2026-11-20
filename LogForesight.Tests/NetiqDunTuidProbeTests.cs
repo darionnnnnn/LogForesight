@@ -106,6 +106,95 @@ public class NetiqDunTuidProbeTests
             NewClient(handler), DateTimeOffset.UtcNow, new CollectingConsole(), CancellationToken.None));
     }
 
+    // ── 整趟 RunAsync：7b 被拒或失敗時其餘步驟照跑、整體不擲例外（第 79 輪 F8） ──
+
+    private static readonly Sentinel ProbeTarget = new()
+    {
+        SentinelId = 1, Name = "test-sentinel", BaseUrl = BaseUrl, Username = "probe-account", PasswordEnc = "probe-password", Active = true
+    };
+
+    /// <summary>
+    /// 整趟探測用的假 Sentinel：一般查詢回 0 筆、成功；只有請求本文含 <c>dun,tuid</c> 投影（步驟 7b）時回指定狀態碼。
+    /// </summary>
+    private sealed class WholeRunSentinel(HttpStatusCode dunTuidJobStatus) : HttpMessageHandler
+    {
+        public int DunTuidRequests { get; private set; }
+        public int JobRequests { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!.ToString();
+            if (request.Method == HttpMethod.Post && url.EndsWith("/SentinelAuthServices/auth/tokens", StringComparison.Ordinal))
+                return Json(HttpStatusCode.OK, "{\"Token\":\"test-token\"}");
+            if (request.Method == HttpMethod.Post && url.EndsWith("/SentinelRESTServices/objects/event-search", StringComparison.Ordinal))
+            {
+                var body = await request.Content!.ReadAsStringAsync(ct);
+                JobRequests++;
+                if (body.Contains("dun,tuid", StringComparison.Ordinal))
+                {
+                    DunTuidRequests++;
+                    return Json(dunTuidJobStatus, "{\"error\":\"rejected\"}");
+                }
+                var resp = Json(HttpStatusCode.Created, "{}");
+                resp.Headers.Location = new Uri(JobUrl);
+                return resp;
+            }
+            if (request.Method == HttpMethod.Get && url == JobUrl)
+                return Json(HttpStatusCode.OK, $"{{\"status\":2,\"found\":0,\"avail\":0,\"results\":{{\"@href\":\"{ResultUrl}\"}}}}");
+            if (request.Method == HttpMethod.Get && url.Contains("/SentinelRESTServices/objects/event?", StringComparison.Ordinal))
+                return Json(HttpStatusCode.OK, "[]");
+            if (request.Method == HttpMethod.Get && url.Contains("/SentinelRESTServices/objects/eventsource", StringComparison.Ordinal))
+                return Json(HttpStatusCode.OK, "[]");
+            if (request.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.OK);
+            return Json(HttpStatusCode.NotFound, "{}");
+        }
+
+        private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
+            new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+    }
+
+    private static async Task<(bool Ok, string Text, WholeRunSentinel Handler)> RunWholeProbe(HttpStatusCode dunTuidJobStatus)
+    {
+        var handler = new WholeRunSentinel(dunTuidJobStatus);
+        var console = new CollectingConsole();
+        var ok = await NetiqProbeRunner.RunAsync(new[] { ProbeTarget },
+            new NetiqOptions { RetryCount = 0, TimeoutSeconds = 30, QueryDelayMs = 0 },
+            sampleIp: null, sampleLinuxIp: null, console,
+            (server, options) => new SentinelClient(server, options, handler), CancellationToken.None);
+        return (ok, console.Text, handler);
+    }
+
+    private static void AssertEveryStepRan(string text)
+    {
+        foreach (var label in new[] { "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[7b]", "[8]", "[13]" })
+            Assert.Contains(label, text);
+        Assert.Contains("Probe 結束", text);
+    }
+
+    [Fact]
+    public async Task 整趟探測_7b欄位被拒時回報被拒_其餘步驟照跑且整體不擲例外()
+    {
+        var (ok, text, handler) = await RunWholeProbe(HttpStatusCode.BadRequest);
+
+        Assert.Equal(1, handler.DunTuidRequests);
+        Assert.Contains("結論：欄位被拒（HTTP 400）", text);
+        AssertEveryStepRan(text);
+        Assert.True(text.IndexOf("[13]", StringComparison.Ordinal) > text.IndexOf("[7b]", StringComparison.Ordinal));
+        Assert.True(ok);   // 被拒是一種結論、不是步驟失敗；步驟 13 之前的查詢都成功
+    }
+
+    [Fact]
+    public async Task 整趟探測_7b伺服器錯誤時該步標失敗_其餘步驟照跑且整體不擲例外()
+    {
+        var (ok, text, handler) = await RunWholeProbe(HttpStatusCode.InternalServerError);
+
+        Assert.Equal(1, handler.DunTuidRequests);
+        var after7b = text[text.IndexOf("[7b]", StringComparison.Ordinal)..];
+        Assert.Contains("✗ 失敗", after7b[..after7b.IndexOf("[8]", StringComparison.Ordinal)]);
+        AssertEveryStepRan(text);
+        Assert.False(ok);   // 7b 失敗使整體回 false，但沒有中斷
+    }
+
     private sealed class FakeSentinel(string eventsJson = "[]", int found = 1, int statusCode = 2,
         HttpStatusCode jobStatusCode = HttpStatusCode.Created, string jobBody = "{}") : HttpMessageHandler
     {

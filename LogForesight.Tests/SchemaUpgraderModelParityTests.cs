@@ -98,6 +98,29 @@ public sealed class SchemaUpgraderModelParityTests
         Assert.Matches(new Regex(@"AddColumnIfMissing\(ctx, isSqlite, ""lf_daily_records"", ""ai_degraded_attempts"",[^\n]*NOT NULL DEFAULT 0"), upgrader);
     }
 
+    /// <summary>
+    /// N1：去重鍵雜湊欄的索引在模型與升級器各維護一份。欄位型別與 NULL 性已由上面兩組對帳涵蓋（補欄定義併入比對），
+    /// 這裡補索引：模型有同名、同欄、非唯一的索引，升級器的補索引呼叫也是同名同欄、不加 unique。
+    /// </summary>
+    [Fact]
+    public void 去重鍵雜湊欄的索引_模型與升級器補索引一致()
+    {
+        const string IndexName = "IX_lf_permission_changes_dedupe_key_hash";
+        using var ctx = NewContext();
+        var entity = ctx.Model.GetEntityTypes().Single(e => e.GetTableName() == "lf_permission_changes");
+        var id = StoreObjectIdentifier.Table("lf_permission_changes", entity.GetSchema());
+        var index = Assert.Single(entity.GetIndexes(), i => i.GetDatabaseName(id) == IndexName);
+        Assert.False(index.IsUnique);
+        Assert.Equal(new[] { "dedupe_key_hash" }, index.Properties.Select(p => p.GetColumnName(id)).ToArray());
+
+        var upgrader = File.ReadAllText(Path.Combine(RepoRoot(), "LogForesight.Core", "Persistence", "Sql", "SchemaUpgrader.cs"));
+        var call = Regex.Match(upgrader,
+            @"AddIndexIfMissing\(ctx, isSqlite, ""lf_permission_changes"",\s*""" + IndexName + @""",\s*""(?<cols>[^""]*)""(?<rest>[^;]*)\);");
+        Assert.True(call.Success, "SchemaUpgrader 找不到去重鍵雜湊欄的 AddIndexIfMissing 呼叫");
+        Assert.Equal("dedupe_key_hash", call.Groups["cols"].Value);
+        Assert.DoesNotContain("unique", call.Groups["rest"].Value);
+    }
+
     [Fact]
     public void 解析器能處理行內多欄_具名約束_括號內逗號()
     {

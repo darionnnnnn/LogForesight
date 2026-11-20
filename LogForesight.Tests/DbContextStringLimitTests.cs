@@ -350,10 +350,13 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
         var opts = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(conn).AddInterceptors(counter).Options;
         using (var init = new LfDbContext(opts)) init.Database.EnsureCreated();
         using var ctx = new LfDbContext(opts);
-        var max = Max(ctx, nameof(PrtgIpExcludeRow), nameof(PrtgIpExcludeRow.Note));
-        var text = new string('字', overlong ? max + 50 : max);
+        // 兩個字串欄各自的上限不同：未超長批次要每欄剛好等於自己的上限（不被截斷），超長批次每欄多 50 字元
+        var noteMax = Max(ctx, nameof(PrtgIpExcludeRow), nameof(PrtgIpExcludeRow.Note));
+        var createdByMax = Max(ctx, nameof(PrtgIpExcludeRow), nameof(PrtgIpExcludeRow.CreatedBy));
+        var note = new string('字', overlong ? noteMax + 50 : noteMax);
+        var createdBy = new string('字', overlong ? createdByMax + 50 : createdByMax);
         for (var i = 0; i < rows; i++)
-            ctx.Add(new PrtgIpExcludeRow { Ip = $"10.0.{i / 250}.{i % 250}", Note = text, CreatedBy = text });
+            ctx.Add(new PrtgIpExcludeRow { Ip = $"10.0.{i / 250}.{i % 250}", Note = note, CreatedBy = createdBy });
         counter.Count = 0;
         var sw = Stopwatch.StartNew();
         ctx.SaveChanges();
@@ -363,14 +366,20 @@ public sealed class DbContextStringLimitTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void 一次寫入五千筆含超長字串_截斷不增加資料庫指令且耗時在守門內()
+    public void 一次寫入五千筆含超長字串_截斷不增加資料庫指令且耗時與未超長基準的比值在守門內()
     {
         WriteBulk(200, overlong: true);   // 暖機（JIT、模型建立、截斷計畫快取）
-        var plain = WriteBulk(5000, overlong: false);
-        var clamped = WriteBulk(5000, overlong: true);
-        output.WriteLine($"5000 筆：未超長 {plain.Commands} 道指令／{plain.Ms} ms；全部超長 {clamped.Commands} 道指令／{clamped.Ms} ms");
+        // 各取三次最小值：負載造成的尖峰只會讓單次變慢，取最小值讓基準與比較都貼近無干擾時的成本
+        var plainRuns = Enumerable.Range(0, 3).Select(_ => WriteBulk(5000, overlong: false)).ToList();
+        var clampedRuns = Enumerable.Range(0, 3).Select(_ => WriteBulk(5000, overlong: true)).ToList();
+        var plainMs = plainRuns.Min(r => r.Ms);
+        var clampedMs = clampedRuns.Min(r => r.Ms);
+        output.WriteLine($"5000 筆：未超長 {plainRuns[0].Commands} 道指令／最小 {plainMs} ms；全部超長 {clampedRuns[0].Commands} 道指令／最小 {clampedMs} ms");
 
-        Assert.Equal(plain.Commands, clamped.Commands);                // 截斷步驟不產生額外資料庫指令
-        Assert.True(clamped.Ms < 20_000, $"5000 筆寫入耗時 {clamped.Ms} ms，超過守門 20 秒");
+        // 主要斷言：截斷步驟不產生額外資料庫指令（每次執行皆同）
+        Assert.All(plainRuns.Concat(clampedRuns), r => Assert.Equal(plainRuns[0].Commands, r.Commands));
+        // 輔助斷言：超長批次耗時不超過同批未超長基準的 3 倍加 1 秒固定餘裕（基準很小時比值不穩，餘裕吸收）
+        Assert.True(clampedMs <= plainMs * 3 + 1000,
+            $"5000 筆超長寫入最小耗時 {clampedMs} ms，超過未超長基準 {plainMs} ms 的 3 倍加 1 秒");
     }
 }

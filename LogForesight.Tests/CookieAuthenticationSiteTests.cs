@@ -285,6 +285,50 @@ public class CookieAuthenticationSiteTests
         Assert.Equal("page=2", after.Unprotect(cursor));
     }
 
+    /// <summary>
+    /// 真實的 PRTG 分頁游標（<c>PrtgMonitoringController</c> 以 DataProtection 保護的 R01 游標）：
+    /// 重建站台後，重啟前簽發的游標仍可解開、通過擁有者與逾期檢查，主機頁照常回 200（不是 InvalidCursor／InvalidToken）。
+    /// 金鑰環遺失時同一個游標會被拒（對照組，證明上面的通過確實來自持久化的金鑰環）。
+    /// </summary>
+    [Fact]
+    public async Task 重建站台後_重啟前簽發的真實PRTG分頁游標仍有效_金鑰環遺失時被拒()
+    {
+        using var site = new AuthSite();
+        var cookie = await site.LoginCookie();
+        using var first = await site.Send(HttpMethod.Get, "api/prtg/monitoring", cookie);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var data = JsonDocument.Parse(await Body(first)).RootElement.GetProperty("data");
+        var hostCursor = data.GetProperty("hostCursor").GetString()!;
+        Assert.False(string.IsNullOrWhiteSpace(hostCursor));
+        var url = "api/prtg/monitoring/hosts?cursor=" + Uri.EscapeDataString(hostCursor);
+
+        // 重啟前先確認這個游標本身有效（排除「游標一開始就不被接受」的假綠）
+        using (var before = await site.Send(HttpMethod.Get, url, cookie))
+            Assert.Equal(HttpStatusCode.OK, before.StatusCode);
+
+        site.Restart();
+
+        // 重啟後游標必須「解得開」：通過解密、擁有者與逾期檢查，之後才輪到目錄版本比對。
+        // 重啟會讓部分版本戳前進，所以可能回 409 CatalogueChanged（游標被認得、要求重新載入目錄）；
+        // 不能是 400 InvalidCursor／InvalidToken——那代表保護器解不開，也就是金鑰環沒有跨重啟持久化。
+        using (var after = await site.Send(HttpMethod.Get, url, cookie))
+        {
+            var body = await Body(after);
+            if (after.StatusCode != HttpStatusCode.OK)
+            {
+                Assert.Equal(HttpStatusCode.Conflict, after.StatusCode);
+                Assert.Equal(ApiErrorCodes.CatalogueChanged, ErrorCode(body));
+            }
+        }
+
+        // 對照組：站台關閉期間金鑰環遺失，同一個游標（與同一個 cookie 的登入）都失效
+        site.Restart(() => Directory.Delete(DataProtectionKeyRing.KeyDirectory(site.DataRoot), recursive: true));
+        var fresh = await site.LoginCookie();
+        using var lost = await site.Send(HttpMethod.Get, url, fresh);
+        Assert.Equal(HttpStatusCode.BadRequest, lost.StatusCode);
+        Assert.Equal(ApiErrorCodes.InvalidCursor, ErrorCode(await Body(lost)));
+    }
+
     [Fact]
     public async Task 金鑰環遺失_全員重登但站台正常_不影響之後的登入()
     {

@@ -40,10 +40,21 @@ public static class NetiqProbeRunner
     /// （program／sev↔syslog priority／OS 判別候選值）。省略時對應步驟標示略過。</param>
     /// <param name="console">輸出目的地——Web 用累積到記憶體緩衝供輪詢讀取的 adapter
     /// （console CLI 版本已隨 Phase 5 退場，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）。</param>
-    public static async Task<bool> RunAsync(
+    public static Task<bool> RunAsync(
         IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
-        string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default)
+        string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default) =>
+        RunAsync(sentinels, settings, sampleIp, sampleLinuxIp, console, clientFactory: null, ct);
+
+    /// <summary>
+    /// 測試注入點：<paramref name="clientFactory"/> 讓測試以假的 Sentinel 回應（<c>HttpMessageHandler</c>）取代真實連線；
+    /// 為 null 時沿用 <c>new SentinelClient(server, settings)</c>，正式行為不變。
+    /// </summary>
+    internal static async Task<bool> RunAsync(
+        IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
+        string? sampleIp, string? sampleLinuxIp, IRunConsole console,
+        Func<SentinelServer, NetiqOptions, SentinelClient>? clientFactory, CancellationToken ct = default)
     {
+        clientFactory ??= static (server, options) => new SentinelClient(server, options);
         if (sentinels.Count == 0)
         {
             console.WriteLine("目前沒有已設定且啟用的 Sentinel（請先在 Web「NetIQ 維護」頁新增），無法執行 probe。");
@@ -80,7 +91,7 @@ public static class NetiqProbeRunner
             var server = SentinelConnectionFactory.ToConnectable(sentinel);
             try
             {
-                allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp, console, ct);
+                allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp, console, clientFactory, ct);
             }
             catch (Exception ex)
             {
@@ -97,7 +108,7 @@ public static class NetiqProbeRunner
 
     private static async Task<bool> ProbeOneAsync(
         SentinelServer server, NetiqOptions settings, string? sampleIp, string? sampleLinuxIp,
-        IRunConsole console, CancellationToken ct)
+        IRunConsole console, Func<SentinelServer, NetiqOptions, SentinelClient> clientFactory, CancellationToken ct)
     {
         console.WriteLine($"── Sentinel「{server.Name}」（{server.BaseUrl}） ──");
         console.WriteLine($"   [人工核對] apidoc（有無聚合端點可取代 NETIQ-API-REFERENCE §3「沒有 GROUP BY」的本地聚合退回方案）：" +
@@ -106,7 +117,7 @@ public static class NetiqProbeRunner
         var ok = true;
         var now = DateTimeOffset.UtcNow;
 
-        await using (var client = new SentinelClient(server, settings))
+        await using (var client = clientFactory(server, settings))
         {
             ok &= await Step(console, 1, "認證＋小範圍查詢（近 1 小時、3 筆、全欄位——用於核對欄位對應）", async () =>
             {
@@ -489,7 +500,7 @@ public static class NetiqProbeRunner
                 Username = server.Username,
                 Password = server.Password + "-wrong"
             };
-            await using var badClient = new SentinelClient(badServer, settings);
+            await using var badClient = clientFactory(badServer, settings);
             try
             {
                 await badClient.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);

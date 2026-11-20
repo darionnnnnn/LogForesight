@@ -4285,6 +4285,40 @@
     ]
   },
   {
+    "name": "互動-PRTG維護-頁籤方向鍵與角色",
+    "role": "ui-admin",
+    "path": "/admin/prtg",
+    "widths": [
+      1280
+    ],
+    "steps": [
+      {
+        "waitFor": "#prtg-tabs [data-tab=\"connection\"].active"
+      },
+      {
+        "evalAssert": "const list = document.getElementById('prtg-tabs'); if (list.getAttribute('role') !== 'tablist') return '頁籤容器 role 應為 tablist，實際 ' + list.getAttribute('role'); const tabs = [...list.querySelectorAll('[data-tab]')]; if (tabs.length < 2) return '頁籤少於兩個'; const bad = tabs.filter(t => t.getAttribute('role') !== 'tab').map(t => t.dataset.tab); if (bad.length) return '這些頁籤的 role 不是 tab：' + bad.join(','); const selected = tabs.filter(t => t.getAttribute('aria-selected') === 'true').map(t => t.dataset.tab); if (selected.join() !== 'connection') return '一開始只有「連線」應 aria-selected=true，實際 [' + selected.join() + ']'; const panel = document.querySelector('[data-panel=\"connection\"]'); if (!panel || panel.getAttribute('role') !== 'tabpanel') return '面板 role 應為 tabpanel'; const first = tabs[0]; first.scrollIntoView({ block: 'center' }); first.focus(); return document.activeElement === first ? null : '焦點沒有落在第一個頁籤';"
+      },
+      {
+        "key": "ArrowDown"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const sel = [...document.querySelectorAll('#prtg-tabs [data-tab]')].filter(t => t.getAttribute('aria-selected') === 'true').map(t => t.dataset.tab); if (sel.join() !== 'params') return '按方向鍵後 aria-selected 應移到「擷取參數」，實際 [' + sel.join() + ']'; if (document.activeElement?.dataset?.tab !== 'params') return '焦點應跟著移到「擷取參數」頁籤'; if (document.querySelector('[data-panel=\"params\"]').classList.contains('d-none')) return '「擷取參數」面板沒有顯示'; if (!document.querySelector('[data-panel=\"connection\"]').classList.contains('d-none')) return '「連線」面板應隱藏'; return location.hash === '#params' ? null : 'hash 應同步為 #params，實際 ' + location.hash;"
+      },
+      {
+        "key": "ArrowUp"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "evalAssert": "const sel = [...document.querySelectorAll('#prtg-tabs [data-tab]')].filter(t => t.getAttribute('aria-selected') === 'true').map(t => t.dataset.tab); return sel.join() === 'connection' ? null : '反方向鍵後 aria-selected 應回到「連線」，實際 [' + sel.join() + ']';"
+      }
+    ]
+  },
+  {
     "name": "互動-PRTG維護-監看範圍點標題列開合",
     "role": "ui-admin",
     "path": "/admin/prtg",

@@ -1058,6 +1058,53 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(0.75, Convert.ToDouble(mag.KeyMetrics["UsableRatio"]));
     }
 
+    [Fact]
+    public void AssessStatus_數值取得量級_偶數晚數時兩個每夜中位數都等於統計出口的平均值()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 3001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 3002, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, DateTime.Now);
+
+        // 14 晚（偶數）：感測器 3001 每晚都有，第 i 晚（0 起算）i+1 列；感測器 3002 只在後 7 晚各 1 列。
+        // 每晚感測器數：7 個 1、7 個 2 → 中位數 1.5（取 sorted[n/2] 的舊算法會得 2）；
+        // 每晚列數：前 7 晚 1..7、後 7 晚 9..15 → 中位數 (7+9)/2 = 8（舊算法得 9）。
+        var sensorCounts = new List<int>();
+        var rowCounts = new List<int>();
+        var values = new List<PrtgValueRow>();
+        for (var i = 0; i < 14; i++)
+        {
+            var day = anchor.AddDays(-i);
+            var rows = i + 1;
+            for (var h = 1; h <= rows; h++)
+                values.Add(new PrtgValueRow { SensorObjid = 3001, PeriodStart = day.AddHours(h), AvgValue = 10.0, Quality = PrtgDataQuality.Ok });
+            var sensors = 1;
+            if (i >= 7)
+            {
+                values.Add(new PrtgValueRow { SensorObjid = 3002, PeriodStart = day.AddHours(20), AvgValue = 10.0, Quality = PrtgDataQuality.Ok });
+                rows++;
+                sensors++;
+            }
+            sensorCounts.Add(sensors);
+            rowCounts.Add(rows);
+        }
+        store.UpsertValues(values);
+
+        var mag = CreateService().AssessStatus(anchor).TriggeredFetchMagnitude;
+
+        Assert.Equal(14, Convert.ToInt32(mag.KeyMetrics["DaysWithValues"]));
+        var sensorMedian = Convert.ToDouble(mag.KeyMetrics["SensorsPerNightMedian"]);
+        var rowMedian = Convert.ToDouble(mag.KeyMetrics["RowsPerNightMedian"]);
+        Assert.Equal(SampleStatistics.Median(sensorCounts)!.Value, sensorMedian);
+        Assert.Equal(SampleStatistics.Median(rowCounts)!.Value, rowMedian);
+        Assert.Equal(1.5, sensorMedian);
+        Assert.Equal(8.0, rowMedian);
+    }
+
     // ── 4. 殘留判定門檻：四種狀態測試 ─────────────────────────────────
 
     [Fact]

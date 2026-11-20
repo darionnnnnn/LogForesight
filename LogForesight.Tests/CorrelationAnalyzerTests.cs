@@ -291,6 +291,51 @@ public class CorrelationAnalyzerTests
         Assert.Contains(findings, f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
     }
 
+    /// <summary>以現行解析器從原始訊息取得「新紀錄」的來源位址集合（與落庫的 KeyIps 同一出口）。</summary>
+    private static List<string> ParsedIps(string address) =>
+        LogAggregator.ExtractAccountsAndIps(new[] { "Account Name:\tbob\nSource Network Address:\t" + address }).Ips.ToList();
+
+    [Fact]
+    public void 暴力破解RDP得手_舊紀錄持久化的IPv4_KeyIps與新解析結果以位址交集命中()
+    {
+        // 舊列：升級前持久化的 KeyIps（IPv4 原字串，沒有 KeyDetails）；新側：現行解析器從原始訊息解出的位址。
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security);
+        yesterdayBrute.TopIssues[0].KeyIps = new List<string> { "198.51.100.1", "203.0.113.7" };
+        var history = new List<DailyAnalysisRecord> { yesterdayBrute };
+
+        LogIssueSignature Rdp(string address)
+        {
+            var sig = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+                IssueSeverity.Low, IssueCategory.Security);
+            sig.KeyIps = ParsedIps(address);
+            return sig;
+        }
+
+        Assert.Equal(new[] { "203.0.113.7" }, ParsedIps("203.0.113.7"));
+        Assert.Contains(CorrelationAnalyzer.Detect(new List<LogIssueSignature> { Rdp("203.0.113.7") }, history, DateTime.Today),
+            f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+        // 邊界另一側：位址不在舊列集合內不命中
+        Assert.DoesNotContain(CorrelationAnalyzer.Detect(new List<LogIssueSignature> { Rdp("203.0.113.8") }, history, DateTime.Today),
+            f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
+    [Fact]
+    public void 暴力破解RDP得手_舊列的壓縮IPv6與新解析的完整大寫寫法視為同一位址()
+    {
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security);
+        yesterdayBrute.TopIssues[0].KeyIps = new List<string> { "2001:db8::7" };
+        var rdp = Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+            IssueSeverity.Low, IssueCategory.Security);
+        rdp.KeyIps = ParsedIps("2001:0DB8:0000:0000:0000:0000:0000:0007");
+
+        Assert.Equal(new[] { "2001:db8::7" }, rdp.KeyIps);
+        Assert.Contains(
+            CorrelationAnalyzer.Detect(new List<LogIssueSignature> { rdp }, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today),
+            f => f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
     [Fact]
     public void 暴力破解RDP得手_舊紀錄KeyDetails的IPv6與新紀錄KeyIps可比對_不同位址不命中()
     {

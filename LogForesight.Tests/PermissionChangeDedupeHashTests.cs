@@ -289,6 +289,52 @@ public sealed class PermissionChangeDedupeHashTests : IDisposable
         Assert.Contains(upsertPlan, d => d.Contains("SEARCH") && d.Contains("IX_lf_permission_changes_dedupe_key_hash"));
     }
 
+    /// <summary>執行刪除並取回該段期間對 lf_permission_changes 的 DELETE 指令之查詢計畫（<c>ExecuteDelete</c> 不是讀取指令，需開啟記錄）。</summary>
+    private List<string> DeletePlanOf(Action delete)
+    {
+        _recorder.Clear();
+        _recorder.IncludeNonQueries = true;
+        try { delete(); }
+        finally { _recorder.IncludeNonQueries = false; }
+        var deletes = _recorder.Commands.Where(c => c.Sql.TrimStart().StartsWith("DELETE", StringComparison.OrdinalIgnoreCase)
+                                                    && c.Sql.Contains("lf_permission_changes")).ToList();
+        Assert.NotEmpty(deletes);
+        var plan = new List<string>();
+        using var conn = new SqliteConnection($"Data Source={_dbPath}");
+        conn.Open();
+        foreach (var (sql, parameters) in deletes)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "EXPLAIN QUERY PLAN " + sql;
+            foreach (var (name, value) in parameters) cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) plan.Add(reader.GetString(3));
+        }
+        return plan;
+    }
+
+    [Fact]
+    public void 查詢計畫_兩個刪除方法就緒前不走雜湊索引_就緒後走雜湊索引()
+    {
+        var store = _backend.PermissionChanges();
+        store.AppendChanges(Enumerable.Range(0, 50).Select(i => Record(i)).ToList());
+        var backfiller = _backend.PermissionChangeDedupeBackfiller();
+        Assert.False(backfiller.Ready);
+        const string Index = "IX_lf_permission_changes_dedupe_key_hash";
+
+        // 就緒前：兩者都只比原鍵，計畫不含雜湊索引
+        Assert.DoesNotContain(PlanOf(() => store.DeleteByDedupeKey(KeyOf(3))), d => d.Contains(Index));
+        Assert.DoesNotContain(DeletePlanOf(() => store.DeleteByDedupeKeys(new[] { KeyOf(4), KeyOf(5) })), d => d.Contains(Index));
+
+        backfiller.Run(CancellationToken.None);
+        Assert.True(backfiller.Ready);
+
+        // 就緒後：依單鍵刪除（先查再移除）與依多鍵刪除（ExecuteDelete）都走雜湊索引
+        Assert.Contains(PlanOf(() => store.DeleteByDedupeKey(KeyOf(6))), d => d.Contains("SEARCH") && d.Contains(Index));
+        Assert.Contains(DeletePlanOf(() => store.DeleteByDedupeKeys(new[] { KeyOf(7), KeyOf(8) })),
+            d => d.Contains("SEARCH") && d.Contains(Index));
+    }
+
     // ── SQL Server 翻譯（不連線） ──
 
     /// <summary>只取 WHERE 之後（SELECT 清單本來就含所有欄位）</summary>
