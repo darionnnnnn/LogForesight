@@ -42,9 +42,14 @@ public sealed class PromptDataFence
     {
         if (string.IsNullOrEmpty(text)) return text ?? string.Empty;
         // 先剝隨機值再剝標記：拆開界線字樣夾帶隨機值的組合（例如 <<<資料結--本次值--束>>>）也要剝乾淨
-        var cleaned = MarkerToken.Replace(text, "");
-        cleaned = cleaned.Replace(Nonce, "");
-        return MarkerToken.Replace(cleaned, "");
+        // 重複到不再變動：巢狀拼接（<<<資料結<<<資料結束>>>束>>>）剝掉內層後外層又成形。每輪只會變短，必然收斂
+        var cleaned = text;
+        while (true)
+        {
+            var next = MarkerToken.Replace(cleaned, "").Replace(Nonce, "");
+            if (next.Length == cleaned.Length) return next;
+            cleaned = next;
+        }
     }
 
     private bool _noticed;

@@ -91,6 +91,53 @@ public class DefaultInputLimitsTests
         public string? Free { get; set; }
         [System.ComponentModel.DataAnnotations.StringLength(10)] public string? Declared { get; set; }
         public List<long>? Ids { get; set; }
+        public IReadOnlyList<long>? ReadOnlyIds { get; set; }
+        public HashSet<long>? IdSet { get; set; }
+    }
+
+    [Fact]
+    public void 宣告成唯讀介面或集合型別的屬性同樣套集合上限()
+    {
+        var names = LogForesight.Web.Filters.DefaultInputLimitsFilter.FindUnbounded(typeof(Sample)).Select(p => p.Name).ToList();
+        Assert.Contains("ReadOnlyIds", names);
+        Assert.Contains("IdSet", names);
+
+        // HashSet 與只實作泛型唯讀介面的集合都不實作非泛型 ICollection，仍要數得出筆數
+        Assert.Equal(3, LogForesight.Web.Filters.DefaultInputLimitsFilter.CountOf(new HashSet<long> { 1, 2, 3 }));
+        Assert.Equal(2, LogForesight.Web.Filters.DefaultInputLimitsFilter.CountOf(new ReadOnlyOnly(2)));
+        Assert.Equal(1, LogForesight.Web.Filters.DefaultInputLimitsFilter.CountOf(new List<long> { 9 }));
+        Assert.Equal(0, LogForesight.Web.Filters.DefaultInputLimitsFilter.CountOf("字串不是集合"));
+        Assert.Equal(0, LogForesight.Web.Filters.DefaultInputLimitsFilter.CountOf(null));
+    }
+
+    private sealed class ReadOnlyOnly(int count) : IReadOnlyList<long>
+    {
+        public long this[int index] => index;
+        public int Count => count;
+        public IEnumerator<long> GetEnumerator() => Enumerable.Range(0, count).Select(i => (long)i).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [Fact]
+    public void JSON解析失敗的訊息不含框架原文與型別名_只指出欄位()
+    {
+        var state = new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary();
+        state.AddModelError("$.groupIds[0]", "The JSON value could not be converted to System.Int64. Path: $.groupIds[0] | LineNumber: 0 | BytePositionInLine: 16.");
+        state.AddModelError("request", "「request」為必填。");
+        var message = LogForesight.Web.Extensions.ServiceCollectionExtensions.ValidationMessage(state);
+        Assert.Contains("groupIds[0]", message);
+        Assert.DoesNotContain("System.", message);
+        Assert.DoesNotContain("JSON value", message);
+        Assert.DoesNotContain("request", message);
+
+        var broken = new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary();
+        broken.AddModelError("$", "'b' is an invalid start of a property name. Expected a '\"'. Path: $ | LineNumber: 0 | BytePositionInLine: 1.");
+        Assert.Equal("請求內容不是合法的 JSON。", LogForesight.Web.Extensions.ServiceCollectionExtensions.ValidationMessage(broken));
+
+        // 另一側：一般驗證訊息（中文、資料註記）照原文
+        var normal = new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary();
+        normal.AddModelError("Account", "「帳號」為必填。");
+        Assert.Equal("「帳號」為必填。", LogForesight.Web.Extensions.ServiceCollectionExtensions.ValidationMessage(normal));
     }
 
     private static void Run(object argument)

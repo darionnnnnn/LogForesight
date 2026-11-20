@@ -25,6 +25,7 @@ public class SharedFrontBehaviorTests
     [NodeTheory]
     [InlineData("安全環境走clipboard複製成功")]
     [InlineData("非安全環境無clipboard走退路複製成功")]
+    [InlineData("焦點在modal內時退路的textarea掛進該modal")]
     [InlineData("clipboard被拒絕時退回execCommand")]
     [InlineData("兩者都失敗時回報原因_安全環境")]
     [InlineData("兩者都失敗時回報原因_非安全環境")]

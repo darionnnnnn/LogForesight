@@ -946,7 +946,11 @@ function presentedFingerprint(sha256) {
 
 /** 與後端 ServerCertificateTrust.TryNormalize 同一套寫法，只用來比對「是否等於已存值」 */
 function normalizeFingerprint(value) {
-    return (value ?? '').replace(/[:\s-]/g, '').toUpperCase();
+    // 多個指紋以逗號、分號或換行分隔；各自去掉冒號、空白、連字號並轉大寫，重複的只留一個，以逗號接回
+    const pins = (value ?? '').split(/[,;\r\n]/)
+        .map(token => token.replace(/[:\s-]/g, '').toUpperCase())
+        .filter(Boolean);
+    return [...new Set(pins)].join(',');
 }
 
 function bindPrtgTest() {

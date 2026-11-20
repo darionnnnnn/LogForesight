@@ -31,7 +31,7 @@ public sealed class DefaultInputLimitsFilter : IActionFilter
                 var value = property.GetValue(argument);
                 if (value is string text && text.Length > DefaultMaxStringLength)
                     throw DomainException.Validation($"「{property.Name}」的內容過長（上限 {DefaultMaxStringLength:N0} 字）。");
-                if (value is ICollection collection && collection.Count > DefaultMaxCollectionCount)
+                if (CountOf(value) > DefaultMaxCollectionCount)
                     throw DomainException.Validation($"「{property.Name}」的項目過多（上限 {DefaultMaxCollectionCount:N0} 筆）。");
             }
         }
@@ -41,6 +41,18 @@ public sealed class DefaultInputLimitsFilter : IActionFilter
     {
     }
 
+    /// <summary>集合的元素數；不是集合回 0。宣告成 <c>IReadOnlyList&lt;T&gt;</c>、<c>HashSet&lt;T&gt;</c> 的屬性不實作非泛型 ICollection，另以泛型介面取數</summary>
+    internal static int CountOf(object? value) => value switch
+    {
+        null or string => 0,
+        ICollection collection => collection.Count,
+        IEnumerable sequence => sequence.GetType().GetInterfaces()
+            .Where(i => i.IsGenericType && (i.GetGenericTypeDefinition() == typeof(IReadOnlyCollection<>) || i.GetGenericTypeDefinition() == typeof(ICollection<>)))
+            .Select(i => (int?)i.GetProperty("Count")!.GetValue(sequence))
+            .FirstOrDefault() ?? 0,
+        _ => 0
+    };
+
     internal static bool IsRequestDto(Type type) =>
         type.IsClass && type.Namespace?.StartsWith("LogForesight.Web.Models", StringComparison.Ordinal) == true;
 
@@ -48,7 +60,7 @@ public sealed class DefaultInputLimitsFilter : IActionFilter
     internal static PropertyInfo[] FindUnbounded(Type type) => type
         .GetProperties(BindingFlags.Public | BindingFlags.Instance)
         .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-        .Where(p => p.PropertyType == typeof(string) || (p.PropertyType != typeof(string) && typeof(ICollection).IsAssignableFrom(p.PropertyType)))
+        .Where(p => p.PropertyType == typeof(string) || (p.PropertyType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(p.PropertyType)))
         .Where(p => !p.IsDefined(typeof(StringLengthAttribute), true) && !p.IsDefined(typeof(MaxLengthAttribute), true)
                     && !p.IsDefined(typeof(LengthAttribute), true))
         .ToArray();

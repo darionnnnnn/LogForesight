@@ -25,7 +25,10 @@ function copyByExecCommand(text) {
     area.setAttribute('tabindex', '-1');
     // 視覺上藏起來但仍可選取（display:none 的元素 select() 不會生效）
     area.classList.add('visually-hidden');
-    document.body.appendChild(area);
+    // 開著 modal 時 Bootstrap 會把焦點鎖在 modal 內：textarea 掛在 body 會被搶走焦點，
+    // 選取落空而 copy 指令照樣回成功。掛進目前焦點所在的 modal 就不受影響
+    const host = previouslyFocused?.closest?.('.modal') ?? document.body;
+    host.appendChild(area);
     try {
         area.select();
         area.setSelectionRange?.(0, text.length);

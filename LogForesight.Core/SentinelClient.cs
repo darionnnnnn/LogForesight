@@ -104,11 +104,18 @@ public sealed class SentinelSearchResult
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>
 public class SentinelClientException : Exception
 {
-    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed", int? httpStatus = null) : base(message, inner)
+    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed", int? httpStatus = null)
+        : base(httpStatus is 301 or 302 or 303 or 307 or 308 ? message + RedirectHint : message, inner)
     {
         SafeCode = safeCode;
         HttpStatus = httpStatus;
     }
+
+    /// <summary>
+    /// 連線不跟隨轉址（<see cref="OutboundHttp"/>）：伺服器回轉址時只看得到狀態碼，這句告訴操作者要改位址。
+    /// 狀態碼是轉址時由建構子附在訊息後面，各個擲出點不必各自處理。
+    /// </summary>
+    public const string RedirectHint = "（伺服器要求轉址，本系統不跟隨：請把連線位址改成最終網址，常見是 http:// 要改成 https://）";
 
     public string SafeCode { get; }
 
@@ -188,7 +195,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
             string.IsNullOrEmpty(parsed.Host))
         {
             throw new SentinelClientException(
-                $"Sentinel「{server.Name}」的連線位址格式不正確：「{server.BaseUrl}」。" +
+                $"Sentinel「{server.Name}」的連線位址格式不正確：「{UrlSecrets.MaskAddressInput(server.BaseUrl)}」。" +
                 "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。",
                 safeCode: SentinelClientException.InvalidBaseUrlCode);
         }

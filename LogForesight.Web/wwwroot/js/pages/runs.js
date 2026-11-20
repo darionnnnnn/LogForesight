@@ -1298,17 +1298,22 @@ let wasAiScheduleRunning = false;
 let scheduleAnyRunning = false;   // 取數或 AI 排程任一在跑：決定下一輪輪詢間隔
 let scheduleStatusPoll = null;
 
-async function refreshScheduleStatus() {
+/**
+ * @param {{background?: boolean}} [options] background＝常駐輪詢那一輪（不是使用者操作）：請求帶背景標頭，
+ *   伺服器不滑動延長閒置時限，否則開著這一頁就永遠不會閒置登出。按鈕觸發的更新不帶。
+ */
+async function refreshScheduleStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     let status = null;
     let aiStatus = null;
     try {
         [status, aiStatus] = await Promise.all([
-            api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-            api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+            api.get('/api/admin/schedule/status', { silent: true, background }).catch(() => null),
+            api.get('/api/admin/schedule/ai-status', { silent: true, background }).catch(() => null),
             // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
             // 兩者自帶錯誤吞掉，且快速輪詢「執行中才開、已存在就不重建」，重複呼叫不會疊輪詢
-            refreshPrtgSyncStatus(),
-            refreshPrtgBackfillStatus()
+            refreshPrtgSyncStatus({ background }),
+            refreshPrtgBackfillStatus({ background })
         ]);
         if (status) {
             applyScheduleStatus(status);
@@ -1318,7 +1323,8 @@ async function refreshScheduleStatus() {
     } finally {
         // 任一 apply 擲例外也要記下狀態並確保常駐輪詢存在（pollWhile 吞例外續排），否則常駐輪詢整條靜默死亡
         scheduleAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
-        scheduleStatusPoll ??= pollWhile(refreshScheduleStatus, () => (scheduleAnyRunning ? 3000 : 10000), { pauseWhenHidden: true });
+        scheduleStatusPoll ??= pollWhile(() => refreshScheduleStatus({ background: true }),
+            () => (scheduleAnyRunning ? 3000 : 10000), { pauseWhenHidden: true });
     }
     return status;
 }
@@ -1855,9 +1861,10 @@ function renderPrtgSyncSummary(status) {
     el.replaceChildren(when, mapped);
 }
 
-async function refreshPrtgSyncStatus() {
+async function refreshPrtgSyncStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     try {
-        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true, background });
         renderPrtgSyncSummary(status);
 
         // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
@@ -1870,7 +1877,7 @@ async function refreshPrtgSyncStatus() {
         }
 
         if (status.isRunning) {
-            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(refreshPrtgSyncStatus, 3000);
+            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(() => refreshPrtgSyncStatus({ background: true }), 3000);
         } else if (prtgSyncTimer) {
             prtgSyncTimer.stop();
             prtgSyncTimer = null;
@@ -2426,10 +2433,11 @@ function renderPrtgBackfillStatus(status) {
         (status.success ? '✓ 完成（可至 PRTG 維護頁查看鏡像狀態）' : '✗ 執行中發生錯誤');
 }
 
-async function refreshPrtgBackfillStatus() {
+async function refreshPrtgBackfillStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     let status;
     try {
-        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background });
     } catch {
         return;
     }
@@ -2437,7 +2445,7 @@ async function refreshPrtgBackfillStatus() {
 
     if (status.isRunning && !prtgBackfillPollTimer) {
         prtgBackfillPollTimer = pollWhile(async () => {
-            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
+            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background: true }).catch(() => null);
             if (!latest) return;
             renderPrtgBackfillStatus(latest);
             if (!latest.isRunning) {

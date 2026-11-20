@@ -125,6 +125,31 @@ public class CookieSessionEventsTests
         Assert.Equal(1, rig.Versions.Current(isServerAdmin: true));
     }
 
+    /// <summary>
+    /// 救援帳號不在使用者資料裡，帳密外洩時改設定檔並重啟是唯一的撤銷手段：改了帳號名稱或密碼雜湊後，
+    /// 先前簽發的 cookie（帶舊設定下的版號）必須失效；設定沒變的重啟不受影響。
+    /// </summary>
+    [Fact]
+    public void 救援帳號設定變更後_先前簽發的版號失效_設定不變的重啟仍有效()
+    {
+        var users = new SessionRig().Users;
+        var blob = new EfSqliteFixture().Blob(SessionVersionStore.ServerAdminBlobKey);
+        long Stamp(string account, string hash) => SessionVersionStore.CredentialStamp(account, hash);
+
+        var original = new SessionVersionStore(users, blob, Stamp("svc-lfadmin", "PBKDF2$1$a$b"));
+        original.Bump(0, isServerAdmin: true);
+        var issued = original.Current(isServerAdmin: true);
+
+        // 設定不變的重啟（帳號大小寫與前後空白不算變更）
+        Assert.Equal(issued, new SessionVersionStore(users, blob, Stamp(" SVC-LFADMIN ", "PBKDF2$1$a$b")).Current(isServerAdmin: true));
+        // 改帳號名稱、改密碼雜湊
+        Assert.NotEqual(issued, new SessionVersionStore(users, blob, Stamp("svc-newadmin", "PBKDF2$1$a$b")).Current(isServerAdmin: true));
+        Assert.NotEqual(issued, new SessionVersionStore(users, blob, Stamp("svc-lfadmin", "PBKDF2$1$a$c")).Current(isServerAdmin: true));
+        // 登出遞增仍在戳記之上累加
+        Assert.Equal(issued + 1, original.Bump(0, isServerAdmin: true));
+        Assert.True(Stamp("x", "y") >= 0);
+    }
+
     [Fact]
     public async Task 缺少工作階段版號claim_視為無效()
     {

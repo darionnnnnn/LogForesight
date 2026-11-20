@@ -49,6 +49,23 @@ public class OutboundTrustBoundaryTests
         Assert.Equal(1, listener.Hits);
     }
 
+    [Fact]
+    public async Task AI探活的預設用戶端不跟隨轉址()
+    {
+        // 探活與正式的 AI 用戶端要同一種行為：端點回轉址時正式呼叫會失敗，探活跟過去就會誤報「連得上」
+        using var listener = new HttpListenerScope();
+        listener.Respond = ctx =>
+        {
+            if (ctx.Request.Url!.AbsolutePath == "/ok") { ctx.Response.StatusCode = 200; return; }
+            ctx.Response.StatusCode = 302;
+            ctx.Response.RedirectLocation = listener.Url + "ok";
+        };
+        using var http = LogForesight.Web.Services.AiProbeService.CreateDefaultHttpClient();
+        using var resp = await http.GetAsync(listener.Url);
+        Assert.Equal(HttpStatusCode.Found, resp.StatusCode);
+        Assert.Equal(1, listener.Hits);
+    }
+
     // ── E5 Sentinel 回應位址同源；E7 建立工作不重送 ──
 
     private static SentinelServer Server() => new()
@@ -269,10 +286,61 @@ public class OutboundTrustBoundaryTests
     [InlineData("https://user@prtg.local/")]
     [InlineData("https://prtg/token/path?user=a")]
     [InlineData("https://prtg/api?tokens=1")]
+    [InlineData("https://prtg.local:8443/api?mail=a@b.c")]
+    [InlineData("https://prtg.local:8443/a@b")]
     public void 網址遮蔽_一般網址原樣保留(string input)
     {
         Assert.False(UrlSecrets.ContainsSecret(input));
         Assert.Equal(input, UrlSecrets.Mask(input));
+    }
+
+    [Fact]
+    public void 網址遮蔽_密碼含小老鼠時整段使用者資訊都遮掉()
+    {
+        Assert.Equal("https://***@host/x", UrlSecrets.Mask("https://u:p@ss@host/x"));
+    }
+
+    [Theory]
+    [InlineData("admin:S3cret@sentinel.corp:8443", "***@sentinel.corp:8443")]
+    [InlineData("ftp://admin:S3cret@sentinel.corp", "ftp://***@sentinel.corp")]
+    [InlineData("sentinel.corp:8443", "sentinel.corp:8443")]
+    [InlineData("https://sentinel.corp:8443", "https://sentinel.corp:8443")]
+    public void 位址欄位回顯_沒寫scheme的帳密也遮掉_一般位址原樣(string input, string expected)
+    {
+        Assert.Equal(expected, UrlSecrets.MaskAddressInput(input));
+    }
+
+    [Theory]
+    [InlineData("admin:S3cret@sentinel.corp:8443")]
+    [InlineData("ftp://admin:S3cret@sentinel.corp")]
+    public void 位址格式不正確的訊息不含帳密_Sentinel與PRTG(string address)
+    {
+        var server = Server();
+        server.BaseUrl = address;
+        var sentinel = Assert.Throws<SentinelClientException>(() => new SentinelClient(server, Settings()));
+        Assert.Equal(SentinelClientException.InvalidBaseUrlCode, sentinel.SafeCode);
+        Assert.DoesNotContain("S3cret", sentinel.Message);
+
+        var prtg = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient(address, "tok", 30, false, null, PrtgAuthModes.Token, "", "", ""));
+        Assert.DoesNotContain("S3cret", prtg.Message);
+    }
+
+    [Theory]
+    [InlineData(301, true)]
+    [InlineData(302, true)]
+    [InlineData(307, true)]
+    [InlineData(308, true)]
+    [InlineData(304, false)]
+    [InlineData(404, false)]
+    [InlineData(500, false)]
+    public void 轉址狀態碼的訊息說明要改位址_其他狀態碼不帶(int status, bool expectHint)
+    {
+        // 連線不跟隨轉址：只給狀態碼的話操作者不知道該把 http 改成 https
+        Assert.Equal(expectHint, PrtgFailureText.ForHttpStatus(status).Contains("轉址"));
+        var sentinel = new SentinelClientException($"讀取失敗：HTTP {status}", httpStatus: status);
+        Assert.Equal(expectHint, sentinel.Message.EndsWith(SentinelClientException.RedirectHint));
+        Assert.StartsWith($"讀取失敗：HTTP {status}", sentinel.Message);
     }
 
     // ── E9 PRTG 明文認證警告 ──

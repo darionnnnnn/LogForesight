@@ -37,9 +37,10 @@ public static class UrlSecrets
         @"(?<prefix>[?&](?<name>[^=&#?\s]{1,64})=)(?<value>[^&#\s]*)",
         RegexOptions.CultureInvariant, RegexTimeout);
 
-    // scheme://使用者資訊@主機：使用者資訊裡有冒號才是帳密（只有帳號沒有密碼的不遮）
+    // scheme://使用者資訊@主機：使用者資訊裡有冒號才是帳密（只有帳號沒有密碼的不遮）。
+    // 使用者資訊取到主機段（第一個 / ? # 之前）的最後一個 @：密碼本身含 @ 時不能只遮到第一個
     private static readonly Regex UserInfo = new(
-        @"(?<prefix>\b[A-Za-z][A-Za-z0-9+.\-]*://)(?<info>[^/?#@\s]*:[^/?#@\s]*)@",
+        @"(?<prefix>\b[A-Za-z][A-Za-z0-9+.\-]*://)(?<info>[^/?#\s]*:[^/?#\s]*)@",
         RegexOptions.CultureInvariant, RegexTimeout);
 
     /// <summary>網址是否夾帶憑證：機敏查詢參數，或 <c>user:pass@</c></summary>
@@ -54,6 +55,19 @@ public static class UrlSecrets
         var masked = QueryParam.Replace(url,
             m => IsSecretName(m.Groups["name"].Value) ? m.Groups["prefix"].Value + "***" : m.Value);
         return UserInfo.Replace(masked, m => m.Groups["prefix"].Value + "***@");
+    }
+
+    /// <summary>
+    /// 給「位址格式不正確」這類訊息回顯使用者填的位址：先 <see cref="Mask"/>，仍含 <c>@</c> 時
+    /// （沒寫 scheme 的 <c>user:pass@host</c>，<see cref="Mask"/> 認不得）把最後一個 @ 之前整段換成 ***。
+    /// 只用在整段就是一個位址欄位值的地方；自由文字不適用（信箱會被遮掉）。
+    /// </summary>
+    public static string MaskAddressInput(string? address)
+    {
+        var masked = Mask(address);
+        var at = masked.LastIndexOf('@');
+        if (at < 0 || masked.Contains("***@", StringComparison.Ordinal)) return masked;
+        return string.Concat("***", masked.AsSpan(at));
     }
 
     private static bool IsSecretName(string rawName)

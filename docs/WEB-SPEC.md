@@ -218,7 +218,7 @@ LogForesight.Web/
   （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
   寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
-- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
+- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
   `CookieSessionEvents.CheckSlidingExpiration` 對它不續發——前景分頁開著不動也會依閒置時數登出。權限版號變更時的就地更新續發不受影響（背景請求同樣換主體）。
 - **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
   （同一台主機的正式／測試兩個子站台互不覆蓋）。
@@ -334,7 +334,8 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
   供下一步的 401 信封顯示。
 - **工作階段版號**是使用者層級的登入失效手段：一般使用者的有效版號由 `IUserStore.GetSessionVersion` 取得＝`WebUser.SessionVersion`（隨使用者資料持久化，**重啟不失效**；
   舊資料缺欄＝0，回滾到舊版時只認這個欄位）加上獨立 blob `user_session_versions` 的登出增量（登出是日常操作，不改寫 `users`，
-  PRTG 範圍清除作業以 `users` 版本當授權柵欄，不能被登出打斷）；serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`。
+  PRTG 範圍清除作業以 `users` 版本當授權柵欄，不能被登出打斷）；serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`，並加上救援帳號設定的戳記
+  （`SessionVersionStore.CredentialStamp`：帳號名稱與密碼雜湊）——改了救援帳號名稱或密碼雜湊並重啟，先前簽發的 serverAdmin cookie 一併失效，這是救援帳密外洩時的撤銷手段。
   登出時遞增（`IUserStore.BumpSessionVersion`／`SessionVersionStore.Bump`，只寫 `user_session_versions`），啟用轉停用時 `UserStore.Upsert` 在 `users` 內遞增 `SessionVersion`
   （停用後再啟用，停用前簽發的 cookie 不復活）；`Upsert` 其餘情況不覆寫此欄。遞增的效果是該使用者**所有裝置**上既有的 cookie 一併失效。
 - **未登入的回應**（`CookieSessionEvents.RedirectToLogin`，依路徑區分）：`/api` 回 401 ＋ 信封 error code `auth_expired`

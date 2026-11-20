@@ -153,6 +153,23 @@ const cases = {
         expectEqual(record.refocused, true, '焦點還給原本的元素');
     },
 
+    async 焦點在modal內時退路的textarea掛進該modal() {
+        // Bootstrap 把焦點鎖在開著的 modal 內：掛在 body 的 textarea 選取會落空，copy 指令卻照樣回成功
+        setNavigator({});
+        globalThis.window.isSecureContext = false;
+        const record = installClipboardDocument(true);
+        let inModal = 0;
+        const modal = { appendChild() { inModal += 1; } };
+        globalThis.document.activeElement = {
+            focus() { record.refocused = true; },
+            closest(selector) { return selector === '.modal' ? modal : null; },
+        };
+        const result = await copyText('報告全文');
+        expectEqual(result.ok, true, '複製結果');
+        expectEqual(inModal, 1, 'textarea 掛進 modal');
+        expectEqual(record.appended, 0, '不掛在 body');
+    },
+
     async clipboard被拒絕時退回execCommand() {
         setNavigator({ clipboard: { writeText: async () => { throw new Error('NotAllowedError'); } } });
         globalThis.window.isSecureContext = true;

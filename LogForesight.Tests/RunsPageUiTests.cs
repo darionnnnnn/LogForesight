@@ -710,8 +710,13 @@ public class RunsPageUiTests
         Assert.False(string.IsNullOrWhiteSpace(refresh), "擷取不到 refreshScheduleStatus 主體");
         var finallyIndex = refresh.IndexOf("finally", StringComparison.Ordinal);
         Assert.True(finallyIndex >= 0, "refreshScheduleStatus 必須用 try/finally 確保排下一輪");
-        var scheduleIndex = refresh.IndexOf("pollWhile(refreshScheduleStatus", StringComparison.Ordinal);
-        Assert.True(scheduleIndex > finallyIndex, "確保常駐輪詢存在的 pollWhile 必須在 finally 區塊內");
+        // 常駐輪詢那一輪要標成背景請求：不帶的話開著執行紀錄頁就永遠不會閒置登出（WEB-SPEC §6.1）
+        var scheduleIndex = refresh.IndexOf("pollWhile(() => refreshScheduleStatus({ background: true })", StringComparison.Ordinal);
+        Assert.True(scheduleIndex > finallyIndex, "確保常駐輪詢存在的 pollWhile 必須在 finally 區塊內，且以背景請求輪詢");
+        // 背景旗標要一路帶到每一個請求
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(refresh, @"\{ silent: true, background \}").Count);
+        Assert.Contains("refreshPrtgSyncStatus({ background })", refresh);
+        Assert.Contains("refreshPrtgBackfillStatus({ background })", refresh);
     }
 
     /// <summary>執行總表換頁：序號守門避免舊回應蓋掉新頁，失敗要有失敗態而不是骨架列永留。</summary>

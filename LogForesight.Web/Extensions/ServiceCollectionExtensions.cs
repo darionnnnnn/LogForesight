@@ -219,7 +219,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISessionSigner, CookieSessionSigner>();
         services.AddSingleton<SessionVersionStore>(sp => new SessionVersionStore(
             sp.GetRequiredService<IUserStore>(),
-            sp.GetRequiredService<StorageBackend>().Blob(SessionVersionStore.ServerAdminBlobKey)));
+            sp.GetRequiredService<StorageBackend>().Blob(SessionVersionStore.ServerAdminBlobKey),
+            SessionVersionStore.CredentialStamp(settings.Auth.ServerAdmin.Account, settings.Auth.ServerAdmin.PasswordHash)));
         services.AddLogForesightDataProtection(settings.Storage.ResolveDataRoot());
 
         services.AddAuthorization(options =>
@@ -254,23 +255,39 @@ public static class ServiceCollectionExtensions
             options.SuppressMapClientErrors = true;
             options.InvalidModelStateResponseFactory = context =>
             {
-                var messages = context.ModelState
-                    .Where(entry => entry.Value?.Errors.Count > 0)
-                    .SelectMany(entry => entry.Value!.Errors.Select(error => error.ErrorMessage))
-                    .Where(message => !string.IsNullOrWhiteSpace(message))
-                    .Distinct()
-                    .ToList();
-
-                var message = messages.Count > 0
-                    ? string.Join("；", messages)
-                    : "輸入內容不合格，請確認必填欄位與格式。";
-
                 return new BadRequestObjectResult(
-                    ApiResponse<object>.Fail(ApiErrorCodes.ValidationFailed, message));
+                    ApiResponse<object>.Fail(ApiErrorCodes.ValidationFailed, ValidationMessage(context.ModelState)));
             };
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// 模型驗證失敗給使用者看的訊息。JSON 本文解析失敗的錯誤（鍵是 <c>$</c> 開頭的 JSON 路徑）訊息是框架的英文原文，
+    /// 含 CLR 型別名與位元組位置：一律換成固定中文並只指出欄位；此時本文參數的「為必填」是解析失敗的連帶結果，不另外列。
+    /// 其餘（資料註記與中文化的繫結訊息）照原文回。
+    /// </summary>
+    internal static string ValidationMessage(Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary modelState)
+    {
+        var failed = modelState.Where(entry => entry.Value?.Errors.Count > 0).ToList();
+        var jsonPaths = failed.Select(entry => entry.Key)
+            .Where(key => key == "$" || key.StartsWith("$.", StringComparison.Ordinal) || key.StartsWith("$[", StringComparison.Ordinal))
+            .ToList();
+        if (jsonPaths.Count > 0)
+        {
+            var fields = jsonPaths.Where(path => path.Length > 2).Select(path => path[2..]).Distinct().Take(5).ToList();
+            return fields.Count > 0
+                ? $"請求內容格式不正確：「{string.Join("」、「", fields)}」的值不是預期的類型。"
+                : "請求內容不是合法的 JSON。";
+        }
+
+        var messages = failed
+            .SelectMany(entry => entry.Value!.Errors.Select(error => error.ErrorMessage))
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct()
+            .ToList();
+        return messages.Count > 0 ? string.Join("；", messages) : "輸入內容不合格，請確認必填欄位與格式。";
     }
 
     /// <summary>業務層與資料存取層</summary>
@@ -291,9 +308,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAiProbeService>(sp =>
         {
             var settings = sp.GetRequiredService<ISystemSettingsStore>();
-            var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
-            var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
-            return new AiProbeService(settings, http);
+            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient());
         });
         services.AddScoped<SetupReadinessService>();
 

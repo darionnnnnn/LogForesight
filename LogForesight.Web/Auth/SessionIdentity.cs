@@ -91,12 +91,29 @@ public sealed class SessionVersionStore
     private readonly IUserStore _users;
     private readonly EfJsonBlobStore _serverAdminBlob;
     private readonly object _lock = new();
+    private readonly long _serverAdminCredentialStamp;
     private long? _serverAdminCached;
 
-    public SessionVersionStore(IUserStore users, EfJsonBlobStore serverAdminBlob)
+    /// <param name="serverAdminCredentialStamp">
+    /// 救援帳號設定的戳記（<see cref="CredentialStamp"/>），加進 serverAdmin 的版號：改了救援帳號名稱或密碼雜湊並重啟後，
+    /// 先前簽發的 serverAdmin cookie 版號就對不上而失效。救援帳號不在使用者資料裡，沒有「停用」可以逐請求檢查，
+    /// 帳密外洩時改設定檔是唯一的撤銷手段，所以它必須連同已簽發的 cookie 一起撤銷。
+    /// </param>
+    public SessionVersionStore(IUserStore users, EfJsonBlobStore serverAdminBlob, long serverAdminCredentialStamp = 0)
     {
         _users = users;
         _serverAdminBlob = serverAdminBlob;
+        _serverAdminCredentialStamp = serverAdminCredentialStamp;
+    }
+
+    /// <summary>救援帳號名稱（不分大小寫）與密碼雜湊的戳記：任一改變戳記就不同。取雜湊前 6 個位元組，與登出遞增相加不會溢位</summary>
+    public static long CredentialStamp(string? account, string? passwordHash)
+    {
+        var text = (account ?? "").Trim().ToLowerInvariant() + "\n" + (passwordHash ?? "");
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text));
+        long stamp = 0;
+        for (var i = 0; i < 6; i++) stamp = (stamp << 8) | hash[i];
+        return stamp;
     }
 
     /// <summary>目前版號。一般使用者呼叫端通常已查過使用者，直接傳入避免重複查找</summary>
@@ -106,7 +123,7 @@ public sealed class SessionVersionStore
         lock (_lock)
         {
             _serverAdminCached ??= Parse(_serverAdminBlob.Read());
-            return _serverAdminCached.Value;
+            return _serverAdminCached.Value + _serverAdminCredentialStamp;
         }
     }
 
@@ -126,7 +143,7 @@ public sealed class SessionVersionStore
                 return (value.ToString(CultureInfo.InvariantCulture), value);
             });
             _serverAdminCached = next;
-            return next;
+            return next + _serverAdminCredentialStamp;
         }
     }
 

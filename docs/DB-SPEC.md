@@ -950,7 +950,7 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 | `prtg_resource_guard_autodetect` | `PrtgResourceGuardAutoDetect`（夜間自動偵測寫；設定頁預覽讀） | `DetectedAt`、`Objids`；清單等於它才算自動偵測結果 |
 | `prtg_recent_stateq_*` | `EfPrtgStore.RecentStateChangeQueuePrefix`（快照服務） | 近期狀態變更待辦 |
 | `prtg_import_diagnostic_*` | 舊版遺留，已無寫入端；`RetentionPruner` 每輪最多清 100 份 | 舊版隔離診斷匯入 |
-| `permission_changes_dedupe_hash_done` | `PermissionChangeDedupeBackfiller.Run`（回填完成且無 NULL 時寫；啟動快判讀） | 權限異動去重鍵雜湊欄回填完成標記（版本字串）；存在即不再掃 `lf_permission_changes`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
+| `permission_changes_dedupe_hash_done` | `PermissionChangeDedupeBackfiller.Run`（回填完成且無 NULL 時寫） | 權限異動去重鍵雜湊欄回填完成的紀錄（版本字串），沒有讀取端：就緒與否每次啟動以索引可 seek 的 `dedupe_key_hash IS NULL` EXISTS 判定，有待補列就由背景回填補齊 |
 | `work_order_outbox_drops` | `WorkOrderOutboxDropStore`（`WorkOrderOutboxStore` 丟棄項目時寫；健康頁讀） | 交辦 outbox 超過上限丟棄的紀錄：近期累計筆數與最近一次丟棄時間；與 outbox 分開，健康頁讀它不必反序列化整份 outbox |
 | `risky_events_source_key_done` | `TopIssueBackfiller.RunRiskySourceKeys`（回填完成且無 NULL 時寫；啟動時讀） | 風險事件來源鍵回填完成標記（版本字串）；存在即不再掃 `lf_risky_events`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
 
