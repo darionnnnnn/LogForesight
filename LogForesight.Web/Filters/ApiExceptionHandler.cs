@@ -12,8 +12,15 @@ public sealed class ApiExceptionHandler : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        if (!ApiStatusEnvelope.IsApiRequest(httpContext.Request)) return false;
+        // UseExceptionHandler 設了 ExceptionHandlingPath 時，會在呼叫 IExceptionHandler 之前就把 Request.Path 改成錯誤頁路徑，
+        // 直接看 Request.Path 會把所有 /api 請求都判成頁面請求、改回 HTML 錯誤頁。原始路徑在 IExceptionHandlerPathFeature。
+        var originalPath = httpContext.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>()?.Path;
+        var path = string.IsNullOrEmpty(originalPath) ? httpContext.Request.Path : new PathString(originalPath);
+        if (!ApiStatusEnvelope.IsApiRequest(path)) return false;
 
+        // 判定為 API 後把路徑還原，對應表的稽核與記錄才不會寫成 /error（只在自己處理時還原；
+        // 回 false 時中介層要拿錯誤頁路徑重跑管線，不能動）。ExceptionHandlerMiddleware 結束時本來就會還原。
+        httpContext.Request.Path = path;
         var (status, code, message) = ApiExceptionMapping.Map(exception, httpContext);
         httpContext.Response.StatusCode = status;
         await httpContext.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(code, message), cancellationToken);
@@ -27,11 +34,14 @@ public sealed class ApiExceptionHandler : IExceptionHandler
 /// </summary>
 public static class ApiStatusEnvelope
 {
-    public static bool IsApiRequest(HttpRequest request) =>
-        request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase);
+    public static bool IsApiRequest(HttpRequest request) => IsApiRequest(request.Path);
+
+    public static bool IsApiRequest(PathString path) =>
+        path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase);
 
     public static (string Code, string Message)? For(int status) => status switch
     {
+        StatusCodes.Status400BadRequest => (ApiErrorCodes.ValidationFailed, "請求格式不正確。"),
         StatusCodes.Status401Unauthorized => (ApiErrorCodes.AuthExpired, "登入已逾期，請重新登入。"),
         StatusCodes.Status403Forbidden => (ApiErrorCodes.Forbidden, "沒有執行此操作的權限。"),
         StatusCodes.Status404NotFound => (ApiErrorCodes.NotFound, "找不到指定的資源。"),

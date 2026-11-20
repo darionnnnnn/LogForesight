@@ -147,4 +147,82 @@ public class CheckupSkipTests
         Assert.DoesNotContain(warns, w => w.Contains("AttachWeeklyCheckup"));
         Assert.NotNull(baseline?.WeeklyCheckup);
     }
+
+    // ── J9：取消權杖傳到週體檢，協調器把該階段標為已停止、整趟交回「使用者取消」──────────
+
+    /// <summary>
+    /// 跑一趟本機分析（昨天已有高風險紀錄（窗口內有訊號，體檢閘門放行才會呼叫 AI）、AI 已設定）：AI 端點是本機監聽器，收到第一個請求（＝體檢的 AI 呼叫，
+    /// 本機分析無待補、沒有更早的 AI 呼叫）時取消權杖，並讓回應遲到——模擬使用者在 AI 呼叫進行中按下停止。
+    /// </summary>
+    private static async Task<(OrchestratorResult Result, RunPhaseRecord? Checkup, int AiRequests)> RunCancelledDuringCheckupAiAsync()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-test-checkup-cancel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        using var cts = new CancellationTokenSource();
+        var aiRequests = 0;
+        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        var server = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var context = await listener.GetContextAsync();
+                    Interlocked.Increment(ref aiRequests);
+                    cts.Cancel();
+                    await Task.Delay(3000);   // 回應遲到：呼叫端必須因取消而離開，不是等到回應
+                    try { context.Response.Abort(); } catch (ObjectDisposedException) { }
+                }
+            }
+            catch (Exception ex) when (ex is System.Net.HttpListenerException or ObjectDisposedException or InvalidOperationException) { }
+        });
+        try
+        {
+            var settings = new AppSettings
+            {
+                Ai = new AiSettings { BaseUrl = $"http://127.0.0.1:{port}", TimeoutSeconds = 30, RetryCount = 0 },
+                Storage = new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "t.db")};Pooling=False" }
+            };
+            var backend = new StorageBackend(settings.Storage, dir, 1);
+            var host = new HostStore(backend.Blob("hosts")).Touch(Environment.MachineName, DateTime.Now);
+            backend.RecordStore(new HostKey { HostId = host.HostId, HostName = Environment.MachineName }).Append(new DailyAnalysisRecord
+            {
+                HostId = host.HostId, Host = Environment.MachineName, Date = DateTime.Today.AddDays(-1),
+                RiskLevel = RiskLevels.High, TopIssues = []
+            });
+
+            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource(), NullAiRequestGate.Instance);
+            var result = await orchestrator.RunAsync(
+                new RunRequest { Scope = RunScope.Full, IncludeLocal = true, BackfillOverride = 1 },
+                settings, dir, new RetentionOptions(), new Console(), cts.Token);
+
+            var store = new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
+            var run = store.GetRun(result.BatchRunId!.Value)!;
+            return (result, run.Phases?.FirstOrDefault(p => p.Key == RunTimingPhases.Checkup), Volatile.Read(ref aiRequests));
+        }
+        finally
+        {
+            listener.Close();
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task J9_體檢的AI呼叫進行中取消_體檢階段標為已停止_整趟交回使用者取消()
+    {
+        var (result, checkup, aiRequests) = await RunCancelledDuringCheckupAiAsync();
+
+        Assert.True(aiRequests >= 1, "體檢沒有呼叫 AI，取消沒有發生在體檢階段");
+        Assert.False(result.Success);
+        Assert.Equal("使用者取消", result.FailureMessage);
+        Assert.NotNull(checkup);
+        Assert.Equal(RunPhaseOutcomes.Stopped, checkup!.Outcome);
+    }
 }

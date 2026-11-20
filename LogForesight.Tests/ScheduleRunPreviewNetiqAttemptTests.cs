@@ -6,6 +6,7 @@ using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -102,6 +103,40 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
 
         Assert.Equal("netiq_attempt_ledger_invalid", ex.Code);
         Assert.Contains("無法準確預覽", ex.Message);
+    }
+
+    /// <summary>B3：網段輸入格式錯誤是專屬例外，回 NormalizeSubnetPrefix 寫好的原訊息</summary>
+    [Fact]
+    public void 網段格式錯誤_回專屬例外的原訊息()
+    {
+        var original = Assert.Throws<SubnetPrefixFormatException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10")).Message;
+        var hosts = new HostStore(_backend.Blob("hosts"));
+
+        var ex = Assert.Throws<DomainException>(() =>
+            ScheduleController.ResolveSegmentHostIds("10", hosts, new SentinelStore(_backend.Blob("sentinels"))));
+
+        Assert.Equal(original, ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+    }
+
+    /// <summary>B3：回執帳本讀取擲框架例外（不是 InvalidDataException）時，不被當成「帳本損毀」的領域訊息，也不外洩原文</summary>
+    [Fact]
+    public void 回執帳本讀取擲框架例外_回固定說明而不是帳本損毀訊息()
+    {
+        var day = DateTime.Today.AddDays(-1);
+        SeedParentRows(new long[] { 1 }, day);
+        using (var db = _backend.CreateContext())
+            db.Database.ExecuteSqlRaw("DROP TABLE lf_log_lines;");
+
+        var ex = Assert.ThrowsAny<Exception>(() =>
+            Controller(new long[] { 1 }).RunPreview("all", null, null, onlyMissingOrFailed: true, backfillDays: 1));
+
+        Assert.IsNotType<DomainException>(ex);
+        var (status, code, message) = LogForesight.Web.Filters.ApiExceptionMapping.Map(ex, new Microsoft.AspNetCore.Http.DefaultHttpContext());
+        Assert.Equal(500, status);
+        Assert.NotEqual("netiq_attempt_ledger_invalid", code);
+        Assert.DoesNotContain("lf_log_lines", message);
+        Assert.DoesNotContain("no such table", message, StringComparison.OrdinalIgnoreCase);
     }
 
     private void SeedParentRows(IEnumerable<long> ids, DateTime date)

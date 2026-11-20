@@ -4,6 +4,7 @@ using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -470,6 +471,38 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(0, old.TruncatedRuns);
         var next = new NetiqSourceAttempt.Receipt(4, 1, old.Date, NetiqAttemptStatus.Failed, DateTime.UtcNow).AfterPrevious(old);
         Assert.Equal(1, next.RetryRuns);
+    }
+
+    /// <summary>
+    /// J7（管線層）：帳本寫入本身擲例外（資料庫層級故障，不是單列損毀）時，帳本只是輔助紀錄——
+    /// 本趟每台主機照常分析寫入、該台 Sentinel 不被整台記成失敗，已分析的主機日也不被重複計入失敗。
+    /// 故障以 SQLite 觸發器注入：任何寫到「NetIQ 嘗試回執」鍵的 lf_log_lines 都擲例外。
+    /// </summary>
+    [Fact]
+    public async Task J7_帳本寫入擲例外_其他主機照常處理_Sentinel不記整台失敗_不重複計失敗()
+    {
+        var sentinel = AddSentinel();
+        var hostA = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var hostB = AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+        using (var ctx = _backend.CreateContext())
+            ctx.Database.ExecuteSqlRaw(
+                "CREATE TRIGGER zz_ledger_fault BEFORE INSERT ON lf_log_lines WHEN NEW.log_key LIKE 'netiq_hostday_attempt_%' " +
+                "BEGIN SELECT RAISE(ABORT, 'ZZ-LEDGER-FAULT 帳本資料庫故障'); END;");
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        // 兩台主機都分析並寫入父紀錄
+        Assert.Equal(2, result.HostDaysAnalyzed);
+        var yesterday = DateTime.Today.AddDays(-1);
+        foreach (var host in new[] { hostA, hostB })
+            Assert.Single(_backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName }).ReadRecent(yesterday, 1));
+        // Sentinel 不記整台失敗、已分析的主機日不被重複計成失敗
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(2, result.HostDaysDone);
+        // 故障確實發生了：帳本一列都沒寫進去（證明上面的結果是「帳本壞了仍照常」，不是「帳本沒壞」）
+        using var check = _backend.CreateContext();
+        Assert.Equal(0, check.LogLines.Count(l => l.LogKey.StartsWith("netiq_hostday_attempt_")));
     }
 
     [Fact]

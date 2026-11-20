@@ -35,6 +35,23 @@ public class CryptoSiteKeyUnavailableTests : IDisposable
         Assert.Contains(reasons, r => r.Key == HealthAttentionKeys.Crypto);
     }
 
+    /// <summary>G8：拒絕加密不能連帶讓既有密文解不開——站台金鑰消失時，用內嵌金鑰寫下的舊密文仍要能讀回（讓管理者看得到、能重新輸入）。</summary>
+    [Fact]
+    public void 站台模式且金鑰檔不存在_加密被拒_既有密文仍可解()
+    {
+        var legacyV1 = CryptoHelper.EncryptV1With(CryptoHelper.EmbeddedKeyForTests, "legacy-secret");
+        var embeddedV2 = CryptoHelper.Encrypt("embedded-secret");   // 尚未進入站台模式：以內嵌金鑰加密
+
+        CryptoHelper.UseKeyFile(Path.Combine(_dir, "missing.key"));
+
+        Assert.True(CryptoHelper.SiteKeyUnavailable);
+        Assert.Throws<CryptoKeyUnavailableException>(() => CryptoHelper.Encrypt("new-secret"));
+        Assert.True(CryptoHelper.TryDecrypt(legacyV1, out var legacyPlain));
+        Assert.Equal("legacy-secret", legacyPlain);
+        Assert.True(CryptoHelper.TryDecrypt(embeddedV2, out var embeddedPlain));
+        Assert.Equal("embedded-secret", embeddedPlain);
+    }
+
     [Fact]
     public void 站台模式且金鑰檔存在_照常加密()
     {

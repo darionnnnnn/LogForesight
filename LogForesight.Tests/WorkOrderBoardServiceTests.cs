@@ -119,6 +119,23 @@ public class WorkOrderBoardServiceTests : IDisposable
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 
+    /// <summary>C12：待派清單頁碼為整數最大值回空頁，總數照舊（位移不溢位成負數而退回第一頁）</summary>
+    [Fact]
+    public void C12_待派清單頁碼為整數最大值_回空頁且總數照舊()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("c12-h", groupIds: pool.GroupId);
+        var host = AddHost("HOST-C12", null, Disk());
+        Candidate(h, inPool: true, host.HostId);
+
+        var firstPage = Service().GetGaps(null, null, 1);
+        var farPage = Service().GetGaps(null, null, int.MaxValue);
+
+        Assert.NotEmpty(firstPage.Rows);
+        Assert.Empty(farPage.Rows);
+        Assert.Equal(firstPage.Total, farPage.Total);
+    }
+
     private static LogIssueSignature Disk(IssueSeverity severity = IssueSeverity.High) => new()
     {
         LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error,

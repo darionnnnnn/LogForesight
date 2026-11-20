@@ -1876,7 +1876,9 @@ public class HandlingServiceTests : IDisposable
 
         IReadOnlySet<string>? grant = restricted ? new HashSet<string> { IssueSignatureKey.For(a) } : null;
         var visibility = new RestrictionVisibility(new AlwaysVisibleService(_hosts), _host.HostId, grant);
-        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle);
+        // 檢視者是另一個人（看他人的工作量）：日層級項目是整台主機當天的狀態，案件授與的檢視者不列
+        var otherViewer = _users.Upsert(new WebUser { Account = "DOMAIN\\viewer", DisplayName = "檢視者" });
+        var currentUser = FakeCurrentUser.ForUser(otherViewer.UserId, Capability.Assign, Capability.Handle);
         var viewer = new HandlingServiceFacade(store: _handlings, issueStore: _issueHandlings, cases: _cases,
             caseCoordinator: _caseCoordinator, noiseMarks: _noiseMarks, repository: _repository, hosts: _hosts, users: _users,
             visibility: visibility, currentUser: currentUser, audit: _audit, settings: _settings, groups: null, issueOwners: _issueOwners);
@@ -1893,6 +1895,37 @@ public class HandlingServiceTests : IDisposable
         {
             Assert.NotEmpty(workload.Days);
         }
+    }
+
+    /// <summary>
+    /// G4 對照：同樣只靠案件授與看得到那台主機，但看的是「自己」的工作量時，被指派給自己的日層級項目仍要列出
+    /// （否則自己被指派了卻在「我的交辦」找不到）；案件仍只列被授與的那個問題。
+    /// 測試組裝必須把 currentUser 傳進查詢服務，viewingSelf 才算得出來。
+    /// </summary>
+    [Fact]
+    public void 工作頁_看自己時只靠案件授與的主機仍列出日層級項目_看他人時不列()
+    {
+        var day = Today.AddDays(-52);
+        var a = Issue("disk", 153);
+        var b = Issue("ntfs", 55);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _other.UserId);
+        var visibility = new RestrictionVisibility(new AlwaysVisibleService(_hosts), _host.HostId,
+            new HashSet<string> { IssueSignatureKey.For(a) });
+
+        HandlingServiceFacade ViewerIs(long viewerId) => new(store: _handlings, issueStore: _issueHandlings, cases: _cases,
+            caseCoordinator: _caseCoordinator, noiseMarks: _noiseMarks, repository: _repository, hosts: _hosts, users: _users,
+            visibility: visibility, currentUser: FakeCurrentUser.ForUser(viewerId, Capability.Assign, Capability.Handle),
+            audit: _audit, settings: _settings, groups: null, issueOwners: _issueOwners);
+
+        var self = ViewerIs(_other.UserId).GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+        var stranger = _users.Upsert(new WebUser { Account = "DOMAIN\\stranger", DisplayName = "路人" });
+        var others = ViewerIs(stranger.UserId).GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+
+        Assert.Equal(153, Assert.Single(self.Cases).EventId);
+        Assert.NotEmpty(self.Days);
+        Assert.Equal(153, Assert.Single(others.Cases).EventId);
+        Assert.Empty(others.Days);
     }
 
     private sealed class RestrictionVisibility(IVisibilityService inner, long hostId, IReadOnlySet<string>? grant) : IVisibilityService

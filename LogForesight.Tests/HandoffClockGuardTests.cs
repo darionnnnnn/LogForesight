@@ -147,6 +147,37 @@ public class HandoffClockGuardTests
             "下列位置直接讀真實時鐘，請改用 TimeProvider（ClockExtensions.LocalNow／LocalToday／UtcNow）：" + string.Join("、", offenders));
     }
 
+    /// <summary>
+    /// A6 反例：在暫時目錄放一個「清單外、但檔名符合樣式」且直讀系統時鐘的新檔，
+    /// 守門必須把它納入範圍並判為違規（證明守門對新檔真的會紅，不只是現有程式碼剛好乾淨）。
+    /// </summary>
+    [Fact]
+    public void 範圍內新增直讀系統時鐘的檔案_守門判定為違規()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lf-clock-guard-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (var dir in ScannedDirectories) Directory.CreateDirectory(Path.Combine(root, dir));
+            const string rel = "LogForesight.Web/Services/WorkOrderTemporaryNewFeature.cs";
+            File.WriteAllText(Path.Combine(root, rel),
+                "namespace X;\nclass WorkOrderTemporaryNewFeature\n{\n    DateTime Due() => DateTime.Now.AddDays(1);\n}\n");
+            // 同目錄放一個範圍外的檔案：它即使直讀時鐘也不該被納入
+            File.WriteAllText(Path.Combine(root, "LogForesight.Web/Services/PrtgUnrelated.cs"), "class P { DateTime T() => DateTime.Now; }");
+
+            Assert.DoesNotContain(rel, Scope);
+            var scope = EffectiveScope(root);
+            Assert.Contains(rel, scope);
+            Assert.DoesNotContain("LogForesight.Web/Services/PrtgUnrelated.cs", scope);
+
+            var offenders = scope.Where(r => File.Exists(Path.Combine(root, r))).SelectMany(r => DirectClockLines(File.ReadAllText(Path.Combine(root, r))).Select(l => $"{r}:{l}")).ToList();
+            Assert.Equal(new[] { rel + ":4" }, offenders);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
     [Fact]
     public void 共用函式是範圍內唯一呼叫GetLocalNow與GetUtcNow的地方()
     {

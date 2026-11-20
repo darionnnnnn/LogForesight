@@ -14,6 +14,7 @@ using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -660,6 +661,110 @@ public class PrtgScopeProtectionTests : IDisposable
 
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
         Assert.Equal(before, Counts());
+    }
+
+    // ── B3：專屬例外回原訊息、框架例外回固定說明（預覽與清除作業兩個控制器）──
+
+    private const string FrameworkMarker = "ZZ-FRAMEWORK-INTERNAL lf_prtg_scope_purge_jobs C:\\data\\path";
+
+    /// <summary>以 SQLite 觸發器注入故障：讓清除作業表在指定動作時擲出帶英文標記的框架層例外</summary>
+    private void InstallJobsTableTrigger(string name, string timingAndOp, string body)
+    {
+        using var context = _backend.CreateContext();
+        context.Database.ExecuteSqlRaw($"CREATE TRIGGER {name} {timingAndOp} ON lf_prtg_scope_purge_jobs BEGIN {body} END;");
+    }
+
+    private static (int Status, string Message) MapToResponse(Exception exception)
+    {
+        var (status, _, message) = LogForesight.Web.Filters.ApiExceptionMapping.Map(exception, new DefaultHttpContext());
+        return (status, message);
+    }
+
+    private static void AssertFrameworkExceptionIsNotLeaked(Exception exception, int expectedStatus = 500)
+    {
+        Assert.IsNotType<DomainException>(exception);
+        var (status, message) = MapToResponse(exception);
+        Assert.Equal(expectedStatus, status);
+        Assert.DoesNotContain("ZZ-FRAMEWORK", message);
+        Assert.DoesNotContain("lf_prtg_scope_purge_jobs", message);
+    }
+
+    [Fact]
+    public void 預覽範圍外清除_專屬規則違反回原訊息()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var (controller, _, _, _) = NewController();
+        // 預覽建立後立刻被改成停止：後續讀預覽邊界時 store 擲 PrtgScopePurgeRuleException
+        InstallJobsTableTrigger("zz_preview_stopped", "AFTER INSERT",
+            "UPDATE lf_prtg_scope_purge_jobs SET status = 'stopped' WHERE job_id = NEW.job_id;");
+
+        var ex = Assert.Throws<DomainException>(() => controller.PreviewPrtgScopePurge());
+
+        Assert.Equal("預覽已不在可檢視狀態，請重新預覽。", ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+    }
+
+    [Fact]
+    public void 預覽範圍外清除_框架例外不被轉成帶原文的領域例外()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var (controller, _, _, _) = NewController();
+        InstallJobsTableTrigger("zz_preview_fault", "BEFORE INSERT", $"SELECT RAISE(ABORT, '{FrameworkMarker}');");
+
+        var ex = Assert.ThrowsAny<Exception>(() => controller.PreviewPrtgScopePurge());
+
+        AssertFrameworkExceptionIsNotLeaked(ex);
+    }
+
+    [Fact]
+    public void 續跑清除作業_專屬規則違反回原訊息()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var (controller, jobsController, _, _) = NewController();
+        var preview = controller.PreviewPrtgScopePurge().Data!;
+        var revision = Store.ScopePurgeJobs().Get(preview.PreviewId!)!.Revision;
+
+        // 尚未接受的預覽不能續跑：store 擲 PrtgScopePurgeRuleException
+        var ex = Assert.Throws<DomainException>(() => jobsController.Resume(preview.PreviewId!,
+            new PrtgScopePurgeResumeRequest { ExpectedRevision = revision }, CancellationToken.None));
+
+        Assert.Equal("清除作業尚未接受。", ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+    }
+
+    [Fact]
+    public void 續跑清除作業_框架例外不被轉成帶原文的領域例外()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var (controller, jobsController, _, _) = NewController();
+        var preview = controller.PreviewPrtgScopePurge().Data!;
+        var accepted = jobsController.Confirm(new PrtgScopePurgeAcceptRequest { PreviewId = preview.PreviewId! }).Data!;
+        InstallJobsTableTrigger("zz_resume_fault", "BEFORE UPDATE", $"SELECT RAISE(ABORT, '{FrameworkMarker}');");
+
+        var ex = Assert.ThrowsAny<Exception>(() => jobsController.Resume(accepted.JobId!,
+            new PrtgScopePurgeResumeRequest { ExpectedRevision = accepted.Revision }, CancellationToken.None));
+
+        AssertFrameworkExceptionIsNotLeaked(ex);
+    }
+
+    [Fact]
+    public void 確認清除作業_框架例外不被轉成帶原文的領域例外()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var (controller, jobsController, _, _) = NewController();
+        var preview = controller.PreviewPrtgScopePurge().Data!;
+        InstallJobsTableTrigger("zz_confirm_fault", "BEFORE UPDATE", $"SELECT RAISE(ABORT, '{FrameworkMarker}');");
+
+        var ex = Assert.ThrowsAny<Exception>(() => jobsController.Confirm(
+            new PrtgScopePurgeAcceptRequest { PreviewId = preview.PreviewId! }));
+
+        // 接受時寫入失敗，store 本來就把 DbUpdateException 統一轉成「另一個清除作業正在執行」的固定說明（409）；重點是原文不外流
+        AssertFrameworkExceptionIsNotLeaked(ex, expectedStatus: 409);
     }
 
     private sealed class StubSettingsService : ISystemSettingsService

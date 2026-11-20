@@ -64,7 +64,7 @@ internal class HandlingServiceFacade
             issueOwnerAdmin, displayNames, mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery(),
-            displayNames, new FixedIssueExclusionSource(IssueExclusion.None));
+            displayNames, new FixedIssueExclusionSource(IssueExclusion.None), currentUser: currentUser);
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);

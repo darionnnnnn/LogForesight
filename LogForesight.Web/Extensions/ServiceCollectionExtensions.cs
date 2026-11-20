@@ -248,6 +248,10 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<ApiBehaviorOptions>(options =>
         {
+            // 不讓 MVC 把空本文的 4xx（415 媒體類型不符等）自動包成 ProblemDetails：
+            // 前端只認信封，ProblemDetails 沒有 success／error，使用者只看得到通用文字。
+            // 關掉後空本文交給 UseStatusCodePages 的 ApiStatusEnvelope 補成信封（B1）。
+            options.SuppressMapClientErrors = true;
             options.InvalidModelStateResponseFactory = context =>
             {
                 var messages = context.ModelState

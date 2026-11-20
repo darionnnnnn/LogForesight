@@ -14,15 +14,18 @@ using Microsoft.Extensions.Logging;
 namespace LogForesight.Web.Services;
 
 /// <summary>Native streamed download: fixed memory reservation, consistent DB snapshot, fresh authorization per row.</summary>
+/// <param name="deadlineLimit">整份匯出的期限；省略時用 <see cref="DefaultDeadline"/>。只給測試縮短期限以驗證逾時回應。</param>
 public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
     IPrtgTransferCapacityProvider capacity, Func<PrtgTransferBinding> captureBinding,
-    DateTime fromDate, DateTime toDate, IAuditService audit) : IActionResult
+    DateTime fromDate, DateTime toDate, IAuditService audit, TimeSpan? deadlineLimit = null) : IActionResult
 {
+    public static readonly TimeSpan DefaultDeadline = TimeSpan.FromMinutes(45);
+
     public async Task ExecuteResultAsync(ActionContext context)
     {
         var response = context.HttpContext.Response;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.HttpContext.RequestAborted);
-        deadline.CancelAfter(TimeSpan.FromMinutes(45));
+        deadline.CancelAfter(deadlineLimit ?? DefaultDeadline);
         var token = deadline.Token;
         var store = new EfPrtgTransferStore(backend, capacity);
         PrtgDiagnosticReadLease? lease = null;

@@ -129,6 +129,25 @@ public class WorkOrderCommandServiceTests : IDisposable
         Source = "disk", EventId = 153, AssignMode = "group", GroupId = groupId, SplitMode = splitMode, ScopeKind = WorkOrderScopes.All
     };
 
+    /// <summary>C12：建單預覽主機頁碼為整數最大值回空頁，總數照舊</summary>
+    [Fact]
+    public void C12_建單預覽頁碼為整數最大值_主機清單為空頁且總數照舊()
+    {
+        AddHost("HOST-A", Disk());
+        AddHost("HOST-B", Disk());
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var request = Single(handler.UserId);
+
+        var first = _service.Preview(request);
+        request.Page = int.MaxValue;
+        var far = _service.Preview(request);
+
+        Assert.NotEmpty(first.Hosts);
+        Assert.Empty(far.Hosts);
+        Assert.Equal(first.TotalHosts, far.TotalHosts);
+        Assert.Equal(first.AffectedMembers, far.AffectedMembers);
+    }
+
     private IssueCase? OpenCase(string hostName, LogIssueSignature? issue = null) =>
         _caseStore.GetOpen(hostName, IssueSignatureKey.For(issue ?? Disk()));
 
@@ -622,6 +641,59 @@ public class WorkOrderCommandServiceTests : IDisposable
         var handler = AddUser("DOMAIN\\h", "處理人");
         var result = _service.Create(Single(handler.UserId));
         return (Assert.Single(result.Orders).WorkOrderId, handler);
+    }
+
+    /// <summary>超過問題鍵欄位上限的簽章：記錄名 255 字加長的 EventKey，使完整問題鍵超過 <see cref="IssueKeyLimit.Max"/></summary>
+    private static LogIssueSignature OverlongDisk()
+    {
+        var issue = Disk(logName: new string('L', 255));
+        issue.EventKey = new string('e', 400);
+        Assert.True(IssueSignatureKey.For(issue).Length > IssueKeyLimit.Max);
+        return issue;
+    }
+
+    /// <summary>J15：建單遇到問題鍵超長的主機——回應指出哪一台未建立（含長度與上限、不含例外原文），其餘主機照常建立，沒有孤立的處理紀錄</summary>
+    [Fact]
+    public void J15_建單含問題鍵超長的主機_回應指出未建立的主機_其餘照常建立_沒有孤立紀錄()
+    {
+        AddHost("HOST-OK");
+        var longIssue = OverlongDisk();
+        AddHost("HOST-LONG", longIssue);
+        var handler = AddUser("DOMAIN\\h", "處理人");
+
+        var result = _service.Create(Single(handler.UserId));
+
+        var skipped = Assert.Single(result.OverlongSkipped);
+        Assert.Equal("HOST-LONG", skipped.HostName);
+        Assert.Contains("問題簽章過長", skipped.Message);
+        Assert.Contains($"上限 {IssueKeyLimit.Max} 字", skipped.Message);
+        Assert.Contains("未建立案件", skipped.Message);
+        Assert.Equal(1, Assert.Single(result.Orders).NewCases);
+        Assert.NotNull(OpenCase("HOST-OK"));
+        Assert.Null(OpenCase("HOST-LONG", longIssue));
+        Assert.Empty(_issueHandlingStore.GetForDay("HOST-LONG", Yesterday));
+        Assert.Empty(_handlingStore.GetLogs("HOST-LONG", Yesterday));
+    }
+
+    /// <summary>J15：追加主機遇到問題鍵超長——回應的 OverlongSkipped 指出該台，新案件數不含它</summary>
+    [Fact]
+    public void J15_追加含問題鍵超長的主機_回應指出未建立的主機_不建案件也不寫紀錄()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+        var longIssue = OverlongDisk();
+        var longHost = AddHost("HOST-LONG", longIssue);
+        var okHost = AddHost("HOST-B");
+
+        var result = _service.Append(orderId, new AppendWorkOrderRequest { HostIds = new List<long> { longHost.HostId, okHost.HostId } });
+
+        var skipped = Assert.Single(result.OverlongSkipped);
+        Assert.Equal("HOST-LONG", skipped.HostName);
+        Assert.Contains("問題簽章過長", skipped.Message);
+        Assert.Equal(1, result.NewCases);
+        Assert.Equal(orderId, OpenCase("HOST-B")!.WorkOrderId);
+        Assert.Null(OpenCase("HOST-LONG", longIssue));
+        Assert.Empty(_issueHandlingStore.GetForDay("HOST-LONG", Yesterday));
+        Assert.Empty(_handlingStore.GetLogs("HOST-LONG", Yesterday));
     }
 
     private AuditEntry SingleAudit(string action) => Assert.Single(_audit.Entries, e => e.Action == action);

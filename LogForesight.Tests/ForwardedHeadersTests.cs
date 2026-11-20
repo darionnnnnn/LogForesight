@@ -76,4 +76,39 @@ public sealed class ForwardedHeadersTests
         Assert.Empty(options.KnownNetworks);
         Assert.Equal(ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto, options.ForwardedHeaders);
     }
+
+    private static LogForesight.Web.Configuration.WebAppSettings 含受信任代理的設定(params string[] proxies) => new()
+    {
+        Jwt = new LogForesight.Web.Configuration.SessionSettings { ExpireHours = 8 },
+        Auth = new LogForesight.Web.Configuration.AuthSettings
+        {
+            Provider = "Ldap",
+            ServerAdmin = new LogForesight.Web.Configuration.ServerAdminSettings
+            {
+                Account = "svc-lfadmin",
+                PasswordHash = "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M="
+            }
+        },
+        Storage = new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory },
+        Server = new LogForesight.Web.Configuration.ServerSettings { TrustedProxies = proxies.ToList() }
+    };
+
+    /// <summary>A4：受信任 proxy 的啟動驗證走 IpSyntax，<c>10.1</c> 這種 IPAddress.TryParse 會放行的縮寫必須被拒。</summary>
+    [Fact]
+    public void 啟動驗證_受信任代理填縮寫10點1被拒()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            含受信任代理的設定("10.1").Validate(strict: false, "Development"));
+
+        Assert.Contains("Server:TrustedProxies", ex.Message);
+        Assert.Contains("10.1", ex.Message);
+    }
+
+    [Fact]
+    public void 啟動驗證_受信任代理填完整IPv4通過()
+    {
+        var ex = Record.Exception(() => 含受信任代理的設定("10.0.0.1").Validate(strict: false, "Development"));
+
+        Assert.Null(ex);
+    }
 }

@@ -869,6 +869,48 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "owner1@test.local" && s.Message.Body.Contains("host1"));
     }
 
+    /// <summary>
+    /// G3：收件人資格單一出口。停用的主機負責人在即時、每日、每週三條路徑都不該收到含主機名與日期的信；
+    /// 同一個設定下啟用中的負責人照常收到（證明不是整條路徑都沒寄）。交辦摘要見 WorkOrderDigestTests.E4。
+    /// </summary>
+    [Theory]
+    [InlineData("urgent")]
+    [InlineData("daily")]
+    [InlineData("weekly")]
+    public async Task G3_停用的主機負責人不收信_啟用的負責人照常收(string lane)
+    {
+        CreateViewAllAccount("ops@test.local");
+        var disabledOwner = _users.Upsert(new WebUser { Account = "owner-off", Email = "off@test.local", Active = false });
+        var activeOwner = _users.Upsert(new WebUser { Account = "owner-on", Email = "on@test.local", Active = true });
+        var hostOff = _hosts.Upsert(new WebHost { HostName = "host-off", OwnerUserIds = new List<long> { disabledOwner.UserId } });
+        var hostOn = _hosts.Upsert(new WebHost { HostName = "host-on", OwnerUserIds = new List<long> { activeOwner.UserId } });
+        // 每日與每週用固定時鐘（2026-08-11 是星期二）；即時通知的主機日以昨天為準（與本檔其他即時通知案例相同）
+        var now = new DateTime(2026, 8, 11, 9, 0, 0);
+        var day = lane == "urgent" ? Yesterday : now.Date.AddDays(-1);
+        EnableMail(s =>
+        {
+            s.MailNotifyHostOwners = true;
+            s.MailMinRiskLevel = RiskLevels.Medium;
+            s.MailUrgentEnabled = lane == "urgent";
+            s.MailDailyEnabled = lane == "daily";
+            s.MailDailyTime = "08:00";
+            s.MailWeeklyEnabled = lane == "weekly";
+            s.MailWeeklyDayOfWeek = "Tuesday";
+            s.MailWeeklyTime = "08:00";
+        });
+        _records.Add(Record(hostOff.HostId, "host-off", day, RiskLevels.High));
+        _records.Add(Record(hostOn.HostId, "host-on", day, RiskLevels.High));
+        var service = Create();
+
+        if (lane == "urgent") await service.NotifyAfterRunAsync();
+        else await service.CheckAndSendDailyWeeklyAsync(now);
+
+        var recipients = _sender.Sent.SelectMany(s => s.Message.To).ToList();
+        Assert.Contains("ops@test.local", recipients);
+        Assert.Contains("on@test.local", recipients);
+        Assert.DoesNotContain("off@test.local", recipients);
+    }
+
     /// <summary>負責人信箱與全域收件人相同（不分大小寫）時，不重複收信——他已經在全域信
     /// 裡看到全部內容，不需要再收一封只列自己主機的信。</summary>
     [Fact]

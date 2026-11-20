@@ -112,6 +112,32 @@ public class UserAdminServiceTests
         Assert.Equal("新處理人", row.NewHandler);
     }
 
+    /// <summary>C2：使用者 Email 儲存時必須是單一合法位址；含逗號、分號、顯示名稱或格式錯誤一律拒絕，且不建立使用者</summary>
+    [Theory]
+    [InlineData("a@corp.local,b@corp.local")]
+    [InlineData("a@corp.local;b@corp.local")]
+    [InlineData("王小明 <a@corp.local>")]
+    [InlineData("not-an-email")]
+    public void SaveUser_Email不是單一合法位址_被拒且不建立使用者(string email)
+    {
+        var service = Create();
+
+        var ex = Assert.Throws<DomainException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\mail", DisplayName = "信箱測試", Email = email }));
+
+        Assert.Contains("Email", ex.Message);
+        Assert.Null(_users.FindByAccount("DOMAIN\\mail"));
+    }
+
+    [Fact]
+    public void SaveUser_單一合法Email_通過並存下修剪後的值()
+    {
+        var saved = Create().SaveUser(new SaveUserRequest { Account = "DOMAIN\\mail", DisplayName = "信箱測試", Email = "  a@corp.local " });
+
+        Assert.Equal("a@corp.local", saved.Email);
+        Assert.Equal("a@corp.local", _users.FindByAccount("DOMAIN\\mail")!.Email);
+    }
+
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 
     [Fact]

@@ -621,6 +621,107 @@ public class CryptoKeyBootstrapperTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// G7（確定性版本）：全域互斥鎖被占用時，兩個同時啟動的初始化都得等——占用期間誰都沒有建立金鑰檔或動資料庫；
+    /// 放開後兩個都完成，結果只有一把金鑰、指紋與檔案一致、既有密文可解。
+    /// 沒有互斥（或鎖名稱不是同一個）時，初始化不會等，占用期間金鑰檔就已出現，這個案例會紅。
+    /// </summary>
+    [Fact]
+    public async Task G7_互斥鎖被占用時兩個初始化都等待_放開後只產生一把金鑰()
+    {
+        _settings.Update(s => s.SmtpPasswordEnc = LegacyV1("secret"));
+        var holderEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHolder = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = Task.Run(() =>
+        {
+            using var held = new Mutex(initiallyOwned: false, CryptoKeyBootstrapper.MutexNameForTests);
+            Assert.True(held.WaitOne());
+            holderEntered.SetResult();
+            releaseHolder.Task.GetAwaiter().GetResult();
+            held.ReleaseMutex();
+        });
+        await holderEntered.Task;
+        var runs = new List<Task>();
+        try
+        {
+            using var barrier = new Barrier(2);
+            runs = Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                CryptoKeyBootstrapper.RunForTests(_backend, _dataRoot, _settings, _sentinels, TimeSpan.FromSeconds(30));
+            })).ToList();
+            await Task.Delay(700);   // 讓兩個初始化確實撞上被占用的互斥
+
+            Assert.False(File.Exists(KeyPath), "互斥被占用期間，初始化不該已經建立金鑰檔");
+            Assert.All(runs, r => Assert.False(r.IsCompleted));
+            Assert.Null(_backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).Read());
+        }
+        finally
+        {
+            releaseHolder.SetResult();
+            await holder;
+        }
+        await Task.WhenAll(runs);
+
+        Assert.False(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.True(File.Exists(KeyPath));
+        Assert.Equal(44, File.ReadAllText(KeyPath).Trim().Length);   // 一把完整的 32 位元組金鑰
+        var running = CryptoHelper.KeyFingerprint;
+        Assert.Contains(running, _backend.Blob(CryptoKeyBootstrapper.FingerprintBlobKey).Read());
+        Assert.True(CryptoHelper.TryDecrypt(_settings.Get().SmtpPasswordEnc, out var plain));
+        Assert.Equal("secret", plain);
+    }
+
+    /// <summary>
+    /// G7：兩個行程（這裡用兩條執行緒）同時對同一個資料目錄做金鑰初始化——金鑰檔產生、指紋 claim 與重加密都在互斥鎖內，
+    /// 結果只會有一把金鑰、指紋與檔案一致、既有密文可解。沒有互斥時，後到者會在先到者還在寫金鑰檔時就讀它，
+    /// 以半截金鑰算指紋或重加密。逐輪新資料目錄、Barrier 同時起跑，重複多輪以涵蓋時序。
+    /// </summary>
+    [Fact]
+    public void G7_兩個同時啟動的初始化_只產生一把金鑰且指紋與密文一致()
+    {
+        for (var round = 0; round < 25; round++)
+        {
+            var root = Path.Combine(Path.GetTempPath(), "lf-cryptokey-race-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                var backend = new StorageBackend(
+                    new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(root, "c.db")}" }, root);
+                var settings = new SystemSettingsStore(backend.Blob("system_settings"));
+                var sentinels = new SentinelStore(backend.Blob("sentinels"));
+                CryptoHelper.ResetForTests();
+                CryptoKeyBootstrapper.KeyMismatch = false;
+                settings.Update(s => s.SmtpPasswordEnc = LegacyV1("secret"));
+                var keyPath = CryptoKeyBootstrapper.KeyFilePath(root);
+
+                using var barrier = new Barrier(2);
+                var runs = Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
+                {
+                    barrier.SignalAndWait();
+                    CryptoKeyBootstrapper.Run(backend, root, settings, sentinels);
+                })).ToArray();
+                Task.WaitAll(runs);
+
+                Assert.False(CryptoKeyBootstrapper.KeyMismatch, $"第 {round} 輪：兩個初始化對同一個資料目錄得到不同金鑰");
+                var running = CryptoHelper.KeyFingerprint;
+                // 重新自金鑰檔載入：行程內使用中的金鑰必須就是檔案裡那一把（完整的 32 位元組 base64）
+                Assert.Equal(44, File.ReadAllText(keyPath).Trim().Length);
+                CryptoHelper.ResetForTests();
+                CryptoHelper.UseKeyFile(keyPath);
+                Assert.Equal(CryptoHelper.KeyFingerprint, running);
+                Assert.Contains(running, backend.Blob("crypto_key_fingerprint").Read());
+                Assert.True(CryptoHelper.TryDecrypt(settings.Get().SmtpPasswordEnc, out var plain));
+                Assert.Equal("secret", plain);
+            }
+            finally
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                try { Directory.Delete(root, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+    }
+
     // ── 金鑰檔位置提示（純函式）──────────────────────────────────────────
 
     [Fact]

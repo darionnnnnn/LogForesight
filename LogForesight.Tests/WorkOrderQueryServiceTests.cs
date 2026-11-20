@@ -130,6 +130,33 @@ public class WorkOrderQueryServiceTests
 
     private static List<long> Ids(WorkOrderListDto dto) => dto.Items.Select(i => i.WorkOrderId).ToList();
 
+    // ── C12：頁碼為整數最大值回空頁（不擲例外、也不退回第一頁）──────────────────
+
+    [Fact]
+    public void C12_交辦清單頁碼為整數最大值_回空頁且總數照舊()
+    {
+        AddOrder(_alice.UserId);
+        AddOrder(_bob.UserId);
+
+        var dto = Service(As(1, Capability.Assign)).List(new WorkOrderListRequest { Page = int.MaxValue, PageSize = 50 });
+
+        Assert.Empty(dto.Items);
+        Assert.Equal(2, dto.Total);
+    }
+
+    [Fact]
+    public void C12_交辦成員清單頁碼為整數最大值_回空頁且總數照舊()
+    {
+        var order = AddOrder(_alice.UserId);
+        AddMember(order, "H1", IssueHandlingStatuses.InProgress);
+        AddMember(order, "H2", IssueHandlingStatuses.InProgress);
+
+        var dto = Service(As(1, Capability.Assign)).Members(order, "all", int.MaxValue, 50);
+
+        Assert.Empty(dto.Items);
+        Assert.Equal(2, dto.Total);
+    }
+
     // ── 授權 ────────────────────────────────────────────────────────────────
 
     [Fact]
