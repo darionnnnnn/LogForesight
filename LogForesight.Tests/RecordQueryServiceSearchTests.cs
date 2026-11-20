@@ -1334,6 +1334,56 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     [Fact]
+    public void ClusterSignatures_總次數超過整數上限時夾在上限而不是回繞成負數()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var huge = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153, Severity = IssueSeverity.High,
+            Category = IssueCategory.Resource, Count = int.MaxValue
+        };
+        AddRecord(a, Yesterday, "高", issues: new[] { huge });
+        AddRecord(b, Yesterday, "高", issues: new[] { huge });
+
+        var cluster = Assert.Single(_service.ClusterSignatures(new RecordSearchRequest()));
+
+        Assert.Equal(int.MaxValue, cluster.TotalCount);
+    }
+
+    [Fact]
+    public void ClusterSignatures_總次數在整數範圍內時原值回傳()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, Yesterday, "高", issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Resource) });
+        AddRecord(b, Yesterday, "高", issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Resource) });
+
+        var cluster = Assert.Single(_service.ClusterSignatures(new RecordSearchRequest()));
+
+        Assert.Equal(2, cluster.TotalCount);
+    }
+
+    [Fact]
+    public void ClusterSignatures_與主清單共用後段篩選_來源與事件都套用()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        foreach (var host in new[] { a, b })
+            AddRecord(host, Yesterday, "高", issues: new[]
+            {
+                Issue("disk", 153, IssueSeverity.High, IssueCategory.Resource),
+                Issue("app", 999, IssueSeverity.High, IssueCategory.Resource)
+            });
+
+        var onlyDisk = _service.ClusterSignatures(new RecordSearchRequest { Source = "disk" });
+        var onlyEvent = _service.ClusterSignatures(new RecordSearchRequest { EventId = 999 });
+
+        Assert.Equal("disk", Assert.Single(onlyDisk).Source);
+        Assert.Equal(999, Assert.Single(onlyEvent).EventId);
+    }
+
+    [Fact]
     public void ClusterSignatures_依主機數排序_取前五()
     {
         var issues = Enumerable.Range(0, 6)

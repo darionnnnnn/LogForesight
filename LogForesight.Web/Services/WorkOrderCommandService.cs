@@ -1,5 +1,6 @@
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -92,7 +93,7 @@ public class WorkOrderCommandService
     {
         var plan = Plan(req);
 
-        var page = Math.Max(1, req.Page);
+        var (page, _) = Paging.Normalize(req.Page, PreviewPageSize, PreviewPageSize);
         var hosts = plan.Hosts
             .Skip((page - 1) * PreviewPageSize)
             .Take(PreviewPageSize)
@@ -156,6 +157,7 @@ public class WorkOrderCommandService
 
         var orders = new List<WorkOrderCreatedDto>();
         var raceSkipped = new List<WorkOrderConflict>();
+        var overlong = new List<WorkOrderOverlongDto>();
         var daySyncPending = 0;
         foreach (var allocation in plan.Allocations)
         {
@@ -172,6 +174,7 @@ public class WorkOrderCommandService
 
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
+            overlong.AddRange(OverlongDtos(outcome));
             if (outcome.WorkOrderId == 0) continue;
 
             orders.Add(new WorkOrderCreatedDto
@@ -233,6 +236,7 @@ public class WorkOrderCommandService
         {
             Orders = orders,
             Skipped = skipped,
+            OverlongSkipped = overlong,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             DaySyncPendingCases = daySyncPending,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
@@ -241,6 +245,14 @@ public class WorkOrderCommandService
             HandlerHasNoEmail = plan.Allocations.Any(a => string.IsNullOrWhiteSpace(a.Handler.Email))
         };
     }
+
+    /// <summary>協調器略過的超長問題鍵，轉成給使用者看的說明（只含主機、長度與上限，不含例外原文）</summary>
+    private static List<WorkOrderOverlongDto> OverlongDtos(WorkOrderMemberOutcome outcome) =>
+        outcome.SkippedOverlong.Select(o => new WorkOrderOverlongDto
+        {
+            HostName = o.HostName,
+            Message = $"主機「{o.HostName}」的問題簽章過長（{o.KeyLength} 字，上限 {o.MaxLength} 字），未建立案件。"
+        }).ToList();
 
     // ── 單一單的操作 ─────────────────────────────────────────────────────────
 
@@ -292,6 +304,7 @@ public class WorkOrderCommandService
             LinkedExisting = outcome.LinkedExisting,
             Reassigned = outcome.Reassigned,
             SkippedConflicts = outcome.SkippedConflicts.Count,
+            OverlongSkipped = OverlongDtos(outcome),
             NoiseExcludedHosts = noiseExcluded,
             IgnoredHosts = ignored,
             DaySyncPendingCases = outcome.DaySync.PendingCases
@@ -436,6 +449,9 @@ public class WorkOrderCommandService
             throw DomainException.Validation($"不支援的交辦範圍「{req.ScopeKind}」。");
         if (req.ScopeKind == WorkOrderScopes.Groups && req.GroupIds is not { Count: > 0 })
             throw DomainException.Validation("交辦範圍為主機群組時，請至少選擇一個主機群組。");
+        // 主機範圍沒選主機時，下游的範圍解析會把「沒指定」當成「不限」而對全部可見主機建案
+        if (req.ScopeKind == WorkOrderScopes.Hosts && req.HostIds is not { Count: > 0 })
+            throw DomainException.Validation("交辦範圍為指定主機時，請至少選擇一台主機。");
         if (req.Note is { Length: > NoteMaxLength })
             throw DomainException.Validation($"說明不可超過 {NoteMaxLength} 字。");
         if (req.DueDate is { } due && due.Date < _clock.LocalToday())
@@ -490,7 +506,7 @@ public class WorkOrderCommandService
         if (withMembers.Count > 0)
         {
             foreach (var group in _cases.GetOpenMany(withMembers.Select(h => h.Resolved.Host.HostName).ToList(), source, eventId)
-                .GroupBy(c => (c.HostName.ToUpperInvariant(), c.IssueKey), HostIssueSignatureKeyComparer.Instance))
+                .GroupBy(c => (HostNameKey.Of(c.HostName), c.IssueKey), HostIssueSignatureKeyComparer.Instance))
             {
                 existing[group.Key] = group
                     .OrderByDescending(c => c.UpdatedAt)
@@ -500,7 +516,7 @@ public class WorkOrderCommandService
             }
         }
         IssueCase? ExistingOf(WorkOrderMember m) =>
-            existing.TryGetValue((m.HostName.ToUpperInvariant(), m.IssueKey), out var c) ? c : null;
+            existing.TryGetValue((HostNameKey.Of(m.HostName), m.IssueKey), out var c) ? c : null;
 
         // 5. 分派（以主機為單位；主機已依名稱升冪）
         var assignedMembers = candidates.ToDictionary(c => c.UserId, _ => 0);
@@ -552,7 +568,7 @@ public class WorkOrderCommandService
             .Select(g => new WorkOrderConflictDto
             {
                 HandlerId = g.Key,
-                HandlerName = usersById.TryGetValue(g.Key, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, g.Key),
+                HandlerName = NameFormat.UserLabel(_displayNames, usersById.GetValueOrDefault(g.Key)),
                 HostCount = g.Count()
             })
             .OrderBy(c => c.HandlerName, StringComparer.OrdinalIgnoreCase)
@@ -599,7 +615,7 @@ public class WorkOrderCommandService
             // 依 id 記住已算過的名稱：略過主機清單逐台取原處理人名稱，顯示名稱規則每次都讀系統設定
             NameOf = id => nameCache.TryGetValue(id, out var cached)
                 ? cached
-                : nameCache[id] = usersById.TryGetValue(id, out var u) ? NameOf(u) : NameFormat.OrDeleted(null, id)
+                : nameCache[id] = NameFormat.UserLabel(_displayNames, usersById.GetValueOrDefault(id))
         };
     }
 
@@ -617,7 +633,7 @@ public class WorkOrderCommandService
 
         var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
         var noise = _noiseMarks.GetAll()
-            .Select(m => (m.HostName.ToUpperInvariant(), m.IssueKey))
+            .Select(m => (HostNameKey.Of(m.HostName), m.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
         var label = $"{source} {eventId}";
 
@@ -636,7 +652,7 @@ public class WorkOrderCommandService
                     .OrderBy(o => o.IssueKey, StringComparer.Ordinal)
                     .ToList();
                 var kept = all
-                    .Where(o => !noise.Contains((host.HostName.ToUpperInvariant(), o.IssueKey)))
+                    .Where(o => !noise.Contains((HostNameKey.Of(host.HostName), o.IssueKey)))
                     .Select(o => new WorkOrderMember
                     {
                         HostName = host.HostName, IssueKey = o.IssueKey, IssueLabel = label, TriggerDate = o.LastSeen

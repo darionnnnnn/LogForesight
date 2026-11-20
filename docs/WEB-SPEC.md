@@ -7,7 +7,7 @@
 > 第 10 節補齊欄位定義，同樣遵守 DB-SPEC 的雙 DB 可移植規則）；規則庫的 DB 映射見
 > [RULES-SPEC.md](RULES-SPEC.md)。
 >
-> 專案：`LogForesight.Web`（.NET 8 MVC）。
+> 專案：`LogForesight.Web`（.NET 10 MVC）。
 
 ## 1. 技術決策總表
 
@@ -19,8 +19,8 @@
 | 4 | 設計原則 | 使用者便利性優先、維護成本最小化（詳見 §8.6 的具體規範，不是口號）；視覺設計服務於「快速抓到問題」（§8.2 視覺層級三原則） |
 | 5 | 資料傳遞 | **View 不經 Model 傳資料**：MVC Controller 只回傳頁面殼（View），資料一律由前端 fetch 呼叫 API Controller 取得（JSON） |
 | 6 | 分層 | Controllers / Models / Services / Repositories / Auth / Filters / Configuration（§4） |
-| 7 | 授權 | Middleware（JWT 驗證身分）＋ ActionFilter（能力檢查）＋ Service 層（資料範圍過濾），三層各司其職（§6、§7） |
-| 8 | 驗證方式 | **JWT，存放於 HttpOnly Cookie**（不放 localStorage，決策理由見 §6.1） |
+| 7 | 授權 | Cookie 驗證（登入 cookie 識別身分、逐請求驗證）＋ ActionFilter（能力檢查）＋ Service 層（資料範圍過濾），三層各司其職（§6、§7） |
+| 8 | 驗證方式 | **內建 Cookie Authentication，票證存放於 HttpOnly Cookie**（不放 localStorage，決策理由見 §6.1） |
 | 9 | 組態 | 全部參數集中 `appsettings.json`，程式以強型別 `WebAppSettings` 類別取得（§5） |
 | 10 | DI | 內建 DI 容器，介面註冊表見 §4.3；一律建構式注入，不用 Service Locator |
 | 11 | 圖表套件 | **Chart.js v4（MIT）**，自架於 wwwroot/lib、經 `core/charts.js` 單點包裝（選型評估與排除清單見 §8.3） |
@@ -98,9 +98,9 @@ LogForesight.Web/
 ├── Services/                     -- 業務規則層：多數直接是具體類別（如 HandlingService）；
 │                                     僅有測試假件依賴的介面（IVisibilityService 等）與其實作同資料夾
 ├── Repositories/                 -- 資料存取層：目前只有 RecordRepository（分析紀錄查詢，強制套用可見範圍）；儀表板聚合在 DashboardService
-├── Auth/                         -- IAuthenticationProvider、StubAuthenticationProvider、JwtTokenService、RoleCapabilityMap
+├── Auth/                         -- IAuthenticationProvider、StubAuthenticationProvider、CookieSessionEvents（逐請求驗證）、SessionVersionStore、DataProtectionKeyRing、RoleCapabilityMap
 ├── Filters/                      -- PermissionAttribute/Filter、ApiExceptionFilter
-├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）
+├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）、LegacyAuthCookieMiddleware（清舊名稱 cookie）
 ├── Views/                        -- 頁面殼（.cshtml 內不寫業務邏輯、不用 ViewModel 帶資料）
 └── wwwroot/
     ├── css/                      -- 主題與元件樣式四層：base／components／layout／pages（§8.2）
@@ -129,7 +129,8 @@ LogForesight.Web/
 | `WebAppSettings` | 組態綁定單例 | Singleton |
 | Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
 | `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ad）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
-| `JwtTokenService` | 直接注入具體類別（`IJwtTokenService` 介面因測試零引用，簡化重構時已移除） | Singleton |
+| `ISessionSigner` | `CookieSessionSigner`（登入建立 cookie、登出遞增工作階段版號並清 cookie；controller 只依賴這個介面） | Singleton |
+| `SessionVersionStore`／`SessionPrincipalFactory` | 工作階段版號的讀寫（一般使用者為 `WebUser.SessionVersion` 加 `user_session_versions` 登出增量，serverAdmin 存 blob `server_admin_session_version`）／cookie 主體的建構 | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
 | `IAuditService` | `AuditService` | Scoped |
@@ -147,14 +148,14 @@ LogForesight.Web/
   // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 每個元素只接受單一 IP（反向代理叢集逐台列出，不支援 CIDR）；
   // FrameOptions 空字串＝不送 X-Frame-Options；Csp 為 Off | ReportOnly | Enforce（不分大小寫），留空＝Development 用 ReportOnly、其餘環境用 Enforce（§6.5）
   "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY", "Csp": "" },
-  // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
-  // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
-  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8, "CookieName": "lf_auth" },
+  // PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
+  // 正式環境務必以環境變數 Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
+  // Jwt 區段是登入 cookie 的設定（區段名稱沿用；cookie 由 Data Protection 加密簽章，沒有簽章金鑰設定）：ExpireHours＝閒置時限。
+  "Jwt": { "ExpireHours": 8, "CookieName": "lf_session" },
   "Auth": {
     // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;環境不是 Development 時啟動會被擋下）
     "Provider": "Stub",
-    // MaxFailedAttempts（預設 5）連續失敗幾次鎖定、LockoutMinutes（預設 15）鎖定分鐘數
-    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>", "MaxFailedAttempts": 5, "LockoutMinutes": 15 }
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
   "AllowedHosts": "*"
 }
@@ -182,10 +183,10 @@ LogForesight.Web/
   **不在程式中直接讀 `IConfiguration`**——組態鍵名只存在於 `AppSettings.cs` 一處，改名不會有魔法字串漏網。
   `Storage` 區段的型別 `StorageSettings` 定義在 Core。
 - **啟動時驗證**：`WebAppSettings.Validate(strict, environmentName)` 檢查：`Storage.Type` 受支援、
-  `Jwt.SecretKey` 非空且至少 32 bytes、`Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
+  `Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
   `Auth.ServerAdmin` 帳號與雜湊非空且雜湊為 PBKDF2 格式、`Server.TrustedProxies` 每項為 IP、
   `Server.PathBase`／`FrameOptions`／`Csp` 值合法；`strict`（環境不是 `Development`）時另擋下公開已知的測試
-  SecretKey／PasswordHash 與 `Auth.Provider=Stub`。
+  PasswordHash 與 `Auth.Provider=Stub`。
   不合格直接 fail fast 拋例外，不讓站台帶病啟動——設定錯誤要顯性化。
 - **新增設定必須有消費端**：「有設定無行為」是本專案紅線（無消費端的 `Ui:DefaultPageSize` 即屬此類）。
   新增可調整項目時預設放 DB 設定頁，只有啟動前提才進 appsettings。
@@ -194,10 +195,10 @@ LogForesight.Web/
   JSON 檔，預設）／`SqlServer`（正式環境，2000 台量級）。**全部資料**（分析紀錄＋webdata）
   走資料庫。Web 的 `appsettings.Development.json` 同樣預設 `Type=Sqlite`（驗證與正式相同的
   SQL 語意）；正式部署改 `SqlServer`。
-- `Jwt.SecretKey` / `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
+- `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
-  （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
+  （`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
   `Ad`（舊值 `Ldap` 視同 `Ad`；`Provider=Stub` 且環境不是 `Development` 時
   啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
   想覆寫本機測試值可用 `appsettings.Development.json`（gitignore）。
@@ -206,17 +207,27 @@ LogForesight.Web/
 
 ## 6. 身分驗證
 
-### 6.1 決策：JWT 放 HttpOnly Cookie
+### 6.1 決策：內建 Cookie Authentication，票證放 HttpOnly Cookie
 
-- **瀏覽器（View→API）**：登入成功後簽發 JWT，寫入 **HttpOnly、Secure、SameSite=Strict** 的
-  Cookie（名稱 `lf_auth`）。前端 JS **接觸不到 token**（HttpOnly），fetch 同源自動帶上，
-  避免 localStorage 存 token 的 XSS 竊取面。View（MVC 頁面殼）與 API 走同一張 Cookie、
-  同一套驗證管線——頁面殼本身也要求已驗證（未登入直接 302 到登入頁，而不是空殼進來再被 API 401）。
-- **建議以 HTTPS 提供服務**；內網自簽或企業 CA 憑證皆可。Cookie 的 `Secure` 旗標
-  **跟隨當次請求的 `Request.IsHttps`**（`Auth/AuthCookie.cs`），不是寫死 `true`：寫死時
-  HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
+- **瀏覽器（View→API）**：登入成功後以 ASP.NET Core 內建 Cookie Authentication 建立登入 cookie
+  （名稱 `lf_session`，**HttpOnly、SameSite=Strict**，`Secure` 見下）。票證由 Data Protection 加密簽章，
+  前端 JS **接觸不到**（HttpOnly），fetch 同源自動帶上，避免 localStorage 存放的 XSS 竊取面。
+  View（MVC 頁面殼）與 API 走同一張 Cookie、同一套驗證管線——頁面殼本身也要求已驗證
+  （未登入直接 302 到登入頁，而不是空殼進來再被 API 401）。沒有 bearer 用戶端，不接受 `Authorization` 標頭。
+- **建議以 HTTPS 提供服務**；內網自簽或企業 CA 憑證皆可。Cookie 的 `Secure` 旗標**跟隨請求**
+  （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
+  寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
-  HTTPS 下行為與寫死 `true` 完全相同。
+- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
+  `CookieSessionEvents.CheckSlidingExpiration` 對它不續發——前景分頁開著不動也會依閒置時數登出。權限版號變更時的就地更新續發不受影響（背景請求同樣換主體）。
+- **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
+  （同一台主機的正式／測試兩個子站台互不覆蓋）。
+- **Data Protection 金鑰環**存在 `{DataRoot}\dataprotection\`（`Auth/DataProtectionKeyRing.cs`），
+  應用名稱固定為 `LogForesight`（不隨部署路徑變動）；啟動時建立目錄並限縮權限（Unix 目錄 700、檔案 600；
+  Windows 移除繼承、只留執行帳號與 SYSTEM），建不起來就停止啟動。登入 cookie 與 PRTG 分頁游標都靠它。
+  **金鑰環遺失的後果只是全員重新登入與舊分頁游標失效，不影響資料，不必備份。**
+- **舊名稱 cookie**（`lf_auth`，改用內建驗證前的格式）不被讀成登入；請求帶著它時，`LegacyAuthCookieMiddleware`
+  在回應清掉它（根路徑與掛載前綴兩個 Path 都清）。
 
 ### 6.2 登入流程與 Claims
 
@@ -227,7 +238,7 @@ LogForesight.Web/
       Stub 實作：`IUserStore` 的 `users` JSON blob 有該帳號且 active 即通過（password 忽略）——僅供開發/前期測試
       正式：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
         bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
-  → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
+  → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 建立登入 cookie（`ISessionSigner.SignInAsync`）
   → 稽核 login / login_failed（§11）
 ```
 
@@ -260,10 +271,9 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
   讓它能確認排程活著；風險日、問題內容與診斷匯出（`RequireViewAll`）仍然進不去。
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
   輪替 SOP：產生新雜湊填入 `PasswordHash` 後重啟站台即可，產生指令
-  （`LogForesight.Web.exe --hash-password`）提供；已簽發的 JWT 最長 8 小時自然失效。
-- **Web 端鎖定**：serverAdmin 連續 5 次登入失敗鎖定 15 分鐘（`Auth.ServerAdmin.MaxFailedAttempts`／`LockoutMinutes`，記憶體計數）——
-  它是本地帳號、**不受 AD 帳戶鎖定原則保護**，必須自帶防暴力破解；一般 AD 帳號沒有這種連續失敗鎖定，
-  只受下方的登入節流與 AD 原則約束。**此鎖定只在驗密碼的 Provider（正式 Ad）下有意義**；
+  （`LogForesight.Web.exe --hash-password`）提供；已建立的登入 cookie 受閒置時限與 24 小時絕對上限約束，自然失效。
+- **防暴力破解**：serverAdmin 與一般帳號一樣只受下方的登入節流約束（依帳號與來源 IP 計失敗，可在畫面上手動解除），
+  不另設第二套鎖定——兩套疊加時，匿名者輸錯幾次就能把 AD 停擺時唯一的救援入口鎖死，而那時沒有其他管理者能登入解除。
   `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
 - 全部操作照常稽核（account=設定的帳號名、user_id NULL）；儀表板登入失敗卡對它的
   失敗嘗試同樣可見。
@@ -288,20 +298,20 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 以使用者帳密向 AD bind 驗證（AD 未設定時 fallback 為 `UnconfiguredAdAuthenticationProvider`）；
 AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流（`LoginThrottle`：5 分鐘滑動窗口內
 同一帳號失敗 10 次或同一來源 IP 失敗 50 次即暫停 5 分鐘，計數鍵上限 1 萬個；暫停期間回 429 `rate_limited`），
-命中門檻時不再呼叫 AD，減少密碼噴灑觸發網域鎖定。迴路位址與未知來源不計入 IP 維度。
+命中門檻時不呼叫 AD，減少密碼噴灑觸發網域鎖定。
+目錄服務無回應時 AD bind 會占住執行緒到逾時，因此**呼叫 Provider 這一步**有並行上限（`DirectoryVerifyGate`：同時 8 個、再排最多 32 個，滿了回 429 `rate_limited`「目錄服務忙碌，請稍後再試。」，不計入失敗節流）；上限不加在端點，serverAdmin 救援帳號不經 Provider、不受影響。迴路位址與未知來源不計入 IP 維度。
 救援帳號豁免 IP 維度（不受共用 IP 門檻連坐），只看帳號維度，仍受本身鎖定限制。
 帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
 使用者查找都用正規化帳號，`CORP\bob` 與 `bob` 是同一個人、同一個節流桶；查找時正規化帳號找不到才退回原字串
 （相容既有含 `\` 的本地帳號）。登入請求的帳號與密碼各上限 256 字。登入後導回的 `returnUrl` 只接受站內相對路徑，
 含 tab、換行字元或 `//`、`\`、`://` 一律拒絕（`core/safe-return-url.js`）。
 
-JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`srvadm`（serverAdmin 標記）、`pv`（簽發時的
-`PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
-`IVisibilityService` 即時解析。`ActiveUserMiddleware` 對一般使用者每個請求都從 `IUserStore` 檢查帳號仍為 active；
-serverAdmin 不在 `IUserStore`，不做這項檢查；一般使用者另比對 token 的 `pv` 與 `PermissionVersionStamp`，版本不符就重算能力、
-無感換發 token，並替換本請求的 principal。
-主機停用或合併造成的隱含授權變更也會推進同一權限版本。換發沿用原工作階段的 `jti` 與 `exp`（不延長登入期），
-寫入 Cookie 的 token 與本請求替換的 principal 使用同一個 `jti`。
+登入 cookie 的 Claims（`AuthClaims`）：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`srvadm`（serverAdmin 標記）、
+`pv`（簽發時的 `PermissionVersionStamp`）、`sv`（簽發時的工作階段版號）、`sst`（這次登入的起點，Unix 秒）。
+**能力進 cookie、主機授權範圍不進 cookie**——範圍每次請求由 `IVisibilityService` 即時解析。
+逐請求驗證在 `CookieSessionEvents.ValidatePrincipal`（細節見 §6.3）。一般使用者的 `pv` 與 `PermissionVersionStamp` 不符時，
+重算能力並**就地更新主體**（`ReplacePrincipal`）、續發 cookie（`ShouldRenew`），後段的授權判斷與 `ICurrentUser` 立即讀到新能力；
+更新保留原本的 `sst` 與 `sv`。主機停用或合併造成的隱含授權變更也會推進同一權限版本。
 
 **上次登入時間**：登入成功時 `IdentityService` 呼叫 `IUserStore.TouchLogin`，寫入
 `user_last_login` blob；讀取時優先使用該 blob，舊使用者資料中的 `WebUser.LastLoginAt` 僅作唯讀
@@ -312,14 +322,28 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
 
 ### 6.3 逾期與登出
 
-- 效期 `Jwt.ExpireHours`（預設 8 小時），不做 refresh token（內網工具，過期重登入即可）。
-- **停用即時生效**：`ActiveUserMiddleware` 逐請求查 `IUserStore` 的 active 狀態，停用或不存在的帳號立即 401，
-  不等 token 自然過期。群組、使用者、主機停用／合併等影響能力或可見範圍的異動推進 `PermissionVersionStamp`；
-  下一個請求發現 `pv` 不符時，重算能力並依 §6.2 契約換發 token。
-- API 收到過期/無效 token → 401 ＋ 信封 error code `auth_expired`；前端攔截後導向登入頁。
+- **閒置時限** `Jwt.ExpireHours`（預設 8 小時，設定鍵沿用），**滑動延長**：有活動就把到期往後推（過半後的請求續發 cookie），
+  閒置超過就登出。**絕對上限 24 小時**（程式常數 `SessionCookie.AbsoluteLifetime`）：不論多活躍，自登入（`sst`）起超過 24 小時一律重新登入。
+  不做 refresh token（內網工具，過期重登入即可）。時間取自注入的 `TimeProvider`。
+- **逐請求驗證**（`CookieSessionEvents.ValidatePrincipal`，每個請求都跑，serverAdmin 只做第 2、3 項）：
+  1. 使用者仍存在且啟用——停用或不存在立即失效，不等 cookie 到期；
+  2. cookie 的 `sv` 等於使用者目前的**工作階段版號**——不同即失效；
+  3. 超過 24 小時絕對上限即失效；
+  4. `pv` 與 `PermissionVersionStamp` 不同——重算能力、就地更新、續發（不是踢出登入：群組編輯很頻繁，不能每改一次就讓全員重登）。
+  缺少或無法解析 `sub`／`sv`／`sst` 的 cookie 視為無效。失效時清除 cookie；原因（已停用／已登出／已逾期）記在請求內，
+  供下一步的 401 信封顯示。
+- **工作階段版號**是使用者層級的登入失效手段：一般使用者的有效版號由 `IUserStore.GetSessionVersion` 取得＝`WebUser.SessionVersion`（隨使用者資料持久化，**重啟不失效**；
+  舊資料缺欄＝0，回滾到舊版時只認這個欄位）加上獨立 blob `user_session_versions` 的登出增量（登出是日常操作，不改寫 `users`，
+  PRTG 範圍清除作業以 `users` 版本當授權柵欄，不能被登出打斷）；serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`，並加上救援帳號設定的戳記
+  （`SessionVersionStore.CredentialStamp`：帳號名稱與密碼雜湊）——改了救援帳號名稱或密碼雜湊並重啟，先前簽發的 serverAdmin cookie 一併失效，這是救援帳密外洩時的撤銷手段。
+  登出時遞增（`IUserStore.BumpSessionVersion`／`SessionVersionStore.Bump`，只寫 `user_session_versions`），啟用轉停用時 `UserStore.Upsert` 在 `users` 內遞增 `SessionVersion`
+  （停用後再啟用，停用前簽發的 cookie 不復活）；`Upsert` 其餘情況不覆寫此欄。遞增的效果是該使用者**所有裝置**上既有的 cookie 一併失效。
+- **未登入的回應**（`CookieSessionEvents.RedirectToLogin`，依路徑區分）：`/api` 回 401 ＋ 信封 error code `auth_expired`
+  （不轉址；被拒絕的原因帶進信封訊息），前端攔截後導向登入頁；頁面請求 302 到 `{PathBase}/login?returnUrl=…`
+  （`returnUrl` 是站內路徑、不含前綴）。已登入但無權限回 403（`/api` 由狀態碼信封補本文）。
   稽核動作碼 `session_expired` 保留於對照表，目前沒有寫入點。
-- `POST /api/auth/logout`：以目前 JWT 的 `jti` 加入行程內 `RevokedTokens`，保留到該 token 原本的 `exp`，再清除 Cookie＋稽核
-  `logout`；只清 Cookie 不足以阻止已被複製的 token 重放。行程重啟會清空撤銷清單，剩餘效期仍由 JWT `exp` 結束。
+- `POST /api/auth/logout`：稽核 `logout`、遞增工作階段版號、清除 Cookie。只清 Cookie 不足以阻止已被複製的 cookie 重放，
+  遞增版號才讓它在剩餘效期內也失效。
 
 ### 6.4 CSRF 防護
 
@@ -357,7 +381,7 @@ SameSite=Strict 已擋跨站帶 Cookie；再加一層防禦深度：`CsrfHeaderM
 
 | 層 | 機制 | 回答的問題 |
 |---|---|---|
-| 1. Middleware | JWT Bearer 驗證（自 Cookie 取 token） | 你是誰？（未登入 → 401） |
+| 1. Cookie 驗證 | 內建 Cookie Authentication ＋ `CookieSessionEvents` 逐請求驗證 | 你是誰？（未登入 → 401） |
 | 2. ActionFilter | `[Permission(Capability.X)]` 讀 `cap` claim | 你能不能用這個功能？（不足 → 403 ＋稽核 `denied`） |
 | 3. Service | `IVisibilityService.GetVisibleHostIds()` | 你能看哪些主機的資料？（查詢一律先過濾） |
 
@@ -391,9 +415,9 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
 **不含 `ViewAll`**。理由：負責人匯入（owners.csv）會自動建立沒有群組的帳號，沒有這一段的話
 對方登入後看得到自己負責的主機、卻連處理狀態都標不了，被交辦也回覆不了——「有可見範圍
-無處置能力」是半套。能力進 JWT；負責人變動會推進權限版本，下一次請求重算能力並無感刷新
-原工作階段的 token（可見範圍則即時生效）。
-停用帳號由登入與 `ActiveUserMiddleware`（逐請求 401）攔截，`UserCapabilityResolver` 本身不檢查停用（見 §6.3）。
+無處置能力」是半套。能力進登入 cookie；負責人變動會推進權限版本，下一次請求重算能力並就地更新
+原工作階段的主體（可見範圍則即時生效）。
+停用帳號由登入與 `CookieSessionEvents`（逐請求 401）攔截，`UserCapabilityResolver` 本身不檢查停用（見 §6.3）。
 
 **負責人路徑**：第 3 層的授權鏈**擴充為聯集**——
 `WebHost.OwnerUserIds` 含此人的（啟用中）主機直接可見，與群組授權同級（整台可見，
@@ -478,7 +502,7 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
    （處理面板每次載入都先讀它再決定要不要給批次表單），但只回識別與 `canHandle`，整天的狀態、處理人、期限、備註、負責人一律不帶。
    端到端驗收見 `LogForesight.Tests/CaseGrantVisibilityTests.cs`（刻意串真實服務，不用替身）。
 
-**授權測試**（`LogForesight.Tests/Authorization/`）：以 `WebApplicationFactory<Program>` 起真站台（Stub 登入、真的 JWT、`PermissionFilter` 與 `VisibilityService`），
+**授權測試**（`LogForesight.Tests/Authorization/`）：以 `WebApplicationFactory<Program>` 起真站台（Stub 登入、真的登入 cookie、`PermissionFilter` 與 `VisibilityService`），
 六種身分（兩位受限使用者、案件授與者、管理者、serverAdmin、匿名）× 四台主機（含停用）各放獨一無二的哨兵字串：
 讀取矩陣斷言受限者對未授權主機直取 404、清單不含哨兵；寫入矩陣斷言被拒且資料前後逐欄相同；角色閘門從每個 action 的 `[Permission]`／`[RequireViewAll]` 推算預期並逐條驗 403；
 快取分鍵、匿名端點恰為 6 條、`FallbackPolicy` 要求登入各有守門。涵蓋守門要求每個 action 都在讀取矩陣、寫入矩陣、有能力標註或附理由的豁免清單其中之一——新增端點沒登錄就紅。
@@ -537,7 +561,10 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `auth_failed` | 401 | 登入帳密錯誤 |
   | `auth_expired` | 401 | 登入逾期 |
   | `forbidden` | 403 | 沒有權限 |
-  | `not_found` | 404 | 資源不存在 |
+  | `not_found` | 404 | 資源不存在（含 `/api` 下找不到的路由） |
+  | `method_not_allowed` | 405 | 該路由不支援這個 HTTP 方法 |
+  | `payload_too_large` | 413 | 請求本文超過上限 |
+  | `unsupported_media_type` | 415 | 請求的內容格式不受支援 |
   | `conflict` | 409 | 樂觀鎖衝突、執行互斥、PRTG 範圍外清除作業佔用範圍寫入 |
   | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
   | `server_error` | 500 | 未預期例外 |
@@ -549,7 +576,9 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
-- **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
+- **例外處理單點化**：例外→(狀態, 錯誤碼, 訊息) 的對應表只有 `ApiExceptionMapping` 一份；MVC 內由 `ApiExceptionFilter` 套用，
+  MVC 以外（中介層、驗證、路由階段）由 `ApiExceptionHandler`（`IExceptionHandler`）套用，只接 `/api` 請求，頁面請求轉 `/error`。
+  `/api` 下沒有本文的 403／404／405／413／415 由 `ApiStatusEnvelope` 補成信封。對應表把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯；去識別化失敗另有專屬例外 `RunExportDeidentificationException`，訊息與屬性只含來源名稱與殘留類別次數、不含原值。
   **樂觀鎖衝突另有一支**：處理狀態三表以
@@ -1259,6 +1288,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   會被續掛加回，與排除的意圖矛盾）。手動交辦只排除已知雜訊主機並回報台數；
   抑制與嚴重度不擋（管理者手動選的問題與主機是明確意圖），預覽顯示提示。
   逐日寫入量超過就地門檻時送出後在背景完成（§9.4b「逐日同步」），toast 註明。
+  問題簽章超過案件／逐日處理列的 `issue_key` 欄位上限（`IssueKeyLimit`，取兩表 `HasMaxLength` 較小者）的成員**不建案件、不寫處理紀錄、不計入成員數**（不截斷：截斷後會撞到別筆的鍵或永遠對不上）；
+  其餘成員照常建立，回應 `overlongSkipped`（建單與追加皆有）逐筆帶 `hostName` 與中文 `message`，畫面以 warning toast 列出。夜間派工遇超長鍵同樣不建案、不寫逐日列與處理紀錄。
   **統一標記**：列內動作之一（需 `Assign`
   **且** `Handle`，兩個標註疊加＝都要滿足；實務上即 admin），把這個問題在**尚未有人接手**的
   主機上一次標成結論（僅結案四態，**原因必填**——代全體下結論的操作，理由是紀錄的一部分）。
@@ -2115,7 +2146,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     快捷期間每次以目前選的天數重算起訖（跨午夜自然前進一天），自訂日期固定；分頁不可見時不發請求，回到可見時若距上次完成已逾間隔就立刻載入一次、否則照原排程；
     自動更新與縮放重繪不顯示骨架列、不做進場動畫（首次載入照現行）。
   - **更新失敗**：保留畫面上的資料，標頭列以 `lf-text-alert` 寫「更新失敗，目前是 HH:mm 的資料」，1 分鐘後重試、連續失敗逐次加倍到 15 分鐘封頂（`wallWaitMs`），成功後訊息消失、回到 15 分鐘一輪；首次載入就失敗時沿用全頁錯誤狀態，同樣 1 分鐘後重試（電視開機時站台常常還沒好）。工具列與標頭列的條件文字只讀「載入成功時記下的快捷期間與比較模式」，不讀輸入欄——改了還沒按套用的條件不會被重繪畫成已套用。
-    大螢幕模式下 `api.get` 一律 `silent`，不跳 toast。登入逾期（`Jwt:ExpireHours`，預設 8 小時，全站生效）沿用 401 導回登入頁並記住帶 `display=wall` 的原網址，沒有長效登入。
+    大螢幕模式下 `api.get` 一律 `silent`，不跳 toast。登入逾期（閒置 `Jwt:ExpireHours`，預設 8 小時，全站生效；連續登入最長 24 小時）沿用 401 導回登入頁並記住帶 `display=wall` 的原網址，沒有長效登入。
   - **結構**：狀態機與排程在 `wwwroot/js/pages/reports-wall.js`（`createWall(deps)`，視窗、文件、網址、計時器與取數／重繪皆注入，行為測試以假時鐘驅動）；`reports.js` 只接頁面元素
     （標頭列、離開鈕、字級變數、圖表轉接）與取數。
 
@@ -2369,7 +2400,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
   掃描精靈結果的 `Warnings` 也顯著標示「示範資料」（誤認 bug 的既有防線）。
 - **頁面分頁化**：
-  現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 手作頁籤模式）——Sentinel 清單與連線
+  現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 頁籤模式）——Sentinel 清單與連線
   節流參數在「設定」。
 - **「匯入」分頁**：掃描匯入自「資料匯入」頁整批搬來
   ——Sentinel 的設定與掃描是同一件事的兩半，分在兩頁會讓「補完探索帳密之後要去哪裡掃」
@@ -2459,8 +2490,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   表單標籤一律是 `form-label`（標籤在欄位上方，各寬度一致）。離開頁面的未儲存提醒仍是瀏覽器原生 `beforeunload`，量測工具以派送事件斷言它已掛上。
 - **頁籤化**：設定項目多且長，
   九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
-  （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
-  `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
+  （沿用規則頁既有的 `ui.js` `bindTabs` 頁籤模式，由 Bootstrap Tab 外掛提供角色與方向鍵；非作用中頁籤需在初始 HTML 就帶
+  `d-none`——`bindTabs` 只在切換時更新面板顯示，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
   （`.lf-settings-footer`，`position: sticky; bottom: 0`），任何頁籤／捲動位置都看得到，不必
   捲到頁尾。表單本身有 `novalidate`，`required`/`min`/`max` 不會攔截原生送出——既有的 JS 層
@@ -2472,7 +2503,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   **整體狀態只有一份判定**：`HealthAttention.Evaluate`（`Services/HealthAttention.cs`）收 `HealthService.GetDetail` 已讀到的事實，回傳原因清單（每項 `key` 加一句中文 `text`）；清單為空＝`ok`，否則 `degraded`（資料庫連不上時最小 DTO 為 `down`，原因 `storage`）。
   `GET api/health/detail` 的 `status` 與 `statusReasons` 都來自這裡，不另算。原因種類（`HealthAttentionKeys`）：`storage` 資料庫連不上、`slowQueries` 慢操作占比過高、`firstSeen` 首見日合併連續失敗、`freshness` 排程資料過期且未確認靜音、`prtgSnapshot` PRTG 快照警示、`memory` 記憶體接近上限、
   `crypto` 金鑰不符或有密文解不開、`migration` 遷移卡死（處理狀態或權限異動遷移尚未完成，且有失敗訊息或開始後超過 30 分鐘）、`prtgFreshness` PRTG 擷取新鮮度可疑、`hostDayRecovery` 主機日恢復有需要人看的列、`lastRun` 最近一趟分析失敗（站台啟動後的最近一趟，行程記憶）、
-  `mailSuspended` 郵件收件人因連續寄送失敗被暫停、`retention` 最近一次保留清除有段失敗（`retention_state` blob 的 `lastFailedSegments`，一趟全部成功才清掉）、`prtgSensorsEmpty`／`prtgDevicesPurged` 最近一次 PRTG 同步結果的兩種警告（PRTG-SPEC §3c；PRTG 未啟用時不計）。
+  `mailSuspended` 郵件收件人因連續寄送失敗被暫停、`retention` 最近一次保留清除有段失敗（`retention_state` blob 的 `lastFailedSegments`，一趟全部成功才清掉）、`prtgSensorsEmpty`／`prtgDevicesPurged` 最近一次 PRTG 同步結果的兩種警告（PRTG-SPEC §3c；PRTG 未啟用時不計）、`certificateTrust` PRTG 或 Sentinel 開了忽略憑證錯誤卻沒填信任指紋（PRTG 未啟用時不計）、`outboxDropped` 交辦通知佇列超過 2 萬筆而丟棄了最舊的待寄項目（`WorkOrderOutboxDropStore` 記錄近期丟棄筆數與最近一次時間，最近一次距今超過 7 天就消失；佇列未滿時不出現，丟棄當下另記一筆警告）。
   頂端顯示：正常時只有一則「系統狀態正常」（`statusNote` success），不顯示原因清單；需要注意時一則 warning `statusNote`「系統需要注意（N 項）」加每項一行（`lf-list-row`，`data-reason-key`，文字走 `textContent`）；`down` 為 error 型。
   健康頁每張卡片以 `data-health-alert` 宣告它的警示對應哪些原因種類（`none`＝不出現警示樣式），`HealthAttentionGuardTests` 比對這份宣告與 `HealthAttentionKeys`：新增會亮警示的卡片必須併進清單。
   **導覽健康告示**（`layout.js` 的 `loadHealthBanner`）：只有具 Maintain 或 DevMonitor 能力的人進頁查一次、不輪詢，其他角色不發請求；並行讀 `GET api/health/freshness` 與 `GET api/health/attention`（`Maintain`／`DevMonitor` 任一，回 `status` 與 `reasons`，與 detail 同一份判定；結果在行程內快取 30 秒，內容是全站狀態、與呼叫者無關），各自失敗當作沒有。
@@ -2623,7 +2654,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      無事的信同時是系統存活訊號）＋標題模板
      （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
      已暫停寄送的收件人清單（見下方）＋「交辦單通知（建立／改派／取消與夜間摘要）」開關
-     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複）＋「站台網址」（`SiteBaseUrl`，選填；消費端 `MailLinks`，信件連結前綴）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
+     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複；每日、每週、交辦三種時刻共用 `InputParsing.TryParseClockTime`，接受 `H:mm`／`HH:mm`、分鐘必須兩位，儲存時以 `NormalizeClockTime` 正規化為 `HH:mm`，`09:30:00`、`24:00`、`9:3` 不合法）＋「站台網址」（`SiteBaseUrl`，選填；消費端 `MailLinks`，信件連結前綴）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
      同頁籤末段是**自動派工**：「夜間分析後自動派工」開關（`AutoDispatchEnabled`，預設關）、三條常駐說明
      （候選人：派工池群組成員，排除暫停接單、看不到該主機的人；負載：進行中交辦單的進行中成員數，挑最輕的人；
      不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾）、
@@ -2687,7 +2718,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
      `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。
 
-     **記憶體（`Memory`、`MemoryWarning`）**：`/api/health/detail` 的 `Memory` 為 `MemorySnapshotDto`，欄位 `CapturedAt`、`WorkingSetBytes`、`PeakWorkingSetBytes`、`PrivateBytes`、`PeakPagedBytes`、`ManagedHeapBytes`、`GcHeapSizeBytes`、`GcCommittedBytes`、`GcFragmentedBytes`、`LohSizeBytes`、`HardLimitBytes`、`Gen2Collections`、`IsServerGc`、`GcConserveMemory`、`GcHeapHardLimitPercent`、`SqliteHeapBytes`、`SqliteHeapHighwaterBytes`、`NlogRuleCount`、`HardLimitUsagePercent` 與 `Caches[]`（快取名稱、條目、元素、命中、未命中、淘汰、超大拒收）。
+     **記憶體（`Memory`、`MemoryWarning`）**：`/api/health/detail` 的 `Memory` 為 `MemorySnapshotDto`，欄位 `CapturedAt`、`WorkingSetBytes`、`PeakWorkingSetBytes`、`PrivateBytes`、`PeakPagedBytes`、`ManagedHeapBytes`、`GcHeapSizeBytes`、`GcCommittedBytes`、`GcFragmentedBytes`、`LohSizeBytes`、`HardLimitBytes`、`Gen2Collections`、`IsServerGc`、`GcConserveMemory`、`GcHeapHardLimitPercent`、`SqliteHeapBytes`、`SqliteHeapHighwaterBytes`、`NlogRuleCount`、`HardLimitUsagePercent` 與 `Caches[]`（快取名稱、條目、元素、命中、未命中、淘汰、超大拒收）。`NlogRuleCount` 在常駐 target 下恆為常數，用途是偵測執行期誤增規則（數字變動就代表有程式動態掛載了 NLog 規則）。
      數值單位為 bytes，除 `CapturedAt`、`Gen2Collections`、`IsServerGc` 與 `Caches` 外皆可為 null：第一次 GC 前讀不到的項目、非 Sqlite 的 SQLite 堆、provider 尚未初始化時為 null。儲存探測失敗時仍會填（記憶體讀取不碰資料庫）。`MemoryWarning` 為託管堆占上限比例達 85% 時為真，並使整體狀態為 `degraded`。
 
      **資料層慢查詢（`TopSlowOperations`）**：除了總操作數／慢操作數／門檻（2000ms）與單一最慢值，
@@ -2876,7 +2907,7 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
 三個來源都只在載入時讀一次，段內「重新確認」鈕重抓三者。
 全項確認也只表示設定與最近一次結果，資料涵蓋另見就緒度與使用效果；逐步劇本見 docs/PRTG-SPEC.md §13。
 
-六個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
+六個頁籤（`ui.js` 的 `bindTabs`，非作用中頁籤初始 HTML 自帶 `d-none`）。
 `bindTabs` 的 `{ hash: true }` 選項讓切換同步網址 hash（`history.replaceState`，
 不塞瀏覽歷史）、進站時依 hash 啟用對應頁籤；校準匯出與資料搬運藏在第四個頁籤裡，跨頁指路需要直達：
 
@@ -3417,7 +3448,7 @@ DB-SPEC 沒有 `lf_user_host_map` 與 `lf_users.is_admin`（可見範圍與管�
 | `ISentinelStore` | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
-| `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
+| `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆，超過時丟棄最舊的並記警告與健康狀態；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
 | `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、管理者提醒的上次提醒日（`AdminReminderLastSent`）、上報信沒有收件人的單（`NoRecipientEscalations`，最多 200 筆）與最近一趟派不出去的問題（`LastUnassignable`）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 45 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
@@ -3542,6 +3573,12 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
   判準——來源零事件、該日取數不完整（來源已滾掉部分事件／查詢被截斷）、來源降級（本機頻道存取被拒）
   三者之一即整天跳過並計入保留申報。NetIQ 端整批查詢失敗的主機日走既有失敗計數，紀錄同樣不被刪除，
   但不計入保留申報。
+- **落庫之後的後續步驟只有一種順序**：本機與 NetIQ 兩條路徑在分析紀錄寫入後都呼叫 `HostDayPostProcessor.RunAsync`，
+  順序固定為：計時紀錄（NetIQ 才有）→ 工作流父紀錄登記（指紋 `HostDayWorkflowFingerprint.ForParentRecord`，不含 PRTG 併入的內容）→
+  併入 PRTG finding → 不需要 AI 時補定案報告 → 工作流 PRTG 腿 → 結果計數 → 案件掛接與夜間派工 → 風險 log 暫存 → 權限異動（NetIQ 才有）。
+  PRTG 併入必須在案件掛接與結果計數之前（案件吃記憶體的 TopIssues，計數吃上調後的風險與報告參照）；
+  父紀錄登記、PRTG 腿、案件掛接、風險 log 暫存、權限異動失敗只記警告，不使已保存的分析紀錄作廢。
+  `HostDayPostProcessorOrderTests` 以步驟觀察點與原始碼守門確保這些步驟只由 `HostDayPostProcessor.RunAsync` 依固定順序呼叫。
 - **不會被刪除的東西**：處理狀態（`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`）、
   首見日（`lf_issue_first_seen`）、郵件已寄鍵。處理狀態的鍵是 `(host, date, issue_key)`，
   重跑後同一個問題自動接回既有結論；新規則不再產生該問題時，該處理列成為孤兒列保留在歷史中。
@@ -3565,15 +3602,23 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
 
 ### 執行紀錄只收自己這趟的事件
 
-`BatchRunRecorder` 掛的 NLog target 註冊的是**全行程 Warn 以上**規則。夜間批次一跑就是數小時，
-這期間站台仍在服務——不過濾的話，使用者開頁面觸發的慢 SQL、儀表板互動 AI 的逾時、
+執行紀錄的 NLog target（`RunLogCapture` 的 `RunLogTarget`）是**全行程唯一的常駐 target**，掛一條 Warn 以上規則：
+站台啟動時（`Program.cs`）安裝一次，`BatchRunRecorder` 建構時冪等補裝，之後全域設定的規則數與 target 數不隨執行增減。
+夜間批次一跑就是數小時，這期間站台仍在服務——不過濾的話，使用者開頁面觸發的慢 SQL、儀表板互動 AI 的逾時、
 AI 分析排程的失敗，全都會被記進「這趟取數執行」的執行詳情，並讓它被判成「有警告」。
 
-因此 recorder 建立時推入 `ScopeContext.PushProperty("lf_run_scope", token)`（`token` 是該 recorder 實例的 GUID 識別碼，
-不是 runId——不同 store 可能配出相同 runId），
-target 的 `Write` **只收 scope 內識別碼相符的事件**，其餘丟棄
-（完整診斷仍在 `logs\logforesight.log`）。同一行程同時有取數與 AI 兩個 recorder 時各認各的，
-target 名稱也帶 runId 與識別碼以免互相移除。
+因此 recorder 建立時登記自己（`RunLogCapture.Register(token, …)`）並推入 `ScopeContext.PushProperty("lf_run_scope", token)`
+（`token` 是該 recorder 實例的 GUID 識別碼，不是 runId——不同 store 可能配出相同 runId），
+target 的 `Write` 依 scope 識別碼分派給對應的 recorder，**沒有識別、識別為空字串、識別未登記或已登出的事件一律丟棄**
+（完整診斷仍在 `logs\logforesight.log`）。同一行程同時有取數與 AI 兩個 recorder 時各認各的；範圍內以
+`Task.Run`、`Parallel.ForEachAsync` 開出的工作沿 `AsyncLocal` 繼承識別，警告進同一趟。
+
+**寫入與記錄解耦**：`Write` 只在記錄的執行緒上做記憶體內的 `WarnCount`／`ErrorCount` 計數並把事件放進該 recorder 的
+有界佇列（`RunLogQueue`，未寫出的擷取事件上限 2000 筆），由專屬背景執行緒依序寫庫——記錄呼叫不等資料庫，
+所以交易內、持鎖中記警告不會與寫入互鎖。里程碑與執行輸出等 recorder 親自寫的行走同一條佇列（保有先後順序，不受上限約束）。
+`Finish` 在寫結束列前停止收件並排空佇列，回傳時所有已記錄的行都已落庫；結束後才記的事件不收。
+佇列滿時新來的擷取事件被丟棄並累計（計數不受影響，只少診斷行），寫入端補一筆 Warn 說明
+（logger `RunLogCapture`，「寫入佇列已滿……有 N 筆警告以上紀錄沒有寫進這趟執行紀錄」），並計入該趟 `WarnCount`。
 
 > **`ScopeContext` 是 `AsyncLocal`：只沿非同步呼叫鏈往下傳，不會往上傳。**
 > recorder 因此**必須在涵蓋整趟執行的方法本體內建構**（現況是 `AnalysisOrchestrator.RunAsync`）。

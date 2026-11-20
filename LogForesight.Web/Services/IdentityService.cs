@@ -5,9 +5,9 @@ using LogForesight.Web.Configuration;
 namespace LogForesight.Web.Services;
 
 /// <summary>登入結果。失敗訊息一律是可直接顯示的中文，且**不區分「查無帳號」與「密碼錯誤」**（避免帳號列舉）</summary>
-public record LoginOutcome(bool Success, TokenIdentity? Identity, string? ErrorMessage)
+public record LoginOutcome(bool Success, SessionIdentity? Identity, string? ErrorMessage)
 {
-    public static LoginOutcome Ok(TokenIdentity identity) => new(true, identity, null);
+    public static LoginOutcome Ok(SessionIdentity identity) => new(true, identity, null);
 
     public static LoginOutcome Fail(string message) => new(false, null, message);
 }
@@ -16,7 +16,7 @@ public record LoginOutcome(bool Success, TokenIdentity? Identity, string? ErrorM
 /// 登入流程的業務層（docs/WEB-SPEC.md §6.2）。
 ///
 /// 職責邊界：**憑證驗證交給 IAuthenticationProvider**（Stub/AD 各自實作），
-/// 這裡負責驗證通過之後的事——查使用者、檢查停用、算能力、組出 token 身分。
+/// 這裡負責驗證通過之後的事——查使用者、檢查停用、算能力、組出登入身分。
 /// 換驗證方式時這個類別完全不需要修改，這正是把 Provider 抽出去的目的。
 /// </summary>
 public class IdentityService
@@ -39,6 +39,7 @@ public class IdentityService
 
     /// <summary>能力解析的單一事實來源（見 <see cref="ResolveCapabilities"/>）</summary>
     private readonly UserCapabilityResolver _capabilities;
+    private readonly PermissionVersionStamp? _permissionVersion;
 
     public IdentityService(
         IUserStore users,
@@ -47,9 +48,11 @@ public class IdentityService
         IAuthenticationProvider provider,
         ServerAdminAuthenticator serverAdmin,
         IAuditService audit,
-        UserCapabilityResolver capabilities)
+        UserCapabilityResolver capabilities,
+        PermissionVersionStamp? permissionVersion = null)
     {
         _capabilities = capabilities;
+        _permissionVersion = permissionVersion;
         _users = users;
         _groups = groups;
         _hosts = hosts;
@@ -72,19 +75,12 @@ public class IdentityService
             case ServerAdminLoginResult.Success:
                 Log.Info("serverAdmin 本地救援帳號登入成功：{0}", account);
                 _audit.RecordAuth(AuditActions.Login, account, null, "serverAdmin 本地救援帳號登入成功", AuditResult.Ok);
-                return LoginOutcome.Ok(new TokenIdentity(
+                return LoginOutcome.Ok(new SessionIdentity(
                     UserId: 0,
                     Account: account,
                     DisplayName: $"{account}（系統維護）",
                     Capabilities: RoleCapabilityMap.ForServerAdmin(),
                     IsServerAdmin: true));
-
-            case ServerAdminLoginResult.LockedOut:
-                var remaining = _serverAdmin.LockedUntil(account);
-                var remainingMinutes = Math.Ceiling(remaining?.TotalMinutes ?? 0);
-                Log.Warn("serverAdmin 帳號鎖定中，登入被拒（帳號：{0}，剩餘 {1} 分鐘）", account, remainingMinutes);
-                _audit.RecordAuth(AuditActions.LoginFailed, account, null, "serverAdmin 帳號鎖定中，登入被拒", AuditResult.Denied);
-                return LoginOutcome.Fail($"此帳號因連續登入失敗已鎖定，請於 {remainingMinutes} 分鐘後再試。");
 
             case ServerAdminLoginResult.WrongPassword:
                 Log.Info("serverAdmin 密碼錯誤：{0}", account);
@@ -122,7 +118,7 @@ public class IdentityService
         // 上次登入時間（§3）：只有這一個寫入點。serverAdmin 不經這裡（它不在 lf_users）
         _users.TouchLogin(user.UserId, DateTime.Now);
 
-        var identity = CreateTokenIdentity(user);
+        var identity = CreateSessionIdentity(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
             $"登入成功（{_provider.Name}）", AuditResult.Ok);
 
@@ -130,15 +126,21 @@ public class IdentityService
     }
 
     /// <summary>
-    /// 一般使用者的 token 身分（能力當下重算）。登入與 ActiveUserMiddleware 的權限版本換發共用這一份，
-    /// 兩條路徑簽出來的 token 內容才不會漂移。
+    /// 一般使用者的登入身分（能力當下重算）。登入與 cookie 驗證的權限版本就地更新共用這一份，
+    /// 兩條路徑算出來的身分內容才不會漂移。
     /// </summary>
-    public TokenIdentity CreateTokenIdentity(WebUser user) => new(
-        UserId: user.UserId,
-        Account: user.Account,
-        DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
-        Capabilities: ResolveCapabilities(user),
-        IsServerAdmin: false);
+    public SessionIdentity CreateSessionIdentity(WebUser user)
+    {
+        // 先讀版號、後算能力（見 SessionIdentity.PermissionVersion）
+        var version = _permissionVersion?.Current;
+        return new(
+            UserId: user.UserId,
+            Account: user.Account,
+            DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
+            Capabilities: ResolveCapabilities(user),
+            IsServerAdmin: false,
+            PermissionVersion: version);
+    }
 
     /// <summary>
     /// AD 登入自動補顯示名稱與 Email（docs/archive/HISTORY.md #8）：批次新增使用者
@@ -162,8 +164,12 @@ public class IdentityService
             ? adInfo.DisplayName
             : null;
 
-        var newEmail = user.Email == null && !string.IsNullOrWhiteSpace(adInfo.Email)
-            ? adInfo.Email
+        // AD 的 mail 屬性同樣不保證是單一位址：不合格就不帶入（記一行警告），不讓它變成會拆成多位收件人的字串
+        var adEmailUsable = SystemSettingsMailHelper.IsSingleBareAddress(adInfo.Email);
+        if (!string.IsNullOrWhiteSpace(adInfo.Email) && !adEmailUsable)
+            Log.Warn("[AD] 帳號 {0} 的 mail 屬性不是單一電子郵件位址，未帶入使用者信箱", user.Account);
+        var newEmail = user.Email == null && adEmailUsable
+            ? adInfo.Email!.Trim()
             : null;
 
         if (newDisplayName == null && newEmail == null) return user;
@@ -182,7 +188,8 @@ public class IdentityService
             Active = user.Active,
             GroupIds = user.GroupIds.ToList(),
             LastLoginAt = user.LastLoginAt,
-            DispatchPaused = user.DispatchPaused
+            DispatchPaused = user.DispatchPaused,
+            SessionVersion = user.SessionVersion
         };
         var saved = _users.Upsert(updated);
 

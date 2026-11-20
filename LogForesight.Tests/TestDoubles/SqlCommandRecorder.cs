@@ -51,6 +51,27 @@ internal sealed class SqlCommandRecorder : DbCommandInterceptor
         return base.DataReaderDisposing(command, eventData, result);
     }
 
+    /// <summary>
+    /// 是否一併記錄不回傳資料列的指令（<c>ExecuteDelete</c>／<c>ExecuteUpdate</c>、INSERT 等）。預設 false，
+    /// 避免影響既有以「讀取指令數」為依據的測試；要看這類指令的查詢計畫時才開。
+    /// </summary>
+    public bool IncludeNonQueries { get; set; }
+
+    public override InterceptionResult<int> NonQueryExecuting(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+    {
+        if (IncludeNonQueries) Record(command);
+        return base.NonQueryExecuting(command, eventData, result);
+    }
+
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+        CancellationToken cancellationToken = default)
+    {
+        if (IncludeNonQueries) Record(command);
+        return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
     public void Clear()
     {
         lock (_gate)

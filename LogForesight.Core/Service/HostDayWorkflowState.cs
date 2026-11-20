@@ -466,7 +466,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     public HostDayWorkflowState ParentSucceeded(long hostId, string hostName, DateTime date, string? runId,
         int eventCount, string decisionFingerprint, bool prtgEnabled, bool aiEnabled, DateTime? now = null,
         bool trackTouched = true, bool preserveMissingCompletionTime = false, long? parentRecordId = null,
-        string? equivalentFingerprint = null)
+        IReadOnlyList<string>? equivalentFingerprints = null)
     {
         if (trackTouched)
         {
@@ -484,9 +484,10 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             if (parentRecordId.HasValue) state.ParentRecordId = parentRecordId;
             state.Parent = WorkflowLegState.Succeeded;
             state.ParentEventCount = Math.Max(0, eventCount);
-            // equivalentFingerprint：同一份內容以舊算法算出的指紋（升級前存下的列）；認得它就不算父紀錄改變，下面照樣換成新指紋
+            // equivalentFingerprints：同一份內容以舊算法算出的指紋（升級前存下的列）；認得它就不算父紀錄改變，下面照樣換成新指紋
             var sameDecision = string.Equals(state.DecisionFingerprint, decisionFingerprint, StringComparison.Ordinal)
-                || (equivalentFingerprint != null && string.Equals(state.DecisionFingerprint, equivalentFingerprint, StringComparison.Ordinal));
+                || (equivalentFingerprints != null && state.DecisionFingerprint != null &&
+                    equivalentFingerprints.Contains(state.DecisionFingerprint, StringComparer.Ordinal));
             var changed = parentIdentityChanged || !sameDecision;
             if (changed)
                 state.ParentCompletedAt = now ?? (preserveMissingCompletionTime ? null : DateTime.Now);
@@ -645,7 +646,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 : null,
             trackTouched: false, preserveMissingCompletionTime: true,
             parentRecordId: record.RecordId > 0 ? record.RecordId : null,
-            equivalentFingerprint: HostDayWorkflowFingerprint.LegacyParentFingerprint(record));
+            equivalentFingerprints: HostDayWorkflowFingerprint.LegacyParentFingerprints(record));
 
     public bool IsCurrentAiVersion(long hostId, DateTime date, long inputVersion)
     {
@@ -1050,13 +1051,13 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 state.RecoveryWaitingWriteRevision is { } waitingRevision && waitingRevision <= capturedWriteRevision)
                 ClearRecoveryWaiting(state);
             if (IsRecoveryStateCurrent(state, record, prtgEnabled, aiEnabled)) return;
-            if (record.LatestNetiqAttemptStatus == "failed")
+            if (record.LatestNetiqAttemptStatus == NetiqAttemptStatus.Failed)
                 ApplyRecoveredParentFailure(state, record);
             else
                 ApplyRecoveredParentSuccess(state, record, prtgEnabled, aiEnabled);
 
             // PRTG 腿由每日評估直接寫入（PrtgDailyPipeline）；恢復只校正停用與不合格父紀錄，不重判 PRTG。
-            if (record.LatestNetiqAttemptStatus != "failed")
+            if (record.LatestNetiqAttemptStatus != NetiqAttemptStatus.Failed)
             {
                 if (!prtgEnabled)
                 {
@@ -1108,7 +1109,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         state.Parent = WorkflowLegState.Succeeded;
         state.ParentEventCount = Math.Max(0, record.AuditEventCount);
         var changed = identityChanged || !(StringComparer.Ordinal.Equals(state.DecisionFingerprint, fingerprint)
-            || StringComparer.Ordinal.Equals(state.DecisionFingerprint, HostDayWorkflowFingerprint.LegacyParentFingerprint(record)));
+            || HostDayWorkflowFingerprint.LegacyParentFingerprints(record).Contains(state.DecisionFingerprint, StringComparer.Ordinal));
         if (changed) state.ParentCompletedAt = parentAt;
         else if (state.ParentCompletedAt == null && parentAt.HasValue) state.ParentCompletedAt = parentAt;
         state.DecisionFingerprint = fingerprint;
@@ -1200,7 +1201,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     private static bool IsRecoveryStateCurrent(HostDayWorkflowState state,
         LogForesight.Core.Models.DailyAnalysisRecord record, bool prtgEnabled, bool aiEnabled)
     {
-        var failed = record.LatestNetiqAttemptStatus == "failed";
+        var failed = record.LatestNetiqAttemptStatus == NetiqAttemptStatus.Failed;
         var fingerprint = failed ? HostDayWorkflowFingerprint.ForRecord(record) : HostDayWorkflowFingerprint.ForParentRecord(record);
         if (state.Parent != (failed ? WorkflowLegState.Failed : WorkflowLegState.Succeeded) ||
             state.ParentRecordId != record.RecordId ||
@@ -1256,19 +1257,25 @@ public static class HostDayWorkflowFingerprint
     /// 否則已完成的 PRTG 腿會被當成「父紀錄變了」重設回等待、整體停在「PRTG 待補」。
     /// 所以一律以精簡投影（<see cref="LogForesight.Core.Persistence.RecordStorageShaper.Compact"/>）計算、與風險等級無關：
     /// 低風險日寫入時會精簡，而同一筆的風險等級會在寫入後跨界，內容形狀因此不能進指紋。
+    /// NetIQ 嘗試狀態與時間也不進指紋：批次結束時帳本會對非成功的主機日回寫這兩欄（時間與分析當下不同），
+    /// 放進來就是內容沒變也被當成父紀錄改變。嘗試失敗由 <c>LatestNetiqAttemptStatus == "failed"</c> 另走失敗路徑，不靠指紋。
     /// </summary>
     public static string ForParentRecord(LogForesight.Core.Models.DailyAnalysisRecord record) =>
-        ParentFingerprint(LogForesight.Core.Persistence.RecordStorageShaper.Compact(record), record.RecordId);
+        ParentFingerprint(LogForesight.Core.Persistence.RecordStorageShaper.Compact(record), record.RecordId, includeAttempt: false);
 
     /// <summary>
-    /// 舊算法（直接以傳入內容計算）的指紋，只供還原路徑辨認升級前存下的列：中風險以上的列資料庫內容是完整的，
-    /// 舊指紋對得上就不算父紀錄改變，並順手換成 <see cref="ForParentRecord"/> 的值。不得用來寫入新列。
+    /// 舊算法的指紋，只供還原路徑辨認升級前存下的列，不得用來寫入新列。依新到舊：
+    /// [0] 精簡投影＋嘗試欄位；[1] 直接以傳入內容計算＋嘗試欄位（中風險以上的列資料庫內容是完整的）。
+    /// 對得上任一個就不算父紀錄改變，並順手換成 <see cref="ForParentRecord"/> 的值。
     /// </summary>
-    public static string LegacyParentFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record) =>
-        ParentFingerprint(record, record.RecordId);
+    public static IReadOnlyList<string> LegacyParentFingerprints(LogForesight.Core.Models.DailyAnalysisRecord record) =>
+    [
+        ParentFingerprint(LogForesight.Core.Persistence.RecordStorageShaper.Compact(record), record.RecordId, includeAttempt: true),
+        ParentFingerprint(record, record.RecordId, includeAttempt: true)
+    ];
 
     /// <summary>精簡投影不帶 RecordId（由資料列決定），身分由呼叫端從原物件取</summary>
-    private static string ParentFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId)
+    private static string ParentFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId, bool includeAttempt)
     {
         var input = JsonSerializer.Serialize(new
         {
@@ -1277,8 +1284,8 @@ public static class HostDayWorkflowFingerprint
             record.Host,
             Date = record.Date.Date,
             record.LogSource,
-            record.LatestNetiqAttemptStatus,
-            record.LatestNetiqAttemptAtUtc,
+            LatestNetiqAttemptStatus = includeAttempt ? record.LatestNetiqAttemptStatus : null,
+            LatestNetiqAttemptAtUtc = includeAttempt ? record.LatestNetiqAttemptAtUtc : null,
             record.AuditEventCount,
             record.ErrorCount,
             record.WarningCount,

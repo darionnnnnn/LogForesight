@@ -128,7 +128,7 @@ public static class TrendAnalyzer
                 .ToList();
 
             sig.DaysSeenInHistory = pastCounts.Count;
-            sig.HistoryDailyAverage = pastCounts.Count > 0 ? Math.Round(Median(pastCounts), 1) : null;
+            sig.HistoryDailyAverage = pastCounts.Count > 0 ? Math.Round(SampleStatistics.Median(pastCounts)!.Value, 1) : null;
             sig.PreviousDayCount = prevRecord == null
                 ? null
                 : prevRecord.TopIssues.FirstOrDefault(i => SameIssue(i, sig))?.Count ?? 0;
@@ -288,7 +288,7 @@ public static class TrendAnalyzer
             string? text = null;
             if (nonZeroErrorDays.Count > 0)
             {
-                var baselineErrors = Median(nonZeroErrorDays);
+                var baselineErrors = SampleStatistics.Median(nonZeroErrorDays)!.Value;
                 if (todayErrorCount >= 10 && todayErrorCount >= baselineErrors * RisingFactor)
                 {
                     text = $"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆";
@@ -330,7 +330,7 @@ public static class TrendAnalyzer
             string? text = null;
             if (nonZeroAuditDays.Count > 0)
             {
-                var baselineAudit = Median(nonZeroAuditDays);
+                var baselineAudit = SampleStatistics.Median(nonZeroAuditDays)!.Value;
                 if (effectiveTodayAuditCount >= 10 && effectiveTodayAuditCount >= baselineAudit * RisingFactor)
                 {
                     text = $"安全稽核事件量突增：今日 {effectiveTodayAuditCount} 筆{residualAuditNote}，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試";
@@ -371,16 +371,4 @@ public static class TrendAnalyzer
     /// </summary>
     private static IssueSeverity Escalate(IssueSeverity s) =>
         s >= IssueSeverity.High ? IssueSeverity.High : s + 1;
-
-    /// <summary>
-    /// 歷史基準的中位數（回饋十三輪 E）：純算術，偶數筆數取中間兩值平均。呼叫端已保證非空清單
-    /// （<see cref="Apply(List{LogIssueSignature},List{DailyAnalysisRecord},DateTime,int,int,bool,bool,out List{string},out List{TrendAlertRef})"/>
-    /// 內三處呼叫點都先檢查 Count &gt; 0），這裡不重複防禦。
-    /// </summary>
-    private static double Median(IEnumerable<int> values)
-    {
-        var sorted = values.OrderBy(v => v).ToList();
-        var mid = sorted.Count / 2;
-        return sorted.Count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2.0 : sorted[mid];
-    }
 }

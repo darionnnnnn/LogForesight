@@ -129,7 +129,7 @@ public sealed class WorkflowParentFingerprintRoundTripTests : IDisposable
     public void 升級前的舊指紋_中風險列還原時不重設並換成新指紋()
     {
         var (atAnalysis, persisted) = Persist(7730, RiskLevels.Medium);
-        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprint(atAnalysis);
+        var legacy = HostDayWorkflowFingerprint.LegacyParentFingerprints(atAnalysis)[1];
         Assert.NotEqual(legacy, HostDayWorkflowFingerprint.ForParentRecord(atAnalysis));
         var workflow = Workflow();
         workflow.ParentSucceeded(7730, atAnalysis.Host, atAnalysis.Date, "run-1", 3, legacy,
@@ -179,6 +179,70 @@ public sealed class WorkflowParentFingerprintRoundTripTests : IDisposable
         workflow.RestoreFromRecord(persisted, aiEnabled: true);
 
         Assert.Equal(WorkflowLegState.Waiting, workflow.Get(7704, atAnalysis.Date)!.Prtg);
+    }
+
+    /// <summary>
+    /// 第 79 輪 J1：資料不完整的主機日在分析當下記下 partial 與當下時間並算父指紋；批次結束時帳本又以另一個時間
+    /// 把同一列回寫成 partial。恢復服務從資料庫讀回時指紋不得因此改變，已完成的 AI 腿不被重設。
+    /// </summary>
+    [Fact]
+    public void 帳本回寫嘗試欄位後_父指紋不變_已完成的腿不被重設()
+    {
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, _root);
+        var day = DateTime.Today.AddDays(-1);
+        var key = new HostKey { HostId = 7790, HostName = "G-7790" };
+        var store = backend.RecordStore(key);
+        var record = LowRiskRecord(7790, key.HostName, day);
+        record.RiskLevel = RiskLevels.Medium;
+        record.DataIncomplete = true;
+        record.LatestNetiqAttemptStatus = NetiqAttemptStatus.Partial;
+        record.LatestNetiqAttemptAtUtc = DateTime.UtcNow.AddMinutes(-5);
+        store.Append(record);
+
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.ParentSucceeded(7790, record.Host, day, "run-1", 3,
+            HostDayWorkflowFingerprint.ForParentRecord(record), prtgEnabled: false, aiEnabled: true,
+            parentRecordId: record.RecordId);
+        var version = workflow.BeginAi(7790, day);
+        workflow.CompleteAi(7790, day, version, success: true);
+        var before = workflow.Get(7790, day)!;
+        Assert.Equal(WorkflowLegState.Succeeded, before.Ai);
+
+        // 批次結束：帳本以另一個時間回寫同一個非成功狀態
+        NetiqSourceAttempt.RecordBatch(backend, new[] { 7790L }, day, 1, NetiqAttemptStatus.Partial, DateTime.UtcNow);
+        var persisted = store.GetOne(new[] { key }, day)!;
+        Assert.NotEqual(record.LatestNetiqAttemptAtUtc, persisted.LatestNetiqAttemptAtUtc);
+
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(record), HostDayWorkflowFingerprint.ForParentRecord(persisted));
+        workflow.RestoreFromRecord(persisted, aiEnabled: true, prtgEnabled: false);
+
+        var after = workflow.Get(7790, day)!;
+        Assert.Equal(before.DecisionVersion, after.DecisionVersion);
+        Assert.Equal(WorkflowLegState.Succeeded, after.Ai);
+    }
+
+    /// <summary>
+    /// J1 升級相容（不經新算法的直接斷言）：升級前存的是「精簡投影＋嘗試欄位」的指紋，
+    /// 內容與嘗試欄位都沒變時還原不重設，並換成新指紋。
+    /// </summary>
+    [Fact]
+    public void 升級前含嘗試欄位的指紋_還原時不重設並換成新指紋()
+    {
+        var (atAnalysis, persisted) = Persist(7791, RiskLevels.Low);
+        var previous = HostDayWorkflowFingerprint.LegacyParentFingerprints(atAnalysis)[0];
+        Assert.NotEqual(previous, HostDayWorkflowFingerprint.ForParentRecord(atAnalysis));
+        var workflow = Workflow();
+        workflow.ParentSucceeded(7791, atAnalysis.Host, atAnalysis.Date, "run-1", 3, previous,
+            prtgEnabled: true, aiEnabled: true, parentRecordId: atAnalysis.RecordId);
+        workflow.SetPrtg(7791, atAnalysis.Date, WorkflowLegState.Succeeded, evidenceReady: true);
+        var before = workflow.Get(7791, atAnalysis.Date)!.DecisionVersion;
+
+        workflow.RestoreFromRecord(persisted, aiEnabled: true);
+
+        var after = workflow.Get(7791, atAnalysis.Date)!;
+        Assert.Equal(WorkflowLegState.Succeeded, after.Prtg);
+        Assert.Equal(before, after.DecisionVersion);
+        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(persisted), after.DecisionFingerprint);
     }
 
     /// <summary>邊界另一側：父紀錄的內容真的變了（重新分析），PRTG 腿照舊要重來</summary>

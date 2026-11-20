@@ -241,32 +241,15 @@ public sealed class PrtgEffectivenessServiceTests
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Endpoint_無ViewAll回ForbidResult(bool serverAdmin)
+    /// <summary>
+    /// 此統計以全站資源為分母：端點宣告 [RequireViewAll]（拒絕時的 403 信封與稽核由該 filter 與例外對應表負責，
+    /// 行為測試在 RequireViewAll 與錯誤出口的測試；路由快照守住宣告本身）。
+    /// </summary>
+    [Fact]
+    public void Endpoint_宣告須全站檢視()
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), "lf-prtg-effectiveness-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dataRoot);
-        try
-        {
-            var backend = new StorageBackend(new StorageSettings
-            {
-                Type = "Sqlite",
-                ConnectionString = $"Data Source={Path.Combine(dataRoot, "test.db") }"
-            }, dataRoot);
-            var user = serverAdmin ? FakeCurrentUser.ServerAdmin() : FakeCurrentUser.WithCapabilities(Capability.Maintain);
-            var controller = new PrtgEffectivenessController(backend, new FakeIssueOwnerStore(), user);
-
-            var result = controller.Get(new DateTime(2026, 9, 10), new DateTime(2026, 9, 10));
-
-            Assert.IsType<ForbidResult>(result.Result);
-        }
-        finally
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
-        }
+        var method = typeof(PrtgEffectivenessController).GetMethod(nameof(PrtgEffectivenessController.Get))!;
+        Assert.NotNull(method.GetCustomAttributes(typeof(LogForesight.Web.Filters.RequireViewAllAttribute), inherit: true).SingleOrDefault());
     }
 
     [Fact]

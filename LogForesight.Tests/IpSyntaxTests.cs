@@ -61,28 +61,20 @@ public class IpSyntaxTests
         Assert.Null(address);
     }
 
-    /// <summary>自由輸入的位址只能走 IpSyntax；框架的 IPAddress.TryParse 會把簡寫當成合法 IPv4。</summary>
-    [Fact]
-    public void 守門_IPAddressTryParse只能出現在白名單檔()
+    /// <summary>
+    /// 自由輸入的位址只能走 IpSyntax。禁用由編譯器以符號比對執行（根目錄 BannedSymbols.txt，RS0030 視為錯誤）；
+    /// 這裡只守住清單本身沒被刪改。
+    /// </summary>
+    [Theory]
+    [InlineData("M:System.Net.IPAddress.TryParse(System.String,System.Net.IPAddress@)")]
+    [InlineData("M:System.Net.IPAddress.TryParse(System.ReadOnlySpan{System.Char},System.Net.IPAddress@)")]
+    [InlineData("M:System.Net.IPAddress.Parse(System.String)")]
+    [InlineData("M:System.Net.IPAddress.Parse(System.ReadOnlySpan{System.Char})")]
+    [InlineData("T:System.Diagnostics.EventLogEntryType")]
+    public void 禁用清單涵蓋框架的IP解析與Windows專屬事件型別(string symbol)
     {
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "IpSyntax.cs", "NetiqHostList.cs", "LoginThrottle.cs", "AppSettings.cs", "PrtgProbeRunner.cs"
-        };
-        var root = FindRepoRoot();
-        var offenders = new List<string>();
-        foreach (var project in new[] { "LogForesight.Core", "LogForesight.Web" })
-        {
-            foreach (var file in Directory.EnumerateFiles(Path.Combine(root, project), "*.cs", SearchOption.AllDirectories))
-            {
-                var sep = Path.DirectorySeparatorChar;
-                if (file.Contains($"{sep}bin{sep}") || file.Contains($"{sep}obj{sep}")) continue;
-                if (allowed.Contains(Path.GetFileName(file))) continue;
-                if (File.ReadAllText(file).Contains("IPAddress.TryParse(", StringComparison.Ordinal))
-                    offenders.Add(Path.GetRelativePath(root, file));
-            }
-        }
-        Assert.True(offenders.Count == 0, "改用 IpSyntax.TryParse：" + string.Join(", ", offenders));
+        var lines = File.ReadAllLines(Path.Combine(FindRepoRoot(), "BannedSymbols.txt"));
+        Assert.Contains(lines, line => line.Split(';')[0] == symbol);
     }
 
     private static string FindRepoRoot()

@@ -27,12 +27,15 @@ public sealed class PrtgDiagnosticExportWriterTests
             BlobKey = PrtgMonitoringPolicyStore.BlobKey,
             Content = JsonSerializer.Serialize(policy), Version = 7, UpdatedAt = From
         });
-        for (var id = 1; id <= 48; id++)
+        // 欄位長度上限由 SaveChanges 統一截斷（Name 255、GroupPath 512），單列最多約 800 位元組；
+        // 要超過單一分塊上限只能靠列數，不能再靠單列塞超長字串。
+        const int deviceCount = 8000;
+        for (var id = 1; id <= deviceCount; id++)
             context.PrtgDevices.Add(new PrtgDeviceRow
             {
                 Objid = id,
-                Name = id == 1 ? "診斷🧪" : new string('a', 100_000),
-                GroupPath = "root", CreatedAt = From, SyncedAt = From
+                Name = id == 1 ? "診斷🧪" : new string('a', 255),
+                GroupPath = new string('g', 512), CreatedAt = From, SyncedAt = From
             });
         await context.SaveChangesAsync();
         await using var transaction = await context.Database.BeginTransactionAsync();
@@ -46,7 +49,7 @@ public sealed class PrtgDiagnosticExportWriterTests
         var package = output.ToArray();
         Assert.True(package.Length > EfPrtgTransferStore.MaxChunkBytes);
         Assert.InRange(output.MaxSingleWrite, 1, EfPrtgTransferStore.MaxChunkBytes);
-        Assert.Equal(48, result.Counts["Devices"]);
+        Assert.Equal(deviceCount, result.Counts["Devices"]);
         Assert.All(PrtgDiagnosticExportSource.V2ArrayProperties.Where(name => name != "Devices"),
             name => Assert.Equal(0, result.Counts[name]));
         Assert.InRange(result.ManifestUtf8Bytes, 1, PrtgDiagnosticExportWriter.MaximumManifestUtf8Bytes);
@@ -64,7 +67,7 @@ public sealed class PrtgDiagnosticExportWriterTests
             chunks.Count, (ordinal, _) => Task.FromResult(chunks[ordinal]), CancellationToken.None);
         Assert.Equal(2, validation.FormatVersion);
         Assert.Contains("manifest-verified", validation.ResultManifestJson, StringComparison.Ordinal);
-        Assert.Equal(48, validation.Counts["Devices"]);
+        Assert.Equal(deviceCount, validation.Counts["Devices"]);
         Assert.Equal(0, validation.Counts["Timelines"]);
         Assert.Equal(0, validation.Counts["Sensors"]);
         Assert.Equal(0, validation.Counts["SemanticEvidence"]);

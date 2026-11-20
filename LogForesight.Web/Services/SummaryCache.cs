@@ -32,7 +32,7 @@ public class DataVersionStamp
 /// <c>ApiResponse</c> 序列化、沒有任何呼叫端會改它。要新增消費端時請維持這個前提，
 /// 需要改內容就自己複製一份。
 /// </summary>
-public class SummaryCache : ICacheStatistics
+public class SummaryCache : BoundedTtlCache<object>
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值——
     /// 兩層快取的新鮮度不一致會讓同一畫面的區塊互相矛盾。</summary>
@@ -42,111 +42,17 @@ public class SummaryCache : ICacheStatistics
     /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空——多人同時使用時整批清會讓命中率趨近 0。</summary>
     private const int MaxEntries = 256;
 
-    private readonly DataVersionStamp _stamp;
-    private readonly Func<DateTime> _now;
-    private readonly object _lock = new();
-    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
-    private long _hits;
-    private long _misses;
-    private long _evictions;
-    private readonly Dictionary<string, (object Payload, DateTime CachedAt, long Version, DateTime LastAccess)> _entries = new();
-    private readonly SingleFlight _flight = new();
-    private DateTime _lastSweep = DateTime.MinValue;
-
     public SummaryCache(DataVersionStamp stamp, Func<DateTime>? now = null)
+        : base("SummaryCache", TtlSeconds, MaxEntries, long.MaxValue, _ => 1, () => stamp.Current, now)
     {
-        _stamp = stamp;
-        _now = now ?? (() => DateTime.Now);
     }
 
     /// <summary>組鍵：用途＋條件＋可見範圍。主機 id 排序後串起，順序不同的同一集合是同一鍵。</summary>
     public static string KeyOf(string scope, string parameters, IReadOnlyCollection<long> visibleHostIds) =>
         $"{scope}|{parameters}|{VisibleHostKeyPart.Of(visibleHostIds)}";
 
-    /// <summary>取快取；未命中（不存在／逾時／版本已推進）時呼叫 factory 算一次並存起來。</summary>
-    public T GetOrAdd<T>(string key, Func<T> factory) where T : class
-    {
-        var version = _stamp.Current;
-        if (TryHit(key, version, countMiss: true) is T hit) return hit;
-
-        // factory 在鎖外執行：聚合查詢很慢，握著鎖算會讓其他請求全部排隊。
-        // 同鍵並發只算一次（SingleFlight）：等著的請求拿同一份；排在後面才進來的先再看一次快取
-        return _flight.Run(key + "|" + version, () =>
-        {
-            if (TryHit(key, version, countMiss: false) is T again) return again;
-            var value = factory();
-            lock (_lock)
-            {
-                var now = _now();
-                if (!_entries.ContainsKey(key)) EvictForInsert(now, version);
-                _entries[key] = (value, now, version, now);
-            }
-            return value;
-        });
-    }
-
-    /// <summary>命中回內容、未命中回 null；同時順手釋放過期條目（每個 TTL 週期最多掃一次）。</summary>
-    private object? TryHit(string key, long version, bool countMiss)
-    {
-        lock (_lock)
-        {
-            var now = _now();
-            SweepIfDue(now, version);
-            if (_entries.TryGetValue(key, out var entry)
-                && entry.Version == version
-                && (now - entry.CachedAt).TotalSeconds < TtlSeconds)
-            {
-                _hits++;
-                _entries[key] = entry with { LastAccess = now };
-                return entry.Payload;
-            }
-            if (countMiss) _misses++;
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 讀取時順手清掉逾時與舊版本的條目（呼叫端須持鎖）：只在「新增且已滿」時才清的話，
-    /// 尖峰過後沒人再新增，過期內容會一直佔著記憶體。每個 TTL 週期最多掃一次，掃描量是條目上限 256 筆。
-    /// </summary>
-    private void SweepIfDue(DateTime now, long version)
-    {
-        if ((now - _lastSweep).TotalSeconds < TtlSeconds) return;
-        _lastSweep = now;
-        RemoveStale(now, version);
-    }
-
-    private void RemoveStale(DateTime now, long version)
-    {
-        var expired = _entries
-            .Where(e => e.Value.Version != version || (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in expired) _entries.Remove(k);
-        _evictions += expired.Count;
-    }
-
-    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除已過期（逾時或版本已推進、再也命不中）的項目，
-    /// 仍滿就逐筆移除最後存取時間最舊的一筆。</summary>
-    private void EvictForInsert(DateTime now, long version)
-    {
-        if (_entries.Count < MaxEntries) return;
-
-        RemoveStale(now, version);
-
-        while (_entries.Count >= MaxEntries)
-        {
-            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
-            _evictions++;
-        }
-    }
-
-    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
-    public CacheStatisticsSnapshot GetStatistics()
-    {
-        lock (_lock)
-        {
-            return new CacheStatisticsSnapshot("SummaryCache", _entries.Count, _entries.Count, _hits, _misses, _evictions, 0);
-        }
-    }
+    /// <summary>取快取；未命中（不存在／逾時／版本已推進）時呼叫 factory 算一次並存起來。
+    /// factory 在鎖外執行（聚合查詢很慢），同鍵並發只算一次。</summary>
+    public T GetOrAdd<T>(string key, Func<T> factory) where T : class =>
+        (T)GetOrCompute(key, CurrentVersion, factory);
 }

@@ -357,14 +357,15 @@ public static class SentinelQueryBuilder
     /// <c>NetiqDiscoveryException</c> 直接轉傳 <c>ex.Message</c>），而
     /// <c>ArgumentException(message, paramName)</c> 會在 Message 後面自動附上
     /// 「(Parameter 'subnetInput')」——參數名對管理員毫無意義，只是把實作細節漏到畫面上。
-    /// 型別維持 <see cref="ArgumentException"/>（呼叫端的 catch 與既有測試都以它為準）。
+    /// 型別是專屬的 <see cref="SubnetPrefixFormatException"/>（繼承 <see cref="ArgumentException"/> 相容既有 catch），
+    /// 呼叫端只攔它才能原樣顯示訊息，不會連框架的 ArgumentException 一起回給使用者。
     /// </summary>
     public static string NormalizeSubnetPrefix(string subnetInput)
     {
         var trimmed = subnetInput?.Trim() ?? string.Empty;
         if (trimmed.Length == 0)
         {
-            throw new ArgumentException("請輸入網段（如 192.168.0 或 192.168.0.0/24）。");
+            throw new SubnetPrefixFormatException("請輸入網段（如 192.168.0 或 192.168.0.0/24）。");
         }
 
         // CIDR：只接受 /16、/24（能對齊八位組邊界才轉得成前綴；/8 太籠統會被下面的量級守則
@@ -376,7 +377,7 @@ public static class SentinelQueryBuilder
         {
             if (!int.TryParse(cidrSplit[1], out var bits) || bits is not (16 or 24))
             {
-                throw new ArgumentException(
+                throw new SubnetPrefixFormatException(
                     $"CIDR 遮罩「/{cidrSplit[1]}」不支援，僅接受 /16、/24（能對齊八位組邊界）。");
             }
             cidrBits = bits;
@@ -385,7 +386,7 @@ public static class SentinelQueryBuilder
         var octets = ipPart.Split('.');
         if (octets.Length is < 1 or > 4 || octets.Any(o => o.Length == 0))
         {
-            throw new ArgumentException($"網段格式不正確：「{subnetInput}」。");
+            throw new SubnetPrefixFormatException($"網段格式不正確：「{subnetInput}」。");
         }
 
         var parsed = new List<int>();
@@ -393,7 +394,7 @@ public static class SentinelQueryBuilder
         {
             if (!int.TryParse(octet, out var value) || value is < 0 or > 255)
             {
-                throw new ArgumentException($"網段格式不正確：「{subnetInput}」（「{octet}」不是合法的 0~255 數字）。");
+                throw new SubnetPrefixFormatException($"網段格式不正確：「{subnetInput}」（「{octet}」不是合法的 0~255 數字）。");
             }
             parsed.Add(value);
         }
@@ -405,7 +406,7 @@ public static class SentinelQueryBuilder
             var wantedOctets = cidrBits.Value / 8;
             if (parsed.Count < wantedOctets)
             {
-                throw new ArgumentException(
+                throw new SubnetPrefixFormatException(
                     $"「{subnetInput}」的位址段數不足以對應 /{cidrBits.Value}。");
             }
             parsed = parsed.Take(wantedOctets).ToList();
@@ -414,14 +415,14 @@ public static class SentinelQueryBuilder
         {
             // 沒帶 CIDR 卻打了完整四段：這是單一 IP 而不是網段，不在這個函數的支援範圍——
             // 明確拒絕比默默截成 /24 安全，使用者原意可能真的只想查一台
-            throw new ArgumentException(
+            throw new SubnetPrefixFormatException(
                 $"「{subnetInput}」是完整的單一 IP，不是網段——查單一台主機請用主機頁或 CSV 匯入；" +
                 "要掃描它所在的網段請改輸入前三段（如 192.168.0 或 192.168.0.0/24）。");
         }
 
         if (parsed.Count < MinPrefixOctets)
         {
-            throw new ArgumentException(
+            throw new SubnetPrefixFormatException(
                 $"網段太籠統：「{subnetInput}」只有 {parsed.Count} 段，至少需要 {MinPrefixOctets} 段" +
                 "（如 192.168），避免掃描範圍等同全站。");
         }
@@ -511,3 +512,8 @@ public enum ScanGranularity { Slash24, Slash26 }
 /// null 代表用 Prefix 的前綴萬用字元查詢（/24）。</summary>
 public sealed record ScanSegment(string Prefix, string Label, IReadOnlyList<string>? Ips);
 
+/// <summary>網段輸入格式錯誤；訊息是寫好給管理員看的中文，可原樣顯示。</summary>
+public sealed class SubnetPrefixFormatException : ArgumentException
+{
+    public SubnetPrefixFormatException(string message) : base(message) { }
+}

@@ -34,13 +34,16 @@ public class RiskReportService
 
     private static string DeepDiveSystemPromptFor(string? hostOs) =>
         "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
-        "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
+        "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptDataFence.SystemNotice + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
     private readonly IAiService _aiService;
     private readonly string? _hostOs;
     private readonly int _deepDiveMaxTokens;
+
+    /// <summary>深入分析呼叫的 token 上限（工廠組裝驗證用）</summary>
+    internal int DeepDiveMaxTokens => _deepDiveMaxTokens;
     private readonly Func<IReadOnlyList<KnownIssueRule>>? _ruleProvider;
 
     /// <param name="ruleProvider">由組裝端注入「目前生效規則清單」（從規則儲存讀取）。處置參考以簽章的
@@ -200,24 +203,31 @@ public class RiskReportService
         List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription,
         CancellationToken ct = default)
     {
+        // 程式寫的標題與指引句留在界線外，只有外部文字（環境描述、全局脈絡含 AI 敘事、問題清單含事件訊息、原始 log）進界線；
+        // 同一份 fence 逐區塊包裝（隨機值相同、聲明只出現一次）。
+        var fence = new PromptDataFence();
         var head = new StringBuilder();
 
         if (serverDescription.Length > 0)
         {
-            head.AppendLine($"【伺服器環境】{serverDescription}");
+            head.AppendLine("【伺服器環境】");
+            head.Append(fence.Block(serverDescription));
         }
 
         head.AppendLine($"{record.Date:yyyy-MM-dd} 的每日分析已判定風險等級「{record.RiskLevel}」。" +
                       $"本次請聚焦【{CategoryZh(category)}】類別的問題，逐一深入分析可能原因與處置方式。");
         head.AppendLine();
-        head.AppendLine($"【全局脈絡】（跨類別的每日分析結論，供參考）{record.Summary}" +
-                      (record.TrendAssessment.Length > 0 ? $" 趨勢：{record.TrendAssessment}" : ""));
+        head.AppendLine("【全局脈絡】（跨類別的每日分析結論，供參考）");
+        head.Append(fence.Block(record.Summary +
+                      (record.TrendAssessment.Length > 0 ? $" 趨勢：{record.TrendAssessment}" : "")));
         head.AppendLine();
         head.AppendLine($"【{CategoryZh(category)}類別的重點問題】");
+        var issueData = new StringBuilder();
         foreach (var issue in issues)
         {
-            head.AppendLine(FormatIssue(issue));
+            issueData.AppendLine(FormatIssue(issue));
         }
+        head.Append(fence.Block(issueData.ToString()));
 
         var footer = new StringBuilder();
         footer.AppendLine();
@@ -245,9 +255,10 @@ public class RiskReportService
         {
             sb.AppendLine();
             sb.AppendLine("【相關原始 log】（依時間排序，可觀察事件先後順序與關聯）");
+            var logData = new StringBuilder();
 
-            // 留給截斷註記與 footer 的餘裕，避免算到剛好卡在邊界
-            int budget = MaxDeepDivePromptChars - head.Length - footer.Length - 200;
+            // 留給資料界線（前後標記約 100 字）、截斷註記與 footer 的餘裕，避免算到剛好卡在邊界
+            int budget = MaxDeepDivePromptChars - head.Length - footer.Length - 400;
             int used = 0;
             included = 0;
             foreach (var line in logLines)
@@ -257,10 +268,11 @@ public class RiskReportService
                     truncated = true;
                     break;
                 }
-                sb.AppendLine(line);
+                logData.AppendLine(line);
                 used += line.Length;
                 included++;
             }
+            sb.Append(fence.Block(logData.ToString()));
 
             if (truncated)
             {

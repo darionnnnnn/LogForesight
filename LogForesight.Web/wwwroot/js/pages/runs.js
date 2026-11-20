@@ -9,14 +9,14 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, saveBlobAsFile } fr
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar, button
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, showTab, applyBackfillDaysLimit, setSpinnerText, cssVar, button
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { formatDuration, phaseSeconds, prtgPauseLabel, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
-import { disclosure } from '../core/elements.js';
+import { disclosure, statusNote } from '../core/elements.js';
 
 /* 色值於執行期讀樣式表語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
@@ -460,7 +460,7 @@ async function renderDayDetailInto(cell, date) {
     pagerEl.className = 'mt-2';
 
     const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail'), status: '' };
-    let sequence = 0;
+    const dayPageGuard = createSeqGuard();
 
     // 狀態篩選（後端篩、總數跟著變）：3000 台時要找「這天失敗的那幾台」不必翻頁；換狀態回到第 1 頁
     const bar = document.createElement('div');
@@ -483,7 +483,7 @@ async function renderDayDetailInto(cell, date) {
     cell.append(bar, listEl, pagerEl);
 
     async function loadDayPage() {
-        const mine = ++sequence;
+        const mine = dayPageGuard.next();
         renderLoading(listEl, 6);
         const params = new URLSearchParams({
             page: String(state.page), pageSize: String(state.pageSize), sort: state.sort.key, dir: state.sort.dir
@@ -493,10 +493,10 @@ async function renderDayDetailInto(cell, date) {
         try {
             result = await api.get(`/api/runs/day/${date}?${params}`);
         } catch {
-            if (mine === sequence) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
+            if (dayPageGuard.isCurrent(mine)) renderError(listEl, { message: '載入當日明細失敗', onRetry: () => loadDayPage() });
             return;
         }
-        if (mine !== sequence) return;   // 連點排序或換頁時，只畫最後一次的結果
+        if (!dayPageGuard.isCurrent(mine)) return;   // 連點排序或換頁時，只畫最後一次的結果
 
         renderTable(listEl, {
             columns: DAY_DETAIL_COLUMNS,
@@ -977,9 +977,9 @@ document.getElementById('run-errors-level')?.addEventListener('change', (event) 
     reloadErrors();
 });
 
-// 提示列的按鈕：切到「執行紀錄」頁籤（走 bindTabs 的點擊機制，同步更新 hash）
+// 提示列的按鈕：切到「執行紀錄」頁籤（走 showTab，與使用者點頁籤同一條路：同步更新 hash）
 document.getElementById('run-errors-notice-go')?.addEventListener('click', () => {
-    document.querySelector('#runs-tabs [data-tab="list"]')?.click();
+    showTab('runs-tabs', 'list');
 });
 
 // ── 匯出分析資料（批次D）：需要 ViewAll；範圍就是目前選的天數 ──────────────────────────
@@ -1291,23 +1291,29 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
 });
 
 // 執行中／閒置輪詢間隔不同（docs/archive/FEEDBACK-8-PLAN.md #2）：執行中要讓進度條「看得出在動」，
-// 閒置時沒有進度可看，維持原本的低頻率即可。自我重新排程（而非 setInterval）方便依上一次
-// 拿到的狀態決定下一輪間隔。
+// 閒置時沒有進度可看，維持原本的低頻率即可。走共用輪詢 pollWhile：間隔函式依上一次
+// 拿到的狀態決定下一輪，背景分頁暫停、回前景立即補一次。
 let wasScheduleRunning = false;
 let wasAiScheduleRunning = false;
-let scheduleStatusTimer = null;
+let scheduleAnyRunning = false;   // 取數或 AI 排程任一在跑：決定下一輪輪詢間隔
+let scheduleStatusPoll = null;
 
-async function refreshScheduleStatus() {
+/**
+ * @param {{background?: boolean}} [options] background＝常駐輪詢那一輪（不是使用者操作）：請求帶背景標頭，
+ *   伺服器不滑動延長閒置時限，否則開著這一頁就永遠不會閒置登出。按鈕觸發的更新不帶。
+ */
+async function refreshScheduleStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     let status = null;
     let aiStatus = null;
     try {
         [status, aiStatus] = await Promise.all([
-            api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-            api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+            api.get('/api/admin/schedule/status', { silent: true, background }).catch(() => null),
+            api.get('/api/admin/schedule/ai-status', { silent: true, background }).catch(() => null),
             // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
             // 兩者自帶錯誤吞掉，且快速輪詢「執行中才開、已存在就不重建」，重複呼叫不會疊輪詢
-            refreshPrtgSyncStatus(),
-            refreshPrtgBackfillStatus()
+            refreshPrtgSyncStatus({ background }),
+            refreshPrtgBackfillStatus({ background })
         ]);
         if (status) {
             applyScheduleStatus(status);
@@ -1315,11 +1321,10 @@ async function refreshScheduleStatus() {
         }
         if (aiStatus) applyAiScheduleStatus(aiStatus);
     } finally {
-        // 任一 apply 擲例外也要排下一輪，否則常駐輪詢整條靜默死亡
-        clearTimeout(scheduleStatusTimer);
-        const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
-        const interval = isAnyRunning ? 3000 : 10000;
-        scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
+        // 任一 apply 擲例外也要記下狀態並確保常駐輪詢存在（pollWhile 吞例外續排），否則常駐輪詢整條靜默死亡
+        scheduleAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
+        scheduleStatusPoll ??= pollWhile(() => refreshScheduleStatus({ background: true }),
+            () => (scheduleAnyRunning ? 3000 : 10000), { pauseWhenHidden: true });
     }
     return status;
 }
@@ -1386,13 +1391,13 @@ function applyPrtgOperationalStatus(status) {
  * 開始時間／已耗時（回饋十七輪批次F-2）：後端 status.startedAt 早就有了，只是畫面上原本
  * 只顯示「執行中」，看不出何時開始、跑了多久。每秒本地計時（不是等輪詢間隔才更新，執行中
  * 輪詢是 3 秒一次，數字跳動會不夠即時），輪詢回來時用 status.startedAt 重設一次校正飄移
- * （分頁背景分頁、系統睡眠都可能讓 setInterval 累積誤差）。
+ * （分頁背景分頁、系統睡眠都可能讓計時累積誤差）。
  */
-const elapsedTimers = new Map();
+const elapsedTicks = new Map();
 
 /**
  * 已耗時計時器：取數排程與 AI 排程各有一個顯示元素，行為完全相同，
- * 因此共用同一份實作，以元素 id 為鍵各自持有自己的 interval。
+ * 因此共用同一份實作，以元素 id 為鍵各自持有自己的輪詢控制代碼。
  */
 function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     const el = document.getElementById(elementId);
@@ -1402,18 +1407,18 @@ function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
     // 值本身在 lf-kv 列裡，要顯示／隱藏的是整列（標籤＋值），不是值本身
     (document.getElementById(`${elementId}-row`) ?? el).classList.remove('d-none');
 
-    clearInterval(elapsedTimers.get(elementId));
+    elapsedTicks.get(elementId)?.stop();
     function tick() {
         const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
         el.textContent = `${formatDuration(seconds)}（開始於 ${formatDateTime(startedAt)}）`;
     }
     tick();
-    elapsedTimers.set(elementId, setInterval(tick, 1000));
+    elapsedTicks.set(elementId, pollWhile(tick, 1000));
 }
 
 function stopElapsedTicker(elementId = 'schedule-elapsed') {
-    clearInterval(elapsedTimers.get(elementId));
-    elapsedTimers.delete(elementId);
+    elapsedTicks.get(elementId)?.stop();
+    elapsedTicks.delete(elementId);
     const el = document.getElementById(elementId);
     (document.getElementById(`${elementId}-row`) ?? el)?.classList.add('d-none');
 }
@@ -1856,9 +1861,10 @@ function renderPrtgSyncSummary(status) {
     el.replaceChildren(when, mapped);
 }
 
-async function refreshPrtgSyncStatus() {
+async function refreshPrtgSyncStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     try {
-        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true, background });
         renderPrtgSyncSummary(status);
 
         // 停止鈕只在真的有東西可停時出現：沒有執行中時後端一律回 409。
@@ -1871,7 +1877,7 @@ async function refreshPrtgSyncStatus() {
         }
 
         if (status.isRunning) {
-            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(refreshPrtgSyncStatus, 3000);
+            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(() => refreshPrtgSyncStatus({ background: true }), 3000);
         } else if (prtgSyncTimer) {
             prtgSyncTimer.stop();
             prtgSyncTimer = null;
@@ -2098,8 +2104,8 @@ function updateRerunModeUI() {
         }
     } else {
         if (warningEl) {
-            warningEl.className = `alert alert-${config.variant} py-2 px-3 mb-3`;
-            warningEl.textContent = config.consequence;
+            warningEl.className = 'mb-3';
+            warningEl.replaceChildren(statusNote(config.variant === 'danger' ? 'error' : 'warning', config.consequence));
             warningEl.hidden = false;
         }
     }
@@ -2427,10 +2433,11 @@ function renderPrtgBackfillStatus(status) {
         (status.success ? '✓ 完成（可至 PRTG 維護頁查看鏡像狀態）' : '✗ 執行中發生錯誤');
 }
 
-async function refreshPrtgBackfillStatus() {
+async function refreshPrtgBackfillStatus(options) {
+    const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
     let status;
     try {
-        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+        status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background });
     } catch {
         return;
     }
@@ -2438,7 +2445,7 @@ async function refreshPrtgBackfillStatus() {
 
     if (status.isRunning && !prtgBackfillPollTimer) {
         prtgBackfillPollTimer = pollWhile(async () => {
-            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
+            const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background: true }).catch(() => null);
             if (!latest) return;
             renderPrtgBackfillStatus(latest);
             if (!latest.isRunning) {

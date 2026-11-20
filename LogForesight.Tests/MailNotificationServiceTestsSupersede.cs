@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Reflection;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -28,16 +29,10 @@ public class MailNotificationServiceTestsSupersede : IDisposable
     private readonly HostDayWorkflowStore _workflowStore;
     private readonly HostDayWorkflowService _workflow;
     private readonly MailNotifyStateStore _state;
-    private readonly ManualClock _clock = new(DateTime.UtcNow);
+    private readonly FakeTimeProvider _clock = new(DateTimeOffset.UtcNow);
 
     /// <summary>以服務使用的同一個時鐘算「昨天」：兩個時鐘來源在本機午夜那一瞬間可能差一天。</summary>
     private DateTime Yesterday => _clock.GetLocalNow().Date.AddDays(-1);
-
-    private sealed class ManualClock(DateTime utcNow) : TimeProvider
-    {
-        public DateTime UtcNowValue { get; set; } = utcNow;
-        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(UtcNowValue, DateTimeKind.Utc));
-    }
 
     public MailNotificationServiceTestsSupersede()
     {
@@ -279,7 +274,7 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         var superseded = _state.Get().UrgentOutbox.Values.Where(i => i.Status == "superseded").ToList();
         Assert.Single(superseded);
         var attempts = _sender.Attempts.Count;
-        _clock.UtcNowValue = _clock.UtcNowValue.AddHours(1);
+        _clock.Advance(TimeSpan.FromHours(1));
         await service.RetryPendingUrgentAsync();
         if (how == "recordId") return;   // 新鍵對應的現行紀錄本身仍待送，另由重試處理
         Assert.Equal(attempts, _sender.Attempts.Count);
@@ -298,7 +293,7 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         Assert.Empty(_sender.Sent);
 
         _sender.ThrowOnSend = null;
-        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(1);
+        _clock.Advance(TimeSpan.FromMinutes(1));
         await service.RetryPendingUrgentAsync();
 
         Assert.Single(_sender.Sent);
@@ -346,13 +341,13 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         Assert.Single(NonTerminal());
         Assert.DoesNotContain(_state.Get().UrgentOutbox.Values, i => i.Status == "superseded");
         var before = QueryCount;
-        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(5);
+        _clock.Advance(TimeSpan.FromMinutes(5));
         await service.RetryPendingUrgentAsync();
         Assert.Equal(before, QueryCount);   // 停用期間重試不重跑整套
 
         _sender.ThrowOnSend = null;
         _settingsStore.Update(s => s.MailUrgentEnabled = true);
-        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(1);
+        _clock.Advance(TimeSpan.FromMinutes(1));
         await service.RetryPendingUrgentAsync();
         Assert.Single(_sender.Sent);
         Assert.Empty(NonTerminal());
@@ -399,7 +394,7 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         var before = QueryCount;
         for (var i = 0; i < 3; i++)
         {
-            _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(31);
+            _clock.Advance(TimeSpan.FromMinutes(31));
             await service.RetryPendingUrgentAsync();
         }
         Assert.Equal(before, QueryCount);
@@ -413,7 +408,7 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         for (var i = 0; i < minutes; i++)
         {
             minute++;
-            _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(1);
+            _clock.Advance(TimeSpan.FromMinutes(1));
             _state.Update(s => s.RecipientFailureStreaks.Clear());
             var before = QueryCount;
             service.RetryPendingUrgentAsync().GetAwaiter().GetResult();
@@ -474,10 +469,10 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         var service = Create();
         _sender.ThrowOnSend = new System.Net.Mail.SmtpException("down");
         await service.NotifyAfterRunAsync();
-        _clock.UtcNowValue = _clock.UtcNowValue.AddMinutes(1);
+        _clock.Advance(TimeSpan.FromMinutes(1));
         await service.RetryPendingUrgentAsync();           // 重試一次、沒有進度 → 進入退避
         var afterRetry = QueryCount;
-        _clock.UtcNowValue = _clock.UtcNowValue.AddSeconds(5);
+        _clock.Advance(TimeSpan.FromSeconds(5));
         await service.RetryPendingUrgentAsync();           // 退避中：不執行
         Assert.Equal(afterRetry, QueryCount);
         _sender.ThrowOnSend = null;

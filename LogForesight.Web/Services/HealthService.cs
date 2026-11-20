@@ -215,8 +215,14 @@ public class HealthService
         var retentionFailure = RetentionPruner.LastFailure(_backend);
         var prtgSyncWarnings = prtgEnabled ? ReadPrtgSyncWarnings() : Array.Empty<PrtgSyncWarning>();
         var suspendedRecipients = _mail.GetSuspendedRecipients();
+        var outboxDrops = new WorkOrderOutboxDropStore(_backend.Blob(WorkOrderOutboxDropStore.BlobKey)).Get();
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
+            InvalidMailSchedules = InvalidMailSchedules(healthSettings),
+            UnpinnedCertificateBypass = UnpinnedCertificateBypass(healthSettings,
+                new NetiqOptionsStore(_backend.Blob("netiq_options")).Get(),
+                hasActiveSentinel: new SentinelStore(_backend.Blob("sentinels")).GetAll().Any(x => x.Active)),
+            CryptoKeyUnavailable = LogForesight.Core.CryptoHelper.SiteKeyUnavailable,
             SlowOperationsHigh = performance.TotalOperations > 0 &&
                                  performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent,
             FirstSeenFailed = firstSeenFailed,
@@ -241,6 +247,8 @@ public class HealthService
             LastRunSucceeded = runSnapshot.LastOutcome?.Success,
             SuspendedMailRecipients = suspendedRecipients,
             RetentionFailure = retentionFailure,
+            OutboxRecentDropped = outboxDrops.RecentDropped,
+            OutboxLastDroppedAt = outboxDrops.LastDroppedAt,
             PrtgSyncWarnings = prtgSyncWarnings
         }, DateTime.Now);
         var degraded = reasons.Count > 0;
@@ -353,9 +361,20 @@ public class HealthService
                 return _attentionCache;
         }
 
-        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖（GetDetail 算完會順手更新快取）
-        var detail = GetDetail();
-        return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        // 在鎖外算：完整診斷會碰 DB 與 PRTG 新鮮度，不能讓所有請求排隊等同一把鎖（GetDetail 算完會順手更新快取）。
+        // 同時進來的請求合併成一次診斷（SingleFlight）：換頁時導覽列、儀表板同時問，不各跑一輪完整診斷。
+        return _attentionFlight.Run("attention", () =>
+        {
+            // 前一個合併可能剛寫入快取並結束：再看一次，避免緊接著重算
+            lock (_attentionLock)
+            {
+                var again = _clock.UtcNow();
+                if (_attentionCache != null && again - _attentionCachedAt < AttentionCacheTtl && again >= _attentionCachedAt)
+                    return _attentionCache;
+            }
+            var detail = GetDetail();
+            return new HealthAttentionDto { Status = detail.Status, Reasons = detail.StatusReasons };
+        });
     }
 
     private void StoreAttention(HealthDetailDto detail)
@@ -378,6 +397,7 @@ public class HealthService
     private static readonly TimeSpan AttentionCacheTtl = TimeSpan.FromSeconds(30);
 
     private readonly object _attentionLock = new();
+    private readonly SingleFlight _attentionFlight = new();
     private HealthAttentionDto? _attentionCache;
     private DateTime _attentionCachedAt;
 
@@ -553,6 +573,34 @@ public class HealthService
             return false;
         }
     }
+
+    /// <summary>已啟用的郵件摘要裡，時刻或星期解析不了的項目（與寄送端同一個解析函式）</summary>
+    /// <summary>開了忽略憑證錯誤又沒填指紋的連線；PRTG 未啟用、沒有啟用中的 Sentinel 時不算（不會連線）</summary>
+    internal static IReadOnlyList<string> UnpinnedCertificateBypass(
+        LogForesight.Core.Models.SystemSettings settings, NetiqOptions netiq, bool hasActiveSentinel)
+    {
+        var names = new List<string>();
+        if (settings.PrtgEnabled &&
+            ServerCertificateTrust.IsUnpinnedBypass(settings.PrtgTrustedCertificateSha256, settings.PrtgIgnoreSslErrors))
+            names.Add("PRTG");
+        if (hasActiveSentinel &&
+            ServerCertificateTrust.IsUnpinnedBypass(netiq.TrustedCertificateSha256, netiq.AllowInvalidCertificates))
+            names.Add("Sentinel");
+        return names;
+    }
+
+    internal static IReadOnlyList<string> InvalidMailSchedules(LogForesight.Core.Models.SystemSettings settings)
+    {
+        var invalid = new List<string>();
+        if (!settings.MailEnabled) return invalid;
+        if (settings.MailDailyEnabled && !InputParsing.TryParseClockTime(settings.MailDailyTime, out _)) invalid.Add("每日摘要時刻");
+        if (settings.MailWeeklyEnabled && (!InputParsing.TryParseClockTime(settings.MailWeeklyTime, out _)
+                || !InputParsing.TryParseDefinedEnum<DayOfWeek>(settings.MailWeeklyDayOfWeek, out _)))
+            invalid.Add("每週摘要時刻或星期");
+        if (settings.MailNotifyWorkOrders && (settings.MailWorkOrderDigestTimes ?? new List<string>()).Any(x => !InputParsing.TryParseClockTime(x, out _)))
+            invalid.Add("交辦摘要時刻");
+        return invalid;
+    }
 }
 
 public static class HealthStatuses
@@ -560,4 +608,5 @@ public static class HealthStatuses
     public const string Ok = "ok";
     public const string Degraded = "degraded";
     public const string Down = "down";
+
 }

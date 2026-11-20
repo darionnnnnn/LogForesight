@@ -70,6 +70,9 @@ public class LogAnalysisService
     private readonly IAnalysisRecordStore _historyService;
     private readonly ISuppressionStore _suppressionStore;
     private readonly RiskReportService? _reportService;
+
+    /// <summary>組裝時注入的報告服務（工廠組裝驗證用）</summary>
+    internal RiskReportService? ReportService => _reportService;
     private readonly string _serverDescription;
     private readonly string _host;
     private readonly long _hostId;
@@ -178,10 +181,13 @@ public class LogAnalysisService
     {
         if (replaceExisting)
         {
-            _historyService.DeleteDays(new[] { targetDate.Date });
+            // 刪舊日與寫新日同一個交易：寫入失敗時舊紀錄仍在
+            _historyService.ReplaceDay(record);
         }
-
-        _historyService.Append(record);
+        else
+        {
+            _historyService.Append(record);
+        }
 
         Log.Info("完成分析 {Date:yyyy-MM-dd}：風險={Risk}, 錯誤={Errors}, 警告={Warnings}, 稽核={Audit}, " +
                  "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告參照={ReportFile}",
@@ -318,7 +324,7 @@ public class LogAnalysisService
 
             if (bruteForceSignature != null)
             {
-                successfulLogonMatch = await DetectSuccessfulLogonAfterBruteForceAsync(targetDate, logs);
+                successfulLogonMatch = await DetectSuccessfulLogonAfterBruteForceAsync(targetDate, logs, ct);
             }
         }
 
@@ -864,8 +870,10 @@ public class LogAnalysisService
     /// 平時不收 4624（SuccessAudit 量極大），只在已有暴力破解訊號時才多查一次，兼顧偵測面與效能。
     /// 此外加上時序條件：成功登入必須晚於或等於該帳號/IP 當日首次失敗時間，避免正常登入後續遭排程失敗污染而誤判。
     /// </summary>
-    private async Task<SuccessfulLogonMatch?> DetectSuccessfulLogonAfterBruteForceAsync(DateTime targetDate, List<EventLogEntryData> logs)
+    private async Task<SuccessfulLogonMatch?> DetectSuccessfulLogonAfterBruteForceAsync(DateTime targetDate, List<EventLogEntryData> logs,
+        CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var failedEntries = logs
             .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625);
         var (failedAccounts, failedIps, earliestFailureByAccount, earliestFailureByIp) =
@@ -900,7 +908,8 @@ public class LogAnalysisService
 
             var scan = await Task.Run(() => _localSecuritySupplementScanner?.Invoke(targetDate.Date, KeepRelevantLogon) ??
                 _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security",
-                    securityExtraEventIds: new[] { 4624 }, keep: KeepRelevantLogon));
+                    securityExtraEventIds: new[] { 4624 }, keep: KeepRelevantLogon, ct: ct), ct);
+            ct.ThrowIfCancellationRequested();
             logonSuccessEntries = logonSuccessEntries.Concat(scan.Entries.Where(l => l.EventId == 4624));
         }
 

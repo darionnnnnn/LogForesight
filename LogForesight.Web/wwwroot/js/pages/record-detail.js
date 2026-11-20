@@ -17,6 +17,8 @@ import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { metaLine, disclosure, statusNote } from '../core/elements.js';
 import { reportCard } from '../core/report-view.js';
 import { statusesWhere, statusVariant } from '../core/handling-statuses.js';
+import { copyText } from '../core/clipboard.js';
+import { escapeSelectorValue } from '../core/selectors.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -449,12 +451,9 @@ function briefBlock(text) {
     // 複製的是畫面上渲染後的文字（不帶 markdown 符號），所以段落要先建好、點擊時才讀 textContent
     const p = document.createElement('p');
     copy.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(p.textContent);
-            toast('已複製', 'success');
-        } catch {
-            toast('無法複製，請手動選取文字', 'warning');
-        }
+        const copied = await copyText(p.textContent);
+        if (copied.ok) toast('已複製', 'success');
+        else toast(`無法複製：${copied.reason}`, 'warning');
     });
     head.appendChild(copy);
     wrap.appendChild(head);
@@ -490,6 +489,7 @@ function renderHeader(detail) {
 
     const card = document.createElement('div');
     card.className = 'lf-card';
+    // 案件授與檢視不帶整日風險等級與事件數（只給被交辦的問題），這三項不顯示
     if (detail.riskLevel === '高') card.classList.add('lf-card--critical');
     else if (detail.riskLevel === '中') card.classList.add('lf-card--warning');
 
@@ -524,7 +524,8 @@ function renderHeader(detail) {
     // 沒有明確依據（舊紀錄／低風險日）時給通用說明，不留使用者自己猜
     const riskBasisTitle = detail.riskBasisText ??
         '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
-    top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
+    top.append(hostLink, dateSpan);
+    if (!detail.caseGrantOnly) top.appendChild(riskBadge(detail.riskLevel, { title: riskBasisTitle }));
 
     // AI 狀態徽章：有結論列就放結論列（由 aiSummaryBlock 收下），沒有才留在第一行
     const aiBadge = aiStatusBadge(detail);
@@ -548,9 +549,9 @@ function renderHeader(detail) {
     const facts = metaLine([
         ...identityFacts(detail),
         detail.logSource ? sourceLine(detail) : null,
-        stat('錯誤', detail.errorCount),
-        stat('警告', detail.warningCount),
-        stat('稽核事件', detail.auditEventCount),
+        detail.caseGrantOnly ? null : stat('錯誤', detail.errorCount),
+        detail.caseGrantOnly ? null : stat('警告', detail.warningCount),
+        detail.caseGrantOnly ? null : stat('稽核事件', detail.auditEventCount),
         detail.hostRoleDesc ? `主機角色：${detail.hostRoleDesc}` : null
     ], { className: 'lf-entity-head__facts' });
     if (facts) body.appendChild(facts);
@@ -2331,7 +2332,7 @@ function renderCategories(detail) {
  * （例如只有 Low 問題、而 Low 被關掉），提示使用者放寬篩選，而不是靜默沒反應。
  */
 function scrollToCategory(category) {
-    const section = document.querySelector(`.lf-issue-group[data-category="${category}"]`);
+    const section = document.querySelector(`.lf-issue-group[data-category="${escapeSelectorValue(category)}"]`);
     if (!section) {
         toast('這一類的問題目前被嚴重度篩選隱藏了，請在上方放寬篩選。', 'info');
         return;

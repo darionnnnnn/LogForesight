@@ -36,6 +36,10 @@ public sealed partial class SentinelClient
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
+            if (ResponseTooLarge(ex) is { } tooLarge) throw tooLarge;
+            if (CertificateRejection(ex) is { } rejection)
+                throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗：{rejection}", ex,
+                    SentinelClientException.CertificateRejectedCode);
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」認證失敗（重試已耗盡）：{ex.Message}", ex);
         }
 
@@ -47,7 +51,7 @@ public sealed partial class SentinelClient
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」認證失敗：HTTP {(int)resp.StatusCode}" +
                     (resp.StatusCode == HttpStatusCode.Unauthorized ? "（帳號或密碼錯誤）" : "") +
-                    $"｜{Truncate(body)}");
+                    $"｜{Truncate(body)}", httpStatus: (int)resp.StatusCode);
             }
 
             var json = await ReadResponseBodyAsync(resp, ct);
@@ -83,7 +87,7 @@ public sealed partial class SentinelClient
 
     /// <summary>認證過的請求：token 過期（401/403）時清快取重新認證一次並重放，仍失敗才放棄。</summary>
     private async Task<HttpResponseMessage> SendAuthenticatedAsync(
-        Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool allowReauth = true)
+        Func<HttpRequestMessage> requestFactory, CancellationToken ct, bool allowReauth = true, bool idempotent = true)
     {
         await EnsureAuthenticatedAsync(ct);
         var token = _token!;
@@ -91,7 +95,7 @@ public sealed partial class SentinelClient
         HttpResponseMessage resp;
         try
         {
-            resp = await _retryPipeline.ExecuteAsync(async innerCt =>
+            resp = await (idempotent ? _retryPipeline : _createJobPipeline).ExecuteAsync(async innerCt =>
             {
                 using var attempt = requestFactory();
                 attempt.Headers.Authorization = new AuthenticationHeaderValue("X-SAML", token);
@@ -106,20 +110,26 @@ public sealed partial class SentinelClient
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
+            if (ResponseTooLarge(ex) is { } tooLarge) throw tooLarge;
+            if (CertificateRejection(ex) is { } rejection)
+                throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗：{rejection}", ex,
+                    SentinelClientException.CertificateRejectedCode);
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗（重試已耗盡）：{ex.Message}", ex);
         }
 
         if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
+            var rejectedStatus = (int)resp.StatusCode;
             resp.Dispose();
             if (!allowReauth)
-                throw new SentinelClientException($"Sentinel「{_server.Name}」驗證被拒（重新認證後仍失敗），請確認帳密與權限是否有效。");
+                throw new SentinelClientException($"Sentinel「{_server.Name}」驗證被拒（重新認證後仍失敗），請確認帳密與權限是否有效。",
+                    httpStatus: rejectedStatus);
 
             if (_readLimits is null) Log.Info("[{Server}] token 可能已過期，重新認證後重放請求", _server.Name);
             else Log.Info("Bounded metadata probe is reauthenticating; identifiers withheld.");
             await TryLogoutStaleTokenAsync(token);
             _token = null;
-            return await SendAuthenticatedAsync(requestFactory, ct, allowReauth: false);
+            return await SendAuthenticatedAsync(requestFactory, ct, allowReauth: false, idempotent: idempotent);
         }
 
         return resp;
@@ -160,19 +170,21 @@ public sealed partial class SentinelClient
 
     private async Task<HttpResponseMessage> SendHttpAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        if (_readLimits is not null)
+        // 所有請求（含回應裡給的工作位址、下一頁連結）一律限定在設定的 Sentinel 站台：
+        // 請求帶著 X-SAML token，回應若指向別的主機而照送，token 就交給了對方。
+        // 相對位址以站台位址解析（HttpClient 沒有 BaseAddress，原樣送出會擲 InvalidOperationException）
+        if (request.RequestUri is { IsAbsoluteUri: false } relative)
+            request.RequestUri = new Uri(_baseUri, relative);
+        var uri = request.RequestUri;
+        if (uri is null ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.Equals(uri.Scheme, _baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.IdnHost, _baseUri.IdnHost, StringComparison.OrdinalIgnoreCase) ||
+            uri.Port != _baseUri.Port)
         {
-            var uri = request.RequestUri;
-            if (uri is null || !uri.IsAbsoluteUri ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
-                !string.IsNullOrEmpty(uri.UserInfo) ||
-                !string.Equals(uri.Scheme, _baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(uri.IdnHost, _baseUri.IdnHost, StringComparison.OrdinalIgnoreCase) ||
-                uri.Port != _baseUri.Port)
-            {
-                throw new SentinelClientException("Sentinel probe rejected a response-provided endpoint.",
-                    safeCode: "source-endpoint-mismatch");
-            }
+            throw new SentinelClientException("Sentinel 回應中的位址指向設定站台以外的主機，已拒絕送出請求。",
+                safeCode: "source-endpoint-mismatch");
         }
 
         if (_readLimits is not null && Interlocked.Increment(ref _httpRequestCount) > _readLimits.MaxHttpRequests)

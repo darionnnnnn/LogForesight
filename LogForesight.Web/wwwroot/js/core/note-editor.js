@@ -11,6 +11,7 @@
  */
 
 import { api, getCurrentUser } from './api.js';
+import { createSeqGuard } from './async-guards.js';
 import { button, confirmAction, showDetailModal, toast } from './ui.js';
 
 const KEY_PREFIX = 'lf-draft:';
@@ -469,9 +470,9 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
     button.className = 'btn btn-sm btn-outline-secondary';
     button.textContent = 'AI 整理';
 
-    let requestSeq = 0;
+    const requestGuard = createSeqGuard();
     const abandon = inlineAction('放棄', () => {
-        requestSeq++;   // 這次回應到了也不採用
+        requestGuard.next();   // 這次回應到了也不採用
         setIdle();
     });
     abandon.classList.add('d-none');
@@ -516,7 +517,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
         emptyHint.textContent = '';
         showMessage();
 
-        const seq = ++requestSeq;
+        const seq = requestGuard.next();
         button.disabled = true;
         button.textContent = '整理中…';
         abandon.classList.remove('d-none');
@@ -529,7 +530,7 @@ function attachAiTidy(textarea, tail, mainRow, status, context, setValue) {
             // 節流（429）與輸入驗證的伺服器訊息對使用者有意義；其餘一律同一句
             errorText = err.status === 429 || err.code === 'validation_failed' ? err.message : AI_FAILED_TEXT;
         }
-        if (seq !== requestSeq) return;   // 已按「放棄」或又送了新的一次
+        if (!requestGuard.isCurrent(seq)) return;   // 已按「放棄」或又送了新的一次
         // 等待期間表單被整張重建（勾選變動）：這個說明欄已不在畫面上，回應整個丟棄——
         // 寫進舊欄位或本機草稿，使用者眼前的新表單看不到，下次進頁才冒出莫名的草稿
         if (!textarea.isConnected) return;

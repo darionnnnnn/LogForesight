@@ -1,0 +1,1 @@
+M:System.Net.HttpListener.Stop;用 Close：Unix 上 Stop 後 Dispose 會重新綁 port，被平行測試占走就擲例外（Windows 測不出來）

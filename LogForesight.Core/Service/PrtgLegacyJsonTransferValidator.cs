@@ -114,7 +114,7 @@ public sealed class PrtgLegacyJsonTransferValidator
     /// </summary>
     private const string LegacyIgnoredArrayProperty = "Observations";
 
-    private static InvalidDataException Invalid(string code, string message) => new($"{code}: {message}");
+    private static PrtgLegacyPackageInvalidException Invalid(string code, string message) => new(code, message);
 
     private sealed class StreamingParser
     {
@@ -610,4 +610,15 @@ public sealed class PrtgLegacyJsonTransferValidator
         public sealed record ParsedPackage(int FormatVersion, IReadOnlyDictionary<string, long> Counts,
             ParsedManifest? Manifest, long ManifestPropertyOffset, string IntegrityStatus);
     }
+}
+
+/// <summary>
+/// 舊版診斷包驗證失敗。錯誤碼放在 <see cref="Code"/> 屬性，呼叫端直接讀，不從訊息字串切出來
+/// （改訊息文案不會靜默改掉錯誤碼）。
+/// </summary>
+public sealed class PrtgLegacyPackageInvalidException : Exception
+{
+    public PrtgLegacyPackageInvalidException(string code, string message) : base(message) => Code = code;
+
+    public string Code { get; }
 }

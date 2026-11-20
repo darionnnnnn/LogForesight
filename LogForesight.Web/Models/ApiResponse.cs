@@ -41,6 +41,9 @@ public static class ApiErrorCodes
     public const string AuthExpired = "auth_expired";
     public const string Forbidden = "forbidden";
     public const string NotFound = "not_found";
+    public const string MethodNotAllowed = "method_not_allowed";
+    public const string PayloadTooLarge = "payload_too_large";
+    public const string UnsupportedMediaType = "unsupported_media_type";
     public const string ValidationFailed = "validation_failed";
     public const string Conflict = "conflict";
     public const string ServerError = "server_error";
@@ -122,6 +125,9 @@ public static class ApiErrorCodes
     public static readonly IReadOnlyDictionary<string, int> Table = new Dictionary<string, int>
     {
         [NotFound] = 404,
+        [MethodNotAllowed] = 405,
+        [PayloadTooLarge] = 413,
+        [UnsupportedMediaType] = 415,
         [Forbidden] = 403,
         [Conflict] = 409,
         [AuthExpired] = 401,

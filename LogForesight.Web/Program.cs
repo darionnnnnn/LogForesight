@@ -1,6 +1,7 @@
 using System.Text;
 using LogForesight.Core.Service;
 using LogForesight.Web;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
@@ -93,16 +94,23 @@ try
     builder.Services.AddLogForesightAuth(settings);
     builder.Services.AddLogForesightServices();
 
+    builder.Services.AddExceptionHandler<ApiExceptionHandler>();
     builder.Services.AddControllersWithViews(options =>
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
         options.Filters.Add<ApiExceptionFilter>();
+        // 請求 DTO 的字串與集合沒有宣告上限時套用預設上限（批次 C14）
+        options.Filters.Add<DefaultInputLimitsFilter>();
+        ChineseModelBindingMessages.Apply(options);
     });
 
     // DTO 驗證失敗也要回統一信封，否則前端拿不到欄位訊息（§7.2）
     builder.Services.AddEnvelopeModelValidation();
 
     var app = builder.Build();
+
+    // 執行紀錄的常駐 NLog target：全行程一個，啟動時裝一次（recorder 建構時也會冪等補裝）
+    RunLogCapture.EnsureInstalled();
 
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())
@@ -113,6 +121,10 @@ try
             dataRoot,
             scope.ServiceProvider.GetRequiredService<ISystemSettingsStore>(),
             scope.ServiceProvider.GetRequiredService<ISentinelStore>());
+
+        // Data Protection 金鑰環目錄（登入 cookie 與分頁游標的金鑰）：啟動時就建立並限縮權限，
+        // 建不起來（帳號沒有寫入權限）就停止啟動，不要拖到第一個人登入才 500
+        DataProtectionKeyRing.Prepare(DataProtectionKeyRing.KeyDirectory(dataRoot));
 
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
@@ -190,9 +202,13 @@ try
     // 驗證、停用帳號、搬移閘門、CSRF）之前，401／403／503 與靜態檔回應才都帶得到。
     app.Use(SecurityHeadersPolicy.Middleware(settings.Server.FrameOptions, settings.Server.ResolveCspMode(app.Environment.EnvironmentName)));
 
+    // 例外出口：/api 請求由 ApiExceptionHandler 回信封（含中介層、驗證階段的例外）；頁面請求轉 /error。
+    // 所有環境一致，開發環境也不回框架的例外頁給 API 呼叫端。
+    app.UseExceptionHandler(new ExceptionHandlerOptions { ExceptionHandlingPath = "/error" });
+    // /api 下沒有本文的 404／405／413／415／403 補成信封（頁面請求不受影響）
+    app.UseStatusCodePages(LogForesight.Web.Filters.ApiStatusEnvelope.WriteAsync);
     if (!app.Environment.IsDevelopment())
     {
-        app.UseExceptionHandler("/error");
         app.UseHsts();
     }
 
@@ -212,8 +228,10 @@ try
     });
     app.UseRouting();
 
+    // 清掉改用內建 Cookie Authentication 之前的舊登入 cookie（只在請求帶著舊名稱時動作）
+    app.UseMiddleware<LegacyAuthCookieMiddleware>(settings.Jwt.CookieName);
+    // 停用、登出、權限變更即時生效（§6.3）由 Cookie 驗證的 ValidatePrincipal 逐請求處理，不再有獨立中介層
     app.UseAuthentication();
-    app.UseMiddleware<ActiveUserMiddleware>();   // 停用帳號即時生效（§6.3），必須在驗證之後
     app.UseAuthorization();
     // 處理狀態搬移中擋下寫入（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
     // 位置有要求：在 UseAuthorization 之後（不擋登入），在 CsrfHeaderMiddleware 之前
@@ -314,6 +332,8 @@ public static class DataVersionStampPolicy
 /// </summary>
 public static class SecurityHeadersPolicy
 {
+    internal const string PermissionsPolicyValue = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()";
+
     /// <summary>
     /// 組出 CSP 政策字串（單行）。inline script 一律要帶 <paramref name="nonce"/>；
     /// <c>img-src</c> 含 <c>data:</c> 是因為 bootstrap 的 data:image/svg+xml 與品牌 logo 的 data URI。
@@ -353,6 +373,10 @@ public static class SecurityHeadersPolicy
                 // 用索引子覆寫而不是 Headers.Add：下游若也設了同名標頭不致擲例外
                 response.Headers["X-Content-Type-Options"] = "nosniff";
                 response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+                // 站台不使用相機、麥克風、定位、付款等瀏覽器能力：一律關閉，被注入的內容也拿不到
+                response.Headers["Permissions-Policy"] = PermissionsPolicyValue;
+                // 與其他來源的視窗隔離（防 window.opener 被跨站頁面操作）
+                response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
                 if (frameValue != null) response.Headers["X-Frame-Options"] = frameValue;
                 if (cspPolicy != null)
                     response.Headers[cspMode == CspMode.Enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only"] = cspPolicy;
@@ -372,10 +396,13 @@ internal static class ForwardedHeadersSetup
         {
             ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
         };
-        forwarded.KnownNetworks.Clear();
+        forwarded.KnownIPNetworks.Clear();
         forwarded.KnownProxies.Clear();
+        // 值已在啟動前檢查（AppSettings.Validate）以 IpSyntax 驗過；這裡解析失敗代表繞過了檢查，直接停機比靜默略過安全
         foreach (var proxy in trustedProxies)
-            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
+            forwarded.KnownProxies.Add(LogForesight.Core.Models.IpSyntax.TryParse(proxy, out var address)
+                ? address!
+                : throw new InvalidOperationException($"Server:TrustedProxies 含有不是 IP 位址的值「{proxy}」"));
         return forwarded;
     }
 }

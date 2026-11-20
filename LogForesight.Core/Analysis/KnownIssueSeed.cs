@@ -32,7 +32,10 @@ public static class KnownIssueSeed
     /// v9 新增 CPU、記憶體與磁碟資源壓力規則；磁碟兩小時低水位使用獨立規則，不受磁碟趨勢 28 日啟用守門。
     /// v11 新增預設停用的記憶體／CPU／Ping 趨勢規則
     /// v12 新增來源樣式 Eventlog 的 1102 稽核清除規則（1102 真實發出者是 Microsoft-Windows-Eventlog）
-    public const int Version = 12;
+    /// v13 sudo 認證失敗片語補複數形；fail2ban 封鎖片語改為詞首邊界的 " Ban "（不命中 Unban）
+    /// v14 sshd 成功登入片語放寬為整詞 Accepted（任何認證方式：keyboard-interactive/pam、gssapi-with-mic 等）
+    /// v15 sshd 成功登入片語改為 OpenSSH 認證方法清單（Accepted password／publickey／…），不再命中 VERBOSE 的 "Accepted key … found at"
+    public const int Version = 15;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -813,16 +816,17 @@ public static class KnownIssueSeed
                     "檢查是否已啟用 fail2ban 或等效的自動封鎖機制", "考慮改用金鑰驗證並停用密碼登入",
                     "確認相同帳號/IP 是否有後續成功登入（見【破解得手】關聯）" } },
         new() { Id = "builtin-linux-ssh-accept", Origin = "builtin", Enabled = true, Scope = "all", Platform = "linux",
-                ProgramPattern = "sshd", MessagePatterns = new[] { "Accepted password", "Accepted publickey" },
+                ProgramPattern = "sshd", MessagePatterns = new[] { "Accepted password", "Accepted publickey", "Accepted keyboard-interactive",
+                    "Accepted hostbased", "Accepted gssapi-with-mic", "Accepted gssapi-keyex", "Accepted none" },
                 Category = IssueCategory.Security, Severity = IssueSeverity.Low,
                 Description = "SSH 登入成功——正常遠端維運即會產生，收集供關聯與趨勢分析，本身非告警",
-                PlainExplanation = "有人成功以密碼或金鑰登入這台主機的 SSH 服務。日常遠端維運會正常產生此紀錄。",
+                PlainExplanation = "有人成功登入這台主機的 SSH 服務（密碼、金鑰、PAM 互動式驗證等任何認證方式）。日常遠端維運會正常產生此紀錄。",
                 Impact = "單筆事件屬正常運作；只有在與同帳號/IP 的大量登入失敗交集時，才代表暴力破解可能已得手。",
                 LikelyCauses = new[] { "管理員或使用者的正常 SSH 連線", "自動化工具或跳板機的遠端連線" },
                 NextSteps = new[] { "正常情況無需處理", "僅在與大量登入失敗的帳號/IP 相符時才需視為破解得手調查" } },
         // fail2ban 是 Low、收集用（比照既有的 builtin-linux-ssh-accept）：確認攻擊被擋下，與 ssh 暴力破解規則互為佐證；對外主機日常有量，Low 才不會吵。
         new() { Id = "builtin-linux-security-fail2ban-ban", Origin = "builtin", Enabled = true, Scope = "all", Platform = "linux",
-                ProgramPattern = "fail2ban", MessagePatterns = new[] { "Ban " },
+                ProgramPattern = "fail2ban", MessagePatterns = new[] { " Ban " },
                 Category = IssueCategory.Security, Severity = IssueSeverity.Low,
                 Description = "fail2ban 封鎖惡意來源 IP——收集用低嚴重度，供攻擊防護佐證，非告警",
                 PlainExplanation = "fail2ban 偵測到多次認證失敗並自動將可疑來源 IP 加入防火牆封鎖清單。設為 Low 作為收集用途（比照 builtin-linux-ssh-accept）：確認攻擊已被防護機制阻擋，並與 SSH 暴力破解規則互為佐證；對外主機日常有量，Low 才不會產生干擾告警。",
@@ -835,7 +839,7 @@ public static class KnownIssueSeed
         // sudo 必須排在 su 前面：ProgramPattern 是子字串比對，"sudo" 天然包含 "su"，
         // su 規則排在前面會讓 sudo 的事件被 su 規則先攔截（selftest 曾抓到這個問題）。
         new() { Id = "builtin-linux-sudo-auth-failure", Origin = "builtin", Enabled = true, Scope = "all", Platform = "linux",
-                ProgramPattern = "sudo", MessagePatterns = new[] { "authentication failure", "incorrect password attempt" },
+                ProgramPattern = "sudo", MessagePatterns = new[] { "authentication failure", "authentication failures", "incorrect password attempt", "incorrect password attempts" },
                 Category = IssueCategory.Security, Severity = IssueSeverity.Medium, CountThreshold = 5,
                 Description = "sudo 提權密碼驗證失敗；短時間內反覆出現可能是提權嘗試",
                 PlainExplanation = "有人在這台主機上以 sudo 執行需要管理員權限的指令，但密碼驗證失敗。",

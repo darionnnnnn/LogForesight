@@ -1,4 +1,5 @@
 using System.Text;
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -26,7 +27,7 @@ public class HelpQaService
         "你是 LogForesight 系統的操作說明書問答助理。請一律使用台灣繁體中文回答。" +
         "只能依據下方提供的說明書章節內容作答，不可引用章節沒有寫的資訊、不可憑空猜測。" +
         "如果提供的章節內容不足以回答使用者的問題，請明確告知「說明書未涵蓋這個問題」。" +
-        "回答結尾另起一行，列出你這次回答實際引用了哪些章節標題。";
+        "回答結尾另起一行，列出你這次回答實際引用了哪些章節標題。" + PromptDataFence.SystemNotice;
 
     private readonly HelpContentService _content;
     private readonly IWebAiService _ai;
@@ -74,8 +75,11 @@ public class HelpQaService
         };
     }
 
-    private static string BuildUserPrompt(string question, List<HelpChapter> chapters)
+    internal static string BuildUserPrompt(string question, List<HelpChapter> chapters)
     {
+        // 說明書內容與使用者問題都不是指令：各自包進界線（同一份 fence，隨機值相同、聲明只出現一次）；
+        // 程式寫的導言與標題留在界線外
+        var fence = new PromptDataFence();
         var sb = new StringBuilder();
         if (chapters.Count == 0)
         {
@@ -85,17 +89,20 @@ public class HelpQaService
         {
             sb.AppendLine("以下是操作說明書的相關章節內容：");
             sb.AppendLine();
+            var content = new StringBuilder();
             foreach (var chapter in chapters)
             {
-                sb.AppendLine($"### {chapter.Title}");
+                content.AppendLine($"### {chapter.Title}");
                 // 餵給 AI 的是詳細版（回饋二十七輪作業 G）：使用者手冊要好讀、AI 要夠細，
                 // 兩者衝突。沒有 AI 版的章節 AiContent 會 fallback 成 Content，行為不變
-                sb.AppendLine(chapter.ContentForAi);
-                sb.AppendLine();
+                content.AppendLine(chapter.ContentForAi);
+                content.AppendLine();
             }
+            sb.Append(fence.Block(content.ToString()));
+            sb.AppendLine();
         }
         sb.AppendLine("使用者問題：");
-        sb.AppendLine(question);
+        sb.Append(fence.Block(question));
         return sb.ToString();
     }
 }

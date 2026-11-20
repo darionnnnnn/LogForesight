@@ -93,7 +93,7 @@ public static class NetiqHostList
         var trimmed = value.Trim();
         if (!trimmed.Contains(':')) return IpSyntax.IsStrictIpv4(trimmed);
 
-        return IPAddress.TryParse(trimmed, out _);
+        return IpSyntax.TryParse(trimmed, out _);
     }
 
     /// <summary>

@@ -312,7 +312,14 @@ public class StorageBackend
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"), Clock);
 
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
-    public PermissionChangeStore PermissionChanges() => new(_dbFactory, Performance);
+    public PermissionChangeStore PermissionChanges() =>
+        new(_dbFactory, Performance, () => PermissionChangeDedupeBackfiller().Ready);
+
+    /// <summary>權限異動去重鍵雜湊欄的背景回填與就緒旗標；全站同一個實例（旗標只升不降，所有 store 共用）。</summary>
+    public PermissionChangeDedupeBackfiller PermissionChangeDedupeBackfiller() =>
+        LazyInitializer.EnsureInitialized(ref _permissionChangeDedupeBackfiller, () => new PermissionChangeDedupeBackfiller(_dbFactory));
+
+    private PermissionChangeDedupeBackfiller? _permissionChangeDedupeBackfiller;
 
     /// <summary>報告全文 store（↔ lf_reports）：同時是 <see cref="IReportSink"/> 與
     /// <see cref="IReportReader"/> 的實作</summary>
@@ -327,7 +334,7 @@ public class StorageBackend
         IIssueAggregateQuery issueQuery,
         ISystemSettingsStore settingsStore,
         IKnownIssueRuleStore ruleStore) =>
-        new(_dbFactory, PrtgStore(), issueQuery, settingsStore, ruleStore);
+        new(_dbFactory, PrtgStore(), issueQuery, settingsStore, ruleStore, clock: Clock);
 
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
@@ -438,12 +445,20 @@ public class StorageBackend
         return new SqlConnectionStringBuilder(connectionString) { MaxPoolSize = maxPoolSize.Value }.ConnectionString;
     }
 
-    /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>
-    private static string MaskConnectionString(string cs)
+    /// <summary>
+    /// 連線字串遮罩：log 與 Location 顯示用，不外流密碼。
+    /// 以官方建構器解析——密碼可用引號包住並含分號（<c>Password="a;b"</c>），自己以分號切段會把後半段當成別的鍵留下
+    /// </summary>
+    internal static string MaskConnectionString(string cs)
     {
-        var parts = cs.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            .Where(p => !p.TrimStart().StartsWith("Password", StringComparison.OrdinalIgnoreCase) &&
-                        !p.TrimStart().StartsWith("Pwd", StringComparison.OrdinalIgnoreCase));
-        return string.Join(";", parts);
+        SqlConnectionStringBuilder builder;
+        try { builder = new SqlConnectionStringBuilder(cs); }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or KeyNotFoundException)
+        {
+            // 解析不了就整段不顯示：寧可少一行說明，也不冒險把殘段印出來
+            return "連線字串格式無法解析";
+        }
+        builder.Remove("Password");
+        return builder.ConnectionString;
     }
 }

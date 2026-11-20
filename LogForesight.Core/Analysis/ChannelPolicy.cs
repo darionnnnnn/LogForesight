@@ -34,7 +34,30 @@ internal sealed class ChannelPolicy
     /// 啟用規則，其 EventIds 聯集即為 watchlist。ErrorWarningOnly 頻道不需 watchlist，留空字串。
     /// </summary>
     public string ProviderProbe { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 明列「資訊等級也收」清單：不論頻道政策為何，清單內（提供者＋事件編號）的非錯誤警告事件一律收進分析。
+    /// 刻意手工明列、不由規則的事件編號推導——同編號在別的提供者或別的版本可能是每天都有的健康訊息
+    /// （例如 NTFS 98 的資訊等級版本），自動推導會把它們變成每天的假告警。空清單＝行為與純政策相同。
+    /// </summary>
+    public IReadOnlyList<InformationalAllowEntry> InformationalAllowList { get; init; } = Array.Empty<InformationalAllowEntry>();
+
+    /// <summary>事件的提供者名是否命中明列清單（比對語意與規則 SourcePattern 相同：不分大小寫的子字串）。</summary>
+    public bool IsInformationalAllowed(string source, int eventId)
+    {
+        foreach (var entry in InformationalAllowList)
+        {
+            if (entry.EventId == eventId && source.Contains(entry.ProviderPattern, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 }
+
+/// <summary>明列清單的一筆：提供者名樣式（照種子規則的 SourcePattern）＋事件編號。</summary>
+internal sealed record InformationalAllowEntry(string ProviderPattern, int EventId);
 
 /// <summary>
 /// 預設頻道目錄。三個傳統日誌 + Defender / RDP 兩類 Operational 頻道。
@@ -52,11 +75,34 @@ internal static class ChannelCatalog
     /// <summary>Security log 事件的 provider 名稱——也是原本寫死在 KnownIssueCatalog 的探測字串。</summary>
     public const string SecurityProbe = "Microsoft-Windows-Security-Auditing";
 
+    /// <summary>
+    /// System／Application 的資訊等級必收清單：安裝新服務 7045（Service Control Manager）、
+    /// 事件日誌被清除 104（Eventlog）。這兩個事件的提供者中繼資料等級是資訊，頻道政策只收錯誤警告就收不到；
+    /// 提供者名照種子規則的 SourcePattern。新增項目要先以 Windows 專屬測試
+    /// （<c>EventProviderMetadataWindowsTests</c>）確認等級與訊息樣板，不得整個編號收。
+    /// </summary>
+    public static readonly IReadOnlyList<InformationalAllowEntry> LegacyInformationalAllowList = new[]
+    {
+        new InformationalAllowEntry("Service Control Manager", 7045),
+        new InformationalAllowEntry("EventLog", 104)
+    };
+
+    /// <summary>
+    /// Security 的稽核清除 1102 必收清單：1102 是成功稽核，原本靠規則推導的 watchlist 才收得到，
+    /// 而該 watchlist 只認來源樣式命中 Security-Auditing 的規則（真實發出者 Eventlog 的那條不貢獻）。
+    /// 明列後停用或刪除任何一條 1102 規則都不會讓本機收不到它。
+    /// </summary>
+    public static readonly IReadOnlyList<InformationalAllowEntry> SecurityInformationalAllowList = new[]
+    {
+        new InformationalAllowEntry("Eventlog", 1102),
+        new InformationalAllowEntry("Security-Auditing", 1102)
+    };
+
     public static readonly IReadOnlyList<ChannelPolicy> Defaults = new List<ChannelPolicy>
     {
-        new() { ChannelName = SystemChannel, Kind = ChannelInclusionKind.ErrorWarningOnly },
-        new() { ChannelName = ApplicationChannel, Kind = ChannelInclusionKind.ErrorWarningOnly },
-        new() { ChannelName = SecurityChannel, Kind = ChannelInclusionKind.SecurityAudit, ProviderProbe = SecurityProbe },
+        new() { ChannelName = SystemChannel, Kind = ChannelInclusionKind.ErrorWarningOnly, InformationalAllowList = LegacyInformationalAllowList },
+        new() { ChannelName = ApplicationChannel, Kind = ChannelInclusionKind.ErrorWarningOnly, InformationalAllowList = LegacyInformationalAllowList },
+        new() { ChannelName = SecurityChannel, Kind = ChannelInclusionKind.SecurityAudit, ProviderProbe = SecurityProbe, InformationalAllowList = SecurityInformationalAllowList },
         new() { ChannelName = DefenderChannel, Kind = ChannelInclusionKind.OperationalWatchlist, ProviderProbe = "Microsoft-Windows-Windows Defender" },
         new() { ChannelName = RdpLsmChannel, Kind = ChannelInclusionKind.OperationalWatchlist, ProviderProbe = "Microsoft-Windows-TerminalServices-LocalSessionManager" },
         new() { ChannelName = RdpRcmChannel, Kind = ChannelInclusionKind.OperationalWatchlist, ProviderProbe = "Microsoft-Windows-TerminalServices-RemoteConnectionManager" }

@@ -57,7 +57,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 `paused`（暫停的 sensor 整段不抓）與 `untrusted`（尚無判定來源）是保留常數，不會寫入。
 
 - 同一（sensor, 小時）：`ok` 覆蓋 `sampled`；`sampled` 對既有 `sampled` 以 coverage 加權合併，既有為 `ok` 時不動。快照批次 ID 與 `lf_prtg_sampled_batches` 同交易提交，重試不重複合併。
-- **可用列**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（`PrtgValueUsability.SampledMinCoverage`）。校準（§11）、數值評估（§9b）只認可用列。
+- **可用列**＝`ok`，或 `sampled` 且 `coverage ≥ 75`（`PrtgValueUsability.SampledMinCoverage`）。校準（§11）、數值評估（§9b）只認可用列。資料庫端的可用列判定只定義在 `PrtgValueRowUsability.Usable`（一棵 `Expression`，SQLite 與 SQL Server 共用；投影內以 `IsUsable` 等標記呼叫、查詢送出前 `ExpandPrtgUsability()` 展開）；PRTG 回應 JSON 欄位讀取只走 `PrtgJson.GetString`／`GetLong`（字串、數字、布林皆容錯，欄位缺席回 null）。
 - `lf_prtg_state_changes.quality` 一律寫 `ok`（狀態變更沒有品質判定依據）。
 
 ## 3. 擷取
@@ -98,7 +98,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   **形狀與筆數檢查**：第一頁回應不是物件或缺少該 content 的陣列，視為未收斂（不當成 0 筆成功）；後續頁形狀異常視為結尾。
   結束時比對 `treesize`：讀到筆數少於它（非「依時間提早停止」）擲 `PrtgPagingNotConvergedException`，已寫出的資料保留但該階段記為失敗，沒讀到的不能當成已刪除；
   `messages` 搭配 `filter_drel` 時 `treesize` 是否為過濾後筆數尚未證實（實機固定 100 萬），不擲例外、不寫警告，階段結束印一行彙總台數。
-- **分頁等待重試**（`PrtgTablePager.FetchAsync` 單點，由 `PrtgFetchService` 的 `retryTransientPaging` 開啟）：只包「單次請求本身」，每次 pager 執行（整個 devices／sensors／messages 讀取）**共最多 2 次**重試，不是每頁各 2 次；第 1 次重試前等 15 秒、第 2 次前等 60 秒（`RetryDelays`，暫定值），等待函式可注入，等待期間取消令牌生效。只對 `PrtgClientException.Kind` 為 `Timeout`、`Transport`，或 `HttpStatus` 且狀態碼為 5xx／429 者重試（`IsRetryable`，不比對訊息字串）；401／403／其他 4xx、`Credential`（含已黏住的憑證失敗）與 `Other` 立即擲出，不重試也不等待。重試只寫 Info（PRTG 慢的夜晚不讓趟次變「有警告」），用盡後的最終失敗照舊由呼叫端記錄。開啟的路徑只有夜間管線、結構同步與歷史回填；探測、快照與資源守門維持單次失敗即回報；逐顆 `historicdata` 不重試。
+- **分頁等待重試**（`PrtgTablePager.FetchAsync` 單點，由 `PrtgFetchService` 的 `retryTransientPaging` 開啟）：只包「單次請求本身」，每次 pager 執行（整個 devices／sensors／messages 讀取）**共最多 2 次**重試，不是每頁各 2 次；第 1 次重試前等 15 秒、第 2 次前等 60 秒（`RetryDelays`，暫定值），以 Polly 重試管線實作、等待走可注入的 `TimeProvider`（預設是 PRTG 用戶端的配額時鐘，測試的共用配額池為加速時鐘），等待期間取消令牌生效（只有「OCE 且呼叫端取消」才是使用者取消）；等待長度固定，不讀 `Retry-After`（逐顆取數的暫停閘才依 `Retry-After`）。只對 `PrtgClientException.Kind` 為 `Timeout`、`Transport`，或 `HttpStatus` 且狀態碼為 5xx／429 者重試（`IsRetryable`，不比對訊息字串）；401／403／其他 4xx、`Credential`（含已黏住的憑證失敗）與 `Other` 立即擲出，不重試也不等待。重試只寫 Info（PRTG 慢的夜晚不讓趟次變「有警告」），用盡後的最終失敗照舊由呼叫端記錄。開啟的路徑只有夜間管線、結構同步與歷史回填；探測、快照與資源守門維持單次失敗即回報；逐顆 `historicdata` 不重試。
 - **逐台階段的暫停閘與待補**（`PrtgFetchService.RunDevicesWithPauseAsync`，逐台 sensors 與 messages 共用；開啟重試的路徑才等待）：逐台路徑不用上一條的分頁重試，避免兩層等待疊加。任一台可重試失敗就拉起共用暫停閘（與數值取數同一份 `PauseSession`：15、60、180 秒加誤差、`Retry-After`），暫停期間不佔併發名額、不送新請求；失敗的台在全部送完後重排一次。明確不成立的 4xx（如已刪除的 404）不重排也不進待補。連續 10 台或總暫停將達 15 分鐘就停損，剩餘裝置不送請求，並進入實例層冷卻，同一趟後面的階段直接記待補；下一趟是新實例。沒完成的裝置記入逐日統計 `PendingSensorDevices`／`PendingMessageDevices`（`null`＝舊紀錄未知），該日 `NeedsReevaluation=true`、`Outcome=partial`，`SourceSynced` 仍為真（已完成的裝置是完整的）。單台失敗不算影響歷史。過期感測器清除只針對完成同步的裝置。**同一波在途請求只算一次**：閘帶世代號，送出前記下、回來比對，不一致的失敗不讓序列前進，不一致的成功也不歸零（數值路徑同樣適用）。狀態卡：進度軌顯示「PRTG 回應異常，暫停中（第 N 次，約 X 秒後重試）」與「PRTG 已停止本趟取數，N 台待補」。
 - **失敗說明**（`PrtgFailureText` 單一對照，給使用者的訊息說明在前、原文附後並截斷到 500 字，原文先遮蔽憑證）：逾時「等候 PRTG 回應逾時…」、連不上「連不上 PRTG 伺服器…」、認證失敗「PRTG 認證失敗：…」、伺服器放棄（HTTP 200 的空白 OK 頁）「PRTG 回應 OK 但沒有回資料…」；HTTP 400 帶出 PRTG 本文的 `<error>` 文字。使用者按停止（OCE 且 ct 已取消）照舊判為取消，不走這份說明。初始化連線失敗：`PrtgClientException` 沿用其訊息，其餘例外只給固定說明、原文進記錄檔。
 - **數值取數的暫停與補抓**（`PrtgFetchService.FetchValuesAsync` 單點，夜間階段 4、觸發式取數、回填共用；常數在 `PrtgValueFetchRetryPolicy`，不開放設定）：逾時、連線失敗、5xx、429 與 PRTG 空白「OK」頁（`PrtgFailureKind.EmptyPage`：HTTP 200 但內文只有 `<B class="no-content">OK</B>`，PRTG 在伺服器端放棄處理時這樣回，不是認證錯誤）時全部工作共用一個暫停閘，依序等 15、60、180 秒（之後維持 180，加 0～20% 誤差，`Retry-After` 較長時取它），成功一顆就歸零；閘已拉起時其他顆的失敗不讓序列前進。失敗的顆在全部送完後逐顆補抓一次，補抓不推進進度。實際總暫停將達 15 分鐘就停損（另有「連續 10 次可重試失敗」的保險，同一個閘內只算一次，正常時鐘下總暫停上限一定先到，它只防時鐘不走的情況）：剩餘的顆計失敗、不送請求，同一個服務實例冷卻 10 分鐘（期間呼叫直接回全部失敗），避免觸發式輪詢與逐日回填反覆打停機的 PRTG；觸發式輪詢在冷卻期內碰到的新問題主機不算已抓，冷卻結束的下一輪再抓。401、403、其他 4xx、解析與寫入失敗不暫停也不補抓。暫停與補抓寫 Info，停損寫 Warn。PRTG 完全不回時，約 20 分鐘內由總暫停上限停損，與併發數無關。
@@ -143,7 +143,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 **快照服務**（`PrtgSnapshotHostedService`）：
 - 每 60 秒檢查，依策略與退避間隔採樣；結構同步、回填與夜間 PRTG 階段執行中最多讓出一個採樣間隔。**先定目標再查**（`PrtgSnapshotTargetResolver`）：最近合格主機對應、有效主機、IP 排除與白名單決定精確 sensor 集合，
-  監看政策的 sensor 清單非空時再縮圈。目標集合（含資源守門監看的 sensor 與 sensor 型別對照）每小時重算一次，型別白名單、守門設定（啟用、覆寫清單、PRTG 網址）、主機或 Sentinel 清單有變時下一輪立即重算，結構同步、範圍補抓與設定變更後也立即重算；主機對應的變動最慢一小時反映。目標為空不發請求，也**不記成功**（不推進最近成功時間、不重設連續失敗、不寫新鮮度），略過原因寫「取數範圍為空：沒有已對應主機的白名單 sensor」。
+  監看政策的 sensor 清單非空時再縮圈。目標集合（含資源守門監看的 sensor 與 sensor 型別對照）每小時重算一次，型別白名單、守門設定（啟用、覆寫清單、PRTG 網址）、主機或 Sentinel 清單有變時下一輪立即重算，結構同步（不論成敗，以 `PrtgStructureSyncService.CompletionCount` 偵測）、範圍補抓與設定變更後也立即重算；目標集合與感測器型別對照是同一份讀取，整輪換算用同一份（`RequestScopeRefresh` 中途清快取不影響已解析的那一輪）；主機對應的變動最慢一小時反映。目標為空不發請求，也**不記成功**（不推進最近成功時間、不重設連續失敗、不寫新鮮度），略過原因寫「取數範圍為空：沒有已對應主機的白名單 sensor」。
 - **有界查詢**：依 objid 排序，每批 100 顆（`filter_objid`，`count=batch+1` 為哨兵，`PrtgSnapshotCapacityResponseValidator` → `PrtgSnapshotResponseContract`），
   最多 3 批在途；一輪必須在一個採樣間隔內完成，否則已取得批次保留、該輪計失敗並說明涵蓋率偏低。單批失敗只記數，全部失敗才進退避。
   **回應契約**：回應含請求集合以外的 objid、不是 `sensors` 陣列、列缺 `status`／`lastcheck`、或為空，整批不收；回應是請求集合的**非空真子集**（PRTG 已刪除其中幾顆）時照收，
@@ -155,6 +155,8 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   持有擁有權的工作者把整個待寫目錄**搬移**到 `pending/prtg-snapshot-archive/<時間>-database-mismatch/`（不刪除），以目前資料庫重新開始採集，寫 Warn 與稽核（`prtg_snapshot_journal_archive`）。
   有期限內樣本時維持停止，PRTG 維護頁鏡像狀態提供「封存舊待寫資料並重新開始」（`POST api/prtg-snapshot-diagnostics/archive-journal`，`Maintain`＋`ViewAll`；只對 `database-mismatch`、`source-changed` 開放，其他原因回 409），
   確認對話寫出會放棄的筆數、時間範圍與封存位置；不提供強制寫進目前資料庫。封存夾不自動清理，確認不需要重播後可手動刪除。
+  `source-changed` 在兩種情況出現：執行中改了 PRTG 位址而記憶體還有樣本，以及重啟時待寫檔記載的來源位址指紋與目前設定不同且檔內有樣本（位址沒變則照舊沿用）。
+  待寫檔發布新世代失敗（容量不足、寫入錯誤）時，只清除本次自己建立的世代目錄與暫存 manifest，不動其他世代；新世代指標切換成功後，世代目錄與 manifest 即為正式內容、不會被清除。
   **不再靜默**：待寫檔停止時診斷小時狀態為 `stopped`（目標數未知記 -1、顯示「未知」，不再顯示「無目標」）；系統健康 PRTG 快照卡在保守策略下「停止」立即警示、「目標非空卻超過 6 小時沒有成功取樣」（從啟動與最近成功取晚者起算）也警示，判定單一入口 `PrtgSnapshotAlert.Evaluate`；
   PRTG 維護頁頁首「啟用準備」多「數值快照」一項；夜間輸出改寫為「取數策略為保守，但數值快照已停止（原因：…），今晚沒有數值來源」並列為警告。
 - 每輪通過前置條件後補抓「範圍內但鏡像沒有感測器」的裝置（每輪最多 50 台，§3c），守門覆寫清單中鏡像找不到的 sensor 所在裝置排最前。
@@ -175,7 +177,12 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 4. 資源守門的裝置（§12）：Sentinel 與 PRTG 位址比對到的裝置、覆寫清單 sensor 所在裝置、corehealth sensor 所在裝置——守門啟用時入範圍；
    未啟用（或指定主機更新）時改列為「保留裝置」：不取數，但範圍外清除時保留其感測器鏡像，守門自動偵測才找得到。
 
-範圍提供者是 `FetchDayAsync` 的必填參數，在裝置階段之後、感測器階段之前呼叫一次：夜間一律重算最新日對應；手動同步只在裝置階段成功時重算；回填用既有對應。
+範圍提供者是 `FetchDayAsync` 的必填參數，在裝置階段之後、感測器階段之前呼叫一次：夜間與手動同步共用 `PrtgHostMapper.ShouldRecompute` 判定，只在裝置階段成功更新時重算對應；回填用既有對應。
+
+**取數目標一律與當前範圍取交集**：
+- 不同步結構的路徑（回填）：sensor 清單讀鏡像，但只取所屬裝置在範圍內者（`EfPrtgStore.GetSensorTargets(scopeDeviceObjids)`，範圍參數必填）；範圍算不出來時不取任何數值。鏡像裡留著的範圍外 sensor 不發請求。
+- 同日續補（`FetchPendingDevicesAsync`）：待補清單是上一趟留下的，續補前以 `PrtgScopeDevices.Compute` 現算範圍（範圍參數必填），清單與範圍取交集；範圍外的裝置不發請求、也不列為待補。範圍算不出來時整段不補、待補清單原樣保留。
+- 續補的感測器、狀態變更兩階段各自隔離：某階段擲例外時該階段的待補裝置原樣保留、整趟標部分完成，規則評估照常執行；使用者取消（例外為 OCE 且取消訊號已觸發）照常往外拋，HttpClient 逾時不算取消。
 
 **人工對應的裝置不在鏡像**（PRTG 端已刪除該裝置）：不入範圍，執行輸出印「人工對應的裝置 #N 已不在 PRTG 鏡像，未納入取數範圍」，
 否則 objid 永留範圍內，每晚查詢已刪裝置失敗、範圍外清除永不執行。維護頁人工對應清單在該列標「PRTG 已無此裝置」徽章（`missingInMirror`），由管理者刪除該筆對應。
@@ -186,7 +193,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 - 裝置：裝置階段無例外、已收斂、寫入數 > 0 時，刪 `synced_at` 早於本趟起點的裝置（在重算對應之前）；本趟沒出現的超過鏡像一半時一台都不刪並警告。
 - 感測器：範圍非空、階段無例外、寫入數 > 0 時刪未刷新的列。範圍內沒有任何對應成功的裝置時不清；本趟「查詢成功但回 0 顆」的裝置給一趟寬限（36 小時內刷新過的列先留）。
 - 範圍外數值與狀態變更：`PrtgScopePurge.RunAfterStructureSync` 只在結構同步與對應全部成功、`CheckScope`（範圍非 null、非部分處理、監看裝置非空、裝置鏡像本趟更新）
-  與 `CheckShrink`（已有基準且減少量不超過 `max(基準 × 30%, 50 台)`）都通過時才清。首次無基準等情況不自動清，由維護頁「監看範圍外資料」預覽後人工確認。
+  、`CheckMapping`（本趟主機對應成功的裝置數 > 0；為 0 時把原因寫進擋下原因，鏡像頁顯示）與 `CheckShrink`（已有基準且減少量不超過 `max(基準 × 30%, 50 台)`）都通過時才清。首次無基準等情況不自動清，由維護頁「監看範圍外資料」預覽後人工確認。
   資源守門所需的裝置與 sensor 不因數值範圍變小而被清。
   清除作業進行中，任何範圍寫入（來源、對應、排除、主機範圍）由 `PrtgScopePurgeBusyException` 擋下，API 回 409／`conflict`。
 
@@ -231,7 +238,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 刪除一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本，與保留期清除同一套保護。
 鏡像沒有裝置、今天沒有任何主機對上、重算期間人工對應／IP 排除持續變動（範圍版本前後不一致，最多重算三次）或任何一步失敗時不刪、不記版本，下次啟動再試（`PrtgHostMapRefresher.TryApplyRuleUpgrade`）。
 `PrtgEnabled` 關閉時不執行，之後啟用要等下次啟動。升級刪除舊對應後，校準（§11）的「狀態變更涵蓋天數」要從升級日重新累積。
-校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收。
+校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收；某日採哪份對應與規則歸戶同一個選法（只採含 ok 列的整份對應，`EfPrtgStore.FindOkHostMapDateOnOrBefore` 是 `GetHostMapForDay` 往回找的那一段），最新一份全是 unmatched 時採較早那份有效對應。
 
 ### 位址怎麼比對
 
@@ -257,7 +264,7 @@ device 分組鍵用解析層結果。IP 排除清單的儲存鍵是純語法值�
 
 ### 什麼時候會重算
 
-夜間 PRTG 路徑重算最新一天（§3c）；手動同步（§5a）、人工對應或 IP 排除變更、主機主檔新增（有 IP）／IP 變更／停用／啟用／合併／解除合併
+夜間 PRTG 路徑與手動同步共用判定：只有裝置結構本趟成功更新（階段 1 無例外、已收斂、寫入數大於 0）才重算（夜間重算最新一天，§3c），沒更新就不產生新的一份對應、沿用最近一份有效對應（手動同步見 §5a）；人工對應或 IP 排除變更、主機主檔新增（有 IP）／IP 變更／停用／啟用／合併／解除合併
 都重算今天（`PrtgHostMapRefresher`，PRTG 未啟用時零成本返回）。
 
 ### 4a. 人工對應（`lf_prtg_manual_map`）
@@ -326,6 +333,8 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 - [S2] 範圍內裝置逐台查詢實測（最多 3 台、6 次 `table.json`），估感測器與狀態變更階段秒數。
 - [S3] 資源守門目標偵測（`PrtgResourceGuardTargets.Detect`，直接查 PRTG）：以位址命中、改以 Core Health 找到或找不到；命中裝置逐台對照取數範圍。
 
+**回應格式**：步驟 1（版本與連線）收到不是 JSON 的回應（登入頁 HTML、純文字）一律判失敗並終止探測，訊息只說「回應不是預期格式」，不夾帶回應原文（可能含主機名或帳號）。
+
 **小範圍資料流驗證**：取最近一份對應中 `ok` 且主機啟用、未合併的裝置（依 objid 排序前 20 台），在這些裝置的 sensor 中取第一顆未暫停、type 在白名單內的 sensor（白名單留空＝不限），
 對昨天呼叫正式 `PrtgFetchService.FetchValuesForSensorsAsync` 並讀回；
 本趟確實寫入且讀回至少一筆 `ok` 才通過。取數、同步或回填執行中拒絕啟動。
@@ -359,7 +368,8 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `PrtgAuthMode` | `token` | `token`／`password`／`passhash`（§6a） |
 | `PrtgApiTokenEnc`／`PrtgPasswordEnc`／`PrtgPasshashEnc` | — | 密文（AES-256-CBC），write-only |
 | `PrtgUsername` | — | password 與 passhash 共用 |
-| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 Info（刻意設定的提醒，不計入趟次警告） |
+| `PrtgIgnoreSslErrors` | false | 忽略憑證錯誤，每次建立連線記 Info（刻意設定的提醒，不計入趟次警告）；有填信任指紋時不生效，沒填時健康頁列為需要注意 |
+| `PrtgTrustedCertificateSha256` | 空 | 信任的憑證指紋（SHA-256，存成大寫十六進位；可貼含冒號或空白的寫法）。有填時只接受指紋相符的憑證，不看憑證鏈與主機名稱；不符時連線失敗訊息指明指紋不符並附伺服器出示的指紋。判定在 `ServerCertificateTrust`；測試連線回傳伺服器出示的指紋（`presentedCertificateSha256`） |
 | `PrtgTimeoutSeconds`／`PrtgFetchConcurrency`／`PrtgBackfillDays` | 60／2／30 | 單次逾時（5–600）、併發上限（1–8）、回填天數（1–365） |
 | `PrtgRetentionDays` | 180 | 鏡像保留天數（規則見 DB-SPEC 保留策略） |
 | `PrtgSensorTypeWhitelist` | 7 種 type | 要擷取數值的 type（留空＝不限）。出廠：`Ping`、`SNMP Disk Free`、`SNMP CPU Load`、`SNMP Memory` 與網卡、多碟可用空間等分析型 type；Traffic 不列入。只管數值取數與快照，不影響規則母體 |
@@ -578,7 +588,9 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 - 匯出檔：自描述 JSON（`FormatVersion` 4），`MagnitudeSemanticsVersion=3`、`FormalEvaluationScope=state-change-messages`；含值型基線（56 天逐日聚合）、
   感測器摘要、type 輪廓（24 小時曲線，資料庫端聚合）、規則門檻（逐日命中、以最低門檻重評的 magnitude 樣本與 P50／P90／P99、`CurrentRules`）、
   數值取得量級、殘留判定指標（不含帳號名稱，與正式判定共用 `ResidualCredentialDetector.EvaluateMetrics`）。`detail=summary` 只匯出摘要。
+- 數值取得量級的每夜中位數欄位（`SensorsPerNightMedian`、`RowsPerNightMedian`）是小數：偶數晚數取中間兩值平均，外部讀取程式要以小數讀取。
   第 4 版新增：值型基線 `KeyMetrics` 的 `SnapshotLastSuccessAt`、`SnapshotConsecutiveFailures`、`SnapshotStopReason`、`SnapshotBackingOff`（讓匯出檔自己回答「快照為什麼沒資料」；`SnapshotStopReason` 是待寫檔停止碼，沒有停止時是快照目前的跳過原因）；殘留候選的 `RecurringGroupCount`、`RecurringGroupShare`（最大組以外跨日重現 ≥ 2 天的組數與其明細占比）；warning 樣本的 `ValueChange7d`（近 7 日已用百分比變化，算不到為 null）。舊欄位名稱與意義不變。
+- 規則門檻重放的「現在」取自注入的時鐘（`StorageBackend.Clock`）：評估日是今天時，當日仍 Down 的持續分鐘只算到評估時刻（`PrtgRuleEvaluator.Evaluate` 的 `asOf`），不算到午夜；過去日照算到當日結束。每日管線不傳 `asOf`。
 - 匯出閘門：四項皆達「可用」才解鎖，否則勾「仍要匯出」覆寫；兩者都寫稽核。
 
 **使用效果**（維護頁頁籤，`PrtgEffectivenessService`）：期間內 PRTG finding 數、低涵蓋取樣小時、建立的案件與交辦、已回覆、已抑制、靜音 profile、

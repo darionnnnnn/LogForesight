@@ -253,6 +253,15 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "raw_text",
             isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
 
+        // 去重鍵的固定長度雜湊與一般索引。舊列保留 NULL，由 PermissionChangeDedupeBackfiller 背景分批補齊；
+        // 補齊前四個依去重鍵查詢的方法仍走原鍵比對。
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "dedupe_key_hash",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        // 大表（可達數百萬列）建索引在啟動同步路徑上，前景 60 秒命令逾時會讓站台起不來：改用分析等級逾時（SQLite 不受影響）。
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_dedupe_key_hash", "dedupe_key_hash",
+            commandTimeoutSeconds: StorageBackend.AnalysisCommandTimeoutSeconds);
+
         // 報告全文（↔ lf_reports）：三種報告（風險／週檢／權限異動）的完整內容。
         // 唯一索引即 upsert 的判定鍵，**含 host_name**：host_id = 0 是「主機尚未登記」的哨兵值
         // 而不是一台主機，只用 host_id 會讓兩台都還沒登記成功的主機在同一天互相覆蓋。
@@ -519,7 +528,7 @@ internal static class SchemaUpgrader
     {
         var result = new List<IndexShape>();
         var rows = ctx.Database.SqlQueryRaw<string>(
-            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list('" + table + "')").ToList();
+            "SELECT name || '|' || \"unique\" || '|' || partial AS Value FROM pragma_index_list({0})", table).ToList();
         foreach (var row in rows)
         {
             var parts = row.Split('|');
@@ -527,7 +536,7 @@ internal static class SchemaUpgrader
             if (parts[2] != "0" || name.StartsWith("sqlite_autoindex_", StringComparison.OrdinalIgnoreCase)) continue;
 
             var columns = ctx.Database.SqlQueryRaw<string>(
-                "SELECT ifnull(name, '') AS Value FROM pragma_index_info('" + name + "') ORDER BY seqno").ToList();
+                "SELECT ifnull(name, '') AS Value FROM pragma_index_info({0}) ORDER BY seqno", name).ToList();
             if (columns.Count == 0 || columns.Any(c => c.Length == 0)) continue;
             result.Add(new IndexShape(name, parts[1] == "1", string.Join(",", columns)));
         }
@@ -705,7 +714,7 @@ internal static class SchemaUpgrader
         ctx.Database.ExecuteSqlRaw(BuildFilteredUniqueIndexSql(table, indexName, columns, filter));
     }
 
-    private const string SqliteCreateWorkOrders = """
+    internal const string SqliteCreateWorkOrders = """
         CREATE TABLE lf_work_orders (
             work_order_id INTEGER NOT NULL CONSTRAINT PK_lf_work_orders PRIMARY KEY AUTOINCREMENT,
             source_name TEXT NULL,
@@ -763,7 +772,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateWorkOrderEvents = """
+    internal const string SqliteCreateWorkOrderEvents = """
         CREATE TABLE lf_work_order_events (
             event_id INTEGER NOT NULL CONSTRAINT PK_lf_work_order_events PRIMARY KEY AUTOINCREMENT,
             work_order_id INTEGER NOT NULL,
@@ -1171,7 +1180,7 @@ internal static class SchemaUpgrader
         return IssueFirstSeenSeedMergeOutcome.Completed;
     }
 
-    private const string SqliteCreateIssueHandling = """
+    internal const string SqliteCreateIssueHandling = """
         CREATE TABLE lf_issue_handling (
             id INTEGER NOT NULL CONSTRAINT PK_lf_issue_handling PRIMARY KEY AUTOINCREMENT,
             host_name TEXT NOT NULL,
@@ -1205,7 +1214,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateIssueCases = """
+    internal const string SqliteCreateIssueCases = """
         CREATE TABLE lf_issue_cases (
             case_id TEXT NOT NULL CONSTRAINT PK_lf_issue_cases PRIMARY KEY,
             host_name TEXT NOT NULL,
@@ -1245,7 +1254,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateRecordHandling = """
+    internal const string SqliteCreateRecordHandling = """
         CREATE TABLE lf_record_handling (
             id INTEGER NOT NULL CONSTRAINT PK_lf_record_handling PRIMARY KEY AUTOINCREMENT,
             host_name TEXT NOT NULL,
@@ -1273,7 +1282,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateRiskyEventsTable = """
+    internal const string SqliteCreateRiskyEventsTable = """
         CREATE TABLE lf_risky_events (
             id INTEGER NOT NULL CONSTRAINT PK_lf_risky_events PRIMARY KEY AUTOINCREMENT,
             host_id INTEGER NOT NULL,
@@ -1307,7 +1316,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreateIssueFirstSeen = """
+    internal const string SqliteCreateIssueFirstSeen = """
         CREATE TABLE lf_issue_first_seen (
             source_key TEXT NOT NULL,
             event_id INTEGER NOT NULL,
@@ -1327,7 +1336,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePermissionChanges = """
+    internal const string SqliteCreatePermissionChanges = """
         CREATE TABLE lf_permission_changes (
             id INTEGER NOT NULL CONSTRAINT PK_lf_permission_changes PRIMARY KEY AUTOINCREMENT,
             change_id TEXT NOT NULL,
@@ -1386,7 +1395,7 @@ internal static class SchemaUpgrader
     // 報告全文。content 不設長度上限：報告是人看的完整敘事，長度不可預期
     // （設上限在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時的截斷例外）。
     // 主鍵在 SQLite 必須是 INTEGER（rowid），不能寫 bigint。
-    private const string SqliteCreateReports = """
+    internal const string SqliteCreateReports = """
         CREATE TABLE lf_reports (
             report_id INTEGER NOT NULL CONSTRAINT PK_lf_reports PRIMARY KEY AUTOINCREMENT,
             host_id INTEGER NOT NULL,
@@ -1416,7 +1425,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgDevices = """
+    internal const string SqliteCreatePrtgDevices = """
         CREATE TABLE lf_prtg_devices (
             objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_devices PRIMARY KEY,
             name TEXT NOT NULL,
@@ -1446,7 +1455,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgSensors = """
+    internal const string SqliteCreatePrtgSensors = """
         CREATE TABLE lf_prtg_sensors (
             objid INTEGER NOT NULL CONSTRAINT PK_lf_prtg_sensors PRIMARY KEY,
             device_objid INTEGER NOT NULL,
@@ -1484,7 +1493,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgStateChanges = """
+    internal const string SqliteCreatePrtgStateChanges = """
         CREATE TABLE lf_prtg_state_changes (
             id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_state_changes PRIMARY KEY AUTOINCREMENT,
             sensor_objid INTEGER NOT NULL,
@@ -1510,7 +1519,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgValues = """
+    internal const string SqliteCreatePrtgValues = """
         CREATE TABLE lf_prtg_values (
             id INTEGER NOT NULL CONSTRAINT PK_lf_prtg_values PRIMARY KEY AUTOINCREMENT,
             sensor_objid INTEGER NOT NULL,
@@ -1538,7 +1547,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgSampledBatches = """
+    internal const string SqliteCreatePrtgSampledBatches = """
         CREATE TABLE lf_prtg_sampled_batches (
             batch_id TEXT NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
             created_at TEXT NOT NULL
@@ -1552,7 +1561,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgHostMap = """
+    internal const string SqliteCreatePrtgHostMap = """
         CREATE TABLE lf_prtg_host_map (
             map_date TEXT NOT NULL,
             device_objid INTEGER NOT NULL,
@@ -1580,7 +1589,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqliteCreatePrtgManualMap = """
+    internal const string SqliteCreatePrtgManualMap = """
         CREATE TABLE lf_prtg_manual_map (
             device_objid INTEGER NOT NULL,
             host_id INTEGER NOT NULL,
@@ -1776,7 +1785,7 @@ internal static class SchemaUpgrader
         if (needsRepair == 1) ctx.Database.ExecuteSqlRaw(SqlServerFixPrtgManualMapIdentityDdl);
     }
 
-    private const string SqliteCreatePrtgIpExcludes = """
+    internal const string SqliteCreatePrtgIpExcludes = """
         CREATE TABLE lf_prtg_ip_excludes (
             ip TEXT NOT NULL,
             note TEXT NULL,
@@ -1845,7 +1854,8 @@ internal static class SchemaUpgrader
     }
 
     private static void AddIndexIfMissing(
-        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false)
+        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false,
+        int? commandTimeoutSeconds = null)
     {
         UpgraderIndexNames.TryAdd(indexName, 0);
         // 同 AddColumnIfMissing：表不存在就跳過，不讓 CREATE INDEX 炸掉啟動
@@ -1855,14 +1865,24 @@ internal static class SchemaUpgrader
 
         Log.Info("[SQL] schema 升級：{Table} 補索引 {Index}", table, indexName);
         var sql = "CREATE " + (unique ? "UNIQUE " : "") + "INDEX " + indexName + " ON " + table + " (" + columns + ")";
-        ctx.Database.ExecuteSqlRaw(sql);
+        // 只在建索引這一句調高逾時，之後還原：同一個 context 後續的升級步驟仍維持原本的命令逾時
+        var previousTimeout = ctx.Database.GetCommandTimeout();
+        if (commandTimeoutSeconds.HasValue) ctx.Database.SetCommandTimeout(commandTimeoutSeconds.Value);
+        try
+        {
+            ctx.Database.ExecuteSqlRaw(sql);
+        }
+        finally
+        {
+            if (commandTimeoutSeconds.HasValue) ctx.Database.SetCommandTimeout(previousTimeout);
+        }
     }
 
     /// <summary>SQLite：<c>pragma_table_info</c> 可當資料表函數查；SqlServer：INFORMATION_SCHEMA</summary>
     private static bool ColumnExists(LfDbContext ctx, bool isSqlite, string table, string column)
     {
         var names = isSqlite
-            ? ctx.Database.SqlQueryRaw<string>("SELECT name FROM pragma_table_info('" + table + "')").ToList()
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM pragma_table_info({0})", table).ToList()
             : ctx.Database.SqlQueryRaw<string>(
                 "SELECT COLUMN_NAME AS Value FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = {0}", table).ToList();
         return names.Contains(column, StringComparer.OrdinalIgnoreCase);
@@ -1872,7 +1892,7 @@ internal static class SchemaUpgrader
     private static bool IndexExists(LfDbContext ctx, bool isSqlite, string table, string indexName)
     {
         var names = isSqlite
-            ? ctx.Database.SqlQueryRaw<string>("SELECT name FROM pragma_index_list('" + table + "')").ToList()
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM pragma_index_list({0})", table).ToList()
             : ctx.Database.SqlQueryRaw<string>(
                 "SELECT i.name AS Value FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id WHERE t.name = {0}", table).ToList();
         return names.Contains(indexName, StringComparer.OrdinalIgnoreCase);

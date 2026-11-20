@@ -8,7 +8,7 @@ import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 import { safeSession } from '../core/storage.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
-    bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
+    bindTabs, showTab, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
     collectLines, renderTable, renderError, renderUpdatedAt, button as makeButton, headerWithHelp,
     createHostSearcher, searchableHostSelect
@@ -21,6 +21,7 @@ import { toScopeSelectValue, prtgScopeInapplicableText, prtgHostMapSummary } fro
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
+import { copyText } from '../core/clipboard.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
@@ -737,6 +738,7 @@ function renderPrtgFields(settings) {
     syncPrtgAuthFields();
 
     document.getElementById('prtg-ignore-ssl').checked = Boolean(settings.prtgIgnoreSslErrors);
+    document.getElementById('prtg-trusted-cert').value = settings.prtgTrustedCertificateSha256 ?? '';
     document.getElementById('prtg-timeout-seconds').value = settings.prtgTimeoutSeconds ?? 60;
     document.getElementById('prtg-fetch-concurrency').value = settings.prtgFetchConcurrency ?? 2;
     document.getElementById('prtg-backfill-days').value = settings.prtgBackfillDays ?? 30;
@@ -929,6 +931,28 @@ function bindScopeControls() {
 }
 
 
+/** 測試連線回報的伺服器憑證指紋（http 連線或 TLS 前就失敗時沒有）：長字串，放在可任意斷行的容器 */
+function presentedFingerprint(sha256) {
+    if (!sha256) return null;
+    const line = document.createElement('div');
+    line.className = 'lf-text-meta lf-break-anywhere mt-1';
+    line.append('伺服器出示的憑證指紋：');
+    const value = document.createElement('span');
+    value.className = 'lf-text-data';
+    value.textContent = sha256;
+    line.append(value);
+    return line;
+}
+
+/** 與後端 ServerCertificateTrust.TryNormalize 同一套寫法，只用來比對「是否等於已存值」 */
+function normalizeFingerprint(value) {
+    // 多個指紋以逗號、分號或換行分隔；各自去掉冒號、空白、連字號並轉大寫，重複的只留一個，以逗號接回
+    const pins = (value ?? '').split(/[,;\r\n]/)
+        .map(token => token.replace(/[:\s-]/g, '').toUpperCase())
+        .filter(Boolean);
+    return [...new Set(pins)].join(',');
+}
+
 function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
     if (!button) return;
@@ -951,6 +975,7 @@ function bindPrtgTest() {
                 passhash: document.getElementById('prtg-passhash')?.value || null,
                 apiToken: document.getElementById('prtg-api-token').value || null,
                 ignoreSslErrors: document.getElementById('prtg-ignore-ssl').checked,
+                trustedCertificateSha256: document.getElementById('prtg-trusted-cert').value.trim(),
                 timeoutSeconds: Number(document.getElementById('prtg-timeout-seconds').value) || 60
             }, { silent: true });
 
@@ -965,13 +990,19 @@ function bindPrtgTest() {
                 && !document.getElementById('prtg-clear-password')?.checked
                 && !document.getElementById('prtg-clear-passhash')?.checked
                 && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
+                && normalizeFingerprint(document.getElementById('prtg-trusted-cert')?.value) === (saved.prtgTrustedCertificateSha256 ?? '')
                 && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
             let text = result.elapsedMs != null
                 ? `${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${result.message}`;
             if (result.success && !matchesSaved) text += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
+            // 這兩個欄位在「擷取參數」頁籤，「連線」頁籤的儲存不含它們；測試讀的是兩頁籤的目前值
+            const certDiffers = Boolean(document.getElementById('prtg-ignore-ssl')?.checked) !== Boolean(saved?.prtgIgnoreSslErrors)
+                || normalizeFingerprint(document.getElementById('prtg-trusted-cert')?.value) !== (saved?.prtgTrustedCertificateSha256 ?? '');
+            if (certDiffers) text += '；信任的憑證指紋與忽略憑證錯誤要在「擷取參數」頁籤儲存，這裡的儲存不含這兩項。';
             resultEl.className = '';
-            resultEl.replaceChildren(statusNote(result.success ? 'success' : 'error', text));
+            resultEl.replaceChildren(...[statusNote(result.success ? 'success' : 'error', text),
+                presentedFingerprint(result.presentedCertificateSha256)].filter(Boolean));
         } catch (error) {
             resultEl.className = '';
             resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
@@ -1072,6 +1103,7 @@ function bindParamsForm() {
                 prtgEnabled: enabled,
                 prtgFetchStrategy: fetchStrategy,
                 prtgIgnoreSslErrors: ignoreSsl,
+                prtgTrustedCertificateSha256: document.getElementById('prtg-trusted-cert').value.trim(),
                 prtgTimeoutSeconds: timeoutSeconds,
                 prtgFetchConcurrency: fetchConcurrency,
                 prtgBackfillDays: backfillDays,
@@ -1950,7 +1982,7 @@ async function openAssignModal(item) {
 let hostAssignModal = null;
 let hostAssignTarget = null;
 let hostAssignSelectedObjid = null;
-let hostAssignSearchSeq = 0;
+const hostAssignSearchGuard = createSeqGuard();
 
 function openHostAssignModal(host) {
     const modalEl = document.getElementById('prtg-host-assign-modal');
@@ -1959,7 +1991,7 @@ function openHostAssignModal(host) {
 
     hostAssignTarget = host;
     hostAssignSelectedObjid = null;
-    hostAssignSearchSeq++;
+    hostAssignSearchGuard.next();
     document.getElementById('prtg-host-assign-host').textContent = host.hostName || `Host ID: ${host.hostId}`;
     document.getElementById('prtg-host-assign-ip').textContent = host.ipAddress || '無 IP';
     // 使用者最常照 IP 找，預設帶入主機 IP
@@ -1982,14 +2014,14 @@ async function searchPrtgDevicesForHost() {
         toast('請至少輸入 2 個字再搜尋', 'warning');
         return;
     }
-    const seq = ++hostAssignSearchSeq;
+    const seq = hostAssignSearchGuard.next();
     hostAssignSelectedObjid = null;
     document.getElementById('prtg-host-assign-submit').disabled = true;
     moreEl.classList.add('d-none');
     renderSpinner(box, '載入中…');
     try {
         const res = await api.get(`/api/admin/settings/prtg-devices/search?q=${encodeURIComponent(q)}`, { silent: true });
-        if (seq !== hostAssignSearchSeq) return;
+        if (!hostAssignSearchGuard.isCurrent(seq)) return;
         const items = ((res && res.items) ? res.items : []).slice(0, 20);
         box.replaceChildren();
         if (items.length === 0) {
@@ -2027,7 +2059,7 @@ async function searchPrtgDevicesForHost() {
         box.appendChild(list);
         moreEl.classList.toggle('d-none', !(res && res.hasMore));
     } catch (error) {
-        if (seq !== hostAssignSearchSeq) return;
+        if (!hostAssignSearchGuard.isCurrent(seq)) return;
         renderError(box, {
             message: `搜尋失敗：${error && error.message ? error.message : '網路或伺服器錯誤'}`,
             onRetry: searchPrtgDevicesForHost
@@ -2530,7 +2562,7 @@ async function activateSelectedBackfillHost(hostName) {
     const search = document.getElementById('prtg-selected-backfill-search');
     pendingBackfillHostId = name;
     if (search) search.value = name;
-    document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
+    showTab('prtg-tabs', 'selected-backfill');
     // 以名稱向伺服器查一次（同一個搜尋器，結果同時就是清單的命中列）
     const result = await backfillSearcher?.run(name);
     if (!result) return; // 失敗（清單已顯示錯誤）或已被更新的搜尋取代
@@ -2671,12 +2703,9 @@ function bindPrtgProbe() {
     });
 
     copyButton.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(outputEl.value);
-            toast('已複製探測輸出', 'success');
-        } catch {
-            toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-        }
+        const copied = await copyText(outputEl.value);
+        if (copied.ok) toast('已複製探測輸出', 'success');
+        else toast(`複製失敗：${copied.reason}`, 'danger');
     });
     downloadButton?.addEventListener('click', () => {
         if (!outputEl.value || downloadButton.disabled) return;
@@ -2762,10 +2791,18 @@ function bindPrtgDataTransfer() {
     let operationBusy = false;
     let pending = null;
     let storageKey = null;
+    // 結果訊息走共用出口：失敗／成功用 statusNote（含圖示與 role），一般進度用說明文字角色
     const show = (message, style = 'muted') => {
         if (!importResult) return;
-        importResult.className = `small mb-2 text-${style}`;
-        importResult.textContent = message;
+        importResult.className = 'mb-2';
+        if (style === 'muted') {
+            const text = document.createElement('span');
+            text.className = 'lf-text-meta';
+            text.textContent = message;
+            importResult.replaceChildren(text);
+        } else {
+            importResult.replaceChildren(statusNote(style === 'danger' ? 'error' : style, message));
+        }
     };
     const savePending = value => {
         pending = value;
@@ -3197,11 +3234,13 @@ if (monitoringForm) {
     let sensorCursors = [null], sensorPageIndex = 0, sensorPage = null;
     let savedHostRows = [], savedHostPageIndex = 0, selectedSensorPageIndex = 0;
     let estimateToken = null, estimateFingerprint = null, baselineFingerprint = null;
-    let draftVersion = 0, estimateSequence = 0;
-    let hostPageSequence = 0, sensorPageSequence = 0, monitoringLoadSequence = 0, previewSequence = 0;
+    let draftVersion = 0;
+    const estimateGuard = createSeqGuard(), hostPageGuard = createSeqGuard(), sensorPageGuard = createSeqGuard();
+    const monitoringLoadGuard = createSeqGuard(), previewGuard = createSeqGuard();
     let hostPageController = null, sensorPageController = null;
     let hostSearchTimer = null, sensorSearchTimer = null;
-    let selectionBatchSequence = 0, activeSelectionBatch = null;
+    const selectionBatchGuard = createSeqGuard();
+    let activeSelectionBatch = null;
     const selectionBatchTimeoutMs = 5 * 60 * 1000;
     function sortedIds(values) { return [...values].map(Number).filter(Number.isSafeInteger).sort((a, b) => a - b); }
     function scopeFingerprint(request) {
@@ -3210,19 +3249,19 @@ if (monitoringForm) {
     }
     function cancelMonitoringPageRequest(kind, clearSearchTimer = true) {
         if (kind === 'host') {
-            hostPageSequence++;
+            hostPageGuard.next();
             hostPageController?.abort();
             hostPageController = null;
             if (clearSearchTimer) { clearTimeout(hostSearchTimer); hostSearchTimer = null; }
         } else {
-            sensorPageSequence++;
+            sensorPageGuard.next();
             sensorPageController?.abort();
             sensorPageController = null;
             if (clearSearchTimer) { clearTimeout(sensorSearchTimer); sensorSearchTimer = null; }
         }
     }
     function invalidateEstimate() {
-        draftVersion++; estimateSequence++;
+        draftVersion++; estimateGuard.next();
         if (activeSelectionBatch) cancelSelectionBatch(activeSelectionBatch.kind, '範圍草稿已變更，批次已拒絕套用');
         cancelMonitoringPageRequest('host', false); cancelMonitoringPageRequest('sensor', false);
         estimateToken = null; estimateFingerprint = null;
@@ -3237,13 +3276,15 @@ if (monitoringForm) {
             hostIds: sortedIds(hostSelection), sensorIds: sortedIds(sensorSelection),
             catalogueToken: monitoring.catalogueToken, estimateToken };
     }
-    async function estimateScope() {
+    // onSequence：取得本次估算的序號，呼叫端據以判斷失敗時自己是否仍是最新一次
+    async function estimateScope(onSequence) {
         const request = monitoringRequest();
         const requestFingerprint = scopeFingerprint(request);
         const requestVersion = draftVersion;
-        const sequence = ++estimateSequence;
+        const sequence = estimateGuard.next();
+        onSequence?.(sequence);
         const estimate = await api.post('/api/prtg/monitoring/estimate', request);
-        if (sequence !== estimateSequence || requestVersion !== draftVersion ||
+        if (!estimateGuard.isCurrent(sequence) || requestVersion !== draftVersion ||
             requestFingerprint !== scopeFingerprint(monitoringRequest())) return null;
         estimateToken = estimate.estimateToken;
         estimateFingerprint = requestFingerprint;
@@ -3256,10 +3297,10 @@ if (monitoringForm) {
     document.getElementById('prtg-monitoring-estimate').addEventListener('click', async () => {
         if (!monitoring) return;
         const requestVersion = draftVersion;
-        const sequence = estimateSequence + 1;
-        try { await estimateScope(); }
+        let estimateSeq = null;
+        try { await estimateScope(started => { estimateSeq = started; }); }
         catch (error) {
-            if (requestVersion === draftVersion && sequence === estimateSequence) {
+            if (requestVersion === draftVersion && estimateGuard.isCurrent(estimateSeq)) {
                 estimateToken = null; updateSaveButton(); document.getElementById('prtg-monitoring-estimate-result').textContent = `估算遭拒：${error.message}`;
             }
         }
@@ -3267,11 +3308,11 @@ if (monitoringForm) {
     let previewOffset = 0;
     async function previewScope(reset = false) {
         if (reset) previewOffset = 0;
-        const requestOffset = previewOffset, sequence = ++previewSequence;
+        const requestOffset = previewOffset, sequence = previewGuard.next();
         const panel = document.getElementById('prtg-monitoring-preview-result');
         try {
             const data = await api.get(`/api/prtg/monitoring/preview?offset=${requestOffset}&limit=100`);
-            if (sequence !== previewSequence || requestOffset !== previewOffset) return null;
+            if (!previewGuard.isCurrent(sequence) || requestOffset !== previewOffset) return null;
             panel.replaceChildren();
             const summary = document.createElement('p');
             summary.textContent = `${data.day.slice(0, 10)}｜設定 ${data.settingsRevision}｜試點 ${data.policyRevision}｜` +
@@ -3293,7 +3334,7 @@ if (monitoringForm) {
                 }
             }
         } catch (error) {
-            if (sequence === previewSequence && requestOffset === previewOffset)
+            if (previewGuard.isCurrent(sequence) && requestOffset === previewOffset)
                 panel.textContent = `範圍預覽失敗：${error.message}`;
         }
     }
@@ -3314,7 +3355,7 @@ if (monitoringForm) {
         const added = [...next].filter(id => !hostSelection.has(id)).length;
         hostSelection.clear(); next.forEach(id => hostSelection.add(id));
         invalidateEstimate(); renderMonitoringHosts();
-        sensorPageSequence++; resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
+        sensorPageGuard.next(); resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
         return added;
     }
     function commitSensorSelection(next) {
@@ -3369,7 +3410,7 @@ if (monitoringForm) {
     function selectionBatchCurrent(batch) {
         const search = batch.kind === 'host' ? hostSearch.value : sensorSearch.value;
         const selectedHosts = batch.kind === 'sensor' ? sortedIds(hostSelection) : null;
-        return activeSelectionBatch === batch && batch.sequence === selectionBatchSequence &&
+        return activeSelectionBatch === batch && selectionBatchGuard.isCurrent(batch.sequence) &&
             batch.draftVersion === draftVersion && monitoring?.revision === batch.revision &&
             monitoring?.catalogueToken === batch.catalogueToken && search === batch.search &&
             JSON.stringify(selectedHosts) === JSON.stringify(batch.selectedHosts);
@@ -3377,7 +3418,7 @@ if (monitoringForm) {
     function cancelSelectionBatch(kind, reason = '已由使用者停止批次') {
         const batch = activeSelectionBatch;
         if (!batch || batch.kind !== kind) return;
-        selectionBatchSequence++;
+        selectionBatchGuard.next();
         activeSelectionBatch = null;
         if (batch.timeoutTimer) clearTimeout(batch.timeoutTimer);
         batch.controller.abort();
@@ -3391,7 +3432,7 @@ if (monitoringForm) {
         const statusBox = isHost ? hostBatchStatus : sensorBatchStatus;
         const maximum = monitoringLimit(kind);
         const batch = {
-            kind, sequence: ++selectionBatchSequence, draftVersion,
+            kind, sequence: selectionBatchGuard.next(), draftVersion,
             revision: monitoring.revision, catalogueToken: monitoring.catalogueToken,
             search: searchInput.value, selectedHosts: isHost ? null : sortedIds(hostSelection),
             controller: new AbortController(), timeoutTimer: null, timedOut: false
@@ -3507,7 +3548,7 @@ if (monitoringForm) {
                 hostSelection.delete(Number(host.hostId));
                 savedHostRows = savedHostRows.filter(item => Number(item.hostId) !== Number(host.hostId));
                 invalidateEstimate(); renderSavedHosts(); renderMonitoringHosts();
-                sensorPageSequence++; resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
+                sensorPageGuard.next(); resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
             });
             const text = document.createElement('span');
             text.textContent = `${host.hostName} (#${host.hostId}) — ${labels[host.status] || '狀態未知'}`;
@@ -3525,7 +3566,7 @@ if (monitoringForm) {
         cancelMonitoringPageRequest('host');
         if (reset) { hostCursors = [null]; hostPageIndex = 0; }
         const pageIndex = hostPageIndex, search = hostSearch.value, catalogueToken = monitoring.catalogueToken;
-        const cursor = hostCursors[pageIndex], sequence = ++hostPageSequence;
+        const cursor = hostCursors[pageIndex], sequence = hostPageGuard.next();
         const controller = new AbortController();
         hostPageController = controller;
         const binding = JSON.stringify([monitoring.revision, catalogueToken, pageIndex, cursor, search]);
@@ -3536,14 +3577,14 @@ if (monitoringForm) {
         catch (error) {
             const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
                 hostPageIndex, hostCursors[hostPageIndex], hostSearch.value]);
-            if (sequence !== hostPageSequence || binding !== currentBinding) return null;
+            if (!hostPageGuard.isCurrent(sequence) || binding !== currentBinding) return null;
             throw error;
         } finally {
             if (hostPageController === controller) hostPageController = null;
         }
         const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
             hostPageIndex, hostCursors[hostPageIndex], hostSearch.value]);
-        if (sequence !== hostPageSequence || binding !== currentBinding) return null;
+        if (!hostPageGuard.isCurrent(sequence) || binding !== currentBinding) return null;
         hostPage = response;
         if (hostPage.nextCursor) hostCursors[pageIndex + 1] = hostPage.nextCursor;
         renderMonitoringHosts();
@@ -3605,12 +3646,12 @@ if (monitoringForm) {
     }
     async function loadMonitoringSensorPage() {
         cancelMonitoringPageRequest('sensor');
-        const sequence = ++sensorPageSequence;
+        const sequence = sensorPageGuard.next();
         const pageIndex = sensorPageIndex, hostIds = sortedIds(hostSelection), search = sensorSearch.value;
         const catalogueToken = monitoring.catalogueToken, revision = monitoring.revision, cursor = sensorCursors[pageIndex];
         const binding = JSON.stringify([revision, catalogueToken, pageIndex, cursor, search, hostIds]);
         if (!hostIds.length) {
-            if (sequence === sensorPageSequence && binding === JSON.stringify([monitoring.revision, monitoring.catalogueToken,
+            if (sensorPageGuard.isCurrent(sequence) && binding === JSON.stringify([monitoring.revision, monitoring.catalogueToken,
                 sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)])) {
                 sensorPage = { rows: [], total: 0, nextCursor: null }; renderMonitoringSensors();
             }
@@ -3626,14 +3667,14 @@ if (monitoringForm) {
         } catch (error) {
             const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
                 sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)]);
-            if (sequence !== sensorPageSequence || binding !== currentBinding) return null;
+            if (!sensorPageGuard.isCurrent(sequence) || binding !== currentBinding) return null;
             throw error;
         } finally {
             if (sensorPageController === controller) sensorPageController = null;
         }
         const currentBinding = monitoring && JSON.stringify([monitoring.revision, monitoring.catalogueToken,
             sensorPageIndex, sensorCursors[sensorPageIndex], sensorSearch.value, sortedIds(hostSelection)]);
-        if (sequence !== sensorPageSequence || binding !== currentBinding) return null;
+        if (!sensorPageGuard.isCurrent(sequence) || binding !== currentBinding) return null;
         sensorPage = response;
         if (sensorPage.nextCursor) sensorCursors[pageIndex + 1] = sensorPage.nextCursor;
         renderMonitoringSensors();
@@ -3641,14 +3682,14 @@ if (monitoringForm) {
     async function loadMonitoring() {
         if (activeSelectionBatch) cancelSelectionBatch(activeSelectionBatch.kind, '正在重新載入目錄，批次已拒絕套用');
         cancelMonitoringPageRequest('host'); cancelMonitoringPageRequest('sensor');
-        const sequence = ++monitoringLoadSequence;
-        hostPageSequence++; sensorPageSequence++; previewSequence++;
+        const sequence = monitoringLoadGuard.next();
+        hostPageGuard.next(); sensorPageGuard.next(); previewGuard.next();
         const draftVersionAtStart = draftVersion;
         try {
             const response = await api.get('/api/prtg/monitoring');
-            if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
-            monitoring = response; draftVersion++; estimateSequence++;
-            hostPageSequence++; sensorPageSequence++;
+            if (!monitoringLoadGuard.isCurrent(sequence) || draftVersionAtStart !== draftVersion) return null;
+            monitoring = response; draftVersion++; estimateGuard.next();
+            hostPageGuard.next(); sensorPageGuard.next();
             // 上限數字只來自後端（ScaleLimits），頁面不寫死
             document.getElementById('prtg-monitoring-selection-limits').textContent =
                 `最多選取 ${formatNumber(monitoringLimit('host'))} 台主機與 ${formatNumber(monitoringLimit('sensor'))} 顆 sensor；超過上限會明確拒絕，不會截斷。`;
@@ -3670,22 +3711,22 @@ if (monitoringForm) {
             updateSaveButton();
             try { await loadMonitoringHostPage(true); }
             catch (error) {
-                if (sequence === monitoringLoadSequence && initializedDraftVersion === draftVersion)
+                if (monitoringLoadGuard.isCurrent(sequence) && initializedDraftVersion === draftVersion)
                     hostSelect.textContent = `主機目錄載入失敗：${error.message}；已儲存選取仍可核對。`;
             }
-            if (sequence !== monitoringLoadSequence || initializedDraftVersion !== draftVersion) return null;
+            if (!monitoringLoadGuard.isCurrent(sequence) || initializedDraftVersion !== draftVersion) return null;
             renderSavedHosts();
             resetMonitoringSensorPages();
             try { await loadMonitoringSensorPage(); }
             catch (error) {
-                if (sequence === monitoringLoadSequence && initializedDraftVersion === draftVersion)
+                if (monitoringLoadGuard.isCurrent(sequence) && initializedDraftVersion === draftVersion)
                     showSensorError(error);
             }
-            if (sequence !== monitoringLoadSequence || initializedDraftVersion !== draftVersion) return null;
+            if (!monitoringLoadGuard.isCurrent(sequence) || initializedDraftVersion !== draftVersion) return null;
             baselineFingerprint = scopeFingerprint(monitoringRequest());
             updateSaveButton();
         } catch (error) {
-            if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
+            if (!monitoringLoadGuard.isCurrent(sequence) || draftVersionAtStart !== draftVersion) return null;
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = true;
             status.textContent = `無法載入或檢視試點範圍：${error.message}。請由至少能檢視完整既有試點的 Maintain 管理者處理。`;
         }

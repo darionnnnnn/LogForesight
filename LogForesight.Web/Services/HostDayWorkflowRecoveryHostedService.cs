@@ -473,10 +473,10 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             try
             {
                 var host = hosts.GetValueOrDefault(record.HostId);
-                var analysis = new LogAnalysisService(new EventLogService(), aiService,
+                var analysis = AnalysisServiceFactory.Create(new EventLogService(), aiService,
                     _backend.RecordStore(new HostKey { HostId = record.HostId, HostName = record.Host }),
-                    suppressionStore, reportService: new RiskReportService(aiService, reportStore,
-                        appSettings.Ai.DeepDiveMaxTokens,
+                    suppressionStore, AnalysisServiceFactory.CreateReportService(aiService, reportStore,
+                        appSettings.Ai,
                         () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_backend.Blob("rules"))),
                         hostOs: host?.Os ?? WebHost.OsWindows),
                     host: record.Host, hostId: record.HostId, riskyEventStore: _backend.RiskyEventStore(),
@@ -582,16 +582,30 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 
     private WorkflowRecoveryCursor ReadCursor()
     {
-        var raw = _backend.Blob(CheckpointKey).Read();
-        return string.IsNullOrWhiteSpace(raw)
-            ? new WorkflowRecoveryCursor()
-            : JsonSerializer.Deserialize<WorkflowRecoveryCursor>(raw) ?? new WorkflowRecoveryCursor();
+        var cursor = ParseCursor(_backend.Blob(CheckpointKey).Read(), out var corrupt);
+        // 游標損壞視為新游標從頭走，留一行警告；之後的寫入會以新游標覆蓋損壞內容（不在 Mutate 內寫記錄）
+        if (corrupt)
+            Log.Warn("Workflow recovery cursor is unreadable; restarting from a fresh cursor");
+        return cursor;
+    }
+
+    /// <summary>讀不出（空白、JSON 損壞、非物件）一律回新游標；<paramref name="corrupt"/> 只在「有內容但解析失敗」時為 true。</summary>
+    private static WorkflowRecoveryCursor ParseCursor(string? raw, out bool corrupt)
+    {
+        corrupt = false;
+        if (string.IsNullOrWhiteSpace(raw)) return new WorkflowRecoveryCursor();
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<WorkflowRecoveryCursor>(raw);
+            if (parsed != null) return parsed;
+        }
+        catch (JsonException) { }
+        corrupt = true;
+        return new WorkflowRecoveryCursor();
     }
 
     private void WriteCursor(WorkflowRecoveryCursor cursor) => _backend.Blob(CheckpointKey)
-        .Mutate(raw => (JsonSerializer.Serialize(MergeCursor(
-            string.IsNullOrWhiteSpace(raw) ? new WorkflowRecoveryCursor() :
-                JsonSerializer.Deserialize<WorkflowRecoveryCursor>(raw) ?? new WorkflowRecoveryCursor(), cursor)), true));
+        .Mutate(raw => (JsonSerializer.Serialize(MergeCursor(ParseCursor(raw, out _), cursor)), true));
 
     private static WorkflowRecoveryCursor MergeCursor(WorkflowRecoveryCursor current, WorkflowRecoveryCursor incoming)
     {

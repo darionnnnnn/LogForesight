@@ -8,6 +8,7 @@
  */
 
 import { api } from '../core/api.js';
+import { readNumberField, readNumberFields } from '../core/number-field.js';
 import { prtgCategoryLabel } from '../core/prtg-sensor-categories.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
@@ -16,6 +17,7 @@ import {
 } from '../core/ui.js';
 import { statusNote, roleText } from '../core/elements.js';
 import { categoryName, severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText, CATEGORY_NAMES, SEVERITY_ORDER, severityCell } from '../core/format.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
 const chipFilters = {
@@ -67,17 +69,19 @@ renderPageHeader(document.getElementById('page-header'), {
     }
 });
 
-const ruleTabsEl = document.getElementById('rule-tabs');
-bindTabs(ruleTabsEl);
-// Windows規則／Linux規則兩個 tab 共用 data-tab="rules"（同一個 data-panel），
-// bindTabs 只負責切換面板顯示；平台切換靠這裡另外偵測 data-platform。
-ruleTabsEl.addEventListener('click', event => {
-    const btn = event.target.closest('[data-platform]');
-    if (!btn) return;
-    currentPlatform = btn.dataset.platform;
-    updateSearchPlaceholder();
-    rulePage = 1;
-    renderRules();
+// Windows／Linux／PRTG 規則三個頁籤共用 data-tab="rules"（同一個 data-panel）：
+// bindTabs 負責切換與鍵盤操作；平台由頁籤按鈕的 data-platform 帶出，點擊與方向鍵切換都經 onChange。
+// 刻意不開 hash 同步：三個平台頁籤共用 data-tab="rules"，hash 只能寫成 #rules、表達不出平台，
+// 重新整理或 hashchange 會一律退回 Windows 頁籤（TabHashUiTests 守門）。
+bindTabs(document.getElementById('rule-tabs'), {
+    onChange: (_name, btn) => {
+        const platform = btn.dataset.platform;
+        if (!platform || platform === currentPlatform) return;
+        currentPlatform = platform;
+        updateSearchPlaceholder();
+        rulePage = 1;
+        renderRules();
+    }
 });
 
 async function load() {
@@ -699,23 +703,23 @@ function collectRule() {
         prtgThreshold: platform === 'prtg' && document.getElementById('rule-prtg-code').value !== 'disk_free_trend' && !isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
         prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null,
         prtgDiskTrendThresholds: platform === 'prtg' && document.getElementById('rule-prtg-code').value === 'disk_free_trend' ? {
-            lowWaterPercent: Number(document.getElementById('rule-prtg-trend-low-water').value),
-            minimumDeclinePercentagePointsPerDay: Number(document.getElementById('rule-prtg-trend-decline').value),
-            maximumDaysToDepletion: Number(document.getElementById('rule-prtg-trend-depletion').value),
-            maximumDaysToLowWater: Number(document.getElementById('rule-prtg-trend-low-water-days').value),
-            minimumValidDays: Number(document.getElementById('rule-prtg-trend-min-days').value),
-            recentWindowDays: Number(document.getElementById('rule-prtg-trend-window').value),
-            minimumDecliningDayRatio: Number(document.getElementById('rule-prtg-trend-ratio').value) / 100
+            lowWaterPercent: readNumberField('rule-prtg-trend-low-water'),
+            minimumDeclinePercentagePointsPerDay: readNumberField('rule-prtg-trend-decline'),
+            maximumDaysToDepletion: readNumberField('rule-prtg-trend-depletion'),
+            maximumDaysToLowWater: readNumberField('rule-prtg-trend-low-water-days'),
+            minimumValidDays: readNumberField('rule-prtg-trend-min-days'),
+            recentWindowDays: readNumberField('rule-prtg-trend-window'),
+            minimumDecliningDayRatio: percentToRatio('rule-prtg-trend-ratio')
         } : null,
         prtgTrendThresholds: platform === 'prtg' && isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? {
-            windowDays: Number(document.getElementById('rule-prtg-vtrend-window').value),
-            minimumValidDays: Number(document.getElementById('rule-prtg-vtrend-min-days').value),
-            minimumSlopePerDay: Number(document.getElementById('rule-prtg-vtrend-slope').value),
-            minimumWorseningDayRatio: Number(document.getElementById('rule-prtg-vtrend-ratio').value) / 100,
-            targetValue: Number(document.getElementById('rule-prtg-vtrend-target').value),
-            horizonDays: Number(document.getElementById('rule-prtg-vtrend-horizon').value),
-            recentDays: Number(document.getElementById('rule-prtg-vtrend-recent').value),
-            baselineMultiplier: Number(document.getElementById('rule-prtg-vtrend-multiplier').value)
+            windowDays: readNumberField('rule-prtg-vtrend-window'),
+            minimumValidDays: readNumberField('rule-prtg-vtrend-min-days'),
+            minimumSlopePerDay: readNumberField('rule-prtg-vtrend-slope'),
+            minimumWorseningDayRatio: percentToRatio('rule-prtg-vtrend-ratio'),
+            targetValue: readNumberField('rule-prtg-vtrend-target'),
+            horizonDays: readNumberField('rule-prtg-vtrend-horizon'),
+            recentDays: readNumberField('rule-prtg-vtrend-recent'),
+            baselineMultiplier: readNumberField('rule-prtg-vtrend-multiplier')
         } : null,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
@@ -727,6 +731,12 @@ function collectRule() {
         likelyCauses: splitLines(document.getElementById('rule-causes').value),
         nextSteps: splitLines(document.getElementById('rule-steps').value)
     };
+}
+
+/** 百分比欄位（畫面以 % 輸入）轉成後端的 0～1 比例；沒填回 null，不當成 0 */
+function percentToRatio(id) {
+    const percent = readNumberField(id);
+    return percent === null ? null : percent / 100;
 }
 
 function splitLines(text) {
@@ -754,12 +764,12 @@ const diskPreviewPrevious = document.getElementById('rule-disk-preview-previous'
 const diskPreviewNext = document.getElementById('rule-disk-preview-next');
 let diskPreviewOffset = 0;
 let diskPreviewHasResult = false;
-let diskPreviewRequestId = 0;
+const diskPreviewGuard = createSeqGuard();
 let diskPreviewFingerprint = '';
 let latestDiskPreview = null;
 
 function clearDiskPreview(message = '') {
-    diskPreviewRequestId++;
+    diskPreviewGuard.next();
     diskPreviewHasResult = false;
     diskPreviewFingerprint = '';
     latestDiskPreview = null;
@@ -792,7 +802,10 @@ async function runDiskPreview(event) {
     if (thresholdError) { toast(thresholdError, 'warning'); return; }
     const daysInput = document.getElementById('rule-disk-preview-days');
     const limitInput = document.getElementById('rule-disk-preview-limit');
-    const days = Number(daysInput.value), limit = Number(limitInput.value), offset = diskPreviewOffset;
+    const days = readNumberField(daysInput, { required: true, integer: true });
+    const limit = readNumberField(limitInput, { required: true, integer: true });
+    if (days === null || limit === null) return;   // 空欄位已在欄位上標錯，不當成 0 往下算
+    const offset = diskPreviewOffset;
     if (!Number.isInteger(days) || days < 1 || days > 730 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
         toast('日期範圍需為 1–730 個已完成日，每頁配對數需為 1–100。', 'warning'); return;
     }
@@ -803,7 +816,7 @@ async function runDiskPreview(event) {
     from.setDate(from.getDate() - (days - 1));
     const requestBody = { fromDate: dateText(from), throughDate: dateText(through), offset, limit, rule: collectRule() };
     const fingerprint = JSON.stringify(requestBody);
-    const requestId = ++diskPreviewRequestId;
+    const requestId = diskPreviewGuard.next();
     const restore = withBusy(document.getElementById('rule-disk-preview-run'), '試算中');
     diskPreviewHasResult = false;
     diskPreviewSummary.textContent = '正在計算未儲存草稿…';
@@ -812,7 +825,7 @@ async function runDiskPreview(event) {
     diskPreviewNext.disabled = true;
     try {
         const result = await api.post('/api/rules/disk-trend-preview', requestBody);
-        if (requestId !== diskPreviewRequestId) return;
+        if (!diskPreviewGuard.isCurrent(requestId)) return;
         const latest = result.latestPreviewAt ? formatDateTime(result.latestPreviewAt) : '—';
         const candidateCount = Number(result.candidateCount ?? 0);
         const assessedCount = Number(result.assessedCount ?? (result.rows ?? []).length);
@@ -853,7 +866,7 @@ async function runDiskPreview(event) {
         }
         diskPreviewResults.appendChild(list);
     } catch (error) {
-        if (requestId !== diskPreviewRequestId) return;
+        if (!diskPreviewGuard.isCurrent(requestId)) return;
         diskPreviewSummary.textContent = error?.message || '目前無法完成預覽，請稍後再試。';
         diskPreviewPage.textContent = '尚未試算';
     } finally {
@@ -863,13 +876,16 @@ async function runDiskPreview(event) {
 
 document.getElementById('rule-disk-preview-run').addEventListener('click', runDiskPreview);
 diskPreviewPrevious.addEventListener('click', event => {
-    const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+    // 空欄位不當成 0（readNumberField 回 null）：偏移量不動，交給 runDiskPreview 在欄位上標錯
+    const limit = readNumberField('rule-disk-preview-limit', { integer: true });
+    if (limit === null) { runDiskPreview(event); return; }
     if (diskPreviewOffset < limit) return;
     diskPreviewOffset -= limit;
     runDiskPreview(event);
 });
 diskPreviewNext.addEventListener('click', event => {
-    diskPreviewOffset += Number(document.getElementById('rule-disk-preview-limit').value);
+    const limit = readNumberField('rule-disk-preview-limit', { integer: true });
+    if (limit !== null) diskPreviewOffset += limit;
     runDiskPreview(event);
 });
 
@@ -895,8 +911,19 @@ document.getElementById('rule-modal').addEventListener('shown.bs.modal', () => {
     document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', !isAnyTrendRuleCode(document.getElementById('rule-prtg-code').value));
 });
 
+/** 趨勢門檻欄位全是必填：沒填的欄位標出錯誤（不當成 0），回傳提示文字；全有值回 null */
+function missingThresholdMessage(ids) {
+    const { ok } = readNumberFields(Object.fromEntries(ids.map(id => [id, { source: id, message: '請輸入數值' }])));
+    return ok ? null : '趨勢門檻有欄位沒填，請補齊後再繼續。';
+}
+
 function diskTrendThresholdError() {
     if (document.getElementById('rule-prtg-code').value !== 'disk_free_trend') return null;
+    const missing = missingThresholdMessage([
+        'rule-prtg-trend-low-water', 'rule-prtg-trend-decline', 'rule-prtg-trend-depletion', 'rule-prtg-trend-low-water-days',
+        'rule-prtg-trend-min-days', 'rule-prtg-trend-window', 'rule-prtg-trend-ratio'
+    ]);
+    if (missing) return missing;
     const values = [
         ['rule-prtg-trend-low-water', 0, 100, '低水位必須介於 0–100%。'],
         ['rule-prtg-trend-decline', Number.MIN_VALUE, 100, '最低下降速度必須大於 0 且不超過 100 百分點／日。'],
@@ -918,6 +945,11 @@ function diskTrendThresholdError() {
 
 function valueTrendThresholdError() {
     if (!isTrendRuleCode(document.getElementById('rule-prtg-code').value)) return null;
+    const missing = missingThresholdMessage([
+        'rule-prtg-vtrend-window', 'rule-prtg-vtrend-min-days', 'rule-prtg-vtrend-slope', 'rule-prtg-vtrend-ratio',
+        'rule-prtg-vtrend-target', 'rule-prtg-vtrend-horizon', 'rule-prtg-vtrend-recent', 'rule-prtg-vtrend-multiplier'
+    ]);
+    if (missing) return missing;
     const windowDays = Number(document.getElementById('rule-prtg-vtrend-window').value);
     const minDays = Number(document.getElementById('rule-prtg-vtrend-min-days').value);
     const slope = Number(document.getElementById('rule-prtg-vtrend-slope').value);
@@ -1000,8 +1032,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
     const restore = withBusy(saveButton, '儲存中');
     const draft = collectRule();
     if (draft.platform === 'prtg' && draft.prtgRuleCode === 'disk_free_trend' && draft.enabled) {
-        const days = Number(document.getElementById('rule-disk-preview-days').value);
-        const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+        const days = readNumberField('rule-disk-preview-days', { required: true, integer: true });
+        const limit = readNumberField('rule-disk-preview-limit', { required: true, integer: true });
+        if (days === null || limit === null) { restore(); return; }
         const through = new Date();
         through.setDate(through.getDate() - 1);
         through.setHours(12, 0, 0, 0);
@@ -1020,8 +1053,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         });
         if (!previewResult) { restore(); return; }
     } else if (draft.platform === 'prtg' && isTrendRuleCode(draft.prtgRuleCode) && draft.enabled) {
-        const days = Number(document.getElementById('rule-disk-preview-days').value);
-        const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+        const days = readNumberField('rule-disk-preview-days', { required: true, integer: true });
+        const limit = readNumberField('rule-disk-preview-limit', { required: true, integer: true });
+        if (days === null || limit === null) { restore(); return; }
         const through = new Date();
         through.setDate(through.getDate() - 1);
         through.setHours(12, 0, 0, 0);

@@ -32,7 +32,7 @@ public sealed class PrtgValueReadinessController : ControllerBase
         PrtgValueReason? filterReason = null;
         if (!string.IsNullOrWhiteSpace(reason))
         {
-            if (!Enum.TryParse<PrtgValueReason>(reason.Trim(), ignoreCase: true, out var parsed))
+            if (!InputParsing.TryParseDefinedEnum<PrtgValueReason>(reason.Trim(), out var parsed))
             {
                 return BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidReason, $"無效的就緒原因：{reason}。"));
             }

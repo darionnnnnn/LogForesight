@@ -6,7 +6,7 @@
 import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
-    toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
+    toast, withBusy, trackUnsaved, bindTabs, showTab, icon, confirmAction, renderTable, collectLines,
     guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt, button as uiButton
 } from '../core/ui.js';
 import { statusNote } from '../core/elements.js';
@@ -15,6 +15,8 @@ import {
     prtgFreshnessLabel, statusBadge, toLocalDateString
 } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
+import { readNumberField } from '../core/number-field.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { loadGuardFields, collectGuardPayload, bindGuardPreview } from './prtg-guard.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -753,10 +755,10 @@ function renderPrtgSnapshotHealth(snapshot) {
         host.replaceChildren();
         return;
     }
-    const badge = document.createElement('span');
-    badge.className = `badge text-bg-${snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'secondary'} me-2`;
     const labels = { disabled: '未啟用', 'no-targets': '無目標', healthy: '可用', covered: '歷史資料覆蓋', insufficient: '資料不足', unknown: '待確認', paused: '預期暫停', stopped: '已停止：待寫檔無法使用', 'no-recent-success': '逾時無成功取樣' };
-    badge.textContent = labels[snapshot.state] ?? '待確認';
+    const badge = statusBadge(labels[snapshot.state] ?? '待確認',
+        snapshot.warning ? 'warning' : snapshot.state === 'healthy' ? 'success' : 'neutral');
+    badge.classList.add('me-2');
     const message = document.createElement('span');
     message.textContent = snapshot.message ?? '';
     const children = [badge, message];
@@ -1314,7 +1316,7 @@ function collectSeverities() {
 function activateTabForElement(el) {
     const panelName = el?.closest('[data-panel]')?.dataset.panel;
     if (!panelName) return;
-    document.querySelector(`#settings-tabs [data-tab="${panelName}"]`)?.click();
+    showTab('settings-tabs', panelName);
 }
 
 /**
@@ -1342,24 +1344,13 @@ function findInvalidNumberFields(form) {
     return invalid;
 }
 
-function clearFieldError(el) {
-    el.classList.remove('is-invalid');
-    if (el.nextElementSibling?.classList.contains('lf-field-error')) el.nextElementSibling.remove();
-}
-
 /**
  * 欄位錯誤的呈現（§6b 表單驗證錯誤）：每個欄位紅框＋下方 invalid-feedback，
  * 切到第一個錯誤欄位所在的頁籤（收合在「進階設定」裡就展開）並 focus，toast 只留一則摘要。
  */
 function showFieldErrors(errors) {
     for (const { el, message } of errors) {
-        clearFieldError(el);
-        el.classList.add('is-invalid');
-        const feedback = document.createElement('div');
-        feedback.className = 'invalid-feedback lf-field-error';
-        feedback.setAttribute('role', 'alert');
-        feedback.textContent = message;
-        el.after(feedback);
+        setFieldError(el, message);
         el.addEventListener('input', () => clearFieldError(el), { once: true });
     }
     const first = errors[0].el;
@@ -1719,12 +1710,15 @@ function bindMailTest() {
             resultEl.replaceChildren(statusNote('warning', '請至少輸入一位收件人。'));
             return;
         }
+        // 埠號清空不能被當成 0 送出：欄位標錯並停下
+        const smtpPort = readNumberField('smtp-port', { required: true, integer: true, message: '請輸入 SMTP 埠號' });
+        if (smtpPort === null) return;
 
         const restore = withBusy(button, '寄送中');
         try {
             const result = await api.post('/api/admin/settings/mail-test', {
                 smtpServer: document.getElementById('smtp-server').value.trim(),
-                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpPort,
                 smtpUseTls: document.getElementById('smtp-use-tls').checked,
                 smtpAccount: document.getElementById('smtp-account').value.trim(),
                 smtpPassword: document.getElementById('smtp-password').value || null,

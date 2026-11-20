@@ -13,10 +13,7 @@ public static class PrtgHistoricalRiskReview
 
     public static bool IsWeakPattern(string? id) => id != null && WeakPatterns.Contains(id);
     private static bool IsNonRiskPrtgPattern(string? id) => IsWeakPattern(id);
-    private static readonly (string Old, string Current)[] Prefixes =
-    [("【儲存故障雙重確認】", "【儲存異常同日訊號】"),
-        ("【磁碟容量雙重確認】", "【容量異常同日訊號】"),
-        ("【失聯獲 PRTG 證實】", "【關機與監測異常同日訊號】")];
+    private static (string Old, string Current)[] Prefixes => PrtgCorroboration.LegacyPrefixes;
 
     public static bool Apply(DailyAnalysisRecord record)
     {

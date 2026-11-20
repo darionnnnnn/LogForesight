@@ -10,7 +10,7 @@ namespace LogForesight.Tests;
 /// 與「指定 userId」（<see cref="HostVisibilityResolver.GetVisibleHostIds(IHostStore, IUserStore, IUserGroupStore, IGroupAccessStore, long, IIssueOwnerStore?, IIssueAggregateQuery?, int)"/>）
 /// 對同一組資料必須回相同集合；規則只該有一份，兩邊漂移就是授權範圍靜默錯誤。
 /// 唯一已知且刻意保留的差異：已停用使用者帶著 ViewAll claim 時，目前登入者路徑回全部、
-/// 指定 userId 路徑回空（claim 由 ActiveUserMiddleware 在請求入口把關）。該組合在
+/// 指定 userId 路徑回空（claim 由 CookieSessionEvents 在請求入口把關）。該組合在
 /// <see cref="停用使用者持有ViewAll_目前登入者回全部_指定userId回空"/> 明確斷言，不靜默通過。
 /// </summary>
 public class VisibilityPathEquivalenceTests

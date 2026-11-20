@@ -71,6 +71,7 @@ public sealed class SqlitePragmaInterceptor : DbConnectionInterceptor
         await base.ConnectionOpenedAsync(connection, eventData, cancellationToken);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "PRAGMA 文字由建構時的數值設定組成，不含外部字串")]
     private void ApplyPragmas(DbConnection connection)
     {
         using var cmd = connection.CreateCommand();

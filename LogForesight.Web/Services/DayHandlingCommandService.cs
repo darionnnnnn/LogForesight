@@ -408,7 +408,7 @@ public class DayHandlingCommandService
             .Select(id =>
             {
                 var user = _users.Get(id);
-                return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
+                return NameFormat.UserLabel(_displayNameService, user);
             })
             .Distinct()
             .ToList();
@@ -627,7 +627,7 @@ public class DayHandlingCommandService
                 .Select(id =>
                 {
                     var user = _users.Get(id);
-                    return user == null ? "（已刪除）" : _displayNameService.Of(user.DisplayName);
+                    return NameFormat.UserNameOnly(_displayNameService, user);
                 })
                 .ToList(),
 
@@ -642,7 +642,7 @@ public class DayHandlingCommandService
             .Select(id =>
             {
                 var user = _users.Get(id);
-                return user == null ? "（已刪除）" : _displayNameService.Of(user.DisplayName);
+                return NameFormat.UserNameOnly(_displayNameService, user);
             })
             .ToList();
 

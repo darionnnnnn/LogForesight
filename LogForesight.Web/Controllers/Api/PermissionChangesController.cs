@@ -44,7 +44,7 @@ public class PermissionChangesController : ControllerBase
             Status = status,
             Source = source,
             From = parsedFrom,
-            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            To = parsedTo is { } toDate ? InputParsing.EndOfDay(toDate) : null,
             Sort = sort,
             Ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase),
             Page = page,
@@ -100,7 +100,7 @@ public class PermissionChangesController : ControllerBase
             Status = status,
             Source = source,
             From = parsedFrom,
-            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            To = parsedTo is { } toDate ? InputParsing.EndOfDay(toDate) : null,
             Sort = sort,
             Ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase)
         };

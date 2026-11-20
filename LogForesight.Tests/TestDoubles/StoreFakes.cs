@@ -315,6 +315,8 @@ internal class FakeUserStore : IUserStore
         // 逐欄與 UserStore.Upsert 對齊（Account 原本漏抄）。
         // LastLoginAt 刻意不覆寫：唯一寫入點是 TouchLogin，
         // 讓 Upsert 帶進來的 null 蓋掉真實登入時間會讓「最近登入」永遠是空的
+        // SessionVersion 不抄；啟用轉停用時遞增（與 UserStore.Upsert 對齊）
+        if (existing.Active && !user.Active) existing.SessionVersion++;
         existing.Account = user.Account;
         existing.DisplayName = user.DisplayName;
         existing.Email = user.Email;
@@ -343,6 +345,14 @@ internal class FakeUserStore : IUserStore
         var user = Get(userId);
         if (user != null) user.DispatchPaused = paused;
     }
+
+    public long BumpSessionVersion(long userId)
+    {
+        var user = Get(userId);
+        return user == null ? 0 : ++user.SessionVersion;
+    }
+
+    public long GetSessionVersion(WebUser user) => user.SessionVersion;
 }
 
 internal class FakeUserGroupStore : IUserGroupStore

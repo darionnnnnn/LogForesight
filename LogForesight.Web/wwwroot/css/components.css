@@ -1128,21 +1128,43 @@ a.lf-badge:hover { text-decoration: underline; }
     cursor: inherit;
 }
 
-/* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
-.table > tbody > tr.lf-row-link { cursor: pointer; }
+/* 整列導向（ui.js attachRowLink）：列內一個真正的 <a href>，::after 延伸到整列（stretched link）。
+   tr 成為定位基準；列內其他連結、按鈕、表單控制項抬到延伸區之上，保有自己的行為。
+   帶 title 的元素也抬上去，列內的提示才不會被延伸區蓋住；代價是這些元素的文字無法拖曳選取。
+   sticky 動作欄（z-index: 1）排在連結之後，同層時畫在延伸區之上，不被蓋住。 */
+.table > tbody > tr.lf-row-link { position: relative; cursor: pointer; }
+.lf-row-link__anchor {
+    color: inherit;
+    text-decoration: none;
+}
+.lf-row-link__anchor:hover { color: inherit; text-decoration: none; }
+.lf-row-link__anchor::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+}
+.lf-row-link :where(a:not(.lf-row-link__anchor), button, input, select, textarea, label, summary, [data-bs-toggle], [title]) {
+    position: relative;
+    z-index: 2;
+}
+/* 連結取得鍵盤焦點時，焦點框畫在整列（延伸區）上；用 inset 的 outline 避免被相鄰儲存格裁掉 */
+.lf-row-link__anchor:focus-visible { outline: none; }
+.lf-row-link__anchor:focus-visible::after {
+    outline: 2px solid var(--lf-primary);
+    outline-offset: -2px;
+}
 
 /* 可展開列：首欄展開箭頭，收合時朝右、展開時朝下 */
 .table > tbody > tr.lf-row-expandable { cursor: pointer; }
 
-/* 整列可點的鍵盤焦點（體檢 H5）：這些列現在有 role="button" + tabindex="0"，
+/* 可展開列的鍵盤焦點（體檢 H5）：這些列有 role="button" + tabindex="0"，
    Tab 得到就必須看得見。用 inset 陰影而不是 outline——<tr> 的 outline 在部分瀏覽器
    會被相鄰儲存格的邊框裁掉，內陰影畫在儲存格背景上不會有這個問題。 */
-.table > tbody > tr.lf-row-link:focus-visible > td,
 .table > tbody > tr.lf-row-expandable:focus-visible > td {
     outline: none;
     box-shadow: inset 0 0 0 2px var(--lf-primary);
 }
-.table > tbody > tr.lf-row-link:focus-visible,
 .table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
 /* 告警列的文字側（回饋二十輪 Q18）：li 是 flex 容器，子項預設 min-width:auto——
    來源名稱這類不含空白的長 token 會拒絕收縮並把右側按鈕推出卡片。

@@ -273,11 +273,11 @@ public class CalibrationServiceTests : IDisposable
             Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability",
             Status = "Up", Paused = false
         }], now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow
-        {
-            MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1",
-            MapStatus = PrtgMapStatus.Ok, CreatedAt = now
-        }]);
+        // 第二台裝置讓這一天的整份對應含 ok 列（只採含 ok 列的整份對應）；下面把裝置 10 那一列改成超長
+        store.ReplaceHostMapForDate(anchor, [
+            new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = now },
+            new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 11, HostId = 2, HostName = "HOST-2", MapStatus = PrtgMapStatus.Ok, CreatedAt = now }
+        ]);
         store.UpsertValues([new PrtgValueRow
         {
             SensorObjid = 1001, PeriodStart = anchor.AddHours(1), AvgValue = 50,
@@ -1056,6 +1056,53 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(0.25, Convert.ToDouble(mag.KeyMetrics["OkRatio"]));
         Assert.Equal(0.5, Convert.ToDouble(mag.KeyMetrics["SampledRatio"]));
         Assert.Equal(0.75, Convert.ToDouble(mag.KeyMetrics["UsableRatio"]));
+    }
+
+    [Fact]
+    public void AssessStatus_數值取得量級_偶數晚數時兩個每夜中位數都等於統計出口的平均值()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var anchor = new DateTime(2026, 8, 31);
+
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 3001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false },
+            new() { Objid = 3002, DeviceObjid = 10, SensorType = "SNMP Disk Free", Paused = false }
+        }, DateTime.Now);
+
+        // 14 晚（偶數）：感測器 3001 每晚都有，第 i 晚（0 起算）i+1 列；感測器 3002 只在後 7 晚各 1 列。
+        // 每晚感測器數：7 個 1、7 個 2 → 中位數 1.5（取 sorted[n/2] 的舊算法會得 2）；
+        // 每晚列數：前 7 晚 1..7、後 7 晚 9..15 → 中位數 (7+9)/2 = 8（舊算法得 9）。
+        var sensorCounts = new List<int>();
+        var rowCounts = new List<int>();
+        var values = new List<PrtgValueRow>();
+        for (var i = 0; i < 14; i++)
+        {
+            var day = anchor.AddDays(-i);
+            var rows = i + 1;
+            for (var h = 1; h <= rows; h++)
+                values.Add(new PrtgValueRow { SensorObjid = 3001, PeriodStart = day.AddHours(h), AvgValue = 10.0, Quality = PrtgDataQuality.Ok });
+            var sensors = 1;
+            if (i >= 7)
+            {
+                values.Add(new PrtgValueRow { SensorObjid = 3002, PeriodStart = day.AddHours(20), AvgValue = 10.0, Quality = PrtgDataQuality.Ok });
+                rows++;
+                sensors++;
+            }
+            sensorCounts.Add(sensors);
+            rowCounts.Add(rows);
+        }
+        store.UpsertValues(values);
+
+        var mag = CreateService().AssessStatus(anchor).TriggeredFetchMagnitude;
+
+        Assert.Equal(14, Convert.ToInt32(mag.KeyMetrics["DaysWithValues"]));
+        var sensorMedian = Convert.ToDouble(mag.KeyMetrics["SensorsPerNightMedian"]);
+        var rowMedian = Convert.ToDouble(mag.KeyMetrics["RowsPerNightMedian"]);
+        Assert.Equal(SampleStatistics.Median(sensorCounts)!.Value, sensorMedian);
+        Assert.Equal(SampleStatistics.Median(rowCounts)!.Value, rowMedian);
+        Assert.Equal(1.5, sensorMedian);
+        Assert.Equal(8.0, rowMedian);
     }
 
     // ── 4. 殘留判定門檻：四種狀態測試 ─────────────────────────────────
@@ -1847,10 +1894,13 @@ public class CalibrationServiceTests : IDisposable
             ctx.TopIssues.Add(new TopIssueRow
             {
                 RecordId = record.RecordId, HostId = 1, RecordDate = anchor, LogName = "PRTG",
-                SourceName = "PRTG:down", EventId = 0, EventKey = new string('x', 256),
+                SourceName = "PRTG:down", EventId = 0, EventKey = "x",
                 Category = "Service", SeverityRank = 2
             });
             ctx.SaveChanges();
+            // 模擬舊版 SQLite 留下的超長列：SaveChanges 會依欄位上限截斷，要用批次更新繞過。
+            var longKey = new string('x', 256);
+            ctx.TopIssues.ExecuteUpdate(u => u.SetProperty(t => t.EventKey, longKey));
         }
 
         foreach (var summaryOnly in new[] { false, true })
@@ -2505,10 +2555,12 @@ public class CalibrationServiceTests : IDisposable
         Assert.NotEmpty(validPackage.ValueBaselines);
         Assert.NotEmpty(validPackage.ValueSensorSummaries);
 
-        store.UpsertSensors(new List<PrtgSensorRow>
+        // 模擬舊版 SQLite 留下的超長單位：UpsertSensors 走 SaveChanges 會依欄位上限截斷，要用批次更新繞過。
+        using (var ctx = _fx.NewContext())
         {
-            new() { Objid = 1001, DeviceObjid = 10, SensorType = "SNMP Disk Free", Unit = new string('u', 65), Paused = false }
-        }, now.AddMinutes(1));
+            var longUnit = new string('u', 65);
+            ctx.PrtgSensors.Where(x => x.Objid == 1001).ExecuteUpdate(u => u.SetProperty(x => x.Unit, longUnit));
+        }
 
         var exception = Assert.ThrowsAny<InvalidOperationException>(
             () => service.BuildExportPackage(anchor, summaryOnly));
@@ -2754,15 +2806,15 @@ public class CalibrationControllerTests : IDisposable
     }
 
     [Fact]
-    public void 校準端點_無ViewAll狀態與匯出皆回403()
+    public void 校準端點_狀態與匯出皆宣告須全站檢視()
     {
-        var controller = CreateController(currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
-        var status = Assert.IsType<ObjectResult>(controller.GetStatus());
-        Assert.Equal(StatusCodes.Status403Forbidden, status.StatusCode);
-        var export = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
-        Assert.Equal(StatusCodes.Status403Forbidden, export.StatusCode);
-        var serverAdmin = CreateController(currentUser: FakeCurrentUser.ServerAdmin());
-        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(serverAdmin.GetStatus()).StatusCode);
+        // 拒絕由 [RequireViewAll] filter 執行（403 信封與稽核見錯誤出口測試，路由快照守住宣告）；
+        // 直接呼叫 action 不經過 filter，所以這裡驗宣告本身
+        foreach (var name in new[] { nameof(CalibrationController.GetStatus), nameof(CalibrationController.Export) })
+        {
+            var method = typeof(CalibrationController).GetMethod(name)!;
+            Assert.NotNull(method.GetCustomAttributes(typeof(LogForesight.Web.Filters.RequireViewAllAttribute), inherit: true).SingleOrDefault());
+        }
     }
 
     [Fact]

@@ -40,10 +40,21 @@ public static class NetiqProbeRunner
     /// （program／sev↔syslog priority／OS 判別候選值）。省略時對應步驟標示略過。</param>
     /// <param name="console">輸出目的地——Web 用累積到記憶體緩衝供輪詢讀取的 adapter
     /// （console CLI 版本已隨 Phase 5 退場，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）。</param>
-    public static async Task<bool> RunAsync(
+    public static Task<bool> RunAsync(
         IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
-        string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default)
+        string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default) =>
+        RunAsync(sentinels, settings, sampleIp, sampleLinuxIp, console, clientFactory: null, ct);
+
+    /// <summary>
+    /// 測試注入點：<paramref name="clientFactory"/> 讓測試以假的 Sentinel 回應（<c>HttpMessageHandler</c>）取代真實連線；
+    /// 為 null 時沿用 <c>new SentinelClient(server, settings)</c>，正式行為不變。
+    /// </summary>
+    internal static async Task<bool> RunAsync(
+        IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
+        string? sampleIp, string? sampleLinuxIp, IRunConsole console,
+        Func<SentinelServer, NetiqOptions, SentinelClient>? clientFactory, CancellationToken ct = default)
     {
+        clientFactory ??= static (server, options) => new SentinelClient(server, options);
         if (sentinels.Count == 0)
         {
             console.WriteLine("目前沒有已設定且啟用的 Sentinel（請先在 Web「NetIQ 維護」頁新增），無法執行 probe。");
@@ -80,7 +91,7 @@ public static class NetiqProbeRunner
             var server = SentinelConnectionFactory.ToConnectable(sentinel);
             try
             {
-                allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp, console, ct);
+                allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp, console, clientFactory, ct);
             }
             catch (Exception ex)
             {
@@ -97,7 +108,7 @@ public static class NetiqProbeRunner
 
     private static async Task<bool> ProbeOneAsync(
         SentinelServer server, NetiqOptions settings, string? sampleIp, string? sampleLinuxIp,
-        IRunConsole console, CancellationToken ct)
+        IRunConsole console, Func<SentinelServer, NetiqOptions, SentinelClient> clientFactory, CancellationToken ct)
     {
         console.WriteLine($"── Sentinel「{server.Name}」（{server.BaseUrl}） ──");
         console.WriteLine($"   [人工核對] apidoc（有無聚合端點可取代 NETIQ-API-REFERENCE §3「沒有 GROUP BY」的本地聚合退回方案）：" +
@@ -106,7 +117,7 @@ public static class NetiqProbeRunner
         var ok = true;
         var now = DateTimeOffset.UtcNow;
 
-        await using (var client = new SentinelClient(server, settings))
+        await using (var client = clientFactory(server, settings))
         {
             ok &= await Step(console, 1, "認證＋小範圍查詢（近 1 小時、3 筆、全欄位——用於核對欄位對應）", async () =>
             {
@@ -224,6 +235,13 @@ public static class NetiqProbeRunner
                 {
                     console.WriteLine("     ⚠ 近 24h 查無登入事件，可自行放大時間範圍重跑本指令核對。");
                 }
+            });
+
+            // 7b：正式取數的投影不含 dun／tuid；這一步只回報「能不能投影、內容是什麼形狀」，
+            // 不動 SentinelFieldMap.Q1ProjectionFields。失敗只讓這一步標 ✗，不影響其餘步驟。
+            ok &= await Step(console, "7b", "dun／tuid 投影（rv40:4625，近 24h、1 筆，正式投影加 dun,tuid）——只回報欄位可否投影與內容形狀，不輸出值", async () =>
+            {
+                await ProbeDunTuidProjectionAsync(client, now, console, ct);
             });
 
             if (string.IsNullOrWhiteSpace(sampleLinuxIp))
@@ -482,7 +500,7 @@ public static class NetiqProbeRunner
                 Username = server.Username,
                 Password = server.Password + "-wrong"
             };
-            await using var badClient = new SentinelClient(badServer, settings);
+            await using var badClient = clientFactory(badServer, settings);
             try
             {
                 await badClient.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
@@ -496,6 +514,75 @@ public static class NetiqProbeRunner
 
         console.WriteLine();
         return ok;
+    }
+
+    /// <summary>dun／tuid 投影探測的結論（供測試與輸出共用）。</summary>
+    internal enum DunTuidVerdict { HasValue, NoValue, Rejected, NoEvent }
+
+    /// <summary>
+    /// 以「正式投影＋dun、tuid」查一筆 4625，只印欄位形狀：有值（長度與字元類型）、無值（缺席或空白）、
+    /// 欄位被拒（HTTP 4xx 或 job 以非成功狀態結束）。**不輸出任何欄位值**——帳號、SID 等實際內容不進診斷輸出。
+    /// 解析用 RawFields：預設的欄位過濾只留正式投影清單內的欄位，dun／tuid 會被濾掉而永遠看起來是「無值」。
+    /// 其他錯誤（連線、認證）照常往外擲，由 Step 標為失敗。
+    /// </summary>
+    internal static async Task<DunTuidVerdict> ProbeDunTuidProjectionAsync(
+        SentinelClient client, DateTimeOffset now, IRunConsole console, CancellationToken ct)
+    {
+        var fields = SentinelFieldMap.Q1ProjectionFields.Concat(new[] { "dun", "tuid" }).ToList();
+        SentinelSearchResult result;
+        try
+        {
+            result = await client.SearchAsync(new SentinelSearchRequest(
+                "rv40:4625", now.AddHours(-24), now, Fields: fields, MaxResults: 1, RawFields: true), ct);
+        }
+        catch (SentinelClientException ex) when (ex.HttpStatus is 400 or 422)
+        {
+            // 只有「請求內容不被接受」類的狀態碼才是欄位被拒；401／403／429／5xx 是認證、權限、節流或伺服器問題，照錯誤處理
+            console.WriteLine($"     結論：欄位被拒（HTTP {ex.HttpStatus}）——伺服器不接受含 dun／tuid 的投影。");
+            return DunTuidVerdict.Rejected;
+        }
+        catch (SentinelClientException ex) when (ex.SafeCode == SentinelClientException.JobNotSuccessfulCode)
+        {
+            console.WriteLine("     結論：欄位被拒（查詢工作以非成功狀態結束）——伺服器不接受含 dun／tuid 的投影，或權限不足。");
+            return DunTuidVerdict.Rejected;
+        }
+
+        var evt = result.Events.FirstOrDefault();
+        if (evt is null)
+        {
+            console.WriteLine($"     found={result.Found}，近 24h 沒有取回 4625 事件，無法判定 dun／tuid 是否有值（可放大時間範圍重跑）。");
+            return DunTuidVerdict.NoEvent;
+        }
+
+        var anyValue = false;
+        foreach (var name in new[] { "dun", "tuid" })
+        {
+            if (evt.Fields.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) && value.Trim() != "-")
+            {
+                anyValue = true;
+                console.WriteLine($"     {name}：有值（長度 {value.Length}，形狀 {ValueShape(value)}）");
+            }
+            else
+            {
+                console.WriteLine($"     {name}：無值（回應沒有這個欄位或內容為空）");
+            }
+        }
+
+        console.WriteLine(anyValue
+            ? "     結論：dun／tuid 可投影，至少一個欄位有值。"
+            : "     結論：dun／tuid 可投影，但這筆事件兩個欄位都沒有值。");
+        return anyValue ? DunTuidVerdict.HasValue : DunTuidVerdict.NoValue;
+    }
+
+    /// <summary>只描述字元組成，不回傳內容本身。</summary>
+    private static string ValueShape(string value)
+    {
+        var v = value.Trim();
+        if (Guid.TryParse(v, out _)) return "guid";
+        if (v.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase) && v.All(c => char.IsAsciiLetterOrDigit(c) || c == '-')) return "sid";
+        if (v.All(char.IsAsciiDigit)) return "digits";
+        if (v.All(char.IsAsciiHexDigit)) return "hex";
+        return "text";
     }
 
     private static Task<bool> Step(IRunConsole console, int index, string title, Func<Task> action) =>

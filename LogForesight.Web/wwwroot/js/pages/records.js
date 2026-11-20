@@ -29,6 +29,8 @@ import { openIssueStatusReplyModal } from './issue-status-reply.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { bindRangeChips } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { copyText } from '../core/clipboard.js';
+import { compareText } from '../core/collation.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -1336,11 +1338,11 @@ function openBulkCloseModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入受影響主機…');
 
-    showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
-    loadBulkCloseForm(group, body);
+    const modal = showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadBulkCloseForm(group, body, modal);
 }
 
-async function loadBulkCloseForm(group, body) {
+async function loadBulkCloseForm(group, body, modal) {
     const filters = collectFilters();
     const params = new URLSearchParams({ source: group.source, eventId: String(group.eventId) });
     if (filters.from) params.set('from', filters.from);
@@ -1355,10 +1357,10 @@ async function loadBulkCloseForm(group, body) {
         return;
     }
 
-    renderBulkCloseForm(body, group, preview);
+    renderBulkCloseForm(body, group, preview, modal);
 }
 
-function renderBulkCloseForm(body, group, preview) {
+function renderBulkCloseForm(body, group, preview, modal) {
     body.replaceChildren();
 
     const targets = preview.hosts.filter(h => !h.skipReason && h.dayCount > 0);
@@ -1495,7 +1497,7 @@ function renderBulkCloseForm(body, group, preview) {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
             }
 
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal.close();
             // 影響範圍的追溯出口（體檢 X6）：批次寫入沒有復原機制，至少要查得到影響了哪些。
             // 導向依問題視角並鎖定同一個問題與期間，剛寫入的結論就在那裡逐台可查
             showBulkCloseTraceLink(result);
@@ -1552,11 +1554,11 @@ function openWorkOrderModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入中…');
 
-    showDetailModal({ title: `交辦：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
-    loadWorkOrderForm(group, body);
+    const modal = showDetailModal({ title: `交辦：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadWorkOrderForm(group, body, modal);
 }
 
-async function loadWorkOrderForm(group, body) {
+async function loadWorkOrderForm(group, body, modal) {
     let users, groups;
     try {
         // 人選走派工人選端點（啟用且具 Handle，附看得到幾台／暫停／最近處理過）；
@@ -1578,7 +1580,7 @@ async function loadWorkOrderForm(group, body) {
         return;
     }
 
-    renderWorkOrderForm(body, group, users, groups);
+    renderWorkOrderForm(body, group, users, groups, modal);
 }
 
 /** 交辦範圍由頁面篩選推導：有選主機→Hosts；否則有選主機群組→Groups；都沒有→All（payload 與畫面共用） */
@@ -1600,14 +1602,14 @@ function workOrderScopeText(scopeKind, filters) {
     return '全站（依目前篩選的期間）';
 }
 
-function renderWorkOrderForm(body, group, users, groups) {
+function renderWorkOrderForm(body, group, users, groups, modal) {
     body.replaceChildren();
 
     const filters = collectFilters();
     let assignMode = 'single';
     const excludedHostIds = new Set();
     let currentPage = 1;
-    let previewRequestId = 0;
+    const previewGuard = createSeqGuard();
     let isFetchingPreview = false;
     let pendingFetch = null;
 
@@ -1855,18 +1857,18 @@ function renderWorkOrderForm(body, group, users, groups) {
             do {
                 const fetchPage = pendingFetch !== null ? pendingFetch : page;
                 pendingFetch = null;
-                const currentRequestId = ++previewRequestId;
+                const currentRequestId = previewGuard.next();
                 const payload = buildWorkOrderPayload(fetchPage);
                 if (payload.assignMode === 'single' && !payload.handlerId) break;
                 if (payload.assignMode === 'group' && !payload.groupId) break;
 
                 try {
                     const preview = await api.post('/api/work-orders/preview', payload, { silent: true });
-                    if (currentRequestId === previewRequestId) {
+                    if (previewGuard.isCurrent(currentRequestId)) {
                         renderPreview(preview);
                     }
                 } catch (error) {
-                    if (currentRequestId === previewRequestId) {
+                    if (previewGuard.isCurrent(currentRequestId)) {
                         summaryWrap.replaceChildren();
                         summaryWrap.appendChild(statusNote('error', error?.message || '預覽失敗'));
                     }
@@ -2047,7 +2049,11 @@ function renderWorkOrderForm(body, group, users, groups) {
                 orderLinks = orderIds.slice(0, 3).map(id => ({ href: orderHref(id), text: `#${id}` }));
                 if (orderIds.length > 3) orderLinks.push({ href: orderHref(orderIds[0]), text: `等 ${orderIds.length} 張` });
             }
-            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
+            // 全部成員都因問題簽章過長被略過、沒有任何單成立時，只顯示下面的警告（不先報「已建立 0 張」的成功）
+            const nothingCreated = orders.length === 0 && (result.overlongSkipped?.length ?? 0) > 0;
+            if (!nothingCreated) {
+                toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
+            }
 
             if (result.daySyncPendingCases > 0) {
                 toast('逐日同步在背景進行，儀表板數字會在數分鐘內更新', 'info');
@@ -2055,6 +2061,13 @@ function renderWorkOrderForm(body, group, users, groups) {
 
             if (result.skipped && result.skipped.length > 0) {
                 toast(`${result.skipped.length} 台略過（已由他人處理中）`, 'warning');
+            }
+
+            if (result.overlongSkipped && result.overlongSkipped.length > 0) {
+                // 訊息由後端組好（主機、長度、上限）；最多列 3 筆，其餘以件數帶過
+                const shown = result.overlongSkipped.slice(0, 3).map(o => o.message);
+                const rest = result.overlongSkipped.length - shown.length;
+                toast(shown.join('') + (rest > 0 ? `另有 ${rest} 台同樣未建立。` : ''), 'warning');
             }
 
             if (result.assigneeCannotHandle && result.assigneeCannotHandle.length > 0) {
@@ -2067,7 +2080,7 @@ function renderWorkOrderForm(body, group, users, groups) {
                 toast(`${result.assigneeNoAccessTotal} 台不在對方的檢視範圍（對方仍可經由交辦看到被交辦的問題）`, 'warning');
             }
 
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal.close();
             search();
         } catch {
             // 錯誤訊息已由 api.js 顯示
@@ -2097,7 +2110,7 @@ function categoryBadges(categories) {
     const active = new Set(activeChips('filter-category-chips', 'category'));
     const wrap = document.createElement('span');
     const sorted = [...(categories ?? [])].sort((a, b) =>
-        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || a.localeCompare(b)
+        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || compareText(a, b)
     );
     for (const category of sorted) {
         const badge = document.createElement('span');
@@ -2168,12 +2181,9 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
     const lines = [csvHeader().join(',')];
     for (const item of lastResult.items) lines.push(csvRow(item).join(','));
 
-    try {
-        await navigator.clipboard.writeText(lines.join('\r\n'));
-        toast(`已複製 ${lastResult.items.length} 筆資料`, 'success');
-    } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-    }
+    const copied = await copyText(lines.join('\r\n'));
+    if (copied.ok) toast(`已複製 ${lastResult.items.length} 筆資料`, 'success');
+    else toast(`複製失敗：${copied.reason}`, 'danger');
 });
 
 function csvHeader() {

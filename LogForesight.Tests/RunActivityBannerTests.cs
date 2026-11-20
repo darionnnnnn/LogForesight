@@ -227,9 +227,13 @@ public class RunActivityBannerUiTests
         var js = ReadWebFile("wwwroot", "js", "core", "layout.js");
         var body = FunctionBody(js, "async function refreshRunActivity()", "function renderRunActivity(");
 
-        Assert.Contains("30000", body);
-        Assert.Contains("60000", body);
-        Assert.Contains("setTimeout(refreshRunActivity", body);
+        // 間隔與退避在共用輪詢出口 pollWhile：執行中 30 秒、閒置 60 秒，背景分頁暫停、失敗退避
+        Assert.Contains("RUN_ACTIVITY_ACTIVE_MS = 30000", js);
+        Assert.Contains("RUN_ACTIVITY_IDLE_MS = 60000", js);
+        Assert.Contains("pollWhile(", js);
+        Assert.Contains("pauseWhenHidden: true", js);
+        Assert.Contains("backoffMaxMs", js);
+        Assert.DoesNotContain("setTimeout(refreshRunActivity", js);
         Assert.Contains("new CustomEvent(", body);
         Assert.Contains("lf:run-activity", js);
     }

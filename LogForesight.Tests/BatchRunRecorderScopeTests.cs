@@ -17,13 +17,11 @@ internal static class NLogTestConfigurationInitializer
     internal static void Initialize()
     {
         LogManager.Configuration ??= new LoggingConfiguration();
-        // PRTG 分頁等待重試（15 秒、60 秒）在整合測試連到不可達位址時會讓案例慢數分鐘；測試組件一律零等待
-        LogForesight.Core.Service.PrtgTablePager.DefaultWait = (_, ct) =>
-        {
-            ct.ThrowIfCancellationRequested();
-            return Task.CompletedTask;
-        };
-        // 全程序共用的配額池：真時鐘下全量並行的 PRTG 測試彼此排隊到逾時；配額規則照常生效，只是時間加速
+        // 多數測試共用同一條記憶體連線，執行紀錄的背景寫入會與測試本身的資料庫操作互相打斷；改成呼叫端直接寫
+        // （非同步行為由 BatchRunRecorderCaptureTests 以檔案型資料庫、RunLogQueueTests 以閘控替身驗證）
+        LogForesight.Core.Service.RunLogQueue.WriteInline = true;
+        // 全程序共用的配額池：真時鐘下全量並行的 PRTG 測試彼此排隊到逾時；配額規則照常生效，只是時間加速。
+        // PRTG 分頁等待重試（15 秒、60 秒）與數值取數暫停閘的預設等待走同一個時鐘，連到不可達位址的整合測試不必真的等
         LogForesight.Core.Service.PrtgRequestBudget.Shared =
             new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock());
     }

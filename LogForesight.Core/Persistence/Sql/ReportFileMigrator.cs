@@ -105,7 +105,7 @@ public sealed class ReportFileMigrator
             _stateStore.Update(s =>
             {
                 s.State = ReportMigrationState.Pending;
-                s.LastError = ex.Message;
+                s.LastError = MigrationFailureText.For(ex);
             });
             throw;
         }

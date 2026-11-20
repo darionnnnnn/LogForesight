@@ -12,6 +12,7 @@
  */
 
 import { api, hasCapability } from './api.js';
+import { pollWhile } from './async-guards.js';
 
 const REFRESH_INTERVAL_MS = 60000;
 
@@ -26,14 +27,9 @@ export function startBadgePolling(user) {
     if (started) return;
     started = true;
 
-    const refresh = () => refreshBadges(user);
-    setInterval(() => {
-        if (!document.hidden) refresh();
-    }, REFRESH_INTERVAL_MS);
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) refresh();
-    });
-    refresh();
+    // 背景分頁暫停、回到前景立即刷新一次，都由共用輪詢出口處理
+    pollWhile(() => refreshBadges(user), REFRESH_INTERVAL_MS, { pauseWhenHidden: true });
+    refreshBadges(user);
 }
 
 async function refreshBadges(user) {
@@ -64,7 +60,7 @@ async function loadMyWorkBadge(user) {
     if (!hasCapability(user, 'Handle')) return null;
 
     try {
-        const summary = await api.get('/api/handlers/me/badge', { silent: true });
+        const summary = await api.get('/api/handlers/me/badge', { silent: true, background: true });
         // 數字取「手上進行中的主機數」：一張單可能含多台，台數才是實際還有多少事要處理
         const count = summary.activeMembers ?? 0;
         const title = `進行中交辦單 ${summary.activeWorkOrders ?? 0} 張、${count} 台；`
@@ -83,7 +79,7 @@ async function loadUnreadBadge(user) {
     if (!hasCapability(user, 'Assign') && !hasCapability(user, 'ViewAll')) return null;
 
     try {
-        const result = await api.get('/api/work-orders/unread-count', { silent: true });
+        const result = await api.get('/api/work-orders/unread-count', { silent: true, background: true });
         const count = result?.count ?? 0;
         setBadge(link, count, `${count} 張交辦單有處理人的新回覆`, false);
         return count;

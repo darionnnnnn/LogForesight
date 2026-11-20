@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -306,11 +307,26 @@ public sealed class EfJsonBlobStore
     // the outer loop owns the single five-attempt budget.
     private sealed class BlobWriterLockTimeoutException() : Exception("SQL blob writer application-lock timeout.");
 
+    /// <summary>
+    /// SQL Server 的暫時性錯誤碼：鎖等待逾時 1222、死結 1205、命令逾時 -2、連線／傳輸層中斷
+    /// （-1、2、53、64、233、10053、10054、10060）與 Azure SQL 的暫時性失敗（40197、40501、40613、49918～49920）。
+    /// 語意相同的錯誤訊息會隨伺服器語系改變，所以只看 <c>SqlException.Number</c>。
+    /// </summary>
+    private static readonly FrozenSet<int> TransientSqlServerErrors =
+        new[] { 1205, 1222, -2, -1, 2, 53, 64, 233, 10053, 10054, 10060, 40197, 40501, 40613, 49918, 49919, 49920 }
+            .ToFrozenSet();
+
+    /// <summary>SQLite 的主結果碼：SQLITE_BUSY 5、SQLITE_LOCKED 6（延伸碼的低 8 位元是主碼）。</summary>
+    private const int SqliteBusy = 5;
+    private const int SqliteLocked = 6;
+
+    /// <summary>
+    /// 是否為暫時性錯誤（短退避重試有機會成功）。一律看資料庫錯誤碼、不看訊息文字：
+    /// 訊息含 busy／locked 字樣但錯誤碼不屬暫時性（例如欄位名稱或資料內容剛好含這些字）不會被誤判。
+    /// 沿著內層例外往下找，EF 的 <see cref="DbUpdateException"/> 與原始資料庫例外都涵蓋。
+    /// </summary>
     internal static bool IsTransient(Exception ex)
     {
-        // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試。
-        // user-function：連線池關閉後（見 StorageBackend.DisableSqlitePoolingIfUnset）此錯誤的
-        // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
         if (ex is BlobWriterLockTimeoutException or DbUpdateConcurrencyException) return true;
 
         // 唯一鍵違規：lf_blobs 以 blob_key 為主鍵，唯一鍵衝突只可能來自「讀到 null 後、自己 Add 前，
@@ -318,14 +334,19 @@ public sealed class EfJsonBlobStore
         // 判定與紀錄庫的首見日競態共用同一份（EfAnalysisRecordStore.IsUniqueViolation：SQLite 19／SQL Server 2601、2627）。
         if (ex is DbUpdateException due && EfAnalysisRecordStore.IsUniqueViolation(due)) return true;
 
-        // SQL Server 鎖等待逾時（1222）／死結（1205）：訊息不含 busy／locked 字樣，依錯誤碼認定
-        if (ex is DbUpdateException { InnerException: Microsoft.Data.SqlClient.SqlException { Number: 1205 or 1222 } }) return true;
-
-        var msg = ex.Message.ToLowerInvariant();
-        // 其餘 DbUpdateException（截斷／FK 等）重試也不會好，只有訊息（含內層）屬暫時性才重試。
-        if (ex is DbUpdateException && ex.InnerException != null)
-            msg += " " + ex.InnerException.Message.ToLowerInvariant();
-        return msg.Contains("busy") || msg.Contains("locked") ||
-               msg.Contains("deadlock") || msg.Contains("user-function");
+        // 其餘 DbUpdateException（截斷／FK 等）的內層若不是暫時性錯誤碼，重試也不會好。
+        for (Exception? cur = ex; cur is not null; cur = cur.InnerException)
+        {
+            switch (cur)
+            {
+                case Microsoft.Data.Sqlite.SqliteException sqlite
+                    when (sqlite.SqliteErrorCode & 0xFF) is SqliteBusy or SqliteLocked:
+                    return true;
+                case Microsoft.Data.SqlClient.SqlException sql
+                    when TransientSqlServerErrors.Contains(sql.Number):
+                    return true;
+            }
+        }
+        return false;
     }
 }

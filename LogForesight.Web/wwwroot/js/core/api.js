@@ -7,6 +7,7 @@
 
 import { toast } from './ui.js';
 import { appUrl, appPath } from './paths.js';
+import { rememberSessionNotice } from './session-notice.js';
 
 const CSRF_HEADER = 'X-Requested-By';
 const CSRF_VALUE = 'LogForesight';
@@ -121,6 +122,8 @@ async function request(method, url, body, options = {}) {
     if (method !== 'GET') {
         init.headers[CSRF_HEADER] = CSRF_VALUE;
     }
+    // 背景輪詢（非使用者操作）：伺服器不滑動延長閒置時限，前景分頁開著也會閒置登出
+    if (options.background === true) init.headers['X-Lf-Background'] = '1';
 
     if (body !== undefined && body !== null) {
         if (options.rawBytes === true) {
@@ -191,6 +194,8 @@ async function request(method, url, body, options = {}) {
     // 蓋成「登入已逾期」）。此時放行到下面的一般錯誤處理，讓後端訊息正常顯示。
     const isLoginAttempt = appPath() === '/login' || url === '/api/auth/login';
     if (response.status === 401 && !isLoginAttempt) {
+        // 後端 401 信封的拒絕原因（已登出、帳號已停用、登入已逾期）：轉址會丟掉訊息，先記下給登入頁顯示一次
+        try { rememberSessionNotice((await response.clone().json())?.error?.message); } catch { /* 沒有可讀的信封就不記 */ }
         // returnUrl 記的是 app 內路徑（不含掛載前綴），登入後由 login.js 用 appUrl 還原
         const returnUrl = encodeURIComponent(appPath() + location.search);
         location.href = appUrl(`/login?returnUrl=${returnUrl}`);

@@ -6,8 +6,11 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { withBusy } from '../core/ui.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { initBrandAlign } from '../core/brand-align.js';
 import { isSafeReturnUrl } from '../core/safe-return-url.js';
+import { statusNote } from '../core/elements.js';
+import { takeSessionNotice } from '../core/session-notice.js';
 
 const form = document.getElementById('lf-login-form');
 const accountInput = document.getElementById('account');
@@ -44,11 +47,10 @@ form.addEventListener('submit', async event => {
 
     const account = accountInput.value.trim();
     if (!account) {
-        accountInput.classList.add('is-invalid');
-        document.getElementById('account-error').textContent = '請輸入帳號';
+        setFieldError(accountInput, '請輸入帳號', { feedback: document.getElementById('account-error') });
         return;
     }
-    accountInput.classList.remove('is-invalid');
+    clearFieldError(accountInput);
 
     const restore = withBusy(submitButton, '登入中');
     try {
@@ -78,6 +80,13 @@ function hideError() {
     errorBox.classList.add('d-none');
 }
 
+/** 被踢回登入頁的原因（api.js 轉址前記下）：顯示一次，textContent 出口 */
+function showSessionNotice() {
+    const message = takeSessionNotice();
+    if (message) form.before(statusNote('info', message));
+}
+
+showSessionNotice();
 init();
 
 initBrandAlign();

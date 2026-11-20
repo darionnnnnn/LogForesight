@@ -413,4 +413,35 @@ public class RetiredImportKindTests
 
         Assert.Contains("owner_account", template);
     }
+
+    // ── 第 79 輪批次 C9：改用 TextFieldParser 後補上的行為 ──
+
+    private static CsvTable ParseText(string content, int maxRows = 5000) =>
+        CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), maxRows);
+
+    [Fact]
+    public void 引號內含換行的儲存格_解析成同一列且行號指向起始行()
+    {
+        var table = ParseText("account,note\nDOMAIN\\a,\"第一行\n第二行\"\nDOMAIN\\b,單行\n");
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Equal("第一行\n第二行", table.Rows[0].Values["note"]);
+        Assert.Equal(2, table.Rows[0].LineNumber);
+        Assert.Equal(4, table.Rows[1].LineNumber);
+    }
+
+    [Fact]
+    public void 列數剛好等於上限通過_多一列就拒絕()
+    {
+        var header = "account\n";
+        Assert.Equal(3, ParseText(header + "a\nb\nc\n", maxRows: 3).Rows.Count);
+        var ex = Assert.Throws<CsvParseException>(() => ParseText(header + "a\nb\nc\nd\n", maxRows: 3));
+        Assert.Contains("上限 3 列", ex.Message);
+    }
+
+    [Fact]
+    public void 引號沒有成對結束_回報該行行號()
+    {
+        var ex = Assert.Throws<CsvParseException>(() => ParseText("account,note\nDOMAIN\\a,ok\nDOMAIN\\b,\"沒有結束\n"));
+        Assert.Contains("第 3 行", ex.Message);
+    }
 }

@@ -131,7 +131,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
 
     private static CreateWorkOrderRequest PrtgOrder(long handlerId) => new()
     {
-        Source = "PRTG:down", EventId = 0, AssignMode = "single", HandlerId = handlerId, ScopeKind = WorkOrderScopes.Hosts
+        Source = "PRTG:down", EventId = 0, AssignMode = "single", HandlerId = handlerId, ScopeKind = WorkOrderScopes.All
     };
 
     // ── 既有缺陷：依問題視角處理概況 ─────────────────────────────────────────

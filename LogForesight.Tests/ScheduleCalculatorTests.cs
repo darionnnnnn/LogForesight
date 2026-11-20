@@ -25,6 +25,7 @@ public class ScheduleCalculatorTests
     [Theory]
     [InlineData("24:00")]
     [InlineData("1:00")]
+    [InlineData(" 01:00")]
     [InlineData("01:60")]
     [InlineData("abc")]
     [InlineData("")]

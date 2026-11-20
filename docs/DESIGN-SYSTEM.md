@@ -383,6 +383,9 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 按鈕 | `ui.js` `button(文字, { variant, size, icon, title, opens, className, disabled, onClick })` |
 | 換頁但要按鈕外觀 | `ui.js` `linkButton(文字, href, opts)` |
 | 頁內導航（捲到分節、切頁籤） | `lf-nav-item`（句中用 `lf-nav-item--inline`） |
+| 整列導向的表格 | `renderTable(..., { rowHref })`：列保有 `<tr>` 語意，第一個沒有互動元素的儲存格放真正的 `<a href>`（`lf-row-link__anchor`，`appUrl` 組網址），以 `::after` 延伸點擊區涵蓋整列；Tab 聚焦、Enter 啟用、中鍵或 Ctrl／Cmd 點擊開新分頁，焦點框畫在整列上。列內其他連結、按鈕、表單控制項與帶 `title` 的元素（進度、關聯訊號格的提示）抬到延伸區之上、保有自己的行為；列內文字無法拖曳選取是延伸點擊區的固有代價；每格都有互動元素時放空連結並以首格文字當 `aria-label`。可展開的列（`rowDetail`／`onRowExpand`）是另一回事，仍是 `aria-expanded` 的列層級切換 |
+| 頁籤 | `ui.js` `bindTabs(tabsEl, { onChange(name, 按鈕), hash })`：`ul.nav.nav-tabs` 內 `button.nav-link[data-tab]` 與同層 `[data-panel]` 以 data 值配對（多顆按鈕可共用一個面板）；Bootstrap 5.3 Tab 外掛提供 `tablist／tab／tabpanel` 角色、`aria-selected`、roving tabindex 與方向鍵、Home／End，`bindTabs` 補 id、`aria-controls`、面板 `d-none`、面板 `aria-labelledby` 與 hash 同步（`history.replaceState`、不捲動；進站與 `hashchange` 依 hash 切換，hash 進選擇器前經 `selectors.js`）。非作用中面板初始 HTML 自帶 `d-none`。頁面以程式切頁籤用 `showTab(頁籤列 id, 名稱)` 或 `bindTabs` 回傳的 `show(名稱)`，不對頁籤按鈕模擬點擊 |
+| 請求序號（舊回應不得蓋掉新結果） | `async-guards.js` `createSeqGuard()`：`next()` 取序號、`isCurrent(序號)` 判斷；頁面不手寫遞增計數器（`SharedExitGuardUiTests` 守門） |
 | 只有圖示的連結 | `lf-icon-link` |
 | 詳情頁頁首卡 | `lf-entity-head`（`__title`／`__link`／`__badges`／`__actions`／`__facts`，layout.css） |
 | 可展開表格就地重繪保留展開 | `renderTable(..., { rowKey, expandedKeys })`；`toggleAllTableDetails` 走列自己的切換 |
@@ -390,6 +393,13 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 詳情頁側軌按鈕摘要 | `side-rail.js` `setSummary(key, 短摘要, 完整文字)`：直式按鈕只放得下約十個字，完整文字放提示 |
 | KPI 數字語意色 | `kpiStrip` 的 `variant` → `lf-stat__value--danger／warning／secondary`：只有 `danger` 上色；`warning` 數字維持文字色、標籤前一顆警示色圓點；`secondary`（零或無事）淡化 |
 | 狀態、層級、旗標標記 | `format.js` `statusBadge`／`severityBadge`／`riskBadge`／`elevatesBadge`（形式見 §8.8） |
+| 複製文字到剪貼簿 | `clipboard.js` `copyText(文字)` → `{ ok, method }`／`{ ok: false, reason }`：優先 `navigator.clipboard`，http 等非安全來源退回隱藏 textarea＋`execCommand('copy')`；失敗時把 `reason` 顯示給使用者，頁面不直接呼叫 `navigator.clipboard` |
+| 欄位錯誤（紅框＋訊息，含 `aria-invalid`、`aria-describedby`、訊息 id） | `field-errors.js` `setFieldError(欄位, 文字, { feedback })`／`clearFieldError(欄位)`；頁面不手寫 `is-invalid`（`bindPastDateCheck`、`confirmActionWithReason` 也走它） |
+| 讀數字欄位（空欄位不當成 0） | `number-field.js` `readNumberField(欄位或 id, { required, integer, message })` 空值回 `null`、必填時標欄位錯誤；一組欄位用 `readNumberFields({ 鍵: 欄位 })` 回 `{ ok, values }`；填 0 回 0 |
+| 網址 hash 或資料字串進 CSS 選擇器 | `selectors.js` `currentHashId()`、`findByData(名稱, 值, root)`、`escapeSelectorValue(值)`：值經跳脫、找不到回 `null`、不擲例外 |
+| 文字排序 | `collation.js` `compareText(a, b)`（`Intl.Collator('zh-Hant', { numeric: true })`：中文依語系、"9" 排在 "10" 前）；`sortRows` 的字串欄位已使用 |
+| 狀態輪詢 | `async-guards.js` `pollWhile(fn, 間隔或 (ctx) => 間隔, { pauseWhenHidden, backoffMaxMs })`：間隔可依上一輪結果（`ctx.lastResult`、`ctx.failures`）重算；`pauseWhenHidden` 在背景分頁暫停、回前景立即補一次；`backoffMaxMs` 讓連續失敗時退避。導覽列的徽章、執行中告示、排程狀態、已耗時計時與精靈掃描進度都走它；頁面不手寫遞迴 `setTimeout` 或 `setInterval` 輪詢 |
+| 對話框（唯讀詳情） | `ui.js` `showDetailModal({ title, body, size, fullscreen, onClose })` 回傳 `{ close(), element }`；頁面以 `close()` 關閉，不模擬點擊 `data-bs-dismiss` 按鈕；送出處理在建立對話框之前就要定義時，先宣告 `let modal = null`，建立後指派、處理中呼叫 `modal?.close()` |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。

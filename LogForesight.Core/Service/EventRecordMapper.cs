@@ -75,6 +75,8 @@ internal static class EventRecordMapper
     /// 類型轉成與平台無關的 <see cref="LogEntryType"/>（成員名稱與整數值相同，含 Critical 的 0）。
     /// </summary>
     [SupportedOSPlatform("windows")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ApiDesign", "RS0030",
+        Justification = "EventLogEntryType 轉成 LogEntryType 的唯一轉換點")]
     public static LogEntryType FromClassic(EventLogEntryType type) => (LogEntryType)(int)type;
 
     /// <summary>

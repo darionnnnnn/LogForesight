@@ -229,7 +229,7 @@ public class NetiqDiscoveryService
         {
             prefix = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix) + ".";
         }
-        catch (ArgumentException)
+        catch (SubnetPrefixFormatException)
         {
             // 格式錯誤交給下游 client 擲出可顯示的訊息（那裡的文案已經寫好），這裡只是不排除
             return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);

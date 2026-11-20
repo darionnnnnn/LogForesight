@@ -271,8 +271,9 @@ public class EfWebdataStoreTests
         {
             callCount++;
             if (callCount == 1)
-                // 只有暫時性錯誤才重試（截斷／唯一鍵／FK 重試也不會好）：以 SQLite 鎖定的內層訊息模擬
-                throw new DbUpdateException("模擬暫時性衝突（IsTransient 應判定為可重試）", new Exception("database is locked"));
+                // 只有暫時性錯誤才重試（截斷／唯一鍵／FK 重試也不會好）：以 SQLITE_BUSY（錯誤碼 5）的內層例外模擬
+                throw new DbUpdateException("模擬暫時性衝突（IsTransient 應判定為可重試）",
+                    new Microsoft.Data.Sqlite.SqliteException("database is locked", 5));
             return ((content ?? "") + "v1", callCount);
         });
 

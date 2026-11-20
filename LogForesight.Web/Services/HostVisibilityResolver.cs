@@ -38,7 +38,7 @@ internal static class HostVisibilityResolver
         PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId)
         => GetGroupVisibleHostIds(hosts, users, userGroups, access, userId, viewAll: null);
 
-    /// <param name="viewAll">null＝由所屬啟用群組的角色即時算；非 null＝由呼叫端提供（目前登入者以 JWT claim 為準）</param>
+    /// <param name="viewAll">null＝由所屬啟用群組的角色即時算；非 null＝由呼叫端提供（目前登入者以登入 cookie 的 claim 為準）</param>
     private static IReadOnlySet<long> GetGroupVisibleHostIds(
         PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
         bool? viewAll)

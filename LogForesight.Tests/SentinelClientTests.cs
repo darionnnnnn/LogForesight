@@ -38,6 +38,48 @@ public class SentinelClientTests
         return resp;
     }
 
+    /// <summary>E4：回應超過整包讀取上限回專屬 safeCode、不重試（重試次數 3 也只打一次）；未超限的同一流程正常完成（邊界兩側）。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task 回應超過讀取上限_擲專屬例外且不重試_未超限正常(bool oversize)
+    {
+        var handler = new StubHandler();
+        var jobUrl = JobUrl("77");
+        var resultsUrl = "https://sentinel.local:8443/SentinelRESTServices/objects/event?query=_jobid_.77&page=1&pagesize=2";
+        var pad = oversize ? new string('x', 8192) : "x";
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: jobUrl));
+            if (req.Method == HttpMethod.Get && url == jobUrl)
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    $"{{\"status\":2,\"found\":1,\"avail\":1,\"results\":{{\"@href\":\"{resultsUrl}\"}}}}"));
+            if (req.Method == HttpMethod.Get && url.Contains("page=1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"[{{\"evt\":\"A\",\"pad\":\"{pad}\"}}]"));
+            if (req.Method == HttpMethod.Delete && url == jobUrl)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 3, pageSize: 2), handler, maxResponseBytes: 1024);
+        var search = client.SearchAsync(new SentinelSearchRequest(
+            "evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow, PageSize: 2));
+
+        if (!oversize)
+        {
+            Assert.Single((await search).Events);
+            return;
+        }
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() => search);
+        Assert.Equal(SentinelClientException.ResponseTooLargeCode, ex.SafeCode);
+        Assert.Contains("上限", ex.Message);
+        Assert.Single(handler.Requests, r => r.Url.Contains("page=1"));
+    }
+
     [Fact]
     public async Task 完整查詢流程_認證建立工作輪詢分頁後刪除工作()
     {

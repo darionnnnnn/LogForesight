@@ -92,7 +92,7 @@ public class RuleAdminServiceTests
         var status = service.GetImportStatus();
         Assert.True(status.HasUpdate);
         Assert.Equal(11, status.CurrentSeedVersion);
-        Assert.Equal(12, status.LatestSeedVersion);
+        Assert.Equal(KnownIssueSeed.Version, status.LatestSeedVersion);
 
         var result = service.ApplyImport(overwriteBuiltin: false);
 
@@ -789,6 +789,63 @@ public class RuleAdminServiceTests
         Assert.Equal("Application / MyNoisyApp EventId 1000", dto.TargetLabel);
         Assert.Equal(WebHost.OsWindows, dto.Platform);
         Assert.Equal(string.Empty, dto.RuleId);
+    }
+
+    [Fact]
+    public void 規則編號尾端帶空白_視為同一條_不會存出兩條同編號規則()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        service.SaveRule(ValidRequest("custom-dup "));
+        Assert.Single(service.GetRules(), r => r.Id == "custom-dup");
+    }
+
+    [Fact]
+    public void 白名單外的平台被拒_不靜默改成windows()
+    {
+        var request = ValidRequest("custom-platform");
+        request.Platform = "solaris";
+        Assert.Contains("不支援的規則平台", Assert.Throws<DomainException>(() => Create().SaveRule(request)).Message);
+    }
+
+    [Fact]
+    public void 規則的陣列欄位收到null_轉成空值_驗證不擲例外()
+    {
+        var rule = System.Text.Json.JsonSerializer.Deserialize<KnownIssueRule>(
+            """{"Id":"custom-null","LikelyCauses":null,"NextSteps":null,"EventIds":null,"MessagePatterns":null,"ProgramPattern":null}""")!;
+        Assert.Empty(rule.LikelyCauses);
+        Assert.Empty(rule.EventIds);
+        Assert.Equal(string.Empty, rule.ProgramPattern);
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { rule });
+        Assert.Single(outcome.SkippedRules);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-3, false)]
+    [InlineData(366, false)]
+    [InlineData(1, true)]
+    [InlineData(365, true)]
+    public void 抑制天數_邊界兩側(int days, bool accepted)
+    {
+        var service = Create();
+        var request = new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature,
+            SignatureKey = IssueSignatureKey.For("Application", "App", 1000, LogForesight.Core.Models.LogEntryType.Error),
+            TargetLabel = "Application / App EventId 1000", Scope = SuppressionScopes.Host, Host = "SRV-01",
+            Reason = "測試", Days = days
+        };
+        if (accepted)
+        {
+            service.AddSuppression(request);
+            Assert.Single(service.GetSuppressions());
+        }
+        else
+        {
+            Assert.Contains("抑制天數", Assert.Throws<DomainException>(() => service.AddSuppression(request)).Message);
+            Assert.Empty(service.GetSuppressions());
+        }
     }
 
     [Fact]

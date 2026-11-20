@@ -21,7 +21,6 @@ public class WorkOrderQueryService
 {
     private const int DefaultPageSize = 20;
     private const int DefaultMemberPageSize = 50;
-    private const string DeletedName = "（已刪除）";
     private const string SystemActorName = "系統";
 
     private readonly IWorkOrderStore _orders;
@@ -146,8 +145,7 @@ public class WorkOrderQueryService
         if (!WorkOrderQueries.PausedModes.Contains(pausedMode))
             throw DomainException.Validation($"不支援的暫停篩選「{req.Paused}」。");
 
-        var page = Math.Max(1, req.Page);
-        var pageSize = req.PageSize < 1 ? DefaultPageSize : Math.Min(req.PageSize, WorkOrderQueries.MaxOrderPageSize);
+        var (page, pageSize) = Paging.Normalize(req.Page, req.PageSize < 1 ? DefaultPageSize : req.PageSize, WorkOrderQueries.MaxOrderPageSize);
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var disabledKeys = DisabledHostKeys();
@@ -237,7 +235,7 @@ public class WorkOrderQueryService
         dto.ScopeGroups = order.ScopeGroupIds.Select(gid => new WorkOrderScopeGroupDto
         {
             GroupId = gid,
-            GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : DeletedName
+            GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : NameFormat.Deleted
         }).ToList();
         dto.ViewerIsHandler = order.HandlerId == _currentUser.UserId;
         dto.ViewerCanReply = order.HandlerId == _currentUser.UserId
@@ -280,8 +278,7 @@ public class WorkOrderQueryService
         if (!WorkOrderQueries.MemberStatuses.Contains(status))
             throw DomainException.Validation($"不支援的成員狀態篩選「{status}」。");
 
-        page = Math.Max(1, page);
-        pageSize = pageSize < 1 ? DefaultMemberPageSize : Math.Min(pageSize, WorkOrderQueries.MaxMemberPageSize);
+        (page, pageSize) = Paging.Normalize(page, pageSize < 1 ? DefaultMemberPageSize : pageSize, WorkOrderQueries.MaxMemberPageSize);
 
         var hosts = _hosts.GetAll();
         var filtered = !_currentUser.Has(Capability.ViewAll) && order.HandlerId != _currentUser.UserId;
@@ -601,5 +598,5 @@ public class WorkOrderQueryService
             .ToList();
 
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
-        users.TryGetValue(userId, out var user) ? _displayNames.WithAccount(user.DisplayName, user.Account) : DeletedName;
+        NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));
 }

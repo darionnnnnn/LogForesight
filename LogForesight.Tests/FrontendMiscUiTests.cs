@@ -100,11 +100,11 @@ public class FrontendMiscUiTests
     {
         var source = ReadPage("chat-panel.js");
         var reset = FunctionBody(source, "function resetConversation(");
-        Assert.Contains("generation++", reset);
+        Assert.Contains("generationGuard.next()", reset);
 
         var submit = FunctionBody(source, "async function onSubmit(");
-        Assert.Contains("const requestGeneration = generation", submit);
-        Assert.Contains("requestGeneration !== generation", submit);
+        Assert.Contains("const requestGeneration = generationGuard.next()", submit);
+        Assert.Contains("!generationGuard.isCurrent(requestGeneration)", submit);
         Assert.Contains("setConversationControlsDisabled(true)", submit);
         Assert.DoesNotContain("issueKey:", source);
         Assert.Contains("focusKeys", submit);

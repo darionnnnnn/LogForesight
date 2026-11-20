@@ -43,7 +43,7 @@ public static class IssueBaselineCalculator
                 continue;
             }
 
-            var median = Median(ordered.Select(d => d.HostCount).OrderBy(x => x).ToList());
+            var median = SampleStatistics.Median(ordered.Select(d => d.HostCount))!.Value;
             var latest = ordered[^1].HostCount;
             // median 在 Count>=MinOccurrenceDays 時必然 >= 1（出現日的主機數恆為正整數），
             // 這裡的 0 防禦只是不假設上述前提永遠成立
@@ -53,11 +53,5 @@ public static class IssueBaselineCalculator
         }
 
         return result;
-    }
-
-    private static double Median(List<int> sorted)
-    {
-        var n = sorted.Count;
-        return n % 2 == 1 ? sorted[n / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
     }
 }

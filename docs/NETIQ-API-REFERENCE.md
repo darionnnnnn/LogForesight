@@ -255,6 +255,15 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 8g（`msg` 片語查詢行為＋暴破樣本），皆掛在「有填 Linux 樣本 IP」同一個開關下，
 是上表全部實證的直接來源。
 
+**步驟 7b（dun／tuid 投影）**：以「正式 Q1 投影加 `dun`、`tuid`」查 `rv40:4625` 近 24 小時 1 筆（保留原始欄位，因為預設的欄位過濾會濾掉投影清單外的欄位），
+只回報兩個欄位的狀態與形狀，不輸出任何值（帳號、SID 內容都不印）：
+- 有值：印長度與字元形狀（`guid`／`sid`／`digits`／`hex`／`text`）。
+- 無值：回應沒有該欄位或內容為空（`-` 也算無值）。
+- 欄位被拒：HTTP 4xx，或查詢工作以非成功狀態結束；結論印「欄位被拒」，不當成診斷失敗。
+- 近 24 小時沒有 4625：回報無法判定。連線、認證類錯誤照常標為這一步失敗，不影響其他步驟。
+
+正式取數的投影（`SentinelFieldMap.Q1ProjectionFields`）不含這兩個欄位。
+
 ### 4a-1. `BuildLinuxFilter` 內容子句（`SentinelQueryBuilder`，批 4B 實作）
 
 `{IP 批次} AND ({規則子句聯集} OR sev:[2 TO 5])`——規則子句依 program 分組，
@@ -325,7 +334,8 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | `MaxResultsPerJob` | 100,000 | 1–10,000,000 | 單一 job 最多回傳筆數（`max-results`），超過標記截斷 |
 | `TimeoutSeconds` | 120 | 1–3,600 | 單次 HTTP 逾時，同時是 job 輪詢至終態的完成期限（§3） |
 | `RetryCount` | 3 | 0–20 | Polly 重試：503／逾時／網路錯誤重試，4xx 不重試 |
-| `AllowInvalidCertificates` | false | — | 自簽憑證環境的顯式逃生門，啟用即 WARN |
+| `AllowInvalidCertificates` | false | — | 自簽憑證環境的顯式逃生門，啟用即 WARN；有填信任指紋時不生效，沒填時健康頁列為需要注意 |
+| `TrustedCertificateSha256` | 空 | SHA-256 | 信任的 Sentinel 憑證指紋，套用於全部 Sentinel。有填時只接受指紋相符的憑證；不符時連線失敗（`certificate-rejected`，不重試）並附伺服器出示的指紋。判定在 `ServerCertificateTrust`；測試連線回傳伺服器出示的指紋 |
 | `BackfillDays` | 1 | 1–365 | 每台主機每次執行最多回補幾天；實際上限＝歷史資料保留天數（不超過 365）；首次與非首次一律套用同一值，缺漏日不自動自癒 |
 | `MaxParallelServers` | 2 | 1–3 | 同時處理幾台 Sentinel；1＝完全依序；上限是行程架構常數，既有存值超過時讀取夾住 |
 | `MaxParallelQueriesPerServer` | 1 | 1–4 | 單台 Sentinel 內同時開幾條批次查詢（client pool 大小）；與 `MaxParallelServers` 的乘積決定夜間分析的 DB 連線池上限 |
@@ -360,4 +370,4 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | `failed`、`stopped` | 失敗或被停止 | 是，每天 2 趟 |
 | `empty-once` | 沒有舊紀錄且回 0 筆，尚未定案（不寫分析紀錄） | 是，下一趟再查一次 |
 
-判定唯一來源是 `NetiqAttemptStatus`。
+判定唯一來源是 `NetiqAttemptStatus`。狀態字串一律用其常數（`NetiqAttemptStatusLiteralGuardTests` 掃描字面值）；`Unknown` 是讀取端哨兵（回執 RunId 無效時由 `ReadLatest` 標示），不在可寫入清單、不算重查。

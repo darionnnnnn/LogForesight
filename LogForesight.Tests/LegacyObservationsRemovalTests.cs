@@ -119,9 +119,9 @@ public sealed class LegacyObservationsRemovalTests : IDisposable
         Assert.Equal(1, result.Counts["Observations"]);
 
         var wrong = Build(2);
-        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+        var error = await Assert.ThrowsAsync<PrtgLegacyPackageInvalidException>(() =>
             validator.ValidateAsync(1, (_, _) => Task.FromResult(wrong), CancellationToken.None));
-        Assert.StartsWith("manifest_count_mismatch:", error.Message, StringComparison.Ordinal);
+        Assert.Equal("manifest_count_mismatch", error.Code);
     }
 
     private static async IAsyncEnumerable<PrtgDiagnosticExportItem> PolicyOnly()

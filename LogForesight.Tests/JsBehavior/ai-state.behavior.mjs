@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
 import { loadButton } from './load-elements.mjs';
 
+const { copyText } = await import('../../LogForesight.Web/wwwroot/js/core/clipboard.js');   // production 的剪貼簿出口（非替身）
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 
@@ -68,11 +70,11 @@ const { aiStatusBadge } = new Function('aiStateOf', 'aiDegradedBadge', `
 
 // 第 66 輪 C：AI 摘要區塊（含重點速報）；renderAiInline 以 textContent 附加，等同 production 對純文字的行為
 const briefToasts = [];
-const { aiSummaryBlock } = new Function('renderAiInline', 'toast', 'button', `
+const { aiSummaryBlock } = new Function('renderAiInline', 'toast', 'button', 'copyText', `
     ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function aiSummaryBlock(')}
     ${extractFunction(sourceOf('pages', 'record-detail.js'), 'function briefBlock(')}
     return { aiSummaryBlock };
-`)((el, text) => { el.appendChild(document.createTextNode(text)); }, (message, kind) => briefToasts.push([message, kind]), button);
+`)((el, text) => { el.appendChild(document.createTextNode(text)); }, (message, kind) => briefToasts.push([message, kind]), button, copyText);
 
 const briefDetail = (over) => ({ aiAnalyzed: true, headline: 'H', brief: 'X', summary: 'S', trendAssessment: '', action: 'A', ...over });
 
@@ -236,7 +238,7 @@ const cases = {
             assert.deepEqual(briefToasts.at(-1), ['已複製', 'success']);
             Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async () => { throw new Error('denied'); } } }, configurable: true });
             button.dispatch('click'); await wait();
-            assert.deepEqual(briefToasts.at(-1), ['無法複製，請手動選取文字', 'warning']);
+            assert.deepEqual(briefToasts.at(-1), ['無法複製：瀏覽器不允許存取剪貼簿，請手動選取文字複製', 'warning']);
         })();
     },
     詳情案件授與檢視不顯示AI狀態() {

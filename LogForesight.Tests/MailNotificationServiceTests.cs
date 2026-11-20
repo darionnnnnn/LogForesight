@@ -869,6 +869,48 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "owner1@test.local" && s.Message.Body.Contains("host1"));
     }
 
+    /// <summary>
+    /// G3：收件人資格單一出口。停用的主機負責人在即時、每日、每週三條路徑都不該收到含主機名與日期的信；
+    /// 同一個設定下啟用中的負責人照常收到（證明不是整條路徑都沒寄）。交辦摘要見 WorkOrderDigestTests.E4。
+    /// </summary>
+    [Theory]
+    [InlineData("urgent")]
+    [InlineData("daily")]
+    [InlineData("weekly")]
+    public async Task G3_停用的主機負責人不收信_啟用的負責人照常收(string lane)
+    {
+        CreateViewAllAccount("ops@test.local");
+        var disabledOwner = _users.Upsert(new WebUser { Account = "owner-off", Email = "off@test.local", Active = false });
+        var activeOwner = _users.Upsert(new WebUser { Account = "owner-on", Email = "on@test.local", Active = true });
+        var hostOff = _hosts.Upsert(new WebHost { HostName = "host-off", OwnerUserIds = new List<long> { disabledOwner.UserId } });
+        var hostOn = _hosts.Upsert(new WebHost { HostName = "host-on", OwnerUserIds = new List<long> { activeOwner.UserId } });
+        // 每日與每週用固定時鐘（2026-08-11 是星期二）；即時通知的主機日以昨天為準（與本檔其他即時通知案例相同）
+        var now = new DateTime(2026, 8, 11, 9, 0, 0);
+        var day = lane == "urgent" ? Yesterday : now.Date.AddDays(-1);
+        EnableMail(s =>
+        {
+            s.MailNotifyHostOwners = true;
+            s.MailMinRiskLevel = RiskLevels.Medium;
+            s.MailUrgentEnabled = lane == "urgent";
+            s.MailDailyEnabled = lane == "daily";
+            s.MailDailyTime = "08:00";
+            s.MailWeeklyEnabled = lane == "weekly";
+            s.MailWeeklyDayOfWeek = "Tuesday";
+            s.MailWeeklyTime = "08:00";
+        });
+        _records.Add(Record(hostOff.HostId, "host-off", day, RiskLevels.High));
+        _records.Add(Record(hostOn.HostId, "host-on", day, RiskLevels.High));
+        var service = Create();
+
+        if (lane == "urgent") await service.NotifyAfterRunAsync();
+        else await service.CheckAndSendDailyWeeklyAsync(now);
+
+        var recipients = _sender.Sent.SelectMany(s => s.Message.To).ToList();
+        Assert.Contains("ops@test.local", recipients);
+        Assert.Contains("on@test.local", recipients);
+        Assert.DoesNotContain("off@test.local", recipients);
+    }
+
     /// <summary>負責人信箱與全域收件人相同（不分大小寫）時，不重複收信——他已經在全域信
     /// 裡看到全部內容，不需要再收一封只列自己主機的信。</summary>
     [Fact]
@@ -1762,9 +1804,15 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Contains("目前靜音中的問題（共 1 個，到期後恢復告警）：", sent.Message.Body);
-        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}｜原因：更換硬碟｜設定者：alice", sent.Message.Body);
+        Assert.Contains($"disk/153：靜音至 {now.Date.AddDays(5):yyyy-MM-dd}", sent.Message.Body);
+        // 第 79 輪批次 G13：管理者填的原因與設定者帳號不寄給收件人
+        Assert.DoesNotContain("更換硬碟", sent.Message.Body);
+        Assert.DoesNotContain("alice", sent.Message.Body);
         Assert.DoesNotContain("DCOM/10016", sent.Message.Body);
         Assert.DoesNotContain("已排查完畢", sent.Message.Body);
+        // 收件人不一定有 Maintain：不指向需要管理權限的頁面，改請洽管理者
+        Assert.Contains("靜音原因與設定者請洽站台管理者", sent.Message.Body);
+        Assert.DoesNotContain("問題負責與靜音頁", sent.Message.Body);
     }
 
     [Fact]

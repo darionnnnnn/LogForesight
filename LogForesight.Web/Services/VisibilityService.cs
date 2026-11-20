@@ -13,8 +13,8 @@ namespace LogForesight.Web.Services;
 /// 所有查詢型 Service **必須**先呼叫 <see cref="GetVisibleHostIds"/> 取得範圍再查資料。
 ///
 /// 授權鏈：使用者 → 使用者群組 → lf_group_access → 主機群組 → 主機。
-/// 範圍**不進 JWT**：調部門後不該還看得到前部門的主機，所以每次請求即時解析
-/// （能力可以接受 token 效期內的延遲，範圍不行）。
+/// 範圍**不進登入 cookie**：調部門後不該還看得到前部門的主機，所以每次請求即時解析
+/// （能力可以接受權限版本更新前的延遲，範圍不行）。
 ///
 /// **負責人路徑**（docs/archive/FEEDBACK-11-PLAN.md §2b）與群組授權鏈**取聯集**：主機的
 /// <see cref="WebHost.OwnerUserIds"/> 含此人時直接可見那台主機。理由是負責人匯入

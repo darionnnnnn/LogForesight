@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using System.Text.RegularExpressions;
 using LogForesight.Web.Models.Dto;
 
@@ -62,7 +63,7 @@ public static class ChatFocusResolver
 
     /// <summary>嚴重度字串的排序值（Low→Critical 遞增，無法解析為 -1）；詢問 AI 的焦點預設與整日摘要共用這一份</summary>
     internal static int SeverityRank(string severity) =>
-        Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
+        InputParsing.TryParseDefinedEnum<IssueSeverity>(severity, out var s) ? (int)s : -1;
 
     private static bool MatchesKeyword(IssueDto issue, string message, HashSet<string> numbers)
     {

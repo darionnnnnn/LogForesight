@@ -388,7 +388,7 @@ public class SystemSettings
     public HashSet<IssueSeverity> ParseUnhandledSeverities() =>
         UnhandledSeverities
             .Select(s => s == "Critical" ? "High" : s)
-            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
+            .Select(s => InputParsing.TryParseDefinedEnum<IssueSeverity>(s, out var severity) ? severity : (IssueSeverity?)null)
             .Where(s => s.HasValue)
             .Select(s => s!.Value)
             .ToHashSet();
@@ -418,6 +418,12 @@ public class SystemSettings
 
     /// <summary>忽略 PRTG 憑證錯誤。內網自簽憑證用的顯式逃生門，啟用時會記 WARN</summary>
     public bool PrtgIgnoreSslErrors { get; set; }
+
+    /// <summary>
+    /// 信任的 PRTG 憑證指紋（SHA-256，正規化為大寫十六進位）。有填時只接受指紋相符的憑證，
+    /// <see cref="PrtgIgnoreSslErrors"/> 不再生效；空字串＝沒設
+    /// </summary>
+    public string PrtgTrustedCertificateSha256 { get; set; } = "";
 
     /// <summary>PrtgTimeoutSeconds 的出廠預設</summary>
     public const int DefaultPrtgTimeoutSeconds = 60;

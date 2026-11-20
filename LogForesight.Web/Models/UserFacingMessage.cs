@@ -15,6 +15,7 @@ public static class UserFacingMessage
     private static readonly Type[] RegisteredTypes =
     {
         typeof(DomainException),
+        typeof(LogForesight.Core.CryptoKeyUnavailableException),
         typeof(LogForesight.Core.Persistence.ConcurrentUpdateException),
         typeof(LogForesight.Core.Persistence.PrtgScopePurgeBusyException),
         typeof(LogForesight.Core.Persistence.WorkOrderRuleException),

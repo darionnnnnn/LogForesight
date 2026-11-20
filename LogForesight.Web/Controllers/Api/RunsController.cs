@@ -77,9 +77,10 @@ public class RunsController : ControllerBase
         [FromQuery] int? pageSize = null, [FromQuery] string? sort = null, [FromQuery] string? dir = null,
         [FromQuery] string? status = null)
     {
-        if (!DateTime.TryParseExact(date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var parsed))
-            throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        var parsed = QueryStringParsing.ParseRequiredDate(date);
+        // 資料日只會落在保留期內：過遠的日期會把查詢窗拉到數十萬天，9999-12-31 加一天更會擲例外變 500
+        if (parsed > DateTime.Today.AddDays(1) || parsed < DateTime.Today.AddYears(-10))
+            throw DomainException.Validation("日期超出可查詢的範圍。");
 
         return ApiResponse<PagedResult<RunDayHostStatusDto>>.Ok(_service.GetDayDetailPage(parsed, page, pageSize, sort, dir, status));
     }

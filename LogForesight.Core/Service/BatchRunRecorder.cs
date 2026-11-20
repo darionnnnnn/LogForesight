@@ -1,6 +1,4 @@
 using NLog;
-using NLog.Config;
-using NLog.Targets;
 
 namespace LogForesight.Core.Service;
 
@@ -40,19 +38,12 @@ public class BatchRunRecorder : IDisposable
 
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
-    private readonly BatchRunNLogTarget? _target;
+    private RunLogQueue? _queue;
     private readonly CancellationToken _ct;
     private volatile bool _finished;
     private IDisposable? _scope;
 
-    /// <summary>
-    /// scope 屬性鍵。值是**這個 recorder 實例**的識別碼，不是 RunId——RunId 由各自的
-    /// store 配號，兩個獨立 store（例如測試裡各自的資料庫、或日後多後端並存）會配出同一個號，
-    /// 那時 target 就會把別人那一趟的事件當成自己的收進來。識別碼逐實例產生，不會碰撞。
-    /// </summary>
-    private const string ScopeKey = "lf_run_scope";
-
-    /// <summary>這個 recorder 實例的識別碼（見 <see cref="ScopeKey"/>）</summary>
+    /// <summary>這個 recorder 實例的識別碼（見 <see cref="RunLogCapture.ScopeKey"/>）</summary>
     private readonly string _scopeToken = Guid.NewGuid().ToString("N");
 
     /// <param name="ct">執行用的取消權杖（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
@@ -100,14 +91,18 @@ public class BatchRunRecorder : IDisposable
         {
             _store.StartRun(_run);
 
-            // 掛上 NLog target：Warn 以上自動流入執行紀錄，不需要在 codebase 各處加呼叫。
-            // 完整診斷仍在 logs\logforesight.log，這裡只收「一眼確認有沒有問題」需要的部分
-            _target = new BatchRunNLogTarget(_store, _run.RunId, _scopeToken, OnLogRecorded);
-            _target.Attach();
-            _scope = ScopeContext.PushProperty(ScopeKey, _scopeToken);
+            // 常駐 NLog target 依 scope 識別把 Warn 以上分派到這個 recorder，不需要在 codebase 各處加呼叫。
+            // 完整診斷仍在 logs\logforesight.log，這裡只收「一眼確認有沒有問題」需要的部分。
+            // 寫庫由佇列的背景執行緒做，記錄路徑不等資料庫
+            RunLogCapture.EnsureInstalled();
+            _queue = new RunLogQueue(_run.RunId, WriteLogRow, OnDropNoteWritten);
+            RunLogCapture.Register(_scopeToken, Capture);
+            _scope = ScopeContext.PushProperty(RunLogCapture.ScopeKey, _scopeToken);
         }
         catch (Exception ex)
         {
+            RunLogCapture.Unregister(_scopeToken);
+            _queue = null;
             Log.Warn(ex, "批次執行紀錄登記失敗（不影響本次分析）：{0}", ex.Message);
             onRegistrationFailed?.Invoke($"執行紀錄登記失敗（不影響本次分析，但這趟執行本次不會出現在執行監控）：{ex.Message}");
             _store = null;
@@ -485,16 +480,43 @@ public class BatchRunRecorder : IDisposable
                     final = _run.Snapshot();
                 }
                 FlushOutputTail();
-                _target?.Detach();
+                // 停止收件並排空：結束列落地前，所有已記錄的警告與診斷行都已寫完
+                RunLogCapture.Unregister(_scopeToken);
+                DrainQueue();
                 _scope?.Dispose();
                 _scope = null;
+                // 排空時可能多了一筆「佇列已滿」說明並計入警告數，結束列要含它
+                lock (_countLock) final = _run.Snapshot();
                 _store.FinishRun(final);
             }
         }
         catch (Exception ex)
         {
+            RunLogCapture.Unregister(_scopeToken);
             Log.Warn(ex, "批次執行紀錄回填失敗：{0}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// 常駐 target 分派進來的事件（在記 log 的執行緒上同步呼叫）：只做記憶體內的計數與入佇列，不碰資料庫。
+    /// 計數不受佇列上限影響（丟棄的只是診斷行，不是警告數）。
+    /// </summary>
+    private void Capture(LogEventInfo logEvent)
+    {
+        // 寫入自己失敗時記的警告不能再被擷取回同一條寫入路徑（呼叫端直接寫的路徑上它帶著本趟識別），否則寫入一直失敗就無限遞迴
+        if (_writingRow) return;
+        var level = logEvent.Level.Name;
+        var shortLogger = RunLogCapture.ShortLoggerName(logEvent.LoggerName);
+        OnLogRecorded(level, shortLogger);
+        _queue?.TryEnqueueCaptured(new BatchRunLog
+        {
+            RunId = _run.RunId,
+            LoggedAt = logEvent.TimeStamp,
+            Level = level,
+            Logger = shortLogger,
+            Message = logEvent.FormattedMessage,
+            ExceptionText = logEvent.Exception?.ToString()
+        });
     }
 
     private void OnLogRecorded(string level, string loggerName)
@@ -513,26 +535,56 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    private void Append(string level, string logger, string message, string? exceptionText, DateTime? loggedAt = null)
+    /// <summary>佇列滿而丟棄時寫了一筆說明：這件事本身就是這趟的一個警告</summary>
+    private void OnDropNoteWritten(long dropped) => OnLogRecorded("Warn", RunLogQueue.DropNoteLogger);
+
+    /// <summary>等已入佇列的行寫完（排空失敗只記本地 log，不中斷結束流程）</summary>
+    private void DrainQueue()
+    {
+        var queue = _queue;
+        if (queue == null) return;
+        if (!queue.Complete(TimeSpan.FromSeconds(30)))
+            Log.Warn("執行紀錄寫入佇列 30 秒內沒有排空，結束列照常寫出（部分診斷行可能缺漏）");
+    }
+
+    [ThreadStatic]
+    private static bool _writingRow;
+
+    private void WriteLogRow(BatchRunLog row)
     {
         if (_store == null) return;
-
+        var outer = _writingRow;
+        _writingRow = true;
         try
         {
-            _store.AppendLog(new BatchRunLog
-            {
-                RunId = _run.RunId,
-                LoggedAt = loggedAt ?? DateTime.Now,
-                Level = level,
-                Logger = logger,
-                Message = message,
-                ExceptionText = exceptionText
-            });
+            _store.AppendLog(row);
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "批次執行紀錄寫入失敗：{0}", ex.Message);
         }
+        finally
+        {
+            _writingRow = outer;
+        }
+    }
+
+    private void Append(string level, string logger, string message, string? exceptionText, DateTime? loggedAt = null)
+    {
+        if (_store == null) return;
+
+        var row = new BatchRunLog
+        {
+            RunId = _run.RunId,
+            LoggedAt = loggedAt ?? DateTime.Now,
+            Level = level,
+            Logger = logger,
+            Message = message,
+            ExceptionText = exceptionText
+        };
+        // 與擷取事件同一條佇列才保有先後順序；佇列已結束（結束後才補寫的行）直接寫
+        if (_queue is { } queue && queue.TryEnqueueForced(row)) return;
+        WriteLogRow(row);
     }
 
     /// <summary>
@@ -552,137 +604,5 @@ public class BatchRunRecorder : IDisposable
         Finish(_run.ExitCode ?? 1);
         _scope?.Dispose();
         _scope = null;
-    }
-
-    /// <summary>
-    /// 把 NLog 的 Warn 以上事件轉寫進執行紀錄。
-    /// 用 target 而不是在各處加呼叫：既有程式碼已經在該記的地方記了 log，
-    /// 逐處改呼叫既繁瑣又一定會漏。
-    /// </summary>
-    internal class BatchRunNLogTarget : TargetWithLayout
-    {
-        /// <summary>保護 <see cref="LogManager.Configuration"/> 這份全域設定的讀改寫（見 <see cref="Attach"/>）</summary>
-        private static readonly object ConfigLock = new();
-
-        private readonly BatchRunStore _store;
-        private readonly long _runId;
-        private readonly string _scopeToken;
-        private readonly Action<string, string> _onRecorded;
-
-        /// <summary>
-        /// 附掛時自建的那一條規則；卸除時以同一個物件移除。
-        /// 不用 <c>config.AddRule(...)</c>：它不回傳規則物件，卸除端只能留下 Targets.Count==0 的空殼
-        /// （nlog.config 內 <c>Microsoft.*</c>／<c>System.Net.Http.*</c> 的 final 規則同樣沒有 target，不能憑此判斷刪除）。
-        /// </summary>
-        private LoggingRule? _rule;
-
-        public BatchRunNLogTarget(BatchRunStore store, long runId, string scopeToken, Action<string, string> onRecorded)
-        {
-            _store = store;
-            _runId = runId;
-            _scopeToken = scopeToken;
-            _onRecorded = onRecorded;
-            // target 名稱要逐實例唯一：RunId 由各自的 store 配號，兩個獨立 store 會配出同一個號，
-            // 同名 target 會在附掛時互相取代，先掛的那一趟從此收不到任何事件。
-            Name = $"batchrun_{runId}_{scopeToken}";
-        }
-
-        /// <param name="configOverride">測試用：改掛在指定設定上而不動全域 <see cref="LogManager.Configuration"/></param>
-        public void Attach(LoggingConfiguration? configOverride = null)
-        {
-            // 全域設定的讀改寫要互斥：取數排程與 AI 排程可以並行（AI 跟隨取數），
-            // 兩趟執行各有自己的 recorder，附掛與卸除動的都是 LogManager.Configuration
-            // 這一份全域物件。不互斥的話兩邊的 AddTarget/RemoveTarget 與 ReconfigExistingLoggers
-            // 會交錯，先掛的那一趟可能被後來者的重設抹掉，從此收不到任何事件——
-            // 而那個失敗是靜默的：執行紀錄只會顯示「這趟沒有任何警告」。
-            lock (ConfigLock)
-            {
-                var config = configOverride ?? LogManager.Configuration;
-                if (config == null) return;
-
-                PurgeLeakedEmptyRules(config);
-
-                config.AddTarget(this);
-                _rule = new LoggingRule("*", LogLevel.Warn, LogLevel.Fatal, this);
-                config.LoggingRules.Add(_rule);
-                LogManager.ReconfigExistingLoggers();
-            }
-        }
-
-        public void Detach(LoggingConfiguration? configOverride = null)
-        {
-            lock (ConfigLock)
-            {
-                var config = configOverride ?? LogManager.Configuration;
-                if (config == null) return;
-
-                if (_rule != null)
-                {
-                    config.LoggingRules.Remove(_rule);
-                    _rule = null;
-                }
-                config.RemoveTarget(Name);
-                LogManager.ReconfigExistingLoggers();
-            }
-        }
-
-        /// <summary>
-        /// 清掉舊版卸除時殘留的空殼規則：<c>*</c>、Warn～Fatal、沒有 target、非 final、無規則名稱。
-        /// 判準必須全部成立才刪，nlog.config 內有意為之的 final 規則（沒有 writeTo）不會符合。
-        /// </summary>
-        private static void PurgeLeakedEmptyRules(LoggingConfiguration config)
-        {
-            var leaked = config.LoggingRules.Where(r =>
-                r.LoggerNamePattern == "*"
-                && r.Targets.Count == 0
-                && !r.Final
-                && string.IsNullOrEmpty(r.RuleName)
-                && r.Levels.Count == 3
-                && r.Levels.Contains(LogLevel.Warn)
-                && r.Levels.Contains(LogLevel.Error)
-                && r.Levels.Contains(LogLevel.Fatal)).ToList();
-            foreach (var r in leaked) config.LoggingRules.Remove(r);
-        }
-
-        protected override void Write(LogEventInfo logEvent)
-        {
-            // 只收這一趟執行自己非同步流程內的事件：target 是全行程 Warn~Fatal 規則，
-            // 不過濾的話夜間批次會把前景頁面的慢 SQL、互動 AI 逾時、AI 排程失敗全記成自己的問題。
-            if (!ScopeContext.TryGetProperty(ScopeKey, out var v))
-                return;
-
-            if (v?.ToString() != _scopeToken)
-                return;
-
-            try
-            {
-                var level = logEvent.Level.Name;
-                var shortLogger = ShortLoggerName(logEvent.LoggerName);
-                _onRecorded(level, shortLogger);
-
-                _store.AppendLog(new BatchRunLog
-                {
-                    RunId = _runId,
-                    LoggedAt = logEvent.TimeStamp,
-                    Level = level,
-                    Logger = shortLogger,
-                    Message = logEvent.FormattedMessage,
-                    ExceptionText = logEvent.Exception?.ToString()
-                });
-            }
-            catch
-            {
-                // 這裡在 NLog 的寫入路徑上——拋出例外會讓記 log 這件事本身變成故障點。
-                // 執行紀錄寫不進去是可惜，讓分析因此中斷是更糟的結果
-            }
-        }
-
-        private static string ShortLoggerName(string? loggerName)
-        {
-            if (string.IsNullOrEmpty(loggerName)) return string.Empty;
-
-            var lastDot = loggerName.LastIndexOf('.');
-            return lastDot >= 0 ? loggerName[(lastDot + 1)..] : loggerName;
-        }
     }
 }

@@ -1,3 +1,4 @@
+using LogForesight.Core.Time;
 using NLog;
 
 namespace LogForesight.Web.Services;
@@ -30,12 +31,15 @@ public class CaseDaySyncHostedService : BackgroundService
 
     private readonly IssueCaseCoordinator _coordinator;
     private readonly WorkOrderCoordinator _workOrders;
+    private readonly TimeProvider _clock;
     private readonly DataVersionStamp _dataVersion;
 
-    public CaseDaySyncHostedService(IssueCaseCoordinator coordinator, WorkOrderCoordinator workOrders, DataVersionStamp dataVersion)
+    public CaseDaySyncHostedService(IssueCaseCoordinator coordinator, WorkOrderCoordinator workOrders, DataVersionStamp dataVersion,
+        TimeProvider? clock = null)
     {
         _coordinator = coordinator;
         _workOrders = workOrders;
+        _clock = clock ?? TimeProvider.System;
         _dataVersion = dataVersion;
     }
 
@@ -62,7 +66,7 @@ public class CaseDaySyncHostedService : BackgroundService
                         while (!stoppingToken.IsCancellationRequested && _coordinator.ApplyPendingCaseDays(BatchSize) > 0)
                             processedAny = true;
 
-                        if (!stoppingToken.IsCancellationRequested && _workOrders.SweepClosures(SweepTake, DateTime.Now) > 0)
+                        if (!stoppingToken.IsCancellationRequested && _workOrders.SweepClosures(SweepTake, _clock.LocalNow()) > 0)
                             processedAny = true;
                     }, stoppingToken);
                 }

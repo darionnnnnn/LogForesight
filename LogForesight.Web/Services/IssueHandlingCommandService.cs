@@ -620,7 +620,7 @@ public class IssueHandlingCommandService
     private string ResolveDisplayName(long userId)
     {
         var user = _users.Get(userId);
-        return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
+        return NameFormat.UserLabel(_displayNameService, user);
     }
 
     private WebHost RequireVisibleHost(long hostId)

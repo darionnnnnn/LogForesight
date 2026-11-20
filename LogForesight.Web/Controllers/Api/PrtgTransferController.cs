@@ -195,9 +195,15 @@ public sealed class PrtgTransferController : ControllerBase
                 TryFailValidation(store, lease, ex.Code);
             return StoreError(ex);
         }
-        catch (InvalidDataException ex)
+        catch (PrtgLegacyPackageInvalidException ex)
         {
-            var code = FailureCode(ex.Message);
+            if (lease != null) TryFailValidation(store, lease, ex.Code);
+            return UnprocessableEntity(ApiResponse.Fail(ex.Code, SafeValidationMessage(ex.Code)));
+        }
+        catch (InvalidDataException)
+        {
+            // 驗證器以外的資料錯誤（片段讀回、上限）：不從訊息推錯誤碼，一律回診斷包無效
+            const string code = ApiErrorCodes.PackageInvalid;
             if (lease != null) TryFailValidation(store, lease, code);
             return UnprocessableEntity(ApiResponse.Fail(code, SafeValidationMessage(code)));
         }
@@ -265,14 +271,6 @@ public sealed class PrtgTransferController : ControllerBase
 
     private static bool IsValidationFailure(string code) =>
         code is ApiErrorCodes.PackageHashMismatch or ApiErrorCodes.ChunkIntegrityFailed or ApiErrorCodes.TransferChunksIncomplete;
-
-    private static string FailureCode(string message)
-    {
-        var separator = message.IndexOf(':');
-        var candidate = separator > 0 ? message[..separator] : ApiErrorCodes.PackageInvalid;
-        return candidate.Length <= 64 && candidate.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')
-            ? candidate : ApiErrorCodes.PackageInvalid;
-    }
 
     private static string SafeValidationMessage(string code) => code switch
     {

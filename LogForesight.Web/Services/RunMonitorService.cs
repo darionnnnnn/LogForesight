@@ -438,18 +438,18 @@ public class RunMonitorService
         {
             return latest.Status switch
             {
-                "failed" => BatchRunStatus.Failed,
-                "stopped" => BatchRunStatus.Stopped,
-                "running" when runsById.TryGetValue(latest.RunId, out var run) && run.FinishedAt.HasValue =>
+                NetiqAttemptStatus.Failed => BatchRunStatus.Failed,
+                NetiqAttemptStatus.Stopped => BatchRunStatus.Stopped,
+                NetiqAttemptStatus.Running when runsById.TryGetValue(latest.RunId, out var run) && run.FinishedAt.HasValue =>
                     run.Stopped ? BatchRunStatus.Stopped : run.ExitCode != 0 || run.ErrorCount > 0 ? BatchRunStatus.Failed : BatchRunStatus.Warning,
-                "running" when runsById.TryGetValue(latest.RunId, out var heldRun) && _isHeld(heldRun) => BatchRunStatus.Running,
-                "running" when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
-                "running" => BatchRunStatus.Running,
-                "partial" or "retained-incomplete" => BatchRunStatus.Warning,
+                NetiqAttemptStatus.Running when runsById.TryGetValue(latest.RunId, out var heldRun) && _isHeld(heldRun) => BatchRunStatus.Running,
+                NetiqAttemptStatus.Running when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
+                NetiqAttemptStatus.Running => BatchRunStatus.Running,
+                NetiqAttemptStatus.Partial or NetiqAttemptStatus.RetainedIncomplete => BatchRunStatus.Warning,
                 // 沒有分析紀錄、等下一趟複查：還沒定案，不算失敗也不算警告（說明在 StatusNote）
                 NetiqAttemptStatus.EmptyOnce => "recheck",
-                "success" when recordDates.Contains(key) => BatchRunStatus.Success,
-                "success" => BatchRunStatus.Warning,
+                NetiqAttemptStatus.Success when recordDates.Contains(key) => BatchRunStatus.Success,
+                NetiqAttemptStatus.Success => BatchRunStatus.Warning,
                 _ => BatchRunStatus.Warning
             };
         }

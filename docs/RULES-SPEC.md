@@ -131,6 +131,12 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 的比對範圍已被前面且啟用中的規則完全涵蓋，就永遠不會被命中。只警告不跳過，由人決定是否調整
 順序或縮小範圍——這是判斷力的問題，程式不擅自代勞。
 
+**下推落差警告**（Linux 規則，併入同一份警告清單、只警告不拒絕）：`MessagePatterns` 在本地是不分大小寫的子字串比對，
+下推到 Sentinel 是整詞片語。啟用中的 Linux 規則若片語頭或尾是某個更長詞的片段（例如 `Fail` 對 `Failed password`），
+本地會命中、Sentinel 取不到，驗證會警告。判斷依據是一份保守的常見 syslog 詞表（`RuleValidator.PushdownVocabulary`，詞表外的片段不警告；與內建種子相同的片語視為已驗證）；已是完整詞、
+或片語以空白起訖表示詞界者不警告。本地比對把訊息視為前面有一個空白，所以 `" Ban "` 能命中開頭的 Ban、不會命中 Unban。
+內建種子的 sshd 成功登入規則片語是 OpenSSH 的認證方法清單（`Accepted password`、`Accepted publickey`、`Accepted keyboard-interactive`、`Accepted hostbased`、`Accepted gssapi-with-mic`、`Accepted gssapi-keyex`、`Accepted none`），涵蓋任何認證方式，又不命中 VERBOSE 另記的 `Accepted key … found at …`；種子內容有變就遞增 `KnownIssueSeed.Version`（目前 15）。
+
 ## 儲存後端與 Interface
 
 沿用專案既有的 Strategy + Factory 模式（與 `IAnalysisRecordStore` 同一套）：

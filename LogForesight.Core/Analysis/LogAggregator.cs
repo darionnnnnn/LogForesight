@@ -190,8 +190,6 @@ public class LogIssueSignature
 
 internal static class LogAggregator
 {
-    private static readonly Regex Ipv4Regex = new(@"\b\d{1,3}(\.\d{1,3}){3}\b", RegexOptions.Compiled);
-
     /// <summary>
     /// Security 與 RDP 事件訊息中帳號欄位的標籤（中英文系統皆支援）。
     /// "Account Name:" 為 Security 4625/4624；"User:" 為 TerminalServices 工作階段事件（21/25/1149）。
@@ -304,17 +302,17 @@ internal static class LogAggregator
 
         foreach (var message in rawMessages)
         {
-            foreach (Match m in Ipv4Regex.Matches(message))
+            foreach (var ip in IpExtractor.ExtractAll(message))
             {
-                if (m.Value != "127.0.0.1" && m.Value != "0.0.0.0")
+                if (ip is not ("127.0.0.1" or "0.0.0.0" or "::1" or "::"))
                 {
-                    ips.Add(m.Value);
+                    ips.Add(ip);
                 }
             }
 
-            foreach (var (_, value) in EnumerateLabelValues(message, AccountLabels, null))
+            foreach (var (_, value) in EnumerateLabelValues(message, AccountLabels, null, keepOverlong: true))
             {
-                if (value.Length == 0 || value == "-" || value.EndsWith("$"))
+                if (value.Length == 0 || value == "-" || value.EndsWith('$'))
                 {
                     continue;
                 }
@@ -327,7 +325,7 @@ internal static class LogAggregator
                 if (slash >= 0 && slash + 1 < value.Length)
                 {
                     var bare = value[(slash + 1)..];
-                    if (bare.Length > 0 && !bare.EndsWith("$"))
+                    if (bare.Length > 0 && !bare.EndsWith('$'))
                     {
                         accounts.Add(bare);
                     }
@@ -398,7 +396,7 @@ internal static class LogAggregator
     /// </summary>
     public static LoginFailureDetail ExtractLoginFailureDetail(int eventId, string rawMessage)
     {
-        var account = ExtractLastValue(rawMessage, AccountLabels) ?? string.Empty;
+        var account = ExtractLastValue(rawMessage, AccountLabels, keepOverlong: true) ?? string.Empty;
         var isComputer = account.EndsWith('$');
 
         if (eventId == 4771)
@@ -608,10 +606,10 @@ internal static class LogAggregator
         }
 
         var trimmed = raw.Trim();
-        var match = Ipv4Regex.Match(trimmed);
-        if (match.Success)
+        var found = IpExtractor.First(trimmed);
+        if (found != null)
         {
-            return match.Value;
+            return found;
         }
 
         if (trimmed.StartsWith("::ffff:", StringComparison.OrdinalIgnoreCase))
@@ -623,17 +621,18 @@ internal static class LogAggregator
         return trimmed == "-" ? string.Empty : trimmed;
     }
 
-    /// <summary>標籤值長度上限。超過視為空值——護欄，防止標籤後面沒有邊界時整段訊息被當成值。</summary>
+    /// <summary>標籤值長度上限。一般標籤超過視為空值——護欄，防止標籤後面沒有邊界時整段訊息被當成值；
+    /// 帳號標籤（<c>keepOverlong</c>）超過則截到此長度後保留。</summary>
     private const int MaxLabelValueLength = 128;
 
     /// <summary>
     /// 取標籤在整則訊息中「最後一個非空值」；值為 "-" 回傳空字串（沿用既有語意）。
     /// excludeSubstrings：標籤本身落在這些字串之內時略過該出現處（例如「Status:」不吃「Sub Status:」）。
     /// </summary>
-    private static string? ExtractLastValue(string message, string[] labels, string[]? excludeSubstrings = null)
+    private static string? ExtractLastValue(string message, string[] labels, string[]? excludeSubstrings = null, bool keepOverlong = false)
     {
         string? last = null;
-        foreach (var (_, value) in EnumerateLabelValues(message, labels, excludeSubstrings))
+        foreach (var (_, value) in EnumerateLabelValues(message, labels, excludeSubstrings, keepOverlong))
         {
             if (value == "-")
             {
@@ -653,10 +652,11 @@ internal static class LogAggregator
     /// 冒號有半形與全形；只有 4625／4771 尾端追加的 Workstation／Source Network Address 才有換行。
     /// 因此值從標籤後第一個非空白字元（不跨越 \r\n）起算，讀到第一個邊界為止：
     /// \n、\r、\t、連續兩個以上空白、訊息結尾；值內的單一空白保留（"CONTOSO\alice"、英文失敗原因句）。
-    /// 值以冒號結尾（原欄位為空、讀到了下一個標籤）或超過 <see cref="MaxLabelValueLength"/> 字視為空值（回傳 ""）。
+    /// 值以冒號結尾（原欄位為空、讀到了下一個標籤）視為空值（回傳 ""）；超過 <see cref="MaxLabelValueLength"/> 字時，
+    /// 帳號標籤截斷後保留、其他標籤視為空值。
     /// 值為 "-" 原樣回傳，由呼叫端決定語意。
     /// </summary>
-    private static List<(int Index, string Value)> EnumerateLabelValues(string message, string[] labels, string[]? excludeSubstrings)
+    private static List<(int Index, string Value)> EnumerateLabelValues(string message, string[] labels, string[]? excludeSubstrings, bool keepOverlong = false)
     {
         var results = new List<(int Index, string Value)>();
         foreach (var label in labels)
@@ -676,7 +676,7 @@ internal static class LogAggregator
                     continue;
                 }
 
-                results.Add((idx, ReadLabelValue(message, from)));
+                results.Add((idx, ReadLabelValue(message, from, keepOverlong)));
             }
         }
 
@@ -700,7 +700,7 @@ internal static class LogAggregator
         return false;
     }
 
-    private static string ReadLabelValue(string message, int start)
+    private static string ReadLabelValue(string message, int start, bool keepOverlong)
     {
         int i = start;
         while (i < message.Length && (message[i] == ' ' || message[i] == '\t'))
@@ -724,9 +724,19 @@ internal static class LogAggregator
         }
 
         var value = message[i..end].TrimEnd();
-        if (value.Length == 0 || value.Length > MaxLabelValueLength || value.EndsWith(':') || value.EndsWith('：'))
+        if (value.Length == 0 || value.EndsWith(':') || value.EndsWith('：'))
         {
             return string.Empty;
+        }
+        if (value.Length > MaxLabelValueLength)
+        {
+            if (!keepOverlong)
+            {
+                return string.Empty;
+            }
+            // 帳號類標籤：超長值截到上限後保留（帳號不能因為長就從集合與噴灑計數消失）。
+            // 切點落在代理對中間時往內退一個字元（TextTruncation.SafeCut），避免留下不合法的 UTF-16。
+            value = TextTruncation.SafeCut(value, MaxLabelValueLength).TrimEnd();
         }
         return value;
     }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 ﻿using System.Net;
 using System.Text;
 using LogForesight.Core;
@@ -323,9 +324,12 @@ public class PrtgClientTests
         Assert.NotNull(socketHandler.SslOptions.RemoteCertificateValidationCallback);
         Assert.True(socketHandler.SslOptions.RemoteCertificateValidationCallback!(null!, null!, null!, System.Net.Security.SslPolicyErrors.None));
 
+        // 沒開放行：一律掛驗證函式（為了記下伺服器出示的指紋），但判定照系統結果——有錯誤就拒絕
         using var clientNoSsl = new PrtgClient(ValidUrl, SampleToken, 30, false, null, PrtgAuthModes.Token, "", "", "");
         var noSslHandler = Assert.IsType<SocketsHttpHandler>(clientNoSsl.Handler);
-        Assert.Null(noSslHandler.SslOptions.RemoteCertificateValidationCallback);
+        var strict = noSslHandler.SslOptions.RemoteCertificateValidationCallback!;
+        Assert.True(strict(null!, null!, null!, System.Net.Security.SslPolicyErrors.None));
+        Assert.False(strict(null!, null!, null!, System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors));
     }
 
     [Fact]
@@ -1210,11 +1214,6 @@ public class PrtgClientTests
 
     // ───────── Retry-After（第 63-2 輪批次 H-1）：標頭交給 HttpResponseMessage.Headers 解析，例外帶出從現在起的長度 ─────────
 
-    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
-
     private static async Task<PrtgClientException> FailWithAsync(HttpStatusCode code, Action<HttpResponseMessage>? decorate,
         TimeProvider? clock = null)
     {
@@ -1249,7 +1248,7 @@ public class PrtgClientTests
         var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
         var ex = await FailWithAsync(HttpStatusCode.ServiceUnavailable,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(90)),
-            new FixedClock(now));
+            new FakeTimeProvider(now));
 
         Assert.Equal(TimeSpan.FromSeconds(90), ex.RetryAfter);
     }
@@ -1260,7 +1259,7 @@ public class PrtgClientTests
         var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
         var past = await FailWithAsync(HttpStatusCode.TooManyRequests,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(-30)),
-            new FixedClock(now));
+            new FakeTimeProvider(now));
         var zero = await FailWithAsync(HttpStatusCode.TooManyRequests,
             r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero));
 

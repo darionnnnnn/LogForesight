@@ -1,3 +1,4 @@
+using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 
 namespace LogForesight.Web.Middleware;
@@ -43,7 +44,7 @@ public class CsrfHeaderMiddleware
 
     private static bool RequiresHeader(HttpContext context)
     {
-        if (!context.Request.Path.StartsWithSegments("/api")) return false;
+        if (!ApiStatusEnvelope.IsApiRequest(context.Request)) return false;
 
         // 瀏覽器自動送出的 CSP 違規回報不帶自訂標頭；只放行這一條精確路徑（不用前綴），端點本身另有大小與頻率限制
         if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.Equals(CspReportPath, StringComparison.OrdinalIgnoreCase))

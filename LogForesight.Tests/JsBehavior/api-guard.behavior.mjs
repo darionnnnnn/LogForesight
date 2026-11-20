@@ -48,7 +48,42 @@ function slowFetch(record, delayMs) {
     });
 }
 
+/** 最小的 sessionStorage 替身（node 沒有；只實作 session-notice.js 用到的三個方法） */
+function fakeSessionStorage() {
+    const map = new Map();
+    return { getItem: k => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)), removeItem: k => map.delete(k) };
+}
+
 const cases = {
+    async 登入逾期401把拒絕原因記下且登入頁只讀一次() {
+        globalThis.sessionStorage = fakeSessionStorage();
+        const { takeSessionNotice } = await import('../../LogForesight.Web/wwwroot/js/core/session-notice.js');
+        globalThis.fetch = async () => new Response(JSON.stringify({ success: false, error: { code: 'auth_expired', message: '您已登出，請重新登入。' } }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } });
+        let caught;
+        try { await api.get('/api/anything', { silent: true }); } catch (error) { caught = error; }
+        assert(caught?.code === 'auth_expired', '仍須丟出 auth_expired');
+        assert(takeSessionNotice() === '您已登出，請重新登入。', '轉址前須記下後端的拒絕原因');
+        assert(takeSessionNotice() === null, '讀後即刪，只顯示一次');
+    },
+    async 沒有sessionStorage時401仍正常轉址() {
+        delete globalThis.sessionStorage;
+        globalThis.fetch = async () => new Response(JSON.stringify({ success: false, error: { message: 'x' } }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } });
+        let caught;
+        try { await api.get('/api/anything', { silent: true }); } catch (error) { caught = error; }
+        assert(caught?.code === 'auth_expired' && location.href.startsWith('/lf/login?returnUrl='), 'sessionStorage 不可用不得影響轉址');
+    },
+    async 背景輪詢帶背景標頭且一般請求不帶() {
+        const seen = [];
+        globalThis.fetch = async (url, init) => {
+            seen.push(init.headers['X-Lf-Background'] ?? null);
+            return new Response(JSON.stringify({ success: true, data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        };
+        await api.get('/api/run-activity', { silent: true, background: true });
+        await api.get('/api/run-activity', { silent: true });
+        assert(seen[0] === '1' && seen[1] === null, `背景請求帶標頭、一般請求不帶，實際 ${JSON.stringify(seen)}`);
+    },
     async JSON下載已知超限不等待取消確認() {
         const body = new ReadableStream({ cancel() { return new Promise(() => {}); } });
         globalThis.fetch = async () => new Response(body,

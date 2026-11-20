@@ -1,7 +1,8 @@
 import { api } from '../core/api.js';
 import { prtgCategoryShort } from '../core/prtg-sensor-categories.js';
 import { formatDate, formatNumber } from '../core/format.js';
-import { guardLoad, renderSpinner, renderTable, button } from '../core/ui.js';
+import { guardLoad, renderSpinner, renderTable, button, showTab } from '../core/ui.js';
+import { compareText } from '../core/collation.js';
 
 /**
  * 數值資料就緒度卡片（環境探測頁籤）
@@ -121,7 +122,7 @@ export function initValueReadiness() {
             .filter(Boolean);
 
         if (validDays.length > 0) {
-            validDays.sort();
+            validDays.sort(compareText);
             const earliest = validDays[0];
             const diffMs = Date.now() - new Date(earliest).getTime();
             const diffDays = diffMs / (1000 * 60 * 60 * 24);
@@ -176,7 +177,7 @@ export function initValueReadiness() {
 
     refreshBtn?.addEventListener('click', () => load());
     backfillBtn?.addEventListener('click', () => {
-        document.querySelector('#prtg-tabs [data-tab="selected-backfill"]')?.click();
+        showTab('prtg-tabs', 'selected-backfill');
     });
 
     prevBtn?.addEventListener('click', () => {

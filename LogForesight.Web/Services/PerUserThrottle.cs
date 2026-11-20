@@ -26,6 +26,9 @@ public class SlidingWindowThrottle<TKey> where TKey : notnull
         _maxKeys = maxKeys;
     }
 
+    /// <summary>全表掃描次數（測試用：驗證滿載時不會每次呼叫都掃）</summary>
+    internal int SweepCount { get; private set; }
+
     /// <summary>還在額度內就記一次並回 true；超過回 false（不記）</summary>
     public bool TryAcquire(TKey key, DateTime nowUtc) => TryAcquire(key, nowUtc, out _);
 
@@ -36,10 +39,12 @@ public class SlidingWindowThrottle<TKey> where TKey : notnull
     {
         lock (_lock)
         {
-            // 清掉整個窗口都過期的鍵，字典不隨歷來鍵數無限成長。每個視窗最多掃一次、鍵數已滿時立刻掃：
-            // 匿名的 CSP 回報端點鍵數可到上限，每次呼叫都全掃會讓一個請求在鎖內做上百萬次比較
-            if (_calls.Count >= _maxKeys || nowUtc - _lastSweepUtc >= _window)
+            // 清掉整個窗口都過期的鍵，字典不隨歷來鍵數無限成長。每個視窗最多掃一次——鍵數已滿時也一樣：
+            // 匿名的 CSP 回報端點鍵數可被灌到上限，滿載時每次呼叫都全掃會讓一個請求在鎖內做上萬次比較。
+            // 滿載期間的新鍵照樣被拒（見下方），等下一次掃描騰出位置
+            if (nowUtc - _lastSweepUtc >= _window)
             {
+                SweepCount++;
                 foreach (var expired in _calls.Where(kv => kv.Value.Count == 0 || nowUtc - kv.Value.Last() >= _window)
                              .Select(kv => kv.Key).ToList())
                     _calls.Remove(expired);

@@ -17,7 +17,7 @@ public sealed record PrtgScopePurgeAuthorization(
             ActorId == 0 ? null : GroupsRevision, AuthFingerprint);
 }
 
-/// <summary>Live purge authorization. It reloads user/group data for every decision and never trusts JWT capability claims.</summary>
+/// <summary>Live purge authorization. It reloads user/group data for every decision and never trusts capability claims in the login cookie.</summary>
 public sealed class PrtgScopePurgeAuthorizationService
 {
     private readonly IUserStore _users;

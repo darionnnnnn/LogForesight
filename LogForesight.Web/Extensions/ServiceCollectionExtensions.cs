@@ -12,10 +12,9 @@ using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Import;
 using LogForesight.Web.Services.Mail;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 
 namespace LogForesight.Web.Extensions;
 
@@ -63,7 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IUserStore>(sp =>
         {
             var backend = sp.GetRequiredService<StorageBackend>();
-            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"));
+            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"), backend.Blob("user_session_versions"));
         });
         services.AddSingleton<IUserGroupStore>(sp => new UserGroupStore(sp.GetRequiredService<StorageBackend>().Blob("user_groups")));
         services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));
@@ -114,6 +113,9 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IHostStore>(),
                 () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
+        // 與 StorageBackend.PermissionChanges() 內的就緒旗標是同一個實例
+        services.AddSingleton<PermissionChangeDedupeBackfiller>(sp =>
+            sp.GetRequiredService<StorageBackend>().PermissionChangeDedupeBackfiller());
         services.AddSingleton(sp => new WorkOrderBackfiller(sp.GetRequiredService<StorageBackend>().WorkOrderStore()));
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
@@ -137,7 +139,11 @@ public static class ServiceCollectionExtensions
 
         // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
         services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
-        services.AddSingleton(sp => new WorkOrderOutboxStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new WorkOrderOutboxDropStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxDropStore.BlobKey)));
+        services.AddSingleton(sp => new WorkOrderOutboxStore(
+            sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<WorkOrderOutboxDropStore>()));
 
         // 每使用者偏好（回饋第 50 輪 C-4，目前只有個人常用語）：獨立 blob，不進使用者清單
         services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));
@@ -153,17 +159,17 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>驗證與授權：JWT（存於 HttpOnly Cookie）＋ 能力解析</summary>
+    /// <summary>驗證與授權：內建 Cookie Authentication（HttpOnly Cookie）＋ 能力解析</summary>
     public static IServiceCollection AddLogForesightAuth(this IServiceCollection services, WebAppSettings settings)
     {
         services.AddHttpContextAccessor();
-        services.AddSingleton<JwtTokenService>();
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+            .TryAddSingleton<TimeProvider>(services, TimeProvider.System);
         services.AddSingleton<ServerAdminAuthenticator>();
         services.AddSingleton<LoginThrottle>();   // 行程內節流狀態，必須是 Singleton 才跨請求累計
-        // 權限版本號與登出撤銷清單都是跨請求共享狀態，必須是 Singleton
+        // 權限版本號是跨請求共享狀態，必須是 Singleton
         services.AddSingleton<PermissionVersionStamp>(sp =>
             new PermissionVersionStamp(sp.GetRequiredService<StorageBackend>().Blob(PermissionVersionStamp.BlobKey)));
-        services.AddSingleton<RevokedTokens>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
@@ -185,62 +191,37 @@ public static class ServiceCollectionExtensions
             return SelectAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback, OperatingSystem.IsWindows);
         });
 
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
+        // 內建 Cookie Authentication（docs/WEB-SPEC.md §6.1）：cookie 內是 Data Protection 加密簽章的票證，
+        // 逐請求驗證（停用、工作階段版號、權限版本、24 小時絕對上限）在 CookieSessionEvents。
+        services.AddAuthentication(SessionCookie.Scheme)
+            .AddCookie(SessionCookie.Scheme, options =>
             {
-                // 關閉 claim 名稱映射：預設行為會把 unique_name 之類的短名稱改寫成
-                // WS-Federation 的長 URI，造成「寫進去的 claim 名字」與「讀出來的名字」不同。
-                // 關掉之後 JwtTokenService 寫什麼名字就讀什麼名字，不需要記憶對照關係。
-                options.MapInboundClaims = false;
-
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    NameClaimType = JwtTokenService.DisplayNameClaim,
-                    RoleClaimType = JwtTokenService.CapabilityClaim,
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer = settings.Jwt.Issuer,
-                    ValidAudience = settings.Jwt.Audience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(settings.Jwt.SecretKey)),
-                    ClockSkew = TimeSpan.FromMinutes(1)
-                };
-
-                options.Events = new JwtBearerEvents
-                {
-                    // token 放在 HttpOnly Cookie 而不是 Authorization 標頭：
-                    // 前端 JS 讀不到 token，XSS 就偷不走它（§6.1）
-                    OnMessageReceived = context =>
-                    {
-                        if (context.Request.Cookies.TryGetValue(settings.Jwt.CookieName, out var token))
-                            context.Token = token;
-                        return Task.CompletedTask;
-                    },
-
-                    // 未驗證時 API 與頁面要有不同待遇：
-                    // API 回 401 讓前端攔截後導頁；頁面直接 302，使用者不會先看到空殼再被踢出去
-                    OnChallenge = async context =>
-                    {
-                        context.HandleResponse();
-
-                        if (context.Request.Path.StartsWithSegments("/api"))
-                        {
-                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                            context.Response.ContentType = "application/json";
-                            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
-                                ApiErrorCodes.AuthExpired, "登入已逾期，請重新登入。"));
-                        }
-                        else
-                        {
-                            // Request.Path 已扣掉掛載前綴，returnUrl 存的是 app 內路徑
-                            // （前端用 appUrl 還原）；轉址目標本身要補回前綴才到得了登入頁
-                            var returnUrl = Uri.EscapeDataString(context.Request.Path + context.Request.QueryString);
-                            context.Response.Redirect($"{context.Request.PathBase}/login?returnUrl={returnUrl}");
-                        }
-                    }
-                };
+                options.Cookie.Name = settings.Jwt.CookieName;
+                // HttpOnly：前端 JS 讀不到；SameSite=Strict：跨站請求不帶，CSRF 的第一層防線
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SameSite = SameSiteMode.Strict;
+                // 跟隨請求：http 與 https 都要能登入（Secure 旗標另認 X-Forwarded-Proto，見 CookieSessionEvents）。
+                // Path 不設定：框架預設用請求的 PathBase，站台掛在 IIS 子 Application 時 cookie 路徑正確。
+                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                options.Cookie.IsEssential = true;
+                // 閒置時限（設定鍵 Jwt:ExpireHours 沿用）＋ 滑動延長；連續登入的絕對上限見 SessionCookie.AbsoluteLifetime
+                options.ExpireTimeSpan = TimeSpan.FromHours(settings.Jwt.ExpireHours);
+                options.SlidingExpiration = true;
+                options.EventsType = typeof(CookieSessionEvents);
+                // 代理終止 TLS 時 IsHttps 為 false：Secure 旗標另認 X-Forwarded-Proto（寫入、續發、刪除都經這個管理員）
+                options.CookieManager = new ForwardedSecureCookieManager();
             });
+        // 時間一律取自注入的 TimeProvider（假時鐘測試要能撥動到期與絕對上限）
+        services.AddOptions<CookieAuthenticationOptions>(SessionCookie.Scheme)
+            .Configure<TimeProvider>((options, clock) => options.TimeProvider = clock);
+        services.AddTransient<CookieSessionEvents>();
+        services.AddSingleton<SessionPrincipalFactory>();
+        services.AddSingleton<ISessionSigner, CookieSessionSigner>();
+        services.AddSingleton<SessionVersionStore>(sp => new SessionVersionStore(
+            sp.GetRequiredService<IUserStore>(),
+            sp.GetRequiredService<StorageBackend>().Blob(SessionVersionStore.ServerAdminBlobKey),
+            SessionVersionStore.CredentialStamp(settings.Auth.ServerAdmin.Account, settings.Auth.ServerAdmin.PasswordHash)));
+        services.AddLogForesightDataProtection(settings.Storage.ResolveDataRoot());
 
         services.AddAuthorization(options =>
         {
@@ -268,25 +249,45 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<ApiBehaviorOptions>(options =>
         {
+            // 不讓 MVC 把空本文的 4xx（415 媒體類型不符等）自動包成 ProblemDetails：
+            // 前端只認信封，ProblemDetails 沒有 success／error，使用者只看得到通用文字。
+            // 關掉後空本文交給 UseStatusCodePages 的 ApiStatusEnvelope 補成信封（B1）。
+            options.SuppressMapClientErrors = true;
             options.InvalidModelStateResponseFactory = context =>
             {
-                var messages = context.ModelState
-                    .Where(entry => entry.Value?.Errors.Count > 0)
-                    .SelectMany(entry => entry.Value!.Errors.Select(error => error.ErrorMessage))
-                    .Where(message => !string.IsNullOrWhiteSpace(message))
-                    .Distinct()
-                    .ToList();
-
-                var message = messages.Count > 0
-                    ? string.Join("；", messages)
-                    : "輸入內容不合格，請確認必填欄位與格式。";
-
                 return new BadRequestObjectResult(
-                    ApiResponse<object>.Fail(ApiErrorCodes.ValidationFailed, message));
+                    ApiResponse<object>.Fail(ApiErrorCodes.ValidationFailed, ValidationMessage(context.ModelState)));
             };
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// 模型驗證失敗給使用者看的訊息。JSON 本文解析失敗的錯誤（鍵是 <c>$</c> 開頭的 JSON 路徑）訊息是框架的英文原文，
+    /// 含 CLR 型別名與位元組位置：一律換成固定中文並只指出欄位；此時本文參數的「為必填」是解析失敗的連帶結果，不另外列。
+    /// 其餘（資料註記與中文化的繫結訊息）照原文回。
+    /// </summary>
+    internal static string ValidationMessage(Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary modelState)
+    {
+        var failed = modelState.Where(entry => entry.Value?.Errors.Count > 0).ToList();
+        var jsonPaths = failed.Select(entry => entry.Key)
+            .Where(key => key == "$" || key.StartsWith("$.", StringComparison.Ordinal) || key.StartsWith("$[", StringComparison.Ordinal))
+            .ToList();
+        if (jsonPaths.Count > 0)
+        {
+            var fields = jsonPaths.Where(path => path.Length > 2).Select(path => path[2..]).Distinct().Take(5).ToList();
+            return fields.Count > 0
+                ? $"請求內容格式不正確：「{string.Join("」、「", fields)}」的值不是預期的類型。"
+                : "請求內容不是合法的 JSON。";
+        }
+
+        var messages = failed
+            .SelectMany(entry => entry.Value!.Errors.Select(error => error.ErrorMessage))
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct()
+            .ToList();
+        return messages.Count > 0 ? string.Join("；", messages) : "輸入內容不合格，請確認必填欄位與格式。";
     }
 
     /// <summary>業務層與資料存取層</summary>
@@ -295,6 +296,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuditService, AuditService>();
         // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
         services.AddScoped<UserCapabilityResolver>();
+        services.AddSingleton<DirectoryVerifyGate>();   // 目錄服務驗證並行上限，跨請求共用
         services.AddScoped<IdentityService>();
         services.AddScoped<PrtgScopePurgeAuthorizationService>();
         services.AddScoped<IVisibilityService, VisibilityService>();
@@ -306,9 +308,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAiProbeService>(sp =>
         {
             var settings = sp.GetRequiredService<ISystemSettingsStore>();
-            var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
-            var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
-            return new AiProbeService(settings, http);
+            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient());
         });
         services.AddScoped<SetupReadinessService>();
 

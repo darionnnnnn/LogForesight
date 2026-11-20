@@ -20,7 +20,7 @@ namespace LogForesight.Web.Services;
 /// 舊鍵當下就再也命不中、下一次呼叫即重算。TTL 與條目上限純粹是清理機制
 /// （避免離線使用者的舊條目無限累積），不是新鮮度的保證來源。
 /// </summary>
-public class IssueOwnedHostIdsCache : ICacheStatistics
+public class IssueOwnedHostIdsCache : BoundedTtlCache<HashSet<long>>
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由
     /// （全站快取的清理節奏一致）。</summary>
@@ -30,24 +30,9 @@ public class IssueOwnedHostIdsCache : ICacheStatistics
     /// 滿了逐筆淘汰（先清過期、再清最久沒被存取的），不整批清空。</summary>
     private const int MaxEntries = 256;
 
-    private readonly DataVersionStamp _stamp;
-    private readonly Func<DateTime> _now;
-    private readonly object _lock = new();
-    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
-    private long _hits;
-    private long _misses;
-    private long _evictions;
-    private readonly Dictionary<string, (HashSet<long> HostIds, DateTime CachedAt, DateTime LastAccess)> _entries = new();
-    private readonly SingleFlight _flight = new();
-
-    /// <summary>上一次看到的版本戳：版本一推進，所有舊鍵都已經死掉（鍵含版本戳），
-    /// 直接整批清掉，免得死條目佔著上限。</summary>
-    private long _seenVersion;
-
     public IssueOwnedHostIdsCache(DataVersionStamp stamp, Func<DateTime>? now = null)
+        : base("IssueOwnedHostIdsCache", TtlSeconds, MaxEntries, long.MaxValue, h => h.Count, () => stamp.Current, now)
     {
-        _stamp = stamp;
-        _now = now ?? (() => DateTime.Now);
     }
 
     /// <summary>組鍵：使用者 id｜資料版本戳｜保留天數。三個維度都是必要的，理由見類別註解。</summary>
@@ -55,82 +40,15 @@ public class IssueOwnedHostIdsCache : ICacheStatistics
         $"{userId}|{version}|{retentionDays}";
 
     /// <summary>
-    /// 取快取；未命中（不存在／逾時／版本已推進）時呼叫 <paramref name="factory"/> 算一次並存起來。
+    /// 取快取；未命中（不存在／逾時／版本已推進）時呼叫 <paramref name="factory"/> 算一次並存起來（同鍵並發只算一次）。
     /// 回傳的是**副本**——呼叫端（VisibilityService 會對它做 UnionWith）不得改到共用集合。
+    /// 版本推進時舊版條目在下一次寫入新鍵時整批釋放（<see cref="BoundedTtlCache{T}"/>）；
+    /// 晚到的舊版本請求不會清掉較新版本的條目。
     /// </summary>
     public IReadOnlySet<long> GetOrAdd(long userId, int retentionDays, Func<IReadOnlySet<long>> factory)
     {
-        var version = _stamp.Current;
-        var key = KeyOf(userId, version, retentionDays);
-
-        lock (_lock)
-        {
-            // 版本戳只前進：較舊版本的晚到請求不得清掉較新版本的條目（D4 契約 5）
-            if (version > _seenVersion)
-            {
-                _evictions += _entries.Count;
-                _entries.Clear();
-                _seenVersion = version;
-            }
-            else if (_entries.TryGetValue(key, out var entry)
-                     && (_now() - entry.CachedAt).TotalSeconds < TtlSeconds)
-            {
-                _hits++;
-                _entries[key] = entry with { LastAccess = _now() };
-                return new HashSet<long>(entry.HostIds);
-            }
-            _misses++;
-        }
-
-        // factory 在鎖外執行：那支聚合查詢很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只算一次（同 SummaryCache）
-        var shared = _flight.Run(key, () =>
-        {
-            // 前一個同鍵合併可能剛寫入並結束：再看一次，避免緊接著重算（同 SummaryCache）
-            lock (_lock)
-            {
-                if (_seenVersion == version && _entries.TryGetValue(key, out var fresh)
-                    && (_now() - fresh.CachedAt).TotalSeconds < TtlSeconds)
-                    return fresh.HostIds;
-            }
-            var value = new HashSet<long>(factory());
-            lock (_lock)
-            {
-                var now = _now();
-                if (!_entries.ContainsKey(key)) EvictForInsert(now);
-                _entries[key] = (value, now, now);
-            }
-            return value;
-        });
-
+        var version = CurrentVersion;
+        var shared = GetOrCompute(KeyOf(userId, version, retentionDays), version, () => new HashSet<long>(factory()));
         return new HashSet<long>(shared);
-    }
-
-    /// <summary>已達上限時騰出空位（呼叫端須持鎖）：先移除逾時項目，仍滿就逐筆移除最後存取時間最舊的一筆。
-    /// （版本推進時的整批清空在 GetOrAdd 開頭，與這裡無關。）</summary>
-    private void EvictForInsert(DateTime now)
-    {
-        if (_entries.Count < MaxEntries) return;
-
-        var expired = _entries
-            .Where(e => (now - e.Value.CachedAt).TotalSeconds >= TtlSeconds)
-            .Select(e => e.Key)
-            .ToList();
-        foreach (var k in expired) _entries.Remove(k);
-        _evictions += expired.Count;
-
-        while (_entries.Count >= MaxEntries)
-        {
-            _entries.Remove(_entries.MinBy(e => e.Value.LastAccess).Key);
-            _evictions++;
-        }
-    }
-
-    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
-    public CacheStatisticsSnapshot GetStatistics()
-    {
-        lock (_lock)
-        {
-            return new CacheStatisticsSnapshot("IssueOwnedHostIdsCache", _entries.Count, _entries.Values.Sum(e => (long)e.HostIds.Count), _hits, _misses, _evictions, 0);
-        }
     }
 }

@@ -390,6 +390,41 @@ public class PrtgProbeRunnerTests
         Assert.Contains(console.Lines, l => l.Contains("探測終止（連線或認證失敗）"));
     }
 
+    [Theory]
+    [InlineData("<!DOCTYPE html><html><body>PRTG Login host=secret-srv01 user=admin</body></html>")]
+    [InlineData("Welcome to secret-srv01 plain text")]
+    public async Task RunAsync_步驟1_回應不是JSON時判為失敗且不夾帶原文(string body)
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "text/html")
+            })
+        };
+
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.False(result);
+        Assert.Contains(console.Lines, l => l.Contains("失敗") && l.Contains("回應不是預期格式"));
+        Assert.Contains(console.Lines, l => l.Contains("探測終止"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("secret-srv01"));
+    }
+
+    [Fact]
+    public async Task RunAsync_步驟1_回應是正常JSON時仍判為成功()
+    {
+        var stub = BuildPagingStub((_, _) => new long[] { 1, 2, 3, 4, 5 });
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget(new LogForesight.Tests.TestDoubles.AcceleratedPrtgClock()));
+        var console = new TestConsole();
+        await PrtgProbeRunner.RunAsync(client, console);
+
+        Assert.Contains(console.Lines, l => l.Contains("PRTG 版本：24.2.98"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("回應不是預期格式"));
+    }
+
     /// <summary>
     /// 建一個把步驟 1~7 都餵最小合法資料的替身，步驟 8 的三次 count=5 查詢交給 pagingResponder
     /// （依 content 與 start 決定回哪些 objid）。步驟 6 的 devices 大 count 回 deviceRows 筆。

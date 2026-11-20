@@ -139,11 +139,10 @@ public static class AiJsonDiagnostics
     {
         if (content.Length <= HeadChars + TailChars) return (content, null);
 
-        var headLength = HeadChars;
-        if (char.IsHighSurrogate(content[headLength - 1])) headLength--;
+        var head = TextTruncation.SafeCut(content, HeadChars);
         var tailStart = content.Length - TailChars;
         if (char.IsLowSurrogate(content[tailStart])) tailStart++;
-        return (content[..headLength], content[tailStart..]);
+        return (head, content[tailStart..]);
     }
 
     /// <summary>

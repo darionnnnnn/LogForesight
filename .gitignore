@@ -16,8 +16,8 @@
 # 批次 console 專案（LogForesight/）已隨 Phase 5 退場移除（docs/WEB-SCHEDULER-PLAN.md §1.5），
 # 其執行期資料目錄規則（history.txt／export／rules.json 等）一併清理。
 
-# Web 本機開發設定——內含開發用 JWT 簽章金鑰與 serverAdmin 密碼雜湊，絕不能進版本控制
-# （正式環境以環境變數 Jwt__SecretKey 等覆寫，見 docs/WEB-SPEC.md §5）
+# Web 本機開發設定——內含 serverAdmin 密碼雜湊，絕不能進版本控制
+# （正式環境以環境變數 Auth__ServerAdmin__PasswordHash 等覆寫，見 docs/WEB-SPEC.md §5）
 LogForesight.Web/appsettings.Development.json
 
 # OS

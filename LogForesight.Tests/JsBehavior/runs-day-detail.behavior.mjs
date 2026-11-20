@@ -34,6 +34,7 @@ function load() {
         document,
         DAY_DETAIL_COLUMNS: [],
         STATUS_META: { success: { label: '成功' }, failed: { label: '失敗' }, recheck: { label: '空資料待複查' } },
+        createSeqGuard: () => { let latest = 0; return { next: () => ++latest, isCurrent: seq => seq === latest }; },
         loadPageSize: () => 20,
         savePageSize: () => { },
         renderLoading: () => { },

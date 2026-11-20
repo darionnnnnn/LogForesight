@@ -9,6 +9,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// <summary>Batch metadata lookup with complete bounded text, preserving the caller's transaction.</summary>
 internal static class BoundedJsonBlobBatchReader
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "插入的只有固定欄位清單與 @k 參數名，值一律走參數")]
     internal static Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)> Read(
         LfDbContext context,IEnumerable<string> keys,int maximumCharacters)
     {

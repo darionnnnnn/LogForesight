@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -49,6 +50,8 @@ public static class PrtgProbeRunner
         allOk &= await StepAsync(console, 1, "版本與連線", async () =>
         {
             var json = await client.GetJsonAsync("/api/status.json?id=0", ct);
+            if (!IsJsonText(json))
+                throw new InvalidOperationException("PRTG 回應不是預期格式（不是 JSON），請確認連線位址與認證資訊。");
             var version = ExtractVersion(json);
             if (!string.IsNullOrWhiteSpace(version))
             {
@@ -101,24 +104,24 @@ public static class PrtgProbeRunner
             var senTableJson = await client.GetJsonAsync("/api/table.json?content=sensors&columns=objid,device,sensor,type,tags,unit,lastvalue,parentid,status&count=50000", ct);
             var parsedSensors = ParseTable(senTableJson, "sensors", el =>
             {
-                var type = GetStringProperty(el, "type");
+                var type = PrtgJson.GetString(el, "type");
                 if (string.IsNullOrWhiteSpace(type)) return null;
-                var unit = GetStringProperty(el, "unit");
+                var unit = PrtgJson.GetString(el, "unit");
                 if (string.IsNullOrWhiteSpace(unit))
                 {
-                    unit = ExtractUnitFromLastValue(GetStringProperty(el, "lastvalue"));
+                    unit = ExtractUnitFromLastValue(PrtgJson.GetString(el, "lastvalue"));
                 }
                 int? parentId = null;
-                if (int.TryParse(GetStringProperty(el, "parentid"), out var pid))
+                if (int.TryParse(PrtgJson.GetString(el, "parentid"), out var pid))
                 {
                     parentId = pid;
                 }
                 long? objid = null;
-                if (long.TryParse(GetStringProperty(el, "objid"), out var oid))
+                if (long.TryParse(PrtgJson.GetString(el, "objid"), out var oid))
                 {
                     objid = oid;
                 }
-                return new SensorTypeSample(type, unit, parentId, objid, GetStringProperty(el, "status"));
+                return new SensorTypeSample(type, unit, parentId, objid, PrtgJson.GetString(el, "status"));
             });
 
             if (parsedSensors.CorruptedCount > 0)
@@ -202,7 +205,7 @@ public static class PrtgProbeRunner
             var grpJson = await client.GetJsonAsync("/api/table.json?content=groups&columns=objid,group&count=1000", ct);
             var parsedGroups = ParseTable(grpJson, "groups", el =>
             {
-                var grp = GetStringProperty(el, "group");
+                var grp = PrtgJson.GetString(el, "group");
                 return grp;
             });
 
@@ -236,9 +239,9 @@ public static class PrtgProbeRunner
             var devHostJson = await client.GetJsonAsync("/api/table.json?content=devices&columns=objid,device,host,group&count=50000", ct);
             var parsedDevHosts = ParseTable(devHostJson, "devices", el =>
             {
-                var host = GetStringProperty(el, "host");
+                var host = PrtgJson.GetString(el, "host");
                 int? objid = null;
-                if (int.TryParse(GetStringProperty(el, "objid"), out var oid))
+                if (int.TryParse(PrtgJson.GetString(el, "objid"), out var oid))
                 {
                     objid = oid;
                 }
@@ -265,7 +268,7 @@ public static class PrtgProbeRunner
                 if (string.IsNullOrWhiteSpace(d.Host)) continue;
                 withHost++;
                 var normalized = PrtgAddress.Normalize(d.Host);
-                if (normalized != null && IPAddress.TryParse(normalized, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
+                if (normalized != null && IpSyntax.TryParse(normalized, out var ip) && ip!.AddressFamily == AddressFamily.InterNetwork)
                 {
                     ipv4Count++;
                 }
@@ -399,9 +402,12 @@ public static class PrtgProbeRunner
             string order;
             if (isMessages)
             {
-                var (dtText, dtMonotonic) = DescribeDatetimeMonotonicity(rows0);
-                order = dtMonotonic ? "依時間排序" : dtText.StartsWith("無法判定", StringComparison.Ordinal)
-                    ? "時間欄位無法解析" : "⚠ 順序不依時間（可能漏列）";
+                order = DescribeDatetimeMonotonicity(rows0).Order switch
+                {
+                    TimeOrder.Increasing or TimeOrder.Decreasing => "依時間排序",
+                    TimeOrder.Unparseable => "時間欄位無法解析",
+                    _ => "⚠ 順序不依時間（可能漏列）"
+                };
             }
             else
             {
@@ -458,7 +464,7 @@ public static class PrtgProbeRunner
             {
                 foreach (var channel in channels.EnumerateArray())
                 {
-                    if (GetStringProperty(channel, "objid") == "0") { primary = channel.Clone(); break; }
+                    if (PrtgJson.GetString(channel, "objid") == "0") { primary = channel.Clone(); break; }
                 }
             }
             if (primary is not { } row)
@@ -466,8 +472,8 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     {type}（sensor {sample.Objid}）：⚠ 頻道表沒有頻道 0；對照語意 {semantic}，取值會選錯頻道，請回報");
                 return;
             }
-            var name = GetStringProperty(row, "name") ?? "（無名稱）";
-            var rawText = GetStringProperty(row, "lastvalue_raw");
+            var name = PrtgJson.GetString(row, "name") ?? "（無名稱）";
+            var rawText = PrtgJson.GetString(row, "lastvalue_raw");
             var plausible = double.TryParse(rawText, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var raw) && PrtgValueSemantics.IsPlausible(semantic, raw);
             console.WriteLine($"     {type}（sensor {sample.Objid}）：頻道 0「{name}」＝{rawText ?? "無值"}；對照語意 {semantic}；" +
@@ -526,22 +532,22 @@ public static class PrtgProbeRunner
     /// 回傳空集合＝無資料；含下層感測器 objid＝可用；全部都是裝置自身＝只有裝置訊息；
     /// 其餘＝回了不屬於該裝置的 objid。站台對照與 9d-5 共用。
     /// </summary>
-    internal static string JudgeDeviceMessagesScope(long deviceObjid, IReadOnlySet<long> childSensorObjids, IReadOnlyList<long> returnedObjids)
+    internal static DeviceMessagesScope JudgeDeviceMessagesScope(long deviceObjid, IReadOnlySet<long> childSensorObjids, IReadOnlyList<long> returnedObjids)
     {
-        if (returnedObjids.Count == 0)
-        {
-            return "無資料，無法判定";
-        }
-        if (returnedObjids.Any(id => childSensorObjids.Contains(id)))
-        {
-            return "✓ 含下層感測器訊息";
-        }
-        if (returnedObjids.All(id => id == deviceObjid))
-        {
-            return "✗ 只有裝置自身——狀態變更取數需改為逐感測器";
-        }
-        return "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）";
+        if (returnedObjids.Count == 0) return DeviceMessagesScope.NoData;
+        if (returnedObjids.Any(id => childSensorObjids.Contains(id))) return DeviceMessagesScope.IncludesSensors;
+        if (returnedObjids.All(id => id == deviceObjid)) return DeviceMessagesScope.DeviceOnly;
+        return DeviceMessagesScope.ForeignObjids;
     }
+
+    /// <summary>判定的顯示文字（只用於輸出；結論一律依列舉判斷，不比對文字）</summary>
+    internal static string DescribeDeviceMessagesScope(DeviceMessagesScope verdict) => verdict switch
+    {
+        DeviceMessagesScope.NoData => "無資料，無法判定",
+        DeviceMessagesScope.IncludesSensors => "✓ 含下層感測器訊息",
+        DeviceMessagesScope.DeviceOnly => "✗ 只有裝置自身——狀態變更取數需改為逐感測器",
+        _ => "⚠ 回傳的 objid 不屬於該裝置（id 參數可能未生效）"
+    };
 
     /// <summary>
     /// 9d-5：逐物件查詢驗證——驗證以單一裝置查詢 sensors 與 messages 是否生效、
@@ -560,7 +566,7 @@ public static class PrtgProbeRunner
             return;
         }
 
-        var bVerdicts = new List<string>();
+        var bVerdicts = new List<DeviceMessagesScope>();
         var bElapsedList = new List<double>();
         List<long>? firstDeviceSensors = null;
         var firstDeviceId = sampleDeviceIds[0];
@@ -574,7 +580,7 @@ public static class PrtgProbeRunner
                 var jsonA = await client.GetJsonAsync($"/api/table.json?content=sensors&columns=objid&count=5000&id={deviceId}", ct);
                 swA.Stop();
 
-                var parsedA = ParseTable(jsonA, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+                var parsedA = ParseTable(jsonA, "sensors", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, null) : null);
                 var rowsA = parsedA.Rows.Select(r => r.Objid).ToList();
                 var expectedSet = sensorSamples
                     .Where(s => s.ParentId.HasValue && (long)s.ParentId.Value == deviceId && s.Objid.HasValue)
@@ -608,7 +614,7 @@ public static class PrtgProbeRunner
                 var jsonB = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={deviceId}&filter_drel=7days", ct);
                 swB.Stop();
 
-                var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+                var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, PrtgJson.GetString(el, "datetime")) : null);
                 var rowsB = parsedB.Rows.Select(r => r.Objid).ToList();
                 var subSet = rowsA.ToHashSet();
                 var nB = rowsB.Count;
@@ -617,7 +623,7 @@ public static class PrtgProbeRunner
 
                 var verdictB = JudgeDeviceMessagesScope(deviceId, subSet, rowsB);
 
-                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {verdictB}");
+                console.WriteLine($"     9d-5：裝置 objid={deviceId} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {nB} 筆、treesize {treesizeText}、不重複 objid {kB} 個 → {DescribeDeviceMessagesScope(verdictB)}");
 
                 bVerdicts.Add(verdictB);
                 bElapsedList.Add(swB.Elapsed.TotalMilliseconds);
@@ -633,12 +639,12 @@ public static class PrtgProbeRunner
         }
 
         // (c) 結論行
-        if (bVerdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
+        if (bVerdicts.Contains(DeviceMessagesScope.IncludesSensors))
         {
             var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
             console.WriteLine($"     9d-5：結論 ✓ 逐裝置查詢狀態變更可用（平均每台 {avgMs:F0} ms）");
         }
-        else if (bVerdicts.Any(v => v.StartsWith("✗", StringComparison.Ordinal)))
+        else if (bVerdicts.Contains(DeviceMessagesScope.DeviceOnly))
         {
             var avgMs = bElapsedList.Count > 0 ? bElapsedList.Average() : 0;
             console.WriteLine($"     9d-5：結論 ✗ 逐裝置查詢只回裝置自身訊息，狀態變更取數需改為逐感測器（平均每台 {avgMs:F0} ms）");
@@ -664,7 +670,7 @@ public static class PrtgProbeRunner
             var jsonD = await client.GetJsonAsync($"/api/table.json?content=messages&columns=objid,datetime&count=50&id={firstSensorId}&filter_drel=7days", ct);
             swD.Stop();
 
-            var parsedD = ParseTable(jsonD, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+            var parsedD = ParseTable(jsonD, "messages", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, PrtgJson.GetString(el, "datetime")) : null);
             console.WriteLine($"     9d-5：感測器 objid={firstSensorId} 逐感測器取狀態變更 耗時 {swD.Elapsed.TotalMilliseconds:F0} ms、回傳 {parsedD.Rows.Count} 筆");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -689,7 +695,7 @@ public static class PrtgProbeRunner
             var jsonE = await client.GetBoundedJsonAsync(url + "&count=" + (r + 1), 512 * 1024, ct);
             swE.Stop();
 
-            var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
+            var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id) ? new PagingRow(id, null) : null);
             var rowsE = parsedE.Rows.Select(r => r.Objid).ToList();
             var n = rowsE.Count;
             using var rawBatch = JsonDocument.Parse(jsonE, new JsonDocumentOptions { MaxDepth = 32 });
@@ -757,8 +763,8 @@ public static class PrtgProbeRunner
     {
         var columns = withDatetime ? "objid,datetime" : "objid";
         var json = await client.GetJsonAsync($"/api/table.json?content={content}&columns={columns}&count={count}&start={start}{extraQuery}", ct);
-        var parsed = ParseTable(json, content, el => long.TryParse(GetStringProperty(el, "objid"), out var id)
-            ? new PagingRow(id, GetStringProperty(el, "datetime"))
+        var parsed = ParseTable(json, content, el => long.TryParse(PrtgJson.GetString(el, "objid"), out var id)
+            ? new PagingRow(id, PrtgJson.GetString(el, "datetime"))
             : null);
         return parsed.Rows;
     }
@@ -767,17 +773,18 @@ public static class PrtgProbeRunner
     /// 頁內 datetime 是否單調（非遞增或非遞減）。有任一筆解析失敗就不下判斷，
     /// 不能拿部分可解析的子集去證明「順序沒問題」。
     /// </summary>
-    private static (string Text, bool Monotonic) DescribeDatetimeMonotonicity(List<PagingRow> rows)
+    private static (string Text, TimeOrder Order) DescribeDatetimeMonotonicity(List<PagingRow> rows)
     {
         var times = new List<DateTime>();
         var failed = 0;
         foreach (var r in rows)
         {
-            if (DateTime.TryParse(r.DatetimeText, out var dt)) times.Add(dt);
+            if (DateTime.TryParse(r.DatetimeText, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var dt)) times.Add(dt);
             else failed++;
         }
 
-        if (failed > 0) return ($"無法判定（datetime 解析失敗 {failed} 筆）", false);
+        if (failed > 0) return ($"無法判定（datetime 解析失敗 {failed} 筆）", TimeOrder.Unparseable);
 
         var nonIncreasing = true;
         var nonDecreasing = true;
@@ -787,9 +794,9 @@ public static class PrtgProbeRunner
             if (times[i] < times[i - 1]) nonDecreasing = false;
         }
 
-        if (nonIncreasing) return ("是（遞減）", true);
-        if (nonDecreasing) return ("是（遞增）", true);
-        return ("否（不單調）", false);
+        if (nonIncreasing) return ("是（遞減）", TimeOrder.Decreasing);
+        if (nonDecreasing) return ("是（遞增）", TimeOrder.Increasing);
+        return ("否（不單調）", TimeOrder.NotMonotonic);
     }
 
     /// <summary>取前 200 字並把換行與 Tab 換成空白，讓診斷行維持單行。</summary>
@@ -920,18 +927,19 @@ public static class PrtgProbeRunner
         return new TableParseResult<T>(list, corrupted, treesize);
     }
 
-    private static string? GetStringProperty(JsonElement el, string propertyName)
+
+    /// <summary>回應內文是否為可解析的 JSON（只判格式，不回傳也不記錄原文）。</summary>
+    private static bool IsJsonText(string text)
     {
-        if (el.TryGetProperty(propertyName, out var prop))
+        try
         {
-            if (prop.ValueKind == JsonValueKind.String)
-                return prop.GetString();
-            if (prop.ValueKind == JsonValueKind.Number)
-                return prop.GetRawText();
-            if (prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False)
-                return prop.GetRawText();
+            using var _ = JsonDocument.Parse(text);
+            return true;
         }
-        return null;
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static string? ExtractVersion(string json)
@@ -968,3 +976,9 @@ public static class PrtgProbeRunner
         return true;
     }
 }
+
+/// <summary>「以裝置 id 查 messages」的判定結果（站台對照與 9d-5 共用）</summary>
+internal enum DeviceMessagesScope { NoData, IncludesSensors, DeviceOnly, ForeignObjids }
+
+/// <summary>messages 回傳列的時間順序</summary>
+internal enum TimeOrder { Increasing, Decreasing, NotMonotonic, Unparseable }

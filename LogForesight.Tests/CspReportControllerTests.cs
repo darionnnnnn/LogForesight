@@ -218,6 +218,7 @@ public sealed class CspReportControllerTests : IDisposable
     [InlineData("POST", "/api/csp-report-x")]
     [InlineData("POST", "/api/csp-report/extra")]
     [InlineData("POST", "/api/other")]
+    [InlineData("POST", "/API/other")]
     [InlineData("DELETE", "/api/csp-report")]
     [InlineData("PUT", "/api/csp-report")]
     public async Task Csrf_其他非GET_API無標頭仍被擋(string method, string path)

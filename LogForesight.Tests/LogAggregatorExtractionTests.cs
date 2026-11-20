@@ -408,15 +408,86 @@ Failure Code:		0x12";
         Assert.Empty(accounts);
     }
 
-    [Fact]
-    public void 值超過128字_視為空值()
+    [Theory]
+    [InlineData(128)]
+    [InlineData(129)]
+    [InlineData(300)]
+    public void 帳號值超過128字_截斷到128字後保留(int length)
     {
-        var msg = "Account Name: " + new string('a', 200);
+        var account = new string('a', length);
+        var msg = "Account Name: " + account;
+        var expected = new string('a', Math.Min(length, 128));
+
         var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
         var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
 
+        Assert.Equal(expected, d.Account);
+        Assert.Contains(expected, accounts);
+    }
+
+    [Fact]
+    public void 帳號截斷點落在代理對中間_往內退一個字元不切壞()
+    {
+        // 127 個 a 後接一個補充平面字元（兩個 UTF-16 單位，第 128 單位是高代理）
+        var msg = "Account Name: " + new string('a', 127) + "\U0001F600" + "tail";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+
+        Assert.Equal(new string('a', 127), d.Account);
+        Assert.False(d.Account.Any(char.IsSurrogate));
+    }
+
+    [Fact]
+    public void 帳號值以冒號結尾仍視為空值_不因截斷改變()
+    {
+        var msg = "Account Name: " + new string('a', 200) + ":";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+
         Assert.Equal(string.Empty, d.Account);
-        Assert.Empty(accounts);
+    }
+
+    [Fact]
+    public void 非帳號標籤的值超過128字仍視為空值()
+    {
+        // 只有帳號標籤保留截斷值；工作站名稱等其他標籤維持護欄
+        var msg = "Account Name:  alice  Workstation Name: " + new string('w', 200);
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+
+        Assert.Equal("alice", d.Account);
+        Assert.Equal(string.Empty, d.Source);
+    }
+
+    [Fact]
+    public void 帳號128與129字都進入密碼噴灑的帳號計數()
+    {
+        // 8 個一般帳號 + 128 字 + 129 字（截斷後與 128 字那個不同，因為前綴字元不同）= 10 個相異帳號
+        var longAccounts = new[] { "x" + new string('a', 127), "y" + new string('b', 128) };
+        Assert.Equal(new[] { 128, 129 }, longAccounts.Select(a => a.Length).ToArray());
+        var names = Enumerable.Range(1, 8).Select(i => $"user{i}").Concat(longAccounts).ToList();
+
+        var details = names.Select(n => LogAggregator.ExtractLoginFailureDetail(4625,
+            $"Account Name:  {n}  Logon Type:  3  Status: 0xC000006D  Sub Status: 0xC000006A  Source Network Address:  10.9.9.9")).ToList();
+        Assert.All(details, d => Assert.False(string.IsNullOrEmpty(d.Account)));
+        foreach (var d in details) { d.Source = "10.9.9.9"; d.Count = 1; }
+
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(names.Select(n => $"Account Name:  {n}  Logon Type:  3"));
+        Assert.Equal(10, accounts.Count);
+
+        var issue = new LogIssueSignature { LoginFailureDetails = details };
+        var findings = PasswordSprayDetector.Detect(new List<LogIssueSignature> { issue });
+
+        Assert.Single(findings);
+    }
+
+    [Fact]
+    public void 少了129字那一側時噴灑計數不足()
+    {
+        // 對照組：只有 9 個相異帳號（不含超長帳號的 129 字那個），不構成噴灑——證明上一案例兩側都有被計入
+        var names = Enumerable.Range(1, 8).Select(i => $"user{i}").Concat(new[] { "x" + new string('a', 127) }).ToList();
+        var details = names.Select(n => new LoginFailureDetail { Account = n, Source = "10.9.9.9", Count = 1 }).ToList();
+
+        var issue = new LogIssueSignature { LoginFailureDetails = details };
+
+        Assert.Empty(PasswordSprayDetector.Detect(new List<LogIssueSignature> { issue }));
     }
 
     [Fact]

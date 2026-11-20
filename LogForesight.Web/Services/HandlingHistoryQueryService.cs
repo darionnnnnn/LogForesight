@@ -33,6 +33,7 @@ public class HandlingHistoryQueryService
     private readonly IIssueExclusionSource _exclusions;
 
     private readonly TimeProvider _clock;
+    private readonly LogForesight.Web.Auth.ICurrentUser? _currentUser;
 
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
@@ -47,9 +48,11 @@ public class HandlingHistoryQueryService
         IIssueAggregateQuery aggregateQuery,
         IUserDisplayNameService displayNameService,
         IIssueExclusionSource exclusions,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        LogForesight.Web.Auth.ICurrentUser? currentUser = null)
     {
         _clock = clock ?? TimeProvider.System;
+        _currentUser = currentUser;
         _store = store;
         _issueStore = issueStore;
         _cases = cases;
@@ -97,7 +100,7 @@ public class HandlingHistoryQueryService
     private string ResolveHandlerName(long userId)
     {
         var user = _users.Get(userId);
-        return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
+        return NameFormat.UserLabel(_displayNameService, user);
     }
 
     /// <summary>報表顯示範圍（§5）：單選過濾——一個母體對應一組明確語意。</summary>
@@ -441,9 +444,16 @@ public class HandlingHistoryQueryService
             if (granted != null) visibleHostIds.Add(granted.HostId);
         }
 
-        var caseItems = BuildHandlerCaseItems(userId, visibleHostIds);
+        // 只靠案件授與才看得到的主機：檢視者只被授與其中某些問題（批次 G4）。
+        // 案件只列被授與的問題；日層級項目是整台主機當天的狀態，只有看自己的工作量時才列。
+        var viewingSelf = _currentUser?.UserId == userId;
+        bool CaseAllowed(long hostId, string issueKey) =>
+            _visibility.GetIssueKeyRestriction(hostId) is not { } granted || granted.Contains(issueKey);
+        bool DayAllowed(long hostId) => viewingSelf || _visibility.GetIssueKeyRestriction(hostId) == null;
+
+        var caseItems = BuildHandlerCaseItems(userId, visibleHostIds, CaseAllowed);
         // 靜音排除條件本次請求只取一次，逐筆推導共用
-        var dayItems = BuildHandlerDayItems(userId, visibleHostIds, includeResolvedDays, _exclusions.Current());
+        var dayItems = BuildHandlerDayItems(userId, visibleHostIds, includeResolvedDays, _exclusions.Current(), DayAllowed);
 
         // 分頁（FEEDBACK-77 F-5）：三個計數以分頁前「全部」項目計算；unresolvedOnly 只影響 Days 清單，
         // 判定沿用 DTO 的 IsUnresolved（來源 progress.IsUnresolved 推導），不另寫狀態清單
@@ -467,14 +477,15 @@ public class HandlingHistoryQueryService
         };
     }
 
-    private List<HandlerCaseItemDto> BuildHandlerCaseItems(long userId, IReadOnlySet<long> visibleHostIds)
+    private List<HandlerCaseItemDto> BuildHandlerCaseItems(long userId, IReadOnlySet<long> visibleHostIds,
+        Func<long, string, bool> caseAllowed)
     {
         var items = new List<HandlerCaseItemDto>();
 
         foreach (var c in _cases.GetOpenByHandler(userId))
         {
             var host = _hosts.FindByName(c.HostName);
-            if (host == null || !visibleHostIds.Contains(host.HostId)) continue;
+            if (host == null || !visibleHostIds.Contains(host.HostId) || !caseAllowed(host.HostId, c.IssueKey)) continue;
 
             var isOverdue = (c.Status == IssueHandlingStatuses.InProgress &&
                               c.DueDate.HasValue && c.DueDate.Value.Date < _clock.LocalToday()) ||
@@ -511,7 +522,8 @@ public class HandlingHistoryQueryService
     /// includeResolvedDays 時另外納入近 30 天內已結案的（成就感與回顧用）。
     /// </summary>
     private List<HandlerDayItemDto> BuildHandlerDayItems(
-        long userId, IReadOnlySet<long> visibleHostIds, bool includeResolvedDays, IssueExclusion exclusion)
+        long userId, IReadOnlySet<long> visibleHostIds, bool includeResolvedDays, IssueExclusion exclusion,
+        Func<long, bool> dayAllowed)
     {
         var cutoff = _clock.LocalToday().AddDays(-30);
         var items = new List<HandlerDayItemDto>();
@@ -519,7 +531,7 @@ public class HandlingHistoryQueryService
         foreach (var handling in _store.GetByHandler(userId))
         {
             var host = _hosts.FindByName(handling.HostName);
-            if (host == null || !visibleHostIds.Contains(host.HostId)) continue;
+            if (host == null || !visibleHostIds.Contains(host.HostId) || !dayAllowed(host.HostId)) continue;
 
             var record = _repository.GetOne(host.HostId, handling.Date);
             if (record == null) continue;   // 分析紀錄不存在（理論上不會，防禦性——指派本身要求紀錄存在）

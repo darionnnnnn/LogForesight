@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 ﻿using System.Diagnostics;
 using System.Data;
 using System.Linq.Expressions;
@@ -87,15 +88,24 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var q = ctx.DailyRecords.AsQueryable();
         if (_ownerHost == null) return q;
         var id = _ownerHost.HostId;
-        var name = _ownerHost.HostName.ToUpperInvariant();
+        var name = HostNameKey.Of(_ownerHost.HostName);
         return q.Where(r => (id != 0 && r.HostId == id) || r.HostName.ToUpper() == name);
     }
 
     // ── 寫入 ─────────────────────────────────────────────────────────────────
 
-    public void Append(DailyAnalysisRecord record)
+    public void Append(DailyAnalysisRecord record) => AppendCore(record, replaceDay: false);
+
+    /// <summary>
+    /// 單日取代：刪該日舊列（主列＋問題子列，範圍與 <see cref="DeleteDays"/> 相同）與寫新列在同一個交易內，
+    /// 寫入擲例外時整個交易回復、舊資料原封不動。持有該主機日鎖，寫入修訂號與 PRTG 追加／AI 附掛等讀改寫路徑的互斥語意同 <see cref="Append"/>。
+    /// </summary>
+    public void ReplaceDay(DailyAnalysisRecord record) => AppendCore(record, replaceDay: true);
+
+    private void AppendCore(DailyAnalysisRecord record, bool replaceDay)
     {
         var sw = Stopwatch.StartNew();
+        var replacedRows = 0;
         var shaped = RecordStorageShaper.ForStorage(record);
         long appendedRecordId = 0;
         // 同主機日已有「只因 PRTG 建立」的紀錄時，日誌分析晚到要原地更新那一列（record id 不變：
@@ -118,6 +128,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             carriedPrtgFindings = null;
             carriedAiPending = false;
+            replacedRows = replaceDay ? DeleteOwnedDayInTransaction(ctx, shaped.Date) : 0;
             var prtgOnly = shaped.LogSource == AnalysisLogSource.Prtg ? null : ctx.DailyRecords
                 .FirstOrDefault(r => r.HostId == shaped.HostId && r.RecordDate == shaped.Date.Date &&
                     r.LogSource == (short)AnalysisLogSource.Prtg);
@@ -200,8 +211,24 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
         UpsertFirstSeen(shaped);
 
-        Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
-            shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);
+        Log.Info("[SQL] {Op} 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，取代舊列 {Replaced}，{Ms}ms",
+            replaceDay ? "ReplaceDay" : "Append", shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count,
+            replacedRows, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>在呼叫端已開啟的交易內刪除此 store 擁有者在該日的主列與問題子列（先子後主，不依賴 FK cascade）；回傳刪除的主列數。</summary>
+    private int DeleteOwnedDayInTransaction(LfDbContext ctx, DateTime date)
+    {
+        var day = date.Date;
+        var total = 0;
+        while (true)
+        {
+            var recordIds = OwnedRows(ctx).Where(r => r.RecordDate == day)
+                .OrderBy(r => r.RecordId).Select(r => r.RecordId).Take(PruneBatchSize).ToList();
+            if (recordIds.Count == 0) return total;
+            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+        }
     }
 
     /// <summary>新列與原地更新共用的欄位填寫（抽出欄必須與 ContentJson 同步）。</summary>
@@ -344,6 +371,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
     }
 
+    // 批次新增走原生 INSERT（不經 PrepareForSave），所以來源名稱在這裡依模型截斷；逐筆降級走 SaveChanges 也共用這個出口
     private static IssueFirstSeenRow NewFirstSeenRow(string sourceKey, int eventId, string source, DateTime date) =>
         new() { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date };
 
@@ -933,10 +961,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return new TopIssueRow
         {
             RecordId = recordId,
+            // 索引欄：存檔時超長會整列不寫（這個問題就從當日紀錄消失），先依模型截斷讓它照常入庫
             SourceName = ColumnClamp.ClampFor<TopIssueRow>(issue.Source, nameof(TopIssueRow.SourceName))!,
             SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
-            Category = ColumnClamp.ClampFor<TopIssueRow>(issue.Category.ToString(), nameof(TopIssueRow.Category))!,
+            Category = issue.Category.ToString(),
             SeverityRank = (int)issue.Severity,
             // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
             // 類別彙總另由 CategoryAggregator 在查詢時聚合、不在此入庫（WEB-SPEC §10.3），
@@ -945,10 +974,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             RecordDate = recordDate.Date,
             EventCount = issue.Count,
             ElevatesDayRisk = issue.ElevatesDayRisk,
-            LogName = ColumnClamp.ClampFor<TopIssueRow>(issue.LogName, nameof(TopIssueRow.LogName))!,
+            LogName = issue.LogName,
             EntryType = (int)issue.EntryType,
-            KnownIssue = ColumnClamp.ClampFor<TopIssueRow>(issue.KnownIssue, nameof(TopIssueRow.KnownIssue)),
-            EventKey = ColumnClamp.ClampFor<TopIssueRow>(issue.EventKey, nameof(TopIssueRow.EventKey))!,
+            KnownIssue = issue.KnownIssue,
+            EventKey = issue.EventKey,
             SourceObservationsJson = sourceObservationsJson,
             SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };
@@ -2061,8 +2090,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處。
     /// **排除 detail_pruned（體檢輪）**：詳情已清的列 ContentJson 是空字串，AI 輸入無法重建，
     /// 掛在待補集合裡只會被反覆撿起又失敗（或以殘根做出垃圾分析）。</summary>
-    private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query) =>
-        query.Where(r => r.AiPending && !r.DetailPruned);
+    // 以參數比較而不是直接寫 r.AiPending && !r.DetailPruned：EF Core 10 對 SQLite 把布林欄翻成裸欄位
+    // （WHERE "ai_pending" AND NOT "detail_pruned"），SQLite 規劃器無法拿裸欄位走 (ai_pending, …) 索引而整表掃描；
+    // 寫成與參數比較才會翻成 = @p，可走索引（QueryPlanGuardTests 守住）。SQL Server 兩種寫法都會翻成 = 比較，沒有差別。
+    // 必須是區域變數（閉包欄位才會被參數化）；常數與 static readonly 會被內嵌後化簡回裸欄位。
+    private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query)
+    {
+        var pending = true;
+        var pruned = false;
+        return query.Where(r => r.AiPending == pending && r.DetailPruned == pruned);
+    }
 
     private static Dictionary<long, List<LogIssueSignature>> LoadLightweightIssues(LfDbContext ctx, HashSet<long> recordIds)
     {
@@ -2092,7 +2129,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 // RecordRepository.NormalizeLegacySeverity 因此看不到 Critical——「重大」標記必須同時補上
                 // （與 EfIssueAggregateQuery 的 ForcesElevate 同一條規則），否則舊資料的重大日會漏標
                 Severity = LegacySeverityRank.ToSeverity(t.SeverityRank),
-                Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
+                Category = InputParsing.TryParseDefinedEnum<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
                 ElevatesDayRisk = t.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(t.SeverityRank),
                 KnownIssue = t.KnownIssue
             }).ToList());

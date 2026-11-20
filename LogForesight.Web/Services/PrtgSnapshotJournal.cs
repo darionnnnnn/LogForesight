@@ -467,6 +467,18 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         }
     }
 
+    /// <summary>只刪本次發布建立的新代目錄與暫存 manifest；刪不掉就留給下次的 <see cref="CleanupInactiveGenerations"/>。</summary>
+    private void DeleteOwnGenerationQuietly(string generation, string? tempManifest)
+    {
+        try { Directory.Delete(GenerationPath(generation), recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        if (tempManifest == null) return;
+        try { File.Delete(tempManifest); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private void CleanupUncommittedSegments(string generation, long committedSequence)
     {
         var directory = Path.Combine(GenerationPath(generation), "segments");
@@ -485,11 +497,21 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         Validate(state, endpoint, now);
         var generation = "checkpoint.g." + Guid.NewGuid().ToString("N");
         var directory = Path.Combine(GenerationPath(generation), "segments");
-        Directory.CreateDirectory(directory);
-        var parts = SnapshotChunks(state);
+        // 新代目錄是這次呼叫自己建的：發布指標切換前任何失敗（容量不足、寫入錯誤）都要把它與暫存 manifest 清掉，
+        // 否則每次重試各留一個孤兒目錄，直到下次成功發布才被回收。切換成功後不得再刪（新代已是現行代）。
+        var switched = false;
+        var tempManifestWritten = false;
+        var tempManifest = ManifestPath + ".tmp";
         var sequence = 0L;
         var previous = "";
         long generationBytes = 0;
+        byte[] manifestBytes;
+        long currentDiskBytes;
+        long previousManifestBytes;
+        try
+        {
+        Directory.CreateDirectory(directory);
+        var parts = SnapshotChunks(state);
         var segments = new List<(long Sequence, Segment Segment, byte[] Bytes)>();
         foreach (var part in parts)
         {
@@ -505,19 +527,26 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             previous = snapshot.Checksum;
         }
         var manifest = new Manifest(1, generation, sequence, previous, "");
-        var manifestBytes = ManifestBytes(manifest);
-        var currentDiskBytes = JournalDiskBytes();
-        var previousManifestBytes = File.Exists(ManifestPath) ? new FileInfo(ManifestPath).Length : 0;
+        manifestBytes = ManifestBytes(manifest);
+        currentDiskBytes = JournalDiskBytes();
+        previousManifestBytes = File.Exists(ManifestPath) ? new FileInfo(ManifestPath).Length : 0;
         if (currentDiskBytes + generationBytes + manifestBytes.LongLength > MaxBytes)
             throw new InvalidDataException("快照 journal 無法在 64 MiB 內保留新舊 generation；保留舊 generation 並停止採集。");
         foreach (var segment in segments)
             WriteDurable(Path.Combine(directory, SegmentName(segment.Sequence)), segment.Bytes);
-        var tempManifest = ManifestPath + ".tmp";
+        tempManifestWritten = true;
         WriteDurable(tempManifest, manifestBytes);
         FaultPoint?.Invoke("before-generation-switch");
         if (File.Exists(ManifestPath)) File.Replace(tempManifest, ManifestPath, null);
         else File.Move(tempManifest, ManifestPath);
+        switched = true;
         FaultPoint?.Invoke("after-generation-switch");
+        }
+        catch when (!switched)
+        {
+            DeleteOwnGenerationQuietly(generation, tempManifestWritten ? tempManifest : null);
+            throw;
+        }
 
         _generation = generation;
         _sequence = sequence;
@@ -951,6 +980,11 @@ internal sealed class PrtgSnapshotJournal : IDisposable
         stored is { Length: 64 } && stored.All(Uri.IsHexDigit) &&
         string.Equals(stored, currentLegacyBinding, StringComparison.Ordinal);
 
-    private static InvalidDataException AmbiguousLegacyBinding() => new(
-        "快照 journal 的舊版來源 binding 已變更且無法由儲存的 opaque hash 判定原因；原資料已保留，需核對後復原，拒絕重標或自動重播。");
+    /// <summary>
+    /// 待寫檔記載的來源位址指紋與目前不同、且檔內還有樣本（多半是重啟前改了 PRTG 位址）：
+    /// 舊樣本不寫進新來源，標成可封存的 source-changed，由管理者封存後重新採集；原檔不動。
+    /// </summary>
+    private static InvalidDataException AmbiguousLegacyBinding() => PrtgSnapshotJournalReason.Tag(new InvalidDataException(
+        "快照待寫檔記載的 PRTG 來源位址與目前設定不同，舊樣本保留待處理、不寫入新來源；請確認後封存舊樣本再重新採集。"),
+        PrtgSnapshotJournalStopCodes.SourceChanged);
 }

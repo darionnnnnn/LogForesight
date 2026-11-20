@@ -113,7 +113,7 @@ public static class PrtgProbeSiteCheck
         }
 
         var deviceNames = devices.ToDictionary(d => d.Objid, d => d.Name);
-        var verdicts = new List<string>();
+        var verdicts = new List<DeviceMessagesScope>();
         var sensorStageMs = new List<double>();
         var changeStageMs = new List<double>();
 
@@ -149,7 +149,7 @@ public static class PrtgProbeSiteCheck
 
                 var verdict = PrtgProbeRunner.JudgeDeviceMessagesScope(deviceObjid, returnedSensors.ToHashSet(), returnedMessages);
                 verdicts.Add(verdict);
-                console.WriteLine($"     裝置 objid={deviceObjid} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {returnedMessages.Count} 筆 → {verdict}");
+                console.WriteLine($"     裝置 objid={deviceObjid} 逐裝置取狀態變更 耗時 {swB.Elapsed.TotalMilliseconds:F0} ms、回傳 {returnedMessages.Count} 筆 → {PrtgProbeRunner.DescribeDeviceMessagesScope(verdict)}");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -161,9 +161,9 @@ public static class PrtgProbeSiteCheck
             }
         }
 
-        if (verdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
+        if (verdicts.Contains(DeviceMessagesScope.IncludesSensors))
             console.WriteLine("     結論 ✓ 範圍內裝置逐台查詢狀態變更可用");
-        else if (verdicts.Any(v => v.StartsWith("✗", StringComparison.Ordinal)))
+        else if (verdicts.Contains(DeviceMessagesScope.DeviceOnly))
             console.WriteLine("     結論 ✗ 逐裝置查詢只回裝置自身訊息，狀態變更取數需改為逐感測器");
         else
             console.WriteLine("     結論 無法判定（樣本裝置近 7 天都沒有狀態變更）");

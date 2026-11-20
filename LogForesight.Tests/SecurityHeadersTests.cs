@@ -84,6 +84,9 @@ public sealed class SecurityHeadersTests
             Assert.Equal("nosniff", Assert.Single(response.Headers.GetValues("X-Content-Type-Options")));
             Assert.Equal("strict-origin-when-cross-origin", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
             Assert.Equal("DENY", Assert.Single(response.Headers.GetValues("X-Frame-Options")));
+            // 第 79 輪批次 G16
+            Assert.Contains("camera=()", Assert.Single(response.Headers.GetValues("Permissions-Policy")));
+            Assert.Equal("same-origin", Assert.Single(response.Headers.GetValues("Cross-Origin-Opener-Policy")));
         }
     }
 
@@ -125,7 +128,7 @@ public sealed class SecurityHeadersTests
 
     /// <summary>
     /// Program.cs 的管線順序：標頭中介層在 UsePathBase 之後，且排在所有會提前結束請求的中介層
-    /// （例外處理、驗證、ActiveUser、MigrationGate、Csrf）之前。
+    /// （例外處理、驗證、MigrationGate、Csrf）之前。
     /// </summary>
     [Fact]
     public void Program_標頭中介層順序正確()
@@ -138,7 +141,7 @@ public sealed class SecurityHeadersTests
         foreach (var later in new[]
                  {
                      "app.UseExceptionHandler(", "app.UseHttpsRedirection(", "app.UseStaticFiles(", "app.UseAuthentication(",
-                     "app.UseMiddleware<ActiveUserMiddleware>", "app.UseMiddleware<MigrationGateMiddleware>",
+                     "app.UseMiddleware<LegacyAuthCookieMiddleware>", "app.UseMiddleware<MigrationGateMiddleware>",
                      "app.UseMiddleware<CsrfHeaderMiddleware>"
                  })
         {
@@ -249,7 +252,7 @@ public sealed class SecurityHeadersTests
 
     private static WebAppSettings SettingsWithCsp(string? csp) => new()
     {
-        Jwt = new JwtSettings { SecretKey = new string('k', 40), ExpireHours = 8 },
+        Jwt = new SessionSettings { ExpireHours = 8 },
         Auth = new AuthSettings
         {
             Provider = "Ldap",

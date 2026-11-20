@@ -2,7 +2,7 @@
 
 LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event Log／Linux syslog），
 以確定性規則／趨勢／關聯層**提早發現硬體故障前兆與入侵跡象**；地端小模型只把結論翻成白話。
-唯一的執行與查詢介面是 `LogForesight.Web`（ASP.NET Core MVC，.NET 8）。
+唯一的執行與查詢介面是 `LogForesight.Web`（ASP.NET Core MVC，.NET 10）。
 
 這份檔案是**地圖不是百科**：先在這裡定位，再開對應文件。別把規劃內容寫回 README。
 
@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **10,985 通過／12 略過**、macOS **10,976 通過／21 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **11,998 通過／12 略過**、macOS **11,983 通過／27 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -57,7 +57,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   表格欄寬照 DESIGN-SYSTEM §8.4a（短值欄 `lf-col-nowrap`、留一欄吸收、同卡多表 `lf-table-aligned`）；無框品牌色按鈕只放表格列、分段控制與清單列（`lf-list-row`），按鈕角色與「每個範圍至多一顆主要按鈕」由 `tools/ui-global-asserts.json` 在每個量測情境檢查。
   修版面缺陷先寫會紅的量測斷言、在未修正的建置確認它紅再修——六項量測抓不到欄位起點不一致、孤立元素這類版面關係。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
-  `appsettings.json` 只留啟動與安全前提（Storage/Jwt/Auth）。**新增設定必須有消費端**——
+  `appsettings.json` 只留啟動與安全前提（Storage/Jwt〔登入 cookie 時限〕/Auth）。**新增設定必須有消費端**——
   「有設定無行為」是本專案紅線。
 - **文件紀律（現行 vs 歷程）**：`docs/` 主目錄只放**現行事實**，`docs/archive/` 放**過程記錄**。
   - 讀取：預設只讀現行文件；`docs/archive/` 非必要不讀，要查時先看它的 `README.md` 索引再開單一檔案。
@@ -83,16 +83,18 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   objid 是發出訊息的 sensor，同一天一顆 sensor 有很多列——拿它去重會靜默丟掉第二筆以後）；
   單次大 `count` 不一定取得齊（少於 `treesize` 就是被截斷，不比對就是靜默少一半）。
   去重鍵要對到該表真正的唯一鍵，單發大查詢一律比對 `treesize` 並在取不齊時出聲。
-- 不要讓兩個 `BatchRunRecorder` 共用可碰撞的識別：附掛／卸除 NLog target 必須取全域設定的互斥鎖，
-  target 名稱與 scope 屬性要帶**逐實例**識別碼、不能只用 RunId——取數與 AI 排程本來就能並行，
-  兩個 recorder 同時活著時先掛的那趟會被後來者的重設抹掉，執行紀錄靜默變成「這趟沒有任何警告」。
+- 不要在執行期增減執行紀錄的 NLog target 或規則，也不要讓 recorder 共用可碰撞的識別：全行程只有 `RunLogCapture` 安裝的一個常駐 target，
+  各 `BatchRunRecorder` 以 `ScopeContext` 的逐實例識別碼（不是 RunId）登記並被分派，沒有識別、識別為空字串或已登出的事件一律不處理；
+  target 的 `Write` 只做記憶體內計數與入該 recorder 的有界佇列，寫庫在背景執行緒、`Finish` 前排空，不得在記錄路徑上同步呼叫資料庫。
+- 不要新增沒標背景的常駐輪詢：頁面開著就會定時送的請求（告示、徽章、狀態卡）一律 `api.get(..., { background: true })`，
+  伺服器對它不滑動延長閒置時限；漏標的頁面開著就永遠不會閒置登出（WEB-SPEC §6.1）。使用者按鈕觸發的更新不帶。
 - 不要拿 `/api/run-activity` 的 `isRunning` 當互斥判斷：它是「取數或 AI 任一在跑」的聯集，只能決定
   告示出不出現；判斷某個動作現在能不能做一律看 `isFetchRun`（後端只在取數執行中擋主機更新，
   AI 單獨在跑時那個動作是允許的）。
 - 不要新增鍵沒涵蓋授權維度的快取：跨請求快取的鍵必須含可見主機集合（或 userId）與資料版本戳，
   少一維就是把 A 看得到的東西端給 B；快取內容若與使用者無關（純鏡像結構）要在註解明講理由。
   版本戳在背景寫入執行中不推進，所以有版本戳的快取仍要保留短 TTL 當上限（`IssueRankingCache`、`ActionableSnapshotCache` 即此形狀）。
-  未命中時的計算一律經 `SingleFlight`（同鍵並發只算一次，結果過大進不了快取時也一樣），否則多人同時開儀表板會各算一整份疊加；
+  跨請求快取一律繼承 `BoundedTtlCache<T>`（TTL、版本清除、元素上限、LRU、統計、未命中經 `SingleFlight` 都只寫在它，子類別只組鍵與定型別）；其他未命中時的計算一律經 `SingleFlight`（同鍵並發只算一次，結果過大進不了快取時也一樣），否則多人同時開儀表板會各算一整份疊加；
   singleton 與 static 上新增的可變集合要在 `LongLivedCollectionGuardTests` 登錄上限或清除時機，站台以月計不重啟，沒有出口的集合就是慢速洩漏。
 - 不要在 Core 複製可見範圍或處理能力規則：兩者依賴 Web 的 `RoleCapabilityMap`，派工候選人由 Web 的
   `IDispatchCandidateSource` 每趟算好快照交給 Core。複製一份就是兩套規則，改一邊另一邊靜默失準。
@@ -120,11 +122,11 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   換算只在 `RunMonitorService.GetDaySummaries`／`GetDayDetailPage`（內部以處理日計算、輸出標資料日）；新消費端要執行日就讀 `RunDate`，不要自己加減一天。
 - 不要讓排程觸發判定各寫一套：所有排程觸發查詢走單一查詢點，明確排除 `BatchRun.JobType == ai`；
   AI 背景工作不算取數排程的新鮮度，也不能被用來補足排程成功判定。
-- 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。
+- 不要把外部系統回傳的字串直接寫進有長度上限的欄位——一律依 `HasMaxLength` 截斷：經 `SaveChanges` 的由 `LfDbContext.PrepareForSave` 統一處理（鍵／索引欄超長該筆不寫），`ExecuteUpdate`／原生 SQL 繞過它，要在寫入處呼叫 `ColumnClamp.ClampFor`（同一個代理對安全的 `TextTruncation.SafeCut`），不寫字面值長度。
   外部來源（PRTG、NetIQ…）沒有長度保證，超長在 SQL Server 端會讓整批寫入一起擲截斷例外、
   SQLite 端卻靜默通過——兩個後端行為分岔，測試環境永遠看不到，正式機才爆。
 - 不要另 new 一個不帶閘道的 `AIService`：所有 AI 呼叫一律經全站 `IAiRequestGate`（互動優先、背景上限隨 `AiConcurrency`），
-  建構點都要帶 `gate:`（`AiRequestGateTests` 掃 `new AIService(`）。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
+  `AIService` 的建構子都把閘道列為必填，漏帶就編譯不過。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
   `AIService` 內有逐實例的請求佇列，共用一個等於把全輪串成單線、`AiConcurrency` 形同失效（設定一輪只解析一次即可，實例每分片一個）。
   AI 待補順序與閒置原因各只有一份判定（`SelectNextBatch`、`BlockingIdleReason`），不要在控制器或畫面再算一次。
 - 不要在測試 `new PrtgRequestBudget()`：真時鐘的配額會讓全量並行的測試彼此排隊到逾時，一律 `new PrtgRequestBudget(new AcceleratedPrtgClock())`（`PrtgRequestBudget.Shared` 在測試組件載入時已換成加速時鐘）。也不要讓並行寫入共用 `EfSqliteFixture` 那一條記憶體連線，並行案例用檔案型 DB。
@@ -132,7 +134,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   整段訊息會被當成值寫進帳號集合與登入失敗明細。標籤值一律走 `LogAggregator` 的擷取 helper（邊界規則見 DETECTION-SPEC「標籤值擷取邊界」）。
 - 不要讓工作流父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）吃到會隨儲存形狀改變的內容：分析當下以記憶體的完整紀錄算、AI 排程與工作流復原以資料庫讀回的紀錄再算，
   兩次不同就會把已完成的 PRTG、AI、郵件腿當成「父紀錄變了」重設，主機日停在「PRTG 待補」。指紋一律以 `RecordStorageShaper.Compact` 的投影計算、與風險等級無關
-  （低風險日寫入時會精簡，風險等級又會在寫入後跨界）；改精簡投影的欄位或指紋內容時，還原路徑要能認得上一版算法（`LegacyParentFingerprint` 的做法），否則升級當下全部既有列重設一次。
+  （低風險日寫入時會精簡，風險等級又會在寫入後跨界），也不含 NetIQ 嘗試狀態與時間（帳本會在批次結束時回寫）；改精簡投影的欄位或指紋內容時，還原路徑要能認得先前各版算法（`LegacyParentFingerprints` 的做法），否則升級當下全部既有列重設一次。
 - 不要讓郵件去重鍵吃到與信件內容無關的狀態：`WorkflowMailIntent` 一律用 `HostDayWorkflowFingerprint.ForMailContent`（AI 已分析／AI 待補／詳情已清除固定為 false），改回 `ForRecord` 就是 AI 寫回後重寄、或留下永遠待送的即時通知項目讓重試空轉。
   即時通知待送項目的終態只在 `MailNotifyStateStore.IsTerminalUrgentStatus` 判定；標成 `superseded` 只限「鍵已不對應本趟候選且該主機日取得到工作流版本」，停用即時通知時不標（重試入口改為不重跑），否則重新啟用後要等下一趟取數才補寄。
 - 不要讓快取鍵的可見主機片段記憶可變集合：`VisibleHostKeyPart` 只對 `FrozenSet<long>` 以物件參考記憶（`VisibilityService.GetVisibleHostIds` 回傳它）；`HashSet` 雖實作 `IReadOnlySet` 但可被修改，這段字串是授權維度。
@@ -148,13 +150,13 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   資料保留清除（`EfIssueCaseStore.Expired`）依同一定義保留仍有效的案件——兩邊定義分岔，處理人判定的不處理就會在保留期後悄悄失效。
 - 不要拿版本號判斷站台部署了哪個 commit：版本號在同一個修訂內不隨 commit 變，一律看 `BuildVersion.Current.Label`（`1.0.70.0+短 sha`，執行紀錄、匯出與健康頁都是它）。
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
-- 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
+- 不要用 `IPAddress.TryParse`／`Parse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`。由編譯器以符號比對禁用（根目錄 `BannedSymbols.txt`，`RS0030` 是建置錯誤），合法使用處以 `[SuppressMessage]` 附理由放行。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
   Core 擲給 Web 需要特定狀態碼的錯誤，用專屬例外型別交給 `ApiExceptionFilter` 對應（如 `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`），不要在控制器比對例外訊息字串。
 - 不要拿 `FileShare.Read` 當跨行程鎖：Unix 上 .NET 以 `flock` 模擬共用模式，只有 `FileShare.None` 是獨佔，其他值兩個持有者都會成功，Windows 上測不出來。
-- 不要對測試的 `HttpListener` 先 `Stop` 再 `Dispose`：Unix 上第二次會重新綁 port，被平行測試占走就擲例外，Windows 測不出來；一律用 `Close`（`PlatformGuardTests` 守門）。
+- 不要對測試的 `HttpListener` 呼叫 `Stop`：Unix 上 `Dispose` 會重新綁 port，被平行測試占走就擲例外，Windows 測不出來；一律用 `Close`（`LogForesight.Tests/BannedSymbols.txt` 禁用）。
 - 不要在測試傳 node 實驗旗標：會隨大版本移除，一移除就是整批行為測試同時紅（`NodeRuntimeTests` 守門）。版本下限只在 `NodeRuntime.MinimumVersion` 判定。
-- 不要在正式碼或測試用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
+- 不要在正式碼用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點（`BannedSymbols.txt` 禁用）。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
 - 不要在 `showDetailModal` 開著時再開一個：Bootstrap 5.3 不支援疊開，內層關閉後背景可捲動、外層焦點鎖定失效。已在 modal 內的次要選擇用就地面板（樣板：`chat-panel.js` 的「指定問題」）。
 - 詢問 AI 的焦點只由 `ChatFocusResolver` 決定（確定性規則、整詞比對、不呼叫 AI 做路由），整日摘要只取自 `GetDetail` 回傳的 DTO——另讀紀錄會把案件授與檢視範圍外的整日敘事帶進 prompt。
 - 不要在頁面現場拼文字樣式、按鈕類別，也不要寫設計系統外的中斷點與按鈕變體：`text-danger|text-warning|text-success`、`small text-muted`、`btn-link`、
@@ -167,6 +169,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   （「已儲存設定」不能掛在已經又改過的表單上）。
 - 不要新增不帶 nonce 的 inline script：CSP 只放行每請求 nonce，漏帶的腳本在正式環境被瀏覽器擋掉（`CspPolicyGuardTests` 掃所有 view）。
   同理不要在 view 或 JS 字串寫 `style=` 屬性與 inline 事件屬性；動態樣式用 `classList` 或 `style.setProperty`。
+- 不要新增 SQL 指令字串串接：值一律走參數，表名等常數插入要在使用處以 `[SuppressMessage("Security", "CA2100", Justification = …)]` 附理由。`CA2100`／`EF1002`／`EF1003`／`CA5394`／`CA1310` 在根目錄 `.editorconfig` 是建置錯誤；新規則升成錯誤前先確認零命中。
 - 不要在 `runtimeconfig.template.json` 加白名單外的 `System.GC.*` 鍵：runtime 對認不得的鍵靜默忽略，錯鍵看起來有設定、實際沒生效（`System.GC.Conserve` 沉默了 32 輪）；鍵名進 `RuntimeConfigGuardTests` 白名單，生效值由啟動 log 與健康頁記憶體卡用 `GC.GetConfigurationVariables()` 讀回。讀回時 `GCHeapHardLimitPercent` 未設是值 0 不是缺鍵，判斷有無硬上限要看「值 > 0」。
 - 不要用「是不是 `OperationCanceledException`」判斷使用者取消：HttpClient 逾時擲的 `TaskCanceledException` 也是 OCE，只有「OCE 且 ct 已取消」才是取消（樣板見 `PrtgScopeEstimateController`）。
 - 新增 `*.behavior.mjs` 案例要同時在 C# `InlineData` 登錄，前端行為測試一律經 `NodeRuntime.RunOrFail` 執行（`NodeRuntimeTests` 守門兩件事）。

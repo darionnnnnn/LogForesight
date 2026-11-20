@@ -6,6 +6,7 @@ using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
+using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
@@ -104,7 +105,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
         var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var initial = store.Get();
         Assert.Equal(new long[] { 1 }, initial.HostIds);
-        Assert.IsType<ConflictObjectResult>(Save(Controller(), Request()));
+        Assert.Equal(ApiErrorCodes.Conflict, Assert.Throws<DomainException>(() => Save(Controller(), Request())).Code);
         Assert.Equal(initial.Revision, store.Get().Revision);
         var clear = Request(initial.Revision); clear.HostIds = []; clear.SensorIds = [];
         Assert.IsType<OkObjectResult>(Save(Controller(), clear));
@@ -147,11 +148,11 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     public void 局部管理者不能覆寫含不可見主機的試點_案件例外不能設定整台主機()
     {
         new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => p.HostIds = [2]);
-        Assert.IsType<ForbidResult>(Controller(new(1)).Get());
-        Assert.IsType<ForbidResult>(Controller(new(1) { CaseOnly = true }).Get());
-        Assert.IsType<ForbidResult>(Controller(new()).Get());
-        Assert.IsType<ForbidResult>(Save(Controller(new(1)), Request()));
-        Assert.IsType<ForbidResult>(Save(Controller(new(1) { CaseOnly = true }), Request()));
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Controller(new(1)).Get()).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Controller(new(1) { CaseOnly = true }).Get()).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Controller(new()).Get()).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Save(Controller(new(1)), Request())).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Save(Controller(new(1) { CaseOnly = true }), Request())).Code);
         new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
         { p.HostIds = [1]; p.SensorIds = [100]; });
         var payload = JsonSerializer.Serialize(((OkObjectResult)Controller(new(1)).Get()).Value);
@@ -204,8 +205,8 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         var maintainer = users.Upsert(new WebUser { Account = "scope-maintainer", Active = true });
         _hosts.SetOwners(1, [maintainer.UserId]);
         var maintainOnly = ControllerWithRealVisibility(FakeCurrentUser.ForUser(maintainer.UserId, Capability.Maintain), users);
-        Assert.IsType<ForbidResult>(maintainOnly.Get());
-        Assert.IsType<ForbidResult>(Save(maintainOnly, Request(beforeDeniedSave.Revision)));
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => maintainOnly.Get()).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => Save(maintainOnly, Request(beforeDeniedSave.Revision))).Code);
         Assert.Equal(beforeDeniedSave.Revision, policy.Get().Revision);
         Assert.Equal(beforeDeniedSave.HostIds, policy.Get().HostIds);
         Assert.Equal(beforeDeniedSave.SensorIds, policy.Get().SensorIds);
@@ -278,8 +279,16 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         }
 
         var policyBlob = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
-        var result = controller.Put(request);
-        Assert.True(result is ConflictObjectResult or ForbidResult, $"Unexpected response for {dimension}: {result.GetType().Name}");
+        // 拒絕有兩種形狀：目錄或版本變了回 409 結果；所選主機變成不可見時擲 403 領域例外（由例外對應表轉成信封並寫稽核）
+        try
+        {
+            var result = controller.Put(request);
+            Assert.True(result is ConflictObjectResult, $"Unexpected response for {dimension}: {result.GetType().Name}");
+        }
+        catch (DomainException ex)
+        {
+            Assert.Contains(ex.Code, new[] { ApiErrorCodes.Forbidden, ApiErrorCodes.Conflict });
+        }
         var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
         Assert.Equal(policyBlob.Content, after.Content);
         Assert.Equal(policyBlob.Version, after.Version);
@@ -315,7 +324,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         visible.Snapshots.Clear();
         visible.RevokeAtSnapshotRead = visible.SnapshotReadCount + 3; // PUT initial capture、post-query fence、政策交易 callback
 
-        Assert.IsType<ConflictObjectResult>(controller.Put(request));
+        Assert.Equal(ApiErrorCodes.Conflict, Assert.Throws<DomainException>(() => controller.Put(request)).Code);
 
         var after = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
         Assert.Equal(policyBlob.Content, after.Content);
@@ -366,7 +375,9 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     {
         var controller = Controller();
         var atLimit = Request(); atLimit.HostIds = Enumerable.Range(1, LogForesight.Core.Models.ScaleLimits.MaxHosts).Select(x => (long)x).ToList();
-        Assert.IsNotType<BadRequestObjectResult>(Estimate(controller, atLimit));
+        // 剛好在上限：不因數量被拒（主機不在可選範圍時是 403 領域例外，那是另一條規則）
+        var atLimitError = Record.Exception(() => Assert.IsNotType<BadRequestObjectResult>(Estimate(controller, atLimit)));
+        Assert.True(atLimitError is null or DomainException { Code: ApiErrorCodes.Forbidden }, atLimitError?.ToString());
 
         var overLimit = Request(); overLimit.HostIds = Enumerable.Range(1, LogForesight.Core.Models.ScaleLimits.MaxHosts + 1).Select(x => (long)x).ToList();
         var rejected = Assert.IsType<BadRequestObjectResult>(Estimate(controller, overLimit));

@@ -32,7 +32,7 @@ internal class WeeklyCheckupService
         "你是資深 Windows Server 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
         "程式已確定這段期間內有值得回顧的訊號（風險日、趨勢異常或關聯訊號），你的工作是把它們" +
         "接續上次體檢的結論，寫成一段給不懂 Event Log 的人也能看懂的回顧文字——不要引用 Event ID 或" +
-        "程式碼層級術語，只根據使用者提供的資料撰寫，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
+        "程式碼層級術語，只根據使用者提供的資料撰寫，不要臆測資料中不存在的事件。" + PromptDataFence.SystemNotice + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出一個符合使用者指定結構的 JSON 物件。";
 
@@ -77,8 +77,10 @@ internal class WeeklyCheckupService
     /// <param name="useAi">false＝AI 未設定（docs/archive/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
     /// （本來就不呼叫 AI）；有訊號時不嘗試呼叫，回傳 Completed=false 讓呼叫端沿用既有
     /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
-    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true)
+    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true,
+        CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         // 週檢是「日誌分析過的日子」的回顧：只有 PRTG 訊號的主機日（當日沒有日誌分析）不算分析天數、
         // 也不拿它的風險觸發 AI 敘事（docs/PRTG-SPEC.md §9）
         var window = _historyReader.ReadRecent(checkupDate, intervalDays)
@@ -124,7 +126,8 @@ internal class WeeklyCheckupService
         var prompt = BuildPrompt(checkupDate, window, serverDescription, lastCheckup);
 
         var result = await _aiService.ChatJsonAsync<WeeklyCheckupAiResult>(prompt, SystemPrompt,
-            validate: r => r.Conclusion.Length > 0, maxTokens: MaxOutputTokens, label: $"checkup-{checkupDate:yyyyMMdd}");
+            validate: r => r.Conclusion.Length > 0, maxTokens: MaxOutputTokens, label: $"checkup-{checkupDate:yyyyMMdd}", ct: ct);
+        ct.ThrowIfCancellationRequested();
 
         var outcome = new WeeklyCheckupResult { CheckupDate = checkupDate };
 
@@ -153,6 +156,7 @@ internal class WeeklyCheckupService
             ? SuppressionFilter.ActiveForHost(allSuppressions, Environment.MachineName, _hostGroupIds, DateTime.Now)
             : new List<RuleSuppression>();
         var content = BuildReportText(checkupDate, window, outcome, activeSuppressions, allSuppressions);
+        ct.ThrowIfCancellationRequested();
         outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup,
             host ?? new HostKey { HostName = Environment.MachineName }, fileName, content);
 
@@ -172,28 +176,37 @@ internal class WeeklyCheckupService
                       "（程式已確定這段期間內有風險日、趨勢異常或關聯訊號），請做期間回顧，" +
                       "把這些已確定的訊號接續之前的脈絡寫成一段給人看的回顧文字。");
 
+        // 段落標題與程式寫的指引句留在界線外；伺服器描述、上次體檢結論、每日摘要、簽章與 PRTG 名稱這些外部文字
+        // 經 PromptDataFence 逐區塊包住（同一份 fence，隨機值相同、聲明只出現一次）。
+        var fence = new PromptDataFence();
+
         if (serverDescription.Length > 0)
         {
-            sb.AppendLine($"【伺服器環境】{serverDescription}");
+            sb.AppendLine();
+            sb.AppendLine("【伺服器環境】");
+            sb.Append(fence.Block(serverDescription));
         }
 
         if (lastCheckup != null)
         {
             sb.AppendLine();
-            sb.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）{TextTruncation.Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)}");
+            sb.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）");
+            sb.Append(fence.Block(TextTruncation.Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)));
         }
 
         sb.AppendLine();
         sb.AppendLine("【每日風險與摘要】");
+        var dayData = new StringBuilder();
         foreach (var day in window)
         {
             // day.AiAnalyzed 守衛（回饋十四輪 B2，比照 AnalysisPromptBuilder 同一守衛）：Summary
             // 在「AI 排隊中」（AiPending）與「統計模式／低風險跳過 AI」時是程式寫的樣板字串
             // （如「（統計已完成，AI 分析排隊中）」「今日無異常訊號…」），不是真正的 AI 判讀。
             // 不加這道守衛，體檢 prompt 會把樣板字串當成「當日結論」引給 AI，把它當真敘事引用。
-            sb.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
+            dayData.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
                           (day.AiAnalyzed && day.Summary.Length > 0 ? $"，結論：{TextTruncation.Truncate(day.Summary, 60)}" : ""));
         }
+        sb.Append(fence.Block(dayData.ToString()));
 
         // 每個簽章一行，含窗口內逐日次數——彙整由程式先算好（確定性計算），AI 只需解讀不需自己加總
         var signatureLines = BuildSignatureLines(window);
@@ -201,10 +214,12 @@ internal class WeeklyCheckupService
         {
             sb.AppendLine();
             sb.AppendLine("【本期各問題簽章的逐日次數】（依嚴重度排序，程式已彙整，只需解讀趨勢）");
+            var data = new StringBuilder();
             foreach (var line in signatureLines.Take(MaxSignatureLines))
             {
-                sb.AppendLine($"- {line}");
+                data.AppendLine($"- {line}");
             }
+            sb.Append(fence.Block(data.ToString()));
             if (signatureLines.Count > MaxSignatureLines)
             {
                 sb.AppendLine($"（另有 {signatureLines.Count - MaxSignatureLines} 種較低嚴重度的簽章未逐項列出）");
@@ -218,10 +233,12 @@ internal class WeeklyCheckupService
         {
             sb.AppendLine();
             sb.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌在同一觀察期出現不表示資源或時間相符）");
+            var data = new StringBuilder();
             foreach (var line in prtgLines.Take(MaxPrtgLines))
             {
-                sb.AppendLine(line);
+                data.AppendLine(line);
             }
+            sb.Append(fence.Block(data.ToString()));
             if (prtgLines.Count > MaxPrtgLines)
             {
                 sb.AppendLine($"另有 {prtgLines.Count - MaxPrtgLines} 項 PRTG 訊號未列出");

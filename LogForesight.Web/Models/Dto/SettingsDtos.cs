@@ -179,6 +179,8 @@ public class SystemSettingsDto
     /// <summary>PRTG passhash 是否已設定；passhash 本身 write-only，絕不回傳明碼或密文（比照 PrtgHasPassword）</summary>
     public bool PrtgHasPasshash { get; set; }
     public bool PrtgIgnoreSslErrors { get; set; }
+    /// <summary>信任的 PRTG 憑證指紋（SHA-256）；空字串＝沒設。指紋是公開資訊，不是密鑰</summary>
+    public string PrtgTrustedCertificateSha256 { get; set; } = "";
     public int PrtgTimeoutSeconds { get; set; }
     public int PrtgFetchConcurrency { get; set; }
     public int PrtgBackfillDays { get; set; }
@@ -466,6 +468,10 @@ public class UpdateSystemSettingsRequest
 
     public bool? PrtgIgnoreSslErrors { get; set; }
 
+    /// <summary>null＝本次請求未提供（沿用既有值）；空字串＝清除。格式見 <c>ServerCertificateTrust.TryNormalize</c></summary>
+    [StringLength(200)]
+    public string? PrtgTrustedCertificateSha256 { get; set; }
+
     /// <summary>write-only；留空＝沿用既有 token，要清除請另外傳 ClearPrtgApiToken=true（同 AI 金鑰慣例）</summary>
     [StringLength(500)]
     public string? PrtgApiToken { get; set; }
@@ -562,6 +568,10 @@ public class UpdatePrtgSettingsRequest
 
     /// <summary>null＝本次請求未提供（沿用既有值）。</summary>
     public bool? PrtgIgnoreSslErrors { get; set; }
+
+    /// <summary>null＝本次請求未提供（沿用既有值）；空字串＝清除。格式見 <c>ServerCertificateTrust.TryNormalize</c></summary>
+    [StringLength(200)]
+    public string? PrtgTrustedCertificateSha256 { get; set; }
 
     /// <summary>write-only；留空＝沿用既有 token，要清除請另外傳 ClearPrtgApiToken=true（同 AI 金鑰慣例）</summary>
     [StringLength(500)]
@@ -744,6 +754,10 @@ public class TestPrtgConnectionRequest
 
     public bool IgnoreSslErrors { get; set; }
 
+    /// <summary>表單目前填的信任指紋（未存檔也採用）；空白＝沒設</summary>
+    [StringLength(200)]
+    public string? TrustedCertificateSha256 { get; set; }
+
     [Range(5, 600, ErrorMessage = "PRTG 逾時秒數必須介於 5~600 秒")]
     public int TimeoutSeconds { get; set; } = SystemSettings.DefaultPrtgTimeoutSeconds;
 }
@@ -753,6 +767,9 @@ public class TestPrtgConnectionResultDto
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public long? ElapsedMs { get; set; }
+
+    /// <summary>PRTG 出示的憑證指紋（SHA-256）；http 連線或連不上 TLS 前就失敗時為 null。管理者核對後貼回設定</summary>
+    public string? PresentedCertificateSha256 { get; set; }
 }
 
 /// <summary>

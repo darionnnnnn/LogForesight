@@ -87,7 +87,13 @@
             </div>
             <div class="form-check mt-3">
                 <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />
-                <label class="form-check-label" for="opt-allow-invalid-certs">略過憑證驗證（Sentinel 使用自簽憑證時的逃生門）</label>
+                <label class="form-check-label" for="opt-allow-invalid-certs">略過憑證驗證（沒填信任指紋時才生效）</label>
+            </div>
+            <div class="mt-3">
+                <label for="opt-trusted-cert" class="form-label">信任的憑證指紋（SHA-256）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="憑證更新後指紋會改變，要把新的指紋貼回這裡；把簽發的 CA 憑證裝進這台主機的作業系統，就不必填也不必維護。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
+                <textarea class="form-control lf-text-data" id="opt-trusted-cert" rows="2" autocomplete="off" spellcheck="false" maxlength="1200" aria-describedby="opt-trusted-cert-help"></textarea>
+                <div class="form-text" id="opt-trusted-cert-help">套用於全部 Sentinel。每台各自自簽憑證時，一行填一個指紋（也可用逗號或分號分隔），任何一個相符就信任。在 Sentinel 清單按「測試連線」會顯示伺服器出示的指紋，核對後貼上；單一指紋內可含冒號或空白。</div>
             </div>
             @* 離線示範資料（§13）：僅非 Production 顯示；預設關閉＝真實連線 *@
             <div class="form-check mt-2 d-none" id="opt-offline-demo-wrap">

@@ -424,6 +424,41 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 狀態補抓一台逾時_其餘裝置照常補抓_不中止整輪()
+    {
+        // 第 79 輪批次 B7：逾時（權杖未取消）是單一裝置的失敗，不能被當成使用者取消而放掉其餘 lease
+        const long slowDevice = 711, nextDevice = 712;
+        SeedManualBusinessDevice(slowDevice);
+        SeedManualBusinessDevice(nextDevice);
+        SetupOkDevices(new long[] { 10 });
+        SeedCurrentMappedSensors();
+        var today = DateTime.Today;
+        SeedCompletedMappedQueueRows(today);
+        var store = _backend.PrtgStore();
+        foreach (var device in new[] { slowDevice, nextDevice })
+            store.UpsertSensorsAndEnqueueRecentStateChanges(
+                new[] { new PrtgSensorRow { Objid = device * 10, DeviceObjid = device, Name = "Ping", SensorType = "ping" } },
+                DateTime.Now, NewRecentStateQueueItem(device, today));
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("content=messages", StringComparison.Ordinal) && url.Contains($"id={slowDevice}", StringComparison.Ordinal))
+                throw new TaskCanceledException("模擬 HttpClient 逾時");
+            return Task.FromResult(JsonResponse(url.Contains("content=messages", StringComparison.Ordinal)
+                ? "{\"treesize\":0,\"messages\":[]}" : "{\"treesize\":0,\"sensors\":[]}"));
+        };
+        var service = CreateService();
+        service.Now = () => today.AddHours(12);
+        await service.ScopeRefreshTickAsync();
+
+        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal) &&
+            url.Contains($"id={nextDevice}", StringComparison.Ordinal));
+        var queue = store.ReadRecentStateChangeQueue();
+        Assert.NotNull(Assert.Single(queue, item => item.DeviceObjid == nextDevice).CompletedAtUtc);
+        Assert.Null(Assert.Single(queue, item => item.DeviceObjid == slowDevice).CompletedAtUtc);
+    }
+
+    [Fact]
     public async Task Queue資格按businessDevice映射列_同host多device含conflict_排除guardOnly()
     {
         var hostA = _hostStore.Upsert(new WebHost { HostName = "queue-map-a", Active = true });
@@ -1459,6 +1494,71 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TickAsync_取樣途中目標快取被重設_流量類仍依同輪類型表換算()
+    {
+        SetupTargetSensors(new[] { (211L, "SNMP Traffic 64bit"), (212L, "Ping") });
+        var json = "{\"treesize\":2,\"sensors\":[" +
+                   "{\"objid\":211,\"lastvalue_raw\":100,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}," +
+                   "{\"objid\":212,\"lastvalue_raw\":100,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}" +
+                   "]}";
+        var service = CreateService();
+        _stubHandler.OnSend = (_, _) =>
+        {
+            // 目標已解析、回應尚未處理時，請求執行緒要求重設（清掉目標與類型表）
+            service.RequestScopeRefresh();
+            return Task.FromResult(JsonResponse(json));
+        };
+
+        await service.TickAsync();
+
+        var rows = service.Accumulator.DrainAll(1, DateTime.Now);
+        Assert.Equal(6000.0, rows.Single(r => r.SensorObjid == 211).AvgValue);
+        Assert.Equal(100.0, rows.Single(r => r.SensorObjid == 212).AvgValue);
+    }
+
+    [Fact]
+    public void 目標解析_類型表與目標來自同一份讀取_重設後下一次才整份換新()
+    {
+        SetupTargetSensors(new[] { (221L, "SNMP Traffic 64bit") });
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var now = DateTime.Now;
+
+        Assert.Equal(new long[] { 221 }, service.ResolveTargets(settings, now, out var types));
+        Assert.Equal("SNMP Traffic 64bit", types[221]);
+
+        service.RequestScopeRefresh();
+        // 已取得的類型表不受重設影響（本輪換算用的是這一份）
+        Assert.Equal("SNMP Traffic 64bit", types[221]);
+        Assert.Equal(new long[] { 221 }, service.ResolveTargets(settings, now, out var next));
+        Assert.Equal("SNMP Traffic 64bit", next[221]);
+    }
+
+    [Fact]
+    public void 結構同步完成後_同一小時內下一次解析就採用新的感測器集合()
+    {
+        SetupTargetSensors(new[] { (231L, "Ping") });
+        var service = CreateService();
+        var settings = _settingsStore.Get();
+        var now = DateTime.Now;
+        Assert.Equal(new long[] { 231 }, service.ResolveTargets(settings, now));
+
+        // 結構同步把新感測器寫進鏡像（監看政策也納入它）
+        SetupTargetSensors(new[] { (231L, "Ping"), (232L, "Ping") });
+
+        // 沒有結構同步完成：同小時沿用快取，不整表重算
+        Assert.Equal(new long[] { 231 }, service.ResolveTargets(settings, now));
+
+        _structureSync.RecordCompletion();
+
+        Assert.Equal(new long[] { 231, 232 }, service.ResolveTargets(settings, now).OrderBy(x => x).ToArray());
+        // 同一次完成只重算一次
+        var count = service.TargetRefreshCount;
+        service.ResolveTargets(settings, now);
+        Assert.Equal(count, service.TargetRefreshCount);
+    }
+
+    [Fact]
     public async Task TickAsync_Interval無法解析_以60秒計且記錄警告()
     {
         SetupTargetSensors(new[] { (301L, "SNMP Traffic 64bit") });
@@ -1893,17 +1993,26 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var clockTicks = initial.Ticks;
         var service = CreateService(pollInterval: TimeSpan.FromMilliseconds(10));
         service.Now = () => new DateTime(Interlocked.Read(ref clockTicks));
+        // 每輪的範圍補抓有真實時間預算（預設 30 秒），比等待上限長；全量負載下補抓變慢時迴圈會卡在補抓裡，
+        // 採樣輪不到。與同檔其他真實迴圈案例一致設為 2 秒。
+        service.ScopeWorkBudget = TimeSpan.FromSeconds(2);
         service.RequestScopeRefresh();
         await service.StartAsync(CancellationToken.None);
+        // 每輪採樣都會寫本機日誌（含落盤）：Windows CI 全量時比 macOS 慢數倍，5 秒不夠；
+        // 範圍更新與採樣交錯的競態已在正式碼修掉（ResolveTargets），這裡放寬的只是慢機器的時間
+        var roundBudget = TimeSpan.FromSeconds(30);
         try
         {
-            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true);
+            await WaitUntilAsync(() => service.GetStatus().LastSkipReason?.Contains("結構同步") == true, roundBudget,
+                () => Describe(service, "等待結構同步略過"));
             for (var round = 1; round <= 3; round++)
             {
                 var expected = initial.AddMinutes(round * 15);
                 Interlocked.Exchange(ref clockTicks, expected.Ticks);
                 service.RequestScopeRefresh();
-                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected);
+                var currentRound = round;
+                await WaitUntilAsync(() => service.GetStatus().LastSuccessAt == expected, roundBudget,
+                    () => Describe(service, $"第 {currentRound} 輪採樣（期望 {expected:O}）"));
                 Assert.Equal(round, SnapshotUrls().Count);
             }
             Assert.True(_structureSync.IsRunning);
@@ -2206,12 +2315,22 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.DoesNotContain(Outputs(service), line => line.Contains("補抓已達期限"));
     }
 
-    private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null)
+    private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null, Func<string>? diagnostics = null)
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         while (!ready() && deadline.Elapsed < (timeout ?? TimeSpan.FromSeconds(5)))
             await Task.Delay(10);
-        Assert.True(ready(), "服務迴圈沒有在有界等待內完成預期採樣。");
+        Assert.True(ready(), "服務迴圈沒有在有界等待內完成預期採樣。" + (diagnostics == null ? "" : Environment.NewLine + diagnostics()));
+    }
+
+    /// <summary>逾時時印出服務狀態與最後幾行輸出：只在特定平台重現的失敗，CI 記錄要看得出卡在哪一步</summary>
+    private static string Describe(PrtgSnapshotHostedService service, string step)
+    {
+        var status = service.GetStatus();
+        var tail = Outputs(service).TakeLast(15);
+        return $"步驟：{step}；LastSuccessAt={status.LastSuccessAt:O}；LastSkipReason={status.LastSkipReason}；" +
+               $"ConsecutiveFailures={status.ConsecutiveFailures}；PendingSamples={status.PendingSamples}；JournalStopCode={status.JournalStopCode}；TargetCount={status.TargetCount}{Environment.NewLine}" +
+               "最後輸出：" + Environment.NewLine + string.Join(Environment.NewLine, tail);
     }
 
     // ── 分批快照與範圍補抓 ──
@@ -2567,14 +2686,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
         Assert.NotNull(dir);
         var source = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", "PrtgSnapshotHostedService.cs"));
-        foreach (var field in new[] { "_sensorTypes", "_targetObjids" })
+        foreach (var field in new[] { "_targetState" })
         {
             var unsafeDeref = System.Text.RegularExpressions.Regex.Matches(source,
                 field + @"(?!\s*(=|\?\.|\?\?))\s*\.(?!\s*$)");
             Assert.True(unsafeDeref.Count == 0,
                 $"{field} 不得直接解參考（請先取區域副本）：{string.Join(" | ", unsafeDeref.Select(m => source.Substring(m.Index, Math.Min(40, source.Length - m.Index))))}");
         }
-        Assert.DoesNotContain("_sensorTypes != null &&", source);
     }
 
     [Fact]
@@ -2831,12 +2949,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         SetupScopeWithoutPending("9001");
         var service = CreateService();
         var purposes = new List<(string Url, PrtgRequestPurpose Purpose)>();
-        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         _stubHandler.OnSend = (request, _) =>
         {
             var url = request.RequestUri!.ToString();
-            purposes.Add((url, Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose));
+            purposes.Add((url, Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose));
             if (IsParentLookupUrl(url)) return Task.FromResult(JsonResponse(
                 "{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":77}]}"));
             if (IsBackfillUrl(url)) return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
@@ -2868,14 +2984,12 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.Now = () => today.AddHours(12);
         var purposes = new List<PrtgRequestPurpose>();
         var snapshotPurposes = new List<PrtgRequestPurpose>();
-        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         _stubHandler.OnSend = (request, _) =>
         {
             if (request.RequestUri!.ToString().Contains("columns=" + PrtgSnapshotTargetResolver.SnapshotColumns, StringComparison.Ordinal))
-                snapshotPurposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+                snapshotPurposes.Add(Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose);
             if (request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal))
-                purposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+                purposes.Add(Assert.IsType<PrtgClient>(service.CurrentClient).RequestPurpose);
             return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[],\"messages\":[]}"));
         };
         await service.ScopeRefreshTickAsync();
@@ -3033,6 +3147,42 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.NotNull(status.LastSuccessAt);
         Assert.Equal(0, status.ConsecutiveFailures);
         Assert.Single(SnapshotUrls());
+    }
+
+    // ---- H7：設定指紋改變才換 client，換掉的舊 client 釋放 ----
+
+    private PrtgClient InvokeGetClient(PrtgSnapshotHostedService service, SystemSettings settings) =>
+        (PrtgClient)typeof(PrtgSnapshotHostedService)
+            .GetMethod("GetClient", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(service, [settings, PrtgRequestPurpose.Snapshot])!;
+
+    [Fact]
+    public async Task 設定指紋不變時重用同一個client_指紋改變才換新並釋放舊的()
+    {
+        var service = CreateService();
+        var created = new List<PrtgClient>();
+        service.ClientFactory = () =>
+        {
+            var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
+            created.Add(client);
+            return client;
+        };
+        var settings = _settingsStore.Get();
+
+        var first = InvokeGetClient(service, settings);
+        var again = InvokeGetClient(service, _settingsStore.Get());
+        Assert.Same(first, again);
+        Assert.Single(created);
+
+        settings.PrtgTimeoutSeconds += 1;   // 指紋的一部分
+        var replaced = InvokeGetClient(service, settings);
+
+        Assert.NotSame(first, replaced);
+        Assert.Equal(2, created.Count);
+        // 舊 client 已釋放：再送請求，底層 HttpClient 擲 ObjectDisposedException（PrtgClient 包成連線失敗）
+        var disposed = await Assert.ThrowsAsync<PrtgClientException>(() => first.GetJsonAsync("api/table.json?content=devices", CancellationToken.None));
+        Assert.IsType<ObjectDisposedException>(disposed.InnerException?.InnerException ?? disposed.InnerException);
+        Assert.Same(replaced, service.CurrentClient);
     }
 
     // ---- 第 75 輪 G-4：待寫檔停擺的自動封存、手動封存與診斷 ----
@@ -3261,6 +3411,41 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(0, service.Accumulator.SampleCount);
         Assert.Null(service.GetStatus().JournalStopCode);
         Assert.True(RestoreJournal(service, _settingsStore.Get()));
+    }
+
+    [Fact]
+    public void 重啟後來源位址已變更且待寫檔有樣本_停止原因為可封存的source_changed()
+    {
+        var now = DateTime.Today.AddHours(12);
+        // 上一個行程以舊位址寫入樣本；重啟前管理者把 PrtgUrl 改成新位址
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        _settingsStore.Update(s => s.PrtgUrl = "https://prtg-new.example.com");
+        var service = CreateService();
+        service.Now = () => now;
+
+        Assert.False(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, service.GetStatus().JournalStopCode);
+        Assert.True(service.GetJournalPreview().CanArchive);
+        var result = service.ArchiveJournalManually();
+        Assert.Equal(PrtgSnapshotJournalStopCodes.SourceChanged, result.StopCode);
+        Assert.Equal(1, result.Rows);
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+    }
+
+    [Fact]
+    public void 重啟後來源位址未變更_沿用待寫檔樣本不停止()
+    {
+        var now = DateTime.Today.AddHours(12);
+        SeedJournal(now.AddHours(-2), now, foreignDatabase: false);
+        var service = CreateService();
+        service.Now = () => now;
+
+        Assert.True(RestoreJournal(service, _settingsStore.Get()));
+
+        Assert.Null(service.GetStatus().JournalStopCode);
+        Assert.Equal(1, service.Accumulator.SampleCount);
+        Assert.Empty(ArchiveDirectories(ArchiveRoot));
     }
 
     [Fact]

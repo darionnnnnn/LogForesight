@@ -40,6 +40,28 @@ public class NetiqOptionsServiceTests : IDisposable
     };
 
     [Fact]
+    public void 信任指紋_正規化後存入_不送沿用_格式不對拒收()
+    {
+        var service = Create("Development");
+        const string Hex = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+
+        var request = Baseline();
+        request.TrustedCertificateSha256 = Hex.ToLowerInvariant();
+        Assert.Equal(Hex, service.Update(request).TrustedCertificateSha256);
+
+        Assert.Equal(Hex, service.Update(Baseline()).TrustedCertificateSha256);
+
+        var bad = Baseline();
+        bad.TrustedCertificateSha256 = Hex[..40];
+        Assert.Throws<DomainException>(() => service.Update(bad));
+        Assert.Equal(Hex, service.Get().TrustedCertificateSha256);
+
+        var clear = Baseline();
+        clear.TrustedCertificateSha256 = " ";
+        Assert.Equal("", service.Update(clear).TrustedCertificateSha256);
+    }
+
+    [Fact]
     public void 預設為真實連線()
     {
         // §13：出廠預設 false＝真連線（取代原本 Development 預設假資料的顛倒方向）

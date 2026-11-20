@@ -1035,6 +1035,71 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Throws<DomainException>(() => Create().Update(request));
     }
 
+    /// <summary>C1：既有資料是不合規的時刻（例如 "90"）時，設定頁照常讀得出來，儲存（PUT 帶回原值）才指出欄位。</summary>
+    [Fact]
+    public void C1_既有的每日摘要時刻是90_設定頁讀得出來_儲存時回報該欄位錯誤()
+    {
+        _store.Update(s => { s.MailDailyEnabled = true; s.MailDailyTime = "90"; });
+        var service = Create();
+
+        var loaded = service.Get();   // 讀取不得擲例外
+
+        Assert.Equal("90", loaded.MailDailyTime);
+        var request = ValidMailRequest();
+        request.MailDailyEnabled = true;
+        request.MailDailyTime = loaded.MailDailyTime;   // 前端把讀到的值原樣送回
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("每日摘要時刻", ex.Message);
+        Assert.Equal("90", _store.Get().MailDailyTime);   // 被拒的儲存不改動既有資料
+    }
+
+    [Fact]
+    public void C1_每週摘要時刻是90_儲存時回報該欄位錯誤()
+    {
+        _store.Update(s => { s.MailWeeklyEnabled = true; s.MailWeeklyTime = "90"; });
+        var service = Create();
+        var request = ValidMailRequest();
+        request.MailWeeklyEnabled = true;
+        request.MailWeeklyDayOfWeek = "Friday";
+        request.MailWeeklyTime = service.Get().MailWeeklyTime;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+
+        Assert.Contains("每週摘要時刻", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("09:30", true)]
+    [InlineData("90", false)]
+    [InlineData("1.02:00", false)]
+    public void C1_每日摘要時刻只接受HH_mm(string time, bool valid)
+    {
+        var request = ValidMailRequest();
+        request.MailDailyEnabled = true;
+        request.MailDailyTime = time;
+
+        var ex = Record.Exception(() => Create().Update(request));
+
+        if (valid) Assert.Null(ex);
+        else Assert.Contains("每日摘要時刻", Assert.IsType<DomainException>(ex).Message);
+    }
+
+    /// <summary>C13：含換行的主旨樣板會讓信件標頭被截斷或注入，儲存時拒絕且不改動既有設定。</summary>
+    [Theory]
+    [InlineData("[{site}] {type}\r\nBcc: attacker@example.com")]
+    [InlineData("第一行\n第二行")]
+    public void C13_含換行的主旨樣板被拒_既有設定不變(string template)
+    {
+        _store.Update(s => s.MailSubjectTemplate = "[{site}] 原樣板");
+        var request = ValidMailRequest();
+        request.MailSubjectTemplate = template;
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+
+        Assert.Contains("主旨樣板不可包含換行", ex.Message);
+        Assert.Equal("[{site}] 原樣板", _store.Get().MailSubjectTemplate);
+    }
+
     [Fact]
     public void Update_交辦摘要時刻格式不合法_拋出驗證錯誤()
     {
@@ -2426,6 +2491,37 @@ public class SystemSettingsServiceTests : IDisposable
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(req));
         Assert.Contains("PRTG 資料保留天數不可大於歷史資料保留天數", ex.Message);
+    }
+
+    [Fact]
+    public void PRTG信任指紋_正規化後存入_不送沿用_空字串清除_格式不對拒收()
+    {
+        var service = Create();
+        const string Hex = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+
+        var colon = string.Join(":", Enumerable.Range(0, 32).Select(i => Hex.Substring(i * 2, 2))).ToLowerInvariant();
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = colon
+        });
+        Assert.Equal(Hex, saved.PrtgTrustedCertificateSha256);
+        Assert.Equal(Hex, _store.Get().PrtgTrustedCertificateSha256);
+
+        var untouched = service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision });
+        Assert.Equal(Hex, untouched.PrtgTrustedCertificateSha256);
+
+        var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = "AB:CD"
+        }));
+        Assert.Contains("憑證指紋格式不正確", ex.Message);
+        Assert.Equal(Hex, _store.Get().PrtgTrustedCertificateSha256);
+
+        var cleared = service.UpdatePrtg(new UpdatePrtgSettingsRequest
+        {
+            ExpectedRevision = _store.Get().Revision, PrtgTrustedCertificateSha256 = ""
+        });
+        Assert.Equal("", cleared.PrtgTrustedCertificateSha256);
     }
 
     [Fact]

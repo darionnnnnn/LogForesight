@@ -28,11 +28,14 @@ public static class HealthAttentionKeys
     public const string Retention = "retention";
     public const string PrtgSensorsEmpty = "prtgSensorsEmpty";
     public const string PrtgDevicesPurged = "prtgDevicesPurged";
+    public const string CertificateTrust = "certificateTrust";
+    public const string OutboxDropped = "outboxDropped";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
         Storage, SlowQueries, FirstSeen, Freshness, PrtgSnapshot, Memory, Crypto,
-        Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged
+        Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged,
+        CertificateTrust, OutboxDropped
     };
 }
 
@@ -51,6 +54,9 @@ public sealed class HealthAttentionInput
     public bool MemoryWarning { get; init; }
     public bool CryptoKeyMismatch { get; init; }
     public bool CryptoDecryptFailure { get; init; }
+
+    /// <summary>站台模式下沒有可用的站台金鑰：密碼類設定存不進去（加密被拒）</summary>
+    public bool CryptoKeyUnavailable { get; init; }
     public IReadOnlyList<MigrationHealth> Migrations { get; init; } = Array.Empty<MigrationHealth>();
 
     /// <summary>PRTG 擷取新鮮度可疑的類別（中文名與連續 0 筆次數）；PRTG 未啟用時為空</summary>
@@ -62,7 +68,18 @@ public sealed class HealthAttentionInput
     /// <summary>最近一趟排程／手動分析的結果；null＝站台啟動後還沒跑過</summary>
     public bool? LastRunSucceeded { get; init; }
     public IReadOnlyList<string> SuspendedMailRecipients { get; init; } = Array.Empty<string>();
+
+    /// <summary>已啟用的郵件摘要中，時刻或星期無法解析的項目名稱（例如「每日摘要時刻」）；這種設定的效果是摘要永不寄出</summary>
+    public IReadOnlyList<string> InvalidMailSchedules { get; init; } = Array.Empty<string>();
     public RetentionFailure? RetentionFailure { get; init; }
+
+    /// <summary>開了「忽略憑證錯誤」卻沒填信任指紋的連線（例如「PRTG」「Sentinel」）：任何憑證都會被接受</summary>
+    public IReadOnlyList<string> UnpinnedCertificateBypass { get; init; } = Array.Empty<string>();
+
+    /// <summary>交辦 outbox 近期丟棄的筆數與最近一次丟棄時間（本地時間）；從未丟棄為 0／null。
+    /// 是否「近期」由 <see cref="HealthAttention.Evaluate"/> 以 <see cref="HealthAttention.OutboxDropRecentWindow"/> 判定。</summary>
+    public int OutboxRecentDropped { get; init; }
+    public DateTime? OutboxLastDroppedAt { get; init; }
 
     /// <summary>最近一次 PRTG 同步結果的警告；PRTG 未啟用時為空</summary>
     public IReadOnlyList<PrtgSyncWarning> PrtgSyncWarnings { get; init; } = Array.Empty<PrtgSyncWarning>();
@@ -77,6 +94,17 @@ public static class HealthAttention
 {
     /// <summary>遷移從開始起超過這段時間仍未完成（或有失敗訊息）就視為卡死</summary>
     internal static readonly TimeSpan MigrationStuckAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>交辦 outbox 丟棄後，這段時間內仍列入整體狀態（與 <c>WorkOrderOutboxDropStore.RecentWindow</c> 同值）</summary>
+    internal static readonly TimeSpan OutboxDropRecentWindow = LogForesight.Core.Persistence.WorkOrderOutboxDropStore.RecentWindow;
+
+    /// <summary>忽略憑證錯誤的設定位置：PRTG 在 PRTG 維護的擷取參數，Sentinel 在 NetIQ 維護的連線與節流參數</summary>
+    private static string CertificateSettingLocation(string source) => source switch
+    {
+        "PRTG" => "PRTG 維護的擷取參數",
+        "Sentinel" => "NetIQ 維護的連線與節流參數",
+        _ => $"{source} 的連線設定"
+    };
 
     public static IReadOnlyList<HealthReason> Evaluate(HealthAttentionInput input, DateTime now)
     {
@@ -98,7 +126,9 @@ public static class HealthAttention
         }
         if (input.MemoryWarning)
             Add(HealthAttentionKeys.Memory, ".NET 記憶體已接近上限，排程可能因記憶體不足中止。");
-        if (input.CryptoKeyMismatch)
+        if (input.CryptoKeyUnavailable)
+            Add(HealthAttentionKeys.Crypto, "站台金鑰檔無法使用，密碼類設定暫時存不進去；請確認站台帳號對資料目錄的 keys 資料夾有讀寫權限。");
+        else if (input.CryptoKeyMismatch)
             Add(HealthAttentionKeys.Crypto, "密碼欄位的加密金鑰與資料庫記錄不符，已儲存的密碼可能解不開。");
         else if (input.CryptoDecryptFailure)
             Add(HealthAttentionKeys.Crypto, "有密碼欄位解不開，該欄位會被當成未設定。");
@@ -129,8 +159,18 @@ public static class HealthAttention
             var more = input.SuspendedMailRecipients.Count > 3 ? $" 等 {input.SuspendedMailRecipients.Count} 位" : "";
             Add(HealthAttentionKeys.MailSuspended, $"郵件收件人因連續寄送失敗被暫停：{shown}{more}。");
         }
+        if (input.UnpinnedCertificateBypass.Count > 0)
+            Add(HealthAttentionKeys.CertificateTrust,
+                $"{string.Join("、", input.UnpinnedCertificateBypass)}開了「忽略憑證錯誤」且沒有填信任的憑證指紋，任何憑證都會被接受；" +
+                $"請到{string.Join("、", input.UnpinnedCertificateBypass.Select(CertificateSettingLocation))}填入伺服器的憑證指紋。");
+        if (input.InvalidMailSchedules.Count > 0)
+            Add(HealthAttentionKeys.MailSuspended, $"郵件設定的{string.Join("、", input.InvalidMailSchedules)}格式不合法，這些摘要不會寄出；請到郵件設定修正為 HH:mm。");
         if (input.RetentionFailure is { } retention)
             Add(HealthAttentionKeys.Retention, $"保留清除有 {retention.Segments.Count} 段失敗（{string.Join("、", retention.Segments)}），其餘段已照常執行。");
+
+        if (input.OutboxRecentDropped > 0 && input.OutboxLastDroppedAt is { } droppedAt && now - droppedAt <= OutboxDropRecentWindow)
+            Add(HealthAttentionKeys.OutboxDropped,
+                $"交辦通知佇列已滿，近期丟棄了 {input.OutboxRecentDropped} 筆最舊的待寄通知（最近一次 {droppedAt:MM/dd HH:mm}）；請檢查郵件是否停擺。");
 
         foreach (var warning in input.PrtgSyncWarnings)
         {

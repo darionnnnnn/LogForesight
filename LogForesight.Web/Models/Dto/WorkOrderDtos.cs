@@ -129,6 +129,10 @@ public class CreateWorkOrderResultDto
 {
     public List<WorkOrderCreatedDto> Orders { get; set; } = new();
     public List<WorkOrderSkippedDto> Skipped { get; set; } = new();
+
+    /// <summary>問題簽章過長、未建立案件的成員（其餘成員照常建立）；每筆附使用者看得懂的說明</summary>
+    public List<WorkOrderOverlongDto> OverlongSkipped { get; set; } = new();
+
     public int NoiseExcludedHosts { get; set; }
     public int DaySyncPendingCases { get; set; }
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
@@ -151,6 +155,14 @@ public class WorkOrderCreatedDto
     public int NewCases { get; set; }
     public int LinkedExisting { get; set; }
     public int Reassigned { get; set; }
+}
+
+public class WorkOrderOverlongDto
+{
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>中文說明（不含例外原文）</summary>
+    public string Message { get; set; } = string.Empty;
 }
 
 public class WorkOrderSkippedDto
@@ -176,6 +188,9 @@ public class AppendWorkOrderResultDto
 
     /// <summary>他人進行中、未改派而略過的成員數</summary>
     public int SkippedConflicts { get; set; }
+
+    /// <summary>問題簽章過長、未建立案件的成員</summary>
+    public List<WorkOrderOverlongDto> OverlongSkipped { get; set; } = new();
 
     public int NoiseExcludedHosts { get; set; }
 

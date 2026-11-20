@@ -138,6 +138,10 @@ public class AIService : IAiService, IDisposable
     /// <summary>強制格式啟用狀態的跨呼叫記憶（取自閘道，建構時取一次；見 <see cref="AiGrammarMemory"/>）</summary>
     private readonly AiGrammarMemory _grammarMemory;
 
+    /// <summary>整包讀取的回應上限；超過時回失敗結果並說明，不重試（<see cref="HttpResponseLimit"/>）</summary>
+    internal const long DefaultMaxResponseBytes = 16L * 1024 * 1024;
+    private readonly long _maxResponseBytes;
+
     public AIService(AiSettings settings, IAiRequestGate gate, IPromptDumper? dumper = null,
         IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
         : this(settings, CreateDefaultHandler(), gate, dumper, usageMeter, lane)
@@ -145,8 +149,10 @@ public class AIService : IAiService, IDisposable
     }
 
     internal AIService(AiSettings settings, HttpMessageHandler handler, IAiRequestGate gate,
-        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
+        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background,
+        long maxResponseBytes = DefaultMaxResponseBytes)
     {
+        _maxResponseBytes = maxResponseBytes;
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
         _gate = gate ?? throw new ArgumentNullException(nameof(gate));
@@ -155,6 +161,8 @@ public class AIService : IAiService, IDisposable
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
+            // AI 回應是幾 KB 到數百 KB 的 JSON：設上限，異常回應（代理錯誤頁、失控的串流）不能一次吃掉站台記憶體
+            MaxResponseContentBufferSize = maxResponseBytes,
             // 固定用 HTTP/1.1，不讓 .NET 嘗試 HTTP/2 協商——llama.cpp server 本身只說 HTTP/1.1，
             // 但長時間生成（本模型單次常見 60~80 秒）中途，某些反向代理/負載平衡器對 HTTP/2
             // 雙向串流處理不完整時容易在回應途中被切斷（症狀："The response ended
@@ -211,8 +219,12 @@ public class AIService : IAiService, IDisposable
                 MaxRetryAttempts = settings.RetryCount,
                 Delay = TimeSpan.FromSeconds(settings.RetryDelaySeconds),
                 BackoffType = DelayBackoffType.Exponential,
+                // 多個背景分片同時失敗時錯開重試時間，不在同一刻一起打回去
+                UseJitter = true,
                 ShouldHandle = new PredicateBuilder()
-                    .Handle<HttpRequestException>()
+                    // 只重試會好的：連線層失敗（沒有狀態碼）、伺服器錯誤、逾時與限流。
+                    // 400（prompt 超過 context）、401／403（金鑰錯）、404（端點錯）重試幾次結果都一樣，只是白等退避時間
+                    .Handle<HttpRequestException>(ex => IsTransientHttpFailure(ex))
                     // HttpClient.Timeout 逾時丟的 TaskCanceledException 其 InnerException 是
                     // TimeoutException——這種不重試：地端模型逾時多半是「這個 prompt 就是跑不完」，
                     // 重試只是再等一次同樣長的時間（最壞＝逾時×(重試次數+1)＋退避）。
@@ -230,6 +242,15 @@ public class AIService : IAiService, IDisposable
         _retryPipeline = retryPipelineBuilder.Build();
     }
 
+    /// <summary>值得重試的 HTTP 失敗：沒有狀態碼（連線層）、5xx、408、429</summary>
+    internal static bool IsTransientHttpFailure(HttpRequestException ex) =>
+        ex.HttpRequestError != HttpRequestError.SecureConnectionError && !HttpResponseLimit.IsExceeded(ex) && ex.StatusCode switch
+    {
+        null => true,
+        System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests => true,
+        var code => (int)code >= 500
+    };
+
     /// <summary>
     /// 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
     /// 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
@@ -239,11 +260,7 @@ public class AIService : IAiService, IDisposable
     /// 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
     /// 相對生成時間微乎其微，直接停用連線池換取穩定性划算。**不要改回預設的連線池。**
     /// </summary>
-    private static HttpMessageHandler CreateDefaultHandler() =>
-        new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.Zero
-        };
+    private static HttpMessageHandler CreateDefaultHandler() => OutboundHttp.CreateHandler(TimeSpan.Zero);
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
@@ -415,7 +432,10 @@ public class AIService : IAiService, IDisposable
             var emptyInfo = ex is EmptyAiResponseException ? lastCallInfo : null;
             return new AiResponse
             {
-                Success = false, Error = ex.Message,
+                Success = false,
+                Error = HttpResponseLimit.IsExceeded(ex)
+                    ? $"AI 回應超過 {HttpResponseLimit.MegabytesText(_maxResponseBytes)} 上限，已放棄（重試不會改變結果）。"
+                    : ex.Message,
                 PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
                 ResponseChars = emptyInfo?.ResponseChars,
                 PromptTokens = emptyInfo?.PromptTokens, CompletionTokens = emptyInfo?.CompletionTokens,

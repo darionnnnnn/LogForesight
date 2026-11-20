@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Models;
 
 namespace LogForesight.Web.Services;
@@ -12,6 +13,17 @@ internal static class NameFormat
 {
     /// <summary>清單轉顯示字串：空清單顯示「（無）」，否則以「、」串接</summary>
     public static string Join(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
+
+    /// <summary>使用者（及交辦單畫面上的群組）已刪除時的唯一顯示文字。</summary>
+    public const string Deleted = "（已刪除）";
+
+    /// <summary>使用者顯示為「顯示名稱(帳號)」；查無使用者（已刪除）一律顯示 <see cref="Deleted"/>，不帶 id。</summary>
+    public static string UserLabel(IUserDisplayNameService displayNames, WebUser? user) =>
+        user == null ? Deleted : displayNames.WithAccount(user.DisplayName, user.Account);
+
+    /// <summary>只含顯示名稱（不帶帳號）的版本，供兼作比對鍵的清單使用；查無使用者顯示 <see cref="Deleted"/>。</summary>
+    public static string UserNameOnly(IUserDisplayNameService displayNames, WebUser? user) =>
+        user == null ? Deleted : displayNames.Of(user.DisplayName);
 
     /// <summary>單一 id 查無對應名稱時的顯示回退</summary>
     public static string OrDeleted(string? name, long id) => name ?? $"(已刪除:{id})";

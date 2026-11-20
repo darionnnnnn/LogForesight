@@ -50,7 +50,10 @@ public class AiSummaryBehaviorTests
     public void NetIQ狀態對照表涵蓋後端所有常數()
     {
         var cs = File.ReadAllText(Path.Combine(Root(), "LogForesight.Core", "Service", "NetiqAttemptStatus.cs"));
-        var values = Regex.Matches(cs, "public const string \\w+\\s*=\\s*\"([^\"]+)\"").Select(m => m.Groups[1].Value).ToList();
+        // Unknown 是讀取端哨兵（帳本回執無效時 ReadLatest 標示），不會以狀態值出現在畫面上，不需要中文對照
+        var values = Regex.Matches(cs, "public const string (\\w+)\\s*=\\s*\"([^\"]+)\"")
+            .Where(m => m.Groups[1].Value != nameof(LogForesight.Core.Service.NetiqAttemptStatus.Unknown))
+            .Select(m => m.Groups[2].Value).ToList();
         Assert.Equal(7, values.Count);
         var format = ReadWeb("js", "core", "format.js");
         foreach (var v in values)

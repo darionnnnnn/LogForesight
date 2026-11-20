@@ -102,8 +102,7 @@ internal class PermissionMonitorService
         // Administrators 成員異動：兩次都讀取成功才比對，避免單次讀取失敗被誤判成「全部成員被移除」
         if (current.AdministratorsMembers != null && previous.AdministratorsMembers != null)
         {
-            var added = current.AdministratorsMembers.Except(previous.AdministratorsMembers, StringComparer.OrdinalIgnoreCase).ToList();
-            var removed = previous.AdministratorsMembers.Except(current.AdministratorsMembers, StringComparer.OrdinalIgnoreCase).ToList();
+            var (added, removed) = CompareAdministrators(previous, current);
 
             foreach (var member in added)
             {
@@ -233,7 +232,7 @@ internal class PermissionMonitorService
             }
         }
 
-        _snapshotStore.Save(current);
+        _snapshotStore.Save(BaselineToSave(previous, current));
 
         if (result.Alerts.Count > 0)
         {
@@ -257,10 +256,14 @@ internal class PermissionMonitorService
             folders[path] = CaptureFolder(path);
         }
 
+        var members = CaptureAdministratorsMembers();
         return new PermissionSnapshot
         {
             CapturedAt = DateTime.Now,
-            AdministratorsMembers = CaptureAdministratorsMembers(),
+            AdministratorsMembers = members?.Select(m => m.Name).ToList(),
+            AdministratorsMemberSids = members?.Where(m => m.Sid != null)
+                .GroupBy(m => m.Sid!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase),
             Folders = folders
         };
     }
@@ -294,7 +297,7 @@ internal class PermissionMonitorService
 
     /// <summary>回傳 null 代表讀取失敗（而非群組真的沒有成員），呼叫端須區分避免誤判</summary>
     [SupportedOSPlatform("windows")]
-    private static List<string>? CaptureAdministratorsMembers()
+    private static List<(string Name, string? Sid)>? CaptureAdministratorsMembers()
     {
         try
         {
@@ -306,8 +309,8 @@ internal class PermissionMonitorService
             }
 
             return group.GetMembers(recursive: false)
-                .Select(m => m.SamAccountName ?? m.Name ?? m.Sid?.Value ?? "(未知帳號)")
-                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .Select(m => (Name: QualifiedName(m), Sid: m.Sid?.Value))
+                .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
         catch (Exception ex)
@@ -317,4 +320,51 @@ internal class PermissionMonitorService
         }
     }
 
+
+    /// <summary>成員的顯示名稱帶上來源（網域或本機），同名帳號在告警裡分得出來</summary>
+    [SupportedOSPlatform("windows")]
+    private static string QualifiedName(Principal member)
+    {
+        var name = member.SamAccountName ?? member.Name ?? member.Sid?.Value ?? "(未知帳號)";
+        var source = member.Context?.Name;
+        return string.IsNullOrEmpty(source) ? name : $"{source}\\{name}";
+    }
+
+    /// <summary>
+    /// 新增與移除的成員（顯示名稱）。兩份快照都有 SID 時以 SID 比對；舊版快照沒有 SID 時以名稱過渡比對
+    /// （否則升級後第一次比對會把全部成員報成新增與移除）。
+    /// </summary>
+    internal static (List<string> Added, List<string> Removed) CompareAdministrators(PermissionSnapshot previous, PermissionSnapshot current)
+    {
+        if (previous.AdministratorsMemberSids is { } before && current.AdministratorsMemberSids is { } after)
+        {
+            var added = after.Where(kv => !before.ContainsKey(kv.Key)).Select(kv => kv.Value).ToList();
+            var removed = before.Where(kv => !after.ContainsKey(kv.Key)).Select(kv => kv.Value).ToList();
+            return (added, removed);
+        }
+        // 舊版快照存的是裸名（admin），新版顯示名稱帶來源（HOST\admin）：過渡比對兩邊都取最後一段
+        static string Bare(string name) => name[(name.LastIndexOf('\\') + 1)..];
+        var previousNames = (previous.AdministratorsMembers ?? new List<string>()).ToList();
+        var currentNames = (current.AdministratorsMembers ?? new List<string>()).ToList();
+        var previousBare = previousNames.Select(Bare).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var currentBare = currentNames.Select(Bare).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (currentNames.Where(n => !previousBare.Contains(Bare(n))).ToList(),
+                previousNames.Where(n => !currentBare.Contains(Bare(n))).ToList());
+    }
+
+    /// <summary>
+    /// 要存成下次基準的快照：Administrators 這一輪讀取失敗時沿用上一份成功的成員資料。
+    /// 直接存的話 null 會變成基準，下次比對被跳過、再下一次才重建基準——失敗期間新增的提權帳號就混進基準、永遠不告警。
+    /// </summary>
+    internal static PermissionSnapshot BaselineToSave(PermissionSnapshot previous, PermissionSnapshot current)
+    {
+        if (current.AdministratorsMembers != null) return current;
+        return new PermissionSnapshot
+        {
+            CapturedAt = current.CapturedAt,
+            AdministratorsMembers = previous.AdministratorsMembers,
+            AdministratorsMemberSids = previous.AdministratorsMemberSids,
+            Folders = current.Folders
+        };
+    }
 }

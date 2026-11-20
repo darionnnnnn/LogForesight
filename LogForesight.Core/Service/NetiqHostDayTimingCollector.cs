@@ -146,7 +146,7 @@ public sealed class NetiqHostDayTimingCollector : INetiqHostDayTimingCollector
             if (!_run.Incomplete && _run.Expected > 0 && _run.Durations.Count == _run.Expected)
             {
                 var sorted = _run.Durations.Order().ToArray();
-                _run.P95Milliseconds = sorted[Math.Clamp((int)Math.Ceiling(sorted.Length * 0.95) - 1, 0, sorted.Length - 1)];
+                _run.P95Milliseconds = sorted[SampleStatistics.NearestRankIndex(sorted.Length, 0.95)];
             }
             // 收集器是 singleton：結束後只留計數與 p95，逐主機日明細（最多 60 萬列）不留到下一趟開始
             _run.ReleaseDetail();

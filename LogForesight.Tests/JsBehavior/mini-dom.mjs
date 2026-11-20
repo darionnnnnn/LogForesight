@@ -56,6 +56,7 @@ class FakeNode {
 
     set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
+    get childNodes() { return this.children; }
 
     // 真瀏覽器的 appendChild／append 是「搬移」：節點已在別的父節點下時先移除，否則同一節點會在兩處出現
     appendChild(child) { this._detach(child); this.children.push(child); if (child) child._parent = this; return child; }
@@ -111,6 +112,11 @@ class FakeNode {
     setAttribute(name, value) { this.attributes[name] = String(value); }
     setAttributeNS(_ns, name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name] ?? null; }
+    removeAttribute(name) { delete this.attributes[name]; }
+    // id 屬性與 setAttribute('id') 同步（真瀏覽器行為；欄位錯誤的 aria-describedby 靠它配對）
+    get id() { return this.attributes.id ?? ''; }
+    set id(value) { this.attributes.id = String(value); }
+    focus() { this.focused = true; }
     addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
     dispatch(type) { (this.listeners[type] || []).forEach(h => h()); }
 

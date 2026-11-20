@@ -195,6 +195,46 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Null(sen.DependencyObjid);
     }
 
+    /// <summary>
+    /// 第 79 輪 D3：裝置 <c>Ip</c> 與感測器 <c>SensorType</c> 是索引欄，存檔時超長會整列不寫，
+    /// 所以 PrtgFetchService 在寫入處先依模型截斷；PRTG 回傳超長字串時兩列仍入庫、長度等於模型上限。
+    /// </summary>
+    [Fact]
+    public async Task FetchDayAsync_裝置Ip與感測器類型超長時仍入庫並截到模型上限()
+    {
+        var ipMax = ColumnClamp.For<PrtgDeviceRow>(nameof(PrtgDeviceRow.Ip))!.Value;
+        var typeMax = ColumnClamp.For<PrtgSensorRow>(nameof(PrtgSensorRow.SensorType))!.Value;
+        var longIp = new string('9', ipMax + 40);
+        var longType = new string('t', typeMax + 40);
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"" + longIp + "\",\"paused\":false}]}";
+        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"" + longType + "\",\"paused\":false}]}";
+
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            if (url.Contains("historicdata.json"))
+                return JsonResponse("{\"histdata\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var service = NewFetchService(client, CreateStore(),
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>());
+
+        await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(101));
+
+        using var ctx = _fx.NewContext();
+        var dev = Assert.Single(await ctx.PrtgDevices.AsNoTracking().ToListAsync());
+        var sen = Assert.Single(await ctx.PrtgSensors.AsNoTracking().ToListAsync());
+        Assert.Equal(ipMax, dev.Ip!.Length);
+        Assert.Equal(typeMax, sen.SensorType.Length);
+    }
+
     [Fact]
     public async Task FetchDayAsync_同一天重跑不產生重複列()
     {
@@ -1252,7 +1292,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1), syncStructure: false);
 
         // 結構端點零請求；paused 的 902 不抓；synced_at 未被改寫（回填不得汙染「最後結構同步時間」）
         Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("content=devices"));
@@ -3232,7 +3272,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
         var service = RetryingService(client, store, (_, _) => Task.CompletedTask);
 
-        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None);
+        var left = await service.FetchPendingDevicesAsync(new long[] { 1, 2 }, new long[] { 2, 3 }, today.AddDays(-1), 1, CancellationToken.None, new long[] { 1, 2, 3 });
 
         Assert.Empty(left.Sensors);
         Assert.Empty(left.Messages);

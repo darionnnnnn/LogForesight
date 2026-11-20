@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Data;
 using System.Data.Common;
 using LogForesight.Core.Persistence;
+using static LogForesight.Core.Persistence.Sql.PrtgValueRowUsability;
 using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using Microsoft.Data.Sqlite;
@@ -1293,7 +1294,7 @@ public sealed class EfPrtgStore
         const int maximumCapturedSensors = 100_000;
         const int queryBatchSize = 500;
         if (candidateSensorObjids.Count > maximumCapturedSensors)
-            throw new InvalidOperationException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
+            throw new PrtgScopePurgeRuleException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
         if (topDevices < 0) throw new ArgumentOutOfRangeException(nameof(topDevices));
 
         using var __perf = _performance.Measure("prtg:PreviewOutOfScopeFrozenCandidates");
@@ -1424,6 +1425,7 @@ public sealed class EfPrtgStore
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "temp_store 的值是同一連線先前以 PRAGMA 讀回的整數")]
     private PrtgCalibrationDataCapture CaptureCalibrationDataCore(DateTime fromInclusive, DateTime toExclusive,
         IReadOnlyCollection<string>? sensorTypeWhitelist, DateTime mapAnchor, PrtgCalibrationCaptureLimits limits,
         CancellationToken cancellationToken, PrtgCalibrationCaptureBudget operationBudget)
@@ -1563,7 +1565,8 @@ public sealed class EfPrtgStore
         if (sensors.Count != sensorCount)
             throw CalibrationCapacity("PRTG sensor mirror 在擷取期間變更，請重試。");
 
-        var mapDate = FindLatestHostMapDate(ctx, PrtgHostMapLookup.LatestLookbackDays, mapAnchor);
+        // 與規則歸戶同一個選法（只採含 ok 列的整份對應）；最新一份全是 unmatched 時採較早那份有效對應
+        var mapDate = FindHostMapDateForDay(ctx, mapAnchor, PrtgHostMapLookup.LatestLookbackDays);
         var maps = new List<PrtgHostMapRow>();
         if (mapDate.HasValue)
         {
@@ -1673,6 +1676,7 @@ public sealed class EfPrtgStore
         private bool _ownsConnection;
         private bool _disposed;
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名是類別內產生的 temp 表常數，id 走 @idsJson 參數")]
         private CalibrationSensorIdScope(LfDbContext context, IReadOnlyCollection<long> ids, string scopeName)
         {
             _context = context;
@@ -1729,6 +1733,7 @@ public sealed class EfPrtgStore
         internal static CalibrationSensorIdScope Create(LfDbContext context, IReadOnlyCollection<long> ids,
             string scopeName = "SelectedSensor") => new(context, ids, scopeName);
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100", Justification = "表名是類別內產生的 temp 表常數")]
         public void Dispose()
         {
             if (_disposed) return;
@@ -1786,7 +1791,8 @@ public sealed class EfPrtgStore
                                  value.MinValue,
                                  value.MaxValue,
                                  value.Quality,
-                                 value.Coverage
+                                 Usable = IsUsable(value),
+                                 SampledUsable = IsSampledUsable(value)
                              };
         if (selectedSensorIds is not null)
             selectedValues = selectedValues.Where(row => selectedSensorIds.Contains(row.SensorObjid));
@@ -1808,31 +1814,24 @@ public sealed class EfPrtgStore
         {
             group.Key.SensorObjid,
             group.Key.Date,
-            AvgValue = group.Average(row => (row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage)) && row.AvgValue != null
+            AvgValue = group.Average(row => row.Usable && row.AvgValue != null
                 ? row.AvgValue : null),
-            MinValue = group.Min(row => (row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage)) && row.AvgValue != null
+            MinValue = group.Min(row => row.Usable && row.AvgValue != null
                 ? row.AvgValue : null),
-            MaxValue = group.Max(row => (row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage)) && row.AvgValue != null
+            MaxValue = group.Max(row => row.Usable && row.AvgValue != null
                 ? row.AvgValue : null),
             OkCount = group.Sum(row => row.Quality == PrtgDataQuality.Ok ? 1 : 0),
             UnknownCount = group.Sum(row => row.Quality == PrtgDataQuality.Unknown ? 1 : 0),
             NodataCount = group.Sum(row => row.Quality == PrtgDataQuality.NoData ? 1 : 0),
-            OtherCount = group.Sum(row => (row.Quality != PrtgDataQuality.Ok &&
-                !(row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage) &&
+            OtherCount = group.Sum(row => (!row.Usable &&
                 row.Quality != PrtgDataQuality.Unknown && row.Quality != PrtgDataQuality.NoData) ? 1 : 0),
             TotalCount = group.Count(),
-            SampledCount = group.Sum(row => row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0),
-            UsableCount = group.Sum(row => row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0),
-            MinObserved = group.Min(row => (row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? row.MinValue : null),
-            MaxObserved = group.Max(row => (row.Quality == PrtgDataQuality.Ok ||
-                (row.Quality == PrtgDataQuality.Sampled && row.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? row.MaxValue : null)
+            SampledCount = group.Sum(row => row.SampledUsable ? 1 : 0),
+            UsableCount = group.Sum(row => row.Usable ? 1 : 0),
+            MinObserved = group.Min(row => row.Usable ? row.MinValue : null),
+            MaxObserved = group.Max(row => row.Usable ? row.MaxValue : null)
         });
-            var page = grouped.OrderBy(row => row.SensorObjid).ThenBy(row => row.Date)
+            var page = grouped.ExpandPrtgUsability().OrderBy(row => row.SensorObjid).ThenBy(row => row.Date)
                 .Take(limits.MaximumPageRows + 1)
                 .Select(row => new PrtgCalibrationDailyAggregation(row.SensorObjid, row.Date,
                     row.AvgValue, row.MinValue, row.MaxValue, row.OkCount, row.UnknownCount, row.NodataCount,
@@ -1875,25 +1874,21 @@ public sealed class EfPrtgStore
                     {
                         value.SensorObjid,
                         sensor.SensorType,
-                        UsablePeriod = (value.Quality == PrtgDataQuality.Ok ||
-                            (value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                        UsablePeriod = IsUsable(value)
                             ? (DateTime?)value.PeriodStart : null,
-                        UsableDate = (value.Quality == PrtgDataQuality.Ok ||
-                            (value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                        UsableDate = IsUsable(value)
                             ? (DateTime?)value.PeriodStart.Date : null,
                         OkCount = value.Quality == PrtgDataQuality.Ok ? 1 : 0,
-                        SampledCount = value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0,
-                        UsableCount = value.Quality == PrtgDataQuality.Ok ||
-                            (value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                        SampledCount = IsSampledUsable(value) ? 1 : 0,
+                        UsableCount = IsUsable(value) ? 1 : 0,
                         UnknownCount = value.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                         NodataCount = value.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                        OtherCount = value.Quality != PrtgDataQuality.Ok &&
-                            !(value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage) &&
+                        OtherCount = !IsUsable(value) &&
                             value.Quality != PrtgDataQuality.Unknown && value.Quality != PrtgDataQuality.NoData ? 1 : 0,
                         TotalCount = 1
                     };
         if (selectedSensorIds is not null) query = query.Where(row => selectedSensorIds.Contains(row.SensorObjid));
-        var grouped = query.GroupBy(row => row.SensorObjid).Select(group => new
+        var grouped = query.ExpandPrtgUsability().GroupBy(row => row.SensorObjid).Select(group => new
         {
             SensorObjid = group.Key,
             OkCount = group.Sum(row => row.OkCount),
@@ -1919,13 +1914,12 @@ public sealed class EfPrtgStore
         PrtgCalibrationCaptureLimits limits, PrtgCalibrationCaptureBudget operationBudget)
     {
         var values = ctx.PrtgValues.AsNoTracking().Where(value => value.PeriodStart >= fromInclusive && value.PeriodStart < toExclusive &&
-            (value.Quality == PrtgDataQuality.Ok ||
-             (value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage)) && value.AvgValue != null);
+            IsUsable(value) && value.AvgValue != null);
         var sensors = ctx.PrtgSensors.AsNoTracking();
         if (selectedSensorIds is not null) sensors = sensors.Where(sensor => selectedSensorIds.Contains(sensor.Objid));
         using var queryBudget = operationBudget.ReserveTransient(limits.MaximumHourlyTypeRows * 256L,
             "PRTG hourly profile SQL result");
-        var grouped = (from value in values
+        var grouped = (from value in values.ExpandPrtgUsability()
                        join sensor in sensors on value.SensorObjid equals sensor.Objid
                        group value by new { sensor.SensorType, value.PeriodStart.Hour } into hourlyGroup
                        select new
@@ -1956,15 +1950,13 @@ public sealed class EfPrtgStore
                 Date = value.PeriodStart.Date,
                 value.SensorObjid,
                 OkCount = value.Quality == PrtgDataQuality.Ok ? 1 : 0,
-                SampledCount = value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0,
-                UsableCount = value.Quality == PrtgDataQuality.Ok ||
-                    (value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
+                SampledCount = IsSampledUsable(value) ? 1 : 0,
+                UsableCount = IsUsable(value) ? 1 : 0,
                 UnknownCount = value.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = value.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = value.Quality != PrtgDataQuality.Ok &&
-                    !(value.Quality == PrtgDataQuality.Sampled && value.Coverage >= PrtgValueUsability.SampledMinCoverage) &&
+                OtherCount = !IsUsable(value) &&
                     value.Quality != PrtgDataQuality.Unknown && value.Quality != PrtgDataQuality.NoData ? 1 : 0
-            })
+            }).ExpandPrtgUsability()
             .GroupBy(row => row.Date)
             .OrderBy(group => group.Key)
             .Take(57)
@@ -2084,6 +2076,26 @@ public sealed class EfPrtgStore
         return ctx.PrtgSensors.AsNoTracking()
             .Select(s => new { s.Objid, s.Paused })
             .ToList()
+            .Select(s => (s.Objid, s.Paused))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 取得所屬裝置在 <paramref name="scopeDeviceObjids"/>（必填）內的 sensor 的 objid 與暫停狀態。
+    /// 不同步結構的取數路徑（回填）用：鏡像可能留有範圍外的 sensor，取數目標必須與當前取數範圍取交集（docs/PRTG-SPEC.md §3c）。
+    /// </summary>
+    public List<(long Objid, bool Paused)> GetSensorTargets(IReadOnlyCollection<long> scopeDeviceObjids)
+    {
+        ArgumentNullException.ThrowIfNull(scopeDeviceObjids);
+        using var __perf = _performance.Measure("prtg:GetSensorTargetsInScope");
+        // 範圍以單一集合參數交給資料庫過濾（LfDbContext 設定集合參數模式），不把整份鏡像讀進記憶體
+        var scope = scopeDeviceObjids.Distinct().ToArray();
+        if (scope.Length == 0) return new List<(long, bool)>();
+        using var ctx = _contextFactory();
+        return ctx.PrtgSensors.AsNoTracking()
+            .Where(s => scope.Contains(s.DeviceObjid))
+            .Select(s => new { s.Objid, s.Paused })
+            .AsEnumerable()
             .Select(s => (s.Objid, s.Paused))
             .ToList();
     }
@@ -2387,10 +2399,20 @@ public sealed class EfPrtgStore
     {
         if (lookbackDays <= 0) return null;
         var dayDate = day.Date;
-        var cutoff = dayDate.AddDays(-(lookbackDays - 1));
-        var onOrBefore = BuildOkMapDatesQuery(ctx.PrtgHostMaps, cutoff, dayDate).Max(d => (DateTime?)d);
+        var onOrBefore = FindOkHostMapDateOnOrBefore(ctx, dayDate, lookbackDays);
         if (onOrBefore != null) return onOrBefore;
         return BuildOkMapDatesQuery(ctx.PrtgHostMaps, dayDate.AddDays(1), DateTime.Today).Min(d => (DateTime?)d);
+    }
+
+    /// <summary>
+    /// (day - lookbackDays, day]（含 day）內「含 ok 列」的最晚對應日期；不往後沿用。
+    /// <see cref="FindHostMapDateForDay"/> 的第一段，也是校準「那天已有對應」判斷的唯一取法（兩邊才會選到同一份）。
+    /// </summary>
+    internal static DateTime? FindOkHostMapDateOnOrBefore(LfDbContext ctx, DateTime day, int lookbackDays)
+    {
+        if (lookbackDays <= 0) return null;
+        var dayDate = day.Date;
+        return BuildOkMapDatesQuery(ctx.PrtgHostMaps, dayDate.AddDays(-(lookbackDays - 1)), dayDate).Max(d => (DateTime?)d);
     }
 
     /// <summary>[from, to]（含）內「含 ok 列」的對應日期（可重複）；供 <see cref="GetHostMapForDay"/> 取 Max／Min。</summary>
@@ -2603,8 +2625,8 @@ public sealed class EfPrtgStore
             if (existing != null)
             {
                 existing.HostId = row.HostId;
-                existing.CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy));
-                existing.Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note));
+                existing.CreatedBy = row.CreatedBy;
+                existing.Note = row.Note;
                 // CreatedAt 保持原值
             }
             else
@@ -2613,8 +2635,8 @@ public sealed class EfPrtgStore
                 {
                     DeviceObjid = row.DeviceObjid,
                     HostId = row.HostId,
-                    CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy)),
-                    Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note)),
+                    CreatedBy = row.CreatedBy,
+                    Note = row.Note,
                     CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
                 };
                 ctx.PrtgManualMaps.Add(newRow);
@@ -2644,9 +2666,8 @@ public sealed class EfPrtgStore
         if (row == null) return;
         var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
         if (normIp == null) return;
-        normIp = ColumnClamp.Clamp(normIp, 64)!;
-        var note = ColumnClamp.Clamp(row.Note, 512);
-        var createdBy = ColumnClamp.Clamp(row.CreatedBy, 64);
+        var note = row.Note;
+        var createdBy = row.CreatedBy;
 
         WriteScopeChange(ctx =>
         {
@@ -2836,23 +2857,19 @@ public sealed class EfPrtgStore
             .Select(v => new
             {
                 v.SensorObjid,
-                UsablePeriod = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                UsablePeriod = IsUsable(v)
                     ? (DateTime?)v.PeriodStart : null,
-                UsableDate = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                UsableDate = IsUsable(v)
                     ? (DateTime?)v.PeriodStart.Date : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
-                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
-                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
+                SampledCount = (IsSampledUsable(v)) ? 1 : 0,
+                UsableCount = IsUsable(v) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                OtherCount = (!IsUsable(v)
                     && v.Quality != PrtgDataQuality.Unknown
                     && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
-            })
+            }).ExpandPrtgUsability()
             .GroupBy(x => x.SensorObjid)
             .Select(g => new
             {
@@ -2904,23 +2921,18 @@ public sealed class EfPrtgStore
             {
                 v.SensorObjid,
                 Date = v.PeriodStart.Date,
-                UsableAvgValue = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) && v.AvgValue != null ? v.AvgValue : null,
-                UsableMinValue = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MinValue : null,
-                UsableMaxValue = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? v.MaxValue : null,
+                UsableAvgValue = IsUsable(v) && v.AvgValue != null ? v.AvgValue : null,
+                UsableMinValue = IsUsable(v) ? v.MinValue : null,
+                UsableMaxValue = IsUsable(v) ? v.MaxValue : null,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
-                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
-                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
+                SampledCount = (IsSampledUsable(v)) ? 1 : 0,
+                UsableCount = IsUsable(v) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                OtherCount = (!IsUsable(v)
                     && v.Quality != PrtgDataQuality.Unknown
                     && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
-            })
+            }).ExpandPrtgUsability()
             .GroupBy(x => new { x.SensorObjid, x.Date })
             .Select(g => new
             {
@@ -2978,16 +2990,14 @@ public sealed class EfPrtgStore
                 Date = v.PeriodStart.Date,
                 v.SensorObjid,
                 OkCount = v.Quality == PrtgDataQuality.Ok ? 1 : 0,
-                SampledCount = (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage) ? 1 : 0,
-                UsableCount = (v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage)) ? 1 : 0,
+                SampledCount = (IsSampledUsable(v)) ? 1 : 0,
+                UsableCount = IsUsable(v) ? 1 : 0,
                 UnknownCount = v.Quality == PrtgDataQuality.Unknown ? 1 : 0,
                 NodataCount = v.Quality == PrtgDataQuality.NoData ? 1 : 0,
-                OtherCount = (!(v.Quality == PrtgDataQuality.Ok ||
-                    (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                OtherCount = (!IsUsable(v)
                     && v.Quality != PrtgDataQuality.Unknown
                     && v.Quality != PrtgDataQuality.NoData) ? 1 : 0,
-            })
+            }).ExpandPrtgUsability()
             .GroupBy(x => x.Date)
             .Select(g => new
             {
@@ -3076,10 +3086,9 @@ public sealed class EfPrtgStore
         DateTime fromInclusive,
         DateTime toExclusive)
     {
-        return from v in values
+        var query = from v in values
                where v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive
-                     && (v.Quality == PrtgDataQuality.Ok ||
-                         (v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+                     && IsUsable(v)
                      && v.AvgValue != null
                join s in sensors on v.SensorObjid equals s.Objid
                group v by new { s.SensorType, v.PeriodStart.Hour } into g
@@ -3088,6 +3097,7 @@ public sealed class EfPrtgStore
                    g.Key.Hour,
                    g.Average(x => x.AvgValue),
                    g.Count());
+        return query.ExpandPrtgUsability();
     }
 
     /// <summary>
@@ -3130,11 +3140,11 @@ public sealed class EfPrtgStore
             .GroupBy(v => v.PeriodStart)
             .Select(g => new PrtgSnapshotValueCoverageProjection(
                 g.Key,
-                g.Sum(v => v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0),
-                g.Sum(v => v.Quality == PrtgDataQuality.Sampled && v.Coverage < PrtgValueUsability.SampledMinCoverage ? 1 : 0),
+                g.Sum(v => IsSampledUsable(v) ? 1 : 0),
+                g.Sum(v => IsSampledLowCoverage(v) ? 1 : 0),
                 g.Sum(v => v.Quality == PrtgDataQuality.Ok ? 1 : 0),
-                g.Sum(v => v.Quality == PrtgDataQuality.Ok ||
-                    v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0)));
+                g.Sum(v => IsUsable(v) ? 1 : 0)))
+            .ExpandPrtgUsability();
 }
 
 /// <summary>

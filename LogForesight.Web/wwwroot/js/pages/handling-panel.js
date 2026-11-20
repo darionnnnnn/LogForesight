@@ -17,6 +17,7 @@ import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant, isNoFixClosure } from '../core/handling-statuses.js';
 import { noFixConsequenceText } from './issue-status-reply.js';
 import { statusNote } from '../core/elements.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
@@ -539,6 +540,8 @@ function handlingForm() {
     form.appendChild(observeWrap);
 
     function observeUntilDate() {
+        // 刻意用 `Number(x) || 預設`：空欄位（Number('') 為 0）與 0 都不是合法觀察天數，一律沿用預設 7 天，
+        // 不像必填欄位要擋下送出（空值＝沿用預設，與 core/number-field.js 的必填讀取是兩種語意）
         const days = Math.min(90, Math.max(1, Number(observeInput.value) || 7));
         const target = new Date();
         target.setDate(target.getDate() + days);
@@ -634,13 +637,12 @@ function handlingForm() {
     }
 
     function showNoteError(message) {
-        noteFeedback.textContent = message;
-        noteInput.classList.add('is-invalid');
+        setFieldError(noteInput, message, { feedback: noteFeedback });
         noteInput.focus();
     }
 
     form.addEventListener('input', () => {
-        noteInput.classList.remove('is-invalid');
+        clearFieldError(noteInput);
         saveFormDraft();
     });
     form.addEventListener('change', saveFormDraft);
@@ -660,7 +662,7 @@ function handlingForm() {
 
         const field = noteFieldOf(selectedStatus);
         noteLabel.textContent = field.label;
-        noteInput.classList.remove('is-invalid');
+        clearFieldError(noteInput);
     }
 
     // 共用 renderChips（單選）：節點只建一次，點選只切換 .active 與 aria-pressed，鍵盤焦點不會掉

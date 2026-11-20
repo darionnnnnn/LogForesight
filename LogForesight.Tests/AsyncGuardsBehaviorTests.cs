@@ -28,6 +28,14 @@ public class AsyncGuardsBehaviorTests
     [InlineData("pollStop")]
     [InlineData("pollStopInFlight")]
     [InlineData("pollFalseStops")]
+    [InlineData("pollIntervalFunctionSeesLastResult")]
+    [InlineData("pollBackoffOnFailureThenRecovers")]
+    [InlineData("pollNoBackoffWithoutOption")]
+    [InlineData("pollHiddenAtStartDoesNotRunThenRunsOnForeground")]
+    [InlineData("pollForegroundAfterBackgroundRunsImmediately")]
+    [InlineData("pollVisibleEventWithoutBackgroundDoesNotRunExtra")]
+    [InlineData("pollStopRemovesVisibilityListener")]
+    [InlineData("pollWithoutPauseOptionIgnoresHidden")]
     public void 非同步守門工具行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

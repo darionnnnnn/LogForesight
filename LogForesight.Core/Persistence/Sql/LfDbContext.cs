@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace LogForesight.Core.Persistence.Sql;
@@ -25,23 +29,115 @@ public class LfDbContext : DbContext
 
     public LfDbContext(DbContextOptions<LfDbContext> options) : base(options) { }
 
-    private void AdvanceDailyRevisions()
+    /// <summary>
+    /// 參數化集合（<c>ids.Contains(x)</c>）一律翻成單一 JSON 參數（SQL Server 的 OPENJSON、SQLite 的 json_each）。
+    /// EF Core 10 起預設改成每個元素一個參數；SQL Server 單一指令最多 2,100 個參數，
+    /// 而本專案有數千個 id 的清單查詢——SQLite 的上限高得多，測試環境看不到，正式機才會擲例外。
+    /// 放在這裡而不是各個 UseSqlite／UseSqlServer 呼叫點：正式後端與上百個測試建立點都經過同一個內容類別，
+    /// 測試才會量到與正式機相同的 SQL。
+    /// </summary>
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        var relational = optionsBuilder.Options.Extensions
+            .OfType<Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension>()
+            .FirstOrDefault();
+        if (relational is null || relational.ParameterizedCollectionMode == ParameterTranslationMode.Parameter) return;
+        ((Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsBuilderInfrastructure)optionsBuilder)
+            .AddOrUpdateExtension(relational.WithUseParameterizedCollectionMode(ParameterTranslationMode.Parameter));
+    }
+
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 各實體型別的字串長度上限欄位清單，以 EF 的 <see cref="IEntityType"/> 為鍵（弱參考：模型被回收時條目自動消失；
+    /// 型別數量固定，不隨資料成長）。鍵欄／索引欄由模型的鍵、索引與外鍵定義推導，不手寫清單。
+    /// </summary>
+    private static readonly ConditionalWeakTable<IEntityType, StringColumn[]> StringColumnPlans = new();
+
+    private sealed record StringColumn(string Name, int MaxLength, bool IsKeyOrIndex);
+
+    private static StringColumn[] PlanFor(IEntityType entityType) => StringColumnPlans.GetValue(entityType, static et =>
+        et.GetProperties()
+            .Where(p => p.ClrType == typeof(string) && p.GetMaxLength() is not null)
+            .Select(p => new StringColumn(p.Name, p.GetMaxLength()!.Value,
+                p.IsKey() || p.IsIndex() || p.IsForeignKey()))
+            .ToArray());
+
+    /// <summary>
+    /// 寫入前的單一處理點：推進每日紀錄的寫入版本，並依模型的 <c>HasMaxLength</c> 處理字串欄位。
+    /// 非鍵欄超長就截斷（代理對安全，<see cref="TextTruncation.SafeCut"/>）；鍵欄與索引欄超長不能截斷
+    /// （截斷會與別的鍵撞號或永遠對不上），該筆改為 Detached 不寫入，其餘筆照常寫入。
+    /// SQL Server 超長字串會讓整批寫入擲截斷例外、SQLite 卻靜默通過，這裡讓兩個後端行為一致。
+    /// Added 處理全部欄位，Modified 只處理實際被修改的欄位；不產生額外的資料庫指令。
+    /// 注意：新增列的鍵／索引字串欄超長時該列被略過（Detached）、不會取得自增主鍵（維持 0），
+    /// 呼叫端若依該列的自增主鍵寫子列會拿到 0；新增外部來源（PRTG、NetIQ…）的索引字串欄時要先想過這條路徑。
+    /// </summary>
+    private void PrepareForSave()
     {
         ChangeTracker.DetectChanges();
-        foreach (var entry in ChangeTracker.Entries<DailyRecordRow>())
-            if (entry.State == EntityState.Modified)
-                entry.Entity.WriteRevision = checked(entry.Property(r => r.WriteRevision).OriginalValue + 1);
+        var autoDetect = ChangeTracker.AutoDetectChangesEnabled;
+        List<(EntityEntry Entry, string Column, int Length, int Max)>? skipped = null;
+        try
+        {
+            // 已手動 DetectChanges；迴圈內不要讓 Entries() 再掃一次。
+            ChangeTracker.AutoDetectChangesEnabled = false;
+            foreach (var entry in ChangeTracker.Entries())
+            {
+                if (entry.State is not (EntityState.Added or EntityState.Modified)) continue;
+
+                if (entry.State == EntityState.Modified && entry.Entity is DailyRecordRow daily)
+                    daily.WriteRevision = checked(entry.OriginalValues.GetValue<long>(nameof(DailyRecordRow.WriteRevision)) + 1);
+
+                // 去重鍵雜湊欄：所有寫入路徑（append／upsert／遷移）都經 SaveChanges，在這一處統一補，不會漏
+                if (entry.Entity is PermissionChangeRow permRow &&
+                    (entry.State == EntityState.Added || entry.Property(nameof(PermissionChangeRow.DedupeKey)).IsModified))
+                {
+                    entry.Property(nameof(PermissionChangeRow.DedupeKeyHash)).CurrentValue =
+                        PermissionChangeDedupeHash.Of(permRow.DedupeKey);
+                }
+
+                foreach (var col in PlanFor(entry.Metadata))
+                {
+                    var prop = entry.Property(col.Name);
+                    if (entry.State == EntityState.Modified && !prop.IsModified) continue;
+                    if (prop.CurrentValue is not string text || text.Length <= col.MaxLength) continue;
+
+                    if (!col.IsKeyOrIndex)
+                    {
+                        prop.CurrentValue = TextTruncation.SafeCut(text, col.MaxLength);
+                        continue;
+                    }
+                    (skipped ??= new()).Add((entry, col.Name, text.Length, col.MaxLength));
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
+
+        if (skipped is null) return;
+        foreach (var (entry, _, _, _) in skipped) entry.State = EntityState.Detached;
+        LogSkipped(skipped.Select(x => (x.Entry.Metadata.ClrType.Name, x.Column, x.Length, x.Max)));
+    }
+
+    private void LogSkipped(IEnumerable<(string Entity, string Column, int Length, int Max)> skipped)
+    {
+        foreach (var g in skipped.GroupBy(x => (x.Entity, x.Column)))
+            Log.Warn("資料庫寫入略過 {Count} 筆：{Entity}.{Column} 是鍵／索引欄，長度（最長 {Length}）超過上限 {Max}，截斷會與其他鍵撞號，該筆不寫入",
+                g.Count(), g.Key.Entity, g.Key.Column, g.Max(x => x.Length), g.First().Max);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        AdvanceDailyRevisions();
+        PrepareForSave();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        AdvanceDailyRevisions();
+        PrepareForSave();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
@@ -469,6 +565,8 @@ public class LfDbContext : DbContext
             // 最長可達約 790 字元。設成 nvarchar(512) 在 SQLite 上（TEXT 無長度）測不出來，
             // 到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。不要改回加長度。
             e.Property(x => x.DedupeKey).HasColumnName("dedupe_key");
+            // 去重鍵的 SHA-256 十六進位（固定 64 字元，可建索引）；舊列為 NULL，由背景回填補齊
+            e.Property(x => x.DedupeKeyHash).HasColumnName("dedupe_key_hash").HasMaxLength(64);
             e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
             e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
             e.Property(x => x.DetectedAt).HasColumnName("detected_at");
@@ -503,8 +601,10 @@ public class LfDbContext : DbContext
             e.Property(x => x.ConfirmedAt).HasColumnName("confirmed_at");
             e.Property(x => x.ConfirmNote).HasColumnName("confirm_note");
 
-            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeysForHost 走
-            // (host_name_key, detected_at) 複合索引後才投影這一欄），而它又長到不適合當索引鍵。
+            // dedupe_key 本身太長不適合當索引鍵（nvarchar(max)）；以條件查詢它的四個方法改走固定長度的
+            // dedupe_key_hash 一般索引（不加唯一約束，雜湊相同仍會再比對原鍵）。
+            // GetDedupeKeysForHost 走 (host_name_key, detected_at) 複合索引後才投影 dedupe_key。
+            e.HasIndex(x => x.DedupeKeyHash).HasDatabaseName("IX_lf_permission_changes_dedupe_key_hash");
             e.HasIndex(x => x.ChangeId).IsUnique().HasDatabaseName("IX_lf_permission_changes_change_id");
             e.HasIndex(x => new { x.Status, x.DetectedAt }).HasDatabaseName("IX_lf_permission_changes_status_detected_at");
             e.HasIndex(x => x.DetectedAt).HasDatabaseName("IX_lf_permission_changes_detected_at");
@@ -1070,6 +1170,10 @@ public class PermissionChangeRow
     public long Id { get; set; }
     public string ChangeId { get; set; } = string.Empty;
     public string DedupeKey { get; set; } = string.Empty;
+
+    /// <summary><see cref="DedupeKey"/> 的 SHA-256 十六進位（小寫 64 字元）。寫入時由 <c>LfDbContext.PrepareForSave</c> 統一計算；
+    /// 升級前的既有列為 null，回填完成（<c>PermissionChangeDedupeBackfiller.Ready</c>）前查詢不依賴它。</summary>
+    public string? DedupeKeyHash { get; set; }
     public string HostName { get; set; } = string.Empty;
     public string HostNameKey { get; set; } = string.Empty;
     public DateTime DetectedAt { get; set; }

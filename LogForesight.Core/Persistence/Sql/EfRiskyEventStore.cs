@@ -44,7 +44,8 @@ public class EfRiskyEventStore : IRiskyEventStore
                 {
                     HostId = hostId,
                     Date = day,
-                    LogName = ColumnClamp.ClampFor<RiskyEventRow>(e.LogName, nameof(RiskyEventRow.LogName))!,
+                    LogName = e.LogName,
+                    // 索引欄：同 TopIssueRow.SourceName，超長先截斷、不讓整列在存檔時被略過
                     Source = ColumnClamp.ClampFor<RiskyEventRow>(e.Source, nameof(RiskyEventRow.Source))!,
                     SourceKey = WorkOrderIssueKey.SourceKeyOf(e.Source),
                     EventId = e.EventId,
@@ -52,7 +53,7 @@ public class EfRiskyEventStore : IRiskyEventStore
                     EventTime = e.EventTime,
                     Message = e.Message,
                     SourceEvidenceJson = SourceEvidence.Serialize(e.SourceEvidence),
-                    RuleId = ColumnClamp.ClampFor<RiskyEventRow>(e.RuleId, nameof(RiskyEventRow.RuleId)),
+                    RuleId = e.RuleId,
                     CreatedAt = e.CreatedAt
                 });
             }

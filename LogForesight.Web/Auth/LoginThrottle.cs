@@ -89,7 +89,7 @@ public class LoginThrottle
             if (ipKey != null)
                 AddFailure(_ips, ipKey, IpThreshold, now);
 
-            EnforceCap();
+            EnforceCap(now, accountKey.Length > 0 ? accountKey : null, ipKey);
         }
     }
 
@@ -124,8 +124,8 @@ public class LoginThrottle
         lock (_lock)
         {
             var removed = _accounts.Remove(NormalizeAccount(key));
-            if (IPAddress.TryParse(key.Trim(), out var ip))
-                removed |= _ips.Remove(IpKey(ip));
+            if (LogForesight.Core.Models.IpSyntax.TryParse(key, out var ip))
+                removed |= _ips.Remove(IpKey(ip!));
             return removed;
         }
     }
@@ -187,13 +187,19 @@ public class LoginThrottle
     }
 
     /// <summary>總鍵數上限：超過時移除最久沒被碰過的鍵（大量亂數帳號的噴灑不能把記憶體撐爆）</summary>
-    private void EnforceCap()
+    /// <param name="touchedAccount">本次剛碰的帳號鍵（不淘汰：其餘桶都封鎖中時，剛建的新桶不能立刻被自己淘汰而漏記失敗）</param>
+    /// <param name="touchedIp">本次剛碰的 IP 鍵，理由同上</param>
+    private void EnforceCap(DateTime now, string? touchedAccount = null, string? touchedIp = null)
     {
         var overflow = _accounts.Count + _ips.Count - MaxKeys;
         if (overflow <= 0) return;
 
-        var oldest = _accounts.Select(kv => (Map: _accounts, kv.Key, kv.Value.LastTouched))
-            .Concat(_ips.Select(kv => (Map: _ips, kv.Key, kv.Value.LastTouched)))
+        // 封鎖中的桶不淘汰：只依最後觸碰時間淘汰的話，攻擊者灌入上萬個亂數帳號就能把已封鎖的帳號擠出去、
+        // 重新開始嘗試。只淘汰未封鎖的；全部都在封鎖中時暫時超量（上限由封鎖時效自然收斂）
+        var oldest = _accounts.Where(kv => !(kv.Value.BlockedUntil > now) && kv.Key != touchedAccount)
+                .Select(kv => (Map: _accounts, kv.Key, kv.Value.LastTouched))
+            .Concat(_ips.Where(kv => !(kv.Value.BlockedUntil > now) && kv.Key != touchedIp)
+                .Select(kv => (Map: _ips, kv.Key, kv.Value.LastTouched)))
             .OrderBy(x => x.LastTouched)
             .Take(overflow)
             .ToList();
@@ -207,7 +213,7 @@ public class LoginThrottle
     {
         if (ip == null || IPAddress.IsLoopback(ip)) return null;
         var key = IpKey(ip);
-        return IPAddress.IsLoopback(IPAddress.Parse(key)) ? null : key;
+        return LogForesight.Core.Models.IpSyntax.TryParse(key, out var normalized) && IPAddress.IsLoopback(normalized!) ? null : key;
     }
 
     private static string IpKey(IPAddress ip) =>

@@ -124,7 +124,7 @@ public sealed class HandlingBlobMigrator
             _stateStore.Update(s =>
             {
                 s.State = HandlingMigrationState.Pending;
-                s.LastError = ex.Message;
+                s.LastError = MigrationFailureText.For(ex);
             });
             throw;
         }

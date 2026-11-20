@@ -75,6 +75,7 @@ async function loadActiveOrders(source, eventId) {
  * @param {() => void} [options.onApplied] 套用成功後的重新載入
  */
 async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, onApplied }) {
+    let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     // 呼叫端都是 click 監聽（沒有人接這個 Promise），失敗要在這裡收掉
     let user;
     try {
@@ -268,7 +269,7 @@ async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, o
                 : '';
             toast(`已靜音『${issueLabel}』至 ${muteEndDate(days)}${closedSuffix}`, 'success');
 
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal?.close();
             onApplied?.();
         } catch {
             // 錯誤訊息已由 api.js 出 toast；modal 不關，讓使用者改完再送一次
@@ -277,7 +278,7 @@ async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, o
     });
 
     body.appendChild(form);
-    showDetailModal({ title: `${actionText}：${issueLabel}`, body });
+    modal = showDetailModal({ title: `${actionText}：${issueLabel}`, body });
 }
 
 /** 靜音 modal 的唯一入口：前置資料請求回來前再觸發會被忽略，不會疊開第二個對話框 */

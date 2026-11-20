@@ -85,8 +85,11 @@ public class DashboardService
         // 鍵含 Assign 能力：PendingDispatch 只有具派工權限者會填（且是依其可見範圍試跑），
         // 可見主機集合相同、能力不同的兩人共用同一筆就會把待派數端給無權者，或讓有權者看不到卡
         var canAssign = _currentUser.Has(Auth.Capability.Assign);
+        // 鍵含 ViewAll：待確認權限異動的計數依 ViewAll 分支（PermissionChangeService.CountPending），
+        // 可見集合恰好等於全站的非 ViewAll 使用者不能共用 ViewAll 那一筆
+        var canViewAll = _currentUser.Has(Auth.Capability.ViewAll);
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|{exclusion.CacheToken}", _visibility.GetVisibleHostIds()),
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|viewall:{canViewAll}|{exclusion.CacheToken}", _visibility.GetVisibleHostIds()),
             () => BuildSummary(days, visibleHosts, exclusion, canAssign));
     }
 

@@ -17,13 +17,13 @@ public sealed class SingleFlight
     /// <summary>目前正在計算中的鍵數（測試用）。</summary>
     internal int InFlightCount => _inFlight.Count;
 
-    public T Run<T>(string key, Func<T> compute) where T : class
+    public T Run<T>(string key, Func<T> compute)
     {
         var flight = _inFlight.GetOrAdd(key,
             _ => new Lazy<object>(() => compute(), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            return (T)flight.Value;
+            return (T)flight.Value;   // 值型別（如件數）以 object 裝箱傳遞，等待者各自拆箱
         }
         finally
         {

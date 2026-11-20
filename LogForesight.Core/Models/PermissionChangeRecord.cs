@@ -81,7 +81,7 @@ public class PermissionChangeRecord
 
     /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
     public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>
-        $"{hostName.ToUpperInvariant()}|{detectedAt.Ticks}|{eventId}|{alertText}";
+        $"{LogForesight.Core.Persistence.Sql.HostNameKey.Of(hostName)}|{detectedAt.Ticks}|{eventId}|{alertText}";
 
     public string DedupeKey() => DedupeKey(HostName, DetectedAt, EventId ?? 0, AlertText);
 }

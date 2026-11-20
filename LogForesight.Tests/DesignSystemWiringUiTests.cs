@@ -61,12 +61,12 @@ public sealed class DesignSystemWiringUiTests
     {
         var js = Read("wwwroot/js/pages/netiq.js");
         var helper = Regex.Match(js, @"function flagMissingField\(inputId, message\) \{.*?\n\}", RegexOptions.Singleline).Value;
-        Assert.Contains("classList.add('is-invalid')", helper);
+        Assert.Contains("setFieldError(input, message)", helper);
         Assert.Contains("input.focus()", helper);
         Assert.Contains("flagMissingField('sentinel-name'", js);
         Assert.Equal(4, Regex.Matches(js, @"'sentinel-(name|base-url|username|password)', '請").Count);
         // 關掉重開或換一台編輯時不留上一次的紅框
-        Assert.Contains("classList.remove('is-invalid');",
+        Assert.Contains("clearFieldError(",
             Regex.Match(js, @"function openSentinelModal\(sentinel\) \{.*?\n\}", RegexOptions.Singleline).Value);
     }
 

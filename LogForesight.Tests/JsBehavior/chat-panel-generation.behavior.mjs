@@ -5,6 +5,7 @@
  * `node chat-panel-generation.behavior.mjs <案例名>` 逐案執行。
  */
 
+import { createSeqGuard } from '../../LogForesight.Web/wwwroot/js/core/async-guards.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -71,7 +72,7 @@ function setup() {
         .replace(/^import[\s\S]*?;\n/gm, '')
         .replace(/^export function/gm, 'function')
         + '\nreturn { initChatPanel, updateIssueOptions };';
-    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', 'loadRunHint', 'button', body);
+    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', 'loadRunHint', 'button', 'createSeqGuard', body);
     const panel = factory(
         document, api, () => {},
         button => { button.disabled = true; return () => { button.disabled = false; }; },
@@ -86,7 +87,8 @@ function setup() {
             btn.disabled = !!disabled;
             if (onClick) btn.addEventListener('click', onClick);
             return btn;
-        });
+        },
+        createSeqGuard);
     const issues = [
         { issueKey: 'A', sourceEventLabel: '問題甲', severity: 3 },
         { issueKey: 'B', sourceEventLabel: '問題乙', severity: 2 }

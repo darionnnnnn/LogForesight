@@ -30,24 +30,13 @@ internal static class LdapCredentialVerifier
 
         try
         {
-            var status = ldap.Authenticate(samAccountName, password);
+            // 驗證與取得使用者屬性在同一次 bind 內完成（見 #8）；屬性查詢失敗不影響登入本身，補資料是加值不是門檻
+            var status = ldap.AuthenticateWithUser(samAccountName, password, out var userInfo);
             if (status != LdapAuthStatus.Success)
             {
                 // 細分只進診斷 log（前端一律「帳號或密碼錯誤」，不洩漏帳號狀態——定案 2026-07-27）
                 Log.Info("AD 驗證未通過（帳號 {0}）：{1}", account, status);
                 return CredentialCheckResult.Fail($"AD 驗證未通過（{status}）");
-            }
-
-            // 驗證通過後順手取得使用者屬性（同一次帳密、同一個連線內查詢，見 #8）——
-            // 查詢失敗不影響登入本身，補資料是加值不是門檻
-            LdapUserInfo? userInfo = null;
-            try
-            {
-                userInfo = ldap.GetUser(samAccountName, password);
-            }
-            catch (Exception ex)
-            {
-                Log.Debug(ex, "AD 驗證成功但查詢使用者屬性失敗（帳號 {0}），略過自動補資料：{1}", account, ex.Message);
             }
 
             return new CredentialCheckResult(true, UserInfo: userInfo);

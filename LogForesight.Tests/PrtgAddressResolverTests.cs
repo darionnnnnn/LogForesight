@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Net;
 using LogForesight.Core.Service;
 using Xunit;
@@ -170,18 +171,10 @@ public class PrtgAddressResolverTests
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"耗時 {sw.Elapsed}");
     }
 
-    /// <summary>可手動撥快的時鐘，驗證快取到期</summary>
-    private sealed class ManualClock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        public override DateTimeOffset GetUtcNow() => _now;
-        public void Advance(TimeSpan span) => _now += span;
-    }
-
     [Fact]
     public void Resolve_查無_59秒內不重查_61秒後重查()
     {
-        var clock = new ManualClock();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var dns = new FakeDns(_ => Array.Empty<IPAddress>());
         var resolver = new PrtgAddressResolver(dns.Lookup, clock);
 
@@ -198,7 +191,7 @@ public class PrtgAddressResolverTests
     [Fact]
     public void Resolve_成功_5分鐘內不重查_之後重查()
     {
-        var clock = new ManualClock();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
         var resolver = new PrtgAddressResolver(dns.Lookup, clock);
 
@@ -215,7 +208,7 @@ public class PrtgAddressResolverTests
     [Fact]
     public void Resolve_逾時_不寫快取_下一次立即重查()
     {
-        var clock = new ManualClock();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var attempts = 0;
         var resolver = new PrtgAddressResolver(host =>
         {
@@ -287,7 +280,7 @@ public class PrtgAddressResolverTests
     [Fact]
     public void Resolve_達條目上限且既有條目過期_先清過期再收新名稱()
     {
-        var clock = new ManualClock();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
         var resolver = new PrtgAddressResolver(dns.Lookup, clock);
         for (var i = 0; i < PrtgAddressResolver.MaxEntries; i++)

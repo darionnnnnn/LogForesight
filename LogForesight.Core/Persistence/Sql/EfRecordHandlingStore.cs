@@ -134,6 +134,14 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
 
     public void AppendLogs(IReadOnlyList<RecordHandlingLog> logs)
     {
+        // 問題鍵超過上限的那一筆：案件與逐日列兩張表都不會寫入它（超長一律不寫，見 IssueKeyLimit），
+        // 處理紀錄也不寫，否則留下對不到任何案件／逐日列的孤立紀錄。上游交辦與夜間派工已先排除，這裡是所有寫入路徑共用的出口
+        var overlong = logs.Where(log => log.IssueKey != null && IssueKeyLimit.Exceeds(log.IssueKey, out _)).ToList();
+        if (overlong.Count > 0)
+        {
+            Log.Warn("處理紀錄有 {Count} 筆問題鍵超過 {Max} 字，不寫入（案件與逐日列同樣不會寫入）", overlong.Count, IssueKeyLimit.Max);
+            logs = logs.Except(overlong).ToList();
+        }
         if (logs.Count == 0) return;
 
         lock (_logLock)

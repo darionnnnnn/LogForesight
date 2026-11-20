@@ -78,19 +78,19 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
     public IReadOnlyList<PrtgDeviceRow> GetDevices() =>
         _devices ??= FetchAll("devices", "objid,device,host", el => new PrtgDeviceRow
         {
-            Objid = GetLong(el, "objid") ?? 0,
-            Name = GetString(el, "device") ?? string.Empty,
-            Ip = GetString(el, "host")
+            Objid = PrtgJson.GetLong(el, "objid") ?? 0,
+            Name = PrtgJson.GetString(el, "device") ?? string.Empty,
+            Ip = PrtgJson.GetString(el, "host")
         });
 
     public IReadOnlyList<PrtgSensorRow> GetSensors() =>
         _sensors ??= FetchAll("sensors", "objid,parentid,sensor,type,status", el => new PrtgSensorRow
         {
-            Objid = GetLong(el, "objid") ?? 0,
-            DeviceObjid = GetLong(el, "parentid") ?? 0,
-            Name = GetString(el, "sensor") ?? string.Empty,
-            SensorType = GetString(el, "type") ?? string.Empty,
-            Status = GetString(el, "status"),
+            Objid = PrtgJson.GetLong(el, "objid") ?? 0,
+            DeviceObjid = PrtgJson.GetLong(el, "parentid") ?? 0,
+            Name = PrtgJson.GetString(el, "sensor") ?? string.Empty,
+            SensorType = PrtgJson.GetString(el, "type") ?? string.Empty,
+            Status = PrtgJson.GetString(el, "status"),
             // 鏡像同步時 Category 也是 null（分類由 SensorType 推導），兩個來源在這一欄一致。
             Category = null,
             Paused = IsPaused(el)
@@ -121,7 +121,7 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
             results.Add(map(el));
         }
 
-        var treeSize = GetLong(root, "treesize");
+        var treeSize = PrtgJson.GetLong(root, "treesize");
         if (treeSize is > 0 && results.Count < treeSize.Value)
         {
             Warn(content, results.Count, treeSize.Value.ToString());
@@ -142,16 +142,7 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
             "請改用「受監看 sensor 覆寫清單」直接指定 objid。");
     }
 
-    private static string? GetString(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 
-    private static long? GetLong(JsonElement el, string name)
-    {
-        if (!el.TryGetProperty(name, out var p)) return null;
-        if (p.ValueKind == JsonValueKind.Number && p.TryGetInt64(out var n)) return n;
-        if (p.ValueKind == JsonValueKind.String && long.TryParse(p.GetString(), out var s)) return s;
-        return null;
-    }
 
     /// <summary>
     /// PRTG 的暫停狀態在 status 文字裡（"Paused"、"Paused by Dependency" 等）。
@@ -159,7 +150,7 @@ public sealed class PrtgLiveGuardSource : IPrtgResourceGuardSource
     /// </summary>
     private static bool IsPaused(JsonElement el)
     {
-        var status = GetString(el, "status");
+        var status = PrtgJson.GetString(el, "status");
         return status != null && status.Contains("paus", StringComparison.OrdinalIgnoreCase);
     }
 }

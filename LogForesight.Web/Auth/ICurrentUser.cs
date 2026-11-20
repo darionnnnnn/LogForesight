@@ -1,4 +1,4 @@
-using System.IdentityModel.Tokens.Jwt;
+using LogForesight.Core.Models;
 using System.Security.Claims;
 
 namespace LogForesight.Web.Auth;
@@ -28,7 +28,7 @@ public interface ICurrentUser
     bool Has(Capability capability);
 }
 
-/// <summary>自 JWT Claims 解析目前登入者。</summary>
+/// <summary>自登入 cookie 主體的 Claims 解析目前登入者。</summary>
 public class HttpContextCurrentUser : ICurrentUser
 {
     private readonly IHttpContextAccessor _accessor;
@@ -40,7 +40,7 @@ public class HttpContextCurrentUser : ICurrentUser
         _accessor = accessor;
     }
 
-    // 每次都從 HttpContext.User 讀，不在建構時抓快照：ActiveUserMiddleware 在權限版本不符時會
+    // 每次都從 HttpContext.User 讀，不在建構時抓快照：cookie 驗證在權限版本不符時會
     // 以重算後的 claims 替換 context.User，而本實例（Scoped）在那之前就已被 middleware 解析出來——
     // 抓快照的話，同一請求後段的授權判斷會讀到舊能力。
     private ClaimsPrincipal? Principal => _accessor.HttpContext?.User;
@@ -48,13 +48,13 @@ public class HttpContextCurrentUser : ICurrentUser
     public bool IsAuthenticated => Principal?.Identity?.IsAuthenticated == true;
 
     public long UserId =>
-        long.TryParse(Principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value, out var id) ? id : 0;
+        long.TryParse(Principal?.FindFirst(AuthClaims.UserId)?.Value, out var id) ? id : 0;
 
-    public string Account => Principal?.FindFirst(JwtTokenService.AccountClaim)?.Value ?? string.Empty;
+    public string Account => Principal?.FindFirst(AuthClaims.Account)?.Value ?? string.Empty;
 
-    public string DisplayName => Principal?.FindFirst(JwtTokenService.DisplayNameClaim)?.Value ?? Account;
+    public string DisplayName => Principal?.FindFirst(AuthClaims.DisplayName)?.Value ?? Account;
 
-    public bool IsServerAdmin => Principal?.FindFirst(JwtTokenService.ServerAdminClaim)?.Value == "1";
+    public bool IsServerAdmin => Principal?.FindFirst(AuthClaims.ServerAdmin)?.Value == "1";
 
     public IReadOnlySet<Capability> Capabilities
     {
@@ -78,9 +78,9 @@ public class HttpContextCurrentUser : ICurrentUser
         var result = new HashSet<Capability>();
         if (principal == null) return result;
 
-        foreach (var claim in principal.FindAll(JwtTokenService.CapabilityClaim))
+        foreach (var claim in principal.FindAll(AuthClaims.Capability))
         {
-            if (Enum.TryParse<Capability>(claim.Value, out var capability))
+            if (InputParsing.TryParseDefinedEnum<Capability>(claim.Value, out var capability))
                 result.Add(capability);
         }
         return result;

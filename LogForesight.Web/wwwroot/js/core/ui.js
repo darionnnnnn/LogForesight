@@ -23,6 +23,9 @@ import { disclosure } from './elements.js';
 import { appUrl } from './paths.js';
 import { safeStorage } from './storage.js';
 import { createSeqGuard } from './async-guards.js';
+import { compareText } from './collation.js';
+import { escapeSelectorValue, currentHashId, findByData } from './selectors.js';
+import { setFieldError, clearFieldError } from './field-errors.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -196,24 +199,48 @@ export function renderPageHeader(container, { subtitle, actions = [], help } = {
 }
 
 /**
- * 頁籤切換（§8.5）：抽出 rules/groups/permission-changes 重複的 [data-tab]/[data-panel] 邏輯。
- * tabsEl 內的 [data-tab] 按鈕與同層 [data-panel] 區塊以 data 值配對；點擊切換 active 與 d-none。
- * hash 為 true 時，進站依網址 hash 切換對應頁籤，切換頁籤時以 replaceState 同步 hash。
+ * 頁籤（§8.5）：以 Bootstrap 5.3 的 Tab 外掛提供角色、aria 與鍵盤操作，這裡補上本站的配對與 hash 同步。
+ *
+ * tabsEl 內的 [data-tab] 按鈕與同層 [data-panel] 區塊以 data 值配對（多顆按鈕可共用同一個面板，例如規則頁的三個平台）。
+ * 外掛負責：tablist／tab／tabpanel 角色、aria-selected、roving tabindex、左右（上下）方向鍵與 Home／End 切換。
+ * 這裡負責：替面板與按鈕配 id、補 aria-controls、面板顯示（d-none）、面板的 aria-labelledby 跟著目前頁籤，
+ * 以及 hash 同步——hash 為 true 時，進站依網址 hash 切換對應頁籤，切換頁籤時以 replaceState 同步 hash（不觸發捲動）；
+ * 已在本頁時 hashchange 也會跟著切。
+ * onChange(name, 按鈕) 在頁籤顯示後呼叫；hash 指向目前已顯示的頁籤時同樣呼叫一次，讓頁面據以載入該頁籤的資料。
+ * 回傳 `{ show(name) }`，供頁面以程式切頁籤（不要對頁籤按鈕模擬點擊）。
  */
 export function bindTabs(tabsEl, { onChange, hash = false } = {}) {
-    if (!tabsEl) return;
-    const panels = tabsEl.parentElement
-        ? tabsEl.parentElement.querySelectorAll('[data-panel]')
-        : document.querySelectorAll('[data-panel]');
+    if (!tabsEl) return null;
+    const scope = tabsEl.parentElement || document;
+    const buttons = [...tabsEl.querySelectorAll('[data-tab]')];
+    // 只認配得到按鈕的面板：同層可能還有別組頁籤的面板（例如頁面上的對話框內另有一組頁籤）
+    const panels = [...scope.querySelectorAll('[data-panel]')]
+        .filter(panel => buttons.some(btn => btn.dataset.tab === panel.dataset.panel));
+    const tabsId = tabsEl.id || 'lf-tabs';
 
-    const activateTab = (btn, updateHash) => {
+    const panelFor = name => panels.find(panel => panel.dataset.panel === name) ?? null;
+
+    // 先替每個面板與按鈕配 id、指到對應面板：外掛建立實例時就依 data-bs-target 設定面板角色
+    buttons.forEach((btn, index) => {
+        if (!btn.id) btn.setAttribute('id', `${tabsId}-tab-${index}`);
+        const panel = panelFor(btn.dataset.tab);
+        if (!panel) return;
+        if (!panel.id) panel.setAttribute('id', `${tabsId}-panel-${btn.dataset.tab}`);
+        btn.setAttribute('data-bs-toggle', 'tab');
+        btn.setAttribute('data-bs-target', '#' + escapeSelectorValue(panel.id));
+        btn.setAttribute('aria-controls', panel.id);
+    });
+    for (const btn of buttons) {
+        if (btn.getAttribute('data-bs-target')) bootstrap.Tab.getOrCreateInstance(btn);
+    }
+
+    // 頁籤顯示後同步：面板顯示、面板的標籤指向目前頁籤、hash、頁面回呼
+    const apply = (btn, { updateHash }) => {
         const name = btn.dataset.tab;
-        for (const link of tabsEl.querySelectorAll('[data-tab]')) {
-            link.classList.toggle('active', link === btn);
-        }
         for (const panel of panels) {
             panel.classList.toggle('d-none', panel.dataset.panel !== name);
         }
+        panelFor(name)?.setAttribute('aria-labelledby', btn.id);
         if (updateHash && hash) {
             try {
                 if (window.history && typeof window.history.replaceState === 'function') {
@@ -223,30 +250,52 @@ export function bindTabs(tabsEl, { onChange, hash = false } = {}) {
                 // history.replaceState 不可用時略過
             }
         }
-        if (onChange) onChange(name);
+        if (onChange) onChange(name, btn);
+    };
+
+    // 外掛的 shown.bs.tab 會冒泡到 tabsEl；event.target 是剛顯示的那顆按鈕
+    tabsEl.addEventListener('shown.bs.tab', event => {
+        const btn = event.target;
+        if (!btn?.dataset?.tab) return;
+        apply(btn, { updateHash: true });
+    });
+
+    const show = name => {
+        const btn = buttons.find(b => b.dataset.tab === name && b.getAttribute('data-bs-target'));
+        if (!btn) return false;
+        if (btn.classList.contains('active')) {
+            // 外掛對已顯示的頁籤不再觸發事件；面板與回呼仍同步一次
+            apply(btn, { updateHash: false });
+        } else {
+            bootstrap.Tab.getOrCreateInstance(btn).show();
+        }
+        return true;
     };
 
     if (hash) {
         const activateFromHash = () => {
-            const current = (location.hash || '').replace(/^#/, '');
-            if (!current) return;
-            for (const btn of tabsEl.querySelectorAll('[data-tab]')) {
-                if (btn.dataset.tab === current) {
-                    activateTab(btn, false);
-                    break;
-                }
-            }
+            const current = currentHashId();
+            if (current) show(current);
         };
         activateFromHash();
         // 已在本頁時點到同頁的深連結（例如全站告示列的「確認並靜音」）只改 hash 不重載，要跟著切頁籤
         window.addEventListener('hashchange', activateFromHash);
     }
 
-    tabsEl.addEventListener('click', event => {
-        const btn = event.target.closest('[data-tab]');
-        if (!btn) return;
-        activateTab(btn, true);
-    });
+    return { show };
+}
+
+/**
+ * 以程式切到 tabsEl（id）的指定頁籤，等同使用者點了那顆頁籤：外掛切換、hash 同步與 onChange 都照常。
+ * 找不到頁籤回 false。頁面不要對頁籤按鈕呼叫 `.click()`。
+ */
+export function showTab(tabsId, name) {
+    const tabsEl = document.getElementById(tabsId);
+    if (!tabsEl) return false;
+    const btn = findByData('tab', name, tabsEl);
+    if (!btn || !btn.getAttribute('data-bs-target')) return false;
+    bootstrap.Tab.getOrCreateInstance(btn).show();
+    return true;
 }
 
 /** 每頁筆數下拉的固定選項（需求：10/20/30/50/100，預設 20）*/
@@ -432,7 +481,7 @@ function buildPageNav(page, totalPages, onPage) {
 
 /**
  * 預計完成日即時檢查（回覆 modal 與交辦 modal 共用，規則只寫這一份）：
- * change／blur 時早於今天就加 is-invalid，並在欄位下方顯示 invalid-feedback（aria-live="polite"）。
+ * change／blur 時早於今天就以 setFieldError 標出欄位（紅框、aria-invalid、aria-describedby）並在欄位下方顯示訊息。
  * 後端另有同一條防線，這裡只是讓使用者在按送出前就看到。
  * @param {HTMLInputElement} input type="date" 的欄位
  * @param {HTMLElement} feedback 錯誤訊息容器（呼叫端建立並放在欄位下方，需帶 aria-live="polite"）
@@ -442,16 +491,14 @@ function buildPageNav(page, totalPages, onPage) {
  */
 export function bindPastDateCheck(input, feedback, { message, isActive = () => true }) {
     function clear() {
-        input.classList.remove('is-invalid');
-        feedback.textContent = '';
+        clearFieldError(input);
     }
     function validate() {
         if (!isActive() || !input.value || input.value >= todayLocal()) {
             clear();
             return true;
         }
-        input.classList.add('is-invalid');
-        feedback.textContent = message;
+        setFieldError(input, message, { feedback });
         return false;
     }
     input.addEventListener('change', validate);
@@ -602,10 +649,11 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
         const modal = new bootstrap.Modal(el);
 
         let reason = null;
+        textarea.addEventListener('input', () => clearFieldError(textarea));
         el.querySelector('[data-lf-confirm]').addEventListener('click', () => {
             const value = textarea.value.trim();
             if (!value) {
-                textarea.classList.add('is-invalid');
+                setFieldError(textarea, `請填寫${reasonLabel}`);
                 return;
             }
             reason = value;
@@ -622,7 +670,7 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
 
 /**
  * 通用資訊 modal（骨架抽自 confirmAction，避免第三份動態 modal 複本）：純檢視用途，
- * 沒有確認/取消語意，只有一個關閉鈕。body 收 DOM 節點而非 HTML 字串——內容常來自
+ * 沒有確認/取消語意，只有一個關閉鈕。回傳 `{ close(), element }`，close() 以 Bootstrap 的 hide 關閉（走一般關閉流程，onClose 與焦點歸還照常）。body 收 DOM 節點而非 HTML 字串——內容常來自
  * 事件原始訊息等攻擊者可控字串，維持 textContent 純文字組裝原則（S7）。
  * size 可傳 'modal-lg' 等 Bootstrap modal-dialog 尺寸 class；fullscreen 為 true 時改用
  * modal-fullscreen（兩者擇一，同時傳入以 fullscreen 優先）。
@@ -683,6 +731,8 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
         if (opener instanceof HTMLElement && document.contains(opener)) opener.focus();
     });
     modal.show();
+    // 回傳關閉方法：頁面在送出成功後呼叫 close()，不必模擬點擊 [data-bs-dismiss] 按鈕
+    return { close: () => modal.hide(), element: el };
 }
 
 /**
@@ -715,8 +765,9 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * columns: [{ key, title, className, render(row), renderHeader(), sortKey, sortDefaultDir }]
  * renderHeader()（選填）：回傳 Node 時取代 title 文字作為表頭儲存格內容——
  * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/archive/HISTORY.md #7）。
- * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
- * 仍照自己的行為，不被整列連結攔截。
+ * rowHref(row)（選填）：回傳非空字串時，該列在第一個沒有互動元素的儲存格放一個真正的 <a href>，
+ * 並以延伸點擊區涵蓋整列（`lf-row-link__anchor`，見 attachRowLink）——列保有 <tr> 語意，
+ * 可用 Tab 聚焦、Enter 啟用、中鍵或 Ctrl／Cmd 點擊開新分頁；列內既有的 <a>/<button> 仍照自己的行為。
  * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），
  * 點該列（避開列內連結/按鈕）即展開/收合，首欄前置一個展開箭頭。與 rowHref 互斥使用。
  * sort/onSort（選填，表格排序）：有 sortKey 的欄位表頭變成可點按鈕；點擊時以目前
@@ -782,14 +833,6 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         const tr = document.createElement('tr');
 
         const href = rowHref ? rowHref(row) : null;
-        if (href) {
-            tr.classList.add('lf-row-link');
-            // 鍵盤可達（體檢 H5）：整列可點是全站主要的下鑽動線（儀表板重點問題卡、
-            // 依問題視角展開列都**沒有列內連結**），只有 click 監聽等於這些功能對
-            // 鍵盤／輔助技術使用者不存在。範本取自風險日詳情已經做對的
-            // lf-card__header--clickable（role + tabindex + Enter/Space + :focus-visible）。
-            makeRowActivatable(tr, () => { location.href = appUrl(href); });
-        }
 
         // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
         // docs/archive/FEEDBACK-9-PLAN.md §2）——大資料量（14 天×2000 台的執行明細）不能進頁全抓。
@@ -836,6 +879,7 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             }
             tr.appendChild(td);
         }
+        if (href) attachRowLink(tr, appUrl(href));
         tbody.appendChild(tr);
 
         if (expandable) {
@@ -998,13 +1042,44 @@ function bindScrollAffordance(wrap) {
     update();
 }
 
+/** 列內連結不能包住的互動元素（巢狀互動元素是無效 HTML）；僅供閱讀用的 tabindex 說明句不算 */
+const ROW_INTERACTIVE_TAGS = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'SUMMARY']);
+
+function hasInteractiveDescendant(node) {
+    for (const child of node.children || []) {
+        if (ROW_INTERACTIVE_TAGS.has(child.tagName)) return true;
+        if (hasInteractiveDescendant(child)) return true;
+    }
+    return false;
+}
+
 /**
- * 讓一整列（<tr>）成為可用鍵盤操作的觸發器（體檢 H5）。
+ * 整列導向：列內放一個真正的 `<a href>`，以延伸點擊區（stretched link）涵蓋整列。
  *
- * 為什麼是 `role="button"` 而不是把整列包成 <a>：表格列裡本來就可能有自己的連結與按鈕，
- * 巢狀互動元素是無效的 HTML，螢幕閱讀器的行為也不可預期。給列一個明確的按鈕語意，
- * 列內元素保有自己的行為（下面的 closest 判斷），是既有 lf-card__header--clickable
- * 已經驗證過的作法。
+ * 為什麼不是 `role="button"` 的 <tr>：那會讓列失去表格列語意，也不能中鍵或 Ctrl 點擊開新分頁。
+ * 為什麼不是把整列包成 <a>：<tr> 不能是 <a> 的子節點，列內本來就可能有自己的連結與按鈕。
+ * 連結包在第一個沒有互動元素的儲存格內容外（可見文字即連結名稱）；每格都有互動元素時，
+ * 在首格最前面放一個空連結並以首格文字當 aria-label。延伸區與列內互動元素的疊放見 components.css。
+ */
+function attachRowLink(tr, url) {
+    tr.classList.add('lf-row-link');
+    const cells = [...tr.children];
+    const host = cells.find(td => !hasInteractiveDescendant(td));
+    const anchor = document.createElement('a');
+    anchor.className = 'lf-row-link__anchor';
+    anchor.setAttribute('href', url);
+    if (host) {
+        anchor.append(...host.childNodes);
+        host.appendChild(anchor);
+    } else if (cells.length > 0) {
+        anchor.setAttribute('aria-label', (cells[0].textContent || '').trim() || '開啟');
+        cells[0].prepend(anchor);
+    }
+}
+
+/**
+ * 讓可展開的列（<tr>）可用鍵盤操作（體檢 H5）。列內元素保有自己的行為（下面的 closest 判斷）。
+ * 導向型的整列連結不走這裡，見 attachRowLink。
  *
  * Space 要 preventDefault：不擋的話瀏覽器會把它當成捲動頁面，使用者按下去畫面往下跳一屏。
  */
@@ -1111,6 +1186,8 @@ export function sortRows(rows, columns, sort) {
         if (va == null && vb == null) return 0;
         if (va == null) return -1;
         if (vb == null) return 1;
+        // 兩邊都是字串走語系比較（中文順序、"9" 排在 "10" 前）；其餘（數字、日期物件）維持原比較
+        if (typeof va === 'string' && typeof vb === 'string') return compareText(va, vb);
         if (va < vb) return -1;
         if (va > vb) return 1;
         return 0;
@@ -1502,7 +1579,7 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
         const ap = pinned.has(a.displayName) ? 0 : 1;
         const bp = pinned.has(b.displayName) ? 0 : 1;
         if (serverOrdered) return ap - bp;
-        return ap - bp || a.displayName.localeCompare(b.displayName, 'zh-TW');
+        return ap - bp || compareText(a.displayName, b.displayName);
     });
 
     let currentValue = selectedId != null ? String(selectedId) : '';
@@ -1808,7 +1885,11 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
 
 /** 送出中的按鈕狀態：disable 防連點（§8.6-6） */
 export function withBusy(button, busyText) {
-    const original = button.innerHTML;
+    // 已在忙碌中再呼叫：不重複保存（否則保存到的是 spinner，還原後按鈕文字就不見了）
+    if (button.dataset.lfBusy === '1') return () => {};
+    button.dataset.lfBusy = '1';
+    // 保存原本的子節點（含文字節點）而不是 innerHTML 字串：還原時放回同一批節點，不經 HTML 解析
+    const original = Array.from(button.childNodes);
     button.disabled = true;
     if (busyText) {
         // DOM 組裝：busyText 走文字節點，不當 HTML 解析
@@ -1818,7 +1899,8 @@ export function withBusy(button, busyText) {
     }
     return () => {
         button.disabled = false;
-        button.innerHTML = original;
+        delete button.dataset.lfBusy;
+        if (busyText) button.replaceChildren(...original);
     };
 }
 

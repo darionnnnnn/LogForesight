@@ -250,7 +250,7 @@ public class ScheduleController : ControllerBase
             try
             {
                 var latestAttempts = NetiqSourceAttempt.ReadLatest(_storageBackend, from, to);
-                if (latestAttempts.Values.Any(attempt => attempt.Status == "unknown"))
+                if (latestAttempts.Values.Any(attempt => attempt.Status == NetiqAttemptStatus.Unknown))
                     throw new DomainException(ApiErrorCodes.NetiqAttemptLedgerInvalid,
                         "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
 
@@ -471,7 +471,7 @@ public class ScheduleController : ControllerBase
         {
             normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(segment);
         }
-        catch (ArgumentException ex)
+        catch (SubnetPrefixFormatException ex)
         {
             throw DomainException.Validation(ex.Message);
         }

@@ -104,11 +104,35 @@ public sealed class SentinelSearchResult
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>
 public class SentinelClientException : Exception
 {
-    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed") : base(message, inner) => SafeCode = safeCode;
+    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed", int? httpStatus = null)
+        : base(httpStatus is 301 or 302 or 303 or 307 or 308 ? message + RedirectHint : message, inner)
+    {
+        SafeCode = safeCode;
+        HttpStatus = httpStatus;
+    }
+
+    /// <summary>
+    /// 連線不跟隨轉址（<see cref="OutboundHttp"/>）：伺服器回轉址時只看得到狀態碼，這句告訴操作者要改位址。
+    /// 狀態碼是轉址時由建構子附在訊息後面，各個擲出點不必各自處理。
+    /// </summary>
+    public const string RedirectHint = "（伺服器要求轉址，本系統不跟隨：請把連線位址改成最終網址，常見是 http:// 要改成 https://）";
+
     public string SafeCode { get; }
+
+    /// <summary>伺服器回的 HTTP 狀態碼；不是 HTTP 層失敗（逾時、格式、憑證…）時為 null。呼叫端依它分辨錯誤種類，不要比對訊息字串</summary>
+    public int? HttpStatus { get; }
+
+    /// <summary>查詢工作以非成功狀態（不可用、取消、存取被拒）結束；伺服器接受請求但不接受這次查詢內容或權限不足</summary>
+    public const string JobNotSuccessfulCode = "job-not-successful";
 
     /// <summary>位址未設定或格式不正確：訊息只含使用者自己填的位址與修正方式，可直接顯示給操作者</summary>
     public const string InvalidBaseUrlCode = "invalid-base-url";
+
+    /// <summary>伺服器憑證被拒（指紋不符或不被信任）；訊息只含本系統的說明與伺服器出示的指紋，可直接顯示</summary>
+    public const string CertificateRejectedCode = "certificate-rejected";
+
+    /// <summary>回應超過整包讀取上限（<c>MaxResponseContentBufferSize</c>）；重試不會變，訊息只含本系統的說明與上限，可直接顯示</summary>
+    public const string ResponseTooLargeCode = "response-too-large";
 }
 
 /// <summary>
@@ -147,14 +171,16 @@ public sealed partial class SentinelClient : ISentinelSearchClient
     private readonly NetiqOptions _settings;
     private readonly HttpClient _http;
     private readonly SentinelClientReadLimits? _readLimits;
+    private readonly long _maxResponseBytes;
     private int _httpRequestCount;
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly ResiliencePipeline _retryPipeline;
+    private readonly ResiliencePipeline _createJobPipeline;
     private string? _token;
     private bool _disposed;
 
     public SentinelClient(SentinelServer server, NetiqOptions settings, HttpMessageHandler? handler = null,
-        SentinelClientReadLimits? readLimits = null)
+        SentinelClientReadLimits? readLimits = null, long? maxResponseBytes = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。", safeCode: SentinelClientException.InvalidBaseUrlCode);
@@ -169,29 +195,39 @@ public sealed partial class SentinelClient : ISentinelSearchClient
             string.IsNullOrEmpty(parsed.Host))
         {
             throw new SentinelClientException(
-                $"Sentinel「{server.Name}」的連線位址格式不正確：「{server.BaseUrl}」。" +
+                $"Sentinel「{server.Name}」的連線位址格式不正確：「{UrlSecrets.MaskAddressInput(server.BaseUrl)}」。" +
                 "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。",
                 safeCode: SentinelClientException.InvalidBaseUrlCode);
         }
 
         _server = server;
+        _maxResponseBytes = maxResponseBytes ?? MaxResponseBytes;
         _baseUri = parsed;
         _settings = settings;
         readLimits?.Validate();
         _readLimits = readLimits;
 
         var ownsHandler = handler == null;
-        var actualHandler = handler ?? CreateDefaultHandler(settings);
+        if (!ServerCertificateTrust.TryNormalize(settings.TrustedCertificateSha256, out _))
+            throw new SentinelClientException("Sentinel 信任的憑證指紋格式不正確，應為 64 個十六進位字元的 SHA-256。",
+                safeCode: "invalid-certificate-pin");
+        // 注入的 handler（測試）不經憑證判定；自建時一律掛上，探測才拿得到伺服器出示的指紋
+        _certificateTrust = handler == null
+            ? new ServerCertificateTrust(settings.TrustedCertificateSha256, settings.AllowInvalidCertificates)
+            : null;
+        var actualHandler = handler ?? OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), _certificateTrust!.Validate);
         if (_readLimits is not null && actualHandler is SocketsHttpHandler boundedHandler)
             boundedHandler.AllowAutoRedirect = false;
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
         {
-            Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1))
+            Timeout = TimeSpan.FromSeconds(Math.Max(settings.TimeoutSeconds, 1)),
+            // 整包讀取的回應上限：異常回應或代理錯誤頁不能一次吃掉站台記憶體（探測模式另有更小的有界讀取）
+            MaxResponseContentBufferSize = _maxResponseBytes
         };
 
         // AllowInvalidCertificates 是顯式逃生門而非靜默放行（AppSettings 註解的承諾）：
         // 每個 client 建立時記一筆 Info（不是每次連線——那會洗版），讓 log 看得出這台是誰在裸奔
-        if (ownsHandler && settings.AllowInvalidCertificates)
+        if (ownsHandler && settings.AllowInvalidCertificates && _certificateTrust!.PinnedSha256 is null)
         {
             if (_readLimits is null)
                 Log.Info("[{Server}] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）", server.Name);
@@ -206,49 +242,72 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         // 要求 MaxRetryAttempts >= 1，傳 0 會在建構子就擲 ValidationException（「NetIQ 維護」頁的
         // 失敗重試次數 min=0，管理員填 0 是合理的「不要重試」，卻會讓每一次 SentinelClient 建構
         // 直接爆掉）；夾到 1 則是靜默違背設定值。不加策略才真的等於「不重試」。
-        var pipelineBuilder = new ResiliencePipelineBuilder();
-        if (settings.RetryCount > 0)
-        {
-            pipelineBuilder.AddRetry(new RetryStrategyOptions
-            {
-                MaxRetryAttempts = settings.RetryCount,
-                Delay = TimeSpan.FromSeconds(1),
-                BackoffType = DelayBackoffType.Exponential,
-                ShouldHandle = new PredicateBuilder()
-                    .Handle<HttpRequestException>()
-                    .Handle<TaskCanceledException>()
-                    .Handle<SentinelTransientException>(),
-                OnRetry = args =>
-                {
-                    if (_readLimits is null)
-                        Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
-                            _server.Name, args.AttemptNumber + 1, settings.RetryCount);
-                    else
-                        Log.Warn("Bounded metadata probe retry {Attempt}/{Total}; details withheld",
-                            args.AttemptNumber + 1, settings.RetryCount);
-                    return default;
-                }
-            });
-        }
-        _retryPipeline = pipelineBuilder.Build();
+        _retryPipeline = BuildRetryPipeline(settings, retryTimeouts: true);
+        // 建立搜尋工作（POST）不是冪等的：逾時代表伺服器可能已經建了工作，重送會多一個殘留工作佔用名額。
+        // 只重試確定沒建成的（連線失敗、5xx），逾時不重送
+        _createJobPipeline = BuildRetryPipeline(settings, retryTimeouts: false);
     }
 
-    private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings)
+    private ResiliencePipeline BuildRetryPipeline(NetiqOptions settings, bool retryTimeouts)
     {
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
-        if (settings.AllowInvalidCertificates)
+        var pipelineBuilder = new ResiliencePipelineBuilder();
+        if (settings.RetryCount <= 0) return pipelineBuilder.Build();
+        // 憑證被拒（SecureConnectionError）與回應超過上限（ConfigurationLimitExceeded）重試也不會變，不重試
+        var predicate = new PredicateBuilder()
+            .Handle<HttpRequestException>(ex => ex.HttpRequestError != HttpRequestError.SecureConnectionError
+                && !HttpResponseLimit.IsExceeded(ex))
+            .Handle<SentinelTransientException>();
+        if (retryTimeouts) predicate = predicate.Handle<TaskCanceledException>();
+        pipelineBuilder.AddRetry(new RetryStrategyOptions
         {
-            // Sentinel 常見以自簽憑證部署；啟用時的 WARN 由建構子負責（每 client 一筆，不在這裡重複）
-            handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
-        }
-        return handler;
+            MaxRetryAttempts = settings.RetryCount,
+            Delay = TimeSpan.FromSeconds(1),
+            BackoffType = DelayBackoffType.Exponential,
+            // 多個主機分批同時失敗時錯開重試時間
+            UseJitter = true,
+            ShouldHandle = predicate,
+            OnRetry = args =>
+            {
+                if (_readLimits is null)
+                    Log.Warn(args.Outcome.Exception, "[{Server}] Sentinel 呼叫失敗，第 {Attempt}/{Total} 次重試",
+                        _server.Name, args.AttemptNumber + 1, settings.RetryCount);
+                else
+                    Log.Warn("Bounded metadata probe retry {Attempt}/{Total}; details withheld",
+                        args.AttemptNumber + 1, settings.RetryCount);
+                return default;
+            }
+        });
+        return pipelineBuilder.Build();
     }
+
+    // Sentinel 常見以自簽憑證部署；啟用略過驗證時的 WARN 由建構子負責（每 client 一筆，不在這裡重複）
+    /// <summary>整包讀取的回應上限（Sentinel 一頁事件數百 KB 到數 MB）</summary>
+    internal const long MaxResponseBytes = 128L * 1024 * 1024;
+
+    private readonly ServerCertificateTrust? _certificateTrust;
+
+    /// <summary>最近一次連線時 Sentinel 出示的憑證指紋（SHA-256；http 連線或還沒連過為 null）</summary>
+    public string? PresentedCertificateSha256 => _certificateTrust?.LastPresentedSha256;
+
+    /// <summary>憑證被拒時可直接顯示的原因；不是憑證問題回 null</summary>
+    private string? CertificateRejection(Exception ex) =>
+        ex is HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError }
+            ? _certificateTrust?.LastRejection
+            : null;
+
+    /// <summary>回應超量時的可顯示例外；不是超量回 null</summary>
+    private SentinelClientException? ResponseTooLarge(Exception ex) =>
+        HttpResponseLimit.IsExceeded(ex)
+            ? new SentinelClientException(
+                $"Sentinel「{_server.Name}」的回應超過 {HttpResponseLimit.MegabytesText(_maxResponseBytes)} 上限，已放棄（重試不會改變結果），請縮小查詢範圍。",
+                ex, SentinelClientException.ResponseTooLargeCode)
+            : null;
 
     private string BaseUrl => _server.BaseUrl.TrimEnd('/');
     private string AuthTokensUrl => $"{BaseUrl}/SentinelAuthServices/auth/tokens";
     private string EventSearchCollectionUrl => $"{BaseUrl}/SentinelRESTServices/objects/event-search";
 
-    private static string Truncate(string s, int max = 300) => s.Length <= max ? s : s[..max] + "…(截斷)";
+    private static string Truncate(string s, int max = 300) => TextTruncation.SafeCut(s, max, "…(截斷)");
 
     /// <summary>僅用於觸發 Polly 重試的內部標記例外，不對外流出</summary>
     private sealed class SentinelTransientException : Exception;

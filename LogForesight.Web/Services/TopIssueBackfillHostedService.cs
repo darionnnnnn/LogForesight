@@ -29,16 +29,38 @@ public class TopIssueBackfillHostedService : BackgroundService
     internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(15);
     internal TimeSpan RetryInterval { get; set; } = TimeSpan.FromMinutes(RetryIntervalMinutes);
 
+    /// <param name="permissionDedupe">權限異動去重鍵雜湊欄的回填；與問題聚合回填共用同一個閘、重試與版本推進，
+    /// 兩段各自獨立（一段失敗不讓另一段跳過，例外在兩段都跑完後才擲出，交給重試）。</param>
     public TopIssueBackfillHostedService(
-        TopIssueBackfiller backfiller, StorageBackend backend, DataVersionStamp dataVersion, BackgroundWorkGate gate)
-        : this(backfiller.TryFastReady, ct =>
-        {
-            backfiller.Run(ct);
-            if (!ct.IsCancellationRequested && backfiller.SourceKeyProgress.Completed)
+        TopIssueBackfiller backfiller, StorageBackend backend, DataVersionStamp dataVersion, BackgroundWorkGate gate,
+        PermissionChangeDedupeBackfiller? permissionDedupe = null)
+        : this(
+            () =>
             {
-                backfiller.RunRiskySourceKeys(backend.RiskyEventStore(), ct);
-            }
-        }, dataVersion, gate)
+                var issueReady = backfiller.TryFastReady();
+                try { permissionDedupe?.TryFastReady(); }
+                catch (Exception ex) { Log.Warn(ex, "[SQL] 權限異動去重鍵雜湊啟動快判失敗，改由背景回填處理：{Msg}", ex.Message); }
+                return issueReady;
+            },
+            ct =>
+            {
+                Exception? failure = null;
+                try
+                {
+                    backfiller.Run(ct);
+                    if (!ct.IsCancellationRequested && backfiller.SourceKeyProgress.Completed)
+                    {
+                        backfiller.RunRiskySourceKeys(backend.RiskyEventStore(), ct);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { failure = ex; }
+
+                try { if (!ct.IsCancellationRequested) permissionDedupe?.Run(ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { failure ??= ex; }
+
+                if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            },
+            dataVersion, gate)
     {
     }
 

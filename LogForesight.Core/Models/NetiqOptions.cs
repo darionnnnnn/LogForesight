@@ -40,6 +40,12 @@ public class NetiqOptions
     public bool AllowInvalidCertificates { get; set; } = false;
 
     /// <summary>
+    /// 信任的 Sentinel 憑證指紋（SHA-256，正規化為大寫十六進位）；多台 Sentinel 各自自簽時可存多個，以逗號分隔，
+    /// 任一相符即可。有填時只接受指紋在清單內的憑證，<see cref="AllowInvalidCertificates"/> 不再生效；空字串＝沒設。套用於全部 Sentinel。
+    /// </summary>
+    public string TrustedCertificateSha256 { get; set; } = "";
+
+    /// <summary>
     /// 每台主機每次執行最多回補幾天（docs/archive/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
     /// 14 天、非首次檢查 14 天內缺漏的雙軌設計——2000 台規模下對 Sentinel 做大量歷史日查詢
     /// 不現實，正式環境的預期行為是「只查前一天」。首次與非首次統一套用同一個值

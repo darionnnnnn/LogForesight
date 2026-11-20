@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
@@ -275,30 +276,16 @@ public sealed class RunExportService : IRunExportService
     internal static double Round4(double value) =>
         double.IsNaN(value) || double.IsInfinity(value) ? 0 : Math.Round(value, 4, MidpointRounding.AwayFromZero);
 
-    internal static double? Median(IReadOnlyList<double> values)
-    {
-        if (values.Count == 0) return null;
-        var sorted = values.OrderBy(v => v).ToList();
-        var mid = sorted.Count / 2;
-        return Round4(sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0);
-    }
+    /// <summary>中位數並四捨五入到小數 4 位；定義由 <see cref="SampleStatistics.Median(IEnumerable{double})"/> 決定。</summary>
+    internal static double? RoundedMedian(IReadOnlyList<double> values) =>
+        SampleStatistics.Median(values) is { } m ? Round4(m) : null;
 
     /// <summary>最近排名法（nearest-rank）的 P95</summary>
     internal static double? Percentile95(IReadOnlyList<double> values)
     {
         if (values.Count == 0) return null;
         var sorted = values.OrderBy(v => v).ToList();
-        var rank = (int)Math.Ceiling(0.95 * sorted.Count);
-        return Round4(sorted[Math.Clamp(rank, 1, sorted.Count) - 1]);
-    }
-
-    /// <summary>截到 <paramref name="max"/> 字，不從代理對中間切開；被截掉時結尾補「…」</summary>
-    internal static string Cut(string s, int max)
-    {
-        if (s.Length <= max) return s;
-        var cut = max;
-        if (cut > 0 && char.IsHighSurrogate(s[cut - 1])) cut--;
-        return s[..cut] + "…";
+        return Round4(sorted[SampleStatistics.NearestRankIndex(sorted.Count, 0.95)]);
     }
 
     /// <summary>孤立的代理字元（遭截斷的 emoji 等）換成 U+FFFD，否則 JSON 序列化會擲例外</summary>
@@ -442,7 +429,7 @@ public sealed class RunExportService : IRunExportService
         /// <summary>自由文字：先遮罩，再清掉孤立代理字元</summary>
         private string Text(string? value) => Clean(_m.Mask(value));
 
-        private string TextCut(string? value, int max) => Cut(Text(value), max);
+        private string TextCut(string? value, int max) => TextTruncation.SafeCutEllipsis(Text(value), max);
 
         private string VersionLabel(string? raw)
         {
@@ -730,12 +717,12 @@ public sealed class RunExportService : IRunExportService
 
             if (g.Samples.Count < _l.SamplesPerGroup)
             {
-                var sample = Cut(masked, _l.SampleChars);
+                var sample = TextTruncation.SafeCutEllipsis(masked, _l.SampleChars);
                 if (!g.Samples.Contains(sample, StringComparer.Ordinal)) g.Samples.Add(sample);
             }
 
             if (g.Stack == null && !string.IsNullOrWhiteSpace(exceptionText))
-                g.Stack = Cut(Clean(_m.MaskStack(exceptionText)), _l.StackChars);
+                g.Stack = TextTruncation.SafeCutEllipsis(Clean(_m.MaskStack(exceptionText)), _l.StackChars);
 
             TrackRecent(g, l.LoggedAt, l.RunId);
         }
@@ -952,7 +939,7 @@ public sealed class RunExportService : IRunExportService
                         Runs = g.Count(),
                         Completed = seconds.Count,
                         NotSucceeded = notSucceeded,
-                        MedianSeconds = Median(seconds),
+                        MedianSeconds = RoundedMedian(seconds),
                         P95Seconds = Percentile95(seconds),
                         MaxSeconds = seconds.Count == 0 ? null : Round4(seconds.Max())
                     };
@@ -1314,8 +1301,8 @@ public sealed class RunExportService : IRunExportService
                     ControlSamples = controlFeatures.Count,
                     Features = both
                         ? FeatureColumns.Select(c => new ExportFeatureMedianDto(Lit(c.Name),
-                            Median(caseFeatures.Select(c.Get).Where(v => v.HasValue).Select(v => v!.Value).ToList()),
-                            Median(controlFeatures.Select(c.Get).Where(v => v.HasValue).Select(v => v!.Value).ToList()))).ToList()
+                            RoundedMedian(caseFeatures.Select(c.Get).Where(v => v.HasValue).Select(v => v!.Value).ToList()),
+                            RoundedMedian(controlFeatures.Select(c.Get).Where(v => v.HasValue).Select(v => v!.Value).ToList()))).ToList()
                         : null
                 };
             }

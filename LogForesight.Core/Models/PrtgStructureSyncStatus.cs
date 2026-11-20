@@ -31,7 +31,7 @@ public sealed class PrtgSyncWarning
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
         text = text.Trim();
-        return text.Length <= max ? text : text[..(max - 1)] + "…";
+        return text.Length <= max ? text : TextTruncation.SafeCut(text, max - 1, "…");
     }
 }
 

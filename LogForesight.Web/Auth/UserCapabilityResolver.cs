@@ -35,7 +35,7 @@ public class UserCapabilityResolver
 
     /// <summary>
     /// 使用者的能力集合。**不檢查帳號是否停用**——停用的攔截點在登入與
-    /// <c>ActiveUserMiddleware</c>（逐請求 401），呼叫端若需要「停用即無能力」的呈現語意
+    /// <c>CookieSessionEvents</c>（逐請求 401），呼叫端若需要「停用即無能力」的呈現語意
     /// （例如使用者詳細頁），自行先判斷 <c>user.Active</c>。
     /// </summary>
     public IReadOnlySet<Capability> Resolve(WebUser user)

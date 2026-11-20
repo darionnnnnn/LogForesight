@@ -375,6 +375,7 @@ public class AdminController : ControllerBase
         TimeoutSeconds = o.TimeoutSeconds,
         RetryCount = o.RetryCount,
         AllowInvalidCertificates = o.AllowInvalidCertificates,
+        TrustedCertificateSha256 = o.TrustedCertificateSha256,
         BackfillDays = o.BackfillDays,
         MaxParallelServers = o.MaxParallelServers,
         MaxParallelQueriesPerServer = o.MaxParallelQueriesPerServer,

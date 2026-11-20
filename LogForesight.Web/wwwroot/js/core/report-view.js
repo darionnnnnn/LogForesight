@@ -16,6 +16,7 @@
 import { icon, toast, showDetailModal } from './ui.js';
 import { saveBlobAsFile } from './api.js';
 import { safeStorage } from './storage.js';
+import { copyText } from './clipboard.js';
 
 /**
  * 副標：日期＋風險等級＋類別。這幾個欄位在全文的標頭裡也有，但那要展開才看得到；
@@ -44,12 +45,9 @@ function downloadReport(report) {
 }
 
 async function copyReport(report) {
-    try {
-        await navigator.clipboard.writeText(report.content);
-        toast('已複製報告全文', 'success');
-    } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-    }
+    const result = await copyText(report.content);
+    if (result.ok) toast('已複製報告全文', 'success');
+    else toast(`複製失敗：${result.reason}`, 'danger');
 }
 
 /**

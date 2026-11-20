@@ -155,6 +155,13 @@ public class PrtgStructureSyncService
     }
 
     /// <summary>同步是否正在執行——取數執行的 PRTG 路徑用它決定要不要等。</summary>
+    private int _completionCount;
+
+    /// <summary>結構同步結束（成功、失敗、取消皆算）的累計次數；快照服務據此重算採樣目標。</summary>
+    public int CompletionCount => Volatile.Read(ref _completionCount);
+
+    internal void RecordCompletion() => Interlocked.Increment(ref _completionCount);
+
     public bool IsRunning => _state.Snapshot().IsRunning;
 
     /// <summary>
@@ -459,6 +466,7 @@ public class PrtgStructureSyncService
             // 反過來寫會讓那一瞬間讀到上一趟的結果。
             _lastRunSucceeded = success;
             _state.EndRun(success);
+            RecordCompletion();
             _cts = null;
             cts.Dispose();
         }

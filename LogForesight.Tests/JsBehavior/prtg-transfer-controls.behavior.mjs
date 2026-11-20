@@ -49,6 +49,7 @@ function makeHarness({ upload, status, abandon, confirmation } = {}) {
         getCurrentUser: async () => ({ userId: 73, isServerAdmin: false, account: 'maintainer' }),
         appUrl: value => value,
         formatNumber: value => String(value),
+        statusNote: (type, text) => { const note = document.createElement('div'); note.className = `lf-status-note lf-status-note--${type}`; note.textContent = text; return note; },
         toast: () => { },
         confirmAction: async () => { calls.confirm++; return confirmation ? confirmation() : true; },
         withBusy: button => {

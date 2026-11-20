@@ -1,0 +1,35 @@
+<Project>
+  <!--
+    套件版本的唯一來源（Central Package Management）。各 .csproj 只寫 PackageReference Include，不寫版本。
+    升級原則：框架與 Microsoft.* 套件同一步升級——只換其中一邊會讓上千筆測試同時失敗
+    （新版 C# 把陣列 Contains 綁到 span 多載，舊版 EF Core 評估不了；舊版測試伺服器在新執行階段寫不出回應）。
+    鎖定檔（packages.lock.json）隨專案提交，CI 以 locked-mode 還原；改版本後在本機 restore 重新產生鎖定檔再提交。
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 平台與資料存取 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.15" />
+    <PackageVersion Include="System.DirectoryServices" Version="10.0.15" />
+    <PackageVersion Include="System.DirectoryServices.AccountManagement" Version="10.0.15" />
+    <PackageVersion Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <!-- 第三方執行期 -->
+    <PackageVersion Include="NLog" Version="6.2.2" />
+    <PackageVersion Include="NLog.Web.AspNetCore" Version="6.3.0" />
+    <PackageVersion Include="Polly" Version="8.7.0" />
+    <PackageVersion Include="OpenCC" Version="0.1.0" />
+    <!-- 建置期分析器（不進輸出） -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
+    <!-- 測試 -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageVersion Include="xunit" Version="2.9.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
+  </ItemGroup>
+</Project>

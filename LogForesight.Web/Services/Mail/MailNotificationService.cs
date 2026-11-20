@@ -457,11 +457,11 @@ public class MailNotificationService
             var to = now.Date.AddDays(-1);
             var dailyFrom = to;
             var weeklyFrom = to.AddDays(-6);
-            var dailyDue = settings.MailDailyEnabled && TimeSpan.TryParse(settings.MailDailyTime, out var dailyTime) &&
+            var dailyDue = settings.MailDailyEnabled && InputParsing.TryParseClockTime(settings.MailDailyTime, out var dailyTime) &&
                 now.TimeOfDay >= dailyTime && _state.Get().LastDailySentDate != today;
             var weeklyDue = settings.MailWeeklyEnabled &&
-                Enum.TryParse<DayOfWeek>(settings.MailWeeklyDayOfWeek, ignoreCase: true, out var weeklyDay) &&
-                now.DayOfWeek == weeklyDay && TimeSpan.TryParse(settings.MailWeeklyTime, out var weeklyTime) &&
+                InputParsing.TryParseDefinedEnum<DayOfWeek>(settings.MailWeeklyDayOfWeek, out var weeklyDay) &&
+                now.DayOfWeek == weeklyDay && InputParsing.TryParseClockTime(settings.MailWeeklyTime, out var weeklyTime) &&
                 now.TimeOfDay >= weeklyTime && _state.Get().LastWeeklySentDate != today;
             if (dailyDue)
             {
@@ -499,9 +499,9 @@ public class MailNotificationService
             if (!settings.MailEnabled) return;
 
             var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                .Select(u => u.Email)
-                .Where(e => !string.IsNullOrWhiteSpace(e))
-                .Select(e => e!.Trim())
+                .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
+                .Where(e => e != null)
+                .Select(e => e!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (recipients.Count == 0)
@@ -611,8 +611,8 @@ public class MailNotificationService
                     : null
             }).ToList();
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0) Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
+            // 超過上限的丟棄由 WorkOrderOutboxStore 統一記警告與健康狀態，呼叫端不必各記一次
+            _outbox.Enqueue(items);
             return true;
         }
         catch (Exception ex)
@@ -665,11 +665,7 @@ public class MailNotificationService
                 .ToList();
             if (items.Count == 0) return;
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0)
-            {
-                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
-            }
+            _outbox.Enqueue(items);
         }
         catch (Exception ex)
         {
@@ -704,11 +700,7 @@ public class MailNotificationService
                 }))
                 .ToList();
 
-            var dropped = _outbox.Enqueue(items);
-            if (dropped > 0)
-            {
-                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
-            }
+            _outbox.Enqueue(items);
         }
         catch (Exception ex)
         {
@@ -751,7 +743,7 @@ public class MailNotificationService
             // 處理人之後補上 email 的不清（下面的摘要時刻會把它寄出）
             var stale = _outbox.Get().Items
                 .Where(kv => kv.Value.NoEmail && kv.Value.EnqueuedAt < staleBefore &&
-                    !(users.TryGetValue(kv.Value.RecipientUserId, out var owner) && owner.Active && !string.IsNullOrWhiteSpace(owner.Email)))
+                    !(users.TryGetValue(kv.Value.RecipientUserId, out var owner) && EligibleEmail(owner) != null))
                 .Select(kv => kv.Key).ToList();
             if (stale.Count > 0)
             {
@@ -764,7 +756,7 @@ public class MailNotificationService
             var dueSlots = new List<(string Key, TimeSpan Time)>();
             foreach (var raw in settings.MailWorkOrderDigestTimes ?? new List<string>())
             {
-                if (!TimeSpan.TryParse(raw, out var t)) continue;
+                if (!InputParsing.TryParseClockTime(raw, out var t)) continue;
                 var key = t.ToString(@"hh\:mm");
                 if (dueSlots.Any(s => s.Key == key)) continue;
                 if (now.TimeOfDay >= t && !(sentSlots.TryGetValue(key, out var last) && last == dateText))
@@ -809,8 +801,11 @@ public class MailNotificationService
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(user.Email))
+        var recipientEmail = EligibleEmail(user);
+        if (recipientEmail == null)
         {
+            if (!string.IsNullOrWhiteSpace(user.Email))
+                Log.Warn("[Mail] 處理人 {UserId} 的信箱不是單一電子郵件位址，交辦通知暫不寄出。", user.UserId);
             // 保留項目並標記，供派工畫面提示；立即項目改走摘要時刻（之後補上 email 仍會寄出）
             _outbox.Update(o =>
             {
@@ -851,7 +846,7 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.Append(text);
 
-        if (await SendSafeAsync(settings, new List<string> { user.Email.Trim() }, subject, body.ToString(), ct))
+        if (await SendSafeAsync(settings, new List<string> { recipientEmail }, subject, body.ToString(), ct))
         {
             _outbox.Update(o => { foreach (var k in keys) o.Items.Remove(k); });
         }
@@ -1006,14 +1001,51 @@ public class MailNotificationService
             : CryptoHelper.TryDecrypt(settings.SmtpPasswordEnc, out var smtpPassword) ? smtpPassword
             : null);
 
-    private static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary) =>
-        template
-            .Replace("{site}", WebBrandName)
-            .Replace("{host}", host)
-            .Replace("{date}", date)
-            .Replace("{risk}", risk)
-            .Replace("{type}", type)
-            .Replace("{summary}", summary);
+    /// <summary>
+    /// 使用者能不能收信、收到哪個位址：啟用中且信箱是單一位址才回傳（去空白後），否則 null。
+    /// 所有以使用者信箱寄信的路徑（管理員、主機負責人、交辦處理人）共用這一個判定——
+    /// 主機負責人路徑原本沒檢查停用，停用的負責人仍會收到含主機名與日期的高風險通知。
+    /// </summary>
+    internal static string? EligibleEmail(WebUser? user)
+    {
+        if (user is not { Active: true } || !SystemSettingsMailHelper.IsSingleBareAddress(user.Email)) return null;
+        return user.Email!.Trim();
+    }
+
+    /// <summary>
+    /// 同 <see cref="EligibleEmail"/>，但啟用中、信箱有填卻不是單一位址時記一行警告（依路徑標示），
+    /// 讓收件人被靜默略過的原因查得到；停用帳號是正常略過，不警告。
+    /// </summary>
+    internal static string? EligibleEmailOrWarn(WebUser? user, string path, ISet<long>? alreadyWarned = null)
+    {
+        var email = EligibleEmail(user);
+        // alreadyWarned：同一次通知處理在主機日迴圈內會反覆遇到同一位使用者，只警告第一次
+        if (email == null && user is { Active: true } && !string.IsNullOrWhiteSpace(user.Email)
+            && (alreadyWarned == null || alreadyWarned.Add(user.UserId)))
+            Log.Warn("[Mail] {Path}：使用者 {UserId} 的信箱不是單一電子郵件位址，略過此收件人。", path, user.UserId);
+        return email;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex TemplateToken = new(
+        @"\{(site|host|date|risk|type|summary)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 單趟展開：只替換樣板裡原本就有的佔位符。逐一 Replace 會讓已代入的值再被展開（主機名含「{summary}」時被換成摘要），
+    /// 換行一律換成空白——MailMessage.Subject 遇到 CR/LF 會擲例外，整封信寄不出去。
+    /// </summary>
+    internal static string ExpandTemplate(string template, string host, string date, string risk, string type, string summary)
+    {
+        var expanded = TemplateToken.Replace(template, m => m.Groups[1].Value switch
+        {
+            "site" => WebBrandName,
+            "host" => host,
+            "date" => date,
+            "risk" => risk,
+            "type" => type,
+            _ => summary
+        });
+        return expanded.Replace('\r', ' ').Replace('\n', ' ');
+    }
 
     /// <summary>品牌名稱走系統設定（外觀分頁），不是這個服務的職責範圍——郵件主旨的 {site} 直接
     /// 用固定產品名，品牌自訂的套用範圍留在畫面顯示層，避免這裡多依賴一份設定讀取</summary>
@@ -1090,6 +1122,7 @@ public class MailNotificationService
 
         if (settings.MailNotifyHostOwners)
         {
+            var warnedOwners = new HashSet<long>();   // 信箱不合格的警告，每位負責人一次通知只記一行
             foreach (var record in records)
             {
                 var host = ctx.Host(record.HostId);
@@ -1097,7 +1130,7 @@ public class MailNotificationService
 
                 foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
-                    var email = ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId)?.Email;
+                    var email = EligibleEmailOrWarn(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId), "主機負責人通知", warnedOwners);
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
 
                     if (!views.TryGetValue(email, out var existing))
@@ -1968,7 +2001,8 @@ public class MailNotificationService
         }
 
         // 週報附目前靜音中的問題（回饋第 47 輪 E-1）：不限窗口——「目前靜音中」是當下狀態。
-        // 這是全站資訊，不受可見範圍過濾（同 unresolvedLine 的既有取捨，所有收件人一律看得到）。
+        // 靜音以問題為單位、不綁主機，所有收件人看到同一份清單；只列問題與到期日——
+        // 管理者填的原因是自由文字、設定者是帳號，會寄給低權限收件人與共用信箱，留在站台上看。
         // _issueOwners 為既有可選相依，null 表示測試未注入或未啟用。
         string? mutedSection = null;
         if (isWeekly && _issueOwners != null)
@@ -1984,7 +2018,8 @@ public class MailNotificationService
             {
                 var lines = new List<string> { $"目前靜音中的問題（共 {muted.Count} 個，到期後恢復告警）：" };
                 lines.AddRange(muted.Select(x =>
-                    $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}｜原因：{x.Mute.Reason}｜設定者：{x.Mute.ByAccount}"));
+                    $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}"));
+                lines.Add("  （靜音原因與設定者請洽站台管理者）");
                 mutedSection = string.Join(Environment.NewLine, lines);
             }
         }

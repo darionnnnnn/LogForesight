@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -847,7 +848,7 @@ public class SentinelRestDirectoryClientTests
     [Fact]
     public async Task 多段預算用盡回部分結果與警告_不擲例外()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new FakeTimeProvider();
         var handler = new ScriptedHandler
         {
             ScriptSelector = filter =>
@@ -859,7 +860,7 @@ public class SentinelRestDirectoryClientTests
             OnJobCreated = jobCount =>
             {
                 // 完成第 1 段（2 個 job）後，於建立第 3 個 job 時讓總預算逾期
-                if (jobCount == 3) clock.FireAll();
+                if (jobCount == 3) clock.Advance(TimeSpan.FromSeconds(1));   // 總預算 1 秒
             }
         };
 
@@ -869,34 +870,6 @@ public class SentinelRestDirectoryClientTests
         Assert.Single(result.Hosts);
         Assert.Equal("192.168.0.10", result.Hosts[0].IpAddress);
         Assert.Contains(result.Warnings, w => w.Contains("已完成 1/256 段") && w.Contains("未掃描的網段"));
-    }
-
-    /// <summary>
-    /// 手動時鐘：記下每個計時器的回呼，<see cref="FireAll"/> 時一次觸發（視同到期），其餘時間永不到期。
-    /// </summary>
-    private sealed class ManualTimeProvider : TimeProvider
-    {
-        private readonly List<(TimerCallback Callback, object? State)> _timers = new();
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            lock (_timers) _timers.Add((callback, state));
-            return new NeverTimer();
-        }
-
-        public void FireAll()
-        {
-            List<(TimerCallback Callback, object? State)> due;
-            lock (_timers) due = _timers.ToList();
-            foreach (var (callback, state) in due) callback(state);
-        }
-
-        private sealed class NeverTimer : ITimer
-        {
-            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
-            public void Dispose() { }
-            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-        }
     }
 
     /// <summary>

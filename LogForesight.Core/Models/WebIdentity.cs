@@ -60,6 +60,13 @@ public class WebUser
     /// 消費端：<c>WorkOrderDispatcher</c>（經 Web 端候選人快照帶入）。
     /// </summary>
     public bool DispatchPaused { get; set; }
+
+    /// <summary>
+    /// 工作階段版號：登入 cookie 內帶簽發當下的值，與這個欄位不同就視為失效。
+    /// 這個欄位只承載舊資料與「啟用轉停用」的遞增；登出的增量另存獨立 blob（<c>user_session_versions</c>，避免日常登出改寫 users blob），
+    /// 有效版號一律讀 <see cref="IUserStore.GetSessionVersion"/>。持久化、重啟不失效。舊資料缺欄反序列化為 0；回滾到舊版時只認這個欄位。
+    /// </summary>
+    public long SessionVersion { get; set; }
 }
 
 /// <summary>

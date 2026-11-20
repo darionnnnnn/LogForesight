@@ -47,6 +47,18 @@ public interface IUserStore
     /// <summary>只改暫停接單旗標：Upsert 是逐欄複製且刻意不含這個欄位（見該處註解），
     /// 這裡是它的唯一寫入點</summary>
     void SetDispatchPaused(long userId, bool paused);
+
+    /// <summary>
+    /// 遞增工作階段版號並回傳新值（登出用）；找不到使用者回 0。<see cref="Upsert"/> 不覆寫這個欄位
+    /// （停用時由 Upsert 內部遞增，見實作），否則編輯使用者會把已登出的 cookie 復活。
+    /// </summary>
+    long BumpSessionVersion(long userId);
+
+    /// <summary>
+    /// 該使用者目前的有效工作階段版號：<see cref="WebUser.SessionVersion"/>（舊資料與停用遞增）＋登出增量。
+    /// Cookie 驗證與簽發一律讀這個，不直接讀 <see cref="WebUser.SessionVersion"/>。
+    /// </summary>
+    long GetSessionVersion(WebUser user);
 }
 
 /// <summary>

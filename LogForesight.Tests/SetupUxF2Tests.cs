@@ -404,8 +404,7 @@ public class SetupUxF2Tests : IDisposable
         var show = FunctionBody(js, "showFieldErrors");
         Assert.Contains("activateTabForElement(", show);
         Assert.Contains(".focus()", show);
-        Assert.Contains("is-invalid", show);
-        Assert.Contains("invalid-feedback", show);
+        Assert.Contains("setFieldError(", show);
         Assert.Contains("有 ${errors.length} 個欄位需要修正", show);
         Assert.Contains("showFieldErrors(invalidFields)", FunctionBody(js, "bindForm"));
     }
@@ -473,8 +472,7 @@ public class SetupUxF2Tests : IDisposable
         // 不再把空白名稱默默改成未分組：mode 一律照選的送
         Assert.DoesNotContain("if (name)", collect);
         Assert.Contains("if (!groupAssignments) return;", FunctionBody(js, "wizardSubmitImport"));
-        Assert.Contains("is-invalid", FunctionBody(js, "markAssignmentError"));
-        Assert.Contains("invalid-feedback", FunctionBody(js, "markAssignmentError"));
+        Assert.Contains("setFieldError(", FunctionBody(js, "markAssignmentError"));
     }
 
     [Fact]

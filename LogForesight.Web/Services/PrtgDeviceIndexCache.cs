@@ -66,80 +66,29 @@ public sealed class PrtgDeviceIndex
 /// 可見範圍的過濾發生在呼叫端各自的授權檢查，不在這份索引裡。
 /// （若哪天索引本身要帶使用者維度，就必須改成鍵含授權範圍，不能沿用這個無鍵版本。）
 /// </summary>
-public class PrtgDeviceIndexCache : ICacheStatistics
+public class PrtgDeviceIndexCache : BoundedTtlCache<PrtgDeviceIndex>
 {
     /// <summary>存活秒數：與 <see cref="IssueRankingCache.TtlSeconds"/> 同值同理由
     /// （全站快取的節奏一致）。</summary>
     public const int TtlSeconds = IssueRankingCache.TtlSeconds;
 
     /// <summary>條目上限：比照 <see cref="SummaryCache"/>／<see cref="IssueOwnedHostIdsCache"/>，
-    /// 超過上限整批清掉、重建付得起。目前呼叫端只用一個固定鍵
+    /// 滿了逐筆淘汰（同其他快取）。目前呼叫端只用一個固定鍵
     /// （<see cref="GlobalKey"/>，索引與使用者無關），上限只是沿用慣例的保險。</summary>
     private const int MaxEntries = 64;
 
     /// <summary>唯一的鍵：索引是全站共用的結構快照，沒有使用者或設定維度可分。</summary>
     public const string GlobalKey = "all-devices";
 
-    private readonly Func<DateTime> _now;
-    private readonly object _lock = new();
-    // 統計計數（皆在 _lock 內維護；供健康頁記憶體詳情，見 ICacheStatistics）
-    private long _hits;
-    private long _misses;
-    private long _evictions;
-    private readonly Dictionary<string, (PrtgDeviceIndex Index, DateTime CachedAt)> _entries = new();
-    private readonly SingleFlight _flight = new();
-
     public PrtgDeviceIndexCache(Func<DateTime>? now = null)
+        : base("PrtgDeviceIndexCache", TtlSeconds, MaxEntries, long.MaxValue, _ => 1, currentVersion: null, now)
     {
-        _now = now ?? (() => DateTime.Now);
     }
 
     /// <summary>
     /// 取快取；未命中（不存在／逾時）時呼叫 <paramref name="loadDevices"/> 讀一次裝置全表、
-    /// 建好索引再存起來。回傳的 <see cref="PrtgDeviceIndex"/> 是唯讀快照（見該類別註解）。
+    /// 建好索引再存起來（同鍵並發只建一次）。回傳的 <see cref="PrtgDeviceIndex"/> 是唯讀快照（見該類別註解）。
     /// </summary>
-    public PrtgDeviceIndex GetOrAdd(string key, Func<IReadOnlyList<PrtgDeviceRow>> loadDevices)
-    {
-        lock (_lock)
-        {
-            if (_entries.TryGetValue(key, out var entry)
-                && (_now() - entry.CachedAt).TotalSeconds < TtlSeconds)
-            {
-                _hits++;
-                return entry.Index;
-            }
-            _misses++;
-        }
-
-        // 讀表與建索引在鎖外做：全表讀取很慢，握著鎖算會讓其他請求全部排隊；同鍵並發只建一次（同 SummaryCache）
-        return _flight.Run(key, () =>
-        {
-            // 前一個同鍵合併可能剛寫入並結束：再看一次，避免緊接著重建（同 SummaryCache）
-            lock (_lock)
-            {
-                if (_entries.TryGetValue(key, out var fresh) && (_now() - fresh.CachedAt).TotalSeconds < TtlSeconds)
-                    return fresh.Index;
-            }
-            var index = new PrtgDeviceIndex(loadDevices());
-            lock (_lock)
-            {
-                if (_entries.Count >= MaxEntries)
-                {
-                    _evictions += _entries.Count;
-                    _entries.Clear();
-                }
-                _entries[key] = (index, _now());
-            }
-            return index;
-        });
-    }
-
-    /// <summary>目前條目數與累計命中／未命中／逐出（健康頁記憶體詳情用）。</summary>
-    public CacheStatisticsSnapshot GetStatistics()
-    {
-        lock (_lock)
-        {
-            return new CacheStatisticsSnapshot("PrtgDeviceIndexCache", _entries.Count, _entries.Count, _hits, _misses, _evictions, 0);
-        }
-    }
+    public PrtgDeviceIndex GetOrAdd(string key, Func<IReadOnlyList<PrtgDeviceRow>> loadDevices) =>
+        GetOrCompute(key, CurrentVersion, () => new PrtgDeviceIndex(loadDevices()));
 }

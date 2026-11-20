@@ -40,7 +40,8 @@ public class BatchedPruneTransientTests : IDisposable
         Assert.False(EfJsonBlobStore.IsTransient(new DbUpdateException("x", new Microsoft.Data.Sqlite.SqliteException("FOREIGN KEY constraint failed", 19, 787))));
         Assert.False(EfJsonBlobStore.IsTransient(new DbUpdateException("x", new Microsoft.Data.Sqlite.SqliteException("NOT NULL constraint failed", 19, 1299))));
         Assert.True(EfJsonBlobStore.IsTransient(new DbUpdateException("x", new Microsoft.Data.Sqlite.SqliteException("UNIQUE constraint failed", 19, 2067))));
-        Assert.True(EfJsonBlobStore.IsTransient(new DbUpdateException("x", new Exception("database is locked"))));
+        // 只有訊息像「busy／locked」、沒有資料庫錯誤碼的例外不是暫時性錯誤（暫時性判定一律看錯誤碼，見 TransientErrorCodeTests）
+        Assert.False(EfJsonBlobStore.IsTransient(new DbUpdateException("x", new Exception("database is locked"))));
         Assert.True(EfJsonBlobStore.IsTransient(new DbUpdateConcurrencyException("x")));
     }
 

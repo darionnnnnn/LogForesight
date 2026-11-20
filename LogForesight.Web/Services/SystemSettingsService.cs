@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
+using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
@@ -154,6 +155,7 @@ public class SystemSettingsService : ISystemSettingsService
         var before = _store.Get();
         var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
+        var prtgPin = NormalizeCertificatePin(request.PrtgTrustedCertificateSha256);
 
         var severities = NormalizeSeverities(request.UnhandledSeverities);
         if (severities.Count == 0)
@@ -297,15 +299,17 @@ public class SystemSettingsService : ISystemSettingsService
             if (!SystemSettingsMailHelper.IsValidEmail(recipient))
                 throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
         }
+        if (request.MailSubjectTemplate is { } subjectTemplate && subjectTemplate.IndexOfAny(new[] { '\r', '\n' }) >= 0)
+            throw DomainException.Validation("郵件主旨樣板不可包含換行。");
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
             throw DomainException.Validation("郵件摘要門檻不合法。");
-        if (request.MailDailyEnabled && !TimeSpan.TryParse(request.MailDailyTime, out _))
-            throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm。");
+        if (request.MailDailyEnabled && !InputParsing.TryParseClockTime(request.MailDailyTime, out _))
+            throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm（例如 09:30）。");
         if (request.MailWeeklyEnabled)
         {
-            if (!TimeSpan.TryParse(request.MailWeeklyTime, out _))
+            if (!InputParsing.TryParseClockTime(request.MailWeeklyTime, out _))
                 throw DomainException.Validation("每週摘要時刻格式不合法，請用 HH:mm。");
-            if (!Enum.TryParse<DayOfWeek>(request.MailWeeklyDayOfWeek, ignoreCase: true, out _))
+            if (!InputParsing.TryParseDefinedEnum<DayOfWeek>(request.MailWeeklyDayOfWeek, out _))
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
         if (request.MailNotifyWorkOrders)
@@ -317,9 +321,9 @@ public class SystemSettingsService : ISystemSettingsService
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var x in times)
             {
-                if (string.IsNullOrWhiteSpace(x) || !TimeSpan.TryParseExact(x, @"hh\:mm", CultureInfo.InvariantCulture, out _))
+                if (string.IsNullOrWhiteSpace(x) || !InputParsing.TryParseClockTime(x, out _))
                     throw DomainException.Validation($"交辦摘要時刻『{x}』格式不合法，請用 HH:mm");
-                if (!seen.Add(x))
+                if (!seen.Add(InputParsing.NormalizeClockTime(x)!))
                     throw DomainException.Validation("交辦摘要時刻不可重複");
             }
         }
@@ -445,10 +449,10 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailMinRiskLevel = request.MailMinRiskLevel;
             s.MailOnRunCompleted = request.MailOnRunCompleted;
             s.MailDailyEnabled = request.MailDailyEnabled;
-            s.MailDailyTime = request.MailDailyTime;
+            s.MailDailyTime = InputParsing.NormalizeClockTime(request.MailDailyTime) ?? "";
             s.MailWeeklyEnabled = request.MailWeeklyEnabled;
             s.MailWeeklyDayOfWeek = request.MailWeeklyDayOfWeek;
-            s.MailWeeklyTime = request.MailWeeklyTime;
+            s.MailWeeklyTime = InputParsing.NormalizeClockTime(request.MailWeeklyTime) ?? "";
             s.MailUrgentEnabled = request.MailUrgentEnabled;
             s.MailSubjectTemplate = string.IsNullOrWhiteSpace(request.MailSubjectTemplate)
                 ? new SystemSettings().MailSubjectTemplate
@@ -458,7 +462,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.SiteBaseUrl = siteBaseUrl;
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
             s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
-            s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).ToList();
+            s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).Select(x => InputParsing.NormalizeClockTime(x) ?? "").ToList();
             s.EscalationReminderDays = request.EscalationReminderDays;
             s.AutoDispatchEnabled = request.AutoDispatchEnabled;
 
@@ -473,6 +477,7 @@ public class SystemSettingsService : ISystemSettingsService
                 password: request.PrtgPassword, clearPassword: request.ClearPrtgPassword,
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
             if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (prtgPin != null) s.PrtgTrustedCertificateSha256 = prtgPin;
             if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
             if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
@@ -551,6 +556,7 @@ public class SystemSettingsService : ISystemSettingsService
         var before = _store.Get();
         var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
+        var prtgPin = NormalizeCertificatePin(request.PrtgTrustedCertificateSha256);
 
         var effectiveRetentionDays = before.RetentionDays;
         var effectivePrtgRetentionDays = request.PrtgRetentionDays ?? before.PrtgRetentionDays;
@@ -612,6 +618,7 @@ public class SystemSettingsService : ISystemSettingsService
                 passhash: request.PrtgPasshash, clearPasshash: request.ClearPrtgPasshash);
             if (request.PrtgEnabled.HasValue) s.PrtgEnabled = request.PrtgEnabled.Value;
             if (request.PrtgIgnoreSslErrors.HasValue) s.PrtgIgnoreSslErrors = request.PrtgIgnoreSslErrors.Value;
+            if (prtgPin != null) s.PrtgTrustedCertificateSha256 = prtgPin;
             if (request.PrtgTimeoutSeconds.HasValue) s.PrtgTimeoutSeconds = request.PrtgTimeoutSeconds.Value;
             if (request.PrtgFetchConcurrency.HasValue) s.PrtgFetchConcurrency = request.PrtgFetchConcurrency.Value;
             if (request.PrtgBackfillDays.HasValue) s.PrtgBackfillDays = request.PrtgBackfillDays.Value;
@@ -654,6 +661,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.PrtgAuthMode,
                     before.PrtgUsername,
                     before.PrtgIgnoreSslErrors,
+                    before.PrtgTrustedCertificateSha256,
                     before.PrtgTimeoutSeconds,
                     before.PrtgFetchConcurrency,
                     before.PrtgBackfillDays,
@@ -682,6 +690,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.PrtgAuthMode,
                     saved.PrtgUsername,
                     saved.PrtgIgnoreSslErrors,
+                    saved.PrtgTrustedCertificateSha256,
                     saved.PrtgTimeoutSeconds,
                     saved.PrtgFetchConcurrency,
                     saved.PrtgBackfillDays,
@@ -930,10 +939,14 @@ public class SystemSettingsService : ISystemSettingsService
             targetId: "prtg_test",
             detail: new { Url = UrlSecrets.Mask(url), AuthMode = request.AuthMode ?? PrtgAuthModes.Token, request.IgnoreSslErrors, request.TimeoutSeconds });
 
+        if (!ServerCertificateTrust.TryNormalize(request.TrustedCertificateSha256, out var testPin))
+            throw DomainException.Validation(NetiqOptionsService.CertificatePinFormatMessage);
+
+        PrtgClient? client = null;
         try
         {
             // 此處不走 PrtgClientFactory，因為測試連線使用的是表單當下的值（尚未存檔的設定），而非已儲存的 SystemSettings
-            using var client = new PrtgClient(
+            client = new PrtgClient(
                 baseUrl: url,
                 tokenOrEmpty: token,
                 timeoutSeconds: request.TimeoutSeconds,
@@ -943,24 +956,34 @@ public class SystemSettingsService : ISystemSettingsService
                 usernameOrEmpty: username,
                 passwordOrEmpty: password,
                 passhashOrEmpty: passhash,
-                budget: PrtgBudget);
+                budget: PrtgBudget,
+                trustedCertificateSha256: testPin);
 
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestPrtgConnectionResultDto
             {
                 Success = true,
                 Message = "連線成功。",
-                ElapsedMs = (long)elapsed.TotalMilliseconds
+                ElapsedMs = (long)elapsed.TotalMilliseconds,
+                PresentedCertificateSha256 = client.PresentedCertificateSha256
             };
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "測試 PRTG 連線失敗");
+            // 憑證被拒的說明是本系統的文字（只含伺服器出示的指紋），照給；其餘原文可能夾帶回應內容，給固定說明
             return new TestPrtgConnectionResultDto
             {
                 Success = false,
-                Message = "測試連線失敗：請檢查 PRTG 位址、連接埠與認證設定；詳細原因見記錄檔。"
+                Message = client?.CertificateRejection is { } rejection
+                    ? $"測試連線失敗：{rejection}"
+                    : "測試連線失敗：請檢查 PRTG 位址、連接埠與認證設定；詳細原因見記錄檔。",
+                PresentedCertificateSha256 = client?.PresentedCertificateSha256
             };
+        }
+        finally
+        {
+            client?.Dispose();
         }
     }
 
@@ -1031,12 +1054,21 @@ public class SystemSettingsService : ISystemSettingsService
 
     /// <summary>
     /// 位址欄位不得夾帶密碼／金鑰參數：位址會進稽核、例外訊息與回應，夾在網址上的憑證會沿著這些路徑外流。
-    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecretQuery"/> 一份，這裡只負責擲出統一訊息。
+    /// 判定規則只有 <see cref="UrlSecrets.ContainsSecret"/> 一份，這裡只負責擲出統一訊息。
     /// </summary>
+    /// <summary>信任指紋：null＝本次未提供（回 null，沿用）；空白＝清除（回空字串）；格式不對擲驗證錯誤</summary>
+    private static string? NormalizeCertificatePin(string? input)
+    {
+        if (input == null) return null;
+        if (!ServerCertificateTrust.TryNormalize(input, out var pin))
+            throw DomainException.Validation(NetiqOptionsService.CertificatePinFormatMessage);
+        return pin ?? "";
+    }
+
     internal static void RejectSecretQuery(string? url)
     {
-        if (UrlSecrets.ContainsSecretQuery(url))
-            throw DomainException.Validation("網址不可包含密碼或金鑰參數，請改填專用的密碼／金鑰欄位。");
+        if (UrlSecrets.ContainsSecret(url))
+            throw DomainException.Validation("網址不可包含帳密、密碼或金鑰參數，請改填專用的帳號／密碼／金鑰欄位。");
     }
 
     private static bool IsValidHttpUrl(string? url) =>
@@ -1390,6 +1422,7 @@ public class SystemSettingsService : ISystemSettingsService
         PrtgHasPassword = !string.IsNullOrEmpty(s.PrtgPasswordEnc),
         PrtgHasPasshash = !string.IsNullOrEmpty(s.PrtgPasshashEnc),
         PrtgIgnoreSslErrors = s.PrtgIgnoreSslErrors,
+        PrtgTrustedCertificateSha256 = s.PrtgTrustedCertificateSha256,
         PrtgTimeoutSeconds = s.PrtgTimeoutSeconds,
         PrtgFetchConcurrency = s.PrtgFetchConcurrency,
         PrtgBackfillDays = s.PrtgBackfillDays,

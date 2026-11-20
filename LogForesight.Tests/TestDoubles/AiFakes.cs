@@ -28,6 +28,7 @@ internal sealed class FakeWebAi : IWebAiService
     {
         Calls++;
         LastUserPrompt = userPrompt;
+        LastSystemPrompt = systemPrompt;
         return Task.FromResult(Response);
     }
 }

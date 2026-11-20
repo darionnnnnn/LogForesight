@@ -36,6 +36,7 @@ function extractBlock(source, prefix) {
     return source.slice(start, source.indexOf('\n};\n', start) + 3);
 }
 
+const { copyText } = await import('../../LogForesight.Web/wwwroot/js/core/clipboard.js');   // production 的剪貼簿出口（非替身）
 const dom = installDom();
 const button = loadButton(dom);
 
@@ -48,12 +49,12 @@ const { logSourceName, netiqAttemptStatusName } = new Function(`
 `)();
 
 const detailSource = sourceOf('pages', 'record-detail.js');
-const { aiSummaryBlock, identityFacts } = new Function('renderAiInline', 'toast', 'button', `
+const { aiSummaryBlock, identityFacts } = new Function('renderAiInline', 'toast', 'button', 'copyText', `
     ${extractFunction(detailSource, 'function aiSummaryBlock(')}
     ${extractFunction(detailSource, 'function briefBlock(')}
     ${extractFunction(detailSource, 'function identityFacts(')}
     return { aiSummaryBlock, identityFacts };
-`)((el, text) => { el.appendChild(document.createTextNode(text)); }, () => {}, button);
+`)((el, text) => { el.appendChild(document.createTextNode(text)); }, () => {}, button, copyText);
 
 const { sourceLine } = new Function('logSourceName', 'netiqAttemptStatusName', `
     ${extractFunction(detailSource, 'function sourceLine(')}

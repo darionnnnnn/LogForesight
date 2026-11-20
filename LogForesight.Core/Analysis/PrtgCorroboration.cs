@@ -15,9 +15,22 @@ namespace LogForesight.Core.Analysis;
 /// </summary>
 public static class PrtgCorroboration
 {
-    private const string StoragePrefix = "【儲存異常同日訊號】";
-    private const string CapacityPrefix = "【容量異常同日訊號】";
-    private const string OutagePrefix = "【關機與監測異常同日訊號】";
+    public const string StoragePrefix = "【儲存異常同日訊號】";
+    public const string CapacityPrefix = "【容量異常同日訊號】";
+    public const string OutagePrefix = "【關機與監測異常同日訊號】";
+
+    /// <summary>歷史舊文案前綴（雙重確認時期）對應現行前綴；歷史重評與判斷「是不是 PRTG 佐證文字」共用，前綴字面值只在這個類別定義。</summary>
+    public static readonly (string Old, string Current)[] LegacyPrefixes =
+    [("【儲存故障雙重確認】", StoragePrefix),
+        ("【磁碟容量雙重確認】", CapacityPrefix),
+        ("【失聯獲 PRTG 證實】", OutagePrefix)];
+
+    /// <summary>文字是否以現行或歷史舊版的 PRTG 佐證前綴開頭。</summary>
+    public static bool HasCorroborationPrefix(string text) =>
+        text.StartsWith(StoragePrefix, StringComparison.Ordinal)
+        || text.StartsWith(CapacityPrefix, StringComparison.Ordinal)
+        || text.StartsWith(OutagePrefix, StringComparison.Ordinal)
+        || LegacyPrefixes.Any(p => text.StartsWith(p.Old, StringComparison.Ordinal));
 
     private static readonly (string Id, string Prefix)[] OwnedPatterns =
     [

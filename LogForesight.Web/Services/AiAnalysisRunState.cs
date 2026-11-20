@@ -52,6 +52,7 @@ public class AiAnalysisRunState
     // 寫回時必須發現世代已變、丟棄這次結果，否則「執行前的舊件數」會連同全新 30 秒有效期被寫回。
     private int _pendingCacheGeneration;
     private static readonly TimeSpan PendingCacheDuration = TimeSpan.FromSeconds(30);
+    private readonly SingleFlight _pendingFlight = new();
 
     // 無進度退避的間隔（暫定值，待實機觀察後再調整）：5 → 10 → 15 分，封頂 15 分；
     // 跟隨取數期間資料持續落地，退避上限壓到 5 分。
@@ -292,32 +293,43 @@ public class AiAnalysisRunState
     /// </summary>
     public int GetPendingAiCount(Func<int> fetcher)
     {
-        int generation;
         lock (_lock)
         {
             if (_cachedPendingCount.HasValue && DateTime.UtcNow < _pendingCacheExpiresAt)
             {
                 return _cachedPendingCount.Value;
             }
-            generation = _pendingCacheGeneration;
         }
 
         // 查詢刻意放在鎖外：這支查詢在實機上要 7~15 秒，若在鎖內執行，排程頁的輪詢
         // 會連帶卡住 AI 排程自己的 TryBeginRun／EndRun（共用同一把鎖）。
-        // 代價是冷快取時可能有兩個併發呼叫各查一次，遠優於阻塞狀態機。
-        var count = fetcher();
-
-        lock (_lock)
+        // 冷快取時同時進來的呼叫合併成一次查詢（SingleFlight）：排程頁輪詢與 AI 排程自己的判斷
+        // 不會各打一支 7~15 秒的慢查詢疊加。
+        return _pendingFlight.Run("pending-ai-count", () =>
         {
-            // 查詢期間快取被使失效（AI 排程結束／整批重標）→ 這筆是過期的，不寫回
-            if (generation == _pendingCacheGeneration)
+            // 前一個合併可能剛寫入快取並結束：再看一次，避免緊接著重查
+            int generation;
+            lock (_lock)
             {
-                _cachedPendingCount = count;
-                _pendingCacheExpiresAt = DateTime.UtcNow.Add(PendingCacheDuration);
+                if (_cachedPendingCount.HasValue && DateTime.UtcNow < _pendingCacheExpiresAt)
+                    return _cachedPendingCount.Value;
+                generation = _pendingCacheGeneration;
             }
-        }
 
-        return count;
+            var count = fetcher();
+
+            lock (_lock)
+            {
+                // 查詢期間快取被使失效（AI 排程結束／整批重標）→ 這筆是過期的，不寫回
+                if (generation == _pendingCacheGeneration)
+                {
+                    _cachedPendingCount = count;
+                    _pendingCacheExpiresAt = DateTime.UtcNow.Add(PendingCacheDuration);
+                }
+            }
+
+            return count;
+        });
     }
 
     /// <summary>

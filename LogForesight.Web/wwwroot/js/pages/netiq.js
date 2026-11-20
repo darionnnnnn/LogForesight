@@ -12,8 +12,11 @@ import { roleText, statusNote } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 import { pollWhile } from '../core/async-guards.js';
+import { copyText } from '../core/clipboard.js';
+import { readNumberFields } from '../core/number-field.js';
+import { setFieldError, clearFieldError } from '../core/field-errors.js';
 
-bindTabs(document.getElementById('netiq-tabs'));
+bindTabs(document.getElementById('netiq-tabs'), { hash: true });
 initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
 
 // ── Sentinel 清單與編輯 ──────────────────────────────────────────────────────
@@ -135,7 +138,7 @@ function openSentinelModal(sentinel) {
             : '留空＝此 Sentinel 無法主動掃描。';
     document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
     for (const id of ['sentinel-name', 'sentinel-base-url', 'sentinel-username', 'sentinel-password']) {
-        document.getElementById(id).classList.remove('is-invalid');       // 也不留上一次缺欄位的紅框
+        clearFieldError(document.getElementById(id));       // 也不留上一次缺欄位的紅框
     }
 
     sentinelModal.show();
@@ -151,9 +154,9 @@ function flagMissingField(inputId, message) {
     document.getElementById('sentinel-test-result').replaceChildren(statusNote('warning', message));
     const input = document.getElementById(inputId);
     if (!input) return;
-    input.classList.add('is-invalid');
+    setFieldError(input, message);
     input.addEventListener('input', () => {
-        input.classList.remove('is-invalid');
+        clearFieldError(input);
         document.getElementById('sentinel-test-result').replaceChildren();
     }, { once: true });
     input.focus();
@@ -184,9 +187,9 @@ document.getElementById('sentinel-test-connection').addEventListener('click', as
             password: password || null
         });
 
-        resultEl.replaceChildren(result.success
+        resultEl.replaceChildren(...[result.success
             ? statusNote('success', `${result.message}（耗時 ${result.elapsedMs}ms）`)
-            : statusNote('error', result.message));
+            : statusNote('error', result.message), presentedFingerprint(result.presentedCertificateSha256)].filter(Boolean));
     } catch {
         // 輸入不合法（如既有 Sentinel 找不到）由 api.js 以 toast 顯示；此處不用另外處理
     } finally {
@@ -242,6 +245,7 @@ async function loadOptions() {
     document.getElementById('opt-timeout').value = options.timeoutSeconds;
     document.getElementById('opt-retry-count').value = options.retryCount;
     document.getElementById('opt-allow-invalid-certs').checked = options.allowInvalidCertificates;
+    document.getElementById('opt-trusted-cert').value = (options.trustedCertificateSha256 ?? '').split(',').join('\n');
     document.getElementById('opt-backfill-days').value = options.backfillDays;
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
     document.getElementById('opt-max-parallel-queries').value = options.maxParallelQueriesPerServer;
@@ -265,22 +269,49 @@ async function loadOptions() {
     renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
 }
 
+/** 測試連線回報的伺服器憑證指紋（http 連線或 TLS 前就失敗時沒有）：長字串，放在可任意斷行的容器 */
+function presentedFingerprint(sha256) {
+    if (!sha256) return null;
+    const line = document.createElement('div');
+    line.className = 'lf-text-meta lf-break-anywhere mt-1';
+    line.append('伺服器出示的憑證指紋：');
+    const value = document.createElement('span');
+    value.className = 'lf-text-data';
+    value.textContent = sha256;
+    line.append(value);
+    return line;
+}
+
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
     event.preventDefault();
+
+    // 數字欄位全是必填：清空的欄位不能被當成 0 送出（readNumberFields 會在欄位上標錯並阻止送出）
+    const numbers = readNumberFields({
+        queryDelayMs: { source: 'opt-query-delay', integer: true },
+        pageSize: { source: 'opt-page-size', integer: true },
+        maxResultsPerJob: { source: 'opt-max-results', integer: true },
+        timeoutSeconds: { source: 'opt-timeout', integer: true },
+        retryCount: { source: 'opt-retry-count', integer: true },
+        backfillDays: { source: 'opt-backfill-days', integer: true },
+        maxParallelServers: { source: 'opt-max-parallel-servers', integer: true },
+        maxParallelQueriesPerServer: { source: 'opt-max-parallel-queries', integer: true }
+    });
+    if (!numbers.ok) return;
 
     const saveButton = document.getElementById('netiq-options-save');
     const restore = withBusy(saveButton, '儲存中');
     try {
         const options = await api.put('/api/admin/netiq/options', {
-            queryDelayMs: Number(document.getElementById('opt-query-delay').value),
-            pageSize: Number(document.getElementById('opt-page-size').value),
-            maxResultsPerJob: Number(document.getElementById('opt-max-results').value),
-            timeoutSeconds: Number(document.getElementById('opt-timeout').value),
-            retryCount: Number(document.getElementById('opt-retry-count').value),
+            queryDelayMs: numbers.values.queryDelayMs,
+            pageSize: numbers.values.pageSize,
+            maxResultsPerJob: numbers.values.maxResultsPerJob,
+            timeoutSeconds: numbers.values.timeoutSeconds,
+            retryCount: numbers.values.retryCount,
             allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
-            backfillDays: Number(document.getElementById('opt-backfill-days').value),
-            maxParallelServers: Number(document.getElementById('opt-max-parallel-servers').value),
-            maxParallelQueriesPerServer: Number(document.getElementById('opt-max-parallel-queries').value),
+            trustedCertificateSha256: document.getElementById('opt-trusted-cert').value.trim(),
+            backfillDays: numbers.values.backfillDays,
+            maxParallelServers: numbers.values.maxParallelServers,
+            maxParallelQueriesPerServer: numbers.values.maxParallelQueriesPerServer,
             chatLiveFetchEnabled: document.getElementById('opt-chat-live-fetch').checked,
             useOfflineDemoData: document.getElementById('opt-offline-demo').checked
         });
@@ -288,6 +319,8 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
         // 重新套用（含離線示範徽章）——儲存後徽章要即時反映
         document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
         document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
+        // 指紋存成正規化寫法（大寫、無分隔），欄位換成實際存入的值
+        document.getElementById('opt-trusted-cert').value = (options.trustedCertificateSha256 ?? '').split(',').join('\n');
         renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
     } catch {
         // 錯誤已由 api.js 顯示
@@ -451,21 +484,15 @@ metadataProbeStartButton.addEventListener('click', async () => {
 });
 
 probeCopyButton.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(probeOutputEl.value);
-        toast('已複製診斷輸出', 'success');
-    } catch {
-        probeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
-    }
+    const copied = await copyText(probeOutputEl.value);
+    if (copied.ok) toast('已複製診斷輸出', 'success');
+    else probeStateEl.replaceChildren(statusNote('error', `複製失敗：${copied.reason}`));
 });
 
 metadataProbeCopyButton.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(metadataProbeOutputEl.value);
-        toast('已複製安全欄位形狀報告', 'success');
-    } catch {
-        metadataProbeStateEl.replaceChildren(statusNote('error', '複製失敗，瀏覽器可能不允許存取剪貼簿'));
-    }
+    const copied = await copyText(metadataProbeOutputEl.value);
+    if (copied.ok) toast('已複製安全欄位形狀報告', 'success');
+    else metadataProbeStateEl.replaceChildren(statusNote('error', `複製失敗：${copied.reason}`));
 });
 
 guardLoad(sentinelListContainer, loadSentinels);

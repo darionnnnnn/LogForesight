@@ -50,7 +50,7 @@ internal static class LinuxCorrelationAnalyzer
         // 失敗面：三類失敗行（Failed password／Invalid user／pam authentication failure）統一走
         // TryParseAuthFailure；pam 行 rhost 為空只是不貢獻 IP，不算解析失敗。
         var (failUsers, failIps, bruteforceParseFailures) = ExtractFailures(bruteforceEvents);
-        var (acceptMatches, acceptParseFailures) = ExtractMatches(acceptEvents, LinuxAuthParser.AcceptedRegex);
+        var (acceptMatches, acceptParseFailures) = ExtractAccepted(acceptEvents);
 
         var successUsers = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         var successIps = new Dictionary<string, DateTime>();
@@ -137,18 +137,19 @@ internal static class LinuxCorrelationAnalyzer
         return (users, ips, failures);
     }
 
-    private static (List<(string User, string Ip, DateTime Time)> Matches, int ParseFailures) ExtractMatches(
-        List<EventLogEntryData> events, Regex pattern)
+    private static (List<(string User, string Ip, DateTime Time)> Matches, int ParseFailures) ExtractAccepted(
+        List<EventLogEntryData> events)
     {
         var matches = new List<(string User, string Ip, DateTime Time)>();
         var failures = 0;
 
         foreach (var evt in events)
         {
-            var match = pattern.Match(evt.Message);
-            if (match.Success)
+            if (LinuxAuthParser.IsAcceptedKeyNotice(evt.Message)
+                && !LinuxAuthParser.TryParseAccepted(evt.Message, out _, out _)) continue;
+            if (LinuxAuthParser.TryParseAccepted(evt.Message, out var user, out var ip))
             {
-                matches.Add((match.Groups["user"].Value, match.Groups["ip"].Value, evt.TimeGenerated));
+                matches.Add((user, ip, evt.TimeGenerated));
             }
             else
             {

@@ -30,7 +30,14 @@ public static class PrtgFailureText
     /// <summary>HTTP 狀態碼的說明：400 帶 PRTG 的錯誤文字（<paramref name="detail"/>），其餘維持狀態碼。</summary>
     public static string ForHttpStatus(int statusCode, string? detail = null)
     {
-        var head = statusCode == 400 ? BadRequest : $"PRTG 伺服器回應錯誤：HTTP {statusCode}";
+        var head = statusCode switch
+        {
+            400 => BadRequest,
+            // 連線不跟隨轉址（OutboundHttp）：只給狀態碼的話操作者不知道要改位址
+            301 or 302 or 303 or 307 or 308 =>
+                $"PRTG 伺服器要求轉址（HTTP {statusCode}），本系統不跟隨：請把連線位址改成最終網址，常見是 http:// 要改成 https://",
+            _ => $"PRTG 伺服器回應錯誤：HTTP {statusCode}"
+        };
         return WithOriginal(head, detail);
     }
 

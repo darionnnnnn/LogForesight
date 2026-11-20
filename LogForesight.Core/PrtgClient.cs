@@ -131,7 +131,8 @@ public sealed class PrtgClient : IDisposable
         string passwordOrEmpty,
         string passhashOrEmpty,
         PrtgRequestBudget? budget = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        string? trustedCertificateSha256 = null)
     {
         Budget = budget ?? PrtgRequestBudget.Shared;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -143,7 +144,7 @@ public sealed class PrtgClient : IDisposable
             string.IsNullOrEmpty(parsed.Host))
         {
             throw new PrtgClientException(
-                $"PRTG 的連線位址格式不正確：「{UrlSecrets.Mask(baseUrl)}」。" +
+                $"PRTG 的連線位址格式不正確：「{UrlSecrets.MaskAddressInput(baseUrl)}」。" +
                 "請填寫完整網址，含 https:// 或 http://（例如 https://prtg.corp.local）。");
         }
 
@@ -171,7 +172,11 @@ public sealed class PrtgClient : IDisposable
         _password = passwordOrEmpty ?? string.Empty;
 
         var ownsHandler = handler == null;
-        var actualHandler = handler ?? CreateDefaultHandler(ignoreSslErrors);
+        if (!ServerCertificateTrust.TryNormalize(trustedCertificateSha256, out _))
+            throw new PrtgClientException("PRTG 信任的憑證指紋格式不正確，應為 64 個十六進位字元的 SHA-256。");
+        // 注入的 handler（測試）不經憑證判定；自建時一律掛上，探測才拿得到伺服器出示的指紋
+        _certificateTrust = handler == null ? new ServerCertificateTrust(trustedCertificateSha256, ignoreSslErrors) : null;
+        var actualHandler = handler ?? OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5), _certificateTrust!.Validate);
         Handler = actualHandler;
 
         _http = new HttpClient(actualHandler, disposeHandler: ownsHandler)
@@ -180,25 +185,28 @@ public sealed class PrtgClient : IDisposable
             MaxResponseContentBufferSize = MaxResponseBytes
         };
 
-        if (ownsHandler && ignoreSslErrors)
+        // PRTG 的認證放在查詢字串裡，走 http:// 等於每個請求都以明文送出 token／帳密
+        if (UsesPlainHttpWithCredentials(parsed, _token, _usesUsernameAuth))
+        {
+            Log.Warn("[PRTG] 連線位址是 http://，認證資訊會以明文傳送；正式環境請改用 https://");
+        }
+
+        if (ownsHandler && ignoreSslErrors && _certificateTrust!.PinnedSha256 is null)
         {
             Log.Info("[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）");
         }
     }
 
-    private static HttpMessageHandler CreateDefaultHandler(bool ignoreSslErrors)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            AllowAutoRedirect = false
-        };
-        if (ignoreSslErrors)
-        {
-            handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
-        }
-        return handler;
-    }
+    internal static bool UsesPlainHttpWithCredentials(Uri baseUri, string token, bool usesUsernameAuth) =>
+        baseUri.Scheme == Uri.UriSchemeHttp && (usesUsernameAuth || !string.IsNullOrWhiteSpace(token));
+
+    private readonly ServerCertificateTrust? _certificateTrust;
+
+    /// <summary>最近一次連線時 PRTG 出示的憑證指紋（SHA-256；http 連線或還沒連過為 null）</summary>
+    public string? PresentedCertificateSha256 => _certificateTrust?.LastPresentedSha256;
+
+    /// <summary>最近一次連線憑證被拒的原因（本系統的中文說明，可直接顯示）；沒有被拒為 null</summary>
+    public string? CertificateRejection => _certificateTrust?.LastRejection;
 
     /// <summary>
     /// 測試 PRTG 連線：呼叫 sensors 端點取得最少資料以驗證連線位址與認證資訊有效性。
@@ -351,13 +359,12 @@ public sealed class PrtgClient : IDisposable
     }
 
     /// <summary>
-    /// 回應超過 <see cref="MaxResponseBytes"/> 時 HttpClient 擲的例外：HttpRequestException、沒有 InnerException、
-    /// 訊息帶著上限位元組數。逾時是 TaskCanceledException、連線失敗帶 InnerException（SocketException／IOException），
-    /// 兩者都不會落進這裡——超量與逾時／連線失敗是兩種訊息。
+    /// 回應超過 <see cref="MaxResponseBytes"/>（<c>MaxResponseContentBufferSize</c>）時 HttpClient 擲的例外。
+    /// 以框架提供的錯誤分類判斷：超量回 <see cref="HttpRequestError.ConfigurationLimitExceeded"/>，
+    /// 連線被拒是 <see cref="HttpRequestError.ConnectionError"/>、逾時是 TaskCanceledException，都不會落進這裡。
+    /// 不比對訊息字串：訊息本地化或框架改版不會讓判定靜默失效。
     /// </summary>
-    private static bool IsOverCapacity(HttpRequestException ex) =>
-        ex.InnerException == null &&
-        ex.Message.Contains(MaxResponseBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    internal static bool IsOverCapacity(HttpRequestException ex) => HttpResponseLimit.IsExceeded(ex);
 
     /// <summary>
     /// 讀 <c>Retry-After</c>：秒數格式直接取，日期格式用 <see cref="_timeProvider"/> 換算成從現在起的長度。
@@ -375,8 +382,12 @@ public sealed class PrtgClient : IDisposable
         PrtgFailureText.ServerGaveUp, kind: PrtgFailureKind.EmptyPage);
 
     /// <summary>傳輸層失敗：依種類（逾時／連不上）給中文說明，底層英文原文（已遮蔽憑證）附在後面。</summary>
-    private static PrtgClientException TransportFailure(string stage, string sanitizedOriginal, Exception ex)
+    private PrtgClientException TransportFailure(string stage, string sanitizedOriginal, Exception ex)
     {
+        // 憑證被拒：原文只會說 SSL 連線失敗，指明是指紋不符或憑證不被信任；重試不會改變結果
+        if (ex is HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError } &&
+            _certificateTrust?.LastRejection is { } rejection)
+            return new PrtgClientException($"{stage}：{rejection}", ex, PrtgFailureKind.Other);
         var kind = ClassifyTransportFailure(ex);
         return new PrtgClientException(
             $"{stage}：{PrtgFailureText.WithOriginal(PrtgFailureText.ForTransport(kind), sanitizedOriginal)}", ex, kind);
@@ -604,10 +615,9 @@ public sealed class PrtgClient : IDisposable
 
             if (expectJson && trimmed.StartsWith('<'))
             {
-                var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;
-                var sanitized = StripSecrets(head.Replace("\r", " ").Replace("\n", " ").Replace("\t", " "));
+                // 不夾帶回應原文：登入頁可能含主機名、使用者名稱等資訊，訊息會進探測輸出與記錄
                 throw new PrtgClientException(
-                    $"PRTG 回傳 HTML 而非 JSON（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）：{sanitized}");
+                    "PRTG 回傳 HTML 而非 JSON，回應不是預期格式（登入頁代表連線位址或認證資訊有誤；空白頁多半是伺服器端處理逾時或負載過高）。");
             }
 
             transportTimer?.Stop();

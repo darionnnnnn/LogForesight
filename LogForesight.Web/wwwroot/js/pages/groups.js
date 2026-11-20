@@ -8,6 +8,7 @@ import { renderTable, renderLoading, renderEmpty, renderError, toast, confirmAct
 import { createSeqGuard } from '../core/async-guards.js';
 import { formatNumber } from '../core/format.js';
 import { roleText, statusNote } from '../core/elements.js';
+import { compareText } from '../core/collation.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
@@ -25,17 +26,8 @@ let selectedAdd = new Set();       // 加入預覽勾選（hostId），跨頁保
 
 // ── 分頁切換 ─────────────────────────────────────────────────────────────────
 
-document.getElementById('group-tabs').addEventListener('click', event => {
-    const button = event.target.closest('[data-tab]');
-    if (!button) return;
-
-    for (const tab of document.querySelectorAll('#group-tabs .nav-link')) {
-        tab.classList.toggle('active', tab === button);
-    }
-    for (const panel of document.querySelectorAll('[data-panel]')) {
-        panel.classList.toggle('d-none', panel.dataset.panel !== button.dataset.tab);
-    }
-});
+// 頁籤名稱各自唯一，網址 #user-groups／#host-groups／#access 直接開啟對應頁籤；成員對話框那組（members-tabs）不吃頁面 hash
+bindTabs(document.getElementById('group-tabs'), { hash: true });
 
 // ── 載入與渲染 ───────────────────────────────────────────────────────────────
 
@@ -423,7 +415,7 @@ document.querySelector('[data-new-host-group]').addEventListener('click', () => 
 
 // ── 成員 modal：頁籤切換 ─────────────────────────────────────────────────────
 
-bindTabs(document.getElementById('members-tabs'), {
+const membersTabs = bindTabs(document.getElementById('members-tabs'), {
     onChange: name => {
         document.getElementById('members-footer-current').classList.toggle('d-none', name !== 'current');
         document.getElementById('members-footer-add').classList.toggle('d-none', name !== 'add');
@@ -436,15 +428,8 @@ function openMembersModal(group) {
     selectedAdd = new Set();
     document.getElementById('members-group-name').textContent = group.groupName;
 
-    // 每次開啟固定回到「目前成員」頁籤，並重置「加入成員」頁籤的殘留狀態
-    for (const tab of document.querySelectorAll('#members-tabs .nav-link')) {
-        tab.classList.toggle('active', tab.dataset.tab === 'current');
-    }
-    for (const panel of document.querySelectorAll('#members-modal [data-panel]')) {
-        panel.classList.toggle('d-none', panel.dataset.panel !== 'current');
-    }
-    document.getElementById('members-footer-current').classList.remove('d-none');
-    document.getElementById('members-footer-add').classList.add('d-none');
+    // 每次開啟固定回到「目前成員」頁籤（面板與頁尾按鈕由 onChange 同步），並重置「加入成員」頁籤的殘留狀態
+    membersTabs.show('current');
 
     membersInput.value = '';
     setMembersMode('cidr');
@@ -520,7 +505,7 @@ function renderCurrentMembers() {
     }
 
     container.replaceChildren();
-    for (const [cidr, members] of [...bySubnet.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const [cidr, members] of [...bySubnet.entries()].sort((a, b) => compareText(a[0], b[0]))) {
         const details = document.createElement('details');
         details.className = 'mb-2 border rounded';
         details.open = true;

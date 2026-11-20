@@ -162,7 +162,7 @@ public class RecordDetailQueryService
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
             .ToDictionary(g => g.Key, g => g.First());
 
-        return new RecordDetailDto
+        var detail = new RecordDetailDto
         {
             HostId = hostId,
             HostName = host?.HostName ?? record.Host,
@@ -173,36 +173,35 @@ public class RecordDetailQueryService
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
             RiskBasisText = FormatRiskBasis(record.RiskBasis),
-            RiskReview = caseGrantOnly ? null : record.RiskReview,
-            LogSource = caseGrantOnly ? null : record.LogSource.ToString(),
-            LatestNetiqAttemptStatus = caseGrantOnly ? null : record.LatestNetiqAttemptStatus,
-            LatestNetiqAttemptAtUtc = caseGrantOnly ? null : record.LatestNetiqAttemptAtUtc,
-            PrtgSupplementEligible = caseGrantOnly ? null : record.CanSupplementWithPrtg(),
+            RiskReview = record.RiskReview,
+            LogSource = record.LogSource.ToString(),
+            LatestNetiqAttemptStatus = record.LatestNetiqAttemptStatus,
+            LatestNetiqAttemptAtUtc = record.LatestNetiqAttemptAtUtc,
+            PrtgSupplementEligible = record.CanSupplementWithPrtg(),
             HiddenIssueCount = record.HiddenIssueCount,
-            // 以下整日敘事在案件授與模式下一律清空（§7）——見上方裁剪處的說明
-            Headline = caseGrantOnly ? "" : record.Headline,
-            Brief = caseGrantOnly ? "" : record.Brief,
-            Summary = caseGrantOnly ? "" : record.Summary,
-            TrendAssessment = caseGrantOnly ? "" : record.TrendAssessment,
-            Action = caseGrantOnly ? "" : record.Action,
-            AiAnalyzed = !caseGrantOnly && record.AiAnalyzed,
-            AiPending = !caseGrantOnly && record.AiPending,
-            AiDegradedAttempts = caseGrantOnly ? 0 : record.AiDegradedAttempts,
+            Headline = record.Headline,
+            Brief = record.Brief,
+            Summary = record.Summary,
+            TrendAssessment = record.TrendAssessment,
+            Action = record.Action,
+            AiAnalyzed = record.AiAnalyzed,
+            AiPending = record.AiPending,
+            AiDegradedAttempts = record.AiDegradedAttempts,
             DetailPruned = record.DetailPruned,
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
             TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
-            TrendAlerts = caseGrantOnly ? new List<string>() : record.TrendAlerts,
-            CorrelationAlerts = caseGrantOnly ? new List<string>() : record.CorrelationAlerts,
-            TrendAlertRefs = caseGrantOnly ? new List<TrendAlertRefDto>() : record.TrendAlertRefs
+            TrendAlerts = record.TrendAlerts,
+            CorrelationAlerts = record.CorrelationAlerts,
+            TrendAlertRefs = record.TrendAlertRefs
                 .Select(r => new TrendAlertRefDto { Text = r.Text, IssueKey = r.IssueKey, Kind = r.Kind }).ToList(),
-            CorrelationAlertRefs = caseGrantOnly ? new List<CorrelationAlertRefDto>() : record.CorrelationAlertRefs
+            CorrelationAlertRefs = record.CorrelationAlertRefs
                 .Select(r => new CorrelationAlertRefDto { Text = r.Text, PatternId = r.PatternId }).ToList(),
-            SuppressedTrendAlerts = caseGrantOnly ? new List<string>() : record.SuppressedTrendAlerts,
-            SuppressedCorrelationAlerts = caseGrantOnly ? new List<string>() : record.SuppressedCorrelationAlerts,
-            DeepDives = caseGrantOnly ? new List<DeepDiveDto>() : record.DeepDives.Select(d => new DeepDiveDto
+            SuppressedTrendAlerts = record.SuppressedTrendAlerts,
+            SuppressedCorrelationAlerts = record.SuppressedCorrelationAlerts,
+            DeepDives = record.DeepDives.Select(d => new DeepDiveDto
             {
                 Category = d.Category.ToString(),
                 Findings = d.Findings.Select(f => new DeepDiveFindingDto
@@ -213,29 +212,30 @@ public class RecordDetailQueryService
                     NextSteps = f.NextSteps
                 }).ToList()
             }).ToList(),
-            // 案件授與只提供單一問題範圍；整日檢查涵蓋率與週檢結果不可讀，也不可顯示為完整或無發現。
-            DataIncomplete = !caseGrantOnly && record.DataIncomplete,
-            SecurityLogAvailable = caseGrantOnly ? null : record.SecurityLogAvailable,
-            UncoveredChecks = caseGrantOnly ? new List<string>() : record.UncoveredChecks,
+            DataIncomplete = record.DataIncomplete,
+            SecurityLogAvailable = record.SecurityLogAvailable,
+            UncoveredChecks = record.UncoveredChecks,
             // 報告有自己的保留期，可能比紀錄先被清掉——實查有無，不看紀錄上那個永遠留著的旗標，
             // 否則畫面會給出一個點下去必定落空的入口
-            HasReport = !caseGrantOnly && _reports.Exists(reportHost, date, ReportKinds.DailyRisk),
-            // 這是整日報告工作狀態；案件授與只涵蓋被交辦問題，不能洩漏整台主機的報告狀態。
-            RiskReportPending = caseGrantOnly ? null : record.RiskReportPending,
+            HasReport = _reports.Exists(reportHost, date, ReportKinds.DailyRisk),
+            RiskReportPending = record.RiskReportPending,
             CaseGrantOnly = caseGrantOnly,
-            WeeklyCheckup = caseGrantOnly || record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
+            WeeklyCheckup = record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
             {
                 CheckupDate = record.WeeklyCheckup.CheckupDate.ToString("yyyy-MM-dd"),
                 HasFindings = record.WeeklyCheckup.HasFindings,
                 Conclusion = record.WeeklyCheckup.Conclusion,
                 // 體檢報告掛在體檢基準日，不是這筆紀錄的日期
-                HasReport = !caseGrantOnly &&
+                HasReport =
                             _reports.Exists(reportHost, record.WeeklyCheckup.CheckupDate, ReportKinds.WeeklyCheckup)
             },
             CanHandle = _currentUser.Has(Capability.Handle),
             UnhandledSeverities = settings.UnhandledSeverities,
             SeverityDisplayMode = settings.SeverityDisplayMode
         };
+        // 案件授與者只拿白名單欄位（§7）：逐欄清空會漏（判定依據、隱藏問題數、事件數都曾漏掉），
+        // 白名單投影讓新增的欄位預設不外流
+        return caseGrantOnly ? CaseGrantDetailView.Project(detail) : detail;
     }
 
     /// <summary>

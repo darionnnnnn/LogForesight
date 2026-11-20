@@ -25,9 +25,10 @@
 |---|---|
 | 資料表 `lf_`、索引 `ix_lf_` 前綴，識別字使用小寫 snake_case | 避免與同庫其他系統混淆；EF 模型與升級器共用命名 |
 | 長文字與巢狀資料由應用層序列化，存入文字欄位 | 不讓查詢依賴單一資料庫的 JSON 函式 |
-| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值。外部字串落地前一律經 `ColumnClamp`（上限讀 EF 模型的 `HasMaxLength`）截斷；鍵欄位（`source_key`、`issue_key` 等）不截斷——`source_key` 由 `SourceKeyOf` 先截 255 再轉大寫，`issue_key` 超過上限則不寫並警告。簽章的 `Source`／`LogName` 在入口（`LogIssueSignature` 的 setter，所有建構與反序列化路徑都經過）就截到 255，問題鍵與來源鍵都由截斷後的值衍生。已知限制：SQLite 不強制長度，舊版寫入的列可能存有超過 255 字的來源，讀回時會在記憶體截斷，與新寫入的鍵一致 |
+| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值。`LfDbContext.SaveChanges`／`SaveChangesAsync` 統一處理：對 Added 與 Modified（只看實際被修改的屬性）實體，依 EF 模型的 `HasMaxLength` 把非鍵欄位截斷（欄位清單依實體型別快取，不逐筆反射，不產生額外資料庫指令）；截斷只有 `TextTruncation.SafeCut` 一個出口，切點落在代理對中間時少取一個字元。主鍵、索引（含唯一）與外鍵欄位由模型定義推導、不截斷（截斷會與別的鍵撞號或永遠對不上）：超長時該筆改為 Detached 不寫入並記警告，同批其他筆照常寫入；警告照常記 log：執行紀錄的常駐 target 只在記憶體內計數並入佇列，由背景執行緒寫庫，不在記 log 的執行緒上碰資料庫，所以呼叫端已開明確交易時記警告也不會互鎖。一般寫入路徑（`SaveChanges`）由模型統一截斷，上限只有 `LfDbContext` 的 `HasMaxLength` 一處來源。例外只有兩類：（1）不經 `SaveChanges` 的寫入逐處依模型長度截斷（`ColumnClamp.ClampFor`，上限取自模型、不寫字面值）——權限異動確認的確認人帳號（`ExecuteUpdate`）、交辦單續掛停止原因（`ExecuteUpdate`）、背景整併解析出的案件來源名稱（`ExecuteUpdate`）、首見日批次新增的來源名稱（原生 INSERT，逐筆降級的 `SaveChanges` 共用同一出口）；其餘繞過寫入只寫布林、數值、版本號、時間、程式固定值或不設上限的 JSON／文字欄，或在同長度欄位之間複製（升級器的首見日回補），不需截斷。（2）索引欄超長時整列不寫的代價高於截斷——問題列的 `TopIssueRow.SourceName`、風險事件的 `Source`、PRTG 裝置 `Ip` 與感測器 `SensorType`——這幾處先依模型截斷再入庫。資料搬運與遷移器（權限異動、處理狀態）都經 `SaveChanges` 寫入，由同一機制涵蓋：非鍵欄截斷後搬入，鍵／索引欄超長的那一列不搬並警告，遷移本身照常完成。`source_key` 由 `SourceKeyOf` 先截 255 再轉大寫，`issue_key` 超過上限則在上游就不寫並警告。簽章的 `Source`／`LogName` 在入口（`LogIssueSignature` 的 setter，所有建構與反序列化路徑都經過）就截到 255，問題鍵與來源鍵都由截斷後的值衍生。`ExecuteUpdate` 與原生 SQL 不經 `SaveChanges`，不在 `PrepareForSave` 涵蓋內，由上述逐處截斷負責（`BypassWriteTruncationTests` 逐處守門）。已知限制：SQLite 不強制長度，舊版寫入的列可能存有超過 255 字的來源，讀回時會在記憶體截斷，與新寫入的鍵一致 |
 | 主鍵、分頁及日期查詢交給 EF Core；少數升級 DDL 分 provider 實作 | 兩個後端的 SQL 語法與索引管理不同 |
 | 寫入多表時明訂交易邊界；SQL Server 的顯式交易由執行策略包住 | 避免部分寫入及重試策略與自開交易衝突 |
+| 暫時性錯誤依資料庫錯誤碼判定、不看訊息文字 | `EfJsonBlobStore.IsTransient`（blob 寫入撞並發時短退避重試）沿著內層例外找：SQLite 主結果碼 5（BUSY）、6（LOCKED，延伸碼取低 8 位元）；SQL Server 的 `SqlException.Number` 屬死結 1205、鎖逾時 1222、命令逾時 -2、連線／傳輸中斷（-1、2、53、64、233、10053、10054、10060）或 Azure 暫時性失敗（40197、40501、40613、49918～49920）；另有樂觀並發衝突與首次寫入的唯一鍵競態。訊息含 busy／locked 字樣但錯誤碼不符不重試（`TransientErrorCodeTests`） |
 
 ## 資料表設計（欄位級）
 
@@ -56,6 +57,8 @@
 
 每張實體表的欄位區塊（偽 DDL，型別用本文件的通用寫法）都由 `DbSpecModelParityTests` 對 `LfDbContext` 的 EF 模型守門：
 欄名、可空性必須一致，且每張表只能有一個區塊。
+
+手寫建表語句（`SchemaUpgrader` 的 SQLite／SQL Server 兩套 `CREATE TABLE` 與 `AddColumnIfMissing` 補欄定義）對 EF 模型另有型別與長度對帳（`SchemaUpgraderTypeParityTests`）：SQL Server 比完整型別字串（含 `nvarchar(255)` 的長度、`bigint`、`datetime2`），SQLite 的字串欄一律是 `TEXT`、沒有長度，比儲存類別。欄名與可空性對帳見 `SchemaUpgraderModelParityTests`。
 
 ```
 lf_log_lines                                         -- append-only 逐行 JSONL（稽核／執行／匯入／處理歷程等）
@@ -297,6 +300,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   id                   bigint PK IDENTITY
   change_id            nvarchar(64) NOT NULL            -- GUID("N")，對外識別用；唯一性由下方索引保證（DDL 無 UNIQUE 子句）
   dedupe_key           nvarchar(max) NOT NULL           -- 主機|事件時間Ticks|EventId|告警文字
+  dedupe_key_hash      nvarchar(64) NULL                -- dedupe_key 的 SHA-256 小寫十六進位（固定 64 字元）；升級前的既有列為 NULL，由背景回填補齊
   host_name            nvarchar(255) NOT NULL           -- 非正規化字串，不是 FK
   host_name_key        nvarchar(255) NOT NULL           -- 不分大小寫比對用的正規化鍵
   detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
@@ -325,7 +329,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   confirm_note         nvarchar(max) NULL
 
 索引：change_id 唯一；(status, detected_at)；detected_at；(host_name_key, detected_at)；
-      (category, status)；created_at
+      (category, status)；created_at；dedupe_key_hash（一般索引，不加唯一約束）
 ```
 
 **確認狀態與異動同列，不另建表。** 三個理由：狀態要能在 SQL 端篩選；批次核准要能做成
@@ -336,12 +340,22 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
 用 `created_at`。反例：NetIQ 重跑一個 100 天前的主機日，寫出的列 `detected_at` 是 100 天前、
 `created_at` 是現在——依 `detected_at` 清理的話這批剛補出來的待辦會立刻消失。**不要改回去。**
 
-**`dedupe_key` 不設長度上限也不建索引。** 它由「主機名(≤255)｜Ticks(19)｜EventId｜
+**`dedupe_key` 不設長度上限、不直接建索引，另存固定長度雜湊 `dedupe_key_hash`。** 它由「主機名(≤255)｜Ticks(19)｜EventId｜
 AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不
 出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」；而 SQL Server 非叢集索引鍵
-上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。沒有任何查詢以
-它為條件：跨執行去重走 `GetDedupeKeysForHost`，以 `(host_name_key, detected_at)` 複合索引
-篩出該主機該批時間區間的列後才投影這一欄——索引不存在也不影響效能。
+上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。
+以它為條件的四個方法（`PermissionChangeStore` 的 `UpsertByDedupeKey`、`DeleteByDedupeKeys`、
+`ExistsByDedupeKey`、`DeleteByDedupeKey`）改查 `dedupe_key_hash`：SHA-256 完整 32 bytes 的小寫十六進位（64 字元，
+`PermissionChangeDedupeHash.Of` 是唯一計算出口），查詢命中雜湊後**仍比對原鍵**，所以不靠雜湊單獨判定相等（SQL Server 預設不分大小寫的定序下，
+雜湊路徑比原鍵路徑嚴格：只差大小寫的告警文字視為不同筆，與記憶體內去重 `StringComparer.Ordinal` 一致）。
+跨執行去重走 `GetDedupeKeysForHost`，以 `(host_name_key, detected_at)` 複合索引篩出該主機該批時間區間的列後才投影 `dedupe_key`，不受影響。
+
+**雜湊欄的寫入與回填。**
+- 寫入：所有寫入路徑（批次、彙總列 upsert、舊資料遷移）都經 `SaveChanges`，由 `LfDbContext.PrepareForSave` 在寫入點統一計算；新列不會是 NULL。
+- 回填：`PermissionChangeDedupeBackfiller` 在背景（併入 `TopIssueBackfillHostedService` 的共用閘、重試與資料版本推進，與問題聚合回填互不阻擋）每批 500 列、每批一個交易補齊舊列，中斷後下次啟動接續；
+  補到沒有 NULL 才寫版本化 blob `permission_changes_dedupe_hash_done` 並發布就緒旗標。
+- 就緒閘門：`PermissionChangeDedupeBackfiller.Ready` 只升不降（`StorageBackend.PermissionChanges()` 建的 store 一律依它切換）。就緒前四個方法走原鍵比對（全表掃描、結果與就緒後相同），就緒後走雜湊索引。
+  啟動快判 `TryFastReady` 先看完成標記，再以索引可 seek 的 `dedupe_key_hash IS NULL` EXISTS 判定，不 `Count()` 全表；標記存在即直接視為就緒、不掃資料列。
 
 **升級路徑**：舊部署的資料在 log key `perm_changes`（JSONL）與 blob key `perm_confirms`，
 由 `PermissionChangeMigrator` 背景搬移。它有**自己的**遷移狀態（blob key
@@ -475,6 +489,7 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 （`OwnedRows` 範圍）在指定日期上的分析紀錄，回傳刪除的主列筆數。規則更新後重新分析舊日子時，
 在寫入新結果前呼叫（見 [WEB-SPEC.md](WEB-SPEC.md) §10.9）。
 
+- **交易式單日取代**：重跑覆蓋既有日期一律用 `IAnalysisRecordStore.ReplaceDay(record)`——刪該日舊列（範圍同上）與寫新列在同一個交易內（包在 execution strategy 裡，SQLite 與 SQL Server 同一份程式），寫入擲例外時舊資料原封不動；持有該主機日鎖，寫入修訂號與 `Append` 同語意。NetIQ 路徑與本機路徑都走它；覆蓋既有日期的呼叫端只呼叫 `ReplaceDay`，不拆成 `DeleteDays` 加 `Append`。
 - **刪除範圍**：`lf_daily_records` 主列＋`lf_top_issues` 子列。類別彙總／告警／深入分析目前寫在
   `content_json` 內（尚未各自成表），隨主列一併消失；`lf_risky_events` 每日寫入本就是 `ReplaceDay`，
   重跑時自然覆蓋，不需另刪。
@@ -642,7 +657,7 @@ Schema 演進採「只增不改」：新版本只加欄位（nullable 或有預�
 > 讀取端據此分辨「尚未同步」與「同步過但零筆」，不可用零值代表未執行。
 
 > 交辦通知的待寄項目存在 `lf_blobs` 的 `work_order_outbox`（單一物件型，與 `mail_notify_state` 分開以免撐爆單列上限；
-> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；寄送規則見 WEB-SPEC §9.4b「通知」。
+> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；超過上限丟棄最舊項目時記警告，並寫入 `work_order_outbox_drops`（見 blob 清單）供健康整體狀態使用；寄送規則見 WEB-SPEC §9.4b「通知」。
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／
@@ -898,9 +913,11 @@ lf_blobs                                             -- 整份 JSON 型 store，
 | `user_prefs` | 每位使用者的常用語及初始設定引導顯示偏好；全站預設常用語在 `system_settings` |
 | `log_id_allocator:batch_runs`／`log_id_allocator:batch_run_logs` | 最高已預約的單調 RunId／LogId；19 字元上限，SQL Server transaction app lock／SQLite 寫入交易跨 store 配發。清除 log 不刪計數器；append 失敗保留間隙；損毀、過長或耗盡拒絕配發，無新 DDL。 |
 | `permission_version` | 群組、主機負責人與問題負責人能力變動後的權限版本；請求時比對並刷新權限 |
+| `server_admin_session_version` | 本地救援帳號（不在 `users`）的工作階段版號；登出時遞增，登入 cookie 內版號不同即失效。一般使用者的有效版號＝`users` blob 的 `SessionVersion` 欄位（舊資料與啟用轉停用時遞增，缺欄為 0）加上 `user_session_versions` 的登出增量 |
 | `prtg_freshness` | 各 PRTG 資料類別的最後成功時間、筆數及連續零筆次數 |
 | `prtg_scope_baseline` | 監看裝置範圍外清除的上次基準及最近擋下原因 |
 | `user_last_login` | 與 `users` 分開寫入的最近登入時間，避免每次登入使使用者快取失效 |
+| `user_session_versions` | 使用者（userId → 次數）的登出增量；與 `users` 分開寫入，日常登出不讓 `users` 版本前進（PRTG 範圍清除作業以 `users` 版本當授權柵欄，登出不該讓它暫停） |
 
 PRTG 衝突類型依最新裝置鏡像及主機對應即時計算，未另存 `conflict_kind` 欄；持久化會使主機 IP
 或鏡像變動後留下過期分類。回填依本次指定天數執行，沒有另設回填水位。
@@ -933,6 +950,8 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 | `prtg_resource_guard_autodetect` | `PrtgResourceGuardAutoDetect`（夜間自動偵測寫；設定頁預覽讀） | `DetectedAt`、`Objids`；清單等於它才算自動偵測結果 |
 | `prtg_recent_stateq_*` | `EfPrtgStore.RecentStateChangeQueuePrefix`（快照服務） | 近期狀態變更待辦 |
 | `prtg_import_diagnostic_*` | 舊版遺留，已無寫入端；`RetentionPruner` 每輪最多清 100 份 | 舊版隔離診斷匯入 |
+| `permission_changes_dedupe_hash_done` | `PermissionChangeDedupeBackfiller.Run`（回填完成且無 NULL 時寫） | 權限異動去重鍵雜湊欄回填完成的紀錄（版本字串），沒有讀取端：就緒與否每次啟動以索引可 seek 的 `dedupe_key_hash IS NULL` EXISTS 判定，有待補列就由背景回填補齊 |
+| `work_order_outbox_drops` | `WorkOrderOutboxDropStore`（`WorkOrderOutboxStore` 丟棄項目時寫；健康頁讀） | 交辦 outbox 超過上限丟棄的紀錄：近期累計筆數與最近一次丟棄時間；與 outbox 分開，健康頁讀它不必反序列化整份 outbox |
 | `risky_events_source_key_done` | `TopIssueBackfiller.RunRiskySourceKeys`（回填完成且無 NULL 時寫；啟動時讀） | 風險事件來源鍵回填完成標記（版本字串）；存在即不再掃 `lf_risky_events`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
 
 - `lf_blobs.version` 同時作快取版本與 EF 併發權杖；`system_settings` JSON 的 `revision` 每次成功更新換 GUID（舊資料為 `legacy`），API 的預期版本在 `Mutate` 內比對。
@@ -1143,7 +1162,7 @@ lf_prtg_transfer_chunks                              -- 診斷包原始片段
 
 ### NetIQ 最新取數嘗試帳本
 
-NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。不新增 Daily 父列，也不代替父資格。
+NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。寫入時某主機日的最新一列損毀（超大、無法解析、主機或日期對不上、狀態未知）只影響該主機日：記警告並以本次回執覆寫同一列（累計截斷／重查計數從本次重新起算），同批其餘主機照常寫入，讀取端因此不會被該列擋住。呼叫端（`NetiqPipelineService.TryRecordAttempt`）對帳本寫入失敗只記警告，不把整台 Sentinel 記成失敗，也不重複計入已分析主機日的失敗。不新增 Daily 父列，也不代替父資格。
 
 RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 CreatedAt 判保留期；每批 5,000、單輪最多 200,000，剩餘留後續輪次。更新與讀取保留原 NetIQ 判定內容、案件與人工回覆，父日的 LatestNetiqAttemptStatus 同步標示失敗或 retained-incomplete，使正式補強 consumer 等待。狀態帳本的 3,000 主機 provider 驗證不代表完整 PRTG 容量／180日保留通過。
 

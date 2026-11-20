@@ -6,7 +6,7 @@
 import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
 import { statusesWhere, statusBadgeMeta, isNoFixClosure, replyableCount } from '../core/handling-statuses.js';
 import { mailNotifyText } from '../core/mail-notify.js';
-import { exclusive } from '../core/async-guards.js';
+import { exclusive, createSeqGuard } from '../core/async-guards.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -28,6 +28,7 @@ import {
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
+import { copyText } from '../core/clipboard.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -76,6 +77,7 @@ async function fetchCandidates(hostIds) {
 }
 
 async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false, hostIds = [] }) {
+    let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const users = await fetchCandidates(hostIds);
     // 停用帳號後端一定拒絕，不擺一個必定失敗的選項
     const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId && u.active);
@@ -118,7 +120,7 @@ async function openSelectHandlerModal({ title, submitText, currentHandlerId, onS
         const handlerId = Number(selectedVal);
         const restore = withBusy(submitBtn, '處理中…');
         try {
-            const closeModal = () => body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            const closeModal = () => modal?.close();
             await onSubmit(handlerId, closeModal, { notifyNow: showNotifyNow && notifyNowCheck.checked });
         } catch {
             restore();
@@ -126,7 +128,7 @@ async function openSelectHandlerModal({ title, submitText, currentHandlerId, onS
     });
 
     body.appendChild(form);
-    showDetailModal({ title, body });
+    modal = showDetailModal({ title, body });
 }
 
 // ── 標頭渲染 ───────────────────────────────────────────────────────────────
@@ -164,8 +166,9 @@ function renderMemberHostCell(item) {
     }
     // 停用主機上的進行中成員不計入處理人的台數：成員列標出來，管理者才知道為什麼數字對不上
     if (!item.hostDisabled || item.closedAt) return name;
+    // 名稱連結與標記同一行：用既有的 lf-meta-line（行內連結點擊區至少 24×24，小字級也點得到）
     const wrap = document.createElement('div');
-    wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
+    wrap.className = 'lf-meta-line';
     wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
     return wrap;
 }
@@ -299,6 +302,7 @@ function blockTargetText(activeCount, singleIssue) {
 }
 
 async function buildAdminCloseModal() {
+    let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     // 結案通知要不要寄取決於交辦單通知開關：依實際設定說明，不承諾不一定寄出的信；讀不到設定就用中性句
     const mailSettings = await getDisplaySettings();
     // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
@@ -410,7 +414,7 @@ async function buildAdminCloseModal() {
                 reason,
                 blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked
             });
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            modal.close();
             toast(`已代為結案 ${res.closedCases} 台`, 'success');
             await reloadAll();
         } catch {
@@ -419,7 +423,7 @@ async function buildAdminCloseModal() {
     });
 
     body.appendChild(form);
-    showDetailModal({ title: '代為結案', body });
+    modal = showDetailModal({ title: '代為結案', body });
 }
 
 /** 設定請求回來前再按一次不會疊開第二個對話框 */
@@ -943,12 +947,9 @@ memberCsvBtn.addEventListener('click', async () => {
         }
 
         const csvContent = rows.join('\r\n');
-        try {
-            await navigator.clipboard.writeText(csvContent);
-            toast(`已複製 ${allItems.length} 台`, 'success');
-        } catch {
-            toast('瀏覽器不允許寫入剪貼簿', 'danger');
-        }
+        const copied = await copyText(csvContent);
+        if (copied.ok) toast(`已複製 ${allItems.length} 台`, 'success');
+        else toast(`複製失敗：${copied.reason}`, 'danger');
     } catch {
         // api.js 已跳出錯誤提示
     } finally {
@@ -959,13 +960,13 @@ memberCsvBtn.addEventListener('click', async () => {
 // ── 載入流程 ───────────────────────────────────────────────────────────────
 
 /** 成員清單的請求序號：連點分頁或連續換篩選時，慢回來的舊請求不可蓋掉新結果 */
-let membersLoadSeq = 0;
+const membersGuard = createSeqGuard();
 
 async function loadMembersOnly() {
-    const seq = ++membersLoadSeq;
+    const seq = membersGuard.next();
     renderLoading(membersContainer, 5);
     const members = await api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`);
-    if (seq !== membersLoadSeq) return;
+    if (!membersGuard.isCurrent(seq)) return;
     renderMembers(members);
 }
 

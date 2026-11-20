@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -62,7 +63,7 @@ public class GroupAdminService
         if (string.IsNullOrWhiteSpace(name))
             throw DomainException.Validation("群組名稱不可為空。");
 
-        if (!Enum.TryParse<UserRole>(request.Role, ignoreCase: true, out var role))
+        if (!InputParsing.TryParseDefinedEnum<UserRole>(request.Role, out var role))
             throw DomainException.Validation($"未知的角色「{request.Role}」。");
 
         var existing = request.GroupId == 0 ? null : _userGroups.Get(request.GroupId);

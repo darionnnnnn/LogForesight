@@ -63,6 +63,13 @@ public class AiProbeService : IAiProbeService
     private DateTime _latestProbedAt = DateTime.MinValue;
     private string _cachedFingerprint = string.Empty;
 
+    /// <summary>
+    /// 站台註冊用的預設用戶端：與正式的 AI 用戶端同一份連線設定（<see cref="LogForesight.Core.OutboundHttp"/>：連線逾時、不跟隨轉址），
+    /// 探活通過才代表實際分析連得上——端點回轉址時兩邊都視為失敗。
+    /// </summary>
+    public static HttpClient CreateDefaultHttpClient() =>
+        new(LogForesight.Core.OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5))) { Timeout = MaxTimeout };
+
     public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient)
     {
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));

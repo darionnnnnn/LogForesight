@@ -75,5 +75,5 @@ public static class AiDegradation
     }
 
     private static string Clamp(string s) =>
-        s.Length <= MaxConclusionChars ? s : s[..(MaxConclusionChars - 1)] + "…";
+        s.Length <= MaxConclusionChars ? s : TextTruncation.SafeCut(s, MaxConclusionChars - 1, "…");
 }

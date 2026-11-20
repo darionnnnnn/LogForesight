@@ -40,6 +40,7 @@ public static class RuleValidator
         }
 
         outcome.ShadowWarnings.AddRange(DetectShadowing(outcome.ValidRules));
+        outcome.ShadowWarnings.AddRange(DetectLinuxPushdownGaps(outcome.ValidRules));
         return outcome;
     }
 
@@ -447,5 +448,96 @@ public static class RuleValidator
         }
 
         return warnings;
+    }
+
+    /// <summary>
+    /// 下推落差警告所用的詞表：常見 syslog 動詞與形容詞的完整詞形。判斷「片語頭尾是不是某個更長詞被切斷」
+    /// 需要一份已知詞表（光看片語本身分不出 <c>Fail</c> 是片段、<c>Failed</c> 是完整詞）；
+    /// 詞表只用來警告、不影響規則是否可存，所以刻意保守——詞表外的片段不警告。
+    /// 不從種子片語推導：種子裡的 <c>Fail event</c>（mdadm）會讓 <c>Fail</c> 變成「已知完整詞」而漏警告。
+    /// </summary>
+    private static readonly System.Collections.Frozen.FrozenSet<string> PushdownVocabulary = System.Collections.Frozen.FrozenSet.ToFrozenSet(new[]
+    {
+        "failed", "invalid", "accepted", "incorrect", "denied", "refused", "rejected", "expired",
+        "exceeded", "terminated", "disconnected", "banned", "unban", "unbanned", "password", "passwords"
+    }, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>內建種子的 Linux 片語（已在正式環境下推驗證過）；使用者規則寫了一模一樣的片語不警告
+    /// （例如種子的 <c>predicted to fail</c> 以 fail 結尾，與單獨的 <c>Fail</c> 在字面上分不開）。</summary>
+    private static readonly Lazy<HashSet<string>> VettedSeedPhrases = new(() =>
+        KnownIssueSeed.CreateRules()
+            .Where(r => r.Platform == "linux")
+            .SelectMany(r => r.MessagePatterns)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Linux 規則片語的下推落差警告：本地比對是子字串（<c>Fail</c> 命中 <c>Failed password</c>），
+    /// 下推到 Sentinel 是整詞片語（<c>msg:("Fail")</c> 只取得到獨立的 Fail 這個詞），
+    /// 片語頭或尾若是某個更長詞的片段，本地會命中、Sentinel 卻取不到——事件根本進不了分析。
+    /// 只是警告、規則照樣可存：片語以空白開頭或結尾（詞界）時該端視為完整，已是完整詞或查無更長詞也不警告。
+    /// 只看啟用中的規則（停用規則不會下推）。
+    /// </summary>
+    internal static List<string> DetectLinuxPushdownGaps(List<KnownIssueRule> validRules)
+    {
+        var warnings = new List<string>();
+        var vocabulary = PushdownVocabulary;
+
+        foreach (var rule in validRules)
+        {
+            if (!rule.Enabled || rule.Platform != "linux")
+            {
+                continue;
+            }
+
+            foreach (var pattern in rule.MessagePatterns)
+            {
+                if (string.IsNullOrEmpty(pattern) || VettedSeedPhrases.Value.Contains(pattern))
+                {
+                    continue;
+                }
+
+                var fragmentSide = FragmentSide(pattern, vocabulary);
+                if (fragmentSide == null)
+                {
+                    continue;
+                }
+
+                warnings.Add($"規則 {rule.Id} 的片語「{pattern}」{fragmentSide}不是完整的詞：" +
+                             $"本地以子字串比對會命中，下推到 Sentinel 是整詞片語、取不到這類事件。" +
+                             $"解法：改成完整的詞（如 Failed），或在片語兩端補空白表示詞界。規則仍可儲存。");
+            }
+        }
+
+        return warnings;
+    }
+
+    /// <summary>片語哪一端是更長詞的片段；兩端都完整回傳 null。</summary>
+    private static string? FragmentSide(string pattern, IReadOnlySet<string> vocabulary)
+    {
+        if (char.IsLetterOrDigit(pattern[^1]))
+        {
+            int start = pattern.Length;
+            while (start > 0 && char.IsLetterOrDigit(pattern[start - 1])) start--;
+            var token = pattern[start..];
+            if (!vocabulary.Contains(token) &&
+                vocabulary.Any(w => w.Length > token.Length && w.StartsWith(token, StringComparison.OrdinalIgnoreCase)))
+            {
+                return "結尾";
+            }
+        }
+
+        if (char.IsLetterOrDigit(pattern[0]))
+        {
+            int end = 0;
+            while (end < pattern.Length && char.IsLetterOrDigit(pattern[end])) end++;
+            var token = pattern[..end];
+            if (!vocabulary.Contains(token) &&
+                vocabulary.Any(w => w.Length > token.Length && w.EndsWith(token, StringComparison.OrdinalIgnoreCase)))
+            {
+                return "開頭";
+            }
+        }
+
+        return null;
     }
 }

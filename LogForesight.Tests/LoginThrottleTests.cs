@@ -104,6 +104,31 @@ public class LoginThrottleTests
         Assert.Empty(t.GetBlocked(T0.AddHours(1)));
     }
 
+    [Fact]
+    public void 鍵數達上限且其餘桶都封鎖中_新桶不被立刻淘汰_失敗照常累計到封鎖()
+    {
+        var t = new LoginThrottle();
+        // 以反射直接塞滿「封鎖中」的桶：逐筆走 RecordFailure 要 10 萬次、每次整張掃描，沒有必要
+        var bucketType = typeof(LoginThrottle).GetNestedType("Bucket", System.Reflection.BindingFlags.NonPublic)!;
+        var accounts = (System.Collections.IDictionary)typeof(LoginThrottle)
+            .GetField("_accounts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(t)!;
+        for (var i = 0; i < LoginThrottle.MaxKeys; i++)
+        {
+            var bucket = Activator.CreateInstance(bucketType, nonPublic: true)!;
+            bucketType.GetField("BlockedUntil")!.SetValue(bucket, (DateTime?)T0.AddMinutes(4));
+            bucketType.GetField("LastTouched")!.SetValue(bucket, T0.AddSeconds(-i));
+            accounts[$"blocked{i}"] = bucket;
+        }
+
+        // 新帳號的第 1 次失敗會讓總鍵數超過上限：舊寫法把這個新桶（唯一未封鎖者）淘汰掉，永遠累計不到門檻
+        for (var i = 0; i < LoginThrottle.AccountThreshold; i++) t.RecordFailure("fresh", null, T0.AddSeconds(i));
+
+        Assert.True(t.IsBlocked("fresh", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+        // 原本封鎖中的桶一個都沒被擠掉
+        Assert.True(t.IsBlocked("blocked0", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+        Assert.True(t.IsBlocked($"blocked{LoginThrottle.MaxKeys - 1}", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+    }
+
     // ── Controller ──────────────────────────────────────────────────────────
 
     private sealed class Harness
@@ -112,10 +137,10 @@ public class LoginThrottleTests
         public readonly RecordingAuditService Audit = new();
         public readonly FakeAuthenticationProvider Provider = new() { ResultToReturn = CredentialCheckResult.Fail("bad") };
         public readonly WebAppSettings Settings = new();
+        public readonly RecordingSessionSigner Signer = new();
 
         public Harness()
         {
-            Settings.Jwt.SecretKey = new string('k', 64);
             Settings.Auth.ServerAdmin.Account = "serverAdmin";
         }
 
@@ -126,9 +151,9 @@ public class LoginThrottleTests
             var hosts = new FakeHostStore();
             var identity = new IdentityService(users, groups, hosts, Provider,
                 new ServerAdminAuthenticator(Settings), Audit, new UserCapabilityResolver(groups, hosts));
-            var controller = new AuthController(identity, new JwtTokenService(Settings, TestPermissionStamps.Shared), Provider,
+            var controller = new AuthController(identity, Signer, Provider,
                 FakeCurrentUser.Anonymous(), Audit, Settings,
-                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle, new RevokedTokens());
+                new UserDisplayNameService(new FakeSystemSettingsStore()), Throttle);
             var http = new DefaultHttpContext();
             http.Connection.RemoteIpAddress = ip;
             controller.ControllerContext = new ControllerContext { HttpContext = http };
@@ -140,16 +165,16 @@ public class LoginThrottleTests
         (r.Result as IStatusCodeActionResult)?.StatusCode;
 
     [Fact]
-    public void 被擋時回429且不呼叫身分驗證_同一次暫停連擋3次只寫1筆稽核()
+    public async Task 被擋時回429且不呼叫身分驗證_同一次暫停連擋3次只寫1筆稽核()
     {
         var h = new Harness();
         for (var i = 0; i < 10; i++)
-            Assert.Equal(401, StatusOf(h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" })));
+            Assert.Equal(401, StatusOf(await h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" })));
         Assert.Equal(10, h.Provider.VerifyCalls);
 
         for (var i = 0; i < 3; i++)
         {
-            var r = h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" });
+            var r = await h.Controller(Ip1).Login(new LoginRequest { Account = "frank", Password = "x" });
             Assert.Equal(429, StatusOf(r));
             var body = (LogForesight.Web.Models.ApiResponse<CurrentUserDto>)((ObjectResult)r.Result!).Value!;
             Assert.StartsWith("登入嘗試次數過多，請於 ", body.Error!.Message);
@@ -157,22 +182,102 @@ public class LoginThrottleTests
 
         Assert.Equal(10, h.Provider.VerifyCalls);
         Assert.Single(h.Audit.Entries, e => e.Action == AuditActions.LoginThrottled);
+        Assert.Empty(h.Signer.SignedIn);   // 失敗與被擋的登入都不建立登入 cookie
     }
 
     [Fact]
-    public void IP已被擋時_serverAdmin仍會進到身分驗證()
+    public async Task IP已被擋時_serverAdmin仍會進到身分驗證()
     {
         var h = new Harness();
         h.Provider.RequiresPasswordValue = false; // Stub 模式：serverAdmin 免密碼即成功
         for (var i = 0; i < 50; i++) h.Throttle.RecordFailure($"u{i}", Ip1, DateTime.Now);
         Assert.True(h.Throttle.IsBlocked("anyone", Ip1, DateTime.Now, out _));
 
-        var blocked = h.Controller(Ip1).Login(new LoginRequest { Account = "anyone", Password = "x" });
+        var blocked = await h.Controller(Ip1).Login(new LoginRequest { Account = "anyone", Password = "x" });
         Assert.Equal(429, StatusOf(blocked));
         Assert.Equal(0, h.Provider.VerifyCalls);
 
-        var r = h.Controller(Ip1).Login(new LoginRequest { Account = "SERVERADMIN", Password = "" });
+        var r = await h.Controller(Ip1).Login(new LoginRequest { Account = "SERVERADMIN", Password = "" });
         Assert.Equal(200, StatusOf(r));
+        Assert.Single(h.Signer.SignedIn, i => i.IsServerAdmin);   // 成功才建立登入 cookie；被擋與失敗都沒有
         Assert.Contains(h.Audit.Entries, e => e.Action == AuditActions.Login && e.Account == "SERVERADMIN");
+    }
+}
+
+/// <summary>
+/// 第 79 輪 G10：失敗計數是原子操作。N 個執行緒以 Barrier 同時起跑記錄失敗，門檻判定必須與依序記錄完全相同——
+/// 少一次不該擋、多一次必擋；計數若有遺失（非原子的讀改寫），剛好等於門檻的那一輪會漏擋。
+/// 各輪都用固定時間點，封鎖時點因此可精確斷言。
+/// </summary>
+public class LoginThrottleConcurrencyTests
+{
+    private static readonly DateTime T0 = new(2026, 9, 19, 10, 0, 0);
+    private static readonly IPAddress Ip = IPAddress.Parse("10.0.0.7");
+
+    private static void RunConcurrently(int count, Action<int> work)
+    {
+        using var barrier = new Barrier(count);
+        var errors = new List<Exception>();
+        var threads = Enumerable.Range(0, count).Select(i => new Thread(() =>
+        {
+            try { barrier.SignalAndWait(); work(i); }
+            catch (Exception ex) { lock (errors) errors.Add(ex); }
+        })).ToList();
+        threads.ForEach(t => t.Start());
+        threads.ForEach(t => t.Join());
+        Assert.Empty(errors);
+    }
+
+    [Theory]
+    [InlineData(LoginThrottle.AccountThreshold - 1, false)]
+    [InlineData(LoginThrottle.AccountThreshold, true)]
+    public void 同帳號並行失敗_剛好達門檻才擋_不因競爭少算或多算(int concurrent, bool blocked)
+    {
+        for (var round = 0; round < 30; round++)
+        {
+            var throttle = new LoginThrottle();
+
+            RunConcurrently(concurrent, _ => throttle.RecordFailure("alice", null, T0));
+
+            Assert.Equal(blocked, throttle.IsBlocked("alice", null, T0, out _));
+            if (blocked)
+            {
+                var entry = Assert.Single(throttle.GetBlocked(T0));
+                Assert.Equal(LoginThrottle.KindAccount, entry.Kind);
+                Assert.Equal(T0 + LoginThrottle.BlockDuration, entry.BlockedUntil);   // 封鎖時點正確
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(LoginThrottle.IpThreshold - 1, false)]
+    [InlineData(LoginThrottle.IpThreshold, true)]
+    public void 同IP不同帳號並行失敗_剛好達門檻才擋(int concurrent, bool blocked)
+    {
+        for (var round = 0; round < 20; round++)
+        {
+            var throttle = new LoginThrottle();
+
+            RunConcurrently(concurrent, i => throttle.RecordFailure($"user{i}", Ip, T0));
+
+            Assert.Equal(blocked, throttle.IsBlocked("someone-else", Ip, T0, out _));
+        }
+    }
+
+    [Fact]
+    public void 同帳號並行一百次失敗_只擋一次且封鎖時點是第一次達門檻的時間()
+    {
+        var throttle = new LoginThrottle();
+
+        RunConcurrently(100, _ => throttle.RecordFailure("bob", null, T0));
+
+        var entry = Assert.Single(throttle.GetBlocked(T0));
+        Assert.Equal("bob", entry.Key);
+        Assert.Equal(T0 + LoginThrottle.BlockDuration, entry.BlockedUntil);
+        // 暫停期間的失敗不延長暫停：暫停結束後第一筆失敗重新計數，不會一次就再擋
+        var after = T0 + LoginThrottle.BlockDuration + TimeSpan.FromSeconds(1);
+        Assert.False(throttle.IsBlocked("bob", null, after, out _));
+        throttle.RecordFailure("bob", null, after);
+        Assert.False(throttle.IsBlocked("bob", null, after, out _));
     }
 }

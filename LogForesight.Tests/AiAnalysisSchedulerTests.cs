@@ -1737,6 +1737,71 @@ public class AiAnalysisSchedulerTests : IDisposable
         }
     }
 
+    private sealed class RecorderFailingService : AiAnalysisHostedService
+    {
+        public bool FailRecorder = true;
+        public int RecorderAttempts;
+
+        public RecorderFailingService(ScheduleOptionsStore o, SchedulerRunState sr, AiAnalysisRunState rs,
+            IAnalysisRecordQuery q, StorageBackend b, ISystemSettingsStore ss, BatchRunStore runs,
+            DailyRecordBackfiller bf, IWebAiService web, IAiService ai)
+            : base(o, sr, rs, q, b, ss, new DataVersionStamp(), runs, bf, web, NullAiRequestGate.Instance, aiService: ai)
+        {
+        }
+
+        internal override BatchRunRecorder CreateRunRecorder(string[] args, string trigger, CancellationToken ct)
+        {
+            RecorderAttempts++;
+            if (FailRecorder) throw new InvalidOperationException("模擬記錄器建構失敗");
+            return base.CreateRunRecorder(args, trigger, ct);
+        }
+    }
+
+    private static async Task WaitUntilIdleAsync(AiAnalysisRunState state)
+    {
+        for (var i = 0; i < 200 && state.IsRunning; i++) await Task.Delay(25);
+    }
+
+    [Fact]
+    public async Task 手動觸發時記錄器建構擲例外_執行中旗標清除且下一次觸發可開始()
+    {
+        var runState = new AiAnalysisRunState();
+        var service = new RecorderFailingService(
+            new ScheduleOptionsStore(_backend.Blob("schedule_options")), new SchedulerRunState(), runState,
+            _backend.RecordStore(), _backend, _settingsStore, BatchRuns(), CompletedBackfiller(),
+            new FakeWebAiService(true), _ai);
+
+        Assert.True(await service.TriggerRunAsync(trigger: BatchRunTriggers.ManualPrefix + "admin"));
+        await WaitUntilIdleAsync(runState);
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(1, service.RecorderAttempts);
+        Assert.False(runState.Snapshot().LastOutcome?.Success ?? true);
+
+        service.FailRecorder = false;
+        Assert.True(await service.TriggerRunAsync(trigger: BatchRunTriggers.ManualPrefix + "admin"));
+        await WaitUntilIdleAsync(runState);
+        Assert.False(runState.IsRunning);
+        Assert.Equal(2, service.RecorderAttempts);
+    }
+
+    [Fact]
+    public async Task 記錄器建構正常時觸發照舊執行並收尾()
+    {
+        var runState = new AiAnalysisRunState();
+        var service = new RecorderFailingService(
+            new ScheduleOptionsStore(_backend.Blob("schedule_options")), new SchedulerRunState(), runState,
+            _backend.RecordStore(), _backend, _settingsStore, BatchRuns(), CompletedBackfiller(),
+            new FakeWebAiService(true), _ai) { FailRecorder = false };
+
+        Assert.True(await service.TriggerRunAsync(trigger: BatchRunTriggers.ManualPrefix + "admin"));
+        await WaitUntilIdleAsync(runState);
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(1, service.RecorderAttempts);
+        Assert.True(runState.Snapshot().LastOutcome?.Success ?? false);
+    }
+
     [Fact]
     public async Task 同一輪兩個主機分片_設定只解析一次但每個分片各建一個AI服務()
     {

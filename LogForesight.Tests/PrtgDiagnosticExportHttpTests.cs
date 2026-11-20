@@ -82,7 +82,7 @@ public sealed class PrtgDiagnosticExportHttpTests
             Assert.Equal(2, validation.FormatVersion);
             Assert.Equal(package.LongLength, validation.DeclaredBytes);
             Assert.Equal(Convert.ToHexString(SHA256.HashData(package)), validation.PackageSha256);
-            Assert.Equal(205, validation.Counts["Devices"]);
+            Assert.Equal(HttpExportFixture.DeviceCount, validation.Counts["Devices"]);
             Assert.Equal(1, validation.Counts["Sensors"]);
             Assert.Equal(1, validation.Counts["StateChanges"]);
             Assert.Equal(1, validation.Counts["Values"]);
@@ -319,15 +319,18 @@ public sealed class PrtgDiagnosticExportHttpTests
             };
         }
 
+        public const int DeviceCount = 8000;
+
         public async Task SeedExportRowsAsync()
         {
             using var db = Backend.CreateContext();
-            for (var id = 1; id <= 205; id++)
+            // 欄位上限由 SaveChanges 統一截斷（Name 255、GroupPath 512）；套件要超過單一分塊上限只能靠列數。
+            for (var id = 1; id <= DeviceCount; id++)
                 db.PrtgDevices.Add(new PrtgDeviceRow
                 {
                     Objid = id,
-                    Name = id == 1 ? "診斷🧪" : new string('d', 30_000),
-                    GroupPath = "root", CreatedAt = From, SyncedAt = From
+                    Name = id == 1 ? "診斷🧪" : new string('d', 255),
+                    GroupPath = new string('g', 512), CreatedAt = From, SyncedAt = From
                 });
             db.PrtgSensors.Add(new PrtgSensorRow
             {

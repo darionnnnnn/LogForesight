@@ -391,10 +391,10 @@ public static class PrtgResourceGuardProbe
 
             if (objid == 0 || !batchSet.Contains(objid)) continue;
 
-            var device = GetStringProperty(item, "device");
-            var sensor = GetStringProperty(item, "sensor");
-            var status = GetStringProperty(item, "status");
-            var lastValue = GetStringProperty(item, "lastvalue");
+            var device = PrtgJson.GetString(item, "device");
+            var sensor = PrtgJson.GetString(item, "sensor");
+            var status = PrtgJson.GetString(item, "status");
+            var lastValue = PrtgJson.GetString(item, "lastvalue");
 
             string? lastValueRaw = null;
             if (item.TryGetProperty("lastvalue_raw", out var rawProp))
@@ -420,15 +420,4 @@ public static class PrtgResourceGuardProbe
         }
     }
 
-    private static string? GetStringProperty(JsonElement el, string propertyName)
-    {
-        if (el.TryGetProperty(propertyName, out var prop))
-        {
-            if (prop.ValueKind == JsonValueKind.String)
-                return prop.GetString();
-            if (prop.ValueKind == JsonValueKind.Number)
-                return prop.GetRawText();
-        }
-        return null;
-    }
 }

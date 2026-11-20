@@ -41,9 +41,8 @@ public sealed class PrtgEffectivenessService
             .Select(m => m.DeviceObjid);
         var okSensors = ctx.PrtgSensors.AsNoTracking().Where(s => okDevices.Contains(s.DeviceObjid)).Select(s => s.Objid);
         var lowCoverageSampledHours = ctx.PrtgValues.AsNoTracking()
+            .Where(PrtgValueRowUsability.SampledLowCoverage)
             .Count(v => v.PeriodStart >= start && v.PeriodStart < endExclusive
-                && v.Quality == PrtgDataQuality.Sampled
-                && v.Coverage < PrtgValueUsability.SampledMinCoverage
                 && okSensors.Contains(v.SensorObjid));
         var recordIds = findingQuery.Select(i => i.RecordId).Distinct().OrderBy(id => id)
             .Take(MaxPayloadRecords + 1).ToArray();
@@ -145,12 +144,7 @@ public sealed class PrtgEffectivenessService
 
     private static bool IsPrtgCorroboration(CorrelationAlertRef alert) => IsPrtgCorroboration(alert.PatternId);
     private static bool IsPrtgCorroboration(string text) => text.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase)
-        || text.StartsWith("【儲存異常同日訊號】", StringComparison.Ordinal)
-        || text.StartsWith("【容量異常同日訊號】", StringComparison.Ordinal)
-        || text.StartsWith("【關機與監測異常同日訊號】", StringComparison.Ordinal)
-        || text.StartsWith("【儲存故障雙重確認】", StringComparison.Ordinal)
-        || text.StartsWith("【磁碟容量雙重確認】", StringComparison.Ordinal)
-        || text.StartsWith("【失聯獲 PRTG 證實】", StringComparison.Ordinal);
+        || PrtgCorroboration.HasCorroborationPrefix(text);
 }
 
 public sealed record PrtgRuleMarkCount(string RuleCode, int FalsePositive, int Handled);

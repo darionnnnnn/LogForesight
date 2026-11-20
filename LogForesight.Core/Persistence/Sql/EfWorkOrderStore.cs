@@ -11,11 +11,9 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public sealed class EfWorkOrderStore : IWorkOrderStore
 {
-    internal const int SourceMaxLength = WorkOrderIssueKey.SourceMaxLength;
-    internal const int IssueLabelMaxLength = 512;
-    internal const int AccountMaxLength = 255;
-    internal const int NoteMaxLength = 1000;
-    internal const int CodeMaxLength = 30;
+    /// <summary>事件說明的長度上限（取自模型，供組字時省略台數與狀態前綴用；落庫截斷由 PrepareForSave 負責）。</summary>
+    internal static readonly int NoteMaxLength =
+        ColumnClamp.For<WorkOrderEventRow>(nameof(WorkOrderEventRow.Note))!.Value;
 
     private readonly Func<LfDbContext> _contextFactory;
     private readonly TimeProvider _clock;
@@ -42,7 +40,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         if (parsed == null) return null;
 
         var (source, eventId) = parsed.Value;
-        return (ColumnClamp.Clamp(source, SourceMaxLength)!, SourceKeyOf(source), eventId);
+        // 背景整併以 ExecuteUpdate 寫入這個名稱（不經 PrepareForSave），所以在解析處就依模型截斷
+        return (ColumnClamp.ClampFor<IssueCaseRow>(source, nameof(IssueCaseRow.SourceName))!, SourceKeyOf(source), eventId);
     }
 
     public WorkOrder? Get(long workOrderId)
@@ -144,7 +143,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
         foreach (var u in updates)
         {
-            var reason = ColumnClamp.Clamp(u.Reason, CodeMaxLength);
+            // ExecuteUpdate 不經 SaveChanges：依模型長度截斷（PrepareForSave 管不到這裡）
+            var reason = ColumnClamp.ClampFor<WorkOrderRow>(u.Reason, nameof(WorkOrderRow.ContinuationStoppedReason));
             var at = reason == null ? (DateTime?)null : u.At;
             ctx.WorkOrders.Where(w => w.WorkOrderId == u.WorkOrderId)
                 .ExecuteUpdate(s => s
@@ -172,11 +172,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         var row = new WorkOrderEventRow
         {
             WorkOrderId = evt.WorkOrderId,
-            Action = ColumnClamp.Clamp(evt.Action, CodeMaxLength)!,
+            Action = evt.Action,
             ActorId = evt.ActorId,
-            ActorAccount = ColumnClamp.Clamp(evt.ActorAccount, AccountMaxLength)!,
+            ActorAccount = evt.ActorAccount,
             MemberDelta = evt.MemberDelta,
-            Note = ColumnClamp.Clamp(evt.Note, NoteMaxLength),
+            Note = evt.Note,
             CreatedAt = evt.CreatedAt
         };
 
@@ -532,28 +532,28 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal static void CopyToRow(WorkOrder order, WorkOrderRow row)
     {
-        row.SourceName = ColumnClamp.Clamp(order.SourceName, SourceMaxLength);
+        row.SourceName = order.SourceName;
         row.SourceKey = order.SourceName == null ? null : SourceKeyOf(order.SourceName);
         row.EventId = order.EventId;
-        row.IssueLabel = ColumnClamp.Clamp(order.IssueLabel, IssueLabelMaxLength)!;
+        row.IssueLabel = order.IssueLabel;
         row.HandlerId = order.HandlerId;
         row.PreviousHandlerId = order.PreviousHandlerId;
-        row.Origin = ColumnClamp.Clamp(order.Origin, CodeMaxLength)!;
-        row.ScopeKind = ColumnClamp.Clamp(order.ScopeKind, CodeMaxLength)!;
+        row.Origin = order.Origin;
+        row.ScopeKind = order.ScopeKind;
         row.ScopeGroupIds = string.Join(",", order.ScopeGroupIds);
         row.AutoAttach = order.AutoAttach;
-        row.Note = ColumnClamp.Clamp(order.Note, NoteMaxLength);
+        row.Note = order.Note;
         row.DueDate = order.DueDate;
         row.CreatedById = order.CreatedById;
-        row.CreatedByAccount = ColumnClamp.Clamp(order.CreatedByAccount, AccountMaxLength)!;
+        row.CreatedByAccount = order.CreatedByAccount;
         row.CreatedAt = order.CreatedAt;
         row.LastAppendedAt = order.LastAppendedAt;
         row.LastReplyAt = order.LastReplyAt;
         row.AdminSeenAt = order.AdminSeenAt;
-        row.ContinuationStoppedReason = ColumnClamp.Clamp(order.ContinuationStoppedReason, CodeMaxLength);
+        row.ContinuationStoppedReason = order.ContinuationStoppedReason;
         row.ContinuationStoppedAt = order.ContinuationStoppedAt;
         row.ClosedAt = order.ClosedAt;
-        row.ClosedReason = ColumnClamp.Clamp(order.ClosedReason, CodeMaxLength);
+        row.ClosedReason = order.ClosedReason;
         row.UpdatedAt = order.UpdatedAt;
     }
 

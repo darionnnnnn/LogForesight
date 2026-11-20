@@ -203,6 +203,74 @@ public class NightlyDispatchTests
         Assert.Equal(1, dispatch.FlushRun(DateTime.Now).SkipCounts["related_warning_active"]);
     }
 
+    /// <summary>超過問題鍵欄位上限的簽章（記錄名 255 字加長 EventKey，完整問題鍵超過 <see cref="IssueKeyLimit.Max"/>）</summary>
+    private static LogIssueSignature OverlongIssue()
+    {
+        var issue = new LogIssueSignature
+        {
+            LogName = new string('L', 255), Source = Source, EventId = EventId, EntryType = LogEntryType.Error,
+            Severity = IssueSeverity.High, EventKey = new string('e', 400)
+        };
+        Assert.True(IssueSignatureKey.For(issue).Length > IssueKeyLimit.Max);
+        return issue;
+    }
+
+    /// <summary>
+    /// J15：夜間派工遇到問題鍵超長——不建案件、不寫逐日列、不寫處理紀錄（沒有孤立紀錄）；
+    /// 同一趟的正常主機照常派工，超長的不算已派出也不讓整趟擲例外。
+    /// </summary>
+    [Fact]
+    public void J15_夜間派工遇超長問題鍵_不建案件不寫逐日列與處理紀錄_正常主機照常派工()
+    {
+        AddHost("SRV-LONG");
+        AddHost("SRV-OK");
+        Owner(7);
+        var (dispatch, _) = Create();
+        var today = DateTime.Today;
+        var overlong = OverlongIssue();
+
+        Attach(dispatch, "SRV-LONG", today, overlong);
+        Attach(dispatch, "SRV-OK", today, Issue());
+
+        Assert.Null(_cases.GetOpen("SRV-LONG", IssueSignatureKey.For(overlong)));
+        Assert.Empty(_issueHandlings.GetForDay("SRV-LONG", today));
+        Assert.Empty(_handlingLog.GetLogs("SRV-LONG", today));
+        var order = Assert.Single(_orders.All);
+        Assert.Equal(1, _cases.GetByWorkOrder(order.WorkOrderId, 0, 100).Count);
+        Assert.NotNull(_cases.GetOpen("SRV-OK", IssueKey));
+        Assert.Equal(1, dispatch.FlushRun(DateTime.Now).AttachedMembers);
+    }
+
+    [Fact]
+    public void J15_夜間派工只有超長問題鍵_沒有任何案件逐日列與處理紀錄_決策階段建出的空單於收尾以EmptyDispatch結案()
+    {
+        AddHost("SRV-LONG");
+        Owner(7);
+        var (dispatch, _) = Create();
+        var today = DateTime.Today;
+        var overlong = OverlongIssue();
+        var outcomes = new List<NightlyDispatchItemOutcome>();
+
+        dispatch.DispatchDay("SRV-LONG", today, [overlong], DateTime.Now, outcomes.Add);
+
+        // 沒有案件、逐日列、處理紀錄；超長的那筆不算已派出
+        Assert.Empty(_cases.GetOpenForHost("SRV-LONG"));
+        Assert.Empty(_issueHandlings.GetForDay("SRV-LONG", today));
+        Assert.Empty(_handlingLog.GetLogs("SRV-LONG", today));
+        Assert.DoesNotContain(outcomes, o => o.Outcome == "delivered");
+        var summary = dispatch.FlushRun(DateTime.Now);
+        Assert.Equal(0, summary.AttachedMembers);
+        // 決策階段已先建出單，成員寫入被略過後那張單沒有任何成員：本趟收尾（FlushRun）重查仍無成員就以 EmptyDispatch 結案，不留進行中空單
+        Assert.NotEmpty(_orders.All);
+        foreach (var order in _orders.All)
+        {
+            Assert.Empty(_cases.GetByWorkOrder(order.WorkOrderId, 0, 100));
+            var closed = _orders.Get(order.WorkOrderId)!;
+            Assert.NotNull(closed.ClosedAt);
+            Assert.Equal(WorkOrderCloseReasons.EmptyDispatch, closed.ClosedReason);
+        }
+    }
+
     [Fact]
     public void 同一趟兩台主機同一負責人問題_一張單兩件案件_收尾一筆appended且不重複()
     {

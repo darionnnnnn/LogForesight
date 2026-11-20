@@ -1,4 +1,5 @@
 using LogForesight.Web.Services;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -86,6 +87,98 @@ public class SettingsBoundClientTests
         Assert.Same(first, second);
         Assert.NotSame(second, third);
         Assert.Equal(2, factoryCalls);
+    }
+
+    // ───────── H7：被換掉的舊客戶端要釋放（寬限期後；PRTG 這類單一迴圈使用者可立即） ─────────
+
+    private sealed class Disposable : IDisposable
+    {
+        public int DisposeCount;
+        public void Dispose() => Interlocked.Increment(ref DisposeCount);
+    }
+
+    [Fact]
+    public void 立即釋放模式_設定改變後舊客戶端被釋放且新的沒被釋放()
+    {
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), disposeGrace: TimeSpan.Zero);
+
+        var first = binding.Get("a")!;
+        Assert.Equal(0, first.DisposeCount);
+        var second = binding.Get("b")!;
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(0, second.DisposeCount);
+    }
+
+    [Fact]
+    public void 設定不變時不重建也不釋放()
+    {
+        var factoryCalls = 0;
+        var binding = new SettingsBoundClient<string, Disposable>(_ => { factoryCalls++; return new Disposable(); }, disposeGrace: TimeSpan.Zero);
+
+        var first = binding.Get("a")!;
+        binding.Get("a");
+        binding.Get("a");
+
+        Assert.Equal(1, factoryCalls);
+        Assert.Equal(0, first.DisposeCount);
+    }
+
+    [Fact]
+    public void 寬限期內不釋放_到期才釋放()
+    {
+        var clock = new FakeTimeProvider();
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
+        var first = binding.Get("a")!;
+        binding.Get("b");
+
+        clock.Advance(TimeSpan.FromMinutes(2) - TimeSpan.FromSeconds(1));
+        Assert.Equal(0, first.DisposeCount);   // 寬限期內：進行中的請求還在用它，不能立刻釋放
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, first.DisposeCount);   // 剛好到期就釋放
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.Equal(1, first.DisposeCount);   // 只釋放一次
+    }
+
+    [Fact]
+    public void 設定改成未設定時舊客戶端同樣被釋放()
+    {
+        var binding = new SettingsBoundClient<string, Disposable>(
+            snapshot => snapshot.Length == 0 ? null : new Disposable(), disposeGrace: TimeSpan.Zero);
+        var first = binding.Get("a")!;
+
+        Assert.Null(binding.Get(""));
+
+        Assert.Equal(1, first.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose立即釋放目前的與寬限期中的舊客戶端_之後可重新建立()
+    {
+        var clock = new FakeTimeProvider();
+        var binding = new SettingsBoundClient<string, Disposable>(_ => new Disposable(), TimeSpan.FromMinutes(2), clock);
+        var first = binding.Get("a")!;
+        var second = binding.Get("b")!;
+
+        binding.Dispose();
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(1, second.DisposeCount);
+        Assert.Null(binding.Current);
+        var third = binding.Get("b")!;
+        Assert.NotSame(second, third);
+        Assert.Equal(0, third.DisposeCount);
+    }
+
+    [Fact]
+    public void 不可釋放的客戶端換掉時不受影響()
+    {
+        var binding = new SettingsBoundClient<string, object>(_ => new object(), disposeGrace: TimeSpan.Zero);
+        var first = binding.Get("a");
+        var second = binding.Get("b");
+        Assert.NotSame(first, second);
     }
 
     private sealed record AdSnapshot(List<string> Servers)
