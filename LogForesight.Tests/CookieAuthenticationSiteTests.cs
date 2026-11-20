@@ -606,6 +606,40 @@ public class DataProtectionKeyRingPermissionTests : IDisposable
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(key));
     }
 
+    [Fact]
+    public void 準備失敗時輸出與記錄都帶目錄路徑與執行身分_原例外照擲()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root") return;   // 需要「沒有寫入權限」的情境
+        var parent = Path.Combine(_root, "locked");
+        Directory.CreateDirectory(parent);
+        File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var target = Path.Combine(parent, "dataprotection");
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        try
+        {
+            Assert.ThrowsAny<Exception>(() => DataProtectionKeyRing.Prepare(target));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+            File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        var text = captured.ToString();
+        Assert.Contains(target, text);
+        Assert.Contains(Environment.UserName, text);
+    }
+
+    [Fact]
+    public void 失敗訊息含目錄與身分()
+    {
+        var message = DataProtectionKeyRing.FailureMessage("/data/dataprotection", "svc-logforesight");
+        Assert.Contains("/data/dataprotection", message);
+        Assert.Contains("svc-logforesight", message);
+    }
+
     [WindowsFact]
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void Windows_目錄移除繼承_只留執行帳號與SYSTEM()

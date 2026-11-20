@@ -62,7 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IUserStore>(sp =>
         {
             var backend = sp.GetRequiredService<StorageBackend>();
-            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"));
+            return new UserStore(backend.Blob("users"), backend.Blob("user_last_login"), backend.Blob("user_session_versions"));
         });
         services.AddSingleton<IUserGroupStore>(sp => new UserGroupStore(sp.GetRequiredService<StorageBackend>().Blob("user_groups")));
         services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));

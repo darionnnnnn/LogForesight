@@ -566,6 +566,8 @@ public class PrtgDailyPipelineTests : IDisposable
             reusePending: (new long[] { 1 }, new long[] { 1 }));
 
         Assert.Contains(console.Lines, l => l.Contains("取數範圍計算失敗，本趟不續補"));
+        // 例外原文（含標記）只進記錄檔，不進維護主控台與執行里程碑
+        Assert.DoesNotContain(console.Lines, l => l.Contains("主機主檔暫時讀不到"));
         // 規則評估照常執行
         Assert.True(registry.IsEvaluated(day));
         Assert.NotEmpty(registry.For(host.HostId, day));
@@ -576,6 +578,7 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Equal(new long[] { 1 }, stat.PendingMessageDevices);
         Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
         Assert.True(stat.NeedsReevaluation);
+        Assert.DoesNotContain("主機主檔暫時讀不到", System.Text.Json.JsonSerializer.Serialize(run));
         Assert.Equal(RunPhaseOutcomes.Partial, run.Phases!.Single(p => p.Key == RunTimingPhases.PrtgSync).Outcome);
     }
 

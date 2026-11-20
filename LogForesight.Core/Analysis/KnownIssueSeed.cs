@@ -34,7 +34,8 @@ public static class KnownIssueSeed
     /// v12 新增來源樣式 Eventlog 的 1102 稽核清除規則（1102 真實發出者是 Microsoft-Windows-Eventlog）
     /// v13 sudo 認證失敗片語補複數形；fail2ban 封鎖片語改為詞首邊界的 " Ban "（不命中 Unban）
     /// v14 sshd 成功登入片語放寬為整詞 Accepted（任何認證方式：keyboard-interactive/pam、gssapi-with-mic 等）
-    public const int Version = 14;
+    /// v15 sshd 成功登入片語改為 OpenSSH 認證方法清單（Accepted password／publickey／…），不再命中 VERBOSE 的 "Accepted key … found at"
+    public const int Version = 15;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -815,7 +816,8 @@ public static class KnownIssueSeed
                     "檢查是否已啟用 fail2ban 或等效的自動封鎖機制", "考慮改用金鑰驗證並停用密碼登入",
                     "確認相同帳號/IP 是否有後續成功登入（見【破解得手】關聯）" } },
         new() { Id = "builtin-linux-ssh-accept", Origin = "builtin", Enabled = true, Scope = "all", Platform = "linux",
-                ProgramPattern = "sshd", MessagePatterns = new[] { "Accepted" },
+                ProgramPattern = "sshd", MessagePatterns = new[] { "Accepted password", "Accepted publickey", "Accepted keyboard-interactive",
+                    "Accepted hostbased", "Accepted gssapi-with-mic", "Accepted gssapi-keyex", "Accepted none" },
                 Category = IssueCategory.Security, Severity = IssueSeverity.Low,
                 Description = "SSH 登入成功——正常遠端維運即會產生，收集供關聯與趨勢分析，本身非告警",
                 PlainExplanation = "有人成功登入這台主機的 SSH 服務（密碼、金鑰、PAM 互動式驗證等任何認證方式）。日常遠端維運會正常產生此紀錄。",

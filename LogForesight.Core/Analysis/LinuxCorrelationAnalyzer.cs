@@ -145,6 +145,8 @@ internal static class LinuxCorrelationAnalyzer
 
         foreach (var evt in events)
         {
+            if (LinuxAuthParser.IsAcceptedKeyNotice(evt.Message)
+                && !LinuxAuthParser.TryParseAccepted(evt.Message, out _, out _)) continue;
             if (LinuxAuthParser.TryParseAccepted(evt.Message, out var user, out var ip))
             {
                 matches.Add((user, ip, evt.TimeGenerated));

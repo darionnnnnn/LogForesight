@@ -301,11 +301,14 @@ public class WeeklyCheckupServiceTests
 
         var lines = prompt.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         int header = lines.FindIndex(l => l.StartsWith("【PRTG 監控訊號】", StringComparison.Ordinal));
-        var prtgLines = lines.Skip(header + 1).TakeWhile(l => l.StartsWith("- [", StringComparison.Ordinal)).ToList();
+        // 標題下方是資料界線（聲明＋開始標記）；PRTG 名稱在界線內，「另有 N 項」是程式寫的句子、在界線外
+        var firstItem = lines.FindIndex(header + 1, l => l.StartsWith("- [", StringComparison.Ordinal));
+        var prtgLines = lines.Skip(firstItem).TakeWhile(l => l.StartsWith("- [", StringComparison.Ordinal)).ToList();
         Assert.Equal(20, prtgLines.Count);
         Assert.StartsWith("- [High] 規則描述-down-99", prtgLines[0]);
         Assert.StartsWith("- [Medium] 規則描述-warning-24：窗口內 2 天", prtgLines[1]);
-        Assert.Equal("另有 5 項 PRTG 訊號未列出", lines[header + 21]);
+        Assert.StartsWith("<<<資料結束 ", lines[firstItem + 20]);
+        Assert.Equal("另有 5 項 PRTG 訊號未列出", lines[firstItem + 21]);
     }
 
     // ── 7 天內到期的靜音段（批次 B-2b）─────────────────────────────────────

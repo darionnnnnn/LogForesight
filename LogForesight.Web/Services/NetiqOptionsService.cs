@@ -51,7 +51,7 @@ public class NetiqOptionsService
     }
 
     internal const string CertificatePinFormatMessage =
-        "憑證指紋格式不正確：請貼上 SHA-256 指紋（64 個十六進位字元，可含冒號或空白）。";
+        "憑證指紋格式不正確：請貼上 SHA-256 指紋（64 個十六進位字元，可含冒號或空白）；有多個時以逗號、分號或換行分隔，任何一項不正確整欄都不會儲存。";
 
     public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {

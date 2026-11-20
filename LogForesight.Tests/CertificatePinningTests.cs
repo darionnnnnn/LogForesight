@@ -48,6 +48,65 @@ public class CertificatePinningTests
         Assert.Null(pin);
     }
 
+    // ── 多個信任指紋（多台各自自簽的 Sentinel） ──
+
+    private static readonly string PinA = new('A', 64);
+    private static readonly string PinB = new('b', 64);
+
+    [Fact]
+    public void 指紋清單_逗號分號換行混用都能分隔_正規化為大寫逗號分隔且去重()
+    {
+        var input = PinA + ";" + PinB + "\r\n" + PinA.ToLowerInvariant() + ",,\n  ";
+        Assert.True(ServerCertificateTrust.TryNormalize(input, out var pins));
+        Assert.Equal(PinA + "," + PinB.ToUpperInvariant(), pins);
+
+        // 單一指紋仍可含冒號與空白
+        var colon = string.Join(":", Enumerable.Range(0, 32).Select(_ => "AB"));
+        Assert.True(ServerCertificateTrust.TryNormalize(colon + "\n" + PinB, out var two));
+        Assert.Equal(string.Concat(Enumerable.Repeat("AB", 32)) + "," + PinB.ToUpperInvariant(), two);
+    }
+
+    [Fact]
+    public void 指紋清單_好的一項加壞的一項_整欄被拒()
+    {
+        Assert.False(ServerCertificateTrust.TryNormalize(PinA + "," + "ZZ", out var pins));
+        Assert.Null(pins);
+        Assert.False(ServerCertificateTrust.TryNormalize(PinA + "\n" + new string('A', 63), out _));
+    }
+
+    [Fact]
+    public async Task Sentinel_信任清單內兩個指紋各自的伺服器都連得上_清單外的被拒()
+    {
+        await using var one = await SelfSignedHttpsServer.StartAsync("{\"Token\":\"tok\"}");
+        await using var two = await SelfSignedHttpsServer.StartAsync("{\"Token\":\"tok\"}");
+        await using var third = await SelfSignedHttpsServer.StartAsync("{\"Token\":\"tok\"}");
+        var pins = one.Sha256 + "\n" + two.Sha256;
+
+        foreach (var server in new[] { one, two })
+        {
+            await using var ok = new SentinelClient(SentinelServer(server), new NetiqOptions
+            {
+                RetryCount = 0, TimeoutSeconds = 10, TrustedCertificateSha256 = pins
+            });
+            await ok.TestConnectionAsync();
+            Assert.Equal(server.Sha256, ok.PresentedCertificateSha256);
+        }
+
+        await using var rejected = new SentinelClient(SentinelServer(third), new NetiqOptions
+        {
+            RetryCount = 0, TimeoutSeconds = 10, TrustedCertificateSha256 = pins, AllowInvalidCertificates = true
+        });
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() => rejected.TestConnectionAsync());
+        Assert.Equal(SentinelClientException.CertificateRejectedCode, ex.SafeCode);
+        Assert.Contains(third.Sha256, ex.Message);
+    }
+
+    [Fact]
+    public void Sentinel_信任清單含壞指紋_建立用戶端就失敗()
+        => Assert.Throws<SentinelClientException>(() => new SentinelClient(
+            new SentinelServer { Name = "S", BaseUrl = "https://localhost:1", Username = "u", Password = "p" },
+            new NetiqOptions { TrustedCertificateSha256 = PinA + ",not-a-hash" }));
+
     // ── 實際 TLS 連線：PRTG ──
 
     [Fact]
@@ -186,14 +245,40 @@ public class CertificatePinningTests
     {
         var prtgOff = new LogForesight.Core.Models.SystemSettings { PrtgEnabled = false, PrtgIgnoreSslErrors = true };
         var netiq = new NetiqOptions { AllowInvalidCertificates = true };
-        Assert.Equal(new[] { "Sentinel" }, HealthService.UnpinnedCertificateBypass(prtgOff, netiq));
+        Assert.Equal(new[] { "Sentinel" }, HealthService.UnpinnedCertificateBypass(prtgOff, netiq, hasActiveSentinel: true));
 
         var prtgOn = new LogForesight.Core.Models.SystemSettings { PrtgEnabled = true, PrtgIgnoreSslErrors = true };
-        Assert.Equal(new[] { "PRTG", "Sentinel" }, HealthService.UnpinnedCertificateBypass(prtgOn, netiq));
+        Assert.Equal(new[] { "PRTG", "Sentinel" }, HealthService.UnpinnedCertificateBypass(prtgOn, netiq, hasActiveSentinel: true));
 
         prtgOn.PrtgTrustedCertificateSha256 = new string('D', 64);
         netiq.TrustedCertificateSha256 = new string('E', 64);
-        Assert.Empty(HealthService.UnpinnedCertificateBypass(prtgOn, netiq));
+        Assert.Empty(HealthService.UnpinnedCertificateBypass(prtgOn, netiq, hasActiveSentinel: true));
+    }
+
+    [Fact]
+    public void 健康原因_沒有啟用中的Sentinel時不列_有啟用才列()
+    {
+        var prtgOff = new LogForesight.Core.Models.SystemSettings { PrtgEnabled = false };
+        var netiq = new NetiqOptions { AllowInvalidCertificates = true };
+
+        Assert.Empty(HealthService.UnpinnedCertificateBypass(prtgOff, netiq, hasActiveSentinel: false));
+        Assert.Equal(new[] { "Sentinel" }, HealthService.UnpinnedCertificateBypass(prtgOff, netiq, hasActiveSentinel: true));
+    }
+
+    [Fact]
+    public void 健康原因訊息_依來源指出設定位置()
+    {
+        var both = HealthAttention.Evaluate(
+            new HealthAttentionInput { UnpinnedCertificateBypass = new[] { "PRTG", "Sentinel" } }, DateTime.Now)
+            .Single(r => r.Key == HealthAttentionKeys.CertificateTrust);
+        Assert.Contains("PRTG 維護的擷取參數", both.Text);
+        Assert.Contains("NetIQ 維護的連線與節流參數", both.Text);
+
+        var prtgOnly = HealthAttention.Evaluate(
+            new HealthAttentionInput { UnpinnedCertificateBypass = new[] { "PRTG" } }, DateTime.Now)
+            .Single(r => r.Key == HealthAttentionKeys.CertificateTrust);
+        Assert.Contains("PRTG 維護的擷取參數", prtgOnly.Text);
+        Assert.DoesNotContain("NetIQ", prtgOnly.Text);
     }
 
     [Fact]

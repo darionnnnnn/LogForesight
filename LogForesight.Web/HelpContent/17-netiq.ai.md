@@ -59,7 +59,7 @@
 - `#opt-max-parallel-servers`（`maxParallelServers`）：同時處理幾台 Sentinel（1~3），硬性上限為 3（同進程架構限制）。
 - `#opt-max-parallel-queries`（`maxParallelQueriesPerServer`）：單台 Sentinel 內查詢平行度（1~4）。
 - `#opt-allow-invalid-certs`（`allowInvalidCertificates`）：略過憑證驗證（核取方塊）；有填信任指紋時不生效，沒填又勾選時健康頁列為需要注意。
-- `#opt-trusted-cert`（`trustedCertificateSha256`）：信任的 Sentinel 憑證指紋（SHA-256，可含冒號或空白，存成大寫無分隔；格式不對時儲存被拒）。套用於全部 Sentinel；有填時只接受指紋相符的憑證。Sentinel 編輯表單的「測試連線」結果下方顯示伺服器出示的指紋；指紋不符時失敗訊息指明並附新指紋。
+- `#opt-trusted-cert`（`trustedCertificateSha256`）：信任的 Sentinel 憑證指紋（SHA-256，單一指紋內可含冒號或空白，存成大寫無分隔）。欄位是多行輸入，可填多個指紋（一行一個，或以逗號、分號分隔，存成逗號分隔），任何一個相符即信任；任何一項格式不對整欄儲存被拒。套用於全部 Sentinel；有填時只接受指紋在清單內的憑證。Sentinel 編輯表單的「測試連線」結果下方顯示伺服器出示的指紋；指紋不符時失敗訊息指明並附新指紋。
 - `#opt-offline-demo`（`useOfflineDemoData`）：使用離線示範資料（僅非 Production 環境可見，容器 `#opt-offline-demo-wrap`；開啟時顯示黃色徽章 `#opt-offline-demo-badge`「示範資料開啟中」）。
 - `#opt-chat-live-fetch`（`chatLiveFetchEnabled`）：詢問 AI 查無暫存時即時向 Sentinel 查詢現場事件（容器 `#opt-chat-live-fetch-wrap`，僅在 AI 服務可用時顯示；全站併發限制 1、快取 10 分鐘，僅對 NetIQ 主機有效）。
 - `#netiq-options-save`：儲存按鈕，呼叫 `PUT /api/admin/netiq/options`。

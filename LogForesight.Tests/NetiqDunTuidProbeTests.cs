@@ -74,6 +74,34 @@ public class NetiqDunTuidProbeTests
     }
 
     [Fact]
+    public async Task 伺服器回HTTP422_也視為欄位被拒()
+    {
+        var handler = new FakeSentinel(jobStatusCode: HttpStatusCode.UnprocessableEntity, jobBody: "{\"error\":\"bad projection\"}");
+        var console = new CollectingConsole();
+
+        var verdict = await NetiqProbeRunner.ProbeDunTuidProjectionAsync(NewClient(handler), DateTimeOffset.UtcNow, console, CancellationToken.None);
+
+        Assert.Equal(NetiqProbeRunner.DunTuidVerdict.Rejected, verdict);
+        Assert.Contains("欄位被拒（HTTP 422）", console.Text);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task 伺服器回401_403_429_不是欄位被拒_照錯誤處理(HttpStatusCode code)
+    {
+        var handler = new FakeSentinel(jobStatusCode: code, jobBody: "denied");
+        var console = new CollectingConsole();
+
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() => NetiqProbeRunner.ProbeDunTuidProjectionAsync(
+            NewClient(handler), DateTimeOffset.UtcNow, console, CancellationToken.None));
+
+        Assert.Equal((int)code, ex.HttpStatus);
+        Assert.DoesNotContain("欄位被拒", console.Text);
+    }
+
+    [Fact]
     public async Task 查詢工作以錯誤狀態結束_回報欄位被拒()
     {
         var handler = new FakeSentinel(statusCode: 4); // Unavailable

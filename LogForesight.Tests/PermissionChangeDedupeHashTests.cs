@@ -218,14 +218,30 @@ public sealed class PermissionChangeDedupeHashTests : IDisposable
     }
 
     [Fact]
-    public void 完成標記存在時快判直接成立_不必再查資料列()
+    public void 完成標記存在但有NULL雜湊列時快判不成立_回填後才就緒()
     {
         _backend.PermissionChanges().AppendChanges(new[] { Record(1) });
         _backend.PermissionChangeDedupeBackfiller().Run(CancellationToken.None);
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM lf_blobs WHERE blob_key = '{PermissionChangeDedupeBackfiller.DoneBlobKey}'"));
 
-        // 新行程（新的回填器實例）：標記存在 → 快判成立，連仍有 NULL 的列也不再掃
+        // 回滾到舊版期間新增的列：雜湊欄為 NULL，完成標記仍在
         MakeLegacy();
+        var next = new PermissionChangeDedupeBackfiller(() => NewContext());
+        Assert.False(next.TryFastReady());
+        Assert.False(next.Ready);
+
+        // Run 不因標記存在而略過，補完才就緒
+        next.Run(CancellationToken.None);
+        Assert.True(next.Ready);
+        Assert.Equal(0, Scalar("SELECT COUNT(*) FROM lf_permission_changes WHERE dedupe_key_hash IS NULL"));
+    }
+
+    [Fact]
+    public void 完成標記存在且沒有NULL雜湊列時快判成立()
+    {
+        _backend.PermissionChanges().AppendChanges(new[] { Record(1) });
+        _backend.PermissionChangeDedupeBackfiller().Run(CancellationToken.None);
+
         var next = new PermissionChangeDedupeBackfiller(() => NewContext());
         Assert.True(next.TryFastReady());
         Assert.True(next.Ready);

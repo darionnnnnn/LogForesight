@@ -69,7 +69,7 @@ public sealed partial class SentinelClient
             {
                 var body = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
-                    $"Sentinel「{_server.Name}」讀取查詢結果失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
+                    $"Sentinel「{_server.Name}」讀取查詢結果失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}", httpStatus: (int)resp.StatusCode);
             }
 
             var json = await ReadResponseBodyAsync(resp, ct);

@@ -89,7 +89,7 @@ public class LoginThrottle
             if (ipKey != null)
                 AddFailure(_ips, ipKey, IpThreshold, now);
 
-            EnforceCap(now);
+            EnforceCap(now, accountKey.Length > 0 ? accountKey : null, ipKey);
         }
     }
 
@@ -187,15 +187,19 @@ public class LoginThrottle
     }
 
     /// <summary>總鍵數上限：超過時移除最久沒被碰過的鍵（大量亂數帳號的噴灑不能把記憶體撐爆）</summary>
-    private void EnforceCap(DateTime now)
+    /// <param name="touchedAccount">本次剛碰的帳號鍵（不淘汰：其餘桶都封鎖中時，剛建的新桶不能立刻被自己淘汰而漏記失敗）</param>
+    /// <param name="touchedIp">本次剛碰的 IP 鍵，理由同上</param>
+    private void EnforceCap(DateTime now, string? touchedAccount = null, string? touchedIp = null)
     {
         var overflow = _accounts.Count + _ips.Count - MaxKeys;
         if (overflow <= 0) return;
 
         // 封鎖中的桶不淘汰：只依最後觸碰時間淘汰的話，攻擊者灌入上萬個亂數帳號就能把已封鎖的帳號擠出去、
         // 重新開始嘗試。只淘汰未封鎖的；全部都在封鎖中時暫時超量（上限由封鎖時效自然收斂）
-        var oldest = _accounts.Where(kv => !(kv.Value.BlockedUntil > now)).Select(kv => (Map: _accounts, kv.Key, kv.Value.LastTouched))
-            .Concat(_ips.Where(kv => !(kv.Value.BlockedUntil > now)).Select(kv => (Map: _ips, kv.Key, kv.Value.LastTouched)))
+        var oldest = _accounts.Where(kv => !(kv.Value.BlockedUntil > now) && kv.Key != touchedAccount)
+                .Select(kv => (Map: _accounts, kv.Key, kv.Value.LastTouched))
+            .Concat(_ips.Where(kv => !(kv.Value.BlockedUntil > now) && kv.Key != touchedIp)
+                .Select(kv => (Map: _ips, kv.Key, kv.Value.LastTouched)))
             .OrderBy(x => x.LastTouched)
             .Take(overflow)
             .ToList();

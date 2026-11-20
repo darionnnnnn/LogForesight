@@ -40,8 +40,8 @@ public class NetiqOptions
     public bool AllowInvalidCertificates { get; set; } = false;
 
     /// <summary>
-    /// 信任的 Sentinel 憑證指紋（SHA-256，正規化為大寫十六進位）。有填時只接受指紋相符的憑證，
-    /// <see cref="AllowInvalidCertificates"/> 不再生效；空字串＝沒設。套用於全部 Sentinel。
+    /// 信任的 Sentinel 憑證指紋（SHA-256，正規化為大寫十六進位）；多台 Sentinel 各自自簽時可存多個，以逗號分隔，
+    /// 任一相符即可。有填時只接受指紋在清單內的憑證，<see cref="AllowInvalidCertificates"/> 不再生效；空字串＝沒設。套用於全部 Sentinel。
     /// </summary>
     public string TrustedCertificateSha256 { get; set; } = "";
 

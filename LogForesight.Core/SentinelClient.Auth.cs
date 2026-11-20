@@ -51,7 +51,7 @@ public sealed partial class SentinelClient
                 throw new SentinelClientException(
                     $"Sentinel「{_server.Name}」認證失敗：HTTP {(int)resp.StatusCode}" +
                     (resp.StatusCode == HttpStatusCode.Unauthorized ? "（帳號或密碼錯誤）" : "") +
-                    $"｜{Truncate(body)}");
+                    $"｜{Truncate(body)}", httpStatus: (int)resp.StatusCode);
             }
 
             var json = await ReadResponseBodyAsync(resp, ct);
@@ -119,9 +119,11 @@ public sealed partial class SentinelClient
 
         if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
+            var rejectedStatus = (int)resp.StatusCode;
             resp.Dispose();
             if (!allowReauth)
-                throw new SentinelClientException($"Sentinel「{_server.Name}」驗證被拒（重新認證後仍失敗），請確認帳密與權限是否有效。");
+                throw new SentinelClientException($"Sentinel「{_server.Name}」驗證被拒（重新認證後仍失敗），請確認帳密與權限是否有效。",
+                    httpStatus: rejectedStatus);
 
             if (_readLimits is null) Log.Info("[{Server}] token 可能已過期，重新認證後重放請求", _server.Name);
             else Log.Info("Bounded metadata probe is reauthenticating; identifiers withheld.");

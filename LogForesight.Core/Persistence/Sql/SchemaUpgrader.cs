@@ -257,8 +257,10 @@ internal static class SchemaUpgrader
         // 補齊前四個依去重鍵查詢的方法仍走原鍵比對。
         AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "dedupe_key_hash",
             isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        // 大表（可達數百萬列）建索引在啟動同步路徑上，前景 60 秒命令逾時會讓站台起不來：改用分析等級逾時（SQLite 不受影響）。
         AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
-            "IX_lf_permission_changes_dedupe_key_hash", "dedupe_key_hash");
+            "IX_lf_permission_changes_dedupe_key_hash", "dedupe_key_hash",
+            commandTimeoutSeconds: StorageBackend.AnalysisCommandTimeoutSeconds);
 
         // 報告全文（↔ lf_reports）：三種報告（風險／週檢／權限異動）的完整內容。
         // 唯一索引即 upsert 的判定鍵，**含 host_name**：host_id = 0 是「主機尚未登記」的哨兵值
@@ -1852,7 +1854,8 @@ internal static class SchemaUpgrader
     }
 
     private static void AddIndexIfMissing(
-        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false)
+        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false,
+        int? commandTimeoutSeconds = null)
     {
         UpgraderIndexNames.TryAdd(indexName, 0);
         // 同 AddColumnIfMissing：表不存在就跳過，不讓 CREATE INDEX 炸掉啟動
@@ -1862,7 +1865,17 @@ internal static class SchemaUpgrader
 
         Log.Info("[SQL] schema 升級：{Table} 補索引 {Index}", table, indexName);
         var sql = "CREATE " + (unique ? "UNIQUE " : "") + "INDEX " + indexName + " ON " + table + " (" + columns + ")";
-        ctx.Database.ExecuteSqlRaw(sql);
+        // 只在建索引這一句調高逾時，之後還原：同一個 context 後續的升級步驟仍維持原本的命令逾時
+        var previousTimeout = ctx.Database.GetCommandTimeout();
+        if (commandTimeoutSeconds.HasValue) ctx.Database.SetCommandTimeout(commandTimeoutSeconds.Value);
+        try
+        {
+            ctx.Database.ExecuteSqlRaw(sql);
+        }
+        finally
+        {
+            if (commandTimeoutSeconds.HasValue) ctx.Database.SetCommandTimeout(previousTimeout);
+        }
     }
 
     /// <summary>SQLite：<c>pragma_table_info</c> 可當資料表函數查；SqlServer：INFORMATION_SCHEMA</summary>

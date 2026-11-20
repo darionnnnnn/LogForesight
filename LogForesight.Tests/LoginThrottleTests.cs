@@ -104,6 +104,31 @@ public class LoginThrottleTests
         Assert.Empty(t.GetBlocked(T0.AddHours(1)));
     }
 
+    [Fact]
+    public void 鍵數達上限且其餘桶都封鎖中_新桶不被立刻淘汰_失敗照常累計到封鎖()
+    {
+        var t = new LoginThrottle();
+        // 以反射直接塞滿「封鎖中」的桶：逐筆走 RecordFailure 要 10 萬次、每次整張掃描，沒有必要
+        var bucketType = typeof(LoginThrottle).GetNestedType("Bucket", System.Reflection.BindingFlags.NonPublic)!;
+        var accounts = (System.Collections.IDictionary)typeof(LoginThrottle)
+            .GetField("_accounts", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(t)!;
+        for (var i = 0; i < LoginThrottle.MaxKeys; i++)
+        {
+            var bucket = Activator.CreateInstance(bucketType, nonPublic: true)!;
+            bucketType.GetField("BlockedUntil")!.SetValue(bucket, (DateTime?)T0.AddMinutes(4));
+            bucketType.GetField("LastTouched")!.SetValue(bucket, T0.AddSeconds(-i));
+            accounts[$"blocked{i}"] = bucket;
+        }
+
+        // 新帳號的第 1 次失敗會讓總鍵數超過上限：舊寫法把這個新桶（唯一未封鎖者）淘汰掉，永遠累計不到門檻
+        for (var i = 0; i < LoginThrottle.AccountThreshold; i++) t.RecordFailure("fresh", null, T0.AddSeconds(i));
+
+        Assert.True(t.IsBlocked("fresh", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+        // 原本封鎖中的桶一個都沒被擠掉
+        Assert.True(t.IsBlocked("blocked0", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+        Assert.True(t.IsBlocked($"blocked{LoginThrottle.MaxKeys - 1}", null, T0.AddSeconds(LoginThrottle.AccountThreshold), out _));
+    }
+
     // ── Controller ──────────────────────────────────────────────────────────
 
     private sealed class Harness

@@ -175,6 +175,9 @@ public class PrtgRefillScopeIntersectionTests : IDisposable
         Assert.Empty(left.Messages);
         Assert.Single(left.StageFailures);
         Assert.Contains("感測器補取失敗", left.StageFailures[0]);
+        // 例外原文（含標記）只進記錄檔，不進維護主控台與執行里程碑
+        Assert.DoesNotContain("感測器階段壞了", left.StageFailures[0]);
+        Assert.Contains("InvalidOperationException", left.StageFailures[0]);
         Assert.Equal(new long[] { 1, 2 }, Ids(handler, "content=messages"));
     }
 
@@ -193,6 +196,7 @@ public class PrtgRefillScopeIntersectionTests : IDisposable
         Assert.Empty(left.Sensors);
         Assert.Equal(new long[] { 1, 2 }, left.Messages.OrderBy(i => i));
         Assert.Contains("狀態變更補取失敗", Assert.Single(left.StageFailures));
+        Assert.DoesNotContain("狀態變更階段壞了", left.StageFailures[0]);
         Assert.Equal(new long[] { 1 }, Ids(handler, "content=sensors"));
     }
 

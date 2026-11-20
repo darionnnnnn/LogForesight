@@ -351,6 +351,8 @@ internal class FakeUserStore : IUserStore
         var user = Get(userId);
         return user == null ? 0 : ++user.SessionVersion;
     }
+
+    public long GetSessionVersion(WebUser user) => user.SessionVersion;
 }
 
 internal class FakeUserGroupStore : IUserGroupStore

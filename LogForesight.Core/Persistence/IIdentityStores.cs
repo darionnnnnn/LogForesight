@@ -53,6 +53,12 @@ public interface IUserStore
     /// （停用時由 Upsert 內部遞增，見實作），否則編輯使用者會把已登出的 cookie 復活。
     /// </summary>
     long BumpSessionVersion(long userId);
+
+    /// <summary>
+    /// 該使用者目前的有效工作階段版號：<see cref="WebUser.SessionVersion"/>（舊資料與停用遞增）＋登出增量。
+    /// Cookie 驗證與簽發一律讀這個，不直接讀 <see cref="WebUser.SessionVersion"/>。
+    /// </summary>
+    long GetSessionVersion(WebUser user);
 }
 
 /// <summary>

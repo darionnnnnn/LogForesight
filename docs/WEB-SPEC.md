@@ -130,7 +130,7 @@ LogForesight.Web/
 | Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
 | `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ad）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
 | `ISessionSigner` | `CookieSessionSigner`（登入建立 cookie、登出遞增工作階段版號並清 cookie；controller 只依賴這個介面） | Singleton |
-| `SessionVersionStore`／`SessionPrincipalFactory` | 工作階段版號的讀寫（一般使用者存在 `WebUser.SessionVersion`，serverAdmin 存 blob `server_admin_session_version`）／cookie 主體的建構 | Singleton |
+| `SessionVersionStore`／`SessionPrincipalFactory` | 工作階段版號的讀寫（一般使用者為 `WebUser.SessionVersion` 加 `user_session_versions` 登出增量，serverAdmin 存 blob `server_admin_session_version`）／cookie 主體的建構 | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
 | `IAuditService` | `AuditService` | Scoped |
@@ -332,9 +332,10 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
   4. `pv` 與 `PermissionVersionStamp` 不同——重算能力、就地更新、續發（不是踢出登入：群組編輯很頻繁，不能每改一次就讓全員重登）。
   缺少或無法解析 `sub`／`sv`／`sst` 的 cookie 視為無效。失效時清除 cookie；原因（已停用／已登出／已逾期）記在請求內，
   供下一步的 401 信封顯示。
-- **工作階段版號**是使用者層級的登入失效手段：一般使用者存在 `WebUser.SessionVersion`（隨使用者資料持久化，**重啟不失效**；
-  舊資料缺欄＝0，回滾到舊版時欄位被忽略），serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`。
-  登出時遞增（`IUserStore.BumpSessionVersion`／`SessionVersionStore.Bump`），啟用轉停用時 `UserStore.Upsert` 也遞增
+- **工作階段版號**是使用者層級的登入失效手段：一般使用者的有效版號由 `IUserStore.GetSessionVersion` 取得＝`WebUser.SessionVersion`（隨使用者資料持久化，**重啟不失效**；
+  舊資料缺欄＝0，回滾到舊版時只認這個欄位）加上獨立 blob `user_session_versions` 的登出增量（登出是日常操作，不改寫 `users`，
+  PRTG 範圍清除作業以 `users` 版本當授權柵欄，不能被登出打斷）；serverAdmin 不在 `lf_users`，版號存 blob `server_admin_session_version`。
+  登出時遞增（`IUserStore.BumpSessionVersion`／`SessionVersionStore.Bump`，只寫 `user_session_versions`），啟用轉停用時 `UserStore.Upsert` 在 `users` 內遞增 `SessionVersion`
   （停用後再啟用，停用前簽發的 cookie 不復活）；`Upsert` 其餘情況不覆寫此欄。遞增的效果是該使用者**所有裝置**上既有的 cookie 一併失效。
 - **未登入的回應**（`CookieSessionEvents.RedirectToLogin`，依路徑區分）：`/api` 回 401 ＋ 信封 error code `auth_expired`
   （不轉址；被拒絕的原因帶進信封訊息），前端攔截後導向登入頁；頁面請求 302 到 `{PathBase}/login?returnUrl=…`

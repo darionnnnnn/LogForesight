@@ -256,7 +256,7 @@ internal static class PrtgDailyPipeline
                     catch (Exception ex)
                     {
                         Log.Error(ex, "PRTG 續補的取數範圍計算失敗，本趟不續補");
-                        var scopeFailure = $"[續補] ✗ 取數範圍計算失敗，本趟不續補、待補清單保留：{ex.Message}";
+                        var scopeFailure = $"[續補] ✗ 取數範圍計算失敗，本趟不續補、待補清單保留（{ex.GetType().Name}，詳見記錄檔）。";
                         prtgConsole.WriteLine(scopeFailure);
                         refillFailures.Add(scopeFailure);
                     }

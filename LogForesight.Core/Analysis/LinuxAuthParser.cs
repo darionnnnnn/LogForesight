@@ -51,6 +51,13 @@ internal static class LinuxAuthParser
     /// gssapi-with-mic、hostbased…都算）；位址欄經 <see cref="IpExtractor.Normalize"/>，
     /// 不是合法位址（如 999.1.1.1、主機名稱）時 <paramref name="ip"/> 為空字串、帳號照樣取得。
     /// </summary>
+    /// <summary>
+    /// sshd 在 LogLevel VERBOSE 另記的 <c>Accepted key {類型} {指紋} found at {路徑}</c>：只是金鑰比對通過的旁註，
+    /// 真正的登入成功行仍是 <c>Accepted publickey for …</c>。不是成功登入，也不算成功面解析失敗。
+    /// </summary>
+    public static bool IsAcceptedKeyNotice(string message) =>
+        !string.IsNullOrEmpty(message) && message.Contains("Accepted key ", StringComparison.Ordinal);
+
     public static bool TryParseAccepted(string message, out string user, out string ip)
     {
         user = string.Empty;

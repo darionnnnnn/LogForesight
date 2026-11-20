@@ -913,10 +913,11 @@ lf_blobs                                             -- 整份 JSON 型 store，
 | `user_prefs` | 每位使用者的常用語及初始設定引導顯示偏好；全站預設常用語在 `system_settings` |
 | `log_id_allocator:batch_runs`／`log_id_allocator:batch_run_logs` | 最高已預約的單調 RunId／LogId；19 字元上限，SQL Server transaction app lock／SQLite 寫入交易跨 store 配發。清除 log 不刪計數器；append 失敗保留間隙；損毀、過長或耗盡拒絕配發，無新 DDL。 |
 | `permission_version` | 群組、主機負責人與問題負責人能力變動後的權限版本；請求時比對並刷新權限 |
-| `server_admin_session_version` | 本地救援帳號（不在 `users`）的工作階段版號；登出時遞增，登入 cookie 內版號不同即失效。一般使用者的版號在 `users` blob 的 `SessionVersion` 欄位（登出與啟用轉停用時遞增，舊資料缺欄為 0） |
+| `server_admin_session_version` | 本地救援帳號（不在 `users`）的工作階段版號；登出時遞增，登入 cookie 內版號不同即失效。一般使用者的有效版號＝`users` blob 的 `SessionVersion` 欄位（舊資料與啟用轉停用時遞增，缺欄為 0）加上 `user_session_versions` 的登出增量 |
 | `prtg_freshness` | 各 PRTG 資料類別的最後成功時間、筆數及連續零筆次數 |
 | `prtg_scope_baseline` | 監看裝置範圍外清除的上次基準及最近擋下原因 |
 | `user_last_login` | 與 `users` 分開寫入的最近登入時間，避免每次登入使使用者快取失效 |
+| `user_session_versions` | 使用者（userId → 次數）的登出增量；與 `users` 分開寫入，日常登出不讓 `users` 版本前進（PRTG 範圍清除作業以 `users` 版本當授權柵欄，登出不該讓它暫停） |
 
 PRTG 衝突類型依最新裝置鏡像及主機對應即時計算，未另存 `conflict_kind` 欄；持久化會使主機 IP
 或鏡像變動後留下過期分類。回填依本次指定天數執行，沒有另設回填水位。

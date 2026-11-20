@@ -80,8 +80,8 @@ public sealed class SessionPrincipalFactory
 }
 
 /// <summary>
-/// 工作階段版號：使用者層級的登入失效手段。一般使用者存在 <see cref="WebUser.SessionVersion"/>（持久化、
-/// 重啟不失效）；serverAdmin 不在 lf_users，版號存在 blob（同樣持久化）。
+/// 工作階段版號：使用者層級的登入失效手段。一般使用者的有效版號由 <see cref="IUserStore.GetSessionVersion"/> 取得
+/// （<see cref="WebUser.SessionVersion"/> 加上獨立 blob 的登出增量，持久化、重啟不失效）；serverAdmin 不在 lf_users，版號存在 blob（同樣持久化）。
 /// 登出時遞增；停用由使用者儲存在「啟用轉停用」時遞增。cookie 內版號與目前值不同＝失效。
 /// </summary>
 public sealed class SessionVersionStore
@@ -102,7 +102,7 @@ public sealed class SessionVersionStore
     /// <summary>目前版號。一般使用者呼叫端通常已查過使用者，直接傳入避免重複查找</summary>
     public long Current(bool isServerAdmin, WebUser? user = null)
     {
-        if (!isServerAdmin) return user?.SessionVersion ?? 0;
+        if (!isServerAdmin) return user == null ? 0 : _users.GetSessionVersion(user);
         lock (_lock)
         {
             _serverAdminCached ??= Parse(_serverAdminBlob.Read());

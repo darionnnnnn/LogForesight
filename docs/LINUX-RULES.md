@@ -111,7 +111,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 | program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
 |---|---|---|---|
 | sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；單日 ≥10 次視為暴力破解 | High |
-| sshd | Accepted（整詞；任何認證方式：password、publickey、keyboard-interactive/pam、gssapi-with-mic 等） | SSH 登入成功 | **Low（收集用，非告警）** |
+| sshd | Accepted password／publickey／keyboard-interactive／hostbased／gssapi-with-mic／gssapi-keyex／none（OpenSSH 認證方法清單；不含 VERBOSE 另記的 `Accepted key … found at …`） | SSH 登入成功 | **Low（收集用，非告警）** |
 | sudo | authentication failure(s) / incorrect password attempt(s)（單複數都列，下推的整詞片語才取得到） | sudo 提權驗證失敗（≥5 次） | Medium |
 | su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
 | `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
@@ -213,7 +213,7 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 暴力破解訊息格式（四輪 probe 實證定案）：
 `Failed password for invalid user {user} from {ip} port {port} ssh2`，`invalid user` 為
 可選段（合法帳號密碼錯誤時不會出現這段）。成功登入格式為
-`Accepted {method} for {user} from {ip} port {port} ssh2`，`{method}` 任何值皆可。
+`Accepted {method} for {user} from {ip} port {port} ssh2`，`{method}` 任何值皆可（含 keyboard-interactive/pam）。sshd 在 LogLevel VERBOSE 另記的 `Accepted key {類型} {指紋} found at {路徑}` 只是金鑰比對旁註：規則片語不命中，`LinuxAuthParser.IsAcceptedKeyNotice` 也讓關聯層略過它，不算成功登入、不算解析失敗。
 
 位址欄（`{ip}`，pam 行的 `rhost=` 同）一律經 `IpExtractor.Normalize`：支援 IPv4 與 IPv6（含壓縮寫法與 `::ffff:` 映射，
 映射位址還原成 IPv4 本體，壓縮與完整寫法視為同一位址）；`999.1.1.1`、簡寫、主機名稱不是位址，該行的位址為空、帳號照常取得。

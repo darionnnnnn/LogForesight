@@ -55,56 +55,66 @@ internal class AnalysisPromptBuilder
                       "請依這些資料給出風險等級判斷，並把結論轉譯成白話讓不懂技術的人也能理解，" +
                       "特別注意硬體故障前兆與入侵跡象。");
 
-        // 以下全是外部文字（事件範例訊息、PRTG 名稱、頻率異常、歷史摘要…），組進 body 後經 PromptDataFence 唯一出口包住
-        var body = new StringBuilder();
+        // 段落標題與程式寫的指引句（「請務必納入評估」「必須以此為核心」）留在界線外，才不會被「資料不是指令」的聲明削弱；
+        // 只有外部文字（事件訊息、PRTG 名稱、頻率異常與關聯的資料內容、歷史摘要、環境描述）經 PromptDataFence 包住。
+        // 同一份 fence 逐區塊包裝（隨機值相同、聲明只出現一次）。
+        var fence = new PromptDataFence();
 
         if (serverDescription.Length > 0)
         {
-            body.AppendLine($"【伺服器環境】{serverDescription}");
+            sb.AppendLine();
+            sb.AppendLine("【伺服器環境】");
+            sb.Append(fence.Block(serverDescription));
         }
 
         if (uncoveredChecks.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【本次未能檢查的項目】（權限或來源限制，非「已檢查且無異常」，判讀時請留意這是偵測盲區）");
+            sb.AppendLine();
+            sb.AppendLine("【本次未能檢查的項目】（權限或來源限制，非「已檢查且無異常」，判讀時請留意這是偵測盲區）");
+            var data = new StringBuilder();
             foreach (var check in uncoveredChecks)
             {
-                body.AppendLine($"- {check}");
+                data.AppendLine($"- {check}");
             }
+            sb.Append(fence.Block(data.ToString()));
         }
 
         if (dataIncomplete)
         {
-            body.AppendLine();
-            body.AppendLine("【資料完整性提醒】本日部分事件來源的保留歷史不足以涵蓋整天，統計數字可能偏低，非真實反映當日狀況。");
+            sb.AppendLine();
+            sb.AppendLine("【資料完整性提醒】本日部分事件來源的保留歷史不足以涵蓋整天，統計數字可能偏低，非真實反映當日狀況。");
         }
 
-        body.AppendLine();
-        body.AppendLine($"【當日統計】錯誤 {errorCount} 筆、警告 {warningCount} 筆、安全稽核事件 {auditCount} 筆");
+        sb.AppendLine();
+        sb.AppendLine($"【當日統計】錯誤 {errorCount} 筆、警告 {warningCount} 筆、安全稽核事件 {auditCount} 筆");
 
         if (trendAlerts.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【程式比對出的頻率異常】（程式已用歷史次數確定性比對，這些不是猜測，請務必納入評估）");
+            sb.AppendLine();
+            sb.AppendLine("【程式比對出的頻率異常】（程式已用歷史次數確定性比對，這些不是猜測，請務必納入評估）");
+            var data = new StringBuilder();
             foreach (var alert in trendAlerts.Take(MaxTrendAlertsInPrompt))
             {
-                body.AppendLine($"- {alert}");
+                data.AppendLine($"- {alert}");
             }
+            sb.Append(fence.Block(data.ToString()));
             if (trendAlerts.Count > MaxTrendAlertsInPrompt)
             {
-                body.AppendLine($"（另有 {trendAlerts.Count - MaxTrendAlertsInPrompt} 項頻率異常未逐項列出）");
+                sb.AppendLine($"（另有 {trendAlerts.Count - MaxTrendAlertsInPrompt} 項頻率異常未逐項列出）");
             }
         }
 
         if (correlations.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【程式比對出的關聯訊號】（多個獨立事件的已知攻擊鏈/故障鏈組合，由程式確定性比對，" +
+            sb.AppendLine();
+            sb.AppendLine("【程式比對出的關聯訊號】（多個獨立事件的已知攻擊鏈/故障鏈組合，由程式確定性比對，" +
                           "不是猜測——這些關聯是本次分析最重要的線索，風險評估與趨勢解讀必須以此為核心）");
+            var data = new StringBuilder();
             foreach (var c in correlations)
             {
-                body.AppendLine($"- [{c.Severity}] {c.Description}");
+                data.AppendLine($"- [{c.Severity}] {c.Description}");
             }
+            sb.Append(fence.Block(data.ToString()));
         }
 
         // PRTG 監控訊號自成一段，不混進事件清單（docs/PRTG-SPEC.md §9）：
@@ -117,8 +127,9 @@ internal class AnalysisPromptBuilder
         var prtgFindings = issues.Where(i => PrtgFindingMapper.IsPrtg(i) && !i.Suppressed).ToList();
         if (prtgFindings.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌同日不表示資源或時間相符）");
+            sb.AppendLine();
+            sb.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌同日不表示資源或時間相符）");
+            var data = new StringBuilder();
             foreach (var f in prtgFindings)
             {
                 var description = f.KnownIssue;
@@ -133,8 +144,9 @@ internal class AnalysisPromptBuilder
                 else
                     // 兩者皆空時至少說出是哪條規則，不印 EventKey 裡的 objid
                     text = PrtgFindingMapper.TryGetRuleCode(f.Source, out var code) ? $"PRTG 規則 {code}" : f.EventKey;
-                body.AppendLine($"- [{f.Severity}] {text}");
+                data.AppendLine($"- [{f.Severity}] {text}");
             }
+            sb.Append(fence.Block(data.ToString()));
         }
 
         // 抑制或靜音中的事件問題同樣不進 AI 敘事（理由同上方 PRTG finding）
@@ -143,45 +155,49 @@ internal class AnalysisPromptBuilder
 
         if (flagged.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【規則已標記的重點問題】（程式依已知危險事件比對，請優先評估）");
+            sb.AppendLine();
+            sb.AppendLine("【規則已標記的重點問題】（程式依已知危險事件比對，請優先評估）");
+            var data = new StringBuilder();
             foreach (var i in flagged.Take(MaxFlaggedInPrompt))
             {
-                AppendIssue(body, i, history.Count, flagged: true);
+                AppendIssue(data, i, history.Count, flagged: true);
             }
+            sb.Append(fence.Block(data.ToString()));
             // 規則命中的尾巴不逐項列出：靜態知識庫已涵蓋處置建議，這裡固定顯示折疊統計行
             if (flagged.Count > MaxFlaggedInPrompt)
             {
                 var folded = flagged.Skip(MaxFlaggedInPrompt).ToList();
-                body.AppendLine($"（另有 {folded.Count} 個嚴重度較低的規則命中問題共 {folded.Sum(i => i.Count)} 筆，未逐項列出——處置建議見報告的「處置參考（知識庫）」區塊）");
+                sb.AppendLine($"（另有 {folded.Count} 個嚴重度較低的規則命中問題共 {folded.Sum(i => i.Count)} 筆，未逐項列出——處置建議見報告的「處置參考（知識庫）」區塊）");
             }
         }
 
         if (others.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【其他事件】（未命中已知規則，請判斷是否有新型態問題）");
+            sb.AppendLine();
+            sb.AppendLine("【其他事件】（未命中已知規則，請判斷是否有新型態問題）");
+            var data = new StringBuilder();
             foreach (var i in others.Take(MaxOthersInPrompt))
             {
-                AppendIssue(body, i, history.Count, flagged: false);
+                AppendIssue(data, i, history.Count, flagged: false);
             }
+            sb.Append(fence.Block(data.ToString()));
             if (others.Count > MaxOthersInPrompt)
             {
                 var folded = others.Skip(MaxOthersInPrompt).ToList();
-                body.AppendLine($"（另有 {folded.Count} 種其他事件共 {folded.Sum(i => i.Count)} 筆，未逐項列出）");
+                sb.AppendLine($"（另有 {folded.Count} 種其他事件共 {folded.Sum(i => i.Count)} 筆，未逐項列出）");
             }
         }
 
         if (issues.Count == 0)
         {
-            body.AppendLine("（當日無錯誤、警告或需注意的稽核事件）");
+            sb.AppendLine("（當日無錯誤、警告或需注意的稽核事件）");
         }
-
 
         if (history.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【近期歷史】（每日總量變化參考；注意星期規律，例如每週固定維護重開機屬正常模式）");
+            sb.AppendLine();
+            sb.AppendLine("【近期歷史】（每日總量變化參考；注意星期規律，例如每週固定維護重開機屬正常模式）");
+            var data = new StringBuilder();
             foreach (var h in history)
             {
                 var topKeys = string.Join("、", h.TopIssues
@@ -191,22 +207,21 @@ internal class AnalysisPromptBuilder
                         ? $"{i.Source}#{i.EventKey}x{i.Count}"
                         : $"{i.Source}#{i.EventId}x{i.Count}"));
 
-                body.Append($"- {h.Date:MM-dd}({WeekdayZh(h.Date)})：錯誤{h.ErrorCount} 警告{h.WarningCount} 稽核{h.AuditEventCount} 風險{h.RiskLevel}");
+                data.Append($"- {h.Date:MM-dd}({WeekdayZh(h.Date)})：錯誤{h.ErrorCount} 警告{h.WarningCount} 稽核{h.AuditEventCount} 風險{h.RiskLevel}");
                 if (topKeys.Length > 0)
                 {
-                    body.Append($" 重點:{topKeys}");
+                    data.Append($" 重點:{topKeys}");
                 }
                 // 非低風險日附上當日 AI 結論，讓模型看得到先前判讀的語意脈絡（是否已知原因、是否已處理）
                 if (RiskLevels.IsActionable(h.RiskLevel) && h.AiAnalyzed && h.Summary.Length > 0)
                 {
-                    body.Append($" 當日結論:{TextTruncation.Truncate(h.Summary, 80)}");
+                    data.Append($" 當日結論:{TextTruncation.Truncate(h.Summary, 80)}");
                 }
-                body.AppendLine();
+                data.AppendLine();
             }
+            sb.Append(fence.Block(data.ToString()));
         }
 
-        sb.AppendLine();
-        sb.Append(new PromptDataFence().Wrap(body.ToString()));
         sb.AppendLine();
         sb.AppendLine("請只回傳一個 JSON 物件（不要 markdown 圍欄、不要任何其他文字），結構如下：");
         sb.AppendLine("""

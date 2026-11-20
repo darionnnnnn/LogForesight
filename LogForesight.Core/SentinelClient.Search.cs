@@ -30,7 +30,8 @@ public sealed partial class SentinelClient
             var status = await PollUntilTerminalAsync(jobHref, ct);
             if (status.State is SentinelJobState.Unavailable or SentinelJobState.Canceled or SentinelJobState.AccessDenied)
             {
-                throw new SentinelClientException($"Sentinel「{_server.Name}」查詢工作結束於非成功狀態：{status.State}");
+                throw new SentinelClientException($"Sentinel「{_server.Name}」查詢工作結束於非成功狀態：{status.State}",
+                    safeCode: SentinelClientException.JobNotSuccessfulCode);
             }
 
             var (events, retrieved) = await FetchAllPagesAsync(status, request, ct);
@@ -130,7 +131,7 @@ public sealed partial class SentinelClient
             {
                 var errBody = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
-                    $"Sentinel「{_server.Name}」建立查詢工作失敗：HTTP {(int)resp.StatusCode}｜{Truncate(errBody)}");
+                    $"Sentinel「{_server.Name}」建立查詢工作失敗：HTTP {(int)resp.StatusCode}｜{Truncate(errBody)}", httpStatus: (int)resp.StatusCode);
             }
 
             if (resp.Headers.Location != null)
@@ -217,7 +218,7 @@ public sealed partial class SentinelClient
             {
                 var body = await SafeReadBodyAsync(resp, ct);
                 throw new SentinelClientException(
-                    $"Sentinel「{_server.Name}」查詢工作狀態失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
+                    $"Sentinel「{_server.Name}」查詢工作狀態失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}", httpStatus: (int)resp.StatusCode);
             }
 
             var json = await ReadResponseBodyAsync(resp, ct);
@@ -321,7 +322,7 @@ public sealed partial class SentinelClient
                 if (!resp.IsSuccessStatusCode)
                 {
                     throw new SentinelClientException(
-                        $"Sentinel「{_server.Name}」讀取「{path}」失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
+                        $"Sentinel「{_server.Name}」讀取「{path}」失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}", httpStatus: (int)resp.StatusCode);
                 }
                 return body;
             }

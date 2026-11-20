@@ -654,7 +654,9 @@ public sealed class PrtgFetchService
             catch (Exception ex) when (!IsUserCancellation(ex, ct))
             {
                 leftSensors = inScopeSensors;
-                var message = $"[續補] ✗ 感測器補取失敗，{inScopeSensors.Count} 台維持待補：{ex.Message}";
+                // 例外原文（可能含網址、路徑）只進記錄檔；維護主控台與執行里程碑只放例外型別
+                Log.Warn(ex, "PRTG 續補的感測器補取失敗，{Count} 台維持待補", inScopeSensors.Count);
+                var message = $"[續補] ✗ 感測器補取失敗，{inScopeSensors.Count} 台維持待補（{ex.GetType().Name}，詳見記錄檔）。";
                 stageFailures.Add(message);
                 _console.WriteLine(message);
             }
@@ -672,7 +674,8 @@ public sealed class PrtgFetchService
             catch (Exception ex) when (!IsUserCancellation(ex, ct))
             {
                 leftMessages = inScopeMessages;
-                var message = $"[續補] ✗ 狀態變更補取失敗，{inScopeMessages.Count} 台維持待補：{ex.Message}";
+                Log.Warn(ex, "PRTG 續補的狀態變更補取失敗，{Count} 台維持待補", inScopeMessages.Count);
+                var message = $"[續補] ✗ 狀態變更補取失敗，{inScopeMessages.Count} 台維持待補（{ex.GetType().Name}，詳見記錄檔）。";
                 stageFailures.Add(message);
                 _console.WriteLine(message);
             }

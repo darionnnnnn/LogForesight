@@ -176,45 +176,53 @@ internal class WeeklyCheckupService
                       "（程式已確定這段期間內有風險日、趨勢異常或關聯訊號），請做期間回顧，" +
                       "把這些已確定的訊號接續之前的脈絡寫成一段給人看的回顧文字。");
 
-        // 伺服器描述、上次體檢結論、每日摘要、簽章與 PRTG 名稱都是外部文字，組進 body 後經 PromptDataFence 包住
-        var body = new StringBuilder();
+        // 段落標題與程式寫的指引句留在界線外；伺服器描述、上次體檢結論、每日摘要、簽章與 PRTG 名稱這些外部文字
+        // 經 PromptDataFence 逐區塊包住（同一份 fence，隨機值相同、聲明只出現一次）。
+        var fence = new PromptDataFence();
 
         if (serverDescription.Length > 0)
         {
-            body.AppendLine($"【伺服器環境】{serverDescription}");
+            sb.AppendLine();
+            sb.AppendLine("【伺服器環境】");
+            sb.Append(fence.Block(serverDescription));
         }
 
         if (lastCheckup != null)
         {
-            body.AppendLine();
-            body.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）{TextTruncation.Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)}");
+            sb.AppendLine();
+            sb.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）");
+            sb.Append(fence.Block(TextTruncation.Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)));
         }
 
-        body.AppendLine();
-        body.AppendLine("【每日風險與摘要】");
+        sb.AppendLine();
+        sb.AppendLine("【每日風險與摘要】");
+        var dayData = new StringBuilder();
         foreach (var day in window)
         {
             // day.AiAnalyzed 守衛（回饋十四輪 B2，比照 AnalysisPromptBuilder 同一守衛）：Summary
             // 在「AI 排隊中」（AiPending）與「統計模式／低風險跳過 AI」時是程式寫的樣板字串
             // （如「（統計已完成，AI 分析排隊中）」「今日無異常訊號…」），不是真正的 AI 判讀。
             // 不加這道守衛，體檢 prompt 會把樣板字串當成「當日結論」引給 AI，把它當真敘事引用。
-            body.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
+            dayData.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
                           (day.AiAnalyzed && day.Summary.Length > 0 ? $"，結論：{TextTruncation.Truncate(day.Summary, 60)}" : ""));
         }
+        sb.Append(fence.Block(dayData.ToString()));
 
         // 每個簽章一行，含窗口內逐日次數——彙整由程式先算好（確定性計算），AI 只需解讀不需自己加總
         var signatureLines = BuildSignatureLines(window);
         if (signatureLines.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【本期各問題簽章的逐日次數】（依嚴重度排序，程式已彙整，只需解讀趨勢）");
+            sb.AppendLine();
+            sb.AppendLine("【本期各問題簽章的逐日次數】（依嚴重度排序，程式已彙整，只需解讀趨勢）");
+            var data = new StringBuilder();
             foreach (var line in signatureLines.Take(MaxSignatureLines))
             {
-                body.AppendLine($"- {line}");
+                data.AppendLine($"- {line}");
             }
+            sb.Append(fence.Block(data.ToString()));
             if (signatureLines.Count > MaxSignatureLines)
             {
-                body.AppendLine($"（另有 {signatureLines.Count - MaxSignatureLines} 種較低嚴重度的簽章未逐項列出）");
+                sb.AppendLine($"（另有 {signatureLines.Count - MaxSignatureLines} 種較低嚴重度的簽章未逐項列出）");
             }
         }
 
@@ -223,20 +231,20 @@ internal class WeeklyCheckupService
         var prtgLines = BuildPrtgLines(window);
         if (prtgLines.Count > 0)
         {
-            body.AppendLine();
-            body.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌在同一觀察期出現不表示資源或時間相符）");
+            sb.AppendLine();
+            sb.AppendLine("【PRTG 監控訊號】（獨立來源 finding，由程式依規則確定性判定；與事件日誌在同一觀察期出現不表示資源或時間相符）");
+            var data = new StringBuilder();
             foreach (var line in prtgLines.Take(MaxPrtgLines))
             {
-                body.AppendLine(line);
+                data.AppendLine(line);
             }
+            sb.Append(fence.Block(data.ToString()));
             if (prtgLines.Count > MaxPrtgLines)
             {
-                body.AppendLine($"另有 {prtgLines.Count - MaxPrtgLines} 項 PRTG 訊號未列出");
+                sb.AppendLine($"另有 {prtgLines.Count - MaxPrtgLines} 項 PRTG 訊號未列出");
             }
         }
 
-        sb.AppendLine();
-        sb.Append(new PromptDataFence().Wrap(body.ToString()));
         sb.AppendLine();
         sb.AppendLine("請只回傳一個 JSON 物件（不要 markdown 圍欄、不要任何其他文字），結構如下：");
         sb.AppendLine("""

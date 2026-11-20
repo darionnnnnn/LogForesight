@@ -38,8 +38,44 @@ public static class DataProtectionKeyRing
         return services;
     }
 
-    /// <summary>建立（或收緊）金鑰環目錄。冪等：目錄已存在就只重設權限</summary>
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 建立（或收緊）金鑰環目錄。冪等：目錄已存在就只重設權限。
+    /// 失敗時記錄與 <see cref="Console.Error"/> 都帶目錄路徑與目前執行身分（診斷 ACL 問題最需要這兩項），再把原例外擲出。
+    /// </summary>
     public static DirectoryInfo Prepare(string path)
+    {
+        try
+        {
+            return PrepareCore(path);
+        }
+        catch (Exception ex)
+        {
+            var message = FailureMessage(path, CurrentIdentityName());
+            Log.Error(ex, message);
+            Console.Error.WriteLine(message + "（" + ex.GetType().Name + "）");
+            throw;
+        }
+    }
+
+    /// <summary>準備失敗的說明（含目錄與執行身分）；獨立成函式供測試驗證內容</summary>
+    internal static string FailureMessage(string path, string identity) =>
+        $"Data Protection 金鑰環目錄準備失敗：目錄 {path}、執行身分 {identity}。請確認該身分對此目錄有建立與寫入權限。";
+
+    private static string CurrentIdentityName()
+    {
+        try
+        {
+            return OperatingSystem.IsWindows() ? WindowsIdentity.GetCurrent().Name : Environment.UserName;
+        }
+        catch (Exception)
+        {
+            return Environment.UserName;
+        }
+    }
+
+    private static DirectoryInfo PrepareCore(string path)
     {
         var directory = new DirectoryInfo(path);
         if (OperatingSystem.IsWindows())

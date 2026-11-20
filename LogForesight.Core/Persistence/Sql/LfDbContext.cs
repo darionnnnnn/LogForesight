@@ -69,6 +69,8 @@ public class LfDbContext : DbContext
     /// （截斷會與別的鍵撞號或永遠對不上），該筆改為 Detached 不寫入，其餘筆照常寫入。
     /// SQL Server 超長字串會讓整批寫入擲截斷例外、SQLite 卻靜默通過，這裡讓兩個後端行為一致。
     /// Added 處理全部欄位，Modified 只處理實際被修改的欄位；不產生額外的資料庫指令。
+    /// 注意：新增列的鍵／索引字串欄超長時該列被略過（Detached）、不會取得自增主鍵（維持 0），
+    /// 呼叫端若依該列的自增主鍵寫子列會拿到 0；新增外部來源（PRTG、NetIQ…）的索引字串欄時要先想過這條路徑。
     /// </summary>
     private void PrepareForSave()
     {

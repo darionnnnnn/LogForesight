@@ -21,7 +21,7 @@ public static class PermissionChangeDedupeHash
 /// 每批 500 列、每批一個交易，中途取消後下次接續；<see cref="Ready"/> 只升不降，
 /// 就緒前 <see cref="PermissionChangeStore"/> 的四個依去重鍵查詢走原鍵比對，就緒後才走雜湊索引。
 /// 啟動快判用索引可 seek 的 <c>dedupe_key_hash IS NULL</c> EXISTS，不對全表 Count；
-/// 完成後寫版本化 blob，之後的啟動連 EXISTS 都不必做。
+/// 完成後寫版本化 blob 僅作紀錄；就緒與否每次啟動依 EXISTS 重新判定（回滾再升級會留下 NULL 雜湊列）。
 /// </summary>
 public sealed class PermissionChangeDedupeBackfiller
 {
@@ -43,13 +43,15 @@ public sealed class PermissionChangeDedupeBackfiller
     public bool Ready => Volatile.Read(ref _ready) == 1;
 
     /// <summary>
-    /// 啟動快判（純讀）：完成標記存在，或沒有任何雜湊欄為 NULL 的列時直接發布就緒。
-    /// 任一條件不成立什麼都不改，交由背景回填處理。
+    /// 啟動快判（純讀）：沒有任何雜湊欄為 NULL 的列時直接發布就緒。
+    /// 完成標記不能單獨當就緒依據：回滾到舊版期間新增的列雜湊欄為 NULL，再升級回來時
+    /// 標記仍在，直接走雜湊查詢會漏掉這些列、Upsert 重複插入；所以每次啟動都做一次索引可 seek 的 EXISTS。
+    /// 有待補列時什麼都不改，交由背景回填處理。
     /// </summary>
     public bool TryFastReady()
     {
         if (Ready) return true;
-        if (SchemaUpgrader.HasBlobVersion(_contextFactory, DoneBlobKey, DoneVersion) || !HasPending())
+        if (!HasPending())
         {
             Volatile.Write(ref _ready, 1);
             return true;
@@ -82,12 +84,7 @@ public sealed class PermissionChangeDedupeBackfiller
     /// <summary>執行回填直到完成或被取消。完成才寫標記並發布就緒；被取消則下次啟動接續。</summary>
     public void Run(CancellationToken cancellationToken)
     {
-        if (SchemaUpgrader.HasBlobVersion(_contextFactory, DoneBlobKey, DoneVersion))
-        {
-            Volatile.Write(ref _ready, 1);
-            return;
-        }
-
+        // 完成標記存在也要重新判定（回滾再升級後可能有 NULL 雜湊列），見 TryFastReady
         var done = 0;
         while (!cancellationToken.IsCancellationRequested)
         {

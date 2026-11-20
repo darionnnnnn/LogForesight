@@ -245,7 +245,7 @@ async function loadOptions() {
     document.getElementById('opt-timeout').value = options.timeoutSeconds;
     document.getElementById('opt-retry-count').value = options.retryCount;
     document.getElementById('opt-allow-invalid-certs').checked = options.allowInvalidCertificates;
-    document.getElementById('opt-trusted-cert').value = options.trustedCertificateSha256 ?? '';
+    document.getElementById('opt-trusted-cert').value = (options.trustedCertificateSha256 ?? '').split(',').join('\n');
     document.getElementById('opt-backfill-days').value = options.backfillDays;
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
     document.getElementById('opt-max-parallel-queries').value = options.maxParallelQueriesPerServer;
@@ -320,7 +320,7 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
         document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
         document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
         // 指紋存成正規化寫法（大寫、無分隔），欄位換成實際存入的值
-        document.getElementById('opt-trusted-cert').value = options.trustedCertificateSha256 ?? '';
+        document.getElementById('opt-trusted-cert').value = (options.trustedCertificateSha256 ?? '').split(',').join('\n');
         renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
     } catch {
         // 錯誤已由 api.js 顯示

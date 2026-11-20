@@ -104,8 +104,19 @@ public sealed class SentinelSearchResult
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>
 public class SentinelClientException : Exception
 {
-    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed") : base(message, inner) => SafeCode = safeCode;
+    public SentinelClientException(string message, Exception? inner = null, string safeCode = "query-failed", int? httpStatus = null) : base(message, inner)
+    {
+        SafeCode = safeCode;
+        HttpStatus = httpStatus;
+    }
+
     public string SafeCode { get; }
+
+    /// <summary>伺服器回的 HTTP 狀態碼；不是 HTTP 層失敗（逾時、格式、憑證…）時為 null。呼叫端依它分辨錯誤種類，不要比對訊息字串</summary>
+    public int? HttpStatus { get; }
+
+    /// <summary>查詢工作以非成功狀態（不可用、取消、存取被拒）結束；伺服器接受請求但不接受這次查詢內容或權限不足</summary>
+    public const string JobNotSuccessfulCode = "job-not-successful";
 
     /// <summary>位址未設定或格式不正確：訊息只含使用者自己填的位址與修正方式，可直接顯示給操作者</summary>
     public const string InvalidBaseUrlCode = "invalid-base-url";

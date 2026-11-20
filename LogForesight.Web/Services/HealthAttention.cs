@@ -98,6 +98,14 @@ public static class HealthAttention
     /// <summary>交辦 outbox 丟棄後，這段時間內仍列入整體狀態（與 <c>WorkOrderOutboxDropStore.RecentWindow</c> 同值）</summary>
     internal static readonly TimeSpan OutboxDropRecentWindow = LogForesight.Core.Persistence.WorkOrderOutboxDropStore.RecentWindow;
 
+    /// <summary>忽略憑證錯誤的設定位置：PRTG 在 PRTG 維護的擷取參數，Sentinel 在 NetIQ 維護的連線與節流參數</summary>
+    private static string CertificateSettingLocation(string source) => source switch
+    {
+        "PRTG" => "PRTG 維護的擷取參數",
+        "Sentinel" => "NetIQ 維護的連線與節流參數",
+        _ => $"{source} 的連線設定"
+    };
+
     public static IReadOnlyList<HealthReason> Evaluate(HealthAttentionInput input, DateTime now)
     {
         var reasons = new List<HealthReason>();
@@ -153,7 +161,8 @@ public static class HealthAttention
         }
         if (input.UnpinnedCertificateBypass.Count > 0)
             Add(HealthAttentionKeys.CertificateTrust,
-                $"{string.Join("、", input.UnpinnedCertificateBypass)}開了「忽略憑證錯誤」且沒有填信任的憑證指紋，任何憑證都會被接受；請在連線設定填入伺服器的憑證指紋。");
+                $"{string.Join("、", input.UnpinnedCertificateBypass)}開了「忽略憑證錯誤」且沒有填信任的憑證指紋，任何憑證都會被接受；" +
+                $"請到{string.Join("、", input.UnpinnedCertificateBypass.Select(CertificateSettingLocation))}填入伺服器的憑證指紋。");
         if (input.InvalidMailSchedules.Count > 0)
             Add(HealthAttentionKeys.MailSuspended, $"郵件設定的{string.Join("、", input.InvalidMailSchedules)}格式不合法，這些摘要不會寄出；請到郵件設定修正為 HH:mm。");
         if (input.RetentionFailure is { } retention)

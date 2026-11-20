@@ -307,8 +307,8 @@ public class UpdateNetiqOptionsRequest
 
     public bool AllowInvalidCertificates { get; set; }
 
-    /// <summary>null＝沿用既有值；空字串＝清除。格式見 <c>ServerCertificateTrust.TryNormalize</c></summary>
-    [StringLength(200)]
+    /// <summary>null＝沿用既有值；空字串＝清除。可填多個指紋（逗號、分號或換行分隔）；格式見 <c>ServerCertificateTrust.TryNormalize</c></summary>
+    [StringLength(1200)]
     public string? TrustedCertificateSha256 { get; set; }
 
     /// <summary>正式環境的預期值是 1（只查前一天）；上限見

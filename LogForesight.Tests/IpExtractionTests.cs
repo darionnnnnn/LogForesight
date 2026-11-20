@@ -147,10 +147,37 @@ public class IpExtractionTests
     }
 
     [Fact]
-    public void 種子的成功登入規則片語為整詞Accepted且種子版本為14()
+    public void 種子的成功登入規則片語為認證方法清單且種子版本為15()
     {
         var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-linux-ssh-accept");
-        Assert.Equal(new[] { "Accepted" }, rule.MessagePatterns);
-        Assert.Equal(14, KnownIssueSeed.Version);
+        Assert.Equal(new[] { "Accepted password", "Accepted publickey", "Accepted keyboard-interactive",
+            "Accepted hostbased", "Accepted gssapi-with-mic", "Accepted gssapi-keyex", "Accepted none" }, rule.MessagePatterns);
+        Assert.Equal(15, KnownIssueSeed.Version);
+    }
+
+    [Fact]
+    public void VERBOSE的Accepted_key旁註不重複計入成功登入也不產生降級告警()
+    {
+        var t0 = DateTime.Today.AddHours(1);
+        var logs = Enumerable.Range(0, 10)
+            .Select(i => SshEvent($"Failed password for invalid user a{i} from 10.0.0.9 port {40000 + i} ssh2", t0.AddMinutes(i)))
+            .ToList();
+        logs.Add(SshEvent("Accepted publickey for ok from 10.0.1.1 port 40100 ssh2: RSA SHA256:abc", t0.AddHours(1)));
+        logs.Add(SshEvent("Accepted key RSA SHA256:abc found at /home/ok/.ssh/authorized_keys:1", t0.AddHours(1)));
+
+        var signatures = LogAggregator.Aggregate(logs);
+        var accepted = Assert.Single(signatures, s => s.EventKey == LinuxCorrelationAnalyzer.SshAcceptRuleId);
+        Assert.Equal(1, accepted.Count);
+
+        Assert.Empty(LinuxCorrelationAnalyzer.Detect(signatures, logs));
+    }
+
+    [Fact]
+    public void Accepted_key旁註不是成功登入_解析器與分析器都略過()
+    {
+        const string notice = "Accepted key RSA SHA256:abc found at /home/ok/.ssh/authorized_keys:1";
+        Assert.True(LinuxAuthParser.IsAcceptedKeyNotice(notice));
+        Assert.False(LinuxAuthParser.TryParseAccepted(notice, out _, out _));
+        Assert.False(LinuxAuthParser.IsAcceptedKeyNotice("Accepted publickey for ok from 10.0.1.1 port 22 ssh2"));
     }
 }
