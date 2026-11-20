@@ -858,7 +858,8 @@
 ## 體檢交接
 
 - 範圍：批次 P、A、B、C、G、E、J、F、K、D、H、M、N、I、L 全部實作，逐段提交並推送到 `feature/feedback-79`；每段的驗收、突變與落差見上方執行紀錄。
-- 收官全量（同一個 commit `9bbce9e9`）：macOS 本機 11,779 通過／27 略過／0 失敗；CI Windows 11,794 通過／12 略過／0 失敗、CI macOS 11,779 通過／27 略過。與基準（Windows 10,985／12、macOS 10,976／21）相比，新增約 800 筆測試；macOS 多出的 6 筆略過是 `[WindowsFact]`（F1 事件提供者中繼資料 4 筆、L6 金鑰目錄權限等）。
+- 完成度核對補齊後的全量（commit `38f8b4ff`）：CI Windows 11,913 通過／12 略過／0 失敗（第一次跑時單一 Node 行為案例 5 秒逾時，只重跑失敗工作即通過）、CI macOS 11,898 通過／27 略過／0 失敗。
+- 實作完成時的收官全量（commit `9bbce9e9`）：macOS 本機 11,779 通過／27 略過／0 失敗；CI Windows 11,794 通過／12 略過／0 失敗、CI macOS 11,779 通過／27 略過。與基準（Windows 10,985／12、macOS 10,976／21）相比，新增約 800 筆測試；macOS 多出的 6 筆略過是 `[WindowsFact]`（F1 事件提供者中繼資料 4 筆、L6 金鑰目錄權限等）。
 - Windows CI 自 G 段起「快照迴圈」測試每次失敗的根因已修（`NoteSkip` 暫停起點與跳過原因的寫入順序競態）；之後 Windows CI 只出現過一次單一 Node 行為案例 5 秒逾時（負載下偶發）。
 - 未在正式環境驗證：SQL Server（D7、D8、J8、N1 只驗到 EF 翻譯）、真實 PRTG／Sentinel 的憑證指紋（以自建自簽 HTTPS 伺服器實測）、Data Protection 金鑰目錄在 IIS 服務帳號下的權限（L6 的 Windows ACL 斷言只在 CI 跑）、Cookie 驗證在 IIS 子 Application 與反向代理後的實際行為。見上方「正式站台實測清單」。
 - 上線影響：升級後全員需重新登入一次（L）；本機來源主機會開始出現「安裝新服務 7045」等告警（F2）；校準匯出的每夜中位數偶數晚數改為平均（H3）。
