@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **11,974 通過／12 略過**、macOS **11,959 通過／27 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **11,998 通過／12 略過**、macOS **11,983 通過／27 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
   歷次基線見 `docs/archive/README.md`。略過的 12 筆是規模壓測，設 `LF_SCALE_BENCH=1` 才跑；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -86,6 +86,8 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在執行期增減執行紀錄的 NLog target 或規則，也不要讓 recorder 共用可碰撞的識別：全行程只有 `RunLogCapture` 安裝的一個常駐 target，
   各 `BatchRunRecorder` 以 `ScopeContext` 的逐實例識別碼（不是 RunId）登記並被分派，沒有識別、識別為空字串或已登出的事件一律不處理；
   target 的 `Write` 只做記憶體內計數與入該 recorder 的有界佇列，寫庫在背景執行緒、`Finish` 前排空，不得在記錄路徑上同步呼叫資料庫。
+- 不要新增沒標背景的常駐輪詢：頁面開著就會定時送的請求（告示、徽章、狀態卡）一律 `api.get(..., { background: true })`，
+  伺服器對它不滑動延長閒置時限；漏標的頁面開著就永遠不會閒置登出（WEB-SPEC §6.1）。使用者按鈕觸發的更新不帶。
 - 不要拿 `/api/run-activity` 的 `isRunning` 當互斥判斷：它是「取數或 AI 任一在跑」的聯集，只能決定
   告示出不出現；判斷某個動作現在能不能做一律看 `isFetchRun`（後端只在取數執行中擋主機更新，
   AI 單獨在跑時那個動作是允許的）。
