@@ -203,9 +203,9 @@ public class PipelineSiteHttpTests
     }
 
     [Fact]
-    public async Task 登入並行上限與佇列占滿_新的登入回429信封()
+    public async Task 目錄驗證名額與佇列占滿_新的登入回429信封_救援帳號仍可登入()
     {
-        var capacity = LoginRateLimit.ConcurrentLogins + LoginRateLimit.QueuedLogins;
+        var capacity = DirectoryVerifyGate.Concurrent + DirectoryVerifyGate.Queued;
         BlockingAuthenticationProvider.Gate.Reset();
         Interlocked.Exchange(ref BlockingAuthenticationProvider.Entered, 0);
         var inflight = new List<Task<HttpResponseMessage>>();
@@ -220,13 +220,17 @@ public class PipelineSiteHttpTests
             var rejected = await first;
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
             var settle = DateTime.UtcNow.AddSeconds(30);
-            while (Volatile.Read(ref BlockingAuthenticationProvider.Entered) < LoginRateLimit.ConcurrentLogins && DateTime.UtcNow < settle)
+            while (Volatile.Read(ref BlockingAuthenticationProvider.Entered) < DirectoryVerifyGate.Concurrent && DateTime.UtcNow < settle)
                 await Task.Delay(25);
-            Assert.Equal(LoginRateLimit.ConcurrentLogins, Volatile.Read(ref BlockingAuthenticationProvider.Entered));
+            Assert.Equal(DirectoryVerifyGate.Concurrent, Volatile.Read(ref BlockingAuthenticationProvider.Entered));
             var (success, code, message) = ReadEnvelope(await rejected.Content.ReadAsStringAsync());
             Assert.False(success);
             Assert.Equal(ApiErrorCodes.RateLimited, code);
-            Assert.Contains("登入請求過多", message);   // 並行上限的訊息，不是帳號節流的「登入嘗試次數過多」
+            Assert.Contains("目錄服務忙碌", message);   // 並行上限的訊息，不是帳號節流的「登入嘗試次數過多」
+
+            // 名額占滿時救援帳號（不經目錄服務驗證）仍可登入——AD 掛掉時它是唯一入口
+            using var rescue = await _fx.Client.PostAsJsonAsyncCompat("/api/auth/login", "{\"account\":\"svc-lfadmin\",\"password\":\"\"}");
+            Assert.Equal(HttpStatusCode.OK, rescue.StatusCode);
         }
         finally
         {

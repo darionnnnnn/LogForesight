@@ -992,6 +992,10 @@ function bindPrtgTest() {
                 ? `${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${result.message}`;
             if (result.success && !matchesSaved) text += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
+            // 這兩個欄位在「擷取參數」頁籤，「連線」頁籤的儲存不含它們；測試讀的是兩頁籤的目前值
+            const certDiffers = Boolean(document.getElementById('prtg-ignore-ssl')?.checked) !== Boolean(saved?.prtgIgnoreSslErrors)
+                || normalizeFingerprint(document.getElementById('prtg-trusted-cert')?.value) !== (saved?.prtgTrustedCertificateSha256 ?? '');
+            if (certDiffers) text += '；信任的憑證指紋與忽略憑證錯誤要在「擷取參數」頁籤儲存，這裡的儲存不含這兩項。';
             resultEl.className = '';
             resultEl.replaceChildren(...[statusNote(result.success ? 'success' : 'error', text),
                 presentedFingerprint(result.presentedCertificateSha256)].filter(Boolean));

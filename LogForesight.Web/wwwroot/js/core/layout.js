@@ -669,7 +669,7 @@ async function refreshRunActivity() {
     let activity = null;
     let failure = null;
     try {
-        activity = await api.get('/api/run-activity', { silent: true });
+        activity = await api.get('/api/run-activity', { silent: true, background: true });
     } catch (err) {
         // 純加值資訊，失敗就當作沒在跑，畫面上不留錯誤訊息；
         // 刻意不做任何停掉輪詢的事——偶發失敗不代表執行結束，只交給 pollWhile 計失敗退避。

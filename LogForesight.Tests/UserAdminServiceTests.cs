@@ -129,6 +129,26 @@ public class UserAdminServiceTests
         Assert.Null(_users.FindByAccount("DOMAIN\\mail"));
     }
 
+    /// <summary>升級前存下的多位址信箱：信箱沒改時停用、改名照常存得進去；改成另一個不合格值仍被拒；寄信端另由 EligibleEmail 擋掉</summary>
+    [Fact]
+    public void SaveUser_既有多位址信箱未變動_可停用與改名_改動才驗證()
+    {
+        const string legacy = "a@corp.local,b@corp.local";
+        _users.Upsert(new WebUser { Account = "DOMAIN\\legacy", DisplayName = "舊", Email = legacy, Active = true });
+        var service = Create();
+
+        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = legacy, Active = false });
+        Assert.False(saved.Active);
+        Assert.Equal("新名", _users.FindByAccount("DOMAIN\\legacy")!.DisplayName);
+        Assert.Equal(legacy, _users.FindByAccount("DOMAIN\\legacy")!.Email);
+
+        // 改成另一個不合格值：驗證照舊
+        Assert.Throws<DomainException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = "x@corp.local;y@corp.local" }));
+        // 改成單一合法位址：通過
+        Assert.Equal("ok@corp.local", service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = "ok@corp.local" }).Email);
+    }
+
     [Fact]
     public void SaveUser_單一合法Email_通過並存下修剪後的值()
     {

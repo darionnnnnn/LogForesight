@@ -218,6 +218,8 @@ LogForesight.Web/
   （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
   寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
+- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
+  `CookieSessionEvents.CheckSlidingExpiration` 對它不續發——前景分頁開著不動也會依閒置時數登出。權限版號變更時的就地更新續發不受影響（背景請求同樣換主體）。
 - **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
   （同一台主機的正式／測試兩個子站台互不覆蓋）。
 - **Data Protection 金鑰環**存在 `{DataRoot}\dataprotection\`（`Auth/DataProtectionKeyRing.cs`），
@@ -296,7 +298,8 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 以使用者帳密向 AD bind 驗證（AD 未設定時 fallback 為 `UnconfiguredAdAuthenticationProvider`）；
 AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流（`LoginThrottle`：5 分鐘滑動窗口內
 同一帳號失敗 10 次或同一來源 IP 失敗 50 次即暫停 5 分鐘，計數鍵上限 1 萬個；暫停期間回 429 `rate_limited`），
-命中門檻時不再呼叫 AD，減少密碼噴灑觸發網域鎖定。迴路位址與未知來源不計入 IP 維度。
+命中門檻時不再呼叫 AD，減少密碼噴灑觸發網域鎖定。
+目錄服務無回應時 AD bind 會占住執行緒到逾時，因此**呼叫 Provider 這一步**有並行上限（`DirectoryVerifyGate`：同時 8 個、再排最多 32 個，滿了回 429 `rate_limited`「目錄服務忙碌，請稍後再試。」，不計入失敗節流）；上限不加在端點，serverAdmin 救援帳號不經 Provider、不受影響。迴路位址與未知來源不計入 IP 維度。
 救援帳號豁免 IP 維度（不受共用 IP 門檻連坐），只看帳號維度，仍受本身鎖定限制。
 帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
 使用者查找都用正規化帳號，`CORP\bob` 與 `bob` 是同一個人、同一個節流桶；查找時正規化帳號找不到才退回原字串
@@ -2649,7 +2652,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      無事的信同時是系統存活訊號）＋標題模板
      （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
      已暫停寄送的收件人清單（見下方）＋「交辦單通知（建立／改派／取消與夜間摘要）」開關
-     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複）＋「站台網址」（`SiteBaseUrl`，選填；消費端 `MailLinks`，信件連結前綴）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
+     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複；每日、每週、交辦三種時刻共用 `InputParsing.TryParseClockTime`，接受 `H:mm`／`HH:mm`、分鐘必須兩位，儲存時以 `NormalizeClockTime` 正規化為 `HH:mm`，`09:30:00`、`24:00`、`9:3` 不合法）＋「站台網址」（`SiteBaseUrl`，選填；消費端 `MailLinks`，信件連結前綴）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
      同頁籤末段是**自動派工**：「夜間分析後自動派工」開關（`AutoDispatchEnabled`，預設關）、三條常駐說明
      （候選人：派工池群組成員，排除暫停接單、看不到該主機的人；負載：進行中交辦單的進行中成員數，挑最輕的人；
      不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾）、

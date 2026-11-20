@@ -1130,6 +1130,7 @@ a.lf-badge:hover { text-decoration: underline; }
 
 /* 整列導向（ui.js attachRowLink）：列內一個真正的 <a href>，::after 延伸到整列（stretched link）。
    tr 成為定位基準；列內其他連結、按鈕、表單控制項抬到延伸區之上，保有自己的行為。
+   帶 title 的元素也抬上去，列內的提示才不會被延伸區蓋住；代價是這些元素的文字無法拖曳選取。
    sticky 動作欄（z-index: 1）排在連結之後，同層時畫在延伸區之上，不被蓋住。 */
 .table > tbody > tr.lf-row-link { position: relative; cursor: pointer; }
 .lf-row-link__anchor {
@@ -1143,7 +1144,7 @@ a.lf-badge:hover { text-decoration: underline; }
     inset: 0;
     z-index: 1;
 }
-.lf-row-link :where(a:not(.lf-row-link__anchor), button, input, select, textarea, label, summary, [data-bs-toggle]) {
+.lf-row-link :where(a:not(.lf-row-link__anchor), button, input, select, textarea, label, summary, [data-bs-toggle], [title]) {
     position: relative;
     z-index: 2;
 }

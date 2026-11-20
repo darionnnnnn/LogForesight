@@ -15,11 +15,23 @@ public class InputValidationTests
     [InlineData("90", false)]
     [InlineData("1.02:00", false)]
     [InlineData("24:00", false)]
-    [InlineData("9:30", false)]
+    [InlineData("9:30", true)]
+    [InlineData("0:05", true)]
+    [InlineData("09:30:00", false)]
+    [InlineData("9:3", false)]
+    [InlineData("009:30", false)]
     [InlineData("-1:00", false)]
     [InlineData(null, false)]
-    public void 時刻只接受HHmm(string? value, bool expected) =>
+    public void 時刻接受HHmm與Hmm_分鐘必須兩位(string? value, bool expected) =>
         Assert.Equal(expected, InputParsing.TryParseClockTime(value, out _));
+
+    [Theory]
+    [InlineData("9:30", "09:30")]
+    [InlineData(" 07:05 ", "07:05")]
+    [InlineData("23:59", "23:59")]
+    [InlineData("24:00", "24:00")]
+    public void 時刻正規化為HHmm_不合法原樣(string value, string expected) =>
+        Assert.Equal(expected, InputParsing.NormalizeClockTime(value));
 
     [Theory]
     [InlineData("Monday", true)]
@@ -139,4 +151,37 @@ public class MailRecipientEligibilityTests
     [Fact]
     public void 找不到使用者時不寄() =>
         Assert.Null(LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmail(null));
+
+    /// <summary>信箱不合格的警告：帶 alreadyWarned 時同一使用者只記一行（主機日迴圈反覆遇到同一人）；不帶則每次都記</summary>
+    [Fact]
+    public void 信箱不合格警告_同一使用者在一次通知處理只記一行()
+    {
+        var target = new NLog.Targets.MemoryTarget("eligible-warn-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        var rule = new NLog.Config.LoggingRule("*", NLog.LogLevel.Warn, target);
+        config.LoggingRules.Add(rule);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            var bad = new LogForesight.Core.Models.WebUser { UserId = 9001, Account = "u", Active = true, Email = "a@x.com,b@x.com" };
+            var other = new LogForesight.Core.Models.WebUser { UserId = 9002, Account = "v", Active = true, Email = "c@x.com;d@x.com" };
+            var warned = new HashSet<long>();
+            for (var i = 0; i < 5; i++)
+                Assert.Null(LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmailOrWarn(bad, "測試路徑", warned));
+            Assert.Null(LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmailOrWarn(other, "測試路徑", warned));
+
+            Assert.Equal(1, target.Logs.Count(l => l.Contains("使用者 9001")));
+            Assert.Equal(1, target.Logs.Count(l => l.Contains("使用者 9002")));
+
+            // 不帶集合（單次呼叫路徑）維持每次都警告
+            LogForesight.Web.Services.Mail.MailNotificationService.EligibleEmailOrWarn(bad, "測試路徑");
+            Assert.Equal(2, target.Logs.Count(l => l.Contains("使用者 9001")));
+        }
+        finally
+        {
+            config.LoggingRules.Remove(rule);
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
 }

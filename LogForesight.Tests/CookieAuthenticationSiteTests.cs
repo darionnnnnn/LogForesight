@@ -384,6 +384,46 @@ public class CookieAuthenticationSiteTests
         Assert.Equal(HttpStatusCode.OK, later.StatusCode);
     }
 
+    /// <summary>背景輪詢（X-Lf-Background）不滑動延長：只有背景請求時，閒置超過時數仍登出</summary>
+    [Fact]
+    public async Task 只有背景請求_不延長閒置時限_超過時數登出()
+    {
+        using var site = new AuthSite(expireHours: 8);
+        var cookie = await site.LoginCookie();
+
+        for (var i = 0; i < 4; i++)
+        {
+            site.Clock.Advance(TimeSpan.FromHours(2) - TimeSpan.FromMinutes(1));
+            using var poll = await site.Send(HttpMethod.Get, "api/auth/me", cookie,
+                configure: r => r.Headers.Add("X-Lf-Background", "1"));
+            Assert.Equal(HttpStatusCode.OK, poll.StatusCode);
+            Assert.Null(AuthTestKit.ReadSessionCookiePair(poll));   // 不續發
+        }
+
+        site.Clock.Advance(TimeSpan.FromMinutes(10));   // 自登入第 8 小時多：背景請求沒有延長過
+        using var after = await site.Me(cookie);
+        Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
+    }
+
+    /// <summary>背景請求遇到權限版號變更：仍換主體並續發（必要的續發，不是活動延長）</summary>
+    [Fact]
+    public async Task 背景請求遇權限變更_仍換主體並續發()
+    {
+        using var site = new AuthSite();
+        AddUser(site, "cookie\\bgpromoted");
+        var cookie = await site.LoginCookie("cookie\\bgpromoted");
+        var users = site.Services.GetRequiredService<IUserStore>();
+        var admin = site.Services.GetRequiredService<IUserGroupStore>().GetAll().First(g => g.Role == UserRole.Admin && g.Active);
+        users.SetGroups(users.FindByAccount("cookie\\bgpromoted")!.UserId, new[] { admin.GroupId });
+        site.Services.GetRequiredService<PermissionVersionStamp>().Bump();
+
+        using var after = await site.Send(HttpMethod.Get, "api/auth/me", cookie,
+            configure: r => r.Headers.Add("X-Lf-Background", "1"));
+        Assert.Equal(HttpStatusCode.OK, after.StatusCode);
+        Assert.Contains("Maintain", await Body(after));
+        Assert.NotNull(AuthTestKit.ReadSessionCookiePair(after));
+    }
+
     [Fact]
     public async Task 連續活動超過24小時_仍須重新登入()
     {
@@ -589,5 +629,65 @@ public class DataProtectionKeyRingPermissionTests : IDisposable
         DataProtectionKeyRing.Prepare(path);
         DataProtectionKeyRing.Prepare(path);
         Assert.True(Directory.Exists(path));
+    }
+}
+
+/// <summary>背景輪詢必須帶背景標頭（否則會滑動延長閒置時限，前景分頁開著永不登出）</summary>
+public class BackgroundPollingHeaderGuardTests
+{
+    private static string Js(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        return File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "wwwroot", "js", relative));
+    }
+
+    [Theory]
+    [InlineData("core/layout.js", "/api/run-activity")]
+    [InlineData("core/badges.js", "/api/handlers/me/badge")]
+    [InlineData("core/badges.js", "/api/work-orders/unread-count")]
+    public void 輪詢呼叫帶background選項(string file, string endpoint)
+    {
+        var line = Js(file).Split('\n').Single(l => l.Contains($"api.get('{endpoint}'"));
+        Assert.Contains("background: true", line);
+    }
+}
+
+/// <summary>第 79 輪自我體檢的前端行為守門（來源比對；行為本身由人工與量測驗收）</summary>
+public class SelfReviewFrontGuardTests
+{
+    private static string Js(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        return File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "wwwroot", "js", relative));
+    }
+
+    /// <summary>全部成員都因問題簽章過長被略過時，不先顯示「已建立 0 張」成功提示，只留警告</summary>
+    [Fact]
+    public void 建單全部被略過時成功提示受nothingCreated把關()
+    {
+        var js = Js("pages/records.js");
+        Assert.Matches(@"const nothingCreated = orders\.length === 0 && \(result\.overlongSkipped\?\.length \?\? 0\) > 0;", js);
+        Assert.Matches(@"if \(!nothingCreated\) \{\s*toast\(`已建立 \$\{createdCount\} 張", js);
+    }
+
+    /// <summary>PRTG 測試連線帶入「擷取參數」頁籤兩欄時，與已存值不同要提示在該頁籤儲存</summary>
+    [Fact]
+    public void PRTG測試連線兩欄與已存值不同時提示到擷取參數頁籤儲存()
+    {
+        var js = Js("pages/prtg-admin.js");
+        Assert.Contains("const certDiffers =", js);
+        Assert.Contains("if (certDiffers) text += '；信任的憑證指紋與忽略憑證錯誤要在「擷取參數」頁籤儲存", js);
+    }
+
+    /// <summary>登入頁讀出被踢回的原因：只經 statusNote（textContent），不寫 innerHTML</summary>
+    [Fact]
+    public void 登入頁以statusNote顯示一次性原因()
+    {
+        var js = Js("pages/login.js");
+        Assert.Contains("takeSessionNotice()", js);
+        Assert.Contains("statusNote('info', message)", js);
+        Assert.DoesNotContain("innerHTML", js);
     }
 }

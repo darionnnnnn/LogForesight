@@ -1016,10 +1016,12 @@ public class MailNotificationService
     /// 同 <see cref="EligibleEmail"/>，但啟用中、信箱有填卻不是單一位址時記一行警告（依路徑標示），
     /// 讓收件人被靜默略過的原因查得到；停用帳號是正常略過，不警告。
     /// </summary>
-    internal static string? EligibleEmailOrWarn(WebUser? user, string path)
+    internal static string? EligibleEmailOrWarn(WebUser? user, string path, ISet<long>? alreadyWarned = null)
     {
         var email = EligibleEmail(user);
-        if (email == null && user is { Active: true } && !string.IsNullOrWhiteSpace(user.Email))
+        // alreadyWarned：同一次通知處理在主機日迴圈內會反覆遇到同一位使用者，只警告第一次
+        if (email == null && user is { Active: true } && !string.IsNullOrWhiteSpace(user.Email)
+            && (alreadyWarned == null || alreadyWarned.Add(user.UserId)))
             Log.Warn("[Mail] {Path}：使用者 {UserId} 的信箱不是單一電子郵件位址，略過此收件人。", path, user.UserId);
         return email;
     }
@@ -1120,6 +1122,7 @@ public class MailNotificationService
 
         if (settings.MailNotifyHostOwners)
         {
+            var warnedOwners = new HashSet<long>();   // 信箱不合格的警告，每位負責人一次通知只記一行
             foreach (var record in records)
             {
                 var host = ctx.Host(record.HostId);
@@ -1127,7 +1130,7 @@ public class MailNotificationService
 
                 foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
-                    var email = EligibleEmailOrWarn(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId), "主機負責人通知");
+                    var email = EligibleEmailOrWarn(ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId), "主機負責人通知", warnedOwners);
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
 
                     if (!views.TryGetValue(email, out var existing))
@@ -2016,7 +2019,7 @@ public class MailNotificationService
                 var lines = new List<string> { $"目前靜音中的問題（共 {muted.Count} 個，到期後恢復告警）：" };
                 lines.AddRange(muted.Select(x =>
                     $"  {x.Profile.SourceName}/{x.Profile.EventId}：靜音至 {x.Mute!.To:yyyy-MM-dd}"));
-                lines.Add("  （靜音原因與設定者請至站台的問題負責與靜音頁查看）");
+                lines.Add("  （靜音原因與設定者請洽站台管理者）");
                 mutedSection = string.Join(Environment.NewLine, lines);
             }
         }

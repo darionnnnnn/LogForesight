@@ -23,6 +23,12 @@ public sealed class CookieSessionEvents : CookieAuthenticationEvents
     /// <summary><c>HttpContext.Items</c> 的鍵：這次請求被拒絕的原因（可直接顯示的中文），給未登入回應用</summary>
     internal const string RejectReasonKey = "lf.auth.reject-reason";
 
+    /// <summary>
+    /// 背景輪詢（執行告示、徽章）請求帶的標頭。這類請求不代表使用者在操作，不得滑動延長閒置時限，
+    /// 否則前景分頁開著就永不閒置登出（WEB-SPEC §6.1）。
+    /// </summary>
+    public const string BackgroundHeader = "X-Lf-Background";
+
     private readonly IUserStore _users;
     private readonly SessionVersionStore _versions;
     private readonly PermissionVersionStamp _permissionVersion;
@@ -103,6 +109,16 @@ public sealed class CookieSessionEvents : CookieAuthenticationEvents
             context.ReplacePrincipal(_principals.Create(_identity.CreateSessionIdentity(user), sessionVersion, startedAt));
             context.ShouldRenew = true;
         }
+    }
+
+    /// <summary>
+    /// 背景輪詢請求不續發 cookie（不滑動延長）。權限版號變更時 <see cref="ValidatePrincipal"/> 的就地更新續發
+    /// 走另一條（ShouldRenew），不受這裡影響——那是必要的換主體，不是活動延長。
+    /// </summary>
+    public override Task CheckSlidingExpiration(CookieSlidingExpirationContext context)
+    {
+        if (context.HttpContext.Request.Headers.ContainsKey(BackgroundHeader)) context.ShouldRenew = false;
+        return Task.CompletedTask;
     }
 
     public override Task RedirectToLogin(RedirectContext<CookieAuthenticationOptions> context)

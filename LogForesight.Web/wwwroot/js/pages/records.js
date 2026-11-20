@@ -2049,7 +2049,11 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
                 orderLinks = orderIds.slice(0, 3).map(id => ({ href: orderHref(id), text: `#${id}` }));
                 if (orderIds.length > 3) orderLinks.push({ href: orderHref(orderIds[0]), text: `等 ${orderIds.length} 張` });
             }
-            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
+            // 全部成員都因問題簽章過長被略過、沒有任何單成立時，只顯示下面的警告（不先報「已建立 0 張」的成功）
+            const nothingCreated = orders.length === 0 && (result.overlongSkipped?.length ?? 0) > 0;
+            if (!nothingCreated) {
+                toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
+            }
 
             if (result.daySyncPendingCases > 0) {
                 toast('逐日同步在背景進行，儀表板數字會在數分鐘內更新', 'info');

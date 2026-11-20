@@ -383,7 +383,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 按鈕 | `ui.js` `button(文字, { variant, size, icon, title, opens, className, disabled, onClick })` |
 | 換頁但要按鈕外觀 | `ui.js` `linkButton(文字, href, opts)` |
 | 頁內導航（捲到分節、切頁籤） | `lf-nav-item`（句中用 `lf-nav-item--inline`） |
-| 整列導向的表格 | `renderTable(..., { rowHref })`：列保有 `<tr>` 語意，第一個沒有互動元素的儲存格放真正的 `<a href>`（`lf-row-link__anchor`，`appUrl` 組網址），以 `::after` 延伸點擊區涵蓋整列；Tab 聚焦、Enter 啟用、中鍵或 Ctrl／Cmd 點擊開新分頁，焦點框畫在整列上。列內其他連結、按鈕、表單控制項抬到延伸區之上、保有自己的行為；每格都有互動元素時放空連結並以首格文字當 `aria-label`。可展開的列（`rowDetail`／`onRowExpand`）是另一回事，仍是 `aria-expanded` 的列層級切換 |
+| 整列導向的表格 | `renderTable(..., { rowHref })`：列保有 `<tr>` 語意，第一個沒有互動元素的儲存格放真正的 `<a href>`（`lf-row-link__anchor`，`appUrl` 組網址），以 `::after` 延伸點擊區涵蓋整列；Tab 聚焦、Enter 啟用、中鍵或 Ctrl／Cmd 點擊開新分頁，焦點框畫在整列上。列內其他連結、按鈕、表單控制項與帶 `title` 的元素（進度、關聯訊號格的提示）抬到延伸區之上、保有自己的行為；列內文字無法拖曳選取是延伸點擊區的固有代價；每格都有互動元素時放空連結並以首格文字當 `aria-label`。可展開的列（`rowDetail`／`onRowExpand`）是另一回事，仍是 `aria-expanded` 的列層級切換 |
 | 頁籤 | `ui.js` `bindTabs(tabsEl, { onChange(name, 按鈕), hash })`：`ul.nav.nav-tabs` 內 `button.nav-link[data-tab]` 與同層 `[data-panel]` 以 data 值配對（多顆按鈕可共用一個面板）；Bootstrap 5.3 Tab 外掛提供 `tablist／tab／tabpanel` 角色、`aria-selected`、roving tabindex 與方向鍵、Home／End，`bindTabs` 補 id、`aria-controls`、面板 `d-none`、面板 `aria-labelledby` 與 hash 同步（`history.replaceState`、不捲動；進站與 `hashchange` 依 hash 切換，hash 進選擇器前經 `selectors.js`）。非作用中面板初始 HTML 自帶 `d-none`。頁面以程式切頁籤用 `showTab(頁籤列 id, 名稱)` 或 `bindTabs` 回傳的 `show(名稱)`，不對頁籤按鈕模擬點擊 |
 | 請求序號（舊回應不得蓋掉新結果） | `async-guards.js` `createSeqGuard()`：`next()` 取序號、`isCurrent(序號)` 判斷；頁面不手寫遞增計數器（`SharedExitGuardUiTests` 守門） |
 | 只有圖示的連結 | `lf-icon-link` |

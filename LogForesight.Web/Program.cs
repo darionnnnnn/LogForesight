@@ -95,24 +95,6 @@ try
     builder.Services.AddLogForesightServices();
 
     builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-    // 登入端點的並行上限：AD 不回應時每個登入請求會占住執行緒到逾時，輪換帳號就能繞過依帳號計的節流把執行緒耗盡。
-    // 超過上限（含佇列）回 429 信封
-    builder.Services.AddRateLimiter(options =>
-    {
-        Microsoft.AspNetCore.RateLimiting.RateLimiterOptionsExtensions.AddConcurrencyLimiter(options, LoginRateLimit.PolicyName, limiter =>
-        {
-            limiter.PermitLimit = LoginRateLimit.ConcurrentLogins;
-            limiter.QueueLimit = LoginRateLimit.QueuedLogins;
-            limiter.QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst;
-        });
-        options.OnRejected = async (context, cancellationToken) =>
-        {
-            context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-            await context.HttpContext.Response.WriteAsJsonAsync(
-                LogForesight.Web.Models.ApiResponse<object>.Fail(LogForesight.Web.Models.ApiErrorCodes.RateLimited, "登入請求過多，請稍後再試。"),
-                cancellationToken);
-        };
-    });
     builder.Services.AddControllersWithViews(options =>
     {
         // 例外處理單點化：Controller 與 Service 都不必寫 try-catch 樣板（§7.2）
@@ -245,7 +227,6 @@ try
         }
     });
     app.UseRouting();
-    app.UseRateLimiter();
 
     // 清掉改用內建 Cookie Authentication 之前的舊登入 cookie（只在請求帶著舊名稱時動作）
     app.UseMiddleware<LegacyAuthCookieMiddleware>(settings.Jwt.CookieName);

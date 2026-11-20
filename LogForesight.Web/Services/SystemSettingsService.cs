@@ -304,7 +304,7 @@ public class SystemSettingsService : ISystemSettingsService
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
             throw DomainException.Validation("郵件摘要門檻不合法。");
         if (request.MailDailyEnabled && !InputParsing.TryParseClockTime(request.MailDailyTime, out _))
-            throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm。");
+            throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm（例如 09:30）。");
         if (request.MailWeeklyEnabled)
         {
             if (!InputParsing.TryParseClockTime(request.MailWeeklyTime, out _))
@@ -323,7 +323,7 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 if (string.IsNullOrWhiteSpace(x) || !InputParsing.TryParseClockTime(x, out _))
                     throw DomainException.Validation($"交辦摘要時刻『{x}』格式不合法，請用 HH:mm");
-                if (!seen.Add(x))
+                if (!seen.Add(InputParsing.NormalizeClockTime(x)!))
                     throw DomainException.Validation("交辦摘要時刻不可重複");
             }
         }
@@ -449,10 +449,10 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailMinRiskLevel = request.MailMinRiskLevel;
             s.MailOnRunCompleted = request.MailOnRunCompleted;
             s.MailDailyEnabled = request.MailDailyEnabled;
-            s.MailDailyTime = request.MailDailyTime;
+            s.MailDailyTime = InputParsing.NormalizeClockTime(request.MailDailyTime) ?? "";
             s.MailWeeklyEnabled = request.MailWeeklyEnabled;
             s.MailWeeklyDayOfWeek = request.MailWeeklyDayOfWeek;
-            s.MailWeeklyTime = request.MailWeeklyTime;
+            s.MailWeeklyTime = InputParsing.NormalizeClockTime(request.MailWeeklyTime) ?? "";
             s.MailUrgentEnabled = request.MailUrgentEnabled;
             s.MailSubjectTemplate = string.IsNullOrWhiteSpace(request.MailSubjectTemplate)
                 ? new SystemSettings().MailSubjectTemplate
@@ -462,7 +462,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.SiteBaseUrl = siteBaseUrl;
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
             s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
-            s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).ToList();
+            s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).Select(x => InputParsing.NormalizeClockTime(x) ?? "").ToList();
             s.EscalationReminderDays = request.EscalationReminderDays;
             s.AutoDispatchEnabled = request.AutoDispatchEnabled;
 

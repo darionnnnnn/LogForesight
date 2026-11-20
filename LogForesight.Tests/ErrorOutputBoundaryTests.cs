@@ -166,7 +166,7 @@ public class LoginRequestSizeHttpTests
     }
 }
 
-/// <summary>登入並行上限與安全標頭（第 79 輪批次 G15、G16）</summary>
+/// <summary>目錄驗證並行上限與安全標頭（第 79 輪批次 G15、G16）</summary>
 [Collection(AuthorizationHttpCollection.Name)]
 public class LoginConcurrencyAndHeadersHttpTests
 {
@@ -174,20 +174,50 @@ public class LoginConcurrencyAndHeadersHttpTests
     public LoginConcurrencyAndHeadersHttpTests(AuthorizationHttpFixture fx) => _fx = fx;
 
     [Fact]
-    public void 登入端點套用並行上限政策()
+    public void 登入端點不套用端點層並行限流_上限只在目錄驗證這一步()
     {
-        var attribute = typeof(LogForesight.Web.Controllers.Api.AuthController).GetMethod("Login")!
-            .GetCustomAttributes(typeof(Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute), inherit: false)
-            .Cast<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>().Single();
-        Assert.Equal(LogForesight.Web.Filters.LoginRateLimit.PolicyName, attribute.PolicyName);
+        // 端點層限流在讀出帳號前生效，會把 AD 掛掉時唯一入口的救援帳號一起擋掉
+        var attributes = typeof(LogForesight.Web.Controllers.Api.AuthController).GetMethod("Login")!
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute), inherit: false);
+        Assert.Empty(attributes);
     }
 
     [Fact]
     public async Task 並行上限內的登入照常處理()
     {
-        var tasks = Enumerable.Range(0, LogForesight.Web.Filters.LoginRateLimit.ConcurrentLogins)
+        var tasks = Enumerable.Range(0, LogForesight.Web.Auth.DirectoryVerifyGate.Concurrent)
             .Select(_ => _fx.SendAsync(_fx.Anonymous, HttpMethod.Post, "/api/auth/login", body: new { account = "nobody", password = "x" }));
         var results = await Task.WhenAll(tasks);
         Assert.All(results, r => Assert.NotEqual(HttpStatusCode.TooManyRequests, r.Status));
+    }
+}
+
+/// <summary>目錄驗證並行閘門的單元行為（名額、佇列、歸還）</summary>
+public class DirectoryVerifyGateTests
+{
+    [Fact]
+    public async Task 名額與佇列滿了回null_歸還後可再進入()
+    {
+        var gate = new LogForesight.Web.Auth.DirectoryVerifyGate();
+        var held = Enumerable.Range(0, LogForesight.Web.Auth.DirectoryVerifyGate.Concurrent).Select(_ => gate.TryEnterAsync().GetAwaiter().GetResult()).ToList();
+        Assert.All(held, h => Assert.NotNull(h));
+
+        var queued = Enumerable.Range(0, LogForesight.Web.Auth.DirectoryVerifyGate.Queued)
+            .Select(_ => gate.TryEnterAsync()).ToList();
+        var settle = DateTime.UtcNow.AddSeconds(30);
+        while (gate.Waiting < LogForesight.Web.Auth.DirectoryVerifyGate.Queued && DateTime.UtcNow < settle) await Task.Delay(20);
+        Assert.Equal(LogForesight.Web.Auth.DirectoryVerifyGate.Queued, gate.Waiting);
+        Assert.Null(await gate.TryEnterAsync());   // 名額與佇列都滿
+
+        foreach (var h in held) h!.Dispose();
+        // 排隊者依序拿到名額：每拿到一個就歸還，下一個才輪得到
+        foreach (var task in queued)
+        {
+            var permit = await task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.NotNull(permit);
+            permit!.Dispose();
+        }
+        using var again = await gate.TryEnterAsync();
+        Assert.NotNull(again);
     }
 }

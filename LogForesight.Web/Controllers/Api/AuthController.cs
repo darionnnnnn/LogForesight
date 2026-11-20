@@ -27,6 +27,7 @@ public class AuthController : ControllerBase
     private readonly WebAppSettings _settings;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly LoginThrottle _throttle;
+    private readonly DirectoryVerifyGate _directoryGate;
 
     public AuthController(
         IdentityService identity,
@@ -36,8 +37,10 @@ public class AuthController : ControllerBase
         IAuditService audit,
         WebAppSettings settings,
         IUserDisplayNameService userDisplayNames,
-        LoginThrottle throttle)
+        LoginThrottle throttle,
+        DirectoryVerifyGate? directoryGate = null)
     {
+        _directoryGate = directoryGate ?? new DirectoryVerifyGate();
         _throttle = throttle;
         _identity = identity;
         _session = session;
@@ -65,7 +68,6 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     // 匿名端點：帳號與密碼各上限 256 字，正常本文遠小於 4 KB；不設上限時任何人都能塞到 Kestrel 預設的 30 MB 再被反序列化
     [RequestSizeLimit(LoginRequestMaxBytes)]
-    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(LoginRateLimit.PolicyName)]
     public async Task<ActionResult<ApiResponse<CurrentUserDto>>> Login([FromBody] LoginRequest request)
     {
         var now = DateTime.Now;
@@ -97,7 +99,20 @@ public class AuthController : ControllerBase
                 ApiErrorCodes.RateLimited, $"登入嘗試次數過多，請於 {minutes} 分鐘後再試。"));
         }
 
-        var outcome = _identity.Login(account, request.Password);
+        // 目錄服務驗證的並行上限（G15）：救援帳號不經 Provider、不受限；一般帳號名額與佇列都滿了回 429，
+        // 這不是帳密問題，不計入失敗節流
+        IDisposable? permit = null;
+        if (!isServerAdmin)
+        {
+            permit = await _directoryGate.TryEnterAsync(HttpContext.RequestAborted);
+            if (permit == null)
+                return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<CurrentUserDto>.Fail(
+                    ApiErrorCodes.RateLimited, "目錄服務忙碌，請稍後再試。"));
+        }
+
+        LoginOutcome outcome;
+        try { outcome = _identity.Login(account, request.Password); }
+        finally { permit?.Dispose(); }
 
         if (!outcome.Success || outcome.Identity == null)
         {

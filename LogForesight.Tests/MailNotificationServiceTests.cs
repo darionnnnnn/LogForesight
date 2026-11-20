@@ -1810,6 +1810,9 @@ public class MailNotificationServiceTests : IDisposable
         Assert.DoesNotContain("alice", sent.Message.Body);
         Assert.DoesNotContain("DCOM/10016", sent.Message.Body);
         Assert.DoesNotContain("已排查完畢", sent.Message.Body);
+        // 收件人不一定有 Maintain：不指向需要管理權限的頁面，改請洽管理者
+        Assert.Contains("靜音原因與設定者請洽站台管理者", sent.Message.Body);
+        Assert.DoesNotContain("問題負責與靜音頁", sent.Message.Body);
     }
 
     [Fact]

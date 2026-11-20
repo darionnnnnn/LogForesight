@@ -9,6 +9,8 @@ import { withBusy } from '../core/ui.js';
 import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { initBrandAlign } from '../core/brand-align.js';
 import { isSafeReturnUrl } from '../core/safe-return-url.js';
+import { statusNote } from '../core/elements.js';
+import { takeSessionNotice } from '../core/session-notice.js';
 
 const form = document.getElementById('lf-login-form');
 const accountInput = document.getElementById('account');
@@ -78,6 +80,13 @@ function hideError() {
     errorBox.classList.add('d-none');
 }
 
+/** 被踢回登入頁的原因（api.js 轉址前記下）：顯示一次，textContent 出口 */
+function showSessionNotice() {
+    const message = takeSessionNotice();
+    if (message) form.before(statusNote('info', message));
+}
+
+showSessionNotice();
 init();
 
 initBrandAlign();

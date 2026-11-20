@@ -7,12 +7,20 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public static class InputParsing
 {
+    private static readonly string[] ClockFormats = { @"h\:mm", @"hh\:mm" };
+
     /// <summary>
-    /// 一天中的時刻，只接受 <c>HH:mm</c>（00:00～23:59）。<see cref="TimeSpan.TryParse(string?, out TimeSpan)"/>
+    /// 一天中的時刻，接受 <c>H:mm</c>／<c>HH:mm</c>（00:00～23:59；小時一或兩位、分鐘必須兩位）。<see cref="TimeSpan.TryParse(string?, out TimeSpan)"/>
     /// 會把 "90" 當成 90 天、"1.02:00" 當成 1 天 2 小時，存進去之後「現在時刻 ≥ 設定」永遠不成立，摘要靜默不寄。
+    /// 儲存時以 <see cref="NormalizeClockTime"/> 正規化為 <c>HH:mm</c>。
     /// </summary>
     public static bool TryParseClockTime(string? value, out TimeSpan time) =>
-        TimeSpan.TryParseExact(value?.Trim(), @"hh\:mm", CultureInfo.InvariantCulture, out time) && time < TimeSpan.FromDays(1);
+        TimeSpan.TryParseExact(value?.Trim(), ClockFormats, CultureInfo.InvariantCulture, out time)
+            && time >= TimeSpan.Zero && time < TimeSpan.FromDays(1);
+
+    /// <summary>合法時刻回 <c>HH:mm</c>；不合法原樣回傳（交給驗證端擋）</summary>
+    public static string? NormalizeClockTime(string? value) =>
+        TryParseClockTime(value, out var time) ? time.ToString(@"hh\:mm", CultureInfo.InvariantCulture) : value;
 
     /// <summary>
     /// 列舉名稱解析，只接受已定義的成員名稱。<see cref="Enum.TryParse{TEnum}(string?, bool, out TEnum)"/> 也接受數字字串（"99"）
