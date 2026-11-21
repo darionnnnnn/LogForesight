@@ -16,6 +16,23 @@
 - **G11 PRTG 語系（E5-01）**：目前實機是英文、比對有效。
 - **G12 其餘（T-01、T-02）**。
 - **批次改派入口（E3-05 的一部分）**：交辦總覽目前只給提示與已篩選的清單。
+- **說明書 AI 版的過時與含糊描述（2026-11-21 以程式碼查證，基準 `d9d8ac15`）**：說明書問答的 AI 讀 `*.ai.md`。
+  同主題的使用者版 `.md` 若有相同描述，一併修正。
+  - **過時，會讓說明書 AI 答錯**：
+    1. `10-scheduler.ai.md` 第 57 行流程圖寫本機主機「同步呼叫 AI」，第 101 行與 Q&A（「本機分析進度條停住」）寫本機分析會等 AI。
+       實際上本機分析只寫統計並標 `AiPending`（`AnalysisOrchestrator` 呼叫 `AnalyzeDayStatisticalAsync`）。
+       AI 只由 `AiAnalysisHostedService` 的 `RetryAiAsync` 補寫。第 100 行的說法正確。
+    2. `10-scheduler.ai.md` 第 67 行寫 AI 例外或逾時時，主機日標成「統計模式（AI 未分析）」。
+       實際上主機日維持待補，標題加 `AiDegradation.ServiceFailedSuffix`，徽章顯示「AI 分析中」。
+       「統計模式（AI 未分析）」只在 AI 沒有被呼叫時出現（`record-detail.js` 的 `aiStatusBadge`）。
+  - **意思正確但有兩種讀法**：
+    3. `19-alert-tools.ai.md` 第 12 行「具 `Maintain`（統一標記為 `Assign` 且 `Handle`）」。
+       統一標記只需要 `Assign`＋`Handle`，不需要 `Maintain`（`IssueBulkCloseController`、`records.js` 的統一標記按鈕）。
+    4. `03-issues.ai.md` 第 31 行「依主機、依日期這三個都不支援」。
+       這裡的「三個」指處理狀態、未指派、逾期三種篩選（`records.js` 的 `VIEW_FILTER_SUPPORT`），容易被讀成漏列一個視角。
+    5. `19-alert-tools.ai.md` 第 39 行「靜音只影響之後的判定與畫面列出」。
+       分析端只把區間內的日子標 `Suppressed`；畫面與派工端在問題目前靜音中時，連靜音前的日子也一併隱藏（`IssueExclusion.IsMuted`）。
+  - 已查證不必改：「尚未有人接手」與「沒有進行中案件」同義（統一標記的定義）；10 分鐘續跑與 60 分鐘空資料複查是兩套機制（`ScheduleCalculator`）。
 
 3000 台規模的效能最佳化中「不改運作邏輯」的部分已完成（背景見 `docs/archive/FEEDBACK-78-PLAN.md`）。以下是同一次盤點留下、刻意未做的項目：
 
