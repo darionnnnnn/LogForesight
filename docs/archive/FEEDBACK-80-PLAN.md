@@ -1,6 +1,6 @@
 # FEEDBACK 第 80 輪規劃：前五輪回顧修正與說明書 AI 版
 
-> 狀態：實作完成待體檢（全部批次已實作並驗收；Z 批終檢完成，見文末「體檢交接」）
+> 狀態：全案完成，已併 dev（1.0.80.2）；併 master 待使用者實測
 > 基準：`feature/backlog-help-content-fixes`@a231599e（dev@d9d8ac15 加兩個提交：BACKLOG 記錄與情境驅動器時鐘修正；1.0.79.2；測試基線 Windows 11,998 通過／12 略過、macOS 11,983 通過／27 略過）
 > 來源：使用者要求先把第 75～79 輪的修改對照程式碼與規劃文件詳細檢查一遍，有錯誤或問題就併入本輪；本輪原定項目是 `docs/BACKLOG.md`「下一輪預定」的說明書 AI 版 5 處。
 > 分支：`feature/feedback-80`（自 dev@d9d8ac15 開出，帶入規劃期間的四個提交）。
@@ -549,3 +549,32 @@ subagent 標為「沒把握」、值得花一個探針的項目。每個探針�
   4. 排程狀態卡的失敗原因仍含例外原文（BACKLOG），本輪沒改。
 - **待使用者決定**：批次 X 四項成立（帶 cookie 時資料庫讀不到的白頁、CSV 空行後行號偏小、熱度格與下鑽清單單位不同、快照封存複合情境少報）與 B3（AI 寫回樂觀檢查含嘗試欄位），皆已記 BACKLOG。
 - **執行者**：主代理 Opus 5.5（批次 A、B、I 與全部驗收、終檢處理）；Sonnet 5.5 子代理（批次 C、D、E、F、G、H、X 實作，兩個終檢審查）。規劃與回顧為 Fable 5.2。
+
+## 體檢輪修正（Fable 5.2，2026-11-23，1.0.80.2）
+
+體檢方與實作方不同模型：實作是 Opus 5.5（主代理，批次 A、B、I 與各次修正）與 Sonnet 5.5（子代理，批次 C～H、X）；規劃與回顧是 Fable 5.2。體檢範圍是 `d9d8ac15..8b330e38` 的全部正式碼（36 檔、約 490 行），由體檢方逐行讀完，並以兩個自寫探針重驗最沒把握的兩處。
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `LogForesight.Core/UrlSecrets.cs` `FindUserInfo`（批次 H1 改寫的線性掃描） | 「scheme 後面緊接另一個 scheme」的帳密沒被遮：`proxy://http://user:pw@host` 原正規式遮成 `proxy://http://***@host`，改寫後原樣輸出。掃完沒有帳密的一段後 `search` 直接跳到段尾，而段尾的冒號正是下一個 `://` 的開頭，被跳過。實作方的 11 個等價案例與三次審查都沒有這個形狀 | 段尾往回一個字元續找（`search = Math.Max(search, i - 1)`），仍為線性 | `UrlSecretsRegexTests.使用者資訊遮蔽_與原正規式隨機比對等價`（改寫前的正規式當對照，固定種子 20 萬筆，遮蔽結果與是否含帳密逐字比對）、`scheme後面緊接另一個scheme_後者的帳密仍被遮` 3 例。未修正時隨機比對紅並列出差異、3 例中 2 紅；以備份還原修正時隨機比對轉紅 |
+| 2 | `MailNotificationServiceTestsSupersede`（批次 B1 的升級相容） | 郵件去重鍵有三個持久存放處（已寄集合、待送清單、工作流帳本的郵件意圖），B1 的升級測試只把前兩處改寫成上一版形狀；帳本那一處沒有測試證明認得「含嘗試欄位」的舊意圖 | 不改正式碼（`LegacyMailPartMap` 的 8 組旗標以含嘗試欄位的舊算法計算，旗標全 false 即上一版）；補測試證明 | `升級前工作流帳本是含嘗試欄位的舊意圖_只用信箱收信_郵件腿維持完成`（兩條通道），三處都改寫成上一版形狀後不重寄、郵件腿維持完成 |
+| 3 | `HostDayWorkflowState.LegacyParentFingerprints` 註解（批次 H3） | 註解寫「沒有站台停在這三個版本」，但 Q2 沒有得到使用者答覆，這是未經確認的事實 | 改寫成從 1.0.77.0～77.2 直接升級時會發生什麼（PRTG 腿重設一次後自行補回） | — |
+| 4 | `AppSettings.cs`（批次 E3） | 註解寫啟動警告也用 `EffectiveIdleTimeout`，實際不是；多餘空行 | 註解更正、空行整理 | — |
+| 5 | `docs/BACKLOG.md` | 本輪新增的十條待決事項被插在「下一輪預定」清單後面，讀起來像下一輪的範圍 | 獨立成「待決的已知缺陷」一節並說明性質 | `DocNarrativeGuardTests` |
+
+體檢看過沒有問題的重點（逐行讀碼）：`ForMailContent` 的 `includeAttempt:true` 路徑序列化結果與改動前逐位元相同（`ForRecord` 的固定值測試守著）；`IsRetryableLegacyNoQualifiedIntent` 的回望期與候選範圍邊界一致；`RetentionRetryState` 單執行緒使用、拿不到執行鎖不算失敗；`IsOverdueInProgress` 兩個呼叫端都傳入注入時鐘的今天；`ToPreviousTrend` 的字串日期比較與 `BuildTrendFromAggregate` 的日期格式一致；`attachTruncateTitle` 在「全部儲存格都有互動元素」的退路不會把主連結包進自己；`refreshSelectedBackfillStatus`／`refreshStructureSyncStatus` 被當事件處理器呼叫時不會誤判成背景；全前端沒有 `setInterval`，12 個 `pollWhile` 呼叫點都在守門範圍。
+
+版號：實作方自查修正與換模型體檢修正各加一次修訂，1.0.80.0 → 1.0.80.2。
+
+測試（體檢修正後的最終程式樹 8f57cba5）：
+- macOS：12,089 通過／31 略過／0 失敗。
+- Windows（使用者指定以本機 Windows 11 VM 為準）：12,092 通過／16 略過／12 失敗。10 筆是 `CertificatePinningTests`（VM 沒有互動登入，ssh 工作階段用不了使用者金鑰區，已知環境因素）；2 筆是 `SharedFrontBehaviorTests` 的 Node 行為案例（頁籤、網址 hash，本輪未改），輸出空白、各卡約 5 秒——這趟 VM 內 Windows Defender 與搜尋索引佔掉約一半 CPU，測試耗時 45 分鐘（平常約 5 分鐘）。全量結束後單獨重跑 `SharedFrontBehaviorTests\|ApiTimeoutBehaviorTests` 74 通過／0 失敗，依專案規則判定為負載下的偶發。扣除環境因素等同 12,104 通過。
+- GitHub CI 同一提交：macOS 12,089 通過；Windows 12,102 通過／2 失敗，失敗的是另外兩個 Node 行為案例（`sortRows數字欄位維持數值比較`、`download401`），同為空白輸出、5 秒，與 VM 那兩筆不是同一批，佐證是負載偶發而非特定案例壞掉。
+
+## 終檢輪
+
+- 體檢修正與文件普查都在 `feature/feedback-80` 提交，最終程式樹跑過 macOS 與 Windows VM 全量（結果見上節）；之後只有文件改動。dev 自分支起點沒有移動，併入後的樹與分支相同，不重跑。
+- 文件稽核：現行文件本輪改動行沒有歷程敘事；BACKLOG 的待決事項獨立成節；CLAUDE.md 測試基線更新。
+- 體檢修正 commit 本身再讀一次 diff：`UrlSecrets` 的一行修正只影響「掃完一段沒有帳密之後從哪裡續找」，最壞輸入的耗時測試仍在 200 毫秒內通過；其餘是測試與註解。
+- 終檢無新發現。
+
