@@ -4,7 +4,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>郵件內容指紋（第 78 輪批次 0）：ForRecord 輸出固定、郵件指紋不含三個狀態旗標。</summary>
+/// <summary>郵件內容指紋：ForRecord 輸出固定、郵件指紋不含三個狀態旗標與 NetIQ 嘗試欄位。</summary>
 public class MailFingerprintTests
 {
     internal static DailyAnalysisRecord Fixed() => new()
@@ -35,5 +35,34 @@ public class MailFingerprintTests
         Assert.Equal(HostDayWorkflowFingerprint.ForMailContent(a), HostDayWorkflowFingerprint.ForMailContent(b));
         b.RiskLevel = RiskLevels.Medium;
         Assert.NotEqual(HostDayWorkflowFingerprint.ForMailContent(a), HostDayWorkflowFingerprint.ForMailContent(b));
+    }
+
+    /// <summary>
+    /// 帳本在續跑每批開始與結束時就地回寫 NetIQ 嘗試狀態與時間，信件內容沒變：郵件指紋不得隨之改變。
+    /// ForRecord 仍含這兩欄（AI 寫回的樂觀檢查與失敗路徑復原刻意使用），舊算法（ForRecordWithFlags）也仍含——
+    /// 旗標全為 false 的舊算法就是上一版的郵件指紋，升級相容靠它認得舊鍵。
+    /// </summary>
+    [Fact]
+    public void 郵件內容指紋不含NetIQ嘗試欄位_舊算法與ForRecord仍含()
+    {
+        var a = Fixed();
+        a.LatestNetiqAttemptStatus = "partial";
+        a.LatestNetiqAttemptAtUtc = new DateTime(2026, 11, 11, 1, 0, 0, DateTimeKind.Utc);
+        var b = Fixed();
+        b.LatestNetiqAttemptStatus = "running";
+        b.LatestNetiqAttemptAtUtc = new DateTime(2026, 11, 11, 2, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(HostDayWorkflowFingerprint.ForMailContent(a), HostDayWorkflowFingerprint.ForMailContent(b));
+        Assert.NotEqual(HostDayWorkflowFingerprint.ForRecord(a), HostDayWorkflowFingerprint.ForRecord(b));
+        Assert.NotEqual(HostDayWorkflowFingerprint.ForRecordWithFlags(a, false, false, false),
+            HostDayWorkflowFingerprint.ForRecordWithFlags(b, false, false, false));
+    }
+
+    [Fact]
+    public void 沒有嘗試欄位時_新郵件指紋與上一版算法相同()
+    {
+        // 嘗試欄位為空的主機日（本機來源、或帳本從未回寫）升級前後鍵完全相同，不必經相容路徑
+        var r = Fixed();
+        Assert.Equal(HostDayWorkflowFingerprint.ForRecordWithFlags(r, false, false, false), HostDayWorkflowFingerprint.ForMailContent(r));
     }
 }

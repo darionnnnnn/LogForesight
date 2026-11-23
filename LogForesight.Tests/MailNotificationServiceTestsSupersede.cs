@@ -518,4 +518,160 @@ public class MailNotificationServiceTestsSupersede : IDisposable
             catch (TargetInvocationException ex) { throw ex.InnerException ?? ex; }
         }
     }
+
+    /// <summary>
+    /// NetIQ 續跑的帳本會在每批開始寫「執行中」、結束寫結果，就地改寫父紀錄的嘗試狀態與時間（RecordBatch → PatchParentAttempt），
+    /// 問題清單與風險不變。郵件去重鍵只看信件內容：不得重寄、不得換鍵、不得把舊項目標成已被取代。
+    /// 這裡直接改紀錄物件的兩欄，與 PatchParentAttempt 對資料列做的事相同（通知服務讀的是紀錄查詢回傳的物件）。
+    /// </summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task 帳本回寫NetIQ嘗試欄位_內容不變不重寄也不換鍵(bool withAccount, bool summaryLane)
+    {
+        EnableMail(summaryLane);
+        if (withAccount) CreateViewAllAccount("ops@test.local");
+        var record = SeedRecord();
+        record.LatestNetiqAttemptStatus = NetiqAttemptStatus.Failed;
+        record.LatestNetiqAttemptAtUtc = _clock.GetUtcNow().UtcDateTime.AddHours(-1);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+        var keysBefore = (summaryLane ? _state.Get().SummarySentKeys : _state.Get().UrgentSentKeys).ToHashSet();
+        var intentKeysBefore = _state.Get().UrgentOutbox.Keys.ToHashSet();
+
+        foreach (var status in new[] { NetiqAttemptStatus.Running, NetiqAttemptStatus.Failed })
+        {
+            _clock.Advance(TimeSpan.FromMinutes(10));
+            record.LatestNetiqAttemptStatus = status;
+            record.LatestNetiqAttemptAtUtc = _clock.GetUtcNow().UtcDateTime;
+            await service.NotifyAfterRunAsync();
+        }
+        _clock.Advance(TimeSpan.FromHours(1));
+        await service.RetryPendingUrgentAsync();
+
+        Assert.Single(_sender.Sent);
+        Assert.Single(_sender.Attempts);
+        Assert.Empty(NonTerminal());
+        Assert.DoesNotContain(_state.Get().UrgentOutbox.Values, i => i.Status == "superseded");
+        Assert.Equal(keysBefore, (summaryLane ? _state.Get().SummarySentKeys : _state.Get().UrgentSentKeys).ToHashSet());
+        Assert.Equal(intentKeysBefore, _state.Get().UrgentOutbox.Keys.ToHashSet());
+    }
+
+    /// <summary>邊界另一側：嘗試欄位不變、問題清單多一件——信件內容變了，必須再寄。</summary>
+    [Fact]
+    public async Task 嘗試欄位不變但多一件問題_即時通知再寄一封()
+    {
+        EnableMail(summaryLane: false);
+        var record = SeedRecord();
+        record.LatestNetiqAttemptStatus = NetiqAttemptStatus.Failed;
+        record.LatestNetiqAttemptAtUtc = _clock.GetUtcNow().UtcDateTime.AddHours(-1);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+
+        record.TopIssues.Add(new LogIssueSignature { LogName = "System", Source = "Ntfs", EventId = 55, EventKey = "Ntfs/55",
+            Category = IssueCategory.Other, Severity = IssueSeverity.High, Count = 2 });
+        await service.NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);
+    }
+
+    /// <summary>
+    /// 升級相容：升級前的郵件指紋含嘗試欄位（＝旗標全為 false 的舊算法）。嘗試欄位自寄出後沒被改寫的主機日，
+    /// 舊鍵要認得、不重寄。（已被改寫過的主機日舊值不在紀錄裡，升級後會再寄一次，與升級前行為相同，不在此測。）
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 升級前含嘗試欄位的舊鍵已寄_不重寄(bool summaryLane)
+    {
+        EnableMail(summaryLane);
+        CreateViewAllAccount("ops@test.local");
+        var record = SeedRecord(aiPending: false);
+        record.LatestNetiqAttemptStatus = NetiqAttemptStatus.Failed;
+        record.LatestNetiqAttemptAtUtc = _clock.GetUtcNow().UtcDateTime.AddHours(-1);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+
+        Assert.NotEqual(HostDayWorkflowFingerprint.ForMailContent(record),
+            HostDayWorkflowFingerprint.ForRecordWithFlags(record, false, false, false));
+        var version = _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId, out _)!;
+        var lane = summaryLane ? "summary" : "urgent";
+        string Convert(string key)
+        {
+            var parts = key.Split('|');
+            var route = parts.First(p => p.StartsWith("route:", StringComparison.Ordinal));
+            var ctxPart = parts.First(p => p.StartsWith("content:", StringComparison.Ordinal));
+            return LegacyKey(service, lane, record, version, route["route:".Length..],
+                ExtractContext(lane, record, version, ctxPart), false, false, false);
+        }
+        _state.Update(s =>
+        {
+            var set = summaryLane ? s.SummarySentKeys : s.UrgentSentKeys;
+            var converted = set.Select(Convert).ToList();
+            set.Clear();
+            foreach (var key in converted) set.Add(key);
+            if (!summaryLane)
+            {
+                var outbox = s.UrgentOutbox.Values.ToList();
+                s.UrgentOutbox.Clear();
+                foreach (var intent in outbox) { intent.Key = Convert(intent.Key); s.UrgentOutbox[intent.Key] = intent; }
+            }
+        });
+
+        await service.NotifyAfterRunAsync();
+        _clock.Advance(TimeSpan.FromHours(1));
+        await service.RetryPendingUrgentAsync();
+
+        Assert.Single(_sender.Sent);
+        Assert.Single(_sender.Attempts);
+        Assert.Empty(NonTerminal());
+    }
+
+    private void SeedLegacyNoQualifiedIntent(DateTime recordDate) => _state.Update(s =>
+    {
+        var intent = new MailUrgentIntent
+        {
+            Key = $"9|{recordDate:yyyy-MM-dd}|legacy", RecordDate = recordDate, CreatedAtUtc = _clock.GetUtcNow().UtcDateTime.AddDays(-30),
+            Status = "no-qualified-recipient"
+        };
+        intent.Recipients["ops@test.local"] = "failed-or-unknown";
+        s.UrgentOutbox[intent.Key] = intent;
+    });
+
+    /// <summary>
+    /// 舊版把部分收件人失敗的項目誤標成「無合格收件人」，重試入口為它保留了補寄路徑。這種項目是終態，
+    /// 超過回望期後補寄路徑已碰不到它的紀錄、永遠不會有進度：不得再觸發整套通知重跑。
+    /// </summary>
+    [Fact]
+    public async Task 超過回望期的舊式無合格收件人項目_重試入口不再觸發()
+    {
+        EnableMail(summaryLane: false);
+        SeedLegacyNoQualifiedIntent(_clock.GetLocalNow().Date.AddDays(-20));
+        var service = Create();
+        var before = QueryCount;
+        for (var i = 0; i < 120; i++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            await service.RetryPendingUrgentAsync();
+        }
+        Assert.Equal(before, QueryCount);
+    }
+
+    /// <summary>邊界另一側：回望期內的同類項目仍保留補寄路徑，重試入口照退避觸發。</summary>
+    [Fact]
+    public async Task 回望期內的舊式無合格收件人項目_重試入口仍觸發()
+    {
+        EnableMail(summaryLane: false);
+        SeedLegacyNoQualifiedIntent(Yesterday);
+        var service = Create();
+        var before = QueryCount;
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await service.RetryPendingUrgentAsync();
+        Assert.True(QueryCount > before);
+    }
 }

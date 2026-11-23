@@ -1317,15 +1317,18 @@ public static class HostDayWorkflowFingerprint
         ForRecordWithIdentity(record, record.RecordId);
 
     /// <summary>
-    /// 郵件去重用的內容指紋：與 <see cref="ForRecord"/> 同一份欄位，但 AI 已分析、AI 待補、詳情已清除
-    /// 三個與信件內容無關的狀態旗標固定為 false（AI 寫回只翻轉這些旗標，不得讓已寄的鍵失效）。
+    /// 郵件去重用的內容指紋：與 <see cref="ForRecord"/> 同一份欄位，但排除與信件內容無關的狀態——
+    /// AI 已分析、AI 待補、詳情已清除三個旗標固定為 false（AI 寫回只翻轉這些旗標），
+    /// NetIQ 嘗試狀態與時間不納入（帳本在續跑每批開始與結束時就地回寫這兩欄，同 <see cref="ForParentRecord"/>）。
     /// 風險等級、問題清單、告警等仍納入。
     /// </summary>
     public static string ForMailContent(LogForesight.Core.Models.DailyAnalysisRecord record) =>
-        ForRecordWithIdentity(record, record.RecordId, aiAnalyzed: false, aiPending: false, detailPruned: false);
+        ForRecordWithIdentity(record, record.RecordId, aiAnalyzed: false, aiPending: false, detailPruned: false,
+            includeAttempt: false);
 
     /// <summary>
-    /// 舊算法的郵件內容指紋（三個旗標用指定值），只供升級辨認舊鍵。升級滿 14 天回望期後可移除。
+    /// 舊算法的郵件內容指紋（三個旗標用指定值、含 NetIQ 嘗試欄位），只供升級辨認舊鍵。
+    /// 旗標全為 false 的那一組即上一版的 <see cref="ForMailContent"/>。升級滿 14 天回望期後可移除。
     /// </summary>
     public static string ForRecordWithFlags(LogForesight.Core.Models.DailyAnalysisRecord record,
         bool aiAnalyzed, bool aiPending, bool detailPruned) =>
@@ -1339,7 +1342,7 @@ public static class HostDayWorkflowFingerprint
         })]);
 
     private static string ForRecordWithIdentity(LogForesight.Core.Models.DailyAnalysisRecord record, long recordId,
-        bool? aiAnalyzed = null, bool? aiPending = null, bool? detailPruned = null)
+        bool? aiAnalyzed = null, bool? aiPending = null, bool? detailPruned = null, bool includeAttempt = true)
     {
         var input = JsonSerializer.Serialize(new
         {
@@ -1348,8 +1351,8 @@ public static class HostDayWorkflowFingerprint
             record.Host,
             Date = record.Date.Date,
             record.LogSource,
-            record.LatestNetiqAttemptStatus,
-            record.LatestNetiqAttemptAtUtc,
+            LatestNetiqAttemptStatus = includeAttempt ? record.LatestNetiqAttemptStatus : null,
+            LatestNetiqAttemptAtUtc = includeAttempt ? record.LatestNetiqAttemptAtUtc : null,
             record.AuditEventCount,
             record.ErrorCount,
             record.WarningCount,
