@@ -479,6 +479,43 @@ subagent 標為「沒把握」、值得花一個探針的項目。每個探針�
   - 單向閘門：B2 把舊項目視為終態之前先查它原本要補救的情境；F1 的當天上限跨日解除。
   - 移除類的依賴方：G2 已列清單與 grep 驗收；E2 搬移 DTO 以路由快照確認。
 
+## 逐項驗收對照（Z1）
+
+判定：符合＝定案與驗收都已落實；偏離有交代＝與定案不同處已寫在執行紀錄。2026-11-23 主代理以 grep 逐項核對，並與獨立文件審查的對照表一致。
+
+| 項目 | 判定 | 程式位置 | 驗收測試 |
+|---|---|---|---|
+| A1 | 符合 | `HelpContent/10-scheduler.ai.md`（流程圖、本機分析不等待 AI、Q&A） | `HelpContentServiceTests`、`HelpWritingGuide`；「同步呼叫 AI」grep 零命中 |
+| A2 | 符合 | `10-scheduler.md`、`10-scheduler.ai.md`、`01-overview.ai.md`、`13-glossary.ai.md`；`record-detail.js` 統計模式徽章提示 | 同上；「統計模式」剩餘命中皆描述沒有呼叫 AI |
+| A3 | 符合 | `19-alert-tools.ai.md` | 同上 |
+| A4 | 符合 | `03-issues.ai.md` | 同上；「這三個都不支援」零命中 |
+| A5 | 符合 | `19-alert-tools.ai.md` | 同上 |
+| B1 | 符合（紅測試未經 `RecordBatch`，有交代） | `HostDayWorkflowState.cs` `ForMailContent`／`ForRecordWithIdentity(includeAttempt)` | `MailNotificationServiceTestsSupersede`（帳本回寫不重寄、多一件問題再寄、升級前舊鍵不重寄）、`MailFingerprintTests` |
+| B2 | 符合 | `MailNotificationService.IsRetryableLegacyNoQualifiedIntent` | `超過回望期的舊式無合格收件人項目_重試入口不再觸發`、`回望期內…仍觸發` |
+| B3 | 偏離有交代（讀碼結案、記 BACKLOG） | — | — |
+| C1 | 符合 | `components.css` `[title]:not(td, th)`、`ui.js` `attachTruncateTitle` | 全站量測斷言「整列連結點擊區與截斷提示」、`SharedFrontBehaviorTests` 4 例 |
+| C2 | 符合 | `ui.js`、`components.css` `.lf-row-link__text` | 同上、`SharedExitGuardUiTests` |
+| D1 | 符合 | `PrtgFailureText.ForStatus`、`PrtgStructureSyncRunner` 兩處 | `PrtgStructureSyncRunnerTests` 4 例 |
+| D2 | 符合（Core 只掃單行賦值，有交代） | `UserFacingMessageGuardTests` | 反例測試 2 項、`Core賦值守門_目前程式綠` |
+| D3 | 符合（兩個遷移器改斷言，有交代） | — | `MigrationFailureBoundaryTests` 4 例 |
+| E1 | 符合 | `ChineseModelBindingMessages.DefaultMessageFor` | `InputValidationMessageSiteTests`、`InputValidationCoverageGuardTests` |
+| E2 | 符合（另修兩個錯置命名空間，有交代） | `Models/Dto/PrtgTransferDtos.cs`、`MeDtos.cs`、`PrtgMonitoringDtos.cs` | `控制器action的本文參數型別_全在Models命名空間下`、`PackageSha256超過預設上限…` |
+| E3 | 符合（終檢移除一年上限，有交代） | `SessionSettings.EffectiveIdleTimeout`、`WebAppSettings.StartupWarnings` | `InputValidationSessionExpireHoursTests` |
+| E4 | 符合 | `PrtgMonitoringController` `MaxOffset`、`prtg-admin.js` 預覽分頁 | `prtg-preview-paging.behavior.mjs` 5 例、`預覽回應帶可瀏覽的最大offset…` |
+| F1 | 符合 | `RetentionRetryGate`、`SchedulerHostedService.RunRetentionIfDueAsync`、`AnalysisOrchestrator.RunRetentionOnlyAsync` | `RetentionRetryTests` |
+| F2 | 符合 | `IssueTodoQuery.IsOverdueInProgress(r, today)`、`MailIssueDigest` | `IssueOverdueClockTests`、`HandoffClockGuardTests` |
+| F3 | 符合 | `prtg-admin.js`、`netiq.js`、`netiq-import-wizard.js` | `BackgroundPollingHeaderGuardTests.所有pollWhile輪詢的請求都帶背景標頭`、`作業進度背景輪詢_閒置過時限回401_重新登入後恢復` |
+| G1 | 符合 | `ReportPreviousTrendPointDto`（可空）、`ReportService.ToPreviousTrend`、`reports.js` | `ReportAnalyticsTests` 前期趨勢 4 例、`reports-kpi.behavior.mjs` |
+| G2 | 符合 | 兩個欄位與追蹤移除 | grep 零命中 |
+| G3 | 偏離有交代（規劃契約有誤，主代理更正） | `PrtgCrossDay.ApplyDetailed` | `Low持平_維持Low不套跨日升級_不計入持平降級筆數` |
+| H1 | 符合 | `UrlSecrets`（線性掃描、逾時防線） | `UrlSecretsRegexTests` |
+| H2 | 符合 | `LogAggregator.ReadLabelValue` | `LogAggregatorExtractionTests` 超長含冒號 2 例 |
+| H3 | 符合（依 Q2 只補註解） | `HostDayWorkflowState.LegacyParentFingerprints` 註解 | — |
+| H4 | 符合 | `nlog.config` 註解 | `NLogConfigAutoReloadGuardTests` |
+| X1～X4 | 符合（成立項目依規劃留略過的探針並記 BACKLOG） | — | `AuthDbFailureProbeXTests`、`CsvParserLineNumberProbeXTests`、`PrtgSnapshotArchiveCountProbeXTests`、`ReportDrillCountProbeXTests` |
+| I1～I7 | 符合 | WEB-SPEC、PRTG-SPEC、DB-SPEC、DETECTION-SPEC、README、CLAUDE.md、說明書 | `DocNarrativeGuardTests`、`DocCrossReferenceTests`、`HelpContentServiceTests`、`HelpWritingGuide` |
+| Z1～Z6 | 符合 | 本表、執行紀錄 Z2 列、體檢交接 | macOS 全量 0 失敗、CI 兩平台綠、遠端分支指向本地 HEAD |
+
 ## 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |

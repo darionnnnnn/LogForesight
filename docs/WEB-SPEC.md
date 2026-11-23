@@ -964,7 +964,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
     或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
     自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
-    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。`pollWhile` 回呼發出的請求一律帶 `background: true`（`BackgroundPollingHeaderGuardTests` 逐一檢查每個呼叫點）；同一個函式也被按鈕呼叫時以參數區分，按鈕那條不帶。
+    `pollWhile` 的背景分頁暫停（`pauseWhenHidden`）與連續失敗退避（`backoffMaxMs`）是選項，常駐輪詢（執行告示、徽章、排程狀態）已啟用，其他輪詢未設時維持固定間隔。`pollWhile` 回呼發出的請求一律帶 `background: true`（`BackgroundPollingHeaderGuardTests` 逐一檢查每個呼叫點）；同一個函式也被按鈕呼叫時以參數區分，按鈕那條不帶。
   - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
     寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.Storage直接呼叫必須改用安全包裝或包在try內` 掃
     `core/`（除 `storage.js`）與 `pages/`：`localStorage.`／`sessionStorage.` 的直接呼叫，該行與前 8 行內必須有 `try {`，

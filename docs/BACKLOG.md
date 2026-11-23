@@ -350,10 +350,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
   要金鑰、Azure 要 deployment），目前只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
   chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
-- **AI 待補：AI 服務停機時無跨輪退避**：傳輸失敗的日子維持待補（不再誤判為已完成），全滅時結束該輪；但下一個輪詢週期（60 秒）在窗口內或跟隨取數時會再選一批重試，
-  沒有跨輪的失敗計數或退避。AI 服務停機整晚時每分鐘最多打一批（每筆受逾時與閘道限制）。
-  **觸發時機**：AI 停機期間的 log 或 AI 服務端負載成為困擾時，於 `AiAnalysisRunState` 記全滅時間、下一輪退避數分鐘（常數即可，不新增設定）。
-- **AI 格式異常降級的補跑沒有每日節流**：降級的主機日（`ai_pending=true`、`ai_degraded_attempts` 未滿 3）每次 AI 排程輪詢都會被選到，在窗口內或跟隨取數時背景輪詢每 60 秒一輪，三次嘗試可能幾分鐘內用完就放棄，不會等到隔天；同輪不重複選取，但跨輪沒有間隔。
+- **AI 格式異常降級的補跑沒有每日節流**：降級的主機日（`ai_pending=true`、`ai_degraded_attempts` 未滿 3）每次 AI 排程輪詢都會被選到；同輪不重複選取，跨輪只受「無進度退避」（`AiAnalysisRunState`，連續無進度依序隔 5、10、15 分鐘）限制，三次嘗試約半小時內用完就放棄，不會等到隔天。
   **觸發時機**：實際看到「AI 摘要已放棄」集中出現、事後單獨重試卻能成功時——做法是以降級時間（或日期）限制同一主機日每天至多嘗試 1 次，常數即可，不新增設定。
 - **AI 快取整份 blob 讀寫**：快取已有 500 筆上限，讀寫本身仍是整份 blob，未排期。
 
@@ -603,10 +600,8 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：需先在實機查「`host_id` 不同但同名」的列數，再決定加 `host_name_key` 欄位，或只對 `host_id=0` 舊列做名稱備援。
 - **PRTG 側與 NetIQ 目錄掃描仍以無條件 `catch (OperationCanceledException)` 判斷取消**（`PrtgDailyPipeline`、`PrtgScopeDevices`、`PrtgStructureSyncRunner`、`PrtgSnapshotHostedService`、`NetiqDiscoveryService`）：`PrtgClient` 與 `NetiqDirectoryClient` 已把 ct 未取消的逾時轉成非取消例外，目前不會把逾時誤判成使用者停止。**觸發時機**：在這些路徑新增不經這兩個用戶端的 HTTP 呼叫時，改用「OCE 且 ct 已取消」判斷（樣板見 `PrtgScopeEstimateController`）。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
-- **別名展開的主機集合在 EF 查詢中被內嵌成常值**：`EfIssueAggregateQuery.ExpandToAliasIds` 回傳 `HashSet<long>`，EF Core 8 會把每個識別寫成 SQL 常值（3,000 台約 65 KB 的查詢文字，執行計畫無法共用）；
-  `LatestOccurrences` 查詢端分組的兩段查詢各帶一份。改回傳 `List<long>` 會變成單一 JSON 參數（SQL Server 走 OPENJSON，需相容性層級 130 以上）。**觸發時機**：SQL Server 慢查詢清單出現這類查詢或計畫快取膨脹。
 - **SQL Server 不分大小寫定序下的出現點分組**：`LatestOccurrences` 查詢端分組與既有的 `ActionableOccurrences` 一樣在 SQL 端以 `EventKey` 分組；SQL Server 預設定序不分大小寫，只差大小寫的 `EventKey` 會併成一個出現點（SQLite 與記憶體路徑分開）。**觸發時機**：確認正式環境為 SQL Server 時一併核對定序。
-- **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
+- **`BatchRunStore` 查舊於視窗的執行編號時全表串流掃描**：回退路徑以 `EnumerateLines(null, null)` 串流逐列比對（不整份載入記憶體），但仍掃全表。**觸發時機**：執行紀錄表很大、查舊執行明顯變慢時改走以執行編號為鍵的索引查詢。
 
 ## 設計面債務（未排期）
 
