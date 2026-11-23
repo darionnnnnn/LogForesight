@@ -24,7 +24,7 @@ namespace LogForesight.Tests;
 public sealed class PrtgSnapshotSharedBudgetCollection { }
 
 [Collection("PrtgSnapshotSharedBudget")]
-public class PrtgSnapshotHostedServiceTests : IDisposable
+public partial class PrtgSnapshotHostedServiceTests : IDisposable
 {
     private const string FixtureNowMarker = "__FIXTURE_NOW__";
     private readonly string _dir;

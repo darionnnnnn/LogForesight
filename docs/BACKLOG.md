@@ -20,6 +20,10 @@
 - **AI 寫回的樂觀檢查含 NetIQ 嘗試欄位**：`ForRecord` 被 `AiAnalysisHostedService` 與 `EfAnalysisRecordStore.TryAttachAiResult` 用來判斷紀錄是否已變；續跑對同一主機日寫入嘗試狀態時，進行中的 AI 結果會被拒、下一輪重做（浪費一次 AI 呼叫，不損資料）。`ForRecord` 同時是失敗路徑的復原判定，修法要分開兩種用途。**觸發時機**：AI 執行紀錄常見「判定版本已更新，拒絕舊 AI 回寫」時。
 - **執行失敗原因含例外原文**：`AnalysisOrchestrator` 的逾時訊息、`RunFailureReasons.Describe`（記憶體不足以外回 `ex.Message`）與「NetIQ 分析失敗：…」寫進 `result.FailureMessage`，經 `RunOutcome.Message` 顯示在排程狀態卡；`AiAnalysisHostedService` 與 `BatchRunRecorder` 也用 `Describe`。流到這裡的例外有自寫中文訊息（設定、憑證）也有框架原文，要先盤點型別再決定哪些保留訊息、哪些換固定說明（作法比照 `PrtgFailureText.ForStatus`）。`UserFacingMessageGuardTests` 以「待檢討」放行這幾處。**觸發時機**：處理排程狀態卡或執行紀錄的錯誤呈現時。
 - **驗證訊息仍可能露出 C# 屬性名**：`DefaultInputLimitsFilter` 的「「屬性名」的內容過長／項目過多」與沒寫訊息的 `[Required]`（「「{0}」為必填」在沒有 `[Display]` 時代入屬性名）。其他驗證屬性已改成不帶欄位名的中文預設訊息。要讓訊息指出欄位又不露屬性名，需要為請求 DTO 補顯示名稱。**觸發時機**：整理表單錯誤呈現時。
+- **資料庫讀不到時帶 cookie 的頁面得到空白 500**：Cookie 驗證讀使用者或版號擲例外時，`AuthenticationHandler` 快取了失敗結果，例外處理重新執行錯誤頁時再擲一次，頁面看不到站台錯誤頁（API 回標準信封，不受影響）。修法選項：驗證事件內接住並標記、改以未登入身分放行，再由中介層回 500；或錯誤頁重新執行前清掉快取的驗證結果。探針 `AuthDbFailureProbeXTests`（略過中）。**觸發時機**：資料庫維護或連線中斷期間使用者回報白頁時。
+- **CSV 匯入錯誤的「第 N 行」在空行之後偏小**：`TextFieldParser` 略過空行但 `LineNumber` 不計入，API 也取不到略過的行數。修法是改成自己逐行計數的讀取器。探針 `CsvParserLineNumberProbeXTests`（略過中；跨行引號欄位的案例為有效守門）。**觸發時機**：使用者依錯誤訊息找不到對應的列時。
+- **問題類型熱度格與下鑽清單的單位不同**：格值是問題日（主機×問題×日），下鑽到問題查詢明細視角是主機日；同機同日多個同類問題時清單筆數較少，畫面沒有說明。修法選項：格改主機日、下鑽改到「依問題」視角、或兩邊補單位說明。探針 `ReportDrillCountProbeXTests`（略過中）。**觸發時機**：使用者回報「點進去筆數對不上」時。
+- **PRTG 快照手動封存在複合情境下少報筆數**：累積樣本落盤失敗（磁碟錯誤）後又遇來源變更，封存前的預覽只數已落盤的列，記憶體裡的未落盤樣本不計入。一般路徑（落盤成功）筆數一致，有守門。探針 `PrtgSnapshotArchiveCountProbeXTests`（複合情境略過中）。**觸發時機**：快照落盤錯誤與 PRTG 改位址同時發生時。
 - **`NetiqSourceAttempt.Mark` 只有測試使用**：正式碼的帳本回寫走 `RecordBatch`；三個測試類別以 `Mark` 布置資料。**觸發時機**：整理帳本測試時一併換成 `RecordBatch` 後刪除。
 
 3000 台規模的效能最佳化中「不改運作邏輯」的部分已完成（背景見 `docs/archive/FEEDBACK-78-PLAN.md`）。以下是同一次盤點留下、刻意未做的項目：
