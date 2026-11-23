@@ -2,6 +2,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using Xunit;
+using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Tests;
 

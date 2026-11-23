@@ -64,6 +64,7 @@ try
     // 不需要再另外推算「批次輸出目錄」。開發者若要讀別處的資料，在設定檔明確填 DataRoot 即可。
     // 只有 Development 放行出廠公開值與 Stub：環境名稱設成 Staging／Test 等值時一律從嚴
     settings.Validate(strict: !builder.Environment.IsDevelopment(), builder.Environment.EnvironmentName);
+    foreach (var warning in settings.StartupWarnings()) logger.Warn(warning);
     builder.Services.AddSingleton(settings);
 
     // 資料根目錄健檢（誠實申報，「沒告警 ≠ 沒問題」的原則）：

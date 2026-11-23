@@ -97,4 +97,20 @@ public sealed class PrtgMonitoringSensorTypesProjectionTests : IDisposable
             !sql.Contains("\"category\"", StringComparison.OrdinalIgnoreCase) &&
             sql.Contains("json_each", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>可瀏覽的最大 offset 只有後端一份（ScaleLimits.MaxPreviewOffset）：預覽回應帶出去，前端不寫死</summary>
+    [Fact]
+    public void 預覽回應帶可瀏覽的最大offset_值等於ScaleLimits()
+    {
+        var protection = new ServiceCollection().AddDataProtection().Services.BuildServiceProvider().GetRequiredService<IDataProtectionProvider>();
+        var controller = new PrtgMonitoringController(_backend, _hosts, new Visible(1),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), protection);
+
+        var ok = Assert.IsType<OkObjectResult>(controller.Preview());
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var data = doc.RootElement.GetProperty("data");
+
+        Assert.Equal(ScaleLimits.MaxPreviewOffset, data.GetProperty("maxOffset").GetInt32());
+    }
 }

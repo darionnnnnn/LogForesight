@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Tests;
 public sealed class PrtgMonitoringContractTests : IDisposable

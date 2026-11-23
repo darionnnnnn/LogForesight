@@ -3328,9 +3328,17 @@ if (monitoringForm) {
             }
             panel.append(list);
             if (previewOffset > 0 || data.hasMore) {
-                for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, data.hasMore]]) {
+                // 可瀏覽的最大 offset 由後端回應告知（ScaleLimits.MaxPreviewOffset）；超過會被後端回 400，所以到頂就停用
+                const nextAllowed = data.hasMore && previewOffset + 100 <= data.maxOffset;
+                for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, nextAllowed]]) {
                     const pageButton = makeButton(text, { variant: 'outline-secondary', onClick: () => { previewOffset = next; previewScope(); } });
                     pageButton.classList.add('me-2'); pageButton.disabled = !allowed; panel.append(pageButton);
+                }
+                if (data.hasMore && !nextAllowed) {
+                    const cap = document.createElement('p');
+                    cap.className = 'lf-text-meta mt-2 mb-0';
+                    cap.textContent = '已到可瀏覽的上限，請用篩選縮小範圍。';
+                    panel.append(cap);
                 }
             }
         } catch (error) {

@@ -8,6 +8,7 @@ using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -287,9 +288,3 @@ public sealed class PrtgTransferController : ControllerBase
 
     private static string Hash(byte[] value) => Convert.ToHexString(SHA256.HashData(value));
 }
-
-public sealed record PrtgTransferCreateRequestDto(
-    Guid TransferId,
-    long DeclaredBytes,
-    int ChunkCount,
-    string PackageSha256);

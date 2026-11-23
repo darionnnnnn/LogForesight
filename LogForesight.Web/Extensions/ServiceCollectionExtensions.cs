@@ -205,7 +205,7 @@ public static class ServiceCollectionExtensions
                 options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
                 options.Cookie.IsEssential = true;
                 // 閒置時限（設定鍵 Jwt:ExpireHours 沿用）＋ 滑動延長；連續登入的絕對上限見 SessionCookie.AbsoluteLifetime
-                options.ExpireTimeSpan = TimeSpan.FromHours(settings.Jwt.ExpireHours);
+                options.ExpireTimeSpan = settings.Jwt.EffectiveIdleTimeout;
                 options.SlidingExpiration = true;
                 options.EventsType = typeof(CookieSessionEvents);
                 // 代理終止 TLS 時 IsHttps 為 false：Secure 旗標另認 X-Forwarded-Proto（寫入、續發、刪除都經這個管理員）
