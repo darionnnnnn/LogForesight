@@ -917,8 +917,9 @@ public class AnalysisOrchestrator
     /// 只做保留期清除、不跑分析：給分析當天沒有執行（排程停用、停擺、錯過窗口）時由排程輪詢補做，
     /// 否則保留期就等於沒有生效。StorageBackend 與執行紀錄 store 的建立方式與 <see cref="RunAsync"/> 相同；
     /// 不建立執行紀錄（BatchRunRecorder）——這不是一趟分析執行。
+    /// 回傳清除結果：呼叫端（排程輪詢）以 <see cref="RetentionRunResult.Succeeded"/> 決定今天算不算做完。
     /// </summary>
-    public Task RunRetentionOnlyAsync(AppSettings settings, string dataRoot, RetentionOptions retention, IRunConsole console)
+    public Task<RetentionRunResult> RunRetentionOnlyAsync(AppSettings settings, string dataRoot, RetentionOptions retention, IRunConsole console)
     {
         var backend = new StorageBackend(settings.Storage, dataRoot, AnalysisMaxPoolSize);
 
@@ -932,8 +933,7 @@ public class AnalysisOrchestrator
             Log.Warn(ex, "執行紀錄儲存初始化失敗（執行歷程本次不清除）：{0}", ex.Message);
         }
 
-        RetentionPruner.Run(backend, retention, console, batchRunStore);
-        return Task.CompletedTask;
+        return Task.FromResult(RetentionPruner.Run(backend, retention, console, batchRunStore));
     }
 
 

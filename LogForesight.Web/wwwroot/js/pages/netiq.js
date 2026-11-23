@@ -431,7 +431,7 @@ async function refreshProbeStatus() {
 
     if (status.isRunning && !probePollTimer) {
         probePollTimer = pollWhile(async () => {
-            const latest = await api.get('/api/admin/netiq/probe/status', { silent: true }).catch(() => null);
+            const latest = await api.get('/api/admin/netiq/probe/status', { silent: true, background: true }).catch(() => null);
             if (!latest) return;
             renderProbeStatus(latest);
             if (!latest.isRunning) {

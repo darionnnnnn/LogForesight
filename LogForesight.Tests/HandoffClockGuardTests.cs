@@ -32,6 +32,8 @@ public class HandoffClockGuardTests
         "LogForesight.Web/Services/AdminReminderService.cs",
         "LogForesight.Web/Services/DismissedIssueService.cs",
         "LogForesight.Web/Services/HealthAttention.cs",
+        "LogForesight.Web/Services/IssueTodoQuery.cs",
+        "LogForesight.Web/Services/Mail/MailIssueDigest.cs",
         "LogForesight.Web/Services/RecordListQueryService.cs",
         "LogForesight.Web/Controllers/Api/IssueOwnersController.cs",
         "LogForesight.Core/Persistence/Sql/EfWorkOrderStore.cs",

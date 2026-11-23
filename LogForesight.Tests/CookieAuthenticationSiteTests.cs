@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using Microsoft.AspNetCore.DataProtection;
@@ -405,6 +406,35 @@ public class CookieAuthenticationSiteTests
         Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
     }
 
+    /// <summary>
+    /// 作業進度輪詢（以 PRTG 結構同步狀態為例，需 Maintain）：背景請求不延長閒置時限，時鐘推過時限後回 401，
+    /// 重新登入後同一個端點可再取得。
+    /// </summary>
+    [Fact]
+    public async Task 作業進度背景輪詢_閒置過時限回401_重新登入後恢復()
+    {
+        using var site = new AuthSite(expireHours: 8);
+        var cookie = await site.LoginCookie();
+        const string url = "api/admin/settings/prtg-structure-sync/status";
+        void Bg(HttpRequestMessage r) => r.Headers.Add("X-Lf-Background", "1");
+
+        for (var i = 0; i < 4; i++)
+        {
+            site.Clock.Advance(TimeSpan.FromHours(2) - TimeSpan.FromMinutes(1));
+            using var poll = await site.Send(HttpMethod.Get, url, cookie, configure: Bg);
+            Assert.Equal(HttpStatusCode.OK, poll.StatusCode);
+            Assert.Null(AuthTestKit.ReadSessionCookiePair(poll));
+        }
+
+        site.Clock.Advance(TimeSpan.FromMinutes(10));
+        using (var expired = await site.Send(HttpMethod.Get, url, cookie, configure: Bg))
+            Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+
+        var fresh = await site.LoginCookie();
+        using var again = await site.Send(HttpMethod.Get, url, fresh, configure: Bg);
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+    }
+
     /// <summary>背景請求遇到權限版號變更：仍換主體並續發（必要的續發，不是活動延長）</summary>
     [Fact]
     public async Task 背景請求遇權限變更_仍換主體並續發()
@@ -684,6 +714,138 @@ public class BackgroundPollingHeaderGuardTests
     {
         var line = Js(file).Split('\n').Single(l => l.Contains($"api.get('{endpoint}'"));
         Assert.Contains("background: true", line);
+    }
+
+    /// <summary>無法靜態判定回呼的 pollWhile 呼叫點（"相對路徑:回呼文字"），附理由；目前沒有。</summary>
+    private static readonly string[] Unresolvable = Array.Empty<string>();
+
+    /// <summary>
+    /// 規則：頁面開著就持續送、不需使用者再操作的輪詢一律標背景。掃每個 pollWhile( 的回呼：
+    /// 箭頭函式本體內的 api.get，或回呼指到的同檔具名函式本體內的 api.get（箭頭只呼叫該函式並傳參時，
+    /// 函式用 background 參數者呼叫端須傳 background: true），都必須帶背景。不發請求的回呼不檢查。
+    /// </summary>
+    internal static List<string> PollViolations(string file, string source)
+    {
+        var violations = new List<string>();
+        var text = string.Join('\n', source.Split('\n').Select(l =>
+            l.TrimStart().StartsWith("//") || l.TrimStart().StartsWith("*") || l.TrimStart().StartsWith("/*") ? "" : l));
+        foreach (Match m in Regex.Matches(text, @"(?<![\w$.])pollWhile\s*\("))
+        {
+            if (text[..m.Index].EndsWith("function ")) continue;
+            var open = m.Index + m.Length - 1;
+            var close = MatchClose(text, open);
+            var args = text.Substring(open + 1, close - open - 1);
+            var cb = FirstArg(args).Trim();
+            var line = text[..m.Index].Count(c => c == '\n') + 1;
+            var where = $"{file}:{line}";
+
+            var arrow = cb.IndexOf("=>", StringComparison.Ordinal);
+            if (Regex.IsMatch(cb, @"^[A-Za-z_$][\w$]*$"))
+            {
+                var body = FunctionBody(text, cb);
+                if (body == null) { if (!Unresolvable.Contains($"{file}:{cb}")) violations.Add($"{where} 回呼 {cb} 找不到同檔定義"); continue; }
+                CheckGets(body, allowParam: false, "", where, violations);
+            }
+            else if (arrow >= 0)
+            {
+                var body = cb[(arrow + 2)..];
+                CheckGets(body, allowParam: false, "", where, violations);
+                foreach (Match call in Regex.Matches(body, @"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\("))
+                {
+                    var fb = FunctionBody(text, call.Groups[1].Value);
+                    if (fb == null) continue;
+                    var callArgs = body.Substring(call.Index + call.Length - 1,
+                        MatchClose(body, call.Index + call.Length - 1) - (call.Index + call.Length - 1) + 1);
+                    CheckGets(fb, allowParam: true, callArgs, $"{where}（{call.Groups[1].Value}）", violations);
+                }
+            }
+            else if (!Unresolvable.Contains($"{file}:{cb}")) violations.Add($"{where} 無法判定回呼：{cb}");
+        }
+        return violations;
+    }
+
+    private static void CheckGets(string body, bool allowParam, string callArgs, string where, List<string> violations)
+    {
+        foreach (Match g in Regex.Matches(body, @"\bapi\.get\s*\("))
+        {
+            var open = g.Index + g.Length - 1;
+            var args = body.Substring(open + 1, MatchClose(body, open) - open - 1);
+            if (Regex.IsMatch(args, @"background\s*:\s*true")) continue;
+            if (allowParam && Regex.IsMatch(args, @"[{,]\s*background\s*[},]") && Regex.IsMatch(callArgs, @"background\s*:\s*true")) continue;
+            violations.Add($"{where} api.get 未帶 background: true：{Regex.Replace(args.Trim(), @"\s+", " ")}");
+        }
+    }
+
+    private static int MatchClose(string t, int open)
+    {
+        var depth = 0;
+        for (var i = open; i < t.Length; i++)
+        {
+            var c = t[i];
+            if (c is '\'' or '"' or '`')
+            {
+                for (i++; i < t.Length && t[i] != c; i++) if (t[i] == '\\') i++;
+                continue;
+            }
+            if (c is '(' or '{' or '[') depth++;
+            else if (c is ')' or '}' or ']') { depth--; if (depth == 0) return i; }
+        }
+        return t.Length - 1;
+    }
+
+    private static string FirstArg(string args)
+    {
+        var depth = 0;
+        for (var i = 0; i < args.Length; i++)
+        {
+            var c = args[i];
+            if (c is '\'' or '"' or '`')
+            {
+                for (i++; i < args.Length && args[i] != c; i++) if (args[i] == '\\') i++;
+                continue;
+            }
+            if (c is '(' or '{' or '[') depth++;
+            else if (c is ')' or '}' or ']') depth--;
+            else if (c == ',' && depth == 0) return args[..i];
+        }
+        return args;
+    }
+
+    /// <summary>同檔具名函式（function 宣告或 const 箭頭）的本體；找不到回 null</summary>
+    private static string? FunctionBody(string text, string name)
+    {
+        var n = Regex.Escape(name);
+        var m = Regex.Match(text, $@"(?:async\s+)?function\s+{n}\s*\(") is { Success: true } f ? f
+            : Regex.Match(text, $@"(?:const|let)\s+{n}\s*=\s*(?:async\s*)?\(");
+        if (!m.Success) return null;
+        var paren = MatchClose(text, m.Index + m.Length - 1);
+        var brace = text.IndexOf('{', paren);
+        return brace < 0 ? null : text.Substring(brace, MatchClose(text, brace) - brace + 1);
+    }
+
+    [Fact]
+    public void 所有pollWhile輪詢的請求都帶背景標頭()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        var root = Path.Combine(dir!.FullName, "LogForesight.Web", "wwwroot", "js");
+        var all = new List<string>();
+        foreach (var sub in new[] { "pages", "core" })
+            foreach (var path in Directory.EnumerateFiles(Path.Combine(root, sub), "*.js", SearchOption.AllDirectories))
+                all.AddRange(PollViolations(Path.GetRelativePath(root, path).Replace('\\', '/'), File.ReadAllText(path)));
+        Assert.True(all.Count == 0, "輪詢請求沒標背景（會滑動延長閒置時限）：\n" + string.Join('\n', all));
+    }
+
+    [Fact]
+    public void 守門判準_沒標的紅_標了的過_不發請求的不檢查()
+    {
+        Assert.Single(PollViolations("a.js", "pollWhile(async () => { await api.get('/x', { silent: true }); }, 1);"));
+        Assert.Empty(PollViolations("a.js", "pollWhile(async () => { await api.get('/x', { silent: true, background: true }); }, 1);"));
+        Assert.Single(PollViolations("a.js", "async function r() { await api.get('/x', { silent: true }); }\npollWhile(r, 1);"));
+        Assert.Single(PollViolations("a.js", "async function r(o) { const background = o?.background === true; await api.get('/x', { silent: true, background }); }\npollWhile(() => r(), 1);"));
+        Assert.Empty(PollViolations("a.js", "async function r(o) { const background = o?.background === true; await api.get('/x', { silent: true, background }); }\npollWhile(() => r({ background: true }), 1);"));
+        Assert.Empty(PollViolations("a.js", "function tick() { el.textContent = 'x'; }\npollWhile(tick, 1000);"));
+        Assert.Single(PollViolations("a.js", "pollWhile(someImported, 1);"));
     }
 }
 

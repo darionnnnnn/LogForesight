@@ -643,20 +643,27 @@ public class SchedulerHostedService : BackgroundService
     private static readonly TimeSpan RetentionOnlyNotBefore = TimeSpan.FromHours(12);
 
     /// <summary>
-    /// 已確認「今天做過保留清除」的日期。記在記憶體是為了不必每分鐘都建一次 StorageBackend
+    /// 單獨保留清除當天的確認與重試狀態。記在記憶體是為了不必每分鐘都建一次 StorageBackend
     /// （建構時會做 schema 確認）去讀 retention_state；確認過一次當天就不再讀。
+    /// 失敗不算確認，依 <see cref="RetentionRetryGate"/> 隔一段時間重試、當天有次數上限。
     /// </summary>
-    private DateTime? _retentionConfirmedDate;
+    private readonly RetentionRetryState _retention = new();
+
+    /// <summary>「現在」的來源（測試可替換）</summary>
+    internal Func<DateTime> Clock { get; init; } = () => DateTime.Now;
+
+    /// <summary>單獨保留清除的執行入口（測試可替換；預設呼叫 orchestrator）</summary>
+    internal Func<AppSettings, string, RetentionOptions, Task<RetentionRunResult>>? RetentionOnlyRunner { get; init; }
 
     /// <summary>
     /// 分析沒跑的日子單獨執行保留清除（排程停用、停擺、錯過窗口時保留期仍要生效）。
     /// 條件：沒有執行中、現在已過中午、今天還沒做過保留清除。拿不到執行鎖就這次略過，下次輪詢再試。
     /// 訊息只寫 NLog，不進執行狀態卡（這不是一趟分析執行）。例外只記警告，不影響下一次輪詢。
     /// </summary>
-    private async Task RunRetentionIfDueAsync()
+    internal async Task RunRetentionIfDueAsync()
     {
-        var now = DateTime.Now;
-        if (_runState.IsRunning || now.TimeOfDay < RetentionOnlyNotBefore || _retentionConfirmedDate == now.Date) return;
+        var now = Clock();
+        if (_runState.IsRunning || now.TimeOfDay < RetentionOnlyNotBefore || !_retention.ShouldRun(now)) return;
 
         try
         {
@@ -668,15 +675,25 @@ public class SchedulerHostedService : BackgroundService
                 .Any(r => r.JobType != BatchRun.JobTypeAi && r.StartedAt >= now.AddHours(-24));
             if (lastRun == now.Date || fetchRanRecently)
             {
-                _retentionConfirmedDate = now.Date;
+                _retention.RecordSuccess(now);
                 return;
             }
 
             var acquired = await _mutexGate.RunExclusiveAsync(async () =>
             {
                 Log.Info("今天尚未執行保留清除（分析未執行），開始單獨執行保留清除。");
-                await _orchestrator.RunRetentionOnlyAsync(settings, dataRoot, retention, new NLogRunConsole());
-                _retentionConfirmedDate = now.Date;
+                var result = RetentionOnlyRunner != null
+                    ? await RetentionOnlyRunner(settings, dataRoot, retention)
+                    : await _orchestrator.RunRetentionOnlyAsync(settings, dataRoot, retention, new NLogRunConsole());
+                if (result.Succeeded)
+                {
+                    _retention.RecordSuccess(now);
+                }
+                else
+                {
+                    _retention.RecordFailure(now);
+                    Log.Warn("單獨保留清除有段失敗（{0}），今天不記為完成，稍後重試。", result.Note);
+                }
             }, MutexTimeout);
 
             if (!acquired)
@@ -684,7 +701,8 @@ public class SchedulerHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "單獨保留清除失敗（下次輪詢再試）：{0}", ex.Message);
+            _retention.RecordFailure(now);
+            Log.Warn(ex, "單獨保留清除失敗（隔一段時間再試，當天有次數上限）：{0}", ex.Message);
         }
     }
 

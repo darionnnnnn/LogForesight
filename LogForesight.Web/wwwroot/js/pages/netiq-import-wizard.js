@@ -278,7 +278,7 @@ function startPolling(jobId, { resume = false } = {}) {
     const poll = async () => {
         if (currentJobId !== jobId) return false;
         try {
-            const job = await api.get(`/api/admin/netiq/scan/${jobId}`, { silent: true });
+            const job = await api.get(`/api/admin/netiq/scan/${jobId}`, { silent: true, background: true });
             if (currentJobId !== jobId) return false;
             consecutiveFailures = 0;
 

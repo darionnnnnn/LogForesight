@@ -222,7 +222,7 @@ public class DashboardService
             dto.Todo = _handling.GetTodoByRange(exclusion, from, anchor, riskLevels);
         }
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
-        dto.IssueTodo = IssueTodoQuery.Aggregate(actionableResolved);
+        dto.IssueTodo = _issueTodo.Aggregate(actionableResolved);
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
 
         // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
@@ -316,7 +316,7 @@ public class DashboardService
                 // 從呼叫端已解析好的全站快照做記憶體子集彙總（回饋十九輪批次I 體檢修正），
                 // 不逐群組重新查詢——群組成員 ⊆ 可見範圍，子集過濾與逐群組查詢結果等價
                 var memberIds = memberHosts.Select(h => h.HostId).ToHashSet();
-                var groupIssueTodo = IssueTodoQuery.Aggregate(
+                var groupIssueTodo = _issueTodo.Aggregate(
                     actionableResolved.Where(r => memberIds.Contains(r.Occurrence.HostId)));
 
                 return new DashboardGroupRiskDto
