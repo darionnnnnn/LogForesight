@@ -420,6 +420,84 @@ const cases = {
         assert(!container.find(n => n.classList.contains('lf-row-link')), '不加 lf-row-link');
     },
 
+    // 整列連結下的截斷欄：完整文字的 title 掛在連結內的 span，不掛 td（td 抬高會切碎延伸點擊區）
+    整列連結所在格就是截斷欄時提示在主連結內() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        const full = '很長很長的主機名稱.example.com';
+        ui.renderTable(container, {
+            columns: [{ key: 'name', title: '主機', truncate: true }, { key: 'ip', title: 'IP' }],
+            rows: [{ name: full, ip: '10.0.0.1', id: 7 }],
+            rowHref: r => `/hosts/${r.id}`,
+        });
+        const tr = container.find(n => n.tagName === 'TR' && n.classList.contains('lf-row-link'));
+        const td = tr.children[0];
+        assert(td.classList.contains('text-truncate'), '截斷欄仍帶 text-truncate');
+        assert(!td.title, '有整列連結時 td 不帶 title');
+        const holder = tr.find(n => n.title === full);
+        assert(holder && holder.tagName === 'SPAN', '完整文字的 title 在 span 上');
+        const link = holder._parent;
+        assert(link.tagName === 'A' && link.classList.contains('lf-row-link__anchor'), 'span 在主連結之內');
+        expectEqual(link.getAttribute('href'), '/lf/hosts/7', '主連結指到列網址');
+        expectEqual(link._parent, td, '主連結就在截斷欄');
+    },
+
+    整列連結在別格時截斷欄包次要連結並帶提示() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        const full = '很長很長的說明文字，被省略號截掉';
+        ui.renderTable(container, {
+            columns: [
+                { key: 'name', title: '名稱' },
+                { key: 'note', title: '說明', truncate: true },
+            ],
+            rows: [{ name: '甲', note: full, id: 7 }],
+            rowHref: r => `/hosts/${r.id}`,
+        });
+        const tr = container.find(n => n.tagName === 'TR' && n.classList.contains('lf-row-link'));
+        const td = tr.children[1];
+        assert(!td.title, 'td 不帶 title');
+        const holder = tr.find(n => n.title === full);
+        assert(holder && holder.tagName === 'SPAN', '完整文字的 title 在 span 上');
+        const secondary = holder._parent;
+        assert(secondary.tagName === 'A', 'span 在次要連結之內');
+        expectEqual(secondary.getAttribute('href'), '/lf/hosts/7', '次要連結與列同網址');
+        expectEqual(secondary.getAttribute('tabindex'), '-1', '不新增 Tab 停駐點');
+        expectEqual(secondary.getAttribute('aria-hidden'), 'true', '不讓輔助科技重複念');
+        expectEqual(secondary._parent, td, '次要連結在截斷欄內');
+    },
+
+    整列連結的截斷欄有按鈕時按鈕不被連結包住() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        const button = text => { const b = dom.newElement('button'); b.textContent = text; return b; };
+        ui.renderTable(container, {
+            columns: [
+                { key: 'name', title: '名稱' },
+                { key: 'act', title: '動作', truncate: true, render: r => button(r.act) },
+            ],
+            rows: [{ name: '甲', act: '重新整理這台主機的資料', id: 7 }],
+            rowHref: r => `/hosts/${r.id}`,
+        });
+        const tr = container.find(n => n.tagName === 'TR' && n.classList.contains('lf-row-link'));
+        const btn = tr.find(n => n.tagName === 'BUTTON');
+        let node = btn._parent;
+        while (node && node !== tr) { assert(node.tagName !== 'A', '按鈕不可在 <a> 之內'); node = node._parent; }
+        expectEqual(tr.children[1].title, '重新整理這台主機的資料', '含互動元素的格退回 td 的 title');
+    },
+
+    沒有rowHref時截斷欄的title仍在td上() {
+        window.addEventListener ||= () => {};
+        const container = dom.newElement('div');
+        ui.renderTable(container, {
+            columns: [{ key: 'a', title: 'A', truncate: true }],
+            rows: [{ a: '一段很長的文字' }],
+        });
+        const td = container.find(n => n.tagName === 'TD');
+        expectEqual(td.title, '一段很長的文字', 'title 在 td 上');
+        assert(!container.find(n => n.tagName === 'SPAN' && n.title), '不多包 span');
+    },
+
     // I3 頁籤：Bootstrap Tab 外掛＋hash 同步
     頁籤配上外掛屬性並建立外掛實例() {
         const env = makeTabsEnv({ names: ['a', 'b'] });

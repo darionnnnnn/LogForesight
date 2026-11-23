@@ -43,8 +43,9 @@ public sealed class SharedExitGuardUiTests
         Assert.Contains(".lf-row-link__anchor::after", css);
         Assert.Matches(@"\.table > tbody > tr\.lf-row-link \{ position: relative;", css);
         Assert.Contains(".lf-row-link__anchor:focus-visible::after", css);
-        // 帶 title 的元素抬到延伸點擊區之上，列內提示才出得來
-        Assert.Matches(@"\.lf-row-link :where\(.*\[data-bs-toggle\], \[title\]\)", css);
+        // 帶 title 的元素抬到延伸點擊區之上，列內提示才出得來；儲存格排除在外（否則延伸區被切成一格）
+        Assert.Matches(@"\.lf-row-link :where\(.*\[data-bs-toggle\], \[title\]:not\(td, th\)\)", css);
+        Assert.Contains("function attachTruncateTitle(", ui);
     }
 
     [Fact]
