@@ -150,6 +150,78 @@ public class PrtgStructureSyncRunnerTests : IDisposable
         }
     }
 
+    /// <summary>第一次讀主機清單就擲例外（主機對應的入口），之後恢復正常。</summary>
+    private sealed class FirstReadThrowingHostStore : FakeHostStore, IHostStore
+    {
+        private readonly Exception _error;
+        private int _reads;
+        public FirstReadThrowingHostStore(Exception? error = null)
+            => _error = error ?? new InvalidOperationException("MARKER-Server=sql01;path=/x");
+        List<WebHost> IHostStore.GetAll() => _reads++ == 0 ? throw _error : GetAll();
+    }
+
+    private async Task<(PrtgStructureSyncStatus Status, TestConsole Console)> RunWithAsync(
+        IHostStore hostStore, Action<string, int, int>? progress = null)
+    {
+        var store = CreateStore();
+        var console = new TestConsole();
+        var (client, _) = CreateClient(StructureResponder);
+        using (client)
+        {
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+            var status = await PrtgStructureSyncRunner.RunAsync(
+                fetchService, store, hostStore, new PrtgAddressResolver(),
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), progress, today: new DateTime(2026, 9, 9));
+            return (status, console);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_對應失敗的一般例外原文不進狀態_只進主控台()
+    {
+        var (status, console) = await RunWithAsync(new FirstReadThrowingHostStore());
+
+        Assert.False(status.Success);
+        Assert.StartsWith("主機對應失敗：", status.ErrorMessage);
+        Assert.DoesNotContain("MARKER", status.ErrorMessage);
+        Assert.Contains("InvalidOperationException", status.ErrorMessage);
+        Assert.Contains("詳細原因見記錄檔", status.ErrorMessage);
+        Assert.Contains(console.Lines, l => l.Contains("MARKER"));
+    }
+
+    [Fact]
+    public async Task RunAsync_整體失敗的一般例外原文不進狀態_只進主控台()
+    {
+        var (status, console) = await RunWithAsync(new FakeHostStore(), (_, _, _) => throw new InvalidOperationException("MARKER-Server=sql01;path=/x"));
+
+        Assert.False(status.Success);
+        Assert.DoesNotContain("MARKER", status.ErrorMessage);
+        Assert.Contains("InvalidOperationException", status.ErrorMessage);
+        Assert.Contains("詳細原因見記錄檔", status.ErrorMessage);
+        Assert.Contains(console.Lines, l => l.Contains("MARKER"));
+    }
+
+    [Fact]
+    public async Task RunAsync_PRTG用戶端例外_整體失敗時狀態沿用其訊息()
+    {
+        var timeout = new PrtgClientException("等候 PRTG 回應逾時，請稍後再試", kind: PrtgFailureKind.Timeout);
+        var (status, _) = await RunWithAsync(new FakeHostStore(), (_, _, _) => throw timeout);
+
+        Assert.False(status.Success);
+        Assert.Contains(timeout.Message, status.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RunAsync_PRTG用戶端例外_對應失敗時狀態沿用其訊息()
+    {
+        var timeout = new PrtgClientException("等候 PRTG 回應逾時，請稍後再試", kind: PrtgFailureKind.Timeout);
+        var (status, _) = await RunWithAsync(new FirstReadThrowingHostStore(timeout));
+
+        Assert.StartsWith("主機對應失敗：", status.ErrorMessage);
+        Assert.Contains(timeout.Message, status.ErrorMessage);
+    }
+
     [Fact]
     public async Task RunAsync_一台都對不到時輸出提示()
     {

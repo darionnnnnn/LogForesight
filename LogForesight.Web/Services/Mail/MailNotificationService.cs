@@ -437,9 +437,15 @@ public class MailNotificationService
         intent.SmtpAcceptedAtUtc.TryGetValue(recipient, out var acceptedAtUtc) && acceptedAtUtc != default &&
         acceptedAtUtc.Kind == DateTimeKind.Utc && acceptedAtUtc >= intent.CreatedAtUtc && acceptedAtUtc <= nowUtc;
 
-    private static bool IsRetryableLegacyNoQualifiedIntent(MailUrgentIntent intent) =>
-        intent.Status == "no-qualified-recipient" && intent.Recipients.Values.Any(status =>
-            status is "failed-or-unknown" or "sending-result-unknown");
+    /// <summary>
+    /// 舊版把部分收件人失敗的項目誤標成「無合格收件人」（終態）。它的紀錄還在回望期內時，整套重跑會把該紀錄當成未寄的候選補寄，
+    /// 所以保留觸發；滑出回望期後沒有任何路徑會處理它，觸發只會讓整套通知空轉，因此不再觸發。
+    /// 回望期與 <see cref="NotifyAfterRunCoreAsync"/> 的候選範圍相同（昨天往前 <see cref="NotifyLookbackDays"/> 天）。
+    /// </summary>
+    private bool IsRetryableLegacyNoQualifiedIntent(MailUrgentIntent intent) =>
+        intent.Status == "no-qualified-recipient" &&
+        intent.RecordDate.Date >= _clock.LocalToday().AddDays(-NotifyLookbackDays) &&
+        intent.Recipients.Values.Any(status => status is "failed-or-unknown" or "sending-result-unknown");
 
     public async Task CheckAndSendDailyWeeklyAsync(DateTime now, CancellationToken ct = default)
     {
@@ -2169,8 +2175,9 @@ public class MailNotificationService
     }
 
     /// <summary>
-    /// 升級相容：舊算法的去重鍵含 AI 已分析／AI 待補／詳情已清除三個旗標的當時實際值，
-    /// 這裡窮舉 8 種組合，任一把已在已寄集合就視為已寄，避免升級後把回望期內已寄的主機日重寄。
+    /// 升級相容：舊算法的去重鍵含 AI 已分析／AI 待補／詳情已清除三個旗標的當時實際值與 NetIQ 嘗試欄位，
+    /// 這裡窮舉 8 種旗標組合（嘗試欄位取紀錄目前的值），任一把已在已寄集合就視為已寄，避免升級後把回望期內已寄的主機日重寄。
+    /// 旗標全為 false 的那一組就是上一版的內容指紋；寄出後嘗試欄位已被帳本改寫的主機日，舊值不在紀錄裡、認不得，升級後會再寄一次。
     /// 升級滿 14 天回望期後可移除（同 <c>LegacyParentFingerprint</c> 的做法）。
     /// </summary>
     private static bool LegacyKeySent(string lane, DailyAnalysisRecord record,

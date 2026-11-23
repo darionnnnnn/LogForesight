@@ -1,4 +1,4 @@
-namespace LogForesight.Web.Controllers.Api;
+namespace LogForesight.Web.Models.Dto;
 
 public sealed class PrtgMonitoringRequest
 {

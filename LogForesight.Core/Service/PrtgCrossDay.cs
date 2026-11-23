@@ -58,14 +58,17 @@ public static class PrtgCrossDay
             if (steady != null && IsSteadyWarningCandidate(sig, consecutive)
                 && steady.TryGetValue(sig.EventKey, out var evidence) && evidence.IsSteady)
             {
-                sig.Severity = sig.Severity switch
+                var downgraded = sig.Severity switch
                 {
                     IssueSeverity.High => IssueSeverity.Medium,
                     IssueSeverity.Medium => IssueSeverity.Low,
                     _ => sig.Severity
                 };
+                // 持平一律不套跨日升級，說明照補（解釋為什麼沒升級）；「持平降級 N 筆」只算嚴重度真的降了的——
+                // 原本就是 Low（規則嚴重度可在畫面設成 Low）沒有可降的一級，不計入
+                if (downgraded != sig.Severity) steadyDowngraded++;
+                sig.Severity = downgraded;
                 AppendDetail(sig, $"；已持續 {consecutive} 日，數值持平（近 {PrtgRuleCatalog.SteadyWarningWindowDays} 日已用 {evidence.FirstUsedPercent:0.#}%→{evidence.LastUsedPercent:0.#}%）");
-                steadyDowngraded++;
                 continue;
             }
 

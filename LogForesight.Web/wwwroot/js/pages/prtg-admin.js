@@ -404,7 +404,7 @@ function renderSelectedBackfillStatus(status) {
             ? `讀取狀態變更 ${status.stateChangesRead} / ${status.stateChangesTotal}`
             : `日期 ${status.daysDone} / ${status.daysTotal}${status.currentDate ? `；目前 ${String(status.currentDate).slice(0, 10)}` : ''}；感測器 ${status.sensorsDone} / ${status.sensorsTotal}`;
         cancel.classList.toggle('d-none', status.runKind !== 'selected' || !status.runId);
-        if (!selectedBackfillTimer) selectedBackfillTimer = pollWhile(refreshSelectedBackfillStatus, 2000);
+        if (!selectedBackfillTimer) selectedBackfillTimer = pollWhile(() => refreshSelectedBackfillStatus({ background: true }), 2000);
         return;
     }
     if (selectedBackfillTimer) { selectedBackfillTimer.stop(); selectedBackfillTimer = null; }
@@ -417,9 +417,14 @@ function renderSelectedBackfillStatus(status) {
         : '';
 }
 
-async function refreshSelectedBackfillStatus() {
+/**
+ * @param {{background?: boolean}} [options] background＝輪詢那一輪（不是使用者操作）：帶背景標頭，不延長閒置時限；
+ *   按鈕與載入觸發的更新不帶（也可能被當事件處理器呼叫，第一個參數是 Event，不是選項）。
+ */
+async function refreshSelectedBackfillStatus(options) {
+    const background = options?.background === true;
     try {
-        const status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true });
+        const status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background });
         renderSelectedBackfillStatus(status);
     } catch (error) {
         const root = document.getElementById('prtg-selected-backfill-status-text');
@@ -2643,7 +2648,7 @@ async function refreshPrtgProbeStatus() {
 
     if (status.isRunning && !prtgProbePollTimer) {
         prtgProbePollTimer = pollWhile(async () => {
-            const latest = await api.get('/api/admin/settings/prtg-probe/status', { silent: true }).catch(() => null);
+            const latest = await api.get('/api/admin/settings/prtg-probe/status', { silent: true, background: true }).catch(() => null);
             if (!latest) return;
             renderPrtgProbeStatus(latest);
             if (!latest.isRunning) {
@@ -3010,14 +3015,16 @@ function renderStructureSyncStatus(status) {
     }
 }
 
-async function refreshStructureSyncStatus() {
+/** @param {{background?: boolean}} [options] background＝輪詢那一輪：帶背景標頭，不延長閒置時限；按鈕與載入觸發的不帶 */
+async function refreshStructureSyncStatus(options) {
+    const background = options?.background === true;
     try {
-        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true });
+        const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true, background });
         renderStructureSyncStatus(status);
 
         if (status.isRunning) {
             if (!structureSyncTimer) {
-                structureSyncTimer = pollWhile(refreshStructureSyncStatus, 3000);
+                structureSyncTimer = pollWhile(() => refreshStructureSyncStatus({ background: true }), 3000);
             }
         } else if (structureSyncTimer) {
             structureSyncTimer.stop();
@@ -3328,9 +3335,17 @@ if (monitoringForm) {
             }
             panel.append(list);
             if (previewOffset > 0 || data.hasMore) {
-                for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, data.hasMore]]) {
+                // 可瀏覽的最大 offset 由後端回應告知（ScaleLimits.MaxPreviewOffset）；超過會被後端回 400，所以到頂就停用
+                const nextAllowed = data.hasMore && previewOffset + 100 <= data.maxOffset;
+                for (const [text, next, allowed] of [['上一頁', previewOffset - 100, previewOffset > 0], ['下一頁', previewOffset + 100, nextAllowed]]) {
                     const pageButton = makeButton(text, { variant: 'outline-secondary', onClick: () => { previewOffset = next; previewScope(); } });
                     pageButton.classList.add('me-2'); pageButton.disabled = !allowed; panel.append(pageButton);
+                }
+                if (data.hasMore && !nextAllowed) {
+                    const cap = document.createElement('p');
+                    cap.className = 'lf-text-meta mt-2 mb-0';
+                    cap.textContent = '已到可瀏覽的上限，請用篩選縮小範圍。';
+                    panel.append(cap);
                 }
             }
         } catch (error) {

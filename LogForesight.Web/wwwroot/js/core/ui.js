@@ -854,7 +854,8 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             if (col.truncate) {
                 td.classList.add('text-truncate');
                 const fullText = (contentNode.textContent || '').trim();
-                if (fullText) td.title = fullText;
+                // 有整列連結的列：提示改由 attachRowLink 掛在連結內的 span，td 本身不帶 title
+                if (fullText && !href) td.title = fullText;
             }
 
             // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示。
@@ -1075,6 +1076,39 @@ function attachRowLink(tr, url) {
         anchor.setAttribute('aria-label', (cells[0].textContent || '').trim() || '開啟');
         cells[0].prepend(anchor);
     }
+    for (const td of cells) attachTruncateTitle(td, url, td === host ? anchor : null);
+}
+
+/**
+ * 整列連結的列裡，截斷欄的完整文字掛在格內一個帶 title 的 span 上，而不是 <td>：
+ * 帶 title 的 <td> 不能抬到延伸點擊區之上（會把延伸區切成只剩一格），但 span 必須在 <a> 之內，
+ * 點截斷文字才照樣是原生導向。連結所在格直接用主連結；其他格包一個次要連結
+ * （同 href、不進 Tab 順序）。次要連結不設 aria-hidden：被搬進去的是儲存格的真實內容，藏起來螢幕閱讀器就讀不到這一格。
+ * 格內有互動元素時不包（連結不能包住按鈕），title 留在 td——這時 td 不會被抬起，提示只在延伸區沒蓋住處出現；
+ * 目前沒有表格同時有截斷欄與格內互動元素，新增時要另外處理。
+ */
+function attachTruncateTitle(td, url, hostAnchor) {
+    if (!td.classList.contains('text-truncate')) return;
+    const fullText = (td.textContent || '').trim();
+    if (!fullText) return;
+    if (!hostAnchor && hasInteractiveDescendant(td)) {
+        td.title = fullText;
+        return;
+    }
+    const span = document.createElement('span');
+    span.title = fullText;
+    if (hostAnchor) {
+        span.append(...hostAnchor.childNodes);
+        hostAnchor.appendChild(span);
+        return;
+    }
+    const link = document.createElement('a');
+    link.className = 'lf-row-link__text';
+    link.setAttribute('href', url);
+    link.setAttribute('tabindex', '-1');
+    span.append(...td.childNodes);
+    link.appendChild(span);
+    td.appendChild(link);
 }
 
 /**

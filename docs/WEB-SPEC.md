@@ -218,7 +218,7 @@ LogForesight.Web/
   （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
   寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
-- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
+- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢、作業進度輪詢（PRTG 回填、探測、結構同步，NetIQ 探測與匯入）這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
   `CookieSessionEvents.CheckSlidingExpiration` 對它不續發——前景分頁開著不動也會依閒置時數登出。權限版號變更時的就地更新續發不受影響（背景請求同樣換主體）。
 - **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
   （同一台主機的正式／測試兩個子站台互不覆蓋）。
@@ -246,7 +246,7 @@ LogForesight.Web/
 **回同一句**，Provider 回報的具體原因（含 `UnconfiguredAdAuthenticationProvider` 的
 「AD 尚未設定」）**只寫進診斷記錄檔，不回前端**——回前端會讓未持有正確憑證的人列舉帳號。
 其餘三種失敗另有各自訊息，因為它們**都不是憑證問題**：帳號欄留空（「請輸入帳號。」）、
-serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。」）、
+登入節流（`LoginThrottle`：5 分鐘內同一帳號失敗達 10 次、或同一來源 IP 失敗達 50 次就暫停 5 分鐘，回 429「登入嘗試次數過多，請於 N 分鐘後再試。」，不透露是帳號還是 IP 被擋；serverAdmin 只計帳號維度、不計 IP）、
 以及**憑證已驗證通過**之後才可能出現的「此帳號尚未建立於系統中」與「此帳號已停用」——
 後兩者要先通過 AD 驗證才看得到，對沒有正確密碼的人不構成列舉管道，
 訊息說得明確才能讓當事人知道該找誰。
@@ -289,10 +289,10 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 驗證——**不論輸入什麼密碼（含錯誤、留空）都放行**。一般帳號由 `StubAuthenticationProvider.Verify`
 恆回 Ok；**本地救援帳號 serverAdmin 同樣一致**：`IdentityService` 把
 `IAuthenticationProvider.RequiresPassword` 傳入 `ServerAdminAuthenticator.TryLogin`，為 `false`
-（Stub）時不比對密碼直接放行並清空失敗計數。`Provider=Stub` 且
+（Stub）時不比對密碼直接放行。`Provider=Stub` 且
 環境不是 `Development` 時啟動 fail fast（防的是「帶著 Stub 上
 正式環境」的失誤，不是測試期的使用）——正式環境強制 Ad（`RequiresPassword=true`），
-救援帳號仍走 PBKDF2 密碼＋鎖定，這條免密碼捷徑到不了正式環境。
+救援帳號仍走 PBKDF2 密碼驗證與登入節流，這條免密碼捷徑到不了正式環境。
 
 **正式驗證（已定案：AD LDAP）**：`DynamicAuthenticationProvider` 依設定頁的 AD 設定，經 `LdapCredentialVerifier`
 以使用者帳密向 AD bind 驗證（AD 未設定時 fallback 為 `UnconfiguredAdAuthenticationProvider`）；
@@ -322,7 +322,7 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
 
 ### 6.3 逾期與登出
 
-- **閒置時限** `Jwt.ExpireHours`（預設 8 小時，設定鍵沿用），**滑動延長**：有活動就把到期往後推（過半後的請求續發 cookie），
+- **閒置時限** `Jwt.ExpireHours`（預設 8 小時，設定鍵沿用；大於 24 時以 24 小時計並在啟動記錄寫一行警告，換算只在 `SessionSettings.EffectiveIdleTimeout`），**滑動延長**：有活動就把到期往後推（過半後的請求續發 cookie），
   閒置超過就登出。**絕對上限 24 小時**（程式常數 `SessionCookie.AbsoluteLifetime`）：不論多活躍，自登入（`sst`）起超過 24 小時一律重新登入。
   不做 refresh token（內網工具，過期重登入即可）。時間取自注入的 `TimeProvider`。
 - **逐請求驗證**（`CookieSessionEvents.ValidatePrincipal`，每個請求都跑，serverAdmin 只做第 2、3 項）：
@@ -558,6 +558,8 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | 碼 | HTTP | 用途 |
   |---|---|---|
   | `validation_failed` | 400 | 輸入不合法（表外預設） |
+
+  輸入驗證：請求 DTO 一律放在 `LogForesight.Web.Models*` 命名空間（`[FromBody]` 型別由反射守門檢查），才會套到 `DefaultInputLimitsFilter` 的預設上限（字串 65,536 字、集合 50,000 筆）；驗證屬性沒寫 `ErrorMessage` 時由 `ChineseModelBindingMessages` 補中文預設訊息（含允許範圍，沒有 `[Display]` 時不帶欄位名，`InputValidationCoverageGuardTests` 檢查涵蓋）。
   | `auth_failed` | 401 | 登入帳密錯誤 |
   | `auth_expired` | 401 | 登入逾期 |
   | `forbidden` | 403 | 沒有權限 |
@@ -589,8 +591,9 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`、`PrtgTransferStoreException`、`PrtgScopeConflictException`、
   `RunExportDeidentificationException`、`NetiqDiscoveryException`）的訊息可以給使用者；其他例外（IO、網路、JSON、SQL、HttpClient 等）的原文可能含檔案路徑、網址或連線字串，
   回應與畫面只給寫好的中文說明，原文只進 NLog。規則只有一處：`UserFacingMessage.For(ex, 備用說明)`（`LogForesight.Web/Models/UserFacingMessage.cs`）——
-  領域例外回原訊息，其餘回備用說明；呼叫端自己用 `Log.Warn(ex, …)` 寫原文。`UserFacingMessageGuardTests` 掃 `LogForesight.Web`：把例外 `.Message`
-  放進回應、DTO、`Fail(`、`DomainException(` 或維護主控台的寫法只能出現在測試內附理由的白名單，白名單項目對不到程式碼也算失敗。
+  領域例外回原訊息，其餘回備用說明；呼叫端自己用 `Log.Warn(ex, …)` 寫原文。`UserFacingMessageGuardTests` 掃 `LogForesight.Web` 中任何成員鏈結尾的 `.Message`（不綁變數名稱），以及 `LogForesight.Core` 把 `.Message` 賦值給屬性或欄位的行：把例外 `.Message`
+  放進回應、DTO、`Fail(`、`DomainException(`、會回給畫面的狀態欄位或維護主控台的寫法只能出現在測試內附理由的白名單，白名單項目對不到程式碼也算失敗。
+  Core 的 PRTG 狀態欄位走 `PrtgFailureText.ForStatus`（`PrtgClientException` 的訊息可留，其他例外給固定說明與型別名）。
   新增例外型別要交給 Filter 對應時，同時登錄進 `UserFacingMessage`。
   交辦協調器（`WorkOrderCoordinator`、`IssueCaseCoordinator`）給使用者看的規則違反一律擲 `WorkOrderRuleException`，由 `ApiExceptionFilter` 對應 400；其他 `ArgumentException`／`InvalidOperationException` 由 Filter 記錄後回 500 與固定說明。`UserFacingMessage` 登錄的型別在 Filter 都要有對應（`ApiExceptionFilterTests` 守門）。
   給使用者的訊息字面（`DomainException(`、`Fail(`、`throw new …Exception("…")`、`Message =`）不寫類別名前綴，也不直接寫內部代碼（主機分級顯示「核心／一般／測試」、PRTG 取數策略顯示「保守／激進」），
@@ -961,7 +964,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
     或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
     自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
-    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。
+    `pollWhile` 的背景分頁暫停（`pauseWhenHidden`）與連續失敗退避（`backoffMaxMs`）是選項，常駐輪詢（執行告示、徽章、排程狀態）已啟用，其他輪詢未設時維持固定間隔。`pollWhile` 回呼發出的請求一律帶 `background: true`（`BackgroundPollingHeaderGuardTests` 逐一檢查每個呼叫點）；同一個函式也被按鈕呼叫時以參數區分，按鈕那條不帶。
   - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
     寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.Storage直接呼叫必須改用安全包裝或包在try內` 掃
     `core/`（除 `storage.js`）與 `pages/`：`localStorage.`／`sessionStorage.` 的直接呼叫，該行與前 8 行內必須有 `try {`，
@@ -1874,7 +1877,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
 
-**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消、退回、代為結案、靜音暫停、靜音恢復，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段（退回段每張單一行：單號 N：{問題}，由 {操作者} 退回：{說明}；後三段空段不輸出、標題只在有時才列）。管理者代為結案通知該單處理人，內容帶結案狀態、原因與「問題再出現時會不會重新派工」（勾選之後不再自動派工＝不會；未勾選或已處理＝會）；靜音造成的暫停通知處理人，帶靜音迄日與「到期自動恢復」，靜音連同代為結案時只發結案那一則（帶靜音迄日，靜音期間不派工、迄日後再出現會重新派工）；管理者提前解除靜音通知處理人已恢復，靜音自然到期不通知。改派或拆出併入目標處理人既有的單時，目標處理人收到的是「新增成員」（帶移入台數），不是「新交辦」。通知原因寫入佇列前截到 500 字。移交、取消、退回、代為結案、靜音暫停、靜音恢復各段每張單只列單號、問題與該次操作（操作者、原因；代為結案另寫結案狀態與會不會重新派工，靜音暫停另寫迄日）；台數與主機名單排除停用主機，與畫面同口徑。只含不需動作的種類（代為結案、取消、移交、靜音暫停）時結尾寫「這些單不需要你再回覆」，靜音暫停另附「只看暫停的單」的查看方式；含新交辦、新增成員、退回、靜音恢復時才寫「請至「我的交辦」檢視上列單號」。退回段另寫「這些主機已改回處理中，請重新處理並回覆」，取消段另寫「問題若仍出現，夜間派工可能重新派工」。靜音連同代為結案中途失敗時，仍進行中的單發靜音暫停。同一收件人同一時段的多筆管理者提醒合併成一段：明細以成員為鍵去重（上報為案件、沒有收件人為單號、派不出去為問題＋原因），同鍵留最新一筆，計數取去重後的數量。新交辦或新增成員的單在寄出時已沒有進行中成員的，改註「成員已結案、移出或主機已停用」。新交辦與新增成員兩段每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時；上報時沒有任何收件人（admin 群組成員都沒有 email）時，當下寫一筆系統稽核 `escalation_no_recipient`（含交辦單號），並把單記進「沒有收件人」清單（`MailNotifyState.NoRecipientEscalations`，單結案或不再有上報成員後不再計入）。**管理者提醒**：每趟夜間派工結束後（排程與情境驅動器同一個入口 `AdminReminderService.RunAfterNightly`），彙整三類——上報超過 `EscalationReminderDays` 天沒人處理的成員（依案件的上報時間 `EscalatedAt` 起算（狀態轉進 escalated 時寫入、轉出清空、夜間掛接不動；升級前舊資料退回最後更新日），大於 N 天才算）、本趟派不出去的問題（夜間派工結果的 `no_candidate`，依問題＋原因彙整台數，存 `LastUnassignable`：每趟把本趟觀察到的項目合併進清單，連續兩個日曆日的執行都沒再觀察到才移除——任何範圍的趟都只會新增或更新，不會清掉沒處理到的項目）、上報時沒有任何收件人的單；任一類不是 0 就為每位有 email 的 admin 群組成員各入列一筆 `admin_reminder`（不屬於任何單，帶三類筆數與明細文字，明細寫入前截到 4000 字），進同一套每人摘要，信分一段「【管理者提醒】」並指向「交辦總覽」。同一個成員（案件）每 N 天至多提醒一次，上次提醒日記在 `MailNotifyState.AdminReminderLastSent`（沒入列任何收件人時不記，不再逾期的鍵每趟清掉）；派不出去的問題每天至多入列一次。`MailEnabled`、`MailNotifyWorkOrders` 任一關閉、N＝0 或沒有任何有 email 的管理者時不入列；收件人是目前操作者時不入列；收件人停用或不存在時項目移除。信末寫「請至站台的「我的交辦」檢視上列單號」；有新交辦時另寫「新交辦請回覆處理狀態」。**站台網址與信件連結**：設定 `SiteBaseUrl`（含子應用程式路徑，例 `https://srv.example.com/lf`，可空；只取自這個設定、不取自請求標頭；儲存時必須是 http／https 完整絕對網址，含空白、ftp、只有主機名、帶查詢字串或片段、內嵌帳密（`https://user@host`）都拒絕）。連結只由 `MailLinks.Build` 組出（去結尾斜線、不出現雙斜線、保留子路徑），沒填時信件不含任何連結。交辦類各種通知（含取消）連到 `/handlers/{收件人編號}`「我的交辦」，不連到已收回授與的單或主機；管理者提醒連到「交辦總覽」；問題上報信連到該交辦單（無單時連「問題查詢」）；高風險信、執行摘要、每日／每週摘要連到「問題查詢」。信件內的頁面名稱與導覽文字（`layout.js`）一致。診斷匯出把站台網址去識別化。
+**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消、退回、代為結案、靜音暫停、靜音恢復，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段（退回段每張單一行：單號 N：{問題}，由 {操作者} 退回：{說明}；後三段空段不輸出、標題只在有時才列）。管理者代為結案通知該單處理人，內容帶結案狀態、原因與「問題再出現時會不會重新派工」（勾選之後不再自動派工＝不會；未勾選或已處理＝會）；靜音造成的暫停通知處理人，帶靜音迄日與「到期自動恢復」，靜音連同代為結案時只發結案那一則（帶靜音迄日，靜音期間不派工、迄日後再出現會重新派工）；管理者提前解除靜音通知處理人已恢復，靜音自然到期不通知。改派或拆出併入目標處理人既有的單時，目標處理人收到的是「新增成員」（帶移入台數），不是「新交辦」。通知原因寫入佇列前截到 500 字。移交、取消、退回、代為結案、靜音暫停、靜音恢復各段每張單只列單號、問題與該次操作（操作者、原因；代為結案另寫結案狀態與會不會重新派工，靜音暫停另寫迄日）；台數與主機名單排除停用主機，與畫面同口徑。只含不需動作的種類（代為結案、取消、移交、靜音暫停）時結尾寫「這些單不需要你再回覆」，靜音暫停另附「只看暫停的單」的查看方式；含新交辦、新增成員、退回、靜音恢復時才寫「請至「我的交辦」檢視上列單號」。退回段另寫「這些主機已改回處理中，請重新處理並回覆」，取消段另寫「問題若仍出現，夜間派工可能重新派工」。靜音連同代為結案中途失敗時，仍進行中的單發靜音暫停。同一收件人同一時段的多筆管理者提醒合併成一段：明細以成員為鍵去重（上報為案件、沒有收件人為單號、派不出去為問題＋原因），同鍵留最新一筆，計數取去重後的數量。新交辦或新增成員的單在寄出時已沒有進行中成員的，改註「成員已結案、移出或主機已停用」。新交辦與新增成員兩段每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時；上報時沒有任何收件人（admin 群組成員都沒有 email）時，當下寫一筆系統稽核 `escalation_no_recipient`（含交辦單號），並把單記進「沒有收件人」清單（`MailNotifyState.NoRecipientEscalations`，單結案或不再有上報成員後不再計入）。**管理者提醒**：每趟夜間派工結束後（排程與情境驅動器同一個入口 `AdminReminderService.RunAfterNightly`），彙整三類——上報超過 `EscalationReminderDays` 天沒人處理的成員（依案件的上報時間 `EscalatedAt` 起算（狀態轉進 escalated 時寫入、轉出清空、夜間掛接不動；升級前舊資料退回最後更新日），大於 N 天才算）、本趟派不出去的問題（夜間派工結果的 `no_candidate`，依問題＋原因彙整台數，存 `LastUnassignable`：每趟把本趟觀察到的項目合併進清單，連續兩個日曆日的執行都沒再觀察到才移除——任何範圍的趟都只會新增或更新，不會清掉沒處理到的項目）、上報時沒有任何收件人的單；任一類不是 0 就為每位有 email 的 admin 群組成員各入列一筆 `admin_reminder`（不屬於任何單，帶三類筆數與明細文字，明細寫入前截到 4000 字），進同一套每人摘要，信分一段「【管理者提醒】」並指向「交辦總覽」。同一個成員（案件）每 N 天至多提醒一次，上次提醒日記在 `MailNotifyState.AdminReminderLastSent`（沒入列任何收件人時不記，不再逾期的鍵每趟清掉）；派不出去的問題每天至多入列一次。`MailEnabled`、`MailNotifyWorkOrders` 任一關閉、N＝0 或沒有任何有 email 的管理者時不入列；收件人停用或不存在時項目移除。（「收件人是目前操作者時不入列」只適用於交辦類通知；管理者提醒由夜間排程產生，沒有操作者。）信末寫「請至站台的「我的交辦」檢視上列單號」；有新交辦時另寫「新交辦請回覆處理狀態」。**站台網址與信件連結**：設定 `SiteBaseUrl`（含子應用程式路徑，例 `https://srv.example.com/lf`，可空；只取自這個設定、不取自請求標頭；儲存時必須是 http／https 完整絕對網址，含空白、ftp、只有主機名、帶查詢字串或片段、內嵌帳密（`https://user@host`）都拒絕）。連結只由 `MailLinks.Build` 組出（去結尾斜線、不出現雙斜線、保留子路徑），沒填時信件不含任何連結。交辦類各種通知（含取消）連到 `/handlers/{收件人編號}`「我的交辦」，不連到已收回授與的單或主機；管理者提醒連到「交辦總覽」；問題上報信連到該交辦單（無單時連「問題查詢」）；高風險信、執行摘要、每日／每週摘要連到「問題查詢」。信件內的頁面名稱與導覽文字（`layout.js`）一致。診斷匯出把站台網址去識別化。
 
 **API**（`api/work-orders`）：
 | 端點 | 能力 | 說明 |
@@ -2079,7 +2082,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      早於「應有資料的最後一天」＝期間終點與 `ScheduleCalculator.ExpectedLastDataDay` 取早者——最近一個**已結束**的排程窗口實例的目標日（開跑日的昨天），排程未啟用時是昨天。窗口還沒跑完之前，昨天的資料本來就不該有，不算缺漏也不算落後（大螢幕整夜開著，否則每晚都會亮警示）；缺漏也只算到這一天。期間內沒有任何一天應該有資料時回「無資料」。顯示：無可評估資料→「無資料」（次要灰）；有缺漏→值「缺 N」、副標「主機日沒有分析資料」（警示色）；
      落後→副標「資料至 MM/DD」（風險狀態文字），沒缺漏但落後時值仍是「完整」、卡片轉警示色；其餘「完整」。
   保留期警示（`comparisonOutOfRetention`／`comparisonPartiallyOutOfRetention`）照舊顯示在第一排上方。
-- **風險趨勢**：折線，最多三條——高風險實線＋淡面積、中風險實線、前期高風險虛線（`summary.previousTrend`，依「期間第幾天」對齊；比較期整段超出保留期時為空、不畫）。
+- **風險趨勢**：折線，最多三條——高風險實線＋淡面積、中風險實線、前期高風險虛線（`summary.previousTrend`，依「期間第幾天」對齊；比較期整段超出保留期時為空、不畫；跨過保留線時，早於保留線的日子 `highRisk`／`mediumRisk` 為 null，那幾天不畫點、表格留白、不下鑽，保留線當天起照常）。
   線型不同，不只靠顏色區分；中風險被顯示設定隱藏時不畫；期間全為 0 顯示無資料。保留「表格」切換與點資料點下鑽（點中哪條線就下鑽哪個風險層級）；
   長期間不另做彙總，座標軸 `ticks.autoSkip` 省略刻度。
 - **處理進度卡**（純 HTML，不用 Chart.js）：第一條橫向堆疊條「已處理／處理中／未處理」（三段相加＝期間內高＋中風險日總數，母體與儀表板待辦同一套
@@ -2677,7 +2680,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
      **待送項目的出口**：即時通知 `UrgentOutbox` 的終態為 `smtp-accepted`、`cancelled-formal-revoked`、`no-qualified-recipient`、`superseded`（判定單一出口 `MailNotifyStateStore.IsTerminalUrgentStatus`）。每趟正常算出本趟候選後，非終態且鍵不在候選裡的項目（紀錄編號改變、滑出回望期、紀錄已刪除）標為 `superseded`（已被取代，不改更新時間）；該主機日這趟取不到工作流版本（父紀錄未完成、恢復等待中）時不判斷；讀取紀錄失敗、例外或取消的那一趟不清理。同一把鍵之後又被算出時照常回到 `pending`。`superseded` 項目不論收件人狀態都算完全終態，超過保留期隨 `PruneTerminalUrgentIntents` 移除；維護頁的通知處理狀態對它不列收件人狀態。
 
-     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）只在有「非終態且尚未記為已寄」的項目、且郵件與即時通知都啟用時才重跑整套通知（停用期間待送項目保留，重新啟用後下一分鐘補寄）；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
+     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）只在有「非終態且尚未記為已寄」的項目（另含狀態為「無合格收件人」但仍有收件人送達結果不明、且紀錄還在 14 天回望期內的項目——回望期內整套重跑會把該紀錄當未寄候選補寄，回望期外沒有路徑處理它，不再觸發），且郵件與即時通知都啟用時才重跑整套通知（停用期間待送項目保留，重新啟用後下一分鐘補寄）；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
 
      **收件人可見範圍過濾**：三路信件都改成雙層內容——
      全站統計行（數字，不含主機名，所有收件人都看得到）＋收件人自己可見範圍內的內容（僅解析

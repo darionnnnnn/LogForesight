@@ -43,6 +43,15 @@ public class WebAppSettings
     // DefaultPageSize 盤點後無任何消費端而直接移除（「有設定無行為」是本專案紅線）。
     // 本檔只保留「站台還沒起來、DB 還沒連上之前就必須知道」的啟動與安全前提。
 
+    /// <summary>不擋啟動、但要在啟動記錄留下的提醒（呼叫端在 <see cref="Validate"/> 通過後逐行寫入記錄）</summary>
+    public IReadOnlyList<string> StartupWarnings()
+    {
+        var warnings = new List<string>();
+        if (Jwt.ExpireHours > SessionCookie.AbsoluteLifetime.TotalHours)
+            warnings.Add($"Jwt:ExpireHours 設為 {Jwt.ExpireHours}，但連續登入的絕對上限固定為 24 小時，實際閒置時限以 24 小時計。");
+        return warnings;
+    }
+
     /// <summary>
     /// 啟動時的組態驗證：不合格直接拋例外中止啟動（fail fast），不讓站台帶病執行。
     /// 沿用批次端「設定錯誤要顯性化」的原則——設定寫錯時最糟的結果是「看起來正常但行為不對」，
@@ -198,6 +207,13 @@ public class SessionSettings
     /// （<see cref="SessionCookie.AbsoluteLifetime"/>，固定常數）。不做 refresh token——內網工具，過期重新登入即可
     /// </summary>
     public int ExpireHours { get; set; } = 8;
+
+    /// <summary>
+    /// 實際採用的閒置時限：<see cref="ExpireHours"/> 超過 24 小時絕對上限時視為 24 小時（閒置時限不可能長過絕對上限）。
+    /// 換算只在這一處，cookie 選項用它；超過上限時 <see cref="WebAppSettings.StartupWarnings"/> 另寫一行啟動警告。
+    /// </summary>
+    public TimeSpan EffectiveIdleTimeout =>
+        TimeSpan.FromHours(Math.Min(ExpireHours, SessionCookie.AbsoluteLifetime.TotalHours));
 
     /// <summary>存放登入狀態的 Cookie 名稱（HttpOnly + SameSite=Strict，前端 JS 讀不到）。與舊版 JWT cookie 的名稱不同，見 <see cref="SessionCookie.LegacyCookieName"/></summary>
     public string CookieName { get; set; } = "lf_session";

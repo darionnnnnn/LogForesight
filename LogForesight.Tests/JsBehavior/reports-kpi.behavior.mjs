@@ -345,6 +345,28 @@ const cases = {
         assert.equal(prev.searchParams.get('riskLevels'), '高');
         assert.equal(drill({ index: 5, datasetIndex: 2 }), null, '前期沒有那一天就不下鑽');
     },
+    趨勢圖_前期早於保留線的點為null_不畫點_表格留白_不下鑽() {
+        const points = [
+            { date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 },
+            { date: '2026-11-09', highRisk: 1, mediumRisk: 0, errorCount: 0 },
+            { date: '2026-11-10', highRisk: 0, mediumRisk: 0, errorCount: 0 }
+        ];
+        const previousTrend = [
+            { dayIndex: 0, date: '2026-05-01', highRisk: null, mediumRisk: null },
+            { dayIndex: 1, date: '2026-05-02', highRisk: 4, mediumRisk: 0 },
+            { dayIndex: 2, date: '2026-05-03', highRisk: 0, mediumRisk: 0 }
+        ];
+        const t = makeTrend(points, { previousTrend });
+        t.renderTrendChart();
+        const spec = t.calls.line[0];
+        const previous = spec.data.datasets.find(d => d.label === '前期高風險');
+        assert.deepEqual(previous.data, [null, 4, 0], 'null 不畫點（斷線），真的 0 仍是 0');
+        assert.deepEqual(t.calls.toolbar[0].tableRows.map(r => r[4]), ['', 4, 0], '表格／CSV 對 null 留白、0 照寫');
+        const drill = spec.drillTo;
+        assert.equal(drill({ index: 0, datasetIndex: 2 }), null, 'null 的前期日沒有資料可下鑽');
+        assert(drill({ index: 1, datasetIndex: 2 }), '有資料的前期日仍可下鑽');
+        assert(drill({ index: 2, datasetIndex: 2 }), '值為 0 的前期日仍可下鑽');
+    },
     趨勢圖下鑽帶上顯示範圍() {
         const points = [{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }];
         const all = makeTrend(points);

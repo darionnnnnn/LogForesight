@@ -1,5 +1,6 @@
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Time;
 using LogForesight.Web.Repositories;
 
 namespace LogForesight.Web.Services.Mail;
@@ -24,13 +25,16 @@ public class MailIssueDigest
     private readonly OccurrenceStatusResolver _statusResolver;
     private readonly ISystemSettingsStore _settingsStore;
     private readonly IIssueExclusionSource _exclusions;
+    private readonly TimeProvider _clock;
 
     public MailIssueDigest(
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
         ISystemSettingsStore settingsStore,
-        IIssueExclusionSource exclusions)
+        IIssueExclusionSource exclusions,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _settingsStore = settingsStore;
@@ -207,9 +211,10 @@ public class MailIssueDigest
         // 鍵一律正規化（回饋二十輪 I 終檢補上）：呼叫端用 Aggregate 的 Source 查這個集合，
         // 那是任一原始寫法，不正規化就會漏
         var overdue = new HashSet<(string, int)>();
+        var today = _clock.LocalToday();
         foreach (var r in resolved)
         {
-            if (!IssueTodoQuery.IsOverdueInProgress(r)) continue;
+            if (!IssueTodoQuery.IsOverdueInProgress(r, today)) continue;
             var signature = IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey);
             if (signature == null) continue;
             var key = IssueProfile.KeyOf(signature.Value.Source, signature.Value.EventId);

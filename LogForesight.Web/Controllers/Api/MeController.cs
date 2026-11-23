@@ -1,6 +1,7 @@
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using Microsoft.AspNetCore.Mvc;
+using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Controllers.Api;
 

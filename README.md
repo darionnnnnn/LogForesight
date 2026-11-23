@@ -108,7 +108,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 - **回滾到舊版的前提**：舊版驗證登入需要 `Jwt:SecretKey`（環境變數 `Jwt__SecretKey` 或設定檔），所以該設定仍在才能回滾；回滾後全員重新登入一次。使用者資料多出的 `SessionVersion` 欄位，舊版讀取時會忽略。
 - 登入時限：`Jwt:ExpireHours`（預設 8 小時）改為「閒置時限」，有操作就延長；連續登入另有 24 小時絕對上限（程式常數）。登出與停用帳號即時生效，登出後該帳號所有裝置上的登入一併失效。
 - `Jwt:SecretKey`、`Jwt:Issuer`、`Jwt:Audience` 已不使用，環境變數 `Jwt__SecretKey` 請先保留，確認新版穩定、不會再回滾之後再刪除（留著不影響啟動）。
-- 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。
+- 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。整份資料目錄備份時建議排除 `dataprotection\`：金鑰環以檔案存放，備份副本流出時，持有者可據以偽造登入 cookie。
 
 **內建規則升級到 v12（稽核記錄清除 1102）**：實際環境的 1102 事件來源是 `Eventlog`，新版多一條對應規則。既有站台要到「系統管理 > 規則維護」套用升級橫幅，新規則才會生效。
 
@@ -638,7 +638,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點與診斷 log 的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
-| `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
+| `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0；大於 24 時以 24 小時計並在啟動記錄寫一行警告）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
 | `Jwt.CookieName` | `lf_session` | 登入 cookie 名稱。舊版的 `lf_auth` 不再使用，請求帶著它時會被清除 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
 | `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。連續失敗的鎖定由登入節流負責，設定檔不含 `MaxFailedAttempts`／`LockoutMinutes`，既有設定鍵可刪、留著無作用。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
@@ -664,7 +664,7 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 | `Storage:SqliteWal` | `true`（僅 SQLite） | 備份時包含 `.db`、`-wal`、`-shm`；需要回退時設為 `false` 並重啟 |
 | `Storage:SqliteCacheSizeKb`／`SqliteMmapSizeBytes`／`SqliteSoftHeapLimitBytes` | 留空＝`65536`（每條連線 page cache 上限 64 MB）／`1073741824`（1 GB 記憶體對映）／不設軟上限（僅 SQLite） | 不需要；「系統健康 > 記憶體」卡的 SQLite 堆峰值偏高時再調小 cache 或設軟上限。可用應用程式集區環境變數 `Storage__SqliteCacheSizeKb` 等覆寫（不必改發行目錄內的檔案）；改完重啟，軟上限由有值改回不設也要重啟才解除。SqlServer 後端填了會在 web.log 警示並忽略 |
 | `Server:TrustedProxies` | 空清單 | 使用反向代理且要按來源 IP 節流登入時，填入可信代理的 IP |
-| Data Protection 金鑰環 `dataprotection\` | 首次啟動自動建立 | 不必備份；遺失只會讓全員重新登入 |
+| Data Protection 金鑰環 `dataprotection\` | 首次啟動自動建立 | 不必備份，備份資料目錄時建議排除（副本流出可偽造登入 cookie）；遺失只會讓全員重新登入 |
 | 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
 | 處理說明常用語 | 每人未設定時使用全站預設（出廠為空） | 管理者可在設定頁填全站預設；個人可自行儲存常用語 |
 | 排程新鮮度確認期限 | 未確認 | 過期告示需管理者在「設定 > 系統健康」確認並設定靜音期限 |

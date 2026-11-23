@@ -14,6 +14,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Models;
+using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -419,7 +420,8 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "主機、政策、規則、目錄或來源範圍在預覽期間變更，請重新查詢。"));
         return Ok(ApiResponse<object>.Ok(new { Day = targetDay, SettingsRevision = settings.Revision, PolicyRevision = policy.Revision,
             ScopeRevision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scopeRevision))), Total = dataPage.Total, Offset = offset,
-            Complete = offset == 0 && rows.Length == dataPage.Total, HasMore = offset + rows.Length < dataPage.Total, Rows = rows,
+            Complete = offset == 0 && rows.Length == dataPage.Total, HasMore = offset + rows.Length < dataPage.Total,
+            MaxOffset = ScaleLimits.MaxPreviewOffset, Rows = rows,
             Limitations = "預覽是現在的資格與條件，不預測命中、責任人或信箱實收。部分管理者不揭露不可歸戶資源。" }));
     }
 

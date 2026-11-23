@@ -531,7 +531,7 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 
 **各段獨立執行**：`RetentionPruner.Run` 把清除分成歷史紀錄、紀錄詳情、執行歷程與匯入紀錄、稽核紀錄、NetIQ 最新取數狀態、權限異動紀錄、風險 log 暫存、處理狀態與處理歷程、報告全文、PRTG 鏡像資料、AI 診斷傾印檔十一段，
 每段各自包在失敗邊界內，一段擲例外只記那一段，其餘照常執行。回傳 `RetentionRunResult.FailedSegments`：分析執行的「保留期清除」階段在有段失敗時標為部分完成（階段說明列段名），全部成功才標成功。
-結果同時寫進 `retention_state` blob：`lastRunDate` 只在全部成功時更新，有段失敗時不更新（失敗那段等隔天重試；同日輪詢不重試，行程重啟除外）；`lastFailureAt` 與 `lastFailedSegments` 記下最近一次失敗，一趟全部成功才清空，系統健康的整體狀態（`retention`）讀這份。
+結果同時寫進 `retention_state` blob：`lastRunDate` 只在全部成功時更新，有段失敗時不更新。整輪分析路徑的失敗等下一趟分析重試；分析沒跑的日子由排程輪詢單獨補做，失敗後 30 分鐘再試、首次之外當天最多再試 3 次，用完等隔天（判定在 `RetentionRetryGate`）；`lastFailureAt` 與 `lastFailedSegments` 記下最近一次失敗，一趟全部成功才清空，系統健康的整體狀態（`retention`）讀這份。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
 NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只對跑分析的那台機器生效

@@ -351,7 +351,7 @@ function aiStatusBadge(detail) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
         badge.textContent = '統計模式（AI 未分析）';
-        badge.title = 'AI 未呼叫或呼叫失敗，規則與趨勢告警照常運作';
+        badge.title = '這天沒有呼叫 AI，規則與趨勢告警照常運作';
         return badge;
     }
     return null;

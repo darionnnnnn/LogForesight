@@ -72,7 +72,6 @@ public class ReportEffectivenessService
         {
             From = ReportBucketing.Fmt(from),
             To = ReportBucketing.Fmt(to),
-            HandlingScopeApplied = false,
             AsOf = ReportBucketing.Fmt(to),
             Buckets = buckets.Select(b => new ReportEffectivenessBucketDto
             {

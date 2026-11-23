@@ -63,7 +63,7 @@ public class ReportCategoryTrendService
         if (nothingVisible) return dto;
 
         var lookup = new HostLookup(_hosts.GetAll());
-        var cells = new Dictionary<IssueCategory, (int[] Counts, IssueSeverity?[] Max)>();
+        var cells = new Dictionary<IssueCategory, int[]>();
 
         // 依日期分段載入（每段 SegmentDays 天、連續不重疊、以日期為界），逐段累計後丟棄該段紀錄，
         // 單次請求的記憶體尖峰由「整期（上限 366 天）所有主機日」降為「一段的量」。
@@ -92,13 +92,12 @@ public class ReportCategoryTrendService
                     var issueKey = IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey);
                     if (!seen.Add((host, issueKey, date))) continue;
 
-                    if (!cells.TryGetValue(issue.Category, out var cell))
+                    if (!cells.TryGetValue(issue.Category, out var counts))
                     {
-                        cell = (new int[buckets.Count], new IssueSeverity?[buckets.Count]);
-                        cells[issue.Category] = cell;
+                        counts = new int[buckets.Count];
+                        cells[issue.Category] = counts;
                     }
-                    cell.Counts[bucket]++;
-                    if (cell.Max[bucket] is not { } current || issue.Severity > current) cell.Max[bucket] = issue.Severity;
+                    counts[bucket]++;
                 }
             }
         }
@@ -107,9 +106,8 @@ public class ReportCategoryTrendService
             .Select(kv => new ReportCategoryTrendRowDto
             {
                 Category = kv.Key.ToString(),
-                Total = kv.Value.Counts.Sum(),
-                Cells = kv.Value.Counts.ToList(),
-                MaxSeverityPerCell = kv.Value.Max.Select(s => s?.ToString()).ToList()
+                Total = kv.Value.Sum(),
+                Cells = kv.Value.ToList()
             })
             .Where(r => r.Total > 0)
             .OrderByDescending(r => r.Total)

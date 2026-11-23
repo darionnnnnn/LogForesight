@@ -33,10 +33,13 @@ public static class ScenarioDriver
         Validate(scenario);
         CryptoHelper.ResetForTests();
         using var site = new ScenarioSite();
-        var seeded = await SeedAsync(site, scenario);
-
         var totalDays = scenario.TotalDays;
         var anchor = DateTime.Today;
+        // 登入前先把假時鐘撥到最後一天的執行時刻（今天 09:00），讓每一天的「現在」都不晚於登入時刻。
+        // 若以真實時刻登入，清晨執行時最後一天的 09:00 已超過閒置時限，該天的人為動作一律 401，結果隨執行時刻變動。
+        site.Clock.SetLocal(anchor.AddHours(9));
+        var seeded = await SeedAsync(site, scenario);
+
         DateTime DataDateOf(int day) => anchor.AddDays(-(totalDays - day + 1));
         var dateToDay = Enumerable.Range(1, totalDays).ToDictionary(DataDateOf, d => d);
 

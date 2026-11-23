@@ -71,7 +71,7 @@ public static class PrtgStructureSyncRunner
                         catch (Exception ex)
                         {
                             // 對應失敗不抹掉已完成的結構同步成果——鏡像已經更新了，那部分是有效的。
-                            mapError = ex.Message;
+                            mapError = PrtgFailureText.ForStatus(ex);
                             console.WriteLine($"✗ 主機對應失敗：{ex.Message}（結構同步結果已保留）");
                         }
                     }
@@ -116,7 +116,7 @@ public static class PrtgStructureSyncRunner
             // 結構同步整個擲例外：provider 若還沒被呼叫就沒有做對應（見上方說明），既有對應保持不變。
             stopwatch.Stop();
             status.Success = false;
-            status.ErrorMessage = ex.Message;
+            status.ErrorMessage = PrtgFailureText.ForStatus(ex);
             status.ElapsedSeconds = stopwatch.Elapsed.TotalSeconds;
             status.CompletedAt = DateTime.Now;
             console.WriteLine($"✗ 結構同步失敗：{ex.Message}（未進行主機對應，既有對應結果保持不變）");

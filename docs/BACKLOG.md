@@ -39,6 +39,21 @@
   處理狀態推導的主機索引在 singleton 服務上，請求內記憶得改資料來源型別。**觸發時機**：慢查詢清單顯示版本探測或主機清單複製成為熱點。
 正式主機的實際耗時、吞吐與記憶體走勢要以環境探測在正式站台量測，開發機的數字不代表正式主機（草案 `docs/drafts/ENV-PROBE-PLAN.md`）。
 
+## 待決的已知缺陷（探針已重現或讀碼確認）
+
+每條都有明確的修法選項，等使用者決定要不要做、選哪一種；標「探針」的在測試專案留有略過中的重現測試，修好後拿掉 `Skip` 即為驗收。
+
+- **AI 寫回的樂觀檢查含 NetIQ 嘗試欄位**：`ForRecord` 被 `AiAnalysisHostedService` 與 `EfAnalysisRecordStore.TryAttachAiResult` 用來判斷紀錄是否已變；續跑對同一主機日寫入嘗試狀態時，進行中的 AI 結果會被拒、下一輪重做（浪費一次 AI 呼叫，不損資料）。`ForRecord` 同時是失敗路徑的復原判定，修法要分開兩種用途。**觸發時機**：AI 執行紀錄常見「判定版本已更新，拒絕舊 AI 回寫」時。
+- **執行失敗原因含例外原文**：`AnalysisOrchestrator` 的逾時訊息、`RunFailureReasons.Describe`（記憶體不足以外回 `ex.Message`）與「NetIQ 分析失敗：…」寫進 `result.FailureMessage`，經 `RunOutcome.Message` 顯示在排程狀態卡；`AiAnalysisHostedService` 與 `BatchRunRecorder` 也用 `Describe`。流到這裡的例外有自寫中文訊息（設定、憑證）也有框架原文，要先盤點型別再決定哪些保留訊息、哪些換固定說明（作法比照 `PrtgFailureText.ForStatus`）。`UserFacingMessageGuardTests` 以「待檢討」放行這幾處。**觸發時機**：處理排程狀態卡或執行紀錄的錯誤呈現時。
+- **驗證訊息仍可能露出 C# 屬性名**：`DefaultInputLimitsFilter` 的「「屬性名」的內容過長／項目過多」與沒寫訊息的 `[Required]`（「「{0}」為必填」在沒有 `[Display]` 時代入屬性名）。其他驗證屬性已改成不帶欄位名的中文預設訊息。要讓訊息指出欄位又不露屬性名，需要為請求 DTO 補顯示名稱。**觸發時機**：整理表單錯誤呈現時。
+- **資料庫讀不到時帶 cookie 的頁面得到空白 500**：Cookie 驗證讀使用者或版號擲例外時，`AuthenticationHandler` 快取了失敗結果，例外處理重新執行錯誤頁時再擲一次，頁面看不到站台錯誤頁（API 回標準信封，不受影響）。修法選項：驗證事件內接住並標記、改以未登入身分放行，再由中介層回 500；或錯誤頁重新執行前清掉快取的驗證結果。探針 `AuthDbFailureProbeXTests`（略過中）。**觸發時機**：資料庫維護或連線中斷期間使用者回報白頁時。
+- **CSV 匯入錯誤的「第 N 行」在空行之後偏小**：`TextFieldParser` 略過空行但 `LineNumber` 不計入，API 也取不到略過的行數。修法是改成自己逐行計數的讀取器。探針 `CsvParserLineNumberProbeXTests`（略過中；跨行引號欄位的案例為有效守門）。**觸發時機**：使用者依錯誤訊息找不到對應的列時。
+- **問題類型熱度格與下鑽清單的單位不同**：格值是問題日（主機×問題×日），下鑽到問題查詢明細視角是主機日；同機同日多個同類問題時清單筆數較少，畫面沒有說明。修法選項：格改主機日、下鑽改到「依問題」視角、或兩邊補單位說明。探針 `ReportDrillCountProbeXTests`（略過中）。**觸發時機**：使用者回報「點進去筆數對不上」時。
+- **PRTG 快照手動封存在複合情境下少報筆數**：累積樣本落盤失敗（磁碟錯誤）後又遇來源變更，封存前的預覽只數已落盤的列，記憶體裡的未落盤樣本不計入。一般路徑（落盤成功）筆數一致，有守門。探針 `PrtgSnapshotArchiveCountProbeXTests`（複合情境略過中）。**觸發時機**：快照落盤錯誤與 PRTG 改位址同時發生時。
+- **排程服務的時鐘有三種寫法並存**：`SchedulerHostedService` 多數地方直接讀 `DateTime.Now`，保留清除重試用 `internal Func<DateTime> Clock` 測試縫，同一輪詢呼叫的郵件服務用注入的 `TimeProvider`。**觸發時機**：把時鐘注入擴到排程服務時整檔改 `TimeProvider`，一併收掉 `Clock` 與 `RetentionOnlyRunner` 兩個縫。
+- **整列連結的截斷欄若同時有格內互動元素，完整文字提示出不來**：`attachTruncateTitle` 在這種格不包連結（連結不能包住按鈕），title 留在 td，而 td 不再被抬到延伸點擊區之上。目前沒有表格是這種組合（全站量測斷言為 0）。**觸發時機**：新增這種欄時，只把文字部分包進帶 title 的 span。
+- **`NetiqSourceAttempt.Mark` 只有測試使用**：正式碼的帳本回寫走 `RecordBatch`；三個測試類別以 `Mark` 布置資料。**觸發時機**：整理帳本測試時一併換成 `RecordBatch` 後刪除。
+
 ## 營運與規模擴充（未排期）
 
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
@@ -70,12 +85,8 @@
   **觸發時機**：出現恢復後又被擋、或上報起算日被改動的回報時，比照 `WorkOrderId` 加保護。
 - **PRTG「感測器全部回空」警告的判定**：範圍內裝置合法地都沒有感測器時也會出警告，健康整體狀態轉黃到下次同步。
   **觸發時機**：正式站台出現誤報時，限定「範圍裝置數大於 0 且全部回空」之外再排除已知無感測器的裝置。
-- **保留期清除失敗後當天不重試**：`RetentionPruner` 分 11 段各自執行，任一段失敗時其他段照常完成，但不寫 `LastRunDate`；排程的 `RunRetentionIfDueAsync` 仍把當天標為已確認，
-  所以只有行程重啟後同日才會再跑，否則等隔天。
-  **觸發時機**：清除步驟常態失敗、需要當天自動補跑時，加上失敗後的有限次重試或退避。
-
 - **Windows 事件欄位只隔單一空白的來源**：標籤值擷取以「連續兩個以上空白」為欄位邊界（`LogAggregator`），目前正式樣本欄位間都是 2～4 個空白。
-  若某個來源的單行訊息欄位之間只有一個空白，值會讀到下一個欄位名稱之後（超過 128 字才會被當成空值）。
+  若某個來源的單行訊息欄位之間只有一個空白，值會讀到下一個欄位名稱之後（超過 128 字且含「冒號後接空白」或全形冒號時會被當成空值；128 字以內的仍會帶著後續欄位）。
   **觸發時機**：登入失敗明細或「相關帳號」再出現帶有其他欄位名稱的值——做法是以已知標籤清單當邊界。
 - **詢問 AI 的 AI 路由**：焦點目前由確定性規則決定（`ChatFocusResolver`）。實測若常出現沒提到編號的提問答不到重點，再評估加一次 AI 判斷焦點。
 - **AI 主分析首次回覆為 `[]`（物件根 schema 未做）**：JSON 模式送 `response_format: json_object`，這個伺服器的文法允許最上層是陣列，模型想先思考時以 `[]` 交差。現況由 `AiGrammarMemory` 記住、之後第一次就不帶文法（見下方「AI 回覆格式異常的成因尚未處理」）。仍可做的根治：JSON 模式改送「物件根」的 schema，讓 `[]` 在文法上不可能——要先對實際的 llama.cpp 伺服器實測是否支援、輸出品質有無變化。**觸發時機**：診斷匯出顯示停用文法後內容檢查失敗率明顯上升時。
@@ -345,10 +356,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
   要金鑰、Azure 要 deployment），目前只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
   chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
-- **AI 待補：AI 服務停機時無跨輪退避**：傳輸失敗的日子維持待補（不再誤判為已完成），全滅時結束該輪；但下一個輪詢週期（60 秒）在窗口內或跟隨取數時會再選一批重試，
-  沒有跨輪的失敗計數或退避。AI 服務停機整晚時每分鐘最多打一批（每筆受逾時與閘道限制）。
-  **觸發時機**：AI 停機期間的 log 或 AI 服務端負載成為困擾時，於 `AiAnalysisRunState` 記全滅時間、下一輪退避數分鐘（常數即可，不新增設定）。
-- **AI 格式異常降級的補跑沒有每日節流**：降級的主機日（`ai_pending=true`、`ai_degraded_attempts` 未滿 3）每次 AI 排程輪詢都會被選到，在窗口內或跟隨取數時背景輪詢每 60 秒一輪，三次嘗試可能幾分鐘內用完就放棄，不會等到隔天；同輪不重複選取，但跨輪沒有間隔。
+- **AI 格式異常降級的補跑沒有每日節流**：降級的主機日（`ai_pending=true`、`ai_degraded_attempts` 未滿 3）每次 AI 排程輪詢都會被選到；同輪不重複選取，跨輪只受「無進度退避」（`AiAnalysisRunState`，連續無進度依序隔 5、10、15 分鐘）限制，三次嘗試約半小時內用完就放棄，不會等到隔天。
   **觸發時機**：實際看到「AI 摘要已放棄」集中出現、事後單獨重試卻能成功時——做法是以降級時間（或日期）限制同一主機日每天至多嘗試 1 次，常數即可，不新增設定。
 - **AI 快取整份 blob 讀寫**：快取已有 500 筆上限，讀寫本身仍是整份 blob，未排期。
 
@@ -598,10 +606,8 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：需先在實機查「`host_id` 不同但同名」的列數，再決定加 `host_name_key` 欄位，或只對 `host_id=0` 舊列做名稱備援。
 - **PRTG 側與 NetIQ 目錄掃描仍以無條件 `catch (OperationCanceledException)` 判斷取消**（`PrtgDailyPipeline`、`PrtgScopeDevices`、`PrtgStructureSyncRunner`、`PrtgSnapshotHostedService`、`NetiqDiscoveryService`）：`PrtgClient` 與 `NetiqDirectoryClient` 已把 ct 未取消的逾時轉成非取消例外，目前不會把逾時誤判成使用者停止。**觸發時機**：在這些路徑新增不經這兩個用戶端的 HTTP 呼叫時，改用「OCE 且 ct 已取消」判斷（樣板見 `PrtgScopeEstimateController`）。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
-- **別名展開的主機集合在 EF 查詢中被內嵌成常值**：`EfIssueAggregateQuery.ExpandToAliasIds` 回傳 `HashSet<long>`，EF Core 8 會把每個識別寫成 SQL 常值（3,000 台約 65 KB 的查詢文字，執行計畫無法共用）；
-  `LatestOccurrences` 查詢端分組的兩段查詢各帶一份。改回傳 `List<long>` 會變成單一 JSON 參數（SQL Server 走 OPENJSON，需相容性層級 130 以上）。**觸發時機**：SQL Server 慢查詢清單出現這類查詢或計畫快取膨脹。
 - **SQL Server 不分大小寫定序下的出現點分組**：`LatestOccurrences` 查詢端分組與既有的 `ActionableOccurrences` 一樣在 SQL 端以 `EventKey` 分組；SQL Server 預設定序不分大小寫，只差大小寫的 `EventKey` 會併成一個出現點（SQLite 與記憶體路徑分開）。**觸發時機**：確認正式環境為 SQL Server 時一併核對定序。
-- **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
+- **`BatchRunStore` 查舊於視窗的執行編號時全表串流掃描**：回退路徑以 `EnumerateLines(null, null)` 串流逐列比對（不整份載入記憶體），但仍掃全表。**觸發時機**：執行紀錄表很大、查舊執行明顯變慢時改走以執行編號為鍵的索引查詢。
 
 ## 設計面債務（未排期）
 

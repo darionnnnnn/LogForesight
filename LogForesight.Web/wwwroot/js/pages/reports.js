@@ -538,6 +538,8 @@ function renderTrendChart() {
             const kind = kinds[point.datasetIndex];
             const day = kind === 'previous' ? previous.get(point.index) : points[point.index];
             if (!day) return null;
+            // 前期早於保留線的日子（highRisk 為 null）沒有資料可下鑽
+            if (kind === 'previous' && day.highRisk == null) return null;
             // 顯示範圍不是「全部」時，線只算該範圍的風險日：下鑽帶同一個範圍，點進去的筆數才對得上
             const level = kind === 'medium' ? '中' : '高';
             return recordsUrl({ riskLevels: level, from: day.date, to: day.date }) + scopeDrillParams();

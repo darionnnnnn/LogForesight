@@ -1,4 +1,5 @@
 using LogForesight.Core.Analysis;
+using LogForesight.Core.Time;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -23,10 +24,12 @@ public class IssueTodoQuery
     private readonly OccurrenceStatusResolver _statusResolver;
     private readonly IIssueExclusionSource _exclusions;
     private readonly ActionableSnapshotCache? _cache;
+    private readonly TimeProvider _clock;
 
     public IssueTodoQuery(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver,
-        IIssueExclusionSource exclusions, ActionableSnapshotCache? cache = null)
+        IIssueExclusionSource exclusions, ActionableSnapshotCache? cache = null, TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _exclusions = exclusions;
@@ -77,8 +80,9 @@ public class IssueTodoQuery
     /// <summary>純彙總（無 I/O）：問題計數以 (Source, EventId) 去重——同一個問題在多台主機
     /// 都未處理只算一個問題，「影響幾台」交給 AffectedHostCount 另外回答，
     /// 兩件事不要混在同一個數字裡。</summary>
-    public static IssueTodoDto Aggregate(IEnumerable<ResolvedOccurrence> resolved)
+    public IssueTodoDto Aggregate(IEnumerable<ResolvedOccurrence> resolved)
     {
+        var today = _clock.LocalToday();
         var openIssues = new HashSet<(string Source, int EventId)>(IssueComparer);
         var inProgressIssues = new HashSet<(string, int)>(IssueComparer);
         var overdueIssues = new HashSet<(string, int)>(IssueComparer);
@@ -102,7 +106,7 @@ public class IssueTodoQuery
 
             // 逾期是「處理中但預計完成日已過」，獨立於三態之外——in_progress 本身不分「按時」
             // 與「拖過頭」，這裡補上這一層，供批次H 郵件的逾期區塊共用同一個口徑
-            if (IsOverdueInProgress(r)) overdueIssues.Add(signature.Value);
+            if (IsOverdueInProgress(r, today)) overdueIssues.Add(signature.Value);
         }
 
         return new IssueTodoDto
@@ -116,9 +120,8 @@ public class IssueTodoQuery
 
     /// <summary>逾期＝處理中但預計完成日已過。internal 供 <c>MailIssueDigest</c>（回饋十九輪批次H）
     /// 共用同一個口徑，不是各自訂一套逾期規則（見上方呼叫處註解）。</summary>
-    internal static bool IsOverdueInProgress(ResolvedOccurrence r)
+    internal static bool IsOverdueInProgress(ResolvedOccurrence r, DateTime today)
     {
-        var today = DateTime.Today;
         if (r.OpenCase != null)
             return r.OpenCase.Status == IssueHandlingStatuses.InProgress && r.OpenCase.DueDate?.Date < today;
 

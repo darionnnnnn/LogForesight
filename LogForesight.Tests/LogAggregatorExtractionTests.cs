@@ -436,6 +436,38 @@ Failure Code:		0x12";
         Assert.False(d.Account.Any(char.IsSurrogate));
     }
 
+    [Theory]
+    [InlineData(": ")]       // 半形冒號後接空白
+    [InlineData("：")]       // 全形冒號
+    public void 帳號值超長且含標籤樣貌_視為缺邊界而回空值(string colon)
+    {
+        // 訊息以單一空白分隔，帳號後面的其他欄位會一起被讀進來；Windows 帳號名稱不允許冒號，
+        // 含冒號的超長值不可能是單一帳號
+        var msg = "Account Name: " + new string('a', 100) + " Account Domain" + colon + "CONTOSO Logon ID" + colon + "0x3E7";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, msg);
+        var (accounts, _) = LogAggregator.ExtractAccountsAndIps(new[] { msg });
+
+        Assert.Equal(string.Empty, d.Account);
+        Assert.DoesNotContain(accounts, x => x.Length >= 100);
+    }
+
+    [Fact]
+    public void 帳號值超長但冒號後不接空白_不視為標籤樣貌_仍截斷保留()
+    {
+        var account = new string('a', 130) + ":b";
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, "Account Name: " + account);
+
+        Assert.Equal(new string('a', 128), d.Account);
+    }
+
+    [Fact]
+    public void 帳號值不超長時含標籤樣貌不受影響()
+    {
+        // 值本身 ≤128 字：不經超長分支，維持原行為
+        var d = LogAggregator.ExtractLoginFailureDetail(4625, "Account Name: alice Logon ID: 0x3E7");
+        Assert.Equal("alice Logon ID: 0x3E7", d.Account);
+    }
+
     [Fact]
     public void 帳號值以冒號結尾仍視為空值_不因截斷改變()
     {

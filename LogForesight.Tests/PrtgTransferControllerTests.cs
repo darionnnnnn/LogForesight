@@ -22,6 +22,7 @@ using System.Net;
 using System.Net.Http.Json;
 using LogForesight.Web.Middleware;
 using Xunit;
+using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Tests;
 
