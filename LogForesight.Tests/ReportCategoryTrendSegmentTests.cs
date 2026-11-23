@@ -126,7 +126,7 @@ public class ReportCategoryTrendSegmentTests : IDisposable
         if (records.Count == 0) return dto;
         var lookup = new HostLookup(_hosts.GetAll());
         var seen = new HashSet<(string, string, DateTime)>();
-        var cells = new Dictionary<IssueCategory, (int[] Counts, IssueSeverity?[] Max)>();
+        var cells = new Dictionary<IssueCategory, int[]>();
         foreach (var record in records)
         {
             var date = record.Date.Date;
@@ -138,19 +138,17 @@ public class ReportCategoryTrendSegmentTests : IDisposable
                 if (exclusion.IsMuted(issue.Source, issue.EventId, date)) continue;
                 var key = IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey);
                 if (!seen.Add((host, key.ToUpperInvariant(), date))) continue;
-                if (!cells.TryGetValue(issue.Category, out var cell))
+                if (!cells.TryGetValue(issue.Category, out var counts))
                 {
-                    cell = (new int[buckets.Count], new IssueSeverity?[buckets.Count]);
-                    cells[issue.Category] = cell;
+                    counts = new int[buckets.Count];
+                    cells[issue.Category] = counts;
                 }
-                cell.Counts[bucket]++;
-                if (cell.Max[bucket] is not { } cur || issue.Severity > cur) cell.Max[bucket] = issue.Severity;
+                counts[bucket]++;
             }
         }
         dto.Rows = cells.Select(kv => new ReportCategoryTrendRowDto
             {
-                Category = kv.Key.ToString(), Total = kv.Value.Counts.Sum(), Cells = kv.Value.Counts.ToList(),
-                MaxSeverityPerCell = kv.Value.Max.Select(s => s?.ToString()).ToList()
+                Category = kv.Key.ToString(), Total = kv.Value.Sum(), Cells = kv.Value.ToList()
             })
             .Where(r => r.Total > 0).OrderByDescending(r => r.Total).ThenBy(r => r.Category, StringComparer.Ordinal).ToList();
         dto.CellMax = dto.Rows.Count == 0 ? 0 : dto.Rows.Max(r => r.Cells.Max());
@@ -169,7 +167,6 @@ public class ReportCategoryTrendSegmentTests : IDisposable
             Assert.Equal(expected.Rows[i].Category, actual.Rows[i].Category);
             Assert.Equal(expected.Rows[i].Total, actual.Rows[i].Total);
             Assert.Equal(expected.Rows[i].Cells, actual.Rows[i].Cells);
-            Assert.Equal(expected.Rows[i].MaxSeverityPerCell, actual.Rows[i].MaxSeverityPerCell);
         }
     }
 

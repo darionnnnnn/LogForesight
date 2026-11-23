@@ -197,7 +197,6 @@ public class ReportAnalyticsTests : IDisposable
         var eff = rig.Effectiveness.Get(D0, PeriodTo);
         var summary = rig.Summary.GetSummary(D0, PeriodTo);
 
-        Assert.False(eff.HandlingScopeApplied);
         Assert.All(eff.Buckets, b => Assert.Equal(b.Total, b.Resolved + b.InProgress + b.Open));
         Assert.Equal(summary.Handling.TotalCount, eff.Buckets.Sum(b => b.Total));
         Assert.Equal(summary.Handling.ResolvedCount, eff.Buckets.Sum(b => b.Resolved));
@@ -451,9 +450,6 @@ public class ReportAnalyticsTests : IDisposable
         Assert.Equal(3, storage.Total);
         Assert.Equal(storage.Total, storage.Cells.Sum());
         Assert.Equal(new[] { 2, 1 }, storage.Cells.Take(2).ToArray());
-        Assert.Equal("Medium", storage.MaxSeverityPerCell[0]);
-        Assert.Null(storage.MaxSeverityPerCell[5]);
-        Assert.Equal("High", trend.Rows[1].MaxSeverityPerCell[0]);
         Assert.Equal(2, trend.CellMax);
     }
 
@@ -513,6 +509,61 @@ public class ReportAnalyticsTests : IDisposable
         Assert.True(s.ComparisonOutOfRetention);
         Assert.Empty(s.PreviousTrend);
         Assert.Equal(2, s.Trend.Count);
+    }
+
+    [Theory]
+    [InlineData("all")]
+    [InlineData("unresolved")]
+    public void 前期趨勢_部分超出保留期_早於保留線的日子為null_保留線當天起為數字(string scope)
+    {
+        _settingsStore.Update(x => x.RetentionDays = 180);
+        var host = AddHost("H1");
+        var threshold = DateTime.Today.AddDays(-180);
+        // 前期起點早於保留線 3 天：前期 T-183 ～ T-174，本期 T-173 ～ T-164
+        var from = threshold.AddDays(7);
+        var to = from.AddDays(9);
+        Rec(host, threshold, "高", Issue("disk", 1));                   // 保留線當天算有資料
+        Rec(host, threshold.AddDays(2), "高", Issue("disk", 2));        // 其餘日子（含 +1）沒有高風險＝真的 0
+
+        var s = MakeRig().Summary.GetSummary(from, to, scope, "previous");
+
+        Assert.True(s.ComparisonPartiallyOutOfRetention);
+        Assert.Equal(10, s.PreviousTrend.Count);
+        Assert.All(s.PreviousTrend.Take(3), p => { Assert.Null(p.HighRisk); Assert.Null(p.MediumRisk); });
+        Assert.All(s.PreviousTrend.Skip(3), p => { Assert.NotNull(p.HighRisk); Assert.NotNull(p.MediumRisk); });
+        Assert.Equal(1, s.PreviousTrend[3].HighRisk);                   // 保留線當天
+        Assert.Equal(0, s.PreviousTrend[4].HighRisk);                   // 真的沒有高風險
+        Assert.Equal(1, s.PreviousTrend[5].HighRisk);
+    }
+
+    [Fact]
+    public void 前期趨勢_完全在保留期內_沒有null()
+    {
+        _settingsStore.Update(x => x.RetentionDays = 180);
+        AddHost("H1");
+        var from = DateTime.Today.AddDays(-20);
+        var s = MakeRig().Summary.GetSummary(from, from.AddDays(9), null, "previous");
+        Assert.False(s.ComparisonPartiallyOutOfRetention);
+        Assert.All(s.PreviousTrend, p => { Assert.NotNull(p.HighRisk); Assert.NotNull(p.MediumRisk); });
+    }
+
+    [Fact]
+    public void 前期趨勢_序列化後早於保留線的日子是null而不是缺鍵或0()
+    {
+        _settingsStore.Update(x => x.RetentionDays = 180);
+        AddHost("H1");
+        var from = DateTime.Today.AddDays(-180).AddDays(7);
+        var s = MakeRig().Summary.GetSummary(from, from.AddDays(9), null, "previous");
+
+        var json = System.Text.Json.JsonSerializer.Serialize(s, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var prev = doc.RootElement.GetProperty("previousTrend");
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, prev[i].GetProperty("highRisk").ValueKind);
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, prev[i].GetProperty("mediumRisk").ValueKind);
+        }
+        Assert.Equal(System.Text.Json.JsonValueKind.Number, prev[3].GetProperty("highRisk").ValueKind);
     }
 
     // ── 可見範圍與快取 ───────────────────────────────────────────────────

@@ -734,6 +734,13 @@ internal static class LogAggregator
             {
                 return string.Empty;
             }
+            // 超長值含「標籤樣貌」（半形冒號後接空白、或全形冒號）＝欄位邊界沒切乾淨，後面的其他欄位被一起讀進來
+            // （訊息以單一空白分隔時會發生）。Windows 帳號名稱不允許冒號，這樣的值不可能是單一帳號，
+            // 截斷保留只會留下一段假帳號進集合與噴灑計數，一律當缺邊界回空值。
+            if (value.Contains(": ", StringComparison.Ordinal) || value.Contains('：'))
+            {
+                return string.Empty;
+            }
             // 帳號類標籤：超長值截到上限後保留（帳號不能因為長就從集合與噴灑計數消失）。
             // 切點落在代理對中間時往內退一個字元（TextTruncation.SafeCut），避免留下不合法的 UTF-16。
             value = TextTruncation.SafeCut(value, MaxLabelValueLength).TrimEnd();

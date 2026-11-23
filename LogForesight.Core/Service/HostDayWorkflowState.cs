@@ -1267,6 +1267,7 @@ public static class HostDayWorkflowFingerprint
     /// 舊算法的指紋，只供還原路徑辨認升級前存下的列，不得用來寫入新列。依新到舊：
     /// [0] 精簡投影＋嘗試欄位；[1] 直接以傳入內容計算＋嘗試欄位（中風險以上的列資料庫內容是完整的）。
     /// 對得上任一個就不算父紀錄改變，並順手換成 <see cref="ForParentRecord"/> 的值。
+    /// 涵蓋 1.0.76.2 以前與 1.0.77.3 以後的算法；1.0.77.0～77.2 的精簡投影不含已抑制告警，未列入（沒有站台停在這三個版本）。
     /// </summary>
     public static IReadOnlyList<string> LegacyParentFingerprints(LogForesight.Core.Models.DailyAnalysisRecord record) =>
     [

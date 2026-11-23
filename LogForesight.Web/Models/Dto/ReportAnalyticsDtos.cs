@@ -58,8 +58,6 @@ public class ReportEffectivenessDto
 {
     public string From { get; set; } = string.Empty;
     public string To { get; set; } = string.Empty;
-    /// <summary>恆為 false：處理成效不套用報表的顯示範圍（handlingScope），前端據此顯示說明</summary>
-    public bool HandlingScopeApplied { get; set; }
     public List<ReportEffectivenessBucketDto> Buckets { get; set; } = new();
     /// <summary>帳齡的基準日（本次資料中的最後一個紀錄日；無資料時為期間迄日）</summary>
     public string AsOf { get; set; } = string.Empty;
@@ -82,8 +80,6 @@ public class ReportCategoryTrendRowDto
     public string Category { get; set; } = string.Empty;
     public int Total { get; set; }
     public List<int> Cells { get; set; } = new();
-    /// <summary>每桶最高嚴重度（Low／Medium／High）；該桶沒有問題日為 null</summary>
-    public List<string?> MaxSeverityPerCell { get; set; } = new();
 }
 
 public class ReportCategoryTrendDto
@@ -101,6 +97,8 @@ public class ReportPreviousTrendPointDto
 {
     public int DayIndex { get; set; }
     public string Date { get; set; } = string.Empty;
-    public int HighRisk { get; set; }
-    public int MediumRisk { get; set; }
+    /// <summary>早於保留線的日子為 null（沒有資料，不是 0）；其餘日子是數字，真的沒有高風險才是 0</summary>
+    public int? HighRisk { get; set; }
+    /// <summary>同 HighRisk：早於保留線為 null</summary>
+    public int? MediumRisk { get; set; }
 }

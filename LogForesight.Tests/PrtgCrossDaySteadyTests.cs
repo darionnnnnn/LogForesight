@@ -64,15 +64,25 @@ public sealed class PrtgCrossDaySteadyTests : IDisposable
     }
 
     [Fact]
-    public void High降為Medium_Low不變()
+    public void High降為Medium()
     {
         var high = Sig(PrtgRuleEvaluator.RuleWarning, IssueSeverity.High);
-        Run(high, 8, Evidence(high, 80, 80));
+        var r = Run(high, 8, Evidence(high, 80, 80));
         Assert.Equal(IssueSeverity.Medium, high.Severity);
+        Assert.Equal(1, r.SteadyDowngraded);
+        Assert.Contains("數值持平", high.SampleMessages[0]);
+    }
 
+    [Fact]
+    public void Low持平_維持Low不套跨日升級_不計入持平降級筆數()
+    {
+        // 規則嚴重度可由使用者在畫面設成 Low：沒有可降的一級，持平仍不套跨日升級（PRTG-SPEC），但不算一筆「持平降級」
         var low = Sig(PrtgRuleEvaluator.RuleWarning, IssueSeverity.Low);
-        Run(low, 8, Evidence(low, 80, 80));
+        var r = Run(low, 8, Evidence(low, 80, 80));
         Assert.Equal(IssueSeverity.Low, low.Severity);
+        Assert.Equal(0, r.SteadyDowngraded);
+        Assert.Equal(0, r.Escalated);
+        Assert.Contains("數值持平", low.SampleMessages[0]);
     }
 
     [Theory]

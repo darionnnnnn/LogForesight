@@ -196,7 +196,7 @@ public class ReportService
             RetentionDays = retentionDays,
             Kpi = kpi,
             Trend = trend,
-            PreviousTrend = outOfRetention ? new List<ReportPreviousTrendPointDto>() : ToPreviousTrend(previousTrend),
+            PreviousTrend = outOfRetention ? new List<ReportPreviousTrendPointDto>() : ToPreviousTrend(previousTrend, retentionThreshold),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
@@ -254,11 +254,24 @@ public class ReportService
     }
 
     /// <summary>前期逐日點轉成帶 DayIndex 的形狀（第 0 天＝前期起日，與本期 Trend 同索引對齊）</summary>
-    private static List<ReportPreviousTrendPointDto> ToPreviousTrend(List<ReportTrendPointDto> points) =>
-        points.Select((p, i) => new ReportPreviousTrendPointDto
+    /// <remarks>
+    /// 早於保留線的日子沒有資料，輸出 null 而不是 0（0 會讓前期線在保留線前畫成「沒有高風險」）；
+    /// 保留線當天算有資料。Date 為 yyyy-MM-dd，字串比較即日期比較。
+    /// </remarks>
+    private static List<ReportPreviousTrendPointDto> ToPreviousTrend(List<ReportTrendPointDto> points, DateTime retentionThreshold)
+    {
+        var thresholdKey = retentionThreshold.ToString("yyyy-MM-dd");
+        return points.Select((p, i) =>
         {
-            DayIndex = i, Date = p.Date, HighRisk = p.HighRisk, MediumRisk = p.MediumRisk
+            var outside = string.CompareOrdinal(p.Date, thresholdKey) < 0;
+            return new ReportPreviousTrendPointDto
+            {
+                DayIndex = i, Date = p.Date,
+                HighRisk = outside ? null : p.HighRisk,
+                MediumRisk = outside ? null : p.MediumRisk
+            };
         }).ToList();
+    }
 
     private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)
     {

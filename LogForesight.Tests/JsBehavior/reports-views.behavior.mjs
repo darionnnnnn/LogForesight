@@ -162,7 +162,7 @@ function makeEffectiveness() {
 
 function effectivenessData(overrides = {}) {
     return {
-        from: '2026-11-01', to: '2026-11-14', handlingScopeApplied: false,
+        from: '2026-11-01', to: '2026-11-14',
         buckets: [
             { from: '2026-11-01', to: '2026-11-01', days: 1, total: 10, resolved: 4, inProgress: 3, open: 3 },
             { from: '2026-11-02', to: '2026-11-02', days: 1, total: 5, resolved: 1, inProgress: 1, open: 3 }
@@ -517,8 +517,8 @@ const cases = {
                 { from: '2026-11-10', to: '2026-11-14', days: 5 }
             ],
             rows: [
-                { category: 'Storage', total: 12, cells: [12, 0], maxSeverityPerCell: ['High', null] },
-                { category: 'Security', total: 2, cells: [0, 2], maxSeverityPerCell: [null, 'Low'] }
+                { category: 'Storage', total: 12, cells: [12, 0] },
+                { category: 'Security', total: 2, cells: [0, 2] }
             ]
         });
         const body = dom.byId.get('cat-heat-body');
