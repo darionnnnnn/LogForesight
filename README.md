@@ -108,7 +108,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 - **回滾到舊版的前提**：舊版驗證登入需要 `Jwt:SecretKey`（環境變數 `Jwt__SecretKey` 或設定檔），所以該設定仍在才能回滾；回滾後全員重新登入一次。使用者資料多出的 `SessionVersion` 欄位，舊版讀取時會忽略。
 - 登入時限：`Jwt:ExpireHours`（預設 8 小時）改為「閒置時限」，有操作就延長；連續登入另有 24 小時絕對上限（程式常數）。登出與停用帳號即時生效，登出後該帳號所有裝置上的登入一併失效。
 - `Jwt:SecretKey`、`Jwt:Issuer`、`Jwt:Audience` 已不使用，環境變數 `Jwt__SecretKey` 請先保留，確認新版穩定、不會再回滾之後再刪除（留著不影響啟動）。
-- 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。
+- 新增資料夾 `{Storage:DataRoot}\dataprotection\`（Data Protection 金鑰環），權限限縮為執行帳號與系統。**金鑰環遺失只會讓全員重新登入、舊的 PRTG 分頁游標失效，不必備份**；重新部署若清空整個資料目錄，會出現同樣的一次性登出。整份資料目錄備份時建議排除 `dataprotection\`：金鑰環以檔案存放，備份副本流出時，持有者可據以偽造登入 cookie。
 
 **內建規則升級到 v12（稽核記錄清除 1102）**：實際環境的 1102 事件來源是 `Eventlog`，新版多一條對應規則。既有站台要到「系統管理 > 規則維護」套用升級橫幅，新規則才會生效。
 
@@ -664,7 +664,7 @@ AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲�
 | `Storage:SqliteWal` | `true`（僅 SQLite） | 備份時包含 `.db`、`-wal`、`-shm`；需要回退時設為 `false` 並重啟 |
 | `Storage:SqliteCacheSizeKb`／`SqliteMmapSizeBytes`／`SqliteSoftHeapLimitBytes` | 留空＝`65536`（每條連線 page cache 上限 64 MB）／`1073741824`（1 GB 記憶體對映）／不設軟上限（僅 SQLite） | 不需要；「系統健康 > 記憶體」卡的 SQLite 堆峰值偏高時再調小 cache 或設軟上限。可用應用程式集區環境變數 `Storage__SqliteCacheSizeKb` 等覆寫（不必改發行目錄內的檔案）；改完重啟，軟上限由有值改回不設也要重啟才解除。SqlServer 後端填了會在 web.log 警示並忽略 |
 | `Server:TrustedProxies` | 空清單 | 使用反向代理且要按來源 IP 節流登入時，填入可信代理的 IP |
-| Data Protection 金鑰環 `dataprotection\` | 首次啟動自動建立 | 不必備份；遺失只會讓全員重新登入 |
+| Data Protection 金鑰環 `dataprotection\` | 首次啟動自動建立 | 不必備份，備份資料目錄時建議排除（副本流出可偽造登入 cookie）；遺失只會讓全員重新登入 |
 | 加密金鑰檔 `keys\lf-crypto.key` | 首次啟動自動產生（使用 `LF_CRYPTO_KEY` 時不產生） | 必須備份；搬遷時與資料庫一起還原並確認執行帳號 ACL |
 | 處理說明常用語 | 每人未設定時使用全站預設（出廠為空） | 管理者可在設定頁填全站預設；個人可自行儲存常用語 |
 | 排程新鮮度確認期限 | 未確認 | 過期告示需管理者在「設定 > 系統健康」確認並設定靜音期限 |

@@ -87,7 +87,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   各 `BatchRunRecorder` 以 `ScopeContext` 的逐實例識別碼（不是 RunId）登記並被分派，沒有識別、識別為空字串或已登出的事件一律不處理；
   target 的 `Write` 只做記憶體內計數與入該 recorder 的有界佇列，寫庫在背景執行緒、`Finish` 前排空，不得在記錄路徑上同步呼叫資料庫。
 - 不要新增沒標背景的常駐輪詢：頁面開著就會定時送的請求（告示、徽章、狀態卡）一律 `api.get(..., { background: true })`，
-  伺服器對它不滑動延長閒置時限；漏標的頁面開著就永遠不會閒置登出（WEB-SPEC §6.1）。使用者按鈕觸發的更新不帶。
+  伺服器對它不滑動延長閒置時限；漏標的頁面開著就永遠不會閒置登出（WEB-SPEC §6.1）。作業進度輪詢（回填、探測、同步）也算；`BackgroundPollingHeaderGuardTests` 檢查每個 `pollWhile(` 的請求。使用者按鈕觸發的更新不帶。
 - 不要拿 `/api/run-activity` 的 `isRunning` 當互斥判斷：它是「取數或 AI 任一在跑」的聯集，只能決定
   告示出不出現；判斷某個動作現在能不能做一律看 `isFetchRun`（後端只在取數執行中擋主機更新，
   AI 單獨在跑時那個動作是允許的）。
@@ -135,14 +135,14 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要讓工作流父指紋（`HostDayWorkflowFingerprint.ForParentRecord`）吃到會隨儲存形狀改變的內容：分析當下以記憶體的完整紀錄算、AI 排程與工作流復原以資料庫讀回的紀錄再算，
   兩次不同就會把已完成的 PRTG、AI、郵件腿當成「父紀錄變了」重設，主機日停在「PRTG 待補」。指紋一律以 `RecordStorageShaper.Compact` 的投影計算、與風險等級無關
   （低風險日寫入時會精簡，風險等級又會在寫入後跨界），也不含 NetIQ 嘗試狀態與時間（帳本會在批次結束時回寫）；改精簡投影的欄位或指紋內容時，還原路徑要能認得先前各版算法（`LegacyParentFingerprints` 的做法），否則升級當下全部既有列重設一次。
-- 不要讓郵件去重鍵吃到與信件內容無關的狀態：`WorkflowMailIntent` 一律用 `HostDayWorkflowFingerprint.ForMailContent`（AI 已分析／AI 待補／詳情已清除固定為 false），改回 `ForRecord` 就是 AI 寫回後重寄、或留下永遠待送的即時通知項目讓重試空轉。
+- 不要讓郵件去重鍵吃到與信件內容無關的狀態：`WorkflowMailIntent` 一律用 `HostDayWorkflowFingerprint.ForMailContent`（AI 已分析／AI 待補／詳情已清除固定為 false，NetIQ 嘗試狀態與時間不納入——帳本在續跑每批開始與結束時就地回寫這兩欄），改回 `ForRecord` 就是 AI 寫回後重寄、或留下永遠待送的即時通知項目讓重試空轉。
   即時通知待送項目的終態只在 `MailNotifyStateStore.IsTerminalUrgentStatus` 判定；標成 `superseded` 只限「鍵已不對應本趟候選且該主機日取得到工作流版本」，停用即時通知時不標（重試入口改為不重跑），否則重新啟用後要等下一趟取數才補寄。
 - 不要讓快取鍵的可見主機片段記憶可變集合：`VisibleHostKeyPart` 只對 `FrozenSet<long>` 以物件參考記憶（`VisibilityService.GetVisibleHostIds` 回傳它）；`HashSet` 雖實作 `IReadOnlySet` 但可被修改，這段字串是授權維度。
 - 不要讓測試的預期摘要（golden）依賴真實的「今天」：摘要裡含日期（意圖鍵、主旨）時要用固定時鐘與固定日期，否則只在錄製當天會過。換行同理：摘要由 `AppendLine`、縮排 JSON 或郵件本文組成時，比對前把 CRLF 正規化成 LF，否則只在錄製的那個平台會過。
 - 不要在別處寫 NetIQ「要不要重查」的狀態清單：判定只在 `NetiqAttemptStatus`（`NetiqAttemptStatusGuardTests` 守門）。帳本每個主機日只留一列，不能靠數列計次，累計隨回執寫入。
 - 不要在交辦、靜音、觀察中的路徑直接讀系統時鐘：「現在／今天」一律走注入的 `TimeProvider`（`Core/Time/ClockExtensions`，store 取 `StorageBackend.Clock`），
   管線呼叫掛接與夜間派工時傳 `backend.Clock`——直接寫 `DateTime.Now` 的程式在情境測試撥動時鐘時會用到真實時間，到期、迄日這類行為就測不到（範圍清單與呼叫點由 `HandoffClockGuardTests` 守門）。
-- 不要把例外的 `.Message` 放進回應、DTO 或維護主控台：一律 `UserFacingMessage.For(ex, 備用說明)`，原文只進記錄檔。交辦協調器給使用者看的規則違反擲 `WorkOrderRuleException`，
+- 不要把例外的 `.Message` 放進回應、DTO 或維護主控台：一律 `UserFacingMessage.For(ex, 備用說明)`，原文只進記錄檔。Core 存進會回給畫面的狀態欄位同理（PRTG 類走 `PrtgFailureText.ForStatus`：`PrtgClientException` 的訊息可留，其他給固定說明與型別名），`UserFacingMessageGuardTests` 掃任何成員鏈結尾的 `.Message` 與 Core 的賦值行。交辦協調器給使用者看的規則違反擲 `WorkOrderRuleException`，
   新的專屬例外型別要同時登錄 `UserFacingMessage` 並在 `ApiExceptionFilter` 加對應（`UserFacingMessageGuardTests`、`ApiExceptionFilterTests` 守門）——
   框架層例外（EF／LINQ）的英文原文含實體名與路徑，轉成領域例外就是外洩。
 - 不要另寫一份「系統要不要注意」的判斷：健康整體狀態只由 `HealthAttention.Evaluate` 決定，健康頁與導覽告示共用；健康頁新增警示卡要宣告 `data-health-alert` 並併入原因清單（`HealthAttentionGuardTests` 守門）。

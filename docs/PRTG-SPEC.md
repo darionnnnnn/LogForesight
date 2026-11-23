@@ -397,7 +397,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 ### 監看政策（可選縮圈）
 
-blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 10,000、sensor 最多 15,000；數字只在 `ScaleLimits`，讀取回應帶 `MaxHosts`／`MaxSensors` 給前端，`ScaleLimitsGuardTests` 守門）。兩份清單都空＝全部已對應主機與其 sensor。
+blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「監看範圍（可選縮圈）」經 `api/prtg/monitoring` 維護（主機最多 10,000、sensor 最多 15,000；數字只在 `ScaleLimits`，讀取回應帶 `MaxHosts`／`MaxSensors` 給前端，`ScaleLimitsGuardTests` 守門）。範圍預覽每頁 100 筆，頁面位置上限 `ScaleLimits.MaxPreviewOffset`（30,000）：預覽回應帶 `maxOffset`，前端在有更多資料但下一頁會超過上限時停用「下一頁」並提示用篩選縮小範圍；直接以更大的位置請求回 400。兩份清單都空＝全部已對應主機與其 sensor。
 - **主機清單有值**：每日管線本趟的主機範圍＝清單 ∩ 本趟要求的主機 ∩ 啟用、未合併且 `Source=netiq` 的主機（`PrtgDailyPipeline.SelectActivePilotHostIds`）；
   本機（local）來源主機與停用、合併的主機不在其中，全部被濾掉時範圍為空集合（本趟只處理 0 台）。縮圈後的範圍是 partial：不清感測器鏡像、不做範圍外清除（§3c）。
 - **sensor 清單有值**：狀態型與數值型規則的評估母體、以及快照目標（§3b）只留清單內的 sensor；`silent` 是裝置層判定，不受限；觸發式數值取數（§3a）不依 sensor 清單縮圈。
@@ -467,7 +467,7 @@ blob `prtg_monitoring_policy`（`PrtgMonitoringPolicyStore`），由維護頁「
 
 **持續 Warning 且數值持平時降一級**（`PrtgCrossDay` 的 `steady` 證據，由 `PrtgDailyPipeline.BuildSteadyEvidence` 以 `PrtgValueAssessment` 算好）：`warning` finding（不含 `ElevatesDayRisk`）連續 ≥ 7 日，且該 sensor 評估日往前 7 天內可用日 ≥ 4、
 已用百分比（`PrtgValueAssessment.UsedPercent`）首尾差 ≤ 2 個百分點、最新值不在危險區（磁碟已用 < 90%、記憶體已用 < 95%）時，嚴重度降一級、不套跨日升級，說明補「已持續 M 日，數值持平（近 7 日已用 X%→Y%）」。
-數值不足、最後一個可用日早於評估日前一天（數值已中斷）、未知單位、CPU／Ping、數值查詢失敗一律維持原行為；只影響當趟評估的 finding，歷史主機日不重算。每日 finding 計數多「持平降級 N 筆」。常數在 `PrtgRuleCatalog`，暫定。
+數值不足、最後一個可用日早於評估日前一天（數值已中斷）、未知單位、CPU／Ping、數值查詢失敗一律維持原行為；只影響當趟評估的 finding，歷史主機日不重算。每日 finding 計數多「持平降級 N 筆」，只算嚴重度真的降了的（規則嚴重度設成 Low 的 finding 持平時維持 Low、同樣不套跨日升級並補說明，但不計入）。常數在 `PrtgRuleCatalog`，暫定。
 
 ### 抑制
 
