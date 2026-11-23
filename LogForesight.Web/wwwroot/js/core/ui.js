@@ -1083,7 +1083,9 @@ function attachRowLink(tr, url) {
  * 整列連結的列裡，截斷欄的完整文字掛在格內一個帶 title 的 span 上，而不是 <td>：
  * 帶 title 的 <td> 不能抬到延伸點擊區之上（會把延伸區切成只剩一格），但 span 必須在 <a> 之內，
  * 點截斷文字才照樣是原生導向。連結所在格直接用主連結；其他格包一個次要連結
- * （同 href、不進 Tab 順序、不給輔助科技重複念）。格內有互動元素時不包，維持 td 的 title。
+ * （同 href、不進 Tab 順序）。次要連結不設 aria-hidden：被搬進去的是儲存格的真實內容，藏起來螢幕閱讀器就讀不到這一格。
+ * 格內有互動元素時不包（連結不能包住按鈕），title 留在 td——這時 td 不會被抬起，提示只在延伸區沒蓋住處出現；
+ * 目前沒有表格同時有截斷欄與格內互動元素，新增時要另外處理。
  */
 function attachTruncateTitle(td, url, hostAnchor) {
     if (!td.classList.contains('text-truncate')) return;
@@ -1104,7 +1106,6 @@ function attachTruncateTitle(td, url, hostAnchor) {
     link.className = 'lf-row-link__text';
     link.setAttribute('href', url);
     link.setAttribute('tabindex', '-1');
-    link.setAttribute('aria-hidden', 'true');
     span.append(...td.childNodes);
     link.appendChild(span);
     td.appendChild(link);

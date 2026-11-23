@@ -140,6 +140,20 @@ public class DefaultInputLimitsTests
         Assert.Equal("「帳號」為必填。", LogForesight.Web.Extensions.ServiceCollectionExtensions.ValidationMessage(normal));
     }
 
+    [Fact]
+    public void 多則驗證訊息串接_不出現句號接分號()
+    {
+        var state = new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary();
+        state.AddModelError("Account", "「帳號」為必填。");
+        state.AddModelError("Note", "輸入內容長度不可超過 255 個字。");
+        var message = LogForesight.Web.Extensions.ServiceCollectionExtensions.ValidationMessage(state);
+        Assert.DoesNotContain("。；", message);
+        Assert.Contains("「帳號」為必填", message);
+        Assert.Contains("輸入內容長度不可超過 255 個字", message);
+        Assert.Contains("；", message);
+        Assert.EndsWith("。", message);
+    }
+
     private static void Run(object argument)
     {
         var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();

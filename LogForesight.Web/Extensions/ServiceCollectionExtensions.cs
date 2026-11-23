@@ -287,7 +287,13 @@ public static class ServiceCollectionExtensions
             .Where(message => !string.IsNullOrWhiteSpace(message))
             .Distinct()
             .ToList();
-        return messages.Count > 0 ? string.Join("；", messages) : "輸入內容不合格，請確認必填欄位與格式。";
+        // 各訊息自帶句號；多則以「；」串接時先去掉句尾句號再補回一個，避免「。；」
+        return messages.Count switch
+        {
+            0 => "輸入內容不合格，請確認必填欄位與格式。",
+            1 => messages[0],
+            _ => string.Join("；", messages.Select(message => message.TrimEnd('。'))) + "。"
+        };
     }
 
     /// <summary>業務層與資料存取層</summary>

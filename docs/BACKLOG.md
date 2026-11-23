@@ -24,6 +24,8 @@
 - **CSV 匯入錯誤的「第 N 行」在空行之後偏小**：`TextFieldParser` 略過空行但 `LineNumber` 不計入，API 也取不到略過的行數。修法是改成自己逐行計數的讀取器。探針 `CsvParserLineNumberProbeXTests`（略過中；跨行引號欄位的案例為有效守門）。**觸發時機**：使用者依錯誤訊息找不到對應的列時。
 - **問題類型熱度格與下鑽清單的單位不同**：格值是問題日（主機×問題×日），下鑽到問題查詢明細視角是主機日；同機同日多個同類問題時清單筆數較少，畫面沒有說明。修法選項：格改主機日、下鑽改到「依問題」視角、或兩邊補單位說明。探針 `ReportDrillCountProbeXTests`（略過中）。**觸發時機**：使用者回報「點進去筆數對不上」時。
 - **PRTG 快照手動封存在複合情境下少報筆數**：累積樣本落盤失敗（磁碟錯誤）後又遇來源變更，封存前的預覽只數已落盤的列，記憶體裡的未落盤樣本不計入。一般路徑（落盤成功）筆數一致，有守門。探針 `PrtgSnapshotArchiveCountProbeXTests`（複合情境略過中）。**觸發時機**：快照落盤錯誤與 PRTG 改位址同時發生時。
+- **排程服務的時鐘有三種寫法並存**：`SchedulerHostedService` 多數地方直接讀 `DateTime.Now`，保留清除重試用 `internal Func<DateTime> Clock` 測試縫，同一輪詢呼叫的郵件服務用注入的 `TimeProvider`。**觸發時機**：把時鐘注入擴到排程服務時整檔改 `TimeProvider`，一併收掉 `Clock` 與 `RetentionOnlyRunner` 兩個縫。
+- **整列連結的截斷欄若同時有格內互動元素，完整文字提示出不來**：`attachTruncateTitle` 在這種格不包連結（連結不能包住按鈕），title 留在 td，而 td 不再被抬到延伸點擊區之上。目前沒有表格是這種組合（全站量測斷言為 0）。**觸發時機**：新增這種欄時，只把文字部分包進帶 title 的 span。
 - **`NetiqSourceAttempt.Mark` 只有測試使用**：正式碼的帳本回寫走 `RecordBatch`；三個測試類別以 `Mark` 布置資料。**觸發時機**：整理帳本測試時一併換成 `RecordBatch` 後刪除。
 
 3000 台規模的效能最佳化中「不改運作邏輯」的部分已完成（背景見 `docs/archive/FEEDBACK-78-PLAN.md`）。以下是同一次盤點留下、刻意未做的項目：
