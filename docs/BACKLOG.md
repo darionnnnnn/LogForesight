@@ -18,6 +18,7 @@
 - **批次改派入口（E3-05 的一部分）**：交辦總覽目前只給提示與已篩選的清單。
 
 - **AI 寫回的樂觀檢查含 NetIQ 嘗試欄位**：`ForRecord` 被 `AiAnalysisHostedService` 與 `EfAnalysisRecordStore.TryAttachAiResult` 用來判斷紀錄是否已變；續跑對同一主機日寫入嘗試狀態時，進行中的 AI 結果會被拒、下一輪重做（浪費一次 AI 呼叫，不損資料）。`ForRecord` 同時是失敗路徑的復原判定，修法要分開兩種用途。**觸發時機**：AI 執行紀錄常見「判定版本已更新，拒絕舊 AI 回寫」時。
+- **執行失敗原因含例外原文**：`AnalysisOrchestrator` 的逾時訊息、`RunFailureReasons.Describe`（記憶體不足以外回 `ex.Message`）與「NetIQ 分析失敗：…」寫進 `result.FailureMessage`，經 `RunOutcome.Message` 顯示在排程狀態卡；`AiAnalysisHostedService` 與 `BatchRunRecorder` 也用 `Describe`。流到這裡的例外有自寫中文訊息（設定、憑證）也有框架原文，要先盤點型別再決定哪些保留訊息、哪些換固定說明（作法比照 `PrtgFailureText.ForStatus`）。`UserFacingMessageGuardTests` 以「待檢討」放行這幾處。**觸發時機**：處理排程狀態卡或執行紀錄的錯誤呈現時。
 - **`NetiqSourceAttempt.Mark` 只有測試使用**：正式碼的帳本回寫走 `RecordBatch`；三個測試類別以 `Mark` 布置資料。**觸發時機**：整理帳本測試時一併換成 `RecordBatch` 後刪除。
 
 3000 台規模的效能最佳化中「不改運作邏輯」的部分已完成（背景見 `docs/archive/FEEDBACK-78-PLAN.md`）。以下是同一次盤點留下、刻意未做的項目：

@@ -72,4 +72,13 @@ public static class PrtgFailureText
     /// </summary>
     public static string ForInit(Exception ex)
         => ex is PrtgClientException ? ex.Message : InitFailed;
+
+    /// <summary>
+    /// 存進維護頁狀態欄位的失敗說明：PRTG 用戶端自己的例外訊息保證不含憑證，是管理者判斷帳密、網路、逾時要用的資訊；
+    /// 其餘例外只給固定說明與型別名（形狀比照 MigrationFailureText），原文（可能含資料表名、路徑）只進主控台與記錄檔。
+    /// </summary>
+    public static string ForStatus(Exception ex)
+        => ex is PrtgClientException
+            ? ex.Message
+            : $"發生非預期的錯誤（{ex.GetType().Name}），詳細原因見記錄檔。";
 }
