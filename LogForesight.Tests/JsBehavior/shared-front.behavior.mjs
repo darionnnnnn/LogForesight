@@ -461,6 +461,7 @@ const cases = {
         assert(holder && holder.tagName === 'SPAN', '完整文字的 title 在 span 上');
         const secondary = holder._parent;
         assert(secondary.tagName === 'A', 'span 在次要連結之內');
+        assert(secondary.classList.contains('lf-row-link__text'), '次要連結帶重設連結外觀的類別（不顯示成連結色與底線）');
         expectEqual(secondary.getAttribute('href'), '/lf/hosts/7', '次要連結與列同網址');
         expectEqual(secondary.getAttribute('tabindex'), '-1', '不新增 Tab 停駐點');
         expectEqual(secondary.getAttribute('aria-hidden'), 'true', '不讓輔助科技重複念');

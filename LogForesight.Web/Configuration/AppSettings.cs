@@ -47,7 +47,7 @@ public class WebAppSettings
     public IReadOnlyList<string> StartupWarnings()
     {
         var warnings = new List<string>();
-        if (Jwt.ExpireHours > SessionCookie.AbsoluteLifetime.TotalHours && Jwt.ExpireHours <= SessionSettings.MaxConfigurableExpireHours)
+        if (Jwt.ExpireHours > SessionCookie.AbsoluteLifetime.TotalHours)
             warnings.Add($"Jwt:ExpireHours 設為 {Jwt.ExpireHours}，但連續登入的絕對上限固定為 24 小時，實際閒置時限以 24 小時計。");
         return warnings;
     }
@@ -75,9 +75,7 @@ public class WebAppSettings
 
         if (Jwt.ExpireHours <= 0)
             errors.Add("Jwt:ExpireHours 必須大於 0。");
-        else if (Jwt.ExpireHours > SessionSettings.MaxConfigurableExpireHours)
-            errors.Add($"Jwt:ExpireHours「{Jwt.ExpireHours}」大得不合理（上限 {SessionSettings.MaxConfigurableExpireHours} 小時）；" +
-                       "登入閒置時限實際最長 24 小時，請改填 1 到 24 之間的整數。");
+
 
         var dataRoot = Storage.ResolveDataRoot();
         if (!Directory.Exists(dataRoot))
@@ -218,9 +216,6 @@ public class SessionSettings
     /// </summary>
     public TimeSpan EffectiveIdleTimeout =>
         TimeSpan.FromHours(Math.Min(ExpireHours, SessionCookie.AbsoluteLifetime.TotalHours));
-
-    /// <summary>設定值大於這個小時數（一年）視為輸入錯誤而非「想要很長」：連換算成 TimeSpan 都可能溢位</summary>
-    public const int MaxConfigurableExpireHours = 24 * 365;
 
     /// <summary>存放登入狀態的 Cookie 名稱（HttpOnly + SameSite=Strict，前端 JS 讀不到）。與舊版 JWT cookie 的名稱不同，見 <see cref="SessionCookie.LegacyCookieName"/></summary>
     public string CookieName { get; set; } = "lf_session";

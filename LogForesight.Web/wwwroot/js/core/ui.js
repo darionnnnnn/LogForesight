@@ -1101,6 +1101,7 @@ function attachTruncateTitle(td, url, hostAnchor) {
         return;
     }
     const link = document.createElement('a');
+    link.className = 'lf-row-link__text';
     link.setAttribute('href', url);
     link.setAttribute('tabindex', '-1');
     link.setAttribute('aria-hidden', 'true');

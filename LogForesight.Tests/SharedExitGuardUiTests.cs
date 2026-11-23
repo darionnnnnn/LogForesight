@@ -43,6 +43,8 @@ public sealed class SharedExitGuardUiTests
         Assert.Contains(".lf-row-link__anchor::after", css);
         Assert.Matches(@"\.table > tbody > tr\.lf-row-link \{ position: relative;", css);
         Assert.Contains(".lf-row-link__anchor:focus-visible::after", css);
+        // 截斷欄的次要連結與主連結同樣重設外觀，否則顯示成連結色與底線
+        Assert.Matches(@"\.lf-row-link__anchor,\s*\.lf-row-link__text \{\s*color: inherit;\s*text-decoration: none;", css);
         // 帶 title 的元素抬到延伸點擊區之上，列內提示才出得來；儲存格排除在外（否則延伸區被切成一格）
         Assert.Matches(@"\.lf-row-link :where\(.*\[data-bs-toggle\], \[title\]:not\(td, th\)\)", css);
         Assert.Contains("function attachTruncateTitle(", ui);

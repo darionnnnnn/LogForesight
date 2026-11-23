@@ -183,7 +183,7 @@ LogForesight.Web/
   **不在程式中直接讀 `IConfiguration`**——組態鍵名只存在於 `AppSettings.cs` 一處，改名不會有魔法字串漏網。
   `Storage` 區段的型別 `StorageSettings` 定義在 Core。
 - **啟動時驗證**：`WebAppSettings.Validate(strict, environmentName)` 檢查：`Storage.Type` 受支援、
-  `Jwt.ExpireHours` > 0 且不大於 8,760（一年，超過視為輸入錯誤）、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
+  `Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
   `Auth.ServerAdmin` 帳號與雜湊非空且雜湊為 PBKDF2 格式、`Server.TrustedProxies` 每項為 IP、
   `Server.PathBase`／`FrameOptions`／`Csp` 值合法；`strict`（環境不是 `Development`）時另擋下公開已知的測試
   PasswordHash 與 `Auth.Provider=Stub`。
@@ -218,7 +218,7 @@ LogForesight.Web/
   （`CookieSecurePolicy.SameAsRequest`，另認反向代理的 `X-Forwarded-Proto: https`，`Auth/SessionCookie.cs`），不是寫死 `true`：
   寫死時 HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
   轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
-- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
+- **閒置時限與背景輪詢**：cookie 滑動延長，但執行告示、徽章、執行紀錄頁的狀態輪詢、作業進度輪詢（PRTG 回填、探測、結構同步，NetIQ 探測與匯入）這類背景輪詢請求帶 `X-Lf-Background: 1`（`api.get(..., { background: true })`），
   `CookieSessionEvents.CheckSlidingExpiration` 對它不續發——前景分頁開著不動也會依閒置時數登出。權限版號變更時的就地更新續發不受影響（背景請求同樣換主體）。
 - **Cookie Path** 不寫死：框架依請求的 `PathBase` 設定，站台掛 IIS 子 Application 時 cookie 路徑是該前綴
   （同一台主機的正式／測試兩個子站台互不覆蓋）。
@@ -246,7 +246,7 @@ LogForesight.Web/
 **回同一句**，Provider 回報的具體原因（含 `UnconfiguredAdAuthenticationProvider` 的
 「AD 尚未設定」）**只寫進診斷記錄檔，不回前端**——回前端會讓未持有正確憑證的人列舉帳號。
 其餘三種失敗另有各自訊息，因為它們**都不是憑證問題**：帳號欄留空（「請輸入帳號。」）、
-登入節流（`LoginThrottle`：同一帳號或同一來源 IP 在 5 分鐘內失敗超過門檻就暫停 5 分鐘，回 429「登入嘗試次數過多，請於 N 分鐘後再試。」，不透露是帳號還是 IP 被擋；serverAdmin 與一般帳號同一套）、
+登入節流（`LoginThrottle`：5 分鐘內同一帳號失敗達 10 次、或同一來源 IP 失敗達 50 次就暫停 5 分鐘，回 429「登入嘗試次數過多，請於 N 分鐘後再試。」，不透露是帳號還是 IP 被擋；serverAdmin 只計帳號維度、不計 IP）、
 以及**憑證已驗證通過**之後才可能出現的「此帳號尚未建立於系統中」與「此帳號已停用」——
 後兩者要先通過 AD 驗證才看得到，對沒有正確密碼的人不構成列舉管道，
 訊息說得明確才能讓當事人知道該找誰。
@@ -558,6 +558,8 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | 碼 | HTTP | 用途 |
   |---|---|---|
   | `validation_failed` | 400 | 輸入不合法（表外預設） |
+
+  輸入驗證：請求 DTO 一律放在 `LogForesight.Web.Models*` 命名空間（`[FromBody]` 型別由反射守門檢查），才會套到 `DefaultInputLimitsFilter` 的預設上限（字串 65,536 字、集合 50,000 筆）；驗證屬性沒寫 `ErrorMessage` 時由 `ChineseModelBindingMessages` 補中文預設訊息（含允許範圍，沒有 `[Display]` 時不帶欄位名，`InputValidationCoverageGuardTests` 檢查涵蓋）。
   | `auth_failed` | 401 | 登入帳密錯誤 |
   | `auth_expired` | 401 | 登入逾期 |
   | `forbidden` | 403 | 沒有權限 |
@@ -589,8 +591,9 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`、`PrtgTransferStoreException`、`PrtgScopeConflictException`、
   `RunExportDeidentificationException`、`NetiqDiscoveryException`）的訊息可以給使用者；其他例外（IO、網路、JSON、SQL、HttpClient 等）的原文可能含檔案路徑、網址或連線字串，
   回應與畫面只給寫好的中文說明，原文只進 NLog。規則只有一處：`UserFacingMessage.For(ex, 備用說明)`（`LogForesight.Web/Models/UserFacingMessage.cs`）——
-  領域例外回原訊息，其餘回備用說明；呼叫端自己用 `Log.Warn(ex, …)` 寫原文。`UserFacingMessageGuardTests` 掃 `LogForesight.Web`：把例外 `.Message`
-  放進回應、DTO、`Fail(`、`DomainException(` 或維護主控台的寫法只能出現在測試內附理由的白名單，白名單項目對不到程式碼也算失敗。
+  領域例外回原訊息，其餘回備用說明；呼叫端自己用 `Log.Warn(ex, …)` 寫原文。`UserFacingMessageGuardTests` 掃 `LogForesight.Web` 中任何成員鏈結尾的 `.Message`（不綁變數名稱），以及 `LogForesight.Core` 把 `.Message` 賦值給屬性或欄位的行：把例外 `.Message`
+  放進回應、DTO、`Fail(`、`DomainException(`、會回給畫面的狀態欄位或維護主控台的寫法只能出現在測試內附理由的白名單，白名單項目對不到程式碼也算失敗。
+  Core 的 PRTG 狀態欄位走 `PrtgFailureText.ForStatus`（`PrtgClientException` 的訊息可留，其他例外給固定說明與型別名）。
   新增例外型別要交給 Filter 對應時，同時登錄進 `UserFacingMessage`。
   交辦協調器（`WorkOrderCoordinator`、`IssueCaseCoordinator`）給使用者看的規則違反一律擲 `WorkOrderRuleException`，由 `ApiExceptionFilter` 對應 400；其他 `ArgumentException`／`InvalidOperationException` 由 Filter 記錄後回 500 與固定說明。`UserFacingMessage` 登錄的型別在 Filter 都要有對應（`ApiExceptionFilterTests` 守門）。
   給使用者的訊息字面（`DomainException(`、`Fail(`、`throw new …Exception("…")`、`Message =`）不寫類別名前綴，也不直接寫內部代碼（主機分級顯示「核心／一般／測試」、PRTG 取數策略顯示「保守／激進」），
@@ -961,7 +964,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
     或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
     自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
-    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。
+    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。`pollWhile` 回呼發出的請求一律帶 `background: true`（`BackgroundPollingHeaderGuardTests` 逐一檢查每個呼叫點）；同一個函式也被按鈕呼叫時以參數區分，按鈕那條不帶。
   - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
     寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.Storage直接呼叫必須改用安全包裝或包在try內` 掃
     `core/`（除 `storage.js`）與 `pages/`：`localStorage.`／`sessionStorage.` 的直接呼叫，該行與前 8 行內必須有 `try {`，
@@ -2677,7 +2680,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
      **待送項目的出口**：即時通知 `UrgentOutbox` 的終態為 `smtp-accepted`、`cancelled-formal-revoked`、`no-qualified-recipient`、`superseded`（判定單一出口 `MailNotifyStateStore.IsTerminalUrgentStatus`）。每趟正常算出本趟候選後，非終態且鍵不在候選裡的項目（紀錄編號改變、滑出回望期、紀錄已刪除）標為 `superseded`（已被取代，不改更新時間）；該主機日這趟取不到工作流版本（父紀錄未完成、恢復等待中）時不判斷；讀取紀錄失敗、例外或取消的那一趟不清理。同一把鍵之後又被算出時照常回到 `pending`。`superseded` 項目不論收件人狀態都算完全終態，超過保留期隨 `PruneTerminalUrgentIntents` 移除；維護頁的通知處理狀態對它不列收件人狀態。
 
-     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）只在有「非終態且尚未記為已寄」的項目（另含舊版誤標成「無合格收件人」、仍有收件人送達結果不明、且紀錄還在 14 天回望期內的項目——回望期內整套重跑會把該紀錄當未寄候選補寄，回望期外沒有路徑處理它，不再觸發），且郵件與即時通知都啟用時才重跑整套通知（停用期間待送項目保留，重新啟用後下一分鐘補寄）；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
+     **重試退避**：`RetryPendingUrgentAsync`（排程每 60 秒呼叫）只在有「非終態且尚未記為已寄」的項目（另含狀態為「無合格收件人」但仍有收件人送達結果不明、且紀錄還在 14 天回望期內的項目——回望期內整套重跑會把該紀錄當未寄候選補寄，回望期外沒有路徑處理它，不再觸發），且郵件與即時通知都啟用時才重跑整套通知（停用期間待送項目保留，重新啟用後下一分鐘補寄）；重跑後沒有進度（沒有項目變成終態、也沒有收件人新變成 `smtp-accepted`）就把下次允許時間往後排，間隔 1→2→4→8→16→30 分鐘封頂；有進度、系統設定 `Revision` 改變、或取數結束觸發的 `NotifyAfterRunAsync` 成功跑完時回到 1 分鐘。取數結束觸發的通知本身不受退避影響。退避狀態只放記憶體（時間用注入的 `TimeProvider`）。
 
      **收件人可見範圍過濾**：三路信件都改成雙層內容——
      全站統計行（數字，不含主機名，所有收件人都看得到）＋收件人自己可見範圍內的內容（僅解析

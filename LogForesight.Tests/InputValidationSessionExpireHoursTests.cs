@@ -55,28 +55,25 @@ public class InputValidationSessionExpireHoursTests
         Assert.Contains("Jwt:ExpireHours", ex.Message);
     }
 
+    /// <summary>
+    /// 大值不擋啟動：換算一律先夾到 24 小時（EffectiveIdleTimeout），不會溢位；既有站台填了大值升級後照常啟動，只多一行警告。
+    /// </summary>
     [Theory]
-    [InlineData(24 * 365, true)]
-    [InlineData(24 * 365 + 1, false)]
-    [InlineData(int.MaxValue, false)]
-    public void 極端值_超過一年換算的小時數才是啟動錯誤_訊息中文(int hours, bool allowed)
+    [InlineData(24 * 365 + 1)]
+    [InlineData(int.MaxValue)]
+    public void 極大值_不擋啟動_以24小時計並警告(int hours)
     {
         var settings = Settings(hours);
-        var ex = Record.Exception(() => settings.Validate(strict: false, "Development"));
-        if (allowed) Assert.Null(ex);
-        else
-        {
-            var message = Assert.IsType<InvalidOperationException>(ex).Message;
-            Assert.Contains("Jwt:ExpireHours", message);
-            Assert.Matches("[一-鿿]", message);
-        }
+        Assert.Null(Record.Exception(() => settings.Validate(strict: false, "Development")));
+        Assert.Equal(TimeSpan.FromHours(24), settings.Jwt.EffectiveIdleTimeout);
+        Assert.Single(settings.StartupWarnings());
     }
 
     [Theory]
     [InlineData(8, 8)]
     [InlineData(24, 24)]
     [InlineData(25, 24)]
-    [InlineData(24 * 365, 24)]
+    [InlineData(int.MaxValue, 24)]
     public void cookie選項的閒置時限取有效值(int configured, int effectiveHours)
     {
         var services = new ServiceCollection();

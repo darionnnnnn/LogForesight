@@ -100,6 +100,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   `IDispatchCandidateSource` 每趟算好快照交給 Core。複製一份就是兩套規則，改一邊另一邊靜默失準。
 - 不要建出不屬於交辦單的進行中案件：任何建案路徑（交辦、日層級指派、夜間派工）一律經 `WorkOrderCoordinator`。
   繞過它直接寫 `IssueCase` 會產生沒有單的散案，處理人清單、徽章、看板全都數不到（`IssueCaseCreationGuardTests` 守住 `new IssueCase` 只出現在 `WorkOrderCoordinator.cs`）。
+- 不要把請求 DTO 放在 `LogForesight.Web.Models*` 以外的命名空間：`DefaultInputLimitsFilter` 只認這個命名空間，放錯就沒有預設輸入上限（反射守門檢查每個 `[FromBody]` 型別）；驗證屬性的中文預設訊息由 `ChineseModelBindingMessages` 統一補，不得露出 C# 屬性名。
 - 不要讓控制器宣告回傳父型別而實際回子型別：JSON 依**宣告型別**序列化，子型別多出來的欄位會被靜默吃掉，
   服務層測試照樣全綠（依問題端點的去重主機數曾因此消失多輪）。宣告型別寫成實際型別，必要時補序列化守門測試。
 - 不要讓 PRTG 取數對整台 PRTG 查：感測器、狀態變更、快照一律只處理 `PrtgScopeDevices.Compute` 的取數範圍（PRTG-SPEC §3c）。

@@ -638,7 +638,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點與診斷 log 的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
-| `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
+| `Jwt.ExpireHours` | `8` | 登入閒置時限（小時，必須大於 0；大於 24 時以 24 小時計並在啟動記錄寫一行警告）：有操作就滑動延長，閒置超過就登出。連續登入另有 24 小時絕對上限（程式常數）。區段名稱沿用 `Jwt`，登入 cookie 本身不再有簽章金鑰設定 |
 | `Jwt.CookieName` | `lf_session` | 登入 cookie 名稱。舊版的 `lf_auth` 不再使用，請求帶著它時會被清除 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
 | `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。連續失敗的鎖定由登入節流負責，設定檔不含 `MaxFailedAttempts`／`LockoutMinutes`，既有設定鍵可刪、留著無作用。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
