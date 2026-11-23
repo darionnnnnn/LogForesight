@@ -76,7 +76,6 @@ public class WebAppSettings
         if (Jwt.ExpireHours <= 0)
             errors.Add("Jwt:ExpireHours 必須大於 0。");
 
-
         var dataRoot = Storage.ResolveDataRoot();
         if (!Directory.Exists(dataRoot))
             errors.Add($"Storage:DataRoot 不存在：{dataRoot}（應指向資料所在的目錄；留空則預設為本站台的執行檔目錄）。");
@@ -209,10 +208,9 @@ public class SessionSettings
     /// </summary>
     public int ExpireHours { get; set; } = 8;
 
-
     /// <summary>
     /// 實際採用的閒置時限：<see cref="ExpireHours"/> 超過 24 小時絕對上限時視為 24 小時（閒置時限不可能長過絕對上限）。
-    /// 換算只在這一處，cookie 選項與啟動警告都用它。
+    /// 換算只在這一處，cookie 選項用它；超過上限時 <see cref="WebAppSettings.StartupWarnings"/> 另寫一行啟動警告。
     /// </summary>
     public TimeSpan EffectiveIdleTimeout =>
         TimeSpan.FromHours(Math.Min(ExpireHours, SessionCookie.AbsoluteLifetime.TotalHours));

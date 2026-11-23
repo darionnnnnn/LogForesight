@@ -144,7 +144,9 @@ public static class UrlSecrets
                 infoEnd = lastAt;
                 return true;
             }
-            search = Math.Max(search, i);
+            // 掃過的這段沒有帳密：從段尾往回一個字元續找——段尾若是「:」後接「//」，那個冒號正是下一個 scheme 的分隔
+            // （a://b://user:pw@host），直接跳到 i 會漏掉它
+            search = Math.Max(search, i - 1);
         }
         return false;
     }

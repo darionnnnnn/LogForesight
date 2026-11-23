@@ -245,6 +245,81 @@ public class MailNotificationServiceTestsSupersede : IDisposable
         Assert.Single(after.MailIntents, i => i.StartsWith(lane + ":", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// 同上，但舊算法與新算法的差別是 NetIQ 嘗試欄位（上一版郵件指紋含這兩欄、旗標全為 false）：
+    /// 去重鍵的三個持久存放處——已寄集合、待送清單、工作流帳本——都改寫成上一版的形狀，升級後不重寄、郵件腿維持完成。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 升級前工作流帳本是含嘗試欄位的舊意圖_只用信箱收信_郵件腿維持完成(bool summaryLane)
+    {
+        var lane = summaryLane ? "summary" : "urgent";
+        EnableMail(summaryLane);
+        var record = SeedRecord(aiPending: false);
+        record.LatestNetiqAttemptStatus = NetiqAttemptStatus.Failed;
+        record.LatestNetiqAttemptAtUtc = _clock.GetUtcNow().UtcDateTime.AddHours(-1);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+        Assert.Single(_sender.Sent);
+        Assert.True(_workflow.Get(record.HostId, record.Date)!.MailIsComplete);
+
+        var version = _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId, out _)!;
+        var ctx = service.MailContextFingerprint(_settingsStore.Get());
+        var oldIntent = lane + ":" + HostDayWorkflowFingerprint.HashParts([
+            lane, record.RecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.ParentRecordId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.DecisionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            HostDayWorkflowFingerprint.ForRecordWithFlags(record, false, false, false),
+            PrtgFindingMapper.Fingerprint(record.TopIssues), ctx]);
+        static string Part(string intent, string email) => System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(intent + "|recipient|" + System.Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(email))))));
+
+        // 工作流帳本改寫成升級前的形狀：意圖與其部分都用舊算法
+        _workflowStore.Update(record.HostId, record.Date, state =>
+        {
+            var newIntent = state.MailIntents.Single(i => i.StartsWith(lane + ":", StringComparison.Ordinal));
+            Assert.NotEqual(oldIntent, newIntent);
+            string Map(string part) => part == Part(newIntent, "ops@test.local") ? Part(oldIntent, "ops@test.local") : part;
+            state.MailIntents = state.MailIntents.Select(i => i == newIntent ? oldIntent : i).ToArray();
+            foreach (var dict in new[] { state.MailExpectedPartsByIntent, state.MailDeliveredPartsByIntent, state.MailFailedPartsByIntent })
+                if (dict.Remove(newIntent, out var parts)) dict[oldIntent] = parts.Select(Map).ToArray();
+            state.MailDeliveredParts = state.MailDeliveredParts.Select(Map).ToArray();
+        });
+        Assert.True(_workflow.Get(record.HostId, record.Date)!.MailIsComplete);
+
+        // 已寄鍵與待送項目也改寫成舊算法（同上一個測試）
+        string Convert(string key)
+        {
+            var parts = key.Split('|');
+            var route = parts.First(p => p.StartsWith("route:", StringComparison.Ordinal));
+            return LegacyKey(service, lane, record, version, route["route:".Length..], ctx, false, false, false);
+        }
+        _state.Update(s =>
+        {
+            var set = summaryLane ? s.SummarySentKeys : s.UrgentSentKeys;
+            var converted = set.Select(Convert).ToList();
+            set.Clear();
+            foreach (var key in converted) set.Add(key);
+            if (!summaryLane)
+            {
+                var outbox = s.UrgentOutbox.Values.ToList();
+                s.UrgentOutbox.Clear();
+                foreach (var intent in outbox) { intent.Key = Convert(intent.Key); s.UrgentOutbox[intent.Key] = intent; }
+            }
+        });
+
+        // 升級後第一趟通知：內容與嘗試欄位都沒變
+        await service.NotifyAfterRunAsync();
+
+        Assert.Single(_sender.Sent);
+        var after = _workflow.Get(record.HostId, record.Date)!;
+        Assert.True(after.MailIsComplete);
+        Assert.DoesNotContain(oldIntent, after.MailIntents);
+        Assert.Single(after.MailIntents, i => i.StartsWith(lane + ":", StringComparison.Ordinal));
+    }
+
     /// <summary>郵件情境指紋：與寄信路徑同一個方法（internal，測試專案可見）。</summary>
     private string ExtractContext(string lane, DailyAnalysisRecord record, HostDayWorkflowVersion version, string contentPart) =>
         Create().MailContextFingerprint(_settingsStore.Get());

@@ -83,4 +83,42 @@ public class UrlSecretsRegexTests
         Assert.True(UrlSecrets.ContainsSecret(small, TimeSpan.FromSeconds(1)));
         Assert.False(UrlSecrets.ContainsSecret("http://h/p?a=b", TimeSpan.FromSeconds(1)));
     }
+
+    // ── 與原正規式的等價性（隨機比對）────────────────────────────────────
+
+    /// <summary>改寫前的使用者資訊正規式（平方級回溯，只在測試裡拿短字串當對照）</summary>
+    private static readonly System.Text.RegularExpressions.Regex ReferenceUserInfo = new(
+        @"(?<prefix>\b[A-Za-z][A-Za-z0-9+.\-]*://)(?<info>[^/?#\s]*:[^/?#\s]*)@",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 線性掃描必須與原正規式逐字等價：固定亂數種子產生大量短字串（不含 = 與 &amp;，查詢參數那一段是空操作），
+    /// 兩者的遮蔽結果與「是否含帳密」都要相同。體檢時這個比對抓到「scheme 後面緊接另一個 scheme」被跳過的退化。
+    /// </summary>
+    [Fact]
+    public void 使用者資訊遮蔽_與原正規式隨機比對等價()
+    {
+        var random = new Random(20261123);
+        string[] atoms = ["a", "B", "9", ":", "@", "/", "?", "#", " ", ".", "-", "+", "_", "://", "://", "http://", "u:p@", "é", "\t", "中", "\n"];
+        var differences = new List<string>();
+        for (var n = 0; n < 200_000 && differences.Count < 5; n++)
+        {
+            var text = string.Concat(Enumerable.Range(0, random.Next(1, 16)).Select(_ => atoms[random.Next(atoms.Length)]));
+            var expected = ReferenceUserInfo.Replace(text, m => m.Groups["prefix"].Value + "***@");
+            var actual = UrlSecrets.Mask(text);
+            if (expected != actual || ReferenceUserInfo.IsMatch(text) != UrlSecrets.ContainsSecret(text))
+                differences.Add($"[{text}] 原正規式=[{expected}] 現行=[{actual}]");
+        }
+        Assert.True(differences.Count == 0, string.Join("\n", differences));
+    }
+
+    [Theory]
+    [InlineData("token://+http://token-:9B_@", "token://+http://***@")]
+    [InlineData("proxy://http://user:pw@host/x", "proxy://http://***@host/x")]
+    [InlineData("a://b://c://u:p@h", "a://b://c://***@h")]
+    public void scheme後面緊接另一個scheme_後者的帳密仍被遮(string input, string expected)
+    {
+        Assert.Equal(expected, UrlSecrets.Mask(input));
+        Assert.True(UrlSecrets.ContainsSecret(input));
+    }
 }
