@@ -3,7 +3,7 @@
 > 狀態：規劃中（已做四視角複檢；待使用者確認「待確認事項」後開工）
 > 基準：`feature/backlog-help-content-fixes`@a231599e（dev@d9d8ac15 加兩個提交：BACKLOG 記錄與情境驅動器時鐘修正；1.0.79.2；測試基線 Windows 11,998 通過／12 略過、macOS 11,983 通過／27 略過）
 > 來源：使用者要求先把第 75～79 輪的修改對照程式碼與規劃文件詳細檢查一遍，有錯誤或問題就併入本輪；本輪原定項目是 `docs/BACKLOG.md`「下一輪預定」的說明書 AI 版 5 處。
-> 分支：沿用 `feature/backlog-help-content-fixes`，不另開。
+> 分支：`feature/feedback-80`（自 dev@d9d8ac15 開出，帶入規劃期間的四個提交）。
 
 ## 怎麼讀這份文件
 
@@ -45,6 +45,8 @@
 | Q6 | PRTG 評估預覽的翻頁上限 30,000：放寬，還是到上限時停用「下一頁」並提示縮小篩選 | **到上限時停用並提示** | 上限是用來擋深分頁成本；放寬只是把邊界往後推 |
 | Q7 | 超長帳號標籤「截斷後保留」是否收緊成「值內出現下一個標籤樣貌就不保留」 | **收緊**（暫定，開工時以真實樣本驗） | 第 79 輪 F6 的本意是保住超長的真帳號，不是把缺邊界的整段訊息當帳號 |
 | Q8 | 作業進度輪詢（PRTG 回填、探測、結構同步、NetIQ 探測與匯入）是否標成背景請求 | **標**（F3） | 同一種回填進度在排程頁已經標了，兩頁不一致；閒置時限預設 8 小時，盯著進度 8 小時不操作而被登出的情境幾乎不存在，作業本身不受登出影響 |
+
+> **開工時的決定（2026-11-23）**：使用者未回覆 Q1～Q8，依本表建議為暫定開工。Q2 不知道答案，以「沒有站台停在 77.0～77.2」處理，H3 只補註解。
 
 ## 批次總覽
 
@@ -371,7 +373,7 @@ subagent 標為「沒把握」、值得花一個探針的項目。每個探針�
 | Z3 | UI 量測 | 改到的頁面（問題查詢、儀表板、使用者詳情、處理人詳情、使用者清單、報表、PRTG 維護、NetIQ 維護）五個寬度六項量測為 0，加 C1／C2 的新斷言 |
 | Z4 | 全量測試 | macOS 與 Windows 11 VM 各一次全綠；通過數、略過數與基線的差寫進「體檢交接」，差額能以本輪新增的測試數解釋 |
 | Z5 | 版號與 BACKLOG | `VersionRoundGuardTests` 通過；BACKLOG 已移除說明書項目，並補記本輪「不做」中需要長期追蹤的項目 |
-| Z6 | 遠端狀態 | `git rev-parse HEAD` 等於 `git rev-parse origin/feature/backlog-help-content-fixes` |
+| Z6 | 遠端狀態 | `git rev-parse HEAD` 等於 `git rev-parse origin/feature/feedback-80` |
 
 換模型體檢與收尾（歸檔、索引、現行文件只留結論）依專案慣例，在 Z 之後進行；併 dev 需使用者同意。
 
@@ -483,6 +485,7 @@ subagent 標為「沒把握」、值得花一個探針的項目。每個探針�
 |---|---|---|---|---|
 | 回顧盤點 | 6 個唯讀 subagent（Sonnet 5.5）＋主代理（Fable 5.2）複核 | 22 條發現，18 條已核、4 條待核 | 兩個探針（整列連結命中、正規式逾時） | 見各批次「現況與核對結果」 |
 | 四視角複檢 | 主代理（Fable 5.2） | 修正 subagent 兩個說法；規劃修改 6 處 | 讀碼：`NetiqSourceAttempt`、`NetiqPipelineService`、`PrtgClient`、`PrtgFailureText`、`UserFacingMessage`、`ReportService`、`rowHref` 全部使用點 | 見「規劃完成後複檢」第二次 |
+| A | 主代理（Opus 5.5） | 五處改寫；A2 同一說法另見於 `10-scheduler.md:15`、`01-overview.ai.md:100`、`13-glossary.ai.md:39-40`（後兩處規劃時沒列到，同根因一併改）；`10-scheduler.ai.md` 的「進度條停住」Q&A 隨 A1 改寫 | `HelpContentServiceTests`、`HelpWritingGuide`、`DocNarrativeGuardTests`、`DocCrossReferenceTests` 20 筆通過；兩個字串 grep 零命中；`統計模式` 剩餘命中逐處確認都描述「沒有呼叫 AI」 | 對照：A1→`AnalysisOrchestrator`／`AiAnalysisHostedService`；A2→`record-detail.js aiStatusBadge`、`AiDegradation.ServiceFailedSuffix`；A3→`IssueBulkCloseController` 的 `[Permission(Assign)]`＋`[Permission(Handle)]`；A4→`records.js VIEW_FILTER_SUPPORT`；A5→`IssueExclusion.IsMuted` |
 
 ## 體檢交接
 
