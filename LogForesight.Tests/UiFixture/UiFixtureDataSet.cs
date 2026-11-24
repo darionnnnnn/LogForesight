@@ -126,6 +126,7 @@ public sealed partial class UiFixtureDataSet : IDisposable
         WriteRecords();
         WriteHandlingAndCases();
         BuildExtended();
+        BuildVolume();
         RegisterScenarios();
     }
 

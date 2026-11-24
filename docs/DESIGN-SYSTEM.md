@@ -423,6 +423,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **資料集** `UiFixture/`：經產品 `StorageBackend` 產生涵蓋版面邊界的 SQLite（長名稱、無空白長字串、HTML 字元、0／1／極多筆、各種狀態與角色）。
   一般測試每次斷言矩陣齊全；設 `LF_UI_FIXTURE=<目錄>` 時把 DB 與情境清單留在 `<目錄>/ai`、`<目錄>/noai`。
   資料日期相對於產生當天（「昨日」就是產生前一天），隔天截圖前要重產，否則預設期間是空的。
+  另設 `LF_UI_FIXTURE_VOLUME=<主機數>` 會在邊界資料之上疊加量體（N 台主機 × 28 天、十個主機群組、經交辦協調器建立的交辦單），供資料量下的操作實測；未設時不執行。
 - **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
   Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。
