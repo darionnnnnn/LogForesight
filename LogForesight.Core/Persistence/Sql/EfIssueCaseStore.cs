@@ -328,6 +328,140 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return ctx.IssueCases.Count(c => c.WorkOrderId == workOrderId);
     }
 
+    /// <summary>進行中成員精簡查詢的 workOrderIds 分批大小（避免 IN 清單過長）</summary>
+    private const int WorkOrderBatchSize = 500;
+
+    /// <summary>歷史查詢的 EventId 預篩上限：超過時不在 SQL 端篩（參數太多），改靠主機批次與記憶體端的精確比對</summary>
+    private const int HistoryEventIdPrefilterLimit = 100;
+
+    /// <summary>進行中成員（精簡欄位）：null＝全部交辦單；指定單號時依 500 一批，查詢次數隨單數而非成員數增長</summary>
+    public List<IssueCase> GetActiveMemberSummaries(IReadOnlyCollection<long>? workOrderIds)
+    {
+        var result = new List<IssueCase>();
+        using var ctx = _contextFactory();
+        if (workOrderIds == null)
+        {
+            result.AddRange(BuildActiveMemberSummaryQuery(ctx, null).ToList().Select(ToSlimModel));
+            return result;
+        }
+
+        foreach (var batch in workOrderIds.Distinct().Chunk(WorkOrderBatchSize))
+            result.AddRange(BuildActiveMemberSummaryQuery(ctx, batch).ToList().Select(ToSlimModel));
+        return result;
+    }
+
+    /// <summary>進行中成員精簡查詢本體（抽出供 SQL 翻譯測試）；只投影統計與復發判定要的欄位，不讀 PRTG 證據與逐日意圖</summary>
+    internal static IQueryable<IssueCaseSlimRow> BuildActiveMemberSummaryQuery(LfDbContext ctx, long[]? workOrderIds)
+    {
+        var query = ctx.IssueCases.AsNoTracking().Where(c => c.ClosedAt == null && c.WorkOrderId != null);
+        if (workOrderIds != null) query = query.Where(c => workOrderIds.Contains(c.WorkOrderId!.Value));
+        return query.Select(c => new IssueCaseSlimRow
+        {
+            CaseId = c.CaseId, HostName = c.HostName, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel, Status = c.Status,
+            HandlerId = c.HandlerId, Note = c.Note, DueDate = c.DueDate, CreatedAt = c.CreatedAt, ClosedAt = c.ClosedAt,
+            UpdatedAt = c.UpdatedAt, WorkOrderId = c.WorkOrderId, SourceName = c.SourceName, EventId = c.EventId,
+            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt
+        });
+    }
+
+    /// <summary>
+    /// 復發判定的前案候選：已結案、未取消、指定主機與問題的案件。主機依 500 一批（host_name_key IN）；
+    /// EventId 在 SQL 端預篩（不超過 <see cref="HistoryEventIdPrefilterLimit"/> 個時），來源以 source_key 在記憶體端精確比對
+    /// （不對欄位套函式，兩個 provider 行為一致）。
+    /// </summary>
+    public List<IssueCase> GetClosedHistory(IEnumerable<string> hostNames, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime? closedSince)
+    {
+        var result = new List<IssueCase>();
+        var keys = hostNames.Select(HostNameKey.Of).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0 || issues.Count == 0) return result;
+
+        var wanted = issues.Select(i => (SourceKey: WorkOrderIssueKey.SourceKeyOf(i.Source), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).Distinct().ToList();
+        var prefilter = eventIds.Count <= HistoryEventIdPrefilterLimit ? eventIds.ToArray() : null;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+        {
+            result.AddRange(BuildClosedHistoryQuery(ctx, batch, prefilter, closedSince).ToList()
+                .Where(r => r.SourceName != null && r.EventId != null
+                            && wanted.Contains((WorkOrderIssueKey.SourceKeyOf(r.SourceName), r.EventId.Value)))
+                .Select(ToSlimModel));
+        }
+        return result;
+    }
+
+    /// <summary>前案候選查詢本體（抽出供 SQL 翻譯測試）</summary>
+    internal static IQueryable<IssueCaseSlimRow> BuildClosedHistoryQuery(LfDbContext ctx, string[] hostNameKeys, int[]? eventIds, DateTime? closedSince)
+    {
+        var query = ctx.IssueCases.AsNoTracking()
+            .Where(c => hostNameKeys.Contains(c.HostNameKey) && c.ClosedAt != null && !c.Cancelled);
+        if (eventIds != null) query = query.Where(c => c.EventId != null && eventIds.Contains(c.EventId.Value));
+        if (closedSince != null) query = query.Where(c => c.ClosedAt >= closedSince);
+        return query.Select(c => new IssueCaseSlimRow
+        {
+            CaseId = c.CaseId, HostName = c.HostName, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel, Status = c.Status,
+            HandlerId = c.HandlerId, Note = c.Note, DueDate = c.DueDate, CreatedAt = c.CreatedAt, ClosedAt = c.ClosedAt,
+            UpdatedAt = c.UpdatedAt, WorkOrderId = c.WorkOrderId, SourceName = c.SourceName, EventId = c.EventId,
+            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt
+        });
+    }
+
+    /// <summary>每張單不重複的主機數：單一 GROUP BY＋COUNT(DISTINCT host_name_key)，依單號 500 一批</summary>
+    public Dictionary<long, int> CountDistinctHosts(IReadOnlyCollection<long> workOrderIds)
+    {
+        var result = new Dictionary<long, int>();
+        var ids = workOrderIds.Distinct().ToList();
+        if (ids.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in ids.Chunk(WorkOrderBatchSize))
+            foreach (var row in BuildDistinctHostsQuery(ctx, batch).ToList())
+                result[row.WorkOrderId] = row.Hosts;
+        return result;
+    }
+
+    /// <summary>不重複主機數的查詢本體（抽出供 SQL 翻譯測試）</summary>
+    internal static IQueryable<DistinctHostRow> BuildDistinctHostsQuery(LfDbContext ctx, long[] workOrderIds) =>
+        ctx.IssueCases.AsNoTracking()
+            .Where(c => c.WorkOrderId != null && workOrderIds.Contains(c.WorkOrderId.Value))
+            .GroupBy(c => c.WorkOrderId!.Value)
+            .Select(g => new DistinctHostRow { WorkOrderId = g.Key, Hosts = g.Select(c => c.HostNameKey).Distinct().Count() });
+
+    internal sealed class DistinctHostRow
+    {
+        public long WorkOrderId { get; init; }
+        public int Hosts { get; init; }
+    }
+
+    /// <summary>精簡投影的列（<see cref="GetActiveMemberSummaries"/>、<see cref="GetClosedHistory"/> 共用）</summary>
+    internal sealed class IssueCaseSlimRow
+    {
+        public string CaseId { get; init; } = string.Empty;
+        public string HostName { get; init; } = string.Empty;
+        public string IssueKey { get; init; } = string.Empty;
+        public string IssueLabel { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public long? HandlerId { get; init; }
+        public string? Note { get; init; }
+        public DateTime? DueDate { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public DateTime? ClosedAt { get; init; }
+        public DateTime UpdatedAt { get; init; }
+        public long? WorkOrderId { get; init; }
+        public string? SourceName { get; init; }
+        public int? EventId { get; init; }
+        public bool Cancelled { get; init; }
+        public DateTime? EscalatedAt { get; init; }
+    }
+
+    private static IssueCase ToSlimModel(IssueCaseSlimRow row) => new()
+    {
+        CaseId = row.CaseId, HostName = row.HostName, IssueKey = row.IssueKey, IssueLabel = row.IssueLabel, Status = row.Status,
+        HandlerId = row.HandlerId, Note = row.Note, DueDate = row.DueDate, CreatedAt = row.CreatedAt, ClosedAt = row.ClosedAt,
+        UpdatedAt = row.UpdatedAt, WorkOrderId = row.WorkOrderId, SourceName = row.SourceName, EventId = row.EventId,
+        Cancelled = row.Cancelled, EscalatedAt = row.EscalatedAt
+    };
+
     /// <summary>
     /// 成員分頁查詢。不限主機時總數與本頁各一句 SQL；限定主機時主機名清單可能超過一批（500），
     /// 分批 IN 無法在 SQL 端跨批分頁，所以各批只取（host_name_key, case_id）兩欄、在記憶體合併排序後，
@@ -344,23 +478,31 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         {
             var all = BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday());
             var total = all.Count();
-            var rows = all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId).Skip(skip).Take(q.PageSize).ToList();
+            // 「全部」同主機的新舊案件相鄰、新的在前（看得出同一台反覆出現）；其餘篩選維持主機、案件編號
+            var ordered = q.Status == WorkOrderQueries.StatusAll
+                ? all.OrderBy(c => c.HostNameKey).ThenByDescending(c => c.CreatedAt).ThenBy(c => c.CaseId)
+                : all.OrderBy(c => c.HostNameKey).ThenBy(c => c.CaseId);
+            var rows = ordered.Skip(skip).Take(q.PageSize).ToList();
             return (rows.Select(ToModel).ToList(), total);
         }
 
         var keys = q.HostNameKeys.Select(HostNameKey.Of).Distinct().ToList();
-        var matched = new List<(string HostNameKey, string CaseId)>();
+        var matched = new List<(string HostNameKey, string CaseId, DateTime CreatedAt)>();
         foreach (var batch in keys.Chunk(HostBatchSize))
         {
             matched.AddRange(BuildMemberHostQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday(), batch)
-                .Select(c => new { c.HostNameKey, c.CaseId })
+                .Select(c => new { c.HostNameKey, c.CaseId, c.CreatedAt })
                 .ToList()
-                .Select(r => (r.HostNameKey, r.CaseId)));
+                .Select(r => (r.HostNameKey, r.CaseId, r.CreatedAt)));
         }
 
-        var pageIds = matched
-            .OrderBy(m => m.HostNameKey, StringComparer.Ordinal)
-            .ThenBy(m => m.CaseId, StringComparer.Ordinal)
+        // 排序規則同上一支分支：「全部」＝主機、建立日新到舊、案件編號；其餘＝主機、案件編號
+        var sortedMatches = q.Status == WorkOrderQueries.StatusAll
+            ? matched.OrderBy(m => m.HostNameKey, StringComparer.Ordinal)
+                .ThenByDescending(m => m.CreatedAt).ThenBy(m => m.CaseId, StringComparer.Ordinal)
+            : matched.OrderBy(m => m.HostNameKey, StringComparer.Ordinal)
+                .ThenBy(m => m.CaseId, StringComparer.Ordinal);
+        var pageIds = sortedMatches
             .Skip(skip)
             .Take(q.PageSize)
             .Select(m => m.CaseId)

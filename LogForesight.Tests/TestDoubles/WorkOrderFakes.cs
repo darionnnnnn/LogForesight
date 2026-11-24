@@ -1,3 +1,4 @@
+using LogForesight.Core.Time;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Tests;
@@ -17,7 +18,16 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     private long _nextEventId = 1;
     private long _versionTicks = new DateTime(2026, 1, 1).Ticks;
 
-    public FakeWorkOrderStore(IIssueCaseStore cases) => _cases = cases;
+    private readonly TimeProvider? _clock;
+
+    public FakeWorkOrderStore(IIssueCaseStore cases, TimeProvider? clock = null)
+    {
+        _cases = cases;
+        _clock = clock;
+    }
+
+    /// <summary>讀取側的「今天」：注入假時鐘時用它，沒注入用系統日期（比照 EF 版注入的時鐘）</summary>
+    private DateTime Today => _clock?.LocalToday() ?? DateTime.Today;
 
     /// <summary>接下來幾次 Save 要擲併發例外（注入用）</summary>
     public int FailNextSaves { get; set; }
@@ -143,7 +153,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
                 InProgress = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress),
                 Observing = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Observing),
                 Open = live.Count(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Open),
-                Overdue = live.Count(c => WorkOrderQueries.IsOverdue(c, DateTime.Today)),
+                Overdue = live.Count(c => WorkOrderQueries.IsOverdue(c, Today)),
                 DaySyncPending = members.Count(c => c.DaySyncPending)
             };
         }
@@ -154,7 +164,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     public WorkOrderPage QueryOrders(WorkOrderQuery q)
     {
         WorkOrderQueries.Validate(q);
-        var today = DateTime.Today;
+        var today = Today;
 
         IEnumerable<WorkOrder> query = _orders;
         if (q.HandlerIds != null) query = query.Where(o => q.HandlerIds.Contains(o.HandlerId));
@@ -178,6 +188,8 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             WorkOrderQueries.StatusOverdue => query.Where(o => o.ClosedAt == null
                 && ActiveMembers(o).Any(c => WorkOrderQueries.IsOverdue(c, today))),
             WorkOrderQueries.StatusUnreplied => query.Where(o => o.ClosedAt == null && o.LastReplyAt == null),
+            WorkOrderQueries.StatusTodo => query.Where(o => o.ClosedAt == null
+                && ActiveMembers(o).Any(c => WorkOrderQueries.IsTodoMember(c, today))),
             WorkOrderQueries.StatusClosed => query.Where(o => o.ClosedAt != null),
             _ => query
         };
@@ -207,7 +219,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     /// <summary>同 EF 版：母體＝進行中單＋近 7 日結案單，依處理人分組</summary>
     public List<HandlerLoad> LoadBoard(IReadOnlyCollection<string>? excludedHostKeys = null)
     {
-        var today = DateTime.Today;
+        var today = Today;
         var closedSince = today.AddDays(-HandlerLoad.ClosedWindowDays);
 
         return _orders.Where(o => o.ClosedAt == null || o.ClosedAt >= closedSince)
@@ -241,7 +253,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     /// <summary>同 EF 版：只算該處理人的進行中單（排除暫停單）；沒有進行中單回全 0</summary>
     public WorkOrderHandlerSummary HandlerSummary(long handlerId, IReadOnlyCollection<string> pausedKeys, IReadOnlyCollection<string>? excludedHostKeys = null)
     {
-        var today = DateTime.Today;
+        var today = Today;
         var all = _orders.Where(o => o.HandlerId == handlerId && o.ClosedAt == null).ToList();
         var active = all.Where(o => !KeyIn(o, pausedKeys)).ToList();
         var members = active
@@ -254,7 +266,10 @@ internal class FakeWorkOrderStore : IWorkOrderStore
             UnrepliedWorkOrders = active.Count(o => o.LastReplyAt == null),
             ActiveMembers = members.Count,
             OverdueMembers = members.Count(c => WorkOrderQueries.IsOverdue(c, today)),
-            PausedWorkOrders = all.Count - active.Count
+            PausedWorkOrders = all.Count - active.Count,
+            ObservingMembers = members.Count(c => IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today)),
+            EscalatedMembers = members.Count(c => c.Status == IssueHandlingStatuses.Escalated),
+            TodoMembers = members.Count(c => WorkOrderQueries.IsTodoMember(c, today))
         };
     }
 

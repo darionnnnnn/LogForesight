@@ -339,6 +339,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                                            && c.DueDate != null && c.DueDate < today
                                            && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing))),
             WorkOrderQueries.StatusUnreplied => query.Where(w => w.ClosedAt == null && w.LastReplyAt == null),
+            // 待我處理：至少有一個待處理成員（進行中、不在停用主機、非上報中、非觀察期內；判準同 WorkOrderQueries.IsTodoMember）
+            WorkOrderQueries.StatusTodo => query.Where(w => w.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
+                                           && c.Status != IssueHandlingStatuses.Escalated
+                                           && !(c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today))),
             WorkOrderQueries.StatusClosed => query.Where(w => w.ClosedAt != null),
             _ => query
         };
@@ -420,6 +425,26 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 OverdueMembers = ctx.IssueCases.Count(c =>
                     c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.DueDate != null && c.DueDate < today
                     && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                // 觀察期內（觀察中且觀察至 >= 今天，判準同 IssueHandlingStatuses.IsObservationActive）與上報中：與 ActiveMembers 同口徑，
+                // 加上「待處理」（＝ActiveMembers − 這兩個）互斥相加等於進行中台數
+                ObservingMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
+                    && c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                EscalatedMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.Escalated &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                // 待處理：非上報中、非觀察期內（判準同 WorkOrderQueries.IsTodoMember；獨立計算，不由前兩者相減，三者相加才是一道可驗的恆等式）
+                TodoMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status != IssueHandlingStatuses.Escalated
+                    && !(c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
                         && (o.SourceKey == null || o.EventId == null
                             || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString()))))

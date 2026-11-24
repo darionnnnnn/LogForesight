@@ -98,7 +98,10 @@ internal static class WorkOrderDigestBuilder
         var escalatedCount = CountOf(ReminderDetailItem.CategoryEscalated) + legacy.Sum(i => i.ReminderEscalated);
         var unassignableCount = CountOf(ReminderDetailItem.CategoryUnassignable) + legacy.Sum(i => i.ReminderUnassignable);
         var noRecipientCount = CountOf(ReminderDetailItem.CategoryNoRecipient) + legacy.Sum(i => i.ReminderNoRecipient);
-        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單。");
+        var recurrenceCount = CountOf(ReminderDetailItem.CategoryRecurrence) + legacy.Sum(i => i.ReminderRecurrence);
+        // 反覆結案又復發有才寫，沒有時整句與既有寫法相同
+        var recurrenceClause = recurrenceCount > 0 ? $"、反覆結案又復發 {recurrenceCount} 個成員" : "";
+        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單{recurrenceClause}。");
         foreach (var section in merged)
         {
             body.AppendLine($"  {section.Heading}共 {section.Count} {section.Unit}");
@@ -124,7 +127,11 @@ internal static class WorkOrderDigestBuilder
     /// </summary>
     internal static List<MergedReminderSection> MergeReminderItems(IEnumerable<WorkOrderOutboxItem> items)
     {
-        var order = new[] { ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient };
+        var order = new[]
+        {
+            ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient,
+            ReminderDetailItem.CategoryRecurrence
+        };
         var byKey = new Dictionary<(string, string), (ReminderDetailItem Item, int Seq)>();
         var maxTotal = new Dictionary<string, int>();
         var heading = new Dictionary<string, (string Heading, string Unit)>();

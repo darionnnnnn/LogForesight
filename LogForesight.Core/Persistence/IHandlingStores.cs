@@ -56,6 +56,18 @@ public interface IIssueHandlingStore
     /// </summary>
     List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds);
 
+    /// <summary>
+    /// 案件目前這一輪「觀察中」的開始時間：該案件展開寫入的逐日列裡、狀態為 observing 者最早的 UpdatedAt。
+    /// 每次回覆為觀察中，案件同步都會把可覆寫的逐日列整批改寫成同一個 UpdatedAt（回覆時間），而夜間掛接只在後面追加較晚的新日子，
+    /// 所以最早的那個時間就是最近一次被回覆為觀察中的時間；改成別的狀態再回覆回觀察中則整批重寫、時間更新。
+    /// 沒有任何觀察中逐日列的案件不在結果裡（呼叫端退回案件本身的最後更新時間）。單一 GROUP BY、依 case_id 分批。
+    /// </summary>
+    Dictionary<string, DateTime> GetObservationStarts(IReadOnlyCollection<string> caseIds) =>
+        GetByCases(caseIds)
+            .Where(h => h.CaseId != null && h.Status == IssueHandlingStatuses.Observing)
+            .GroupBy(h => h.CaseId!, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Min(h => h.UpdatedAt), StringComparer.Ordinal);
+
     /// <summary>寫入／更新單一問題的狀態；status 為 null／空字串代表清除該問題的標記（回到未處理）</summary>
     void Save(IssueHandling handling);
 
@@ -156,7 +168,47 @@ public interface IIssueCaseStore
     int CountByWorkOrder(long workOrderId);
 
     /// <summary>
-    /// 某交辦單的成員（狀態與主機名篩選、分頁），依 host_name_key、case_id 排序。
+    /// 交辦單的**進行中**成員（精簡欄位版，不含 PRTG 證據與逐日意圖）：單一查詢取多張單，
+    /// 復發、主機數與觀察統計用（<see cref="IssueRecurrence"/>）。<paramref name="workOrderIds"/> 為 null＝全部交辦單的進行中成員
+    /// （管理者提醒掃全站用）；空集合回空清單。未連結交辦單的案件不回。
+    /// </summary>
+    List<IssueCase> GetActiveMemberSummaries(IReadOnlyCollection<long>? workOrderIds) =>
+        (workOrderIds ?? GetAllOrderIds()).SelectMany(id => GetByWorkOrder(id, 0, int.MaxValue)).Where(c => c.ClosedAt == null).ToList();
+
+    /// <summary>預設實作的全站交辦單枚舉：只有替身沒覆寫 <see cref="GetActiveMemberSummaries"/> 時才會走到，EF 實作不使用</summary>
+    private IReadOnlyCollection<long> GetAllOrderIds() =>
+        throw new NotSupportedException("這個案件 store 沒有實作全站進行中成員查詢。");
+
+    /// <summary>
+    /// 已結案（ClosedAt 非 null）且未取消的案件，限定指定主機與問題（Source＋EventId，來源不分大小寫）：
+    /// 復發判定的前案候選，一次取回、不逐成員查。<paramref name="closedSince"/> 非 null 時只取結案時間不早於它的案件。
+    /// 主機以 host_name_key 比對、分批查；空主機或空問題回空清單。
+    /// </summary>
+    List<IssueCase> GetClosedHistory(IEnumerable<string> hostNames, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime? closedSince)
+    {
+        var names = hostNames.Select(HostNameKey.Of).ToHashSet(StringComparer.Ordinal);
+        var wanted = issues.Select(i => (WorkOrderIssueKey.SourceKeyOf(i.Source), i.EventId)).ToHashSet();
+        return GetMany(hostNames)
+            .Where(c => c.ClosedAt != null && !c.Cancelled && c.SourceName != null && c.EventId != null
+                        && (closedSince == null || c.ClosedAt >= closedSince)
+                        && names.Contains(HostNameKey.Of(c.HostName))
+                        && wanted.Contains((WorkOrderIssueKey.SourceKeyOf(c.SourceName), c.EventId.Value)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 每張單不重複的主機數（host_name_key 去重，含已結案成員與已停用主機）；零成員的單不出現在結果裡。
+    /// 單一 GROUP BY，查詢次數不隨成員數增長。
+    /// </summary>
+    Dictionary<long, int> CountDistinctHosts(IReadOnlyCollection<long> workOrderIds) =>
+        workOrderIds.Distinct()
+            .Select(id => (Id: id, Hosts: GetByWorkOrder(id, 0, int.MaxValue).Select(c => HostNameKey.Of(c.HostName)).Distinct().Count()))
+            .Where(x => x.Hosts > 0)
+            .ToDictionary(x => x.Id, x => x.Hosts);
+
+    /// <summary>
+    /// 某交辦單的成員（狀態與主機名篩選、分頁），依 host_name_key、case_id 排序；
+    /// 狀態為「全部」時同主機的新舊案件相鄰、建立日新到舊（host_name_key、created_at 降冪、case_id）。
     /// 查詢次數不隨成員數增長；主機名清單依既有 500 一批分批比對。條件不合法擲 ArgumentException。
     /// </summary>
     (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q);

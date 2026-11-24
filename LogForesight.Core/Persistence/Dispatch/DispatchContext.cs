@@ -11,7 +11,7 @@ namespace LogForesight.Core.Persistence;
 public sealed class DispatchContext
 {
     /// <summary>延續性回看天數（暫定）：（主機, 問題）這段期間內最後一件 resolved 案件的處理人優先</summary>
-    internal const int ContinuityDays = 30;
+    public const int ContinuityDays = 30;
 
     private readonly Dictionary<(string SourceUpper, int EventId), IssueProfile> _profiles;
     private readonly Dictionary<(string SourceKey, int EventId), List<WorkOrder>> _activeOrders;

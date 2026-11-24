@@ -44,6 +44,8 @@ public class HandoffClockGuardTests
         "LogForesight.Core/Persistence/WorkOrderOutboxStore.cs",
         "LogForesight.Core/Persistence/AuditLogStore.cs",
         "LogForesight.Core/Persistence/WorkOrderCoordinator.cs",
+        "LogForesight.Core/Persistence/IssueRecurrence.cs",
+        "LogForesight.Web/Services/ObservationRecurrence.cs",
         "LogForesight.Core/Persistence/Dispatch/DispatchContext.cs",
         "LogForesight.Core/Persistence/Dispatch/WorkOrderDispatcher.cs",
         "LogForesight.Core/Persistence/Dispatch/NightlyDispatch.cs",

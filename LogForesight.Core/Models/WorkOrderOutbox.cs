@@ -21,6 +21,7 @@ public sealed class WorkOrderOutboxItem
     public int ReminderEscalated { get; set; }       // 上報逾期未處理的成員數
     public int ReminderUnassignable { get; set; }    // 本趟派不出去的問題數
     public int ReminderNoRecipient { get; set; }     // 上報時沒有任何收件人的單數
+    public int ReminderRecurrence { get; set; }      // 反覆結案又復發（復發次數達門檻）的成員數
     public string? Detail { get; set; }              // 三類的明細文字（寫入前截到 DetailMaxLength）
 
     /// <summary>管理者提醒的結構化明細（成員鍵＋顯示文字）；信件依（類別, 鍵）去重。只有文字的舊項目為 null，組信時退回逐行處理。</summary>
@@ -48,6 +49,9 @@ public sealed class ReminderDetailItem
     public const string CategoryEscalated = "escalated";
     public const string CategoryUnassignable = "unassignable";
     public const string CategoryNoRecipient = "no_recipient";
+
+    /// <summary>反覆結案又復發：進行中成員的復發次數達 <c>AdminReminderService.RecurrenceReminderThreshold</c></summary>
+    public const string CategoryRecurrence = "recurrence";
 
     public const int KeyMaxLength = 200;
     public const int TextMaxLength = 300;
@@ -89,7 +93,7 @@ public static class WorkOrderOutboxKinds
     public const string MuteResumed = "mute_resumed";
 
     /// <summary>
-    /// 管理者提醒（夜間派工結束後彙整）：上報逾 N 天未處理的成員、本趟派不出去的問題、上報時沒有任何收件人的單。
+    /// 管理者提醒（夜間派工結束後彙整）：上報逾 N 天未處理的成員、本趟派不出去的問題、上報時沒有任何收件人的單、反覆結案又復發的成員。
     /// 收件人是管理者；不屬於任何一張單（<see cref="WorkOrderOutboxItem.WorkOrderId"/> 為 0），內容放在 <see cref="WorkOrderOutboxItem.Detail"/>。
     /// </summary>
     public const string AdminReminder = "admin_reminder";

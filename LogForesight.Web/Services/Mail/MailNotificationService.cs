@@ -592,11 +592,11 @@ public class MailNotificationService
     /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
     /// </summary>
     public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail,
-        IReadOnlyList<ReminderDetailItem>? detailItems = null)
+        IReadOnlyList<ReminderDetailItem>? detailItems = null, int recurrence = 0)
     {
         try
         {
-            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient == 0) return false;
+            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient + recurrence == 0) return false;
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return false;
 
@@ -611,6 +611,7 @@ public class MailNotificationService
                 ReminderEscalated = escalated,
                 ReminderUnassignable = unassignable,
                 ReminderNoRecipient = noRecipient,
+                ReminderRecurrence = recurrence,
                 Detail = WorkOrderOutboxItem.ClampDetail(detail),
                 ReminderItems = detailItems is { Count: > 0 }
                     ? detailItems.Take(WorkOrderOutboxItem.ReminderItemsMaxCount).Select(i => i.Clamped()).ToList()

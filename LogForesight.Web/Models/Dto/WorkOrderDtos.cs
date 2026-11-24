@@ -315,7 +315,10 @@ public class WorkOrderListRequest
     public string? Source { get; set; }
     public int? EventId { get; set; }
 
-    /// <summary><c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c></summary>
+    /// <summary>
+    /// <c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c>／<c>todo</c>（待我處理：
+    /// 進行中且至少有一個待處理成員，只剩觀察期內或上報中成員的單不列；判準見 <c>WorkOrderQueries.StatusTodo</c>）
+    /// </summary>
     public string Status { get; set; } = "active";
 
     /// <summary>true＝只列處理人已停用或已失去處理能力的單（與續掛停止原因 <c>handler_inactive</c> 同義）</summary>
@@ -400,6 +403,31 @@ public class WorkOrderRowDto
     public DateTime? ContinuationStoppedAt { get; set; }
 
     public WorkOrderCountsDto Counts { get; set; } = new();
+
+    /// <summary>
+    /// 進行中的不重複主機數（成員以主機名鍵去重，不含停用主機上的成員）。<see cref="WorkOrderCountsDto.Active"/> 數的是成員（案件）；
+    /// 同一台主機在同一張單內有新舊案件時，成員數會大於主機數。
+    /// </summary>
+    public int ActiveHosts { get; set; }
+
+    /// <summary>歷來不重複主機數（全部成員，含已結案與停用主機上的成員）</summary>
+    public int TotalHosts { get; set; }
+
+    /// <summary>進行中成員裡是「復發」的不重複主機數（判定見 <c>IssueRecurrence</c>）；不含停用主機</summary>
+    public int RecurrenceHosts { get; set; }
+
+    /// <summary>觀察期內（觀察中且觀察至 &gt;= 今天）的進行中不重複主機數；不含停用主機</summary>
+    public int ObservingHosts { get; set; }
+
+    /// <summary>觀察到期（觀察中且觀察至 &lt; 今天）的進行中不重複主機數；不含停用主機</summary>
+    public int ObservationExpiredHosts { get; set; }
+
+    /// <summary>
+    /// 待處理成員（進行中、非上報中、非觀察期內；觀察到期算待處理，判準同 <c>WorkOrderQueries.IsTodoMember</c>）的不重複主機數；
+    /// 不含停用主機。清單狀態篩選為 <c>todo</c>（待我處理）時以這個數字當台數。
+    /// </summary>
+    public int TodoHosts { get; set; }
+
     public DateTime? DueDate { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastAppendedAt { get; set; }
@@ -461,6 +489,13 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     /// 不含已停用主機）。0＝處理人都看得到；單已結案恆為 0。
     /// </summary>
     public int HandlerUnseenMemberCount { get; set; }
+
+    /// <summary>
+    /// 觀察到期且觀察期間「確定沒有再發生」（<see cref="WorkOrderMemberDto.ObservedRecurDays"/> 為 0）的進行中成員案件編號。
+    /// 觀察期間沒有任何分析紀錄（無資料，K 為 null）的成員不列。畫面「把到期且沒有再發生的 N 台結案」一鍵動作以既有回覆端點送出這些案件
+    /// （狀態已處理、說明「觀察期滿未再發生」）；不含停用主機上的成員。
+    /// </summary>
+    public List<string> ObservationExpiredQuietCaseIds { get; set; } = new();
 }
 
 public class WorkOrderMemberDto
@@ -498,6 +533,40 @@ public class WorkOrderMemberDto
 
     /// <summary>同主機同 sensor 最近 30 日已落盤的磁碟趨勢 finding</summary>
     public WorkOrderDiskTrendEvidenceDto? DiskTrend { get; set; }
+
+    /// <summary>
+    /// 是復發：同主機同問題（Source＋EventId）的上一件案件以「已處理」結案，且結案日落在本件建立日往前 30 天內
+    /// （日曆日差，第 30 天算、第 31 天不算）。上一件是不處理類結案不算；沒有上一件不算。判定在 <c>IssueRecurrence</c>。
+    /// </summary>
+    public bool IsRecurrence { get; set; }
+
+    /// <summary>復發次數 N：建立於本件之前、以「已處理」結案、結案日在上述 30 天內的同主機同問題案件數</summary>
+    public int RecurrenceCount { get; set; }
+
+    /// <summary>上一件案件最後的回覆（結案日、狀態、說明）；沒有上一件為 null。與是否復發無關，由畫面決定怎麼用</summary>
+    public WorkOrderLastReplyDto? LastReply { get; set; }
+
+    /// <summary>
+    /// 觀察期間再發生日數 K：觀察開始日（不含）到今天（含）之間，這台主機這個問題有出現紀錄的日數。
+    /// null＝不是觀察中的進行中成員，或這段期間這台主機沒有任何分析紀錄（無資料，不等於沒有再發生）。
+    /// </summary>
+    public int? ObservedRecurDays { get; set; }
+
+    /// <summary>同主機同問題的第幾次（從 1 起算＝建立在本件之前的未取消案件數＋1，含其他交辦單的案件）；「全部」篩選下同主機的新舊案件對照用</summary>
+    public int Occurrence { get; set; } = 1;
+}
+
+/// <summary>上一件案件最後的回覆摘要</summary>
+public class WorkOrderLastReplyDto
+{
+    /// <summary>回覆（結案）時間</summary>
+    public DateTime Date { get; set; }
+
+    /// <summary>案件結案時的狀態（<c>IssueHandlingStatuses</c> 代碼）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>回覆說明（案件上最近一次的說明）；沒有為 null</summary>
+    public string? Note { get; set; }
 }
 
 public class WorkOrderDiskTrendEvidenceDto
@@ -801,6 +870,19 @@ public class HandlerSummaryDto
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; set; }
+
+    /// <summary>
+    /// 進行中台數（<see cref="ActiveMembers"/>）的三個互斥分法，三者相加恆等於 <see cref="ActiveMembers"/>：
+    /// 待我處理（進行中、非上報中、非觀察期內；觀察到期算在這裡）、觀察期內（觀察中且觀察至 &gt;= 今天）、上報中。
+    /// 口徑同 <see cref="ActiveMembers"/>（非暫停單、不含停用主機）；數的是成員（主機×問題）。
+    /// </summary>
+    public int TodoHosts { get; set; }
+
+    /// <summary>觀察期內的台數（見 <see cref="TodoHosts"/>）</summary>
+    public int ObservingHosts { get; set; }
+
+    /// <summary>上報中的台數（見 <see cref="TodoHosts"/>）</summary>
+    public int EscalatedHosts { get; set; }
 
     /// <summary>這位處理人目前暫停接單（自動派工排除他）；處理人工作頁頁頭標記用，側欄徽章不填</summary>
     public bool HandlerPaused { get; set; }

@@ -304,12 +304,19 @@ public static class WorkOrderQueries
     public const string StatusClosed = "closed";
     public const string StatusAll = "all";
 
+    /// <summary>
+    /// 待我處理（只用在交辦單清單）：進行中且至少有一個「待處理成員」的單——待處理成員＝進行中、不在停用主機上、
+    /// 不是上報中、也不在觀察期內（觀察至日期 &gt;= 今天）的成員；只剩觀察期內或上報中成員的單不列。
+    /// 觀察到期（觀察至日期 &lt; 今天）的成員算待處理。判準與 <see cref="IsTodoMember"/> 同義。
+    /// </summary>
+    public const string StatusTodo = "todo";
+
     public const string SortCreatedDesc = "created_desc";
     public const string SortMembersDesc = "members_desc";
     public const string SortUnrepliedOldest = "unreplied_oldest";
 
     public static readonly string[] OrderStatuses =
-        { StatusActive, StatusEscalated, StatusOverdue, StatusUnreplied, StatusClosed, StatusAll };
+        { StatusActive, StatusEscalated, StatusOverdue, StatusUnreplied, StatusClosed, StatusAll, StatusTodo };
 
     public static readonly string[] MemberStatuses =
         { StatusActive, StatusClosed, StatusEscalated, StatusOverdue, StatusAll };
@@ -344,6 +351,15 @@ public static class WorkOrderQueries
     public static bool IsOverdue(IssueCase c, DateTime today) =>
         c.ClosedAt == null && c.DueDate != null && c.DueDate.Value < today.Date
         && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing);
+
+    /// <summary>
+    /// 待處理成員（我的交辦「待我處理」的最小單位）：進行中、不是上報中、不在觀察期內。呼叫端另行排除停用主機。
+    /// 進行中成員恰好分成三類互斥：待處理（含觀察到期）、觀察期內（<see cref="IssueHandlingStatuses.IsObservationActive"/>）、上報中，
+    /// 三者相加＝進行中台數；SQL 端（<c>EfWorkOrderStore</c> 的處理人摘要與清單）與替身都以這個定義為準。
+    /// </summary>
+    public static bool IsTodoMember(IssueCase c, DateTime today) =>
+        c.ClosedAt == null && c.Status != IssueHandlingStatuses.Escalated
+        && !IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today);
 
     /// <summary>清單條件檢查（store 入口共用；使用者輸入的友善訊息由 Web 層先擋）</summary>
     public static void Validate(WorkOrderQuery q)
@@ -381,6 +397,21 @@ public sealed class WorkOrderHandlerSummary
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; init; }
+
+    /// <summary>
+    /// 進行中成員裡「觀察期內」的台數（觀察中且觀察至 &gt;= 今天）；與 <see cref="ActiveMembers"/> 同口徑
+    /// （非暫停單、不含停用主機上的成員）。判準同 <see cref="IssueHandlingStatuses.IsObservationActive"/>。
+    /// </summary>
+    public int ObservingMembers { get; init; }
+
+    /// <summary>進行中成員裡上報中的台數；口徑同 <see cref="ActiveMembers"/></summary>
+    public int EscalatedMembers { get; init; }
+
+    /// <summary>
+    /// 進行中成員裡「待處理」的台數（判準 <see cref="WorkOrderQueries.IsTodoMember"/>：非上報中、非觀察期內，觀察到期算在這裡）；
+    /// 口徑同 <see cref="ActiveMembers"/>。與 <see cref="ObservingMembers"/>、<see cref="EscalatedMembers"/> 互斥，三者相加＝<see cref="ActiveMembers"/>。
+    /// </summary>
+    public int TodoMembers { get; init; }
 }
 
 /// <summary>處理人負載看板的一列（列有進行中交辦單、或近 <see cref="ClosedWindowDays"/> 日有結案單的處理人）</summary>

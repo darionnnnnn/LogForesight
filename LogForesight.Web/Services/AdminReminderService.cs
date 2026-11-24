@@ -10,12 +10,14 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 管理者提醒（第 76-2 輪批次 C-2）：夜間派工結束後彙整三類，交辦總覽與管理者的交辦摘要信共用同一個彙整函式
+/// 管理者提醒（第 76-2 輪批次 C-2）：夜間派工結束後彙整四類，交辦總覽與管理者的交辦摘要信共用同一個彙整函式
 /// <see cref="Compute"/>——不寫第二份計算。
 /// <list type="number">
 /// <item>上報（無法處理）超過 N 天（<see cref="SystemSettings.EscalationReminderDays"/>）仍沒人處理的成員，依案件上報時間（EscalatedAt，舊資料退回最後更新日）起算；</item>
 /// <item>最近一趟夜間派工派不出去的問題（<see cref="MailNotifyState.LastUnassignable"/>，每趟合併）；</item>
-/// <item>上報時沒有任何收件人的單（<see cref="MailNotificationService"/> 上報當下記下）。</item>
+/// <item>上報時沒有任何收件人的單（<see cref="MailNotificationService"/> 上報當下記下）；</item>
+/// <item>反覆結案又復發的進行中成員：復發次數（<see cref="IssueRecurrence"/>）達 <see cref="RecurrenceReminderThreshold"/>，
+/// 同一成員的去重沿用上面的「每 N 天至多提醒一次」機制（鍵 <see cref="RecurrenceKey"/>）。</item>
 /// </list>
 /// 信件走同一套每人摘要（通知佇列新種類 <see cref="WorkOrderOutboxKinds.AdminReminder"/>），收件人＝上報信的收件人規則
 /// （admin 群組啟用中成員、有 email）。同一個成員每 N 天至多提醒一次，上次提醒日記在 <see cref="MailNotifyState.AdminReminderLastSent"/>；
@@ -31,6 +33,9 @@ public sealed class AdminReminderService
 
     /// <summary>信件明細每類最多列幾行</summary>
     internal const int MailLineLimit = 20;
+
+    /// <summary>「反覆結案又復發」的門檻（暫定）：進行中成員的復發次數 N 達到這個值就列入</summary>
+    internal const int RecurrenceReminderThreshold = 3;
 
     /// <summary>派不出去的項目連續幾個日曆日沒再被觀察到就移除</summary>
     internal const int UnassignableUnobservedDays = 1;
@@ -144,6 +149,8 @@ public sealed class AdminReminderService
                 days > 0 && IsDue(state, NoRecipientKey(order.WorkOrderId), today, days)));
         }
 
+        var recurrence = ScanRecurrence(exclusion, excluded, state, today, days);
+
         escalated = escalated.OrderByDescending(e => e.Days).ThenBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal).ToList();
         var unassignable = state.LastUnassignable
             .Where(u => !IsLabelMuted(exclusion, u.IssueLabel))
@@ -165,11 +172,46 @@ public sealed class AdminReminderService
         dto.NoRecipient = noRecipient.Take(OverviewItemLimit)
             .Select(e => new AdminReminderNoRecipientDto { WorkOrderId = e.WorkOrderId, IssueLabel = e.IssueLabel })
             .ToList();
-        return new AdminReminderResult(dto, escalated, noRecipient)
+        dto.RecurrenceCount = recurrence.Count;
+        dto.Recurrence = recurrence.Take(OverviewItemLimit)
+            .Select(e => new AdminReminderRecurrenceDto
+                { WorkOrderId = e.WorkOrderId, IssueLabel = e.IssueLabel, HostName = e.HostName, RecurrenceCount = e.Count })
+            .ToList();
+        return new AdminReminderResult(dto, escalated, noRecipient, recurrence)
         {
             UnassignableDueForMail = days > 0 && unassignable.Count > 0
                 && state.AdminReminderLastSent.GetValueOrDefault(UnassignableStateKey) != DateKey(today)
         };
+    }
+
+    /// <summary>
+    /// 反覆結案又復發：全站進行中成員（精簡欄位）一次取回、前案候選一次取回，以 <see cref="IssueRecurrence.Evaluate"/> 算復發次數，
+    /// 達 <see cref="RecurrenceReminderThreshold"/> 的列入。靜音中的問題與停用主機上的成員不列（同上報類）；成員之後結案為不處理類
+    /// 就不再是進行中成員，自然不列。前案只取結案日不早於「最早一件的建立日往前一個回看窗」者（更早的不影響次數）。
+    /// 排序：復發次數多的在前，再依單號、主機。
+    /// </summary>
+    private List<RecurrenceEntry> ScanRecurrence(IssueExclusion exclusion, IReadOnlyCollection<string> excludedHostKeys,
+        MailNotifyState state, DateTime today, int days)
+    {
+        var disabled = excludedHostKeys.ToHashSet(StringComparer.Ordinal);
+        var members = _cases.GetActiveMemberSummaries(null)
+            .Where(c => c.WorkOrderId != null && !disabled.Contains(Core.Persistence.Sql.HostNameKey.Of(c.HostName))
+                        && !(c.SourceName != null && c.EventId is int eventId && exclusion.IsCurrentlyMuted(c.SourceName, eventId)))
+            .ToList();
+        if (members.Count == 0) return new List<RecurrenceEntry>();
+
+        var hostNames = members.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var issues = members.Where(c => c.SourceName != null && c.EventId != null)
+            .Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+        var since = members.Min(c => c.CreatedAt).Date.AddDays(-IssueRecurrence.WindowDays);
+        var info = IssueRecurrence.Evaluate(members, _cases.GetClosedHistory(hostNames, issues, since));
+
+        return members
+            .Where(c => info[c.CaseId].Count >= RecurrenceReminderThreshold)
+            .Select(c => new RecurrenceEntry(c.CaseId, c.WorkOrderId!.Value, c.IssueLabel, c.HostName, info[c.CaseId].Count,
+                days > 0 && IsDue(state, RecurrenceKey(c.CaseId), today, days)))
+            .OrderByDescending(e => e.Count).ThenBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -208,7 +250,7 @@ public sealed class AdminReminderService
             var result = ComputeResult();
             var dto = result.Dto;
             var mailUnassignable = result.UnassignableDueForMail ? dto.UnassignableCount : 0;
-            var mailTotal = result.MailEscalatedCount + mailUnassignable + result.MailNoRecipientCount;
+            var mailTotal = result.MailEscalatedCount + mailUnassignable + result.MailNoRecipientCount + result.MailRecurrenceCount;
 
             var recipients = new List<long>();
             if (settings.EscalationReminderDays > 0 && settings.MailEnabled && settings.MailNotifyWorkOrders && mailTotal > 0)
@@ -223,20 +265,23 @@ public sealed class AdminReminderService
 
             var queued = recipients.Count > 0 &&
                          _mail.EnqueueAdminReminders(recipients, result.MailEscalatedCount, mailUnassignable, result.MailNoRecipientCount,
-                             FormatMailDetail(result, mailUnassignable > 0), BuildMailItems(result, mailUnassignable > 0));
+                             FormatMailDetail(result, mailUnassignable > 0), BuildMailItems(result, mailUnassignable > 0),
+                             result.MailRecurrenceCount);
 
             _state.Update(s =>
             {
                 var todayKey = DateKey(today);
                 if (queued)
                 {
-                    foreach (var key in result.MailEscalatedKeys.Concat(result.MailNoRecipientKeys)) s.AdminReminderLastSent[key] = todayKey;
+                    foreach (var key in result.MailEscalatedKeys.Concat(result.MailNoRecipientKeys).Concat(result.MailRecurrenceKeys))
+                        s.AdminReminderLastSent[key] = todayKey;
                     if (mailUnassignable > 0) s.AdminReminderLastSent[UnassignableStateKey] = todayKey;
                 }
 
                 // 不再逾期（已處理、已結案）的鍵清掉；本趟提醒的鍵一定在目前逾期集合內
                 var live = result.EscalatedAll.Select(e => e.CaseId)
                     .Concat(result.NoRecipientAll.Select(e => NoRecipientKey(e.WorkOrderId)))
+                    .Concat(result.RecurrenceAll.Select(e => RecurrenceKey(e.CaseId)))
                     .Append(UnassignableStateKey)
                     .ToHashSet(StringComparer.Ordinal);
                 foreach (var stale in s.AdminReminderLastSent.Keys.Where(k => !live.Contains(k)).ToList())
@@ -288,6 +333,9 @@ public sealed class AdminReminderService
 
     internal static string NoRecipientKey(long workOrderId) => $"wo:{workOrderId}";
 
+    /// <summary>「反覆結案又復發」的提醒去重鍵：加前綴避免與同一案件的上報鍵（案件編號）互相覆蓋</summary>
+    internal static string RecurrenceKey(string caseId) => $"recurrence:{caseId}";
+
     private static string DateKey(DateTime d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     /// <summary>派不出去的原因白話（與待派頁的原因同義）</summary>
@@ -325,6 +373,13 @@ public sealed class AdminReminderService
             Text = $"單號 {n.WorkOrderId}：{n.IssueLabel}（上報信寄不出去，請確認管理者的 email）",
             Heading = "【上報時沒有任何收件人的單】", Unit = "張"
         }));
+        var recurrence = result.RecurrenceAll.Where(e => e.DueForMail).ToList();
+        items.AddRange(recurrence.Take(MailLineLimit).Select(r => new ReminderDetailItem
+        {
+            Category = ReminderDetailItem.CategoryRecurrence, Key = RecurrenceKey(r.CaseId), Total = recurrence.Count,
+            Text = $"單號 {r.WorkOrderId}：{r.IssueLabel}（{r.HostName}），已處理後又復發 {r.Count} 次",
+            Heading = "【反覆結案又復發】", Unit = "個成員"
+        }));
         return items;
     }
 
@@ -355,6 +410,14 @@ public sealed class AdminReminderService
                 sb.AppendLine($"  單號 {n.WorkOrderId}：{n.IssueLabel}（上報信寄不出去，請確認管理者的 email）");
             if (noRecipient.Count > MailLineLimit) sb.AppendLine($"  …等 {noRecipient.Count} 張");
         }
+        var recurrence = result.RecurrenceAll.Where(e => e.DueForMail).ToList();
+        if (recurrence.Count > 0)
+        {
+            sb.AppendLine($"【反覆結案又復發】共 {recurrence.Count} 個成員");
+            foreach (var r in recurrence.Take(MailLineLimit))
+                sb.AppendLine($"  單號 {r.WorkOrderId}：{r.IssueLabel}（{r.HostName}），已處理後又復發 {r.Count} 次");
+            if (recurrence.Count > MailLineLimit) sb.AppendLine($"  …等 {recurrence.Count} 個成員");
+        }
         return sb.ToString().TrimEnd();
     }
 }
@@ -365,28 +428,36 @@ internal sealed record EscalatedEntry(string CaseId, long WorkOrderId, string Is
 /// <summary>上報時沒有收件人的單（內部彙整：含「本趟要不要提醒」，不外送）</summary>
 internal sealed record NoRecipientEntry(long WorkOrderId, string IssueLabel, bool DueForMail);
 
+/// <summary>反覆結案又復發的成員（內部彙整：含案件編號、復發次數與「本趟要不要提醒」，不外送）</summary>
+internal sealed record RecurrenceEntry(string CaseId, long WorkOrderId, string IssueLabel, string HostName, int Count, bool DueForMail);
+
 /// <summary>
 /// <see cref="AdminReminderService.ComputeResult"/> 的結果：對外回應 <see cref="Dto"/> 加上入列與組信用的內部彙整。
 /// 對外 DTO 只留回應欄位，內部欄位不靠序列化屬性遮蔽。
 /// </summary>
 internal sealed class AdminReminderResult
 {
-    public AdminReminderResult(AdminReminderDto dto, List<EscalatedEntry> escalatedAll, List<NoRecipientEntry> noRecipientAll)
+    public AdminReminderResult(AdminReminderDto dto, List<EscalatedEntry> escalatedAll, List<NoRecipientEntry> noRecipientAll,
+        List<RecurrenceEntry>? recurrenceAll = null)
     {
         Dto = dto;
         EscalatedAll = escalatedAll;
         NoRecipientAll = noRecipientAll;
+        RecurrenceAll = recurrenceAll ?? new List<RecurrenceEntry>();
     }
 
     public AdminReminderDto Dto { get; }
     public List<EscalatedEntry> EscalatedAll { get; }
     public List<NoRecipientEntry> NoRecipientAll { get; }
+    public List<RecurrenceEntry> RecurrenceAll { get; }
 
     /// <summary>派不出去清單這趟要不要提醒（間隔天數已開、清單非空、今天還沒提醒過）</summary>
     public bool UnassignableDueForMail { get; init; }
 
     public int MailEscalatedCount => EscalatedAll.Count(e => e.DueForMail);
     public int MailNoRecipientCount => NoRecipientAll.Count(e => e.DueForMail);
+    public int MailRecurrenceCount => RecurrenceAll.Count(e => e.DueForMail);
+    public List<string> MailRecurrenceKeys => RecurrenceAll.Where(e => e.DueForMail).Select(e => AdminReminderService.RecurrenceKey(e.CaseId)).ToList();
     public List<string> MailEscalatedKeys => EscalatedAll.Where(e => e.DueForMail).Select(e => e.CaseId).ToList();
     public List<string> MailNoRecipientKeys => NoRecipientAll.Where(e => e.DueForMail).Select(e => AdminReminderService.NoRecipientKey(e.WorkOrderId)).ToList();
 }

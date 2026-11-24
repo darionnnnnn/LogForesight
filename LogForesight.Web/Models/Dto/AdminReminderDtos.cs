@@ -25,8 +25,14 @@ public sealed class AdminReminderDto
     /// <summary>今天新上報（上報時間是今天、仍待處理）的成員數；與「超過 N 天」分開計數，只在總覽顯示</summary>
     public int NewEscalatedCount { get; set; }
 
-    /// <summary>三類（含今天新上報）任一不是 0 就顯示提醒區</summary>
-    public bool Any => EscalatedCount + UnassignableCount + NoRecipientCount + NewEscalatedCount > 0;
+    /// <summary>
+    /// 反覆結案又復發的進行中成員數：同主機同問題已有 <c>AdminReminderService.RecurrenceReminderThreshold</c> 件以上「已處理」結案又再出現
+    /// （復發次數 N，判定見 <c>IssueRecurrence</c>）。成員之後被結案為不處理類就不再列。靜音中的問題與停用主機不列。
+    /// </summary>
+    public int RecurrenceCount { get; set; }
+
+    /// <summary>各類（含今天新上報）任一不是 0 就顯示提醒區</summary>
+    public bool Any => EscalatedCount + UnassignableCount + NoRecipientCount + NewEscalatedCount + RecurrenceCount > 0;
 
     /// <summary>派不出去清單的彙整時間；null＝尚未跑過夜間派工</summary>
     public DateTime? UnassignableAt { get; set; }
@@ -37,6 +43,20 @@ public sealed class AdminReminderDto
     public List<AdminReminderEscalatedDto> NewEscalated { get; set; } = new();
     public List<AdminReminderUnassignableDto> Unassignable { get; set; } = new();
     public List<AdminReminderNoRecipientDto> NoRecipient { get; set; } = new();
+
+    /// <summary>反覆結案又復發的成員明細（復發次數多的在前），上限同其他類</summary>
+    public List<AdminReminderRecurrenceDto> Recurrence { get; set; } = new();
+}
+
+/// <summary>反覆結案又復發的一個成員（主機＋問題）</summary>
+public sealed class AdminReminderRecurrenceDto
+{
+    public long WorkOrderId { get; set; }
+    public string IssueLabel { get; set; } = "";
+    public string HostName { get; set; } = "";
+
+    /// <summary>復發次數 N（近 30 天內以已處理結案、之後又再出現的次數）</summary>
+    public int RecurrenceCount { get; set; }
 }
 
 /// <summary>上報逾期的一個成員（主機＋問題）</summary>

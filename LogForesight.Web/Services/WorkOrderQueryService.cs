@@ -41,6 +41,7 @@ public class WorkOrderQueryService
 
     private readonly TimeProvider _clock;
     private readonly UserCapabilityResolver? _capabilities;
+    private readonly IIssueHandlingStore? _issueHandlings;
 
     public WorkOrderQueryService(
         IWorkOrderStore orders,
@@ -56,8 +57,10 @@ public class WorkOrderQueryService
         IUserGroupStore userGroups,
         IAnalysisRecordQuery records,
         TimeProvider? clock = null,
-        UserCapabilityResolver? capabilities = null)
+        UserCapabilityResolver? capabilities = null,
+        IIssueHandlingStore? issueHandlings = null)
     {
+        _issueHandlings = issueHandlings;
         _capabilities = capabilities;
         _clock = clock ?? TimeProvider.System;
         _userGroups = userGroups;
@@ -122,7 +125,8 @@ public class WorkOrderQueryService
         {
             ActiveWorkOrders = s.ActiveWorkOrders, ActiveMembers = s.ActiveMembers,
             OverdueMembers = s.OverdueMembers, UnrepliedWorkOrders = s.UnrepliedWorkOrders,
-            PausedWorkOrders = s.PausedWorkOrders
+            PausedWorkOrders = s.PausedWorkOrders,
+            TodoHosts = s.TodoMembers, ObservingHosts = s.ObservingMembers, EscalatedHosts = s.EscalatedMembers
         };
     }
 
@@ -186,10 +190,11 @@ public class WorkOrderQueryService
 
         var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList(), disabledKeys);
         var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var hostStats = BuildHostStats(result.Items, disabledKeys, out _);
 
         return new WorkOrderListDto
         {
-            Items = result.Items.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, rules, exclusion)).ToList(),
+            Items = result.Items.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, hostStats, rules, exclusion)).ToList(),
             Total = result.Total,
             Page = page,
             PageSize = pageSize
@@ -229,7 +234,17 @@ public class WorkOrderQueryService
         var rules = KnownIssueCatalog.ResolveRules(_rules);
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
 
-        var dto = FillRow(new WorkOrderDetailDto(), order, users, counts, rules, _exclusions.Current());
+        var hostStats = BuildHostStats(new[] { order }, WorkOrderQueries.DisabledHostKeys(allHosts), out var activeLive);
+        var dto = FillRow(new WorkOrderDetailDto(), order, users, counts, hostStats, rules, _exclusions.Current());
+        // 單頭的案件編號清單跟成員清單一樣只給檢視者看得到的主機（受限檢視者不能靠它取得看不到的案件）
+        var quietPool = activeLive;
+        if (!_currentUser.Has(Capability.ViewAll) && order.HandlerId != _currentUser.UserId)
+        {
+            var visible = _visibility.GetVisibleHostIds();
+            var visibleKeys = allHosts.Where(h => visible.Contains(h.HostId)).Select(h => HostNameKey.Of(h.HostName)).ToHashSet(StringComparer.Ordinal);
+            quietPool = activeLive.Where(c => visibleKeys.Contains(HostNameKey.Of(c.HostName))).ToList();
+        }
+        dto.ObservationExpiredQuietCaseIds = QuietExpiredCaseIds(quietPool, allHosts);
         dto.Note = order.Note;
         dto.CreatedByAccount = order.CreatedByAccount;
         dto.ScopeGroups = order.ScopeGroupIds.Select(gid => new WorkOrderScopeGroupDto
@@ -323,6 +338,10 @@ public class WorkOrderQueryService
             .ToDictionary(g => g.Key, g => g.First().HostId);
         var today = _clock.LocalToday();
 
+        // 復發與第 N 次：本頁成員的前案一次取回（不設結案時間下限，「上次回覆」要看到上一件不論多久以前）；觀察期間再發生日數 K 同樣一次批次算
+        var recurrence = RecurrenceOf(items, boundedWindow: false);
+        var observedDays = ObservationRecurrence.Compute(items, today, _issueHandlings, _records, hosts);
+
         var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
                 CaseId = c.CaseId,
@@ -344,7 +363,12 @@ public class WorkOrderQueryService
                 DaySyncPending = c.DaySyncPending,
                 Cancelled = c.Cancelled,
                 ClosedAt = c.ClosedAt,
-                RelatedWorkOrderId = relatedOrdersByCase.TryGetValue(c.CaseId, out var relatedId) ? relatedId : null
+                RelatedWorkOrderId = relatedOrdersByCase.TryGetValue(c.CaseId, out var relatedId) ? relatedId : null,
+                IsRecurrence = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence,
+                RecurrenceCount = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Count,
+                Occurrence = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Occurrence,
+                LastReply = LastReplyOf(recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Previous),
+                ObservedRecurDays = observedDays.GetValueOrDefault(c.CaseId)
         }).ToList();
 
         AttachDiskTrendFindings(order, items, memberDtos);
@@ -536,7 +560,8 @@ public class WorkOrderQueryService
     }
 
     private T FillRow<T>(T dto, WorkOrder o, Dictionary<long, WebUser> users,
-        Dictionary<long, WorkOrderMemberCounts> counts, List<KnownIssueRule> rules, IssueExclusion exclusion) where T : WorkOrderRowDto
+        Dictionary<long, WorkOrderMemberCounts> counts, Dictionary<long, OrderHostStats> hostStats, List<KnownIssueRule> rules,
+        IssueExclusion exclusion) where T : WorkOrderRowDto
     {
         users.TryGetValue(o.HandlerId, out var handler);
         var c = counts.TryGetValue(o.WorkOrderId, out var found) ? found : new WorkOrderMemberCounts();
@@ -567,6 +592,13 @@ public class WorkOrderQueryService
             Total = c.Total, Active = c.Active, ActiveOnDisabledHosts = c.ActiveOnDisabledHosts, Closed = c.Closed, InProgress = c.InProgress, Observing = c.Observing,
             Open = c.Open, Escalated = c.Escalated, Overdue = c.Overdue, DaySyncPending = c.DaySyncPending
         };
+        var hs = hostStats.GetValueOrDefault(o.WorkOrderId);
+        dto.ActiveHosts = hs.Active;
+        dto.TotalHosts = hs.Total;
+        dto.RecurrenceHosts = hs.Recurrence;
+        dto.ObservingHosts = hs.Observing;
+        dto.ObservationExpiredHosts = hs.Expired;
+        dto.TodoHosts = hs.Todo;
         dto.DueDate = o.DueDate;
         dto.CreatedAt = o.CreatedAt;
         dto.LastAppendedAt = o.LastAppendedAt;
@@ -588,6 +620,89 @@ public class WorkOrderQueryService
                 dto.ResumedFromMuteAt = ResumedAt(spans, exclusion.Today)?.ToString("yyyy-MM-dd");
         }
         return dto;
+    }
+
+    /// <summary>一張單的主機統計（單頭、清單列用）；全部是不重複主機數</summary>
+    private readonly record struct OrderHostStats(int Active, int Total, int Recurrence, int Observing, int Expired, int Todo);
+
+    /// <summary>
+    /// 本頁各單的主機統計：歷來主機數一句 GROUP BY、進行中成員一次取回（精簡欄位）、前案候選一次取回，
+    /// 再於記憶體以 <see cref="IssueRecurrence"/> 與 <see cref="IssueHandlingStatuses"/> 的共用判定彙整——查詢次數不隨成員數增長。
+    /// 停用主機上的成員不計入進行中相關的數字（與 <see cref="WorkOrderCountsDto"/> 同口徑），歷來主機數照舊含全部。
+    /// <paramref name="activeLive"/> 回傳參與統計的進行中成員（供單頭另外算觀察到期的成員）。
+    /// </summary>
+    private Dictionary<long, OrderHostStats> BuildHostStats(
+        IReadOnlyCollection<WorkOrder> orders, IReadOnlyCollection<string> disabledKeys, out List<IssueCase> activeLive)
+    {
+        activeLive = new List<IssueCase>();
+        var result = new Dictionary<long, OrderHostStats>();
+        if (orders.Count == 0) return result;
+
+        var totals = _cases.CountDistinctHosts(orders.Select(o => o.WorkOrderId).ToList());
+        var activeIds = orders.Where(o => o.ClosedAt == null).Select(o => o.WorkOrderId).ToList();
+        var disabled = disabledKeys.ToHashSet(StringComparer.Ordinal);
+        if (activeIds.Count > 0)
+            activeLive = _cases.GetActiveMemberSummaries(activeIds)
+                .Where(c => c.WorkOrderId != null && !disabled.Contains(HostNameKey.Of(c.HostName)))
+                .ToList();
+
+        var recurrence = RecurrenceOf(activeLive, boundedWindow: true);
+        var today = _clock.LocalToday();
+        var byOrder = activeLive.GroupBy(c => c.WorkOrderId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var o in orders)
+        {
+            var members = byOrder.GetValueOrDefault(o.WorkOrderId) ?? new List<IssueCase>();
+            int Hosts(Func<IssueCase, bool> match) =>
+                members.Where(match).Select(c => HostNameKey.Of(c.HostName)).Distinct(StringComparer.Ordinal).Count();
+            result[o.WorkOrderId] = new OrderHostStats(
+                Active: Hosts(_ => true),
+                Total: totals.GetValueOrDefault(o.WorkOrderId),
+                Recurrence: Hosts(c => recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence),
+                Observing: Hosts(c => IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today)),
+                Expired: Hosts(c => IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, today)),
+                Todo: Hosts(c => WorkOrderQueries.IsTodoMember(c, today)));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 對 <paramref name="targets"/> 的復發判定（<see cref="IssueRecurrence.Evaluate"/>）：同主機同問題的前案候選一次取回。
+    /// <paramref name="boundedWindow"/>＝true 時前案只取結案日不早於「最早一件的建立日往前一個回看窗」者——
+    /// 復發與次數只看回看窗內，更早的前案不影響結果（清單統計用）；false＝全取（成員清單要「上次回覆」與第 N 次）。
+    /// </summary>
+    private Dictionary<string, RecurrenceInfo> RecurrenceOf(IReadOnlyCollection<IssueCase> targets, bool boundedWindow)
+    {
+        if (targets.Count == 0) return new Dictionary<string, RecurrenceInfo>(StringComparer.Ordinal);
+
+        var hostNames = targets.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var issues = targets.Where(c => c.SourceName != null && c.EventId != null)
+            .Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+        DateTime? since = boundedWindow ? targets.Min(c => c.CreatedAt).Date.AddDays(-IssueRecurrence.WindowDays) : null;
+        return IssueRecurrence.Evaluate(targets, _cases.GetClosedHistory(hostNames, issues, since));
+    }
+
+    private static WorkOrderLastReplyDto? LastReplyOf(IssueCase? previous) =>
+        previous?.ClosedAt == null
+            ? null
+            : new WorkOrderLastReplyDto
+            {
+                Date = previous.ClosedAt.Value, Status = previous.Status,
+                Note = string.IsNullOrWhiteSpace(previous.Note) ? null : previous.Note
+            };
+
+    /// <summary>觀察到期、且觀察期間確定沒有再發生（K 為 0）的進行中成員編號；K 為無資料（null）的不列</summary>
+    private List<string> QuietExpiredCaseIds(IReadOnlyCollection<IssueCase> activeLive, IReadOnlyCollection<WebHost> hosts)
+    {
+        var today = _clock.LocalToday();
+        var expired = activeLive.Where(c => IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, today)).ToList();
+        if (expired.Count == 0) return new List<string>();
+
+        var days = ObservationRecurrence.Compute(expired, today, _issueHandlings, _records, hosts);
+        return expired
+            .Where(c => days.TryGetValue(c.CaseId, out var k) && k == 0)
+            .OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal).ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Select(c => c.CaseId)
+            .ToList();
     }
 
     /// <summary>暫停判定的唯一一份：進行中、問題欄非 null，且問題目前靜音中（SQL 端對應 <c>WorkOrderQuery.PausedKeys</c>）</summary>
