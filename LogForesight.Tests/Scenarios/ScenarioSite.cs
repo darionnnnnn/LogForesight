@@ -198,6 +198,18 @@ public sealed class ScenarioSite : IDisposable
         NLog.LogManager.Configuration = _savedNLogConfig;
         CryptoHelper.ResetForTests();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        // 可用性模擬（UsabilitySimulationTests）要把整個資料目錄留給站台實測：設 LF_SCENARIO_KEEP_DATA=<目錄> 時先複製再刪
+        var keep = Environment.GetEnvironmentVariable("LF_SCENARIO_KEEP_DATA");
+        if (!string.IsNullOrWhiteSpace(keep)) CopyDirectory(_dataRoot, keep);
         try { Directory.Delete(_dataRoot, recursive: true); } catch (IOException) { /* SQLite 檔案可能仍被連線池占用，留在暫存目錄無妨 */ }
+    }
+
+    private static void CopyDirectory(string from, string to)
+    {
+        foreach (var dir in Directory.GetDirectories(from, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(dir.Replace(from, to));
+        Directory.CreateDirectory(to);
+        foreach (var file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+            File.Copy(file, file.Replace(from, to), overwrite: true);
     }
 }
