@@ -18,6 +18,11 @@ let userGroups = [];
 let hostGroups = [];
 let matrix = null;
 let editing = null;         // { kind: 'user' | 'host', group }
+let editingGrantedBefore = new Set();   // 開啟群組編輯彈窗時的授權集合；儲存時只送與它的差異
+const matrixChecks = new Map();         // userGroupId → Map(hostGroupId → checkbox)，回應回來時整列重繪用
+const ACCESS_TOAST_MERGE_MS = 1500;     // 連續勾選的成功提示合併成一則的時間窗
+let pendingAccessNotes = [];            // { userGroupName, hostGroupName, granted }
+let accessToastTimer = null;
 const MEMBERS_PAGE_SIZE = 50;   // 成員清單與加入預覽的伺服器分頁筆數
 let membersState = null;    // { groupId, groupName, mode, query, preview }
 let currentMembers = { items: [], page: 1, pageSize: MEMBERS_PAGE_SIZE, total: 0 };   // 「目前成員」目前這一頁
@@ -194,8 +199,10 @@ function renderMatrix() {
     wrap.appendChild(note);
 
     // 矩陣表頭的欄位數隨主機群組動態變動：欄位定義逐欄產生，排序／空狀態一律交給 renderTable
+    matrixChecks.clear();
     const matrixColumns = [{
         title: '使用者群組 ＼ 主機群組',
+        className: 'lf-matrix-sticky',
         render: row => {
             const name = document.createElement('span');
             name.className = 'lf-text-title';
@@ -210,9 +217,18 @@ function renderMatrix() {
         }
     }];
     for (const hostGroup of matrix.hostGroups) {
+        const fullTitle = `${hostGroup.groupName}（${hostGroup.hostCount ?? 0} 台）`;
         matrixColumns.push({
-            title: hostGroup.groupName,
+            title: fullTitle,
             className: 'text-center',
+            // 欄標題過長以省略號截斷，完整名稱與台數放 title
+            renderHeader: () => {
+                const label = document.createElement('span');
+                label.className = 'lf-matrix-col-title';
+                label.title = fullTitle;
+                label.textContent = fullTitle;
+                return label;
+            },
             render: row => {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
@@ -220,6 +236,8 @@ function renderMatrix() {
                 checkbox.checked = row.grantedHostGroupIds.includes(hostGroup.groupId);
                 checkbox.setAttribute('aria-label', `${row.userGroupName} 可存取 ${hostGroup.groupName}`);
                 checkbox.addEventListener('change', () => onToggleAccess(row, hostGroup, checkbox));
+                if (!matrixChecks.has(row.userGroupId)) matrixChecks.set(row.userGroupId, new Map());
+                matrixChecks.get(row.userGroupId).set(hostGroup.groupId, checkbox);
                 return checkbox;
             }
         });
@@ -231,25 +249,62 @@ function renderMatrix() {
     container.replaceChildren(wrap);
 }
 
-async function onToggleAccess(row, hostGroup, checkbox) {
-    const granted = new Set(row.grantedHostGroupIds);
-    if (checkbox.checked) granted.add(hostGroup.groupId);
-    else granted.delete(hostGroup.groupId);
+/** 以伺服器回的完整清單重繪該列的勾選（別人剛做的變更也會跟著出現） */
+function syncRowChecks(row) {
+    const checks = matrixChecks.get(row.userGroupId);
+    if (!checks) return;
+    for (const [hostGroupId, box] of checks) box.checked = row.grantedHostGroupIds.includes(hostGroupId);
+}
 
+/** 每勾或取消一格只送那一格的增或減，由伺服器依當下狀態套用（不送整份清單，避免舊畫面互相覆蓋） */
+async function onToggleAccess(row, hostGroup, checkbox) {
+    const wantGrant = checkbox.checked;
     checkbox.disabled = true;
     try {
-        await api.put(`/api/admin/access/${row.userGroupId}`, { hostGroupIds: [...granted] });
-        row.grantedHostGroupIds = [...granted];
-        toast(
-            checkbox.checked
-                ? `已授權「${row.userGroupName}」檢視「${hostGroup.groupName}」`
-                : `已取消「${row.userGroupName}」對「${hostGroup.groupName}」的授權`,
-            'success', 2500);
+        const result = await api.put(`/api/admin/access/${row.userGroupId}`,
+            wantGrant ? { grant: [hostGroup.groupId], revoke: [] } : { grant: [], revoke: [hostGroup.groupId] });
+        row.grantedHostGroupIds = result.grantedHostGroupIds;
+        syncRowChecks(row);
+        noteAccessChange(row.userGroupName, hostGroup.groupName, wantGrant);
     } catch {
-        checkbox.checked = !checkbox.checked;   // 失敗時還原勾選狀態，避免畫面與實際不符
+        // 錯誤已由 api.js 顯示；畫面可能已與資料庫不符，重新載入整張矩陣
+        await reloadMatrixAfterFailure();
     } finally {
         checkbox.disabled = false;
     }
+}
+
+async function reloadMatrixAfterFailure() {
+    try {
+        matrix = await api.get('/api/admin/access');
+        renderMatrix();
+        toast('授權沒有儲存成功，已重新載入最新的授權矩陣。', 'warning', 5000);
+    } catch {
+        // 連重新載入都失敗：錯誤已由 api.js 顯示
+    }
+}
+
+/** 連續勾選的成功提示合併成一則，內容寫出實際變更 */
+function noteAccessChange(userGroupName, hostGroupName, granted) {
+    pendingAccessNotes.push({ userGroupName, hostGroupName, granted });
+    if (accessToastTimer) clearTimeout(accessToastTimer);
+    accessToastTimer = setTimeout(flushAccessToast, ACCESS_TOAST_MERGE_MS);
+}
+
+function flushAccessToast() {
+    accessToastTimer = null;
+    const notes = pendingAccessNotes;
+    pendingAccessNotes = [];
+    if (notes.length === 0) return;
+
+    const single = new Set(notes.map(n => n.userGroupName)).size === 1;
+    const label = n => single ? n.hostGroupName : `${n.userGroupName}／${n.hostGroupName}`;
+    const parts = [];
+    const granted = notes.filter(n => n.granted).map(label);
+    const revoked = notes.filter(n => !n.granted).map(label);
+    if (granted.length > 0) parts.push(`已授權：${granted.join('、')}`);
+    if (revoked.length > 0) parts.push(`已收回：${revoked.join('、')}`);
+    toast(`${single ? `「${notes[0].userGroupName}」` : ''}${parts.join('；')}`, 'success', 2500);
 }
 
 // ── 群組編輯 ─────────────────────────────────────────────────────────────────
@@ -298,6 +353,7 @@ function openModal(kind, group) {
 
         const granted = new Set(
             group ? matrix.userGroups.find(r => r.userGroupId === group.groupId)?.grantedHostGroupIds ?? [] : []);
+        editingGrantedBefore = new Set(granted);
         renderHostAccessChecks(granted);
         updateHostAccessVisibility();
     }
@@ -354,13 +410,14 @@ form.addEventListener('submit', async event => {
             const saved = await api.post('/api/admin/groups', payload);
 
             // 兩段式：群組本身已存檔，主機可見範圍走既有 access API 另外送出。
-            // 新群組且什麼都沒勾時略過這一步，避免留下一筆「由（無）改為（無）」的空稽核紀錄；
-            // 編輯既有群組則一律送出，包含「全部取消勾選＝收回全部授權」這個有意義的動作。
             if (payload.role === 'User') {
-                const hostGroupIds = selectedHostAccessIds();
-                if (editing.group || hostGroupIds.length > 0) {
+                // 只送與開啟時的差異：沒有差異就不送，也不會蓋掉別人在這段時間做的授權變更
+                const selected = new Set(selectedHostAccessIds());
+                const grant = [...selected].filter(id => !editingGrantedBefore.has(id));
+                const revoke = [...editingGrantedBefore].filter(id => !selected.has(id));
+                if (grant.length > 0 || revoke.length > 0) {
                     try {
-                        await api.put(`/api/admin/access/${saved.groupId}`, { hostGroupIds });
+                        await api.put(`/api/admin/access/${saved.groupId}`, { grant, revoke });
                     } catch {
                         toast(
                             `群組「${saved.groupName}」已儲存，但設定可檢視的主機群組時發生錯誤，請至「授權矩陣」頁籤手動設定。`,

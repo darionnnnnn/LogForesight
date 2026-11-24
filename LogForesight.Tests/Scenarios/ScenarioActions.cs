@@ -340,8 +340,12 @@ public static class ScenarioActions
         {
             var group = ctx.Site.Get<IUserGroupStore>().GetAll().FirstOrDefault(g => g.GroupName == "ug-" + account)
                 ?? throw new ScenarioUnresolvedException($"站台沒有使用者「{account}」的專屬群組");
+            // 情境動作語意是「改為」：授權寫入只有增減，這裡以當下授權算出差異再送
+            var wanted = hostGroups.Select(ctx.HostGroupId).ToList();
+            var current = ctx.Site.Get<IGroupAccessStore>().GetAll()
+                .Where(a => a.UserGroupId == group.GroupId).Select(a => a.HostGroupId).ToList();
             return ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/access/{group.GroupId}",
-                new SetAccessRequest { HostGroupIds = hostGroups.Select(ctx.HostGroupId).ToList() });
+                new SetAccessRequest { Grant = wanted.Except(current).ToList(), Revoke = current.Except(wanted).ToList() });
         }
     }
 

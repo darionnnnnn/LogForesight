@@ -154,6 +154,15 @@ public interface IGroupAccessStore
     /// <summary>整組取代某使用者群組可存取的主機群組</summary>
     void SetForUserGroup(long userGroupId, IEnumerable<long> hostGroupIds);
 
+    /// <summary>
+    /// 增減式寫入：在同一次讀改寫內，以「當下」的授權狀態套用 <paramref name="grant"/> 與 <paramref name="revoke"/>。
+    /// 不吃整份清單，兩個各持舊畫面的管理員才不會互相覆蓋。已存在的再授權、本來沒有的再收回都不算變更。
+    /// </summary>
+    GroupAccessChange ApplyChange(long userGroupId, IReadOnlyCollection<long> grant, IReadOnlyCollection<long> revoke);
+
     /// <summary>整份取代（CSV 匯入 group_access.csv 的全量取代語意）</summary>
     void ReplaceAll(IEnumerable<GroupAccess> accesses);
 }
+
+/// <summary><see cref="IGroupAccessStore.ApplyChange"/> 的結果：實際增加、實際收回與套用後的完整清單</summary>
+public sealed record GroupAccessChange(List<long> Added, List<long> Removed, List<long> Final);

@@ -338,9 +338,20 @@ public class AccessMatrixRowDto
     public List<long> GrantedHostGroupIds { get; set; } = new();
 }
 
+/// <summary>授權寫入只有增減一種形式：伺服器以當下資料庫狀態套用，不收整份清單（避免舊畫面互相覆蓋）</summary>
 public class SetAccessRequest
 {
-    public List<long> HostGroupIds { get; set; } = new();
+    /// <summary>要新增授權的主機群組</summary>
+    public List<long> Grant { get; set; } = new();
+
+    /// <summary>要收回授權的主機群組</summary>
+    public List<long> Revoke { get; set; } = new();
+}
+
+/// <summary>增減套用後，該使用者群組的完整授權清單（前端以它重繪整列）</summary>
+public class AccessChangeResultDto
+{
+    public List<long> GrantedHostGroupIds { get; set; } = new();
 }
 
 public class HostDto

@@ -287,6 +287,22 @@ internal class FakeGroupAccessStore : IGroupAccessStore
             _accesses.Add(new GroupAccess { UserGroupId = userGroupId, HostGroupId = hostGroupId });
     }
 
+    public GroupAccessChange ApplyChange(long userGroupId, IReadOnlyCollection<long> grant, IReadOnlyCollection<long> revoke)
+    {
+        var added = new List<long>();
+        var removed = new List<long>();
+        foreach (var id in grant.Distinct())
+        {
+            if (_accesses.Any(a => a.UserGroupId == userGroupId && a.HostGroupId == id)) continue;
+            _accesses.Add(new GroupAccess { UserGroupId = userGroupId, HostGroupId = id });
+            added.Add(id);
+        }
+        foreach (var id in revoke.Distinct())
+            if (_accesses.RemoveAll(a => a.UserGroupId == userGroupId && a.HostGroupId == id) > 0) removed.Add(id);
+        return new GroupAccessChange(added, removed,
+            _accesses.Where(a => a.UserGroupId == userGroupId).Select(a => a.HostGroupId).ToList());
+    }
+
     public void ReplaceAll(IEnumerable<GroupAccess> accesses) => _accesses = accesses.ToList();
 }
 

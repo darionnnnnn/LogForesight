@@ -276,11 +276,11 @@ export const scenarios = [
         const m = await get(a, '/api/admin/access');
         const g = m.userGroups.find(x => x.userGroupName === 'ug-h-wang');
         run.note('h-wang 原本的授權群組數', g.grantedHostGroupIds.length);
-        await a.step('管理員取消 h-wang 的全部授權', 'PUT /api/admin/access（等同授權矩陣全部取消）', async () => { const r = await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { hostGroupIds: [] }); if (r.status !== 200) throw new Error('HTTP ' + r.status); });
+        await a.step('管理員取消 h-wang 的全部授權', 'PUT /api/admin/access（等同授權矩陣全部取消）', async () => { const r = await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { grant: [], revoke: g.grantedHostGroupIds }); if (r.status !== 200) throw new Error('HTTP ' + r.status); });
         await h.step('處理人點第一台主機', '在舊清單上點主機', () => h.inPage(`const l = document.querySelector('main tbody a'); if (!l) throw new Error('清單沒有連結'); l.click(); await new Promise(r => setTimeout(r, 1500));`), `return location.pathname + '｜' + __mu.text('main', 160);`);
         await h.step('處理人重新整理問題查詢', '重新開啟', () => h.goto(`/records?view=host`), `return __mu.text('main', 220);`);
         await h.step('處理人開我的交辦', `開啟 ${h.landing}`, () => h.goto(h.landing), KPI);
-        await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { hostGroupIds: g.grantedHostGroupIds });
+        await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { grant: g.grantedHostGroupIds, revoke: [] });
         run.note('已還原 h-wang 的授權', g.grantedHostGroupIds.length);
     }
 },

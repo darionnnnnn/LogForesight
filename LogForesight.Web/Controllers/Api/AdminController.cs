@@ -321,11 +321,8 @@ public class AdminController : ControllerBase
         ApiResponse<AccessMatrixDto>.Ok(_groups.GetAccessMatrix());
 
     [HttpPut("access/{userGroupId:long}")]
-    public ApiResponse SetAccess(long userGroupId, [FromBody] SetAccessRequest request)
-    {
-        _groups.SetAccess(userGroupId, request.HostGroupIds);
-        return ApiResponse.Ok();
-    }
+    public ApiResponse<AccessChangeResultDto> SetAccess(long userGroupId, [FromBody] SetAccessRequest request) =>
+        ApiResponse<AccessChangeResultDto>.Ok(_groups.ChangeAccess(userGroupId, request.Grant, request.Revoke));
 
     // ── Sentinel ─────────────────────────────────────────────────────────────
 

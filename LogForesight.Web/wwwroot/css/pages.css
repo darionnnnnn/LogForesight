@@ -1297,3 +1297,27 @@ a.lf-calendar__cell:focus-visible {
         display: none !important;
     }
 }
+
+/* ── 群組頁：授權矩陣（groups.js renderMatrix）──────────────────────────────
+   首欄（使用者群組名稱）固定在左緣，欄數多時水平捲動也看得到是哪一列；
+   主機群組欄標題設最大寬度、超出以省略號截斷（完整名稱與台數在 title）。 */
+.lf-table-wrap :where(th, td).lf-matrix-sticky {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+    box-shadow: 6px 0 6px -6px rgba(15, 23, 42, .18);
+}
+
+.lf-table-wrap tbody tr:hover > td.lf-matrix-sticky {
+    background: var(--bs-table-hover-bg, var(--lf-gray-50));
+}
+
+.lf-matrix-col-title {
+    display: block;
+    max-width: 10rem;
+    margin-inline: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

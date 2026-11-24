@@ -433,6 +433,12 @@ public class GroupAdminService
     {
         var accesses = _access.GetAll();
 
+        // 啟用主機數：Active 且未併入其他主機（墓碑不算）；一次掃描全部主機，不逐群組查
+        var hostCountByGroup = new Dictionary<long, int>();
+        foreach (var host in _hosts.GetAll().Where(h => h.Active && h.MergedInto == null))
+            foreach (var gid in host.GroupIds.Distinct())
+                hostCountByGroup[gid] = hostCountByGroup.GetValueOrDefault(gid) + 1;
+
         var userGroups = _userGroups.GetAll()
             .Where(g => g.Role == UserRole.User)
             .OrderBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
@@ -459,37 +465,61 @@ public class GroupAdminService
             {
                 GroupId = g.GroupId,
                 GroupName = g.GroupName,
-                Active = g.Active
+                Active = g.Active,
+                HostCount = hostCountByGroup.GetValueOrDefault(g.GroupId)
             }).ToList()
         };
     }
 
-    public void SetAccess(long userGroupId, IEnumerable<long> hostGroupIds)
+    /// <summary>
+    /// 授權增減：以當下資料庫狀態套用 grant／revoke（在 store 的單次讀改寫內完成），回傳套用後的完整清單。
+    /// 驗證（重疊、不存在的主機群組）任何一項失敗都整筆不寫；兩者皆空只回目前清單、不寫稽核。
+    /// </summary>
+    public AccessChangeResultDto ChangeAccess(long userGroupId, IEnumerable<long>? grant, IEnumerable<long>? revoke)
     {
         var userGroup = _userGroups.Get(userGroupId)
                         ?? throw DomainException.NotFound("找不到這個使用者群組。");
 
         var allHostGroups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
-        var requested = hostGroupIds.Distinct().ToList();
+        var grantIds = (grant ?? Array.Empty<long>()).Distinct().ToList();
+        var revokeIds = (revoke ?? Array.Empty<long>()).Distinct().ToList();
 
-        NameFormat.EnsureAllKnown(requested, allHostGroups, "主機群組");
+        var overlap = grantIds.Intersect(revokeIds).ToList();
+        if (overlap.Count > 0)
+            throw DomainException.Validation(
+                $"同一個主機群組不可同時授權又收回（ID：{string.Join("、", overlap)}）。");
 
-        var before = _access.GetAll()
-            .Where(a => a.UserGroupId == userGroupId)
-            .Select(a => allHostGroups.TryGetValue(a.HostGroupId, out var g) ? g.GroupName : a.HostGroupId.ToString())
-            .OrderBy(n => n)
-            .ToList();
-        var after = requested.Select(id => allHostGroups[id].GroupName).OrderBy(n => n).ToList();
+        NameFormat.EnsureAllKnown(grantIds, allHostGroups, "主機群組");
+        NameFormat.EnsureAllKnown(revokeIds, allHostGroups, "主機群組");
 
-        _access.SetForUserGroup(userGroupId, requested);
+        if (grantIds.Count == 0 && revokeIds.Count == 0)
+            return new AccessChangeResultDto
+            {
+                GrantedHostGroupIds = _access.GetAll()
+                    .Where(a => a.UserGroupId == userGroupId).Select(a => a.HostGroupId).ToList()
+            };
 
-        var isGrant = after.Count >= before.Count;
-        _audit.Record(
-            action: isGrant ? AuditActions.AccessGrant : AuditActions.AccessRevoke,
-            summary: $"變更「{userGroup.GroupName}」可存取的主機群組：" +
-                     $"由「{NameFormat.Join(before)}」改為「{NameFormat.Join(after)}」",
-            targetKind: "group",
-            targetId: userGroupId.ToString(),
-            detail: new { Before = before, After = after });
+        var change = _access.ApplyChange(userGroupId, grantIds, revokeIds);
+
+        string NamesOf(List<long> ids) => NameFormat.Join(
+            ids.Select(id => allHostGroups.TryGetValue(id, out var g) ? g.GroupName : id.ToString()).OrderBy(n => n).ToList());
+
+        if (change.Added.Count > 0)
+            _audit.Record(
+                action: AuditActions.AccessGrant,
+                summary: $"授權「{userGroup.GroupName}」檢視主機群組：{NamesOf(change.Added)}",
+                targetKind: "group",
+                targetId: userGroupId.ToString(),
+                detail: new { Added = change.Added.Select(id => allHostGroups[id].GroupName).OrderBy(n => n).ToList() });
+
+        if (change.Removed.Count > 0)
+            _audit.Record(
+                action: AuditActions.AccessRevoke,
+                summary: $"收回「{userGroup.GroupName}」檢視主機群組：{NamesOf(change.Removed)}",
+                targetKind: "group",
+                targetId: userGroupId.ToString(),
+                detail: new { Removed = change.Removed.Select(id => allHostGroups[id].GroupName).OrderBy(n => n).ToList() });
+
+        return new AccessChangeResultDto { GrantedHostGroupIds = change.Final };
     }
 }
