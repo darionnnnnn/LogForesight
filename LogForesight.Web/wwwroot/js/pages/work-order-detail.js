@@ -23,11 +23,12 @@ import {
     button,
     linkButton,
     icon,
-    candidatesToUserOptions
+    candidatesToUserOptions,
+    createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
 
@@ -45,6 +46,7 @@ const memberReplyBtn = document.getElementById('wo-member-reply');
 const memberNoteEl = document.getElementById('wo-member-note');
 const membersContainer = document.getElementById('wo-members');
 const memberPagerContainer = document.getElementById('wo-member-pager');
+const memberSearchInput = document.getElementById('wo-member-search');
 
 const timelineContainer = document.getElementById('wo-timeline');
 
@@ -54,7 +56,21 @@ const PAGE_SIZE = 50;
 let currentUser = null;
 let currentDetail = null;
 let memberPage = 1;
-const selectedCaseIds = new Set();
+/** 目前已載入的這一頁成員（勾選全選與空狀態判斷看它） */
+let currentMemberItems = [];
+/** 成員表的勾選（caseId → 成員列）：與回覆彈窗的主機面板同一個共用元件，換頁、搜尋都保留，改狀態篩選才清除 */
+const selection = createPageSelection({
+    keyOf: item => item.caseId,
+    isSelectable: item => !item.closedAt,
+    getPageItems: () => currentMemberItems,
+    labels: { row: '選取這台主機', all: '全選本頁可處理主機' },
+    bar: { barId: 'wo-member-selected', countId: 'wo-member-selected', unit: '台' },
+    onSelectAll: () => { renderMemberRows(); },
+    onChange: () => { updateSplitBtn(); updateReplyBtn(); }
+});
+const selectedCaseIds = selection.selected;
+/** 成員表的主機名篩選（完全相符）；空字串＝不篩選 */
+let memberHostName = '';
 /** 目前已載入的成員：caseId → hostId（改派／拆出算人選看不看得到主機用；只含已載入的分頁） */
 const loadedMemberHosts = new Map();
 
@@ -445,9 +461,23 @@ function openMemberReply(caseIds, targetText, hostCount = caseIds.length) {
             : `order:${workOrderId}:all`,
         aiContext: { issueLabel: currentDetail.issueLabel, hostCount },
         reuseIssueKey: currentDetail.issueKey || null,
-        submit: async payload => {
-            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
+        // 對象是全部進行中主機時，彈窗內可切換成「只回覆部分主機」（面板挑的 caseId 以第二個參數傳回）
+        picker: caseIds.length === 0
+            ? { load: ({ page, pageSize, hostNames }) => api.get(orderMembersUrl(workOrderId, { status: 'active', page, pageSize, hostNames }), { silent: true }) }
+            : undefined,
+        partialTarget: caseIds.length > 0,
+        followUp: {
+            remaining: () => remainingActiveCount(workOrderId),
+            submitRest: async payload => {
+                const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
+                toastReplyResult(result, payload);
+                return result;
+            }
+        },
+        submit: async (payload, picked) => {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: picked ?? caseIds, ...payload }, { silent: true });
             toastReplyResult(result, payload);
+            return result;
         },
         onRejected: error => {
             reloadAll();   // guardLoad 自行處理載入失敗，不會擲出
@@ -613,7 +643,31 @@ function updateReplyBtn() {
     memberReplyBtn.disabled = selectedCaseIds.size === 0;
 }
 
+/** 最近一次畫出的成員頁資料：全選本頁後原地重畫用 */
+let lastMemberData = null;
+/** 整單結案後只自動切一次篩選：使用者之後自己選回「進行中」就尊重他的選擇 */
+let memberAutoSwitched = false;
+
+function renderMemberRows() {
+    if (lastMemberData) renderMembers(lastMemberData);
+}
+
+/**
+ * 成員表空狀態依篩選組字：有主機名篩選＝沒有符合條件；「進行中」篩選但單上有已結案成員＝直說已結案幾台
+ * （不再寫「沒有關聯的成員主機」——單上其實有成員，只是都結案了）。
+ */
+function memberEmptyState(status, hostName, counts) {
+    if (hostName) return { title: '沒有符合條件的主機', hint: '請確認主機名完整相符，或清除主機名篩選。' };
+    if (status === 'active' && (counts?.closed ?? 0) > 0) {
+        return { title: `沒有進行中的主機（已結案 ${counts.closed} 台）`, hint: '把狀態篩選改為「已結案」或「全部」可查看這些主機。' };
+    }
+    if (status === 'active') return { title: '沒有進行中的主機', hint: '這張單目前沒有進行中的成員主機。' };
+    return { title: '沒有符合條件的主機', hint: '請調整狀態篩選。' };
+}
+
 function renderMembers(data) {
+    lastMemberData = data;
+    currentMemberItems = data.items || [];
     loadedMemberHosts.clear();
     for (const m of data.items || []) {
         if (m.hostId != null) loadedMemberHosts.set(m.caseId, m.hostId);
@@ -636,56 +690,15 @@ function renderMembers(data) {
             title: '',
             className: 'text-center text-nowrap',
             renderHeader: () => {
-                const chk = document.createElement('input');
-                chk.type = 'checkbox';
-                chk.className = 'form-check-input';
-                let chkTitle = '全選可處理主機';
-                if (canReply && !canSplit) chkTitle = '全選可回覆主機';
-                else if (canSplit && !canReply) chkTitle = '全選可拆出主機';
-                chk.title = chkTitle;
-                const selectableItems = (data.items || []).filter(item => !item.closedAt);
-                chk.checked = selectableItems.length > 0 && selectableItems.every(item => selectedCaseIds.has(item.caseId));
-                chk.disabled = selectableItems.length === 0;
-                chk.addEventListener('change', () => {
-                    for (const item of selectableItems) {
-                        if (chk.checked) {
-                            selectedCaseIds.add(item.caseId);
-                        } else {
-                            selectedCaseIds.delete(item.caseId);
-                        }
-                    }
-                    const rowCheckboxes = membersContainer.querySelectorAll('.wo-member-select');
-                    for (const rc of rowCheckboxes) {
-                        rc.checked = chk.checked;
-                    }
-                    updateSplitBtn();
-                    updateReplyBtn();
-                });
+                const chk = selection.selectAllHeaderCheckbox();
+                chk.title = canReply && !canSplit ? '全選本頁可回覆主機' : (canSplit && !canReply ? '全選本頁可拆出主機' : '全選本頁可處理主機');
+                chk.disabled = currentMemberItems.filter(item => !item.closedAt).length === 0;
                 return chk;
             },
             render: item => {
-                if (item.closedAt) {
-                    return document.createTextNode('');
-                }
-                const chk = document.createElement('input');
-                chk.type = 'checkbox';
-                chk.className = 'form-check-input wo-member-select';
-                chk.checked = selectedCaseIds.has(item.caseId);
-                chk.addEventListener('change', () => {
-                    if (chk.checked) {
-                        selectedCaseIds.add(item.caseId);
-                    } else {
-                        selectedCaseIds.delete(item.caseId);
-                    }
-                    updateSplitBtn();
-                    updateReplyBtn();
-                    const selectAll = membersContainer.querySelector('thead input[type="checkbox"]');
-                    if (selectAll) {
-                        const selectableItems = (data.items || []).filter(i => !i.closedAt);
-                        selectAll.checked = selectableItems.length > 0 && selectableItems.every(i => selectedCaseIds.has(i.caseId));
-                    }
-                });
-                return chk;
+                const cell = selection.rowCheckboxCell(item);
+                if (cell.classList) cell.classList.add('wo-member-select');
+                return cell;
             }
         });
     }
@@ -778,7 +791,7 @@ function renderMembers(data) {
     renderTable(membersContainer, {
         columns,
         rows: data.items,
-        empty: { title: '沒有符合條件的成員', hint: '此交辦單目前沒有關聯的成員主機。' }
+        empty: memberEmptyState(memberStatusSelect.value, memberHostName, currentDetail?.counts)
     });
 
     renderPagination(memberPagerContainer, {
@@ -786,10 +799,7 @@ function renderMembers(data) {
         totalPages: Math.ceil(data.total / data.pageSize),
         pageSize: data.pageSize,
         onPage: newPage => {
-            memberPage = newPage;
-            selectedCaseIds.clear();
-            updateSplitBtn();
-            updateReplyBtn();
+            memberPage = newPage;   // 勾選跨頁保留
             guardLoad(membersContainer, loadMembersOnly);
         }
     });
@@ -865,9 +875,14 @@ function renderTimeline(timeline) {
 
 memberStatusSelect.addEventListener('change', () => {
     memberPage = 1;
-    selectedCaseIds.clear();
-    updateSplitBtn();
-    updateReplyBtn();
+    selection.clear();   // 勾選是對「這個狀態篩選下的清單」做的
+    guardLoad(membersContainer, loadMembersOnly);
+});
+
+/** 主機名搜尋（完全相符、不分大小寫）：回第一頁，勾選保留 */
+memberSearchInput.addEventListener('change', () => {
+    memberHostName = memberSearchInput.value.trim();
+    memberPage = 1;
     guardLoad(membersContainer, loadMembersOnly);
 });
 
@@ -877,9 +892,9 @@ memberSplitBtn.addEventListener('click', () => {
         title: '拆出選取的主機',
         submitText: '確定拆出',
         currentHandlerId: currentDetail?.handlerId,
-        hostIds: [...new Set([...selectedCaseIds].map(id => loadedMemberHosts.get(id)).filter(id => id != null))],
+        hostIds: [...new Set([...selectedCaseIds.values()].map(item => item.hostId).filter(id => id != null))],
         onSubmit: async (handlerId, closeModal) => {
-            const caseIds = Array.from(selectedCaseIds);
+            const caseIds = [...selectedCaseIds.keys()];
             const res = await api.post(`/api/work-orders/${workOrderId}/split`, { caseIds, handlerId });
             closeModal();
             toast(`已拆出 ${res.movedCases} 台到單號 #${res.targetWorkOrderId}${res.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : ''}`, 'success');
@@ -888,9 +903,7 @@ memberSplitBtn.addEventListener('click', () => {
                     toast(`${item.handlerName} 沒有處理權限（${item.hostCount} 台）`, 'warning');
                 }
             }
-            selectedCaseIds.clear();
-            updateSplitBtn();
-            updateReplyBtn();
+            selection.clear();
             await reloadAll();
         }
     });
@@ -898,7 +911,7 @@ memberSplitBtn.addEventListener('click', () => {
 
 memberReplyBtn.addEventListener('click', () => {
     if (selectedCaseIds.size === 0) return;
-    const caseIds = Array.from(selectedCaseIds);
+    const caseIds = [...selectedCaseIds.keys()];
     openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`);
 });
 
@@ -969,10 +982,18 @@ memberCsvBtn.addEventListener('click', async () => {
 /** 成員清單的請求序號：連點分頁或連續換篩選時，慢回來的舊請求不可蓋掉新結果 */
 const membersGuard = createSeqGuard();
 
+/** 成員表目前這一頁的請求網址（狀態、頁碼、主機名篩選） */
+function memberListUrl() {
+    return orderMembersUrl(workOrderId, {
+        status: memberStatusSelect.value, page: memberPage, pageSize: PAGE_SIZE,
+        hostNames: memberHostName ? [memberHostName] : null
+    });
+}
+
 async function loadMembersOnly() {
     const seq = membersGuard.next();
     renderLoading(membersContainer, 5);
-    const members = await api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`);
+    const members = await api.get(memberListUrl());
     if (!membersGuard.isCurrent(seq)) return;
     renderMembers(members);
 }
@@ -1024,15 +1045,22 @@ function markSeenOnce(detail) {
 
 async function loadAll() {
     try {
-        const [user, detail, members, timeline] = await Promise.all([
+        let [user, detail, members, timeline] = await Promise.all([
             getCurrentUser(),
             api.get(`/api/work-orders/${workOrderId}`, { silent: true }),
-            api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`, { silent: true }),
+            api.get(memberListUrl(), { silent: true }),
             api.get(`/api/work-orders/${workOrderId}/timeline`, { silent: true })
         ]);
 
         currentUser = user;
         currentDetail = detail;
+        // 整單結案後「進行中」篩選只會是空的：自動切到「全部」，讓人看到已結案的成員
+        if (detail.closedAt && memberStatusSelect.value === 'active' && !memberAutoSwitched) {
+            memberAutoSwitched = true;
+            memberStatusSelect.value = 'all';
+            memberPage = 1;
+            members = await api.get(memberListUrl(), { silent: true });
+        }
         markSeenOnce(detail);
 
         renderHeader(detail);
@@ -1072,9 +1100,7 @@ async function loadAll() {
 const reloadHooks = [];
 
 async function reloadAll() {
-    selectedCaseIds.clear();
-    updateSplitBtn();
-    updateReplyBtn();
+    selection.clear();
     await guardedLoadAll();
     for (const hook of reloadHooks) hook();
 }

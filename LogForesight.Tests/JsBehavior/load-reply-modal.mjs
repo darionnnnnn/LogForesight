@@ -17,6 +17,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 export const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 export const read = (...p) => fs.readFileSync(path.join(jsRoot, ...p), 'utf8').replaceAll('\r\n', '\n').replace(/^﻿+/, '');
 export const catalog = await import(pathToFileURL(path.join(jsRoot, 'core', 'handling-statuses.js')).href);
+const { createSeqGuard } = await import(pathToFileURL(path.join(jsRoot, 'core', 'async-guards.js')).href);
 
 /** 切出一個函式本體（`export function` 的 export 一併去掉） */
 export function extract(source, declaration) {
@@ -64,13 +65,14 @@ export function loadReplyModule({ apiGet = async () => ({}), confirmResult = tru
         }
         return el;
     };
-    const { statusNote } = loadElements(dom);
+    const { statusNote, roleText } = loadElements(dom);
     const button = loadButton(dom);
 
     const uiSource = read('core', 'ui.js');
     const formatSource = read('core', 'format.js');
     const renderChips = new Function(`${extract(uiSource, 'export function renderChips(')}\nreturn renderChips;`)();
     const withBusy = new Function(`${extract(uiSource, 'export function withBusy(')}\nreturn withBusy;`)();
+    const createPageSelection = new Function(`${extract(uiSource, 'export function createPageSelection(')}\nreturn createPageSelection;`)();
     const formatFns = new Function(`${extract(formatSource, 'export function toLocalDateString(')}
 ${extract(formatSource, 'export function todayLocal(')}
 ${extract(formatSource, 'export function dateAfterDays(')}
@@ -79,7 +81,51 @@ return { toLocalDateString, todayLocal, dateAfterDays };`)();
     const env = {
         dom, toasts: [], posts: [], gets: [], confirms: 0, copied: [], drafts: {}, shown: [], closed: 0, fieldErrors: []
     };
+    // 彈窗尚未接上文件：依 id 在已開的彈窗本體裡找（createPageSelection 的選取列靠 getElementById 定位）
+    const baseGetById = document.getElementById;
+    document.getElementById = id => env.shown.map(entry => byId(entry.body, id)).find(Boolean) ?? baseGetById(id);
+
+    // 主機面板（reply-host-picker.js）也用 production 版載入
+    const pickerSource = read('pages', 'reply-host-picker.js');
+    const pickerImports = [...pickerSource.matchAll(/^import \{([^}]*)\} from '[^']+';$/gm)]
+        .flatMap(m => m[1].split(',').map(x => x.trim().split(/\s+as\s+/).pop()).filter(Boolean));
+    // 共用表格與分頁列的最小替身（本測試只看面板的列與換頁行為；真版在 core/ui.js）
+    const renderTable = (container, { columns, rows, empty }) => {
+        const table = dom.newElement('table');
+        const headRow = dom.newElement('tr');
+        for (const column of columns) {
+            const th = dom.newElement('th');
+            const head = column.renderHeader ? column.renderHeader() : column.title;
+            if (head && typeof head === 'object') th.appendChild(head); else th.textContent = head || '';
+            headRow.appendChild(th);
+        }
+        const body = dom.newElement('tbody');
+        for (const row of rows) {
+            const tr = dom.newElement('tr');
+            for (const column of columns) {
+                const td = dom.newElement('td');
+                const content = column.render(row);
+                if (content && typeof content === 'object') td.appendChild(content); else td.textContent = content || '';
+                tr.appendChild(td);
+            }
+            body.appendChild(tr);
+        }
+        table.append(headRow, body);
+        if (rows.length === 0) { const e = dom.newElement('div'); e.textContent = empty.title; container.replaceChildren(e); } else container.replaceChildren(table);
+    };
+    const renderPagination = (container, { page, totalPages, onPage }) => {
+        if (!totalPages || totalPages <= 1) { container.replaceChildren(); return; }
+        const prev = button('上一頁', { onClick: () => onPage(page - 1) });
+        const next = button('下一頁', { onClick: () => onPage(page + 1) });
+        container.replaceChildren(prev, next);
+    };
+    const PICKER_STUBS = { createPageSelection, renderTable, renderPagination, button, createSeqGuard, roleText, statusBadgeMeta: catalog.statusBadgeMeta };
+    for (const name of pickerImports) assert(name in PICKER_STUBS, `reply-host-picker.js 匯入了 ${name}，load-reply-modal.mjs 沒有對應替身`);
+    const pickerModule = new Function(...Object.keys(PICKER_STUBS),
+        `${pickerSource.replace(/^import .*;$/gm, '').replace(/^export /gm, '')}\nreturn { createHostPicker, parseHostNames };`)(...Object.values(PICKER_STUBS));
+
     const STUBS = {
+        createHostPicker: pickerModule.createHostPicker,
         api: {
             get: async url => { env.gets.push(url); return apiGet(url); },
             post: async (url, body, options) => { env.posts.push({ url, body, options }); return {}; }
@@ -124,9 +170,9 @@ return { toLocalDateString, todayLocal, dateAfterDays };`)();
         .flatMap(m => m[1].split(',').map(x => x.trim().split(/\s+as\s+/).pop()).filter(Boolean));
     for (const name of imported) assert(name in STUBS, `issue-status-reply.js 匯入了 ${name}，load-reply-modal.mjs 沒有對應替身`);
     source = source.replace(IMPORT_LINES, '').replace(/^export /gm, '');
-    const exported = ['openWorkOrderReplyModal', 'toastReplyResult', 'toastReplyManyResult', 'replyOutcomeText', 'describeReplyRejection', 'workOrdersDraftKey', 'noFixConsequenceText'];
+    const exported = ['orderMembersUrl', 'remainingActiveCount', 'openWorkOrderReplyModal', 'toastReplyResult', 'toastReplyManyResult', 'replyOutcomeText', 'describeReplyRejection', 'workOrdersDraftKey', 'noFixConsequenceText'];
     const module = new Function(...Object.keys(STUBS), `${source}\nreturn { ${exported.join(', ')} };`)(...Object.values(STUBS));
-    return { env, ...module, formatFns };
+    return { env, ...module, formatFns, ...pickerModule };
 }
 
 /** 開一個回覆彈窗並回傳常用節點與操作；status 以結論按鈕的 data-status 找 */
@@ -141,7 +187,6 @@ export function openReply(loaded, options = {}) {
     const entry = env.shown[env.shown.length - 1];
     const body = entry.body;
     const form = body.children[0];
-    const chips = all(body).filter(n => n.classList?.contains('lf-chip'));
     const buttons = () => all(body).filter(n => n.tagName === 'BUTTON');
     return {
         entry, body, form, submits,
@@ -152,11 +197,19 @@ export function openReply(loaded, options = {}) {
         required: byId(body, 'wo-reply-status-required'),
         rejected: byId(body, 'wo-reply-rejected'),
         copyBtn: byId(body, 'wo-reply-copy-note'),
+        toggle: byId(body, 'wo-reply-pick-toggle'),
+        panel: byId(body, 'wo-reply-picker'),
+        search: byId(body, 'wo-reply-pick-search'),
+        applyBtn: byId(body, 'wo-reply-pick-apply'),
+        missing: byId(body, 'wo-reply-pick-missing'),
+        statusLabel: byId(body, 'wo-reply-status-label'),
+        hintText: () => textOf(body.children[0].children[0]),
         submitBtn: buttons().find(n => n.type === 'submit'),
-        chips,
-        chip: status => chips.find(n => n.dataset.status === status),
+        // 結論按鈕在續問（「其餘 N 台」）時會重畫，每次都重新找
+        get chips() { return all(body).filter(n => n.classList?.contains('lf-chip')); },
+        chip(status) { return this.chips.find(n => n.dataset.status === status); },
         pick(status) { this.chip(status).click(); },
-        active: () => chips.filter(n => n.classList.contains('active')).map(n => n.dataset.status),
+        active() { return this.chips.filter(n => n.classList.contains('active')).map(n => n.dataset.status); },
         write(text) { this.note.value = text; this.note.dispatch('input'); },
         send() { return fire(form, 'submit'); },
         buttonByText: text => buttons().find(n => n.textContent.includes(text))

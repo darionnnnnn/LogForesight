@@ -456,6 +456,94 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(1, active.HiddenMemberCount);
     }
 
+    // ── 成員主機名篩選（E-2）────────────────────────────────────────────────
+
+    private (long Id, WorkOrderQueryService Svc) HostNameFilterFixture()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "SRV-A", IssueHandlingStatuses.InProgress);
+        AddMember(id, "SRV-B", IssueHandlingStatuses.InProgress);
+        AddMember(id, "SRV-C", IssueHandlingStatuses.Resolved, closed: D2);
+        return (id, Service(As(_alice.UserId, Capability.Handle)));
+    }
+
+    [Fact]
+    public void 成員主機名篩選_命中_不分大小寫_多個名稱取聯集()
+    {
+        var (id, svc) = HostNameFilterFixture();
+
+        Assert.Equal(new[] { "SRV-B" }, svc.Members(id, "all", 1, 50, new[] { "srv-b" }).Items.Select(i => i.HostName));
+        var many = svc.Members(id, "all", 1, 50, new[] { "SRV-A", " srv-c ", "SRV-A" });
+        Assert.Equal(new[] { "SRV-A", "SRV-C" }, many.Items.Select(i => i.HostName));
+        Assert.Equal(2, many.Total);
+        // 與狀態篩選同時成立：C 已結案，「進行中」就只剩 A
+        Assert.Equal(new[] { "SRV-A" }, svc.Members(id, "active", 1, 50, new[] { "SRV-A", "SRV-C" }).Items.Select(i => i.HostName));
+    }
+
+    [Fact]
+    public void 成員主機名篩選_找不到回空_部分相符不算_空白與空集合等於不篩選()
+    {
+        var (id, svc) = HostNameFilterFixture();
+
+        var none = svc.Members(id, "all", 1, 50, new[] { "NOPE" });
+        Assert.Empty(none.Items);
+        Assert.Equal(0, none.Total);
+        Assert.Empty(svc.Members(id, "all", 1, 50, new[] { "SRV" }).Items);   // 完全相符，不是包含
+        Assert.Equal(3, svc.Members(id, "all", 1, 50, new[] { "  ", "" }).Total);
+        Assert.Equal(3, svc.Members(id, "all", 1, 50, Array.Empty<string>()).Total);
+        Assert.Equal(3, svc.Members(id, "all", 1, 50).Total);
+    }
+
+    [Fact]
+    public void 成員主機名篩選_五百個可以_五百零一個回驗證錯誤()
+    {
+        var (id, svc) = HostNameFilterFixture();
+        var names500 = Enumerable.Range(0, 500).Select(i => $"H{i}").ToList();
+        Assert.Empty(svc.Members(id, "all", 1, 50, names500).Items);
+
+        var ex = Assert.Throws<DomainException>(() => svc.Members(id, "all", 1, 50, names500.Append("H500").ToList()));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        // 重複與空白不計入個數：501 個但去空白後只有 500 個仍可通過
+        Assert.Empty(svc.Members(id, "all", 1, 50, names500.Append("  ").ToList()).Items);
+    }
+
+    [Fact]
+    public void Authorization_成員主機名篩選_受限使用者的可見範圍不變_名稱不能擴大範圍()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "H1", IssueHandlingStatuses.InProgress);
+        AddMember(id, "H2", IssueHandlingStatuses.InProgress);
+        AddMember(id, "H3", IssueHandlingStatuses.InProgress);
+        var visible = _hosts.FindByName("H2")!.HostId;
+        var restricted = Service(As(_stranger.UserId, Capability.Assign), visible);
+
+        // 名稱指到看不見的 H1：什麼都不回，隱藏數仍以「這個名稱篩選」的全貌計（H1 這一台）
+        var hiddenOnly = restricted.Members(id, "all", 1, 50, new[] { "H1" });
+        Assert.Empty(hiddenOnly.Items);
+        Assert.Equal(1, hiddenOnly.HiddenMemberCount);
+        // 名稱含可見與不可見：只回可見的那台
+        var mixed = restricted.Members(id, "all", 1, 50, new[] { "H1", "H2" });
+        Assert.Equal(new[] { "H2" }, mixed.Items.Select(i => i.HostName));
+        Assert.Equal(1, mixed.HiddenMemberCount);
+        // 不帶名稱：與原行為一致
+        var plain = restricted.Members(id, "all", 1, 50);
+        Assert.Equal(new[] { "H2" }, plain.Items.Select(i => i.HostName));
+        Assert.Equal(2, plain.HiddenMemberCount);
+    }
+
+    [Fact]
+    public void Authorization_成員主機名篩選_只看得到自己的單_別人的單仍403()
+    {
+        var mine = AddOrder(_alice.UserId);
+        var others = AddOrder(_bob.UserId);
+        AddMember(mine, "SRV-A", IssueHandlingStatuses.InProgress);
+        AddMember(others, "SRV-A", IssueHandlingStatuses.InProgress);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        Assert.Single(svc.Members(mine, "all", 1, 50, new[] { "srv-a" }).Items);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.Members(others, "all", 1, 50, new[] { "SRV-A" })).Code);
+    }
+
     [Fact]
     public void 成員_ViewAll與處理人看全部_隱藏數為0()
     {

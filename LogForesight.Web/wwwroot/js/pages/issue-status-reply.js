@@ -12,6 +12,7 @@ import { api, getCurrentUser } from '../core/api.js';
 import { setFieldError, clearFieldError } from '../core/field-errors.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck, renderChips, button as makeButton } from '../core/ui.js';
 import { copyText } from '../core/clipboard.js';
+import { createHostPicker } from './reply-host-picker.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, isNoFixClosure, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { statusNote } from '../core/elements.js';
@@ -61,8 +62,16 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false }
  * @param {boolean} [options.multiTarget] 這次涵蓋多台主機或多張單：不處理類的後果說明改用複數說法
  * @param {string} [options.initialStatus] 結論按鈕的初始選取（「下一張」沿用上一張的結論）；不傳＝不預選，必須自己選
  * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
+ * @param {{load: (params: {page: number, pageSize: number, hostNames: string[]|null}) => Promise<object>}} [options.picker]
+ *        有值時對象是「全部進行中主機」的彈窗多一個「只回覆部分主機」切換：就地面板列出進行中成員讓人勾選或貼上主機名；
+ *        勾選後送出時 submit 的第二個參數是勾選的 caseId 陣列（沒切換時為 undefined，呼叫端用預設對象）
+ * @param {boolean} [options.partialTarget] 呼叫端傳進來的對象本身就是部分主機（例如成員表勾選的幾台）
+ * @param {{remaining: (result: any) => Promise<number>, submitRest: (payload: object) => Promise<any>}} [options.followUp]
+ *        部分主機以結案類結論回覆成功、單還有進行中主機時，彈窗不關閉，改問「其餘 N 台要一起設為…」：
+ *        remaining 取剩下的進行中台數，submitRest 以 caseIds 為空（＝全部進行中，也就是剩下的）送出；
+ *        第一次是非結案類（處理中、觀察中、上報）時不提示、直接關閉。需要 submit 回傳 API 回應
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp }) {
     let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const body = document.createElement('div');
     const form = document.createElement('form');
@@ -70,8 +79,33 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
-    hint.textContent = `套用對象：${targetText}；每台主機的交辦會連同它涵蓋的日期一起更新。`;
     form.appendChild(hint);
+
+    // 部分主機：切換成就地面板（不另開 modal）；rest＝部分回覆結案後問「其餘 N 台」
+    let picking = false;
+    let mode = 'whole';
+    let restCount = 0;
+    const picker = pickerOptions ? createHostPicker({ load: pickerOptions.load, onChange: () => { syncHint(); syncSubmitState(); } }) : null;
+    const pickToggle = makeButton('只回覆部分主機', { onClick: () => togglePicking() });
+    pickToggle.id = 'wo-reply-pick-toggle';
+    pickToggle.classList.add('mb-3', picker ? 'd-inline-block' : 'd-none');
+    form.appendChild(pickToggle);
+    if (picker) form.appendChild(picker.element);
+    function syncHint() {
+        const target = mode === 'rest'
+            ? `其餘 ${restCount} 台進行中主機`
+            : (picking ? `選取的 ${picker.selected.size} 台主機` : targetText);
+        hint.textContent = `套用對象：${target}；每台主機的交辦會連同它涵蓋的日期一起更新。`;
+    }
+    syncHint();
+    function togglePicking() {
+        picking = !picking;
+        picker.element.classList.toggle('d-none', !picking);
+        pickToggle.textContent = picking ? '改為回覆全部進行中主機' : '只回覆部分主機';
+        if (picking) picker.open();
+        syncHint();
+        syncSubmitState();
+    }
 
     // 被拒訊息：常駐到使用者按「關閉訊息」為止（不是自動消失的 toast），草稿與表單內容保留
     const rejectBox = document.createElement('div');
@@ -217,9 +251,12 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     }
 
     function syncSubmitState() {
-        const missing = !selectedStatus;
+        const noStatus = !selectedStatus;
+        const noHosts = !noStatus && picking && picker.selected.size === 0;
+        const missing = noStatus || noHosts;
         submitBtn.disabled = missing;
         if (nextBtn) nextBtn.disabled = missing;
+        statusRequiredHint.textContent = noHosts ? '請勾選要回覆的主機' : '請選擇這次的結論';
         statusRequiredHint.classList.toggle('d-none', !missing);
         submitBtn.textContent = selectedStatus === 'in_progress' ? '更新說明（不結案）' : '送出';
     }
@@ -232,16 +269,19 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         syncSubmitState();
     }
 
-    renderChips(statusGroup, {
-        items: STATUS_OPTIONS.map(option => ({ value: option.value, label: option.shortLabel, title: option.label, ariaLabel: option.label })),
-        attr: 'status',
-        activeValues: [selectedStatus],
-        multi: false,
-        onToggle: value => {
-            selectedStatus = value;
-            onStatusChanged();
-        }
-    });
+    function renderStatusChips() {
+        renderChips(statusGroup, {
+            items: STATUS_OPTIONS.map(option => ({ value: option.value, label: option.shortLabel, title: option.label, ariaLabel: option.label })),
+            attr: 'status',
+            activeValues: [selectedStatus],
+            multi: false,
+            onToggle: value => {
+                selectedStatus = value;
+                onStatusChanged();
+            }
+        });
+    }
+    renderStatusChips();
     onStatusChanged();
 
     // 方向鍵在結論按鈕群組內切換選取（左／上＝前一個、右／下＝後一個，頭尾相接）
@@ -313,6 +353,25 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         if (typeof status === 'number') toast(error.message || '送出失敗，請再試一次', 'danger');
     }
 
+    /** 部分回覆結案後的第二步：同一個彈窗改問「其餘 N 台要一起設為…」，結論重選、說明清空，以 caseIds 為空送出 */
+    function enterRestMode(count) {
+        mode = 'rest';
+        restCount = count;
+        picking = false;
+        picker?.element.classList.add('d-none');
+        pickToggle.classList.add('d-none');
+        pickToggle.classList.remove('d-inline-block');
+        rejectBox.classList.add('d-none');
+        rejectBox.replaceChildren();
+        statusLabel.textContent = `其餘 ${count} 台要一起設為…`;
+        selectedStatus = null;
+        renderStatusChips();
+        noteEditor.setValue('');
+        noteEditor.clearDraft();
+        syncHint();
+        onStatusChanged();
+    }
+
     /** 驗證→送出→關閉；goNext＝成功後接著開下一張（失敗或必填沒過都停在原彈窗） */
     async function send(button, goNext) {
         if (!selectedStatus) return;
@@ -350,8 +409,13 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         const restore = withBusy(button, '送出中');
         submitBtn.disabled = true;
         if (nextBtn) nextBtn.disabled = true;
+        // 部分主機回覆（勾選或呼叫端指定）且結論是結案類：成功後單若還有進行中主機，改問「其餘 N 台」
+        const partial = mode === 'whole' && (picking || partialTarget);
+        let result;
         try {
-            await submit(payload);
+            result = mode === 'rest'
+                ? await followUp.submitRest(payload)
+                : await submit(payload, picking ? picker.selectedIds() : undefined);
         } catch (error) {
             restore();
             syncSubmitState();
@@ -360,6 +424,16 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         }
 
         noteEditor.clearDraft();
+        if (partial && !goNext && followUp && statusMeta(payload.status)?.closed && !result?.workOrderClosed) {
+            let remaining = 0;
+            try { remaining = await followUp.remaining(result); } catch { remaining = 0; }
+            if (remaining > 0) {
+                restore();
+                onApplied?.();   // 剛回覆的那幾台先更新到畫面；彈窗留著等「其餘」的決定
+                enterRestMode(remaining);
+                return;
+            }
+        }
         closeConfirmed = true;
         // 下一張等這個彈窗完全關閉才開：兩個 modal 的淡出／淡入交疊時，前一個收尾會拿掉頁面的捲動鎖定
         if (goNext) modalEl.addEventListener('hidden.bs.modal', () => onNext(payload), { once: true });
@@ -385,6 +459,22 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         closeConfirmed = true;
         modal.close();
     });
+}
+
+/**
+ * 交辦單成員端點的網址（交辦單頁、我的交辦展開列、回覆彈窗的主機面板共用）。
+ * hostNames＝主機名篩選（完全相符、不分大小寫），以重複的 hostName 參數送出；null／空陣列＝不篩選。
+ */
+export function orderMembersUrl(workOrderId, { status = 'all', page = 1, pageSize = 50, hostNames = null } = {}) {
+    const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
+    for (const name of hostNames ?? []) params.append('hostName', name);
+    return `/api/work-orders/${workOrderId}/members?${params}`;
+}
+
+/** 這張單目前還有幾台進行中主機（含停用主機上的）：部分回覆結案後決定要不要問「其餘 N 台」 */
+export async function remainingActiveCount(workOrderId) {
+    const detail = await api.get(`/api/work-orders/${workOrderId}`, { silent: true });
+    return replyableCount(detail?.counts);
 }
 
 /**

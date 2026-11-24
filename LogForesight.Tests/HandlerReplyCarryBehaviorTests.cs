@@ -28,6 +28,7 @@ public class HandlerReplyCarryBehaviorTests
     [InlineData("oneActivePlusOneDisabledOpensWholeOrderModal")]
     [InlineData("rowReplyOpensModalForOneManyAndZero")]
     [InlineData("rejectedReplyRefreshesListAndNamesHandler")]
+    [InlineData("wholeOrderModalOffersPartialPickAndRest")]
     public void 列上回覆入口與下一張carry行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

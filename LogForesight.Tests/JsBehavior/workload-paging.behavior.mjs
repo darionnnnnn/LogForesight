@@ -64,7 +64,7 @@ function loadHandlerDetail(respond) {
         renderDays: days => { state.daysEl = `TABLE ${days[0]}`; },
         renderPagination() { }, pagerFor: () => ({}),
         createSeqGuard: seqGuard,
-        casesEl, daysEl, userId: 5, includeResolvedDays: false, advancedLoaded: false,
+        casesEl, daysEl, userId: 5, includeResolvedDays: false, advancedHostName: '', advancedLoaded: false,
         console: { error() { } }, WORKLOAD_PAGE_SIZE: 20,
         api: { get: async url => respond(url) }
     };

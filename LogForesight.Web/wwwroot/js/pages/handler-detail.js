@@ -27,11 +27,12 @@ import {
     savePageSize,
     toast,
     button,
-    linkButton
+    linkButton,
+    createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { createSeqGuard } from '../core/async-guards.js';
@@ -50,6 +51,7 @@ const sortSelect = document.getElementById('handler-wo-sort');
 const pausedCheckbox = document.getElementById('handler-wo-paused');
 const replyOrdersBtn = document.getElementById('handler-wo-reply');
 const selectedCountEl = document.getElementById('handler-wo-selected');
+const hostSearchInput = document.getElementById('handler-host-search');
 const advancedEl = document.getElementById('handler-advanced');
 const advancedBodyEl = document.getElementById('handler-advanced-body');
 
@@ -69,6 +71,7 @@ const MEMBER_STATUS_OPTIONS = [
 const MEMBER_PAGE_SIZE = 50;
 
 let includeResolvedDays = false;
+let advancedHostName = '';          // 進階檢視的主機名搜尋（完全相符）；空字串＝不篩選
 let casesPage = 1;                // 進階檢視兩張表各自的伺服器分頁頁碼，互不影響
 let daysPage = 1;
 let currentUser = null;
@@ -676,6 +679,19 @@ async function replyOrder(row, carry) {
     openWholeOrderReply(row, count, carry);
 }
 
+/** 部分回覆結案後續問「其餘 N 台」用：取剩餘台數、以 caseIds 為空送出（onClosed＝這次寫入使整張單結案） */
+function replyFollowUp(workOrderId, onClosed) {
+    return {
+        remaining: () => remainingActiveCount(workOrderId),
+        submitRest: async payload => {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
+            toastReplyResult(result, payload);
+            if (result.workOrderClosed) onClosed();
+            return result;
+        }
+    };
+}
+
 /** 整張單回覆：對象＝全部進行中主機，caseIds 為空由伺服器取全部進行中 */
 function openWholeOrderReply(row, count, carry) {
     let closedNow = false;
@@ -687,10 +703,14 @@ function openWholeOrderReply(row, count, carry) {
         aiContext: { issueLabel: row.issueLabel, hostCount: count },
         initialStatus: carry ? carry.status : undefined,
         previousNote: carry ? carry.note : null,
-        submit: async payload => {
-            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
+        // 彈窗內可切換成「只回覆部分主機」；部分回覆結案後單若還有進行中主機，續問「其餘 N 台」
+        picker: { load: ({ page, pageSize, hostNames }) => api.get(orderMembersUrl(row.workOrderId, { status: 'active', page, pageSize, hostNames }), { silent: true }) },
+        followUp: replyFollowUp(row.workOrderId, () => { closedNow = true; }),
+        submit: async (payload, picked) => {
+            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: picked ?? [], ...payload }, { silent: true });
             toastReplyResult(result, payload);
             closedNow = result.workOrderClosed;
+            return result;
         },
         onRejected: error => rejectedReply(error, row.workOrderId),
         onApplied: () => {
@@ -874,6 +894,21 @@ function buildMemberPanel(row, cell) {
     memberStatus.id = statusLabel.htmlFor;
     bar.append(statusLabel, memberStatus);
 
+    const searchLabel = document.createElement('label');
+    searchLabel.className = 'lf-text-label text-nowrap';
+    searchLabel.textContent = '主機名';
+    searchLabel.htmlFor = `handler-wo-member-search-${row.workOrderId}`;
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.id = searchLabel.htmlFor;
+    searchInput.className = 'form-control form-control-sm w-auto';
+    searchInput.placeholder = '輸入完整主機名後按 Enter';
+    searchInput.autocomplete = 'off';
+    const selectedCountEl = document.createElement('span');
+    selectedCountEl.id = `handler-wo-member-selected-${row.workOrderId}`;
+    selectedCountEl.className = 'lf-text-meta text-nowrap d-none';
+    bar.append(searchLabel, searchInput, selectedCountEl);
+
     const replyHostsBtn = button('回覆選取的主機', { opens: 'dialog' });
     replyHostsBtn.classList.add('ms-auto');
     replyHostsBtn.disabled = true;
@@ -890,9 +925,22 @@ function buildMemberPanel(row, cell) {
     box.append(bar, tableBox, pagerBox, noteEl);
     cell.replaceChildren(box);
 
-    // 勾選的主機：caseId → 問題簽章（全部相同時回覆彈窗才能「沿用此問題上次的說明」）
-    const selectedCases = new Map();
     let memberPage = 1;
+    let memberHostName = '';
+    let currentItems = [];
+    let lastData = null;
+    // 勾選的主機（caseId → 成員列）：共用元件，換頁、搜尋都保留，改狀態篩選才清除；
+    // 成員列帶問題簽章（全部相同時回覆彈窗才能「沿用此問題上次的說明」）
+    const selection = createPageSelection({
+        keyOf: item => item.caseId,
+        isSelectable: item => !item.closedAt,
+        getPageItems: () => currentItems,
+        labels: { row: '選取這台主機', all: '全選本頁主機' },
+        bar: { barId: selectedCountEl.id, countId: selectedCountEl.id, unit: '台' },
+        onSelectAll: () => { if (lastData) renderMembers(lastData); },
+        onChange: () => updateReplyHostsBtn()
+    });
+    const selectedCases = selection.selected;
 
     const updateReplyHostsBtn = () => {
         replyHostsBtn.disabled = selectedCases.size === 0;
@@ -900,20 +948,17 @@ function buildMemberPanel(row, cell) {
 
     async function loadMembers() {
         renderLoading(tableBox, 3);
-        const params = new URLSearchParams({
-            status: memberStatus.value,
-            page: String(memberPage),
-            pageSize: String(MEMBER_PAGE_SIZE)
-        });
-        const data = await api.get(`/api/work-orders/${row.workOrderId}/members?${params}`);
+        const data = await api.get(orderMembersUrl(row.workOrderId, {
+            status: memberStatus.value, page: memberPage, pageSize: MEMBER_PAGE_SIZE,
+            hostNames: memberHostName ? [memberHostName] : null
+        }));
         renderMembers(data);
     }
 
     function renderMembers(data) {
+        lastData = data;
         const items = data.items || [];
-        for (const id of [...selectedCases.keys()]) {
-            if (!items.some(i => i.caseId === id)) selectedCases.delete(id);
-        }
+        currentItems = items;
 
         noteEl.textContent = data.hiddenMemberCount > 0
             ? `另有 ${data.hiddenMemberCount} 台主機不在您的檢視範圍，未列出`
@@ -926,42 +971,14 @@ function buildMemberPanel(row, cell) {
                 title: '',
                 className: 'text-center text-nowrap',
                 renderHeader: () => {
-                    const chk = document.createElement('input');
-                    chk.type = 'checkbox';
-                    chk.className = 'form-check-input';
-                    chk.title = '全選本頁主機';
-                    const selectable = items.filter(i => !i.closedAt);
-                    chk.checked = selectable.length > 0 && selectable.every(i => selectedCases.has(i.caseId));
-                    chk.disabled = selectable.length === 0;
-                    chk.addEventListener('change', () => {
-                        for (const item of selectable) {
-                            if (chk.checked) selectedCases.set(item.caseId, item.issueKey);
-                            else selectedCases.delete(item.caseId);
-                        }
-                        for (const rc of tableBox.querySelectorAll('.handler-wo-member-select')) {
-                            rc.checked = chk.checked;
-                        }
-                        updateReplyHostsBtn();
-                    });
+                    const chk = selection.selectAllHeaderCheckbox();
+                    chk.disabled = items.filter(i => !i.closedAt).length === 0;
                     return chk;
                 },
                 render: item => {
-                    if (item.closedAt) return document.createTextNode('');
-                    const chk = document.createElement('input');
-                    chk.type = 'checkbox';
-                    chk.className = 'form-check-input handler-wo-member-select';
-                    chk.checked = selectedCases.has(item.caseId);
-                    chk.addEventListener('change', () => {
-                        if (chk.checked) selectedCases.set(item.caseId, item.issueKey);
-                        else selectedCases.delete(item.caseId);
-                        const selectAll = tableBox.querySelector('thead input[type="checkbox"]');
-                        if (selectAll) {
-                            const selectable = items.filter(i => !i.closedAt);
-                            selectAll.checked = selectable.length > 0 && selectable.every(i => selectedCases.has(i.caseId));
-                        }
-                        updateReplyHostsBtn();
-                    });
-                    return chk;
+                    const cell = selection.rowCheckboxCell(item);
+                    if (cell.classList) cell.classList.add('handler-wo-member-select');
+                    return cell;
                 }
             });
         }
@@ -1034,15 +1051,19 @@ function buildMemberPanel(row, cell) {
 
     memberStatus.addEventListener('change', () => {
         memberPage = 1;
-        selectedCases.clear();
-        updateReplyHostsBtn();
+        selection.clear();   // 勾選是對「這個狀態篩選下的清單」做的
+        guardLoad(tableBox, loadMembers);
+    });
+    searchInput.addEventListener('change', () => {
+        memberHostName = searchInput.value.trim();
+        memberPage = 1;
         guardLoad(tableBox, loadMembers);
     });
 
     replyHostsBtn.addEventListener('click', () => {
         if (selectedCases.size === 0) return;
         const caseIds = [...selectedCases.keys()];
-        const issueKeys = new Set(selectedCases.values());
+        const issueKeys = new Set([...selectedCases.values()].map(item => item.issueKey));
         const total = row.counts?.total ?? 0;
         let closedNow = false;
 
@@ -1054,10 +1075,13 @@ function buildMemberPanel(row, cell) {
             aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
             // 勾選的主機都是同一個問題簽章才能沿用上次的說明
             reuseIssueKey: issueKeys.size === 1 ? [...issueKeys][0] : null,
+            partialTarget: true,
+            followUp: replyFollowUp(row.workOrderId, () => { closedNow = true; }),
             submit: async payload => {
                 const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
                 toastReplyResult(result, payload);
                 closedNow = result.workOrderClosed;
+                return result;
             },
             onRejected: error => rejectedReply(error, row.workOrderId),
             onApplied: () => {
@@ -1096,10 +1120,11 @@ async function loadAdvanced(part) {
     if (casesSeq) renderLoading(casesEl, 3);
     if (daysSeq) renderLoading(daysEl, 3);
     const query = `includeResolvedDays=${includeResolvedDays}&casesPage=${casesPage}&daysPage=${daysPage}&pageSize=${WORKLOAD_PAGE_SIZE}`;
+    const hostFilter = advancedHostName ? `&hostName=${encodeURIComponent(advancedHostName)}` : '';
     const stillWanted = () => (casesSeq > 0 && workloadSeq.cases.isCurrent(casesSeq)) || (daysSeq > 0 && workloadSeq.days.isCurrent(daysSeq));
     let workload;
     try {
-        workload = await api.get(`/api/handlers/${userId}/workload?${query}`);
+        workload = await api.get(`/api/handlers/${userId}/workload?${query}${hostFilter}`);
     } catch (error) {
         // 過期請求的失敗不處理：往上丟會讓 guardLoad 把較新請求已畫好的表換成「載入失敗」
         if (!stillWanted()) return;
@@ -1231,6 +1256,13 @@ const onOrderFilterChange = () => {
 statusSelect.addEventListener('change', onOrderFilterChange);
 sortSelect.addEventListener('change', onOrderFilterChange);
 pausedCheckbox.addEventListener('change', onOrderFilterChange);
+
+hostSearchInput.addEventListener('change', () => {
+    advancedHostName = hostSearchInput.value.trim();
+    casesPage = 1;
+    daysPage = 1;
+    guardLoad([casesEl, daysEl], loadAdvanced);
+});
 
 document.getElementById('toggle-resolved-days').addEventListener('change', event => {
     includeResolvedDays = event.target.checked;

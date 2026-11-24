@@ -272,7 +272,14 @@ public class WorkOrderQueryService
     /// <summary>已停用主機的 host_name_key：徽章、處理人摘要、總覽台數共用的排除集合</summary>
     private IReadOnlyCollection<string> DisabledHostKeys() => WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
 
-    public WorkOrderMemberPageDto Members(long id, string status, int page, int pageSize)
+    /// <summary>成員端點一次最多比對的主機名個數（貼上清單的上限）</summary>
+    public const int MaxMemberHostNames = 500;
+
+    /// <summary>
+    /// 成員分頁。hostNames＝主機名篩選（完全相符、不分大小寫，以 host_name_key 比對；最多 <see cref="MaxMemberHostNames"/> 個，超過回驗證錯誤）；
+    /// 與可見範圍取交集：受限檢視者只會看到自己可見的主機，名稱篩選不能擴大範圍。
+    /// </summary>
+    public WorkOrderMemberPageDto Members(long id, string status, int page, int pageSize, IReadOnlyCollection<string>? hostNames = null)
     {
         var order = Authorize(id);
         if (!WorkOrderQueries.MemberStatuses.Contains(status))
@@ -280,14 +287,17 @@ public class WorkOrderQueryService
 
         (page, pageSize) = Paging.Normalize(page, pageSize < 1 ? DefaultMemberPageSize : pageSize, WorkOrderQueries.MaxMemberPageSize);
 
+        var nameKeys = NormalizeHostNameFilter(hostNames);
+
         var hosts = _hosts.GetAll();
         var filtered = !_currentUser.Has(Capability.ViewAll) && order.HandlerId != _currentUser.UserId;
 
-        IReadOnlyCollection<string>? hostKeys = null;
+        IReadOnlyCollection<string>? hostKeys = nameKeys;
         if (filtered)
         {
             var visible = _visibility.GetVisibleHostIds();
-            hostKeys = hosts.Where(h => visible.Contains(h.HostId)).Select(h => HostNameKey.Of(h.HostName)).Distinct().ToList();
+            var visibleKeys = hosts.Where(h => visible.Contains(h.HostId)).Select(h => HostNameKey.Of(h.HostName)).Distinct().ToList();
+            hostKeys = nameKeys == null ? visibleKeys : visibleKeys.Intersect(nameKeys, StringComparer.Ordinal).ToList();
         }
 
         var (items, total) = _cases.QueryMembers(new WorkOrderMemberQuery
@@ -302,7 +312,7 @@ public class WorkOrderQueryService
         {
             var unfiltered = _cases.QueryMembers(new WorkOrderMemberQuery
             {
-                WorkOrderId = id, Status = status, HostNameKeys = null, Page = 1, PageSize = 1
+                WorkOrderId = id, Status = status, HostNameKeys = nameKeys, Page = 1, PageSize = 1
             }).Total;
             hidden = unfiltered - total;
         }
@@ -347,6 +357,16 @@ public class WorkOrderQueryService
             Page = page,
             PageSize = pageSize
         };
+    }
+
+    /// <summary>主機名篩選正規化成 host_name_key 集合：去空白、去重；沒有任何名稱＝不篩選（null）；超過上限回驗證錯誤</summary>
+    private static List<string>? NormalizeHostNameFilter(IReadOnlyCollection<string>? hostNames)
+    {
+        var names = (hostNames ?? Array.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToList();
+        if (names.Count == 0) return null;
+        if (names.Count > MaxMemberHostNames)
+            throw DomainException.Validation($"主機名篩選最多 {MaxMemberHostNames} 個，目前 {names.Count} 個，請分批查詢。");
+        return names.Select(HostNameKey.Of).Distinct(StringComparer.Ordinal).ToList();
     }
 
     private string? EvidenceParentStatus(IssueCase issueCase)

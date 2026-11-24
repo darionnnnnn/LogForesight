@@ -28,6 +28,11 @@
                         <option value="all">全部</option>
                     </select>
                 </div>
+                <div class="d-flex align-items-center gap-1">
+                    <label for="wo-member-search" class="lf-text-label text-nowrap">主機名</label>
+                    <input type="search" id="wo-member-search" class="form-control form-control-sm w-auto" placeholder="輸入完整主機名後按 Enter" autocomplete="off">
+                </div>
+                <span id="wo-member-selected" class="lf-text-meta text-nowrap d-none"></span>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="wo-member-csv">複製 CSV</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="wo-member-split" aria-haspopup="dialog" disabled>拆出選取的主機</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="wo-member-reply" aria-haspopup="dialog" disabled>回覆選取的主機</button>

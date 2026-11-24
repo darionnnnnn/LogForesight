@@ -2020,19 +2020,22 @@ export async function confirmAndClearMute(rule) {
  *   （全選與表頭三態只看本頁可勾選的列）。
  * - labels：{ row, all } 為列／表頭勾選框的 title；bar：{ barId, countId, unit } 為選取列與計數文字（「已選 N {unit}」）。
  * - onSelectAll()：全選／取消全選後的重繪（頁面通常傳自己的 render）。
+ * - onChange()：勾選集合有變（逐列、全選、清除）時呼叫，供頁面同步按鈕狀態（選用）。
  * 回傳的 selected 是 key → 列物件的 Map，由頁面持有並直接讀取（批次動作取 keys()／values()）；
  * 批次動作成功或篩選改變時用 clear() 清空（同步選取列與表頭狀態）。
  */
-export function createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll }) {
+export function createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll, onChange }) {
     const selected = new Map();
     let headerCheckboxEl = null;
 
     function renderBar() {
         const barEl = document.getElementById(bar.barId);
-        if (!barEl) return;
-        barEl.classList.toggle('d-none', selected.size === 0);
-        const countEl = document.getElementById(bar.countId);
-        if (countEl) countEl.textContent = `已選 ${selected.size} ${bar.unit}`;
+        if (barEl) {
+            barEl.classList.toggle('d-none', selected.size === 0);
+            const countEl = document.getElementById(bar.countId);
+            if (countEl) countEl.textContent = `已選 ${selected.size} ${bar.unit}`;
+        }
+        onChange?.();
     }
 
     /** 本頁可勾選列是否已全部勾選（checked）、部分勾選（indeterminate）——翻頁、篩選、逐列勾選後都要重新同步 */
@@ -2078,6 +2081,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
             } else {
                 for (const item of selectable) selected.delete(keyOf(item));
             }
+            renderBar();
             if (onSelectAll) onSelectAll();
         });
 

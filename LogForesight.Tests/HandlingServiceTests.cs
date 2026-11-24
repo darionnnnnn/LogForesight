@@ -1794,6 +1794,30 @@ public class HandlingServiceTests : IDisposable
     }
 
     [Fact]
+    public void 工作頁_主機名搜尋_完全相符不分大小寫_只影響清單與清單總數不影響三個計數()
+    {
+        var day = Today.AddDays(-50);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+
+        var hit = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: _host.HostName.ToLowerInvariant());
+        Assert.Single(hit.Cases);
+        Assert.Single(hit.Days);
+        Assert.Equal(1, hit.CasesTotal);
+
+        var miss = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: "NOT-A-HOST");
+        Assert.Empty(miss.Cases);
+        Assert.Empty(miss.Days);
+        Assert.Equal(0, miss.CasesTotal);
+        Assert.Equal(1, miss.OpenCaseCount);   // 計數是全部，不隨搜尋變
+
+        var partial = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: _host.HostName[..1]);
+        Assert.Empty(partial.Cases);   // 完全相符，不是包含
+        Assert.Single(service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: "  ").Cases);
+    }
+
+    [Fact]
     public void 工作頁_日項目帶IsUnresolved_與UnresolvedDayCount同一出處()
     {
         var openDay = Today.AddDays(-50);

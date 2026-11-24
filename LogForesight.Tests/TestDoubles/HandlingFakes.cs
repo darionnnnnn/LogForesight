@@ -78,8 +78,9 @@ internal class HandlingServiceFacade
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
     public HandlerWorkloadDto GetHandlerWorkload(
-        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false) =>
-        _history.GetHandlerWorkload(userId, includeResolvedDays, casesPage, daysPage, pageSize, unresolvedOnly);
+        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false,
+        string? hostNameFilter = null) =>
+        _history.GetHandlerWorkload(userId, includeResolvedDays, casesPage, daysPage, pageSize, unresolvedOnly, hostNameFilter);
 }
 
 /// <summary>可見範圍固定為空——供工作頁的「檢視者可見範圍過濾」測試使用</summary>

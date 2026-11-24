@@ -430,7 +430,8 @@ public class HandlingHistoryQueryService
     /// 停用消失），前端據 Active 後綴「（已停用）」。
     /// </summary>
     public HandlerWorkloadDto GetHandlerWorkload(
-        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false)
+        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false,
+        string? hostNameFilter = null)
     {
         var user = _users.Get(userId) ?? throw DomainException.NotFound("找不到這位使用者。");
 
@@ -461,6 +462,11 @@ public class HandlingHistoryQueryService
         var (dPage, _) = Paging.Normalize(daysPage, pageSize);
         var listedDays = unresolvedOnly ? dayItems.Where(d => d.IsUnresolved).ToList() : dayItems;
 
+        // 主機名搜尋（完全相符、不分大小寫，host_name_key 同口徑）只作用在兩張清單與其總數；上面的三個計數仍是全部
+        var nameKey = string.IsNullOrWhiteSpace(hostNameFilter) ? null : HostNameKey.Of(hostNameFilter.Trim());
+        var listedCases = nameKey == null ? caseItems : caseItems.Where(c => HostNameKey.Of(c.HostName) == nameKey).ToList();
+        if (nameKey != null) listedDays = listedDays.Where(d => HostNameKey.Of(d.HostName) == nameKey).ToList();
+
         return new HandlerWorkloadDto
         {
             UserId = user.UserId,
@@ -470,9 +476,9 @@ public class HandlingHistoryQueryService
             OpenCaseCount = caseItems.Count,
             UnresolvedDayCount = dayItems.Count(d => d.IsUnresolved),
             OverdueCount = caseItems.Count(c => c.IsOverdue) + dayItems.Count(d => d.IsOverdue),
-            CasesTotal = caseItems.Count,
+            CasesTotal = listedCases.Count,
             DaysTotal = listedDays.Count,
-            Cases = caseItems.Skip((cPage - 1) * size).Take(size).ToList(),
+            Cases = listedCases.Skip((cPage - 1) * size).Take(size).ToList(),
             Days = listedDays.Skip((dPage - 1) * size).Take(size).ToList()
         };
     }

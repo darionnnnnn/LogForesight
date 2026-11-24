@@ -352,8 +352,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         var matched = new List<(string HostNameKey, string CaseId)>();
         foreach (var batch in keys.Chunk(HostBatchSize))
         {
-            matched.AddRange(BuildMemberFilterQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday())
-                .Where(c => batch.Contains(c.HostNameKey))
+            matched.AddRange(BuildMemberHostQuery(ctx, q.WorkOrderId, q.Status, _clock.LocalToday(), batch)
                 .Select(c => new { c.HostNameKey, c.CaseId })
                 .ToList()
                 .Select(r => (r.HostNameKey, r.CaseId)));
@@ -374,6 +373,10 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             .ToDictionary(c => c.CaseId);
         return (pageIds.Where(byId.ContainsKey).Select(id => ToModel(byId[id])).ToList(), matched.Count);
     }
+
+    /// <summary>成員狀態篩選加主機名鍵（host_name_key）集合：貼上清單與搜尋的主機名篩選；SQL Server 翻譯成 IN 清單</summary>
+    internal static IQueryable<IssueCaseRow> BuildMemberHostQuery(LfDbContext ctx, long workOrderId, string status, DateTime today, string[] hostNameKeys) =>
+        BuildMemberFilterQuery(ctx, workOrderId, status, today).Where(c => hostNameKeys.Contains(c.HostNameKey));
 
     /// <summary>成員狀態篩選本體；逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義</summary>
     internal static IQueryable<IssueCaseRow> BuildMemberFilterQuery(LfDbContext ctx, long workOrderId, string status, DateTime today)

@@ -68,6 +68,7 @@ function makeContext(members) {
     const openSingleReply = extractFunction('function openSingleReply(');
     const openWholeOrderReply = extractFunction('function openWholeOrderReply(');
     const rejectedReply = extractFunction('function rejectedReply(');
+    const replyFollowUp = extractFunction('function replyFollowUp(');
 
     const replyableCountSource = extractFrom(statusesSource, 'export function replyableCount(').replace('export function', 'function');
     const code = `
@@ -136,6 +137,9 @@ const openNextOrder = () => { };
 const openSingleReply = ${openSingleReply};
 const openWholeOrderReply = ${openWholeOrderReply};
 const rejectedReply = ${rejectedReply};
+const replyFollowUp = ${replyFollowUp};
+const orderMembersUrl = (id, { status, page, pageSize, hostNames }) => '/api/work-orders/' + id + '/members?status=' + status + '&page=' + page + '&pageSize=' + pageSize + (hostNames || []).map(n => '&hostName=' + n).join('');
+const remainingActiveCount = async () => 7;
 const replyOrder = ${replyOrder.toString().replace(/^async function replyOrder/, 'async function replyOrder')};
 
 function renderTable(container, { columns, rows: items }) {
@@ -310,13 +314,37 @@ async function oneActivePlusOneDisabledOpensWholeOrderModal() {
     assert.equal(context.getMembersUrl(), null, '不可被當成單台而去抓第一筆成員');
 }
 
+// 整單彈窗提供「只回覆部分主機」面板與「其餘 N 台」續問：面板只取進行中成員、勾選的 caseId 以第二個參數送出、續問以空 caseIds 送出
+async function wholeOrderModalOffersPartialPickAndRest() {
+    const context = makeContext();
+    const row = { workOrderId: 80, counts: { active: 20, total: 20 }, issueLabel: '問題' };
+    context.register(row);
+    await context.replyOrder(row, null);
+    const modal = context.getLastModal();
+
+    assert.equal(typeof modal.picker?.load, 'function', '整單彈窗要有主機面板');
+    await modal.picker.load({ page: 2, pageSize: 20, hostNames: ['srv-a'] });
+    assert.equal(context.getMembersUrl(), '/api/work-orders/80/members?status=active&page=2&pageSize=20&hostName=srv-a', '面板只取進行中成員並帶主機名篩選');
+
+    await modal.submit({ status: 'resolved', note: null, dueDate: null }, [3, 4]);
+    assert.deepEqual(context.posts.at(-1).body.caseIds, [3, 4], '面板勾選的主機以 caseIds 送出');
+    await modal.submit({ status: 'resolved', note: null, dueDate: null });
+    assert.deepEqual(context.posts.at(-1).body.caseIds, [], '沒切換面板仍是全部進行中');
+
+    assert.equal(await modal.followUp.remaining({}), 7);
+    await modal.followUp.submitRest({ status: 'resolved', note: 'x', dueDate: null });
+    assert.deepEqual(context.posts.at(-1).body, { caseIds: [], status: 'resolved', note: 'x', dueDate: null }, '其餘以 caseIds 為空送出（不新增請求欄位）');
+    assert.equal(context.posts.at(-1).options.silent, true);
+}
+
 const cases = {
     singleActiveOnDisabledHostOpensSingleReply,
     oneActivePlusOneDisabledOpensWholeOrderModal,
     nextMultiHostReplyCarriesStatusAndNote,
     manualReplyDoesNotCarry,
     rowReplyOpensModalForOneManyAndZero,
-    rejectedReplyRefreshesListAndNamesHandler
+    rejectedReplyRefreshesListAndNamesHandler,
+    wholeOrderModalOffersPartialPickAndRest
 };
 
 const name = process.argv[2];
