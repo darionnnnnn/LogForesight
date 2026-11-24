@@ -834,4 +834,7 @@ public class WorkOrderCandidateDto
     public bool InPool { get; set; }
     public bool RecentlyResolvedSameIssue { get; set; }
     public int ActiveLoad { get; set; }
+
+    /// <summary>使用者是否設定了 email（沒有就收不到交辦通知）</summary>
+    public bool HasEmail { get; set; }
 }

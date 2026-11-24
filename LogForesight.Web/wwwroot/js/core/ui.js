@@ -1668,7 +1668,9 @@ export function candidatesToUserOptions(candidates) {
     return (candidates || []).map(c => {
         const badges = [];
         if (c.recentlyResolvedSameIssue) badges.push('最近處理過');
+        badges.push(c.activeLoad > 0 ? `進行中 ${c.activeLoad} 台` : '目前沒有進行中');
         if (c.hiddenHostCount > 0) badges.push(`看不到 ${c.hiddenHostCount} 台（將以交辦授與補上）`);
+        if (c.hasEmail === false) badges.push('沒有 email');
         if (c.paused) badges.push('暫停接單');
         return { userId: c.userId, account: c.account, displayName: c.displayName, active: true, badges };
     });

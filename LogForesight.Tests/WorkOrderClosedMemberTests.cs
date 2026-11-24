@@ -188,6 +188,35 @@ public class WorkOrderClosedMemberTests : IDisposable
         Assert.Equal(W.OpenCase("HOST-CLOSED")!.CaseId, row.CaseId);
     }
 
+    [Fact]
+    public void 協調器_候選日一天已結案一天未處理_建案只寫未處理那天_已結案那天的列不被改寫()
+    {
+        var host = W.AddHost("HOST-MIXED");
+        var earlier = Yesterday.AddDays(-1);
+        W.RecordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        W.CloseDay("HOST-MIXED");   // 只有昨天已結案，前天未處理
+        var closedBefore = Assert.Single(W.IssueHandlingStore.GetForDay("HOST-MIXED", Yesterday));
+        var handler = W.AddHandler();
+
+        var outcome = W.Coordinator.Create(NewRequest(handler.UserId, Member("HOST-MIXED")));
+
+        Assert.Equal(1, outcome.NewCases);
+        Assert.Empty(outcome.SkippedClosed);
+        var created = W.OpenCase("HOST-MIXED");
+        Assert.NotNull(created);
+        var closedAfter = Assert.Single(W.IssueHandlingStore.GetForDay("HOST-MIXED", Yesterday));
+        Assert.Equal(IssueHandlingStatuses.Resolved, closedAfter.Status);
+        Assert.Equal(closedBefore.CaseId, closedAfter.CaseId);
+        Assert.NotEqual(created!.CaseId, closedAfter.CaseId);
+        var openDay = Assert.Single(W.IssueHandlingStore.GetForDay("HOST-MIXED", earlier));
+        Assert.Equal(IssueHandlingStatuses.InProgress, openDay.Status);
+        Assert.Equal(created.CaseId, openDay.CaseId);
+    }
+
     private static WorkOrderMember Member(string hostName) => new()
     {
         HostName = hostName, IssueKey = KeyOf(Disk()), IssueLabel = "disk 153", TriggerDate = Yesterday

@@ -87,7 +87,8 @@ public sealed class WorkOrderCandidateService
                 Paused = user.DispatchPaused,
                 InPool = user.GroupIds.Any(poolGroupIds.Contains),
                 RecentlyResolvedSameIssue = recentHandlers.Contains(user.UserId),
-                ActiveLoad = loads.TryGetValue(user.UserId, out var load) ? load : 0
+                ActiveLoad = loads.TryGetValue(user.UserId, out var load) ? load : 0,
+                HasEmail = !string.IsNullOrWhiteSpace(user.Email)
             });
         }
 

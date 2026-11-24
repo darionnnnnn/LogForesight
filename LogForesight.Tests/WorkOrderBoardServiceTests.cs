@@ -258,6 +258,41 @@ public class WorkOrderBoardServiceTests : IDisposable
     }
 
     [Fact]
+    public void 待派_最近出現日已結案的主機不列_同一台隔天再出現沒有逐日處理列_回到待派建議()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var earlier = Yesterday.AddDays(-1);
+        var host = _hosts.Upsert(new WebHost { HostName = "HOST-AGAIN" });
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-AGAIN", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        Candidate(h, inPool: true, host.HostId);
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = "HOST-AGAIN", Date = earlier, IssueKey = KeyOf(Disk()), Status = IssueHandlingStatuses.Resolved,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+
+        var closedRow = RowOf(Service().GetGaps(null, null, 1), "disk");
+        Assert.Empty(closedRow.Suggested);
+        Assert.Equal(1, closedRow.Excluded["already_closed"]);
+
+        // 隔天再出現：新的出現日沒有逐日處理列，不能因為「曾經結案過」就一直擋
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Yesterday, RiskLevel = "高",
+            Headline = "HOST-AGAIN", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+
+        var again = RowOf(Service().GetGaps(null, null, 1), "disk");
+        Assert.Equal(1, Assert.Single(again.Suggested).Hosts);
+        Assert.False(again.Excluded.ContainsKey("already_closed"));
+    }
+
+    [Fact]
     public void 待派_被不再打擾擋下的主機計入gate_dismissed而不是already_closed()
     {
         var pool = AddPoolGroup();

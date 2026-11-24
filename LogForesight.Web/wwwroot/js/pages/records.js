@@ -19,7 +19,7 @@ import {
     headerWithHelp, icon, bindPastDateCheck, linkButton
 } from '../core/ui.js';
 import { statusNote, roleText, filterDisclosure } from '../core/elements.js';
-import { statusesWhere } from '../core/handling-statuses.js';
+import { statusesWhere, statusMeta } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
     formatUserName, toLocalDateString, analysisAnchorLocal, aiStateOf, aiDegradedBadge, latestStatusCell, issueBaselineCell, severityCell, issueDensityCell
@@ -1602,12 +1602,173 @@ function workOrderScopeText(scopeKind, filters) {
     return '全站（依目前篩選的期間）';
 }
 
+/** 預覽清單「狀態」欄文字：一般／處理中／已結案／先前判定不處理（帳號或日期缺就省略該段） */
+export function workOrderHostStatusText(host) {
+    const MD = /^\d{4}-(\d{2})-(\d{2})/.exec(String(host.closedAt ?? ''));
+    const tail = [host.closedByAccount || null, MD ? `${MD[1]}-${MD[2]}` : null].filter(Boolean).join('，');
+    const paren = tail ? `（${tail}）` : '';
+    if (host.closedReason === 'closed') {
+        const status = statusMeta(host.closedStatus)?.shortLabel ?? host.closedStatus ?? '';
+        return `已結案${status ? '：' + status : ''}${paren}`;
+    }
+    if (host.closedReason === 'dismissed') return `先前判定不處理${paren}`;
+    if (host.existingHandlerName) return `處理中（目前：${host.existingHandlerName}）`;
+    return '未處理';
+}
+
+/**
+ * 交辦預覽的主機表格（勾選、主機、狀態）。一般主機勾選＝不在 excludedHostIds；
+ * 已結案／不再打擾的主機預設不勾，勾了才進 reopenHostIds。表頭全選只作用在本頁的一般主機。
+ * state 的兩個 Set 跨頁保存；任何勾選變動後呼叫 onChange（重新預覽）。
+ */
+export function renderWorkOrderHostTable(container, hosts, { excludedHostIds, reopenHostIds }, onChange) {
+    const isClosedRow = host => Boolean(host.closedReason);
+    const ordinary = hosts.filter(h => !isClosedRow(h));
+    const selectedCount = ordinary.filter(h => !excludedHostIds.has(h.hostId)).length;
+
+    const columns = [
+        {
+            key: 'select', title: '選取', className: 'lf-col-nowrap',
+            renderHeader: () => {
+                const all = document.createElement('input');
+                all.type = 'checkbox';
+                all.className = 'form-check-input mt-0';
+                all.setAttribute('aria-label', '全選或全不選本頁的一般主機');
+                all.disabled = ordinary.length === 0;
+                all.checked = ordinary.length > 0 && selectedCount === ordinary.length;
+                all.indeterminate = selectedCount > 0 && selectedCount < ordinary.length;
+                all.addEventListener('change', () => {
+                    for (const h of ordinary) {
+                        if (all.checked) excludedHostIds.delete(h.hostId);
+                        else excludedHostIds.add(h.hostId);
+                    }
+                    onChange();
+                });
+                return all;
+            },
+            render: host => {
+                const closed = isClosedRow(host);
+                const check = document.createElement('input');
+                check.type = 'checkbox';
+                check.className = 'form-check-input mt-0';
+                check.id = `wo-host-${host.hostId}`;
+                check.setAttribute('aria-label', `選取 ${host.hostName}`);
+                check.checked = closed ? reopenHostIds.has(host.hostId) : !excludedHostIds.has(host.hostId);
+                check.addEventListener('change', () => {
+                    if (closed) {
+                        if (check.checked) reopenHostIds.add(host.hostId); else reopenHostIds.delete(host.hostId);
+                    } else if (check.checked) {
+                        excludedHostIds.delete(host.hostId);
+                    } else {
+                        excludedHostIds.add(host.hostId);
+                    }
+                    onChange();
+                });
+                return check;
+            }
+        },
+        {
+            key: 'hostName', title: '主機',
+            render: host => {
+                const label = document.createElement('label');
+                label.setAttribute('for', `wo-host-${host.hostId}`);
+                label.textContent = host.hostName;
+                return label;
+            }
+        },
+        {
+            key: 'status', title: '狀態',
+            renderHeader: () => {
+                const wrap = document.createElement('span');
+                const title = document.createElement('span');
+                title.textContent = '狀態';
+                const hint = document.createElement('div');
+                hint.className = 'lf-text-meta';
+                hint.textContent = '已處理的主機要逐台勾選才會重新交辦';
+                wrap.append(title, hint);
+                return wrap;
+            },
+            render: host => {
+                const notes = [workOrderHostStatusText(host)];
+                if (host.noiseExcluded) notes.push('已知雜訊');
+                if (host.manuallyExcluded) notes.push('已排除');
+                const span = document.createElement('span');
+                span.className = 'lf-text-meta';
+                span.textContent = notes.join('・');
+                return span;
+            }
+        }
+    ];
+    renderTable(container, { columns, rows: hosts, caption: '受影響主機' });
+}
+
+/** 交辦預覽摘要（台數、排除說明、可見範圍提示、分配）；寫進 summaryWrap，供行為測試單獨載入 */
+function renderWorkOrderPreviewSummary(summaryWrap, preview) {
+    summaryWrap.replaceChildren();
+
+    const primaryLine = document.createElement('div');
+    primaryLine.className = 'lf-text-title mb-1';
+    primaryLine.textContent = `將交辦 ${formatNumber(preview.affectedHosts ?? 0)} 台（${formatNumber(preview.affectedMembers ?? 0)} 個問題成員）`;
+    summaryWrap.appendChild(primaryLine);
+
+    const secondaryLine = document.createElement('div');
+    secondaryLine.className = 'lf-text-meta mb-1';
+    const daysLabel = preview.estimatedHostDaysLabel || '期間內';
+    secondaryLine.textContent = `${daysLabel} 預估 ${formatNumber(preview.estimatedHostDays ?? 0)} 主機日`;
+    summaryWrap.appendChild(secondaryLine);
+
+    const exclusions = [];
+    if (preview.noiseExcludedHosts > 0) {
+        exclusions.push(`已知雜訊排除 ${formatNumber(preview.noiseExcludedHosts)} 台`);
+    }
+    if (preview.manuallyExcludedHosts > 0) {
+        exclusions.push(`手動排除 ${formatNumber(preview.manuallyExcludedHosts)} 台`);
+    }
+    if (preview.closedSkippedHosts > 0) {
+        exclusions.push(`已結案略過 ${formatNumber(preview.closedSkippedHosts)} 台`);
+    }
+    if (preview.dismissedSkippedHosts > 0) {
+        exclusions.push(`先前判定不處理略過 ${formatNumber(preview.dismissedSkippedHosts)} 台`);
+    }
+    if (preview.pausedMembersExcluded > 0) {
+        exclusions.push(`暫停接單略過 ${formatNumber(preview.pausedMembersExcluded)} 位成員`);
+    }
+    for (const ex of exclusions) {
+        const exDiv = document.createElement('div');
+        exDiv.className = 'lf-text-meta mb-1';
+        exDiv.textContent = ex;
+        summaryWrap.appendChild(exDiv);
+    }
+
+    if (preview.assigneeNoAccessTotal > 0) {
+        const names = (preview.assigneeNoAccess || []).slice(0, 5).map(a => a.hostName).filter(Boolean);
+        const note = statusNote('warning', `${formatNumber(preview.assigneeNoAccessTotal)} 台不在對方的檢視範圍（對方仍可經由交辦看到被交辦的問題）`);
+        if (names.length > 0) note.title = `例如：${names.join('、')}`;
+        summaryWrap.appendChild(note);
+    }
+
+    if (preview.allocation && preview.allocation.length > 0) {
+        const allocWrap = document.createElement('div');
+        allocWrap.className = 'mt-2 pt-2 border-top';
+        for (const a of preview.allocation) {
+            const row = document.createElement('div');
+            const mergeNote = a.mergeIntoWorkOrderId != null
+                ? `併入單號 #${a.mergeIntoWorkOrderId}`
+                : '新建單';
+            row.textContent = `${a.handlerName} ${formatNumber(a.hostCount)} 台（${mergeNote}）`;
+            allocWrap.appendChild(row);
+        }
+        summaryWrap.appendChild(allocWrap);
+    }
+}
+
 function renderWorkOrderForm(body, group, users, groups, modal) {
     body.replaceChildren();
 
     const filters = collectFilters();
     let assignMode = 'single';
     const excludedHostIds = new Set();
+    const reopenHostIds = new Set();   // 已結案／不再打擾的主機，逐台勾了才重新交辦
     let currentPage = 1;
     const previewGuard = createSeqGuard();
     let isFetchingPreview = false;
@@ -1729,7 +1890,7 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
     autoAttachCheck.addEventListener('change', () => { autoAttachWanted = autoAttachCheck.checked; });
 
     function updateAutoAttachState() {
-        const hasExcluded = excludedHostIds.size > 0;
+        const hasExcluded = excludedHostIds.size > 0 || reopenHostIds.size > 0;
         if (hasExcluded) {
             autoAttachCheck.checked = false;
             autoAttachHelp.textContent = '已手動排除主機時不提供續掛（被排除的主機之後再出現會被自動加回）。';
@@ -1832,13 +1993,14 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
             hostIds: filters.hostIds.length > 0 ? filters.hostIds.map(Number) : null,
             groupIds: filters.groupIds.length > 0 ? filters.groupIds.map(Number) : null,
             excludeHostIds: [...excludedHostIds],
+            reopenHostIds: [...reopenHostIds],
             assignMode,
             handlerId: assignMode === 'single' ? (Number(handlerSelect.value) || null) : null,
             groupId: assignMode === 'group' ? (Number(groupSelect.value) || null) : null,
             splitMode: assignMode === 'group' ? splitSelect.value : null,
             reassignConflicts: Boolean(reassignCheck.checked),
             scopeKind,
-            autoAttach: scopeKind !== 'Hosts' && autoAttachCheck.checked && excludedHostIds.size === 0,
+            autoAttach: scopeKind !== 'Hosts' && autoAttachCheck.checked && excludedHostIds.size === 0 && reopenHostIds.size === 0,
             note: noteInput.value.trim() || null,
             dueDate: dueInput.value || null,
             notifyNow: Boolean(notifyNowCheck.checked),
@@ -1894,102 +2056,17 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
         }
 
         // 預覽摘要
-        summaryWrap.replaceChildren();
-
-        const primaryLine = document.createElement('div');
-        primaryLine.className = 'lf-text-title mb-1';
-        primaryLine.textContent = `將交辦 ${formatNumber(preview.affectedHosts ?? 0)} 台（${formatNumber(preview.affectedMembers ?? 0)} 個問題成員）`;
-        summaryWrap.appendChild(primaryLine);
-
-        const secondaryLine = document.createElement('div');
-        secondaryLine.className = 'lf-text-meta mb-1';
-        const daysLabel = preview.estimatedHostDaysLabel || '期間內';
-        secondaryLine.textContent = `${daysLabel} 預估 ${formatNumber(preview.estimatedHostDays ?? 0)} 主機日`;
-        summaryWrap.appendChild(secondaryLine);
-
-        const exclusions = [];
-        if (preview.noiseExcludedHosts > 0) {
-            exclusions.push(`已知雜訊排除 ${formatNumber(preview.noiseExcludedHosts)} 台`);
-        }
-        if (preview.manuallyExcludedHosts > 0) {
-            exclusions.push(`手動排除 ${formatNumber(preview.manuallyExcludedHosts)} 台`);
-        }
-        if (preview.pausedMembersExcluded > 0) {
-            exclusions.push(`暫停接單略過 ${formatNumber(preview.pausedMembersExcluded)} 位成員`);
-        }
-        for (const ex of exclusions) {
-            const exDiv = document.createElement('div');
-            exDiv.className = 'lf-text-meta mb-1';
-            exDiv.textContent = ex;
-            summaryWrap.appendChild(exDiv);
-        }
-
-        if (preview.allocation && preview.allocation.length > 0) {
-            const allocWrap = document.createElement('div');
-            allocWrap.className = 'mt-2 pt-2 border-top';
-            for (const a of preview.allocation) {
-                const row = document.createElement('div');
-                const mergeNote = a.mergeIntoWorkOrderId != null
-                    ? `併入單號 #${a.mergeIntoWorkOrderId}`
-                    : '新建單';
-                row.textContent = `${a.handlerName} ${formatNumber(a.hostCount)} 台（${mergeNote}）`;
-                allocWrap.appendChild(row);
-            }
-            summaryWrap.appendChild(allocWrap);
-        }
+        renderWorkOrderPreviewSummary(summaryWrap, preview);
 
         // 主機清單
         hostSummary.textContent = `檢視受影響主機（${formatNumber(preview.totalHosts ?? 0)} 台）`;
         hostList.replaceChildren();
 
         if (preview.hosts && preview.hosts.length > 0) {
-            for (const host of preview.hosts) {
-                const row = document.createElement('div');
-                row.className = 'd-flex align-items-center gap-2 py-1';
-
-                const check = document.createElement('input');
-                check.type = 'checkbox';
-                check.className = 'form-check-input mt-0';
-                check.checked = !excludedHostIds.has(host.hostId);
-                check.addEventListener('change', () => {
-                    if (check.checked) {
-                        excludedHostIds.delete(host.hostId);
-                    } else {
-                        excludedHostIds.add(host.hostId);
-                    }
-                    updateAutoAttachState();
-                    requestPreview(currentPage);
-                });
-
-                const name = document.createElement('span');
-                name.className = 'flex-grow-1';
-                name.textContent = host.hostName;
-
-                row.append(check, name);
-
-                if (host.existingHandlerName) {
-                    const existing = document.createElement('span');
-                    existing.className = 'lf-text-meta';
-                    existing.textContent = `目前：${host.existingHandlerName}`;
-                    row.appendChild(existing);
-                }
-
-                if (host.noiseExcluded) {
-                    const noise = document.createElement('span');
-                    noise.className = 'lf-text-meta';
-                    noise.textContent = '已知雜訊';
-                    row.appendChild(noise);
-                }
-
-                if (host.manuallyExcluded) {
-                    const manual = document.createElement('span');
-                    manual.className = 'lf-text-meta';
-                    manual.textContent = '已排除';
-                    row.appendChild(manual);
-                }
-
-                hostList.appendChild(row);
-            }
+            renderWorkOrderHostTable(hostList, preview.hosts, { excludedHostIds, reopenHostIds }, () => {
+                updateAutoAttachState();
+                requestPreview(currentPage);
+            });
         } else {
             const empty = document.createElement('div');
             empty.className = 'lf-text-meta py-2';
@@ -2074,6 +2151,14 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
                 for (const a of result.assigneeCannotHandle) {
                     toast(`${a.handlerName} 沒有處理權限（${a.hostCount} 台）`, 'warning');
                 }
+            }
+
+            const closedSkipped = (result.closedSkippedHosts ?? 0) + (result.dismissedSkippedHosts ?? 0);
+            if (closedSkipped > 0) {
+                const parts = [];
+                if (result.closedSkippedHosts > 0) parts.push(`已結案 ${formatNumber(result.closedSkippedHosts)} 台`);
+                if (result.dismissedSkippedHosts > 0) parts.push(`先前判定不處理 ${formatNumber(result.dismissedSkippedHosts)} 台`);
+                toast(`${parts.join('、')}未重新交辦（需要時請在預覽清單逐台勾選）`, 'info');
             }
 
             if (result.assigneeNoAccessTotal > 0) {
