@@ -545,6 +545,14 @@ public class RecordListQueryService
     }
 
     /// <summary>
+    /// 出現點的「處理到哪」：交給 <see cref="OccurrenceStatusResolver"/>（唯一判定），交辦與待派試跑不另寫結案判斷。
+    /// 掛在這裡是因為兩個呼叫端本來就持有它，不必為同一個判定各加一個相依。
+    /// </summary>
+    public List<ResolvedOccurrence> ResolveOccurrenceStatuses(
+        IReadOnlyCollection<HostIssueOccurrence> occurrences, DateTime from, DateTime to) =>
+        _statusResolver.Resolve(occurrences, from, to);
+
+    /// <summary>
     /// 依問題視角的範圍解析（可見主機∩主機／群組篩選、期間、嚴重度可見性、日風險等級母體）。
     /// 公開給交辦單建單（<see cref="WorkOrderCommandService"/>）共用：建單的主機母體必須與
     /// 依問題視角該問題那一列的主機數同一口徑，所以兩邊只能經過這一份解析。

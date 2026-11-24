@@ -23,6 +23,12 @@ public class CreateWorkOrderRequest
     /// <summary>管理者在預覽取消勾選的主機（整台排除）</summary>
     public List<long>? ExcludeHostIds { get; set; }
 
+    /// <summary>
+    /// 管理者在預覽勾選「重新交辦」的主機：這些主機已結案（處理人回覆已處理／不處理）或被「不再自動派工」擋住的成員，
+    /// 照常納入；沒列在這裡的，預覽與建立都會略過這類成員。不再打擾的成員納入時等於恢復（舊案件的擋派旗標改為 false）。
+    /// </summary>
+    public List<long>? ReopenHostIds { get; set; }
+
     /// <summary>勾「立即通知」：處理人的通知不等摘要時刻，下一次輪詢就寄。</summary>
     public bool NotifyNow { get; set; }
 
@@ -70,6 +76,12 @@ public class WorkOrderPreviewDto
 
     public int NoiseExcludedHosts { get; set; }
     public int ManuallyExcludedHosts { get; set; }
+
+    /// <summary>因「最近一次出現當天已被處理人結案」而略過的主機數（未勾重新交辦）</summary>
+    public int ClosedSkippedHosts { get; set; }
+
+    /// <summary>因「不再自動派工」而略過的主機數（未勾重新交辦）</summary>
+    public int DismissedSkippedHosts { get; set; }
 
     /// <summary>群組分攤時排除的暫停接單成員數</summary>
     public int PausedMembersExcluded { get; set; }
@@ -123,6 +135,21 @@ public class WorkOrderPreviewHostDto
 
     public bool NoiseExcluded { get; set; }
     public bool ManuallyExcluded { get; set; }
+
+    /// <summary>
+    /// 因結案類處理而略過的原因：<c>closed</c>（已結案）／<c>dismissed</c>（不再自動派工）；null＝不是這類略過。
+    /// 這類主機一個成員都不會寫入，要寫入請把主機 id 放進請求的 <see cref="CreateWorkOrderRequest.ReopenHostIds"/>。
+    /// </summary>
+    public string? ClosedReason { get; set; }
+
+    /// <summary>結案狀態（<c>resolved</c>／<c>wont_fix</c>／<c>false_positive</c>／<c>known_noise</c>）；取不到為 null</summary>
+    public string? ClosedStatus { get; set; }
+
+    /// <summary>結案者帳號；取不到為 null</summary>
+    public string? ClosedByAccount { get; set; }
+
+    /// <summary>結案時間；取不到為 null</summary>
+    public DateTime? ClosedAt { get; set; }
 }
 
 public class CreateWorkOrderResultDto
@@ -134,6 +161,13 @@ public class CreateWorkOrderResultDto
     public List<WorkOrderOverlongDto> OverlongSkipped { get; set; } = new();
 
     public int NoiseExcludedHosts { get; set; }
+
+    /// <summary>因已結案而略過的主機數（與預覽同一份計畫；另含協調器保底再擋下的）</summary>
+    public int ClosedSkippedHosts { get; set; }
+
+    /// <summary>因不再自動派工而略過的主機數</summary>
+    public int DismissedSkippedHosts { get; set; }
+
     public int DaySyncPendingCases { get; set; }
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
     public int AssigneeNoAccessTotal { get; set; }

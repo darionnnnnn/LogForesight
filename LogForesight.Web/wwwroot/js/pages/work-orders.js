@@ -91,7 +91,9 @@ const EXCLUDED_LABELS = {
     gate_severity: '嚴重度未達',
     gateSeverity: '嚴重度未達',
     gate_dismissed: '不再打擾',
-    gateDismissed: '不再打擾'
+    gateDismissed: '不再打擾',
+    already_closed: '已處理',
+    alreadyClosed: '已處理'
 };
 
 // URL 篩選參數（依問題／處理人篩選；群組只預選下拉）

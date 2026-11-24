@@ -12,6 +12,12 @@ public sealed class WorkOrderMember
 
     /// <summary>使用者操作所在的風險日；新案件的 First/LastLinkedDate 以它的日期起算</summary>
     public DateTime TriggerDate { get; set; }
+
+    /// <summary>
+    /// 明確要求重開：這個成員的觸發日即使已被標成結案類，建案時也要改回處理中（<see cref="CaseDayIntent.TriggerDate"/>）。
+    /// false（預設）時，候選日全是結案類的新成員會被協調器歸入「已結案」略過，不建出沒有逐日列的案件。
+    /// </summary>
+    public bool Reopen { get; set; }
 }
 
 /// <summary>操作者與操作時間（寫入案件、逐日歷程、交辦單事件共用同一份）</summary>
@@ -67,6 +73,14 @@ public sealed class WorkOrderConflict
     public long? HandlerId { get; set; }
 }
 
+/// <summary>成員處理時略過的已結案成員：沒有任何可寫入的逐日列（候選日全是結案類），且呼叫端沒有要求重開</summary>
+public sealed class WorkOrderClosedMember
+{
+    public string HostName { get; set; } = string.Empty;
+
+    public string IssueKey { get; set; } = string.Empty;
+}
+
 /// <summary>成員處理時略過的超長問題鍵：簽章長度超過案件／逐日處理列欄位上限，不建立案件也不寫處理紀錄</summary>
 public sealed class WorkOrderOverlongMember
 {
@@ -100,6 +114,9 @@ public sealed class WorkOrderMemberOutcome
 
     /// <summary>問題鍵超過欄位上限而未建立案件的成員（不截斷：截斷後的鍵會撞到別筆或永遠對不上）</summary>
     public List<WorkOrderOverlongMember> SkippedOverlong { get; set; } = new();
+
+    /// <summary>沒有可寫入逐日列、也沒要求重開而略過的成員（不建案件）</summary>
+    public List<WorkOrderClosedMember> SkippedClosed { get; set; } = new();
 
     public CaseDaySubmitResult DaySync { get; set; }
 }

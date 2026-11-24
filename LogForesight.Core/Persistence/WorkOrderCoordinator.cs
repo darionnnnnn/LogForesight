@@ -112,6 +112,7 @@ public class WorkOrderCoordinator
             return new WorkOrderMemberOutcome
             {
                 WorkOrderId = 0, CreatedOrder = false, SkippedConflicts = preview.Skipped, SkippedOverlong = preview.Overlong,
+                SkippedClosed = preview.Closed,
                 DaySync = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0)
             };
         }
@@ -218,17 +219,22 @@ public class WorkOrderCoordinator
 
         var outcome = new WorkOrderMemberOutcome
         {
-            WorkOrderId = order.WorkOrderId, SkippedConflicts = plan.Skipped, SkippedOverlong = plan.Overlong
+            WorkOrderId = order.WorkOrderId, SkippedConflicts = plan.Skipped, SkippedOverlong = plan.Overlong,
+            SkippedClosed = plan.Closed
         };
         var sourceOrders = new HashSet<long>();
 
         var newCases = new List<IssueCase>(plan.New.Count);
+        // 要求重開的成員：觸發日要寫成處理中（即使該日已結案），依觸發日分組各送一次逐日同步
+        var reopenDays = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         foreach (var member in plan.New)
         {
             var day = member.TriggerDate.Date;
+            var caseId = Guid.NewGuid().ToString("n");
+            if (member.Reopen) reopenDays[caseId] = day;
             newCases.Add(new IssueCase
             {
-                CaseId = Guid.NewGuid().ToString("n"),
+                CaseId = caseId,
                 HostName = member.HostName, IssueKey = member.IssueKey, IssueLabel = member.IssueLabel,
                 PrtgEvidence = _caseCoordinator.CapturePrtgEvidence(member.HostName, day, member.IssueKey),
                 Status = IssueHandlingStatuses.InProgress, HandlerId = order.HandlerId,
@@ -253,13 +259,24 @@ public class WorkOrderCoordinator
             if (existing.WorkOrderId != null) sourceOrders.Add(existing.WorkOrderId.Value);
         }
 
-        outcome.DaySync = _caseCoordinator.SubmitCaseDays(newCases, new CaseDayIntent
+        CaseDayIntent AssignIntent(DateTime? triggerDate) => new()
         {
             Mode = CaseDayModes.Assign, Status = IssueHandlingStatuses.InProgress,
             Note = order.Note, DueDate = order.DueDate,
             ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt,
-            TriggerDate = null
-        }, _caseDayInlineRowLimit);
+            TriggerDate = triggerDate
+        };
+
+        // 一般成員一次送出（與重開前相同）；重開成員依觸發日分組，各送一次
+        var normalCases = newCases.Where(c => !reopenDays.ContainsKey(c.CaseId)).ToList();
+        var daySync = _caseCoordinator.SubmitCaseDays(normalCases, AssignIntent(null), _caseDayInlineRowLimit);
+        foreach (var group in newCases.Where(c => reopenDays.ContainsKey(c.CaseId))
+                     .GroupBy(c => reopenDays[c.CaseId]).OrderBy(g => g.Key))
+        {
+            var part = _caseCoordinator.SubmitCaseDays(group.ToList(), AssignIntent(group.Key), _caseDayInlineRowLimit);
+            daySync = new CaseDaySubmitResult(daySync.Inline && part.Inline, daySync.Rows + part.Rows, daySync.PendingCases + part.PendingCases);
+        }
+        outcome.DaySync = daySync;
 
         // 改連不動逐日列（狀態沒變），只存案件
         if (relinked.Count > 0) _cases.SaveMany(relinked);
@@ -292,7 +309,7 @@ public class WorkOrderCoordinator
     /// <summary>成員分類的結果：只讀不寫（案件物件尚未被修改）</summary>
     private sealed record MemberPlan(
         List<WorkOrderMember> New, List<IssueCase> Relink, List<IssueCase> Reassign, List<WorkOrderConflict> Skipped,
-        List<WorkOrderOverlongMember> Overlong)
+        List<WorkOrderOverlongMember> Overlong, List<WorkOrderClosedMember> Closed)
     {
         public int EffectiveCount => New.Count + Relink.Count + Reassign.Count;
     }
@@ -301,6 +318,8 @@ public class WorkOrderCoordinator
     /// 成員分類的唯一一份（建單前的預判與寫入共用）：一次 GetOpenMany 取既有進行中案件配對。
     /// 無進行中案件＝新案件；同處理人＝改連（已在 workOrderId 這張單上的不算）；
     /// 他人且 reassignConflicts＝改派；他人未要求改派＝略過。workOrderId 為 null＝尚未有單。
+    /// 新案件中沒有任何可寫入逐日列（候選日全是結案類）、又沒要求重開（<see cref="WorkOrderMember.Reopen"/>）的，
+    /// 歸入「已結案」略過、不計入有效成員——任何呼叫端都不會因此建出沒有逐日列的案件。
     /// </summary>
     private MemberPlan ClassifyMembers(List<WorkOrderMember> members, string source, int eventId, long handlerId, long? workOrderId, bool reassignConflicts)
     {
@@ -309,7 +328,8 @@ public class WorkOrderCoordinator
             existingByKey.TryAdd((openCase.HostName, openCase.IssueKey), openCase);
 
         var plan = new MemberPlan(new List<WorkOrderMember>(), new List<IssueCase>(), new List<IssueCase>(), new List<WorkOrderConflict>(),
-            new List<WorkOrderOverlongMember>());
+            new List<WorkOrderOverlongMember>(), new List<WorkOrderClosedMember>());
+        var newMembers = new List<WorkOrderMember>();
         var seen = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
 
         foreach (var member in members)
@@ -332,7 +352,7 @@ public class WorkOrderCoordinator
 
             if (!existingByKey.TryGetValue((member.HostName, member.IssueKey), out var existing))
             {
-                plan.New.Add(member);
+                newMembers.Add(member);
                 continue;
             }
 
@@ -355,6 +375,22 @@ public class WorkOrderCoordinator
             plan.Reassign.Add(existing);
         }
 
+        // 新成員的逐日列預判：只對沒要求重開的成員試算（重開成員的觸發日一定會寫），一次批次試算
+        var probes = newMembers
+            .Where(m => !m.Reopen)
+            .Select(m => new IssueCase { CaseId = string.Empty, HostName = m.HostName, IssueKey = m.IssueKey })
+            .ToList();
+        var closed = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
+        foreach (var dead in _caseCoordinator.CasesWithoutWritableDays(probes))
+            closed.Add((dead.HostName, dead.IssueKey));
+        foreach (var member in newMembers)
+        {
+            if (!member.Reopen && closed.Contains((member.HostName, member.IssueKey)))
+                plan.Closed.Add(new WorkOrderClosedMember { HostName = member.HostName, IssueKey = member.IssueKey });
+            else
+                plan.New.Add(member);
+        }
+
         return plan;
     }
 
@@ -366,7 +402,7 @@ public class WorkOrderCoordinator
     public WorkOrderMemberPreview PreviewMembers(List<WorkOrderMember> members, string source, int eventId, long handlerId)
     {
         var plan = ClassifyMembers(members, source, eventId, handlerId, null, false);
-        return new WorkOrderMemberPreview(plan.New.Count, plan.Relink.Count, plan.Skipped);
+        return new WorkOrderMemberPreview(plan.New.Count, plan.Relink.Count, plan.Skipped, plan.Closed);
     }
 
     // ── 改派／拆單 ───────────────────────────────────────────────────────────
@@ -1214,8 +1250,9 @@ public class WorkOrderCoordinator
     }
 }
 
-/// <summary><see cref="WorkOrderCoordinator.PreviewMembers"/> 的結果：新案件數、改連數、被他人進行中案件占用的衝突</summary>
-public sealed record WorkOrderMemberPreview(int NewCases, int LinkedExisting, IReadOnlyList<WorkOrderConflict> Conflicts);
+/// <summary><see cref="WorkOrderCoordinator.PreviewMembers"/> 的結果：新案件數、改連數、被他人進行中案件占用的衝突、沒有可寫入逐日列而略過的已結案成員</summary>
+public sealed record WorkOrderMemberPreview(
+    int NewCases, int LinkedExisting, IReadOnlyList<WorkOrderConflict> Conflicts, IReadOnlyList<WorkOrderClosedMember> Closed);
 
 /// <summary><see cref="WorkOrderCoordinator.RetractDayAssignments"/> 對單張單的處理結果</summary>
 public sealed record DayOrderRetraction(long WorkOrderId, long HandlerId, bool WholeOrderCancelled, int CancelledCases);

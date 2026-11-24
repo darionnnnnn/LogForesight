@@ -225,6 +225,74 @@ public class WorkOrderBoardServiceTests : IDisposable
 
     private static GapRowDto RowOf(GapsDto dto, string source) => Assert.Single(dto.Rows, r => r.Source == source);
 
+    // ── 已結案的出現點不建單（階段 A-1）──────────────────────────────────────
+
+    private void ClosedRow(string hostName, LogIssueSignature issue, string status = IssueHandlingStatuses.Resolved) =>
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = hostName, Date = Yesterday, IssueKey = KeyOf(issue), Status = status,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+
+    [Fact]
+    public void 待派_最近出現日已結案的主機不列為建議_計入already_closed_立即派工只為未處理那台建案()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var closed = AddHost("HOST-CLOSED");
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, closed.HostId, open.HostId);
+        ClosedRow("HOST-CLOSED", Disk());
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
+        Assert.Equal(1, row.Excluded["already_closed"]);
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.AssignedMembers);
+        Assert.NotNull(_caseStore.GetOpen("HOST-OPEN", KeyOf(Disk())));
+        Assert.Null(_caseStore.GetOpen("HOST-CLOSED", KeyOf(Disk())));
+        Assert.Equal(1, _caseStore.GetMany(new[] { "HOST-OPEN", "HOST-CLOSED" }).Count);
+    }
+
+    [Fact]
+    public void 待派_被不再打擾擋下的主機計入gate_dismissed而不是already_closed()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var dismissed = AddHost("HOST-DISMISSED");
+        var closed = AddHost("HOST-CLOSED");
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, dismissed.HostId, closed.HostId, open.HostId);
+        // 處理人回不處理：案件結案＋逐日列也是結案類——閘門先擋，原因要留在 gate_dismissed
+        DismissedCase("HOST-DISMISSED", Disk());
+        ClosedRow("HOST-DISMISSED", Disk(), IssueHandlingStatuses.WontFix);
+        ClosedRow("HOST-CLOSED", Disk());
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipDismissed]);
+        Assert.Equal(1, row.Excluded["already_closed"]);
+        Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
+    }
+
+    [Fact]
+    public void 待派_只是嚴重度預設不處理且沒有逐日標記_不算已結案_仍走原本的嚴重度排除()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var low = AddHost("HOST-LOW", null, Disk(IssueSeverity.Low));
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, low.HostId, open.HostId);
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipSeverity]);
+        Assert.False(row.Excluded.ContainsKey("already_closed"));
+    }
+
     // ── 負載看板 ─────────────────────────────────────────────────────────────
 
     [Fact]
