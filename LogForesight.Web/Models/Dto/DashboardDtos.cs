@@ -64,6 +64,12 @@ public class DashboardDto
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
 
+    /// <summary>
+    /// 可見範圍內未回報主機的名稱，依名稱排序、最多 <see cref="LogForesight.Web.Services.DashboardService.SilentHostNameLimit"/> 台
+    /// （完整清單在主機頁，只有 Maintain 進得去；其他角色的卡片提示用這份）。0 台時為空。
+    /// </summary>
+    public List<string> SilentHostNames { get; set; } = new();
+
     /// <summary>可見未回報主機中 PRTG 現況提示為 down 的台數（PRTG 未啟用時為 0）</summary>
     public int SilentHostsPrtgDownCount { get; set; }
 

@@ -102,6 +102,30 @@ const cases = {
         assert.ok(rows[0].textContent.includes('4 筆'));
     },
 
+    // 今天新上報：只有這一類也要顯示提醒區；多一行「今天新上報：N 筆」並連到上報中篩選，與「超過 N 天」分開
+    newEscalatedAloneShowsRegionWithLinkToEscalatedFilter() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ newEscalatedCount: 2, newEscalated: [{ workOrderId: 9, issueLabel: 'disk 153', hostName: 'SRV1', days: 0 }] }));
+        const rows = find(remindersContainer, n => n.tagName === 'LI' && n.className.includes('lf-list-row'));
+        assert.equal(rows.length, 1);
+        assert.ok(rows[0].textContent.includes('今天新上報：2 筆'), rows[0].textContent);
+        assert.ok(!rows[0].textContent.includes('超過'), '不與逾期類混在一起');
+        const links = find(remindersContainer, n => n.tagName === 'A').map(a => a.href);
+        assert.equal(links[0], '/lf/work-orders?status=escalated');
+        assert.ok(links.includes('/lf/work-orders/9'), '明細有單號連結');
+        assert.ok(!remindersContainer.textContent.includes('上報 0 天'), '今天新上報的明細不寫「上報 0 天」');
+    },
+
+    // 今天新上報與逾期兩類並存：兩行，今天新上報在前
+    newEscalatedAndOverdueAreSeparateRows() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ newEscalatedCount: 1, escalatedCount: 4 }));
+        const rows = find(remindersContainer, n => n.tagName === 'LI' && n.className.includes('lf-list-row'));
+        assert.equal(rows.length, 2);
+        assert.ok(rows[0].textContent.includes('今天新上報：1 筆'));
+        assert.ok(rows[1].textContent.includes('上報超過 3 天沒人處理：4 筆'));
+    },
+
     // 重畫會清掉舊內容：先有數字、再變 0，提醒區消失（不留殘影）
     rerenderClearsPreviousContent() {
         const { renderReminders, remindersContainer } = env();

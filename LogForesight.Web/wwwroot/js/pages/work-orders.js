@@ -938,7 +938,7 @@ async function removeMute(r) {
 // ── 管理者提醒區 ───────────────────────────────────────────────────────────
 
 /**
- * 提醒區（第 76-2 輪批次 C-2）：上報逾期未處理、本趟派不出去、上報時沒有收件人三類，數字與夜間的管理者摘要信
+ * 提醒區（第 76-2 輪批次 C-2）：今天新上報、上報逾期未處理、本趟派不出去、上報時沒有收件人四類（今天新上報只在這裡顯示、不寄信），數字與夜間的管理者摘要信
  * 同一個彙整函式（GET api/work-orders/admin-reminders）。三類都是 0 時整區不顯示；有數字時每類一行「N 筆」並連到對應位置。
  */
 function renderReminders(data) {
@@ -947,7 +947,8 @@ function renderReminders(data) {
     const escalated = data.escalatedCount ?? 0;
     const unassignable = data.unassignableCount ?? 0;
     const noRecipient = data.noRecipientCount ?? 0;
-    if (escalated + unassignable + noRecipient === 0) return;
+    const newEscalated = data.newEscalatedCount ?? 0;
+    if (escalated + unassignable + noRecipient + newEscalated === 0) return;
 
     remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
     // 沒有 Assign 的檢視者（主管、開發人員）只能看：不用行動語氣，直說誰能處理
@@ -989,6 +990,12 @@ function renderReminders(data) {
     };
     const span = t => { const e = document.createElement('span'); e.textContent = t; return e; };
     const orderLink = id => linkButton(`單號 ${id}`, appUrl('/work-orders/' + id));
+    // 今天新上報：與「超過 N 天」分開，管理員當天就看得到剛上報的，不必等到逾期
+    if (newEscalated > 0) {
+        const rows = (data.newEscalated ?? []).map(e => [orderLink(e.workOrderId), span(`${e.issueLabel}　${e.hostName}`)]);
+        addRow(`今天新上報：${formatNumber(newEscalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated',
+            '看是哪些', rows, newEscalated);
+    }
     if (escalated > 0) {
         const rows = (data.escalated ?? []).map(e => [orderLink(e.workOrderId), span(`${e.issueLabel}　${e.hostName}　上報 ${e.days} 天`)]);
         addRow(`上報超過 ${data.thresholdDays} 天沒人處理：${formatNumber(escalated)} 筆`, '看上報中的單', appUrl('/work-orders') + '?status=escalated',

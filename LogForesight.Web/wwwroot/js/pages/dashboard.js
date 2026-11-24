@@ -357,17 +357,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
-    cards.push({
-        group: 'todo',
-        label: '未回報主機',
-        value: data.silentHostsCount,
-        variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
-        hint: data.silentHostsPrtgDownCount > 0
-            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
-            : undefined,
-        title: '沒回報 ≠ 沒問題',
-        url: '/admin/hosts?status=silent'
-    });
+    cards.push(silentHostsCard(data, user));
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
         cards.push({
@@ -411,6 +401,35 @@ function renderKpi(data, user, displaySettings, myBadge) {
     const strip = kpiStrip(groups, { singleRow: true });
     container.replaceChildren(strip);
     mountKpiReveal(strip, container, new Set(cards.filter(c => c.variant === 'danger').map(c => c.label)));
+}
+
+/**
+ * 未回報主機卡。目的地（主機頁的「未回報」篩選）需要 Maintain：有 Maintain 才是連結；
+ * 其他角色不可點，改在提示文字列出可見範圍內未回報的主機名（API 最多帶 5 台，超過寫「等 N 台」）。
+ */
+function silentHostsCard(data, user) {
+    const card = {
+        group: 'todo',
+        label: '未回報主機',
+        value: data.silentHostsCount,
+        variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
+        hint: data.silentHostsPrtgDownCount > 0
+            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
+            : undefined,
+        title: '沒回報 ≠ 沒問題'
+    };
+
+    if (hasCapability(user, 'Maintain')) {
+        card.url = '/admin/hosts?status=silent';
+        return card;
+    }
+
+    const names = data.silentHostNames ?? [];
+    if (data.silentHostsCount > 0 && names.length > 0) {
+        const more = data.silentHostsCount > names.length ? ` 等 ${formatNumber(data.silentHostsCount)} 台` : '';
+        card.title = `${card.title}\n未回報：${names.join('、')}${more}`;
+    }
+    return card;
 }
 
 /** 告警卡＝建卡時 variant 為 danger 的卡（以標籤對應，不看樣式類別，換角色類別不會讓「藏起來的告警數」靜默變 0） */

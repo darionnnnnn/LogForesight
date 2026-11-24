@@ -90,6 +90,7 @@ public sealed class AdminReminderService
 
         var excluded = WorkOrderQueries.DisabledHostKeys(_hosts.GetAll());
         var escalated = new List<EscalatedEntry>();
+        var newToday = new List<EscalatedEntry>();
         var overdueOrderIds = new HashSet<long>();
         for (var page = 1; ; page++)
         {
@@ -112,7 +113,11 @@ public sealed class AdminReminderService
                         if (c.ClosedAt != null || excluded.Contains(Core.Persistence.Sql.HostNameKey.Of(c.HostName))) continue;
                         if (c.SourceName != null && c.EventId is int caseEvent && exclusion.IsCurrentlyMuted(c.SourceName, caseEvent)) continue;
                         // 上報起算日：EscalatedAt（轉進 escalated 的時間，夜間掛接不動它）；升級前的舊資料為 null，退回最後更新日
-                        var elapsed = (int)(today - (c.EscalatedAt ?? c.UpdatedAt).Date).TotalDays;
+                        var escalatedDay = (c.EscalatedAt ?? c.UpdatedAt).Date;
+                        // 今天新上報：與「超過 N 天」分開計數與列出（逾期類只認 elapsed > threshold，今天上報的 elapsed 為 0 不會重複）
+                        if (escalatedDay == today)
+                            newToday.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.IssueLabel, c.HostName, 0, false));
+                        var elapsed = (int)(today - escalatedDay).TotalDays;
                         if (elapsed <= threshold) continue;
                         overdueOrderIds.Add(order.WorkOrderId);
                         escalated.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.IssueLabel, c.HostName, elapsed,
@@ -145,6 +150,11 @@ public sealed class AdminReminderService
             .Select(u => new AdminReminderUnassignableDto { IssueLabel = u.IssueLabel, Reason = u.Reason, Hosts = u.Hosts })
             .ToList();
 
+        newToday = newToday.OrderBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal).ToList();
+        dto.NewEscalatedCount = newToday.Count;
+        dto.NewEscalated = newToday.Take(OverviewItemLimit)
+            .Select(e => new AdminReminderEscalatedDto { WorkOrderId = e.WorkOrderId, IssueLabel = e.IssueLabel, HostName = e.HostName, Days = 0 })
+            .ToList();
         dto.EscalatedCount = escalated.Count;
         dto.UnassignableCount = unassignable.Count;
         dto.NoRecipientCount = noRecipient.Count;

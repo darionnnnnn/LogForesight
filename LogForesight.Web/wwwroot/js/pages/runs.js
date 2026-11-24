@@ -1071,6 +1071,9 @@ aiRerunModalEl?.addEventListener('hidden.bs.modal', () => {
     document.getElementById('schedule-ai-rerun-blocked')?.classList.add('d-none');
 });
 
+/** 沒有 Maintain 時，PRTG 設定、結構同步、回填三個端點都會被拒（且每次寫一筆被拒稽核）：不送請求，直接標明原因 */
+const NEEDS_MAINTAIN_TEXT = '需要維護權限才能檢視';
+
 async function loadSchedule() {
     const user = await getCurrentUser();
     canMaintainSchedule = hasCapability(user, 'Maintain');
@@ -1096,7 +1099,8 @@ async function loadSchedule() {
     const [options, aiReady, settings, scheduleStatus] = await Promise.all([
         api.get('/api/admin/schedule/options'),
         getAiAvailable(),
-        api.get('/api/admin/settings', { silent: true }).catch(() => null),
+        // /api/admin/settings 需要 Maintain：沒有就不送（DevMonitor 的 PRTG 狀態改由排程狀態的精簡投影帶）
+        canMaintainSchedule ? api.get('/api/admin/settings', { silent: true }).catch(() => null) : Promise.resolve(null),
         statusPromise
     ]);
     aiAvailable = aiReady;
@@ -1126,9 +1130,9 @@ async function loadSchedule() {
             daysHintEl.textContent = `往前 ${scheduleStatus.prtgBackfillDays} 天`;
         }
     } else {
-        // 設定 API 需要 Maintain；DevMonitor 讀不到就明講「—」，不能讓「載入中…」永遠掛著
+        // 設定 API 需要 Maintain：沒有 Maintain 就明講原因，不能讓「載入中…」永遠掛著
         const stateEl = document.getElementById('prtg-module-state');
-        if (stateEl) stateEl.textContent = '—';
+        if (stateEl) stateEl.textContent = canMaintainSchedule ? '—' : NEEDS_MAINTAIN_TEXT;
     }
 }
 
@@ -1863,6 +1867,12 @@ function renderPrtgSyncSummary(status) {
 
 async function refreshPrtgSyncStatus(options) {
     const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
+    if (!canMaintainSchedule) {
+        // 端點需要 Maintain：不送請求（否則每次輪詢都被拒並寫一筆被拒稽核）
+        const summaryEl = document.getElementById('prtg-sync-summary');
+        if (summaryEl) summaryEl.textContent = NEEDS_MAINTAIN_TEXT;
+        return;
+    }
     try {
         const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true, background });
         renderPrtgSyncSummary(status);
@@ -2435,6 +2445,12 @@ function renderPrtgBackfillStatus(status) {
 
 async function refreshPrtgBackfillStatus(options) {
     const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
+    if (!canMaintainSchedule) {
+        // 端點需要 Maintain：不送請求（否則每次輪詢都被拒並寫一筆被拒稽核）
+        const statusEl = document.getElementById('prtg-backfill-status');
+        if (statusEl) statusEl.textContent = NEEDS_MAINTAIN_TEXT;
+        return;
+    }
     let status;
     try {
         status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background });

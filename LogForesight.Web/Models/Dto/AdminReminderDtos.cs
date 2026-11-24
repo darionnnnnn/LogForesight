@@ -22,13 +22,19 @@ public sealed class AdminReminderDto
     /// <summary>上報時沒有任何收件人、且仍有上報成員的單數</summary>
     public int NoRecipientCount { get; set; }
 
-    /// <summary>三類任一不是 0 就顯示提醒區</summary>
-    public bool Any => EscalatedCount + UnassignableCount + NoRecipientCount > 0;
+    /// <summary>今天新上報（上報時間是今天、仍待處理）的成員數；與「超過 N 天」分開計數，只在總覽顯示</summary>
+    public int NewEscalatedCount { get; set; }
+
+    /// <summary>三類（含今天新上報）任一不是 0 就顯示提醒區</summary>
+    public bool Any => EscalatedCount + UnassignableCount + NoRecipientCount + NewEscalatedCount > 0;
 
     /// <summary>派不出去清單的彙整時間；null＝尚未跑過夜間派工</summary>
     public DateTime? UnassignableAt { get; set; }
 
     public List<AdminReminderEscalatedDto> Escalated { get; set; } = new();
+
+    /// <summary>今天新上報的成員明細（<see cref="AdminReminderEscalatedDto.Days"/> 恆為 0），上限同其他類</summary>
+    public List<AdminReminderEscalatedDto> NewEscalated { get; set; } = new();
     public List<AdminReminderUnassignableDto> Unassignable { get; set; } = new();
     public List<AdminReminderNoRecipientDto> NoRecipient { get; set; } = new();
 }

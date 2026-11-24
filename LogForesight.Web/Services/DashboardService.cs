@@ -252,8 +252,18 @@ public class DashboardService
     private static void BuildSilentHosts(DashboardDto dto, List<WebHost> visibleHosts)
     {
         var now = DateTime.Now;
-        dto.SilentHostsCount = visibleHosts.Count(h => HostAdminService.IsSilent(h, now));
+        var silent = visibleHosts.Where(h => HostAdminService.IsSilent(h, now)).ToList();
+        dto.SilentHostsCount = silent.Count;
+        // 名稱只取可見範圍內的前幾台（已是 visibleHosts 過濾後）；數量大時完整清單走主機頁
+        dto.SilentHostNames = silent
+            .Select(h => h.HostName)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Take(SilentHostNameLimit)
+            .ToList();
     }
+
+    /// <summary>儀表板摘要帶回的未回報主機名稱上限</summary>
+    public const int SilentHostNameLimit = 5;
 
     /// <summary>
     /// 未回報主機中 PRTG 現況為 down 的台數——與主機頁的提示走同一份計算

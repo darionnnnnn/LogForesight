@@ -13,7 +13,7 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
-import { appUrl, recordDetailUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl, recordsUrl } from '../core/paths.js';
 import { safeStorage } from '../core/storage.js';
 import {
     renderLoading,
@@ -236,6 +236,8 @@ function renderKpi(data) {
 
 /** 交辦單清單的請求序號（同 work-orders.js）：慢回來的舊請求不可蓋掉新篩選的結果 */
 const ordersGuard = createSeqGuard();
+/** 空狀態補查的請求序號：重畫、換頁後，過期的回應不得寫回畫面 */
+const emptyHintGuard = createSeqGuard();
 
 function ordersUrl() {
     const pageSize = loadPageSize('handler-work-orders');
@@ -357,6 +359,7 @@ function selectedInfo(id) {
 }
 
 function renderOrders(data) {
+    emptyHintGuard.next();   // 新的一頁畫出來：前一次空狀態補查的回應作廢
     const rows = data.items || [];
     currentRows = rows;
     orderTotalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
@@ -541,6 +544,38 @@ function renderOrdersEmpty() {
     const link = document.createElement('a');
     link.href = appUrl('/');
     link.textContent = '前往總覽儀表板';
+    const actionEl = document.createElement('div');
+    actionEl.className = 'mt-2';
+    actionEl.appendChild(link);
+    ordersEl.firstElementChild.appendChild(actionEl);
+    showVisibleIssuesInEmpty(emptyHintGuard.next());
+}
+
+/**
+ * 空狀態第三分支補充：沒有交辦單，但可見範圍內仍有未處理問題時，改寫成「你可以看到的主機目前有 N 個未處理問題（影響 M 台）」
+ * 並連到問題查詢；N 為 0 或取不到時維持原文。數字取儀表板摘要的 issueTodo（同一口徑，不另寫查詢），期間用儀表板的設定。
+ */
+async function showVisibleIssuesInEmpty(seq) {
+    let data;
+    try {
+        const days = Number(safeStorage.get('lf.dashboard.days')) || 7;
+        data = await api.get(`/api/dashboard/summary?days=${days}`, { silent: true });
+    } catch {
+        return;   // 補充資訊：取不到就維持原文
+    }
+    if (!emptyHintGuard.isCurrent(seq)) return;
+    const open = data?.issueTodo?.openIssueCount ?? 0;
+    if (open <= 0) return;
+
+    const hosts = data.issueTodo.affectedHostCount ?? 0;
+    renderEmpty(ordersEl, {
+        title: `你可以看到的主機目前有 ${formatNumber(open)} 個未處理問題（影響 ${formatNumber(hosts)} 台）`,
+        hint: '目前沒有指派給你的交辦單；可到問題查詢看看有哪些問題。'
+    });
+    const link = document.createElement('a');
+    // 三級嚴重度全帶、期間同儀表板：與儀表板「未處理問題」卡落在同一份清單
+    link.href = appUrl(recordsUrl({ view: 'issue', statuses: 'open', riskLevels: '高,中,低', from: data.from, to: data.to }));
+    link.textContent = '查看未處理問題';
     const actionEl = document.createElement('div');
     actionEl.className = 'mt-2';
     actionEl.appendChild(link);

@@ -533,6 +533,42 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(3, summary.SilentHostsCount);
     }
 
+    private WebHost AddSilentHost(string name) =>
+        _hosts.Upsert(new WebHost { HostName = name, Active = true, CreatedAt = DateTime.Now.AddDays(-30), LastReportAt = DateTime.Now.AddDays(-5) });
+
+    [Fact]
+    public void GetSummary_未回報主機名只含可見範圍且依名稱排序()
+    {
+        var mine2 = AddSilentHost("B-MINE");
+        var mine1 = AddSilentHost("A-MINE");
+        AddSilentHost("Z-OTHER-DEPT");   // 不在授權範圍：名稱不得出現
+        _hosts.Upsert(new WebHost { HostName = "OK-HOST", Active = true, CreatedAt = DateTime.Now.AddDays(-30), LastReportAt = DateTime.Now.AddHours(-1) });
+
+        var (dashboard, _) = BuildServices(new HostScopedVisibility(_hosts, mine1.HostId, mine2.HostId));
+        var summary = dashboard.GetSummary(7);
+
+        Assert.Equal(2, summary.SilentHostsCount);
+        Assert.Equal(new[] { "A-MINE", "B-MINE" }, summary.SilentHostNames);
+        Assert.DoesNotContain("Z-OTHER-DEPT", summary.SilentHostNames);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(3, 3)]
+    [InlineData(5, 5)]
+    [InlineData(6, 5)]
+    [InlineData(7, 5)]
+    public void GetSummary_未回報主機名單最多五台_計數仍是全部(int silentCount, int expectedNames)
+    {
+        for (var i = 0; i < silentCount; i++) AddSilentHost($"SILENT-{i:00}");
+
+        var summary = _service.GetSummary(7);
+
+        Assert.Equal(silentCount, summary.SilentHostsCount);
+        Assert.Equal(expectedNames, summary.SilentHostNames.Count);
+        if (silentCount > 0) Assert.Equal("SILENT-00", summary.SilentHostNames[0]);
+    }
+
     // ── 「N 個靜音中的問題未列出」（批次 B-2b）──────────────────────────────
 
     /// <summary>以指定靜音排除條件組一套與建構子相同的服務（儀表板、報表、依問題視角）</summary>
