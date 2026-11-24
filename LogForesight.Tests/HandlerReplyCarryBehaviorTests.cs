@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 下一張回覆在多主機交辦單上的 carry 行為：實際執行 handler-detail.js 的 production 函式，
+/// 我的交辦列上「回覆」的入口分流（1 台／多台／0 台、被拒重載）與下一張回覆的 carry 行為：實際執行 handler-detail.js 的 production 函式，
 /// 只替換 DOM、API 與 UI 邊界，避免以字串存在性或重寫演算法作為通過條件。
 /// </summary>
 public class HandlerReplyCarryBehaviorTests
@@ -22,11 +22,13 @@ public class HandlerReplyCarryBehaviorTests
     }
 
     [NodeTheory]
-    [InlineData("nextMultiHostReplyCarriesStatusAndNoteOnce")]
-    [InlineData("manualReplyClearsCarryFromExpandedPanel")]
+    [InlineData("nextMultiHostReplyCarriesStatusAndNote")]
+    [InlineData("manualReplyDoesNotCarry")]
     [InlineData("singleActiveOnDisabledHostOpensSingleReply")]
-    [InlineData("oneActivePlusOneDisabledExpandsMemberPanel")]
-    public void 下一張回覆carry行為(string caseName)
+    [InlineData("oneActivePlusOneDisabledOpensWholeOrderModal")]
+    [InlineData("rowReplyOpensModalForOneManyAndZero")]
+    [InlineData("rejectedReplyRefreshesListAndNamesHandler")]
+    public void 列上回覆入口與下一張carry行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
         var script = Path.Combine(scriptDir, "handler-reply-carry.behavior.mjs");

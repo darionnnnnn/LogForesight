@@ -31,7 +31,8 @@ import {
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection } from './issue-status-reply.js';
+import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { createSeqGuard } from '../core/async-guards.js';
 
@@ -85,6 +86,7 @@ let lastRefresh = Promise.resolve();
 let advancedLoaded = false;
 let advancedAllowed = false;       // 確認有權檢視這個人的頁之後才開放進階檢視（workload 對無權者 403）
 let advancedPending = false;       // 權限確認前進階檢視就被展開：確認後補載入
+let listNotice = null;             // 「清單有更新」提示（本人且可回覆才建立）
 
 async function load() {
     renderLoading(kpiEl, 1);
@@ -114,6 +116,10 @@ async function load() {
     }
 
     advancedAllowed = true;
+    // 側欄徽章的輪詢發現我的進行中台數或單數與載入時不同，就在頁面頂端提示重新載入（不另開輪詢）
+    if (canReply && !listNotice) {
+        listNotice = createListUpdateNotice({ anchor: kpiEl, onReload: () => { lastRefresh = scheduleRefresh(null, false); } });
+    }
     if (advancedPending) {
         advancedPending = false;
         guardLoad([casesEl, daysEl], loadAdvanced);
@@ -259,6 +265,7 @@ async function loadOrders() {
     const data = await api.get(ordersUrl());
     if (!ordersGuard.isCurrent(seq)) return;
     renderOrders(data);
+    listNotice?.rebase();   // 清單剛重新取過，提示作廢（下一次徽章事件才是新基準）
 }
 
 /**
@@ -290,6 +297,7 @@ async function refreshAfterReply({ keepExpandedId = null } = {}) {
         if (row.closedAt) unselectOrder(row.workOrderId);   // 結案處理：已結案的單不能再回覆
     }
     renderOrders(data);
+    listNotice?.rebase();
     for (const id of expanded) expandOrderRow(id);
     window.scrollTo(0, scrollY);
 
@@ -325,21 +333,12 @@ function expandedOrderIds() {
     return ids;
 }
 
-/** 展開某列的成員面板；carry 只供本次下一張回覆，手動回覆的 null 會清掉舊 carry。 */
-const pendingReplyCarry = new Map();
-
-function expandOrderRow(workOrderId, carry = null) {
+/** 展開某列的成員面板（回覆後的就地更新用它恢復使用者先前展開的列） */
+function expandOrderRow(workOrderId) {
     const tr = orderRowEl(workOrderId);
     if (!tr) return null;
-    if (carry) pendingReplyCarry.set(workOrderId, carry);
-    else pendingReplyCarry.delete(workOrderId);
     if (tr.getAttribute('aria-expanded') !== 'true') tr.click();
-    const panel = tr.nextElementSibling.querySelector('.handler-wo-member-panel');
-    if (panel) {
-        panel._replyCarry = carry;
-        pendingReplyCarry.delete(workOrderId);
-    }
-    return panel;
+    return tr.nextElementSibling.querySelector('.handler-wo-member-panel');
 }
 
 function selectOrder(row) {
@@ -500,11 +499,7 @@ function renderOrders(data) {
             rows,
             stickyLastColumn: true,   // 375px 寬時「回覆」動作欄固定在右緣，不被橫向捲動藏起來
             // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
-            onRowExpand: (row, cell) => {
-                const carry = pendingReplyCarry.get(row.workOrderId) || null;
-                pendingReplyCarry.delete(row.workOrderId);
-                buildMemberPanel(row, cell, carry);
-            }
+            onRowExpand: (row, cell) => buildMemberPanel(row, cell)
         });
     }
 
@@ -617,8 +612,8 @@ replyOrdersBtn.addEventListener('click', () => {
         draftKey: workOrdersDraftKey(workOrderIds),
         aiContext,
         submit: async payload => {
-            const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload });
-            toastReplyManyResult(result);
+            const result = await api.post('/api/work-orders/reply-many', { workOrderIds, ...payload }, { silent: true });
+            toastReplyManyResult(result, payload);
             // 回覆成功的單已處理完：取消勾選並記為處理過（「下一張」跳過）
             for (const id of result.succeeded || []) {
                 unselectOrder(id);
@@ -632,6 +627,7 @@ replyOrdersBtn.addEventListener('click', () => {
                 throw new Error('partial');
             }
         },
+        onRejected: error => rejectedReply(error, null),
         onApplied: () => {
             lastRefresh = scheduleRefresh(null, false);
         }
@@ -641,11 +637,27 @@ replyOrdersBtn.addEventListener('click', () => {
 // ── 列上的「回覆」與下一張 ─────────────────────────────────────────────────
 
 /**
- * 列上的「回覆」：只剩一台進行中（含停用主機上的進行中——成員清單與回覆端點都涵蓋它，不能只看 counts.active） → 直接開單張回覆彈窗；多台 → 展開成員面板讓人勾選這次處理好的主機。
- * carry＝由「送出並回覆下一張」帶過來的上一張內容（沿用狀態、可帶入說明）。
+ * 回覆被拒（單已結案、成員已非進行中、單已改派）：重新載入摘要與清單（草稿與訊息由彈窗保留），
+ * 單張單被拒為 403 時回傳含新處理人的說明（讀單取名）；reply-many 涵蓋多張單，不指名（workOrderId 傳 null）。
+ */
+function rejectedReply(error, workOrderId) {
+    lastRefresh = scheduleRefresh(null, false);
+    return workOrderId == null ? undefined : describeReplyRejection(error, workOrderId);
+}
+
+/**
+ * 列上的「回覆」：一律開回覆彈窗。只剩一台進行中（含停用主機上的進行中——成員清單與回覆端點都涵蓋它，
+ * 不能只看 counts.active）→ 對象是那一台；多台 → 對象預設「全部進行中主機」，送出時 caseIds 為空
+ * （端點語意：空＝全部進行中），要只回覆部分主機走展開列的勾選。0 台不開彈窗。
+ * carry＝由「送出並回覆下一張」帶過來的上一張內容（沿用結論、可帶入說明）。
  */
 async function replyOrder(row, carry) {
-    if (replyableCount(row.counts) === 1) {
+    const count = replyableCount(row.counts);
+    if (count === 0) {
+        toast('這張單已沒有進行中的主機', 'info');
+        return;
+    }
+    if (count === 1) {
         const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
         let member;
         try {
@@ -661,16 +673,32 @@ async function replyOrder(row, carry) {
         openSingleReply(row, member, carry);
         return;
     }
+    openWholeOrderReply(row, count, carry);
+}
 
-    const panel = expandOrderRow(row.workOrderId, carry);
-    if (!panel) return;
-    if (!panel.querySelector('.handler-wo-member-hint')) {
-        const hint = document.createElement('div');
-        hint.className = 'lf-hint mb-2 handler-wo-member-hint';
-        hint.textContent = '全部處理好可按「全選」';
-        panel.prepend(hint);
-    }
-    panel.focus();
+/** 整張單回覆：對象＝全部進行中主機，caseIds 為空由伺服器取全部進行中 */
+function openWholeOrderReply(row, count, carry) {
+    let closedNow = false;
+    openWorkOrderReplyModal({
+        multiTarget: true,
+        title: `回覆交辦單 #${row.workOrderId}`,
+        targetText: `全部進行中主機（${count} 台）`,
+        draftKey: `order:${row.workOrderId}:all`,
+        aiContext: { issueLabel: row.issueLabel, hostCount: count },
+        initialStatus: carry ? carry.status : undefined,
+        previousNote: carry ? carry.note : null,
+        submit: async payload => {
+            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
+            toastReplyResult(result, payload);
+            closedNow = result.workOrderClosed;
+        },
+        onRejected: error => rejectedReply(error, row.workOrderId),
+        onApplied: () => {
+            handledOrderIds.add(row.workOrderId);
+            lastRefresh = scheduleRefresh(row.workOrderId, closedNow);
+        },
+        onNext: payload => openNextOrder(row.workOrderId, payload)
+    });
 }
 
 function openSingleReply(row, member, carry) {
@@ -684,10 +712,11 @@ function openSingleReply(row, member, carry) {
         initialStatus: carry ? carry.status : undefined,
         previousNote: carry ? carry.note : null,
         submit: async payload => {
-            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: [member.caseId], ...payload });
-            toastReplyResult(result);
+            const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: [member.caseId], ...payload }, { silent: true });
+            toastReplyResult(result, payload);
             closedNow = result.workOrderClosed;
         },
+        onRejected: error => rejectedReply(error, row.workOrderId),
         onApplied: () => {
             handledOrderIds.add(row.workOrderId);
             lastRefresh = scheduleRefresh(row.workOrderId, closedNow);
@@ -816,11 +845,10 @@ function dueDateCell(row) {
  * 展開列：該單的成員（主機）清單，可勾選後只回覆選取的幾台。
  * 勾選狀態是這一次展開的區域狀態——就地更新重繪列時自然歸零。
  */
-function buildMemberPanel(row, cell, carry = null) {
+function buildMemberPanel(row, cell) {
     const box = document.createElement('div');
     box.className = 'p-2 handler-wo-member-panel';
     box.tabIndex = -1;
-    box._replyCarry = carry;
 
     // 佐證層：這張單的來源與最近新增時間（判斷「要不要處理」用不到，放展開列）
     const facts = metaLine([
@@ -1026,13 +1054,12 @@ function buildMemberPanel(row, cell, carry = null) {
             aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
             // 勾選的主機都是同一個問題簽章才能沿用上次的說明
             reuseIssueKey: issueKeys.size === 1 ? [...issueKeys][0] : null,
-            initialStatus: box._replyCarry ? box._replyCarry.status : undefined,
-            previousNote: box._replyCarry ? box._replyCarry.note : null,
             submit: async payload => {
-                const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload });
-                toastReplyResult(result);
+                const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
+                toastReplyResult(result, payload);
                 closedNow = result.workOrderClosed;
             },
+            onRejected: error => rejectedReply(error, row.workOrderId),
             onApplied: () => {
                 handledOrderIds.add(row.workOrderId);
                 lastRefresh = scheduleRefresh(row.workOrderId, closedNow, row.workOrderId);

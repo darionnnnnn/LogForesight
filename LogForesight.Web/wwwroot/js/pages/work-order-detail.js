@@ -27,7 +27,8 @@ import {
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection } from './issue-status-reply.js';
+import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
 
 // DOM 元素
@@ -429,17 +430,28 @@ async function buildAdminCloseModal() {
 /** 設定請求回來前再按一次不會疊開第二個對話框 */
 const openAdminCloseModal = exclusive(buildAdminCloseModal);
 
-/** 以本單的回覆端點回覆指定成員；成功後重新載入本頁 */
-function openMemberReply(caseIds, targetText) {
+/**
+ * 以本單的回覆端點回覆指定成員；成功後重新載入本頁。
+ * caseIds 為空＝全部進行中主機（端點語意），此時 hostCount 帶實際台數；被拒（單已結案、成員已非進行中、單已改派）
+ * 一樣重新載入單頭、成員表與時間軸，訊息與草稿由彈窗保留，403 改寫成含新處理人的說明。
+ */
+function openMemberReply(caseIds, targetText, hostCount = caseIds.length) {
     openWorkOrderReplyModal({
+        multiTarget: hostCount > 1,
         title: `回覆交辦單 #${workOrderId}`,
         targetText,
-        draftKey: `order:${workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
-        aiContext: { issueLabel: currentDetail.issueLabel, hostCount: caseIds.length },
+        draftKey: caseIds.length > 0
+            ? `order:${workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`
+            : `order:${workOrderId}:all`,
+        aiContext: { issueLabel: currentDetail.issueLabel, hostCount },
         reuseIssueKey: currentDetail.issueKey || null,
         submit: async payload => {
-            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload });
-            toastReplyResult(result);
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
+            toastReplyResult(result, payload);
+        },
+        onRejected: error => {
+            reloadAll();   // guardLoad 自行處理載入失敗，不會擲出
+            return describeReplyRejection(error, workOrderId);
         },
         onApplied: () => reloadAll()
     });
@@ -458,7 +470,7 @@ function renderActions(detail, user) {
     }
 
     if (detail.viewerCanReply) {
-        // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
+        // 與工作頁列上的「回覆」同一套：一律開回覆彈窗（0 台不開）；1 台對象是那一台，多台預設全部進行中主機（caseIds 為空）
         // 處理人在這一頁最常做的事：頁面唯一的實心主要按鈕（管理動作是一般次要按鈕，處理人看不到）
         const replyBtn = button('回覆這張單', { variant: 'primary', size: null, onClick: async () => {
             // 含停用主機上的進行中成員：成員清單與回覆端點都涵蓋它們（與處理人工作頁同一個算法）
@@ -468,12 +480,7 @@ function renderActions(detail, user) {
                 return;
             }
             if (activeCount > 1) {
-                memberStatusSelect.value = 'active';
-                memberPage = 1;
-                selectedCaseIds.clear();
-                await guardLoad(membersContainer, loadMembersOnly);
-                membersContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                toast('勾選這次處理好的主機，再按「回覆選取的主機」', 'info');
+                openMemberReply([], `全部進行中主機（${activeCount} 台）`, activeCount);
                 return;
             }
             const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
@@ -1061,11 +1068,15 @@ async function loadAll() {
     }
 }
 
+/** 重新載入完成後要做的事（「清單有更新」提示作廢）；init 登錄 */
+const reloadHooks = [];
+
 async function reloadAll() {
     selectedCaseIds.clear();
     updateSplitBtn();
     updateReplyBtn();
     await guardedLoadAll();
+    for (const hook of reloadHooks) hook();
 }
 
 /**
@@ -1084,6 +1095,9 @@ async function guardedLoadAll() {
 }
 
 function init() {
+    // 側欄徽章的輪詢發現我的進行中台數或單數與載入時不同，就在頁面頂端提示重新載入（不另開輪詢）
+    const listNotice = createListUpdateNotice({ anchor: headerContainer, onReload: () => reloadAll() });
+    reloadHooks.push(() => listNotice.rebase());
     renderLoading(headerContainer, 3);
     renderLoading(membersContainer, 5);
     renderLoading(timelineContainer, 3);

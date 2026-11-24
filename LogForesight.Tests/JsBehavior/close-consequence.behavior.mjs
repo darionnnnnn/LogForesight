@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
 import { loadElements, loadButton } from './load-elements.mjs';
+import { loadReplyModule, openReply } from './load-reply-modal.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -344,10 +345,10 @@ const cases = {
         assert.deepEqual(onlyDisabled.opened, [{ caseIds: [55], targetText: '主機 HOST-D' }], '只剩停用主機的一台要開單台回覆');
         assert.ok(!onlyDisabled.toasts.some(t => t.m.includes('已沒有進行中')), '不可被擋成沒有進行中的主機');
 
+        // 一啟用加一停用：合計 2 台，一律開整單彈窗（caseIds 為空），不再只捲到成員表
         const mixed = await run({ active: 1, activeOnDisabledHosts: 1 });
-        assert.equal(mixed.opened.length, 0, '兩台合計是多台，不直接開單台回覆');
-        assert.equal(mixed.memberStatusSelect.value, 'active');
-        assert.ok(mixed.toasts.some(t => t.m.includes('勾選這次處理好的主機')), JSON.stringify(mixed.toasts));
+        assert.deepEqual(mixed.opened, [{ caseIds: [], targetText: '全部進行中主機（2 台）' }], '兩台合計要開整單彈窗');
+        assert.equal(mixed.toasts.length, 0);
 
         const single = await run({ active: 1, activeOnDisabledHosts: 0 });
         assert.equal(single.opened.length, 1);
@@ -433,43 +434,29 @@ const cases = {
         assert.equal(env.shown.length, 1, '等待期間的重複觸發要被忽略');
     },
 
-    // B5-b：回覆表單的不處理類說明行
+    // B5-b：回覆表單的不處理類說明行（結論改成一排按鈕後，以 production 整份模組執行）
     async replyFormShowsNoFixNoteOnlyForNoFix() {
-        const env = makeEnv();
-        const source = read('pages', 'issue-status-reply.js');
-        const fn = extract(source, 'export function openWorkOrderReplyModal(').replace(/^export /, '');
-        const statusOptions = catalog.statusesWhere(s => s.replyable).map(s => ({ value: s.value, label: s.label }));
-        const editor = { setValue() { }, clearDraft() { } };
-        const noFixConsequenceText = new Function(`${extract(source, 'export function noFixConsequenceText(').replace(/^export /, '')}\nreturn noFixConsequenceText;`)();
-        const run = new Function('STATUS_OPTIONS', 'noFixConsequenceText', 'statusNote', 'isNoFixClosure', 'statusMeta', 'makeButton', 'attachNoteEditor',
-            'showDetailModal', 'bindPastDateCheck', 'confirmAction', 'withBusy', 'toast', 'todayLocal', 'toLocalDateString', 'MAX_DUE_DATE_DAYS', 'setFieldError', 'clearFieldError',
-            `${fn}\nreturn openWorkOrderReplyModal;`)(
-            statusOptions, noFixConsequenceText, env.statusNote, catalog.isNoFixClosure, catalog.statusMeta, env.button, () => editor,
-            env.showDetailModal, () => ({ validate: () => true }), async () => true, () => () => { }, () => { },
-            () => '2026-01-01', () => '2026-04-01', 90, () => { }, () => { });
+        const loaded = loadReplyModule();
         const open = (extra = {}) => {
-            env.shown.length = 0;
-            run({ title: 't', targetText: '本單 3 台', draftKey: 'k', submit: async () => { }, ...extra });
-            const body = env.shown[0].body;
-            return { body, select: byId(body, 'wo-reply-status'), note: byId(body, 'wo-reply-no-fix-note') };
+            const m = openReply(loaded, { targetText: '本單 3 台', draftKey: 'k', ...extra });
+            return { ...m, note: byId(m.body, 'wo-reply-no-fix-note') };
         };
 
         const m = open();
         assert.ok(m.note, '回覆表單有說明行節點');
         assert.ok(textOf(m.note).includes('這台主機的這個問題之後不會再派給任何人；需要恢復請找管理者。'));
         assert.ok(m.note.classList.contains('lf-status-note--warning'), '用 warning 型提示');
-        const options = all(m.select).filter(n => n.tagName === 'OPTION').map(n => n.value);
+        assert.equal(hidden(m.note), true, '沒選結論時不顯示');
+        const options = m.chips.map(n => n.dataset.status);
         assert.deepEqual(options.filter(v => ['wont_fix', 'false_positive', 'known_noise'].includes(v)).sort(), ['false_positive', 'known_noise', 'wont_fix']);
         for (const value of options) {
-            m.select.value = value;
-            m.select.dispatch('change');
+            m.pick(value);
             const expected = ['wont_fix', 'false_positive', 'known_noise'].includes(value);
             assert.equal(hidden(m.note), !expected, `${value}：說明行${expected ? '要' : '不可'}出現`);
         }
         for (const value of ['resolved', 'in_progress', 'observing', 'escalated']) {
             assert.ok(options.includes(value), `${value} 在回覆選項內`);
-            m.select.value = value;
-            m.select.dispatch('change');
+            m.pick(value);
             assert.equal(hidden(m.note), true, `${value} 不出現說明行`);
         }
         // 一次涵蓋多台主機或多張單：改用複數說法，不說「這台主機」

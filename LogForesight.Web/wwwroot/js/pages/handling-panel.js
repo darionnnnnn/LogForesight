@@ -12,7 +12,7 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, renderChips, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
-import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+import { formatDateTime, formatUserName, dateAfterDays } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant, isNoFixClosure } from '../core/handling-statuses.js';
 import { noFixConsequenceText } from './issue-status-reply.js';
@@ -495,9 +495,7 @@ function handlingForm() {
     for (const days of [3, 7, 14]) {
         quickRow.appendChild(button(`${days} 日`, {
             onClick: () => {
-                const target = new Date();
-                target.setDate(target.getDate() + days);
-                dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
+                dueInput.value = dateAfterDays(days);   // 本地日期（S12），不用 toISOString 的 UTC 日期
                 saveFormDraft();
             }
         }));
@@ -543,9 +541,7 @@ function handlingForm() {
         // 刻意用 `Number(x) || 預設`：空欄位（Number('') 為 0）與 0 都不是合法觀察天數，一律沿用預設 7 天，
         // 不像必填欄位要擋下送出（空值＝沿用預設，與 core/number-field.js 的必填讀取是兩種語意）
         const days = Math.min(90, Math.max(1, Number(observeInput.value) || 7));
-        const target = new Date();
-        target.setDate(target.getDate() + days);
-        return toLocalDateString(target);
+        return dateAfterDays(days);
     }
 
     /** 送出用的 dueDate：in_progress 用日期選擇器的值，observing 用天數換算的日期，其餘不存 */

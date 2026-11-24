@@ -7,7 +7,8 @@
  *
  * 每 60 秒刷新一次；分頁隱藏時不打 API，回到前景（visibilitychange）立即刷新一次。
  * 各頁**不得另開計時器**——需要跟著徽章更新的頁面訂閱 `lf:badges` 事件
- * （`detail: { myWork, unread }`，取不到的一項維持上次已知值，從未取到則為 null）。
+ * （`detail: { myWork, myWorkOrders, unread }`：myWork＝我進行中的台數、myWorkOrders＝我進行中的單數，
+ * 取不到的一項維持上次已知值，從未取到則為 null）。我的交辦與交辦單頁據此提示「清單有更新」（core/list-update-notice.js）。
  * **失敗完全靜默**：徽章是加值資訊，載不到就維持原樣；為了一個數字讓側欄出現錯誤提示是本末倒置。
  */
 
@@ -17,10 +18,15 @@ import { pollWhile } from './async-guards.js';
 const REFRESH_INTERVAL_MS = 60000;
 
 /** 最近一次成功取得的數字；失敗時沿用，避免徽章因單次失敗而閃爍或消失 */
-const lastKnown = { myWork: null, unread: null };
+const lastKnown = { myWork: null, myWorkOrders: null, unread: null };
 
 let started = false;
 let refreshing = false;
+
+/** 最近一次已知的徽章數字（頁面剛載入時取基準用；從未取到的項目為 null） */
+export function currentBadgeCounts() {
+    return { ...lastKnown };
+}
 
 /** 啟動徽章輪詢（整個頁面生命週期只會生效一次；重複呼叫直接略過） */
 export function startBadgePolling(user) {
@@ -38,10 +44,13 @@ async function refreshBadges(user) {
     refreshing = true;
     try {
         const [myWork, unread] = await Promise.all([loadMyWorkBadge(user), loadUnreadBadge(user)]);
-        if (myWork !== undefined) lastKnown.myWork = myWork;
+        if (myWork !== undefined) {
+            lastKnown.myWork = myWork?.members ?? null;
+            lastKnown.myWorkOrders = myWork?.orders ?? null;
+        }
         if (unread !== undefined) lastKnown.unread = unread;
         window.dispatchEvent(new CustomEvent('lf:badges', {
-            detail: { myWork: lastKnown.myWork, unread: lastKnown.unread }
+            detail: { myWork: lastKnown.myWork, myWorkOrders: lastKnown.myWorkOrders, unread: lastKnown.unread }
         }));
     } finally {
         refreshing = false;
@@ -66,7 +75,7 @@ async function loadMyWorkBadge(user) {
         const title = `進行中交辦單 ${summary.activeWorkOrders ?? 0} 張、${count} 台；`
             + `逾期 ${summary.overdueMembers ?? 0} 台、未回覆 ${summary.unrepliedWorkOrders ?? 0} 張`;
         setBadge(link, count, title, (summary.overdueMembers ?? 0) > 0);
-        return count;
+        return { members: count, orders: summary.activeWorkOrders ?? 0 };
     } catch {
         return undefined;
     }

@@ -326,6 +326,13 @@ export function todayLocal() {
     return toLocalDateString(new Date());
 }
 
+/** 今天起第 N 天的本地日期字串（快捷「3／7／14 日」與觀察天數換算共用，不各頁自己加天數） */
+export function dateAfterDays(days) {
+    const target = new Date();
+    target.setDate(target.getDate() + days);
+    return toLocalDateString(target);
+}
+
 /**
  * 分析資料涵蓋的最後一天＝昨天（回饋十九輪批次C）：分析永遠只產到昨天
  * （後端 AnalysisOrchestrator 固定分析 yesterday），期間篩選的預設終點與快捷範圍
