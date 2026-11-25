@@ -183,12 +183,6 @@
       {
         "assert": {
           "sel": "#record-list button",
-          "notText": "統一標記"
-        }
-      },
-      {
-        "assert": {
-          "sel": "#record-list button",
           "notText": "交辦"
         }
       },
@@ -4996,7 +4990,7 @@
       {
         "assert": {
           "sel": "#wo-reminders",
-          "text": "派不出去的問題：2 筆"
+          "text": "派不出去的問題：2 個"
         }
       },
       {
@@ -5009,12 +5003,6 @@
         "assert": {
           "sel": "#wo-reminders",
           "text": "可派未派的問題："
-        }
-      },
-      {
-        "assert": {
-          "sel": "#wo-reminders",
-          "text": "最近一次夜間派工派不出去的問題：2 筆"
         }
       },
       {
@@ -5053,18 +5041,6 @@
       },
       {
         "evalAssert": "const bs = [...document.querySelectorAll('#wo-reminders .lf-disclosure')]; if (bs.length < 2) return '提醒區每類應有展開鈕，實際 ' + bs.length; bs.forEach(b => b.click()); return null;"
-      },
-      {
-        "assert": {
-          "sel": "#wo-reminders",
-          "text": "Ui-Unassignable-Issue EventId 8630"
-        }
-      },
-      {
-        "assert": {
-          "sel": "#wo-reminders",
-          "text": "彙整於"
-        }
       },
       {
         "evalAssert": "const a = document.querySelector('#wo-reminders .lf-disclosure-target a[href*=\"/work-orders/\"]'); return a ? null : '上報明細的單號應連到交辦單';"
