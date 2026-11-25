@@ -29,6 +29,9 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [InlineData("work-orders-reminders.behavior.mjs", "reminderDaysZeroShowsPersistentNote")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFetchesEndpointAndRenders")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFailureLeavesAreaEmpty")]
+    [InlineData("work-orders-reminders.behavior.mjs", "todoCategoriesShowRowsWithLinks")]
+    [InlineData("work-orders-reminders.behavior.mjs", "onlyNewCategoryShowsRegionAndZeroOrMissingDoesNot")]
+    [InlineData("work-orders-reminders.behavior.mjs", "fetchFailedWithoutTimeStillListed")]
     public void 管理者提醒區的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

@@ -28,7 +28,7 @@
       "keywords": ["告警抑制", "抑制", "已知雜訊", "主機群組", "全站", "抑制目標", "簽章抑制", "關聯抑制", "音量抑制", "抑制範圍", "到期解除", "影響面預覽", "NoiseMark"],
       "related": ["rules", "record-detail", "alert-tools"] },
     { "id": "alert-tools", "title": "讓告警安靜的工具", "file": "19-alert-tools.md", "aiFile": "19-alert-tools.ai.md", "icon": "slash-circle",
-      "keywords": ["靜音", "問題靜音", "暫時不看", "到期恢復", "延長靜音", "解除靜音", "抑制", "統一標記", "不再打擾", "決策表", "哪個工具", "盲區", "靜音中"],
+      "keywords": ["靜音", "問題靜音", "暫時不看", "到期恢復", "延長靜音", "解除靜音", "抑制", "統一標記", "不再打擾", "決策表", "哪個工具", "盲區", "靜音中", "不再顯示", "比較表", "已知雜訊", "不處理", "誤報"],
       "related": ["suppression", "issue-owners", "handling"] },
     { "id": "hosts", "title": "主機（含主機群組）", "file": "08-hosts.md", "aiFile": "08-hosts.ai.md", "icon": "hdd-network", "requires": "Maintain",
       "keywords": ["主機", "主機群組", "群組", "負責人", "NetIQ", "Sentinel", "掃描", "作業系統", "Windows", "Linux", "主機分級", "核心主機", "主機合併", "授權矩陣", "主動探索"],

@@ -72,6 +72,7 @@ async function load() {
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
+    renderAdminTodo(data);
     renderBanner(data, user);
     renderKpi(data, user, displaySettings, myBadge);
     renderCategories(data);
@@ -208,6 +209,62 @@ function renderServerAdminGuide() {
     container.replaceChildren(card);
 }
 
+/**
+ * 「需要你處理」的項目（只列數字不是 0 的類別），順序：昨晚取數結果、今天新上報、上報逾期、可派未派、派不出去、
+ * 沒有收件人、處理人已停用或暫停、反覆復發、未分組主機。資料與交辦總覽提醒區同一個彙整（AdminReminderDto）。
+ * 每項帶連到處理點的路徑（href 由呼叫端以 appUrl 組）。
+ */
+function adminTodoItems(todo, pendingDispatch) {
+    const items = [];
+    const n = value => value ?? 0;
+    const add = (count, text, href) => { if (count > 0) items.push({ text, href }); };
+    add(n(todo.fetchFailedCount), '最近一趟取數失敗', '/runs');
+    add(n(todo.newEscalatedCount), `今天新上報 ${formatNumber(n(todo.newEscalatedCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.escalatedCount), `上報逾期 ${formatNumber(n(todo.escalatedCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.dispatchableCount), `可派未派 ${formatNumber(n(todo.dispatchableCount))} 個問題`, '/work-orders#gaps');
+    // 待派問題太多、算不出可派數字時，仍要讓管理員知道去縮小期間
+    if (pendingDispatch?.tooLarge) items.push({ text: '待派問題太多，請縮小期間', href: '/work-orders#gaps' });
+    add(n(todo.unassignableCount), `派不出去 ${formatNumber(n(todo.unassignableCount))} 筆`, '/work-orders#gaps');
+    add(n(todo.noRecipientCount), `上報沒有收件人 ${formatNumber(n(todo.noRecipientCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.inactiveHandlerCount), `處理人已停用或暫停、仍有單 ${formatNumber(n(todo.inactiveHandlerCount))} 人`, '/work-orders?status=active&handlerInactive=1');
+    add(n(todo.recurrenceCount), `反覆復發 ${formatNumber(n(todo.recurrenceCount))} 筆`, '/work-orders?status=active');
+    add(n(todo.ungroupedHostCount), `未分組主機 ${formatNumber(n(todo.ungroupedHostCount))} 台`, '/admin/hosts?status=ungrouped');
+    return items;
+}
+
+/** 儀表板頂端「需要你處理」一列：具 Assign 才有（後端對 Manager、Dev 不回 adminTodo）；全部為 0 收成一行文字 */
+function renderAdminTodo(data) {
+    const container = document.getElementById('dashboard-todo');
+    if (!container) return;
+    container.replaceChildren();
+    const todo = data.adminTodo;
+    if (!todo || !todo.todoIncluded) return;
+
+    const items = adminTodoItems(todo, data.pendingDispatch);
+    const row = document.createElement('div');
+    row.className = 'lf-hint mb-3 d-flex flex-wrap align-items-center gap-3';
+    row.setAttribute('role', 'status');
+    if (items.length === 0) {
+        row.appendChild(roleText('lf-text-meta', '目前沒有需要你處理的項目'));
+        container.appendChild(row);
+        return;
+    }
+    row.appendChild(roleText('lf-text-label', '需要你處理'));
+    const list = document.createElement('ul');
+    list.className = 'list-unstyled d-flex flex-wrap align-items-center gap-3 mb-0';
+    for (const item of items) {
+        const li = document.createElement('li');
+        li.className = 'lf-list-row';
+        const link = document.createElement('a');
+        link.href = appUrl(item.href);
+        link.textContent = item.text;
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+    row.appendChild(list);
+    container.appendChild(row);
+}
+
 /** 說明可見資料與分析範圍，避免把空資料當成健康結論。 */
 function renderBanner(data, user) {
     const container = document.getElementById('dashboard-banner');
@@ -320,17 +377,12 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 資料同交辦總覽待派頁籤的試跑（近 7 天）；點卡直接進該頁籤（#gaps）。null 時不建卡。
     if (data.pendingDispatch) {
         const pd = data.pendingDispatch;
-        const unassignable = pd.unassignableIssueCount ?? 0;
         cards.push({
             group: 'todo',
             label: '待派工問題',
             value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),   // 字串值不可進 formatNumber（渲染處只格式化數值）
             variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
-            hint: pd.tooLarge
-                ? '超過上限，請到待派頁縮小期間'
-                : unassignable > 0
-                    ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
-                    : '近 7 天沒人接的問題',
+            hint: pendingDispatchHint(pd),
             // kpiStrip 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
             url: '/work-orders#gaps'
         });
@@ -432,6 +484,18 @@ function silentHostsCard(data, user) {
         card.title = `${card.title}\n${card.detail}`;
     }
     return card;
+}
+
+/**
+ * 待派工問題卡的副標：卡片的數字＝「可以派」＋「派不出去」兩段相加；「不會派」（嚴重度未達、不再打擾）不計。
+ * 兩段分開寫出來，管理員一眼分得出「按立即派工會派出去幾個」與「卡在授權或派工池的幾個」。
+ */
+function pendingDispatchHint(pd) {
+    if (pd.tooLarge) return '超過上限，請到待派頁縮小期間';
+    const dispatchable = pd.dispatchableIssueCount ?? 0;
+    const unassignable = pd.unassignableIssueCount ?? 0;
+    if (dispatchable === 0 && unassignable === 0) return '近 7 天沒人接的問題';
+    return `可以派 ${formatNumber(dispatchable)} 個、派不出去 ${formatNumber(unassignable)} 個`;
 }
 
 /**

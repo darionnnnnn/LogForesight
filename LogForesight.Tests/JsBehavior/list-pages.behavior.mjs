@@ -150,6 +150,7 @@ function makeDashboard() {
         let currentDays = 7;
         const loadGuard = createSeqGuard();
         const document = { getElementById: () => ({ set textContent(v) { onWrite('range'); } }) };
+        const renderAdminTodo = () => onWrite('todo');
         const renderBanner = () => onWrite('banner');
         const renderKpi = () => onWrite('kpi');
         const renderCategories = () => onWrite('categories');

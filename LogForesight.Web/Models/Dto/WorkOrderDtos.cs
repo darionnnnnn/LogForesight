@@ -789,6 +789,12 @@ public class GapsDto
     public List<GapRowDto> Rows { get; set; } = new();
     public int Total { get; set; }
 
+    /// <summary>
+    /// 本次列出的清單總問題數（分頁依據）：帶 <c>section</c> 時＝該段有項目的問題數，不帶時等於 <see cref="Total"/>。
+    /// 一個問題在多段都有項目時每段各算一次；該段沒有任何問題為 0。
+    /// </summary>
+    public int SectionTotal { get; set; }
+
     /// <summary>全部待派問題中有「無法派出」主機的問題數（不分頁；儀表板待派工卡只呼叫一次試跑就拿得到）</summary>
     public int UnassignableTotal { get; set; }
 

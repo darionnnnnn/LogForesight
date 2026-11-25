@@ -33,9 +33,11 @@ public class WorkOrderBoardController : ControllerBase
     public ApiResponse<LoadBoardDto> LoadBoard([FromQuery] long? groupId) =>
         ApiResponse<LoadBoardDto>.Ok(_service.GetLoadBoard(groupId));
 
+    /// <summary>待派清單；<c>section</c>（dispatchable／unassignable／notDispatched）只列該段的問題，各段統計不隨之變</summary>
     [HttpGet("gaps")]
-    public ApiResponse<GapsDto> Gaps([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int page = 1) =>
-        ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page));
+    public ApiResponse<GapsDto> Gaps([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int page = 1,
+        [FromQuery] string? section = null) =>
+        ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page, section));
 
     /// <summary>
     /// 管理者提醒與待辦的筆數與明細（上報逾期未處理、今天新上報、本趟派不出去、上報沒有收件人、反覆復發；

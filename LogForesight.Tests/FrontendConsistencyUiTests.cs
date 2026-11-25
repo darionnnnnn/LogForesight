@@ -410,7 +410,8 @@ public class FrontendConsistencyUiTests
         Assert.Contains("'/work-orders#gaps'", js);
         Assert.Contains("label: '待派工問題'", js);
         Assert.Contains("'超過上限'", js);
-        Assert.Contains("無法派出（無可接單人選）", js);
+        // 卡片副標改為「可以派 N 個、派不出去 M 個」兩段分開寫（第 81 輪批次 F，A3）
+        Assert.Contains("可以派 ${formatNumber(dispatchable)} 個、派不出去 ${formatNumber(unassignable)} 個", js);
     }
 
     [Fact]

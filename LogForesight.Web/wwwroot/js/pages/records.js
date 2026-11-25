@@ -18,7 +18,8 @@ import {
     loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
     headerWithHelp, icon, bindPastDateCheck, linkButton
 } from '../core/ui.js';
-import { statusNote, roleText, filterDisclosure } from '../core/elements.js';
+import { statusNote, roleText, filterDisclosure, disclosure } from '../core/elements.js';
+import { HIDE_GUIDE_COLUMNS, HIDE_GUIDE_ROWS, HIDE_GUIDE_LEAD } from '../core/hide-guide.js';
 import { statusesWhere, statusMeta } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
@@ -589,6 +590,7 @@ function render() {
     }
     document.getElementById('result-count').replaceChildren(...countNodes);
 
+    renderHideGuide(currentView === 'issue' && lastResult.items.length > 0);
     if (currentView === 'host') renderHostView();
     else if (currentView === 'date') renderDateView();
     else if (currentView === 'issue') renderIssueView();
@@ -1216,6 +1218,48 @@ function detailForIssue(group) {
     params.set('eventId', String(group.eventId));
     params.set('source', group.source);
     return `?${params.toString()}`;
+}
+
+/**
+ * 「不再顯示這個問題：選哪一種」比較表（N1）：緊接在依問題視角的表格上方，與列上「更多」選單裡的靜音、統一標記同一組選擇。
+ * 預設收合；只有能做其中任何一種的人（指派、維護或處理能力）才看得到。內容與操作說明書共用 core/hide-guide.js。
+ */
+function renderHideGuide(visible) {
+    const container = document.getElementById('issue-hide-guide');
+    if (!container) return;
+    container.replaceChildren();
+    const canAny = ['Assign', 'Maintain', 'Handle'].some(cap => hasCapability(currentUser, cap));
+    container.classList.toggle('d-none', !(visible && canAny));
+    if (!visible || !canAny) return;
+
+    const body = document.createElement('div');
+    body.className = 'mt-2';
+    const lead = document.createElement('p');
+    lead.className = 'lf-text-meta mb-2';
+    lead.textContent = HIDE_GUIDE_LEAD;
+    const tableHost = document.createElement('div');
+    tableHost.className = 'lf-table-aligned';
+    body.append(lead, tableHost);
+    const lines = texts => {
+        const wrap = document.createElement('div');
+        for (const text of texts) {
+            const line = document.createElement('div');
+            line.textContent = text;
+            wrap.appendChild(line);
+        }
+        return wrap;
+    };
+    renderTable(tableHost, {
+        columns: [
+            { title: HIDE_GUIDE_COLUMNS[0], className: 'lf-col-nowrap', render: r => roleText('lf-text-label', r.name) },
+            { title: HIDE_GUIDE_COLUMNS[1], render: r => lines(r.scope) },
+            { title: HIDE_GUIDE_COLUMNS[2], render: r => lines(r.orders) },
+            { title: HIDE_GUIDE_COLUMNS[3], render: r => lines(r.dispatch) }
+        ],
+        rows: HIDE_GUIDE_ROWS,
+        caption: '不再顯示這個問題：六種做法的比較'
+    });
+    container.append(disclosure('不再顯示這個問題：選哪一種', body, { expanded: false }), body);
 }
 
 /**

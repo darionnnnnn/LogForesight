@@ -213,6 +213,51 @@ const cases = {
     }
 };
 
+// ── 第 81 輪批次 F（F11-1）：管理員待辦的新增類別（昨晚取數結果、可派未派、處理人停用或暫停仍有單、未分組主機）──
+Object.assign(cases, {
+    // 四個新類別各一行、連到處理點；明細只有「處理人」類有
+    todoCategoriesShowRowsWithLinks() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({
+            fetchFailedCount: 1, fetchFailed: { endedAt: '2026-11-25T02:00:00', trigger: 'schedule' },
+            dispatchableCount: 4, dispatchableKnown: true,
+            inactiveHandlerCount: 1, inactiveHandlers: [{ userId: 9, name: '王小明(wang)', disabled: true, activeWorkOrders: 2, activeMembers: 5 }],
+            ungroupedHostCount: 3
+        }));
+        const rows = find(remindersContainer, n => n.tagName === 'LI' && n.className.includes('lf-list-row'));
+        assert.equal(rows.length, 4);
+        assert.ok(rows[0].textContent.includes('最近一趟取數失敗（T:2026-11-25T02:00:00）'), rows[0].textContent);
+        assert.ok(rows[1].textContent.includes('可派未派的問題：4 個'));
+        assert.ok(rows[2].textContent.includes('處理人已停用或暫停接單、名下仍有單：1 人'));
+        assert.ok(rows[2].textContent.includes('王小明(wang)') && rows[2].textContent.includes('帳號已停用') && rows[2].textContent.includes('2 張、5 台'));
+        assert.ok(rows[3].textContent.includes('未分組主機：3 台'));
+        const links = find(remindersContainer, n => n.tagName === 'A').map(a => a.href);
+        assert.deepEqual(links, ['/lf/runs', '/lf/work-orders#gaps', '/lf/work-orders?status=active&handlerInactive=1', '/lf/admin/hosts?status=ungrouped']);
+    },
+
+    // 邊界：只有新類別不是 0 也要顯示提醒區；全 0 與缺欄位（舊回應）不顯示
+    onlyNewCategoryShowsRegionAndZeroOrMissingDoesNot() {
+        const only = env();
+        only.renderReminders(data({ ungroupedHostCount: 1 }));
+        assert.ok(only.remindersContainer.children.length > 0);
+        const zero = env();
+        zero.renderReminders(data({ fetchFailedCount: 0, dispatchableCount: 0, inactiveHandlerCount: 0, ungroupedHostCount: 0 }));
+        assert.equal(zero.remindersContainer.children.length, 0);
+        const missing = env();
+        missing.renderReminders(data());
+        assert.equal(missing.remindersContainer.children.length, 0);
+    },
+
+    // 取數失敗但沒帶時間（舊資料）也要有一行，不擲例外
+    fetchFailedWithoutTimeStillListed() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ fetchFailedCount: 1, fetchFailed: null }));
+        const rows = find(remindersContainer, n => n.tagName === 'LI' && n.className.includes('lf-list-row'));
+        assert.equal(rows.length, 1);
+        assert.ok(rows[0].textContent.includes('最近一趟取數失敗'));
+    }
+});
+
 const name = process.argv[2];
 if (!name) {
     console.log(Object.keys(cases).join('\n'));

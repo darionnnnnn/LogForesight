@@ -187,8 +187,17 @@ public class WorkOrderBoardService
 
     // ── 待派清單 ────────────────────────────────────────────────────────────
 
-    public GapsDto GetGaps(DateTime? from, DateTime? to, int page)
+    /// <summary>
+    /// 待派清單。<paramref name="section"/>＝<c>dispatchable</c>／<c>unassignable</c>／<c>notDispatched</c> 時只列該段有項目的問題
+    /// （依該段台數多的在前分頁，<see cref="GapsDto.SectionTotal"/> 是該段問題數）；不帶＝全部問題（現行行為，依缺口台數排序）。
+    /// 一個問題在不同主機上可同時出現在多段，各段列表各列一次。各段統計與派不出去分組一律是全部問題的數字，不隨 section 變。
+    /// </summary>
+    public GapsDto GetGaps(DateTime? from, DateTime? to, int page) => GetGaps(from, to, page, null);
+
+    /// <inheritdoc cref="GetGaps(DateTime?, DateTime?, int)"/>
+    public GapsDto GetGaps(DateTime? from, DateTime? to, int page, string? section)
     {
+        var sectionKey = ParseGapSection(section);
         var trial = RunTrial(from, to);
         (page, _) = Paging.Normalize(page, GapPageSize, GapPageSize);
 
@@ -209,11 +218,23 @@ public class WorkOrderBoardService
             .ThenBy(s => s.EventId)
             .ToList();
         dto.Total = summaries.Count;
+        dto.SectionTotal = summaries.Count;
         dto.DispatchableIssueHosts = summaries.Sum(s => s.Suggested.Sum(x => x.Hosts));
         foreach (var gap in trial.Gaps.Where(g => g.Decision.Kind != DispatchDecisionKind.Skip))
             dto.DispatchableHostNames.Add(gap.Host.HostName);
         dto.UnassignableTotal = summaries.Count(s => s.Unassignable.Count > 0);
         FillSections(dto, summaries);
+
+        if (sectionKey != null)
+        {
+            summaries = summaries
+                .Where(s => SectionHostsOf(s, sectionKey) > 0)
+                .OrderByDescending(s => SectionHostsOf(s, sectionKey))
+                .ThenBy(s => s.Source, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(s => s.EventId)
+                .ToList();
+            dto.SectionTotal = summaries.Count;
+        }
 
         var pageRows = summaries.Skip((page - 1) * GapPageSize).Take(GapPageSize).ToList();
         if (pageRows.Count == 0) return dto;
@@ -249,6 +270,28 @@ public class WorkOrderBoardService
 
         return dto;
     }
+
+    internal const string SectionDispatchable = "dispatchable";
+    internal const string SectionUnassignable = "unassignable";
+    internal const string SectionNotDispatched = "notDispatched";
+
+    private static string? ParseGapSection(string? section)
+    {
+        if (string.IsNullOrWhiteSpace(section)) return null;
+        return section switch
+        {
+            SectionDispatchable or SectionUnassignable or SectionNotDispatched => section,
+            _ => throw DomainException.Validation("待派清單的段落只能是 dispatchable、unassignable 或 notDispatched。")
+        };
+    }
+
+    /// <summary>某問題在指定段的（問題×主機）數；0＝該問題不在這一段</summary>
+    private static int SectionHostsOf(IssueSummary s, string section) => section switch
+    {
+        SectionDispatchable => s.Suggested.Sum(x => x.Hosts),
+        SectionUnassignable => s.Unassignable.Sum(x => x.Hosts),
+        _ => s.Excluded.Values.Sum()
+    };
 
     /// <summary>
     /// 待派三段與派不出去的分組（不分頁，全部問題）：

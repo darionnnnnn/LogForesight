@@ -643,6 +643,9 @@
         }
       },
       {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
+      },
+      {
         "waitFor": "#wo-dismissed tbody tr"
       },
       {
@@ -698,6 +701,9 @@
         }
       },
       {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
+      },
+      {
         "waitFor": "#wo-dismissed .lf-empty, #wo-dismissed tbody tr"
       },
       {
@@ -724,6 +730,9 @@
       },
       {
         "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
       },
       {
         "waitFor": "#wo-dismissed tbody tr"
@@ -5212,6 +5221,58 @@
       },
       {
         "evalAssert": "const toggles = [...document.querySelectorAll('#wo-header .lf-disclosure')].filter(b => ['處置參考', '訊息樣本'].includes(b.textContent.trim()));\nif (toggles.length === 0) return '量測前提不成立：這張單沒有處置參考也沒有訊息樣本，無法驗證展開';\nconst before = location.pathname;\nfor (const t of toggles) { t.click(); }\nconst opened = toggles.filter(t => { const target = document.getElementById(t.getAttribute('aria-controls')); return target && !target.classList.contains('d-none'); });\nif (opened.length !== toggles.length) return '有展開鈕按下後內容沒有顯示';\nif (location.pathname !== before) return '展開處置參考不應離開交辦單頁';\nreturn null;"
+      }
+    ]
+  }
+  ,{
+    "name": "版面-交辦總覽-待派三段",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      { "waitFor": "#wo-list tbody tr" },
+      { "click": "#wo-tabs [data-tab=\"gaps\"]" },
+      { "waitFor": "#wo-gaps [data-gap-section=\"notDispatched\"]" },
+      {
+        "evalAssert": "const names = [...document.querySelectorAll('#wo-gaps [data-gap-section]')].map(s => s.dataset.gapSection);\nif (names.join() !== 'dispatchable,unassignable,notDispatched') return '待派頁三段的順序不是 可以派、派不出去、不會派：' + names.join();\nconst body = n => document.getElementById('wo-gaps-section-' + n);\nif (body('dispatchable').classList.contains('d-none')) return '「可以派」預設要展開';\nif (!body('notDispatched').classList.contains('d-none')) return '「不會派」預設要收合';\nconst card = document.getElementById('wo-dismissed-body');\nif (!card || !card.classList.contains('d-none')) return '「不再自動派工」清單預設要收合';\nif (!document.getElementById('wo-dismissed-count').textContent.trim()) return '「不再自動派工」收合時標頭要有計數';\nreturn null;"
+      },
+      {
+        "evalAssert": "const body = document.getElementById('wo-gaps-section-dispatchable');\nconst hasTable = body.querySelector('table');\nconst empty = body.querySelector('.lf-empty');\nif (!hasTable && !empty) return '「可以派」既沒有表格也沒有空狀態文字';\nif (empty && !empty.textContent.includes('目前沒有可以派的問題')) return '空狀態文字不是「目前沒有可以派的問題」';\nreturn null;"
+      },
+      { "click": "#wo-gaps [data-gap-section=\"notDispatched\"] .lf-disclosure" },
+      { "waitFor": "#wo-gaps-section-notDispatched table, #wo-gaps-section-notDispatched .lf-empty" },
+      { "assert": { "sel": "#wo-gaps-section-notDispatched", "visible": true } }
+    ]
+  }
+  ,{
+    "name": "版面-儀表板-需要你處理一列",
+    "role": "ui-admin",
+    "path": "/",
+    "steps": [
+      { "waitFor": "#dashboard-kpi .lf-kpi-card" },
+      { "waitFor": "#dashboard-todo .lf-hint" },
+      {
+        "evalAssert": "const row = document.querySelector('#dashboard-todo .lf-hint');\nif (!row) return '找不到「需要你處理」一列';\nconst links = row.querySelectorAll('a[href]');\nif (links.length === 0 && !row.textContent.includes('目前沒有需要你處理的項目')) return '一列既沒有連結也不是「目前沒有需要你處理的項目」';\nif (links.length > 0 && !row.textContent.includes('需要你處理')) return '有項目時要有「需要你處理」標籤';\nif (row.scrollWidth > row.clientWidth + 1) return '「需要你處理」一列有橫向溢出';\nreturn null;"
+      }
+    ]
+  }
+  ,{
+    "name": "主管-儀表板-沒有需要你處理一列",
+    "role": "ui-manager",
+    "path": "/",
+    "steps": [
+      { "waitFor": "#dashboard-kpi .lf-kpi-card" },
+      { "assert": { "sel": "#dashboard-todo .lf-hint", "count": 0 } }
+    ]
+  }
+  ,{
+    "name": "版面-問題查詢-不再顯示這個問題比較表",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      { "waitFor": "#record-list tbody tr.lf-row-expandable" },
+      { "waitFor": "#issue-hide-guide .lf-disclosure" },
+      {
+        "evalAssert": "const toggle = document.querySelector('#issue-hide-guide .lf-disclosure');\nconst target = document.getElementById(toggle.getAttribute('aria-controls'));\nif (!target.classList.contains('d-none')) return '比較表預設要收合';\ntoggle.click();\nif (target.classList.contains('d-none')) return '展開後比較表沒有顯示';\nconst rows = target.querySelectorAll('tbody tr');\nif (rows.length !== 6) return '比較表要有六列（靜音、抑制、已知雜訊、不處理、誤報、統一標記），實際 ' + rows.length;\nif (target.scrollWidth > target.clientWidth + 1) return '比較表有橫向溢出';\nreturn null;"
       }
     ]
   }
