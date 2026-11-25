@@ -26,7 +26,7 @@ const HOST_GROUPS = [
 ];
 const USER_GROUPS = [{ groupId: 5, groupName: '維運部', role: 'User', builtin: false, active: true, memberCount: 2 }];
 
-function load({ granted = [19], put, matrixAfter = null }) {
+function load({ granted = [19], put, matrixAfter = null, hostGroupsAfter = null }) {
     const src = fs.readFileSync(path.join(jsRoot, 'pages', 'groups.js'), 'utf8').replaceAll('\r\n', '\n');
     const imports = src.match(/^import .*;$/gm) ?? [];
     assert.equal(imports.length, 6, 'groups.js 的匯入行數變了，替身要跟著檢查');
@@ -34,7 +34,7 @@ function load({ granted = [19], put, matrixAfter = null }) {
 
     const els = new Map();
     const el = key => { if (!els.has(key)) els.set(key, dom.newElement('div')); return els.get(key); };
-    const spy = { puts: [], gets: [], posts: [], toasts: [], matrixTables: [], timers: [], checked: [] };
+    const spy = { puts: [], gets: [], posts: [], toasts: [], matrixTables: [], tables: [], timers: [], checked: [] };
     const fakeDocument = {
         ...document,
         getElementById: id => el(`#${id}`),
@@ -43,6 +43,7 @@ function load({ granted = [19], put, matrixAfter = null }) {
         createElement: tag => document.createElement(tag)
     };
     let matrixCalls = 0;
+    let hostGroupCalls = 0;
     const stubs = {
         document: fakeDocument,
         bootstrap: { Modal: class { show() { } hide() { } } },
@@ -50,7 +51,10 @@ function load({ granted = [19], put, matrixAfter = null }) {
             get: async url => {
                 spy.gets.push(url);
                 if (url === '/api/admin/groups') return USER_GROUPS;
-                if (url === '/api/admin/host-groups') return HOST_GROUPS;
+                if (url === '/api/admin/host-groups') {
+                    hostGroupCalls++;
+                    return hostGroupCalls > 1 && hostGroupsAfter ? hostGroupsAfter : HOST_GROUPS;
+                }
                 if (url === '/api/admin/access') {
                     matrixCalls++;
                     return matrixCalls > 1 && matrixAfter ? matrixAfter : { userGroups: [{ userGroupId: 5, userGroupName: '維運部', active: true, grantedHostGroupIds: granted }], hostGroups: HOST_GROUPS };
@@ -60,7 +64,7 @@ function load({ granted = [19], put, matrixAfter = null }) {
             put: async (url, bodyArg) => { spy.puts.push({ url, body: bodyArg }); return put(url, bodyArg, spy.puts.length); },
             post: async (url, bodyArg) => { spy.posts.push({ url, body: bodyArg }); return { groupId: 5, groupName: '維運部' }; }
         },
-        renderTable: (container, opts) => { if (opts.columns?.[0]?.className === 'lf-matrix-sticky') spy.matrixTables.push(opts); },
+        renderTable: (container, opts) => { spy.tables.push(opts); if (opts.columns?.[0]?.className === 'lf-matrix-sticky') spy.matrixTables.push(opts); },
         renderLoading: () => { }, renderEmpty: () => { }, renderError: () => { },
         toast: (message, type) => spy.toasts.push({ message, type }),
         createSeqGuard: () => { let latest = 0; return { next: () => ++latest, isCurrent: seq => seq === latest }; },
@@ -217,6 +221,73 @@ const cases = {
         await settle();
 
         assert.deepEqual(ctx.spy.puts[0].body, { grant: [], revoke: [18, 19] });
+    },
+
+    // 回應亂序：伺服器依序套用 A→B，B 的回應先到、A 的舊回應後到，畫面要停在 B 的結果
+    async outOfOrderResponseDoesNotOverwriteNewerResult() {
+        const pending = [];
+        const { boxes } = await boot({ granted: [], put: () => new Promise(resolve => pending.push(resolve)) });
+        flipTo(boxes.get(17), true);
+        flipTo(boxes.get(18), true);
+        await settle();
+        pending[1]({ grantedHostGroupIds: [17, 18] });
+        await settle();
+        pending[0]({ grantedHostGroupIds: [17] });
+        await settle();
+
+        assert.equal(boxes.get(17).checked, true);
+        assert.equal(boxes.get(18).checked, true, '較舊的回應晚到不得把較新的勾選洗掉');
+    },
+
+    // 失敗路徑同樣守門：較舊請求的錯誤晚到，不得觸發重新載入而換掉較新的成功結果
+    async staleFailureDoesNotReloadOverNewerResult() {
+        const pending = [];
+        const ctx = await boot({ granted: [], put: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) });
+        flipTo(ctx.boxes.get(17), true);
+        flipTo(ctx.boxes.get(18), true);
+        await settle();
+        const tablesBefore = ctx.spy.matrixTables.length;
+        const matrixGetsBefore = ctx.spy.gets.filter(u => u === '/api/admin/access').length;
+        pending[1].resolve({ grantedHostGroupIds: [17, 18] });
+        await settle();
+        pending[0].reject(new Error('舊請求逾時'));
+        await settle();
+
+        assert.equal(ctx.spy.gets.filter(u => u === '/api/admin/access').length, matrixGetsBefore, '舊錯誤不得重新載入矩陣');
+        assert.equal(ctx.spy.matrixTables.length, tablesBefore);
+        assert.equal(ctx.boxes.get(18).checked, true);
+        assert.equal(ctx.spy.toasts.some(t => t.type === 'warning'), false);
+    },
+
+    // 授權成功後重新取主機群組清單並重畫，「看得到的派工池群組」數字才會跟著變
+    async accessChangeRefreshesHostGroupTable() {
+        const after = HOST_GROUPS.map(g => ({ ...g, visiblePoolGroups: g.groupId === 17 ? 1 : 0 }));
+        const ctx = await boot({ granted: [], hostGroupsAfter: after, put: () => ({ grantedHostGroupIds: [17] }) });
+        const getsBefore = ctx.spy.gets.filter(u => u === '/api/admin/host-groups').length;
+        const tablesBefore = ctx.spy.tables.length;
+        flipTo(ctx.boxes.get(17), true);
+        await settle();
+
+        assert.equal(ctx.spy.gets.filter(u => u === '/api/admin/host-groups').length, getsBefore + 1);
+        const hostTable = ctx.spy.tables.slice(tablesBefore).find(t => t.columns?.some(c => c.title === '看得到的派工池群組'));
+        assert.ok(hostTable, '主機群組表沒有重畫');
+        assert.equal(hostTable.rows.find(g => g.groupId === 17).visiblePoolGroups, 1);
+    },
+
+    // 派工池開關成功後同樣重新取主機群組清單
+    async dispatchPoolToggleRefreshesHostGroupTable() {
+        const ctx = await boot({ granted: [], put: () => ({}) });
+        const userTable = ctx.spy.tables.find(t => t.columns?.some(c => c.title === '派工池'));
+        assert.ok(userTable, '使用者群組表沒畫出來');
+        const toggleCol = userTable.columns.find(c => c.title === '派工池');
+        const wrap = toggleCol.render({ groupId: 5, builtin: false, dispatchPool: false });
+        const input = wrap.children[0];
+        const getsBefore = ctx.spy.gets.filter(u => u === '/api/admin/host-groups').length;
+        input.checked = true;
+        input.dispatch('change');
+        await settle();
+
+        assert.equal(ctx.spy.gets.filter(u => u === '/api/admin/host-groups').length, getsBefore + 1);
     }
 };
 

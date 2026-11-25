@@ -36,7 +36,7 @@ const cases = {
             { text: '今天新上報 2 筆', href: '/lf/work-orders?status=escalated' },
             { text: '上報逾期 3 筆', href: '/lf/work-orders?status=escalated' },
             { text: '可派未派 4 個問題', href: '/lf/work-orders#gaps' },
-            { text: '派不出去 5 筆', href: '/lf/work-orders#gaps' },
+            { text: '派不出去 5 個問題', href: '/lf/work-orders#gaps' },
             { text: '上報沒有收件人 6 筆', href: '/lf/work-orders?status=escalated' },
             { text: '處理人已停用或暫停、仍有單 7 人', href: '/lf/work-orders?status=active&handlerInactive=1' },
             { text: '反覆復發 8 筆', href: '/lf/work-orders?status=active' },

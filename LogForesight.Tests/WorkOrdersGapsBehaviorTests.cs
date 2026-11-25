@@ -18,7 +18,7 @@ public sealed class WorkOrdersGapsBehaviorTests
     [InlineData("work-orders-gaps.behavior.mjs", "grantControlListsPoolGroupsAndEnablesOnSelect")]
     [InlineData("work-orders-gaps.behavior.mjs", "grantConfirmsPutsAndReloadsGaps")]
     [InlineData("work-orders-gaps.behavior.mjs", "grantCancelDoesNothing")]
-    [InlineData("work-orders-gaps.behavior.mjs", "noMaintainShowsLinkOnly")]
+    [InlineData("work-orders-gaps.behavior.mjs", "noMaintainShowsContactAdminWithoutLink")]
     [InlineData("work-orders-gaps.behavior.mjs", "noPoolGroupsShowsExplanationAndLink")]
     [InlineData("work-orders-gaps.behavior.mjs", "emptyDispatchableShowsEmptyText")]
     [InlineData("work-orders-gaps.behavior.mjs", "nonEmptyDispatchableRendersTableWithoutEmptyText")]

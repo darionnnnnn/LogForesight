@@ -27,6 +27,9 @@ public class CurrentUserDto
     /// <summary>能力字串陣列。**前端只用來決定顯示什麼，真正的防線在後端**</summary>
     public List<string> Capabilities { get; set; } = new();
 
+    /// <summary>是不是任一主機的負責人；前端用來決定只具 Handle 的人要不要顯示「統一標記」（只能標到自己負責的主機）。真正的範圍限制在後端</summary>
+    public bool OwnsAnyHost { get; set; }
+
     /// <summary>尚無任何 admin 成員時為 true，前端據此提示 serverAdmin 去指派</summary>
     public bool NeedsAdminSetup { get; set; }
 

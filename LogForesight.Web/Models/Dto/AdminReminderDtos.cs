@@ -22,6 +22,12 @@ public sealed class AdminReminderDto
     /// </summary>
     public int UnassignableCount { get; set; }
 
+    /// <summary>
+    /// <see cref="UnassignableCount"/> 是不是即時試跑的數字（true＝與待派卡同一份；false＝夜間快照，
+    /// 例如沒有 Assign 的檢視者，或試跑超過上限時退回快照）。前端依此決定文字要不要寫「最近一次夜間派工」。
+    /// </summary>
+    public bool UnassignableLive { get; set; }
+
     /// <summary>上報時沒有任何收件人、且仍有上報成員的單數</summary>
     public int NoRecipientCount { get; set; }
 
@@ -97,6 +103,7 @@ public sealed class AdminReminderDto
         copy.TodoIncluded = includeTodo;
         copy.DispatchableKnown = false;
         copy.DispatchableCount = 0;
+        copy.UnassignableLive = false;
         if (!includeTodo)
         {
             copy.FetchFailedCount = 0;
@@ -114,6 +121,7 @@ public sealed class AdminReminderDto
             if (pending.UnassignableIssues is { } live)
             {
                 copy.UnassignableCount = live;
+                copy.UnassignableLive = true;
                 if (live == 0) copy.Unassignable = new();
             }
         }

@@ -7,6 +7,7 @@
  */
 
 import { api } from '../core/api.js';
+import { pollWhile } from '../core/async-guards.js';
 import { appUrl } from '../core/paths.js';
 import { toast, withBusy, guardLoad, button, linkButton } from '../core/ui.js';
 import { roleText, statusNote } from '../core/elements.js';
@@ -148,6 +149,7 @@ async function load() {
     status = statusData;
     settingsSnapshot = settingsData;
     render();
+    scheduleCheckingRecheck();
 
     // 深連結（§ URL 反映狀態）：重整或分享網址時捲到同一步
     const hashId = currentHashId();
@@ -155,6 +157,65 @@ async function load() {
         const target = findByData('step-row', hashId);
         target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
+}
+
+const CHECKING_RECHECK_INTERVAL_MS = 3000;
+const CHECKING_RECHECK_MAX_ATTEMPTS = 5;
+let recheckTimer = null;
+
+/** 就地更新單一步驟的圓點、徽章與說明文字；不碰表單，使用者已輸入的值不會被清掉 */
+function updateStepInPlace(step) {
+    const view = stepViews.get(step.id);
+    if (!view) return;
+    const meta = STEP_STATE_META[stepState(step)];
+    view.dot.style.setProperty('--lf-swatch', meta.dot);
+    view.badgeSlot.replaceChildren(statusBadge(meta.badgeText, meta.badgeVariant));
+    view.detail.textContent = step.detail;
+}
+
+/**
+ * 重抓回來的狀態：還在檢查中就不動畫面；有結果時，AI 表單沒被動過才整個重畫（成功後表單該消失、進度要更新），
+ * 動過就只更新該步驟的徽章與說明（進度另外更新），避免清掉使用者正在輸入的欄位。
+ */
+function applyRecheckResult(latest) {
+    status = latest;
+    const ai = latest.steps.find(s => s.id === 'ai');
+    if (!aiFormDirty) {
+        render();
+        return;
+    }
+    renderProgress();
+    if (ai) updateStepInPlace(ai);
+}
+
+/**
+ * AI 步驟「檢查中」（站台尚無探測結果）時，每幾秒重抓一次狀態，最多 5 次；取得結果就依結果更新並停止。
+ * 5 次仍沒有結果，徽章改成終態文字「尚未取得結果，請重新整理」。
+ * 這是頁面開著就會送的背景請求，一律標 background，不延長閒置時限。
+ */
+function scheduleCheckingRecheck() {
+    recheckTimer?.stop();
+    recheckTimer = null;
+    recheckExhausted = false;
+    if (!status?.steps?.some(s => s.checking)) return;
+
+    let attempts = 0;
+    recheckTimer = pollWhile(async () => {
+        attempts += 1;
+        const latest = await api.get('/api/admin/setup/status', { silent: true, background: true }).catch(() => null);
+        if (latest && !latest.steps.some(s => s.checking)) {
+            applyRecheckResult(latest);
+            recheckTimer = null;
+            return false;
+        }
+        if (attempts >= CHECKING_RECHECK_MAX_ATTEMPTS) {
+            recheckExhausted = true;
+            const ai = status.steps.find(s => s.checking);
+            if (ai) updateStepInPlace(ai);
+            recheckTimer = null;
+            return false;
+        }
+    }, CHECKING_RECHECK_INTERVAL_MS);
 }
 
 function render() {
@@ -185,11 +246,22 @@ function renderProgress() {
 const STEP_STATE_META = {
     done: { dot: 'var(--lf-success)', badgeVariant: 'success', badgeText: '已完成' },
     skipped: { dot: 'var(--lf-gray-400)', badgeVariant: 'secondary', badgeText: '已跳過' },
-    pending: { dot: 'var(--lf-gray-200)', badgeVariant: 'warning', badgeText: '待設定' }
+    pending: { dot: 'var(--lf-gray-200)', badgeVariant: 'warning', badgeText: '待設定' },
+    // 站台剛啟動、AI 探測還沒回來：不是「待設定」，也不是已完成
+    checking: { dot: 'var(--lf-gray-200)', badgeVariant: 'neutral', badgeText: '檢查中' },
+    // 重抓到上限仍沒有結果：終態文字，不一直停在「檢查中」
+    checkTimeout: { dot: 'var(--lf-gray-200)', badgeVariant: 'secondary', badgeText: '尚未取得結果，請重新整理' }
 };
+
+// 每個步驟的可就地更新的畫面節點（重抓結果回來時只更新這些，不重畫整個精靈、不清掉使用者已輸入的表單）
+const stepViews = new Map();   // stepId → { dot, badgeSlot, detail }
+let recheckExhausted = false;  // 重抓到上限仍沒有結果
+let aiFormDirty = false;       // 使用者動過 AI 表單欄位
 
 function renderSteps() {
     stepsContainer.replaceChildren();
+    stepViews.clear();
+    aiFormDirty = false;
 
     const list = document.createElement('div');
     list.className = 'list-group list-group-flush';
@@ -217,13 +289,16 @@ function renderSteps() {
 
         titleRow.appendChild(roleText('lf-text-title', `${index + 1}. ${step.title}`));
 
-        titleRow.appendChild(statusBadge(meta.badgeText, meta.badgeVariant));
+        const badgeSlot = document.createElement('span');
+        badgeSlot.appendChild(statusBadge(meta.badgeText, meta.badgeVariant));
+        titleRow.appendChild(badgeSlot);
         body.appendChild(titleRow);
 
         const detail = document.createElement('div');
         detail.className = 'lf-text-meta mt-1';
         detail.textContent = step.detail;
         body.appendChild(detail);
+        stepViews.set(step.id, { dot, badgeSlot, detail });
 
         if (step.id === 'ad' && !step.done) {
             body.appendChild(renderAdInlineForm(step));
@@ -560,6 +635,8 @@ function renderAiInlineForm(step) {
     const apiKeyHint = form.querySelector('#setup-ai-api-key-hint');
     const saveTestBtn = form.querySelector('#setup-ai-save-test-btn');
     const feedback = form.querySelector('#setup-ai-feedback');
+    form.addEventListener('input', () => { aiFormDirty = true; });
+    form.addEventListener('change', () => { aiFormDirty = true; });
 
     const currentProvider = settingsSnapshot?.aiProvider || 'Local';
     providerSelect.value = currentProvider;
@@ -673,6 +750,7 @@ function renderAiInlineForm(step) {
 function stepState(step) {
     if (step.done) return 'done';
     if (step.skipped) return 'skipped';
+    if (step.checking) return recheckExhausted ? 'checkTimeout' : 'checking';
     return 'pending';
 }
 

@@ -157,6 +157,7 @@ public class AuthController : ControllerBase
             DisplayName = _userDisplayNames.Of(_currentUser.DisplayName),
             IsServerAdmin = _currentUser.IsServerAdmin,
             Capabilities = _currentUser.Capabilities.Select(c => c.ToString()).ToList(),
+            OwnsAnyHost = _identity.OwnsAnyHost(_currentUser.UserId),
             NeedsAdminSetup = _currentUser.IsServerAdmin && _identity.HasNoAdmins(),
             LandingPath = LandingPathFor(_currentUser.UserId, _currentUser.IsServerAdmin, _currentUser.Capabilities)
         });
@@ -168,6 +169,7 @@ public class AuthController : ControllerBase
         DisplayName = _userDisplayNames.Of(identity.DisplayName),
         IsServerAdmin = identity.IsServerAdmin,
         Capabilities = identity.Capabilities.Select(c => c.ToString()).ToList(),
+        OwnsAnyHost = _identity.OwnsAnyHost(identity.UserId),
         NeedsAdminSetup = identity.IsServerAdmin && _identity.HasNoAdmins(),
         LandingPath = LandingPathFor(identity.UserId, identity.IsServerAdmin, identity.Capabilities)
     };

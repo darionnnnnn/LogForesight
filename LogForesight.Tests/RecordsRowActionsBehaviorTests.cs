@@ -20,6 +20,7 @@ public sealed class RecordsRowActionsBehaviorTests
     [InlineData("records-row-actions.behavior.mjs", "oneAction")]
     [InlineData("records-row-actions.behavior.mjs", "maintainOnlyHasMuteAndHideTriage")]
     [InlineData("records-row-actions.behavior.mjs", "handleOnlyHasBulkMarkEntry")]
+    [InlineData("records-row-actions.behavior.mjs", "handleOnlyNonOwnerHasNoBulkMarkEntry")]
     [InlineData("records-row-actions.behavior.mjs", "bulkCloseFormAutoApplyOnlyForAssign")]
     [InlineData("records-row-actions.behavior.mjs", "noActionReturnsEmpty")]
     [InlineData("records-row-actions.behavior.mjs", "menuItemFocusesToggleBeforeOpening")]

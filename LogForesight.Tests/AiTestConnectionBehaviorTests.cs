@@ -19,6 +19,10 @@ public class AiTestConnectionBehaviorTests
     [InlineData("notConfiguredShowsWarningNotError")]
     [InlineData("requestFailureShowsMessageAndRestores")]
     [InlineData("saveAndTestProbesBeforeReadingStatus")]
+    [InlineData("checkingRecheckStopsWhenResultArrives")]
+    [InlineData("checkingRecheckKeepsDirtyFormAndUpdatesBadgeOnly")]
+    [InlineData("checkingRecheckHasAttemptCap")]
+    [InlineData("notCheckingSchedulesNothing")]
     [InlineData("healthBackgroundRowTextCoversAllProbeStates")]
     public void AI測試連線行為(string caseName)
     {

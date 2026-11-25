@@ -32,12 +32,12 @@ const SOURCES = ['function issueActionsCell', 'function issueActions(', 'functio
     .map(declaration => extractFunction(records, declaration)).join('\n');
 
 /** 組一個頁面層環境：caps＝目前使用者的能力，mine＝這一列是不是自己的案件 */
-function env({ caps = [], mine = false } = {}) {
+function env({ caps = [], mine = false, owner = true } = {}) {
     const dom = installDom();
     const button = loadButton(dom);
     const opened = [];
     const hidden = [];
-    const currentUser = { userId: 7 };
+    const currentUser = { userId: 7, ownsAnyHost: owner };
     const hasCapability = (user, cap) => user === currentUser && caps.includes(cap);
     const bootstrap = { Dropdown: { getOrCreateInstance: toggle => ({ hide: () => hidden.push(toggle) }) } };
     const modal = name => (...args) => opened.push({ name, args, focused: document.activeElement });
@@ -97,6 +97,12 @@ const cases = {
         const { result } = env({ caps: ['Handle'] });
         assert.deepEqual(inlineTexts(result), ['統一標記']);
         assert.deepEqual(inlineTexts(env({ caps: ['Assign'] }).result), ['交辦'], '只具 Assign 沒有統一標記');
+    },
+    // 只具 Handle、不是任何主機的負責人：可標的主機是空的，不擺統一標記；負責人與管理者（Assign）不受影響
+    handleOnlyNonOwnerHasNoBulkMarkEntry() {
+        assert.equal(env({ caps: ['Handle'], owner: false }).result, '', '非負責人的 Handle 不顯示統一標記');
+        assert.deepEqual(inlineTexts(env({ caps: ['Handle'], owner: true }).result), ['統一標記']);
+        assert.deepEqual(inlineTexts(env({ caps: ['Assign', 'Handle'], owner: false }).result), ['交辦', '統一標記'], '管理者不限主機，維持現狀');
     },
     // 統一標記 modal：機房結論勾選框只給具 Assign 者；只具 Handle 時不顯示並在說明寫「只會標到你負責的主機」，略過原因照實列出
     bulkCloseFormAutoApplyOnlyForAssign() {

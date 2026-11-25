@@ -224,7 +224,7 @@ function adminTodoItems(todo, pendingDispatch) {
     add(n(todo.dispatchableCount), `可派未派 ${formatNumber(n(todo.dispatchableCount))} 個問題`, '/work-orders#gaps');
     // 待派問題太多、算不出可派數字時，仍要讓管理員知道去縮小期間
     if (pendingDispatch?.tooLarge) items.push({ text: '待派問題太多，請縮小期間', href: '/work-orders#gaps' });
-    add(n(todo.unassignableCount), `派不出去 ${formatNumber(n(todo.unassignableCount))} 筆`, '/work-orders#gaps');
+    add(n(todo.unassignableCount), `派不出去 ${formatNumber(n(todo.unassignableCount))} 個問題`, '/work-orders#gaps');
     add(n(todo.noRecipientCount), `上報沒有收件人 ${formatNumber(n(todo.noRecipientCount))} 筆`, '/work-orders?status=escalated');
     add(n(todo.inactiveHandlerCount), `處理人已停用或暫停、仍有單 ${formatNumber(n(todo.inactiveHandlerCount))} 人`, '/work-orders?status=active&handlerInactive=1');
     add(n(todo.recurrenceCount), `反覆復發 ${formatNumber(n(todo.recurrenceCount))} 筆`, '/work-orders?status=active');

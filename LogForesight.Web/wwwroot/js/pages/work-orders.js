@@ -692,6 +692,13 @@ const UNASSIGNABLE_HINTS = {
     no_visibility: '派工池成員都看不到這些主機。把下列主機群組授權給派工池群組，就能派出去。'
 };
 
+/** 沒有 Maintain 的檢視者（主管、開發維運）進不去「群組與授權」：只說明、請洽系統管理員，不給連結 */
+const UNASSIGNABLE_HINTS_NO_MAINTAIN = {
+    no_pool: '派工池裡沒有任何成員。請洽系統管理員，把使用者群組設為派工池並加入成員。',
+    all_paused: UNASSIGNABLE_HINTS.all_paused,
+    no_visibility: '派工池成員都看不到這些主機。請洽系統管理員把這些主機群組授權給派工池群組。'
+};
+
 const SECTION_META = {
     dispatchable: { title: '可以派', open: true, countOf: d => d.dispatchable },
     unassignable: { title: '派不出去', open: true, countOf: d => d.unassignableSection },
@@ -848,7 +855,7 @@ function renderUnassignableSummary(state, data) {
             roleText('lf-text-label', UNASSIGNABLE_LABELS[reason.reason] || reason.reason), ' ',
             roleText('lf-text-meta', `${formatNumber(reason.issues)} 個問題、${formatNumber(reason.hosts)} 台`));
         block.appendChild(line);
-        const hint = UNASSIGNABLE_HINTS[reason.reason];
+        const hint = (data.canGrantAccess ? UNASSIGNABLE_HINTS : UNASSIGNABLE_HINTS_NO_MAINTAIN)[reason.reason];
         if (hint) {
             const hintLine = roleText('lf-text-meta', hint);
             hintLine.classList.add('d-block');
@@ -889,7 +896,7 @@ function renderUnseenGroups(data) {
         item.appendChild(roleText('lf-text-meta', `${formatNumber(group.hosts)} 台、${formatNumber(group.issues)} 個問題`));
         item.appendChild(data.canGrantAccess
             ? renderGrantControl(group, data.poolGroups ?? [])
-            : linkButton('到「群組與授權」設定', appUrl('/admin/groups'), { variant: 'outline-secondary' }));
+            : roleText('lf-text-meta', '請洽系統管理員授權'));
         wrap.appendChild(item);
     }
     return wrap;
@@ -1601,7 +1608,10 @@ function renderReminders(data) {
     if (dispatchable > 0) {
         addRow(`可派未派的問題：${formatNumber(dispatchable)} 個`, '看待派', appUrl('/work-orders') + '#gaps');
     }
-    if (unassignable > 0) {
+    if (unassignable > 0 && data.unassignableLive) {
+        // 即時試跑的數字（與待派卡同一份）：不寫夜間派工與彙整時間；明細是夜間快照、與即時數字不一定對得上，不列，改到待派看
+        addRow(`派不出去的問題：${formatNumber(unassignable)} 個`, '看待派', appUrl('/work-orders') + '#gaps');
+    } else if (unassignable > 0) {
         const at = data.unassignableAt ? `（彙整於 ${formatDateTime(data.unassignableAt)}）` : '';
         const rows = (data.unassignable ?? []).map(u => [span(`${u.issueLabel}　${UNASSIGNABLE_LABELS[u.reason] ?? u.reason}　${formatNumber(u.hosts)} 台`)]);
         addRow(`最近一次夜間派工派不出去的問題：${formatNumber(unassignable)} 筆${at}`, '看待派', appUrl('/work-orders') + '#gaps',

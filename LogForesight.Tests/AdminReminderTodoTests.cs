@@ -280,6 +280,20 @@ public sealed class AdminReminderTodoTests : IDisposable
         Assert.Equal(1, service.Compute(true, new PendingDispatchCounts(0, true, 0)).UnassignableCount);
     }
 
+    [Fact]
+    public void 派不出去_即時旗標只在採用即時數字時為true_前端依此決定要不要寫夜間派工()
+    {
+        SeedUnassignableSnapshot();
+        var service = Service();
+
+        Assert.True(service.Compute(true, new PendingDispatchCounts(0, false, 3)).UnassignableLive);
+        Assert.True(service.Compute(true, new PendingDispatchCounts(0, false, 0)).UnassignableLive);
+        Assert.False(service.Compute().UnassignableLive);
+        Assert.False(service.Compute(true, new PendingDispatchCounts(0, false)).UnassignableLive);
+        Assert.False(service.Compute(true, new PendingDispatchCounts(0, true, 0)).UnassignableLive);
+        Assert.False(service.Compute(false, new PendingDispatchCounts(0, false, 3)).UnassignableLive);
+    }
+
     // ── 全 0 與 Manager／Dev ─────────────────────────────────────────────────
 
     [Fact]

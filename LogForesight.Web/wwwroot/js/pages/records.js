@@ -1316,7 +1316,9 @@ function issueActions(group) {
         list.push({ text: '交辦', title: '把這個問題交辦給處理人（建立交辦單）', run: () => openWorkOrderModal(group) });
     }
     // 統一標記具 Handle 即可（後端 O1 規則）：Assign＋Handle（管理者）不限主機，只具 Handle（主機負責人）只標到自己負責的主機
-    if (hasCapability(currentUser, 'Handle')) {
+    // 只具 Handle 又不是任何主機的負責人時，可標的主機是空的：不擺一顆必定沒有對象的按鈕
+    // 具 Assign（不限主機）＋Handle，或具 Handle 且至少負責一台主機（只標自己負責的）；範圍限制的防線在後端
+    if (hasCapability(currentUser, 'Handle') && (hasCapability(currentUser, 'Assign') || currentUser?.ownsAnyHost === true)) {
         list.push({
             text: '統一標記',
             title: hasCapability(currentUser, 'Assign')

@@ -19,6 +19,8 @@ let hostGroups = [];
 let matrix = null;
 let editing = null;         // { kind: 'user' | 'host', group }
 let editingGrantedBefore = new Set();   // 開啟群組編輯彈窗時的授權集合；儲存時只送與它的差異
+const accessSeqByRow = new Map();       // userGroupId → 請求序號守門：回應亂序時只套用該列最新一次請求的結果
+const hostGroupsSeq = createSeqGuard(); // 重新取主機群組清單的序號守門
 const matrixChecks = new Map();         // userGroupId → Map(hostGroupId → checkbox)，回應回來時整列重繪用
 const ACCESS_TOAST_MERGE_MS = 1500;     // 連續勾選的成功提示合併成一則的時間窗
 let pendingAccessNotes = [];            // { userGroupName, hostGroupName, granted }
@@ -283,17 +285,45 @@ function syncRowChecks(row) {
 async function onToggleAccess(row, hostGroup, checkbox) {
     const wantGrant = checkbox.checked;
     checkbox.disabled = true;
+    // 同一列連點多格時回應可能亂序：每列各有序號，較舊的回應（成功或失敗）晚到都不得蓋掉較新的結果
+    let guard = accessSeqByRow.get(row.userGroupId);
+    if (!guard) {
+        guard = createSeqGuard();
+        accessSeqByRow.set(row.userGroupId, guard);
+    }
+    const seq = guard.next();
     try {
         const result = await api.put(`/api/admin/access/${row.userGroupId}`,
             wantGrant ? { grant: [hostGroup.groupId], revoke: [] } : { grant: [], revoke: [hostGroup.groupId] });
-        row.grantedHostGroupIds = result.grantedHostGroupIds;
-        syncRowChecks(row);
+        // 舊回應仍是一次成功的變更（提示照出），只是不套用它那份已過時的清單
+        if (guard.isCurrent(seq)) {
+            row.grantedHostGroupIds = result.grantedHostGroupIds;
+            syncRowChecks(row);
+        }
         noteAccessChange(row.userGroupName, hostGroup.groupName, wantGrant);
+        await refreshHostGroups();
     } catch {
+        if (!guard.isCurrent(seq)) return;
         // 錯誤已由 api.js 顯示；畫面可能已與資料庫不符，重新載入整張矩陣
         await reloadMatrixAfterFailure();
     } finally {
         checkbox.disabled = false;
+    }
+}
+
+/**
+ * 授權或派工池變更後重新取主機群組清單並重畫表：「看得到的派工池群組」數字由後端依當下授權與派工池算出，
+ * 前端不自己推算。失敗時保留原畫面（錯誤已由 api.js 顯示）；較舊的回應晚到不蓋掉較新的。
+ */
+async function refreshHostGroups() {
+    const seq = hostGroupsSeq.next();
+    try {
+        const latest = await api.get('/api/admin/host-groups');
+        if (!hostGroupsSeq.isCurrent(seq)) return;
+        hostGroups = latest;
+        renderHostGroups();
+    } catch {
+        // 數字暫時沒更新不影響授權本身；錯誤已由 api.js 顯示
     }
 }
 
@@ -916,6 +946,7 @@ function renderDispatchPoolToggle(group) {
                 await api.put(`/api/admin/groups/${group.groupId}/dispatch-pool`, { inPool: next }, { silent: true });
                 group.dispatchPool = next;
                 toast('已更新派工池設定');
+                await refreshHostGroups();
             } catch (error) {
                 input.checked = !next;
                 toast(error.message, 'danger');

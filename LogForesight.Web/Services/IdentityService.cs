@@ -262,5 +262,12 @@ public class IdentityService
 
     // 解析邏輯抽至 AdminMembersResolver（回饋十八輪批次G）：上報通知的收件人來源
     // （Singleton 的 MailNotificationService）也要「找出全部 admin 成員」，共用同一份判定
+    /// <summary>
+    /// 是不是任一主機的負責人（不論主機啟用與否）。與「統一標記」的範圍規則同口徑
+    /// （<c>IssueHandlingCommandService</c> 只具 Handle 者只標到自己負責的主機）：前端據此決定要不要顯示那顆鈕。
+    /// </summary>
+    public bool OwnsAnyHost(long userId) =>
+        userId > 0 && _hosts.GetAll().Any(h => h.OwnerUserIds.Contains(userId));
+
     public bool HasNoAdmins() => AdminMembersResolver.GetAdminMembers(_groups, _users).Count == 0;
 }

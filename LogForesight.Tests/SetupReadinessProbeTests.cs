@@ -321,11 +321,40 @@ public class SetupReadinessProbeTests : IDisposable
         Assert.True(first.Success && second.Success);
         Assert.True(sw.ElapsedMilliseconds < 1000, $"狀態端點不得等探測，實耗 {sw.ElapsedMilliseconds} ms");
         Assert.False(first.Data!.Steps.Single(s => s.Id == "ai").Done, "尚無探測結果：沿用上次（NotProbed）");
+        Assert.True(first.Data!.Steps.Single(s => s.Id == "ai").Checking, "尚無探測結果：回應要讓前端分得出「檢查中」");
 
         release.SetResult();
         await WaitUntil(() => probeService.LatestResult.IsReady);
         Assert.Equal(1, handler.CallCount);
-        Assert.True(controller.Status().Data!.Steps.Single(s => s.Id == "ai").Done);
+        var ready = controller.Status().Data!.Steps.Single(s => s.Id == "ai");
+        Assert.True(ready.Done);
+        Assert.False(ready.Checking);
+    }
+
+    /// <summary>探測有了結果（失敗）之後不再是「檢查中」：精靈顯示待設定而不是一直轉。</summary>
+    [Fact]
+    public async Task 探測失敗後AI步驟不再是檢查中()
+    {
+        var release = new TaskCompletionSource();
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = async (_, ct) =>
+            {
+                await release.Task.WaitAsync(ct);
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+        };
+        using var client = new HttpClient(handler);
+        var probeService = new AiProbeService(_settings, client);
+        var controller = new SetupController(CreateService(probeService), new RecordingAuditService());
+
+        Assert.True(controller.Status().Data!.Steps.Single(s => s.Id == "ai").Checking);
+        release.SetResult();
+        await WaitUntil(() => probeService.LatestResult.Status != AiProbeStatus.NotProbed);
+
+        var step = controller.Status().Data!.Steps.Single(s => s.Id == "ai");
+        Assert.False(step.Done);
+        Assert.False(step.Checking);
     }
 
     /// <summary>A1b：精靈「儲存並測試」與設定頁「測試連線」走明確的同步探測：拿到這一次的結果，不受 60 秒快取影響。</summary>

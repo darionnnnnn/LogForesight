@@ -31,7 +31,7 @@ const FUNCTIONS = [
     'async function loadMutedCount(', 'function updateMutedTabTitle(', 'async function fetchMutedIssues(', 'function loadTab(',
     'function buildGapSection('
 ].map(d => extract(source, d)).join('\n');
-const CONSTS = ['SECTION_META', 'UNASSIGNABLE_HINTS', 'UNASSIGNABLE_LABELS', 'EXCLUDED_LABELS'].map(extractConst).join('\n');
+const CONSTS = ['SECTION_META', 'UNASSIGNABLE_HINTS', 'UNASSIGNABLE_HINTS_NO_MAINTAIN', 'UNASSIGNABLE_LABELS', 'EXCLUDED_LABELS'].map(extractConst).join('\n');
 
 const NAMES = [
     'document', 'Node', 'button', 'disclosure', 'roleText', 'linkButton', 'appUrl', 'formatNumber', 'renderTable', 'renderEmpty', 'renderPagination',
@@ -197,17 +197,23 @@ const cases = {
         assert.equal(e.log.gapReloads ?? 0, 0);
     },
 
-    // F12-2：沒有 Maintain＝只有連到「群組與授權」的連結，沒有選單與授權鈕
-    noMaintainShowsLinkOnly() {
+    // 沒有 Maintain＝沒有選單、授權鈕與連結（進不去群組與授權頁），改請洽系統管理員；兩版提示都不指到那一頁
+    noMaintainShowsContactAdminWithoutLink() {
         const e = env();
         const body = document.createElement('div');
         e.renderUnassignableSummary(state('unassignable', body), { ...NO_VIS, canGrantAccess: false });
         const row = flat(body).find(n => n.dataset?.hostGroupId === '5');
         assert.equal(flat(row).filter(n => n.tagName === 'SELECT').length, 0);
         assert.equal(buttonsOf(row, '授權').length, 0);
-        const link = flat(row).find(n => n.tagName === 'A');
-        assert.equal(link.href, '/lf/admin/groups');
-        assert.ok(text(link).includes('群組與授權'));
+        assert.equal(flat(body).filter(n => n.tagName === 'A').length, 0, '沒有 Maintain 不給連結');
+        assert.ok(text(body).includes('請洽系統管理員'));
+        assert.ok(!text(body).includes('群組與授權'));
+        const withMaintain = document.createElement('div');
+        e.renderUnassignableSummary(state('unassignable', withMaintain), { ...NO_VIS, unassignableReasons: [{ reason: 'no_pool', issues: 1, hosts: 1 }] });
+        assert.ok(text(withMaintain).includes('群組與授權'), '有 Maintain 的 no_pool 提示維持指到群組與授權');
+        const noPool = document.createElement('div');
+        e.renderUnassignableSummary(state('unassignable', noPool), { ...NO_VIS, canGrantAccess: false, unassignableReasons: [{ reason: 'no_pool', issues: 1, hosts: 1 }] });
+        assert.ok(text(noPool).includes('請洽系統管理員') && !text(noPool).includes('群組與授權'));
     },
 
     // F12-2 邊界：沒有任何派工池群組時，有 Maintain 也只給連結與說明

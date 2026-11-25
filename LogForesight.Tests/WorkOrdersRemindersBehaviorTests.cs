@@ -26,6 +26,7 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [InlineData("work-orders-reminders.behavior.mjs", "rerenderClearsPreviousContent")]
     [InlineData("work-orders-reminders.behavior.mjs", "detailListsAreCollapsedAndLinked")]
     [InlineData("work-orders-reminders.behavior.mjs", "unassignableAtNullAndTruncationNote")]
+    [InlineData("work-orders-reminders.behavior.mjs", "unassignableLiveWording")]
     [InlineData("work-orders-reminders.behavior.mjs", "reminderDaysZeroShowsPersistentNote")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFetchesEndpointAndRenders")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFailureLeavesAreaEmpty")]

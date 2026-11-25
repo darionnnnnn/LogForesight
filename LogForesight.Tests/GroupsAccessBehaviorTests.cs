@@ -21,6 +21,10 @@ public class GroupsAccessBehaviorTests
     [InlineData("modalSavesOnlyTheDifference")]
     [InlineData("modalWithoutDifferenceSendsNoAccessRequest")]
     [InlineData("modalUncheckAllRevokesWhatWasThere")]
+    [InlineData("outOfOrderResponseDoesNotOverwriteNewerResult")]
+    [InlineData("staleFailureDoesNotReloadOverNewerResult")]
+    [InlineData("accessChangeRefreshesHostGroupTable")]
+    [InlineData("dispatchPoolToggleRefreshesHostGroupTable")]
     public void 授權矩陣行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

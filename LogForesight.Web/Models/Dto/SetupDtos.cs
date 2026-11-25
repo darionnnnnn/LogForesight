@@ -17,6 +17,12 @@ public class SetupStepDto
 
     public string Detail { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 這一步的判定還在檢查中（目前只有 AI 步驟：站台啟動後尚無探測結果，背景探測還沒回來）。
+    /// 此時 <see cref="Done"/> 為 false 但不代表「未完成」，前端顯示「檢查中」並稍後重抓一次。
+    /// </summary>
+    public bool Checking { get; set; }
+
     /// <summary>「前往設定」導向的頁面；null＝這一步沒有可前往的頁面（如儲存體）</summary>
     public string? TargetUrl { get; set; }
 }

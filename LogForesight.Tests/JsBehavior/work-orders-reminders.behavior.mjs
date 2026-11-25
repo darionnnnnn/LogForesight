@@ -189,6 +189,18 @@ const cases = {
         assert.ok(text.includes('只列前 1 筆，共 80 筆'));
     },
 
+    // 即時試跑的數字：不寫「最近一次夜間派工」與彙整時間，單位是個，不列夜間快照的明細
+    unassignableLiveWording() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ unassignableCount: 3, unassignableLive: true, unassignableAt: '2026-11-16T02:10:00',
+            unassignable: [{ issueLabel: 'nic 27', reason: 'no_pool', hosts: 3 }] }));
+        const text = remindersContainer.textContent;
+        assert.ok(text.includes('派不出去的問題：3 個'));
+        assert.ok(!text.includes('夜間派工') && !text.includes('彙整於'));
+        assert.ok(!text.includes('nic 27'), '快照明細與即時數字對不上，不列');
+        assert.ok(find(remindersContainer, n => n.tagName === 'A').some(a => a.href === '/lf/work-orders#gaps'));
+    },
+
     // 提醒信間隔為 0：常駐說明；非 0 不出現
     reminderDaysZeroShowsPersistentNote() {
         const off = env();
