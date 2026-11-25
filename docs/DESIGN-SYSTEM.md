@@ -407,6 +407,14 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 交辦單的台數口徑文字 | `format.js` `hostCountText(列)` 回「進行中 N 台；歷來 M 台、K 件」（台＝不重複主機數、件＝成員數） |
 | 交辦單清單的嚴重度欄與標記（新、復發、退回、觀察到期） | `format.js` `workOrderSeverityCell(列)`、`workOrderFlagBadges(列, { recurrence })`：我的交辦與交辦總覽共用 |
 | 今天起第 N 天的日期（快捷「3／7／14 日」、觀察天數換算） | `format.js` `dateAfterDays(天數)`，回本地日期字串 |
+| 「不再顯示這個問題：選哪一種」比較表的文字 | `hide-guide.js` `HIDE_GUIDE_COLUMNS`／`HIDE_GUIDE_ROWS`／`HIDE_GUIDE_LEAD`：純資料，問題查詢與說明書 19 章共用同一份說法，頁面不另寫一份 |
+| 「不再顯示這個問題…」三問句對照 | `hide-triage.js` `TRIAGE_TABLE`（多久×範圍×已交辦的單共 18 格，每格對應既有端點或附不提供的原因）、`triageAvailability`、`buildTriagePlan`：純資料與純函式，套用面板 `pages/hide-triage-panel.js` 只負責畫面與送出 |
+| 不顯示設定總覽的儲存格文字 | `hide-summary.js` `muteText`／`conclusionText`／`suppressionText`／`dismissedText`：沒有該設定回 `null`，畫面寫「—」 |
+| 頁頂主機快速搜尋（名稱或 IP，最多 10 筆） | `host-quick-search.js` `initHostQuickSearch(user)`（`layout.js` 掛在頂列）：走 `GET api/hosts?query=&limit=`、請求序號守門、結果浮層 `lf-host-search__results`，連結走 `hostSearchHref`（`appUrl`） |
+| 使用者編輯視窗的群組即時摘要 | `user-group-summary.js` `createUserGroupSummary({ host, fetchPreview })`、`summaryLines(預覽)`：能力、可見主機、是否在派工池，連點勾選以請求序號守門 |
+| 規則維護直接開某條規則的編輯 | `paths.js` `ruleEditUrl(規則 Id)` 回 app 內路徑（呼叫端再套 `appUrl`）；交辦單頁與問題查詢的「調整這條規則」共用 |
+| 圖表工具列的完整 CSV 下載 | `charts.js` `attachToolbar(container, { …, csvHref })`：有給才多一顆「下載 CSV」連結，整份資料由伺服器串流，不是畫面上的列 |
+| 含不定長文字、需換行的標記 | `lf-badge--wrap`（`components.css`）：可換行、不超出儲存格，例：風險日詳情處理狀態欄的案件徽章 |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。

@@ -407,8 +407,10 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 查詢仍只回授權範圍的資料。
 
 **同一個 `[Permission]` 內的多個能力是「任一」，兩個標註疊加是「都要」**——類別層與方法層
-不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
-表達「兩者兼具」（實務上即 admin）。
+不是就近覆寫。代為結案（§9.4b）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
+表達「兩者兼具」（實務上即 admin）。統一標記（§9.2）只標 `Handle`，範圍由服務層依是否另具 `Assign` 決定：
+具 `Assign` 者不限主機，只具 `Handle` 的主機負責人限自己負責的主機（過濾在 `IssueHandlingCommandService.BulkCloseOwnerScope`，不信任前端），
+且不能使用「之後新出現的主機日也自動套用」。
 
 **權限異動的停用主機例外**：持有 `ViewAll` 者在權限異動的清單、單筆確認、批次確認與報告全文看得到停用主機，清單與確認另含已不在主機表的主機（`PermissionChangeService.IsChangeVisible`，四條路徑同一個判定；報告需要主機編號，主機已不在主機表時回 404）——異動是已經發生的事，主機停用不代表不用檢核。其他頁面的「停用主機一律不可見」不變；沒有 `ViewAll` 的人只看可見主機。
 
@@ -513,7 +515,7 @@ SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，�
 
 **交辦單授權**（§9.4b）：單點函式逐單檢查，可看者＝處理人本人、`Assign`、`ViewAll` 三者之一，
 其他人 403（不是 404——單存在但無權）；成員依**檢視者**可見範圍過濾並回 `hiddenMemberCount`。
-總覽頁與清單 `Assign` 或 `ViewAll`；建單、追加、改派、拆單、取消 `Assign`；代為結案 `Assign`＋`Handle`
+總覽頁與清單 `Assign` 或 `ViewAll`；建單、追加、改派、批次改派（預覽與套用）、拆單、取消 `Assign`；代為結案 `Assign`＋`Handle`
 （兩個標註疊加，理由同統一標記）；立即派工 `Assign`；自動派工開關、問題靜音 `Maintain`；回覆 `Handle`
 且只能回覆自己是處理人的單（admin 亦然——代人回覆走代為結案）。
 
@@ -570,7 +572,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `method_not_allowed` | 405 | 該路由不支援這個 HTTP 方法 |
   | `payload_too_large` | 413 | 請求本文超過上限 |
   | `unsupported_media_type` | 415 | 請求的內容格式不受支援 |
-  | `conflict` | 409 | 樂觀鎖衝突、執行互斥、PRTG 範圍外清除作業佔用範圍寫入 |
+  | `conflict` | 409 | 樂觀鎖衝突（系統設定、規則與使用者的 `version` 比對，`ConcurrentUpdateException`）、執行互斥、PRTG 範圍外清除作業佔用範圍寫入 |
   | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
   | `server_error` | 500 | 未預期例外 |
   | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
@@ -1083,8 +1085,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   高風險主機排行、頂部 KPI 卡列的「待處理」與「權限與安全」組（未處理／逾期、權限異動待確認；具 `Handle` 者多一張
   **我的交辦單**卡：進行中單數，副行台數、逾期台數與未回覆單數，連到自己的 §9.4a，資料同側欄徽章
   `GET api/handlers/me/badge`；具 `Assign` 者另有**待派工問題**卡：`DashboardDto.PendingDispatch`，
-  資料同交辦總覽待派頁籤的試跑 `GetGaps`（近 7 天：昨天往前 7 天；最近出現日已被處理人結案的主機不計入），主數字＝待派問題總數、
-  超過試跑上限時顯示「超過上限」，副行為其中無法派出的問題數；點卡進待派頁籤 `/work-orders#gaps`；
+  資料同交辦總覽待派頁籤的試跑 `GetGaps`（近 7 天：昨天往前 7 天；最近出現日已被處理人結案的主機不計入），主數字＝「可以派」與「派不出去」兩段的問題數相加
+  （`DispatchableIssueCount`＋`UnassignableIssueCount`，與待派頁兩段一致；「不會派」不計）、
+  超過試跑上限時顯示「超過上限」，副行寫「可以派 N 個、派不出去 M 個」，兩段都是 0 時寫「近 7 天沒人接的問題」；點卡進待派頁籤 `/work-orders#gaps`；
   不具 `Assign` 者該欄為 null、不試跑。整包快取的鍵含 Assign 維度）、未回報主機、
   **依群組風險概況**、Web 登入失敗 24h 卡（具 `ViewAudit` 才顯示）。
 - **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
@@ -1166,6 +1169,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **未回報主機卡依能力分流**：目的地（主機頁的「未回報」篩選）需要 `Maintain`，所以只有持有它的人看到的是連結；其他角色（處理人、主管、開發維運）的卡片不可點，
   tooltip 在「沒回報 ≠ 沒問題」之後多一行「未回報：{主機名}、…」。主機名取自 `DashboardDto.SilentHostNames`：只含檢視者可見範圍內的未回報主機，依名稱排序、最多 5 台
   （`DashboardService.SilentHostNameLimit`），總數大於 5 時尾端寫「等 N 台」，0 台時不帶名單。
+- **「需要你處理」列**（`#dashboard-todo`，具 `Assign` 才有；`DashboardDto.AdminTodo`，Manager、Dev 為 null）：頁頂一列連結，只列數字不是 0 的類別，
+  順序：最近一趟取數失敗、今天新上報、上報逾期、可派未派（待派卡同一次試跑的可派問題數帶入，不再跑第二次試跑）、
+  待派問題太多請縮小期間、派不出去、上報沒有收件人、處理人已停用或暫停仍有單、反覆復發、未分組主機；每項連到處理點。
+  全部為 0 時收成一行「目前沒有需要你處理的項目」。資料與交辦總覽提醒區、管理者摘要信是同一個彙整函式（`AdminReminderService.Compute`，經 `AdminTodoService` 帶快取與可見範圍），
+  新類別三處同時出現；「可派未派」依賴使用者可見範圍，不進夜間摘要信。
+- **「未處理問題」卡口徑**：副標寫「影響 N 台．風險日未處理 X、處理中 Y」——影響台數與下鑽依問題視角的 `distinctHostCount` 同定義（這些問題影響的全部主機，含其中已有人處理的），
+  風險日拆成兩個數字，不相加。重點問題列的名稱一律用後端回的 `issueLabel`（`IssueNames`，見 §9.4b「問題名稱單一出口」），前端不自行組「來源 (事件編號)」。
+- **AI 無摘要出口**：沒有 AI 摘要的日子（統計模式或 AI 未跑）全站經同一個出口 `NoAiSummary`：標題顯示當日最重問題的名稱與白話說明
+  （重大旗標優先、再嚴重度、再次數；已抑制的問題不參與，全部被抑制才使用；當日無問題寫「今日未偵測到需要處理的問題」），
+  空白或舊版佔位括號字讀取時現場補，不搬資料；風險日詳情標題區的摘要不重複標題。
+- **AI 暫時不通**：AI 網路層失敗後互動入口（今日焦點、查詢歸納、判讀、整理說明、詢問 AI）進入 60 秒冷卻，期間不送請求、直接回「AI 暫時無法連線」，背景排程不受冷卻影響（細節見 §9.10 AI 窗口）。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
   「未處理數」**只計未處理（Open）**，與 KPI 卡「未處理問題」同一個定義——含處理中會讓
@@ -1210,7 +1224,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機，**一台一列**（`GET api/records/issue-hosts`，見下方依問題視角段）。
   列內動作依能力出現，依固定優先序排：**回覆處理狀態**（處理人清單含自己且具 `Handle`）→ **交辦**（`Assign`，建交辦單，見下方）→
-  **統一標記**（`Assign`＋`Handle`）→ **靜音**（`Maintain`，§9.4b）。兩個以內全部橫排在列上；三個以上第一個留在列上、其餘收進「更多」下拉選單
+  **統一標記**（畫面入口需 `Assign`＋`Handle`；後端接受 `Handle`，範圍見下）→ **靜音**（`Maintain`，§9.4b）→ **不再顯示這個問題…**（`Maintain`）→ **調整這條規則**（`Maintain` 且該問題命中規則）。兩個以內全部橫排在列上；三個以上第一個留在列上、其餘收進「更多」下拉選單
   （以 fixed 定位跳出表格容器的裁切；展開中的固定格提到最上層；選單項先把焦點交回「更多」再開視窗；點選單不觸發整列展開）。動作欄因此窄到 FHD 下整張表不需水平捲動。
   回覆處理狀態：同一個問題被交辦到
   N 台主機時，在這裡填一次即回覆**自己名下**該問題的全部進行中交辦單（`POST api/work-orders/reply-many`，
@@ -1235,6 +1249,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   導致報表『未完成』把已結案日誤算進去」的缺口。**只在對外出口套用**——
   `DayHandlingDerivation` 的推導本身與逾期判定仍看真正的 `open`/`in_progress`，不受收斂影響；
   詳細結論（不處理/誤報/已知雜訊）只在風險日詳情頁的問題層級呈現。
+- 主機篩選與頁頂主機快速搜尋共用 `GET api/hosts?query=&limit=`：`query` 比對主機名稱、Sentinel 回報的顯示名與最近已知 IP（包含、不分大小寫、可見範圍內、僅啟用主機），
+  `limit` 限縮筆數（1 到 20，預設 20；快速搜尋要 10），回應列另帶 `displayName`、`ipAddress`。
 - API：`GET api/records?hostIds=&groupIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&sort=&dir=&page=&pageSize=`
   （`severity`/`overdue` 為下鑽用選用參數，§10.3；三視角端點 `api/records`、`api/records/by-host`、`api/records/by-date` 皆支援 `groupIds`／`sort`/`dir`——
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
@@ -1251,6 +1267,22 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   以未結案的高＋中風險日、依預設排序取清單後找目前這筆的下一筆；目前這筆不在清單裡
   （例如剛結案）取第一筆。窗口是整個保留期（同上一條的理由），成本由跨請求快取吸收
   ——鍵含可見主機集合與可見度設定，少任一維度就是把 A 的待辦端給 B。
+- **依問題視角的名稱與處理概況**：列標題一律用後端回的 `IssueLabel`（`IssueNames`，見 §9.4b「問題名稱單一出口」；Windows 是「來源 EventId N」，事件編號為 0 的 Linux、PRTG 只顯示來源，不顯示「0」），
+  交辦、統一標記、回覆視窗標題與預填的問題名稱同一個字串，前端不自行組「來源 (編號)」。處理概況除「未處理／處理中／已處理」外另列一行「N 台預設不處理」（有才顯示）：
+  `DefaultIgnoredCount`＝這台主機在這個問題的每個出現點都沒有任何標記（沒有進行中案件、沒有逐日處理標記），只因嚴重度不在「需處理」名單內而被視為已處理；
+  它不與 `ResolvedCount`（只算有人標記的結案類）合計，未處理＋處理中＋已處理＋預設不處理＝受影響主機數。
+- **單一風險層級時其餘層級顯示「—」**：依主機、依日期兩個視角的「高風險／中風險／低風險」三欄，查詢只篩一個風險層級時，另外兩欄顯示「—」而不是 0
+  （資料已被篩掉，0 會被讀成「沒有那一級的風險」）；篩兩個以上或不限時三欄都是實際計數。判定以產生該次結果的篩選為準（`lastRiskLevels`），不看之後又改過的 chip。
+  沒有 AI 摘要的日子，headline 由伺服器補成當日最重問題（§9.1「AI 無摘要出口」），前端不自備佔位字。
+- **「不再顯示這個問題」比較表與入口**（`#issue-hide-guide`，依問題視角、有資料且具指派、維護或處理任一能力才顯示，預設收合的揭露區，表格緊接在依問題表格上方）：
+  內容在 `core/hide-guide.js`（`HIDE_GUIDE_COLUMNS`／`HIDE_GUIDE_ROWS`），四欄（做法／範圍與期限／進行中的交辦單／之後會不會再派工）六列（靜音、抑制、已知雜訊、不處理、誤報、統一標記），
+  操作說明書 19 章以同一份文字逐字呈現（`HideGuideTests` 比對）；每一格對應的程式行為見該檔檔頭。比較表是「選哪一種」的說明，真的要套用走每列「更多」的「不再顯示這個問題…」（`Maintain`），
+  由 `pages/hide-triage-panel.js`＋`core/hide-triage.js` 以三個問句決定做法：多久（暫時選 1～365 天／長期）、範圍（全站／指定主機群組／單一主機）、已交辦的單（暫停／代為結案／不動；這個問題沒有進行中交辦單時不問）。
+  三問 2×3×3＝18 個組合在 `TRIAGE_TABLE` 逐格列出，每格不是對應既有機制就是「不提供並附原因」：暫時＋全站＝靜音（`PUT admin/issue-owners/{source}/{eventId}/mute`，帶 `existingOrders`）；
+  長期＋全站＝機房結論（`PUT …/conclusion`，`autoApply` 為 true，結論限已知雜訊、不處理；選代為結案時另對每張進行中的單 `POST work-orders/{id}/admin-close` 並停派）；
+  指定主機群組或單一主機＝規則抑制（`POST rules/{ruleId}/suppressions`，暫時帶天數、長期不帶）。問題沒有對應規則時不提供群組與單一主機；只對部分主機設定抑制時單維持原狀，只能選「不動」。
+  套用前先顯示後果摘要；多步套用中途失敗不回滾，畫面說明完成幾步。不新增任何儲存。
+- **「調整這條規則」**：`IssueGroupDto.RuleId`（與白話說明同一個查法的規則 Id，未命中為 null）；列「更多」的連結直達 `ruleEditUrl(ruleId)`（`core/paths.js`，規則維護頁帶入該規則的編輯）。換頁動作是連結，不是對話框。
 - **依問題視角補上「時間形狀」**：
   原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
   欄位——**vs 基準**（語意與計算式同 §9.1，`IssueBaselineCalculator` 共用）、
@@ -1311,9 +1343,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   逐日寫入量超過就地門檻時送出後在背景完成（§9.4b「逐日同步」），toast 註明。
   問題簽章超過案件／逐日處理列的 `issue_key` 欄位上限（`IssueKeyLimit`，取兩表 `HasMaxLength` 較小者）的成員**不建案件、不寫處理紀錄、不計入成員數**（不截斷：截斷後會撞到別筆的鍵或永遠對不上）；
   其餘成員照常建立，回應 `overlongSkipped`（建單與追加皆有）逐筆帶 `hostName` 與中文 `message`，畫面以 warning toast 列出。夜間派工遇超長鍵同樣不建案、不寫逐日列與處理紀錄。
-  **統一標記**：列內動作之一（需 `Assign`
-  **且** `Handle`，兩個標註疊加＝都要滿足；實務上即 admin），把這個問題在**尚未有人接手**的
+  **統一標記**：列內動作之一（畫面入口對同時具 `Assign` 與 `Handle` 者顯示；端點能力為 `Handle`，範圍見下），把這個問題在**尚未有人接手**的
   主機上一次標成結論（僅結案四態，**原因必填**——代全體下結論的操作，理由是紀錄的一部分）。
+  - **範圍與能力（O1）**：端點能力為 `Handle`（類別層標註不再疊 `Assign`）。具 `Assign` 者範圍不限；只具 `Handle` 的主機負責人只能標自己是負責人的主機，其餘列入略過，
+    原因「不是你負責的主機」（`IssueHandlingCommandService.NotOwnedSkipReason`；預覽、結果、錯誤訊息共用），過濾在後端（`BulkCloseOwnerScope`），不信任前端。
+    「之後新出現的主機日也自動套用」是全站的決定，只具 `Handle` 者送出會被拒（403，仍需 `Assign`＋`Maintain`）。畫面上的「統一標記」入口目前仍只對同時具 `Assign` 與 `Handle` 者顯示。
   - **「尚未有人接手」＝該（主機, 問題）沒有進行中案件**，這是唯一的略過條件（定案 6-1）：
     已有案件者不論處理人是誰（含 admin 自己）一律略過並回報，要動別人的案件走改派（§9.4b）
     或由處理人自己回覆。**無案件時**，期間內即使有人標了處理中／觀察中也
@@ -1331,7 +1365,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     `handling_status` 分開，稽核查詢要能單獨篩出這種跨主機跨日的大範圍操作）。
   API：`GET api/records/by-issue?...&sort=severity|hostCount|dayCount|totalCount|lastSeen`、
   `GET api/handling/issue-cases/close-preview?source=&eventId=&from=&to=`＋
-  `POST api/handling/issue-cases/bulk-close`（統一標記，`Assign`＋`Handle`，
+  `POST api/handling/issue-cases/bulk-close`（統一標記，`Handle`，範圍依是否另具 `Assign`，
   **刻意獨立成第三個 controller**——另兩個類別各有自己的類別層能力，混進去會把對象搞混）、
   交辦與回覆的端點見 §9.4b。
   **依問題視角的 chips ＝問題嚴重度**（問題主視角，畫面上的群組標籤也隨視角改成「問題嚴重度」）：
@@ -1370,7 +1404,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      第一次勾選問題（單列或表頭全選）；使用者手動展開／收合過之後，勾選不再自動展開（`hasUserChoice`）。案件授與檢視不建立側軌、右欄直接展開。
   0a. **勾選與表單暫存**：重點問題清單每次重繪（嚴重度篩選、顯示範圍、重載）都取消不在目前可見清單內的勾選（`pruneHiddenSelection`，掛在 `renderIssues` 入口）——
      送出對象必須等於畫面上看得到的對象；有取消時面板說明一次「已取消 N 個不在目前清單的勾選」，下一次勾選變動就清掉。
-     「已處理／已有結論」收合區每次重繪都重新收起，勾在裡面的問題同樣算不在可見清單內。
+     不在目前顯示範圍內的問題同樣算不在可見清單內。
      表單暫存日層級、批次各一份（在批次的輸入不會蓋掉日層級剛點的狀態與日期）：狀態只有使用者親自點過才沿用、且只取自己模式那一份（日層級預設為推導狀態、批次不預選），預計完成日、觀察天數、「清除雜訊記憶」同樣只取自己模式那一份；
      使用者這次打的說明跨模式保留（日層級預填的已存說明不算，不會被帶進批次），從批次回到日層級且說明有字時，表單上方寫明「目前沒有勾選問題，儲存會套用到這一天的整體狀態」。本機草稿只存說明文字，一個風險日一個鍵。
      「AI 整理」回應到達時說明欄已不在畫面上（等待期間勾選變動重建了表單）就整個丟棄，不寫舊欄位、不寫草稿。
@@ -1405,10 +1439,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   7. **計數器分三段「已處理／處理中／未處理」**：已處理＝`resolved`、處理中＝`in_progress`、未處理＝真正未標記的
      （含明確 `open`）；不處理/誤報/已知雜訊/預設不處理**仍三邊都不計**——那些是「已經有結論」，
      不是「還沒處理」。任一段為 0 時省略該段，避免「已處理 0／處理中 0／未處理 12」的噪音。
-  8. **已結案排序收合**（**僅風險日詳情**——問題查詢清單維持既有緊急程度
-     排序）：類別分節內未處理→處理中排最前面直接可見，其餘（已處理/不處理/誤報/已知雜訊/預設不處理/
-     自動雜訊）收合到分節底部的「已處理／已有結論 N 項」可展開列。展開狀態不持久化（每次進頁預設
-     收合）——批次套用後常有列從主表「搬」進這裡，維持收合預設值最不會讓人意外。
+  8. **已結案排序**（**僅風險日詳情**——問題查詢清單維持既有緊急程度
+     排序）：三個顯示範圍（第 16 項）都平鋪、不收合。「全部（含已完成）」時類別分節內未處理→處理中排最前面、已有結論
+     （已處理/不處理/誤報/已知雜訊/預設不處理/自動雜訊）排在後面（穩定排序，同層級維持原順序）；其餘範圍維持原順序。
+     沒有「已處理／已有結論」收合區——收合區裡的列是選了範圍卻看不到的列，三個選項下都不留這種地方。
   9. **處理狀態與歷程同步**：
      - **問題層級標記逐筆寫入歷程**：`ApplyIssueStatus` 標記**一個問題就寫一列**
        （批次勾 10 項即 10 列，刻意不做彙總——「攏統的彙總標記沒有意義」，每一筆都要查得到
@@ -1436,7 +1470,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
        → 帳號／來源 IP 摘要（`keyDetailsBlock`：以「；」切段、每段在第一個冒號分成標籤與值，切不出這個形狀就整段原樣；
        一般文字色，不上紅字）→「原始訊息 N」。詳情已清除的日子以一行說明取代帳號與原始訊息。
      - 佐證層（`evidencePanel`，`renderTable` 的 `rowDetail`）依序為處置參考（無知識庫但 AI 可用時為「AI 判讀」）、登入失敗明細、
-       數值趨勢、殘留憑證判定、來源觀測；一區都沒有時不掛展開列。文字分三層（區標題眉標＋分隔線、小標正文色粗體、處置參考內文一般字級，處置步驟用編號清單；規格見 DESIGN-SYSTEM §8.5），來源觀測的欄位名淡化、值用正文色。面板有其他區但沒有來源觀測時，來源觀測區寫「未保存可核對的來源觀測」（清單被截斷時加註），讓人分得出「沒有」與「漏顯示」。詳情已清除的日子只剩處置參考。內容 eager 建好，列印全顯示。
+       數值趨勢、殘留憑證判定、來源觀測；一區都沒有時不掛展開列。**來源觀測用白話與當地時間**：摘要一行說「N 筆事件：01:00、01:02、01:04」「N 筆時間區間：…」「N 筆沒有時間資訊」
+       「N 筆缺少時間依據，看不出是否連續發生」（同一當地日省略日期、跨日每個時間帶月-日；時間點最多列 8 個、區間最多 4 個，超過以「…」收尾；清單本身 64 筆上限），
+       逐筆的來源、範圍、主機、資源、UTC 時間與來源事件編號等原始欄位收進可展開的「技術細節」，每筆只印有值的行。文字分三層（區標題眉標＋分隔線、小標正文色粗體、處置參考內文一般字級，處置步驟用編號清單；規格見 DESIGN-SYSTEM §8.5），來源觀測的欄位名淡化、值用正文色。面板有其他區但沒有來源觀測時，來源觀測區寫「未保存可核對的來源觀測」（清單被截斷時加註），讓人分得出「沒有」與「漏顯示」。詳情已清除的日子只剩處置參考。內容 eager 建好，列印全顯示。
      - 分節標頭右側「全部展開／全部收合」（沒有可展開列的分節不出現）；使用者展開過的列以 issueKey 記在頁面（`renderTable` 的
        `rowKey`／`expandedKeys`），批次套用或改狀態後就地重繪仍維持展開；重載時不先換成骨架列，捲動位置不跳。
      - 長文字一律走 `ui.js` 的 `collapsibleText`：容器文字超過 300 字（`COLLAPSE_LIMIT`）才收合，
@@ -1524,10 +1560,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
        進行中案件的處理人（後綴「（案件）」）。
   16. **顯示範圍下拉**：嚴重度篩選旁一個**單選**下拉，
      與嚴重度是 AND 關係。每個問題先歸入四個互斥的桶——未處理／我處理中／**他人處理中**
-     （進行中案件的處理人不是自己）／已完成（結案四態＋預設不處理＋自動雜訊）——四個選項是
-     這些桶的組合：「待處理」（預設，隱藏他人處理中）／「顯示所有問題」／「隱藏已完成」／
-     「僅已完成」（平鋪，不再收合）。選項附當前數量、狀態不持久化（每次進頁回預設，同已結案
-     收合的誠實預設原則）；被篩掉的項數在底部說明，「沒看到」與「不存在」必須分得清楚。
+     （進行中案件的處理人不是自己）／已完成（結案四態＋預設不處理＋自動雜訊）——三個選項是
+     這些桶的組合，字面與內容一致、計數＝切過去實際列出的列數：「待處理」（預設，未處理＋我處理中，隱藏他人處理中與已完成）／
+     「全部（含已完成）」（四個桶全列，不收合）／「只看已完成」（只有已完成桶）。**只有「全部」看得到他人處理中與靜音中的問題**。
+     選項附當前數量、狀態不持久化（每次進頁回預設）；被篩掉的項數在底部說明，「沒看到」與「不存在」必須分得清楚；
+     當前範圍沒有列、別的範圍有時，提示切到真正看得到列的範圍（待處理沒有就找下一個有列的選項）。
      **他人處理中的問題不可勾選、不可改狀態**：checkbox `disabled`、全選跳過、狀態欄唯讀，
      後端 `IssueHandlingCommandService.RequireNotHandledByOthers` 是實際防線（**admin 也擋**——
      admin 的正確動作是改派，不是繞過協調機制直接寫）。要換人處理走第 17 項的改派。
@@ -1547,7 +1584,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      「#單號」徽章連到 `/work-orders/{id}`（`IssueDto.WorkOrderId`）。
      **靜音徽章**：這一列的問題被靜音（`IssueDto.IsMuted`，與讀取側排除同一判定：目前靜音中或
      紀錄日落在區間內）時「問題」欄顯示「靜音至 yyyy-MM-dd」，`title` 帶原因與設定者；
-     靜音問題本來就在「已處理／已有結論」收合區，展開「顯示所有問題」才看得到。
+     靜音問題只在顯示範圍「全部（含已完成）」看得到。
+     徽章用 `lf-badge--wrap`（可換行、不超出儲存格，人名等不定長文字在窄欄也留在儲存格內，§8.6）。
+     **處理人列**：側軌「處理狀態」卡的「處理人」在本日有問題層級交辦時，改列本日相關的交辦單與各自的處理人
+     （單號連到 `/work-orders/{id}`，能不能開由後端逐單授權把關；來源是問題列帶的案件處理人與單號，沒有單號的舊案件不列），
+     日層級指派下拉的標籤是「日層級指派」、無人選項寫「無日層級指派」；只有沒有任何問題層級交辦、也沒有日層級處理人時才寫「未指派」。
+     日層級指派本身的行為不變（具 `Assign` 才是下拉，否則唯讀）。
+     **不處理類的後果提示**：處理面板勾選的問題全部都是高嚴重度或重大（`DismissalReleases`，伺服器判定，前端不判斷嚴重度；有一個是永久的就維持原句）時，不處理／誤報／已知雜訊的後果提示寫「30 天內不再派工，之後仍在發生會重新派工」；
+     其餘問題維持「之後不再派工」。
   15. **查看先前處理**：問題再次發生時，「處理狀態」欄
      多一顆「先前處理」按鈕（`IssueDto.HasPriorHandling`——早於本日、狀態為結案類的逐日標記或
      已結案的 `IssueCase` 任一存在即為 true；唯讀角色也看得到，不限 `canHandle`）。點擊開
@@ -1692,7 +1736,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **PRTG 監控對應**：`GET api/host-detail/{hostId}/prtg` 列對應的 device 與 sensor（狀態依前綴上色、外部字串 `textContent`）。趨勢分類的 sensor 另有「數值資料」欄：
   就緒（綠）、「資料累積中 X／28 日」（灰）、其他不足原因（警示色），原因標籤與就緒度卡、規則頁試算同一列舉（PRTG-SPEC §9b）；
   Maintain 另看到「查看數值資料就緒度」連結，其他使用者不顯示設定入口。案件授與回 403。
-- API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`、`GET api/host-detail/{hostId}/prtg`
+- **這台的交辦**（`#host-orders-card`，`GET api/host-detail/{hostId}/orders`，`HostOrdersController`）：這台主機每個**進行中的案件**一列——問題、嚴重度、處理人、狀態、單號（連到交辦單頁）、上次回覆、是否復發。
+  什麼算一列：以案件（主機×問題簽章）為列；同主機同問題但登錄類型不同是兩個案件，各一列並標出登錄類型（`ShowLogName`）。0 列時顯示「這台主機目前沒有進行中的交辦」。
+  端點沒有 `[Permission]`（比照主機詳情）：授權是資料範圍過濾——主機必須可見；只經案件授與看得到這台的人，只回被交辦的問題（`GetIssueKeyRestriction`）。
+  檢視者是該單處理人且具 `Handle`（`CanReply`）的列可勾選，一次回覆多個問題：沿用回覆彈窗（`issue-status-reply.js`），依單號由小到大逐張送 `POST work-orders/{id}/reply`、`caseIds` 只帶這台主機的案件；
+  其中一張失敗（例如剛被改派）不影響其他張，訊息逐張列出失敗的單與原因。選到不處理類時後果提示依 `DismissalReleases` 換句（見 §9.3）。
+- **頁頂主機快速搜尋**（所有頁面，`layout.js` 掛在頂列，窄螢幕換到標題下一行）：輸入名稱或 IP，列出可見範圍內符合的主機（最多 10 筆，名稱後括號附 Sentinel 顯示名、次要文字為 IP），選取後到 `/hosts/{id}`。
+  走 `GET api/hosts?query=&limit=10`（§9.2；範圍由伺服器依可見範圍決定，前端不過濾也不快取，受限使用者搜不到範圍外的主機），輸入停頓 250 ms 才送、以請求序號守門；使用者輸入觸發的查詢，不標 `background`。
+- API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`、`GET api/host-detail/{hostId}/prtg`、`GET api/host-detail/{hostId}/orders`
 
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（本人或具 Assign／ViewAll，資料以檢視者可見範圍過濾）
 
@@ -1709,6 +1760,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   各數字口徑同側欄徽章與儀表板「我的交辦單」卡（非暫停單的進行中成員、不含停用主機）；「今天需要你處理」的五個數字只在這支摘要端點計算，徽章端點不算。
   「今天新增」＝成員建立日是今天（站台時鐘）；「被退回」＝單最近一筆退回事件之後處理人尚未回覆的成員數；「3 天內到期」＝處理中成員的期限在今天到今天＋3 天（含兩端，已逾期的不算）；
   以台計的三個數字是各單不重複主機數的加總，等於清單各列同名欄位相加。
+- **口徑說明**（`#handler-caliber-note`）：頁面寫明「這裡的單數與台數不含『問題靜音中而暫停』的單，暫停的單到期後自動恢復；管理者的負載看板會把暫停的單一併計入」。
 - **三個頁籤**：
   - **交辦單**（預設）：一列一張交辦單——單號｜問題（主體，白話說明為次要文字；其下標記「新 N」「退回 N」「觀察到期 N」，0 不顯示）｜嚴重度（含「重大」，推導不到顯示「—」）｜主機（台數口徑「進行中 N 台；歷來 M 台、K 件」，復發的標「復發 N」，其下是各狀態件數）｜逾期｜未回覆天數｜期限
     （有期限時日期旁一顆鉛筆鈕就地修改，沒有期限時是「設定期限」鈕）｜「回覆」鈕在列尾。來源與最近新增屬佐證，放在展開列頂端的一行次要資訊。
@@ -1742,7 +1794,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `unresolvedOnly=true` 時風險日只列未結案（判定沿用每個日項目的 `isUnresolved`）。
   側欄徽章顯示進行中台數，有逾期時轉警示色，`title` 寫「進行中 N 張／M 台；逾期 K 台／未回覆 J 張」。
   側欄的兩顆徽章（「我的交辦」進行中台數、「交辦總覽」未讀回覆單數，後者具 `Assign` 或 `ViewAll` 才有、0 不顯示）
-  由 `core/badges.js` 的單一計時器每 60 秒刷新；分頁隱藏時不打 API，回到前景立即刷新一次；失敗靜默、沿用上次的數字。
+  由 `core/badges.js` 的單一計時器每 60 秒刷新（「交辦總覽」徽章只對具 `Assign` 者顯示與請求——已讀只有 `Assign` 會寫，只具 `ViewAll` 的人看到的數字不會歸零）；分頁隱藏時不打 API，回到前景立即刷新一次；失敗靜默、沿用上次的數字。
   各頁不另開計時器，要跟著更新的頁面訂閱刷新後發出的 `lf:badges` 事件（`detail: { myWork, unread }`）。
 
 ### 9.4b `/work-orders` 交辦總覽與 `/work-orders/{id}` 交辦單詳情（`Assign` 或 `ViewAll`）
@@ -1761,9 +1813,15 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 為空。沒有重開：案件結案後不會回到進行中，同問題再出現是新案件、新單；畫面以讀取時推導標出**復發**（見下「台數、成員表與回覆」）。詳情頁逐筆標記讓全部成員結案時，
 結案由背景同步服務每輪掃描補上。
 
-**管理者提醒區**（頁籤列上方 `#wo-reminders`；目前靜音中的問題不列入，派不出去的清單由每趟合併，連續兩個日曆日的執行沒再觀察到的項目才移除）：五類——今天新上報的成員、上報超過 N 天沒人處理的成員、最近一趟夜間派工派不出去的問題、上報信沒有任何收件人的單、反覆結案又復發的成員——任一類不是 0 時顯示一則 warning `statusNote`「有項目需要管理者處理」，下方每類一行（`lf-list-row`）寫「N 筆」並附連結：上報逾期連到 `?status=escalated`（進行中頁籤的「上報中」篩選）、派不出去連到 `#gaps`（待派頁籤）、沒有收件人連到第一張單的詳情；今天新上報連到 `?status=escalated`（只在這區顯示、不寄信，與「超過 N 天」分開計數）；反覆結案又復發連到 `?status=active`（復發的成員都在進行中的單裡，單號連結到那張單、成員表標出復發次數）；各類都是 0 或端點失敗時整區不顯示。資料來自 `GET api/work-orders/admin-reminders`（`Assign`／`ViewAll`），與夜間管理者摘要信由同一個彙整函式 `AdminReminderService.Compute` 算出，不受郵件總開關與提醒間隔影響（郵件關閉時這是唯一管道）；N＝0 時逾期仍以出廠 3 天判定，並常駐 info「提醒信已關閉（設定為 0），此處仍會顯示。」。每類各有預設收合的「看是哪些」明細（`escalated`：單號連結、問題、主機、上報天數；`unassignable`：問題、原因、台數，行尾標 `unassignableAt` 彙整時間；`noRecipient`：單號連結；`newEscalated`：同 `escalated`、`days` 恆為 0；`recurrence`：單號連結、問題、主機、復發次數）；明細每類最多 50 筆，超過時註明總數。
+**管理者提醒區**（頁籤列上方 `#wo-reminders`；目前靜音中的問題不列入，派不出去的清單由每趟合併，連續兩個日曆日的執行沒再觀察到的項目才移除）：五類——今天新上報的成員、上報超過 N 天沒人處理的成員、最近一趟夜間派工派不出去的問題、上報信沒有任何收件人的單、反覆結案又復發的成員——任一類不是 0 時顯示一則 warning `statusNote`「有項目需要管理者處理」，下方每類一行（`lf-list-row`）寫「N 筆」並附連結：上報逾期連到 `?status=escalated`（進行中頁籤的「上報中」篩選）、派不出去連到 `#gaps`（待派頁籤）、沒有收件人連到第一張單的詳情；今天新上報連到 `?status=escalated`（只在這區顯示、不寄信，與「超過 N 天」分開計數）；反覆結案又復發連到 `?status=active`（復發的成員都在進行中的單裡，單號連結到那張單、成員表標出復發次數）；各類都是 0 或端點失敗時整區不顯示。**具 `Assign` 者另有四類待辦**（`todoIncluded`；只具 `ViewAll` 的 Manager、Dev 這四類恆為 0）：昨晚取數結果（最近一趟取數失敗，與健康頁同一個來源，連到 `/runs`）、可派未派（待派試跑「可以派」的問題數，連到 `#gaps`；試跑超過上限時改提示縮小期間）、處理人已停用或暫停接單但名下仍有進行中單（單位是人，明細列每人的單數與台數，連到 `?status=active&handlerInactive=1`）、未分組主機（連到 `/admin/hosts?status=ungrouped`）；同一份資料也是儀表板「需要你處理」列（§9.1）。可派未派依賴使用者可見範圍，只在站內提醒區與儀表板，不進夜間摘要信。資料來自 `GET api/work-orders/admin-reminders`（`Assign`／`ViewAll`，經 `AdminTodoService` 疊上呼叫者的待辦類別），與夜間管理者摘要信由同一個彙整函式 `AdminReminderService.Compute` 算出，不受郵件總開關與提醒間隔影響（郵件關閉時這是唯一管道）；N＝0 時逾期仍以出廠 3 天判定，並常駐 info「提醒信已關閉（設定為 0），此處仍會顯示。」。每類各有預設收合的「看是哪些」明細（`escalated`：單號連結、問題、主機、上報天數；`unassignable`：問題、原因、台數，行尾標 `unassignableAt` 彙整時間；`noRecipient`：單號連結；`newEscalated`：同 `escalated`、`days` 恆為 0；`recurrence`：單號連結、問題、主機、復發次數）；明細每類最多 50 筆，超過時註明總數。
 
 **總覽頁四頁籤**（`bindTabs` 啟用網址 hash，外部可直接連到 `#load`／`#gaps`／`#muted`）：
+- **進行中（批次改派與處理人篩選）**：清單可勾選多張進行中的單（表頭全選本頁、跨頁保留勾選）→ 勾選列上「改派給…」→ 選新處理人 → 預覽 → 套用（`work-orders-bulk.js`）。
+  預覽 `POST api/work-orders/bulk-reassign/preview`（只讀，`Assign`）每張回分類——`new`（成員連同單換處理人）、`merge`（併入目標處理人同問題的進行中單，原單以「移交」結案；這批裡同問題已有一張先成了目標的單時，後面的也是 `merge`）、`skip`（已是該處理人、已結案、找不到）——
+  加上會移動的台數、目標看不到而要以交辦授與補上的主機數（`grantHostCount`）、目標是否暫停接單／沒有 email／沒有處理能力（改派仍可執行，只是提醒）；套用 `POST api/work-orders/bulk-reassign`（`Assign`，`notifyNow` 可選）
+  逐張沿用單張改派（`WorkOrderCoordinator.Reassign`），單張失敗不影響其他張，結果逐張回 `ok`／`skipped`／`failed` 與原因；預覽與套用共用同一份分類，預覽數字＝結果。
+  一次上限 100 張（去重後超過整批被拒、不做任何事；畫面在勾選超過時停用按鈕並寫「一次最多改派 100 張」），每張仍各發一次通知，改派衝突（處理人正在回覆）沿用單張改派的訊息。
+  篩選列另有**處理人篩選**（`handlerId`，網址參數同名；負載看板點人名會切到進行中頁籤並帶入、勾選該人名下進行中的單）。
 - **進行中**：交辦單清單——單號｜問題（其下標記：新、復發、退回、觀察到期，0 不顯示）｜嚴重度｜處理人（停用／暫停接單徽章）｜成員（台數口徑「進行中 N 台；歷來 M 台、K 件」、狀態彙總、逐日同步中台數）｜
   逾期｜未回覆｜未讀回覆（有則顯示「有新回覆」淡色徽章）｜期限｜來源｜建立｜最近新增（最近一次加入成員的時間）｜狀態。篩選：狀態（進行中／上報中／有逾期／未回覆／已結案／全部）、
   排序（最新建立／成員最多／最久未回覆／處理優先序／期限最近／嚴重度；網址可帶 `sort`）、**群組**（處理人所屬的使用者群組，選項來自 `GET api/work-orders/handler-groups`，派工池群組名後加
@@ -1776,8 +1834,20 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   另在彙總行寫「主機已停用 N」；成員總數不變。狀態欄在續掛已停止時多一枚 warning 徽章「續掛已停止：{原因顯示名稱}」（只在進行中的單）。
 - **負載看板**：每位處理人一列（含停用、暫停接單標示）——進行中單｜進行中台數｜未回覆單｜逾期台數｜
   近 7 天結案｜最舊進行中。負載口徑＝進行中單的進行中成員數，只在 `WorkOrderDispatcher` 一處定義。
-  暫停的單**不扣除**（負載不因靜音瞬間歸零再跳回）。**停用主機上的成員不計入**進行中台數與逾期台數。
-- **待派**：期間（預設昨天往前 7 天）內出現、沒有任何進行中案件、且最近出現日還沒被處理人結案的問題，以派工試跑決定——
+  暫停的單**不扣除**（負載不因靜音瞬間歸零再跳回），看板上以一句口徑說明寫明；處理人工作頁（§9.4a）的數字則排除暫停的單，頁面同樣寫明。**停用主機上的成員不計入**進行中台數與逾期台數。
+  每位處理人名稱是連結、每列有「改派他名下的單…」：切到進行中頁籤並預先篩該處理人、勾選他名下進行中的單（超過一頁時提示用表頭全選本頁或調高每頁筆數），進入上面的批次改派流程。
+- **待派三段**（`GET api/work-orders/gaps?from&to&page&section`，`section`＝`dispatchable`／`unassignable`／`notDispatched` 只列該段的問題、各段統計不隨之變，`sectionTotal` 是該段分頁依據；
+  同一個問題在不同主機上可落在不同段，各段各算一次）：**可以派**（預設展開；有建議處理人，每列可派台數與「建議處理人（N 台、新建單或併入既有單）」，空時顯示「目前沒有可以派的問題」）、
+  **派不出去**（預設展開；沒有可接單人選，依原因分組、每組一次說明：`no_pool` 沒有派工池成員、`all_paused` 候選人全部暫停接單、`no_visibility` 派工池成員都看不到這些主機；
+  「沒有人看得到」的主機群組去重、每個群組只出現一次並帶台數與問題數，具 `Maintain`〔`canGrantAccess`〕時旁邊有「授權給…」下拉列出啟用中的派工池群組、直接沿用 `PUT api/admin/access/{userGroupId}` 增減式授權，完成後該段重算；
+  沒有 `Maintain` 時只給連到群組與授權的連結；沒有任何主機群組的主機提示先到「系統管理 > 主機」補群組）、
+  **不會派**（預設收合、標題帶總數；閘門排除：嚴重度未達、不再打擾、抑制、已知雜訊、靜音）。每段統計 `GapSectionDto` 兩個單位：問題數與（問題×主機）數。
+  儀表板待派卡與提醒區的「可派未派」只計前兩段（§9.1）；嚴重度未達的問題不再排在最前面。上限 20,000 的判定不變。
+- **單題派工與派工預覽**：「可以派」每列「派這個問題」，頁頭「立即派工」整頁派；兩者都先預覽再確認——`POST api/work-orders/auto-dispatch/preview`（`Assign`，不落盤）與落盤 `POST api/work-orders/auto-dispatch` 共用同一個試跑與分組，
+  請求帶 `source`＋`eventId` 時只派該問題（不帶＝整頁）；預覽回將建立與將併入的單數、掛入總台數、每人台數與派不出去的原因，確認框寫「將建立 N 張單、併入 M 張單，共 K 台」（單題時前綴「問題名稱」）。
+  沒有任何新成員被派出（多半是別人剛派完）時訊息為「沒有需要派的項目（可能剛由其他人派出）」，不再回「已建立 0 張、併入 5 張，共 0 台」（`nothingToDispatch`，`mergedOrders` 只計真的併入新成員的單）。
+  單題派工結果等於整頁試跑中該問題的那幾列，其他問題不受影響。
+- **待派（試跑規則）**：期間（預設昨天往前 7 天）內出現、沒有任何進行中案件、且最近出現日還沒被處理人結案的問題，以派工試跑決定——
   SQL 只取候選出現點（排除已有進行中案件），記憶體以與夜間相同的 `WorkOrderDispatcher.Decide`（含 ⓪ 靜音）
   套閘門、可見範圍與選人，依問題分組回：待派台數｜建議處理人｜無法派出（原因 `no_pool`／`no_visibility`
   （列出無人看得到的主機群組）／`all_paused`）｜已排除（閘門計數）。最近出現日已被處理人結案的（主機, 問題）——逐日處理列是結案類、沒有進行中案件，判定走 `OccurrenceStatusResolver` 的處理概況——整筆不進試跑結果：不列在待派頁、不計入儀表板「待派工問題」卡、不登記虛擬單、不計負載，立即派工也不會為它們建案；之後有未結案的新出現日就回到待派。閘門已略過的（例如不再打擾）維持原因，待派頁照常列在「已排除」。夜間派工不套用這項排除。試跑一律視為自動派工開啟、不模擬 ① 與 ③。抑制以「規則可能命中」
@@ -1785,12 +1855,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `tooLarge` 要求縮小期間（上限算尚未派出的出現點）；讀逐出現點原始列之前先以聚合的主機數總和減進行中案件數估下界，下界已超過就直接回 `tooLarge`，不必先把整期出現點讀進記憶體。**畫面數字＝按「立即派工」會發生的事**：
   「立即派工」（`Assign`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；建單依處理人、問題與
   決策來源分組，來源（問題負責人規則／自動派工）與備註比照夜間派工；部分問題失敗時逐組回報、稽核一定寫。
-- **不再自動派工**（待派頁籤下方的卡片，標頭 `lf-text-label` 眉標，右側帶「共 N 個問題、M 台」）：列出被「不再打擾」閘門擋住的（主機, 問題），
+- **不再自動派工**（待派頁籤下方的卡片，**預設收合、展開才載入清單**；標頭 `lf-text-label` 眉標，右側帶「共 N 個問題、M 台」，數字來自輕量計數 `GET api/work-orders/dismissed/count`〔`Assign`／`ViewAll`，與清單同一個查詢〕）：列出被「不再打擾」閘門擋住的（主機, 問題），
   依問題分組（台數多的在前），每組一個標頭列（問題名稱與台數；有 `Assign` 時右側一顆「整個問題恢復」）與一張表——主機｜先前結案狀態（不處理／誤報／已知雜訊徽章）｜
   結案的人｜日期｜「恢復」（有 `Assign` 時）；每頁 50 個問題組，0 筆時顯示「沒有不再自動派工的問題」。待派清單「已排除」欄的「不再打擾 N 台」可點，捲到這一區。
   恢復前以 `confirmAction`（主要色確認鈕）寫出主機（或台數）與問題，成功後 toast 並就地重載這一區。
-  資料與判定：`GET api/work-orders/dismissed?page`（`Assign`／`ViewAll`，可見範圍同待派頁）對可見主機逐台呼叫 `DispatchContext.DismissedCases`
-  ——`DismissedKeys` 也是用它取鍵，所以清單與夜間派工、日層級指派是同一份判定，沒有第二份條件。「結案的人、日期」不另存欄位：日期取案件結案時間，
+  **「恢復派工」欄**：每列顯示這件何時會自動恢復——高嚴重度或重大、處理人回覆產生、上線後結案的案件寫「N 天後恢復派工」（`releaseInDays`，第 30 天＝1）；中低嚴重度、管理者代為結案時明確勾選「之後不再自動派工」的寫「永久」（`releaseInDays` 為 null）；
+  上線前結案的高嚴重度案件寫「上線前判定」（`preLaunch`，不自動解除，由管理者逐筆或整個問題「恢復」）。判定見下方「不再打擾 30 天解除」。
+  資料與判定：`GET api/work-orders/dismissed?page`（`Assign`／`ViewAll`，可見範圍同待派頁）以資料庫端查詢取候選（每個主機×問題鍵最新一件未取消的不處理類案件），再套同一個 `DispatchContext.DismissedCases`
+  ——`DismissedKeys` 也是用它取鍵，所以清單與夜間派工、日層級指派是同一份判定，沒有第二份條件（對照測試在固定資料集上逐主機比對兩者結果相同）。「結案的人、日期」不另存欄位：日期取案件結案時間，
   人從處理歷程（同主機、同問題、同狀態、時間最貼近結案時間的一列的操作者）讀，歷程尚待背景同步時退回案件上待寫入的意圖，都沒有顯示「—」。
   恢復端點（能力 `Assign`；不用 `Maintain`，救援帳號沒有業務資料檢視）：`POST api/work-orders/dismissed/restore { hostName, issueKey }`（單筆）、
   `POST api/work-orders/dismissed/restore-issue { source, eventId }`（整個問題，只處理可見主機）；動作只把那件最新案件的 `BlocksRedispatch` 寫成 false
@@ -1798,10 +1870,30 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   恢復後下一趟夜間派工照常判斷；處理人之後再回不處理是新案件（欄位空值），閘門重新生效。
 - **靜音中**（只有 `Maintain` 看得到；沒有該能力時頁籤與面板從 DOM 移除，`#muted` 不生效）：
   目前靜音中的問題，依到期日升冪——問題｜靜音至｜剩餘天數｜起始日｜原因｜設定者｜暫停中交辦單（前 20 個問題
-  逐一查張數）｜「延長」「解除」（兩者都開視窗，按鈕帶 `aria-haspopup="dialog"`）。頁籤標題帶數字「靜音中（N）」。
+  逐一查張數）｜「延長」「解除」（兩者都開視窗，按鈕帶 `aria-haspopup="dialog"`）。**清單點到該頁籤才載入**（`GET api/admin/issue-owners`）；頁籤標題的數字「靜音中（N）」走輕量計數
+  `GET api/admin/issue-owners/muted-count`（`Maintain`），停在其他頁籤時不送清單請求。
 - **版面（設計系統 v3）**：每列主體是問題（粗體）；單號、日期、台數用 `lf-text-data`，次要資訊用 `lf-text-meta`；
   篩選欄位標籤用 `lf-text-label`。「問題」「處理人」「成員」欄設最小欄寬（`lf-minw-*`），資料夾帶超長無空白標籤時
   不會被壓成逐字直排，表格在窄螢幕改為左右捲動。無 `Maintain` 的角色沒有「靜音中」頁籤，無 `Assign` 的角色（如主管）沒有「立即派工」。
+
+**詳情頁的處置參考與捷徑**（`/work-orders/{id}`）：單頭可展開「處置參考」（規則的白話說明、影響、可能原因、處置步驟，`guidance`，與風險日問題列同一份組法 `IssueGuidanceDto.From`）與「訊息樣本」（成員中最近一次出現當天的樣本，最多 3 則，`sampleMessages`；最近一天的樣本已隨詳情清除時往前一天找），
+展開不離開本頁；多問題單、未命中規則、規則已退役或規則沒有任何知識內容時不放處置參考，訊息樣本不受影響。單頭另有三個捷徑（`issueShortcuts`）：「這個問題的其他交辦單」（具 `Assign` 或 `ViewAll`，連到已篩選該問題的交辦總覽）、
+「靜音這個問題」「不再顯示這個問題…」（具 `Maintain`，後者開 §9.2 的三問句面板）、「調整這條規則」（具 `Maintain` 且 `ruleId` 不為 null，連到 `ruleEditUrl`，規則維護頁直接開該規則的編輯）。
+沒有權限檢視這張單時成員與處理歷程兩個區塊整個不渲染（連同標題與篩選列），只剩錯誤說明與返回出口。
+成員表同一台主機在同頁有多列時，每列標出登錄類型（`LogName`，例如 System、Application；同主機同問題不同登錄類型是不同案件）。
+
+**代為結案的範圍**：`POST {id}/admin-close` 的請求可帶 `caseIds`：不帶或空＝全部進行中成員、整張單結案（既有行為）；帶了則只結案這些案件，其中有已結案或不屬於這張單的整筆拒絕、什麼都不寫；範圍內結案後單上若還有進行中成員，單繼續進行。
+畫面「結案範圍」單選：「全部進行中（N 台）」、「只有上報中的（N 台）」（`escalatedCaseIds`，不含停用主機上的成員；有上報成員時才出現且為預設）、「勾選的成員（N 台）」（有勾選才出現）；選全部時另提示含已停用主機 N 台。
+
+**不再打擾 30 天解除**（唯一判定 `DismissalRelease`，`DispatchContext.DismissedCases`、資料保留清除、不再自動派工清單與新案件標記都呼叫它，不得另寫第二份天數或條件）：一件會被擋的案件，同時符合下列全部時對閘門解除一次——
+①`BlocksRedispatch` 為 null（處理人回覆不處理類產生；管理者代為結案明確勾選「之後不再自動派工」的 true 是永久）；②該問題**目前規則**的嚴重度為高或帶重大旗標（規則可在畫面調整，不用靜態表；規則不存在或 Linux 事件編號 0 無法唯一對到規則時視為非高、不解除）；
+③結案日不早於生效日 `DismissalRelease.EffectiveFrom`（2026-11-25，程式常數；上線前結案的不自動解除，清單標「上線前判定」）；④以日曆日差計，判定日距結案日超過 30 天（第 30 天仍擋、第 31 天不擋）。
+中、低嚴重度維持永久；30 天不是設定。解除後問題仍在發生，夜間派工與立即派工照常建單，新案件帶「先前判定不處理（日期、判定人），已滿 30 天仍在發生」標記（成員 `priorDismissal`、單頭 `priorDismissalHosts`，讀取時推導不存欄位，判定人取前案處理人帳號），
+放行時在單歷程寫一筆系統事件 `dismissal_released`（趟末每張單合併一筆，帶台數）；處理人再次回不處理就重新計 30 天。回覆彈窗、代為結案說明與結案通知信對高嚴重度的問題改寫「30 天內不再派工，之後仍在發生會重新派工」（伺服器的 `dismissalReleases` 布林決定）。
+
+**問題名稱單一出口**：全站問題名稱只有一個產生點 `IssueNames`（Core）：Windows 事件「來源 EventId N」；事件編號為 0（Linux、PRTG）只顯示來源，並在恰好一條規則命中時附規則名稱，不顯示「0」；PRTG 固定短稱。
+`LogIssueSignature.SourceEventLabel` 的 Windows 分支委派它；待派頁、管理員提醒、不再自動派工清單、立即派工與人工交辦建立的單、夜間派工、通知信、問題查詢一律走它（DTO 的 `IssueLabel`／`DisplayLabel`），前端不自行組「來源 (編號)」。
+已存進交辦單與歷程的名稱不回寫，顯示時以單上的來源與事件重新產生，取不到才用存的字串。
 
 **停用主機不計入台數**：處理人徽章（`GET api/handlers/me/badge`）、處理人摘要、負載看板、交辦總覽的成員數與儀表板「我的交辦單」卡（同徽章資料）、
 候選人清單的負載與夜間派工的負載，一律以 `WorkOrderQueries.DisabledHostKeys`（已停用主機的 `host_name_key`，同名鍵仍有啟用主機者不算）排除，
@@ -1860,6 +1952,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **觀察到期一鍵結案**：單頭有「把到期且沒有再發生的 N 台結案」鈕（`observationExpiredQuietCaseIds`：觀察到期且 K＝0 的進行中成員；無資料與有再發生的不列；只有 `ViewerCanReply` 且單進行中才顯示）。
   點選先確認，再以既有回覆端點送「已處理」、說明「觀察期滿未再發生」；不自動結案。
 - **清單有更新提示**：交辦單頁與我的交辦共用（§9.4a），數字取自徽章輪詢的進行中台數與單數。
+- **上報後的通知交代**：回覆為「無法處理（上報）」的結果帶 `escalationNotifiedAdmins`（有 email 且會收到上報信的管理員數，郵件停用為 0；沒有新上報為 null）：toast 寫「已通知 N 位管理員」，0 時寫「目前沒有可通知的管理員，已列入交辦總覽提醒」。
 
 **未讀回覆**：處理人回覆後管理者要能一眼看出。`lf_work_orders.admin_seen_at` 記具 `Assign` 的使用者最近開啟詳情的時間
 （不做逐人已讀）；**未讀＝進行中、有回覆，且 `last_reply_at` 晚於 `COALESCE(admin_seen_at, created_at)`**。
@@ -1942,17 +2035,21 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `GET handler-groups` | `Assign`／`ViewAll` | 群組篩選選項（啟用中使用者群組） |
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count, escalated }`（SQL COUNT，側欄徽章用；`escalated`＝其中含至少一個上報中進行中成員的單數，徽章提示文字寫「其中上報 M 張」） |
 | `GET {id}`／`{id}/members?status&page&pageSize&hostName`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200；`hostName` 可重複，完全相符、不分大小寫、≤ 500 個 |
-| `GET load-board?groupId`／`gaps?from&to&page` | `Assign`／`ViewAll` | 負載看板、待派試跑 |
+| `GET load-board?groupId`／`gaps?from&to&page&section` | `Assign`／`ViewAll` | 負載看板、待派試跑（`section` 只列單一段） |
+| `POST bulk-reassign/preview`／`POST bulk-reassign` `{ workOrderIds, handlerId, notifyNow }` | `Assign` | 批次改派預覽（只讀）與套用；一次 ≤ 100 張，逐張回報 |
+| `POST auto-dispatch/preview { from, to, source?, eventId? }` | `Assign` | 派工預覽（不落盤），與落盤共用試跑 |
+| `GET dismissed/count` | `Assign`／`ViewAll` | 不再自動派工的問題數與台數 |
 | `GET admin-reminders` | `Assign`／`ViewAll` | 管理者提醒的筆數與明細：`escalatedCount`／`unassignableCount`／`noRecipientCount`／`newEscalatedCount`（今天新上報）／`recurrenceCount`（反覆結案又復發）、`reminderDays`（設定值，0＝不寄信）、`thresholdDays`、`unassignableAt`（派不出去清單的彙整時間，null＝尚未跑過夜間派工）、`any`；明細 `escalated`（`workOrderId`、`issueLabel`、`hostName`、`days`）、`unassignable`（`issueLabel`、`reason`、`hosts`）、`noRecipient`（`workOrderId`、`issueLabel`）、`newEscalated`（同 `escalated`，`days` 恆 0）、`recurrence`（`workOrderId`、`issueLabel`、`hostName`、`recurrenceCount`），每類最多 50 筆 |
 | `GET dismissed?page` | `Assign`／`ViewAll` | 被「不再打擾」擋住的項目（依問題分組、每頁 50 組）；每列含 `hostName`、`issueKey`、`status`、`closedBy`、`closedAt` |
 | `POST dismissed/restore { hostName, issueKey }`／`dismissed/restore-issue { source, eventId }` | `Assign` | 恢復單筆／整個問題的自動派工；稽核 `work_order_dismiss_restore`；沒被擋住回 404 |
-| `POST auto-dispatch { from, to }` | `Assign` | 立即派工；稽核 `work_order_auto_dispatch_run` |
+| `POST auto-dispatch { from, to, source?, eventId? }` | `Assign` | 立即派工（帶 `source`＋`eventId` 只派該問題）；稽核 `work_order_auto_dispatch_run` |
 | `POST preview`／`POST` | `Assign` | 交辦預覽與建單（同一 request 形狀；`reopenHostIds` 指定要重新交辦的已結案或不再打擾主機，沒列的略過；回 `closedSkippedHosts`、`dismissedSkippedHosts`，預覽另回 `suggestedDueDate`） |
 | `POST {id}/append`／`reassign`／`split`／`cancel` | `Assign` | 單操作；取消原因必填 |
 | `POST {id}/return { note }` | `Assign` | 退回處理人（`escalated` 成員改回處理中）；說明必填 ≤500；無 `escalated` 成員或單已結案回驗證錯誤 |
 | `POST {id}/seen` | 登入（僅 `Assign` 會寫入） | 標記管理者已看過（未讀回覆判定）；回 200＋`ApiResponse<bool>`，不具 `Assign` 時不寫入也回 200 |
 | `POST candidates { hostIds, source?, eventId? }` | `Assign` | 手動派工人選（啟用且具 Handle；附可見台數、暫停、最近處理過同問題、負載、有無 email；排序：最近處理過 → 看得到全部主機 → 負載輕 → 帳號） |
-| `POST {id}/admin-close` | `Assign`＋`Handle` | 代為結案 |
+| `POST {id}/admin-close { status, reason, blockRedispatch, caseIds? }` | `Assign`＋`Handle` | 代為結案；`caseIds` 限範圍 |
+| `GET api/host-detail/{hostId}/orders` | 無能力標註（資料範圍過濾） | 主機詳情「這台的交辦」（§9.4） |
 | `POST {id}/reply`／`POST reply-many` | `Handle`，限本人的單 | 回覆；多單回覆含別人的單時整筆 403 零寫入 |
 
 稽核動作：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_return`／`_due_date`／`_admin_close`／`_auto_dispatch_run`，
@@ -2056,6 +2153,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
     **不可改成從當頁資料收集**，那樣沒出現在當頁的類別就選不到）
   - `GET api/permission-changes/ids` → `{ changeIds, total, truncated }`（僅待確認；與清單共用同一份篩選組裝）
+  - 無法解析的列（`isUnparsed`，說明欄只有「無法解析細節」）在說明欄多一顆「展開原文」（展開後「收合原文」，`aria-expanded`）：就地顯示原始事件摘要，優先未截斷的 `rawText`，舊資料退回 `alertText`，都沒有寫「（沒有可顯示的原始事件內容）」；
+    可解析的列沒有這顆鈕（改看列展開明細）；原文是外部字串，一律 `textContent`。
   - `GET api/permission-changes/report?host=&date=` → 該主機該日的權限異動報告全文（`ReportViewDto`，查無回 null）
   - `PUT api/permission-changes/{id}/confirm`（單筆；已被他人處理時回 Conflict）
   - `POST api/permission-changes/confirm/batch` → `{ updatedCount, skipped[] }`（一次上限 500；
@@ -2172,6 +2271,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - 分桶（`ReportBucketing` 單一出口）：期間 ≤ 14 天按日、15～120 天按週（週一起算，頭尾截在期間內）、> 120 天按月。
   - **各時段的處理狀態**：每桶「該桶產生的風險日」現在的已結案／處理中／未處理（判定沿用 `HandlingHistoryQueryService.ClassifyDays`，與 `GetTodo` 同一份），直向堆疊條、顏色同處理進度；點「未處理」段下鑽該桶期間的未處理清單。
   - **未結案帳齡**：仍未結案的風險日距 `asOf`（期間內最後紀錄日）的天數，分 0–3／4–7／8–14／15–30／31+；合計＝第一排「未結案風險日」（顯示範圍為全部時）。
+  - **未結案三段**（`unresolved`，`ReportEffectivenessService`）：第一排「未結案風險日」下方拆成三段，各段寫明單位——**在處理人手上**（主機日；另列進行中交辦案件數與最舊天數）、**待派**（主機日；另列可派的問題×主機數）、**不需處理**（主機日：嚴重度未達、已知雜訊、不再打擾、靜音等不會派工的）。
+    三段的主機日相加＝未結案主機日（對照式寫在測試裡）；案件數與「問題×主機」是另一種單位，只列在旁邊。待派與不需處理以主機為單位分主機日（近似，註解寫明）；待派試跑超過上限時兩段拆不開，直說「期間太長，無法拆開，請縮短期間」，不猜。
   - **結案後再發生**：單位「主機 × 問題簽章」；期間內最後一次被標為已處理（不含不處理、誤報、已知雜訊）的紀錄日 D 之後 14 天內同主機同問題又出現（靜音當天不算）＝再發生；已處理那天有紀錄、該問題卻不在顯示中的問題清單（已靜音、嚴重度被隱藏）時不算一組；觀察未滿 14 天且未再發生的另列「觀察中」、不進分母；分母 0 時 `rate` 為 null，畫面寫「期間內沒有可評估的已處理問題」。前 10 名表格：問題、已處理主機數、再發生主機數。查詢次數固定（一次 `QueryLightweight`、一次問題處理狀態），不隨組合數成長。
   - 三個指標標題旁各一個說明圖示，文字取自回應的 `definitions`。
 - **問題類型**（`GET api/reports/category-trend`，`ReportCategoryTrendService`）：類別 × 桶的「問題日」（主機 × 問題 × 日去重），套可見範圍、顯示設定、靜音排除；
@@ -2179,6 +2280,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **配色**：語意色（高／中風險、處理狀態、類別、嚴重度）沿用 `core/charts.js` 的色盤，與儀表板一致；報表頁的模組內不寫色碼字面。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。三個視角依序全部印出、各自分頁；按列印時先補載入尚未載入的視角，載入失敗（或補載入途中被更新的請求取代）的那頁印「此部分未能載入」，該視角之後載入成功就恢復。顯示範圍不是「全部」時列印標題寫明「總覽：範圍；處理成效與問題類型不套用顯示範圍」。
+- **完整 CSV**（F20-4）：總覽的趨勢、主機排行、問題排行三張圖表工具列各有「下載 CSV」（`charts.attachToolbar` 的 `csvHref`，與畫面同一組期間、顯示範圍與比較設定）：
+  `GET api/reports/export/{table}?from=&to=&handlingScope=&compare=`（`table`＝`trend`／`hosts`／`issues`；登入即可，服務層依可見範圍過濾，與 summary 走同一段查詢），整份資料不限當頁或 Top 10。
+  規則只在 `ReportCsv`：UTF-8 加 BOM、CRLF；含逗號、雙引號、換行的文字以雙引號包起；文字儲存格以 `=`、`+`、`-`、`@`、Tab、CR 開頭時前置單引號（公式注入防護，外部字串一律當文字）；數字以不分文化的格式輸出。
+  列數上限 50,000（`ReportCsv.MaxRows`，程式常數；恰為上限放行），超過在開始寫回應之前回 400 並要求縮小期間；回應 `Cache-Control: no-store`，檔名 `report-{table}-{起}-{迄}.csv`。
 - API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned&compare=previous|yoy`
   （KPI＋圖表＋TotalHosts＋Handling＋前期趨勢＋套用的 HandlingScope 一次回傳）；`GET api/reports/effectiveness?from=&to=`、`GET api/reports/category-trend?from=&to=`
   （同一套期間規則與 366 天上限；三個端點的快取鍵都含可見主機集合）。
@@ -2223,6 +2328,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   完整對照見 [RULES-SPEC.md](RULES-SPEC.md)「讓告警安靜的工具」）；
   規則異動史（稽核過濾 `target_kind=rule`）。**儲存前後端執行規則驗證**（欄位合格、遮蔽、關聯層覆蓋——
   共用驗證邏輯位於 Core），驗證不過拒絕儲存並逐條顯示問題。
+- **規則試算**（F19-2，編輯視窗「試算」鈕 `#rule-trial-run`，`POST api/rules/trial`，`Maintain`，`[SkipDataVersionBump]`，唯讀、不寫任何資料）：調整門檻、嚴重度或重大旗標時，把草稿規則套在近 30 天既有的問題子列上，
+  回「命中主機日 N → M」「重大主機日」「會被派工的（主機, 問題）N → M」（`RuleTrialDto` 的 Before／After；重用正式分析的判定，不另寫第二份）。資料來源只到問題子列、不重讀原始事件，所以門檻調低、嚴重度或重大旗標調高、範圍變大的結果標示為**下限估計**（低於舊門檻而沒被記錄的事件看不到）；
+  訊息內容條件是分析當下才比對，試算沿用已記錄的命中結果。新規則「→」前是 0；不支援試算的規則（例如趨勢類另有草稿試算）回 `supported=false` 與原因。連按時以請求序號守門，慢的舊回應不蓋掉新結果。
+- **規則直達與版本衝突**：網址帶 `?ruleId=`（交辦單頁與問題查詢的「調整這條規則」，`ruleEditUrl`）載入完成後切到該規則的平台頁籤並開編輯，找不到時 toast「找不到規則…可能已被刪除」。
+  `RuleDto.Version` 是該條規則的內容雜湊（不新增欄位），編輯既有規則儲存時 `SaveRuleRequest.Version` 必填，空白或與伺服器當下不同＝`ConcurrentUpdateException`→409（`conflict`，訊息「這筆資料剛被其他人修改，請重新載入後再改」），整筆不寫入；
+  畫面保留剛填的內容、顯示常駐訊息與「重新載入」，不自動覆蓋。規則的停用、刪除、回復預設、匯入也在同一個臨界區內套用，找不到規則時給明確提示；新增沒有舊版本。
 - **快速篩選 toolbar**：狀態／來源／抑制單選 chip，嚴重度／類別多選 chip，
   排序＝嚴重度/類別/門檻。chip 各自獨立可疊加。詳情頁「誤報」
   提示的 `?search=` deep-link 開頁自動帶入搜尋字。
@@ -2252,7 +2363,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   分類與套用邏輯在 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`；Web 是唯一的入口，
   套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
 - API：`GET api/rules`（全量清單）、`POST api/rules`（新增或更新，`SaveRule`）、`POST api/rules/validate`（儲存前驗證）、
-  `POST api/rules/disk-trend-preview`（磁碟趨勢規則試算）、`DELETE api/rules/{id}`、
+  `POST api/rules/disk-trend-preview`（磁碟趨勢規則試算）、`POST api/rules/trial`（規則試算）、`DELETE api/rules/{id}`、
   `GET api/rules/{id}/restore-preview`、`POST api/rules/{id}/restore`、`PUT api/rules/{id}/enabled`、
   `GET api/rules/suppressions`（全部抑制清單）、`POST/DELETE api/rules/{id}/suppressions`、
   `GET api/rules/{id}/suppression-preview`。
@@ -2296,6 +2407,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   上限 100 筆）。**AD 登入自動補資料（#8）**：只填帳號的使用者首次以 AD 登入時，用同一次驗證取得的
   AD 屬性補齊顯示名稱與 Email（只補「視同未填」的欄位——DisplayName 為空或等於帳號、Email 為 null；
   手動填過的值不覆寫），寫一筆「AD 登入自動同步」稽核。
+- **編輯一次送出與版本衝突**（M，CU-12）：使用者編輯視窗的基本資料與群組在**同一個請求**（`POST api/admin/users`）送出、同一個版本比對：`UserDto.Version`（內容雜湊，不新增欄位）開窗時讀到、`SaveUserRequest.Version` 帶回，
+  帳號已存在時必填，空白或不同＝409、整筆不寫，不會出現「名稱存了、群組沒存」，只改群組也不會把顯示名稱改回開窗時的舊值。409 時畫面保留使用者剛填的內容、顯示常駐訊息與「重新載入」，使用者按了才換成伺服器的最新值；新增沒有舊版本。
+- **群組即時摘要**（F18-1，`GET api/admin/users/group-preview?userId=&groupIds=&active=`，`Maintain`；`userId` 省略＝新增中的使用者）：依目前勾選、尚未儲存的群組算出並顯示三行——能力（中文，含負責人隱含能力）、可見主機台數、是否在派工池
+  （在池但沒有處理能力時寫「不會被派單」；勾選的群組中有停用的另提醒）；勾選或取消群組、切換啟用都即時更新，連點以請求序號守門；不寫入，規則全在後端（`UserGroupPreviewService`，沿用既有的能力與可見範圍判定）。
+- **停用或暫停接單前先確認**（L12）：把啟用帳號改成停用，或打開「暫停接單」前，先查處理人摘要；名下有進行中的單時顯示「N 張進行中的交辦單、M 台」（台數不含暫停單，張數含）並讓管理者選「一併改派」（儲存後進交辦總覽，已篩該處理人並勾好他名下的單，進入 §9.4b 批次改派）或「先不處理」（照常停用）；取消＝這次變更不做；沒有單或查不到摘要時沿用儲存後的 toast 提示。
+- **暫停接單只對派工池成員顯示**（U1）：「接單」欄只有屬於任一啟用中派工池群組的使用者才有「暫停接單」切換，其餘顯示「—」；已經暫停的人一律保留開關（不在池內也要能取消暫停）。
+- **主機群組的「看得到的派工池群組」欄**（F17-3）：主機群組清單多一欄，數量來自後端（`visiblePoolGroups`）：「N 個」；0＝沒有任何派工池群組看得到、群組內主機不會被自動派工，標警示「0 個，不會被自動派工」並附「去授權」（切到授權矩陣頁籤）；
+  群組停用、沒有啟用主機或派工池沒有可接單成員時不適用，顯示「—」。批次設定群組後若目標群組沒有任何派工池看得到，當場提示並附「去授權」。口徑：池內一位可接單成員看得到該群組全部啟用主機才算看得到。
 - **畫面層級（設計系統 v3）**：使用者表主體是帳號（`lf-text-title`），顯示名稱與 Email 用 `lf-text-meta`，上次登入用 `lf-text-data`，「從未登入」用 `lf-text-meta`；
   主機表主體是主機名（`lf-text-title`），IP 用 `lf-text-data`，來源、OS、角色描述用 `lf-text-meta`；
   **只有「未回報」的最近回報時間用 `lf-text-alert`**（風險狀態），待辦佇列卡的數字用一般標題色、不上黃字。
@@ -2414,6 +2533,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   自動取得檢視權限」**改寫**為「套用後負責人會自動取得檢視權與處理狀態維護權限；已在線上的
   使用者在下一次請求會取得處理權限（檢視範圍即時生效）」——§2b 起負責人本身即授權路徑與
   能力來源（§7.1），留著舊警告會讓管理員以為還要去授權矩陣補一刀。
+- **將自動建立的帳號醒目標示**（M3）：owners.csv 預覽中，帳號不存在、套用時會自動建立的，以 warning 色提示「套用時將自動建立 N 個使用者帳號：…」並說明建立後啟用、不屬於任何群組、請確認沒有拼錯；沒有要建立的帳號時預覽不多任何東西。
 - **NetIQ 掃描匯入已搬離本頁**：見 §9.9a 的「匯入」分頁。
 
 ### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
@@ -2553,7 +2673,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   AD 測試與測試寄信的結果、缺欄位提示顯示在各自的測試按鈕下方，「確認並靜音」缺日期顯示在該卡內。常駐說明改 `lf-text-meta`，層級／嚴重度切換鈕經 `button()`；
   表單標籤一律是 `form-label`（標籤在欄位上方，各寬度一致）。離開頁面的未儲存提醒仍是瀏覽器原生 `beforeunload`，量測工具以派送事件斷言它已掛上。
 - **頁籤化**：設定項目多且長，
-  九個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  十個頁籤（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／**系統健康**／**資源守門**／郵件通知／**派工**／外觀——外觀依既有定案固定放最後）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 頁籤模式，由 Bootstrap Tab 外掛提供角色與方向鍵；非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在切換時更新面板顯示，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -2564,6 +2684,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
   **資源守門**頁籤：八個 `PrtgResourceGuard*` 欄位、「預覽」與「自動偵測並填入」；清單是夜間自動偵測結果時，清單上方顯示「自動偵測 yyyy-MM-dd」（預覽回傳 `autoDetectedAt`，PRTG-SPEC §12）。
 - **系統健康頁籤**：頂端是整體狀態（`#health-overall`），其下顯示「PRTG 快照」、「排程資料新鮮度」、「記憶體」、「慢查詢」、「背景工作」、「登入暫停」與「初始設定」。
+  **派工就緒卡**（`DispatchReadinessService`，`data-health-alert`，頂端整體狀態之下）：逐項列出八種「靜默失效」的狀態——通過／不通過、影響的數量與名單、修正連結：主機都有群組（`/admin/hosts`）、主機群組都有派工池看得到（`/admin/groups`；派工池沒有可接單成員時這項標為略過並說明先處理下一項）、
+  有可接單的派工池、自動派工已開啟（`/admin/settings#dispatch`）、AI 執行窗口已設定（`/runs#settings`）、排程已啟用（`/runs#settings`）、管理員有可用的 email、派工池成員都有可用的 email（後兩項只在郵件通知開啟時列入）。
+  每一項重用既有判定：派工池與可見範圍用派工候選人快照、派不出去的原因碼與待派試跑同一份、AI 窗口與排程用排程同一份；不寫第二份可見範圍或派工資格規則。「主機群組沒授權給派工池」以啟用且有啟用主機的群組計，空群組不算。
+  任一項不通過就併入整體狀態原因（`dispatchReadiness`，每項一句「派工就緒：…」）；全新站台一開始會列出未完成的設定。初始設定精靈最後有一張「確認派工就緒」導向卡連到這裡（不計入精靈進度）。
+  **AI 連線失敗**也是一個原因（`aiUnreachable`）：AI 已設定、上次探測連不上或回應格式不相容才算（沒設定是合法的統計模式，沒探測過也不算），文字指向「設定 > AI 服務」確認位址後測試連線。
   **整體狀態只有一份判定**：`HealthAttention.Evaluate`（`Services/HealthAttention.cs`）收 `HealthService.GetDetail` 已讀到的事實，回傳原因清單（每項 `key` 加一句中文 `text`）；清單為空＝`ok`，否則 `degraded`（資料庫連不上時最小 DTO 為 `down`，原因 `storage`）。
   `GET api/health/detail` 的 `status` 與 `statusReasons` 都來自這裡，不另算。原因種類（`HealthAttentionKeys`）：`storage` 資料庫連不上、`slowQueries` 慢操作占比過高、`firstSeen` 首見日合併連續失敗、`freshness` 排程資料過期且未確認靜音、`prtgSnapshot` PRTG 快照警示、`memory` 記憶體接近上限、
   `crypto` 金鑰不符或有密文解不開、`migration` 遷移卡死（處理狀態或權限異動遷移尚未完成，且有失敗訊息或開始後超過 30 分鐘）、`prtgFreshness` PRTG 擷取新鮮度可疑、`hostDayRecovery` 主機日恢復有需要人看的列、`lastRun` 最近一趟分析失敗（站台啟動後的最近一趟，行程記憶）、
@@ -2609,7 +2734,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
       灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
       `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
       用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
-  2. **AI 服務**：提供者三選一（`Local` 本機 OpenAI 相容端點／`OpenAi` 官方／`AzureOpenAi`，
+  2. **AI 服務**（頁籤內有「測試連線」鈕 `#ai-test-btn`：`POST api/admin/setup/ai-probe`，與初始設定精靈同一個探測，測的是**已儲存**的設定，剛改的欄位要先儲存；AD、郵件本來就有測試鈕）：提供者三選一（`Local` 本機 OpenAI 相容端點／`OpenAi` 官方／`AzureOpenAi`，
      預設 Local ＝ 升級前的既有行為）＋位址＋金鑰（write-only，金鑰密文存 DB）＋模型名稱，
      Azure 另有部署名稱與 API 版本。請求組法依提供者而異：Local／OpenAi 走
      `{base}/v1/chat/completions` 帶 `Authorization: Bearer`；Azure 走
@@ -2719,11 +2844,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
      已暫停寄送的收件人清單（見下方）＋「交辦單通知（建立／改派／取消與夜間摘要）」開關
      （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複；每日、每週、交辦三種時刻共用 `InputParsing.TryParseClockTime`，接受 `H:mm`／`HH:mm`、分鐘必須兩位，儲存時以 `NormalizeClockTime` 正規化為 `HH:mm`，`09:30:00`、`24:00`、`9:3` 不合法）＋「站台網址」（`SiteBaseUrl`，選填；消費端 `MailLinks`，信件連結前綴）＋「管理者提醒間隔（天）」（`EscalationReminderDays`，預設 3、0～30，0＝不寄提醒信；消費端 `AdminReminderService`，內容見 §9.4b「通知」）。
-     同頁籤末段是**自動派工**：「夜間分析後自動派工」開關（`AutoDispatchEnabled`，預設關）、三條常駐說明
+     **自動派工在獨立的「派工」頁籤**（`data-tab="dispatch"`，網址 `/admin/settings#dispatch`；設定鍵 `AutoDispatchEnabled` 與儲存流程不變，仍在同一個設定表單一起儲存）：
+     「夜間分析後自動派工」開關（預設關）、三條常駐說明
      （候選人：派工池群組成員，排除暫停接單、看不到該主機的人；負載：進行中交辦單的進行中成員數，挑最輕的人；
      不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾）、
      沒有任何派工池群組時的警告（儲存照樣允許，夜間記一則警告），以及與規則頁共用的工具決策表。
-     放在郵件頁籤是因為它與交辦單通知同屬夜間派工配套，單一開關另立頁籤過於稀疏。
+     頁籤底部連到系統健康的「派工就緒」卡；待派頁與就緒卡都連到這裡。
      「測試寄信」（`POST api/admin/settings/mail-test`）用表單目前值試寄一封，不需先儲存，
      密碼欄留空時 fallback 已儲存的密文；回報成功或含 SMTP 錯誤細節（管理者對自己測試，
      細節可顯示，比照 AD 測試連線的語意）。三路觸發與寄送實作見 §10.2 的
@@ -2947,13 +3073,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   「完成」全部自動判定（讀現成 store，不新增探測邏輯）、「跳過」由使用者手動決定
   （`SetupWizardStateStore`，blob `setup_wizard_state`）。步驟清單不含規則版本——規則庫由
   RuleBootstrapper 啟動時自動就緒，使用者無事可做。
+- **AI 步驟不等探測**：`GET api/admin/setup/status` 只回**上次探測結果**並在背景更新（AI 不通時探測要等逾時，每分鐘第一個開管理頁的人不該為此等待；首次載入 AI 步驟顯示尚未探測），不阻塞回應；
+  精靈 AI 表單的「儲存並測試」與設定頁的「測試連線」走明確的同步探測 `POST api/admin/setup/ai-probe`（不看快取、等結果，逾時 10 秒，`[SkipDataVersionBump]`、不寫稽核）。
 - **不進側欄**：入口在操作說明書清單第一項（type=link 導引卡，見 §9.9c）；直接輸入網址也可達。
   全部步驟達終態（`allSettled`）後可勾「隱藏教學文件裡的精靈入口」（隱藏只影響清單入口，
   `/setup` 本身仍可用）。
 - **版面**：頂部整體進度（n/10＋進度條）＋垂直 checklist（狀態圓點＋標題＋detail＋
   「前往設定」「跳過此步」）；聚焦步驟寫入 `location.hash`（`#step-{id}`）深連結；「前往設定」
   帶 `?from=setup`，目標頁（`layout.js` 共用）顯示可關閉的「返回啟動精靈」提示列。
-- API：`GET api/admin/setup/status`、`POST api/admin/setup/skip/{stepId}`（未知／不可跳過的
+- API：`GET api/admin/setup/status`、`POST api/admin/setup/ai-probe`、`POST api/admin/setup/skip/{stepId}`（未知／不可跳過的
   stepId 後端直接忽略，前端不顯示按鈕只是第一道）、`POST api/admin/setup/hidden`（走稽核）。
 
 ### 9.9e `/admin/prtg` PRTG 維護（`Maintain`）
@@ -3206,6 +3334,16 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   即時觸發**不受 AI 執行窗口限制**（跟隨取數是「取數跑到哪、判讀跟到哪」）；
   取數執行中（finding 已就緒）與取數結束後 10 分鐘內，背景輪詢也視同跟隨取數、不看窗口；取數結束時另主動喚醒一次。
   窗口只管背景消化積壓，狀態卡那一列因此標示為「背景補跑窗口」，已在窗口內時顯示「窗口內，隨時可跑」。
+  **未設定窗口**：排程狀態與 AI 狀態回 `aiWindowConfigured`（`ScheduleCalculator.HasAnyWindow`；後端在「窗口內」與「沒有任何窗口」兩種情況都把下一次時間回成 null，要看這個旗標才分得出來），
+  閒置原因 `no-window`（唯一判定在 `BlockingIdleReason`）。畫面那一列有四種狀態各一句：AI 服務未設定／「—」（還不知道）／「未設定窗口，AI 不會自動執行」加連到窗口設定的「前往設定窗口」／有窗口（下一次時間，窗口內為「窗口內，隨時可跑」）；
+  閒置說明寫「請到『AI 分析』設定背景補跑窗口，或按『立即補跑』」。沒帶旗標的舊回應照「有窗口」處理，不誤報。
+- **AI 互動入口冷卻**：AI 網路層失敗（連線失敗、逾時、5xx、408、429）後，互動車道在 `IAiRequestGate` 進入 60 秒冷卻（`AiRequestGate.NetworkFailureCooldown`，程式常數）：今日焦點、查詢歸納、判讀、整理說明、詢問 AI 不送請求，直接回「AI 暫時無法連線，請稍後再試。」；
+  排隊中的請求在別人失敗後也走冷卻，不各等一次逾時；背景排程（自己有重試）不受影響；成功即解除；使用者取消（OCE 且 ct 已取消）不算失敗。冷卻狀態在全站閘道，不另 new 服務。
+- **執行總表每日結論與補跑**（F21-2、F21-3）：每個資料日一句結論（`RunDayConclusion`，唯一產生點），欄位「結論」：取數進行中／「N 台失敗、N 台異常中斷、N 台未執行（今天那列寫尚未處理）」（失敗最多點名 3 台，有可補跑的主機時結尾「，可補跑」）／「N 台回空資料，待複查」／「全部成功」（有警告註明台數）／「這天沒有需要處理的主機」；
+  十多欄計數收進展開（只列不為 0 的狀態，另有失敗主機完整名單）。失敗或未執行的列有「補跑這些主機」（`Maintain`，`data-maintain-only`；沒有可補跑的主機不出現）：把參數帶進既有的「立即執行」彈窗，預覽與確認流程不變——模式固定「只補跑失敗或未執行」、
+  資料日換成回望天數（立即執行以回望天數涵蓋日子，沒有指定單一資料日的參數）、主機是後端算好的可補跑名單（`scope=hosts`＋`hostNames`，`RunPreview`／`POST schedule/run` 都收；一次最多 `RunMonitorService.MaxRerunHostNames` 台，名單超過時退回全部主機；
+  名單裡已不會被查詢的主機明說並要求重新整理，不靜默少幾台）。
+- **四頁籤**：執行總表／
 - **AI 待補順序**（`AiAnalysisHostedService.SelectNextBatch`，每批重算）：近日層（紀錄日 ≥ 今天−2）新→舊，跟著取數；
   其餘為積壓層，七日一塊、塊由新到舊、塊內同主機舊→新——舊日的 AI 結論先寫回，後一天 prompt 的【近期歷史】才看得到。
   近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
@@ -3452,6 +3590,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉。
 - **版面（設計系統 v3）**：「內容」欄的摘要是每列主體（`lf-text-title`），其下「詳細」是 `disclosure`（箭頭加文字）展開 before/after JSON；
   時間與來源 IP 用 `lf-text-data`，帳號用 `lf-text-meta`。篩選動作（「只看被拒的存取」「查詢」）在篩選列右側。
+- **動作篩選分組與搜尋**（X1）：「動作」下拉依代碼前綴分組（身分與存取、處理與交辦、問題、規則與靜音、使用者、主機與群組、匯入與資料來源、排程與系統；沒命中前綴的新動作歸「其他」固定在最後，不會因對照表沒更新而消失），組內依名稱排序；
+  上方有「搜尋動作」輸入框，名稱或代碼包含關鍵字即顯示，已勾選的選項搜尋時一律保留，整組都隱藏時連標題一起隱藏。分組只影響呈現，動作代碼與名稱仍由 `GET api/audit/actions` 提供。
 - API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`、
   `GET api/audit/actions`（動作代碼與中文名稱對照）
 
