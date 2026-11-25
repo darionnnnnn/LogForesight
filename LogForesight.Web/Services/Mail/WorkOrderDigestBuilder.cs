@@ -112,7 +112,12 @@ internal static class WorkOrderDigestBuilder
         var recurrenceCount = CountOf(ReminderDetailItem.CategoryRecurrence) + legacy.Sum(i => i.ReminderRecurrence);
         // 反覆結案又復發有才寫，沒有時整句與既有寫法相同
         var recurrenceClause = recurrenceCount > 0 ? $"、反覆結案又復發 {recurrenceCount} 個成員" : "";
-        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單{recurrenceClause}。");
+        // 管理員待辦新增的類別：有才寫，沒有時整句與既有寫法相同
+        var todoClause = string.Concat(
+            CountOf(ReminderDetailItem.CategoryFetchFailed) > 0 ? $"、最近一趟取數失敗 {CountOf(ReminderDetailItem.CategoryFetchFailed)} 趟" : "",
+            CountOf(ReminderDetailItem.CategoryInactiveHandler) > 0 ? $"、已停用或暫停接單的處理人名下仍有單 {CountOf(ReminderDetailItem.CategoryInactiveHandler)} 位" : "",
+            CountOf(ReminderDetailItem.CategoryUngroupedHosts) > 0 ? $"、未分組主機 {CountOf(ReminderDetailItem.CategoryUngroupedHosts)} 台" : "");
+        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單{recurrenceClause}{todoClause}。");
         foreach (var section in merged)
         {
             body.AppendLine($"  {section.Heading}共 {section.Count} {section.Unit}");
@@ -141,7 +146,8 @@ internal static class WorkOrderDigestBuilder
         var order = new[]
         {
             ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient,
-            ReminderDetailItem.CategoryRecurrence
+            ReminderDetailItem.CategoryRecurrence, ReminderDetailItem.CategoryFetchFailed, ReminderDetailItem.CategoryInactiveHandler,
+            ReminderDetailItem.CategoryUngroupedHosts
         };
         var byKey = new Dictionary<(string, string), (ReminderDetailItem Item, int Seq)>();
         var maxTotal = new Dictionary<string, int>();

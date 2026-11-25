@@ -589,14 +589,14 @@ public class MailNotificationService
 
     /// <summary>
     /// 管理者提醒入列：每位收件人一筆 <see cref="WorkOrderOutboxKinds.AdminReminder"/>，進同一套每人摘要。
-    /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
+    /// 開關關閉、沒有收件人或各類都是 0 時不入列（<paramref name="todo"/> 是管理員待辦新增類別的待提醒項目數）。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
     /// </summary>
     public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail,
-        IReadOnlyList<ReminderDetailItem>? detailItems = null, int recurrence = 0)
+        IReadOnlyList<ReminderDetailItem>? detailItems = null, int recurrence = 0, int todo = 0)
     {
         try
         {
-            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient + recurrence == 0) return false;
+            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient + recurrence + todo == 0) return false;
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return false;
 

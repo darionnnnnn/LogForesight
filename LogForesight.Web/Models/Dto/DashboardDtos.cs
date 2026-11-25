@@ -78,15 +78,28 @@ public class DashboardDto
 
     /// <summary>待派工問題（§9.1）：僅具 Assign 者填，其餘為 null——前端據此決定要不要建卡片</summary>
     public PendingDispatchDto? PendingDispatch { get; set; }
+
+    /// <summary>
+    /// 「需要你處理」列的資料（與交辦總覽提醒區同一個彙整，<c>AdminReminderService.Compute</c>）：僅具 Assign 者填，Manager、Dev 為 null。
+    /// 各項數字為 0 的類別不顯示；全部為 0 時畫面收成一行「目前沒有需要你處理的項目」。
+    /// </summary>
+    public AdminReminderDto? AdminTodo { get; set; }
 }
 
 /// <summary>儀表板「待派工問題」卡：資料同交辦總覽待派頁籤的試跑（近 7 天）</summary>
 public class PendingDispatchDto
 {
-    /// <summary>待派問題分組總數（<c>GapsDto.Total</c>，不是當頁筆數）；<see cref="TooLarge"/> 時為 0 且不可信</summary>
+    /// <summary>
+    /// 卡片的待派問題數＝「可以派」＋「派不出去」兩段的問題數相加（<see cref="DispatchableIssueCount"/> ＋ <see cref="UnassignableIssueCount"/>，
+    /// 與待派頁兩段的問題數一致）。「不會派」（嚴重度未達、不再打擾等）不計入。同一問題在不同主機上分屬兩段時各算一次。
+    /// <see cref="TooLarge"/> 時為 0 且不可信。
+    /// </summary>
     public int IssueCount { get; set; }
 
-    /// <summary>其中無法派出（無可接單人選）的問題數</summary>
+    /// <summary>第一段「可以派」的問題數；沒有可派項目時為 0（畫面顯示空狀態文字）</summary>
+    public int DispatchableIssueCount { get; set; }
+
+    /// <summary>第二段「派不出去」（無可接單人選）的問題數</summary>
     public int UnassignableIssueCount { get; set; }
 
     /// <summary>出現點超過試跑上限：不計數，請到待派頁籤縮小期間</summary>

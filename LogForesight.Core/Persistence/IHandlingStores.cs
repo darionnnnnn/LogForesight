@@ -119,6 +119,19 @@ public interface IIssueCaseStore
     /// </summary>
     List<IssueCase> GetOpenMany(IEnumerable<string> hostNames) => GetMany(hostNames).Where(c => c.ClosedAt == null).ToList();
 
+    /// <summary>
+    /// 「不再打擾」的候選案件（未計 30 天解除）：指定主機上，每個（主機, 問題鍵）建立最晚的未取消案件，
+    /// 且它是不處理類狀態（<see cref="IssueHandlingStatuses.Dismissals"/>）、<see cref="IssueCase.BlocksRedispatch"/> 不是 false。
+    /// 定義等同 <c>DispatchContext.DismissalCandidates</c>（待派頁恢復清單與計數用）；正式實作在資料庫端取，
+    /// 候選集合只有被擋的案件而不是主機全部案件。呼叫端再以 <c>DispatchContext.DismissedCases</c> 套用解除條件。
+    /// 預設實作（測試替身）逐主機取全部案件後在記憶體套同一個判定。
+    /// </summary>
+    List<IssueCase> GetDismissalCandidates(IEnumerable<string> hostNames) =>
+        GetMany(hostNames)
+            .GroupBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
+            .SelectMany(g => DispatchContext.DismissalCandidates(g))
+            .ToList();
+
     /// <summary>指定處理人名下的全部進行中案件（處理人員工作頁，docs/archive/FEEDBACK-4-PLAN.md §6）</summary>
     List<IssueCase> GetOpenByHandler(long userId);
 

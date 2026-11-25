@@ -75,6 +75,37 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return query.ToList().Select(ToModel).ToList();
     }
 
+    public List<IssueCase> GetDismissalCandidates(IEnumerable<string> hostNames)
+    {
+        var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
+        var result = new List<IssueCase>();
+        if (keys.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in keys.Chunk(HostBatchSize))
+            result.AddRange(DismissalCandidates(ctx, batch).ToList().Select(ToModel));
+        return result;
+    }
+
+    /// <summary>
+    /// 「不再打擾」候選的資料庫端查詢（抽出供 SQL 翻譯測試與對照測試）：定義見 <c>DispatchContext.DismissalCandidates</c>——
+    /// 每個（主機, 問題鍵）建立最晚（同時間再比最後更新、再比案件編號小者）的未取消案件，是不處理類狀態且 BlocksRedispatch 不是 false。
+    /// 「建立最晚」以 NOT EXISTS 較新的同鍵未取消案件表達（兩個後端都能翻譯、不用視窗函數）；
+    /// 問題鍵以字串全等比對（與 <see cref="Expired"/> 同），來源大小寫不同的同一問題在記憶體端的 <c>IssueSignatureKeyComparer</c> 才視為同鍵。
+    /// 案件編號的平手比較依資料庫定序（編號為小寫十六進位，大小寫無差異）。
+    /// </summary>
+    internal static IQueryable<IssueCaseRow> DismissalCandidates(LfDbContext ctx, IReadOnlyCollection<string> hostKeys)
+    {
+        var dismissals = IssueHandlingStatuses.Dismissals;
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => hostKeys.Contains(c.HostNameKey) && !c.Cancelled
+                        && dismissals.Contains(c.Status) && c.BlocksRedispatch != false
+                        && !ctx.IssueCases.Any(n => n.HostNameKey == c.HostNameKey && n.IssueKey == c.IssueKey && !n.Cancelled
+                            && (n.CreatedAt > c.CreatedAt
+                                || (n.CreatedAt == c.CreatedAt && n.UpdatedAt > c.UpdatedAt)
+                                || (n.CreatedAt == c.CreatedAt && n.UpdatedAt == c.UpdatedAt && n.CaseId.CompareTo(c.CaseId) < 0))));
+    }
+
     public List<IssueCase> GetOpenByHandler(long userId)
     {
         using var ctx = _contextFactory();

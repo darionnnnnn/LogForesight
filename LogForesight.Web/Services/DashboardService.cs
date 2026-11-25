@@ -33,6 +33,7 @@ public class DashboardService
     private readonly EfPrtgStore _prtgStore;
     private readonly IIssueExclusionSource _exclusions;
     private readonly PendingDispatchGapsProvider _gaps;
+    private readonly AdminTodoService? _adminTodo;
 
     public DashboardService(
         IVisibilityService visibility,
@@ -49,8 +50,9 @@ public class DashboardService
         SummaryCache summaryCache,
         EfPrtgStore prtgStore,
         IIssueExclusionSource exclusions,
-        PendingDispatchGapsProvider gaps, StorageBackend? backend = null)
+        PendingDispatchGapsProvider gaps, StorageBackend? backend = null, AdminTodoService? adminTodo = null)
     {
+        _adminTodo = adminTodo;
         _gaps = gaps;
         _backend = backend;
         _prtgStore = prtgStore;
@@ -113,8 +115,11 @@ public class DashboardService
         if (first.TooLarge) return dto;
 
         // 只呼叫一次：每次 GetGaps 都會重跑整段派工試跑，逐頁翻會讓成本乘上頁數
-        dto.IssueCount = first.Total;
-        dto.UnassignableIssueCount = first.UnassignableTotal;
+        // 卡片只計前兩段（可以派、派不出去）：嚴重度未達、不再打擾等「不會派」的問題不算待辦，
+        // 不能再把台數最多的它們排在最前面（待派頁的第三段另有總數）
+        dto.DispatchableIssueCount = first.Dispatchable.Issues;
+        dto.UnassignableIssueCount = first.UnassignableSection.Issues;
+        dto.IssueCount = dto.DispatchableIssueCount + dto.UnassignableIssueCount;
         return dto;
     }
 
@@ -135,6 +140,11 @@ public class DashboardService
             TotalHosts = visibleHosts.Count,
             PendingDispatch = canAssign ? BuildPendingDispatch() : null
         };
+        // 「需要你處理」：與待派卡同一次試跑的可派問題數帶入同一個彙整函式（不再跑第二次試跑）
+        if (canAssign && _adminTodo != null)
+            dto.AdminTodo = _adminTodo.GetForCurrentUser(dto.PendingDispatch is { } pending
+                ? new PendingDispatchCounts(pending.DispatchableIssueCount, pending.TooLarge)
+                : null);
 
         // 全部走 SQL 端聚合（SCALE-3000 S4），不再把整段期間的紀錄載入記憶體。
         // 繞過 RecordRepository 之後，它套的三層可見範圍要在這裡自己等價重現：

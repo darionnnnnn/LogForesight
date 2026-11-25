@@ -106,6 +106,22 @@ public class DismissedIssueService
         return dto;
     }
 
+    /// <summary>
+    /// 不再自動派工的輕量計數（清單預設收合時只顯示它）：N 個問題、M 台主機。與 <see cref="GetList"/> 走同一個查詢
+    /// （<see cref="Blocked"/>），數字必然相同；不組欄位、不讀處理歷程。
+    /// 單位：<see cref="DismissedCountDto.Issues"/>＝被擋住的相異（來源, 事件編號）問題數；<see cref="DismissedCountDto.Hosts"/>＝相異主機數；
+    /// 一個都沒有時兩者皆為 0。
+    /// </summary>
+    public DismissedCountDto GetCount()
+    {
+        var blocked = Blocked();
+        return new DismissedCountDto
+        {
+            Issues = blocked.Select(b => (b.SourceKey, b.EventId)).Distinct().Count(),
+            Hosts = blocked.Select(b => HostNameKey.Of(b.Case.HostName)).Distinct().Count()
+        };
+    }
+
     /// <summary>恢復單一（主機, 問題）：該件最新案件的欄位寫成 false。目前沒被擋住（或看不到該主機）擲 NotFound。</summary>
     public DismissedRestoreResultDto Restore(string hostName, string issueKey)
     {
@@ -157,7 +173,11 @@ public class DismissedIssueService
 
     private sealed record BlockedCase(IssueCase Case, string Source, string SourceKey, int EventId);
 
-    /// <summary>可見主機上目前被閘門擋住的案件（逐主機呼叫共用判定）</summary>
+    /// <summary>
+    /// 可見主機上目前被閘門擋住的案件：候選由資料庫端取（<see cref="IIssueCaseStore.GetDismissalCandidates"/>：每個鍵最新的未取消案件、
+    /// 不處理類、BlocksRedispatch 不是 false，只回被擋的而不是主機全部案件），再逐主機呼叫共用判定
+    /// <see cref="DispatchContext.DismissedCases"/> 套用 30 天解除。清單、計數與恢復共用這一個方法。
+    /// </summary>
     private List<BlockedCase> Blocked()
     {
         var visible = VisibleHostNames();
@@ -167,7 +187,7 @@ public class DismissedIssueService
         var result = new List<BlockedCase>();
         var today = _clock.LocalToday();
         var releaseRules = ReleaseRules();
-        foreach (var byHost in _cases.GetMany(hostNames).GroupBy(c => HostNameKey.Of(c.HostName)))
+        foreach (var byHost in _cases.GetDismissalCandidates(hostNames).GroupBy(c => HostNameKey.Of(c.HostName)))
         {
             foreach (var c in DispatchContext.DismissedCases(byHost, today, releaseRules))
             {

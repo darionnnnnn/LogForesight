@@ -20,13 +20,13 @@ public class WorkOrderBoardController : ControllerBase
 {
     private readonly WorkOrderBoardService _service;
     private readonly DismissedIssueService _dismissed;
-    private readonly AdminReminderService _reminders;
+    private readonly AdminTodoService _todo;
 
-    public WorkOrderBoardController(WorkOrderBoardService service, DismissedIssueService dismissed, AdminReminderService reminders)
+    public WorkOrderBoardController(WorkOrderBoardService service, DismissedIssueService dismissed, AdminTodoService todo)
     {
         _service = service;
         _dismissed = dismissed;
-        _reminders = reminders;
+        _todo = todo;
     }
 
     [HttpGet("load-board")]
@@ -38,13 +38,19 @@ public class WorkOrderBoardController : ControllerBase
         ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page));
 
     /// <summary>
-    /// 管理者提醒的三類筆數與明細（上報逾期未處理、本趟派不出去、上報沒有收件人）；與夜間的管理者摘要信同一個彙整函式，
-    /// 郵件總開關關閉時交辦總覽靠這支端點顯示。
+    /// 管理者提醒與待辦的筆數與明細（上報逾期未處理、今天新上報、本趟派不出去、上報沒有收件人、反覆復發；
+    /// 具 Assign 的人另有昨晚取數結果、可派未派、處理人已停用或暫停仍有單、未分組主機）；與夜間的管理者摘要信、儀表板「需要你處理」列
+    /// 同一個彙整函式（<see cref="AdminReminderService.Compute"/>），郵件總開關關閉時交辦總覽靠這支端點顯示。
     /// </summary>
     [SkipDataVersionBump]
     [HttpGet("admin-reminders")]
     public ApiResponse<AdminReminderDto> AdminReminders() =>
-        ApiResponse<AdminReminderDto>.Ok(_reminders.Compute());
+        ApiResponse<AdminReminderDto>.Ok(_todo.GetForCurrentUser());
+
+    /// <summary>不再自動派工的輕量計數（N 個問題、M 台）：清單預設收合，展開前只需要這個數字</summary>
+    [HttpGet("dismissed/count")]
+    public ApiResponse<DismissedCountDto> DismissedCount() =>
+        ApiResponse<DismissedCountDto>.Ok(_dismissed.GetCount());
 
     /// <summary>被「不再打擾」擋住、不再自動派工的項目（依問題分組、分頁）；可見範圍同待派頁</summary>
     [HttpGet("dismissed")]

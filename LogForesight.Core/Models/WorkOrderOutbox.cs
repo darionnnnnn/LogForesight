@@ -53,6 +53,15 @@ public sealed class ReminderDetailItem
     /// <summary>反覆結案又復發：進行中成員的復發次數達 <c>AdminReminderService.RecurrenceReminderThreshold</c></summary>
     public const string CategoryRecurrence = "recurrence";
 
+    /// <summary>管理員待辦：最近一趟取數失敗</summary>
+    public const string CategoryFetchFailed = "fetch_failed";
+
+    /// <summary>管理員待辦：處理人已停用或暫停接單、名下仍有進行中單</summary>
+    public const string CategoryInactiveHandler = "inactive_handler";
+
+    /// <summary>管理員待辦：未分組主機</summary>
+    public const string CategoryUngroupedHosts = "ungrouped_hosts";
+
     public const int KeyMaxLength = 200;
     public const int TextMaxLength = 300;
     public const int HeadingMaxLength = 100;

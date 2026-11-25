@@ -736,6 +736,70 @@ public class GapsDto
 
     public DateTime From { get; set; }
     public DateTime To { get; set; }
+
+    /// <summary>第一段「可以派」：有建議處理人的問題數與（問題×主機）數；超過上限時為 0</summary>
+    public GapSectionDto Dispatchable { get; set; } = new();
+
+    /// <summary>第二段「派不出去」：沒有可接單人選（<c>no_pool／all_paused／no_visibility</c>）的問題數與（問題×主機）數</summary>
+    public GapSectionDto UnassignableSection { get; set; } = new();
+
+    /// <summary>第三段「不會派」：閘門排除（嚴重度未達、不再打擾、抑制、已知雜訊、靜音）的問題數與（問題×主機）數</summary>
+    public GapSectionDto NotDispatched { get; set; } = new();
+
+    /// <summary>第二段依原因分組（每組一次說明）；原因依序排序</summary>
+    public List<GapUnassignableReasonDto> UnassignableReasons { get; set; } = new();
+
+    /// <summary>
+    /// 「沒有人看得到」（<c>no_visibility</c>）的主機所屬群組，每個群組只出現一次（不隨問題重複），
+    /// 台數多的在前。沒有群組的主機不在內。
+    /// </summary>
+    public List<GapUnseenHostGroupDto> UnseenHostGroups { get; set; } = new();
+
+    /// <summary>可授權的派工池使用者群組（啟用中且為派工池）；授權沿用 <c>PUT api/admin/access/{userGroupId}</c></summary>
+    public List<GapPoolGroupDto> PoolGroups { get; set; } = new();
+
+    /// <summary>目前使用者能否直接授權（具 Maintain）；否則畫面只給連到群組與授權的連結</summary>
+    public bool CanGrantAccess { get; set; }
+}
+
+/// <summary>
+/// 待派頁一段的統計。<see cref="Issues"/>＝該段有幾個問題（相異來源＋事件編號）；<see cref="Hosts"/>＝該段「問題×主機」數
+/// （同一台主機在兩個問題上各算一次）。一個問題在不同主機上可落在不同段，各段各算一次；該段沒有任何項目時兩者皆為 0。
+/// </summary>
+public class GapSectionDto
+{
+    public int Issues { get; set; }
+    public int Hosts { get; set; }
+}
+
+public class GapUnassignableReasonDto
+{
+    /// <summary>no_pool／all_paused／no_visibility</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>有這個原因的問題數</summary>
+    public int Issues { get; set; }
+
+    /// <summary>（問題×主機）數</summary>
+    public int Hosts { get; set; }
+}
+
+public class GapUnseenHostGroupDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+
+    /// <summary>此群組內沒有人看得到的相異主機數</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>牽涉到此群組的問題數</summary>
+    public int Issues { get; set; }
+}
+
+public class GapPoolGroupDto
+{
+    public long UserGroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
 }
 
 /// <summary>待派清單的一列＝一個問題（Source, EventId）</summary>
@@ -773,6 +837,16 @@ public class DismissedListDto
     public int TotalHosts { get; set; }
 
     public List<DismissedGroupDto> Groups { get; set; } = new();
+}
+
+/// <summary>不再自動派工的輕量計數（與清單同一個查詢）</summary>
+public class DismissedCountDto
+{
+    /// <summary>被擋住的問題數（相異的來源＋事件編號）；沒有任何被擋住時為 0</summary>
+    public int Issues { get; set; }
+
+    /// <summary>被擋住的主機台數（相異主機）；沒有任何被擋住時為 0</summary>
+    public int Hosts { get; set; }
 }
 
 public class DismissedGroupDto
@@ -860,6 +934,40 @@ public class AutoDispatchRequest
 {
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
+
+    /// <summary>單題派工：問題來源；與 <see cref="EventId"/> 一起給或都不給（不帶＝全頁，現行行為）</summary>
+    public string? Source { get; set; }
+
+    /// <summary>單題派工：問題事件編號</summary>
+    public int? EventId { get; set; }
+}
+
+/// <summary>
+/// 立即派工預覽（<c>POST api/work-orders/auto-dispatch/preview</c>，不落盤）：與落盤共用同一個試跑與分組。
+/// 單位見 <c>WorkOrderBoardService.PreviewAutoDispatch</c>；沒有任何可派項目時 <see cref="NothingToDispatch"/> 為 true、各數字為 0。
+/// </summary>
+public class AutoDispatchPreviewDto
+{
+    /// <summary>將建立的新單張數</summary>
+    public int CreateOrders { get; set; }
+
+    /// <summary>將併入既有單的張數（只掛進既有單、不新建）</summary>
+    public int MergeOrders { get; set; }
+
+    /// <summary>掛入的總台數（各人台數加總）</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>每人將掛入的台數</summary>
+    public List<AutoDispatchHandlerDto> PerHandler { get; set; } = new();
+
+    /// <summary>範圍內派不出去的（原因 → 台數）</summary>
+    public List<GapUnassignableDto> Unassigned { get; set; } = new();
+
+    /// <summary>沒有任何可派的項目</summary>
+    public bool NothingToDispatch { get; set; }
+
+    /// <summary>給畫面顯示的訊息；有可派項目時為 null</summary>
+    public string? Message { get; set; }
 }
 
 public class AutoDispatchResultDto
@@ -873,6 +981,15 @@ public class AutoDispatchResultDto
 
     /// <summary>建單擲例外的組（其餘組照常處理；全部失敗時仍回結果、不擲）</summary>
     public List<AutoDispatchFailedGroupDto> FailedGroups { get; set; } = new();
+
+    /// <summary>
+    /// 這次沒有任何新成員被派出（<see cref="AssignedMembers"/> 為 0）且沒有失敗的組：多半是別人剛派完。
+    /// <see cref="MergedOrders"/> 只計真的併入新成員的單，所以這時三個數字都是 0。
+    /// </summary>
+    public bool NothingToDispatch { get; set; }
+
+    /// <summary>給畫面顯示的訊息（<see cref="NothingToDispatch"/> 時為「沒有需要派的項目（可能剛由其他人派出）」，否則為 null）</summary>
+    public string? Message { get; set; }
 }
 
 public class AutoDispatchFailedGroupDto

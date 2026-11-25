@@ -717,4 +717,22 @@ public sealed class IssueMuteTests : IDisposable
             Actor = new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now.AddHours(-1) }
         }).WorkOrderId;
     }
+
+    // ── 第 81 輪批次 F（CU-9）：靜音中計數端點 ─────────────────────────────
+
+    [Fact]
+    public void CU9_靜音中計數只算今天落在區間內的問題_與清單的CurrentMute同一個判定()
+    {
+        _owners.Upsert(new IssueProfile { SourceName = "a", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(-1), To = Today, Reason = "r", ByAccount = "x" } } });   // 今天最後一天：算
+        _owners.Upsert(new IssueProfile { SourceName = "b", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(-5), To = Today.AddDays(-1), Reason = "r", ByAccount = "x" } } });   // 昨天到期：不算
+        _owners.Upsert(new IssueProfile { SourceName = "c", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(1), To = Today.AddDays(3), Reason = "r", ByAccount = "x" } } });   // 明天才開始：不算
+        _owners.Upsert(new IssueProfile { SourceName = "d", EventId = 1 });                                                                                                                         // 從未靜音：不算
+        var admin = Admin(Maintainer());
+
+        var count = admin.CountMuted();
+
+        Assert.Equal(1, count.Count);
+        Assert.Equal(admin.List().Count(o => o.CurrentMute != null), count.Count);
+        Assert.Equal(0, new IssueMuteTests().Admin(Maintainer()).CountMuted().Count);
+    }
 }

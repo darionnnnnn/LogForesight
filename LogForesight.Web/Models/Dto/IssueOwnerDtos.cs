@@ -132,3 +132,10 @@ public class RecentIssueOptionDto
     /// <summary>這個問題是否已經有負責人規則——picker 用來標示「已指派」，避免使用者誤以為要新增</summary>
     public bool HasOwner { get; set; }
 }
+
+/// <summary>靜音中問題的輕量計數（<c>GET api/admin/issue-owners/muted-count</c>）</summary>
+public class MutedCountDto
+{
+    /// <summary>目前靜音中的問題數（今天落在靜音區間內的問題設定筆數）；沒有任何靜音為 0</summary>
+    public int Count { get; set; }
+}

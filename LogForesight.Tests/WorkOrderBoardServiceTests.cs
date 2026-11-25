@@ -22,7 +22,7 @@ namespace LogForesight.Tests;
 /// 候選人池以手組快照替身帶入（Web 端規則另由 DispatchCandidateSourceTests 驗）。
 /// </summary>
 [Collection("NLogGlobalConfig")]
-public class WorkOrderBoardServiceTests : IDisposable
+public partial class WorkOrderBoardServiceTests : IDisposable
 {
     private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
 
@@ -112,10 +112,10 @@ public class WorkOrderBoardServiceTests : IDisposable
     }
 
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences,
-        IIssueAggregateQuery? aggregates = null, TimeProvider? clock = null) => new(
+        IIssueAggregateQuery? aggregates = null, TimeProvider? clock = null, ICurrentUser? user = null) => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, aggregates ?? _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences, clock);
+        user ?? FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences, clock);
 
     /// <summary>批次 S：立即派工放行「不再打擾已滿 30 天」的主機時，與夜間派工同一段累計寫一筆系統事件（同張單合併一筆，只算放行的那台）</summary>
     [Fact]

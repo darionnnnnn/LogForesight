@@ -70,7 +70,7 @@ public sealed class AdminReminderRecurrenceTests : IDisposable
 
     private IssueCase Case(string host, string status, DateTime created, DateTime? closed = null, long? orderId = null, int eventId = 153)
     {
-        if (_hosts.FindByName(host) == null) _hosts.Upsert(new WebHost { HostName = host });
+        if (_hosts.FindByName(host) == null) _hosts.Upsert(new WebHost { HostName = host, GroupIds = new List<long> { 1 } });
         var c = new IssueCase
         {
             CaseId = $"case-{++_seq:D4}", HostName = host, IssueKey = IssueSignatureKey.For("System", "disk", eventId, LogEntryType.Error),

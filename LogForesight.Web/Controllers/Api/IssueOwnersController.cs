@@ -26,6 +26,10 @@ public class IssueOwnersController : ControllerBase
     [HttpGet]
     public ApiResponse<List<IssueOwnerDto>> List() => ApiResponse<List<IssueOwnerDto>>.Ok(_service.List());
 
+    /// <summary>靜音中問題的輕量計數：交辦總覽頁籤標題用；清單改為點到「靜音中」頁籤才載入（<c>GET api/admin/issue-owners</c>）</summary>
+    [HttpGet("muted-count")]
+    public ApiResponse<MutedCountDto> MutedCount() => ApiResponse<MutedCountDto>.Ok(_service.CountMuted());
+
     /// <summary>按需讀取此問題最近的靜音操作，只回傳白名單欄位，不開放一般稽核明細。</summary>
     [HttpGet("{source}/{eventId:int}/mute-history")]
     public ApiResponse<List<IssueMuteActionDto>> MuteHistory(string source, int eventId,

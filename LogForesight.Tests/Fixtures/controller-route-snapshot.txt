@@ -39,6 +39,7 @@ PUT	/api/admin/hosts/{hostId:long}/owners	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/hosts/{hostId:long}/unmerge	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
 PUT	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
+GET	/api/admin/issue-owners/muted-count	C=Maintain;A=-	-	-	-	IssueOwnersController
 GET	/api/admin/issue-owners/recent-issues	C=Maintain;A=-	-	-	-	IssueOwnersController
 DELETE	/api/admin/issue-owners/{source}/{eventId:int}	C=Maintain;A=-	-	-	-	IssueOwnersController
 DELETE	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	-	-	IssueOwnersController
@@ -243,8 +244,10 @@ GET	/api/work-orders	C=Assign|ViewAll;A=-	-	-	-	WorkOrderListController
 POST	/api/work-orders	C=Assign;A=-	-	-	-	WorkOrdersController
 GET	/api/work-orders/admin-reminders	C=Assign|ViewAll;A=-	-	-	skipbump	WorkOrderBoardController
 POST	/api/work-orders/auto-dispatch	C=Assign;A=-	-	-	-	WorkOrderAutoDispatchController
+POST	/api/work-orders/auto-dispatch/preview	C=Assign;A=-	-	-	skipbump	WorkOrderAutoDispatchController
 POST	/api/work-orders/candidates	C=Assign;A=Assign	-	-	skipbump	WorkOrdersController
 GET	/api/work-orders/dismissed	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController
+GET	/api/work-orders/dismissed/count	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController
 POST	/api/work-orders/dismissed/restore	C=Assign;A=-	-	-	-	WorkOrderDismissedController
 POST	/api/work-orders/dismissed/restore-issue	C=Assign;A=-	-	-	-	WorkOrderDismissedController
 GET	/api/work-orders/gaps	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController

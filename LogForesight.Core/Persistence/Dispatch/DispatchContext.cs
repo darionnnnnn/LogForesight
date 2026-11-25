@@ -258,8 +258,9 @@ public sealed class DispatchContext
             .Where(c => DismissalRelease.IsReleased(c, today, rules))
             .ToList();
 
-    /// <summary>未計解除前的候選：每個鍵最新的未取消案件，不處理類狀態、BlocksRedispatch 不是 false（<see cref="DismissedCases"/> 與 <see cref="ReleasedCases"/> 共用）</summary>
-    private static IEnumerable<IssueCase> DismissalCandidates(IEnumerable<IssueCase> casesOfHost) =>
+    /// <summary>未計解除前的候選：每個鍵最新的未取消案件，不處理類狀態、BlocksRedispatch 不是 false（<see cref="DismissedCases"/> 與 <see cref="ReleasedCases"/> 共用；
+    /// <c>IIssueCaseStore.GetDismissalCandidates</c> 的預設實作與 EF 資料庫端查詢以它為對照標準）</summary>
+    internal static IEnumerable<IssueCase> DismissalCandidates(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
             // 已取消的案件不是處理人的判定（管理者對被擋主機手動建單又取消，取消案件不能把閘門解除），取最新時略過
             .Where(c => !c.Cancelled)

@@ -745,15 +745,21 @@ public class DashboardServiceTests : IDisposable
             new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps);
     }
 
-    /// <summary>120 個問題（第 1 頁 50 列），其中 4 個無法派出（由 GetGaps 的全量計數 UnassignableTotal 提供，不在第 1 頁的列上）</summary>
+    /// <summary>
+    /// 三段統計：可以派 116、派不出去 4、不會派 30（Total＝全部問題 150 不被卡片使用）。第 1 頁 50 列；
+    /// 卡片數字由 GetGaps 的全量段統計提供，不在第 1 頁的列上。
+    /// </summary>
     private static PendingDispatchGapsProvider PagedGaps(List<(DateTime? From, DateTime? To, int Page)> calls, bool tooLarge = false) =>
         (from, to, page) =>
         {
             calls.Add((from, to, page));
             var dto = new GapsDto { Page = page, From = from!.Value, To = to!.Value, TooLarge = tooLarge };
             if (tooLarge) return dto;
-            dto.Total = 120;
+            dto.Total = 150;
             dto.UnassignableTotal = 4;
+            dto.Dispatchable = new GapSectionDto { Issues = 116, Hosts = 300 };
+            dto.UnassignableSection = new GapSectionDto { Issues = 4, Hosts = 5 };
+            dto.NotDispatched = new GapSectionDto { Issues = 30, Hosts = 400 };
             var count = page < 3 ? 50 : 20;
             for (var i = 0; i < count; i++)
             {
@@ -774,8 +780,10 @@ public class DashboardServiceTests : IDisposable
         var pending = service.GetSummary(7).PendingDispatch;
 
         Assert.NotNull(pending);
-        Assert.Equal(120, pending!.IssueCount);          // 總數，不是當頁 50 列
-        Assert.Equal(4, pending.UnassignableIssueCount);  // 全量計數，不是第 1 頁列上的 0 個
+        // 卡片只計前兩段：可以派 116＋派不出去 4＝120；「不會派」的 30 個與全部問題數 150 都不計入
+        Assert.Equal(120, pending!.IssueCount);
+        Assert.Equal(116, pending.DispatchableIssueCount);
+        Assert.Equal(4, pending.UnassignableIssueCount);
         Assert.False(pending.TooLarge);
         Assert.Equal(Anchor.AddDays(-6).ToString("yyyy-MM-dd"), pending.From);
         Assert.Equal(Anchor.ToString("yyyy-MM-dd"), pending.To);

@@ -47,7 +47,7 @@ public sealed class AdminReminderNewEscalatedTests : IDisposable
     private IssueCase AddMember(string status, DateTime? escalatedAt, DateTime updatedAt, DateTime? closedAt = null)
     {
         var n = ++_seq;
-        _hosts.Upsert(new WebHost { HostName = $"SRV{n}", Active = true });
+        _hosts.Upsert(new WebHost { HostName = $"SRV{n}", Active = true, GroupIds = new List<long> { 1 } });
         var orderId = _orders.Insert(new WorkOrder { SourceName = "disk", EventId = 100 + n, IssueLabel = $"disk {100 + n}", HandlerId = 1, CreatedAt = Now.AddDays(-10) });
         var member = new IssueCase
         {

@@ -85,6 +85,17 @@ public class IssueOwnerAdminService
             .ToList();
     }
 
+    /// <summary>
+    /// 靜音中的問題數（輕量計數，給交辦總覽「靜音中」頁籤的數字）：只讀問題設定、不組靜音歷程與近期彙總，
+    /// 判定與 <see cref="List"/> 的 <c>CurrentMute</c> 同一個函式（<see cref="IssueProfile.CurrentMute"/>，以今天判定）。
+    /// 單位＝問題（來源＋事件編號各一筆設定）；沒有任何靜音中的問題為 0。
+    /// </summary>
+    public MutedCountDto CountMuted()
+    {
+        var today = _clock.LocalToday();
+        return new MutedCountDto { Count = _issueOwners.GetAll().Count(p => IssueProfile.CurrentMute(p, today) != null) };
+    }
+
     /// <summary>問題選擇器候選項：近 <see cref="RecentIssueWindowDays"/> 天內出現過的問題，
     /// 依主機數由多到少排序（影響面大的問題排前面，符合「今天該先處理哪個」的既有排序哲學）。</summary>
     public List<RecentIssueOptionDto> RecentIssues()
