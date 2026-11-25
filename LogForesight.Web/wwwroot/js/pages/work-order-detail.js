@@ -635,15 +635,16 @@ function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurr
         partialTarget: caseIds.length > 0,
         followUp: {
             remaining: () => remainingActiveCount(workOrderId),
-            submitRest: async payload => {
+            // context.batch＝同表單的兩次送出，成功訊息由彈窗合併成一則
+            submitRest: async (payload, context) => {
                 const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
-                toastReplyResult(result, payload);
+                if (!context?.batch) toastReplyResult(result, payload);
                 return result;
             }
         },
-        submit: async (payload, picked) => {
+        submit: async (payload, picked, context) => {
             const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: picked ?? caseIds, ...payload }, { silent: true });
-            toastReplyResult(result, payload);
+            if (!context?.batch) toastReplyResult(result, payload);
             return result;
         },
         onRejected: error => {

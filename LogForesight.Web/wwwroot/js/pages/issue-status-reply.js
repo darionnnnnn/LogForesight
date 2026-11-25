@@ -77,9 +77,13 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false, 
  * @param {boolean} [options.partialTarget] 呼叫端傳進來的對象本身就是部分主機（例如成員表勾選的幾台）
  * @param {{hosts: number}} [options.recurrence] 這次涵蓋的主機裡有幾台是反覆發生（復發）的問題：hosts > 0 時彈窗頂端提示，
  *        並在結論按鈕前列三個建議（還在處理、觀察 7 日、請管理員評估）；沒有或 0 台不顯示。建議只是預選結論並預填，不擋其他結論
- * @param {{remaining: (result: any) => Promise<number>, submitRest: (payload: object) => Promise<any>}} [options.followUp]
- *        部分主機以結案類結論回覆成功、單還有進行中主機時，彈窗不關閉，改問「其餘 N 台要一起設為…」：
- *        remaining 取剩下的進行中台數，submitRest 以 caseIds 為空（＝全部進行中，也就是剩下的）送出；
+ * @param {{remaining: (result: any) => Promise<number>, submitRest: (payload: object, context?: {batch: boolean}) => Promise<any>}} [options.followUp]
+ *        部分主機以結案類結論回覆時處理「其餘 N 台」：remaining 取剩下的進行中台數，submitRest 以 caseIds 為空
+ *        （＝全部進行中，也就是剩下的）送出。兩種走法：
+ *        1. 同表單設定：在「只回覆部分主機」模式選了結案類結論，結論下方多一段「其餘 N 台一起設為…（選填）」
+ *           （N＝面板的進行中總台數－已勾選台數，面板還沒取得總台數時不出現）；選了就在同一次送出依序送勾選的與其餘的，
+ *           兩次都成功才關閉。此時 submit／submitRest 的最後一個參數是 { batch: true }，呼叫端不出成功訊息，由彈窗出合併的一則；
+ *        2. 沒選其餘結論：勾選的送出成功、單還有進行中主機時，彈窗不關閉，改問「其餘 N 台要一起設為…」。
  *        第一次是非結案類（處理中、觀察中、上報）時不提示、直接關閉。需要 submit 回傳 API 回應
  */
 export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence, dismissalReleases = false, multiIssues = false }) {
@@ -96,7 +100,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     let picking = false;
     let mode = 'whole';
     let restCount = 0;
-    const picker = pickerOptions ? createHostPicker({ load: pickerOptions.load, onChange: () => { syncHint(); syncRecurrence(); syncSubmitState(); } }) : null;
+    const picker = pickerOptions ? createHostPicker({ load: pickerOptions.load, onChange: () => { syncHint(); syncRecurrence(); syncRest(); syncSubmitState(); } }) : null;
     const pickToggle = makeButton('只回覆部分主機', { onClick: () => togglePicking() });
     pickToggle.id = 'wo-reply-pick-toggle';
     pickToggle.classList.add('mb-3', picker ? 'd-inline-block' : 'd-none');
@@ -113,9 +117,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         picking = !picking;
         picker.element.classList.toggle('d-none', !picking);
         pickToggle.textContent = picking ? '改為回覆全部進行中主機' : '只回覆部分主機';
-        if (picking) picker.open();
+        // 進行中總台數在第一頁載入後才知道：載入完再算一次「其餘 N 台」
+        if (picking) Promise.resolve(picker.open()).then(() => syncRest());
         syncHint();
         syncRecurrence();
+        syncRest();
         syncSubmitState();
     }
 
@@ -175,6 +181,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     noFixNote.classList.add('d-none');
     noFixNote.id = 'wo-reply-no-fix-note';
     form.append(statusLabel, statusGroup, noFixNote);
+    // 「其餘 N 台一起設為…（選填）」：部分主機＋結案類結論時才出現，內容見 syncRest 一帶
+    const restBox = document.createElement('div');
+    restBox.id = 'wo-reply-rest';
+    restBox.className = 'mb-3 d-none';
+    form.appendChild(restBox);
 
     const noteHead = document.createElement('div');
     noteHead.className = 'd-flex align-items-end justify-content-between gap-2';
@@ -276,13 +287,115 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         dueCheck.validate();
     }
 
+    // ── 其餘 N 台一起設為…（選填）：只回覆部分主機、結論是結案類時，同一張表單順便設定沒勾選的其餘主機 ──
+    // 其餘的結論可選與現行「其餘 N 台」第二步相同的全部結論；說明欄沿用同一份處理說明（不另開一欄：
+    // 批次處理的兩部分通常是同一件事，各寫一次反而容易漏填；上報、不處理等必填說明的結論也靠這一份），日期另設。
+    let restStatus = null;
+    const restLabel = document.createElement('div');
+    restLabel.className = 'form-label lf-text-label';
+    restLabel.id = 'wo-reply-rest-label';
+    const restGroup = document.createElement('div');
+    restGroup.id = 'wo-reply-rest-status';
+    restGroup.className = 'lf-handling__chips mb-2';
+    restGroup.setAttribute('role', 'group');
+    restGroup.setAttribute('aria-labelledby', 'wo-reply-rest-label');
+    const restDueLabel = document.createElement('label');
+    restDueLabel.className = 'form-label lf-text-label';
+    restDueLabel.textContent = '其餘的預計完成日／觀察至';
+    restDueLabel.htmlFor = 'wo-reply-rest-due';
+    const restDueInput = document.createElement('input');
+    restDueInput.id = 'wo-reply-rest-due';
+    restDueInput.type = 'date';
+    restDueInput.min = todayLocal();
+    restDueInput.max = dueMax;
+    restDueInput.className = 'form-control form-control-sm mb-2';
+    const restDueError = document.createElement('div');
+    restDueError.className = 'invalid-feedback d-block';
+    restDueError.setAttribute('aria-live', 'polite');
+    const restQuickRow = document.createElement('div');
+    restQuickRow.className = 'd-flex gap-2 mb-2';
+    restQuickRow.id = 'wo-reply-rest-due-quick';
+    const restNeedsDue = () => restStatus === 'in_progress' || restStatus === 'observing';
+    const restDueCheck = bindPastDateCheck(restDueInput, restDueError, { message: '預計完成日不可早於今天', isActive: restNeedsDue });
+    let restDueAutofilled = false;
+    restDueInput.addEventListener('input', () => { restDueAutofilled = false; });
+    // 快捷鈕只在其餘選了觀察中時才建（不選時不在 DOM 內，不與主結論的快捷鈕搶同名按鈕）
+    const restQuickButtons = () => OBSERVE_QUICK_DAYS.map(days => makeButton(`${days} 日`, {
+        onClick: () => {
+            restDueInput.value = dateAfterDays(days);
+            restDueAutofilled = false;
+            restDueCheck.validate();
+        }
+    }));
+    restBox.append(restLabel, restGroup, restDueLabel, restQuickRow, restDueInput, restDueError);
+
+    function syncRestDue() {
+        restDueLabel.classList.toggle('d-none', !restNeedsDue());
+        restDueInput.classList.toggle('d-none', !restNeedsDue());
+        restQuickRow.classList.toggle('d-none', restStatus !== 'observing');
+        if (restStatus === 'observing') {
+            if (restQuickRow.children.length === 0) restQuickRow.append(...restQuickButtons());
+        } else {
+            restQuickRow.replaceChildren();
+        }
+        if (restStatus === 'observing' && !restDueInput.value) {
+            restDueInput.value = dateAfterDays(OBSERVE_DEFAULT_DAYS);
+            restDueAutofilled = true;
+        } else if (restStatus !== 'observing' && restDueAutofilled) {
+            restDueInput.value = '';
+            restDueAutofilled = false;
+        }
+        restDueCheck.validate();
+    }
+
+    function renderRestChips() {
+        renderChips(restGroup, {
+            items: STATUS_OPTIONS.map(option => ({ value: option.value, label: option.shortLabel, title: option.label, ariaLabel: option.label })),
+            attr: 'restStatus',
+            activeValues: [restStatus],
+            multi: true,   // 可再點一次取消（選填）；單選由這裡重畫維持
+            onToggle: (value, nowActive) => {
+                restStatus = nowActive ? value : null;
+                renderRestChips();
+                syncRestDue();
+            }
+        });
+    }
+
+    /** 沒勾選的其餘台數：面板還沒取得進行中總台數、或不在部分主機模式時為 0（這段不出現，維持現行的兩段式） */
+    function restHostCount() {
+        if (mode !== 'whole' || !picking || !picker || !followUp) return 0;
+        const total = picker.activeTotal();
+        return total === null ? 0 : Math.max(0, total - picker.selected.size);
+    }
+
+    /** 這段只在部分主機＋結案類結論＋其餘至少 1 台時出現；收起時一併清掉已選的其餘結論，避免藏著的選擇被送出 */
+    function syncRest() {
+        const count = statusMeta(selectedStatus)?.closed ? restHostCount() : 0;
+        const show = count > 0;
+        restBox.classList.toggle('d-none', !show);
+        if (!show) {
+            restStatus = null;
+            restGroup.replaceChildren();
+        } else {
+            restLabel.textContent = `其餘 ${count} 台一起設為…（選填）`;
+            renderRestChips();
+        }
+        syncRestDue();
+    }
+
     // 沒選結論不能送出：按鈕停用並說明原因；處理中不結案，按鈕文字直說
+    // 提示行放在固定一行高的槽裡：選了結論、提示收起後槽仍佔一行，底部按鈕不會往上位移（快速點「送出」不落空）
     const statusRequiredHint = document.createElement('div');
-    statusRequiredHint.className = 'lf-hint mb-2';
+    statusRequiredHint.className = 'lf-hint';
     statusRequiredHint.id = 'wo-reply-status-required';
     statusRequiredHint.setAttribute('aria-live', 'polite');
     statusRequiredHint.textContent = '請選擇這次的結論';
-    form.appendChild(statusRequiredHint);
+    const statusRequiredSlot = document.createElement('div');
+    statusRequiredSlot.className = 'lf-hint-slot mb-2';
+    statusRequiredSlot.id = 'wo-reply-status-required-slot';
+    statusRequiredSlot.appendChild(statusRequiredHint);
+    form.appendChild(statusRequiredSlot);
 
     // 送出類按鈕建在表單裡，彈窗開起來後搬到頁尾與「關閉」同列（見 showDetailModal 之後的 placeSubmitInFooter）；
     // 以 form 屬性關聯表單，搬走後按鈕仍是這張表單的送出鈕（Enter／Ctrl+Enter 的送出路徑不變）
@@ -315,6 +428,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         noFixNote.classList.toggle('d-none', !isNoFixClosure(selectedStatus));
         syncNoteField();
         syncDueVisibility();
+        syncRest();
         syncSubmitState();
     }
 
@@ -431,8 +545,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         if (typeof status === 'number') toast(error.message || '送出失敗，請再試一次', 'danger');
     }
 
-    /** 部分回覆結案後的第二步：同一個彈窗改問「其餘 N 台要一起設為…」，結論重選、說明清空，以 caseIds 為空送出 */
-    function enterRestMode(count) {
+    /**
+     * 部分回覆結案後的第二步：同一個彈窗改問「其餘 N 台要一起設為…」，結論重選、說明清空，以 caseIds 為空送出。
+     * preset＝同表單設定其餘時第二次送出失敗，帶回使用者選的其餘結論、日期與說明，讓人直接再送一次。
+     */
+    function enterRestMode(count, preset) {
         mode = 'rest';
         restCount = count;
         picking = false;
@@ -444,9 +561,13 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         // 復發主機數是原對象的數字，不適用於「其餘」：mode 先設成 rest，syncRecurrence 會把提示與建議收起
         syncRecurrence();
         statusLabel.textContent = `其餘 ${count} 台要一起設為…`;
-        selectedStatus = null;
+        selectedStatus = preset?.status ?? null;
+        if (preset?.dueDate) {
+            dueInput.value = preset.dueDate;   // 先放日期：onStatusChanged 看到已有值就不再帶預設
+            dueAutofilled = false;
+        }
         renderStatusChips();
-        noteEditor.setValue('');
+        noteEditor.setValue(preset?.note ?? '');
         noteEditor.clearDraft();
         syncHint();
         onStatusChanged();
@@ -476,6 +597,24 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
             setFieldError(dueInput, '標記為「觀察中」時請指定觀察至日期', { feedback: dueError });
             errors.push(dueInput);
         }
+        // 其餘的結論（同表單設定其餘）：說明沿用同一欄，必填規則與日期驗證和主結論相同
+        const restMeta = restStatus ? statusMeta(restStatus) : null;
+        if (restMeta?.noteRequired && !noteInput.value.trim() && !errors.includes(noteInput)) {
+            const reasonText = restMeta.noteLabel.replace(/（.*）$/, '');
+            setFieldError(noteInput, `其餘設為「${restMeta.shortLabel}」時請填寫${reasonText}`, { feedback: noteError });
+            errors.push(noteInput);
+        }
+        if (restStatus) {
+            if (!restDueCheck.validate()) errors.push(restDueInput);
+            else if (restNeedsDue() && restDueInput.value > dueMax) {
+                setFieldError(restDueInput, `預計完成日最多只能設在 ${MAX_DUE_DATE_DAYS} 天內`, { feedback: restDueError });
+                errors.push(restDueInput);
+            }
+            if (restStatus === 'observing' && !restDueInput.value) {
+                setFieldError(restDueInput, '標記為「觀察中」時請指定觀察至日期', { feedback: restDueError });
+                errors.push(restDueInput);
+            }
+        }
         if (errors.length > 0) {
             errors[0].focus();
             return;
@@ -486,6 +625,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
             note: noteInput.value.trim() || null,
             dueDate: dueInput.value || null
         };
+        // 同表單設定其餘：只有部分主機模式、選了其餘結論才有（syncRest 在其他情況已把它清掉）
+        const restPayload = restStatus && mode === 'whole' && picking
+            ? { status: restStatus, note: payload.note, dueDate: restNeedsDue() ? (restDueInput.value || null) : null }
+            : null;
+        const restTargetCount = restPayload ? restHostCount() : 0;
         const restore = withBusy(button, '送出中');
         submitBtn.disabled = true;
         if (nextBtn) nextBtn.disabled = true;
@@ -495,7 +639,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         try {
             result = mode === 'rest'
                 ? await followUp.submitRest(payload)
-                : await submit(payload, picking ? picker.selectedIds() : undefined);
+                : await submit(payload, picking ? picker.selectedIds() : undefined, restPayload ? { batch: true } : undefined);
         } catch (error) {
             restore();
             syncSubmitState();
@@ -504,7 +648,27 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         }
 
         noteEditor.clearDraft();
-        if (partial && !goNext && followUp && statusMeta(payload.status)?.closed && !result?.workOrderClosed) {
+        if (restPayload) {
+            if (result?.workOrderClosed) {
+                toastReplyResult(result, payload);   // 勾選的這批已讓整張單結案，沒有其餘可送
+            } else {
+                let restResult;
+                try {
+                    restResult = await followUp.submitRest(restPayload, { batch: true });
+                } catch (error) {
+                    // 第一部分已寫入：先交代並更新畫面，再切到「其餘」第二步保留使用者選的結論，讓人直接重送
+                    restore();
+                    toastReplyResult(result, payload);
+                    onApplied?.();
+                    let remaining = 0;
+                    try { remaining = await followUp.remaining(result); } catch { remaining = 0; }
+                    enterRestMode(remaining > 0 ? remaining : restTargetCount, { ...restPayload });
+                    await handleFailure(error);
+                    return;
+                }
+                toastReplyBoth(result, payload, restResult, restPayload);
+            }
+        } else if (partial && !goNext && followUp && statusMeta(payload.status)?.closed && !result?.workOrderClosed) {
             let remaining = 0;
             try { remaining = await followUp.remaining(result); } catch { remaining = 0; }
             if (remaining > 0) {
@@ -620,6 +784,19 @@ function placeSubmitInFooter(modalElement, buttons) {
     const footer = modalElement?.querySelector?.('.modal-footer');
     if (!footer) return;
     for (const btn of buttons) if (btn) footer.appendChild(btn);
+}
+
+/**
+ * 同表單先回覆勾選的主機、再設定其餘（兩次請求都成功）的合併成功訊息：一則寫出兩部分各幾台與結論，
+ * 逐日同步的提示只出一次。呼叫端在 { batch: true } 時不自己出訊息，交給這支。
+ */
+export function toastReplyBoth(first, firstPayload, rest, restPayload) {
+    const closed = first?.workOrderClosed || rest?.workOrderClosed ? '，整張單已結案' : '';
+    const part = (result, payload) => replyOutcomeText(payload, `${result?.cases ?? 0} 台`, result?.escalationNotifiedAdmins);
+    toast(`${part(first, firstPayload)}；${part(rest, restPayload)}${closed}`, 'success');
+    if (first?.daySyncPendingCases > 0 || rest?.daySyncPendingCases > 0) {
+        toast('逐日同步在背景進行', 'info');
+    }
 }
 
 /** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應）；payload＝這次送出的 { status, dueDate } */

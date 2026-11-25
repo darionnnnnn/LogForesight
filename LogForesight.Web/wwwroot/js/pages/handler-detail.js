@@ -788,9 +788,10 @@ async function replyOrder(row, carry) {
 function replyFollowUp(workOrderId, onClosed) {
     return {
         remaining: () => remainingActiveCount(workOrderId),
-        submitRest: async payload => {
+        // context.batch＝同表單的兩次送出，成功訊息由彈窗合併成一則
+        submitRest: async (payload, context) => {
             const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
-            toastReplyResult(result, payload);
+            if (!context?.batch) toastReplyResult(result, payload);
             if (result.workOrderClosed) onClosed();
             return result;
         }
@@ -813,9 +814,9 @@ function openWholeOrderReply(row, count, carry) {
         // 彈窗內可切換成「只回覆部分主機」；部分回覆結案後單若還有進行中主機，續問「其餘 N 台」
         picker: { load: ({ page, pageSize, hostNames }) => api.get(orderMembersUrl(row.workOrderId, { status: 'active', page, pageSize, hostNames }), { silent: true }) },
         followUp: replyFollowUp(row.workOrderId, () => { closedNow = true; }),
-        submit: async (payload, picked) => {
+        submit: async (payload, picked, context) => {
             const result = await api.post(`/api/work-orders/${row.workOrderId}/reply`, { caseIds: picked ?? [], ...payload }, { silent: true });
-            toastReplyResult(result, payload);
+            if (!context?.batch) toastReplyResult(result, payload);
             closedNow = result.workOrderClosed;
             return result;
         },

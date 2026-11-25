@@ -5178,7 +5178,7 @@
   {
     "name": "互動-處理人-回覆視窗-只回覆部分主機",
     "role": "ui-handler",
-    "path": "/work-orders/1",
+    "path": "/work-orders/11",
     "steps": [
       {
         "waitFor": "main button.btn-primary:not(.modal *)"
@@ -5195,6 +5195,31 @@
       {
         "assert": {
           "sel": ".modal.show form",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗-部分主機同表單設其餘",
+    "role": "ui-handler",
+    "path": "/work-orders/11",
+    "steps": [
+      {
+        "waitFor": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "click": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "evalAssert": "return (async () => { const wait = ms => new Promise(r => setTimeout(r, ms));\nconst t = document.getElementById('wo-reply-pick-toggle');\nif (!t || t.classList.contains('d-none')) return '找不到「只回覆部分主機」';\nt.click(); await wait(1200);\nconst boxes = [...document.querySelectorAll('.modal.show tbody input[type=checkbox]')].filter(b => b.offsetParent !== null);\nif (boxes.length < 2) return '進行中成員不足兩台：' + boxes.length;\nboxes[0].click(); await wait(200);\nconst chip = [...document.querySelectorAll('#wo-reply-status button')].find(b => b.textContent.trim() === '已處理');\nif (!chip) return '找不到結論「已處理」'; chip.click(); await wait(300);\nconst rest = document.getElementById('wo-reply-rest');\nif (!rest || rest.classList.contains('d-none')) return '其餘 N 台區塊沒出現';\nconst obs = [...document.querySelectorAll('#wo-reply-rest-status button')].find(b => b.textContent.trim() === '觀察中');\nif (!obs) return '其餘區找不到「觀察中」'; obs.click(); await wait(300);\nconst q = document.getElementById('wo-reply-rest-due-quick');\nif (!q || q.classList.contains('d-none')) return '其餘區觀察中沒有日期快選';\nreturn null; })();"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reply-rest",
           "visible": true
         }
       }

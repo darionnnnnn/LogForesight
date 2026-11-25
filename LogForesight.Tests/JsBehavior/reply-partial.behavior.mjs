@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { installDom } from './mini-dom.mjs';
-import { loadReplyModule, openReply, read, extract, fire, all, textOf, hidden, catalog } from './load-reply-modal.mjs';
+import { loadReplyModule, openReply, read, extract, fire, all, byId, textOf, hidden, catalog } from './load-reply-modal.mjs';
 
 /** 假的成員端點：total 台進行中成員 SRV-001…，依 hostNames 完全相符（不分大小寫）篩選並分頁 */
 function memberSource(total, { closed = new Set() } = {}) {
@@ -21,6 +21,14 @@ function memberSource(total, { closed = new Set() } = {}) {
     };
     return { items, calls, load };
 }
+
+/** 獨立於 production dateAfterDays 的預期值：今天起第 N 天的本機日期 */
+function expectedDate(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setTimeout(r, 0)); };
 
 const nodes = (root, pred) => all(root).filter(pred);
 const rowChecks = body => nodes(body, n => n.tagName === 'INPUT' && n.type === 'checkbox' && n.title === '選取這台主機');
@@ -191,6 +199,202 @@ const cases = {
         const noPartial = await make({ picking: false, partialTarget: false, status: 'resolved' });
         closesNormally(noPartial);
         assert.equal(noPartial.counts.remaining, 0, '整張單回覆（非部分）不問其餘');
+    },
+
+    // 貼上兩個以上名稱：不必按「篩選／勾選」就自動查詢並勾選；只貼一個名稱維持現行（不自動篩選）
+    async pasteAutoSelectsOnlyWhenTwoOrMoreNames() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, { picker: { load: src.load } });
+        m.toggle.click();
+        await settle();
+        const callsBefore = src.calls.length;
+
+        m.search.value = 'srv-001\nSRV-003';
+        await fire(m.search, 'paste');
+        await settle();
+        assert.ok(src.calls.length > callsBefore, '貼上兩個名稱後自動查詢');
+        assert.equal(textOf(m.panel.find(n => n.id === 'wo-reply-pick-count')), '已選 2 台', '自動勾選命中的兩台');
+        assert.deepEqual(rowChecks(m.body).map(c => c.checked), [true, true]);
+
+        const m2 = openReply(loaded, { picker: { load: src.load } });
+        m2.toggle.click();
+        await settle();
+        const before = src.calls.length;
+        m2.search.value = 'srv-002';
+        await fire(m2.search, 'paste');
+        await settle();
+        assert.equal(src.calls.length, before, '只貼一個名稱不自動查詢');
+        assert.equal(rowChecks(m2.body).filter(c => c.checked).length, 0, '也不勾選');
+    },
+
+    // 部分主機＋結案類結論：結論下方出現「其餘 N 台一起設為…（選填）」，N＝進行中總台數－已勾選；非結案類不出現
+    async restSectionShowsForClosedPartialReply() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, { picker: { load: src.load }, followUp: { remaining: async () => 3, submitRest: async () => ({}) } });
+        const box = byId(m.body, 'wo-reply-rest');
+        assert.equal(hidden(box), true, '整單模式沒有這一段');
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);
+        await tick(rowChecks(m.body)[1]);
+        m.pick('resolved');
+        assert.equal(hidden(box), false);
+        assert.equal(textOf(byId(m.body, 'wo-reply-rest-label')), '其餘 3 台一起設為…（選填）');
+        const restChips = () => all(byId(m.body, 'wo-reply-rest-status')).filter(n => n.classList?.contains('lf-chip'));
+        assert.ok(restChips().length >= 4, '可選的結論與第二步相同');
+        assert.deepEqual(restChips().filter(c => c.classList.contains('active')), [], '不預選');
+
+        await tick(rowChecks(m.body)[2]);
+        assert.equal(textOf(byId(m.body, 'wo-reply-rest-label')), '其餘 2 台一起設為…（選填）', '多勾一台，N 跟著變');
+
+        m.pick('observing');
+        assert.equal(hidden(box), true, '非結案類結論不出現');
+        m.pick('wont_fix');
+        assert.equal(hidden(box), false);
+        // 全勾＝沒有其餘
+        await tick(rowChecks(m.body)[3]);
+        await tick(rowChecks(m.body)[4]);
+        assert.equal(hidden(box), true, '其餘 0 台不出現');
+
+        // 沒有 followUp 或面板還沒取得總台數：不出現
+        const noFollow = openReply(loaded, { picker: { load: src.load } });
+        noFollow.toggle.click();
+        await settle();
+        await tick(rowChecks(noFollow.body)[0]);
+        noFollow.pick('resolved');
+        assert.equal(hidden(byId(noFollow.body, 'wo-reply-rest')), true, '沒有 followUp 不出現');
+    },
+
+    // 選其餘＝觀察中後送出：先送勾選的、再以 submitRest 送其餘；兩次都成功才關閉、一則合併訊息
+    async restChosenSendsBothRequestsThenCloses() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const calls = [];
+        let applied = 0;
+        const m = openReply(loaded, {
+            picker: { load: src.load },
+            submit: async (payload, picked, context) => { calls.push({ kind: 'submit', payload, picked, context }); return { cases: 2 }; },
+            followUp: {
+                remaining: async () => 3,
+                submitRest: async (payload, context) => { calls.push({ kind: 'rest', payload, context }); return { cases: 3 }; }
+            },
+            onApplied: () => { applied++; }
+        });
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);
+        await tick(rowChecks(m.body)[1]);
+        m.pick('resolved');
+        m.write('已處理完');
+        const restObserving = all(byId(m.body, 'wo-reply-rest-status')).find(n => n.dataset.restStatus === 'observing');
+        restObserving.click();
+        assert.equal(byId(m.body, 'wo-reply-rest-due').value, expectedDate(7), '其餘選觀察中預設 7 日');
+        assert.equal(hidden(byId(m.body, 'wo-reply-rest-due-quick')), false, '有 3／7／14 日快捷');
+        await m.send();
+
+        assert.deepEqual(calls.map(c => c.kind), ['submit', 'rest']);
+        assert.deepEqual(calls[0].picked, ['c1', 'c2'], '第一個請求只送勾選的');
+        assert.deepEqual(calls[0].payload, { status: 'resolved', note: '已處理完', dueDate: null });
+        assert.deepEqual(calls[1].payload, { status: 'observing', note: '已處理完', dueDate: expectedDate(7) }, '其餘沿用同一份說明');
+        assert.deepEqual([calls[0].context, calls[1].context], [{ batch: true }, { batch: true }], '兩次都交代呼叫端不出訊息');
+        assert.equal(loaded.env.closed, 1, '兩次都成功才關閉');
+        assert.equal(applied, 1);
+        const successes = loaded.env.toasts.filter(t => t.type === 'success');
+        assert.equal(successes.length, 1, '只出一則成功訊息');
+        assert.ok(successes[0].message.includes('2 台') && successes[0].message.includes('3 台'), successes[0].message);
+        assert.ok(successes[0].message.includes('已處理') && successes[0].message.includes('觀察中'), successes[0].message);
+    },
+
+    // 可再點一次取消；取消後與沒選一樣進入「其餘 N 台」第二步（既有行為），不先送其餘
+    async restChoiceCanBeToggledOffAndFallsBackToSecondStep() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const calls = [];
+        const m = openReply(loaded, {
+            picker: { load: src.load },
+            submit: async (payload, picked, context) => { calls.push({ kind: 'submit', context }); return { cases: 2 }; },
+            followUp: { remaining: async () => 3, submitRest: async () => { calls.push({ kind: 'rest' }); return {}; } }
+        });
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);
+        await tick(rowChecks(m.body)[1]);
+        m.pick('resolved');
+        const chipOf = status => all(byId(m.body, 'wo-reply-rest-status')).find(n => n.dataset.restStatus === status);
+        chipOf('observing').click();
+        chipOf('observing').click();
+        assert.deepEqual(all(byId(m.body, 'wo-reply-rest-status')).filter(n => n.classList?.contains('active')), [], '再點一次取消');
+        await m.send();
+        assert.deepEqual(calls.map(c => c.kind), ['submit'], '沒選其餘就只送第一個請求');
+        assert.equal(calls[0].context, undefined);
+        assert.equal(loaded.env.closed, 0, '彈窗留著進入第二步');
+        assert.equal(textOf(m.statusLabel), '其餘 3 台要一起設為…');
+    },
+
+    // 第二個請求失敗：彈窗不關、進入 rest 模式並保留其餘結論與日期，第一部分已更新畫面
+    async restRequestFailureKeepsModalInRestModeWithChoice() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        let applied = 0;
+        const m = openReply(loaded, {
+            picker: { load: src.load },
+            submit: async () => ({ cases: 2 }),
+            followUp: { remaining: async () => 3, submitRest: async () => { throw Object.assign(new Error('伺服器忙碌'), { status: 500 }); } },
+            onApplied: () => { applied++; }
+        });
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);
+        await tick(rowChecks(m.body)[1]);
+        m.pick('resolved');
+        m.write('說明');
+        all(byId(m.body, 'wo-reply-rest-status')).find(n => n.dataset.restStatus === 'observing').click();
+        const picked = expectedDate(14);
+        m.buttonByText('14 日').click();
+        await m.send();
+
+        assert.equal(loaded.env.closed, 0, '彈窗不關');
+        assert.equal(applied, 1, '第一部分已寫入，先更新畫面一次');
+        assert.equal(textOf(m.statusLabel), '其餘 3 台要一起設為…', '切到 rest 模式');
+        assert.deepEqual(m.active(), ['observing'], '保留使用者選的其餘結論');
+        assert.equal(m.due.value, picked, '保留日期');
+        assert.equal(m.note.value, '說明', '保留說明');
+        assert.ok(loaded.env.toasts.some(t => t.type === 'danger'), '顯示錯誤');
+        assert.equal(hidden(byId(m.body, 'wo-reply-rest')), true, '舊的其餘區收起');
+        // 直接再送一次：走既有 rest 模式的送出
+        assert.equal(m.submitBtn.disabled, false);
+    },
+
+    // 提示行（請選擇這次的結論）的槽在選結論前後、整單／部分／其餘三種模式都保留，底部按鈕不位移
+    async statusHintSlotKeepsItsLine() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, {
+            picker: { load: src.load },
+            submit: async () => ({ cases: 1 }),
+            followUp: { remaining: async () => 3, submitRest: async () => ({}) }
+        });
+        const slot = () => byId(m.body, 'wo-reply-status-required-slot');
+        const check = label => {
+            assert.ok(slot(), `${label}：槽存在`);
+            assert.ok(slot().classList.contains('lf-hint-slot'), `${label}：槽帶佔位類別`);
+            assert.equal(hidden(slot()), false, `${label}：槽沒被收成不佔位`);
+            assert.ok(slot().children.includes(m.required), `${label}：提示在槽內`);
+        };
+        check('整單未選結論');
+        m.pick('resolved');
+        check('整單已選結論');
+        m.toggle.click();
+        await settle();
+        check('部分模式');
+        await tick(rowChecks(m.body)[0]);
+        m.pick('resolved');
+        check('部分且已勾選');
+        await m.send();
+        assert.equal(textOf(m.statusLabel), '其餘 3 台要一起設為…');
+        check('其餘模式');
     },
 
     // 成員端點網址：主機名以重複的 hostName 參數送出並編碼

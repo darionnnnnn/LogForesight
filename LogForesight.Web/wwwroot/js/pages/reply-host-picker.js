@@ -8,6 +8,8 @@
  *
  * 搜尋規則：輸入框內容以換行、逗號、空白切開；一個名稱＝以該主機名篩選清單（伺服器端分頁），
  * 兩個以上＝貼上清單：逐批查詢、完全相符（不分大小寫）的主機自動勾選並列在清單，找不到的名稱逐一列出。
+ * 貼上（paste）後切出兩個以上名稱時自動執行同一個 apply（與按鈕、Enter 同一條路徑）；只有一個名稱不自動篩選，
+ * 避免貼上單一名稱或打字途中就觸發查詢。
  */
 
 import { createPageSelection, renderTable, renderPagination, button } from '../core/ui.js';
@@ -80,6 +82,8 @@ export function createHostPicker({ load, onChange }) {
     let mode = 'server';
     let filterNames = null;
     let pastedItems = [];
+    /** 這張單進行中成員的總台數：只在「不篩選」的查詢取得（篩選與貼上清單的 total 是相符台數），沒查過為 null */
+    let activeTotal = null;
     const seqGuard = createSeqGuard();
 
     const selection = createPageSelection({
@@ -115,12 +119,15 @@ export function createHostPicker({ load, onChange }) {
             return;
         }
         const seq = seqGuard.next();
+        const unfiltered = !filterNames;
         let data;
         try {
             data = await load({ page: target, pageSize: PAGE_SIZE, hostNames: filterNames });
         } catch {
             return;   // 錯誤提示已由共用請求層顯示；清單維持原樣
         }
+        // 不篩選的結果即使因連續操作被視為過時（清單不更新），進行中總台數仍然正確，照記
+        if (unfiltered) activeTotal = data.total ?? (data.items || []).length;
         if (!seqGuard.isCurrent(seq)) return;   // 連續操作時慢回來的舊結果不蓋掉新的
         items = data.items || [];
         total = data.total ?? items.length;
@@ -190,12 +197,21 @@ export function createHostPicker({ load, onChange }) {
         apply();
     });
 
+    // 貼上時輸入框的值要等事件之後才更新：延到下一個工作再讀；兩個以上名稱才自動套用
+    search.addEventListener('paste', () => {
+        setTimeout(() => {
+            if (parseHostNames(search.value).length >= 2) apply();
+        }, 0);
+    });
+
     return {
         element,
         selected: selection.selected,
         /** 第一次顯示面板時載入第一頁 */
         open: () => (items.length === 0 && mode === 'server' ? goto(1) : Promise.resolve()),
         selectedIds: () => [...selection.selected.keys()],
+        /** 進行中成員總台數（還沒載入過清單時為 null）：回覆彈窗用來算「其餘 N 台」 */
+        activeTotal: () => activeTotal,
         apply
     };
 }
