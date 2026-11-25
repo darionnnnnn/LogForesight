@@ -10,6 +10,7 @@ import {
 } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
+import { askWorkOrderChoice } from './availability-choice.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -228,6 +229,51 @@ async function notifyActiveWorkOrders(user, count, action) {
     });
 }
 
+/** 停用／暫停後要進交辦總覽批次改派的網址：該處理人、進行中，reassign=1 讓清單載入後先把他名下的單勾好 */
+function reassignUrl(user) {
+    const params = new URLSearchParams({ handlerId: String(user.userId), status: 'active', reassign: '1' });
+    return `${appUrl('/work-orders')}?${params}`;
+}
+
+/**
+ * 停用或暫停接單「之前」先看名下進行中的交辦單（L12）：有單就顯示張數與台數，讓管理者選
+ * 「一併改派」或「先不處理」（仍可停用）；取消＝不做這次變更。
+ * 回傳 'cancel'（不做）、'reassign'（做完後進批次改派）、'informed'（看過說明、先不處理）、
+ * 'silent'（沒有單，或查不到摘要——例如沒有檢視交辦的能力：沿用儲存後的提示）。
+ * 張數含暫停中的單；台數取處理人摘要的進行中台數（不含暫停單）。
+ */
+async function confirmBeforeAvailabilityChange(user, action) {
+    let summary = null;
+    try {
+        summary = await api.get(`/api/handlers/${user.userId}/work-orders/summary`, { silent: true });
+    } catch {
+        return 'silent';
+    }
+    const paused = Number(summary?.pausedWorkOrders) || 0;
+    const orders = (Number(summary?.activeWorkOrders) || 0) + paused;
+    if (orders <= 0) return 'silent';
+    const members = Number(summary?.activeMembers) || 0;
+    const pausedNote = paused > 0 ? `（其中 ${paused} 張暫停中，台數不含暫停單）` : '';
+    const choice = await askWorkOrderChoice({
+        title: `${action}前先確認交辦單`,
+        message: `${user.account} 名下還有 ${orders} 張進行中的交辦單、${members} 台${pausedNote}。\n` +
+            `${action}後這些單仍在他名下，不會自動轉走。\n` +
+            '「一併改派」：儲存後直接進交辦總覽，改派給其他處理人。「先不處理」：照常' + action + '，之後再處理。'
+    });
+    if (choice === 'reassign') return 'reassign';
+    return choice === 'skip' ? 'informed' : 'cancel';
+}
+
+/** 停用或暫停完成後的接續：一併改派＝進批次改派；看過說明就不再重複提示；沒看過才沿用原提示 */
+function continueAfterAvailabilityChange(choice, user, count, action) {
+    if (choice === 'reassign') {
+        location.href = reassignUrl(user);
+        return;
+    }
+    if (choice === 'informed') return;
+    notifyActiveWorkOrders(user, count, action);
+}
+
 function renderDispatchPausedToggle(user) {
     const wrap = document.createElement('div');
     wrap.className = 'form-check m-0';
@@ -248,11 +294,17 @@ function renderDispatchPausedToggle(user) {
     input.addEventListener('change', async () => {
         const next = input.checked;
         input.disabled = true;
+        const choice = next ? await confirmBeforeAvailabilityChange(user, '暫停接單') : 'silent';
+        if (choice === 'cancel') {
+            input.checked = !next;
+            input.disabled = false;
+            return;
+        }
         try {
             const result = await api.put(`/api/admin/users/${user.userId}/dispatch-paused`, { paused: next }, { silent: true });
             user.dispatchPaused = next;
             toast('已更新暫停接單設定');
-            if (next) notifyActiveWorkOrders(user, result?.activeWorkOrders, '暫停接單');
+            if (next) continueAfterAvailabilityChange(choice, user, result?.activeWorkOrders, '暫停接單');
         } catch (error) {
             input.checked = !next;
             toast(error.message, 'danger');
@@ -352,6 +404,12 @@ form.addEventListener('submit', async event => {
         return;
     }
 
+    // 停用前先看名下進行中的交辦單（L12）：取消＝這次儲存不做
+    const availabilityChoice = editingUser?.active && !active
+        ? await confirmBeforeAvailabilityChange(editingUser, '停用')
+        : 'silent';
+    if (availabilityChoice === 'cancel') return;
+
     const restore = withBusy(saveButton, '儲存中');
 
     try {
@@ -366,7 +424,7 @@ form.addEventListener('submit', async event => {
         await api.put(`/api/admin/users/${saved.userId}/groups`, { groupIds: selectedGroupIds });
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');
-        if (editingUser?.active && !active) notifyActiveWorkOrders(saved, saved.activeWorkOrders, '停用');
+        if (editingUser?.active && !active) continueAfterAvailabilityChange(availabilityChoice, saved, saved.activeWorkOrders, '停用');
         modal.hide();
         await guardLoad(listContainer, load);
     } catch {

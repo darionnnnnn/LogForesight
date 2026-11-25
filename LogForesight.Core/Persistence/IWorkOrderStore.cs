@@ -12,6 +12,13 @@ public interface IWorkOrderStore
 {
     WorkOrder? Get(long workOrderId);
 
+    /// <summary>
+    /// 一次取多張單（含已結案；不存在的編號不回）：批次改派預覽與套用用，查詢次數不隨張數增長。
+    /// 預設實作逐張 <see cref="Get"/>（測試替身）；EF 實作單句 IN 查詢。
+    /// </summary>
+    List<WorkOrder> GetMany(IReadOnlyCollection<long> workOrderIds) =>
+        workOrderIds.Distinct().Select(Get).OfType<WorkOrder>().ToList();
+
     /// <summary>某處理人對某問題的進行中交辦單（資料庫保證至多一張）</summary>
     WorkOrder? GetActiveFor(long handlerId, string source, int eventId);
 
