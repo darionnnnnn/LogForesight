@@ -1014,13 +1014,18 @@ public class WorkOrderCoordinator
         var closing = IssueHandlingStatuses.IsClosed(status);
 
         // 期限（P-1，與 IssueCaseCoordinator.SyncStatus 同一條規則，兩邊要一起改）：
-        // 處理中且請求沒帶日期＝保留成員原有的期限（回覆不清掉期限），帶了以新日期為準；
+        // 只有成員「目前狀態就是處理中」且請求是處理中、沒帶日期時，才保留成員原有的期限（回覆不清掉期限）；帶了以新日期為準。
+        // 目前是觀察中（存的是「觀察至」）或其他狀態切到處理中且沒帶日期＝沒有期限，不能把觀察至當期限帶回去而立刻逾期。
         // 觀察中存的是「觀察至」，語意不變（沒帶就是沒有）；結案類與 open 一律清空。
-        // 保留時每個成員的期限可能不同，逐日列的意圖只有單一期限值，所以依各成員原期限分組、逐組寫入。
+        // 保留時每個成員的期限可能不同，逐日列的意圖只有單一期限值，所以依各成員（保留的）原期限分組、逐組寫入。
+        // 分組必須在下面 member.ApplyStatus 改掉狀態之前算好。
+        var requestedDue = status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null;
         var preserving = status == IssueHandlingStatuses.InProgress && dueDate == null;
         var groups = preserving
-            ? members.GroupBy(m => m.DueDate).Select(g => (Due: g.Key, Members: g.ToList())).ToList()
-            : new List<(DateTime? Due, List<IssueCase> Members)> { (status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null, members) };
+            ? members
+                .GroupBy(m => m.Status == IssueHandlingStatuses.InProgress ? m.DueDate : null)
+                .Select(g => (Due: g.Key, Members: g.ToList())).ToList()
+            : new List<(DateTime? Due, List<IssueCase> Members)> { (requestedDue, members) };
 
         var result = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0);
         foreach (var (due, group) in groups)

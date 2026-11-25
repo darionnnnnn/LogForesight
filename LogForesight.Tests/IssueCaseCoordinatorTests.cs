@@ -189,6 +189,28 @@ public class IssueCaseCoordinatorTests
     }
 
     [Fact]
+    public void 同步_觀察中切回處理中未帶日期_期限為空_不沿用觀察至()
+    {
+        var trigger = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        var observeUntil = DateTime.Today.AddDays(-3);
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Observing, note: "觀察", dueDate: observeUntil, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Equal(observeUntil, _cases.GetOpen(Host, IssueKey)!.DueDate);
+
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.InProgress, note: "回來處理", dueDate: null, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        Assert.Null(_cases.GetOpen(Host, IssueKey)!.DueDate);
+        Assert.Null(_issueHandlings.GetForDay(Host, trigger).Single().DueDate);
+    }
+
+    [Fact]
     public void 同步_觀察中未帶日期_語意不變_不沿用原期限()
     {
         var trigger = DateTime.Today;

@@ -270,8 +270,12 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
         _items.Where(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
                           h.Date.Date == date.Date).ToList();
 
+    /// <summary>測試掛鉤：每次 GetMany 之前呼叫，用來模擬「計畫之後、協調器寫入之前」資料被別人改掉的競態</summary>
+    public Action? BeforeGetMany { get; set; }
+
     public List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to)
     {
+        BeforeGetMany?.Invoke();
         var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return _items.Where(h => names.Contains(h.HostName) &&
                                  h.Date.Date >= from.Date && h.Date.Date <= to.Date).ToList();

@@ -995,4 +995,18 @@ public class WorkOrderCoordinatorTests
         Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
         Assert.Null(w.Row("H1", D2)!.DueDate);
     }
+
+    [Fact]
+    public void Reply_觀察中切回處理中未帶日期_期限為空_不沿用觀察至()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(null, null);
+        var observeUntil = new DateTime(2026, 9, 1); // 已過的觀察至
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Observing, "觀察", observeUntil, Actor(T0.AddHours(2)));
+        Assert.Equal(observeUntil, w.Cases.Get(h1.CaseId)!.DueDate);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "回來處理", null, Actor(T0.AddHours(3)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
 }

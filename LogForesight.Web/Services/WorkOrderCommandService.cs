@@ -186,6 +186,8 @@ public class WorkOrderCommandService
         var overlong = new List<WorkOrderOverlongDto>();
         var daySyncPending = 0;
         var closedByCoordinator = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // 協調器逐成員略過的已結案（主機＋簽章）：同一台的其他成員仍可能寫入，恢復判定要逐成員，不能整台移除
+        var closedMembers = new List<(string HostName, string IssueKey)>();
         // 實際寫入的（主機, 簽章）：不再打擾的成員被重開後，只有真的建了案件的才恢復
         var written = new HashSet<(string HostName, string IssueKey)>(HostIssueSignatureKeyComparer.Instance);
         foreach (var allocation in plan.Allocations)
@@ -204,7 +206,11 @@ public class WorkOrderCommandService
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
             overlong.AddRange(OverlongDtos(outcome));
-            foreach (var closed in outcome.SkippedClosed) closedByCoordinator.Add(HostNameKey.Of(closed.HostName));
+            foreach (var closed in outcome.SkippedClosed)
+            {
+                closedByCoordinator.Add(HostNameKey.Of(closed.HostName));
+                closedMembers.Add((HostNameKey.Of(closed.HostName), closed.IssueKey));
+            }
             if (outcome.WorkOrderId == 0) continue;
             foreach (var member in allocation.Hosts.SelectMany(h => h.Effective))
                 written.Add((HostNameKey.Of(member.HostName), member.IssueKey));
@@ -242,7 +248,7 @@ public class WorkOrderCommandService
         }
 
         foreach (var conflict in raceSkipped) written.Remove((HostNameKey.Of(conflict.HostName), conflict.IssueKey));
-        foreach (var closed in closedByCoordinator) written.RemoveWhere(w => w.HostName == closed);
+        foreach (var closed in closedMembers) written.Remove(closed);
         RestoreDismissed(plan, written);
 
         var handlerNames = plan.Allocations.Select(a => NameOf(a.Handler)).ToList();

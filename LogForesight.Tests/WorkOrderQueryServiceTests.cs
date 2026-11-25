@@ -517,14 +517,14 @@ public class WorkOrderQueryServiceTests
         var visible = _hosts.FindByName("H2")!.HostId;
         var restricted = Service(As(_stranger.UserId, Capability.Assign), visible);
 
-        // 名稱指到看不見的 H1：什麼都不回，隱藏數仍以「這個名稱篩選」的全貌計（H1 這一台）
+        // 名稱指到看不見的 H1：什麼都不回，隱藏數一律 0——回報數字會讓人探測不可見主機是否在單內
         var hiddenOnly = restricted.Members(id, "all", 1, 50, new[] { "H1" });
         Assert.Empty(hiddenOnly.Items);
-        Assert.Equal(1, hiddenOnly.HiddenMemberCount);
+        Assert.Equal(0, hiddenOnly.HiddenMemberCount);
         // 名稱含可見與不可見：只回可見的那台
         var mixed = restricted.Members(id, "all", 1, 50, new[] { "H1", "H2" });
         Assert.Equal(new[] { "H2" }, mixed.Items.Select(i => i.HostName));
-        Assert.Equal(1, mixed.HiddenMemberCount);
+        Assert.Equal(0, mixed.HiddenMemberCount);
         // 不帶名稱：與原行為一致
         var plain = restricted.Members(id, "all", 1, 50);
         Assert.Equal(new[] { "H2" }, plain.Items.Select(i => i.HostName));

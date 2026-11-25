@@ -435,12 +435,14 @@ public class WorkOrderQueryService
 
         var relatedOrdersByCase = RelatedPrtgOrders(order, items);
 
+        // 有主機名篩選時隱藏數一律 0：以「篩選後未過濾數 − 可見數」回報，受限檢視者可拿它探測某台看不到的主機是否在單內。
+        // 沒有名稱篩選時才回報（與單的整體成員數對得上，不指到特定主機）。
         var hidden = 0;
-        if (filtered)
+        if (filtered && nameKeys == null)
         {
             var unfiltered = _cases.QueryMembers(new WorkOrderMemberQuery
             {
-                WorkOrderId = id, Status = status, HostNameKeys = nameKeys, Page = 1, PageSize = 1
+                WorkOrderId = id, Status = status, HostNameKeys = null, Page = 1, PageSize = 1
             }).Total;
             hidden = unfiltered - total;
         }
@@ -886,6 +888,10 @@ public class WorkOrderQueryService
         var issues = all.Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
         // 範圍從最早的成員建立日往前一個月到今天：只要最近一次，範圍太窄會漏掉建單前就開始出現的問題
         var from = all.Min(c => c.CreatedAt).Date.AddDays(-30);
+        // 不套用「可見嚴重度」：可見嚴重度是全站顯示政策（系統設定，不分檢視者），管的是「哪些問題會被列進問題清單」；
+        // 交辦單是已經建立的案件，名稱、成員數、期限與處理優先序（P-1）本來就不受它限制，嚴重度欄與處理優先序必須同一個來源，
+        // 若這裡把被隱藏的等級視為推導不到，清單會顯示「—」卻仍照該等級排序／預設期限。建單當下的母體已由 ResolveMembers 套用可見嚴重度。
+        // 也不依檢視者而異，所以不會把 A 看得到的東西端給 B。
         var occurrences = _aggregates.LatestOccurrences(IssueExclusion.None, issues, from, _clock.LocalToday(), hostIds);
         var byHost = new Dictionary<long, Dictionary<string, HostIssueOccurrence>>();
         foreach (var occ in occurrences)

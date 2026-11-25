@@ -480,6 +480,10 @@ public class GroupAdminService
         var userGroup = _userGroups.Get(userGroupId)
                         ?? throw DomainException.NotFound("找不到這個使用者群組。");
 
+        // 兩者都沒提供（null，不是空陣列）＝舊請求形狀（例如整份 hostGroupIds），不能靜默當成「不變」回成功
+        if (grant == null && revoke == null)
+            throw DomainException.Validation("請求格式已更新，請改用 grant／revoke 指定要新增或收回的主機群組。");
+
         var allHostGroups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var grantIds = (grant ?? Array.Empty<long>()).Distinct().ToList();
         var revokeIds = (revoke ?? Array.Empty<long>()).Distinct().ToList();

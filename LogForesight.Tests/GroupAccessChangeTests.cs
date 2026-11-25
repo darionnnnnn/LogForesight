@@ -93,6 +93,23 @@ public sealed class GroupAccessChangeTests : IDisposable
     }
 
     [Fact]
+    public void 舊請求形狀_grant與revoke都沒提供_驗證錯誤且資料不變()
+    {
+        // 舊格式 { hostGroupIds: [...] } 反序列化後 Grant／Revoke 都是 null
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<LogForesight.Web.Models.Dto.SetAccessRequest>(
+            "{\"hostGroupIds\":[1,2]}", new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+        Assert.Null(legacy.Grant);
+        Assert.Null(legacy.Revoke);
+
+        var ex = Assert.Throws<DomainException>(() => { _service.ChangeAccess(_dept, legacy.Grant, legacy.Revoke); });
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("grant", ex.Message);
+        Assert.Equal(new[] { _hg[19] }.ToHashSet(), Granted());
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
     public void 空請求_回目前清單且不寫稽核()
     {
         var result = _service.ChangeAccess(_dept, Array.Empty<long>(), Array.Empty<long>());

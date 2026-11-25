@@ -621,7 +621,7 @@ public class WorkOrderMemberPageDto
     public List<WorkOrderMemberDto> Items { get; set; } = new();
     public int Total { get; set; }
 
-    /// <summary>因檢視者可見範圍而沒列出的成員數（沒過濾時為 0）</summary>
+    /// <summary>因檢視者可見範圍而沒列出的成員數（沒過濾時為 0；帶主機名篩選時一律 0，避免探測不可見主機）</summary>
     public int HiddenMemberCount { get; set; }
 
     public int Page { get; set; }

@@ -155,6 +155,58 @@ public class WorkOrderClosedMemberTests : IDisposable
     }
 
     [Fact]
+    public void 重新交辦_同一台兩個成員_一個被協調器以已結案略過_另一個不再打擾成員仍恢復()
+    {
+        var host = TestData.AddHost(W.Hosts, "HOST-TWO");
+        var diskA = Disk();                                       // 計畫時是未處理，協調器寫入前被別人結案
+        var diskB = Disk();
+        diskB.EntryType = LogEntryType.Warning;                   // 同問題另一個簽章：不再打擾
+        W.RecordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Yesterday, RiskLevel = "高",
+            Headline = host.HostName, TopIssues = new List<LogIssueSignature> { diskA, diskB }
+        });
+        var keyA = KeyOf(diskA);
+        var keyB = KeyOf(diskB);
+        W.IssueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = Yesterday, IssueKey = keyB, Status = IssueHandlingStatuses.WontFix,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now.AddHours(-2)
+        });
+        var blocked = new IssueCase
+        {
+            CaseId = Guid.NewGuid().ToString("n"), HostName = host.HostName, IssueKey = keyB,
+            Status = IssueHandlingStatuses.WontFix, HandlerId = 77, CreatedAt = DateTime.Today.AddDays(-9),
+            ClosedAt = DateTime.Today.AddDays(-8), FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday
+        };
+        W.CaseStore.Save(blocked);
+        var handler = W.AddHandler();
+        var request = Single(handler.UserId);
+        request.ReopenHostIds = new List<long> { host.HostId };
+
+        var raced = false;
+        W.IssueHandlingStore.BeforeGetMany = () =>
+        {
+            // 只在協調器預判可寫入日（CasesWithoutWritableDays）時動手，計畫階段的讀取不受影響
+            if (raced || !new System.Diagnostics.StackTrace().ToString().Contains("CasesWithoutWritableDays")) return;
+            raced = true;
+            W.IssueHandlingStore.Save(new IssueHandling
+            {
+                HostName = host.HostName, Date = Yesterday, IssueKey = keyA, Status = IssueHandlingStatuses.Resolved,
+                ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+            });
+        };
+
+        var result = W.Service.Create(request);
+
+        Assert.True(raced);
+        Assert.Equal(1, Assert.Single(result.Orders).NewCases);
+        Assert.Null(W.CaseStore.GetOpen(host.HostName, keyA));
+        Assert.NotNull(W.CaseStore.GetOpen(host.HostName, keyB));
+        Assert.False(W.CaseStore.Get(blocked.CaseId)!.BlocksRedispatch);
+    }
+
+    [Fact]
     public void 協調器保底_略過清單帶出已結案成員_全部都是已結案時不建單()
     {
         W.AddHost("HOST-CLOSED");
