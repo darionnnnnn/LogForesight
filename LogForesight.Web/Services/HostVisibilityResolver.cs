@@ -52,6 +52,18 @@ internal static class HostVisibilityResolver
             .Where(g => g.Active && user.GroupIds.Contains(g.GroupId))
             .ToList();
 
+        return GroupVisibleHostIds(hosts, activeGroups, access, viewAll);
+    }
+
+    /// <summary>
+    /// 一組「啟用中群組」看得到的主機（群組授權那一條路徑）。<see cref="GetGroupVisibleHostIds(PrtgHostSnapshot,IUserStore,IUserGroupStore,IGroupAccessStore,long)"/>
+    /// 與使用者編輯視窗的即時摘要（尚未儲存的勾選）共用這一份，規則只有一個。
+    /// </summary>
+    /// <param name="activeGroups">呼叫端已過濾為啟用中的群組</param>
+    /// <param name="viewAll">null＝由群組角色即時算；非 null＝由呼叫端提供（目前登入者以登入 cookie 的 claim 為準）</param>
+    public static IReadOnlySet<long> GroupVisibleHostIds(
+        PrtgHostSnapshot hosts, IReadOnlyList<UserGroup> activeGroups, IGroupAccessStore access, bool? viewAll = null)
+    {
         var allHosts = hosts.Hosts.Where(h => h.Active).ToList();
 
         if (viewAll ?? RoleCapabilityMap.For(activeGroups.Select(g => g.Role)).Contains(Capability.ViewAll))

@@ -18,6 +18,7 @@ public class GroupAdminService
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly DispatchReadinessService? _readiness;
 
     public GroupAdminService(
         IUserGroupStore userGroups,
@@ -26,8 +27,10 @@ public class GroupAdminService
         IUserStore users,
         IHostStore hosts,
         IAuditService audit,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion,
+        DispatchReadinessService? readiness = null)
     {
+        _readiness = readiness;
         _permissionVersion = permissionVersion;
         _userGroups = userGroups;
         _hostGroups = hostGroups;
@@ -149,6 +152,7 @@ public class GroupAdminService
     public List<HostGroupDto> GetHostGroups()
     {
         var hosts = _hosts.GetAll();
+        var sights = _readiness?.GetHostGroupSights().ToDictionary(s => s.GroupId);
 
         return _hostGroups.GetAll()
             .OrderBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
@@ -157,7 +161,8 @@ public class GroupAdminService
                 GroupId = g.GroupId,
                 GroupName = g.GroupName,
                 Active = g.Active,
-                HostCount = hosts.Count(h => h.GroupIds.Contains(g.GroupId))
+                HostCount = hosts.Count(h => h.GroupIds.Contains(g.GroupId)),
+                VisiblePoolGroups = sights != null && sights.TryGetValue(g.GroupId, out var sight) && sight.Evaluated ? sight.PoolGroups : null
             })
             .ToList();
     }

@@ -6,7 +6,7 @@
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, renderError, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad, renderPagination } from '../core/ui.js';
 import { createSeqGuard } from '../core/async-guards.js';
-import { formatNumber } from '../core/format.js';
+import { formatNumber, statusBadge } from '../core/format.js';
 import { roleText, statusNote } from '../core/elements.js';
 import { compareText } from '../core/collation.js';
 
@@ -147,12 +147,35 @@ function renderHostGroups() {
         columns: [
             { title: '群組名稱', render: g => hostGroupNameCell(g) },
             { title: '主機數', className: 'text-end', render: g => String(g.hostCount) },
+            { title: '看得到的派工池群組', className: 'lf-col-nowrap', render: g => visiblePoolGroupsCell(g) },
             { title: '狀態', render: g => activeBadge(g.active) },
             { title: '', className: 'text-end', render: g => groupActions('host', g) }
         ],
         rows: hostGroups,
         empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或按「新增群組」建立。' }
     });
+}
+
+/**
+ * 「看得到的派工池群組」欄（第 81 輪批次 U，F17-3）：數量來自後端（visiblePoolGroups）。
+ * 0＝沒有任何派工池群組看得到，群組內的主機不會被自動派工：標警示並附「去授權」（切到授權矩陣頁籤）。
+ * null＝不適用（群組停用、沒有啟用主機，或派工池沒有可接單的成員），顯示「—」。
+ */
+function visiblePoolGroupsCell(group) {
+    const count = group.visiblePoolGroups;
+    if (count === null || count === undefined) {
+        const none = roleText('lf-text-meta', '—');
+        none.title = '群組停用、沒有啟用的主機，或派工池沒有可接單的成員，無從判定';
+        return none;
+    }
+    if (count > 0) return document.createTextNode(`${count} 個`);
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-2';
+    const link = document.createElement('a');
+    link.href = '#access';
+    link.textContent = '去授權';
+    wrap.append(statusBadge('0 個，不會被自動派工', 'warning'), link);
+    return wrap;
 }
 
 /** 群組名稱是列的主體（純文字）；開成員視窗改由列尾的「成員」按鈕，兩千台規模下逐台編輯不現實 */

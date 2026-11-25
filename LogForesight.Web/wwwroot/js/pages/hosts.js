@@ -865,6 +865,19 @@ document.getElementById('btn-clear-selection').addEventListener('click', () => {
     render();
 });
 
+/**
+ * 批次設定群組後的提示（第 81 輪批次 U，F17-3）：設定的目標群組裡，沒有任何派工池群組看得到的那幾個。
+ * 這些群組的主機不會被自動派工，所以要當場講，並附連到授權矩陣的「去授權」。沒有這種群組回 null。
+ */
+export function noPoolGroupsNotice(noPoolGroups) {
+    const names = (noPoolGroups ?? []).map(g => g.groupName);
+    if (names.length === 0) return null;
+    return {
+        message: `主機群組「${names.join('、')}」沒有任何派工池群組看得到，裡面的主機不會被自動派工。`,
+        link: { href: appUrl('/admin/groups#access'), text: '去授權' }
+    };
+}
+
 document.getElementById('batch-groups-form').addEventListener('submit', async event => {
     event.preventDefault();
 
@@ -884,6 +897,10 @@ document.getElementById('batch-groups-form').addEventListener('submit', async ev
         toast(result.skipped.length > 0
             ? `已更新 ${result.updatedCount} 台，略過 ${result.skipped.length} 台（已併入其他主機）`
             : `已更新 ${result.updatedCount} 台`, 'success');
+
+        // F17-3：目標群組沒有任何派工池群組看得到時，當場提醒並附「去授權」
+        const notice = noPoolGroupsNotice(result.noPoolGroups);
+        if (notice) toast(notice.message, 'warning', 12000, { link: notice.link });
 
         selection.clear();
         batchGroupsModal.hide();

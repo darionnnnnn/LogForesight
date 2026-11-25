@@ -240,6 +240,12 @@ public class HostGroupDto
     public string GroupName { get; set; } = string.Empty;
     public bool Active { get; set; }
     public int HostCount { get; set; }
+
+    /// <summary>
+    /// 看得到這個主機群組的啟用派工池群組數（<c>DispatchReadinessService</c> 的判定）。0＝沒有派工池群組看得到，群組內的主機不會被自動派工；
+    /// null＝不適用：群組停用、沒有啟用主機（空群組不算），或派工池沒有可接單的成員而無從比對。
+    /// </summary>
+    public int? VisiblePoolGroups { get; set; }
 }
 
 public class SaveHostGroupRequest
@@ -481,6 +487,18 @@ public class HostGroupsBatchResultDto
 {
     public int UpdatedCount { get; set; }
     public List<SkippedHostDto> Skipped { get; set; } = new();
+
+    /// <summary>
+    /// 這次設定的目標群組中，沒有任何派工池群組看得到的（僅在有主機被更新時評估）：
+    /// 這些群組的主機不會被自動派工，畫面提示並附「去授權」。群組停用、空群組、派工池沒有可接單成員時不列。
+    /// </summary>
+    public List<HostGroupNoPoolDto> NoPoolGroups { get; set; } = new();
+}
+
+public class HostGroupNoPoolDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
 }
 
 /// <summary>批次設定分級的結果（回饋十九輪批次G，形狀同 HostGroupsBatchResultDto）</summary>

@@ -135,8 +135,10 @@ public class HostAdminService
         ISystemSettingsStore settings,
         PermissionVersionStamp permissionVersion,
         PrtgSnapshotHostedService snapshotService,
-        IPrtgAddressResolver addressResolver)
+        IPrtgAddressResolver addressResolver,
+        DispatchReadinessService? readiness = null)
     {
+        _readiness = readiness;
         _permissionVersion = permissionVersion;
         _addressResolver = addressResolver;
         _settings = settings;
@@ -154,6 +156,7 @@ public class HostAdminService
 
     private readonly IPrtgHostMapRefresher _mapRefresher;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly DispatchReadinessService? _readiness;
     private readonly PrtgSnapshotHostedService _snapshotService;
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
@@ -498,10 +501,19 @@ public class HostAdminService
                 });
         }
 
+        // 設定完之後才評估（群組內剛加入的主機也要算進去）；沒有更新任何主機就沒有新的影響，不提示
+        var noPool = result.Updated.Count > 0 && _readiness != null
+            ? _readiness.GetHostGroupSights()
+                .Where(s => requestedGroupIds.Contains(s.GroupId) && s.Evaluated && s.PoolGroups == 0)
+                .Select(s => new HostGroupNoPoolDto { GroupId = s.GroupId, GroupName = s.GroupName })
+                .ToList()
+            : new List<HostGroupNoPoolDto>();
+
         return new HostGroupsBatchResultDto
         {
             UpdatedCount = result.Updated.Count,
-            Skipped = result.Skipped.Select(h => new SkippedHostDto { HostName = h.HostName, Reason = "已併入其他主機" }).ToList()
+            Skipped = result.Skipped.Select(h => new SkippedHostDto { HostName = h.HostName, Reason = "已併入其他主機" }).ToList(),
+            NoPoolGroups = noPool
         };
     }
 
