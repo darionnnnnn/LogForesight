@@ -75,6 +75,50 @@ async function prepareAssign(u, issueRowText, toAccount, riskLevels = '高,中,�
         `const t = __mu.modalText() || ''; const i = t.indexOf('將交辦'); return i >= 0 ? t.slice(i, i + 160) : t.slice(0, 200);`);
 }
 
+/**
+ * MU13 用：在 admin 看得到的「問題→主機」清單中，找一個 handler 也能處理、該日這個問題尚無案件也沒標過狀態的（主機, 日期）。
+ * 回傳 { hostId, hostName, date, dates, issueKey }；找不到回 null。
+ */
+async function findHostDayForIssue(admin, handler, source, eventId) {
+    const q = `source=${encodeURIComponent(source)}&eventId=${eventId}&riskLevels=${encodeURIComponent('高,中,低')}&from=${today(-7)}&to=${today(-1)}&page=1&pageSize=50`;
+    const d = await get(admin, `/api/records/issue-hosts?${q}`);
+    for (const row of d?.items || []) {
+        for (const date of (row.dates || []).slice(0, 3)) {
+            const det = await get(handler, `/api/records/${row.hostId}/${date}`);
+            const it = det?.topIssues?.find(i => i.source === source && i.eventId === eventId);
+            // 只挑「真的待處理」的：沒有標記時，嚴重度預設已處理的問題（isDefaultUnhandled 為 false）面板上已是已結案，標不了
+            if (det?.canHandle && it && !it.caseStatus && it.isDefaultUnhandled && (!it.handlingStatus || it.handlingStatus === 'open'))
+                return { hostId: row.hostId, hostName: row.hostName, date, dates: row.dates || [date], issueKey: it.issueKey };
+        }
+    }
+    return null;
+}
+
+/** MU13 查核：（主機, 問題）的案件分布，以及逐日列與案件狀態是否對得上 */
+async function hostIssueState(u, ctx, source, eventId) {
+    const list = await get(u, `/api/work-orders?status=all&source=${encodeURIComponent(source)}&eventId=${eventId}&page=1&pageSize=100`);
+    let active = 0, closed = 0, cancelled = 0; const parts = [];
+    for (const o of list?.items || []) {
+        const m = await get(u, `/api/work-orders/${o.workOrderId}/members?status=all&page=1&pageSize=50&hostName=${encodeURIComponent(ctx.hostName)}`);
+        for (const x of (m?.items || []).filter(i => i.hostId === ctx.hostId && i.issueKey === ctx.issueKey)) {
+            const kind = x.cancelled ? '已取消' : x.closedAt ? '已結案' : '進行中';
+            if (x.cancelled) cancelled++; else if (x.closedAt) closed++; else active++;
+            parts.push(`單 #${o.workOrderId}（${o.handlerName}）案件 ${x.caseId}：${kind}／${x.status}${x.daySyncPending ? '／逐日同步待補' : ''}`);
+        }
+    }
+    return { active, closed, cancelled, parts };
+}
+
+async function hostIssueDays(u, ctx, source, eventId) {
+    const rows = [];
+    for (const date of [...new Set([ctx.date, ...ctx.dates])]) {
+        const det = await get(u, `/api/records/${ctx.hostId}/${date}`);
+        const it = det?.topIssues?.find(i => i.source === source && i.eventId === eventId);
+        rows.push({ date, handling: it?.handlingStatus || '（無標記）', caseStatus: it?.caseStatus || '（無案件）', handler: it?.caseHandlerAccount || '' });
+    }
+    return rows;
+}
+
 async function serverCheck(run, u, label, fn) { try { run.note(label, await fn()); } catch (e) { run.note(label, '（查核失敗：' + e.message + '）'); } }
 
 // ── 情境 ────────────────────────────────────────────────────────────────────
@@ -410,6 +454,140 @@ export const scenarios = [
             return `共 ${d.total} 張；同人同問題多張：${dup.join('；') || '無'}`;
         });
         await serverCheck(run, A, '最終：負載看板', async () => { const lb = await get(A, '/api/work-orders/load-board'); return (lb.rows || lb).map(r => `${r.name} ${r.activeWorkOrders} 張 ${r.activeMembers} 台`).join('；'); });
+    }
+}
+,{
+    id: 'MU13', title: '同一問題：處理人在風險日標記與管理員交辦同時',
+    what: 'h-chen 在某台主機的風險日詳情勾選 Application Error (1000) 並選好「已處理」與說明（不送出）；a-admin 在問題查詢依問題視角對同一問題開交辦彈窗、選 h-lin（不送出）；兩人同一瞬間送出',
+    async run(run) {
+        const [h, a] = await Promise.all([run.user('h-chen'), run.user('a-admin')]);
+        // 依序試幾個問題，用第一個找得到「真的待處理、尚無案件也沒標過」主機日的（低嚴重度的問題預設已處理，標不了）
+        const CANDIDATES = [['Application Error', 1000], ['Service Control Manager', 7034], ['NETLOGON', 5719], ['Microsoft-Windows-WHEA-Logger', 17]];
+        let SRC = null, EID = null, LABEL = null, ctx = null;
+        for (const [src, eid] of CANDIDATES) {
+            ctx = await findHostDayForIssue(a, h, src, eid);
+            if (ctx) { SRC = src; EID = eid; LABEL = `${src} (${eid})`; break; }
+        }
+        if (!ctx) { run.note('前置不足', `候選問題中找不到 h-chen 能處理、尚無案件也沒標過狀態的（主機, 日期），略過`); return; }
+        run.note('選用的主機日', `${ctx.hostName}（#${ctx.hostId}）${ctx.date}；問題 ${LABEL}；issueKey=${ctx.issueKey}；此主機出現該問題的日期：${ctx.dates.join('、')}`);
+        const before = await hostIssueState(a, ctx, SRC, EID);
+        run.note('送出前（主機, 問題）的案件', before.parts.join('；') || '沒有案件');
+
+        const prepareMark = u => u.step('開風險日、勾問題、選結論', `開啟 /records/${ctx.hostId}/${ctx.date} → 勾選 ${LABEL} → 處理狀態選「已處理」→ 填說明（不送出）`, async () => {
+            await u.goto(`/records/${ctx.hostId}/${ctx.date}`);
+            await u.inPage(`const key = ${J(ctx.issueKey)};
+                const box = await __mu.waitFor(() => [...document.querySelectorAll('main tbody input[type=checkbox]')].find(c => c.dataset.issueKey === key && c.offsetParent && !c.disabled));
+                box.click();
+                await __mu.waitFor(() => document.querySelector('.lf-detail-side__body .lf-handling__chips button'));
+                __mu.pickStatus('.lf-detail-side__body', '已處理');
+                __mu.typeIn('.lf-detail-side__body', 'MU13：h-chen 已處理', '#handling-note');`);
+        }, `return __mu.text('.lf-detail-side__body', 260);`);
+
+        await run.together(() => prepareMark(h), () => prepareAssign(a, LABEL, 'h-lin'));
+        await run.together(
+            () => h.step('h-chen 送出標記', '按「套用到 1 個問題」', () => h.inPage(`__mu.click('套用到', '.lf-detail-side__body');`),
+                `return __mu.text('.lf-detail-side__body', 260);`),
+            () => submitModal(a, '建立交辦單', 'a-admin 建立交辦單（→h-lin）'));
+
+        await serverCheck(run, a, '（主機, 問題）送出後的案件', async () => {
+            const r = await hostIssueState(a, ctx, SRC, EID);
+            const flags = [];
+            if (r.active > 1) flags.push('⚠ 同一（主機, 問題）有多件進行中案件');
+            return `進行中 ${r.active}、已結案 ${r.closed}、已取消 ${r.cancelled}；${r.parts.join('；') || '沒有案件'}${flags.length ? '；' + flags.join('；') : ''}`;
+        });
+        await serverCheck(run, a, '逐日列與案件是否對得上', async () => {
+            const days = await hostIssueDays(a, ctx, SRC, EID);
+            const flags = days.filter(d => d.caseStatus !== '（無案件）' && /^(（無標記）|open)$/.test(d.handling)).map(d => `⚠ ${d.date} 案件 ${d.caseStatus} 卻沒有對應的逐日標記`);
+            return days.map(d => `${d.date}：標記 ${d.handling}／案件 ${d.caseStatus}${d.handler ? `（${d.handler}）` : ''}`).join('；') + (flags.length ? '；' + flags.join('；') : '；沒有「處理中卻沒有逐日列」的日子');
+        });
+        await h.step('h-chen 重新整理風險日', `開啟 /records/${ctx.hostId}/${ctx.date}`, () => h.goto(`/records/${ctx.hostId}/${ctx.date}`),
+            `const r = document.querySelector('main tbody input[data-issue-key=${J(ctx.issueKey)}]')?.closest('tr'); return r ? r.innerText.replace(/\\s+/g, ' ').slice(0, 200) : '（找不到該問題列）';`);
+    }
+},
+{
+    id: 'MU16', title: '兩位管理員同時編輯同一條規則',
+    what: 'a-admin 改規則「說明」、demo-admin 改同一條規則的「白話說明」，各自開編輯視窗改好後同一瞬間按儲存；兩人都具 Maintain',
+    async run(run) {
+        const [a, b] = await Promise.all([run.user('a-admin'), run.user('demo-admin')]);
+        // 選一條 Windows、啟用中、Id 不是別條 Id 的子字串（清單搜尋才點得到唯一一列），且目前內容通得過驗證的規則
+        const rules = await get(a, '/api/rules') || [];
+        const cands = rules.filter(r => r.platform === 'windows' && r.enabled && !r.retiredNote && !rules.some(o => o !== r && o.id.toLowerCase().includes(r.id.toLowerCase())));
+        let pick = null;
+        for (const r of cands.slice(0, 15)) { const v = await api(a, 'POST', '/api/rules/validate', r); if (v.body?.data?.isValid) { pick = r; break; } }
+        if (!pick) { run.note('前置不足', '找不到可編輯且通過驗證的 Windows 規則，略過'); return; }
+        const original = { description: pick.description, plain: pick.plainExplanation || '' };
+        const MARK_A = ' [MU16-A]', MARK_B = 'MU16-B 同時測試的白話說明';
+        run.note('選用的規則', `${pick.id}；說明＝「${original.description}」；白話說明＝「${original.plain || '（空）'}」`);
+        const read = async () => { const r = (await get(a, '/api/rules')).find(x => x.id === pick.id); return r; };
+
+        const open = u => u.step('開規則維護、開編輯視窗', `開啟 /admin/rules → 搜尋 ${pick.id} → 按該列「編輯」`, async () => {
+            await u.goto('/admin/rules');
+            await u.inPage(`await __mu.waitFor(() => document.getElementById('rule-search'));
+                __mu.setValue(document.getElementById('rule-search'), ${J(pick.id)});
+                const row = await __mu.waitFor(() => [...document.querySelectorAll('#rule-list tbody tr')].filter(r => r.offsetParent).find(r => [...r.querySelectorAll('.lf-text-data')].some(e => e.innerText.trim() === ${J(pick.id)})));
+                const btn = row.querySelector('button[title="編輯"]'); if (!btn) throw new Error('找不到編輯鈕'); btn.click();
+                await __mu.waitFor(() => __mu.modal() && document.getElementById('rule-id').value === ${J(pick.id)});`);
+        }, `return __mu.modalText();`);
+        await run.together(() => open(a), () => open(b));
+
+        await run.together(
+            () => a.step('a-admin 改說明', `說明欄尾端加「${MARK_A}」`, () => a.inPage(`const el = document.getElementById('rule-description'); __mu.setValue(el, el.value + ${J(MARK_A)});`)),
+            () => b.step('demo-admin 改白話說明', `白話說明改為「${MARK_B}」`, () => b.inPage(`__mu.setValue(document.getElementById('rule-plain'), ${J(MARK_B)});`)));
+        const save = u => u.step(`${u.account} 儲存`, '按「儲存」', () => u.inPage(`__mu.click('儲存', '.modal.show'); await new Promise(r => setTimeout(r, 1500));`),
+            `return (__mu.modalText() || '（視窗已關）').slice(0, 200);`);
+        await run.together(() => save(a), () => save(b));
+        const after = await read();
+        run.note('同時儲存後的規則內容（只記錄，不斷言）',
+            `說明＝「${after.description}」（${after.description.includes(MARK_A.trim()) ? '含 A 的修改' : '沒有 A 的修改'}）；白話說明＝「${after.plainExplanation || '（空）'}」（${(after.plainExplanation || '').includes(MARK_B) ? '含 B 的修改' : '沒有 B 的修改'}）`);
+        for (const u of [a, b]) await u.step(`${u.account} 儲存後的畫面`, '不操作', async () => { }, `return (__mu.modalText() || '（視窗已關）') + '｜' + [...document.querySelectorAll('.alert, [role=alert], [role=status]')].filter(e => e.offsetParent).map(e => e.innerText.trim()).filter(Boolean).join(' / ').slice(0, 200);`);
+        await serverCheck(run, a, '稽核紀錄（該規則最近的異動）', async () => {
+            const d = await get(a, `/api/audit?page=1&pageSize=10&targetKind=rule`);
+            return (d?.items || []).filter(x => x.targetId === pick.id).slice(0, 4).map(x => `${x.action}：${x.account} ${x.summary}`).join(' ｜ ') || '（讀不到或沒有紀錄）';
+        });
+        try { await api(a, 'POST', '/api/rules', { ...after, description: original.description, plainExplanation: original.plain }); run.note('已還原規則', pick.id); } catch (e) { run.note('還原規則失敗', e.message); }
+    }
+},
+{
+    id: 'MU17', title: '兩位管理員同時編輯同一位使用者',
+    what: 'a-admin 改 v-viewer 的顯示名稱、demo-admin 在同一位使用者勾選一個多出來的群組，各自開編輯視窗改好後同一瞬間按儲存（畫面儲存時會依序送出「基本資料」與「群組」兩個請求）',
+    async run(run) {
+        const [a, b] = await Promise.all([run.user('a-admin'), run.user('demo-admin')]);
+        const TARGET = 'v-viewer', NAME_MARK = '（MU17-A）';
+        const users = await get(a, '/api/admin/users') || [];
+        const me = users.find(u => u.account === TARGET);
+        const groups = await get(a, '/api/admin/groups') || [];
+        const extra = groups.find(g => !me?.groupIds.includes(g.groupId) && g.active !== false && /^manager$/i.test(g.role)) || groups.find(g => !me?.groupIds.includes(g.groupId) && !/^admin$/i.test(g.role));
+        if (!me || !extra) { run.note('前置不足', `找不到 ${TARGET} 或可多勾的非管理員群組，略過`); return; }
+        const gname = id => groups.find(g => g.groupId === id)?.groupName || id;
+        const original = { displayName: me.displayName, email: me.email, active: me.active, groupIds: me.groupIds.slice() };
+        run.note('選用的使用者與群組', `${TARGET}：顯示名稱＝「${me.displayName}」；原群組＝${me.groupIds.map(gname).join('、') || '（無）'}；B 會多勾「${extra.groupName}」（${extra.role}）`);
+        const read = async () => { const u = (await get(a, '/api/admin/users')).find(x => x.account === TARGET); return `顯示名稱＝「${u.displayName}」（${u.displayName.includes(NAME_MARK) ? '含 A 的修改' : '沒有 A 的修改'}）；群組＝${u.groupIds.map(gname).join('、') || '（無）'}（${u.groupIds.includes(extra.groupId) ? '含 B 勾的群組' : '沒有 B 勾的群組'}）`; };
+
+        const open = u => u.step('開使用者清單、開編輯視窗', `開啟 /admin/users → 按 ${TARGET} 該列「編輯」`, async () => {
+            await u.goto('/admin/users');
+            await u.inPage(`// 其他使用者的群組欄也可能含 'v-viewer'（如 ug-v-viewer）：以帳號欄（第一格第一行）完全相符找列
+                const row = await __mu.waitFor(() => [...document.querySelectorAll('#user-list tbody tr')].filter(r => r.offsetParent).find(r => (r.querySelector('td')?.innerText || '').trim().split(/\\s+/)[0] === ${J(TARGET)}));
+                __mu.click('編輯', row); await __mu.waitFor(() => __mu.modal() && document.getElementById('user-account').value === ${J(TARGET)});`);
+        }, `return __mu.modalText();`);
+        await run.together(() => open(a), () => open(b));
+        await run.together(
+            () => a.step('a-admin 改顯示名稱', `顯示名稱尾端加「${NAME_MARK}」`, () => a.inPage(`const el = document.getElementById('user-display-name'); __mu.setValue(el, el.value + ${J(NAME_MARK)});`)),
+            () => b.step(`demo-admin 勾「${extra.groupName}」`, `在所屬群組勾選「${extra.groupName}」`, () => b.inPage(`const c = [...document.querySelectorAll('#user-groups input[type=checkbox]')].find(x => x.value === ${J(String(extra.groupId))}); if (!c) throw new Error('找不到群組勾選框'); if (!c.checked) c.click();`)));
+        const save = u => u.step(`${u.account} 儲存`, '按「儲存」', () => u.inPage(`__mu.click('儲存', '.modal.show'); await new Promise(r => setTimeout(r, 1500));`),
+            `return (__mu.modalText() || '（視窗已關）').slice(0, 200);`);
+        await run.together(() => save(a), () => save(b));
+        run.note('同時儲存後的使用者內容（只記錄，不斷言）', await read());
+        for (const u of [a, b]) await u.step(`${u.account} 儲存後的畫面`, '不操作', async () => { }, `return (__mu.modalText() || '（視窗已關）') + '｜' + (__mu.row(${J(TARGET)})?.innerText.replace(/\\s+/g, ' ').slice(0, 160) || '（清單上沒有這一列）');`);
+        await a.step('a-admin 重新整理後看到的列', '重新開啟 /admin/users', () => a.goto('/admin/users'), ROW(TARGET));
+        await serverCheck(run, a, '稽核紀錄（該使用者最近的異動）', async () => {
+            const d = await get(a, `/api/audit?page=1&pageSize=10&targetKind=user`);
+            return (d?.items || []).filter(x => String(x.targetId) === String(me.userId)).slice(0, 4).map(x => `${x.action}：${x.account} ${x.summary}`).join(' ｜ ') || '（讀不到或沒有紀錄）';
+        });
+        try {
+            await api(a, 'POST', '/api/admin/users', { account: TARGET, displayName: original.displayName, email: original.email, active: original.active });
+            await api(a, 'PUT', `/api/admin/users/${me.userId}/groups`, { groupIds: original.groupIds });
+            run.note('已還原使用者', `${TARGET} 的顯示名稱與群組`);
+        } catch (e) { run.note('還原使用者失敗', e.message); }
     }
 }
 ];
