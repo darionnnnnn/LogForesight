@@ -145,8 +145,26 @@ public class WorkOrderCommandService
             PageSize = PreviewPageSize,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
             AssigneeNoAccessTotal = plan.NoAccess.Count,
-            AssigneeCannotHandle = plan.CannotHandle
+            AssigneeCannotHandle = plan.CannotHandle,
+            SuggestedDueDate = SuggestedDueDateOf(plan)
         };
+    }
+
+    /// <summary>
+    /// 建議期限（預覽用，P-1）：該問題在「會寫入的主機」上最近一次出現的最高嚴重度，自今天（站台時鐘）起算預設天數
+    /// （<see cref="DefaultDueDays"/>，與夜間派工同一個常數來源）；低、沒有會寫入的主機或推導不到嚴重度為 null。
+    /// 只是預填，建立時仍以請求的 <c>DueDate</c> 為準。
+    /// </summary>
+    private DateTime? SuggestedDueDateOf(CreatePlan plan)
+    {
+        var hostIds = plan.Hosts.Where(h => h.Effective.Count > 0).Select(h => h.Resolved.Host.HostId).ToHashSet();
+        if (hostIds.Count == 0) return null;
+
+        var occurrences = _aggregates.LatestOccurrences(
+            IssueExclusion.None, new[] { (plan.Source, plan.EventId) }, plan.Scope.From, plan.Scope.To, hostIds.ToList());
+        var ranks = occurrences.Where(o => hostIds.Contains(o.HostId)).Select(o => o.SeverityRank).ToList();
+        if (ranks.Count == 0) return null;
+        return DefaultDueDays.DueDateFor(LegacySeverityRank.ToSeverity(ranks.Max()), _clock.LocalToday());
     }
 
     public CreateWorkOrderResultDto Create(CreateWorkOrderRequest req)

@@ -350,19 +350,38 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return result;
     }
 
+    /// <summary>指定交辦單的全部成員（含已結案，精簡欄位）：依 500 張一批，查詢次數隨單數而非成員數增長</summary>
+    public List<IssueCase> GetMemberSummaries(IReadOnlyCollection<long> workOrderIds)
+    {
+        var result = new List<IssueCase>();
+        if (workOrderIds.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in workOrderIds.Distinct().Chunk(WorkOrderBatchSize))
+            result.AddRange(BuildMemberSummaryQuery(ctx, batch).ToList().Select(ToSlimModel));
+        return result;
+    }
+
+    /// <summary>全部成員精簡查詢本體（抽出供 SQL 翻譯測試）：投影同 <see cref="BuildActiveMemberSummaryQuery"/>，不限進行中</summary>
+    internal static IQueryable<IssueCaseSlimRow> BuildMemberSummaryQuery(LfDbContext ctx, long[] workOrderIds) =>
+        SlimProjection(ctx.IssueCases.AsNoTracking().Where(c => c.WorkOrderId != null && workOrderIds.Contains(c.WorkOrderId!.Value)));
+
     /// <summary>進行中成員精簡查詢本體（抽出供 SQL 翻譯測試）；只投影統計與復發判定要的欄位，不讀 PRTG 證據與逐日意圖</summary>
     internal static IQueryable<IssueCaseSlimRow> BuildActiveMemberSummaryQuery(LfDbContext ctx, long[]? workOrderIds)
     {
         var query = ctx.IssueCases.AsNoTracking().Where(c => c.ClosedAt == null && c.WorkOrderId != null);
         if (workOrderIds != null) query = query.Where(c => workOrderIds.Contains(c.WorkOrderId!.Value));
-        return query.Select(c => new IssueCaseSlimRow
+        return SlimProjection(query);
+    }
+
+    private static IQueryable<IssueCaseSlimRow> SlimProjection(IQueryable<IssueCaseRow> query) =>
+        query.Select(c => new IssueCaseSlimRow
         {
             CaseId = c.CaseId, HostName = c.HostName, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel, Status = c.Status,
             HandlerId = c.HandlerId, Note = c.Note, DueDate = c.DueDate, CreatedAt = c.CreatedAt, ClosedAt = c.ClosedAt,
             UpdatedAt = c.UpdatedAt, WorkOrderId = c.WorkOrderId, SourceName = c.SourceName, EventId = c.EventId,
             Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt
         });
-    }
 
     /// <summary>
     /// 復發判定的前案候選：已結案、未取消、指定主機與問題的案件。主機依 500 一批（host_name_key IN）；

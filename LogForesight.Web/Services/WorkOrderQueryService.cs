@@ -42,6 +42,7 @@ public class WorkOrderQueryService
     private readonly TimeProvider _clock;
     private readonly UserCapabilityResolver? _capabilities;
     private readonly IIssueHandlingStore? _issueHandlings;
+    private readonly IIssueAggregateQuery? _aggregates;
 
     public WorkOrderQueryService(
         IWorkOrderStore orders,
@@ -58,8 +59,10 @@ public class WorkOrderQueryService
         IAnalysisRecordQuery records,
         TimeProvider? clock = null,
         UserCapabilityResolver? capabilities = null,
-        IIssueHandlingStore? issueHandlings = null)
+        IIssueHandlingStore? issueHandlings = null,
+        IIssueAggregateQuery? aggregates = null)
     {
+        _aggregates = aggregates;
         _issueHandlings = issueHandlings;
         _capabilities = capabilities;
         _clock = clock ?? TimeProvider.System;
@@ -107,7 +110,26 @@ public class WorkOrderQueryService
         // 檢視者自己的可見主機數：只用在本人頁的空狀態分流（側欄徽章不需要，不算）
         // 只經案件授與看得到的主機也算「有授權」：只算群組授權會把這種人誤判成「尚未被授權任何主機」
         dto.VisibleHostCount = _visibility.GetVisibleHostIds().Count + _visibility.GetCaseGrantHostNames().Count;
+        FillTodayCounts(dto, userId);
         return dto;
+    }
+
+    /// <summary>
+    /// 「今天需要你處理」的五個數字（P-1）：只有處理人工作頁的摘要端點算（側欄徽章每次輪詢都呼叫，不加這幾趟查詢）。
+    /// 母體＝這位處理人進行中、非暫停的單，與清單各列同一份 <see cref="BuildFacts"/>，所以各數字＝清單各列同名欄位相加。
+    /// </summary>
+    private void FillTodayCounts(HandlerSummaryDto dto, long userId)
+    {
+        var exclusion = _exclusions.Current();
+        var orders = _orders.GetActiveByHandler(userId).Where(o => !IsPaused(o, exclusion)).ToList();
+        if (orders.Count == 0) return;
+
+        var facts = BuildFacts(orders, DisabledHostKeys(), SeverityScope.None, out _);
+        dto.NewTodayHosts = facts.Values.Sum(f => f.NewToday);
+        dto.RecurrenceHosts = facts.Values.Sum(f => f.Recurrence);
+        dto.ReturnedMembers = facts.Values.Sum(f => f.ReturnedMembers);
+        dto.ObservationExpiredHosts = facts.Values.Sum(f => f.Expired);
+        dto.DueSoonMembers = facts.Values.Sum(f => f.DueSoonMembers);
     }
 
     /// <summary>
@@ -138,13 +160,19 @@ public class WorkOrderQueryService
         throw DomainException.Forbidden("沒有檢視這位處理人交辦清單的權限。");
     }
 
-    /// <summary>清單查詢與組裝的唯一一份：交辦單一次、本頁計數一次、使用者一次</summary>
+    /// <summary>
+    /// 清單查詢與組裝的唯一一份：交辦單一次、本頁計數一次、使用者一次。
+    /// 排序與篩選分兩條路：資料庫端能排的三個鍵且沒有標記篩選＝SQL 排序＋分頁（只組本頁）；
+    /// 要讀取時推導（處理優先序、期限最近、嚴重度）或有標記篩選（被退回、今天新增、復發…）＝先取符合條件的全體、算好各單的推導欄位、
+    /// 在記憶體篩選與排序後才分頁（排序跨頁成立，不是只排當頁）。兩條路組出來的列欄位相同。
+    /// </summary>
     private WorkOrderListDto QueryList(WorkOrderListRequest req, string defaultPausedMode, IssueExclusion exclusion)
     {
         if (!WorkOrderQueries.OrderStatuses.Contains(req.Status))
             throw DomainException.Validation($"不支援的狀態篩選「{req.Status}」。");
-        if (!WorkOrderQueries.Sorts.Contains(req.Sort))
+        if (!WorkOrderQueries.AllSorts.Contains(req.Sort))
             throw DomainException.Validation($"不支援的排序「{req.Sort}」。");
+        var flag = NormalizeFlag(req.Flag);
         var pausedMode = string.IsNullOrWhiteSpace(req.Paused) ? defaultPausedMode : req.Paused.Trim();
         if (!WorkOrderQueries.PausedModes.Contains(pausedMode))
             throw DomainException.Validation($"不支援的暫停篩選「{req.Paused}」。");
@@ -172,13 +200,14 @@ public class WorkOrderQueryService
             handlerIds = handlerIds == null ? members : handlerIds.Where(members.Contains).ToList();
         }
 
-        var result = _orders.QueryOrders(new WorkOrderQuery
+        var derived = flag != null || WorkOrderQueries.DerivedSorts.Contains(req.Sort);
+        var query = new WorkOrderQuery
         {
             HandlerIds = handlerIds,
             Source = string.IsNullOrWhiteSpace(req.Source) ? null : req.Source.Trim(),
             EventId = req.EventId,
             Status = req.Status,
-            Sort = req.Sort,
+            Sort = derived ? WorkOrderQueries.SortCreatedDesc : req.Sort,
             Page = page,
             PageSize = pageSize,
             PausedKeys = exclusion.CurrentlyMutedCompositeKeys,
@@ -186,18 +215,102 @@ public class WorkOrderQueryService
             PausedMode = pausedMode,
             OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null,
             UnreadOnly = req.UnreadOnly
-        });
+        };
 
-        var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList(), disabledKeys);
+        List<WorkOrder> pageItems;
+        int total;
+        Dictionary<long, OrderFacts> facts;
+        if (!derived)
+        {
+            var result = _orders.QueryOrders(query);
+            pageItems = result.Items;
+            total = result.Total;
+            facts = BuildFacts(pageItems, disabledKeys, SeverityScope.WithFallback, out _);
+        }
+        else
+        {
+            var all = _orders.FilterOrders(query);
+            var needSeverity = req.Sort is WorkOrderQueries.SortPriority or WorkOrderQueries.SortSeverity;
+            facts = BuildFacts(all, disabledKeys, needSeverity ? SeverityScope.ActiveOnly : SeverityScope.None, out _);
+            IEnumerable<WorkOrder> kept = all;
+            if (flag != null) kept = kept.Where(o => FlagMatches(flag, facts[o.WorkOrderId]));
+            var ordered = SortOrders(kept, req.Sort, facts, req.Sort == WorkOrderQueries.SortMembersDesc
+                ? _orders.CountMembers(all.Select(o => o.WorkOrderId).ToList(), disabledKeys) : null).ToList();
+            total = ordered.Count;
+            pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+            // 排序只用進行中成員的嚴重度；本頁的列再補「沒有進行中成員時取全部成員最後已知值」
+            AddSeverityFallback(pageItems, facts);
+        }
+
+        var counts = _orders.CountMembers(pageItems.Select(o => o.WorkOrderId).ToList(), disabledKeys);
         var rules = KnownIssueCatalog.ResolveRules(_rules);
-        var hostStats = BuildHostStats(result.Items, disabledKeys, out _);
 
         return new WorkOrderListDto
         {
-            Items = result.Items.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, hostStats, rules, exclusion)).ToList(),
-            Total = result.Total,
+            Items = pageItems.Select(o => FillRow(new WorkOrderRowDto(), o, users, counts, facts, rules, exclusion)).ToList(),
+            Total = total,
             Page = page,
             PageSize = pageSize
+        };
+    }
+
+    /// <summary>標記篩選鍵正規化（不分大小寫、去頭尾空白）；空白＝不篩；不認得的值回驗證錯誤</summary>
+    private static string? NormalizeFlag(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var text = raw.Trim();
+        return WorkOrderQueries.Flags.FirstOrDefault(f => string.Equals(f, text, StringComparison.OrdinalIgnoreCase))
+               ?? throw DomainException.Validation($"不支援的標記篩選「{raw}」。");
+    }
+
+    private static bool FlagMatches(string flag, OrderFacts f) => flag switch
+    {
+        WorkOrderQueries.FlagReturned => f.ReturnedMembers > 0,
+        WorkOrderQueries.FlagNewToday => f.NewToday > 0,
+        WorkOrderQueries.FlagRecurrence => f.Recurrence > 0,
+        WorkOrderQueries.FlagObservationExpired => f.Expired > 0,
+        WorkOrderQueries.FlagDueSoon => f.DueSoonMembers > 0,
+        _ => false
+    };
+
+    /// <summary>嚴重度排序鍵：高＞中＞低；同級重大旗標在前；無法推導（null）排最後</summary>
+    private static int SeverityKey(OrderFacts f) =>
+        f.Severity is not { } s ? -1 : (int)s * 2 + (f.Critical ? 1 : 0);
+
+    /// <summary>
+    /// 全體排序（唯一一份）：同值一律再依建立時間新到舊、單號降冪，分頁才穩定。
+    /// 三個推導鍵的定義見 <see cref="WorkOrderQueries.SortPriority"/>、<see cref="WorkOrderQueries.SortDueSoon"/>、<see cref="WorkOrderQueries.SortSeverity"/>；
+    /// 其餘三個（建立時間、成員數、未回覆）與資料庫端排序同義，有標記篩選時走這裡。
+    /// </summary>
+    private static IEnumerable<WorkOrder> SortOrders(IEnumerable<WorkOrder> orders, string sort,
+        Dictionary<long, OrderFacts> facts, Dictionary<long, WorkOrderMemberCounts>? counts)
+    {
+        OrderFacts F(WorkOrder o) => facts[o.WorkOrderId];
+        return sort switch
+        {
+            WorkOrderQueries.SortPriority => orders
+                .OrderByDescending(o => F(o).ReturnedMembers > 0)
+                .ThenByDescending(o => F(o).OverdueMembers > 0)
+                .ThenByDescending(o => SeverityKey(F(o)))
+                .ThenBy(o => F(o).EarliestDue ?? DateTime.MaxValue)
+                .ThenByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId),
+            WorkOrderQueries.SortDueSoon => orders
+                .OrderBy(o => F(o).EarliestDue ?? DateTime.MaxValue)
+                .ThenByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId),
+            WorkOrderQueries.SortSeverity => orders
+                .OrderByDescending(o => SeverityKey(F(o)))
+                .ThenByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId),
+            WorkOrderQueries.SortMembersDesc => orders
+                .OrderByDescending(o => counts != null && counts.TryGetValue(o.WorkOrderId, out var c) ? c.Active : 0)
+                .ThenByDescending(o => o.WorkOrderId),
+            WorkOrderQueries.SortUnrepliedOldest => orders
+                .OrderBy(o => o.LastReplyAt == null ? 0 : 1)
+                .ThenBy(o => o.CreatedAt)
+                .ThenByDescending(o => o.WorkOrderId),
+            _ => orders.OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.WorkOrderId)
         };
     }
 
@@ -234,7 +347,7 @@ public class WorkOrderQueryService
         var rules = KnownIssueCatalog.ResolveRules(_rules);
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
 
-        var hostStats = BuildHostStats(new[] { order }, WorkOrderQueries.DisabledHostKeys(allHosts), out var activeLive);
+        var hostStats = BuildFacts(new[] { order }, WorkOrderQueries.DisabledHostKeys(allHosts), SeverityScope.WithFallback, out var activeLive);
         var dto = FillRow(new WorkOrderDetailDto(), order, users, counts, hostStats, rules, _exclusions.Current());
         // 單頭的案件編號清單跟成員清單一樣只給檢視者看得到的主機（受限檢視者不能靠它取得看不到的案件）
         var quietPool = activeLive;
@@ -560,7 +673,7 @@ public class WorkOrderQueryService
     }
 
     private T FillRow<T>(T dto, WorkOrder o, Dictionary<long, WebUser> users,
-        Dictionary<long, WorkOrderMemberCounts> counts, Dictionary<long, OrderHostStats> hostStats, List<KnownIssueRule> rules,
+        Dictionary<long, WorkOrderMemberCounts> counts, Dictionary<long, OrderFacts> hostStats, List<KnownIssueRule> rules,
         IssueExclusion exclusion) where T : WorkOrderRowDto
     {
         users.TryGetValue(o.HandlerId, out var handler);
@@ -599,6 +712,10 @@ public class WorkOrderQueryService
         dto.ObservingHosts = hs.Observing;
         dto.ObservationExpiredHosts = hs.Expired;
         dto.TodoHosts = hs.Todo;
+        dto.NewTodayHosts = hs.NewToday;
+        dto.ReturnedMembers = hs.ReturnedMembers;
+        dto.Severity = hs.Severity?.ToString();
+        dto.Critical = hs.Critical;
         dto.DueDate = o.DueDate;
         dto.CreatedAt = o.CreatedAt;
         dto.LastAppendedAt = o.LastAppendedAt;
@@ -622,20 +739,33 @@ public class WorkOrderQueryService
         return dto;
     }
 
-    /// <summary>一張單的主機統計（單頭、清單列用）；全部是不重複主機數</summary>
-    private readonly record struct OrderHostStats(int Active, int Total, int Recurrence, int Observing, int Expired, int Todo);
+    /// <summary>
+    /// 一張單讀取時推導的列欄位（單頭、清單列、排序與標記篩選共用的唯一一份）。
+    /// 主機統計類（Active…Todo、NewToday）是不重複主機數；ReturnedMembers、OverdueMembers、DueSoonMembers 是成員（案件）數。
+    /// </summary>
+    /// <param name="EarliestDue">進行中且處理中成員的最早期限；沒有時退回單本身的期限（進行中的單）；都沒有為 null（排序時排最後）</param>
+    /// <param name="Severity">單內進行中成員最近一次出現的最高嚴重度（已正規化）；推導不到為 null</param>
+    private readonly record struct OrderFacts(
+        int Active, int Total, int Recurrence, int Observing, int Expired, int Todo,
+        int NewToday, int ReturnedMembers, int OverdueMembers, int DueSoonMembers, DateTime? EarliestDue,
+        IssueSeverity? Severity, bool Critical);
+
+    /// <summary>嚴重度推導的範圍：不算／只算有進行中成員的單（全體排序用）／連「沒有進行中成員」的單也補全部成員最後已知值（本頁與單頭）</summary>
+    private enum SeverityScope { None, ActiveOnly, WithFallback }
 
     /// <summary>
-    /// 本頁各單的主機統計：歷來主機數一句 GROUP BY、進行中成員一次取回（精簡欄位）、前案候選一次取回，
-    /// 再於記憶體以 <see cref="IssueRecurrence"/> 與 <see cref="IssueHandlingStatuses"/> 的共用判定彙整——查詢次數不隨成員數增長。
+    /// 各單的推導欄位：歷來主機數一句 GROUP BY、進行中成員一次取回（精簡欄位）、前案候選一次取回、退回／回覆事件一次取回、
+    /// 嚴重度的最近出現點一次取回，再於記憶體以 <see cref="IssueRecurrence"/>、<see cref="IssueHandlingStatuses"/> 與
+    /// <see cref="WorkOrderQueries"/> 的共用判定彙整——查詢次數不隨成員數增長。
     /// 停用主機上的成員不計入進行中相關的數字（與 <see cref="WorkOrderCountsDto"/> 同口徑），歷來主機數照舊含全部。
     /// <paramref name="activeLive"/> 回傳參與統計的進行中成員（供單頭另外算觀察到期的成員）。
     /// </summary>
-    private Dictionary<long, OrderHostStats> BuildHostStats(
-        IReadOnlyCollection<WorkOrder> orders, IReadOnlyCollection<string> disabledKeys, out List<IssueCase> activeLive)
+    private Dictionary<long, OrderFacts> BuildFacts(
+        IReadOnlyCollection<WorkOrder> orders, IReadOnlyCollection<string> disabledKeys, SeverityScope severityScope,
+        out List<IssueCase> activeLive)
     {
         activeLive = new List<IssueCase>();
-        var result = new Dictionary<long, OrderHostStats>();
+        var result = new Dictionary<long, OrderFacts>();
         if (orders.Count == 0) return result;
 
         var totals = _cases.CountDistinctHosts(orders.Select(o => o.WorkOrderId).ToList());
@@ -649,20 +779,145 @@ public class WorkOrderQueryService
         var recurrence = RecurrenceOf(activeLive, boundedWindow: true);
         var today = _clock.LocalToday();
         var byOrder = activeLive.GroupBy(c => c.WorkOrderId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+        var returned = ReturnedMembersOf(orders, byOrder);
+        var severity = severityScope == SeverityScope.None
+            ? new Dictionary<long, (IssueSeverity Severity, bool Critical)>()
+            : SeverityOf(orders, byOrder, severityScope == SeverityScope.WithFallback);
         foreach (var o in orders)
         {
             var members = byOrder.GetValueOrDefault(o.WorkOrderId) ?? new List<IssueCase>();
             int Hosts(Func<IssueCase, bool> match) =>
                 members.Where(match).Select(c => HostNameKey.Of(c.HostName)).Distinct(StringComparer.Ordinal).Count();
-            result[o.WorkOrderId] = new OrderHostStats(
+            var sev = severity.TryGetValue(o.WorkOrderId, out var found) ? found : ((IssueSeverity Severity, bool Critical)?)null;
+            result[o.WorkOrderId] = new OrderFacts(
                 Active: Hosts(_ => true),
                 Total: totals.GetValueOrDefault(o.WorkOrderId),
                 Recurrence: Hosts(c => recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence),
                 Observing: Hosts(c => IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today)),
                 Expired: Hosts(c => IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, today)),
-                Todo: Hosts(c => WorkOrderQueries.IsTodoMember(c, today)));
+                Todo: Hosts(c => WorkOrderQueries.IsTodoMember(c, today)),
+                NewToday: Hosts(c => c.CreatedAt.Date == today.Date),
+                ReturnedMembers: returned.GetValueOrDefault(o.WorkOrderId),
+                OverdueMembers: members.Count(c => WorkOrderQueries.IsOverdue(c, today)),
+                DueSoonMembers: members.Count(c => WorkOrderQueries.IsDueSoon(c, today)),
+                EarliestDue: EarliestDueOf(o, members),
+                Severity: sev?.Severity, Critical: sev?.Critical ?? false);
         }
         return result;
+    }
+
+    /// <summary>最早期限：進行中且處理中成員的最早期限；沒有就退回進行中單本身的期限（單結案了為 null）</summary>
+    private static DateTime? EarliestDueOf(WorkOrder o, List<IssueCase> activeMembers)
+    {
+        var memberDue = activeMembers
+            .Where(c => c.Status == IssueHandlingStatuses.InProgress && c.DueDate != null)
+            .Select(c => (DateTime?)c.DueDate!.Value.Date)
+            .Min();
+        return memberDue ?? (o.ClosedAt == null ? o.DueDate?.Date : null);
+    }
+
+    /// <summary>
+    /// 被退回的成員數（只有進行中的單有）：這張單**最近一筆**退回事件之後沒有處理人回覆事件，才算被退回；
+    /// 數量＝進行中成員中仍是處理中、說明是該次退回說明的（退回時成員說明被設成退回說明；之後夜間續掛新增的成員說明不同，不算）。
+    /// 事件一次取回（動作只取退回與回覆兩種）；兩筆事件同一時間點時以事件序比大小。
+    /// </summary>
+    private Dictionary<long, int> ReturnedMembersOf(IReadOnlyCollection<WorkOrder> orders, Dictionary<long, List<IssueCase>> activeByOrder)
+    {
+        var result = new Dictionary<long, int>();
+        var ids = orders.Where(o => o.ClosedAt == null).Select(o => o.WorkOrderId).ToList();
+        if (ids.Count == 0) return result;
+
+        var events = _orders.ListEventsOf(ids, new[] { WorkOrderEventActions.Returned, WorkOrderEventActions.Replied });
+        foreach (var (orderId, list) in events)
+        {
+            var lastReturn = list.LastOrDefault(e => e.Action == WorkOrderEventActions.Returned);
+            if (lastReturn == null) continue;
+            var repliedAfter = list.Any(e => e.Action == WorkOrderEventActions.Replied
+                && (e.CreatedAt > lastReturn.CreatedAt || (e.CreatedAt == lastReturn.CreatedAt && e.EventId > lastReturn.EventId)));
+            if (repliedAfter) continue;
+
+            var count = (activeByOrder.GetValueOrDefault(orderId) ?? new List<IssueCase>())
+                .Count(c => c.Status == IssueHandlingStatuses.InProgress && SameReturnNote(c.Note, lastReturn.Note));
+            if (count > 0) result[orderId] = count;
+        }
+        return result;
+    }
+
+    /// <summary>成員說明是不是某次退回說明（事件說明超長時被截斷，成員說明為其延伸也算）</summary>
+    private static bool SameReturnNote(string? memberNote, string? eventNote) =>
+        memberNote != null && eventNote != null
+        && (string.Equals(memberNote, eventNote, StringComparison.Ordinal)
+            || (memberNote.Length > eventNote.Length && memberNote.StartsWith(eventNote, StringComparison.Ordinal)));
+
+    /// <summary>
+    /// 嚴重度與重大旗標：成員（主機, 完整簽章）最近一次出現點（<see cref="IIssueAggregateQuery.LatestOccurrences"/>，所有單合併成一次查詢）
+    /// 的嚴重度取最大（舊資料 Critical 先正規化為 High），重大旗標＝任何一個命中；進行中成員優先，
+    /// <paramref name="withFallback"/> 為 true 時沒有進行中成員的單改用全部成員（含已結案）的最後已知值。
+    /// 沒有注入彙總查詢、成員對不到主機或沒有出現點者不出現在結果裡（畫面顯示「—」）。
+    /// </summary>
+    private Dictionary<long, (IssueSeverity Severity, bool Critical)> SeverityOf(
+        IReadOnlyCollection<WorkOrder> orders, Dictionary<long, List<IssueCase>> activeByOrder, bool withFallback)
+    {
+        var result = new Dictionary<long, (IssueSeverity, bool)>();
+        if (_aggregates == null || orders.Count == 0) return result;
+
+        var membersByOrder = new Dictionary<long, List<IssueCase>>();
+        var fallbackIds = new List<long>();
+        foreach (var o in orders)
+        {
+            if (activeByOrder.TryGetValue(o.WorkOrderId, out var active) && active.Count > 0) membersByOrder[o.WorkOrderId] = active;
+            else if (withFallback) fallbackIds.Add(o.WorkOrderId);
+        }
+        if (fallbackIds.Count > 0)
+        {
+            foreach (var g in _cases.GetMemberSummaries(fallbackIds).Where(c => c.WorkOrderId != null && !c.Cancelled).GroupBy(c => c.WorkOrderId!.Value))
+                membersByOrder[g.Key] = g.ToList();
+        }
+
+        var all = membersByOrder.Values.SelectMany(x => x).Where(c => c.SourceName != null && c.EventId != null).ToList();
+        if (all.Count == 0) return result;
+
+        var hostIdByKey = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var h in _hosts.GetAll()) hostIdByKey.TryAdd(HostNameKey.Of(h.HostName), h.HostId);
+        long HostIdOf(IssueCase c) => hostIdByKey.GetValueOrDefault(HostNameKey.Of(c.HostName));
+
+        var hostIds = all.Select(HostIdOf).Where(id => id != 0).Distinct().ToList();
+        if (hostIds.Count == 0) return result;
+        var issues = all.Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+        // 範圍從最早的成員建立日往前一個月到今天：只要最近一次，範圍太窄會漏掉建單前就開始出現的問題
+        var from = all.Min(c => c.CreatedAt).Date.AddDays(-30);
+        var occurrences = _aggregates.LatestOccurrences(IssueExclusion.None, issues, from, _clock.LocalToday(), hostIds);
+        var byHost = new Dictionary<long, Dictionary<string, HostIssueOccurrence>>();
+        foreach (var occ in occurrences)
+        {
+            if (!byHost.TryGetValue(occ.HostId, out var inner))
+                byHost[occ.HostId] = inner = new Dictionary<string, HostIssueOccurrence>(IssueSignatureKeyComparer.Instance);
+            inner.TryAdd(occ.IssueKey, occ);
+        }
+
+        foreach (var (orderId, members) in membersByOrder)
+        {
+            int? maxRank = null;
+            var critical = false;
+            foreach (var c in members)
+            {
+                if (!byHost.TryGetValue(HostIdOf(c), out var inner) || !inner.TryGetValue(c.IssueKey, out var occ)) continue;
+                var rank = LegacySeverityRank.Normalize(occ.SeverityRank);
+                if (maxRank == null || rank > maxRank) maxRank = rank;
+                critical |= occ.ElevatesDayRisk;
+            }
+            if (maxRank != null) result[orderId] = ((IssueSeverity)maxRank.Value, critical);
+        }
+        return result;
+    }
+
+    /// <summary>本頁的列補嚴重度：全體排序只用進行中成員，沒有進行中成員的單在這裡改取全部成員的最後已知值</summary>
+    private void AddSeverityFallback(IReadOnlyCollection<WorkOrder> pageOrders, Dictionary<long, OrderFacts> facts)
+    {
+        var missing = pageOrders.Where(o => facts[o.WorkOrderId].Severity == null && facts[o.WorkOrderId].Active == 0).ToList();
+        if (missing.Count == 0) return;
+        foreach (var (orderId, sev) in SeverityOf(missing, new Dictionary<long, List<IssueCase>>(), withFallback: true))
+            facts[orderId] = facts[orderId] with { Severity = sev.Severity, Critical = sev.Critical };
     }
 
     /// <summary>

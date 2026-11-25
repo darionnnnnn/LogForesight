@@ -148,6 +148,54 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(first.AffectedMembers, far.AffectedMembers);
     }
 
+    // ── P-1：預覽建議期限（W1）────────────────────────────────────────────────
+
+    private static LogIssueSignature DiskWith(IssueSeverity severity) => new()
+    {
+        LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error,
+        Severity = severity, Count = 1, Category = IssueCategory.Other
+    };
+
+    [Theory]
+    [InlineData(IssueSeverity.High, 3)]
+    [InlineData(IssueSeverity.Medium, 7)]
+    public void 預覽建議期限_依問題嚴重度自今天起算_高3天_中7天(IssueSeverity severity, int days)
+    {
+        AddHost("HOST-A", DiskWith(severity));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+
+        var preview = _service.Preview(Single(handler.UserId));
+
+        Assert.Equal(DateTime.Today.AddDays(days), preview.SuggestedDueDate);
+    }
+
+    [Fact]
+    public void 預覽建議期限_低嚴重度為null_多台主機取最高()
+    {
+        AddHost("HOST-LOW", DiskWith(IssueSeverity.Low));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        Assert.Null(_service.Preview(Single(handler.UserId)).SuggestedDueDate);
+
+        AddHost("HOST-HIGH", DiskWith(IssueSeverity.High));
+        Assert.Equal(DateTime.Today.AddDays(3), _service.Preview(Single(handler.UserId)).SuggestedDueDate);
+    }
+
+    [Fact]
+    public void 預覽建議期限_只預填_建立時以請求的期限為準_清掉就是沒有()
+    {
+        AddHost("HOST-A", DiskWith(IssueSeverity.High));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var request = Single(handler.UserId);
+        Assert.NotNull(_service.Preview(request).SuggestedDueDate);
+
+        request.DueDate = null;   // 使用者把預填的期限清掉
+        var created = _service.Create(request);
+
+        var members = MembersOf(created.Orders.Single().WorkOrderId);
+        Assert.All(members, m => Assert.Null(m.DueDate));
+        Assert.Null(_orderStore.Get(created.Orders.Single().WorkOrderId)!.DueDate);
+    }
+
     private IssueCase? OpenCase(string hostName, LogIssueSignature? issue = null) =>
         _caseStore.GetOpen(hostName, IssueSignatureKey.For(issue ?? Disk()));
 

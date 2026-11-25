@@ -129,10 +129,20 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         return HostIdsForResult;
     }
 
+    /// <summary>LatestOccurrences 回傳的固定結果（交辦單清單的嚴重度推導、預覽建議期限的測試用）；預設空</summary>
+    public List<HostIssueOccurrence> LatestOccurrencesResult { get; set; } = new();
+
+    /// <summary>LatestOccurrences 累計呼叫次數：斷言「一頁的單只查一次、不逐張查」</summary>
+    public int LatestOccurrencesCalls { get; private set; }
+
     public List<HostIssueOccurrence> LatestOccurrences(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
-        IReadOnlySet<string>? riskLevels = null) => new();
+        IReadOnlySet<string>? riskLevels = null)
+    {
+        LatestOccurrencesCalls++;
+        return LatestOccurrencesResult.ToList();
+    }
 
     public List<CategoryAggregate> AggregateByCategory(
         IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,

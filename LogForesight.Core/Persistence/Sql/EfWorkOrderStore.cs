@@ -285,6 +285,46 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return new WorkOrderPage { Items = rows.Select(ToModel).ToList(), Total = total };
     }
 
+    public List<WorkOrder> FilterOrders(WorkOrderQuery q)
+    {
+        using var ctx = _contextFactory();
+
+        return BuildFilterAllQuery(ctx, q, _clock.LocalToday()).ToList().Select(ToModel).ToList();
+    }
+
+    /// <summary>「符合條件的全部單」查詢本體（抽出供 SQL 翻譯測試）：篩選同 <see cref="BuildOrderFilterQuery"/>，固定建立時間新到舊、單號降冪</summary>
+    internal static IQueryable<WorkOrderRow> BuildFilterAllQuery(LfDbContext ctx, WorkOrderQuery q, DateTime today) =>
+        BuildOrderFilterQuery(ctx, q, today).OrderByDescending(w => w.CreatedAt).ThenByDescending(w => w.WorkOrderId);
+
+    public Dictionary<long, List<WorkOrderEvent>> ListEventsOf(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string> actions)
+    {
+        var result = new Dictionary<long, List<WorkOrderEvent>>();
+        if (workOrderIds.Count == 0 || actions.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        var wantedActions = actions.Distinct().ToList();
+        foreach (var batch in workOrderIds.Distinct().Chunk(500))
+        {
+            var ids = batch.ToList();
+            var rows = BuildEventsOfQuery(ctx, ids, wantedActions).ToList();
+            foreach (var g in rows.GroupBy(e => e.WorkOrderId))
+            {
+                result[g.Key] = g.Select(e => new WorkOrderEvent
+                {
+                    EventId = e.EventId, WorkOrderId = e.WorkOrderId, Action = e.Action, ActorId = e.ActorId,
+                    ActorAccount = e.ActorAccount, MemberDelta = e.MemberDelta, Note = e.Note, CreatedAt = e.CreatedAt
+                }).ToList();
+            }
+        }
+        return result;
+    }
+
+    /// <summary>多張單指定動作的事件查詢本體（抽出供 SQL 翻譯測試）：依 CreatedAt、EventId 升冪</summary>
+    internal static IQueryable<WorkOrderEventRow> BuildEventsOfQuery(LfDbContext ctx, List<long> ids, List<string> actions) =>
+        ctx.WorkOrderEvents.AsNoTracking()
+            .Where(e => ids.Contains(e.WorkOrderId) && actions.Contains(e.Action))
+            .OrderBy(e => e.CreatedAt).ThenBy(e => e.EventId);
+
     /// <summary>
     /// 清單的篩選本體（抽出供 SQL 翻譯測試）：成員相關條件一律是關聯 EXISTS 子查詢，
     /// 逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義。

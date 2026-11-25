@@ -581,7 +581,9 @@ public class WorkOrderCoordinator
             SourceName = issue.Source, EventId = issue.EventId, IssueLabel = issue.SourceEventLabel,
             HandlerId = decision.HandlerId!.Value, Origin = decision.Origin!,
             ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
-            Note = NightlyNoteOf(decision.Origin!), DueDate = null,
+            // 預設期限（P-1）：依該問題嚴重度自建立日起算（高 3 天、中 7 天、低不帶），常數來源 DefaultDueDays；
+            // 只影響這次建的單，既有單不回填
+            Note = NightlyNoteOf(decision.Origin!), DueDate = DefaultDueDays.DueDateFor(issue.Severity, occurredAt),
             CreatedById = null, CreatedByAccount = AuditActions.SystemAccount, CreatedAt = occurredAt,
             LastAppendedAt = occurredAt
         });
@@ -626,10 +628,10 @@ public class WorkOrderCoordinator
 
         // 只重讀本批成員涉及的單（一個主機日通常只有個位數張）：每個主機日都讀全部進行中的單，
         // 在數千台×數百張進行中單的站台上是整晚重複的全表讀
-        var activeHandlers = members.Select(m => m.WorkOrderId).Distinct()
+        var activeOrders = members.Select(m => m.WorkOrderId).Distinct()
             .Select(id => _orders.Get(id))
             .Where(o => o != null && o.ClosedAt == null)
-            .ToDictionary(o => o!.WorkOrderId, o => o!.HandlerId);
+            .ToDictionary(o => o!.WorkOrderId, o => o!);
 
         var day = date.Date;
         var cases = new List<IssueCase>(members.Count);
@@ -639,11 +641,12 @@ public class WorkOrderCoordinator
         foreach (var (issue, workOrderId, _, step) in members)
         {
             index++;
-            if (!activeHandlers.TryGetValue(workOrderId, out var handlerId))
+            if (!activeOrders.TryGetValue(workOrderId, out var activeOrder))
             {
                 written.Add(null);
                 continue;
             }
+            var handlerId = activeOrder.HandlerId;
 
             var key = IssueSignatureKey.For(issue);
             // 超長的鍵 store 會拒寫：不建案件也不寫逐日列與處理紀錄（回報為未寫入，與無有效單同一個出口）
@@ -664,12 +667,15 @@ public class WorkOrderCoordinator
             written.Add(handlerId);
             var note = NightlyNoteOf(step);
             var caseId = Guid.NewGuid().ToString("n");
+            // 期限（P-1）：所屬單有期限就沿用單的期限；單沒有期限（上線前建的舊單）才依這個成員的嚴重度帶預設。
+            // 既有案件不回填，所以舊成員仍沒有期限
+            var dueDate = activeOrder.DueDate ?? DefaultDueDays.DueDateFor(issue.Severity, occurredAt);
 
             cases.Add(new IssueCase
             {
                 CaseId = caseId, HostName = host.HostName, IssueKey = key, IssueLabel = issue.SourceEventLabel,
                 PrtgEvidence = _caseCoordinator.CapturePrtgEvidence(host.HostName, day, key),
-                Status = IssueHandlingStatuses.InProgress, HandlerId = handlerId, Note = note,
+                Status = IssueHandlingStatuses.InProgress, HandlerId = handlerId, Note = note, DueDate = dueDate,
                 FirstLinkedDate = day, LastLinkedDate = day,
                 CreatedAt = occurredAt, UpdatedAt = occurredAt, CreatedByAccount = string.Empty,
                 WorkOrderId = workOrderId
@@ -677,7 +683,7 @@ public class WorkOrderCoordinator
             rows.Add(new IssueHandling
             {
                 HostName = host.HostName, Date = day, IssueKey = key, Status = IssueHandlingStatuses.InProgress,
-                Note = note, DueDate = null, CaseId = caseId,
+                Note = note, DueDate = dueDate, CaseId = caseId,
                 ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
             });
             logs.Add(new RecordHandlingLog
@@ -1005,24 +1011,38 @@ public class WorkOrderCoordinator
     {
         var clearing = status == IssueHandlingStatuses.Open;
         var effectiveNote = clearing ? null : note;
-        var effectiveDueDate = status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null;
         var closing = IssueHandlingStatuses.IsClosed(status);
 
-        foreach (var member in members)
-        {
-            member.ApplyStatus(status, actor.OccurredAt);
-            member.Note = effectiveNote;
-            member.DueDate = effectiveDueDate;
-            member.UpdatedAt = actor.OccurredAt;
-            if (closing) member.ClosedAt = actor.OccurredAt;
-        }
+        // 期限（P-1，與 IssueCaseCoordinator.SyncStatus 同一條規則，兩邊要一起改）：
+        // 處理中且請求沒帶日期＝保留成員原有的期限（回覆不清掉期限），帶了以新日期為準；
+        // 觀察中存的是「觀察至」，語意不變（沒帶就是沒有）；結案類與 open 一律清空。
+        // 保留時每個成員的期限可能不同，逐日列的意圖只有單一期限值，所以依各成員原期限分組、逐組寫入。
+        var preserving = status == IssueHandlingStatuses.InProgress && dueDate == null;
+        var groups = preserving
+            ? members.GroupBy(m => m.DueDate).Select(g => (Due: g.Key, Members: g.ToList())).ToList()
+            : new List<(DateTime? Due, List<IssueCase> Members)> { (status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null, members) };
 
-        return _caseCoordinator.SubmitCaseDays(members, new CaseDayIntent
+        var result = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0);
+        foreach (var (due, group) in groups)
         {
-            Mode = CaseDayModes.Sync, Status = status, Note = effectiveNote, DueDate = effectiveDueDate, Clearing = clearing,
-            ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt,
-            TriggerDate = null
-        }, _caseDayInlineRowLimit);
+            foreach (var member in group)
+            {
+                member.ApplyStatus(status, actor.OccurredAt);
+                member.Note = effectiveNote;
+                member.DueDate = due;
+                member.UpdatedAt = actor.OccurredAt;
+                if (closing) member.ClosedAt = actor.OccurredAt;
+            }
+
+            var part = _caseCoordinator.SubmitCaseDays(group, new CaseDayIntent
+            {
+                Mode = CaseDayModes.Sync, Status = status, Note = effectiveNote, DueDate = due, Clearing = clearing,
+                ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt,
+                TriggerDate = null
+            }, _caseDayInlineRowLimit);
+            result = new CaseDaySubmitResult(result.Inline && part.Inline, result.Rows + part.Rows, result.PendingCases + part.PendingCases);
+        }
+        return result;
     }
 
     // ── 結案推導 ─────────────────────────────────────────────────────────────

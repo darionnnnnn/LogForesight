@@ -175,6 +175,13 @@ public interface IIssueCaseStore
     List<IssueCase> GetActiveMemberSummaries(IReadOnlyCollection<long>? workOrderIds) =>
         (workOrderIds ?? GetAllOrderIds()).SelectMany(id => GetByWorkOrder(id, 0, int.MaxValue)).Where(c => c.ClosedAt == null).ToList();
 
+    /// <summary>
+    /// 指定交辦單的**全部**成員（含已結案，精簡欄位版）：「單內沒有進行中成員時取全部成員最後已知嚴重度」用，
+    /// 單一查詢取多張單。空集合回空清單。預設實作逐張 <see cref="GetByWorkOrder"/>；EF 實作依 500 張一批。
+    /// </summary>
+    List<IssueCase> GetMemberSummaries(IReadOnlyCollection<long> workOrderIds) =>
+        workOrderIds.Distinct().SelectMany(id => GetByWorkOrder(id, 0, int.MaxValue)).ToList();
+
     /// <summary>預設實作的全站交辦單枚舉：只有替身沒覆寫 <see cref="GetActiveMemberSummaries"/> 時才會走到，EF 實作不使用</summary>
     private IReadOnlyCollection<long> GetAllOrderIds() =>
         throw new NotSupportedException("這個案件 store 沒有實作全站進行中成員查詢。");

@@ -321,7 +321,59 @@ public static class WorkOrderQueries
     public static readonly string[] MemberStatuses =
         { StatusActive, StatusClosed, StatusEscalated, StatusOverdue, StatusAll };
 
+    /// <summary>
+    /// 處理優先序（P-1，H7）：有被退回的 → 有逾期的（<see cref="IsOverdue"/>，含觀察到期）→ 嚴重度高到低 →
+    /// 期限近到遠（無期限排最後）→ 建立時間新到舊（同現行預設）→ 單號降冪。
+    /// </summary>
+    public const string SortPriority = "priority";
+
+    /// <summary>期限最近：進行中成員的最早期限（無期限排最後），同值依建立時間新到舊、單號降冪</summary>
+    public const string SortDueSoon = "dueSoon";
+
+    /// <summary>嚴重度：高到低（無法推導排最後），同值依建立時間新到舊、單號降冪</summary>
+    public const string SortSeverity = "severity";
+
+    /// <summary>資料庫端可直接排序的三個鍵（store 的 <c>QueryOrders</c> 只認這些）</summary>
     public static readonly string[] Sorts = { SortCreatedDesc, SortMembersDesc, SortUnrepliedOldest };
+
+    /// <summary>
+    /// 要讀取時推導（退回、逾期、嚴重度、最早期限）才排得出來的鍵：由 Web 服務對「符合篩選的全體」在記憶體排序後再取頁，
+    /// 不交給 store 的 <c>QueryOrders</c>（它只認 <see cref="Sorts"/>）。
+    /// </summary>
+    public static readonly string[] DerivedSorts = { SortPriority, SortDueSoon, SortSeverity };
+
+    /// <summary>清單端點接受的全部排序鍵：<see cref="Sorts"/>＋<see cref="DerivedSorts"/></summary>
+    public static readonly string[] AllSorts = Sorts.Concat(DerivedSorts).ToArray();
+
+    // ── 清單標記篩選（我的交辦「今天需要你處理」；與狀態篩選取交集，含 todo）──────────────────
+
+    /// <summary>被退回：管理者退回後處理人尚未回覆的單（判定見 Web 服務 <c>ReturnedMembers</c>）</summary>
+    public const string FlagReturned = "returned";
+
+    /// <summary>今天新增：有成員建立日是今天的單</summary>
+    public const string FlagNewToday = "newToday";
+
+    /// <summary>復發：有進行中成員是復發（<c>IssueRecurrence</c>）的單</summary>
+    public const string FlagRecurrence = "recurrence";
+
+    /// <summary>觀察到期：有觀察中且觀察至早於今天的進行中成員的單</summary>
+    public const string FlagObservationExpired = "observationExpired";
+
+    /// <summary>3 天內到期：有處理中成員期限落在今天～今天＋<see cref="DueSoonDays"/> 的單</summary>
+    public const string FlagDueSoon = "dueSoon";
+
+    public static readonly string[] Flags = { FlagReturned, FlagNewToday, FlagRecurrence, FlagObservationExpired, FlagDueSoon };
+
+    /// <summary>「即將到期」的天數：期限落在 [今天, 今天＋3]（含兩端）</summary>
+    public const int DueSoonDays = 3;
+
+    /// <summary>
+    /// 即將到期的成員（唯一一份判定）：進行中、處理中（預計完成日才有意義；觀察中的日期是「觀察至」，另有觀察到期標記），
+    /// 期限落在今天到今天＋<see cref="DueSoonDays"/> 天之間（含兩端）。已逾期（期限早於今天）不算——逾期有自己的標記。
+    /// </summary>
+    public static bool IsDueSoon(IssueCase c, DateTime today) =>
+        c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress && c.DueDate != null
+        && c.DueDate.Value.Date >= today.Date && c.DueDate.Value.Date <= today.Date.AddDays(DueSoonDays);
 
     public const string PausedInclude = "include";
     public const string PausedExclude = "exclude";

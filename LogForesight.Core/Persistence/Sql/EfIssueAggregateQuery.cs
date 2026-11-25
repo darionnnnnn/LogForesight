@@ -534,7 +534,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var rows = q
             .Select(x => new
             {
-                x.HostId, x.LogName, x.SourceKey, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue
+                x.HostId, x.LogName, x.SourceKey, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue,
+                x.ElevatesDayRisk
             })
             .ToList()
             .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
@@ -558,7 +559,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                         g.Key.EventKey),
                     LastSeen = latest.RecordDate,
                     SeverityRank = latest.SeverityRank,
-                    KnownIssue = latest.KnownIssue
+                    KnownIssue = latest.KnownIssue,
+                    ElevatesDayRisk = g.Where(x => x.RecordDate == latest.RecordDate).Any(x => x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank))
                 };
             })
             .ToList();
@@ -631,7 +633,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                         g.Key.EventId, (LogForesight.Core.Models.LogEntryType)g.Key.EntryType, g.Key.EventKey),
                     LastSeen = latestRow.RecordDate,
                     SeverityRank = latestRow.SeverityRank,
-                    KnownIssue = latestRow.KnownIssue
+                    KnownIssue = latestRow.KnownIssue,
+                    ElevatesDayRisk = g.Where(x => x.RecordDate == latestRow.RecordDate).Any(x => x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank))
                 };
             })
             .ToList();
@@ -639,7 +642,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     internal sealed record LatestOccurrenceRow(
         long HostId, string LogName, string SourceKey, int EventId, int EntryType, string EventKey,
-        DateTime RecordDate, int SeverityRank, string? KnownIssue);
+        DateTime RecordDate, int SeverityRank, string? KnownIssue, bool ElevatesDayRisk);
 
     internal sealed record OccurrenceNameRow(
         long HostId, string LogName, string? SourceKey, int EventId, int EntryType, string EventKey, string SourceName);
@@ -668,7 +671,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 on new { x.HostId, x.LogName, SourceKey = x.SourceKey!, x.EventId, x.EntryType, x.EventKey, x.RecordDate }
                 equals new { l.HostId, l.LogName, l.SourceKey, l.EventId, l.EntryType, l.EventKey, RecordDate = l.LastSeen }
             select new LatestOccurrenceRow(
-                x.HostId, x.LogName, l.SourceKey, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue);
+                x.HostId, x.LogName, l.SourceKey, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue, x.ElevatesDayRisk);
 
         var names = q
             .Select(x => new OccurrenceNameRow(x.HostId, x.LogName, x.SourceKey, x.EventId, x.EntryType, x.EventKey, x.SourceName))

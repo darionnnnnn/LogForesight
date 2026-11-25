@@ -65,6 +65,46 @@ public interface IWorkOrderStore
     WorkOrderPage QueryOrders(WorkOrderQuery q);
 
     /// <summary>
+    /// 符合條件的**全部**交辦單（不分頁，依建立時間新到舊、單號降冪）：Web 服務對「讀取時推導」的排序與標記篩選
+    /// （處理優先序、期限最近、嚴重度、被退回、復發…）要先取得全體、算好鍵、排序後再取頁，不能只排當頁。
+    /// <paramref name="q"/> 的 Sort／Page／PageSize 被忽略。預設實作以 <see cref="QueryOrders"/> 逐頁取；EF 實作單句 SQL。
+    /// </summary>
+    List<WorkOrder> FilterOrders(WorkOrderQuery q)
+    {
+        var all = new List<WorkOrder>();
+        for (var page = 1; ; page++)
+        {
+            var part = QueryOrders(new WorkOrderQuery
+            {
+                HandlerIds = q.HandlerIds, Source = q.Source, EventId = q.EventId, Status = q.Status,
+                Sort = WorkOrderQueries.SortCreatedDesc, Page = page, PageSize = WorkOrderQueries.MaxOrderPageSize,
+                PausedKeys = q.PausedKeys, PausedMode = q.PausedMode, OnlyKeys = q.OnlyKeys, UnreadOnly = q.UnreadOnly,
+                ExcludedHostKeys = q.ExcludedHostKeys
+            });
+            all.AddRange(part.Items);
+            if (part.Items.Count < WorkOrderQueries.MaxOrderPageSize || all.Count >= part.Total) return all;
+        }
+    }
+
+    /// <summary>
+    /// 多張單指定動作的事件（依 CreatedAt、EventId 升冪），一次查詢取回；沒有事件的單不出現在結果裡。
+    /// 「被退回」的判定（最近一筆退回之後有沒有處理人回覆）用。預設實作逐張 <see cref="ListEvents"/>；EF 實作依 500 張一批。
+    /// </summary>
+    Dictionary<long, List<WorkOrderEvent>> ListEventsOf(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string> actions)
+    {
+        var result = new Dictionary<long, List<WorkOrderEvent>>();
+        foreach (var id in workOrderIds.Distinct())
+        {
+            var events = ListEvents(id)
+                .Where(e => actions.Contains(e.Action))
+                .OrderBy(e => e.CreatedAt).ThenBy(e => e.EventId)
+                .ToList();
+            if (events.Count > 0) result[id] = events;
+        }
+        return result;
+    }
+
+    /// <summary>
     /// 一次查詢取得每位「有進行中交辦單或近 7 日有結案單」的處理人負載。
     /// <paramref name="excludedHostKeys"/>（已停用主機的 host_name_key）上的成員不計入成員數與逾期成員數；null＝不排除。
     /// </summary>

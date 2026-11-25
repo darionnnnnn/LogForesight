@@ -905,4 +905,94 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(eventsBefore, w.Events(id));
         Assert.Equal(savesBefore, w.Orders.SaveCalls);
     }
+
+    // ── 回覆不清掉期限（P-1：處理中未帶日期＝保留成員原有期限）────────────────────────
+
+    private static (World W, long Id, IssueCase H1, IssueCase H2) TwoHostOrderWithDue(DateTime? due1, DateTime? due2)
+    {
+        var w = new World();
+        foreach (var h in new[] { "H1", "H2" }) w.AddHostDays(h, D2);
+        var id = w.Coordinator.Create(Request(Alice, "H1", "H2")).WorkOrderId;
+        var h1 = w.Cases.GetOpen("H1", IssueKey)!;
+        var h2 = w.Cases.GetOpen("H2", IssueKey)!;
+        // 回覆帶日期＝把期限寫進成員；之後的測試再用「未帶日期」的回覆檢查保留
+        if (due1 != null) w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "先處理", due1, Actor(T0.AddHours(1)));
+        if (due2 != null) w.Coordinator.Reply(id, new[] { h2.CaseId }, IssueHandlingStatuses.InProgress, "先處理", due2, Actor(T0.AddHours(1)));
+        return (w, id, w.Cases.Get(h1.CaseId)!, w.Cases.Get(h2.CaseId)!);
+    }
+
+    [Fact]
+    public void Reply_處理中未帶日期_保留成員原有期限_案件與逐日列一致()
+    {
+        var due = new DateTime(2026, 9, 24);
+        var (w, id, h1, _) = TwoHostOrderWithDue(due, null);
+        Assert.Equal(due, h1.DueDate);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "還在處理", null, Actor(T0.AddHours(2)));
+
+        Assert.Equal(due, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(due, w.Row("H1", D2)!.DueDate);
+        Assert.Equal("還在處理", w.Cases.Get(h1.CaseId)!.Note);
+    }
+
+    [Fact]
+    public void Reply_處理中帶新日期_以新日期為準()
+    {
+        var due = new DateTime(2026, 9, 24);
+        var newDue = new DateTime(2026, 9, 30);
+        var (w, id, h1, _) = TwoHostOrderWithDue(due, null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "延後", newDue, Actor(T0.AddHours(2)));
+
+        Assert.Equal(newDue, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(newDue, w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_結案類_清空期限_即使成員原本有期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(new DateTime(2026, 9, 24), null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Resolved, "修好了", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_觀察中未帶日期_語意不變_不沿用原期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(new DateTime(2026, 9, 24), null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Observing, "觀察", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_一次回覆多個成員_未帶日期時各自保留自己的期限()
+    {
+        var due1 = new DateTime(2026, 9, 24);
+        var due2 = new DateTime(2026, 10, 5);
+        var (w, id, h1, h2) = TwoHostOrderWithDue(due1, due2);
+
+        w.Coordinator.Reply(id, null, IssueHandlingStatuses.InProgress, "全部繼續", null, Actor(T0.AddHours(2)));
+
+        Assert.Equal(due1, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(due2, w.Cases.Get(h2.CaseId)!.DueDate);
+        Assert.Equal(due1, w.Row("H1", D2)!.DueDate);
+        Assert.Equal(due2, w.Row("H2", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_原本沒有期限的成員_處理中未帶日期_仍然沒有期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(null, null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "處理", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
 }

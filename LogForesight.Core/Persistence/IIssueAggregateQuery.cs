@@ -405,6 +405,12 @@ public sealed class HostIssueOccurrence
 
     /// <summary>最近一次出現當天的已知問題說明（回饋十九輪批次E1，依問題視角用），未命中規則為 null</summary>
     public string? KnownIssue { get; init; }
+
+    /// <summary>
+    /// 最近一次出現當天命中「重大」旗標（<c>elevates_day_risk</c>；舊資料的 Critical 經 <see cref="LegacySeverityRank.ForcesElevate"/> 視為重大）。
+    /// 只有 <c>LatestOccurrences</c> 填這一欄（交辦單清單的嚴重度與重大旗標用），其他入口維持 false。
+    /// </summary>
+    public bool ElevatesDayRisk { get; init; }
 }
 
 /// <summary>

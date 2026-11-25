@@ -102,9 +102,12 @@ public class IssueCaseCoordinator
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
-        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）
+        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）。
+        // 處理中且沒帶日期＝保留案件原有的期限（回覆不清掉期限，P-1；與 WorkOrderCoordinator.ApplyStatus 同一條規則，兩邊要一起改）；
+        // 觀察中語意不變，沒帶就是沒有
         var effectiveDueDate = effectiveStatus is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
-            ? dueDate : null;
+            ? (effectiveStatus == IssueHandlingStatuses.InProgress ? dueDate ?? openCase.DueDate : dueDate)
+            : null;
 
         var eligibleDays = ResolveEligibleDays(host, hostName, issueKey);
         if (!eligibleDays.Contains(triggerDate.Date)) eligibleDays.Add(triggerDate.Date);

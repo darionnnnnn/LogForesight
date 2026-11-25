@@ -101,6 +101,12 @@ public class WorkOrderPreviewDto
     public int AssigneeNoAccessTotal { get; set; }
 
     public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
+
+    /// <summary>
+    /// 建議期限（預填「預計完成日」用，可清除）：依這個問題在會寫入的主機上的最高嚴重度，自今天（站台時鐘）起算——
+    /// 高 3 天、中 7 天（<c>DefaultDueDays</c>）；低或推導不到嚴重度為 null。建立時仍以請求的 <c>DueDate</c> 為準（清掉就是沒有）。
+    /// </summary>
+    public DateTime? SuggestedDueDate { get; set; }
 }
 
 public class WorkOrderConflictDto
@@ -327,8 +333,21 @@ public class WorkOrderListRequest
     /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>
     public long? GroupId { get; set; }
 
-    /// <summary><c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c></summary>
+    /// <summary>
+    /// <c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c>，以及讀取時推導的三個：
+    /// <c>priority</c>（處理優先序：被退回 → 逾期 → 嚴重度高到低 → 期限近到遠、無期限最後 → 建立時間新到舊）、
+    /// <c>dueSoon</c>（期限最近）、<c>severity</c>（嚴重度高到低）。三個推導鍵對「符合篩選的全體」排序後才分頁，不是只排當頁。
+    /// </summary>
     public string Sort { get; set; } = "created_desc";
+
+    /// <summary>
+    /// 標記篩選（我的交辦「今天需要你處理」各數字的明細）：<c>returned</c>（被退回）／<c>newToday</c>（今天新增）／
+    /// <c>recurrence</c>（復發）／<c>observationExpired</c>（觀察到期）／<c>dueSoon</c>（3 天內到期）；空白＝不篩。
+    /// **組合規則**：與 <see cref="Status"/>（含 <c>todo</c> 待我處理）、暫停、處理人等其他條件一律取交集（AND），
+    /// 不互相覆蓋——例如 <c>status=todo&amp;flag=returned</c> ＝待我處理且被退回的單。標記只看進行中、非停用主機的成員，
+    /// 所以已結案的單不會被任何標記選中。
+    /// </summary>
+    public string? Flag { get; set; }
 
     public int Page { get; set; } = 1;
 
@@ -427,6 +446,27 @@ public class WorkOrderRowDto
     /// 不含停用主機。清單狀態篩選為 <c>todo</c>（待我處理）時以這個數字當台數。
     /// </summary>
     public int TodoHosts { get; set; }
+
+    /// <summary>
+    /// 今天新增：進行中成員裡建立時間（日期）是今天（站台時鐘）的不重複主機數；不含停用主機。
+    /// 昨天 23:59 建立的不算。
+    /// </summary>
+    public int NewTodayHosts { get; set; }
+
+    /// <summary>
+    /// 被退回的成員數：這張單最近一筆退回事件之後處理人尚未回覆時，＝仍是處理中、說明是該次退回說明的進行中成員數
+    /// （夜間續掛新增的成員不算）；沒有被退回、或退回後處理人已回覆為 0。以成員（案件）計，不是主機。
+    /// </summary>
+    public int ReturnedMembers { get; set; }
+
+    /// <summary>
+    /// 顯示用的嚴重度（<c>High</c>／<c>Medium</c>／<c>Low</c>）：取單內**進行中**成員最近一次出現的最高嚴重度
+    /// （舊資料的 Critical 視為 High）；單內沒有進行中成員時取全部成員的最後已知值；都推導不到為 null（畫面顯示「—」）。
+    /// </summary>
+    public string? Severity { get; set; }
+
+    /// <summary>重大旗標：用來決定 <see cref="Severity"/> 的那些最近一次出現中，有任何一個命中重大旗標（<c>elevates_day_risk</c>）</summary>
+    public bool Critical { get; set; }
 
     public DateTime? DueDate { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -883,6 +923,28 @@ public class HandlerSummaryDto
 
     /// <summary>上報中的台數（見 <see cref="TodoHosts"/>）</summary>
     public int EscalatedHosts { get; set; }
+
+    // ── 今天需要你處理（只有 HandlerSummary 端點填，側欄徽章不填、恆為 0）─────────────────────────
+    // 口徑同 ActiveMembers：進行中交辦單（不含暫停單）底下的進行中成員、不含停用主機。
+    // 「以主機計」的三個數字是各單的不重複主機數加總，等於清單各列同名欄位相加；同一台主機出現在兩張單算兩次。
+
+    /// <summary>今天新增（以主機計）：成員建立日是今天；等於清單各列 <see cref="WorkOrderRowDto.NewTodayHosts"/> 相加</summary>
+    public int NewTodayHosts { get; set; }
+
+    /// <summary>復發（以主機計）：進行中成員是復發（<c>IssueRecurrence</c>）；等於各列 <see cref="WorkOrderRowDto.RecurrenceHosts"/> 相加</summary>
+    public int RecurrenceHosts { get; set; }
+
+    /// <summary>被退回（以成員計）：等於各列 <see cref="WorkOrderRowDto.ReturnedMembers"/> 相加</summary>
+    public int ReturnedMembers { get; set; }
+
+    /// <summary>觀察到期（以主機計）：觀察中且觀察至早於今天；等於各列 <see cref="WorkOrderRowDto.ObservationExpiredHosts"/> 相加</summary>
+    public int ObservationExpiredHosts { get; set; }
+
+    /// <summary>
+    /// 3 天內到期（以成員計）：處理中成員的期限在今天～今天＋3 天（含兩端）；判定見 <c>WorkOrderQueries.IsDueSoon</c>。
+    /// 已逾期的不算（逾期是 <see cref="OverdueMembers"/>）。
+    /// </summary>
+    public int DueSoonMembers { get; set; }
 
     /// <summary>這位處理人目前暫停接單（自動派工排除他）；處理人工作頁頁頭標記用，側欄徽章不填</summary>
     public bool HandlerPaused { get; set; }
