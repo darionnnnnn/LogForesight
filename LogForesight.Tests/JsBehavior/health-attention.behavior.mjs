@@ -48,7 +48,8 @@ const reasonRows = host => find(host, n => n.tagName === 'LI');
 // ── 導覽告示 ───────────────────────────────────────────────
 
 function bannerEnv({ capabilities, freshness = { stale: false }, attention = { status: 'ok', reasons: [] }, attentionFails = false }) {
-    installDom();
+    const dom = installDom();
+    const { disclosure } = loadElements(dom);
     const calls = [];
     let bar = 'untouched';
     const api = {
@@ -60,9 +61,9 @@ function bannerEnv({ capabilities, freshness = { stale: false }, attention = { s
     };
     const source = read('core/layout.js');
     const body = ['function freshnessReason(', 'async function loadHealthBanner('].map(d => extractFunction(source, d)).join('\n');
-    const factory = new Function('api', 'hasCapability', 'registerAlert', 'formatDateTime', 'appUrl', 'document',
+    const factory = new Function('api', 'hasCapability', 'registerAlert', 'formatDateTime', 'appUrl', 'document', 'disclosure',
         `${body}\nreturn loadHealthBanner;`);
-    const load = factory(api, (_, c) => capabilities.includes(c), (_, node) => { bar = node; }, v => String(v), p => p, document);
+    const load = factory(api, (_, c) => capabilities.includes(c), (_, node) => { bar = node; }, v => String(v), p => p, document, disclosure);
     return { load, calls, bar: () => bar };
 }
 
@@ -151,6 +152,29 @@ const cases = {
         assert.ok(node.children[0].textContent.includes('排程資料已超過 48 小時沒有成功更新'));
         assert.equal(find(node, n => n.tagName === 'LI').length, 2);
         assert.deepEqual(find(node, n => n.tagName === 'A').map(a => a.href), ['/runs', '/admin/settings#health']);
+    },
+
+    // 原因多於兩項：清單收進揭露（預設收合、按鈕寫明項數），告示不把頁面頂掉；兩項以內照舊直接列出
+    async bannerCollapsesReasonsBeyondTwo() {
+        const many = [
+            { key: 'a', text: '原因甲。' }, { key: 'b', text: '原因乙。' }, { key: 'c', text: '原因丙。' }
+        ];
+        const { load, bar } = bannerEnv({ capabilities: ['Maintain'], attention: { status: 'degraded', reasons: many } });
+        await load({});
+        const node = bar();
+        const list = find(node, n => n.attributes?.['data-health-reasons'] === '1')[0];
+        assert.equal(find(list, n => n.tagName === 'LI').length, 3);
+        assert.ok(list.className.includes('d-none'), '預設收合');
+        const toggle = find(node, n => n.tagName === 'BUTTON')[0];
+        assert.ok(toggle.textContent.includes('3 項'), toggle.textContent);
+        assert.equal(toggle.getAttribute('aria-controls'), list.id);
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        toggle.listeners.click[0]({ stopPropagation() {} });
+        assert.ok(!list.className.includes('d-none'), '展開後可見');
+        const few = bannerEnv({ capabilities: ['Maintain'], attention: { status: 'degraded', reasons: many.slice(0, 2) } });
+        await few.load({});
+        assert.equal(find(few.bar(), n => n.tagName === 'BUTTON').length, 0);
+        assert.ok(!find(few.bar(), n => n.attributes?.['data-health-reasons'] === '1')[0].className.includes('d-none'));
     },
 
     // 正常且排程沒過期 → 不顯示

@@ -3972,13 +3972,13 @@
     ],
     "steps": [
       {
-        "waitFor": "table tbody tr"
+        "waitFor": "#run-summary table tbody tr.lf-row-expandable"
       },
       {
         "wait": 600
       },
       {
-        "evalAssert": "const ths = [...document.querySelectorAll('table thead th')].map(th => th.textContent.trim());\nconst idx = ths.indexOf('未執行');\nif (idx < 0) return '找不到「未執行」欄';\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const tr of document.querySelectorAll('table tbody tr')) {\n  const cell = tr.children[idx];\n  const num = cell && cell.querySelector('.lf-status-count');\n  if (!num) continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '沒有可量的「未執行」數字';"
+        "evalAssert": "return (async () => {\n// 批次 V 把執行總表十多欄計數收進每列的展開（renderDayCounts），「未執行」不再是表格欄；\n// 這裡先展開每一列，再量展開區內「未執行」數字的文字對比（原本要守的事不變）\nconst rows = [...document.querySelectorAll('#run-summary table tbody tr.lf-row-expandable')];\nif (!rows.length) return '找不到可展開的資料列';\nrows.forEach(tr => tr._lfSetExpanded(true));\nawait new Promise(r => setTimeout(r, 600));\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const item of document.querySelectorAll('#run-summary .lf-day-counts > span')) {\n  const label = item.querySelector('.lf-text-label');\n  const num = item.querySelector('.lf-status-count');\n  if (!label || !num || label.textContent.trim() !== '未執行') continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '展開後沒有可量的「未執行」數字'; })();"
       }
     ]
   },
@@ -5007,8 +5007,32 @@
       },
       {
         "assert": {
+          "sel": "#wo-reminders",
+          "text": "可派未派的問題："
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "最近一次夜間派工派不出去的問題：2 筆"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "處理人已停用或暫停接單、名下仍有單：2 人"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "未分組主機：1 台"
+        }
+      },
+      {
+        "assert": {
           "sel": "#wo-reminders > ul > li",
-          "count": 3
+          "count": 6
         }
       }
     ]
@@ -5522,7 +5546,9 @@
     "path": "fixture:record.cases",
     "widths": [375, 768, 1280, 1920, 2560],
     "steps": [
-      { "waitFor": "#detail-issues .lf-status-cell__wrap .lf-badge" },
+      { "waitFor": "#detail-issues .lf-status-cell__wrap" },
+      { "select": ["#detail-scope", "all"] },
+      { "waitFor": "#detail-issues .lf-status-cell__wrap .lf-badge--primary" },
       {
         "evalAssert": "const badges = [...document.querySelectorAll('#detail-issues .lf-status-cell__wrap .lf-badge--primary')]; if (!badges.length) return '資料集沒有案件徽章'; const bad = []; for (const b of badges) { const td = b.closest('td'); const r = document.createRange(); r.selectNodeContents(b); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); if (right > td.getBoundingClientRect().right + 1) bad.push(Math.round(right - td.getBoundingClientRect().right)); } return bad.length ? ('案件徽章超出儲存格 ' + bad.join(',') + 'px') : null;"
       }

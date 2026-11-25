@@ -8,6 +8,7 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon, button, linkButton } from './ui.js';
+import { disclosure } from './elements.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 import { safeStorage } from './storage.js';
 import { normalizeFontScale } from './font-scale.js';
@@ -849,6 +850,11 @@ async function loadHealthBanner(user) {
             const item = document.createElement('li');
             item.textContent = r.text;
             list.appendChild(item);
+        }
+        // 原因多於兩項時收進揭露：告示在每一頁頂端，常駐的長清單會把「一屏看完」的版面頂掉；
+        // 標題列已寫明項數，要看逐項再展開（兩項以內照舊直接列出）
+        if (reasons.length > 2) {
+            bar.appendChild(disclosure(`看 ${reasons.length} 項原因`, list));
         }
         bar.appendChild(list);
         // 沒有 Maintain 的人（開發人員）進不了系統健康頁，只看得到原因：補上下一步，免得看完不知道找誰；主文已列出聯絡人就不重複
