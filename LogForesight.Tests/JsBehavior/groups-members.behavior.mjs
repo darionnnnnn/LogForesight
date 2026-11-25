@@ -65,6 +65,7 @@ function load({ pages, previewResult = null, failPages = new Set(), delays = {} 
         guardLoad: () => { },
         renderPagination: (container, opts) => spy.pagers.set(container, opts),
         formatNumber: n => String(n),
+        statusBadge: (text) => { const n = dom.newElement('span'); n.textContent = text; return n; },
         compareText: (a, b) => String(a).localeCompare(String(b)),
         roleText: (cls, text) => { const n = dom.newElement('span'); n.textContent = text; return n; },
         statusNote: (type, text) => { const n = dom.newElement('div'); n.textContent = text; return n; }

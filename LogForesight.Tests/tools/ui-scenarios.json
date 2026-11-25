@@ -5223,6 +5223,199 @@
         "evalAssert": "const toggles = [...document.querySelectorAll('#wo-header .lf-disclosure')].filter(b => ['處置參考', '訊息樣本'].includes(b.textContent.trim()));\nif (toggles.length === 0) return '量測前提不成立：這張單沒有處置參考也沒有訊息樣本，無法驗證展開';\nconst before = location.pathname;\nfor (const t of toggles) { t.click(); }\nconst opened = toggles.filter(t => { const target = document.getElementById(t.getAttribute('aria-controls')); return target && !target.classList.contains('d-none'); });\nif (opened.length !== toggles.length) return '有展開鈕按下後內容沒有顯示';\nif (location.pathname !== before) return '展開處置參考不應離開交辦單頁';\nreturn null;"
       }
     ]
+  },
+  {
+    "name": "設定-健康-派工就緒卡",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "degraded",
+            "statusReasons": [
+              {
+                "key": "dispatchReadiness",
+                "text": "派工就緒：自動派工開關沒有開，夜間分析後不會自動派單。"
+              }
+            ],
+            "dispatchReadiness": {
+              "items": [
+                {
+                  "id": "host-no-group",
+                  "title": "主機都有群組",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 7,
+                  "detail": "有 7 台啟用的主機沒有加入任何主機群組，派工池看不到它們。",
+                  "examples": [
+                    "WIN-APP01",
+                    "WIN-DB01",
+                    "LINUX-EDGE-01"
+                  ],
+                  "fixUrl": "/admin/hosts",
+                  "fixLabel": "前往主機頁"
+                },
+                {
+                  "id": "host-group-no-pool",
+                  "title": "主機群組都有派工池看得到",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 2,
+                  "detail": "有 2 個主機群組沒有授權給任何派工池群組，群組內的主機不會被自動派工。",
+                  "examples": [
+                    "機房甲",
+                    "機房乙"
+                  ],
+                  "fixUrl": "/admin/groups",
+                  "fixLabel": "去授權"
+                },
+                {
+                  "id": "no-pool",
+                  "title": "有可接單的派工池",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "派工池有 3 位可接單的成員。",
+                  "examples": [],
+                  "fixUrl": "/admin/groups",
+                  "fixLabel": "前往群組與授權"
+                },
+                {
+                  "id": "auto-dispatch-off",
+                  "title": "自動派工已開啟",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 1,
+                  "detail": "自動派工開關沒有開，夜間分析後不會自動派單（續掛既有單與問題負責人規則不受影響）。",
+                  "examples": [],
+                  "fixUrl": "/admin/settings#dispatch",
+                  "fixLabel": "前往派工設定"
+                },
+                {
+                  "id": "ai-window",
+                  "title": "AI 執行窗口已設定",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "AI 背景補跑有設定執行窗口。",
+                  "examples": [],
+                  "fixUrl": "/runs#settings",
+                  "fixLabel": "前往排程設定"
+                },
+                {
+                  "id": "schedule-off",
+                  "title": "排程已啟用",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "排程已啟用，會定時取數與分析。",
+                  "examples": [],
+                  "fixUrl": "/runs#settings",
+                  "fixLabel": "前往排程設定"
+                },
+                {
+                  "id": "admin-no-email",
+                  "title": "管理員有可用的 email",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 2,
+                  "detail": "所有管理員都沒有可用的 email，上報信與管理員提醒信寄不出去。",
+                  "examples": [
+                    "admin",
+                    "boss"
+                  ],
+                  "fixUrl": "/admin/users",
+                  "fixLabel": "前往使用者"
+                },
+                {
+                  "id": "pool-no-email",
+                  "title": "派工池成員都有可用的 email",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "派工池成員都有可用的 email。",
+                  "examples": [],
+                  "fixUrl": "/admin/users",
+                  "fixLabel": "前往使用者"
+                }
+              ],
+              "failedCount": 4,
+              "mailChecked": true
+            }
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-dispatch-readiness .lf-table-wrap",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const host = document.getElementById('health-dispatch-readiness'); const rows = host.querySelectorAll('tbody tr'); if (rows.length !== 8) return `就緒卡應列 8 項，實際 ${rows.length}`; const links = host.querySelectorAll('tbody a[href]'); if (links.length !== 4) return `不通過的 4 項各應有 1 個修正連結，實際 ${links.length}`; if (!host.querySelector('.lf-status-note--warning')) return '缺少警告型摘要訊息'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-dispatch",
+    "role": "ui-admin",
+    "path": "/admin/settings#dispatch",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"dispatch\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#auto-dispatch-enabled",
+          "visible": true
+        }
+      },
+      {
+        "evalAssert": "const mail = document.querySelector('[data-panel=\"mail\"]'); if (mail && mail.querySelector('#auto-dispatch-enabled')) return '自動派工開關仍在郵件通知頁籤'; const link = document.querySelector('[data-panel=\"dispatch\"] a[href$=\"#health\"]'); if (!link) return '派工頁籤缺少連到系統健康「派工就緒」的連結'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-群組與授權-主機群組有看得到的派工池群組欄",
+    "role": "ui-admin",
+    "path": "/admin/groups#host-groups",
+    "steps": [
+      {
+        "waitFor": "#host-group-list tbody tr"
+      },
+      {
+        "evalAssert": "const heads = [...document.querySelectorAll('#host-group-list thead th')].map(t => t.textContent.trim()); if (!heads.includes('看得到的派工池群組')) return '主機群組清單缺少「看得到的派工池群組」欄：' + heads.join('、'); const idx = heads.indexOf('看得到的派工池群組'); const cells = [...document.querySelectorAll('#host-group-list tbody tr')].map(r => r.children[idx]?.textContent.trim() ?? ''); if (cells.some(c => c === '')) return '有主機群組列沒有顯示派工池群組數（至少要有「—」或數字）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-使用者-編輯視窗群組即時摘要",
+    "role": "ui-admin",
+    "path": "/admin/users",
+    "steps": [
+      {
+        "waitFor": "#user-list tbody tr"
+      },
+      {
+        "click": "#user-list tbody tr button.btn-outline-primary"
+      },
+      {
+        "waitFor": "#user-modal.show"
+      },
+      {
+        "waitFor": "#user-group-summary .lf-text-label",
+        "timeout": 15000
+      },
+      {
+        "evalAssert": "const s = document.getElementById('user-group-summary').textContent; for (const k of ['能力', '可見主機', '派工池']) if (!s.includes(k)) return '群組摘要缺少「' + k + '」：' + s; const boxes = [...document.querySelectorAll('#user-groups input[type=checkbox]')]; if (boxes.length === 0) return '量測前提不成立：沒有群組勾選框'; return null;"
+      }
+    ]
   }
   ,{
     "name": "版面-交辦總覽-待派三段",

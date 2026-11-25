@@ -36,6 +36,7 @@ public class HealthService
     private readonly IReadOnlyList<ICacheStatistics> _caches;
     private readonly TimeProvider _clock;
     private readonly IAiProbeService? _aiProbe;
+    private readonly DispatchReadinessService? _readiness;
 
     public HealthService(
         StorageBackend backend,
@@ -48,8 +49,10 @@ public class HealthService
         IEnumerable<ICacheStatistics>? caches = null,
         HostDayWorkflowRecoveryHostedService? recoveryService = null,
         TimeProvider? clock = null,
-        IAiProbeService? aiProbe = null)
+        IAiProbeService? aiProbe = null,
+        DispatchReadinessService? readiness = null)
     {
+        _readiness = readiness;
         _aiProbe = aiProbe;
         _clock = clock ?? TimeProvider.System;
         _recoveryService = recoveryService;
@@ -222,8 +225,11 @@ public class HealthService
         // AI 探測：讀上次結果、在背景更新（不等探測）；健康頁每次載入順便讓結果保持新鮮
         _aiProbe?.RefreshInBackground();
         var aiProbe = _aiProbe?.LatestResult;
+        var dispatchReadiness = _readiness?.Evaluate();
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
+            DispatchReadinessFailures = dispatchReadiness?.Items.Where(i => !i.Passed).Select(i => i.Detail).ToList()
+                                        ?? new List<string>(),
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
             UnpinnedCertificateBypass = UnpinnedCertificateBypass(healthSettings,
                 new NetiqOptionsStore(_backend.Blob("netiq_options")).Get(),
@@ -264,6 +270,7 @@ public class HealthService
         {
             Status = degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
             StatusReasons = reasons.ToList(),
+            DispatchReadiness = dispatchReadiness,
             AiProbeStatus = aiProbe?.Status.ToString(),
             AiProbeDetail = aiProbe?.Detail,
             RetentionFailedSegments = retentionFailure?.Segments.ToList() ?? new List<string>(),

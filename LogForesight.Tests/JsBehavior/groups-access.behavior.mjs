@@ -70,6 +70,7 @@ function load({ granted = [19], put, matrixAfter = null }) {
         guardLoad: async (_containers, fn) => fn(),
         renderPagination: () => { },
         formatNumber: n => String(n),
+        statusBadge: (text) => { const n = dom.newElement('span'); n.textContent = text; return n; },
         compareText: (a, b) => String(a).localeCompare(String(b)),
         roleText: (cls, text) => { const n = dom.newElement('span'); n.textContent = text; return n; },
         statusNote: (type, text) => { const n = dom.newElement('div'); n.textContent = text; return n; },

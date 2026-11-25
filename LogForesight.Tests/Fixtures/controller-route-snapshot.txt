@@ -129,6 +129,7 @@ GET	/api/admin/setup/status	C=Maintain;A=-	-	-	-	SetupController
 GET	/api/admin/users	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/users	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/users/batch	C=Maintain;A=-	-	-	-	AdminController
+GET	/api/admin/users/group-preview	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/users/{userId:long}/detail	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/dispatch-paused	C=Maintain;A=-	-	-	-	AdminController
 PUT	/api/admin/users/{userId:long}/groups	C=Maintain;A=-	-	-	-	AdminController

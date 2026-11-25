@@ -11,6 +11,7 @@ import {
 import { formatDateTime } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
 import { askWorkOrderChoice } from './availability-choice.js';
+import { createUserGroupSummary } from '../core/user-group-summary.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -28,6 +29,26 @@ let pageSize = loadPageSize('users');
 // 新增筆數（docs/archive/HISTORY.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
 // 編輯既有使用者一律走單筆（帳號本來就不可改，多筆模式沒有意義）
 let createMode = 'single';
+
+// 編輯視窗的群組即時摘要（F18-1）：能力、可見主機台數、是否在派工池；依目前勾選、尚未儲存的群組算
+const groupSummary = createUserGroupSummary({
+    host: document.getElementById('user-group-summary'),
+    fetchPreview: ({ userId, groupIds, active }) => {
+        const query = new URLSearchParams();
+        if (userId) query.set('userId', String(userId));
+        for (const id of groupIds) query.append('groupIds', String(id));
+        query.set('active', String(active));
+        return api.get(`/api/admin/users/group-preview?${query}`, { silent: true });
+    }
+});
+
+function refreshGroupSummary() {
+    groupSummary.refresh({
+        userId: editingUser?.userId ?? null,
+        groupIds: Array.from(document.querySelectorAll('#user-groups input:checked')).map(input => Number(input.value)),
+        active: document.getElementById('user-active').checked
+    });
+}
 
 // chip 篩選狀態（§5.1 D-2）：狀態/角色單選，群組多選
 // 狀態預設 'active'（§4，回饋第十一輪）：日常維護看的是「現在還在職的人」，
@@ -372,6 +393,7 @@ function openModal(user) {
     setCreateMode('single');
 
     renderGroupCheckboxes(user);
+    refreshGroupSummary();
     modal.show();
 }
 
@@ -393,6 +415,10 @@ function setCreateMode(mode) {
 for (const button of document.querySelectorAll('#user-mode-toggle button')) {
     button.addEventListener('click', () => setCreateMode(button.dataset.mode));
 }
+
+// 勾選或取消群組、切換啟用，摘要即時更新（事件委派：群組清單每次開窗都重畫）
+document.getElementById('user-groups').addEventListener('change', refreshGroupSummary);
+document.getElementById('user-active').addEventListener('change', refreshGroupSummary);
 
 function renderGroupCheckboxes(user) {
     checkboxList(document.getElementById('user-groups'), groups.map(group => ({

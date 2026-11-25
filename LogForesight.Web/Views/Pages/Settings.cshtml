@@ -14,6 +14,7 @@
     @* 資源守門：同時節制 NetIQ 取數與 PRTG 擷取兩路，因此放在全站設定而非 PRTG 維護頁 *@
     <li class="nav-item"><button class="nav-link" data-tab="guard" type="button">資源守門</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mail" type="button">郵件通知</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="dispatch" type="button">派工</button></li>
     @* 外觀（docs/archive/FEEDBACK-10-PLAN.md §1）：放最後一個頁籤——找 logo／名稱的人會直覺點「外觀」，
        塞進「層級與顯示」反而找不到；擺最後則不動預設落地頁籤（層級與顯示仍是主要入口） *@
     <li class="nav-item"><button class="nav-link" data-tab="brand" type="button">外觀</button></li>
@@ -543,6 +544,13 @@
            HealthAttentionGuardTests 比對這份宣告與 HealthAttentionKeys，新增會亮警示的卡片必須併進清單 *@
         <div class="mb-3" id="health-overall" role="status"></div>
         <p class="lf-text-meta mb-3" id="health-build" role="status"></p>
+        @* 派工就緒（第 81 輪批次 U）：八種「派工靜默失效」的狀況逐項列出；不通過的項目併入整體狀態原因（HealthAttention） *@
+        <div class="lf-card mb-3" data-health-alert="dispatchReadiness" id="health-dispatch-readiness-card">
+            <div class="lf-card__header"><h2 class="lf-card__title">派工就緒</h2></div>
+            <div class="lf-card__body">
+                <div id="health-dispatch-readiness" role="status" aria-live="polite"></div>
+            </div>
+        </div>
         <div class="lf-card mb-3" data-health-alert="prtgSnapshot">
             <div class="lf-card__header"><h2 class="lf-card__title">PRTG 快照</h2></div>
             <div class="lf-card__body">
@@ -893,8 +901,21 @@
             </div>
             <div id="mail-test-result"></div>
 
-            <hr />
+        </div>
+    </div>
 
+    @* 派工（第 81 輪批次 U）：夜間自動派工的開關與說明獨立成一個頁籤，健康頁的「派工就緒」卡與待派頁都連到這裡。
+       設定鍵（AutoDispatchEnabled）與儲存流程不變，仍在同一個設定表單內一起儲存 *@
+    <div class="lf-card mb-3 d-none" data-panel="dispatch" id="dispatch">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">派工
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="夜間分析後是否自動把問題派給派工池的處理人。是否真的派得出去，要看派工池、主機群組授權、排程與 AI 窗口等條件，系統健康頁的「派工就緒」卡會逐項檢查。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h2>
+        </div>
+        <div class="lf-card__body">
             <h3 class="h6">自動派工
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
                         data-bs-content="候選人：派工池群組的成員，排除已暫停接單、看不到該主機的人。負載：以目前進行中交辦單的進行中成員數計算，挑最輕的人。不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾。">
@@ -910,6 +931,7 @@
                 <span>目前沒有任何使用者群組被設為派工池，自動派工不會派出任何單。請到「群組與授權」設定。</span>
             </div>
             <div id="auto-dispatch-alert-tools"></div>
+            <p class="mb-0 mt-3"><a href="@Url.Content("~/admin/settings")#health">前往系統健康檢查「派工就緒」</a></p>
         </div>
     </div>
 

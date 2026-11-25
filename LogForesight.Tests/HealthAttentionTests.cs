@@ -57,6 +57,10 @@ public class HealthAttentionTests
         [HealthAttentionKeys.CertificateTrust] = (new() { UnpinnedCertificateBypass = new[] { "Sentinel" } }, "Sentinel開了「忽略憑證錯誤」"),
         [HealthAttentionKeys.OutboxDropped] = (new() { OutboxRecentDropped = 3, OutboxLastDroppedAt = Now.AddDays(-1) }, "丟棄了 3 筆"),
         [HealthAttentionKeys.AiUnreachable] = (new() { AiUnreachable = true }, "AI 服務連線失敗"),
+        [HealthAttentionKeys.DispatchReadiness] = (new()
+        {
+            DispatchReadinessFailures = new[] { "自動派工開關沒有開，夜間分析後不會自動派單。" }
+        }, "派工就緒：自動派工開關沒有開"),
     };
 
     public static IEnumerable<object[]> AllKeys() => HealthAttentionKeys.All.Select(k => new object[] { k });

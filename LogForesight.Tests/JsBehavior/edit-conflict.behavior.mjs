@@ -92,7 +92,9 @@ function loadPage(file, tail, { apiHandlers = {}, checked = [] } = {}) {
         checkboxList: () => { },
         formatDateTime: v => String(v),
         appUrl: p => p,
-        roleText: () => dom.newElement('span')
+        roleText: () => dom.newElement('span'),
+        // 群組即時摘要（批次 U）：與本檔的儲存／衝突行為無關，換成不發請求的替身
+        createUserGroupSummary: () => ({ refresh() { }, clear() { } })
     });
     const modalClass = class { show() { spy.shows++; } hide() { spy.hides++; } };
     const all = [...Object.keys(stubs), 'document', 'bootstrap'];

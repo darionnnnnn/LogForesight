@@ -31,12 +31,13 @@ public static class HealthAttentionKeys
     public const string CertificateTrust = "certificateTrust";
     public const string OutboxDropped = "outboxDropped";
     public const string AiUnreachable = "aiUnreachable";
+    public const string DispatchReadiness = "dispatchReadiness";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
         Storage, SlowQueries, FirstSeen, Freshness, PrtgSnapshot, Memory, Crypto,
         Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged,
-        CertificateTrust, OutboxDropped, AiUnreachable
+        CertificateTrust, OutboxDropped, AiUnreachable, DispatchReadiness
     };
 }
 
@@ -87,6 +88,12 @@ public sealed class HealthAttentionInput
     /// 沒設定（統計模式是合法運作方式）與還沒探測過都不算——那不是故障。
     /// </summary>
     public bool AiUnreachable { get; init; }
+
+    /// <summary>
+    /// 派工就緒檢查不通過的項目說明（每項一句，來自 <see cref="DispatchReadinessService.Evaluate"/>）；
+    /// 全部通過、略過或沒有派工就緒服務（測試組裝）時為空。判定在就緒服務，這裡只負責併入整體狀態。
+    /// </summary>
+    public IReadOnlyList<string> DispatchReadinessFailures { get; init; } = Array.Empty<string>();
 
     /// <summary>最近一次 PRTG 同步結果的警告；PRTG 未啟用時為空</summary>
     public IReadOnlyList<PrtgSyncWarning> PrtgSyncWarnings { get; init; } = Array.Empty<PrtgSyncWarning>();
@@ -181,6 +188,9 @@ public static class HealthAttention
 
         if (input.AiUnreachable)
             Add(HealthAttentionKeys.AiUnreachable, "AI 服務連線失敗，白話摘要與互動問答暫時無法使用（分析仍以統計模式照常執行）；請到「設定 > AI 服務」確認位址後按「測試連線」。");
+
+        foreach (var failure in input.DispatchReadinessFailures)
+            Add(HealthAttentionKeys.DispatchReadiness, Sentence($"派工就緒：{PrtgSyncWarning.Truncate(failure, 200)}"));
 
         foreach (var warning in input.PrtgSyncWarnings)
         {

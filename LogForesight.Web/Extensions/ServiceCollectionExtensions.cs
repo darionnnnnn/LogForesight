@@ -310,6 +310,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<HostAdminService>();
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
+        services.AddScoped<UserGroupPreviewService>();
         services.AddScoped<IssueOwnerAdminService>();
         services.AddSingleton<IAiProbeService>(sp =>
         {
@@ -509,6 +510,8 @@ public static class ServiceCollectionExtensions
 
         // 派工候選人快照：Singleton，相依全是 Singleton store（能力／可見範圍規則留在 Web，Core 只吃快照）
         services.AddSingleton<IDispatchCandidateSource, DispatchCandidateSource>();
+        // 派工就緒檢查與主機群組「看得到的派工池群組」：重用候選人快照與既有判定，不另寫規則
+        services.AddSingleton<DispatchReadinessService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
