@@ -25,7 +25,7 @@ public static class DefaultDueDays
     };
 
     /// <summary>以 severity_rank 原始值取預設天數（先經 <see cref="LegacySeverityRank"/> 正規化）</summary>
-    public static int? ForRank(int rank) => ForSeverity((IssueSeverity)rank);
+    public static int? ForRank(int rank) => ForSeverity(LegacySeverityRank.ToSeverity(rank));
 
     /// <summary>
     /// 預設期限日期：<paramref name="createdOn"/> 只取日期部分（不帶時間）再加天數；低嚴重度回 null。

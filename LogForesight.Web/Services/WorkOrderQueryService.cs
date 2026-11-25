@@ -912,7 +912,7 @@ public class WorkOrderQueryService
                 if (maxRank == null || rank > maxRank) maxRank = rank;
                 critical |= occ.ElevatesDayRisk;
             }
-            if (maxRank != null) result[orderId] = ((IssueSeverity)maxRank.Value, critical);
+            if (maxRank != null) result[orderId] = (LegacySeverityRank.ToSeverity(maxRank.Value), critical);
         }
         return result;
     }
