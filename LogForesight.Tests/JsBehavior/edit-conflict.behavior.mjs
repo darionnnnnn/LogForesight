@@ -248,6 +248,28 @@ const cases = {
         assert.ok(!page.spy.toasts.some(t => t.message.includes('已更新')), '不得顯示成功');
     },
 
+    // 規則 409 後重新載入找不到該規則（已被刪除）：提示一句再關視窗
+    async ruleReloadWhenRuleDeletedToastsAndCloses() {
+        let deleted = false;
+        const page = loadRules({
+            'GET /api/rules': () => (deleted ? [] : [ruleFixture()]),
+            'POST /api/rules': () => { throw new ApiErrorStub(409, '衝突'); }
+        });
+        await settle();
+        page.openRuleModal(ruleFixture());
+        await submit2(page);
+        await settle();
+        const reload = page.el('#rule-conflict').find(n => n.tagName === 'BUTTON');
+
+        deleted = true;
+        await reload.listeners.click[0]();
+        await settle();
+
+        assert.ok(page.spy.toasts.some(t => t.message === '這條規則已被刪除'), JSON.stringify(page.spy.toasts));
+        assert.equal(page.spy.hides, 1, '要關視窗');
+        assert.ok(isHidden(page.el('#rule-conflict')));
+    },
+
     // 規則的重新載入鈕：重打清單並以最新版本重開視窗
     async ruleReloadButtonRefreshesAndClearsNotice() {
         let description = '原說明';

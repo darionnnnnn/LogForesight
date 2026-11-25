@@ -22,6 +22,7 @@ public class EditConflictBehaviorTests
     [InlineData("ruleSaveSendsVersionForEditAndNullForCreate")]
     [InlineData("ruleConflictKeepsInputAndShowsPersistentNotice")]
     [InlineData("ruleReloadButtonRefreshesAndClearsNotice")]
+    [InlineData("ruleReloadWhenRuleDeletedToastsAndCloses")]
     public void 編輯衝突行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

@@ -29,9 +29,9 @@ public class EditConflictTests : IDisposable
 
     // ── 規則 ────────────────────────────────────────────────────────────────
 
-    private static KnownIssueRule Rule(string id, string description = "自訂應用程式錯誤") => new()
+    private static KnownIssueRule Rule(string id, string description = "自訂應用程式錯誤", string origin = "custom") => new()
     {
-        Id = id, Origin = "custom", Enabled = true, SourcePattern = "MyApp", EventIds = new[] { 9001 },
+        Id = id, Origin = origin, Enabled = true, SourcePattern = "MyApp", EventIds = new[] { 9001 },
         Category = IssueCategory.Service, Severity = IssueSeverity.Medium, Description = description,
         CountThreshold = 3, PlainExplanation = "應用程式發生錯誤", Impact = "服務可能中斷",
         LikelyCauses = new[] { "設定錯誤" }, NextSteps = new[] { "檢查設定檔" }
@@ -182,6 +182,104 @@ public class EditConflictTests : IDisposable
             Assert.Contains("回合" + round, service.GetRules().Single().Description);
         }
         Assert.Equal(5, audit.Entries.Count(e => e.Action == AuditActions.RuleUpdate));
+    }
+
+    // ── 規則的其他寫入路徑與 SaveRule 並發：兩邊的變更都要保留 ───────────────────
+
+    private (RuleAdminService Service, KnownIssueRuleStore Store) RealRuleService(string key, params KnownIssueRule[] rules)
+    {
+        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, _directory);
+        var store = new KnownIssueRuleStore(backend.Blob(key));
+        store.Save(new RuleFileContent { SeedVersion = 1, Rules = rules.ToList() });
+        return (RuleService(store, new RecordingAuditService()), store);
+    }
+
+    private static void Race(Action a, Action b)
+    {
+        using var gate = new Barrier(2);
+        var threads = new[] { a, b }.Select(work => new Thread(() => { gate.SignalAndWait(); work(); })).ToList();
+        threads.ForEach(t => t.Start());
+        threads.ForEach(t => t.Join());
+    }
+
+    private const int RaceRounds = 15;
+
+    [Fact]
+    public void 規則_停用啟用與儲存另一條同時執行_兩邊的變更都保留()
+    {
+        for (var round = 0; round < RaceRounds; round++)
+        {
+            var (service, store) = RealRuleService($"race-enable-{round}", Rule("custom-a"), Rule("custom-b"));
+            var versionA = service.GetRules().Single(r => r.Id == "custom-a").Version;
+
+            Race(() => service.SaveRule(RuleRequest("custom-a", versionA, description: $"A回合{round}")),
+                 () => service.SetEnabled("custom-b", false));
+
+            var rules = store.Load().Content!.Rules;
+            Assert.Equal($"A回合{round}", rules.Single(r => r.Id == "custom-a").Description);
+            Assert.False(rules.Single(r => r.Id == "custom-b").Enabled);
+        }
+    }
+
+    [Fact]
+    public void 規則_刪除與儲存另一條同時執行_兩邊的變更都保留()
+    {
+        for (var round = 0; round < RaceRounds; round++)
+        {
+            var (service, store) = RealRuleService($"race-delete-{round}", Rule("custom-a"), Rule("custom-b"));
+            var versionA = service.GetRules().Single(r => r.Id == "custom-a").Version;
+
+            Race(() => service.SaveRule(RuleRequest("custom-a", versionA, description: $"A回合{round}")),
+                 () => service.DeleteRule("custom-b"));
+
+            var rules = store.Load().Content!.Rules;
+            Assert.Equal($"A回合{round}", Assert.Single(rules).Description);
+            Assert.Equal("custom-a", rules.Single().Id);
+        }
+    }
+
+    [Fact]
+    public void 規則_回復預設與儲存另一條同時執行_兩邊的變更都保留()
+    {
+        var seed = Rule("builtin-seeded", origin: "builtin");
+        for (var round = 0; round < RaceRounds; round++)
+        {
+            var edited = Rule("builtin-seeded", "被改過的說明", "builtin");
+            var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, _directory);
+            var store = new KnownIssueRuleStore(backend.Blob($"race-restore-{round}"));
+            store.Save(new RuleFileContent { SeedVersion = 1, Rules = new List<KnownIssueRule> { edited, Rule("custom-a") } });
+            var seeds = new FakeRuleSeedStore();
+            seeds.Sync(new[] { seed }, seedVersion: 1);
+            var service = new RuleAdminService(store, seeds, new FakeSuppressionStore(), new FakeUserStore(),
+                FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
+                new FakeHostStore(), new FakeIssueAggregateQuery(), visibility: new FixedVisibilityService(Array.Empty<long>()));
+            var versionA = service.GetRules().Single(r => r.Id == "custom-a").Version;
+
+            Race(() => service.SaveRule(RuleRequest("custom-a", versionA, description: $"A回合{round}")),
+                 () => service.RestoreSeed("builtin-seeded"));
+
+            var rules = store.Load().Content!.Rules;
+            Assert.Equal($"A回合{round}", rules.Single(r => r.Id == "custom-a").Description);
+            Assert.Equal("自訂應用程式錯誤", rules.Single(r => r.Id == "builtin-seeded").Description);
+        }
+    }
+
+    [Fact]
+    public void 規則_匯入與儲存另一條同時執行_兩邊的變更都保留()
+    {
+        for (var round = 0; round < RaceRounds; round++)
+        {
+            var (service, store) = RealRuleService($"race-import-{round}", Rule("custom-a"));
+            var versionA = service.GetRules().Single().Version;
+
+            Race(() => service.SaveRule(RuleRequest("custom-a", versionA, description: $"A回合{round}")),
+                 () => service.ApplyImport(overwriteBuiltin: false));
+
+            var content = store.Load().Content!;
+            Assert.Equal($"A回合{round}", content.Rules.Single(r => r.Id == "custom-a").Description);
+            Assert.Equal(KnownIssueSeed.Version, content.SeedVersion);
+            Assert.True(content.Rules.Count > 1, "匯入的內建規則要在");
+        }
     }
 
     // ── 使用者 ──────────────────────────────────────────────────────────────

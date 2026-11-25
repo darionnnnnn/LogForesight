@@ -1012,8 +1012,12 @@ async function reloadAfterRuleConflict() {
     clearRuleConflict();
     await load();
     const fresh = rules.find(r => r.id === ruleId);
-    if (fresh) openRuleModal(fresh);
-    else ruleModal.hide();
+    if (fresh) {
+        openRuleModal(fresh);
+    } else {
+        toast('這條規則已被刪除', 'warning');
+        ruleModal.hide();
+    }
 }
 
 function showValidation(result) {
