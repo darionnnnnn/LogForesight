@@ -475,7 +475,7 @@ public class RecordListQueryService
         // 兩頁的「vs 基準」數字必然一致；只對本頁篩選後留下的問題查，不是整份表
         var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
         var baselines = IssueBaselineCalculator.Compute(
-            _aggregates.DailyHostCounts(exclusion, issues, baselineFrom, baselineTo, hostIds));
+            _aggregates.DailyHostCounts(exclusion, issues, baselineFrom, baselineTo, hostIds, scope.DayRiskLevels));
         // 靜音不排除：機房首見日是跨主機的機房級事實，與顯示決定無關
         var fleetFirstSeen = _aggregates.FirstSeenFor(IssueExclusion.None, issues);
 
@@ -492,7 +492,9 @@ public class RecordListQueryService
                 a,
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
                 periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen,
-                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null))
+                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null,
+                IssueNames.ForRules(rules, a.Source, a.EventId),
+                KnownIssueCatalog.FindRuleByAggregateKey(rules, a.Source, a.EventId)?.Id))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -545,6 +547,14 @@ public class RecordListQueryService
     }
 
     /// <summary>
+    /// 出現點的「處理到哪」：交給 <see cref="OccurrenceStatusResolver"/>（唯一判定），交辦與待派試跑不另寫結案判斷。
+    /// 掛在這裡是因為兩個呼叫端本來就持有它，不必為同一個判定各加一個相依。
+    /// </summary>
+    public List<ResolvedOccurrence> ResolveOccurrenceStatuses(
+        IReadOnlyCollection<HostIssueOccurrence> occurrences, DateTime from, DateTime to) =>
+        _statusResolver.Resolve(occurrences, from, to);
+
+    /// <summary>
     /// 依問題視角的範圍解析（可見主機∩主機／群組篩選、期間、嚴重度可見性、日風險等級母體）。
     /// 公開給交辦單建單（<see cref="WorkOrderCommandService"/>）共用：建單的主機母體必須與
     /// 依問題視角該問題那一列的主機數同一口徑，所以兩邊只能經過這一份解析。
@@ -586,7 +596,9 @@ public class RecordListQueryService
         IReadOnlyDictionary<long, WebUser> usersById,
         IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
         IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
-        string? plainExplanation)
+        string? plainExplanation,
+        string issueLabel,
+        string? ruleId)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照：出現點是完整簽章鍵（含 EventKey 第五段），
         // 同主機多顆 PRTG sensor、Linux 同程式命中不同規則各自一筆。每台主機取**最差狀態**
@@ -594,7 +606,13 @@ public class RecordListQueryService
         // 取「最近出現那筆」會讓晚出現且已處理的 sensor 把另一顆未處理的蓋掉。同狀態時取最近出現者
         var perHost = WorstPerHost(occurrences).Values.ToList();
 
-        int unhandled = 0, processing = 0, resolvedCount = 0;
+        int unhandled = 0, processing = 0, resolvedCount = 0, defaultIgnored = 0;
+        // 預設不處理：這台主機所有出現點都沒有案件也沒有標記（A14），其餘已處理才算有人處理過
+        var defaultHostIds = occurrences
+            .GroupBy(o => o.Host.HostId)
+            .Where(g => g.All(o => o.Status == HostIssueStatus.Resolved && o.OpenCase == null && o.Handling == null))
+            .Select(g => g.Key)
+            .ToHashSet();
         var handlerIds = new HashSet<long>();
 
         // 處理人仍留在 Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，
@@ -609,7 +627,9 @@ public class RecordListQueryService
             {
                 case HostIssueStatus.Open: unhandled++; break;
                 case HostIssueStatus.Processing: processing++; break;
-                case HostIssueStatus.Resolved: resolvedCount++; break;
+                case HostIssueStatus.Resolved:
+                    if (defaultHostIds.Contains(occ.Host.HostId)) defaultIgnored++; else resolvedCount++;
+                    break;
             }
         }
 
@@ -632,6 +652,7 @@ public class RecordListQueryService
         {
             Source = aggregate.Source,
             EventId = aggregate.EventId,
+            IssueLabel = issueLabel,
             Category = aggregate.Category,
             MaxSeverity = LegacySeverityRank.ToSeverity(aggregate.MaxSeverityRank).ToString(),
             HostCount = aggregate.HostCount,
@@ -653,10 +674,12 @@ public class RecordListQueryService
 
             KnownIssue = latestKnownIssue,
             PlainExplanation = plainExplanation,
-            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount),
+            RuleId = string.IsNullOrEmpty(ruleId) ? null : ruleId,
+            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount, defaultIgnored),
             UnhandledCount = unhandled,
             InProgressCount = processing,
             ResolvedCount = resolvedCount,
+            DefaultIgnoredCount = defaultIgnored,
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
             GroupStatus = unhandled > 0 ? HandlingStatuses.Open
                 : processing > 0 ? HandlingStatuses.InProgress
@@ -815,12 +838,13 @@ public class RecordListQueryService
     };
 
     /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
-    private static string BuildHandlingSummary(int unhandled, int processing, int resolved)
+    private static string BuildHandlingSummary(int unhandled, int processing, int resolved, int defaultIgnored)
     {
         var parts = new List<string>();
         if (unhandled > 0) parts.Add($"{unhandled} 台未處理");
         if (processing > 0) parts.Add($"{processing} 台處理中");
         if (resolved > 0) parts.Add($"{resolved} 台已處理");
+        if (defaultIgnored > 0) parts.Add($"{defaultIgnored} 台預設不處理");
         return parts.Count > 0 ? string.Join("／", parts) : "—";
     }
 
@@ -1203,7 +1227,7 @@ public class RecordListQueryService
             HostName = hostName,
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
-            Headline = record.Headline,
+            Headline = RecordStatsBuilder.HeadlineOf(record),
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             Categories = CategoryAggregator.Aggregate(record.TopIssues)

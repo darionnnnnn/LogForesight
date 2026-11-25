@@ -316,24 +316,16 @@ function renderSummary(summaryPage) {
             // 每列是資料日（事件發生的那一天）；執行日只出現在「執行日與時間」欄（第 73 輪 F）
             { title: '資料日', className: 'text-nowrap', render: dataDateCell },
             { title: '執行日與時間', className: 'lf-minw-sm', render: s => renderDayTimingCell(s.timing, { runDate: s.runDate, pendingText: s.pendingSummary, inProgress: s.inProgress, catchUp: s.catchUpStartedAt, catchUpMore: s.catchUpMore }) },
-            { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
-            { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
-            { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
-            { title: '失敗', className: 'text-end', render: s => countCell(s.failedCount, 'failed') },
-            { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
-            { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
-            { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
-            { title: '未執行', className: 'text-end', render: s => notRunCell(s) },
-            { title: '空資料待複查', className: 'text-end', render: s => recheckCell(s) },
-            { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
+            // 一句結論由後端產生（RunDayConclusion）；十多欄計數收進展開（renderDayCounts）
+            { title: '結論', className: 'lf-minw-sm', render: s => conclusionCell(s) },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
-            { title: '失敗主機', render: s => failedHostsCell(s) }
+            { title: '', className: 'text-end', render: s => rerunCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
         // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
         onRowExpand: (summary, cell) => {
             const hosts = document.createElement('div');
-            cell.replaceChildren(renderDayTiming(summary.timing), hosts);
+            cell.replaceChildren(renderDayCounts(summary), renderDayTiming(summary.timing), hosts);
             renderDayDetailInto(hosts, summary.date);
         },
         empty: { title: '尚無執行紀錄', hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。' }
@@ -394,20 +386,101 @@ function countCell(count, status) {
     return span;
 }
 
-function failedHostsCell(summary) {
-    const total = summary.failedCount + summary.stuckCount;
-    if (total === 0) return document.createTextNode('');
+/** 結論格：後端一句話；失敗或異常中斷時用警示色（顏色之外文字本身已說明，不靠顏色傳達） */
+function conclusionCell(s) {
+    const span = document.createElement('span');
+    span.textContent = s.conclusion || '';
+    return span;
+}
 
+/** 十多欄計數收進展開：只列不為 0 的狀態，加上 PRTG 與失敗主機的完整名單 */
+function renderDayCounts(s) {
     const wrap = document.createElement('div');
-    wrap.textContent = summary.failedHostNames.join('、');
-
-    if (summary.otherFailedCount > 0) {
-        const more = document.createElement('span');
-        more.className = 'lf-text-meta';
-        more.textContent = `　其他 ${summary.otherFailedCount} 台`;
-        wrap.appendChild(more);
+    wrap.className = 'd-flex flex-wrap gap-3 mb-2 lf-day-counts';
+    const items = [
+        ['成功', s.successCount, 'success'], ['已回補', s.backfilledCount, 'backfilled'], ['有警告', s.warningCount, 'warning'],
+        ['失敗', s.failedCount, 'failed'], ['已停止', s.stoppedCount, 'stopped'], ['異常中斷', s.stuckCount, 'stuck'],
+        ['執行中', s.runningCount, 'running'], ['未執行', s.notRunCount, 'none'], ['空資料待複查', s.recheckCount, 'recheck'],
+        ['本機停用', s.localDisabledCount, 'local_disabled']
+    ];
+    for (const [label, count, status] of items) {
+        if (!(count > 0)) continue;
+        const item = document.createElement('span');
+        item.className = 'text-nowrap';
+        const name = document.createElement('span');
+        name.className = 'lf-text-label me-1';
+        name.textContent = `${label}`;
+        item.append(name, countCell(count, status));
+        wrap.appendChild(item);
+    }
+    const failed = s.failedCount + s.stuckCount;
+    if (failed > 0 && s.failedHostNames?.length) {
+        const names = document.createElement('div');
+        names.className = 'w-100';
+        const label = document.createElement('span');
+        label.className = 'lf-text-label me-1';
+        label.textContent = '失敗主機';
+        const text = document.createElement('span');
+        text.textContent = s.failedHostNames.join('、') + (s.otherFailedCount > 0 ? `　其他 ${s.otherFailedCount} 台` : '');
+        names.append(label, text);
+        wrap.appendChild(names);
     }
     return wrap;
+}
+
+/**
+ * 立即執行要帶入的參數（執行總表「補跑這些主機」）：模式固定「只補跑失敗或未執行」；
+ * 資料日換成回望天數（立即執行以回望天數涵蓋日子，從今天往前數到那個資料日）；
+ * 主機是後端算好的可補跑名單（超過上限為空，改用全部主機）。
+ * @returns {{mode: string, backfillDays: number, dataDate: string, hostNames: string[], hostCount: number}}
+ */
+function runNowCarryFor(summary, now = new Date()) {
+    const [y, m, d] = summary.date.split('-').map(Number);
+    const dataDay = new Date(y, m - 1, d);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const backfillDays = Math.max(1, Math.round((today - dataDay) / 86400000));
+    return {
+        mode: 'None',
+        backfillDays,
+        dataDate: summary.date,
+        hostNames: summary.rerunHostNames ?? [],
+        hostCount: summary.rerunHostCount ?? 0
+    };
+}
+
+/** 把補跑參數帶進既有的立即執行彈窗；預覽與確認流程完全沿用 */
+function openRunNowForDay(summary) {
+    const carry = runNowCarryFor(summary);
+    document.getElementById('run-now-form').reset();
+    const useHosts = carry.hostNames.length > 0;
+    document.getElementById('run-now-scope-hosts-row').classList.toggle('d-none', !useHosts);
+    document.getElementById('run-now-scope-hosts').checked = useHosts;
+    document.getElementById('run-now-scope-all').checked = !useHosts;
+    document.getElementById('run-now-scope-hosts-label').textContent =
+        `指定主機（${carry.hostCount} 台：${carry.hostNames.slice(0, 3).join('、')}${carry.hostNames.length > 3 ? ' 等' : ''}）`;
+    runNowHostNames = useHosts ? carry.hostNames : [];
+    document.getElementById('run-now-segment-field').classList.add('d-none');
+    document.getElementById('run-now-backfill').value = String(carry.backfillDays);
+    document.getElementById('run-now-rerun-mode').value = carry.mode;
+    updateRerunModeUI();
+    updateRunNowPreview();
+    refreshScheduleStatus();
+    runNowModal.show();
+}
+
+/** 「補跑這些主機」鈕：只給有 Maintain 的人（data-maintain-only；沒有可補跑的主機不出現） */
+function rerunCell(s) {
+    if (!s.canRerun) return document.createTextNode('');
+    const btn = button('補跑這些主機', {
+        variant: 'outline-primary', opens: 'dialog',
+        title: `只補跑 ${s.date} 失敗或未執行的 ${s.rerunHostCount} 台`,
+        onClick: event => { event.stopPropagation(); openRunNowForDay(s); }
+    });
+    btn.dataset.maintainOnly = '';
+    btn.dataset.maintainAction = '';
+    // 沒有 Maintain 時整顆隱藏；Maintain 判定在排程設定載入時完成，先到的列由 loadSchedule 的 data-maintain-action 揭開
+    if (canMaintainSchedule !== true) btn.classList.add('d-none');
+    return btn;
 }
 
 // 排序在後端（RunMonitorService.GetDayDetailPage），這裡只宣告可排序的鍵
@@ -1071,6 +1144,9 @@ aiRerunModalEl?.addEventListener('hidden.bs.modal', () => {
     document.getElementById('schedule-ai-rerun-blocked')?.classList.add('d-none');
 });
 
+/** 沒有 Maintain 時，PRTG 設定、結構同步、回填三個端點都會被拒（且每次寫一筆被拒稽核）：不送請求，直接標明原因 */
+const NEEDS_MAINTAIN_TEXT = '需要維護權限才能檢視';
+
 async function loadSchedule() {
     const user = await getCurrentUser();
     canMaintainSchedule = hasCapability(user, 'Maintain');
@@ -1096,7 +1172,8 @@ async function loadSchedule() {
     const [options, aiReady, settings, scheduleStatus] = await Promise.all([
         api.get('/api/admin/schedule/options'),
         getAiAvailable(),
-        api.get('/api/admin/settings', { silent: true }).catch(() => null),
+        // /api/admin/settings 需要 Maintain：沒有就不送（DevMonitor 的 PRTG 狀態改由排程狀態的精簡投影帶）
+        canMaintainSchedule ? api.get('/api/admin/settings', { silent: true }).catch(() => null) : Promise.resolve(null),
         statusPromise
     ]);
     aiAvailable = aiReady;
@@ -1126,9 +1203,9 @@ async function loadSchedule() {
             daysHintEl.textContent = `往前 ${scheduleStatus.prtgBackfillDays} 天`;
         }
     } else {
-        // 設定 API 需要 Maintain；DevMonitor 讀不到就明講「—」，不能讓「載入中…」永遠掛著
+        // 設定 API 需要 Maintain：沒有 Maintain 就明講原因，不能讓「載入中…」永遠掛著
         const stateEl = document.getElementById('prtg-module-state');
-        if (stateEl) stateEl.textContent = '—';
+        if (stateEl) stateEl.textContent = canMaintainSchedule ? '—' : NEEDS_MAINTAIN_TEXT;
     }
 }
 
@@ -1172,15 +1249,7 @@ function applyScheduleOptions(options) {
     if (aiNextTriggerEl) {
         // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
         // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
-        if (aiAvailable === false) {
-            aiNextTriggerEl.textContent = 'AI 服務未設定';
-        } else if (aiAvailable === null) {
-            aiNextTriggerEl.textContent = '—';   // 還不知道 AI 設定狀態，不落到最樂觀的那句
-        } else if (options.nextAiTriggerTime) {
-            aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
-        } else {
-            aiNextTriggerEl.textContent = '窗口內，隨時可跑';
-        }
+        renderAiWindowState(aiNextTriggerEl, aiAvailable, options.nextAiTriggerTime, options.aiWindowConfigured);
     }
 
     // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C），
@@ -1504,6 +1573,31 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
+/**
+ * 「背景補跑窗口」那一列的唯一出口（設定載入與狀態輪詢共用）。四種狀態各一句：
+ * AI 未設定；還不知道（—）；沒有設定任何窗口（說明不會自動執行並連到窗口設定）；有窗口（下一次時間，在窗口內時為「窗口內，隨時可跑」）。
+ * 後端在「窗口內」與「沒有任何窗口」兩種情況都把下一次時間回成 null，所以要看 windowConfigured 才分得出來；
+ * windowConfigured 沒帶（舊回應）時照「有窗口」處理，不誤報沒設定。
+ */
+function renderAiWindowState(el, available, nextTriggerTime, windowConfigured) {
+    el.replaceChildren();
+    if (available === false) {
+        el.textContent = 'AI 服務未設定';
+    } else if (available === null) {
+        el.textContent = '—';   // 還不知道 AI 設定狀態，不落到最樂觀的那句
+    } else if (windowConfigured === false) {
+        el.append('未設定窗口，AI 不會自動執行　');
+        const link = document.createElement('a');
+        link.href = `${appUrl('/runs')}#settings`;   // bindTabs 只認頁籤名；窗口設定在「設定」頁籤
+        link.textContent = '前往設定窗口';
+        el.append(link);
+    } else if (nextTriggerTime) {
+        el.textContent = formatDateTime(nextTriggerTime);
+    } else {
+        el.textContent = '窗口內，隨時可跑';
+    }
+}
+
 // AI 排程閒置原因的文案（後端 AiIdleReasons 的字面值）。
 // 'disabled' 另有帶件數的既有文案；'no-pending' 不需要說明（待補為 0 本身就講完了）。
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
@@ -1511,6 +1605,7 @@ const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
     'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
+    'no-window': '未設定窗口，AI 不會自動執行；請到「AI 分析」設定背景補跑窗口，或按「立即補跑」。',
     'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。',
     'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'
 };
@@ -1567,7 +1662,7 @@ function applyAiScheduleStatus(status) {
         let hint = '';
         // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
         // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
-        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'no-window'].includes(status.idleReason))) {
             hint = aiIdleHintText(status);
         }
 
@@ -1607,13 +1702,7 @@ function applyAiScheduleStatus(status) {
     if (nextTriggerEl) {
         // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
         // 已在窗口內時後端回 null，代表現在就會跑。
-        if (aiAvailable === false) {
-            nextTriggerEl.textContent = 'AI 服務未設定';
-        } else if (status.nextTriggerTime) {
-            nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
-        } else {
-            nextTriggerEl.textContent = '窗口內，隨時可跑';
-        }
+        renderAiWindowState(nextTriggerEl, aiAvailable, status.nextTriggerTime, status.aiWindowConfigured);
     }
 
     if (wasAiScheduleRunning && !status.isRunning) {
@@ -1863,6 +1952,12 @@ function renderPrtgSyncSummary(status) {
 
 async function refreshPrtgSyncStatus(options) {
     const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
+    if (!canMaintainSchedule) {
+        // 端點需要 Maintain：不送請求（否則每次輪詢都被拒並寫一筆被拒稽核）
+        const summaryEl = document.getElementById('prtg-sync-summary');
+        if (summaryEl) summaryEl.textContent = NEEDS_MAINTAIN_TEXT;
+        return;
+    }
     try {
         const status = await api.get('/api/admin/settings/prtg-structure-sync/status', { silent: true, background });
         renderPrtgSyncSummary(status);
@@ -2056,6 +2151,8 @@ document.getElementById('schedule-ai-rerun-confirm')?.addEventListener('click', 
 
 let runNowPreviewDebounce = null;
 let runNowAiDisabled = null;
+/** 執行總表「補跑這些主機」帶入的主機名單（scope=hosts 時送出）；一般的立即執行為空 */
+let runNowHostNames = [];
 
 const RERUN_MODE_CONFIG = {
     None: {
@@ -2122,6 +2219,8 @@ function updateRunNowAiDisabledHint() {
 
 document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-form').reset();
+    runNowHostNames = [];
+    document.getElementById('run-now-scope-hosts-row').classList.add('d-none');
     document.getElementById('run-now-scope-all').checked = true;
     document.getElementById('run-now-segment-field').classList.add('d-none');
     updateRerunModeUI();
@@ -2170,6 +2269,7 @@ async function updateRunNowPreview() {
 
     const params = new URLSearchParams({ scope });
     if (scope === 'segment') params.set('segment', segment);
+    if (scope === 'hosts') for (const name of runNowHostNames) params.append('hostNames', name);
     if (onlyMissingOrFailed) params.set('onlyMissingOrFailed', 'true');
     if (backfillDays) params.set('backfillDays', backfillDays);
 
@@ -2260,6 +2360,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const result = await api.post('/api/admin/schedule/run', {
             scope,
             segment: scope === 'segment' ? segment : null,
+            hostNames: scope === 'hosts' ? runNowHostNames : null,
             backfillDays: days,
             onlyMissingOrFailed,
             rerunMode,
@@ -2435,6 +2536,12 @@ function renderPrtgBackfillStatus(status) {
 
 async function refreshPrtgBackfillStatus(options) {
     const background = options?.background === true;   // 簽章不用解構：測試以第一個大括號擷取函式主體
+    if (!canMaintainSchedule) {
+        // 端點需要 Maintain：不送請求（否則每次輪詢都被拒並寫一筆被拒稽核）
+        const statusEl = document.getElementById('prtg-backfill-status');
+        if (statusEl) statusEl.textContent = NEEDS_MAINTAIN_TEXT;
+        return;
+    }
     let status;
     try {
         status = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true, background });

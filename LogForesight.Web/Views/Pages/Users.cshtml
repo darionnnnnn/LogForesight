@@ -53,6 +53,7 @@
             </div>
             <form id="user-form" novalidate>
                 <div class="modal-body">
+                    <div class="mb-3 d-none" id="user-conflict" aria-live="polite"></div>
                     <div class="btn-group btn-group-sm mb-3 d-none" id="user-mode-toggle" role="group" aria-label="新增筆數">
                         <button type="button" class="btn btn-outline-secondary active" data-mode="single">單筆</button>
                         <button type="button" class="btn btn-outline-secondary" data-mode="batch">多筆</button>
@@ -104,6 +105,7 @@
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <div id="user-groups" role="group" aria-labelledby="user-groups-label" class="border rounded p-2 lf-scroll-sm"></div>
+                        <div id="user-group-summary" class="lf-text-meta mt-2" role="status" aria-live="polite"></div>
                     </div>
                 </div>
                 <div class="modal-footer">

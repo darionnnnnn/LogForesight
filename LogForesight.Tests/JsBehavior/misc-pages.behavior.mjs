@@ -39,6 +39,15 @@ function build(page, declarations, prelude, returns, args = {}) {
     return factory(...names.map((n) => args[n]));
 }
 
+/** 稽核頁動作篩選的純函式：分組常數與三支函式的 production 原文 */
+function makeAuditActionHelpers() {
+    const source = sourceOf('audit.js');
+    const consts = source.slice(source.indexOf('const ACTION_GROUPS'), source.indexOf('/** 把 { 代碼: 名稱 }'));
+    const fns = ['function groupAuditActions(', 'function auditActionMatches(', 'function applyAuditActionSearch(']
+        .map((d) => extractFunction(source, d)).join('\n');
+    return new Function(`${consts}\n${fns}\nreturn { groupAuditActions, auditActionMatches, applyAuditActionSearch };`)();
+}
+
 /** 設定頁記憶體卡：production 的 renderMemoryHealth 與格式化函式，畫面邊界與 renderTable 為替身 */
 function makeMemoryCard() {
     const hosts = {};
@@ -1110,6 +1119,62 @@ const cases = {
         assert(!tables[0].rows.some((r) => r.item === '.NET 硬上限'), '不可把實體記憶體標成硬上限');
         const text = hosts['health-memory'].children[0].children.map((c) => c.textContent).join('');
         assert(text.includes('本機可用記憶體') && !text.includes('硬上限'), text);
+    },
+    // X1：稽核動作篩選分組與搜尋（純前端）
+    稽核動作分組_依前綴歸組且未知動作歸其他() {
+        const { groupAuditActions } = makeAuditActionHelpers();
+        const groups = groupAuditActions({
+            login: '登入', work_order_create: '建立交辦單', rule_update: '修改規則', prtg_probe_run: 'PRTG 探測',
+            user_create: '建立使用者', brand_new_action: '新動作'
+        });
+        const byLabel = Object.fromEntries(groups.map((g) => [g.label, g.entries.map((e) => e[0])]));
+        assert.deepEqual(byLabel['身分與存取'], ['login']);
+        assert.deepEqual(byLabel['處理與交辦'], ['work_order_create']);
+        assert.deepEqual(byLabel['問題、規則與靜音'], ['rule_update']);
+        assert.deepEqual(byLabel['PRTG'], ['prtg_probe_run']);
+        assert.deepEqual(byLabel['使用者、主機與群組'], ['user_create']);
+        assert.deepEqual(byLabel['其他'], ['brand_new_action']);
+        assert.equal(groups.at(-1).label, '其他', '其他固定在最後');
+        assert(!groups.some((g) => g.entries.length === 0), '沒有項目的組不出現');
+        assert.deepEqual(groupAuditActions({}), []);
+    },
+    稽核動作搜尋_名稱或代碼比對且已選項目保留() {
+        const { auditActionMatches, applyAuditActionSearch } = makeAuditActionHelpers();
+        assert(auditActionMatches('work_order_create', '建立交辦單', '交辦'));
+        assert(auditActionMatches('work_order_create', '建立交辦單', 'WORK_ORDER'), '代碼不分大小寫');
+        assert(!auditActionMatches('work_order_create', '建立交辦單', '規則'));
+        assert(auditActionMatches('x', '名稱', '   '), '空白關鍵字等於沒搜尋');
+        const option = (value, text, selected = false) => ({ value, textContent: text, selected, hidden: false });
+        const a = option('work_order_create', '建立交辦單');
+        const b = option('rule_update', '修改規則');
+        const c = option('login', '登入', true);
+        const g1 = { hidden: false, querySelectorAll: () => [a, b] };
+        const g2 = { hidden: false, querySelectorAll: () => [c] };
+        const select = { querySelectorAll: (sel) => (sel === 'optgroup' ? [g1, g2] : []) };
+        applyAuditActionSearch(select, '交辦');
+        assert.equal(a.hidden, false);
+        assert.equal(b.hidden, true);
+        assert.equal(c.hidden, false, '已勾選的選項搜尋時仍保留');
+        assert.equal(g1.hidden, false);
+        const d = option('rule_update', '修改規則');
+        const g3 = { hidden: false, querySelectorAll: () => [d] };
+        applyAuditActionSearch({ querySelectorAll: () => [g3] }, '交辦');
+        assert.equal(g3.hidden, true, '整組都不符合時連分組標題一起隱藏');
+        applyAuditActionSearch(select, '');
+        assert(!a.hidden && !b.hidden && !g1.hidden, '清空關鍵字全部恢復');
+    },
+    // M3：負責人 CSV 預覽把將自動建立的帳號用警告色醒目標示
+    負責人匯入預覽_將建立的帳號用警告標示() {
+        const source = sourceOf('imports.js');
+        const statusNote = (type, text) => ({ type, text, classList: { add(c) { this.added = c; } } });
+        const newUsersNote = new Function('statusNote', `${extractFunction(source, 'function newUsersNote(')}\nreturn newUsersNote;`)(statusNote);
+        const note = newUsersNote(['DOMAIN\\new1', 'DOMAIN\\new2']);
+        assert.equal(note.type, 'warning', '要用警告色，不是一般資訊');
+        assert(note.text.includes('2 個使用者帳號') && note.text.includes('DOMAIN\\new1、DOMAIN\\new2'), note.text);
+        assert(note.text.includes('不屬於任何群組'), '說明建立後的狀態');
+        assert.equal(newUsersNote([]), null, '沒有要建立的帳號就不出現');
+        assert.equal(newUsersNote(undefined), null, '舊回應沒有欄位也不爆');
+        assert(/newUsersNote\(currentPlan\.newUsers\)/.test(source), '預覽要走這個函式');
     },
 };
 

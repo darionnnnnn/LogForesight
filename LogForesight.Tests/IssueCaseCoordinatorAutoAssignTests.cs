@@ -43,7 +43,7 @@ public class IssueCaseCoordinatorAutoAssignTests
     private NightlyDispatch Dispatch(IssueCaseCoordinator coordinator)
     {
         var pool = new DispatchCandidatePool { ByUserId = _candidates.ToDictionary(c => c.UserId) };
-        var ctx = DispatchContext.Build(pool, _issueProfiles, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+        var ctx = DispatchContext.Build(pool, _issueProfiles, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now, TestRules.None);
         var workOrders = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, coordinator, _handlingLog, _hosts);
         return new NightlyDispatch(workOrders, ctx, _hosts);
     }

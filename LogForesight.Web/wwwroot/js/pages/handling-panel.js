@@ -12,7 +12,7 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, renderChips, toast, withBusy, showDetailModal, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
-import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+import { formatDateTime, formatUserName, dateAfterDays } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere, statusVariant, isNoFixClosure } from '../core/handling-statuses.js';
 import { noFixConsequenceText } from './issue-status-reply.js';
@@ -47,7 +47,8 @@ let state = null;
 /**
  * @param {() => Set<string>} getSelection 目前勾選的問題鍵集合（record-detail 持有）
  * @param {(result?: {status: string, issueKeys: string[]}) => Promise} onBatchSaved 批次套用成功後回呼（重載頁面＋後續治本提議）
- * @param {{canMaintainRules?: boolean}} options 能力旗標：誤報時是否顯示規則維護提示
+ * @param {{canMaintainRules?: boolean, dismissalReleases?: (keys: Set<string>) => boolean}} options 能力旗標：誤報時是否顯示規則維護提示；
+ *        dismissalReleases＝勾選的問題「不再打擾」滿 30 天是否都會自動解除（由伺服器的布林決定）
  */
 export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved, options = {}) {
     const panel = document.getElementById('handling-panel');
@@ -130,6 +131,75 @@ export function derivedStatusShortLabel(handling) {
     return handling.totalIssues > 0 ? `${text} ${handling.closedIssues}/${handling.totalIssues}` : text;
 }
 
+/**
+ * 本日各問題的進行中案件依交辦單分組：每張單一筆（單號、處理人、涵蓋本日的問題數）。
+ * 來源是詳情的問題列（案件處理人與所屬交辦單由伺服器填入）；沒有案件或舊案件未整併成單（沒有單號）的不列。
+ * @param {Array<{caseHandlerName?: string|null, caseHandlerAccount?: string|null, workOrderId?: number|null}>} issues
+ * @returns {Array<{workOrderId: number, handlerName: string, handlerAccount: string|null, issueCount: number}>} 依單號由小到大
+ */
+export function issueOrdersOf(issues) {
+    const byOrder = new Map();
+    for (const issue of issues ?? []) {
+        if (!issue.workOrderId || !issue.caseHandlerName) continue;
+        const found = byOrder.get(issue.workOrderId);
+        if (found) found.issueCount += 1;
+        else byOrder.set(issue.workOrderId, {
+            workOrderId: issue.workOrderId, handlerName: issue.caseHandlerName, handlerAccount: issue.caseHandlerAccount ?? null, issueCount: 1
+        });
+    }
+    return [...byOrder.values()].sort((a, b) => a.workOrderId - b.workOrderId);
+}
+
+/** 「處理人」列：列出本日相關的交辦單與各自的處理人（單號連到交辦單頁；能不能開由後端的逐單授權把關） */
+function issueOrdersField(orders) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-handling__row';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'lf-handling__row-label lf-text-label';
+    labelEl.textContent = '處理人';
+
+    const valueEl = document.createElement('div');
+    valueEl.className = 'lf-handling__row-value';
+    for (const order of orders) {
+        const line = document.createElement('div');
+        const link = document.createElement('a');
+        link.href = appUrl(`/work-orders/${order.workOrderId}`);
+        link.textContent = `#${order.workOrderId}`;
+        line.append(link, ' ', document.createTextNode(`${formatUserName(order.handlerName, order.handlerAccount)}（${order.issueCount} 個問題）`));
+        valueEl.appendChild(line);
+    }
+    const hint = document.createElement('div');
+    hint.className = 'form-text fw-normal';
+    hint.textContent = '依問題交辦；各問題的處理人以交辦單為準';
+    valueEl.appendChild(hint);
+    wrap.append(labelEl, valueEl);
+    return wrap;
+}
+
+/**
+ * 人員區的「處理人」。日層級指派的行為不變（有 Assign 能力就是指派下拉，否則唯讀顯示）；
+ * 本日有問題層級交辦時另列「處理人：各單與各自的處理人」，並且只有在沒有任何問題層級交辦、也沒有日層級處理人時才寫「未指派」。
+ * @param {object} handling 處理狀態（handlerName／handlerAccount／canAssign）
+ * @param {Array} orders issueOrdersOf 的結果
+ * @param {(labelText: string) => HTMLElement} makeAssignField 建指派下拉列（有 Assign 能力時），參數是列標籤
+ */
+export function handlerRows(handling, orders, makeAssignField) {
+    const rows = [];
+    const hasOrders = orders.length > 0;
+    if (hasOrders) rows.push(issueOrdersField(orders));
+
+    if (handling.canAssign) {
+        // 有問題層級交辦時，日層級下拉的標籤改成「日層級指派」，不與上面的「處理人」並列兩個同名欄
+        rows.push(makeAssignField(hasOrders ? '日層級指派' : '處理人'));
+    } else if (handling.handlerName) {
+        rows.push(readonlyField(hasOrders ? '日層級指派' : '處理人', formatUserName(handling.handlerName, handling.handlerAccount), '僅系統管理員可指派或改派'));
+    } else if (!hasOrders) {
+        rows.push(readonlyField('處理人', '未指派', '僅系統管理員可指派或改派'));
+    }
+    return rows;
+}
+
 function render() {
     const panel = document.getElementById('handling-panel');
     const { handling, users, hostId, date, options } = state;
@@ -172,16 +242,8 @@ function render() {
         true
     ));
 
-    // 處理人：事件層級，只有 admin 能改
-    if (handling.canAssign) {
-        people.appendChild(assignField(handling, users, hostId, date));
-    } else {
-        people.appendChild(readonlyField(
-            '處理人',
-            handling.handlerName ? formatUserName(handling.handlerName, handling.handlerAccount) : '未指派',
-            '僅系統管理員可指派或改派'
-        ));
-    }
+    // 處理人：事件層級，只有 admin 能改；本日有問題層級的交辦單時改列各張單與各自的處理人（見 handlerRows）
+    people.append(...handlerRows(handling, state.options?.getIssueOrders?.() ?? [], labelText => assignField(handling, users, hostId, date, labelText)));
     panel.appendChild(people);
 
     if (!handling.canHandle) {
@@ -281,19 +343,22 @@ function readonlyField(label, value, hint, hintAsIcon = false) {
     return wrap;
 }
 
-function assignField(handling, users, hostId, date) {
+function assignField(handling, users, hostId, date, labelText = '處理人') {
+    // 有問題層級交辦時日層級下拉沒有選人也不能寫「未指派」（那是交辦單以外的另一件事）：選項改寫成「無日層級指派」
+    const noneLabel = labelText === '處理人' ? '（未指派）' : '（無日層級指派）';
     const wrap = document.createElement('div');
     wrap.className = 'lf-handling__row';
 
     const label = document.createElement('label');
     label.className = 'lf-handling__row-label form-label lf-text-label mb-0';
-    label.textContent = '處理人';
+    label.textContent = labelText;
     label.htmlFor = 'handler-select';
 
     // 可搜尋選單（§8）：文字框篩帳號/顯示名稱＋原生 select；負責人置頂並標「（負責人）」
     const { element: selectWrap, select } = searchableUserSelect(users, {
         selectedId: handling.handlerId,
         includeNone: true,
+        noneLabel,
         pinnedNames: handling.ownerNames
     });
     select.id = 'handler-select';
@@ -495,9 +560,7 @@ function handlingForm() {
     for (const days of [3, 7, 14]) {
         quickRow.appendChild(button(`${days} 日`, {
             onClick: () => {
-                const target = new Date();
-                target.setDate(target.getDate() + days);
-                dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
+                dueInput.value = dateAfterDays(days);   // 本地日期（S12），不用 toISOString 的 UTC 日期
                 saveFormDraft();
             }
         }));
@@ -543,9 +606,7 @@ function handlingForm() {
         // 刻意用 `Number(x) || 預設`：空欄位（Number('') 為 0）與 0 都不是合法觀察天數，一律沿用預設 7 天，
         // 不像必填欄位要擋下送出（空值＝沿用預設，與 core/number-field.js 的必填讀取是兩種語意）
         const days = Math.min(90, Math.max(1, Number(observeInput.value) || 7));
-        const target = new Date();
-        target.setDate(target.getDate() + days);
-        return toLocalDateString(target);
+        return dateAfterDays(days);
     }
 
     /** 送出用的 dueDate：in_progress 用日期選擇器的值，observing 用天數換算的日期，其餘不存 */
@@ -582,7 +643,10 @@ function handlingForm() {
     form.appendChild(ruleHint);
 
     // 不處理類的後果（與處理人回覆表單同一句）：選到才顯示，免得人以為只是換個標籤
-    const noFixNote = statusNote('warning', noFixConsequenceText({ multiIssues: batchMode && selection.size > 1 }));
+    const noFixNote = statusNote('warning', noFixConsequenceText({
+        multiIssues: batchMode && selection.size > 1,
+        releases: batchMode && state.options.dismissalReleases?.(selection) === true
+    }));
     noFixNote.classList.add('mb-3', 'd-none');
     noFixNote.dataset.role = 'no-fix-note';
     form.appendChild(noFixNote);

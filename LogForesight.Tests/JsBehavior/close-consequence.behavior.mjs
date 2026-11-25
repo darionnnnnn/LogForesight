@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installDom } from './mini-dom.mjs';
 import { loadElements, loadButton } from './load-elements.mjs';
+import { loadReplyModule, openReply } from './load-reply-modal.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -69,24 +70,27 @@ const textOf = node => node.textContent;
 const notes = root => all(root).filter(n => n.classList?.contains('lf-status-note'));
 
 // ── 代為結案對話框 ───────────────────────────────────────────────
-function loadAdminClose(env, { settings, currentDetail, getDisplaySettings }) {
+function loadAdminClose(env, { settings, currentDetail, getDisplaySettings, selectedCaseIds }) {
     const source = read('pages', 'work-order-detail.js');
     const fn = extract(source, 'async function buildAdminCloseModal(');
     const wiring = extractLine(source, 'const openAdminCloseModal = ');
     const blockTargetText = extract(source, 'function blockTargetText(');
+    // 範圍選項的組法在 work-order-reference.js（production 版）；勾選的案件由呼叫端以 selectedCaseIds（Map）帶入
+    const reference = read('pages', 'work-order-reference.js');
+    const scopeFns = `${extract(reference, 'export function adminCloseScopeOptions(').replace(/^export /, '')}\n${extract(reference, 'export function defaultAdminCloseScope(').replace(/^export /, '')}`;
     const api = { post: async (url, payload) => { env.posts.push({ url, payload }); return { closedCases: 1 }; } };
     return new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
-        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', 'mailNotifyText', 'exclusive',
-        `${blockTargetText}\n${fn}\n${wiring}\nreturn openAdminCloseModal;`)(
+        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', 'mailNotifyText', 'exclusive', 'selectedCaseIds',
+        `${scopeFns}\n${blockTargetText}\n${fn}\n${wiring}\nreturn openAdminCloseModal;`)(
         env.button, env.statusNote, catalog.statusesWhere, catalog.isNoFixClosure, env.showDetailModal, api,
         (m, t) => env.toasts.push({ m, t }), () => () => { }, currentDetail, 7, async () => { },
-        getDisplaySettings ?? (async () => settings), mailNotifyText, exclusive);
+        getDisplaySettings ?? (async () => settings), mailNotifyText, exclusive, selectedCaseIds ?? new Map());
 }
 
-async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security', settings } = {}) {
+async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security', settings, escalatedCaseIds, selectedCaseIds } = {}) {
     const env = makeEnv();
-    const detail = { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled } };
-    const run = loadAdminClose(env, { settings: settings ?? { mailWorkOrdersEnabled: mail }, currentDetail: detail });
+    const detail = { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled }, escalatedCaseIds };
+    const run = loadAdminClose(env, { settings: settings ?? { mailWorkOrdersEnabled: mail }, currentDetail: detail, selectedCaseIds });
     await run();
     const body = env.shown[0].body;
     const form = body.children[0];
@@ -299,6 +303,48 @@ const cases = {
         assert.equal(env.shown.length, 2, '第一個開完後可以再開');
     },
     // B5-a：送出請求帶 blockRedispatch
+    // 範圍（第 81 輪批次 T）：有上報成員時預設「只有上報中的」、只送這些案件；選回「全部進行中」不帶案件清單
+    async adminCloseScopeDefaultsToEscalatedAndSendsCaseIds() {
+        const dlg = await openAdminClose(60, 0, { escalatedCaseIds: ['e1', 'e2'] });
+        const radios = all(dlg.body).filter(n => n.tagName === 'INPUT' && n.type === 'radio');
+        assert.deepEqual(radios.map(r => r.value), ['all', 'escalated']);
+        assert.deepEqual(radios.map(r => r.checked), [false, true], '預設選「只有上報中的」');
+        assert(textOf(dlg.submit).includes('代為結案 2 台'), textOf(dlg.submit));
+        assert(!hidden(radios[0]._parent._parent), '有範圍可選時範圍區塊顯示');
+
+        dlg.pick('wont_fix');
+        dlg.write('不處理');
+        await dlg.send();
+        assert.deepEqual(dlg.env.posts[0].payload, { status: 'wont_fix', reason: '不處理', blockRedispatch: false, caseIds: ['e1', 'e2'] });
+
+        // 改選全部：按鈕台數與請求都回到整張單（不帶 caseIds）
+        const all2 = await openAdminClose(60, 0, { escalatedCaseIds: ['e1', 'e2'] });
+        const allRadio = all(all2.body).find(n => n.tagName === 'INPUT' && n.type === 'radio' && n.value === 'all');
+        allRadio.checked = true;
+        allRadio.dispatch('change');
+        assert(textOf(all2.submit).includes('代為結案 60 台'), textOf(all2.submit));
+        all2.pick('resolved');
+        all2.write('全部處理完');
+        await all2.send();
+        assert.equal('caseIds' in all2.env.posts[0].payload, false, '全部進行中＝不帶案件清單');
+    },
+    async adminCloseScopeSelectedMembersAndNoExtraScope() {
+        const picked = new Map([['s1', {}], ['s2', {}], ['s3', {}]]);
+        const dlg = await openAdminClose(60, 0, { selectedCaseIds: picked });
+        const radios = all(dlg.body).filter(n => n.tagName === 'INPUT' && n.type === 'radio');
+        assert.deepEqual(radios.map(r => [r.value, r.checked]), [['all', true], ['selected', false]], '只有勾選、沒有上報成員：預設全部');
+        radios[1].checked = true;
+        radios[1].dispatch('change');
+        dlg.pick('resolved');
+        dlg.write('勾選的處理完');
+        await dlg.send();
+        assert.deepEqual(dlg.env.posts[0].payload.caseIds, ['s1', 's2', 's3']);
+
+        const plain = await openAdminClose(60, 0);
+        const group = all(plain.body).find(n => n.tagName === 'FIELDSET');
+        assert(hidden(group), '沒有上報成員也沒有勾選時不顯示範圍選項');
+        assert(textOf(plain.submit).includes('代為結案 60 台'));
+    },
     async adminCloseSendsBlockRedispatch() {
         const checked = await openAdminClose();
         checked.pick('false_positive');
@@ -344,10 +390,10 @@ const cases = {
         assert.deepEqual(onlyDisabled.opened, [{ caseIds: [55], targetText: '主機 HOST-D' }], '只剩停用主機的一台要開單台回覆');
         assert.ok(!onlyDisabled.toasts.some(t => t.m.includes('已沒有進行中')), '不可被擋成沒有進行中的主機');
 
+        // 一啟用加一停用：合計 2 台，一律開整單彈窗（caseIds 為空），不再只捲到成員表
         const mixed = await run({ active: 1, activeOnDisabledHosts: 1 });
-        assert.equal(mixed.opened.length, 0, '兩台合計是多台，不直接開單台回覆');
-        assert.equal(mixed.memberStatusSelect.value, 'active');
-        assert.ok(mixed.toasts.some(t => t.m.includes('勾選這次處理好的主機')), JSON.stringify(mixed.toasts));
+        assert.deepEqual(mixed.opened, [{ caseIds: [], targetText: '全部進行中主機（2 台）' }], '兩台合計要開整單彈窗');
+        assert.equal(mixed.toasts.length, 0);
 
         const single = await run({ active: 1, activeOnDisabledHosts: 0 });
         assert.equal(single.opened.length, 1);
@@ -391,13 +437,29 @@ const cases = {
         assert.ok(unknown.includes(NEUTRAL), unknown);
         assert.ok(!unknown.includes('未啟用') && !unknown.includes('下一封'), unknown);
     },
+    // F16-2：時長按鈕下方寫明迄日與「含今天共 N 天」；自訂天數不合法時改提示範圍
+    async muteRangeHintStatesInclusiveDays() {
+        const source = read('pages', 'issue-mute-modal.js');
+        const text = new Function('toLocalDateString', 'MIN_DAYS', 'MAX_DAYS',
+            `${extract(source, 'function muteEndDate(')}\n${extract(source, 'function muteRangeText(')}\nreturn muteRangeText;`)(
+            d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, 1, 365);
+        const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+        assert.equal(text(7), `靜音至 ${addDays(6)}（含今天共 7 天）`, '1 週＝迄日是今天後第 6 天（共 7 天），不是第 7 天');
+        assert.equal(text(1), `靜音至 ${addDays(0)}（含今天共 1 天）`, '1 天＝只有今天');
+        assert.equal(text(365), `靜音至 ${addDays(364)}（含今天共 365 天）`, '上限');
+        assert.equal(text(0), '請輸入 1～365 的天數', '下限外');
+        assert.equal(text(366), '請輸入 1～365 的天數', '上限外');
+        assert.equal(text(Number('')), '請輸入 1～365 的天數', '自訂欄空白（Number("") 是 0）');
+        assert.equal(text(2.5), '請輸入 1～365 的天數', '非整數');
+        assert.ok(/rangeHint\.textContent = muteRangeText\(/.test(source), '畫面要顯示它');
+    },
     // 靜音對話框：代為結案附註的三態，以及設定請求回來前重複觸發只開一個
     async muteModalNotifyTextThreeStatesAndRepeatTrigger() {
         const build = (settings, gate) => {
             const env = makeEnv();
             const source = read('pages', 'issue-mute-modal.js');
             const fn = [
-                extract(source, 'function muteEndDate('), extract(source, 'function dateOnly('), extract(source, 'async function loadActiveOrders('),
+                extract(source, 'function muteEndDate('), extract(source, 'function muteRangeText('), extract(source, 'function dateOnly('), extract(source, 'async function loadActiveOrders('),
                 extract(source, 'async function buildIssueMuteModal('),
                 extractLine(source, 'export const openIssueMuteModal = ').replace(/^export /, '')
             ].join('\n');
@@ -433,43 +495,29 @@ const cases = {
         assert.equal(env.shown.length, 1, '等待期間的重複觸發要被忽略');
     },
 
-    // B5-b：回覆表單的不處理類說明行
+    // B5-b：回覆表單的不處理類說明行（結論改成一排按鈕後，以 production 整份模組執行）
     async replyFormShowsNoFixNoteOnlyForNoFix() {
-        const env = makeEnv();
-        const source = read('pages', 'issue-status-reply.js');
-        const fn = extract(source, 'export function openWorkOrderReplyModal(').replace(/^export /, '');
-        const statusOptions = catalog.statusesWhere(s => s.replyable).map(s => ({ value: s.value, label: s.label }));
-        const editor = { setValue() { }, clearDraft() { } };
-        const noFixConsequenceText = new Function(`${extract(source, 'export function noFixConsequenceText(').replace(/^export /, '')}\nreturn noFixConsequenceText;`)();
-        const run = new Function('STATUS_OPTIONS', 'noFixConsequenceText', 'statusNote', 'isNoFixClosure', 'statusMeta', 'makeButton', 'attachNoteEditor',
-            'showDetailModal', 'bindPastDateCheck', 'confirmAction', 'withBusy', 'toast', 'todayLocal', 'toLocalDateString', 'MAX_DUE_DATE_DAYS', 'setFieldError', 'clearFieldError',
-            `${fn}\nreturn openWorkOrderReplyModal;`)(
-            statusOptions, noFixConsequenceText, env.statusNote, catalog.isNoFixClosure, catalog.statusMeta, env.button, () => editor,
-            env.showDetailModal, () => ({ validate: () => true }), async () => true, () => () => { }, () => { },
-            () => '2026-01-01', () => '2026-04-01', 90, () => { }, () => { });
+        const loaded = loadReplyModule();
         const open = (extra = {}) => {
-            env.shown.length = 0;
-            run({ title: 't', targetText: '本單 3 台', draftKey: 'k', submit: async () => { }, ...extra });
-            const body = env.shown[0].body;
-            return { body, select: byId(body, 'wo-reply-status'), note: byId(body, 'wo-reply-no-fix-note') };
+            const m = openReply(loaded, { targetText: '本單 3 台', draftKey: 'k', ...extra });
+            return { ...m, note: byId(m.body, 'wo-reply-no-fix-note') };
         };
 
         const m = open();
         assert.ok(m.note, '回覆表單有說明行節點');
         assert.ok(textOf(m.note).includes('這台主機的這個問題之後不會再派給任何人；需要恢復請找管理者。'));
         assert.ok(m.note.classList.contains('lf-status-note--warning'), '用 warning 型提示');
-        const options = all(m.select).filter(n => n.tagName === 'OPTION').map(n => n.value);
+        assert.equal(hidden(m.note), true, '沒選結論時不顯示');
+        const options = m.chips.map(n => n.dataset.status);
         assert.deepEqual(options.filter(v => ['wont_fix', 'false_positive', 'known_noise'].includes(v)).sort(), ['false_positive', 'known_noise', 'wont_fix']);
         for (const value of options) {
-            m.select.value = value;
-            m.select.dispatch('change');
+            m.pick(value);
             const expected = ['wont_fix', 'false_positive', 'known_noise'].includes(value);
             assert.equal(hidden(m.note), !expected, `${value}：說明行${expected ? '要' : '不可'}出現`);
         }
         for (const value of ['resolved', 'in_progress', 'observing', 'escalated']) {
             assert.ok(options.includes(value), `${value} 在回覆選項內`);
-            m.select.value = value;
-            m.select.dispatch('change');
+            m.pick(value);
             assert.equal(hidden(m.note), true, `${value} 不出現說明行`);
         }
         // 一次涵蓋多台主機或多張單：改用複數說法，不說「這台主機」
@@ -479,6 +527,27 @@ const cases = {
         // 「下一張」沿用上一張的初始狀態為不處理類時，一打開就要看得到
         const carried = open({ initialStatus: 'wont_fix' });
         assert.equal(hidden(carried.note), false, '初始就是不處理時一打開就顯示');
+    },
+
+    // 批次 S：伺服器標示「不再打擾滿 30 天會自動解除」（dismissalReleases）時，後果提示改成會重新派工；沒標就維持永久說法
+    async replyFormNoFixNoteSaysReleaseOnlyWhenServerFlagsIt() {
+        const loaded = loadReplyModule();
+        const open = (extra = {}) => {
+            const m = openReply(loaded, { targetText: '本單 3 台', draftKey: 'k', ...extra });
+            return { ...m, note: byId(m.body, 'wo-reply-no-fix-note') };
+        };
+
+        const flagged = open({ dismissalReleases: true });
+        assert.ok(textOf(flagged.note).includes('這台主機的這個問題30 天內不再派工，之後仍在發生會重新派工。'), textOf(flagged.note));
+        assert.ok(!textOf(flagged.note).includes('不會再派給任何人'), '不可同時留著永久說法');
+        const flaggedMany = open({ dismissalReleases: true, multiTarget: true });
+        assert.ok(textOf(flaggedMany.note).includes('這些主機的這個問題30 天內不再派工'), textOf(flaggedMany.note));
+
+        const plain = open({ dismissalReleases: false });
+        assert.ok(textOf(plain.note).includes('之後不會再派給任何人；需要恢復請找管理者。'));
+        assert.ok(!textOf(plain.note).includes('30 天'));
+        const absent = open();
+        assert.ok(textOf(absent.note).includes('之後不會再派給任何人'), '沒有欄位（舊回應）維持永久說法');
     }
 };
 

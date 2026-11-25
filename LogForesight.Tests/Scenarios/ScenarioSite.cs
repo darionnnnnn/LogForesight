@@ -116,18 +116,25 @@ public sealed class ScenarioSite : IDisposable
 
             // AI：站台的 AI 設定預設指向 localhost:8080（可能真有東西在聽）。情境一律不呼叫 AI，
             // 這裡指到不會有人聽的位址並關重試，萬一有程式路徑碰到也只是立刻失敗，不會對外連線
-            Get<ISystemSettingsStore>().Update(s =>
-            {
-                s.AiBaseUrl = "http://127.0.0.1:1";
-                s.AiRetryCount = 0;
-                s.AiTimeoutSeconds = 2;
-            });
+            Get<ISystemSettingsStore>().Update(ApplyAiIsolation);
         }
         catch
         {
             Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// 情境站台的 AI 隔離設定。重試次數取設定驗證下限 1（0 會讓設定頁無法直接儲存），
+    /// 重試等待設 0 秒，萬一有路徑碰到 AI 也只是立刻失敗。
+    /// </summary>
+    internal static void ApplyAiIsolation(SystemSettings s)
+    {
+        s.AiBaseUrl = "http://127.0.0.1:1";
+        s.AiRetryCount = 1;
+        s.AiRetryDelaySeconds = 0;
+        s.AiTimeoutSeconds = 2;
     }
 
     private void SetEnv(string key, string value)
@@ -198,6 +205,18 @@ public sealed class ScenarioSite : IDisposable
         NLog.LogManager.Configuration = _savedNLogConfig;
         CryptoHelper.ResetForTests();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        // 可用性模擬（UsabilitySimulationTests）要把整個資料目錄留給站台實測：設 LF_SCENARIO_KEEP_DATA=<目錄> 時先複製再刪
+        var keep = Environment.GetEnvironmentVariable("LF_SCENARIO_KEEP_DATA");
+        if (!string.IsNullOrWhiteSpace(keep)) CopyDirectory(_dataRoot, keep);
         try { Directory.Delete(_dataRoot, recursive: true); } catch (IOException) { /* SQLite 檔案可能仍被連線池占用，留在暫存目錄無妨 */ }
+    }
+
+    private static void CopyDirectory(string from, string to)
+    {
+        foreach (var dir in Directory.GetDirectories(from, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(dir.Replace(from, to));
+        Directory.CreateDirectory(to);
+        foreach (var file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+            File.Copy(file, file.Replace(from, to), overwrite: true);
     }
 }

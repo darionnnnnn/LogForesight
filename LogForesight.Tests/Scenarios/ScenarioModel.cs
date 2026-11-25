@@ -186,6 +186,18 @@ public sealed class Scenario
 
     public int? ExplicitDays { get; private set; }
 
+    /// <summary>
+    /// 最後一天的「今天」；預設為真實的今天。需要資料日落在固定日期之後的情境（例如「不再打擾」30 天解除的生效日期之後）
+    /// 用它把整段時間軸平移，不依賴真實日期。
+    /// </summary>
+    public DateTime? AnchorDate { get; private set; }
+
+    public Scenario WithAnchor(DateTime anchor)
+    {
+        AnchorDate = anchor.Date;
+        return this;
+    }
+
     public IReadOnlyDictionary<int, DayPlan> Plans => _days;
 
     public Scenario WithSettings(ScenarioSettings settings)

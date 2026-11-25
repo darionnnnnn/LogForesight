@@ -163,7 +163,9 @@ public static class RetentionPruner
             var issueHandlingPruned = backend.IssueHandlingStore().Prune(retention.RetentionDays);
             var recordHandlingStore = backend.RecordHandlingStore();
             var dayHandlingPruned = recordHandlingStore.Prune(retention.RetentionDays);
-            var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays);
+            // 「不再打擾」30 天解除要看問題目前規則的嚴重度；規則讀不到時退回內建種子（ResolveRules），不因此跳過清除
+            var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(backend.Blob("rules"))));
+            var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays, releaseRules);
             var workOrderPruned = backend.WorkOrderStore().PruneClosed(retention.RetentionDays);
             // 未結案交辦單的事件：追責紀錄，天數同處理歷程（AuditRetentionDays）；建單事件與每張單最新 200 筆保留
             var workOrderEventPruned = backend.WorkOrderStore().PruneOpenOrderEvents(retention.AuditRetentionDays);

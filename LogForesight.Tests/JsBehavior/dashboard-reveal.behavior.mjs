@@ -303,8 +303,74 @@ const cases = {
 
         render({ ...data, pendingDispatch: null, silentHostsPrtgDownCount: 3 }, user, display, badge);
         assert.equal(todoCards().at(-1).sub, '其中 3 台有 PRTG 監測項目異常');
+    },
+
+    // 未回報主機卡：有 Maintain 才是連結（目的地需要 Maintain）；其他角色不可點，提示列出可見範圍的主機名
+    silentHostsCardLinkOnlyForMaintain() {
+        const { render, silentCard } = silentCardHarness();
+        const base = { silentHostsCount: 3, silentHostNames: ['A', 'B', 'C'] };
+
+        render({ ...base }, { capabilities: ['Maintain'], userId: 1 });
+        assert.equal(silentCard().url, '/admin/hosts?status=silent', 'Maintain 要是連結');
+        assert.equal(silentCard().title, '沒回報 ≠ 沒問題', 'Maintain 的提示維持原文');
+
+        render({ ...base }, { capabilities: ['ViewAll', 'DevMonitor'], userId: 2 });
+        assert.ok(!silentCard().url, '沒有 Maintain 不可點');
+    },
+
+    silentHostsCardNonMaintainTitleListsNames() {
+        const { render, silentCard } = silentCardHarness();
+        const user = { capabilities: ['ViewAll', 'DevMonitor'], userId: 2 };
+
+        render({ silentHostsCount: 0, silentHostNames: [] }, user);
+        assert.equal(silentCard().title, '沒回報 ≠ 沒問題', '0 台不帶清單');
+        assert.ok(!silentCard().url);
+        assert.ok(!silentCard().detail, '0 台卡片上不列主機名');
+
+        render({ silentHostsCount: 3, silentHostNames: ['A', 'B', 'C'] }, user);
+        assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C', '3 台全列、不寫「等」');
+        assert.equal(silentCard().detail, '未回報：A、B、C', '3 台：卡片上可見地全列、不寫「等」');
+
+        render({ silentHostsCount: 5, silentHostNames: ['A', 'B', 'C', 'D', 'E'] }, user);
+        assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C、D、E', '剛好 5 台不寫「等」');
+        assert.equal(silentCard().detail, '未回報：A、B、C、D、E', '5 台：卡片上剛好 5 台不寫「等」');
+
+        render({ silentHostsCount: 7, silentHostNames: ['A', 'B', 'C', 'D', 'E'] }, user);
+        assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C、D、E 等 7 台', '超過 5 台寫「等 N 台」');
+        assert.equal(silentCard().detail, '未回報：A、B、C、D、E 等 7 台', '7 台：卡片上超過 5 台寫「等 N 台」');
+
+        // Maintain 是連結卡，不在卡片上列名單（點進主機頁看）
+        render({ silentHostsCount: 3, silentHostNames: ['A', 'B', 'C'] }, { capabilities: ['Maintain'], userId: 1 });
+        assert.ok(!silentCard().detail);
     }
 };
+
+function silentCardHarness() {
+    const source = fs.readFileSync(path.join(jsRoot, 'pages', 'dashboard.js'), 'utf8').replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
+    const body = source.slice(source.indexOf('function renderKpi('), source.indexOf('function mountKpiReveal('));
+    let captured = null;
+    const renderKpi = new Function(
+        'hasCapability', 'recordsUrl', 'formatNumber', 'kpiStrip', 'document', 'helpIcon', 'mountKpiReveal', 'DAY_RISK_HELP',
+        `${body}\nreturn renderKpi;`)(
+        (user, capability) => user.capabilities.includes(capability),
+        () => '/records',
+        value => String(value),
+        groups => { captured = groups; return dom.newElement('div'); },
+        { getElementById: () => dom.newElement('div') },
+        () => dom.newElement('button'),
+        () => {},
+        'help');
+    const data = {
+        highRiskDays: 0, mediumRiskDays: 0, totalHosts: 1, coverageGapDays: 0,
+        issueTodo: { affectedHostCount: 0, overdueIssueCount: 0, openIssueCount: 0 },
+        todo: { openCount: 0, inProgressCount: 0 },
+        silentHostsPrtgDownCount: 0, pendingPermissionChanges: 0, recentLoginFailures: null
+    };
+    return {
+        render: (extra, user) => renderKpi({ ...data, ...extra }, user, { visibleDayRiskLevels: ['高', '中'] }, null),
+        silentCard: () => captured.find(group => group.title === '待處理').cards.find(card => card.label === '未回報主機')
+    };
+}
 
 const name = process.argv[2];
 if (!name) {

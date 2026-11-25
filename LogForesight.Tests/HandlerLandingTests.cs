@@ -51,11 +51,11 @@ public class HandlerLandingTests : IDisposable
 
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
-    private static AuthController LoginController(FakeUserStore users, FakeUserGroupStore groups)
+    private static AuthController LoginController(FakeUserStore users, FakeUserGroupStore groups, FakeHostStore? hostStore = null)
     {
         var settings = new WebAppSettings();
         settings.Auth.ServerAdmin.Account = "serverAdmin";
-        var hosts = new FakeHostStore();
+        var hosts = hostStore ?? new FakeHostStore();
         var audit = new RecordingAuditService();
         var provider = new StubAuthenticationProvider();
         var identity = new IdentityService(users, groups, hosts, provider,
@@ -88,6 +88,25 @@ public class HandlerLandingTests : IDisposable
         var data = await LoginJson(LoginController(users, groups), "DOMAIN\\handler");
 
         Assert.Equal($"/handlers/{user.UserId}", data.GetProperty("landingPath").GetString());
+    }
+
+    [Fact]
+    public async Task 登入API_是否為主機負責人_決定ownsAnyHost()
+    {
+        var users = new FakeUserStore();
+        var groups = new FakeUserGroupStore();
+        var group = groups.Upsert(new UserGroup { GroupName = "OO部門", Role = UserRole.User });
+        var plain = users.Upsert(new WebUser { Account = "DOMAIN\\plain", GroupIds = new List<long> { group.GroupId } });
+        var owner = users.Upsert(new WebUser { Account = "DOMAIN\\owner", GroupIds = new List<long> { group.GroupId } });
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostName = "h1", Active = true, OwnerUserIds = new List<long> { owner.UserId } });
+
+        var plainData = await LoginJson(LoginController(users, groups, hosts), "DOMAIN\\plain");
+        var ownerData = await LoginJson(LoginController(users, groups, hosts), "DOMAIN\\owner");
+
+        Assert.False(plainData.GetProperty("ownsAnyHost").GetBoolean());
+        Assert.True(ownerData.GetProperty("ownsAnyHost").GetBoolean());
+        Assert.NotEqual(plain.UserId, owner.UserId);
     }
 
     [Fact]

@@ -183,12 +183,6 @@
       {
         "assert": {
           "sel": "#record-list button",
-          "notText": "統一標記"
-        }
-      },
-      {
-        "assert": {
-          "sel": "#record-list button",
           "notText": "交辦"
         }
       },
@@ -643,6 +637,9 @@
         }
       },
       {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
+      },
+      {
         "waitFor": "#wo-dismissed tbody tr"
       },
       {
@@ -698,6 +695,9 @@
         }
       },
       {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
+      },
+      {
         "waitFor": "#wo-dismissed .lf-empty, #wo-dismissed tbody tr"
       },
       {
@@ -724,6 +724,9 @@
       },
       {
         "click": "#wo-tabs [data-tab=\"gaps\"]"
+      },
+      {
+        "click": "#wo-dismissed-toggle-slot .lf-disclosure"
       },
       {
         "waitFor": "#wo-dismissed tbody tr"
@@ -1147,15 +1150,18 @@
       },
       {
         "assert": {
-          "sel": ".modal.show form button[type=\"submit\"]",
+          "sel": ".modal.show .modal-footer button[type=\"submit\"]",
           "visible": true
         }
       },
       {
         "assert": {
-          "sel": ".modal.show form",
+          "sel": ".modal.show .modal-footer",
           "text": "送出並回覆下一張"
         }
+      },
+      {
+        "evalAssert": "const f = document.querySelector('.modal.show .modal-footer'); const submit = f.querySelector('button[type=\"submit\"]'); const close = [...f.querySelectorAll('button')].find(b => b.textContent.trim() === '關閉'); if (!close) return '頁尾找不到關閉鈕'; const a = submit.getBoundingClientRect(), b = close.getBoundingClientRect(); if (Math.abs(a.top - b.top) > 40) return '送出與關閉不在同一列'; const r = f.getBoundingClientRect(); if (a.right > r.right + 1 || a.left < r.left - 1) return '送出鈕超出頁尾'; if (document.querySelector('.modal.show form button[type=\"submit\"]')) return '送出鈕還留在表單內'; return null;"
       }
     ]
   },
@@ -3960,13 +3966,13 @@
     ],
     "steps": [
       {
-        "waitFor": "table tbody tr"
+        "waitFor": "#run-summary table tbody tr.lf-row-expandable"
       },
       {
         "wait": 600
       },
       {
-        "evalAssert": "const ths = [...document.querySelectorAll('table thead th')].map(th => th.textContent.trim());\nconst idx = ths.indexOf('未執行');\nif (idx < 0) return '找不到「未執行」欄';\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const tr of document.querySelectorAll('table tbody tr')) {\n  const cell = tr.children[idx];\n  const num = cell && cell.querySelector('.lf-status-count');\n  if (!num) continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '沒有可量的「未執行」數字';"
+        "evalAssert": "return (async () => {\n// 批次 V 把執行總表十多欄計數收進每列的展開（renderDayCounts），「未執行」不再是表格欄；\n// 這裡先展開每一列，再量展開區內「未執行」數字的文字對比（原本要守的事不變）\nconst rows = [...document.querySelectorAll('#run-summary table tbody tr.lf-row-expandable')];\nif (!rows.length) return '找不到可展開的資料列';\nrows.forEach(tr => tr._lfSetExpanded(true));\nawait new Promise(r => setTimeout(r, 600));\nconst rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);\nconst lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };\nconst bgOf = el => { for (let e = el; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c && !c.startsWith('rgba(0, 0, 0, 0)') && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };\nlet checked = 0;\nfor (const item of document.querySelectorAll('#run-summary .lf-day-counts > span')) {\n  const label = item.querySelector('.lf-text-label');\n  const num = item.querySelector('.lf-status-count');\n  if (!label || !num || label.textContent.trim() !== '未執行') continue;\n  const a = lum(rgb(getComputedStyle(num).color)), b = lum(rgb(bgOf(num)));\n  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);\n  checked++;\n  if (ratio < 4.5) return '「未執行」數字對比只有 ' + ratio.toFixed(2) + ':1：' + num.textContent;\n}\nreturn checked ? null : '展開後沒有可量的「未執行」數字'; })();"
       }
     ]
   },
@@ -4984,7 +4990,7 @@
       {
         "assert": {
           "sel": "#wo-reminders",
-          "text": "派不出去的問題：2 筆"
+          "text": "派不出去的問題：2 個"
         }
       },
       {
@@ -4995,8 +5001,26 @@
       },
       {
         "assert": {
+          "sel": "#wo-reminders",
+          "text": "可派未派的問題："
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "處理人已停用或暫停接單、名下仍有單：2 人"
+        }
+      },
+      {
+        "assert": {
+          "sel": "#wo-reminders",
+          "text": "未分組主機：1 台"
+        }
+      },
+      {
+        "assert": {
           "sel": "#wo-reminders > ul > li",
-          "count": 3
+          "count": 6
         }
       }
     ]
@@ -5017,18 +5041,6 @@
       },
       {
         "evalAssert": "const bs = [...document.querySelectorAll('#wo-reminders .lf-disclosure')]; if (bs.length < 2) return '提醒區每類應有展開鈕，實際 ' + bs.length; bs.forEach(b => b.click()); return null;"
-      },
-      {
-        "assert": {
-          "sel": "#wo-reminders",
-          "text": "Ui-Unassignable-Issue EventId 8630"
-        }
-      },
-      {
-        "assert": {
-          "sel": "#wo-reminders",
-          "text": "彙整於"
-        }
       },
       {
         "evalAssert": "const a = document.querySelector('#wo-reminders .lf-disclosure-target a[href*=\"/work-orders/\"]'); return a ? null : '上報明細的單號應連到交辦單';"
@@ -5114,6 +5126,432 @@
       },
       {
         "evalAssert": "return document.querySelector('.lf-page-header')?.textContent.includes('目前暫停接單') ? null : '頁頭沒有「目前暫停接單」標記';"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-交辦視窗主機表格",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "evalAssert": "return (async () => { const tr = document.querySelector('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail)');\nif (!tr) return '找不到資料列';\nconst btn = [...tr.querySelectorAll('button, .dropdown-item')].find(i => i.textContent.trim() === '交辦');\nif (!btn) return '這一列沒有「交辦」';\nif (btn.classList.contains('dropdown-item')) { tr.querySelector('.dropdown-toggle')?.click(); await new Promise(r => setTimeout(r, 400)); }\nbtn.click();\nreturn null; })();"
+      },
+      {
+        "waitFor": ".modal.show .lf-bulk-assign-hosts"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "return (async () => { const sum = [...document.querySelectorAll('.modal.show summary')].find(x => x.textContent.includes('受影響主機'));\nif (!sum) return '找不到「檢視受影響主機」';\nsum.click();\nawait new Promise(r => setTimeout(r, 400));\nconst table = document.querySelector('.modal.show .lf-bulk-assign-hosts table');\nif (!table) return '受影響主機不是表格';\nconst all = table.querySelector('thead input[type=checkbox]');\nif (!all) return '表頭沒有全選勾選框';\nconst box = table.querySelector('tbody input[type=checkbox]');\nif (box && !box.getAttribute('aria-label')) return '勾選框沒有 aria-label';\nreturn null; })();"
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗-只回覆部分主機",
+    "role": "ui-handler",
+    "path": "/work-orders/11",
+    "steps": [
+      {
+        "waitFor": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "click": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "evalAssert": "return (async () => { const t = document.getElementById('wo-reply-pick-toggle');\nif (!t) return '找不到「只回覆部分主機」';\nif (t.classList.contains('d-none')) return null;\nt.click();\nawait new Promise(r => setTimeout(r, 800));\nreturn null; })();"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗-部分主機同表單設其餘",
+    "role": "ui-handler",
+    "path": "/work-orders/11",
+    "steps": [
+      {
+        "waitFor": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "click": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "evalAssert": "return (async () => { const wait = ms => new Promise(r => setTimeout(r, ms));\nconst t = document.getElementById('wo-reply-pick-toggle');\nif (!t || t.classList.contains('d-none')) return '找不到「只回覆部分主機」';\nt.click(); await wait(1200);\nconst boxes = [...document.querySelectorAll('.modal.show tbody input[type=checkbox]')].filter(b => b.offsetParent !== null);\nif (boxes.length < 2) return '進行中成員不足兩台：' + boxes.length;\nboxes[0].click(); await wait(200);\nconst chip = [...document.querySelectorAll('#wo-reply-status button')].find(b => b.textContent.trim() === '已處理');\nif (!chip) return '找不到結論「已處理」'; chip.click(); await wait(300);\nconst rest = document.getElementById('wo-reply-rest');\nif (!rest || rest.classList.contains('d-none')) return '其餘 N 台區塊沒出現';\nconst obs = [...document.querySelectorAll('#wo-reply-rest-status button')].find(b => b.textContent.trim() === '觀察中');\nif (!obs) return '其餘區找不到「觀察中」'; obs.click(); await wait(300);\nconst q = document.getElementById('wo-reply-rest-due-quick');\nif (!q || q.classList.contains('d-none')) return '其餘區觀察中沒有日期快選';\nreturn null; })();"
+      },
+      {
+        "assert": {
+          "sel": "#wo-reply-rest",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "版面-群組與授權-矩陣首欄固定且欄名有上限",
+    "role": "ui-admin",
+    "path": "/admin/groups",
+    "widths": [
+      375
+    ],
+    "steps": [
+      {
+        "click": "#group-tabs [data-tab=\"access\"]"
+      },
+      {
+        "waitFor": "#access-matrix .lf-table-wrap table"
+      },
+      {
+        "evalAssert": "const wrap = document.querySelector('#access-matrix .lf-table-wrap');\nif (!wrap) return '找不到授權矩陣的捲動容器 #access-matrix .lf-table-wrap';\nconst titles = [...wrap.querySelectorAll('thead .lf-matrix-col-title')];\nif (titles.length < 2) return '量測前提不成立：主機群組欄標題只有 ' + titles.length + ' 個，無法驗證欄名上限';\nconst limit = parseFloat(getComputedStyle(titles[0]).maxWidth);\nif (!Number.isFinite(limit)) return '欄標題沒有設定最大寬度（max-width＝' + getComputedStyle(titles[0]).maxWidth + '）';\nconst wide = titles.map(t => ({ t, w: t.getBoundingClientRect().width })).filter(x => x.w > limit + 2);\nif (wide.length) return '欄標題寬度超過上限 ' + Math.round(limit) + 'px：' + wide.map(x => Math.round(x.w) + 'px「' + x.t.textContent.slice(0, 12) + '…」').join('、');\nconst truncated = titles.filter(t => t.scrollWidth > t.clientWidth + 1);\nif (truncated.length === 0) return '量測前提不成立：沒有任何欄標題長到需要截斷，無法驗證省略號（資料集應含超長主機群組名稱）';\nconst noEllipsis = truncated.find(t => getComputedStyle(t).textOverflow !== 'ellipsis');\nif (noEllipsis) return '過長的欄標題沒有以省略號截斷（text-overflow＝' + getComputedStyle(noEllipsis).textOverflow + '）';\nif (wrap.scrollWidth <= wrap.clientWidth + 1) return '量測前提不成立：矩陣在 ' + innerWidth + 'px 不需要水平捲動（scrollWidth ' + wrap.scrollWidth + ' ≤ clientWidth ' + wrap.clientWidth + '），無法驗證首欄固定';\nwrap.scrollLeft = wrap.scrollWidth;\nif (wrap.scrollLeft < 1) return '量測前提不成立：容器無法水平捲動（scrollLeft 捲不動）';\nconst box = wrap.getBoundingClientRect();\nconst cells = [...wrap.querySelectorAll('thead th.lf-matrix-sticky, tbody td.lf-matrix-sticky')];\nif (cells.length < 2) return '量測前提不成立：找不到首欄儲存格（.lf-matrix-sticky）';\nconst off = cells.find(c => { const r = c.getBoundingClientRect(); return r.left < box.left - 1 || r.right > box.right + 1 || r.width === 0; });\nif (off) return '捲到最右後首欄儲存格「' + off.textContent.trim().slice(0, 12) + '」跑出可視範圍（left ' + Math.round(off.getBoundingClientRect().left) + '，容器 left ' + Math.round(box.left) + '）';\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-主機詳情-這台的交辦區塊",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-orders .lf-table-wrap, #host-orders .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#host-orders-card",
+          "visible": true
+        }
+      },
+      {
+        "evalAssert": "const body = document.getElementById('host-orders');\nif (!body) return '找不到 #host-orders';\nconst table = body.querySelector('table');\nconst empty = body.querySelector('.lf-empty');\nif (!table && !empty) return '「這台的交辦」既沒有表格也沒有空狀態';\nif (empty && !empty.textContent.includes('這台主機目前沒有進行中的交辦')) return '空狀態文字不是「這台主機目前沒有進行中的交辦」：' + empty.textContent.trim().slice(0, 40);\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-交辦單-處置參考與訊息樣本就地展開",
+    "role": "ui-admin",
+    "path": "/work-orders/1",
+    "steps": [
+      {
+        "waitFor": "#wo-header .lf-disclosure"
+      },
+      {
+        "evalAssert": "const toggles = [...document.querySelectorAll('#wo-header .lf-disclosure')].filter(b => ['處置參考', '訊息樣本'].includes(b.textContent.trim()));\nif (toggles.length === 0) return '量測前提不成立：這張單沒有處置參考也沒有訊息樣本，無法驗證展開';\nconst before = location.pathname;\nfor (const t of toggles) { t.click(); }\nconst opened = toggles.filter(t => { const target = document.getElementById(t.getAttribute('aria-controls')); return target && !target.classList.contains('d-none'); });\nif (opened.length !== toggles.length) return '有展開鈕按下後內容沒有顯示';\nif (location.pathname !== before) return '展開處置參考不應離開交辦單頁';\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "設定-健康-派工就緒卡",
+    "role": "ui-admin",
+    "path": "/admin/settings#health",
+    "steps": [
+      {
+        "waitFor": "#health-freshness *",
+        "timeout": 20000
+      },
+      {
+        "patchApi": {
+          "/api/health/detail": {
+            "status": "degraded",
+            "statusReasons": [
+              {
+                "key": "dispatchReadiness",
+                "text": "派工就緒：自動派工開關沒有開，夜間分析後不會自動派單。"
+              }
+            ],
+            "dispatchReadiness": {
+              "items": [
+                {
+                  "id": "host-no-group",
+                  "title": "主機都有群組",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 7,
+                  "detail": "有 7 台啟用的主機沒有加入任何主機群組，派工池看不到它們。",
+                  "examples": [
+                    "WIN-APP01",
+                    "WIN-DB01",
+                    "LINUX-EDGE-01"
+                  ],
+                  "fixUrl": "/admin/hosts",
+                  "fixLabel": "前往主機頁"
+                },
+                {
+                  "id": "host-group-no-pool",
+                  "title": "主機群組都有派工池看得到",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 2,
+                  "detail": "有 2 個主機群組沒有授權給任何派工池群組，群組內的主機不會被自動派工。",
+                  "examples": [
+                    "機房甲",
+                    "機房乙"
+                  ],
+                  "fixUrl": "/admin/groups",
+                  "fixLabel": "去授權"
+                },
+                {
+                  "id": "no-pool",
+                  "title": "有可接單的派工池",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "派工池有 3 位可接單的成員。",
+                  "examples": [],
+                  "fixUrl": "/admin/groups",
+                  "fixLabel": "前往群組與授權"
+                },
+                {
+                  "id": "auto-dispatch-off",
+                  "title": "自動派工已開啟",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 1,
+                  "detail": "自動派工開關沒有開，夜間分析後不會自動派單（續掛既有單與問題負責人規則不受影響）。",
+                  "examples": [],
+                  "fixUrl": "/admin/settings#dispatch",
+                  "fixLabel": "前往派工設定"
+                },
+                {
+                  "id": "ai-window",
+                  "title": "AI 執行窗口已設定",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "AI 背景補跑有設定執行窗口。",
+                  "examples": [],
+                  "fixUrl": "/runs#settings",
+                  "fixLabel": "前往排程設定"
+                },
+                {
+                  "id": "schedule-off",
+                  "title": "排程已啟用",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "排程已啟用，會定時取數與分析。",
+                  "examples": [],
+                  "fixUrl": "/runs#settings",
+                  "fixLabel": "前往排程設定"
+                },
+                {
+                  "id": "admin-no-email",
+                  "title": "管理員有可用的 email",
+                  "passed": false,
+                  "skipped": false,
+                  "affected": 2,
+                  "detail": "所有管理員都沒有可用的 email，上報信與管理員提醒信寄不出去。",
+                  "examples": [
+                    "admin",
+                    "boss"
+                  ],
+                  "fixUrl": "/admin/users",
+                  "fixLabel": "前往使用者"
+                },
+                {
+                  "id": "pool-no-email",
+                  "title": "派工池成員都有可用的 email",
+                  "passed": true,
+                  "skipped": false,
+                  "affected": 0,
+                  "detail": "派工池成員都有可用的 email。",
+                  "examples": [],
+                  "fixUrl": "/admin/users",
+                  "fixLabel": "前往使用者"
+                }
+              ],
+              "failedCount": 4,
+              "mailChecked": true
+            }
+          }
+        }
+      },
+      {
+        "reload": true
+      },
+      {
+        "waitFor": "#health-dispatch-readiness .lf-table-wrap",
+        "timeout": 20000
+      },
+      {
+        "evalAssert": "const host = document.getElementById('health-dispatch-readiness'); const rows = host.querySelectorAll('tbody tr'); if (rows.length !== 8) return `就緒卡應列 8 項，實際 ${rows.length}`; const links = host.querySelectorAll('tbody a[href]'); if (links.length !== 4) return `不通過的 4 項各應有 1 個修正連結，實際 ${links.length}`; if (!host.querySelector('.lf-status-note--warning')) return '缺少警告型摘要訊息'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "設定-頁籤-dispatch",
+    "role": "ui-admin",
+    "path": "/admin/settings#dispatch",
+    "steps": [
+      {
+        "waitFor": "[data-panel=\"dispatch\"]:not(.d-none)"
+      },
+      {
+        "assert": {
+          "sel": "#auto-dispatch-enabled",
+          "visible": true
+        }
+      },
+      {
+        "evalAssert": "const mail = document.querySelector('[data-panel=\"mail\"]'); if (mail && mail.querySelector('#auto-dispatch-enabled')) return '自動派工開關仍在郵件通知頁籤'; const link = document.querySelector('[data-panel=\"dispatch\"] a[href$=\"#health\"]'); if (!link) return '派工頁籤缺少連到系統健康「派工就緒」的連結'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-群組與授權-主機群組有看得到的派工池群組欄",
+    "role": "ui-admin",
+    "path": "/admin/groups#host-groups",
+    "steps": [
+      {
+        "waitFor": "#host-group-list tbody tr"
+      },
+      {
+        "evalAssert": "const heads = [...document.querySelectorAll('#host-group-list thead th')].map(t => t.textContent.trim()); if (!heads.includes('看得到的派工池群組')) return '主機群組清單缺少「看得到的派工池群組」欄：' + heads.join('、'); const idx = heads.indexOf('看得到的派工池群組'); const cells = [...document.querySelectorAll('#host-group-list tbody tr')].map(r => r.children[idx]?.textContent.trim() ?? ''); if (cells.some(c => c === '')) return '有主機群組列沒有顯示派工池群組數（至少要有「—」或數字）'; return null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-使用者-編輯視窗群組即時摘要",
+    "role": "ui-admin",
+    "path": "/admin/users",
+    "steps": [
+      {
+        "waitFor": "#user-list tbody tr"
+      },
+      {
+        "click": "#user-list tbody tr button.btn-outline-primary"
+      },
+      {
+        "waitFor": "#user-modal.show"
+      },
+      {
+        "waitFor": "#user-group-summary .lf-text-label",
+        "timeout": 15000
+      },
+      {
+        "evalAssert": "const s = document.getElementById('user-group-summary').textContent; for (const k of ['能力', '可見主機', '派工池']) if (!s.includes(k)) return '群組摘要缺少「' + k + '」：' + s; const boxes = [...document.querySelectorAll('#user-groups input[type=checkbox]')]; if (boxes.length === 0) return '量測前提不成立：沒有群組勾選框'; return null;"
+      }
+    ]
+  }
+  ,{
+    "name": "版面-交辦總覽-待派三段",
+    "role": "ui-admin",
+    "path": "fixture:page.work-orders",
+    "steps": [
+      { "waitFor": "#wo-list tbody tr" },
+      { "click": "#wo-tabs [data-tab=\"gaps\"]" },
+      { "waitFor": "#wo-gaps [data-gap-section=\"notDispatched\"]" },
+      {
+        "evalAssert": "const names = [...document.querySelectorAll('#wo-gaps [data-gap-section]')].map(s => s.dataset.gapSection);\nif (names.join() !== 'dispatchable,unassignable,notDispatched') return '待派頁三段的順序不是 可以派、派不出去、不會派：' + names.join();\nconst body = n => document.getElementById('wo-gaps-section-' + n);\nif (body('dispatchable').classList.contains('d-none')) return '「可以派」預設要展開';\nif (!body('notDispatched').classList.contains('d-none')) return '「不會派」預設要收合';\nconst card = document.getElementById('wo-dismissed-body');\nif (!card || !card.classList.contains('d-none')) return '「不再自動派工」清單預設要收合';\nif (!document.getElementById('wo-dismissed-count').textContent.trim()) return '「不再自動派工」收合時標頭要有計數';\nreturn null;"
+      },
+      {
+        "evalAssert": "const body = document.getElementById('wo-gaps-section-dispatchable');\nconst hasTable = body.querySelector('table');\nconst empty = body.querySelector('.lf-empty');\nif (!hasTable && !empty) return '「可以派」既沒有表格也沒有空狀態文字';\nif (empty && !empty.textContent.includes('目前沒有可以派的問題')) return '空狀態文字不是「目前沒有可以派的問題」';\nreturn null;"
+      },
+      { "click": "#wo-gaps [data-gap-section=\"notDispatched\"] .lf-disclosure" },
+      { "waitFor": "#wo-gaps-section-notDispatched table, #wo-gaps-section-notDispatched .lf-empty" },
+      { "assert": { "sel": "#wo-gaps-section-notDispatched", "visible": true } }
+    ]
+  }
+  ,{
+    "name": "版面-儀表板-需要你處理一列",
+    "role": "ui-admin",
+    "path": "/",
+    "steps": [
+      { "waitFor": "#dashboard-kpi .lf-kpi-card" },
+      { "waitFor": "#dashboard-todo .lf-hint" },
+      {
+        "evalAssert": "const row = document.querySelector('#dashboard-todo .lf-hint');\nif (!row) return '找不到「需要你處理」一列';\nconst links = row.querySelectorAll('a[href]');\nif (links.length === 0 && !row.textContent.includes('目前沒有需要你處理的項目')) return '一列既沒有連結也不是「目前沒有需要你處理的項目」';\nif (links.length > 0 && !row.textContent.includes('需要你處理')) return '有項目時要有「需要你處理」標籤';\nif (row.scrollWidth > row.clientWidth + 1) return '「需要你處理」一列有橫向溢出';\nreturn null;"
+      }
+    ]
+  }
+  ,{
+    "name": "主管-儀表板-沒有需要你處理一列",
+    "role": "ui-manager",
+    "path": "/",
+    "steps": [
+      { "waitFor": "#dashboard-kpi .lf-kpi-card" },
+      { "assert": { "sel": "#dashboard-todo .lf-hint", "count": 0 } }
+    ]
+  }
+  ,{
+    "name": "版面-問題查詢-不再顯示這個問題比較表",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      { "waitFor": "#record-list tbody tr.lf-row-expandable" },
+      { "waitFor": "#issue-hide-guide .lf-disclosure" },
+      {
+        "evalAssert": "const toggle = document.querySelector('#issue-hide-guide .lf-disclosure');\nconst target = document.getElementById(toggle.getAttribute('aria-controls'));\nif (!target.classList.contains('d-none')) return '比較表預設要收合';\ntoggle.click();\nif (target.classList.contains('d-none')) return '展開後比較表沒有顯示';\nconst rows = target.querySelectorAll('tbody tr');\nif (rows.length !== 6) return '比較表要有六列（靜音、抑制、已知雜訊、不處理、誤報、統一標記），實際 ' + rows.length;\nif (target.scrollWidth > target.clientWidth + 1) return '比較表有橫向溢出';\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-問題負責與靜音-不顯示設定總覽",
+    "role": "ui-admin",
+    "path": "/admin/issue-owners",
+    "steps": [
+      {
+        "waitFor": "#issue-hide-summary tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#issue-hide-summary .lf-skeleton",
+          "count": 0
+        }
+      },
+      {
+        "evalAssert": "const host = document.getElementById('issue-hide-summary');\nconst heads = [...host.querySelectorAll('thead th')].map(th => th.textContent.trim());\nconst want = ['問題', '靜音', '機房結論', '抑制', '不再打擾'];\nif (want.some((w, i) => heads[i] !== w)) return '總覽表頭要是 ' + want.join('、') + '，實際 ' + heads.join('、');\nconst rows = host.querySelectorAll('tbody tr');\nif (rows.length === 0) return '總覽沒有任何列';\nconst text = host.textContent;\nif (!text.includes('靜音至')) return '資料集裡有靜音中的問題，總覽要列出迄日';\nconst clear = [...host.querySelectorAll('tbody button')].filter(b => b.textContent.trim() === '解除');\nif (clear.length === 0) return '有靜音或結論的列要有「解除」動作';\nif (host.scrollWidth > host.clientWidth + 1) return '總覽有橫向溢出';\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-不再顯示這個問題分流面板",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr.lf-row-expandable"
+      },
+      {
+        "evalAssert": "const toggle = document.querySelector('#record-list tbody tr.lf-row-expandable .dropdown-toggle');\nif (!toggle) return '依問題視角的列沒有「更多」選單';\ntoggle.click();\nconst item = [...document.querySelectorAll('#record-list .dropdown-menu.show .dropdown-item')].find(i => i.textContent.trim() === '不再顯示這個問題…');\nif (!item) return '「更多」裡沒有「不再顯示這個問題…」';\nitem.click();\nreturn null;"
+      },
+      {
+        "waitFor": ".modal.show form button[type=submit]"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst groups = modal.querySelectorAll('.btn-group[role=group]');\nif (groups.length < 3) return '要有多久、範圍（以及已交辦的單或結論）分段控制，實際 ' + groups.length;\nconst status = modal.querySelector('[role=status]');\nif (!status || !status.textContent.includes('做法：靜音')) return '預設（暫時＋全站）後果摘要要寫「做法：靜音」';\nconst primary = modal.querySelectorAll('.btn-primary');\nif (primary.length !== 1) return '面板只能有一顆主要按鈕，實際 ' + primary.length;\nif (modal.scrollWidth > modal.clientWidth + 1) return '面板有橫向溢出';\nreturn null;"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst btn = label => [...modal.querySelectorAll('.btn-group button')].find(b => b.textContent.trim() === label);\nbtn('長期').click();\nconst status = modal.querySelector('[role=status]');\nif (!status.textContent.includes('做法：機房結論')) return '長期＋全站要改寫「做法：機房結論」，實際：' + status.textContent;\nreturn null;"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst btn = label => [...modal.querySelectorAll('.btn-group button')].find(b => b.textContent.trim() === label);\nconst group = btn('指定主機群組');\nif (!group) return '沒有「指定主機群組」選項';\nif (group.disabled) return null;\ngroup.click();\nconst status = modal.querySelector('[role=status]');\nif (!status.textContent.includes('做法：規則抑制')) return '指定主機群組要改寫「做法：規則抑制」，實際：' + status.textContent;\nreturn null;"
+      }
+    ]
+  }
+  ,{
+    "name": "版面-風險日詳情-交辦徽章不越出儲存格",
+    "role": "ui-admin",
+    "path": "fixture:record.cases",
+    "widths": [375, 768, 1280, 1920, 2560],
+    "steps": [
+      { "waitFor": "#detail-issues .lf-status-cell__wrap" },
+      { "select": ["#detail-scope", "all"] },
+      { "waitFor": "#detail-issues .lf-status-cell__wrap .lf-badge--primary" },
+      {
+        "evalAssert": "const badges = [...document.querySelectorAll('#detail-issues .lf-status-cell__wrap .lf-badge--primary')]; if (!badges.length) return '資料集沒有案件徽章'; const bad = []; for (const b of badges) { const td = b.closest('td'); const r = document.createRange(); r.selectNodeContents(b); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); if (right > td.getBoundingClientRect().right + 1) bad.push(Math.round(right - td.getBoundingClientRect().right)); } return bad.length ? ('案件徽章超出儲存格 ' + bad.join(',') + 'px') : null;"
       }
     ]
   }

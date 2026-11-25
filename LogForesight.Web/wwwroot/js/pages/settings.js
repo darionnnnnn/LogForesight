@@ -14,6 +14,7 @@ import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
     prtgFreshnessLabel, statusBadge, toLocalDateString
 } from '../core/format.js';
+import { appUrl } from '../core/paths.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 import { readNumberField } from '../core/number-field.js';
 import { setFieldError, clearFieldError } from '../core/field-errors.js';
@@ -697,6 +698,7 @@ async function loadHealthTab({ refresh = false } = {}) {
     }
     renderHealthOverall(detail);
     renderBuildInfo(detail);
+    renderDispatchReadiness(detail.dispatchReadiness);
     renderFreshness(detail.scheduleFreshness);
     renderPrtgSnapshotHealth(detail.prtgSnapshot);
     renderSlowQueries(detail.topSlowOperations);
@@ -735,6 +737,69 @@ function renderHealthOverall(detail) {
         children.push(list);
     }
     host.replaceChildren(...children);
+}
+
+/**
+ * 派工就緒卡（第 81 輪批次 U）：八種「派工靜默失效」的狀況逐項列出，每項通過／不通過、影響數量、修正連結。
+ * 判定全在後端（detail.dispatchReadiness），這裡只顯示；不通過的項目同時出現在上方的整體狀態原因。
+ * 郵件通知沒開時兩個 email 項不在清單內，補一行說明。外部字串（主機名、帳號）一律走 textContent。
+ */
+function renderDispatchReadiness(readiness) {
+    const host = document.getElementById('health-dispatch-readiness');
+    if (!host) return;
+    if (!readiness) {
+        host.replaceChildren();
+        return;
+    }
+    const items = readiness.items ?? [];
+    const summary = readiness.failedCount > 0
+        ? statusNote('warning', `有 ${formatNumber(readiness.failedCount)} 項會讓派工靜默失效，請逐項處理`)
+        : statusNote('success', '派工所需的設定都已就緒');
+    const table = document.createElement('div');
+    renderTable(table, {
+        columns: [
+            { key: 'title', title: '檢查項目', className: 'lf-col-nowrap' },
+            {
+                key: 'passed', title: '狀態', className: 'lf-col-nowrap',
+                render: r => (r.skipped ? statusBadge('無法判定', 'neutral')
+                    : r.passed ? statusBadge('通過', 'success') : statusBadge('不通過', 'warning'))
+            },
+            { key: 'detail', title: '說明', render: r => dispatchReadinessDetail(r) },
+            {
+                key: 'fix', title: '', className: 'lf-col-nowrap',
+                render: r => {
+                    if (r.passed && !r.skipped) return '';
+                    const link = document.createElement('a');
+                    link.href = appUrl(r.fixUrl);
+                    link.textContent = r.fixLabel;
+                    return link;
+                }
+            }
+        ],
+        rows: items,
+        empty: { title: '沒有檢查項目', hint: '後端沒有回傳任何檢查項目，請重新整理頁面；仍是空的請查看站台記錄檔。' }
+    });
+    const children = [summary, table];
+    if (!readiness.mailChecked) {
+        const note = document.createElement('p');
+        note.className = 'lf-text-meta mt-2 mb-0';
+        note.textContent = '郵件通知沒有開啟，「管理員有可用的 email」與「派工池成員都有可用的 email」兩項不列入檢查。';
+        children.push(note);
+    }
+    host.replaceChildren(...children);
+}
+
+/** 說明文字，不通過且有受影響對象時附上名稱（最多後端給的 5 個，其餘以「等 N 項」收尾） */
+function dispatchReadinessDetail(item) {
+    const span = document.createElement('span');
+    const examples = item.examples ?? [];
+    let text = item.detail ?? '';
+    if (!item.passed && examples.length > 0) {
+        const more = item.affected > examples.length ? ` 等 ${formatNumber(item.affected)} 項` : '';
+        text += `（${examples.join('、')}${more}）`;
+    }
+    span.textContent = text;
+    return span;
 }
 
 /** 版本與站台主機狀態：判斷「站台到底部署了哪一版」只看這一行 */
@@ -980,7 +1045,8 @@ function renderBackgroundJobs(detail) {
                 ? `最近一次有段失敗：${detail.retentionFailedSegments.join('、')}`
                 : '正常'
         },
-        { item: '密碼欄位加密', status: cryptoStatus(detail) }
+        { item: '密碼欄位加密', status: cryptoStatus(detail) },
+        { item: 'AI 服務連線', status: aiProbeStatusText(detail) }
     ];
     if (detail.hostDayRecovery) rows.push({ item: '主機日恢復', status: hostDayRecoveryStatus(detail.hostDayRecovery) });
     const ledgerNotice = mailLedgerNotice(detail.mailContributionLedger);
@@ -1011,6 +1077,16 @@ function renderBackgroundJobs(detail) {
         note.textContent = `來源大小寫合併預覽（最多 50 組）：${preview.map(g =>
             `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
         document.getElementById('health-background').appendChild(note);
+    }
+}
+
+/** 背景工作表「AI 服務連線」列：上次探測結果（沒設定與還沒探測不是故障，照實說） */
+function aiProbeStatusText(detail) {
+    switch (detail.aiProbeStatus) {
+        case 'Ready': return '連線正常';
+        case 'Failed': return '連線失敗（白話摘要與互動問答暫時無法使用）';
+        case 'NotConfigured': return '尚未設定（以統計模式運作）';
+        default: return '尚未探測';
     }
 }
 
@@ -1738,6 +1814,30 @@ function bindMailTest() {
 }
 
 /**
+ * AI 測試連線（批次 D F22-2）：沿用初始設定精靈的同一個同步探測（不看快取、重新探一次）。
+ * 測的是已儲存的設定；探測結果文字是後端的固定中文，仍以 statusNote 的 textContent 呈現。
+ */
+function bindAiTest() {
+    const button = document.getElementById('ai-test-btn');
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+        const resultEl = document.getElementById('ai-test-result');
+        resultEl.replaceChildren();
+        const restore = withBusy(button, '測試中');
+        try {
+            const result = await api.post('/api/admin/setup/ai-probe', {}, { silent: true });
+            const tone = result.isReady ? 'success' : result.status === 'NotConfigured' ? 'warning' : 'error';
+            resultEl.replaceChildren(statusNote(tone, result.detail));
+        } catch (error) {
+            resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
+        } finally {
+            restore();
+        }
+    });
+}
+
+/**
  * AI 進階參數「還原預設值」（docs/archive/FEEDBACK-10-PLAN.md §3）：出廠值由後端隨設定一起送來
  * （`aiAdvancedDefaults`，源頭是 Core 的 SystemSettings 屬性初始器），前端不硬編第二份數字。
  * 只填回欄位、不直接存檔——存檔仍走整頁單一 form 的「儲存」，未儲存提醒（trackUnsaved）
@@ -1783,6 +1883,7 @@ bindForm();
 bindAiProvider();
 bindAdTest();
 bindMailTest();
+bindAiTest();
 bindAiAdvancedReset();
 bindAiUsageReset();
 // 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
@@ -1804,7 +1905,7 @@ bindAdvancedSections();
 bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
-        '#mail-test-btn, #mail-test-result, #health-ack-until, #health-ack-btn'
+        '#mail-test-btn, #mail-test-result, #ai-test-btn, #ai-test-result, #health-ack-until, #health-ack-btn'
 });
 load();
 renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));

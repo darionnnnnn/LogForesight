@@ -46,6 +46,7 @@ let suppressionPage = 1;
 let suppressionPageSize = loadPageSize('suppressions');
 
 const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
+const ruleConflictBox = document.getElementById('rule-conflict');
 const restoreModal = new bootstrap.Modal(document.getElementById('restore-modal'));
 const suppressModal = new bootstrap.Modal(document.getElementById('suppress-modal'));
 
@@ -96,6 +97,31 @@ async function load() {
 
     renderRules();
     renderSuppressions();
+    openPendingRuleFromUrl();
+}
+
+/**
+ * 交辦單頁與問題查詢的「調整這條規則」帶 ?ruleId= 過來：第一次載入完成後切到該規則的平台頁籤、
+ * 把搜尋欄定位到它並直接開編輯（只做一次，之後儲存、刪除的重新載入不會再開）。
+ * 找不到（已被刪除）就明說，不留一個沒反應的頁面。
+ */
+let pendingRuleId = new URLSearchParams(location.search).get('ruleId');
+function openPendingRuleFromUrl() {
+    if (!pendingRuleId) return;
+    const ruleId = pendingRuleId;
+    pendingRuleId = null;
+    const rule = rules.find(r => r.id === ruleId);
+    if (!rule) {
+        toast(`找不到規則「${ruleId}」，可能已被刪除。`, 'warning');
+        return;
+    }
+    if (rule.platform !== currentPlatform) {
+        document.querySelector(`#rule-tabs [data-platform="${rule.platform}"]`)?.click();
+    }
+    document.getElementById('rule-search').value = rule.id;
+    rulePage = 1;
+    renderRules();
+    openRuleModal(rule);
 }
 
 /**
@@ -580,8 +606,10 @@ function actionsCell(rule) {
  */
 function openRuleModal(rule, { asTemplate = false } = {}) {
     clearDiskPreview();
+    clearRuleConflict();
     editingRule = asTemplate ? null : rule;
     document.getElementById('rule-validation').replaceChildren();
+    document.getElementById('rule-trial')?.replaceChildren();
 
     // 範本模式才顯示「同時停用原規則」（回饋十五輪 R4），預設勾選——見官方建議路徑
     // （停用 builtin＋以它為範本複製）的說明，這裡把正確順序內建進同一次儲存操作
@@ -691,6 +719,10 @@ function collectRule() {
 
     return {
         id: document.getElementById('rule-id').value.trim(),
+        // 開啟編輯時讀到的版本；新增（含以此為範本）沒有舊版本
+        version: editingRule?.version ?? null,
+        // 新增（含以此為範本）：編號撞到既有規則時伺服器回「編號已存在」，不是版本衝突
+        isNew: !editingRule,
         enabled: document.getElementById('rule-enabled').checked,
         platform,
         sourcePattern: document.getElementById('rule-source').value.trim(),
@@ -988,6 +1020,95 @@ document.getElementById('rule-validate').addEventListener('click', async () => {
     }
 });
 
+// ── 規則試算（F19-2）──────────────────────────────────────────────────────────
+
+/**
+ * 試算結果的逐行文字（後端算好的數字，這裡只組句）。不支援試算時只回原因一行；
+ * 數字一律「現在 → 試算」；下限估計與訊息條件未重算各附一句說明。
+ * @returns {string[]}
+ */
+function ruleTrialLines(result) {
+    if (!result.supported) return [result.unsupportedReason || '這條規則無法試算。'];
+    const lines = [
+        `近 ${result.windowDays} 天命中主機日：${result.hitHostDaysBefore} → ${result.hitHostDaysAfter}`,
+        `會被派工的（主機, 問題）：${result.dispatchPairsBefore} → ${result.dispatchPairsAfter}`,
+        '含靜音中的問題（試算不排除靜音）。'
+    ];
+    if (result.elevatedHostDaysBefore !== result.elevatedHostDaysAfter) {
+        lines.push(`會判成高風險日的主機日（重大旗標）：${result.elevatedHostDaysBefore} → ${result.elevatedHostDaysAfter}`);
+    }
+    if (result.isNewRule) lines.push('這是新規則，「→」前的數字是 0（目前沒有這條規則）。');
+    if (result.isLowerBound) {
+        lines.push('這是下限估計：門檻調低、嚴重度或重大旗標調高、或規則範圍變大時，低於舊門檻而沒被記錄的事件看不到，實際只會比這個數字多。');
+    }
+    if (result.messageConditionNotRecomputed) {
+        lines.push('訊息內容條件是分析當下才比對，試算沿用已記錄的命中結果，改了訊息條件的影響要實際重跑才看得到。');
+    }
+    return lines;
+}
+
+function showRuleTrial(result) {
+    const container = document.getElementById('rule-trial');
+    container.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'mb-3';
+    box.appendChild(statusNote(result.supported ? 'info' : 'warning', result.supported ? '試算結果（未儲存，資料庫沒有變動）' : '無法試算'));
+    const list = document.createElement('ul');
+    list.className = 'lf-text-meta mb-0 mt-1 ps-4';
+    for (const line of ruleTrialLines(result)) {
+        const li = document.createElement('li');
+        li.textContent = line;
+        list.appendChild(li);
+    }
+    box.appendChild(list);
+    container.appendChild(box);
+}
+
+const ruleTrialGuard = createSeqGuard();
+document.getElementById('rule-trial-run')?.addEventListener('click', async () => {
+    const thresholdError = diskTrendThresholdError() || valueTrendThresholdError();
+    if (thresholdError) { toast(thresholdError, 'warning'); return; }
+    const seq = ruleTrialGuard.next();
+    const restore = withBusy(document.getElementById('rule-trial-run'), '試算中');
+    try {
+        const result = await api.post('/api/rules/trial', collectRule());
+        if (!ruleTrialGuard.isCurrent(seq)) return;   // 慢的舊回應不得蓋掉較新的試算
+        showRuleTrial(result);
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+/** 版本衝突（409）的常駐訊息：保留使用者剛填的內容，不自動覆蓋、不自動關視窗，只提供重新載入 */
+const RULE_CONFLICT_TEXT = '這筆資料剛被其他人修改，請重新載入後再改。';
+function clearRuleConflict() {
+    ruleConflictBox.replaceChildren();
+    ruleConflictBox.classList.add('d-none');
+}
+
+function showRuleConflict() {
+    ruleConflictBox.replaceChildren(
+        statusNote('warning', RULE_CONFLICT_TEXT),
+        button('重新載入', { variant: 'outline-secondary', onClick: reloadAfterRuleConflict }));
+    ruleConflictBox.classList.remove('d-none');
+}
+
+/** 使用者按「重新載入」才換成伺服器的最新內容（這時才會丟掉自己填的內容） */
+async function reloadAfterRuleConflict() {
+    const ruleId = editingRule?.id;
+    clearRuleConflict();
+    await load();
+    const fresh = rules.find(r => r.id === ruleId);
+    if (fresh) {
+        openRuleModal(fresh);
+    } else {
+        toast('這條規則已被刪除', 'warning');
+        ruleModal.hide();
+    }
+}
+
 function showValidation(result) {
     const container = document.getElementById('rule-validation');
     container.replaceChildren();
@@ -1082,7 +1203,8 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
     const sourceRuleId = templateSourceRuleId;
 
     try {
-        await api.post('/api/rules', draft);
+        // silent：409 由常駐訊息處理（保留輸入），其他錯誤在下面補 toast
+        await api.post('/api/rules', draft, { silent: true });
 
         // 先建後停（回饋十五輪 R4）：順序刻意如此——若反過來先停用原規則、新規則卻建立失敗，
         // 會留下「原規則已停用、沒有替代規則生效」的空窗，比遮蔽警告更糟。
@@ -1102,8 +1224,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
 
         ruleModal.hide();
         await load();
-    } catch {
-        // 後端的驗證錯誤已由 api.js 以 toast 顯示
+    } catch (error) {
+        if (error?.status === 409) showRuleConflict();
+        else if (error?.name === 'ApiError') toast(error.message, 'danger');
     } finally {
         restore();
     }

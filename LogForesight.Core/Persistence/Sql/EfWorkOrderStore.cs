@@ -51,6 +51,21 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return row == null ? null : ToModel(row);
     }
 
+    public List<WorkOrder> GetMany(IReadOnlyCollection<long> workOrderIds)
+    {
+        if (workOrderIds.Count == 0) return new List<WorkOrder>();
+        using var ctx = _contextFactory();
+        // 呼叫端上限 100 張；仍依 500 張一批，避免 IN 清單過長（SQL Server 參數上限）
+        var result = new List<WorkOrder>();
+        foreach (var chunk in workOrderIds.Distinct().Chunk(500))
+            result.AddRange(BuildManyQuery(ctx, chunk).ToList().Select(ToModel));
+        return result;
+    }
+
+    /// <summary>依單號取多張單（含已結案）；與 SQLite 共用同一個 IN 查詢，SQL Server 翻譯由測試以 ToQueryString 驗證。</summary>
+    internal static IQueryable<WorkOrderRow> BuildManyQuery(LfDbContext ctx, IReadOnlyCollection<long> ids) =>
+        ctx.WorkOrders.AsNoTracking().Where(w => ids.Contains(w.WorkOrderId));
+
     public WorkOrder? GetActiveFor(long handlerId, string source, int eventId)
     {
         var key = SourceKeyOf(source);
@@ -158,6 +173,18 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         using var ctx = _contextFactory();
         return ctx.WorkOrders.AsNoTracking().Where(UnreadReplyPredicate).Count();
     }
+
+    public int CountUnreadRepliesWithEscalated()
+    {
+        using var ctx = _contextFactory();
+        return BuildUnreadEscalatedQuery(ctx).Count();
+    }
+
+    /// <summary>未讀回覆且含上報中進行中成員的單（EXISTS 子查詢；抽出供兩後端 SQL 翻譯測試）</summary>
+    internal static IQueryable<WorkOrderRow> BuildUnreadEscalatedQuery(LfDbContext ctx) =>
+        ctx.WorkOrders.AsNoTracking().Where(UnreadReplyPredicate)
+            .Where(w => ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                                                && c.Status == IssueHandlingStatuses.Escalated));
 
     /// <summary>
     /// 未讀回覆的 SQL 條件（單點）：與 <see cref="WorkOrder.HasUnreadReply"/> 同義——
@@ -285,6 +312,46 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return new WorkOrderPage { Items = rows.Select(ToModel).ToList(), Total = total };
     }
 
+    public List<WorkOrder> FilterOrders(WorkOrderQuery q)
+    {
+        using var ctx = _contextFactory();
+
+        return BuildFilterAllQuery(ctx, q, _clock.LocalToday()).ToList().Select(ToModel).ToList();
+    }
+
+    /// <summary>「符合條件的全部單」查詢本體（抽出供 SQL 翻譯測試）：篩選同 <see cref="BuildOrderFilterQuery"/>，固定建立時間新到舊、單號降冪</summary>
+    internal static IQueryable<WorkOrderRow> BuildFilterAllQuery(LfDbContext ctx, WorkOrderQuery q, DateTime today) =>
+        BuildOrderFilterQuery(ctx, q, today).OrderByDescending(w => w.CreatedAt).ThenByDescending(w => w.WorkOrderId);
+
+    public Dictionary<long, List<WorkOrderEvent>> ListEventsOf(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string> actions)
+    {
+        var result = new Dictionary<long, List<WorkOrderEvent>>();
+        if (workOrderIds.Count == 0 || actions.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        var wantedActions = actions.Distinct().ToList();
+        foreach (var batch in workOrderIds.Distinct().Chunk(500))
+        {
+            var ids = batch.ToList();
+            var rows = BuildEventsOfQuery(ctx, ids, wantedActions).ToList();
+            foreach (var g in rows.GroupBy(e => e.WorkOrderId))
+            {
+                result[g.Key] = g.Select(e => new WorkOrderEvent
+                {
+                    EventId = e.EventId, WorkOrderId = e.WorkOrderId, Action = e.Action, ActorId = e.ActorId,
+                    ActorAccount = e.ActorAccount, MemberDelta = e.MemberDelta, Note = e.Note, CreatedAt = e.CreatedAt
+                }).ToList();
+            }
+        }
+        return result;
+    }
+
+    /// <summary>多張單指定動作的事件查詢本體（抽出供 SQL 翻譯測試）：依 CreatedAt、EventId 升冪</summary>
+    internal static IQueryable<WorkOrderEventRow> BuildEventsOfQuery(LfDbContext ctx, List<long> ids, List<string> actions) =>
+        ctx.WorkOrderEvents.AsNoTracking()
+            .Where(e => ids.Contains(e.WorkOrderId) && actions.Contains(e.Action))
+            .OrderBy(e => e.CreatedAt).ThenBy(e => e.EventId);
+
     /// <summary>
     /// 清單的篩選本體（抽出供 SQL 翻譯測試）：成員相關條件一律是關聯 EXISTS 子查詢，
     /// 逾期判準與 <see cref="WorkOrderQueries.IsOverdue"/> 同義。
@@ -339,6 +406,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                                            && c.DueDate != null && c.DueDate < today
                                            && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing))),
             WorkOrderQueries.StatusUnreplied => query.Where(w => w.ClosedAt == null && w.LastReplyAt == null),
+            // 待我處理：至少有一個待處理成員（進行中、不在停用主機、非上報中、非觀察期內；判準同 WorkOrderQueries.IsTodoMember）
+            WorkOrderQueries.StatusTodo => query.Where(w => w.ClosedAt == null
+                && ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
+                                           && c.Status != IssueHandlingStatuses.Escalated
+                                           && !(c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today))),
             WorkOrderQueries.StatusClosed => query.Where(w => w.ClosedAt != null),
             _ => query
         };
@@ -420,6 +492,26 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 OverdueMembers = ctx.IssueCases.Count(c =>
                     c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.DueDate != null && c.DueDate < today
                     && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing) &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                // 觀察期內（觀察中且觀察至 >= 今天，判準同 IssueHandlingStatuses.IsObservationActive）與上報中：與 ActiveMembers 同口徑，
+                // 加上「待處理」（＝ActiveMembers − 這兩個）互斥相加等於進行中台數
+                ObservingMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey)
+                    && c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                EscalatedMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status == IssueHandlingStatuses.Escalated &&
+                    ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
+                        && (o.SourceKey == null || o.EventId == null
+                            || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString())))),
+                // 待處理：非上報中、非觀察期內（判準同 WorkOrderQueries.IsTodoMember；獨立計算，不由前兩者相減，三者相加才是一道可驗的恆等式）
+                TodoMembers = ctx.IssueCases.Count(c =>
+                    c.ClosedAt == null && !excluded.Contains(c.HostNameKey) && c.Status != IssueHandlingStatuses.Escalated
+                    && !(c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate >= today) &&
                     ctx.WorkOrders.Any(o => o.WorkOrderId == c.WorkOrderId && o.ClosedAt == null && o.HandlerId == g.Key
                         && (o.SourceKey == null || o.EventId == null
                             || !keys.Contains(o.SourceKey + IssueExclusion.CompositeKeySeparator + o.EventId.Value.ToString()))))

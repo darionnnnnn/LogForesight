@@ -73,6 +73,7 @@ public class RecordDetailQueryService
         // 規則命中問題的處置參考來自當前 rules.json（反映 Web 上的規則編輯），
         // 一次載入建索引，逐列查是記憶體查表。單日詳情低頻，一次檔案讀取可忽略
         var guidance = LoadGuidanceLookup();
+        var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
 
         // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題。
         // 存整筆 IssueHandling（不只是 Status 字串）——批次套用改版後還需要 DueDate
@@ -179,9 +180,10 @@ public class RecordDetailQueryService
             LatestNetiqAttemptAtUtc = record.LatestNetiqAttemptAtUtc,
             PrtgSupplementEligible = record.CanSupplementWithPrtg(),
             HiddenIssueCount = record.HiddenIssueCount,
-            Headline = record.Headline,
+            // 沒有 AI 摘要：標題改為當日最重的（授與範圍內的）問題，「狀況」不重複同一句（NoAiSummary 唯一出口）
+            Headline = NoAiSummary.ResolveHeadline(record.Headline, visibleTopIssues, record.HasCoverageGap),
             Brief = record.Brief,
-            Summary = record.Summary,
+            Summary = NoAiSummary.ResolveSummary(record.Summary),
             TrendAssessment = record.TrendAssessment,
             Action = record.Action,
             AiAnalyzed = record.AiAnalyzed,
@@ -191,7 +193,7 @@ public class RecordDetailQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, releaseRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -370,7 +372,7 @@ public class RecordDetailQueryService
                 Date = date.ToString("yyyy-MM-dd"),
                 HasRecord = record != null,
                 RiskLevel = record?.RiskLevel,
-                Headline = record?.Headline ?? "",
+                Headline = record == null ? "" : RecordStatsBuilder.HeadlineOf(record),
                 HasCoverageGap = record != null && record.HasCoverageGap,
                 RiskReportPending = caseGrantOnly ? null : record?.RiskReportPending
             });
@@ -408,7 +410,7 @@ public class RecordDetailQueryService
                 HasFindings = latestCheckup.HasFindings,
                 Conclusion = latestCheckup.Conclusion
             },
-            TopSignatures = BuildIssueSummary(records.Values),
+            TopSignatures = BuildIssueSummary(records.Values, KnownIssueCatalog.ResolveRules(_rules)),
             MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(hostSettings.RetentionDays)
         };
     }
@@ -551,7 +553,7 @@ public class RecordDetailQueryService
     /// 這裡關心「出現幾天」而不是「幾台主機」，維度不同故各自 Select。
     /// 排序：最高嚴重度（重→輕）→ 總次數 desc。
     /// </summary>
-    private static List<HostIssueSummaryDto> BuildIssueSummary(IEnumerable<DailyAnalysisRecord> records) =>
+    private static List<HostIssueSummaryDto> BuildIssueSummary(IEnumerable<DailyAnalysisRecord> records, IReadOnlyList<KnownIssueRule> rules) =>
         RecordQueryHelpers.GroupIssuesBySignature(records)
             .Select(g =>
             {
@@ -562,6 +564,7 @@ public class RecordDetailQueryService
                 {
                     Source = g.Key.Source,
                     EventId = g.Key.EventId,
+                    IssueLabel = IssueNames.ForRules(rules, g.Key.Source, g.Key.EventId),
                     Category = latest.Issue.Category.ToString(),
                     TotalCount = g.Sum(x => x.Issue.Count),
                     DaysSeen = g.Select(x => x.Record.Date.Date).Distinct().Count(),
@@ -665,6 +668,7 @@ public class RecordDetailQueryService
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         AccountDisplayRuleSet accountRules,
+        IssueRuleLookup releaseRules,
         Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate, long? WorkOrderId)>? openCases = null,
         HashSet<string>? priorClosedIssueKeys = null)
     {
@@ -686,6 +690,7 @@ public class RecordDetailQueryService
             Category = issue.Category.ToString(),
             Severity = issue.Severity.ToString(),
             ElevatesDayRisk = issue.ElevatesDayRisk,
+            DismissalReleases = DismissalRelease.AppliesTo(releaseRules, key),
             KnownIssue = issue.KnownIssue,
             FirstSeen = issue.FirstSeen,
             LastSeen = issue.LastSeen,
@@ -767,20 +772,7 @@ public class RecordDetailQueryService
     private static IssueGuidanceDto? BuildGuidance(LogIssueSignature issue, Dictionary<string, KnownIssueRule>? guidance)
     {
         if (guidance == null || string.IsNullOrEmpty(issue.RuleId)) return null;
-        if (!guidance.TryGetValue(issue.RuleId, out var rule)) return null;
-
-        var hasContent = !string.IsNullOrWhiteSpace(rule.PlainExplanation) ||
-                         !string.IsNullOrWhiteSpace(rule.Impact) ||
-                         rule.LikelyCauses.Length > 0 || rule.NextSteps.Length > 0;
-        if (!hasContent) return null;
-
-        return new IssueGuidanceDto
-        {
-            Explanation = rule.PlainExplanation,
-            Impact = rule.Impact,
-            LikelyCauses = rule.LikelyCauses.ToList(),
-            NextSteps = rule.NextSteps.ToList()
-        };
+        return guidance.TryGetValue(issue.RuleId, out var rule) ? IssueGuidanceDto.From(rule) : null;
     }
 
     /// <summary>

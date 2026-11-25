@@ -24,7 +24,8 @@ public class WorkOrderEventTextTests
         Assert.Contains(WorkOrderEventActions.Replied, codes);
         Assert.Contains(WorkOrderEventActions.DueDateChanged, codes);
         Assert.Contains(WorkOrderEventActions.Returned, codes);
-        Assert.Equal(12, codes.Count);
+        Assert.Contains(WorkOrderEventActions.DismissalReleased, codes);
+        Assert.Equal(13, codes.Count);
     }
 
     [Fact]

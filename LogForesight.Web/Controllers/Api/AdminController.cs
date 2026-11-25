@@ -77,6 +77,16 @@ public class AdminController : ControllerBase
     public ApiResponse<PagedResult<UserVisibleHostDto>> GetUserVisibleHosts(long userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
         ApiResponse<PagedResult<UserVisibleHostDto>>.Ok(_users.GetVisibleHosts(userId, page, pageSize));
 
+    /// <summary>
+    /// 使用者編輯視窗的群組即時摘要（能力、可見主機台數、是否在派工池）：依目前勾選、尚未儲存的群組算出，不寫入。
+    /// <paramref name="userId"/> 省略＝新增中的使用者。
+    /// </summary>
+    [HttpGet("users/group-preview")]
+    public ApiResponse<UserGroupPreviewDto> PreviewUserGroups(
+        [FromServices] UserGroupPreviewService preview,
+        [FromQuery] long? userId, [FromQuery] List<long>? groupIds, [FromQuery] bool active = true) =>
+        ApiResponse<UserGroupPreviewDto>.Ok(preview.Preview(userId, groupIds ?? new List<long>(), active));
+
     [HttpPost("users")]
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));
@@ -321,11 +331,8 @@ public class AdminController : ControllerBase
         ApiResponse<AccessMatrixDto>.Ok(_groups.GetAccessMatrix());
 
     [HttpPut("access/{userGroupId:long}")]
-    public ApiResponse SetAccess(long userGroupId, [FromBody] SetAccessRequest request)
-    {
-        _groups.SetAccess(userGroupId, request.HostGroupIds);
-        return ApiResponse.Ok();
-    }
+    public ApiResponse<AccessChangeResultDto> SetAccess(long userGroupId, [FromBody] SetAccessRequest request) =>
+        ApiResponse<AccessChangeResultDto>.Ok(_groups.ChangeAccess(userGroupId, request.Grant, request.Revoke));
 
     // ── Sentinel ─────────────────────────────────────────────────────────────
 

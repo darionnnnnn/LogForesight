@@ -72,6 +72,7 @@ async function load() {
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
+    renderAdminTodo(data);
     renderBanner(data, user);
     renderKpi(data, user, displaySettings, myBadge);
     renderCategories(data);
@@ -208,6 +209,62 @@ function renderServerAdminGuide() {
     container.replaceChildren(card);
 }
 
+/**
+ * 「需要你處理」的項目（只列數字不是 0 的類別），順序：昨晚取數結果、今天新上報、上報逾期、可派未派、派不出去、
+ * 沒有收件人、處理人已停用或暫停、反覆復發、未分組主機。資料與交辦總覽提醒區同一個彙整（AdminReminderDto）。
+ * 每項帶連到處理點的路徑（href 由呼叫端以 appUrl 組）。
+ */
+function adminTodoItems(todo, pendingDispatch) {
+    const items = [];
+    const n = value => value ?? 0;
+    const add = (count, text, href) => { if (count > 0) items.push({ text, href }); };
+    add(n(todo.fetchFailedCount), '最近一趟取數失敗', '/runs');
+    add(n(todo.newEscalatedCount), `今天新上報 ${formatNumber(n(todo.newEscalatedCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.escalatedCount), `上報逾期 ${formatNumber(n(todo.escalatedCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.dispatchableCount), `可派未派 ${formatNumber(n(todo.dispatchableCount))} 個問題`, '/work-orders#gaps');
+    // 待派問題太多、算不出可派數字時，仍要讓管理員知道去縮小期間
+    if (pendingDispatch?.tooLarge) items.push({ text: '待派問題太多，請縮小期間', href: '/work-orders#gaps' });
+    add(n(todo.unassignableCount), `派不出去 ${formatNumber(n(todo.unassignableCount))} 個問題`, '/work-orders#gaps');
+    add(n(todo.noRecipientCount), `上報沒有收件人 ${formatNumber(n(todo.noRecipientCount))} 筆`, '/work-orders?status=escalated');
+    add(n(todo.inactiveHandlerCount), `處理人已停用或暫停、仍有單 ${formatNumber(n(todo.inactiveHandlerCount))} 人`, '/work-orders?status=active&handlerInactive=1');
+    add(n(todo.recurrenceCount), `反覆復發 ${formatNumber(n(todo.recurrenceCount))} 筆`, '/work-orders?status=active');
+    add(n(todo.ungroupedHostCount), `未分組主機 ${formatNumber(n(todo.ungroupedHostCount))} 台`, '/admin/hosts?status=ungrouped');
+    return items;
+}
+
+/** 儀表板頂端「需要你處理」一列：具 Assign 才有（後端對 Manager、Dev 不回 adminTodo）；全部為 0 收成一行文字 */
+function renderAdminTodo(data) {
+    const container = document.getElementById('dashboard-todo');
+    if (!container) return;
+    container.replaceChildren();
+    const todo = data.adminTodo;
+    if (!todo || !todo.todoIncluded) return;
+
+    const items = adminTodoItems(todo, data.pendingDispatch);
+    const row = document.createElement('div');
+    row.className = 'lf-hint mb-3 d-flex flex-wrap align-items-center gap-3';
+    row.setAttribute('role', 'status');
+    if (items.length === 0) {
+        row.appendChild(roleText('lf-text-meta', '目前沒有需要你處理的項目'));
+        container.appendChild(row);
+        return;
+    }
+    row.appendChild(roleText('lf-text-label', '需要你處理'));
+    const list = document.createElement('ul');
+    list.className = 'list-unstyled d-flex flex-wrap align-items-center gap-3 mb-0';
+    for (const item of items) {
+        const li = document.createElement('li');
+        li.className = 'lf-list-row';
+        const link = document.createElement('a');
+        link.href = appUrl(item.href);
+        link.textContent = item.text;
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+    row.appendChild(list);
+    container.appendChild(row);
+}
+
 /** 說明可見資料與分析範圍，避免把空資料當成健康結論。 */
 function renderBanner(data, user) {
     const container = document.getElementById('dashboard-banner');
@@ -304,7 +361,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 大數字改問題口徑（回饋十九輪批次D2，外部審查§一-2）：「未處理 1,340」（風險日數）
     // 在兩千台環境對使用者等於沒有資訊，改成「未處理問題 X 個」——有幾個不同的問題要處理，
     // 副標才是影響台數與風險日數（data.todo 的既有日數，退居輔助角色）
-    const todoSub = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
+    const todoSub = todoCardSub(data.issueTodo, data.todo);
     cards.push({
         group: 'todo',
         label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
@@ -320,17 +377,12 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 資料同交辦總覽待派頁籤的試跑（近 7 天）；點卡直接進該頁籤（#gaps）。null 時不建卡。
     if (data.pendingDispatch) {
         const pd = data.pendingDispatch;
-        const unassignable = pd.unassignableIssueCount ?? 0;
         cards.push({
             group: 'todo',
             label: '待派工問題',
             value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),   // 字串值不可進 formatNumber（渲染處只格式化數值）
             variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
-            hint: pd.tooLarge
-                ? '超過上限，請到待派頁縮小期間'
-                : unassignable > 0
-                    ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
-                    : '近 7 天沒人接的問題',
+            hint: pendingDispatchHint(pd),
             // kpiStrip 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
             url: '/work-orders#gaps'
         });
@@ -357,17 +409,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
-    cards.push({
-        group: 'todo',
-        label: '未回報主機',
-        value: data.silentHostsCount,
-        variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
-        hint: data.silentHostsPrtgDownCount > 0
-            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
-            : undefined,
-        title: '沒回報 ≠ 沒問題',
-        url: '/admin/hosts?status=silent'
-    });
+    cards.push(silentHostsCard(data, user));
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
         cards.push({
@@ -403,7 +445,8 @@ function renderKpi(data, user, displaySettings, myBadge) {
             variant: card.variant,
             url: card.url,
             sub: card.sub ?? card.hint,
-            title: card.title ?? card.hint
+            title: card.title ?? card.hint,
+            detail: card.detail
         }))
     }));
 
@@ -411,6 +454,57 @@ function renderKpi(data, user, displaySettings, myBadge) {
     const strip = kpiStrip(groups, { singleRow: true });
     container.replaceChildren(strip);
     mountKpiReveal(strip, container, new Set(cards.filter(c => c.variant === 'danger').map(c => c.label)));
+}
+
+/**
+ * 未回報主機卡。目的地（主機頁的「未回報」篩選）需要 Maintain：有 Maintain 才是連結；
+ * 其他角色不可點，改在卡片內可見地列出可見範圍內未回報的主機名（API 最多帶 5 台，超過寫「等 N 台」），提示文字（title）保留同一份。
+ */
+function silentHostsCard(data, user) {
+    const card = {
+        group: 'todo',
+        label: '未回報主機',
+        value: data.silentHostsCount,
+        variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
+        hint: data.silentHostsPrtgDownCount > 0
+            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
+            : undefined,
+        title: '沒回報 ≠ 沒問題'
+    };
+
+    if (hasCapability(user, 'Maintain')) {
+        card.url = '/admin/hosts?status=silent';
+        return card;
+    }
+
+    const names = data.silentHostNames ?? [];
+    if (data.silentHostsCount > 0 && names.length > 0) {
+        const more = data.silentHostsCount > names.length ? ` 等 ${formatNumber(data.silentHostsCount)} 台` : '';
+        card.detail = `未回報：${names.join('、')}${more}`;
+        card.title = `${card.title}\n${card.detail}`;
+    }
+    return card;
+}
+
+/**
+ * 待派工問題卡的副標：卡片的數字＝「可以派」＋「派不出去」兩段相加；「不會派」（嚴重度未達、不再打擾）不計。
+ * 兩段分開寫出來，管理員一眼分得出「按立即派工會派出去幾個」與「卡在授權或派工池的幾個」。
+ */
+function pendingDispatchHint(pd) {
+    if (pd.tooLarge) return '超過上限，請到待派頁縮小期間';
+    const dispatchable = pd.dispatchableIssueCount ?? 0;
+    const unassignable = pd.unassignableIssueCount ?? 0;
+    if (dispatchable === 0 && unassignable === 0) return '近 7 天沒人接的問題';
+    return `可以派 ${formatNumber(dispatchable)} 個、派不出去 ${formatNumber(unassignable)} 個`;
+}
+
+/**
+ * 「未處理問題」卡副標：影響台數與下鑽（問題查詢 distinctHostCount）同口徑——
+ * 這些未處理問題所影響的全部主機（含其中已有人處理的）；風險日拆成「未處理 N、處理中 M」兩個數字，
+ * 不再相加成一個看不出差別的總數。
+ */
+function todoCardSub(issueTodo, todo) {
+    return `影響 ${formatNumber(issueTodo.affectedHostCount)} 台．風險日未處理 ${formatNumber(todo.openCount)}、處理中 ${formatNumber(todo.inProgressCount)}`;
 }
 
 /** 告警卡＝建卡時 variant 為 danger 的卡（以標籤對應，不看樣式類別，換角色類別不會讓「藏起來的告警數」靜默變 0） */
@@ -619,7 +713,7 @@ function issueNameCell(issue) {
     const title = document.createElement('div');
     title.className = 'lf-text-title d-flex align-items-center gap-1';
     const name = document.createElement('span');
-    name.textContent = `${issue.source} (${issue.eventId})`;
+    name.textContent = issue.issueLabel;
     title.appendChild(name);
 
     if (issue.isNew) {

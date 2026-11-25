@@ -38,18 +38,18 @@ public class BulkScaleGateTests : IDisposable
     }
 
     /// <summary>groups 影響「被指派者動不動得了」的判定（H1），多數測試給空的即可</summary>
-    private IssueHandlingCommandService NewService(FakeUserGroupStore groups)
+    private IssueHandlingCommandService NewService(FakeUserGroupStore groups, FakeCurrentUser? user = null)
     {
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
-        var currentUser = FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle);
+        var currentUser = user ?? FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle);
         var displayNames = new UserDisplayNameService(_settingsStore);
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         var workOrderStore = new FakeWorkOrderStore(_caseStore);
         var workOrders = new WorkOrderCoordinator(workOrderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, new RecordingAuditService(), currentUser, displayNames,
-            workOrderStore, workOrders, TestPermissionStamps.Shared);
+            workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
         return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
             caseCoordinator,
@@ -85,7 +85,7 @@ public class BulkScaleGateTests : IDisposable
             query, aggregates, coordinator, workOrderStore, _caseStore, new FakeNoiseMarkStore(),
             _hosts, _users, visibility, new UserCapabilityResolver(groups, _hosts),
             FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            new RecordingAuditService(), displayNames, mail);
+            new RecordingAuditService(), displayNames, mail, new FakeRuleStore());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -173,6 +173,33 @@ public class BulkScaleGateTests : IDisposable
     /// 而逾時之後使用者不知道到底寫進去多少、重按一次又是一輪。上限要**擋在寫入之前**，
     /// 而且錯誤訊息要說得出「怎麼縮小範圍」。
     /// </summary>
+    /// <summary>負責人範圍的預檢只計他負責的主機：可見範圍內符合的項目很多、負責的很少時不被上限擋下</summary>
+    [Fact]
+    public void 統一標記_負責人預檢只計負責的主機_可見很多負責很少時不被上限擋()
+    {
+        SeedHosts(IssueHandlingCommandService.MaxBulkCloseDayWrites + 1, days: 1);
+        var owned = _hosts.GetAll().First(h => h.HostName == "SRV-0000");
+        owned.OwnerUserIds = new List<long> { 42 };
+        _hosts.Upsert(owned);
+        var owner = NewService(new FakeUserGroupStore(),
+            FakeCurrentUser.ForUser(42, LogForesight.Web.Auth.Capability.Handle));
+
+        var preview = owner.PreviewBulkClose("DistributedCOM", 10016, null, null);
+
+        Assert.Equal(1, preview.TotalDayCount);
+        Assert.Equal(1, preview.TotalHostCount - preview.SkippedHostCount);
+
+        // 負責的主機自己就超過上限時仍擋下
+        var tooMany = NewService(new FakeUserGroupStore(),
+            FakeCurrentUser.ForUser(43, LogForesight.Web.Auth.Capability.Handle));
+        foreach (var host in _hosts.GetAll())
+        {
+            host.OwnerUserIds = new List<long> { 43 };
+            _hosts.Upsert(host);
+        }
+        Assert.Throws<DomainException>(() => tooMany.PreviewBulkClose("DistributedCOM", 10016, null, null));
+    }
+
     [Fact]
     public void 統一標記_符合條件的項目超過上限時在讀取階段擋下_不截斷()
     {

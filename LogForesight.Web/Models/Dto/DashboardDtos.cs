@@ -2,6 +2,9 @@
 
 public class DashboardDto
 {
+    /// <summary>淺層複本：快取內的共用主體不能被改，疊上能力相關欄位前先複製（清單等巢狀物件共用、不被改動）</summary>
+    public DashboardDto ShallowCopy() => (DashboardDto)MemberwiseClone();
+
     public int Days { get; set; }
     public string From { get; set; } = string.Empty;
     public string To { get; set; } = string.Empty;
@@ -64,6 +67,12 @@ public class DashboardDto
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
 
+    /// <summary>
+    /// 可見範圍內未回報主機的名稱，依名稱排序、最多 <see cref="LogForesight.Web.Services.DashboardService.SilentHostNameLimit"/> 台
+    /// （完整清單在主機頁，只有 Maintain 進得去；其他角色的卡片提示用這份）。0 台時為空。
+    /// </summary>
+    public List<string> SilentHostNames { get; set; } = new();
+
     /// <summary>可見未回報主機中 PRTG 現況提示為 down 的台數（PRTG 未啟用時為 0）</summary>
     public int SilentHostsPrtgDownCount { get; set; }
 
@@ -72,15 +81,28 @@ public class DashboardDto
 
     /// <summary>待派工問題（§9.1）：僅具 Assign 者填，其餘為 null——前端據此決定要不要建卡片</summary>
     public PendingDispatchDto? PendingDispatch { get; set; }
+
+    /// <summary>
+    /// 「需要你處理」列的資料（與交辦總覽提醒區同一個彙整，<c>AdminReminderService.Compute</c>）：僅具 Assign 者填，Manager、Dev 為 null。
+    /// 各項數字為 0 的類別不顯示；全部為 0 時畫面收成一行「目前沒有需要你處理的項目」。
+    /// </summary>
+    public AdminReminderDto? AdminTodo { get; set; }
 }
 
 /// <summary>儀表板「待派工問題」卡：資料同交辦總覽待派頁籤的試跑（近 7 天）</summary>
 public class PendingDispatchDto
 {
-    /// <summary>待派問題分組總數（<c>GapsDto.Total</c>，不是當頁筆數）；<see cref="TooLarge"/> 時為 0 且不可信</summary>
+    /// <summary>
+    /// 卡片的待派問題數＝「可以派」＋「派不出去」兩段的問題數相加（<see cref="DispatchableIssueCount"/> ＋ <see cref="UnassignableIssueCount"/>，
+    /// 與待派頁兩段的問題數一致）。「不會派」（嚴重度未達、不再打擾等）不計入。同一問題在不同主機上分屬兩段時各算一次。
+    /// <see cref="TooLarge"/> 時為 0 且不可信。
+    /// </summary>
     public int IssueCount { get; set; }
 
-    /// <summary>其中無法派出（無可接單人選）的問題數</summary>
+    /// <summary>第一段「可以派」的問題數；沒有可派項目時為 0（畫面顯示空狀態文字）</summary>
+    public int DispatchableIssueCount { get; set; }
+
+    /// <summary>第二段「派不出去」（無可接單人選）的問題數</summary>
     public int UnassignableIssueCount { get; set; }
 
     /// <summary>出現點超過試跑上限：不計數，請到待派頁籤縮小期間</summary>
@@ -105,6 +127,9 @@ public class IssueRankingDto
 {
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>顯示用的問題名稱（<see cref="IssueNames.ForRules"/>，全站唯一出口）：事件編號為 0 時只顯示來源並附規則名稱（恰好一條規則命中才附），不顯示「0」。前端一律用它，不自行組來源與事件編號。</summary>
+    public string IssueLabel { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
 
     /// <summary>期間內這個問題出現過的最高嚴重度</summary>

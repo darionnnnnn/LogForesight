@@ -140,6 +140,7 @@ public class RunMonitorService
                 Timing = RunDayTimingBuilder.Build(allRuns.Where(r => r.StartedAt.Date == date.Date).ToList())
             };
             var failedHosts = new List<string>();
+            var rerunHosts = new List<string>();
 
             // PRTG 欄取這一列的資料日 R（＝D-1）：一趟取數處理的是前一天的資料，多日回望則記在 PrtgDays 的各個資料日。
             // 規則（在取數類執行中，依 StartedAt 由新到舊找第一個符合者）：
@@ -190,15 +191,19 @@ public class RunMonitorService
                     case BatchRunStatus.Success: summary.SuccessCount++; break;
                     case "backfilled": summary.BackfilledCount++; break;
                     case BatchRunStatus.Warning: summary.WarningCount++; break;
-                    case BatchRunStatus.Failed: summary.FailedCount++; failedHosts.Add(host.HostName); break;
-                    case BatchRunStatus.Stuck: summary.StuckCount++; failedHosts.Add(host.HostName); break;
+                    case BatchRunStatus.Failed: summary.FailedCount++; failedHosts.Add(host.HostName); rerunHosts.Add(host.HostName); break;
+                    case BatchRunStatus.Stuck: summary.StuckCount++; failedHosts.Add(host.HostName); rerunHosts.Add(host.HostName); break;
                     case BatchRunStatus.Running: summary.RunningCount++; break;
                     // 已停止不列失敗主機清單——那是使用者的明確操作，缺漏日下次執行自動回補
                     case BatchRunStatus.Stopped: summary.StoppedCount++; break;
                     case "local_disabled": summary.LocalDisabledCount++; break;
                     // 空資料等複查：不是漏跑，不進「未執行」
                     case "recheck": summary.RecheckCount++; break;
-                    default: summary.NotRunCount++; break;
+                    default:
+                        summary.NotRunCount++;
+                        // 今天那一列的未執行是「尚未處理」，不是漏跑，不列入補跑
+                        if (!isToday) rerunHosts.Add(host.HostName);
+                        break;
                 }
             }
 
@@ -212,11 +217,17 @@ public class RunMonitorService
             summary.CatchUpMore = Math.Max(0, catchUp.Count - MaxCatchUpRuns);
             summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
             summary.OtherFailedCount = Math.Max(0, failedHosts.Count - MaxFailedHostNames);
+            summary.RerunHostCount = rerunHosts.Count;
+            summary.RerunHostNames = rerunHosts.Count <= MaxRerunHostNames ? rerunHosts : new List<string>();
+            summary.Conclusion = RunDayConclusion.Build(summary);
             summaries.Add(summary);
         }
 
         return summaries;
     }
+
+    /// <summary>「補跑這些主機」最多帶入幾台主機名；超過時改以全部主機＋只補跑失敗或未執行（<see cref="RunDaySummaryDto.RerunHostNames"/>）</summary>
+    public const int MaxRerunHostNames = 200;
 
     /// <summary>總表「另於…補跑」最多列幾趟（其餘寫「等 N 趟」）</summary>
     private const int MaxCatchUpRuns = 2;

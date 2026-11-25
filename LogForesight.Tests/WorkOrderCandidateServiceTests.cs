@@ -89,6 +89,20 @@ public class WorkOrderCandidateServiceTests
     }
 
     [Fact]
+    public void HasEmail依使用者email是否非空白()
+    {
+        var withMail = _users.Upsert(new WebUser { Account = "m", Active = true, Email = "m@example.com", GroupIds = new List<long> { _dept.GroupId } });
+        var blank = _users.Upsert(new WebUser { Account = "b", Active = true, Email = "  ", GroupIds = new List<long> { _dept.GroupId } });
+        var none = _users.Upsert(new WebUser { Account = "n", Active = true, Email = null, GroupIds = new List<long> { _dept.GroupId } });
+
+        var list = Service().Get(Req()).ToDictionary(c => c.UserId);
+
+        Assert.True(list[withMail.UserId].HasEmail);
+        Assert.False(list[blank.UserId].HasEmail);
+        Assert.False(list[none.UserId].HasEmail);
+    }
+
+    [Fact]
     public void 停用者不在清單()
     {
         User("gone", _dept, active: false);

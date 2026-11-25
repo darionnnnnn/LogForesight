@@ -24,6 +24,7 @@ public sealed class HandlerAvailabilityBehaviorTests
     [InlineData("handler-availability.behavior.mjs", "stopNoteOnlyWhenStopped")]
     [InlineData("handler-availability.behavior.mjs", "listBadgeOnlyWhenStopped")]
     [InlineData("handler-availability.behavior.mjs", "memberHostCellMarksDisabledHost")]
+    [InlineData("handler-availability.behavior.mjs", "pauseToggleOnlyForDispatchPoolMembers")]
     [InlineData("handler-availability.behavior.mjs", "noticeSilentWhenZero")]
     [InlineData("handler-availability.behavior.mjs", "noticeWithLinkWhenPositive")]
     [InlineData("handler-availability.behavior.mjs", "noticeWithoutLinkWhenViewerCannotOpenWorkOrders")]

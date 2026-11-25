@@ -81,6 +81,11 @@ public sealed class NoRecipientEscalation
 public sealed class UnassignableIssue
 {
     public string IssueLabel { get; set; } = "";
+
+    /// <summary>問題來源與事件編號（顯示名稱與靜音判定用）；舊資料為 null，顯示與靜音退回由 <see cref="IssueLabel"/> 解析</summary>
+    public string? Source { get; set; }
+    public int EventId { get; set; }
+
     public string Reason { get; set; } = "";
     public int Hosts { get; set; }
 

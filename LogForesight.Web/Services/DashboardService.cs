@@ -32,7 +32,8 @@ public class DashboardService
     private readonly SummaryCache _summaryCache;
     private readonly EfPrtgStore _prtgStore;
     private readonly IIssueExclusionSource _exclusions;
-    private readonly PendingDispatchGapsProvider _gaps;
+    private readonly PendingDispatchCountsService _pendingCounts;
+    private readonly AdminTodoService? _adminTodo;
 
     public DashboardService(
         IVisibilityService visibility,
@@ -49,9 +50,10 @@ public class DashboardService
         SummaryCache summaryCache,
         EfPrtgStore prtgStore,
         IIssueExclusionSource exclusions,
-        PendingDispatchGapsProvider gaps, StorageBackend? backend = null)
+        PendingDispatchCountsService pendingCounts, StorageBackend? backend = null, AdminTodoService? adminTodo = null)
     {
-        _gaps = gaps;
+        _adminTodo = adminTodo;
+        _pendingCounts = pendingCounts;
         _backend = backend;
         _prtgStore = prtgStore;
         _visibility = visibility;
@@ -72,53 +74,77 @@ public class DashboardService
     public DashboardDto GetSummary(int days)
     {
         // 整包回應快取（批次F）：單次請求要打十支以上聚合查詢，版本戳沒推進的期間重算是純浪費。
-        // 鍵含可見主機集合——不同授權範圍各自一份，不得串味。
         // 可見主機取一次就傳下去，不為了組鍵多走訪一次整份主機表（同 ReportService 的效能契約）。
         var visibleHosts = _visibility.GetVisibleHosts();
-        // 鍵含 ViewAudit 能力（體檢輪）：RecentLoginFailures 只有稽核權限者會填，
-        // 兩個可見主機集合相同、稽核權限不同的帳號共用同一筆快取就是把登入失敗數
-        // 端給無權者（或讓有權者看到 0）。BuildSummary 內其餘內容不依個人能力分歧。
-        var canViewAudit = _currentUser.Has(Auth.Capability.ViewAudit);
-        // 靜音排除條件本次請求只取一次：快取鍵與 BuildSummary 內全部查詢（含重點問題、可行動快照、
-        // 待辦）用同一份，跨午夜或設定變更時同一頁不會混用兩份規則
+        // 靜音排除條件本次請求只取一次：快取鍵與全部查詢（含重點問題、可行動快照、待辦）用同一份，
+        // 跨午夜或設定變更時同一頁不會混用兩份規則
         var exclusion = _exclusions.Current();
-        // 鍵含 Assign 能力：PendingDispatch 只有具派工權限者會填（且是依其可見範圍試跑），
-        // 可見主機集合相同、能力不同的兩人共用同一筆就會把待派數端給無權者，或讓有權者看不到卡
-        var canAssign = _currentUser.Has(Auth.Capability.Assign);
-        // 鍵含 ViewAll：待確認權限異動的計數依 ViewAll 分支（PermissionChangeService.CountPending），
-        // 可見集合恰好等於全站的非 ViewAll 使用者不能共用 ViewAll 那一筆
+        var visibleHostIds = _visibility.GetVisibleHostIds();
+
+        // 主體與個人能力分開快取：主體只由「可見主機集合＋期間＋靜音條件」決定，可見範圍相同、
+        // 能力不同的帳號（管理員與主管）共用同一份，不再各算一整份。
+        // 與能力有關的欄位（待派、需要你處理、權限異動待確認數、登入失敗）不進主體，
+        // 在下面依呼叫者能力疊上去；疊加用複本，不改動快取內的共用實例。
+        var body = _summaryCache.GetOrAdd(
+            SummaryCache.KeyOf("dashboard-body", $"{days}|{exclusion.CacheToken}", visibleHostIds),
+            () => BuildBody(days, visibleHosts, exclusion));
+        var dto = body.ShallowCopy();
+
+        // 待確認權限異動數依 ViewAll 分支（PermissionChangeService.CountPending）：
+        // 可見集合恰好等於全站的非 ViewAll 使用者不能共用 ViewAll 那一筆，鍵含 viewall
         var canViewAll = _currentUser.Has(Auth.Capability.ViewAll);
-        return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|viewall:{canViewAll}|{exclusion.CacheToken}", _visibility.GetVisibleHostIds()),
-            () => BuildSummary(days, visibleHosts, exclusion, canAssign));
-    }
+        dto.PendingPermissionChanges = _summaryCache.GetOrAdd(
+            SummaryCache.KeyOf("dashboard-perm-pending", $"viewall:{canViewAll}", visibleHostIds),
+            () => new CountBox(_permissionChanges.CountPending())).Value;
 
-    /// <summary>
-    /// 待派工問題（§9.1）：期間＝昨天往前 7 天（與交辦總覽待派頁籤預設期間一致，
-    /// <c>WorkOrderBoardService</c> 預設 迄日＝昨天、起日＝迄日-6）。
-    /// <c>GetGaps</c> 每頁只回 50 列、無法派出的標記在列上，所以逐頁讀完才數得出全部的「無法派出問題數」；
-    /// 結果進整包快取，不是每次請求都跑。
-    /// </summary>
-    private PendingDispatchDto BuildPendingDispatch()
-    {
-        var to = DateTime.Today.AddDays(-1);
-        var from = to.AddDays(-6);
-        var first = _gaps(from, to, 1);
-        var dto = new PendingDispatchDto
+        // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
+        // 反而洩漏了系統遭受嘗試的程度。無權者不讀、不填（保持 null／0 的預設）
+        if (_currentUser.Has(Capability.ViewAudit))
         {
-            TooLarge = first.TooLarge,
-            From = first.From.ToString("yyyy-MM-dd"),
-            To = first.To.ToString("yyyy-MM-dd")
-        };
-        if (first.TooLarge) return dto;
+            dto.RecentLoginFailures = _summaryCache.GetOrAdd(
+                SummaryCache.KeyOf("dashboard-login-failures", "audit", visibleHostIds),
+                () => new CountBox(_audit.Count(DateTime.Now.AddHours(-24), DateTime.Now, AuditActions.LoginFailed))).Value;
+        }
 
-        // 只呼叫一次：每次 GetGaps 都會重跑整段派工試跑，逐頁翻會讓成本乘上頁數
-        dto.IssueCount = first.Total;
-        dto.UnassignableIssueCount = first.UnassignableTotal;
+        // 待派卡與「需要你處理」只有具派工權限者才有，且共用同一份待派試跑計數
+        // （可見範圍相同的具派工權限者共用，見 PendingDispatchCountsService）
+        if (_currentUser.Has(Auth.Capability.Assign))
+        {
+            var pending = _pendingCounts.Get();
+            dto.PendingDispatch = ToPendingDispatchDto(pending);
+            // 「需要你處理」：與待派卡同一份試跑計數帶入同一個彙整函式（不再跑第二次試跑）
+            if (_adminTodo != null)
+                dto.AdminTodo = _adminTodo.GetForCurrentUser(new PendingDispatchCounts(pending.DispatchableIssues, pending.TooLarge, pending.UnassignableIssues));
+        }
         return dto;
     }
 
-    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts, IssueExclusion exclusion, bool canAssign)
+    /// <summary>快取內的整數計數（<see cref="SummaryCache"/> 的值必須是參考型別）</summary>
+    private sealed record CountBox(int Value);
+
+    /// <summary>
+    /// 待派工問題（§9.1）：期間＝昨天往前 7 天（與交辦總覽待派頁籤預設期間一致）。
+    /// 卡片只計前兩段（可以派、派不出去）：嚴重度未達、不再打擾等「不會派」的問題不算待辦，
+    /// 不能再把台數最多的它們排在最前面（待派頁的第三段另有總數）。
+    /// 計數來自 <see cref="WorkOrderBoardService.GetGapCounts"/>，與待派頁同一份試跑。
+    /// </summary>
+    private static PendingDispatchDto ToPendingDispatchDto(PendingDispatchSummary pending)
+    {
+        var dto = new PendingDispatchDto
+        {
+            TooLarge = pending.TooLarge,
+            From = pending.From.ToString("yyyy-MM-dd"),
+            To = pending.To.ToString("yyyy-MM-dd")
+        };
+        if (pending.TooLarge) return dto;
+        dto.DispatchableIssueCount = pending.DispatchableIssues;
+        dto.UnassignableIssueCount = pending.UnassignableIssues;
+        dto.IssueCount = dto.DispatchableIssueCount + dto.UnassignableIssueCount;
+        return dto;
+    }
+
+    /// <summary>與個人能力無關的主體：只由可見主機、期間與靜音條件決定（能力相關欄位由 <see cref="GetSummary"/> 疊上）</summary>
+    private DashboardDto BuildBody(int days, List<WebHost> visibleHosts, IssueExclusion exclusion)
     {
         // 期間錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
         // （AnalysisOrchestrator 固定分析 yesterday），錨在真實今天會讓「今天」按鈕查詢
@@ -132,10 +158,8 @@ public class DashboardService
             Days = days,
             From = from.ToString("yyyy-MM-dd"),
             To = anchor.ToString("yyyy-MM-dd"),
-            TotalHosts = visibleHosts.Count,
-            PendingDispatch = canAssign ? BuildPendingDispatch() : null
+            TotalHosts = visibleHosts.Count
         };
-
         // 全部走 SQL 端聚合（SCALE-3000 S4），不再把整段期間的紀錄載入記憶體。
         // 繞過 RecordRepository 之後，它套的三層可見範圍要在這裡自己等價重現：
         // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveVisibility 算出，
@@ -223,14 +247,6 @@ public class DashboardService
         }
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
         dto.IssueTodo = _issueTodo.Aggregate(actionableResolved);
-        dto.PendingPermissionChanges = _permissionChanges.CountPending();
-
-        // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
-        // 反而洩漏了系統遭受嘗試的程度
-        if (_currentUser.Has(Capability.ViewAudit))
-        {
-            dto.RecentLoginFailures = _audit.Count(DateTime.Now.AddHours(-24), DateTime.Now, AuditActions.LoginFailed);
-        }
 
         return dto;
     }
@@ -252,8 +268,18 @@ public class DashboardService
     private static void BuildSilentHosts(DashboardDto dto, List<WebHost> visibleHosts)
     {
         var now = DateTime.Now;
-        dto.SilentHostsCount = visibleHosts.Count(h => HostAdminService.IsSilent(h, now));
+        var silent = visibleHosts.Where(h => HostAdminService.IsSilent(h, now)).ToList();
+        dto.SilentHostsCount = silent.Count;
+        // 名稱只取可見範圍內的前幾台（已是 visibleHosts 過濾後）；數量大時完整清單走主機頁
+        dto.SilentHostNames = silent
+            .Select(h => h.HostName)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Take(SilentHostNameLimit)
+            .ToList();
     }
+
+    /// <summary>儀表板摘要帶回的未回報主機名稱上限</summary>
+    public const int SilentHostNameLimit = 5;
 
     /// <summary>
     /// 未回報主機中 PRTG 現況為 down 的台數——與主機頁的提示走同一份計算

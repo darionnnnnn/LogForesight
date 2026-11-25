@@ -494,12 +494,14 @@ public class WorkOrderCoordinatorTests
         var known = Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Split(id, new[] { "a", "0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33" }, Carol, Actor()));
         Assert.Contains("H2-DONE", known.Message);
+        Assert.Contains("主機 H2-DONE 已不是交辦單", known.Message);   // CU-7：主機名後補空白，不與「已不是」黏在一起
         Assert.Contains("請重新整理成員清單", known.Message);
         Assert.DoesNotContain("0f8e6d2c", known.Message);
 
         // 查不到案件（已被清除）時不寫識別碼，只提示重新整理
         var unknown = Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "ghost-id" }, Carol, Actor()));
         Assert.DoesNotContain("ghost-id", unknown.Message);
+        Assert.StartsWith("選取的成員中有主機已不是交辦單", unknown.Message);   // 沒有主機名時不多出空白
         Assert.Contains("請重新整理成員清單", unknown.Message);
     }
 
@@ -591,6 +593,92 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(WorkOrderEventActions.AdminClosed, evt.Action);
         Assert.Equal($"{IssueHandlingStatuses.Resolved}：已換硬碟", evt.Note);
         Assert.Equal(-1, evt.MemberDelta);
+    }
+
+    // ── AdminClose 範圍（第 81 輪批次 T：全部進行中／只有上報中的／勾選的成員）──────────────
+
+    [Fact]
+    public void AdminClose_範圍三種_全部不帶清單整張單結案()
+    {
+        var (w, id, _) = ThreeHostOrder();
+
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "全部處理完", Actor(), blocksRedispatch: false);
+
+        Assert.Equal(3, result.ClosedCases);
+        Assert.All(w.Cases.GetByWorkOrder(id, 0, 10), c => Assert.NotNull(c.ClosedAt));
+        Assert.Equal(WorkOrderCloseReasons.AdminClosed, w.Orders.Get(id)!.ClosedReason);
+    }
+
+    [Fact]
+    public void AdminClose_範圍三種_只有上報中的_其餘維持原狀_單繼續進行()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var escalated = cases.Where(c => c.HostName is "H1" or "H2").Select(c => c.CaseId).ToList();
+        w.Coordinator.Reply(id, escalated, IssueHandlingStatuses.Escalated, "處理不了", null, Actor(T0.AddHours(1)));
+
+        var later = T0.AddHours(2);
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "評估後不處理", Actor(later), blocksRedispatch: true, caseIds: escalated);
+
+        Assert.Equal(2, result.ClosedCases);
+        var byHost = w.Cases.GetByWorkOrder(id, 0, 10).ToDictionary(c => c.HostName);
+        Assert.Equal(IssueHandlingStatuses.WontFix, byHost["H1"].Status);
+        Assert.Equal(later, byHost["H1"].ClosedAt);
+        Assert.True(byHost["H1"].BlocksRedispatch, "停派旗標只寫在範圍內的成員");
+        Assert.Equal(IssueHandlingStatuses.InProgress, byHost["H3"].Status);
+        Assert.Null(byHost["H3"].ClosedAt);
+        Assert.NotEqual(true, byHost["H3"].BlocksRedispatch);
+
+        var order = w.Orders.Get(id)!;
+        Assert.Null(order.ClosedAt);
+        Assert.Null(order.ClosedReason);
+        var evt = w.Orders.ListEvents(id).Last(e => e.Action == WorkOrderEventActions.AdminClosed);
+        Assert.Equal(-2, evt.MemberDelta);
+        Assert.Equal($"{IssueHandlingStatuses.WontFix}：評估後不處理", evt.Note);
+    }
+
+    [Fact]
+    public void AdminClose_範圍三種_勾選的成員_範圍內結案後單才推導結案()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1").CaseId;
+        var rest = cases.Where(c => c.HostName != "H1").Select(c => c.CaseId).ToList();
+
+        var first = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "先處理一台", Actor(T0.AddHours(1)), blocksRedispatch: false, caseIds: new[] { h1 });
+        Assert.Equal(1, first.ClosedCases);
+        Assert.Null(w.Orders.Get(id)!.ClosedAt);
+
+        // 剩下的也在範圍內結案：沒有進行中成員了，單由結案推導結案（all_closed），不是 admin_closed
+        var second = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "其餘也處理", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: rest);
+        Assert.Equal(2, second.ClosedCases);
+        var order = w.Orders.Get(id)!;
+        Assert.NotNull(order.ClosedAt);
+        Assert.Equal(WorkOrderCloseReasons.AllClosed, order.ClosedReason);
+    }
+
+    [Fact]
+    public void AdminClose_帶已結案或不屬於這張單的案件_整筆拒絕且什麼都不寫()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1");
+        var h2 = cases.Single(c => c.HostName == "H2");
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Resolved, "已處理", null, Actor(T0.AddHours(1)));
+        var eventsBefore = w.Orders.ListEvents(id).Count;
+
+        // 已結案的案件
+        Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "x", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: new[] { h2.CaseId, h1.CaseId }));
+        // 不屬於這張單的案件
+        w.AddHostDays("H9", D2);
+        var other = w.Coordinator.Create(Request(Bob, "H9")).WorkOrderId;
+        var foreign = w.Cases.GetByWorkOrder(other, 0, 10).Single().CaseId;
+        Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "x", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: new[] { h2.CaseId, foreign }));
+
+        var after = w.Cases.GetByWorkOrder(id, 0, 10).Single(c => c.HostName == "H2");
+        Assert.Equal(IssueHandlingStatuses.InProgress, after.Status);
+        Assert.Null(after.ClosedAt);
+        Assert.Equal(eventsBefore, w.Orders.ListEvents(id).Count);
+        Assert.Null(w.Orders.Get(id)!.ClosedAt);
     }
 
     // ── Reply ────────────────────────────────────────────────────────────────
@@ -904,5 +992,109 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(before.UpdatedAt, after.UpdatedAt);
         Assert.Equal(eventsBefore, w.Events(id));
         Assert.Equal(savesBefore, w.Orders.SaveCalls);
+    }
+
+    // ── 回覆不清掉期限（P-1：處理中未帶日期＝保留成員原有期限）────────────────────────
+
+    private static (World W, long Id, IssueCase H1, IssueCase H2) TwoHostOrderWithDue(DateTime? due1, DateTime? due2)
+    {
+        var w = new World();
+        foreach (var h in new[] { "H1", "H2" }) w.AddHostDays(h, D2);
+        var id = w.Coordinator.Create(Request(Alice, "H1", "H2")).WorkOrderId;
+        var h1 = w.Cases.GetOpen("H1", IssueKey)!;
+        var h2 = w.Cases.GetOpen("H2", IssueKey)!;
+        // 回覆帶日期＝把期限寫進成員；之後的測試再用「未帶日期」的回覆檢查保留
+        if (due1 != null) w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "先處理", due1, Actor(T0.AddHours(1)));
+        if (due2 != null) w.Coordinator.Reply(id, new[] { h2.CaseId }, IssueHandlingStatuses.InProgress, "先處理", due2, Actor(T0.AddHours(1)));
+        return (w, id, w.Cases.Get(h1.CaseId)!, w.Cases.Get(h2.CaseId)!);
+    }
+
+    [Fact]
+    public void Reply_處理中未帶日期_保留成員原有期限_案件與逐日列一致()
+    {
+        var due = new DateTime(2026, 9, 24);
+        var (w, id, h1, _) = TwoHostOrderWithDue(due, null);
+        Assert.Equal(due, h1.DueDate);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "還在處理", null, Actor(T0.AddHours(2)));
+
+        Assert.Equal(due, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(due, w.Row("H1", D2)!.DueDate);
+        Assert.Equal("還在處理", w.Cases.Get(h1.CaseId)!.Note);
+    }
+
+    [Fact]
+    public void Reply_處理中帶新日期_以新日期為準()
+    {
+        var due = new DateTime(2026, 9, 24);
+        var newDue = new DateTime(2026, 9, 30);
+        var (w, id, h1, _) = TwoHostOrderWithDue(due, null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "延後", newDue, Actor(T0.AddHours(2)));
+
+        Assert.Equal(newDue, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(newDue, w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_結案類_清空期限_即使成員原本有期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(new DateTime(2026, 9, 24), null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Resolved, "修好了", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_觀察中未帶日期_語意不變_不沿用原期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(new DateTime(2026, 9, 24), null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Observing, "觀察", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_一次回覆多個成員_未帶日期時各自保留自己的期限()
+    {
+        var due1 = new DateTime(2026, 9, 24);
+        var due2 = new DateTime(2026, 10, 5);
+        var (w, id, h1, h2) = TwoHostOrderWithDue(due1, due2);
+
+        w.Coordinator.Reply(id, null, IssueHandlingStatuses.InProgress, "全部繼續", null, Actor(T0.AddHours(2)));
+
+        Assert.Equal(due1, w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Equal(due2, w.Cases.Get(h2.CaseId)!.DueDate);
+        Assert.Equal(due1, w.Row("H1", D2)!.DueDate);
+        Assert.Equal(due2, w.Row("H2", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_原本沒有期限的成員_處理中未帶日期_仍然沒有期限()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(null, null);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "處理", null, Actor(T0.AddHours(2)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
+    }
+
+    [Fact]
+    public void Reply_觀察中切回處理中未帶日期_期限為空_不沿用觀察至()
+    {
+        var (w, id, h1, _) = TwoHostOrderWithDue(null, null);
+        var observeUntil = new DateTime(2026, 9, 1); // 已過的觀察至
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Observing, "觀察", observeUntil, Actor(T0.AddHours(2)));
+        Assert.Equal(observeUntil, w.Cases.Get(h1.CaseId)!.DueDate);
+
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.InProgress, "回來處理", null, Actor(T0.AddHours(3)));
+
+        Assert.Null(w.Cases.Get(h1.CaseId)!.DueDate);
+        Assert.Null(w.Row("H1", D2)!.DueDate);
     }
 }

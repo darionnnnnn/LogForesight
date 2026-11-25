@@ -53,6 +53,9 @@ public class WorkOrderCommandService
 
     private readonly TimeProvider _clock;
 
+    /// <summary>目前規則（「不再打擾」30 天解除要看問題目前規則的嚴重度；必填，不退回靜態表）</summary>
+    private readonly IKnownIssueRuleStore _rules;
+
     public WorkOrderCommandService(
         RecordListQueryService query,
         IIssueAggregateQuery aggregates,
@@ -68,8 +71,10 @@ public class WorkOrderCommandService
         IAuditService audit,
         IUserDisplayNameService displayNames,
         MailNotificationService mail,
+        IKnownIssueRuleStore rules,
         TimeProvider? clock = null)
     {
+        _rules = rules;
         _clock = clock ?? TimeProvider.System;
         _query = query;
         _aggregates = aggregates;
@@ -104,7 +109,11 @@ public class WorkOrderCommandService
                 AllocatedHandlerId = h.Effective.Count > 0 ? h.Handler!.UserId : null,
                 ExistingHandlerName = h.ConflictHandlerId.HasValue ? plan.NameOf(h.ConflictHandlerId.Value) : null,
                 NoiseExcluded = h.Resolved.NoiseExcluded,
-                ManuallyExcluded = h.Resolved.ManuallyExcluded
+                ManuallyExcluded = h.Resolved.ManuallyExcluded,
+                ClosedReason = h.Resolved.Exclusion?.Reason,
+                ClosedStatus = h.Resolved.Exclusion?.Status,
+                ClosedByAccount = h.Resolved.Exclusion?.ByAccount,
+                ClosedAt = h.Resolved.Exclusion?.At
             })
             .ToList();
 
@@ -122,6 +131,8 @@ public class WorkOrderCommandService
             EstimatedHostDays = estimatedHostDays,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             ManuallyExcludedHosts = plan.ManuallyExcludedHosts,
+            ClosedSkippedHosts = plan.ClosedSkippedHosts,
+            DismissedSkippedHosts = plan.DismissedSkippedHosts,
             PausedMembersExcluded = plan.PausedMembersExcluded,
             Conflicts = plan.Conflicts,
             Allocation = plan.Allocations
@@ -139,15 +150,35 @@ public class WorkOrderCommandService
             PageSize = PreviewPageSize,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
             AssigneeNoAccessTotal = plan.NoAccess.Count,
-            AssigneeCannotHandle = plan.CannotHandle
+            AssigneeCannotHandle = plan.CannotHandle,
+            SuggestedDueDate = SuggestedDueDateOf(plan)
         };
+    }
+
+    /// <summary>
+    /// 建議期限（預覽用，P-1）：該問題在「會寫入的主機」上最近一次出現的最高嚴重度，自今天（站台時鐘）起算預設天數
+    /// （<see cref="DefaultDueDays"/>，與夜間派工同一個常數來源）；低、沒有會寫入的主機或推導不到嚴重度為 null。
+    /// 只是預填，建立時仍以請求的 <c>DueDate</c> 為準。
+    /// </summary>
+    private DateTime? SuggestedDueDateOf(CreatePlan plan)
+    {
+        var hostIds = plan.Hosts.Where(h => h.Effective.Count > 0).Select(h => h.Resolved.Host.HostId).ToHashSet();
+        if (hostIds.Count == 0) return null;
+
+        var occurrences = _aggregates.LatestOccurrences(
+            IssueExclusion.None, new[] { (plan.Source, plan.EventId) }, plan.Scope.From, plan.Scope.To, hostIds.ToList());
+        var ranks = occurrences.Where(o => hostIds.Contains(o.HostId)).Select(o => o.SeverityRank).ToList();
+        if (ranks.Count == 0) return null;
+        return DefaultDueDays.DueDateFor(LegacySeverityRank.ToSeverity(ranks.Max()), _clock.LocalToday());
     }
 
     public CreateWorkOrderResultDto Create(CreateWorkOrderRequest req)
     {
         var plan = Plan(req);
         if (plan.Hosts.All(h => h.Resolved.Members.Count == 0))
-            throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
+            throw DomainException.Validation(plan.ClosedSkippedHosts + plan.DismissedSkippedHosts > 0
+                ? "符合條件的主機都已處理完畢，或被「不再自動派工」擋住；要重新交辦請在預覽勾選這些主機的「重新交辦」。"
+                : "找不到任何符合條件、且您有權限的主機。");
 
         var actor = _currentUser.ToWorkOrderActor(_clock);
         var scopeKind = req.ScopeKind;
@@ -159,6 +190,12 @@ public class WorkOrderCommandService
         var raceSkipped = new List<WorkOrderConflict>();
         var overlong = new List<WorkOrderOverlongDto>();
         var daySyncPending = 0;
+        var closedByCoordinator = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var closedByCoordinatorNames = new List<string>();
+        // 協調器逐成員略過的已結案（主機＋簽章）：同一台的其他成員仍可能寫入，恢復判定要逐成員，不能整台移除
+        var closedMembers = new List<(string HostName, string IssueKey)>();
+        // 實際寫入的（主機, 簽章）：不再打擾的成員被重開後，只有真的建了案件的才恢復
+        var written = new HashSet<(string HostName, string IssueKey)>(HostIssueSignatureKeyComparer.Instance);
         foreach (var allocation in plan.Allocations)
         {
             var outcome = _coordinator.Create(new WorkOrderCreateRequest
@@ -175,7 +212,14 @@ public class WorkOrderCommandService
             daySyncPending += outcome.DaySync.PendingCases;
             raceSkipped.AddRange(outcome.SkippedConflicts);
             overlong.AddRange(OverlongDtos(outcome));
+            foreach (var closed in outcome.SkippedClosed)
+            {
+                if (closedByCoordinator.Add(HostNameKey.Of(closed.HostName))) closedByCoordinatorNames.Add(closed.HostName);
+                closedMembers.Add((HostNameKey.Of(closed.HostName), closed.IssueKey));
+            }
             if (outcome.WorkOrderId == 0) continue;
+            foreach (var member in allocation.Hosts.SelectMany(h => h.Effective))
+                written.Add((HostNameKey.Of(member.HostName), member.IssueKey));
 
             orders.Add(new WorkOrderCreatedDto
             {
@@ -209,13 +253,20 @@ public class WorkOrderCommandService
             });
         }
 
+        foreach (var conflict in raceSkipped) written.Remove((HostNameKey.Of(conflict.HostName), conflict.IssueKey));
+        foreach (var closed in closedMembers) written.Remove(closed);
+        RestoreDismissed(plan, written);
+
         var handlerNames = plan.Allocations.Select(a => NameOf(a.Handler)).ToList();
         var addedHosts = plan.Allocations.Sum(a => a.Hosts.Count);
         _audit.Record(
             action: AuditActions.WorkOrderCreate,
             summary: $"交辦『{plan.IssueLabel}』給 {NameFormat.Join(handlerNames)}：" +
                      $"新建 {orders.Count(o => o.CreatedOrder)} 張、併入 {orders.Count(o => !o.CreatedOrder)} 張，" +
-                     $"加入 {addedHosts} 台（略過 {skipped.Count} 台、雜訊排除 {plan.NoiseExcludedHosts} 台）",
+                     $"加入 {addedHosts} 台（略過 {skipped.Count} 台、雜訊排除 {plan.NoiseExcludedHosts} 台）" +
+                     (plan.ClosedSkippedHosts + plan.DismissedSkippedHosts > 0
+                         ? $"，已結案略過 {plan.ClosedSkippedHosts} 台、不再打擾略過 {plan.DismissedSkippedHosts} 台"
+                         : ""),
             targetKind: TargetKind,
             targetId: $"{plan.Source}/{plan.EventId}",
             detail: new
@@ -224,7 +275,9 @@ public class WorkOrderCommandService
                 WorkOrderIds = orders.Select(o => o.WorkOrderId).ToList(),
                 PerHandler = plan.Allocations.Select(a => new { Handler = a.Handler.Account, Hosts = a.Hosts.Count }).ToList(),
                 Skipped = skipped.Count,
-                NoiseExcluded = plan.NoiseExcludedHosts
+                NoiseExcluded = plan.NoiseExcludedHosts,
+                ClosedSkipped = plan.ClosedSkippedHosts,
+                DismissedSkipped = plan.DismissedSkippedHosts
             });
 
         foreach (var order in orders)
@@ -238,12 +291,47 @@ public class WorkOrderCommandService
             Skipped = skipped,
             OverlongSkipped = overlong,
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
+            ClosedSkippedHosts = plan.ClosedSkippedHosts + closedByCoordinator.Count,
+            DismissedSkippedHosts = plan.DismissedSkippedHosts,
+            ClosedSkippedHostNames = SkippedHostNames(plan, ClosedReasons.Closed, closedByCoordinatorNames),
+            DismissedSkippedHostNames = SkippedHostNames(plan, ClosedReasons.Dismissed, Array.Empty<string>()),
             DaySyncPendingCases = daySyncPending,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
             AssigneeNoAccessTotal = plan.NoAccess.Count,
             AssigneeCannotHandle = plan.CannotHandle,
             HandlerHasNoEmail = plan.Allocations.Any(a => string.IsNullOrWhiteSpace(a.Handler.Email))
         };
+    }
+
+    /// <summary>
+    /// 重新交辦「不再打擾」的成員後恢復：建案成功的成員，把被擋的那件舊案件 <see cref="IssueCase.BlocksRedispatch"/> 寫成 false
+    /// （做法與 <see cref="DismissedIssueService.Restore"/> 相同），並寫一筆恢復稽核。只在 <see cref="Create"/> 呼叫，預覽不寫資料。
+    /// </summary>
+    private void RestoreDismissed(CreatePlan plan, HashSet<(string HostName, string IssueKey)> written)
+    {
+        var restored = new List<IssueCase>();
+        foreach (var host in plan.Hosts)
+        {
+            foreach (var (issueKey, blocked) in host.Resolved.ReopenedDismissed)
+            {
+                if (!written.Contains((HostNameKey.Of(host.Resolved.Host.HostName), issueKey))) continue;
+                var fresh = _cases.Get(blocked.CaseId);
+                if (fresh == null || fresh.BlocksRedispatch == false) continue;
+                fresh.BlocksRedispatch = false;
+                restored.Add(fresh);
+            }
+        }
+        if (restored.Count == 0) return;
+
+        _cases.SaveMany(restored);
+        var hostNames = restored.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList();
+        _audit.Record(
+            action: AuditActions.WorkOrderDismissRestore,
+            summary: $"重新交辦恢復自動派工：問題 {plan.IssueLabel}（{hostNames.Count} 台）",
+            targetKind: TargetKind,
+            targetId: $"{plan.Source}/{plan.EventId}",
+            detail: new { Issue = plan.IssueLabel, Hosts = hostNames.Count, HostNames = hostNames, CaseIds = restored.Select(c => c.CaseId).ToList() });
     }
 
     /// <summary>協調器略過的超長問題鍵，轉成給使用者看的說明（只含主機、長度與上限，不含例外原文）</summary>
@@ -271,7 +359,7 @@ public class WorkOrderCommandService
         var visible = scope.HostIds.ToHashSet();
         var ignored = requested.Count(hostId => !visible.Contains(hostId));
 
-        var resolved = ResolveMembers(order.SourceName, order.EventId.Value, scope, new HashSet<long>());
+        var resolved = ResolveMembers(order.SourceName, order.EventId.Value, scope, new HashSet<long>(), new HashSet<long>());
         var members = resolved.SelectMany(r => r.Members).ToList();
         if (members.Count == 0)
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
@@ -281,7 +369,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderAppend,
-            summary: $"交辦單 {id}『{order.IssueLabel}』追加主機：新案件 {outcome.NewCases} 件、改連 {outcome.LinkedExisting} 件、" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』追加主機：新案件 {outcome.NewCases} 件、改連 {outcome.LinkedExisting} 件、" +
                      $"改派 {outcome.Reassigned} 件（略過 {outcome.SkippedConflicts.Count} 件、雜訊排除 {noiseExcluded} 台、無權限忽略 {ignored} 台）",
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -322,7 +410,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderReassign,
-            summary: $"交辦單 {id}『{order.IssueLabel}』改派給 {NameOf(handler)}：移動 {result.MovedCases} 件" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』改派給 {NameOf(handler)}：移動 {result.MovedCases} 件" +
                      (result.MergedIntoExisting ? $"，併入單號 {result.TargetWorkOrderId}" : ""),
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -347,7 +435,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderSplit,
-            summary: $"交辦單 {id}『{order.IssueLabel}』拆出 {result.MovedCases} 件給 {NameOf(handler)}" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』拆出 {result.MovedCases} 件給 {NameOf(handler)}" +
                      (result.MergedIntoExisting ? $"，併入單號 {result.TargetWorkOrderId}" : $"，新單號 {result.TargetWorkOrderId}"),
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -372,7 +460,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderCancel,
-            summary: $"取消交辦單 {id}『{order.IssueLabel}』：{result.ClosedCases} 件案件調回未處理（原因：{reason}）",
+            summary: $"取消交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件案件調回未處理（原因：{reason}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, Reason = reason, result.HandlerId });
@@ -395,7 +483,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderReturn,
-            summary: $"退回交辦單 {id}『{order.IssueLabel}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
+            summary: $"退回交辦單 {id}『{LabelOf(order)}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ReturnedCases, Note = note, result.HandlerId });
@@ -417,17 +505,22 @@ public class WorkOrderCommandService
 
         // 「已處理」不是不處理類，勾選值一律忽略；只有不處理類且勾選才擋住之後的派工
         var blocksRedispatch = req.Status != IssueHandlingStatuses.Resolved && req.BlockRedispatch;
-        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch);
+        var caseIds = req.CaseIds is { Count: > 0 } ? req.CaseIds : null;
+        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch, caseIds);
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
-            summary: $"代為結案交辦單 {id}『{order.IssueLabel}』：{result.ClosedCases} 件標為 {req.Status}（原因：{reason}）",
+            summary: $"代為結案交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件標為 {req.Status}"
+                     + (caseIds == null ? string.Empty : "（指定範圍）") + $"（原因：{reason}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
-            detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId });
+            detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId, Scoped = caseIds != null });
 
-        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）
+        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）。
+        // 範圍結案且單仍有進行中成員時，信件寫「N 台已由管理者代為結案（單仍在進行中）」：成員數放在 MemberDelta（整張單結案維持 0、沿用原文）
+        var stillOpen = caseIds != null && _orders.Get(id) is { ClosedAt: null };
         _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, result.HandlerId, _currentUser.UserId, _currentUser.Account,
+            memberDelta: stillOpen ? result.ClosedCases : 0,
             reason: reason, status: req.Status, blocksRedispatch: blocksRedispatch);
 
         return new WorkOrderCloseResultDto
@@ -496,7 +589,8 @@ public class WorkOrderCommandService
             HostIds = req.HostIds, GroupIds = req.GroupIds, From = req.From, To = req.To
         });
         var excluded = req.ExcludeHostIds == null ? new HashSet<long>() : req.ExcludeHostIds.ToHashSet();
-        var hosts = ResolveMembers(source, eventId, scope, excluded)
+        var reopen = req.ReopenHostIds == null ? new HashSet<long>() : req.ReopenHostIds.ToHashSet();
+        var hosts = ResolveMembers(source, eventId, scope, excluded, reopen)
             .Select(r => new PlannedHost(r))
             .ToList();
 
@@ -602,13 +696,15 @@ public class WorkOrderCommandService
         {
             Source = source,
             EventId = eventId,
-            IssueLabel = $"{source} {eventId}",
+            IssueLabel = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId),
             Scope = scope,
             Hosts = hosts,
             Allocations = allocations,
             PausedMembersExcluded = paused,
             NoiseExcludedHosts = hosts.Count(h => h.Resolved.NoiseExcluded),
             ManuallyExcludedHosts = hosts.Count(h => h.Resolved.ManuallyExcluded),
+            ClosedSkippedHosts = hosts.Count(h => h.Resolved.Exclusion?.Reason == ClosedReasons.Closed),
+            DismissedSkippedHosts = hosts.Count(h => h.Resolved.Exclusion?.Reason == ClosedReasons.Dismissed),
             Conflicts = conflicts,
             NoAccess = noAccess,
             CannotHandle = cannotHandle,
@@ -622,9 +718,15 @@ public class WorkOrderCommandService
     /// <summary>
     /// 出現點解析與排除的唯一一份（建單計畫與追加共用）：一次 LatestOccurrences 取「每台主機 × 完整簽章 ×
     /// 最近出現日」，每個簽章一個成員（TriggerDate＝最近出現日）；手動排除整台；已知雜訊記憶命中的
-    /// （主機, 簽章）逐成員扣除，一台主機全部成員都被扣才算雜訊排除一台。回傳依主機名稱升冪。
+    /// （主機, 簽章）逐成員扣除，一台主機全部成員都被扣才算雜訊排除一台。
+    /// 雜訊之後再扣兩類「已經有人下過結論」的成員（除非該主機在 <paramref name="reopenHostIds"/>）：
+    /// 被「不再打擾」擋住的（<see cref="DispatchContext.DismissedKeys"/>，派工閘門同一支判定），以及最近一次出現當天
+    /// 已被處理人結案的（<see cref="OccurrenceStatusResolver"/>：沒有進行中案件、逐日處理列是結案類；
+    /// 「沒標記但嚴重度不在需處理名單」的預設已處理不算）。兩類都要排除，否則建出的案件逐日同步會略過已結案的日子，
+    /// 變成沒有逐日列的案件。一台主機的成員全部被扣才算整台排除，並帶出原因與結案資訊供預覽顯示。回傳依主機名稱升冪。
     /// </summary>
-    private List<ResolvedHost> ResolveMembers(string source, int eventId, IssueScope scope, IReadOnlySet<long> excludeHostIds)
+    private List<ResolvedHost> ResolveMembers(
+        string source, int eventId, IssueScope scope, IReadOnlySet<long> excludeHostIds, IReadOnlySet<long> reopenHostIds)
     {
         // 靜音不排除（不用 scope.Exclusion）：派工決策以紀錄日判定靜音，已在派工脈絡處理
         var occurrences = _aggregates.LatestOccurrences(
@@ -635,34 +737,147 @@ public class WorkOrderCommandService
         var noise = _noiseMarks.GetAll()
             .Select(m => (HostNameKey.Of(m.HostName), m.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
-        var label = $"{source} {eventId}";
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId);
 
-        return occurrences
+        // 每台主機：去重後的簽章（最近出現者）→ 扣掉雜訊後的出現點
+        var perHost = occurrences
             .Where(o => hostsById.ContainsKey(o.HostId))
             .GroupBy(o => o.HostId)
             .Select(g =>
             {
                 var host = hostsById[g.Key];
                 if (excludeHostIds.Contains(host.HostId))
-                    return new ResolvedHost(host, new List<WorkOrderMember>(), NoiseExcluded: false, ManuallyExcluded: true);
-
-                var all = g
+                    return (Host: host, Manual: true, Kept: new List<HostIssueOccurrence>());
+                var kept = g
                     .GroupBy(o => o.IssueKey, IssueSignatureKeyComparer.Instance)
                     .Select(k => k.OrderByDescending(o => o.LastSeen).First())
                     .OrderBy(o => o.IssueKey, StringComparer.Ordinal)
-                    .ToList();
-                var kept = all
                     .Where(o => !noise.Contains((HostNameKey.Of(host.HostName), o.IssueKey)))
-                    .Select(o => new WorkOrderMember
+                    .ToList();
+                return (Host: host, Manual: false, Kept: kept);
+            })
+            .ToList();
+
+        // 結案類判定：只對還在候選的出現點做（批次載入，查詢次數與主機數無關）。勾了重新交辦的主機也要判，
+        // 才知道哪些成員要標記重開
+        var judged = perHost.Where(x => !x.Manual && x.Kept.Count > 0).ToList();
+        var statusByHost = new Dictionary<long, Dictionary<string, ResolvedOccurrence>>();
+        var noWritableDays = new HashSet<(string HostName, string IssueKey)>(HostIssueSignatureKeyComparer.Instance);
+        var dismissedByHost = new Dictionary<string, Dictionary<string, IssueCase>>(StringComparer.OrdinalIgnoreCase);
+        if (judged.Count > 0)
+        {
+            var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
+            var today = _clock.LocalToday();
+            var casesByHost = _cases.GetMany(judged.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+                .GroupBy(c => HostNameKey.Of(c.HostName))
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            foreach (var x in judged)
+            {
+                if (!casesByHost.TryGetValue(HostNameKey.Of(x.Host.HostName), out var hostCases)) continue;
+                var byKey = DispatchContext.DismissedCases(hostCases, today, releaseRules)
+                    .ToDictionary(c => c.IssueKey, c => c, IssueSignatureKeyComparer.Instance);
+                if (byKey.Count > 0) dismissedByHost[x.Host.HostName] = byKey;
+            }
+
+            foreach (var r in _query.ResolveOccurrenceStatuses(judged.SelectMany(x => x.Kept).ToList(), scope.From, scope.To))
+            {
+                if (!statusByHost.TryGetValue(r.Host.HostId, out var byKey))
+                    statusByHost[r.Host.HostId] = byKey = new Dictionary<string, ResolvedOccurrence>(IssueSignatureKeyComparer.Instance);
+                byKey.TryAdd(r.Occurrence.IssueKey, r);
+            }
+
+            // 最近出現日已結案還不夠：期間內任一天未結案就照常建案（只寫未結案的日子），所以再問協調器同一份
+            // 「沒有可寫入逐日列」的判定，批次一次。兩個條件都成立才算已結案
+            var latestClosed = statusByHost.Values
+                .SelectMany(d => d.Values)
+                .Where(IsLatestDayClosed)
+                .Select(r => (r.Host.HostName, r.Occurrence.IssueKey))
+                .ToList();
+            if (latestClosed.Count > 0) noWritableDays = _coordinator.KeysWithoutWritableDays(latestClosed);
+        }
+
+        return perHost
+            .Select(x =>
+            {
+                var host = x.Host;
+                if (x.Manual)
+                    return new ResolvedHost(host, new List<WorkOrderMember>(), NoiseExcluded: false, ManuallyExcluded: true);
+
+                var reopened = reopenHostIds.Contains(host.HostId);
+                var members = new List<WorkOrderMember>();
+                var reopenedDismissed = new List<(string IssueKey, IssueCase Case)>();
+                HostExclusion? exclusion = null;
+                dismissedByHost.TryGetValue(host.HostName, out var dismissed);
+                statusByHost.TryGetValue(host.HostId, out var statuses);
+
+                foreach (var o in x.Kept)
+                {
+                    var member = new WorkOrderMember
                     {
                         HostName = host.HostName, IssueKey = o.IssueKey, IssueLabel = label, TriggerDate = o.LastSeen
-                    })
-                    .ToList();
-                return new ResolvedHost(host, kept, NoiseExcluded: kept.Count == 0, ManuallyExcluded: false);
+                    };
+                    IssueCase? blocked = null;
+                    dismissed?.TryGetValue(o.IssueKey, out blocked);
+                    ResolvedOccurrence? resolved = null;
+                    statuses?.TryGetValue(o.IssueKey, out resolved);
+                    var isClosed = resolved != null && IsLatestDayClosed(resolved)
+                                   && noWritableDays.Contains((host.HostName, o.IssueKey));
+
+                    if (blocked == null && !isClosed)
+                    {
+                        members.Add(member);
+                        continue;
+                    }
+
+                    if (reopened)
+                    {
+                        // 勾了重新交辦：照常納入，並標記要把觸發日改回處理中；不再打擾的記下舊案件，建案成功後恢復
+                        member.Reopen = true;
+                        members.Add(member);
+                        if (blocked != null) reopenedDismissed.Add((o.IssueKey, blocked));
+                        continue;
+                    }
+
+                    // 不再打擾優先於已結案（它是更具體的原因：處理人判定不處理，且擋住之後的派工）
+                    exclusion ??= blocked != null
+                        ? new HostExclusion(ClosedReasons.Dismissed, blocked.Status,
+                            AccountOf(resolved?.Handling) ?? NullIfBlank(blocked.DaySyncIntent?.ActorAccount), blocked.ClosedAt)
+                        : new HostExclusion(ClosedReasons.Closed, resolved!.Handling!.Status,
+                            AccountOf(resolved.Handling), AtOf(resolved.Handling));
+                }
+
+                var noiseExcluded = x.Kept.Count == 0;
+                return new ResolvedHost(host, members, NoiseExcluded: noiseExcluded, ManuallyExcluded: false,
+                    Exclusion: members.Count == 0 && !noiseExcluded ? exclusion : null,
+                    ReopenedDismissedCases: reopenedDismissed);
             })
             .OrderBy(r => r.Host.HostName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    /// <summary>
+    /// 略過主機名清單（建立結果用）：計畫判定該原因略過的主機，加上協調器保底再擋下的；依名稱排序、不分大小寫去重，
+    /// 只列前 <see cref="NoAccessListLimit"/> 筆（與 AssigneeNoAccess 同上限，總數看計數欄位）。
+    /// </summary>
+    private static List<string> SkippedHostNames(CreatePlan plan, string reason, IEnumerable<string> extra) =>
+        plan.Hosts
+            .Where(h => h.Resolved.Exclusion?.Reason == reason)
+            .Select(h => h.Resolved.Host.HostName)
+            .Concat(extra)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Take(NoAccessListLimit)
+            .ToList();
+
+    /// <summary>最近出現日已被處理人結案：沒有進行中案件、逐日處理列是結案類（「沒標記的預設已處理」不算）</summary>
+    private static bool IsLatestDayClosed(ResolvedOccurrence r) =>
+        r is { OpenCase: null, Handling: not null } && IssueHandlingStatuses.IsClosed(r.Handling.Status);
+
+    private static string? NullIfBlank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
+
+    private static string? AccountOf(IssueHandling? handling) => NullIfBlank(handling?.ActorAccount);
+
+    private static DateTime? AtOf(IssueHandling handling) => handling.UpdatedAt == default ? null : handling.UpdatedAt;
 
     // ── 共用 ────────────────────────────────────────────────────────────────
 
@@ -717,7 +932,25 @@ public class WorkOrderCommandService
 
     private string NameOf(WebUser user) => _displayNames.WithAccount(user.DisplayName, user.Account);
 
-    private sealed record ResolvedHost(WebHost Host, List<WorkOrderMember> Members, bool NoiseExcluded, bool ManuallyExcluded);
+    /// <summary>
+    /// <paramref name="Exclusion"/>：整台因結案類處理被排除（成員全被扣）的原因與結案資訊，否則 null。
+    /// <paramref name="ReopenedDismissed"/>：勾選重新交辦而納入的「不再打擾」成員（問題鍵 → 被擋住的舊案件），建案成功後恢復用。
+    /// </summary>
+    private sealed record ResolvedHost(WebHost Host, List<WorkOrderMember> Members, bool NoiseExcluded, bool ManuallyExcluded,
+        HostExclusion? Exclusion = null, IReadOnlyList<(string IssueKey, IssueCase Case)>? ReopenedDismissedCases = null)
+    {
+        public IReadOnlyList<(string IssueKey, IssueCase Case)> ReopenedDismissed =>
+            ReopenedDismissedCases ?? Array.Empty<(string, IssueCase)>();
+    }
+
+    /// <summary>結案類排除的原因（<see cref="ClosedReasons"/>）與結案資訊；取不到的欄位為 null</summary>
+    private sealed record HostExclusion(string Reason, string? Status, string? ByAccount, DateTime? At);
+
+    private static class ClosedReasons
+    {
+        public const string Closed = "closed";
+        public const string Dismissed = "dismissed";
+    }
 
     private sealed class PlannedHost
     {
@@ -751,9 +984,15 @@ public class WorkOrderCommandService
         public required int PausedMembersExcluded { get; init; }
         public required int NoiseExcludedHosts { get; init; }
         public required int ManuallyExcludedHosts { get; init; }
+        public required int ClosedSkippedHosts { get; init; }
+        public required int DismissedSkippedHosts { get; init; }
         public required List<WorkOrderConflictDto> Conflicts { get; init; }
         public required List<AssigneeNoAccessDto> NoAccess { get; init; }
         public required List<AssigneeCannotHandleDto> CannotHandle { get; init; }
         public required Func<long, string> NameOf { get; init; }
     }
+
+    /// <summary>稽核與畫面用的交辦單名稱：以單上的來源與事件重新產生（事件編號 0 附規則名稱），全站同一個出口</summary>
+    private string LabelOf(WorkOrder order) => order.DisplayLabel(KnownIssueCatalog.ResolveRules(_rules));
 }
+

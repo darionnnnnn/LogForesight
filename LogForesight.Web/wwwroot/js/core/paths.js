@@ -22,6 +22,15 @@ export function appUrl(path) {
     return BASE + path;
 }
 
+/**
+ * 網址參數 `name` 的值若在 validValues 內就回傳，沒帶或不認得回 null（沿用頁面預設，網址優先於預設）。
+ * 清單的排序、狀態等下拉共用，不要各頁自己寫一份。
+ */
+export function urlParamChoice(search, name, validValues) {
+    const value = new URLSearchParams(search).get(name);
+    return value && validValues.includes(value) ? value : null;
+}
+
 /** 問題查詢下鑽路徑。參數只在這裡編碼；呼叫端寫入 href 時才套 appUrl。 */
 export function recordsUrl(filters = {}) {
     const params = new URLSearchParams();
@@ -31,6 +40,14 @@ export function recordsUrl(filters = {}) {
     }
     const query = params.toString();
     return query ? `/records?${query}` : '/records';
+}
+
+/**
+ * 規則維護頁直接開某條規則的編輯（`?ruleId=`）。回傳 app 內路徑，呼叫端寫入 href／location 時才套 appUrl。
+ * 交辦單頁與問題查詢的「調整這條規則」共用這一個出口，參數只在這裡編碼。
+ */
+export function ruleEditUrl(ruleId) {
+    return `/admin/rules?${new URLSearchParams({ ruleId: String(ruleId) })}`;
 }
 
 /**

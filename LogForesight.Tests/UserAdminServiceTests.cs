@@ -51,6 +51,9 @@ public class UserAdminServiceTests
         CreatedAt = DateTime.Today.AddHours(-1), ClosedAt = closed
     };
 
+    /// <summary>編輯既有使用者要帶開啟編輯時讀到的版本（第 81 輪批次 M）；測試以目前資料的版本代表「剛開啟編輯」</summary>
+    private string VersionOf(string account) => UserVersion.Of(_users.FindByAccount(account)!);
+
     [Fact]
     public void 停用帳號_回應帶進行中單數_已結案不算_0張時為0()
     {
@@ -59,14 +62,14 @@ public class UserAdminServiceTests
         var service = CreateWith(orders);
 
         // 沒有任何單：回 0，畫面不提示
-        Assert.Equal(0, service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false }).ActiveWorkOrders);
+        Assert.Equal(0, service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false, Version = VersionOf("DOMAIN\\h") }).ActiveWorkOrders);
 
         orders.Insert(OrderOf(user.UserId, "disk", 1));
         orders.Insert(OrderOf(user.UserId, "disk", 2));
         orders.Insert(OrderOf(user.UserId, "disk", 3, closed: DateTime.Now));
         orders.Insert(OrderOf(user.UserId + 1, "disk", 4));
 
-        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false });
+        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\h", DisplayName = "處理人", Active = false, Version = VersionOf("DOMAIN\\h") });
 
         Assert.False(saved.Active);
         Assert.Equal(2, saved.ActiveWorkOrders);
@@ -137,7 +140,7 @@ public class UserAdminServiceTests
         _users.Upsert(new WebUser { Account = "DOMAIN\\legacy", DisplayName = "舊", Email = legacy, Active = true });
         var service = Create();
 
-        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = legacy, Active = false });
+        var saved = service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = legacy, Active = false, Version = VersionOf("DOMAIN\\legacy") });
         Assert.False(saved.Active);
         Assert.Equal("新名", _users.FindByAccount("DOMAIN\\legacy")!.DisplayName);
         Assert.Equal(legacy, _users.FindByAccount("DOMAIN\\legacy")!.Email);
@@ -146,7 +149,7 @@ public class UserAdminServiceTests
         Assert.Throws<DomainException>(() =>
             service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = "x@corp.local;y@corp.local" }));
         // 改成單一合法位址：通過
-        Assert.Equal("ok@corp.local", service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = "ok@corp.local" }).Email);
+        Assert.Equal("ok@corp.local", service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\legacy", DisplayName = "新名", Email = "ok@corp.local", Version = VersionOf("DOMAIN\\legacy") }).Email);
     }
 
     [Fact]
@@ -195,6 +198,35 @@ public class UserAdminServiceTests
 
         Assert.Single(result.Created);   // 不分大小寫去重，三種寫法只算一筆
         Assert.Equal("DOMAIN\\a", result.Created[0]);
+    }
+
+    [Fact]
+    public void 新增使用者撞到已存在的帳號_驗證錯誤_不是版本衝突()
+    {
+        var service = Create();
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\dup", DisplayName = "原本的名字" });
+
+        var ex = Assert.Throws<DomainException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "domain\\DUP", DisplayName = "新名字", IsNew = true }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("已存在", ex.Message);
+        Assert.Equal("原本的名字", _users.FindByAccount("DOMAIN\\dup")!.DisplayName);
+    }
+
+    [Fact]
+    public void 編輯既有使用者帶舊版本_仍是409版本衝突()
+    {
+        var service = Create();
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "甲" });
+        var stale = VersionOf("DOMAIN\\edit");
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "乙", Version = stale });
+
+        var ex = Assert.Throws<ConcurrentUpdateException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "丙", Version = stale }));
+
+        Assert.NotNull(ex);
+        Assert.Equal("乙", _users.FindByAccount("DOMAIN\\edit")!.DisplayName);
     }
 
     [Fact]
@@ -527,7 +559,7 @@ public class UserAdminServiceTests
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "舊名" });
         _users.TouchLogin(user.UserId, new DateTime(2026, 8, 5, 9, 30, 0));
 
-        Create().SaveUser(new SaveUserRequest { Account = "DOMAIN\\wang", DisplayName = "新名", Active = true });
+        Create().SaveUser(new SaveUserRequest { Account = "DOMAIN\\wang", DisplayName = "新名", Active = true, Version = VersionOf("DOMAIN\\wang") });
 
         Assert.Equal(new DateTime(2026, 8, 5, 9, 30, 0), _users.Get(user.UserId)!.LastLoginAt);
     }

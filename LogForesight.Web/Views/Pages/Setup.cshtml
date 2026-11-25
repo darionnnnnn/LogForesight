@@ -38,6 +38,18 @@
     <div class="lf-card__body p-0" id="setup-steps"></div>
 </section>
 
+@* 最後一步（第 81 輪批次 U）：上面的步驟做完後，到系統健康的「派工就緒」卡確認派工真的會動——
+   主機有沒有群組、群組有沒有授權給派工池、自動派工開關、AI 窗口、排程與 email 共八項。這張卡不是精靈步驟（不計入進度），只是導向 *@
+<section class="lf-card mt-3" id="setup-dispatch-readiness">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">最後一步：確認派工就緒</h2>
+    </div>
+    <div class="lf-card__body">
+        <p class="mb-2">步驟都處理完後，請到系統健康頁的「派工就緒」卡逐項確認：主機有沒有群組、群組有沒有授權給派工池、自動派工有沒有開、排程與 AI 窗口有沒有設定，以及管理員與派工池成員有沒有可用的 email。</p>
+        <a id="setup-dispatch-readiness-link" href="@Url.Content("~/admin/settings")#health">前往「派工就緒」</a>
+    </div>
+</section>
+
 <template id="setup-ad-template">
     <div class="card mt-3 border bg-light" id="setup-ad-form" data-primary-scope>
         <div class="card-body">

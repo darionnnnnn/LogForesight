@@ -157,6 +157,7 @@ public class AuthController : ControllerBase
             DisplayName = _userDisplayNames.Of(_currentUser.DisplayName),
             IsServerAdmin = _currentUser.IsServerAdmin,
             Capabilities = _currentUser.Capabilities.Select(c => c.ToString()).ToList(),
+            OwnsAnyHost = _identity.OwnsAnyHost(_currentUser.UserId),
             NeedsAdminSetup = _currentUser.IsServerAdmin && _identity.HasNoAdmins(),
             LandingPath = LandingPathFor(_currentUser.UserId, _currentUser.IsServerAdmin, _currentUser.Capabilities)
         });
@@ -168,13 +169,15 @@ public class AuthController : ControllerBase
         DisplayName = _userDisplayNames.Of(identity.DisplayName),
         IsServerAdmin = identity.IsServerAdmin,
         Capabilities = identity.Capabilities.Select(c => c.ToString()).ToList(),
+        OwnsAnyHost = _identity.OwnsAnyHost(identity.UserId),
         NeedsAdminSetup = identity.IsServerAdmin && _identity.HasNoAdmins(),
         LandingPath = LandingPathFor(identity.UserId, identity.IsServerAdmin, identity.Capabilities)
     };
 
     /// <summary>
     /// 登入落地頁：只負責處理問題的人（有 Handle、沒有任何管理能力）直接落到自己的交辦工作頁——
-    /// 儀表板不是他今天要做的事；其餘一律落到儀表板。
+    /// 儀表板不是他今天要做的事；有 DevMonitor、沒有 Handle 也沒有 Assign 的人（典型是開發維運）直接落到排程作業頁，
+    /// 那是他每天要看的頁；其餘一律落到儀表板。救援帳號（serverAdmin）不適用以上兩條。
     /// </summary>
     internal static string LandingPathFor(long userId, bool isServerAdmin, IReadOnlySet<Capability> capabilities)
     {
@@ -183,6 +186,12 @@ public class AuthController : ControllerBase
             && !capabilities.Contains(Capability.Maintain)
             && !capabilities.Contains(Capability.Assign)
             && !capabilities.Contains(Capability.ViewAll);
-        return handlerOnly ? $"/handlers/{userId}" : "/";
+        if (handlerOnly) return $"/handlers/{userId}";
+
+        var monitorOnly = !isServerAdmin
+            && capabilities.Contains(Capability.DevMonitor)
+            && !capabilities.Contains(Capability.Handle)
+            && !capabilities.Contains(Capability.Assign);
+        return monitorOnly ? "/runs" : "/";
     }
 }

@@ -9,6 +9,8 @@ namespace LogForesight.Web.Services;
 ///
 /// **判定只有一份**：清單與恢復都走 <see cref="DispatchContext.DismissedCases"/>，與夜間派工、日層級指派用的
 /// <see cref="DispatchContext.DismissedKeys"/> 是同一個函式——這裡不寫任何狀態或欄位條件。
+/// 高嚴重度（或重大）且處理人回覆產生的，結案滿 30 天後閘門自動解除（<see cref="DismissalRelease"/>），清單每筆標示剩餘天數；
+/// 其餘（中低嚴重度、管理者明確勾選、上線前判定）維持永久。
 /// 恢復＝把那件最新案件的 <see cref="IssueCase.BlocksRedispatch"/> 寫成 false，不建案、不改狀態；
 /// 之後處理人再回不處理會是新案件（欄位空值），閘門重新生效。
 /// 「誰結的、哪一天」不另存欄位：從處理歷程（<see cref="RecordHandlingLog"/>）讀，歷程尚未同步時退回案件上待寫入的意圖。
@@ -30,6 +32,7 @@ public class DismissedIssueService
     private readonly IVisibilityService _visibility;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _displayNames;
+    private readonly TimeProvider _clock;
 
     public DismissedIssueService(
         IIssueCaseStore cases,
@@ -39,8 +42,10 @@ public class DismissedIssueService
         IKnownIssueRuleStore rules,
         IVisibilityService visibility,
         IAuditService audit,
-        IUserDisplayNameService displayNames)
+        IUserDisplayNameService displayNames,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _cases = cases;
         _handling = handling;
         _hosts = hosts;
@@ -77,11 +82,13 @@ public class DismissedIssueService
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var releaseRules = DismissalRelease.LookupFrom(rules);
+        var today = _clock.LocalToday();
         dto.Groups = pageGroups.Select(g => new DismissedGroupDto
         {
             Source = g.Items[0].Source,
             EventId = g.Key.EventId,
-            IssueLabel = LabelOf(g.Items[0].Source, g.Key.EventId),
+            IssueLabel = IssueNames.ForRules(rules, g.Items[0].Source, g.Key.EventId),
             PlainExplanation = KnownIssueCatalog.PlainExplanationFor(rules, g.Items[0].Source, g.Key.EventId),
             Hosts = g.Items.Count,
             Rows = g.Items.Select(b => new DismissedRowDto
@@ -90,10 +97,56 @@ public class DismissedIssueService
                 IssueKey = b.Case.IssueKey,
                 Status = b.Case.Status,
                 ClosedBy = ClosedByOf(b.Case, users),
-                ClosedAt = b.Case.ClosedAt
+                ClosedAt = b.Case.ClosedAt,
+                // 只有會解除的才有剩餘天數；上線前判定的高嚴重度、中低嚴重度、管理者明確勾選的都是永久
+                ReleaseInDays = DismissalRelease.RemainingDays(b.Case, today, releaseRules),
+                PreLaunch = DismissalRelease.IsPreLaunch(b.Case, releaseRules)
             }).ToList()
         }).ToList();
         return dto;
+    }
+
+    /// <summary>
+    /// 不再自動派工的輕量計數（清單預設收合時只顯示它）：N 個問題、M 台主機。與 <see cref="GetList"/> 走同一個查詢
+    /// （<see cref="Blocked"/>），數字必然相同；不組欄位、不讀處理歷程。
+    /// 單位：<see cref="DismissedCountDto.Issues"/>＝被擋住的相異（來源, 事件編號）問題數；<see cref="DismissedCountDto.Hosts"/>＝相異主機數；
+    /// 一個都沒有時兩者皆為 0。
+    /// </summary>
+    public DismissedCountDto GetCount()
+    {
+        var blocked = Blocked();
+        return new DismissedCountDto
+        {
+            Issues = blocked.Select(b => (b.SourceKey, b.EventId)).Distinct().Count(),
+            Hosts = blocked.Select(b => HostNameKey.Of(b.Case.HostName)).Distinct().Count()
+        };
+    }
+
+    /// <summary>
+    /// 每個問題被「不再自動派工」擋住的彙總（問題負責與靜音頁的「不顯示」總覽用）：走同一個 <see cref="Blocked"/>，
+    /// 與 <see cref="GetList"/> 的每組數字同一單位——<see cref="DismissedIssueSummary.Hosts"/>＝該問題被擋住的（主機, 問題）件數，
+    /// 與清單每組的 <see cref="DismissedGroupDto.Hosts"/> 相同；<see cref="DismissedIssueSummary.ReleasingHosts"/>＝其中會在 N 天後自動恢復的件數
+    /// （<see cref="DismissalRelease.RemainingDays"/> 有值者），<see cref="DismissedIssueSummary.NextReleaseInDays"/>＝其中最早恢復的剩餘天數。
+    /// 沒有被擋住的問題不列；一次批次查詢，不逐問題查。
+    /// </summary>
+    public List<DismissedIssueSummary> GetIssueSummaries()
+    {
+        var blocked = Blocked();
+        if (blocked.Count == 0) return new List<DismissedIssueSummary>();
+
+        var releaseRules = ReleaseRules();
+        var today = _clock.LocalToday();
+        return blocked
+            .GroupBy(b => (b.SourceKey, b.EventId))
+            .Select(g =>
+            {
+                var remaining = g.Select(b => DismissalRelease.RemainingDays(b.Case, today, releaseRules))
+                    .Where(d => d.HasValue).Select(d => d!.Value).ToList();
+                return new DismissedIssueSummary(g.First().Source, g.Key.EventId, g.Count(), remaining.Count,
+                    remaining.Count == 0 ? null : remaining.Min());
+            })
+            .OrderBy(s => s.Source, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.EventId)
+            .ToList();
     }
 
     /// <summary>恢復單一（主機, 問題）：該件最新案件的欄位寫成 false。目前沒被擋住（或看不到該主機）擲 NotFound。</summary>
@@ -103,12 +156,12 @@ public class DismissedIssueService
             || !VisibleHostNames().Contains(HostNameKey.Of(hostName)))
             throw DomainException.NotFound(NotBlockedMessage);
 
-        var target = DispatchContext.DismissedCases(_cases.GetMany(new[] { hostName }))
+        var target = DispatchContext.DismissedCases(_cases.GetMany(new[] { hostName }), _clock.LocalToday(), ReleaseRules())
             .FirstOrDefault(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, issueKey));
         if (target == null) throw DomainException.NotFound(NotBlockedMessage);
 
         var (source, eventId) = SourceAndEventOf(target);
-        var label = LabelOf(source, eventId);
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId);
         var previousStatus = target.Status;
         target.BlocksRedispatch = false;
         _cases.Save(target);
@@ -130,7 +183,7 @@ public class DismissedIssueService
         if (targets.Count == 0)
             throw DomainException.NotFound("這個問題目前沒有被「不再自動派工」擋住的主機。");
 
-        var label = LabelOf(targets[0].Source, eventId);
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), targets[0].Source, eventId);
         foreach (var t in targets) t.Case.BlocksRedispatch = false;
         _cases.SaveMany(targets.Select(t => t.Case).ToList());
 
@@ -147,7 +200,11 @@ public class DismissedIssueService
 
     private sealed record BlockedCase(IssueCase Case, string Source, string SourceKey, int EventId);
 
-    /// <summary>可見主機上目前被閘門擋住的案件（逐主機呼叫共用判定）</summary>
+    /// <summary>
+    /// 可見主機上目前被閘門擋住的案件：候選由資料庫端取（<see cref="IIssueCaseStore.GetDismissalCandidates"/>：每個鍵最新的未取消案件、
+    /// 不處理類、BlocksRedispatch 不是 false，只回被擋的而不是主機全部案件），再逐主機呼叫共用判定
+    /// <see cref="DispatchContext.DismissedCases"/> 套用 30 天解除。清單、計數與恢復共用這一個方法。
+    /// </summary>
     private List<BlockedCase> Blocked()
     {
         var visible = VisibleHostNames();
@@ -155,9 +212,11 @@ public class DismissedIssueService
 
         var hostNames = _hosts.GetAll().Where(h => visible.Contains(HostNameKey.Of(h.HostName))).Select(h => h.HostName).ToList();
         var result = new List<BlockedCase>();
-        foreach (var byHost in _cases.GetMany(hostNames).GroupBy(c => HostNameKey.Of(c.HostName)))
+        var today = _clock.LocalToday();
+        var releaseRules = ReleaseRules();
+        foreach (var byHost in _cases.GetDismissalCandidates(hostNames).GroupBy(c => HostNameKey.Of(c.HostName)))
         {
-            foreach (var c in DispatchContext.DismissedCases(byHost))
+            foreach (var c in DispatchContext.DismissedCases(byHost, today, releaseRules))
             {
                 var (source, eventId) = SourceAndEventOf(c);
                 result.Add(new BlockedCase(c, source, WorkOrderIssueKey.SourceKeyOf(source), eventId));
@@ -165,6 +224,8 @@ public class DismissedIssueService
         }
         return result;
     }
+
+    private IssueRuleLookup ReleaseRules() => DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
 
     private HashSet<string> VisibleHostNames()
     {
@@ -177,7 +238,6 @@ public class DismissedIssueService
             ? (parsed.Source, parsed.EventId)
             : (c.SourceName ?? c.IssueLabel, c.EventId ?? 0);
 
-    private static string LabelOf(string source, int eventId) => $"{source} {eventId}";
 
     /// <summary>
     /// 結案的人：先找處理歷程裡同主機、同問題、同狀態且時間最貼近結案時間的一列（歷程日在案件最後／最早掛接日）；

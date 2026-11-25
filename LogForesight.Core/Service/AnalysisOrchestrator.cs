@@ -657,6 +657,7 @@ public class AnalysisOrchestrator
                     dispatchContext = DispatchContext.Build(
                         candidatePool, new IssueOwnerStore(backend.Blob("issue_owners")), workOrderStore, issueCaseStore,
                         new NoiseMarkStore(backend.Blob("noise_marks")), systemSettings, backend.Clock.LocalNow(),
+                        DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(ruleStore)),
                         WorkOrderQueries.DisabledHostKeys(hostStore.GetAll()));
                 }
                 catch (Exception ex)
@@ -1494,7 +1495,7 @@ public class AnalysisOrchestrator
                 console.WriteLine($"  現在該做：{record.Action}");
             }
         }
-        else if (!record.AiAnalyzed && verbose)
+        else if (!record.AiAnalyzed && verbose && record.Summary.Length > 0)
         {
             console.WriteLine($"  {record.Summary}");
         }

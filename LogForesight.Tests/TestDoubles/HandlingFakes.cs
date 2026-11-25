@@ -1,3 +1,4 @@
+using LogForesight.Core.Time;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -55,10 +56,10 @@ internal class HandlingServiceFacade
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
+            audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            displayNames, mail, issueOwners, noiseMarks, cases, exclusions);
+            displayNames, new FakeRuleStore(), mail, issueOwners, noiseMarks, cases, exclusions);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);
@@ -78,8 +79,9 @@ internal class HandlingServiceFacade
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
     public HandlerWorkloadDto GetHandlerWorkload(
-        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false) =>
-        _history.GetHandlerWorkload(userId, includeResolvedDays, casesPage, daysPage, pageSize, unresolvedOnly);
+        long userId, bool includeResolvedDays, int casesPage = 1, int daysPage = 1, int pageSize = 20, bool unresolvedOnly = false,
+        string? hostNameFilter = null) =>
+        _history.GetHandlerWorkload(userId, includeResolvedDays, casesPage, daysPage, pageSize, unresolvedOnly, hostNameFilter);
 }
 
 /// <summary>可見範圍固定為空——供工作頁的「檢視者可見範圍過濾」測試使用</summary>
@@ -268,8 +270,12 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
         _items.Where(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
                           h.Date.Date == date.Date).ToList();
 
+    /// <summary>測試掛鉤：每次 GetMany 之前呼叫，用來模擬「計畫之後、協調器寫入之前」資料被別人改掉的競態</summary>
+    public Action? BeforeGetMany { get; set; }
+
     public List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to)
     {
+        BeforeGetMany?.Invoke();
         var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return _items.Where(h => names.Contains(h.HostName) &&
                                  h.Date.Date >= from.Date && h.Date.Date <= to.Date).ToList();
@@ -422,11 +428,47 @@ internal class FakeIssueCaseStore : IIssueCaseStore
 
     public int CountByWorkOrder(long workOrderId) => _items.Count(c => c.WorkOrderId == workOrderId);
 
+    /// <summary>讀取側改用的「今天」（觀察期、逾期判定）；測試注入假時鐘，沒設時用系統日期</summary>
+    public TimeProvider? Clock { get; set; }
+
+    public int GetActiveMemberSummariesCalls { get; private set; }
+    public int GetClosedHistoryCalls { get; private set; }
+    public int CountDistinctHostsCalls { get; private set; }
+
+    /// <summary>同 EF 版：進行中且屬於某張單的成員；null＝全部交辦單</summary>
+    public List<IssueCase> GetActiveMemberSummaries(IReadOnlyCollection<long>? workOrderIds)
+    {
+        GetActiveMemberSummariesCalls++;
+        return _items.Where(c => c.ClosedAt == null && c.WorkOrderId != null
+                                 && (workOrderIds == null || workOrderIds.Contains(c.WorkOrderId.Value))).ToList();
+    }
+
+    /// <summary>同 EF 版：已結案、未取消、指定主機與問題（來源不分大小寫）、結案時間不早於下限</summary>
+    public List<IssueCase> GetClosedHistory(IEnumerable<string> hostNames, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime? closedSince)
+    {
+        GetClosedHistoryCalls++;
+        var names = hostNames.Select(HostNameKey.Of).ToHashSet(StringComparer.Ordinal);
+        var wanted = issues.Select(i => (WorkOrderIssueKey.SourceKeyOf(i.Source), i.EventId)).ToHashSet();
+        return _items.Where(c => c.ClosedAt != null && !c.Cancelled && c.SourceName != null && c.EventId != null
+                                 && (closedSince == null || c.ClosedAt >= closedSince)
+                                 && names.Contains(HostNameKey.Of(c.HostName))
+                                 && wanted.Contains((WorkOrderIssueKey.SourceKeyOf(c.SourceName), c.EventId.Value))).ToList();
+    }
+
+    /// <summary>同 EF 版：每張單 host_name_key 去重的主機數，零成員的單不出現</summary>
+    public Dictionary<long, int> CountDistinctHosts(IReadOnlyCollection<long> workOrderIds)
+    {
+        CountDistinctHostsCalls++;
+        return _items.Where(c => c.WorkOrderId != null && workOrderIds.Contains(c.WorkOrderId.Value))
+            .GroupBy(c => c.WorkOrderId!.Value)
+            .ToDictionary(g => g.Key, g => g.Select(c => HostNameKey.Of(c.HostName)).Distinct().Count());
+    }
+
     /// <summary>同 EF 版：狀態與主機名（大寫鍵）篩選，依主機名大寫、CaseId 排序後分頁</summary>
     public (List<IssueCase> Items, int Total) QueryMembers(WorkOrderMemberQuery q)
     {
         WorkOrderQueries.Validate(q);
-        var today = DateTime.Today;
+        var today = Clock?.LocalToday() ?? DateTime.Today;
         var keys = q.HostNameKeys?.Select(HostNameKey.Of).ToHashSet(StringComparer.Ordinal);
 
         var matched = _items.Where(c => c.WorkOrderId == q.WorkOrderId)
@@ -439,8 +481,14 @@ internal class FakeIssueCaseStore : IIssueCaseStore
                 WorkOrderQueries.StatusOverdue => WorkOrderQueries.IsOverdue(c, today),
                 _ => true
             })
-            .OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
-            .ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .ToList();
+
+        // 同 EF 版：「全部」＝主機、建立日新到舊、案件編號；其餘＝主機、案件編號
+        matched = (q.Status == WorkOrderQueries.StatusAll
+                ? matched.OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
+                    .ThenByDescending(c => c.CreatedAt).ThenBy(c => c.CaseId, StringComparer.Ordinal)
+                : matched.OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal)
+                    .ThenBy(c => c.CaseId, StringComparer.Ordinal))
             .ToList();
 
         return (matched.Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).ToList(), matched.Count);

@@ -301,7 +301,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IAuditService, AuditService>();
         // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
-        services.AddScoped<UserCapabilityResolver>();
+        services.AddSingleton<UserCapabilityResolver>();   // 只依賴 singleton store；AdminReminderService（singleton）也要用
         services.AddSingleton<DirectoryVerifyGate>();   // 目錄服務驗證並行上限，跨請求共用
         services.AddScoped<IdentityService>();
         services.AddScoped<PrtgScopePurgeAuthorizationService>();
@@ -310,11 +310,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<HostAdminService>();
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
+        services.AddScoped<UserGroupPreviewService>();
         services.AddScoped<IssueOwnerAdminService>();
         services.AddSingleton<IAiProbeService>(sp =>
         {
             var settings = sp.GetRequiredService<ISystemSettingsStore>();
-            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient());
+            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient(), requestGate: sp.GetRequiredService<IAiRequestGate>());
         });
         services.AddScoped<SetupReadinessService>();
 
@@ -425,6 +426,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IssueTodoQuery>();
         // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
         services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
+        // 只回計數的待派試跑（與 GetGaps 共用同一個 RunTrial）與其跨請求共用點
+        services.AddScoped<PendingDispatchSummaryProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGapCounts);
+        services.AddScoped<PendingDispatchCountsService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
         services.AddScoped<ReportEffectivenessService>();
@@ -454,11 +458,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WorkOrderQueryService>();
         // 手動派工人選（交辦／改派／日層級指派共用；能力與可見範圍沿用既有解析器）
         services.AddScoped<WorkOrderCandidateService>();
+        services.AddScoped<WorkOrderBulkReassignService>();
         // 交辦單回覆（處理人本人；授權在服務內）
         services.AddScoped<WorkOrderReplyService>();
         // 交辦單負載看板／待派清單（派工試跑）／立即派工
         services.AddScoped<WorkOrderBoardService>();
         services.AddScoped<DismissedIssueService>();
+        services.AddScoped<IssueHideSummaryService>();
+        services.AddScoped<AdminTodoService>();
         services.AddScoped<HandlingHistoryQueryService>();
 
         services.AddScoped<PermissionChangeService>();
@@ -506,6 +513,8 @@ public static class ServiceCollectionExtensions
 
         // 派工候選人快照：Singleton，相依全是 Singleton store（能力／可見範圍規則留在 Web，Core 只吃快照）
         services.AddSingleton<IDispatchCandidateSource, DispatchCandidateSource>();
+        // 派工就緒檢查與主機群組「看得到的派工池群組」：重用候選人快照與既有判定，不另寫規則
+        services.AddSingleton<DispatchReadinessService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊

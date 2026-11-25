@@ -214,7 +214,7 @@ public class HandlerWorkPageTests : IDisposable
         new() { LogName = "System", Source = Source, EventId = eventId, EntryType = LogEntryType.Error };
 
     private WorkOrderReplyController Controller(WebUser user) =>
-        new(new WorkOrderReplyService(_coordinator, _orders, _cases, FakeCurrentUser.ForUser(user.UserId, Capability.Handle), _audit, _mail));
+        new(new WorkOrderReplyService(_coordinator, _orders, _cases, FakeCurrentUser.ForUser(user.UserId, Capability.Handle), _audit, _mail, new FakeRuleStore()));
 
     private long CreateOrder(WebUser handler) =>
         _coordinator.Create(new WorkOrderCreateRequest

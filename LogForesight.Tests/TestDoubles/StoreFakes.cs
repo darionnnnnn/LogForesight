@@ -287,6 +287,22 @@ internal class FakeGroupAccessStore : IGroupAccessStore
             _accesses.Add(new GroupAccess { UserGroupId = userGroupId, HostGroupId = hostGroupId });
     }
 
+    public GroupAccessChange ApplyChange(long userGroupId, IReadOnlyCollection<long> grant, IReadOnlyCollection<long> revoke)
+    {
+        var added = new List<long>();
+        var removed = new List<long>();
+        foreach (var id in grant.Distinct())
+        {
+            if (_accesses.Any(a => a.UserGroupId == userGroupId && a.HostGroupId == id)) continue;
+            _accesses.Add(new GroupAccess { UserGroupId = userGroupId, HostGroupId = id });
+            added.Add(id);
+        }
+        foreach (var id in revoke.Distinct())
+            if (_accesses.RemoveAll(a => a.UserGroupId == userGroupId && a.HostGroupId == id) > 0) removed.Add(id);
+        return new GroupAccessChange(added, removed,
+            _accesses.Where(a => a.UserGroupId == userGroupId).Select(a => a.HostGroupId).ToList());
+    }
+
     public void ReplaceAll(IEnumerable<GroupAccess> accesses) => _accesses = accesses.ToList();
 }
 
@@ -323,6 +339,35 @@ internal class FakeUserStore : IUserStore
         existing.Active = user.Active;
         existing.GroupIds = user.GroupIds;
         return existing;
+    }
+
+    private readonly object _saveLock = new();
+
+    public UserSaveResult SaveIfUnchanged(WebUser user, string? expectedVersion, IReadOnlyCollection<long>? groupIds)
+    {
+        lock (_saveLock)
+        {
+            var existing = FindByAccount(user.Account);
+            if (existing == null)
+            {
+                user.UserId = _nextId++;
+                if (groupIds != null) user.GroupIds = groupIds.Distinct().ToList();
+                _users.Add(user);
+                return new UserSaveResult(null, user);
+            }
+
+            if (!string.Equals(expectedVersion, UserVersion.Of(existing), StringComparison.Ordinal))
+                throw ConcurrentUpdateException.StaleVersion();
+
+            var before = UserVersion.Snapshot(existing);
+            if (existing.Active && !user.Active) existing.SessionVersion++;
+            existing.Account = user.Account;
+            existing.DisplayName = user.DisplayName;
+            existing.Email = user.Email;
+            existing.Active = user.Active;
+            if (groupIds != null) existing.GroupIds = groupIds.Distinct().ToList();
+            return new UserSaveResult(before, existing);
+        }
     }
 
     public void SetGroups(long userId, IEnumerable<long> groupIds)

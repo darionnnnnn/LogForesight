@@ -808,8 +808,8 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(2, logs.Count);
         Assert.All(logs, l => Assert.Equal(HandlingActions.IssueStatus, l.Action));
         Assert.All(logs, l => Assert.Equal(HandlingStatuses.Resolved, l.Status));
-        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(a) && l.IssueLabel == "disk 153");
-        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(b) && l.IssueLabel == "app 1000");
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(a) && l.IssueLabel == "disk EventId 153");
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(b) && l.IssueLabel == "app EventId 1000");
         // 同一次批次共用同一個時間戳（供前端 timeline 視覺分組），操作者一致
         Assert.All(logs, l => Assert.Equal(logs[0].CreatedAt, l.CreatedAt));
         Assert.All(logs, l => Assert.False(string.IsNullOrEmpty(l.ActorAccount)));
@@ -834,7 +834,7 @@ public class HandlingServiceTests : IDisposable
         var log = Assert.Single(_handlings.GetLogs(_host.HostName, day));
         Assert.Equal(HandlingActions.IssueStatus, log.Action);
         Assert.Equal(IssueSignatureKey.For(a), log.IssueKey);
-        Assert.Equal("disk 153", log.IssueLabel);
+        Assert.Equal("disk EventId 153", log.IssueLabel);
         Assert.Equal(HandlingStatuses.InProgress, log.Status);
         Assert.Equal("查修中", log.Note);
     }
@@ -1561,6 +1561,132 @@ public class HandlingServiceTests : IDisposable
         Assert.Null(_issueOwners.Get("disk", 153));
     }
 
+    // ── O1：主機負責人（具 Handle、不具 Assign）的統一標記 ───────────────────────────────
+
+    private HandlingServiceFacade CreateAs(WebUser actor, params Capability[] capabilities) => new(
+        store: _handlings, issueStore: _issueHandlings, cases: _cases, caseCoordinator: _caseCoordinator,
+        noiseMarks: _noiseMarks, repository: _repository, hosts: _hosts, users: _users,
+        visibility: new AlwaysVisibleService(_hosts), currentUser: FakeCurrentUser.ForUser(actor.UserId, capabilities),
+        audit: _audit, settings: _settings, issueOwners: _issueOwners);
+
+    /// <summary>SRV-A 由 _owner 負責（建構子）；SRV-B 沒有負責人。兩台都有同一個問題。</summary>
+    private WebHost AddUnownedHostWithDisk(string name, DateTime day)
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = name });
+        _repository.AddRecord(host.HostName, day, Issue("disk", 153));
+        return host;
+    }
+
+    private static BulkCloseIssueRequest CloseRequest(bool autoApply = false) => new()
+    {
+        Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "負責人統一標記", AutoApply = autoApply
+    };
+
+    [Fact]
+    public void O1_負責人只標到自己負責的主機_其他主機列入略過且原因是不是你負責的主機()
+    {
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        var unowned = AddUnownedHostWithDisk("SRV-B", day);
+
+        var result = CreateAs(_owner, Capability.Handle).BulkCloseIssue(CloseRequest());
+
+        Assert.Equal(1, result.UpdatedHostCount);
+        var skipped = Assert.Single(result.Skipped);
+        Assert.Equal("SRV-B", skipped.HostName);
+        Assert.Equal("不是你負責的主機", skipped.SkipReason);
+        Assert.Single(_issueHandlings.GetForDay(_host.HostName, day));
+        Assert.Empty(_issueHandlings.GetForDay(unowned.HostName, day));
+    }
+
+    [Fact]
+    public void O1_預覽與套用同一份略過規則_負責人預覽看得到自己的台數與略過台數()
+    {
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        AddUnownedHostWithDisk("SRV-B", day);
+
+        var preview = CreateAs(_owner, Capability.Handle).PreviewBulkClose("disk", 153, null, null);
+
+        Assert.Equal(2, preview.TotalHostCount);
+        Assert.Equal(1, preview.SkippedHostCount);
+        Assert.Equal(1, preview.TotalDayCount);
+        Assert.Equal("不是你負責的主機", preview.Hosts.Single(h => h.HostName == "SRV-B").SkipReason);
+        Assert.Null(preview.Hosts.Single(h => h.HostName == _host.HostName).SkipReason);
+    }
+
+    [Fact]
+    public void O1_負責人一台都不負責_整批擋下且不寫入()
+    {
+        var day = Today.AddDays(-3);
+        var unowned = AddUnownedHostWithDisk("SRV-B", day);
+
+        var ex = Assert.Throws<DomainException>(() => CreateAs(_other, Capability.Handle).BulkCloseIssue(CloseRequest()));
+
+        Assert.Contains("沒有您負責的主機", ex.Message);
+        Assert.Empty(_issueHandlings.GetForDay(unowned.HostName, day));
+        Assert.Empty(_issueHandlings.GetForDay(_host.HostName, day));
+    }
+
+    [Fact]
+    public void O1_負責人送出之後自動套用的機房結論被拒_仍需Assign且零寫入()
+    {
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+
+        // 即使同時具 Maintain，沒有 Assign 的負責人也不能設全站的決定
+        var ex = Assert.Throws<DomainException>(() =>
+            CreateAs(_owner, Capability.Handle, Capability.Maintain).BulkCloseIssue(CloseRequest(autoApply: true)));
+
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        Assert.Null(_issueOwners.Get("disk", 153));
+        Assert.Empty(_issueHandlings.GetForDay(_host.HostName, day));
+    }
+
+    [Fact]
+    public void O1_Admin行為不變_不限負責主機且可帶機房結論()
+    {
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        var unowned = AddUnownedHostWithDisk("SRV-B", day);
+
+        var result = CreateAs(_other, Capability.Assign, Capability.Handle, Capability.Maintain).BulkCloseIssue(CloseRequest(autoApply: true));
+
+        Assert.Equal(2, result.UpdatedHostCount);
+        Assert.Empty(result.Skipped);
+        Assert.Single(_issueHandlings.GetForDay(unowned.HostName, day));
+        Assert.NotNull(_issueOwners.Get("disk", 153));
+    }
+
+    /// <summary>授權維度在 controller 標註：只要 Handle（負責人可進），不再疊 Assign；不具 Handle 的（含只有 Assign 者）被擋成 403</summary>
+    [Theory]
+    [InlineData(new[] { Capability.Assign }, true)]
+    [InlineData(new[] { Capability.ViewAll, Capability.Maintain }, true)]
+    [InlineData(new[] { Capability.Handle }, false)]
+    [InlineData(new[] { Capability.Assign, Capability.Handle }, false)]
+    public void O1_統一標記端點的能力門檻只有Handle(Capability[] caps, bool denied)
+    {
+        var attributes = typeof(LogForesight.Web.Controllers.Api.IssueBulkCloseController)
+            .GetCustomAttributes(typeof(LogForesight.Web.Filters.PermissionAttribute), inherit: true)
+            .Cast<LogForesight.Web.Filters.PermissionAttribute>().ToList();
+        var required = Assert.Single(attributes).Arguments!.Cast<Capability[]>().Single();
+        Assert.Equal(new[] { Capability.Handle }, required);
+
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        http.Request.Path = "/api/handling/issue-cases/bulk-close";
+        var context = new Microsoft.AspNetCore.Mvc.Filters.AuthorizationFilterContext(
+            new Microsoft.AspNetCore.Mvc.ActionContext(http, new Microsoft.AspNetCore.Routing.RouteData(),
+                new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor()),
+            new List<Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata>());
+
+        new LogForesight.Web.Filters.PermissionFilter(required, FakeCurrentUser.ForUser(_other.UserId, caps), _audit).OnAuthorization(context);
+
+        if (denied)
+            Assert.Equal(403, Assert.IsType<Microsoft.AspNetCore.Mvc.ObjectResult>(context.Result).StatusCode);
+        else
+            Assert.Null(context.Result);
+    }
+
     /// <summary>
     /// 已有進行中案件的主機整台略過（定案 6-1）——不論處理人是誰。要動別人的案件，
     /// 正規路徑是改派或由處理人自己回覆。
@@ -1786,11 +1912,35 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(1, workload.OpenCaseCount);
         var caseItem = Assert.Single(workload.Cases);
         Assert.Equal(_host.HostName, caseItem.HostName);
-        Assert.Equal("disk 153", caseItem.IssueLabel);
+        Assert.Equal("disk EventId 153", caseItem.IssueLabel);
 
         var dayItem = Assert.Single(workload.Days);
         Assert.Equal(day.ToString("yyyy-MM-dd"), dayItem.Date);
         Assert.Equal(HandlingStatuses.InProgress, dayItem.DerivedStatus);
+    }
+
+    [Fact]
+    public void 工作頁_主機名搜尋_完全相符不分大小寫_只影響清單與清單總數不影響三個計數()
+    {
+        var day = Today.AddDays(-50);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+
+        var hit = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: _host.HostName.ToLowerInvariant());
+        Assert.Single(hit.Cases);
+        Assert.Single(hit.Days);
+        Assert.Equal(1, hit.CasesTotal);
+
+        var miss = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: "NOT-A-HOST");
+        Assert.Empty(miss.Cases);
+        Assert.Empty(miss.Days);
+        Assert.Equal(0, miss.CasesTotal);
+        Assert.Equal(1, miss.OpenCaseCount);   // 計數是全部，不隨搜尋變
+
+        var partial = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: _host.HostName[..1]);
+        Assert.Empty(partial.Cases);   // 完全相符，不是包含
+        Assert.Single(service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false, hostNameFilter: "  ").Cases);
     }
 
     [Fact]
@@ -2342,7 +2492,7 @@ public class HandlingServiceTests : IDisposable
 
         Assert.Equal(2, _mailSender.Sent.Count);
         var second = _mailSender.Sent[1];
-        Assert.Contains("app 1000", second.Message.Body);
+        Assert.Contains("app EventId 1000", second.Message.Body);
         Assert.DoesNotContain("2 個問題", second.Message.Body);
     }
 
@@ -2360,7 +2510,7 @@ public class HandlingServiceTests : IDisposable
         _repository.AddRecord(second.HostName, day, a);
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Handle);
         var (_, orders, coordinator) = CreateIssueServiceWithOrders(currentUser);
-        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail());
+        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail(), new FakeRuleStore());
         var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, second.HostName);
 
         reply.Reply(id, new WorkOrderReplyRequest
@@ -2389,7 +2539,7 @@ public class HandlingServiceTests : IDisposable
             new AlwaysVisibleService(_hosts), currentUser, _audit,
             new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
-            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared, new FakeRuleStore()),
             displayNames);
         return (service, orders, coordinator);
     }

@@ -15,8 +15,10 @@ import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction
 import { roleText } from '../core/elements.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
+import { guardHideSummary } from './issue-hide-summary.js';
 
 const listContainer = document.getElementById('issue-owner-list');
+const hideSummaryContainer = document.getElementById('issue-hide-summary');
 const form = document.getElementById('issue-owner-form');
 const modal = new bootstrap.Modal(document.getElementById('issue-owner-modal'));
 const picker = document.getElementById('issue-owner-picker');
@@ -61,13 +63,15 @@ async function load() {
     users = userList;
 
     renderList();
+    // 不顯示設定總覽（批次 N）：與清單同一時機重載；失敗只影響總覽，不拖住清單
+    guardHideSummary(hideSummaryContainer, () => guardLoad(listContainer, load));
 }
 
 /** 問題顯示標籤的單一出口：後端已算好 displayLabel（Linux 的 EventId 恆 0，不顯示無意義的「(0)」），
  * 舊資料或尚未帶欄位時退回本地推算 */
 function issueLabel(item) {
     if (!item) return '';
-    return item.displayLabel || (item.eventId === 0 ? item.sourceName : `${item.sourceName} (${item.eventId})`);
+    return item.displayLabel;
 }
 
 function renderList() {

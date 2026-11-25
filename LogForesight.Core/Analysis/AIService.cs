@@ -327,6 +327,9 @@ public class AIService : IAiService, IDisposable
 
         // 互動車道（畫面上有人在等）連本實例的佇列都不無限等：排隊逾上限照一般失敗降級（體檢輪）。
         // 閘道在佇列之後取，上限只套在閘道上等於沒限——第二個問題會在佇列裡等到前一個答完。
+        // 冷卻中（AI 剛網路層失敗）：互動入口連佇列都不排，直接回「暫時無法連線」，不讓每個人各等一次逾時
+        if (_lane == AiLane.Interactive && _gate.InteractiveCoolingDown)
+            return CooldownResponse(prompt, systemPrompt);
         if (_lane == AiLane.Interactive && !await _requestQueue.WaitAsync(_gate.InteractiveMaxWait, ct))
         {
             Log.Warn("Chat 互動請求在實例佇列排隊超過 {Seconds} 秒，放棄", _gate.InteractiveMaxWait.TotalSeconds);
@@ -338,6 +341,9 @@ public class AIService : IAiService, IDisposable
         ChatCallInfo? lastCallInfo = null;
         try
         {
+            // 排隊期間別人的請求失敗而開了冷卻：排在後面的人不必再各送一次（第一個失敗後其餘走冷卻）
+            if (_lane == AiLane.Interactive && _gate.InteractiveCoolingDown)
+                return CooldownResponse(prompt, systemPrompt);
             // 全站閘道在本實例佇列之後取：排在自己佇列裡的呼叫不佔全站許可。
             // 互動車道排不到會擲 TimeoutException，由下方 catch 照一般失敗降級。
             using var lease = await _gate.EnterAsync(_lane, ct);
@@ -396,6 +402,7 @@ public class AIService : IAiService, IDisposable
                 return sanitized;
             }, ct);
 
+            _gate.ReportSuccess();
             Log.Info("Chat 完成：耗時={ElapsedMs}ms, 回應長度={ResponseChars} 字元", sw.ElapsedMilliseconds, content.Length);
             _dumper.Dump(label, systemPrompt ?? "", prompt, content);
             return new AiResponse
@@ -428,6 +435,7 @@ public class AIService : IAiService, IDisposable
         catch (Exception ex)
         {
             Log.Warn(ex, "Chat 最終失敗（重試已耗盡）：耗時={ElapsedMs}ms", sw.ElapsedMilliseconds);
+            if (IsNetworkFailure(ex)) _gate.ReportNetworkFailure(_lane);
             // 只有空回覆失敗是「伺服器有回、內容空」，才有回應資訊可帶；連線、HTTP、逾時沒有
             var emptyInfo = ex is EmptyAiResponseException ? lastCallInfo : null;
             return new AiResponse
@@ -449,6 +457,27 @@ public class AIService : IAiService, IDisposable
             _requestQueue.Release();
         }
     }
+
+    /// <summary>冷卻期間互動入口的回應：不送請求，失敗訊息固定（呼叫端照一般 AI 失敗降級）。</summary>
+    private static AiResponse CooldownResponse(string prompt, string? systemPrompt) => new()
+    {
+        Success = false,
+        Error = AiRequestGate.CooldownMessage,
+        PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0
+    };
+
+    /// <summary>
+    /// 這個例外算不算「AI 網路層失敗」（會開啟互動車道冷卻）：連線層失敗與 5xx／408／429（<see cref="IsTransientHttpFailure"/>），
+    /// 以及 HttpClient 逾時（<see cref="TaskCanceledException"/>／<see cref="OperationCanceledException"/>）。
+    /// <b>使用者取消不算</b>：呼叫端要先排除「OCE 且自己的 ct 已取消」（<see cref="ChatAsync"/> 在更前面的 catch 已處理）。
+    /// 排隊逾時（<see cref="TimeoutException"/>）、空回應、信封解析失敗、400／401／404 都不算——那些不是「連不上」。
+    /// </summary>
+    internal static bool IsNetworkFailure(Exception ex) => ex switch
+    {
+        HttpRequestException http => IsTransientHttpFailure(http),
+        OperationCanceledException => true,   // 走到這裡的 OCE 一定不是呼叫端取消（見上），即 HttpClient 逾時
+        _ => false
+    };
 
     /// <summary>記下這次呼叫的 token 用量；統計失敗不得影響 AI 呼叫本身。</summary>
     private void RecordUsage(OpenAIUsage? usage)

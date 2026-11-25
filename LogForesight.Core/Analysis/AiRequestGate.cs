@@ -33,6 +33,22 @@ public interface IAiRequestGate
     /// 掛在閘道上是因為閘道本來就是全站唯一、每個 <see cref="AIService"/> 建構點都必須帶的物件。
     /// </summary>
     AiGrammarMemory GrammarMemory { get; }
+
+    /// <summary>
+    /// 互動車道是否在冷卻中（D 批 A1／CU-4）：AI 網路層失敗（連線失敗、逾時）後的 <see cref="AiRequestGate.NetworkFailureCooldown"/> 內為 true。
+    /// 冷卻期間互動入口（今日焦點、查詢歸納、判讀、整理說明、詢問 AI）不送請求、直接回 <see cref="AiRequestGate.CooldownMessage"/>，
+    /// 不必每個人各等一次逾時；背景車道不看這個值（排程有自己的重試與退避）。預設實作恆為 false，測試替身不必跟著改。
+    /// </summary>
+    bool InteractiveCoolingDown => false;
+
+    /// <summary>
+    /// 回報一次網路層失敗。只有互動車道的失敗會開啟（或延長）冷卻：背景請求逾時多半是「這個 prompt 就是跑不完」，
+    /// 不代表 AI 掛了。呼叫端負責分辨失敗種類（<see cref="AIService.IsNetworkFailure"/>），使用者取消不得回報。
+    /// </summary>
+    void ReportNetworkFailure(AiLane lane) { }
+
+    /// <summary>回報一次成功：解除冷卻（任一車道的成功都證明 AI 通了）。</summary>
+    void ReportSuccess() { }
 }
 
 /// <summary>不節流（僅供測試；正式碼的閘道參數一律必填）：行為等同只有各實例自己的序列化。</summary>
@@ -69,6 +85,12 @@ public sealed class AiRequestGate : IAiRequestGate
     public static readonly TimeSpan DefaultInteractiveMaxWait = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan DefaultBackgroundMaxYield = TimeSpan.FromSeconds(30);
 
+    /// <summary>網路層失敗後互動車道的冷卻時間（程式常數，不開設定）。</summary>
+    public static readonly TimeSpan NetworkFailureCooldown = TimeSpan.FromSeconds(60);
+
+    /// <summary>冷卻期間互動入口直接回的訊息。</summary>
+    public const string CooldownMessage = "AI 暫時無法連線，請稍後再試。";
+
     /// <summary>等待中至多隔這麼久重看一次（背景上限改設定時不必等別人歸還許可）。</summary>
     private static readonly TimeSpan RecheckInterval = TimeSpan.FromSeconds(1);
 
@@ -79,16 +101,40 @@ public sealed class AiRequestGate : IAiRequestGate
     private int _interactive;
     private int _background;
     private TaskCompletionSource _changed = NewSignal();
+    private readonly TimeProvider _time;
+    // 冷卻到期時刻（UTC ticks；0＝沒有冷卻）。單一個時間戳，不是集合，沒有成長問題
+    private long _cooldownUntilTicks;
 
     /// <param name="backgroundLimit">背景併發上限（AI 併發數設定），夾在 1～8</param>
-    public AiRequestGate(Func<int> backgroundLimit, TimeSpan? interactiveMaxWait = null, TimeSpan? backgroundMaxYield = null)
+    /// <param name="timeProvider">冷卻判定用的時鐘（「現在」一律走注入的 TimeProvider）；預設系統時鐘</param>
+    public AiRequestGate(Func<int> backgroundLimit, TimeSpan? interactiveMaxWait = null, TimeSpan? backgroundMaxYield = null,
+        TimeProvider? timeProvider = null)
     {
+        _time = timeProvider ?? TimeProvider.System;
         _backgroundLimit = backgroundLimit;
         _interactiveMaxWait = interactiveMaxWait ?? DefaultInteractiveMaxWait;
         _backgroundMaxYield = backgroundMaxYield ?? DefaultBackgroundMaxYield;
     }
 
     public TimeSpan InteractiveMaxWait => _interactiveMaxWait;
+
+    public bool InteractiveCoolingDown => _time.GetUtcNow().UtcTicks < Interlocked.Read(ref _cooldownUntilTicks);
+
+    public void ReportNetworkFailure(AiLane lane)
+    {
+        if (lane != AiLane.Interactive) return;
+        var until = _time.GetUtcNow().UtcTicks + NetworkFailureCooldown.Ticks;
+        long seen;
+        // 只往後延、不往前縮：並發的失敗回報以最晚的到期時刻為準
+        while ((seen = Interlocked.Read(ref _cooldownUntilTicks)) < until &&
+               Interlocked.CompareExchange(ref _cooldownUntilTicks, until, seen) != seen) { }
+        if (seen < until) Log.Warn("AI 互動請求網路層失敗，互動入口冷卻 {Seconds} 秒（冷卻期間不送請求、直接回 AI 暫時無法連線）", NetworkFailureCooldown.TotalSeconds);
+    }
+
+    public void ReportSuccess()
+    {
+        if (Interlocked.Exchange(ref _cooldownUntilTicks, 0) != 0) Log.Info("AI 請求成功，互動入口冷卻解除");
+    }
 
     /// <summary>全站共用的強制格式記憶（本閘道是全站唯一實例）。</summary>
     public AiGrammarMemory GrammarMemory { get; } = new();

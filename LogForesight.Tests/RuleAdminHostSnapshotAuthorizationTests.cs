@@ -200,6 +200,7 @@ public sealed class RuleAdminHostSnapshotAuthorizationTests
         }
 
         public void SetForUserGroup(long id, IEnumerable<long> hostGroupIds) => inner.SetForUserGroup(id, hostGroupIds);
+        public GroupAccessChange ApplyChange(long id, IReadOnlyCollection<long> grant, IReadOnlyCollection<long> revoke) => inner.ApplyChange(id, grant, revoke);
         public void ReplaceAll(IEnumerable<GroupAccess> accesses) => inner.ReplaceAll(accesses);
     }
 }

@@ -102,9 +102,15 @@ public class IssueCaseCoordinator
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
-        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）
+        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）。
+        // 案件目前就是處理中、又標處理中且沒帶日期＝保留案件原有的期限（回覆不清掉期限，P-1；與 WorkOrderCoordinator.ApplyStatus 同一條規則，兩邊要一起改）；
+        // 目前是觀察中（存的是「觀察至」）切回處理中沒帶日期＝沒有期限，不沿用觀察至；
+        // 觀察中語意不變，沒帶就是沒有
         var effectiveDueDate = effectiveStatus is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
-            ? dueDate : null;
+            ? (effectiveStatus == IssueHandlingStatuses.InProgress
+                ? dueDate ?? (openCase.Status == IssueHandlingStatuses.InProgress ? openCase.DueDate : null)
+                : dueDate)
+            : null;
 
         var eligibleDays = ResolveEligibleDays(host, hostName, issueKey);
         if (!eligibleDays.Contains(triggerDate.Date)) eligibleDays.Add(triggerDate.Date);
@@ -408,6 +414,25 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
+    /// 回傳這批案件中「指派時沒有任何可寫入逐日列」的案件（只讀、不寫）：用 <see cref="PlanCaseDays"/> 以指派模式、
+    /// 不帶觸發日試算，合格日（候選日扣掉已結案類，<see cref="IsOverwritable"/>）為零的就是——
+    /// 照建的話會得到「處理中、卻沒有任何逐日列」的案件。判定不複製合格日規則，直接取計畫結果。
+    /// 傳入的案件只需要主機名稱與問題鍵。
+    /// 只有「有候選日、但全是結案類」才算：完全沒有留存歷史的成員（候選日為零）維持原行為照常建案，
+    /// 它不是「被人結案」，而是沒有可展開的歷史（出現點一律來自歷史，正式路徑不會遇到）。
+    /// </summary>
+    public List<IssueCase> CasesWithoutWritableDays(IReadOnlyList<IssueCase> cases)
+    {
+        if (cases.Count == 0) return new List<IssueCase>();
+
+        var intent = new CaseDayIntent { Mode = CaseDayModes.Assign, Status = IssueHandlingStatuses.InProgress, TriggerDate = null };
+        return PlanCaseDays(cases.Select(c => (c, intent)).ToList())
+            .Where(p => p.LinkedMin == null && p.CandidateDayCount > 0)
+            .Select(p => p.Case)
+            .ToList();
+    }
+
+    /// <summary>
     /// 背景一批：取待同步案件，依各自的意圖寫入（同一批合併查詢），寫完以「意圖未變更才清」清旗標。
     /// 指派模式要推進的 First/LastLinkedDate 以 store 讀新值後只改這兩欄再存——批次開頭讀到的
     /// 物件可能已經過時，整列覆寫會蓋掉使用者期間做的變更。回傳本批處理的案件數。
@@ -464,6 +489,9 @@ public class IssueCaseCoordinator
         /// <summary>指派模式的合格日範圍（含冪等跳過的日子）；null＝不推進案件的關聯日期</summary>
         public DateTime? LinkedMin { get; set; }
         public DateTime? LinkedMax { get; set; }
+
+        /// <summary>候選日（留存歷史中含此簽章的風險日，扣除已結案前）的天數；0＝沒有任何歷史可展開</summary>
+        public int CandidateDayCount { get; set; }
     }
 
     /// <summary>
@@ -576,7 +604,7 @@ public class IssueCaseCoordinator
                 : existing.GetValueOrDefault((issueCase.HostName, issueCase.IssueKey)) ?? new Dictionary<DateTime, IssueHandling>();
             IssueHandling? Existing(DateTime d) => existingByDate.GetValueOrDefault(d.Date);
 
-            var plan = new CaseDayPlan { Case = issueCase, Intent = intent };
+            var plan = new CaseDayPlan { Case = issueCase, Intent = intent, CandidateDayCount = candidateDays[i].Count };
             plans.Add(plan);
 
             List<DateTime> days;

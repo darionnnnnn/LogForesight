@@ -12,7 +12,7 @@
 
 import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
-import { cssVar } from './ui.js';
+import { cssVar, linkButton } from './ui.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
@@ -205,7 +205,7 @@ export const bar = (canvas, spec) => create(canvas, { ...spec, type: 'bar' });
 /** 追蹤每個 container 上一次由 attachToolbar 插入的 tableWrapper，供清除用 */
 const _toolbarTableMap = new WeakMap();
 
-export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
+export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title, csvHref }) {
     // 清除上一次由 attachToolbar 產生的 toolbar（以 data-lf-toolbar 標記）
     container.querySelectorAll('[data-lf-toolbar]').forEach(el => el.remove());
 
@@ -236,6 +236,12 @@ export function attachToolbar(container, { canvasWrapper, tableColumns, tableRow
     });
 
     toolbar.appendChild(toggleButton);
+    // 完整 CSV（F20-4）：一般連結讓瀏覽器直接下載，檔名與內容由伺服器決定；整份資料，不只畫面上的列
+    if (csvHref) {
+        const csvLink = linkButton('下載 CSV', csvHref, { variant: 'outline-secondary' });
+        csvLink.setAttribute('aria-label', `下載「${title}」的完整資料（CSV）`);
+        toolbar.appendChild(csvLink);
+    }
     container.appendChild(toolbar);
 }
 

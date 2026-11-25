@@ -31,7 +31,8 @@ public class WorkOrderBoardService
     internal const int DefaultMaxOccurrences = 20000;
 
     private const int GapPageSize = 50;
-    private const int DefaultPeriodDays = 7;
+    /// <summary>待派試跑的預設期間天數（昨天往前算）；報表處理成效在期間不超過它時才做試跑拆分</summary>
+    internal const int DefaultPeriodDays = 7;
     private const int UnseenHostGroupLimit = 10;
     private const string TargetKind = "work_order";
 
@@ -187,8 +188,17 @@ public class WorkOrderBoardService
 
     // ── 待派清單 ────────────────────────────────────────────────────────────
 
-    public GapsDto GetGaps(DateTime? from, DateTime? to, int page)
+    /// <summary>
+    /// 待派清單。<paramref name="section"/>＝<c>dispatchable</c>／<c>unassignable</c>／<c>notDispatched</c> 時只列該段有項目的問題
+    /// （依該段台數多的在前分頁，<see cref="GapsDto.SectionTotal"/> 是該段問題數）；不帶＝全部問題（現行行為，依缺口台數排序）。
+    /// 一個問題在不同主機上可同時出現在多段，各段列表各列一次。各段統計與派不出去分組一律是全部問題的數字，不隨 section 變。
+    /// </summary>
+    public GapsDto GetGaps(DateTime? from, DateTime? to, int page) => GetGaps(from, to, page, null);
+
+    /// <inheritdoc cref="GetGaps(DateTime?, DateTime?, int)"/>
+    public GapsDto GetGaps(DateTime? from, DateTime? to, int page, string? section)
     {
+        var sectionKey = ParseGapSection(section);
         var trial = RunTrial(from, to);
         (page, _) = Paging.Normalize(page, GapPageSize, GapPageSize);
 
@@ -209,7 +219,23 @@ public class WorkOrderBoardService
             .ThenBy(s => s.EventId)
             .ToList();
         dto.Total = summaries.Count;
+        dto.SectionTotal = summaries.Count;
+        dto.DispatchableIssueHosts = summaries.Sum(s => s.Suggested.Sum(x => x.Hosts));
+        foreach (var gap in trial.Gaps.Where(g => g.Decision.Kind != DispatchDecisionKind.Skip))
+            dto.DispatchableHostNames.Add(gap.Host.HostName);
         dto.UnassignableTotal = summaries.Count(s => s.Unassignable.Count > 0);
+        FillSections(dto, summaries);
+
+        if (sectionKey != null)
+        {
+            summaries = summaries
+                .Where(s => SectionHostsOf(s, sectionKey) > 0)
+                .OrderByDescending(s => SectionHostsOf(s, sectionKey))
+                .ThenBy(s => s.Source, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(s => s.EventId)
+                .ToList();
+            dto.SectionTotal = summaries.Count;
+        }
 
         var pageRows = summaries.Skip((page - 1) * GapPageSize).Take(GapPageSize).ToList();
         if (pageRows.Count == 0) return dto;
@@ -222,7 +248,7 @@ public class WorkOrderBoardService
         {
             Source = s.Source,
             EventId = s.EventId,
-            IssueLabel = LabelOf(s.Source, s.EventId),
+            IssueLabel = IssueNames.ForRules(rules, s.Source, s.EventId),
             PlainExplanation = KnownIssueCatalog.PlainExplanationFor(rules, s.Source, s.EventId),
             GapHosts = s.GapHosts,
             Excluded = s.Excluded,
@@ -246,6 +272,110 @@ public class WorkOrderBoardService
         return dto;
     }
 
+    /// <summary>
+    /// 待派試跑只回計數（儀表板待派卡用）：與 <see cref="GetGaps(DateTime?, DateTime?, int, string?)"/> 共用同一個
+    /// <see cref="RunTrial"/> 與同一份彙整、同一個計數函式，不載使用者／規則／群組、不組列。
+    /// </summary>
+    public PendingDispatchSummary GetGapCounts(DateTime? from, DateTime? to)
+    {
+        var trial = RunTrial(from, to);
+        if (trial.TooLarge) return new PendingDispatchSummary(true, trial.Scope.From, trial.Scope.To, 0, 0);
+        var (dispatchable, unassignable) = SectionIssueCounts(Summarize(trial.Gaps));
+        return new PendingDispatchSummary(false, trial.Scope.From, trial.Scope.To, dispatchable, unassignable);
+    }
+
+    /// <summary>可以派／派不出去兩段的問題數（待派頁各段統計與只回計數的入口共用）</summary>
+    private static (int Dispatchable, int Unassignable) SectionIssueCounts(List<IssueSummary> summaries) =>
+        (summaries.Count(s => s.Suggested.Count > 0), summaries.Count(s => s.Unassignable.Count > 0));
+
+    internal const string SectionDispatchable = "dispatchable";
+    internal const string SectionUnassignable = "unassignable";
+    internal const string SectionNotDispatched = "notDispatched";
+
+    private static string? ParseGapSection(string? section)
+    {
+        if (string.IsNullOrWhiteSpace(section)) return null;
+        return section switch
+        {
+            SectionDispatchable or SectionUnassignable or SectionNotDispatched => section,
+            _ => throw DomainException.Validation("待派清單的段落只能是 dispatchable、unassignable 或 notDispatched。")
+        };
+    }
+
+    /// <summary>某問題在指定段的（問題×主機）數；0＝該問題不在這一段</summary>
+    private static int SectionHostsOf(IssueSummary s, string section) => section switch
+    {
+        SectionDispatchable => s.Suggested.Sum(x => x.Hosts),
+        SectionUnassignable => s.Unassignable.Sum(x => x.Hosts),
+        _ => s.Excluded.Values.Sum()
+    };
+
+    /// <summary>
+    /// 待派三段與派不出去的分組（不分頁，全部問題）：
+    /// 可以派＝有建議處理人的（問題, 主機）；派不出去＝無候選人（no_pool／all_paused／no_visibility）；不會派＝閘門排除（嚴重度未達、不再打擾、抑制、已知雜訊、靜音）。
+    /// 一個問題在不同主機上可能同時落在多段，各段各算一次；單位見 <see cref="GapSectionDto"/>。
+    /// </summary>
+    private void FillSections(GapsDto dto, List<IssueSummary> summaries)
+    {
+        var (dispatchableIssues, unassignableIssues) = SectionIssueCounts(summaries);
+        dto.Dispatchable = new GapSectionDto
+        {
+            Issues = dispatchableIssues,
+            Hosts = summaries.Sum(s => s.Suggested.Sum(x => x.Hosts))
+        };
+        dto.UnassignableSection = new GapSectionDto
+        {
+            Issues = unassignableIssues,
+            Hosts = summaries.Sum(s => s.Unassignable.Sum(x => x.Hosts))
+        };
+        dto.NotDispatched = new GapSectionDto
+        {
+            Issues = summaries.Count(s => s.Excluded.Count > 0),
+            Hosts = summaries.Sum(s => s.Excluded.Values.Sum())
+        };
+        dto.UnassignableReasons = summaries
+            .SelectMany(s => s.Unassignable.Select(u => (Summary: s, Unassignable: u)))
+            .GroupBy(x => x.Unassignable.Reason, StringComparer.Ordinal)
+            .Select(g => new GapUnassignableReasonDto
+            {
+                Reason = g.Key,
+                Issues = g.Count(),
+                Hosts = g.Sum(x => x.Unassignable.Hosts)
+            })
+            .OrderBy(r => r.Reason, StringComparer.Ordinal)
+            .ToList();
+
+        // 「沒有人看得到」的主機群組：每個群組只出現一次（不隨問題重複），附受影響的主機數與問題數
+        var groupNames = _hostGroups.GetAll().ToDictionary(g => g.GroupId, g => g.GroupName);
+        var unseen = new Dictionary<long, (HashSet<long> HostIds, int Issues)>();
+        foreach (var summary in summaries)
+        {
+            var groupsOfIssue = new HashSet<long>();
+            foreach (var host in summary.UnseenHosts)
+            {
+                foreach (var gid in host.GroupIds.Where(groupNames.ContainsKey))
+                {
+                    if (!unseen.TryGetValue(gid, out var entry)) unseen[gid] = entry = (new HashSet<long>(), 0);
+                    entry.HostIds.Add(host.HostId);
+                    if (groupsOfIssue.Add(gid)) unseen[gid] = (entry.HostIds, entry.Issues + 1);
+                }
+            }
+        }
+        dto.UnseenHostGroups = unseen
+            .Select(p => new GapUnseenHostGroupDto { GroupId = p.Key, GroupName = groupNames[p.Key], Hosts = p.Value.HostIds.Count, Issues = p.Value.Issues })
+            .OrderByDescending(g => g.Hosts)
+            .ThenBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.GroupId)
+            .ToList();
+        dto.PoolGroups = _userGroups.GetAll()
+            .Where(g => g.Active && g.DispatchPool)
+            .OrderBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.GroupId)
+            .Select(g => new GapPoolGroupDto { UserGroupId = g.GroupId, GroupName = g.GroupName })
+            .ToList();
+        dto.CanGrantAccess = _currentUser.Has(Capability.Maintain);
+    }
+
     // ── 立即派工 ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -255,16 +385,32 @@ public class WorkOrderBoardService
     private static string OriginOf(DispatchDecision d) =>
         d.Origin ?? (d.Step == WorkOrderOrigins.OwnerRule ? WorkOrderOrigins.OwnerRule : WorkOrderOrigins.AutoDispatch);
 
-    public AutoDispatchResultDto RunAutoDispatch(DateTime? from, DateTime? to)
+    /// <summary>零個新成員時的訊息（立即派工與單題派工共用；兩人幾乎同時派工時，後到的人會看到這個）</summary>
+    internal const string NothingToDispatchMessage = "沒有需要派的項目（可能剛由其他人派出）";
+
+    /// <summary>
+    /// 問題篩選（單題派工）：來源與事件編號要一起給或都不給；都不給＝全頁。篩選在**全頁試跑之後**套用：
+    /// 決策（負載平衡、同人併單）一律以整頁為準，單題派工的結果因此等於全頁試跑中該問題的那幾列，預覽也等於結果。
+    /// </summary>
+    private static (string SourceKey, int EventId)? IssueFilterOf(string? source, int? eventId)
     {
-        var trial = RunTrial(from, to);
-        if (trial.TooLarge)
-            throw DomainException.Validation($"期間內尚未派出的問題出現點至少 {trial.PendingAtLeast:N0} 筆，超過上限 {_maxOccurrences:N0} 筆，請縮小期間後再派工。");
+        if (string.IsNullOrWhiteSpace(source) && eventId == null) return null;
+        if (string.IsNullOrWhiteSpace(source) || eventId == null)
+            throw DomainException.Validation("單題派工需要同時指定問題的來源與事件編號。");
+        return (WorkOrderIssueKey.SourceKeyOf(source), eventId.Value);
+    }
 
-        var actor = _currentUser.ToWorkOrderActor(_clock);
+    private static List<GapDecision> ApplyIssueFilter(List<GapDecision> gaps, (string SourceKey, int EventId)? filter) =>
+        filter is not { } f
+            ? gaps
+            : gaps.Where(g => WorkOrderIssueKey.SourceKeyOf(g.Issue.Source) == f.SourceKey && g.Issue.EventId == f.EventId).ToList();
 
-        // 掛單與建單都依（處理人, 問題）分組；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單
-        var groups = trial.Gaps
+    /// <summary>
+    /// 要建單或掛單的決策，依（處理人, 問題）分組：掛單與建單都依這組鍵；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單。
+    /// 立即派工與預覽共用同一份分組，預覽的張數與台數才會等於實際結果。
+    /// </summary>
+    private static List<IGrouping<(long HandlerId, string SourceKey, int EventId, string Origin), GapDecision>> DispatchGroups(IEnumerable<GapDecision> gaps) =>
+        gaps
             .Where(g => g.Decision.Kind != DispatchDecisionKind.Skip)
             .GroupBy(g => (HandlerId: g.Decision.HandlerId!.Value, SourceKey: WorkOrderIssueKey.SourceKeyOf(g.Issue.Source), g.Issue.EventId,
                 Origin: OriginOf(g.Decision)))
@@ -274,6 +420,70 @@ public class WorkOrderBoardService
             .ThenBy(g => g.Key.Origin, StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>
+    /// 立即派工的預覽（不落盤）：與 <see cref="RunAutoDispatch"/> 共用同一個試跑與同一份分組，回「將建立／併入 N 張單、每人 M 台」。
+    /// 單位：<see cref="AutoDispatchPreviewDto.CreateOrders"/>＝分組中會建新單的組數（試跑內有建單決策）；
+    /// <see cref="AutoDispatchPreviewDto.MergeOrders"/>＝只掛進既有單的組數；每人台數＝該人各組相異主機數加總（與結果的 PerHandler 同口徑）。
+    /// 沒有任何可派的決策時 <see cref="AutoDispatchPreviewDto.NothingToDispatch"/> 為 true。預覽不預測協調器的衝突略過，
+    /// 實際結果只會少、不會多。
+    /// </summary>
+    public AutoDispatchPreviewDto PreviewAutoDispatch(DateTime? from, DateTime? to, string? source = null, int? eventId = null)
+    {
+        var filter = IssueFilterOf(source, eventId);
+        var trial = RunTrial(from, to);
+        EnsureNotTooLarge(trial);
+        var gaps = ApplyIssueFilter(trial.Gaps, filter);
+        var groups = DispatchGroups(gaps);
+
+        var users = _users.GetAll().ToDictionary(u => u.UserId);
+        var hostsByHandler = new Dictionary<long, int>();
+        foreach (var group in groups)
+            hostsByHandler[group.Key.HandlerId] = hostsByHandler.GetValueOrDefault(group.Key.HandlerId)
+                + group.Select(g => g.Host.HostId).Distinct().Count();
+
+        var dto = new AutoDispatchPreviewDto
+        {
+            CreateOrders = groups.Count(g => g.Any(x => x.Decision.Kind == DispatchDecisionKind.CreateFor)),
+            MergeOrders = groups.Count(g => g.All(x => x.Decision.Kind != DispatchDecisionKind.CreateFor)),
+            PerHandler = hostsByHandler
+                .Select(p => new AutoDispatchHandlerDto { HandlerId = p.Key, Name = NameOf(users, p.Key), Hosts = p.Value })
+                .OrderBy(p => p.HandlerId)
+                .ToList(),
+            Unassigned = UnassignedOf(gaps)
+        };
+        dto.Hosts = dto.PerHandler.Sum(p => p.Hosts);
+        dto.NothingToDispatch = groups.Count == 0;
+        if (dto.NothingToDispatch) dto.Message = NothingToDispatchMessage;
+        return dto;
+    }
+
+    private void EnsureNotTooLarge(Trial trial)
+    {
+        if (trial.TooLarge)
+            throw DomainException.Validation($"期間內尚未派出的問題出現點至少 {trial.PendingAtLeast:N0} 筆，超過上限 {_maxOccurrences:N0} 筆，請縮小期間後再派工。");
+    }
+
+    private static List<GapUnassignableDto> UnassignedOf(List<GapDecision> gaps) =>
+        Summarize(gaps)
+            .SelectMany(s => s.Unassignable)
+            .GroupBy(u => u.Reason, StringComparer.Ordinal)
+            .Select(g => new GapUnassignableDto { Reason = g.Key, Hosts = g.Sum(u => u.Hosts) })
+            .OrderBy(u => u.Reason, StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>立即派工；<paramref name="source"/>／<paramref name="eventId"/> 都給＝只派這個問題（見 <see cref="IssueFilterOf"/>），都不給＝全頁。</summary>
+    public AutoDispatchResultDto RunAutoDispatch(DateTime? from, DateTime? to, string? source = null, int? eventId = null)
+    {
+        var filter = IssueFilterOf(source, eventId);
+        var trial = RunTrial(from, to);
+        EnsureNotTooLarge(trial);
+        var gaps = ApplyIssueFilter(trial.Gaps, filter);
+
+        var actor = _currentUser.ToWorkOrderActor(_clock);
+
+        var groups = DispatchGroups(gaps);
+
+        var nameRules = KnownIssueCatalog.ResolveRules(_rules);
         var created = 0;
         var merged = 0;
         var assignedMembers = 0;
@@ -281,10 +491,11 @@ public class WorkOrderBoardService
         var hostsByHandler = new Dictionary<long, int>();
         var failedGroups = new List<AutoDispatchFailedGroupDto>();
         var createdOrdersByHandler = new Dictionary<long, List<(long WorkOrderId, string IssueLabel, List<string> HostNames)>>();
+        var releasedTally = new DismissalReleaseTally();
         foreach (var group in groups)
         {
             var first = group.First();
-            var label = LabelOf(first.Issue.Source, first.Issue.EventId);
+            var label = IssueNames.ForRules(nameRules, first.Issue.Source, first.Issue.EventId);
             var members = group
                 .Select(g => new WorkOrderMember
                 {
@@ -307,6 +518,9 @@ public class WorkOrderBoardService
                 AutoAttach = false,
                 ReassignConflicts = false,
                 Note = WorkOrderCoordinator.NightlyNoteOf(group.Key.Origin),
+                // 預設期限（P-1）：依該組成員的最高嚴重度自今天（站台時鐘）起算，與夜間派工同一個常數來源；
+                // 併入既有單時單的期限優先（建單請求的期限只在新建時採用）
+                DueDate = DefaultDueDays.DueDateFor(group.Max(g => g.Issue.Severity), _clock.LocalToday()),
                 Members = members,
                 Actor = actor
             });
@@ -327,13 +541,20 @@ public class WorkOrderBoardService
             daySyncPending += outcome.DaySync.PendingCases;
             if (outcome.WorkOrderId == 0) continue;
 
+            var newMembers = outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned;
+            // 「併入」只算真的併入了新成員的單：兩人同時派工時後到的人併進去零個成員，不算併入（否則回「併入 5 張、共 0 台」）
             if (outcome.CreatedOrder) created++;
-            else merged++;
-            assignedMembers += outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned;
-
+            else if (newMembers > 0) merged++;
+            assignedMembers += newMembers;
+            // 因「不再打擾已滿 30 天」放行而寫入的成員：與夜間派工共用同一份累計，趟末各單合併一筆系統事件
+            // 略過的成員（衝突、已結案）一律不算寫入：放行累計、結果台數、新單通知主機名單口徑一致
             var skipped = outcome.SkippedConflicts
                 .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
+                .Concat(outcome.SkippedClosed.Select(c => (HostNameKey.Of(c.HostName), c.IssueKey)))
                 .ToHashSet(HostIssueSignatureKeyComparer.Instance);
+            releasedTally.Add(outcome.WorkOrderId,
+                group.Count(g => g.Released && !skipped.Contains((HostNameKey.Of(g.Host.HostName), g.IssueKey))));
+
             var distinctGroupHosts = members
                 .Where(m => !skipped.Contains((HostNameKey.Of(m.HostName), m.IssueKey)))
                 .Select(m => m.HostName)
@@ -357,6 +578,8 @@ public class WorkOrderBoardService
             }
         }
 
+        releasedTally.Flush(_coordinator, _clock.LocalNow());
+
         var users = _users.GetAll().ToDictionary(u => u.UserId);
 
         // 一次入列：立即派工一趟可能建數百張單，逐筆入列會把整份 outbox blob 重寫數百次
@@ -370,25 +593,21 @@ public class WorkOrderBoardService
             .Select(p => new AutoDispatchHandlerDto { HandlerId = p.Key, Name = NameOf(users, p.Key), Hosts = p.Value })
             .OrderBy(p => p.HandlerId)
             .ToList();
-        var unassigned = Summarize(trial.Gaps)
-            .SelectMany(s => s.Unassignable)
-            .GroupBy(u => u.Reason, StringComparer.Ordinal)
-            .Select(g => new GapUnassignableDto { Reason = g.Key, Hosts = g.Sum(u => u.Hosts) })
-            .OrderBy(u => u.Reason, StringComparer.Ordinal)
-            .ToList();
+        var unassigned = UnassignedOf(gaps);
 
         var period = $"{trial.Scope.From:yyyy-MM-dd}~{trial.Scope.To:yyyy-MM-dd}";
         var attachedHosts = perHandler.Sum(p => p.Hosts);
         var unassignedHosts = unassigned.Sum(u => u.Hosts);
         _audit.Record(
             action: AuditActions.WorkOrderAutoDispatchRun,
-            summary: $"立即派工（{period}）：新建 {created} 張、併入 {merged} 張，掛入 {attachedHosts} 台，無法派 {unassignedHosts} 台，失敗 {failedGroups.Count} 組",
+            summary: $"{(filter == null ? "立即派工" : "單題派工")}（{period}）：新建 {created} 張、併入 {merged} 張，掛入 {attachedHosts} 台，無法派 {unassignedHosts} 台，失敗 {failedGroups.Count} 組",
             targetKind: TargetKind,
             targetId: period,
             detail: new
             {
                 From = trial.Scope.From, To = trial.Scope.To, CreatedOrders = created, MergedOrders = merged,
                 AssignedMembers = assignedMembers,
+                IssueFilter = filter == null ? null : new { Source = source, EventId = eventId },
                 FailedGroups = failedGroups.Select(g => new { g.HandlerId, g.Source, g.EventId, g.Hosts, g.Message }).ToList(),
                 PerHandler = perHandler.Select(p => new { p.HandlerId, p.Hosts }).ToList(),
                 Unassigned = unassigned.Select(u => new { u.Reason, u.Hosts }).ToList()
@@ -402,7 +621,10 @@ public class WorkOrderBoardService
             PerHandler = perHandler,
             Unassigned = unassigned,
             DaySyncPendingCases = daySyncPending,
-            FailedGroups = failedGroups
+            FailedGroups = failedGroups,
+            // 沒有任何新成員、也沒有失敗的組：多半是別人剛派完。明確標出，畫面不要顯示「已建立 0 張」
+            NothingToDispatch = assignedMembers == 0 && failedGroups.Count == 0,
+            Message = assignedMembers == 0 && failedGroups.Count == 0 ? NothingToDispatchMessage : null
         };
     }
 
@@ -449,16 +671,34 @@ public class WorkOrderBoardService
 
         if (candidates.Count > _maxOccurrences) return new Trial(scope, TooLarge: true, new List<GapDecision>(), candidates.Count);
 
+        // 已結案的（主機, 簽章）：處理概況只有一份判定（OccurrenceStatusResolver）；Resolved 狀態含「沒標記的預設已處理」，
+        // 所以一定要看逐日處理列真的是結案類，才算被人結案
+        var latestClosed = _query.ResolveOccurrenceStatuses(candidates.Select(x => x.Occurrence).ToList(), scope.From, scope.To)
+            .Where(r => r is { OpenCase: null, Handling: not null } && IssueHandlingStatuses.IsClosed(r.Handling.Status))
+            .Select(r => (r.Host.HostName, r.Occurrence.IssueKey))
+            .ToList();
+        // 最近出現日已結案還不夠：期間內任一天未結案，建案會寫那一天，仍是待派的工作。
+        // 所以再問協調器「沒有可寫入逐日列」（與建案略過同一份判定），批次一次，兩個條件都成立才算已結案
+        var noWritableDays = latestClosed.Count == 0
+            ? new HashSet<(string HostName, string IssueKey)>()
+            : _coordinator.KeysWithoutWritableDays(latestClosed);
+        var closedKeys = latestClosed
+            .Where(k => noWritableDays.Contains(k))
+            .Select(k => (HostNameKey.Of(k.HostName), k.IssueKey))
+            .ToHashSet(HostIssueSignatureKeyComparer.Instance);
+
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;
         settings.AutoDispatchEnabled = true;
         var now = _clock.LocalNow();
         var ctx = DispatchContext.Build(_candidates.Build(), _issueOwners, _orders, _cases, _noiseMarks, settings, now,
+            DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules)),
             WorkOrderQueries.DisabledHostKeys(_hosts.GetAll()));
         ctx.PreloadDismissed(candidates.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
 
         // 抑制：清單與規則各讀一次；每台主機的生效中抑制算一次（純記憶體）
         var allSuppressions = _suppressions.LoadAll();
-        var rulesById = KnownIssueCatalog.ResolveRules(_rules)
+        var nameRules = KnownIssueCatalog.ResolveRules(_rules);
+        var rulesById = nameRules
             .GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var activeByHost = new Dictionary<long, (HashSet<string> SignatureKeys, List<KnownIssueRule> Rules)>();
@@ -489,6 +729,11 @@ public class WorkOrderBoardService
                                || active.Rules.Any(r => KnownIssueCatalog.RuleMayHit(r, issue.Source, issue.EventId));
 
             var decision = WorkOrderDispatcher.Decide(ctx, host, issue, occurrence.LastSeen.Date);
+            // 最近一次出現當天已被處理人結案：不是待派的工作，整筆不進試跑結果（不列在待派頁、不計入儀表板待派卡、
+            // 不登記虛擬單、不計負載）。閘門已略過的（例如不再打擾）維持原因，讓待派頁照常標出被擋的主機。
+            // 在這裡而不在 WorkOrderDispatcher 判定：結案狀態讀的是 OccurrenceStatusResolver 的處理概況，夜間派工路徑不受影響。
+            if (decision.Kind != DispatchDecisionKind.Skip && closedKeys.Contains((HostNameKey.Of(host.HostName), occurrence.IssueKey)))
+                continue;
             if (decision.Kind == DispatchDecisionKind.CreateFor)
             {
                 ctx.RegisterOrder(new WorkOrder
@@ -496,16 +741,18 @@ public class WorkOrderBoardService
                     WorkOrderId = --virtualOrderId,
                     SourceName = issue.Source,
                     EventId = issue.EventId,
-                    IssueLabel = LabelOf(issue.Source, issue.EventId),
+                    IssueLabel = IssueNames.ForRules(nameRules, issue.Source, issue.EventId),
                     HandlerId = decision.HandlerId!.Value,
                     Origin = decision.Origin!,
                     ScopeKind = WorkOrderScopes.Hosts,
                     CreatedAt = now
                 });
             }
+            // 本來被不再打擾擋住、因期滿而放行：必須在 Commit 之前判（案件快取尚未被本趟新單影響）
+            var released = decision.Kind != DispatchDecisionKind.Skip && ctx.IsReleased(host.HostName, occurrence.IssueKey);
             ctx.Commit(decision, issue.Source, issue.EventId);
 
-            gaps.Add(new GapDecision(host, issue, occurrence.IssueKey, occurrence.LastSeen, decision));
+            gaps.Add(new GapDecision(host, issue, occurrence.IssueKey, occurrence.LastSeen, decision, released));
         }
 
         return new Trial(scope, TooLarge: false, gaps, candidates.Count);
@@ -561,12 +808,10 @@ public class WorkOrderBoardService
 
     private static int DistinctHosts(IEnumerable<GapDecision> gaps) => gaps.Select(x => x.Host.HostId).Distinct().Count();
 
-    private static string LabelOf(string source, int eventId) => $"{source} {eventId}";
-
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
         NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));
 
-    private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision);
+    private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision, bool Released = false);
 
     /// <summary><paramref name="PendingAtLeast"/>：尚未派出的出現點數；以下界判定超限時是下界（實際至少這麼多）</summary>
     private sealed record Trial(IssueScope Scope, bool TooLarge, List<GapDecision> Gaps, long PendingAtLeast);

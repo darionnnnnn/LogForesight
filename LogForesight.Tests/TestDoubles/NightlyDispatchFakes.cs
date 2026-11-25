@@ -13,7 +13,7 @@ internal static class NightlyDispatchFakes
     {
         var orders = new FakeWorkOrderStore(new FakeIssueCaseStore());
         var ctx = DispatchContext.Build(
-            new DispatchCandidatePool(), issueProfiles, orders, cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+            new DispatchCandidatePool(), issueProfiles, orders, cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now, TestRules.None);
         var coordinator = new WorkOrderCoordinator(orders, cases, issueHandlings, caseCoordinator, handlingLog, hosts);
         return new NightlyDispatch(coordinator, ctx, hosts);
     }

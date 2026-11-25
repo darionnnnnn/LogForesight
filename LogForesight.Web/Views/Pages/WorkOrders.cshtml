@@ -38,6 +38,9 @@
                     <label for="wo-sort" class="form-label mb-0 lf-text-label text-nowrap">排序</label>
                     <select id="wo-sort" class="form-select form-select-sm w-auto">
                         <option value="created_desc" selected>最新建立</option>
+                        <option value="priority">處理優先序</option>
+                        <option value="dueSoon">期限最近</option>
+                        <option value="severity">嚴重度</option>
                         <option value="members_desc">成員最多</option>
                         <option value="unreplied_oldest">最久未回覆</option>
                     </select>
@@ -45,6 +48,10 @@
                 <div class="d-flex align-items-center gap-2 mw-100">
                     <label for="wo-group" class="form-label mb-0 lf-text-label text-nowrap">群組</label>
                     <select id="wo-group" class="form-select form-select-sm w-auto lf-shrink"><option value="">全部</option></select>
+                </div>
+                <div class="d-flex align-items-center gap-2 mw-100">
+                    <label for="wo-handler" class="form-label mb-0 lf-text-label text-nowrap">處理人</label>
+                    <select id="wo-handler" class="form-select form-select-sm w-auto lf-shrink"><option value="">全部</option></select>
                 </div>
                 @* 次要條件：work-orders.js 以 filterDisclosure 收合，按鈕標籤帶已勾選數 *@
                 <div class="d-flex flex-wrap align-items-center gap-3" id="wo-more">
@@ -58,11 +65,21 @@
                     </div>
                 </div>
             </div>
+            @* 批次改派（work-orders-bulk.js）：勾選列＋就地面板，不開 modal *@
+            <div id="wo-bulk-bar" class="d-none mb-2">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <span id="wo-bulk-count" class="lf-text-meta text-nowrap"></span>
+                    <span id="wo-bulk-actions" class="d-flex flex-wrap align-items-center gap-2"></span>
+                </div>
+            </div>
+            <p id="wo-bulk-hint" class="lf-text-meta mb-2" role="status"></p>
+            <div id="wo-bulk-panel" class="d-none mb-3 p-3 border rounded"></div>
             <div id="wo-list"></div>
             <nav id="wo-pager" class="mt-3"></nav>
         </div>
 
         <div data-panel="load" class="d-none">
+            <p class="lf-text-meta mb-2" id="wo-load-caliber-note">這裡的進行中單與台數包含「問題靜音中而暫停」的單；處理人自己的「我的交辦」不含暫停的單，所以兩邊數字可能差這一部分。</p>
             <div id="wo-load"></div>
         </div>
 
@@ -85,15 +102,19 @@
                 </div>
             </div>
             <div id="wo-gaps-note" class="lf-text-meta mb-3"></div>
+            @* 三段（work-orders.js 組出）：可以派、派不出去、不會派；各段各自分頁，後兩段點開才載入 *@
             <div id="wo-gaps"></div>
-            <nav id="wo-gaps-pager" class="mt-3"></nav>
 
             <section class="lf-card mt-4" id="wo-dismissed-card" aria-labelledby="wo-dismissed-title">
                 <div class="lf-card__header">
                     <h3 class="lf-text-label mb-0" id="wo-dismissed-title">不再自動派工</h3>
-                    <span class="lf-text-meta" id="wo-dismissed-count"></span>
+                    <span class="d-flex flex-wrap align-items-center gap-2">
+                        <span id="wo-dismissed-toggle-slot"></span>
+                        <span class="lf-text-meta" id="wo-dismissed-count"></span>
+                    </span>
                 </div>
-                <div class="lf-card__body">
+                @* 預設收合，展開才載入清單；收合時只顯示標頭的計數 *@
+                <div class="lf-card__body" id="wo-dismissed-body">
                     <p class="lf-text-meta mb-3">處理人或管理者判定不處理、誤報、已知雜訊的問題，之後不再自動派工。恢復後下一次夜間派工會重新判斷。</p>
                     <div id="wo-dismissed"></div>
                     <nav id="wo-dismissed-pager" class="mt-3"></nav>

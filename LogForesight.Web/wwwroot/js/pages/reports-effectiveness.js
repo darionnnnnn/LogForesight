@@ -39,6 +39,28 @@ export function agingSwatches(count, readToken) {
     return Array.from({ length: count }, (_, i) => readToken(`--lf-heat-${Math.min(i + 1, 5)}`));
 }
 
+/**
+ * 「未結案」三段的說明列（純函式）：每段寫明單位。三段的「主機日」相加＝未結案主機日；
+ * 案件數與「問題×主機」是另一種單位，只列在旁邊對照。待派試跑超過上限時拆不開，直說，不猜。
+ */
+export function unresolvedBreakdownLines(unresolved) {
+    if (!unresolved) return [];
+    const inHand = unresolved.inHandlers ?? {};
+    const pending = unresolved.pendingDispatch ?? {};
+    const notNeeded = unresolved.notNeeded ?? {};
+    const oldest = inHand.oldestDays == null ? '' : `，最舊 ${inHand.oldestDays} 天`;
+    const lines = [`在處理人手上：${inHand.hostDays ?? 0} 個主機日（進行中交辦 ${inHand.cases ?? 0} 項${oldest}）`];
+    if (pending.tooLarge) {
+        lines.push(pending.unsplitReason === 'permission'
+            ? '待派與不需處理：需要派工權限才能拆開'
+            : '待派與不需處理：期間太長，無法拆開，請縮短期間');
+    } else {
+        lines.push(`待派：${pending.hostDays ?? 0} 個主機日（可派的問題×主機 ${pending.issueHosts ?? 0} 個）`);
+        lines.push(`不需處理：${notNeeded.hostDays ?? 0} 個主機日（嚴重度未達、已知雜訊、不再打擾、靜音等，不會派工）`);
+    }
+    return lines;
+}
+
 /** 再發生率的文字（純函式）：rate 為 null＝分母 0，不是 0% */
 export function recurrenceSummary(recurrence) {
     const evaluated = recurrence.recurred + recurrence.notRecurred;
@@ -138,6 +160,15 @@ export function createEffectivenessView(deps) {
             `未結案 ${formatNumber(total)}`,
             `未結案帳齡：${segments.map(s => `${s.label} ${s.value}`).join('、')}，共 ${total} 個風險日（算到 ${data.asOf}）`,
             segments));
+
+        const lines = doc.createElement('ul');
+        lines.className = 'lf-text-meta mt-2 mb-0';
+        for (const text of unresolvedBreakdownLines(data.unresolved)) {
+            const item = doc.createElement('li');
+            item.textContent = text;
+            lines.appendChild(item);
+        }
+        body.appendChild(lines);
     }
 
     /** 前 10 名表格：問題可點（下鑽問題查詢的依問題視角，帶來源、事件編號與期間），後兩欄是短值欄 */
@@ -150,7 +181,7 @@ export function createEffectivenessView(deps) {
                     key: 'label', title: '問題', className: 'lf-break-anywhere',
                     render: item => {
                         const link = doc.createElement('a');
-                        link.textContent = item.label || `${item.source} (${item.eventId})`;
+                        link.textContent = item.label;
                         link.href = appUrl(recordsUrl({
                             view: 'issue', source: item.source, eventId: item.eventId,
                             riskLevels: '高,中,低', from: range.from, to: range.to

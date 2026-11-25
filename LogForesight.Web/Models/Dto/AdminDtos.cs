@@ -5,6 +5,13 @@ namespace LogForesight.Web.Models.Dto;
 public class UserDto
 {
     public long UserId { get; set; }
+
+    /// <summary>
+    /// 這位使用者目前的版本（顯示名稱、Email、啟用、群組的雜湊）。開啟編輯視窗時帶著它，
+    /// 儲存時放進 <see cref="SaveUserRequest.Version"/>；伺服器當下的版本不同就整筆拒絕（409）。
+    /// </summary>
+    public string Version { get; set; } = string.Empty;
+
     public string Account { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string? Email { get; set; }
@@ -131,6 +138,26 @@ public class SaveUserRequest
     public string? Email { get; set; }
 
     public bool Active { get; set; } = true;
+
+    /// <summary>
+    /// 開啟編輯時讀到的 <see cref="UserDto.Version"/>。帳號已存在時必填（空白或與伺服器當下不同＝409，資料不變）；
+    /// 新增帳號不需要。
+    /// </summary>
+    [StringLength(64)]
+    public string? Version { get; set; }
+
+    /// <summary>
+    /// true＝這次是「新增使用者」。伺服器看到此旗標且帳號已存在時回「帳號已存在」的驗證錯誤，而不是版本衝突（409）；
+    /// 未帶（false）＝編輯，沒帶版本或版本過期仍是 409。
+    /// </summary>
+    public bool IsNew { get; set; }
+
+    /// <summary>
+    /// 編輯視窗勾選的群組，與基本資料同一個請求、同一個版本比對。
+    /// null（不帶）＝不動群組，沿用伺服器當下的值——只改基本資料不會以開啟視窗時的群組快照覆蓋；
+    /// 空陣列＝清空群組。
+    /// </summary>
+    public List<long>? GroupIds { get; set; }
 }
 
 public class SetUserGroupsRequest
@@ -219,6 +246,12 @@ public class HostGroupDto
     public string GroupName { get; set; } = string.Empty;
     public bool Active { get; set; }
     public int HostCount { get; set; }
+
+    /// <summary>
+    /// 看得到這個主機群組的啟用派工池群組數（<c>DispatchReadinessService</c> 的判定）。0＝沒有派工池群組看得到，群組內的主機不會被自動派工；
+    /// null＝不適用：群組停用、沒有啟用主機（空群組不算），或派工池沒有可接單的成員而無從比對。
+    /// </summary>
+    public int? VisiblePoolGroups { get; set; }
 }
 
 public class SaveHostGroupRequest
@@ -338,9 +371,20 @@ public class AccessMatrixRowDto
     public List<long> GrantedHostGroupIds { get; set; } = new();
 }
 
+/// <summary>授權寫入只有增減一種形式：伺服器以當下資料庫狀態套用，不收整份清單（避免舊畫面互相覆蓋）</summary>
 public class SetAccessRequest
 {
-    public List<long> HostGroupIds { get; set; } = new();
+    /// <summary>要新增授權的主機群組；null＝沒提供（與空陣列不同：兩者都沒提供視為舊格式請求，回驗證錯誤）</summary>
+    public List<long>? Grant { get; set; }
+
+    /// <summary>要收回授權的主機群組；null＝沒提供</summary>
+    public List<long>? Revoke { get; set; }
+}
+
+/// <summary>增減套用後，該使用者群組的完整授權清單（前端以它重繪整列）</summary>
+public class AccessChangeResultDto
+{
+    public List<long> GrantedHostGroupIds { get; set; } = new();
 }
 
 public class HostDto
@@ -449,6 +493,18 @@ public class HostGroupsBatchResultDto
 {
     public int UpdatedCount { get; set; }
     public List<SkippedHostDto> Skipped { get; set; } = new();
+
+    /// <summary>
+    /// 這次設定的目標群組中，沒有任何派工池群組看得到的（僅在有主機被更新時評估）：
+    /// 這些群組的主機不會被自動派工，畫面提示並附「去授權」。群組停用、空群組、派工池沒有可接單成員時不列。
+    /// </summary>
+    public List<HostGroupNoPoolDto> NoPoolGroups { get; set; } = new();
+}
+
+public class HostGroupNoPoolDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
 }
 
 /// <summary>批次設定分級的結果（回饋十九輪批次G，形狀同 HostGroupsBatchResultDto）</summary>
@@ -492,6 +548,12 @@ public class VisibleHostDto
 {
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>Sentinel 回報的顯示名稱（NetIQ 主機以 IP 登錄時用來認人）；沒有為 null</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>最近已知 IP（顯示線索）；沒有為 null</summary>
+    public string? IpAddress { get; set; }
     public string RoleDesc { get; set; } = string.Empty;
     public DateTime? LastReportAt { get; set; }
 }

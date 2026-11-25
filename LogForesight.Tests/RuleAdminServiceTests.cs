@@ -58,6 +58,10 @@ public class RuleAdminServiceTests
         new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups,
             _hosts, _issueAggregateQuery, visibility: new FixedVisibilityService(_hosts.GetAll().Select(h => h.HostId)));
 
+    /// <summary>編輯既有規則要帶開啟編輯時讀到的版本（第 81 輪批次 M）；測試以目前清單的版本代表「剛開啟編輯」</summary>
+    private static string VersionOf(RuleAdminService service, string id) =>
+        service.GetRules().Single(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)).Version;
+
     private static SaveRuleRequest ValidRequest(string id = "custom-test") => new()
     {
         Id = id,
@@ -484,6 +488,7 @@ public class RuleAdminServiceTests
         var request = ValidRequest(BuiltinId);
         request.Description = "改過的說明";
 
+        request.Version = VersionOf(service, BuiltinId);
         var result = service.SaveRule(request);
 
         Assert.True(result.IsModified);
@@ -499,6 +504,7 @@ public class RuleAdminServiceTests
         var request = ValidRequest(BuiltinId);
         request.Description = "改壞的說明";
         request.SourcePattern = "wrong";
+        request.Version = VersionOf(service, BuiltinId);
         service.SaveRule(request);
 
         service.RestoreSeed(BuiltinId);
@@ -521,6 +527,7 @@ public class RuleAdminServiceTests
         var service = Create();
         var request = ValidRequest(BuiltinId);
         request.Description = "改壞的說明";
+        request.Version = VersionOf(service, BuiltinId);
         service.SaveRule(request);
 
         service.RestoreSeed(BuiltinId);
@@ -548,6 +555,7 @@ public class RuleAdminServiceTests
         var service = Create();
         var request = ValidRequest(BuiltinId);
         request.Description = "改過的說明";
+        request.Version = VersionOf(service, BuiltinId);
         service.SaveRule(request);
 
         var preview = service.PreviewRestore(BuiltinId);
@@ -796,8 +804,34 @@ public class RuleAdminServiceTests
     {
         var service = Create();
         service.SaveRule(ValidRequest("custom-dup"));
-        service.SaveRule(ValidRequest("custom-dup "));
+        var second = ValidRequest("custom-dup ");
+        second.Version = VersionOf(service, "custom-dup");
+        service.SaveRule(second);
         Assert.Single(service.GetRules(), r => r.Id == "custom-dup");
+    }
+
+    [Fact]
+    public void 新增規則撞到既有編號_回編號已存在的驗證錯誤_不是版本衝突()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        var again = ValidRequest("custom-dup");
+        again.IsNew = true;
+
+        var ex = Assert.Throws<DomainException>(() => service.SaveRule(again));
+
+        Assert.Contains("已存在", ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+    }
+
+    [Fact]
+    public void 編輯既有規則沒帶版本_仍是版本衝突()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        var edit = ValidRequest("custom-dup");   // IsNew=false、Version=null：編輯但沒帶版本
+
+        Assert.Throws<ConcurrentUpdateException>(() => service.SaveRule(edit));
     }
 
     [Fact]
@@ -1502,7 +1536,9 @@ public class RuleAdminServiceTests
         _rules.Content.Rules.Add(seedRule);
         _seeds.Sync(_rules.Content.Rules.ToList(), seedVersion: 1);
         var service = Create();
-        service.SaveRule(PrtgRequest("builtin-prtg-down-hardware", "availability"));
+        var prtgRequest = PrtgRequest("builtin-prtg-down-hardware", "availability");
+        prtgRequest.Version = VersionOf(service, "builtin-prtg-down-hardware");
+        service.SaveRule(prtgRequest);
 
         var preview = service.PreviewRestore("builtin-prtg-down-hardware");
 

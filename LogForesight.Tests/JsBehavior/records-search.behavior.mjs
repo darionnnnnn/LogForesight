@@ -38,6 +38,7 @@ function makeContext() {
         let currentView = 'detail';
         let currentPage = 1;
         let lastResult = null;
+        let lastRiskLevels = [];
         const listContainer = { id: 'list' };
         const ENDPOINT = { detail: '/api/records', issue: '/api/records/by-issue' };
         const history = { replaceState() {} };
@@ -320,6 +321,21 @@ const cases = {
                 assert.equal(ctx.viewSupports(view, key), want, `${view}/${key}`);
             }
         }
+    },
+    // X2：只篩一個風險層級時，其他層級欄位顯示「—」而不是 0
+    風險層級欄位只篩一級時其他欄顯示破折號() {
+        const make = levels => new Function('roleText', `let lastRiskLevels = ${JSON.stringify(levels)};\n${extractFunction('function riskCountCell(')}\nreturn riskCountCell;`)(
+            (cls, text) => ({ cls, text }));
+        const only = make(['中']);
+        assert.equal(only(0, '高').text, '—', '只篩中：高顯示破折號');
+        assert.equal(only(0, '低').text, '—', '只篩中：低顯示破折號');
+        assert.equal(only(0, '中').text, '0', '被篩的那一級仍顯示實際計數，包含 0');
+        assert.equal(only(7, '中').text, '7');
+        const two = make(['高', '中']);
+        assert.equal(two(0, '低').text, '0', '篩兩級時三欄都是實際計數');
+        const none = make([]);
+        assert.equal(none(0, '高').text, '0', '不限風險層級時是實際計數');
+        assert(/riskCountCell\(h\.highRiskDays, '高'\)/.test(source) && /riskCountCell\(d\.lowRiskHosts, '低'\)/.test(source), '主機與日期視角都要走這個函式');
     },
 };
 

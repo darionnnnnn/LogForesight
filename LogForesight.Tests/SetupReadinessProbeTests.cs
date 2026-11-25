@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
@@ -270,10 +271,14 @@ public class SetupReadinessProbeTests : IDisposable
         var controller = new SetupController(setupService, new RecordingAuditService());
 
         var sw = Stopwatch.StartNew();
-        // SetupController.Status 會在取狀態前先呼叫 RefreshProbeAsync
-        var actionResult = await controller.Status(CancellationToken.None);
+        // 批次 D（A1b）：狀態端點不再等探測；要這一刻的結果走明確的同步探測端點（逾時照樣回 Failed、不擲出）
+        var probeResult = await controller.ProbeAi(CancellationToken.None);
         sw.Stop();
 
+        Assert.True(probeResult.Success);
+        Assert.False(probeResult.Data!.IsReady);
+        Assert.Equal("Failed", probeResult.Data.Status);
+        var actionResult = controller.Status();
         Assert.NotNull(actionResult);
         Assert.True(actionResult.Success);
         Assert.NotNull(actionResult.Data);
@@ -284,6 +289,159 @@ public class SetupReadinessProbeTests : IDisposable
         Assert.Contains("逾時", probeService.LatestResult.Detail);
         Assert.Equal(1, handler.CallCount);
         Assert.True(sw.ElapsedMilliseconds < 5000, $"探活應於短逾時後返回，實耗 {sw.ElapsedMilliseconds} ms");
+    }
+
+    private static HttpResponseMessage OkProbeResponse() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],\"usage\":{\"total_tokens\":2}}", Encoding.UTF8, "application/json")
+    };
+
+    /// <summary>A1b：AI 不通（探測卡住）時，狀態端點的回應時間不含探測；探測在背景只跑一次、不重入。</summary>
+    [Fact]
+    public async Task A1b_狀態端點不等探測_背景更新且不重入()
+    {
+        var release = new TaskCompletionSource();
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = async (_, ct) =>
+            {
+                await release.Task.WaitAsync(ct);
+                return OkProbeResponse();
+            }
+        };
+        using var client = new HttpClient(handler);
+        var probeService = new AiProbeService(_settings, client);
+        var controller = new SetupController(CreateService(probeService), new RecordingAuditService());
+
+        var sw = Stopwatch.StartNew();
+        var first = controller.Status();
+        var second = controller.Status();   // 背景探測還沒結束：不再起第二個
+        sw.Stop();
+
+        Assert.True(first.Success && second.Success);
+        Assert.True(sw.ElapsedMilliseconds < 1000, $"狀態端點不得等探測，實耗 {sw.ElapsedMilliseconds} ms");
+        Assert.False(first.Data!.Steps.Single(s => s.Id == "ai").Done, "尚無探測結果：沿用上次（NotProbed）");
+        Assert.True(first.Data!.Steps.Single(s => s.Id == "ai").Checking, "尚無探測結果：回應要讓前端分得出「檢查中」");
+
+        release.SetResult();
+        await WaitUntil(() => probeService.LatestResult.IsReady);
+        Assert.Equal(1, handler.CallCount);
+        var ready = controller.Status().Data!.Steps.Single(s => s.Id == "ai");
+        Assert.True(ready.Done);
+        Assert.False(ready.Checking);
+    }
+
+    /// <summary>探測有了結果（失敗）之後不再是「檢查中」：精靈顯示待設定而不是一直轉。</summary>
+    [Fact]
+    public async Task 探測失敗後AI步驟不再是檢查中()
+    {
+        var release = new TaskCompletionSource();
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = async (_, ct) =>
+            {
+                await release.Task.WaitAsync(ct);
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+        };
+        using var client = new HttpClient(handler);
+        var probeService = new AiProbeService(_settings, client);
+        var controller = new SetupController(CreateService(probeService), new RecordingAuditService());
+
+        Assert.True(controller.Status().Data!.Steps.Single(s => s.Id == "ai").Checking);
+        release.SetResult();
+        await WaitUntil(() => probeService.LatestResult.Status != AiProbeStatus.NotProbed);
+
+        var step = controller.Status().Data!.Steps.Single(s => s.Id == "ai");
+        Assert.False(step.Done);
+        Assert.False(step.Checking);
+    }
+
+    /// <summary>A1b：精靈「儲存並測試」與設定頁「測試連線」走明確的同步探測：拿到這一次的結果，不受 60 秒快取影響。</summary>
+    [Fact]
+    public async Task A1b_明確探測端點每次都重探_回這次結果()
+    {
+        var healthy = false;
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = (_, _) => Task.FromResult(healthy
+                ? OkProbeResponse()
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))
+        };
+        using var client = new HttpClient(handler);
+        var probeService = new AiProbeService(_settings, client);
+        var controller = new SetupController(CreateService(probeService), new RecordingAuditService());
+
+        var bad = await controller.ProbeAi(CancellationToken.None);
+        Assert.False(bad.Data!.IsReady);
+        Assert.Equal("Failed", bad.Data.Status);
+
+        healthy = true;
+        var good = await controller.ProbeAi(CancellationToken.None);
+        Assert.True(good.Data!.IsReady);
+        Assert.Equal(2, handler.CallCount);
+        Assert.True(controller.Status().Data!.Steps.Single(s => s.Id == "ai").Done, "狀態端點讀到的是剛探的結果");
+    }
+
+    /// <summary>AI 冷卻中，探測成功即證明 AI 通了：解除互動車道冷卻；探測失敗不開冷卻（失敗種類未必是網路層）。</summary>
+    [Fact]
+    public async Task 明確探測成功解除AI冷卻_背景探測不解除_失敗不開冷卻()
+    {
+        var healthy = true;
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = (_, _) => Task.FromResult(healthy
+                ? OkProbeResponse()
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))
+        };
+        using var client = new HttpClient(handler);
+        var gate = new AiRequestGate(() => 1);
+        var probeService = new AiProbeService(_settings, client, requestGate: gate);
+
+        gate.ReportNetworkFailure(AiLane.Interactive);
+        Assert.True(gate.InteractiveCoolingDown);
+        Assert.True((await probeService.ProbeNowAsync()).IsReady);
+        Assert.False(gate.InteractiveCoolingDown);
+
+        // 失敗的探測不開冷卻
+        healthy = false;
+        Assert.False((await probeService.ProbeNowAsync()).IsReady);
+        Assert.False(gate.InteractiveCoolingDown);
+
+        // 背景探測（RefreshAsync）成功不解除：AI 連得上但回應逾時時，背景探測不該一再提早解除冷卻
+        var refreshGate = new AiRequestGate(() => 1);
+        healthy = true;
+        refreshGate.ReportNetworkFailure(AiLane.Interactive);
+        Assert.True((await new AiProbeService(_settings, client, requestGate: refreshGate).RefreshAsync()).IsReady);
+        Assert.True(refreshGate.InteractiveCoolingDown);
+    }
+
+    /// <summary>A1b：並發的明確探測，排隊期間別人剛探完的結果直接共用（不連打兩次）。</summary>
+    [Fact]
+    public async Task A1b_並發的明確探測共用同一次結果()
+    {
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = async (_, ct) =>
+            {
+                await Task.Delay(100, ct);
+                return OkProbeResponse();
+            }
+        };
+        using var client = new HttpClient(handler);
+        var probeService = new AiProbeService(_settings, client);
+
+        var results = await Task.WhenAll(probeService.ProbeNowAsync(), probeService.ProbeNowAsync(), probeService.ProbeNowAsync());
+
+        Assert.All(results, r => Assert.True(r.IsReady));
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.True(condition(), "等待條件逾時");
     }
 
     // ── 郵件條件測試 ─────────────────────────────────────────────────────────────

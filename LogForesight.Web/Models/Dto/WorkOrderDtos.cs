@@ -23,6 +23,12 @@ public class CreateWorkOrderRequest
     /// <summary>管理者在預覽取消勾選的主機（整台排除）</summary>
     public List<long>? ExcludeHostIds { get; set; }
 
+    /// <summary>
+    /// 管理者在預覽勾選「重新交辦」的主機：這些主機已結案（處理人回覆已處理／不處理）或被「不再自動派工」擋住的成員，
+    /// 照常納入；沒列在這裡的，預覽與建立都會略過這類成員。不再打擾的成員納入時等於恢復（舊案件的擋派旗標改為 false）。
+    /// </summary>
+    public List<long>? ReopenHostIds { get; set; }
+
     /// <summary>勾「立即通知」：處理人的通知不等摘要時刻，下一次輪詢就寄。</summary>
     public bool NotifyNow { get; set; }
 
@@ -71,6 +77,12 @@ public class WorkOrderPreviewDto
     public int NoiseExcludedHosts { get; set; }
     public int ManuallyExcludedHosts { get; set; }
 
+    /// <summary>因「最近一次出現當天已被處理人結案」而略過的主機數（未勾重新交辦）</summary>
+    public int ClosedSkippedHosts { get; set; }
+
+    /// <summary>因「不再自動派工」而略過的主機數（未勾重新交辦）</summary>
+    public int DismissedSkippedHosts { get; set; }
+
     /// <summary>群組分攤時排除的暫停接單成員數</summary>
     public int PausedMembersExcluded { get; set; }
 
@@ -89,6 +101,12 @@ public class WorkOrderPreviewDto
     public int AssigneeNoAccessTotal { get; set; }
 
     public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
+
+    /// <summary>
+    /// 建議期限（預填「預計完成日」用，可清除）：依這個問題在會寫入的主機上的最高嚴重度，自今天（站台時鐘）起算——
+    /// 高 3 天、中 7 天（<c>DefaultDueDays</c>）；低或推導不到嚴重度為 null。建立時仍以請求的 <c>DueDate</c> 為準（清掉就是沒有）。
+    /// </summary>
+    public DateTime? SuggestedDueDate { get; set; }
 }
 
 public class WorkOrderConflictDto
@@ -123,6 +141,21 @@ public class WorkOrderPreviewHostDto
 
     public bool NoiseExcluded { get; set; }
     public bool ManuallyExcluded { get; set; }
+
+    /// <summary>
+    /// 因結案類處理而略過的原因：<c>closed</c>（已結案）／<c>dismissed</c>（不再自動派工）；null＝不是這類略過。
+    /// 這類主機一個成員都不會寫入，要寫入請把主機 id 放進請求的 <see cref="CreateWorkOrderRequest.ReopenHostIds"/>。
+    /// </summary>
+    public string? ClosedReason { get; set; }
+
+    /// <summary>結案狀態（<c>resolved</c>／<c>wont_fix</c>／<c>false_positive</c>／<c>known_noise</c>）；取不到為 null</summary>
+    public string? ClosedStatus { get; set; }
+
+    /// <summary>結案者帳號；取不到為 null</summary>
+    public string? ClosedByAccount { get; set; }
+
+    /// <summary>結案時間；取不到為 null</summary>
+    public DateTime? ClosedAt { get; set; }
 }
 
 public class CreateWorkOrderResultDto
@@ -134,6 +167,19 @@ public class CreateWorkOrderResultDto
     public List<WorkOrderOverlongDto> OverlongSkipped { get; set; } = new();
 
     public int NoiseExcludedHosts { get; set; }
+
+    /// <summary>因已結案而略過的主機數（與預覽同一份計畫；另含協調器保底再擋下的）</summary>
+    public int ClosedSkippedHosts { get; set; }
+
+    /// <summary>因不再自動派工而略過的主機數</summary>
+    public int DismissedSkippedHosts { get; set; }
+
+    /// <summary>已結案而略過的主機名稱（依名稱排序、不分大小寫去重，只列前 50 筆；總數見 <see cref="ClosedSkippedHosts"/>）</summary>
+    public List<string> ClosedSkippedHostNames { get; set; } = new();
+
+    /// <summary>不再自動派工而略過的主機名稱（同上，只列前 50 筆；總數見 <see cref="DismissedSkippedHosts"/>）</summary>
+    public List<string> DismissedSkippedHostNames { get; set; } = new();
+
     public int DaySyncPendingCases { get; set; }
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
     public int AssigneeNoAccessTotal { get; set; }
@@ -242,6 +288,12 @@ public class AdminCloseWorkOrderRequest
 
     /// <summary>結案狀態是不處理類時，是否讓這台主機的這個問題之後不再自動派工；結案狀態為「已處理」時忽略</summary>
     public bool BlockRedispatch { get; set; }
+
+    /// <summary>
+    /// 只結案這些案件（「只有上報中的」或「勾選的成員」兩種範圍都用它）。null 或空＝全部進行中成員、整張單結案（既有行為）；
+    /// 帶了但其中有已結案或不屬於這張單的案件，整筆拒絕、什麼都不寫。範圍內結案後單上若還有進行中成員，單繼續進行。
+    /// </summary>
+    public List<string>? CaseIds { get; set; }
 }
 
 /// <summary>退回處理人：說明必填（長度與空白由服務層驗證）</summary>
@@ -262,6 +314,9 @@ public class WorkOrderReturnResultDto
 public class WorkOrderUnreadCountDto
 {
     public int Count { get; set; }
+
+    /// <summary>未讀單中，含至少一個上報中進行中成員的單數（<see cref="Count"/> 的子集）</summary>
+    public int Escalated { get; set; }
 }
 
 /// <summary>取消／代為結案的結果</summary>
@@ -281,17 +336,33 @@ public class WorkOrderListRequest
     public string? Source { get; set; }
     public int? EventId { get; set; }
 
-    /// <summary><c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c></summary>
+    /// <summary>
+    /// <c>active</c>／<c>escalated</c>／<c>overdue</c>／<c>unreplied</c>／<c>closed</c>／<c>all</c>／<c>todo</c>（待我處理：
+    /// 進行中且至少有一個待處理成員，只剩觀察期內或上報中成員的單不列；判準見 <c>WorkOrderQueries.StatusTodo</c>）
+    /// </summary>
     public string Status { get; set; } = "active";
 
-    /// <summary>true＝只列處理人已停用或已失去處理能力的單（與續掛停止原因 <c>handler_inactive</c> 同義）</summary>
+    /// <summary>true＝只列處理人已停用、暫停接單或已失去處理能力的單（<c>HandlerInactivity</c>，與管理者待辦同一個判定）</summary>
     public bool HandlerInactive { get; set; }
 
     /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>
     public long? GroupId { get; set; }
 
-    /// <summary><c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c></summary>
+    /// <summary>
+    /// <c>created_desc</c>／<c>members_desc</c>／<c>unreplied_oldest</c>，以及讀取時推導的三個：
+    /// <c>priority</c>（處理優先序：被退回 → 逾期 → 嚴重度高到低 → 期限近到遠、無期限最後 → 建立時間新到舊）、
+    /// <c>dueSoon</c>（期限最近）、<c>severity</c>（嚴重度高到低）。三個推導鍵對「符合篩選的全體」排序後才分頁，不是只排當頁。
+    /// </summary>
     public string Sort { get; set; } = "created_desc";
+
+    /// <summary>
+    /// 標記篩選（我的交辦「今天需要你處理」各數字的明細）：<c>returned</c>（被退回）／<c>newToday</c>（今天新增）／
+    /// <c>recurrence</c>（復發）／<c>observationExpired</c>（觀察到期）／<c>dueSoon</c>（3 天內到期）；空白＝不篩。
+    /// **組合規則**：與 <see cref="Status"/>（含 <c>todo</c> 待我處理）、暫停、處理人等其他條件一律取交集（AND），
+    /// 不互相覆蓋——例如 <c>status=todo&amp;flag=returned</c> ＝待我處理且被退回的單。標記只看進行中、非停用主機的成員，
+    /// 所以已結案的單不會被任何標記選中。
+    /// </summary>
+    public string? Flag { get; set; }
 
     public int Page { get; set; } = 1;
 
@@ -366,6 +437,64 @@ public class WorkOrderRowDto
     public DateTime? ContinuationStoppedAt { get; set; }
 
     public WorkOrderCountsDto Counts { get; set; } = new();
+
+    /// <summary>
+    /// 進行中的不重複主機數（成員以主機名鍵去重，不含停用主機上的成員）。<see cref="WorkOrderCountsDto.Active"/> 數的是成員（案件）；
+    /// 同一台主機在同一張單內有新舊案件時，成員數會大於主機數。
+    /// </summary>
+    public int ActiveHosts { get; set; }
+
+    /// <summary>歷來不重複主機數（全部成員，含已結案與停用主機上的成員）</summary>
+    public int TotalHosts { get; set; }
+
+    /// <summary>進行中成員裡是「復發」的不重複主機數（判定見 <c>IssueRecurrence</c>）；不含停用主機</summary>
+    public int RecurrenceHosts { get; set; }
+
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」（同主機同問題上一件是處理人判定不處理、已滿 30 天仍在發生才重新派工）的不重複主機數；不含停用主機。
+    /// 判定與成員的 <see cref="WorkOrderMemberDto.PriorDismissal"/> 同一個函式（<c>DismissalRelease.PriorDismissalOf</c>）。
+    /// </summary>
+    public int PriorDismissalHosts { get; set; }
+
+    /// <summary>
+    /// 這張單的問題之「不再打擾」滿 30 天會自動解除（目前規則嚴重度高或重大）：回覆彈窗選到不處理類時據此換後果提示，
+    /// 前端不自己判斷嚴重度。多問題單（沒有單一問題）為 false。
+    /// </summary>
+    public bool DismissalReleases { get; set; }
+
+    /// <summary>觀察期內（觀察中且觀察至 &gt;= 今天）的進行中不重複主機數；不含停用主機</summary>
+    public int ObservingHosts { get; set; }
+
+    /// <summary>觀察到期（觀察中且觀察至 &lt; 今天）的進行中不重複主機數；不含停用主機</summary>
+    public int ObservationExpiredHosts { get; set; }
+
+    /// <summary>
+    /// 待處理成員（進行中、非上報中、非觀察期內；觀察到期算待處理，判準同 <c>WorkOrderQueries.IsTodoMember</c>）的不重複主機數；
+    /// 不含停用主機。清單狀態篩選為 <c>todo</c>（待我處理）時以這個數字當台數。
+    /// </summary>
+    public int TodoHosts { get; set; }
+
+    /// <summary>
+    /// 今天新增：進行中成員裡建立時間（日期）是今天（站台時鐘）的不重複主機數；不含停用主機。
+    /// 昨天 23:59 建立的不算。
+    /// </summary>
+    public int NewTodayHosts { get; set; }
+
+    /// <summary>
+    /// 被退回的成員數：這張單最近一筆退回事件之後處理人尚未回覆時，＝仍是處理中、說明是該次退回說明的進行中成員數
+    /// （夜間續掛新增的成員不算）；沒有被退回、或退回後處理人已回覆為 0。以成員（案件）計，不是主機。
+    /// </summary>
+    public int ReturnedMembers { get; set; }
+
+    /// <summary>
+    /// 顯示用的嚴重度（<c>High</c>／<c>Medium</c>／<c>Low</c>）：取單內**進行中**成員最近一次出現的最高嚴重度
+    /// （舊資料的 Critical 視為 High）；單內沒有進行中成員時取全部成員的最後已知值；都推導不到為 null（畫面顯示「—」）。
+    /// </summary>
+    public string? Severity { get; set; }
+
+    /// <summary>重大旗標：用來決定 <see cref="Severity"/> 的那些最近一次出現中，有任何一個命中重大旗標（<c>elevates_day_risk</c>）</summary>
+    public bool Critical { get; set; }
+
     public DateTime? DueDate { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastAppendedAt { get; set; }
@@ -427,6 +556,37 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     /// 不含已停用主機）。0＝處理人都看得到；單已結案恆為 0。
     /// </summary>
     public int HandlerUnseenMemberCount { get; set; }
+
+    /// <summary>
+    /// 觀察到期且觀察期間「確定沒有再發生」（<see cref="WorkOrderMemberDto.ObservedRecurDays"/> 為 0）的進行中成員案件編號。
+    /// 觀察期間沒有任何分析紀錄（無資料，K 為 null）的成員不列。畫面「把到期且沒有再發生的 N 台結案」一鍵動作以既有回覆端點送出這些案件
+    /// （狀態已處理、說明「觀察期滿未再發生」）；不含停用主機上的成員。
+    /// </summary>
+    public List<string> ObservationExpiredQuietCaseIds { get; set; } = new();
+
+    /// <summary>
+    /// 命中規則的處置參考（影響、可能原因、處置步驟）。多問題單、未命中規則、規則已退役、或規則沒有任何知識內容時為 null
+    /// （畫面不顯示處置參考，訊息樣本不受影響）。與風險日問題列的處置參考同一份組法（<see cref="IssueGuidanceDto.From"/>）。
+    /// </summary>
+    public IssueGuidanceDto? Guidance { get; set; }
+
+    /// <summary>
+    /// 命中規則的 Id（「調整這條規則」的目的地）；多問題單、未命中或規則已退役為 null。
+    /// 不分檢視者（規則 Id 不是敏感資料）；能不能開規則頁由畫面依 Maintain 決定，規則頁與規則 API 另有後端把關。
+    /// </summary>
+    public string? RuleId { get; set; }
+
+    /// <summary>
+    /// 成員中最近一次出現當天的訊息樣本，最多 3 則（每則已是分析時截短過的文字）。
+    /// 母體是檢視者看得到的進行中成員；最近一天的樣本已隨詳情清除時往前一天找，找不到為空陣列。
+    /// </summary>
+    public List<string> SampleMessages { get; set; } = new();
+
+    /// <summary>
+    /// 上報中（狀態 escalated）的進行中成員案件編號（檢視者看得到的主機）：代為結案的「只有上報中的」範圍直接用它送出。
+    /// 0 個＝這張單沒有上報成員。
+    /// </summary>
+    public List<string> EscalatedCaseIds { get; set; } = new();
 }
 
 public class WorkOrderMemberDto
@@ -444,6 +604,12 @@ public class WorkOrderMemberDto
     /// <summary>這台主機已停用：進行中時不計入處理人的台數（徽章、負載看板、總覽）；重新啟用後恢復計入</summary>
     public bool HostDisabled { get; set; }
     public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 登錄類型（問題簽章的 LogName，例如 System、Application）；簽章解析不出來為 null。
+    /// 同一主機在成員表同頁有多列時，畫面以它區分各列（同主機同問題不同登錄類型是不同案件）。
+    /// </summary>
+    public string? LogName { get; set; }
     public string Status { get; set; } = string.Empty;
 
     /// <summary>
@@ -464,6 +630,105 @@ public class WorkOrderMemberDto
 
     /// <summary>同主機同 sensor 最近 30 日已落盤的磁碟趨勢 finding</summary>
     public WorkOrderDiskTrendEvidenceDto? DiskTrend { get; set; }
+
+    /// <summary>
+    /// 是復發：同主機同問題（Source＋EventId）的上一件案件以「已處理」結案，且結案日落在本件建立日往前 30 天內
+    /// （日曆日差，第 30 天算、第 31 天不算）。上一件是不處理類結案不算；沒有上一件不算。判定在 <c>IssueRecurrence</c>。
+    /// </summary>
+    public bool IsRecurrence { get; set; }
+
+    /// <summary>復發次數 N：建立於本件之前、以「已處理」結案、結案日在上述 30 天內的同主機同問題案件數</summary>
+    public int RecurrenceCount { get; set; }
+
+    /// <summary>上一件案件最後的回覆（結案日、狀態、說明）；沒有上一件為 null。與是否復發無關，由畫面決定怎麼用</summary>
+    public WorkOrderLastReplyDto? LastReply { get; set; }
+
+    /// <summary>
+    /// 觀察期間再發生日數 K：觀察開始日（不含）到今天（含）之間，這台主機這個問題有出現紀錄的日數。
+    /// null＝不是觀察中的進行中成員，或這段期間這台主機沒有任何分析紀錄（無資料，不等於沒有再發生）。
+    /// </summary>
+    public int? ObservedRecurDays { get; set; }
+
+    /// <summary>
+    /// 先前判定不處理：同主機同問題的上一件未取消案件是處理人判定不處理（不處理、誤報、已知雜訊）、高嚴重度或重大，
+    /// 且距結案已滿 30 天仍在發生才重新派工的這件。沒有為 null。判定在 <c>DismissalRelease.PriorDismissalOf</c>（與派工閘門共用同一個解除條件）。
+    /// </summary>
+    public PriorDismissalDto? PriorDismissal { get; set; }
+
+    /// <summary>同主機同問題的第幾次（從 1 起算＝建立在本件之前的未取消案件數＋1，含其他交辦單的案件）；「全部」篩選下同主機的新舊案件對照用</summary>
+    public int Occurrence { get; set; } = 1;
+}
+
+/// <summary>成員的「先前判定不處理」資訊（畫面：先前判定不處理（MM-DD，某人），已滿 30 天仍在發生）</summary>
+public class PriorDismissalDto
+{
+    /// <summary>上一件的結案時間</summary>
+    public DateTime ClosedAt { get; set; }
+
+    /// <summary>判定人帳號；讀不到為 null</summary>
+    public string? Account { get; set; }
+
+    /// <summary>上一件的結案狀態：wont_fix／false_positive／known_noise</summary>
+    public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 主機詳情「這台的交辦」（GET api/host-detail/{hostId}/orders）：這台主機每個進行中的案件一列。
+/// 什麼算一個：以案件（主機×問題簽章）為列；同主機同問題但登錄類型（LogName）不同是兩個案件，各一列、
+/// 且 <see cref="HostWorkOrderRowDto.ShowLogName"/> 為 true 讓畫面標出登錄類型。
+/// 一列都沒有（這台沒有進行中的交辦，或檢視者被授權的問題都沒有進行中交辦）時 <see cref="Items"/> 為空陣列，畫面顯示「這台主機目前沒有進行中的交辦」。
+/// 受限檢視者：主機必須可見；只經案件授與看得到這台的人，只回被交辦（授與）的問題。
+/// </summary>
+public class HostWorkOrdersDto
+{
+    public List<HostWorkOrderRowDto> Items { get; set; } = new();
+}
+
+public class HostWorkOrderRowDto
+{
+    public string CaseId { get; set; } = string.Empty;
+    public long WorkOrderId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+
+    /// <summary>登錄類型（問題簽章的 LogName，例如 System、Application）；簽章解析不出來為 null</summary>
+    public string? LogName { get; set; }
+
+    /// <summary>同主機同問題（來源＋事件）有不只一列時為 true：這時畫面要標出登錄類型才分得出各列</summary>
+    public bool ShowLogName { get; set; }
+
+    /// <summary>最近一次出現的最高嚴重度（已正規化的 High／Medium／Low…）；推導不到為 null（畫面顯示「—」）</summary>
+    public string? Severity { get; set; }
+
+    public bool Critical { get; set; }
+    public long HandlerId { get; set; }
+    public string HandlerName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>復發（判定見 <c>IssueRecurrence</c>）</summary>
+    public bool IsRecurrence { get; set; }
+
+    /// <summary>上一件的回覆（結案時間、狀態、說明）；沒有前案為 null</summary>
+    public WorkOrderLastReplyDto? LastReply { get; set; }
+
+    /// <summary>這個問題的「不再打擾」滿 30 天會自動解除（回覆彈窗換後果提示用）</summary>
+    public bool DismissalReleases { get; set; }
+
+    /// <summary>檢視者是這張單的處理人、具 Handle 能力：這一列可勾選回覆（後端另有逐單授權）</summary>
+    public bool CanReply { get; set; }
+}
+
+/// <summary>上一件案件最後的回覆摘要</summary>
+public class WorkOrderLastReplyDto
+{
+    /// <summary>回覆（結案）時間</summary>
+    public DateTime Date { get; set; }
+
+    /// <summary>案件結案時的狀態（<c>IssueHandlingStatuses</c> 代碼）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>回覆說明（案件上最近一次的說明）；沒有為 null</summary>
+    public string? Note { get; set; }
 }
 
 public class WorkOrderDiskTrendEvidenceDto
@@ -478,7 +743,7 @@ public class WorkOrderMemberPageDto
     public List<WorkOrderMemberDto> Items { get; set; } = new();
     public int Total { get; set; }
 
-    /// <summary>因檢視者可見範圍而沒列出的成員數（沒過濾時為 0）</summary>
+    /// <summary>因檢視者可見範圍而沒列出的成員數（沒過濾時為 0；帶主機名篩選時一律 0，避免探測不可見主機）</summary>
     public int HiddenMemberCount { get; set; }
 
     public int Page { get; set; }
@@ -530,6 +795,12 @@ public class GapsDto
     public List<GapRowDto> Rows { get; set; } = new();
     public int Total { get; set; }
 
+    /// <summary>
+    /// 本次列出的清單總問題數（分頁依據）：帶 <c>section</c> 時＝該段有項目的問題數，不帶時等於 <see cref="Total"/>。
+    /// 一個問題在多段都有項目時每段各算一次；該段沒有任何問題為 0。
+    /// </summary>
+    public int SectionTotal { get; set; }
+
     /// <summary>全部待派問題中有「無法派出」主機的問題數（不分頁；儀表板待派工卡只呼叫一次試跑就拿得到）</summary>
     public int UnassignableTotal { get; set; }
 
@@ -537,6 +808,13 @@ public class GapsDto
 
     /// <summary>出現點超過上限：不做試跑，請縮小期間</summary>
     public bool TooLarge { get; set; }
+
+    /// <summary>可派的「問題 × 主機」總數（單位：問題×主機；不分頁，各問題的建議處理人台數相加）；超過上限時為 0</summary>
+    public int DispatchableIssueHosts { get; set; }
+
+    /// <summary>有可派問題的主機名稱（去重、不分大小寫）。只供伺服器內部彙整（報表處理成效），不輸出到 API</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public HashSet<string> DispatchableHostNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>超過上限時尚未派出的出現點數（以下界判定時為「至少」）；未超過時為 0</summary>
     public long PendingAtLeast { get; set; }
@@ -546,6 +824,70 @@ public class GapsDto
 
     public DateTime From { get; set; }
     public DateTime To { get; set; }
+
+    /// <summary>第一段「可以派」：有建議處理人的問題數與（問題×主機）數；超過上限時為 0</summary>
+    public GapSectionDto Dispatchable { get; set; } = new();
+
+    /// <summary>第二段「派不出去」：沒有可接單人選（<c>no_pool／all_paused／no_visibility</c>）的問題數與（問題×主機）數</summary>
+    public GapSectionDto UnassignableSection { get; set; } = new();
+
+    /// <summary>第三段「不會派」：閘門排除（嚴重度未達、不再打擾、抑制、已知雜訊、靜音）的問題數與（問題×主機）數</summary>
+    public GapSectionDto NotDispatched { get; set; } = new();
+
+    /// <summary>第二段依原因分組（每組一次說明）；原因依序排序</summary>
+    public List<GapUnassignableReasonDto> UnassignableReasons { get; set; } = new();
+
+    /// <summary>
+    /// 「沒有人看得到」（<c>no_visibility</c>）的主機所屬群組，每個群組只出現一次（不隨問題重複），
+    /// 台數多的在前。沒有群組的主機不在內。
+    /// </summary>
+    public List<GapUnseenHostGroupDto> UnseenHostGroups { get; set; } = new();
+
+    /// <summary>可授權的派工池使用者群組（啟用中且為派工池）；授權沿用 <c>PUT api/admin/access/{userGroupId}</c></summary>
+    public List<GapPoolGroupDto> PoolGroups { get; set; } = new();
+
+    /// <summary>目前使用者能否直接授權（具 Maintain）；否則畫面只給連到群組與授權的連結</summary>
+    public bool CanGrantAccess { get; set; }
+}
+
+/// <summary>
+/// 待派頁一段的統計。<see cref="Issues"/>＝該段有幾個問題（相異來源＋事件編號）；<see cref="Hosts"/>＝該段「問題×主機」數
+/// （同一台主機在兩個問題上各算一次）。一個問題在不同主機上可落在不同段，各段各算一次；該段沒有任何項目時兩者皆為 0。
+/// </summary>
+public class GapSectionDto
+{
+    public int Issues { get; set; }
+    public int Hosts { get; set; }
+}
+
+public class GapUnassignableReasonDto
+{
+    /// <summary>no_pool／all_paused／no_visibility</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>有這個原因的問題數</summary>
+    public int Issues { get; set; }
+
+    /// <summary>（問題×主機）數</summary>
+    public int Hosts { get; set; }
+}
+
+public class GapUnseenHostGroupDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+
+    /// <summary>此群組內沒有人看得到的相異主機數</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>牽涉到此群組的問題數</summary>
+    public int Issues { get; set; }
+}
+
+public class GapPoolGroupDto
+{
+    public long UserGroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
 }
 
 /// <summary>待派清單的一列＝一個問題（Source, EventId）</summary>
@@ -585,6 +927,16 @@ public class DismissedListDto
     public List<DismissedGroupDto> Groups { get; set; } = new();
 }
 
+/// <summary>不再自動派工的輕量計數（與清單同一個查詢）</summary>
+public class DismissedCountDto
+{
+    /// <summary>被擋住的問題數（相異的來源＋事件編號）；沒有任何被擋住時為 0</summary>
+    public int Issues { get; set; }
+
+    /// <summary>被擋住的主機台數（相異主機）；沒有任何被擋住時為 0</summary>
+    public int Hosts { get; set; }
+}
+
 public class DismissedGroupDto
 {
     public string Source { get; set; } = string.Empty;
@@ -612,6 +964,15 @@ public class DismissedRowDto
     public string? ClosedBy { get; set; }
 
     public DateTime? ClosedAt { get; set; }
+
+    /// <summary>
+    /// 距自動恢復派工還有幾天（高嚴重度或重大、處理人回覆產生、生效日期之後結案才有；第 30 天＝1）。
+    /// null＝永久（中低嚴重度、管理者明確勾選之後不再自動派工、上線前判定），畫面顯示「永久」。
+    /// </summary>
+    public int? ReleaseInDays { get; set; }
+
+    /// <summary>上線前判定：結案早於 30 天解除功能的生效日期，不自動解除，由管理者逐筆或整個問題恢復</summary>
+    public bool PreLaunch { get; set; }
 }
 
 /// <summary>恢復單一（主機, 問題）</summary>
@@ -661,6 +1022,40 @@ public class AutoDispatchRequest
 {
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
+
+    /// <summary>單題派工：問題來源；與 <see cref="EventId"/> 一起給或都不給（不帶＝全頁，現行行為）</summary>
+    public string? Source { get; set; }
+
+    /// <summary>單題派工：問題事件編號</summary>
+    public int? EventId { get; set; }
+}
+
+/// <summary>
+/// 立即派工預覽（<c>POST api/work-orders/auto-dispatch/preview</c>，不落盤）：與落盤共用同一個試跑與分組。
+/// 單位見 <c>WorkOrderBoardService.PreviewAutoDispatch</c>；沒有任何可派項目時 <see cref="NothingToDispatch"/> 為 true、各數字為 0。
+/// </summary>
+public class AutoDispatchPreviewDto
+{
+    /// <summary>將建立的新單張數</summary>
+    public int CreateOrders { get; set; }
+
+    /// <summary>將併入既有單的張數（只掛進既有單、不新建）</summary>
+    public int MergeOrders { get; set; }
+
+    /// <summary>掛入的總台數（各人台數加總）</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>每人將掛入的台數</summary>
+    public List<AutoDispatchHandlerDto> PerHandler { get; set; } = new();
+
+    /// <summary>範圍內派不出去的（原因 → 台數）</summary>
+    public List<GapUnassignableDto> Unassigned { get; set; } = new();
+
+    /// <summary>沒有任何可派的項目</summary>
+    public bool NothingToDispatch { get; set; }
+
+    /// <summary>給畫面顯示的訊息；有可派項目時為 null</summary>
+    public string? Message { get; set; }
 }
 
 public class AutoDispatchResultDto
@@ -674,6 +1069,15 @@ public class AutoDispatchResultDto
 
     /// <summary>建單擲例外的組（其餘組照常處理；全部失敗時仍回結果、不擲）</summary>
     public List<AutoDispatchFailedGroupDto> FailedGroups { get; set; } = new();
+
+    /// <summary>
+    /// 這次沒有任何新成員被派出（<see cref="AssignedMembers"/> 為 0）且沒有失敗的組：多半是別人剛派完。
+    /// <see cref="MergedOrders"/> 只計真的併入新成員的單，所以這時三個數字都是 0。
+    /// </summary>
+    public bool NothingToDispatch { get; set; }
+
+    /// <summary>給畫面顯示的訊息（<see cref="NothingToDispatch"/> 時為「沒有需要派的項目（可能剛由其他人派出）」，否則為 null）</summary>
+    public string? Message { get; set; }
 }
 
 public class AutoDispatchFailedGroupDto
@@ -726,6 +1130,13 @@ public class WorkOrderReplyResultDto
     public int Cases { get; set; }
     public bool WorkOrderClosed { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 }
 
 /// <summary>多張交辦單一次回覆（每張全部進行中成員）</summary>
@@ -744,6 +1155,13 @@ public class WorkOrderReplyManyResultDto
     public int Cases { get; set; }
     public int ClosedWorkOrders { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 
     /// <summary>已寫入成功的單（依送出順序）</summary>
     public List<long> Succeeded { get; set; } = new();
@@ -767,6 +1185,41 @@ public class HandlerSummaryDto
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; set; }
+
+    /// <summary>
+    /// 進行中台數（<see cref="ActiveMembers"/>）的三個互斥分法，三者相加恆等於 <see cref="ActiveMembers"/>：
+    /// 待我處理（進行中、非上報中、非觀察期內；觀察到期算在這裡）、觀察期內（觀察中且觀察至 &gt;= 今天）、上報中。
+    /// 口徑同 <see cref="ActiveMembers"/>（非暫停單、不含停用主機）；數的是成員（主機×問題）。
+    /// </summary>
+    public int TodoHosts { get; set; }
+
+    /// <summary>觀察期內的台數（見 <see cref="TodoHosts"/>）</summary>
+    public int ObservingHosts { get; set; }
+
+    /// <summary>上報中的台數（見 <see cref="TodoHosts"/>）</summary>
+    public int EscalatedHosts { get; set; }
+
+    // ── 今天需要你處理（只有 HandlerSummary 端點填，側欄徽章不填、恆為 0）─────────────────────────
+    // 口徑同 ActiveMembers：進行中交辦單（不含暫停單）底下的進行中成員、不含停用主機。
+    // 「以主機計」的三個數字是各單的不重複主機數加總，等於清單各列同名欄位相加；同一台主機出現在兩張單算兩次。
+
+    /// <summary>今天新增（以主機計）：成員建立日是今天；等於清單各列 <see cref="WorkOrderRowDto.NewTodayHosts"/> 相加</summary>
+    public int NewTodayHosts { get; set; }
+
+    /// <summary>復發（以主機計）：進行中成員是復發（<c>IssueRecurrence</c>）；等於各列 <see cref="WorkOrderRowDto.RecurrenceHosts"/> 相加</summary>
+    public int RecurrenceHosts { get; set; }
+
+    /// <summary>被退回（以成員計）：等於各列 <see cref="WorkOrderRowDto.ReturnedMembers"/> 相加</summary>
+    public int ReturnedMembers { get; set; }
+
+    /// <summary>觀察到期（以主機計）：觀察中且觀察至早於今天；等於各列 <see cref="WorkOrderRowDto.ObservationExpiredHosts"/> 相加</summary>
+    public int ObservationExpiredHosts { get; set; }
+
+    /// <summary>
+    /// 3 天內到期（以成員計）：處理中成員的期限在今天～今天＋3 天（含兩端）；判定見 <c>WorkOrderQueries.IsDueSoon</c>。
+    /// 已逾期的不算（逾期是 <see cref="OverdueMembers"/>）。
+    /// </summary>
+    public int DueSoonMembers { get; set; }
 
     /// <summary>這位處理人目前暫停接單（自動派工排除他）；處理人工作頁頁頭標記用，側欄徽章不填</summary>
     public bool HandlerPaused { get; set; }
@@ -800,4 +1253,7 @@ public class WorkOrderCandidateDto
     public bool InPool { get; set; }
     public bool RecentlyResolvedSameIssue { get; set; }
     public int ActiveLoad { get; set; }
+
+    /// <summary>使用者是否設定了 email（沒有就收不到交辦通知）</summary>
+    public bool HasEmail { get; set; }
 }

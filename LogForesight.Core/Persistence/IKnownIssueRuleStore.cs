@@ -63,4 +63,46 @@ public interface IKnownIssueRuleStore
     /// <summary>寫入規則檔內容（初次部署種子、或規則維護頁「內建規則升級」套用後）。實作應採原子寫入
     /// （寫暫存檔後改名），避免程式在寫入途中被中斷留下半個損毀的檔案。</summary>
     void Save(RuleFileContent content);
+
+    /// <summary>
+    /// 讀→改→寫的原子單位：<paramref name="mutation"/> 拿到目前最新的規則檔內容、就地修改後由這裡寫回，
+    /// 讀與寫之間不會被另一個儲存插入（規則維護的「版本比對＋換一條」必須在這一段內完成）。
+    /// mutation 擲例外時不寫入。預設實作以行程內鎖串接 Load／Save，供測試替身使用；
+    /// 正式實作（<see cref="KnownIssueRuleStore"/>）走 blob 的交易。
+    /// </summary>
+    TResult Update<TResult>(Func<RuleFileContent, TResult> mutation)
+    {
+        lock (RuleStoreLocks.Fallback)
+        {
+            var outcome = Load();
+            if (!outcome.Success || outcome.Content == null)
+                throw new InvalidOperationException($"規則庫載入失敗：{outcome.Error}");
+            var result = mutation(outcome.Content);
+            Save(outcome.Content);
+            return result;
+        }
+    }
+}
+
+internal static class RuleStoreLocks
+{
+    internal static readonly object Fallback = new();
+}
+
+/// <summary>
+/// 單一規則的版本：該條規則內容的雜湊（不新增欄位）。規則清單／單筆讀取回傳它，
+/// 儲存時帶回來比對；內容沒變版本就不變，改了別條規則不會讓這條衝突。
+/// </summary>
+public static class KnownIssueRuleVersion
+{
+    private static readonly System.Text.Json.JsonSerializerOptions Options = new()
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    public static string Of(KnownIssueRule rule)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(rule, Options));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes), 0, 8);
+    }
 }

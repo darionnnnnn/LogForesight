@@ -159,6 +159,74 @@ public class IssueCaseCoordinatorTests
     }
 
     [Fact]
+    public void 同步_處理中未帶日期_保留案件原有期限_帶日期以新日期為準_結案類清空()
+    {
+        var trigger = DateTime.Today;
+        var due = DateTime.Today.AddDays(5);
+        AddRecord(trigger);
+        var coordinator = Create();
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: due,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Equal(due, _cases.GetOpen(Host, IssueKey)!.DueDate);
+
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.InProgress, note: "繼續", dueDate: null, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Equal(due, _cases.GetOpen(Host, IssueKey)!.DueDate);
+        Assert.Equal(due, _issueHandlings.GetForDay(Host, trigger).Single().DueDate);
+
+        var later = DateTime.Today.AddDays(9);
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.InProgress, note: "延後", dueDate: later, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Equal(later, _cases.GetOpen(Host, IssueKey)!.DueDate);
+
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Resolved, note: "好了", dueDate: null, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Null(_cases.Get(_cases.GetMany(new[] { Host }).Single().CaseId)!.DueDate);
+        Assert.Null(_issueHandlings.GetForDay(Host, trigger).Single().DueDate);
+    }
+
+    [Fact]
+    public void 同步_觀察中切回處理中未帶日期_期限為空_不沿用觀察至()
+    {
+        var trigger = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        var observeUntil = DateTime.Today.AddDays(-3);
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Observing, note: "觀察", dueDate: observeUntil, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        Assert.Equal(observeUntil, _cases.GetOpen(Host, IssueKey)!.DueDate);
+
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.InProgress, note: "回來處理", dueDate: null, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        Assert.Null(_cases.GetOpen(Host, IssueKey)!.DueDate);
+        Assert.Null(_issueHandlings.GetForDay(Host, trigger).Single().DueDate);
+    }
+
+    [Fact]
+    public void 同步_觀察中未帶日期_語意不變_不沿用原期限()
+    {
+        var trigger = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: DateTime.Today.AddDays(5),
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Observing, note: "觀察", dueDate: null, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        Assert.Null(_cases.GetOpen(Host, IssueKey)!.DueDate);
+    }
+
+    [Fact]
     public void 同步_清除標記時不缺列改落盤明確open()
     {
         var trigger = DateTime.Today;

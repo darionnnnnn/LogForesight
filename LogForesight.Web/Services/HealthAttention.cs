@@ -30,12 +30,14 @@ public static class HealthAttentionKeys
     public const string PrtgDevicesPurged = "prtgDevicesPurged";
     public const string CertificateTrust = "certificateTrust";
     public const string OutboxDropped = "outboxDropped";
+    public const string AiUnreachable = "aiUnreachable";
+    public const string DispatchReadiness = "dispatchReadiness";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
         Storage, SlowQueries, FirstSeen, Freshness, PrtgSnapshot, Memory, Crypto,
         Migration, PrtgFreshness, HostDayRecovery, LastRun, MailSuspended, Retention, PrtgSensorsEmpty, PrtgDevicesPurged,
-        CertificateTrust, OutboxDropped
+        CertificateTrust, OutboxDropped, AiUnreachable, DispatchReadiness
     };
 }
 
@@ -80,6 +82,18 @@ public sealed class HealthAttentionInput
     /// 是否「近期」由 <see cref="HealthAttention.Evaluate"/> 以 <see cref="HealthAttention.OutboxDropRecentWindow"/> 判定。</summary>
     public int OutboxRecentDropped { get; init; }
     public DateTime? OutboxLastDroppedAt { get; init; }
+
+    /// <summary>
+    /// AI 服務已設定、上次探測卻連不上或回應格式不相容（<see cref="AiProbeStatus.Failed"/>）。
+    /// 沒設定（統計模式是合法運作方式）與還沒探測過都不算——那不是故障。
+    /// </summary>
+    public bool AiUnreachable { get; init; }
+
+    /// <summary>
+    /// 派工就緒檢查不通過的項目說明（每項一句，來自 <see cref="DispatchReadinessService.Evaluate"/>）；
+    /// 全部通過、略過或沒有派工就緒服務（測試組裝）時為空。判定在就緒服務，這裡只負責併入整體狀態。
+    /// </summary>
+    public IReadOnlyList<string> DispatchReadinessFailures { get; init; } = Array.Empty<string>();
 
     /// <summary>最近一次 PRTG 同步結果的警告；PRTG 未啟用時為空</summary>
     public IReadOnlyList<PrtgSyncWarning> PrtgSyncWarnings { get; init; } = Array.Empty<PrtgSyncWarning>();
@@ -171,6 +185,12 @@ public static class HealthAttention
         if (input.OutboxRecentDropped > 0 && input.OutboxLastDroppedAt is { } droppedAt && now - droppedAt <= OutboxDropRecentWindow)
             Add(HealthAttentionKeys.OutboxDropped,
                 $"交辦通知佇列已滿，近期丟棄了 {input.OutboxRecentDropped} 筆最舊的待寄通知（最近一次 {droppedAt:MM/dd HH:mm}）；請檢查郵件是否停擺。");
+
+        if (input.AiUnreachable)
+            Add(HealthAttentionKeys.AiUnreachable, "AI 服務連線失敗，白話摘要與互動問答暫時無法使用（分析仍以統計模式照常執行）；請到「設定 > AI 服務」確認位址後按「測試連線」。");
+
+        foreach (var failure in input.DispatchReadinessFailures)
+            Add(HealthAttentionKeys.DispatchReadiness, Sentence($"派工就緒：{PrtgSyncWarning.Truncate(failure, 200)}"));
 
         foreach (var warning in input.PrtgSyncWarnings)
         {

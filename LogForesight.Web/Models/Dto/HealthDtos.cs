@@ -55,6 +55,15 @@ public class HealthDetailDto : HealthDto
     /// <summary>整體狀態不是 ok 的原因（每項一句中文）；ok 時為空清單。判定唯一在 HealthAttention.Evaluate。</summary>
     public List<LogForesight.Web.Services.HealthReason> StatusReasons { get; set; } = new();
 
+    /// <summary>派工就緒檢查（逐項通過／不通過）；沒有就緒服務（測試組裝）或儲存連不上時為 null。不通過的項目已併入 <see cref="StatusReasons"/>。</summary>
+    public DispatchReadinessDto? DispatchReadiness { get; set; }
+
+    /// <summary>AI 探測的上次結果（<c>NotConfigured／NotProbed／Ready／Failed</c>）；站台沒有探測服務時為 null。只有 Failed 會進整體狀態原因。</summary>
+    public string? AiProbeStatus { get; set; }
+
+    /// <summary>AI 探測上次結果的一句中文說明（固定文字）</summary>
+    public string? AiProbeDetail { get; set; }
+
     /// <summary>建置時有沒有取得 commit；false 時無法從版本判斷站台部署了哪一版</summary>
     public bool BuildShaKnown { get; set; }
 

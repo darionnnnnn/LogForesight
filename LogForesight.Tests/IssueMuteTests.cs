@@ -54,7 +54,7 @@ public sealed class IssueMuteTests : IDisposable
 
     private IssueOwnerAdminService Admin(ICurrentUser user, IIssueOwnerStore? store = null) =>
         new(store ?? _owners, new FakeIssueAggregateQuery(), _users, _audit, user,
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, new FakeRuleStore());
 
     private static ICurrentUser Maintainer() => FakeCurrentUser.ForUser(5, Capability.Maintain);
 
@@ -255,7 +255,7 @@ public sealed class IssueMuteTests : IDisposable
         };
 
         // 現在不在任何區間內，只驗紀錄日的判定；目前靜音中的規則見下一條測試
-        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now.AddDays(10));
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now.AddDays(10), TestRules.None);
 
         Assert.True(ctx.IsMuted("DISK", EventId, Today.AddDays(-3)));
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-2).AddHours(20)));
@@ -275,7 +275,7 @@ public sealed class IssueMuteTests : IDisposable
             ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
         };
 
-        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now, TestRules.None);
 
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-5)));
         Assert.False(ctx.IsMuted(Source, 154, Today.AddDays(-5)));
@@ -479,7 +479,7 @@ public sealed class IssueMuteTests : IDisposable
 
         var admin = new IssueOwnerAdminService(_owners, new FakeIssueAggregateQuery(), _users, _audit,
             FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle),
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, mail: mail);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, new FakeRuleStore(), mail: mail);
         admin.SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "設備維護", ExistingOrders = "close" });
 
         var items = outbox.Get().Items.Values.ToList();
@@ -523,7 +523,7 @@ public sealed class IssueMuteTests : IDisposable
             ? new[] { Profile((Today.AddDays(-1), Today.AddDays(2))) }
             : Array.Empty<IssueProfile>();
         var service = new AdminReminderService(settings, _orders, _cases, _hosts, _users, new FakeUserGroupStore(), state, mail,
-            new FixedIssueExclusionSource(IssueExclusion.From(profiles, Today)));
+            new FakeRuleStore(), new FixedIssueExclusionSource(IssueExclusion.From(profiles, Today)));
 
         var dto = service.Compute();
 
@@ -716,5 +716,23 @@ public sealed class IssueMuteTests : IDisposable
             },
             Actor = new WorkOrderActor { ActorAccount = "boss", OccurredAt = DateTime.Now.AddHours(-1) }
         }).WorkOrderId;
+    }
+
+    // ── 第 81 輪批次 F（CU-9）：靜音中計數端點 ─────────────────────────────
+
+    [Fact]
+    public void CU9_靜音中計數只算今天落在區間內的問題_與清單的CurrentMute同一個判定()
+    {
+        _owners.Upsert(new IssueProfile { SourceName = "a", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(-1), To = Today, Reason = "r", ByAccount = "x" } } });   // 今天最後一天：算
+        _owners.Upsert(new IssueProfile { SourceName = "b", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(-5), To = Today.AddDays(-1), Reason = "r", ByAccount = "x" } } });   // 昨天到期：不算
+        _owners.Upsert(new IssueProfile { SourceName = "c", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today.AddDays(1), To = Today.AddDays(3), Reason = "r", ByAccount = "x" } } });   // 明天才開始：不算
+        _owners.Upsert(new IssueProfile { SourceName = "d", EventId = 1 });                                                                                                                         // 從未靜音：不算
+        var admin = Admin(Maintainer());
+
+        var count = admin.CountMuted();
+
+        Assert.Equal(1, count.Count);
+        Assert.Equal(admin.List().Count(o => o.CurrentMute != null), count.Count);
+        Assert.Equal(0, new IssueMuteTests().Admin(Maintainer()).CountMuted().Count);
     }
 }

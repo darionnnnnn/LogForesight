@@ -23,6 +23,7 @@ public sealed class HealthAttentionBehaviorTests
     [InlineData("health-attention.behavior.mjs", "overallDownUsesErrorNote")]
     [InlineData("health-attention.behavior.mjs", "overallReasonTextIsPlainText")]
     [InlineData("health-attention.behavior.mjs", "bannerListsReasonsWhenNotOk")]
+    [InlineData("health-attention.behavior.mjs", "bannerCollapsesReasonsBeyondTwo")]
     [InlineData("health-attention.behavior.mjs", "bannerKeepsStaleBarAndAddsReasons")]
     [InlineData("health-attention.behavior.mjs", "bannerHiddenWhenOk")]
     [InlineData("health-attention.behavior.mjs", "bannerDevMonitorSeesReasonsWithoutSettingsLink")]

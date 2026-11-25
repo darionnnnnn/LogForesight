@@ -2,7 +2,7 @@
  * 使用者維護（docs/WEB-SPEC.md §9.8）。
  */
 
-import { roleText } from '../core/elements.js';
+import { roleText, statusNote } from '../core/elements.js';
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
@@ -10,6 +10,8 @@ import {
 } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
+import { askWorkOrderChoice } from './availability-choice.js';
+import { createUserGroupSummary } from '../core/user-group-summary.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -27,6 +29,26 @@ let pageSize = loadPageSize('users');
 // 新增筆數（docs/archive/HISTORY.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
 // 編輯既有使用者一律走單筆（帳號本來就不可改，多筆模式沒有意義）
 let createMode = 'single';
+
+// 編輯視窗的群組即時摘要（F18-1）：能力、可見主機台數、是否在派工池；依目前勾選、尚未儲存的群組算
+const groupSummary = createUserGroupSummary({
+    host: document.getElementById('user-group-summary'),
+    fetchPreview: ({ userId, groupIds, active }) => {
+        const query = new URLSearchParams();
+        if (userId) query.set('userId', String(userId));
+        for (const id of groupIds) query.append('groupIds', String(id));
+        query.set('active', String(active));
+        return api.get(`/api/admin/users/group-preview?${query}`, { silent: true });
+    }
+});
+
+function refreshGroupSummary() {
+    groupSummary.refresh({
+        userId: editingUser?.userId ?? null,
+        groupIds: Array.from(document.querySelectorAll('#user-groups input:checked')).map(input => Number(input.value)),
+        active: document.getElementById('user-active').checked
+    });
+}
 
 // chip 篩選狀態（§5.1 D-2）：狀態/角色單選，群組多選
 // 狀態預設 'active'（§4，回饋第十一輪）：日常維護看的是「現在還在職的人」，
@@ -101,7 +123,7 @@ const USER_COLUMNS = [
             span.title = '暫停後，夜間自動派工不會再派新單給這個人；既有交辦單不受影響。';
             return span;
         },
-        render: u => renderDispatchPausedToggle(u)
+        render: u => (showsDispatchPausedToggle(u) ? renderDispatchPausedToggle(u) : roleText('lf-text-meta', '—'))
     },
     { title: '狀態', sortKey: 'active', sortValue: u => u.active ? 1 : 0, render: u => renderActiveBadge(u.active) },
     { title: '', className: 'text-end', render: u => renderEditButton(u) }
@@ -228,6 +250,61 @@ async function notifyActiveWorkOrders(user, count, action) {
     });
 }
 
+/** 停用／暫停後要進交辦總覽批次改派的網址：該處理人、進行中，reassign=1 讓清單載入後先把他名下的單勾好 */
+function reassignUrl(user) {
+    const params = new URLSearchParams({ handlerId: String(user.userId), status: 'active', reassign: '1' });
+    return `${appUrl('/work-orders')}?${params}`;
+}
+
+/**
+ * 停用或暫停接單「之前」先看名下進行中的交辦單（L12）：有單就顯示張數與台數，讓管理者選
+ * 「一併改派」或「先不處理」（仍可停用）；取消＝不做這次變更。
+ * 回傳 'cancel'（不做）、'reassign'（做完後進批次改派）、'informed'（看過說明、先不處理）、
+ * 'silent'（沒有單，或查不到摘要——例如沒有檢視交辦的能力：沿用儲存後的提示）。
+ * 張數含暫停中的單；台數取處理人摘要的進行中台數（不含暫停單）。
+ */
+async function confirmBeforeAvailabilityChange(user, action) {
+    let summary = null;
+    try {
+        summary = await api.get(`/api/handlers/${user.userId}/work-orders/summary`, { silent: true });
+    } catch {
+        return 'silent';
+    }
+    const paused = Number(summary?.pausedWorkOrders) || 0;
+    const orders = (Number(summary?.activeWorkOrders) || 0) + paused;
+    if (orders <= 0) return 'silent';
+    const members = Number(summary?.activeMembers) || 0;
+    const pausedNote = paused > 0 ? `（其中 ${paused} 張暫停中，台數不含暫停單）` : '';
+    const choice = await askWorkOrderChoice({
+        title: `${action}前先確認交辦單`,
+        message: `${user.account} 名下還有 ${orders} 張進行中的交辦單、${members} 台${pausedNote}。\n` +
+            `${action}後這些單仍在他名下，不會自動轉走。\n` +
+            '「一併改派」：儲存後直接進交辦總覽，改派給其他處理人。「先不處理」：照常' + action + '，之後再處理。'
+    });
+    if (choice === 'reassign') return 'reassign';
+    return choice === 'skip' ? 'informed' : 'cancel';
+}
+
+/** 停用或暫停完成後的接續：一併改派＝進批次改派；看過說明就不再重複提示；沒看過才沿用原提示 */
+function continueAfterAvailabilityChange(choice, user, count, action) {
+    if (choice === 'reassign') {
+        location.href = reassignUrl(user);
+        return;
+    }
+    if (choice === 'informed') return;
+    notifyActiveWorkOrders(user, count, action);
+}
+
+/**
+ * 「暫停接單」只對夜間派工的候選人有意義：使用者屬於任一啟用中的派工池群組才顯示；
+ * 其餘顯示「—」。已經暫停的人一律保留開關（不在池內也要能取消暫停，否則旗標會卡死）。
+ */
+function showsDispatchPausedToggle(user) {
+    if (user.dispatchPaused) return true;
+    const poolGroupIds = new Set(groups.filter(g => g.dispatchPool && g.active !== false).map(g => g.groupId));
+    return (user.groupIds ?? []).some(id => poolGroupIds.has(id));
+}
+
 function renderDispatchPausedToggle(user) {
     const wrap = document.createElement('div');
     wrap.className = 'form-check m-0';
@@ -248,11 +325,17 @@ function renderDispatchPausedToggle(user) {
     input.addEventListener('change', async () => {
         const next = input.checked;
         input.disabled = true;
+        const choice = next ? await confirmBeforeAvailabilityChange(user, '暫停接單') : 'silent';
+        if (choice === 'cancel') {
+            input.checked = !next;
+            input.disabled = false;
+            return;
+        }
         try {
             const result = await api.put(`/api/admin/users/${user.userId}/dispatch-paused`, { paused: next }, { silent: true });
             user.dispatchPaused = next;
             toast('已更新暫停接單設定');
-            if (next) notifyActiveWorkOrders(user, result?.activeWorkOrders, '暫停接單');
+            if (next) continueAfterAvailabilityChange(choice, user, result?.activeWorkOrders, '暫停接單');
         } catch (error) {
             input.checked = !next;
             toast(error.message, 'danger');
@@ -276,8 +359,35 @@ function renderEditButton(user) {
     return button('編輯', { variant: 'outline-primary', onClick: () => openModal(user) });
 }
 
+/** 版本衝突（409）的常駐訊息：保留使用者剛填的內容，不自動覆蓋、不自動關視窗，只提供重新載入 */
+const CONFLICT_TEXT = '這筆資料剛被其他人修改，請重新載入後再改。';
+const conflictBox = document.getElementById('user-conflict');
+
+function clearConflict() {
+    conflictBox.replaceChildren();
+    conflictBox.classList.add('d-none');
+}
+
+function showConflict() {
+    conflictBox.replaceChildren(
+        statusNote('warning', CONFLICT_TEXT),
+        button('重新載入', { variant: 'outline-secondary', onClick: reloadAfterConflict }));
+    conflictBox.classList.remove('d-none');
+}
+
+/** 使用者按「重新載入」才換成伺服器的最新值（這時才會丟掉自己填的內容） */
+async function reloadAfterConflict() {
+    const userId = editingUser?.userId;
+    clearConflict();
+    await guardLoad(listContainer, load);
+    const fresh = users.find(u => u.userId === userId);
+    if (fresh) openModal(fresh);
+    else modal.hide();
+}
+
 function openModal(user) {
     editingUser = user;
+    clearConflict();
 
     document.getElementById('user-modal-title').textContent = user ? `編輯 ${user.account}` : '新增使用者';
     document.getElementById('user-account').value = user?.account ?? '';
@@ -293,6 +403,7 @@ function openModal(user) {
     setCreateMode('single');
 
     renderGroupCheckboxes(user);
+    refreshGroupSummary();
     modal.show();
 }
 
@@ -314,6 +425,10 @@ function setCreateMode(mode) {
 for (const button of document.querySelectorAll('#user-mode-toggle button')) {
     button.addEventListener('click', () => setCreateMode(button.dataset.mode));
 }
+
+// 勾選或取消群組、切換啟用，摘要即時更新（事件委派：群組清單每次開窗都重畫）
+document.getElementById('user-groups').addEventListener('change', refreshGroupSummary);
+document.getElementById('user-active').addEventListener('change', refreshGroupSummary);
 
 function renderGroupCheckboxes(user) {
     checkboxList(document.getElementById('user-groups'), groups.map(group => ({
@@ -352,25 +467,34 @@ form.addEventListener('submit', async event => {
         return;
     }
 
+    // 停用前先看名下進行中的交辦單（L12）：取消＝這次儲存不做
+    const availabilityChoice = editingUser?.active && !active
+        ? await confirmBeforeAvailabilityChange(editingUser, '停用')
+        : 'silent';
+    if (availabilityChoice === 'cancel') return;
+
     const restore = withBusy(saveButton, '儲存中');
 
     try {
+        // 基本資料與群組同一個請求、同一個版本比對：任何一部分過期都整筆拒絕，不會出現「名稱存了、群組沒存」。
+        // 新增沒有舊版本；silent：409 由下面的常駐訊息處理，不再另跳 toast
         const saved = await api.post('/api/admin/users', {
             account,
             displayName: document.getElementById('user-display-name').value.trim(),
             email: document.getElementById('user-email').value.trim() || null,
-            active
-        });
-
-        // 群組是獨立端點：儲存基本資料不會動到權限，權限異動一律留下自己的稽核紀錄
-        await api.put(`/api/admin/users/${saved.userId}/groups`, { groupIds: selectedGroupIds });
+            active,
+            groupIds: selectedGroupIds,
+            version: editingUser?.version ?? null,
+            isNew: !editingUser
+        }, { silent: true });
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');
-        if (editingUser?.active && !active) notifyActiveWorkOrders(saved, saved.activeWorkOrders, '停用');
+        if (editingUser?.active && !active) continueAfterAvailabilityChange(availabilityChoice, saved, saved.activeWorkOrders, '停用');
         modal.hide();
         await guardLoad(listContainer, load);
-    } catch {
-        // 錯誤訊息已由 api.js 以 toast 顯示
+    } catch (error) {
+        if (error?.status === 409) showConflict();
+        else if (error?.name === 'ApiError') toast(error.message, 'danger');
     } finally {
         restore();
     }

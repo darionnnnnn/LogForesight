@@ -213,10 +213,23 @@ public interface IIssueAggregateQuery
     /// 只回傳有出現的日子——沒出現的日子不落地成 0，呼叫端用列數就能知道「出現日數」，
     /// 不必額外傳日曆天數展開。<paramref name="issues"/> 是呼叫端已經算出的候選問題集合
     /// （通常是當頁排行結果），不是整份表——與 <see cref="LatestOccurrences"/> 同一個規模假設。
+    /// <paramref name="dayRiskLevels"/> **必填**（null＝不限日風險等級）：必須與同一頁主清單 <c>Aggregate</c> 傳的是同一個值，
+    /// 否則基準的每日台數會比期間的主機數還大（主清單只看到限縮後的日子、基準卻算進全部日子）。
+    /// 「一台」＝該日該問題出現過的相異存活主機，沒出現的日子不產生列。
     /// </summary>
     List<IssueDailyHostCount> DailyHostCounts(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds);
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels);
+
+    /// <summary>
+    /// 規則試算用的問題子列（F19-2）：期間內指定問題（<paramref name="issues"/>，呼叫端已依規則縮小的少數幾種）的每一列
+    /// （存活主機, 日, 簽章）與當日發生次數，母體與 <see cref="Aggregate"/> 相同的可見主機；靜音排除依呼叫端傳入的
+    /// <see cref="IssueExclusion"/>（規則試算傳 <see cref="IssueExclusion.None"/>，靜音中的問題仍計入）。
+    /// 同一存活主機、日、簽章（含合併主機別名）的次數相加成一列；唯讀，不寫入任何資料。
+    /// </summary>
+    List<RuleTrialRow> RuleTrialRows(
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds) => throw new NotSupportedException();
 
     /// <summary>
     /// 問題的機房首見日（回饋十九輪批次G4呈現，批次B落地，↔ lf_issue_first_seen）。
@@ -346,6 +359,9 @@ public sealed record DayHandlingProjection(long HostId, DateTime Date, string Da
 /// <summary>單一問題的一個（存活主機, 日）出現，<see cref="SeverityRank"/> 為該日這個問題的最高嚴重度</summary>
 public sealed record IssueHostDay(long HostId, DateTime Date, int SeverityRank);
 
+/// <summary>規則試算的一列問題子列：<see cref="Count"/> 是當日該簽章的發生次數，<see cref="EventKey"/> 是 Linux 聚合時比對命中的規則 Id（Windows 為空）</summary>
+public sealed record RuleTrialRow(long HostId, DateTime Date, string Source, int EventId, string EventKey, int Count);
+
 /// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
 public sealed class IssueDailyHostCount
 {
@@ -405,6 +421,12 @@ public sealed class HostIssueOccurrence
 
     /// <summary>最近一次出現當天的已知問題說明（回饋十九輪批次E1，依問題視角用），未命中規則為 null</summary>
     public string? KnownIssue { get; init; }
+
+    /// <summary>
+    /// 最近一次出現當天命中「重大」旗標（<c>elevates_day_risk</c>；舊資料的 Critical 經 <see cref="LegacySeverityRank.ForcesElevate"/> 視為重大）。
+    /// 只有 <c>LatestOccurrences</c> 填這一欄（交辦單清單的嚴重度與重大旗標用），其他入口維持 false。
+    /// </summary>
+    public bool ElevatesDayRisk { get; init; }
 }
 
 /// <summary>

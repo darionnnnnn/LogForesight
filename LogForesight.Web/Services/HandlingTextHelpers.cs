@@ -50,7 +50,4 @@ internal static class HandlingTextHelpers
         HandlingActions.CaseReassign => "改派交辦處理人",
         _ => action
     };
-
-    /// <summary>問題歷程列的顯示文字（「Source EventId」），反正規化存進 RecordHandlingLog.IssueLabel</summary>
-    public static string IssueLabel(LogIssueSignature issue) => $"{issue.Source} {issue.EventId}";
 }

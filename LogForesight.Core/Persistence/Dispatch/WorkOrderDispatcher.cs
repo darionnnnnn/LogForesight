@@ -174,12 +174,19 @@ public static class WorkOrderDispatcher
     /// </list>
     /// 「問題負責人」路徑傳 <c>mustSee: null</c>：管理者明確指定的負責人不檢查可見主機（刻意設計）。
     /// </summary>
-    internal static string? IneligibleReason(DispatchContext ctx, long userId, WebHost? mustSee, bool requirePool)
+    internal static string? IneligibleReason(DispatchContext ctx, long userId, WebHost? mustSee, bool requirePool) =>
+        IneligibleReason(ctx.Pool, userId, mustSee?.HostId, requirePool);
+
+    /// <summary>
+    /// 同上，只看候選人池快照（不需要整份 <see cref="DispatchContext"/>）：就緒檢查要回答「這台主機現在有沒有人接得到」，
+    /// 與決策共用這一個判定，不另寫資格條件。
+    /// </summary>
+    internal static string? IneligibleReason(DispatchCandidatePool candidatePool, long userId, long? mustSeeHostId, bool requirePool)
     {
-        if (!ctx.Pool.ByUserId.TryGetValue(userId, out var candidate)) return ContinuationStopReasons.HandlerInactive;
+        if (!candidatePool.ByUserId.TryGetValue(userId, out var candidate)) return ContinuationStopReasons.HandlerInactive;
         if (candidate.Paused) return ContinuationStopReasons.HandlerPaused;
         if (requirePool && !candidate.InPool) return IneligibleNotInPool;
-        if (mustSee != null && !candidate.VisibleHostIds.Contains(mustSee.HostId)) return ContinuationStopReasons.HostNotVisible;
+        if (mustSeeHostId != null && !candidate.VisibleHostIds.Contains(mustSeeHostId.Value)) return ContinuationStopReasons.HostNotVisible;
         return null;
     }
 

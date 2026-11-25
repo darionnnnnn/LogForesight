@@ -56,6 +56,11 @@ public class HealthAttentionTests
         }, "已對應主機的裝置被清除"),
         [HealthAttentionKeys.CertificateTrust] = (new() { UnpinnedCertificateBypass = new[] { "Sentinel" } }, "Sentinel開了「忽略憑證錯誤」"),
         [HealthAttentionKeys.OutboxDropped] = (new() { OutboxRecentDropped = 3, OutboxLastDroppedAt = Now.AddDays(-1) }, "丟棄了 3 筆"),
+        [HealthAttentionKeys.AiUnreachable] = (new() { AiUnreachable = true }, "AI 服務連線失敗"),
+        [HealthAttentionKeys.DispatchReadiness] = (new()
+        {
+            DispatchReadinessFailures = new[] { "自動派工開關沒有開，夜間分析後不會自動派單。" }
+        }, "派工就緒：自動派工開關沒有開"),
     };
 
     public static IEnumerable<object[]> AllKeys() => HealthAttentionKeys.All.Select(k => new object[] { k });
@@ -183,7 +188,7 @@ public class HealthAttentionServiceWiringTests : IDisposable
         new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
         new ScheduleOptionsStore(_backend.Blob("schedule_options")));
 
-    private HealthService NewService(TimeProvider? clock = null)
+    private HealthService NewService(TimeProvider? clock = null, IAiProbeService? aiProbe = null, DispatchReadinessService? readiness = null)
     {
         var freshness = NewFreshnessService();
         var mail = new MailNotificationService(
@@ -191,13 +196,92 @@ public class HealthAttentionServiceWiringTests : IDisposable
             new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
             new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)),
             new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
-        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock);
+        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock, aiProbe: aiProbe, readiness: readiness);
     }
 
     private static WorkOrderOutboxItem OutboxItem(int i) => new()
     {
         Kind = WorkOrderOutboxKinds.Created, WorkOrderId = i, RecipientUserId = 1, ActorAccount = "admin"
     };
+
+    /// <summary>F22-2：AI 已設定卻連不上才是故障；沒設定、還沒探測、探測正常都不算。邊界兩側各一例。</summary>
+    [Theory]
+    [InlineData(AiProbeStatus.Failed, true)]
+    [InlineData(AiProbeStatus.Ready, false)]
+    [InlineData(AiProbeStatus.NotConfigured, false)]
+    [InlineData(AiProbeStatus.NotProbed, false)]
+    public void AI探測結果只有Failed會進整體狀態原因(AiProbeStatus status, bool expectReason)
+    {
+        var probe = new FakeAiProbeService { LatestResult = new AiProbeResult(status == AiProbeStatus.Ready, status, "x", DateTime.UtcNow) };
+
+        var detail = NewService(aiProbe: probe).GetDetail();
+
+        Assert.Equal(expectReason, detail.StatusReasons.Any(r => r.Key == HealthAttentionKeys.AiUnreachable));
+        Assert.Equal(status.ToString(), detail.AiProbeStatus);
+        if (expectReason) Assert.Equal(HealthStatuses.Degraded, detail.Status);
+    }
+
+    /// <summary>派工就緒環境：除指定的開關外全部通過（有池、池成員、主機群組已授權）</summary>
+    private DispatchReadinessService NewReadiness(bool autoDispatch, bool aiConfigured, bool scheduleEnabled, bool aiWindow)
+    {
+        var users = new FakeUserStore();
+        var groups = new FakeUserGroupStore();
+        var hosts = new FakeHostStore();
+        var hostGroups = new FakeHostGroupStore();
+        var access = new FakeGroupAccessStore();
+        var settings = new FakeSystemSettingsStore();
+        var pool = groups.Upsert(new UserGroup { GroupName = "池", Role = UserRole.User, Active = true, DispatchPool = true });
+        var room = hostGroups.Upsert(new HostGroup { GroupName = "機房", Active = true });
+        access.SetForUserGroup(pool.GroupId, new[] { room.GroupId });
+        users.Upsert(new WebUser { Account = "h", Active = true, GroupIds = new List<long> { pool.GroupId } });
+        hosts.Upsert(new WebHost { HostName = "H1", GroupIds = new List<long> { room.GroupId } });
+        settings.Update(s =>
+        {
+            s.AutoDispatchEnabled = autoDispatch;
+            if (!aiConfigured) s.AiBaseUrl = "";   // 出廠預設已有本機 AI 位址；清空＝未設定（統計模式）
+        });
+        var schedule = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
+        schedule.Update(o =>
+        {
+            o.Enabled = scheduleEnabled;
+            o.AiWindows = aiWindow ? new List<ScheduleWindow> { new() { Start = "01:00", End = "05:00" } } : new List<ScheduleWindow>();
+        });
+        return new DispatchReadinessService(hosts, hostGroups, users, groups,
+            new DispatchCandidateSource(users, groups, hosts, access, new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(),
+                settings, new FakeWorkOrderStore(new FakeIssueCaseStore())),
+            settings, schedule);
+    }
+
+    [Fact]
+    public void 派工就緒_統計模式沒有AI窗口_整體狀態不降級()
+    {
+        var detail = NewService(readiness: NewReadiness(autoDispatch: true, aiConfigured: false, scheduleEnabled: false, aiWindow: false)).GetDetail();
+
+        Assert.True(detail.Status == HealthStatuses.Ok, string.Join("｜", detail.StatusReasons.Select(r => r.Text)));
+        Assert.True(detail.DispatchReadiness!.Items.Single(i => i.Id == "ai-window").Passed);
+    }
+
+    [Fact]
+    public void 派工就緒_AI已設定卻沒有窗口_照舊併入整體狀態()
+    {
+        var detail = NewService(readiness: NewReadiness(autoDispatch: true, aiConfigured: true, scheduleEnabled: false, aiWindow: false)).GetDetail();
+
+        Assert.Equal(HealthStatuses.Degraded, detail.Status);
+        Assert.Contains(detail.StatusReasons, r => r.Key == HealthAttentionKeys.DispatchReadiness && r.Text.Contains("AI 執行窗口"));
+        Assert.False(detail.DispatchReadiness!.Items.Single(i => i.Id == "ai-window").Passed);
+    }
+
+    [Fact]
+    public void 派工就緒_自動派工與排程關閉_卡片顯示不通過但整體狀態不受影響()
+    {
+        var detail = NewService(readiness: NewReadiness(autoDispatch: false, aiConfigured: false, scheduleEnabled: false, aiWindow: false)).GetDetail();
+
+        var items = detail.DispatchReadiness!.Items;
+        Assert.False(items.Single(i => i.Id == "auto-dispatch-off").Passed);
+        Assert.False(items.Single(i => i.Id == "schedule-off").Passed);
+        Assert.Equal(HealthStatuses.Ok, detail.Status);
+        Assert.Empty(detail.StatusReasons);
+    }
 
     [Fact]
     public void 交辦通知佇列剛好塞滿_沒有丟棄_整體狀態正常()

@@ -1574,6 +1574,44 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
+    /// A14：處理概況把「預設不處理」分開算。預設不處理＝這台主機這個問題沒有任何標記（沒有案件、沒有逐日標記），
+    /// 只因嚴重度不在「需處理」名單而被視為已處理；已處理＝有人標了結案類。兩者不合計。
+    /// 邊界：同嚴重度（高）沒標記是未處理，不是預設不處理；低嚴重度被標了已處理仍是已處理。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_處理概況把預設不處理與已處理分開算()
+    {
+        var marked = AddHost("HOST-MARKED");
+        var defaultLow = AddHost("HOST-DEFAULT");
+        var openHigh = AddHost("HOST-OPEN");
+        var markedLow = AddHost("HOST-MARKED-LOW");
+        var high = DiskIssue();
+        var low = DiskIssue(IssueSeverity.Low);
+
+        AddRecord(marked, Yesterday, "高", issues: new[] { high });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = marked.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(high),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        AddRecord(defaultLow, Yesterday, "高", issues: new[] { low });
+        AddRecord(openHigh, Yesterday, "高", issues: new[] { high });
+        AddRecord(markedLow, Yesterday, "高", issues: new[] { low });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = markedLow.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(low),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var group = Assert.Single(_service.SearchByIssue(new RecordSearchRequest()).Items);
+
+        Assert.Equal(1, group.UnhandledCount);
+        Assert.Equal(2, group.ResolvedCount);          // 有標記的已處理（含低嚴重度被標已處理的那台）
+        Assert.Equal(1, group.DefaultIgnoredCount);    // 沒有任何標記、只因嚴重度不在需處理名單
+        Assert.Equal("1 台未處理／2 台已處理／1 台預設不處理", group.HandlingSummary);
+    }
+
+    /// <summary>
     /// 依問題視角的母體＝全站「日風險等級顯示」設定允許的主機日（WEB-SPEC §10）：
     /// 隱藏低風險日時，只出現在低風險日的問題查不到；高風險日上的問題不受影響。
     /// </summary>

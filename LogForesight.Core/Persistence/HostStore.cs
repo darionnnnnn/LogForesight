@@ -386,6 +386,33 @@ public class GroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessSto
         });
     }
 
+    public GroupAccessChange ApplyChange(long userGroupId, IReadOnlyCollection<long> grant, IReadOnlyCollection<long> revoke)
+    {
+        return Mutate(accesses =>
+        {
+            var current = accesses.Where(a => a.UserGroupId == userGroupId).Select(a => a.HostGroupId).ToHashSet();
+            var added = new List<long>();
+            var removed = new List<long>();
+
+            foreach (var id in grant.Distinct())
+            {
+                if (!current.Add(id)) continue;
+                accesses.Add(new GroupAccess { UserGroupId = userGroupId, HostGroupId = id, GrantedAt = DateTime.Now });
+                added.Add(id);
+            }
+
+            foreach (var id in revoke.Distinct())
+            {
+                if (!current.Remove(id)) continue;
+                accesses.RemoveAll(a => a.UserGroupId == userGroupId && a.HostGroupId == id);
+                removed.Add(id);
+            }
+
+            return new GroupAccessChange(added, removed, accesses
+                .Where(a => a.UserGroupId == userGroupId).Select(a => a.HostGroupId).ToList());
+        });
+    }
+
     public void ReplaceAll(IEnumerable<GroupAccess> accesses)
     {
         Mutate(existing =>

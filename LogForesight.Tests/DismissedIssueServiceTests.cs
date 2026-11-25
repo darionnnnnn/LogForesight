@@ -58,7 +58,7 @@ public class DismissedIssueServiceTests
         Case("c-resolved", host.HostName, "disk", 4, IssueHandlingStatuses.Resolved, blocks: null);
 
         var all = _cases.GetMany(new[] { host.HostName });
-        var gateKeys = DispatchContext.DismissedKeys(all);
+        var gateKeys = DispatchContext.DismissedKeys(all, DateTime.Today, TestRules.None);
         var listed = Service().GetList(1).Groups.SelectMany(g => g.Rows).Select(r => r.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
 
         Assert.Equal(gateKeys.OrderBy(k => k), listed.OrderBy(k => k));
@@ -73,7 +73,7 @@ public class DismissedIssueServiceTests
         Case("new", host.HostName, "disk", 1, IssueHandlingStatuses.InProgress, createdAt: Now.AddDays(-1));
 
         Assert.Empty(Service().GetList(1).Groups);
-        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName })));
+        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName }), DateTime.Today, TestRules.None));
     }
 
     [Fact]
@@ -87,8 +87,8 @@ public class DismissedIssueServiceTests
         _cases.Save(cancelled);
 
         var all = _cases.GetMany(new[] { host.HostName });
-        Assert.Equal("dismissed", Assert.Single(DispatchContext.DismissedCases(all)).CaseId);
-        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(all));
+        Assert.Equal("dismissed", Assert.Single(DispatchContext.DismissedCases(all, DateTime.Today, TestRules.None)).CaseId);
+        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(all, DateTime.Today, TestRules.None));
         Assert.Single(Service().GetList(1).Groups.SelectMany(g => g.Rows));
     }
 
@@ -100,7 +100,7 @@ public class DismissedIssueServiceTests
         c.Cancelled = true;
         _cases.Save(c);
 
-        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName })));
+        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName }), DateTime.Today, TestRules.None));
     }
 
     // ── 欄位、分組、分頁、可見範圍 ───────────────────────────────────────────
@@ -126,7 +126,7 @@ public class DismissedIssueServiceTests
         Assert.Equal(2, dto.Total);
         Assert.Equal(2, dto.TotalHosts);
         var disk = dto.Groups[0];
-        Assert.Equal("disk 153", disk.IssueLabel);
+        Assert.Equal("disk EventId 153", disk.IssueLabel);
         Assert.Equal(2, disk.Hosts);
         var row = disk.Rows.Single(r => r.HostName == "HOST-A");
         Assert.Equal(IssueHandlingStatuses.KnownNoise, row.Status);
@@ -134,7 +134,7 @@ public class DismissedIssueServiceTests
         Assert.Equal(closedAt, row.ClosedAt);
         Assert.Equal(c.IssueKey, row.IssueKey);
         Assert.Null(disk.Rows.Single(r => r.HostName == "HOST-B").ClosedBy);
-        Assert.Equal("ntfs 55", dto.Groups[1].IssueLabel);
+        Assert.Equal("ntfs EventId 55", dto.Groups[1].IssueLabel);
     }
 
     [Fact]
@@ -188,8 +188,8 @@ public class DismissedIssueServiceTests
         Assert.False(saved.BlocksRedispatch);
         Assert.Equal(IssueHandlingStatuses.WontFix, saved.Status);
         Assert.Equal(closedAt, saved.ClosedAt);
-        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" })));
-        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-B" })));
+        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" }), DateTime.Today, TestRules.None));
+        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-B" }), DateTime.Today, TestRules.None));
         Assert.Equal(new[] { "HOST-B" }, Service().GetList(1).Groups.Single().Rows.Select(r => r.HostName));
     }
 
@@ -204,9 +204,9 @@ public class DismissedIssueServiceTests
 
         Assert.Equal(3, result.Restored);
         foreach (var h in hosts)
-            Assert.DoesNotContain(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { h.HostName })));
-        Assert.Contains(Key("ntfs", 2), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" })));
-        Assert.Equal("ntfs 2", Service().GetList(1).Groups.Single().IssueLabel);
+            Assert.DoesNotContain(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { h.HostName }), DateTime.Today, TestRules.None));
+        Assert.Contains(Key("ntfs", 2), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" }), DateTime.Today, TestRules.None));
+        Assert.Equal("ntfs EventId 2", Service().GetList(1).Groups.Single().IssueLabel);
     }
 
     [Fact]
@@ -215,12 +215,12 @@ public class DismissedIssueServiceTests
         var host = Host("HOST-A");
         Case("c1", host.HostName, "disk", 1, IssueHandlingStatuses.WontFix, createdAt: Now.AddDays(-5));
         Service().Restore("HOST-A", Key("disk", 1));
-        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" })));
+        Assert.Empty(DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" }), DateTime.Today, TestRules.None));
 
         // 之後再派工、處理人又回「不處理」：新案件的欄位是空值
         Case("c2", host.HostName, "disk", 1, IssueHandlingStatuses.WontFix, blocks: null, createdAt: Now.AddDays(-1));
 
-        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" })));
+        Assert.Contains(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" }), DateTime.Today, TestRules.None));
         Assert.Single(Service().GetList(1).Groups.Single().Rows);
     }
 
@@ -253,8 +253,8 @@ public class DismissedIssueServiceTests
         Assert.Equal(2, _audit.Entries.Count);
         Assert.All(_audit.Entries, e => Assert.Equal(AuditActions.WorkOrderDismissRestore, e.Action));
         Assert.Contains("HOST-A", _audit.Entries[0].Summary);
-        Assert.Contains("ntfs 55", _audit.Entries[0].Summary);
-        Assert.Contains("disk 153", _audit.Entries[1].Summary);
+        Assert.Contains("ntfs EventId 55", _audit.Entries[0].Summary);
+        Assert.Contains("disk EventId 153", _audit.Entries[1].Summary);
         Assert.Contains("2 台", _audit.Entries[1].Summary);
     }
 }

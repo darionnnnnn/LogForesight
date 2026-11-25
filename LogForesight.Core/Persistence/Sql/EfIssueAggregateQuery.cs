@@ -534,7 +534,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var rows = q
             .Select(x => new
             {
-                x.HostId, x.LogName, x.SourceKey, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue
+                x.HostId, x.LogName, x.SourceKey, x.SourceName, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue,
+                x.ElevatesDayRisk
             })
             .ToList()
             .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
@@ -558,7 +559,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                         g.Key.EventKey),
                     LastSeen = latest.RecordDate,
                     SeverityRank = latest.SeverityRank,
-                    KnownIssue = latest.KnownIssue
+                    KnownIssue = latest.KnownIssue,
+                    ElevatesDayRisk = g.Where(x => x.RecordDate == latest.RecordDate).Any(x => x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank))
                 };
             })
             .ToList();
@@ -631,7 +633,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                         g.Key.EventId, (LogForesight.Core.Models.LogEntryType)g.Key.EntryType, g.Key.EventKey),
                     LastSeen = latestRow.RecordDate,
                     SeverityRank = latestRow.SeverityRank,
-                    KnownIssue = latestRow.KnownIssue
+                    KnownIssue = latestRow.KnownIssue,
+                    ElevatesDayRisk = g.Where(x => x.RecordDate == latestRow.RecordDate).Any(x => x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank))
                 };
             })
             .ToList();
@@ -639,7 +642,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     internal sealed record LatestOccurrenceRow(
         long HostId, string LogName, string SourceKey, int EventId, int EntryType, string EventKey,
-        DateTime RecordDate, int SeverityRank, string? KnownIssue);
+        DateTime RecordDate, int SeverityRank, string? KnownIssue, bool ElevatesDayRisk);
 
     internal sealed record OccurrenceNameRow(
         long HostId, string LogName, string? SourceKey, int EventId, int EntryType, string EventKey, string SourceName);
@@ -668,7 +671,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 on new { x.HostId, x.LogName, SourceKey = x.SourceKey!, x.EventId, x.EntryType, x.EventKey, x.RecordDate }
                 equals new { l.HostId, l.LogName, l.SourceKey, l.EventId, l.EntryType, l.EventKey, RecordDate = l.LastSeen }
             select new LatestOccurrenceRow(
-                x.HostId, x.LogName, l.SourceKey, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue);
+                x.HostId, x.LogName, l.SourceKey, x.EventId, x.EntryType, x.EventKey, x.RecordDate, x.SeverityRank, x.KnownIssue, x.ElevatesDayRisk);
 
         var names = q
             .Select(x => new OccurrenceNameRow(x.HostId, x.LogName, x.SourceKey, x.EventId, x.EntryType, x.EventKey, x.SourceName))
@@ -741,7 +744,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<IssueDailyHostCount> DailyHostCounts(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds)
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels)
     {
         if (issues.Count == 0) return new List<IssueDailyHostCount>();
         if (hostIds != null && hostIds.Count == 0) return new List<IssueDailyHostCount>();
@@ -766,6 +769,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             var expanded = ExpandToAliasIds(aliasIndex, hostIds);
             q = q.Where(x => expanded.Contains(x.HostId));
         }
+        q = ApplyRiskLevels(ctx, q, f, t, dayRiskLevels);
 
         // 目標範圍是呼叫端已經算出的少數幾種問題（通常是當頁排行結果），不是整份表——
         // 與 LatestOccurrences／HostIdsFor 同一個規模假設
@@ -795,6 +799,72 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
         _performance?.Record("issues:DailyHostCounts", sw.ElapsedMilliseconds);
 
+        return result;
+    }
+
+    /// <summary>規則試算讀的問題子列查詢（只有投影、不含記憶體端的來源比對）；獨立成靜態方法讓兩個後端的翻譯測試走同一條查詢</summary>
+    internal static IQueryable<RuleTrialProjection> RuleTrialQuery(
+        LfDbContext ctx, IssueExclusion exclusion, bool sourceKeyReady, IReadOnlyCollection<int> eventIds,
+        DateTime f, DateTime t, IReadOnlyCollection<long>? expandedHostIds)
+    {
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+        if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        return q.Select(x => new RuleTrialProjection
+        {
+            HostId = x.HostId, SourceKey = x.SourceKey, SourceName = x.SourceName, EventId = x.EventId, EventKey = x.EventKey,
+            RecordDate = x.RecordDate, EventCount = x.EventCount, LogName = x.LogName, EntryType = x.EntryType
+        });
+    }
+
+    internal sealed class RuleTrialProjection
+    {
+        public long HostId { get; init; }
+        public string? SourceKey { get; init; }
+        public string SourceName { get; init; } = string.Empty;
+        public int EventId { get; init; }
+        public string EventKey { get; init; } = string.Empty;
+        public DateTime RecordDate { get; init; }
+        public int EventCount { get; init; }
+        public string LogName { get; init; } = string.Empty;
+        public int EntryType { get; init; }
+    }
+
+    public List<RuleTrialRow> RuleTrialRows(
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds)
+    {
+        if (issues.Count == 0) return new List<RuleTrialRow>();
+        if (hostIds != null && hostIds.Count == 0) return new List<RuleTrialRow>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
+
+        var wanted = issues.Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var expanded = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
+
+        // 目標範圍是呼叫端已依規則縮小的少數幾種問題，不是整份表（與 DailyHostCounts 同一個規模假設）
+        var rows = RuleTrialQuery(ctx, exclusion, sourceKeyReady, eventIds, f, t, expanded)
+            .ToList()
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
+            .ToList();
+
+        // 合併主機別名與存活主機同日同簽章的次數相加（與正式分析把合併主機視為一台一致）
+        var result = rows
+            .GroupBy(x => (HostId: Surviving(aliasIndex, x.HostId), x.RecordDate,
+                Source: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId, x.EventKey, x.LogName, x.EntryType))
+            .Select(g => new RuleTrialRow(g.Key.HostId, g.Key.RecordDate, g.Key.Source, g.Key.EventId, g.Key.EventKey, g.Sum(x => x.EventCount)))
+            .ToList();
+
+        _performance?.Record("issues:RuleTrialRows", sw.ElapsedMilliseconds);
         return result;
     }
 
@@ -1919,6 +1989,35 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>沒有 AI 摘要的紀錄所需的問題子列（只取顯示名稱與排序用到的欄位）</summary>
+    internal sealed record NoSummaryIssueRow(
+        long RecordId, string LogName, string SourceName, int EventId, string EventKey,
+        int SeverityRank, bool ElevatesDayRisk, int EventCount, string? KnownIssue);
+
+    /// <summary>沒有 AI 摘要的紀錄（<paramref name="recordIds"/>）的問題子列：單一批次查詢（<c>WHERE record_id IN (…)</c>）</summary>
+    internal static IQueryable<NoSummaryIssueRow> NoSummaryIssueRows(LfDbContext ctx, IReadOnlyCollection<long> recordIds) =>
+        ctx.TopIssues.AsNoTracking()
+            .Where(x => recordIds.Contains(x.RecordId))
+            .Select(x => new NoSummaryIssueRow(x.RecordId, x.LogName, x.SourceName, x.EventId, x.EventKey,
+                x.SeverityRank, x.ElevatesDayRisk, x.EventCount, x.KnownIssue));
+
+    /// <summary>沒有 AI 摘要的紀錄（<paramref name="recordIds"/>）→ 當日最重問題的標題；一次批次查詢，沒有問題子列的紀錄也有標題（<see cref="NoAiSummary.NoIssueHeadline"/>）。</summary>
+    private static Dictionary<long, string> NoSummaryHeadlines(LfDbContext ctx, IReadOnlyCollection<long> recordIds)
+    {
+        if (recordIds.Count == 0) return new Dictionary<long, string>();
+        var rows = NoSummaryIssueRows(ctx, recordIds)
+            .ToList()
+            .GroupBy(x => x.RecordId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => new NoAiSummary.Candidate(
+                    NoAiSummary.NameOf(x.LogName, x.SourceName, x.EventId, x.EventKey), LegacySeverityRank.Normalize(x.SeverityRank),
+                    x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank), x.EventCount, x.KnownIssue, Suppressed: false)).ToList());
+        return recordIds.ToDictionary(
+            id => id,
+            id => NoAiSummary.HeadlineFor(rows.TryGetValue(id, out var list) ? list : new List<NoAiSummary.Candidate>()));
+    }
+
     /// <summary>
     /// 靜音排除的作用範圍同 <see cref="AggregateByDate"/>：風險日數、關聯日數、最新一天的風險等級與標題
     /// 來自 <c>lf_daily_records</c>，不重算；排除只作用在問題篩選的 exists 子查詢與類別清單。
@@ -1972,10 +2071,15 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 2. 每台主機最新一天的風險等級與標題：以相關子查詢取 MAX(RecordDate) 那列，同樣是主機數量級
         var latestRaw = recordsQuery
             .Where(r => r.RecordDate == recordsQuery.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
-            .Select(r => new { r.HostId, r.RiskLevel, r.Headline, r.AiPending, r.AiDegradedAttempts })
+            .Select(r => new { r.RecordId, r.HostId, r.RiskLevel, r.Headline, r.AiPending, r.AiDegradedAttempts })
             .ToList()
             .GroupBy(r => r.HostId)
             .ToDictionary(g => g.Key, g => g.First());
+
+        // 2b. 沒有 AI 摘要的最新一天（空白或舊版佔位字）：標題改為當日最重的問題（NoAiSummary 唯一出口）。
+        //     只對這幾列、以一次批次查詢取問題子列，量級＝主機數，不逐列查
+        var noSummaryRecordIds = latestRaw.Values.Where(r => NoAiSummary.IsPlaceholder(r.Headline)).Select(r => r.RecordId).Distinct().ToList();
+        var noSummaryHeadlines = NoSummaryHeadlines(ctx, noSummaryRecordIds);
 
         // 3. 類別：問題子列 join 篩選後的紀錄，SQL 端依 (HostId, Category) 分組，拉回主機 × 類別列
         if (riskLevels != null)
@@ -2030,7 +2134,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
                     LatestDate = newest.MaxDate,
                     LatestRiskLevel = head?.RiskLevel ?? string.Empty,
-                    LatestHeadline = head?.Headline ?? string.Empty,
+                    LatestHeadline = head == null ? string.Empty
+                        : noSummaryHeadlines.TryGetValue(head.RecordId, out var fallbackHeadline) ? fallbackHeadline : head.Headline,
                     LatestAiPending = head?.AiPending ?? false,
                     LatestAiDegradedAttempts = head?.AiDegradedAttempts ?? 0
                 };
@@ -2300,7 +2405,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <see cref="LatestOccurrences"/>）與三個輔助查詢共用同一份定義，避免「主機數對不上筆數」。
     /// null＝不限制；**空集合＝零結果**（與 hostIds 同一套授權／可見性慣例，不是「不限制」）。
     /// </summary>
-    private static IQueryable<TopIssueRow> ApplyRiskLevels(
+    internal static IQueryable<TopIssueRow> ApplyRiskLevels(
         LfDbContext ctx, IQueryable<TopIssueRow> q, DateTime from, DateTime to, IReadOnlySet<string>? riskLevels)
     {
         if (riskLevels == null) return q;

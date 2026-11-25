@@ -99,6 +99,35 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
         return result;
     }
 
+    /// <summary>觀察開始時間：同 <see cref="IIssueHandlingStore.GetObservationStarts"/>；case_id 分批各一句 GROUP BY（走 IX_lf_issue_handling_case_id）</summary>
+    public Dictionary<string, DateTime> GetObservationStarts(IReadOnlyCollection<string> caseIds)
+    {
+        var result = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        var ids = caseIds.Distinct(StringComparer.Ordinal).ToList();
+        if (ids.Count == 0) return result;
+
+        using var ctx = _contextFactory();
+        foreach (var batch in ids.Chunk(CaseIdBatchSize))
+        {
+            foreach (var row in BuildObservationStartQuery(ctx, batch).ToList())
+                result[row.CaseId] = row.StartedAt;
+        }
+        return result;
+    }
+
+    /// <summary>觀察開始時間的查詢本體（抽出供 SQL 翻譯測試）</summary>
+    internal static IQueryable<ObservationStartRow> BuildObservationStartQuery(LfDbContext ctx, string[] caseIds) =>
+        ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.CaseId != null && caseIds.Contains(h.CaseId) && h.Status == IssueHandlingStatuses.Observing)
+            .GroupBy(h => h.CaseId!)
+            .Select(g => new ObservationStartRow { CaseId = g.Key, StartedAt = g.Min(h => h.UpdatedAt) });
+
+    internal sealed class ObservationStartRow
+    {
+        public string CaseId { get; init; } = string.Empty;
+        public DateTime StartedAt { get; init; }
+    }
+
     /// <summary>以主機範圍粗篩後在 C# 比較完整鍵；見 <see cref="IIssueNoteQuery.GetLatestNote"/></summary>
     public (string HostName, DateTime RecordDate, string Note, DateTime UpdatedAt)? GetLatestNote(
         string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys)

@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Web.Services.Mail;
 
 /// <summary>
@@ -15,6 +17,19 @@ public static class MailLinks
     public const string WorkOrdersPath = "work-orders";
     public const string RecordsPath = "records";
     public static string MyWorkOrdersPath(long userId) => $"handlers/{userId}";
+
+    /// <summary>「我的交辦」連結帶標記篩選的查詢參數名（值是 <see cref="WorkOrderQueries.Flags"/> 之一，與清單端點的 <c>flag</c> 同名同值）</summary>
+    public const string FlagQueryName = "flag";
+
+    /// <summary>
+    /// 帶標記篩選的「我的交辦」路徑（例 <c>handlers/3?flag=returned</c>：只看被退回的單）。
+    /// <paramref name="flag"/> 為 null 或不是已知標記時退回不帶篩選的路徑（不把未知值塞進信件連結）。
+    /// 站台網址與相對路徑的相接仍只在 <see cref="Build"/>。
+    /// </summary>
+    public static string MyWorkOrdersPath(long userId, string? flag) =>
+        flag != null && WorkOrderQueries.Flags.Contains(flag)
+            ? $"{MyWorkOrdersPath(userId)}?{FlagQueryName}={Uri.EscapeDataString(flag)}"
+            : MyWorkOrdersPath(userId);
     public static string WorkOrderPath(long workOrderId) => $"work-orders/{workOrderId}";
 
     /// <summary>格式說明（儲存被拒時給使用者的訊息）</summary>

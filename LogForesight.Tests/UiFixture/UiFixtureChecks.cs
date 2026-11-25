@@ -541,7 +541,7 @@ internal sealed class UiFixtureChecks
         {
             var cases = c._d.Backend.IssueCaseStore().GetMany(c._hosts.GetAll().Select(h => h.HostName).ToList());
             var blocked = cases.GroupBy(x => x.HostName, StringComparer.OrdinalIgnoreCase)
-                .SelectMany(g => DispatchContext.DismissedCases(g)).ToList();
+                .SelectMany(g => DispatchContext.DismissedCases(g, DateTime.Today, TestRules.None)).ToList();
             True(blocked.Count(x => x.IssueLabel.Contains("8700", StringComparison.Ordinal)) == 6, "Ui-Dismissed-Noise 應有 6 台被擋住（含超長主機名）");
             True(blocked.Count(x => x.IssueLabel.Contains("8710", StringComparison.Ordinal)) == 1, "Ui-Dismissed-Single 應有 1 台被擋住");
         },

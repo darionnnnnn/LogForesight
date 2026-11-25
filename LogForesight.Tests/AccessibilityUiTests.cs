@@ -301,11 +301,14 @@ public class AccessibilityUiTests
     }
 
     [Fact]
-    public void 交辦單回覆modal的三個label都有for_輸入有id_期限有min()
+    public void 交辦單回覆modal的欄位label都有for_結論群組有labelledby_期限有min()
     {
         var js = ReadWeb("wwwroot", "js", "pages", "issue-status-reply.js");
 
-        foreach (var id in new[] { "wo-reply-status", "wo-reply-note", "wo-reply-due" })
+        // 結論是一排按鈕（role=group），不是單一表單控制項：以 aria-labelledby 指到標題，不用沒有對象的 label for
+        Assert.Contains(".id = 'wo-reply-status-label'", js);
+        Assert.Contains("setAttribute('aria-labelledby', 'wo-reply-status-label')", js);
+        foreach (var id in new[] { "wo-reply-note", "wo-reply-due" })
         {
             Assert.Contains($"htmlFor = '{id}'", js);
             Assert.Contains($".id = '{id}'", js);

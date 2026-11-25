@@ -17,18 +17,24 @@ import {
     guardLoad,
     toast,
     confirmActionWithReason,
+    confirmAction,
     showDetailModal,
     withBusy,
     searchableUserSelect,
     button,
     linkButton,
     icon,
-    candidatesToUserOptions
+    candidatesToUserOptions,
+    createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
-import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
+import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge, hostCountText } from '../core/format.js';
+import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount, caseIdsDraftKey } from './issue-status-reply.js';
+import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
+import { openIssueMuteModal } from './issue-mute-modal.js';
+import { openHideTriage } from './hide-triage-panel.js';
+import { guidancePanel, sampleMessagesPanel, issueShortcuts, adminCloseScopeOptions, defaultAdminCloseScope } from './work-order-reference.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -44,6 +50,7 @@ const memberReplyBtn = document.getElementById('wo-member-reply');
 const memberNoteEl = document.getElementById('wo-member-note');
 const membersContainer = document.getElementById('wo-members');
 const memberPagerContainer = document.getElementById('wo-member-pager');
+const memberSearchInput = document.getElementById('wo-member-search');
 
 const timelineContainer = document.getElementById('wo-timeline');
 
@@ -53,7 +60,21 @@ const PAGE_SIZE = 50;
 let currentUser = null;
 let currentDetail = null;
 let memberPage = 1;
-const selectedCaseIds = new Set();
+/** 目前已載入的這一頁成員（勾選全選與空狀態判斷看它） */
+let currentMemberItems = [];
+/** 成員表的勾選（caseId → 成員列）：與回覆彈窗的主機面板同一個共用元件，換頁、搜尋都保留，改狀態篩選才清除 */
+const selection = createPageSelection({
+    keyOf: item => item.caseId,
+    isSelectable: item => !item.closedAt,
+    getPageItems: () => currentMemberItems,
+    labels: { row: '選取這台主機', all: '全選本頁可處理主機' },
+    bar: { barId: 'wo-member-selected', countId: 'wo-member-selected', unit: '台' },
+    onSelectAll: () => { renderMemberRows(); },
+    onChange: () => { updateSplitBtn(); updateReplyBtn(); }
+});
+const selectedCaseIds = selection.selected;
+/** 成員表的主機名篩選（完全相符）；空字串＝不篩選 */
+let memberHostName = '';
 /** 目前已載入的成員：caseId → hostId（改派／拆出算人選看不看得到主機用；只含已載入的分頁） */
 const loadedMemberHosts = new Map();
 
@@ -62,6 +83,62 @@ const loadedMemberHosts = new Map();
 function renderMemberStatusBadge(status) {
     const meta = statusBadgeMeta(status) || { label: status || '未知', variant: 'neutral' };
     return statusBadge(meta.label, meta.variant);
+}
+
+/** 上次回覆說明在成員表最多顯示幾個字；全文放 title */
+const LAST_REPLY_NOTE_MAX = 24;
+/** 一鍵結案寫進回覆的說明 */
+const QUIET_CLOSE_NOTE = '觀察期滿未再發生';
+
+/** 新案件的「先前判定不處理」：上一件不處理類結案、期滿 30 天仍在發生才重新派工（判定在伺服器，這裡只組文字） */
+function priorDismissalText(prior) {
+    const date = String(prior.closedAt || '').slice(5, 10);
+    const who = prior.account ? `，${prior.account}` : '';
+    return `先前判定不處理（${date}${who}），已滿 30 天仍在發生`;
+}
+
+/** 「MM-DD 狀態：說明」（說明過長截斷，全文由呼叫端放 title）；日期取自結案時間的月-日 */
+function lastReplyParts(lastReply) {
+    const meta = statusBadgeMeta(lastReply.status);
+    const head = `${String(lastReply.date || '').slice(5, 10)} ${meta ? meta.label : lastReply.status || ''}`.trim();
+    const note = lastReply.note ? String(lastReply.note) : '';
+    const shown = note.length > LAST_REPLY_NOTE_MAX ? `${note.slice(0, LAST_REPLY_NOTE_MAX)}…` : note;
+    return { text: note ? `${head}：${shown}` : head, full: note ? `${head}：${note}` : '' };
+}
+
+/** 觀察中成員的「觀察期間再發生」文字：null＝觀察期間沒有任何分析紀錄（無資料，不等於沒有再發生） */
+function observedRecurText(days) {
+    if (days == null) return '無資料';
+    return days === 0 ? '沒有再發生' : `觀察期間再發生 ${days} 天`;
+}
+
+/**
+ * 成員表的狀態格：狀態徽章，復發的成員附「復發 N 次」與上一件的回覆（日期、狀態、說明；說明一律 textContent，
+ * 過長截斷並以 title 呈現全文），觀察中的成員附觀察期間再發生的天數。附註都是判斷層文字，沒有就只有徽章。
+ */
+function memberStatusCell(item) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-column align-items-start gap-1';
+    wrap.appendChild(renderMemberStatusBadge(item.status));
+    if (item.isRecurrence) {
+        wrap.appendChild(statusBadge(`復發 ${item.recurrenceCount ?? 1} 次`, 'warning', { title: '同一台主機的同一個問題，近 30 天內已處理結案後又再出現' }));
+        if (item.lastReply) {
+            const parts = lastReplyParts(item.lastReply);
+            const line = roleText('lf-text-meta', parts.text);
+            line.classList.add('text-wrap');
+            if (parts.full) line.title = parts.full;
+            wrap.appendChild(line);
+        }
+    }
+    if (item.priorDismissal) {
+        const line = roleText('lf-text-meta', priorDismissalText(item.priorDismissal));
+        line.classList.add('text-wrap');
+        wrap.appendChild(line);
+    }
+    if (item.status === 'observing' && !item.closedAt) {
+        wrap.appendChild(roleText('lf-text-meta', observedRecurText(item.observedRecurDays)));
+    }
+    return wrap;
 }
 
 // ── 處理人選單 modal（改派與拆出共用，同一件事只寫一份）───────────────────
@@ -156,20 +233,34 @@ function renderBadges(detail) {
     badgesEl.replaceChildren(...badges);
 }
 
-/** 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標） */
-function renderMemberHostCell(item) {
+/**
+ * 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標）。
+ * showOccurrence（「全部」篩選）：同主機的新舊案件並列時標「第 N 次」，新舊才對得起來；
+ * multiOnPage＝同一頁裡這台主機有不只一筆，第 1 次也標。
+ */
+function renderMemberHostCell(item, showOccurrence = false, multiOnPage = false) {
     const name = item.hostId ? document.createElement('a') : roleText('lf-text-title', item.hostName || '');
     if (item.hostId) {
         name.href = appUrl('/hosts/' + item.hostId);
         name.className = 'lf-text-title';
         name.textContent = item.hostName || '';
     }
+    const occurrence = item.occurrence ?? 1;
+    const occurrenceTag = showOccurrence && (occurrence > 1 || multiOnPage) ? roleText('lf-text-meta', `第 ${occurrence} 次`) : null;
     // 停用主機上的進行中成員不計入處理人的台數：成員列標出來，管理者才知道為什麼數字對不上
-    if (!item.hostDisabled || item.closedAt) return name;
+    const disabledTag = item.hostDisabled && !item.closedAt
+        ? statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' })
+        : null;
+    // 同主機在同一頁有多列時標出登錄類型（Error／Warning 等不同登錄類型各自是一件案件，否則看起來是重複列）
+    const logNameTag = multiOnPage && item.logName ? roleText('lf-text-meta', `登錄類型：${item.logName}`) : null;
+    if (!occurrenceTag && !disabledTag && !logNameTag) return name;
     // 名稱連結與標記同一行：用既有的 lf-meta-line（行內連結點擊區至少 24×24，小字級也點得到）
     const wrap = document.createElement('div');
     wrap.className = 'lf-meta-line';
-    wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
+    wrap.append(name);
+    if (logNameTag) wrap.append(logNameTag);
+    if (occurrenceTag) wrap.append(occurrenceTag);
+    if (disabledTag) wrap.append(disabledTag);
     return wrap;
 }
 
@@ -198,6 +289,23 @@ function continuationStopNote(detail) {
     const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
     const when = detail.continuationStoppedAt ? `（${formatDate(detail.continuationStoppedAt)}）` : '';
     return statusNote('info', `續掛已停止${when}：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
+}
+
+/**
+ * 頁首「成員」事實的文字：台數口徑（進行中台數、歷來台數與件數，見 hostCountText）、狀態分項（件數）、
+ * 有復發主機時補「其中 N 台是復發」。
+ */
+function memberSummaryText(detail) {
+    const counts = detail.counts || {};
+    const memberParts = [];
+    if (counts.inProgress > 0) memberParts.push(`處理中 ${counts.inProgress}`);
+    if (counts.observing > 0) memberParts.push(`觀察 ${counts.observing}`);
+    if (counts.open > 0) memberParts.push(`未處理 ${counts.open}`);
+    if (counts.escalated > 0) memberParts.push(`上報 ${counts.escalated}`);
+    if (counts.daySyncPending > 0) memberParts.push(`逐日同步中 ${counts.daySyncPending} 台`);
+    const recurrence = detail.recurrenceHosts > 0 ? `；其中 ${detail.recurrenceHosts} 台是復發` : '';
+    const prior = detail.priorDismissalHosts > 0 ? `；其中 ${detail.priorDismissalHosts} 台先前判定不處理、已滿 30 天仍在發生` : '';
+    return hostCountText(detail) + recurrence + prior + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
 }
 
 /**
@@ -235,14 +343,7 @@ function renderHeader(detail) {
     if (!detail.handlerActive) handlerWrap.append(' ', statusBadge('已停用', 'secondary'));
     if (detail.handlerPaused) handlerWrap.append(' ', statusBadge('暫停接單', 'warning'));
 
-    const counts = detail.counts || {};
-    const memberParts = [];
-    if (counts.inProgress > 0) memberParts.push(`處理中 ${counts.inProgress}`);
-    if (counts.observing > 0) memberParts.push(`觀察 ${counts.observing}`);
-    if (counts.open > 0) memberParts.push(`未處理 ${counts.open}`);
-    if (counts.escalated > 0) memberParts.push(`上報 ${counts.escalated}`);
-    if (counts.daySyncPending > 0) memberParts.push(`逐日同步中 ${counts.daySyncPending} 台`);
-    const membersText = `${counts.active ?? 0}／${counts.total ?? 0} 台` + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
+    const membersText = memberSummaryText(detail);
 
     const lastReplyText = detail.lastReplyAt
         ? formatDateTime(detail.lastReplyAt)
@@ -256,8 +357,42 @@ function renderHeader(detail) {
         fact('最近回覆', lastReplyText)
     ]));
 
+    // 觀察期滿且期間沒有再發生的主機：一顆結案鈕放在判斷層（成員數字）正下方，不與頁面唯一的主要按鈕「回覆這張單」並排
+    const quietBtn = quietCloseButton(detail);
+    if (quietBtn) {
+        const quietRow = document.createElement('div');
+        quietRow.className = 'mt-2';
+        quietRow.appendChild(quietBtn);
+        nodes.push(quietRow);
+    }
+
     const stopNote = continuationStopNote(detail);
     if (stopNote) nodes.push(stopNote);
+
+    // 處置參考與訊息樣本：就地展開、不離開本頁；沒有內容（未命中規則、沒有樣本）就不放展開鈕
+    for (const [label, panel] of [['處置參考', guidancePanel(detail.guidance)], ['訊息樣本', sampleMessagesPanel(detail.sampleMessages)]]) {
+        if (panel) nodes.push(disclosure(label, panel, { className: 'mt-1' }), panel);
+    }
+    // 這個問題的捷徑：其他交辦單、靜音、調整規則（沒有 Maintain 時只有其他交辦單）
+    const shortcuts = issueShortcuts(detail, {
+        canListOrders: hasCapability(currentUser, 'Assign') || hasCapability(currentUser, 'ViewAll'),
+        canMaintain: hasCapability(currentUser, 'Maintain'),
+        onMute: () => openIssueMuteModal({
+            source: detail.source,
+            eventId: detail.eventId,
+            issueLabel: detail.issueLabel,
+            currentMute: null,
+            onApplied: () => reloadAll()
+        }),
+        onHideTriage: () => openHideTriage({
+            source: detail.source,
+            eventId: detail.eventId,
+            issueLabel: detail.issueLabel,
+            ruleId: detail.ruleId ?? null,
+            onApplied: () => reloadAll()
+        })
+    });
+    if (shortcuts) nodes.push(shortcuts);
 
     // 範圍
     const scopeKindLower = String(detail.scopeKind).toLowerCase();
@@ -308,6 +443,13 @@ async function buildAdminCloseModal() {
     // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
     const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
     const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
+    // 範圍：全部進行中／只有上報中的／勾選的成員（後兩者有才出現）；有上報成員時預設「只有上報中的」
+    const scopeOptions = adminCloseScopeOptions({
+        activeCount,
+        escalatedCaseIds: currentDetail?.escalatedCaseIds ?? [],
+        selectedCaseIds: [...selectedCaseIds.keys()]
+    });
+    let scope = scopeOptions.find(option => option.value === defaultAdminCloseScope(scopeOptions));
     const body = document.createElement('div');
     const form = document.createElement('form');
 
@@ -315,6 +457,36 @@ async function buildAdminCloseModal() {
     statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '結案狀態';
     statusLabel.htmlFor = 'wo-close-status';
+
+    // 範圍選擇（有上報成員或有勾選才顯示）：單選，預設見 defaultAdminCloseScope
+    const scopeWrap = document.createElement('fieldset');
+    scopeWrap.className = 'mb-3' + (scopeOptions.length > 1 ? '' : ' d-none');
+    const scopeLegend = document.createElement('legend');
+    scopeLegend.className = 'form-label lf-text-label';
+    scopeLegend.textContent = '結案範圍';
+    scopeWrap.appendChild(scopeLegend);
+    for (const option of scopeOptions) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.className = 'form-check-input';
+        input.name = 'wo-close-scope';
+        input.id = `wo-close-scope-${option.value}`;
+        input.value = option.value;
+        input.checked = option === scope;
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            scope = option;
+            syncState();
+        });
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = option.label;
+        wrap.append(input, label);
+        scopeWrap.appendChild(wrap);
+    }
 
     // 不預選：代為結案影響整張單，結案狀態要管理者自己選一次
     const statusSelect = document.createElement('select');
@@ -344,8 +516,8 @@ async function buildAdminCloseModal() {
     const blockLabel = document.createElement('label');
     blockLabel.className = 'form-check-label';
     blockLabel.htmlFor = 'wo-close-block';
-    const targetText = blockTargetText(activeCount, !!currentDetail?.source);
-    blockLabel.textContent = `${targetText}之後不再自動派工`;
+    // 後果說明指稱的對象依所選範圍的台數；範圍換了要重寫（syncState）
+    let targetText = blockTargetText(scope.count, !!currentDetail?.source);
     blockWrap.append(blockInput, blockLabel);
 
     // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
@@ -364,14 +536,15 @@ async function buildAdminCloseModal() {
     reasonInput.rows = 3;
     reasonInput.required = true;
 
-    const submitBtn = button(`代為結案 ${activeCount} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
+    const submitBtn = button(`代為結案 ${scope.count} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
     const actions = document.createElement('div');
     actions.className = 'lf-form-actions d-flex justify-content-end';
     actions.appendChild(submitBtn);
 
     function renderConsequence() {
         const notifyText = mailNotifyText(mailSettings, '處理人會在下一封交辦摘要收到結案通知', '目前未啟用交辦單通知，請自行告知處理人');
-        const notes = [statusNote('info', `${notifyText}。` + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        const notes = [statusNote('info', `${notifyText}。` + (scope.value === 'all' && onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        if (scope.value !== 'all') notes.push(statusNote('info', `只結案${scope.name} ${scope.count} 台，其餘成員維持原狀、單繼續進行。`));
         if (isNoFixClosure(statusSelect.value)) {
             notes.push(statusNote('warning', blockInput.checked
                 ? `已勾選：${targetText}之後不會再自動派工。`
@@ -380,6 +553,9 @@ async function buildAdminCloseModal() {
         consequence.replaceChildren(...notes);
     }
     function syncState() {
+        targetText = blockTargetText(scope.count, !!currentDetail?.source);
+        blockLabel.textContent = `${targetText}之後不再自動派工（勾選＝永久，不會因時間自動恢復）`;
+        submitBtn.children[submitBtn.children.length - 1].textContent = `代為結案 ${scope.count} 台`;   // button() 的文字在最後一個子節點
         const noFix = isNoFixClosure(statusSelect.value);
         blockWrap.classList.toggle('d-none', !noFix);
         if (!noFix) blockInput.checked = false;
@@ -391,7 +567,7 @@ async function buildAdminCloseModal() {
     reasonInput.addEventListener('input', syncState);
     syncState();
 
-    form.append(statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
+    form.append(scopeWrap, statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -412,7 +588,9 @@ async function buildAdminCloseModal() {
             const res = await api.post(`/api/work-orders/${workOrderId}/admin-close`, {
                 status: statusSelect.value,
                 reason,
-                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked
+                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked,
+                // 範圍＝全部進行中時不帶案件清單（整張單結案）；其餘只結案這些案件
+                ...(scope.caseIds ? { caseIds: scope.caseIds } : {})
             });
             modal.close();
             toast(`已代為結案 ${res.closedCases} 台`, 'success');
@@ -429,20 +607,84 @@ async function buildAdminCloseModal() {
 /** 設定請求回來前再按一次不會疊開第二個對話框 */
 const openAdminCloseModal = exclusive(buildAdminCloseModal);
 
-/** 以本單的回覆端點回覆指定成員；成功後重新載入本頁 */
-function openMemberReply(caseIds, targetText) {
+/**
+ * 以本單的回覆端點回覆指定成員；成功後重新載入本頁。
+ * caseIds 為空＝全部進行中主機（端點語意），此時 hostCount 帶實際台數；被拒（單已結案、成員已非進行中、單已改派）
+ * 一樣重新載入單頭、成員表與時間軸，訊息與草稿由彈窗保留，403 改寫成含新處理人的說明。
+ */
+function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurrenceHosts = null) {
+    // 復發主機數：指定成員的（成員表勾選、單一成員）由呼叫端以成員自己的 isRecurrence 數好傳入；整張單回覆取單頭的數字；
+    // 指定成員卻沒給數字就不提示（不拿單頭的數字近似——單頭有復發不代表這一台是）
+    const recurrenceInReply = recurrenceHosts
+        ?? (caseIds.length === 0 ? (currentDetail.recurrenceHosts ?? 0) : 0);
     openWorkOrderReplyModal({
+        recurrence: { hosts: recurrenceInReply },
+        dismissalReleases: !!currentDetail.dismissalReleases,
+        multiTarget: hostCount > 1,
         title: `回覆交辦單 #${workOrderId}`,
         targetText,
-        draftKey: `order:${workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
-        aiContext: { issueLabel: currentDetail.issueLabel, hostCount: caseIds.length },
+        draftKey: caseIdsDraftKey(workOrderId, caseIds),
+        aiContext: { issueLabel: currentDetail.issueLabel, hostCount },
         reuseIssueKey: currentDetail.issueKey || null,
-        submit: async payload => {
-            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload });
-            toastReplyResult(result);
+        // 對象是全部進行中主機時，彈窗內可切換成「只回覆部分主機」（面板挑的 caseId 以第二個參數傳回）
+        picker: caseIds.length === 0
+            ? { load: ({ page, pageSize, hostNames }) => api.get(orderMembersUrl(workOrderId, { status: 'active', page, pageSize, hostNames }), { silent: true }) }
+            : undefined,
+        partialTarget: caseIds.length > 0,
+        followUp: {
+            remaining: () => remainingActiveCount(workOrderId),
+            // context.batch＝同表單的兩次送出，成功訊息由彈窗合併成一則
+            submitRest: async (payload, context) => {
+                const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: [], ...payload }, { silent: true });
+                if (!context?.batch) toastReplyResult(result, payload);
+                return result;
+            }
+        },
+        submit: async (payload, picked, context) => {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds: picked ?? caseIds, ...payload }, { silent: true });
+            if (!context?.batch) toastReplyResult(result, payload);
+            return result;
+        },
+        onRejected: error => {
+            reloadAll();   // guardLoad 自行處理載入失敗，不會擲出
+            return describeReplyRejection(error, workOrderId);
         },
         onApplied: () => reloadAll()
     });
+}
+
+/**
+ * 「把到期且沒有再發生的 N 台結案」：觀察期滿、觀察期間確定沒有再發生的成員（後端 observationExpiredQuietCaseIds）一次結案。
+ * 不自動結案——先 confirmAction 說清楚影響，再以既有回覆端點送「已處理」、說明「觀察期滿未再發生」；
+ * 成功沿用回覆的共用成功訊息並重載單頭、成員與時間軸。名單為空、檢視者不能回覆或單已結案時回 null。
+ */
+function quietCloseButton(detail) {
+    const caseIds = detail?.observationExpiredQuietCaseIds ?? [];
+    if (caseIds.length === 0 || !detail.viewerCanReply || detail.closedAt) return null;
+    const btn = button(`把到期且沒有再發生的 ${caseIds.length} 台結案`, { variant: 'outline-secondary', size: null, onClick: async () => {
+        const confirmed = await confirmAction({
+            title: '結案觀察期滿的主機？',
+            message: `將把 ${caseIds.length} 台觀察期已滿、期間沒有再發生的主機設為「已處理」，說明寫「${QUIET_CLOSE_NOTE}」。觀察期間沒有分析資料的主機不在其中。`,
+            confirmText: '結案',
+            confirmVariant: 'primary'
+        });
+        if (!confirmed) return;
+        const payload = { status: 'resolved', note: QUIET_CLOSE_NOTE, dueDate: null };
+        const restore = withBusy(btn, '結案中…');
+        try {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
+            toastReplyResult(result, payload);
+        } catch (error) {
+            restore();
+            toast(error?.message || '結案失敗，請再試一次', 'danger');
+            // 被拒（單已結案、成員已非進行中、單已改派）：畫面資料已過期，重載
+            if (error?.status === 400 || error?.status === 403) await reloadAll();
+            return;
+        }
+        restore();
+        await reloadAll();
+    } });
+    return btn;
 }
 
 function renderActions(detail, user) {
@@ -458,7 +700,7 @@ function renderActions(detail, user) {
     }
 
     if (detail.viewerCanReply) {
-        // 與工作頁列上的「回覆」同一套分流：進行中 1 台直接開彈窗；多台就在本頁成員表勾選後「回覆選取的主機」
+        // 與工作頁列上的「回覆」同一套：一律開回覆彈窗（0 台不開）；1 台對象是那一台，多台預設全部進行中主機（caseIds 為空）
         // 處理人在這一頁最常做的事：頁面唯一的實心主要按鈕（管理動作是一般次要按鈕，處理人看不到）
         const replyBtn = button('回覆這張單', { variant: 'primary', size: null, onClick: async () => {
             // 含停用主機上的進行中成員：成員清單與回覆端點都涵蓋它們（與處理人工作頁同一個算法）
@@ -468,12 +710,7 @@ function renderActions(detail, user) {
                 return;
             }
             if (activeCount > 1) {
-                memberStatusSelect.value = 'active';
-                memberPage = 1;
-                selectedCaseIds.clear();
-                await guardLoad(membersContainer, loadMembersOnly);
-                membersContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                toast('勾選這次處理好的主機，再按「回覆選取的主機」', 'info');
+                openMemberReply([], `全部進行中主機（${activeCount} 台）`, activeCount);
                 return;
             }
             const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '1' });
@@ -483,7 +720,7 @@ function renderActions(detail, user) {
                 toast('這張單已沒有進行中的主機', 'info');
                 return;
             }
-            openMemberReply([member.caseId], `主機 ${member.hostName}`);
+            openMemberReply([member.caseId], `主機 ${member.hostName}`, 1, member.isRecurrence ? 1 : 0);
         } });
         actionsContainer.appendChild(replyBtn);
     }
@@ -606,7 +843,31 @@ function updateReplyBtn() {
     memberReplyBtn.disabled = selectedCaseIds.size === 0;
 }
 
+/** 最近一次畫出的成員頁資料：全選本頁後原地重畫用 */
+let lastMemberData = null;
+/** 整單結案後只自動切一次篩選：使用者之後自己選回「進行中」就尊重他的選擇 */
+let memberAutoSwitched = false;
+
+function renderMemberRows() {
+    if (lastMemberData) renderMembers(lastMemberData);
+}
+
+/**
+ * 成員表空狀態依篩選組字：有主機名篩選＝沒有符合條件；「進行中」篩選但單上有已結案成員＝直說已結案幾台
+ * （不再寫「沒有關聯的成員主機」——單上其實有成員，只是都結案了）。
+ */
+function memberEmptyState(status, hostName, counts) {
+    if (hostName) return { title: '沒有符合條件的主機', hint: '請確認主機名完整相符，或清除主機名篩選。' };
+    if (status === 'active' && (counts?.closed ?? 0) > 0) {
+        return { title: `沒有進行中的主機（已結案 ${counts.closed} 台）`, hint: '把狀態篩選改為「已結案」或「全部」可查看這些主機。' };
+    }
+    if (status === 'active') return { title: '沒有進行中的主機', hint: '這張單目前沒有進行中的成員主機。' };
+    return { title: '沒有符合條件的主機', hint: '請調整狀態篩選。' };
+}
+
 function renderMembers(data) {
+    lastMemberData = data;
+    currentMemberItems = data.items || [];
     loadedMemberHosts.clear();
     for (const m of data.items || []) {
         if (m.hostId != null) loadedMemberHosts.set(m.caseId, m.hostId);
@@ -623,62 +884,25 @@ function renderMembers(data) {
     const canReply = currentDetail && currentDetail.viewerCanReply;
     const showCheckboxes = canSplit || canReply;
     const columns = [];
+    // 「全部」篩選下新舊案件並列：同主機的列標「第 N 次」
+    const showOccurrence = memberStatusSelect.value === 'all';
+    const hostRows = new Map();
+    for (const m of data.items || []) hostRows.set(m.hostName, (hostRows.get(m.hostName) ?? 0) + 1);
 
     if (showCheckboxes) {
         columns.push({
             title: '',
             className: 'text-center text-nowrap',
             renderHeader: () => {
-                const chk = document.createElement('input');
-                chk.type = 'checkbox';
-                chk.className = 'form-check-input';
-                let chkTitle = '全選可處理主機';
-                if (canReply && !canSplit) chkTitle = '全選可回覆主機';
-                else if (canSplit && !canReply) chkTitle = '全選可拆出主機';
-                chk.title = chkTitle;
-                const selectableItems = (data.items || []).filter(item => !item.closedAt);
-                chk.checked = selectableItems.length > 0 && selectableItems.every(item => selectedCaseIds.has(item.caseId));
-                chk.disabled = selectableItems.length === 0;
-                chk.addEventListener('change', () => {
-                    for (const item of selectableItems) {
-                        if (chk.checked) {
-                            selectedCaseIds.add(item.caseId);
-                        } else {
-                            selectedCaseIds.delete(item.caseId);
-                        }
-                    }
-                    const rowCheckboxes = membersContainer.querySelectorAll('.wo-member-select');
-                    for (const rc of rowCheckboxes) {
-                        rc.checked = chk.checked;
-                    }
-                    updateSplitBtn();
-                    updateReplyBtn();
-                });
+                const chk = selection.selectAllHeaderCheckbox();
+                chk.title = canReply && !canSplit ? '全選本頁可回覆主機' : (canSplit && !canReply ? '全選本頁可拆出主機' : '全選本頁可處理主機');
+                chk.disabled = currentMemberItems.filter(item => !item.closedAt).length === 0;
                 return chk;
             },
             render: item => {
-                if (item.closedAt) {
-                    return document.createTextNode('');
-                }
-                const chk = document.createElement('input');
-                chk.type = 'checkbox';
-                chk.className = 'form-check-input wo-member-select';
-                chk.checked = selectedCaseIds.has(item.caseId);
-                chk.addEventListener('change', () => {
-                    if (chk.checked) {
-                        selectedCaseIds.add(item.caseId);
-                    } else {
-                        selectedCaseIds.delete(item.caseId);
-                    }
-                    updateSplitBtn();
-                    updateReplyBtn();
-                    const selectAll = membersContainer.querySelector('thead input[type="checkbox"]');
-                    if (selectAll) {
-                        const selectableItems = (data.items || []).filter(i => !i.closedAt);
-                        selectAll.checked = selectableItems.length > 0 && selectableItems.every(i => selectedCaseIds.has(i.caseId));
-                    }
-                });
-                return chk;
+                const cell = selection.rowCheckboxCell(item);
+                if (cell.classList) cell.classList.add('wo-member-select');
+                return cell;
             }
         });
     }
@@ -687,12 +911,11 @@ function renderMembers(data) {
         {
             title: '主機',
             truncate: true,
-            render: item => renderMemberHostCell(item)
+            render: item => renderMemberHostCell(item, showOccurrence, (hostRows.get(item.hostName) ?? 0) > 1)
         },
         {
             title: '狀態',
-            className: 'text-nowrap',
-            render: item => renderMemberStatusBadge(item.status)
+            render: item => memberStatusCell(item)
         },
         {
             title: '期限',
@@ -771,7 +994,7 @@ function renderMembers(data) {
     renderTable(membersContainer, {
         columns,
         rows: data.items,
-        empty: { title: '沒有符合條件的成員', hint: '此交辦單目前沒有關聯的成員主機。' }
+        empty: memberEmptyState(memberStatusSelect.value, memberHostName, currentDetail?.counts)
     });
 
     renderPagination(memberPagerContainer, {
@@ -779,10 +1002,7 @@ function renderMembers(data) {
         totalPages: Math.ceil(data.total / data.pageSize),
         pageSize: data.pageSize,
         onPage: newPage => {
-            memberPage = newPage;
-            selectedCaseIds.clear();
-            updateSplitBtn();
-            updateReplyBtn();
+            memberPage = newPage;   // 勾選跨頁保留
             guardLoad(membersContainer, loadMembersOnly);
         }
     });
@@ -858,9 +1078,14 @@ function renderTimeline(timeline) {
 
 memberStatusSelect.addEventListener('change', () => {
     memberPage = 1;
-    selectedCaseIds.clear();
-    updateSplitBtn();
-    updateReplyBtn();
+    selection.clear();   // 勾選是對「這個狀態篩選下的清單」做的
+    guardLoad(membersContainer, loadMembersOnly);
+});
+
+/** 主機名搜尋（完全相符、不分大小寫）：回第一頁，勾選保留 */
+memberSearchInput.addEventListener('change', () => {
+    memberHostName = memberSearchInput.value.trim();
+    memberPage = 1;
     guardLoad(membersContainer, loadMembersOnly);
 });
 
@@ -870,9 +1095,9 @@ memberSplitBtn.addEventListener('click', () => {
         title: '拆出選取的主機',
         submitText: '確定拆出',
         currentHandlerId: currentDetail?.handlerId,
-        hostIds: [...new Set([...selectedCaseIds].map(id => loadedMemberHosts.get(id)).filter(id => id != null))],
+        hostIds: [...new Set([...selectedCaseIds.values()].map(item => item.hostId).filter(id => id != null))],
         onSubmit: async (handlerId, closeModal) => {
-            const caseIds = Array.from(selectedCaseIds);
+            const caseIds = [...selectedCaseIds.keys()];
             const res = await api.post(`/api/work-orders/${workOrderId}/split`, { caseIds, handlerId });
             closeModal();
             toast(`已拆出 ${res.movedCases} 台到單號 #${res.targetWorkOrderId}${res.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : ''}`, 'success');
@@ -881,9 +1106,7 @@ memberSplitBtn.addEventListener('click', () => {
                     toast(`${item.handlerName} 沒有處理權限（${item.hostCount} 台）`, 'warning');
                 }
             }
-            selectedCaseIds.clear();
-            updateSplitBtn();
-            updateReplyBtn();
+            selection.clear();
             await reloadAll();
         }
     });
@@ -891,8 +1114,9 @@ memberSplitBtn.addEventListener('click', () => {
 
 memberReplyBtn.addEventListener('click', () => {
     if (selectedCaseIds.size === 0) return;
-    const caseIds = Array.from(selectedCaseIds);
-    openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`);
+    const caseIds = [...selectedCaseIds.keys()];
+    const recurrenceHosts = [...selectedCaseIds.values()].filter(item => item?.isRecurrence).length;
+    openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`, caseIds.length, recurrenceHosts);
 });
 
 memberCsvBtn.addEventListener('click', async () => {
@@ -962,10 +1186,18 @@ memberCsvBtn.addEventListener('click', async () => {
 /** 成員清單的請求序號：連點分頁或連續換篩選時，慢回來的舊請求不可蓋掉新結果 */
 const membersGuard = createSeqGuard();
 
+/** 成員表目前這一頁的請求網址（狀態、頁碼、主機名篩選） */
+function memberListUrl() {
+    return orderMembersUrl(workOrderId, {
+        status: memberStatusSelect.value, page: memberPage, pageSize: PAGE_SIZE,
+        hostNames: memberHostName ? [memberHostName] : null
+    });
+}
+
 async function loadMembersOnly() {
     const seq = membersGuard.next();
     renderLoading(membersContainer, 5);
-    const members = await api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`);
+    const members = await api.get(memberListUrl());
     if (!membersGuard.isCurrent(seq)) return;
     renderMembers(members);
 }
@@ -1015,18 +1247,36 @@ function markSeenOnce(detail) {
     });
 }
 
+/**
+ * 沒有權限檢視這張單時，成員與處理歷程兩個區塊整個不顯示（只剩錯誤說明與返回出口）；
+ * 載入成功就恢復。區塊是容器所在的 section 卡片，連同標題與篩選列一起收，不留空殼。
+ */
+function setDetailSectionsDenied(denied) {
+    for (const container of [membersContainer, timelineContainer]) {
+        container?.closest('section')?.classList.toggle('d-none', denied);
+    }
+}
+
 async function loadAll() {
     try {
-        const [user, detail, members, timeline] = await Promise.all([
+        let [user, detail, members, timeline] = await Promise.all([
             getCurrentUser(),
             api.get(`/api/work-orders/${workOrderId}`, { silent: true }),
-            api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`, { silent: true }),
+            api.get(memberListUrl(), { silent: true }),
             api.get(`/api/work-orders/${workOrderId}/timeline`, { silent: true })
         ]);
 
         currentUser = user;
         currentDetail = detail;
+        // 整單結案後「進行中」篩選只會是空的：自動切到「全部」，讓人看到已結案的成員
+        if (detail.closedAt && memberStatusSelect.value === 'active' && !memberAutoSwitched) {
+            memberAutoSwitched = true;
+            memberStatusSelect.value = 'all';
+            memberPage = 1;
+            members = await api.get(memberListUrl(), { silent: true });
+        }
         markSeenOnce(detail);
+        setDetailSectionsDenied(false);
 
         renderHeader(detail);
         renderReassignedHint(detail, user);
@@ -1036,6 +1286,7 @@ async function loadAll() {
     } catch (error) {
         if (error?.status === 403) {
             renderError(headerContainer, { message: error.message || '您沒有權限檢視這張交辦單。' });
+            setDetailSectionsDenied(true);
             // 只有 Handle 的原處理人在單被改派後會落到這裡（授權只認目前處理人），而 403 拿不到歷程，
             // 無法確認他是否曾是處理人。出口只給一條：打不開交辦總覽的人回自己的交辦
             // （具 Handle 者附上可能原因），能開的人回交辦清單
@@ -1061,11 +1312,13 @@ async function loadAll() {
     }
 }
 
+/** 重新載入完成後要做的事（「清單有更新」提示作廢）；init 登錄 */
+const reloadHooks = [];
+
 async function reloadAll() {
-    selectedCaseIds.clear();
-    updateSplitBtn();
-    updateReplyBtn();
+    selection.clear();
     await guardedLoadAll();
+    for (const hook of reloadHooks) hook();
 }
 
 /**
@@ -1084,6 +1337,9 @@ async function guardedLoadAll() {
 }
 
 function init() {
+    // 側欄徽章的輪詢發現我的進行中台數或單數與載入時不同，就在頁面頂端提示重新載入（不另開輪詢）
+    const listNotice = createListUpdateNotice({ anchor: headerContainer, onReload: () => reloadAll() });
+    reloadHooks.push(() => listNotice.rebase());
     renderLoading(headerContainer, 3);
     renderLoading(membersContainer, 5);
     renderLoading(timelineContainer, 3);

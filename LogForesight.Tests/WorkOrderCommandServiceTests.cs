@@ -75,7 +75,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            _audit, displayNames, _mail);
+            _audit, displayNames, _mail, new FakeRuleStore());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -146,6 +146,54 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Empty(far.Hosts);
         Assert.Equal(first.TotalHosts, far.TotalHosts);
         Assert.Equal(first.AffectedMembers, far.AffectedMembers);
+    }
+
+    // ── P-1：預覽建議期限（W1）────────────────────────────────────────────────
+
+    private static LogIssueSignature DiskWith(IssueSeverity severity) => new()
+    {
+        LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error,
+        Severity = severity, Count = 1, Category = IssueCategory.Other
+    };
+
+    [Theory]
+    [InlineData(IssueSeverity.High, 3)]
+    [InlineData(IssueSeverity.Medium, 7)]
+    public void 預覽建議期限_依問題嚴重度自今天起算_高3天_中7天(IssueSeverity severity, int days)
+    {
+        AddHost("HOST-A", DiskWith(severity));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+
+        var preview = _service.Preview(Single(handler.UserId));
+
+        Assert.Equal(DateTime.Today.AddDays(days), preview.SuggestedDueDate);
+    }
+
+    [Fact]
+    public void 預覽建議期限_低嚴重度為null_多台主機取最高()
+    {
+        AddHost("HOST-LOW", DiskWith(IssueSeverity.Low));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        Assert.Null(_service.Preview(Single(handler.UserId)).SuggestedDueDate);
+
+        AddHost("HOST-HIGH", DiskWith(IssueSeverity.High));
+        Assert.Equal(DateTime.Today.AddDays(3), _service.Preview(Single(handler.UserId)).SuggestedDueDate);
+    }
+
+    [Fact]
+    public void 預覽建議期限_只預填_建立時以請求的期限為準_清掉就是沒有()
+    {
+        AddHost("HOST-A", DiskWith(IssueSeverity.High));
+        var handler = AddUser("DOMAIN\\h", "處理人");
+        var request = Single(handler.UserId);
+        Assert.NotNull(_service.Preview(request).SuggestedDueDate);
+
+        request.DueDate = null;   // 使用者把預填的期限清掉
+        var created = _service.Create(request);
+
+        var members = MembersOf(created.Orders.Single().WorkOrderId);
+        Assert.All(members, m => Assert.Null(m.DueDate));
+        Assert.Null(_orderStore.Get(created.Orders.Single().WorkOrderId)!.DueDate);
     }
 
     private IssueCase? OpenCase(string hostName, LogIssueSignature? issue = null) =>
@@ -706,7 +754,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         var entry = SingleAudit(AuditActions.WorkOrderCreate);
         Assert.Equal("work_order", entry.TargetKind);
         Assert.Equal("disk/153", entry.TargetId);
-        Assert.Equal("交辦『disk 153』給 處理人(DOMAIN\\h)：新建 1 張、併入 0 張，加入 2 台（略過 0 台、雜訊排除 0 台）", entry.Summary);
+        Assert.Equal("交辦『disk EventId 153』給 處理人(DOMAIN\\h)：新建 1 張、併入 0 張，加入 2 台（略過 0 台、雜訊排除 0 台）", entry.Summary);
     }
 
     [Fact]
@@ -953,6 +1001,67 @@ public class WorkOrderCommandServiceTests : IDisposable
         _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = status, Reason = "r", BlockRedispatch = block });
 
         Assert.All(MembersOf(orderId), c => Assert.Equal(expected, c.BlocksRedispatch));
+    }
+
+    [Fact]
+    public void 代為結案_第81輪T_帶案件清單只結案範圍內的成員_單繼續進行並寫稽核()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var scoped = members.Single(c => c.HostName == "HOST-A").CaseId;
+
+        var result = _service.AdminClose(orderId, new AdminCloseWorkOrderRequest
+        {
+            Status = IssueHandlingStatuses.WontFix, Reason = "只有這台不處理", BlockRedispatch = true, CaseIds = new List<string> { scoped }
+        });
+
+        Assert.Equal(1, result.ClosedCases);
+        var after = MembersOf(orderId).ToDictionary(c => c.HostName);
+        Assert.Equal(IssueHandlingStatuses.WontFix, after["HOST-A"].Status);
+        Assert.True(after["HOST-A"].BlocksRedispatch);
+        Assert.Equal(IssueHandlingStatuses.InProgress, after["HOST-B"].Status);
+        Assert.Null(_orderStore.Get(orderId)!.ClosedAt);
+        var audit = SingleAudit(AuditActions.WorkOrderAdminClose);
+        Assert.Contains("指定範圍", audit.Summary);
+    }
+
+    [Fact]
+    public void 代為結案_範圍結案單仍進行中_通知帶已結案台數_整張結案或範圍結完整張單則為0()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var a = members.Single(c => c.HostName == "HOST-A").CaseId;
+        var b = members.Single(c => c.HostName == "HOST-B").CaseId;
+        _outbox.Update(x => x.Items.Clear());
+
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "先結一台", CaseIds = new List<string> { a } });
+        var partial = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxKinds.AdminClosed, partial.Kind);
+        Assert.Equal(1, partial.MemberDelta);   // 單仍在進行中：帶這次結案的台數
+
+        _outbox.Update(x => x.Items.Clear());
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "最後一台", CaseIds = new List<string> { b } });
+        Assert.Equal(0, Assert.Single(_outbox.Get().Items.Values).MemberDelta);   // 範圍結完、整張單因此結案：沿用整張單原文
+    }
+
+    [Fact]
+    public void 代為結案_第81輪T_案件清單含已結案或不屬於這張單的案件_整筆拒絕且不寫稽核()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var a = members.Single(c => c.HostName == "HOST-A").CaseId;
+        var b = members.Single(c => c.HostName == "HOST-B").CaseId;
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "先結一台", CaseIds = new List<string> { a } });
+        var auditBefore = _audit.Entries.Count;
+
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.AdminClose(orderId,
+            new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "含已結案", CaseIds = new List<string> { b, a } }));
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.AdminClose(orderId,
+            new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "不屬於本單", CaseIds = new List<string> { b, "no-such-case" } }));
+
+        Assert.Equal(IssueHandlingStatuses.InProgress, MembersOf(orderId).Single(c => c.HostName == "HOST-B").Status);
+        Assert.Equal(auditBefore, _audit.Entries.Count);
     }
 
     // ── 郵件通知 ─────────────────────────────────────────────────────────────

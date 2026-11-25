@@ -129,6 +129,12 @@ public class IssueGroupDto
 {
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>
+    /// 顯示用的問題名稱（<see cref="IssueNames.For"/>，全站問題名稱的唯一出口）：事件編號大於 0 是「來源 EventId 編號」，
+    /// 為 0（Linux、PRTG）只顯示來源，不顯示「0」。一列一個問題（來源＋事件編號）；前端一律用它，不自行組「來源 (編號)」。
+    /// </summary>
+    public string IssueLabel { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
 
     /// <summary>期間內這個問題出現過的最高嚴重度</summary>
@@ -173,6 +179,13 @@ public class IssueGroupDto
     /// <summary>白話說明（取自命中規則的 PlainExplanation；未命中或規則無說明時為 null）</summary>
     public string? PlainExplanation { get; set; }
 
+    /// <summary>
+    /// 命中規則的 Id（與白話說明同一個查法：<c>KnownIssueCatalog.FindRuleByAggregateKey</c>）；未命中、規則已退役為 null。
+    /// 「調整這條規則」的目的地；不分檢視者（規則 Id 不是敏感資料，能不能開規則頁由畫面依 Maintain 決定、後端另擋），
+    /// 所以不影響依檢視者分流的快取。
+    /// </summary>
+    public string? RuleId { get; set; }
+
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
@@ -183,8 +196,15 @@ public class IssueGroupDto
     /// <summary>處理概況：處理中台數（與 HandlingSummary 來源一致）</summary>
     public int InProgressCount { get; set; }
 
-    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）</summary>
+    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）。只算有人標記的結案類；不含 <see cref="DefaultIgnoredCount"/></summary>
     public int ResolvedCount { get; set; }
+
+    /// <summary>
+    /// 處理概況：預設不處理的台數。一台主機算一台，條件是這台主機在這個問題上的每個出現點都沒有任何標記
+    /// （沒有進行中案件、沒有逐日處理標記），只因嚴重度不在「需處理」名單內而被視為已處理。
+    /// 沒有任何一台時為 0。與 <see cref="ResolvedCount"/> 不合計：未處理＋處理中＋已處理＋預設不處理＝受影響主機數。
+    /// </summary>
+    public int DefaultIgnoredCount { get; set; }
 
     /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
     /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>
@@ -394,6 +414,12 @@ public class IssueDto
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
     public bool ElevatesDayRisk { get; set; }
 
+    /// <summary>
+    /// 這個問題的「不再打擾」滿 30 天會自動解除（目前規則嚴重度高或重大，見 <c>DismissalRelease.AppliesTo</c>）。
+    /// 處理面板選到不處理類時據此換後果提示，前端不自己判斷嚴重度。
+    /// </summary>
+    public bool DismissalReleases { get; set; }
+
     public string? KnownIssue { get; set; }
     public string FirstSeen { get; set; } = string.Empty;
     public string LastSeen { get; set; } = string.Empty;
@@ -536,6 +562,27 @@ public class IssueGuidanceDto
     public string Impact { get; set; } = string.Empty;
     public List<string> LikelyCauses { get; set; } = new();
     public List<string> NextSteps { get; set; } = new();
+
+    /// <summary>
+    /// 規則的處置參考（風險日問題列與交辦單頁共用的唯一組法）：白話說明、影響、可能原因、處置步驟都沒有內容時回 null，
+    /// 前端就不掛展開面板；規則為 null（未命中、已退役的 PRTG 代碼）同樣回 null。
+    /// </summary>
+    public static IssueGuidanceDto? From(KnownIssueRule? rule)
+    {
+        if (rule == null) return null;
+        var hasContent = !string.IsNullOrWhiteSpace(rule.PlainExplanation) ||
+                         !string.IsNullOrWhiteSpace(rule.Impact) ||
+                         rule.LikelyCauses.Length > 0 || rule.NextSteps.Length > 0;
+        if (!hasContent) return null;
+
+        return new IssueGuidanceDto
+        {
+            Explanation = rule.PlainExplanation,
+            Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses.ToList(),
+            NextSteps = rule.NextSteps.ToList()
+        };
+    }
 }
 
 /// <summary>
@@ -716,6 +763,9 @@ public class HostIssueSummaryDto
 {
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>顯示用的問題名稱（<see cref="IssueNames.ForRules"/>，全站唯一出口）：事件編號為 0 時只顯示來源並附規則名稱（恰好一條規則命中才附），不顯示「0」。前端一律用它，不自行組來源與事件編號。</summary>
+    public string IssueLabel { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
 
     /// <summary>期間內出現過的最高嚴重度（High/Medium/Low）</summary>

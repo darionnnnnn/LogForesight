@@ -20,7 +20,7 @@ public sealed class NightlyDispatchSummary
 }
 
 /// <summary>夜間派工派不出去的問題：<paramref name="Reason"/> 是 no_pool／all_paused／no_visibility</summary>
-public sealed record NightlyUnassignableIssue(string IssueLabel, string Reason, int Hosts);
+public sealed record NightlyUnassignableIssue(string IssueLabel, string Reason, int Hosts, string? Source = null, int EventId = 0);
 
 /// <summary>夜間派工彙總的一張單</summary>
 public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel)
@@ -51,6 +51,8 @@ public sealed class NightlyDispatch
     // 本趟累計（皆在 _ctx.Gate 內讀寫）
     private readonly Dictionary<long, int> _addedByOrder = new();
     private readonly Dictionary<long, int> _recurrenceByOrder = new();
+    /// <summary>本趟因「不再打擾已滿 30 天」放行而寫入成員的台數（單 → 台數）；趟末在單歷程合併成一筆系統事件</summary>
+    private readonly DismissalReleaseTally _released = new();
     private readonly Dictionary<long, long> _handlerByOrder = new();
     private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
@@ -61,7 +63,7 @@ public sealed class NightlyDispatch
     /// <summary>寫入當下才發現的途中變動（單已結案／已改派），趟末併入 SkipCounts</summary>
     private readonly Dictionary<string, int> _midrunCounts = new(StringComparer.Ordinal);
     /// <summary>本趟派不出去：（問題, 原因）→ 主機名集合（同主機多日只算一台）</summary>
-    private readonly Dictionary<(string Issue, string Reason), HashSet<string>> _unassignable = new();
+    private readonly Dictionary<(string Source, int EventId, string Reason), HashSet<string>> _unassignable = new();
 
     public NightlyDispatch(WorkOrderCoordinator coordinator, DispatchContext ctx, IHostStore hosts)
     {
@@ -107,6 +109,7 @@ public sealed class NightlyDispatch
         var hostName = host.HostName;
         var members = new List<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)>();
         var recurrences = new List<bool>();
+        var releases = new List<bool>();
         foreach (var issue in issues)
         {
                 var relatedWarningOrderId = _ctx.ActiveWarningOrderForSensor(hostName, issue);
@@ -132,7 +135,7 @@ public sealed class NightlyDispatch
                         _ctx.Commit(decision, issue.Source, issue.EventId);
                         if (decision.SkipReason == WorkOrderDispatcher.SkipNoCandidate)
                         {
-                            var key = ($"{issue.Source} {issue.EventId}", decision.NoCandidateDetail ?? WorkOrderDispatcher.NoCandidateNoPool);
+                            var key = (issue.Source, issue.EventId, decision.NoCandidateDetail ?? WorkOrderDispatcher.NoCandidateNoPool);
                             if (!_unassignable.TryGetValue(key, out var hostSet))
                                 _unassignable[key] = hostSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                             hostSet.Add(hostName);
@@ -171,6 +174,7 @@ public sealed class NightlyDispatch
 
                 members.Add((issue, decision.WorkOrderId!.Value, decision.HandlerId!.Value, decision.Step!));
                 recurrences.Add(decision.Recurrence);
+                releases.Add(_ctx.IsReleased(hostName, IssueSignatureKey.For(issue)));
                 _ctx.Commit(decision, issue.Source, issue.EventId);
         }
 
@@ -200,6 +204,7 @@ public sealed class NightlyDispatch
                     _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
 
                 _addedByOrder[workOrderId] = _addedByOrder.GetValueOrDefault(workOrderId) + 1;
+                if (releases[i]) _released.Add(workOrderId);
                 if (recurrences[i])
                 {
                     _recurrenceByOrder[workOrderId] = _recurrenceByOrder.GetValueOrDefault(workOrderId) + 1;
@@ -283,6 +288,8 @@ public sealed class NightlyDispatch
             foreach (var (workOrderId, added) in _addedByOrder.OrderBy(p => p.Key))
                 _coordinator.RecordNightlyAppended(workOrderId, added, occurredAt);
 
+            _released.Flush(_coordinator, occurredAt);
+
             // 本趟新建、最後一個成員都沒寫入的單（成員全因「決策後已有進行中案件」略過）：交給結案推導
             // 收掉（以 empty_dispatch 結案），不留零成員的進行中空單，也不列進摘要與通知。放在收尾而非當下，
             // 同一趟後面的主機仍可能掛入這張單；推導只在單真的沒有任何案件時才結案。
@@ -318,8 +325,8 @@ public sealed class NightlyDispatch
                 SkipCounts = skipCounts,
                 PerHandler = perHandler,
                 Unassignable = _unassignable
-                    .OrderBy(p => p.Key.Issue, StringComparer.Ordinal).ThenBy(p => p.Key.Reason, StringComparer.Ordinal)
-                    .Select(p => new NightlyUnassignableIssue(p.Key.Issue, p.Key.Reason, p.Value.Count))
+                    .OrderBy(p => p.Key.Source, StringComparer.Ordinal).ThenBy(p => p.Key.EventId).ThenBy(p => p.Key.Reason, StringComparer.Ordinal)
+                    .Select(p => new NightlyUnassignableIssue(IssueNames.For(p.Key.Source, p.Key.EventId), p.Key.Reason, p.Value.Count, p.Key.Source, p.Key.EventId))
                     .ToList()
             };
 

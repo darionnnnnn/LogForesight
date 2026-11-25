@@ -120,6 +120,38 @@ export function severityCell(severity, elevatesDayRisk) {
 }
 
 /**
+ * 交辦單清單的嚴重度欄（我的交辦與交辦總覽共用）：有嚴重度用 severityCell（含「重大」旗標），
+ * 推導不到（null 或舊回應缺欄位）顯示「—」；沒有嚴重度時不單獨標重大。
+ */
+export function workOrderSeverityCell(row) {
+    if (!row?.severity) {
+        const span = document.createElement('span');
+        span.className = 'lf-text-data';
+        span.textContent = '—';
+        return span;
+    }
+    return severityCell(row.severity, Boolean(row.critical));
+}
+
+/**
+ * 交辦單清單列的標記（0 或缺漏不顯示，全 0 回 null）：新 N（今天新增的主機）、退回 N（被退回的成員）、
+ * 觀察到期 N（主機）；recurrence 為真時加「復發 N」。我的交辦的復發標記已在主機欄，所以預設不含；
+ * 交辦總覽沒有主機欄標記，傳 `{ recurrence: true }`。
+ */
+export function workOrderFlagBadges(row, { recurrence = false } = {}) {
+    const items = [];
+    if (row?.newTodayHosts > 0) items.push([`新 ${row.newTodayHosts}`, 'info', `今天新增 ${row.newTodayHosts} 台`]);
+    if (recurrence && row?.recurrenceHosts > 0) items.push([`復發 ${row.recurrenceHosts}`, 'warning', `${row.recurrenceHosts} 台是結案後又再發生的問題`]);
+    if (row?.returnedMembers > 0) items.push([`退回 ${row.returnedMembers}`, 'warning', `${row.returnedMembers} 個成員被退回、處理人尚未回覆`]);
+    if (row?.observationExpiredHosts > 0) items.push([`觀察到期 ${row.observationExpiredHosts}`, 'warning', `${row.observationExpiredHosts} 台觀察期已過，等待結案或再處理`]);
+    if (items.length === 0) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-wrap align-items-center gap-1 mt-1';
+    for (const [text, variant, title] of items) wrap.appendChild(statusBadge(text, variant, { title }));
+    return wrap;
+}
+
+/**
  * 出現密度：出現天數 ÷ 期間天數（數字＋密度條）。layout 'row' 為橫排（儀表板、靠右），
  * 'column' 為數字在上、密度條換行在下（問題排行表，欄寬不變）。
  */
@@ -326,6 +358,13 @@ export function todayLocal() {
     return toLocalDateString(new Date());
 }
 
+/** 今天起第 N 天的本地日期字串（快捷「3／7／14 日」與觀察天數換算共用，不各頁自己加天數） */
+export function dateAfterDays(days) {
+    const target = new Date();
+    target.setDate(target.getDate() + days);
+    return toLocalDateString(target);
+}
+
 /**
  * 分析資料涵蓋的最後一天＝昨天（回饋十九輪批次C）：分析永遠只產到昨天
  * （後端 AnalysisOrchestrator 固定分析 yesterday），期間篩選的預設終點與快捷範圍
@@ -342,6 +381,20 @@ export function analysisAnchorLocal() {
 export function formatNumber(value) {
     if (value === null || value === undefined) return '';
     return Number(value).toLocaleString('zh-TW');
+}
+
+/**
+ * 交辦單的台數口徑（交辦單頁單頭、我的交辦清單列、交辦總覽清單列共用這一支）：
+ * 「台」是不重複主機數，「件」是成員（主機×問題）數——同一台主機結案後再發生會是新的一件，所以件數會大於台數。
+ * 歷來台數等於進行中台數時寫「歷來同」，不重複報同一個數字。
+ * @param {{activeHosts?: number, totalHosts?: number, counts?: {total?: number}}} row 單頭或清單列
+ */
+export function hostCountText(row) {
+    const active = row?.activeHosts ?? 0;
+    const total = row?.totalHosts ?? active;
+    const members = row?.counts?.total ?? 0;
+    const history = total === active ? '歷來同' : `歷來 ${total} 台`;
+    return `進行中 ${active} 台；${history}、${members} 件`;
 }
 
 /** 已執行時長「分:秒」（例如 12:05；超過一小時分鐘數照累加）。負值視為 0 */

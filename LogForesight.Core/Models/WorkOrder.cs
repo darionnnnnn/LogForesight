@@ -21,6 +21,14 @@ public class WorkOrder
     /// <summary>「Source EventId」反正規化存下來（同 <see cref="IssueCase.IssueLabel"/> 的理由）</summary>
     public string IssueLabel { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 畫面、提醒與通知信顯示的問題名稱：以單上的來源與事件經 <see cref="IssueNames"/> 重新產生（事件編號 0 附規則名稱，
+    /// <paramref name="rules"/> 必填），取不到（多問題單、PRTG 舊單）才用存的 <see cref="IssueLabel"/>。不回寫；
+    /// 舊單存的「sshd 0」這類字串因此不必改資料就顯示成同一種寫法。
+    /// </summary>
+    public string DisplayLabel(IReadOnlyList<KnownIssueRule> rules) =>
+        IssueNames.Display(SourceName, EventId ?? 0, IssueLabel, rules);
+
     public long HandlerId { get; set; }
 
     /// <summary>最近一次被改派走的處理人，可唯讀開啟此單；再次改派時覆寫（只記最近一位）</summary>
@@ -170,6 +178,9 @@ public static class WorkOrderEventActions
     public const string Replied = "replied";
     public const string DueDateChanged = "due_date_changed";
 
+    /// <summary>系統事件：本趟有先前判定不處理、已滿 30 天（<see cref="DismissalRelease.Days"/>）而放行重新派工的主機（成員數記在 MemberDelta）</summary>
+    public const string DismissalReleased = "dismissal_released";
+
     /// <summary>管理者把「無法處理」的成員退回給處理人（escalated → in_progress）</summary>
     public const string Returned = "returned";
 }
@@ -304,17 +315,76 @@ public static class WorkOrderQueries
     public const string StatusClosed = "closed";
     public const string StatusAll = "all";
 
+    /// <summary>
+    /// 待我處理（只用在交辦單清單）：進行中且至少有一個「待處理成員」的單——待處理成員＝進行中、不在停用主機上、
+    /// 不是上報中、也不在觀察期內（觀察至日期 &gt;= 今天）的成員；只剩觀察期內或上報中成員的單不列。
+    /// 觀察到期（觀察至日期 &lt; 今天）的成員算待處理。判準與 <see cref="IsTodoMember"/> 同義。
+    /// </summary>
+    public const string StatusTodo = "todo";
+
     public const string SortCreatedDesc = "created_desc";
     public const string SortMembersDesc = "members_desc";
     public const string SortUnrepliedOldest = "unreplied_oldest";
 
     public static readonly string[] OrderStatuses =
-        { StatusActive, StatusEscalated, StatusOverdue, StatusUnreplied, StatusClosed, StatusAll };
+        { StatusActive, StatusEscalated, StatusOverdue, StatusUnreplied, StatusClosed, StatusAll, StatusTodo };
 
     public static readonly string[] MemberStatuses =
         { StatusActive, StatusClosed, StatusEscalated, StatusOverdue, StatusAll };
 
+    /// <summary>
+    /// 處理優先序（P-1，H7）：有被退回的 → 有逾期的（<see cref="IsOverdue"/>，含觀察到期）→ 嚴重度高到低 →
+    /// 期限近到遠（無期限排最後）→ 建立時間新到舊（同現行預設）→ 單號降冪。
+    /// </summary>
+    public const string SortPriority = "priority";
+
+    /// <summary>期限最近：進行中成員的最早期限（無期限排最後），同值依建立時間新到舊、單號降冪</summary>
+    public const string SortDueSoon = "dueSoon";
+
+    /// <summary>嚴重度：高到低（無法推導排最後），同值依建立時間新到舊、單號降冪</summary>
+    public const string SortSeverity = "severity";
+
+    /// <summary>資料庫端可直接排序的三個鍵（store 的 <c>QueryOrders</c> 只認這些）</summary>
     public static readonly string[] Sorts = { SortCreatedDesc, SortMembersDesc, SortUnrepliedOldest };
+
+    /// <summary>
+    /// 要讀取時推導（退回、逾期、嚴重度、最早期限）才排得出來的鍵：由 Web 服務對「符合篩選的全體」在記憶體排序後再取頁，
+    /// 不交給 store 的 <c>QueryOrders</c>（它只認 <see cref="Sorts"/>）。
+    /// </summary>
+    public static readonly string[] DerivedSorts = { SortPriority, SortDueSoon, SortSeverity };
+
+    /// <summary>清單端點接受的全部排序鍵：<see cref="Sorts"/>＋<see cref="DerivedSorts"/></summary>
+    public static readonly string[] AllSorts = Sorts.Concat(DerivedSorts).ToArray();
+
+    // ── 清單標記篩選（我的交辦「今天需要你處理」；與狀態篩選取交集，含 todo）──────────────────
+
+    /// <summary>被退回：管理者退回後處理人尚未回覆的單（判定見 Web 服務 <c>ReturnedMembers</c>）</summary>
+    public const string FlagReturned = "returned";
+
+    /// <summary>今天新增：有成員建立日是今天的單</summary>
+    public const string FlagNewToday = "newToday";
+
+    /// <summary>復發：有進行中成員是復發（<c>IssueRecurrence</c>）的單</summary>
+    public const string FlagRecurrence = "recurrence";
+
+    /// <summary>觀察到期：有觀察中且觀察至早於今天的進行中成員的單</summary>
+    public const string FlagObservationExpired = "observationExpired";
+
+    /// <summary>3 天內到期：有處理中成員期限落在今天～今天＋<see cref="DueSoonDays"/> 的單</summary>
+    public const string FlagDueSoon = "dueSoon";
+
+    public static readonly string[] Flags = { FlagReturned, FlagNewToday, FlagRecurrence, FlagObservationExpired, FlagDueSoon };
+
+    /// <summary>「即將到期」的天數：期限落在 [今天, 今天＋3]（含兩端）</summary>
+    public const int DueSoonDays = 3;
+
+    /// <summary>
+    /// 即將到期的成員（唯一一份判定）：進行中、處理中（預計完成日才有意義；觀察中的日期是「觀察至」，另有觀察到期標記），
+    /// 期限落在今天到今天＋<see cref="DueSoonDays"/> 天之間（含兩端）。已逾期（期限早於今天）不算——逾期有自己的標記。
+    /// </summary>
+    public static bool IsDueSoon(IssueCase c, DateTime today) =>
+        c.ClosedAt == null && c.Status == IssueHandlingStatuses.InProgress && c.DueDate != null
+        && c.DueDate.Value.Date >= today.Date && c.DueDate.Value.Date <= today.Date.AddDays(DueSoonDays);
 
     public const string PausedInclude = "include";
     public const string PausedExclude = "exclude";
@@ -344,6 +414,15 @@ public static class WorkOrderQueries
     public static bool IsOverdue(IssueCase c, DateTime today) =>
         c.ClosedAt == null && c.DueDate != null && c.DueDate.Value < today.Date
         && (c.Status == IssueHandlingStatuses.InProgress || c.Status == IssueHandlingStatuses.Observing);
+
+    /// <summary>
+    /// 待處理成員（我的交辦「待我處理」的最小單位）：進行中、不是上報中、不在觀察期內。呼叫端另行排除停用主機。
+    /// 進行中成員恰好分成三類互斥：待處理（含觀察到期）、觀察期內（<see cref="IssueHandlingStatuses.IsObservationActive"/>）、上報中，
+    /// 三者相加＝進行中台數；SQL 端（<c>EfWorkOrderStore</c> 的處理人摘要與清單）與替身都以這個定義為準。
+    /// </summary>
+    public static bool IsTodoMember(IssueCase c, DateTime today) =>
+        c.ClosedAt == null && c.Status != IssueHandlingStatuses.Escalated
+        && !IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today);
 
     /// <summary>清單條件檢查（store 入口共用；使用者輸入的友善訊息由 Web 層先擋）</summary>
     public static void Validate(WorkOrderQuery q)
@@ -381,6 +460,21 @@ public sealed class WorkOrderHandlerSummary
 
     /// <summary>進行中且暫停（問題目前靜音中）的單數；上面四個數字都不含暫停單</summary>
     public int PausedWorkOrders { get; init; }
+
+    /// <summary>
+    /// 進行中成員裡「觀察期內」的台數（觀察中且觀察至 &gt;= 今天）；與 <see cref="ActiveMembers"/> 同口徑
+    /// （非暫停單、不含停用主機上的成員）。判準同 <see cref="IssueHandlingStatuses.IsObservationActive"/>。
+    /// </summary>
+    public int ObservingMembers { get; init; }
+
+    /// <summary>進行中成員裡上報中的台數；口徑同 <see cref="ActiveMembers"/></summary>
+    public int EscalatedMembers { get; init; }
+
+    /// <summary>
+    /// 進行中成員裡「待處理」的台數（判準 <see cref="WorkOrderQueries.IsTodoMember"/>：非上報中、非觀察期內，觀察到期算在這裡）；
+    /// 口徑同 <see cref="ActiveMembers"/>。與 <see cref="ObservingMembers"/>、<see cref="EscalatedMembers"/> 互斥，三者相加＝<see cref="ActiveMembers"/>。
+    /// </summary>
+    public int TodoMembers { get; init; }
 }
 
 /// <summary>處理人負載看板的一列（列有進行中交辦單、或近 <see cref="ClosedWindowDays"/> 日有結案單的處理人）</summary>

@@ -127,11 +127,21 @@ function renderSummary() {
 
     previewSummary.replaceChildren(wrap);
 
-    if (currentPlan.newUsers && currentPlan.newUsers.length > 0) {
-        const note = statusNote('info', `套用時將自動建立 ${currentPlan.newUsers.length} 個使用者帳號：${currentPlan.newUsers.join('、')}`);
-        note.classList.add('mt-3');
-        previewSummary.appendChild(note);
-    }
+    const newUsersNoteEl = newUsersNote(currentPlan.newUsers);
+    if (newUsersNoteEl) previewSummary.appendChild(newUsersNoteEl);
+}
+
+/**
+ * 將自動建立的帳號：用警告色醒目標示（不是一般資訊）——帳號拼錯時套用後會多出一個沒人用的帳號，
+ * 要在套用前看到。沒有要建立的帳號回 null，預覽不多任何東西。
+ */
+function newUsersNote(newUsers) {
+    if (!newUsers || newUsers.length === 0) return null;
+    const note = statusNote('warning',
+        `套用時將自動建立 ${newUsers.length} 個使用者帳號：${newUsers.join('、')}。` +
+        '這些帳號目前不存在，建立後為啟用狀態、不屬於任何群組；請確認帳號沒有拼錯。');
+    note.classList.add('mt-3');
+    return note;
 }
 
 function renderWarnings() {

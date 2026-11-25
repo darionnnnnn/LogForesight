@@ -39,6 +39,8 @@ public class DashboardRevealBehaviorTests
     [InlineData("沒給onCollapsedChange照常運作")]
     [InlineData("dashboard收合時strip有collapsed類別且展開移除")]
     [InlineData("todoGroupOrder")]
+    [InlineData("silentHostsCardLinkOnlyForMaintain")]
+    [InlineData("silentHostsCardNonMaintainTitleListsNames")]
     public void 第一排揭露與待處理順序(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

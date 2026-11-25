@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Time;
 using LogForesight.Web.Models.Dto;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -340,8 +341,12 @@ public static class ScenarioActions
         {
             var group = ctx.Site.Get<IUserGroupStore>().GetAll().FirstOrDefault(g => g.GroupName == "ug-" + account)
                 ?? throw new ScenarioUnresolvedException($"站台沒有使用者「{account}」的專屬群組");
+            // 情境動作語意是「改為」：授權寫入只有增減，這裡以當下授權算出差異再送
+            var wanted = hostGroups.Select(ctx.HostGroupId).ToList();
+            var current = ctx.Site.Get<IGroupAccessStore>().GetAll()
+                .Where(a => a.UserGroupId == group.GroupId).Select(a => a.HostGroupId).ToList();
             return ctx.Site.SendAsync(Actor, HttpMethod.Put, $"api/admin/access/{group.GroupId}",
-                new SetAccessRequest { HostGroupIds = hostGroups.Select(ctx.HostGroupId).ToList() });
+                new SetAccessRequest { Grant = wanted.Except(current).ToList(), Revoke = current.Except(wanted).ToList() });
         }
     }
 
@@ -373,7 +378,8 @@ public static class ScenarioActions
         public override string Describe() => $"恢復自動派工：{host} 的 {source} EventId {eventId}";
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
         {
-            var blocked = DispatchContext.DismissedCases(ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { host }))
+            var blocked = DispatchContext.DismissedCases(ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { host }), ctx.Site.Clock.LocalToday(),
+                    DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(ctx.Site.Get<IKnownIssueRuleStore>())))
                 .FirstOrDefault(c => string.Equals(c.SourceName, source, StringComparison.OrdinalIgnoreCase) && c.EventId == eventId)
                 ?? throw new ScenarioUnresolvedException($"{host} 的 {source} EventId {eventId} 目前沒有被擋住");
             return ctx.Site.SendAsync(Actor, HttpMethod.Post, "api/work-orders/dismissed/restore",
@@ -422,7 +428,9 @@ public static class ScenarioActions
                 Account = account,
                 DisplayName = account,
                 Email = spec.HasEmail ? $"{account}@scenario.test" : null,
-                Active = false
+                Active = false,
+                // 與使用者頁相同：帶開啟編輯時讀到的版本（第 81 輪批次 M）
+                Version = UserVersion.Of(ctx.Site.Get<IUserStore>().FindByAccount(account)!)
             });
         }
     }
@@ -450,8 +458,6 @@ public static class ScenarioActions
             var request = System.Text.Json.JsonSerializer.Deserialize<UpdateSystemSettingsRequest>(
                 data, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
             request.ExpectedRevision = doc.RootElement.GetProperty("data").GetProperty("revision").GetString();
-            // 測試站台的設定存檔沒有帶網路層重試次數（出廠值 3 由設定頁表單補上），這裡照設定頁補成出廠值
-            if (request.AiRetryCount < 1) request.AiRetryCount = new SystemSettings().AiRetryCount;
             request.EscalationReminderDays = days;
             return await ctx.Site.SendAsync(Actor, HttpMethod.Put, "api/admin/settings", request);
         }

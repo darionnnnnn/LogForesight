@@ -38,6 +38,15 @@ function muteEndDate(days) {
     return toLocalDateString(d);
 }
 
+/**
+ * 時長與迄日的關係，寫在按鈕下方：區間含今天，所以「1 週」＝今天起共 7 天、迄日是第 7 天（不是第 8 天）。
+ * 天數不合法（自訂欄空白、超出範圍）時回提示範圍，不顯示迄日。
+ */
+function muteRangeText(days) {
+    if (!Number.isInteger(days) || days < MIN_DAYS || days > MAX_DAYS) return `請輸入 ${MIN_DAYS}～${MAX_DAYS} 的天數`;
+    return `靜音至 ${muteEndDate(days)}（含今天共 ${days} 天）`;
+}
+
 function dateOnly(value) {
     return formatDateTime(value).slice(0, 10);
 }
@@ -47,22 +56,24 @@ function dateOnly(value) {
  * 這是加值資訊，取不到就當作沒有單：靜音本身不該被一次列表請求失敗卡住
  * （後端仍以預設的 pause 處置既有單）。
  */
-async function loadActiveOrders(source, eventId) {
+export async function loadActiveOrders(source, eventId) {
     const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '100' });
     if (source) params.set('source', source);
     if (eventId !== null && eventId !== undefined) params.set('eventId', String(eventId));
 
     try {
         const data = await api.get(`/api/work-orders?${params}`, { silent: true });
-        if (!data) return { orders: 0, hosts: 0 };
+        if (!data) return { orders: 0, hosts: 0, ids: [] };
         const items = data.items ?? [];
         // 張數取後端總數（同一問題一位處理人最多一張，實務上遠少於一頁）；台數加總本頁各單
         return {
             orders: data.total,
-            hosts: items.reduce((sum, r) => sum + (r.counts?.active ?? 0), 0)
+            hosts: items.reduce((sum, r) => sum + (r.counts?.active ?? 0), 0),
+            // 本頁各單的編號（不再打擾分流的「代為結案」逐張發請求用）；少於 orders＝清單被分頁截斷，呼叫端要自己處理
+            ids: items.map(r => r.workOrderId)
         };
     } catch {
-        return { orders: 0, hosts: 0 };
+        return { orders: 0, hosts: 0, ids: [] };
     }
 }
 
@@ -125,6 +136,11 @@ async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, o
     durationWrap.className = 'd-flex flex-wrap gap-1 mb-2';
     form.appendChild(durationWrap);
 
+    const rangeHint = document.createElement('div');
+    rangeHint.className = 'lf-hint mb-2';
+    rangeHint.setAttribute('aria-live', 'polite');
+    form.appendChild(rangeHint);
+
     const customWrap = document.createElement('div');
     customWrap.className = 'mb-3 d-none';
     const customInput = document.createElement('input');
@@ -157,7 +173,9 @@ async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, o
             entry.btn.classList.toggle('active', entry.option === selected);
         }
         customWrap.classList.toggle('d-none', selected.days !== null);
+        rangeHint.textContent = muteRangeText(selected.days === null ? Number(customInput.value) : selected.days);
     }
+    customInput.addEventListener('input', syncDuration);
     syncDuration();
 
     // ── 4. 原因（必填）────────────────────────────────────────────────────

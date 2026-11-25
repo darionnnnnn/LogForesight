@@ -78,6 +78,7 @@ public class WorkOrderQueryServiceTests
         public void MarkAdminSeen(long workOrderId, DateTime seenAt) => _inner.MarkAdminSeen(workOrderId, seenAt);
         public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates) => _inner.SetContinuationStops(updates);
         public int CountUnreadReplies() => _inner.CountUnreadReplies();
+        public int CountUnreadRepliesWithEscalated() => _inner.CountUnreadRepliesWithEscalated();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
         public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null) => _inner.CountMembers(workOrderIds, excludedHostKeys);
@@ -456,6 +457,94 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(1, active.HiddenMemberCount);
     }
 
+    // ── 成員主機名篩選（E-2）────────────────────────────────────────────────
+
+    private (long Id, WorkOrderQueryService Svc) HostNameFilterFixture()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "SRV-A", IssueHandlingStatuses.InProgress);
+        AddMember(id, "SRV-B", IssueHandlingStatuses.InProgress);
+        AddMember(id, "SRV-C", IssueHandlingStatuses.Resolved, closed: D2);
+        return (id, Service(As(_alice.UserId, Capability.Handle)));
+    }
+
+    [Fact]
+    public void 成員主機名篩選_命中_不分大小寫_多個名稱取聯集()
+    {
+        var (id, svc) = HostNameFilterFixture();
+
+        Assert.Equal(new[] { "SRV-B" }, svc.Members(id, "all", 1, 50, new[] { "srv-b" }).Items.Select(i => i.HostName));
+        var many = svc.Members(id, "all", 1, 50, new[] { "SRV-A", " srv-c ", "SRV-A" });
+        Assert.Equal(new[] { "SRV-A", "SRV-C" }, many.Items.Select(i => i.HostName));
+        Assert.Equal(2, many.Total);
+        // 與狀態篩選同時成立：C 已結案，「進行中」就只剩 A
+        Assert.Equal(new[] { "SRV-A" }, svc.Members(id, "active", 1, 50, new[] { "SRV-A", "SRV-C" }).Items.Select(i => i.HostName));
+    }
+
+    [Fact]
+    public void 成員主機名篩選_找不到回空_部分相符不算_空白與空集合等於不篩選()
+    {
+        var (id, svc) = HostNameFilterFixture();
+
+        var none = svc.Members(id, "all", 1, 50, new[] { "NOPE" });
+        Assert.Empty(none.Items);
+        Assert.Equal(0, none.Total);
+        Assert.Empty(svc.Members(id, "all", 1, 50, new[] { "SRV" }).Items);   // 完全相符，不是包含
+        Assert.Equal(3, svc.Members(id, "all", 1, 50, new[] { "  ", "" }).Total);
+        Assert.Equal(3, svc.Members(id, "all", 1, 50, Array.Empty<string>()).Total);
+        Assert.Equal(3, svc.Members(id, "all", 1, 50).Total);
+    }
+
+    [Fact]
+    public void 成員主機名篩選_五百個可以_五百零一個回驗證錯誤()
+    {
+        var (id, svc) = HostNameFilterFixture();
+        var names500 = Enumerable.Range(0, 500).Select(i => $"H{i}").ToList();
+        Assert.Empty(svc.Members(id, "all", 1, 50, names500).Items);
+
+        var ex = Assert.Throws<DomainException>(() => svc.Members(id, "all", 1, 50, names500.Append("H500").ToList()));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        // 重複與空白不計入個數：501 個但去空白後只有 500 個仍可通過
+        Assert.Empty(svc.Members(id, "all", 1, 50, names500.Append("  ").ToList()).Items);
+    }
+
+    [Fact]
+    public void Authorization_成員主機名篩選_受限使用者的可見範圍不變_名稱不能擴大範圍()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "H1", IssueHandlingStatuses.InProgress);
+        AddMember(id, "H2", IssueHandlingStatuses.InProgress);
+        AddMember(id, "H3", IssueHandlingStatuses.InProgress);
+        var visible = _hosts.FindByName("H2")!.HostId;
+        var restricted = Service(As(_stranger.UserId, Capability.Assign), visible);
+
+        // 名稱指到看不見的 H1：什麼都不回，隱藏數一律 0——回報數字會讓人探測不可見主機是否在單內
+        var hiddenOnly = restricted.Members(id, "all", 1, 50, new[] { "H1" });
+        Assert.Empty(hiddenOnly.Items);
+        Assert.Equal(0, hiddenOnly.HiddenMemberCount);
+        // 名稱含可見與不可見：只回可見的那台
+        var mixed = restricted.Members(id, "all", 1, 50, new[] { "H1", "H2" });
+        Assert.Equal(new[] { "H2" }, mixed.Items.Select(i => i.HostName));
+        Assert.Equal(0, mixed.HiddenMemberCount);
+        // 不帶名稱：與原行為一致
+        var plain = restricted.Members(id, "all", 1, 50);
+        Assert.Equal(new[] { "H2" }, plain.Items.Select(i => i.HostName));
+        Assert.Equal(2, plain.HiddenMemberCount);
+    }
+
+    [Fact]
+    public void Authorization_成員主機名篩選_只看得到自己的單_別人的單仍403()
+    {
+        var mine = AddOrder(_alice.UserId);
+        var others = AddOrder(_bob.UserId);
+        AddMember(mine, "SRV-A", IssueHandlingStatuses.InProgress);
+        AddMember(others, "SRV-A", IssueHandlingStatuses.InProgress);
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+
+        Assert.Single(svc.Members(mine, "all", 1, 50, new[] { "srv-a" }).Items);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.Members(others, "all", 1, 50, new[] { "SRV-A" })).Code);
+    }
+
     [Fact]
     public void 成員_ViewAll與處理人看全部_隱藏數為0()
     {
@@ -549,6 +638,21 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(new[] { alices }, Ids(svc.List(new WorkOrderListRequest { GroupId = gA.GroupId })));
         Assert.Equal(new[] { bobs }, Ids(svc.List(new WorkOrderListRequest { GroupId = gB.GroupId })));
         Assert.Equal(2, svc.List(new WorkOrderListRequest()).Total);
+    }
+
+    /// <summary>F14-1：交辦總覽的處理人篩選只回該人的單；不帶篩選時全部都在（兩側各一例）</summary>
+    [Fact]
+    public void 清單_處理人篩選_只回該人的單_不帶篩選回全部()
+    {
+        var alice1 = AddOrder(_alice.UserId, eventId: 1);
+        var alice2 = AddOrder(_alice.UserId, eventId: 2);
+        var bob1 = AddOrder(_bob.UserId, eventId: 3);
+        var svc = Service(As(1, Capability.Assign));
+
+        Assert.Equal(new[] { alice1, alice2 }.OrderBy(x => x), Ids(svc.List(new WorkOrderListRequest { HandlerId = _alice.UserId })).OrderBy(x => x));
+        Assert.Equal(new[] { bob1 }, Ids(svc.List(new WorkOrderListRequest { HandlerId = _bob.UserId })));
+        Assert.Equal(3, svc.List(new WorkOrderListRequest()).Total);
+        Assert.Equal(0, svc.List(new WorkOrderListRequest { HandlerId = 424242 }).Total);
     }
 
     [Fact]
@@ -927,6 +1031,38 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(1, s.PausedWorkOrders);
     }
 
+    /// <summary>
+    /// K2：我的交辦（處理人頁）排除靜音暫停的單，負載看板不扣。同一份資料下兩個數字的差，單數等於 PausedWorkOrders、
+    /// 台數等於暫停單底下的進行中成員數；沒有暫停單時兩邊相等（邊界另一側）。
+    /// </summary>
+    [Fact]
+    public void 我的交辦與負載看板的差等於靜音暫停的單()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_alice.UserId, source: "net", eventId: 99);
+        AddMember(paused, "H1", IssueHandlingStatuses.InProgress);
+        AddMember(paused, "H2", IssueHandlingStatuses.Open);
+        AddMember(normal, "H3", IssueHandlingStatuses.Open);
+
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+        var boardBefore = _orders.LoadBoard().Single(l => l.HandlerId == _alice.UserId);
+        var before = svc.HandlerSummary(_alice.UserId);
+        Assert.Equal(boardBefore.ActiveWorkOrders, before.ActiveWorkOrders);   // 沒有靜音：相等
+        Assert.Equal(boardBefore.ActiveMembers, before.ActiveMembers);
+
+        Mute((Source, EventId, Today.AddDays(-1), Today.AddDays(3)));
+        svc = Service(As(_alice.UserId, Capability.Handle));
+        var board = _orders.LoadBoard().Single(l => l.HandlerId == _alice.UserId);
+        var mine = svc.HandlerSummary(_alice.UserId);
+
+        Assert.Equal(2, board.ActiveWorkOrders);
+        Assert.Equal(1, mine.ActiveWorkOrders);
+        Assert.Equal(board.ActiveWorkOrders - mine.ActiveWorkOrders, mine.PausedWorkOrders);
+        Assert.Equal(3, board.ActiveMembers);
+        Assert.Equal(1, mine.ActiveMembers);
+        Assert.Equal(2, board.ActiveMembers - mine.ActiveMembers);   // 暫停單底下的 H1、H2
+    }
+
     [Fact]
     public void 處理人清單Paused_only只列暫停單_include全列()
     {
@@ -1080,6 +1216,48 @@ public class WorkOrderQueryServiceTests
         Assert.True(_orders.Get(id)!.HasUnreadReply);
         Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
         Assert.Equal(1, svc.UnreadCount().Count);
+    }
+
+    [Fact]
+    public void 未讀回覆_上報數只計含上報中進行中成員的未讀單()
+    {
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+        // 未讀且有上報中成員（另有一個處理中成員，同一張單只算一張）
+        var escalated = AddOrder(_alice.UserId, source: "Disk", eventId: 1, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(escalated, "HOST-A", IssueHandlingStatuses.Escalated);
+        AddMember(escalated, "HOST-B", IssueHandlingStatuses.Escalated);
+        AddMember(escalated, "HOST-C", IssueHandlingStatuses.InProgress);
+        // 未讀但沒有上報中成員
+        var plain = AddOrder(_alice.UserId, source: "Disk", eventId: 2, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(plain, "HOST-D", IssueHandlingStatuses.InProgress);
+        // 上報中成員已結案：不算上報
+        var closedMember = AddOrder(_alice.UserId, source: "Disk", eventId: 3, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(closedMember, "HOST-E", IssueHandlingStatuses.Escalated, closed: DateTime.Now.AddMinutes(-30));
+
+        var result = svc.UnreadCount();
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal(1, result.Escalated);
+    }
+
+    [Fact]
+    public void 未讀回覆_有上報但已讀不算_沒有任何上報時為0()
+    {
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(id, "HOST-A", IssueHandlingStatuses.Escalated);
+        Assert.Equal(1, svc.UnreadCount().Escalated);
+
+        svc.MarkSeen(id);
+
+        var seen = svc.UnreadCount();
+        Assert.Equal(0, seen.Count);
+        Assert.Equal(0, seen.Escalated);
+
+        var none = AddOrder(_alice.UserId, source: "Disk", eventId: 9, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(none, "HOST-Z", IssueHandlingStatuses.InProgress);
+        Assert.Equal(1, svc.UnreadCount().Count);
+        Assert.Equal(0, svc.UnreadCount().Escalated);
     }
 
     [Fact]

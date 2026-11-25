@@ -392,6 +392,17 @@ public static class KnownIssueCatalog
                && (rule.MatchAllEventIds || rule.EventIds.Contains(eventId));
     }
 
+    /// <summary>聚合層（來源, 事件 ID）對得到的規則名稱（<see cref="KnownIssueRule.Description"/> 的第一段，到全形分號為止），問題名稱 <see cref="IssueNames"/> 附註用；找不到或空白回 null。</summary>
+    public static string? RuleNameFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = FindRuleByAggregateKey(rules, source, eventId);
+        if (string.IsNullOrWhiteSpace(rule?.Description)) return null;
+        // Description 常帶「；單日 ≥3 次才升為 Medium」這類門檻說明，名稱只取第一段
+        var cut = rule.Description.IndexOf('；');
+        var name = (cut > 0 ? rule.Description[..cut] : rule.Description).Trim();
+        return name.Length == 0 ? null : name;
+    }
+
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
         if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
@@ -402,10 +413,22 @@ public static class KnownIssueCatalog
             return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
         }
 
-        var rule = eventId == 0
+        var rule = FindRuleByAggregateKey(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 以聚合層看得到的（來源, 事件 ID）找「目前生效的」規則（不含已退役的 PRTG 代碼）：PRTG 走規則代碼、Linux（EventId 0）走 program、
+    /// 其餘走 Windows 的來源＋事件 ID。白話說明與「不再打擾」30 天解除的嚴重度判斷共用這一份，找不到或說不出是哪一條回 null。
+    /// </summary>
+    public static KnownIssueRule? FindRuleByAggregateKey(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
+            return PrtgRuleCatalog.IsRetired(prtgCode) ? null : FindPrtgRuleByCode(rules, prtgCode);
+
+        return eventId == 0
             ? FindLinuxRuleByProgram(rules, source)
             : FindRule(rules, source, eventId);
-        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
     }
 
     /// <summary>
@@ -566,14 +589,27 @@ public static class KnownIssueCatalog
     private static void ApplyRule(LogIssueSignature signature, KnownIssueRule rule)
     {
         signature.Category = rule.Category;
-        var thresholdMet = signature.Count >= rule.CountThreshold;
-        signature.BelowThreshold = !thresholdMet;
-        signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
-        // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
-        // 讓當天判定成高風險日，旗標要複製同一個行為（docs/archive/HISTORY.md #1）
-        signature.ElevatesDayRisk = thresholdMet && rule.ElevatesDayRisk;
+        var outcome = OutcomeFor(rule, signature.Count);
+        signature.BelowThreshold = !outcome.ThresholdMet;
+        signature.Severity = outcome.Severity;
+        signature.ElevatesDayRisk = outcome.ElevatesDayRisk;
         signature.KnownIssue = rule.Description;
         signature.RuleId = rule.Id;
+    }
+
+    /// <summary>規則對某個次數的判定結果（<see cref="OutcomeFor"/>）</summary>
+    public readonly record struct RuleOutcome(bool ThresholdMet, IssueSeverity Severity, bool ElevatesDayRisk);
+
+    /// <summary>
+    /// 規則套在「當日發生 <paramref name="count"/> 次」上的嚴重度與重大旗標判定——正式分析（<see cref="ApplyRule"/>）
+    /// 與規則試算（<c>RuleAdminService.TrialRule</c>）共用這唯一一份：達次數門檻才給完整嚴重度與旗標，
+    /// 未達則降一級、旗標不算（舊制下「降到 High、沒到 Critical」本來就不會讓當天判定成高風險日，
+    /// 旗標要複製同一個行為，docs/archive/HISTORY.md #1）。
+    /// </summary>
+    public static RuleOutcome OutcomeFor(KnownIssueRule rule, int count)
+    {
+        var thresholdMet = count >= rule.CountThreshold;
+        return new RuleOutcome(thresholdMet, thresholdMet ? rule.Severity : Downgrade(rule.Severity), thresholdMet && rule.ElevatesDayRisk);
     }
 
     private static void ClearToOther(LogIssueSignature signature)

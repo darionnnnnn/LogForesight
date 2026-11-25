@@ -116,6 +116,25 @@ const cases = {
         assert.ok(!closed.textContent.includes('主機已停用'));
     },
 
+    // U1：「暫停接單」只對派工池成員顯示；已暫停的人保留開關，才能取消
+    pauseToggleOnlyForDispatchPoolMembers() {
+        const make = groups => new Function('groups', `${extractFunction(usersSource, 'function showsDispatchPausedToggle(')}\nreturn showsDispatchPausedToggle;`)(groups);
+        const groups = [
+            { groupId: 1, dispatchPool: true, active: true },
+            { groupId: 2, dispatchPool: false, active: true },
+            { groupId: 3, dispatchPool: true, active: false }
+        ];
+        const shows = make(groups);
+        assert.equal(shows({ groupIds: [1] }), true, '在派工池群組內顯示');
+        assert.equal(shows({ groupIds: [2, 1] }), true, '多個群組只要其一是派工池');
+        assert.equal(shows({ groupIds: [2] }), false, '只在非派工池群組不顯示');
+        assert.equal(shows({ groupIds: [3] }), false, '派工池群組已停用不算');
+        assert.equal(shows({ groupIds: [] }), false, '沒有群組不顯示');
+        assert.equal(shows({}), false, '舊回應沒有 groupIds 不爆');
+        assert.equal(shows({ groupIds: [2], dispatchPaused: true }), true, '已暫停的人要能取消');
+        assert.ok(/showsDispatchPausedToggle\(u\) \? renderDispatchPausedToggle\(u\)/.test(usersSource), '接單欄要走這個判斷');
+    },
+
     // D7：停用或暫停後 0 張單 → 不提示
     async noticeSilentWhenZero() {
         const e = env();

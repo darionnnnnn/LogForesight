@@ -1668,7 +1668,9 @@ export function candidatesToUserOptions(candidates) {
     return (candidates || []).map(c => {
         const badges = [];
         if (c.recentlyResolvedSameIssue) badges.push('最近處理過');
+        badges.push(c.activeLoad > 0 ? `進行中 ${c.activeLoad} 台` : '目前沒有進行中');
         if (c.hiddenHostCount > 0) badges.push(`看不到 ${c.hiddenHostCount} 台（將以交辦授與補上）`);
+        if (c.hasEmail === false) badges.push('沒有 email');
         if (c.paused) badges.push('暫停接單');
         return { userId: c.userId, account: c.account, displayName: c.displayName, active: true, badges };
     });
@@ -1852,8 +1854,9 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 /**
  * KPI 卡列（唯一出口）：分組、等高、限寬。各頁不得再自己用「col-6 col-lg-3 ＋ 單張卡」排 KPI（FrontendConsistencyUiTests 守門）。
  *
- * groups：`[{ title?, cards: [{ value, label, variant?, url?, sub?, title? }] }]`
+ * groups：`[{ title?, cards: [{ value, label, variant?, url?, onClick?, sub?, title? }] }]`
  * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。
+ * - detail：副標下方的可見補充文字（字串，不截斷、可換行；例如未回報主機名單）。沒給就不產生節點，其他卡的結構與高度不變。
  * - 沒有卡的組不輸出；所有組都沒有卡時回傳空容器，由呼叫端決定要不要顯示。
  * - singleRow：各組排在同一排依卡數分寬、卡片撐滿（搭配 core/reveal.js 只顯示第一排的頁面用）。
  * - 每張卡一律有副標列（沒有副標時是空佔位，保留一行高度）——這是「同列等高」的結構前提，
@@ -1887,6 +1890,13 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             const el = document.createElement(card.url ? 'a' : 'div');
             el.className = card.url ? 'lf-kpi-card lf-kpi-card--link' : 'lf-kpi-card';
             if (card.url) el.href = appUrl(card.url);
+            // onClick：就地套用（不換頁）；仍保留 url 讓中鍵／新分頁可用，一般點擊攔下改走 onClick
+            if (typeof card.onClick === 'function') {
+                el.addEventListener('click', event => {
+                    event.preventDefault();
+                    card.onClick(event);
+                });
+            }
             const fullText = card.title || (typeof card.sub === 'string' ? card.sub : '');
             if (fullText) el.title = fullText;
 
@@ -1907,6 +1917,12 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             }
 
             el.append(valueEl, labelEl, subEl);
+            if (typeof card.detail === 'string' && card.detail !== '') {
+                const detailEl = document.createElement('div');
+                detailEl.className = 'lf-kpi-card__detail lf-text-meta lf-break-anywhere';
+                detailEl.textContent = card.detail;
+                el.appendChild(detailEl);
+            }
             grid.appendChild(el);
         }
 
@@ -2018,19 +2034,22 @@ export async function confirmAndClearMute(rule) {
  *   （全選與表頭三態只看本頁可勾選的列）。
  * - labels：{ row, all } 為列／表頭勾選框的 title；bar：{ barId, countId, unit } 為選取列與計數文字（「已選 N {unit}」）。
  * - onSelectAll()：全選／取消全選後的重繪（頁面通常傳自己的 render）。
+ * - onChange()：勾選集合有變（逐列、全選、清除）時呼叫，供頁面同步按鈕狀態（選用）。
  * 回傳的 selected 是 key → 列物件的 Map，由頁面持有並直接讀取（批次動作取 keys()／values()）；
  * 批次動作成功或篩選改變時用 clear() 清空（同步選取列與表頭狀態）。
  */
-export function createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll }) {
+export function createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll, onChange }) {
     const selected = new Map();
     let headerCheckboxEl = null;
 
     function renderBar() {
         const barEl = document.getElementById(bar.barId);
-        if (!barEl) return;
-        barEl.classList.toggle('d-none', selected.size === 0);
-        const countEl = document.getElementById(bar.countId);
-        if (countEl) countEl.textContent = `已選 ${selected.size} ${bar.unit}`;
+        if (barEl) {
+            barEl.classList.toggle('d-none', selected.size === 0);
+            const countEl = document.getElementById(bar.countId);
+            if (countEl) countEl.textContent = `已選 ${selected.size} ${bar.unit}`;
+        }
+        onChange?.();
     }
 
     /** 本頁可勾選列是否已全部勾選（checked）、部分勾選（indeterminate）——翻頁、篩選、逐列勾選後都要重新同步 */
@@ -2076,6 +2095,7 @@ export function createPageSelection({ keyOf, isSelectable, getPageItems, labels,
             } else {
                 for (const item of selectable) selected.delete(keyOf(item));
             }
+            renderBar();
             if (onSelectAll) onSelectAll();
         });
 

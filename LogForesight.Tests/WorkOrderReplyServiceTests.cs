@@ -76,7 +76,7 @@ public class WorkOrderReplyServiceTests : IDisposable
     private static LogIssueSignature Signature(int eventId) =>
         new() { LogName = "System", Source = Source, EventId = eventId, EntryType = LogEntryType.Error };
 
-    private WorkOrderReplyService Service(ICurrentUser user) => new(_coordinator, _orders, _cases, user, _audit, _mail);
+    private WorkOrderReplyService Service(ICurrentUser user) => new(_coordinator, _orders, _cases, user, _audit, _mail, new FakeRuleStore());
 
     private static ICurrentUser As(WebUser user, params Capability[] caps) => FakeCurrentUser.ForUser(user.UserId, caps);
 
@@ -100,6 +100,62 @@ public class WorkOrderReplyServiceTests : IDisposable
         var members = string.Join(";", _cases.GetByWorkOrder(orderId, 0, 100)
             .OrderBy(c => c.HostName).Select(c => $"{c.HostName}:{c.Status}:{c.ClosedAt}"));
         return $"{members}|{order.LastReplyAt}|{order.UpdatedAt.Ticks}|{_orders.ListEvents(orderId).Count}";
+    }
+
+    // ── 上報回饋（F07-1）：回覆結果帶「會收到通知的管理員數」 ─────────────────────
+
+    [Fact]
+    public void 上報_有可通知管理員_回覆帶人數()
+    {
+        var id = CreateOrder(_alice, 153, "H1");
+        var result = Service(As(_alice, Capability.Handle)).Reply(id, new WorkOrderReplyRequest
+        {
+            Status = IssueHandlingStatuses.Escalated, Note = "無法處理"
+        });
+        Assert.Equal(1, result.EscalationNotifiedAdmins);
+    }
+
+    [Fact]
+    public void 上報_管理員都沒有email_回覆人數為0()
+    {
+        // 把唯一的管理員 email 清掉：沒有可通知的人
+        var admin = _users.GetAll().Single(u => u.Account == "admin1");
+        admin.Email = null;
+        _users.Upsert(admin);
+        var id = CreateOrder(_alice, 153, "H1");
+        var result = Service(As(_alice, Capability.Handle)).Reply(id, new WorkOrderReplyRequest
+        {
+            Status = IssueHandlingStatuses.Escalated, Note = "無法處理"
+        });
+        Assert.Equal(0, result.EscalationNotifiedAdmins);
+    }
+
+    [Fact]
+    public void 上報_非上報狀態或原本就已上報_不帶人數()
+    {
+        var id = CreateOrder(_alice, 153, "H1");
+        var svc = Service(As(_alice, Capability.Handle));
+        var first = svc.Reply(id, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Escalated, Note = "x" });
+        Assert.Equal(1, first.EscalationNotifiedAdmins);
+        // 同一批成員已是 escalated：不重複通知，也不提
+        var again = svc.Reply(id, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Escalated, Note = "x" });
+        Assert.Null(again.EscalationNotifiedAdmins);
+
+        var id2 = CreateOrder(_alice, 154, "H1");
+        var resolved = svc.Reply(id2, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Resolved, Note = "ok" });
+        Assert.Null(resolved.EscalationNotifiedAdmins);
+    }
+
+    [Fact]
+    public void 多單上報_帶人數()
+    {
+        var a = CreateOrder(_alice, 153, "H1");
+        var b = CreateOrder(_alice, 154, "H2");
+        var result = Service(As(_alice, Capability.Handle)).ReplyMany(new WorkOrderReplyManyRequest
+        {
+            WorkOrderIds = new List<long> { a, b }, Status = IssueHandlingStatuses.Escalated, Note = "x"
+        });
+        Assert.Equal(1, result.EscalationNotifiedAdmins);
     }
 
     // ── 單張回覆 ─────────────────────────────────────────────────────────────
@@ -130,7 +186,7 @@ public class WorkOrderReplyServiceTests : IDisposable
         Assert.Equal(AuditActions.HandlingStatus, entry.Action);
         Assert.Equal("work_order", entry.TargetKind);
         Assert.Equal(id.ToString(), entry.TargetId);
-        Assert.Equal($"回覆交辦單 #{id}「disk 153」：2 台標為「已處理」", entry.Summary);
+        Assert.Equal($"回覆交辦單 #{id}「disk EventId 153」：2 台標為「已處理」", entry.Summary);
     }
 
     [Theory]

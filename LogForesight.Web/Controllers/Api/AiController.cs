@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -33,6 +34,7 @@ public class AiController : ControllerBase
     private readonly IAuditService _audit;
     private readonly ISystemSettingsStore _systemSettings;
     private readonly AiAnalysisRunState _aiRunState;
+    private readonly IAiRequestGate? _aiGate;
 
     public AiController(
         AiInsightService ai,
@@ -47,8 +49,10 @@ public class AiController : ControllerBase
         ICurrentUser currentUser,
         IAuditService audit,
         ISystemSettingsStore systemSettings,
-        AiAnalysisRunState aiRunState)
+        AiAnalysisRunState aiRunState,
+        IAiRequestGate? aiGate = null)
     {
+        _aiGate = aiGate;
         _ai = ai;
         _dashboard = dashboard;
         _recordsList = recordsList;
@@ -119,6 +123,9 @@ public class AiController : ControllerBase
     public async Task<ApiResponse<AiFocusDto?>> TodayFocus([FromQuery] int? days)
     {
         if (!_ai.Available) return ApiResponse<AiFocusDto?>.Ok(null);
+        // 冷卻中（CU-4）：AI 剛連不上，這次一定不會送請求，不必先算整份儀表板摘要再被冷卻擋下——
+        // 摘要快取未命中時要好幾秒，多人同時開儀表板就是每人各等一次。回 null 與冷卻擋下的結果相同
+        if (_aiGate?.InteractiveCoolingDown == true) return ApiResponse<AiFocusDto?>.Ok(null);
         var dashboard = _dashboard.GetSummary(DashboardController.ClampDays(days));
         var gate = AiRateLimit.Gate(_autoThrottle, _currentUser.UserId);
         var focus = await _ai.TodayFocusAsync(dashboard, gate.BeforeCall);

@@ -27,6 +27,8 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseCountsMembersOnDisabledHosts")]
     [InlineData("continuationStopNoteShowsDate")]
     [InlineData("adminCloseSendsBlockRedispatch")]
+    [InlineData("adminCloseScopeDefaultsToEscalatedAndSendsCaseIds")]
+    [InlineData("adminCloseScopeSelectedMembersAndNoExtraScope")]
     [InlineData("adminCloseRefusesWithoutStatus")]
     [InlineData("replyFormShowsNoFixNoteOnlyForNoFix")]
     [InlineData("adminCloseNotifyTextFollowsMailSetting")]
@@ -35,9 +37,11 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseUnknownMailSettingUsesNeutralText")]
     [InlineData("adminCloseIgnoresRepeatTriggerWhileLoading")]
     [InlineData("actionsReplyCountsMembersOnDisabledHosts")]
+    [InlineData("replyFormNoFixNoteSaysReleaseOnlyWhenServerFlagsIt")]
     [InlineData("actionsNotifyTextFollowsMailSettingThreeStates")]
     [InlineData("clearMuteNotifyTextFollowsMailSettingThreeStates")]
     [InlineData("muteModalNotifyTextThreeStatesAndRepeatTrigger")]
+    [InlineData("muteRangeHintStatesInclusiveDays")]
     public void 結案後果說明行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

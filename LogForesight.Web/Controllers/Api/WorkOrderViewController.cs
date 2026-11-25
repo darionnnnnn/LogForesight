@@ -39,10 +39,11 @@ public class WorkOrderViewController : ControllerBase
         return ApiResponse<bool>.Ok(true);
     }
 
+    /// <summary>hostName 可重複多次（完全相符、不分大小寫、最多 500 個）：搜尋與貼上主機清單共用</summary>
     [HttpGet("{id:long}/members")]
     public ApiResponse<WorkOrderMemberPageDto> Members(long id, [FromQuery] string status = "all",
-        [FromQuery] int page = 1, [FromQuery] int pageSize = 50) =>
-        ApiResponse<WorkOrderMemberPageDto>.Ok(_service.Members(id, status, page, pageSize));
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery(Name = "hostName")] string[]? hostNames = null) =>
+        ApiResponse<WorkOrderMemberPageDto>.Ok(_service.Members(id, status, page, pageSize, hostNames));
 
     [HttpGet("{id:long}/timeline")]
     public ApiResponse<List<WorkOrderEventDto>> Timeline(long id) =>

@@ -67,7 +67,7 @@ public class DataConsistencyJ2Tests : IDisposable
             },
             PoolMemberCount = 0, ActivePoolMemberCount = 0
         };
-        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, DateTime.Now);
+        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, DateTime.Now, TestRules.None);
         return (new NightlyDispatch(_coordinator, ctx, _hosts), orderId);
     }
 

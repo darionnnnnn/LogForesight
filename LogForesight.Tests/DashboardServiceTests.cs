@@ -6,6 +6,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -65,7 +66,8 @@ public class DashboardServiceTests : IDisposable
         var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), (_, _, _) => new GapsDto());
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None),
+            PendingCountsTestFactory.FromGaps((_, _, _) => new GapsDto(), new SummaryCache(new DataVersionStamp()), visibility, new FixedIssueExclusionSource(IssueExclusion.None)));
         // 兩頁一致的對照組：報表走同一組 store 與聚合
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         return (dashboard, reports);
@@ -417,6 +419,61 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(summary.IssueTodo.OpenIssueCount, issueResult.Total);
     }
 
+    /// <summary>
+    /// K1：卡片「影響 N 台」＝下鑽（問題查詢 distinctHostCount）。同一個未處理問題上，一台未處理、一台已標處理，
+    /// 兩台都算（下鑽列出的就是這兩台）；問題沒有任何未處理時兩邊都是 0。
+    /// </summary>
+    [Fact]
+    public void 未處理問題卡影響台數與依問題視角下鑽的去重主機數一致()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+        var c = AddHost("HOST-C", 1);
+        var open = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 7, EntryType = LogForesight.Core.Models.LogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        var allDone = new LogIssueSignature
+        {
+            LogName = "System", Source = "ntfs", EventId = 55, EntryType = LogForesight.Core.Models.LogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { open } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { open } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = c.HostId, Host = c.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { allDone } });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = b.HostName, Date = Anchor, IssueKey = IssueSignatureKey.For(open),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = c.HostName, Date = Anchor, IssueKey = IssueSignatureKey.For(allDone),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var summary = _service.GetSummary(7);
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var listService = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        var drill = listService.SearchByIssue(new RecordSearchRequest
+        {
+            From = DateTime.Parse(summary.From), To = DateTime.Parse(summary.To), Statuses = new() { "open" }
+        });
+
+        Assert.Equal(1, summary.IssueTodo.OpenIssueCount);
+        Assert.Equal(2, summary.IssueTodo.AffectedHostCount);   // HOST-A（未處理）＋HOST-B（已處理）；ntfs 的 HOST-C 不算
+        Assert.Equal(drill.DistinctHostCount, summary.IssueTodo.AffectedHostCount);
+    }
+
     [Fact]
     public void 未處理問題KPI與依問題視角下鑽筆數一致_來源名稱大小寫不同視為同一問題()
     {
@@ -533,6 +590,42 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(3, summary.SilentHostsCount);
     }
 
+    private WebHost AddSilentHost(string name) =>
+        _hosts.Upsert(new WebHost { HostName = name, Active = true, CreatedAt = DateTime.Now.AddDays(-30), LastReportAt = DateTime.Now.AddDays(-5) });
+
+    [Fact]
+    public void GetSummary_未回報主機名只含可見範圍且依名稱排序()
+    {
+        var mine2 = AddSilentHost("B-MINE");
+        var mine1 = AddSilentHost("A-MINE");
+        AddSilentHost("Z-OTHER-DEPT");   // 不在授權範圍：名稱不得出現
+        _hosts.Upsert(new WebHost { HostName = "OK-HOST", Active = true, CreatedAt = DateTime.Now.AddDays(-30), LastReportAt = DateTime.Now.AddHours(-1) });
+
+        var (dashboard, _) = BuildServices(new HostScopedVisibility(_hosts, mine1.HostId, mine2.HostId));
+        var summary = dashboard.GetSummary(7);
+
+        Assert.Equal(2, summary.SilentHostsCount);
+        Assert.Equal(new[] { "A-MINE", "B-MINE" }, summary.SilentHostNames);
+        Assert.DoesNotContain("Z-OTHER-DEPT", summary.SilentHostNames);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(3, 3)]
+    [InlineData(5, 5)]
+    [InlineData(6, 5)]
+    [InlineData(7, 5)]
+    public void GetSummary_未回報主機名單最多五台_計數仍是全部(int silentCount, int expectedNames)
+    {
+        for (var i = 0; i < silentCount; i++) AddSilentHost($"SILENT-{i:00}");
+
+        var summary = _service.GetSummary(7);
+
+        Assert.Equal(silentCount, summary.SilentHostsCount);
+        Assert.Equal(expectedNames, summary.SilentHostNames.Count);
+        if (silentCount > 0) Assert.Equal("SILENT-00", summary.SilentHostNames[0]);
+    }
+
     // ── 「N 個靜音中的問題未列出」（批次 B-2b）──────────────────────────────
 
     /// <summary>以指定靜音排除條件組一套與建構子相同的服務（儀表板、報表、依問題視角）</summary>
@@ -557,7 +650,8 @@ public class DashboardServiceTests : IDisposable
         var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), source, (_, _, _) => new GapsDto());
+            new EfPrtgStore(_fixture.NewContext), source,
+            PendingCountsTestFactory.FromGaps((_, _, _) => new GapsDto(), new SummaryCache(new DataVersionStamp()), visibility, source));
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
             _severityVisibility, new SummaryCache(new DataVersionStamp()), source, new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         var list = new RecordListQueryService(
@@ -634,7 +728,8 @@ public class DashboardServiceTests : IDisposable
     // ── 待派工問題卡（§9.1）──────────────────────────────────────────────────
 
     /// <summary>以指定使用者與共用的快取組一個儀表板服務（其餘相依同建構子）；回報每次 gaps 呼叫的參數</summary>
-    private DashboardService ServiceFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps)
+    private DashboardService ServiceFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps,
+        Func<AdminTodoService>? adminTodo = null, AuditLogStore? auditStore = null)
     {
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
@@ -649,20 +744,28 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver, new FixedIssueExclusionSource(IssueExclusion.None));
         return new DashboardService(
-            visibility, new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
+            visibility, auditStore ?? new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, cache,
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps);
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None),
+            PendingCountsTestFactory.FromGaps(gaps, cache, visibility, new FixedIssueExclusionSource(IssueExclusion.None)),
+            adminTodo: adminTodo?.Invoke());
     }
 
-    /// <summary>120 個問題（第 1 頁 50 列），其中 4 個無法派出（由 GetGaps 的全量計數 UnassignableTotal 提供，不在第 1 頁的列上）</summary>
+    /// <summary>
+    /// 三段統計：可以派 116、派不出去 4、不會派 30（Total＝全部問題 150 不被卡片使用）。第 1 頁 50 列；
+    /// 卡片數字由 GetGaps 的全量段統計提供，不在第 1 頁的列上。
+    /// </summary>
     private static PendingDispatchGapsProvider PagedGaps(List<(DateTime? From, DateTime? To, int Page)> calls, bool tooLarge = false) =>
         (from, to, page) =>
         {
             calls.Add((from, to, page));
             var dto = new GapsDto { Page = page, From = from!.Value, To = to!.Value, TooLarge = tooLarge };
             if (tooLarge) return dto;
-            dto.Total = 120;
+            dto.Total = 150;
             dto.UnassignableTotal = 4;
+            dto.Dispatchable = new GapSectionDto { Issues = 116, Hosts = 300 };
+            dto.UnassignableSection = new GapSectionDto { Issues = 4, Hosts = 5 };
+            dto.NotDispatched = new GapSectionDto { Issues = 30, Hosts = 400 };
             var count = page < 3 ? 50 : 20;
             for (var i = 0; i < count; i++)
             {
@@ -683,8 +786,10 @@ public class DashboardServiceTests : IDisposable
         var pending = service.GetSummary(7).PendingDispatch;
 
         Assert.NotNull(pending);
-        Assert.Equal(120, pending!.IssueCount);          // 總數，不是當頁 50 列
-        Assert.Equal(4, pending.UnassignableIssueCount);  // 全量計數，不是第 1 頁列上的 0 個
+        // 卡片只計前兩段：可以派 116＋派不出去 4＝120；「不會派」的 30 個與全部問題數 150 都不計入
+        Assert.Equal(120, pending!.IssueCount);
+        Assert.Equal(116, pending.DispatchableIssueCount);
+        Assert.Equal(4, pending.UnassignableIssueCount);
         Assert.False(pending.TooLarge);
         Assert.Equal(Anchor.AddDays(-6).ToString("yyyy-MM-dd"), pending.From);
         Assert.Equal(Anchor.ToString("yyyy-MM-dd"), pending.To);
@@ -739,12 +844,85 @@ public class DashboardServiceTests : IDisposable
         Assert.NotNull(assigner2.GetSummary(7).PendingDispatch);
     }
 
+    /// <summary>以與儀表板相同的快取與待派計數組一個「需要你處理」服務（呼叫者能力由 user 決定）</summary>
+    private AdminTodoService AdminTodoFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps)
+    {
+        var mail = new MailNotificationService(
+            _settingsStore, new FakeSmtpMailSender(), _hosts, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), new FakeHandlingStore(), new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            new ScheduleFreshnessService(
+                new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")),
+                new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(_caseStore), _caseStore,
+            new FakeRuleStore(), new FakeIssueOwnerStore());
+        var reminders = new AdminReminderService(
+            _settingsStore, new FakeWorkOrderStore(_caseStore), _caseStore, _hosts, _users, new FakeUserGroupStore(),
+            new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), mail, new FakeRuleStore(), cache: cache);
+        var counts = PendingCountsTestFactory.FromGaps(gaps, cache, new AlwaysVisibleService(_hosts), new FixedIssueExclusionSource(IssueExclusion.None));
+        return new AdminTodoService(reminders, user, counts);
+    }
+
+    private AuditLogStore AuditWithLoginFailures(int count)
+    {
+        var store = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
+        for (var i = 0; i < count; i++)
+            store.Append(new AuditEntry { Account = "x", Action = AuditActions.LoginFailed, OccurredAt = DateTime.Now.AddMinutes(-5) });
+        return store;
+    }
+
     /// <summary>
-    /// 第 79 輪批次 G14：快取鍵含 ViewAll 維度（待確認權限異動的計數依它分支）。
-    /// 同一組可見主機下，有 ViewAll 與沒有的兩人各自一筆快取，第二人不會命中第一人的那筆。
+    /// 主體與個人能力分開快取：可見範圍相同、能力不同的管理員、主管、處理人共用同一份主體（待派試跑也只算一次），
+    /// 但能力欄位各自正確——無 Assign 者 PendingDispatch／AdminTodo 為 null，無 ViewAudit 者看不到登入失敗數。
+    /// 兩種先後順序各跑一次（先算的人不能把自己的能力欄位留在共用主體裡）。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GetSummary_可見範圍相同能力不同_共用主體且能力欄位各自正確(bool adminFirst)
+    {
+        var cache = new SummaryCache(new DataVersionStamp());
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var gaps = PagedGaps(calls);
+        var audit = AuditWithLoginFailures(3);
+        var adminUser = FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.Assign, Capability.ViewAudit, Capability.Handle);
+        var managerUser = FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.Assign, Capability.Handle);
+        var handlerUser = FakeCurrentUser.WithCapabilities(Capability.Handle);
+        var admin = ServiceFor(adminUser, cache, gaps, () => AdminTodoFor(adminUser, cache, gaps), audit);
+        var manager = ServiceFor(managerUser, cache, gaps, () => AdminTodoFor(managerUser, cache, gaps), audit);
+        var handler = ServiceFor(handlerUser, cache, gaps, () => AdminTodoFor(handlerUser, cache, gaps), audit);
+
+        DashboardDto a, m;
+        if (adminFirst) { a = admin.GetSummary(7); m = manager.GetSummary(7); }
+        else { m = manager.GetSummary(7); a = admin.GetSummary(7); }
+        var h = handler.GetSummary(7);
+
+        Assert.Equal(3, a.RecentLoginFailures);
+        Assert.Null(m.RecentLoginFailures);
+        Assert.Null(h.RecentLoginFailures);
+
+        Assert.NotNull(a.PendingDispatch);
+        Assert.NotNull(m.PendingDispatch);
+        Assert.Null(h.PendingDispatch);
+        Assert.Equal(120, m.PendingDispatch!.IssueCount);
+        Assert.NotNull(a.AdminTodo);
+        Assert.NotNull(m.AdminTodo);
+        Assert.True(m.AdminTodo!.TodoIncluded);
+        Assert.Null(h.AdminTodo);
+
+        // 共用主體：三人拿到的是同一份主體內容（清單參考相同），待派試跑只跑一次
+        Assert.Same(a.Categories, m.Categories);
+        Assert.Same(a.TopIssues, h.TopIssues);
+        Assert.Equal(new[] { 1 }, calls.Select(c => c.Page));
+        // 疊加用的是複本：能力欄位沒有被寫回共用主體（處理人看不到前人疊上去的值）
+        Assert.NotSame(a, m);
+    }
+
+    /// <summary>
+    /// 主體共用、但待確認權限異動數依 ViewAll 分支：同一組可見主機下，有 ViewAll 與沒有的兩人
+    /// 共用一份主體（命中一次）、各自一筆權限異動計數（不互相命中）。
     /// </summary>
     [Fact]
-    public void GetSummary_同可見主機下ViewAll與非ViewAll不共用快取()
+    public void GetSummary_同可見主機下ViewAll與非ViewAll_共用主體但權限異動計數各自一筆()
     {
         var cache = new SummaryCache(new DataVersionStamp());
         var calls = new List<(DateTime? From, DateTime? To, int Page)>();
@@ -752,8 +930,8 @@ public class DashboardServiceTests : IDisposable
         ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), cache, PagedGaps(calls)).GetSummary(7);
 
         var stats = cache.GetStatistics();
-        Assert.Equal(2, stats.Entries);
-        Assert.Equal(0, stats.Hits);
+        Assert.Equal(3, stats.Entries);   // 主體 1＋權限異動計數 2
+        Assert.Equal(1, stats.Hits);      // 只有主體被第二人命中
     }
 }
 

@@ -60,7 +60,7 @@ public class WorkOrderDispatcherTests
     };
 
     private DispatchContext Build(DateTime? now = null) =>
-        DispatchContext.Build(Pool(), _owners, _orders, _cases, _noise, _settings, now ?? DateTime.Today);
+        DispatchContext.Build(Pool(), _owners, _orders, _cases, _noise, _settings, now ?? DateTime.Today, TestRules.None);
 
     private void Owners(params long[] userIds) =>
         _owners.Upsert(new IssueProfile { SourceName = Source, EventId = EventId, OwnerUserIds = userIds.ToList() });
@@ -777,7 +777,7 @@ public class WorkOrderDispatcherTests
         // 處理人回覆不寫欄位，維持 null
         var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today } };
 
-        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases, DateTime.Today, TestRules.None).Contains("k"));
     }
 
     [Theory]
@@ -788,7 +788,7 @@ public class WorkOrderDispatcherTests
     {
         var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = status, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = false } };
 
-        Assert.Empty(DispatchContext.DismissedKeys(cases));
+        Assert.Empty(DispatchContext.DismissedKeys(cases, DateTime.Today, TestRules.None));
     }
 
     [Theory]
@@ -799,7 +799,7 @@ public class WorkOrderDispatcherTests
     {
         var cases = new[] { new IssueCase { CaseId = "c", HostName = "SRV-01", IssueKey = "k", Status = IssueHandlingStatuses.WontFix, ClosedAt = DateTime.Today, CreatedAt = DateTime.Today, BlocksRedispatch = blocks } };
 
-        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases).Contains("k"));
+        Assert.Equal(blocked, DispatchContext.DismissedKeys(cases, DateTime.Today, TestRules.None).Contains("k"));
     }
 
     /// <summary>B2-d 夜間派工側：三個問題（空值／否／是）的判定，與日層級指派預覽那條測試用同一組資料</summary>
@@ -830,7 +830,7 @@ public class WorkOrderDispatcherTests
     {
         ClosedCase("SRV-01", IssueHandlingStatuses.WontFix, DateTime.Today.AddDays(-1));
         var counting = new CountingIssueCaseStore(_cases);
-        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today);
+        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today, TestRules.None);
         counting.GetManyCalls = 0;
 
         Assert.True(ctx.IsDismissed("SRV-01", IssueKey));
@@ -852,11 +852,11 @@ public class WorkOrderDispatcherTests
         ClosedCase("SRV-04", IssueHandlingStatuses.FalsePositive, DateTime.Today.AddDays(-3));
         var hosts = new[] { "SRV-01", "SRV-02", "SRV-03", "SRV-04", "SRV-05" };
 
-        var plain = DispatchContext.Build(Pool(), _owners, _orders, new CountingIssueCaseStore(_cases), _noise, _settings, DateTime.Today);
+        var plain = DispatchContext.Build(Pool(), _owners, _orders, new CountingIssueCaseStore(_cases), _noise, _settings, DateTime.Today, TestRules.None);
         var expected = hosts.Select(h => plain.IsDismissed(h, IssueKey)).ToList();
 
         var counting = new CountingIssueCaseStore(_cases);
-        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today);
+        var ctx = DispatchContext.Build(Pool(), _owners, _orders, counting, _noise, _settings, DateTime.Today, TestRules.None);
         counting.GetManyCalls = 0;
 
         ctx.PreloadDismissed(new[] { "srv-01", "SRV-02", "SRV-03" });

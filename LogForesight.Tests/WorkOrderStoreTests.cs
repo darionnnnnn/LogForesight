@@ -880,6 +880,46 @@ public class WorkOrderStoreTests : IDisposable
     }
 
     [Fact]
+    public void 未讀且含上報中成員的單數_已讀已結案與非上報成員都不算_單一查詢()
+    {
+        var store = CountingStore();
+        var t = new DateTime(2026, 10, 1, 8, 0, 0);
+        var unreadEsc = InsertUnreadCase(store, "UnreadEsc", t, t.AddHours(1), null);
+        var unreadPlain = InsertUnreadCase(store, "UnreadPlain", t, t.AddHours(1), null);
+        var seenEsc = InsertUnreadCase(store, "SeenEsc", t, t.AddHours(1), t.AddHours(2));
+        var unreadClosedMember = InsertUnreadCase(store, "UnreadClosedMember", t, t.AddHours(1), null);
+        AddCase("e1", unreadEsc, IssueHandlingStatuses.Escalated, null);
+        AddCase("e2", unreadEsc, IssueHandlingStatuses.Escalated, null);   // 同一張單兩個上報成員仍只算一張
+        AddCase("p1", unreadPlain, IssueHandlingStatuses.InProgress, null);
+        AddCase("s1", seenEsc, IssueHandlingStatuses.Escalated, null);
+        AddCase("c1", unreadClosedMember, IssueHandlingStatuses.Escalated, DateTime.Now);
+
+        _counter.Readers = 0;
+        var escalated = store.CountUnreadRepliesWithEscalated();
+
+        Assert.Equal(1, _counter.Readers);
+        Assert.Equal(1, escalated);
+        Assert.Equal(3, store.CountUnreadReplies());
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void 未讀且含上報中成員的單數兩後端都翻譯成單一SQL(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = EfWorkOrderStore.BuildUnreadEscalatedQuery(ctx).ToQueryString();
+
+        Assert.Contains("lf_issue_cases", sql);
+        Assert.Contains("admin_seen_at", sql);
+        Assert.Contains("escalated", sql);
+    }
+
+    [Fact]
     public void Save不會用舊複本蓋掉MarkAdminSeen寫入的已讀時間()
     {
         var store = Store();

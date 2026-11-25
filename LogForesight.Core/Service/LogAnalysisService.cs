@@ -469,8 +469,9 @@ public class LogAnalysisService
         // 不需要 AI：lowRisk 且尾巴事件不夠多（既有 skipAiForLowRisk 語意），或 useAi 全域關閉——
         // 兩者都在這裡直接定案，不進 AI 段
         bool skipAiForLowRisk = useAi && lowRisk;
-        record.Headline = skipAiForLowRisk ? LowRiskHeadline : "（統計模式紀錄，未呼叫 AI 分析）";
-        record.Summary = skipAiForLowRisk ? LowRiskSummary : "（統計模式紀錄，未呼叫 AI 分析）";
+        // 沒有 AI 摘要時全站同一個出口（NoAiSummary）：標題是當日最重的問題名稱與白話說明，摘要留空不重複
+        record.Headline = skipAiForLowRisk ? LowRiskHeadline : NoAiSummary.HeadlineFor(issues, record.HasCoverageGap);
+        record.Summary = skipAiForLowRisk ? LowRiskSummary : string.Empty;
 
         // record 此時已是完整定案內容（Headline/Summary/RiskLevel/TrendAlerts/CorrelationAlerts/
         // UncoveredChecks/DataIncomplete 皆已設好），直接傳給報告產生器，PrepareAsync 會就地

@@ -241,7 +241,7 @@ public class IssueExclusionTests : IDisposable
     {
         var methods = typeof(IIssueAggregateQuery).GetMethods();
 
-        Assert.Equal(24, methods.Length);   // 19 個抽象方法＋AggregateReportKpiPair／AggregatePrtgRuleHitsBounded／AggregateReportCoverage／IssueHostDays／AggregateHostTotals 預設介面方法
+        Assert.Equal(25, methods.Length);   // 19 個抽象方法＋AggregateReportKpiPair／AggregatePrtgRuleHitsBounded／AggregateReportCoverage／IssueHostDays／AggregateHostTotals／RuleTrialRows 預設介面方法
         foreach (var method in methods)
         {
             var exclusionParams = method.GetParameters().Where(p => p.ParameterType == typeof(IssueExclusion)).ToList();
@@ -317,7 +317,7 @@ public class IssueExclusionTests : IDisposable
         var service = new IssueOwnerAdminService(
             owners, aggregates, new FakeUserStore(), new RecordingAuditService(),
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
-            new UserDisplayNameService(new FakeSystemSettingsStore()), workOrderStore, workOrders, TestPermissionStamps.Shared);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
 
         var recent = service.RecentIssues();
 

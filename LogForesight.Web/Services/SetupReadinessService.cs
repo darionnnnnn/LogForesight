@@ -63,6 +63,12 @@ public class SetupReadinessService
     public Task<AiProbeResult> RefreshProbeAsync(CancellationToken ct = default) =>
         _aiProbe.RefreshAsync(ct);
 
+    /// <summary>狀態端點用：在背景更新 AI 探測，不等待（狀態讀的是上次探測結果）。</summary>
+    public void RequestBackgroundProbe() => _aiProbe.RefreshInBackground();
+
+    /// <summary>明確的同步探測（精靈「儲存並測試」、設定頁「測試連線」）：重新探一次並回這次的結果。</summary>
+    public Task<AiProbeResult> ProbeNowAsync(CancellationToken ct = default) => _aiProbe.ProbeNowAsync(ct);
+
     private sealed record StepMetadata(
         string Id,
         string Title,
@@ -84,6 +90,8 @@ public class SetupReadinessService
         public required bool MailConfigured { get; init; }
         public required string MailDetail { get; init; }
         public required bool AiConfigured { get; init; }
+        /// <summary>尚無探測結果（<see cref="AiProbeStatus.NotProbed"/>）：AI 步驟是「檢查中」，不是「未完成」</summary>
+        public required bool AiChecking { get; init; }
         public required string AiProbeDetail { get; init; }
         public required bool LegacyAiConfigured { get; init; }
         public required bool ScheduleEnabled { get; init; }
@@ -201,6 +209,7 @@ public class SetupReadinessService
             bool canSkip = def.CanSkip(_webSettings);
             bool done = def.IsDone(evalCtx);
             bool skipped = canSkip && state.SkippedSteps.Contains(def.Id);
+            bool checking = def.Id == "ai" && !done && evalCtx.AiChecking;
             return new SetupStepDto
             {
                 Id = def.Id,
@@ -209,6 +218,7 @@ public class SetupReadinessService
                 Skipped = skipped,
                 CanSkip = canSkip,
                 Detail = done ? def.DoneDetail(evalCtx) : def.NotDoneDetail(evalCtx),
+                Checking = checking,
                 TargetUrl = def.TargetUrl
             };
         }).ToList();
@@ -257,6 +267,7 @@ public class SetupReadinessService
             MailConfigured = mailConfigured,
             MailDetail = mailDetail,
             AiConfigured = probe.IsReady,
+            AiChecking = probe.Status == AiProbeStatus.NotProbed,
             AiProbeDetail = probe.Detail,
             LegacyAiConfigured = !string.IsNullOrWhiteSpace(settings.AiBaseUrl),
             ScheduleEnabled = scheduleOptions.Enabled,

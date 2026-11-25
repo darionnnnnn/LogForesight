@@ -19,12 +19,20 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [InlineData("work-orders-reminders.behavior.mjs", "readOnlyViewerSeesWhoCanAct")]
     [InlineData("work-orders-reminders.behavior.mjs", "allThreeClassesShowRowsWithLinks")]
     [InlineData("work-orders-reminders.behavior.mjs", "onlyNonZeroClassIsListed")]
+    [InlineData("work-orders-reminders.behavior.mjs", "newEscalatedAloneShowsRegionWithLinkToEscalatedFilter")]
+    [InlineData("work-orders-reminders.behavior.mjs", "newEscalatedAndOverdueAreSeparateRows")]
+    [InlineData("work-orders-reminders.behavior.mjs", "recurrenceAloneShowsRowLinkedToActiveList")]
+    [InlineData("work-orders-reminders.behavior.mjs", "recurrenceZeroOrMissingAddsNoRow")]
     [InlineData("work-orders-reminders.behavior.mjs", "rerenderClearsPreviousContent")]
     [InlineData("work-orders-reminders.behavior.mjs", "detailListsAreCollapsedAndLinked")]
     [InlineData("work-orders-reminders.behavior.mjs", "unassignableAtNullAndTruncationNote")]
+    [InlineData("work-orders-reminders.behavior.mjs", "unassignableLiveWording")]
     [InlineData("work-orders-reminders.behavior.mjs", "reminderDaysZeroShowsPersistentNote")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFetchesEndpointAndRenders")]
     [InlineData("work-orders-reminders.behavior.mjs", "loadFailureLeavesAreaEmpty")]
+    [InlineData("work-orders-reminders.behavior.mjs", "todoCategoriesShowRowsWithLinks")]
+    [InlineData("work-orders-reminders.behavior.mjs", "onlyNewCategoryShowsRegionAndZeroOrMissingDoesNot")]
+    [InlineData("work-orders-reminders.behavior.mjs", "fetchFailedWithoutTimeStillListed")]
     public void 管理者提醒區的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

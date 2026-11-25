@@ -23,8 +23,11 @@ public class ScheduleOptionsDto
     /// <summary>AI 分析併發數</summary>
     public int AiConcurrency { get; set; } = 1;
 
-    /// <summary>已在背景補跑窗口內時為 null（不必說「下一次」，現在就會跑）</summary>
+    /// <summary>已在背景補跑窗口內時為 null（不必說「下一次」，現在就會跑）；<b>沒有設定任何窗口時也是 null</b>，要分辨請看 <see cref="AiWindowConfigured"/></summary>
     public DateTime? NextAiTriggerTime { get; set; }
+
+    /// <summary>是否至少設定了一個可解析的 AI 背景補跑窗口（<c>ScheduleCalculator.HasAnyWindow</c>）；false＝AI 不會自動補跑</summary>
+    public bool AiWindowConfigured { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
@@ -275,12 +278,15 @@ public class RunPreviewDto
     public bool AiDisabled { get; set; }
 }
 
-/// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）</summary>
+/// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）｜hosts（指定主機名單，NetIQ 主機）</summary>
 public class TriggerRunRequest
 {
     public string Scope { get; set; } = "all";
     public string? Segment { get; set; }
     public long? HostId { get; set; }
+
+    /// <summary>Scope=hosts 時的主機名單（執行總表「補跑這些主機」帶入）；其他範圍忽略。上限同 <c>RunMonitorService.MaxRerunHostNames</c></summary>
+    public List<string>? HostNames { get; set; }
 
     /// <summary>一次性回補天數覆寫（1..MaxBackfillDaysLimit，且不可超過 RetentionDays），不落地設定</summary>
     [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
@@ -371,6 +377,9 @@ public class AiScheduleStatusDto
 
     public int AiConcurrency { get; set; } = 1;
     public DateTime? NextTriggerTime { get; set; }
+
+    /// <summary>是否至少設定了一個可解析的 AI 背景補跑窗口；false 時 <see cref="NextTriggerTime"/> 的 null 不代表「在窗口內」</summary>
+    public bool AiWindowConfigured { get; set; }
     public bool? LastRunSuccess { get; set; }
     public string? LastRunMessage { get; set; }
     public string? LastRunTriggerText { get; set; }

@@ -281,7 +281,10 @@ public class IssueTodoDto
     /// <summary>處理中但預計完成日已過的問題數，與批次H 郵件的逾期區塊同一個口徑</summary>
     public int OverdueIssueCount { get; set; }
 
-    /// <summary>受未處理問題影響的相異主機數——KPI 卡副標「影響 N 台」</summary>
+    /// <summary>
+    /// 這些未處理問題所影響的相異主機數——KPI 卡副標「影響 N 台」。與問題查詢下鑽（<c>distinctHostCount</c>）同口徑：
+    /// 只要某個問題有任何一台主機未處理，那個問題在母體內出現過的每一台主機都算（含其中已處理、處理中的）；沒有未處理問題時為 0。
+    /// </summary>
     public int AffectedHostCount { get; set; }
 }
 
@@ -461,6 +464,13 @@ public class PermissionChangeDto
     /// <summary>未截斷的原始事件訊息。升級前寫入的資料與彙總列為 null，
     /// 此時展開明細只能退而顯示 500 字截斷版的 AlertText</summary>
     public string? RawText { get; set; }
+
+    /// <summary>
+    /// 「無法解析」的列：類別為其他、沒有可用的對象（空白或舊壞值）、沒有操作者與目標帳號、異動前後皆空，
+    /// 且不是彙總列。清單上只有這種列在說明欄提供「展開原文」（可解析的列沒有，改看列展開明細）。
+    /// 判定只在 <c>PermissionChangeService.IsUnparsed</c>。
+    /// </summary>
+    public bool IsUnparsed { get; set; }
 
     public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;

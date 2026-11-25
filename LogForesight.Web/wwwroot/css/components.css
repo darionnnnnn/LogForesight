@@ -20,6 +20,11 @@
     color: var(--lf-text-muted);
 }
 
+/* 提示行的固定槽：提示收起時仍佔一行高，其下的按鈕不會因提示出現／消失而位移 */
+.lf-hint-slot {
+    min-height: calc(var(--lf-font-size-sm) * var(--bs-body-line-height, 1.5));
+}
+
 .lf-hint .lf-icon {
     margin-top: .15em;
     color: var(--lf-gray-400);
@@ -514,6 +519,13 @@ a.lf-badge:hover { text-decoration: underline; }
     font-weight: 500;
     line-height: 1.5;
     white-space: nowrap;
+}
+
+/* 可換行的標記：文字含人名等不定長內容時使用（風險日詳情處理狀態欄的案件徽章），超長不得越出儲存格 */
+.lf-badge--wrap {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .lf-badge::before {

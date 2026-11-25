@@ -42,6 +42,7 @@ public class ReportsViewsBehaviorTests
     [InlineData("處理成效_再發生率分母為0時顯示說明而不是0百分比")]
     [InlineData("處理成效_再發生率大數字與前10名表格")]
     [InlineData("處理成效_三個指標各有說明圖示且文字取自後端")]
+    [InlineData("處理成效_未結案三段各寫單位")]
     [InlineData("處理成效_期間內沒有風險日顯示無資料")]
     [InlineData("處理成效_數字對得起來_帳齡合計等於未結案_分桶合計等於各桶三態相加")]
     [InlineData("處理成效_下鑽網址函式")]

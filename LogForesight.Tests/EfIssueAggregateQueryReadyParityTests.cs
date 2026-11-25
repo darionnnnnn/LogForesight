@@ -76,8 +76,8 @@ public sealed class EfIssueAggregateQueryReadyParityTests : IDisposable
             old.IssueHostDayCount(IssueExclusion.None, "DISK", 153, Day, Day.AddDays(2), null, null, null),
             ready.IssueHostDayCount(IssueExclusion.None, "DISK", 153, Day, Day.AddDays(2), null, null, null));
         Assert.Equal(
-            NormalizeDailyHostCounts(old.DailyHostCounts(IssueExclusion.None, wanted, Day, Day.AddDays(2), null)),
-            NormalizeDailyHostCounts(ready.DailyHostCounts(IssueExclusion.None, wanted, Day, Day.AddDays(2), null)));
+            NormalizeDailyHostCounts(old.DailyHostCounts(IssueExclusion.None, wanted, Day, Day.AddDays(2), null, null)),
+            NormalizeDailyHostCounts(ready.DailyHostCounts(IssueExclusion.None, wanted, Day, Day.AddDays(2), null, null)));
     }
 
     [Fact]

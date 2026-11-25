@@ -6,6 +6,7 @@
     <div id="page-header"></div>
 
     <div class="mt-1" id="handler-kpi"></div>
+    <p class="lf-text-meta mt-2 mb-0" id="handler-caliber-note">這裡的單數與台數不含「問題靜音中而暫停」的單，暫停的單到期後自動恢復；管理者的負載看板會把暫停的單一併計入。</p>
 
     @* 處理人的工作單位是交辦單：主區塊只有交辦單清單，列上就能回覆（DESIGN-SYSTEM §6b）；
        「依主機」與「被指派的風險日」收進下方進階檢視，第一次展開才載入。 *@
@@ -15,7 +16,8 @@
                 <div class="d-flex align-items-center gap-2">
                     <label for="handler-wo-status" class="lf-text-label text-nowrap">狀態</label>
                     <select id="handler-wo-status" class="form-select form-select-sm w-auto">
-                        <option value="active" selected>進行中</option>
+                        <option value="todo" selected>待我處理</option>
+                        <option value="active">進行中</option>
                         <option value="escalated">上報中</option>
                         <option value="overdue">有逾期</option>
                         <option value="unreplied">未回覆</option>
@@ -26,7 +28,10 @@
                 <div class="d-flex align-items-center gap-2">
                     <label for="handler-wo-sort" class="lf-text-label text-nowrap">排序</label>
                     <select id="handler-wo-sort" class="form-select form-select-sm w-auto">
-                        <option value="created_desc" selected>最新建立</option>
+                        <option value="priority" selected>處理優先序</option>
+                        <option value="dueSoon">期限最近</option>
+                        <option value="severity">嚴重度</option>
+                        <option value="created_desc">最新建立</option>
                         <option value="members_desc">成員最多</option>
                         <option value="unreplied_oldest">最久未回覆</option>
                     </select>
@@ -40,6 +45,8 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="handler-wo-reply" aria-haspopup="dialog" disabled>回覆選取的單（全部進行中主機）</button>
                 </div>
             </div>
+            @* 標記篩選橫幅（網址帶 flag 或點「今天需要你處理」的數字時由 handler-detail.js 顯示） *@
+            <div id="handler-wo-flag" class="mb-3 d-none"></div>
             <div id="handler-wo-list"></div>
             <nav id="handler-wo-pager" class="mt-3"></nav>
             <div id="handler-wo-note" class="lf-text-meta mt-2 d-none"></div>
@@ -49,7 +56,13 @@
     <section class="lf-card mt-3" id="handler-advanced">
         <div class="lf-card__body" id="handler-advanced-toggle"></div>
         <div class="lf-card__body pt-0 d-none" id="handler-advanced-body">
-            <h3 class="lf-text-title mt-2 mb-2">依主機</h3>
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2 mb-2">
+                <h3 class="lf-text-title mb-0">依主機</h3>
+                <div class="d-flex align-items-center gap-1 lf-no-print">
+                    <label for="handler-host-search" class="lf-text-label text-nowrap">主機名</label>
+                    <input type="search" id="handler-host-search" class="form-control form-control-sm w-auto" placeholder="輸入完整主機名後按 Enter" autocomplete="off">
+                </div>
+            </div>
             <div id="handler-cases"></div>
 
             <div class="d-flex flex-wrap align-items-center justify-content-between mt-4 mb-2">

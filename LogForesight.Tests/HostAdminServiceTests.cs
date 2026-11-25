@@ -125,6 +125,64 @@ public class HostAdminServiceTests : IDisposable
         new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
         _snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
+    // ── 第 81 輪批次 U（F17-3）：批次設定群組後，目標群組沒有任何派工池看得到就當場提示 ──
+
+    private (HostAdminService Service, FakeUserGroupStore UserGroups, FakeGroupAccessStore Access) CreateWithReadiness()
+    {
+        var users = new FakeUserStore();
+        var userGroups = new FakeUserGroupStore();
+        var access = new FakeGroupAccessStore();
+        var settings = new FakeSystemSettingsStore();
+        var readiness = new DispatchReadinessService(_hosts, _groups, users, userGroups,
+            new DispatchCandidateSource(users, userGroups, _hosts, access, new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(),
+                settings, new FakeWorkOrderStore(new FakeIssueCaseStore())),
+            settings, new ScheduleOptionsStore(_fx.Blob("schedule_options")));
+        var pool = userGroups.Upsert(new UserGroup { GroupName = "池", Role = UserRole.User, Active = true, DispatchPool = true });
+        users.Upsert(new WebUser { Account = "handler", GroupIds = new List<long> { pool.GroupId } });
+        var service = new HostAdminService(_hosts, _groups, users, new FakeNetiqServerCatalog("SENTINEL-A"), new FakeNetiqHostServiceForAdmin(),
+            _audit, new UserDisplayNameService(settings), new EfPrtgStore(_fx.NewContext), _mapRefresher, settings, TestPermissionStamps.Shared,
+            _snapshotService, new LogForesight.Core.Service.PrtgAddressResolver(), readiness);
+        return (service, userGroups, access);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_目標群組沒有派工池看得到_回傳提示_授權後不再提示()
+    {
+        var (service, userGroups, access) = CreateWithReadiness();
+        var authorized = _groups.Upsert(new HostGroup { GroupName = "已授權" });
+        var lonely = _groups.Upsert(new HostGroup { GroupName = "沒授權" });
+        var pool = userGroups.GetAll().Single();
+        access.SetForUserGroup(pool.GroupId, new[] { authorized.GroupId });
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        var okResult = service.SetGroupsBatch(new[] { a.HostId }, new[] { authorized.GroupId }, "add");
+        // 目標群組裡的主機若同時屬於已授權的群組，仍是派工池看得到的（派工看的是主機能不能被接單），不提示
+        var shared = service.SetGroupsBatch(new[] { a.HostId }, new[] { lonely.GroupId }, "add");
+        Assert.Empty(shared.NoPoolGroups);
+        var warned = service.SetGroupsBatch(new[] { b.HostId }, new[] { lonely.GroupId }, "replace");
+
+        Assert.Empty(okResult.NoPoolGroups);
+        var hint = Assert.Single(warned.NoPoolGroups);
+        Assert.Equal((lonely.GroupId, "沒授權"), (hint.GroupId, hint.GroupName));
+
+        access.SetForUserGroup(pool.GroupId, new[] { authorized.GroupId, lonely.GroupId });
+        Assert.Empty(service.SetGroupsBatch(new[] { b.HostId }, new[] { lonely.GroupId }, "add").NoPoolGroups);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_沒有更新任何主機_不評估也不提示()
+    {
+        var (service, _, _) = CreateWithReadiness();
+        var lonely = _groups.Upsert(new HostGroup { GroupName = "沒授權" });
+        var merged = _hosts.Upsert(new WebHost { HostName = "M", MergedInto = 99 });
+
+        var result = service.SetGroupsBatch(new[] { merged.HostId }, new[] { lonely.GroupId }, "add");
+
+        Assert.Equal(0, result.UpdatedCount);
+        Assert.Empty(result.NoPoolGroups);
+    }
+
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
     // 這一條路徑與 NetiqHostService 寫的是同一份資料。驗證只掛在其中一條的話，

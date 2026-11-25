@@ -11,7 +11,7 @@ namespace LogForesight.Core.Persistence;
 public sealed class DispatchContext
 {
     /// <summary>延續性回看天數（暫定）：（主機, 問題）這段期間內最後一件 resolved 案件的處理人優先</summary>
-    internal const int ContinuityDays = 30;
+    public const int ContinuityDays = 30;
 
     private readonly Dictionary<(string SourceUpper, int EventId), IssueProfile> _profiles;
     private readonly Dictionary<(string SourceKey, int EventId), List<WorkOrder>> _activeOrders;
@@ -25,6 +25,8 @@ public sealed class DispatchContext
     private readonly IWorkOrderStore? _orders;
     private readonly Dictionary<string, HashSet<string>> _dismissedByHost = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<IssueCase>> _casesByHost = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DateTime _today;
+    private readonly IssueRuleLookup _rules;
 
     private DispatchContext(
         IIssueCaseStore cases,
@@ -37,8 +39,12 @@ public sealed class DispatchContext
         Dictionary<string, Dictionary<(string SourceKey, int EventId), (DateTime ClosedAt, long HandlerId)>> continuityByHost,
         HashSet<IssueSeverity> unhandledSeverities,
         bool autoDispatchEnabled,
-        bool unavailable)
+        bool unavailable,
+        DateTime today,
+        IssueRuleLookup rules)
     {
+        _today = today;
+        _rules = rules;
         _cases = cases;
         _orders = orders;
         Pool = pool;
@@ -84,7 +90,8 @@ public sealed class DispatchContext
 
     public static DispatchContext Build(
         DispatchCandidatePool pool, IIssueOwnerStore issueOwners, IWorkOrderStore orders, IIssueCaseStore cases,
-        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now, IReadOnlyCollection<string>? disabledHostKeys = null)
+        INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now, IssueRuleLookup rules,
+        IReadOnlyCollection<string>? disabledHostKeys = null)
     {
         var allProfiles = issueOwners.GetAll();
 
@@ -123,7 +130,7 @@ public sealed class DispatchContext
         }
 
         return new DispatchContext(cases, orders, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
-            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false)
+            settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false, today: now.Date, rules: rules)
         {
             // 靜音區間：不限有負責人的問題；同鍵（大小寫折疊後）的區間合併
             Exclusion = IssueExclusion.From(allProfiles, now.Date)
@@ -142,7 +149,7 @@ public sealed class DispatchContext
             new Dictionary<long, (int ActiveMembers, int ActiveWorkOrders)>(),
             new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, Dictionary<(string SourceKey, int EventId), (DateTime ClosedAt, long HandlerId)>>(StringComparer.OrdinalIgnoreCase),
-            new HashSet<IssueSeverity>(), autoDispatchEnabled: false, unavailable: true);
+            new HashSet<IssueSeverity>(), autoDispatchEnabled: false, unavailable: true, today: DateTime.MinValue, rules: _ => null);
 
     /// <summary>
     /// 問題目前靜音中，或紀錄日落在該問題任一靜音區間（皆含首尾）；委派 <see cref="IssueExclusion.IsMuted"/>，
@@ -159,7 +166,7 @@ public sealed class DispatchContext
     public bool IsDismissed(string hostName, string issueKey)
     {
         if (!_dismissedByHost.TryGetValue(hostName, out var keys))
-            _dismissedByHost[hostName] = keys = DismissedKeys(CasesFor(hostName));
+            _dismissedByHost[hostName] = keys = DismissedKeys(CasesFor(hostName), _today, _rules);
         return keys.Contains(issueKey);
     }
 
@@ -229,15 +236,31 @@ public sealed class DispatchContext
         {
             var hostCases = casesByHost.TryGetValue(hostName, out var cases) ? cases : new List<IssueCase>();
             _casesByHost[hostName] = hostCases;
-            _dismissedByHost[hostName] = DismissedKeys(hostCases);
+            _dismissedByHost[hostName] = DismissedKeys(hostCases, _today, _rules);
         }
     }
 
     /// <summary>
-    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的未取消案件，以不處理類狀態（<see cref="IssueHandlingStatuses.Dismissals"/>）結案、且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者。
+    /// 「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的未取消案件，以不處理類狀態（<see cref="IssueHandlingStatuses.Dismissals"/>）結案、
+    /// 且 <see cref="IssueCase.BlocksRedispatch"/> 不是 false 者，**扣掉已滿 <see cref="DismissalRelease.Days"/> 天解除的**（<see cref="DismissalRelease.IsReleased"/>：
+    /// 處理人回覆產生的、目前規則嚴重度高或重大、生效日期之後結案）。
     /// 回傳的是那件案件本身（待派頁的恢復清單要顯示先前結案狀態、並對它寫回欄位）；閘門只取它的鍵（<see cref="DismissedKeys"/>）。
+    /// <paramref name="today"/> 與 <paramref name="rules"/> 必填：漏接的呼叫端編譯不過，不會靜默退回永久擋。
     /// </summary>
-    internal static List<IssueCase> DismissedCases(IEnumerable<IssueCase> casesOfHost) =>
+    internal static List<IssueCase> DismissedCases(IEnumerable<IssueCase> casesOfHost, DateTime today, IssueRuleLookup rules) =>
+        DismissalCandidates(casesOfHost)
+            .Where(c => !DismissalRelease.IsReleased(c, today, rules))
+            .ToList();
+
+    /// <summary>本來會擋、但因期滿而放行的案件（<see cref="DismissedCases"/> 的補集；夜間派工寫系統事件、清單標示用）</summary>
+    internal static List<IssueCase> ReleasedCases(IEnumerable<IssueCase> casesOfHost, DateTime today, IssueRuleLookup rules) =>
+        DismissalCandidates(casesOfHost)
+            .Where(c => DismissalRelease.IsReleased(c, today, rules))
+            .ToList();
+
+    /// <summary>未計解除前的候選：每個鍵最新的未取消案件，不處理類狀態、BlocksRedispatch 不是 false（<see cref="DismissedCases"/> 與 <see cref="ReleasedCases"/> 共用；
+    /// <c>IIssueCaseStore.GetDismissalCandidates</c> 的預設實作與 EF 資料庫端查詢以它為對照標準）</summary>
+    internal static IEnumerable<IssueCase> DismissalCandidates(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
             // 已取消的案件不是處理人的判定（管理者對被擋主機手動建單又取消，取消案件不能把閘門解除），取最新時略過
             .Where(c => !c.Cancelled)
@@ -248,12 +271,15 @@ public sealed class DispatchContext
                 .ThenBy(c => c.CaseId, StringComparer.Ordinal)
                 .First())
             .Where(c => IssueHandlingStatuses.Dismissals.Contains(c.Status))
-            .Where(c => c.BlocksRedispatch != false)
-            .ToList();
+            .Where(c => c.BlocksRedispatch != false);
 
     /// <summary>被「不再打擾」擋住的問題鍵集合；判定走 <see cref="DismissedCases"/>，沒有第二份條件</summary>
-    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
-        DismissedCases(casesOfHost).Select(c => c.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
+    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost, DateTime today, IssueRuleLookup rules) =>
+        DismissedCases(casesOfHost, today, rules).Select(c => c.IssueKey).ToHashSet(IssueSignatureKeyComparer.Instance);
+
+    /// <summary>該（主機, 問題）本來被不再打擾擋住、因期滿而放行（夜間派工據此在單歷程寫系統事件）</summary>
+    internal bool IsReleased(string hostName, string issueKey) =>
+        ReleasedCases(CasesFor(hostName), _today, _rules).Any(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, issueKey));
 
     /// <summary>登記一張進行中單（真的建單後，或試跑時的負數 id 虛擬單）</summary>
     public void RegisterOrder(WorkOrder order)

@@ -11,6 +11,33 @@
 
 規則維護清單上的抑制入口是只有圖示（鈴鐺加斜線，title「抑制」）的按鈕；靜音與抑制在畫面上只有具 `Maintain` 的系統管理員看得到。統一標記需要的是 `Assign` 與 `Handle` 兩項能力，不需要 `Maintain`。
 
+## 「不再顯示這個問題：選哪一種」六種做法的比較（N1）
+
+畫面入口：問題查詢依問題視角的表格上方，收合的「不再顯示這個問題：選哪一種」（需具 `Assign`、`Maintain` 或 `Handle` 其中之一才顯示）。內容同使用者版的比較表，資料來源 `wwwroot/js/core/hide-guide.js`。
+
+| 做法 | 範圍與期限 | 對進行中交辦單 | 對之後派工 | 程式依據 |
+| --- | --- | --- | --- | --- |
+| 靜音 | 一個問題（Source＋EventId），全機房；1～365 天，到期自動恢復（`MaxMuteDays`）。需 `Maintain` | `existingOrders`：`pause`（不動，推導為暫停）或 `close`（以不處理代為結案，需 `Assign`＋`Handle`；`blocksRedispatch: false`，不算「不再打擾」） | 紀錄日落在區間內就略過（派工決策 ⓪ 靜音，在續掛之前）；到期後問題再出現重新派工 | `IssueOwnerAdminService.SetMute`、`WorkOrderDispatcher.Decide` |
+| 抑制 | 規則型可 Host／Group／Site；簽章、關聯、總量型只能 Host。`Days` 1～365 或永久；到期不刪、只是不再生效。需 `Maintain` | 不碰交辦單（建立抑制的程式沒有任何交辦單呼叫） | 命中的問題 `Suppressed`，派工閘門 1 略過（續掛也不掛新成員）；到期後恢復 | `RuleAdminService.AddSuppression`、`SuppressionFilter`、`WorkOrderDispatcher.Decide` |
+| 已知雜訊 | 一台主機×一個問題簽章，沒有期限。風險日詳情與統一標記標此狀態時另寫雜訊記憶（`NoiseMark`） | 該主機有進行中案件時案件結案（成員結案）；別人處理中的案件不能直接標 | 雜訊記憶命中（閘門 2）永久略過；案件結案後同時是「不再打擾」（`Dismissals`）。取消記憶：風險日詳情「調回未處理」並選刪除記憶 | `IssueHandlingCommandService.ApplyIssueStatus`、`DispatchContext.IsNoise` |
+| 不處理 | 一台主機×一個問題。處理人回覆產生的（`BlocksRedispatch` 為 null）若問題目前規則嚴重度高或重大，結案日在生效日之後且滿 30 天自動解除；管理者勾選代為結案的是永久 | 該主機的案件（成員）結案；單上其他主機不動 | 有案件結案才有「不再打擾」閘門 4（`DismissedCases`）；只在風險日詳情標、沒有案件時只寫被標的那一天，不擋之後。管理者代為結案未勾選＝`BlocksRedispatch=false`，問題再出現重新派工。恢復：待派頁籤「不再自動派工」區 | `DispatchContext.DismissedCases`、`DismissalRelease`、`WorkOrderCoordinator.AdminClose` |
+| 誤報 | 同不處理（同屬 `IssueHandlingStatuses.Dismissals`） | 同不處理 | 同不處理 | 同不處理 |
+| 統一標記 | 查詢期間內、該問題沒有進行中案件的主機；一次性寫逐日處理狀態。勾自動套用另寫機房結論（需 `Assign`＋`Maintain`；只具 `Handle` 的主機負責人不能勾） | 不動：有進行中案件的主機整台略過；單次上限 5,000 個主機日 | 標出的日子視為已有結論，待派不再列；之後新日子：沒勾自動套用會重新派工，勾了由逐日掛接寫入同一結論；標已知雜訊會寫雜訊記憶而永久略過 | `IssueHandlingCommandService.BulkCloseIssue`、`IssueCaseCoordinator.AttachNewDay` |
+
+## 「不再顯示這個問題…」分流入口（N、F16-1）
+
+入口：問題查詢依問題視角每列「更多」選單，與交辦單頁問題捷徑（未結案的單才有）；需 `Maintain`。三問（多久／範圍／已交辦的單）對照既有機制，不新增儲存；對照表是 `wwwroot/js/core/hide-triage.js` 的 `TRIAGE_TABLE`（2×3×3＝18 格，測試逐格固定端點與參數）。沒有進行中交辦單時不問第三題。
+
+| 多久＋範圍 | 機制與端點 | 第三題可選 |
+| --- | --- | --- |
+| 暫時＋全站 | 靜音：`PUT /api/admin/issue-owners/{source}/{eventId}/mute`（`days`、`reason`、`existingOrders`） | `pause`、`close`（`keep` 不可選：靜音期間單推導為暫停） |
+| 長期＋全站 | 機房結論：`PUT .../conclusion`（`status` 為 known_noise 或 wont_fix、`note`、`autoApply: true`）；選代為結案時再對每張進行中的單 `POST /api/work-orders/{id}/admin-close`（`blockRedispatch: true`） | `keep`、`close`（`pause` 不可選：長期沒有到期恢復） |
+| 暫時或長期＋指定群組／單一主機 | 規則抑制：`POST /api/rules/{ruleId}/suppressions`（`scope` 為 Group 或 Host；暫時帶 `days`，長期 `days` 為 null） | 只有 `keep`（抑制不碰交辦單） |
+
+- 問題沒有對應規則（`ruleId` 為空）時，群組與單一主機不可選。
+- 代為結案需同時具 `Assign` 與 `Handle`；進行中的單超過一頁（100 張）時不提供，避免逐張結案漏單。
+- 套用依序送出請求、失敗即停，已完成的設定不回滾，畫面會說明做到哪一步。
+
 ## 靜音的判定規則
 
 - 某一列（問題, 紀錄日）靜音＝問題**目前**靜音中，或紀錄日落在它任一區間內。
@@ -31,7 +58,7 @@
 
 - 觸發：處理人回覆不處理類（不處理、誤報、已知雜訊）一律停派，風險日詳情的處理面板標記這三種狀態也一樣；處理人回覆表單與處理面板選到這三種狀態時，都顯示同一行後果說明（一次涵蓋多台主機或多張單時寫「這些主機的這個問題…」）；管理者代為結案選不處理類時，勾選框「這台主機的這個問題之後不再自動派工」（預設不勾）才停派；選「已處理」不停派；靜音選「代為結案為『不處理』」也不停派（靜音期間不派，結束後再出現會重新派）。
 - **管理者代為結案沒勾選時，問題再出現會重新派工**；對話框會寫「未勾選：這個問題之後再出現時會重新派工。不想再收到，請勾選上方選項，或改用靜音。」
-- 恢復：交辦總覽「待派」頁籤下方的「不再自動派工」區，依問題分組，「恢復」（單台）或「整個問題恢復」（全部），需要 `Assign`；主管與開發人員只能看清單。升級前就以不處理類結案的舊案件視同停派，也列在這裡。
+- 恢復：交辦總覽「待派」頁籤下方的「不再自動派工」區，依問題分組，「恢復」（單台）或「整個問題恢復」（全部），需要 `Assign`；主管與開發人員只能看清單。升級前就以不處理類結案的舊案件視同停派，也列在這裡。另一條路：管理員人工交辦時，在預覽勾選「先前判定不處理」的主機，也會恢復自動派工（不必到待派頁）。
 - 靜音與通知（都需開啟「交辦單通知」，未開啟時畫面提示自行告知處理人）：設定靜音且選「暫停」時，處理人收到「靜音暫停」；選代為結案時只收「代為結案」；提前解除靜音時收到「靜音恢復」，已代為結案的單不會重開。
 
 ## 常見誤解

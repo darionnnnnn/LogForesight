@@ -34,7 +34,7 @@ internal sealed class ScaleServices
     private readonly MailNotificationService _mail;
 
     public WorkOrderReplyService ReplyServiceAs(long userId) =>
-        new(WorkOrders, WorkOrderStore, Cases, FakeCurrentUser.ForUser(userId, Capability.Handle), new RecordingAuditService(), _mail);
+        new(WorkOrders, WorkOrderStore, Cases, FakeCurrentUser.ForUser(userId, Capability.Handle), new RecordingAuditService(), _mail, new FakeRuleStore());
 
     /// <param name="viewAll">true＝以 ViewAll（admin）身分，全部主機可見；false＝受限部門使用者</param>
     public ScaleServices(ScaleDataSet data, bool viewAll = true)
@@ -82,7 +82,8 @@ internal sealed class ScaleServices
             settingsStore, aggregates, issueTodo, settingsService, new SummaryCache(new DataVersionStamp()),
             backend.PrtgStore(), new FixedIssueExclusionSource(IssueExclusion.None),
             // WorkOrderBoard 在本建構子稍後才組好；委派延後到呼叫時才取用
-            (from, to, page) => WorkOrderBoard!.GetGaps(from, to, page));
+            new PendingDispatchCountsService((from, to) => WorkOrderBoard!.GetGapCounts(from, to),
+                new SummaryCache(new DataVersionStamp()), Visibility, new FixedIssueExclusionSource(IssueExclusion.None)));
 
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
 
@@ -97,7 +98,7 @@ internal sealed class ScaleServices
 
         WorkOrders = new WorkOrderCoordinator(WorkOrderStore, Cases, IssueHandlings, CaseCoordinator, recordHandling, Hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames,
-            WorkOrderStore, WorkOrders, TestPermissionStamps.Shared);
+            WorkOrderStore, WorkOrders, TestPermissionStamps.Shared, new FakeRuleStore());
 
         var capabilities = new UserCapabilityResolver(userGroups, Hosts, issueOwners);
         var auditService = new RecordingAuditService();
@@ -145,7 +146,8 @@ internal sealed class ScaleServices
             currentUser,
             auditService,
             displayNames,
-            _mail);
+            _mail,
+            new FakeRuleStore());
 
         var candidates = new DispatchCandidateSource(
             users, userGroups, Hosts, access, issueOwners, aggregates, settingsStore, WorkOrderStore);

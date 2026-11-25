@@ -111,7 +111,8 @@ public class EmptyStateGuidanceUiTests
         // 2. work-orders.js
         var workOrdersJs = ReadPage("work-orders.js");
         Assert.Contains("請調整狀態、群組或勾選條件，或至「待派」頁籤查看可建立交辦的問題", workOrdersJs);
-        Assert.Contains("目前區間內所有問題皆已指派交辦，或請調整上方的起訖日期", workOrdersJs);
+        // 待派頁改為三段（第 81 輪批次 F）：每段各有空狀態文字，「可以派」的下一步是看另外兩段或調整期間
+        Assert.Contains("期間內沒有可派給處理人的問題；派不出去或不會派的問題在下面兩段，或調整上方的起訖日期。", workOrdersJs);
         Assert.Contains("目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可到左側「系統管理 > 問題負責與靜音」頁，或在問題查詢的「依問題」視角，對問題設定靜音", workOrdersJs);
         Assert.Contains("目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料", workOrdersJs);
 

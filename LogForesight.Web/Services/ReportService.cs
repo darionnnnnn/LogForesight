@@ -2,6 +2,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 
@@ -59,12 +60,54 @@ public class ReportService
         return _summaryCache.GetOrAdd(
             SummaryCache.KeyOf("report", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{handlingScope}|{compare}|{exclusion.CacheToken}",
                 visibleHosts.Select(h => h.HostId).ToList()),
-            () => BuildSummary(from, to, handlingScope, compare, visibleHosts, exclusion));
+            () => BuildSummary(from, to, handlingScope, compare, visibleHosts, exclusion, out _, out _));
+    }
+
+    /// <summary>
+    /// 報表 CSV 匯出（F20-4）：各表的完整資料，不是畫面上的 Top 10。
+    /// 走與 <see cref="GetSummary"/> 同一段 <c>BuildSummary</c>（同一組查詢、同一份可見範圍與靜音排除、同一個排序），
+    /// 只是多取出沒被截成 Top 10 的完整排行；不經快取（匯出少見，且要拿到完整清單）。
+    /// 列數超過 <see cref="ReportCsv.MaxRows"/> 擲驗證錯誤，要求縮小期間。
+    /// </summary>
+    public ReportCsvTable GetCsvTable(string table, DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
+    {
+        if (to < from) (from, to) = (to, from);
+        var visibleHosts = _visibility.GetVisibleHosts();
+        var exclusion = _exclusions.Current();
+        var summary = BuildSummary(from, to, handlingScope, compare, visibleHosts, exclusion, out var fullHosts, out var fullIssues);
+
+        ReportCsvTable result;
+        switch (table)
+        {
+            case ReportCsv.TableTrend:
+                result = new ReportCsvTable(
+                    new[] { "日期", "高風險", "中風險", "錯誤數" },
+                    summary.Trend.Select(p => (IReadOnlyList<object?>)new object?[] { p.Date, p.HighRisk, p.MediumRisk, p.ErrorCount }).ToList());
+                break;
+            case ReportCsv.TableHosts:
+                result = new ReportCsvTable(
+                    new[] { "主機", "顯示名稱", "高風險日", "中風險日", "關聯訊號日", "最新風險等級", "最新狀況" },
+                    fullHosts.Select(h => (IReadOnlyList<object?>)new object?[]
+                        { h.HostName, h.DisplayName, h.HighRiskDays, h.MediumRiskDays, h.CorrelationDays, h.LatestRiskLevel, h.LatestHeadline }).ToList());
+                break;
+            case ReportCsv.TableIssues:
+                result = new ReportCsvTable(
+                    new[] { "問題", "來源", "事件編號", "分數", "分類", "最高嚴重度", "主機數", "風險日數", "事件次數", "首見", "最近出現" },
+                    fullIssues.Select(i => (IReadOnlyList<object?>)new object?[]
+                        { i.IssueLabel, i.Source, i.EventId, Math.Round(i.PriorityScore, 0), i.Category, i.MaxSeverity,
+                          i.HostCount, i.DayCount, i.TotalCount, string.IsNullOrEmpty(i.FleetFirstSeen) ? i.FirstSeen : i.FleetFirstSeen, i.LastSeen }).ToList());
+                break;
+            default:
+                throw DomainException.Validation($"沒有這張報表表格：{table}。可用：{ReportCsv.TableTrend}、{ReportCsv.TableHosts}、{ReportCsv.TableIssues}。");
+        }
+
+        ReportCsv.RequireWithinLimit(result.Rows.Count);
+        return result;
     }
 
     private ReportSummaryDto BuildSummary(
         DateTime from, DateTime to, string? handlingScope, string? compare, List<WebHost> visibleHosts,
-        IssueExclusion exclusion)
+        IssueExclusion exclusion, out List<DashboardHostDto> fullHostRanking, out IReadOnlyList<IssueRankingDto> fullIssueRanking)
     {
 
         var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
@@ -184,6 +227,8 @@ public class ReportService
         var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
 
         var statsPending = _issueRanking.StatsPending();
+        fullHostRanking = ranked;
+        fullIssueRanking = issueRanked;
 
         var dto = new ReportSummaryDto
         {

@@ -6,7 +6,7 @@
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, renderError, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad, renderPagination } from '../core/ui.js';
 import { createSeqGuard } from '../core/async-guards.js';
-import { formatNumber } from '../core/format.js';
+import { formatNumber, statusBadge } from '../core/format.js';
 import { roleText, statusNote } from '../core/elements.js';
 import { compareText } from '../core/collation.js';
 
@@ -18,6 +18,13 @@ let userGroups = [];
 let hostGroups = [];
 let matrix = null;
 let editing = null;         // { kind: 'user' | 'host', group }
+let editingGrantedBefore = new Set();   // 開啟群組編輯彈窗時的授權集合；儲存時只送與它的差異
+const accessSeqByRow = new Map();       // userGroupId → 請求序號守門：回應亂序時只套用該列最新一次請求的結果
+const hostGroupsSeq = createSeqGuard(); // 重新取主機群組清單的序號守門
+const matrixChecks = new Map();         // userGroupId → Map(hostGroupId → checkbox)，回應回來時整列重繪用
+const ACCESS_TOAST_MERGE_MS = 1500;     // 連續勾選的成功提示合併成一則的時間窗
+let pendingAccessNotes = [];            // { userGroupName, hostGroupName, granted }
+let accessToastTimer = null;
 const MEMBERS_PAGE_SIZE = 50;   // 成員清單與加入預覽的伺服器分頁筆數
 let membersState = null;    // { groupId, groupName, mode, query, preview }
 let currentMembers = { items: [], page: 1, pageSize: MEMBERS_PAGE_SIZE, total: 0 };   // 「目前成員」目前這一頁
@@ -142,12 +149,35 @@ function renderHostGroups() {
         columns: [
             { title: '群組名稱', render: g => hostGroupNameCell(g) },
             { title: '主機數', className: 'text-end', render: g => String(g.hostCount) },
+            { title: '看得到的派工池群組', className: 'lf-col-nowrap', render: g => visiblePoolGroupsCell(g) },
             { title: '狀態', render: g => activeBadge(g.active) },
             { title: '', className: 'text-end', render: g => groupActions('host', g) }
         ],
         rows: hostGroups,
         empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或按「新增群組」建立。' }
     });
+}
+
+/**
+ * 「看得到的派工池群組」欄（第 81 輪批次 U，F17-3）：數量來自後端（visiblePoolGroups）。
+ * 0＝沒有任何派工池群組看得到，群組內的主機不會被自動派工：標警示並附「去授權」（切到授權矩陣頁籤）。
+ * null＝不適用（群組停用、沒有啟用主機，或派工池沒有可接單的成員），顯示「—」。
+ */
+function visiblePoolGroupsCell(group) {
+    const count = group.visiblePoolGroups;
+    if (count === null || count === undefined) {
+        const none = roleText('lf-text-meta', '—');
+        none.title = '群組停用、沒有啟用的主機，或派工池沒有可接單的成員，無從判定';
+        return none;
+    }
+    if (count > 0) return document.createTextNode(`${count} 個`);
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-2';
+    const link = document.createElement('a');
+    link.href = '#access';
+    link.textContent = '去授權';
+    wrap.append(statusBadge('0 個，不會被自動派工', 'warning'), link);
+    return wrap;
 }
 
 /** 群組名稱是列的主體（純文字）；開成員視窗改由列尾的「成員」按鈕，兩千台規模下逐台編輯不現實 */
@@ -194,8 +224,10 @@ function renderMatrix() {
     wrap.appendChild(note);
 
     // 矩陣表頭的欄位數隨主機群組動態變動：欄位定義逐欄產生，排序／空狀態一律交給 renderTable
+    matrixChecks.clear();
     const matrixColumns = [{
         title: '使用者群組 ＼ 主機群組',
+        className: 'lf-matrix-sticky',
         render: row => {
             const name = document.createElement('span');
             name.className = 'lf-text-title';
@@ -210,9 +242,18 @@ function renderMatrix() {
         }
     }];
     for (const hostGroup of matrix.hostGroups) {
+        const fullTitle = `${hostGroup.groupName}（${hostGroup.hostCount ?? 0} 台）`;
         matrixColumns.push({
-            title: hostGroup.groupName,
+            title: fullTitle,
             className: 'text-center',
+            // 欄標題過長以省略號截斷，完整名稱與台數放 title
+            renderHeader: () => {
+                const label = document.createElement('span');
+                label.className = 'lf-matrix-col-title';
+                label.title = fullTitle;
+                label.textContent = fullTitle;
+                return label;
+            },
             render: row => {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
@@ -220,6 +261,8 @@ function renderMatrix() {
                 checkbox.checked = row.grantedHostGroupIds.includes(hostGroup.groupId);
                 checkbox.setAttribute('aria-label', `${row.userGroupName} 可存取 ${hostGroup.groupName}`);
                 checkbox.addEventListener('change', () => onToggleAccess(row, hostGroup, checkbox));
+                if (!matrixChecks.has(row.userGroupId)) matrixChecks.set(row.userGroupId, new Map());
+                matrixChecks.get(row.userGroupId).set(hostGroup.groupId, checkbox);
                 return checkbox;
             }
         });
@@ -231,25 +274,90 @@ function renderMatrix() {
     container.replaceChildren(wrap);
 }
 
-async function onToggleAccess(row, hostGroup, checkbox) {
-    const granted = new Set(row.grantedHostGroupIds);
-    if (checkbox.checked) granted.add(hostGroup.groupId);
-    else granted.delete(hostGroup.groupId);
+/** 以伺服器回的完整清單重繪該列的勾選（別人剛做的變更也會跟著出現） */
+function syncRowChecks(row) {
+    const checks = matrixChecks.get(row.userGroupId);
+    if (!checks) return;
+    for (const [hostGroupId, box] of checks) box.checked = row.grantedHostGroupIds.includes(hostGroupId);
+}
 
+/** 每勾或取消一格只送那一格的增或減，由伺服器依當下狀態套用（不送整份清單，避免舊畫面互相覆蓋） */
+async function onToggleAccess(row, hostGroup, checkbox) {
+    const wantGrant = checkbox.checked;
     checkbox.disabled = true;
+    // 同一列連點多格時回應可能亂序：每列各有序號，較舊的回應（成功或失敗）晚到都不得蓋掉較新的結果
+    let guard = accessSeqByRow.get(row.userGroupId);
+    if (!guard) {
+        guard = createSeqGuard();
+        accessSeqByRow.set(row.userGroupId, guard);
+    }
+    const seq = guard.next();
     try {
-        await api.put(`/api/admin/access/${row.userGroupId}`, { hostGroupIds: [...granted] });
-        row.grantedHostGroupIds = [...granted];
-        toast(
-            checkbox.checked
-                ? `已授權「${row.userGroupName}」檢視「${hostGroup.groupName}」`
-                : `已取消「${row.userGroupName}」對「${hostGroup.groupName}」的授權`,
-            'success', 2500);
+        const result = await api.put(`/api/admin/access/${row.userGroupId}`,
+            wantGrant ? { grant: [hostGroup.groupId], revoke: [] } : { grant: [], revoke: [hostGroup.groupId] });
+        // 舊回應仍是一次成功的變更（提示照出），只是不套用它那份已過時的清單
+        if (guard.isCurrent(seq)) {
+            row.grantedHostGroupIds = result.grantedHostGroupIds;
+            syncRowChecks(row);
+        }
+        noteAccessChange(row.userGroupName, hostGroup.groupName, wantGrant);
+        await refreshHostGroups();
     } catch {
-        checkbox.checked = !checkbox.checked;   // 失敗時還原勾選狀態，避免畫面與實際不符
+        if (!guard.isCurrent(seq)) return;
+        // 錯誤已由 api.js 顯示；畫面可能已與資料庫不符，重新載入整張矩陣
+        await reloadMatrixAfterFailure();
     } finally {
         checkbox.disabled = false;
     }
+}
+
+/**
+ * 授權或派工池變更後重新取主機群組清單並重畫表：「看得到的派工池群組」數字由後端依當下授權與派工池算出，
+ * 前端不自己推算。失敗時保留原畫面（錯誤已由 api.js 顯示）；較舊的回應晚到不蓋掉較新的。
+ */
+async function refreshHostGroups() {
+    const seq = hostGroupsSeq.next();
+    try {
+        const latest = await api.get('/api/admin/host-groups');
+        if (!hostGroupsSeq.isCurrent(seq)) return;
+        hostGroups = latest;
+        renderHostGroups();
+    } catch {
+        // 數字暫時沒更新不影響授權本身；錯誤已由 api.js 顯示
+    }
+}
+
+async function reloadMatrixAfterFailure() {
+    try {
+        matrix = await api.get('/api/admin/access');
+        renderMatrix();
+        toast('授權沒有儲存成功，已重新載入最新的授權矩陣。', 'warning', 5000);
+    } catch {
+        // 連重新載入都失敗：錯誤已由 api.js 顯示
+    }
+}
+
+/** 連續勾選的成功提示合併成一則，內容寫出實際變更 */
+function noteAccessChange(userGroupName, hostGroupName, granted) {
+    pendingAccessNotes.push({ userGroupName, hostGroupName, granted });
+    if (accessToastTimer) clearTimeout(accessToastTimer);
+    accessToastTimer = setTimeout(flushAccessToast, ACCESS_TOAST_MERGE_MS);
+}
+
+function flushAccessToast() {
+    accessToastTimer = null;
+    const notes = pendingAccessNotes;
+    pendingAccessNotes = [];
+    if (notes.length === 0) return;
+
+    const single = new Set(notes.map(n => n.userGroupName)).size === 1;
+    const label = n => single ? n.hostGroupName : `${n.userGroupName}／${n.hostGroupName}`;
+    const parts = [];
+    const granted = notes.filter(n => n.granted).map(label);
+    const revoked = notes.filter(n => !n.granted).map(label);
+    if (granted.length > 0) parts.push(`已授權：${granted.join('、')}`);
+    if (revoked.length > 0) parts.push(`已收回：${revoked.join('、')}`);
+    toast(`${single ? `「${notes[0].userGroupName}」` : ''}${parts.join('；')}`, 'success', 2500);
 }
 
 // ── 群組編輯 ─────────────────────────────────────────────────────────────────
@@ -298,6 +406,7 @@ function openModal(kind, group) {
 
         const granted = new Set(
             group ? matrix.userGroups.find(r => r.userGroupId === group.groupId)?.grantedHostGroupIds ?? [] : []);
+        editingGrantedBefore = new Set(granted);
         renderHostAccessChecks(granted);
         updateHostAccessVisibility();
     }
@@ -354,13 +463,14 @@ form.addEventListener('submit', async event => {
             const saved = await api.post('/api/admin/groups', payload);
 
             // 兩段式：群組本身已存檔，主機可見範圍走既有 access API 另外送出。
-            // 新群組且什麼都沒勾時略過這一步，避免留下一筆「由（無）改為（無）」的空稽核紀錄；
-            // 編輯既有群組則一律送出，包含「全部取消勾選＝收回全部授權」這個有意義的動作。
             if (payload.role === 'User') {
-                const hostGroupIds = selectedHostAccessIds();
-                if (editing.group || hostGroupIds.length > 0) {
+                // 只送與開啟時的差異：沒有差異就不送，也不會蓋掉別人在這段時間做的授權變更
+                const selected = new Set(selectedHostAccessIds());
+                const grant = [...selected].filter(id => !editingGrantedBefore.has(id));
+                const revoke = [...editingGrantedBefore].filter(id => !selected.has(id));
+                if (grant.length > 0 || revoke.length > 0) {
                     try {
-                        await api.put(`/api/admin/access/${saved.groupId}`, { hostGroupIds });
+                        await api.put(`/api/admin/access/${saved.groupId}`, { grant, revoke });
                     } catch {
                         toast(
                             `群組「${saved.groupName}」已儲存，但設定可檢視的主機群組時發生錯誤，請至「授權矩陣」頁籤手動設定。`,
@@ -836,6 +946,7 @@ function renderDispatchPoolToggle(group) {
                 await api.put(`/api/admin/groups/${group.groupId}/dispatch-pool`, { inPool: next }, { silent: true });
                 group.dispatchPool = next;
                 toast('已更新派工池設定');
+                await refreshHostGroups();
             } catch (error) {
                 input.checked = !next;
                 toast(error.message, 'danger');

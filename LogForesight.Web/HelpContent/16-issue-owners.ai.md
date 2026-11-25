@@ -1,5 +1,12 @@
 # 問題負責與靜音（AI 參考指引）
 
+## 不顯示設定總覽（N、F16-4）
+
+頁面頂端的總覽表每個問題一列，資料來自 `GET /api/admin/issue-owners/hide-summary`（需 `Maintain`，`IssueHideSummaryService`），四個來源各一次批次查詢：問題檔案（靜音迄日、機房結論）、抑制清單、規則表、被「不再自動派工」擋住的案件。判定重用既有函式：靜音 `IssueProfile.CurrentMute`、不再打擾 `DispatchContext.DismissedCases`（台數與待派頁清單每組相同，其中「會恢復」依 `DismissalRelease.RemainingDays`）、抑制取尚未到期的規則型與簽章型。
+
+- 規則型抑制要反查有哪些問題，只看近 30 天出現過的問題（多一次聚合查詢，且只在有生效中的規則型抑制時才查）；近期沒出現、也沒有其他三種設定的規則抑制不在總覽，完整清單在規則維護「告警抑制」。
+- 一列四欄各自可為空；四者皆空的問題不列。每欄旁的動作：靜音與結論「解除」（既有的 DELETE 端點）、抑制「前往規則維護」、不再打擾「前往待派頁」。
+
 ## 頁面基本資訊與存取架構
 
 - **頁面路徑**：`/admin/issue-owners`。

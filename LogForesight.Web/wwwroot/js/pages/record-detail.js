@@ -10,7 +10,7 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings,
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
-import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel, issueOrdersOf } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -107,15 +107,18 @@ let aiAvailable = false;
  *   others     他人處理中：進行中案件的處理人是別人
  *   done       已完成：結案四態＋「不處理（預設）」＋「已知雜訊（自動）」
  *
- * 四個選項是這四個桶的組合。**預設不顯示他人處理中**——同一個問題同時有兩個人在動，
+ * 三個選項是這四個桶的組合，字面與內容一致、計數＝切過去實際列出的列數：
+ *   待處理              pending＋mine（不含他人處理中、不含已完成）
+ *   全部（含已完成）     四個桶全列；未處理與處理中排在每個分節的最前面，已完成排在後面，不收合
+ *   只看已完成          done
+ * **預設不顯示他人處理中**（只有「全部」看得到）——同一個問題同時有兩個人在動，
  * 後標的會蓋掉先標的，那是這個功能要防的事（後端另有一道拒絕，見 IssueHandlingCommandService）。
- * 「已完成」平常維持既有的「分節底部收合列」呈現，只有選「僅已完成」時才平鋪出來。
+ * 沒有「已處理／已有結論」收合區：收合區裡的列是選了範圍卻看不到的列，三個選項下都不留這種地方。
  */
 const SCOPE_OPTIONS = [
-    { value: 'pending', label: '待處理', buckets: ['pending', 'mine'], collapseDone: true },
-    { value: 'all', label: '顯示所有問題', buckets: ['pending', 'mine', 'others'], collapseDone: true },
-    { value: 'hide-done', label: '隱藏已完成', buckets: ['pending', 'mine', 'others'], collapseDone: false },
-    { value: 'done-only', label: '僅已完成', buckets: ['done'], collapseDone: false }
+    { value: 'pending', label: '待處理', buckets: ['pending', 'mine'] },
+    { value: 'all', label: '全部（含已完成）', buckets: ['pending', 'mine', 'others', 'done'] },
+    { value: 'done-only', label: '只看已完成', buckets: ['done'] }
 ];
 
 let currentScope = 'pending';
@@ -206,6 +209,11 @@ async function load() {
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
+        // 本日有問題層級交辦時，處理人列改列各張單與各自的處理人（案件處理人與單號來自問題列）
+        getIssueOrders: () => issueOrdersOf(currentDetail.topIssues),
+        // 勾選的問題「不再打擾」滿 30 天都會自動解除（伺服器的 dismissalReleases）：處理面板的不處理類後果提示換句；前端不判斷嚴重度
+        dismissalReleases: keys => keys.size > 0
+            && [...keys].every(key => currentDetail.topIssues.find(i => i.issueKey === key)?.dismissalReleases === true),
         // 側軌摘要的唯一更新路徑：面板每次載完（含自行重載）都會回呼
         onRefreshed: updateSideRail,
         // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」
@@ -1141,7 +1149,7 @@ async function createSignatureSuppressions(issues) {
 
 /**
  * 未處理判定（含明確 open 或從沒標記過、且不是低風險預設不處理／已知雜訊自動判讀的問題）：
- * renderProgress 的三段計數器與 renderIssues 的排序／收合共用同一份判斷（D2/D3），
+ * renderProgress 的三段計數器與 renderIssues 的排序共用同一份判斷（D2/D3），
  * 避免計數器說的「未處理」跟畫面上排在最前面的列對不起來。
  */
 function isUnresolvedIssue(issue) {
@@ -1152,8 +1160,7 @@ function isUnresolvedIssue(issue) {
 function isInProgressIssue(issue) {
     // 觀察中一併算「還在進行」（docs/archive/FEEDBACK-10-PLAN.md §8 體檢）：它是非結案類，
     // 日層級推導本來就把它視同處理中（docs/archive/FEEDBACK-8-PLAN.md #4）。
-    // 少了它，觀察中的問題會被收進標示「已處理／已有結論」的收合區——標籤與內容不符，
-    // 而且顯示範圍下拉把它算進「待處理」，數字對得上、卻要展開「已有結論」才找得到。
+    // 少了它，觀察中的問題在「全部」範圍會被排進已完成那一層——標籤與內容不符。
     // escalated（回饋十八輪批次G）同理：上報中＝有人在管、還沒有結論。
     return issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing' ||
         issue.handlingStatus === 'escalated';
@@ -1199,6 +1206,11 @@ function highlightedCategories() {
  * 切換時共用同一份判斷，避免多處篩選邏輯各自維護後兜不起來。
  * 嚴重度與顯示範圍（§8）是 AND 關係——兩個條件都通過才看得到。
  */
+/** 「全部」範圍的排序層級：未處理 0、處理中 1、其餘（已有結論）2 */
+function issueRank(issue) {
+    return isUnresolvedIssue(issue) ? 0 : (isInProgressIssue(issue) ? 1 : 2);
+}
+
 /**
  * 管理者顯示設定允許的嚴重度（回饋二十輪 L）。與使用者自己的篩選（activeSeverities）
  * 是兩件事：被管理者隱藏的層級不該長出篩選鈕、也不該算進「另有 N 項未顯示」——
@@ -1216,11 +1228,7 @@ function allowedSeverities() {
  */
 function pruneHiddenSelection() {
     if (selectedIssueKeys.size === 0) return 0;
-    // 「已處理／已有結論」收合區每次重繪都重新收起：展開後勾在裡面的問題，重繪後同樣看不到
-    const { collapseDone } = currentScopeOption();
-    const visible = new Set(visibleTopIssues()
-        .filter(issue => !collapseDone || isUnresolvedIssue(issue) || isInProgressIssue(issue))
-        .map(issue => issue.issueKey));
+    const visible = new Set(visibleTopIssues().map(issue => issue.issueKey));
     let pruned = 0;
     for (const key of [...selectedIssueKeys]) {
         if (!visible.has(key)) {
@@ -1262,7 +1270,7 @@ function countIssues(issues, { severity = null, scoped = true, scopeValue = null
 
 /**
  * 找出「切過去真的看得到」的顯示範圍。預設不處理的低嚴重度問題落在 done 桶，
- * 而「顯示所有問題」的桶不含 done——直接寫死切到 all 會切了還是空的。
+ * 「待處理」的桶不含 done——直接寫死切到 pending 會切了還是空的。
  * 回傳 null 代表沒有任何範圍看得到（不該出現捷徑按鈕）。
  */
 function scopeThatReveals(issues) {
@@ -1306,7 +1314,7 @@ function renderScopeFilter(detail) {
         select.appendChild(el);
     }
 
-    // 沒有任何他人處理中的問題時，「待處理」與「顯示所有問題」看到的東西完全一樣——
+    // 沒有任何他人處理中或已完成的問題時，「待處理」與「全部」看到的東西完全一樣——
     // 下拉仍保留（選項數固定比較好預期），但預設值不需要使用者操心
     select.onchange = () => changeScope(select.value);
 }
@@ -1411,10 +1419,6 @@ function renderIssues(detail) {
     let hidden = 0;
     const allowed = allowedSeverities();
 
-    // 顯示範圍（§8）：collapseDone 決定「已完成」是維持既有的分節底部收合列（待處理／
-    // 顯示所有問題），還是整組不出現（隱藏已完成）／整組平鋪（僅已完成）
-    const { collapseDone } = currentScopeOption();
-
     for (const category of detail.categories) {
         const all = detail.topIssues.filter(i => i.category === category.category);
         if (all.length === 0) continue;
@@ -1443,33 +1447,17 @@ function renderIssues(detail) {
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
-        // 已結案排序收合（docs/archive/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
-        // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
-        // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
-        // 顯示範圍為「隱藏已完成」「僅已完成」時不再分主表／收合區（§8）：前者已經沒有
-        // 已完成的列可收，後者整張表就是已完成的列——再收合一次等於什麼都看不到
-        const primary = collapseDone
-            ? issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i))
-            : issues;
-        const rest = collapseDone
-            ? issues.filter(i => !isUnresolvedIssue(i) && !isInProgressIssue(i))
-            : [];
+        // 三個顯示範圍都平鋪、不收合（H10）。「全部」時未處理→處理中排在最前面、已完成在後（穩定排序，
+        // 同一層級維持原順序）；其餘範圍維持原順序。僅風險日詳情——問題查詢清單維持既有緊急程度排序不動。
+        const rows = currentScope === 'all' ? issues.slice().sort((x, y) => issueRank(x) - issueRank(y)) : issues;
 
         const body = document.createElement('div');
         body.className = 'lf-table-aligned';
-        if (primary.length > 0) {
-            // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
-            renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
-            const expandAll = expandAllToggle(body);
-            if (expandAll) header.appendChild(expandAll);
-        } else {
-            renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」檢視。' });
-        }
+        // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
+        renderTable(body, { columns: issueColumns(rows), rows, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
+        const expandAll = expandAllToggle(body);
+        if (expandAll) header.appendChild(expandAll);
         section.appendChild(body);
-
-        if (rest.length > 0) {
-            section.appendChild(collapsedRestSection(rest));
-        }
 
         // 「其他」類別（未命中規則）沒有逐列處置參考，改在分節末尾附上 AI 深入分析——
         // 取代舊版獨立的深入分析卡，讓分析與所屬類別至少對齊在同一個區塊
@@ -1520,24 +1508,6 @@ function renderIssues(detail) {
 
     // 下鑽進來時直接捲到命中的第一個類別分節
     container.querySelector('.lf-issue-group--hit')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-}
-
-/**
- * 已結案／已有結論問題的收合區塊（#8）：分節底部一條「展開▾」列，點開才渲染完整表格。
- * 每次 renderIssues 重繪都重新收合（不記憶展開狀態）——批次套用後常有列從上方主表
- * 「搬」進這裡，維持收合預設值最不會讓人意外。
- */
-function collapsedRestSection(rest) {
-    const wrap = document.createElement('div');
-    wrap.className = 'border-top';
-
-    const body = document.createElement('div');
-    body.className = 'lf-table-aligned';
-    renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
-    const toggle = disclosure(`已處理／已有結論 ${rest.length} 項`, body, { className: 'lf-issue-group__rest-toggle' });
-
-    wrap.append(toggle, body);
-    return wrap;
 }
 
 /**
@@ -1607,11 +1577,11 @@ function issueCell(issue) {
         wrap.appendChild(collapsibleText(text));
     }
 
-    // 時段是這一組事件在當日最早到最晚出現的時間，不是來源時間窗——口徑放在 title 與佐證的來源觀測區
+    // 時段是這一組事件在當日最早到最晚出現的時間（不是來源提供的時間）——口徑放在 title，來源實際時間在佐證的來源觀測區
     const period = document.createElement('span');
     period.className = 'text-nowrap';
     period.textContent = `${issue.firstSeen}–${issue.lastSeen}`;
-    period.title = '群組顯示時段：這組事件當日最早到最晚出現的時間，不是來源時間窗';
+    period.title = '這組事件當天最早與最晚出現的時間；來源實際提供的時間請看佐證裡的來源觀測';
     const meta = metaLine([
         `${formatNumber(issue.count)} 次`,
         period,
@@ -1648,7 +1618,7 @@ function issueStateBadges(issue) {
         badge.title = '此規則已被本機抑制：只關掉通知與風險升級，事件仍照常紀錄';
         items.push(badge);
     }
-    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
+    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在「全部（含已完成）」範圍看得到，這是預期
     if (issue.isMuted && issue.muteTo) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
@@ -1714,8 +1684,9 @@ function evidencePanel(issue) {
 /**
  * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
  * 沒有任何觀測時回 null；面板有其他佐證時由 evidencePanel 補一句「未保存」。
- * 每筆只印有值的行：「時間解讀」「原生參照」沒有值時不逐筆印「未知」，改由摘要行的計數承擔，
- * 「不能推定連續狀態」的警語也移到摘要行（換位置、不消失）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
+ * 摘要用白話與當地時間說「有幾筆、什麼時候」（「3 筆事件：01:00、01:02、01:04」）；
+ * 來源種類、範圍、主機、資源、UTC 時間與來源提供的編號這些原始欄位收進「技術細節」展開區，
+ * 每筆只印有值的行（沒有值的不逐筆印「未知」，由摘要承擔）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
  * 資源鍵與主機鍵相同時不重複；其他鍵原樣顯示，不猜別台主機的名稱（第 73 輪 E）。
  */
 function sourceEvidenceBlock(issue) {
@@ -1724,18 +1695,7 @@ function sourceEvidenceBlock(issue) {
 
     const block = document.createElement('div');
     block.className = 'lf-source-obs';
-    const exactReferences = observations.filter(item => item.nativeReference).length;
-    const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
-    const unresolved = observations.filter(item => !item.windowResolution).length;
-    const summary = metaLine([
-        `${observations.length} 筆`,
-        `${exactTimes} 筆有 UTC 時間`,
-        `${exactReferences} 筆有原生參照`,
-        unresolved > 0 ? `${unresolved} 筆無時間解讀，不能推定連續狀態` : null,
-        issue.sourceObservationsTruncated ? '清單已截斷' : null,
-        '群組顯示時段不是來源時間窗'
-    ]);
-    block.appendChild(summary);
+    block.appendChild(metaLine(sourceEvidenceSummaryParts(observations, issue.sourceObservationsTruncated)));
 
     const sourceNames = {
         Prtg: 'PRTG', SentinelWindows: 'Sentinel Windows', SentinelLinux: 'Sentinel Linux',
@@ -1767,15 +1727,77 @@ function sourceEvidenceBlock(issue) {
         if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) fields.push(['資源', item.exactResourceKey || '未知']);
         row.appendChild(sourceLine(fields));
 
-        if (item.eventTimeUtc) row.appendChild(sourceLine([['UTC 時間', formatSourceUtc(item.eventTimeUtc)]], 'lf-text-data'));
-        else if (item.windowStartUtc && item.windowEndUtc) row.appendChild(sourceLine([['UTC 區間', `[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`]], 'lf-text-data'));
-        else row.appendChild(sourceLine([['UTC 時間／區間', '未知']]));
-        if (item.windowResolution) row.appendChild(sourceLine([['時間解讀', item.windowResolution]]));
-        if (item.nativeReference) row.appendChild(sourceLine([['原生參照', item.nativeReference]], 'lf-text-data'));
+        // 當地時間為主；原始 UTC 值留在技術細節對照
+        if (item.eventTimeUtc) {
+            row.appendChild(sourceLine([['時間', formatSourceLocal(item.eventTimeUtc)], ['UTC', formatSourceUtc(item.eventTimeUtc)]], 'lf-text-data'));
+        } else if (item.windowStartUtc && item.windowEndUtc) {
+            row.appendChild(sourceLine([['時段', `${formatSourceLocal(item.windowStartUtc)} 至 ${formatSourceLocal(item.windowEndUtc)}（不含迄點）`],
+                ['UTC', `[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`]], 'lf-text-data'));
+        } else {
+            row.appendChild(sourceLine([['時間／時段', '未知']]));
+        }
+        if (item.windowResolution) row.appendChild(sourceLine([['時間依據', item.windowResolution]]));
+        if (item.nativeReference) row.appendChild(sourceLine([['來源事件編號', item.nativeReference]], 'lf-text-data'));
         list.appendChild(row);
     }
-    block.appendChild(list);
+    block.append(disclosure('技術細節', list, { className: 'mt-1' }), list);
     return block;
+}
+
+/**
+ * 來源觀測摘要（白話、當地時間）：事件幾筆在哪些時間、時間區間幾筆、沒有時間資訊幾筆；
+ * 沒有時間依據的筆數另外直說「看不出是否連續發生」。時間跨日時每個時間帶月-日。
+ * 時間點最多列 8 個、區間最多 4 個，超過以「…」收尾（清單本身另有 64 筆上限）。
+ */
+function sourceEvidenceSummaryParts(observations, truncated) {
+    const events = observations.filter(item => item.eventTimeUtc);
+    const windows = observations.filter(item => !item.eventTimeUtc && item.windowStartUtc && item.windowEndUtc);
+    const untimed = observations.length - events.length - windows.length;
+    const unresolved = observations.filter(item => !item.windowResolution).length;
+
+    const parts = [];
+    // 所有時間落在同一個當地日才省略日期；跨日時全部帶月-日，避免 23:50 與 00:10 看起來是同一天
+    const stamps = [...events.map(item => item.eventTimeUtc), ...windows.flatMap(item => [item.windowStartUtc, item.windowEndUtc])];
+    const days = new Set(stamps.map(value => localDayKey(value)));
+    const showDate = days.size > 1;
+    const clip = (items, max) => items.length > max ? `${items.slice(0, max).join('、')}…` : items.join('、');
+
+    if (events.length > 0) {
+        const times = events.map(item => item.eventTimeUtc).sort((a, b) => new Date(a) - new Date(b))
+            .map(value => formatSourceClock(value, showDate));
+        parts.push(`${events.length} 筆事件：${clip(times, 8)}`);
+    }
+    if (windows.length > 0) {
+        const spans = windows.map(item => `${formatSourceClock(item.windowStartUtc, showDate)}–${formatSourceClock(item.windowEndUtc, showDate)}`);
+        parts.push(`${windows.length} 筆時間區間：${clip(spans, 4)}`);
+    }
+    if (untimed > 0) parts.push(`${untimed} 筆沒有時間資訊`);
+    if (unresolved > 0) parts.push(`${unresolved} 筆缺少時間依據，看不出是否連續發生`);
+    if (truncated) parts.push('清單已截斷');
+    return parts;
+}
+
+/** 當地日期鍵（跨日判斷用）；無法解析的值各自獨立，不與其他值併成同一天 */
+function localDayKey(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? `?${value}` : `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/** 當地時間的「HH:mm」（withDate 時前面加「MM-DD 」）；無法解析回「未知」 */
+function formatSourceClock(value, withDate) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '未知';
+    const pad = n => String(n).padStart(2, '0');
+    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return withDate ? `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}` : clock;
+}
+
+/** 當地時間的「YYYY-MM-DD HH:mm:ss」；無法解析回「未知」 */
+function formatSourceLocal(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '未知';
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function formatSourceUtc(value) {
@@ -1862,7 +1884,7 @@ function caseBadge(issue) {
     const linkable = issue.caseHandlerId && canViewHandlerPage(currentUser, issue.caseHandlerId);
     const badge = document.createElement(linkable ? 'a' : 'span');
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
-    badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
+    badge.className = 'lf-badge lf-badge--primary lf-badge--wrap d-inline-block mt-1';
     if (linkable) {
         badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());

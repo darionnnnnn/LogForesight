@@ -5,7 +5,14 @@ namespace LogForesight.Web.Services.Mail;
 
 /// <summary>單張單在寄送當下的資料（呼叫端從 store 讀好再傳入；單已刪除時傳 null）。</summary>
 internal sealed record WorkOrderDigestOrder(long WorkOrderId, string IssueLabel, string? PlainExplanation, int HostCount,
-    IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate);
+    IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate)
+{
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」標記（<c>DismissalRelease.PriorDismissalsOf</c>，與畫面同一個推導）的成員建立時間，
+    /// 一台主機一筆；新增成員段只數這次新增的（建立時間不早於該項目入列日）。
+    /// </summary>
+    public IReadOnlyList<DateTime> PriorDismissalCreatedAts { get; init; } = Array.Empty<DateTime>();
+}
 
 /// <summary>
 /// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段，空段不輸出。
@@ -43,11 +50,15 @@ internal static class WorkOrderDigestBuilder
         if (reminders.Count > 0) subjectSummary = rows.Count == reminders.Count ? "管理者提醒" : subjectSummary + "、管理者提醒";
 
         var body = new StringBuilder();
+        // 只有退回段附帶篩選的連結（被退回），點進去直接是那一批單；其餘段只有信尾的總連結。
+        // 新交辦、新增成員不帶「今天新增」：這類信常在隔天早上才寄，成員建立日已不是寄信當天，帶篩選會點開空清單。
+        string? SectionLink(string? flag) => flag == null
+            ? null : MailLinks.Build(siteBaseUrl, MailLinks.MyWorkOrdersPath(recipientUserId, flag));
         AppendSection(body, "【新交辦】", created);
         AppendSection(body, "【新增成員】", appended);
         AppendSection(body, "【移交】", transferred);
         AppendSection(body, "【取消】", cancelled);
-        AppendSection(body, "【退回】", returned);
+        AppendSection(body, "【退回】", returned, SectionLink(WorkOrderQueries.FlagReturned), "只看被退回的單");
         AppendSection(body, "【代為結案】", adminClosed);
         AppendSection(body, "【靜音暫停】", mutePaused);
         AppendSection(body, "【靜音恢復】", muteResumed);
@@ -98,7 +109,15 @@ internal static class WorkOrderDigestBuilder
         var escalatedCount = CountOf(ReminderDetailItem.CategoryEscalated) + legacy.Sum(i => i.ReminderEscalated);
         var unassignableCount = CountOf(ReminderDetailItem.CategoryUnassignable) + legacy.Sum(i => i.ReminderUnassignable);
         var noRecipientCount = CountOf(ReminderDetailItem.CategoryNoRecipient) + legacy.Sum(i => i.ReminderNoRecipient);
-        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單。");
+        var recurrenceCount = CountOf(ReminderDetailItem.CategoryRecurrence) + legacy.Sum(i => i.ReminderRecurrence);
+        // 反覆結案又復發有才寫，沒有時整句與既有寫法相同
+        var recurrenceClause = recurrenceCount > 0 ? $"、反覆結案又復發 {recurrenceCount} 個成員" : "";
+        // 管理員待辦新增的類別：有才寫，沒有時整句與既有寫法相同
+        var todoClause = string.Concat(
+            CountOf(ReminderDetailItem.CategoryFetchFailed) > 0 ? $"、最近一趟取數失敗 {CountOf(ReminderDetailItem.CategoryFetchFailed)} 趟" : "",
+            CountOf(ReminderDetailItem.CategoryInactiveHandler) > 0 ? $"、已停用或暫停接單的處理人名下仍有單 {CountOf(ReminderDetailItem.CategoryInactiveHandler)} 位" : "",
+            CountOf(ReminderDetailItem.CategoryUngroupedHosts) > 0 ? $"、未分組主機 {CountOf(ReminderDetailItem.CategoryUngroupedHosts)} 台" : "");
+        body.AppendLine($"  上報逾期未處理 {escalatedCount} 個成員、本趟派不出去 {unassignableCount} 項、上報時沒有收件人 {noRecipientCount} 張單{recurrenceClause}{todoClause}。");
         foreach (var section in merged)
         {
             body.AppendLine($"  {section.Heading}共 {section.Count} {section.Unit}");
@@ -124,7 +143,12 @@ internal static class WorkOrderDigestBuilder
     /// </summary>
     internal static List<MergedReminderSection> MergeReminderItems(IEnumerable<WorkOrderOutboxItem> items)
     {
-        var order = new[] { ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient };
+        var order = new[]
+        {
+            ReminderDetailItem.CategoryEscalated, ReminderDetailItem.CategoryUnassignable, ReminderDetailItem.CategoryNoRecipient,
+            ReminderDetailItem.CategoryRecurrence, ReminderDetailItem.CategoryFetchFailed, ReminderDetailItem.CategoryInactiveHandler,
+            ReminderDetailItem.CategoryUngroupedHosts
+        };
         var byKey = new Dictionary<(string, string), (ReminderDetailItem Item, int Seq)>();
         var maxTotal = new Dictionary<string, int>();
         var heading = new Dictionary<string, (string Heading, string Unit)>();
@@ -207,8 +231,11 @@ internal static class WorkOrderDigestBuilder
         return sb.ToString().TrimEnd();
     }
 
+    /// <param name="filterLink">這一段專屬的帶篩選連結（沒設站台網址時為 null，什麼都不寫）</param>
+    /// <param name="filterLabel">連結的用途說明</param>
     private static void AppendSection(StringBuilder body,
-        string title, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> rows)
+        string title, List<(WorkOrderOutboxItem Item, WorkOrderDigestOrder? Order)> rows,
+        string? filterLink = null, string? filterLabel = null)
     {
         if (rows.Count == 0) return;
         body.AppendLine(title);
@@ -233,7 +260,10 @@ internal static class WorkOrderDigestBuilder
                     break;
                 case WorkOrderOutboxKinds.AdminClosed:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
-                    body.AppendLine($"    由 {item.ActorAccount} 代為結案，結案狀態：{StatusText(item.Status)}。");
+                    // 範圍結案、單仍進行中（MemberDelta＞0）：只寫這幾台被結案，不能讓人以為整張單結了
+                    body.AppendLine(item.MemberDelta > 0
+                        ? $"    {item.MemberDelta} 台已由管理者 {item.ActorAccount} 代為結案（單仍在進行中），結案狀態：{StatusText(item.Status)}。"
+                        : $"    由 {item.ActorAccount} 代為結案，結案狀態：{StatusText(item.Status)}。");
                     AppendReason(body, item);
                     body.AppendLine($"    {RedispatchText(item)}");
                     break;
@@ -256,6 +286,7 @@ internal static class WorkOrderDigestBuilder
                     break;
             }
         }
+        if (filterLink != null) body.AppendLine($"  連結（{filterLabel}）：{filterLink}");
         body.AppendLine();
     }
 
@@ -283,6 +314,17 @@ internal static class WorkOrderDigestBuilder
         {
             body.AppendLine($"    其中 {item.RecurrenceMembers} 台是復發：你最近 30 天內修好過的主機又出現同一個問題");
         }
+
+        // 期滿放行後重新派工的成員：新交辦段整張單算，新增成員段只算這次新增的（不超過新增台數）
+        var priorDismissed = item.Kind switch
+        {
+            WorkOrderOutboxKinds.Created => order.PriorDismissalCreatedAts.Count,
+            WorkOrderOutboxKinds.Appended => Math.Min(item.MemberDelta,
+                order.PriorDismissalCreatedAts.Count(t => t >= item.EnqueuedAt.Date)),
+            _ => 0
+        };
+        if (priorDismissed > 0)
+            body.AppendLine($"    其中 {priorDismissed} 台先前判定不處理、已滿 {DismissalRelease.Days} 天仍在發生");
 
         if (order.HostNames.Count > 0)
         {
@@ -312,7 +354,7 @@ internal static class WorkOrderDigestBuilder
     /// <summary>問題再出現會不會重新派工：勾選「之後不再自動派工」＝不會；靜音造成的結案＝靜音期間不會、迄日後會；其餘會。</summary>
     private static string RedispatchText(WorkOrderOutboxItem item)
     {
-        if (item.BlocksRedispatch) return "問題再出現時：不會重新派工（已勾選之後不再自動派工）。";
+        if (item.BlocksRedispatch) return "問題再出現時：不會重新派工（已勾選之後不再自動派工，不會因時間自動恢復）。";
         if (item.Until.HasValue)
             return $"問題再出現時：靜音期間（至 {item.Until.Value:yyyy-MM-dd}）不會派工，靜音結束後再出現會重新派工。";
         return "問題再出現時：會重新派工。";

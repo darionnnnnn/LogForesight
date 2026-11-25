@@ -22,7 +22,7 @@ namespace LogForesight.Tests;
 /// 候選人池以手組快照替身帶入（Web 端規則另由 DispatchCandidateSourceTests 驗）。
 /// </summary>
 [Collection("NLogGlobalConfig")]
-public class WorkOrderBoardServiceTests : IDisposable
+public partial class WorkOrderBoardServiceTests : IDisposable
 {
     private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
 
@@ -111,11 +111,105 @@ public class WorkOrderBoardServiceTests : IDisposable
             Assert.Contains(items, item => item.WorkOrderId == order.WorkOrderId);
     }
 
+    [Theory]
+    [InlineData(IssueSeverity.High, 3)]
+    [InlineData(IssueSeverity.Medium, 7)]
+    public void 立即派工_建出的單與成員依嚴重度帶預設期限(IssueSeverity severity, int days)
+    {
+        var host = AddHost("HOST-DUE", null, Disk(severity));
+        PoolSeeing(host);
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        var expected = DateTime.Today.AddDays(days);
+        Assert.Equal(expected, Assert.Single(_orderStore.All).DueDate);
+        Assert.Equal(expected, _caseStore.GetOpen("HOST-DUE", KeyOf(Disk(severity)))!.DueDate);
+        Assert.Equal(expected, _issueHandlingStore.GetForDay("HOST-DUE", Yesterday).Single().DueDate);
+    }
+
+    /// <summary>協調器回報「已結案略過」的成員：結果台數與新單通知主機名單都不含它（併發下前一刻結案的日子）</summary>
+    [Fact]
+    public void 立即派工_協調器回SkippedClosed_結果台數與通知名單不含它()
+    {
+        var closing = new ClosingOnInsertStore(_caseStore);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
+        var coordinator = new WorkOrderCoordinator(closing, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        Candidate(h, inPool: true, a.HostId, b.HostId);
+        // 建單寫入前一刻，HOST-B 的出現日被別人結案：試跑看得到它、協調器分類時略過它
+        closing.OnInsert = () => ClosedRow("HOST-B", Disk());
+        var service = new WorkOrderBoardService(
+            closing, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
+            _candidates, _issueOwners, _noiseMarks, _settingsStore, coordinator,
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
+
+        var result = service.RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        Assert.Equal(1, result.AssignedMembers);
+        Assert.Equal(1, Assert.Single(result.PerHandler).Hosts);
+        Assert.Null(_caseStore.GetOpen("HOST-B", KeyOf(Disk())));
+    }
+
+    /// <summary>建單寫入時先執行一段動作（模擬試跑之後、分類之前發生的併發變動）</summary>
+    private sealed class ClosingOnInsertStore : FakeWorkOrderStore
+    {
+        public ClosingOnInsertStore(IIssueCaseStore cases) : base(cases) { }
+
+        public Action? OnInsert { get; set; }
+
+        public override long Insert(WorkOrder order)
+        {
+            OnInsert?.Invoke();
+            return base.Insert(order);
+        }
+    }
+
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences,
-        IIssueAggregateQuery? aggregates = null) => new(
+        IIssueAggregateQuery? aggregates = null, TimeProvider? clock = null, ICurrentUser? user = null) => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, aggregates ?? _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences);
+        user ?? FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences, clock);
+
+    /// <summary>批次 S：立即派工放行「不再打擾已滿 30 天」的主機時，與夜間派工同一段累計寫一筆系統事件（同張單合併一筆，只算放行的那台）</summary>
+    [Fact]
+    public void 立即派工_期滿放行的主機_該單歷程合併寫一筆dismissal_released事件()
+    {
+        var (h, _) = PoolSeeing(AddHost("HOST-REL"), AddHost("HOST-NEW"));
+        var closed = new DateTime(2026, 12, 1, 10, 0, 0);
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "prior", HostName = "HOST-REL", IssueKey = KeyOf(Disk()), IssueLabel = "disk 153", Status = IssueHandlingStatuses.WontFix,
+            CreatedAt = closed.AddDays(-3), UpdatedAt = closed, ClosedAt = closed, FirstLinkedDate = closed.Date.AddDays(-3),
+            LastLinkedDate = closed.Date.AddDays(-3), BlocksRedispatch = null, SourceName = "disk", EventId = 153
+        });
+        var clock = new FixedLocalClock(closed.Date.AddDays(31));   // 距結案第 31 天：閘門放行
+
+        var result = Service(clock: clock).RunAutoDispatch(Yesterday, Yesterday);
+
+        Assert.Equal(2, result.AssignedMembers);
+        var order = Assert.Single(_orderStore.All);
+        var released = Assert.Single(_orderStore.ListEvents(order.WorkOrderId), e => e.Action == WorkOrderEventActions.DismissalReleased);
+        Assert.Equal(1, released.MemberDelta);
+        Assert.Contains("1 台先前判定不處理已滿 30 天，重新派工", released.Note);
+        Assert.Equal(h.UserId, order.HandlerId);
+
+        // 距結案第 30 天仍擋：沒有放行、不建案、不寫事件
+        var other = new WorkOrderBoardServiceTests();
+        try
+        {
+            var (_, _) = other.PoolSeeing(other.AddHost("HOST-REL"));
+            other._caseStore.Save(_caseStore.Get("prior")!);
+            var early = other.Service(clock: new FixedLocalClock(closed.Date.AddDays(30)));
+            Assert.Equal(0, early.RunAutoDispatch(Yesterday, Yesterday).AssignedMembers);
+            Assert.Empty(other._orderStore.All);
+        }
+        finally { other.Dispose(); }
+    }
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 
@@ -225,6 +319,144 @@ public class WorkOrderBoardServiceTests : IDisposable
 
     private static GapRowDto RowOf(GapsDto dto, string source) => Assert.Single(dto.Rows, r => r.Source == source);
 
+    // ── 已結案的出現點不建單（階段 A-1）──────────────────────────────────────
+
+    private void ClosedRow(string hostName, LogIssueSignature issue, string status = IssueHandlingStatuses.Resolved) =>
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = hostName, Date = Yesterday, IssueKey = KeyOf(issue), Status = status,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+
+    [Fact]
+    public void 待派_最近出現日已結案的主機不列入待派_不算缺口也不算排除_立即派工只為未處理那台建案()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var closed = AddHost("HOST-CLOSED");
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, closed.HostId, open.HostId);
+        ClosedRow("HOST-CLOSED", Disk());
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        // 已結案不是待派的工作：不算缺口、也不列在「已排除」（CU-8：待派頁與儀表板都不含它）
+        Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
+        Assert.Equal(1, row.GapHosts);
+        Assert.Empty(row.Excluded);
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.AssignedMembers);
+        Assert.NotNull(_caseStore.GetOpen("HOST-OPEN", KeyOf(Disk())));
+        Assert.Null(_caseStore.GetOpen("HOST-CLOSED", KeyOf(Disk())));
+        Assert.Equal(1, _caseStore.GetMany(new[] { "HOST-OPEN", "HOST-CLOSED" }).Count);
+    }
+
+    [Fact]
+    public void 待派_最近出現日已結案的主機不列_同一台隔天再出現沒有逐日處理列_回到待派建議()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var earlier = Yesterday.AddDays(-1);
+        var host = _hosts.Upsert(new WebHost { HostName = "HOST-AGAIN" });
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-AGAIN", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        Candidate(h, inPool: true, host.HostId);
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = "HOST-AGAIN", Date = earlier, IssueKey = KeyOf(Disk()), Status = IssueHandlingStatuses.Resolved,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+
+        // 唯一一台已結案：這個問題整列不出現在待派，也不計入問題數（儀表板待派卡用同一個 Total）
+        var closedGaps = Service().GetGaps(null, null, 1);
+        Assert.DoesNotContain(closedGaps.Rows, r => r.Source == "disk");
+        Assert.Equal(0, closedGaps.Total);
+
+        // 隔天再出現：新的出現日沒有逐日處理列，不能因為「曾經結案過」就一直擋
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Yesterday, RiskLevel = "高",
+            Headline = "HOST-AGAIN", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+
+        var again = RowOf(Service().GetGaps(null, null, 1), "disk");
+        Assert.Equal(1, Assert.Single(again.Suggested).Hosts);
+        Assert.Empty(again.Excluded);
+    }
+
+    [Fact]
+    public void 待派_最近出現日已結案但更早一天未結案_仍列入待派建議_全部日子都結案才不列入()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var earlier = Yesterday.AddDays(-1);
+        var host = AddHost("HOST-MIXED");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        Candidate(h, inPool: true, host.HostId);
+        ClosedRow("HOST-MIXED", Disk());   // 只有最近出現日（昨天）已結案，前天未結案
+
+        // 期間內仍有未結案的日子：建案會寫那一天，所以是待派的工作
+        var mixed = RowOf(Service().GetGaps(null, null, 1), "disk");
+        Assert.Equal(1, Assert.Single(mixed.Suggested).Hosts);
+        Assert.Equal(1, mixed.GapHosts);
+
+        // 前天也結案：每個出現日都是結案類，不列入待派
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = "HOST-MIXED", Date = earlier, IssueKey = KeyOf(Disk()), Status = IssueHandlingStatuses.Resolved,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+        var allClosed = Service().GetGaps(null, null, 1);
+        Assert.DoesNotContain(allClosed.Rows, r => r.Source == "disk");
+        Assert.Equal(0, allClosed.Total);
+    }
+
+    [Fact]
+    public void 待派_被不再打擾擋下的主機計入gate_dismissed_已結案的主機不列入()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var dismissed = AddHost("HOST-DISMISSED");
+        var closed = AddHost("HOST-CLOSED");
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, dismissed.HostId, closed.HostId, open.HostId);
+        // 處理人回不處理：案件結案＋逐日列也是結案類——閘門先擋，原因要留在 gate_dismissed
+        DismissedCase("HOST-DISMISSED", Disk());
+        ClosedRow("HOST-DISMISSED", Disk(), IssueHandlingStatuses.WontFix);
+        ClosedRow("HOST-CLOSED", Disk());
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipDismissed]);
+        Assert.Equal(1, row.Excluded.Count);
+        Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
+        Assert.Equal(2, row.GapHosts);
+    }
+
+    [Fact]
+    public void 待派_只是嚴重度預設不處理且沒有逐日標記_不算已結案_仍走原本的嚴重度排除()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var low = AddHost("HOST-LOW", null, Disk(IssueSeverity.Low));
+        var open = AddHost("HOST-OPEN");
+        Candidate(h, inPool: true, low.HostId, open.HostId);
+
+        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+
+        Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipSeverity]);
+        Assert.Equal(2, row.GapHosts);
+    }
+
     // ── 負載看板 ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -314,7 +546,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         var suggestion = Assert.Single(row.Suggested);
         Assert.Equal((h.UserId, 1, true), (suggestion.HandlerId, suggestion.Hosts, suggestion.WillCreate));
         Assert.Empty(row.Unassignable);
-        Assert.Equal("disk 153", row.IssueLabel);
+        Assert.Equal("disk EventId 153", row.IssueLabel);
     }
 
     /// <summary>
@@ -899,12 +1131,19 @@ public class WorkOrderBoardServiceTests : IDisposable
     {
         public List<DispatchCandidate> Candidates { get; } = new();
 
-        public DispatchCandidatePool Build() => new()
+        /// <summary>每次 Build 前呼叫（試跑已取得進行中案件鍵之後）：測試用來模擬「另一個人在這時候先派完」的併發</summary>
+        public Action? BeforeBuild { get; set; }
+
+        public DispatchCandidatePool Build()
         {
-            ByUserId = Candidates.ToDictionary(c => c.UserId),
-            PoolMemberCount = Candidates.Count(c => c.InPool),
-            ActivePoolMemberCount = Candidates.Count(c => c.InPool && !c.Paused)
-        };
+            BeforeBuild?.Invoke();
+            return new()
+            {
+                ByUserId = Candidates.ToDictionary(c => c.UserId),
+                PoolMemberCount = Candidates.Count(c => c.InPool),
+                ActivePoolMemberCount = Candidates.Count(c => c.InPool && !c.Paused)
+            };
+        }
     }
 
     private sealed class AllVisible : IVisibilityService

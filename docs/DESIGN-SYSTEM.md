@@ -400,6 +400,21 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 文字排序 | `collation.js` `compareText(a, b)`（`Intl.Collator('zh-Hant', { numeric: true })`：中文依語系、"9" 排在 "10" 前）；`sortRows` 的字串欄位已使用 |
 | 狀態輪詢 | `async-guards.js` `pollWhile(fn, 間隔或 (ctx) => 間隔, { pauseWhenHidden, backoffMaxMs })`：間隔可依上一輪結果（`ctx.lastResult`、`ctx.failures`）重算；`pauseWhenHidden` 在背景分頁暫停、回前景立即補一次；`backoffMaxMs` 讓連續失敗時退避。導覽列的徽章、執行中告示、排程狀態、已耗時計時與精靈掃描進度都走它；頁面不手寫遞迴 `setTimeout` 或 `setInterval` 輪詢 |
 | 對話框（唯讀詳情） | `ui.js` `showDetailModal({ title, body, size, fullscreen, onClose })` 回傳 `{ close(), element }`；頁面以 `close()` 關閉，不模擬點擊 `data-bs-dismiss` 按鈕；送出處理在建立對話框之前就要定義時，先宣告 `let modal = null`，建立後指派、處理中呼叫 `modal?.close()` |
+| 清單頁勾選（跨頁保留、表頭全選、選取列） | `ui.js` `createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll, onChange })`：`onChange` 在勾選集合有變（逐列、全選、清除）時通知頁面同步按鈕狀態，選用 |
+| KPI 卡就地套用條件（不換頁） | `kpiStrip` 卡片的 `onClick`：一般點擊攔下改走它，同時保留 `url` 讓中鍵與新分頁可用 |
+| 「清單有更新」提示（我的交辦、交辦單頁） | `list-update-notice.js` `createListUpdateNotice({ anchor, onReload })` 回傳 `{ rebase }`：訂閱 `lf:badges`、不另開輪詢；頁面自己重載清單後呼叫 `rebase()` |
+| 網址參數只認限定值（排序、狀態下拉） | `paths.js` `urlParamChoice(search, 名稱, 合法值清單)`：不在清單內回 `null`，沿用頁面預設 |
+| 交辦單的台數口徑文字 | `format.js` `hostCountText(列)` 回「進行中 N 台；歷來 M 台、K 件」（台＝不重複主機數、件＝成員數） |
+| 交辦單清單的嚴重度欄與標記（新、復發、退回、觀察到期） | `format.js` `workOrderSeverityCell(列)`、`workOrderFlagBadges(列, { recurrence })`：我的交辦與交辦總覽共用 |
+| 今天起第 N 天的日期（快捷「3／7／14 日」、觀察天數換算） | `format.js` `dateAfterDays(天數)`，回本地日期字串 |
+| 「不再顯示這個問題：選哪一種」比較表的文字 | `hide-guide.js` `HIDE_GUIDE_COLUMNS`／`HIDE_GUIDE_ROWS`／`HIDE_GUIDE_LEAD`：純資料，問題查詢與說明書 19 章共用同一份說法，頁面不另寫一份 |
+| 「不再顯示這個問題…」三問句對照 | `hide-triage.js` `TRIAGE_TABLE`（多久×範圍×已交辦的單共 18 格，每格對應既有端點或附不提供的原因）、`triageAvailability`、`buildTriagePlan`：純資料與純函式，套用面板 `pages/hide-triage-panel.js` 只負責畫面與送出 |
+| 不顯示設定總覽的儲存格文字 | `hide-summary.js` `muteText`／`conclusionText`／`suppressionText`／`dismissedText`：沒有該設定回 `null`，畫面寫「—」 |
+| 頁頂主機快速搜尋（名稱或 IP，最多 10 筆） | `host-quick-search.js` `initHostQuickSearch(user)`（`layout.js` 掛在頂列）：走 `GET api/hosts?query=&limit=`、請求序號守門、結果浮層 `lf-host-search__results`，連結走 `hostSearchHref`（`appUrl`） |
+| 使用者編輯視窗的群組即時摘要 | `user-group-summary.js` `createUserGroupSummary({ host, fetchPreview })`、`summaryLines(預覽)`：能力、可見主機、是否在派工池，連點勾選以請求序號守門 |
+| 規則維護直接開某條規則的編輯 | `paths.js` `ruleEditUrl(規則 Id)` 回 app 內路徑（呼叫端再套 `appUrl`）；交辦單頁與問題查詢的「調整這條規則」共用 |
+| 圖表工具列的完整 CSV 下載 | `charts.js` `attachToolbar(container, { …, csvHref })`：有給才多一顆「下載 CSV」連結，整份資料由伺服器串流，不是畫面上的列 |
+| 含不定長文字、需換行的標記 | `lf-badge--wrap`（`components.css`）：可換行、不超出儲存格，例：風險日詳情處理狀態欄的案件徽章 |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。
@@ -423,6 +438,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **資料集** `UiFixture/`：經產品 `StorageBackend` 產生涵蓋版面邊界的 SQLite（長名稱、無空白長字串、HTML 字元、0／1／極多筆、各種狀態與角色）。
   一般測試每次斷言矩陣齊全；設 `LF_UI_FIXTURE=<目錄>` 時把 DB 與情境清單留在 `<目錄>/ai`、`<目錄>/noai`。
   資料日期相對於產生當天（「昨日」就是產生前一天），隔天截圖前要重產，否則預設期間是空的。
+  另設 `LF_UI_FIXTURE_VOLUME=<主機數>` 會在邊界資料之上疊加量體（N 台主機 × 28 天、十個主機群組、經交辦協調器建立的交辦單），供資料量下的操作實測；未設時不執行。
 - **啟動站台** `tools/ui-serve.mjs --fixture <目錄>/ai [--port] [--path-base /LogForesight]`：從獨立發佈目錄、以資料集複本啟動（不鎖 bin、背景服務改寫不影響下一次）。
   Git Bash 會把 `/LogForesight` 改寫成 Windows 路徑，要加 `MSYS_NO_PATHCONV=1`。
   站台或量測執行中不要同時跑 `dotnet test`：機器忙時 Node 行為案例會逾時（輸出空白而失敗），單獨重跑就過。

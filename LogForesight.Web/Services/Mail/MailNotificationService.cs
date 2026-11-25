@@ -504,12 +504,7 @@ public class MailNotificationService
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled) return;
 
-            var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
-                .Where(e => e != null)
-                .Select(e => e!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var recipients = EscalationRecipients();
             if (recipients.Count == 0)
             {
                 Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
@@ -544,6 +539,32 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 問題上報通知處理失敗（不影響狀態變更本身）");
+        }
+    }
+
+    /// <summary>上報信的收件人（admin 群組成員中有可用 email 者，去重）。寄信與回覆畫面的「已通知 N 位」共用這一份判定。</summary>
+    private List<string> EscalationRecipients() =>
+        AdminMembersResolver.GetAdminMembers(_userGroups, _users)
+            .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
+            .Where(e => e != null)
+            .Select(e => e!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// 這次上報會收到通知的管理員數（回覆成功後給處理人看）：郵件停用時沒有信會寄出，回 0；
+    /// 否則是上報信的收件人數。與 <see cref="NotifyEscalationAsync"/> 同一份判定，不另算。
+    /// </summary>
+    public int CountEscalationRecipients()
+    {
+        try
+        {
+            return _settingsStore.Get().MailEnabled ? EscalationRecipients().Count : 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 計算上報收件人數失敗（不影響狀態變更本身）");
+            return 0;
         }
     }
 
@@ -589,14 +610,14 @@ public class MailNotificationService
 
     /// <summary>
     /// 管理者提醒入列：每位收件人一筆 <see cref="WorkOrderOutboxKinds.AdminReminder"/>，進同一套每人摘要。
-    /// 開關關閉、沒有收件人或三類都是 0 時不入列。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
+    /// 開關關閉、沒有收件人或各類都是 0 時不入列（<paramref name="todo"/> 是管理員待辦新增類別的待提醒項目數）。回傳是否真的入列（呼叫端依此記錄「上次提醒日」）。
     /// </summary>
     public bool EnqueueAdminReminders(IReadOnlyCollection<long> recipientUserIds, int escalated, int unassignable, int noRecipient, string detail,
-        IReadOnlyList<ReminderDetailItem>? detailItems = null)
+        IReadOnlyList<ReminderDetailItem>? detailItems = null, int recurrence = 0, int todo = 0)
     {
         try
         {
-            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient == 0) return false;
+            if (recipientUserIds.Count == 0 || escalated + unassignable + noRecipient + recurrence + todo == 0) return false;
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return false;
 
@@ -611,6 +632,7 @@ public class MailNotificationService
                 ReminderEscalated = escalated,
                 ReminderUnassignable = unassignable,
                 ReminderNoRecipient = noRecipient,
+                ReminderRecurrence = recurrence,
                 Detail = WorkOrderOutboxItem.ClampDetail(detail),
                 ReminderItems = detailItems is { Count: > 0 }
                     ? detailItems.Take(WorkOrderOutboxItem.ReminderItemsMaxCount).Select(i => i.Clamped()).ToList()
@@ -883,7 +905,39 @@ public class MailNotificationService
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);
-        return new WorkOrderDigestOrder(order.WorkOrderId, order.IssueLabel, plain, hostCount, hostNames, order.Note, order.DueDate);
+        return new WorkOrderDigestOrder(order.WorkOrderId, order.DisplayLabel(getRules()), plain, hostCount, hostNames, order.Note, order.DueDate)
+        {
+            PriorDismissalCreatedAts = hostCount == 0 ? Array.Empty<DateTime>() : PriorDismissalCreatedAtsOf(workOrderId, getRules(), disabled)
+        };
+    }
+
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」的成員建立時間（每台主機一筆）：全部進行中成員（排除停用主機）分頁取回，
+    /// 前案以生效日為下限一次取回，推導與畫面共用 <see cref="DismissalRelease.PriorDismissalsOf"/>。
+    /// </summary>
+    private List<DateTime> PriorDismissalCreatedAtsOf(long workOrderId, List<KnownIssueRule> rules, HashSet<string> disabled)
+    {
+        var active = new List<IssueCase>();
+        for (var page = 1; ; page++)
+        {
+            var members = _issueCases.QueryMembers(new WorkOrderMemberQuery
+            {
+                WorkOrderId = workOrderId, Status = WorkOrderQueries.StatusActive, Page = page, PageSize = 200
+            });
+            active.AddRange(members.Items.Where(c => !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName))));
+            if (members.Items.Count < 200 || page * 200 >= members.Total) break;
+        }
+        if (active.Count == 0) return new List<DateTime>();
+
+        var issues = active.Where(c => c.SourceName != null && c.EventId != null)
+            .Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+        var history = _issueCases.GetClosedHistory(active.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            issues, DismissalRelease.EffectiveFrom);
+        var prior = DismissalRelease.PriorDismissalsOf(active, history, DismissalRelease.LookupFrom(rules));
+        return active.Where(c => prior.ContainsKey(c.CaseId))
+            .GroupBy(c => LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName))
+            .Select(g => g.Min(c => c.CreatedAt))
+            .ToList();
     }
 
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>
