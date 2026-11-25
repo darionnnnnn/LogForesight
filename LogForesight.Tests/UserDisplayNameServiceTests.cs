@@ -481,7 +481,8 @@ public class UserDisplayNameServiceTests
             settingsStore,
             progress,
             capabilities,
-            displayNameService);
+            displayNameService,
+            new FakeRuleStore());
     }
 
     private static IssueHandlingCommandService CreateIssueHandlingCommandService(

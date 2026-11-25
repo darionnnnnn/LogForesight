@@ -466,6 +466,27 @@ const cases = {
         // 「下一張」沿用上一張的初始狀態為不處理類時，一打開就要看得到
         const carried = open({ initialStatus: 'wont_fix' });
         assert.equal(hidden(carried.note), false, '初始就是不處理時一打開就顯示');
+    },
+
+    // 批次 S：伺服器標示「不再打擾滿 30 天會自動解除」（dismissalReleases）時，後果提示改成會重新派工；沒標就維持永久說法
+    async replyFormNoFixNoteSaysReleaseOnlyWhenServerFlagsIt() {
+        const loaded = loadReplyModule();
+        const open = (extra = {}) => {
+            const m = openReply(loaded, { targetText: '本單 3 台', draftKey: 'k', ...extra });
+            return { ...m, note: byId(m.body, 'wo-reply-no-fix-note') };
+        };
+
+        const flagged = open({ dismissalReleases: true });
+        assert.ok(textOf(flagged.note).includes('這台主機的這個問題30 天內不再派工，之後仍在發生會重新派工。'), textOf(flagged.note));
+        assert.ok(!textOf(flagged.note).includes('不會再派給任何人'), '不可同時留著永久說法');
+        const flaggedMany = open({ dismissalReleases: true, multiTarget: true });
+        assert.ok(textOf(flaggedMany.note).includes('這些主機的這個問題30 天內不再派工'), textOf(flaggedMany.note));
+
+        const plain = open({ dismissalReleases: false });
+        assert.ok(textOf(plain.note).includes('之後不會再派給任何人；需要恢復請找管理者。'));
+        assert.ok(!textOf(plain.note).includes('30 天'));
+        const absent = open();
+        assert.ok(textOf(absent.note).includes('之後不會再派給任何人'), '沒有欄位（舊回應）維持永久說法');
     }
 };
 

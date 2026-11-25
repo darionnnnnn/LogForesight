@@ -53,6 +53,9 @@ public class WorkOrderCommandService
 
     private readonly TimeProvider _clock;
 
+    /// <summary>目前規則（「不再打擾」30 天解除要看問題目前規則的嚴重度；必填，不退回靜態表）</summary>
+    private readonly IKnownIssueRuleStore _rules;
+
     public WorkOrderCommandService(
         RecordListQueryService query,
         IIssueAggregateQuery aggregates,
@@ -68,8 +71,10 @@ public class WorkOrderCommandService
         IAuditService audit,
         IUserDisplayNameService displayNames,
         MailNotificationService mail,
+        IKnownIssueRuleStore rules,
         TimeProvider? clock = null)
     {
+        _rules = rules;
         _clock = clock ?? TimeProvider.System;
         _query = query;
         _aggregates = aggregates;
@@ -756,13 +761,15 @@ public class WorkOrderCommandService
         var dismissedByHost = new Dictionary<string, Dictionary<string, IssueCase>>(StringComparer.OrdinalIgnoreCase);
         if (judged.Count > 0)
         {
+            var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
+            var today = _clock.LocalToday();
             var casesByHost = _cases.GetMany(judged.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
                 .GroupBy(c => HostNameKey.Of(c.HostName))
                 .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
             foreach (var x in judged)
             {
                 if (!casesByHost.TryGetValue(HostNameKey.Of(x.Host.HostName), out var hostCases)) continue;
-                var byKey = DispatchContext.DismissedCases(hostCases)
+                var byKey = DispatchContext.DismissedCases(hostCases, today, releaseRules)
                     .ToDictionary(c => c.IssueKey, c => c, IssueSignatureKeyComparer.Instance);
                 if (byKey.Count > 0) dismissedByHost[x.Host.HostName] = byKey;
             }

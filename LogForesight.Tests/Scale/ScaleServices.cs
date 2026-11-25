@@ -145,7 +145,8 @@ internal sealed class ScaleServices
             currentUser,
             auditService,
             displayNames,
-            _mail);
+            _mail,
+            new FakeRuleStore());
 
         var candidates = new DispatchCandidateSource(
             users, userGroups, Hosts, access, issueOwners, aggregates, settingsStore, WorkOrderStore);

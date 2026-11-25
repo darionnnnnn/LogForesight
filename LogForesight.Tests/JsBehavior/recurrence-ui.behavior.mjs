@@ -49,6 +49,7 @@ function constLine(source, name) {
 /** work-order-detail.js 成員狀態格需要的函式與常數（production 原文） */
 const memberStatusCellParts = () => [
     constLine(detailSource, 'LAST_REPLY_NOTE_MAX'),
+    extract(detailSource, 'function priorDismissalText('),
     extract(detailSource, 'function lastReplyParts('),
     extract(detailSource, 'function observedRecurText('),
     extract(detailSource, 'function renderMemberStatusBadge('),
@@ -117,6 +118,30 @@ const cases = {
         // 非復發：沒有任何復發附註
         const plain = cell({ status: 'in_progress', isRecurrence: false, recurrenceCount: 0, lastReply: { date: '2026-11-01T00:00:00', status: 'resolved', note: 'x' } });
         assert.ok(!plain.textContent.includes('復發') && !plain.textContent.includes('11-01'), plain.textContent);
+    },
+
+    // 批次 S：期滿放行後重新派工的成員，狀態格寫「先前判定不處理（MM-DD，某人），已滿 30 天仍在發生」；沒有就不出現
+    memberStatusCellShowsPriorDismissal() {
+        const { roleText, statusBadge } = elements();
+        const cell = new Function('document', 'statusBadge', 'statusBadgeMeta', 'roleText', `${memberStatusCellParts()}\nreturn memberStatusCell;`)(document, statusBadge, catalog.statusBadgeMeta, roleText);
+
+        const marked = cell({ status: 'in_progress', priorDismissal: { closedAt: '2026-12-18T09:00:00', account: 'h1', status: 'wont_fix' } });
+        assert.ok(marked.textContent.includes('先前判定不處理（12-18，h1），已滿 30 天仍在發生'), marked.textContent);
+        const noAccount = cell({ status: 'open', priorDismissal: { closedAt: '2026-12-18T09:00:00', account: null, status: 'known_noise' } });
+        assert.ok(noAccount.textContent.includes('先前判定不處理（12-18），已滿 30 天仍在發生'), noAccount.textContent);
+        const plain = cell({ status: 'in_progress', priorDismissal: null });
+        assert.ok(!plain.textContent.includes('先前判定不處理'), plain.textContent);
+        const old = cell({ status: 'in_progress' });
+        assert.ok(!old.textContent.includes('先前判定不處理'), '舊回應沒有欄位也不出現');
+    },
+
+    // 批次 S：單頭只在有這類成員時才多一句
+    headerShowsPriorDismissalOnlyWhenPositive() {
+        const text = detail => new Function('hostCountText', `${extract(detailSource, 'function memberSummaryText(')}\nreturn memberSummaryText;`)(hostCountText)(detail);
+        const base = { counts: { inProgress: 2, total: 2, active: 2 }, activeHosts: 2, totalHosts: 2 };
+        assert.ok(text({ ...base, priorDismissalHosts: 2 }).includes('其中 2 台先前判定不處理、已滿 30 天仍在發生'), text({ ...base, priorDismissalHosts: 2 }));
+        assert.ok(!text({ ...base, priorDismissalHosts: 0 }).includes('先前判定不處理'));
+        assert.ok(!text(base).includes('先前判定不處理'), '舊回應沒有欄位也不出現');
     },
 
     memberHostCellMarksOccurrenceOnlyUnderAllFilter() {

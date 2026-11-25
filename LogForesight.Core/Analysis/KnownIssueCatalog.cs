@@ -402,10 +402,22 @@ public static class KnownIssueCatalog
             return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
         }
 
-        var rule = eventId == 0
+        var rule = FindRuleByAggregateKey(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 以聚合層看得到的（來源, 事件 ID）找「目前生效的」規則（不含已退役的 PRTG 代碼）：PRTG 走規則代碼、Linux（EventId 0）走 program、
+    /// 其餘走 Windows 的來源＋事件 ID。白話說明與「不再打擾」30 天解除的嚴重度判斷共用這一份，找不到或說不出是哪一條回 null。
+    /// </summary>
+    public static KnownIssueRule? FindRuleByAggregateKey(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
+            return PrtgRuleCatalog.IsRetired(prtgCode) ? null : FindPrtgRuleByCode(rules, prtgCode);
+
+        return eventId == 0
             ? FindLinuxRuleByProgram(rules, source)
             : FindRule(rules, source, eventId);
-        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
     }
 
     /// <summary>

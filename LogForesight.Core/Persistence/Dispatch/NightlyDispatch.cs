@@ -51,6 +51,8 @@ public sealed class NightlyDispatch
     // 本趟累計（皆在 _ctx.Gate 內讀寫）
     private readonly Dictionary<long, int> _addedByOrder = new();
     private readonly Dictionary<long, int> _recurrenceByOrder = new();
+    /// <summary>本趟因「不再打擾已滿 30 天」放行而寫入成員的台數（單 → 台數）；趟末在單歷程合併成一筆系統事件</summary>
+    private readonly DismissalReleaseTally _released = new();
     private readonly Dictionary<long, long> _handlerByOrder = new();
     private readonly Dictionary<long, string> _labelByOrder = new();
     private readonly HashSet<long> _createdOrders = new();
@@ -107,6 +109,7 @@ public sealed class NightlyDispatch
         var hostName = host.HostName;
         var members = new List<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)>();
         var recurrences = new List<bool>();
+        var releases = new List<bool>();
         foreach (var issue in issues)
         {
                 var relatedWarningOrderId = _ctx.ActiveWarningOrderForSensor(hostName, issue);
@@ -171,6 +174,7 @@ public sealed class NightlyDispatch
 
                 members.Add((issue, decision.WorkOrderId!.Value, decision.HandlerId!.Value, decision.Step!));
                 recurrences.Add(decision.Recurrence);
+                releases.Add(_ctx.IsReleased(hostName, IssueSignatureKey.For(issue)));
                 _ctx.Commit(decision, issue.Source, issue.EventId);
         }
 
@@ -200,6 +204,7 @@ public sealed class NightlyDispatch
                     _midrunCounts[WorkOrderCoordinator.HandlerChangedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.HandlerChangedMidrun) + 1;
 
                 _addedByOrder[workOrderId] = _addedByOrder.GetValueOrDefault(workOrderId) + 1;
+                if (releases[i]) _released.Add(workOrderId);
                 if (recurrences[i])
                 {
                     _recurrenceByOrder[workOrderId] = _recurrenceByOrder.GetValueOrDefault(workOrderId) + 1;
@@ -282,6 +287,8 @@ public sealed class NightlyDispatch
         {
             foreach (var (workOrderId, added) in _addedByOrder.OrderBy(p => p.Key))
                 _coordinator.RecordNightlyAppended(workOrderId, added, occurredAt);
+
+            _released.Flush(_coordinator, occurredAt);
 
             // 本趟新建、最後一個成員都沒寫入的單（成員全因「決策後已有進行中案件」略過）：交給結案推導
             // 收掉（以 empty_dispatch 結案），不留零成員的進行中空單，也不列進摘要與通知。放在收尾而非當下，

@@ -73,6 +73,7 @@ public class RecordDetailQueryService
         // 規則命中問題的處置參考來自當前 rules.json（反映 Web 上的規則編輯），
         // 一次載入建索引，逐列查是記憶體查表。單日詳情低頻，一次檔案讀取可忽略
         var guidance = LoadGuidanceLookup();
+        var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
 
         // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題。
         // 存整筆 IssueHandling（不只是 Status 字串）——批次套用改版後還需要 DueDate
@@ -191,7 +192,7 @@ public class RecordDetailQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => WithMute(ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, releaseRules, openCases, priorClosedIssueKeys), record.Date, exclusion, profilesByKey)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -665,6 +666,7 @@ public class RecordDetailQueryService
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         AccountDisplayRuleSet accountRules,
+        IssueRuleLookup releaseRules,
         Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate, long? WorkOrderId)>? openCases = null,
         HashSet<string>? priorClosedIssueKeys = null)
     {
@@ -686,6 +688,7 @@ public class RecordDetailQueryService
             Category = issue.Category.ToString(),
             Severity = issue.Severity.ToString(),
             ElevatesDayRisk = issue.ElevatesDayRisk,
+            DismissalReleases = DismissalRelease.AppliesTo(releaseRules, key),
             KnownIssue = issue.KnownIssue,
             FirstSeen = issue.FirstSeen,
             LastSeen = issue.LastSeen,

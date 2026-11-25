@@ -59,7 +59,7 @@ internal class HandlingServiceFacade
             audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            displayNames, mail, issueOwners, noiseMarks, cases, exclusions);
+            displayNames, new FakeRuleStore(), mail, issueOwners, noiseMarks, cases, exclusions);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);

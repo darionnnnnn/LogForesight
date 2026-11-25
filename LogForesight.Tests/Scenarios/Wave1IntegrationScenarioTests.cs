@@ -211,7 +211,7 @@ public sealed class Wave1IntegrationScenarioTests
                 {
                     var h2 = CaseOf(ctx, OrderNo(ctx, 1), "H2");
                     var hostCases = ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { "H2" }).ToList();
-                    var gated = DispatchContext.DismissedCases(hostCases).Any(c => c.CaseId == h2.CaseId);
+                    var gated = DispatchContext.DismissedCases(hostCases, DateTime.Today, TestRules.None).Any(c => c.CaseId == h2.CaseId);
                     // BlocksRedispatch 為 null（處理人回覆沒有明確設定）也算擋住：判定是「不是 false」，與 DispatchContext.DismissedCases 同一條件
                     return $"{h2.Status}|{(h2.ClosedAt != null ? "closed" : "open")}|{(h2.BlocksRedispatch != false ? "blocks" : "free")}|{(gated ? "gated" : "not-gated")}";
                 })));

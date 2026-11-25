@@ -32,6 +32,7 @@ public sealed partial class HandoffScenarioTests
         "S10" => BuildS10(),
         "B3不勾" => BuildAdminCloseRedispatch("B3 代為結案不勾選", block: false),
         "B3勾選" => BuildAdminCloseRedispatch("B3 代為結案勾選", block: true),
+        "R31回彈" => BuildDismissalRelease(),
         "B4恢復單筆" => BuildRestoreOne(),
         "B4整個問題" => BuildRestoreIssue(),
         "B4再回不處理" => BuildRestoreThenDismissAgain(),

@@ -17,6 +17,7 @@ internal static class WorkOrderTextHelpers
         WorkOrderEventActions.Replied => "已回覆",
         WorkOrderEventActions.DueDateChanged => "修改期限",
         WorkOrderEventActions.Returned => "退回",
+        WorkOrderEventActions.DismissalReleased => "期滿重新派工",
         _ => action
     };
 }

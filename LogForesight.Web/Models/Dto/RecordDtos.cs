@@ -394,6 +394,12 @@ public class IssueDto
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
     public bool ElevatesDayRisk { get; set; }
 
+    /// <summary>
+    /// 這個問題的「不再打擾」滿 30 天會自動解除（目前規則嚴重度高或重大，見 <c>DismissalRelease.AppliesTo</c>）。
+    /// 處理面板選到不處理類時據此換後果提示，前端不自己判斷嚴重度。
+    /// </summary>
+    public bool DismissalReleases { get; set; }
+
     public string? KnownIssue { get; set; }
     public string FirstSeen { get; set; } = string.Empty;
     public string LastSeen { get; set; } = string.Empty;

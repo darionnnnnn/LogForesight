@@ -380,7 +380,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             CaseId = c.CaseId, HostName = c.HostName, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel, Status = c.Status,
             HandlerId = c.HandlerId, Note = c.Note, DueDate = c.DueDate, CreatedAt = c.CreatedAt, ClosedAt = c.ClosedAt,
             UpdatedAt = c.UpdatedAt, WorkOrderId = c.WorkOrderId, SourceName = c.SourceName, EventId = c.EventId,
-            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt
+            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt, BlocksRedispatch = c.BlocksRedispatch
         });
 
     /// <summary>
@@ -421,7 +421,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             CaseId = c.CaseId, HostName = c.HostName, IssueKey = c.IssueKey, IssueLabel = c.IssueLabel, Status = c.Status,
             HandlerId = c.HandlerId, Note = c.Note, DueDate = c.DueDate, CreatedAt = c.CreatedAt, ClosedAt = c.ClosedAt,
             UpdatedAt = c.UpdatedAt, WorkOrderId = c.WorkOrderId, SourceName = c.SourceName, EventId = c.EventId,
-            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt
+            Cancelled = c.Cancelled, EscalatedAt = c.EscalatedAt, BlocksRedispatch = c.BlocksRedispatch
         });
     }
 
@@ -471,6 +471,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         public int? EventId { get; init; }
         public bool Cancelled { get; init; }
         public DateTime? EscalatedAt { get; init; }
+        public bool? BlocksRedispatch { get; init; }
     }
 
     private static IssueCase ToSlimModel(IssueCaseSlimRow row) => new()
@@ -478,7 +479,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         CaseId = row.CaseId, HostName = row.HostName, IssueKey = row.IssueKey, IssueLabel = row.IssueLabel, Status = row.Status,
         HandlerId = row.HandlerId, Note = row.Note, DueDate = row.DueDate, CreatedAt = row.CreatedAt, ClosedAt = row.ClosedAt,
         UpdatedAt = row.UpdatedAt, WorkOrderId = row.WorkOrderId, SourceName = row.SourceName, EventId = row.EventId,
-        Cancelled = row.Cancelled, EscalatedAt = row.EscalatedAt
+        Cancelled = row.Cancelled, EscalatedAt = row.EscalatedAt, BlocksRedispatch = row.BlocksRedispatch
     };
 
     /// <summary>
@@ -616,34 +617,66 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     /// 結案時間才是案件自己的生命週期終點，也才是「可以忘記了」的正確判準。
     /// 例外：處理人判定的不處理類且仍是該鍵最新案件者不過期（見 <see cref="Expired"/>）。
     /// </summary>
-    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+    /// <param name="rules">問題目前規則的嚴重度查詢（由呼叫端傳入；30 天解除判定要用，Core 不複製規則）</param>
+    public int Prune(int retentionDays, IssueRuleLookup rules) =>
+        Prune(retentionDays, rules, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
 
     /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
-    internal int Prune(int retentionDays, int maxRows, int batchSize)
+    internal int Prune(int retentionDays, IssueRuleLookup rules, int maxRows, int batchSize)
     {
         var cutoff = _clock.LocalToday().AddDays(-retentionDays);
+        var released = ReleasedCaseIds(cutoff, _clock.LocalToday(), rules);
 
         return BatchedPrune.Run<string>(_contextFactory,
-            (ctx, take) => Expired(ctx, cutoff)
+            (ctx, take) => Expired(ctx, cutoff, released)
                 .OrderBy(c => c.ClosedAt)
                 .Select(c => c.CaseId)
                 .Take(take)
                 .ToList(),
             (ctx, ids) => ctx.IssueCases.Where(c => ids.Contains(c.CaseId)).ExecuteDelete(),
-            ctx => Expired(ctx, cutoff).Count(),
+            ctx => Expired(ctx, cutoff, released).Count(),
             "已結案的問題案件", maxRows, batchSize);
+    }
+
+    /// <summary>
+    /// 已過期、且依 <see cref="DismissalRelease.IsReleased"/>（與派工閘門同一個函式）已解除不再擋的不處理類案件編號。
+    /// 先以 SQL 只取「結案早於 cutoff、不處理類、未取消、BlocksRedispatch 為空、結案日不早於生效日」的案件縮小範圍（只是預篩），
+    /// 資格與天數的判定一律交給 <see cref="DismissalRelease.IsReleased"/>。
+    /// </summary>
+    internal List<string> ReleasedCaseIds(DateTime cutoff, DateTime today, IssueRuleLookup rules)
+    {
+        using var ctx = _contextFactory();
+        return ReleaseCandidates(ctx, cutoff)
+            .ToList()
+            .Select(ToModel)
+            .Where(c => DismissalRelease.IsReleased(c, today, rules))
+            .Select(c => c.CaseId)
+            .ToList();
+    }
+
+    /// <summary>解除判定的預篩查詢本體（抽出供 SQL 翻譯測試）</summary>
+    internal static IQueryable<IssueCaseRow> ReleaseCandidates(LfDbContext ctx, DateTime cutoff)
+    {
+        var dismissals = IssueHandlingStatuses.Dismissals;
+        var effectiveFrom = DismissalRelease.EffectiveFrom;
+        return ctx.IssueCases.AsNoTracking()
+            .Where(c => c.ClosedAt != null && c.ClosedAt < cutoff && c.ClosedAt >= effectiveFrom
+                        && !c.Cancelled && c.BlocksRedispatch == null && dismissals.Contains(c.Status));
     }
 
     /// <summary>
     /// 可清除的已結案案件：結案早於 cutoff，**但**保留「處理人判定的不處理類且仍是該（主機, 問題）最新案件」——
     /// 這種案件是「不再打擾」閘門與待派頁恢復清單的依據（判定見 DispatchContext.DismissedCases：不處理類狀態、BlocksRedispatch 不是 false、
     /// 該鍵最新的未取消案件），刪掉它問題會重新派工、也從恢復清單消失。以 NOT EXISTS 較新的同鍵未取消且已結案案件表達（較新案件仍進行中不算取代：它之後若被取消，閘門就要靠這筆），兩個後端都能翻譯。
+    /// <paramref name="releasedCaseIds"/> 是已滿 30 天解除的案件（<see cref="ReleasedCaseIds"/>）：閘門不再擋它，不再因「仍有效」而保留。
     /// </summary>
-    internal static IQueryable<IssueCaseRow> Expired(LfDbContext ctx, DateTime cutoff)
+    internal static IQueryable<IssueCaseRow> Expired(LfDbContext ctx, DateTime cutoff, IReadOnlyCollection<string> releasedCaseIds)
     {
         var dismissals = IssueHandlingStatuses.Dismissals;
+        var released = releasedCaseIds.ToList();
         return ctx.IssueCases.Where(c => c.ClosedAt != null && c.ClosedAt < cutoff
             && !(dismissals.Contains(c.Status) && !c.Cancelled && c.BlocksRedispatch != false
+                 && !released.Contains(c.CaseId)
                  && !ctx.IssueCases.Any(n => n.HostNameKey == c.HostNameKey && n.IssueKey == c.IssueKey
                                              && !n.Cancelled && n.ClosedAt != null && n.CreatedAt > c.CreatedAt)));
     }

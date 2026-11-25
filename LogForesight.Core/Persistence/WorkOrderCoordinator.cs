@@ -732,6 +732,14 @@ public class WorkOrderCoordinator
         });
     }
 
+    /// <summary>
+    /// 夜間派工一趟結束：本趟有「先前判定不處理、已滿 30 天」而放行重新派工的成員時，在該單歷程記一筆系統事件
+    /// （同一張單同一趟合併成一筆，成員數記在 MemberDelta）。
+    /// </summary>
+    public void RecordDismissalReleased(long workOrderId, int hosts, DateTime occurredAt) =>
+        AppendEvent(workOrderId, WorkOrderEventActions.DismissalReleased, NightlyActor(occurredAt), hosts,
+            $"{hosts} 台先前判定不處理已滿 {DismissalRelease.Days} 天，重新派工");
+
     /// <summary>夜間派工一趟結束：寫入（或清除）續掛停止標示；只寫標示欄位，不動單的其他欄位與併發權杖</summary>
     public void RecordContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates)
     {

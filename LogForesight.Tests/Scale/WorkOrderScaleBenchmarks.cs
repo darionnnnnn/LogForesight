@@ -184,7 +184,8 @@ public class WorkOrderScaleBenchmarks
                 services2.Cases,
                 noiseMarks,
                 settings,
-                DateTime.Now);
+                DateTime.Now,
+                TestRules.None);
             var dispatch2 = new NightlyDispatch(services2.WorkOrders, ctx2, services2.Hosts);
 
             var sw2 = Stopwatch.StartNew();

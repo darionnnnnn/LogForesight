@@ -75,7 +75,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            _audit, displayNames, _mail);
+            _audit, displayNames, _mail, new FakeRuleStore());
     }
 
     public void Dispose() => _fixture.Dispose();

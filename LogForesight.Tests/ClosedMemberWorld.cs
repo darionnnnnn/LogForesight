@@ -66,7 +66,7 @@ internal sealed class ClosedMemberWorld : IDisposable
         Service = new WorkOrderCommandService(
             query, aggregates, Coordinator, OrderStore, CaseStore, NoiseMarks, Hosts, Users, visibility,
             new UserCapabilityResolver(UserGroups, Hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            Audit, displayNames, mail);
+            Audit, displayNames, mail, new FakeRuleStore());
     }
 
     public void Dispose() => _fixture.Dispose();

@@ -124,7 +124,7 @@ const cases = {
         assert.equal(log.tables.length, 2);
         assert.equal(dismissedCountEl.textContent, '共 2 個問題、4 台');
         const t = log.tables[0];
-        assert.deepEqual(t.columns.map(c => c.title), ['主機', '先前結案狀態', '結案的人', '日期', '']);
+        assert.deepEqual(t.columns.map(c => c.title), ['主機', '先前結案狀態', '結案的人', '日期', '恢復派工', '']);
         const cls = title => t.columns.find(c => c.title === title).className || '';
         assert.ok(cls('主機').includes('text-nowrap'));
         assert.ok(cls('先前結案狀態').includes('lf-col-nowrap'));
@@ -136,6 +136,27 @@ const cases = {
         assert.equal(t.trs[0].children[3].textContent, '2026-11-09');
         assert.equal(t.trs[2].children[2].textContent, '—');
         assert.equal(t.trs[2].children[3].textContent, '—');
+    },
+
+    // 批次 S：恢復派工欄三種標示——N 天後恢復派工（高嚴重度）、上線前判定、其餘永久
+    releaseColumnShowsDaysPreLaunchOrPermanent() {
+        const { renderDismissed, log } = env();
+        const rows = [
+            row('HOST-A', 'wont_fix', { releaseInDays: 23, preLaunch: false }),
+            row('HOST-B', 'wont_fix', { releaseInDays: null, preLaunch: true }),
+            row('HOST-C', 'wont_fix', { releaseInDays: null, preLaunch: false }),
+            row('HOST-D', 'wont_fix')   // 舊回應沒有欄位：永久
+        ];
+        renderDismissed({ page: 1, pageSize: 50, total: 1, totalHosts: 4, groups: [group('disk 153', 4, rows)] }, true);
+        const t = log.tables[0];
+        const col = t.columns.findIndex(c => c.title === '恢復派工');
+        assert.ok(col >= 0, '有恢復派工欄');
+        assert.ok((t.columns[col].className || '').includes('lf-col-nowrap'), '短值欄不折行');
+        assert.equal(t.trs[0].children[col].textContent, '23 天後恢復派工');
+        assert.equal(t.trs[1].children[col].textContent, '上線前判定');
+        assert.ok(t.trs[1].children[col].find(n => n.title && n.title.includes('不會自動恢復')), '上線前判定的說明放在 title');
+        assert.equal(t.trs[2].children[col].textContent, '永久');
+        assert.equal(t.trs[3].children[col].textContent, '永久');
     },
 
     // 按鈕：每組標頭一顆「整個問題恢復」（outline-secondary），每列一顆「恢復」（outline-primary）；沒有能力時都不出現
@@ -153,7 +174,7 @@ const cases = {
         const noCap = env();
         noCap.renderDismissed({ page: 1, pageSize: 50, total: 1, totalHosts: 2, groups: [group('disk 153', 2, [row('HOST-A'), row('HOST-B')])] }, false);
         assert.equal(buttonsOf(noCap.dismissedContainer).length, 0);
-        assert.deepEqual(noCap.log.tables[0].columns.map(c => c.title), ['主機', '先前結案狀態', '結案的人', '日期']);
+        assert.deepEqual(noCap.log.tables[0].columns.map(c => c.title), ['主機', '先前結案狀態', '結案的人', '日期', '恢復派工']);
     },
 
     // 分頁：總頁數＝問題組數 ÷ 每頁組數

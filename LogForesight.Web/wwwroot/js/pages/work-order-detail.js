@@ -87,6 +87,13 @@ const LAST_REPLY_NOTE_MAX = 24;
 /** 一鍵結案寫進回覆的說明 */
 const QUIET_CLOSE_NOTE = '觀察期滿未再發生';
 
+/** 新案件的「先前判定不處理」：上一件不處理類結案、期滿 30 天仍在發生才重新派工（判定在伺服器，這裡只組文字） */
+function priorDismissalText(prior) {
+    const date = String(prior.closedAt || '').slice(5, 10);
+    const who = prior.account ? `，${prior.account}` : '';
+    return `先前判定不處理（${date}${who}），已滿 30 天仍在發生`;
+}
+
 /** 「MM-DD 狀態：說明」（說明過長截斷，全文由呼叫端放 title）；日期取自結案時間的月-日 */
 function lastReplyParts(lastReply) {
     const meta = statusBadgeMeta(lastReply.status);
@@ -119,6 +126,11 @@ function memberStatusCell(item) {
             if (parts.full) line.title = parts.full;
             wrap.appendChild(line);
         }
+    }
+    if (item.priorDismissal) {
+        const line = roleText('lf-text-meta', priorDismissalText(item.priorDismissal));
+        line.classList.add('text-wrap');
+        wrap.appendChild(line);
     }
     if (item.status === 'observing' && !item.closedAt) {
         wrap.appendChild(roleText('lf-text-meta', observedRecurText(item.observedRecurDays)));
@@ -286,7 +298,8 @@ function memberSummaryText(detail) {
     if (counts.escalated > 0) memberParts.push(`上報 ${counts.escalated}`);
     if (counts.daySyncPending > 0) memberParts.push(`逐日同步中 ${counts.daySyncPending} 台`);
     const recurrence = detail.recurrenceHosts > 0 ? `；其中 ${detail.recurrenceHosts} 台是復發` : '';
-    return hostCountText(detail) + recurrence + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
+    const prior = detail.priorDismissalHosts > 0 ? `；其中 ${detail.priorDismissalHosts} 台先前判定不處理、已滿 30 天仍在發生` : '';
+    return hostCountText(detail) + recurrence + prior + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
 }
 
 /**
@@ -436,7 +449,7 @@ async function buildAdminCloseModal() {
     blockLabel.className = 'form-check-label';
     blockLabel.htmlFor = 'wo-close-block';
     const targetText = blockTargetText(activeCount, !!currentDetail?.source);
-    blockLabel.textContent = `${targetText}之後不再自動派工`;
+    blockLabel.textContent = `${targetText}之後不再自動派工（勾選＝永久，不會因時間自動恢復）`;
     blockWrap.append(blockInput, blockLabel);
 
     // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
@@ -532,6 +545,7 @@ function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurr
         ?? (caseIds.length === 0 ? (currentDetail.recurrenceHosts ?? 0) : 0);
     openWorkOrderReplyModal({
         recurrence: { hosts: recurrenceInReply },
+        dismissalReleases: !!currentDetail.dismissalReleases,
         multiTarget: hostCount > 1,
         title: `回覆交辦單 #${workOrderId}`,
         targetText,

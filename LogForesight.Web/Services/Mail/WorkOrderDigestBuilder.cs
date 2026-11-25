@@ -5,7 +5,14 @@ namespace LogForesight.Web.Services.Mail;
 
 /// <summary>單張單在寄送當下的資料（呼叫端從 store 讀好再傳入；單已刪除時傳 null）。</summary>
 internal sealed record WorkOrderDigestOrder(long WorkOrderId, string IssueLabel, string? PlainExplanation, int HostCount,
-    IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate);
+    IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate)
+{
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」標記（<c>DismissalRelease.PriorDismissalsOf</c>，與畫面同一個推導）的成員建立時間，
+    /// 一台主機一筆；新增成員段只數這次新增的（建立時間不早於該項目入列日）。
+    /// </summary>
+    public IReadOnlyList<DateTime> PriorDismissalCreatedAts { get; init; } = Array.Empty<DateTime>();
+}
 
 /// <summary>
 /// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消／退回／代為結案／靜音暫停／靜音恢復」八段，空段不輸出。
@@ -299,6 +306,17 @@ internal static class WorkOrderDigestBuilder
             body.AppendLine($"    其中 {item.RecurrenceMembers} 台是復發：你最近 30 天內修好過的主機又出現同一個問題");
         }
 
+        // 期滿放行後重新派工的成員：新交辦段整張單算，新增成員段只算這次新增的（不超過新增台數）
+        var priorDismissed = item.Kind switch
+        {
+            WorkOrderOutboxKinds.Created => order.PriorDismissalCreatedAts.Count,
+            WorkOrderOutboxKinds.Appended => Math.Min(item.MemberDelta,
+                order.PriorDismissalCreatedAts.Count(t => t >= item.EnqueuedAt.Date)),
+            _ => 0
+        };
+        if (priorDismissed > 0)
+            body.AppendLine($"    其中 {priorDismissed} 台先前判定不處理、已滿 {DismissalRelease.Days} 天仍在發生");
+
         if (order.HostNames.Count > 0)
         {
             var hostList = string.Join("、", order.HostNames.Take(HostListLimit));
@@ -327,7 +345,7 @@ internal static class WorkOrderDigestBuilder
     /// <summary>問題再出現會不會重新派工：勾選「之後不再自動派工」＝不會；靜音造成的結案＝靜音期間不會、迄日後會；其餘會。</summary>
     private static string RedispatchText(WorkOrderOutboxItem item)
     {
-        if (item.BlocksRedispatch) return "問題再出現時：不會重新派工（已勾選之後不再自動派工）。";
+        if (item.BlocksRedispatch) return "問題再出現時：不會重新派工（已勾選之後不再自動派工，不會因時間自動恢復）。";
         if (item.Until.HasValue)
             return $"問題再出現時：靜音期間（至 {item.Until.Value:yyyy-MM-dd}）不會派工，靜音結束後再出現會重新派工。";
         return "問題再出現時：會重新派工。";

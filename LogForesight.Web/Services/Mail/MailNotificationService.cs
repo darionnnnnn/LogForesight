@@ -884,7 +884,39 @@ public class MailNotificationService
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);
-        return new WorkOrderDigestOrder(order.WorkOrderId, order.IssueLabel, plain, hostCount, hostNames, order.Note, order.DueDate);
+        return new WorkOrderDigestOrder(order.WorkOrderId, order.IssueLabel, plain, hostCount, hostNames, order.Note, order.DueDate)
+        {
+            PriorDismissalCreatedAts = hostCount == 0 ? Array.Empty<DateTime>() : PriorDismissalCreatedAtsOf(workOrderId, getRules(), disabled)
+        };
+    }
+
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」的成員建立時間（每台主機一筆）：全部進行中成員（排除停用主機）分頁取回，
+    /// 前案以生效日為下限一次取回，推導與畫面共用 <see cref="DismissalRelease.PriorDismissalsOf"/>。
+    /// </summary>
+    private List<DateTime> PriorDismissalCreatedAtsOf(long workOrderId, List<KnownIssueRule> rules, HashSet<string> disabled)
+    {
+        var active = new List<IssueCase>();
+        for (var page = 1; ; page++)
+        {
+            var members = _issueCases.QueryMembers(new WorkOrderMemberQuery
+            {
+                WorkOrderId = workOrderId, Status = WorkOrderQueries.StatusActive, Page = page, PageSize = 200
+            });
+            active.AddRange(members.Items.Where(c => !disabled.Contains(LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName))));
+            if (members.Items.Count < 200 || page * 200 >= members.Total) break;
+        }
+        if (active.Count == 0) return new List<DateTime>();
+
+        var issues = active.Where(c => c.SourceName != null && c.EventId != null)
+            .Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+        var history = _issueCases.GetClosedHistory(active.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            issues, DismissalRelease.EffectiveFrom);
+        var prior = DismissalRelease.PriorDismissalsOf(active, history, DismissalRelease.LookupFrom(rules));
+        return active.Where(c => prior.ContainsKey(c.CaseId))
+            .GroupBy(c => LogForesight.Core.Persistence.Sql.HostNameKey.Of(c.HostName))
+            .Select(g => g.Min(c => c.CreatedAt))
+            .ToList();
     }
 
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>

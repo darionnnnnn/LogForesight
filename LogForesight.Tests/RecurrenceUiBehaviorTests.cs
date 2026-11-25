@@ -21,6 +21,8 @@ public sealed class RecurrenceUiBehaviorTests
     [InlineData("hostCountTextIsTheOnlyFormatter")]
     [InlineData("headerShowsRecurrenceOnlyWhenPositive")]
     [InlineData("memberStatusCellShowsRecurrenceAndLastReply")]
+    [InlineData("memberStatusCellShowsPriorDismissal")]
+    [InlineData("headerShowsPriorDismissalOnlyWhenPositive")]
     [InlineData("memberHostCellMarksOccurrenceOnlyUnderAllFilter")]
     [InlineData("handlerRowShowsRecurrenceBadgeOnlyWhenPositive")]
     [InlineData("replyModalShowsRecurrenceHintAndThreeSuggestions")]

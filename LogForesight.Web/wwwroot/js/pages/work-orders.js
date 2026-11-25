@@ -717,6 +717,20 @@ function renderDismissed(data, canRestore) {
                 title: '日期',
                 className: 'lf-col-nowrap lf-col-w-md',
                 render: row => row.closedAt ? roleText('lf-text-data', formatDate(row.closedAt)) : document.createTextNode('—')
+            },
+            {
+                // 高嚴重度（或重大）且處理人回覆產生的，滿 30 天自動恢復派工；上線前判定的不會自動恢復；其餘永久
+                title: '恢復派工',
+                className: 'lf-col-nowrap lf-col-w-md',
+                render: row => {
+                    if (row.releaseInDays != null) return roleText('lf-text-data', `${row.releaseInDays} 天後恢復派工`);
+                    if (row.preLaunch) {
+                        const text = roleText('lf-text-data', '上線前判定');
+                        text.title = '結案早於「30 天自動恢復」上線，不會自動恢復；請逐筆或整個問題恢復';
+                        return text;
+                    }
+                    return roleText('lf-text-data', '永久');
+                }
             }
         ];
         if (canRestore) {

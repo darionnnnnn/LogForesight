@@ -16,6 +16,7 @@ public sealed class WorkOrdersDismissedBehaviorTests
     [NodeTheory]
     [InlineData("work-orders-dismissed.behavior.mjs", "emptyShowsExplanation")]
     [InlineData("work-orders-dismissed.behavior.mjs", "groupsRenderOneTablePerIssue")]
+    [InlineData("work-orders-dismissed.behavior.mjs", "releaseColumnShowsDaysPreLaunchOrPermanent")]
     [InlineData("work-orders-dismissed.behavior.mjs", "restoreButtonsExistOnlyWithCapability")]
     [InlineData("work-orders-dismissed.behavior.mjs", "paginationUsesServerPageSize")]
     [InlineData("work-orders-dismissed.behavior.mjs", "restoreRowConfirmsThenPostsAndReloads")]

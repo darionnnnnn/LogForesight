@@ -206,6 +206,9 @@ async function load() {
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
+        // 勾選的問題「不再打擾」滿 30 天都會自動解除（伺服器的 dismissalReleases）：處理面板的不處理類後果提示換句；前端不判斷嚴重度
+        dismissalReleases: keys => keys.size > 0
+            && [...keys].every(key => currentDetail.topIssues.find(i => i.issueKey === key)?.dismissalReleases === true),
         // 側軌摘要的唯一更新路徑：面板每次載完（含自行重載）都會回呼
         onRefreshed: updateSideRail,
         // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」

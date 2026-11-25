@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Time;
 using LogForesight.Web.Models.Dto;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -377,7 +378,8 @@ public static class ScenarioActions
         public override string Describe() => $"恢復自動派工：{host} 的 {source} EventId {eventId}";
         internal override Task<ActionHttpResult> ExecuteAsync(ScenarioActionContext ctx)
         {
-            var blocked = DispatchContext.DismissedCases(ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { host }))
+            var blocked = DispatchContext.DismissedCases(ctx.Site.Get<IIssueCaseStore>().GetMany(new[] { host }), ctx.Site.Clock.LocalToday(),
+                    DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(ctx.Site.Get<IKnownIssueRuleStore>())))
                 .FirstOrDefault(c => string.Equals(c.SourceName, source, StringComparison.OrdinalIgnoreCase) && c.EventId == eventId)
                 ?? throw new ScenarioUnresolvedException($"{host} 的 {source} EventId {eventId} 目前沒有被擋住");
             return ctx.Site.SendAsync(Actor, HttpMethod.Post, "api/work-orders/dismissed/restore",

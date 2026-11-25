@@ -35,6 +35,7 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseUnknownMailSettingUsesNeutralText")]
     [InlineData("adminCloseIgnoresRepeatTriggerWhileLoading")]
     [InlineData("actionsReplyCountsMembersOnDisabledHosts")]
+    [InlineData("replyFormNoFixNoteSaysReleaseOnlyWhenServerFlagsIt")]
     [InlineData("actionsNotifyTextFollowsMailSettingThreeStates")]
     [InlineData("clearMuteNotifyTextFollowsMailSettingThreeStates")]
     [InlineData("muteModalNotifyTextThreeStatesAndRepeatTrigger")]

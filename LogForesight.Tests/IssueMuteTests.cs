@@ -255,7 +255,7 @@ public sealed class IssueMuteTests : IDisposable
         };
 
         // 現在不在任何區間內，只驗紀錄日的判定；目前靜音中的規則見下一條測試
-        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now.AddDays(10));
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now.AddDays(10), TestRules.None);
 
         Assert.True(ctx.IsMuted("DISK", EventId, Today.AddDays(-3)));
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-2).AddHours(20)));
@@ -275,7 +275,7 @@ public sealed class IssueMuteTests : IDisposable
             ByUserId = new Dictionary<long, DispatchCandidate>(), PoolMemberCount = 0, ActivePoolMemberCount = 0
         };
 
-        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+        var ctx = DispatchContext.Build(pool, owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now, TestRules.None);
 
         Assert.True(ctx.IsMuted(Source, EventId, Today.AddDays(-5)));
         Assert.False(ctx.IsMuted(Source, 154, Today.AddDays(-5)));

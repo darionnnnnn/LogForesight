@@ -71,7 +71,7 @@ public class NightlyDispatchTests
             PoolMemberCount = _candidates.Count(c => c.InPool),
             ActivePoolMemberCount = _candidates.Count(c => c.InPool && !c.Paused)
         };
-        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, DateTime.Now);
+        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, DateTime.Now, TestRules.None);
         var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
         return (new NightlyDispatch(coordinator, ctx, _hosts), ctx);
     }
@@ -753,7 +753,7 @@ public class NightlyDispatchTests
             PoolMemberCount = _candidates.Count(c => c.InPool),
             ActivePoolMemberCount = _candidates.Count(c => c.InPool && !c.Paused)
         };
-        var ctx = DispatchContext.Build(pool, _owners, _orders, proxy, new FakeNoiseMarkStore(), _settings, DateTime.Now);
+        var ctx = DispatchContext.Build(pool, _owners, _orders, proxy, new FakeNoiseMarkStore(), _settings, DateTime.Now, TestRules.None);
         var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
         var dispatch = new NightlyDispatch(coordinator, ctx, _hosts);
 

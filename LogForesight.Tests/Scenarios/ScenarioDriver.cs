@@ -34,7 +34,7 @@ public static class ScenarioDriver
         CryptoHelper.ResetForTests();
         using var site = new ScenarioSite();
         var totalDays = scenario.TotalDays;
-        var anchor = DateTime.Today;
+        var anchor = scenario.AnchorDate ?? DateTime.Today;
         // 登入前先把假時鐘撥到最後一天的執行時刻（今天 09:00），讓每一天的「現在」都不晚於登入時刻。
         // 若以真實時刻登入，清晨執行時最後一天的 09:00 已超過閒置時限，該天的人為動作一律 401，結果隨執行時刻變動。
         site.Clock.SetLocal(anchor.AddHours(9));
@@ -280,7 +280,8 @@ public static class ScenarioDriver
         var workOrderStore = backend.WorkOrderStore();
         var issueCaseStore = backend.IssueCaseStore();
         var dispatchContext = DispatchContext.Build(
-            candidatePool, issueOwners, workOrderStore, issueCaseStore, site.Get<INoiseMarkStore>(), systemSettings, site.Clock.LocalNow());
+            candidatePool, issueOwners, workOrderStore, issueCaseStore, site.Get<INoiseMarkStore>(), systemSettings, site.Clock.LocalNow(),
+            DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(backend.Blob("rules")))));
         var coordinator = new WorkOrderCoordinator(
             workOrderStore, issueCaseStore, backend.IssueHandlingStore(), caseCoordinator, backend.RecordHandlingStore(), hostStore);
         var nightlyDispatch = new NightlyDispatch(coordinator, dispatchContext, hostStore);

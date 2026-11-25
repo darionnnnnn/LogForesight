@@ -444,6 +444,18 @@ public class WorkOrderRowDto
     /// <summary>進行中成員裡是「復發」的不重複主機數（判定見 <c>IssueRecurrence</c>）；不含停用主機</summary>
     public int RecurrenceHosts { get; set; }
 
+    /// <summary>
+    /// 進行中成員裡帶「先前判定不處理」（同主機同問題上一件是處理人判定不處理、已滿 30 天仍在發生才重新派工）的不重複主機數；不含停用主機。
+    /// 判定與成員的 <see cref="WorkOrderMemberDto.PriorDismissal"/> 同一個函式（<c>DismissalRelease.PriorDismissalOf</c>）。
+    /// </summary>
+    public int PriorDismissalHosts { get; set; }
+
+    /// <summary>
+    /// 這張單的問題之「不再打擾」滿 30 天會自動解除（目前規則嚴重度高或重大）：回覆彈窗選到不處理類時據此換後果提示，
+    /// 前端不自己判斷嚴重度。多問題單（沒有單一問題）為 false。
+    /// </summary>
+    public bool DismissalReleases { get; set; }
+
     /// <summary>觀察期內（觀察中且觀察至 &gt;= 今天）的進行中不重複主機數；不含停用主機</summary>
     public int ObservingHosts { get; set; }
 
@@ -601,8 +613,27 @@ public class WorkOrderMemberDto
     /// </summary>
     public int? ObservedRecurDays { get; set; }
 
+    /// <summary>
+    /// 先前判定不處理：同主機同問題的上一件未取消案件是處理人判定不處理（不處理、誤報、已知雜訊）、高嚴重度或重大，
+    /// 且距結案已滿 30 天仍在發生才重新派工的這件。沒有為 null。判定在 <c>DismissalRelease.PriorDismissalOf</c>（與派工閘門共用同一個解除條件）。
+    /// </summary>
+    public PriorDismissalDto? PriorDismissal { get; set; }
+
     /// <summary>同主機同問題的第幾次（從 1 起算＝建立在本件之前的未取消案件數＋1，含其他交辦單的案件）；「全部」篩選下同主機的新舊案件對照用</summary>
     public int Occurrence { get; set; } = 1;
+}
+
+/// <summary>成員的「先前判定不處理」資訊（畫面：先前判定不處理（MM-DD，某人），已滿 30 天仍在發生）</summary>
+public class PriorDismissalDto
+{
+    /// <summary>上一件的結案時間</summary>
+    public DateTime ClosedAt { get; set; }
+
+    /// <summary>判定人帳號；讀不到為 null</summary>
+    public string? Account { get; set; }
+
+    /// <summary>上一件的結案狀態：wont_fix／false_positive／known_noise</summary>
+    public string Status { get; set; } = string.Empty;
 }
 
 /// <summary>上一件案件最後的回覆摘要</summary>
@@ -764,6 +795,15 @@ public class DismissedRowDto
     public string? ClosedBy { get; set; }
 
     public DateTime? ClosedAt { get; set; }
+
+    /// <summary>
+    /// 距自動恢復派工還有幾天（高嚴重度或重大、處理人回覆產生、生效日期之後結案才有；第 30 天＝1）。
+    /// null＝永久（中低嚴重度、管理者明確勾選之後不再自動派工、上線前判定），畫面顯示「永久」。
+    /// </summary>
+    public int? ReleaseInDays { get; set; }
+
+    /// <summary>上線前判定：結案早於 30 天解除功能的生效日期，不自動解除，由管理者逐筆或整個問題恢復</summary>
+    public bool PreLaunch { get; set; }
 }
 
 /// <summary>恢復單一（主機, 問題）</summary>

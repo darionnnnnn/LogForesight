@@ -47,7 +47,8 @@ let state = null;
 /**
  * @param {() => Set<string>} getSelection 目前勾選的問題鍵集合（record-detail 持有）
  * @param {(result?: {status: string, issueKeys: string[]}) => Promise} onBatchSaved 批次套用成功後回呼（重載頁面＋後續治本提議）
- * @param {{canMaintainRules?: boolean}} options 能力旗標：誤報時是否顯示規則維護提示
+ * @param {{canMaintainRules?: boolean, dismissalReleases?: (keys: Set<string>) => boolean}} options 能力旗標：誤報時是否顯示規則維護提示；
+ *        dismissalReleases＝勾選的問題「不再打擾」滿 30 天是否都會自動解除（由伺服器的布林決定）
  */
 export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved, options = {}) {
     const panel = document.getElementById('handling-panel');
@@ -578,7 +579,10 @@ function handlingForm() {
     form.appendChild(ruleHint);
 
     // 不處理類的後果（與處理人回覆表單同一句）：選到才顯示，免得人以為只是換個標籤
-    const noFixNote = statusNote('warning', noFixConsequenceText({ multiIssues: batchMode && selection.size > 1 }));
+    const noFixNote = statusNote('warning', noFixConsequenceText({
+        multiIssues: batchMode && selection.size > 1,
+        releases: batchMode && state.options.dismissalReleases?.(selection) === true
+    }));
     noFixNote.classList.add('mb-3', 'd-none');
     noFixNote.dataset.role = 'no-fix-note';
     form.appendChild(noFixNote);

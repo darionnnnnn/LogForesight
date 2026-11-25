@@ -60,7 +60,7 @@ public class NightlyDefaultDueDateTests
             PoolMemberCount = _candidates.Count(c => c.InPool),
             ActivePoolMemberCount = _candidates.Count(c => c.InPool && !c.Paused)
         };
-        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, Occurred);
+        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), _settings, Occurred, TestRules.None);
         var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
         return (new NightlyDispatch(coordinator, ctx, _hosts), coordinator);
     }

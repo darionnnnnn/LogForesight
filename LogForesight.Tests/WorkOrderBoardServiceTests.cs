@@ -112,10 +112,46 @@ public class WorkOrderBoardServiceTests : IDisposable
     }
 
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences,
-        IIssueAggregateQuery? aggregates = null) => new(
+        IIssueAggregateQuery? aggregates = null, TimeProvider? clock = null) => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, aggregates ?? _aggregates,
         _candidates, _issueOwners, _noiseMarks, _settingsStore, _coordinator,
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences);
+        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, maxOccurrences, clock);
+
+    /// <summary>批次 S：立即派工放行「不再打擾已滿 30 天」的主機時，與夜間派工同一段累計寫一筆系統事件（同張單合併一筆，只算放行的那台）</summary>
+    [Fact]
+    public void 立即派工_期滿放行的主機_該單歷程合併寫一筆dismissal_released事件()
+    {
+        var (h, _) = PoolSeeing(AddHost("HOST-REL"), AddHost("HOST-NEW"));
+        var closed = new DateTime(2026, 12, 1, 10, 0, 0);
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "prior", HostName = "HOST-REL", IssueKey = KeyOf(Disk()), IssueLabel = "disk 153", Status = IssueHandlingStatuses.WontFix,
+            CreatedAt = closed.AddDays(-3), UpdatedAt = closed, ClosedAt = closed, FirstLinkedDate = closed.Date.AddDays(-3),
+            LastLinkedDate = closed.Date.AddDays(-3), BlocksRedispatch = null, SourceName = "disk", EventId = 153
+        });
+        var clock = new FixedLocalClock(closed.Date.AddDays(31));   // 距結案第 31 天：閘門放行
+
+        var result = Service(clock: clock).RunAutoDispatch(Yesterday, Yesterday);
+
+        Assert.Equal(2, result.AssignedMembers);
+        var order = Assert.Single(_orderStore.All);
+        var released = Assert.Single(_orderStore.ListEvents(order.WorkOrderId), e => e.Action == WorkOrderEventActions.DismissalReleased);
+        Assert.Equal(1, released.MemberDelta);
+        Assert.Contains("1 台先前判定不處理已滿 30 天，重新派工", released.Note);
+        Assert.Equal(h.UserId, order.HandlerId);
+
+        // 距結案第 30 天仍擋：沒有放行、不建案、不寫事件
+        var other = new WorkOrderBoardServiceTests();
+        try
+        {
+            var (_, _) = other.PoolSeeing(other.AddHost("HOST-REL"));
+            other._caseStore.Save(_caseStore.Get("prior")!);
+            var early = other.Service(clock: new FixedLocalClock(closed.Date.AddDays(30)));
+            Assert.Equal(0, early.RunAutoDispatch(Yesterday, Yesterday).AssignedMembers);
+            Assert.Empty(other._orderStore.All);
+        }
+        finally { other.Dispose(); }
+    }
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 

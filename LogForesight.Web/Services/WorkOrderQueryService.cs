@@ -454,7 +454,8 @@ public class WorkOrderQueryService
         var today = _clock.LocalToday();
 
         // 復發與第 N 次：本頁成員的前案一次取回（不設結案時間下限，「上次回覆」要看到上一件不論多久以前）；觀察期間再發生日數 K 同樣一次批次算
-        var recurrence = RecurrenceOf(items, boundedWindow: false);
+        var (recurrence, priorDismissals) = RecurrenceOf(items, boundedWindow: false);
+        var priorAccounts = _users.GetAll().ToDictionary(u => u.UserId, u => u.Account);
         var observedDays = ObservationRecurrence.Compute(items, today, _issueHandlings, _records, hosts);
 
         var memberDtos = items.Select(c => new WorkOrderMemberDto
@@ -483,6 +484,14 @@ public class WorkOrderQueryService
                 RecurrenceCount = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Count,
                 Occurrence = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Occurrence,
                 LastReply = LastReplyOf(recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).Previous),
+                PriorDismissal = priorDismissals.TryGetValue(c.CaseId, out var prior)
+                    ? new PriorDismissalDto
+                    {
+                        ClosedAt = prior.ClosedAt!.Value, Status = prior.Status,
+                        Account = prior.HandlerId is long hid && priorAccounts.TryGetValue(hid, out var account)
+                            ? account : prior.DaySyncIntent?.ActorAccount
+                    }
+                    : null,
                 ObservedRecurDays = observedDays.GetValueOrDefault(c.CaseId)
         }).ToList();
 
@@ -711,6 +720,9 @@ public class WorkOrderQueryService
         dto.ActiveHosts = hs.Active;
         dto.TotalHosts = hs.Total;
         dto.RecurrenceHosts = hs.Recurrence;
+        dto.PriorDismissalHosts = hs.PriorDismissal;
+        dto.DismissalReleases = o.SourceName != null && o.EventId != null
+            && DismissalRelease.AppliesTo(rules, o.SourceName, o.EventId.Value);
         dto.ObservingHosts = hs.Observing;
         dto.ObservationExpiredHosts = hs.Expired;
         dto.TodoHosts = hs.Todo;
@@ -748,7 +760,7 @@ public class WorkOrderQueryService
     /// <param name="EarliestDue">進行中且處理中成員的最早期限；沒有時退回單本身的期限（進行中的單）；都沒有為 null（排序時排最後）</param>
     /// <param name="Severity">單內進行中成員最近一次出現的最高嚴重度（已正規化）；推導不到為 null</param>
     private readonly record struct OrderFacts(
-        int Active, int Total, int Recurrence, int Observing, int Expired, int Todo,
+        int Active, int Total, int Recurrence, int PriorDismissal, int Observing, int Expired, int Todo,
         int NewToday, int ReturnedMembers, int OverdueMembers, int DueSoonMembers, DateTime? EarliestDue,
         IssueSeverity? Severity, bool Critical);
 
@@ -778,7 +790,7 @@ public class WorkOrderQueryService
                 .Where(c => c.WorkOrderId != null && !disabled.Contains(HostNameKey.Of(c.HostName)))
                 .ToList();
 
-        var recurrence = RecurrenceOf(activeLive, boundedWindow: true);
+        var (recurrence, priorDismissals) = RecurrenceOf(activeLive, boundedWindow: true);
         var today = _clock.LocalToday();
         var byOrder = activeLive.GroupBy(c => c.WorkOrderId!.Value).ToDictionary(g => g.Key, g => g.ToList());
         var returned = ReturnedMembersOf(orders, byOrder);
@@ -795,6 +807,7 @@ public class WorkOrderQueryService
                 Active: Hosts(_ => true),
                 Total: totals.GetValueOrDefault(o.WorkOrderId),
                 Recurrence: Hosts(c => recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence),
+                PriorDismissal: Hosts(c => priorDismissals.ContainsKey(c.CaseId)),
                 Observing: Hosts(c => IssueHandlingStatuses.IsObservationActive(c.Status, c.DueDate, today)),
                 Expired: Hosts(c => IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, today)),
                 Todo: Hosts(c => WorkOrderQueries.IsTodoMember(c, today)),
@@ -927,19 +940,26 @@ public class WorkOrderQueryService
     }
 
     /// <summary>
-    /// 對 <paramref name="targets"/> 的復發判定（<see cref="IssueRecurrence.Evaluate"/>）：同主機同問題的前案候選一次取回。
-    /// <paramref name="boundedWindow"/>＝true 時前案只取結案日不早於「最早一件的建立日往前一個回看窗」者——
+    /// 對 <paramref name="targets"/> 的復發判定（<see cref="IssueRecurrence.Evaluate"/>）與「先前判定不處理」推導
+    /// （<see cref="DismissalRelease.PriorDismissalsOf"/>，與派工閘門同一個解除條件）：同主機同問題的前案候選只取一次，兩個判定共用。
+    /// <paramref name="boundedWindow"/>＝true 時前案只取結案日不早於「最早一件的建立日往前一個回看窗」與「不再打擾生效日」兩者較早者——
     /// 復發與次數只看回看窗內，更早的前案不影響結果（清單統計用）；false＝全取（成員清單要「上次回覆」與第 N 次）。
     /// </summary>
-    private Dictionary<string, RecurrenceInfo> RecurrenceOf(IReadOnlyCollection<IssueCase> targets, bool boundedWindow)
+    private (Dictionary<string, RecurrenceInfo> Recurrence, Dictionary<string, IssueCase> PriorDismissals) RecurrenceOf(
+        IReadOnlyCollection<IssueCase> targets, bool boundedWindow)
     {
-        if (targets.Count == 0) return new Dictionary<string, RecurrenceInfo>(StringComparer.Ordinal);
+        if (targets.Count == 0)
+            return (new Dictionary<string, RecurrenceInfo>(StringComparer.Ordinal), new Dictionary<string, IssueCase>(StringComparer.Ordinal));
 
         var hostNames = targets.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var issues = targets.Where(c => c.SourceName != null && c.EventId != null)
             .Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
-        DateTime? since = boundedWindow ? targets.Min(c => c.CreatedAt).Date.AddDays(-IssueRecurrence.WindowDays) : null;
-        return IssueRecurrence.Evaluate(targets, _cases.GetClosedHistory(hostNames, issues, since));
+        DateTime? since = boundedWindow
+            ? new[] { targets.Min(c => c.CreatedAt).Date.AddDays(-IssueRecurrence.WindowDays), DismissalRelease.EffectiveFrom }.Min()
+            : null;
+        var history = _cases.GetClosedHistory(hostNames, issues, since);
+        var releaseRules = DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
+        return (IssueRecurrence.Evaluate(targets, history), DismissalRelease.PriorDismissalsOf(targets, history, releaseRules));
     }
 
     private static WorkOrderLastReplyDto? LastReplyOf(IssueCase? previous) =>

@@ -53,7 +53,7 @@ public sealed class HostDayPostProcessorOrderTests : IDisposable
     private NightlyDispatch Dispatch()
     {
         var pool = new DispatchCandidatePool { ByUserId = new Dictionary<long, DispatchCandidate>() };
-        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now);
+        var ctx = DispatchContext.Build(pool, _owners, _orders, _cases, new FakeNoiseMarkStore(), new SystemSettings(), DateTime.Now, TestRules.None);
         var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
         return new NightlyDispatch(coordinator, ctx, _hosts);
     }

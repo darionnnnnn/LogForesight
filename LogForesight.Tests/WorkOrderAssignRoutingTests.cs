@@ -42,7 +42,7 @@ public class WorkOrderAssignRoutingTests
 
         _dayService = new DayHandlingCommandService(
             _handlingStore, _issueHandlingStore, workOrders, _repository, _hosts, _users, visibility,
-            currentUser, audit, _settingsStore, progress, capabilities, displayNames);
+            currentUser, audit, _settingsStore, progress, capabilities, displayNames, new FakeRuleStore());
     }
 
     private static LogIssueSignature DiskIssue() => new()

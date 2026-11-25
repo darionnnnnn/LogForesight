@@ -114,7 +114,7 @@ public class HandlingRetentionTests : IDisposable
         store.Save(Case("ancient-open", "SRV-C", IssueHandlingStatuses.InProgress,
             closedAt: null, firstLinkedDaysAgo: 900));
 
-        var removed = store.Prune(retentionDays: 120);
+        var removed = store.Prune(retentionDays: 120, rules: TestRules.None);
 
         Assert.Equal(1, removed);
         Assert.Null(store.Get("old-closed"));
@@ -133,9 +133,9 @@ public class HandlingRetentionTests : IDisposable
                 closedAt: DateTime.Now.AddDays(-200), firstLinkedDaysAgo: 300));
         }
 
-        Assert.Equal(3, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
-        Assert.Equal(2, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
-        Assert.Equal(0, store.Prune(retentionDays: 120, maxRows: 3, batchSize: 2));
+        Assert.Equal(3, store.Prune(retentionDays: 120, rules: TestRules.None, maxRows: 3, batchSize: 2));
+        Assert.Equal(2, store.Prune(retentionDays: 120, rules: TestRules.None, maxRows: 3, batchSize: 2));
+        Assert.Equal(0, store.Prune(retentionDays: 120, rules: TestRules.None, maxRows: 3, batchSize: 2));
     }
 
     private IssueCase DismissCase(string caseId, string host, string status, int closedDaysAgo, int createdDaysAgo,
@@ -164,7 +164,7 @@ public class HandlingRetentionTests : IDisposable
         // 已處理類（一般結案）：照刪
         store.Save(DismissCase("resolved", "SRV-D", IssueHandlingStatuses.Resolved, closedDaysAgo: 200, createdDaysAgo: 300));
 
-        var removed = store.Prune(retentionDays: 120);
+        var removed = store.Prune(retentionDays: 120, rules: TestRules.None);
 
         Assert.Equal(4, removed);
         Assert.NotNull(store.Get("latest-wontfix"));
@@ -184,7 +184,7 @@ public class HandlingRetentionTests : IDisposable
         open.ClosedAt = null;
         store.Save(open);
 
-        Assert.Equal(0, store.Prune(retentionDays: 120));
+        Assert.Equal(0, store.Prune(retentionDays: 120, rules: TestRules.None));
         Assert.NotNull(store.Get("held"));
 
         // 較新案件結案（最近結案、不過期）後才算取代：舊的不處理案件照刪
@@ -193,7 +193,7 @@ public class HandlingRetentionTests : IDisposable
         closed.ClosedAt = DateTime.Now.AddDays(-5);
         store.Save(closed);
 
-        Assert.Equal(1, store.Prune(retentionDays: 120));
+        Assert.Equal(1, store.Prune(retentionDays: 120, rules: TestRules.None));
         Assert.Null(store.Get("held"));
         Assert.NotNull(store.Get("newer-open"));
     }
@@ -206,8 +206,8 @@ public class HandlingRetentionTests : IDisposable
         for (var i = 0; i < 3; i++)
             store.Save(DismissCase($"gone{i}", $"SRV-{i}", IssueHandlingStatuses.Resolved, closedDaysAgo: 200, createdDaysAgo: 300));
 
-        Assert.Equal(3, store.Prune(retentionDays: 120, maxRows: 10, batchSize: 2));
-        Assert.Equal(0, store.Prune(retentionDays: 120, maxRows: 10, batchSize: 2));
+        Assert.Equal(3, store.Prune(retentionDays: 120, rules: TestRules.None, maxRows: 10, batchSize: 2));
+        Assert.Equal(0, store.Prune(retentionDays: 120, rules: TestRules.None, maxRows: 10, batchSize: 2));
         Assert.NotNull(store.Get("keep"));
     }
 
@@ -221,8 +221,8 @@ public class HandlingRetentionTests : IDisposable
 
         foreach (var sql in new[]
                  {
-                     EfIssueCaseStore.Expired(sqlServer, DateTime.Today).ToQueryString(),
-                     EfIssueCaseStore.Expired(sqlite, DateTime.Today).ToQueryString()
+                     EfIssueCaseStore.Expired(sqlServer, DateTime.Today, Array.Empty<string>()).ToQueryString(),
+                     EfIssueCaseStore.Expired(sqlite, DateTime.Today, Array.Empty<string>()).ToQueryString()
                  })
         {
             // 子查詢翻成 EXISTS（外層以 NOT 包住保留條件）

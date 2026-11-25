@@ -53,6 +53,9 @@ public class DayHandlingCommandService
 
     private readonly TimeProvider _clock;
 
+    /// <summary>目前規則（「不再打擾」30 天解除要看問題目前規則的嚴重度；必填，不退回靜態表）</summary>
+    private readonly IKnownIssueRuleStore _rules;
+
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -67,6 +70,7 @@ public class DayHandlingCommandService
         HandlingProgressCalculator progress,
         UserCapabilityResolver capabilities,
         IUserDisplayNameService displayNameService,
+        IKnownIssueRuleStore rules,
         MailNotificationService? mail = null,
         IIssueOwnerStore? issueOwners = null,
         INoiseMarkStore? noiseMarks = null,
@@ -74,6 +78,7 @@ public class DayHandlingCommandService
         IIssueExclusionSource? exclusions = null,
         TimeProvider? clock = null)
     {
+        _rules = rules;
         _clock = clock ?? TimeProvider.System;
         _noiseMarks = noiseMarks;
         _cases = cases;
@@ -366,7 +371,8 @@ public class DayHandlingCommandService
         var heldHandlerIds = new HashSet<long>();
         var skippedByReason = new Dictionary<string, int>(StringComparer.Ordinal);
         var dismissedKeys = _cases != null
-            ? DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName }))
+            ? DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName }), _clock.LocalToday(),
+                DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules)))
             : null;
         var exclusion = _exclusions?.Current();
 

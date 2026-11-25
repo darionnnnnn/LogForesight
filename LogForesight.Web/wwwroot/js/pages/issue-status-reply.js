@@ -37,9 +37,12 @@ const RECURRENCE_ESCALATE_NOTE = '重複發生，請評估調整規則或靜音'
  * 處理人回覆表單與風險日詳情的處理面板共用這一句，不各寫一份。
  * multiHosts＝一次涵蓋多台主機或多張單（「這些主機的這個問題」）；
  * multiIssues＝一次涵蓋同一台主機的多個問題（「這台主機的這些問題」）。
+ * releases＝這些問題的「不再打擾」滿 30 天會自動解除（高嚴重度或重大，由伺服器的 dismissalReleases 布林決定，前端不判斷嚴重度）：
+ * 改寫成「30 天內不再派工，之後仍在發生會重新派工」；多個問題只要有一個不適用（永久）就維持原句，不對永久的說成會重新派工。
  */
-export function noFixConsequenceText({ multiHosts = false, multiIssues = false } = {}) {
+export function noFixConsequenceText({ multiHosts = false, multiIssues = false, releases = false } = {}) {
     const subject = multiHosts ? '這些主機的這個問題' : (multiIssues ? '這台主機的這些問題' : '這台主機的這個問題');
+    if (releases) return `${subject}30 天內不再派工，之後仍在發生會重新派工。`;
     return `${subject}之後不會再派給任何人；需要恢復請找管理者。`;
 }
 
@@ -62,6 +65,8 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false }
  * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => void} [options.onNext]
  *        有值時在「送出」旁多一顆「送出並回覆下一張」：送出成功後關閉彈窗並以這次送出的內容呼叫它；
  *        送出失敗或必填沒過時停在原彈窗
+ * @param {boolean} [options.dismissalReleases] 這次涵蓋的問題「不再打擾」滿 30 天會自動解除（伺服器的 dismissalReleases；多張單要全部都是才傳 true）：
+ *        不處理類的後果說明改寫成「30 天內不再派工，之後仍在發生會重新派工」
  * @param {boolean} [options.multiTarget] 這次涵蓋多台主機或多張單：不處理類的後果說明改用複數說法
  * @param {string} [options.initialStatus] 結論按鈕的初始選取（「下一張」沿用上一張的結論）；不傳＝不預選，必須自己選
  * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
@@ -76,7 +81,7 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false }
  *        remaining 取剩下的進行中台數，submitRest 以 caseIds 為空（＝全部進行中，也就是剩下的）送出；
  *        第一次是非結案類（處理中、觀察中、上報）時不提示、直接關閉。需要 submit 回傳 API 回應
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence, dismissalReleases = false }) {
     let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const body = document.createElement('div');
     const form = document.createElement('form');
@@ -164,7 +169,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     statusGroup.setAttribute('aria-labelledby', 'wo-reply-status-label');
     let selectedStatus = initialStatus && STATUS_OPTIONS.some(option => option.value === initialStatus) ? initialStatus : null;
     // 選到不處理類時說明後果：這是處理人單方面的決定，之後不會再派給任何人（管理者代為結案才有「是否停派」可選）
-    const noFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: multiTarget }));
+    const noFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: multiTarget, releases: dismissalReleases }));
     noFixNote.classList.add('mb-3');
     noFixNote.classList.add('d-none');
     noFixNote.id = 'wo-reply-no-fix-note';
@@ -653,6 +658,7 @@ export async function openIssueStatusReplyModal(group, onApplied) {
         draftKey: workOrdersDraftKey(workOrderIds),
         aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
         recurrence: { hosts: orders.reduce((sum, order) => sum + (order.recurrenceHosts ?? 0), 0) },
+        dismissalReleases: orders.every(order => order.dismissalReleases),
         // 依問題視角只有 Source＋EventId、沒有完整簽章（同一事件可能分屬多個簽章），不顯示沿用
         reuseIssueKey: null,
         submit: async payload => {

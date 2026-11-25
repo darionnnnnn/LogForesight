@@ -170,6 +170,9 @@ public static class WorkOrderEventActions
     public const string Replied = "replied";
     public const string DueDateChanged = "due_date_changed";
 
+    /// <summary>系統事件：本趟有先前判定不處理、已滿 30 天（<see cref="DismissalRelease.Days"/>）而放行重新派工的主機（成員數記在 MemberDelta）</summary>
+    public const string DismissalReleased = "dismissal_released";
+
     /// <summary>管理者把「無法處理」的成員退回給處理人（escalated → in_progress）</summary>
     public const string Returned = "returned";
 }

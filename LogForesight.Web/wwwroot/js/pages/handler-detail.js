@@ -455,7 +455,7 @@ function expandOrderRow(workOrderId) {
 
 function selectOrder(row) {
     selectedOrderIds.add(row.workOrderId);
-    selectedOrderMeta.set(row.workOrderId, { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0 });
+    selectedOrderMeta.set(row.workOrderId, { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0, dismissalReleases: !!row.dismissalReleases });
 }
 
 function unselectOrder(id) {
@@ -466,7 +466,7 @@ function unselectOrder(id) {
 /** 勾選中的單的台數與問題名稱：本頁的用最新列，不在本頁的用勾選當下記的那份 */
 function selectedInfo(id) {
     const row = orderRowsById.get(id);
-    return row ? { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0 } : selectedOrderMeta.get(id);
+    return row ? { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0, dismissalReleases: !!row.dismissalReleases } : selectedOrderMeta.get(id);
 }
 
 function renderOrders(data) {
@@ -714,6 +714,7 @@ replyOrdersBtn.addEventListener('click', () => {
     openWorkOrderReplyModal({
         multiTarget: workOrderIds.length > 1 || hosts > 1,
         recurrence: { hosts: infos.reduce((sum, info) => sum + (info.recurrence ?? 0), 0) },
+        dismissalReleases: infos.length > 0 && infos.every(info => info.dismissalReleases),
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
@@ -802,6 +803,7 @@ function openWholeOrderReply(row, count, carry) {
     openWorkOrderReplyModal({
         multiTarget: true,
         recurrence: { hosts: row.recurrenceHosts ?? 0 },
+        dismissalReleases: !!row.dismissalReleases,
         title: `回覆交辦單 #${row.workOrderId}`,
         targetText: `全部進行中主機（${count} 台）`,
         draftKey: `order:${row.workOrderId}:all`,
@@ -830,6 +832,7 @@ function openSingleReply(row, member, carry) {
     let closedNow = false;
     openWorkOrderReplyModal({
         recurrence: { hosts: member.isRecurrence ? 1 : 0 },
+        dismissalReleases: !!row.dismissalReleases,
         title: `回覆交辦單 #${row.workOrderId}`,
         targetText: `主機 ${member.hostName}${member.hostDisabled ? '（主機已停用）' : ''}`,
         draftKey: `order:${row.workOrderId}:cases:${member.caseId}`,
@@ -1176,6 +1179,7 @@ function buildMemberPanel(row, cell) {
         openWorkOrderReplyModal({
             title: `回覆交辦單 #${row.workOrderId}`,
             recurrence: { hosts: [...selectedCases.values()].filter(item => item?.isRecurrence).length },
+            dismissalReleases: !!row.dismissalReleases,
             multiTarget: caseIds.length > 1,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
             draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,

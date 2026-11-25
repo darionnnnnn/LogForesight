@@ -281,6 +281,7 @@ public class WorkOrderBoardService
         var hostsByHandler = new Dictionary<long, int>();
         var failedGroups = new List<AutoDispatchFailedGroupDto>();
         var createdOrdersByHandler = new Dictionary<long, List<(long WorkOrderId, string IssueLabel, List<string> HostNames)>>();
+        var releasedTally = new DismissalReleaseTally();
         foreach (var group in groups)
         {
             var first = group.First();
@@ -330,6 +331,12 @@ public class WorkOrderBoardService
             if (outcome.CreatedOrder) created++;
             else merged++;
             assignedMembers += outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned;
+            // 因「不再打擾已滿 30 天」放行而寫入的成員：與夜間派工共用同一份累計，趟末各單合併一筆系統事件
+            var skippedKeys = outcome.SkippedConflicts
+                .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
+                .ToHashSet(HostIssueSignatureKeyComparer.Instance);
+            releasedTally.Add(outcome.WorkOrderId,
+                group.Count(g => g.Released && !skippedKeys.Contains((HostNameKey.Of(g.Host.HostName), g.IssueKey))));
 
             var skipped = outcome.SkippedConflicts
                 .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
@@ -356,6 +363,8 @@ public class WorkOrderBoardService
                 list.Add((outcome.WorkOrderId, label, distinctGroupHosts));
             }
         }
+
+        releasedTally.Flush(_coordinator, _clock.LocalNow());
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
 
@@ -469,6 +478,7 @@ public class WorkOrderBoardService
         settings.AutoDispatchEnabled = true;
         var now = _clock.LocalNow();
         var ctx = DispatchContext.Build(_candidates.Build(), _issueOwners, _orders, _cases, _noiseMarks, settings, now,
+            DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules)),
             WorkOrderQueries.DisabledHostKeys(_hosts.GetAll()));
         ctx.PreloadDismissed(candidates.Select(x => x.Host.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
 
@@ -524,9 +534,11 @@ public class WorkOrderBoardService
                     CreatedAt = now
                 });
             }
+            // 本來被不再打擾擋住、因期滿而放行：必須在 Commit 之前判（案件快取尚未被本趟新單影響）
+            var released = decision.Kind != DispatchDecisionKind.Skip && ctx.IsReleased(host.HostName, occurrence.IssueKey);
             ctx.Commit(decision, issue.Source, issue.EventId);
 
-            gaps.Add(new GapDecision(host, issue, occurrence.IssueKey, occurrence.LastSeen, decision));
+            gaps.Add(new GapDecision(host, issue, occurrence.IssueKey, occurrence.LastSeen, decision, released));
         }
 
         return new Trial(scope, TooLarge: false, gaps, candidates.Count);
@@ -587,7 +599,7 @@ public class WorkOrderBoardService
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
         NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));
 
-    private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision);
+    private sealed record GapDecision(WebHost Host, LogIssueSignature Issue, string IssueKey, DateTime LastSeen, DispatchDecision Decision, bool Released = false);
 
     /// <summary><paramref name="PendingAtLeast"/>：尚未派出的出現點數；以下界判定超限時是下界（實際至少這麼多）</summary>
     private sealed record Trial(IssueScope Scope, bool TooLarge, List<GapDecision> Gaps, long PendingAtLeast);

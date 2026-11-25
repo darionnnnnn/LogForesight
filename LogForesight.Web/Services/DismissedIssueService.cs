@@ -9,6 +9,8 @@ namespace LogForesight.Web.Services;
 ///
 /// **判定只有一份**：清單與恢復都走 <see cref="DispatchContext.DismissedCases"/>，與夜間派工、日層級指派用的
 /// <see cref="DispatchContext.DismissedKeys"/> 是同一個函式——這裡不寫任何狀態或欄位條件。
+/// 高嚴重度（或重大）且處理人回覆產生的，結案滿 30 天後閘門自動解除（<see cref="DismissalRelease"/>），清單每筆標示剩餘天數；
+/// 其餘（中低嚴重度、管理者明確勾選、上線前判定）維持永久。
 /// 恢復＝把那件最新案件的 <see cref="IssueCase.BlocksRedispatch"/> 寫成 false，不建案、不改狀態；
 /// 之後處理人再回不處理會是新案件（欄位空值），閘門重新生效。
 /// 「誰結的、哪一天」不另存欄位：從處理歷程（<see cref="RecordHandlingLog"/>）讀，歷程尚未同步時退回案件上待寫入的意圖。
@@ -30,6 +32,7 @@ public class DismissedIssueService
     private readonly IVisibilityService _visibility;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _displayNames;
+    private readonly TimeProvider _clock;
 
     public DismissedIssueService(
         IIssueCaseStore cases,
@@ -39,8 +42,10 @@ public class DismissedIssueService
         IKnownIssueRuleStore rules,
         IVisibilityService visibility,
         IAuditService audit,
-        IUserDisplayNameService displayNames)
+        IUserDisplayNameService displayNames,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _cases = cases;
         _handling = handling;
         _hosts = hosts;
@@ -77,6 +82,8 @@ public class DismissedIssueService
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var releaseRules = DismissalRelease.LookupFrom(rules);
+        var today = _clock.LocalToday();
         dto.Groups = pageGroups.Select(g => new DismissedGroupDto
         {
             Source = g.Items[0].Source,
@@ -90,7 +97,10 @@ public class DismissedIssueService
                 IssueKey = b.Case.IssueKey,
                 Status = b.Case.Status,
                 ClosedBy = ClosedByOf(b.Case, users),
-                ClosedAt = b.Case.ClosedAt
+                ClosedAt = b.Case.ClosedAt,
+                // 只有會解除的才有剩餘天數；上線前判定的高嚴重度、中低嚴重度、管理者明確勾選的都是永久
+                ReleaseInDays = DismissalRelease.RemainingDays(b.Case, today, releaseRules),
+                PreLaunch = DismissalRelease.IsPreLaunch(b.Case, releaseRules)
             }).ToList()
         }).ToList();
         return dto;
@@ -103,7 +113,7 @@ public class DismissedIssueService
             || !VisibleHostNames().Contains(HostNameKey.Of(hostName)))
             throw DomainException.NotFound(NotBlockedMessage);
 
-        var target = DispatchContext.DismissedCases(_cases.GetMany(new[] { hostName }))
+        var target = DispatchContext.DismissedCases(_cases.GetMany(new[] { hostName }), _clock.LocalToday(), ReleaseRules())
             .FirstOrDefault(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, issueKey));
         if (target == null) throw DomainException.NotFound(NotBlockedMessage);
 
@@ -155,9 +165,11 @@ public class DismissedIssueService
 
         var hostNames = _hosts.GetAll().Where(h => visible.Contains(HostNameKey.Of(h.HostName))).Select(h => h.HostName).ToList();
         var result = new List<BlockedCase>();
+        var today = _clock.LocalToday();
+        var releaseRules = ReleaseRules();
         foreach (var byHost in _cases.GetMany(hostNames).GroupBy(c => HostNameKey.Of(c.HostName)))
         {
-            foreach (var c in DispatchContext.DismissedCases(byHost))
+            foreach (var c in DispatchContext.DismissedCases(byHost, today, releaseRules))
             {
                 var (source, eventId) = SourceAndEventOf(c);
                 result.Add(new BlockedCase(c, source, WorkOrderIssueKey.SourceKeyOf(source), eventId));
@@ -165,6 +177,8 @@ public class DismissedIssueService
         }
         return result;
     }
+
+    private IssueRuleLookup ReleaseRules() => DismissalRelease.LookupFrom(KnownIssueCatalog.ResolveRules(_rules));
 
     private HashSet<string> VisibleHostNames()
     {

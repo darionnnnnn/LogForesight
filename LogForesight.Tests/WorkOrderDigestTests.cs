@@ -429,6 +429,40 @@ public class WorkOrderDigestTests : IDisposable
         string? plain = null, string? note = null, DateTime? due = null) =>
         new(id, label, plain, hostCount, hosts ?? new[] { "host-a", "host-b" }, note, due);
 
+    /// <summary>批次 S：新交辦、新增成員段註明帶「先前判定不處理」標記的台數；0 台不出現；其他段不出現</summary>
+    [Fact]
+    public void 摘要信_新交辦與新增成員段註明先前判定不處理的台數_零台不出現()
+    {
+        var marked = new[] { new DateTime(2027, 1, 15, 2, 0, 0), new DateTime(2027, 1, 15, 2, 1, 0) };
+        var rows = new List<(WorkOrderOutboxItem, WorkOrderDigestOrder?)>
+        {
+            (Item(WorkOrderOutboxKinds.Created, 1), Order(1) with { }),
+            (Item(WorkOrderOutboxKinds.Appended, 2, delta: 2), Order(2))
+        };
+        rows[0] = (rows[0].Item1, new WorkOrderDigestOrder(1, "disk 153", null, 2, new[] { "host-a", "host-b" }, null, null) { PriorDismissalCreatedAts = marked });
+        rows[1] = (rows[1].Item1, new WorkOrderDigestOrder(2, "disk 153", null, 2, new[] { "host-a", "host-b" }, null, null) { PriorDismissalCreatedAts = marked });
+
+        var (_, body) = WorkOrderDigestBuilder.Build(rows);
+
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(body, "其中 2 台先前判定不處理、已滿 30 天仍在發生").Count);
+
+        var none = WorkOrderDigestBuilder.Build(new List<(WorkOrderOutboxItem, WorkOrderDigestOrder?)>
+        {
+            (Item(WorkOrderOutboxKinds.Created, 3), Order(3)),
+            (Item(WorkOrderOutboxKinds.Appended, 4, delta: 1), Order(4))
+        }).Body;
+        Assert.DoesNotContain("先前判定不處理", none);
+
+        // 新增成員段不超過新增台數；取消段不出現
+        var capped = WorkOrderDigestBuilder.Build(new List<(WorkOrderOutboxItem, WorkOrderDigestOrder?)>
+        {
+            (Item(WorkOrderOutboxKinds.Appended, 5, delta: 1), new WorkOrderDigestOrder(5, "disk 153", null, 2, new[] { "host-a" }, null, null) { PriorDismissalCreatedAts = marked }),
+            (Item(WorkOrderOutboxKinds.Cancelled, 6), new WorkOrderDigestOrder(6, "disk 153", null, 2, new[] { "host-a" }, null, null) { PriorDismissalCreatedAts = marked })
+        }).Body;
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(capped, "其中 1 台先前判定不處理").Count);
+        Assert.DoesNotContain("其中 2 台先前判定不處理", capped);
+    }
+
     [Fact]
     public void J_Build_主機二十五台只列二十個名稱並註明總數()
     {
