@@ -101,6 +101,17 @@ public sealed class WorkOrderCandidateService
             .ToList();
     }
 
+    /// <summary>
+    /// 某位使用者目前看得到的主機集合（批次改派預覽算「以授與補上幾台」用）：與 <see cref="Get"/> 同一個可見範圍判定
+    /// （<see cref="HostVisibilityResolver"/>），不另寫第二份；回傳的集合以 <c>HostId</c> 比對。
+    /// </summary>
+    public IReadOnlySet<long> VisibleHostIdsOf(WebUser user)
+    {
+        var retentionDays = _settings.Get().RetentionDays;
+        return HostVisibilityResolver.GetVisibleHostIds(_hosts.CapturePrtgSnapshot(), _users, _userGroups, _access, user.UserId,
+            _issueOwners, _issueAggregates, retentionDays);
+    }
+
     /// <summary>近 <see cref="DispatchContext.ContinuityDays"/> 天內結案（resolved）過同一個問題的處理人；資料來源與派工延續性同一支。</summary>
     private HashSet<long> RecentHandlersOfSameIssue(WorkOrderCandidatesRequest? req)
     {

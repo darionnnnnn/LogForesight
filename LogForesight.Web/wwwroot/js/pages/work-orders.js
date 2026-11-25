@@ -24,7 +24,9 @@ import {
     withBusy,
     guardLoad,
     loadPageSize,
-    savePageSize
+    savePageSize,
+    showTab,
+    createPageSelection
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge, hostCountText, workOrderSeverityCell, workOrderFlagBadges } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
@@ -32,6 +34,7 @@ import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elem
 import { statusBadgeMeta } from '../core/handling-statuses.js';
 import { compareText } from '../core/collation.js';
 import { createSeqGuard } from '../core/async-guards.js';
+import { createBulkReassignPanel, BULK_REASSIGN_MAX } from './work-orders-bulk.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -43,6 +46,8 @@ const remindersContainer = document.getElementById('wo-reminders');
 const activeStatusSelect = document.getElementById('wo-status');
 const activeSortSelect = document.getElementById('wo-sort');
 const activeGroupSelect = document.getElementById('wo-group');
+// 處理人篩選：清單端點的 handlerId 參數；負載看板點人名、網址帶 handlerId 都會設定它
+const activeHandlerSelect = document.getElementById('wo-handler');
 const activeResumedCheckbox = document.getElementById('wo-resumed');
 // 處理人離職或停用後，要逐單改派或代為結案——這個篩選把那些單一次找出來
 const activeHandlerInactiveCheckbox = document.getElementById('wo-handler-inactive');
@@ -51,6 +56,10 @@ const activeUnreadOnlyCheckbox = createUnreadOnlyCheckbox();
 setupMoreFilters();
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
+// 批次改派：勾選列（選取數與動作）、就地面板（不開 modal）、提示
+const bulkBarActions = document.getElementById('wo-bulk-actions');
+const bulkPanelContainer = document.getElementById('wo-bulk-panel');
+const bulkHintEl = document.getElementById('wo-bulk-hint');
 
 // 負載看板頁籤
 const loadContainer = document.getElementById('wo-load');
@@ -183,8 +192,9 @@ function updateFilterLabel(handlerName) {
     if (!filterLabelSpan) return;
     const parts = [filterSource, filterEventId].filter(x => x !== null && x !== '');
     let text = `篩選：${parts.join(' ')}`;
-    if (filterHandlerId) {
-        const handlerText = handlerName ? `處理人 ${handlerName}` : `處理人 #${filterHandlerId}`;
+    const handlerValue = currentHandlerValue();
+    if (handlerValue) {
+        const handlerText = handlerName ? `處理人 ${handlerName}` : `處理人 #${handlerValue}`;
         text += parts.length > 0 ? `｜${handlerText}` : handlerText;
     }
     filterLabelSpan.textContent = text;
@@ -215,6 +225,114 @@ const loadedTabs = new Set();
 let activePage = 1;
 let gapsPage = 1;
 let dismissedPage = 1;
+/** 具 Assign 才有勾選與批次改派（ViewAll 只能看） */
+let canAssign = false;
+/** 目前這一頁的進行中清單（勾選全選只看本頁可勾選的列） */
+let activeItems = [];
+/** 從負載看板或停用提示進來的批次改派：清單載入後若全部放得進一頁，就先全部勾好，使用者只要按「改派給…」 */
+let pendingAutoSelect = false;
+
+/** 進行中清單的勾選（workOrderId → 列）：跨頁保留，改篩選或套用後清除 */
+const selection = createPageSelection({
+    keyOf: item => item.workOrderId,
+    isSelectable: item => !item.closedAt,
+    getPageItems: () => activeItems,
+    labels: { row: '選取這張交辦單', all: '全選本頁進行中的交辦單' },
+    bar: { barId: 'wo-bulk-bar', countId: 'wo-bulk-count', unit: '張' },
+    onSelectAll: () => renderActiveRows(),
+    onChange: () => updateBulkBar()
+});
+
+const bulkPanel = createBulkReassignPanel({
+    container: bulkPanelContainer,
+    getSelectedIds: () => [...selection.selected.keys()],
+    onApplied: () => {
+        selection.clear();
+        loadedTabs.delete('load');
+        guardLoad(activeListContainer, loadActive);
+    }
+});
+
+/** 勾選列上的動作：「改派給…」（超過上限停用並說明）與「清除選取」 */
+function updateBulkBar() {
+    if (!bulkBarActions) return;
+    const count = selection.selected.size;
+    bulkBarActions.replaceChildren();
+    if (count === 0) return;
+    const over = count > BULK_REASSIGN_MAX;
+    bulkBarActions.append(
+        button('改派給…', { variant: 'primary', disabled: over, onClick: () => bulkPanel.open() }),
+        button('清除選取', { onClick: () => selection.clear() })
+    );
+    if (over) bulkBarActions.appendChild(roleText('lf-text-meta', `一次最多改派 ${BULK_REASSIGN_MAX} 張，請取消部分勾選`));
+}
+
+/** 目前處理人篩選的值（空字串＝不限） */
+function currentHandlerValue() {
+    return activeHandlerSelect ? activeHandlerSelect.value : '';
+}
+
+/** 設定處理人篩選；下拉裡沒有這個人（例如網址帶了已不在負載看板的人）就補一個選項，不靜默退回「全部」 */
+function setHandlerFilterValue(userId, name) {
+    if (!activeHandlerSelect) return;
+    const value = String(userId ?? '');
+    if (value && !Array.from(activeHandlerSelect.options ?? []).some(o => o.value === value)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = name || `處理人 #${value}`;
+        activeHandlerSelect.appendChild(opt);
+    }
+    activeHandlerSelect.value = value;
+}
+
+/**
+ * 以某位處理人篩選進行中清單（負載看板點人名、「改派他名下的單…」共用同一個入口）：
+ * 回到第 1 頁、清掉勾選、切到「進行中」頁籤並重查。autoSelect＝清單載入後先全部勾好（放得進一頁時）。
+ */
+function applyHandlerFilter(userId, { name, autoSelect = false } = {}) {
+    setHandlerFilterValue(userId, name);
+    if (activeStatusSelect) activeStatusSelect.value = 'active';
+    activePage = 1;
+    selection.clear();
+    bulkPanel.close();
+    if (bulkHintEl) bulkHintEl.textContent = '';
+    pendingAutoSelect = autoSelect;
+    loadedTabs.add('active'); // 避免頁籤切換回呼再重查一次；下面明確載入
+    showTab('wo-tabs', 'active');
+    guardLoad(activeListContainer, loadActive);
+}
+
+/** 清單載入後的「預先全選」：只在全部放得進本頁、且不超過批次上限時做，否則交給使用者用表頭全選或調整每頁筆數 */
+function consumeAutoSelect(data) {
+    if (!pendingAutoSelect) return;
+    pendingAutoSelect = false;
+    if (!canAssign) return;
+    const selectable = (data.items || []).filter(item => !item.closedAt);
+    if (data.total > data.items.length || selectable.length === 0 || selectable.length > BULK_REASSIGN_MAX) {
+        if (bulkHintEl) bulkHintEl.textContent = '名下的單超過一頁：請用表頭的勾選框全選本頁，或調高每頁筆數後再勾選，然後按「改派給…」。';
+        return;
+    }
+    for (const item of selectable) selection.selected.set(item.workOrderId, item);
+    if (bulkHintEl) bulkHintEl.textContent = '已勾選這位處理人名下進行中的單；按「改派給…」選新處理人並預覽。';
+}
+
+/** 負載看板與處理人下拉共用的選項來源（靜默失敗：下拉只剩「全部」） */
+async function loadHandlerOptions() {
+    if (!activeHandlerSelect) return;
+    let data = null;
+    try {
+        data = await api.get('/api/work-orders/load-board', { silent: true });
+    } catch {
+        return;
+    }
+    const rows = (data?.rows || []).slice().sort((a, b) => compareText(a.name || '', b.name || ''));
+    for (const row of rows) {
+        const opt = document.createElement('option');
+        opt.value = String(row.userId);
+        opt.textContent = row.active === false ? `${row.name}（已停用）` : row.name;
+        activeHandlerSelect.appendChild(opt);
+    }
+}
 
 // ── 進行中頁籤 ─────────────────────────────────────────────────────────────
 
@@ -243,13 +361,14 @@ async function loadActive() {
     if (hasUrlFilter) {
         if (filterSource) params.set('source', filterSource);
         if (filterEventId) params.set('eventId', filterEventId);
-        if (filterHandlerId) params.set('handlerId', filterHandlerId);
     }
+    const handlerValue = currentHandlerValue();
+    if (handlerValue) params.set('handlerId', handlerValue);
     if (activeGroupSelect.value) params.set('groupId', activeGroupSelect.value);
 
     const data = await api.get(`/api/work-orders?${params}`);
     if (!activeGuard.isCurrent(seq)) return;
-    if (filterHandlerId) {
+    if (hasUrlFilter && currentHandlerValue()) {
         updateFilterLabel(data?.items?.length > 0 ? data.items[0].handlerName : null);
     }
     renderActiveTable(data);
@@ -264,7 +383,29 @@ function continuationStoppedBadge(r) {
 }
 
 function renderActiveTable(data) {
-    const columns = [
+    activeItems = data.items || [];
+    consumeAutoSelect(data);
+    selection.renderBar();
+    renderActiveRows(data);
+    loadedTabs.add('active');
+}
+
+/** 目前頁的清單資料（全選重繪時沿用，不重打 API） */
+let lastActiveData = null;
+
+function renderActiveRows(data = lastActiveData) {
+    if (!data) return;
+    lastActiveData = data;
+    const columns = [];
+    if (canAssign) {
+        columns.push({
+            title: '',
+            className: 'text-center text-nowrap',
+            renderHeader: () => selection.selectAllHeaderCheckbox(),
+            render: r => selection.rowCheckboxCell(r)
+        });
+    }
+    columns.push(
         {
             title: '單號',
             className: 'text-nowrap',
@@ -405,7 +546,7 @@ function renderActiveTable(data) {
                 return wrap;
             }
         }
-    ];
+    );
 
     renderTable(activeListContainer, {
         columns,
@@ -439,6 +580,36 @@ async function loadLoadBoard() {
     loadedTabs.add('load');
 }
 
+/** 負載看板的處理人名稱：點下去帶入進行中清單的處理人篩選（原本連到處理人工作頁的連結移到操作欄） */
+function handlerFilterLink(row) {
+    const link = document.createElement('a');
+    link.href = appUrl('/work-orders') + '?handlerId=' + row.userId;
+    link.textContent = row.name || '';
+    link.title = '看他名下進行中的交辦單';
+    link.addEventListener('click', event => {
+        event.preventDefault();
+        applyHandlerFilter(row.userId, { name: row.name });
+    });
+    return link;
+}
+
+/** 負載看板每列的操作：「改派他名下的單…」（具 Assign 且他名下有進行中單）與處理人工作頁連結 */
+function loadBoardActions(row) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-2';
+    if (canAssign && row.activeWorkOrders > 0) {
+        wrap.appendChild(button('改派他名下的單…', {
+            title: `篩選 ${row.name} 名下進行中的單並勾選，再選新處理人`,
+            onClick: () => applyHandlerFilter(row.userId, { name: row.name, autoSelect: true })
+        }));
+    }
+    const page = document.createElement('a');
+    page.href = appUrl('/handlers/' + row.userId);
+    page.textContent = '工作頁';
+    wrap.appendChild(page);
+    return wrap;
+}
+
 function renderLoadBoardTable(data) {
     const rows = (data.rows || []).slice().sort((a, b) => b.activeMembers - a.activeMembers);
 
@@ -449,10 +620,7 @@ function renderLoadBoardTable(data) {
             render: r => {
                 const wrap = document.createElement('div');
                 wrap.className = 'd-flex align-items-center gap-1 flex-wrap';
-                const link = document.createElement('a');
-                link.href = appUrl('/handlers/' + r.userId);
-                link.textContent = r.name || '';
-                wrap.appendChild(link);
+                wrap.appendChild(handlerFilterLink(r));
                 if (!r.active) {
                     wrap.appendChild(statusBadge('已停用', 'secondary'));
                 }
@@ -493,6 +661,11 @@ function renderLoadBoardTable(data) {
         {
             title: '最舊進行中',
             render: r => (r.oldestActiveCreatedAt ? roleText('lf-text-data', formatDate(r.oldestActiveCreatedAt)) : '—')
+        },
+        {
+            title: '操作',
+            className: 'text-nowrap',
+            render: r => loadBoardActions(r)
         }
     ];
 
@@ -1085,11 +1258,15 @@ function handleTabChange(tabName) {
 // 篩選變更時回到第 1 頁重查
 const onActiveFilterChange = () => {
     activePage = 1;
+    selection.clear();   // 篩選變了，先前勾的單不一定還在這份清單裡
+    bulkPanel.close();
+    if (bulkHintEl) bulkHintEl.textContent = '';
     guardLoad(activeListContainer, loadActive);
 };
 activeStatusSelect.addEventListener('change', onActiveFilterChange);
 activeSortSelect.addEventListener('change', onActiveFilterChange);
 activeGroupSelect.addEventListener('change', onActiveFilterChange);
+activeHandlerSelect?.addEventListener('change', onActiveFilterChange);
 activeResumedCheckbox.addEventListener('change', onActiveFilterChange);
 activeHandlerInactiveCheckbox.addEventListener('change', onActiveFilterChange);
 activeUnreadOnlyCheckbox.addEventListener('change', onActiveFilterChange);
@@ -1161,6 +1338,7 @@ gapsAutoDispatchBtn.addEventListener('click', async () => {
 
 async function init() {
     currentUser = await getCurrentUser();
+    canAssign = hasCapability(currentUser, 'Assign');
 
     // 立即派工是業務動作（建單），能力是 Assign；Maintain 含不能看業務資料的救援帳號，不該看到這顆鈕
     if (hasCapability(currentUser, 'Assign')) gapsAutoDispatchBtn.classList.remove('d-none');
@@ -1181,6 +1359,10 @@ async function init() {
 
     // 群組選項先填好，網址帶 groupId 時第一次查詢就用預選值
     await loadHandlerGroups();
+    // 處理人下拉：先填好選項，網址帶 handlerId 時第一次查詢就用預選值；停用處理人提示帶 reassign=1 時預先勾好他名下的單
+    await loadHandlerOptions();
+    if (filterHandlerId) setHandlerFilterValue(filterHandlerId);
+    if (urlParams.get('reassign') === '1') pendingAutoSelect = true;
 
     bindTabs(tabsEl, { hash: true, onChange: handleTabChange });
     loadReminders();

@@ -383,7 +383,7 @@ public class IssueHandlingCommandService
 
     public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to)
     {
-        var plan = PlanBulkClose(source, eventId, from, to);
+        var plan = PlanBulkClose(source, eventId, from, to, BulkCloseOwnerScope());
         var rows = plan.Select(p => p.Row).ToList();
 
         return new IssueBulkClosePreviewDto
@@ -425,16 +425,24 @@ public class IssueHandlingCommandService
             throw DomainException.Validation("請填寫原因——統一標記是代全體下結論，理由要留在紀錄裡。");
 
         // 勾「之後自動套用」會設定機房結論（需 Maintain）：檢查提前到任何寫入之前，
-        // 否則逐日標記寫完才在 SetConclusion 被擋，留下半套結果
-        if (request.AutoApply) _issueOwnerAdmin.EnsureMaintain();
+        // 否則逐日標記寫完才在 SetConclusion 被擋，留下半套結果。
+        // 機房結論是全站的決定：只具 Handle 的主機負責人不能用（O1），仍需 Assign
+        if (request.AutoApply)
+        {
+            if (BulkCloseOwnerScope() != null)
+                throw DomainException.Forbidden("「之後新出現的主機日也自動套用」是全站的決定，只有具指派能力的管理者能使用；請取消勾選後再標記。");
+            _issueOwnerAdmin.EnsureMaintain();
+        }
 
-        var plan = PlanBulkClose(request.Source, request.EventId, request.From, request.To);
+        var plan = PlanBulkClose(request.Source, request.EventId, request.From, request.To, BulkCloseOwnerScope());
         var targets = plan.Where(p => p.Row.SkipReason == null && p.Days.Count > 0).ToList();
         var skipped = plan.Where(p => p.Row.SkipReason != null).Select(p => p.Row).ToList();
 
         if (targets.Count == 0)
             throw DomainException.Validation(skipped.Count > 0
-                ? "這個問題在期間內的主機都已有人處理或已有結論，沒有可統一標記的項目。"
+                ? (skipped.All(r => r.SkipReason == NotOwnedSkipReason)
+                    ? "這個問題在期間內沒有您負責的主機可統一標記。"
+                    : "這個問題在期間內的主機都已有人處理或已有結論，沒有可統一標記的項目。")
                 : "找不到任何符合條件、且您有權限的主機。");
 
         // 單次寫入的硬上限（體檢 M10／S7）：統一標記是同步 HTTP，寫入量一大必然超過
@@ -518,7 +526,7 @@ public class IssueHandlingCommandService
     /// 查詢走 <see cref="IRecordRepository.Query"/>，天生受可見範圍限制。
     /// </summary>
     private List<(WebHost Host, List<(DateTime Date, string IssueKey, string IssueLabel)> Days, IssueBulkCloseHostDto Row)>
-        PlanBulkClose(string source, int eventId, DateTime? from, DateTime? to)
+        PlanBulkClose(string source, int eventId, DateTime? from, DateTime? to, long? ownerOnlyUserId = null)
     {
         RecordQueryFilter Filter() => new() { Source = source, EventId = eventId, From = from, To = to };
         // 讀取階段上限：先以 SQL 計數（來源與事件 ID 皆已下推），超過就整批擋下請使用者縮小，
@@ -574,6 +582,14 @@ public class IssueHandlingCommandService
         {
             var row = new IssueBulkCloseHostDto { HostId = host.HostId, HostName = host.HostName };
 
+            // 主機負責人（具 Handle、不具 Assign）只能標自己負責的主機：由後端以主機負責人清單過濾，不信任前端
+            if (ownerOnlyUserId != null && !host.OwnerUserIds.Contains(ownerOnlyUserId.Value))
+            {
+                row.SkipReason = NotOwnedSkipReason;
+                plan.Add((host, new List<(DateTime, string, string)>(), row));
+                continue;
+            }
+
             if (ownersByHost.TryGetValue(host.HostName, out var owner))
             {
                 row.SkipReason = $"已在 {ResolveDisplayName(owner.HandlerId!.Value)} 的交辦單處理中";
@@ -616,6 +632,15 @@ public class IssueHandlingCommandService
 
         return plan;
     }
+
+    /// <summary>統一標記略過「非負責主機」的原因文字（預覽、結果與錯誤訊息判斷共用同一個）</summary>
+    public const string NotOwnedSkipReason = "不是你負責的主機";
+
+    /// <summary>
+    /// 統一標記的範圍限制（O1）：具 Assign 者不限（null）；只具 Handle 者限「自己是主機負責人」的主機，回傳他的使用者編號。
+    /// 具備能力的最低門檻（Handle）由 controller 標註把關；這裡只決定範圍，授權維度只寫這一處。
+    /// </summary>
+    private long? BulkCloseOwnerScope() => _currentUser.Has(Capability.Assign) ? null : _currentUser.UserId;
 
     private string ResolveDisplayName(long userId)
     {

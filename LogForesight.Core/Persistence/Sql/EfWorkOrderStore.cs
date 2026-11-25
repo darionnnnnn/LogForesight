@@ -51,6 +51,21 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return row == null ? null : ToModel(row);
     }
 
+    public List<WorkOrder> GetMany(IReadOnlyCollection<long> workOrderIds)
+    {
+        if (workOrderIds.Count == 0) return new List<WorkOrder>();
+        using var ctx = _contextFactory();
+        // 呼叫端上限 100 張；仍依 500 張一批，避免 IN 清單過長（SQL Server 參數上限）
+        var result = new List<WorkOrder>();
+        foreach (var chunk in workOrderIds.Distinct().Chunk(500))
+            result.AddRange(BuildManyQuery(ctx, chunk).ToList().Select(ToModel));
+        return result;
+    }
+
+    /// <summary>依單號取多張單（含已結案）；與 SQLite 共用同一個 IN 查詢，SQL Server 翻譯由測試以 ToQueryString 驗證。</summary>
+    internal static IQueryable<WorkOrderRow> BuildManyQuery(LfDbContext ctx, IReadOnlyCollection<long> ids) =>
+        ctx.WorkOrders.AsNoTracking().Where(w => ids.Contains(w.WorkOrderId));
+
     public WorkOrder? GetActiveFor(long handlerId, string source, int eventId)
     {
         var key = SourceKeyOf(source);
