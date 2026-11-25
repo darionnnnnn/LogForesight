@@ -1003,6 +1003,47 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.All(MembersOf(orderId), c => Assert.Equal(expected, c.BlocksRedispatch));
     }
 
+    [Fact]
+    public void 代為結案_第81輪T_帶案件清單只結案範圍內的成員_單繼續進行並寫稽核()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var scoped = members.Single(c => c.HostName == "HOST-A").CaseId;
+
+        var result = _service.AdminClose(orderId, new AdminCloseWorkOrderRequest
+        {
+            Status = IssueHandlingStatuses.WontFix, Reason = "只有這台不處理", BlockRedispatch = true, CaseIds = new List<string> { scoped }
+        });
+
+        Assert.Equal(1, result.ClosedCases);
+        var after = MembersOf(orderId).ToDictionary(c => c.HostName);
+        Assert.Equal(IssueHandlingStatuses.WontFix, after["HOST-A"].Status);
+        Assert.True(after["HOST-A"].BlocksRedispatch);
+        Assert.Equal(IssueHandlingStatuses.InProgress, after["HOST-B"].Status);
+        Assert.Null(_orderStore.Get(orderId)!.ClosedAt);
+        var audit = SingleAudit(AuditActions.WorkOrderAdminClose);
+        Assert.Contains("指定範圍", audit.Summary);
+    }
+
+    [Fact]
+    public void 代為結案_第81輪T_案件清單含已結案或不屬於這張單的案件_整筆拒絕且不寫稽核()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var a = members.Single(c => c.HostName == "HOST-A").CaseId;
+        var b = members.Single(c => c.HostName == "HOST-B").CaseId;
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "先結一台", CaseIds = new List<string> { a } });
+        var auditBefore = _audit.Entries.Count;
+
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.AdminClose(orderId,
+            new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "含已結案", CaseIds = new List<string> { b, a } }));
+        Assert.Throws<LogForesight.Core.Persistence.WorkOrderRuleException>(() => _service.AdminClose(orderId,
+            new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "不屬於本單", CaseIds = new List<string> { b, "no-such-case" } }));
+
+        Assert.Equal(IssueHandlingStatuses.InProgress, MembersOf(orderId).Single(c => c.HostName == "HOST-B").Status);
+        Assert.Equal(auditBefore, _audit.Entries.Count);
+    }
+
     // ── 郵件通知 ─────────────────────────────────────────────────────────────
 
     [Fact]

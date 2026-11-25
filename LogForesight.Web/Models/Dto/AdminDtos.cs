@@ -503,6 +503,12 @@ public class VisibleHostDto
 {
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>Sentinel 回報的顯示名稱（NetIQ 主機以 IP 登錄時用來認人）；沒有為 null</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>最近已知 IP（顯示線索）；沒有為 null</summary>
+    public string? IpAddress { get; set; }
     public string RoleDesc { get; set; } = string.Empty;
     public DateTime? LastReportAt { get; set; }
 }

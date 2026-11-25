@@ -493,7 +493,8 @@ public class RecordListQueryService
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
                 periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen,
                 explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null,
-                IssueNames.ForRules(rules, a.Source, a.EventId)))
+                IssueNames.ForRules(rules, a.Source, a.EventId),
+                KnownIssueCatalog.FindRuleByAggregateKey(rules, a.Source, a.EventId)?.Id))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -596,7 +597,8 @@ public class RecordListQueryService
         IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
         IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
         string? plainExplanation,
-        string issueLabel)
+        string issueLabel,
+        string? ruleId)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照：出現點是完整簽章鍵（含 EventKey 第五段），
         // 同主機多顆 PRTG sensor、Linux 同程式命中不同規則各自一筆。每台主機取**最差狀態**
@@ -672,6 +674,7 @@ public class RecordListQueryService
 
             KnownIssue = latestKnownIssue,
             PlainExplanation = plainExplanation,
+            RuleId = string.IsNullOrEmpty(ruleId) ? null : ruleId,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount, defaultIgnored),
             UnhandledCount = unhandled,
             InProgressCount = processing,

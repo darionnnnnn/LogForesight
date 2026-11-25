@@ -43,9 +43,9 @@ function setup() {
         get: async () => [],
         post: async () => ({ added: 1, updated: 0, warnings: ['規則 A 遮蔽規則 B', '規則 C 不合格被跳過'] })
     };
-    const run = new Function('api', 'toast', 'withBusy', 'statusNote', 'renderLoading', 'renderRules', 'renderSuppressions', 'ruleImportModal', 'checkRuleImportStatus', 'document',
+    const run = new Function('api', 'toast', 'withBusy', 'statusNote', 'renderLoading', 'renderRules', 'renderSuppressions', 'ruleImportModal', 'checkRuleImportStatus', 'document', 'openPendingRuleFromUrl',
         `let rules = [], suppressions = [];\n${fns}\nreturn { applyRuleImport, load };`)(
-        api, (m) => toasts.push(m), () => () => { }, statusNote, () => { }, () => { }, () => { }, { hide() { } }, async () => { }, document);
+        api, (m) => toasts.push(m), () => () => { }, statusNote, () => { }, () => { }, () => { }, { hide() { } }, async () => { }, document, () => { });
     return { box, run, toasts };
 }
 

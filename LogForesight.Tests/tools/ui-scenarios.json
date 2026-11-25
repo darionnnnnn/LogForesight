@@ -5182,5 +5182,37 @@
         "evalAssert": "const wrap = document.querySelector('#access-matrix .lf-table-wrap');\nif (!wrap) return '找不到授權矩陣的捲動容器 #access-matrix .lf-table-wrap';\nconst titles = [...wrap.querySelectorAll('thead .lf-matrix-col-title')];\nif (titles.length < 2) return '量測前提不成立：主機群組欄標題只有 ' + titles.length + ' 個，無法驗證欄名上限';\nconst limit = parseFloat(getComputedStyle(titles[0]).maxWidth);\nif (!Number.isFinite(limit)) return '欄標題沒有設定最大寬度（max-width＝' + getComputedStyle(titles[0]).maxWidth + '）';\nconst wide = titles.map(t => ({ t, w: t.getBoundingClientRect().width })).filter(x => x.w > limit + 2);\nif (wide.length) return '欄標題寬度超過上限 ' + Math.round(limit) + 'px：' + wide.map(x => Math.round(x.w) + 'px「' + x.t.textContent.slice(0, 12) + '…」').join('、');\nconst truncated = titles.filter(t => t.scrollWidth > t.clientWidth + 1);\nif (truncated.length === 0) return '量測前提不成立：沒有任何欄標題長到需要截斷，無法驗證省略號（資料集應含超長主機群組名稱）';\nconst noEllipsis = truncated.find(t => getComputedStyle(t).textOverflow !== 'ellipsis');\nif (noEllipsis) return '過長的欄標題沒有以省略號截斷（text-overflow＝' + getComputedStyle(noEllipsis).textOverflow + '）';\nif (wrap.scrollWidth <= wrap.clientWidth + 1) return '量測前提不成立：矩陣在 ' + innerWidth + 'px 不需要水平捲動（scrollWidth ' + wrap.scrollWidth + ' ≤ clientWidth ' + wrap.clientWidth + '），無法驗證首欄固定';\nwrap.scrollLeft = wrap.scrollWidth;\nif (wrap.scrollLeft < 1) return '量測前提不成立：容器無法水平捲動（scrollLeft 捲不動）';\nconst box = wrap.getBoundingClientRect();\nconst cells = [...wrap.querySelectorAll('thead th.lf-matrix-sticky, tbody td.lf-matrix-sticky')];\nif (cells.length < 2) return '量測前提不成立：找不到首欄儲存格（.lf-matrix-sticky）';\nconst off = cells.find(c => { const r = c.getBoundingClientRect(); return r.left < box.left - 1 || r.right > box.right + 1 || r.width === 0; });\nif (off) return '捲到最右後首欄儲存格「' + off.textContent.trim().slice(0, 12) + '」跑出可視範圍（left ' + Math.round(off.getBoundingClientRect().left) + '，容器 left ' + Math.round(box.left) + '）';\nreturn null;"
       }
     ]
+  },
+  {
+    "name": "版面-主機詳情-這台的交辦區塊",
+    "role": "ui-admin",
+    "path": "fixture:host.win",
+    "steps": [
+      {
+        "waitFor": "#host-orders .lf-table-wrap, #host-orders .lf-empty"
+      },
+      {
+        "assert": {
+          "sel": "#host-orders-card",
+          "visible": true
+        }
+      },
+      {
+        "evalAssert": "const body = document.getElementById('host-orders');\nif (!body) return '找不到 #host-orders';\nconst table = body.querySelector('table');\nconst empty = body.querySelector('.lf-empty');\nif (!table && !empty) return '「這台的交辦」既沒有表格也沒有空狀態';\nif (empty && !empty.textContent.includes('這台主機目前沒有進行中的交辦')) return '空狀態文字不是「這台主機目前沒有進行中的交辦」：' + empty.textContent.trim().slice(0, 40);\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "版面-交辦單-處置參考與訊息樣本就地展開",
+    "role": "ui-admin",
+    "path": "/work-orders/1",
+    "steps": [
+      {
+        "waitFor": "#wo-header .lf-disclosure"
+      },
+      {
+        "evalAssert": "const toggles = [...document.querySelectorAll('#wo-header .lf-disclosure')].filter(b => ['處置參考', '訊息樣本'].includes(b.textContent.trim()));\nif (toggles.length === 0) return '量測前提不成立：這張單沒有處置參考也沒有訊息樣本，無法驗證展開';\nconst before = location.pathname;\nfor (const t of toggles) { t.click(); }\nconst opened = toggles.filter(t => { const target = document.getElementById(t.getAttribute('aria-controls')); return target && !target.classList.contains('d-none'); });\nif (opened.length !== toggles.length) return '有展開鈕按下後內容沒有顯示';\nif (location.pathname !== before) return '展開處置參考不應離開交辦單頁';\nreturn null;"
+      }
+    ]
   }
 ]
