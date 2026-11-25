@@ -107,15 +107,18 @@ let aiAvailable = false;
  *   others     他人處理中：進行中案件的處理人是別人
  *   done       已完成：結案四態＋「不處理（預設）」＋「已知雜訊（自動）」
  *
- * 四個選項是這四個桶的組合。**預設不顯示他人處理中**——同一個問題同時有兩個人在動，
+ * 三個選項是這四個桶的組合，字面與內容一致、計數＝切過去實際列出的列數：
+ *   待處理              pending＋mine（不含他人處理中、不含已完成）
+ *   全部（含已完成）     四個桶全列；未處理與處理中排在每個分節的最前面，已完成排在後面，不收合
+ *   只看已完成          done
+ * **預設不顯示他人處理中**（只有「全部」看得到）——同一個問題同時有兩個人在動，
  * 後標的會蓋掉先標的，那是這個功能要防的事（後端另有一道拒絕，見 IssueHandlingCommandService）。
- * 「已完成」平常維持既有的「分節底部收合列」呈現，只有選「僅已完成」時才平鋪出來。
+ * 沒有「已處理／已有結論」收合區：收合區裡的列是選了範圍卻看不到的列，三個選項下都不留這種地方。
  */
 const SCOPE_OPTIONS = [
-    { value: 'pending', label: '待處理', buckets: ['pending', 'mine'], collapseDone: true },
-    { value: 'all', label: '顯示所有問題', buckets: ['pending', 'mine', 'others'], collapseDone: true },
-    { value: 'hide-done', label: '隱藏已完成', buckets: ['pending', 'mine', 'others'], collapseDone: false },
-    { value: 'done-only', label: '僅已完成', buckets: ['done'], collapseDone: false }
+    { value: 'pending', label: '待處理', buckets: ['pending', 'mine'] },
+    { value: 'all', label: '全部（含已完成）', buckets: ['pending', 'mine', 'others', 'done'] },
+    { value: 'done-only', label: '只看已完成', buckets: ['done'] }
 ];
 
 let currentScope = 'pending';
@@ -1144,7 +1147,7 @@ async function createSignatureSuppressions(issues) {
 
 /**
  * 未處理判定（含明確 open 或從沒標記過、且不是低風險預設不處理／已知雜訊自動判讀的問題）：
- * renderProgress 的三段計數器與 renderIssues 的排序／收合共用同一份判斷（D2/D3），
+ * renderProgress 的三段計數器與 renderIssues 的排序共用同一份判斷（D2/D3），
  * 避免計數器說的「未處理」跟畫面上排在最前面的列對不起來。
  */
 function isUnresolvedIssue(issue) {
@@ -1155,8 +1158,7 @@ function isUnresolvedIssue(issue) {
 function isInProgressIssue(issue) {
     // 觀察中一併算「還在進行」（docs/archive/FEEDBACK-10-PLAN.md §8 體檢）：它是非結案類，
     // 日層級推導本來就把它視同處理中（docs/archive/FEEDBACK-8-PLAN.md #4）。
-    // 少了它，觀察中的問題會被收進標示「已處理／已有結論」的收合區——標籤與內容不符，
-    // 而且顯示範圍下拉把它算進「待處理」，數字對得上、卻要展開「已有結論」才找得到。
+    // 少了它，觀察中的問題在「全部」範圍會被排進已完成那一層——標籤與內容不符。
     // escalated（回饋十八輪批次G）同理：上報中＝有人在管、還沒有結論。
     return issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing' ||
         issue.handlingStatus === 'escalated';
@@ -1202,6 +1204,11 @@ function highlightedCategories() {
  * 切換時共用同一份判斷，避免多處篩選邏輯各自維護後兜不起來。
  * 嚴重度與顯示範圍（§8）是 AND 關係——兩個條件都通過才看得到。
  */
+/** 「全部」範圍的排序層級：未處理 0、處理中 1、其餘（已有結論）2 */
+function issueRank(issue) {
+    return isUnresolvedIssue(issue) ? 0 : (isInProgressIssue(issue) ? 1 : 2);
+}
+
 /**
  * 管理者顯示設定允許的嚴重度（回饋二十輪 L）。與使用者自己的篩選（activeSeverities）
  * 是兩件事：被管理者隱藏的層級不該長出篩選鈕、也不該算進「另有 N 項未顯示」——
@@ -1219,11 +1226,7 @@ function allowedSeverities() {
  */
 function pruneHiddenSelection() {
     if (selectedIssueKeys.size === 0) return 0;
-    // 「已處理／已有結論」收合區每次重繪都重新收起：展開後勾在裡面的問題，重繪後同樣看不到
-    const { collapseDone } = currentScopeOption();
-    const visible = new Set(visibleTopIssues()
-        .filter(issue => !collapseDone || isUnresolvedIssue(issue) || isInProgressIssue(issue))
-        .map(issue => issue.issueKey));
+    const visible = new Set(visibleTopIssues().map(issue => issue.issueKey));
     let pruned = 0;
     for (const key of [...selectedIssueKeys]) {
         if (!visible.has(key)) {
@@ -1265,7 +1268,7 @@ function countIssues(issues, { severity = null, scoped = true, scopeValue = null
 
 /**
  * 找出「切過去真的看得到」的顯示範圍。預設不處理的低嚴重度問題落在 done 桶，
- * 而「顯示所有問題」的桶不含 done——直接寫死切到 all 會切了還是空的。
+ * 「待處理」的桶不含 done——直接寫死切到 pending 會切了還是空的。
  * 回傳 null 代表沒有任何範圍看得到（不該出現捷徑按鈕）。
  */
 function scopeThatReveals(issues) {
@@ -1309,7 +1312,7 @@ function renderScopeFilter(detail) {
         select.appendChild(el);
     }
 
-    // 沒有任何他人處理中的問題時，「待處理」與「顯示所有問題」看到的東西完全一樣——
+    // 沒有任何他人處理中或已完成的問題時，「待處理」與「全部」看到的東西完全一樣——
     // 下拉仍保留（選項數固定比較好預期），但預設值不需要使用者操心
     select.onchange = () => changeScope(select.value);
 }
@@ -1414,10 +1417,6 @@ function renderIssues(detail) {
     let hidden = 0;
     const allowed = allowedSeverities();
 
-    // 顯示範圍（§8）：collapseDone 決定「已完成」是維持既有的分節底部收合列（待處理／
-    // 顯示所有問題），還是整組不出現（隱藏已完成）／整組平鋪（僅已完成）
-    const { collapseDone } = currentScopeOption();
-
     for (const category of detail.categories) {
         const all = detail.topIssues.filter(i => i.category === category.category);
         if (all.length === 0) continue;
@@ -1446,33 +1445,17 @@ function renderIssues(detail) {
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
-        // 已結案排序收合（docs/archive/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
-        // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
-        // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
-        // 顯示範圍為「隱藏已完成」「僅已完成」時不再分主表／收合區（§8）：前者已經沒有
-        // 已完成的列可收，後者整張表就是已完成的列——再收合一次等於什麼都看不到
-        const primary = collapseDone
-            ? issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i))
-            : issues;
-        const rest = collapseDone
-            ? issues.filter(i => !isUnresolvedIssue(i) && !isInProgressIssue(i))
-            : [];
+        // 三個顯示範圍都平鋪、不收合（H10）。「全部」時未處理→處理中排在最前面、已完成在後（穩定排序，
+        // 同一層級維持原順序）；其餘範圍維持原順序。僅風險日詳情——問題查詢清單維持既有緊急程度排序不動。
+        const rows = currentScope === 'all' ? issues.slice().sort((x, y) => issueRank(x) - issueRank(y)) : issues;
 
         const body = document.createElement('div');
         body.className = 'lf-table-aligned';
-        if (primary.length > 0) {
-            // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
-            renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
-            const expandAll = expandAllToggle(body);
-            if (expandAll) header.appendChild(expandAll);
-        } else {
-            renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」檢視。' });
-        }
+        // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
+        renderTable(body, { columns: issueColumns(rows), rows, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
+        const expandAll = expandAllToggle(body);
+        if (expandAll) header.appendChild(expandAll);
         section.appendChild(body);
-
-        if (rest.length > 0) {
-            section.appendChild(collapsedRestSection(rest));
-        }
 
         // 「其他」類別（未命中規則）沒有逐列處置參考，改在分節末尾附上 AI 深入分析——
         // 取代舊版獨立的深入分析卡，讓分析與所屬類別至少對齊在同一個區塊
@@ -1523,24 +1506,6 @@ function renderIssues(detail) {
 
     // 下鑽進來時直接捲到命中的第一個類別分節
     container.querySelector('.lf-issue-group--hit')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-}
-
-/**
- * 已結案／已有結論問題的收合區塊（#8）：分節底部一條「展開▾」列，點開才渲染完整表格。
- * 每次 renderIssues 重繪都重新收合（不記憶展開狀態）——批次套用後常有列從上方主表
- * 「搬」進這裡，維持收合預設值最不會讓人意外。
- */
-function collapsedRestSection(rest) {
-    const wrap = document.createElement('div');
-    wrap.className = 'border-top';
-
-    const body = document.createElement('div');
-    body.className = 'lf-table-aligned';
-    renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: evidencePanel, rowKey: i => i.issueKey, expandedKeys: expandedIssueKeys });
-    const toggle = disclosure(`已處理／已有結論 ${rest.length} 項`, body, { className: 'lf-issue-group__rest-toggle' });
-
-    wrap.append(toggle, body);
-    return wrap;
 }
 
 /**
@@ -1651,7 +1616,7 @@ function issueStateBadges(issue) {
         badge.title = '此規則已被本機抑制：只關掉通知與風險升級，事件仍照常紀錄';
         items.push(badge);
     }
-    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在展開「顯示所有問題」時看得到，這是預期
+    // 靜音中的問題（docs/archive/FEEDBACK-47-PLAN.md 15.3 (3)）：只在「全部（含已完成）」範圍看得到，這是預期
     if (issue.isMuted && issue.muteTo) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';

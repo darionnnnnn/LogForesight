@@ -854,8 +854,6 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-source-obs__list > li + li { margin-top: var(--lf-space-2); }
 
-/* 分節底部「已處理／已有結論」的收合列 */
-.lf-issue-group__rest-toggle { margin: var(--lf-space-2) var(--lf-space-3); }
 
 /* 處理狀態欄表頭的全選：與逐列勾選同尺寸，點擊區至少 24×24 */
 .lf-status-cell .form-check-input {

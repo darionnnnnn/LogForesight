@@ -281,7 +281,10 @@ public class IssueTodoDto
     /// <summary>處理中但預計完成日已過的問題數，與批次H 郵件的逾期區塊同一個口徑</summary>
     public int OverdueIssueCount { get; set; }
 
-    /// <summary>受未處理問題影響的相異主機數——KPI 卡副標「影響 N 台」</summary>
+    /// <summary>
+    /// 這些未處理問題所影響的相異主機數——KPI 卡副標「影響 N 台」。與問題查詢下鑽（<c>distinctHostCount</c>）同口徑：
+    /// 只要某個問題有任何一台主機未處理，那個問題在母體內出現過的每一台主機都算（含其中已處理、處理中的）；沒有未處理問題時為 0。
+    /// </summary>
     public int AffectedHostCount { get; set; }
 }
 

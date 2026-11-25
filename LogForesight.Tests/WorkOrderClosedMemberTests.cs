@@ -353,15 +353,15 @@ public class WorkOrderClosedMemberTests : IDisposable
     [Fact]
     public void 預覽的已結案略過台數_與問題視角同一問題同一期間由處理人標記結案的已處理台數一致()
     {
-        // 問題視角的「已處理」含兩種：處理人逐日標記結案，以及嚴重度預設不處理（沒標記）——後者不是預覽的略過。
-        // 先量出沒有任何人工標記時的「預設已處理」台數，再扣掉，剩下的就是處理人標記結案的台數。
+        // 問題視角把處理人逐日標記結案（已處理）與嚴重度預設不處理（沒標記，另列）分開算——後者不是預覽的略過。
+        // 先量出沒有任何人工標記時的「預設不處理」台數，標記結案後已處理台數就是處理人標記的台數。
         W.AddHost("HOST-OPEN");
         W.AddHost("HOST-LOW", Disk(IssueSeverity.Low));
         W.AddHost("HOST-CLOSED-1");
         W.AddHost("HOST-CLOSED-2");
         var handler = W.AddHandler();
         var issueRequest = new RecordSearchRequest();
-        var defaultResolved = Assert.Single(W.Query.SearchByIssue(issueRequest).Items).ResolvedCount;
+        var defaultResolved = Assert.Single(W.Query.SearchByIssue(issueRequest).Items).DefaultIgnoredCount;
 
         W.CloseDay("HOST-CLOSED-1");
         W.CloseDay("HOST-CLOSED-2", IssueHandlingStatuses.WontFix);
@@ -370,8 +370,8 @@ public class WorkOrderClosedMemberTests : IDisposable
         var preview = W.Service.Preview(Single(handler.UserId));
 
         Assert.Equal(1, defaultResolved);
-        Assert.Equal(2, group.ResolvedCount - defaultResolved);
-        Assert.Equal(group.ResolvedCount - defaultResolved, preview.ClosedSkippedHosts);
+        Assert.Equal(2, group.ResolvedCount);   // A14 之後已處理只算有人標記的，預設不處理另列
+        Assert.Equal(group.ResolvedCount, preview.ClosedSkippedHosts);
         Assert.Equal(2, preview.AffectedHosts);   // HOST-OPEN 與預設已處理的 HOST-LOW 仍會寫入
     }
 

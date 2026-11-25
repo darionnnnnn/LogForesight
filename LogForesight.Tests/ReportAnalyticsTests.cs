@@ -94,6 +94,8 @@ public class ReportAnalyticsTests : IDisposable
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _visibleSettings = new();
+    private GapsDto _gapsResult = new();
+    private GapsDto GapsProvider(DateTime? from, DateTime? to, int page) => _gapsResult;
 
     // 期間 D0 ～ D0+29（全在過去，lastDataDay 完全由資料決定）
     private static readonly DateTime D0 = DateTime.Today.AddDays(-60);
@@ -139,7 +141,7 @@ public class ReportAnalyticsTests : IDisposable
         {
             Summary = new ReportService(repoProxy, _hosts, visibility, handling, ranking, _settingsStore, aggregates, _visibleSettings,
                 cache, exclusions, new SqlPerformanceMonitor()),
-            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions, new FakeRuleStore()),
+            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions, new FakeRuleStore(), _caseStore, GapsProvider),
             CategoryTrend = new ReportCategoryTrendService(repoProxy, _hosts, visibility, _visibleSettings, cache, exclusions),
             RepoCalls = repoCounter,
             IssueStoreCalls = issueCounter
@@ -215,6 +217,91 @@ public class ReportAnalyticsTests : IDisposable
         var eff = rig.Effectiveness.Get(D0, PeriodTo);
         Assert.Equal(30, eff.Buckets.Sum(b => b.Days));
         Assert.Equal(ReportBucketing.Build(D0, PeriodTo).Count, eff.Buckets.Count);
+    }
+
+    // ── 未結案三段（K3）────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 三段的主機日相加＝未結案主機日：在處理人手上（處理中）＋待派（未處理、該主機有可派問題）＋不需處理（其餘未處理）。
+    /// 另帶案件數與最舊天數、可派的問題×主機（不同單位，不參與相加）。
+    /// </summary>
+    [Fact]
+    public void 未結案三段_主機日相加等於未結案_並帶案件數與最舊天數與可派問題主機()
+    {
+        var inHand = AddHost("IN-HAND");
+        var pending = AddHost("PENDING");
+        var notNeeded = AddHost("NOT-NEEDED");
+        var done = AddHost("DONE");
+        var issue = Issue("disk", 7);
+        // 處理中兩個主機日、待派主機兩個未處理日、不需處理主機三個未處理日、已處理主機一日（不算未結案）
+        foreach (var i in new[] { 0, 1 }) { Rec(inHand, D0.AddDays(i), "高", issue); Mark(inHand, D0.AddDays(i), issue, IssueHandlingStatuses.InProgress); }
+        foreach (var i in new[] { 0, 1 }) Rec(pending, D0.AddDays(i), "高", issue);
+        foreach (var i in new[] { 0, 1, 2 }) Rec(notNeeded, D0.AddDays(i), "高", issue);
+        Rec(done, D0, "高", issue);
+        Mark(done, D0, issue, IssueHandlingStatuses.Resolved);
+        // 在處理人手上：兩個進行中案件（一個 10 天前建、一個 3 天前建）；另一台不可見的主機不算（本測試全可見，故兩件都算）
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = inHand.HostName, IssueKey = IssueSignatureKey.For(issue), Status = IssueHandlingStatuses.InProgress,
+            WorkOrderId = 1, CreatedAt = DateTime.Today.AddDays(-10)
+        });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "c2", HostName = pending.HostName, IssueKey = IssueSignatureKey.For(issue), Status = IssueHandlingStatuses.InProgress,
+            WorkOrderId = 1, CreatedAt = DateTime.Today.AddDays(-3)
+        });
+        _gapsResult = new GapsDto { DispatchableIssueHosts = 5 };
+        _gapsResult.DispatchableHostNames.Add("PENDING");
+
+        var eff = MakeRig().Effectiveness.Get(D0, PeriodTo);
+        var u = eff.Unresolved;
+
+        Assert.Equal(7, eff.UnresolvedTotal);
+        Assert.Equal(2, u.InHandlers.HostDays);
+        Assert.Equal(2, u.PendingDispatch.HostDays);
+        Assert.Equal(3, u.NotNeeded.HostDays);
+        // 對照式：三段主機日相加＝未結案主機日
+        Assert.Equal(eff.UnresolvedTotal, u.InHandlers.HostDays + u.PendingDispatch.HostDays!.Value + u.NotNeeded.HostDays!.Value);
+        Assert.Equal(2, u.InHandlers.Cases);
+        Assert.Equal(10, u.InHandlers.OldestDays);
+        Assert.Equal(5, u.PendingDispatch.IssueHosts);
+        Assert.False(u.PendingDispatch.TooLarge);
+    }
+
+    /// <summary>邊界：沒有進行中案件時最舊天數是 null；沒有可派主機時全部未處理都是「不需處理」</summary>
+    [Fact]
+    public void 未結案三段_沒有案件也沒有可派問題()
+    {
+        var host = AddHost("H1");
+        Rec(host, D0, "高", Issue("disk", 7));
+
+        var eff = MakeRig().Effectiveness.Get(D0, PeriodTo);
+        var u = eff.Unresolved;
+
+        Assert.Equal(0, u.InHandlers.Cases);
+        Assert.Null(u.InHandlers.OldestDays);
+        Assert.Equal(0, u.PendingDispatch.HostDays);
+        Assert.Equal(1, u.NotNeeded.HostDays);
+        Assert.Equal(eff.UnresolvedTotal, u.InHandlers.HostDays + u.PendingDispatch.HostDays!.Value + u.NotNeeded.HostDays!.Value);
+    }
+
+    /// <summary>待派試跑超過上限時拆不開：標 TooLarge，待派與不需處理的主機日為 null，處理中那段仍照算</summary>
+    [Fact]
+    public void 未結案三段_待派試跑超過上限時標TooLarge_不猜()
+    {
+        var host = AddHost("H1");
+        var issue = Issue("disk", 7);
+        Rec(host, D0, "高", issue);
+        Mark(host, D0, issue, IssueHandlingStatuses.InProgress);
+        Rec(host, D0.AddDays(1), "高", issue);
+        _gapsResult = new GapsDto { TooLarge = true };
+
+        var u = MakeRig().Effectiveness.Get(D0, PeriodTo).Unresolved;
+
+        Assert.True(u.PendingDispatch.TooLarge);
+        Assert.Null(u.PendingDispatch.HostDays);
+        Assert.Null(u.NotNeeded.HostDays);
+        Assert.Equal(1, u.InHandlers.HostDays);
     }
 
     // ── 帳齡 ─────────────────────────────────────────────────────────────

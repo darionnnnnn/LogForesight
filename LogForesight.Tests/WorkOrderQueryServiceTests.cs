@@ -1016,6 +1016,38 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(1, s.PausedWorkOrders);
     }
 
+    /// <summary>
+    /// K2：我的交辦（處理人頁）排除靜音暫停的單，負載看板不扣。同一份資料下兩個數字的差，單數等於 PausedWorkOrders、
+    /// 台數等於暫停單底下的進行中成員數；沒有暫停單時兩邊相等（邊界另一側）。
+    /// </summary>
+    [Fact]
+    public void 我的交辦與負載看板的差等於靜音暫停的單()
+    {
+        var paused = AddOrder(_alice.UserId);
+        var normal = AddOrder(_alice.UserId, source: "net", eventId: 99);
+        AddMember(paused, "H1", IssueHandlingStatuses.InProgress);
+        AddMember(paused, "H2", IssueHandlingStatuses.Open);
+        AddMember(normal, "H3", IssueHandlingStatuses.Open);
+
+        var svc = Service(As(_alice.UserId, Capability.Handle));
+        var boardBefore = _orders.LoadBoard().Single(l => l.HandlerId == _alice.UserId);
+        var before = svc.HandlerSummary(_alice.UserId);
+        Assert.Equal(boardBefore.ActiveWorkOrders, before.ActiveWorkOrders);   // 沒有靜音：相等
+        Assert.Equal(boardBefore.ActiveMembers, before.ActiveMembers);
+
+        Mute((Source, EventId, Today.AddDays(-1), Today.AddDays(3)));
+        svc = Service(As(_alice.UserId, Capability.Handle));
+        var board = _orders.LoadBoard().Single(l => l.HandlerId == _alice.UserId);
+        var mine = svc.HandlerSummary(_alice.UserId);
+
+        Assert.Equal(2, board.ActiveWorkOrders);
+        Assert.Equal(1, mine.ActiveWorkOrders);
+        Assert.Equal(board.ActiveWorkOrders - mine.ActiveWorkOrders, mine.PausedWorkOrders);
+        Assert.Equal(3, board.ActiveMembers);
+        Assert.Equal(1, mine.ActiveMembers);
+        Assert.Equal(2, board.ActiveMembers - mine.ActiveMembers);   // 暫停單底下的 H1、H2
+    }
+
     [Fact]
     public void 處理人清單Paused_only只列暫停單_include全列()
     {

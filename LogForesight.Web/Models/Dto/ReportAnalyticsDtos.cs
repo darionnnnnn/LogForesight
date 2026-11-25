@@ -55,6 +55,52 @@ public class ReportRecurringIssueDto
     public int RecurredCount { get; set; }
 }
 
+/// <summary>
+/// 「未結案」拆三段，每段寫明單位。三段的 <c>HostDays</c>（主機日）相加＝<see cref="ReportEffectivenessDto.UnresolvedTotal"/>：
+/// 在處理人手上＝現在狀態為「處理中」的主機日；待派＝「未處理」的主機日中、該主機在待派試跑裡有可派問題的；
+/// 不需處理＝其餘「未處理」的主機日（該主機沒有任何可派問題：嚴重度未達、已知雜訊、不再打擾、靜音等閘門擋下，或沒有可接單的人）。
+/// 待派的「問題×主機」與在處理人手上的「案件數」是另一種單位，列在各段旁邊供對照，不參與相加。
+/// </summary>
+public class ReportUnresolvedBreakdownDto
+{
+    public ReportInHandlersDto InHandlers { get; set; } = new();
+    public ReportPendingDispatchDto PendingDispatch { get; set; } = new();
+    public ReportNotNeededDto NotNeeded { get; set; } = new();
+}
+
+/// <summary>在處理人手上</summary>
+public class ReportInHandlersDto
+{
+    /// <summary>進行中案件數（單位：案件＝一台主機 × 一個問題；只算可見主機）；沒有時為 0</summary>
+    public int Cases { get; set; }
+
+    /// <summary>最舊的進行中案件從建立到今天的天數；沒有進行中案件時為 null</summary>
+    public int? OldestDays { get; set; }
+
+    /// <summary>單位：主機日</summary>
+    public int HostDays { get; set; }
+}
+
+/// <summary>待派（沿用待派試跑的結果，不另寫判定）</summary>
+public class ReportPendingDispatchDto
+{
+    /// <summary>期間太長、試跑出現點超過上限：不做試跑，<see cref="IssueHosts"/> 與 <see cref="HostDays"/> 無法拆分（全部「未處理」併入 <see cref="HostDays"/>＝null，不需處理亦 null）</summary>
+    public bool TooLarge { get; set; }
+
+    /// <summary>可派的「問題 × 主機」數（單位：問題×主機，同一台主機兩個問題算兩個）</summary>
+    public int IssueHosts { get; set; }
+
+    /// <summary>單位：主機日；<see cref="TooLarge"/> 時為 null</summary>
+    public int? HostDays { get; set; }
+}
+
+/// <summary>不需處理</summary>
+public class ReportNotNeededDto
+{
+    /// <summary>單位：主機日；待派試跑超過上限（拆不開）時為 null</summary>
+    public int? HostDays { get; set; }
+}
+
 public class ReportEffectivenessDto
 {
     public string From { get; set; } = string.Empty;
@@ -63,7 +109,9 @@ public class ReportEffectivenessDto
     /// <summary>帳齡的基準日（本次資料中的最後一個紀錄日；無資料時為期間迄日）</summary>
     public string AsOf { get; set; } = string.Empty;
     public List<ReportAgingBandDto> Aging { get; set; } = new();
+    /// <summary>未結案風險日數（單位：主機日）；三段拆解見 <see cref="Unresolved"/>，三段的主機日相加＝這個數字</summary>
     public int UnresolvedTotal { get; set; }
+    public ReportUnresolvedBreakdownDto Unresolved { get; set; } = new();
     public ReportRecurrenceDto Recurrence { get; set; } = new();
     public ReportEffectivenessDefinitionsDto Definitions { get; set; } = new();
 }

@@ -721,6 +721,13 @@ public class GapsDto
     /// <summary>出現點超過上限：不做試跑，請縮小期間</summary>
     public bool TooLarge { get; set; }
 
+    /// <summary>可派的「問題 × 主機」總數（單位：問題×主機；不分頁，各問題的建議處理人台數相加）；超過上限時為 0</summary>
+    public int DispatchableIssueHosts { get; set; }
+
+    /// <summary>有可派問題的主機名稱（去重、不分大小寫）。只供伺服器內部彙整（報表處理成效），不輸出到 API</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public HashSet<string> DispatchableHostNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>超過上限時尚未派出的出現點數（以下界判定時為「至少」）；未超過時為 0</summary>
     public long PendingAtLeast { get; set; }
 

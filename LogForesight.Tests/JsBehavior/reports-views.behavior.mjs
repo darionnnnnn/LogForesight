@@ -24,7 +24,7 @@ globalThis.bootstrap.Popover = class { constructor(el) { this.el = el; } };   //
 const load = file => import(pathToFileURL(path.join(jsRoot, ...file.split('/'))).href);
 const common = await load('pages/reports-common.js');
 const { recordsUrl } = await load('core/paths.js');
-const { createEffectivenessView, bucketDrillUrl, recurrenceSummary, agingSwatches } = await load('pages/reports-effectiveness.js');
+const { createEffectivenessView, bucketDrillUrl, recurrenceSummary, agingSwatches, unresolvedBreakdownLines } = await load('pages/reports-effectiveness.js');
 const { createCategoryView, cellDrillUrl, cellAriaLabel } = await load('pages/reports-category.js');
 const { roleText, fact, metaLine } = loadElements(dom);
 
@@ -731,6 +731,30 @@ const cases = {
         keeper.leave();
         assert.deepEqual(log, []);
     }
+    ,
+
+    // K3：未結案三段各自寫明單位；待派試跑超過上限時直說拆不開，不猜
+    '處理成效_未結案三段各寫單位'() {
+        const lines = unresolvedBreakdownLines({
+            inHandlers: { cases: 188, oldestDays: 40, hostDays: 900 },
+            pendingDispatch: { tooLarge: false, issueHosts: 12, hostDays: 300 },
+            notNeeded: { hostDays: 826 }
+        });
+        assert.deepEqual(lines, [
+            '在處理人手上：900 個主機日（進行中交辦 188 項，最舊 40 天）',
+            '待派：300 個主機日（可派的問題×主機 12 個）',
+            '不需處理：826 個主機日（嚴重度未達、已知雜訊、不再打擾、靜音等，不會派工）'
+        ]);
+        // 邊界：沒有進行中案件時不寫「最舊」
+        assert.equal(unresolvedBreakdownLines({ inHandlers: { cases: 0, oldestDays: null, hostDays: 0 }, pendingDispatch: {}, notNeeded: {} })[0],
+            '在處理人手上：0 個主機日（進行中交辦 0 項）');
+        // 超過上限：兩段合併成一句說明
+        const tooLarge = unresolvedBreakdownLines({ inHandlers: { cases: 1, hostDays: 2 }, pendingDispatch: { tooLarge: true }, notNeeded: {} });
+        assert.equal(tooLarge.length, 2);
+        assert.equal(tooLarge[1], '待派與不需處理：期間太長，無法拆開，請縮短期間');
+        assert.deepEqual(unresolvedBreakdownLines(null), []);
+    }
+
 };
 
 const name = process.argv[2];

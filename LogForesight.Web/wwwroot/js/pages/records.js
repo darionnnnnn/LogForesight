@@ -849,7 +849,7 @@ function renderIssueView() {
         {
             title: '處理概況',
             className: 'text-nowrap',
-            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有交辦或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
+            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有交辦或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。沒有任何標記、只因嚴重度不在需處理名單而視為已處理的，另列「預設不處理」，不與已處理合計。', '處理概況'),
             render: i => issueHandlingSummaryCell(i)
         },
         { title: '處理人', render: i => issueHandlersCell(i) },
@@ -1062,7 +1062,7 @@ function issueAssignedCell(group) {
 }
 
 /**
- * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現
+ * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現；預設不處理另列一行，有才顯示
  */
 function issueHandlingSummaryCell(group) {
     const wrap = document.createElement('div');
@@ -1080,6 +1080,13 @@ function issueHandlingSummaryCell(group) {
     resolved.textContent = `${formatNumber(group.resolvedCount)} 台已處理`;
 
     wrap.append(unhandled, inProgress, resolved);
+    // 預設不處理（沒有任何標記、嚴重度不在需處理名單）不與已處理合計；沒有時不佔行
+    if (group.defaultIgnoredCount > 0) {
+        const ignored = document.createElement('div');
+        ignored.className = 'lf-text-data';
+        ignored.textContent = `${formatNumber(group.defaultIgnoredCount)} 台預設不處理`;
+        wrap.append(ignored);
+    }
     return wrap;
 }
 

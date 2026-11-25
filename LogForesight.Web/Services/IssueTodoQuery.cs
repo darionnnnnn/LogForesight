@@ -86,9 +86,9 @@ public class IssueTodoQuery
         var openIssues = new HashSet<(string Source, int EventId)>(IssueComparer);
         var inProgressIssues = new HashSet<(string, int)>(IssueComparer);
         var overdueIssues = new HashSet<(string, int)>(IssueComparer);
-        var openHosts = new HashSet<long>();
+        var resolvedList = resolved as IReadOnlyCollection<ResolvedOccurrence> ?? resolved.ToList();
 
-        foreach (var r in resolved)
+        foreach (var r in resolvedList)
         {
             var signature = IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey);
             if (signature == null) continue;
@@ -97,7 +97,6 @@ public class IssueTodoQuery
             {
                 case HostIssueStatus.Open:
                     openIssues.Add(signature.Value);
-                    openHosts.Add(r.Occurrence.HostId);
                     break;
                 case HostIssueStatus.Processing:
                     inProgressIssues.Add(signature.Value);
@@ -108,6 +107,12 @@ public class IssueTodoQuery
             // 與「拖過頭」，這裡補上這一層，供批次H 郵件的逾期區塊共用同一個口徑
             if (IsOverdueInProgress(r, today)) overdueIssues.Add(signature.Value);
         }
+
+        // 影響台數＝未處理問題在母體內出現過的全部主機（與問題查詢下鑽的 distinctHostCount 同口徑）
+        var openHosts = resolvedList
+            .Where(r => IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey) is { } sig && openIssues.Contains(sig))
+            .Select(r => r.Occurrence.HostId)
+            .ToHashSet();
 
         return new IssueTodoDto
         {

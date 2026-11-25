@@ -417,6 +417,61 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(summary.IssueTodo.OpenIssueCount, issueResult.Total);
     }
 
+    /// <summary>
+    /// K1：卡片「影響 N 台」＝下鑽（問題查詢 distinctHostCount）。同一個未處理問題上，一台未處理、一台已標處理，
+    /// 兩台都算（下鑽列出的就是這兩台）；問題沒有任何未處理時兩邊都是 0。
+    /// </summary>
+    [Fact]
+    public void 未處理問題卡影響台數與依問題視角下鑽的去重主機數一致()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+        var c = AddHost("HOST-C", 1);
+        var open = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 7, EntryType = LogForesight.Core.Models.LogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        var allDone = new LogIssueSignature
+        {
+            LogName = "System", Source = "ntfs", EventId = 55, EntryType = LogForesight.Core.Models.LogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { open } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { open } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = c.HostId, Host = c.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { allDone } });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = b.HostName, Date = Anchor, IssueKey = IssueSignatureKey.For(open),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = c.HostName, Date = Anchor, IssueKey = IssueSignatureKey.For(allDone),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var summary = _service.GetSummary(7);
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var listService = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
+            new NextUnhandledSequenceCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        var drill = listService.SearchByIssue(new RecordSearchRequest
+        {
+            From = DateTime.Parse(summary.From), To = DateTime.Parse(summary.To), Statuses = new() { "open" }
+        });
+
+        Assert.Equal(1, summary.IssueTodo.OpenIssueCount);
+        Assert.Equal(2, summary.IssueTodo.AffectedHostCount);   // HOST-A（未處理）＋HOST-B（已處理）；ntfs 的 HOST-C 不算
+        Assert.Equal(drill.DistinctHostCount, summary.IssueTodo.AffectedHostCount);
+    }
+
     [Fact]
     public void 未處理問題KPI與依問題視角下鑽筆數一致_來源名稱大小寫不同視為同一問題()
     {

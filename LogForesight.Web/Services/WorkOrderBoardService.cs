@@ -209,6 +209,9 @@ public class WorkOrderBoardService
             .ThenBy(s => s.EventId)
             .ToList();
         dto.Total = summaries.Count;
+        dto.DispatchableIssueHosts = summaries.Sum(s => s.Suggested.Sum(x => x.Hosts));
+        foreach (var gap in trial.Gaps.Where(g => g.Decision.Kind != DispatchDecisionKind.Skip))
+            dto.DispatchableHostNames.Add(gap.Host.HostName);
         dto.UnassignableTotal = summaries.Count(s => s.Unassignable.Count > 0);
 
         var pageRows = summaries.Skip((page - 1) * GapPageSize).Take(GapPageSize).ToList();

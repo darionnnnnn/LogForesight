@@ -189,8 +189,15 @@ public class IssueGroupDto
     /// <summary>處理概況：處理中台數（與 HandlingSummary 來源一致）</summary>
     public int InProgressCount { get; set; }
 
-    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）</summary>
+    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）。只算有人標記的結案類；不含 <see cref="DefaultIgnoredCount"/></summary>
     public int ResolvedCount { get; set; }
+
+    /// <summary>
+    /// 處理概況：預設不處理的台數。一台主機算一台，條件是這台主機在這個問題上的每個出現點都沒有任何標記
+    /// （沒有進行中案件、沒有逐日處理標記），只因嚴重度不在「需處理」名單內而被視為已處理。
+    /// 沒有任何一台時為 0。與 <see cref="ResolvedCount"/> 不合計：未處理＋處理中＋已處理＋預設不處理＝受影響主機數。
+    /// </summary>
+    public int DefaultIgnoredCount { get; set; }
 
     /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
     /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>

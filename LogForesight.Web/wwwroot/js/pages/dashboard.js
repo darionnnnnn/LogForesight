@@ -304,7 +304,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 大數字改問題口徑（回饋十九輪批次D2，外部審查§一-2）：「未處理 1,340」（風險日數）
     // 在兩千台環境對使用者等於沒有資訊，改成「未處理問題 X 個」——有幾個不同的問題要處理，
     // 副標才是影響台數與風險日數（data.todo 的既有日數，退居輔助角色）
-    const todoSub = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
+    const todoSub = todoCardSub(data.issueTodo, data.todo);
     cards.push({
         group: 'todo',
         label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
@@ -432,6 +432,15 @@ function silentHostsCard(data, user) {
         card.title = `${card.title}\n${card.detail}`;
     }
     return card;
+}
+
+/**
+ * 「未處理問題」卡副標：影響台數與下鑽（問題查詢 distinctHostCount）同口徑——
+ * 這些未處理問題所影響的全部主機（含其中已有人處理的）；風險日拆成「未處理 N、處理中 M」兩個數字，
+ * 不再相加成一個看不出差別的總數。
+ */
+function todoCardSub(issueTodo, todo) {
+    return `影響 ${formatNumber(issueTodo.affectedHostCount)} 台．風險日未處理 ${formatNumber(todo.openCount)}、處理中 ${formatNumber(todo.inProgressCount)}`;
 }
 
 /** 告警卡＝建卡時 variant 為 danger 的卡（以標籤對應，不看樣式類別，換角色類別不會讓「藏起來的告警數」靜默變 0） */

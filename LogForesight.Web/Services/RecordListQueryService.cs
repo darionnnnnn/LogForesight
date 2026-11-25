@@ -604,7 +604,13 @@ public class RecordListQueryService
         // 取「最近出現那筆」會讓晚出現且已處理的 sensor 把另一顆未處理的蓋掉。同狀態時取最近出現者
         var perHost = WorstPerHost(occurrences).Values.ToList();
 
-        int unhandled = 0, processing = 0, resolvedCount = 0;
+        int unhandled = 0, processing = 0, resolvedCount = 0, defaultIgnored = 0;
+        // 預設不處理：這台主機所有出現點都沒有案件也沒有標記（A14），其餘已處理才算有人處理過
+        var defaultHostIds = occurrences
+            .GroupBy(o => o.Host.HostId)
+            .Where(g => g.All(o => o.Status == HostIssueStatus.Resolved && o.OpenCase == null && o.Handling == null))
+            .Select(g => g.Key)
+            .ToHashSet();
         var handlerIds = new HashSet<long>();
 
         // 處理人仍留在 Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，
@@ -619,7 +625,9 @@ public class RecordListQueryService
             {
                 case HostIssueStatus.Open: unhandled++; break;
                 case HostIssueStatus.Processing: processing++; break;
-                case HostIssueStatus.Resolved: resolvedCount++; break;
+                case HostIssueStatus.Resolved:
+                    if (defaultHostIds.Contains(occ.Host.HostId)) defaultIgnored++; else resolvedCount++;
+                    break;
             }
         }
 
@@ -664,10 +672,11 @@ public class RecordListQueryService
 
             KnownIssue = latestKnownIssue,
             PlainExplanation = plainExplanation,
-            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount),
+            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount, defaultIgnored),
             UnhandledCount = unhandled,
             InProgressCount = processing,
             ResolvedCount = resolvedCount,
+            DefaultIgnoredCount = defaultIgnored,
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
             GroupStatus = unhandled > 0 ? HandlingStatuses.Open
                 : processing > 0 ? HandlingStatuses.InProgress
@@ -826,12 +835,13 @@ public class RecordListQueryService
     };
 
     /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
-    private static string BuildHandlingSummary(int unhandled, int processing, int resolved)
+    private static string BuildHandlingSummary(int unhandled, int processing, int resolved, int defaultIgnored)
     {
         var parts = new List<string>();
         if (unhandled > 0) parts.Add($"{unhandled} 台未處理");
         if (processing > 0) parts.Add($"{processing} 台處理中");
         if (resolved > 0) parts.Add($"{resolved} 台已處理");
+        if (defaultIgnored > 0) parts.Add($"{defaultIgnored} 台預設不處理");
         return parts.Count > 0 ? string.Join("／", parts) : "—";
     }
 
