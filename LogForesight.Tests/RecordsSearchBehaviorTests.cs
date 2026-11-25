@@ -30,6 +30,7 @@ public class RecordsSearchBehaviorTests
     [InlineData("切回明細恢復逾期與標籤且提示消失")]
     [InlineData("依問題視角只略過逾期")]
     [InlineData("支援矩陣與後端一致")]
+    [InlineData("風險層級欄位只篩一級時其他欄顯示破折號")]
     [InlineData("aiSummaryStaleResponseIsDropped")]
     [InlineData("aiSummaryFailureShowsNoticeAndKeepsPrevious")]
     [InlineData("aiSummaryFailureAfterFilterChangeIsSilent")]

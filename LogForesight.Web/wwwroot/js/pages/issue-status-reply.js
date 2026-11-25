@@ -284,13 +284,17 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     statusRequiredHint.textContent = '請選擇這次的結論';
     form.appendChild(statusRequiredHint);
 
+    // 送出類按鈕建在表單裡，彈窗開起來後搬到頁尾與「關閉」同列（見 showDetailModal 之後的 placeSubmitInFooter）；
+    // 以 form 屬性關聯表單，搬走後按鈕仍是這張表單的送出鈕（Enter／Ctrl+Enter 的送出路徑不變）
+    const formId = `wo-reply-form-${Math.random().toString(36).slice(2, 10)}`;
+    form.id = formId;
     const submitBtn = makeButton('送出', { variant: 'primary', type: 'submit' });
+    submitBtn.setAttribute('form', formId);
     form.appendChild(submitBtn);
 
     let nextBtn = null;
     if (onNext) {
         nextBtn = makeButton('送出並回覆下一張', { variant: 'outline-secondary' });
-        nextBtn.classList.add('ms-2');
         form.appendChild(nextBtn);
         nextBtn.addEventListener('click', () => send(nextBtn, true));
     }
@@ -519,6 +523,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     body.appendChild(form);
     modal = showDetailModal({ title, body });
+    placeSubmitInFooter(modal.element, [nextBtn, submitBtn]);
 
     // 關閉保護（DESIGN-SYSTEM §6b）：Esc／點遮罩／關閉鈕都走 hide.bs.modal，說明欄有字時先問；草稿一律保留
     let closeConfirmed = false;
@@ -605,6 +610,16 @@ function escalationNotifyText(notifiedAdmins) {
     return notifiedAdmins > 0
         ? `，已通知 ${notifiedAdmins} 位管理員`
         : '，目前沒有可通知的管理員，已列入交辦總覽提醒';
+}
+
+/**
+ * 把送出類按鈕搬到彈窗頁尾，排在「關閉」之後（主要動作在最右，與確認框同一組排法）。
+ * 找不到頁尾（極端情況）就留在表單內，功能不變。buttons 可含 null（沒有「送出並回覆下一張」時）。
+ */
+function placeSubmitInFooter(modalElement, buttons) {
+    const footer = modalElement?.querySelector?.('.modal-footer');
+    if (!footer) return;
+    for (const btn of buttons) if (btn) footer.appendChild(btn);
 }
 
 /** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應）；payload＝這次送出的 { status, dueDate } */

@@ -604,6 +604,12 @@ public class WorkOrderMemberDto
     /// <summary>這台主機已停用：進行中時不計入處理人的台數（徽章、負載看板、總覽）；重新啟用後恢復計入</summary>
     public bool HostDisabled { get; set; }
     public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 登錄類型（問題簽章的 LogName，例如 System、Application）；簽章解析不出來為 null。
+    /// 同一主機在成員表同頁有多列時，畫面以它區分各列（同主機同問題不同登錄類型是不同案件）。
+    /// </summary>
+    public string? LogName { get; set; }
     public string Status { get; set; } = string.Empty;
 
     /// <summary>

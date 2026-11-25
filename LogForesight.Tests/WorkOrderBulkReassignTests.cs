@@ -274,6 +274,9 @@ public class WorkOrderBulkReassignTests : IDisposable
         var failed = result.Rows.Single(r => r.Status == BulkReassignStatuses.Failed);
         Assert.Equal(orders[1], failed.WorkOrderId);
         Assert.Contains("重新載入", failed.Reason);
+        // 與批次 E 回覆被拒（「這張單剛改派給…」）同一個口吻：先說這張單剛怎麼了，再說使用者的動作有沒有生效
+        Assert.StartsWith("這張單剛", failed.Reason);
+        Assert.Contains("你的改派未套用", failed.Reason);
         Assert.DoesNotContain("注入", failed.Reason);   // 例外原文不外洩
         Assert.Equal(target.UserId, _orderStore.Get(orders[0])!.HandlerId);
         Assert.Equal(target.UserId, _orderStore.Get(orders[2])!.HandlerId);

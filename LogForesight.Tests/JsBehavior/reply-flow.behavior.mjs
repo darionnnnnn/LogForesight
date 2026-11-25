@@ -24,6 +24,26 @@ const rejection = (status, message) => Object.assign(new Error(message), { statu
 
 const cases = {
     // 不預選：沒選結論時送出鈕停用、顯示原因；選處理中時鈕文字直說不結案
+    // X3：送出鈕在頁尾、與「關閉」同列；表單內不留送出鈕，頁尾按鈕以 form 屬性關聯表單
+    async submitButtonsLiveInFooterBesideClose() {
+        const view = openReply(loadReplyModule(), { onNext: () => { } });
+        const footerButtons = view.entry.footer.children.filter(n => n.tagName === 'BUTTON');
+        assert.deepEqual(footerButtons.map(n => n.textContent.replace(/\s+/g, '')), ['關閉', '送出並回覆下一張', '送出'], '頁尾依序是關閉、送出並回覆下一張、送出');
+        assert.equal(view.submitBtn.type, 'submit');
+        assert.ok(view.entry.footer.children.includes(view.submitBtn), '送出鈕在頁尾');
+        assert.equal(view.submitBtn.getAttribute('form'), view.form.id, '以 form 屬性關聯表單');
+        assert.ok(view.form.id, '表單要有 id');
+        const inForm = all(view.form).filter(n => n.tagName === 'BUTTON' && n.type === 'submit');
+        assert.equal(inForm.length, 0, '表單內不留送出鈕');
+        // 搬到頁尾後送出路徑不變：選結論、送出表單 → 呼叫 submit
+        view.pick('resolved');
+        await view.send();
+        assert.equal(view.submits.length, 1);
+        // 沒有「送出並回覆下一張」時，頁尾只有關閉與送出
+        const plain = openReply(loadReplyModule());
+        assert.deepEqual(plain.entry.footer.children.filter(n => n.tagName === 'BUTTON').map(n => n.textContent.replace(/\s+/g, '')), ['關閉', '送出']);
+    },
+
     async noConclusionDisablesSubmit() {
         const loaded = loadReplyModule();
         const m = openReply(loaded);

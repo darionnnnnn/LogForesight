@@ -437,13 +437,29 @@ const cases = {
         assert.ok(unknown.includes(NEUTRAL), unknown);
         assert.ok(!unknown.includes('未啟用') && !unknown.includes('下一封'), unknown);
     },
+    // F16-2：時長按鈕下方寫明迄日與「含今天共 N 天」；自訂天數不合法時改提示範圍
+    async muteRangeHintStatesInclusiveDays() {
+        const source = read('pages', 'issue-mute-modal.js');
+        const text = new Function('toLocalDateString', 'MIN_DAYS', 'MAX_DAYS',
+            `${extract(source, 'function muteEndDate(')}\n${extract(source, 'function muteRangeText(')}\nreturn muteRangeText;`)(
+            d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, 1, 365);
+        const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+        assert.equal(text(7), `靜音至 ${addDays(6)}（含今天共 7 天）`, '1 週＝迄日是今天後第 6 天（共 7 天），不是第 7 天');
+        assert.equal(text(1), `靜音至 ${addDays(0)}（含今天共 1 天）`, '1 天＝只有今天');
+        assert.equal(text(365), `靜音至 ${addDays(364)}（含今天共 365 天）`, '上限');
+        assert.equal(text(0), '請輸入 1～365 的天數', '下限外');
+        assert.equal(text(366), '請輸入 1～365 的天數', '上限外');
+        assert.equal(text(Number('')), '請輸入 1～365 的天數', '自訂欄空白（Number("") 是 0）');
+        assert.equal(text(2.5), '請輸入 1～365 的天數', '非整數');
+        assert.ok(/rangeHint\.textContent = muteRangeText\(/.test(source), '畫面要顯示它');
+    },
     // 靜音對話框：代為結案附註的三態，以及設定請求回來前重複觸發只開一個
     async muteModalNotifyTextThreeStatesAndRepeatTrigger() {
         const build = (settings, gate) => {
             const env = makeEnv();
             const source = read('pages', 'issue-mute-modal.js');
             const fn = [
-                extract(source, 'function muteEndDate('), extract(source, 'function dateOnly('), extract(source, 'async function loadActiveOrders('),
+                extract(source, 'function muteEndDate('), extract(source, 'function muteRangeText('), extract(source, 'function dateOnly('), extract(source, 'async function loadActiveOrders('),
                 extract(source, 'async function buildIssueMuteModal('),
                 extractLine(source, 'export const openIssueMuteModal = ').replace(/^export /, '')
             ].join('\n');

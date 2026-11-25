@@ -1156,15 +1156,18 @@
       },
       {
         "assert": {
-          "sel": ".modal.show form button[type=\"submit\"]",
+          "sel": ".modal.show .modal-footer button[type=\"submit\"]",
           "visible": true
         }
       },
       {
         "assert": {
-          "sel": ".modal.show form",
+          "sel": ".modal.show .modal-footer",
           "text": "送出並回覆下一張"
         }
+      },
+      {
+        "evalAssert": "const f = document.querySelector('.modal.show .modal-footer'); const submit = f.querySelector('button[type=\"submit\"]'); const close = [...f.querySelectorAll('button')].find(b => b.textContent.trim() === '關閉'); if (!close) return '頁尾找不到關閉鈕'; const a = submit.getBoundingClientRect(), b = close.getBoundingClientRect(); if (Math.abs(a.top - b.top) > 40) return '送出與關閉不在同一列'; const r = f.getBoundingClientRect(); if (a.right > r.right + 1 || a.left < r.left - 1) return '送出鈕超出頁尾'; if (document.querySelector('.modal.show form button[type=\"submit\"]')) return '送出鈕還留在表單內'; return null;"
       }
     ]
   },
@@ -5273,6 +5276,18 @@
       { "waitFor": "#issue-hide-guide .lf-disclosure" },
       {
         "evalAssert": "const toggle = document.querySelector('#issue-hide-guide .lf-disclosure');\nconst target = document.getElementById(toggle.getAttribute('aria-controls'));\nif (!target.classList.contains('d-none')) return '比較表預設要收合';\ntoggle.click();\nif (target.classList.contains('d-none')) return '展開後比較表沒有顯示';\nconst rows = target.querySelectorAll('tbody tr');\nif (rows.length !== 6) return '比較表要有六列（靜音、抑制、已知雜訊、不處理、誤報、統一標記），實際 ' + rows.length;\nif (target.scrollWidth > target.clientWidth + 1) return '比較表有橫向溢出';\nreturn null;"
+      }
+    ]
+  }
+  ,{
+    "name": "版面-風險日詳情-交辦徽章不越出儲存格",
+    "role": "ui-admin",
+    "path": "fixture:record.cases",
+    "widths": [375, 768, 1280, 1920, 2560],
+    "steps": [
+      { "waitFor": "#detail-issues .lf-status-cell__wrap .lf-badge" },
+      {
+        "evalAssert": "const badges = [...document.querySelectorAll('#detail-issues .lf-status-cell__wrap .lf-badge--primary')]; if (!badges.length) return '資料集沒有案件徽章'; const bad = []; for (const b of badges) { const td = b.closest('td'); const r = document.createRange(); r.selectNodeContents(b); const right = Math.max(...[...r.getClientRects()].map(x => x.right)); if (right > td.getBoundingClientRect().right + 1) bad.push(Math.round(right - td.getBoundingClientRect().right)); } return bad.length ? ('案件徽章超出儲存格 ' + bad.join(',') + 'px') : null;"
       }
     ]
   }

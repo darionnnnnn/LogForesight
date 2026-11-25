@@ -218,6 +218,25 @@ public sealed class WorkOrderRecurrenceQueryTests
     }
 
     [Fact]
+    public void H6_成員帶登錄類型_同主機同問題不同登錄類型各一列且分得開()
+    {
+        var order = AddOrder();
+        var system = AddCase(order, "H1", IssueHandlingStatuses.InProgress, Today.AddDays(-1));
+        var app = AddCase(order, "H1", IssueHandlingStatuses.InProgress, Today.AddDays(-1));
+        app.IssueKey = IssueSignatureKey.For("Application", "disk", 153, LogEntryType.Error);
+        _cases.Save(app);
+        var unparsable = AddCase(order, "H2", IssueHandlingStatuses.InProgress, Today.AddDays(-1));
+        unparsable.IssueKey = "not-a-signature";
+        _cases.Save(unparsable);
+
+        var items = Service(Admin()).Members(order, "all", 1, 50).Items;
+
+        Assert.Equal("System", items.Single(i => i.CaseId == system.CaseId).LogName);
+        Assert.Equal("Application", items.Single(i => i.CaseId == app.CaseId).LogName);
+        Assert.Null(items.Single(i => i.CaseId == unparsable.CaseId).LogName);   // 簽章解析不出來＝沒有登錄類型
+    }
+
+    [Fact]
     public void 成員_沒有前案_欄位都是預設值_上次回覆為null_第1次()
     {
         var order = AddOrder();

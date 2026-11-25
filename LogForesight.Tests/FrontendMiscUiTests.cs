@@ -289,6 +289,9 @@ public class FrontendMiscBehaviorTests
     [InlineData("prtg未對應翻頁仍帶同一個pin_只有第一頁第一次跳轉")]
     [InlineData("prtg未對應清網址保留其他參數與hash")]
     [InlineData("prtg未對應跳轉共用既有區塊展開與捲動")]
+    [InlineData("稽核動作分組_依前綴歸組且未知動作歸其他")]
+    [InlineData("稽核動作搜尋_名稱或代碼比對且已選項目保留")]
+    [InlineData("負責人匯入預覽_將建立的帳號用警告標示")]
     public void 小項行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

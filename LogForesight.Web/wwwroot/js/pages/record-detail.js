@@ -1884,7 +1884,7 @@ function caseBadge(issue) {
     const linkable = issue.caseHandlerId && canViewHandlerPage(currentUser, issue.caseHandlerId);
     const badge = document.createElement(linkable ? 'a' : 'span');
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
-    badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
+    badge.className = 'lf-badge lf-badge--primary lf-badge--wrap d-inline-block mt-1';
     if (linkable) {
         badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());

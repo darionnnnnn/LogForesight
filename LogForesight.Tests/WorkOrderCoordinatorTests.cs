@@ -494,12 +494,14 @@ public class WorkOrderCoordinatorTests
         var known = Assert.Throws<WorkOrderRuleException>(() =>
             w.Coordinator.Split(id, new[] { "a", "0f8e6d2c-3b7a-4c1e-9d55-aa11bb22cc33" }, Carol, Actor()));
         Assert.Contains("H2-DONE", known.Message);
+        Assert.Contains("主機 H2-DONE 已不是交辦單", known.Message);   // CU-7：主機名後補空白，不與「已不是」黏在一起
         Assert.Contains("請重新整理成員清單", known.Message);
         Assert.DoesNotContain("0f8e6d2c", known.Message);
 
         // 查不到案件（已被清除）時不寫識別碼，只提示重新整理
         var unknown = Assert.Throws<WorkOrderRuleException>(() => w.Coordinator.Split(id, new[] { "ghost-id" }, Carol, Actor()));
         Assert.DoesNotContain("ghost-id", unknown.Message);
+        Assert.StartsWith("選取的成員中有主機已不是交辦單", unknown.Message);   // 沒有主機名時不多出空白
         Assert.Contains("請重新整理成員清單", unknown.Message);
     }
 
