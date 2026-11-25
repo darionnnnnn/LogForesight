@@ -135,6 +135,21 @@ public class RuleTrialTests : IDisposable
     }
 
     [Fact]
+    public void 沒有可見主機_回無法試算並寫明原因_有可見主機時照常試算()
+    {
+        SeedData();
+        var noHosts = new RuleAdminService(_rules, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(), _hosts,
+            new EfIssueAggregateQuery(_fx.NewContext, _hosts), systemSettings: _settings, visibility: new FixedVisibilityService(Array.Empty<long>()));
+
+        var empty = noHosts.TrialRule(Draft(5));
+        Assert.False(empty.Supported);
+        Assert.Equal("目前帳號沒有可見主機，無法試算。", empty.UnsupportedReason);
+
+        Assert.True(Service().TrialRule(Draft(5)).Supported);   // 邊界另一側：有可見主機照常算
+    }
+
+    [Fact]
     public void 門檻調低_標示為下限估計_調高或不變不是()
     {
         SeedData();

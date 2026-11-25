@@ -811,6 +811,30 @@ public class RuleAdminServiceTests
     }
 
     [Fact]
+    public void 新增規則撞到既有編號_回編號已存在的驗證錯誤_不是版本衝突()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        var again = ValidRequest("custom-dup");
+        again.IsNew = true;
+
+        var ex = Assert.Throws<DomainException>(() => service.SaveRule(again));
+
+        Assert.Contains("已存在", ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+    }
+
+    [Fact]
+    public void 編輯既有規則沒帶版本_仍是版本衝突()
+    {
+        var service = Create();
+        service.SaveRule(ValidRequest("custom-dup"));
+        var edit = ValidRequest("custom-dup");   // IsNew=false、Version=null：編輯但沒帶版本
+
+        Assert.Throws<ConcurrentUpdateException>(() => service.SaveRule(edit));
+    }
+
+    [Fact]
     public void 白名單外的平台被拒_不靜默改成windows()
     {
         var request = ValidRequest("custom-platform");

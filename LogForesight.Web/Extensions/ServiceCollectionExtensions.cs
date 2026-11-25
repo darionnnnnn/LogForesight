@@ -301,7 +301,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IAuditService, AuditService>();
         // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
-        services.AddScoped<UserCapabilityResolver>();
+        services.AddSingleton<UserCapabilityResolver>();   // 只依賴 singleton store；AdminReminderService（singleton）也要用
         services.AddSingleton<DirectoryVerifyGate>();   // 目錄服務驗證並行上限，跨請求共用
         services.AddScoped<IdentityService>();
         services.AddScoped<PrtgScopePurgeAuthorizationService>();

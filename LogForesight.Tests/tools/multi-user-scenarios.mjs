@@ -544,7 +544,7 @@ export const scenarios = [
             const d = await get(a, `/api/audit?page=1&pageSize=10&targetKind=rule`);
             return (d?.items || []).filter(x => x.targetId === pick.id).slice(0, 4).map(x => `${x.action}：${x.account} ${x.summary}`).join(' ｜ ') || '（讀不到或沒有紀錄）';
         });
-        try { await api(a, 'POST', '/api/rules', { ...after, description: original.description, plainExplanation: original.plain }); run.note('已還原規則', pick.id); } catch (e) { run.note('還原規則失敗', e.message); }
+        try { const latest = await read(); await api(a, 'POST', '/api/rules', { ...latest, description: original.description, plainExplanation: original.plain }); run.note('已還原規則', pick.id); } catch (e) { run.note('還原規則失敗', e.message); }
     }
 },
 {
@@ -584,7 +584,9 @@ export const scenarios = [
             return (d?.items || []).filter(x => String(x.targetId) === String(me.userId)).slice(0, 4).map(x => `${x.action}：${x.account} ${x.summary}`).join(' ｜ ') || '（讀不到或沒有紀錄）';
         });
         try {
-            await api(a, 'POST', '/api/admin/users', { account: TARGET, displayName: original.displayName, email: original.email, active: original.active });
+            // 批次 M 起編輯既有使用者必須帶目前版本（沒帶或過期＝409）：還原前先讀回最新的 version
+            const latest = (await get(a, '/api/admin/users') || []).find(x => x.account === TARGET);
+            await api(a, 'POST', '/api/admin/users', { account: TARGET, displayName: original.displayName, email: original.email, active: original.active, version: latest?.version });
             await api(a, 'PUT', `/api/admin/users/${me.userId}/groups`, { groupIds: original.groupIds });
             run.note('已還原使用者', `${TARGET} 的顯示名稱與群組`);
         } catch (e) { run.note('還原使用者失敗', e.message); }

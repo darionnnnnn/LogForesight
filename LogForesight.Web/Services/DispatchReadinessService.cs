@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -23,6 +24,13 @@ namespace LogForesight.Web.Services;
 public sealed class DispatchReadinessService
 {
     private const int ExampleLimit = 5;
+
+    /// <summary>
+    /// 在健康頁「派工就緒」卡照常顯示不通過與修正連結、但<b>不併入</b>整體狀態（<c>HealthAttention.Evaluate</c>）的項目：
+    /// 自動派工開關與排程啟用是管理員可以刻意關閉的營運選擇，併入會讓導覽告示列常駐。其餘項目照舊併入。
+    /// </summary>
+    public static readonly IReadOnlySet<string> NotInHealthStatusIds =
+        new HashSet<string>(StringComparer.Ordinal) { "auto-dispatch-off", "schedule-off" };
 
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;
@@ -105,7 +113,7 @@ public sealed class DispatchReadinessService
         var items = new List<DispatchReadinessItemDto>();
 
         // 1. 主機沒有群組：沒有群組就沒有任何授權路徑（只剩主機負責人），派工池看不到
-        var ungrouped = hosts.Where(h => h.GroupIds.Count == 0).OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase).ToList();
+        var ungrouped = NetiqHostList.Ungrouped(hosts).OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase).ToList();
         items.Add(Item("host-no-group", "主機都有群組", ungrouped.Count == 0, ungrouped.Count,
             ungrouped.Count == 0 ? "所有啟用的主機都已加入主機群組。"
                 : $"有 {ungrouped.Count} 台啟用的主機沒有加入任何主機群組，派工池看不到它們。",
@@ -140,9 +148,14 @@ public sealed class DispatchReadinessService
         // 5. AI 執行窗口
         var schedule = _schedule.Get();
         var hasAiWindow = ScheduleCalculator.HasAnyWindow(schedule.AiWindows);
-        items.Add(Item("ai-window", "AI 執行窗口已設定", hasAiWindow, hasAiWindow ? 0 : 1,
-            hasAiWindow ? "AI 背景補跑有設定執行窗口。" : "沒有設定任何 AI 執行窗口，AI 不會自動補跑，白話摘要會一直停在待補。",
-            Array.Empty<string>(), "/runs#settings", "前往排程設定"));
+        // AI 未設定＝統計模式，是合法運作（與健康頁 AiUnreachable 排除「未設定」同一個口徑）：沒有 AI 要補跑，不需要執行窗口
+        if (!AIService.BuildSettingsFromDb(settings).IsConfigured)
+            items.Add(Skipped("ai-window", "AI 執行窗口已設定",
+                "AI 尚未設定（統計模式），不需要 AI 執行窗口。", "/runs#settings", "前往排程設定"));
+        else
+            items.Add(Item("ai-window", "AI 執行窗口已設定", hasAiWindow, hasAiWindow ? 0 : 1,
+                hasAiWindow ? "AI 背景補跑有設定執行窗口。" : "沒有設定任何 AI 執行窗口，AI 不會自動補跑，白話摘要會一直停在待補。",
+                Array.Empty<string>(), "/runs#settings", "前往排程設定"));
 
         // 6. 排程啟用
         items.Add(Item("schedule-off", "排程已啟用", schedule.Enabled, schedule.Enabled ? 0 : 1,

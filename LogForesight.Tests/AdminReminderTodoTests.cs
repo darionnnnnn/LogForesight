@@ -139,6 +139,74 @@ public sealed class AdminReminderTodoTests : IDisposable
         Assert.DoesNotContain(dto.InactiveHandlers, h => h.UserId == normal.UserId || h.UserId == pausedNoOrder.UserId);
     }
 
+    /// <summary>
+    /// 待辦的「處理人已停用或暫停仍有單」人數＝點連結（handlerInactive=1）後清單裡不重複的處理人數。
+    /// 三種原因各一人：帳號停用、失去 Handle、暫停接單；正常處理人兩邊都不算。
+    /// </summary>
+    [Fact]
+    public void 處理人無法接單的待辦人數_等於連結篩選後清單的不重複處理人數()
+    {
+        var userRole = _groups.Upsert(new UserGroup { GroupName = "處理人", Role = UserRole.User, Active = true });
+        var managerRole = _groups.Upsert(new UserGroup { GroupName = "主管", Role = UserRole.Manager, Active = true });
+        var capabilities = new UserCapabilityResolver(_groups, _hosts);
+        var disabled = _users.Upsert(new WebUser { Account = "gone", Active = false, GroupIds = new List<long> { userRole.GroupId } });
+        var noHandle = _users.Upsert(new WebUser { Account = "mgr", Active = true, GroupIds = new List<long> { managerRole.GroupId } });
+        var paused = _users.Upsert(new WebUser { Account = "rest", Active = true, DispatchPaused = true, GroupIds = new List<long> { userRole.GroupId } });
+        var normal = _users.Upsert(new WebUser { Account = "busy", Active = true, GroupIds = new List<long> { userRole.GroupId } });
+        foreach (var u in new[] { disabled, noHandle, paused, normal }) { OrderOf(u.UserId, 1); OrderOf(u.UserId, 1); }
+
+        var reminder = new AdminReminderService(
+            _settings, _orders, _cases, _hosts, _users, _groups, _state, _mail, new FakeRuleStore(), clock: _clock,
+            runState: _runState, displayNames: new UserDisplayNameService(_settings), capabilities: capabilities)
+            .Compute(true);
+        var listed = new WorkOrderQueryService(
+            _orders, _cases, _users, _hosts, new FakeHostGroupStore(), new FakeRuleStore(), new AlwaysVisibleService(_hosts),
+            FakeCurrentUser.ForUser(1, Capability.ViewAll, Capability.Assign), new UserDisplayNameService(_settings),
+            new FixedIssueExclusionSource(IssueExclusion.None), _groups, new FakeAnalysisRecordQuery(), _clock, capabilities)
+            .List(new WorkOrderListRequest { Status = "active", HandlerInactive = true, PageSize = 100 });
+
+        var handlers = listed.Items.Select(i => i.HandlerId).Distinct().ToHashSet();
+        Assert.Equal(new[] { disabled.UserId, noHandle.UserId, paused.UserId }.ToHashSet(), handlers);
+        Assert.Equal(handlers.Count, reminder.InactiveHandlerCount);
+        Assert.DoesNotContain(normal.UserId, handlers);
+    }
+
+    private sealed class SwitchableExclusionSource : IIssueExclusionSource
+    {
+        public IssueExclusion Current_ { get; set; } = IssueExclusion.None;
+        public IssueExclusion Current() => Current_;
+    }
+
+    // ── 快取鍵 ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void 提醒彙整快取_靜音版本或日期改變時鍵不同_不沿用舊結果()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new SummaryCache(stamp);
+        var exclusions = new SwitchableExclusionSource { Current_ = IssueExclusion.None };
+        var service = new AdminReminderService(
+            _settings, _orders, _cases, _hosts, _users, _groups, _state, _mail, new FakeRuleStore(), exclusions, _clock,
+            _runState, cache, new UserDisplayNameService(_settings));
+
+        FailLastRun(Today.AddHours(2));
+        var first = service.Compute(true);
+        Assert.Equal(1, first.FetchFailedCount);
+        FailLastRun(Today.AddHours(3), success: true);
+
+        Assert.Equal(1, service.Compute(true).FetchFailedCount);        // 同鍵：命中快取（證明快取有效）
+        exclusions.Current_ = IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = "disk", EventId = 1, Mutes = new List<MuteInterval> { new() { From = Today, To = Today.AddDays(3) } } }
+        }, Today);
+        Assert.Equal(0, service.Compute(true).FetchFailedCount);        // 靜音版本變了：重算
+
+        FailLastRun(Today.AddHours(4));
+        Assert.Equal(0, service.Compute(true).FetchFailedCount);        // 又命中舊鍵（還沒跨日）
+        SetNow(Today.AddDays(1).AddHours(1));
+        Assert.Equal(1, service.Compute(true).FetchFailedCount);        // 跨日：鍵不同，重算
+    }
+
     // ── 未分組主機 ───────────────────────────────────────────────────────────
 
     [Fact]
@@ -339,5 +407,24 @@ public sealed class AdminReminderTodoTests : IDisposable
             new FixedVisibilityService(new long[] { 3 }), exclusions);
         other.GetForCurrentUser();
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void AdminTodoService_待派數字快取鍵含日期_跨日重跑試跑()
+    {
+        var calls = 0;
+        PendingDispatchGapsProvider gaps = (from, to, page) =>
+        {
+            calls++;
+            return new GapsDto { Dispatchable = new GapSectionDto { Issues = calls, Hosts = 1 } };
+        };
+        var cache = new SummaryCache(new DataVersionStamp());
+        var visibility = new FixedVisibilityService(new long[] { 1 });
+        var service = (DateTime day) => new AdminTodoService(Service(cache), gaps, FakeCurrentUser.WithCapabilities(Capability.Assign), cache, visibility,
+            new FixedIssueExclusionSource(IssueExclusion.From(Array.Empty<IssueProfile>(), day)));
+
+        Assert.Equal(1, service(Today).GetForCurrentUser().DispatchableCount);
+        Assert.Equal(1, service(Today).GetForCurrentUser().DispatchableCount);   // 同一天：命中
+        Assert.Equal(2, service(Today.AddDays(1)).GetForCurrentUser().DispatchableCount);   // 跨日：重跑
     }
 }

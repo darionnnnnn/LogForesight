@@ -101,6 +101,12 @@ public class SaveRuleRequest
     [StringLength(64)]
     public string? Version { get; set; }
 
+    /// <summary>
+    /// true＝這次是「新增規則」（畫面的新增與以此為範本）。伺服器看到此旗標且該編號已存在時回「規則編號已存在」的驗證錯誤，
+    /// 而不是版本衝突（409）；未帶（false）＝編輯，沒帶版本就是衝突。
+    /// </summary>
+    public bool IsNew { get; set; }
+
     public bool Enabled { get; set; } = true;
 
     /// <summary>'windows'（預設）| 'linux' | 'prtg'。是否合法、與其他欄位是否互相對應

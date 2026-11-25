@@ -721,6 +721,8 @@ function collectRule() {
         id: document.getElementById('rule-id').value.trim(),
         // 開啟編輯時讀到的版本；新增（含以此為範本）沒有舊版本
         version: editingRule?.version ?? null,
+        // 新增（含以此為範本）：編號撞到既有規則時伺服器回「編號已存在」，不是版本衝突
+        isNew: !editingRule,
         enabled: document.getElementById('rule-enabled').checked,
         platform,
         sourcePattern: document.getElementById('rule-source').value.trim(),
@@ -1029,7 +1031,8 @@ function ruleTrialLines(result) {
     if (!result.supported) return [result.unsupportedReason || '這條規則無法試算。'];
     const lines = [
         `近 ${result.windowDays} 天命中主機日：${result.hitHostDaysBefore} → ${result.hitHostDaysAfter}`,
-        `會被派工的（主機, 問題）：${result.dispatchPairsBefore} → ${result.dispatchPairsAfter}`
+        `會被派工的（主機, 問題）：${result.dispatchPairsBefore} → ${result.dispatchPairsAfter}`,
+        '含靜音中的問題（試算不排除靜音）。'
     ];
     if (result.elevatedHostDaysBefore !== result.elevatedHostDaysAfter) {
         lines.push(`會判成高風險日的主機日（重大旗標）：${result.elevatedHostDaysBefore} → ${result.elevatedHostDaysAfter}`);

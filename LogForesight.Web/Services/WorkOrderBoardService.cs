@@ -31,7 +31,8 @@ public class WorkOrderBoardService
     internal const int DefaultMaxOccurrences = 20000;
 
     private const int GapPageSize = 50;
-    private const int DefaultPeriodDays = 7;
+    /// <summary>待派試跑的預設期間天數（昨天往前算）；報表處理成效在期間不超過它時才做試跑拆分</summary>
+    internal const int DefaultPeriodDays = 7;
     private const int UnseenHostGroupLimit = 10;
     private const string TargetKind = "work_order";
 

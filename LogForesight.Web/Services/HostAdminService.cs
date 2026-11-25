@@ -280,7 +280,7 @@ public class HostAdminService
                 "netiq" => filtered.Where(h => h.Source == "netiq" && h.Active),
                 "pending" => filtered.Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null && h.SentinelId == null),
                 "silent" => filtered.Where(h => IsSilent(h, DateTime.Now)),
-                "ungrouped" => filtered.Where(h => h.Active && h.MergedInto == null && h.GroupIds.Count == 0),
+                "ungrouped" => NetiqHostList.Ungrouped(filtered),   // 未分組的唯一判定（管理者待辦、就緒檢查共用）
                 "inactive" => filtered.Where(h => !h.Active),
                 // 指派下拉與勾選清單用：啟用且未合併（合併進別台的主機不是指派目標）
                 "assignable" => filtered.Where(h => h.Active && h.MergedInto == null),

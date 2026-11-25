@@ -364,6 +364,31 @@ public class CaseGrantVisibilityTests : IDisposable
     }
 
     [Fact]
+    public void 案件授與者在主機時間軸與紀錄清單看不到未授與問題的無AI摘要標題()
+    {
+        // 無 AI 摘要的紀錄：標題會由整筆 TopIssues 的最重問題組出來，授與者不該因此看到沒被授與的問題名稱
+        var host = _hosts.Upsert(new WebHost { HostName = "SRV-NOAI", GroupIds = new List<long> { 30 } });
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Day, RiskLevel = "高", Headline = "",
+            TopIssues = new List<LogIssueSignature> { _otherIssue, _grantedIssue }
+        });
+        _cases.Save(new IssueCase
+        {
+            CaseId = "case-noai", HostName = host.HostName, IssueKey = IssueSignatureKey.For(_grantedIssue),
+            IssueLabel = "disk 153", HandlerId = _user.UserId, Status = IssueHandlingStatuses.InProgress,
+            FirstLinkedDate = Day, LastLinkedDate = Day
+        });
+        var query = Query(Visibility());
+
+        var timeline = query.GetHostDetail(host.HostId, days: 7).Timeline;
+        Assert.All(timeline, d => Assert.DoesNotContain(_otherIssue.SourceEventLabel, d.Headline ?? ""));
+
+        var rows = query.Search(new RecordSearchRequest { HostIds = new List<long> { host.HostId } }).Items;
+        Assert.All(rows, r => Assert.DoesNotContain(_otherIssue.SourceEventLabel, r.Headline ?? ""));
+    }
+
+    [Fact]
     public void 一般可見主機的主機詳情仍包含已授權的紀錄摘要()
     {
         AddRecord(_ownHost, Day, _grantedIssue, _otherIssue);

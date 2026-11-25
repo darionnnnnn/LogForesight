@@ -516,8 +516,11 @@ public class WorkOrderCommandService
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId, Scoped = caseIds != null });
 
-        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）
+        // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）。
+        // 範圍結案且單仍有進行中成員時，信件寫「N 台已由管理者代為結案（單仍在進行中）」：成員數放在 MemberDelta（整張單結案維持 0、沿用原文）
+        var stillOpen = caseIds != null && _orders.Get(id) is { ClosedAt: null };
         _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, result.HandlerId, _currentUser.UserId, _currentUser.Account,
+            memberDelta: stillOpen ? result.ClosedCases : 0,
             reason: reason, status: req.Status, blocksRedispatch: blocksRedispatch);
 
         return new WorkOrderCloseResultDto

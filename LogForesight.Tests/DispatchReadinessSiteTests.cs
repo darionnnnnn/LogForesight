@@ -45,11 +45,12 @@ public class DispatchReadinessSiteTests
         Assert.False(wizard["groups"].Done);
         Assert.False(wizard["dept-groups"].Done);
 
-        // 健康整體狀態：三項不通過各一條原因，且整體為 degraded
+        // 健康整體狀態：自動派工開關與排程啟用是可以刻意關閉的營運選擇，卡片照列不通過但不併入整體狀態；
+        // 只有「沒有可接單的派工池」併入，整體為 degraded
         var detail = site.Get<HealthService>().GetDetail();
         Assert.Equal("degraded", detail.Status);
         var reasons = detail.StatusReasons.Where(r => r.Key == HealthAttentionKeys.DispatchReadiness).ToList();
-        Assert.Equal(3, reasons.Count);
+        Assert.Single(reasons);
         Assert.All(reasons, r => Assert.StartsWith("派工就緒：", r.Text));
         Assert.Equal(3, detail.DispatchReadiness!.FailedCount);
     }

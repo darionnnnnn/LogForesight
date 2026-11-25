@@ -155,6 +155,35 @@ public class HostOrderCrossCutTests
     }
 
     [Fact]
+    public void 這台的交辦_上次回覆說明只給處理人本人與有指派或全站檢視的人()
+    {
+        var host = AddHost("SRV-1");
+        var other = AddHost("SRV-2");
+        // 前案：同主機同問題、先建立並已處理結案、帶說明
+        var prior = AddOrder(_alice.UserId);
+        var old = AddCase(prior, host.HostName, IssueKey, IssueHandlingStatuses.Resolved, closed: D2);
+        old.CreatedAt = D2.AddDays(-5); old.Note = "機密說明"; _cases.Save(old);
+        var order = AddOrder(_bob.UserId);
+        var current = AddCase(order, host.HostName, IssueKey);
+        current.CaseId += "-new"; current.CreatedAt = D2; _cases.Save(current);
+
+        // 非處理人、沒有 Assign 或 ViewAll：只回日期與狀態
+        var viewer = _users.Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "卡蘿" });
+        var vis = VisibleTo(new[] { host, other }, host);
+        var plain = Service(As(viewer.UserId, Capability.Handle), vis).HostOrders(host.HostId).Items.Single();
+        Assert.NotNull(plain.LastReply);
+        Assert.Equal(IssueHandlingStatuses.Resolved, plain.LastReply!.Status);
+        Assert.Null(plain.LastReply.Note);
+
+        // 處理人本人：看得到
+        var self = Service(As(_bob.UserId, Capability.Handle), vis).HostOrders(host.HostId).Items.Single();
+        Assert.Equal("機密說明", self.LastReply!.Note);
+        // Assign：看得到
+        var assign = Service(As(viewer.UserId, Capability.Handle, Capability.Assign), vis).HostOrders(host.HostId).Items.Single();
+        Assert.Equal("機密說明", assign.LastReply!.Note);
+    }
+
+    [Fact]
     public void 這台的交辦_受限使用者主機不可見_404且不洩漏()
     {
         var (host, other) = SeedHostWithTwoOrders();

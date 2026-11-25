@@ -1026,6 +1026,26 @@ public class WorkOrderCommandServiceTests : IDisposable
     }
 
     [Fact]
+    public void 代為結案_範圍結案單仍進行中_通知帶已結案台數_整張結案或範圍結完整張單則為0()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");
+        var members = MembersOf(orderId);
+        var a = members.Single(c => c.HostName == "HOST-A").CaseId;
+        var b = members.Single(c => c.HostName == "HOST-B").CaseId;
+        _outbox.Update(x => x.Items.Clear());
+
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "先結一台", CaseIds = new List<string> { a } });
+        var partial = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxKinds.AdminClosed, partial.Kind);
+        Assert.Equal(1, partial.MemberDelta);   // 單仍在進行中：帶這次結案的台數
+
+        _outbox.Update(x => x.Items.Clear());
+        _service.AdminClose(orderId, new AdminCloseWorkOrderRequest { Status = IssueHandlingStatuses.Resolved, Reason = "最後一台", CaseIds = new List<string> { b } });
+        Assert.Equal(0, Assert.Single(_outbox.Get().Items.Values).MemberDelta);   // 範圍結完、整張單因此結案：沿用整張單原文
+    }
+
+    [Fact]
     public void 代為結案_第81輪T_案件清單含已結案或不屬於這張單的案件_整筆拒絕且不寫稽核()
     {
         var (orderId, _) = CreateOneOrder("HOST-A", "HOST-B");

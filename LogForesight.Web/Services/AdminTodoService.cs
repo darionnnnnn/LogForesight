@@ -46,11 +46,16 @@ public class AdminTodoService
     /// 可派問題數：待派試跑結果依可見主機集合與靜音條件各存一份（鍵含授權維度；內容是計數，不含主機名）。
     /// 試跑期間用預設的「昨天往前 7 天」，與儀表板待派卡同一段。
     /// </summary>
-    private PendingDispatchCounts PendingCounts() => _cache.GetOrAdd(
-        SummaryCache.KeyOf("pending-dispatch-counts", _exclusions.Current().CacheToken, _visibility.GetVisibleHostIds()),
-        () =>
-        {
-            var gaps = _gaps(null, null, 1);
-            return new PendingDispatchCounts(gaps.Dispatchable.Issues, gaps.TooLarge);
-        });
+    private PendingDispatchCounts PendingCounts()
+    {
+        // 試跑窗口依今天算（昨天往前 7 天）：鍵含日期，跨日不沿用前一天的結果
+        var exclusion = _exclusions.Current();
+        return _cache.GetOrAdd(
+            SummaryCache.KeyOf("pending-dispatch-counts", $"{exclusion.CacheToken}|{exclusion.Today:yyyyMMdd}", _visibility.GetVisibleHostIds()),
+            () =>
+            {
+                var gaps = _gaps(null, null, 1);
+                return new PendingDispatchCounts(gaps.Dispatchable.Issues, gaps.TooLarge);
+            });
+    }
 }

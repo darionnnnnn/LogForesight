@@ -27,7 +27,8 @@ const cases = {
         const lines = ruleTrialLines(base);
         assert.equal(lines[0], '近 30 天命中主機日：7 → 4');
         assert.equal(lines[1], '會被派工的（主機, 問題）：3 → 2');
-        assert.equal(lines.length, 2, '沒有高風險日變化、不是下限、不是新規則時只有兩行');
+        assert.equal(lines[2], '含靜音中的問題（試算不排除靜音）。');
+        assert.equal(lines.length, 3, '沒有高風險日變化、不是下限、不是新規則時只有兩行數字加一句靜音說明');
     },
     lowerBoundAddsExplanationOnlyWhenLowerBound() {
         assert(ruleTrialLines({ ...base, isLowerBound: true }).some(l => l.includes('下限估計')));

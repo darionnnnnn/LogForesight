@@ -1315,11 +1315,13 @@ function issueActions(group) {
     if (hasCapability(currentUser, 'Assign')) {
         list.push({ text: '交辦', title: '把這個問題交辦給處理人（建立交辦單）', run: () => openWorkOrderModal(group) });
     }
-    // 統一標記要 Assign＋Handle 兩者（後端同一條規則）——實務上就是 admin
-    if (hasCapability(currentUser, 'Assign') && hasCapability(currentUser, 'Handle')) {
+    // 統一標記具 Handle 即可（後端 O1 規則）：Assign＋Handle（管理者）不限主機，只具 Handle（主機負責人）只標到自己負責的主機
+    if (hasCapability(currentUser, 'Handle')) {
         list.push({
             text: '統一標記',
-            title: '把這個問題在尚未有人接手的主機上一次標成結論',
+            title: hasCapability(currentUser, 'Assign')
+                ? '把這個問題在尚未有人接手的主機上一次標成結論'
+                : '把這個問題在你負責、且尚未有人接手的主機上一次標成結論',
             run: () => openBulkCloseModal(group)
         });
     }
@@ -1482,7 +1484,9 @@ function renderBulkCloseForm(body, group, preview, modal) {
 
     const scopeNote = document.createElement('div');
     scopeNote.className = 'lf-hint mb-3';
-    scopeNote.textContent = '只套用到「尚未有人接手」的主機——已建立交辦的主機一律略過（要換結論請由處理人回覆或先改派）。' +
+    const canAutoApply = hasCapability(currentUser, 'Assign');
+    scopeNote.textContent = (canAutoApply ? '' : '只會標到你負責的主機，其他主機會列為略過（不是你負責的主機）。') +
+        '只套用到「尚未有人接手」的主機——已建立交辦的主機一律略過（要換結論請由處理人回覆或先改派）。' +
         '本操作只對上列期間內的既有紀錄下結論；規則未調整前，之後的新日子仍會產生同類問題' +
         '（標「已知雜訊」除外——會為這些主機寫入雜訊記憶，之後同問題自動標示）。';
     form.appendChild(scopeNote);
@@ -1546,18 +1550,22 @@ function renderBulkCloseForm(body, group, preview, modal) {
 
     // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這次操作只處理上方列出的既有日子，
     // 勾選後才會另外把這個問題設成機房結論，讓之後新出現的主機日也自動套用同一個結論
-    const autoApplyWrap = document.createElement('div');
-    autoApplyWrap.className = 'form-check mb-3';
-    const autoApplyInput = document.createElement('input');
-    autoApplyInput.type = 'checkbox';
-    autoApplyInput.className = 'form-check-input';
-    autoApplyInput.id = 'bulk-close-auto-apply';
-    const autoApplyLabel = document.createElement('label');
-    autoApplyLabel.className = 'form-check-label';
-    autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
-    autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
-    autoApplyWrap.append(autoApplyInput, autoApplyLabel);
-    form.appendChild(autoApplyWrap);
+    // 機房結論是全站的決定，只有具 Assign 的管理者能用（後端同一條規則）；只具 Handle 的主機負責人看不到這個勾選框
+    let autoApplyInput = { checked: false };
+    if (canAutoApply) {
+        const autoApplyWrap = document.createElement('div');
+        autoApplyWrap.className = 'form-check mb-3';
+        autoApplyInput = document.createElement('input');
+        autoApplyInput.type = 'checkbox';
+        autoApplyInput.className = 'form-check-input';
+        autoApplyInput.id = 'bulk-close-auto-apply';
+        const autoApplyLabel = document.createElement('label');
+        autoApplyLabel.className = 'form-check-label';
+        autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
+        autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
+        autoApplyWrap.append(autoApplyInput, autoApplyLabel);
+        form.appendChild(autoApplyWrap);
+    }
 
     const submit = button('套用', { variant: 'primary', size: '', type: 'submit' });
     // 上限用總數判斷，不是本頁列出的筆數——列表被截斷不代表可以送出更多

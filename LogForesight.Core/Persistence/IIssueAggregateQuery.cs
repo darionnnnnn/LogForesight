@@ -223,7 +223,8 @@ public interface IIssueAggregateQuery
 
     /// <summary>
     /// 規則試算用的問題子列（F19-2）：期間內指定問題（<paramref name="issues"/>，呼叫端已依規則縮小的少數幾種）的每一列
-    /// （存活主機, 日, 簽章）與當日發生次數，母體與 <see cref="Aggregate"/> 相同的可見主機與靜音排除。
+    /// （存活主機, 日, 簽章）與當日發生次數，母體與 <see cref="Aggregate"/> 相同的可見主機；靜音排除依呼叫端傳入的
+    /// <see cref="IssueExclusion"/>（規則試算傳 <see cref="IssueExclusion.None"/>，靜音中的問題仍計入）。
     /// 同一存活主機、日、簽章（含合併主機別名）的次數相加成一列；唯讀，不寫入任何資料。
     /// </summary>
     List<RuleTrialRow> RuleTrialRows(

@@ -225,8 +225,9 @@ export function createBulkReassignPanel({ container, getSelectedIds, onApplied }
             // 整批被拒（例如超過上限）：訊息已顯示；已部分執行的情況只會在回應內逐張列出
             return;
         }
-        if (!guard.isCurrent(seq)) return;
-        renderResult(result);
+        // 伺服器已經改派了：不論對話框在等待期間是否被取消或換了畫面，清勾選與重載清單的回呼一律要呼叫；
+        // 只有結果畫面受序號保護（過期的回應不蓋掉較新的畫面）
+        if (guard.isCurrent(seq)) renderResult(result);
         onApplied?.(result);
     }
 

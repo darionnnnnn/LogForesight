@@ -51,7 +51,7 @@ const cases = {
         assert.ok(!el.textContent.includes('窗口內，隨時可跑'), '沒有窗口不能說隨時可跑');
         const link = el.children.find(c => c.tagName?.toLowerCase() === 'a');
         assert.ok(link, '要有連結');
-        assert.equal(link.href, '/app/runs#schedule-ai-windows');
+        assert.equal(link.href, '/app/runs#settings');
     },
     // 窗口內：有窗口、下一次時間為 null → 隨時可跑
     async inWindowSaysAnytime() {

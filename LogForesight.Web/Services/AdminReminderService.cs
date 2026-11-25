@@ -3,6 +3,7 @@ using System.Text;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Time;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services.Mail;
 using NLog;
@@ -59,6 +60,9 @@ public sealed class AdminReminderService
     private readonly SummaryCache? _cache;
     private readonly IUserDisplayNameService? _displayNames;
 
+    /// <summary>處理能力解析（與交辦單清單的處理人篩選共用 <see cref="HandlerInactivity"/>）；null＝不看處理能力</summary>
+    private readonly UserCapabilityResolver? _capabilities;
+
     /// <param name="runState">最近一趟取數結果的來源（昨晚取數結果類別）；null＝該類別恆為 0</param>
     /// <param name="cache">
     /// 跨請求快取（<see cref="SummaryCache"/>，繼承 <see cref="BoundedTtlCache{T}"/>）：<see cref="Compute"/> 的彙整每次開儀表板或交辦總覽都會跑，
@@ -68,8 +72,10 @@ public sealed class AdminReminderService
         ISystemSettingsStore settings, IWorkOrderStore orders, IIssueCaseStore cases, IHostStore hosts,
         IUserStore users, IUserGroupStore userGroups, MailNotifyStateStore state, MailNotificationService mail,
         IKnownIssueRuleStore rules, IIssueExclusionSource? exclusions = null, TimeProvider? clock = null,
-        SchedulerRunState? runState = null, SummaryCache? cache = null, IUserDisplayNameService? displayNames = null)
+        SchedulerRunState? runState = null, SummaryCache? cache = null, IUserDisplayNameService? displayNames = null,
+        UserCapabilityResolver? capabilities = null)
     {
+        _capabilities = capabilities;
         _runState = runState;
         _cache = cache;
         _displayNames = displayNames;
@@ -102,9 +108,19 @@ public sealed class AdminReminderService
     public AdminReminderDto Compute(bool includeTodo = false, PendingDispatchCounts? pending = null)
     {
         var result = _cache != null
-            ? _cache.GetOrAdd(SummaryCache.KeyOf("admin-reminders", "global", Array.Empty<long>()), ComputeResult)
+            ? _cache.GetOrAdd(SummaryCache.KeyOf("admin-reminders", CacheParameters(), Array.Empty<long>()), ComputeResult)
             : ComputeResult();
         return result.Dto.ForCaller(includeTodo, pending);
+    }
+
+    /// <summary>
+    /// 快取鍵的參數段：靜音版本（<see cref="IssueExclusion.CacheToken"/>）與今天的日期。三類提醒都排除目前靜音中的問題，
+    /// 靜音一變、鍵就換；逾期天數以今天計，跨日也不能沿用前一天的結果。資料版本戳與短 TTL 仍由 <see cref="SummaryCache"/> 負責。
+    /// </summary>
+    private string CacheParameters()
+    {
+        var exclusion = _exclusions?.Current() ?? IssueExclusion.None;
+        return $"global|{exclusion.CacheToken}|{_clock.LocalToday():yyyyMMdd}";
     }
 
     /// <summary>
@@ -238,12 +254,14 @@ public sealed class AdminReminderService
         // ② 處理人已停用或暫停接單、名下仍有進行中單
         var users = _users.GetAll().ToDictionary(u => u.UserId);
         var inactive = new List<AdminReminderInactiveHandlerDto>();
+        var reasons = new Dictionary<long, string>();
         foreach (var load in _orders.LoadBoard(excludedHostKeys).Where(l => l.ActiveWorkOrders > 0).OrderBy(l => l.HandlerId))
         {
             // 使用者已刪除（查無帳號）的單不在這一類：判定只看帳號的停用與暫停旗標
             if (!users.TryGetValue(load.HandlerId, out var user)) continue;
+            if (!HandlerInactivity.IsInactive(user, _capabilities)) continue;
             var disabled = !user.Active;
-            if (!disabled && !user.DispatchPaused) continue;
+            reasons[load.HandlerId] = user.DispatchPaused ? "暫停接單" : "已無處理權限";
             inactive.Add(new AdminReminderInactiveHandlerDto
             {
                 UserId = load.HandlerId,
@@ -259,7 +277,7 @@ public sealed class AdminReminderService
         {
             var key = $"handler:{h.UserId}";
             todo.Add(new TodoEntry(ReminderDetailItem.CategoryInactiveHandler, key, "【處理人已停用或暫停接單、名下仍有單】", "位", inactive.Count,
-                $"{h.Name}（{(h.Disabled ? "已停用" : "暫停接單")}）名下還有 {h.ActiveWorkOrders} 張單、{h.ActiveMembers} 台，請改派",
+                $"{h.Name}（{(h.Disabled ? "已停用" : reasons.GetValueOrDefault(h.UserId, "暫停接單"))}）名下還有 {h.ActiveWorkOrders} 張單、{h.ActiveMembers} 台，請改派",
                 days > 0 && IsDue(state, key, today, days)));
         }
 

@@ -181,6 +181,34 @@ const cases = {
         assert(hasClass(t.results, 'd-none'), '空白輸入收起結果');
     },
 
+    // Enter 前往：查詢期間又輸入了新字，舊的查詢回來時不能拿更早一批結果的第一筆去導覽；仍是最新的才前往
+    async hostSearchEnterOnlyNavigatesWhenQueryIsCurrent() {
+        const pending = [];
+        const t = setupSearch(url => url.includes('query=web&')
+            ? { items: [host(1, 'WEB-01')], total: 1, truncated: false }
+            : new Promise(resolve => pending.push({ url, resolve })));
+        const nav = { href: '' };
+        globalThis.location = nav;
+        const enter = () => t.input.listeners.keydown[0]({ key: 'Enter', preventDefault() { } });
+
+        await t.search.run('web');                       // 先有一批結果（第一筆 WEB-01）
+        t.input.value = 'web1';
+        enter();                                         // 還沒查就按 Enter：送出 web1
+        const newer = t.search.run('web12');             // 等待期間又輸入新字：web1 變成過期
+        pending[0].resolve({ items: [host(2, 'WEB-12')], total: 1, truncated: false });
+        await tick();
+        assert.equal(nav.href, '', '過期的 Enter 查詢不得導覽（更不能用更早一批的第一筆）');
+        pending[1].resolve({ items: [host(3, 'WEB-123')], total: 1, truncated: false });
+        await newer;
+
+        // 邊界另一側：Enter 的查詢仍是最新的，就前往第一筆
+        t.input.value = 'web9';
+        enter();
+        pending[2].resolve({ items: [host(9, 'WEB-09')], total: 1, truncated: false });
+        await tick(); await tick();
+        assert.equal(nav.href, `${BASE}/hosts/9`, '最新的查詢才前往第一筆');
+    },
+
     // ── F05-1 這台的交辦 ────────────────────────────────────────────────────
     // 勾選兩個問題（分屬兩張單）一次回覆：每張單各一次回覆請求，caseIds 只帶這台的案件
     async hostOrdersReplyTwoIssuesTwoRequests() {

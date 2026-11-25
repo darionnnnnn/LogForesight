@@ -228,7 +228,7 @@ public class HealthService
         var dispatchReadiness = _readiness?.Evaluate();
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
-            DispatchReadinessFailures = dispatchReadiness?.Items.Where(i => !i.Passed).Select(i => i.Detail).ToList()
+            DispatchReadinessFailures = dispatchReadiness?.Items.Where(i => !i.Passed && !DispatchReadinessService.NotInHealthStatusIds.Contains(i.Id)).Select(i => i.Detail).ToList()
                                         ?? new List<string>(),
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
             UnpinnedCertificateBypass = UnpinnedCertificateBypass(healthSettings,

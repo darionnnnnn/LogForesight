@@ -92,6 +92,43 @@ const cases = {
         assert.equal(opened[0].name, 'triage');
         assert.equal(opened[0].args[0].source, 'disk');
     },
+    // O1：統一標記具 Handle 即顯示入口（主機負責人只具 Handle）；沒有 Handle 就沒有（只具 Assign 者被後端擋，前端不擺一顆必定失敗的按鈕）
+    handleOnlyHasBulkMarkEntry() {
+        const { result } = env({ caps: ['Handle'] });
+        assert.deepEqual(inlineTexts(result), ['統一標記']);
+        assert.deepEqual(inlineTexts(env({ caps: ['Assign'] }).result), ['交辦'], '只具 Assign 沒有統一標記');
+    },
+    // 統一標記 modal：機房結論勾選框只給具 Assign 者；只具 Handle 時不顯示並在說明寫「只會標到你負責的主機」，略過原因照實列出
+    bulkCloseFormAutoApplyOnlyForAssign() {
+        const render = caps => {
+            const dom = installDom();
+            const button = loadButton(dom);
+            const currentUser = { userId: 7 };
+            const noop = () => { };
+            const body = extractFunction(records, 'function renderBulkCloseForm(') + '\n' + extractFunction(records, 'function bulkCloseStatusCell(');
+            const f = new Function('document', 'button', 'currentUser', 'hasCapability', 'renderTable', 'formatNumber', 'statusesWhere', 'withBusy',
+                'toast', 'api', 'collectFilters', 'showBulkCloseTraceLink', 'search', 'BULK_CLOSE_DAY_LIMIT',
+                `${body}\nreturn renderBulkCloseForm;`)(
+                document, button, currentUser, (u, cap) => caps.includes(cap),
+                (container, opts) => { container.rows = opts.rows.map(r => opts.columns.map(c => c.render(r))); container.appendChild(document.createElement('table')); },
+                n => String(n), () => [{ value: 'resolved', shortLabel: '已處理', closed: true }], () => noop, noop, {}, () => ({}), noop, noop, 5000);
+            const container = document.createElement('div');
+            f(container, { source: 'disk', eventId: 153, issueLabel: 'x' }, {
+                from: null, to: null, truncated: false, totalHostCount: 2, skippedHostCount: 1, totalDayCount: 3,
+                hosts: [
+                    { hostName: 'MINE', dayCount: 3, overwriteDayCount: 0, alreadyClosedDayCount: 0, skipReason: null },
+                    { hostName: 'OTHER', dayCount: 0, overwriteDayCount: 0, alreadyClosedDayCount: 0, skipReason: '不是你負責的主機' }]
+            }, { close: noop });
+            return container;
+        };
+        const owner = render(['Handle']);
+        assert.ok(!owner.find(n => n.id === 'bulk-close-auto-apply'), '只具 Handle：沒有機房結論勾選框');
+        assert.ok(owner.textContent.includes('只會標到你負責的主機'), '說明寫明範圍');
+        assert.ok(owner.textContent.includes('不是你負責的主機'), '略過原因照實列出');
+        const admin = render(['Handle', 'Assign']);
+        assert.ok(admin.find(n => n.id === 'bulk-close-auto-apply'), 'Assign＋Handle：有勾選框（行為不變）');
+        assert.ok(!admin.textContent.includes('只會標到你負責的主機'));
+    },
     noActionReturnsEmpty() {
         const { result } = env({ caps: [] });
         assert.equal(result, '');

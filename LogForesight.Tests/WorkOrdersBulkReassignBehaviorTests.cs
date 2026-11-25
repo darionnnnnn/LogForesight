@@ -28,6 +28,7 @@ public sealed class WorkOrdersBulkReassignBehaviorTests
     [InlineData("work-orders-bulk.behavior.mjs", "previewLinesCarryEveryFlag")]
     [InlineData("work-orders-bulk.behavior.mjs", "resultSummaryReportsFailures")]
     [InlineData("work-orders-bulk.behavior.mjs", "panelPreviewThenApply")]
+    [InlineData("work-orders-bulk.behavior.mjs", "panelApplyStaleStillNotifiesPage")]
     [InlineData("work-orders-bulk.behavior.mjs", "panelApplyDisabledWhenNothingToDo")]
     [InlineData("work-orders-bulk.behavior.mjs", "availabilityAsksWithCountsWhenOrdersExist")]
     [InlineData("work-orders-bulk.behavior.mjs", "availabilityReassignChoiceGoesToBatchFlow")]
