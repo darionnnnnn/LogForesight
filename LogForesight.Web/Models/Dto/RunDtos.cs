@@ -72,6 +72,25 @@ public class RunDaySummaryDto
     /// <summary>該日 PRTG 結局原因（與 <see cref="PrtgOutcome"/> 同一筆逐日統計；舊紀錄或無原因為 null）</summary>
     public string? PrtgNote { get; set; }
 
+    /// <summary>
+    /// 這個資料日的一句結論（產生點只有 <see cref="LogForesight.Web.Services.RunDayConclusion.Build"/>）：
+    /// 全部成功、N 台失敗…可補跑、N 台未執行、異常中斷、空資料待複查各有一句；十多欄計數收進展開。
+    /// </summary>
+    public string Conclusion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 可「補跑這些主機」的主機名：失敗、異常中斷、未執行（今天那一列不含「尚未處理」的未執行，也不含空資料待複查——
+    /// 複查會自動進行）。超過 <see cref="LogForesight.Web.Services.RunMonitorService.MaxRerunHostNames"/> 台時為空清單，
+    /// 前端改以「全部主機＋只補跑失敗或未執行」帶入，結果相同。
+    /// </summary>
+    public List<string> RerunHostNames { get; set; } = new();
+
+    /// <summary>可補跑的主機數（<see cref="RerunHostNames"/> 超過上限被清空時仍是真實台數）；0＝沒有可補跑的，不出現補跑鈕</summary>
+    public int RerunHostCount { get; set; }
+
+    /// <summary><see cref="RerunHostCount"/> 大於 0</summary>
+    public bool CanRerun => RerunHostCount > 0;
+
     /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
     public List<string> FailedHostNames { get; set; } = new();
     public int OtherFailedCount { get; set; }

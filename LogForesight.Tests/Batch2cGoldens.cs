@@ -4,8 +4,8 @@ namespace LogForesight.Tests;
 /// 執行總表輸出約 100 KB，只記長度與 SHA-256；其餘直接記全文。</summary>
 internal static class Batch2cGoldens
 {
-    public const int RunMonitorLength = 104074;
-    public const string RunMonitorSha256 = "f28ed2cc4508c0c9ec5156ad30d9752dd4fc5dbe4dc9c7567471e00a752c249d";
+    public const int RunMonitorLength = 105327;
+    public const string RunMonitorSha256 = "db7ef0b7696480cf7e41b870b8ed559e523a7932ef5c46a68a722725d509af2f";
 
     public const string Occurrence = """
 HOST-1|Application|disk|11|1|Processing|case=case-first|handling=/|inherited=False

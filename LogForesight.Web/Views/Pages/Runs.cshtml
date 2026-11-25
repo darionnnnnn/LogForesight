@@ -377,6 +377,13 @@
                                 <span id="run-now-scope-all-label">全部主機（等同排程觸發的完整執行）</span>
                             </label>
                         </div>
+                        @* 只在執行總表按「補跑這些主機」時出現（runs.js 的 openRunNowForDay 帶入名單與台數） *@
+                        <div class="form-check d-none" id="run-now-scope-hosts-row">
+                            <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-hosts" value="hosts" />
+                            <label class="form-check-label" for="run-now-scope-hosts">
+                                <span id="run-now-scope-hosts-label">指定主機</span>
+                            </label>
+                        </div>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-segment" value="segment" />
                             <label class="form-check-label" for="run-now-scope-segment">網段範圍（僅 NetIQ 主機）</label>

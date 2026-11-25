@@ -118,6 +118,7 @@
             <form id="rule-form" novalidate>
                 <div class="modal-body">
                     <div id="rule-validation"></div>
+                    <div id="rule-trial" aria-live="polite"></div>
 
                     @* 以此為範本建立自訂規則時顯示（回饋十五輪 R4）：官方建議路徑「停用原規則＋以它為
                        範本複製」在 UI 上被拆成兩個獨立操作，順序錯了（先複製沒先停用）就會撞見遮蔽
@@ -359,6 +360,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-outline-secondary" id="rule-trial-run" title="把這份草稿套在近 30 天既有的問題紀錄上，看命中與派工數量會怎麼變；不會儲存">試算影響</button>
                     <button type="button" class="btn btn-outline-secondary" id="rule-validate">先驗證</button>
                     <button type="submit" class="btn btn-primary" id="rule-save">儲存</button>
                 </div>

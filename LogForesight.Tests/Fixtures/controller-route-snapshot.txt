@@ -213,6 +213,7 @@ GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	-	-	HandlingContro
 GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	-	-	RecordsController
 GET	/api/reports/category-trend	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/effectiveness	C=-;A=-	-	-	-	ReportsController
+GET	/api/reports/export/{table}	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/summary	C=-;A=-	-	-	-	ReportsController
 GET	/api/rules	C=Maintain;A=-	-	-	-	RulesController
 POST	/api/rules	C=Maintain;A=-	-	-	-	RulesController
@@ -221,6 +222,7 @@ POST	/api/rules/import-apply	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/import-preview	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/import-status	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/suppressions	C=Maintain;A=-	-	-	-	RulesController
+POST	/api/rules/trial	C=Maintain;A=-	-	-	skipbump	RulesController
 POST	/api/rules/validate	C=Maintain;A=-	-	-	skipbump	RulesController
 DELETE	/api/rules/{ruleId}	C=Maintain;A=-	-	-	-	RulesController
 PUT	/api/rules/{ruleId}/enabled	C=Maintain;A=-	-	-	-	RulesController

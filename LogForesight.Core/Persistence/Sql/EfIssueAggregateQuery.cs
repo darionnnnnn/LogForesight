@@ -802,6 +802,72 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>規則試算讀的問題子列查詢（只有投影、不含記憶體端的來源比對）；獨立成靜態方法讓兩個後端的翻譯測試走同一條查詢</summary>
+    internal static IQueryable<RuleTrialProjection> RuleTrialQuery(
+        LfDbContext ctx, IssueExclusion exclusion, bool sourceKeyReady, IReadOnlyCollection<int> eventIds,
+        DateTime f, DateTime t, IReadOnlyCollection<long>? expandedHostIds)
+    {
+        var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+        if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        return q.Select(x => new RuleTrialProjection
+        {
+            HostId = x.HostId, SourceKey = x.SourceKey, SourceName = x.SourceName, EventId = x.EventId, EventKey = x.EventKey,
+            RecordDate = x.RecordDate, EventCount = x.EventCount, LogName = x.LogName, EntryType = x.EntryType
+        });
+    }
+
+    internal sealed class RuleTrialProjection
+    {
+        public long HostId { get; init; }
+        public string? SourceKey { get; init; }
+        public string SourceName { get; init; } = string.Empty;
+        public int EventId { get; init; }
+        public string EventKey { get; init; } = string.Empty;
+        public DateTime RecordDate { get; init; }
+        public int EventCount { get; init; }
+        public string LogName { get; init; } = string.Empty;
+        public int EntryType { get; init; }
+    }
+
+    public List<RuleTrialRow> RuleTrialRows(
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds)
+    {
+        if (issues.Count == 0) return new List<RuleTrialRow>();
+        if (hostIds != null && hostIds.Count == 0) return new List<RuleTrialRow>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        exclusion = exclusion.ForRange(f, t);
+        var aliasIndex = AliasIndex();
+        var sourceKeyReady = _sourceKeyReady();
+
+        var wanted = issues.Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var expanded = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
+
+        // 目標範圍是呼叫端已依規則縮小的少數幾種問題，不是整份表（與 DailyHostCounts 同一個規模假設）
+        var rows = RuleTrialQuery(ctx, exclusion, sourceKeyReady, eventIds, f, t, expanded)
+            .ToList()
+            .Where(x => wanted.Contains((SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId)))
+            .ToList();
+
+        // 合併主機別名與存活主機同日同簽章的次數相加（與正式分析把合併主機視為一台一致）
+        var result = rows
+            .GroupBy(x => (HostId: Surviving(aliasIndex, x.HostId), x.RecordDate,
+                Source: SourceKeyOf(x.SourceKey, x.SourceName, sourceKeyReady), x.EventId, x.EventKey, x.LogName, x.EntryType))
+            .Select(g => new RuleTrialRow(g.Key.HostId, g.Key.RecordDate, g.Key.Source, g.Key.EventId, g.Key.EventKey, g.Sum(x => x.EventCount)))
+            .ToList();
+
+        _performance?.Record("issues:RuleTrialRows", sw.ElapsedMilliseconds);
+        return result;
+    }
+
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues)
     {

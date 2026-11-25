@@ -583,7 +583,7 @@ function monthDay(dueDate) {
  * 不各寫一份：結案類寫出結論名稱、處理中說明「仍為處理中」、觀察中帶到期日、上報說明已通知管理者。
  * scope＝涵蓋範圍文字（「20 台」「3 張單共 20 台」）；沒有 payload（取不到結論）時退回最簡說法。
  */
-export function replyOutcomeText(payload, scope) {
+export function replyOutcomeText(payload, scope, notifiedAdmins) {
     const meta = statusMeta(payload?.status);
     if (!meta) return `已回覆 ${scope}`;
     if (meta.closed) return `已回覆 ${scope}為${meta.shortLabel}`;
@@ -591,14 +591,25 @@ export function replyOutcomeText(payload, scope) {
         const until = monthDay(payload.dueDate);
         return `${scope}改為觀察中${until ? `，至 ${until}` : ''}`;
     }
-    if (meta.value === 'escalated') return `${scope}已上報管理者`;
+    if (meta.value === 'escalated') return `${scope}已上報管理者${escalationNotifyText(notifiedAdmins)}`;
     return `已更新 ${scope}的說明（仍為${meta.shortLabel}）`;
+}
+
+/**
+ * 上報後的通知交代：後端帶「會收到通知的管理員數」。N＞0 寫明人數；0 寫明沒有可通知的人、已列入交辦總覽提醒；
+ * 沒帶（null／undefined，例如這些成員原本就已上報而不重複通知）不多說。
+ */
+function escalationNotifyText(notifiedAdmins) {
+    if (!Number.isInteger(notifiedAdmins) || notifiedAdmins < 0) return '';
+    return notifiedAdmins > 0
+        ? `，已通知 ${notifiedAdmins} 位管理員`
+        : '，目前沒有可通知的管理員，已列入交辦總覽提醒';
 }
 
 /** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應）；payload＝這次送出的 { status, dueDate } */
 export function toastReplyResult(result, payload) {
     const closed = result.workOrderClosed ? '，整張單已結案' : '';
-    toast(`${replyOutcomeText(payload, `${result.cases} 台`)}${closed}`, 'success');
+    toast(`${replyOutcomeText(payload, `${result.cases} 台`, result.escalationNotifiedAdmins)}${closed}`, 'success');
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');
     }
@@ -615,7 +626,7 @@ export function toastReplyManyResult(result, payload) {
             + `尚有 ${notProcessed} 張未處理，已保留勾選可直接重送。`, 'warning');
     } else {
         const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
-        toast(`${replyOutcomeText(payload, `${result.workOrders} 張單共 ${result.cases} 台`)}${closed}`, 'success');
+        toast(`${replyOutcomeText(payload, `${result.workOrders} 張單共 ${result.cases} 台`, result.escalationNotifiedAdmins)}${closed}`, 'success');
     }
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');

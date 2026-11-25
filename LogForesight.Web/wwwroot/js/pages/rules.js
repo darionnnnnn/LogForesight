@@ -582,6 +582,7 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
     clearDiskPreview();
     editingRule = asTemplate ? null : rule;
     document.getElementById('rule-validation').replaceChildren();
+    document.getElementById('rule-trial')?.replaceChildren();
 
     // 範本模式才顯示「同時停用原規則」（回饋十五輪 R4），預設勾選——見官方建議路徑
     // （停用 builtin＋以它為範本複製）的說明，這裡把正確順序內建進同一次儲存操作
@@ -981,6 +982,66 @@ document.getElementById('rule-validate').addEventListener('click', async () => {
         showValidation(result);
 
         if (result.isValid && result.warnings.length === 0) toast('這條規則通過驗證', 'success');
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+// ── 規則試算（F19-2）──────────────────────────────────────────────────────────
+
+/**
+ * 試算結果的逐行文字（後端算好的數字，這裡只組句）。不支援試算時只回原因一行；
+ * 數字一律「現在 → 試算」；下限估計與訊息條件未重算各附一句說明。
+ * @returns {string[]}
+ */
+function ruleTrialLines(result) {
+    if (!result.supported) return [result.unsupportedReason || '這條規則無法試算。'];
+    const lines = [
+        `近 ${result.windowDays} 天命中主機日：${result.hitHostDaysBefore} → ${result.hitHostDaysAfter}`,
+        `會被派工的（主機, 問題）：${result.dispatchPairsBefore} → ${result.dispatchPairsAfter}`
+    ];
+    if (result.elevatedHostDaysBefore !== result.elevatedHostDaysAfter) {
+        lines.push(`會判成高風險日的主機日（重大旗標）：${result.elevatedHostDaysBefore} → ${result.elevatedHostDaysAfter}`);
+    }
+    if (result.isNewRule) lines.push('這是新規則，「→」前的數字是 0（目前沒有這條規則）。');
+    if (result.isLowerBound) {
+        lines.push('這是下限估計：門檻調低、嚴重度或重大旗標調高、或規則範圍變大時，低於舊門檻而沒被記錄的事件看不到，實際只會比這個數字多。');
+    }
+    if (result.messageConditionNotRecomputed) {
+        lines.push('訊息內容條件是分析當下才比對，試算沿用已記錄的命中結果，改了訊息條件的影響要實際重跑才看得到。');
+    }
+    return lines;
+}
+
+function showRuleTrial(result) {
+    const container = document.getElementById('rule-trial');
+    container.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'mb-3';
+    box.appendChild(statusNote(result.supported ? 'info' : 'warning', result.supported ? '試算結果（未儲存，資料庫沒有變動）' : '無法試算'));
+    const list = document.createElement('ul');
+    list.className = 'lf-text-meta mb-0 mt-1 ps-4';
+    for (const line of ruleTrialLines(result)) {
+        const li = document.createElement('li');
+        li.textContent = line;
+        list.appendChild(li);
+    }
+    box.appendChild(list);
+    container.appendChild(box);
+}
+
+const ruleTrialGuard = createSeqGuard();
+document.getElementById('rule-trial-run')?.addEventListener('click', async () => {
+    const thresholdError = diskTrendThresholdError() || valueTrendThresholdError();
+    if (thresholdError) { toast(thresholdError, 'warning'); return; }
+    const seq = ruleTrialGuard.next();
+    const restore = withBusy(document.getElementById('rule-trial-run'), '試算中');
+    try {
+        const result = await api.post('/api/rules/trial', collectRule());
+        if (!ruleTrialGuard.isCurrent(seq)) return;   // 慢的舊回應不得蓋掉較新的試算
+        showRuleTrial(result);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {

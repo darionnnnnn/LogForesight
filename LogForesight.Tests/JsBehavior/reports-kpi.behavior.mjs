@@ -111,12 +111,12 @@ function makeTrend(points, { visibleRisk = ['高', '中', '低'], scope = 'all',
         attachToolbar: (_c, spec) => { calls.toolbar.push(spec); }
     };
     const cssVar = name => `var(${name})`;
-    const inst = build(['function renderTrendChart(', 'function mountToolbar(', 'function clearToolbar(', 'function scopeDrillParams('], `
-        const currentData = { trend: points, previousTrend };
+    const inst = build(['function renderTrendChart(', 'function mountToolbar(', 'function clearToolbar(', 'function scopeDrillParams(', 'function reportCsvHref('], `
+        const currentData = { from: '2026-10-12', to: '2026-11-10', handlingScope: 'all', comparisonMode: 'previous', trend: points, previousTrend };
         const currentScope = ${JSON.stringify(scope)};
         const visibleDayRisk = new Set(visibleRisk);
         const chartInstances = {};
-    `, '{ renderTrendChart }', { points, previousTrend, visibleRisk, charts, recordsUrl, cssVar });
+    `, '{ renderTrendChart }', { points, previousTrend, visibleRisk, charts, recordsUrl, cssVar, appUrl: p => p });
     inst.calls = calls;
     return inst;
 }
@@ -328,6 +328,14 @@ const cases = {
         assert.equal(t.calls.toolbar.length, 1, '保留表格切換');
         assert.deepEqual(t.calls.toolbar[0].tableColumns, ['日期', '高風險', '中風險', '錯誤數', '前期高風險']);
         assert.deepEqual(t.calls.toolbar[0].tableRows[0], ['2026-11-08', 3, 1, 0, 5]);
+    },
+    趨勢圖_工具列帶完整CSV下載連結() {
+        const t = makeTrend([{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }], { previousTrend: [] });
+        t.renderTrendChart();
+        const spec = t.calls.toolbar[0];
+        assert.equal(spec.csvHref, '/api/reports/export/trend?from=2026-10-12&to=2026-11-10&handlingScope=all&compare=previous',
+            '下載連結帶同一組期間與顯示範圍，由伺服器輸出完整資料');
+        assert(!('csvTable' in spec), '內部標記不得傳給圖表庫');
     },
     趨勢圖下鑽_高_中_前期各帶各的日期與層級() {
         const points = [{ date: '2026-11-08', highRisk: 3, mediumRisk: 1, errorCount: 0 }];

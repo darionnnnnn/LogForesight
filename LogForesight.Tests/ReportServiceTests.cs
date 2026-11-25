@@ -99,6 +99,92 @@ public class ReportServiceTests : IDisposable
         Assert.Contains(scoped.IssueRanking, i => i.Source == "allowed-src");
     }
 
+    // ── CSV 匯出（F20-4） ────────────────────────────────────────────────────
+
+    [Fact]
+    public void CSV_主機排行是整份清單_不是Top10_且與總覽同一份排序()
+    {
+        for (var i = 1; i <= 13; i++)
+            AddRecord(AddHost($"H{i:D2}"), DateTime.Today, "高");
+        var from = DateTime.Today.AddDays(-6);
+        var summary = _service.GetSummary(from, DateTime.Today);
+        Assert.Equal(10, summary.HostRanking.Count);
+        Assert.Equal(13, summary.RankedHostCount);
+
+        var table = _service.GetCsvTable(ReportCsv.TableHosts, from, DateTime.Today);
+        Assert.Equal(13, table.Rows.Count);
+        // 前 10 列與總覽 Top 10 同序同內容（同一段查詢，不是第二份）
+        Assert.Equal(summary.HostRanking.Select(h => h.HostName), table.Rows.Take(10).Select(r => (string)r[0]!));
+    }
+
+    [Fact]
+    public void CSV_受限使用者只拿到可見範圍()
+    {
+        var allowed = AddHost("ALLOWED");
+        var hidden = AddHost("HIDDEN");
+        var allowedIssue = new LogIssueSignature { LogName = "System", Source = "allowed-src", EventId = 11, Severity = IssueSeverity.High, Count = 1 };
+        var hiddenIssue = new LogIssueSignature { LogName = "System", Source = "hidden-src", EventId = 22, Severity = IssueSeverity.High, Count = 1 };
+        AddRecord(allowed, DateTime.Today, "高", allowedIssue);
+        AddRecord(hidden, DateTime.Today, "高", hiddenIssue);
+        AddRecord(hidden, DateTime.Today.AddDays(-1), "高", hiddenIssue);
+
+        var scoped = ServiceWithVisibility(new HostScopedVisibility(_hosts, allowed.HostId));
+        var from = DateTime.Today.AddDays(-6);
+        var hosts = scoped.GetCsvTable(ReportCsv.TableHosts, from, DateTime.Today);
+        Assert.Equal("ALLOWED", Assert.Single(hosts.Rows)[0]);
+        var issues = scoped.GetCsvTable(ReportCsv.TableIssues, from, DateTime.Today);
+        Assert.DoesNotContain(issues.Rows, r => (string)r[1]! == "hidden-src");
+        Assert.Contains(issues.Rows, r => (string)r[1]! == "allowed-src");
+        var trend = scoped.GetCsvTable(ReportCsv.TableTrend, from, DateTime.Today);
+        Assert.Equal(1, trend.Rows.Sum(r => (int)r[1]!));   // 只算授權那台的 1 個高風險日
+
+        // 對照組：不限範圍時兩台都在（證明資料與判準比得到東西）
+        Assert.Equal(2, _service.GetCsvTable(ReportCsv.TableHosts, from, DateTime.Today).Rows.Count);
+    }
+
+    [Fact]
+    public void CSV_未知的表名擲驗證錯誤()
+    {
+        Assert.Throws<LogForesight.Web.Models.DomainException>(() =>
+            _service.GetCsvTable("nope", DateTime.Today.AddDays(-1), DateTime.Today));
+    }
+
+    [Fact]
+    public void CSV_列數上限_50000放行_50001拒絕()
+    {
+        ReportCsv.RequireWithinLimit(ReportCsv.MaxRows);   // 恰好上限放行
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => ReportCsv.RequireWithinLimit(ReportCsv.MaxRows + 1));
+        Assert.Contains("50000", ex.Message);
+        Assert.Contains("縮小期間", ex.Message);
+    }
+
+    [Fact]
+    public async Task CSV_寫出_BOM_換行_引號_公式注入()
+    {
+        var table = new ReportCsvTable(new[] { "名稱", "數量" }, new List<IReadOnlyList<object?>>
+        {
+            new object?[] { "=HYPERLINK(\"http://x\")", 1 },
+            new object?[] { "+cmd", -5 },
+            new object?[] { "-1+1", 0 },
+            new object?[] { "@SUM(A1)", 2 },
+            new object?[] { "a,b\"c\nd", null },
+            new object?[] { "正常 <b>文字</b>", 3.5 }
+        });
+        using var ms = new MemoryStream();
+        await ReportCsv.WriteAsync(ms, table);
+        var bytes = ms.ToArray();
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes.Take(3).ToArray());   // UTF-8 BOM
+        var text = System.Text.Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        var lines = text.Split("\r\n");
+        Assert.Equal("名稱,數量", lines[0]);
+        Assert.StartsWith("\"'=HYPERLINK(", lines[1]);   // 前置單引號、且含逗號/引號時再加引號
+        Assert.Equal("'+cmd,-5", lines[2]);              // 文字前置單引號；數字負值不動
+        Assert.Equal("'-1+1,0", lines[3]);
+        Assert.Equal("'@SUM(A1),2", lines[4]);
+        Assert.Equal("\"a,b\"\"c\nd\",", lines[5]);     // 含逗號、引號、換行：整格加引號、內部引號重複一次（null 為空儲存格）
+        Assert.Contains("正常 <b>文字</b>,3.5", text);   // 外部字串原樣輸出為文字
+    }
+
     private void AddRecord(WebHost host, DateTime date, string risk, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
         {
