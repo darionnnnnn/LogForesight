@@ -174,15 +174,23 @@ public class ReportEffectivenessService
         // 試跑是整批派工推演、成本高，只在檢視者具 Assign（本來就能看待派）且期間不超過待派預設窗口時才跑；
         // 其餘情況不呼叫試跑，直接標「無法拆開」（沿用 TooLarge 的表達，兩段主機日為 null）
         var periodDays = (to.Date - from.Date).Days + 1;
-        if (!_currentUser.Has(Capability.Assign) || periodDays > WorkOrderBoardService.DefaultPeriodDays)
+        if (!_currentUser.Has(Capability.Assign))
         {
             breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "permission";
+            return;
+        }
+        if (periodDays > WorkOrderBoardService.DefaultPeriodDays)
+        {
+            breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "period";
             return;
         }
         var trial = _gaps(from, to, 1);
         if (trial.TooLarge)
         {
             breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "period";
             return;
         }
         breakdown.PendingDispatch.IssueHosts = trial.DispatchableIssueHosts;

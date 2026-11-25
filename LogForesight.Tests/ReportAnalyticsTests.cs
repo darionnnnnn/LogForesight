@@ -302,6 +302,7 @@ public class ReportAnalyticsTests : IDisposable
         var u = MakeRig().Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
 
         Assert.True(u.PendingDispatch.TooLarge);
+        Assert.Equal("period", u.PendingDispatch.UnsplitReason);
         Assert.Null(u.PendingDispatch.HostDays);
         Assert.Null(u.NotNeeded.HostDays);
         Assert.Equal(1, u.InHandlers.HostDays);
@@ -325,6 +326,7 @@ public class ReportAnalyticsTests : IDisposable
         var inWindow = MakeRig().Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
         Assert.Equal(1, _gapsCalls);
         Assert.False(inWindow.PendingDispatch.TooLarge);
+        Assert.Null(inWindow.PendingDispatch.UnsplitReason);
         Assert.Equal(1, inWindow.PendingDispatch.HostDays);
 
         // 期間 8 天（超過一天）：不跑
@@ -332,6 +334,7 @@ public class ReportAnalyticsTests : IDisposable
         var tooLong = MakeRig().Effectiveness.Get(D0, D0.AddDays(7)).Unresolved;
         Assert.Equal(0, _gapsCalls);
         Assert.True(tooLong.PendingDispatch.TooLarge);
+        Assert.Equal("period", tooLong.PendingDispatch.UnsplitReason);
         Assert.Null(tooLong.PendingDispatch.HostDays);
         Assert.Null(tooLong.NotNeeded.HostDays);
 
@@ -340,6 +343,7 @@ public class ReportAnalyticsTests : IDisposable
         var noAssign = MakeRig(user: FakeCurrentUser.WithCapabilities(Capability.ViewAll)).Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
         Assert.Equal(0, _gapsCalls);
         Assert.True(noAssign.PendingDispatch.TooLarge);
+        Assert.Equal("permission", noAssign.PendingDispatch.UnsplitReason);
     }
 
     /// <summary>快取鍵含檢視者是否具 Assign：同一期間、同一可見範圍，具 Assign 者的拆分不能端給沒有 Assign 的人</summary>
