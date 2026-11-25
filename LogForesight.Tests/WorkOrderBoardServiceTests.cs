@@ -235,7 +235,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         });
 
     [Fact]
-    public void 待派_最近出現日已結案的主機不列為建議_計入already_closed_立即派工只為未處理那台建案()
+    public void 待派_最近出現日已結案的主機不列入待派_不算缺口也不算排除_立即派工只為未處理那台建案()
     {
         var pool = AddPoolGroup();
         var h = AddUser("h", groupIds: pool.GroupId);
@@ -246,8 +246,10 @@ public class WorkOrderBoardServiceTests : IDisposable
 
         var row = RowOf(Service().GetGaps(null, null, 1), "disk");
 
+        // 已結案不是待派的工作：不算缺口、也不列在「已排除」（CU-8：待派頁與儀表板都不含它）
         Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
-        Assert.Equal(1, row.Excluded["already_closed"]);
+        Assert.Equal(1, row.GapHosts);
+        Assert.Empty(row.Excluded);
 
         var result = Service().RunAutoDispatch(null, null);
 
@@ -276,9 +278,10 @@ public class WorkOrderBoardServiceTests : IDisposable
             ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
         });
 
-        var closedRow = RowOf(Service().GetGaps(null, null, 1), "disk");
-        Assert.Empty(closedRow.Suggested);
-        Assert.Equal(1, closedRow.Excluded["already_closed"]);
+        // 唯一一台已結案：這個問題整列不出現在待派，也不計入問題數（儀表板待派卡用同一個 Total）
+        var closedGaps = Service().GetGaps(null, null, 1);
+        Assert.DoesNotContain(closedGaps.Rows, r => r.Source == "disk");
+        Assert.Equal(0, closedGaps.Total);
 
         // 隔天再出現：新的出現日沒有逐日處理列，不能因為「曾經結案過」就一直擋
         _recordStore.Append(new DailyAnalysisRecord
@@ -289,11 +292,11 @@ public class WorkOrderBoardServiceTests : IDisposable
 
         var again = RowOf(Service().GetGaps(null, null, 1), "disk");
         Assert.Equal(1, Assert.Single(again.Suggested).Hosts);
-        Assert.False(again.Excluded.ContainsKey("already_closed"));
+        Assert.Empty(again.Excluded);
     }
 
     [Fact]
-    public void 待派_被不再打擾擋下的主機計入gate_dismissed而不是already_closed()
+    public void 待派_被不再打擾擋下的主機計入gate_dismissed_已結案的主機不列入()
     {
         var pool = AddPoolGroup();
         var h = AddUser("h", groupIds: pool.GroupId);
@@ -309,8 +312,9 @@ public class WorkOrderBoardServiceTests : IDisposable
         var row = RowOf(Service().GetGaps(null, null, 1), "disk");
 
         Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipDismissed]);
-        Assert.Equal(1, row.Excluded["already_closed"]);
+        Assert.Equal(1, row.Excluded.Count);
         Assert.Equal(1, Assert.Single(row.Suggested).Hosts);
+        Assert.Equal(2, row.GapHosts);
     }
 
     [Fact]
@@ -325,7 +329,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         var row = RowOf(Service().GetGaps(null, null, 1), "disk");
 
         Assert.Equal(1, row.Excluded[WorkOrderDispatcher.SkipSeverity]);
-        Assert.False(row.Excluded.ContainsKey("already_closed"));
+        Assert.Equal(2, row.GapHosts);
     }
 
     // ── 負載看板 ─────────────────────────────────────────────────────────────

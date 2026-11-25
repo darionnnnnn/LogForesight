@@ -30,14 +30,6 @@ public class WorkOrderBoardService
     /// <summary>出現點上限（暫定）：超過就不做試跑，請使用者縮小期間</summary>
     internal const int DefaultMaxOccurrences = 20000;
 
-    /// <summary>
-    /// 試跑略過原因：這個（主機, 簽章）最近一次出現當天已被處理人結案（沒有進行中案件、逐日處理列是結案類）。
-    /// 派工閘門都放行、決策是建單或掛單時才會出現——建出去的案件逐日同步會略過已結案的日子，變成沒有逐日列的案件。
-    /// 在這裡而不在 <see cref="WorkOrderDispatcher"/> 判定：結案狀態讀的是 <see cref="OccurrenceStatusResolver"/> 的處理概況，
-    /// 夜間派工路徑不受影響。
-    /// </summary>
-    internal const string SkipAlreadyClosed = "already_closed";
-
     private const int GapPageSize = 50;
     private const int DefaultPeriodDays = 7;
     private const int UnseenHostGroupLimit = 10;
@@ -504,9 +496,11 @@ public class WorkOrderBoardService
                                || active.Rules.Any(r => KnownIssueCatalog.RuleMayHit(r, issue.Source, issue.EventId));
 
             var decision = WorkOrderDispatcher.Decide(ctx, host, issue, occurrence.LastSeen.Date);
-            // 閘門已略過的維持原因；只有決策是建單或掛單、且已結案時才改成 already_closed（不登記虛擬單、不計負載）
+            // 最近一次出現當天已被處理人結案：不是待派的工作，整筆不進試跑結果（不列在待派頁、不計入儀表板待派卡、
+            // 不登記虛擬單、不計負載）。閘門已略過的（例如不再打擾）維持原因，讓待派頁照常標出被擋的主機。
+            // 在這裡而不在 WorkOrderDispatcher 判定：結案狀態讀的是 OccurrenceStatusResolver 的處理概況，夜間派工路徑不受影響。
             if (decision.Kind != DispatchDecisionKind.Skip && closedKeys.Contains((HostNameKey.Of(host.HostName), occurrence.IssueKey)))
-                decision = new DispatchDecision { Kind = DispatchDecisionKind.Skip, SkipReason = SkipAlreadyClosed };
+                continue;
             if (decision.Kind == DispatchDecisionKind.CreateFor)
             {
                 ctx.RegisterOrder(new WorkOrder
