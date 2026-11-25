@@ -1,6 +1,7 @@
 using System.Text;
 using LogForesight.Core.Time;
 using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Models.Dto;
 using Xunit;
 using Xunit.Abstractions;
@@ -14,6 +15,15 @@ namespace LogForesight.Tests.Scenarios;
 /// 預設不執行。設 <c>LF_USABILITY_SIM=&lt;輸出目錄&gt;</c> 才跑；<c>LF_USABILITY_HOSTS</c>（預設 300）、
 /// <c>LF_USABILITY_DAYS</c>（預設 5）、<c>LF_USABILITY_CAPACITY</c>（每位處理人每天回覆的主機數，預設 40）。
 /// 資料目錄經 <c>LF_SCENARIO_KEEP_DATA</c> 複製到 <c>&lt;輸出目錄&gt;/data</c>，逐日指標寫 <c>&lt;輸出目錄&gt;/metrics.tsv</c>。
+///
+/// metrics.tsv 欄位（逐日一列，「今天」＝該日的模擬時鐘日）：
+///   day／ordersOpen（進行中單）／casesOpen（進行中成員）／casesOverdue（逾期成員數）／ordersCreatedToday／repliedToday／
+///   maxHandlerCases／minHandlerCases，另有 PLAN 1.3 節要比對的三個指標：
+///   - repeatNewOrders：今天新建、且同處理人同問題（SourceName＋EventId）昨天也新建過一張單的單數；
+///   - autoOrdersWithDuePct：今天新建的自動派工單（Origin＝auto_dispatch）中有期限者的比例（0～100 整數，分母為 0 輸出 NA）；
+///   - casesOverdue：同上（逾期數）。
+/// 處理人行為：觀察期內（觀察中且觀察至不早於今天）的成員不回覆也不耗產能；復發成員（<see cref="IssueRecurrence"/> 判定）
+/// 不回「已處理」，改回「觀察中 7 日」70%／「處理中、期限今天＋7」30%；非復發成員維持已處理 70%／觀察中 20%／不處理 10%。
 /// </summary>
 public class UsabilitySimulationTests
 {
@@ -37,7 +47,7 @@ public class UsabilitySimulationTests
         if (Directory.Exists(dataDir)) Directory.Delete(dataDir, recursive: true);
         Environment.SetEnvironmentVariable("LF_SCENARIO_KEEP_DATA", dataDir);
 
-        var metrics = new List<string> { "day\tordersOpen\tcasesOpen\tcasesOverdue\tordersCreatedToday\trepliedToday\tmaxHandlerCases\tminHandlerCases\tunassignedHighMed" };
+        var metrics = new List<string> { "day\tordersOpen\tcasesOpen\tcasesOverdue\tordersCreatedToday\trepliedToday\tmaxHandlerCases\tminHandlerCases\trepeatNewOrders\tautoOrdersWithDuePct" };
         var replied = new Dictionary<int, int>();
         try
         {
@@ -153,12 +163,22 @@ public class UsabilitySimulationTests
         var open = orders.SelectMany(o => cases.GetByWorkOrder(o.WorkOrderId, 0, 100000).Where(c => c.ClosedAt == null)).ToList();
         var today = site.Clock.LocalNow().Date;
         var perHandler = Handlers.Select(hd => open.Count(c => c.HandlerId == ctx.UserId(hd))).ToList();
-        var createdToday = OrderRef.AllOrders(ctx).Count(o => o.CreatedAt.Date == today);
+        var all = OrderRef.AllOrders(ctx);
+        var newToday = all.Where(o => o.CreatedAt.Date == today).ToList();
+        var yesterdayKeys = all.Where(o => o.CreatedAt.Date == today.AddDays(-1))
+            .Select(o => (o.HandlerId, Source: o.SourceName?.ToLowerInvariant(), o.EventId)).ToHashSet();
+        var repeatNew = newToday.Count(o => yesterdayKeys.Contains((o.HandlerId, o.SourceName?.ToLowerInvariant(), o.EventId)));
+        var autoToday = newToday.Where(o => o.Origin == WorkOrderOrigins.AutoDispatch).ToList();
+        var autoDuePct = autoToday.Count == 0 ? "NA"
+            : (autoToday.Count(o => o.DueDate != null) * 100 / autoToday.Count).ToString();
         return string.Join('\t', day, orders.Count, open.Count, open.Count(c => c.DueDate != null && c.DueDate.Value.Date < today),
-            createdToday, replied.GetValueOrDefault(day), perHandler.Max(), perHandler.Min(), "-");
+            newToday.Count, replied.GetValueOrDefault(day), perHandler.Max(), perHandler.Min(), repeatNew, autoDuePct);
     }
 
-    /// <summary>一位處理人一天的工作：產能內依期限、成員數排序回覆（已處理 70%、觀察中 20%、不處理 10%）</summary>
+    /// <summary>
+    /// 一位處理人一天的工作：產能內依期限、成員數排序回覆。觀察期內的成員跳過；復發成員與非復發成員分兩次回覆
+    /// （復發：觀察中 7 日 70%／處理中期限今天＋7 30%；非復發：已處理 70%、觀察中 20%、不處理 10%）
+    /// </summary>
     private sealed class WorkdayAction(string actor, int capacity, int seed, Dictionary<int, int> replied, int day) : ScenarioAction(actor)
     {
         public override string Describe() => $"{Actor} 依產能 {capacity} 台回覆";
@@ -168,8 +188,11 @@ public class UsabilitySimulationTests
             var rnd = new Random(seed);
             var userId = ctx.UserId(Actor);
             var cases = ctx.Site.Get<IIssueCaseStore>();
+            var today = ctx.Site.Clock.LocalNow().Date;
             var orders = ctx.Site.Get<IWorkOrderStore>().GetActiveByHandler(userId)
-                .Select(o => (Order: o, Open: cases.GetByWorkOrder(o.WorkOrderId, 0, 100000).Where(c => c.ClosedAt == null).ToList()))
+                .Select(o => (Order: o, Open: cases.GetByWorkOrder(o.WorkOrderId, 0, 100000)
+                    .Where(c => c.ClosedAt == null && !(c.Status == IssueHandlingStatuses.Observing && c.DueDate != null && c.DueDate.Value.Date >= today))
+                    .ToList()))
                 .Where(x => x.Open.Count > 0)
                 .OrderBy(x => x.Open.Min(c => c.DueDate ?? DateTime.MaxValue)).ThenBy(x => x.Open.Count)
                 .ToList();
@@ -179,16 +202,29 @@ public class UsabilitySimulationTests
             {
                 if (left <= 0) break;
                 var take = open.Take(left).ToList();
-                var roll = rnd.NextDouble();
-                var status = roll < 0.7 ? IssueHandlingStatuses.Resolved : roll < 0.9 ? IssueHandlingStatuses.Observing : IssueHandlingStatuses.WontFix;
-                last = await ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.WorkOrderId}/reply",
-                    new WorkOrderReplyRequest
-                    {
-                        Status = status, Note = "模擬回覆",
-                        DueDate = status == IssueHandlingStatuses.Observing ? ctx.Site.Clock.LocalNow().Date.AddDays(7) : null,
-                        CaseIds = take.Count == open.Count ? null : take.Select(c => c.CaseId).ToList()
-                    });
-                if (last.StatusCode == 200) { left -= take.Count; replied[day] = replied.GetValueOrDefault(day) + take.Count; }
+                // 復發判定走正式的 IssueRecurrence（與成員清單的 isRecurrence 同一個入口），不另寫比較
+                var recurrence = IssueRecurrence.Evaluate(take, cases.GetClosedHistory(
+                    take.Select(c => c.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                    take.Where(c => c.SourceName != null && c.EventId != null).Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList(),
+                    null));
+                var groups = new[] { (Recurring: true, Cases: take.Where(c => recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence).ToList()),
+                                     (Recurring: false, Cases: take.Where(c => !recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None).IsRecurrence).ToList()) };
+                foreach (var (recurring, group) in groups)
+                {
+                    if (group.Count == 0) continue;
+                    var roll = rnd.NextDouble();
+                    var status = recurring
+                        ? (roll < 0.7 ? IssueHandlingStatuses.Observing : IssueHandlingStatuses.InProgress)
+                        : roll < 0.7 ? IssueHandlingStatuses.Resolved : roll < 0.9 ? IssueHandlingStatuses.Observing : IssueHandlingStatuses.WontFix;
+                    last = await ctx.Site.SendAsync(Actor, HttpMethod.Post, $"api/work-orders/{order.WorkOrderId}/reply",
+                        new WorkOrderReplyRequest
+                        {
+                            Status = status, Note = "模擬回覆",
+                            DueDate = status is IssueHandlingStatuses.Observing or IssueHandlingStatuses.InProgress ? today.AddDays(7) : null,
+                            CaseIds = group.Select(c => c.CaseId).ToList()
+                        });
+                    if (last.StatusCode == 200) { left -= group.Count; replied[day] = replied.GetValueOrDefault(day) + group.Count; }
+                }
             }
             return last;
         }

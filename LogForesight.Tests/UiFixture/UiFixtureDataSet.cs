@@ -89,9 +89,10 @@ public sealed partial class UiFixtureDataSet : IDisposable
 
     /// <summary>
     /// 在 <c>rootDir/Db/logforesight.db</c> 產生資料庫（已存在則先刪除重建）。
+    /// <paramref name="volumeHosts"/> 非 null 時以它取代 <c>LF_UI_FIXTURE_VOLUME</c>（測試不必動行程層級環境變數）。
     /// 站台以 <c>--Storage:DataRoot=rootDir --Storage:Type=Sqlite</c> 啟動即讀得到。
     /// </summary>
-    public static UiFixtureDataSet Generate(string rootDir, UiFixtureVariant variant)
+    public static UiFixtureDataSet Generate(string rootDir, UiFixtureVariant variant, int? volumeHosts = null)
     {
         Directory.CreateDirectory(rootDir);
         var dbDir = Path.Combine(rootDir, "Db");
@@ -106,7 +107,7 @@ public sealed partial class UiFixtureDataSet : IDisposable
         var set = new UiFixtureDataSet(rootDir, variant, backend);
         try
         {
-            set.Build();
+            set.Build(volumeHosts);
         }
         finally
         {
@@ -117,7 +118,7 @@ public sealed partial class UiFixtureDataSet : IDisposable
         return set;
     }
 
-    private void Build()
+    private void Build(int? volumeHosts = null)
     {
         ApplyVariant(Backend, Variant);
         BuildIdentity();
@@ -126,7 +127,7 @@ public sealed partial class UiFixtureDataSet : IDisposable
         WriteRecords();
         WriteHandlingAndCases();
         BuildExtended();
-        BuildVolume();
+        BuildVolume(volumeHosts);
         RegisterScenarios();
     }
 

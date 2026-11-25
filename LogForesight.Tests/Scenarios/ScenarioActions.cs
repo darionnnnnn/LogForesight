@@ -454,8 +454,6 @@ public static class ScenarioActions
             var request = System.Text.Json.JsonSerializer.Deserialize<UpdateSystemSettingsRequest>(
                 data, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
             request.ExpectedRevision = doc.RootElement.GetProperty("data").GetProperty("revision").GetString();
-            // 測試站台的設定存檔沒有帶網路層重試次數（出廠值 3 由設定頁表單補上），這裡照設定頁補成出廠值
-            if (request.AiRetryCount < 1) request.AiRetryCount = new SystemSettings().AiRetryCount;
             request.EscalationReminderDays = days;
             return await ctx.Site.SendAsync(Actor, HttpMethod.Put, "api/admin/settings", request);
         }

@@ -12,9 +12,10 @@ public sealed partial class UiFixtureDataSet
 {
     public const string VolumeEnvVar = "LF_UI_FIXTURE_VOLUME";
 
-    private void BuildVolume()
+    private void BuildVolume(int? hostCountOverride = null)
     {
-        if (!int.TryParse(Environment.GetEnvironmentVariable(VolumeEnvVar), out var hostCount) || hostCount <= 0) return;
+        var hostCount = hostCountOverride ?? (int.TryParse(Environment.GetEnvironmentVariable(VolumeEnvVar), out var fromEnv) ? fromEnv : 0);
+        if (hostCount <= 0) return;
 
         var rnd = new Random(20261124);
         var groups = new List<long>();
@@ -172,7 +173,8 @@ public sealed partial class UiFixtureDataSet
         var visibleToOps = volHosts.Where((h, i) => (i % 10) < 5).Select(h => h.HostName).ToHashSet();
         var records = Backend.RecordStore();
         var created = 0;
-        foreach (var daysAgo in new[] { 1, 2, 3, 5, 8 })
+        // 由舊到新建單：併入既有單時「最近新增」不會早於該單的建立時間（LastAppendedAt >= CreatedAt）
+        foreach (var daysAgo in new[] { 8, 5, 3, 2, 1 })
         {
             var date = DayOf(daysAgo);
             var dayRecords = records.Query(new RecordQueryFilter { From = date, To = date })
