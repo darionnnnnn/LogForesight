@@ -159,6 +159,18 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         return ctx.WorkOrders.AsNoTracking().Where(UnreadReplyPredicate).Count();
     }
 
+    public int CountUnreadRepliesWithEscalated()
+    {
+        using var ctx = _contextFactory();
+        return BuildUnreadEscalatedQuery(ctx).Count();
+    }
+
+    /// <summary>未讀回覆且含上報中進行中成員的單（EXISTS 子查詢；抽出供兩後端 SQL 翻譯測試）</summary>
+    internal static IQueryable<WorkOrderRow> BuildUnreadEscalatedQuery(LfDbContext ctx) =>
+        ctx.WorkOrders.AsNoTracking().Where(UnreadReplyPredicate)
+            .Where(w => ctx.IssueCases.Any(c => c.WorkOrderId == w.WorkOrderId && c.ClosedAt == null
+                                                && c.Status == IssueHandlingStatuses.Escalated));
+
     /// <summary>
     /// 未讀回覆的 SQL 條件（單點）：與 <see cref="WorkOrder.HasUnreadReply"/> 同義——
     /// closed_at IS NULL AND last_reply_at IS NOT NULL AND last_reply_at &gt; COALESCE(admin_seen_at, created_at)。

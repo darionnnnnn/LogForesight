@@ -411,6 +411,35 @@ const cases = {
         assert.deepEqual(events[0].detail, { myWork: 20, myWorkOrders: 3, unread: 2 });
     },
 
+    // 未讀徽章的提示文字：有上報時帶「其中上報 M 張」，沒有時維持原文
+    async unreadBadgeTitleMentionsEscalated() {
+        installDom();
+        const source = read('core', 'badges.js');
+        const fns = ['async function loadUnreadBadge(', 'function setBadge('].map(d => extract(source, d)).join('\n');
+        const titles = [];
+        const link = {
+            querySelector: () => null, dataset: {},
+            appendChild(node) { node.title = ''; this.badge = node; }
+        };
+        const run = async payload => {
+            titles.length = 0;
+            const build = new Function('api', 'hasCapability', 'document', `${fns}\nreturn loadUnreadBadge;`);
+            const fn = build({ get: async () => payload }, () => true, {
+                querySelector: () => link,
+                createElement: () => ({ classList: { toggle() { } }, setAttribute(k, v) { if (k === 'title') titles.push(v); }, set title(v) { titles.push(v); }, className: '', textContent: '' })
+            });
+            const count = await fn({ userId: 1 });
+            return { count, title: titles.at(-1) };
+        };
+        const withEsc = await run({ count: 4, escalated: 2 });
+        assert.equal(withEsc.count, 4);
+        assert.equal(withEsc.title, '4 張交辦單有處理人的新回覆（其中上報 2 張）');
+        const without = await run({ count: 3, escalated: 0 });
+        assert.equal(without.title, '3 張交辦單有處理人的新回覆');
+        const legacy = await run({ count: 3 });
+        assert.equal(legacy.title, '3 張交辦單有處理人的新回覆', '舊伺服器沒有 escalated 欄位：維持原文');
+    },
+
     // 「清單有更新」：數字與載入時不同才出現、相同不出現；自己重載後以新數字為基準
     async listUpdateNoticeAppearsOnlyWhenCountsDiffer() {
         const dom = installDom();

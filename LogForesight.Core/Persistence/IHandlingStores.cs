@@ -57,9 +57,9 @@ public interface IIssueHandlingStore
     List<IssueHandling> GetByCases(IReadOnlyCollection<string> caseIds);
 
     /// <summary>
-    /// 案件目前這一輪「觀察中」的開始時間：該案件展開寫入的逐日列裡、狀態為 observing 者最早的 UpdatedAt。
-    /// 每次回覆為觀察中，案件同步都會把可覆寫的逐日列整批改寫成同一個 UpdatedAt（回覆時間），而夜間掛接只在後面追加較晚的新日子，
-    /// 所以最早的那個時間就是最近一次被回覆為觀察中的時間；改成別的狀態再回覆回觀察中則整批重寫、時間更新。
+    /// 案件目前這一輪「觀察中」的開始時間：取該案件展開寫入的逐日列裡、狀態為 observing 者最早的 UpdatedAt（實作就是這個最小值）。
+    /// 它等於「最近一次被回覆為觀察中的時間」，靠一個不變式：每次回覆為觀察中，案件同步都會把可覆寫的逐日列整批改寫成同一個 UpdatedAt（回覆時間），
+    /// 夜間掛接只在後面追加較晚的新日子，所以最小值恆為最近一次回覆的時間；中間改成別的狀態再回覆回觀察中，同樣整批重寫、時間更新。
     /// 沒有任何觀察中逐日列的案件不在結果裡（呼叫端退回案件本身的最後更新時間）。單一 GROUP BY、依 case_id 分批。
     /// </summary>
     Dictionary<string, DateTime> GetObservationStarts(IReadOnlyCollection<string> caseIds) =>

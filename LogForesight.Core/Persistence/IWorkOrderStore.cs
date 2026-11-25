@@ -47,6 +47,12 @@ public interface IWorkOrderStore
     /// <summary>有未讀回覆的單數（SQL 端 COUNT，判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
     int CountUnreadReplies();
 
+    /// <summary>
+    /// 有未讀回覆、且含至少一個上報中進行中成員的單數（<see cref="CountUnreadReplies"/> 的子集；單一 SQL，不逐張查）。
+    /// 上報中進行中＝成員未結案且狀態為 escalated；不排除停用主機，口徑與 <see cref="CountUnreadReplies"/> 相同。
+    /// </summary>
+    int CountUnreadRepliesWithEscalated();
+
     void AppendEvent(WorkOrderEvent evt);
 
     /// <summary>依 CreatedAt 升冪</summary>

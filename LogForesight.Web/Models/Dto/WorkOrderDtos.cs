@@ -302,6 +302,9 @@ public class WorkOrderReturnResultDto
 public class WorkOrderUnreadCountDto
 {
     public int Count { get; set; }
+
+    /// <summary>未讀單中，含至少一個上報中進行中成員的單數（<see cref="Count"/> 的子集）</summary>
+    public int Escalated { get; set; }
 }
 
 /// <summary>取消／代為結案的結果</summary>

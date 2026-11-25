@@ -133,12 +133,24 @@ public sealed class MailLinksTests
     [Theory]
     [InlineData(WorkOrderOutboxKinds.Created)]
     [InlineData(WorkOrderOutboxKinds.Appended)]
-    public void P1_新交辦與新增成員段的連結只看今天新增的單(string kind)
+    public void P1_新交辦與新增成員段的連結不帶篩選_連到我的交辦本身(string kind)
     {
         var (_, body) = WorkOrderDigestBuilder.Build(new[] { (Item(kind), (WorkOrderDigestOrder?)Order()) }, Base, 3);
 
-        Assert.Contains($"{Base}/handlers/3?flag=newToday", body);
-        Assert.DoesNotContain("flag=returned", body);
+        Assert.Contains($"{Base}/handlers/3", body);
+        Assert.DoesNotContain("flag=", body);
+    }
+
+    /// <summary>白天之後派的單常在隔天 08:00 才寄：「今天新增」那天已過，帶 newToday 會點開空清單</summary>
+    [Fact]
+    public void P1_隔天寄出的信_新交辦段連結不帶今天新增篩選()
+    {
+        var sent = Item(WorkOrderOutboxKinds.Created);
+        sent.EnqueuedAt = new DateTime(2026, 11, 20, 18, 0, 0);   // 前一天傍晚入列、隔天早上寄
+        var (_, body) = WorkOrderDigestBuilder.Build(new[] { (sent, (WorkOrderDigestOrder?)Order(7)) }, Base, 3);
+
+        Assert.DoesNotContain("newToday", body);
+        Assert.Contains($"連結：{Base}/handlers/3", body);
     }
 
     [Theory]
@@ -168,8 +180,7 @@ public sealed class MailLinksTests
 
         var lines = body.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         var returnedHeading = lines.FindIndex(l => l == "【退回】");
-        var createdHeading = lines.FindIndex(l => l == "【新交辦】");
-        Assert.True(lines.FindIndex(createdHeading, l => l.Contains("flag=newToday")) < returnedHeading);   // 連結跟在自己那一段後面
+                Assert.DoesNotContain(lines.Take(returnedHeading), l => l.Contains("flag="));   // 新交辦段不帶篩選
         Assert.Contains(lines.Skip(returnedHeading), l => l.Contains("flag=returned"));
         Assert.Equal($"連結：{Base}/handlers/3", lines.Last(l => l.StartsWith("連結：", StringComparison.Ordinal)));
     }

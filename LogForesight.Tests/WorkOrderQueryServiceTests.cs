@@ -78,6 +78,7 @@ public class WorkOrderQueryServiceTests
         public void MarkAdminSeen(long workOrderId, DateTime seenAt) => _inner.MarkAdminSeen(workOrderId, seenAt);
         public void SetContinuationStops(IReadOnlyCollection<ContinuationStopUpdate> updates) => _inner.SetContinuationStops(updates);
         public int CountUnreadReplies() => _inner.CountUnreadReplies();
+        public int CountUnreadRepliesWithEscalated() => _inner.CountUnreadRepliesWithEscalated();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
         public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds, IReadOnlyCollection<string>? excludedHostKeys = null) => _inner.CountMembers(workOrderIds, excludedHostKeys);
@@ -1168,6 +1169,48 @@ public class WorkOrderQueryServiceTests
         Assert.True(_orders.Get(id)!.HasUnreadReply);
         Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
         Assert.Equal(1, svc.UnreadCount().Count);
+    }
+
+    [Fact]
+    public void 未讀回覆_上報數只計含上報中進行中成員的未讀單()
+    {
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+        // 未讀且有上報中成員（另有一個處理中成員，同一張單只算一張）
+        var escalated = AddOrder(_alice.UserId, source: "Disk", eventId: 1, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(escalated, "HOST-A", IssueHandlingStatuses.Escalated);
+        AddMember(escalated, "HOST-B", IssueHandlingStatuses.Escalated);
+        AddMember(escalated, "HOST-C", IssueHandlingStatuses.InProgress);
+        // 未讀但沒有上報中成員
+        var plain = AddOrder(_alice.UserId, source: "Disk", eventId: 2, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(plain, "HOST-D", IssueHandlingStatuses.InProgress);
+        // 上報中成員已結案：不算上報
+        var closedMember = AddOrder(_alice.UserId, source: "Disk", eventId: 3, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(closedMember, "HOST-E", IssueHandlingStatuses.Escalated, closed: DateTime.Now.AddMinutes(-30));
+
+        var result = svc.UnreadCount();
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal(1, result.Escalated);
+    }
+
+    [Fact]
+    public void 未讀回覆_有上報但已讀不算_沒有任何上報時為0()
+    {
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(id, "HOST-A", IssueHandlingStatuses.Escalated);
+        Assert.Equal(1, svc.UnreadCount().Escalated);
+
+        svc.MarkSeen(id);
+
+        var seen = svc.UnreadCount();
+        Assert.Equal(0, seen.Count);
+        Assert.Equal(0, seen.Escalated);
+
+        var none = AddOrder(_alice.UserId, source: "Disk", eventId: 9, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        AddMember(none, "HOST-Z", IssueHandlingStatuses.InProgress);
+        Assert.Equal(1, svc.UnreadCount().Count);
+        Assert.Equal(0, svc.UnreadCount().Escalated);
     }
 
     [Fact]

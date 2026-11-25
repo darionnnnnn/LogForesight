@@ -43,11 +43,12 @@ internal static class WorkOrderDigestBuilder
         if (reminders.Count > 0) subjectSummary = rows.Count == reminders.Count ? "管理者提醒" : subjectSummary + "、管理者提醒";
 
         var body = new StringBuilder();
-        // 新交辦、新增成員、退回三段各附一條帶篩選的連結（今天新增／被退回），點進去直接是那一批單；其餘段只有信尾的總連結
+        // 只有退回段附帶篩選的連結（被退回），點進去直接是那一批單；其餘段只有信尾的總連結。
+        // 新交辦、新增成員不帶「今天新增」：這類信常在隔天早上才寄，成員建立日已不是寄信當天，帶篩選會點開空清單。
         string? SectionLink(string? flag) => flag == null
             ? null : MailLinks.Build(siteBaseUrl, MailLinks.MyWorkOrdersPath(recipientUserId, flag));
-        AppendSection(body, "【新交辦】", created, SectionLink(WorkOrderQueries.FlagNewToday), "只看今天新增的單");
-        AppendSection(body, "【新增成員】", appended, SectionLink(WorkOrderQueries.FlagNewToday), "只看今天新增的單");
+        AppendSection(body, "【新交辦】", created);
+        AppendSection(body, "【新增成員】", appended);
         AppendSection(body, "【移交】", transferred);
         AppendSection(body, "【取消】", cancelled);
         AppendSection(body, "【退回】", returned, SectionLink(WorkOrderQueries.FlagReturned), "只看被退回的單");

@@ -115,6 +115,9 @@ internal class FakeWorkOrderStore : IWorkOrderStore
 
     public int CountUnreadReplies() => _orders.Count(o => o.HasUnreadReply);
 
+    public int CountUnreadRepliesWithEscalated() => _orders.Count(o => o.HasUnreadReply
+        && _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Any(c => c.ClosedAt == null && c.Status == IssueHandlingStatuses.Escalated));
+
     public virtual void AppendEvent(WorkOrderEvent evt)
     {
         evt.EventId = _nextEventId++;

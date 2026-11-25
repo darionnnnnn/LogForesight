@@ -316,7 +316,7 @@ public class WorkOrderQueryService
 
     /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
     /// <summary>未讀回覆的單數（側欄徽章用；能力由 controller 標註把關）。SQL 端 COUNT，不把單拉回記憶體</summary>
-    public WorkOrderUnreadCountDto UnreadCount() => new() { Count = _orders.CountUnreadReplies() };
+    public WorkOrderUnreadCountDto UnreadCount() => new() { Count = _orders.CountUnreadReplies(), Escalated = _orders.CountUnreadRepliesWithEscalated() };
 
     /// <summary>
     /// 記錄「管理者已看過這張單」：只有具 Assign 的使用者才寫入（ViewAll 唯讀者與處理人本人開詳情不算「已讀」）。
