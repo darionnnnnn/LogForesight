@@ -37,6 +37,7 @@ public class ControllerRouteSnapshotTests
         ["DashboardController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["RunActivityController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["HostDetailController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
+        ["HostOrdersController"] = "讀取類 action 登入即可（FallbackPolicy），主機可見性與案件授與的問題白名單由 Service 層 IVisibilityService 過濾（不可見 404）",
         ["ReportsController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["DisplaySettingsController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["HandlersController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",

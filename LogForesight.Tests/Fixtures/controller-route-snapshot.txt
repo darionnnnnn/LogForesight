@@ -164,6 +164,7 @@ GET	/api/help/ask-available	C=-;A=-	-	-	-	HelpController
 GET	/api/help/manual	C=-;A=-	-	-	-	HelpController
 GET	/api/host-detail/{hostId:long}	C=-;A=-	-	-	-	HostDetailController
 GET	/api/host-detail/{hostId:long}/issues	C=-;A=-	-	-	-	HostDetailController
+GET	/api/host-detail/{hostId:long}/orders	C=-;A=-	-	-	-	HostOrdersController
 GET	/api/host-detail/{hostId:long}/prtg	C=-;A=-	-	-	-	HostDetailController
 GET	/api/hosts	C=-;A=-	-	-	-	HostsController
 GET	/api/hosts/groups	C=-;A=-	-	-	-	HostsController

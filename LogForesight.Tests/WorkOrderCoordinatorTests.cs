@@ -593,6 +593,92 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(-1, evt.MemberDelta);
     }
 
+    // ── AdminClose 範圍（第 81 輪批次 T：全部進行中／只有上報中的／勾選的成員）──────────────
+
+    [Fact]
+    public void AdminClose_範圍三種_全部不帶清單整張單結案()
+    {
+        var (w, id, _) = ThreeHostOrder();
+
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "全部處理完", Actor(), blocksRedispatch: false);
+
+        Assert.Equal(3, result.ClosedCases);
+        Assert.All(w.Cases.GetByWorkOrder(id, 0, 10), c => Assert.NotNull(c.ClosedAt));
+        Assert.Equal(WorkOrderCloseReasons.AdminClosed, w.Orders.Get(id)!.ClosedReason);
+    }
+
+    [Fact]
+    public void AdminClose_範圍三種_只有上報中的_其餘維持原狀_單繼續進行()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var escalated = cases.Where(c => c.HostName is "H1" or "H2").Select(c => c.CaseId).ToList();
+        w.Coordinator.Reply(id, escalated, IssueHandlingStatuses.Escalated, "處理不了", null, Actor(T0.AddHours(1)));
+
+        var later = T0.AddHours(2);
+        var result = w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "評估後不處理", Actor(later), blocksRedispatch: true, caseIds: escalated);
+
+        Assert.Equal(2, result.ClosedCases);
+        var byHost = w.Cases.GetByWorkOrder(id, 0, 10).ToDictionary(c => c.HostName);
+        Assert.Equal(IssueHandlingStatuses.WontFix, byHost["H1"].Status);
+        Assert.Equal(later, byHost["H1"].ClosedAt);
+        Assert.True(byHost["H1"].BlocksRedispatch, "停派旗標只寫在範圍內的成員");
+        Assert.Equal(IssueHandlingStatuses.InProgress, byHost["H3"].Status);
+        Assert.Null(byHost["H3"].ClosedAt);
+        Assert.NotEqual(true, byHost["H3"].BlocksRedispatch);
+
+        var order = w.Orders.Get(id)!;
+        Assert.Null(order.ClosedAt);
+        Assert.Null(order.ClosedReason);
+        var evt = w.Orders.ListEvents(id).Last(e => e.Action == WorkOrderEventActions.AdminClosed);
+        Assert.Equal(-2, evt.MemberDelta);
+        Assert.Equal($"{IssueHandlingStatuses.WontFix}：評估後不處理", evt.Note);
+    }
+
+    [Fact]
+    public void AdminClose_範圍三種_勾選的成員_範圍內結案後單才推導結案()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1").CaseId;
+        var rest = cases.Where(c => c.HostName != "H1").Select(c => c.CaseId).ToList();
+
+        var first = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "先處理一台", Actor(T0.AddHours(1)), blocksRedispatch: false, caseIds: new[] { h1 });
+        Assert.Equal(1, first.ClosedCases);
+        Assert.Null(w.Orders.Get(id)!.ClosedAt);
+
+        // 剩下的也在範圍內結案：沒有進行中成員了，單由結案推導結案（all_closed），不是 admin_closed
+        var second = w.Coordinator.AdminClose(id, IssueHandlingStatuses.Resolved, "其餘也處理", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: rest);
+        Assert.Equal(2, second.ClosedCases);
+        var order = w.Orders.Get(id)!;
+        Assert.NotNull(order.ClosedAt);
+        Assert.Equal(WorkOrderCloseReasons.AllClosed, order.ClosedReason);
+    }
+
+    [Fact]
+    public void AdminClose_帶已結案或不屬於這張單的案件_整筆拒絕且什麼都不寫()
+    {
+        var (w, id, cases) = ThreeHostOrder();
+        var h1 = cases.Single(c => c.HostName == "H1");
+        var h2 = cases.Single(c => c.HostName == "H2");
+        w.Coordinator.Reply(id, new[] { h1.CaseId }, IssueHandlingStatuses.Resolved, "已處理", null, Actor(T0.AddHours(1)));
+        var eventsBefore = w.Orders.ListEvents(id).Count;
+
+        // 已結案的案件
+        Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "x", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: new[] { h2.CaseId, h1.CaseId }));
+        // 不屬於這張單的案件
+        w.AddHostDays("H9", D2);
+        var other = w.Coordinator.Create(Request(Bob, "H9")).WorkOrderId;
+        var foreign = w.Cases.GetByWorkOrder(other, 0, 10).Single().CaseId;
+        Assert.Throws<WorkOrderRuleException>(() =>
+            w.Coordinator.AdminClose(id, IssueHandlingStatuses.WontFix, "x", Actor(T0.AddHours(2)), blocksRedispatch: false, caseIds: new[] { h2.CaseId, foreign }));
+
+        var after = w.Cases.GetByWorkOrder(id, 0, 10).Single(c => c.HostName == "H2");
+        Assert.Equal(IssueHandlingStatuses.InProgress, after.Status);
+        Assert.Null(after.ClosedAt);
+        Assert.Equal(eventsBefore, w.Orders.ListEvents(id).Count);
+        Assert.Null(w.Orders.Get(id)!.ClosedAt);
+    }
+
     // ── Reply ────────────────────────────────────────────────────────────────
 
     private static (World W, long Id, List<IssueCase> Cases) ThreeHostOrder()

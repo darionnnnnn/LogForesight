@@ -54,6 +54,12 @@
         <div class="lf-main">
             <header class="lf-topbar lf-no-print">
                 <h1 class="lf-topbar__title">@ViewData["Title"]</h1>
+                @* 主機快速搜尋：名稱或 IP，結果由伺服器依登入者的可見範圍過濾（core/host-quick-search.js）；載入後才顯示 *@
+                <div class="lf-host-search d-none lf-no-print" id="lf-host-search" role="search">
+                    <label for="lf-host-search-input" class="visually-hidden">搜尋主機（名稱或 IP）</label>
+                    <input type="search" id="lf-host-search-input" class="form-control form-control-sm" placeholder="搜尋主機（名稱或 IP）" autocomplete="off" aria-controls="lf-host-search-results">
+                    <div id="lf-host-search-results" class="lf-host-search__results d-none" aria-live="polite"></div>
+                </div>
                 <div class="btn-group btn-group-sm" role="group" aria-label="字級" id="lf-font-scale">
                     <button type="button" class="btn btn-outline-secondary" data-scale="small" title="小字級">小</button>
                     <button type="button" class="btn btn-outline-secondary" data-scale="medium" title="標準字級">中</button>

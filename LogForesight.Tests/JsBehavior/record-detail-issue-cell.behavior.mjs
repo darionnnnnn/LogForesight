@@ -63,19 +63,20 @@ const renderTableStub = (wrap, { columns, rows }) => {
 };
 
 const ctx = { currentDetail: { detailPruned: false }, aiAvailable: false, modals: [] };
-const names = ['issueCell', 'issueStateBadges', 'evidencePanel', 'guidancePanel', 'appendList', 'sourceEvidenceBlock', 'formatSourceUtc',
+const names = ['issueCell', 'issueStateBadges', 'evidencePanel', 'guidancePanel', 'appendList', 'sourceEvidenceBlock', 'sourceEvidenceSummaryParts', 'localDayKey',
+    'formatSourceClock', 'formatSourceLocal', 'formatSourceUtc',
     'residualCredentialBlock', 'loginFailureDetailsTable', 'keyDetailsBlock', 'sampleMessagesTrigger', 'trendCell'];
 const body = [
     extractLine(recordDetail, 'const TREND_WORDS'),
     ...names.map(n => extractFunction(recordDetail, `function ${n}(`))
 ].join('\n');
-const fns = new Function('document', 'collapsibleText', 'metaLine', 'button', 'severityCell', 'formatNumber', 'renderTable',
+const fns = new Function('document', 'collapsibleText', 'metaLine', 'disclosure', 'button', 'severityCell', 'formatNumber', 'renderTable',
     'renderAiInline', 'aiInterpretPanel', 'prtgTrendEvidenceBlock', 'showDetailModal', 'sampleMessagesBody', 'ctx',
     `const currentDetail = new Proxy({}, { get: (_, k) => ctx.currentDetail[k] });
      const aiAvailableRef = () => ctx.aiAvailable;
      ${body.replaceAll('aiAvailable ?', 'aiAvailableRef() ?')}
      return { ${names.join(', ')} };`)(
-    document, collapsibleText, metaLine, button, () => mark('severity', '高'), n => String(n), renderTableStub,
+    document, collapsibleText, metaLine, disclosure, button, () => mark('severity', '高'), n => String(n), renderTableStub,
     (el, t) => { el.textContent = t; }, () => mark('ai-interpret', 'AI'), () => mark('prtg-evidence', 'PRTG'),
     opts => ctx.modals.push(opts), () => mark('samples'), ctx);
 
@@ -92,6 +93,9 @@ const obs = n => Array.from({ length: n }, (_, i) => ({
     sourceKind: 'Prtg', resourceScope: 'Host', exactHostKey: `h${i}`, exactResourceKey: `r${i}`,
     eventTimeUtc: i === 0 ? null : '2026-01-01T00:00:00Z', nativeReference: i === 2 ? 'ref' : null
 }));
+const hhmm = iso => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// 來源觀測摘要不得出現的三句內部用語（第 81 輪批次 T）
+const INTERNAL_PHRASES = ['無時間解讀，不能推定連續狀態', '群組顯示時段不是來源時間窗', '原生參照'];
 const failure = (account, extra = {}) => ({ account, source: 'WS01', logonTypeText: '網路', reasonText: '密碼錯誤', count: 3, ...extra });
 const clickOf = b => (b.listeners.click || []).forEach(h => h({ stopPropagation() { b._stopped = true; } }));
 const LEGACY = 'TP-BKSVR02$ Account Domain: BRK Logon ID: 0x3E7 Group: Security ID: S-1-5-32-544 Group Name: Administrators Group Domain: Builtin Changed Attributes: SAM Account Name: - SID History: - Additional Information: Privileges: -';
@@ -111,7 +115,7 @@ const cases = {
         assert.equal(known.textContent, '已知問題 A');
         assert(meta.className.includes('lf-meta-line'));
         assert.deepEqual(meta.children.map(c => c.textContent), ['3 次', '01:00–02:00', 'Security']);
-        assert(meta.children[1].title.includes('不是來源時間窗'), '時段的口徑放在 title');
+        assert(meta.children[1].title.includes('最早與最晚'), '時段的口徑放在 title（白話，不用內部用語）');
         assert(!allText(wrap).includes('群組顯示時段 '), '判斷層不再出現「群組顯示時段」字樣');
     },
     identicalTextShownOnce() {
@@ -137,7 +141,7 @@ const cases = {
         const wrap = fns.issueCell(issue);
         const text = allText(wrap);
         assert(!text.includes('密碼錯誤'), '登入失敗明細不在判斷層');
-        assert(!text.includes('原生參照'), '來源觀測不在判斷層');
+        assert(!text.includes('來源事件編號') && !text.includes('技術細節'), '來源觀測不在判斷層');
         assert(!text.includes('依據文字'), '殘留憑證依據不在判斷層（徽章在）');
         assert(text.includes('疑似殘留憑證重試'));
         assert(hasClass(wrap, 'lf-key-details'), '帳號摘要留在判斷層');
@@ -223,12 +227,12 @@ const cases = {
         assert(!all(panel).some(n => (n.className || '').split(' ').includes('small')), '處置參考的內文與清單不帶 small');
     },
     sourceEvidenceKeysMuted() {
-        // 來源觀測的欄位名與值分開包裝；文字內容與順序不變，時間值是技術值
+        // 來源觀測的欄位名與值分開包裝（在「技術細節」展開區內）；時間值是技術值
         reset();
         const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
-        const row = block.children[1].children[1];
+        const row = block.children[2].children[1];
         const keys = all(row).filter(n => (n.className || '').split(' ').includes('lf-source-obs__key')).map(n => n.textContent);
-        assert.deepEqual(keys, ['來源：', '範圍：', '主機：', '資源：', 'UTC 時間：']);
+        assert.deepEqual(keys, ['來源：', '範圍：', '主機：', '資源：', '時間：', 'UTC：']);
         assert.equal(row.children[0].textContent, '來源：PRTG；範圍：主機；主機：h1；資源：r1', '文字內容與順序不變');
         assert(all(row.children[1]).some(n => (n.className || '').split(' ').includes('lf-text-data')), '時間值是技術值');
     },
@@ -273,19 +277,47 @@ const cases = {
         reset();
         const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
         const summary = block.children[0].children.map(c => c.textContent);
-        assert.deepEqual(summary, ['3 筆', '2 筆有 UTC 時間', '1 筆有原生參照', '3 筆無時間解讀，不能推定連續狀態', '群組顯示時段不是來源時間窗']);
-        assert.equal(block.children[1].children.length, 3);
-        assert(!all(block).some(n => n.tagName === 'BUTTON' || n.tagName === 'A'), '佐證層內不再有切換鈕，也不產生連結');
+        // obs(3)：第 1 筆沒有時間、第 2、3 筆是 2026-01-01T00:00Z 的事件；三筆都沒有時間依據
+        assert.deepEqual(summary, [`2 筆事件：${hhmm('2026-01-01T00:00:00Z')}、${hhmm('2026-01-01T00:00:00Z')}`, '1 筆沒有時間資訊', '3 筆缺少時間依據，看不出是否連續發生']);
+        assert.equal(block.children[2].children.length, 3, '三筆各一列（在技術細節內）');
+        assert(!all(block).some(n => n.tagName === 'A'), '佐證層內不產生連結');
+        const buttons = all(block).filter(n => n.tagName === 'BUTTON');
+        assert.deepEqual(buttons.map(b => b.textContent), ['技術細節'], '只有技術細節的展開鈕');
+        assert(block.children[2].className.split(' ').includes('d-none'), '原始欄位預設收合');
+        // 三句內部用語零命中
+        const text = allText(block);
+        for (const phrase of INTERNAL_PHRASES) assert(!text.includes(phrase), `不得出現內部用語：${phrase}`);
+    },
+    // 摘要用當地時間：同一天只列時分、跨日帶月-日；區間與事件分開寫
+    sourceEvidenceLocalTimeSummary() {
+        reset();
+        const at = (h, m, day = 1) => new Date(2026, 0, day, h, m).toISOString();
+        const ev = iso => ({ sourceKind: 'Prtg', resourceScope: 'Host', exactHostKey: 'h', exactResourceKey: 'h', eventTimeUtc: iso, windowResolution: 'x' });
+        const sameDay = fns.sourceEvidenceBlock({ sourceObservations: [ev(at(1, 4)), ev(at(1, 0)), ev(at(1, 2))] });
+        assert.deepEqual(sameDay.children[0].children.map(c => c.textContent), ['3 筆事件：01:00、01:02、01:04'], '事件依時間排序、當地時間');
+        const crossDay = fns.sourceEvidenceBlock({ sourceObservations: [ev(at(23, 50, 1)), ev(at(0, 10, 2))] });
+        assert.deepEqual(crossDay.children[0].children.map(c => c.textContent), ['2 筆事件：01-01 23:50、01-02 00:10'], '跨日時帶月-日');
+        const win = { sourceKind: 'Prtg', resourceScope: 'Host', exactHostKey: 'h', exactResourceKey: 'h', windowStartUtc: at(1, 0), windowEndUtc: at(2, 0), windowResolution: 'x' };
+        const mixed = fns.sourceEvidenceBlock({ sourceObservations: [ev(at(1, 30)), win] });
+        assert.deepEqual(mixed.children[0].children.map(c => c.textContent), ['1 筆事件：01:30', '1 筆時間區間：01:00–02:00']);
+        const many = fns.sourceEvidenceBlock({ sourceObservations: Array.from({ length: 10 }, (_, i) => ev(at(1, i))) });
+        assert(many.children[0].children[0].textContent.endsWith('…'), '時間點太多時以「…」收尾');
+    },
+    // 反例先確認守門會中，再確認 production 原始碼零命中
+    sourceEvidenceNoInternalPhrases() {
+        const hit = text => INTERNAL_PHRASES.filter(p => text.includes(p));
+        assert.deepEqual(hit('3 筆無時間解讀，不能推定連續狀態；群組顯示時段不是來源時間窗；1 筆有原生參照'), INTERNAL_PHRASES, '舊文字三句都會被守門抓到');
+        assert.deepEqual(hit(recordDetail), [], 'record-detail.js 不得再出現內部用語');
     },
     // ── 第 73 輪 E：沒有值的行不逐筆印、警語移到摘要行、本頁主機顯示名稱 ──
     sourceEvidenceUnknownLinesOmitted() {
         reset();
         const block = fns.sourceEvidenceBlock({ sourceObservations: obs(3) });
-        const rows = block.children[1].children;
-        assert.deepEqual(rows.map(r => r.children.length), [2, 2, 3], '只印來源與時間兩行；有原生參照的那筆多一行');
-        assert(!allText(block).includes('原生參照：未知'), '不逐筆印未知的原生參照');
-        assert(!allText(block).includes('時間解讀：'), '沒有時間解讀時不逐筆印');
-        assert(allText(rows[2]).includes('原生參照：ref'), '有值的原生參照照印');
+        const rows = block.children[2].children;
+        assert.deepEqual(rows.map(r => r.children.length), [2, 2, 3], '只印來源與時間兩行；有來源事件編號的那筆多一行');
+        assert(!allText(block).includes('來源事件編號：未知'), '不逐筆印未知的來源事件編號');
+        assert(!allText(block).includes('時間依據：'), '沒有時間依據時不逐筆印');
+        assert(allText(rows[2]).includes('來源事件編號：ref'), '有值的來源事件編號照印');
     },
     sourceEvidencePartialResolution() {
         reset();
@@ -293,11 +325,11 @@ const cases = {
         items[1].windowResolution = '整日彙總';
         const block = fns.sourceEvidenceBlock({ sourceObservations: items });
         const summary = block.children[0].children.map(c => c.textContent);
-        assert(summary.includes('2 筆無時間解讀，不能推定連續狀態'), '警語筆數＝沒有時間解讀的筆數');
-        assert(allText(block.children[1].children[1]).includes('時間解讀：整日彙總'), '有值的時間解讀照印');
+        assert(summary.includes('2 筆缺少時間依據，看不出是否連續發生'), '警語筆數＝沒有時間依據的筆數');
+        assert(allText(block.children[2].children[1]).includes('時間依據：整日彙總'), '有值的時間依據照印');
         items.forEach(i => { i.windowResolution = 'x'; });
         const all = fns.sourceEvidenceBlock({ sourceObservations: items }).children[0].children.map(c => c.textContent);
-        assert(!all.some(t => t.includes('無時間解讀')), '全部都有時間解讀時沒有警語');
+        assert(!all.some(t => t.includes('缺少時間依據')), '全部都有時間依據時沒有警語');
     },
     sourceEvidenceOwnHostName() {
         reset();

@@ -397,6 +397,62 @@
     min-height: 3.25rem;
 }
 
+/* 頁頂主機快速搜尋：結果是搜尋欄正下方的浮層，寬度跟搜尋欄；窄螢幕時搜尋欄換到標題下一行 */
+.lf-host-search {
+    position: relative;
+    flex: 0 1 20rem;
+    margin-inline: var(--lf-space-4);
+}
+
+.lf-host-search__results {
+    position: absolute;
+    inset-inline: 0;
+    top: 100%;
+    z-index: 1050;
+    margin-top: var(--lf-space-1);
+    background: var(--lf-card-bg);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    box-shadow: var(--lf-shadow-md);
+    display: flex;
+    flex-direction: column;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.lf-host-search__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--lf-space-2);
+    padding: var(--lf-space-2) var(--lf-space-3);
+    color: var(--lf-text);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.lf-host-search__item:hover,
+.lf-host-search__item:focus-visible {
+    background: var(--lf-content-bg);
+}
+
+.lf-host-search__note {
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
+@media (max-width: 767.98px) {
+    .lf-topbar {
+        flex-wrap: wrap;
+        gap: var(--lf-space-2);
+    }
+
+    .lf-host-search {
+        order: 3;
+        flex: 1 1 100%;
+        margin-inline: 0;
+    }
+}
+
 .lf-topbar__title {
     font-size: var(--lf-font-size-2xl);
     letter-spacing: -.01em;

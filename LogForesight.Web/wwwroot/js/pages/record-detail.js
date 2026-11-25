@@ -10,7 +10,7 @@ import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings,
 import { appUrl, recordsUrl, recordDetailUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, button as makeButton, linkButton, collapsibleText, toggleAllTableDetails, bindRememberedCollapse } from '../core/ui.js';
 import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell, logSourceName, netiqAttemptStatusName } from '../core/format.js';
-import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection, derivedStatusLabel, derivedStatusShortLabel, issueOrdersOf } from './handling-panel.js';
 import { createSideRail } from '../core/side-rail.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -209,6 +209,8 @@ async function load() {
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
         canMaintainRules,
+        // 本日有問題層級交辦時，處理人列改列各張單與各自的處理人（案件處理人與單號來自問題列）
+        getIssueOrders: () => issueOrdersOf(currentDetail.topIssues),
         // 勾選的問題「不再打擾」滿 30 天都會自動解除（伺服器的 dismissalReleases）：處理面板的不處理類後果提示換句；前端不判斷嚴重度
         dismissalReleases: keys => keys.size > 0
             && [...keys].every(key => currentDetail.topIssues.find(i => i.issueKey === key)?.dismissalReleases === true),
@@ -1575,11 +1577,11 @@ function issueCell(issue) {
         wrap.appendChild(collapsibleText(text));
     }
 
-    // 時段是這一組事件在當日最早到最晚出現的時間，不是來源時間窗——口徑放在 title 與佐證的來源觀測區
+    // 時段是這一組事件在當日最早到最晚出現的時間（不是來源提供的時間）——口徑放在 title，來源實際時間在佐證的來源觀測區
     const period = document.createElement('span');
     period.className = 'text-nowrap';
     period.textContent = `${issue.firstSeen}–${issue.lastSeen}`;
-    period.title = '群組顯示時段：這組事件當日最早到最晚出現的時間，不是來源時間窗';
+    period.title = '這組事件當天最早與最晚出現的時間；來源實際提供的時間請看佐證裡的來源觀測';
     const meta = metaLine([
         `${formatNumber(issue.count)} 次`,
         period,
@@ -1682,8 +1684,9 @@ function evidencePanel(issue) {
 /**
  * 來源觀測（佐證層）：有界清單，每筆的外部值一律當文字呈現、不做成連結。
  * 沒有任何觀測時回 null；面板有其他佐證時由 evidencePanel 補一句「未保存」。
- * 每筆只印有值的行：「時間解讀」「原生參照」沒有值時不逐筆印「未知」，改由摘要行的計數承擔，
- * 「不能推定連續狀態」的警語也移到摘要行（換位置、不消失）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
+ * 摘要用白話與當地時間說「有幾筆、什麼時候」（「3 筆事件：01:00、01:02、01:04」）；
+ * 來源種類、範圍、主機、資源、UTC 時間與來源提供的編號這些原始欄位收進「技術細節」展開區，
+ * 每筆只印有值的行（沒有值的不逐筆印「未知」，由摘要承擔）。本頁主機的內部鍵（host-id:N）顯示主機名稱，
  * 資源鍵與主機鍵相同時不重複；其他鍵原樣顯示，不猜別台主機的名稱（第 73 輪 E）。
  */
 function sourceEvidenceBlock(issue) {
@@ -1692,18 +1695,7 @@ function sourceEvidenceBlock(issue) {
 
     const block = document.createElement('div');
     block.className = 'lf-source-obs';
-    const exactReferences = observations.filter(item => item.nativeReference).length;
-    const exactTimes = observations.filter(item => item.eventTimeUtc || (item.windowStartUtc && item.windowEndUtc)).length;
-    const unresolved = observations.filter(item => !item.windowResolution).length;
-    const summary = metaLine([
-        `${observations.length} 筆`,
-        `${exactTimes} 筆有 UTC 時間`,
-        `${exactReferences} 筆有原生參照`,
-        unresolved > 0 ? `${unresolved} 筆無時間解讀，不能推定連續狀態` : null,
-        issue.sourceObservationsTruncated ? '清單已截斷' : null,
-        '群組顯示時段不是來源時間窗'
-    ]);
-    block.appendChild(summary);
+    block.appendChild(metaLine(sourceEvidenceSummaryParts(observations, issue.sourceObservationsTruncated)));
 
     const sourceNames = {
         Prtg: 'PRTG', SentinelWindows: 'Sentinel Windows', SentinelLinux: 'Sentinel Linux',
@@ -1735,15 +1727,77 @@ function sourceEvidenceBlock(issue) {
         if ((item.exactResourceKey ?? null) !== (item.exactHostKey ?? null)) fields.push(['資源', item.exactResourceKey || '未知']);
         row.appendChild(sourceLine(fields));
 
-        if (item.eventTimeUtc) row.appendChild(sourceLine([['UTC 時間', formatSourceUtc(item.eventTimeUtc)]], 'lf-text-data'));
-        else if (item.windowStartUtc && item.windowEndUtc) row.appendChild(sourceLine([['UTC 區間', `[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`]], 'lf-text-data'));
-        else row.appendChild(sourceLine([['UTC 時間／區間', '未知']]));
-        if (item.windowResolution) row.appendChild(sourceLine([['時間解讀', item.windowResolution]]));
-        if (item.nativeReference) row.appendChild(sourceLine([['原生參照', item.nativeReference]], 'lf-text-data'));
+        // 當地時間為主；原始 UTC 值留在技術細節對照
+        if (item.eventTimeUtc) {
+            row.appendChild(sourceLine([['時間', formatSourceLocal(item.eventTimeUtc)], ['UTC', formatSourceUtc(item.eventTimeUtc)]], 'lf-text-data'));
+        } else if (item.windowStartUtc && item.windowEndUtc) {
+            row.appendChild(sourceLine([['時段', `${formatSourceLocal(item.windowStartUtc)} 至 ${formatSourceLocal(item.windowEndUtc)}（不含迄點）`],
+                ['UTC', `[${formatSourceUtc(item.windowStartUtc)}, ${formatSourceUtc(item.windowEndUtc)})`]], 'lf-text-data'));
+        } else {
+            row.appendChild(sourceLine([['時間／時段', '未知']]));
+        }
+        if (item.windowResolution) row.appendChild(sourceLine([['時間依據', item.windowResolution]]));
+        if (item.nativeReference) row.appendChild(sourceLine([['來源事件編號', item.nativeReference]], 'lf-text-data'));
         list.appendChild(row);
     }
-    block.appendChild(list);
+    block.append(disclosure('技術細節', list, { className: 'mt-1' }), list);
     return block;
+}
+
+/**
+ * 來源觀測摘要（白話、當地時間）：事件幾筆在哪些時間、時間區間幾筆、沒有時間資訊幾筆；
+ * 沒有時間依據的筆數另外直說「看不出是否連續發生」。時間跨日時每個時間帶月-日。
+ * 時間點最多列 8 個、區間最多 4 個，超過以「…」收尾（清單本身另有 64 筆上限）。
+ */
+function sourceEvidenceSummaryParts(observations, truncated) {
+    const events = observations.filter(item => item.eventTimeUtc);
+    const windows = observations.filter(item => !item.eventTimeUtc && item.windowStartUtc && item.windowEndUtc);
+    const untimed = observations.length - events.length - windows.length;
+    const unresolved = observations.filter(item => !item.windowResolution).length;
+
+    const parts = [];
+    // 所有時間落在同一個當地日才省略日期；跨日時全部帶月-日，避免 23:50 與 00:10 看起來是同一天
+    const stamps = [...events.map(item => item.eventTimeUtc), ...windows.flatMap(item => [item.windowStartUtc, item.windowEndUtc])];
+    const days = new Set(stamps.map(value => localDayKey(value)));
+    const showDate = days.size > 1;
+    const clip = (items, max) => items.length > max ? `${items.slice(0, max).join('、')}…` : items.join('、');
+
+    if (events.length > 0) {
+        const times = events.map(item => item.eventTimeUtc).sort((a, b) => new Date(a) - new Date(b))
+            .map(value => formatSourceClock(value, showDate));
+        parts.push(`${events.length} 筆事件：${clip(times, 8)}`);
+    }
+    if (windows.length > 0) {
+        const spans = windows.map(item => `${formatSourceClock(item.windowStartUtc, showDate)}–${formatSourceClock(item.windowEndUtc, showDate)}`);
+        parts.push(`${windows.length} 筆時間區間：${clip(spans, 4)}`);
+    }
+    if (untimed > 0) parts.push(`${untimed} 筆沒有時間資訊`);
+    if (unresolved > 0) parts.push(`${unresolved} 筆缺少時間依據，看不出是否連續發生`);
+    if (truncated) parts.push('清單已截斷');
+    return parts;
+}
+
+/** 當地日期鍵（跨日判斷用）；無法解析的值各自獨立，不與其他值併成同一天 */
+function localDayKey(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? `?${value}` : `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/** 當地時間的「HH:mm」（withDate 時前面加「MM-DD 」）；無法解析回「未知」 */
+function formatSourceClock(value, withDate) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '未知';
+    const pad = n => String(n).padStart(2, '0');
+    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return withDate ? `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}` : clock;
+}
+
+/** 當地時間的「YYYY-MM-DD HH:mm:ss」；無法解析回「未知」 */
+function formatSourceLocal(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '未知';
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function formatSourceUtc(value) {

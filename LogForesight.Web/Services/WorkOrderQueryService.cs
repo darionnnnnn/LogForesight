@@ -358,6 +358,12 @@ public class WorkOrderQueryService
             quietPool = activeLive.Where(c => visibleKeys.Contains(HostNameKey.Of(c.HostName))).ToList();
         }
         dto.ObservationExpiredQuietCaseIds = QuietExpiredCaseIds(quietPool, allHosts);
+        dto.EscalatedCaseIds = quietPool
+            .Where(c => c.Status == IssueHandlingStatuses.Escalated)
+            .OrderBy(c => HostNameKey.Of(c.HostName), StringComparer.Ordinal).ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Select(c => c.CaseId)
+            .ToList();
+        FillGuidanceAndSamples(dto, order, rules, quietPool, allHosts);
         dto.Note = order.Note;
         dto.CreatedByAccount = order.CreatedByAccount;
         dto.ScopeGroups = order.ScopeGroupIds.Select(gid => new WorkOrderScopeGroupDto
@@ -374,6 +380,153 @@ public class WorkOrderQueryService
             ? HandlerUnseenMembers(order, counts.TryGetValue(id, out var c) ? c.Active : 0, allHosts)
             : 0;
         return dto;
+    }
+
+    // ── 主機詳情「這台的交辦」───────────────────────────────────────────────
+
+    /// <summary>
+    /// 這台主機每個進行中的案件一列（問題、嚴重度、處理人、狀態、單號、上次回覆、復發）。
+    /// 主機不可見回 404（<see cref="IVisibilityService.EnsureVisible"/>，與主機詳情同一道門）；只經案件授與看得到這台的檢視者，
+    /// 只回被授與的問題（<see cref="IVisibilityService.GetIssueKeyRestriction"/>，與詳情頁同一個咽喉點）。
+    /// 嚴重度、復發、前案都以這台的案件一次批次查詢，不逐列查。
+    /// </summary>
+    public HostWorkOrdersDto HostOrders(long hostId)
+    {
+        _visibility.EnsureVisible(hostId);
+        var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機，或您沒有檢視權限。");
+        var restriction = _visibility.GetIssueKeyRestriction(hostId);
+
+        var cases = _cases.GetOpenMany(new[] { host.HostName })
+            .Where(c => c.WorkOrderId != null && c.ClosedAt == null && !c.Cancelled)
+            .Where(c => restriction == null || restriction.Contains(c.IssueKey))
+            .ToList();
+        var dto = new HostWorkOrdersDto();
+        if (cases.Count == 0) return dto;
+
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var users = _users.GetAll().ToDictionary(u => u.UserId);
+        var (recurrence, _) = RecurrenceOf(cases, boundedWindow: false);
+
+        // 嚴重度：這台主機、這些問題最近一次出現（與交辦單清單同一個來源與不套可見嚴重度的理由）
+        var occurrences = new Dictionary<string, HostIssueOccurrence>(IssueSignatureKeyComparer.Instance);
+        var withIssue = cases.Where(c => c.SourceName != null && c.EventId != null).ToList();
+        if (_aggregates != null && withIssue.Count > 0)
+        {
+            var from = withIssue.Min(c => c.CreatedAt).Date.AddDays(-30);
+            var issues = withIssue.Select(c => (c.SourceName!, c.EventId!.Value)).Distinct().ToList();
+            foreach (var occ in _aggregates.LatestOccurrences(IssueExclusion.None, issues, from, _clock.LocalToday(), new[] { hostId }))
+                occurrences.TryAdd(occ.IssueKey, occ);
+        }
+
+        var viewerCanHandle = _currentUser.Has(Capability.Handle);
+        var rows = new List<HostWorkOrderRowDto>();
+        foreach (var c in cases)
+        {
+            var order = _orders.Get(c.WorkOrderId!.Value);
+            if (order == null || order.ClosedAt != null) continue;
+
+            occurrences.TryGetValue(c.IssueKey, out var occ);
+            var info = recurrence.GetValueOrDefault(c.CaseId, RecurrenceInfo.None);
+            rows.Add(new HostWorkOrderRowDto
+            {
+                CaseId = c.CaseId,
+                WorkOrderId = order.WorkOrderId,
+                IssueLabel = order.DisplayLabel(rules),
+                LogName = IssueSignatureKey.TryParseFull(c.IssueKey)?.LogName,
+                Severity = occ == null ? null : LegacySeverityRank.ToSeverity(LegacySeverityRank.Normalize(occ.SeverityRank)).ToString(),
+                Critical = occ?.ElevatesDayRisk ?? false,
+                HandlerId = order.HandlerId,
+                HandlerName = NameOf(users, order.HandlerId),
+                Status = c.Status,
+                DueDate = c.DueDate,
+                IsRecurrence = info.IsRecurrence,
+                LastReply = LastReplyOf(info.Previous),
+                DismissalReleases = order.SourceName != null && order.EventId != null
+                    && DismissalRelease.AppliesTo(rules, order.SourceName, order.EventId.Value),
+                CanReply = viewerCanHandle && order.HandlerId == _currentUser.UserId
+            });
+        }
+
+        // 同主機同問題（來源＋事件）不只一列：標出登錄類型。以訂單的來源與事件分群（簽章的來源與事件在案件上已反正規化）
+        var sameIssue = cases
+            .Where(c => rows.Any(r => r.CaseId == c.CaseId))
+            .GroupBy(c => (WorkOrderIssueKey.SourceKeyOf(c.SourceName ?? string.Empty), c.EventId ?? 0))
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g.Select(c => c.CaseId))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var r in rows) r.ShowLogName = sameIssue.Contains(r.CaseId);
+
+        dto.Items = rows
+            .OrderByDescending(r => r.Severity == null ? -1 : (int)Enum.Parse<IssueSeverity>(r.Severity))
+            .ThenBy(r => r.IssueLabel, StringComparer.Ordinal).ThenBy(r => r.LogName, StringComparer.Ordinal)
+            .ThenBy(r => r.CaseId, StringComparer.Ordinal)
+            .ToList();
+        return dto;
+    }
+
+    /// <summary>單頭「訊息樣本」一次最多看幾則</summary>
+    public const int MaxSampleMessages = 3;
+
+    /// <summary>找樣本時最多取幾台成員主機（最近掛接的優先）：上千台的單不能為了 3 則樣本把整單的主機日全查一遍</summary>
+    private const int SampleHostLimit = 200;
+
+    /// <summary>找樣本時最多往回找幾個有出現的日子（最近的優先；最近的日子詳情可能已清除、沒有樣本）</summary>
+    private const int SampleDayLimit = 5;
+
+    /// <summary>
+    /// 單頭的處置參考、規則 Id 與訊息樣本。單一問題單才有（多問題單沒有單一規則與單一問題）：
+    /// 規則走 <see cref="KnownIssueCatalog.FindRuleByAggregateKey"/>（與白話說明同一個查法），處置參考走 <see cref="IssueGuidanceDto.From"/>；
+    /// 樣本的母體是檢視者看得到的進行中成員（<paramref name="visibleActive"/>），與成員清單同一範圍。
+    /// </summary>
+    private void FillGuidanceAndSamples(WorkOrderDetailDto dto, WorkOrder order, List<KnownIssueRule> rules,
+        IReadOnlyCollection<IssueCase> visibleActive, IReadOnlyCollection<WebHost> allHosts)
+    {
+        if (order.SourceName == null || order.EventId == null) return;
+
+        var rule = KnownIssueCatalog.FindRuleByAggregateKey(rules, order.SourceName, order.EventId.Value);
+        dto.Guidance = IssueGuidanceDto.From(rule);
+        if (rule != null && !string.IsNullOrEmpty(rule.Id)) dto.RuleId = rule.Id;
+        dto.SampleMessages = SampleMessagesOf(visibleActive, allHosts);
+    }
+
+    /// <summary>
+    /// 成員中最近一次出現的訊息樣本（最多 <see cref="MaxSampleMessages"/> 則）：由新到舊逐日讀該日分析紀錄中對應問題簽章的樣本，
+    /// 取到第一個有樣本的日子為止（最多 <see cref="SampleDayLimit"/> 天）；同一天多台主機都出現時依主機編號取第一台，結果穩定。
+    /// </summary>
+    private List<string> SampleMessagesOf(IReadOnlyCollection<IssueCase> members, IReadOnlyCollection<WebHost> allHosts)
+    {
+        var result = new List<string>();
+        if (members.Count == 0) return result;
+
+        var hostByKey = new Dictionary<string, WebHost>(StringComparer.Ordinal);
+        foreach (var h in allHosts) hostByKey.TryAdd(HostNameKey.Of(h.HostName), h);
+
+        var chosen = members
+            .Where(c => hostByKey.ContainsKey(HostNameKey.Of(c.HostName)))
+            .OrderByDescending(c => c.LastLinkedDate).ThenBy(c => c.CaseId, StringComparer.Ordinal)
+            .Take(SampleHostLimit)
+            .ToList();
+        if (chosen.Count == 0) return result;
+
+        var hostKeys = chosen.Select(c => HostKey.Of(hostByKey[HostNameKey.Of(c.HostName)]))
+            .GroupBy(k => k.HostId).Select(g => g.First()).ToList();
+        var issueKeys = chosen.Select(c => c.IssueKey).Distinct(StringComparer.Ordinal).ToList();
+        var hits = _records.IssueDaysFor(hostKeys, issueKeys)
+            .OrderByDescending(h => h.Date.Date).ThenBy(h => h.HostId)
+            .Take(SampleDayLimit)
+            .ToList();
+
+        foreach (var hit in hits)
+        {
+            var host = hostKeys.FirstOrDefault(k => k.HostId == hit.HostId);
+            if (host == null) continue;
+            var record = _records.GetOne(new[] { host }, hit.Date);
+            var issue = record?.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(IssueSignatureKey.For(i), hit.IssueKey));
+            var samples = (issue?.SampleMessages ?? new List<string>())
+                .Where(m => !string.IsNullOrWhiteSpace(m)).Take(MaxSampleMessages).ToList();
+            if (samples.Count > 0) return samples;
+        }
+        return result;
     }
 
     /// <summary>

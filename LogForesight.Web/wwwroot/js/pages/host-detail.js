@@ -11,12 +11,15 @@ import { renderLoading, renderSpinner, renderTable, button, toast, withBusy, gua
 import { metaLine, roleText, statusNote, fact } from '../core/elements.js';
 import { categoryName, formatDateTime, formatNumber, severityBadge, riskBadge, statusBadge, SEVERITY_ORDER } from '../core/format.js';
 import { renderAiInline } from '../core/markdown-lite.js';
+import { createHostOrders } from './host-orders.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
 let currentDays = 30;
 let canMaintainHost = false;
 let currentUser = null;
+/** 「這台的交辦」：與風險時間軸的天數無關，只建一次（切換天數重載不重建、不重打） */
+let hostOrders = null;
 const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update-modal'));
 
 const LEGEND = [
@@ -60,6 +63,7 @@ async function load() {
     }
 
     renderHeader(detail);
+    loadHostOrders(detail);
     renderTimeline(detail);
     renderIssues(detail);
     renderCheckup(detail);
@@ -69,6 +73,22 @@ async function load() {
     } else {
         loadPrtgMapping();
     }
+}
+
+/** 「這台的交辦」區塊：自己載入、自己處理失敗（guardLoad 顯示錯誤與重試），不拖慢也不擋住下方的時間軸與問題表 */
+function loadHostOrders(detail) {
+    if (hostOrders) return;
+    hostOrders = createHostOrders({
+        hostId,
+        hostName: detail.hostName,
+        container: document.getElementById('host-orders'),
+        currentUser,
+        can: hasCapability,
+        replyButtonHost: document.getElementById('host-orders-actions'),
+        selectedCountEl: document.getElementById('host-orders-selected')
+    });
+    renderLoading(document.getElementById('host-orders'), 2);
+    guardLoad(document.getElementById('host-orders'), () => hostOrders.load());
 }
 
 function renderCaseGrantScopeNotice(container, message) {

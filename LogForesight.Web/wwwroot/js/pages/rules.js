@@ -96,6 +96,31 @@ async function load() {
 
     renderRules();
     renderSuppressions();
+    openPendingRuleFromUrl();
+}
+
+/**
+ * 交辦單頁與問題查詢的「調整這條規則」帶 ?ruleId= 過來：第一次載入完成後切到該規則的平台頁籤、
+ * 把搜尋欄定位到它並直接開編輯（只做一次，之後儲存、刪除的重新載入不會再開）。
+ * 找不到（已被刪除）就明說，不留一個沒反應的頁面。
+ */
+let pendingRuleId = new URLSearchParams(location.search).get('ruleId');
+function openPendingRuleFromUrl() {
+    if (!pendingRuleId) return;
+    const ruleId = pendingRuleId;
+    pendingRuleId = null;
+    const rule = rules.find(r => r.id === ruleId);
+    if (!rule) {
+        toast(`找不到規則「${ruleId}」，可能已被刪除。`, 'warning');
+        return;
+    }
+    if (rule.platform !== currentPlatform) {
+        document.querySelector(`#rule-tabs [data-platform="${rule.platform}"]`)?.click();
+    }
+    document.getElementById('rule-search').value = rule.id;
+    rulePage = 1;
+    renderRules();
+    openRuleModal(rule);
 }
 
 /**

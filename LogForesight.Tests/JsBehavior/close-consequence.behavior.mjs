@@ -70,24 +70,27 @@ const textOf = node => node.textContent;
 const notes = root => all(root).filter(n => n.classList?.contains('lf-status-note'));
 
 // ── 代為結案對話框 ───────────────────────────────────────────────
-function loadAdminClose(env, { settings, currentDetail, getDisplaySettings }) {
+function loadAdminClose(env, { settings, currentDetail, getDisplaySettings, selectedCaseIds }) {
     const source = read('pages', 'work-order-detail.js');
     const fn = extract(source, 'async function buildAdminCloseModal(');
     const wiring = extractLine(source, 'const openAdminCloseModal = ');
     const blockTargetText = extract(source, 'function blockTargetText(');
+    // 範圍選項的組法在 work-order-reference.js（production 版）；勾選的案件由呼叫端以 selectedCaseIds（Map）帶入
+    const reference = read('pages', 'work-order-reference.js');
+    const scopeFns = `${extract(reference, 'export function adminCloseScopeOptions(').replace(/^export /, '')}\n${extract(reference, 'export function defaultAdminCloseScope(').replace(/^export /, '')}`;
     const api = { post: async (url, payload) => { env.posts.push({ url, payload }); return { closedCases: 1 }; } };
     return new Function('button', 'statusNote', 'statusesWhere', 'isNoFixClosure', 'showDetailModal', 'api', 'toast', 'withBusy',
-        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', 'mailNotifyText', 'exclusive',
-        `${blockTargetText}\n${fn}\n${wiring}\nreturn openAdminCloseModal;`)(
+        'currentDetail', 'workOrderId', 'reloadAll', 'getDisplaySettings', 'mailNotifyText', 'exclusive', 'selectedCaseIds',
+        `${scopeFns}\n${blockTargetText}\n${fn}\n${wiring}\nreturn openAdminCloseModal;`)(
         env.button, env.statusNote, catalog.statusesWhere, catalog.isNoFixClosure, env.showDetailModal, api,
         (m, t) => env.toasts.push({ m, t }), () => () => { }, currentDetail, 7, async () => { },
-        getDisplaySettings ?? (async () => settings), mailNotifyText, exclusive);
+        getDisplaySettings ?? (async () => settings), mailNotifyText, exclusive, selectedCaseIds ?? new Map());
 }
 
-async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security', settings } = {}) {
+async function openAdminClose(activeCount = 3, onDisabled = 0, { mail = true, issueSource = 'Security', settings, escalatedCaseIds, selectedCaseIds } = {}) {
     const env = makeEnv();
-    const detail = { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled } };
-    const run = loadAdminClose(env, { settings: settings ?? { mailWorkOrdersEnabled: mail }, currentDetail: detail });
+    const detail = { source: issueSource, counts: { active: activeCount, activeOnDisabledHosts: onDisabled }, escalatedCaseIds };
+    const run = loadAdminClose(env, { settings: settings ?? { mailWorkOrdersEnabled: mail }, currentDetail: detail, selectedCaseIds });
     await run();
     const body = env.shown[0].body;
     const form = body.children[0];
@@ -300,6 +303,48 @@ const cases = {
         assert.equal(env.shown.length, 2, '第一個開完後可以再開');
     },
     // B5-a：送出請求帶 blockRedispatch
+    // 範圍（第 81 輪批次 T）：有上報成員時預設「只有上報中的」、只送這些案件；選回「全部進行中」不帶案件清單
+    async adminCloseScopeDefaultsToEscalatedAndSendsCaseIds() {
+        const dlg = await openAdminClose(60, 0, { escalatedCaseIds: ['e1', 'e2'] });
+        const radios = all(dlg.body).filter(n => n.tagName === 'INPUT' && n.type === 'radio');
+        assert.deepEqual(radios.map(r => r.value), ['all', 'escalated']);
+        assert.deepEqual(radios.map(r => r.checked), [false, true], '預設選「只有上報中的」');
+        assert(textOf(dlg.submit).includes('代為結案 2 台'), textOf(dlg.submit));
+        assert(!hidden(radios[0]._parent._parent), '有範圍可選時範圍區塊顯示');
+
+        dlg.pick('wont_fix');
+        dlg.write('不處理');
+        await dlg.send();
+        assert.deepEqual(dlg.env.posts[0].payload, { status: 'wont_fix', reason: '不處理', blockRedispatch: false, caseIds: ['e1', 'e2'] });
+
+        // 改選全部：按鈕台數與請求都回到整張單（不帶 caseIds）
+        const all2 = await openAdminClose(60, 0, { escalatedCaseIds: ['e1', 'e2'] });
+        const allRadio = all(all2.body).find(n => n.tagName === 'INPUT' && n.type === 'radio' && n.value === 'all');
+        allRadio.checked = true;
+        allRadio.dispatch('change');
+        assert(textOf(all2.submit).includes('代為結案 60 台'), textOf(all2.submit));
+        all2.pick('resolved');
+        all2.write('全部處理完');
+        await all2.send();
+        assert.equal('caseIds' in all2.env.posts[0].payload, false, '全部進行中＝不帶案件清單');
+    },
+    async adminCloseScopeSelectedMembersAndNoExtraScope() {
+        const picked = new Map([['s1', {}], ['s2', {}], ['s3', {}]]);
+        const dlg = await openAdminClose(60, 0, { selectedCaseIds: picked });
+        const radios = all(dlg.body).filter(n => n.tagName === 'INPUT' && n.type === 'radio');
+        assert.deepEqual(radios.map(r => [r.value, r.checked]), [['all', true], ['selected', false]], '只有勾選、沒有上報成員：預設全部');
+        radios[1].checked = true;
+        radios[1].dispatch('change');
+        dlg.pick('resolved');
+        dlg.write('勾選的處理完');
+        await dlg.send();
+        assert.deepEqual(dlg.env.posts[0].payload.caseIds, ['s1', 's2', 's3']);
+
+        const plain = await openAdminClose(60, 0);
+        const group = all(plain.body).find(n => n.tagName === 'FIELDSET');
+        assert(hidden(group), '沒有上報成員也沒有勾選時不顯示範圍選項');
+        assert(textOf(plain.submit).includes('代為結案 60 台'));
+    },
     async adminCloseSendsBlockRedispatch() {
         const checked = await openAdminClose();
         checked.pick('false_positive');

@@ -16,6 +16,7 @@ import { initBrandAlign } from './brand-align.js';
 import { startBadgePolling } from './badges.js';
 import { pollWhile } from './async-guards.js';
 import { clearAllDraftsForUser } from './note-editor.js';
+import { initHostQuickSearch } from './host-quick-search.js';
 
 /**
  * 詳情頁路徑前綴 → 父選單 href：詳情頁不在選單上，沒有這張表就沒有任何項目高亮。
@@ -100,6 +101,7 @@ async function init() {
     renderNav(user);
     bindMobileMenu();
     renderCurrentUser(user);
+    initHostQuickSearch(user);
     bindLogout(user);
     initHelpPopovers();
     startRunActivityPolling();   // 執行中告示：取得使用者成功之後才開始（未登入時上面已提前返回）

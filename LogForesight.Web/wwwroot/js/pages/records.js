@@ -12,7 +12,7 @@
  */
 
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
-import { appUrl, recordDetailUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl, ruleEditUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, renderPager, withBusy, renderChips,
     loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
@@ -1276,11 +1276,26 @@ function issueActions(group) {
             })
         });
     }
+    // 調整這條規則：到規則維護直接開那條規則的編輯（連結，不是對話框）；只有命中規則、且具 Maintain 的人才有
+    if (hasCapability(currentUser, 'Maintain') && group.ruleId) {
+        list.push({
+            text: '調整這條規則',
+            title: '到規則維護開啟這條規則的編輯',
+            href: appUrl(ruleEditUrl(group.ruleId)),
+            run: () => { location.href = appUrl(ruleEditUrl(group.ruleId)); }
+        });
+    }
     return list;
 }
 
 /** 列上的動作按鈕：列內重複動作用無框品牌色文字（DESIGN-SYSTEM §6b）；不觸發整列展開 */
 function issueActionButton(action) {
+    // 換頁的動作是連結（中鍵、新分頁可用），點擊不觸發整列展開
+    if (action.href) {
+        const link = linkButton(action.text, action.href, { variant: 'outline-primary', title: action.title });
+        link.addEventListener('click', event => event.stopPropagation());
+        return link;
+    }
     return button(action.text, {
         variant: 'outline-primary',
         opens: 'dialog',
@@ -1313,17 +1328,22 @@ function issueMoreMenu(actions) {
     // 選單的留白（ul／li）不是按鈕，點到會被整列展開的處理接走；在選單這一層擋下
     menu.addEventListener('click', event => event.stopPropagation());
     for (const action of actions) {
-        const item = document.createElement('button');
-        item.type = 'button';
+        // 換頁的動作用連結（不是按鈕、不宣告會開對話框）；其餘照舊先收選單再開視窗
+        const item = document.createElement(action.href ? 'a' : 'button');
         item.className = 'dropdown-item';
         item.textContent = action.text;
         item.title = action.title;
-        item.setAttribute('aria-haspopup', 'dialog');
-        item.addEventListener('click', () => {
-            bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
-            toggle.focus();
-            action.run();
-        });
+        if (action.href) {
+            item.href = action.href;
+        } else {
+            item.type = 'button';
+            item.setAttribute('aria-haspopup', 'dialog');
+            item.addEventListener('click', () => {
+                bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+                toggle.focus();
+                action.run();
+            });
+        }
         const li = document.createElement('li');
         li.appendChild(item);
         menu.appendChild(li);

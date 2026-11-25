@@ -899,13 +899,18 @@ public class WorkOrderCoordinator
         return result;
     }
 
-    /// <summary>代為結案（2.7）：進行中成員全部標成指定的結案狀態</summary>
-    public WorkOrderCloseResult AdminClose(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch)
+    /// <summary>
+    /// 代為結案（2.7）：<paramref name="caseIds"/> 為 null 或空＝進行中成員全部標成指定的結案狀態、整張單結案；
+    /// 帶了案件清單＝只結案這些成員（任一不是本單進行中成員→整筆不做），結案後單上沒有進行中成員才由推導結案，否則單繼續進行。
+    /// </summary>
+    public WorkOrderCloseResult AdminClose(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch,
+        IReadOnlyCollection<string>? caseIds = null)
     {
-        lock (OrderMutationLock) return AdminCloseLocked(workOrderId, status, reason, actor, blocksRedispatch);
+        lock (OrderMutationLock) return AdminCloseLocked(workOrderId, status, reason, actor, blocksRedispatch, caseIds);
     }
 
-    private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch)
+    private WorkOrderCloseResult AdminCloseLocked(long workOrderId, string status, string reason, WorkOrderActor actor, bool blocksRedispatch,
+        IReadOnlyCollection<string>? caseIds)
     {
         if (!IssueHandlingStatuses.IsClosed(status))
             throw new WorkOrderRuleException($"代為結案的狀態「{status}」不是結案類。");
@@ -913,12 +918,23 @@ public class WorkOrderCoordinator
             throw new WorkOrderRuleException("代為結案要填原因。");
 
         var order = GetActive(workOrderId);
-        var members = ActiveMembers(workOrderId);
+        var partial = caseIds is { Count: > 0 };
+        var members = partial ? SelectMembers(workOrderId, caseIds!) : ActiveMembers(workOrderId);
         // 先標記再套狀態：ApplyStatus 會連同成員一起存檔，欄位要跟結案狀態同一次寫入
         foreach (var member in members) member.BlocksRedispatch = blocksRedispatch;
         var daySync = ApplyStatus(members, status, reason, null, actor);
 
-        CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, EventNoteOf($"{status}：", reason, ""));
+        var note = EventNoteOf($"{status}：", reason, "");
+        if (!partial)
+        {
+            CloseOrder(workOrderId, WorkOrderCloseReasons.AdminClosed, WorkOrderEventActions.AdminClosed, actor, -members.Count, note);
+        }
+        else
+        {
+            // 範圍內結案：只記一筆代為結案事件（成員數變化），單是否結案交給結案推導（全部成員都結案才會）
+            AppendEvent(workOrderId, WorkOrderEventActions.AdminClosed, actor, -members.Count, note);
+            RecomputeClosureLocked(workOrderId, actor.OccurredAt);
+        }
         return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
     }
 

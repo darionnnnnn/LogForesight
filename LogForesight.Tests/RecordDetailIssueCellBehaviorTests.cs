@@ -33,6 +33,8 @@ public sealed class RecordDetailIssueCellBehaviorTests
     [InlineData("evidencePanelNoneReturnsNull")]
     [InlineData("evidencePanelPrunedKeepsGuidanceOnly")]
     [InlineData("sourceEvidenceList")]
+    [InlineData("sourceEvidenceLocalTimeSummary")]
+    [InlineData("sourceEvidenceNoInternalPhrases")]
     [InlineData("sourceEvidenceUnknownLinesOmitted")]
     [InlineData("sourceEvidencePartialResolution")]
     [InlineData("sourceEvidenceOwnHostName")]

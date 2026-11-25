@@ -32,6 +32,8 @@ import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, ori
 import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
+import { openIssueMuteModal } from './issue-mute-modal.js';
+import { guidancePanel, sampleMessagesPanel, issueShortcuts, adminCloseScopeOptions, defaultAdminCloseScope } from './work-order-reference.js';
 
 // DOM 元素
 const rootEl = document.getElementById('wo-detail');
@@ -363,6 +365,24 @@ function renderHeader(detail) {
     const stopNote = continuationStopNote(detail);
     if (stopNote) nodes.push(stopNote);
 
+    // 處置參考與訊息樣本：就地展開、不離開本頁；沒有內容（未命中規則、沒有樣本）就不放展開鈕
+    for (const [label, panel] of [['處置參考', guidancePanel(detail.guidance)], ['訊息樣本', sampleMessagesPanel(detail.sampleMessages)]]) {
+        if (panel) nodes.push(disclosure(label, panel, { className: 'mt-1' }), panel);
+    }
+    // 這個問題的捷徑：其他交辦單、靜音、調整規則（沒有 Maintain 時只有其他交辦單）
+    const shortcuts = issueShortcuts(detail, {
+        canListOrders: hasCapability(currentUser, 'Assign') || hasCapability(currentUser, 'ViewAll'),
+        canMaintain: hasCapability(currentUser, 'Maintain'),
+        onMute: () => openIssueMuteModal({
+            source: detail.source,
+            eventId: detail.eventId,
+            issueLabel: detail.issueLabel,
+            currentMute: null,
+            onApplied: () => reloadAll()
+        })
+    });
+    if (shortcuts) nodes.push(shortcuts);
+
     // 範圍
     const scopeKindLower = String(detail.scopeKind).toLowerCase();
     let scopeText;
@@ -412,6 +432,13 @@ async function buildAdminCloseModal() {
     // 後端 AdminClose 結案所有進行中成員，含停用主機上的：台數要連停用的一起算
     const onDisabled = currentDetail?.counts?.activeOnDisabledHosts ?? 0;
     const activeCount = (currentDetail?.counts?.active ?? 0) + onDisabled;
+    // 範圍：全部進行中／只有上報中的／勾選的成員（後兩者有才出現）；有上報成員時預設「只有上報中的」
+    const scopeOptions = adminCloseScopeOptions({
+        activeCount,
+        escalatedCaseIds: currentDetail?.escalatedCaseIds ?? [],
+        selectedCaseIds: [...selectedCaseIds.keys()]
+    });
+    let scope = scopeOptions.find(option => option.value === defaultAdminCloseScope(scopeOptions));
     const body = document.createElement('div');
     const form = document.createElement('form');
 
@@ -419,6 +446,36 @@ async function buildAdminCloseModal() {
     statusLabel.className = 'form-label lf-text-label';
     statusLabel.textContent = '結案狀態';
     statusLabel.htmlFor = 'wo-close-status';
+
+    // 範圍選擇（有上報成員或有勾選才顯示）：單選，預設見 defaultAdminCloseScope
+    const scopeWrap = document.createElement('fieldset');
+    scopeWrap.className = 'mb-3' + (scopeOptions.length > 1 ? '' : ' d-none');
+    const scopeLegend = document.createElement('legend');
+    scopeLegend.className = 'form-label lf-text-label';
+    scopeLegend.textContent = '結案範圍';
+    scopeWrap.appendChild(scopeLegend);
+    for (const option of scopeOptions) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.className = 'form-check-input';
+        input.name = 'wo-close-scope';
+        input.id = `wo-close-scope-${option.value}`;
+        input.value = option.value;
+        input.checked = option === scope;
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            scope = option;
+            syncState();
+        });
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = option.label;
+        wrap.append(input, label);
+        scopeWrap.appendChild(wrap);
+    }
 
     // 不預選：代為結案影響整張單，結案狀態要管理者自己選一次
     const statusSelect = document.createElement('select');
@@ -448,8 +505,8 @@ async function buildAdminCloseModal() {
     const blockLabel = document.createElement('label');
     blockLabel.className = 'form-check-label';
     blockLabel.htmlFor = 'wo-close-block';
-    const targetText = blockTargetText(activeCount, !!currentDetail?.source);
-    blockLabel.textContent = `${targetText}之後不再自動派工（勾選＝永久，不會因時間自動恢復）`;
+    // 後果說明指稱的對象依所選範圍的台數；範圍換了要重寫（syncState）
+    let targetText = blockTargetText(scope.count, !!currentDetail?.source);
     blockWrap.append(blockInput, blockLabel);
 
     // 後果說明：通知依設定而定；不處理類再依勾選說明問題再出現時會怎樣
@@ -468,14 +525,15 @@ async function buildAdminCloseModal() {
     reasonInput.rows = 3;
     reasonInput.required = true;
 
-    const submitBtn = button(`代為結案 ${activeCount} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
+    const submitBtn = button(`代為結案 ${scope.count} 台`, { variant: 'primary', size: null, type: 'submit', disabled: true });
     const actions = document.createElement('div');
     actions.className = 'lf-form-actions d-flex justify-content-end';
     actions.appendChild(submitBtn);
 
     function renderConsequence() {
         const notifyText = mailNotifyText(mailSettings, '處理人會在下一封交辦摘要收到結案通知', '目前未啟用交辦單通知，請自行告知處理人');
-        const notes = [statusNote('info', `${notifyText}。` + (onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        const notes = [statusNote('info', `${notifyText}。` + (scope.value === 'all' && onDisabled > 0 ? `含已停用主機 ${onDisabled} 台。` : ''))];
+        if (scope.value !== 'all') notes.push(statusNote('info', `只結案${scope.name} ${scope.count} 台，其餘成員維持原狀、單繼續進行。`));
         if (isNoFixClosure(statusSelect.value)) {
             notes.push(statusNote('warning', blockInput.checked
                 ? `已勾選：${targetText}之後不會再自動派工。`
@@ -484,6 +542,9 @@ async function buildAdminCloseModal() {
         consequence.replaceChildren(...notes);
     }
     function syncState() {
+        targetText = blockTargetText(scope.count, !!currentDetail?.source);
+        blockLabel.textContent = `${targetText}之後不再自動派工（勾選＝永久，不會因時間自動恢復）`;
+        submitBtn.children[submitBtn.children.length - 1].textContent = `代為結案 ${scope.count} 台`;   // button() 的文字在最後一個子節點
         const noFix = isNoFixClosure(statusSelect.value);
         blockWrap.classList.toggle('d-none', !noFix);
         if (!noFix) blockInput.checked = false;
@@ -495,7 +556,7 @@ async function buildAdminCloseModal() {
     reasonInput.addEventListener('input', syncState);
     syncState();
 
-    form.append(statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
+    form.append(scopeWrap, statusLabel, statusSelect, blockWrap, reasonLabel, reasonInput, consequence, actions);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -516,7 +577,9 @@ async function buildAdminCloseModal() {
             const res = await api.post(`/api/work-orders/${workOrderId}/admin-close`, {
                 status: statusSelect.value,
                 reason,
-                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked
+                blockRedispatch: isNoFixClosure(statusSelect.value) && blockInput.checked,
+                // 範圍＝全部進行中時不帶案件清單（整張單結案）；其餘只結案這些案件
+                ...(scope.caseIds ? { caseIds: scope.caseIds } : {})
             });
             modal.close();
             toast(`已代為結案 ${res.closedCases} 台`, 'success');

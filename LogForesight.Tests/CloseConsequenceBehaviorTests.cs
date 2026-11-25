@@ -27,6 +27,8 @@ public class CloseConsequenceBehaviorTests
     [InlineData("adminCloseCountsMembersOnDisabledHosts")]
     [InlineData("continuationStopNoteShowsDate")]
     [InlineData("adminCloseSendsBlockRedispatch")]
+    [InlineData("adminCloseScopeDefaultsToEscalatedAndSendsCaseIds")]
+    [InlineData("adminCloseScopeSelectedMembersAndNoExtraScope")]
     [InlineData("adminCloseRefusesWithoutStatus")]
     [InlineData("replyFormShowsNoFixNoteOnlyForNoFix")]
     [InlineData("adminCloseNotifyTextFollowsMailSetting")]

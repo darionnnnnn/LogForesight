@@ -131,6 +131,8 @@ public static class ReadMatrix
         // ── 主機詳情、主機與群組清單 ─────────────────────────────────────────────
         new() { Key = "GET /api/host-detail/{hostId:long}", Scope = RowScope.Host, Positive = new[] { Host } },
         new() { Key = "GET /api/host-detail/{hostId:long}/issues", Scope = RowScope.Host, Query = "source={src}&eventId={eventId}", PositiveText = "\"totalCount\":5" },
+        // 這台的交辦（第 81 輪批次 T）：主機必須可見（不可見 404）；只經案件授與看得到的主機只回被交辦的問題，哨兵限制同案件授與的允許清單
+        new() { Key = "GET /api/host-detail/{hostId:long}/orders", Scope = RowScope.Host },
         new() { Key = "GET /api/host-detail/{hostId:long}/prtg", Scope = RowScope.Host, CaseStatuses = new[] { HttpStatusCode.Forbidden, HttpStatusCode.NotFound }, PositiveText = "\"devices\":[]" },
         new() { Key = "GET /api/hosts", Scope = RowScope.Global, Positive = new[] { Host } },
         new() { Key = "GET /api/hosts/groups", Scope = RowScope.Global, Positive = new[] { SentinelKind.Group } },
