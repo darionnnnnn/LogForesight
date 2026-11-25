@@ -154,7 +154,7 @@ export const scenarios = [
     what: 'a-admin 交辦 Application Error 給 h-chen、demo-admin 交辦同一問題給 h-lin，同一瞬間按建立',
     async run(run) {
         const [a, b] = await Promise.all([run.user('a-admin'), run.user('demo-admin')]);
-        await run.together(() => prepareAssign(a, 'Application Error (1000)', 'h-chen'), () => prepareAssign(b, 'Application Error (1000)', 'h-lin'));
+        await run.together(() => prepareAssign(a, 'Application Error EventId 1000', 'h-chen'), () => prepareAssign(b, 'Application Error EventId 1000', 'h-lin'));
         await run.together(() => submitModal(a, '建立交辦單', '建立（a-admin→h-chen）'), () => submitModal(b, '建立交辦單', '建立（demo-admin→h-lin）'));
         await serverCheck(run, a, '這個問題的進行中單', async () => {
             const d = await get(a, '/api/work-orders?status=active&source=Application%20Error&eventId=1000&page=1&pageSize=50');
@@ -169,11 +169,19 @@ export const scenarios = [
         const [a, b] = await Promise.all([run.user('a-admin'), run.user('demo-admin')]);
         const before = await get(a, '/api/work-orders?status=active&page=1&pageSize=100');
         run.note('派工前進行中單數', before?.total);
-        const prep = u => u.step('待派頁按立即派工', '開啟 /work-orders#gaps → 立即派工（停在確認框）', async () => {
-            await u.goto('/work-orders#gaps'); await u.inPage(`await __mu.waitFor(() => __mu.find('立即派工')); __mu.click('立即派工'); await __mu.waitFor(() => __mu.modal());`);
-        }, `return __mu.modalText();`);
+        // 立即派工先呼叫預覽：有可派的項目才開確認框；沒有時只顯示「沒有需要派的項目」，不開確認框（正確行為，記錄後不送出）
+        const opened = {};
+        const prep = u => u.step('待派頁按立即派工', '開啟 /work-orders#gaps → 立即派工（有可派項目時停在確認框）', async () => {
+            await u.goto('/work-orders#gaps');
+            opened[u.account] = await u.inPage(`await __mu.waitFor(() => __mu.find('立即派工')); __mu.click('立即派工');
+                const end = Date.now() + 15000;
+                while (Date.now() < end) { if (__mu.modal()) return true; if (/沒有需要派的項目/.test(document.body.innerText)) return false; await new Promise(r => setTimeout(r, 100)); }
+                throw new Error('等不到確認框或「沒有需要派的項目」');`);
+        }, `return __mu.modal() ? __mu.modalText() : __mu.text('main', 200);`);
         await run.together(() => prep(a), () => prep(b));
-        await run.together(() => submitModal(a, '確定派工', '確定派工（a-admin）'), () => submitModal(b, '確定派工', '確定派工（demo-admin）'));
+        run.note('預覽結果', `a-admin ${opened[a.account] ? '開確認框' : '沒有可派項目'}；demo-admin ${opened[b.account] ? '開確認框' : '沒有可派項目'}`);
+        const confirmIfOpened = (u, name) => opened[u.account] ? submitModal(u, '確定派工', name) : Promise.resolve();
+        await run.together(() => confirmIfOpened(a, '確定派工（a-admin）'), () => confirmIfOpened(b, '確定派工（demo-admin）'));
         await serverCheck(run, a, '派工後：同處理人同問題的進行中單', async () => {
             const d = await get(a, '/api/work-orders?status=active&page=1&pageSize=100');
             const key = o => `${o.handlerName}｜${o.issueLabel}`;
@@ -360,8 +368,8 @@ export const scenarios = [
         const orders = await activeOrders(h, h.userId);
         const o = orders.find(x => x.label.startsWith('disk')) || orders[0];
         await prepareMemberReply(h, o.id, 2, '已處理', '已更換磁碟');
-        await a.step('開問題查詢', '依問題視角', () => a.goto(`/records?riskLevels=${encodeURIComponent('高,中')}&from=${today(-7)}&to=${today(-1)}&view=issue&pageSize=50`), ROW('disk (153)'));
-        await a.step('準備靜音', 'disk (153) → 更多 → 靜音 → 1 週、代為結案', () => a.inPage(`__mu.clickInRow('disk (153)', '更多'); await new Promise(r => setTimeout(r, 300));
+        await a.step('開問題查詢', '依問題視角', () => a.goto(`/records?riskLevels=${encodeURIComponent('高,中')}&from=${today(-7)}&to=${today(-1)}&view=issue&pageSize=50`), ROW('disk EventId 153'));
+        await a.step('準備靜音', 'disk EventId 153 → 更多 → 靜音 → 1 週、代為結案', () => a.inPage(`__mu.clickInRow('disk EventId 153', '更多'); await new Promise(r => setTimeout(r, 300));
             __mu.click('靜音', '.dropdown-menu.show'); await __mu.waitFor(() => __mu.modal()); __mu.click('1 週', '.modal.show');
             __mu.typeIn('.modal.show', '廠商更換中，暫不追蹤', 'textarea, input[type=text]'); __mu.click('代為結案', '.modal.show');`), `return __mu.modalText();`);
         await run.together(() => submitModal(h, '送出', '處理人送出'), () => submitModal(a, '靜音問題', '管理員靜音並代為結案'));
@@ -397,8 +405,18 @@ export const scenarios = [
         run.note('負責人要標記的風險日', ownerDay);
         await run.together(
             ...handlers.map(u => () => handlerRound(u, 1, '已處理')),
-            async () => { await A.step('第 1 輪：待派頁按立即派工', '開啟 /work-orders#gaps → 立即派工', async () => { await A.goto('/work-orders#gaps'); await A.inPage(`await __mu.waitFor(() => __mu.find('立即派工')); __mu.click('立即派工'); await __mu.waitFor(() => __mu.modal());`); }); return submitModal(A, '確定派工', '第 1 輪：確定派工'); },
-            async () => { await prepareAssign(B, 'Application Error (1000)', 'h-wang'); return submitModal(B, '建立交辦單', '第 1 輪：交辦 Application Error → h-wang'); },
+            async () => {
+                let hasModal = false;
+                await A.step('第 1 輪：待派頁按立即派工', '開啟 /work-orders#gaps → 立即派工（有可派項目才開確認框）', async () => {
+                    await A.goto('/work-orders#gaps');
+                    hasModal = await A.inPage(`await __mu.waitFor(() => __mu.find('立即派工')); __mu.click('立即派工');
+                        const end = Date.now() + 15000;
+                        while (Date.now() < end) { if (__mu.modal()) return true; if (/沒有需要派的項目/.test(document.body.innerText)) return false; await new Promise(r => setTimeout(r, 100)); }
+                        throw new Error('等不到確認框或「沒有需要派的項目」');`);
+                }, `return __mu.modal() ? __mu.modalText() : __mu.text('main', 200);`);
+                return hasModal ? submitModal(A, '確定派工', '第 1 輪：確定派工') : undefined;
+            },
+            async () => { await prepareAssign(B, 'Application Error EventId 1000', 'h-wang'); return submitModal(B, '建立交辦單', '第 1 輪：交辦 Application Error → h-wang'); },
             view(M, '第 1 輪：主管儀表板', '/'),
             view(D, '第 1 輪：開發維運排程作業', '/runs'),
             async () => {
@@ -458,7 +476,7 @@ export const scenarios = [
 }
 ,{
     id: 'MU13', title: '同一問題：處理人在風險日標記與管理員交辦同時',
-    what: 'h-chen 在某台主機的風險日詳情勾選 Application Error (1000) 並選好「已處理」與說明（不送出）；a-admin 在問題查詢依問題視角對同一問題開交辦彈窗、選 h-lin（不送出）；兩人同一瞬間送出',
+    what: 'h-chen 在某台主機的風險日詳情勾選 Application Error EventId 1000 並選好「已處理」與說明（不送出）；a-admin 在問題查詢依問題視角對同一問題開交辦彈窗、選 h-lin（不送出）；兩人同一瞬間送出',
     async run(run) {
         const [h, a] = await Promise.all([run.user('h-chen'), run.user('a-admin')]);
         // 依序試幾個問題，用第一個找得到「真的待處理、尚無案件也沒標過」主機日的（低嚴重度的問題預設已處理，標不了）
@@ -466,7 +484,7 @@ export const scenarios = [
         let SRC = null, EID = null, LABEL = null, ctx = null;
         for (const [src, eid] of CANDIDATES) {
             ctx = await findHostDayForIssue(a, h, src, eid);
-            if (ctx) { SRC = src; EID = eid; LABEL = `${src} (${eid})`; break; }
+            if (ctx) { SRC = src; EID = eid; LABEL = `${src} EventId ${eid}`; break; }
         }
         if (!ctx) { run.note('前置不足', `候選問題中找不到 h-chen 能處理、尚無案件也沒標過狀態的（主機, 日期），略過`); return; }
         run.note('選用的主機日', `${ctx.hostName}（#${ctx.hostId}）${ctx.date}；問題 ${LABEL}；issueKey=${ctx.issueKey}；此主機出現該問題的日期：${ctx.dates.join('、')}`);
