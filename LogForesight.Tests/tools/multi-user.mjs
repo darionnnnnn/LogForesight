@@ -110,6 +110,22 @@ const IN_PAGE = `(() => {
       const opt = [...sel.options].find(o => o.value === valueOrText || norm(o.text).includes(valueOrText)); if (!opt) throw new Error('沒有選項：' + valueOrText);
       m.setValue(sel, opt.value); return true;
     },
+    /** 選結論：有可見下拉就用下拉；回覆彈窗的結論是一排按鈕（.lf-handling__chips），依按鈕文字或 aria-label 點選 */
+    pickStatus(scope, text) {
+      const sel = [...scopeOf(scope).querySelectorAll('select')].filter(vis)[0];
+      if (sel && [...sel.options].some(o => o.value === text || norm(o.text).includes(text))) return m.selectIn(scope, text);
+      const chips = [...scopeOf(scope).querySelectorAll('.lf-handling__chips button, [role=radiogroup] button, [role=group] button')].filter(vis);
+      const chip = chips.find(b => norm(b.innerText) === text) || chips.find(b => norm(b.innerText).includes(text) || (b.getAttribute('aria-label') || '').includes(text));
+      if (!chip) throw new Error('找不到結論：' + text);
+      chip.click(); return true;
+    },
+    /** 回覆彈窗的送出鈕：一般結論是「送出」，處理中是「更新說明（不結案）」 */
+    submitReply(scope) {
+      const el = m.find('送出', scope) || m.find('更新說明', scope);
+      if (!el) throw new Error('找不到送出鈕');
+      if (el.disabled) throw new Error('元素停用中：' + norm(el.innerText));
+      el.click(); return true;
+    },
     typeIn(scope, text, selector = 'textarea') {
       const el = [...scopeOf(scope).querySelectorAll(selector)].filter(vis)[0]; if (!el) throw new Error('找不到輸入欄：' + selector);
       el.focus(); m.setValue(el, text); return true;

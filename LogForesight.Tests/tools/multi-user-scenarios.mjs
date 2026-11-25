@@ -34,20 +34,20 @@ async function prepareMemberReply(u, orderId, n, status, note, name = '準備回
             boxes.forEach(c => { if (!c.checked) c.click(); });
             __mu.click('回覆選取的主機');
             await __mu.waitFor(() => __mu.modal());
-            __mu.selectIn('.modal.show', ${J(status)});
+            __mu.pickStatus('.modal.show', ${J(status)});
             const d = document.querySelector('.modal.show input[type=date]'); if (d && d.offsetParent) __mu.setValue(d, ${J(today(7))});
             __mu.typeIn('.modal.show', ${J(note)});`);
     }, `return __mu.modalText();`);
 }
 
 const submitModal = (u, text = '送出', name = '送出回覆') =>
-    u.step(name, `按「${text}」`, () => u.inPage(`__mu.click(${J(text)}, '.modal.show');`), `return __mu.text('main', 200);`);
+    u.step(name, `按「${text}」`, () => u.inPage(text === '送出' ? `__mu.submitReply('.modal.show');` : `__mu.click(${J(text)}, '.modal.show');`), `return __mu.text('main', 200);`);
 
 /** 我的交辦清單：勾一張單 → 回覆選取的單 → 填好，不送出 */
 async function prepareOrderReplyFromList(u, orderId, status, note) {
     return u.step('從清單準備整單回覆', `勾選 #${orderId} → 回覆選取的單 → 選「${status}」`, async () => {
         await u.inPage(`__mu.checkRow(${J('#' + orderId)}); __mu.click('回覆選取的單');
-            await __mu.waitFor(() => __mu.modal()); __mu.selectIn('.modal.show', ${J(status)}); __mu.typeIn('.modal.show', ${J(note)});`);
+            await __mu.waitFor(() => __mu.modal()); __mu.pickStatus('.modal.show', ${J(status)}); __mu.typeIn('.modal.show', ${J(note)});`);
     }, `return __mu.modalText();`);
 }
 
@@ -62,7 +62,7 @@ async function prepareReassign(u, orderId, toAccount) {
 async function prepareAdminClose(u, orderId, statusText, reason) {
     await u.step(`開交辦單 #${orderId}`, `開啟 /work-orders/${orderId}`, () => u.goto(`/work-orders/${orderId}`));
     return u.step('準備代為結案', `代為結案 → 選「${statusText}」→ 填原因`, () => u.inPage(`__mu.click('代為結案'); await __mu.waitFor(() => __mu.modal());
-        __mu.selectIn('.modal.show', ${J(statusText)}); __mu.typeIn('.modal.show', ${J(reason)});`), `return __mu.modalText();`);
+        __mu.pickStatus('.modal.show', ${J(statusText)}); __mu.typeIn('.modal.show', ${J(reason)});`), `return __mu.modalText();`);
 }
 
 /** 問題查詢依問題視角：找到問題列並開交辦彈窗、選人，不送出 */
@@ -175,7 +175,7 @@ export const scenarios = [
     async run(run) {
         const [a, b] = await Promise.all([run.user('a-admin'), run.user('demo-admin')]);
         const open = u => u.step('開授權矩陣', '開啟 /admin/groups#access', async () => { await u.goto('/admin/groups#access'); await u.inPage(`await __mu.waitFor(() => __mu.row('ug-h-chen'));`); });
-        const toggle = (u, col) => u.inPage(`const t = __mu.row('ug-h-chen').closest('table'); const i = [...t.querySelectorAll('thead th')].findIndex(h => h.innerText.trim() === ${J(col)});
+        const toggle = (u, col) => u.inPage(`const t = __mu.row('ug-h-chen').closest('table'); const i = [...t.querySelectorAll('thead th')].findIndex(h => { const t = h.innerText.trim(); return t === ${J(col)} || (t.startsWith(${J(col)}) && !/^\\d/.test(t.slice(${J(col)}.length))); });
             if (i < 0) throw new Error('找不到欄 ${col}'); __mu.row('ug-h-chen').children[i].querySelector('input').click();`);
         const granted = async () => { const m = await get(a, '/api/admin/access'); const names = Object.fromEntries(m.hostGroups.map(g => [g.groupId, g.groupName]));
             return m.userGroups.find(g => g.userGroupName === 'ug-h-chen').grantedHostGroupIds.map(id => names[id]).sort().join('、'); };
@@ -230,7 +230,9 @@ export const scenarios = [
         await serverCheck(run, a, `最終狀態 #${orders[0].id}`, () => orderState(a, orders[0].id));
         await a.step('管理員重新啟用 h-lin（還原）', '使用者頁 → 編輯 h-lin → 勾啟用 → 儲存', async () => {
             await a.goto('/admin/users');
-            await a.inPage(`await __mu.waitFor(() => __mu.row('h-lin')); __mu.clickInRow('h-lin', '編輯'); await __mu.waitFor(() => __mu.modal());
+            // 使用者清單預設只列啟用中的帳號：剛停用的 h-lin 要先把狀態篩選切到「全部」才看得到
+            await a.inPage(`await __mu.waitFor(() => __mu.find('全部')); __mu.click('全部');
+                await __mu.waitFor(() => __mu.row('h-lin')); __mu.clickInRow('h-lin', '編輯'); await __mu.waitFor(() => __mu.modal());
                 const c = [...document.querySelectorAll('.modal.show input[type=checkbox]')].find(x => (x.labels?.[0]?.innerText || '').includes('啟用')); if (!c.checked) c.click();
                 __mu.click('儲存', '.modal.show');`);
         });
@@ -277,7 +279,12 @@ export const scenarios = [
         const g = m.userGroups.find(x => x.userGroupName === 'ug-h-wang');
         run.note('h-wang 原本的授權群組數', g.grantedHostGroupIds.length);
         await a.step('管理員取消 h-wang 的全部授權', 'PUT /api/admin/access（等同授權矩陣全部取消）', async () => { const r = await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { grant: [], revoke: g.grantedHostGroupIds }); if (r.status !== 200) throw new Error('HTTP ' + r.status); });
-        await h.step('處理人點第一台主機', '在舊清單上點主機', () => h.inPage(`const l = document.querySelector('main tbody a'); if (!l) throw new Error('清單沒有連結'); l.click(); await new Promise(r => setTimeout(r, 1500));`), `return location.pathname + '｜' + __mu.text('main', 160);`);
+        await h.step('處理人點第一台主機', '在舊清單上點主機', async () => {
+            // 讀出舊清單上的連結再以 goto 前往：在頁內 click 會換頁，正在執行的頁內腳本會被中斷（不是產品錯誤）
+            const href = await h.inPage(`const l = document.querySelector('main tbody a'); if (!l) throw new Error('清單沒有連結'); return l.getAttribute('href');`);
+            await h.goto(href);
+            await h.inPage(`await new Promise(r => setTimeout(r, 1500));`);
+        }, `return location.pathname + '｜' + __mu.text('main', 220);`);
         await h.step('處理人重新整理問題查詢', '重新開啟', () => h.goto(`/records?view=host`), `return __mu.text('main', 220);`);
         await h.step('處理人開我的交辦', `開啟 ${h.landing}`, () => h.goto(h.landing), KPI);
         await api(a, 'PUT', `/api/admin/access/${g.userGroupId}`, { grant: g.grantedHostGroupIds, revoke: [] });
@@ -366,7 +373,7 @@ export const scenarios = [
             async () => { if (!tsai.length) return; await prepareReassign(A, tsai[tsai.length - 1].id, 'h-huang'); return submitModal(A, '確定改派', `第 2 輪：改派 #${tsai[tsai.length - 1].id} → h-huang`); },
             async () => {
                 await B.step('第 2 輪：開授權矩陣', '開啟 /admin/groups#access', async () => { await B.goto('/admin/groups#access'); await B.inPage(`await __mu.waitFor(() => __mu.row('ug-v-viewer'));`); });
-                return B.step('第 2 輪：授權 ug-v-viewer × 機房02', '勾選', () => B.inPage(`const t = __mu.row('ug-v-viewer').closest('table'); const i = [...t.querySelectorAll('thead th')].findIndex(h => h.innerText.trim() === '機房02'); __mu.row('ug-v-viewer').children[i].querySelector('input').click();`));
+                return B.step('第 2 輪：授權 ug-v-viewer × 機房02', '勾選', () => B.inPage(`const t = __mu.row('ug-v-viewer').closest('table'); const i = [...t.querySelectorAll('thead th')].findIndex(h => { const x = h.innerText.trim(); return x === '機房02' || (x.startsWith('機房02') && !/^\\d/.test(x.slice(4))); }); __mu.row('ug-v-viewer').children[i].querySelector('input').click();`));
             },
             view(M, '第 2 輪：主管報表', '/reports'),
             view(D, '第 2 輪：開發維運儀表板', '/'),
@@ -378,7 +385,8 @@ export const scenarios = [
         const wu = await activeOrders(A, by['h-wu'].userId);
         await run.together(
             ...handlers.map(u => async () => {
-                await u.step('第 3 輪：開我的交辦', `開啟 ${u.landing}`, () => u.goto(u.landing), KPI);
+                // 我的交辦預設篩選是「待我處理」（只剩觀察期內成員的單不列）；這一輪要回覆的是任何進行中的單，所以切到「進行中」
+                await u.step('第 3 輪：開我的交辦', `開啟 ${u.landing}?status=active`, () => u.goto(`${u.landing}?status=active`), KPI);
                 const orders = await activeOrders(u, u.userId);
                 if (!orders.length) return;
                 const o = orders[orders.length - 1];
