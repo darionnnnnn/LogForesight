@@ -42,6 +42,19 @@ function extractFrom(source, declaration) {
     throw new Error(`production 函式未閉合：${declaration}`);
 }
 
+/** 參數是解構物件（`({ … })`）的函式：從參數列的右括號之後找本體的左大括號 */
+function extractSelection(source, declaration) {
+    const start = source.indexOf(declaration);
+    assert(start >= 0, `找不到 production 函式：${declaration}`);
+    const open = source.indexOf('{', source.indexOf(')', start));
+    let depth = 0;
+    for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++;
+        else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1).replace(/^export /, '');
+    }
+    throw new Error(`production 函式未閉合：${declaration}`);
+}
+
 function makeContext(members) {
     const dom = installDom();
     const createElement = dom.newElement;
@@ -70,9 +83,16 @@ function makeContext(members) {
     const rejectedReply = extractFunction('function rejectedReply(');
     const replyFollowUp = extractFunction('function replyFollowUp(');
 
+    const uiSource = fs.readFileSync(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'ui.js'), 'utf8').replaceAll('\r\n', '\n');
+    const createPageSelectionSource = extractSelection(uiSource, 'export function createPageSelection(');
+    const replySource = fs.readFileSync(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'pages', 'issue-status-reply.js'), 'utf8').replaceAll('\r\n', '\n');
+    const caseIdsDraftKeySource = extractFrom(replySource, 'export function caseIdsDraftKey(').replace('export function', 'function');
+
     const replyableCountSource = extractFrom(statusesSource, 'export function replyableCount(').replace('export function', 'function');
     const code = `
 ${replyableCountSource}
+${createPageSelectionSource}
+${caseIdsDraftKeySource}
 let lastMembersUrl = null;
 const pendingReplyCarry = new Map();
 const rows = new Map();
@@ -193,7 +213,7 @@ function getPanel(row) { return rows.get(row.workOrderId).cell.querySelector('.h
 function getLastModal() { return lastModal; }
 function clearLastModal() { lastModal = null; }
 function getMembersUrl() { return lastMembersUrl; }
-return { posts, toasts, replyToasts, refreshCalls: () => refreshCalls, rejectedReply, getMembersUrl, expandOrderRow, replyOrder, pendingReplyCarry, register, waitForLoad, getPanel, getLastModal, clearLastModal };
+return { handled: () => [...handledOrderIds], posts, toasts, replyToasts, refreshCalls: () => refreshCalls, rejectedReply, getMembersUrl, expandOrderRow, replyOrder, pendingReplyCarry, register, waitForLoad, getPanel, getLastModal, clearLastModal };
 `;
 
     return new Function('document', 'Node', 'path', code)(document, Node, path);
@@ -337,7 +357,48 @@ async function wholeOrderModalOffersPartialPickAndRest() {
     assert.equal(context.posts.at(-1).options.silent, true);
 }
 
+// 展開列「回覆選取的主機」：對象文字用進行中台數（不是含已結案的總數）、草稿識別以字串排序（caseId 是 GUID）
+async function memberReplyUsesActiveCountAndSortedDraftKey() {
+    const members = [
+        { caseId: 'b-guid', issueKey: 'k', hostName: 'SRV-B', status: 'active', closedAt: null },
+        { caseId: 'a-guid', issueKey: 'k', hostName: 'SRV-A', status: 'active', closedAt: null }
+    ];
+    const context = makeContext(members);
+    const row = { workOrderId: 90, counts: { active: 2, closed: 3, total: 5 }, issueLabel: '問題' };
+    const { tr } = context.register(row);
+    tr.click();
+    await context.waitForLoad();
+    const panel = context.getPanel(row);
+    const walk = node => [node, ...node.children.flatMap(walk)];
+    const checks = walk(panel).filter(n => n.tagName === 'INPUT' && n.type === 'checkbox' && n.title === '選取這台主機');
+    assert.equal(checks.length, 2);
+    for (const check of checks) {
+        check.checked = true;
+        await Promise.all((check.listeners.change || []).map(h => h({})));
+    }
+    const replyBtn = walk(panel).find(n => n.tagName === 'BUTTON' && n.textContent === '回覆選取的主機');
+    await Promise.all((replyBtn.listeners.click || []).map(h => h({})));
+    const modal = context.getLastModal();
+    assert.equal(modal.targetText, '本單進行中 2 台中的 2 台', '總數 5 含已結案的 3 台，對象文字要用進行中台數');
+    assert.equal(modal.draftKey, 'order:90:cases:a-guid,b-guid', 'GUID 字串以字串排序');
+}
+
+// 整單彈窗：部分主機結案後直接接下一張、單仍有進行中主機時不標成已處理（「下一張」之後仍能回到這張）
+async function wholeOrderNextWithRemainderStaysUnhandled() {
+    const context = makeContext();
+    const row = { workOrderId: 91, counts: { active: 5, total: 5 }, issueLabel: '問題' };
+    context.register(row);
+    await context.replyOrder(row, null);
+    const modal = context.getLastModal();
+    modal.onApplied({ restRemaining: 3 });
+    assert.deepEqual(context.handled(), [], '單仍有進行中主機：不標成已處理');
+    modal.onApplied();
+    assert.deepEqual(context.handled(), [91], '一般送出：標成已處理');
+}
+
 const cases = {
+    wholeOrderNextWithRemainderStaysUnhandled,
+    memberReplyUsesActiveCountAndSortedDraftKey,
     singleActiveOnDisabledHostOpensSingleReply,
     oneActivePlusOneDisabledOpensWholeOrderModal,
     nextMultiHostReplyCarriesStatusAndNote,

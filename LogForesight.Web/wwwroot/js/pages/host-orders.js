@@ -33,7 +33,7 @@ export function groupCasesByOrder(rows) {
 /**
  * 每張單各送一次回覆（POST /api/work-orders/{id}/reply，caseIds 只帶這台主機的案件），依單號由小到大逐張送。
  * 單張失敗不中斷其他張：結果逐張記錄。呼叫端的 post 要自己加 `{ silent: true }`（失敗訊息統一在彙整後出）。
- * @returns {Promise<{succeeded: Array<{workOrderId: number, cases: number, workOrderClosed: boolean}>, failed: Array<{workOrderId: number, message: string, error: Error}>}>}
+ * @returns {Promise<{succeeded: Array<{workOrderId: number, cases: number, workOrderClosed: boolean, escalationNotifiedAdmins: number|null}>, failed: Array<{workOrderId: number, message: string, error: Error}>}>}
  */
 export async function submitHostReplies(rows, payload, post) {
     const groups = groupCasesByOrder(rows);
@@ -42,7 +42,8 @@ export async function submitHostReplies(rows, payload, post) {
     for (const orderId of [...groups.keys()].sort((a, b) => a - b)) {
         try {
             const result = await post(orderId, { caseIds: groups.get(orderId), ...payload });
-            succeeded.push({ workOrderId: orderId, cases: result?.cases ?? groups.get(orderId).length, workOrderClosed: result?.workOrderClosed === true });
+            succeeded.push({ workOrderId: orderId, cases: result?.cases ?? groups.get(orderId).length, workOrderClosed: result?.workOrderClosed === true,
+                escalationNotifiedAdmins: Number.isInteger(result?.escalationNotifiedAdmins) ? result.escalationNotifiedAdmins : null });
         } catch (error) {
             failed.push({ workOrderId: orderId, message: error?.message || '未知原因', error });
         }
@@ -59,7 +60,10 @@ export function hostRepliesMessage(result, payload) {
     if (result.failed.length === 0) {
         const closed = result.succeeded.filter(item => item.workOrderClosed).length;
         const scope = `${total} 個問題`;
-        return { kind: 'success', text: `${replyOutcomeText(payload, scope)}${closed > 0 ? `，其中 ${closed} 張單結案` : ''}` };
+        // 上報通知人數：取各張單回報的最大值——每張單通知的是同一批管理員，加總會重複計算（都沒回報＝不多說，與其他回覆入口同一句型）
+        const counts = result.succeeded.map(item => item.escalationNotifiedAdmins).filter(Number.isInteger);
+        const notified = counts.length > 0 ? Math.max(...counts) : undefined;
+        return { kind: 'success', text: `${replyOutcomeText(payload, scope, notified)}${closed > 0 ? `，其中 ${closed} 張單結案` : ''}` };
     }
     const failures = result.failed.map(item => `#${item.workOrderId} 失敗：${item.message}`).join('；');
     return { kind: 'warning', text: `已完成 ${result.succeeded.length} 張單；${failures}。失敗的單仍在清單中，可再回覆一次。` };
@@ -182,7 +186,8 @@ export function createHostOrders({ hostId, hostName, container, currentUser, can
             multiTarget: false,
             multiIssues: picked.length > 1,
             aiContext: { issueLabel: picked.length === 1 ? picked[0].issueLabel : undefined, hostCount: 1 },
-            recurrence: { hosts: picked.filter(row => row.isRecurrence).length },
+            // 這個入口的單位是「問題」（同一台主機的多個問題），復發提示用「N 個問題」計
+            recurrence: { hosts: picked.filter(row => row.isRecurrence).length, unit: 'issue' },
             // 多個問題要全部都適用才換成「30 天後重新派工」的說法，不對永久的說成會重新派工
             dismissalReleases: picked.every(row => row.dismissalReleases === true),
             reuseIssueKey: null,

@@ -342,9 +342,9 @@ const cases = {
         const make = () => {
             const opened = [];
             const openReplyModal = options => opened.push(options);
-            const fn = new Function('currentDetail', 'workOrderId', 'openWorkOrderReplyModal',
+            const fn = new Function('currentDetail', 'workOrderId', 'openWorkOrderReplyModal', 'caseIdsDraftKey',
                 `${extract(detailSource, 'function openMemberReply(')}\nreturn openMemberReply;`)(
-                { recurrenceHosts: 5, issueLabel: 'x', issueKey: 'k' }, 7, openReplyModal);
+                { recurrenceHosts: 5, issueLabel: 'x', issueKey: 'k' }, 7, openReplyModal, loadReplyModule().caseIdsDraftKey);
             return { fn, opened };
         };
         const { fn, opened } = make();

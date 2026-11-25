@@ -27,6 +27,7 @@ public class HostOrderCrossCutBehaviorTests
     [InlineData("hostSearchStaleResponseAndBlankInput")]
     [InlineData("hostSearchEnterOnlyNavigatesWhenQueryIsCurrent")]
     [InlineData("hostOrdersReplyTwoIssuesTwoRequests")]
+    [InlineData("hostOrdersEscalationSumsNotifiedAdminsAndCountsIssues")]
     [InlineData("hostOrdersOneRejectedOthersSucceed")]
     [InlineData("hostOrdersEmptyAndNotReplyable")]
     [InlineData("hostOrdersLogNameAndOrderLink")]

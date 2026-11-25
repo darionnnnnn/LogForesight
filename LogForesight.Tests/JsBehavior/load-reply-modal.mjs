@@ -178,7 +178,7 @@ return { toLocalDateString, todayLocal, dateAfterDays };`)();
         .flatMap(m => m[1].split(',').map(x => x.trim().split(/\s+as\s+/).pop()).filter(Boolean));
     for (const name of imported) assert(name in STUBS, `issue-status-reply.js 匯入了 ${name}，load-reply-modal.mjs 沒有對應替身`);
     source = source.replace(IMPORT_LINES, '').replace(/^export /gm, '');
-    const exported = ['orderMembersUrl', 'remainingActiveCount', 'openWorkOrderReplyModal', 'toastReplyResult', 'toastReplyManyResult', 'replyOutcomeText', 'describeReplyRejection', 'workOrdersDraftKey', 'noFixConsequenceText'];
+    const exported = ['orderMembersUrl', 'remainingActiveCount', 'openWorkOrderReplyModal', 'toastReplyResult', 'toastReplyManyResult', 'replyOutcomeText', 'describeReplyRejection', 'workOrdersDraftKey', 'noFixConsequenceText', 'caseIdsDraftKey'];
     const module = new Function(...Object.keys(STUBS), `${source}\nreturn { ${exported.join(', ')} };`)(...Object.values(STUBS));
     return { env, ...module, formatFns, ...pickerModule };
 }

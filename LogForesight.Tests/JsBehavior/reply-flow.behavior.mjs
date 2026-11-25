@@ -371,10 +371,10 @@ const cases = {
         const posts = [];
         let reloads = 0;
         const api = { post: async (url, body, options) => { posts.push({ url, body, options }); return { cases: 20 }; } };
-        const run = new Function('openWorkOrderReplyModal', 'workOrderId', 'currentDetail', 'api', 'toastReplyResult', 'describeReplyRejection', 'reloadAll',
+        const run = new Function('openWorkOrderReplyModal', 'workOrderId', 'currentDetail', 'api', 'toastReplyResult', 'describeReplyRejection', 'reloadAll', 'caseIdsDraftKey',
             `${fn}\nreturn openMemberReply;`)(
             options => opened.push(options), 7, { issueLabel: '問題', issueKey: 'k' }, api, loaded.toastReplyResult,
-            (error, id) => loaded.describeReplyRejection(error, id), async () => { reloads++; });
+            (error, id) => loaded.describeReplyRejection(error, id), async () => { reloads++; }, loaded.caseIdsDraftKey);
 
         run([], '全部進行中主機（20 台）', 20);
         const modal = opened[0];

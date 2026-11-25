@@ -232,6 +232,27 @@ const cases = {
         assert.equal(t.toasts.at(-1).type, 'success');
     },
 
+    // 上報：各張單回報的通知人數加總成同一句；都沒回報就不多說；復發提示以「問題」計數
+    async hostOrdersEscalationSumsNotifiedAdminsAndCountsIssues() {
+        const rows = [orderRow('c1', 12, { isRecurrence: true }), orderRow('c2', 9, { isRecurrence: true }), orderRow('c3', 5)];
+        const notified = { 12: 3, 9: 2 };
+        const t = setupHostOrders({ rows, post: (url, body) => ({ cases: body.caseIds.length, workOrderClosed: false, escalationNotifiedAdmins: notified[Number(url.split('/')[3])] }) });
+        await t.orders.load();
+        tickRows(t.tables.at(-1), rows, ['c1', 'c2', 'c3']);
+        t.orders.openReply();
+        assert.deepEqual(t.modals[0].recurrence, { hosts: 2, unit: 'issue' }, '復發數以問題計，並標明單位');
+        await t.modals[0].submit({ status: 'escalated', note: '請評估', dueDate: null });
+        const message = t.toasts.at(-1).message;
+        assert(message.includes('已上報管理者，已通知 3 位管理員'), message);
+
+        const silent = setupHostOrders({ rows, post: (url, body) => ({ cases: body.caseIds.length, workOrderClosed: false }) });
+        await silent.orders.load();
+        tickRows(silent.tables.at(-1), rows, ['c1', 'c2']);
+        silent.orders.openReply();
+        await silent.modals[0].submit({ status: 'escalated', note: '請評估', dueDate: null });
+        assert(!silent.toasts.at(-1).message.includes('已通知'), silent.toasts.at(-1).message);
+    },
+
     // 其中一張被拒：另一張仍成功，訊息列出失敗的單與原因；全部失敗才讓彈窗保留草稿
     async hostOrdersOneRejectedOthersSucceed() {
         const rows = [orderRow('c1', 12), orderRow('c2', 9)];

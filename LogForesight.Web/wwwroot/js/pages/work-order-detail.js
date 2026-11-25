@@ -29,7 +29,7 @@ import {
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
 import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge, hostCountText } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount, caseIdsDraftKey } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
@@ -623,9 +623,7 @@ function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurr
         multiTarget: hostCount > 1,
         title: `回覆交辦單 #${workOrderId}`,
         targetText,
-        draftKey: caseIds.length > 0
-            ? `order:${workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`
-            : `order:${workOrderId}:all`,
+        draftKey: caseIdsDraftKey(workOrderId, caseIds),
         aiContext: { issueLabel: currentDetail.issueLabel, hostCount },
         reuseIssueKey: currentDetail.issueKey || null,
         // 對象是全部進行中主機時，彈窗內可切換成「只回覆部分主機」（面板挑的 caseId 以第二個參數傳回）

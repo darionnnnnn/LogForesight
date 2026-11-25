@@ -516,7 +516,177 @@ return { renderMembers, selection, page: () => memberPage };`);
         assert.equal(back.checked, true, '回到第一頁時該列仍是勾選');
         // 已結案成員不能勾
         assert.equal(tableOptions.columns[0].render({ caseId: 'c9', closedAt: 'x' }).tagName === 'INPUT', false);
+    },
+    // 其餘選到不處理類：同款後果說明（複數／單數、30 天解除），收起或取消選擇時一起隱藏
+    async restNoFixNoteFollowsRestChoice() {
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, { picker: { load: memberSource(5).load }, followUp: { remaining: async () => 3, submitRest: async () => ({}) } });
+        const note = () => byId(m.body, 'wo-reply-rest-no-fix-note');
+        const restChip = status => nodes(byId(m.body, 'wo-reply-rest-status'), n => n.dataset?.restStatus === status)[0];
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);
+        m.pick('resolved');
+        assert.equal(hidden(note()), true, '其餘還沒選：不顯示');
+        restChip('resolved').click();
+        assert.equal(hidden(note()), true, '其餘選已處理：不顯示');
+        restChip('wont_fix').click();
+        assert.equal(hidden(note()), false, '其餘選不處理：顯示後果說明');
+        assert.equal(textOf(note()), loaded.noFixConsequenceText({ multiHosts: true }), '其餘 4 台：複數說法');
+        assert.equal(hidden(byId(m.body, 'wo-reply-no-fix-note')), true, '主結論不是不處理類：主結論的說明不受影響');
+        restChip('wont_fix').click();
+        assert.equal(hidden(note()), true, '再點一次取消選擇：隱藏');
+        restChip('false_positive').click();
+        assert.equal(hidden(note()), false);
+        m.pick('in_progress');
+        assert.equal(hidden(note()), true, '其餘區收起（主結論改成非結案類）：一起隱藏');
+
+        // 其餘剩 1 台＝單數說法；整批 30 天解除
+        const one = openReply(loadReplyModule(), { picker: { load: memberSource(2).load }, dismissalReleases: true, followUp: { remaining: async () => 1, submitRest: async () => ({}) } });
+        one.toggle.click();
+        await settle();
+        await tick(rowChecks(one.body)[0]);
+        one.pick('resolved');
+        nodes(byId(one.body, 'wo-reply-rest-status'), n => n.dataset?.restStatus === 'known_noise')[0].click();
+        const text = textOf(byId(one.body, 'wo-reply-rest-no-fix-note'));
+        assert.equal(text, loaded.noFixConsequenceText({ multiHosts: false, releases: true }));
+        assert.ok(text.includes('30 天'), text);
+    },
+
+    // 主機面板載入失敗：面板內常駐一行提示（呼叫端的 load 是靜音的，沒有 toast），下一次成功載入就清掉
+    async pickerLoadFailureShowsInlineErrorUntilNextSuccess() {
+        const src = memberSource(5);
+        const state = { fail: true };
+        const load = async params => { if (state.fail) throw Object.assign(new Error('boom'), { status: 500 }); return src.load(params); };
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, { picker: { load } });
+        const errorEl = () => byId(m.body, 'wo-reply-pick-error');
+        m.toggle.click();
+        await settle();
+        assert.equal(hidden(errorEl()), false, '第一頁就載入失敗：面板顯示提示');
+        assert.ok(textOf(errorEl()).includes('載入失敗'), textOf(errorEl()));
+        assert.equal(loaded.env.toasts.length, 0, '不靠 toast');
+
+        state.fail = false;
+        await m.applyBtn.listeners.click[0]();
+        assert.equal(hidden(errorEl()), true, '下一次成功載入清掉提示');
+        assert.equal(rowChecks(m.body).length, 5);
+
+        // 貼上清單時查詢失敗也要出聲，而不是讓人以為沒有相符的主機
+        state.fail = true;
+        m.search.value = 'srv-001\nSRV-003';
+        await m.applyBtn.listeners.click[0]();
+        assert.equal(hidden(errorEl()), false, '貼上清單的查詢失敗：顯示提示');
+        assert.equal(hidden(m.missing), true, '不誤報「找不到」');
+        state.fail = false;
+        await m.applyBtn.listeners.click[0]();
+        assert.equal(hidden(errorEl()), true);
+        assert.deepEqual(rowChecks(m.body).map(c => c.checked), [true, true]);
+    },
+
+    // 被拒（成員已非進行中）後：面板清單重載、勾選只留仍進行中的（含不在目前頁的勾選）、已選台數跟著更新
+    async rejectionRefreshesPickerAndPrunesSelection() {
+        const all25 = memberSource(25).items;
+        const gone = new Set();
+        const calls = [];
+        const load = async ({ page, pageSize, hostNames }) => {
+            calls.push({ page, hostNames });
+            const keys = hostNames ? new Set(hostNames.map(n => n.toUpperCase())) : null;
+            const matched = all25.filter(item => !gone.has(item.caseId) && (!keys || keys.has(item.hostName.toUpperCase())));
+            return { items: matched.slice((page - 1) * pageSize, page * pageSize), total: matched.length, page, pageSize };
+        };
+        const loaded = loadReplyModule();
+        let rejected = 0;
+        const m = openReply(loaded, {
+            picker: { load },
+            followUp: { remaining: async () => 0, submitRest: async () => ({}) },
+            submit: async () => { throw Object.assign(new Error('主機 SRV-001 已不是交辦單 7 的進行中成員'), { status: 400 }); },
+            onRejected: () => { rejected++; }
+        });
+        m.toggle.click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);                      // c1（第 1 頁）
+        pagerBtn(m.body, '下一頁').click();
+        await settle();
+        await tick(rowChecks(m.body)[0]);                      // c21（第 2 頁）
+        pagerBtn(m.body, '上一頁').click();
+        await settle();
+        assert.ok(m.hintText().includes('選取的 2 台'), m.hintText());
+
+        gone.add('c1');                                         // c1 在別處被結案
+        const before = calls.length;
+        m.pick('resolved');
+        await m.send();
+        await settle();
+        assert.equal(rejected, 1);
+        assert.ok(calls.length > before, '被拒後面板重新載入');
+        assert.equal(hidden(m.rejected), false, '被拒訊息仍常駐');
+        assert.ok(m.hintText().includes('選取的 1 台'), `已移走的勾選要被拿掉：${m.hintText()}`);
+        assert.ok(textOf(m.panel.find(n => n.id === 'wo-reply-pick-count')).includes('1'), '已選台數跟著更新');
+        // 清單補位：c1 移走後第 1 頁是 c2…c21，只有補進來的 c21 是勾選的
+        assert.deepEqual(rowChecks(m.body).map(c => c.checked), [...Array(19).fill(false), true], 'c1 的勾選已拿掉，c21 的勾選仍在');
+        assert.ok(!all(m.body).some(n => n.textContent === 'SRV-001'), '已移走的成員不在清單');
+        pagerBtn(m.body, '下一頁').click();
+        await settle();
+        assert.equal(rowChecks(m.body).some(c => c.checked), false, '第 2 頁（c22…c25）沒有勾選');
+    },
+
+    // 「送出並回覆下一張」搭配部分主機結案：單還有進行中主機時交代其餘台數，並通知呼叫端不要標成已處理
+    async nextAfterPartialClosingReportsRemainder() {
+        const run = async ({ remaining, partial = true, status = 'resolved' }) => {
+            const loaded = loadReplyModule();
+            const nexts = [];
+            const applied = [];
+            const m = openReply(loaded, {
+                picker: { load: memberSource(5).load }, onNext: p => nexts.push(p), onApplied: info => applied.push(info),
+                submit: async () => ({ cases: 2, workOrderClosed: false }),
+                followUp: { remaining: async () => remaining, submitRest: async () => ({}) }
+            });
+            if (partial) {
+                m.toggle.click();
+                await settle();
+                await tick(rowChecks(m.body)[0]);
+                await tick(rowChecks(m.body)[1]);
+            }
+            m.pick(status);
+            await fire(m.buttonByText('送出並回覆下一張'), 'click');
+            await settle();
+            await fire(m.entry.element, 'hidden.bs.modal');   // 彈窗完全關閉後才開下一張
+            return { loaded, nexts, applied };
+        };
+        const left = await run({ remaining: 3 });
+        assert.equal(left.loaded.env.closed, 1, '不停下來問其餘，直接關閉去下一張');
+        assert.equal(left.nexts.length, 1);
+        assert.deepEqual(left.applied, [{ restRemaining: 3 }], '告訴呼叫端這張單還有 3 台進行中');
+        assert.ok(left.loaded.env.toasts.some(t => t.message.includes('其餘 3 台尚未處理')), JSON.stringify(left.loaded.env.toasts));
+
+        const none = await run({ remaining: 0 });
+        assert.deepEqual(none.applied, [undefined], '沒有剩的：照常');
+        assert.ok(!none.loaded.env.toasts.some(t => t.message.includes('尚未處理')));
+        const open = await run({ remaining: 3, status: 'in_progress' });
+        assert.deepEqual(open.applied, [undefined], '非結案類不提示（單本來就還在進行）');
+        const whole = await run({ remaining: 3, partial: false });
+        assert.deepEqual(whole.applied, [undefined], '回覆全部進行中主機：沒有「其餘」');
+    },
+
+    // 復發提示的計數單位：一般入口用「台」，主機詳情「這台的交辦」（多個問題）用「個問題」
+    recurrenceUnitFollowsEntry() {
+        const text = options => textOf(byId(openReply(loadReplyModule(), options).body, 'wo-reply-recurrence'));
+        assert.ok(text({ recurrence: { hosts: 2 } }).includes('其中 2 台是反覆發生的'), '一般入口以台計');
+        assert.ok(text({ recurrence: { hosts: 2 }, multiIssues: true }).includes('其中 2 個問題是反覆發生的'));
+        assert.ok(text({ recurrence: { hosts: 1, unit: 'issue' } }).includes('其中 1 個問題是反覆發生的'), '只勾一個問題也以問題計');
+    },
+
+    // 草稿識別：GUID 字串以字串排序，同一批成員不論勾選順序都對到同一份草稿
+    caseIdsDraftKeyIgnoresPickOrder() {
+        const { caseIdsDraftKey } = loadReplyModule();
+        const ids = ['b1f0-guid', 'a0c3-guid', 'c7d9-guid'];
+        assert.equal(caseIdsDraftKey(7, ids), caseIdsDraftKey(7, [...ids].reverse()));
+        assert.equal(caseIdsDraftKey(7, ids), 'order:7:cases:a0c3-guid,b1f0-guid,c7d9-guid');
+        assert.equal(caseIdsDraftKey(7, []), 'order:7:all', '空陣列＝整單');
+        assert.equal(caseIdsDraftKey(7, [5, 3]), 'order:7:cases:3,5');
     }
+
 };
 
 const name = process.argv[2];

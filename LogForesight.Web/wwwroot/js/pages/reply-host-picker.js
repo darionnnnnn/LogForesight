@@ -70,10 +70,17 @@ export function createHostPicker({ load, onChange }) {
     missingEl.className = 'lf-text-meta text-wrap mb-2 d-none';
     missingEl.setAttribute('aria-live', 'polite');
 
+    // 載入失敗的常駐提示：呼叫端的 load 帶 silent（不出 toast），這裡自己說；下一次成功載入就清掉
+    const errorEl = document.createElement('div');
+    errorEl.id = 'wo-reply-pick-error';
+    errorEl.className = 'lf-text-meta text-wrap mb-2 d-none';
+    errorEl.setAttribute('role', 'alert');
+    errorEl.setAttribute('aria-live', 'polite');
+
     const tableBox = document.createElement('div');
     const pagerBox = document.createElement('div');
     pagerBox.className = 'mt-2';
-    element.append(searchLabel, search, toolbar, missingEl, tableBox, pagerBox);
+    element.append(searchLabel, search, toolbar, missingEl, errorEl, tableBox, pagerBox);
 
     let items = [];
     let total = 0;
@@ -95,6 +102,15 @@ export function createHostPicker({ load, onChange }) {
         onSelectAll: () => render(),
         onChange
     });
+
+    function showLoadError() {
+        errorEl.textContent = '主機清單載入失敗，請再試一次。';
+        errorEl.classList.remove('d-none');
+    }
+    function clearLoadError() {
+        errorEl.textContent = '';
+        errorEl.classList.add('d-none');
+    }
 
     function render() {
         const emptyTitle = mode === 'pasted' || filterNames ? '沒有符合條件的進行中主機' : '這張單沒有進行中的主機';
@@ -124,8 +140,11 @@ export function createHostPicker({ load, onChange }) {
         try {
             data = await load({ page: target, pageSize: PAGE_SIZE, hostNames: filterNames });
         } catch {
-            return;   // 錯誤提示已由共用請求層顯示；清單維持原樣
+            // load 帶 silent、不會出 toast：在面板內留一行提示，清單維持原樣
+            if (seqGuard.isCurrent(seq)) showLoadError();
+            return;
         }
+        if (seqGuard.isCurrent(seq)) clearLoadError();
         // 不篩選的結果即使因連續操作被視為過時（清單不更新），進行中總台數仍然正確，照記
         if (unfiltered) activeTotal = data.total ?? (data.items || []).length;
         if (!seqGuard.isCurrent(seq)) return;   // 連續操作時慢回來的舊結果不蓋掉新的
@@ -169,9 +188,11 @@ export function createHostPicker({ load, onChange }) {
         try {
             found = await lookupAll(names);
         } catch {
+            if (seqGuard.isCurrent(seq)) showLoadError();   // 貼上清單查不到時不能靜默：使用者會以為沒有相符的主機
             return;
         }
         if (!seqGuard.isCurrent(seq)) return;
+        clearLoadError();
         const unique = new Map(found.map(item => [item.caseId, item]));
         const matchedNames = new Set([...unique.values()].map(item => String(item.hostName || '').toUpperCase()));
         for (const item of unique.values()) selection.selected.set(item.caseId, item);
@@ -188,6 +209,46 @@ export function createHostPicker({ load, onChange }) {
         page = 1;
         items = pastedItems.slice(0, PAGE_SIZE);
         render();
+    }
+
+    /**
+     * 送出被拒（成員已非進行中）後重整：以伺服器目前的進行中成員為準。
+     * 清單重載目前這一頁（貼上清單則就地剔除已非進行中的列）；勾選以「已勾選的主機名」做一次分批查詢
+     * （與貼上清單同一條 lookupAll，每批 40 名）確認 caseId 仍在進行中——跨頁勾選不在目前頁，
+     * 只比對目前頁會漏掉；用 caseIds 比對則端點沒有這個篩選。查詢失敗時保留勾選並顯示面板提示，不亂清。
+     */
+    async function refresh() {
+        const seq = seqGuard.next();
+        let active;
+        try {
+            const selectedItems = [...selection.selected.values()];
+            const names = parseHostNames(selectedItems.map(item => item.hostName).filter(Boolean).join('\n'));
+            active = names.length > 0 ? new Set((await lookupAll(names)).map(item => item.caseId)) : new Set();
+            // 不篩選的第一頁：同時更新「進行中總台數」（其餘 N 台的來源）
+            const head = await load({ page: 1, pageSize: 1, hostNames: null });
+            activeTotal = head.total ?? (head.items || []).length;
+        } catch {
+            if (seqGuard.isCurrent(seq)) showLoadError();
+            return;
+        }
+        if (!seqGuard.isCurrent(seq)) return;
+        clearLoadError();
+        for (const key of [...selection.selected.keys()]) {
+            if (!active.has(key)) selection.selected.delete(key);
+        }
+        if (mode === 'pasted') {
+            pastedItems = pastedItems.filter(item => active.has(item.caseId));
+            total = pastedItems.length;
+            page = Math.min(page, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+            items = pastedItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+            render();
+        } else {
+            await goto(page);
+            // 目前頁清空（最後一頁的成員都被移走）時退回上一頁
+            if (items.length === 0 && page > 1) await goto(page - 1);
+        }
+        selection.renderBar();
+        onChange?.();
     }
 
     search.addEventListener('keydown', event => {
@@ -212,6 +273,7 @@ export function createHostPicker({ load, onChange }) {
         selectedIds: () => [...selection.selected.keys()],
         /** 進行中成員總台數（還沒載入過清單時為 null）：回覆彈窗用來算「其餘 N 台」 */
         activeTotal: () => activeTotal,
+        refresh,
         apply
     };
 }

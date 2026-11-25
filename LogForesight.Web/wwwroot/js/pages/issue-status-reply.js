@@ -49,11 +49,12 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false, 
 /**
  * @param {object} options
  * @param {string} options.title modal 標題
- * @param {string} options.targetText 最上方的對象說明（呼叫端決定，例如「本單 96 台中的 5 台」）
+ * @param {string} options.targetText 最上方的對象說明（呼叫端決定，例如「本單進行中 96 台中的 5 台」）
  * @param {(payload: {status: string, note: string|null, dueDate: string|null}) => Promise<any>} options.submit
  *        呼叫端提供的送出函式；成功與否的訊息由呼叫端自己出。回覆請求要帶 `{ silent: true }`：
  *        被拒（400／403）的訊息由這個彈窗常駐顯示，其他 API 錯誤由這裡補 toast
- * @param {() => void} [options.onApplied] 送出成功後的重新載入
+ * @param {(info?: {restRemaining: number}) => void} [options.onApplied] 送出成功後的重新載入；
+ *        info.restRemaining＞0＝部分主機以結案類送出並直接接「下一張」、這張單還有進行中主機（呼叫端不要把這張單標成已處理）
  * @param {(error: Error) => (Promise<string|void>|string|void)} [options.onRejected]
  *        被拒（400 單已結案／成員已非進行中、403 單已改派）時呼叫：呼叫端在這裡重新載入頁面資料，
  *        可回傳一段取代伺服器訊息的說明（例如補上新處理人）；草稿不清
@@ -75,7 +76,7 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false, 
  *        有值時對象是「全部進行中主機」的彈窗多一個「只回覆部分主機」切換：就地面板列出進行中成員讓人勾選或貼上主機名；
  *        勾選後送出時 submit 的第二個參數是勾選的 caseId 陣列（沒切換時為 undefined，呼叫端用預設對象）
  * @param {boolean} [options.partialTarget] 呼叫端傳進來的對象本身就是部分主機（例如成員表勾選的幾台）
- * @param {{hosts: number}} [options.recurrence] 這次涵蓋的主機裡有幾台是反覆發生（復發）的問題：hosts > 0 時彈窗頂端提示，
+ * @param {{hosts: number, unit?: 'issue'}} [options.recurrence] 這次涵蓋的主機裡有幾台是反覆發生（復發）的問題：hosts > 0 時彈窗頂端提示，
  *        並在結論按鈕前列三個建議（還在處理、觀察 7 日、請管理員評估）；沒有或 0 台不顯示。建議只是預選結論並預填，不擋其他結論
  * @param {{remaining: (result: any) => Promise<number>, submitRest: (payload: object, context?: {batch: boolean}) => Promise<any>}} [options.followUp]
  *        部分主機以結案類結論回覆時處理「其餘 N 台」：remaining 取剩下的進行中台數，submitRest 以 caseIds 為空
@@ -133,7 +134,10 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     // 復發提示與三個建議（有復發主機才有）：放在結論按鈕之前，點了等於選對應結論並預填
     const recurrenceHosts = recurrence?.hosts > 0 ? recurrence.hosts : 0;
-    const recurrenceText = count => `其中 ${count} 台是反覆發生的問題。結案後又出現，建議先看原因：`;
+    // 計數單位：一般入口是主機；主機詳情「這台的交辦」是同一台主機的多個問題，改用「個問題」
+    const recurrenceByIssue = multiIssues || recurrence?.unit === 'issue';
+    const recurrenceText = count => (recurrenceByIssue ? `其中 ${count} 個問題是反覆發生的。` : `其中 ${count} 台是反覆發生的問題。`)
+        + '結案後又出現，建議先看原因：';
     const recurrenceHint = recurrenceHosts > 0 ? statusNote('info', recurrenceText(recurrenceHosts)) : null;
     const suggestRow = recurrenceHosts > 0 ? document.createElement('div') : null;
     if (recurrenceHint) {
@@ -327,7 +331,17 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
             restDueCheck.validate();
         }
     }));
-    restBox.append(restLabel, restGroup, restDueLabel, restQuickRow, restDueInput, restDueError);
+    // 其餘選到不處理類時同樣說明後果（與主結論同一句；其餘台數多於 1 台才用複數說法）
+    const restNoFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: true, releases: dismissalReleases }));
+    restNoFixNote.classList.add('mb-2', 'd-none');
+    restNoFixNote.id = 'wo-reply-rest-no-fix-note';
+    restBox.append(restLabel, restGroup, restNoFixNote, restDueLabel, restQuickRow, restDueInput, restDueError);
+
+    function syncRestNoFix() {
+        const show = isNoFixClosure(restStatus);
+        if (show) restNoFixNote.textContent = noFixConsequenceText({ multiHosts: restHostCount() > 1, releases: dismissalReleases });
+        restNoFixNote.classList.toggle('d-none', !show);
+    }
 
     function syncRestDue() {
         restDueLabel.classList.toggle('d-none', !restNeedsDue());
@@ -338,6 +352,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         } else {
             restQuickRow.replaceChildren();
         }
+        syncRestNoFix();
         if (restStatus === 'observing' && !restDueInput.value) {
             restDueInput.value = dateAfterDays(OBSERVE_DEFAULT_DAYS);
             restDueAutofilled = true;
@@ -537,7 +552,10 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
             const withCopy = status === 403;
             showRejection(error.message || '這次回覆被拒絕', withCopy);
             let better;
+            // 部分主機模式：勾選的成員可能已非進行中，面板清單與勾選以伺服器現況重整（已選台數跟著更新）
+            const refreshed = picking && picker ? picker.refresh().catch(() => { }) : null;
             try { better = await onRejected?.(error); } catch { better = undefined; }
+            await refreshed;
             if (typeof better === 'string' && better) showRejection(better, withCopy);
             return;
         }
@@ -636,6 +654,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         // 部分主機回覆（勾選或呼叫端指定）且結論是結案類：成功後單若還有進行中主機，改問「其餘 N 台」
         const partial = mode === 'whole' && (picking || partialTarget);
         let result;
+        let restRemaining = 0;   // 「送出並回覆下一張」搭配部分主機結案時，這張單還剩的進行中台數
         try {
             result = mode === 'rest'
                 ? await followUp.submitRest(payload)
@@ -668,10 +687,14 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
                 }
                 toastReplyBoth(result, payload, restResult, restPayload);
             }
-        } else if (partial && !goNext && followUp && statusMeta(payload.status)?.closed && !result?.workOrderClosed) {
+        } else if (partial && followUp && statusMeta(payload.status)?.closed && !result?.workOrderClosed) {
             let remaining = 0;
             try { remaining = await followUp.remaining(result); } catch { remaining = 0; }
-            if (remaining > 0) {
+            if (remaining > 0 && goNext) {
+                // 「送出並回覆下一張」不停下來問其餘：交代還剩幾台，並讓呼叫端知道這張單還沒處理完（不標成已處理）
+                restRemaining = remaining;
+                toast(`其餘 ${remaining} 台尚未處理，這張單之後還會再出現`, 'info');
+            } else if (remaining > 0) {
                 restore();
                 onApplied?.();   // 剛回覆的那幾台先更新到畫面；彈窗留著等「其餘」的決定
                 enterRestMode(remaining);
@@ -682,7 +705,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         // 下一張等這個彈窗完全關閉才開：兩個 modal 的淡出／淡入交疊時，前一個收尾會拿掉頁面的捲動鎖定
         if (goNext) modalEl.addEventListener('hidden.bs.modal', () => onNext(payload), { once: true });
         modal?.close();
-        onApplied?.();
+        onApplied?.(restRemaining > 0 ? { restRemaining } : undefined);
     }
 
     body.appendChild(form);
@@ -741,6 +764,16 @@ export async function describeReplyRejection(error, workOrderId) {
 /** 回覆多張交辦單的草稿識別：單號排序後以逗號連接，同一批單不論勾選順序都對到同一份草稿 */
 export function workOrdersDraftKey(workOrderIds) {
     return `orders:${[...workOrderIds].sort((a, b) => a - b).join(',')}`;
+}
+
+/**
+ * 單張交辦單回覆的草稿識別：caseIds 為空＝整單（全部進行中主機）；指定成員時以字串排序，
+ * 同一批成員不論勾選順序都對到同一份草稿（caseId 是 GUID 字串，不能用數值相減排序）。
+ */
+export function caseIdsDraftKey(workOrderId, caseIds) {
+    return caseIds.length > 0
+        ? `order:${workOrderId}:cases:${[...caseIds].map(String).sort().join(',')}`
+        : `order:${workOrderId}:all`;
 }
 
 /** 觀察至日期顯示成月-日（「12-01」）；後端與表單都是 YYYY-MM-DD */

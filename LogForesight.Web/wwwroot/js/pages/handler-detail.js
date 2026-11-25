@@ -32,7 +32,7 @@ import {
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure } from '../core/elements.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS, hostCountText, severityName, workOrderSeverityCell, workOrderFlagBadges } from '../core/format.js';
-import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
+import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection, orderMembersUrl, remainingActiveCount, caseIdsDraftKey } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 import { createSeqGuard } from '../core/async-guards.js';
@@ -821,8 +821,9 @@ function openWholeOrderReply(row, count, carry) {
             return result;
         },
         onRejected: error => rejectedReply(error, row.workOrderId),
-        onApplied: () => {
-            handledOrderIds.add(row.workOrderId);
+        onApplied: info => {
+            // 部分主機結案後直接接下一張、這張單還有進行中主機：不標成已處理，「下一張」之後仍能回到它
+            if (!(info?.restRemaining > 0)) handledOrderIds.add(row.workOrderId);
             lastRefresh = scheduleRefresh(row.workOrderId, closedNow);
         },
         onNext: payload => openNextOrder(row.workOrderId, payload)
@@ -1174,7 +1175,7 @@ function buildMemberPanel(row, cell) {
         if (selectedCases.size === 0) return;
         const caseIds = [...selectedCases.keys()];
         const issueKeys = new Set([...selectedCases.values()].map(item => item.issueKey));
-        const total = row.counts?.total ?? 0;
+        const activeInOrder = replyableCount(row.counts);   // 進行中台數：已結案的成員不在可回覆的對象裡
         let closedNow = false;
 
         openWorkOrderReplyModal({
@@ -1182,8 +1183,8 @@ function buildMemberPanel(row, cell) {
             recurrence: { hosts: [...selectedCases.values()].filter(item => item?.isRecurrence).length },
             dismissalReleases: !!row.dismissalReleases,
             multiTarget: caseIds.length > 1,
-            targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
-            draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
+            targetText: `本單進行中 ${activeInOrder} 台中的 ${caseIds.length} 台`,
+            draftKey: caseIdsDraftKey(row.workOrderId, caseIds),
             aiContext: { issueLabel: row.issueLabel, hostCount: caseIds.length },
             // 勾選的主機都是同一個問題簽章才能沿用上次的說明
             reuseIssueKey: issueKeys.size === 1 ? [...issueKeys][0] : null,

@@ -37,6 +37,12 @@ public class ReplyPartialBehaviorTests
     [InlineData("memberEmptyStateTexts")]
     [InlineData("closedOrderSwitchesMemberFilterToAll")]
     [InlineData("memberTableKeepsSelectionAcrossPages")]
+    [InlineData("restNoFixNoteFollowsRestChoice")]
+    [InlineData("pickerLoadFailureShowsInlineErrorUntilNextSuccess")]
+    [InlineData("rejectionRefreshesPickerAndPrunesSelection")]
+    [InlineData("nextAfterPartialClosingReportsRemainder")]
+    [InlineData("recurrenceUnitFollowsEntry")]
+    [InlineData("caseIdsDraftKeyIgnoresPickOrder")]
     public void 部分主機回覆行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
