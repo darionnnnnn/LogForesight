@@ -260,7 +260,10 @@ internal static class WorkOrderDigestBuilder
                     break;
                 case WorkOrderOutboxKinds.AdminClosed:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
-                    body.AppendLine($"    由 {item.ActorAccount} 代為結案，結案狀態：{StatusText(item.Status)}。");
+                    // 範圍結案、單仍進行中（MemberDelta＞0）：只寫這幾台被結案，不能讓人以為整張單結了
+                    body.AppendLine(item.MemberDelta > 0
+                        ? $"    {item.MemberDelta} 台已由管理者 {item.ActorAccount} 代為結案（單仍在進行中），結案狀態：{StatusText(item.Status)}。"
+                        : $"    由 {item.ActorAccount} 代為結案，結案狀態：{StatusText(item.Status)}。");
                     AppendReason(body, item);
                     body.AppendLine($"    {RedispatchText(item)}");
                     break;

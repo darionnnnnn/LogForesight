@@ -1588,7 +1588,7 @@ function renderAiWindowState(el, available, nextTriggerTime, windowConfigured) {
     } else if (windowConfigured === false) {
         el.append('未設定窗口，AI 不會自動執行　');
         const link = document.createElement('a');
-        link.href = `${appUrl('/runs')}#schedule-ai-windows`;
+        link.href = `${appUrl('/runs')}#settings`;   // bindTabs 只認頁籤名；窗口設定在「設定」頁籤
         link.textContent = '前往設定窗口';
         el.append(link);
     } else if (nextTriggerTime) {

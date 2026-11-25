@@ -25,6 +25,7 @@ public class HostOrderCrossCutBehaviorTests
     [InlineData("hostSearchByNameAndIp")]
     [InlineData("hostSearchShowsOnlyWhatServerReturnsAndCapsAtTen")]
     [InlineData("hostSearchStaleResponseAndBlankInput")]
+    [InlineData("hostSearchEnterOnlyNavigatesWhenQueryIsCurrent")]
     [InlineData("hostOrdersReplyTwoIssuesTwoRequests")]
     [InlineData("hostOrdersOneRejectedOthersSucceed")]
     [InlineData("hostOrdersEmptyAndNotReplyable")]

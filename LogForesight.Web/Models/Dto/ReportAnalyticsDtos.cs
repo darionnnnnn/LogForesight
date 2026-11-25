@@ -87,6 +87,12 @@ public class ReportPendingDispatchDto
     /// <summary>期間太長、試跑出現點超過上限：不做試跑，<see cref="IssueHosts"/> 與 <see cref="HostDays"/> 無法拆分（全部「未處理」併入 <see cref="HostDays"/>＝null，不需處理亦 null）</summary>
     public bool TooLarge { get; set; }
 
+    /// <summary>
+    /// <see cref="TooLarge"/> 時無法拆開的原因：<c>period</c>＝期間超過待派預設窗口或試跑出現點超過上限（縮短期間即可）；
+    /// <c>permission</c>＝檢視者沒有派工權限（待派試跑只對能派工的人執行）。可以拆開時為 null。
+    /// </summary>
+    public string? UnsplitReason { get; set; }
+
     /// <summary>可派的「問題 × 主機」數（單位：問題×主機，同一台主機兩個問題算兩個）</summary>
     public int IssueHosts { get; set; }
 

@@ -3166,6 +3166,70 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.False(service.Get().AutoDispatchEnabled);
     }
 
+    /// <summary>
+    /// F23-3 往返：自動派工開關搬到「派工」頁籤後，設定頁儲存時送出的欄位（取自 settings.js 的儲存請求）打進伺服器再讀回，
+    /// 開關的值保持，且其他設定沒有被清掉或改掉。請求欄位取自頁面原始碼，頁面多送或少送欄位都會讓這條紅。
+    /// </summary>
+    [Fact]
+    public void 設定頁派工頁籤儲存_以頁面實際送出的欄位往返_開關保持且其他設定不被清掉()
+    {
+        var repoRoot = new DirectoryInfo(AppContext.BaseDirectory);
+        while (repoRoot != null && !File.Exists(Path.Combine(repoRoot.FullName, "LogForesight.sln"))) repoRoot = repoRoot.Parent;
+        var js = File.ReadAllText(Path.Combine(repoRoot!.FullName, "LogForesight.Web", "wwwroot", "js", "pages", "settings.js"));
+        var start = js.IndexOf("api.put('/api/admin/settings', {", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到設定頁儲存請求");
+        var end = js.IndexOf("            });", start, StringComparison.Ordinal);
+        var sent = System.Text.RegularExpressions.Regex.Matches(js[start..end], @"^ {16}(\w+)\s*[:,]", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("autoDispatchEnabled", sent);
+        Assert.Contains("mailSubjectTemplate", sent);   // 切得對：取到的是整份儲存請求，不是半截
+
+        // 頁面送出的每個欄位都是請求類別認得的屬性（拼錯會被伺服器靜默忽略）
+        var known = typeof(UpdateSystemSettingsRequest).GetProperties()
+            .Select(p => char.ToLowerInvariant(p.Name[0]) + p.Name[1..]).ToHashSet(StringComparer.Ordinal);
+        Assert.True(sent.All(known.Contains), "頁面送出了請求類別沒有的欄位：" + string.Join("、", sent.Where(k => !known.Contains(k))));
+
+        var service = Create();
+        var seed = ValidRequest();
+        seed.MailSubjectTemplate = "[自訂] {host}";
+        seed.EscalationReminderDays = 5;
+        seed.AiTimeoutSeconds = 321;
+        seed.AutoDispatchEnabled = false;
+        service.Update(seed);
+        var before = service.Get();
+
+        // 模擬設定頁：以目前讀到的設定為底，只帶頁面實際送出的欄位，把自動派工開關打開
+        var web = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        var current = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(before, web))!.AsObject();
+        var payload = new System.Text.Json.Nodes.JsonObject();
+        foreach (var (key, value) in current.Where(kv => sent.Contains(kv.Key)).ToList()) payload[key] = value?.DeepClone();
+        payload["autoDispatchEnabled"] = true;
+        payload["expectedRevision"] = before.Revision;
+        var request = System.Text.Json.JsonSerializer.Deserialize<UpdateSystemSettingsRequest>(payload.ToJsonString(), web)!;
+
+        service.Update(request);
+        var after = service.Get();
+
+        Assert.True(after.AutoDispatchEnabled);
+        Assert.Equal("[自訂] {host}", after.MailSubjectTemplate);
+        Assert.Equal(5, after.EscalationReminderDays);
+        Assert.Equal(321, after.AiTimeoutSeconds);
+        // 其餘欄位逐一相同（版本與時間戳除外）
+        static System.Text.Json.Nodes.JsonObject Normalize(SystemSettingsDto dto, System.Text.Json.JsonSerializerOptions o)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dto, o))!.AsObject();
+            foreach (var skip in new[] { "autoDispatchEnabled", "revision", "updatedAt" }) node.Remove(skip);
+            return node;
+        }
+        Assert.Equal(Normalize(before, web).ToJsonString(), Normalize(after, web).ToJsonString());
+
+        // 邊界另一側：再關回 false 也保持
+        payload["autoDispatchEnabled"] = false;
+        payload["expectedRevision"] = after.Revision;
+        service.Update(System.Text.Json.JsonSerializer.Deserialize<UpdateSystemSettingsRequest>(payload.ToJsonString(), web)!);
+        Assert.False(service.Get().AutoDispatchEnabled);
+    }
+
     [Fact]
     public async Task TestPrtgAsync_使用共享預算且呼叫table端點受限流保護()
     {

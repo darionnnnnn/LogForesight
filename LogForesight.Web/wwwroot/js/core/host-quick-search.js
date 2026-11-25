@@ -29,7 +29,8 @@ function itemMain(host) {
 /**
  * @param {{input: HTMLInputElement, results: HTMLElement, delay?: number}} elements
  *        input＝搜尋欄；results＝結果容器（空白時隱藏，由本函式切換 d-none）
- * @returns {{ run(keyword: string): Promise<void>, search(keyword: string): void, clear(): void }}
+ * @returns {{ run(keyword: string): Promise<boolean>, search(keyword: string): void, clear(): void }}
+ *          run 回傳「這次查詢的結果是不是目前有效的那一筆」：被較新的輸入取代、或輸入已清空時為 false（Enter 前往只認 true）
  */
 export function createHostQuickSearch({ input, results, delay = HOST_SEARCH_DELAY_MS }) {
     const seq = createSeqGuard();
@@ -62,7 +63,7 @@ export function createHostQuickSearch({ input, results, delay = HOST_SEARCH_DELA
         const text = String(keyword ?? '').trim();
         if (text === '') {
             clear();
-            return;
+            return false;
         }
 
         const id = seq.next();
@@ -71,18 +72,18 @@ export function createHostQuickSearch({ input, results, delay = HOST_SEARCH_DELA
             const params = new URLSearchParams({ query: text, limit: String(HOST_SEARCH_LIMIT) });
             data = await api.get(`/api/hosts?${params}`, { silent: true });
         } catch {
-            if (!seq.isCurrent(id)) return;
+            if (!seq.isCurrent(id)) return false;
             firstHref = null;
             show([note('搜尋失敗，請再試一次')]);
-            return;
+            return true;
         }
-        if (!seq.isCurrent(id)) return;   // 更新的輸入已送出，這筆是過期回應
+        if (!seq.isCurrent(id)) return false;   // 更新的輸入已送出，這筆是過期回應
 
         const items = (data?.items ?? []).slice(0, HOST_SEARCH_LIMIT);
         if (items.length === 0) {
             firstHref = null;
             show([note('找不到符合的主機')]);
-            return;
+            return true;
         }
 
         const nodes = items.map(host => {
@@ -105,6 +106,7 @@ export function createHostQuickSearch({ input, results, delay = HOST_SEARCH_DELA
         // 實際符合的比顯示的多時直說，不讓人以為就只有這些
         if (data?.truncated) nodes.push(note(`只列前 ${HOST_SEARCH_LIMIT} 筆，共 ${data.total} 筆符合，請輸入更完整的名稱或 IP`));
         show(nodes);
+        return true;
     }
 
     input.addEventListener('input', () => {
@@ -121,8 +123,9 @@ export function createHostQuickSearch({ input, results, delay = HOST_SEARCH_DELA
             clear();
         } else if (event.key === 'Enter') {
             event.preventDefault();
-            // 還沒查就按 Enter：先查再依第一筆前往
-            run(input.value).then(() => { if (firstHref) location.href = firstHref; });
+            // 還沒查就按 Enter：先查再依第一筆前往。只有這次查詢仍是最新的才前往：
+            // 查詢期間又輸入了新字（或已清空），firstHref 可能還是更早一批結果的，不能拿來導覽
+            run(input.value).then(current => { if (current && firstHref) location.href = firstHref; });
         }
     });
 

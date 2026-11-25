@@ -185,10 +185,10 @@ public class WorkOrderQueryService
         IReadOnlyCollection<long>? handlerIds = req.HandlerId.HasValue ? new[] { req.HandlerId.Value } : null;
         if (req.HandlerInactive)
         {
-            // 與續掛停止原因 handler_inactive 同義（處理人已停用，或已不具處理能力——派工端以不在候選人快照判定）：
-            // 帳號停用，或解析出的能力不含 Handle。測試組裝沒注入解析器時只看帳號停用
+            // 與管理者待辦「處理人已停用或暫停仍有單」同一個判定（HandlerInactivity）：
+            // 帳號停用、暫停接單，或解析出的能力不含 Handle。測試組裝沒注入解析器時只看停用與暫停旗標
             var inactive = users.Values
-                .Where(u => !u.Active || (_capabilities != null && !_capabilities.Resolve(u).Contains(Capability.Handle)))
+                .Where(u => HandlerInactivity.IsInactive(u, _capabilities))
                 .Select(u => u.UserId).ToHashSet();
             handlerIds = handlerIds == null ? inactive : handlerIds.Where(inactive.Contains).ToList();
         }
@@ -419,6 +419,8 @@ public class WorkOrderQueryService
         }
 
         var viewerCanHandle = _currentUser.Has(Capability.Handle);
+        // 上次回覆的說明是處理人寫給管理者看的內容：檢視者不是該列處理人、也沒有 Assign 或 ViewAll 時只回日期與狀態
+        var viewerSeesAll = _currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll);
         var rows = new List<HostWorkOrderRowDto>();
         foreach (var c in cases)
         {
@@ -440,7 +442,7 @@ public class WorkOrderQueryService
                 Status = c.Status,
                 DueDate = c.DueDate,
                 IsRecurrence = info.IsRecurrence,
-                LastReply = LastReplyOf(info.Previous),
+                LastReply = LastReplyOf(info.Previous, includeNote: viewerSeesAll || order.HandlerId == _currentUser.UserId),
                 DismissalReleases = order.SourceName != null && order.EventId != null
                     && DismissalRelease.AppliesTo(rules, order.SourceName, order.EventId.Value),
                 CanReply = viewerCanHandle && order.HandlerId == _currentUser.UserId
@@ -1116,13 +1118,13 @@ public class WorkOrderQueryService
         return (IssueRecurrence.Evaluate(targets, history), DismissalRelease.PriorDismissalsOf(targets, history, releaseRules));
     }
 
-    private static WorkOrderLastReplyDto? LastReplyOf(IssueCase? previous) =>
+    private static WorkOrderLastReplyDto? LastReplyOf(IssueCase? previous, bool includeNote = true) =>
         previous?.ClosedAt == null
             ? null
             : new WorkOrderLastReplyDto
             {
                 Date = previous.ClosedAt.Value, Status = previous.Status,
-                Note = string.IsNullOrWhiteSpace(previous.Note) ? null : previous.Note
+                Note = includeNote && !string.IsNullOrWhiteSpace(previous.Note) ? previous.Note : null
             };
 
     /// <summary>觀察到期、且觀察期間確定沒有再發生（K 為 0）的進行中成員編號；K 為無資料（null）的不列</summary>

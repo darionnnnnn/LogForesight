@@ -200,6 +200,18 @@ public sealed class DispatchReadinessServiceTests : IDisposable
     }
 
     [Fact]
+    public void AI窗口_AI未設定是統計模式_略過且視為通過()
+    {
+        _settings.Update(s => s.AiBaseUrl = "");
+        _schedule.Update(o => o.AiWindows = new List<ScheduleWindow>());
+
+        var item = Item(Service().Evaluate(), "ai-window");
+
+        Assert.True(item.Passed);
+        Assert.True(item.Skipped);
+    }
+
+    [Fact]
     public void AI窗口_沒有可解析的窗口不通過_有窗口通過()
     {
         _schedule.Update(o => o.AiWindows = new List<ScheduleWindow>());

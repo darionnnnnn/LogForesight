@@ -248,6 +248,10 @@ public class RuleAdminService
 
         var isNew = existing == null;
 
+        // 畫面送的是「新增」、編號卻已存在：這是撞號，不是別人同時改過它——回驗證錯誤（編輯既有規則沒帶版本仍是 409，見下）
+        if (request.IsNew && existing != null)
+            throw DomainException.Validation($"規則編號「{existing.Id}」已存在，請改用其他編號；要修改既有規則請從清單開啟它。");
+
         if (isNew && !request.Id.StartsWith("custom-", StringComparison.OrdinalIgnoreCase))
         {
             // 新規則一律 custom- 前綴：builtin 的命名空間屬於程式內建種子，
@@ -849,6 +853,13 @@ public class RuleAdminService
         List<long> hostIds = _visibility != null
             ? _visibility.GetVisibleHostIds().ToList()
             : _hosts.GetAll().Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
+        // 可見主機是空集合：沒有任何母體可算，回「無法試算」並寫明原因，不回一排 0 → 0 讓人以為規則沒有影響
+        if (hostIds.Count == 0)
+        {
+            result.Supported = false;
+            result.UnsupportedReason = "目前帳號沒有可見主機，無法試算。";
+            return result;
+        }
 
         // 候選問題：先以聚合層看得到的（來源, 事件 ID）縮小到「現行或草稿可能命中」的少數幾種，再只讀這幾種的子列
         var candidates = _issueAggregateQuery.Aggregate(IssueExclusion.None, from, to, hostIds)

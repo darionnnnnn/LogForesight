@@ -260,6 +260,49 @@ const cases = {
         assert.ok(container.classList.contains('d-none'), '完成後收起面板');
     },
 
+    // 套用請求在等待時對話框被取消（序號已過期）：伺服器已經改派，onApplied（清勾選、重載清單與負載看板）仍要呼叫，
+    // 只有結果畫面不渲染
+    async panelApplyStaleStillNotifiesPage() {
+        const dom = installDom();
+        const button = loadButton(dom);
+        const { roleText, statusNote } = loadElements(dom);
+        const guard = { n: 0, stale: false, next() { return ++this.n; }, isCurrent(s) { return !this.stale && s === this.n; } };
+        const api = {
+            async post(url) {
+                if (url.endsWith('/candidates')) return [{ userId: 9, account: 'DOMAIN\\to', displayName: '乙', activeLoad: 0, hiddenHostCount: 0, hasEmail: true }];
+                if (url.endsWith('/preview')) return { totalOrders: 1, newCount: 1, mergeCount: 0, skipCount: 0, movedMembers: 2, grantHostCount: 0, handlerName: '乙', handlerPaused: false, handlerHasNoEmail: false, handlerCannotHandle: false, rows: [
+                    { workOrderId: 1, issueLabel: 'A', currentHandlerName: '甲', outcome: 'new', memberCount: 2, grantHostCount: 0 }] };
+                guard.stale = true;   // 回應回來之前，對話框已被取消或換了畫面
+                return { handlerName: '乙', succeededCount: 1, newCount: 1, mergeCount: 0, movedMembers: 2, skippedCount: 0, failedCount: 0, rows: [] };
+            }
+        };
+        const picker = { element: document.createElement('div'), getValue: () => '9' };
+        const renderTable = (container) => { container.appendChild(document.createElement('table')); };
+        const noop = () => { };
+        const applied = [];
+        const body = [
+            extractFunction(bulkSource, 'function bulkPreviewLines('),
+            extractFunction(bulkSource, 'function bulkResultSummary('),
+            extractFunction(bulkSource, 'function bulkOutcomeText('),
+            extractFunction(bulkSource, 'function orderLink('),
+            extractFunction(bulkSource, 'export function createBulkReassignPanel(').replace(/^export /, '')
+        ].join('\n').replace(/export function bulkPreviewLines/, 'function bulkPreviewLines');
+        const create = new Function('api', 'appUrl', 'button', 'renderTable', 'renderLoading', 'searchableUserSelect', 'candidatesToUserOptions', 'toast', 'withBusy',
+            'roleText', 'statusNote', 'statusBadge', 'createSeqGuard', 'document', 'BULK_REASSIGN_MAX',
+            `${body}\nreturn createBulkReassignPanel;`)(
+            api, p => p, button, renderTable, noop, () => picker, list => list.map(c => ({ userId: c.userId, active: true })), noop, () => noop,
+            roleText, statusNote, (text) => roleText('badge', text), () => guard, document, 100);
+        const container = document.createElement('div');
+        const panel = create({ container, getSelectedIds: () => [1], onApplied: r => applied.push(r) });
+
+        await panel.open();
+        await container.find(n => n.tagName === 'BUTTON' && n.textContent === '預覽').listeners.click[0]();
+        await container.find(n => n.tagName === 'BUTTON' && n.textContent === '確定改派 1 張').listeners.click[0]();
+
+        assert.equal(applied.length, 1, '伺服器已改派，過期也要通知頁面重載');
+        assert.ok(!container.textContent.includes('已改派 1 張'), '過期的回應不渲染結果畫面');
+    },
+
     // 預覽沒有任何可改派的單（全部略過）時，確定鈕停用
     async panelApplyDisabledWhenNothingToDo() {
         const dom = installDom();

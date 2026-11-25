@@ -8,7 +8,7 @@ public sealed class WorkOrderOutboxItem
     public long RecipientUserId { get; set; }
     public DateTime EnqueuedAt { get; set; }
     public string ActorAccount { get; set; } = "";
-    public int MemberDelta { get; set; }             // 本次新增台數（Appended／夜間續掛用；其他為 0）
+    public int MemberDelta { get; set; }             // 本次新增台數（Appended／夜間續掛用）；代為結案：範圍結案且單仍進行中時為已結案台數（其他為 0）
     public int RecurrenceMembers { get; set; }       // 復發台數（夜間自動派工延續性偏好）
     public string? Reason { get; set; }              // 取消／移交／結案／靜音原因（寫入前截到 ReasonMaxLength）
     public string? Status { get; set; }              // 代為結案的結案狀態（IssueHandlingStatuses 代碼；其他種類為 null）

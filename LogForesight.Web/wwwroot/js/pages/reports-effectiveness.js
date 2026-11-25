@@ -51,7 +51,9 @@ export function unresolvedBreakdownLines(unresolved) {
     const oldest = inHand.oldestDays == null ? '' : `，最舊 ${inHand.oldestDays} 天`;
     const lines = [`在處理人手上：${inHand.hostDays ?? 0} 個主機日（進行中交辦 ${inHand.cases ?? 0} 項${oldest}）`];
     if (pending.tooLarge) {
-        lines.push('待派與不需處理：期間太長，無法拆開，請縮短期間');
+        lines.push(pending.unsplitReason === 'permission'
+            ? '待派與不需處理：需要派工權限才能拆開'
+            : '待派與不需處理：期間太長，無法拆開，請縮短期間');
     } else {
         lines.push(`待派：${pending.hostDays ?? 0} 個主機日（可派的問題×主機 ${pending.issueHosts ?? 0} 個）`);
         lines.push(`不需處理：${notNeeded.hostDays ?? 0} 個主機日（嚴重度未達、已知雜訊、不再打擾、靜音等，不會派工）`);

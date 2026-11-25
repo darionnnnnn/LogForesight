@@ -752,6 +752,9 @@ const cases = {
         const tooLarge = unresolvedBreakdownLines({ inHandlers: { cases: 1, hostDays: 2 }, pendingDispatch: { tooLarge: true }, notNeeded: {} });
         assert.equal(tooLarge.length, 2);
         assert.equal(tooLarge[1], '待派與不需處理：期間太長，無法拆開，請縮短期間');
+        // 沒有派工權限時原因不是期間：寫明需要權限，不叫人縮短期間
+        const noPermission = unresolvedBreakdownLines({ inHandlers: { cases: 1, hostDays: 2 }, pendingDispatch: { tooLarge: true, unsplitReason: 'permission' }, notNeeded: {} });
+        assert.equal(noPermission[1], '待派與不需處理：需要派工權限才能拆開');
         assert.deepEqual(unresolvedBreakdownLines(null), []);
     }
 

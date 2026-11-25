@@ -2,6 +2,7 @@ using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -95,7 +96,8 @@ public class ReportAnalyticsTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _visibleSettings = new();
     private GapsDto _gapsResult = new();
-    private GapsDto GapsProvider(DateTime? from, DateTime? to, int page) => _gapsResult;
+    private int _gapsCalls;
+    private GapsDto GapsProvider(DateTime? from, DateTime? to, int page) { _gapsCalls++; return _gapsResult; }
 
     // 期間 D0 ～ D0+29（全在過去，lastDataDay 完全由資料決定）
     private static readonly DateTime D0 = DateTime.Today.AddDays(-60);
@@ -120,7 +122,7 @@ public class ReportAnalyticsTests : IDisposable
         public required ReportServiceTests.CountingProxy<IIssueHandlingStore> IssueStoreCalls { get; init; }
     }
 
-    private Rig MakeRig(IVisibilityService? visibility = null, IssueExclusion? exclusion = null, SummaryCache? cache = null)
+    private Rig MakeRig(IVisibilityService? visibility = null, IssueExclusion? exclusion = null, SummaryCache? cache = null, ICurrentUser? user = null)
     {
         visibility ??= new AlwaysVisibleService(_hosts);
         cache ??= new SummaryCache(new DataVersionStamp());
@@ -141,7 +143,8 @@ public class ReportAnalyticsTests : IDisposable
         {
             Summary = new ReportService(repoProxy, _hosts, visibility, handling, ranking, _settingsStore, aggregates, _visibleSettings,
                 cache, exclusions, new SqlPerformanceMonitor()),
-            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions, new FakeRuleStore(), _caseStore, GapsProvider),
+            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions, new FakeRuleStore(), _caseStore, GapsProvider,
+                user ?? FakeCurrentUser.WithCapabilities(Capability.Assign)),
             CategoryTrend = new ReportCategoryTrendService(repoProxy, _hosts, visibility, _visibleSettings, cache, exclusions),
             RepoCalls = repoCounter,
             IssueStoreCalls = issueCounter
@@ -253,7 +256,7 @@ public class ReportAnalyticsTests : IDisposable
         _gapsResult = new GapsDto { DispatchableIssueHosts = 5 };
         _gapsResult.DispatchableHostNames.Add("PENDING");
 
-        var eff = MakeRig().Effectiveness.Get(D0, PeriodTo);
+        var eff = MakeRig().Effectiveness.Get(D0, D0.AddDays(6));
         var u = eff.Unresolved;
 
         Assert.Equal(7, eff.UnresolvedTotal);
@@ -275,7 +278,7 @@ public class ReportAnalyticsTests : IDisposable
         var host = AddHost("H1");
         Rec(host, D0, "高", Issue("disk", 7));
 
-        var eff = MakeRig().Effectiveness.Get(D0, PeriodTo);
+        var eff = MakeRig().Effectiveness.Get(D0, D0.AddDays(6));
         var u = eff.Unresolved;
 
         Assert.Equal(0, u.InHandlers.Cases);
@@ -296,12 +299,67 @@ public class ReportAnalyticsTests : IDisposable
         Rec(host, D0.AddDays(1), "高", issue);
         _gapsResult = new GapsDto { TooLarge = true };
 
-        var u = MakeRig().Effectiveness.Get(D0, PeriodTo).Unresolved;
+        var u = MakeRig().Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
 
         Assert.True(u.PendingDispatch.TooLarge);
+        Assert.Equal("period", u.PendingDispatch.UnsplitReason);
         Assert.Null(u.PendingDispatch.HostDays);
         Assert.Null(u.NotNeeded.HostDays);
         Assert.Equal(1, u.InHandlers.HostDays);
+    }
+
+    /// <summary>
+    /// 待派拆分的條件：檢視者具 Assign 且期間不超過待派預設窗口（7 天）才跑試跑；邊界兩側各一例，
+    /// 沒跑時兩段主機日為 null、標 TooLarge，處理中那段照算。
+    /// </summary>
+    [Fact]
+    public void 未結案三段_待派拆分只在具Assign且期間不超過預設窗口時跑試跑()
+    {
+        var host = AddHost("H1");
+        var issue = Issue("disk", 7);
+        Rec(host, D0, "高", issue);
+        _gapsResult = new GapsDto { DispatchableIssueHosts = 1 };
+        _gapsResult.DispatchableHostNames.Add("H1");
+
+        // 具 Assign、期間剛好 7 天：跑試跑
+        _gapsCalls = 0;
+        var inWindow = MakeRig().Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
+        Assert.Equal(1, _gapsCalls);
+        Assert.False(inWindow.PendingDispatch.TooLarge);
+        Assert.Null(inWindow.PendingDispatch.UnsplitReason);
+        Assert.Equal(1, inWindow.PendingDispatch.HostDays);
+
+        // 期間 8 天（超過一天）：不跑
+        _gapsCalls = 0;
+        var tooLong = MakeRig().Effectiveness.Get(D0, D0.AddDays(7)).Unresolved;
+        Assert.Equal(0, _gapsCalls);
+        Assert.True(tooLong.PendingDispatch.TooLarge);
+        Assert.Equal("period", tooLong.PendingDispatch.UnsplitReason);
+        Assert.Null(tooLong.PendingDispatch.HostDays);
+        Assert.Null(tooLong.NotNeeded.HostDays);
+
+        // 沒有 Assign（期間在窗口內）：不跑
+        _gapsCalls = 0;
+        var noAssign = MakeRig(user: FakeCurrentUser.WithCapabilities(Capability.ViewAll)).Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
+        Assert.Equal(0, _gapsCalls);
+        Assert.True(noAssign.PendingDispatch.TooLarge);
+        Assert.Equal("permission", noAssign.PendingDispatch.UnsplitReason);
+    }
+
+    /// <summary>快取鍵含檢視者是否具 Assign：同一期間、同一可見範圍，具 Assign 者的拆分不能端給沒有 Assign 的人</summary>
+    [Fact]
+    public void 未結案三段_快取不在有無Assign的檢視者之間共用()
+    {
+        var host = AddHost("H1");
+        Rec(host, D0, "高", Issue("disk", 7));
+        _gapsResult = new GapsDto { DispatchableIssueHosts = 1 };
+        var cache = new SummaryCache(new DataVersionStamp());
+
+        var assigner = MakeRig(cache: cache).Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
+        var viewer = MakeRig(cache: cache, user: FakeCurrentUser.WithCapabilities(Capability.ViewAll)).Effectiveness.Get(D0, D0.AddDays(6)).Unresolved;
+
+        Assert.False(assigner.PendingDispatch.TooLarge);
+        Assert.True(viewer.PendingDispatch.TooLarge);
     }
 
     // ── 帳齡 ─────────────────────────────────────────────────────────────

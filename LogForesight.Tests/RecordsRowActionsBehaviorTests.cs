@@ -19,6 +19,8 @@ public sealed class RecordsRowActionsBehaviorTests
     [InlineData("records-row-actions.behavior.mjs", "twoActionsInlineWithoutMenu")]
     [InlineData("records-row-actions.behavior.mjs", "oneAction")]
     [InlineData("records-row-actions.behavior.mjs", "maintainOnlyHasMuteAndHideTriage")]
+    [InlineData("records-row-actions.behavior.mjs", "handleOnlyHasBulkMarkEntry")]
+    [InlineData("records-row-actions.behavior.mjs", "bulkCloseFormAutoApplyOnlyForAssign")]
     [InlineData("records-row-actions.behavior.mjs", "noActionReturnsEmpty")]
     [InlineData("records-row-actions.behavior.mjs", "menuItemFocusesToggleBeforeOpening")]
     public void 問題查詢列內動作的production行為(string scriptName, string caseName)

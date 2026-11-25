@@ -3,6 +3,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Core.Analysis;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 
@@ -38,14 +39,16 @@ public class ReportEffectivenessService
     private readonly IKnownIssueRuleStore _rules;
     private readonly IIssueCaseStore _cases;
     private readonly PendingDispatchGapsProvider _gaps;
+    private readonly ICurrentUser _currentUser;
     private readonly TimeProvider _clock;
 
     public ReportEffectivenessService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IIssueHandlingStore issueStore, ISystemSettingsService systemSettings,
         SummaryCache cache, IIssueExclusionSource exclusions, IKnownIssueRuleStore rules,
-        IIssueCaseStore cases, PendingDispatchGapsProvider gaps, TimeProvider? clock = null)
+        IIssueCaseStore cases, PendingDispatchGapsProvider gaps, ICurrentUser currentUser, TimeProvider? clock = null)
     {
+        _currentUser = currentUser;
         _rules = rules;
         _cases = cases;
         _gaps = gaps;
@@ -65,8 +68,9 @@ public class ReportEffectivenessService
         if (to < from) (from, to) = (to, from);
         var visibleHosts = _visibility.GetVisibleHosts();
         var exclusion = _exclusions.Current();
+        // 待派拆分只給具 Assign 的檢視者（見 FillUnresolvedBreakdown）：結果隨檢視者能力不同，鍵要含這一維
         return _cache.GetOrAdd(
-            SummaryCache.KeyOf("report-effectiveness", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{exclusion.CacheToken}",
+            SummaryCache.KeyOf("report-effectiveness", $"{from:yyyyMMdd}|{to:yyyyMMdd}|{exclusion.CacheToken}|assign:{_currentUser.Has(Capability.Assign)}",
                 visibleHosts.Select(h => h.HostId).ToList()),
             () => Build(from.Date, to.Date, exclusion));
     }
@@ -166,11 +170,27 @@ public class ReportEffectivenessService
         var openDays = classified.Where(d => d.External == HandlingStatuses.Open).ToList();
         breakdown.InHandlers.HostDays = inProgressDays;
 
-        // 待派：沿用待派試跑（期間同報表期間）；超過上限時拆不開，兩段的主機日都不給
+        // 待派：沿用待派試跑（期間同報表期間）；超過上限時拆不開，兩段的主機日都不給。
+        // 試跑是整批派工推演、成本高，只在檢視者具 Assign（本來就能看待派）且期間不超過待派預設窗口時才跑；
+        // 其餘情況不呼叫試跑，直接標「無法拆開」（沿用 TooLarge 的表達，兩段主機日為 null）
+        var periodDays = (to.Date - from.Date).Days + 1;
+        if (!_currentUser.Has(Capability.Assign))
+        {
+            breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "permission";
+            return;
+        }
+        if (periodDays > WorkOrderBoardService.DefaultPeriodDays)
+        {
+            breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "period";
+            return;
+        }
         var trial = _gaps(from, to, 1);
         if (trial.TooLarge)
         {
             breakdown.PendingDispatch.TooLarge = true;
+            breakdown.PendingDispatch.UnsplitReason = "period";
             return;
         }
         breakdown.PendingDispatch.IssueHosts = trial.DispatchableIssueHosts;

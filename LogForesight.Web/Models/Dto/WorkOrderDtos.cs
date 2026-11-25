@@ -342,7 +342,7 @@ public class WorkOrderListRequest
     /// </summary>
     public string Status { get; set; } = "active";
 
-    /// <summary>true＝只列處理人已停用或已失去處理能力的單（與續掛停止原因 <c>handler_inactive</c> 同義）</summary>
+    /// <summary>true＝只列處理人已停用、暫停接單或已失去處理能力的單（<c>HandlerInactivity</c>，與管理者待辦同一個判定）</summary>
     public bool HandlerInactive { get; set; }
 
     /// <summary>處理人所屬的使用者群組（回饋第 47 輪定案 48：與負載看板同義）；null＝不限</summary>

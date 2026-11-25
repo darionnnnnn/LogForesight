@@ -717,6 +717,23 @@ public class WorkOrderDigestTests : IDisposable
     }
 
     [Fact]
+    public void C1_範圍代為結案且單仍進行中_信件寫幾台已結案而不是整張結案()
+    {
+        var partial = Item(WorkOrderOutboxKinds.AdminClosed, 501);
+        partial.MemberDelta = 2;
+        partial.Status = IssueHandlingStatuses.Resolved;
+        var (_, partialBody) = WorkOrderDigestBuilder.Build(new[] { (partial, (WorkOrderDigestOrder?)Order(501)) });
+        Assert.Contains("2 台已由管理者", partialBody);
+        Assert.Contains("單仍在進行中", partialBody);
+
+        var whole = Item(WorkOrderOutboxKinds.AdminClosed, 502);
+        whole.Status = IssueHandlingStatuses.Resolved;
+        var (_, wholeBody) = WorkOrderDigestBuilder.Build(new[] { (whole, (WorkOrderDigestOrder?)Order(502)) });
+        Assert.DoesNotContain("單仍在進行中", wholeBody);
+        Assert.Contains("代為結案，結案狀態：已處理", wholeBody);
+    }
+
+    [Fact]
     public async Task C1_代為結案未勾選不再派工_內文寫明再出現會重新派工()
     {
         var id = SeedOrder("Disk 153", 1, _alice.UserId);
