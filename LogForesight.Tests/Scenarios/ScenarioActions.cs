@@ -428,7 +428,9 @@ public static class ScenarioActions
                 Account = account,
                 DisplayName = account,
                 Email = spec.HasEmail ? $"{account}@scenario.test" : null,
-                Active = false
+                Active = false,
+                // 與使用者頁相同：帶開啟編輯時讀到的版本（第 81 輪批次 M）
+                Version = UserVersion.Of(ctx.Site.Get<IUserStore>().FindByAccount(account)!)
             });
         }
     }

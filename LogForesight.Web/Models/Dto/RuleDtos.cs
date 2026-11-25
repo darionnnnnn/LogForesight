@@ -6,6 +6,13 @@ namespace LogForesight.Web.Models.Dto;
 public class RuleDto
 {
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 這條規則目前的版本（內容雜湊）。開啟編輯時帶著它，儲存時放進 <see cref="SaveRuleRequest.Version"/>；
+    /// 伺服器當下的版本不同就整筆拒絕（409）。只有這條規則自己的內容變動才會改版本。
+    /// </summary>
+    public string Version { get; set; } = string.Empty;
+
     public string Origin { get; set; } = string.Empty;
     public bool Enabled { get; set; }
 
@@ -86,6 +93,13 @@ public class SaveRuleRequest
     [Required(ErrorMessage = "請輸入規則 Id")]
     [StringLength(100)]
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 開啟編輯時讀到的 <see cref="RuleDto.Version"/>。編輯既有規則必填（空白或與伺服器當下不同＝409，資料不變）；
+    /// 新增規則（Id 尚不存在）不需要。
+    /// </summary>
+    [StringLength(64)]
+    public string? Version { get; set; }
 
     public bool Enabled { get; set; } = true;
 

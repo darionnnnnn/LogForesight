@@ -250,10 +250,27 @@ public class RuleAdminService
         if (!validation.IsValid)
             throw DomainException.Validation("規則不合格，未儲存：" + string.Join("；", validation.Errors));
 
-        if (isNew) content.Rules.Add(rule);
-        else content.Rules[content.Rules.IndexOf(existing!)] = rule;
-
-        _rules.Save(content);
+        // 版本比對與寫入在同一個臨界區：上面的驗證用的是開始時讀到的快照，真正寫入前要以
+        // 「此刻最新的內容」再比一次版本（讀與寫之間不得被另一個儲存插入），不同就整筆不寫、不記稽核。
+        _rules.Update<object?>(fresh =>
+        {
+            var current = fresh.Rules
+                .FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase));
+            if (isNew)
+            {
+                // 新增沒有舊版本；但同編號剛被別人建立就是衝突（否則會產生兩條同編號規則）
+                if (current != null) throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules.Add(rule);
+            }
+            else
+            {
+                if (current == null ||
+                    !string.Equals(request.Version, KnownIssueRuleVersion.Of(current), StringComparison.Ordinal))
+                    throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules[fresh.Rules.IndexOf(current)] = rule;
+            }
+            return null;
+        });
 
         _audit.Record(
             action: isNew ? AuditActions.RuleCreate : AuditActions.RuleUpdate,
@@ -1186,6 +1203,7 @@ public class RuleAdminService
         return new RuleDto
         {
             Id = rule.Id,
+            Version = KnownIssueRuleVersion.Of(rule),
             Origin = rule.Origin,
             Enabled = rule.Enabled,
             Platform = rule.Platform,

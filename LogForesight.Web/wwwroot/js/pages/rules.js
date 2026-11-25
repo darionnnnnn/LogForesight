@@ -46,6 +46,7 @@ let suppressionPage = 1;
 let suppressionPageSize = loadPageSize('suppressions');
 
 const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
+const ruleConflictBox = document.getElementById('rule-conflict');
 const restoreModal = new bootstrap.Modal(document.getElementById('restore-modal'));
 const suppressModal = new bootstrap.Modal(document.getElementById('suppress-modal'));
 
@@ -580,6 +581,7 @@ function actionsCell(rule) {
  */
 function openRuleModal(rule, { asTemplate = false } = {}) {
     clearDiskPreview();
+    clearRuleConflict();
     editingRule = asTemplate ? null : rule;
     document.getElementById('rule-validation').replaceChildren();
 
@@ -691,6 +693,8 @@ function collectRule() {
 
     return {
         id: document.getElementById('rule-id').value.trim(),
+        // 開啟編輯時讀到的版本；新增（含以此為範本）沒有舊版本
+        version: editingRule?.version ?? null,
         enabled: document.getElementById('rule-enabled').checked,
         platform,
         sourcePattern: document.getElementById('rule-source').value.trim(),
@@ -988,6 +992,30 @@ document.getElementById('rule-validate').addEventListener('click', async () => {
     }
 });
 
+/** 版本衝突（409）的常駐訊息：保留使用者剛填的內容，不自動覆蓋、不自動關視窗，只提供重新載入 */
+const RULE_CONFLICT_TEXT = '這筆資料剛被其他人修改，請重新載入後再改。';
+function clearRuleConflict() {
+    ruleConflictBox.replaceChildren();
+    ruleConflictBox.classList.add('d-none');
+}
+
+function showRuleConflict() {
+    ruleConflictBox.replaceChildren(
+        statusNote('warning', RULE_CONFLICT_TEXT),
+        button('重新載入', { variant: 'outline-secondary', onClick: reloadAfterRuleConflict }));
+    ruleConflictBox.classList.remove('d-none');
+}
+
+/** 使用者按「重新載入」才換成伺服器的最新內容（這時才會丟掉自己填的內容） */
+async function reloadAfterRuleConflict() {
+    const ruleId = editingRule?.id;
+    clearRuleConflict();
+    await load();
+    const fresh = rules.find(r => r.id === ruleId);
+    if (fresh) openRuleModal(fresh);
+    else ruleModal.hide();
+}
+
 function showValidation(result) {
     const container = document.getElementById('rule-validation');
     container.replaceChildren();
@@ -1082,7 +1110,8 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
     const sourceRuleId = templateSourceRuleId;
 
     try {
-        await api.post('/api/rules', draft);
+        // silent：409 由常駐訊息處理（保留輸入），其他錯誤在下面補 toast
+        await api.post('/api/rules', draft, { silent: true });
 
         // 先建後停（回饋十五輪 R4）：順序刻意如此——若反過來先停用原規則、新規則卻建立失敗，
         // 會留下「原規則已停用、沒有替代規則生效」的空窗，比遮蔽警告更糟。
@@ -1102,8 +1131,9 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
 
         ruleModal.hide();
         await load();
-    } catch {
-        // 後端的驗證錯誤已由 api.js 以 toast 顯示
+    } catch (error) {
+        if (error?.status === 409) showRuleConflict();
+        else if (error?.name === 'ApiError') toast(error.message, 'danger');
     } finally {
         restore();
     }

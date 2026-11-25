@@ -341,6 +341,35 @@ internal class FakeUserStore : IUserStore
         return existing;
     }
 
+    private readonly object _saveLock = new();
+
+    public UserSaveResult SaveIfUnchanged(WebUser user, string? expectedVersion, IReadOnlyCollection<long>? groupIds)
+    {
+        lock (_saveLock)
+        {
+            var existing = FindByAccount(user.Account);
+            if (existing == null)
+            {
+                user.UserId = _nextId++;
+                if (groupIds != null) user.GroupIds = groupIds.Distinct().ToList();
+                _users.Add(user);
+                return new UserSaveResult(null, user);
+            }
+
+            if (!string.Equals(expectedVersion, UserVersion.Of(existing), StringComparison.Ordinal))
+                throw ConcurrentUpdateException.StaleVersion();
+
+            var before = UserVersion.Snapshot(existing);
+            if (existing.Active && !user.Active) existing.SessionVersion++;
+            existing.Account = user.Account;
+            existing.DisplayName = user.DisplayName;
+            existing.Email = user.Email;
+            existing.Active = user.Active;
+            if (groupIds != null) existing.GroupIds = groupIds.Distinct().ToList();
+            return new UserSaveResult(before, existing);
+        }
+    }
+
     public void SetGroups(long userId, IEnumerable<long> groupIds)
     {
         var user = Get(userId);
