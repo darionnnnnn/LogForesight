@@ -2,7 +2,7 @@
  * 使用者維護（docs/WEB-SPEC.md §9.8）。
  */
 
-import { roleText } from '../core/elements.js';
+import { roleText, statusNote } from '../core/elements.js';
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
@@ -328,8 +328,35 @@ function renderEditButton(user) {
     return button('編輯', { variant: 'outline-primary', onClick: () => openModal(user) });
 }
 
+/** 版本衝突（409）的常駐訊息：保留使用者剛填的內容，不自動覆蓋、不自動關視窗，只提供重新載入 */
+const CONFLICT_TEXT = '這筆資料剛被其他人修改，請重新載入後再改。';
+const conflictBox = document.getElementById('user-conflict');
+
+function clearConflict() {
+    conflictBox.replaceChildren();
+    conflictBox.classList.add('d-none');
+}
+
+function showConflict() {
+    conflictBox.replaceChildren(
+        statusNote('warning', CONFLICT_TEXT),
+        button('重新載入', { variant: 'outline-secondary', onClick: reloadAfterConflict }));
+    conflictBox.classList.remove('d-none');
+}
+
+/** 使用者按「重新載入」才換成伺服器的最新值（這時才會丟掉自己填的內容） */
+async function reloadAfterConflict() {
+    const userId = editingUser?.userId;
+    clearConflict();
+    await guardLoad(listContainer, load);
+    const fresh = users.find(u => u.userId === userId);
+    if (fresh) openModal(fresh);
+    else modal.hide();
+}
+
 function openModal(user) {
     editingUser = user;
+    clearConflict();
 
     document.getElementById('user-modal-title').textContent = user ? `編輯 ${user.account}` : '新增使用者';
     document.getElementById('user-account').value = user?.account ?? '';
@@ -413,22 +440,24 @@ form.addEventListener('submit', async event => {
     const restore = withBusy(saveButton, '儲存中');
 
     try {
+        // 基本資料與群組同一個請求、同一個版本比對：任何一部分過期都整筆拒絕，不會出現「名稱存了、群組沒存」。
+        // 新增沒有舊版本；silent：409 由下面的常駐訊息處理，不再另跳 toast
         const saved = await api.post('/api/admin/users', {
             account,
             displayName: document.getElementById('user-display-name').value.trim(),
             email: document.getElementById('user-email').value.trim() || null,
-            active
-        });
-
-        // 群組是獨立端點：儲存基本資料不會動到權限，權限異動一律留下自己的稽核紀錄
-        await api.put(`/api/admin/users/${saved.userId}/groups`, { groupIds: selectedGroupIds });
+            active,
+            groupIds: selectedGroupIds,
+            version: editingUser?.version ?? null
+        }, { silent: true });
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');
         if (editingUser?.active && !active) continueAfterAvailabilityChange(availabilityChoice, saved, saved.activeWorkOrders, '停用');
         modal.hide();
         await guardLoad(listContainer, load);
-    } catch {
-        // 錯誤訊息已由 api.js 以 toast 顯示
+    } catch (error) {
+        if (error?.status === 409) showConflict();
+        else if (error?.name === 'ApiError') toast(error.message, 'danger');
     } finally {
         restore();
     }

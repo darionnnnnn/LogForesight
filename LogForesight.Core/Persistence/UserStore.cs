@@ -96,6 +96,36 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
         });
     }
 
+    public UserSaveResult SaveIfUnchanged(WebUser user, string? expectedVersion, IReadOnlyCollection<long>? groupIds)
+    {
+        return Mutate(users =>
+        {
+            var existing = users.FirstOrDefault(u =>
+                string.Equals(u.Account, user.Account, StringComparison.OrdinalIgnoreCase));
+
+            if (existing == null)
+            {
+                user.UserId = NextId(users.Select(u => u.UserId));
+                if (groupIds != null) user.GroupIds = groupIds.Distinct().ToList();
+                users.Add(user);
+                return new UserSaveResult(null, user);
+            }
+
+            if (!string.Equals(expectedVersion, UserVersion.Of(existing), StringComparison.Ordinal))
+                throw ConcurrentUpdateException.StaleVersion();
+
+            var before = UserVersion.Snapshot(existing);
+            // 欄位保留規則同 Upsert（LastLoginAt、SessionVersion、DispatchPaused 不覆寫；啟用轉停用遞增 SessionVersion）
+            if (existing.Active && !user.Active) existing.SessionVersion++;
+            existing.Account = user.Account;
+            existing.DisplayName = user.DisplayName;
+            existing.Email = user.Email;
+            existing.Active = user.Active;
+            if (groupIds != null) existing.GroupIds = groupIds.Distinct().ToList();
+            return new UserSaveResult(before, existing);
+        });
+    }
+
     public void SetGroups(long userId, IEnumerable<long> groupIds)
     {
         Mutate(users =>

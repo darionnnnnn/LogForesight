@@ -146,7 +146,17 @@ public class RuleAdminService
         if (plan.Added == 0 && plan.Updated == 0)
             throw DomainException.Validation("沒有需要套用的變更（可能已經是最新版本，或未修改的 builtin 規則需要勾選「連同已修改的內建規則一併覆蓋」）。");
 
-        var validation = RuleImportPlanner.Apply(_rules, plan);
+        // 以臨界區內的最新規則重算計畫再寫入，與 SaveRule 並發時不互相覆蓋
+        RuleValidationOutcome validation = null!;
+        plan = _rules.Update(fresh =>
+        {
+            var freshPlan = RuleImportPlanner.BuildPlan(fresh.Rules, KnownIssueSeed.CreateRules(), overwriteBuiltin);
+            fresh.SchemaVersion = RuleFileContent.CurrentSchemaVersion;
+            fresh.SeedVersion = KnownIssueSeed.Version;
+            fresh.Rules = freshPlan.ResultingRules;
+            validation = RuleValidator.Validate(fresh.Rules);
+            return freshPlan;
+        });
 
         _audit.Record(
             action: AuditActions.RuleSeedImport,
@@ -256,10 +266,27 @@ public class RuleAdminService
         if (!validation.IsValid)
             throw DomainException.Validation("規則不合格，未儲存：" + string.Join("；", validation.Errors));
 
-        if (isNew) content.Rules.Add(rule);
-        else content.Rules[content.Rules.IndexOf(existing!)] = rule;
-
-        _rules.Save(content);
+        // 版本比對與寫入在同一個臨界區：上面的驗證用的是開始時讀到的快照，真正寫入前要以
+        // 「此刻最新的內容」再比一次版本（讀與寫之間不得被另一個儲存插入），不同就整筆不寫、不記稽核。
+        _rules.Update<object?>(fresh =>
+        {
+            var current = fresh.Rules
+                .FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase));
+            if (isNew)
+            {
+                // 新增沒有舊版本；但同編號剛被別人建立就是衝突（否則會產生兩條同編號規則）
+                if (current != null) throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules.Add(rule);
+            }
+            else
+            {
+                if (current == null ||
+                    !string.Equals(request.Version, KnownIssueRuleVersion.Of(current), StringComparison.Ordinal))
+                    throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules[fresh.Rules.IndexOf(current)] = rule;
+            }
+            return null;
+        });
 
         _audit.Record(
             action: isNew ? AuditActions.RuleCreate : AuditActions.RuleUpdate,
@@ -295,8 +322,14 @@ public class RuleAdminService
         // stampModified: false——「已修改」徽章指的是**內容**被改過（決定程式改版時
         // 要不要跟進新種子），啟用/停用是獨立的營運狀態（--overwrite-builtin 本來就會保留它）。
         // 只停用就掛上「已修改」會讓人誤以為內容動過，該查的差異其實不存在。
-        content.Rules[index] = CloneWith(rule, enabled: enabled, stampModified: false);
-        _rules.Save(content);
+        // 寫入在臨界區內以最新內容套用，與 SaveRule 並發時不互相覆蓋（不需版本比對）
+        _rules.Update<object?>(fresh =>
+        {
+            var freshIndex = fresh.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+            if (freshIndex < 0) throw DomainException.NotFound("找不到這條規則。");
+            fresh.Rules[freshIndex] = CloneWith(fresh.Rules[freshIndex], enabled: enabled, stampModified: false);
+            return null;
+        });
 
         _audit.Record(
             action: enabled ? AuditActions.RuleEnable : AuditActions.RuleDisable,
@@ -611,8 +644,16 @@ public class RuleAdminService
                 $"「{ruleId}」是程式內建規則，不可刪除。若不需要它，請改為停用（可隨時恢復）。");
         }
 
-        content.Rules.Remove(rule);
-        _rules.Save(content);
+        _rules.Update<object?>(fresh =>
+        {
+            var current = fresh.Rules.FirstOrDefault(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase))
+                          ?? throw DomainException.NotFound("找不到這條規則。");
+            if (!string.Equals(current.Origin, "custom", StringComparison.OrdinalIgnoreCase))
+                throw DomainException.Validation(
+                    $"「{ruleId}」是程式內建規則，不可刪除。若不需要它，請改為停用（可隨時恢復）。");
+            fresh.Rules.Remove(current);
+            return null;
+        });
 
         // 連同該規則的抑制設定一併清除，否則會留下指向不存在規則的孤兒設定
         var allSuppressions = _suppressions.LoadAll();
@@ -651,13 +692,16 @@ public class RuleAdminService
     {
         var (current, seedRule) = LoadForRestore(ruleId);
 
-        var content = LoadContent();
-        var index = content.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
-
         // 回復內容但**保留使用者的 Enabled 設定**——回復內容不等於重新啟用，
-        // 沿用 --overwrite-builtin 的既有語意（停用不會被悄悄打開）
-        content.Rules[index] = CloneWith(seedRule, enabled: current.Enabled, clearModified: true);
-        _rules.Save(content);
+        // 沿用 --overwrite-builtin 的既有語意（停用不會被悄悄打開）。
+        // 在臨界區內以最新內容套用，與 SaveRule 並發時不互相覆蓋
+        _rules.Update<object?>(fresh =>
+        {
+            var index = fresh.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) throw DomainException.NotFound("找不到這條規則。");
+            fresh.Rules[index] = CloneWith(seedRule, enabled: fresh.Rules[index].Enabled, clearModified: true);
+            return null;
+        });
 
         _audit.Record(
             action: AuditActions.RuleRestoreSeed,
@@ -1293,6 +1337,7 @@ public class RuleAdminService
         return new RuleDto
         {
             Id = rule.Id,
+            Version = KnownIssueRuleVersion.Of(rule),
             Origin = rule.Origin,
             Enabled = rule.Enabled,
             Platform = rule.Platform,

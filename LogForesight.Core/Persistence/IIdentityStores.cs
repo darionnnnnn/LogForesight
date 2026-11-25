@@ -28,6 +28,15 @@ public interface IUserStore
     void SetGroups(long userId, IEnumerable<long> groupIds);
 
     /// <summary>
+    /// 管理員編輯視窗的一次儲存（第 81 輪批次 M）：基本資料（顯示名稱、Email、啟用）與群組在**同一個原子寫入**內完成，
+    /// 並在這同一個臨界區內比對 <paramref name="expectedVersion"/>（<see cref="UserVersion.Of"/>）。
+    /// 帳號已存在而版本空白或與當下不同 → 擲 <see cref="ConcurrentUpdateException"/>、什麼都不寫；
+    /// 帳號不存在＝新增，不需版本。<paramref name="groupIds"/> 為 null＝不動群組（沿用伺服器當下的值，
+    /// 不以開啟視窗時的快照覆蓋）。其餘欄位的保留規則與 <see cref="Upsert"/> 相同。
+    /// </summary>
+    UserSaveResult SaveIfUnchanged(WebUser user, string? expectedVersion, IReadOnlyCollection<long>? groupIds);
+
+    /// <summary>
     /// 記錄一次成功登入的時間（docs/archive/FEEDBACK-11-PLAN.md §3）。
     /// **刻意不併進 <see cref="Upsert"/>**：Upsert 的既存分支逐欄覆寫，而各處建構
     /// <see cref="WebUser"/> 的呼叫端（使用者頁儲存、批次新增）都不會帶這個欄位，
@@ -59,6 +68,32 @@ public interface IUserStore
     /// Cookie 驗證與簽發一律讀這個，不直接讀 <see cref="WebUser.SessionVersion"/>。
     /// </summary>
     long GetSessionVersion(WebUser user);
+}
+
+/// <summary><see cref="IUserStore.SaveIfUnchanged"/> 的結果：寫入前的快照（新增時為 null）與寫入後的物件。</summary>
+public sealed record UserSaveResult(WebUser? Before, WebUser After);
+
+/// <summary>
+/// 單一使用者的版本：管理員編輯視窗涵蓋的欄位（顯示名稱、Email、啟用、群組）的雜湊，不新增欄位。
+/// 暫停接單、登入時間等不在編輯視窗內的欄位不參與，不會讓編輯中的人無謂衝突。
+/// </summary>
+public static class UserVersion
+{
+    public static string Of(WebUser user)
+    {
+        var text = string.Join('\n',
+            user.DisplayName ?? "", user.Email ?? "", user.Active ? "1" : "0",
+            string.Join(',', user.GroupIds.Distinct().OrderBy(id => id)));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(text)), 0, 8);
+    }
+
+    /// <summary>寫入前快照（只含編輯視窗涵蓋的欄位，供稽核與權限判斷比對）</summary>
+    public static WebUser Snapshot(WebUser user) => new()
+    {
+        UserId = user.UserId, Account = user.Account, DisplayName = user.DisplayName, Email = user.Email,
+        Active = user.Active, GroupIds = user.GroupIds.ToList()
+    };
 }
 
 /// <summary>

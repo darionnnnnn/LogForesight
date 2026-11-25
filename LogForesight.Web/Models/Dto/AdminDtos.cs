@@ -5,6 +5,13 @@ namespace LogForesight.Web.Models.Dto;
 public class UserDto
 {
     public long UserId { get; set; }
+
+    /// <summary>
+    /// 這位使用者目前的版本（顯示名稱、Email、啟用、群組的雜湊）。開啟編輯視窗時帶著它，
+    /// 儲存時放進 <see cref="SaveUserRequest.Version"/>；伺服器當下的版本不同就整筆拒絕（409）。
+    /// </summary>
+    public string Version { get; set; } = string.Empty;
+
     public string Account { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string? Email { get; set; }
@@ -131,6 +138,20 @@ public class SaveUserRequest
     public string? Email { get; set; }
 
     public bool Active { get; set; } = true;
+
+    /// <summary>
+    /// 開啟編輯時讀到的 <see cref="UserDto.Version"/>。帳號已存在時必填（空白或與伺服器當下不同＝409，資料不變）；
+    /// 新增帳號不需要。
+    /// </summary>
+    [StringLength(64)]
+    public string? Version { get; set; }
+
+    /// <summary>
+    /// 編輯視窗勾選的群組，與基本資料同一個請求、同一個版本比對。
+    /// null（不帶）＝不動群組，沿用伺服器當下的值——只改基本資料不會以開啟視窗時的群組快照覆蓋；
+    /// 空陣列＝清空群組。
+    /// </summary>
+    public List<long>? GroupIds { get; set; }
 }
 
 public class SetUserGroupsRequest

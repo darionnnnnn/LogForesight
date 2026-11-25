@@ -21,4 +21,16 @@ public sealed class ConcurrentUpdateException : Exception
         : base($"{what}剛剛已被其他人修改，您看到的可能不是最新狀態。請重新整理後再操作一次。", inner)
     {
     }
+
+    private ConcurrentUpdateException(string message) : base(message)
+    {
+    }
+
+    /// <summary>
+    /// 版本比對失敗（第 81 輪批次 M）：呼叫端帶來的「開啟編輯時讀到的版本」與伺服器當下的不同，
+    /// 或編輯既有資料卻沒帶版本——沒有任何資料被寫入。與上面的建構子同樣對應 409，
+    /// 但這裡沒有底層 EF 例外可附，訊息固定說明該怎麼做。
+    /// </summary>
+    public static ConcurrentUpdateException StaleVersion() =>
+        new("這筆資料剛被其他人修改，請重新載入後再改。");
 }

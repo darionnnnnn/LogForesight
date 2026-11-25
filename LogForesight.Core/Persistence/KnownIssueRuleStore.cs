@@ -205,6 +205,16 @@ public class KnownIssueRuleStore : IKnownIssueRuleStore
     public void Save(RuleFileContent content) =>
         _blob.Mutate<object?>(_ => (JsonSerializer.Serialize(content, _options), null));
 
+    public TResult Update<TResult>(Func<RuleFileContent, TResult> mutation) =>
+        _blob.Mutate(raw =>
+        {
+            var outcome = LoadText(raw);
+            if (!outcome.Success || outcome.Content == null)
+                throw new InvalidOperationException($"規則庫載入失敗：{outcome.Error}");
+            var result = mutation(outcome.Content);
+            return (JsonSerializer.Serialize(outcome.Content, _options), result);
+        });
+
     private static int? TryGetInt(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var el) && el.TryGetInt32(out var value) ? value : null;
 }
