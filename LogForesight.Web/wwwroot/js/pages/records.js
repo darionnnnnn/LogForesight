@@ -1703,6 +1703,26 @@ export function renderWorkOrderHostTable(container, hosts, { excludedHostIds, re
 }
 
 /** 交辦預覽摘要（台數、排除說明、可見範圍提示、分配）；寫進 summaryWrap，供行為測試單獨載入 */
+/**
+ * 交辦彈窗的期限預填：預覽回來的 suggestedDueDate（依嚴重度，可清除）填進預計完成日。
+ * 使用者動過期限欄（改日期或清掉，input／change 事件）之後記下「已編輯」，之後的預覽不再覆蓋；
+ * 沒動過就跟著最新的建議走（建議消失時一併清掉預填，並藏起說明）。程式設值不會觸發事件，不會誤記為使用者編輯。
+ */
+function createSuggestedDuePrefill(dueInput, hintEl) {
+    let userEdited = false;
+    const markEdited = () => { userEdited = true; };
+    dueInput.addEventListener('input', markEdited);
+    dueInput.addEventListener('change', markEdited);
+    return {
+        apply(preview) {
+            const suggested = preview?.suggestedDueDate ? String(preview.suggestedDueDate).slice(0, 10) : '';
+            hintEl.classList.toggle('d-none', !suggested);
+            if (userEdited) return;
+            dueInput.value = suggested;
+        }
+    };
+}
+
 function renderWorkOrderPreviewSummary(summaryWrap, preview) {
     summaryWrap.replaceChildren();
 
@@ -1922,7 +1942,11 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
     dueError.className = 'invalid-feedback d-block mb-3';
     dueError.setAttribute('aria-live', 'polite');
     const dueCheck = bindPastDateCheck(dueInput, dueError, { message: '預計完成日不可早於今天' });
-    form.append(dueLabel, dueInput, dueError);
+    const dueHint = document.createElement('div');
+    dueHint.className = 'lf-text-meta mt-1 d-none';
+    dueHint.textContent = '依嚴重度預設，可清除';
+    const duePrefill = createSuggestedDuePrefill(dueInput, dueHint);
+    form.append(dueLabel, dueInput, dueHint, dueError);
 
     // 4. 衝突處理
     const conflictWrap = document.createElement('div');
@@ -2027,6 +2051,7 @@ function renderWorkOrderForm(body, group, users, groups, modal) {
                 try {
                     const preview = await api.post('/api/work-orders/preview', payload, { silent: true });
                     if (previewGuard.isCurrent(currentRequestId)) {
+                        duePrefill.apply(preview);
                         renderPreview(preview);
                     }
                 } catch (error) {

@@ -9,7 +9,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { appUrl, urlParamChoice } from '../core/paths.js';
 import {
     renderTable,
     renderPagination,
@@ -26,7 +26,7 @@ import {
     loadPageSize,
     savePageSize
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge, hostCountText } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge, hostCountText, workOrderSeverityCell, workOrderFlagBadges } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
@@ -129,6 +129,12 @@ if (hasUrlFilter) {
         hintRow.appendChild(clearLink);
         toolbar.parentElement.insertBefore(hintRow, toolbar);
     }
+}
+
+// 網址帶 sort 時優先於預設（最新建立）；不認得的值沿用預設
+{
+    const urlSort = activeSortSelect && urlParamChoice(location.search, 'sort', Array.from(activeSortSelect.options ?? []).map(o => o.value));
+    if (urlSort) activeSortSelect.value = urlSort;
 }
 
 // 只帶 status（例如提醒區的「上報中」連結）：預選狀態下拉，其餘篩選維持預設
@@ -275,7 +281,17 @@ function renderActiveTable(data) {
         {
             title: '問題',
             className: 'lf-minw-xl',
-            render: r => renderIssueCell(r.issueLabel, r.plainExplanation)
+            render: r => {
+                const cell = renderIssueCell(r.issueLabel, r.plainExplanation);
+                const flags = workOrderFlagBadges(r, { recurrence: true });
+                if (flags) cell.appendChild(flags);
+                return cell;
+            }
+        },
+        {
+            title: '嚴重度',
+            className: 'text-nowrap',
+            render: r => workOrderSeverityCell(r)
         },
         {
             title: '處理人',

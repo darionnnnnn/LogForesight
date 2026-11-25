@@ -1854,7 +1854,7 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 /**
  * KPI 卡列（唯一出口）：分組、等高、限寬。各頁不得再自己用「col-6 col-lg-3 ＋ 單張卡」排 KPI（FrontendConsistencyUiTests 守門）。
  *
- * groups：`[{ title?, cards: [{ value, label, variant?, url?, sub?, title? }] }]`
+ * groups：`[{ title?, cards: [{ value, label, variant?, url?, onClick?, sub?, title? }] }]`
  * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。
  * - 沒有卡的組不輸出；所有組都沒有卡時回傳空容器，由呼叫端決定要不要顯示。
  * - singleRow：各組排在同一排依卡數分寬、卡片撐滿（搭配 core/reveal.js 只顯示第一排的頁面用）。
@@ -1889,6 +1889,13 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             const el = document.createElement(card.url ? 'a' : 'div');
             el.className = card.url ? 'lf-kpi-card lf-kpi-card--link' : 'lf-kpi-card';
             if (card.url) el.href = appUrl(card.url);
+            // onClick：就地套用（不換頁）；仍保留 url 讓中鍵／新分頁可用，一般點擊攔下改走 onClick
+            if (typeof card.onClick === 'function') {
+                el.addEventListener('click', event => {
+                    event.preventDefault();
+                    card.onClick(event);
+                });
+            }
             const fullText = card.title || (typeof card.sub === 'string' ? card.sub : '');
             if (fullText) el.title = fullText;
 

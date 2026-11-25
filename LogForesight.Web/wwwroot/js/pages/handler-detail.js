@@ -13,7 +13,7 @@
  */
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
-import { appUrl, recordDetailUrl, recordsUrl } from '../core/paths.js';
+import { appUrl, recordDetailUrl, recordsUrl, urlParamChoice } from '../core/paths.js';
 import { safeStorage } from '../core/storage.js';
 import {
     renderLoading,
@@ -31,7 +31,7 @@ import {
     createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure } from '../core/elements.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS, hostCountText } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS, hostCountText, severityName, workOrderSeverityCell, workOrderFlagBadges } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
@@ -54,6 +54,7 @@ const selectedCountEl = document.getElementById('handler-wo-selected');
 const hostSearchInput = document.getElementById('handler-host-search');
 const advancedEl = document.getElementById('handler-advanced');
 const advancedBodyEl = document.getElementById('handler-advanced-body');
+const flagBannerEl = document.getElementById('handler-wo-flag');
 
 const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
@@ -67,6 +68,23 @@ const DONE_ROW_DELAY_MS = 1200;
 function urlOrderStatus(search, validValues) {
     const value = new URLSearchParams(search).get('status');
     return value && validValues.includes(value) ? value : null;
+}
+
+/**
+ * 標記篩選（摘要信連結 `?flag=returned`、「今天需要你處理」各數字）：值與後端 `flag` 參數一致，
+ * 橫幅文字也只在這一張表。未知的值不出橫幅，但仍原樣送給後端，驗證錯誤照後端訊息顯示。
+ */
+const ORDER_FLAGS = {
+    returned: '被退回的單',
+    newToday: '今天新增的單',
+    recurrence: '復發的單',
+    observationExpired: '觀察到期的單',
+    dueSoon: '3 天內到期的單'
+};
+
+/** 網址 ?flag=：有值就回原字串（含未知值），沒帶回 null */
+function urlOrderFlag(search) {
+    return new URLSearchParams(search).get('flag') || null;
 }
 
 const MEMBER_STATUS_OPTIONS = [
@@ -87,6 +105,7 @@ let currentUser = null;
 let isSelf = false;                // 檢視自己的頁
 let canReply = false;              // 本人檢視自己的頁且具 Handle
 let summary = null;                // work-orders/summary
+let activeFlag = urlOrderFlag(location.search);   // 標記篩選（網址帶入或點「今天需要你處理」的數字）
 let orderPage = 1;
 let orderTotalPages = 1;
 let currentRows = [];              // 目前這一頁的單（清單排序），「下一張」依此找
@@ -250,14 +269,84 @@ function kpiCards(data) {
     ];
 }
 
+/**
+ * 「今天需要你處理」五個數字（主要一行）：今天新增、復發、被退回、觀察到期、3 天內到期。
+ * 大於 0 的整張卡可點，套用對應的標記篩選（狀態改為進行中：數字以進行中成員計，不能再被「待我處理」篩掉一部分）；
+ * 0 照顯示、淡化（secondary）且不可點。欄位缺漏（舊回應）一律當 0。
+ */
+function todayCards(data) {
+    const defs = [
+        { flag: 'newToday', label: '今天新增', value: data.newTodayHosts, sub: '台' },
+        { flag: 'recurrence', label: '復發', value: data.recurrenceHosts, sub: '台' },
+        { flag: 'returned', label: '被退回', value: data.returnedMembers, sub: '件' },
+        { flag: 'observationExpired', label: '觀察到期', value: data.observationExpiredHosts, sub: '台' },
+        { flag: 'dueSoon', label: '3 天內到期', value: data.dueSoonMembers, sub: '件' }
+    ];
+    return defs.map(d => {
+        const value = d.value ?? 0;
+        const card = { value: formatNumber(value), label: d.label, sub: d.sub };
+        if (value > 0) {
+            // url 讓中鍵／新分頁可用（頁面載入時由 urlOrderFlag 接手）；一般點擊就地套用
+            card.url = `/handlers/${userId}?status=active&flag=${d.flag}`;
+            card.onClick = () => applyFlag(d.flag, { status: 'active' });
+            card.title = `只看${ORDER_FLAGS[d.flag]}`;
+        } else {
+            card.variant = 'secondary';
+        }
+        return card;
+    });
+}
+
 function renderKpi(data) {
     kpiEl.replaceChildren();
 
-    const cards = kpiCards(data);
+    // 主要一行：今天需要你處理；次要一行：存量（進行中單、三個互斥台數、逾期、未回覆）
+    kpiEl.appendChild(kpiStrip([{ title: '今天需要你處理', cards: todayCards(data) }], { singleRow: true }));
+    const stock = kpiStrip([{
+        title: '目前存量',
+        cards: kpiCards(data).map(c => ({ value: formatNumber(c.value), label: c.label, variant: c.variant }))
+    }], { singleRow: true });
+    stock.classList.add('mt-3');
+    kpiEl.appendChild(stock);
+}
 
-    kpiEl.appendChild(kpiStrip([{
-        cards: cards.map(c => ({ value: formatNumber(c.value), label: c.label, variant: c.variant }))
-    }]));
+/** 標記橫幅文字：已知值回「只看：…」，未知或沒有回 null */
+function flagBannerText(flag) {
+    return ORDER_FLAGS[flag] ? `只看：${ORDER_FLAGS[flag]}` : null;
+}
+
+/** 清單上方的標記橫幅：有已知標記時顯示並附清除鈕；其餘隱藏 */
+function renderFlagBanner() {
+    flagBannerEl.replaceChildren();
+    const text = activeFlag ? flagBannerText(activeFlag) : null;
+    flagBannerEl.classList.toggle('d-none', !text);
+    if (!text) return;
+    const row = document.createElement('div');
+    row.className = 'd-flex flex-wrap align-items-center gap-2';
+    row.append(
+        roleText('lf-text-label', text),
+        button('清除', { icon: 'x-lg', title: '清除「只看」條件，回到完整清單', onClick: () => applyFlag(null) })
+    );
+    flagBannerEl.appendChild(row);
+}
+
+/** 網址同步標記：有就寫入 flag、沒有就移除；網址本來帶 status 的跟著下拉更新（其餘參數保留），不新增瀏覽紀錄 */
+function syncFlagUrl() {
+    const params = new URLSearchParams(location.search);
+    if (activeFlag) params.set('flag', activeFlag);
+    else params.delete('flag');
+    if (params.has('status')) params.set('status', statusSelect.value);
+    const query = params.toString();
+    history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
+}
+
+/** 套用或清除標記篩選（status 有給就一併切換下拉）：同步網址與橫幅，回第一頁重載 */
+function applyFlag(flag, { status = null } = {}) {
+    activeFlag = flag || null;
+    if (status) statusSelect.value = status;
+    syncFlagUrl();
+    renderFlagBanner();
+    onOrderFilterChange();
 }
 
 // ── 交辦單清單 ─────────────────────────────────────────────────────────────
@@ -277,6 +366,7 @@ function ordersUrl() {
     });
     // 未勾選時不帶 paused：處理人視角的預設本來就是排除暫停單（後端決定）
     if (pausedCheckbox.checked) params.set('paused', 'only');
+    if (activeFlag) params.set('flag', activeFlag);
     return `/api/handlers/${userId}/work-orders?${params}`;
 }
 
@@ -451,6 +541,11 @@ function renderOrders(data) {
         {
             title: '問題',
             render: row => orderIssueCell(row)
+        },
+        {
+            title: '嚴重度',
+            className: 'text-nowrap d-none d-sm-table-cell',
+            render: row => workOrderSeverityCell(row)
         },
         {
             title: '主機',
@@ -1277,10 +1372,14 @@ function orderIssueCell(row) {
         sub.classList.add('d-block');
         wrap.appendChild(sub);
     }
+    // 標記（新／退回／觀察到期）放在問題格：窄螢幕隱藏欄時仍看得到；復發標記在主機欄與窄版摘要行
+    const flags = workOrderFlagBadges(row);
+    if (flags) wrap.appendChild(flags);
     const counts = row.counts || {};
     const overdue = counts.overdue ?? 0;
     const narrow = metaLine([
         workOrderLink(row),
+        row.severity ? `嚴重度 ${severityName(row.severity)}${row.critical ? '（重大）' : ''}` : null,
         orderHostsHeadline(row, statusSelect.value),
         row.recurrenceHosts > 0 ? `復發 ${row.recurrenceHosts}` : null,
         overdue > 0 ? roleText('lf-text-alert', `逾期 ${overdue}`) : null,
@@ -1342,6 +1441,9 @@ document.getElementById('handler-advanced-toggle').appendChild(
     disclosure('進階檢視：依主機、被指派的風險日', advancedBodyEl, { expanded: advancedOpenAtStart, onToggle: onAdvancedToggle }));
 if (advancedOpenAtStart) onAdvancedToggle(true);
 
+const sortFromUrl = urlParamChoice(location.search, 'sort', Array.from(sortSelect.options).map(option => option.value));
+if (sortFromUrl) sortSelect.value = sortFromUrl;
+renderFlagBanner();
 const statusFromUrl = urlOrderStatus(location.search, Array.from(statusSelect.options).map(option => option.value));
 if (statusFromUrl) statusSelect.value = statusFromUrl;
 guardLoad([kpiEl, ordersEl], load);
