@@ -17,6 +17,7 @@ import {
     guardLoad,
     toast,
     confirmActionWithReason,
+    confirmAction,
     showDetailModal,
     withBusy,
     searchableUserSelect,
@@ -27,7 +28,7 @@ import {
     createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure, fact, statusNote } from '../core/elements.js';
-import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
+import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge, hostCountText } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
@@ -79,6 +80,50 @@ const loadedMemberHosts = new Map();
 function renderMemberStatusBadge(status) {
     const meta = statusBadgeMeta(status) || { label: status || '未知', variant: 'neutral' };
     return statusBadge(meta.label, meta.variant);
+}
+
+/** 上次回覆說明在成員表最多顯示幾個字；全文放 title */
+const LAST_REPLY_NOTE_MAX = 24;
+/** 一鍵結案寫進回覆的說明 */
+const QUIET_CLOSE_NOTE = '觀察期滿未再發生';
+
+/** 「MM-DD 狀態：說明」（說明過長截斷，全文由呼叫端放 title）；日期取自結案時間的月-日 */
+function lastReplyParts(lastReply) {
+    const meta = statusBadgeMeta(lastReply.status);
+    const head = `${String(lastReply.date || '').slice(5, 10)} ${meta ? meta.label : lastReply.status || ''}`.trim();
+    const note = lastReply.note ? String(lastReply.note) : '';
+    const shown = note.length > LAST_REPLY_NOTE_MAX ? `${note.slice(0, LAST_REPLY_NOTE_MAX)}…` : note;
+    return { text: note ? `${head}：${shown}` : head, full: note ? `${head}：${note}` : '' };
+}
+
+/** 觀察中成員的「觀察期間再發生」文字：null＝觀察期間沒有任何分析紀錄（無資料，不等於沒有再發生） */
+function observedRecurText(days) {
+    if (days == null) return '無資料';
+    return days === 0 ? '沒有再發生' : `觀察期間再發生 ${days} 天`;
+}
+
+/**
+ * 成員表的狀態格：狀態徽章，復發的成員附「復發 N 次」與上一件的回覆（日期、狀態、說明；說明一律 textContent，
+ * 過長截斷並以 title 呈現全文），觀察中的成員附觀察期間再發生的天數。附註都是判斷層文字，沒有就只有徽章。
+ */
+function memberStatusCell(item) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-column align-items-start gap-1';
+    wrap.appendChild(renderMemberStatusBadge(item.status));
+    if (item.isRecurrence) {
+        wrap.appendChild(statusBadge(`復發 ${item.recurrenceCount ?? 1} 次`, 'warning', { title: '同一台主機的同一個問題，近 30 天內已處理結案後又再出現' }));
+        if (item.lastReply) {
+            const parts = lastReplyParts(item.lastReply);
+            const line = roleText('lf-text-meta', parts.text);
+            line.classList.add('text-wrap');
+            if (parts.full) line.title = parts.full;
+            wrap.appendChild(line);
+        }
+    }
+    if (item.status === 'observing' && !item.closedAt) {
+        wrap.appendChild(roleText('lf-text-meta', observedRecurText(item.observedRecurDays)));
+    }
+    return wrap;
 }
 
 // ── 處理人選單 modal（改派與拆出共用，同一件事只寫一份）───────────────────
@@ -173,20 +218,31 @@ function renderBadges(detail) {
     badgesEl.replaceChildren(...badges);
 }
 
-/** 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標） */
-function renderMemberHostCell(item) {
+/**
+ * 成員表的主機格：有主機頁就連過去；停用主機上的進行中成員多一枚「主機已停用」標記（結案成員不標）。
+ * showOccurrence（「全部」篩選）：同主機的新舊案件並列時標「第 N 次」，新舊才對得起來；
+ * multiOnPage＝同一頁裡這台主機有不只一筆，第 1 次也標。
+ */
+function renderMemberHostCell(item, showOccurrence = false, multiOnPage = false) {
     const name = item.hostId ? document.createElement('a') : roleText('lf-text-title', item.hostName || '');
     if (item.hostId) {
         name.href = appUrl('/hosts/' + item.hostId);
         name.className = 'lf-text-title';
         name.textContent = item.hostName || '';
     }
+    const occurrence = item.occurrence ?? 1;
+    const occurrenceTag = showOccurrence && (occurrence > 1 || multiOnPage) ? roleText('lf-text-meta', `第 ${occurrence} 次`) : null;
     // 停用主機上的進行中成員不計入處理人的台數：成員列標出來，管理者才知道為什麼數字對不上
-    if (!item.hostDisabled || item.closedAt) return name;
+    const disabledTag = item.hostDisabled && !item.closedAt
+        ? statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' })
+        : null;
+    if (!occurrenceTag && !disabledTag) return name;
     // 名稱連結與標記同一行：用既有的 lf-meta-line（行內連結點擊區至少 24×24，小字級也點得到）
     const wrap = document.createElement('div');
     wrap.className = 'lf-meta-line';
-    wrap.append(name, statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' }));
+    wrap.append(name);
+    if (occurrenceTag) wrap.append(occurrenceTag);
+    if (disabledTag) wrap.append(disabledTag);
     return wrap;
 }
 
@@ -215,6 +271,22 @@ function continuationStopNote(detail) {
     const label = detail.continuationStoppedLabel || detail.continuationStoppedReason || '';
     const when = detail.continuationStoppedAt ? `（${formatDate(detail.continuationStoppedAt)}）` : '';
     return statusNote('info', `續掛已停止${when}：${label}。夜間派工不再把新主機續掛進這張單，處理人恢復資格後，之後新出現的主機照常續掛。`);
+}
+
+/**
+ * 頁首「成員」事實的文字：台數口徑（進行中台數、歷來台數與件數，見 hostCountText）、狀態分項（件數）、
+ * 有復發主機時補「其中 N 台是復發」。
+ */
+function memberSummaryText(detail) {
+    const counts = detail.counts || {};
+    const memberParts = [];
+    if (counts.inProgress > 0) memberParts.push(`處理中 ${counts.inProgress}`);
+    if (counts.observing > 0) memberParts.push(`觀察 ${counts.observing}`);
+    if (counts.open > 0) memberParts.push(`未處理 ${counts.open}`);
+    if (counts.escalated > 0) memberParts.push(`上報 ${counts.escalated}`);
+    if (counts.daySyncPending > 0) memberParts.push(`逐日同步中 ${counts.daySyncPending} 台`);
+    const recurrence = detail.recurrenceHosts > 0 ? `；其中 ${detail.recurrenceHosts} 台是復發` : '';
+    return hostCountText(detail) + recurrence + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
 }
 
 /**
@@ -252,14 +324,7 @@ function renderHeader(detail) {
     if (!detail.handlerActive) handlerWrap.append(' ', statusBadge('已停用', 'secondary'));
     if (detail.handlerPaused) handlerWrap.append(' ', statusBadge('暫停接單', 'warning'));
 
-    const counts = detail.counts || {};
-    const memberParts = [];
-    if (counts.inProgress > 0) memberParts.push(`處理中 ${counts.inProgress}`);
-    if (counts.observing > 0) memberParts.push(`觀察 ${counts.observing}`);
-    if (counts.open > 0) memberParts.push(`未處理 ${counts.open}`);
-    if (counts.escalated > 0) memberParts.push(`上報 ${counts.escalated}`);
-    if (counts.daySyncPending > 0) memberParts.push(`逐日同步中 ${counts.daySyncPending} 台`);
-    const membersText = `${counts.active ?? 0}／${counts.total ?? 0} 台` + (memberParts.length > 0 ? `（${memberParts.join('、')}）` : '');
+    const membersText = memberSummaryText(detail);
 
     const lastReplyText = detail.lastReplyAt
         ? formatDateTime(detail.lastReplyAt)
@@ -272,6 +337,15 @@ function renderHeader(detail) {
         fact('期限', detail.dueDate ? formatDate(detail.dueDate) : '—'),
         fact('最近回覆', lastReplyText)
     ]));
+
+    // 觀察期滿且期間沒有再發生的主機：一顆結案鈕放在判斷層（成員數字）正下方，不與頁面唯一的主要按鈕「回覆這張單」並排
+    const quietBtn = quietCloseButton(detail);
+    if (quietBtn) {
+        const quietRow = document.createElement('div');
+        quietRow.className = 'mt-2';
+        quietRow.appendChild(quietBtn);
+        nodes.push(quietRow);
+    }
 
     const stopNote = continuationStopNote(detail);
     if (stopNote) nodes.push(stopNote);
@@ -451,8 +525,13 @@ const openAdminCloseModal = exclusive(buildAdminCloseModal);
  * caseIds 為空＝全部進行中主機（端點語意），此時 hostCount 帶實際台數；被拒（單已結案、成員已非進行中、單已改派）
  * 一樣重新載入單頭、成員表與時間軸，訊息與草稿由彈窗保留，403 改寫成含新處理人的說明。
  */
-function openMemberReply(caseIds, targetText, hostCount = caseIds.length) {
+function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurrenceHosts = null) {
+    // 復發主機數：成員表勾選的由呼叫端數好傳入；整張單回覆取單頭的數字；只剩一台進行中時，該台是復發＝單頭的復發主機數 > 0
+    const recurrenceInReply = recurrenceHosts
+        ?? (caseIds.length === 0 ? (currentDetail.recurrenceHosts ?? 0)
+            : (caseIds.length === 1 ? Math.min(1, currentDetail.recurrenceHosts ?? 0) : 0));
     openWorkOrderReplyModal({
+        recurrence: { hosts: recurrenceInReply },
         multiTarget: hostCount > 1,
         title: `回覆交辦單 #${workOrderId}`,
         targetText,
@@ -485,6 +564,40 @@ function openMemberReply(caseIds, targetText, hostCount = caseIds.length) {
         },
         onApplied: () => reloadAll()
     });
+}
+
+/**
+ * 「把到期且沒有再發生的 N 台結案」：觀察期滿、觀察期間確定沒有再發生的成員（後端 observationExpiredQuietCaseIds）一次結案。
+ * 不自動結案——先 confirmAction 說清楚影響，再以既有回覆端點送「已處理」、說明「觀察期滿未再發生」；
+ * 成功沿用回覆的共用成功訊息並重載單頭、成員與時間軸。名單為空、檢視者不能回覆或單已結案時回 null。
+ */
+function quietCloseButton(detail) {
+    const caseIds = detail?.observationExpiredQuietCaseIds ?? [];
+    if (caseIds.length === 0 || !detail.viewerCanReply || detail.closedAt) return null;
+    const btn = button(`把到期且沒有再發生的 ${caseIds.length} 台結案`, { variant: 'outline-secondary', size: null, onClick: async () => {
+        const confirmed = await confirmAction({
+            title: '結案觀察期滿的主機？',
+            message: `將把 ${caseIds.length} 台觀察期已滿、期間沒有再發生的主機設為「已處理」，說明寫「${QUIET_CLOSE_NOTE}」。觀察期間沒有分析資料的主機不在其中。`,
+            confirmText: '結案',
+            confirmVariant: 'primary'
+        });
+        if (!confirmed) return;
+        const payload = { status: 'resolved', note: QUIET_CLOSE_NOTE, dueDate: null };
+        const restore = withBusy(btn, '結案中…');
+        try {
+            const result = await api.post(`/api/work-orders/${workOrderId}/reply`, { caseIds, ...payload }, { silent: true });
+            toastReplyResult(result, payload);
+        } catch (error) {
+            restore();
+            toast(error?.message || '結案失敗，請再試一次', 'danger');
+            // 被拒（單已結案、成員已非進行中、單已改派）：畫面資料已過期，重載
+            if (error?.status === 400 || error?.status === 403) await reloadAll();
+            return;
+        }
+        restore();
+        await reloadAll();
+    } });
+    return btn;
 }
 
 function renderActions(detail, user) {
@@ -684,6 +797,10 @@ function renderMembers(data) {
     const canReply = currentDetail && currentDetail.viewerCanReply;
     const showCheckboxes = canSplit || canReply;
     const columns = [];
+    // 「全部」篩選下新舊案件並列：同主機的列標「第 N 次」
+    const showOccurrence = memberStatusSelect.value === 'all';
+    const hostRows = new Map();
+    for (const m of data.items || []) hostRows.set(m.hostName, (hostRows.get(m.hostName) ?? 0) + 1);
 
     if (showCheckboxes) {
         columns.push({
@@ -707,12 +824,11 @@ function renderMembers(data) {
         {
             title: '主機',
             truncate: true,
-            render: item => renderMemberHostCell(item)
+            render: item => renderMemberHostCell(item, showOccurrence, (hostRows.get(item.hostName) ?? 0) > 1)
         },
         {
             title: '狀態',
-            className: 'text-nowrap',
-            render: item => renderMemberStatusBadge(item.status)
+            render: item => memberStatusCell(item)
         },
         {
             title: '期限',
@@ -912,7 +1028,8 @@ memberSplitBtn.addEventListener('click', () => {
 memberReplyBtn.addEventListener('click', () => {
     if (selectedCaseIds.size === 0) return;
     const caseIds = [...selectedCaseIds.keys()];
-    openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`);
+    const recurrenceHosts = [...selectedCaseIds.values()].filter(item => item?.isRecurrence).length;
+    openMemberReply(caseIds, `選取的 ${caseIds.length} 台主機`, caseIds.length, recurrenceHosts);
 });
 
 memberCsvBtn.addEventListener('click', async () => {

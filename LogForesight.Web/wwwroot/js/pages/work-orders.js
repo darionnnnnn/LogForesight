@@ -26,7 +26,7 @@ import {
     loadPageSize,
     savePageSize
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge, hostCountText } from '../core/format.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { roleText, filterDisclosure, statusNote, disclosure } from '../core/elements.js';
 import { statusBadgeMeta } from '../core/handling-statuses.js';
@@ -303,7 +303,7 @@ function renderActiveTable(data) {
                 const counts = r.counts || {};
                 const main = document.createElement('div');
                 main.className = 'text-nowrap lf-text-data';
-                main.textContent = `${counts.active ?? 0}／${counts.total ?? 0} 台`;
+                main.textContent = hostCountText(r);
                 wrap.appendChild(main);
 
                 const parts = [];
@@ -938,7 +938,7 @@ async function removeMute(r) {
 // ── 管理者提醒區 ───────────────────────────────────────────────────────────
 
 /**
- * 提醒區（第 76-2 輪批次 C-2）：今天新上報、上報逾期未處理、本趟派不出去、上報時沒有收件人四類（今天新上報只在這裡顯示、不寄信），數字與夜間的管理者摘要信
+ * 提醒區（第 76-2 輪批次 C-2）：今天新上報、上報逾期未處理、本趟派不出去、上報時沒有收件人、反覆結案又復發五類（今天新上報只在這裡顯示、不寄信），數字與夜間的管理者摘要信
  * 同一個彙整函式（GET api/work-orders/admin-reminders）。三類都是 0 時整區不顯示；有數字時每類一行「N 筆」並連到對應位置。
  */
 function renderReminders(data) {
@@ -948,7 +948,8 @@ function renderReminders(data) {
     const unassignable = data.unassignableCount ?? 0;
     const noRecipient = data.noRecipientCount ?? 0;
     const newEscalated = data.newEscalatedCount ?? 0;
-    if (escalated + unassignable + noRecipient + newEscalated === 0) return;
+    const recurrence = data.recurrenceCount ?? 0;
+    if (escalated + unassignable + noRecipient + newEscalated + recurrence === 0) return;
 
     remindersContainer.appendChild(statusNote('warning', '有項目需要管理者處理'));
     // 沒有 Assign 的檢視者（主管、開發人員）只能看：不用行動語氣，直說誰能處理
@@ -1013,6 +1014,13 @@ function renderReminders(data) {
         addRow(`上報信沒有任何收件人的單：${formatNumber(noRecipient)} 筆`, first ? `看單號 ${first.workOrderId}` : '看上報中的單',
             first ? appUrl('/work-orders/' + first.workOrderId) : appUrl('/work-orders') + '?status=escalated',
             '看是哪些', rows, noRecipient);
+    }
+    // 反覆結案又復發：沒有專屬的清單篩選，連到交辦總覽「進行中」（復發的成員都在進行中的單裡）；
+    // 明細的單號連結直接到那張單，成員表會標出復發次數
+    if (recurrence > 0) {
+        const rows = (data.recurrence ?? []).map(r => [orderLink(r.workOrderId), span(`${r.issueLabel}　${r.hostName}　復發 ${r.recurrenceCount} 次`)]);
+        addRow(`反覆結案又復發：${formatNumber(recurrence)} 筆`, '看進行中的單', appUrl('/work-orders') + '?status=active',
+            '看是哪些', rows, recurrence);
     }
     remindersContainer.appendChild(list);
 }

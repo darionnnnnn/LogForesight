@@ -21,6 +21,8 @@ public sealed class WorkOrdersRemindersBehaviorTests
     [InlineData("work-orders-reminders.behavior.mjs", "onlyNonZeroClassIsListed")]
     [InlineData("work-orders-reminders.behavior.mjs", "newEscalatedAloneShowsRegionWithLinkToEscalatedFilter")]
     [InlineData("work-orders-reminders.behavior.mjs", "newEscalatedAndOverdueAreSeparateRows")]
+    [InlineData("work-orders-reminders.behavior.mjs", "recurrenceAloneShowsRowLinkedToActiveList")]
+    [InlineData("work-orders-reminders.behavior.mjs", "recurrenceZeroOrMissingAddsNoRow")]
     [InlineData("work-orders-reminders.behavior.mjs", "rerenderClearsPreviousContent")]
     [InlineData("work-orders-reminders.behavior.mjs", "detailListsAreCollapsedAndLinked")]
     [InlineData("work-orders-reminders.behavior.mjs", "unassignableAtNullAndTruncationNote")]

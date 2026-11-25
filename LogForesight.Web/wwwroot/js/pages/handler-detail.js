@@ -31,7 +31,7 @@ import {
     createPageSelection
 } from '../core/ui.js';
 import { metaLine, roleText, disclosure } from '../core/elements.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, statusText, dueCell, ORIGIN_LABELS, hostCountText } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey, describeReplyRejection, orderMembersUrl, remainingActiveCount } from './issue-status-reply.js';
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { statusBadgeMeta, replyableCount, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
@@ -59,6 +59,15 @@ const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
 // 剛回覆而結案的列先淡化多久再重繪（讓人看得到「這張結案了」，不是突然消失）
 const DONE_ROW_DELAY_MS = 1200;
+
+/**
+ * 網址 ?status= 指定的清單狀態（通知信、提醒連結帶進來）：值要是狀態下拉有的選項才採用；
+ * 沒帶或不認得回 null，沿用頁面預設（待我處理）與使用者已選的值——網址優先於預設，不覆蓋使用者的選擇。
+ */
+function urlOrderStatus(search, validValues) {
+    const value = new URLSearchParams(search).get('status');
+    return value && validValues.includes(value) ? value : null;
+}
 
 const MEMBER_STATUS_OPTIONS = [
     { value: 'active', label: '進行中' },
@@ -225,16 +234,26 @@ function renderHeader(data) {
     renderPageHeader(document.getElementById('page-header'), { subtitle });
 }
 
+/**
+ * KPI 卡：進行中的台數分成三個互斥數字——待我處理（含觀察到期）、觀察期內、上報中，相加等於進行中台數；
+ * 另有進行中單、逾期台數與未回覆單。欄位缺漏（舊回應）一律當 0。
+ */
+function kpiCards(data) {
+    const overdue = data.overdueMembers ?? 0;
+    return [
+        { value: data.activeWorkOrders ?? 0, label: '進行中單' },
+        { value: data.todoHosts ?? 0, label: '待我處理' },
+        { value: data.observingHosts ?? 0, label: '觀察期內' },
+        { value: data.escalatedHosts ?? 0, label: '上報中' },
+        { value: overdue, label: '逾期台數', variant: overdue > 0 ? 'danger' : 'secondary' },
+        { value: data.unrepliedWorkOrders ?? 0, label: '未回覆單' }
+    ];
+}
+
 function renderKpi(data) {
     kpiEl.replaceChildren();
 
-    const overdue = data.overdueMembers ?? 0;
-    const cards = [
-        { value: data.activeWorkOrders, label: '進行中單' },
-        { value: data.activeMembers, label: '進行中台數' },
-        { value: overdue, label: '逾期台數', variant: overdue > 0 ? 'danger' : 'secondary' },
-        { value: data.unrepliedWorkOrders, label: '未回覆單' }
-    ];
+    const cards = kpiCards(data);
 
     kpiEl.appendChild(kpiStrip([{
         cards: cards.map(c => ({ value: formatNumber(c.value), label: c.label, variant: c.variant }))
@@ -313,7 +332,7 @@ async function refreshAfterReply({ keepExpandedId = null } = {}) {
 /** 回覆成功後排程就地更新；單因此結案且目前看的是「進行中」時，先淡化該列再重繪（不阻塞） */
 function scheduleRefresh(workOrderId, closed, keepExpandedId = null) {
     const refresh = () => guardLoad(ordersEl, () => refreshAfterReply({ keepExpandedId }));
-    if (!(closed && statusSelect.value === 'active')) return refresh();
+    if (!(closed && (statusSelect.value === 'active' || statusSelect.value === 'todo'))) return refresh();
 
     const tr = orderRowEl(workOrderId);
     if (tr) tr.classList.add('lf-row--done');
@@ -346,7 +365,7 @@ function expandOrderRow(workOrderId) {
 
 function selectOrder(row) {
     selectedOrderIds.add(row.workOrderId);
-    selectedOrderMeta.set(row.workOrderId, { active: replyableCount(row.counts), issueLabel: row.issueLabel });
+    selectedOrderMeta.set(row.workOrderId, { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0 });
 }
 
 function unselectOrder(id) {
@@ -357,7 +376,7 @@ function unselectOrder(id) {
 /** 勾選中的單的台數與問題名稱：本頁的用最新列，不在本頁的用勾選當下記的那份 */
 function selectedInfo(id) {
     const row = orderRowsById.get(id);
-    return row ? { active: replyableCount(row.counts), issueLabel: row.issueLabel } : selectedOrderMeta.get(id);
+    return row ? { active: replyableCount(row.counts), issueLabel: row.issueLabel, recurrence: row.recurrenceHosts ?? 0 } : selectedOrderMeta.get(id);
 }
 
 function renderOrders(data) {
@@ -436,28 +455,7 @@ function renderOrders(data) {
         {
             title: '主機',
             className: 'd-none d-sm-table-cell',
-            render: row => {
-                const wrap = document.createElement('div');
-                const counts = row.counts || {};
-                const main = document.createElement('div');
-                main.className = 'text-nowrap';
-                main.textContent = `${counts.active ?? 0}／${counts.total ?? 0} 台`;
-                wrap.appendChild(main);
-
-                const parts = [];
-                if (counts.inProgress > 0) parts.push(`處理中 ${counts.inProgress}`);
-                if (counts.observing > 0) parts.push(`觀察 ${counts.observing}`);
-                if (counts.open > 0) parts.push(`未處理 ${counts.open}`);
-                if (counts.escalated > 0) parts.push(`上報 ${counts.escalated}`);
-                if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
-
-                if (parts.length > 0) {
-                    const sub = roleText('lf-text-meta', parts.join('、'));
-                    sub.classList.add('d-block');
-                    wrap.appendChild(sub);
-                }
-                return wrap;
-            }
+            render: row => orderHostsCell(row, statusSelect.value)
         },
         {
             title: '逾期',
@@ -530,8 +528,18 @@ function renderOrders(data) {
  * 其他篩選（含只看暫停）沿用一般文字。
  */
 function renderOrdersEmpty() {
-    if (!(isSelf && statusSelect.value === 'active' && !pausedCheckbox.checked)) {
+    const viewingActive = statusSelect.value === 'active' || statusSelect.value === 'todo';
+    if (!(isSelf && viewingActive && !pausedCheckbox.checked)) {
         renderEmpty(ordersEl, { title: '目前沒有符合條件的交辦單', hint: '請調整狀態篩選或取消勾選「只看暫停」。' });
+        return;
+    }
+    // 預設的「待我處理」是空的、但還有觀察期內或上報中的單：說明它們在哪，不要讓人以為沒有工作
+    const waiting = (summary.observingHosts ?? 0) + (summary.escalatedHosts ?? 0);
+    if (statusSelect.value === 'todo' && waiting > 0) {
+        renderEmpty(ordersEl, {
+            title: '目前沒有待我處理的交辦單',
+            hint: `觀察期內 ${summary.observingHosts ?? 0} 台、上報中 ${summary.escalatedHosts ?? 0} 台；把狀態篩選改為「進行中」可以看到它們。`
+        });
         return;
     }
     if (summary.visibleHostCount === 0) {
@@ -610,6 +618,7 @@ replyOrdersBtn.addEventListener('click', () => {
 
     openWorkOrderReplyModal({
         multiTarget: workOrderIds.length > 1 || hosts > 1,
+        recurrence: { hosts: infos.reduce((sum, info) => sum + (info.recurrence ?? 0), 0) },
         title: '回覆選取的交辦單',
         targetText: `${workOrderIds.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
@@ -697,6 +706,7 @@ function openWholeOrderReply(row, count, carry) {
     let closedNow = false;
     openWorkOrderReplyModal({
         multiTarget: true,
+        recurrence: { hosts: row.recurrenceHosts ?? 0 },
         title: `回覆交辦單 #${row.workOrderId}`,
         targetText: `全部進行中主機（${count} 台）`,
         draftKey: `order:${row.workOrderId}:all`,
@@ -724,6 +734,7 @@ function openWholeOrderReply(row, count, carry) {
 function openSingleReply(row, member, carry) {
     let closedNow = false;
     openWorkOrderReplyModal({
+        recurrence: { hosts: member.isRecurrence ? 1 : 0 },
         title: `回覆交辦單 #${row.workOrderId}`,
         targetText: `主機 ${member.hostName}${member.hostDisabled ? '（主機已停用）' : ''}`,
         draftKey: `order:${row.workOrderId}:cases:${member.caseId}`,
@@ -1069,6 +1080,7 @@ function buildMemberPanel(row, cell) {
 
         openWorkOrderReplyModal({
             title: `回覆交辦單 #${row.workOrderId}`,
+            recurrence: { hosts: [...selectedCases.values()].filter(item => item?.isRecurrence).length },
             multiTarget: caseIds.length > 1,
             targetText: `本單 ${total} 台中的 ${caseIds.length} 台`,
             draftKey: `order:${row.workOrderId}:cases:${[...caseIds].sort((a, b) => a - b).join(',')}`,
@@ -1215,6 +1227,42 @@ function hostLink(item) {
     return link;
 }
 
+/** 清單列「主機」欄的主行文字：「待我處理」篩選以待處理主機數為主，其餘是共用的台數口徑（hostCountText） */
+function orderHostsHeadline(row, status) {
+    return status === 'todo' ? `待我處理 ${row.todoHosts ?? 0} 台` : hostCountText(row);
+}
+
+/**
+ * 清單列「主機」欄：主行是台數口徑；復發的主機數（recurrenceHosts > 0 才出現）標「復發 N」；
+ * 其下是各狀態的件數分項。「待我處理」篩選時，主行改待處理主機數，完整的台數口徑移到分項行。
+ */
+function orderHostsCell(row, status) {
+    const wrap = document.createElement('div');
+    const counts = row.counts || {};
+    const main = document.createElement('div');
+    main.className = 'text-nowrap';
+    main.append(orderHostsHeadline(row, status));
+    if (row.recurrenceHosts > 0) {
+        main.append(' ', statusBadge(`復發 ${row.recurrenceHosts}`, 'warning', { title: `${row.recurrenceHosts} 台是結案後又再發生的問題` }));
+    }
+    wrap.appendChild(main);
+
+    const parts = [];
+    if (status === 'todo') parts.push(hostCountText(row));
+    if (counts.inProgress > 0) parts.push(`處理中 ${counts.inProgress}`);
+    if (counts.observing > 0) parts.push(`觀察 ${counts.observing}`);
+    if (counts.open > 0) parts.push(`未處理 ${counts.open}`);
+    if (counts.escalated > 0) parts.push(`上報 ${counts.escalated}`);
+    if (counts.daySyncPending > 0) parts.push(`逐日同步中 ${counts.daySyncPending}`);
+
+    if (parts.length > 0) {
+        const sub = roleText('lf-text-meta', parts.join('、'));
+        sub.classList.add('d-block');
+        wrap.appendChild(sub);
+    }
+    return wrap;
+}
+
 /**
  * 「問題」欄：標題為主體，白話說明收成次要文字。
  * 窄螢幕（< 576px）隱藏單號／主機／逾期／未回覆／期限五欄，把判斷「要不要處理」的數字收成這欄底下的一行，
@@ -1233,7 +1281,8 @@ function orderIssueCell(row) {
     const overdue = counts.overdue ?? 0;
     const narrow = metaLine([
         workOrderLink(row),
-        `${counts.active ?? 0}／${counts.total ?? 0} 台`,
+        orderHostsHeadline(row, statusSelect.value),
+        row.recurrenceHosts > 0 ? `復發 ${row.recurrenceHosts}` : null,
         overdue > 0 ? roleText('lf-text-alert', `逾期 ${overdue}`) : null,
         row.unrepliedDays != null ? `未回覆 ${row.unrepliedDays} 天` : null,
         narrowDueDate(row)
@@ -1293,4 +1342,6 @@ document.getElementById('handler-advanced-toggle').appendChild(
     disclosure('進階檢視：依主機、被指派的風險日', advancedBodyEl, { expanded: advancedOpenAtStart, onToggle: onAdvancedToggle }));
 if (advancedOpenAtStart) onAdvancedToggle(true);
 
+const statusFromUrl = urlOrderStatus(location.search, Array.from(statusSelect.options).map(option => option.value));
+if (statusFromUrl) statusSelect.value = statusFromUrl;
 guardLoad([kpiEl, ordersEl], load);

@@ -351,6 +351,20 @@ export function formatNumber(value) {
     return Number(value).toLocaleString('zh-TW');
 }
 
+/**
+ * 交辦單的台數口徑（交辦單頁單頭、我的交辦清單列、交辦總覽清單列共用這一支）：
+ * 「台」是不重複主機數，「件」是成員（主機×問題）數——同一台主機結案後再發生會是新的一件，所以件數會大於台數。
+ * 歷來台數等於進行中台數時寫「歷來同」，不重複報同一個數字。
+ * @param {{activeHosts?: number, totalHosts?: number, counts?: {total?: number}}} row 單頭或清單列
+ */
+export function hostCountText(row) {
+    const active = row?.activeHosts ?? 0;
+    const total = row?.totalHosts ?? active;
+    const members = row?.counts?.total ?? 0;
+    const history = total === active ? '歷來同' : `歷來 ${total} 台`;
+    return `進行中 ${active} 台；${history}、${members} 件`;
+}
+
 /** 已執行時長「分:秒」（例如 12:05；超過一小時分鐘數照累加）。負值視為 0 */
 export function formatElapsed(ms) {
     const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));

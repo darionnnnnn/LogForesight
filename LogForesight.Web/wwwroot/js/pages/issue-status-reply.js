@@ -29,6 +29,9 @@ const STATUS_OPTIONS = statusesWhere(s => s.replyable).map(s => ({ value: s.valu
 const OBSERVE_QUICK_DAYS = [3, 7, 14];
 const OBSERVE_DEFAULT_DAYS = 7;
 
+/** 復發建議「請管理員評估」預填的說明（使用者已輸入說明時不覆蓋） */
+const RECURRENCE_ESCALATE_NOTE = '重複發生，請評估調整規則或靜音';
+
 /**
  * 不處理類（不處理、誤報、已知雜訊）的後果說明：處理人單方面結案，之後不會再派給任何人。
  * 處理人回覆表單與風險日詳情的處理面板共用這一句，不各寫一份。
@@ -66,12 +69,14 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false }
  *        有值時對象是「全部進行中主機」的彈窗多一個「只回覆部分主機」切換：就地面板列出進行中成員讓人勾選或貼上主機名；
  *        勾選後送出時 submit 的第二個參數是勾選的 caseId 陣列（沒切換時為 undefined，呼叫端用預設對象）
  * @param {boolean} [options.partialTarget] 呼叫端傳進來的對象本身就是部分主機（例如成員表勾選的幾台）
+ * @param {{hosts: number}} [options.recurrence] 這次涵蓋的主機裡有幾台是反覆發生（復發）的問題：hosts > 0 時彈窗頂端提示，
+ *        並在結論按鈕前列三個建議（還在處理、觀察 7 日、請管理員評估）；沒有或 0 台不顯示。建議只是預選結論並預填，不擋其他結論
  * @param {{remaining: (result: any) => Promise<number>, submitRest: (payload: object) => Promise<any>}} [options.followUp]
  *        部分主機以結案類結論回覆成功、單還有進行中主機時，彈窗不關閉，改問「其餘 N 台要一起設為…」：
  *        remaining 取剩下的進行中台數，submitRest 以 caseIds 為空（＝全部進行中，也就是剩下的）送出；
  *        第一次是非結案類（處理中、觀察中、上報）時不提示、直接關閉。需要 submit 回傳 API 回應
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence }) {
     let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const body = document.createElement('div');
     const form = document.createElement('form');
@@ -112,6 +117,20 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     rejectBox.id = 'wo-reply-rejected';
     rejectBox.className = 'mb-3 d-none';
     form.appendChild(rejectBox);
+
+    // 復發提示與三個建議（有復發主機才有）：放在結論按鈕之前，點了等於選對應結論並預填
+    const recurrenceHosts = recurrence?.hosts > 0 ? recurrence.hosts : 0;
+    const recurrenceHint = recurrenceHosts > 0
+        ? statusNote('info', `其中 ${recurrenceHosts} 台是反覆發生的問題。結案後又出現，建議先看原因：`)
+        : null;
+    const suggestRow = recurrenceHosts > 0 ? document.createElement('div') : null;
+    if (recurrenceHint) {
+        recurrenceHint.id = 'wo-reply-recurrence';
+        recurrenceHint.classList.add('mb-2');
+        suggestRow.id = 'wo-reply-suggest';
+        suggestRow.className = 'd-flex flex-wrap gap-2 mb-3';
+        form.append(recurrenceHint, suggestRow);
+    }
 
     // 結論：一排單選按鈕（與風險日處理面板同一個 renderChips 與 .lf-handling__chips 樣式），預設不選
     const statusLabel = document.createElement('div');
@@ -284,6 +303,35 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     renderStatusChips();
     onStatusChanged();
 
+    /** 以程式選定結論（復發建議用）：與點結論按鈕同一條同步路徑 */
+    function chooseStatus(value) {
+        selectedStatus = value;
+        renderStatusChips();
+        onStatusChanged();
+    }
+    if (suggestRow) {
+        const addSuggestion = (id, label, onPick) => {
+            const btn = makeButton(label, { onClick: onPick });
+            btn.id = id;
+            suggestRow.appendChild(btn);
+        };
+        addSuggestion('wo-reply-suggest-progress', '還在處理（設預計完成日）', () => {
+            chooseStatus('in_progress');
+            dueInput.focus();
+        });
+        addSuggestion('wo-reply-suggest-observe', `觀察 ${OBSERVE_DEFAULT_DAYS} 日`, () => {
+            chooseStatus('observing');
+            dueInput.value = dateAfterDays(OBSERVE_DEFAULT_DAYS);
+            dueAutofilled = false;
+            dueCheck.validate();
+        });
+        // 「上報管理者」是既有結論（目錄裡的 escalated，必填說明）：預填一句，已經寫了說明就不覆蓋
+        addSuggestion('wo-reply-suggest-escalate', '請管理員評估調整規則或靜音', () => {
+            chooseStatus('escalated');
+            if (!noteInput.value.trim()) noteEditor.setValue(RECURRENCE_ESCALATE_NOTE);
+        });
+    }
+
     // 方向鍵在結論按鈕群組內切換選取（左／上＝前一個、右／下＝後一個，頭尾相接）
     statusGroup.addEventListener('keydown', event => {
         const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
@@ -363,6 +411,9 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         pickToggle.classList.remove('d-inline-block');
         rejectBox.classList.add('d-none');
         rejectBox.replaceChildren();
+        // 復發主機數是整張單的數字，不適用於「其餘」：提示與建議收起
+        recurrenceHint?.classList.add('d-none');
+        suggestRow?.classList.add('d-none');
         statusLabel.textContent = `其餘 ${count} 台要一起設為…`;
         selectedStatus = null;
         renderStatusChips();
@@ -582,6 +633,7 @@ export async function openIssueStatusReplyModal(group, onApplied) {
         targetText: `${orders.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
         aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
+        recurrence: { hosts: orders.reduce((sum, order) => sum + (order.recurrenceHosts ?? 0), 0) },
         // 依問題視角只有 Source＋EventId、沒有完整簽章（同一事件可能分屬多個簽章），不顯示沿用
         reuseIssueKey: null,
         submit: async payload => {

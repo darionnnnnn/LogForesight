@@ -126,6 +126,29 @@ const cases = {
         assert.ok(rows[1].textContent.includes('上報超過 3 天沒人處理：4 筆'));
     },
 
+    // 反覆結案又復發：只有這一類也要顯示提醒區；一行「反覆結案又復發：N 筆」，連到交辦總覽進行中（沒有專屬篩選）；0 時不出現
+    recurrenceAloneShowsRowLinkedToActiveList() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ recurrenceCount: 2, recurrence: [{ workOrderId: 9, issueLabel: 'disk 153', hostName: 'SRV1', recurrenceCount: 4 }] }));
+        const rows = find(remindersContainer, n => n.tagName === 'LI' && n.className.includes('lf-list-row'));
+        assert.equal(rows.length, 1);
+        assert.ok(rows[0].textContent.includes('反覆結案又復發：2 筆'), rows[0].textContent);
+        const links = find(remindersContainer, n => n.tagName === 'A').map(a => a.href);
+        assert.equal(links[0], '/lf/work-orders?status=active', '沒有對應篩選：連到交辦總覽進行中');
+        assert.ok(links.includes('/lf/work-orders/9'), '明細有單號連結');
+        assert.ok(remindersContainer.textContent.includes('復發 4 次') && remindersContainer.textContent.includes('SRV1'));
+    },
+
+    recurrenceZeroOrMissingAddsNoRow() {
+        const { renderReminders, remindersContainer } = env();
+        renderReminders(data({ escalatedCount: 1, recurrenceCount: 0 }));
+        assert.ok(!remindersContainer.textContent.includes('反覆結案又復發'));
+        renderReminders(data({ escalatedCount: 1 }));
+        assert.ok(!remindersContainer.textContent.includes('反覆結案又復發'), '舊回應沒有欄位也不出現');
+        renderReminders(data({ recurrenceCount: 0 }));
+        assert.equal(remindersContainer.children.length, 0, '只有復發類且為 0 時整區不顯示');
+    },
+
     // 重畫會清掉舊內容：先有數字、再變 0，提醒區消失（不留殘影）
     rerenderClearsPreviousContent() {
         const { renderReminders, remindersContainer } = env();
