@@ -440,6 +440,32 @@ const cases = {
         assert.equal(legacy.title, '3 張交辦單有處理人的新回覆', '舊伺服器沒有 escalated 欄位：維持原文');
     },
 
+    // M1：未讀回覆徽章只對具 Assign 的人顯示（已讀只有 Assign 會寫，ViewAll 的人看到的數字永遠不會歸零）；
+    // 沒有 Assign 的人不送請求（不產生被拒或無意義的請求）。能力組合照 RoleCapabilityMap 的 Manager／Dev／Admin。
+    async unreadBadgeOnlyForAssign() {
+        installDom();
+        const source = read('core', 'badges.js');
+        const fns = ['async function loadUnreadBadge(', 'function setBadge('].map(d => extract(source, d)).join('\n');
+        const roles = {
+            Manager: ['ViewAll'],
+            Dev: ['ViewAll', 'DevMonitor'],
+            Admin: ['ViewAll', 'Handle', 'Assign', 'ConfirmPermission', 'Maintain', 'DevMonitor', 'ViewAudit']
+        };
+        const run = async role => {
+            let calls = 0;
+            const link = { querySelector: () => null, dataset: {}, appendChild() { } };
+            const build = new Function('api', 'hasCapability', 'document', `${fns}\nreturn loadUnreadBadge;`);
+            const fn = build({ get: async () => { calls++; return { count: 3, escalated: 0 }; } },
+                (user, cap) => user.caps.includes(cap),
+                { querySelector: () => link, createElement: () => ({ classList: { toggle() { } }, setAttribute() { }, set title(v) { }, className: '', textContent: '' }) });
+            const count = await fn({ userId: 1, caps: roles[role] });
+            return { count, calls };
+        };
+        assert.deepEqual(await run('Manager'), { count: null, calls: 0 }, 'Manager 不顯示也不送請求');
+        assert.deepEqual(await run('Dev'), { count: null, calls: 0 }, 'Dev 不顯示也不送請求');
+        assert.deepEqual(await run('Admin'), { count: 3, calls: 1 }, 'Admin 顯示');
+    },
+
     // 「清單有更新」：數字與載入時不同才出現、相同不出現；自己重載後以新數字為基準
     async listUpdateNoticeAppearsOnlyWhenCountsDiffer() {
         const dom = installDom();

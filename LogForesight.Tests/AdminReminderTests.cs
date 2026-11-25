@@ -48,7 +48,7 @@ public sealed class AdminReminderTests
                 new ScheduleOptionsStore(fx.Blob("schedule_options"))),
             new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey)), orders, cases, new FakeRuleStore(), new FakeIssueOwnerStore());
         var clock = LocalClock(now);
-        return (new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, clock: clock), state, clock, fx);
+        return (new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, new FakeRuleStore(), clock: clock), state, clock, fx);
     }
 
     /// <summary>G3：admin 提醒收件人與其他寄信路徑共用 EligibleEmail——停用、信箱含逗號者不入列；單一位址者入列（邊界兩側）。</summary>
@@ -78,7 +78,7 @@ public sealed class AdminReminderTests
                 new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
                 new ScheduleOptionsStore(fx.Blob("schedule_options"))),
             outbox, orders, cases, new FakeRuleStore(), new FakeIssueOwnerStore());
-        var service = new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, clock: LocalClock(new DateTime(2026, 11, 17, 23, 0, 0)));
+        var service = new AdminReminderService(settings, orders, cases, hosts, users, groups, state, mail, new FakeRuleStore(), clock: LocalClock(new DateTime(2026, 11, 17, 23, 0, 0)));
 
         service.RunAfterNightly(Summary(("disk 154", "no_pool", 3)));
 

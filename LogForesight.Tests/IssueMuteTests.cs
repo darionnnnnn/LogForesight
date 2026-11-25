@@ -54,7 +54,7 @@ public sealed class IssueMuteTests : IDisposable
 
     private IssueOwnerAdminService Admin(ICurrentUser user, IIssueOwnerStore? store = null) =>
         new(store ?? _owners, new FakeIssueAggregateQuery(), _users, _audit, user,
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, new FakeRuleStore());
 
     private static ICurrentUser Maintainer() => FakeCurrentUser.ForUser(5, Capability.Maintain);
 
@@ -479,7 +479,7 @@ public sealed class IssueMuteTests : IDisposable
 
         var admin = new IssueOwnerAdminService(_owners, new FakeIssueAggregateQuery(), _users, _audit,
             FakeCurrentUser.ForUser(5, Capability.Maintain, Capability.Assign, Capability.Handle),
-            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, mail: mail);
+            new UserDisplayNameService(new FakeSystemSettingsStore()), _orders, _coordinator, TestPermissionStamps.Shared, new FakeRuleStore(), mail: mail);
         admin.SetMute(Source, EventId, new SetIssueMuteRequest { Days = 3, Reason = "設備維護", ExistingOrders = "close" });
 
         var items = outbox.Get().Items.Values.ToList();
@@ -523,7 +523,7 @@ public sealed class IssueMuteTests : IDisposable
             ? new[] { Profile((Today.AddDays(-1), Today.AddDays(2))) }
             : Array.Empty<IssueProfile>();
         var service = new AdminReminderService(settings, _orders, _cases, _hosts, _users, new FakeUserGroupStore(), state, mail,
-            new FixedIssueExclusionSource(IssueExclusion.From(profiles, Today)));
+            new FakeRuleStore(), new FixedIssueExclusionSource(IssueExclusion.From(profiles, Today)));
 
         var dto = service.Compute();
 

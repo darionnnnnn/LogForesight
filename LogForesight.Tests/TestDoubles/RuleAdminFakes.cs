@@ -170,7 +170,7 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<IssueDailyHostCount> DailyHostCounts(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds) => new();
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels) => new();
 
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues) => new();

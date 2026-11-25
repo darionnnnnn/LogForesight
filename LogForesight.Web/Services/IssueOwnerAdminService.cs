@@ -28,6 +28,7 @@ public class IssueOwnerAdminService
     private readonly IWorkOrderStore _workOrders;
     private readonly WorkOrderCoordinator _workOrderCoordinator;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly IKnownIssueRuleStore _rules;
     private readonly MailNotificationService? _mail;
 
     /// <summary>靜音天數上限（含自訂截止日距今天的上限）</summary>
@@ -44,9 +45,10 @@ public class IssueOwnerAdminService
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
         ICurrentUser currentUser, IUserDisplayNameService displayNameService,
         IWorkOrderStore workOrders, WorkOrderCoordinator workOrderCoordinator,
-        PermissionVersionStamp permissionVersion,
+        PermissionVersionStamp permissionVersion, IKnownIssueRuleStore rules,
         TimeProvider? clock = null, MailNotificationService? mail = null)
     {
+        _rules = rules;
         _mail = mail;
         _clock = clock ?? TimeProvider.System;
         _permissionVersion = permissionVersion;
@@ -94,6 +96,7 @@ public class IssueOwnerAdminService
             .ToHashSet();
 
         // 靜音不排除：靜音中的問題要選得到、看得到近況，才能解除
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
         return _issueAggregates.Aggregate(IssueExclusion.None, from, to, null)
             .OrderByDescending(a => a.HostCount)
             .ThenBy(a => a.Source, StringComparer.OrdinalIgnoreCase)
@@ -103,7 +106,7 @@ public class IssueOwnerAdminService
                 {
                     SourceName = a.Source,
                     EventId = a.EventId,
-                    DisplayLabel = FormatDisplayLabel(a.Source, a.EventId),
+                    DisplayLabel = IssueNames.ForRules(rules, a.Source, a.EventId),
                     HostCount = a.HostCount,
                     LastSeen = a.LastSeen,
                     HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
@@ -143,7 +146,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
-            summary: $"設定問題「{sourceName} {request.EventId}」的負責人：由「{NameFormat.Join(beforeOwners)}」改為「{NameFormat.Join(afterOwners)}」",
+            summary: $"設定問題「{IssueNames.For(sourceName, request.EventId)}」的負責人：由「{NameFormat.Join(beforeOwners)}」改為「{NameFormat.Join(afterOwners)}」",
             targetKind: "issue_owner",
             targetId: $"{sourceName}/{request.EventId}",
             detail: new { SourceName = sourceName, request.EventId, Before = beforeOwners, After = afterOwners, request.Note });
@@ -186,7 +189,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
-            summary: $"設定問題「{sourceName} {eventId}」的機房結論：{HandlingTextHelpers.IssueStatusText(request.Status)}" +
+            summary: $"設定問題「{IssueNames.For(sourceName, eventId)}」的機房結論：{HandlingTextHelpers.IssueStatusText(request.Status)}" +
                      (beforeStatus != null ? $"（原結論：{HandlingTextHelpers.IssueStatusText(beforeStatus)}）" : "") +
                      (request.AutoApply ? "，之後新出現的主機日將自動套用" : ""),
             targetKind: "issue_owner",
@@ -220,7 +223,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
-            summary: $"解除問題「{source} {eventId}」的機房結論",
+            summary: $"解除問題「{IssueNames.For(source, eventId)}」的機房結論",
             targetKind: "issue_owner",
             targetId: $"{source}/{eventId}");
 
@@ -326,7 +329,7 @@ public class IssueOwnerAdminService
                 closeOutcome.Succeeded.Add(order.WorkOrderId);
                 _audit.Record(
                     action: AuditActions.WorkOrderAdminClose,
-                    summary: $"靜音問題「{sourceName} {eventId}」代為結案交辦單 #{order.WorkOrderId}",
+                    summary: $"靜音問題「{IssueNames.For(sourceName, eventId)}」代為結案交辦單 #{order.WorkOrderId}",
                     targetKind: "work_order",
                     targetId: order.WorkOrderId.ToString(),
                     detail: new { SourceName = sourceName, EventId = eventId, Reason = reason });
@@ -347,7 +350,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueMute,
-            summary: $"靜音問題「{sourceName} {eventId}」：{interval.From:yyyy-MM-dd}～{interval.To:yyyy-MM-dd}" +
+            summary: $"靜音問題「{IssueNames.For(sourceName, eventId)}」：{interval.From:yyyy-MM-dd}～{interval.To:yyyy-MM-dd}" +
                      (extended ? "（延長進行中的靜音）" : "") + $"，原因：{reason}" +
                      (closeOrders ? $"，代為結案進行中交辦單 {closedCount} 張" : "，進行中交辦單不代為結案（暫停）"),
             targetKind: "issue_owner",
@@ -406,7 +409,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueUnmute,
-            summary: $"解除問題「{existing.SourceName} {existing.EventId}」的靜音" +
+            summary: $"解除問題「{IssueNames.For(existing.SourceName, existing.EventId)}」的靜音" +
                      (removed
                          ? $"（原區間 {current.From:yyyy-MM-dd}～{current.To:yyyy-MM-dd} 今天才開始，整段刪除）"
                          : $"（區間改為 {current.From:yyyy-MM-dd}～{today.AddDays(-1):yyyy-MM-dd}）"),
@@ -430,7 +433,7 @@ public class IssueOwnerAdminService
 
         _audit.Record(
             action: AuditActions.IssueOwnerDelete,
-            summary: $"刪除問題「{existing.SourceName} {existing.EventId}」的負責人規則（原負責人：{NameFormat.Join(ownerNames)}）",
+            summary: $"刪除問題「{IssueNames.For(existing.SourceName, existing.EventId)}」的負責人規則（原負責人：{NameFormat.Join(ownerNames)}）",
             targetKind: "issue_owner",
             targetId: $"{existing.SourceName}/{existing.EventId}");
     }
@@ -457,7 +460,7 @@ public class IssueOwnerAdminService
         {
             SourceName = rule.SourceName,
             EventId = rule.EventId,
-            DisplayLabel = FormatDisplayLabel(rule.SourceName, rule.EventId),
+            DisplayLabel = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), rule.SourceName, rule.EventId),
             OwnerUserIds = rule.OwnerUserIds,
             OwnerNames = rule.OwnerUserIds
                 .Select(id => NameFormat.UserLabel(_displayNameService, usersById.GetValueOrDefault(id)))
@@ -492,12 +495,4 @@ public class IssueOwnerAdminService
     {
         From = m.From, To = m.To, Reason = m.Reason, ByAccount = m.ByAccount, At = m.At
     };
-
-    /// <summary>
-    /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，
-    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題設定的鍵是 (Source, 0)，涵蓋該來源的
-    /// 全部規則，任選其中一個 key 掛上去語意是錯的（且候選清單與已指派清單會長得不一樣）。
-    /// </summary>
-    public static string FormatDisplayLabel(string source, int eventId) =>
-        eventId == 0 ? source : $"{source} ({eventId})";
 }

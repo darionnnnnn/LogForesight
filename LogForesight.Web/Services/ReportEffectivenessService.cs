@@ -35,12 +35,14 @@ public class ReportEffectivenessService
     private readonly ISystemSettingsService _systemSettings;
     private readonly SummaryCache _cache;
     private readonly IIssueExclusionSource _exclusions;
+    private readonly IKnownIssueRuleStore _rules;
 
     public ReportEffectivenessService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IIssueHandlingStore issueStore, ISystemSettingsService systemSettings,
-        SummaryCache cache, IIssueExclusionSource exclusions)
+        SummaryCache cache, IIssueExclusionSource exclusions, IKnownIssueRuleStore rules)
     {
+        _rules = rules;
         _repository = repository;
         _hosts = hosts;
         _visibility = visibility;
@@ -100,7 +102,7 @@ public class ReportEffectivenessService
         var inPeriod = loaded.Where(r => r.Date.Date >= from && r.Date.Date <= to).ToList();
         FillHandling(dto, buckets, exclusion, inPeriod, issueRows,
             asOf: inPeriod.Count > 0 ? inPeriod.Max(r => r.Date.Date) : to);
-        dto.Recurrence = BuildRecurrence(exclusion, loaded, issueRows, NameOf, from, to);
+        dto.Recurrence = BuildRecurrence(exclusion, loaded, issueRows, NameOf, from, to, KnownIssueCatalog.ResolveRules(_rules));
         return dto;
     }
 
@@ -132,7 +134,7 @@ public class ReportEffectivenessService
 
     private static ReportRecurrenceDto BuildRecurrence(
         IssueExclusion exclusion, List<DailyAnalysisRecord> loaded, List<IssueHandling> issueRows,
-        Func<DailyAnalysisRecord, string> nameOf, DateTime from, DateTime to)
+        Func<DailyAnalysisRecord, string> nameOf, DateTime from, DateTime to, IReadOnlyList<KnownIssueRule> nameRules)
     {
         var result = new ReportRecurrenceDto();
 
@@ -208,7 +210,7 @@ public class ReportEffectivenessService
             .Take(TopRecurringLimit)
             .Select(v => new ReportRecurringIssueDto
             {
-                Source = v.Source, EventId = v.EventId, Label = v.Label, HostCount = v.Hosts, RecurredCount = v.Recurred
+                Source = v.Source, EventId = v.EventId, Label = IssueNames.ForRules(nameRules, v.Source, v.EventId), HostCount = v.Hosts, RecurredCount = v.Recurred
             })
             .ToList();
         return result;

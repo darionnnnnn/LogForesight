@@ -53,12 +53,13 @@ public sealed class AdminReminderService
     private readonly MailNotifyStateStore _state;
     private readonly MailNotificationService _mail;
     private readonly IIssueExclusionSource? _exclusions;
+    private readonly IKnownIssueRuleStore _rules;
     private readonly TimeProvider _clock;
 
     public AdminReminderService(
         ISystemSettingsStore settings, IWorkOrderStore orders, IIssueCaseStore cases, IHostStore hosts,
         IUserStore users, IUserGroupStore userGroups, MailNotifyStateStore state, MailNotificationService mail,
-        IIssueExclusionSource? exclusions = null, TimeProvider? clock = null)
+        IKnownIssueRuleStore rules, IIssueExclusionSource? exclusions = null, TimeProvider? clock = null)
     {
         _settings = settings;
         _orders = orders;
@@ -68,6 +69,7 @@ public sealed class AdminReminderService
         _userGroups = userGroups;
         _state = state;
         _mail = mail;
+        _rules = rules;
         _exclusions = exclusions;
         _clock = clock ?? TimeProvider.System;
     }
@@ -85,6 +87,7 @@ public sealed class AdminReminderService
     internal AdminReminderResult ComputeResult()
     {
         var settings = _settings.Get();
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
         var today = _clock.LocalToday();
         var state = _state.Get();
         var days = settings.EscalationReminderDays;
@@ -121,11 +124,11 @@ public sealed class AdminReminderService
                         var escalatedDay = (c.EscalatedAt ?? c.UpdatedAt).Date;
                         // 今天新上報：與「超過 N 天」分開計數與列出（逾期類只認 elapsed > threshold，今天上報的 elapsed 為 0 不會重複）
                         if (escalatedDay == today)
-                            newToday.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.IssueLabel, c.HostName, 0, false));
+                            newToday.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.DisplayLabel(rules), c.HostName, 0, false));
                         var elapsed = (int)(today - escalatedDay).TotalDays;
                         if (elapsed <= threshold) continue;
                         overdueOrderIds.Add(order.WorkOrderId);
-                        escalated.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.IssueLabel, c.HostName, elapsed,
+                        escalated.Add(new EscalatedEntry(c.CaseId, order.WorkOrderId, order.DisplayLabel(rules), c.HostName, elapsed,
                             days > 0 && IsDue(state, c.CaseId, today, days)));
                     }
                     if (members.Items.Count < MemberPageSize || mPage * MemberPageSize >= members.Total) break;
@@ -145,16 +148,16 @@ public sealed class AdminReminderService
                 WorkOrderId = order.WorkOrderId, Status = WorkOrderQueries.StatusEscalated, Page = 1, PageSize = 1
             });
             if (open.Total == 0) continue;
-            noRecipient.Add(new NoRecipientEntry(order.WorkOrderId, order.IssueLabel,
+            noRecipient.Add(new NoRecipientEntry(order.WorkOrderId, order.DisplayLabel(rules),
                 days > 0 && IsDue(state, NoRecipientKey(order.WorkOrderId), today, days)));
         }
 
-        var recurrence = ScanRecurrence(exclusion, excluded, state, today, days);
+        var recurrence = ScanRecurrence(exclusion, excluded, state, today, days, rules);
 
         escalated = escalated.OrderByDescending(e => e.Days).ThenBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal).ToList();
         var unassignable = state.LastUnassignable
-            .Where(u => !IsLabelMuted(exclusion, u.IssueLabel))
-            .Select(u => new AdminReminderUnassignableDto { IssueLabel = u.IssueLabel, Reason = u.Reason, Hosts = u.Hosts })
+            .Where(u => !IsMuted(exclusion, u))
+            .Select(u => new AdminReminderUnassignableDto { IssueLabel = IssueNames.Display(u.Source, u.EventId, u.IssueLabel, rules), Reason = u.Reason, Hosts = u.Hosts })
             .ToList();
 
         newToday = newToday.OrderBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal).ToList();
@@ -191,7 +194,7 @@ public sealed class AdminReminderService
     /// 排序：復發次數多的在前，再依單號、主機。
     /// </summary>
     private List<RecurrenceEntry> ScanRecurrence(IssueExclusion exclusion, IReadOnlyCollection<string> excludedHostKeys,
-        MailNotifyState state, DateTime today, int days)
+        MailNotifyState state, DateTime today, int days, IReadOnlyList<KnownIssueRule> rules)
     {
         var disabled = excludedHostKeys.ToHashSet(StringComparer.Ordinal);
         var members = _cases.GetActiveMemberSummaries(null)
@@ -208,7 +211,7 @@ public sealed class AdminReminderService
 
         return members
             .Where(c => info[c.CaseId].Count >= RecurrenceReminderThreshold)
-            .Select(c => new RecurrenceEntry(c.CaseId, c.WorkOrderId!.Value, c.IssueLabel, c.HostName, info[c.CaseId].Count,
+            .Select(c => new RecurrenceEntry(c.CaseId, c.WorkOrderId!.Value, IssueNames.Display(c.SourceName, c.EventId ?? 0, c.IssueLabel, rules), c.HostName, info[c.CaseId].Count,
                 days > 0 && IsDue(state, RecurrenceKey(c.CaseId), today, days)))
             .OrderByDescending(e => e.Count).ThenBy(e => e.WorkOrderId).ThenBy(e => e.HostName, StringComparer.Ordinal)
             .ToList();
@@ -218,11 +221,17 @@ public sealed class AdminReminderService
     /// 派不出去清單只存標籤「Source EventId」（派工端組字串的格式）：拆出事件編號與來源，走 <see cref="IssueExclusion"/> 同一條靜音判定。
     /// 標籤不是這個格式時視為不靜音。
     /// </summary>
-    private static bool IsLabelMuted(IssueExclusion exclusion, string label)
+    private static bool IsMuted(IssueExclusion exclusion, UnassignableIssue u)
     {
+        // 有來源與事件編號（新資料）直接判定；舊資料只有標籤，標籤的最後一段是事件編號（「來源 編號」或「來源 EventId 編號」）
+        if (!string.IsNullOrWhiteSpace(u.Source)) return exclusion.IsCurrentlyMuted(u.Source, u.EventId);
+        var label = u.IssueLabel;
         var cut = label.LastIndexOf(' ');
-        return cut > 0 && int.TryParse(label[(cut + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var eventId)
-            && exclusion.IsCurrentlyMuted(label[..cut], eventId);
+        if (cut <= 0 || !int.TryParse(label[(cut + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var eventId)) return false;
+        var source = label[..cut];
+        const string marker = " EventId";
+        if (source.EndsWith(marker, StringComparison.Ordinal)) source = source[..^marker.Length];
+        return exclusion.IsCurrentlyMuted(source, eventId);
     }
 
     /// <summary>
@@ -309,7 +318,7 @@ public sealed class AdminReminderService
         foreach (var e in existing)
             merged[(e.IssueLabel, e.Reason)] = new UnassignableIssue
             {
-                IssueLabel = e.IssueLabel, Reason = e.Reason, Hosts = e.Hosts, ObservedAt = e.ObservedAt ?? lastAt
+                IssueLabel = e.IssueLabel, Source = e.Source, EventId = e.EventId, Reason = e.Reason, Hosts = e.Hosts, ObservedAt = e.ObservedAt ?? lastAt
             };
         foreach (var o in observed)
         {
@@ -317,7 +326,7 @@ public sealed class AdminReminderService
             var hosts = merged.TryGetValue(key, out var prior) && prior.ObservedAt?.Date == now.Date
                 ? Math.Max(prior.Hosts, o.Hosts)
                 : o.Hosts;
-            merged[key] = new UnassignableIssue { IssueLabel = o.IssueLabel, Reason = o.Reason, Hosts = hosts, ObservedAt = now };
+            merged[key] = new UnassignableIssue { IssueLabel = o.IssueLabel, Source = o.Source, EventId = o.EventId, Reason = o.Reason, Hosts = hosts, ObservedAt = now };
         }
         var cutoff = now.Date.AddDays(-UnassignableUnobservedDays);
         // 沒有任何時間可依據（ObservedAt 與 lastAt 都是 null）的項目保留，下一趟寫入時才有觀察時間

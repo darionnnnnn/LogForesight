@@ -48,7 +48,7 @@ public sealed class AdminReminderRecurrenceTests : IDisposable
                 new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
                 new ScheduleOptionsStore(_fx.Blob("schedule_options"))),
             _outbox, _orders, _cases, new FakeRuleStore(), new FakeIssueOwnerStore());
-        _service = new AdminReminderService(settings, _orders, _cases, _hosts, users, groups, _state, mail, clock: _clock);
+        _service = new AdminReminderService(settings, _orders, _cases, _hosts, users, groups, _state, mail, new FakeRuleStore(), clock: _clock);
         _orderId = _orders.Insert(new WorkOrder
         {
             SourceName = "disk", EventId = 153, IssueLabel = "disk 153", HandlerId = 77, Origin = WorkOrderOrigins.Manual,
@@ -104,7 +104,7 @@ public sealed class AdminReminderRecurrenceTests : IDisposable
         Assert.Equal("H3", item.HostName);
         Assert.Equal(3, item.RecurrenceCount);
         Assert.Equal(_orderId, item.WorkOrderId);
-        Assert.Equal("disk 153", item.IssueLabel);
+        Assert.Equal("disk EventId 153", item.IssueLabel);
         Assert.True(dto.Any);
         Assert.Equal(3, AdminReminderService.RecurrenceReminderThreshold);
     }
@@ -173,7 +173,7 @@ public sealed class AdminReminderRecurrenceTests : IDisposable
         Assert.Equal("管理者提醒", subject);
         Assert.Contains("、反覆結案又復發 1 個成員。", body);
         Assert.Contains("【反覆結案又復發】共 1 個成員", body);
-        Assert.Contains($"單號 {_orderId}：disk 153（H3），已處理後又復發 3 次", body);
+        Assert.Contains($"單號 {_orderId}：disk EventId 153（H3），已處理後又復發 3 次", body);
     }
 
     [Fact]
@@ -283,7 +283,7 @@ public sealed class AdminReminderRecurrenceTests : IDisposable
                 new ScheduleFreshnessService(
                     new BatchRunStore(_fx.LogStore("batch_runs2"), _fx.LogStore("batch_run_logs2")),
                     new ScheduleOptionsStore(_fx.Blob("schedule_options2"))),
-                _outbox, _orders, _cases, new FakeRuleStore(), new FakeIssueOwnerStore()), clock: _clock);
+                _outbox, _orders, _cases, new FakeRuleStore(), new FakeIssueOwnerStore()), new FakeRuleStore(), clock: _clock);
         HostWithRecurrences("H3", 3);
 
         service.RunAfterNightly(null);

@@ -222,7 +222,7 @@ public class WorkOrderBoardService
         {
             Source = s.Source,
             EventId = s.EventId,
-            IssueLabel = LabelOf(s.Source, s.EventId),
+            IssueLabel = IssueNames.ForRules(rules, s.Source, s.EventId),
             PlainExplanation = KnownIssueCatalog.PlainExplanationFor(rules, s.Source, s.EventId),
             GapHosts = s.GapHosts,
             Excluded = s.Excluded,
@@ -274,6 +274,7 @@ public class WorkOrderBoardService
             .ThenBy(g => g.Key.Origin, StringComparer.Ordinal)
             .ToList();
 
+        var nameRules = KnownIssueCatalog.ResolveRules(_rules);
         var created = 0;
         var merged = 0;
         var assignedMembers = 0;
@@ -285,7 +286,7 @@ public class WorkOrderBoardService
         foreach (var group in groups)
         {
             var first = group.First();
-            var label = LabelOf(first.Issue.Source, first.Issue.EventId);
+            var label = IssueNames.ForRules(nameRules, first.Issue.Source, first.Issue.EventId);
             var members = group
                 .Select(g => new WorkOrderMember
                 {
@@ -484,7 +485,8 @@ public class WorkOrderBoardService
 
         // 抑制：清單與規則各讀一次；每台主機的生效中抑制算一次（純記憶體）
         var allSuppressions = _suppressions.LoadAll();
-        var rulesById = KnownIssueCatalog.ResolveRules(_rules)
+        var nameRules = KnownIssueCatalog.ResolveRules(_rules);
+        var rulesById = nameRules
             .GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var activeByHost = new Dictionary<long, (HashSet<string> SignatureKeys, List<KnownIssueRule> Rules)>();
@@ -527,7 +529,7 @@ public class WorkOrderBoardService
                     WorkOrderId = --virtualOrderId,
                     SourceName = issue.Source,
                     EventId = issue.EventId,
-                    IssueLabel = LabelOf(issue.Source, issue.EventId),
+                    IssueLabel = IssueNames.ForRules(nameRules, issue.Source, issue.EventId),
                     HandlerId = decision.HandlerId!.Value,
                     Origin = decision.Origin!,
                     ScopeKind = WorkOrderScopes.Hosts,
@@ -593,8 +595,6 @@ public class WorkOrderBoardService
     };
 
     private static int DistinctHosts(IEnumerable<GapDecision> gaps) => gaps.Select(x => x.Host.HostId).Distinct().Count();
-
-    private static string LabelOf(string source, int eventId) => $"{source} {eventId}";
 
     private string NameOf(Dictionary<long, WebUser> users, long userId) =>
         NameFormat.UserLabel(_displayNames, users.GetValueOrDefault(userId));

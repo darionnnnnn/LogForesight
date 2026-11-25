@@ -122,19 +122,19 @@ public class IssueHandlingCommandService
         var previousStatus = _issueStore.GetForDay(host.HostName, date)
             .FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, request.IssueKey))?.Status;
 
-        var caseSync = ApplyIssueStatus(host, date, request.IssueKey, HandlingTextHelpers.IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, _clock.LocalNow());
+        var caseSync = ApplyIssueStatus(host, date, request.IssueKey, issue.SourceEventLabel, request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, _clock.LocalNow());
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
             summary: clearing
-                ? $"清除 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】的處理標記"
-                : $"將 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」" +
+                ? $"清除 {host.HostName} {date:yyyy-MM-dd}【{IssueNames.For(issue.Source, issue.EventId)}】的處理標記"
+                : $"將 {host.HostName} {date:yyyy-MM-dd}【{IssueNames.For(issue.Source, issue.EventId)}】標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」" +
                   (caseSync.Applied ? $"（已同步交辦涵蓋的 {caseSync.SyncedDayCount} 天）" : ""),
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
             detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
 
-        NotifyEscalationIfNeeded(request.Status, previousStatus, HandlingTextHelpers.IssueLabel(issue), host.HostName, request.Note);
+        NotifyEscalationIfNeeded(request.Status, previousStatus, issue.SourceEventLabel, host.HostName, request.Note);
 
         // 回傳更新後的當日進度，讓前端就地更新「N/M 已處理」與日層級推導狀態
         var progress = _progress.ComputeProgress(host, date, record);
@@ -165,7 +165,7 @@ public class IssueHandlingCommandService
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
         var labelByKey = record.TopIssues
             .GroupBy(IssueSignatureKey.For, IssueSignatureKeyComparer.Instance)
-            .ToDictionary(g => g.Key, g => HandlingTextHelpers.IssueLabel(g.First()), IssueSignatureKeyComparer.Instance);
+            .ToDictionary(g => g.Key, g => g.First().SourceEventLabel, IssueSignatureKeyComparer.Instance);
         var appliedKeys = request.IssueKeys.Distinct(IssueSignatureKeyComparer.Instance).Where(labelByKey.ContainsKey).ToList();
         if (appliedKeys.Count == 0)
             throw DomainException.Validation("找不到任何勾選的問題，可能紀錄已更新，請重新整理。");
@@ -475,7 +475,7 @@ public class IssueHandlingCommandService
 
         _audit.Record(
             action: AuditActions.IssueBulkClose,
-            summary: $"統一標記「{request.Source} {request.EventId}」為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
+            summary: $"統一標記「{IssueNames.For(request.Source, request.EventId)}」為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
                      $"{targets.Count} 台主機、共 {updatedDays} 天" +
                      (skipped.Count > 0 ? $"，{skipped.Count} 台略過" : "") +
                      (request.AutoApply ? "，並設為機房結論自動套用" : ""),
@@ -604,7 +604,7 @@ public class IssueHandlingCommandService
                 if (current is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing or IssueHandlingStatuses.Escalated)
                     row.OverwriteDayCount++;
 
-                days.Add((date, issueKey, HandlingTextHelpers.IssueLabel(issue)));
+                days.Add((date, issueKey, issue.SourceEventLabel));
             }
 
             row.DayCount = days.Count;

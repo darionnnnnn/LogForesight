@@ -744,7 +744,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<IssueDailyHostCount> DailyHostCounts(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds)
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels)
     {
         if (issues.Count == 0) return new List<IssueDailyHostCount>();
         if (hostIds != null && hostIds.Count == 0) return new List<IssueDailyHostCount>();
@@ -769,6 +769,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             var expanded = ExpandToAliasIds(aliasIndex, hostIds);
             q = q.Where(x => expanded.Contains(x.HostId));
         }
+        q = ApplyRiskLevels(ctx, q, f, t, dayRiskLevels);
 
         // 目標範圍是呼叫端已經算出的少數幾種問題（通常是當頁排行結果），不是整份表——
         // 與 LatestOccurrences／HostIdsFor 同一個規模假設
@@ -2303,7 +2304,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <see cref="LatestOccurrences"/>）與三個輔助查詢共用同一份定義，避免「主機數對不上筆數」。
     /// null＝不限制；**空集合＝零結果**（與 hostIds 同一套授權／可見性慣例，不是「不限制」）。
     /// </summary>
-    private static IQueryable<TopIssueRow> ApplyRiskLevels(
+    internal static IQueryable<TopIssueRow> ApplyRiskLevels(
         LfDbContext ctx, IQueryable<TopIssueRow> q, DateTime from, DateTime to, IReadOnlySet<string>? riskLevels)
     {
         if (riskLevels == null) return q;

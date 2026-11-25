@@ -693,7 +693,7 @@ public class WorkOrderQueryService
         dto.WorkOrderId = o.WorkOrderId;
         dto.Source = o.SourceName;
         dto.EventId = o.EventId;
-        dto.IssueLabel = PrtgFindingMapper.DisplayStoredLabel(o.IssueLabel);
+        dto.IssueLabel = o.DisplayLabel(rules);
         dto.PlainExplanation = o.SourceName != null && o.EventId != null
             ? KnownIssueCatalog.PlainExplanationFor(rules, o.SourceName, o.EventId.Value)
             : null;

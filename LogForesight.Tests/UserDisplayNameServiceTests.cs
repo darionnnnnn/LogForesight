@@ -503,7 +503,7 @@ public class UserDisplayNameServiceTests
         var workOrders = new WorkOrderCoordinator(workOrderStore, caseStore, issueStore, coordinator, recordStore, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), users, new RecordingAuditService(), currentUser, displayNameService,
-            workOrderStore, workOrders, TestPermissionStamps.Shared);
+            workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
         return new IssueHandlingCommandService(
             recordStore,
             issueStore,

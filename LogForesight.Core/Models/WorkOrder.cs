@@ -21,6 +21,14 @@ public class WorkOrder
     /// <summary>「Source EventId」反正規化存下來（同 <see cref="IssueCase.IssueLabel"/> 的理由）</summary>
     public string IssueLabel { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 畫面、提醒與通知信顯示的問題名稱：以單上的來源與事件經 <see cref="IssueNames"/> 重新產生（事件編號 0 附規則名稱，
+    /// <paramref name="rules"/> 必填），取不到（多問題單、PRTG 舊單）才用存的 <see cref="IssueLabel"/>。不回寫；
+    /// 舊單存的「sshd 0」這類字串因此不必改資料就顯示成同一種寫法。
+    /// </summary>
+    public string DisplayLabel(IReadOnlyList<KnownIssueRule> rules) =>
+        IssueNames.Display(SourceName, EventId ?? 0, IssueLabel, rules);
+
     public long HandlerId { get; set; }
 
     /// <summary>最近一次被改派走的處理人，可唯讀開啟此單；再次改派時覆寫（只記最近一位）</summary>

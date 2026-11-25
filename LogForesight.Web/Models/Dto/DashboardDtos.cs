@@ -111,6 +111,9 @@ public class IssueRankingDto
 {
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>顯示用的問題名稱（<see cref="IssueNames.ForRules"/>，全站唯一出口）：事件編號為 0 時只顯示來源並附規則名稱（恰好一條規則命中才附），不顯示「0」。前端一律用它，不自行組來源與事件編號。</summary>
+    public string IssueLabel { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
 
     /// <summary>期間內這個問題出現過的最高嚴重度</summary>

@@ -34,6 +34,7 @@ public class ReplyFlowBehaviorTests
     [InlineData("workOrderPageActionOpensModalForAllCounts")]
     [InlineData("badgeEventCarriesMemberAndOrderCounts")]
     [InlineData("unreadBadgeTitleMentionsEscalated")]
+    [InlineData("unreadBadgeOnlyForAssign")]
     [InlineData("listUpdateNoticeAppearsOnlyWhenCountsDiffer")]
     public void 回覆流程行為(string caseName)
     {

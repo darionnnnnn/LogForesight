@@ -475,7 +475,7 @@ public class RecordListQueryService
         // 兩頁的「vs 基準」數字必然一致；只對本頁篩選後留下的問題查，不是整份表
         var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
         var baselines = IssueBaselineCalculator.Compute(
-            _aggregates.DailyHostCounts(exclusion, issues, baselineFrom, baselineTo, hostIds));
+            _aggregates.DailyHostCounts(exclusion, issues, baselineFrom, baselineTo, hostIds, scope.DayRiskLevels));
         // 靜音不排除：機房首見日是跨主機的機房級事實，與顯示決定無關
         var fleetFirstSeen = _aggregates.FirstSeenFor(IssueExclusion.None, issues);
 
@@ -492,7 +492,8 @@ public class RecordListQueryService
                 a,
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
                 periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen,
-                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null))
+                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null,
+                IssueNames.ForRules(rules, a.Source, a.EventId)))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -594,7 +595,8 @@ public class RecordListQueryService
         IReadOnlyDictionary<long, WebUser> usersById,
         IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
         IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
-        string? plainExplanation)
+        string? plainExplanation,
+        string issueLabel)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照：出現點是完整簽章鍵（含 EventKey 第五段），
         // 同主機多顆 PRTG sensor、Linux 同程式命中不同規則各自一筆。每台主機取**最差狀態**
@@ -640,6 +642,7 @@ public class RecordListQueryService
         {
             Source = aggregate.Source,
             EventId = aggregate.EventId,
+            IssueLabel = issueLabel,
             Category = aggregate.Category,
             MaxSeverity = LegacySeverityRank.ToSeverity(aggregate.MaxSeverityRank).ToString(),
             HostCount = aggregate.HostCount,

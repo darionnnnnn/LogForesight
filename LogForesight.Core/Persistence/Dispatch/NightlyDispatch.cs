@@ -20,7 +20,7 @@ public sealed class NightlyDispatchSummary
 }
 
 /// <summary>夜間派工派不出去的問題：<paramref name="Reason"/> 是 no_pool／all_paused／no_visibility</summary>
-public sealed record NightlyUnassignableIssue(string IssueLabel, string Reason, int Hosts);
+public sealed record NightlyUnassignableIssue(string IssueLabel, string Reason, int Hosts, string? Source = null, int EventId = 0);
 
 /// <summary>夜間派工彙總的一張單</summary>
 public sealed record NightlyDispatchOrderLine(long WorkOrderId, bool CreatedThisRun, int AddedMembers, string IssueLabel)
@@ -63,7 +63,7 @@ public sealed class NightlyDispatch
     /// <summary>寫入當下才發現的途中變動（單已結案／已改派），趟末併入 SkipCounts</summary>
     private readonly Dictionary<string, int> _midrunCounts = new(StringComparer.Ordinal);
     /// <summary>本趟派不出去：（問題, 原因）→ 主機名集合（同主機多日只算一台）</summary>
-    private readonly Dictionary<(string Issue, string Reason), HashSet<string>> _unassignable = new();
+    private readonly Dictionary<(string Source, int EventId, string Reason), HashSet<string>> _unassignable = new();
 
     public NightlyDispatch(WorkOrderCoordinator coordinator, DispatchContext ctx, IHostStore hosts)
     {
@@ -135,7 +135,7 @@ public sealed class NightlyDispatch
                         _ctx.Commit(decision, issue.Source, issue.EventId);
                         if (decision.SkipReason == WorkOrderDispatcher.SkipNoCandidate)
                         {
-                            var key = ($"{issue.Source} {issue.EventId}", decision.NoCandidateDetail ?? WorkOrderDispatcher.NoCandidateNoPool);
+                            var key = (issue.Source, issue.EventId, decision.NoCandidateDetail ?? WorkOrderDispatcher.NoCandidateNoPool);
                             if (!_unassignable.TryGetValue(key, out var hostSet))
                                 _unassignable[key] = hostSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                             hostSet.Add(hostName);
@@ -325,8 +325,8 @@ public sealed class NightlyDispatch
                 SkipCounts = skipCounts,
                 PerHandler = perHandler,
                 Unassignable = _unassignable
-                    .OrderBy(p => p.Key.Issue, StringComparer.Ordinal).ThenBy(p => p.Key.Reason, StringComparer.Ordinal)
-                    .Select(p => new NightlyUnassignableIssue(p.Key.Issue, p.Key.Reason, p.Value.Count))
+                    .OrderBy(p => p.Key.Source, StringComparer.Ordinal).ThenBy(p => p.Key.EventId).ThenBy(p => p.Key.Reason, StringComparer.Ordinal)
+                    .Select(p => new NightlyUnassignableIssue(IssueNames.For(p.Key.Source, p.Key.EventId), p.Key.Reason, p.Value.Count, p.Key.Source, p.Key.EventId))
                     .ToList()
             };
 

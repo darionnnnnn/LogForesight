@@ -3,7 +3,7 @@
  *
  * 兩顆徽章：
  * - 「我的交辦」：手上進行中的主機數（資料來自單一聚合端點 `handlers/me/badge`，需 Handle 能力）；
- * - 「交辦總覽」：有未讀回覆的單數（`work-orders/unread-count`，需 Assign 或 ViewAll；0 不顯示；未讀單含上報中成員時，提示文字加「其中上報 M 張」）。
+ * - 「交辦總覽」：有未讀回覆的單數（`work-orders/unread-count`，只對具 Assign 的人顯示與請求（已讀只有 Assign 會寫，ViewAll 看到的數字不會歸零）；0 不顯示；未讀單含上報中成員時，提示文字加「其中上報 M 張」）。
  *
  * 每 60 秒刷新一次；分頁隱藏時不打 API，回到前景（visibilitychange）立即刷新一次。
  * 各頁**不得另開計時器**——需要跟著徽章更新的頁面訂閱 `lf:badges` 事件
@@ -85,7 +85,8 @@ async function loadMyWorkBadge(user) {
 async function loadUnreadBadge(user) {
     const link = document.querySelector('[data-badge-source="unread-replies"]');
     if (!link) return null;
-    if (!hasCapability(user, 'Assign') && !hasCapability(user, 'ViewAll')) return null;
+    // 已讀只有 Assign 會寫：只有 ViewAll 的人（Manager、Dev）看到的數字永遠不會歸零，也不送請求
+    if (!hasCapability(user, 'Assign')) return null;
 
     try {
         const result = await api.get('/api/work-orders/unread-count', { silent: true, background: true });

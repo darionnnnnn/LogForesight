@@ -1067,8 +1067,8 @@ public class IssueAggregateQueryTests : IDisposable
     {
         var exclusion = SeedMuteScenario();
 
-        var muted = Query().DailyHostCounts(exclusion, MuteIssues, MuteFrom, MuteTo, null);
-        var all = Query().DailyHostCounts(IssueExclusion.None, MuteIssues, MuteFrom, MuteTo, null);
+        var muted = Query().DailyHostCounts(exclusion, MuteIssues, MuteFrom, MuteTo, null, null);
+        var all = Query().DailyHostCounts(IssueExclusion.None, MuteIssues, MuteFrom, MuteTo, null, null);
 
         Assert.Equal(3, muted.Count);   // disk 8/3、8/20、net 8/7
         Assert.DoesNotContain(muted, c => c.EventId == 7);

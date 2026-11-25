@@ -26,7 +26,7 @@ public class IssueOwnerAdminServiceTests
         var workOrderStore = new FakeWorkOrderStore(cases);
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, handlingStore, hosts);
         return new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()),
-            workOrderStore, workOrders, TestPermissionStamps.Shared);
+            workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
     }
 
     private WebUser AddUser(string account, string displayName) =>

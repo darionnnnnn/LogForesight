@@ -341,7 +341,7 @@ public class DayHandlingCommandService
     /// <summary>成員身分：同一份組法供預覽與寫入共用</summary>
     private static WorkOrderMember MemberOf(WebHost host, DateTime date, DayCaseCandidate c) => new()
     {
-        HostName = host.HostName, IssueKey = c.Key, IssueLabel = HandlingTextHelpers.IssueLabel(c.Issue), TriggerDate = date
+        HostName = host.HostName, IssueKey = c.Key, IssueLabel = c.Issue.SourceEventLabel, TriggerDate = date
     };
 
     /// <summary>
@@ -445,7 +445,7 @@ public class DayHandlingCommandService
             //     使用者在前端確認過「要改派」才換人（§9），改派留下 case_reassign 歷程
             var outcome = _workOrders.Create(new WorkOrderCreateRequest
             {
-                Source = issue.Source, EventId = issue.EventId, IssueLabel = HandlingTextHelpers.IssueLabel(issue),
+                Source = issue.Source, EventId = issue.EventId, IssueLabel = issue.SourceEventLabel,
                 HandlerId = handlerId, Origin = WorkOrderOrigins.DayAssign,
                 ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
                 Note = null, DueDate = null,
@@ -458,7 +458,7 @@ public class DayHandlingCommandService
             reassigned += outcome.Reassigned;
             if (outcome.CreatedOrder && outcome.WorkOrderId > 0)
             {
-                createdOrders.Add((outcome.WorkOrderId, HandlingTextHelpers.IssueLabel(issue)));
+                createdOrders.Add((outcome.WorkOrderId, issue.SourceEventLabel));
             }
 
             foreach (var conflict in outcome.SkippedConflicts)

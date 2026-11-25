@@ -808,8 +808,8 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(2, logs.Count);
         Assert.All(logs, l => Assert.Equal(HandlingActions.IssueStatus, l.Action));
         Assert.All(logs, l => Assert.Equal(HandlingStatuses.Resolved, l.Status));
-        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(a) && l.IssueLabel == "disk 153");
-        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(b) && l.IssueLabel == "app 1000");
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(a) && l.IssueLabel == "disk EventId 153");
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(b) && l.IssueLabel == "app EventId 1000");
         // 同一次批次共用同一個時間戳（供前端 timeline 視覺分組），操作者一致
         Assert.All(logs, l => Assert.Equal(logs[0].CreatedAt, l.CreatedAt));
         Assert.All(logs, l => Assert.False(string.IsNullOrEmpty(l.ActorAccount)));
@@ -834,7 +834,7 @@ public class HandlingServiceTests : IDisposable
         var log = Assert.Single(_handlings.GetLogs(_host.HostName, day));
         Assert.Equal(HandlingActions.IssueStatus, log.Action);
         Assert.Equal(IssueSignatureKey.For(a), log.IssueKey);
-        Assert.Equal("disk 153", log.IssueLabel);
+        Assert.Equal("disk EventId 153", log.IssueLabel);
         Assert.Equal(HandlingStatuses.InProgress, log.Status);
         Assert.Equal("查修中", log.Note);
     }
@@ -1786,7 +1786,7 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(1, workload.OpenCaseCount);
         var caseItem = Assert.Single(workload.Cases);
         Assert.Equal(_host.HostName, caseItem.HostName);
-        Assert.Equal("disk 153", caseItem.IssueLabel);
+        Assert.Equal("disk EventId 153", caseItem.IssueLabel);
 
         var dayItem = Assert.Single(workload.Days);
         Assert.Equal(day.ToString("yyyy-MM-dd"), dayItem.Date);
@@ -2366,7 +2366,7 @@ public class HandlingServiceTests : IDisposable
 
         Assert.Equal(2, _mailSender.Sent.Count);
         var second = _mailSender.Sent[1];
-        Assert.Contains("app 1000", second.Message.Body);
+        Assert.Contains("app EventId 1000", second.Message.Body);
         Assert.DoesNotContain("2 個問題", second.Message.Body);
     }
 
@@ -2384,7 +2384,7 @@ public class HandlingServiceTests : IDisposable
         _repository.AddRecord(second.HostName, day, a);
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Handle);
         var (_, orders, coordinator) = CreateIssueServiceWithOrders(currentUser);
-        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail());
+        var reply = new WorkOrderReplyService(coordinator, orders, _cases, currentUser, _audit, CreateMail(), new FakeRuleStore());
         var id = CreateWorkOrder(coordinator, _other.UserId, a, day, _host.HostName, second.HostName);
 
         reply.Reply(id, new WorkOrderReplyRequest
@@ -2413,7 +2413,7 @@ public class HandlingServiceTests : IDisposable
             new AlwaysVisibleService(_hosts), currentUser, _audit,
             new HandlingProgressCalculator(_issueHandlings, _handlings, _cases, _settings, new FixedIssueExclusionSource(IssueExclusion.None)),
             new UserCapabilityResolver(new FakeUserGroupStore(), _hosts, _issueOwners),
-            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared),
+            new IssueOwnerAdminService(_issueOwners, new FakeIssueAggregateQuery(), _users, _audit, currentUser, displayNames, orders, coordinator, TestPermissionStamps.Shared, new FakeRuleStore()),
             displayNames);
         return (service, orders, coordinator);
     }

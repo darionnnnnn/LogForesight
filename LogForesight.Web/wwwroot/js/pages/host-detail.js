@@ -273,8 +273,8 @@ const ISSUE_COLUMNS = [
         title: '來源 / Event',
         className: 'lf-break-anywhere',
         sortKey: 'source',
-        sortValue: s => `${s.source} (${s.eventId})`,
-        render: s => roleText('lf-text-title', `${s.source} (${s.eventId})`)
+        sortValue: s => s.issueLabel,
+        render: s => roleText('lf-text-title', s.issueLabel)
     },
     {
         title: '分類',

@@ -754,7 +754,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         var entry = SingleAudit(AuditActions.WorkOrderCreate);
         Assert.Equal("work_order", entry.TargetKind);
         Assert.Equal("disk/153", entry.TargetId);
-        Assert.Equal("交辦『disk 153』給 處理人(DOMAIN\\h)：新建 1 張、併入 0 張，加入 2 台（略過 0 台、雜訊排除 0 台）", entry.Summary);
+        Assert.Equal("交辦『disk EventId 153』給 處理人(DOMAIN\\h)：新建 1 張、併入 0 張，加入 2 台（略過 0 台、雜訊排除 0 台）", entry.Summary);
     }
 
     [Fact]

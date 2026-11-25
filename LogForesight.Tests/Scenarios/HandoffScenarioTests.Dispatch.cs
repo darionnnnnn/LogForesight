@@ -456,7 +456,7 @@ public sealed partial class HandoffScenarioTests
                 string.Join(",", DismissedRows(d.Probe("dismissed")).Select(r => r.Str("hostName")).OrderBy(h => h, StringComparer.Ordinal))))
             .Expect(Check("S8.d3.dismissed-says-why", 3, "清單帶出先前結案狀態（不處理、誤報、已知雜訊），已處理的不列", "false_positive,known_noise,wont_fix", d =>
                 string.Join(",", DismissedRows(d.Probe("dismissed")).Select(r => r.Str("status")).OrderBy(x => x, StringComparer.Ordinal))))
-            .Expect(Check("S8.d3.dismissed-fields", 3, "每列有問題、結案的人（處理人 z1）與結案日期", "disk 153/有/有", d =>
+            .Expect(Check("S8.d3.dismissed-fields", 3, "每列有問題、結案的人（處理人 z1）與結案日期", "disk EventId 153/有/有", d =>
             {
                 var group = d.Probe("dismissed").Items("groups").Single();
                 var row = group.GetProperty("rows").EnumerateArray().First(r => r.Str("hostName") == "HOST-B");

@@ -640,7 +640,7 @@ function issueNameCell(issue) {
     const title = document.createElement('div');
     title.className = 'lf-text-title d-flex align-items-center gap-1';
     const name = document.createElement('span');
-    name.textContent = `${issue.source} (${issue.eventId})`;
+    name.textContent = issue.issueLabel;
     title.appendChild(name);
 
     if (issue.isNew) {

@@ -884,7 +884,7 @@ public class MailNotificationService
         string? plain = null;
         if (!string.IsNullOrWhiteSpace(order.SourceName) && order.EventId.HasValue)
             plain = KnownIssueCatalog.PlainExplanationFor(getRules(), order.SourceName, order.EventId.Value);
-        return new WorkOrderDigestOrder(order.WorkOrderId, order.IssueLabel, plain, hostCount, hostNames, order.Note, order.DueDate)
+        return new WorkOrderDigestOrder(order.WorkOrderId, order.DisplayLabel(getRules()), plain, hostCount, hostNames, order.Note, order.DueDate)
         {
             PriorDismissalCreatedAts = hostCount == 0 ? Array.Empty<DateTime>() : PriorDismissalCreatedAtsOf(workOrderId, getRules(), disabled)
         };

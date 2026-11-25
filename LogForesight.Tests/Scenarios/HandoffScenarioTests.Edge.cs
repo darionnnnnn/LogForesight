@@ -70,7 +70,7 @@ public sealed partial class HandoffScenarioTests
                     "all_paused" => "派工池的人全部暫停接單",
                     _ => "池內的人都看不到這些主機"
                 };
-                var ok = r.Unassignable == 1 && r.Detail is { } t && t.Contains("disk 153", StringComparison.Ordinal) && t.Contains(reasonText, StringComparison.Ordinal);
+                var ok = r.Unassignable == 1 && r.Detail is { } t && t.Contains("disk EventId 153", StringComparison.Ordinal) && t.Contains(reasonText, StringComparison.Ordinal);
                 return ok ? $"1/{reason}文字" : $"{r.Unassignable}/{r.Detail}";
             }))
             .Expect(Check("S11.d1.overview", 1, "交辦總覽的端點同一份數字：派不出去 1", "1", d => d.Probe("overview").Int("unassignableCount").ToString()))

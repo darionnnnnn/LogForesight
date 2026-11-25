@@ -38,6 +38,7 @@ public class WorkOrderReplyService
     /// </summary>
     private readonly MailNotificationService _mail;
 
+    private readonly IKnownIssueRuleStore _rules;
     private readonly TimeProvider _clock;
 
     public WorkOrderReplyService(
@@ -47,6 +48,7 @@ public class WorkOrderReplyService
         ICurrentUser currentUser,
         IAuditService audit,
         MailNotificationService mail,
+        IKnownIssueRuleStore rules,
         TimeProvider? clock = null)
     {
         _clock = clock ?? TimeProvider.System;
@@ -56,6 +58,7 @@ public class WorkOrderReplyService
         _currentUser = currentUser;
         _audit = audit;
         _mail = mail;
+        _rules = rules;
     }
 
     public WorkOrderReplyResultDto Reply(long id, WorkOrderReplyRequest req)
@@ -69,12 +72,12 @@ public class WorkOrderReplyService
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
-            summary: $"回覆交辦單 #{id}「{order.IssueLabel}」：{result.Cases} 台標為「{HandlingTextHelpers.IssueStatusText(req.Status)}」",
+            summary: $"回覆交辦單 #{id}「{LabelOf(order)}」：{result.Cases} 台標為「{HandlingTextHelpers.IssueStatusText(req.Status)}」",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, req.CaseIds, req.Status, req.Note, req.DueDate, result.Cases, result.WorkOrderClosed });
 
-        NotifyEscalation(req.Status, order.IssueLabel, newlyEscalated, req.Note, id);
+        NotifyEscalation(req.Status, LabelOf(order), newlyEscalated, req.Note, id);
 
         return new WorkOrderReplyResultDto
         {
@@ -142,7 +145,7 @@ public class WorkOrderReplyService
         }
 
         // 整批一封（不逐張各寄一封轟炸 admin），只涵蓋已成功的單
-        var issueLabel = succeeded.Count == 1 ? succeeded[0].IssueLabel : $"{succeeded.Count} 張交辦單";
+        var issueLabel = succeeded.Count == 1 ? LabelOf(succeeded[0]) : $"{succeeded.Count} 張交辦單";
         NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note, succeeded.Count == 1 ? succeeded[0].WorkOrderId : null);
 
         return new WorkOrderReplyManyResultDto
@@ -182,7 +185,7 @@ public class WorkOrderReplyService
         {
             _audit.Record(
                 action: AuditActions.WorkOrderDueDate,
-                summary: $"修改交辦單 #{id}「{order.IssueLabel}」期限：{order.DueDate?.ToString("yyyy-MM-dd") ?? "無"}→{dueDate?.ToString("yyyy-MM-dd") ?? "無"}",
+                summary: $"修改交辦單 #{id}「{LabelOf(order)}」期限：{order.DueDate?.ToString("yyyy-MM-dd") ?? "無"}→{dueDate?.ToString("yyyy-MM-dd") ?? "無"}",
                 targetKind: TargetKind,
                 targetId: id.ToString(),
                 detail: new { WorkOrderId = id, Previous = order.DueDate, DueDate = dueDate });
@@ -241,4 +244,8 @@ public class WorkOrderReplyService
             newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
             _currentUser.Account, note, workOrderId));
     }
+
+    /// <summary>稽核與上報通知用的交辦單名稱：與畫面同一個出口（事件編號 0 附規則名稱）</summary>
+    private string LabelOf(WorkOrder order) => order.DisplayLabel(KnownIssueCatalog.ResolveRules(_rules));
 }
+

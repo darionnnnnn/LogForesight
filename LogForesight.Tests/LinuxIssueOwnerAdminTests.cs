@@ -28,7 +28,7 @@ public class LinuxIssueOwnerAdminTests
         var workOrderStore = new FakeWorkOrderStore(cases);
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, handlingStore, hosts);
         return new(_issueOwners, _issueAggregates, _users, _audit, FakeCurrentUser.ForAccount(account), new UserDisplayNameService(new FakeSystemSettingsStore()),
-            workOrderStore, workOrders, TestPermissionStamps.Shared);
+            workOrderStore, workOrders, TestPermissionStamps.Shared, new FakeRuleStore());
     }
 
     private WebUser AddUser(string account, string displayName) =>
@@ -109,11 +109,11 @@ public class LinuxIssueOwnerAdminTests
         Assert.DoesNotContain("(0)", sshd.DisplayLabel);
 
         var cron = options.Single(o => o.SourceName == "cron");
-        Assert.Equal("cron", cron.DisplayLabel);
+        Assert.Equal("cron（排程任務（cron）執行失敗）", cron.DisplayLabel);   // 恰好一條規則命中才附規則名稱
         Assert.DoesNotContain("(0)", cron.DisplayLabel);
 
         var disk = options.Single(o => o.SourceName == "disk");
-        Assert.Equal("disk (153)", disk.DisplayLabel);
+        Assert.Equal("disk EventId 153", disk.DisplayLabel);
     }
 
     [Fact]
@@ -174,6 +174,6 @@ public class LinuxIssueOwnerAdminTests
 
         var disk = list.Single(r => r.SourceName == "disk");
         Assert.Equal(153, disk.EventId);
-        Assert.Equal("disk (153)", disk.DisplayLabel);
+        Assert.Equal("disk EventId 153", disk.DisplayLabel);
     }
 }

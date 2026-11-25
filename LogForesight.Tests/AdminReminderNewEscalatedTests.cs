@@ -38,7 +38,7 @@ public sealed class AdminReminderNewEscalatedTests : IDisposable
             new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _orders, _cases, new FakeRuleStore(), new FakeIssueOwnerStore());
         var clock = new FakeTimeProvider(new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(Now, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero));
         clock.SetLocalTimeZone(TimeZoneInfo.Local);
-        _service = new AdminReminderService(_settings, _orders, _cases, _hosts, users, groups, state, mail, clock: clock);
+        _service = new AdminReminderService(_settings, _orders, _cases, _hosts, users, groups, state, mail, new FakeRuleStore(), clock: clock);
     }
 
     public void Dispose() => _fx.Dispose();

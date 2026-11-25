@@ -392,6 +392,17 @@ public static class KnownIssueCatalog
                && (rule.MatchAllEventIds || rule.EventIds.Contains(eventId));
     }
 
+    /// <summary>聚合層（來源, 事件 ID）對得到的規則名稱（<see cref="KnownIssueRule.Description"/> 的第一段，到全形分號為止），問題名稱 <see cref="IssueNames"/> 附註用；找不到或空白回 null。</summary>
+    public static string? RuleNameFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = FindRuleByAggregateKey(rules, source, eventId);
+        if (string.IsNullOrWhiteSpace(rule?.Description)) return null;
+        // Description 常帶「；單日 ≥3 次才升為 Medium」這類門檻說明，名稱只取第一段
+        var cut = rule.Description.IndexOf('；');
+        var name = (cut > 0 ? rule.Description[..cut] : rule.Description).Trim();
+        return name.Length == 0 ? null : name;
+    }
+
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
         if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))

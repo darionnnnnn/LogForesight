@@ -150,7 +150,7 @@ export function createEffectivenessView(deps) {
                     key: 'label', title: '問題', className: 'lf-break-anywhere',
                     render: item => {
                         const link = doc.createElement('a');
-                        link.textContent = item.label || `${item.source} (${item.eventId})`;
+                        link.textContent = item.label;
                         link.href = appUrl(recordsUrl({
                             view: 'issue', source: item.source, eventId: item.eventId,
                             riskLevels: '高,中,低', from: range.from, to: range.to

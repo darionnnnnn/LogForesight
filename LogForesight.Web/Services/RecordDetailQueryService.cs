@@ -409,7 +409,7 @@ public class RecordDetailQueryService
                 HasFindings = latestCheckup.HasFindings,
                 Conclusion = latestCheckup.Conclusion
             },
-            TopSignatures = BuildIssueSummary(records.Values),
+            TopSignatures = BuildIssueSummary(records.Values, KnownIssueCatalog.ResolveRules(_rules)),
             MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(hostSettings.RetentionDays)
         };
     }
@@ -552,7 +552,7 @@ public class RecordDetailQueryService
     /// 這裡關心「出現幾天」而不是「幾台主機」，維度不同故各自 Select。
     /// 排序：最高嚴重度（重→輕）→ 總次數 desc。
     /// </summary>
-    private static List<HostIssueSummaryDto> BuildIssueSummary(IEnumerable<DailyAnalysisRecord> records) =>
+    private static List<HostIssueSummaryDto> BuildIssueSummary(IEnumerable<DailyAnalysisRecord> records, IReadOnlyList<KnownIssueRule> rules) =>
         RecordQueryHelpers.GroupIssuesBySignature(records)
             .Select(g =>
             {
@@ -563,6 +563,7 @@ public class RecordDetailQueryService
                 {
                     Source = g.Key.Source,
                     EventId = g.Key.EventId,
+                    IssueLabel = IssueNames.ForRules(rules, g.Key.Source, g.Key.EventId),
                     Category = latest.Issue.Category.ToString(),
                     TotalCount = g.Sum(x => x.Issue.Count),
                     DaysSeen = g.Select(x => x.Record.Date.Date).Distinct().Count(),

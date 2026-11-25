@@ -158,7 +158,9 @@ public class IssueRankingBuilder
         var issuesOnPage = current.Select(a => (a.Source, a.EventId)).Distinct().ToList();
         var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
         var baselines = IssueBaselineCalculator.Compute(
-            _aggregates.DailyHostCounts(exclusion, issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
+            _aggregates.DailyHostCounts(exclusion, issuesOnPage, baselineFrom, baselineTo, visibleHostIds,
+                // 與本方法主聚合（Build 的 Aggregate）同一個值：排行不限日風險等級
+                dayRiskLevels: null));
         // 靜音不排除：機房首見日是跨主機的機房級事實，與顯示決定無關
         var fleetFirstSeen = _aggregates.FirstSeenFor(IssueExclusion.None, issuesOnPage);
 
@@ -256,6 +258,7 @@ public class IssueRankingBuilder
                 {
                     Source = a.Source,
                     EventId = a.EventId,
+                    IssueLabel = IssueNames.ForRules(rules, a.Source, a.EventId),
                     Category = a.Category,
                     MaxSeverity = LegacySeverityRank.ToSeverity(a.MaxSeverityRank).ToString(),
                     HostCount = a.HostCount,

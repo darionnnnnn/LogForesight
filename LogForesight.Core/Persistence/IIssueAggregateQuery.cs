@@ -213,10 +213,13 @@ public interface IIssueAggregateQuery
     /// 只回傳有出現的日子——沒出現的日子不落地成 0，呼叫端用列數就能知道「出現日數」，
     /// 不必額外傳日曆天數展開。<paramref name="issues"/> 是呼叫端已經算出的候選問題集合
     /// （通常是當頁排行結果），不是整份表——與 <see cref="LatestOccurrences"/> 同一個規模假設。
+    /// <paramref name="dayRiskLevels"/> **必填**（null＝不限日風險等級）：必須與同一頁主清單 <c>Aggregate</c> 傳的是同一個值，
+    /// 否則基準的每日台數會比期間的主機數還大（主清單只看到限縮後的日子、基準卻算進全部日子）。
+    /// 「一台」＝該日該問題出現過的相異存活主機，沒出現的日子不產生列。
     /// </summary>
     List<IssueDailyHostCount> DailyHostCounts(
         IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds);
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels);
 
     /// <summary>
     /// 問題的機房首見日（回饋十九輪批次G4呈現，批次B落地，↔ lf_issue_first_seen）。

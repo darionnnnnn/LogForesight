@@ -1153,7 +1153,7 @@ function issueGroupCell(group) {
     const wrap = document.createElement('div');
     const title = document.createElement('div');
     title.className = 'lf-text-title';
-    title.textContent = `${group.source} (${group.eventId})`;
+    title.textContent = group.issueLabel;
     wrap.appendChild(title);
 
     // 白話說明：在來源(EventId)之下多一行；單行截斷、設最大寬度、hover/focus 可看完整內容。
@@ -1262,7 +1262,7 @@ function issueActions(group) {
             run: () => openIssueMuteModal({
                 source: group.source,
                 eventId: group.eventId,
-                issueLabel: `${group.source} (${group.eventId})`,
+                issueLabel: group.issueLabel,
                 currentMute: null,
                 onApplied: search
             })
@@ -1338,7 +1338,7 @@ function openBulkCloseModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入受影響主機…');
 
-    const modal = showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    const modal = showDetailModal({ title: `統一標記：${group.issueLabel}`, body, size: 'modal-lg' });
     loadBulkCloseForm(group, body, modal);
 }
 
@@ -1554,7 +1554,7 @@ function openWorkOrderModal(group) {
     body.appendChild(loadingWrap);
     renderSpinner(loadingWrap, '載入中…');
 
-    const modal = showDetailModal({ title: `交辦：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    const modal = showDetailModal({ title: `交辦：${group.issueLabel}`, body, size: 'modal-lg' });
     loadWorkOrderForm(group, body, modal);
 }
 

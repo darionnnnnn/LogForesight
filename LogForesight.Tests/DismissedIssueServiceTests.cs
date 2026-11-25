@@ -126,7 +126,7 @@ public class DismissedIssueServiceTests
         Assert.Equal(2, dto.Total);
         Assert.Equal(2, dto.TotalHosts);
         var disk = dto.Groups[0];
-        Assert.Equal("disk 153", disk.IssueLabel);
+        Assert.Equal("disk EventId 153", disk.IssueLabel);
         Assert.Equal(2, disk.Hosts);
         var row = disk.Rows.Single(r => r.HostName == "HOST-A");
         Assert.Equal(IssueHandlingStatuses.KnownNoise, row.Status);
@@ -134,7 +134,7 @@ public class DismissedIssueServiceTests
         Assert.Equal(closedAt, row.ClosedAt);
         Assert.Equal(c.IssueKey, row.IssueKey);
         Assert.Null(disk.Rows.Single(r => r.HostName == "HOST-B").ClosedBy);
-        Assert.Equal("ntfs 55", dto.Groups[1].IssueLabel);
+        Assert.Equal("ntfs EventId 55", dto.Groups[1].IssueLabel);
     }
 
     [Fact]
@@ -206,7 +206,7 @@ public class DismissedIssueServiceTests
         foreach (var h in hosts)
             Assert.DoesNotContain(Key("disk", 1), DispatchContext.DismissedKeys(_cases.GetMany(new[] { h.HostName }), DateTime.Today, TestRules.None));
         Assert.Contains(Key("ntfs", 2), DispatchContext.DismissedKeys(_cases.GetMany(new[] { "HOST-A" }), DateTime.Today, TestRules.None));
-        Assert.Equal("ntfs 2", Service().GetList(1).Groups.Single().IssueLabel);
+        Assert.Equal("ntfs EventId 2", Service().GetList(1).Groups.Single().IssueLabel);
     }
 
     [Fact]
@@ -253,8 +253,8 @@ public class DismissedIssueServiceTests
         Assert.Equal(2, _audit.Entries.Count);
         Assert.All(_audit.Entries, e => Assert.Equal(AuditActions.WorkOrderDismissRestore, e.Action));
         Assert.Contains("HOST-A", _audit.Entries[0].Summary);
-        Assert.Contains("ntfs 55", _audit.Entries[0].Summary);
-        Assert.Contains("disk 153", _audit.Entries[1].Summary);
+        Assert.Contains("ntfs EventId 55", _audit.Entries[0].Summary);
+        Assert.Contains("disk EventId 153", _audit.Entries[1].Summary);
         Assert.Contains("2 台", _audit.Entries[1].Summary);
     }
 }

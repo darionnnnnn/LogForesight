@@ -139,7 +139,7 @@ public class ReportAnalyticsTests : IDisposable
         {
             Summary = new ReportService(repoProxy, _hosts, visibility, handling, ranking, _settingsStore, aggregates, _visibleSettings,
                 cache, exclusions, new SqlPerformanceMonitor()),
-            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions),
+            Effectiveness = new ReportEffectivenessService(repoProxy, _hosts, visibility, handling, issueProxy, _visibleSettings, cache, exclusions, new FakeRuleStore()),
             CategoryTrend = new ReportCategoryTrendService(repoProxy, _hosts, visibility, _visibleSettings, cache, exclusions),
             RepoCalls = repoCounter,
             IssueStoreCalls = issueCounter

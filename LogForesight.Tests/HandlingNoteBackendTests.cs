@@ -97,7 +97,7 @@ public class HandlingNoteBackendTests : IDisposable
         }).WorkOrderId;
 
     private WorkOrderReplyService Service() =>
-        new(_coordinator, _orders, _cases, FakeCurrentUser.ForUser(_alice.UserId, Capability.Handle), _audit, _mail);
+        new(_coordinator, _orders, _cases, FakeCurrentUser.ForUser(_alice.UserId, Capability.Handle), _audit, _mail, new FakeRuleStore());
 
     private static bool IsValid(object request) =>
         Validator.TryValidateObject(request, new ValidationContext(request), new List<ValidationResult>(), validateAllProperties: true);

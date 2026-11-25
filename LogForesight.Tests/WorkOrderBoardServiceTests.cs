@@ -488,7 +488,7 @@ public class WorkOrderBoardServiceTests : IDisposable
         var suggestion = Assert.Single(row.Suggested);
         Assert.Equal((h.UserId, 1, true), (suggestion.HandlerId, suggestion.Hosts, suggestion.WillCreate));
         Assert.Empty(row.Unassignable);
-        Assert.Equal("disk 153", row.IssueLabel);
+        Assert.Equal("disk EventId 153", row.IssueLabel);
     }
 
     /// <summary>

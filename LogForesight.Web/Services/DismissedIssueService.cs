@@ -88,7 +88,7 @@ public class DismissedIssueService
         {
             Source = g.Items[0].Source,
             EventId = g.Key.EventId,
-            IssueLabel = LabelOf(g.Items[0].Source, g.Key.EventId),
+            IssueLabel = IssueNames.ForRules(rules, g.Items[0].Source, g.Key.EventId),
             PlainExplanation = KnownIssueCatalog.PlainExplanationFor(rules, g.Items[0].Source, g.Key.EventId),
             Hosts = g.Items.Count,
             Rows = g.Items.Select(b => new DismissedRowDto
@@ -118,7 +118,7 @@ public class DismissedIssueService
         if (target == null) throw DomainException.NotFound(NotBlockedMessage);
 
         var (source, eventId) = SourceAndEventOf(target);
-        var label = LabelOf(source, eventId);
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId);
         var previousStatus = target.Status;
         target.BlocksRedispatch = false;
         _cases.Save(target);
@@ -140,7 +140,7 @@ public class DismissedIssueService
         if (targets.Count == 0)
             throw DomainException.NotFound("這個問題目前沒有被「不再自動派工」擋住的主機。");
 
-        var label = LabelOf(targets[0].Source, eventId);
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), targets[0].Source, eventId);
         foreach (var t in targets) t.Case.BlocksRedispatch = false;
         _cases.SaveMany(targets.Select(t => t.Case).ToList());
 
@@ -191,7 +191,6 @@ public class DismissedIssueService
             ? (parsed.Source, parsed.EventId)
             : (c.SourceName ?? c.IssueLabel, c.EventId ?? 0);
 
-    private static string LabelOf(string source, int eventId) => $"{source} {eventId}";
 
     /// <summary>
     /// 結案的人：先找處理歷程裡同主機、同問題、同狀態且時間最貼近結案時間的一列（歷程日在案件最後／最早掛接日）；

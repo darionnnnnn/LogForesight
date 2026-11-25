@@ -52,18 +52,18 @@ public sealed class DismissedIssueReleaseListTests
 
         var dto = Service(Closed.Date.AddDays(10)).GetList(1);
 
-        Assert.Equal(21, RowOf(dto, "HOST-HIGH", "disk 153").ReleaseInDays);
-        Assert.False(RowOf(dto, "HOST-HIGH", "disk 153").PreLaunch);
+        Assert.Equal(21, RowOf(dto, "HOST-HIGH", "disk EventId 153").ReleaseInDays);
+        Assert.False(RowOf(dto, "HOST-HIGH", "disk EventId 153").PreLaunch);
 
-        var pre = RowOf(dto, "HOST-PRE", "disk 153");
+        var pre = RowOf(dto, "HOST-PRE", "disk EventId 153");
         Assert.True(pre.PreLaunch);
         Assert.Null(pre.ReleaseInDays);
 
-        var admin = RowOf(dto, "HOST-ADMIN", "disk 153");
+        var admin = RowOf(dto, "HOST-ADMIN", "disk EventId 153");
         Assert.Null(admin.ReleaseInDays);
         Assert.False(admin.PreLaunch);
 
-        var medium = RowOf(dto, "HOST-MID", "Time-Service 29");
+        var medium = RowOf(dto, "HOST-MID", "Time-Service EventId 29");
         Assert.Null(medium.ReleaseInDays);
         Assert.False(medium.PreLaunch);
     }
@@ -73,7 +73,7 @@ public sealed class DismissedIssueReleaseListTests
     {
         Case("high", "HOST-A", "disk", 153, Closed);
 
-        Assert.Equal(1, RowOf(Service(Closed.Date.AddDays(30)).GetList(1), "HOST-A", "disk 153").ReleaseInDays);
+        Assert.Equal(1, RowOf(Service(Closed.Date.AddDays(30)).GetList(1), "HOST-A", "disk EventId 153").ReleaseInDays);
         Assert.Empty(Service(Closed.Date.AddDays(31)).GetList(1).Groups);
     }
 }

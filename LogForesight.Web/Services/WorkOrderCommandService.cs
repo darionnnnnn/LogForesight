@@ -369,7 +369,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderAppend,
-            summary: $"交辦單 {id}『{order.IssueLabel}』追加主機：新案件 {outcome.NewCases} 件、改連 {outcome.LinkedExisting} 件、" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』追加主機：新案件 {outcome.NewCases} 件、改連 {outcome.LinkedExisting} 件、" +
                      $"改派 {outcome.Reassigned} 件（略過 {outcome.SkippedConflicts.Count} 件、雜訊排除 {noiseExcluded} 台、無權限忽略 {ignored} 台）",
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -410,7 +410,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderReassign,
-            summary: $"交辦單 {id}『{order.IssueLabel}』改派給 {NameOf(handler)}：移動 {result.MovedCases} 件" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』改派給 {NameOf(handler)}：移動 {result.MovedCases} 件" +
                      (result.MergedIntoExisting ? $"，併入單號 {result.TargetWorkOrderId}" : ""),
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -435,7 +435,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderSplit,
-            summary: $"交辦單 {id}『{order.IssueLabel}』拆出 {result.MovedCases} 件給 {NameOf(handler)}" +
+            summary: $"交辦單 {id}『{LabelOf(order)}』拆出 {result.MovedCases} 件給 {NameOf(handler)}" +
                      (result.MergedIntoExisting ? $"，併入單號 {result.TargetWorkOrderId}" : $"，新單號 {result.TargetWorkOrderId}"),
             targetKind: TargetKind,
             targetId: id.ToString(),
@@ -460,7 +460,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderCancel,
-            summary: $"取消交辦單 {id}『{order.IssueLabel}』：{result.ClosedCases} 件案件調回未處理（原因：{reason}）",
+            summary: $"取消交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件案件調回未處理（原因：{reason}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, Reason = reason, result.HandlerId });
@@ -483,7 +483,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderReturn,
-            summary: $"退回交辦單 {id}『{order.IssueLabel}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
+            summary: $"退回交辦單 {id}『{LabelOf(order)}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ReturnedCases, Note = note, result.HandlerId });
@@ -509,7 +509,7 @@ public class WorkOrderCommandService
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
-            summary: $"代為結案交辦單 {id}『{order.IssueLabel}』：{result.ClosedCases} 件標為 {req.Status}（原因：{reason}）",
+            summary: $"代為結案交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件標為 {req.Status}（原因：{reason}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId });
@@ -691,7 +691,7 @@ public class WorkOrderCommandService
         {
             Source = source,
             EventId = eventId,
-            IssueLabel = $"{source} {eventId}",
+            IssueLabel = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId),
             Scope = scope,
             Hosts = hosts,
             Allocations = allocations,
@@ -732,7 +732,7 @@ public class WorkOrderCommandService
         var noise = _noiseMarks.GetAll()
             .Select(m => (HostNameKey.Of(m.HostName), m.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
-        var label = $"{source} {eventId}";
+        var label = IssueNames.ForRules(KnownIssueCatalog.ResolveRules(_rules), source, eventId);
 
         // 每台主機：去重後的簽章（最近出現者）→ 扣掉雜訊後的出現點
         var perHost = occurrences
@@ -986,4 +986,8 @@ public class WorkOrderCommandService
         public required List<AssigneeCannotHandleDto> CannotHandle { get; init; }
         public required Func<long, string> NameOf { get; init; }
     }
+
+    /// <summary>稽核與畫面用的交辦單名稱：以單上的來源與事件重新產生（事件編號 0 附規則名稱），全站同一個出口</summary>
+    private string LabelOf(WorkOrder order) => order.DisplayLabel(KnownIssueCatalog.ResolveRules(_rules));
 }
+

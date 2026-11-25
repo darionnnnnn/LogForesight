@@ -47,6 +47,7 @@ public class ReportRecurringIssueDto
 {
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
+    /// <summary>顯示用的問題名稱（<see cref="IssueNames.ForRules"/>）；前端直接用，不自行組來源與事件編號</summary>
     public string Label { get; set; } = string.Empty;
     /// <summary>期間內此問題被標為已處理的主機數</summary>
     public int HostCount { get; set; }

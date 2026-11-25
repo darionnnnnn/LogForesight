@@ -653,10 +653,10 @@ export async function openIssueStatusReplyModal(group, onApplied) {
 
     openWorkOrderReplyModal({
         multiTarget: orders.length > 1 || hosts > 1,
-        title: `回覆處理狀態：${group.source} (${group.eventId})`,
+        title: `回覆處理狀態：${group.issueLabel}`,
         targetText: `${orders.length} 張單共 ${hosts} 台`,
         draftKey: workOrdersDraftKey(workOrderIds),
-        aiContext: { issueLabel: `${group.source} (${group.eventId})`, hostCount: hosts },
+        aiContext: { issueLabel: group.issueLabel, hostCount: hosts },
         recurrence: { hosts: orders.reduce((sum, order) => sum + (order.recurrenceHosts ?? 0), 0) },
         dismissalReleases: orders.every(order => order.dismissalReleases),
         // 依問題視角只有 Source＋EventId、沒有完整簽章（同一事件可能分屬多個簽章），不顯示沿用

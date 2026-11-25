@@ -67,7 +67,7 @@ async function load() {
  * 舊資料或尚未帶欄位時退回本地推算 */
 function issueLabel(item) {
     if (!item) return '';
-    return item.displayLabel || (item.eventId === 0 ? item.sourceName : `${item.sourceName} (${item.eventId})`);
+    return item.displayLabel;
 }
 
 function renderList() {

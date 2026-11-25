@@ -753,7 +753,7 @@ function renderIssueRankChart() {
         return;
     }
 
-    const labels = issues.map(i => `${i.source} (${i.eventId})`);
+    const labels = issues.map(i => i.issueLabel);
     const counts = issues.map(i => i.totalCount);
     if (others) {
         labels.push(`其他 ${others.issueCount} 個問題`);
@@ -783,7 +783,7 @@ function renderIssueRankChart() {
     });
 
     const tableRows = issues.map(i => [
-        `${i.source} (${i.eventId})`, i.priorityScore.toFixed(0), categoryName(i.category),
+        i.issueLabel, i.priorityScore.toFixed(0), categoryName(i.category),
         severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount,
         issueBaselineText(i), i.fleetFirstSeen || i.firstSeen
     ]);
