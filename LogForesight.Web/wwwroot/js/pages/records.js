@@ -28,6 +28,7 @@ import {
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
+import { openHideTriage, HIDE_TRIAGE_ACTION } from './hide-triage-panel.js';
 import { bindRangeChips } from '../core/date-range.js';
 import { createSeqGuard } from '../core/async-guards.js';
 import { copyText } from '../core/clipboard.js';
@@ -1237,9 +1238,15 @@ function renderHideGuide(visible) {
     const lead = document.createElement('p');
     lead.className = 'lf-text-meta mb-2';
     lead.textContent = HIDE_GUIDE_LEAD;
+    // 連到分流入口（批次 N）：比較表是「選哪一種」的說明，真的要套用走每一列「更多」裡的「不再顯示這個問題…」
+    const entryHint = document.createElement('p');
+    entryHint.className = 'lf-text-meta mb-2';
+    entryHint.textContent = hasCapability(currentUser, 'Maintain')
+        ? '不想自己選？從下方每個問題的「更多」選「不再顯示這個問題…」，回答三個問題就會套用對應的做法。'
+        : '要套用這些做法，請洽具維護權限的管理者，他可以從每個問題的「更多」選「不再顯示這個問題…」。';
     const tableHost = document.createElement('div');
     tableHost.className = 'lf-table-aligned';
-    body.append(lead, tableHost);
+    body.append(lead, entryHint, tableHost);
     const lines = texts => {
         const wrap = document.createElement('div');
         for (const text of texts) {
@@ -1316,6 +1323,20 @@ function issueActions(group) {
                 eventId: group.eventId,
                 issueLabel: group.issueLabel,
                 currentMute: null,
+                onApplied: search
+            })
+        });
+    }
+    // 不再顯示這個問題…（批次 N）：三個問句選對應的做法（靜音、機房結論、規則抑制），先說後果再套用；原有各入口保留
+    if (hasCapability(currentUser, 'Maintain')) {
+        list.push({
+            text: HIDE_TRIAGE_ACTION.text,
+            title: HIDE_TRIAGE_ACTION.title,
+            run: () => openHideTriage({
+                source: group.source,
+                eventId: group.eventId,
+                issueLabel: group.issueLabel,
+                ruleId: group.ruleId ?? null,
                 onApplied: search
             })
         });

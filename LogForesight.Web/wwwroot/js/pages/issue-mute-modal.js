@@ -47,22 +47,24 @@ function dateOnly(value) {
  * 這是加值資訊，取不到就當作沒有單：靜音本身不該被一次列表請求失敗卡住
  * （後端仍以預設的 pause 處置既有單）。
  */
-async function loadActiveOrders(source, eventId) {
+export async function loadActiveOrders(source, eventId) {
     const params = new URLSearchParams({ status: 'active', page: '1', pageSize: '100' });
     if (source) params.set('source', source);
     if (eventId !== null && eventId !== undefined) params.set('eventId', String(eventId));
 
     try {
         const data = await api.get(`/api/work-orders?${params}`, { silent: true });
-        if (!data) return { orders: 0, hosts: 0 };
+        if (!data) return { orders: 0, hosts: 0, ids: [] };
         const items = data.items ?? [];
         // 張數取後端總數（同一問題一位處理人最多一張，實務上遠少於一頁）；台數加總本頁各單
         return {
             orders: data.total,
-            hosts: items.reduce((sum, r) => sum + (r.counts?.active ?? 0), 0)
+            hosts: items.reduce((sum, r) => sum + (r.counts?.active ?? 0), 0),
+            // 本頁各單的編號（不再打擾分流的「代為結案」逐張發請求用）；少於 orders＝清單被分頁截斷，呼叫端要自己處理
+            ids: items.map(r => r.workOrderId)
         };
     } catch {
-        return { orders: 0, hosts: 0 };
+        return { orders: 0, hosts: 0, ids: [] };
     }
 }
 

@@ -460,6 +460,7 @@ public static class ServiceCollectionExtensions
         // 交辦單負載看板／待派清單（派工試跑）／立即派工
         services.AddScoped<WorkOrderBoardService>();
         services.AddScoped<DismissedIssueService>();
+        services.AddScoped<IssueHideSummaryService>();
         services.AddScoped<AdminTodoService>();
         services.AddScoped<HandlingHistoryQueryService>();
 

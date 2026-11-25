@@ -33,6 +33,7 @@ import { openWorkOrderReplyModal, toastReplyResult, describeReplyRejection, orde
 import { createListUpdateNotice } from '../core/list-update-notice.js';
 import { copyText } from '../core/clipboard.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
+import { openHideTriage } from './hide-triage-panel.js';
 import { guidancePanel, sampleMessagesPanel, issueShortcuts, adminCloseScopeOptions, defaultAdminCloseScope } from './work-order-reference.js';
 
 // DOM 元素
@@ -378,6 +379,13 @@ function renderHeader(detail) {
             eventId: detail.eventId,
             issueLabel: detail.issueLabel,
             currentMute: null,
+            onApplied: () => reloadAll()
+        }),
+        onHideTriage: () => openHideTriage({
+            source: detail.source,
+            eventId: detail.eventId,
+            issueLabel: detail.issueLabel,
+            ruleId: detail.ruleId ?? null,
             onApplied: () => reloadAll()
         })
     });

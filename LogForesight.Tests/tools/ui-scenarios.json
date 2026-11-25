@@ -5275,5 +5275,49 @@
         "evalAssert": "const toggle = document.querySelector('#issue-hide-guide .lf-disclosure');\nconst target = document.getElementById(toggle.getAttribute('aria-controls'));\nif (!target.classList.contains('d-none')) return '比較表預設要收合';\ntoggle.click();\nif (target.classList.contains('d-none')) return '展開後比較表沒有顯示';\nconst rows = target.querySelectorAll('tbody tr');\nif (rows.length !== 6) return '比較表要有六列（靜音、抑制、已知雜訊、不處理、誤報、統一標記），實際 ' + rows.length;\nif (target.scrollWidth > target.clientWidth + 1) return '比較表有橫向溢出';\nreturn null;"
       }
     ]
+  },
+  {
+    "name": "版面-問題負責與靜音-不顯示設定總覽",
+    "role": "ui-admin",
+    "path": "/admin/issue-owners",
+    "steps": [
+      {
+        "waitFor": "#issue-hide-summary tbody tr"
+      },
+      {
+        "assert": {
+          "sel": "#issue-hide-summary .lf-skeleton",
+          "count": 0
+        }
+      },
+      {
+        "evalAssert": "const host = document.getElementById('issue-hide-summary');\nconst heads = [...host.querySelectorAll('thead th')].map(th => th.textContent.trim());\nconst want = ['問題', '靜音', '機房結論', '抑制', '不再打擾'];\nif (want.some((w, i) => heads[i] !== w)) return '總覽表頭要是 ' + want.join('、') + '，實際 ' + heads.join('、');\nconst rows = host.querySelectorAll('tbody tr');\nif (rows.length === 0) return '總覽沒有任何列';\nconst text = host.textContent;\nif (!text.includes('靜音至')) return '資料集裡有靜音中的問題，總覽要列出迄日';\nconst clear = [...host.querySelectorAll('tbody button')].filter(b => b.textContent.trim() === '解除');\nif (clear.length === 0) return '有靜音或結論的列要有「解除」動作';\nif (host.scrollWidth > host.clientWidth + 1) return '總覽有橫向溢出';\nreturn null;"
+      }
+    ]
+  },
+  {
+    "name": "互動-問題查詢-不再顯示這個問題分流面板",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr.lf-row-expandable"
+      },
+      {
+        "evalAssert": "const toggle = document.querySelector('#record-list tbody tr.lf-row-expandable .dropdown-toggle');\nif (!toggle) return '依問題視角的列沒有「更多」選單';\ntoggle.click();\nconst item = [...document.querySelectorAll('#record-list .dropdown-menu.show .dropdown-item')].find(i => i.textContent.trim() === '不再顯示這個問題…');\nif (!item) return '「更多」裡沒有「不再顯示這個問題…」';\nitem.click();\nreturn null;"
+      },
+      {
+        "waitFor": ".modal.show form button[type=submit]"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst groups = modal.querySelectorAll('.btn-group[role=group]');\nif (groups.length < 3) return '要有多久、範圍（以及已交辦的單或結論）分段控制，實際 ' + groups.length;\nconst status = modal.querySelector('[role=status]');\nif (!status || !status.textContent.includes('做法：靜音')) return '預設（暫時＋全站）後果摘要要寫「做法：靜音」';\nconst primary = modal.querySelectorAll('.btn-primary');\nif (primary.length !== 1) return '面板只能有一顆主要按鈕，實際 ' + primary.length;\nif (modal.scrollWidth > modal.clientWidth + 1) return '面板有橫向溢出';\nreturn null;"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst btn = label => [...modal.querySelectorAll('.btn-group button')].find(b => b.textContent.trim() === label);\nbtn('長期').click();\nconst status = modal.querySelector('[role=status]');\nif (!status.textContent.includes('做法：機房結論')) return '長期＋全站要改寫「做法：機房結論」，實際：' + status.textContent;\nreturn null;"
+      },
+      {
+        "evalAssert": "const modal = document.querySelector('.modal.show');\nconst btn = label => [...modal.querySelectorAll('.btn-group button')].find(b => b.textContent.trim() === label);\nconst group = btn('指定主機群組');\nif (!group) return '沒有「指定主機群組」選項';\nif (group.disabled) return null;\ngroup.click();\nconst status = modal.querySelector('[role=status]');\nif (!status.textContent.includes('做法：規則抑制')) return '指定主機群組要改寫「做法：規則抑制」，實際：' + status.textContent;\nreturn null;"
+      }
+    ]
   }
 ]

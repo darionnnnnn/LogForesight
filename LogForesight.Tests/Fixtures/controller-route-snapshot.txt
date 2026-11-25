@@ -39,6 +39,7 @@ PUT	/api/admin/hosts/{hostId:long}/owners	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/hosts/{hostId:long}/unmerge	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
 PUT	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
+GET	/api/admin/issue-owners/hide-summary	C=Maintain;A=-	-	-	-	IssueOwnersController
 GET	/api/admin/issue-owners/muted-count	C=Maintain;A=-	-	-	-	IssueOwnersController
 GET	/api/admin/issue-owners/recent-issues	C=Maintain;A=-	-	-	-	IssueOwnersController
 DELETE	/api/admin/issue-owners/{source}/{eventId:int}	C=Maintain;A=-	-	-	-	IssueOwnersController

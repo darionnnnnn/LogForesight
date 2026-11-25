@@ -84,11 +84,12 @@ export function ruleEditHref(detail) {
 /**
  * 這個問題的捷徑列。
  * @param {object} detail 交辦單詳情
- * @param {{canListOrders: boolean, canMaintain: boolean, onMute: () => void}} options
- *        canListOrders＝能看交辦總覽（Assign 或 ViewAll）；canMaintain＝具 Maintain；onMute＝開靜音視窗
+ * @param {{canListOrders: boolean, canMaintain: boolean, onMute: () => void, onHideTriage?: () => void}} options
+ *        canListOrders＝能看交辦總覽（Assign 或 ViewAll）；canMaintain＝具 Maintain；onMute＝開靜音視窗；
+ *        onHideTriage＝開「不再顯示這個問題…」分流（批次 N，沒傳就不放這顆）
  * @returns {HTMLElement|null} 一個捷徑都沒有（多問題單、或沒有任何權限）回 null
  */
-export function issueShortcuts(detail, { canListOrders, canMaintain, onMute }) {
+export function issueShortcuts(detail, { canListOrders, canMaintain, onMute, onHideTriage }) {
     const nodes = [];
     const ordersHref = otherOrdersHref(detail);
     if (ordersHref && canListOrders) {
@@ -96,6 +97,9 @@ export function issueShortcuts(detail, { canListOrders, canMaintain, onMute }) {
     }
     if (ordersHref && canMaintain && !detail.closedAt) {
         nodes.push(button('靜音這個問題', { variant: 'outline-secondary', opens: 'dialog', title: '暫時不看這個問題（到期自動恢復）', onClick: () => onMute() }));
+    }
+    if (ordersHref && canMaintain && !detail.closedAt && onHideTriage) {
+        nodes.push(button('不再顯示這個問題…', { variant: 'outline-secondary', opens: 'dialog', title: '回答三個問題，系統選對應的做法並先說明後果', onClick: () => onHideTriage() }));
     }
     const ruleHref = ruleEditHref(detail);
     if (ruleHref && canMaintain) {

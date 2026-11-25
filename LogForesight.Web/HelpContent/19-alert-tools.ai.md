@@ -24,6 +24,20 @@
 | 誤報 | 同不處理（同屬 `IssueHandlingStatuses.Dismissals`） | 同不處理 | 同不處理 | 同不處理 |
 | 統一標記 | 查詢期間內、該問題沒有進行中案件的主機；一次性寫逐日處理狀態。勾自動套用另寫機房結論（需 `Assign`＋`Maintain`；只具 `Handle` 的主機負責人不能勾） | 不動：有進行中案件的主機整台略過；單次上限 5,000 個主機日 | 標出的日子視為已有結論，待派不再列；之後新日子：沒勾自動套用會重新派工，勾了由逐日掛接寫入同一結論；標已知雜訊會寫雜訊記憶而永久略過 | `IssueHandlingCommandService.BulkCloseIssue`、`IssueCaseCoordinator.AttachNewDay` |
 
+## 「不再顯示這個問題…」分流入口（N、F16-1）
+
+入口：問題查詢依問題視角每列「更多」選單，與交辦單頁問題捷徑（未結案的單才有）；需 `Maintain`。三問（多久／範圍／已交辦的單）對照既有機制，不新增儲存；對照表是 `wwwroot/js/core/hide-triage.js` 的 `TRIAGE_TABLE`（2×3×3＝18 格，測試逐格固定端點與參數）。沒有進行中交辦單時不問第三題。
+
+| 多久＋範圍 | 機制與端點 | 第三題可選 |
+| --- | --- | --- |
+| 暫時＋全站 | 靜音：`PUT /api/admin/issue-owners/{source}/{eventId}/mute`（`days`、`reason`、`existingOrders`） | `pause`、`close`（`keep` 不可選：靜音期間單推導為暫停） |
+| 長期＋全站 | 機房結論：`PUT .../conclusion`（`status` 為 known_noise 或 wont_fix、`note`、`autoApply: true`）；選代為結案時再對每張進行中的單 `POST /api/work-orders/{id}/admin-close`（`blockRedispatch: true`） | `keep`、`close`（`pause` 不可選：長期沒有到期恢復） |
+| 暫時或長期＋指定群組／單一主機 | 規則抑制：`POST /api/rules/{ruleId}/suppressions`（`scope` 為 Group 或 Host；暫時帶 `days`，長期 `days` 為 null） | 只有 `keep`（抑制不碰交辦單） |
+
+- 問題沒有對應規則（`ruleId` 為空）時，群組與單一主機不可選。
+- 代為結案需同時具 `Assign` 與 `Handle`；進行中的單超過一頁（100 張）時不提供，避免逐張結案漏單。
+- 套用依序送出請求、失敗即停，已完成的設定不回滾，畫面會說明做到哪一步。
+
 ## 靜音的判定規則
 
 - 某一列（問題, 紀錄日）靜音＝問題**目前**靜音中，或紀錄日落在它任一區間內。

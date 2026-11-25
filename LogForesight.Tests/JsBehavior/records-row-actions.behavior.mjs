@@ -42,10 +42,10 @@ function env({ caps = [], mine = false } = {}) {
     const bootstrap = { Dropdown: { getOrCreateInstance: toggle => ({ hide: () => hidden.push(toggle) }) } };
     const modal = name => (...args) => opened.push({ name, args, focused: document.activeElement });
     const factory = new Function('document', 'button', 'currentUser', 'hasCapability', 'bootstrap', 'search',
-        'openIssueStatusReplyModal', 'openWorkOrderModal', 'openBulkCloseModal', 'openIssueMuteModal',
+        'openIssueStatusReplyModal', 'openWorkOrderModal', 'openBulkCloseModal', 'openIssueMuteModal', 'openHideTriage', 'HIDE_TRIAGE_ACTION',
         `${SOURCES}\nreturn issueActionsCell;`);
     const cell = factory(document, button, currentUser, hasCapability, bootstrap, () => { },
-        modal('reply'), modal('assign'), modal('bulk'), modal('mute'));
+        modal('reply'), modal('assign'), modal('bulk'), modal('mute'), modal('triage'), { text: '不再顯示這個問題…', title: '回答三個問題，系統選對應的做法並先說明後果' });
     const group = { source: 'disk', eventId: 153, handlers: mine ? [{ handlerId: 7 }] : [] };
     return { result: cell(group), opened, hidden };
 }
@@ -58,28 +58,39 @@ const menuTexts = wrap => {
 };
 
 const cases = {
-    // 四個都可用：回覆處理狀態留在列上，其餘三個收進「更多」
+    // 五個都可用：回覆處理狀態留在列上，其餘四個收進「更多」（批次 N 起多一個「不再顯示這個問題…」）
     fourActionsKeepFirstInlineRestInMenu() {
         const { result } = env({ caps: ['Handle', 'Assign', 'Maintain'], mine: true });
         assert.deepEqual(inlineTexts(result), ['回覆處理狀態']);
-        assert.deepEqual(menuTexts(result), ['交辦', '統一標記', '靜音']);
+        assert.deepEqual(menuTexts(result), ['交辦', '統一標記', '靜音', '不再顯示這個問題…']);
     },
-    // 管理者、不是自己的案件：三個動作，交辦留在列上
+    // 管理者、不是自己的案件：四個動作，交辦留在列上
     threeActionsAdminNotMine() {
         const { result } = env({ caps: ['Handle', 'Assign', 'Maintain'], mine: false });
         assert.deepEqual(inlineTexts(result), ['交辦']);
-        assert.deepEqual(menuTexts(result), ['統一標記', '靜音']);
+        assert.deepEqual(menuTexts(result), ['統一標記', '靜音', '不再顯示這個問題…']);
     },
     // 只有兩個：全部橫排，不出選單（不必多點一下）
     twoActionsInlineWithoutMenu() {
-        const { result } = env({ caps: ['Assign', 'Maintain'] });
-        assert.deepEqual(inlineTexts(result), ['交辦', '靜音']);
+        const { result } = env({ caps: ['Assign', 'Handle'] });
+        assert.deepEqual(inlineTexts(result), ['交辦', '統一標記']);
         assert.equal(menuOf(result), null);
     },
     oneAction() {
-        const { result } = env({ caps: ['Maintain'] });
-        assert.deepEqual(inlineTexts(result), ['靜音']);
+        const { result } = env({ caps: ['Assign'] });
+        assert.deepEqual(inlineTexts(result), ['交辦']);
         assert.equal(menuOf(result), null);
+    },
+    // 批次 N：只有 Maintain 的人有靜音與「不再顯示這個問題…」兩個動作，橫排不出選單；點下去開分流面板
+    maintainOnlyHasMuteAndHideTriage() {
+        const { result, opened } = env({ caps: ['Maintain'] });
+        assert.deepEqual(inlineTexts(result), ['靜音', '不再顯示這個問題…']);
+        assert.equal(menuOf(result), null);
+        const hide = result.children.find(c => c.textContent === '不再顯示這個問題…');
+        (hide.listeners.click || []).forEach(h => h({ stopPropagation() { }, preventDefault() { } }));
+        assert.equal(opened.length, 1);
+        assert.equal(opened[0].name, 'triage');
+        assert.equal(opened[0].args[0].source, 'disk');
     },
     noActionReturnsEmpty() {
         const { result } = env({ caps: [] });

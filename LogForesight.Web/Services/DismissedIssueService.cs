@@ -122,6 +122,33 @@ public class DismissedIssueService
         };
     }
 
+    /// <summary>
+    /// 每個問題被「不再自動派工」擋住的彙總（問題負責與靜音頁的「不顯示」總覽用）：走同一個 <see cref="Blocked"/>，
+    /// 與 <see cref="GetList"/> 的每組數字同一單位——<see cref="DismissedIssueSummary.Hosts"/>＝該問題被擋住的（主機, 問題）件數，
+    /// 與清單每組的 <see cref="DismissedGroupDto.Hosts"/> 相同；<see cref="DismissedIssueSummary.ReleasingHosts"/>＝其中會在 N 天後自動恢復的件數
+    /// （<see cref="DismissalRelease.RemainingDays"/> 有值者），<see cref="DismissedIssueSummary.NextReleaseInDays"/>＝其中最早恢復的剩餘天數。
+    /// 沒有被擋住的問題不列；一次批次查詢，不逐問題查。
+    /// </summary>
+    public List<DismissedIssueSummary> GetIssueSummaries()
+    {
+        var blocked = Blocked();
+        if (blocked.Count == 0) return new List<DismissedIssueSummary>();
+
+        var releaseRules = ReleaseRules();
+        var today = _clock.LocalToday();
+        return blocked
+            .GroupBy(b => (b.SourceKey, b.EventId))
+            .Select(g =>
+            {
+                var remaining = g.Select(b => DismissalRelease.RemainingDays(b.Case, today, releaseRules))
+                    .Where(d => d.HasValue).Select(d => d!.Value).ToList();
+                return new DismissedIssueSummary(g.First().Source, g.Key.EventId, g.Count(), remaining.Count,
+                    remaining.Count == 0 ? null : remaining.Min());
+            })
+            .OrderBy(s => s.Source, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.EventId)
+            .ToList();
+    }
+
     /// <summary>恢復單一（主機, 問題）：該件最新案件的欄位寫成 false。目前沒被擋住（或看不到該主機）擲 NotFound。</summary>
     public DismissedRestoreResultDto Restore(string hostName, string issueKey)
     {

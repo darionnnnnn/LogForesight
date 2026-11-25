@@ -30,6 +30,12 @@ public class IssueOwnersController : ControllerBase
     [HttpGet("muted-count")]
     public ApiResponse<MutedCountDto> MutedCount() => ApiResponse<MutedCountDto>.Ok(_service.CountMuted());
 
+    /// <summary>不顯示設定總覽（第 81 輪批次 N）：每個問題一列，彙總目前生效的靜音、機房結論、抑制、不再打擾。
+    /// 與問題負責與靜音頁同一個 Maintain 能力；判定與數字重用各來源既有的函式，見 <see cref="IssueHideSummaryService"/>。</summary>
+    [HttpGet("hide-summary")]
+    public ApiResponse<List<IssueHideSummaryDto>> HideSummary([FromServices] IssueHideSummaryService summary) =>
+        ApiResponse<List<IssueHideSummaryDto>>.Ok(summary.GetSummaries());
+
     /// <summary>按需讀取此問題最近的靜音操作，只回傳白名單欄位，不開放一般稽核明細。</summary>
     [HttpGet("{source}/{eventId:int}/mute-history")]
     public ApiResponse<List<IssueMuteActionDto>> MuteHistory(string source, int eventId,
