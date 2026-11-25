@@ -2,6 +2,9 @@
 
 public class DashboardDto
 {
+    /// <summary>淺層複本：快取內的共用主體不能被改，疊上能力相關欄位前先複製（清單等巢狀物件共用、不被改動）</summary>
+    public DashboardDto ShallowCopy() => (DashboardDto)MemberwiseClone();
+
     public int Days { get; set; }
     public string From { get; set; } = string.Empty;
     public string To { get; set; } = string.Empty;

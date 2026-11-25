@@ -6,6 +6,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -725,7 +726,8 @@ public class DashboardServiceTests : IDisposable
     // ── 待派工問題卡（§9.1）──────────────────────────────────────────────────
 
     /// <summary>以指定使用者與共用的快取組一個儀表板服務（其餘相依同建構子）；回報每次 gaps 呼叫的參數</summary>
-    private DashboardService ServiceFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps)
+    private DashboardService ServiceFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps,
+        Func<AdminTodoService>? adminTodo = null, AuditLogStore? auditStore = null)
     {
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
@@ -740,9 +742,10 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver, new FixedIssueExclusionSource(IssueExclusion.None));
         return new DashboardService(
-            visibility, new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
+            visibility, auditStore ?? new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, cache,
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps);
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps,
+            adminTodo: adminTodo?.Invoke());
     }
 
     /// <summary>
@@ -838,12 +841,84 @@ public class DashboardServiceTests : IDisposable
         Assert.NotNull(assigner2.GetSummary(7).PendingDispatch);
     }
 
+    /// <summary>以與儀表板相同的快取與待派計數組一個「需要你處理」服務（呼叫者能力由 user 決定）</summary>
+    private AdminTodoService AdminTodoFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps)
+    {
+        var mail = new MailNotificationService(
+            _settingsStore, new FakeSmtpMailSender(), _hosts, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), new FakeHandlingStore(), new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
+            new ScheduleFreshnessService(
+                new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")),
+                new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(_caseStore), _caseStore,
+            new FakeRuleStore(), new FakeIssueOwnerStore());
+        var reminders = new AdminReminderService(
+            _settingsStore, new FakeWorkOrderStore(_caseStore), _caseStore, _hosts, _users, new FakeUserGroupStore(),
+            new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), mail, new FakeRuleStore(), cache: cache);
+        return new AdminTodoService(reminders, gaps, user, cache, new AlwaysVisibleService(_hosts), new FixedIssueExclusionSource(IssueExclusion.None));
+    }
+
+    private AuditLogStore AuditWithLoginFailures(int count)
+    {
+        var store = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
+        for (var i = 0; i < count; i++)
+            store.Append(new AuditEntry { Account = "x", Action = AuditActions.LoginFailed, OccurredAt = DateTime.Now.AddMinutes(-5) });
+        return store;
+    }
+
     /// <summary>
-    /// 第 79 輪批次 G14：快取鍵含 ViewAll 維度（待確認權限異動的計數依它分支）。
-    /// 同一組可見主機下，有 ViewAll 與沒有的兩人各自一筆快取，第二人不會命中第一人的那筆。
+    /// 主體與個人能力分開快取：可見範圍相同、能力不同的管理員、主管、處理人共用同一份主體（待派試跑也只算一次），
+    /// 但能力欄位各自正確——無 Assign 者 PendingDispatch／AdminTodo 為 null，無 ViewAudit 者看不到登入失敗數。
+    /// 兩種先後順序各跑一次（先算的人不能把自己的能力欄位留在共用主體裡）。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GetSummary_可見範圍相同能力不同_共用主體且能力欄位各自正確(bool adminFirst)
+    {
+        var cache = new SummaryCache(new DataVersionStamp());
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var gaps = PagedGaps(calls);
+        var audit = AuditWithLoginFailures(3);
+        var adminUser = FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.Assign, Capability.ViewAudit, Capability.Handle);
+        var managerUser = FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.Assign, Capability.Handle);
+        var handlerUser = FakeCurrentUser.WithCapabilities(Capability.Handle);
+        var admin = ServiceFor(adminUser, cache, gaps, () => AdminTodoFor(adminUser, cache, gaps), audit);
+        var manager = ServiceFor(managerUser, cache, gaps, () => AdminTodoFor(managerUser, cache, gaps), audit);
+        var handler = ServiceFor(handlerUser, cache, gaps, () => AdminTodoFor(handlerUser, cache, gaps), audit);
+
+        DashboardDto a, m;
+        if (adminFirst) { a = admin.GetSummary(7); m = manager.GetSummary(7); }
+        else { m = manager.GetSummary(7); a = admin.GetSummary(7); }
+        var h = handler.GetSummary(7);
+
+        Assert.Equal(3, a.RecentLoginFailures);
+        Assert.Null(m.RecentLoginFailures);
+        Assert.Null(h.RecentLoginFailures);
+
+        Assert.NotNull(a.PendingDispatch);
+        Assert.NotNull(m.PendingDispatch);
+        Assert.Null(h.PendingDispatch);
+        Assert.Equal(120, m.PendingDispatch!.IssueCount);
+        Assert.NotNull(a.AdminTodo);
+        Assert.NotNull(m.AdminTodo);
+        Assert.True(m.AdminTodo!.TodoIncluded);
+        Assert.Null(h.AdminTodo);
+
+        // 共用主體：三人拿到的是同一份主體內容（清單參考相同），待派試跑只跑一次
+        Assert.Same(a.Categories, m.Categories);
+        Assert.Same(a.TopIssues, h.TopIssues);
+        Assert.Equal(new[] { 1 }, calls.Select(c => c.Page));
+        // 疊加用的是複本：能力欄位沒有被寫回共用主體（處理人看不到前人疊上去的值）
+        Assert.NotSame(a, m);
+    }
+
+    /// <summary>
+    /// 主體共用、但待確認權限異動數依 ViewAll 分支：同一組可見主機下，有 ViewAll 與沒有的兩人
+    /// 共用一份主體（命中一次）、各自一筆權限異動計數（不互相命中）。
     /// </summary>
     [Fact]
-    public void GetSummary_同可見主機下ViewAll與非ViewAll不共用快取()
+    public void GetSummary_同可見主機下ViewAll與非ViewAll_共用主體但權限異動計數各自一筆()
     {
         var cache = new SummaryCache(new DataVersionStamp());
         var calls = new List<(DateTime? From, DateTime? To, int Page)>();
@@ -851,8 +926,8 @@ public class DashboardServiceTests : IDisposable
         ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), cache, PagedGaps(calls)).GetSummary(7);
 
         var stats = cache.GetStatistics();
-        Assert.Equal(2, stats.Entries);
-        Assert.Equal(0, stats.Hits);
+        Assert.Equal(3, stats.Entries);   // 主體 1＋權限異動計數 2
+        Assert.Equal(1, stats.Hits);      // 只有主體被第二人命中
     }
 }
 

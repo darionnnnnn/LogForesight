@@ -272,6 +272,22 @@ public class WorkOrderBoardService
         return dto;
     }
 
+    /// <summary>
+    /// 待派試跑只回計數（儀表板待派卡用）：與 <see cref="GetGaps(DateTime?, DateTime?, int, string?)"/> 共用同一個
+    /// <see cref="RunTrial"/> 與同一份彙整、同一個計數函式，不載使用者／規則／群組、不組列。
+    /// </summary>
+    public PendingDispatchSummary GetGapCounts(DateTime? from, DateTime? to)
+    {
+        var trial = RunTrial(from, to);
+        if (trial.TooLarge) return new PendingDispatchSummary(true, trial.Scope.From, trial.Scope.To, 0, 0);
+        var (dispatchable, unassignable) = SectionIssueCounts(Summarize(trial.Gaps));
+        return new PendingDispatchSummary(false, trial.Scope.From, trial.Scope.To, dispatchable, unassignable);
+    }
+
+    /// <summary>可以派／派不出去兩段的問題數（待派頁各段統計與只回計數的入口共用）</summary>
+    private static (int Dispatchable, int Unassignable) SectionIssueCounts(List<IssueSummary> summaries) =>
+        (summaries.Count(s => s.Suggested.Count > 0), summaries.Count(s => s.Unassignable.Count > 0));
+
     internal const string SectionDispatchable = "dispatchable";
     internal const string SectionUnassignable = "unassignable";
     internal const string SectionNotDispatched = "notDispatched";
@@ -301,14 +317,15 @@ public class WorkOrderBoardService
     /// </summary>
     private void FillSections(GapsDto dto, List<IssueSummary> summaries)
     {
+        var (dispatchableIssues, unassignableIssues) = SectionIssueCounts(summaries);
         dto.Dispatchable = new GapSectionDto
         {
-            Issues = summaries.Count(s => s.Suggested.Count > 0),
+            Issues = dispatchableIssues,
             Hosts = summaries.Sum(s => s.Suggested.Sum(x => x.Hosts))
         };
         dto.UnassignableSection = new GapSectionDto
         {
-            Issues = summaries.Count(s => s.Unassignable.Count > 0),
+            Issues = unassignableIssues,
             Hosts = summaries.Sum(s => s.Unassignable.Sum(x => x.Hosts))
         };
         dto.NotDispatched = new GapSectionDto

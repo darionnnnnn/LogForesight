@@ -11,21 +11,16 @@ namespace LogForesight.Web.Services;
 public class AdminTodoService
 {
     private readonly AdminReminderService _reminders;
-    private readonly PendingDispatchGapsProvider _gaps;
     private readonly ICurrentUser _currentUser;
-    private readonly SummaryCache _cache;
-    private readonly IVisibilityService _visibility;
-    private readonly IIssueExclusionSource _exclusions;
+    private readonly PendingDispatchCountsService _counts;
 
     public AdminTodoService(AdminReminderService reminders, PendingDispatchGapsProvider gaps, ICurrentUser currentUser,
-        SummaryCache cache, IVisibilityService visibility, IIssueExclusionSource exclusions)
+        SummaryCache cache, IVisibilityService visibility, IIssueExclusionSource exclusions,
+        PendingDispatchCountsService? counts = null)
     {
         _reminders = reminders;
-        _gaps = gaps;
         _currentUser = currentUser;
-        _cache = cache;
-        _visibility = visibility;
-        _exclusions = exclusions;
+        _counts = counts ?? new PendingDispatchCountsService(PendingDispatchCountsService.FromGaps(gaps), cache, visibility, exclusions);
     }
 
     /// <summary>目前使用者的提醒與待辦；沒有 Assign 時不含待辦類別，也不跑待派試跑</summary>
@@ -42,20 +37,10 @@ public class AdminTodoService
     public AdminReminderDto GetForCurrentUser(PendingDispatchCounts? pending) =>
         _currentUser.Has(Capability.Assign) ? _reminders.Compute(includeTodo: true, pending) : _reminders.Compute();
 
-    /// <summary>
-    /// 可派問題數：待派試跑結果依可見主機集合與靜音條件各存一份（鍵含授權維度；內容是計數，不含主機名）。
-    /// 試跑期間用預設的「昨天往前 7 天」，與儀表板待派卡同一段。
-    /// </summary>
+    /// <summary>可派問題數：與儀表板待派卡共用 <see cref="PendingDispatchCountsService"/>（鍵含可見主機集合）</summary>
     private PendingDispatchCounts PendingCounts()
     {
-        // 試跑窗口依今天算（昨天往前 7 天）：鍵含日期，跨日不沿用前一天的結果
-        var exclusion = _exclusions.Current();
-        return _cache.GetOrAdd(
-            SummaryCache.KeyOf("pending-dispatch-counts", $"{exclusion.CacheToken}|{exclusion.Today:yyyyMMdd}", _visibility.GetVisibleHostIds()),
-            () =>
-            {
-                var gaps = _gaps(null, null, 1);
-                return new PendingDispatchCounts(gaps.Dispatchable.Issues, gaps.TooLarge);
-            });
+        var summary = _counts.Get();
+        return new PendingDispatchCounts(summary.DispatchableIssues, summary.TooLarge);
     }
 }

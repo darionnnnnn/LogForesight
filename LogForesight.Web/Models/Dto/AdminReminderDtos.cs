@@ -176,3 +176,10 @@ public sealed class AdminReminderInactiveHandlerDto
 /// <paramref name="TooLarge"/> 時 <paramref name="DispatchableIssues"/> 不可信。
 /// </summary>
 public sealed record PendingDispatchCounts(int DispatchableIssues, bool TooLarge);
+
+/// <summary>
+/// 待派試跑只回計數的結果（儀表板待派卡與「需要你處理」共用）：可派與派不出去的問題數、期間。
+/// 與 <c>GetGaps</c> 的 <c>Dispatchable.Issues</c>／<c>UnassignableSection.Issues</c> 同一份判定；
+/// <paramref name="TooLarge"/> 時兩個問題數都是 0、不可信。
+/// </summary>
+public sealed record PendingDispatchSummary(bool TooLarge, DateTime From, DateTime To, int DispatchableIssues, int UnassignableIssues);

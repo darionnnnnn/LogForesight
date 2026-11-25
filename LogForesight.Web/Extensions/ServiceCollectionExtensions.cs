@@ -426,6 +426,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IssueTodoQuery>();
         // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
         services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
+        // 只回計數的待派試跑（與 GetGaps 共用同一個 RunTrial）與其跨請求共用點
+        services.AddScoped<PendingDispatchSummaryProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGapCounts);
+        services.AddScoped<PendingDispatchCountsService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
         services.AddScoped<ReportEffectivenessService>();
