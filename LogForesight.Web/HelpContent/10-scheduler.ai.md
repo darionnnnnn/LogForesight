@@ -3,6 +3,7 @@
 ## 頁面基本資訊與存取架構
 
 - **頁面路徑**：`/runs`（側欄「系統 > 排程作業」）。
+- **沒有 `Maintain` 的 PRTG 欄位**：PRTG 設定（`/api/admin/settings`）、結構同步狀態與回填狀態三個端點都要 `Maintain`；僅 `DevMonitor` 者前端不送這些請求（避免每次被拒並寫稽核），對應欄位顯示「需要維護權限才能檢視」，PRTG 模組狀態沿用排程狀態的精簡投影。
 - **存取權限**：`DevMonitor` 或 `Maintain` 任一即可進入。排程設定與手動觸發屬 `Maintain`，執行紀錄唯讀屬 `DevMonitor`；僅 `DevMonitor` 者在「排程設定」頁籤看得到目前設定，欄位唯讀（按鈕隱藏），頁籤上有說明列。
 - **後端端點**：
   - 狀態輪詢：`GET /api/admin/schedule/status`，回傳當前執行狀態（`SchedulerRunState`）。

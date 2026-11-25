@@ -400,6 +400,13 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | 文字排序 | `collation.js` `compareText(a, b)`（`Intl.Collator('zh-Hant', { numeric: true })`：中文依語系、"9" 排在 "10" 前）；`sortRows` 的字串欄位已使用 |
 | 狀態輪詢 | `async-guards.js` `pollWhile(fn, 間隔或 (ctx) => 間隔, { pauseWhenHidden, backoffMaxMs })`：間隔可依上一輪結果（`ctx.lastResult`、`ctx.failures`）重算；`pauseWhenHidden` 在背景分頁暫停、回前景立即補一次；`backoffMaxMs` 讓連續失敗時退避。導覽列的徽章、執行中告示、排程狀態、已耗時計時與精靈掃描進度都走它；頁面不手寫遞迴 `setTimeout` 或 `setInterval` 輪詢 |
 | 對話框（唯讀詳情） | `ui.js` `showDetailModal({ title, body, size, fullscreen, onClose })` 回傳 `{ close(), element }`；頁面以 `close()` 關閉，不模擬點擊 `data-bs-dismiss` 按鈕；送出處理在建立對話框之前就要定義時，先宣告 `let modal = null`，建立後指派、處理中呼叫 `modal?.close()` |
+| 清單頁勾選（跨頁保留、表頭全選、選取列） | `ui.js` `createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll, onChange })`：`onChange` 在勾選集合有變（逐列、全選、清除）時通知頁面同步按鈕狀態，選用 |
+| KPI 卡就地套用條件（不換頁） | `kpiStrip` 卡片的 `onClick`：一般點擊攔下改走它，同時保留 `url` 讓中鍵與新分頁可用 |
+| 「清單有更新」提示（我的交辦、交辦單頁） | `list-update-notice.js` `createListUpdateNotice({ anchor, onReload })` 回傳 `{ rebase }`：訂閱 `lf:badges`、不另開輪詢；頁面自己重載清單後呼叫 `rebase()` |
+| 網址參數只認限定值（排序、狀態下拉） | `paths.js` `urlParamChoice(search, 名稱, 合法值清單)`：不在清單內回 `null`，沿用頁面預設 |
+| 交辦單的台數口徑文字 | `format.js` `hostCountText(列)` 回「進行中 N 台；歷來 M 台、K 件」（台＝不重複主機數、件＝成員數） |
+| 交辦單清單的嚴重度欄與標記（新、復發、退回、觀察到期） | `format.js` `workOrderSeverityCell(列)`、`workOrderFlagBadges(列, { recurrence })`：我的交辦與交辦總覽共用 |
+| 今天起第 N 天的日期（快捷「3／7／14 日」、觀察天數換算） | `format.js` `dateAfterDays(天數)`，回本地日期字串 |
 
 表格內的勾選框（含可展開列第一欄）、換頁連結（滑過才有底線）、分頁鈕、排序表頭、關閉鈕、說明圖示鈕、`summary` 的點擊區都已在共用樣式處理。
 表格寬到要橫向捲動時，卡片內頂層表格的展開列內容固定在可視寬度內（尺寸容器＋sticky）。
