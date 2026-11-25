@@ -180,9 +180,10 @@ public class RecordDetailQueryService
             LatestNetiqAttemptAtUtc = record.LatestNetiqAttemptAtUtc,
             PrtgSupplementEligible = record.CanSupplementWithPrtg(),
             HiddenIssueCount = record.HiddenIssueCount,
-            Headline = record.Headline,
+            // 沒有 AI 摘要：標題改為當日最重的（授與範圍內的）問題，「狀況」不重複同一句（NoAiSummary 唯一出口）
+            Headline = NoAiSummary.ResolveHeadline(record.Headline, visibleTopIssues),
             Brief = record.Brief,
-            Summary = record.Summary,
+            Summary = NoAiSummary.ResolveSummary(record.Summary),
             TrendAssessment = record.TrendAssessment,
             Action = record.Action,
             AiAnalyzed = record.AiAnalyzed,
@@ -371,7 +372,7 @@ public class RecordDetailQueryService
                 Date = date.ToString("yyyy-MM-dd"),
                 HasRecord = record != null,
                 RiskLevel = record?.RiskLevel,
-                Headline = record?.Headline ?? "",
+                Headline = record == null ? "" : RecordStatsBuilder.HeadlineOf(record),
                 HasCoverageGap = record != null && record.HasCoverageGap,
                 RiskReportPending = caseGrantOnly ? null : record?.RiskReportPending
             });

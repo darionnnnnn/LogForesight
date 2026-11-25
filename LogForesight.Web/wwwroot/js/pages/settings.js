@@ -980,7 +980,8 @@ function renderBackgroundJobs(detail) {
                 ? `最近一次有段失敗：${detail.retentionFailedSegments.join('、')}`
                 : '正常'
         },
-        { item: '密碼欄位加密', status: cryptoStatus(detail) }
+        { item: '密碼欄位加密', status: cryptoStatus(detail) },
+        { item: 'AI 服務連線', status: aiProbeStatusText(detail) }
     ];
     if (detail.hostDayRecovery) rows.push({ item: '主機日恢復', status: hostDayRecoveryStatus(detail.hostDayRecovery) });
     const ledgerNotice = mailLedgerNotice(detail.mailContributionLedger);
@@ -1011,6 +1012,16 @@ function renderBackgroundJobs(detail) {
         note.textContent = `來源大小寫合併預覽（最多 50 組）：${preview.map(g =>
             `${g.names.join('／')}（Event ID ${g.eventId}）`).join('；')}`;
         document.getElementById('health-background').appendChild(note);
+    }
+}
+
+/** 背景工作表「AI 服務連線」列：上次探測結果（沒設定與還沒探測不是故障，照實說） */
+function aiProbeStatusText(detail) {
+    switch (detail.aiProbeStatus) {
+        case 'Ready': return '連線正常';
+        case 'Failed': return '連線失敗（白話摘要與互動問答暫時無法使用）';
+        case 'NotConfigured': return '尚未設定（以統計模式運作）';
+        default: return '尚未探測';
     }
 }
 
@@ -1738,6 +1749,30 @@ function bindMailTest() {
 }
 
 /**
+ * AI 測試連線（批次 D F22-2）：沿用初始設定精靈的同一個同步探測（不看快取、重新探一次）。
+ * 測的是已儲存的設定；探測結果文字是後端的固定中文，仍以 statusNote 的 textContent 呈現。
+ */
+function bindAiTest() {
+    const button = document.getElementById('ai-test-btn');
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+        const resultEl = document.getElementById('ai-test-result');
+        resultEl.replaceChildren();
+        const restore = withBusy(button, '測試中');
+        try {
+            const result = await api.post('/api/admin/setup/ai-probe', {}, { silent: true });
+            const tone = result.isReady ? 'success' : result.status === 'NotConfigured' ? 'warning' : 'error';
+            resultEl.replaceChildren(statusNote(tone, result.detail));
+        } catch (error) {
+            resultEl.replaceChildren(statusNote('error', error?.message || '測試連線失敗。'));
+        } finally {
+            restore();
+        }
+    });
+}
+
+/**
  * AI 進階參數「還原預設值」（docs/archive/FEEDBACK-10-PLAN.md §3）：出廠值由後端隨設定一起送來
  * （`aiAdvancedDefaults`，源頭是 Core 的 SystemSettings 屬性初始器），前端不硬編第二份數字。
  * 只填回欄位、不直接存檔——存檔仍走整頁單一 form 的「儲存」，未儲存提醒（trackUnsaved）
@@ -1783,6 +1818,7 @@ bindForm();
 bindAiProvider();
 bindAdTest();
 bindMailTest();
+bindAiTest();
 bindAiAdvancedReset();
 bindAiUsageReset();
 // 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
@@ -1804,7 +1840,7 @@ bindAdvancedSections();
 bindGuardPreview();
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
-        '#mail-test-btn, #mail-test-result, #health-ack-until, #health-ack-btn'
+        '#mail-test-btn, #mail-test-result, #ai-test-btn, #ai-test-result, #health-ack-until, #health-ack-btn'
 });
 load();
 renderAlertToolsTable(document.getElementById('auto-dispatch-alert-tools'));

@@ -74,6 +74,6 @@ public static class AiDegradation
         return Clamp(conclusion) + suffix;
     }
 
-    private static string Clamp(string s) =>
+    internal static string Clamp(string s) =>
         s.Length <= MaxConclusionChars ? s : TextTruncation.SafeCut(s, MaxConclusionChars - 1, "…");
 }

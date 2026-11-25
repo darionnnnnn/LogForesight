@@ -43,6 +43,19 @@ public interface IAiProbeService
     /// 逾期或無快取時執行實際探活（最長 10 秒）。同一時間多個並發請求共用同一次實際探活。
     /// </summary>
     Task<AiProbeResult> RefreshAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// 明確的同步探測（初始設定精靈的「儲存並測試」、設定頁的「測試連線」）：不看 60 秒快取、一定重新探一次，
+    /// 回這次的結果並更新 <see cref="LatestResult"/>。多個並發的明確探測排隊；排隊期間別人剛探完的結果（探測開始晚於本次呼叫）直接共用。
+    /// 預設實作退回 <see cref="RefreshAsync"/>，測試替身不必跟著改。
+    /// </summary>
+    Task<AiProbeResult> ProbeNowAsync(CancellationToken ct = default) => RefreshAsync(ct);
+
+    /// <summary>
+    /// 在背景更新探測結果（單一背景更新、不重入）：呼叫端不等待，只讀 <see cref="LatestResult"/>。
+    /// 狀態端點每次載入都呼叫它——AI 不通時不再讓管理頁等探測逾時。預設實作什麼都不做。
+    /// </summary>
+    void RefreshInBackground() { }
 }
 
 /// <summary>
@@ -58,6 +71,8 @@ public class AiProbeService : IAiProbeService
     private readonly ISystemSettingsStore _settingsStore;
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeProvider _clock;
+    private int _backgroundRunning;
 
     private AiProbeResult? _latestResult;
     private DateTime _latestProbedAt = DateTime.MinValue;
@@ -70,8 +85,9 @@ public class AiProbeService : IAiProbeService
     public static HttpClient CreateDefaultHttpClient() =>
         new(LogForesight.Core.OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5))) { Timeout = MaxTimeout };
 
-    public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient)
+    public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient, TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     }
@@ -79,12 +95,49 @@ public class AiProbeService : IAiProbeService
     public AiProbeResult LatestResult =>
         _latestResult ?? new AiProbeResult(false, AiProbeStatus.NotProbed, "AI 服務尚未探活。", DateTime.MinValue);
 
+    private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
+
+    public void RefreshInBackground()
+    {
+        // 單一背景更新：已有一個在跑就不再起（狀態端點每次載入都會呼叫，不能疊出一串探測）
+        if (Interlocked.CompareExchange(ref _backgroundRunning, 1, 0) != 0) return;
+        _ = Task.Run(async () =>
+        {
+            try { await RefreshAsync(CancellationToken.None); }
+            catch (Exception ex) { Log.Warn(ex, "AI 背景探測失敗（沿用上次結果）"); }
+            finally { Volatile.Write(ref _backgroundRunning, 0); }
+        });
+    }
+
+    public async Task<AiProbeResult> ProbeNowAsync(CancellationToken ct = default)
+    {
+        var requestedAt = UtcNow;
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var settings = _settingsStore.Get();
+            var fingerprint = GetFingerprint(settings);
+            // 排隊期間別人剛探完（探測開始時間晚於本次呼叫、設定沒變）：直接共用，不連續打兩次
+            if (_latestResult != null && _cachedFingerprint == fingerprint && _latestProbedAt >= requestedAt)
+                return _latestResult;
+
+            var result = await ExecuteProbeAsync(settings, ct);
+            _latestResult = result;
+            _latestProbedAt = UtcNow;
+            _cachedFingerprint = fingerprint;
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<AiProbeResult> RefreshAsync(CancellationToken ct = default)
     {
         var settings = _settingsStore.Get();
         var fingerprint = GetFingerprint(settings);
-        var now = DateTime.UtcNow;
-
+        var now = UtcNow;
         if (_latestResult != null &&
             _cachedFingerprint == fingerprint &&
             now - _latestProbedAt < DefaultCacheDuration)
@@ -95,7 +148,7 @@ public class AiProbeService : IAiProbeService
         await _gate.WaitAsync(ct);
         try
         {
-            now = DateTime.UtcNow;
+            now = UtcNow;
             if (_latestResult != null &&
                 _cachedFingerprint == fingerprint &&
                 now - _latestProbedAt < DefaultCacheDuration)
@@ -105,7 +158,7 @@ public class AiProbeService : IAiProbeService
 
             var result = await ExecuteProbeAsync(settings, ct);
             _latestResult = result;
-            _latestProbedAt = DateTime.UtcNow;
+            _latestProbedAt = UtcNow;
             _cachedFingerprint = fingerprint;
             return result;
         }
@@ -120,7 +173,7 @@ public class AiProbeService : IAiProbeService
 
     private async Task<AiProbeResult> ExecuteProbeAsync(SystemSettings db, CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
+        var now = UtcNow;
         var aiSettings = AIService.BuildSettingsFromDb(db);
 
         if (!aiSettings.IsConfigured)

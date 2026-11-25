@@ -640,6 +640,8 @@ function renderAiInlineForm(step) {
             await api.put('/api/admin/settings', { ...payload, expectedRevision: latest.revision });
             settingsSnapshot = await api.get('/api/admin/settings');
 
+            // 明確的同步探測（不看快取、這一次的結果）；狀態端點只回上次探測結果，不能拿它判斷剛存的設定
+            await api.post('/api/admin/setup/ai-probe', {}, { silent: true });
             const newStatus = await api.get('/api/admin/setup/status');
             const { isSuccess, detail } = checkAiProbeResult(newStatus);
 

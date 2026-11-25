@@ -56,6 +56,7 @@ public class HealthAttentionTests
         }, "已對應主機的裝置被清除"),
         [HealthAttentionKeys.CertificateTrust] = (new() { UnpinnedCertificateBypass = new[] { "Sentinel" } }, "Sentinel開了「忽略憑證錯誤」"),
         [HealthAttentionKeys.OutboxDropped] = (new() { OutboxRecentDropped = 3, OutboxLastDroppedAt = Now.AddDays(-1) }, "丟棄了 3 筆"),
+        [HealthAttentionKeys.AiUnreachable] = (new() { AiUnreachable = true }, "AI 服務連線失敗"),
     };
 
     public static IEnumerable<object[]> AllKeys() => HealthAttentionKeys.All.Select(k => new object[] { k });
@@ -183,7 +184,7 @@ public class HealthAttentionServiceWiringTests : IDisposable
         new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
         new ScheduleOptionsStore(_backend.Blob("schedule_options")));
 
-    private HealthService NewService(TimeProvider? clock = null)
+    private HealthService NewService(TimeProvider? clock = null, IAiProbeService? aiProbe = null)
     {
         var freshness = NewFreshnessService();
         var mail = new MailNotificationService(
@@ -191,13 +192,30 @@ public class HealthAttentionServiceWiringTests : IDisposable
             new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
             new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)),
             new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
-        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock);
+        return new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mail, freshness, clock: clock, aiProbe: aiProbe);
     }
 
     private static WorkOrderOutboxItem OutboxItem(int i) => new()
     {
         Kind = WorkOrderOutboxKinds.Created, WorkOrderId = i, RecipientUserId = 1, ActorAccount = "admin"
     };
+
+    /// <summary>F22-2：AI 已設定卻連不上才是故障；沒設定、還沒探測、探測正常都不算。邊界兩側各一例。</summary>
+    [Theory]
+    [InlineData(AiProbeStatus.Failed, true)]
+    [InlineData(AiProbeStatus.Ready, false)]
+    [InlineData(AiProbeStatus.NotConfigured, false)]
+    [InlineData(AiProbeStatus.NotProbed, false)]
+    public void AI探測結果只有Failed會進整體狀態原因(AiProbeStatus status, bool expectReason)
+    {
+        var probe = new FakeAiProbeService { LatestResult = new AiProbeResult(status == AiProbeStatus.Ready, status, "x", DateTime.UtcNow) };
+
+        var detail = NewService(aiProbe: probe).GetDetail();
+
+        Assert.Equal(expectReason, detail.StatusReasons.Any(r => r.Key == HealthAttentionKeys.AiUnreachable));
+        Assert.Equal(status.ToString(), detail.AiProbeStatus);
+        if (expectReason) Assert.Equal(HealthStatuses.Degraded, detail.Status);
+    }
 
     [Fact]
     public void 交辦通知佇列剛好塞滿_沒有丟棄_整體狀態正常()

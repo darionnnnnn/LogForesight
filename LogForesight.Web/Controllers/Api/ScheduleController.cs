@@ -542,6 +542,7 @@ public class ScheduleController : ControllerBase
             NextTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)
                 ? null
                 : ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows),
+            AiWindowConfigured = ScheduleCalculator.HasAnyWindow(options.AiWindows),
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
@@ -609,6 +610,7 @@ public class ScheduleController : ControllerBase
         NextAiTriggerTime = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows)
             ? null
             : ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows),
+        AiWindowConfigured = ScheduleCalculator.HasAnyWindow(options.AiWindows),
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)

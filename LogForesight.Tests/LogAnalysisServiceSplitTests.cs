@@ -165,7 +165,9 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var report = new EfReportStore(_fx.NewContext).Read(
             new HostKey { HostId = record.HostId, HostName = record.Host }, record.Date, ReportKinds.DailyRisk);
         Assert.NotNull(report);
-        Assert.Contains("統計模式紀錄", report.Content);
+        // 批次 D（H8／O2）：沒有 AI 摘要時標題是當日最重的問題名稱與白話說明，不再是統計模式佔位字
+        Assert.Contains("disk EventId 153", record.Headline);
+        Assert.Contains(record.Headline, report.Content);
     }
 
     [Fact]

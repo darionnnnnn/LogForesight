@@ -669,7 +669,8 @@ function headlineCell(record) {
     }
 
     const text = document.createElement('span');
-    text.textContent = record.headline || '（無 AI 摘要）';
+    // 沒有 AI 摘要時標題由伺服器補成當日最重的問題（NoAiSummary 唯一出口），前端不再自備佔位字
+    text.textContent = record.headline ?? '';
     if (!record.aiAnalyzed && !record.aiPending) text.className = 'lf-text-meta';
     wrap.appendChild(text);
 
@@ -744,7 +745,7 @@ function renderHostView() {
             { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.lowRiskDays)) },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: h => correlationCell(h.correlationDays) },
             { title: '類型', render: h => categoryBadges(h.categories) },
-            { title: '最新狀況', render: h => latestStatusCell(h, `${h.latestDate}　${h.latestHeadline}`) }
+            { title: '最新狀況', render: h => latestStatusCell(h, [h.latestDate, h.latestHeadline].filter(Boolean).join('　')) }
         ],
         rows: lastResult.items,
         sort,

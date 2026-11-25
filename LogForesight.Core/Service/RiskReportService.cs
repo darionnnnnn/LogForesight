@@ -372,7 +372,10 @@ public class RiskReportService
         {
             sb.AppendLine($"  重點速報：{record.Brief}");
         }
-        sb.AppendLine($"  {record.Summary}");
+        if (record.Summary.Length > 0)
+        {
+            sb.AppendLine($"  {record.Summary}");
+        }
         if (record.Action.Length > 0)
         {
             sb.AppendLine($"  現在該做：{record.Action}");

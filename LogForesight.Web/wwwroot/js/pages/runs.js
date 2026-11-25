@@ -1176,15 +1176,7 @@ function applyScheduleOptions(options) {
     if (aiNextTriggerEl) {
         // AI 沒有啟用開關：這一列說的是背景補跑窗口。後端在窗口內時回 null。
         // 與 ai-status 那條路徑同一套判斷，否則載入瞬間會先閃「隨時可跑」再被改成「未設定」。
-        if (aiAvailable === false) {
-            aiNextTriggerEl.textContent = 'AI 服務未設定';
-        } else if (aiAvailable === null) {
-            aiNextTriggerEl.textContent = '—';   // 還不知道 AI 設定狀態，不落到最樂觀的那句
-        } else if (options.nextAiTriggerTime) {
-            aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
-        } else {
-            aiNextTriggerEl.textContent = '窗口內，隨時可跑';
-        }
+        renderAiWindowState(aiNextTriggerEl, aiAvailable, options.nextAiTriggerTime, options.aiWindowConfigured);
     }
 
     // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C），
@@ -1508,6 +1500,31 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
+/**
+ * 「背景補跑窗口」那一列的唯一出口（設定載入與狀態輪詢共用）。四種狀態各一句：
+ * AI 未設定；還不知道（—）；沒有設定任何窗口（說明不會自動執行並連到窗口設定）；有窗口（下一次時間，在窗口內時為「窗口內，隨時可跑」）。
+ * 後端在「窗口內」與「沒有任何窗口」兩種情況都把下一次時間回成 null，所以要看 windowConfigured 才分得出來；
+ * windowConfigured 沒帶（舊回應）時照「有窗口」處理，不誤報沒設定。
+ */
+function renderAiWindowState(el, available, nextTriggerTime, windowConfigured) {
+    el.replaceChildren();
+    if (available === false) {
+        el.textContent = 'AI 服務未設定';
+    } else if (available === null) {
+        el.textContent = '—';   // 還不知道 AI 設定狀態，不落到最樂觀的那句
+    } else if (windowConfigured === false) {
+        el.append('未設定窗口，AI 不會自動執行　');
+        const link = document.createElement('a');
+        link.href = `${appUrl('/runs')}#schedule-ai-windows`;
+        link.textContent = '前往設定窗口';
+        el.append(link);
+    } else if (nextTriggerTime) {
+        el.textContent = formatDateTime(nextTriggerTime);
+    } else {
+        el.textContent = '窗口內，隨時可跑';
+    }
+}
+
 // AI 排程閒置原因的文案（後端 AiIdleReasons 的字面值）。
 // 'disabled' 另有帶件數的既有文案；'no-pending' 不需要說明（待補為 0 本身就講完了）。
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
@@ -1515,6 +1532,7 @@ const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
     'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
+    'no-window': '未設定窗口，AI 不會自動執行；請到「AI 分析」設定背景補跑窗口，或按「立即補跑」。',
     'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。',
     'backoff': '上一輪沒有進度，暫停自動重試中（可按「立即補跑」）'
 };
@@ -1571,7 +1589,7 @@ function applyAiScheduleStatus(status) {
         let hint = '';
         // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
         // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
-        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'no-window'].includes(status.idleReason))) {
             hint = aiIdleHintText(status);
         }
 
@@ -1611,13 +1629,7 @@ function applyAiScheduleStatus(status) {
     if (nextTriggerEl) {
         // AI 一律啟用；這一列說的是「積壓什麼時候會被背景消化」。
         // 已在窗口內時後端回 null，代表現在就會跑。
-        if (aiAvailable === false) {
-            nextTriggerEl.textContent = 'AI 服務未設定';
-        } else if (status.nextTriggerTime) {
-            nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
-        } else {
-            nextTriggerEl.textContent = '窗口內，隨時可跑';
-        }
+        renderAiWindowState(nextTriggerEl, aiAvailable, status.nextTriggerTime, status.aiWindowConfigured);
     }
 
     if (wasAiScheduleRunning && !status.isRunning) {

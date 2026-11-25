@@ -1923,6 +1923,35 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    /// <summary>沒有 AI 摘要的紀錄所需的問題子列（只取顯示名稱與排序用到的欄位）</summary>
+    internal sealed record NoSummaryIssueRow(
+        long RecordId, string LogName, string SourceName, int EventId, string EventKey,
+        int SeverityRank, bool ElevatesDayRisk, int EventCount, string? KnownIssue);
+
+    /// <summary>沒有 AI 摘要的紀錄（<paramref name="recordIds"/>）的問題子列：單一批次查詢（<c>WHERE record_id IN (…)</c>）</summary>
+    internal static IQueryable<NoSummaryIssueRow> NoSummaryIssueRows(LfDbContext ctx, IReadOnlyCollection<long> recordIds) =>
+        ctx.TopIssues.AsNoTracking()
+            .Where(x => recordIds.Contains(x.RecordId))
+            .Select(x => new NoSummaryIssueRow(x.RecordId, x.LogName, x.SourceName, x.EventId, x.EventKey,
+                x.SeverityRank, x.ElevatesDayRisk, x.EventCount, x.KnownIssue));
+
+    /// <summary>沒有 AI 摘要的紀錄（<paramref name="recordIds"/>）→ 當日最重問題的標題；一次批次查詢，沒有問題子列的紀錄也有標題（<see cref="NoAiSummary.NoIssueHeadline"/>）。</summary>
+    private static Dictionary<long, string> NoSummaryHeadlines(LfDbContext ctx, IReadOnlyCollection<long> recordIds)
+    {
+        if (recordIds.Count == 0) return new Dictionary<long, string>();
+        var rows = NoSummaryIssueRows(ctx, recordIds)
+            .ToList()
+            .GroupBy(x => x.RecordId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => new NoAiSummary.Candidate(
+                    NoAiSummary.NameOf(x.LogName, x.SourceName, x.EventId, x.EventKey), LegacySeverityRank.Normalize(x.SeverityRank),
+                    x.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(x.SeverityRank), x.EventCount, x.KnownIssue, Suppressed: false)).ToList());
+        return recordIds.ToDictionary(
+            id => id,
+            id => NoAiSummary.HeadlineFor(rows.TryGetValue(id, out var list) ? list : new List<NoAiSummary.Candidate>()));
+    }
+
     /// <summary>
     /// 靜音排除的作用範圍同 <see cref="AggregateByDate"/>：風險日數、關聯日數、最新一天的風險等級與標題
     /// 來自 <c>lf_daily_records</c>，不重算；排除只作用在問題篩選的 exists 子查詢與類別清單。
@@ -1976,10 +2005,15 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 2. 每台主機最新一天的風險等級與標題：以相關子查詢取 MAX(RecordDate) 那列，同樣是主機數量級
         var latestRaw = recordsQuery
             .Where(r => r.RecordDate == recordsQuery.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
-            .Select(r => new { r.HostId, r.RiskLevel, r.Headline, r.AiPending, r.AiDegradedAttempts })
+            .Select(r => new { r.RecordId, r.HostId, r.RiskLevel, r.Headline, r.AiPending, r.AiDegradedAttempts })
             .ToList()
             .GroupBy(r => r.HostId)
             .ToDictionary(g => g.Key, g => g.First());
+
+        // 2b. 沒有 AI 摘要的最新一天（空白或舊版佔位字）：標題改為當日最重的問題（NoAiSummary 唯一出口）。
+        //     只對這幾列、以一次批次查詢取問題子列，量級＝主機數，不逐列查
+        var noSummaryRecordIds = latestRaw.Values.Where(r => NoAiSummary.IsPlaceholder(r.Headline)).Select(r => r.RecordId).Distinct().ToList();
+        var noSummaryHeadlines = NoSummaryHeadlines(ctx, noSummaryRecordIds);
 
         // 3. 類別：問題子列 join 篩選後的紀錄，SQL 端依 (HostId, Category) 分組，拉回主機 × 類別列
         if (riskLevels != null)
@@ -2034,7 +2068,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
                     LatestDate = newest.MaxDate,
                     LatestRiskLevel = head?.RiskLevel ?? string.Empty,
-                    LatestHeadline = head?.Headline ?? string.Empty,
+                    LatestHeadline = head == null ? string.Empty
+                        : noSummaryHeadlines.TryGetValue(head.RecordId, out var fallbackHeadline) ? fallbackHeadline : head.Headline,
                     LatestAiPending = head?.AiPending ?? false,
                     LatestAiDegradedAttempts = head?.AiDegradedAttempts ?? 0
                 };

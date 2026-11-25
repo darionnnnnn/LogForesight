@@ -26,8 +26,10 @@ public static class AiIdleReasons
     public const string Disabled = "disabled";
     /// <summary>存量校正回填尚未完成（完成前搶跑等於把整庫重跑一遍）</summary>
     public const string BackfillPending = "backfill-pending";
-    /// <summary>不在 AI 執行窗口內</summary>
+    /// <summary>不在 AI 執行窗口內（有設定窗口，只是現在不在其中）</summary>
     public const string OutsideWindow = "outside-window";
+    /// <summary>沒有設定任何 AI 執行窗口：背景補跑不會自動執行（只有跟隨取數的即時分析與手動觸發會跑）</summary>
+    public const string NoWindow = "no-window";
     /// <summary>沒有待補的主機日</summary>
     public const string NoPending = "no-pending";
     /// <summary>取數執行中且當日 PRTG finding 尚未算完，最近兩天的待補要等它到齊才判讀</summary>

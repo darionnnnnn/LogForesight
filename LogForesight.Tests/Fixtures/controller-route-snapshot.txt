@@ -120,6 +120,7 @@ POST	/api/admin/settings/prtg-structure-sync/start	C=Maintain;A=-	-	-	-	PrtgBack
 GET	/api/admin/settings/prtg-structure-sync/status	C=Maintain;A=-	-	-	-	PrtgBackfillAdminController
 POST	/api/admin/settings/prtg-test	C=Maintain;A=-	-	-	skipbump	SettingsController
 GET	/api/admin/settings/prtg-unmapped-hosts	C=Maintain;A=-	-	viewall	-	PrtgHostMappingAdminController
+POST	/api/admin/setup/ai-probe	C=Maintain;A=-	-	-	skipbump	SetupController
 POST	/api/admin/setup/hidden	C=Maintain;A=-	-	-	-	SetupController
 POST	/api/admin/setup/skip/{stepId}	C=Maintain;A=-	-	-	-	SetupController
 GET	/api/admin/setup/status	C=Maintain;A=-	-	-	-	SetupController

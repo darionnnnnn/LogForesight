@@ -203,7 +203,8 @@ public class AiAnalysisHostedService : BackgroundService
         if (requireWindow)
         {
             inWindow = ScheduleCalculator.IsWithinAnyWindow(now, options.AiWindows);
-            if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
+            if (!inWindow && !_schedulerRunState.IsFollowingFetch(now))
+                return ScheduleCalculator.HasAnyWindow(options.AiWindows) ? AiIdleReasons.OutsideWindow : AiIdleReasons.NoWindow;
         }
 
         // 無進度退避：上一輪自動觸發毫無進度時暫停重試，省下每分鐘的待補查詢與空轉。

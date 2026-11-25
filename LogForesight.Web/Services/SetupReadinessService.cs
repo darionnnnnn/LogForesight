@@ -63,6 +63,12 @@ public class SetupReadinessService
     public Task<AiProbeResult> RefreshProbeAsync(CancellationToken ct = default) =>
         _aiProbe.RefreshAsync(ct);
 
+    /// <summary>狀態端點用：在背景更新 AI 探測，不等待（狀態讀的是上次探測結果）。</summary>
+    public void RequestBackgroundProbe() => _aiProbe.RefreshInBackground();
+
+    /// <summary>明確的同步探測（精靈「儲存並測試」、設定頁「測試連線」）：重新探一次並回這次的結果。</summary>
+    public Task<AiProbeResult> ProbeNowAsync(CancellationToken ct = default) => _aiProbe.ProbeNowAsync(ct);
+
     private sealed record StepMetadata(
         string Id,
         string Title,

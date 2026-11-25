@@ -139,7 +139,9 @@ public class Batch2cTests : IDisposable
         var hits = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
                         !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") &&
-                        !f.Contains($"{Path.DirectorySeparatorChar}LogForesight.Tests{Path.DirectorySeparatorChar}"))
+                        !f.Contains($"{Path.DirectorySeparatorChar}LogForesight.Tests{Path.DirectorySeparatorChar}") &&
+                        // 併行開發的 git worktree 放在 .claude/ 底下（不進版控），那裡是整份原始碼的副本，不算第二處
+                        !f.Contains($"{Path.DirectorySeparatorChar}.claude{Path.DirectorySeparatorChar}"))
             .Where(f => File.ReadAllText(f).Contains("/ 5) * 60"))
             .Select(Path.GetFileName)
             .ToList();

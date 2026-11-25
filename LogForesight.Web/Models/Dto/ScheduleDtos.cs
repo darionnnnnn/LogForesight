@@ -23,8 +23,11 @@ public class ScheduleOptionsDto
     /// <summary>AI 分析併發數</summary>
     public int AiConcurrency { get; set; } = 1;
 
-    /// <summary>已在背景補跑窗口內時為 null（不必說「下一次」，現在就會跑）</summary>
+    /// <summary>已在背景補跑窗口內時為 null（不必說「下一次」，現在就會跑）；<b>沒有設定任何窗口時也是 null</b>，要分辨請看 <see cref="AiWindowConfigured"/></summary>
     public DateTime? NextAiTriggerTime { get; set; }
+
+    /// <summary>是否至少設定了一個可解析的 AI 背景補跑窗口（<c>ScheduleCalculator.HasAnyWindow</c>）；false＝AI 不會自動補跑</summary>
+    public bool AiWindowConfigured { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
@@ -371,6 +374,9 @@ public class AiScheduleStatusDto
 
     public int AiConcurrency { get; set; } = 1;
     public DateTime? NextTriggerTime { get; set; }
+
+    /// <summary>是否至少設定了一個可解析的 AI 背景補跑窗口；false 時 <see cref="NextTriggerTime"/> 的 null 不代表「在窗口內」</summary>
+    public bool AiWindowConfigured { get; set; }
     public bool? LastRunSuccess { get; set; }
     public string? LastRunMessage { get; set; }
     public string? LastRunTriggerText { get; set; }

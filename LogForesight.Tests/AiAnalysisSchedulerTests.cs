@@ -1068,6 +1068,41 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(AiIdleReasons.OutsideWindow, runState.Snapshot().IdleReason);
     }
 
+    /// <summary>D1：沒有設定任何 AI 窗口與「有窗口、現在不在其中」是兩種閒置原因；判定只在 BlockingIdleReason 一處</summary>
+    [Fact]
+    public async Task TickAsync_沒有設定任何窗口時閒置原因為NoWindow()
+    {
+        var options = new ScheduleOptions { AiWindows = new List<ScheduleWindow>() };
+
+        var (service, runState, _, _) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.NoWindow, runState.Snapshot().IdleReason);
+        Assert.Equal(AiIdleReasons.NoWindow, service.CurrentIdleReason(() => 1));
+    }
+
+    [Fact]
+    public void CurrentIdleReason_無窗口與窗口外各是各的原因_窗口內不擋()
+    {
+        var pendingOne = () => 1;
+        var now = DateTime.Now;
+        var outside = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+        Assert.Equal(AiIdleReasons.NoWindow, CreateTestHarness(new ScheduleOptions { AiWindows = new() }).Service.CurrentIdleReason(pendingOne));
+        Assert.Equal(AiIdleReasons.OutsideWindow, CreateTestHarness(outside).Service.CurrentIdleReason(pendingOne));
+        Assert.Null(CreateTestHarness(AllDay()).Service.CurrentIdleReason(pendingOne));
+        var broken = new ScheduleOptions { AiWindows = new List<ScheduleWindow> { new() { Start = "xx", End = "yy" } } };
+        Assert.Equal(AiIdleReasons.NoWindow, CreateTestHarness(broken).Service.CurrentIdleReason(pendingOne));
+    }
+
     [Fact]
     public async Task TickAsync_無待補時記錄閒置原因()
     {

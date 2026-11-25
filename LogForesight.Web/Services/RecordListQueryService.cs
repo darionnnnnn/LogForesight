@@ -1224,7 +1224,7 @@ public class RecordListQueryService
             HostName = hostName,
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
-            Headline = record.Headline,
+            Headline = RecordStatsBuilder.HeadlineOf(record),
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             Categories = CategoryAggregator.Aggregate(record.TopIssues)

@@ -1495,7 +1495,7 @@ public class AnalysisOrchestrator
                 console.WriteLine($"  現在該做：{record.Action}");
             }
         }
-        else if (!record.AiAnalyzed && verbose)
+        else if (!record.AiAnalyzed && verbose && record.Summary.Length > 0)
         {
             console.WriteLine($"  {record.Summary}");
         }

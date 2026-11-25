@@ -35,6 +35,7 @@ public class HealthService
     private readonly HostDayWorkflowRecoveryHostedService? _recoveryService;
     private readonly IReadOnlyList<ICacheStatistics> _caches;
     private readonly TimeProvider _clock;
+    private readonly IAiProbeService? _aiProbe;
 
     public HealthService(
         StorageBackend backend,
@@ -46,8 +47,10 @@ public class HealthService
         PrtgSnapshotHostedService? snapshotService = null,
         IEnumerable<ICacheStatistics>? caches = null,
         HostDayWorkflowRecoveryHostedService? recoveryService = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        IAiProbeService? aiProbe = null)
     {
+        _aiProbe = aiProbe;
         _clock = clock ?? TimeProvider.System;
         _recoveryService = recoveryService;
         _backend = backend;
@@ -216,6 +219,9 @@ public class HealthService
         var prtgSyncWarnings = prtgEnabled ? ReadPrtgSyncWarnings() : Array.Empty<PrtgSyncWarning>();
         var suspendedRecipients = _mail.GetSuspendedRecipients();
         var outboxDrops = new WorkOrderOutboxDropStore(_backend.Blob(WorkOrderOutboxDropStore.BlobKey)).Get();
+        // AI 探測：讀上次結果、在背景更新（不等探測）；健康頁每次載入順便讓結果保持新鮮
+        _aiProbe?.RefreshInBackground();
+        var aiProbe = _aiProbe?.LatestResult;
         var reasons = HealthAttention.Evaluate(new HealthAttentionInput
         {
             InvalidMailSchedules = InvalidMailSchedules(healthSettings),
@@ -249,6 +255,7 @@ public class HealthService
             RetentionFailure = retentionFailure,
             OutboxRecentDropped = outboxDrops.RecentDropped,
             OutboxLastDroppedAt = outboxDrops.LastDroppedAt,
+            AiUnreachable = aiProbe?.Status == AiProbeStatus.Failed,
             PrtgSyncWarnings = prtgSyncWarnings
         }, DateTime.Now);
         var degraded = reasons.Count > 0;
@@ -257,6 +264,8 @@ public class HealthService
         {
             Status = degraded ? HealthStatuses.Degraded : HealthStatuses.Ok,
             StatusReasons = reasons.ToList(),
+            AiProbeStatus = aiProbe?.Status.ToString(),
+            AiProbeDetail = aiProbe?.Detail,
             RetentionFailedSegments = retentionFailure?.Segments.ToList() ?? new List<string>(),
             PrtgSyncWarnings = prtgSyncWarnings.Select(w => w.Message).ToList(),
             Version = Version,

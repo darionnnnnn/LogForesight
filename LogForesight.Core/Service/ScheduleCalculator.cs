@@ -268,6 +268,13 @@ public static class ScheduleCalculator
         windows.Any(w => IsWithinWindow(now, w));
 
     /// <summary>
+    /// 是否至少有一個可解析的窗口（起訖都是合法 HH:mm）。沒有任何窗口時排程永遠不會觸發：
+    /// 閒置原因與畫面以這個為準，與「有窗口、只是現在不在其中」分開講。
+    /// </summary>
+    public static bool HasAnyWindow(IEnumerable<ScheduleWindow> windows) =>
+        windows.Any(w => TryParseMinutes(w.Start, out _) && TryParseMinutes(w.End, out _));
+
+    /// <summary>
     /// now 所屬窗口「這一次」的起始時刻——跨午夜窗口（例如 22:00→06:00）凌晨仍算「昨晚那次」，
     /// 不是今天一個新的實例。now 不在這個窗口內時回 null。
     /// </summary>

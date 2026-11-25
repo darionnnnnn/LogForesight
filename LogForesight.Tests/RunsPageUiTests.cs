@@ -1064,7 +1064,7 @@ console.log('PASS operational status refresh');
         var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
         Assert.Contains(": status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'", js);
         Assert.Contains(": status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'", js);
-        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {", js);
+        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending', 'no-window'].includes(status.idleReason))) {", js);
         Assert.DoesNotContain("存量校正回填尚未完成", js);
     }
 
@@ -1144,7 +1144,7 @@ console.log('PASS operational status refresh');
 
         // 待補已是 0 件時沒有東西可以補跑，退避提示不出現（不放進「待補 0 件也顯示」的例外清單）
         var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
-        Assert.Contains("['disabled', 'backfill-pending'].includes(status.idleReason)", aiBody);
+        Assert.Contains("['disabled', 'backfill-pending', 'no-window'].includes(status.idleReason)", aiBody);
         Assert.DoesNotContain("'backfill-pending', 'backoff']", aiBody);
         Assert.Contains("aiIdleHintText(status)", aiBody);
 
