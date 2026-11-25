@@ -296,6 +296,37 @@ public class WorkOrderBoardServiceTests : IDisposable
     }
 
     [Fact]
+    public void 待派_最近出現日已結案但更早一天未結案_仍列入待派建議_全部日子都結案才不列入()
+    {
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var earlier = Yesterday.AddDays(-1);
+        var host = AddHost("HOST-MIXED");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        Candidate(h, inPool: true, host.HostId);
+        ClosedRow("HOST-MIXED", Disk());   // 只有最近出現日（昨天）已結案，前天未結案
+
+        // 期間內仍有未結案的日子：建案會寫那一天，所以是待派的工作
+        var mixed = RowOf(Service().GetGaps(null, null, 1), "disk");
+        Assert.Equal(1, Assert.Single(mixed.Suggested).Hosts);
+        Assert.Equal(1, mixed.GapHosts);
+
+        // 前天也結案：每個出現日都是結案類，不列入待派
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = "HOST-MIXED", Date = earlier, IssueKey = KeyOf(Disk()), Status = IssueHandlingStatuses.Resolved,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now
+        });
+        var allClosed = Service().GetGaps(null, null, 1);
+        Assert.DoesNotContain(allClosed.Rows, r => r.Source == "disk");
+        Assert.Equal(0, allClosed.Total);
+    }
+
+    [Fact]
     public void 待派_被不再打擾擋下的主機計入gate_dismissed_已結案的主機不列入()
     {
         var pool = AddPoolGroup();

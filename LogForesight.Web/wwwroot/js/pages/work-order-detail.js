@@ -526,10 +526,10 @@ const openAdminCloseModal = exclusive(buildAdminCloseModal);
  * 一樣重新載入單頭、成員表與時間軸，訊息與草稿由彈窗保留，403 改寫成含新處理人的說明。
  */
 function openMemberReply(caseIds, targetText, hostCount = caseIds.length, recurrenceHosts = null) {
-    // 復發主機數：成員表勾選的由呼叫端數好傳入；整張單回覆取單頭的數字；只剩一台進行中時，該台是復發＝單頭的復發主機數 > 0
+    // 復發主機數：指定成員的（成員表勾選、單一成員）由呼叫端以成員自己的 isRecurrence 數好傳入；整張單回覆取單頭的數字；
+    // 指定成員卻沒給數字就不提示（不拿單頭的數字近似——單頭有復發不代表這一台是）
     const recurrenceInReply = recurrenceHosts
-        ?? (caseIds.length === 0 ? (currentDetail.recurrenceHosts ?? 0)
-            : (caseIds.length === 1 ? Math.min(1, currentDetail.recurrenceHosts ?? 0) : 0));
+        ?? (caseIds.length === 0 ? (currentDetail.recurrenceHosts ?? 0) : 0);
     openWorkOrderReplyModal({
         recurrence: { hosts: recurrenceInReply },
         multiTarget: hostCount > 1,
@@ -633,7 +633,7 @@ function renderActions(detail, user) {
                 toast('這張單已沒有進行中的主機', 'info');
                 return;
             }
-            openMemberReply([member.caseId], `主機 ${member.hostName}`);
+            openMemberReply([member.caseId], `主機 ${member.hostName}`, 1, member.isRecurrence ? 1 : 0);
         } });
         actionsContainer.appendChild(replyBtn);
     }

@@ -90,7 +90,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     let picking = false;
     let mode = 'whole';
     let restCount = 0;
-    const picker = pickerOptions ? createHostPicker({ load: pickerOptions.load, onChange: () => { syncHint(); syncSubmitState(); } }) : null;
+    const picker = pickerOptions ? createHostPicker({ load: pickerOptions.load, onChange: () => { syncHint(); syncRecurrence(); syncSubmitState(); } }) : null;
     const pickToggle = makeButton('只回覆部分主機', { onClick: () => togglePicking() });
     pickToggle.id = 'wo-reply-pick-toggle';
     pickToggle.classList.add('mb-3', picker ? 'd-inline-block' : 'd-none');
@@ -109,6 +109,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         pickToggle.textContent = picking ? '改為回覆全部進行中主機' : '只回覆部分主機';
         if (picking) picker.open();
         syncHint();
+        syncRecurrence();
         syncSubmitState();
     }
 
@@ -120,9 +121,8 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     // 復發提示與三個建議（有復發主機才有）：放在結論按鈕之前，點了等於選對應結論並預填
     const recurrenceHosts = recurrence?.hosts > 0 ? recurrence.hosts : 0;
-    const recurrenceHint = recurrenceHosts > 0
-        ? statusNote('info', `其中 ${recurrenceHosts} 台是反覆發生的問題。結案後又出現，建議先看原因：`)
-        : null;
+    const recurrenceText = count => `其中 ${count} 台是反覆發生的問題。結案後又出現，建議先看原因：`;
+    const recurrenceHint = recurrenceHosts > 0 ? statusNote('info', recurrenceText(recurrenceHosts)) : null;
     const suggestRow = recurrenceHosts > 0 ? document.createElement('div') : null;
     if (recurrenceHint) {
         recurrenceHint.id = 'wo-reply-recurrence';
@@ -130,6 +130,26 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         suggestRow.id = 'wo-reply-suggest';
         suggestRow.className = 'd-flex flex-wrap gap-2 mb-3';
         form.append(recurrenceHint, suggestRow);
+    }
+
+    /**
+     * 提示與建議跟著「回覆對象」重算：整單沿用呼叫端給的台數；切到部分主機後是勾選成員中 isRecurrence 的不重複主機數
+     * （同一台的多個簽章只算一台）；「其餘 N 台」續問不適用（復發台數是原對象的）。0 台時提示與三個建議都收起。
+     */
+    function syncRecurrence() {
+        if (!recurrenceHint) return;
+        let count = recurrenceHosts;
+        if (mode === 'rest') count = 0;
+        else if (picking) {
+            const hosts = new Set();
+            for (const item of picker.selected.values()) {
+                if (item?.isRecurrence) hosts.add(String(item.hostName ?? item.hostId ?? item.caseId).toUpperCase());
+            }
+            count = hosts.size;
+        }
+        if (count > 0) recurrenceHint.textContent = recurrenceText(count);
+        recurrenceHint.classList.toggle('d-none', count === 0);
+        suggestRow.classList.toggle('d-none', count === 0);
     }
 
     // 結論：一排單選按鈕（與風險日處理面板同一個 renderChips 與 .lf-handling__chips 樣式），預設不選
@@ -411,9 +431,8 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         pickToggle.classList.remove('d-inline-block');
         rejectBox.classList.add('d-none');
         rejectBox.replaceChildren();
-        // 復發主機數是整張單的數字，不適用於「其餘」：提示與建議收起
-        recurrenceHint?.classList.add('d-none');
-        suggestRow?.classList.add('d-none');
+        // 復發主機數是原對象的數字，不適用於「其餘」：mode 先設成 rest，syncRecurrence 會把提示與建議收起
+        syncRecurrence();
         statusLabel.textContent = `其餘 ${count} 台要一起設為…`;
         selectedStatus = null;
         renderStatusChips();

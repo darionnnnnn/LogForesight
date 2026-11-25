@@ -27,6 +27,7 @@ public class KpiStripBehaviorTests
     [InlineData("linkCardIsAnchorWithAppUrlHref")]
     [InlineData("variantAppliesToValue")]
     [InlineData("nodeSubIsAppendedNotParsed")]
+    [InlineData("detailIsVisibleTextBelowSubAndOnlyWhenGiven")]
     public void KPI卡列結構行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

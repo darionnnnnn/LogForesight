@@ -186,6 +186,7 @@ public class WorkOrderCommandService
         var overlong = new List<WorkOrderOverlongDto>();
         var daySyncPending = 0;
         var closedByCoordinator = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var closedByCoordinatorNames = new List<string>();
         // 協調器逐成員略過的已結案（主機＋簽章）：同一台的其他成員仍可能寫入，恢復判定要逐成員，不能整台移除
         var closedMembers = new List<(string HostName, string IssueKey)>();
         // 實際寫入的（主機, 簽章）：不再打擾的成員被重開後，只有真的建了案件的才恢復
@@ -208,7 +209,7 @@ public class WorkOrderCommandService
             overlong.AddRange(OverlongDtos(outcome));
             foreach (var closed in outcome.SkippedClosed)
             {
-                closedByCoordinator.Add(HostNameKey.Of(closed.HostName));
+                if (closedByCoordinator.Add(HostNameKey.Of(closed.HostName))) closedByCoordinatorNames.Add(closed.HostName);
                 closedMembers.Add((HostNameKey.Of(closed.HostName), closed.IssueKey));
             }
             if (outcome.WorkOrderId == 0) continue;
@@ -287,6 +288,8 @@ public class WorkOrderCommandService
             NoiseExcludedHosts = plan.NoiseExcludedHosts,
             ClosedSkippedHosts = plan.ClosedSkippedHosts + closedByCoordinator.Count,
             DismissedSkippedHosts = plan.DismissedSkippedHosts,
+            ClosedSkippedHostNames = SkippedHostNames(plan, ClosedReasons.Closed, closedByCoordinatorNames),
+            DismissedSkippedHostNames = SkippedHostNames(plan, ClosedReasons.Dismissed, Array.Empty<string>()),
             DaySyncPendingCases = daySyncPending,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
             AssigneeNoAccessTotal = plan.NoAccess.Count,
@@ -749,6 +752,7 @@ public class WorkOrderCommandService
         // 才知道哪些成員要標記重開
         var judged = perHost.Where(x => !x.Manual && x.Kept.Count > 0).ToList();
         var statusByHost = new Dictionary<long, Dictionary<string, ResolvedOccurrence>>();
+        var noWritableDays = new HashSet<(string HostName, string IssueKey)>(HostIssueSignatureKeyComparer.Instance);
         var dismissedByHost = new Dictionary<string, Dictionary<string, IssueCase>>(StringComparer.OrdinalIgnoreCase);
         if (judged.Count > 0)
         {
@@ -769,6 +773,15 @@ public class WorkOrderCommandService
                     statusByHost[r.Host.HostId] = byKey = new Dictionary<string, ResolvedOccurrence>(IssueSignatureKeyComparer.Instance);
                 byKey.TryAdd(r.Occurrence.IssueKey, r);
             }
+
+            // 最近出現日已結案還不夠：期間內任一天未結案就照常建案（只寫未結案的日子），所以再問協調器同一份
+            // 「沒有可寫入逐日列」的判定，批次一次。兩個條件都成立才算已結案
+            var latestClosed = statusByHost.Values
+                .SelectMany(d => d.Values)
+                .Where(IsLatestDayClosed)
+                .Select(r => (r.Host.HostName, r.Occurrence.IssueKey))
+                .ToList();
+            if (latestClosed.Count > 0) noWritableDays = _coordinator.KeysWithoutWritableDays(latestClosed);
         }
 
         return perHost
@@ -795,8 +808,8 @@ public class WorkOrderCommandService
                     dismissed?.TryGetValue(o.IssueKey, out blocked);
                     ResolvedOccurrence? resolved = null;
                     statuses?.TryGetValue(o.IssueKey, out resolved);
-                    var isClosed = resolved is { OpenCase: null, Handling: not null }
-                                   && IssueHandlingStatuses.IsClosed(resolved.Handling.Status);
+                    var isClosed = resolved != null && IsLatestDayClosed(resolved)
+                                   && noWritableDays.Contains((host.HostName, o.IssueKey));
 
                     if (blocked == null && !isClosed)
                     {
@@ -829,6 +842,24 @@ public class WorkOrderCommandService
             .OrderBy(r => r.Host.HostName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    /// <summary>
+    /// 略過主機名清單（建立結果用）：計畫判定該原因略過的主機，加上協調器保底再擋下的；依名稱排序、不分大小寫去重，
+    /// 只列前 <see cref="NoAccessListLimit"/> 筆（與 AssigneeNoAccess 同上限，總數看計數欄位）。
+    /// </summary>
+    private static List<string> SkippedHostNames(CreatePlan plan, string reason, IEnumerable<string> extra) =>
+        plan.Hosts
+            .Where(h => h.Resolved.Exclusion?.Reason == reason)
+            .Select(h => h.Resolved.Host.HostName)
+            .Concat(extra)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Take(NoAccessListLimit)
+            .ToList();
+
+    /// <summary>最近出現日已被處理人結案：沒有進行中案件、逐日處理列是結案類（「沒標記的預設已處理」不算）</summary>
+    private static bool IsLatestDayClosed(ResolvedOccurrence r) =>
+        r is { OpenCase: null, Handling: not null } && IssueHandlingStatuses.IsClosed(r.Handling.Status);
 
     private static string? NullIfBlank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
 

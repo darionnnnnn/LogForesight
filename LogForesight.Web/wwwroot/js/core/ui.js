@@ -1856,6 +1856,7 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
  *
  * groups：`[{ title?, cards: [{ value, label, variant?, url?, onClick?, sub?, title? }] }]`
  * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。
+ * - detail：副標下方的可見補充文字（字串，不截斷、可換行；例如未回報主機名單）。沒給就不產生節點，其他卡的結構與高度不變。
  * - 沒有卡的組不輸出；所有組都沒有卡時回傳空容器，由呼叫端決定要不要顯示。
  * - singleRow：各組排在同一排依卡數分寬、卡片撐滿（搭配 core/reveal.js 只顯示第一排的頁面用）。
  * - 每張卡一律有副標列（沒有副標時是空佔位，保留一行高度）——這是「同列等高」的結構前提，
@@ -1916,6 +1917,12 @@ export function kpiStrip(groups, { singleRow = false } = {}) {
             }
 
             el.append(valueEl, labelEl, subEl);
+            if (typeof card.detail === 'string' && card.detail !== '') {
+                const detailEl = document.createElement('div');
+                detailEl.className = 'lf-kpi-card__detail lf-text-meta lf-break-anywhere';
+                detailEl.textContent = card.detail;
+                el.appendChild(detailEl);
+            }
             grid.appendChild(el);
         }
 

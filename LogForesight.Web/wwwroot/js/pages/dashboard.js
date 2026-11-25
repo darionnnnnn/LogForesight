@@ -393,7 +393,8 @@ function renderKpi(data, user, displaySettings, myBadge) {
             variant: card.variant,
             url: card.url,
             sub: card.sub ?? card.hint,
-            title: card.title ?? card.hint
+            title: card.title ?? card.hint,
+            detail: card.detail
         }))
     }));
 
@@ -405,7 +406,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
 /**
  * 未回報主機卡。目的地（主機頁的「未回報」篩選）需要 Maintain：有 Maintain 才是連結；
- * 其他角色不可點，改在提示文字列出可見範圍內未回報的主機名（API 最多帶 5 台，超過寫「等 N 台」）。
+ * 其他角色不可點，改在卡片內可見地列出可見範圍內未回報的主機名（API 最多帶 5 台，超過寫「等 N 台」），提示文字（title）保留同一份。
  */
 function silentHostsCard(data, user) {
     const card = {
@@ -427,7 +428,8 @@ function silentHostsCard(data, user) {
     const names = data.silentHostNames ?? [];
     if (data.silentHostsCount > 0 && names.length > 0) {
         const more = data.silentHostsCount > names.length ? ` 等 ${formatNumber(data.silentHostsCount)} 台` : '';
-        card.title = `${card.title}\n未回報：${names.join('、')}${more}`;
+        card.detail = `未回報：${names.join('、')}${more}`;
+        card.title = `${card.title}\n${card.detail}`;
     }
     return card;
 }

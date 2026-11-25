@@ -395,6 +395,23 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>
+    /// 一批（主機, 問題鍵）中「指派時沒有任何可寫入逐日列」的鍵（只讀、批次一次）：與建單前預判（<see cref="ClassifyMembers"/>）
+    /// 同一份判定（<see cref="IssueCaseCoordinator.CasesWithoutWritableDays"/>）——期間內每個出現日都是結案類才在集合內。
+    /// 人工交辦預覽與待派試跑用它確認「已結案」與建案時的略過一致，不另寫第二份合格日判定。
+    /// </summary>
+    public HashSet<(string HostName, string IssueKey)> KeysWithoutWritableDays(IEnumerable<(string HostName, string IssueKey)> keys)
+    {
+        var result = new HashSet<(string HostName, string IssueKey)>(MemberKeyComparer.Instance);
+        var probes = keys
+            .Distinct(MemberKeyComparer.Instance)
+            .Select(k => new IssueCase { CaseId = string.Empty, HostName = k.HostName, IssueKey = k.IssueKey })
+            .ToList();
+        foreach (var dead in _caseCoordinator.CasesWithoutWritableDays(probes))
+            result.Add((dead.HostName, dead.IssueKey));
+        return result;
+    }
+
+    /// <summary>
     /// 指派預覽（只讀）：與建單前預判、實際寫入共用 <see cref="ClassifyMembers"/>，
     /// 不要求改派（reassignConflicts＝false）時：無進行中案件＝新案件、同處理人＝改連、他人進行中＝衝突。
     /// 不鎖、不寫任何資料。

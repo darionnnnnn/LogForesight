@@ -325,15 +325,23 @@ const cases = {
         render({ silentHostsCount: 0, silentHostNames: [] }, user);
         assert.equal(silentCard().title, '沒回報 ≠ 沒問題', '0 台不帶清單');
         assert.ok(!silentCard().url);
+        assert.ok(!silentCard().detail, '0 台卡片上不列主機名');
 
         render({ silentHostsCount: 3, silentHostNames: ['A', 'B', 'C'] }, user);
         assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C', '3 台全列、不寫「等」');
+        assert.equal(silentCard().detail, '未回報：A、B、C', '3 台：卡片上可見地全列、不寫「等」');
 
         render({ silentHostsCount: 5, silentHostNames: ['A', 'B', 'C', 'D', 'E'] }, user);
         assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C、D、E', '剛好 5 台不寫「等」');
+        assert.equal(silentCard().detail, '未回報：A、B、C、D、E', '5 台：卡片上剛好 5 台不寫「等」');
 
         render({ silentHostsCount: 7, silentHostNames: ['A', 'B', 'C', 'D', 'E'] }, user);
         assert.equal(silentCard().title, '沒回報 ≠ 沒問題\n未回報：A、B、C、D、E 等 7 台', '超過 5 台寫「等 N 台」');
+        assert.equal(silentCard().detail, '未回報：A、B、C、D、E 等 7 台', '7 台：卡片上超過 5 台寫「等 N 台」');
+
+        // Maintain 是連結卡，不在卡片上列名單（點進主機頁看）
+        render({ silentHostsCount: 3, silentHostNames: ['A', 'B', 'C'] }, { capabilities: ['Maintain'], userId: 1 });
+        assert.ok(!silentCard().detail);
     }
 };
 

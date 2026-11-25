@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
 import { loadElements, loadButton } from './load-elements.mjs';
-import { loadReplyModule, openReply, read, extract, byId, all, textOf, hidden, catalog } from './load-reply-modal.mjs';
+import { loadReplyModule, openReply, read, extract, byId, all, textOf, hidden, catalog, fire } from './load-reply-modal.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -228,6 +228,77 @@ const cases = {
         await m.send();
         assert.equal(hidden(byId(m.body, 'wo-reply-recurrence')), true);
         assert.equal(hidden(byId(m.body, 'wo-reply-suggest')), true);
+    },
+
+    // 對象切到「只回覆部分主機」：復發提示的台數以勾選成員中 isRecurrence 的不重複主機數重算，0 時提示與建議都收起
+    async replyModalRecurrenceCountFollowsPartialSelection() {
+        const members = [
+            { caseId: 'c1', hostName: 'SRV-001', status: 'in_progress', isRecurrence: true },
+            { caseId: 'c2', hostName: 'SRV-002', status: 'in_progress', isRecurrence: true },
+            { caseId: 'c3', hostName: 'SRV-003', status: 'in_progress', isRecurrence: false },
+            { caseId: 'c4', hostName: 'SRV-001', status: 'in_progress', isRecurrence: true }   // 同一台的另一個簽章
+        ];
+        const load = async ({ page, pageSize }) => ({ items: members, total: members.length, page, pageSize });
+        const m = openReply(loadReplyModule(), { recurrence: { hosts: 2 }, picker: { load } });
+        const hint = () => byId(m.body, 'wo-reply-recurrence');
+        const suggest = () => byId(m.body, 'wo-reply-suggest');
+        const checks = () => all(m.body).filter(n => n.tagName === 'INPUT' && n.type === 'checkbox' && n.title === '選取這台主機');
+        const tick = (i, on = true) => { checks()[i].checked = on; return fire(checks()[i], 'change'); };
+
+        // 整單：沿用呼叫端給的台數
+        assert.ok(textOf(hint()).includes('其中 2 台'), textOf(hint()));
+
+        m.toggle.click();
+        await new Promise(r => setTimeout(r, 0));
+        // 切到部分、還沒勾：0 台復發，提示與三個建議都收起
+        assert.equal(hidden(hint()), true, '沒勾任何主機不提示');
+        assert.equal(hidden(suggest()), true);
+
+        await tick(0);                       // SRV-001（復發）
+        await tick(2);                       // SRV-003（非復發）
+        assert.equal(hidden(hint()), false);
+        assert.ok(textOf(hint()).includes('其中 1 台'), '勾 2 台其中 1 台復發：' + textOf(hint()));
+        assert.equal(hidden(suggest()), false);
+
+        await tick(3);                       // 同一台 SRV-001 的另一件：不重複計
+        assert.ok(textOf(hint()).includes('其中 1 台'), '同主機不重複計：' + textOf(hint()));
+        await tick(1);                       // SRV-002（復發）
+        assert.ok(textOf(hint()).includes('其中 2 台'), textOf(hint()));
+
+        // 只留非復發的
+        await tick(0, false); await tick(1, false); await tick(3, false);
+        assert.equal(hidden(hint()), true, '勾的都不是復發：無提示');
+        assert.equal(hidden(suggest()), true, '勾的都不是復發：無建議');
+
+        // 改回整單：回到呼叫端給的台數
+        m.toggle.click();
+        assert.equal(hidden(hint()), false);
+        assert.ok(textOf(hint()).includes('其中 2 台'), textOf(hint()));
+        assert.equal(hidden(suggest()), false);
+    },
+
+    // 單一成員回覆：用該成員自己的 isRecurrence，不拿單頭復發主機數近似
+    singleMemberReplyUsesMembersOwnRecurrence() {
+        const make = () => {
+            const opened = [];
+            const openReplyModal = options => opened.push(options);
+            const fn = new Function('currentDetail', 'workOrderId', 'openWorkOrderReplyModal',
+                `${extract(detailSource, 'function openMemberReply(')}\nreturn openMemberReply;`)(
+                { recurrenceHosts: 5, issueLabel: 'x', issueKey: 'k' }, 7, openReplyModal);
+            return { fn, opened };
+        };
+        const { fn, opened } = make();
+        fn(['c1'], '主機 A', 1, 0);
+        assert.equal(opened.at(-1).recurrence.hosts, 0, '該成員非復發、單頭有復發：不提示');
+        fn(['c1'], '主機 A', 1, 1);
+        assert.equal(opened.at(-1).recurrence.hosts, 1, '該成員是復發：1 台');
+        fn(['c1'], '主機 A', 1);
+        assert.equal(opened.at(-1).recurrence.hosts, 0, '沒給成員資訊的單一成員不以單頭近似');
+        fn([], '全部', 20);
+        assert.equal(opened.at(-1).recurrence.hosts, 5, '整張單仍取單頭的復發主機數');
+
+        // 呼叫端（單一進行中成員的回覆入口）要把成員自己的旗標傳進來
+        assert.match(detailSource, /openMemberReply\(\[member\.caseId\], `主機 \$\{member\.hostName\}`, 1, member\.isRecurrence \? 1 : 0\)/);
     },
 
     // ── 4. 我的交辦觀察分流 ──────────────────────────────────────────────────

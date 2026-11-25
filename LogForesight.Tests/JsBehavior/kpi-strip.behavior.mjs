@@ -106,6 +106,19 @@ const cases = {
         const noneValue = none.find(n => has(n, 'lf-stat__value'));
         assert.equal(noneValue.className.includes('text-'), false);
     },
+    detailIsVisibleTextBelowSubAndOnlyWhenGiven() {
+        const { kpiStrip } = load();
+        const [withDetail, without] = cardsOf(kpiStrip([{ cards: [
+            { value: '3', label: '有明細', sub: '副標', detail: '未回報：A、B、C <i>' },
+            { value: '0', label: '沒明細' }
+        ] }]));
+        const detail = withDetail.find(n => has(n, 'lf-kpi-card__detail'));
+        assert(detail, '有 detail 的卡要產生可見節點');
+        assert.equal(detail.textContent, '未回報：A、B、C <i>', '走 textContent，不當 HTML 解析');
+        assert.equal(has(detail, 'lf-text-meta'), true, '用文字角色類別');
+        assert.equal(withDetail.children.indexOf(detail), withDetail.children.indexOf(subOf(withDetail)) + 1, '緊接在副標之後');
+        assert.ok(!without.find(n => has(n, 'lf-kpi-card__detail')), '沒給 detail 不產生節點');
+    },
     nodeSubIsAppendedNotParsed() {
         const { kpiStrip, dom } = load();
         const badge = dom.newElement('div');

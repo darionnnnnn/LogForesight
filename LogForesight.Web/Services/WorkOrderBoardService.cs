@@ -451,9 +451,18 @@ public class WorkOrderBoardService
 
         // 已結案的（主機, 簽章）：處理概況只有一份判定（OccurrenceStatusResolver）；Resolved 狀態含「沒標記的預設已處理」，
         // 所以一定要看逐日處理列真的是結案類，才算被人結案
-        var closedKeys = _query.ResolveOccurrenceStatuses(candidates.Select(x => x.Occurrence).ToList(), scope.From, scope.To)
+        var latestClosed = _query.ResolveOccurrenceStatuses(candidates.Select(x => x.Occurrence).ToList(), scope.From, scope.To)
             .Where(r => r is { OpenCase: null, Handling: not null } && IssueHandlingStatuses.IsClosed(r.Handling.Status))
-            .Select(r => (HostNameKey.Of(r.Host.HostName), r.Occurrence.IssueKey))
+            .Select(r => (r.Host.HostName, r.Occurrence.IssueKey))
+            .ToList();
+        // 最近出現日已結案還不夠：期間內任一天未結案，建案會寫那一天，仍是待派的工作。
+        // 所以再問協調器「沒有可寫入逐日列」（與建案略過同一份判定），批次一次，兩個條件都成立才算已結案
+        var noWritableDays = latestClosed.Count == 0
+            ? new HashSet<(string HostName, string IssueKey)>()
+            : _coordinator.KeysWithoutWritableDays(latestClosed);
+        var closedKeys = latestClosed
+            .Where(k => noWritableDays.Contains(k))
+            .Select(k => (HostNameKey.Of(k.HostName), k.IssueKey))
             .ToHashSet(HostIssueSignatureKeyComparer.Instance);
 
         var settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(_settings.Get()))!;

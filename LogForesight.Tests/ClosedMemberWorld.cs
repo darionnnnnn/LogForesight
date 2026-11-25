@@ -32,6 +32,7 @@ internal sealed class ClosedMemberWorld : IDisposable
     public readonly FakeWorkOrderStore OrderStore;
     public readonly RecordingAuditService Audit = new();
     public readonly WorkOrderCoordinator Coordinator;
+    public readonly RecordListQueryService Query;
     public readonly WorkOrderCommandService Service;
     private readonly UserGroup _handlerRole;
 
@@ -45,7 +46,7 @@ internal sealed class ClosedMemberWorld : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, Hosts);
         var statusResolver = new OccurrenceStatusResolver(Hosts, IssueHandlingStore, CaseStore, SettingsStore);
         var displayNames = new UserDisplayNameService(SettingsStore);
-        var query = new RecordListQueryService(
+        var query = Query = new RecordListQueryService(
             repository, Hosts, Users, HandlingStore, IssueHandlingStore, CaseStore, SettingsStore, severity,
             visibility, aggregates, statusResolver, displayNames, new NextUnhandledSequenceCache(new DataVersionStamp()),
             new FixedIssueExclusionSource(IssueExclusion.None));

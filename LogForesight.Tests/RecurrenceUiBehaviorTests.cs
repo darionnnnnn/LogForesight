@@ -29,6 +29,8 @@ public sealed class RecurrenceUiBehaviorTests
     [InlineData("replyModalObserveSuggestionSetsSevenDays")]
     [InlineData("replyModalProgressSuggestionSelectsInProgressAndFocusesDue")]
     [InlineData("replyModalSuggestionsHiddenInRestMode")]
+    [InlineData("replyModalRecurrenceCountFollowsPartialSelection")]
+    [InlineData("singleMemberReplyUsesMembersOwnRecurrence")]
     [InlineData("handlerKpiShowsTodoObservingEscalated")]
     [InlineData("handlerDefaultStatusIsTodoAndUrlWins")]
     [InlineData("observedTextHasThreeForms")]

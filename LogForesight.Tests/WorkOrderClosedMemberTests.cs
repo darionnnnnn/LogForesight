@@ -269,6 +269,135 @@ public class WorkOrderClosedMemberTests : IDisposable
         Assert.Equal(created.CaseId, openDay.CaseId);
     }
 
+    [Fact]
+    public void 預覽_最近出現日已結案但更早一天未結案_不略過_全部出現日都結案才略過()
+    {
+        var host = W.AddHost("HOST-MIXED");
+        var earlier = Yesterday.AddDays(-1);
+        W.RecordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        W.CloseDay("HOST-MIXED");   // 只有最近出現日（昨天）已結案，前天未處理
+        var handler = W.AddHandler();
+
+        var mixed = W.Service.Preview(Single(handler.UserId));
+
+        Assert.Equal(0, mixed.ClosedSkippedHosts);
+        Assert.Equal(1, mixed.AffectedHosts);
+        Assert.Null(Assert.Single(mixed.Hosts).ClosedReason);
+
+        // 前天也結案：每個出現日都是結案類才算已結案
+        W.IssueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = earlier, IssueKey = KeyOf(Disk()), Status = IssueHandlingStatuses.Resolved,
+            ActorAccount = "DOMAIN\\closer", UpdatedAt = DateTime.Now.AddHours(-2)
+        });
+        var allClosed = W.Service.Preview(Single(handler.UserId));
+
+        Assert.Equal(1, allClosed.ClosedSkippedHosts);
+        Assert.Equal(0, allClosed.AffectedHosts);
+        Assert.Equal("closed", Assert.Single(allClosed.Hosts).ClosedReason);
+    }
+
+    [Fact]
+    public void 建立_最近出現日已結案但更早一天未結案_照常建案_只寫未結案的那天()
+    {
+        var host = W.AddHost("HOST-MIXED");
+        var earlier = Yesterday.AddDays(-1);
+        W.RecordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        W.CloseDay("HOST-MIXED");
+        var handler = W.AddHandler();
+
+        var result = W.Service.Create(Single(handler.UserId));
+
+        Assert.Equal(0, result.ClosedSkippedHosts);
+        Assert.Equal(1, Assert.Single(result.Orders).NewCases);
+        var created = W.OpenCase("HOST-MIXED");
+        Assert.NotNull(created);
+        Assert.Equal(IssueHandlingStatuses.Resolved, Assert.Single(W.IssueHandlingStore.GetForDay("HOST-MIXED", Yesterday)).Status);
+        Assert.Equal(created!.CaseId, Assert.Single(W.IssueHandlingStore.GetForDay("HOST-MIXED", earlier)).CaseId);
+    }
+
+    [Fact]
+    public void 建立_結果帶出已結案與不再打擾的略過主機名清單_依名稱排序_各最多50筆_總數照舊()
+    {
+        W.AddHost("HOST-OPEN");
+        for (var i = 0; i < 55; i++)
+        {
+            var name = $"CLOSED-{i:D2}";
+            W.AddHost(name);
+            W.CloseDay(name);
+        }
+        W.AddHost("DISMISSED-B");
+        W.AddHost("DISMISSED-A");
+        W.Dismiss("DISMISSED-B");
+        W.Dismiss("DISMISSED-A");
+        var handler = W.AddHandler();
+
+        var result = W.Service.Create(Single(handler.UserId));
+
+        Assert.Equal(55, result.ClosedSkippedHosts);
+        Assert.Equal(50, result.ClosedSkippedHostNames.Count);
+        Assert.Equal(Enumerable.Range(0, 50).Select(i => $"CLOSED-{i:D2}"), result.ClosedSkippedHostNames);
+        Assert.Equal(2, result.DismissedSkippedHosts);
+        Assert.Equal(new[] { "DISMISSED-A", "DISMISSED-B" }, result.DismissedSkippedHostNames);
+        Assert.DoesNotContain("HOST-OPEN", result.ClosedSkippedHostNames);
+    }
+
+    [Fact]
+    public void 預覽的已結案略過台數_與問題視角同一問題同一期間由處理人標記結案的已處理台數一致()
+    {
+        // 問題視角的「已處理」含兩種：處理人逐日標記結案，以及嚴重度預設不處理（沒標記）——後者不是預覽的略過。
+        // 先量出沒有任何人工標記時的「預設已處理」台數，再扣掉，剩下的就是處理人標記結案的台數。
+        W.AddHost("HOST-OPEN");
+        W.AddHost("HOST-LOW", Disk(IssueSeverity.Low));
+        W.AddHost("HOST-CLOSED-1");
+        W.AddHost("HOST-CLOSED-2");
+        var handler = W.AddHandler();
+        var issueRequest = new RecordSearchRequest();
+        var defaultResolved = Assert.Single(W.Query.SearchByIssue(issueRequest).Items).ResolvedCount;
+
+        W.CloseDay("HOST-CLOSED-1");
+        W.CloseDay("HOST-CLOSED-2", IssueHandlingStatuses.WontFix);
+
+        var group = Assert.Single(W.Query.SearchByIssue(issueRequest).Items);
+        var preview = W.Service.Preview(Single(handler.UserId));
+
+        Assert.Equal(1, defaultResolved);
+        Assert.Equal(2, group.ResolvedCount - defaultResolved);
+        Assert.Equal(group.ResolvedCount - defaultResolved, preview.ClosedSkippedHosts);
+        Assert.Equal(2, preview.AffectedHosts);   // HOST-OPEN 與預設已處理的 HOST-LOW 仍會寫入
+    }
+
+    [Fact]
+    public void 預覽與問題視角口徑差異_最近出現日已結案但更早一天未結案_問題視角算已處理_預覽不略過()
+    {
+        // 問題視角逐主機看「最近一次出現日」的處理概況；預覽的略過要求期間內每個出現日都是結案類（建案會寫未結案的日子）。
+        // 兩者對這種混合主機刻意不同，這條測試鎖住差異，之後有人把任一邊改齊要同步決定。
+        var host = W.AddHost("HOST-MIXED");
+        var earlier = Yesterday.AddDays(-1);
+        W.RecordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = earlier, RiskLevel = "高",
+            Headline = "HOST-MIXED", TopIssues = new List<LogIssueSignature> { Disk() }
+        });
+        W.CloseDay("HOST-MIXED");
+        var handler = W.AddHandler();
+
+        var group = Assert.Single(W.Query.SearchByIssue(new RecordSearchRequest()).Items);
+        var preview = W.Service.Preview(Single(handler.UserId));
+
+        Assert.Equal(1, group.ResolvedCount);
+        Assert.Equal(0, preview.ClosedSkippedHosts);
+        Assert.Equal(1, preview.AffectedHosts);
+    }
+
     private static WorkOrderMember Member(string hostName) => new()
     {
         HostName = hostName, IssueKey = KeyOf(Disk()), IssueLabel = "disk 153", TriggerDate = Yesterday

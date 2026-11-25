@@ -174,6 +174,12 @@ public class CreateWorkOrderResultDto
     /// <summary>因不再自動派工而略過的主機數</summary>
     public int DismissedSkippedHosts { get; set; }
 
+    /// <summary>已結案而略過的主機名稱（依名稱排序、不分大小寫去重，只列前 50 筆；總數見 <see cref="ClosedSkippedHosts"/>）</summary>
+    public List<string> ClosedSkippedHostNames { get; set; } = new();
+
+    /// <summary>不再自動派工而略過的主機名稱（同上，只列前 50 筆；總數見 <see cref="DismissedSkippedHosts"/>）</summary>
+    public List<string> DismissedSkippedHostNames { get; set; } = new();
+
     public int DaySyncPendingCases { get; set; }
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
     public int AssigneeNoAccessTotal { get; set; }
