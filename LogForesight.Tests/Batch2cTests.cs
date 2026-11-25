@@ -141,7 +141,7 @@ public class Batch2cTests : IDisposable
                         !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") &&
                         !f.Contains($"{Path.DirectorySeparatorChar}LogForesight.Tests{Path.DirectorySeparatorChar}") &&
                         // 併行開發的 git worktree 放在 .claude/ 底下（不進版控），那裡是整份原始碼的副本，不算第二處
-                        !f.Contains($"{Path.DirectorySeparatorChar}.claude{Path.DirectorySeparatorChar}"))
+                        !f.StartsWith(Path.Combine(root, ".claude") + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             .Where(f => File.ReadAllText(f).Contains("/ 5) * 60"))
             .Select(Path.GetFileName)
             .ToList();

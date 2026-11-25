@@ -1257,7 +1257,7 @@ function renderHideGuide(visible) {
         ? '不想自己選？從下方每個問題的「更多」選「不再顯示這個問題…」，回答三個問題就會套用對應的做法。'
         : '要套用這些做法，請洽具維護權限的管理者，他可以從每個問題的「更多」選「不再顯示這個問題…」。';
     const tableHost = document.createElement('div');
-    tableHost.className = 'lf-table-aligned';
+    // 這裡只有一張表：不用 lf-table-aligned（同卡多表才需要的固定版面，會讓不換行的名稱欄在 1% 寬度下溢出），維持自動版面
     body.append(lead, entryHint, tableHost);
     const lines = texts => {
         const wrap = document.createElement('div');
