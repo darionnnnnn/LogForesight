@@ -21,6 +21,8 @@ const PAGE_SIZE = 20;
 /** 貼上清單查詢的批大小與每批頁大小：查詢字串有長度上限（IIS 預設 2048 字元），名稱分批送 */
 const LOOKUP_NAMES_PER_REQUEST = 40;
 const LOOKUP_PAGE_SIZE = 200;
+/** 一次貼上的主機名上限（與成員端點單次主機名篩選上限同值） */
+export const MAX_PASTED_NAMES = 500;
 
 /** 輸入框文字切成名稱清單（換行、逗號、頓號、分號、空白皆為分隔），保留順序並以不分大小寫去重 */
 export function parseHostNames(text) {
@@ -181,6 +183,13 @@ export function createHostPicker({ load, onChange }) {
             mode = 'server';
             filterNames = names.length === 1 ? names : null;
             await goto(1);
+            return;
+        }
+
+        // 一次貼上的名稱數有上限：每 40 個名稱一批查詢，不設上限時貼上整份清冊就是上百個請求
+        if (names.length > MAX_PASTED_NAMES) {
+            missingEl.textContent = `一次最多貼上 ${MAX_PASTED_NAMES} 個主機名（這次 ${names.length} 個），請分批貼上。`;
+            missingEl.classList.remove('d-none');
             return;
         }
 

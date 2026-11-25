@@ -1,4 +1,4 @@
--- 交辦資料一致性檢查（docs/FEEDBACK-81-CONCURRENCY-PLAN.md 第 6.1 節）。
+-- 交辦資料一致性檢查（docs/archive/FEEDBACK-81-CONCURRENCY-PLAN.md 第 6.1 節）。
 -- 對站台的 SQLite 資料庫副本執行：sqlite3 <副本.db> < db-invariants.sql
 -- 每一列的數字應為 0；非 0 代表留下了不一致的資料（先複製資料庫再查，不要對執行中的站台直接跑）。
 select 'a 進行中案件但所屬單已結案或沒有單', count(*) from lf_issue_cases c left join lf_work_orders o on o.work_order_id=c.work_order_id where c.closed_at is null and (o.work_order_id is null or o.closed_at is not null);

@@ -39,13 +39,15 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。每個批次驗收通過後在 `feature/*` 分支 commit 並 push；併 dev／master 需使用者同意。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **12,104 通過／16 略過**、macOS **12,089 通過／31 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
-  歷次基線見 `docs/archive/README.md`。略過的 16 筆中 12 筆是規模壓測（設 `LF_SCALE_BENCH=1` 才跑）、4 筆是待決缺陷的重現探針（`*ProbeXTests`，見 BACKLOG「待決的已知缺陷」）；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 Windows **12,988 通過／17 略過**、macOS **12,983 通過／32 略過**，全量 Windows 約 14 分鐘、macOS 約 3 分鐘（耗時分析用 `LogForesight.Tests/tools/test-timing.py`）。前端行為測試需要 Node.js 22.7 以上；CI 兩個平台都跑。環境變數由 `LogForesight.Tests/test.runsettings` 帶入，
+  歷次基線見 `docs/archive/README.md`。略過的 17 筆中 13 筆是規模壓測（設 `LF_SCALE_BENCH=1` 才跑）、4 筆是待決缺陷的重現探針（`*ProbeXTests`，見 BACKLOG「待決的已知缺陷」）；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`。文件／說明書批次可先跑定向的
   `dotnet test --filter "FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpWritingGuide"`（後者是說明書句長守門，名稱不含 HelpContent，漏掉就是超長句一路帶到全量）與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
   後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；改 view markup 前先 `grep` 測試專案找被斷言的字串（斷言 markup 的測試不一定叫 UiTests），新增或改 `*.behavior.mjs` 加跑 `NodeRuntimeTests`，改現行文件加跑 `DocNarrativeGuardTests`；新增或搬動端點、在 `IIssueAggregateQuery` 加方法時加跑 `Authorization|ControllerRouteSnapshot|IssueExclusionTests`（授權涵蓋清單與介面反射守門，名稱與被改的服務無關，定向篩選掃不到）；
   全量裡單一 Node 行為案例約 5 秒逾時而其餘全綠時，單獨重跑該測試類，通過即為負載下的偶發；
   `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
+  交辦與派工的整體行為另有三個工具（預設不跑）：`UsabilitySimulationTests`（`LF_USABILITY_SIM=<目錄>`，多日模擬，輸出 `metrics.tsv`）、
+  `LogForesight.Tests/tools/multi-user.mjs`（多個隔離工作階段同時操作站台，輸出逐步時間軸）、`tools/db-invariants.sql`（交辦資料十項一致性，應全為 0）。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **版號**：`1.0.<輪次>.<修訂>`，規則寫在 `Directory.Build.props` 註解。開新一輪的第一個提交就把輪次改成該輪 `FEEDBACK-N-PLAN` 的 N、修訂歸 0；
   實作方自查修正、換模型體檢修正、併 dev 後的實測補修各加 1 次修訂（同一批多個 commit 只加一次）；零星修補只加修訂。
@@ -100,6 +102,14 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   `IDispatchCandidateSource` 每趟算好快照交給 Core。複製一份就是兩套規則，改一邊另一邊靜默失準。
 - 不要建出不屬於交辦單的進行中案件：任何建案路徑（交辦、日層級指派、夜間派工）一律經 `WorkOrderCoordinator`。
   繞過它直接寫 `IssueCase` 會產生沒有單的散案，處理人清單、徽章、看板全都數不到（`IssueCaseCreationGuardTests` 守住 `new IssueCase` 只出現在 `WorkOrderCoordinator.cs`）。
+- 不要另拼問題名稱：畫面、通知信與建單一律走 `IssueNames`（`For`／`ForRules`／`Display`）或完整簽章的 `SourceEventLabel`，PRTG 規則短稱只有 `IssueNames.PrtgKindText` 一張表。
+  各處自拼「來源＋事件編號」會讓 Linux 與 PRTG 問題顯示成「sshd 0」這種分不出來的名稱（`IssueNameParityTests` 守門）。
+- 不要新增不帶期限的自動建單路徑：夜間派工與立即派工的期限一律出自 `DefaultDueDays`（續掛成員用 `MemberDueDate`，單期限已過就自續掛日起算）。
+  漏帶的單永遠不逾期，逾期訊號對那條路徑整個失效；沿用已過期的期限則是新成員一建立就逾期。
+- 不要讓建案繞過「需不需要處理」的判定：成員涵蓋日全數已結案就不建案件（`WorkOrderCoordinator` 的保底與 `KeysWithoutWritableDays`），「不再打擾」只看 `DispatchContext.DismissedCases`（30 天解除在 `DismissalRelease`）。
+  預覽、建立、待派試跑、立即派工共用同一份，預覽的略過數才會等於結果。
+- 不要把依個人能力分歧的欄位放進儀表板主體（`DashboardService.BuildBody`）：主體依可見主機集合跨帳號共用，待派、需要你處理、權限異動數、登入失敗由 `GetSummary` 依呼叫者能力疊在複本上。
+- 不要在互動 AI 入口先做昂貴的準備再被冷卻擋下：先看 `IAiRequestGate.InteractiveCoolingDown`；只有明確探測（`AiProbeService.ProbeNowAsync`）與真實呼叫成功會解除冷卻，背景探測不解除。
 - 不要把請求 DTO 放在 `LogForesight.Web.Models*` 以外的命名空間：`DefaultInputLimitsFilter` 只認這個命名空間，放錯就沒有預設輸入上限（反射守門檢查每個 `[FromBody]` 型別）；驗證屬性的中文預設訊息由 `ChineseModelBindingMessages` 統一補，不得露出 C# 屬性名。
 - 不要讓控制器宣告回傳父型別而實際回子型別：JSON 依**宣告型別**序列化，子型別多出來的欄位會被靜默吃掉，
   服務層測試照樣全綠（依問題端點的去重主機數曾因此消失多輪）。宣告型別寫成實際型別，必要時補序列化守門測試。

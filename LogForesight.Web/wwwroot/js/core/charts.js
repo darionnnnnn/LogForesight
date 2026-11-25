@@ -12,7 +12,7 @@
 
 import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
-import { cssVar } from './ui.js';
+import { cssVar, linkButton } from './ui.js';
 import { FONT_SCALE_EVENT } from './reveal.js';
 
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
@@ -238,10 +238,7 @@ export function attachToolbar(container, { canvasWrapper, tableColumns, tableRow
     toolbar.appendChild(toggleButton);
     // 完整 CSV（F20-4）：一般連結讓瀏覽器直接下載，檔名與內容由伺服器決定；整份資料，不只畫面上的列
     if (csvHref) {
-        const csvLink = document.createElement('a');
-        csvLink.className = 'btn btn-sm btn-outline-secondary';
-        csvLink.href = csvHref;
-        csvLink.textContent = '下載 CSV';
+        const csvLink = linkButton('下載 CSV', csvHref, { variant: 'outline-secondary' });
         csvLink.setAttribute('aria-label', `下載「${title}」的完整資料（CSV）`);
         toolbar.appendChild(csvLink);
     }

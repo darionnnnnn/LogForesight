@@ -1,4 +1,4 @@
-// 多人同時操作測試驅動器（docs/FEEDBACK-81-CONCURRENCY-PLAN.md）。
+// 多人同時操作測試驅動器（docs/archive/FEEDBACK-81-CONCURRENCY-PLAN.md）。
 //
 // 一個 Chrome 行程內建立多個彼此隔離的瀏覽器工作階段（等同多個無痕視窗，各自獨立 cookie），
 // 每個工作階段以不同帳號登入站台、載入真正的頁面，由情境腳本同時操控；每一步記錄時間、使用者、動作、

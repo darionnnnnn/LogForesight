@@ -1,8 +1,8 @@
 # 第 81 輪多人同時操作測試
 
 > 用途：前三次測試都是「一個角色測完再測下一個」。實際上所有人在上班時間同時操作：處理人在回覆、管理員在派工與改派、主管在看報表。本文件設計並記錄「多人同時」的測試，逐步紀錄留給事後分析。
-> 搭配：`docs/FEEDBACK-81-PLAN.md`（規劃）、`docs/FEEDBACK-81-TEST-PLAN.md`（測試項目）、`docs/FEEDBACK-81-FLOW-PLAN.md`（流程評估）。
-> 逐步紀錄：`docs/feedback-81-concurrency/`（每個情境一份時間軸，由工具產生）。
+> 搭配：`docs/archive/FEEDBACK-81-PLAN.md`（規劃）、`docs/archive/FEEDBACK-81-TEST-PLAN.md`（測試項目）、`docs/archive/FEEDBACK-81-FLOW-PLAN.md`（流程評估）。
+> 逐步紀錄：`docs/archive/feedback-81-concurrency/`（每個情境一份時間軸，由工具產生）。
 
 ## 1. 模擬方式的評估
 
@@ -76,7 +76,7 @@
 
 ## 5. 執行紀錄與發現
 
-2026-11-24 執行。每個情境前重新部署乾淨的 D2 資料。逐步時間軸在 `docs/feedback-81-concurrency/MUnn.md`（每一步：秒數、誰、動作、結果、送出的請求與回應、提示與彈窗、畫面觀察）；原始 JSON Lines 由工具輸出，未入版控。
+2026-11-24 執行。每個情境前重新部署乾淨的 D2 資料。逐步時間軸在 `docs/archive/feedback-81-concurrency/MUnn.md`（每一步：秒數、誰、動作、結果、送出的請求與回應、提示與彈窗、畫面觀察）；原始 JSON Lines 由工具輸出，未入版控。
 
 ### 5.1 總表
 

@@ -28,6 +28,7 @@ public class ReplyPartialBehaviorTests
     [InlineData("restPromptAfterPartialClosingReply")]
     [InlineData("restPromptOnlyWhenPartialClosingAndStillActive")]
     [InlineData("pasteAutoSelectsOnlyWhenTwoOrMoreNames")]
+    [InlineData("pasteOverLimitSendsNoLookup")]
     [InlineData("restSectionShowsForClosedPartialReply")]
     [InlineData("restChosenSendsBothRequestsThenCloses")]
     [InlineData("restChoiceCanBeToggledOffAndFallsBackToSecondStep")]

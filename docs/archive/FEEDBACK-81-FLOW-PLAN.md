@@ -1,8 +1,8 @@
 # 第 81 輪維運操作流程逐步評估
 
 > 用途：以維運人員的角度，把每個日常與偶發的操作流程逐步走一遍，每一步停下來想「這步要不要存在、能不能更直接、遇到各種狀況會怎樣」，記錄成後續規劃可直接取用的材料。
-> 搭配：`docs/FEEDBACK-81-PLAN.md`（發現與修正批次）、`docs/FEEDBACK-81-TEST-PLAN.md`（測試項目與執行紀錄）。
-> 逐流程紀錄：`docs/feedback-81-flows/`（每個流程一份）。本檔只放格式、清單、對照與總表。
+> 搭配：`docs/archive/FEEDBACK-81-PLAN.md`（發現與修正批次）、`docs/archive/FEEDBACK-81-TEST-PLAN.md`（測試項目與執行紀錄）。
+> 逐流程紀錄：`docs/archive/feedback-81-flows/`（每個流程一份）。本檔只放格式、清單、對照與總表。
 
 ## 1. 怎麼讀、怎麼用
 

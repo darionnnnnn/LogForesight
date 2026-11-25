@@ -87,7 +87,7 @@ public class AiProbeService : IAiProbeService
         new(LogForesight.Core.OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5))) { Timeout = MaxTimeout };
 
     /// <param name="requestGate">
-    /// 全站 AI 請求閘道（站台註冊時帶入既有 singleton）：探測成功即證明 AI 通了，對它回報成功以解除互動車道的冷卻；
+    /// 全站 AI 請求閘道（站台註冊時帶入既有 singleton）：明確探測（<see cref="ProbeNowAsync"/>）成功即證明 AI 通了，對它回報成功以解除互動車道的冷卻；背景探測不解除；
     /// 探測失敗不開冷卻（失敗種類未必是網路層）。測試可不帶。
     /// </param>
     public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient, TimeProvider? clock = null,
@@ -132,6 +132,8 @@ public class AiProbeService : IAiProbeService
             _latestResult = result;
             _latestProbedAt = UtcNow;
             _cachedFingerprint = fingerprint;
+            // 只有明確探測（測試連線、儲存並測試）成功才解除冷卻：背景探測每分鐘都可能跑，
+            // AI 連得上但回應逾時時會一再提早解除冷卻，讓每個人重新等一次逾時
             if (result.Status == AiProbeStatus.Ready) _requestGate?.ReportSuccess();
             return result;
         }
@@ -168,7 +170,6 @@ public class AiProbeService : IAiProbeService
             _latestResult = result;
             _latestProbedAt = UtcNow;
             _cachedFingerprint = fingerprint;
-            if (result.Status == AiProbeStatus.Ready) _requestGate?.ReportSuccess();
             return result;
         }
         finally

@@ -201,6 +201,23 @@ const cases = {
         assert.equal(noPartial.counts.remaining, 0, '整張單回覆（非部分）不問其餘');
     },
 
+    // 一次貼上超過上限的名稱：不送任何查詢，面板內提示分批
+    async pasteOverLimitSendsNoLookup() {
+        const src = memberSource(5);
+        const loaded = loadReplyModule();
+        const m = openReply(loaded, { picker: { load: src.load } });
+        m.toggle.click();
+        await settle();
+        const before = src.calls.length;
+        m.search.value = Array.from({ length: 501 }, (_, i) => `HOST-${i}`).join('\n');
+        await fire(m.search, 'paste');
+        await settle();
+        assert.equal(src.calls.length, before, '超過上限不查詢');
+        const missing = m.panel.find(n => n.id === 'wo-reply-pick-missing');
+        assert.ok(textOf(missing).includes('一次最多貼上 500 個主機名'), textOf(missing));
+        assert.equal(missing.classList.contains('d-none'), false);
+    },
+
     // 貼上兩個以上名稱：不必按「篩選／勾選」就自動查詢並勾選；只貼一個名稱維持現行（不自動篩選）
     async pasteAutoSelectsOnlyWhenTwoOrMoreNames() {
         const src = memberSource(5);

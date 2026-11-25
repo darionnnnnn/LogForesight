@@ -1,4 +1,4 @@
-// 多人同時操作情境（docs/FEEDBACK-81-CONCURRENCY-PLAN.md 第 4 節）。資料：D2 多日模擬（UsabilitySimulationTests）。
+// 多人同時操作情境（docs/archive/FEEDBACK-81-CONCURRENCY-PLAN.md 第 4 節）。資料：D2 多日模擬（UsabilitySimulationTests）。
 // 每個情境自己開使用者、自己查最終狀態；彼此不共用瀏覽器。會改資料，重跑前重新部署資料集。
 
 const HANDLERS = ['h-chen', 'h-lin', 'h-wang', 'h-huang', 'h-wu', 'h-tsai'];

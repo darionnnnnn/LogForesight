@@ -385,7 +385,7 @@ public class SetupReadinessProbeTests : IDisposable
 
     /// <summary>AI 冷卻中，探測成功即證明 AI 通了：解除互動車道冷卻；探測失敗不開冷卻（失敗種類未必是網路層）。</summary>
     [Fact]
-    public async Task 探測成功解除AI冷卻_探測失敗不開冷卻()
+    public async Task 明確探測成功解除AI冷卻_背景探測不解除_失敗不開冷卻()
     {
         var healthy = true;
         var handler = new ProbeTestHttpMessageHandler
@@ -408,12 +408,12 @@ public class SetupReadinessProbeTests : IDisposable
         Assert.False((await probeService.ProbeNowAsync()).IsReady);
         Assert.False(gate.InteractiveCoolingDown);
 
-        // 背景探測（RefreshAsync）成功同樣解除
+        // 背景探測（RefreshAsync）成功不解除：AI 連得上但回應逾時時，背景探測不該一再提早解除冷卻
         var refreshGate = new AiRequestGate(() => 1);
         healthy = true;
         refreshGate.ReportNetworkFailure(AiLane.Interactive);
         Assert.True((await new AiProbeService(_settings, client, requestGate: refreshGate).RefreshAsync()).IsReady);
-        Assert.False(refreshGate.InteractiveCoolingDown);
+        Assert.True(refreshGate.InteractiveCoolingDown);
     }
 
     /// <summary>A1b：並發的明確探測，排隊期間別人剛探完的結果直接共用（不連打兩次）。</summary>
