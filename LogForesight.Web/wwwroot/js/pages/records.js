@@ -1678,16 +1678,6 @@ export function renderWorkOrderHostTable(container, hosts, { excludedHostIds, re
         },
         {
             key: 'status', title: '狀態',
-            renderHeader: () => {
-                const wrap = document.createElement('span');
-                const title = document.createElement('span');
-                title.textContent = '狀態';
-                const hint = document.createElement('div');
-                hint.className = 'lf-text-meta';
-                hint.textContent = '已處理的主機要逐台勾選才會重新交辦';
-                wrap.append(title, hint);
-                return wrap;
-            },
             render: host => {
                 const notes = [workOrderHostStatusText(host)];
                 if (host.noiseExcluded) notes.push('已知雜訊');
@@ -1700,6 +1690,11 @@ export function renderWorkOrderHostTable(container, hosts, { excludedHostIds, re
         }
     ];
     renderTable(container, { columns, rows: hosts, caption: '受影響主機' });
+    // 說明放在表格上方而不是狀態欄標頭：窄螢幕下欄標頭寬度只剩一兩個字，說明會被截斷看不到
+    const hint = document.createElement('div');
+    hint.className = 'lf-text-meta mb-1';
+    hint.textContent = '已處理的主機要逐台勾選才會重新交辦';
+    container.prepend(hint);
 }
 
 /** 交辦預覽摘要（台數、排除說明、可見範圍提示、分配）；寫進 summaryWrap，供行為測試單獨載入 */

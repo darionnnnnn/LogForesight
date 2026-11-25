@@ -5116,5 +5116,52 @@
         "evalAssert": "return document.querySelector('.lf-page-header')?.textContent.includes('目前暫停接單') ? null : '頁頭沒有「目前暫停接單」標記';"
       }
     ]
+  },
+  {
+    "name": "互動-問題查詢-交辦視窗主機表格",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "evalAssert": "return (async () => { const tr = document.querySelector('#record-list .lf-table-wrap > table > tbody > tr:not(.lf-row-detail)');\nif (!tr) return '找不到資料列';\nconst btn = [...tr.querySelectorAll('button, .dropdown-item')].find(i => i.textContent.trim() === '交辦');\nif (!btn) return '這一列沒有「交辦」';\nif (btn.classList.contains('dropdown-item')) { tr.querySelector('.dropdown-toggle')?.click(); await new Promise(r => setTimeout(r, 400)); }\nbtn.click();\nreturn null; })();"
+      },
+      {
+        "waitFor": ".modal.show .lf-bulk-assign-hosts"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "evalAssert": "return (async () => { const sum = [...document.querySelectorAll('.modal.show summary')].find(x => x.textContent.includes('受影響主機'));\nif (!sum) return '找不到「檢視受影響主機」';\nsum.click();\nawait new Promise(r => setTimeout(r, 400));\nconst table = document.querySelector('.modal.show .lf-bulk-assign-hosts table');\nif (!table) return '受影響主機不是表格';\nconst all = table.querySelector('thead input[type=checkbox]');\nif (!all) return '表頭沒有全選勾選框';\nconst box = table.querySelector('tbody input[type=checkbox]');\nif (box && !box.getAttribute('aria-label')) return '勾選框沒有 aria-label';\nreturn null; })();"
+      }
+    ]
+  },
+  {
+    "name": "互動-處理人-回覆視窗-只回覆部分主機",
+    "role": "ui-handler",
+    "path": "/work-orders/1",
+    "steps": [
+      {
+        "waitFor": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "click": "main button.btn-primary:not(.modal *)"
+      },
+      {
+        "waitFor": ".modal.show form"
+      },
+      {
+        "evalAssert": "return (async () => { const t = document.getElementById('wo-reply-pick-toggle');\nif (!t) return '找不到「只回覆部分主機」';\nif (t.classList.contains('d-none')) return null;\nt.click();\nawait new Promise(r => setTimeout(r, 800));\nreturn null; })();"
+      },
+      {
+        "assert": {
+          "sel": ".modal.show form",
+          "visible": true
+        }
+      }
+    ]
   }
 ]
