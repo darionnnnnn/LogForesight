@@ -25,6 +25,10 @@ public class IssueNameParityTests
         new object[] { "sshd", 0, "sshd" },                                                  // Linux，多條規則命中：不猜是哪一條
         new object[] { "unknown-daemon", 0, "unknown-daemon" },                              // Linux，沒有規則
         new object[] { "PRTG:down", 0, "PRTG 持續故障" },                                    // PRTG（聚合層沒有感測器編號）
+        new object[] { "PRTG:disk_free_trend", 0, "PRTG 磁碟容量趨勢" },                     // PRTG 趨勢類：規則代碼是 PrtgRuleEvaluator.Rule*
+        new object[] { "PRTG:memory_used_trend", 0, "PRTG 記憶體使用趨勢" },
+        new object[] { "PRTG:cpu_load_trend", 0, "PRTG CPU 負載趨勢" },
+        new object[] { "PRTG:ping_latency_trend", 0, "PRTG Ping 延遲趨勢" },
     };
 
     [Theory]
@@ -42,6 +46,26 @@ public class IssueNameParityTests
         Assert.Equal(expected, unassignable);
         if (!source.StartsWith("PRTG:", StringComparison.Ordinal))
             Assert.Equal(expected, nightlyStored.DisplayLabel(Rules));
+    }
+
+    /// <summary>簽章的 PRTG 顯示名稱與問題名稱共用同一張固定短稱表：八種規則代碼都不露出英文代碼</summary>
+    [Theory]
+    [InlineData("down")]
+    [InlineData("warning")]
+    [InlineData("flapping")]
+    [InlineData("silent")]
+    [InlineData("disk_free_trend")]
+    [InlineData("memory_used_trend")]
+    [InlineData("cpu_load_trend")]
+    [InlineData("ping_latency_trend")]
+    public void PRTG簽章名稱與問題名稱共用同一張短稱表(string code)
+    {
+        var kind = IssueNames.For($"PRTG:{code}", 0);
+        var signature = new LogIssueSignature { LogName = "PRTG", EventKey = $"prtg:{code}:77:0:x" };
+
+        Assert.Equal($"{kind}（感測器 #77）", signature.SourceEventLabel);
+        Assert.DoesNotContain(code, kind);
+        Assert.DoesNotContain('_', kind);
     }
 
     [Fact]

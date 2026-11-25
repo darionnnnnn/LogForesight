@@ -484,7 +484,8 @@ form.addEventListener('submit', async event => {
             email: document.getElementById('user-email').value.trim() || null,
             active,
             groupIds: selectedGroupIds,
-            version: editingUser?.version ?? null
+            version: editingUser?.version ?? null,
+            isNew: !editingUser
         }, { silent: true });
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');

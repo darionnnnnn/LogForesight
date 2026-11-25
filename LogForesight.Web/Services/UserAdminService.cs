@@ -231,6 +231,9 @@ public class UserAdminService
 
         var existing = _users.FindByAccount(account);
         var isNew = existing == null;
+        // 畫面送的是「新增」、帳號卻已存在：這是撞號，不是別人同時改過它——回驗證錯誤（編輯既有帳號版本不符仍是 409）
+        if (request.IsNew && existing != null)
+            throw DomainException.Validation($"帳號「{existing.Account}」已存在，請改用其他帳號；要修改既有使用者請從清單開啟它。");
         // 只在新增或信箱有改動時驗證：升級前存的多位址信箱不能讓管理者連停用、改名都存不了；
         // 寄信端另由 EligibleEmail 擋掉不合格信箱，不會因此寄到錯的地方
         var emailChanged = isNew || !string.Equals(request.Email?.Trim() ?? "", existing!.Email?.Trim() ?? "", StringComparison.Ordinal);

@@ -470,7 +470,7 @@ public class LogAnalysisService
         // 兩者都在這裡直接定案，不進 AI 段
         bool skipAiForLowRisk = useAi && lowRisk;
         // 沒有 AI 摘要時全站同一個出口（NoAiSummary）：標題是當日最重的問題名稱與白話說明，摘要留空不重複
-        record.Headline = skipAiForLowRisk ? LowRiskHeadline : NoAiSummary.HeadlineFor(issues);
+        record.Headline = skipAiForLowRisk ? LowRiskHeadline : NoAiSummary.HeadlineFor(issues, record.HasCoverageGap);
         record.Summary = skipAiForLowRisk ? LowRiskSummary : string.Empty;
 
         // record 此時已是完整定案內容（Headline/Summary/RiskLevel/TrendAlerts/CorrelationAlerts/

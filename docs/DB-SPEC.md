@@ -515,7 +515,7 @@ lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案；處理人判定的不處理類、未取消、`blocks_redispatch` 不為 false，且同主機同問題沒有較新的已結案未取消案件者保留，它是「不再打擾」閘門的依據）／`lf_work_orders`（僅已結案，事件 `lf_work_order_events` 隨單刪；進行中的單永不清） |
+| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案；處理人判定的不處理類、未取消、`blocks_redispatch` 不為 false，且同主機同問題沒有較新的已結案未取消案件者保留，它是「不再打擾」閘門的依據；已依 30 天解除的不處理案件（`DismissalRelease`）照一般已結案案件清除，判定見 [WEB-SPEC.md](WEB-SPEC.md)「不再打擾 30 天解除」）／`lf_work_orders`（僅已結案，事件 `lf_work_order_events` 隨單刪；進行中的單永不清） |
 | `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |

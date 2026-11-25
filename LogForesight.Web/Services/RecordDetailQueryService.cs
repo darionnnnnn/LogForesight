@@ -181,7 +181,7 @@ public class RecordDetailQueryService
             PrtgSupplementEligible = record.CanSupplementWithPrtg(),
             HiddenIssueCount = record.HiddenIssueCount,
             // 沒有 AI 摘要：標題改為當日最重的（授與範圍內的）問題，「狀況」不重複同一句（NoAiSummary 唯一出口）
-            Headline = NoAiSummary.ResolveHeadline(record.Headline, visibleTopIssues),
+            Headline = NoAiSummary.ResolveHeadline(record.Headline, visibleTopIssues, record.HasCoverageGap),
             Brief = record.Brief,
             Summary = NoAiSummary.ResolveSummary(record.Summary),
             TrendAssessment = record.TrendAssessment,

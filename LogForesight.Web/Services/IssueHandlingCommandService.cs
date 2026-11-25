@@ -531,7 +531,18 @@ public class IssueHandlingCommandService
         RecordQueryFilter Filter() => new() { Source = source, EventId = eventId, From = from, To = to };
         // 讀取階段上限：先以 SQL 計數（來源與事件 ID 皆已下推），超過就整批擋下請使用者縮小，
         // 不載入、不截斷（截斷會讓「到底影響了哪些」不可知）
-        if (_repository.QueryPage(Filter(), 1, 1).Total > MaxBulkCloseDayWrites)
+        // 負責人範圍：預檢只計他負責的主機（含併入的別名識別）——可見範圍很大、負責的很少時不該被上限擋下；
+        // 非負責主機之後仍整台列入略過（原因 NotOwnedSkipReason），那些列不會寫入，所以不算進單次寫入上限
+        var countFilter = Filter();
+        if (ownerOnlyUserId != null)
+        {
+            var allHosts = _hosts.GetAll();
+            countFilter.Hosts = allHosts
+                .Where(h => h.OwnerUserIds.Contains(ownerOnlyUserId.Value))
+                .SelectMany(h => HostIdentityResolver.Expand(allHosts, h.HostId))
+                .ToList();
+        }
+        if (_repository.QueryPage(countFilter, 1, 1).Total > MaxBulkCloseDayWrites)
             throw new DomainException(ApiErrorCodes.ValidationFailed,
                 $"符合條件的項目超過 {MaxBulkCloseDayWrites.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆，請縮小日期區間或依主機群組篩選後分次批次結案");
         var records = _repository.Query(Filter());

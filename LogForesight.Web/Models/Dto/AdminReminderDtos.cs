@@ -16,7 +16,10 @@ public sealed class AdminReminderDto
     /// <summary>上報後超過間隔天數仍沒人處理的成員數</summary>
     public int EscalatedCount { get; set; }
 
-    /// <summary>最近一趟夜間派工派不出去的問題數</summary>
+    /// <summary>
+    /// 派不出去的問題數：畫面路徑（儀表板、交辦總覽提醒區）是待派試跑第二段的即時問題數，與待派卡同一口徑；
+    /// 沒有即時計數的路徑（夜間摘要信）是最近一趟夜間派工的快照。
+    /// </summary>
     public int UnassignableCount { get; set; }
 
     /// <summary>上報時沒有任何收件人、且仍有上報成員的單數</summary>
@@ -107,6 +110,12 @@ public sealed class AdminReminderDto
         {
             copy.DispatchableKnown = true;
             copy.DispatchableCount = pending.DispatchableIssues;
+            // 有即時計數（畫面路徑）時「派不出去」與同頁待派卡同一口徑：就地授權後待派試跑已經派得出去，不再沿用夜間快照
+            if (pending.UnassignableIssues is { } live)
+            {
+                copy.UnassignableCount = live;
+                if (live == 0) copy.Unassignable = new();
+            }
         }
         return copy;
     }
@@ -174,8 +183,10 @@ public sealed class AdminReminderInactiveHandlerDto
 /// <summary>
 /// 待派試跑的可派問題數（<see cref="AdminReminderDto.DispatchableCount"/> 的來源）：呼叫者可見範圍、近 7 天。
 /// <paramref name="TooLarge"/> 時 <paramref name="DispatchableIssues"/> 不可信。
+/// <paramref name="UnassignableIssues"/>：同一次試跑第二段「派不出去」的問題數（與待派卡同一份）；null＝呼叫端沒有即時計數，
+/// 「派不出去」維持夜間快照（摘要信等沒有使用者範圍的路徑）。
 /// </summary>
-public sealed record PendingDispatchCounts(int DispatchableIssues, bool TooLarge);
+public sealed record PendingDispatchCounts(int DispatchableIssues, bool TooLarge, int? UnassignableIssues = null);
 
 /// <summary>
 /// 待派試跑只回計數的結果（儀表板待派卡與「需要你處理」共用）：可派與派不出去的問題數、期間。

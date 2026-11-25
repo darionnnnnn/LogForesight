@@ -50,12 +50,10 @@ public class DashboardService
         SummaryCache summaryCache,
         EfPrtgStore prtgStore,
         IIssueExclusionSource exclusions,
-        PendingDispatchGapsProvider gaps, StorageBackend? backend = null, AdminTodoService? adminTodo = null,
-        PendingDispatchCountsService? pendingCounts = null)
+        PendingDispatchCountsService pendingCounts, StorageBackend? backend = null, AdminTodoService? adminTodo = null)
     {
         _adminTodo = adminTodo;
-        _pendingCounts = pendingCounts ?? new PendingDispatchCountsService(
-            PendingDispatchCountsService.FromGaps(gaps), summaryCache, visibility, exclusions);
+        _pendingCounts = pendingCounts;
         _backend = backend;
         _prtgStore = prtgStore;
         _visibility = visibility;
@@ -116,7 +114,7 @@ public class DashboardService
             dto.PendingDispatch = ToPendingDispatchDto(pending);
             // 「需要你處理」：與待派卡同一份試跑計數帶入同一個彙整函式（不再跑第二次試跑）
             if (_adminTodo != null)
-                dto.AdminTodo = _adminTodo.GetForCurrentUser(new PendingDispatchCounts(pending.DispatchableIssues, pending.TooLarge));
+                dto.AdminTodo = _adminTodo.GetForCurrentUser(new PendingDispatchCounts(pending.DispatchableIssues, pending.TooLarge, pending.UnassignableIssues));
         }
         return dto;
     }

@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 namespace LogForesight;
 
 /// <summary>
@@ -22,17 +23,20 @@ public static class IssueNames
         return name == null ? src : $"{src}（{name}）";
     }
 
-    /// <summary>PRTG 規則代碼的固定短稱（與 <see cref="LogIssueSignature.SourceEventLabel"/> 的 PRTG 種類文字同一套用語）；不認得的代碼原樣顯示</summary>
-    private static string PrtgKindText(string code) => code.ToLowerInvariant() switch
+    /// <summary>
+    /// PRTG 規則代碼（<c>PrtgRuleEvaluator.Rule*</c>）的固定短稱，是全站唯一一份：
+    /// <see cref="For"/> 與 <see cref="LogIssueSignature.SourceEventLabel"/> 的 PRTG 分支都呼叫這裡；不認得的代碼原樣顯示。
+    /// </summary>
+    public static string PrtgKindText(string code) => code.ToLowerInvariant() switch
     {
-        "down" => "持續故障",
-        "warning" => "持續警告",
-        "flapping" => "反覆故障",
-        "disk" => "磁碟容量趨勢",
-        "memory" => "記憶體使用趨勢",
-        "cpu" => "CPU 負載趨勢",
-        "ping" => "Ping 延遲趨勢",
-        "silent" => "長時間無回報",
+        PrtgRuleEvaluator.RuleDown => "持續故障",
+        PrtgRuleEvaluator.RuleWarning => "持續警告",
+        PrtgRuleEvaluator.RuleFlapping => "反覆故障",
+        PrtgRuleEvaluator.RuleDiskFreeTrend => "磁碟容量趨勢",
+        PrtgRuleEvaluator.RuleMemoryUsedTrend => "記憶體使用趨勢",
+        PrtgRuleEvaluator.RuleCpuLoadTrend => "CPU 負載趨勢",
+        PrtgRuleEvaluator.RulePingLatencyTrend => "Ping 延遲趨勢",
+        PrtgRuleEvaluator.RuleSilent => "長時間無回報",
         _ => code
     };
 

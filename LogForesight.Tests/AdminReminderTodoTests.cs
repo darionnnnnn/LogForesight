@@ -244,6 +244,42 @@ public sealed class AdminReminderTodoTests : IDisposable
         Assert.Equal((0, true), (zero.DispatchableCount, zero.DispatchableKnown));
     }
 
+    // ── 派不出去：畫面路徑用即時試跑、夜間路徑用快照 ─────────────────────────
+
+    private void SeedUnassignableSnapshot() => _state.Update(s =>
+    {
+        s.LastUnassignable = new List<UnassignableIssue>
+        {
+            new() { IssueLabel = "disk 153", Source = "disk", EventId = 153, Reason = "no_visibility", Hosts = 2, ObservedAt = Today }
+        };
+        s.LastUnassignableAt = Today;
+    });
+
+    [Fact]
+    public void 派不出去_畫面路徑帶即時計數就用即時問題數_就地授權後歸零_沒帶即時計數仍取夜間快照()
+    {
+        SeedUnassignableSnapshot();
+        var service = Service();
+
+        // 畫面路徑：待派試跑第二段已經是 0（管理者剛就地授權），不再沿用昨晚的快照
+        var live = service.Compute(true, new PendingDispatchCounts(0, false, 0));
+        Assert.Equal(0, live.UnassignableCount);
+        Assert.Empty(live.Unassignable);
+        Assert.False(live.Any);
+
+        // 即時有 3 個問題派不出去：數字以即時為準
+        Assert.Equal(3, service.Compute(true, new PendingDispatchCounts(0, false, 3)).UnassignableCount);
+
+        // 沒帶即時計數（摘要信等夜間路徑）：同一個 Compute，維持快照
+        var nightly = service.Compute();
+        Assert.Equal(1, nightly.UnassignableCount);
+        Assert.Single(nightly.Unassignable);
+        Assert.Equal(1, service.Compute(true, new PendingDispatchCounts(0, false)).UnassignableCount);
+
+        // 試跑超過上限時即時數字不可信，退回快照
+        Assert.Equal(1, service.Compute(true, new PendingDispatchCounts(0, true, 0)).UnassignableCount);
+    }
+
     // ── 全 0 與 Manager／Dev ─────────────────────────────────────────────────
 
     [Fact]
@@ -392,19 +428,20 @@ public sealed class AdminReminderTodoTests : IDisposable
         var visibility = new FixedVisibilityService(new long[] { 1, 2 });
         var exclusions = new FixedIssueExclusionSource(IssueExclusion.None);
 
-        var plain = new AdminTodoService(reminders, gaps, FakeCurrentUser.WithCapabilities(Capability.ViewAll), cache, visibility, exclusions);
+        PendingDispatchCountsService Counts(IVisibilityService v) => PendingCountsTestFactory.FromGaps(gaps, cache, v, exclusions);
+        var plain = new AdminTodoService(reminders, FakeCurrentUser.WithCapabilities(Capability.ViewAll), Counts(visibility));
         var dto = plain.GetForCurrentUser();
         Assert.False(dto.TodoIncluded);
         Assert.Equal(0, calls);
 
-        var assigner = new AdminTodoService(reminders, gaps, FakeCurrentUser.WithCapabilities(Capability.Assign), cache, visibility, exclusions);
+        var assigner = new AdminTodoService(reminders, FakeCurrentUser.WithCapabilities(Capability.Assign), Counts(visibility));
         Assert.Equal(4, assigner.GetForCurrentUser().DispatchableCount);
         Assert.Equal(4, assigner.GetForCurrentUser().DispatchableCount);
         Assert.Equal(1, calls);
 
         // 不同可見範圍不共用待派數字（鍵含可見主機集合）
-        var other = new AdminTodoService(reminders, gaps, FakeCurrentUser.WithCapabilities(Capability.Assign), cache,
-            new FixedVisibilityService(new long[] { 3 }), exclusions);
+        var other = new AdminTodoService(reminders, FakeCurrentUser.WithCapabilities(Capability.Assign),
+            Counts(new FixedVisibilityService(new long[] { 3 })));
         other.GetForCurrentUser();
         Assert.Equal(2, calls);
     }
@@ -420,8 +457,9 @@ public sealed class AdminReminderTodoTests : IDisposable
         };
         var cache = new SummaryCache(new DataVersionStamp());
         var visibility = new FixedVisibilityService(new long[] { 1 });
-        var service = (DateTime day) => new AdminTodoService(Service(cache), gaps, FakeCurrentUser.WithCapabilities(Capability.Assign), cache, visibility,
-            new FixedIssueExclusionSource(IssueExclusion.From(Array.Empty<IssueProfile>(), day)));
+        var service = (DateTime day) => new AdminTodoService(Service(cache), FakeCurrentUser.WithCapabilities(Capability.Assign),
+            PendingCountsTestFactory.FromGaps(gaps, cache, visibility,
+                new FixedIssueExclusionSource(IssueExclusion.From(Array.Empty<IssueProfile>(), day))));
 
         Assert.Equal(1, service(Today).GetForCurrentUser().DispatchableCount);
         Assert.Equal(1, service(Today).GetForCurrentUser().DispatchableCount);   // 同一天：命中

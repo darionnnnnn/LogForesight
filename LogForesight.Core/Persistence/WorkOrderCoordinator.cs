@@ -684,9 +684,9 @@ public class WorkOrderCoordinator
             written.Add(handlerId);
             var note = NightlyNoteOf(step);
             var caseId = Guid.NewGuid().ToString("n");
-            // 期限（P-1）：所屬單有期限就沿用單的期限；單沒有期限（上線前建的舊單）才依這個成員的嚴重度帶預設。
-            // 既有案件不回填，所以舊成員仍沒有期限
-            var dueDate = activeOrder.DueDate ?? DefaultDueDays.DueDateFor(issue.Severity, occurredAt);
+            // 期限（P-1）：所屬單的期限還沒過就沿用；單沒有期限（上線前建的舊單）或已早於續掛當天，
+            // 改依這個成員的嚴重度自續掛當天起算預設期限（新成員不出生即逾期）。既有案件不回填，所以舊成員期限不變
+            var dueDate = DefaultDueDays.MemberDueDate(activeOrder.DueDate, issue.Severity, occurredAt);
 
             cases.Add(new IssueCase
             {

@@ -518,6 +518,9 @@ public class WorkOrderBoardService
                 AutoAttach = false,
                 ReassignConflicts = false,
                 Note = WorkOrderCoordinator.NightlyNoteOf(group.Key.Origin),
+                // 預設期限（P-1）：依該組成員的最高嚴重度自今天（站台時鐘）起算，與夜間派工同一個常數來源；
+                // 併入既有單時單的期限優先（建單請求的期限只在新建時採用）
+                DueDate = DefaultDueDays.DueDateFor(group.Max(g => g.Issue.Severity), _clock.LocalToday()),
                 Members = members,
                 Actor = actor
             });
@@ -544,15 +547,14 @@ public class WorkOrderBoardService
             else if (newMembers > 0) merged++;
             assignedMembers += newMembers;
             // 因「不再打擾已滿 30 天」放行而寫入的成員：與夜間派工共用同一份累計，趟末各單合併一筆系統事件
-            var skippedKeys = outcome.SkippedConflicts
-                .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
-                .ToHashSet(HostIssueSignatureKeyComparer.Instance);
-            releasedTally.Add(outcome.WorkOrderId,
-                group.Count(g => g.Released && !skippedKeys.Contains((HostNameKey.Of(g.Host.HostName), g.IssueKey))));
-
+            // 略過的成員（衝突、已結案）一律不算寫入：放行累計、結果台數、新單通知主機名單口徑一致
             var skipped = outcome.SkippedConflicts
                 .Select(c => (HostNameKey.Of(c.HostName), c.IssueKey))
+                .Concat(outcome.SkippedClosed.Select(c => (HostNameKey.Of(c.HostName), c.IssueKey)))
                 .ToHashSet(HostIssueSignatureKeyComparer.Instance);
+            releasedTally.Add(outcome.WorkOrderId,
+                group.Count(g => g.Released && !skipped.Contains((HostNameKey.Of(g.Host.HostName), g.IssueKey))));
+
             var distinctGroupHosts = members
                 .Where(m => !skipped.Contains((HostNameKey.Of(m.HostName), m.IssueKey)))
                 .Select(m => m.HostName)

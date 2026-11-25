@@ -28,18 +28,6 @@ public class PendingDispatchCountsService
         _exclusions = exclusions;
     }
 
-    /// <summary>以完整待派清單的取得方式推出計數（只給沒有注入計數入口的組裝，例如測試替身）</summary>
-    public static PendingDispatchSummaryProvider FromGaps(PendingDispatchGapsProvider gaps) => (from, to) =>
-    {
-        // 與試跑的預設期間一致（昨天往前 7 天）；替身清單的取得方式需要明確期間
-        var periodTo = (to ?? DateTime.Today.AddDays(-1)).Date;
-        var periodFrom = (from ?? periodTo.AddDays(-6)).Date;
-        var g = gaps(periodFrom, periodTo, 1);
-        return g.TooLarge
-            ? new PendingDispatchSummary(true, g.From, g.To, 0, 0)
-            : new PendingDispatchSummary(false, g.From, g.To, g.Dispatchable.Issues, g.UnassignableSection.Issues);
-    };
-
     public PendingDispatchSummary Get()
     {
         var exclusion = _exclusions.Current();

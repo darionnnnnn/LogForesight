@@ -317,7 +317,8 @@ public class SetupUxF2Tests : IDisposable
             visibility, new AuditLogStore(new EfJsonLogStore(_fx.NewContext, "audit")), currentUser, handling, permissionChanges,
             _hostGroups, new IssueRankingBuilder(aggregates, _hosts, exclusions), settingsStore, aggregates,
             new IssueTodoQuery(aggregates, statusResolver, exclusions), severity, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fx.NewContext), exclusions, (_, _, _) => new GapsDto());
+            new EfPrtgStore(_fx.NewContext), exclusions, PendingCountsTestFactory.FromGaps(
+                (_, _, _) => new GapsDto(), new SummaryCache(new DataVersionStamp()), visibility, exclusions));
 
         var summary = dashboard.GetSummary(7);
 

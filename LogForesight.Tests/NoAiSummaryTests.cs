@@ -146,6 +146,22 @@ public sealed class NoAiSummaryTests : IDisposable
     }
 
     [Fact]
+    public void 零問題但資料不完整_標題不寫未偵測到_有問題時不受影響()
+    {
+        var headline = NoAiSummary.HeadlineFor(Array.Empty<LogIssueSignature>(), coverageGap: true);
+
+        Assert.Equal(NoAiSummary.NoIssueIncompleteHeadline, headline);
+        Assert.Equal("資料不完整，尚未偵測到需要處理的問題", headline);
+        Assert.DoesNotContain("今日未偵測到", headline);
+        Assert.False(NoAiSummary.IsPlaceholder(headline));
+        // 已存的是佔位字時，讀取端也依同一個判定改標題
+        Assert.Equal(NoAiSummary.NoIssueIncompleteHeadline,
+            NoAiSummary.ResolveHeadline("", Array.Empty<LogIssueSignature>(), coverageGap: true));
+        // 有問題時標題仍是最重的問題，資料不完整不改它
+        Assert.StartsWith("shown EventId 2", NoAiSummary.HeadlineFor(new[] { Issue("shown", 2, IssueSeverity.Low, 1) }, coverageGap: true));
+    }
+
+    [Fact]
     public void 標題過長截斷到上限()
     {
         var headline = NoAiSummary.HeadlineFor(new[]

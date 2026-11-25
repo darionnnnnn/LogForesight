@@ -86,6 +86,35 @@ public sealed class GroupAccessChangeTests : IDisposable
     }
 
     [Fact]
+    public void 授權給已停用的主機群組_驗證錯誤且整筆不寫入()
+    {
+        var disabled = _hostGroups.Upsert(new HostGroup { GroupName = "停用機房", Active = false }).GroupId;
+
+        var ex = Assert.Throws<DomainException>(() =>
+            _service.ChangeAccess(_dept, new[] { _hg[18], disabled }, null));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("停用機房", ex.Message);
+        Assert.Equal(new[] { _hg[19] }.ToHashSet(), Granted());
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 收回已停用主機群組的舊授權_允許()
+    {
+        var disabled = _hostGroups.Upsert(new HostGroup { GroupName = "停用機房", Active = true }).GroupId;
+        _access.SetForUserGroup(_dept, new[] { _hg[19], disabled });
+        var group = _hostGroups.Get(disabled)!;
+        group.Active = false;
+        _hostGroups.Upsert(group);
+
+        var result = _service.ChangeAccess(_dept, null, new[] { disabled });
+
+        Assert.Equal(new[] { _hg[19] }.ToHashSet(), Granted());
+        Assert.Equal(new[] { _hg[19] }, result.GrantedHostGroupIds);
+    }
+
+    [Fact]
     public void 使用者群組不存在_404()
     {
         var ex = Assert.Throws<DomainException>(() => _service.ChangeAccess(777, new[] { _hg[18] }, null));

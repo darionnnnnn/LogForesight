@@ -42,16 +42,11 @@ public class AiProbeResultDto
     /// <summary>給人看的一句中文（固定文字，不含外部字串）</summary>
     public string Detail { get; set; } = string.Empty;
 
-    public DateTime ProbedAt { get; set; }
-    public double? HttpElapsedMilliseconds { get; set; }
-
     public static AiProbeResultDto From(LogForesight.Web.Services.AiProbeResult r) => new()
     {
         IsReady = r.IsReady,
         Status = r.Status.ToString(),
-        Detail = r.Detail,
-        ProbedAt = r.ProbedAt,
-        HttpElapsedMilliseconds = r.HttpElapsedMilliseconds
+        Detail = r.Detail
     };
 }
 

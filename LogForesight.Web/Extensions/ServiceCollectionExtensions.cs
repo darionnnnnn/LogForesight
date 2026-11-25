@@ -315,7 +315,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAiProbeService>(sp =>
         {
             var settings = sp.GetRequiredService<ISystemSettingsStore>();
-            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient());
+            return new AiProbeService(settings, AiProbeService.CreateDefaultHttpClient(), requestGate: sp.GetRequiredService<IAiRequestGate>());
         });
         services.AddScoped<SetupReadinessService>();
 

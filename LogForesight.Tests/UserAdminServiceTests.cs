@@ -201,6 +201,35 @@ public class UserAdminServiceTests
     }
 
     [Fact]
+    public void 新增使用者撞到已存在的帳號_驗證錯誤_不是版本衝突()
+    {
+        var service = Create();
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\dup", DisplayName = "原本的名字" });
+
+        var ex = Assert.Throws<DomainException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "domain\\DUP", DisplayName = "新名字", IsNew = true }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("已存在", ex.Message);
+        Assert.Equal("原本的名字", _users.FindByAccount("DOMAIN\\dup")!.DisplayName);
+    }
+
+    [Fact]
+    public void 編輯既有使用者帶舊版本_仍是409版本衝突()
+    {
+        var service = Create();
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "甲" });
+        var stale = VersionOf("DOMAIN\\edit");
+        service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "乙", Version = stale });
+
+        var ex = Assert.Throws<ConcurrentUpdateException>(() =>
+            service.SaveUser(new SaveUserRequest { Account = "DOMAIN\\edit", DisplayName = "丙", Version = stale }));
+
+        Assert.NotNull(ex);
+        Assert.Equal("乙", _users.FindByAccount("DOMAIN\\edit")!.DisplayName);
+    }
+
+    [Fact]
     public void BatchCreateUsers_已存在帳號_預設跳過不動()
     {
         var groupA = AddGroup("A");

@@ -1,4 +1,5 @@
 using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -18,6 +19,12 @@ public static class NoAiSummary
 {
     /// <summary>當日沒有任何問題時的標題</summary>
     public const string NoIssueHeadline = "今日未偵測到需要處理的問題";
+
+    /// <summary>
+    /// 零問題但當日資料不完整（取數不全、安全日誌缺）時的標題：沒看到問題不等於沒有問題，
+    /// 不寫「未偵測到」，改明說資料不完整（判定同 <see cref="DailyAnalysisRecord.HasCoverageGap"/>）。
+    /// </summary>
+    public const string NoIssueIncompleteHeadline = "資料不完整，尚未偵測到需要處理的問題";
 
     /// <summary>
     /// 一個問題的排序與顯示素材（資料庫聚合列沒有完整簽章，用這個最小形狀）。
@@ -44,20 +51,22 @@ public static class NoAiSummary
     }
 
     /// <summary>已存的標題是佔位字或空白時，回當日最重問題的標題；否則原樣回傳。</summary>
-    public static string ResolveHeadline(string? stored, IReadOnlyList<LogIssueSignature> issues) =>
-        IsPlaceholder(stored) ? HeadlineFor(issues) : stored!;
+    public static string ResolveHeadline(string? stored, IReadOnlyList<LogIssueSignature> issues, bool coverageGap = false) =>
+        IsPlaceholder(stored) ? HeadlineFor(issues, coverageGap) : stored!;
 
     /// <summary>已存的摘要是佔位字時回空字串（標題已經說了，不重複）；否則原樣回傳。</summary>
     public static string ResolveSummary(string? stored) =>
         IsPlaceholder(stored) ? string.Empty : stored!;
 
-    public static string HeadlineFor(IReadOnlyList<LogIssueSignature> issues) =>
+    /// <param name="issues">當日問題</param>
+    /// <param name="coverageGap">當日資料不完整或有涵蓋缺口（<see cref="DailyAnalysisRecord.HasCoverageGap"/>）；只影響零問題時的標題</param>
+    public static string HeadlineFor(IReadOnlyList<LogIssueSignature> issues, bool coverageGap = false) =>
         HeadlineFor(issues.Select(i => new Candidate(
-            i.SourceEventLabel, (int)i.Severity, i.ElevatesDayRisk, i.Count, i.KnownIssue, i.Suppressed)).ToList());
+            i.SourceEventLabel, (int)i.Severity, i.ElevatesDayRisk, i.Count, i.KnownIssue, i.Suppressed)).ToList(), coverageGap);
 
-    public static string HeadlineFor(IReadOnlyList<Candidate> issues)
+    public static string HeadlineFor(IReadOnlyList<Candidate> issues, bool coverageGap = false)
     {
-        if (issues.Count == 0) return NoIssueHeadline;
+        if (issues.Count == 0) return coverageGap ? NoIssueIncompleteHeadline : NoIssueHeadline;
 
         var pool = issues.Where(i => !i.Suppressed).ToList();
         if (pool.Count == 0) pool = issues.ToList();

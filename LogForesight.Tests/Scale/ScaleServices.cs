@@ -82,7 +82,8 @@ internal sealed class ScaleServices
             settingsStore, aggregates, issueTodo, settingsService, new SummaryCache(new DataVersionStamp()),
             backend.PrtgStore(), new FixedIssueExclusionSource(IssueExclusion.None),
             // WorkOrderBoard 在本建構子稍後才組好；委派延後到呼叫時才取用
-            (from, to, page) => WorkOrderBoard!.GetGaps(from, to, page));
+            new PendingDispatchCountsService((from, to) => WorkOrderBoard!.GetGapCounts(from, to),
+                new SummaryCache(new DataVersionStamp()), Visibility, new FixedIssueExclusionSource(IssueExclusion.None)));
 
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
 

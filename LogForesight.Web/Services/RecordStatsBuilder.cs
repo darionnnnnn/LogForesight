@@ -74,7 +74,7 @@ public static class RecordStatsBuilder
 
     /// <summary>沒有 AI 摘要時改顯示當日最重的問題（全站同一個出口：<see cref="LogForesight.Core.Service.NoAiSummary"/>）</summary>
     internal static string HeadlineOf(LogForesight.Core.Models.DailyAnalysisRecord r) =>
-        LogForesight.Core.Service.NoAiSummary.ResolveHeadline(r.Headline, r.TopIssues);
+        LogForesight.Core.Service.NoAiSummary.ResolveHeadline(r.Headline, r.TopIssues, r.HasCoverageGap);
 
     /// <summary>顯示名空白視為沒有（null），畫面不必再判斷空字串</summary>
     private static string? NormalizeDisplayName(string? name) => string.IsNullOrWhiteSpace(name) ? null : name;

@@ -72,6 +72,7 @@ public class AiProbeService : IAiProbeService
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeProvider _clock;
+    private readonly IAiRequestGate? _requestGate;
     private int _backgroundRunning;
 
     private AiProbeResult? _latestResult;
@@ -85,8 +86,14 @@ public class AiProbeService : IAiProbeService
     public static HttpClient CreateDefaultHttpClient() =>
         new(LogForesight.Core.OutboundHttp.CreateHandler(TimeSpan.FromMinutes(5))) { Timeout = MaxTimeout };
 
-    public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient, TimeProvider? clock = null)
+    /// <param name="requestGate">
+    /// 全站 AI 請求閘道（站台註冊時帶入既有 singleton）：探測成功即證明 AI 通了，對它回報成功以解除互動車道的冷卻；
+    /// 探測失敗不開冷卻（失敗種類未必是網路層）。測試可不帶。
+    /// </param>
+    public AiProbeService(ISystemSettingsStore settingsStore, HttpClient httpClient, TimeProvider? clock = null,
+        IAiRequestGate? requestGate = null)
     {
+        _requestGate = requestGate;
         _clock = clock ?? TimeProvider.System;
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
@@ -125,6 +132,7 @@ public class AiProbeService : IAiProbeService
             _latestResult = result;
             _latestProbedAt = UtcNow;
             _cachedFingerprint = fingerprint;
+            if (result.Status == AiProbeStatus.Ready) _requestGate?.ReportSuccess();
             return result;
         }
         finally
@@ -160,6 +168,7 @@ public class AiProbeService : IAiProbeService
             _latestResult = result;
             _latestProbedAt = UtcNow;
             _cachedFingerprint = fingerprint;
+            if (result.Status == AiProbeStatus.Ready) _requestGate?.ReportSuccess();
             return result;
         }
         finally

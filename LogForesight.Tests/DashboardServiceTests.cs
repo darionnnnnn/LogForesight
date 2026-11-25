@@ -66,7 +66,8 @@ public class DashboardServiceTests : IDisposable
         var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), (_, _, _) => new GapsDto());
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None),
+            PendingCountsTestFactory.FromGaps((_, _, _) => new GapsDto(), new SummaryCache(new DataVersionStamp()), visibility, new FixedIssueExclusionSource(IssueExclusion.None)));
         // 兩頁一致的對照組：報表走同一組 store 與聚合
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         return (dashboard, reports);
@@ -649,7 +650,8 @@ public class DashboardServiceTests : IDisposable
         var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), source, (_, _, _) => new GapsDto());
+            new EfPrtgStore(_fixture.NewContext), source,
+            PendingCountsTestFactory.FromGaps((_, _, _) => new GapsDto(), new SummaryCache(new DataVersionStamp()), visibility, source));
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
             _severityVisibility, new SummaryCache(new DataVersionStamp()), source, new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         var list = new RecordListQueryService(
@@ -744,7 +746,8 @@ public class DashboardServiceTests : IDisposable
         return new DashboardService(
             visibility, auditStore ?? new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, cache,
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps,
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None),
+            PendingCountsTestFactory.FromGaps(gaps, cache, visibility, new FixedIssueExclusionSource(IssueExclusion.None)),
             adminTodo: adminTodo?.Invoke());
     }
 
@@ -855,7 +858,8 @@ public class DashboardServiceTests : IDisposable
         var reminders = new AdminReminderService(
             _settingsStore, new FakeWorkOrderStore(_caseStore), _caseStore, _hosts, _users, new FakeUserGroupStore(),
             new MailNotifyStateStore(_fixture.Blob("mail_notify_state")), mail, new FakeRuleStore(), cache: cache);
-        return new AdminTodoService(reminders, gaps, user, cache, new AlwaysVisibleService(_hosts), new FixedIssueExclusionSource(IssueExclusion.None));
+        var counts = PendingCountsTestFactory.FromGaps(gaps, cache, new AlwaysVisibleService(_hosts), new FixedIssueExclusionSource(IssueExclusion.None));
+        return new AdminTodoService(reminders, user, counts);
     }
 
     private AuditLogStore AuditWithLoginFailures(int count)

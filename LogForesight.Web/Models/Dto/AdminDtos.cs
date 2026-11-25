@@ -147,6 +147,12 @@ public class SaveUserRequest
     public string? Version { get; set; }
 
     /// <summary>
+    /// true＝這次是「新增使用者」。伺服器看到此旗標且帳號已存在時回「帳號已存在」的驗證錯誤，而不是版本衝突（409）；
+    /// 未帶（false）＝編輯，沒帶版本或版本過期仍是 409。
+    /// </summary>
+    public bool IsNew { get; set; }
+
+    /// <summary>
     /// 編輯視窗勾選的群組，與基本資料同一個請求、同一個版本比對。
     /// null（不帶）＝不動群組，沿用伺服器當下的值——只改基本資料不會以開啟視窗時的群組快照覆蓋；
     /// 空陣列＝清空群組。

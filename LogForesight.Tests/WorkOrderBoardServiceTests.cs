@@ -111,6 +111,64 @@ public partial class WorkOrderBoardServiceTests : IDisposable
             Assert.Contains(items, item => item.WorkOrderId == order.WorkOrderId);
     }
 
+    [Theory]
+    [InlineData(IssueSeverity.High, 3)]
+    [InlineData(IssueSeverity.Medium, 7)]
+    public void 立即派工_建出的單與成員依嚴重度帶預設期限(IssueSeverity severity, int days)
+    {
+        var host = AddHost("HOST-DUE", null, Disk(severity));
+        PoolSeeing(host);
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        var expected = DateTime.Today.AddDays(days);
+        Assert.Equal(expected, Assert.Single(_orderStore.All).DueDate);
+        Assert.Equal(expected, _caseStore.GetOpen("HOST-DUE", KeyOf(Disk(severity)))!.DueDate);
+        Assert.Equal(expected, _issueHandlingStore.GetForDay("HOST-DUE", Yesterday).Single().DueDate);
+    }
+
+    /// <summary>協調器回報「已結案略過」的成員：結果台數與新單通知主機名單都不含它（併發下前一刻結案的日子）</summary>
+    [Fact]
+    public void 立即派工_協調器回SkippedClosed_結果台數與通知名單不含它()
+    {
+        var closing = new ClosingOnInsertStore(_caseStore);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
+        var coordinator = new WorkOrderCoordinator(closing, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
+        var pool = AddPoolGroup();
+        var h = AddUser("h", groupIds: pool.GroupId);
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        Candidate(h, inPool: true, a.HostId, b.HostId);
+        // 建單寫入前一刻，HOST-B 的出現日被別人結案：試跑看得到它、協調器分類時略過它
+        closing.OnInsert = () => ClosedRow("HOST-B", Disk());
+        var service = new WorkOrderBoardService(
+            closing, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,
+            _candidates, _issueOwners, _noiseMarks, _settingsStore, coordinator,
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _displayNames, _mail, WorkOrderBoardService.DefaultMaxOccurrences);
+
+        var result = service.RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        Assert.Equal(1, result.AssignedMembers);
+        Assert.Equal(1, Assert.Single(result.PerHandler).Hosts);
+        Assert.Null(_caseStore.GetOpen("HOST-B", KeyOf(Disk())));
+    }
+
+    /// <summary>建單寫入時先執行一段動作（模擬試跑之後、分類之前發生的併發變動）</summary>
+    private sealed class ClosingOnInsertStore : FakeWorkOrderStore
+    {
+        public ClosingOnInsertStore(IIssueCaseStore cases) : base(cases) { }
+
+        public Action? OnInsert { get; set; }
+
+        public override long Insert(WorkOrder order)
+        {
+            OnInsert?.Invoke();
+            return base.Insert(order);
+        }
+    }
+
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences,
         IIssueAggregateQuery? aggregates = null, TimeProvider? clock = null, ICurrentUser? user = null) => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, aggregates ?? _aggregates,

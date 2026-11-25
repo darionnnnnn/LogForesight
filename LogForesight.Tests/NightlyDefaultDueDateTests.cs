@@ -158,6 +158,48 @@ public class NightlyDefaultDueDateTests
     }
 
     [Fact]
+    public void 續掛進已過期的單_新成員依嚴重度從續掛當天起算_舊成員不變()
+    {
+        AddHost("SRV-01");
+        AddHost("SRV-02");
+        AllowAll("SRV-01", "SRV-02");
+        var (dispatch, _) = Create();
+
+        Dispatch(dispatch, "SRV-01", Issue(IssueSeverity.High));
+        var order = _orders.All.Single();
+        Assert.Equal(Day.AddDays(3), order.DueDate);
+
+        // 單建立後第 10 天續掛：單的期限（建立日＋3）早已過去
+        _clock.Advance(TimeSpan.FromDays(10));
+        var appendDay = _clock.GetLocalNow().DateTime.Date;
+        Dispatch(dispatch, "SRV-02", Issue(IssueSeverity.High));
+
+        var fresh = _cases.GetOpenForHost("SRV-02").Single();
+        Assert.Equal(order.WorkOrderId, fresh.WorkOrderId);
+        Assert.Equal(appendDay.AddDays(3), fresh.DueDate);
+        Assert.Equal(appendDay.AddDays(3), _issueHandlings.GetForDay("SRV-02", Day).Single().DueDate);
+        // 單與舊成員的期限不動
+        Assert.Equal(Day.AddDays(3), _orders.Get(order.WorkOrderId)!.DueDate);
+        Assert.Equal(Day.AddDays(3), _cases.GetOpenForHost("SRV-01").Single().DueDate);
+    }
+
+    [Fact]
+    public void 同日續掛進未過期的單_新成員沿用單的期限()
+    {
+        AddHost("SRV-01");
+        AddHost("SRV-02");
+        AllowAll("SRV-01", "SRV-02");
+        var (dispatch, _) = Create();
+
+        Dispatch(dispatch, "SRV-01", Issue(IssueSeverity.High));
+        // 單的期限正好是續掛當天（不早於今天）仍算未過期
+        _clock.Advance(TimeSpan.FromDays(3));
+        Dispatch(dispatch, "SRV-02", Issue(IssueSeverity.High));
+
+        Assert.Equal(Day.AddDays(3), _cases.GetOpenForHost("SRV-02").Single().DueDate);
+    }
+
+    [Fact]
     public void 續掛進無期限舊單_新成員依嚴重度帶預設_舊成員維持沒有期限()
     {
         AddHost("SRV-01");

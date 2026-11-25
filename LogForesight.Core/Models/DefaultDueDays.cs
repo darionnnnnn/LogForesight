@@ -33,4 +33,11 @@ public static class DefaultDueDays
     /// </summary>
     public static DateTime? DueDateFor(IssueSeverity severity, DateTime createdOn) =>
         ForSeverity(severity) is { } days ? createdOn.Date.AddDays(days) : null;
+
+    /// <summary>
+    /// 夜間續掛進既有單的成員期限：單的期限還沒過（不早於 <paramref name="today"/>）就沿用單的期限；
+    /// 單沒有期限或已過期，改依該成員嚴重度自 <paramref name="today"/> 起算預設期限（低嚴重度回 null），避免新成員出生即逾期。
+    /// </summary>
+    public static DateTime? MemberDueDate(DateTime? orderDueDate, IssueSeverity severity, DateTime today) =>
+        orderDueDate is { } due && due.Date >= today.Date ? due : DueDateFor(severity, today);
 }

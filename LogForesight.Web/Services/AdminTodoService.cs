@@ -14,13 +14,11 @@ public class AdminTodoService
     private readonly ICurrentUser _currentUser;
     private readonly PendingDispatchCountsService _counts;
 
-    public AdminTodoService(AdminReminderService reminders, PendingDispatchGapsProvider gaps, ICurrentUser currentUser,
-        SummaryCache cache, IVisibilityService visibility, IIssueExclusionSource exclusions,
-        PendingDispatchCountsService? counts = null)
+    public AdminTodoService(AdminReminderService reminders, ICurrentUser currentUser, PendingDispatchCountsService counts)
     {
         _reminders = reminders;
         _currentUser = currentUser;
-        _counts = counts ?? new PendingDispatchCountsService(PendingDispatchCountsService.FromGaps(gaps), cache, visibility, exclusions);
+        _counts = counts;
     }
 
     /// <summary>目前使用者的提醒與待辦；沒有 Assign 時不含待辦類別，也不跑待派試跑</summary>
@@ -41,6 +39,6 @@ public class AdminTodoService
     private PendingDispatchCounts PendingCounts()
     {
         var summary = _counts.Get();
-        return new PendingDispatchCounts(summary.DispatchableIssues, summary.TooLarge);
+        return new PendingDispatchCounts(summary.DispatchableIssues, summary.TooLarge, summary.UnassignableIssues);
     }
 }

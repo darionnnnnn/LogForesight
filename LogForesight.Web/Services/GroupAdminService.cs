@@ -478,7 +478,7 @@ public class GroupAdminService
 
     /// <summary>
     /// 授權增減：以當下資料庫狀態套用 grant／revoke（在 store 的單次讀改寫內完成），回傳套用後的完整清單。
-    /// 驗證（重疊、不存在的主機群組）任何一項失敗都整筆不寫；兩者皆空只回目前清單、不寫稽核。
+    /// 驗證（重疊、不存在或已停用的主機群組〔收回側可已停用〕）任何一項失敗都整筆不寫；兩者皆空只回目前清單、不寫稽核。
     /// </summary>
     public AccessChangeResultDto ChangeAccess(long userGroupId, IEnumerable<long>? grant, IEnumerable<long>? revoke)
     {
@@ -500,6 +500,12 @@ public class GroupAdminService
 
         NameFormat.EnsureAllKnown(grantIds, allHostGroups, "主機群組");
         NameFormat.EnsureAllKnown(revokeIds, allHostGroups, "主機群組");
+
+        // 授權側不收已停用的主機群組（授權了也看不到東西，卻會留下無效授權）；收回側允許，才收得回舊授權
+        var inactiveGrants = grantIds.Where(id => !allHostGroups[id].Active).Select(id => allHostGroups[id].GroupName).ToList();
+        if (inactiveGrants.Count > 0)
+            throw DomainException.Validation(
+                $"主機群組「{string.Join("、", inactiveGrants)}」已停用，不能授權；請先啟用該群組。");
 
         if (grantIds.Count == 0 && revokeIds.Count == 0)
             return new AccessChangeResultDto

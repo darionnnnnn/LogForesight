@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Auth;
@@ -351,6 +352,39 @@ public class SetupReadinessProbeTests : IDisposable
         Assert.True(good.Data!.IsReady);
         Assert.Equal(2, handler.CallCount);
         Assert.True(controller.Status().Data!.Steps.Single(s => s.Id == "ai").Done, "狀態端點讀到的是剛探的結果");
+    }
+
+    /// <summary>AI 冷卻中，探測成功即證明 AI 通了：解除互動車道冷卻；探測失敗不開冷卻（失敗種類未必是網路層）。</summary>
+    [Fact]
+    public async Task 探測成功解除AI冷卻_探測失敗不開冷卻()
+    {
+        var healthy = true;
+        var handler = new ProbeTestHttpMessageHandler
+        {
+            HandlerFunc = (_, _) => Task.FromResult(healthy
+                ? OkProbeResponse()
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))
+        };
+        using var client = new HttpClient(handler);
+        var gate = new AiRequestGate(() => 1);
+        var probeService = new AiProbeService(_settings, client, requestGate: gate);
+
+        gate.ReportNetworkFailure(AiLane.Interactive);
+        Assert.True(gate.InteractiveCoolingDown);
+        Assert.True((await probeService.ProbeNowAsync()).IsReady);
+        Assert.False(gate.InteractiveCoolingDown);
+
+        // 失敗的探測不開冷卻
+        healthy = false;
+        Assert.False((await probeService.ProbeNowAsync()).IsReady);
+        Assert.False(gate.InteractiveCoolingDown);
+
+        // 背景探測（RefreshAsync）成功同樣解除
+        var refreshGate = new AiRequestGate(() => 1);
+        healthy = true;
+        refreshGate.ReportNetworkFailure(AiLane.Interactive);
+        Assert.True((await new AiProbeService(_settings, client, requestGate: refreshGate).RefreshAsync()).IsReady);
+        Assert.False(refreshGate.InteractiveCoolingDown);
     }
 
     /// <summary>A1b：並發的明確探測，排隊期間別人剛探完的結果直接共用（不連打兩次）。</summary>
