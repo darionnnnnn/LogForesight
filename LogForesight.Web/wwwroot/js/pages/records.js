@@ -47,6 +47,8 @@ let pageSize = loadPageSize('records');
 // 因此視角切換時重設（見 view-toggle 事件），不像篩選條件那樣沿用
 let sort = { key: '', dir: 'desc' };
 let lastResult = null;
+/** 產生 lastResult 那次查詢的風險層級篩選（畫面上的 chip 之後可能又改過，彙總欄位要對照查詢當下的條件） */
+let lastRiskLevels = [];
 // 全站「日風險等級顯示」設定允許的等級（見 syncRiskChipSemantics）
 let dayRiskVisible = new Set(['高', '中', '低']);
 
@@ -501,6 +503,7 @@ async function search() {
     // 視角已切換或已有更新的查詢：舊回應的資料形狀可能與目前視角不符，直接丟棄
     if (!searchGuard.isCurrent(seq) || view !== currentView) return;
     lastResult = result;
+    lastRiskLevels = filters.riskLevels ?? [];
     render();
 }
 
@@ -739,13 +742,22 @@ function handlerCell(record) {
 
 // ── 依主機視角（日期合併）────────────────────────────────────────────────────
 
+/**
+ * 風險層級欄位的數字：查詢只篩一個風險層級時，其他兩個層級的資料已被篩掉，
+ * 顯示 0 會被讀成「這台沒有那一級的風險」——改顯示「—」。篩兩個以上或不限時，三欄都是實際計數。
+ */
+function riskCountCell(count, level) {
+    const only = lastRiskLevels.length === 1 ? lastRiskLevels[0] : null;
+    return roleText('lf-text-data', only !== null && only !== level ? '—' : String(count));
+}
+
 function renderHostView() {
     renderTable(listContainer, {
         columns: [
             { title: '主機', sortKey: 'host', truncate: true, render: h => roleText('lf-text-title', h.hostName) },
-            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.highRiskDays)) },
-            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.mediumRiskDays)) },
-            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => roleText('lf-text-data', String(h.lowRiskDays)) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => riskCountCell(h.highRiskDays, '高') },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => riskCountCell(h.mediumRiskDays, '中') },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => riskCountCell(h.lowRiskDays, '低') },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: h => correlationCell(h.correlationDays) },
             { title: '類型', render: h => categoryBadges(h.categories) },
             { title: '最新狀況', render: h => latestStatusCell(h, [h.latestDate, h.latestHeadline].filter(Boolean).join('　')) }
@@ -765,9 +777,9 @@ function renderDateView() {
         columns: [
             { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => roleText('lf-text-title text-nowrap', d.date) },
             { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.hostCount)) },
-            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.highRiskHosts)) },
-            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.mediumRiskHosts)) },
-            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: d => roleText('lf-text-data', String(d.lowRiskHosts)) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => riskCountCell(d.highRiskHosts, '高') },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => riskCountCell(d.mediumRiskHosts, '中') },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: d => riskCountCell(d.lowRiskHosts, '低') },
             { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: d => correlationCell(d.correlationHosts) },
             { title: '類型', render: d => categoryBadges(d.categories) }
         ],

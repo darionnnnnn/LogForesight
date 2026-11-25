@@ -24,6 +24,8 @@ public sealed class RecurrenceUiBehaviorTests
     [InlineData("memberStatusCellShowsPriorDismissal")]
     [InlineData("headerShowsPriorDismissalOnlyWhenPositive")]
     [InlineData("memberHostCellMarksOccurrenceOnlyUnderAllFilter")]
+    [InlineData("memberHostCellShowsLogNameOnlyWhenHostRepeats")]
+    [InlineData("deniedDetailHidesMemberAndTimelineSections")]
     [InlineData("handlerRowShowsRecurrenceBadgeOnlyWhenPositive")]
     [InlineData("replyModalShowsRecurrenceHintAndThreeSuggestions")]
     [InlineData("replyModalEscalateSuggestionSelectsEscalatedAndPrefillsNote")]

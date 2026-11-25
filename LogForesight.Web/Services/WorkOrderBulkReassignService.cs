@@ -30,7 +30,7 @@ public class WorkOrderBulkReassignService
     /// <summary>一次最多改派幾張單（去重後超過整批被拒）</summary>
     public const int MaxOrders = 100;
 
-    private const string ConcurrentFallback = "這張單剛被其他人更新（例如處理人正在回覆），請重新載入後再改派。";
+    private const string ConcurrentFallback = "這張單剛被其他人更新（例如處理人正在回覆或剛改派），你的改派未套用，請重新載入後再試。";
     private const string FailedFallback = "改派失敗，請稍後再試；原因已寫入記錄檔。";
 
     private readonly WorkOrderCommandService _commands;

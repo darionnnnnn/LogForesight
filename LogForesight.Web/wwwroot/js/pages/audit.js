@@ -50,17 +50,75 @@ async function init() {
     await search();
 }
 
+/**
+ * 動作分組（純前端，依代碼前綴；前一組先比對）：沒命中任何前綴的新動作歸「其他」，不會因為對照表沒更新而消失。
+ * 分組只影響下拉的呈現，動作代碼與名稱仍由後端對照表提供。
+ */
+const ACTION_GROUPS = [
+    ['身分與存取', /^(login|logout|session_|access_|perm_)/],
+    ['處理與交辦', /^(handling_|issue_bulk_close|work_order_|escalation_)/],
+    ['問題、規則與靜音', /^(rule_|suppress_|issue_)/],
+    ['使用者、主機與群組', /^(user_|host_|group_)/],
+    ['匯入與資料來源', /^(import_|netiq_|sentinel_)/],
+    ['PRTG', /^(prtg_|calibration_)/],
+    ['排程與系統', /^(schedule_|settings_|health_|run_|ai_)/]
+];
+const OTHER_GROUP = '其他';
+
+/** 把 { 代碼: 名稱 } 分成 [{ label, entries: [[代碼, 名稱]] }]；組內依名稱排序、沒有項目的組不出現，「其他」固定在最後 */
+export function groupAuditActions(actions) {
+    const buckets = new Map([...ACTION_GROUPS.map(([label]) => label), OTHER_GROUP].map(label => [label, []]));
+    for (const [code, name] of Object.entries(actions || {})) {
+        const group = ACTION_GROUPS.find(([, pattern]) => pattern.test(code));
+        buckets.get(group ? group[0] : OTHER_GROUP).push([code, name]);
+    }
+    return [...buckets]
+        .filter(([, entries]) => entries.length > 0)
+        .map(([label, entries]) => ({ label, entries: entries.sort((a, b) => a[1].localeCompare(b[1], 'zh-Hant')) }));
+}
+
+/** 搜尋比對：名稱或代碼包含關鍵字（不分大小寫）；沒輸入關鍵字全部符合 */
+export function auditActionMatches(code, name, query) {
+    const q = String(query || '').trim().toLowerCase();
+    return q === '' || String(name).toLowerCase().includes(q) || String(code).toLowerCase().includes(q);
+}
+
+/**
+ * 依關鍵字顯示／隱藏下拉的選項與分組標題：已勾選的選項一律保留（搜尋時不能讓人看不到自己選了什麼），
+ * 整組都隱藏時連分組標題一起隱藏。
+ */
+export function applyAuditActionSearch(select, query) {
+    for (const group of Array.from(select.querySelectorAll('optgroup'))) {
+        let anyShown = false;
+        for (const option of Array.from(group.querySelectorAll('option'))) {
+            const show = option.selected || auditActionMatches(option.value, option.textContent, query);
+            option.hidden = !show;
+            if (show) anyShown = true;
+        }
+        group.hidden = !anyShown;
+    }
+}
+
 /** 動作對照表由後端提供：動作代碼由後端定義，對照表跟著定義走才不會漏 */
 async function loadActionOptions() {
     const actions = await api.get('/api/audit/actions');
     const select = document.getElementById('audit-actions');
 
-    for (const [code, name] of Object.entries(actions)) {
-        const option = document.createElement('option');
-        option.value = code;
-        option.textContent = name;
-        select.appendChild(option);
+    for (const { label, entries } of groupAuditActions(actions)) {
+        const group = document.createElement('optgroup');
+        group.label = label;
+        for (const [code, name] of entries) {
+            const option = document.createElement('option');
+            option.value = code;
+            option.textContent = name;
+            group.appendChild(option);
+        }
+        select.appendChild(group);
     }
+
+    document.getElementById('audit-actions-search')?.addEventListener('input', event => {
+        applyAuditActionSearch(select, event.target.value);
+    });
 }
 
 async function search() {

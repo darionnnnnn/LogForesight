@@ -22,6 +22,7 @@ public class ReplyFlowBehaviorTests
     }
 
     [NodeTheory]
+    [InlineData("submitButtonsLiveInFooterBesideClose")]
     [InlineData("noConclusionDisablesSubmit")]
     [InlineData("observingDefaultsToSevenDaysWithQuickButtons")]
     [InlineData("successMessagesNameTheConclusion")]

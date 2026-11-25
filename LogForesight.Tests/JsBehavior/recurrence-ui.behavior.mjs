@@ -157,6 +157,41 @@ const cases = {
         assert.equal(findAll(cell(item, true), n => n.tagName === 'A')[0].href, '/lf/hosts/5');
     },
 
+    // H6：同主機在同頁有多列時標登錄類型；單列或沒有登錄類型不標
+    memberHostCellShowsLogNameOnlyWhenHostRepeats() {
+        const { roleText, statusBadge } = elements();
+        const cell = new Function('document', 'appUrl', 'roleText', 'statusBadge', `${extract(detailSource, 'function renderMemberHostCell(')}\nreturn renderMemberHostCell;`)(document, p => '/lf' + p, roleText, statusBadge);
+        const item = { hostId: 5, hostName: 'SRV-1', occurrence: 1, logName: 'Application', closedAt: null };
+        assert.ok(textOf(cell(item, false, true)).includes('登錄類型：Application'), '同頁同主機多列要標');
+        assert.ok(!textOf(cell(item, false, false)).includes('登錄類型'), '同頁只有一列不標');
+        assert.ok(!textOf(cell({ ...item, logName: null }, false, true)).includes('登錄類型'), '沒有登錄類型不標');
+        assert.equal(findAll(cell(item, false, true), n => n.tagName === 'A')[0].href, '/lf/hosts/5', '主機名仍是連結');
+    },
+
+    // E2：沒有權限時成員與歷程兩個區塊整個收起，載入成功再恢復
+    deniedDetailHidesMemberAndTimelineSections() {
+        installDom();
+        const section = () => { const s = document.createElement('section'); return s; };
+        const [memberSection, timelineSection] = [section(), section()];
+        const membersContainer = document.createElement('div');
+        const timelineContainer = document.createElement('div');
+        memberSection.appendChild(membersContainer);
+        timelineSection.appendChild(timelineContainer);
+        // mini-dom 沒有 closest：替身只回所屬 section（production 的 closest('section') 在真實 DOM 同義）
+        membersContainer.closest = () => memberSection;
+        timelineContainer.closest = () => timelineSection;
+        const fn = new Function('membersContainer', 'timelineContainer', `${extract(detailSource, 'function setDetailSectionsDenied(')}\nreturn setDetailSectionsDenied;`)(membersContainer, timelineContainer);
+        fn(true);
+        assert.ok(memberSection.classList.contains('d-none'), '成員區塊要收起');
+        assert.ok(timelineSection.classList.contains('d-none'), '歷程區塊要收起');
+        fn(false);
+        assert.ok(!memberSection.classList.contains('d-none') && !timelineSection.classList.contains('d-none'), '載入成功要恢復');
+        // 403 分支與成功分支都要呼叫它（切出的原始碼斷言：避免只寫了函式沒接上）
+        const loadAll = extract(detailSource, 'async function loadAll(');
+        assert.ok(/error\?\.status === 403\) \{[\s\S]*?setDetailSectionsDenied\(true\)/.test(loadAll), '403 分支要收起區塊');
+        assert.ok(loadAll.includes('setDetailSectionsDenied(false)'), '成功分支要恢復');
+    },
+
     handlerRowShowsRecurrenceBadgeOnlyWhenPositive() {
         const { roleText, statusBadge } = elements();
         const make = () => new Function('document', 'hostCountText', 'roleText', 'statusBadge', `${extract(handlerSource, 'function orderHostsHeadline(')}\n${extract(handlerSource, 'function orderHostsCell(')}\nreturn orderHostsCell;`)(document, hostCountText, roleText, statusBadge);

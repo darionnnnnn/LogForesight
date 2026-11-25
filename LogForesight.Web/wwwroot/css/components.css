@@ -516,6 +516,13 @@ a.lf-badge:hover { text-decoration: underline; }
     white-space: nowrap;
 }
 
+/* 可換行的標記：文字含人名等不定長內容時使用（風險日詳情處理狀態欄的案件徽章），超長不得越出儲存格 */
+.lf-badge--wrap {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 .lf-badge::before {
     content: "";
     flex: none;

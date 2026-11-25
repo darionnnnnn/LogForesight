@@ -123,7 +123,7 @@ const USER_COLUMNS = [
             span.title = '暫停後，夜間自動派工不會再派新單給這個人；既有交辦單不受影響。';
             return span;
         },
-        render: u => renderDispatchPausedToggle(u)
+        render: u => (showsDispatchPausedToggle(u) ? renderDispatchPausedToggle(u) : roleText('lf-text-meta', '—'))
     },
     { title: '狀態', sortKey: 'active', sortValue: u => u.active ? 1 : 0, render: u => renderActiveBadge(u.active) },
     { title: '', className: 'text-end', render: u => renderEditButton(u) }
@@ -293,6 +293,16 @@ function continueAfterAvailabilityChange(choice, user, count, action) {
     }
     if (choice === 'informed') return;
     notifyActiveWorkOrders(user, count, action);
+}
+
+/**
+ * 「暫停接單」只對夜間派工的候選人有意義：使用者屬於任一啟用中的派工池群組才顯示；
+ * 其餘顯示「—」。已經暫停的人一律保留開關（不在池內也要能取消暫停，否則旗標會卡死）。
+ */
+function showsDispatchPausedToggle(user) {
+    if (user.dispatchPaused) return true;
+    const poolGroupIds = new Set(groups.filter(g => g.dispatchPool && g.active !== false).map(g => g.groupId));
+    return (user.groupIds ?? []).some(id => poolGroupIds.has(id));
 }
 
 function renderDispatchPausedToggle(user) {

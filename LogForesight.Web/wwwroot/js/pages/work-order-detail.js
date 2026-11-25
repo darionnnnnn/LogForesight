@@ -251,11 +251,14 @@ function renderMemberHostCell(item, showOccurrence = false, multiOnPage = false)
     const disabledTag = item.hostDisabled && !item.closedAt
         ? statusBadge('主機已停用', 'neutral', { title: '這台主機已停用，不計入處理人的台數；重新啟用後恢復計入。' })
         : null;
-    if (!occurrenceTag && !disabledTag) return name;
+    // 同主機在同一頁有多列時標出登錄類型（Error／Warning 等不同登錄類型各自是一件案件，否則看起來是重複列）
+    const logNameTag = multiOnPage && item.logName ? roleText('lf-text-meta', `登錄類型：${item.logName}`) : null;
+    if (!occurrenceTag && !disabledTag && !logNameTag) return name;
     // 名稱連結與標記同一行：用既有的 lf-meta-line（行內連結點擊區至少 24×24，小字級也點得到）
     const wrap = document.createElement('div');
     wrap.className = 'lf-meta-line';
     wrap.append(name);
+    if (logNameTag) wrap.append(logNameTag);
     if (occurrenceTag) wrap.append(occurrenceTag);
     if (disabledTag) wrap.append(disabledTag);
     return wrap;
@@ -1245,6 +1248,16 @@ function markSeenOnce(detail) {
     });
 }
 
+/**
+ * 沒有權限檢視這張單時，成員與處理歷程兩個區塊整個不顯示（只剩錯誤說明與返回出口）；
+ * 載入成功就恢復。區塊是容器所在的 section 卡片，連同標題與篩選列一起收，不留空殼。
+ */
+function setDetailSectionsDenied(denied) {
+    for (const container of [membersContainer, timelineContainer]) {
+        container?.closest('section')?.classList.toggle('d-none', denied);
+    }
+}
+
 async function loadAll() {
     try {
         let [user, detail, members, timeline] = await Promise.all([
@@ -1264,6 +1277,7 @@ async function loadAll() {
             members = await api.get(memberListUrl(), { silent: true });
         }
         markSeenOnce(detail);
+        setDetailSectionsDenied(false);
 
         renderHeader(detail);
         renderReassignedHint(detail, user);
@@ -1273,6 +1287,7 @@ async function loadAll() {
     } catch (error) {
         if (error?.status === 403) {
             renderError(headerContainer, { message: error.message || '您沒有權限檢視這張交辦單。' });
+            setDetailSectionsDenied(true);
             // 只有 Handle 的原處理人在單被改派後會落到這裡（授權只認目前處理人），而 403 拿不到歷程，
             // 無法確認他是否曾是處理人。出口只給一條：打不開交辦總覽的人回自己的交辦
             // （具 Handle 者附上可能原因），能開的人回交辦清單

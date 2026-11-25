@@ -614,6 +614,7 @@ public class WorkOrderQueryService
         var memberDtos = items.Select(c => new WorkOrderMemberDto
         {
                 CaseId = c.CaseId,
+                LogName = IssueSignatureKey.TryParseFull(c.IssueKey)?.LogName,
                 PrtgEvidence = c.PrtgEvidence,
                 PrtgEvidenceParentStatus = EvidenceParentStatus(c),
                 PrtgEvidenceRecordPath = c.PrtgEvidence != null && hostIdByKey.TryGetValue(HostNameKey.Of(c.HostName), out var evidenceHostId) &&

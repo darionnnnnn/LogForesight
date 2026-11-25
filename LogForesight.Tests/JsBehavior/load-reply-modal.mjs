@@ -137,7 +137,15 @@ return { toLocalDateString, todayLocal, dateAfterDays };`)();
         withBusy,
         showDetailModal: ({ title, body }) => {
             const element = dom.newElement('div');
-            const entry = { title, body, element, close() { env.closed++; } };
+            // 與 showDetailModal 的真實結構一致：頁尾有「關閉」鈕，送出類按鈕會被搬進來（X3）
+            const footer = dom.newElement('div');
+            footer.className = 'modal-footer';
+            const closeBtn = dom.newElement('button');
+            closeBtn.type = 'button';
+            closeBtn.textContent = '關閉';
+            footer.appendChild(closeBtn);
+            element.appendChild(footer);
+            const entry = { title, body, element, footer, close() { env.closed++; } };
             env.shown.push(entry);
             return { close: entry.close, element };
         },
@@ -187,7 +195,8 @@ export function openReply(loaded, options = {}) {
     const entry = env.shown[env.shown.length - 1];
     const body = entry.body;
     const form = body.children[0];
-    const buttons = () => all(body).filter(n => n.tagName === 'BUTTON');
+    // 送出類按鈕在頁尾（entry.element），其餘在表單內（body）
+    const buttons = () => [...all(body), ...all(entry.element)].filter(n => n.tagName === 'BUTTON');
     return {
         entry, body, form, submits,
         group: byId(body, 'wo-reply-status'),

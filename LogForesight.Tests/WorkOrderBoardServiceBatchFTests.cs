@@ -238,4 +238,27 @@ public partial class WorkOrderBoardServiceTests
         Assert.Equal("沒有需要派的項目（可能剛由其他人派出）", second.Message);
         Assert.Equal((0, 0, 0), (second.CreatedOrders, second.MergedOrders, second.AssignedMembers));
     }
+    [Fact]
+    public void CU6_兩人同時立即派工_後到者的併入不計沒有新成員的單()
+    {
+        TwoIssueSetup();
+        AutoDispatchResultDto? first = null;
+        var armed = true;
+        // 後到者的試跑已取得「進行中案件鍵」（此時還沒有案件），在它取候選人時先到者整批派完：
+        // 後到者仍帶著舊的待派清單去建單，每一組都撞上先到者剛建的案件，併入既有單但沒有任何新成員
+        _candidates.BeforeBuild = () =>
+        {
+            if (!armed) return;
+            armed = false;
+            first = Service().RunAutoDispatch(null, null);
+        };
+
+        var second = Service().RunAutoDispatch(null, null);
+
+        Assert.NotNull(first);
+        Assert.True(first!.AssignedMembers > 0);
+        Assert.Equal(0, second.AssignedMembers);
+        Assert.Equal(0, second.CreatedOrders);
+        Assert.Equal(0, second.MergedOrders);   // 併入了單，但沒有新成員：不算「併入 N 張」（舊算法會回併入 2 張、共 0 台）
+    }
 }

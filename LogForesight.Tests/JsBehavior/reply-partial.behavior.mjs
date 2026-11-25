@@ -236,6 +236,7 @@ const cases = {
             'markSeenOnce', 'renderHeader', 'renderReassignedHint', 'renderActions', 'renderMembers', 'renderTimeline', 'renderError',
             'headerContainer', 'membersContainer', 'timelineContainer', 'actionsContainer', 'badgesEl', 'canViewHandlerPage', 'hasCapability', 'linkButton', 'appUrl', 'backLinkFor',
             `let memberPage = 3; let memberHostName = ''; let currentUser = null; let currentDetail = null; let memberAutoSwitched = false;
+const setDetailSectionsDenied = () => { };
 ${memberListUrl}\n${loadAll}\nreturn { loadAll, state: () => ({ memberPage, currentDetail }) };`)(
             async () => ({ userId: 1 }), { get: async (url, o) => { const r = await api.get(url, o); return detailClosed || !r.closedAt ? r : { ...r, closedAt: null }; } },
             7, memberStatusSelect, loaded.orderMembersUrl, 50, () => { }, () => { }, () => { }, () => { }, members => rendered.push(members), () => { }, () => { },

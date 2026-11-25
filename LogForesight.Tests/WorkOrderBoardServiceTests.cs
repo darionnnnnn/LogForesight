@@ -1073,12 +1073,19 @@ public partial class WorkOrderBoardServiceTests : IDisposable
     {
         public List<DispatchCandidate> Candidates { get; } = new();
 
-        public DispatchCandidatePool Build() => new()
+        /// <summary>每次 Build 前呼叫（試跑已取得進行中案件鍵之後）：測試用來模擬「另一個人在這時候先派完」的併發</summary>
+        public Action? BeforeBuild { get; set; }
+
+        public DispatchCandidatePool Build()
         {
-            ByUserId = Candidates.ToDictionary(c => c.UserId),
-            PoolMemberCount = Candidates.Count(c => c.InPool),
-            ActivePoolMemberCount = Candidates.Count(c => c.InPool && !c.Paused)
-        };
+            BeforeBuild?.Invoke();
+            return new()
+            {
+                ByUserId = Candidates.ToDictionary(c => c.UserId),
+                PoolMemberCount = Candidates.Count(c => c.InPool),
+                ActivePoolMemberCount = Candidates.Count(c => c.InPool && !c.Paused)
+            };
+        }
     }
 
     private sealed class AllVisible : IVisibilityService
