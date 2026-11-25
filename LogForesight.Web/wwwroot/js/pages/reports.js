@@ -445,10 +445,23 @@ function renderCharts() {
     renderIssueRankChart();
 }
 
-/** 掛上「表格」切換：重畫後一律回到圖表視圖，不留下上一次的「表格」狀態（否則整張卡只剩空白） */
+/**
+ * 某張表的完整 CSV 下載連結（F20-4）：與畫面同一組期間、顯示範圍與比較設定，伺服器端依使用者可見範圍輸出整份資料
+ * （不是當頁或 Top 10）。table＝trend｜hosts｜issues。
+ */
+function reportCsvHref(table) {
+    const q = new URLSearchParams({
+        from: currentData.from, to: currentData.to,
+        handlingScope: currentData.handlingScope ?? 'all', compare: currentData.comparisonMode ?? 'previous'
+    });
+    return appUrl(`/api/reports/export/${table}?${q}`);
+}
+
+/** 掛上「表格」切換：重畫後一律回到圖表視圖，不留下上一次的「表格」狀態（否則整張卡只剩空白）。spec.csvTable 有值時加「下載 CSV」 */
 function mountToolbar(container, wrapper, spec) {
     wrapper.classList.remove('d-none');
-    charts.attachToolbar(container, { canvasWrapper: wrapper, ...spec });
+    const { csvTable, ...rest } = spec;
+    charts.attachToolbar(container, { canvasWrapper: wrapper, ...rest, ...(csvTable ? { csvHref: reportCsvHref(csvTable) } : {}) });
 }
 
 /** 沒資料時收掉上一次的表格切換：舊按鈕留著會讓人切出上一期的數字 */
@@ -548,6 +561,7 @@ function renderTrendChart() {
 
     mountToolbar(toolbar, wrapper, {
         title: '風險趨勢',
+        csvTable: 'trend',
         tableColumns: showPrevious ? ['日期', '高風險', '中風險', '錯誤數', '前期高風險'] : ['日期', '高風險', '中風險', '錯誤數'],
         tableRows: points.map((p, i) => showPrevious
             ? [p.date, p.highRisk, p.mediumRisk, p.errorCount, previous.get(i)?.highRisk ?? '']
@@ -727,6 +741,7 @@ function renderHostChart() {
 
     mountToolbar(toolbar, wrapper, {
         title: '主機排行',
+        csvTable: 'hosts',
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
         tableRows
     });
@@ -793,6 +808,7 @@ function renderIssueRankChart() {
 
     mountToolbar(toolbar, wrapper, {
         title: '問題排行',
+        csvTable: 'issues',
         // 排序已改依分數（§G3，見 IssueRankingBuilder.Build），這裡只是把數字亮出來讓人看得懂
         // 為什麼是這個順序——不重算，直接顯示後端算好的分數
         tableColumns: ['問題', '分數', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數', 'vs 基準', '首見（機房）'],

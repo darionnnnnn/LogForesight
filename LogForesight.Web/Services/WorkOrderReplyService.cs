@@ -77,14 +77,15 @@ public class WorkOrderReplyService
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, req.CaseIds, req.Status, req.Note, req.DueDate, result.Cases, result.WorkOrderClosed });
 
-        NotifyEscalation(req.Status, LabelOf(order), newlyEscalated, req.Note, id);
+        var notified = NotifyEscalation(req.Status, LabelOf(order), newlyEscalated, req.Note, id);
 
         return new WorkOrderReplyResultDto
         {
             WorkOrderId = id,
             Cases = result.Cases,
             WorkOrderClosed = result.WorkOrderClosed,
-            DaySyncPendingCases = result.DaySync.PendingCases
+            DaySyncPendingCases = result.DaySync.PendingCases,
+            EscalationNotifiedAdmins = notified
         };
     }
 
@@ -146,7 +147,7 @@ public class WorkOrderReplyService
 
         // 整批一封（不逐張各寄一封轟炸 admin），只涵蓋已成功的單
         var issueLabel = succeeded.Count == 1 ? LabelOf(succeeded[0]) : $"{succeeded.Count} 張交辦單";
-        NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note, succeeded.Count == 1 ? succeeded[0].WorkOrderId : null);
+        var notified = NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note, succeeded.Count == 1 ? succeeded[0].WorkOrderId : null);
 
         return new WorkOrderReplyManyResultDto
         {
@@ -154,6 +155,7 @@ public class WorkOrderReplyService
             Cases = cases,
             ClosedWorkOrders = closed,
             DaySyncPendingCases = pending,
+            EscalationNotifiedAdmins = notified,
             Succeeded = succeeded.Select(o => o.WorkOrderId).ToList(),
             FailedWorkOrderId = failedId,
             FailureMessage = failureMessage,
@@ -235,14 +237,19 @@ public class WorkOrderReplyService
         return result;
     }
 
-    /// <summary>上報通知 fire-and-forget（NotifyEscalationAsync 內部 try/catch 到底、永不拋出）</summary>
-    private void NotifyEscalation(string status, string issueLabel, List<string> newlyEscalatedHosts, string? note, long? workOrderId)
+    /// <summary>
+    /// 上報通知 fire-and-forget（NotifyEscalationAsync 內部 try/catch 到底、永不拋出）。
+    /// 回傳這次會收到通知的管理員數給回覆畫面用；沒有新上報（不是無法處理、或沒有新轉入的成員）回 null。
+    /// </summary>
+    private int? NotifyEscalation(string status, string issueLabel, List<string> newlyEscalatedHosts, string? note, long? workOrderId)
     {
-        if (status != IssueHandlingStatuses.Escalated || newlyEscalatedHosts.Count == 0) return;
+        if (status != IssueHandlingStatuses.Escalated || newlyEscalatedHosts.Count == 0) return null;
+        var recipients = _mail.CountEscalationRecipients();
         _ = _mail.NotifyEscalationAsync(new EscalationNotice(
             issueLabel,
             newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
             _currentUser.Account, note, workOrderId));
+        return recipients;
     }
 
     /// <summary>稽核與上報通知用的交辦單名稱：與畫面同一個出口（事件編號 0 附規則名稱）</summary>

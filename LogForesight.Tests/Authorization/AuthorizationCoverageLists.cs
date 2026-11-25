@@ -44,6 +44,8 @@ public static class AuthorizationCoverageLists
         ["GET /hosts/{hostId:long}"] = "頁面殼：只回 View，資料由 /api/host-detail 授權（讀取矩陣）",
         ["GET /handlers/{userId:long}"] = "頁面殼：只回 View，資料由 /api/handlers 授權（讀取矩陣）",
         ["GET /work-orders/{id:long}"] = "頁面殼：只回 View，資料由 /api/work-orders/{id} 授權（讀取矩陣）",
+        ["GET /api/handling/issue-cases/close-preview"] = "統一標記預覽（O1）：能力只要 Handle，受限 A 能進，所以角色閘門打不到；範圍在服務層——具 Assign 者不限，只具 Handle 者限自己負責的主機，非負責主機列入略過（原因「不是你負責的主機」），資料來源是 RecordRepository 的可見範圍。由 HandlingServiceTests 的 O1_ 系列驗證",
+        ["POST /api/handling/issue-cases/bulk-close"] = "統一標記（O1）：同上；負責人只標到自己負責的主機、其他主機略過、帶機房結論（AutoApply）被拒（仍需 Assign）、不具 Handle 被擋（PermissionFilter 以真實 controller 標註驗證）、Admin 行為不變。由 HandlingServiceTests 的 O1_ 系列驗證",
         ["GET /permission-changes"] = "頁面殼：只回 View（掛 ConfirmPermission，受限 A 本來就有該能力，所以角色閘門打不到）；資料由 /api/permission-changes 授權（讀取矩陣）",
     };
 }

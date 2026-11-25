@@ -237,17 +237,27 @@ public class UserAdminService
         if (emailChanged && !string.IsNullOrWhiteSpace(request.Email) && !SystemSettingsMailHelper.IsSingleBareAddress(request.Email))
             throw DomainException.Validation($"Email「{request.Email.Trim()}」不是單一的電子郵件位址（不可含逗號、分號或顯示名稱）。");
 
-        var user = _users.Upsert(new WebUser
+        var allGroups = _groups.GetAll().ToDictionary(g => g.GroupId);
+        List<long>? requestedGroups = null;
+        if (request.GroupIds != null)
+        {
+            requestedGroups = request.GroupIds.Distinct().ToList();
+            NameFormat.EnsureAllKnown(requestedGroups, allGroups, "群組");
+        }
+
+        // 基本資料與群組同一次原子寫入、同一個版本比對（見 IUserStore.SaveIfUnchanged）；
+        // 未帶群組＝不動群組，不以開啟視窗時的快照覆蓋伺服器的新值
+        var saved = _users.SaveIfUnchanged(new WebUser
         {
             Account = account,
             DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? account : request.DisplayName.Trim(),
             Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim(),
-            Active = request.Active,
-            // 群組成員資格由 SetUserGroups 專責維護：如果這裡也能改，
-            // 「更新顯示名稱」這種操作就有機會意外清掉某人的所有權限
-            GroupIds = existing?.GroupIds ?? new List<long>()
-        });
-        if (existing != null && existing.Active != user.Active) _permissionVersion.Bump();
+            Active = request.Active
+        }, request.Version, requestedGroups);
+        var user = saved.After;
+        var before = saved.Before;
+        isNew = before == null;
+        if (before != null && before.Active != user.Active) _permissionVersion.Bump();
 
         _audit.Record(
             action: isNew ? AuditActions.UserCreate : AuditActions.UserUpdate,
@@ -258,7 +268,22 @@ public class UserAdminService
             targetId: user.UserId.ToString(),
             detail: new { user.Account, user.DisplayName, user.Email, user.Active });
 
-        var dto = ToDto(user, _groups.GetAll().ToDictionary(g => g.GroupId), _users.GetLastLogins());
+        // 群組有實際變動才另記一筆權限異動稽核（格式與 SetUserGroups 相同），並讓權限版號前進
+        var beforeGroupIds = before?.GroupIds ?? new List<long>();
+        if (requestedGroups != null && !beforeGroupIds.OrderBy(i => i).SequenceEqual(requestedGroups.OrderBy(i => i)))
+        {
+            _permissionVersion.Bump();
+            var beforeNames = beforeGroupIds.Select(id => allGroups.TryGetValue(id, out var g) ? g.GroupName : id.ToString()).ToList();
+            var afterNames = requestedGroups.Select(id => allGroups[id].GroupName).ToList();
+            _audit.Record(
+                action: AuditActions.UserUpdate,
+                summary: $"變更使用者 {user.Account} 的群組：由「{NameFormat.Join(beforeNames)}」改為「{NameFormat.Join(afterNames)}」",
+                targetKind: "user",
+                targetId: user.UserId.ToString(),
+                detail: new { Before = beforeNames, After = afterNames });
+        }
+
+        var dto = ToDto(user, allGroups, _users.GetLastLogins());
         // 停用帳號後單仍在他名下：回應帶進行中單數，畫面提示並連到已篩選的交辦總覽
         dto.ActiveWorkOrders = ActiveWorkOrderCount(user.UserId);
         return dto;
@@ -391,6 +416,7 @@ public class UserAdminService
         IReadOnlyDictionary<long, DateTime> lastLogins, int ownedHostCount = 0) => new()
     {
         UserId = user.UserId,
+        Version = UserVersion.Of(user),
         Account = user.Account,
         DisplayName = _userDisplayNames.Of(user.DisplayName),
         Email = user.Email,

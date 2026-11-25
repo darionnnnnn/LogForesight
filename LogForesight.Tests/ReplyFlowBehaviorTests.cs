@@ -25,6 +25,7 @@ public class ReplyFlowBehaviorTests
     [InlineData("noConclusionDisablesSubmit")]
     [InlineData("observingDefaultsToSevenDaysWithQuickButtons")]
     [InlineData("successMessagesNameTheConclusion")]
+    [InlineData("escalationMessageNamesNotifiedAdmins")]
     [InlineData("keyboardArrowKeysCtrlEnterAndEscKeepDraft")]
     [InlineData("rejected403KeepsMessageDraftAndOffersCopy")]
     [InlineData("rejected400AndOtherErrors")]

@@ -30,13 +30,17 @@ public class HostsController : ControllerBase
     /// 兩千台規模下問題查詢頁的主機篩選不能再一次把全部主機灌進一個 &lt;select&gt;。
     /// ids：依主機 Id 精確取回（不受 20 筆上限），供已選主機（例如網址帶入的 hostIds）
     /// 解析回顯示名稱使用。兩者皆未提供時回全部（既有行為，向下相容）。
+    /// query 比對主機名稱、Sentinel 回報的顯示名與最近已知 IP（包含、不分大小寫；全站主機快速搜尋輸入名稱或 IP 都找得到）；
+    /// limit 限縮 query 結果的筆數（1 到 <see cref="AutocompleteLimit"/>，預設後者；快速搜尋要 10 筆）。
     /// </summary>
     /// <summary>autocomplete 的顯示上限（§5.4 D-4）</summary>
     public const int AutocompleteLimit = 20;
 
     [HttpGet]
-    public ApiResponse<VisibleHostListDto> GetVisibleHosts([FromQuery] string? query = null, [FromQuery] string? ids = null)
+    public ApiResponse<VisibleHostListDto> GetVisibleHosts([FromQuery] string? query = null, [FromQuery] string? ids = null,
+        [FromQuery] int limit = AutocompleteLimit)
     {
+        limit = Math.Clamp(limit, 1, AutocompleteLimit);
         var hosts = _visibility.GetVisibleHosts().Where(h => h.Active);
 
         var wantedIds = QueryStringParsing.ParseLongs(ids);
@@ -47,15 +51,18 @@ public class HostsController : ControllerBase
         }
         else if (!string.IsNullOrWhiteSpace(query))
         {
-            hosts = hosts.Where(h => h.HostName.Contains(query, StringComparison.OrdinalIgnoreCase));
+            var needle = query.Trim();
+            hosts = hosts.Where(h => h.HostName.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                                     || (h.DisplayName?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                                     || (h.IpAddress?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));
         }
 
         var matched = hosts.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase).ToList();
 
         // 總數在截斷**之前**算（體檢 X4）：畫面要能說出「顯示前 20 筆，共 N 筆符合」，
         // 只回截斷後的清單等於讓使用者以為符合的就只有這些
-        var truncate = !string.IsNullOrWhiteSpace(query) && matched.Count > AutocompleteLimit;
-        var shown = truncate ? matched.Take(AutocompleteLimit) : matched;
+        var truncate = !string.IsNullOrWhiteSpace(query) && matched.Count > limit;
+        var shown = truncate ? matched.Take(limit) : matched;
 
         return ApiResponse<VisibleHostListDto>.Ok(new VisibleHostListDto
         {
@@ -66,6 +73,8 @@ public class HostsController : ControllerBase
                 {
                     HostId = h.HostId,
                     HostName = h.HostName,
+                    DisplayName = h.DisplayName,
+                    IpAddress = h.IpAddress,
                     RoleDesc = h.RoleDesc,
                     LastReportAt = h.LastReportAt
                 })

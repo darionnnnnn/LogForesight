@@ -87,6 +87,8 @@ public static class ReadMatrix
         // ── 儀表板、報表、問題查詢（清單／彙總類）──────────────────────────────
         new() { Key = "GET /api/dashboard/summary", Scope = RowScope.Global, Positive = new[] { Host, Headline, IssueA } },
         new() { Key = "GET /api/reports/summary", Scope = RowScope.Global, Query = "from={from}&to={to}", Positive = new[] { Host, Headline, IssueA } },
+        // 報表 CSV 匯出（F20-4）：與 summary 同一段查詢，主機排行表每台有風險日的可見主機一列
+        new() { Key = "GET /api/reports/export/{table}", Scope = RowScope.Global, Query = "from={from}&to={to}", Positive = new[] { Host } },
         // 處理成效：再發生排行的問題標籤帶主機前綴的問題名（哨兵 IssueA）；類型趨勢只回數字，
         // 完整可見的主機數 × 兩個問題＝問題日總數（多算＝洩漏了不可見主機的資料）
         new() { Key = "GET /api/reports/effectiveness", Scope = RowScope.Global, Query = "from={from}&to={to}", Positive = new[] { IssueA } },
@@ -129,6 +131,8 @@ public static class ReadMatrix
         // ── 主機詳情、主機與群組清單 ─────────────────────────────────────────────
         new() { Key = "GET /api/host-detail/{hostId:long}", Scope = RowScope.Host, Positive = new[] { Host } },
         new() { Key = "GET /api/host-detail/{hostId:long}/issues", Scope = RowScope.Host, Query = "source={src}&eventId={eventId}", PositiveText = "\"totalCount\":5" },
+        // 這台的交辦（第 81 輪批次 T）：主機必須可見（不可見 404）；只經案件授與看得到的主機只回被交辦的問題，哨兵限制同案件授與的允許清單
+        new() { Key = "GET /api/host-detail/{hostId:long}/orders", Scope = RowScope.Host },
         new() { Key = "GET /api/host-detail/{hostId:long}/prtg", Scope = RowScope.Host, CaseStatuses = new[] { HttpStatusCode.Forbidden, HttpStatusCode.NotFound }, PositiveText = "\"devices\":[]" },
         new() { Key = "GET /api/hosts", Scope = RowScope.Global, Positive = new[] { Host } },
         new() { Key = "GET /api/hosts/groups", Scope = RowScope.Global, Positive = new[] { SentinelKind.Group } },
@@ -191,6 +195,8 @@ public static class ReadMatrix
             "userId" => (targetUser?.UserId ?? 0).ToString(),
             "id" => (order?.Id ?? 0).ToString(),
             "allHostIds" => string.Join(",", fx.Hosts.Select(h => h.Id)),
+            // 報表 CSV 匯出的表名：主機排行是每台主機一列，哨兵（主機名）一定出現在可見主機的列上
+            "table" => "hosts",
             var other => throw new InvalidOperationException($"未知的占位符 {{{other}}}（{row.Key}）")
         });
 

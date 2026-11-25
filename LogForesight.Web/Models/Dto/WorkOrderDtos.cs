@@ -288,6 +288,12 @@ public class AdminCloseWorkOrderRequest
 
     /// <summary>結案狀態是不處理類時，是否讓這台主機的這個問題之後不再自動派工；結案狀態為「已處理」時忽略</summary>
     public bool BlockRedispatch { get; set; }
+
+    /// <summary>
+    /// 只結案這些案件（「只有上報中的」或「勾選的成員」兩種範圍都用它）。null 或空＝全部進行中成員、整張單結案（既有行為）；
+    /// 帶了但其中有已結案或不屬於這張單的案件，整筆拒絕、什麼都不寫。範圍內結案後單上若還有進行中成員，單繼續進行。
+    /// </summary>
+    public List<string>? CaseIds { get; set; }
 }
 
 /// <summary>退回處理人：說明必填（長度與空白由服務層驗證）</summary>
@@ -557,6 +563,30 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     /// （狀態已處理、說明「觀察期滿未再發生」）；不含停用主機上的成員。
     /// </summary>
     public List<string> ObservationExpiredQuietCaseIds { get; set; } = new();
+
+    /// <summary>
+    /// 命中規則的處置參考（影響、可能原因、處置步驟）。多問題單、未命中規則、規則已退役、或規則沒有任何知識內容時為 null
+    /// （畫面不顯示處置參考，訊息樣本不受影響）。與風險日問題列的處置參考同一份組法（<see cref="IssueGuidanceDto.From"/>）。
+    /// </summary>
+    public IssueGuidanceDto? Guidance { get; set; }
+
+    /// <summary>
+    /// 命中規則的 Id（「調整這條規則」的目的地）；多問題單、未命中或規則已退役為 null。
+    /// 不分檢視者（規則 Id 不是敏感資料）；能不能開規則頁由畫面依 Maintain 決定，規則頁與規則 API 另有後端把關。
+    /// </summary>
+    public string? RuleId { get; set; }
+
+    /// <summary>
+    /// 成員中最近一次出現當天的訊息樣本，最多 3 則（每則已是分析時截短過的文字）。
+    /// 母體是檢視者看得到的進行中成員；最近一天的樣本已隨詳情清除時往前一天找，找不到為空陣列。
+    /// </summary>
+    public List<string> SampleMessages { get; set; } = new();
+
+    /// <summary>
+    /// 上報中（狀態 escalated）的進行中成員案件編號（檢視者看得到的主機）：代為結案的「只有上報中的」範圍直接用它送出。
+    /// 0 個＝這張單沒有上報成員。
+    /// </summary>
+    public List<string> EscalatedCaseIds { get; set; } = new();
 }
 
 public class WorkOrderMemberDto
@@ -634,6 +664,52 @@ public class PriorDismissalDto
 
     /// <summary>上一件的結案狀態：wont_fix／false_positive／known_noise</summary>
     public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 主機詳情「這台的交辦」（GET api/host-detail/{hostId}/orders）：這台主機每個進行中的案件一列。
+/// 什麼算一個：以案件（主機×問題簽章）為列；同主機同問題但登錄類型（LogName）不同是兩個案件，各一列、
+/// 且 <see cref="HostWorkOrderRowDto.ShowLogName"/> 為 true 讓畫面標出登錄類型。
+/// 一列都沒有（這台沒有進行中的交辦，或檢視者被授權的問題都沒有進行中交辦）時 <see cref="Items"/> 為空陣列，畫面顯示「這台主機目前沒有進行中的交辦」。
+/// 受限檢視者：主機必須可見；只經案件授與看得到這台的人，只回被交辦（授與）的問題。
+/// </summary>
+public class HostWorkOrdersDto
+{
+    public List<HostWorkOrderRowDto> Items { get; set; } = new();
+}
+
+public class HostWorkOrderRowDto
+{
+    public string CaseId { get; set; } = string.Empty;
+    public long WorkOrderId { get; set; }
+    public string IssueLabel { get; set; } = string.Empty;
+
+    /// <summary>登錄類型（問題簽章的 LogName，例如 System、Application）；簽章解析不出來為 null</summary>
+    public string? LogName { get; set; }
+
+    /// <summary>同主機同問題（來源＋事件）有不只一列時為 true：這時畫面要標出登錄類型才分得出各列</summary>
+    public bool ShowLogName { get; set; }
+
+    /// <summary>最近一次出現的最高嚴重度（已正規化的 High／Medium／Low…）；推導不到為 null（畫面顯示「—」）</summary>
+    public string? Severity { get; set; }
+
+    public bool Critical { get; set; }
+    public long HandlerId { get; set; }
+    public string HandlerName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>復發（判定見 <c>IssueRecurrence</c>）</summary>
+    public bool IsRecurrence { get; set; }
+
+    /// <summary>上一件的回覆（結案時間、狀態、說明）；沒有前案為 null</summary>
+    public WorkOrderLastReplyDto? LastReply { get; set; }
+
+    /// <summary>這個問題的「不再打擾」滿 30 天會自動解除（回覆彈窗換後果提示用）</summary>
+    public bool DismissalReleases { get; set; }
+
+    /// <summary>檢視者是這張單的處理人、具 Handle 能力：這一列可勾選回覆（後端另有逐單授權）</summary>
+    public bool CanReply { get; set; }
 }
 
 /// <summary>上一件案件最後的回覆摘要</summary>
@@ -1042,6 +1118,13 @@ public class WorkOrderReplyResultDto
     public int Cases { get; set; }
     public bool WorkOrderClosed { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 }
 
 /// <summary>多張交辦單一次回覆（每張全部進行中成員）</summary>
@@ -1060,6 +1143,13 @@ public class WorkOrderReplyManyResultDto
     public int Cases { get; set; }
     public int ClosedWorkOrders { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 
     /// <summary>已寫入成功的單（依送出順序）</summary>
     public List<long> Succeeded { get; set; } = new();

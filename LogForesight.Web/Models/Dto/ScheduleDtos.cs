@@ -278,12 +278,15 @@ public class RunPreviewDto
     public bool AiDisabled { get; set; }
 }
 
-/// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）</summary>
+/// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）｜hosts（指定主機名單，NetIQ 主機）</summary>
 public class TriggerRunRequest
 {
     public string Scope { get; set; } = "all";
     public string? Segment { get; set; }
     public long? HostId { get; set; }
+
+    /// <summary>Scope=hosts 時的主機名單（執行總表「補跑這些主機」帶入）；其他範圍忽略。上限同 <c>RunMonitorService.MaxRerunHostNames</c></summary>
+    public List<string>? HostNames { get; set; }
 
     /// <summary>一次性回補天數覆寫（1..MaxBackfillDaysLimit，且不可超過 RetentionDays），不落地設定</summary>
     [Range(1, NetiqOptions.MaxBackfillDaysLimit)]

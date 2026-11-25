@@ -38,6 +38,10 @@ public class RuleAdminService
     private readonly PrtgValueAssessment? _valueAssessment;
     private readonly ISystemSettingsStore? _systemSettings;
     private readonly IVisibilityService? _visibility;
+    private readonly TimeProvider _clock;
+
+    /// <summary>規則試算（F19-2）回看的天數</summary>
+    public const int TrialWindowDays = 30;
 
     /// <summary>抑制影響面預覽（回饋十四輪 C1）的比對窗口天數，與規則清單頁「近 N 日」等處的既有慣例一致</summary>
     private const int SuppressionPreviewWindowDays = 14;
@@ -54,8 +58,10 @@ public class RuleAdminService
         IIssueAggregateQuery issueAggregateQuery,
         PrtgValueAssessment? valueAssessment = null,
         ISystemSettingsStore? systemSettings = null,
-        IVisibilityService? visibility = null)
+        IVisibilityService? visibility = null,
+        TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _rules = rules;
         _seeds = seeds;
         _suppressions = suppressions;
@@ -140,7 +146,17 @@ public class RuleAdminService
         if (plan.Added == 0 && plan.Updated == 0)
             throw DomainException.Validation("沒有需要套用的變更（可能已經是最新版本，或未修改的 builtin 規則需要勾選「連同已修改的內建規則一併覆蓋」）。");
 
-        var validation = RuleImportPlanner.Apply(_rules, plan);
+        // 以臨界區內的最新規則重算計畫再寫入，與 SaveRule 並發時不互相覆蓋
+        RuleValidationOutcome validation = null!;
+        plan = _rules.Update(fresh =>
+        {
+            var freshPlan = RuleImportPlanner.BuildPlan(fresh.Rules, KnownIssueSeed.CreateRules(), overwriteBuiltin);
+            fresh.SchemaVersion = RuleFileContent.CurrentSchemaVersion;
+            fresh.SeedVersion = KnownIssueSeed.Version;
+            fresh.Rules = freshPlan.ResultingRules;
+            validation = RuleValidator.Validate(fresh.Rules);
+            return freshPlan;
+        });
 
         _audit.Record(
             action: AuditActions.RuleSeedImport,
@@ -250,10 +266,27 @@ public class RuleAdminService
         if (!validation.IsValid)
             throw DomainException.Validation("規則不合格，未儲存：" + string.Join("；", validation.Errors));
 
-        if (isNew) content.Rules.Add(rule);
-        else content.Rules[content.Rules.IndexOf(existing!)] = rule;
-
-        _rules.Save(content);
+        // 版本比對與寫入在同一個臨界區：上面的驗證用的是開始時讀到的快照，真正寫入前要以
+        // 「此刻最新的內容」再比一次版本（讀與寫之間不得被另一個儲存插入），不同就整筆不寫、不記稽核。
+        _rules.Update<object?>(fresh =>
+        {
+            var current = fresh.Rules
+                .FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase));
+            if (isNew)
+            {
+                // 新增沒有舊版本；但同編號剛被別人建立就是衝突（否則會產生兩條同編號規則）
+                if (current != null) throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules.Add(rule);
+            }
+            else
+            {
+                if (current == null ||
+                    !string.Equals(request.Version, KnownIssueRuleVersion.Of(current), StringComparison.Ordinal))
+                    throw ConcurrentUpdateException.StaleVersion();
+                fresh.Rules[fresh.Rules.IndexOf(current)] = rule;
+            }
+            return null;
+        });
 
         _audit.Record(
             action: isNew ? AuditActions.RuleCreate : AuditActions.RuleUpdate,
@@ -289,8 +322,14 @@ public class RuleAdminService
         // stampModified: false——「已修改」徽章指的是**內容**被改過（決定程式改版時
         // 要不要跟進新種子），啟用/停用是獨立的營運狀態（--overwrite-builtin 本來就會保留它）。
         // 只停用就掛上「已修改」會讓人誤以為內容動過，該查的差異其實不存在。
-        content.Rules[index] = CloneWith(rule, enabled: enabled, stampModified: false);
-        _rules.Save(content);
+        // 寫入在臨界區內以最新內容套用，與 SaveRule 並發時不互相覆蓋（不需版本比對）
+        _rules.Update<object?>(fresh =>
+        {
+            var freshIndex = fresh.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+            if (freshIndex < 0) throw DomainException.NotFound("找不到這條規則。");
+            fresh.Rules[freshIndex] = CloneWith(fresh.Rules[freshIndex], enabled: enabled, stampModified: false);
+            return null;
+        });
 
         _audit.Record(
             action: enabled ? AuditActions.RuleEnable : AuditActions.RuleDisable,
@@ -605,8 +644,16 @@ public class RuleAdminService
                 $"「{ruleId}」是程式內建規則，不可刪除。若不需要它，請改為停用（可隨時恢復）。");
         }
 
-        content.Rules.Remove(rule);
-        _rules.Save(content);
+        _rules.Update<object?>(fresh =>
+        {
+            var current = fresh.Rules.FirstOrDefault(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase))
+                          ?? throw DomainException.NotFound("找不到這條規則。");
+            if (!string.Equals(current.Origin, "custom", StringComparison.OrdinalIgnoreCase))
+                throw DomainException.Validation(
+                    $"「{ruleId}」是程式內建規則，不可刪除。若不需要它，請改為停用（可隨時恢復）。");
+            fresh.Rules.Remove(current);
+            return null;
+        });
 
         // 連同該規則的抑制設定一併清除，否則會留下指向不存在規則的孤兒設定
         var allSuppressions = _suppressions.LoadAll();
@@ -645,13 +692,16 @@ public class RuleAdminService
     {
         var (current, seedRule) = LoadForRestore(ruleId);
 
-        var content = LoadContent();
-        var index = content.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
-
         // 回復內容但**保留使用者的 Enabled 設定**——回復內容不等於重新啟用，
-        // 沿用 --overwrite-builtin 的既有語意（停用不會被悄悄打開）
-        content.Rules[index] = CloneWith(seedRule, enabled: current.Enabled, clearModified: true);
-        _rules.Save(content);
+        // 沿用 --overwrite-builtin 的既有語意（停用不會被悄悄打開）。
+        // 在臨界區內以最新內容套用，與 SaveRule 並發時不互相覆蓋
+        _rules.Update<object?>(fresh =>
+        {
+            var index = fresh.Rules.FindIndex(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) throw DomainException.NotFound("找不到這條規則。");
+            fresh.Rules[index] = CloneWith(seedRule, enabled: fresh.Rules[index].Enabled, clearModified: true);
+            return null;
+        });
 
         _audit.Record(
             action: AuditActions.RuleRestoreSeed,
@@ -760,6 +810,107 @@ public class RuleAdminService
             ApproximateForLinux = isLinux,
             ApproximateForPrtg = isPrtg
         };
+    }
+
+    /// <summary>
+    /// 規則試算（F19-2）：把草稿規則套在近 <see cref="TrialWindowDays"/> 天既有的問題子列上，回「命中主機日」與
+    /// 「會被派工的（主機, 問題）」現在→試算的對照。不寫入任何資料（連稽核都不寫——它不是修改）。
+    /// 規則判定重用正式分析的同一段：規則比對 <see cref="KnownIssueCatalog.FindRule(IReadOnlyList{KnownIssueRule}, string, int)"/>、
+    /// 次數門檻與嚴重度 <see cref="KnownIssueCatalog.OutcomeFor"/>，派工嚴重度關卡用系統設定的未處理嚴重度集合
+    /// （<see cref="SystemSettings.ParseUnhandledSeverities"/>，與 <c>DispatchContext</c> 同一份）。
+    /// </summary>
+    public RuleTrialDto TrialRule(SaveRuleRequest request)
+    {
+        request.Id = request.Id?.Trim() ?? string.Empty;
+        var content = LoadContent();
+        var existing = content.Rules.FirstOrDefault(r => string.Equals(r.Id, request.Id, StringComparison.OrdinalIgnoreCase));
+        var draft = BuildRule(request, existing);
+
+        var result = new RuleTrialDto { WindowDays = TrialWindowDays, IsNewRule = existing == null };
+        var isPrtg = string.Equals(draft.Platform, "prtg", StringComparison.OrdinalIgnoreCase)
+                     || (existing != null && string.Equals(existing.Platform, "prtg", StringComparison.OrdinalIgnoreCase));
+        if (isPrtg)
+        {
+            result.Supported = false;
+            result.UnsupportedReason = "PRTG 規則的門檻是分鐘或往返次數，不是問題子列的發生次數，無法用既有資料試算。";
+            return result;
+        }
+
+        // 現行規則表與「換上草稿」的規則表：新規則接在最後（與儲存同一個位置），既有規則原位替換——先後順序決定誰先命中
+        var before = content.Rules.ToList();
+        var after = existing == null
+            ? before.Append(draft).ToList()
+            : before.Select(r => ReferenceEquals(r, existing) ? draft : r).ToList();
+        var isLinux = string.Equals(draft.Platform, "linux", StringComparison.OrdinalIgnoreCase);
+
+        var today = _clock.LocalToday();
+        var to = today;
+        var from = today.AddDays(-(TrialWindowDays - 1));
+        List<long> hostIds = _visibility != null
+            ? _visibility.GetVisibleHostIds().ToList()
+            : _hosts.GetAll().Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToList();
+
+        // 候選問題：先以聚合層看得到的（來源, 事件 ID）縮小到「現行或草稿可能命中」的少數幾種，再只讀這幾種的子列
+        var candidates = _issueAggregateQuery.Aggregate(IssueExclusion.None, from, to, hostIds)
+            .Where(a => KnownIssueCatalog.RuleMayHit(existing ?? draft, a.Source, a.EventId) || KnownIssueCatalog.RuleMayHit(draft, a.Source, a.EventId))
+            .Select(a => (a.Source, a.EventId))
+            .Distinct()
+            .ToList();
+        var rows = candidates.Count == 0
+            ? new List<RuleTrialRow>()
+            : _issueAggregateQuery.RuleTrialRows(IssueExclusion.None, candidates, from, to, hostIds);
+
+        var dispatchable = (_systemSettings?.Get() ?? new SystemSettings()).ParseUnhandledSeverities();
+
+        var b = TrialTally(rows, before, existing, isLinux, dispatchable);
+        var a2 = TrialTally(rows, after, draft, isLinux, dispatchable);
+        result.HitHostDaysBefore = b.HitHostDays;
+        result.HitHostDaysAfter = a2.HitHostDays;
+        result.ElevatedHostDaysBefore = b.ElevatedHostDays;
+        result.ElevatedHostDaysAfter = a2.ElevatedHostDays;
+        result.DispatchPairsBefore = b.DispatchPairs;
+        result.DispatchPairsAfter = a2.DispatchPairs;
+
+        // 比現行更寬：看不到的是「低於舊門檻／舊嚴重度而沒被記錄」的事件，真實數字只會更多
+        result.IsLowerBound = existing == null
+            || draft.CountThreshold < existing.CountThreshold
+            || (draft.Enabled && !existing.Enabled)
+            || draft.Severity > existing.Severity
+            || (draft.ElevatesDayRisk && !existing.ElevatesDayRisk)
+            || a2.MatchedRows > b.MatchedRows;
+        result.MessageConditionNotRecomputed = isLinux && existing != null
+            && (!draft.MessagePatterns.SequenceEqual(existing.MessagePatterns)
+                || !string.Equals(draft.ProgramPattern, existing.ProgramPattern, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(draft.EventNamePattern, existing.EventNamePattern, StringComparison.OrdinalIgnoreCase));
+        return result;
+    }
+
+    private readonly record struct TrialCounts(int HitHostDays, int ElevatedHostDays, int DispatchPairs, int MatchedRows);
+
+    /// <summary>以指定規則表把子列逐列判定：比對（Windows 走正式的 FindRule，Linux 認子列記下的命中規則 Id）、門檻與嚴重度（OutcomeFor）、派工嚴重度關卡</summary>
+    private static TrialCounts TrialTally(
+        IReadOnlyList<RuleTrialRow> rows, IReadOnlyList<KnownIssueRule> rules, KnownIssueRule? rule, bool isLinux,
+        IReadOnlySet<IssueSeverity> dispatchable)
+    {
+        if (rule == null) return new TrialCounts(0, 0, 0, 0);
+        var hitDays = new HashSet<(long, DateTime)>();
+        var elevatedDays = new HashSet<(long, DateTime)>();
+        var pairs = new HashSet<(long, string, int, string)>();
+        var matched = 0;
+        foreach (var row in rows)
+        {
+            var hits = isLinux
+                ? rule.Enabled && string.Equals(row.EventKey, rule.Id, StringComparison.OrdinalIgnoreCase)
+                : KnownIssueCatalog.FindRule(rules, row.Source, row.EventId) is { } found
+                  && string.Equals(found.Id, rule.Id, StringComparison.OrdinalIgnoreCase);
+            if (!hits) continue;
+            matched++;
+            var outcome = KnownIssueCatalog.OutcomeFor(rule, row.Count);
+            if (outcome.ThresholdMet) hitDays.Add((row.HostId, row.Date));
+            if (outcome.ElevatesDayRisk) elevatedDays.Add((row.HostId, row.Date));
+            if (dispatchable.Contains(outcome.Severity)) pairs.Add((row.HostId, row.Source.ToUpperInvariant(), row.EventId, row.EventKey));
+        }
+        return new TrialCounts(hitDays.Count, elevatedDays.Count, pairs.Count, matched);
     }
 
     /// <summary>既有進入點（POST /api/rules/{ruleId}/suppressions）：RuleId 來自路由，內部委派到
@@ -1186,6 +1337,7 @@ public class RuleAdminService
         return new RuleDto
         {
             Id = rule.Id,
+            Version = KnownIssueRuleVersion.Of(rule),
             Origin = rule.Origin,
             Enabled = rule.Enabled,
             Platform = rule.Platform,

@@ -179,6 +179,13 @@ public class IssueGroupDto
     /// <summary>白話說明（取自命中規則的 PlainExplanation；未命中或規則無說明時為 null）</summary>
     public string? PlainExplanation { get; set; }
 
+    /// <summary>
+    /// 命中規則的 Id（與白話說明同一個查法：<c>KnownIssueCatalog.FindRuleByAggregateKey</c>）；未命中、規則已退役為 null。
+    /// 「調整這條規則」的目的地；不分檢視者（規則 Id 不是敏感資料，能不能開規則頁由畫面依 Maintain 決定、後端另擋），
+    /// 所以不影響依檢視者分流的快取。
+    /// </summary>
+    public string? RuleId { get; set; }
+
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
@@ -555,6 +562,27 @@ public class IssueGuidanceDto
     public string Impact { get; set; } = string.Empty;
     public List<string> LikelyCauses { get; set; } = new();
     public List<string> NextSteps { get; set; } = new();
+
+    /// <summary>
+    /// 規則的處置參考（風險日問題列與交辦單頁共用的唯一組法）：白話說明、影響、可能原因、處置步驟都沒有內容時回 null，
+    /// 前端就不掛展開面板；規則為 null（未命中、已退役的 PRTG 代碼）同樣回 null。
+    /// </summary>
+    public static IssueGuidanceDto? From(KnownIssueRule? rule)
+    {
+        if (rule == null) return null;
+        var hasContent = !string.IsNullOrWhiteSpace(rule.PlainExplanation) ||
+                         !string.IsNullOrWhiteSpace(rule.Impact) ||
+                         rule.LikelyCauses.Length > 0 || rule.NextSteps.Length > 0;
+        if (!hasContent) return null;
+
+        return new IssueGuidanceDto
+        {
+            Explanation = rule.PlainExplanation,
+            Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses.ToList(),
+            NextSteps = rule.NextSteps.ToList()
+        };
+    }
 }
 
 /// <summary>

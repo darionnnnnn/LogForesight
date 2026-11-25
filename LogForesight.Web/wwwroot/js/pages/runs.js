@@ -316,24 +316,16 @@ function renderSummary(summaryPage) {
             // 每列是資料日（事件發生的那一天）；執行日只出現在「執行日與時間」欄（第 73 輪 F）
             { title: '資料日', className: 'text-nowrap', render: dataDateCell },
             { title: '執行日與時間', className: 'lf-minw-sm', render: s => renderDayTimingCell(s.timing, { runDate: s.runDate, pendingText: s.pendingSummary, inProgress: s.inProgress, catchUp: s.catchUpStartedAt, catchUpMore: s.catchUpMore }) },
-            { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
-            { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
-            { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
-            { title: '失敗', className: 'text-end', render: s => countCell(s.failedCount, 'failed') },
-            { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
-            { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
-            { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
-            { title: '未執行', className: 'text-end', render: s => notRunCell(s) },
-            { title: '空資料待複查', className: 'text-end', render: s => recheckCell(s) },
-            { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
+            // 一句結論由後端產生（RunDayConclusion）；十多欄計數收進展開（renderDayCounts）
+            { title: '結論', className: 'lf-minw-sm', render: s => conclusionCell(s) },
             { title: 'PRTG', render: s => renderPrtgDaySummaryCell(s) },
-            { title: '失敗主機', render: s => failedHostsCell(s) }
+            { title: '', className: 'text-end', render: s => rerunCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
         // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
         onRowExpand: (summary, cell) => {
             const hosts = document.createElement('div');
-            cell.replaceChildren(renderDayTiming(summary.timing), hosts);
+            cell.replaceChildren(renderDayCounts(summary), renderDayTiming(summary.timing), hosts);
             renderDayDetailInto(hosts, summary.date);
         },
         empty: { title: '尚無執行紀錄', hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。' }
@@ -394,20 +386,101 @@ function countCell(count, status) {
     return span;
 }
 
-function failedHostsCell(summary) {
-    const total = summary.failedCount + summary.stuckCount;
-    if (total === 0) return document.createTextNode('');
+/** 結論格：後端一句話；失敗或異常中斷時用警示色（顏色之外文字本身已說明，不靠顏色傳達） */
+function conclusionCell(s) {
+    const span = document.createElement('span');
+    span.textContent = s.conclusion || '';
+    return span;
+}
 
+/** 十多欄計數收進展開：只列不為 0 的狀態，加上 PRTG 與失敗主機的完整名單 */
+function renderDayCounts(s) {
     const wrap = document.createElement('div');
-    wrap.textContent = summary.failedHostNames.join('、');
-
-    if (summary.otherFailedCount > 0) {
-        const more = document.createElement('span');
-        more.className = 'lf-text-meta';
-        more.textContent = `　其他 ${summary.otherFailedCount} 台`;
-        wrap.appendChild(more);
+    wrap.className = 'd-flex flex-wrap gap-3 mb-2 lf-day-counts';
+    const items = [
+        ['成功', s.successCount, 'success'], ['已回補', s.backfilledCount, 'backfilled'], ['有警告', s.warningCount, 'warning'],
+        ['失敗', s.failedCount, 'failed'], ['已停止', s.stoppedCount, 'stopped'], ['異常中斷', s.stuckCount, 'stuck'],
+        ['執行中', s.runningCount, 'running'], ['未執行', s.notRunCount, 'none'], ['空資料待複查', s.recheckCount, 'recheck'],
+        ['本機停用', s.localDisabledCount, 'local_disabled']
+    ];
+    for (const [label, count, status] of items) {
+        if (!(count > 0)) continue;
+        const item = document.createElement('span');
+        item.className = 'text-nowrap';
+        const name = document.createElement('span');
+        name.className = 'lf-text-label me-1';
+        name.textContent = `${label}`;
+        item.append(name, countCell(count, status));
+        wrap.appendChild(item);
+    }
+    const failed = s.failedCount + s.stuckCount;
+    if (failed > 0 && s.failedHostNames?.length) {
+        const names = document.createElement('div');
+        names.className = 'w-100';
+        const label = document.createElement('span');
+        label.className = 'lf-text-label me-1';
+        label.textContent = '失敗主機';
+        const text = document.createElement('span');
+        text.textContent = s.failedHostNames.join('、') + (s.otherFailedCount > 0 ? `　其他 ${s.otherFailedCount} 台` : '');
+        names.append(label, text);
+        wrap.appendChild(names);
     }
     return wrap;
+}
+
+/**
+ * 立即執行要帶入的參數（執行總表「補跑這些主機」）：模式固定「只補跑失敗或未執行」；
+ * 資料日換成回望天數（立即執行以回望天數涵蓋日子，從今天往前數到那個資料日）；
+ * 主機是後端算好的可補跑名單（超過上限為空，改用全部主機）。
+ * @returns {{mode: string, backfillDays: number, dataDate: string, hostNames: string[], hostCount: number}}
+ */
+function runNowCarryFor(summary, now = new Date()) {
+    const [y, m, d] = summary.date.split('-').map(Number);
+    const dataDay = new Date(y, m - 1, d);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const backfillDays = Math.max(1, Math.round((today - dataDay) / 86400000));
+    return {
+        mode: 'None',
+        backfillDays,
+        dataDate: summary.date,
+        hostNames: summary.rerunHostNames ?? [],
+        hostCount: summary.rerunHostCount ?? 0
+    };
+}
+
+/** 把補跑參數帶進既有的立即執行彈窗；預覽與確認流程完全沿用 */
+function openRunNowForDay(summary) {
+    const carry = runNowCarryFor(summary);
+    document.getElementById('run-now-form').reset();
+    const useHosts = carry.hostNames.length > 0;
+    document.getElementById('run-now-scope-hosts-row').classList.toggle('d-none', !useHosts);
+    document.getElementById('run-now-scope-hosts').checked = useHosts;
+    document.getElementById('run-now-scope-all').checked = !useHosts;
+    document.getElementById('run-now-scope-hosts-label').textContent =
+        `指定主機（${carry.hostCount} 台：${carry.hostNames.slice(0, 3).join('、')}${carry.hostNames.length > 3 ? ' 等' : ''}）`;
+    runNowHostNames = useHosts ? carry.hostNames : [];
+    document.getElementById('run-now-segment-field').classList.add('d-none');
+    document.getElementById('run-now-backfill').value = String(carry.backfillDays);
+    document.getElementById('run-now-rerun-mode').value = carry.mode;
+    updateRerunModeUI();
+    updateRunNowPreview();
+    refreshScheduleStatus();
+    runNowModal.show();
+}
+
+/** 「補跑這些主機」鈕：只給有 Maintain 的人（data-maintain-only；沒有可補跑的主機不出現） */
+function rerunCell(s) {
+    if (!s.canRerun) return document.createTextNode('');
+    const btn = button('補跑這些主機', {
+        variant: 'outline-primary', opens: 'dialog',
+        title: `只補跑 ${s.date} 失敗或未執行的 ${s.rerunHostCount} 台`,
+        onClick: event => { event.stopPropagation(); openRunNowForDay(s); }
+    });
+    btn.dataset.maintainOnly = '';
+    btn.dataset.maintainAction = '';
+    // 沒有 Maintain 時整顆隱藏；Maintain 判定在排程設定載入時完成，先到的列由 loadSchedule 的 data-maintain-action 揭開
+    if (canMaintainSchedule !== true) btn.classList.add('d-none');
+    return btn;
 }
 
 // 排序在後端（RunMonitorService.GetDayDetailPage），這裡只宣告可排序的鍵
@@ -2078,6 +2151,8 @@ document.getElementById('schedule-ai-rerun-confirm')?.addEventListener('click', 
 
 let runNowPreviewDebounce = null;
 let runNowAiDisabled = null;
+/** 執行總表「補跑這些主機」帶入的主機名單（scope=hosts 時送出）；一般的立即執行為空 */
+let runNowHostNames = [];
 
 const RERUN_MODE_CONFIG = {
     None: {
@@ -2144,6 +2219,8 @@ function updateRunNowAiDisabledHint() {
 
 document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-form').reset();
+    runNowHostNames = [];
+    document.getElementById('run-now-scope-hosts-row').classList.add('d-none');
     document.getElementById('run-now-scope-all').checked = true;
     document.getElementById('run-now-segment-field').classList.add('d-none');
     updateRerunModeUI();
@@ -2192,6 +2269,7 @@ async function updateRunNowPreview() {
 
     const params = new URLSearchParams({ scope });
     if (scope === 'segment') params.set('segment', segment);
+    if (scope === 'hosts') for (const name of runNowHostNames) params.append('hostNames', name);
     if (onlyMissingOrFailed) params.set('onlyMissingOrFailed', 'true');
     if (backfillDays) params.set('backfillDays', backfillDays);
 
@@ -2282,6 +2360,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const result = await api.post('/api/admin/schedule/run', {
             scope,
             segment: scope === 'segment' ? segment : null,
+            hostNames: scope === 'hosts' ? runNowHostNames : null,
             backfillDays: days,
             onlyMissingOrFailed,
             rerunMode,

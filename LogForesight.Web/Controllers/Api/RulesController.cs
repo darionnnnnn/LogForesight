@@ -37,6 +37,15 @@ public class RulesController : ControllerBase
     public ApiResponse<DiskTrendRulePreviewDto> PreviewDiskTrend([FromBody] DiskTrendRulePreviewRequest request) =>
         ApiResponse<DiskTrendRulePreviewDto>.Ok(_service.PreviewDiskTrend(request, HttpContext.RequestAborted));
 
+    /// <summary>
+    /// 規則試算（F19-2）：草稿規則套在近 30 天既有問題子列上的影響（命中主機日、會被派工的（主機, 問題））。
+    /// 唯讀，不寫入任何資料；門檻調低時結果是下限估計。
+    /// </summary>
+    [SkipDataVersionBump]
+    [HttpPost("trial")]
+    public ApiResponse<RuleTrialDto> Trial([FromBody] SaveRuleRequest request) =>
+        ApiResponse<RuleTrialDto>.Ok(_service.TrialRule(request));
+
     [HttpPost]
     public ApiResponse<RuleDto> Save([FromBody] SaveRuleRequest request) =>
         ApiResponse<RuleDto>.Ok(_service.SaveRule(request));

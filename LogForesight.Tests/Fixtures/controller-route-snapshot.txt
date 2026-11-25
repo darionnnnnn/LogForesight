@@ -39,7 +39,6 @@ PUT	/api/admin/hosts/{hostId:long}/owners	C=Maintain;A=-	-	-	-	AdminController
 POST	/api/admin/hosts/{hostId:long}/unmerge	C=Maintain;A=-	-	-	-	AdminController
 GET	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
 PUT	/api/admin/issue-owners	C=Maintain;A=-	-	-	-	IssueOwnersController
-GET	/api/admin/issue-owners/muted-count	C=Maintain;A=-	-	-	-	IssueOwnersController
 GET	/api/admin/issue-owners/recent-issues	C=Maintain;A=-	-	-	-	IssueOwnersController
 DELETE	/api/admin/issue-owners/{source}/{eventId:int}	C=Maintain;A=-	-	-	-	IssueOwnersController
 DELETE	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	-	-	IssueOwnersController
@@ -150,8 +149,8 @@ GET	/api/handlers/me/badge	C=-;A=-	-	-	-	HandlersController
 GET	/api/handlers/{userId:long}/work-orders	C=-;A=-	-	-	-	HandlersController
 GET	/api/handlers/{userId:long}/work-orders/summary	C=-;A=-	-	-	-	HandlersController
 GET	/api/handlers/{userId:long}/workload	C=-;A=-	-	-	-	HandlersController
-POST	/api/handling/issue-cases/bulk-close	C=Assign&Handle;A=-	-	-	-	IssueBulkCloseController
-GET	/api/handling/issue-cases/close-preview	C=Assign&Handle;A=-	-	-	-	IssueBulkCloseController
+POST	/api/handling/issue-cases/bulk-close	C=Handle;A=-	-	-	-	IssueBulkCloseController
+GET	/api/handling/issue-cases/close-preview	C=Handle;A=-	-	-	-	IssueBulkCloseController
 GET	/api/handling/last-note	C=-;A=Handle	-	-	-	IssueNoteController
 GET	/api/health	C=-;A=-	anonymous	-	-	HealthController
 GET	/api/health/attention	C=-;A=DevMonitor|Maintain	-	-	-	HealthController
@@ -165,6 +164,7 @@ GET	/api/help/ask-available	C=-;A=-	-	-	-	HelpController
 GET	/api/help/manual	C=-;A=-	-	-	-	HelpController
 GET	/api/host-detail/{hostId:long}	C=-;A=-	-	-	-	HostDetailController
 GET	/api/host-detail/{hostId:long}/issues	C=-;A=-	-	-	-	HostDetailController
+GET	/api/host-detail/{hostId:long}/orders	C=-;A=-	-	-	-	HostOrdersController
 GET	/api/host-detail/{hostId:long}/prtg	C=-;A=-	-	-	-	HostDetailController
 GET	/api/hosts	C=-;A=-	-	-	-	HostsController
 GET	/api/hosts/groups	C=-;A=-	-	-	-	HostsController
@@ -214,6 +214,7 @@ GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	-	-	HandlingContro
 GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	-	-	RecordsController
 GET	/api/reports/category-trend	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/effectiveness	C=-;A=-	-	-	-	ReportsController
+GET	/api/reports/export/{table}	C=-;A=-	-	-	-	ReportsController
 GET	/api/reports/summary	C=-;A=-	-	-	-	ReportsController
 GET	/api/rules	C=Maintain;A=-	-	-	-	RulesController
 POST	/api/rules	C=Maintain;A=-	-	-	-	RulesController
@@ -222,6 +223,7 @@ POST	/api/rules/import-apply	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/import-preview	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/import-status	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/rules/suppressions	C=Maintain;A=-	-	-	-	RulesController
+POST	/api/rules/trial	C=Maintain;A=-	-	-	skipbump	RulesController
 POST	/api/rules/validate	C=Maintain;A=-	-	-	skipbump	RulesController
 DELETE	/api/rules/{ruleId}	C=Maintain;A=-	-	-	-	RulesController
 PUT	/api/rules/{ruleId}/enabled	C=Maintain;A=-	-	-	-	RulesController
@@ -244,10 +246,10 @@ GET	/api/work-orders	C=Assign|ViewAll;A=-	-	-	-	WorkOrderListController
 POST	/api/work-orders	C=Assign;A=-	-	-	-	WorkOrdersController
 GET	/api/work-orders/admin-reminders	C=Assign|ViewAll;A=-	-	-	skipbump	WorkOrderBoardController
 POST	/api/work-orders/auto-dispatch	C=Assign;A=-	-	-	-	WorkOrderAutoDispatchController
-POST	/api/work-orders/auto-dispatch/preview	C=Assign;A=-	-	-	skipbump	WorkOrderAutoDispatchController
+POST	/api/work-orders/bulk-reassign	C=Assign;A=-	-	-	-	WorkOrdersController
+POST	/api/work-orders/bulk-reassign/preview	C=Assign;A=-	-	-	skipbump	WorkOrdersController
 POST	/api/work-orders/candidates	C=Assign;A=Assign	-	-	skipbump	WorkOrdersController
 GET	/api/work-orders/dismissed	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController
-GET	/api/work-orders/dismissed/count	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController
 POST	/api/work-orders/dismissed/restore	C=Assign;A=-	-	-	-	WorkOrderDismissedController
 POST	/api/work-orders/dismissed/restore-issue	C=Assign;A=-	-	-	-	WorkOrderDismissedController
 GET	/api/work-orders/gaps	C=Assign|ViewAll;A=-	-	-	-	WorkOrderBoardController

@@ -772,20 +772,7 @@ public class RecordDetailQueryService
     private static IssueGuidanceDto? BuildGuidance(LogIssueSignature issue, Dictionary<string, KnownIssueRule>? guidance)
     {
         if (guidance == null || string.IsNullOrEmpty(issue.RuleId)) return null;
-        if (!guidance.TryGetValue(issue.RuleId, out var rule)) return null;
-
-        var hasContent = !string.IsNullOrWhiteSpace(rule.PlainExplanation) ||
-                         !string.IsNullOrWhiteSpace(rule.Impact) ||
-                         rule.LikelyCauses.Length > 0 || rule.NextSteps.Length > 0;
-        if (!hasContent) return null;
-
-        return new IssueGuidanceDto
-        {
-            Explanation = rule.PlainExplanation,
-            Impact = rule.Impact,
-            LikelyCauses = rule.LikelyCauses.ToList(),
-            NextSteps = rule.NextSteps.ToList()
-        };
+        return guidance.TryGetValue(issue.RuleId, out var rule) ? IssueGuidanceDto.From(rule) : null;
     }
 
     /// <summary>

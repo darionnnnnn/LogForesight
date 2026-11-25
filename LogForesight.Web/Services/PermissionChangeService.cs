@@ -525,6 +525,7 @@ public class PermissionChangeService
             After = change.After,
             AlertText = change.AlertText,
             RawText = change.RawText,
+            IsUnparsed = IsUnparsed(change),
             SummaryText = GenerateSummaryText(change, rules),
             ObjectType = change.ObjectType,
             ProcessName = change.ProcessName,
@@ -538,6 +539,22 @@ public class PermissionChangeService
             ConfirmedAt = confirmation?.ConfirmedAt,
             ConfirmNote = confirmation?.Note
         };
+    }
+
+    /// <summary>
+    /// 無法解析細節的列：類別其他、對象解析不出（空白或舊壞值）、無操作者與目標帳號、異動前後皆空、非彙總列。
+    /// 清單據此在說明欄提供就地「展開原文」。
+    /// </summary>
+    public static bool IsUnparsed(PermissionChangeRecord change)
+    {
+        var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
+        if (category != PermissionCategory.Other) return false;
+        if (change.CoveredFrom != null || change.CoveredTo != null) return false;
+        return string.IsNullOrWhiteSpace(ResolveTarget(change.Target, string.Empty, change.EventId))
+            && string.IsNullOrWhiteSpace(change.InitiatorAccount)
+            && string.IsNullOrWhiteSpace(change.TargetAccount)
+            && string.IsNullOrWhiteSpace(change.Before)
+            && string.IsNullOrWhiteSpace(change.After);
     }
 
     /// <summary>產生異動摘要說明（後端統一組裝，避免前後端規則漂移）。

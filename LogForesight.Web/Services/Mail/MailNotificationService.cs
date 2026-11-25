@@ -504,12 +504,7 @@ public class MailNotificationService
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled) return;
 
-            var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
-                .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
-                .Where(e => e != null)
-                .Select(e => e!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var recipients = EscalationRecipients();
             if (recipients.Count == 0)
             {
                 Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
@@ -544,6 +539,32 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 問題上報通知處理失敗（不影響狀態變更本身）");
+        }
+    }
+
+    /// <summary>上報信的收件人（admin 群組成員中有可用 email 者，去重）。寄信與回覆畫面的「已通知 N 位」共用這一份判定。</summary>
+    private List<string> EscalationRecipients() =>
+        AdminMembersResolver.GetAdminMembers(_userGroups, _users)
+            .Select(u => EligibleEmailOrWarn(u, "問題上報通知"))
+            .Where(e => e != null)
+            .Select(e => e!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// 這次上報會收到通知的管理員數（回覆成功後給處理人看）：郵件停用時沒有信會寄出，回 0；
+    /// 否則是上報信的收件人數。與 <see cref="NotifyEscalationAsync"/> 同一份判定，不另算。
+    /// </summary>
+    public int CountEscalationRecipients()
+    {
+        try
+        {
+            return _settingsStore.Get().MailEnabled ? EscalationRecipients().Count : 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 計算上報收件人數失敗（不影響狀態變更本身）");
+            return 0;
         }
     }
 

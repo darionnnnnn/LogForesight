@@ -432,16 +432,19 @@ public class FrontendConsistencyUiTests
         Assert.Contains("['主機', hostLabel(item.exactHostKey)]", block);
         Assert.Contains("key || '未知'", block);
         Assert.Contains("item.exactResourceKey || '未知'", block);
-        Assert.Contains("['UTC 時間／區間', '未知']", block);
-        // 沒有值的「時間解讀」「原生參照」不逐筆印，警語移到摘要行（第 73 輪 E）
-        Assert.Contains("if (item.nativeReference) row.appendChild(sourceLine([['原生參照', item.nativeReference]]", block);
-        Assert.Contains("筆無時間解讀，不能推定連續狀態", block);
+        Assert.Contains("['時間／時段', '未知']", block);
+        // 沒有值的「時間依據」「來源事件編號」不逐筆印，警語在摘要行（第 73 輪 E；第 81 輪批次 T 改成白話與當地時間）
+        Assert.Contains("if (item.nativeReference) row.appendChild(sourceLine([['來源事件編號', item.nativeReference]]", block);
+        Assert.Contains("disclosure('技術細節', list", block);
         // 欄位名與值分開包裝，一律寫 textContent（實際輸出的文字由 record-detail-issue-cell.behavior.mjs 守住）
         Assert.Contains("keyEl.textContent = `${key}：`", block);
         Assert.Contains("valueEl.textContent = value", block);
         Assert.DoesNotContain("innerHTML", block);
         Assert.DoesNotContain("href", block);
-        Assert.Contains("群組顯示時段不是來源時間窗", block);
+        // 內部用語不再出現在畫面（反例由行為測試 sourceEvidenceNoInternalPhrases 先確認守門會中）
+        Assert.DoesNotContain("群組顯示時段不是來源時間窗", js);
+        Assert.DoesNotContain("無時間解讀，不能推定連續狀態", js);
+        Assert.DoesNotContain("原生參照", js);
     }
 
     [Fact]

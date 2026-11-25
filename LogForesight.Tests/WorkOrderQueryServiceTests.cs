@@ -640,6 +640,21 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(2, svc.List(new WorkOrderListRequest()).Total);
     }
 
+    /// <summary>F14-1：交辦總覽的處理人篩選只回該人的單；不帶篩選時全部都在（兩側各一例）</summary>
+    [Fact]
+    public void 清單_處理人篩選_只回該人的單_不帶篩選回全部()
+    {
+        var alice1 = AddOrder(_alice.UserId, eventId: 1);
+        var alice2 = AddOrder(_alice.UserId, eventId: 2);
+        var bob1 = AddOrder(_bob.UserId, eventId: 3);
+        var svc = Service(As(1, Capability.Assign));
+
+        Assert.Equal(new[] { alice1, alice2 }.OrderBy(x => x), Ids(svc.List(new WorkOrderListRequest { HandlerId = _alice.UserId })).OrderBy(x => x));
+        Assert.Equal(new[] { bob1 }, Ids(svc.List(new WorkOrderListRequest { HandlerId = _bob.UserId })));
+        Assert.Equal(3, svc.List(new WorkOrderListRequest()).Total);
+        Assert.Equal(0, svc.List(new WorkOrderListRequest { HandlerId = 424242 }).Total);
+    }
+
     [Fact]
     public void 清單_群組篩選與處理人篩選取交集()
     {

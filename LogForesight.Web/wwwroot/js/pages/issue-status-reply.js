@@ -68,6 +68,7 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false, 
  * @param {boolean} [options.dismissalReleases] 這次涵蓋的問題「不再打擾」滿 30 天會自動解除（伺服器的 dismissalReleases；多張單要全部都是才傳 true）：
  *        不處理類的後果說明改寫成「30 天內不再派工，之後仍在發生會重新派工」
  * @param {boolean} [options.multiTarget] 這次涵蓋多台主機或多張單：不處理類的後果說明改用複數說法
+ * @param {boolean} [options.multiIssues] 這次涵蓋同一台主機的多個問題（主機詳情「這台的交辦」）：後果說明改指「這台主機的這些問題」
  * @param {string} [options.initialStatus] 結論按鈕的初始選取（「下一張」沿用上一張的結論）；不傳＝不預選，必須自己選
  * @param {string|null} [options.previousNote] 上一張的說明：有值時說明欄上方顯示「帶入上一張的說明」連結
  * @param {{load: (params: {page: number, pageSize: number, hostNames: string[]|null}) => Promise<object>}} [options.picker]
@@ -81,7 +82,7 @@ export function noFixConsequenceText({ multiHosts = false, multiIssues = false, 
  *        remaining 取剩下的進行中台數，submitRest 以 caseIds 為空（＝全部進行中，也就是剩下的）送出；
  *        第一次是非結案類（處理中、觀察中、上報）時不提示、直接關閉。需要 submit 回傳 API 回應
  */
-export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence, dismissalReleases = false }) {
+export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, onApplied, onRejected, aiContext = {}, reuseIssueKey = null, onNext, initialStatus, previousNote, multiTarget = false, picker: pickerOptions, partialTarget = false, followUp, recurrence, dismissalReleases = false, multiIssues = false }) {
     let modal = null;   // showDetailModal 回傳的控制代碼，送出成功後以 close() 關閉
     const body = document.createElement('div');
     const form = document.createElement('form');
@@ -169,7 +170,7 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     statusGroup.setAttribute('aria-labelledby', 'wo-reply-status-label');
     let selectedStatus = initialStatus && STATUS_OPTIONS.some(option => option.value === initialStatus) ? initialStatus : null;
     // 選到不處理類時說明後果：這是處理人單方面的決定，之後不會再派給任何人（管理者代為結案才有「是否停派」可選）
-    const noFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: multiTarget, releases: dismissalReleases }));
+    const noFixNote = statusNote('warning', noFixConsequenceText({ multiHosts: multiTarget, multiIssues, releases: dismissalReleases }));
     noFixNote.classList.add('mb-3');
     noFixNote.classList.add('d-none');
     noFixNote.id = 'wo-reply-no-fix-note';
@@ -583,7 +584,7 @@ function monthDay(dueDate) {
  * 不各寫一份：結案類寫出結論名稱、處理中說明「仍為處理中」、觀察中帶到期日、上報說明已通知管理者。
  * scope＝涵蓋範圍文字（「20 台」「3 張單共 20 台」）；沒有 payload（取不到結論）時退回最簡說法。
  */
-export function replyOutcomeText(payload, scope) {
+export function replyOutcomeText(payload, scope, notifiedAdmins) {
     const meta = statusMeta(payload?.status);
     if (!meta) return `已回覆 ${scope}`;
     if (meta.closed) return `已回覆 ${scope}為${meta.shortLabel}`;
@@ -591,14 +592,25 @@ export function replyOutcomeText(payload, scope) {
         const until = monthDay(payload.dueDate);
         return `${scope}改為觀察中${until ? `，至 ${until}` : ''}`;
     }
-    if (meta.value === 'escalated') return `${scope}已上報管理者`;
+    if (meta.value === 'escalated') return `${scope}已上報管理者${escalationNotifyText(notifiedAdmins)}`;
     return `已更新 ${scope}的說明（仍為${meta.shortLabel}）`;
+}
+
+/**
+ * 上報後的通知交代：後端帶「會收到通知的管理員數」。N＞0 寫明人數；0 寫明沒有可通知的人、已列入交辦總覽提醒；
+ * 沒帶（null／undefined，例如這些成員原本就已上報而不重複通知）不多說。
+ */
+function escalationNotifyText(notifiedAdmins) {
+    if (!Number.isInteger(notifiedAdmins) || notifiedAdmins < 0) return '';
+    return notifiedAdmins > 0
+        ? `，已通知 ${notifiedAdmins} 位管理員`
+        : '，目前沒有可通知的管理員，已列入交辦總覽提醒';
 }
 
 /** 單張交辦單回覆的成功訊息（POST /api/work-orders/{id}/reply 的回應）；payload＝這次送出的 { status, dueDate } */
 export function toastReplyResult(result, payload) {
     const closed = result.workOrderClosed ? '，整張單已結案' : '';
-    toast(`${replyOutcomeText(payload, `${result.cases} 台`)}${closed}`, 'success');
+    toast(`${replyOutcomeText(payload, `${result.cases} 台`, result.escalationNotifiedAdmins)}${closed}`, 'success');
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');
     }
@@ -615,7 +627,7 @@ export function toastReplyManyResult(result, payload) {
             + `尚有 ${notProcessed} 張未處理，已保留勾選可直接重送。`, 'warning');
     } else {
         const closed = result.closedWorkOrders > 0 ? `，其中 ${result.closedWorkOrders} 張結案` : '';
-        toast(`${replyOutcomeText(payload, `${result.workOrders} 張單共 ${result.cases} 台`)}${closed}`, 'success');
+        toast(`${replyOutcomeText(payload, `${result.workOrders} 張單共 ${result.cases} 台`, result.escalationNotifiedAdmins)}${closed}`, 'success');
     }
     if (result.daySyncPendingCases > 0) {
         toast('逐日同步在背景進行', 'info');

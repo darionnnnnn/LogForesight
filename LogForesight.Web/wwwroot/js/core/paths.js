@@ -43,6 +43,14 @@ export function recordsUrl(filters = {}) {
 }
 
 /**
+ * 規則維護頁直接開某條規則的編輯（`?ruleId=`）。回傳 app 內路徑，呼叫端寫入 href／location 時才套 appUrl。
+ * 交辦單頁與問題查詢的「調整這條規則」共用這一個出口，參數只在這裡編碼。
+ */
+export function ruleEditUrl(ruleId) {
+    return `/admin/rules?${new URLSearchParams({ ruleId: String(ruleId) })}`;
+}
+
+/**
  * 風險日詳情路徑。`handle: true` 是「去處理」意圖（帶 `#handling`，詳情頁會展開右側處理面板）；
  * 一般「查看」不帶 hash。回傳 app 內路徑，呼叫端寫入 href 時才套 appUrl（或交給 rowHref）。
  */

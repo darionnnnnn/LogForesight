@@ -39,6 +39,7 @@ public class ReportsKpiBehaviorTests
     [InlineData("排行標籤_有顯示名")]
     [InlineData("排行標籤_沒有顯示名")]
     [InlineData("趨勢圖是折線_高實線淡面積_中實線_前期虛線")]
+    [InlineData("趨勢圖_工具列帶完整CSV下載連結")]
     [InlineData("趨勢圖下鑽_高_中_前期各帶各的日期與層級")]
     [InlineData("趨勢圖_前期早於保留線的點為null_不畫點_表格留白_不下鑽")]
     [InlineData("趨勢圖下鑽帶上顯示範圍")]

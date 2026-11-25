@@ -218,9 +218,10 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse<RunPreviewDto> RunPreview(
         [FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId,
-        [FromQuery] bool onlyMissingOrFailed = false, [FromQuery] int? backfillDays = null)
+        [FromQuery] bool onlyMissingOrFailed = false, [FromQuery] int? backfillDays = null,
+        [FromQuery] string[]? hostNames = null)
     {
-        var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId);
+        var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId, hostNames);
         var aiDisabled = !(_webAi?.Available ?? true);
 
         if (!onlyMissingOrFailed)
@@ -327,7 +328,7 @@ public class ScheduleController : ControllerBase
 
         }
 
-        var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
+        var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId, request.HostNames);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
 
@@ -354,6 +355,7 @@ public class ScheduleController : ControllerBase
                 request.Scope,
                 request.Segment,
                 request.HostId,
+                request.HostNames,
                 request.BackfillDays,
                 request.OnlyMissingOrFailed,
                 request.RerunMode,
@@ -410,7 +412,7 @@ public class ScheduleController : ControllerBase
     /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉；Windows／Linux 主機皆涵蓋在內，
     /// docs/archive/FEEDBACK-12-PLAN.md §4B——Linux 取數上線後這裡不再需要另外分開處理）。
     /// </summary>
-    private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId)
+    private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId, IReadOnlyList<string>? hostNames = null)
     {
         switch (scope)
         {
@@ -450,8 +452,27 @@ public class ScheduleController : ControllerBase
 
                 return (RunScope.NetiqHosts, new List<long> { id }, false);
 
+            case "hosts":
+                // 執行總表「補跑這些主機」帶入的主機名單：只取目前會被查詢的 NetIQ 主機（與 all／segment 同一份清單），
+                // 名單裡已不會被查詢或不存在的主機明說，不靜默少幾台
+                var names = (hostNames ?? Array.Empty<string>())
+                    .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (names.Count == 0) throw DomainException.Validation("請指定要補跑的主機。");
+                if (names.Count > RunMonitorService.MaxRerunHostNames)
+                    throw DomainException.Validation($"一次最多指定 {RunMonitorService.MaxRerunHostNames} 台主機，請改用全部主機並勾選只補跑失敗或未執行。");
+                var pollable = HostListSelection.FromStore(_hosts, _sentinels).ByServer.Values.SelectMany(v => v).ToList();
+                var byName = pollable.GroupBy(t => t.HostName, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().HostId, StringComparer.OrdinalIgnoreCase);
+                var missing = names.Where(n => !byName.ContainsKey(n)).ToList();
+                if (missing.Count > 0)
+                    throw DomainException.Validation(
+                        $"有 {missing.Count} 台主機目前不會被查詢（可能已停用、待歸屬 Sentinel，或不是 NetIQ 主機）：" +
+                        string.Join("、", missing.Take(5)) + (missing.Count > 5 ? " 等" : "") + "。請重新整理執行總表後再試。");
+                return (RunScope.NetiqHosts, names.Select(n => byName[n]).Distinct().ToList(), false);
+
             default:
-                throw DomainException.Validation($"範圍「{scope}」不合法，僅接受 all/segment/host。");
+                throw DomainException.Validation($"範圍「{scope}」不合法，僅接受 all/segment/host/hosts。");
         }
     }
 
@@ -489,6 +510,7 @@ public class ScheduleController : ControllerBase
         "all" => "全部主機",
         "segment" => "網段",
         "host" => "單一主機",
+        "hosts" => "指定主機",
         _ => scope
     };
 

@@ -99,6 +99,24 @@ const cases = {
         assert.deepEqual(sent.submits, [{ status: 'observing', note: null, dueDate: expectedDate(7) }]);
     },
 
+    // 上報後寫明通知了幾位管理員；沒有可通知的人時寫明已列入交辦總覽提醒；沒帶數字（不是新上報）不多說
+    async escalationMessageNamesNotifiedAdmins() {
+        const loaded = loadReplyModule();
+        const say = (result, many = false) => {
+            loaded.env.toasts.length = 0;
+            (many ? loaded.toastReplyManyResult : loaded.toastReplyResult)(result, { status: 'escalated', note: 'x' });
+            return loaded.env.toasts[0].message;
+        };
+        assert.equal(say({ cases: 3, escalationNotifiedAdmins: 2 }), '3 台已上報管理者，已通知 2 位管理員');
+        assert.equal(say({ cases: 3, escalationNotifiedAdmins: 0 }), '3 台已上報管理者，目前沒有可通知的管理員，已列入交辦總覽提醒');
+        assert.equal(say({ cases: 3, escalationNotifiedAdmins: null }), '3 台已上報管理者');
+        assert.equal(say({ workOrders: 2, cases: 5, escalationNotifiedAdmins: 1 }, true), '2 張單共 5 台已上報管理者，已通知 1 位管理員');
+        // 非上報狀態即使帶了數字也不提
+        loaded.env.toasts.length = 0;
+        loaded.toastReplyResult({ cases: 1, escalationNotifiedAdmins: 2 }, { status: 'resolved' });
+        assert.equal(loaded.env.toasts[0].message, '已回覆 1 台為已處理');
+    },
+
     // 成功訊息寫出結論（三個呼叫端共用 replyOutcomeText／toastReply*Result）
     async successMessagesNameTheConclusion() {
         const loaded = loadReplyModule();

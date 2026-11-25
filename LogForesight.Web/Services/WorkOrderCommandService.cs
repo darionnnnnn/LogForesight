@@ -505,14 +505,16 @@ public class WorkOrderCommandService
 
         // 「已處理」不是不處理類，勾選值一律忽略；只有不處理類且勾選才擋住之後的派工
         var blocksRedispatch = req.Status != IssueHandlingStatuses.Resolved && req.BlockRedispatch;
-        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch);
+        var caseIds = req.CaseIds is { Count: > 0 } ? req.CaseIds : null;
+        var result = _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor(_clock), blocksRedispatch, caseIds);
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
-            summary: $"代為結案交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件標為 {req.Status}（原因：{reason}）",
+            summary: $"代為結案交辦單 {id}『{LabelOf(order)}』：{result.ClosedCases} 件標為 {req.Status}"
+                     + (caseIds == null ? string.Empty : "（指定範圍）") + $"（原因：{reason}）",
             targetKind: TargetKind,
             targetId: id.ToString(),
-            detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId });
+            detail: new { WorkOrderId = id, result.ClosedCases, req.Status, Reason = reason, result.HandlerId, Scoped = caseIds != null });
 
         // 通知處理人：結案狀態、原因，以及問題再出現會不會重新派工（沿用每人一封的摘要）
         _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.AdminClosed, id, result.HandlerId, _currentUser.UserId, _currentUser.Account,

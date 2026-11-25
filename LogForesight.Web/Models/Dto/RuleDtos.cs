@@ -6,6 +6,13 @@ namespace LogForesight.Web.Models.Dto;
 public class RuleDto
 {
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 這條規則目前的版本（內容雜湊）。開啟編輯時帶著它，儲存時放進 <see cref="SaveRuleRequest.Version"/>；
+    /// 伺服器當下的版本不同就整筆拒絕（409）。只有這條規則自己的內容變動才會改版本。
+    /// </summary>
+    public string Version { get; set; } = string.Empty;
+
     public string Origin { get; set; } = string.Empty;
     public bool Enabled { get; set; }
 
@@ -86,6 +93,13 @@ public class SaveRuleRequest
     [Required(ErrorMessage = "請輸入規則 Id")]
     [StringLength(100)]
     public string Id { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 開啟編輯時讀到的 <see cref="RuleDto.Version"/>。編輯既有規則必填（空白或與伺服器當下不同＝409，資料不變）；
+    /// 新增規則（Id 尚不存在）不需要。
+    /// </summary>
+    [StringLength(64)]
+    public string? Version { get; set; }
 
     public bool Enabled { get; set; } = true;
 
@@ -386,4 +400,51 @@ public class RuleImportApplyResultDto
 
     /// <summary>套用後重新驗證的警告（遮蔽偵測＋不合格被跳過的規則），非阻斷性</summary>
     public List<string> Warnings { get; set; } = new();
+}
+
+
+/// <summary>
+/// 規則試算結果（F19-2）：把編輯中的草稿規則套在近 <see cref="WindowDays"/> 天既有的問題子列上，與目前生效的規則對照。
+/// 只讀問題子列（不重讀原始事件），不寫入任何資料。
+/// </summary>
+public sealed class RuleTrialDto
+{
+    /// <summary>false＝這條規則無法試算（PRTG 規則的門檻是分鐘／次數，不是問題子列的發生次數），原因在 <see cref="UnsupportedReason"/></summary>
+    public bool Supported { get; set; } = true;
+    public string? UnsupportedReason { get; set; }
+
+    /// <summary>試算涵蓋的天數（含今天往前）</summary>
+    public int WindowDays { get; set; }
+
+    /// <summary>草稿是新規則（目前沒有這條）：「現在」一欄恆為 0</summary>
+    public bool IsNewRule { get; set; }
+
+    /// <summary>
+    /// 命中主機日：近 <see cref="WindowDays"/> 天內，至少一列問題子列被這條規則比對到、且當日發生次數達到規則門檻的（主機, 日）數。
+    /// 現在＝目前儲存的規則，試算＝草稿。Windows 以規則表的先後順序取第一條命中（與正式分析同一個 <c>FindRule</c>），
+    /// Linux 以問題子列記下的命中規則 Id 為準（訊息內容條件不重算）。
+    /// </summary>
+    public int HitHostDaysBefore { get; set; }
+    public int HitHostDaysAfter { get; set; }
+
+    /// <summary>命中且帶「重大」旗標（會把當天判成高風險日）的主機日數；判定與正式分析同一份（<c>KnownIssueCatalog.OutcomeFor</c>）</summary>
+    public int ElevatedHostDaysBefore { get; set; }
+    public int ElevatedHostDaysAfter { get; set; }
+
+    /// <summary>
+    /// 會被派工的（主機, 問題）數：命中這條規則、套上規則嚴重度（未達門檻降一級）後落在系統設定「未處理嚴重度」集合內的
+    /// 相異（主機, 問題）。只算派工閘門的嚴重度那一關；靜音、不再打擾、負責人、可派候選人另有判定，這裡不重算，
+    /// 所以是「規則面最多會有幾組」。
+    /// </summary>
+    public int DispatchPairsBefore { get; set; }
+    public int DispatchPairsAfter { get; set; }
+
+    /// <summary>
+    /// true＝試算結果是「下限」：草稿比現行規則更寬（門檻調低、嚴重度或重大旗標調高、停用改啟用、比對範圍變大）時，
+    /// 低於舊門檻或舊嚴重度而沒被記進問題子列的事件看不到，真實命中只會多、不會少。
+    /// </summary>
+    public bool IsLowerBound { get; set; }
+
+    /// <summary>Linux 規則的訊息內容條件是分析當下才比對，試算沿用問題子列記下的命中結果；改了訊息條件時這裡為 true，數字僅供參考</summary>
+    public bool MessageConditionNotRecomputed { get; set; }
 }
