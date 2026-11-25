@@ -465,6 +465,13 @@ public class PermissionChangeDto
     /// 此時展開明細只能退而顯示 500 字截斷版的 AlertText</summary>
     public string? RawText { get; set; }
 
+    /// <summary>
+    /// 「無法解析」的列：類別為其他、沒有可用的對象（空白或舊壞值）、沒有操作者與目標帳號、異動前後皆空，
+    /// 且不是彙總列。清單上只有這種列在說明欄提供「展開原文」（可解析的列沒有，改看列展開明細）。
+    /// 判定只在 <c>PermissionChangeService.IsUnparsed</c>。
+    /// </summary>
+    public bool IsUnparsed { get; set; }
+
     public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;
 

@@ -925,6 +925,13 @@ public class WorkOrderReplyResultDto
     public int Cases { get; set; }
     public bool WorkOrderClosed { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 }
 
 /// <summary>多張交辦單一次回覆（每張全部進行中成員）</summary>
@@ -943,6 +950,13 @@ public class WorkOrderReplyManyResultDto
     public int Cases { get; set; }
     public int ClosedWorkOrders { get; set; }
     public int DaySyncPendingCases { get; set; }
+
+    /// <summary>
+    /// 本次「無法處理（上報）」會收到通知的管理員數（有 email 且會收到上報信者；郵件停用時為 0）。
+    /// 0 代表沒有可通知的人，前端要寫明已列入交辦總覽提醒。
+    /// 為 null＝這次沒有新上報（狀態不是無法處理，或這些成員原本就已上報而不重複通知），前端不提。
+    /// </summary>
+    public int? EscalationNotifiedAdmins { get; set; }
 
     /// <summary>已寫入成功的單（依送出順序）</summary>
     public List<long> Succeeded { get; set; } = new();

@@ -79,7 +79,10 @@ public class RunsPageUiTests
         // 總表欄位要把今日待補摘要與執行中旗標接進共用的執行時間格（行為測試只驗 renderDayTimingCell 本身）
         // 第 73 輪 F：同一格另帶處理日與補跑行
         Assert.Contains("renderDayTimingCell(s.timing, { runDate: s.runDate, pendingText: s.pendingSummary, inProgress: s.inProgress, catchUp: s.catchUpStartedAt, catchUpMore: s.catchUpMore })", js);
-        Assert.Contains("render: s => notRunCell(s)", js);
+        // 十多欄計數收進展開（renderDayCounts），列上只有後端算好的一句結論與補跑鈕
+        Assert.Contains("{ title: '結論', className: 'lf-minw-sm', render: s => conclusionCell(s) }", js);
+        Assert.Contains("renderDayCounts(summary)", js);
+        Assert.Contains("['空資料待複查', s.recheckCount, 'recheck']", js);
         Assert.Contains("recheckCount", js);
         // 列是資料日、執行日只在執行時間欄
         Assert.Contains("{ title: '資料日', className: 'text-nowrap', render: dataDateCell }", js);

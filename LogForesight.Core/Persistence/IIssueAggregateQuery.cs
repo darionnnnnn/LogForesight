@@ -222,6 +222,15 @@ public interface IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? dayRiskLevels);
 
     /// <summary>
+    /// 規則試算用的問題子列（F19-2）：期間內指定問題（<paramref name="issues"/>，呼叫端已依規則縮小的少數幾種）的每一列
+    /// （存活主機, 日, 簽章）與當日發生次數，母體與 <see cref="Aggregate"/> 相同的可見主機與靜音排除。
+    /// 同一存活主機、日、簽章（含合併主機別名）的次數相加成一列；唯讀，不寫入任何資料。
+    /// </summary>
+    List<RuleTrialRow> RuleTrialRows(
+        IssueExclusion exclusion, IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds) => throw new NotSupportedException();
+
+    /// <summary>
     /// 問題的機房首見日（回饋十九輪批次G4呈現，批次B落地，↔ lf_issue_first_seen）。
     /// 鍵為 (SourceKey 正規化大寫, EventId)，呼叫端查詢時要對 Source 做同樣的
     /// <c>ToUpperInvariant()</c> 正規化才查得到——與本檔其餘方法的 wanted-normalization 慣例一致。
@@ -348,6 +357,9 @@ public sealed record DayHandlingProjection(long HostId, DateTime Date, string Da
 
 /// <summary>單一問題的一個（存活主機, 日）出現，<see cref="SeverityRank"/> 為該日這個問題的最高嚴重度</summary>
 public sealed record IssueHostDay(long HostId, DateTime Date, int SeverityRank);
+
+/// <summary>規則試算的一列問題子列：<see cref="Count"/> 是當日該簽章的發生次數，<see cref="EventKey"/> 是 Linux 聚合時比對命中的規則 Id（Windows 為空）</summary>
+public sealed record RuleTrialRow(long HostId, DateTime Date, string Source, int EventId, string EventKey, int Count);
 
 /// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
 public sealed class IssueDailyHostCount

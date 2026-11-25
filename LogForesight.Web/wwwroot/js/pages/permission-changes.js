@@ -515,7 +515,32 @@ function summaryCell(row) {
         div.title = row.summaryText;
         div.tabIndex = 0;
     }
-    return div;
+    if (!row.isUnparsed) return div;
+
+    // 無法解析的列：說明欄只有「無法解析細節」，使用者無從判斷，就地展開原始事件摘要，不必離開清單。
+    // 可解析的列沒有這個按鈕（改看列展開明細）。原文是外部事件字串，一律 textContent。
+    const wrap = document.createElement('div');
+    const raw = document.createElement('div');
+    raw.className = 'lf-text-data border rounded bg-white p-2 mt-1 lf-scroll-xl lf-pre-wrap lf-break-word d-none';
+    raw.textContent = rawEventText(row);
+    const toggle = button('展開原文', { variant: 'outline-secondary', className: 'mt-1' });
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.dataset.rawToggle = 'true';
+    toggle.addEventListener('click', () => {
+        const open = raw.classList.toggle('d-none') === false;
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.children[toggle.children.length - 1].textContent = open ? '收合原文' : '展開原文';
+    });
+    wrap.append(div, toggle, raw);
+    return wrap;
+}
+
+/** 無法解析列要顯示的原文：未截斷的 rawText 優先，舊資料退回 alertText，都沒有時明說沒有 */
+function rawEventText(row) {
+    const raw = String(row.rawText ?? '').trim();
+    if (raw !== '') return raw;
+    const alert = String(row.alertText ?? '').trim();
+    return alert !== '' ? alert : '（沒有可顯示的原始事件內容）';
 }
 
 function permStatusBadge(status) {
