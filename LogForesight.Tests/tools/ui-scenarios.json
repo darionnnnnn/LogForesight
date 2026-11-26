@@ -5202,6 +5202,25 @@
     ]
   },
   {
+    "name": "互動-問題查詢-統一標記不預選結論",
+    "role": "ui-admin",
+    "path": "/records?view=issue",
+    "steps": [
+      {
+        "waitFor": "#record-list tbody tr"
+      },
+      {
+        "evalAssert": "return (async () => { const wait = ms => new Promise(r => setTimeout(r, ms));\nconst btn = [...document.querySelectorAll('#record-list button')].find(b => b.textContent.trim() === '統一標記');\nif (btn) btn.click(); else { const more = [...document.querySelectorAll('#record-list button')].find(b => b.textContent.trim().startsWith('更多')); if (!more) return '找不到統一標記入口'; more.click(); await wait(200);\nconst item = [...document.querySelectorAll('.dropdown-menu.show .dropdown-item, .dropdown-menu.show button, .dropdown-menu.show a')].find(e => e.textContent.trim() === '統一標記'); if (!item) return '更多選單沒有統一標記'; item.click(); }\nfor (let i = 0; i < 30 && !document.getElementById('bulk-close-status'); i++) await wait(200);\nconst sel = document.getElementById('bulk-close-status'); if (!sel) return '統一標記對話框沒有出現';\nif (sel.value !== '') return '結論不應預選，實際：' + sel.value;\nconst submit = [...document.querySelectorAll('.modal.show button[type=submit]')].find(b => b.textContent.trim() === '套用');\nif (!submit) return '找不到套用鈕'; if (!submit.disabled) return '未選結論時套用應停用';\nreturn null; })();"
+      },
+      {
+        "assert": {
+          "sel": "#bulk-close-status",
+          "visible": true
+        }
+      }
+    ]
+  },
+  {
     "name": "版面-群組與授權-矩陣首欄固定且欄名有上限",
     "role": "ui-admin",
     "path": "/admin/groups",

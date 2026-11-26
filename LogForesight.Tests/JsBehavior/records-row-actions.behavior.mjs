@@ -135,6 +135,37 @@ const cases = {
         assert.ok(admin.find(n => n.id === 'bulk-close-auto-apply'), 'Assign＋Handle：有勾選框（行為不變）');
         assert.ok(!admin.textContent.includes('只會標到你負責的主機'));
     },
+    // 統一標記不預選結論：第一個選項是空的提示，沒選之前「套用」停用；選了才啟用
+    bulkCloseFormRequiresChoosingConclusion() {
+        const dom = installDom();
+        const button = loadButton(dom);
+        const noop = () => { };
+        const body = extractFunction(records, 'function renderBulkCloseForm(') + '\n' + extractFunction(records, 'function bulkCloseStatusCell(');
+        const f = new Function('document', 'button', 'currentUser', 'hasCapability', 'renderTable', 'formatNumber', 'statusesWhere', 'withBusy',
+            'toast', 'api', 'collectFilters', 'showBulkCloseTraceLink', 'search', 'BULK_CLOSE_DAY_LIMIT',
+            `${body}\nreturn renderBulkCloseForm;`)(
+            document, button, { userId: 7 }, () => true,
+            (container, opts) => { container.appendChild(document.createElement('table')); },
+            n => String(n), () => [{ value: 'resolved', shortLabel: '已處理', closed: true }, { value: 'known_noise', shortLabel: '已知雜訊', closed: true }],
+            () => noop, noop, {}, () => ({}), noop, noop, 5000);
+        const container = document.createElement('div');
+        f(container, { source: 'disk', eventId: 153, issueLabel: 'x' }, {
+            from: null, to: null, truncated: false, totalHostCount: 1, skippedHostCount: 0, totalDayCount: 3,
+            hosts: [{ hostName: 'MINE', dayCount: 3, overwriteDayCount: 0, alreadyClosedDayCount: 0, skipReason: null }]
+        }, { close: noop });
+        const select = container.find(n => n.id === 'bulk-close-status');
+        const options = select.children.map(o => [o.value, o.textContent]);
+        assert.deepEqual(options[0], ['', '請選擇結論…'], '第一個選項是空的提示');
+        assert.equal(options.length, 3);
+        const submit = container.find(n => n.tagName === 'BUTTON' && n.textContent.trim() === '套用');
+        assert.equal(submit.disabled, true, '沒選結論：套用停用');
+        select.value = 'known_noise';
+        select.dispatch('change');
+        assert.equal(submit.disabled, false, '選了結論：套用啟用');
+        select.value = '';
+        select.dispatch('change');
+        assert.equal(submit.disabled, true, '改回未選：再停用');
+    },
     noActionReturnsEmpty() {
         const { result } = env({ caps: [] });
         assert.equal(result, '');

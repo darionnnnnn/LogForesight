@@ -1533,6 +1533,13 @@ function renderBulkCloseForm(body, group, preview, modal) {
     statusLabel.textContent = '結論';
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
+    statusSelect.id = 'bulk-close-status';
+    statusLabel.htmlFor = statusSelect.id;
+    // 不預選結論（與回覆彈窗同一原則）：有預設值時填了原因就能直接套用成「已處理」，一次寫進很多台又沒有復原
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '請選擇結論…';
+    statusSelect.appendChild(placeholder);
     for (const option of statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }))) {
         const el = document.createElement('option');
         el.value = option.value;
@@ -1572,7 +1579,10 @@ function renderBulkCloseForm(body, group, preview, modal) {
     const submit = button('套用', { variant: 'primary', size: '', type: 'submit' });
     // 上限用總數判斷，不是本頁列出的筆數——列表被截斷不代表可以送出更多
     const overLimit = preview.totalDayCount > BULK_CLOSE_DAY_LIMIT;
-    submit.disabled = targets.length === 0 || overLimit;
+    // 還沒選結論時不能套用；選了才啟用（對象為 0 或超過上限時一律停用）
+    const syncSubmit = () => { submit.disabled = targets.length === 0 || overLimit || !statusSelect.value; };
+    statusSelect.addEventListener('change', syncSubmit);
+    syncSubmit();
     form.appendChild(submit);
 
     if (overLimit) {
@@ -1586,6 +1596,10 @@ function renderBulkCloseForm(body, group, preview, modal) {
     form.addEventListener('submit', async event => {
         event.preventDefault();
 
+        if (!statusSelect.value) {
+            toast('請選擇結論', 'warning');
+            return;
+        }
         if (!noteInput.value.trim()) {
             toast('請填寫原因', 'warning');
             return;
