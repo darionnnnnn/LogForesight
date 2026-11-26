@@ -286,3 +286,15 @@
   3. B7 翻譯測試以 SQL 片段比對，EF 升級改變引號格式時要跟著調。
   4. 新增的「儀表板摘要效能」BACKLOG 條目數字取自第 81 輪的量測，這次沒有重測。
 
+## 實作方自查修正
+
+主代理（Opus 5.5）逐項讀 B1～B7 的 diff，另派 Haiku 5.5 唯讀抽查 BACKLOG 改寫（約 55 個點名的符號、數字與行為）。
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `PrtgTransferController.Abandon`（B2） | 對已放棄的搬運再按放棄，store 原樣回傳，控制器又寫一筆稽核——與「重複完成不重複寫」不一致 | `EfPrtgTransferStore.AbandonOwned` 改為回傳狀態；控制器只在放棄時間等於這次的時間時寫稽核。不先查狀態：查狀態要求完整身分綁定，而放棄刻意允許同一登入者在範圍變動後放棄舊工作（先試的預檢做法讓既有測試轉紅，已改掉） | `AbandonOnAlreadyAbandonedTransferDoesNotWriteAnotherAudit`（先紅後綠；拿掉判斷的突變轉紅） |
+| 2 | BACKLOG 清單篩選邊界一節 | 修法方向被寫進觸發時機句 | 拆成「觸發時機」與「修法方向」兩句 | 文件守門 |
+| 3 | BACKLOG 兩處 | 「多輪 probe」「已改 `RecordQuery`」過程字眼 | 改成現況句 | 文件守門 |
+
+**查證後不改**：抽查回報「處理歷程依稽核保留天數清除」不符——實際 `RetentionPruner` 以 `PruneLogs(AuditRetentionDays)` 清處理歷程，BACKLOG 原文正確。其餘約 50 點符合。B1～B7 其他路徑（下鑽網址經 `kpiStrip` 的 `appUrl` 組裝、清除鈕、匯入精靈只看啟用且帳密齊備的、排序次序鍵）讀碼無問題。
+

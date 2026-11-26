@@ -529,6 +529,19 @@ public sealed class PrtgTransferControllerTests
         Assert.Contains("放棄", entry.Summary, StringComparison.Ordinal);
     }
 
+    /// <summary>重複按放棄（已是放棄狀態，store 原樣回傳）不重複寫稽核：與重複完成同一原則。</summary>
+    [Fact]
+    public void AbandonOnAlreadyAbandonedTransferDoesNotWriteAnotherAudit()
+    {
+        using var fixture = new TransferFixture();
+        var id = fixture.CreateTransfer();
+        Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(id));
+
+        Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(id));
+
+        Assert.Single(fixture.Audit.Entries);
+    }
+
     [Fact]
     public async Task CompleteWithHashMismatchWritesNoImportAudit()
     {

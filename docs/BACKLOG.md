@@ -221,7 +221,7 @@ messages 帶時間篩選時 treesize 是否為篩選後筆數尚未證實，讀�
 ### 清單篩選的邊界回應（探針已重現）
 
 - 權限異動輸入無效網段時，網段欄位標紅，下方列表同時換成「沒有待確認的權限異動」空狀態，容易讀成真的沒有資料。
-**觸發時機**：使用者回報篩選結果看不懂時，權限異動驗證失敗時保留上一份結果。
+**觸發時機**：使用者回報篩選結果看不懂時。修法方向：權限異動驗證失敗時保留上一份結果。
 
 ### 風險日詳情與處理人工作頁的流程瑕疵（探針已重現）
 
@@ -307,7 +307,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
   2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
-  3. Linux 主機的欄位形狀與 `sev` 對應：已由多輪 probe 定案並實作，見
+  3. Linux 主機的欄位形狀與 `sev` 對應：已由探針實測定案並實作，見
      [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)。
   4. 真實 watchlist 形狀查詢（事件 ID 集合＋50 台 IP 批次）的耗時與命中量，決定夜間窗時程與
      批次大小。現有的主機日計時收集器（`NetiqHostDayTimingCollector`）只量統計分析＋落地段，不含 Sentinel 查詢耗時，
@@ -579,7 +579,7 @@ IIS 重疊回收期間，新行程拿不到待寫檔擁有權，停止原因落�
 
 ## 設計面債務（未排期）
 
-- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`AdminController`（21 個）、`AuditController`（9 個）、`RulesController`（7 個）仍逐參數宣告（`HandlingController` 已收斂）。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
+- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢使用 `RecordQuery`（含表驅動綁定測試）；`AdminController`（21 個）、`AuditController`（9 個）、`RulesController`（7 個）仍逐參數宣告（`HandlingController` 已收斂）。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
 - **評估過、刻意維持現狀的替換**（各附觸發時機）：
   - `SchemaUpgrader` 換成版本化遷移：無法在真實 SQL Server 驗證。**觸發時機**：有 SQL Server 測試環境（見下方容器測試），或升級步驟需要不可逆的資料轉換時。
   - `PrtgSnapshotJournal` 換成 SQLite 佇列：現行待寫檔正確且有完整性檢查。**觸發時機**：待寫檔出現效能或損壞問題時。
