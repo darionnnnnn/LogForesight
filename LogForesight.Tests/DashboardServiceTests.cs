@@ -918,6 +918,41 @@ public class DashboardServiceTests : IDisposable
     }
 
     /// <summary>
+    /// 24 小時登入失敗卡下鑽（dashboard.js 帶 actions=login_failed、from＝昨天、to＝今天、不帶 result）：
+    /// 登入失敗有 Failed（密碼錯、AD 失敗、查無帳號）與 Denied（帳號停用）兩種結果，
+    /// 以同一組參數查稽核紀錄要包含卡片計入的每一筆、不含其他動作的被拒紀錄；
+    /// 清單另含昨天但超過 24 小時的那一筆，所以筆數大於等於卡片數字。
+    /// </summary>
+    [Fact]
+    public void 登入失敗卡下鑽參數查得到卡片計入的每一筆()
+    {
+        var audit = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
+        var now = DateTime.Now;
+        for (var i = 0; i < 3; i++)
+            audit.Append(new AuditEntry { Account = $"f{i}", Action = AuditActions.LoginFailed, Result = AuditResult.Failed, OccurredAt = now.AddMinutes(-5 - i) });
+        audit.Append(new AuditEntry { Account = "disabled", Action = AuditActions.LoginFailed, Result = AuditResult.Denied, OccurredAt = now.AddMinutes(-9) });
+        // 超過 24 小時、但仍在「昨天」：取昨天 00:00:01，只有本機剛過午夜 1 秒內才會落到卡片窗內
+        audit.Append(new AuditEntry { Account = "old", Action = AuditActions.LoginFailed, Result = AuditResult.Failed, OccurredAt = DateTime.Today.AddDays(-1).AddSeconds(1) });
+        audit.Append(new AuditEntry { Account = "other", Action = AuditActions.AccessDenied, Result = AuditResult.Denied, OccurredAt = now.AddMinutes(-7) });
+
+        var user = FakeCurrentUser.WithCapabilities(Capability.ViewAudit);
+        var card = ServiceFor(user, new SummaryCache(new DataVersionStamp()), PagedGaps(new List<(DateTime? From, DateTime? To, int Page)>()), auditStore: audit)
+            .GetSummary(7).RecentLoginFailures;
+        Assert.Equal(4, card);
+
+        var controller = new LogForesight.Web.Controllers.Api.AuditController(
+            new AuditQueryService(audit, _users, new UserDisplayNameService(_settingsStore)));
+        var page = controller.Query(
+            from: DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), to: DateTime.Today.ToString("yyyy-MM-dd"),
+            userId: null, actions: AuditActions.LoginFailed, targetKind: null, result: null, pageSize: 100).Data!;
+
+        Assert.Equal(5, page.Items.Count);
+        Assert.All(page.Items, e => Assert.Equal(AuditActions.LoginFailed, e.Action));
+        Assert.Contains(page.Items, e => e.Account == "disabled");
+        Assert.DoesNotContain(page.Items, e => e.Account == "other");
+    }
+
+    /// <summary>
     /// 主體共用、但待確認權限異動數依 ViewAll 分支：同一組可見主機下，有 ViewAll 與沒有的兩人
     /// 共用一份主體（命中一次）、各自一筆權限異動計數（不互相命中）。
     /// </summary>
