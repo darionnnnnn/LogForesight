@@ -283,7 +283,10 @@ public class AccessibilityUiTests
         Assert.Contains("noteLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "records.js"));
         Assert.Contains("reasonLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "issue-mute-modal.js"));
         Assert.Contains("reasonLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "hide-triage-panel.js"));
-        Assert.Contains("reasonLabel.includes('必填') ? reasonLabel : `${reasonLabel}（必填）`", ReadWeb("wwwroot", "js", "core", "ui.js"));
+        var ui = ReadWeb("wwwroot", "js", "core", "ui.js");
+        Assert.Contains("reasonLabel.includes('必填') ? reasonLabel : `${reasonLabel}（必填）`", ui);
+        // 未填時的錯誤訊息不重複帶出「（必填）」
+        Assert.Contains("`請填寫${reasonLabel.replace(/（必填）$/, '')}`", ui);
     }
 
     [Fact]

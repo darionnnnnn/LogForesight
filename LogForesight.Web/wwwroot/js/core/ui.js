@@ -654,7 +654,8 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
         el.querySelector('[data-lf-confirm]').addEventListener('click', () => {
             const value = textarea.value.trim();
             if (!value) {
-                setFieldError(textarea, `請填寫${reasonLabel}`);
+                // 錯誤訊息不帶「（必填）」字樣（呼叫端的標籤可能已含）
+                setFieldError(textarea, `請填寫${reasonLabel.replace(/（必填）$/, '')}`);
                 return;
             }
             reason = value;
