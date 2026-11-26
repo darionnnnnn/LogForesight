@@ -43,8 +43,7 @@ public sealed class HelpManualLayoutTests
     public void 章節目錄的每個圖示都存在於icons_svg()
     {
         var root = FindRepoRoot();
-        var svg = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "img", "icons.svg"));
-        var symbols = Regex.Matches(svg, "symbol id=\"([^\"]+)\"").Select(m => m.Groups[1].Value).ToHashSet();
+        var symbols = IconSpriteIds.Load(root);
 
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "LogForesight.Web", "HelpContent", "manifest.json")));
         var missing = manifest.RootElement.GetProperty("chapters").EnumerateArray()
