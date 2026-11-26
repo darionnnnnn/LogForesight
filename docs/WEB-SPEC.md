@@ -3866,7 +3866,7 @@ target 的 `Write` 依 scope 識別碼分派給對應的 recorder，**沒有識�
    依定案（auth/handling/perm_confirm/rule/admin/import 六類；交辦單 `work_order_*`、
    派工旗標 `group_dispatch_pool`／`user_dispatch_paused`、問題靜音 `issue_mute`／`issue_unmute` 歸 handling 與 admin；另有排程作業
    `schedule_*` 與 NetIQ 診斷 `netiq_probe_run`——後者雖是查詢，但屬對 Sentinel 的主動查詢
-   操作，比照寫入記錄；全站資料離站的匯出同樣記錄：`calibration_export`、`prtg_data_export`、`run_diagnostics_export`）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
+   操作，比照寫入記錄；全站資料離站的匯出同樣記錄：`calibration_export`、`prtg_data_export`、`run_diagnostics_export`；PRTG 診斷隔離匯入的完成與放棄記 `prtg_data_import`）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
    的中文對照表**必須同 commit 補上**——漏了不會壞，但稽核頁會顯示原始代碼字串。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。

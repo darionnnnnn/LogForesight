@@ -569,6 +569,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 
 - 匯出：區間 ≤366 天、HTTP 串流 JSON（V2，末尾 Manifest）、資料庫一致快照（SQL Server snapshot isolation／SQLite WAL，不滿足時拒絕）、keyset 分頁、128 MiB 額度（共用 256 MiB 帳本）。
 - 匯入：`prtg-import-transfers` 持久工作、≤4 MiB 逐片傳送後串流驗證、雜湊一致才接受；綁定登入者與全站可見範圍；完成保留 7 天、放棄 1 天。舊 multipart `POST prtg-import` 回 410。
+  稽核：完成驗證成功與放棄各寫一筆 `prtg_data_import`（明細只有搬運編號、宣告位元組數、分塊數、封包雜湊前 12 碼）；建立、已完成再呼叫完成、驗證失敗不寫。
 - 匯出 V2 封套的陣列區段為 `Devices`、`Sensors`、`StateChanges`、`Values`、`HostMaps`、`ManualMaps`，另保留 `Timelines`、`SemanticEvidence`、`SemanticResults` 三個陣列以維持新舊匯入檔相容，內容一律為空陣列。
 - 匯出不含 `Observations` 區段（`lf_prtg_observations` 已移除）；之前匯出的包仍帶此區段，匯入照驗欄位與筆數但不寫入任何地方。格式版本維持 2；
   **舊版站台匯不進新版匯出的包**（其驗證器要求該區段存在）。

@@ -95,6 +95,8 @@ public sealed class PrtgTransferController : ControllerBase
     {
         var binding = CaptureBinding();
         Store().AbandonOwned(transferId, binding, DateTimeOffset.UtcNow);
+        _audit.Record(AuditActions.PrtgDataImport, "放棄匯入", "prtg_transfer", transferId.ToString("D"),
+            detail: new { TransferId = transferId });
         return Ok(ApiResponse<object>.Ok(new { TransferId = transferId, State = PrtgTransferStates.Abandoned }));
     }
 
@@ -188,6 +190,16 @@ public sealed class PrtgTransferController : ControllerBase
             cancellationToken.ThrowIfCancellationRequested();
             var completed = store.CompleteValidation(lease, validation.PackageSha256,
                 validation.ResultManifestJson, finalBinding, DateTimeOffset.UtcNow);
+            // 隔離匯入：只留搬運編號、大小、分塊數與雜湊前綴，不放檔案內容、連線位址或例外原文
+            _audit.Record(AuditActions.PrtgDataImport, "匯入 PRTG 診斷資料（隔離保存，未寫入正式資料）",
+                "prtg_transfer", transferId.ToString("D"),
+                detail: new
+                {
+                    TransferId = transferId,
+                    completed.DeclaredBytes,
+                    completed.ChunkCount,
+                    PackageSha256Prefix = completed.PackageSha256 is { Length: > 12 } hash ? hash[..12] : completed.PackageSha256
+                });
             return Ok(ApiResponse<PrtgTransferStatus>.Ok(completed));
         }
         catch (PrtgTransferStoreException ex)
