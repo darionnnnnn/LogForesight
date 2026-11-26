@@ -483,6 +483,10 @@ const cases = {
         assert.ok((await noteOf({ mailWorkOrdersEnabled: true })).includes('處理人會在下一封交辦摘要收到通知'));
         assert.ok((await noteOf({ mailWorkOrdersEnabled: false })).includes('目前未啟用交辦單通知，請自行告知處理人'));
         const unknown = await noteOf({});
+        // 原因實際必填：標籤要先講，不是送出後才跳錯誤
+        const labelled = build({});
+        await labelled.run({ source: 'Security', eventId: 1, issueLabel: 'L' });
+        assert.ok(all(labelled.env.shown[0].body).some(n => n.tagName === 'LABEL' && textOf(n) === '原因（必填）'), '靜音原因欄標示必填');
         assert.ok(unknown.includes(NEUTRAL), unknown);
         assert.ok(!unknown.includes('未啟用') && !unknown.includes('下一封'), unknown);
 

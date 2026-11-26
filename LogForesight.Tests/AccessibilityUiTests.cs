@@ -273,6 +273,22 @@ public class AccessibilityUiTests
         }
     }
 
+    /// <summary>
+    /// 必填的原因欄，標籤要先寫「必填」，不是送出後才跳錯誤：統一標記、靜音、「不再顯示這個問題…」引導面板，
+    /// 以及共用的確認並填原因對話框（抑制、退回、取消交辦都用它，呼叫端沒寫就由它補上）。
+    /// </summary>
+    [Fact]
+    public void 必填的原因欄_標籤標示必填()
+    {
+        Assert.Contains("noteLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "records.js"));
+        Assert.Contains("reasonLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "issue-mute-modal.js"));
+        Assert.Contains("reasonLabel.textContent = '原因（必填）';", ReadWeb("wwwroot", "js", "pages", "hide-triage-panel.js"));
+        var ui = ReadWeb("wwwroot", "js", "core", "ui.js");
+        Assert.Contains("reasonLabel.includes('必填') ? reasonLabel : `${reasonLabel}（必填）`", ui);
+        // 未填時的錯誤訊息不重複帶出「（必填）」
+        Assert.Contains("`請填寫${reasonLabel.replace(/（必填）$/, '')}`", ui);
+    }
+
     [Fact]
     public void ui_js動態確認對話框都設aria_labelledby()
     {

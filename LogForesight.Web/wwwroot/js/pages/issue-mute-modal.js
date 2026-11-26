@@ -181,7 +181,7 @@ async function buildIssueMuteModal({ source, eventId, issueLabel, currentMute, o
     // ── 4. 原因（必填）────────────────────────────────────────────────────
     const reasonLabel = document.createElement('label');
     reasonLabel.className = 'form-label lf-text-label';
-    reasonLabel.textContent = '原因';
+    reasonLabel.textContent = '原因（必填）';
     const reasonInput = document.createElement('textarea');
     reasonInput.className = 'form-control form-control-sm';
     reasonInput.rows = 2;
