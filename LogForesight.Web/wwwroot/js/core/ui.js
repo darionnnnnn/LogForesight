@@ -641,7 +641,8 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
         titleEl.id = titleId;
         titleEl.textContent = title;
         el.querySelector('.modal-body p').textContent = message;
-        el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
+        // 這個對話框的原因一律必填（未填不能確認）：標籤先講，呼叫端沒寫就補上
+        el.querySelector('[data-lf-reason-label]').textContent = reasonLabel.includes('必填') ? reasonLabel : `${reasonLabel}（必填）`;
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
         const textarea = el.querySelector('[data-lf-reason]');
 
