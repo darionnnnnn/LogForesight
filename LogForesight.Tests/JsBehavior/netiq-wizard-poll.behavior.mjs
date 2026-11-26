@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pollWhile } from '../../LogForesight.Web/wwwroot/js/core/async-guards.js';
+import { installDom } from './mini-dom.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const wizardPath = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js', 'pages', 'netiq-import-wizard.js');
@@ -26,6 +27,27 @@ function extractFunction(declaration) {
     }
     throw new Error(`production 函式未閉合：${declaration}`);
 }
+
+
+/** 第 81 輪 B6：掃描匯入下拉（refreshScanPicker／renderScanPicker／pickerHint）的篩選與無選項提示 */
+function makePicker() {
+    installDom();
+    const picker = document.createElement('div');
+    const Option = function (text, value) { const o = document.createElement('option'); o.textContent = text; o.value = value; return o; };
+    const body = ['function refreshScanPicker(', 'function renderScanPicker(', 'function pickerHint('].map(d => extractFunction(d).replace(/^export /, '')).join('\n');
+    const fns = new Function('document', 'Option', 'button', 'statusNote', 'openWizard',
+        `let scanPicker = null; let discoverableSentinels = [];\n${body}\nreturn { setPicker: el => { scanPicker = el; }, refreshScanPicker };`)(
+        document, Option, () => document.createElement('button'), () => document.createElement('div'), () => {});
+    fns.setPicker(picker);
+    const all = n => [n, ...n.children.flatMap(all)];
+    return {
+        refresh: list => fns.refreshScanPicker(list),
+        options: () => all(picker).filter(n => n.tagName === 'OPTION' && n.parentNode?.id === 'scan-sentinel-select' || false),
+        text: () => picker.textContent,
+        picker, all
+    };
+}
+const sentinel = (name, extra = {}) => ({ name, active: true, canDiscover: true, credentialState: 'ok', ...extra });
 
 class FakeApiError extends Error {
     constructor(code, message, status) { super(message); this.code = code; this.status = status; }
@@ -99,6 +121,27 @@ const cases = {
         for (let i = 0; i < 6; i++) await ctx.tick();
         assert.equal(ctx.state.hidden, 0, '失敗不連續達三次，不可關精靈');
         assert.equal(ctx.getJobId(), 'job1');
+    },
+    // 一個正常加一個解不開：下拉只有正常那個
+    undecryptableSentinelIsNotListed() {
+        const p = makePicker();
+        p.refresh([sentinel('good'), sentinel('broken', { credentialState: 'undecryptable' })]);
+        const select = p.all(p.picker).find(n => n.id === 'scan-sentinel-select');
+        assert(select, '應有下拉');
+        assert.deepEqual(select.children.map(o => o.value), ['good']);
+    },
+    // 全部解不開：顯示「密碼無法解密」那句，沒有下拉
+    allUndecryptableShowsDecryptHint() {
+        const p = makePicker();
+        p.refresh([sentinel('a', { credentialState: 'undecryptable' }), sentinel('b', { credentialState: 'undecryptable' })]);
+        assert.equal(p.text(), '有 Sentinel 的密碼無法解密，請至「設定」分頁重新輸入密碼。');
+        assert.equal(p.all(p.picker).some(n => n.id === 'scan-sentinel-select'), false);
+    },
+    // 全部是帳密未設定：沿用既有那句
+    allNotConfiguredShowsExistingHint() {
+        const p = makePicker();
+        p.refresh([sentinel('a', { canDiscover: false, credentialState: 'missing' }), sentinel('b', { canDiscover: false, credentialState: 'missing' })]);
+        assert.equal(p.text(), '目前沒有帳密齊備且啟用中的 Sentinel，請至「設定」分頁補上探索帳密。');
     },
     async 工作不存在或已逾期立即停止() {
         const gone = new FakeApiError('validation_failed', '掃描工作不存在或已逾期，請重新掃描。', 400);

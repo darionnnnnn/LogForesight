@@ -26,6 +26,9 @@ public class NetiqWizardPollBehaviorTests
     [InlineData("連續三次失敗才停止並提示")]
     [InlineData("成功一次歸零連續失敗計數")]
     [InlineData("工作不存在或已逾期立即停止")]
+    [InlineData("undecryptableSentinelIsNotListed")]
+    [InlineData("allUndecryptableShowsDecryptHint")]
+    [InlineData("allNotConfiguredShowsExistingHint")]
     public void 精靈輪詢容錯行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

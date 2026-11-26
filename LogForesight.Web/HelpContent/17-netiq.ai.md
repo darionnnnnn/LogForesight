@@ -70,7 +70,7 @@
 由獨立模組 `netiq-import-wizard.js` 管理：
 
 ### 1. 掃描選擇器（`#netiq-scan-picker`）
-- `#scan-sentinel-select`：Sentinel 下拉選單，過濾僅列出啟用且帳密齊備者（`active && canDiscover`）。此篩選只看欄位非空，密碼無法解密的 Sentinel 仍會列出，按「掃描匯入」才由後端回錯誤「Sentinel「名稱」的密碼無法解密（金鑰檔與資料庫不相符），無法主動掃描。請到「設定」分頁編輯該 Sentinel 重新輸入密碼。」；診斷分頁的下拉則已在名稱後標「（密碼無法解密）」，執行診斷時輸出「密碼無法解密…略過」。夜間取數對這台不建連線、不送請求，轄下主機計失敗主機日。
+- `#scan-sentinel-select`：Sentinel 下拉選單，過濾僅列出啟用、帳密齊備且密碼可解的（`active && canDiscover && credentialState !== 'undecryptable'`；`canDiscover` 只看欄位非空，所以另外排除 `undecryptable`）。沒有可選項時不顯示下拉，依原因寫一句提示：有啟用且帳密齊備、但密碼解不開的寫「有 Sentinel 的密碼無法解密，請至「設定」分頁重新輸入密碼。」，其餘寫「目前沒有帳密齊備且啟用中的 Sentinel，請至「設定」分頁補上探索帳密。」。後端對解不開的 Sentinel 仍保留錯誤「Sentinel「名稱」的密碼無法解密（金鑰檔與資料庫不相符），無法主動掃描。請到「設定」分頁編輯該 Sentinel 重新輸入密碼。」作為保險；診斷分頁的下拉則照常列出並在名稱後標「（密碼無法解密）」，執行診斷時輸出「密碼無法解密…略過」。夜間取數對這台不建連線、不送請求，轄下主機計失敗主機日。
 - `#scan-subnet-input`：網段輸入框（必填，支援前綴如 `192.168.0` 或 CIDR `192.168.0.0/24`）。
 - 掃描前可選「掃描粒度」（「每段 254 台（預設）」／「每段 62 台（最細）」；事件量大的網段選細粒度可避免安靜主機被吵雜主機擠掉，代價是掃描較久）與「併發」（「單一查詢（預設）」／「同時 2 個查詢」／「同時 3 個查詢」）。
 - 點選「掃描匯入」呼叫 `POST /api/admin/netiq/scan` 建立掃描工作（回傳 `jobId`），再輪詢 `GET /api/admin/netiq/scan/{jobId}` 取得 `NetiqScanResultDto`（可取消），並開啟精靈 Modal `#netiq-wizard-modal`。

@@ -26,7 +26,8 @@ let discoverableSentinels = [];
 export function refreshScanPicker(sentinels) {
     if (!scanPicker) return;
 
-    discoverableSentinels = sentinels.filter(s => s.active && s.canDiscover);
+    // 密碼解不開的（credentialState === 'undecryptable'）選了必定失敗，不列入；canDiscover 只看欄位非空
+    discoverableSentinels = sentinels.filter(s => s.active && s.canDiscover && s.credentialState !== 'undecryptable');
     renderScanPicker(sentinels);
 }
 
@@ -52,7 +53,11 @@ function renderScanPicker(allSentinels) {
     }
 
     if (discoverableSentinels.length === 0) {
-        scanPicker.appendChild(pickerHint('目前沒有帳密齊備且啟用中的 Sentinel，請至「設定」分頁補上探索帳密。'));
+        // 沒有可選項時依原因分兩句：有密碼解不開的先請重新輸入密碼，其餘是帳密還沒補齊
+        const hasUndecryptable = allSentinels.some(s => s.active && s.canDiscover && s.credentialState === 'undecryptable');
+        scanPicker.appendChild(pickerHint(hasUndecryptable
+            ? '有 Sentinel 的密碼無法解密，請至「設定」分頁重新輸入密碼。'
+            : '目前沒有帳密齊備且啟用中的 Sentinel，請至「設定」分頁補上探索帳密。'));
         return;
     }
 
