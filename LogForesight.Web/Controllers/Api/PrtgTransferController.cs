@@ -191,7 +191,7 @@ public sealed class PrtgTransferController : ControllerBase
             var completed = store.CompleteValidation(lease, validation.PackageSha256,
                 validation.ResultManifestJson, finalBinding, DateTimeOffset.UtcNow);
             // 隔離匯入：只留搬運編號、大小、分塊數與雜湊前綴，不放檔案內容、連線位址或例外原文
-            _audit.Record(AuditActions.PrtgDataImport, "匯入 PRTG 診斷資料（隔離保存，未寫入正式資料）",
+            _audit.Record(AuditActions.PrtgDataImport, "匯入 PRTG 診斷資料（隔離儲存，未寫入正式資料）",
                 "prtg_transfer", transferId.ToString("D"),
                 detail: new
                 {

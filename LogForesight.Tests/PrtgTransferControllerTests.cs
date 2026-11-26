@@ -490,7 +490,7 @@ public sealed class PrtgTransferControllerTests
 
         var entry = Assert.Single(fixture.Audit.Entries);
         Assert.Equal(AuditActions.PrtgDataImport, entry.Action);
-        Assert.Equal("匯入 PRTG 診斷資料（隔離保存，未寫入正式資料）", entry.Summary);
+        Assert.Equal("匯入 PRTG 診斷資料（隔離儲存，未寫入正式資料）", entry.Summary);
         Assert.Equal(AuditResult.Ok, entry.Result);
         using var detail = JsonDocument.Parse(entry.DetailJson!);
         var root = detail.RootElement;
