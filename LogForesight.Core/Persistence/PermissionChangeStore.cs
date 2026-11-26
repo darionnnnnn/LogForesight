@@ -386,7 +386,7 @@ public class PermissionChangeStore
             PageSize = maxCount
         }).Items;
 
-    private static IQueryable<PermissionChangeRow> ApplyOrdering(
+    internal static IQueryable<PermissionChangeRow> ApplyOrdering(
         IQueryable<PermissionChangeRow> query,
         string? sort,
         bool ascending)
@@ -400,10 +400,12 @@ public class PermissionChangeStore
             sortKey = "detectedat";
         }
 
+        // 主機名排序用正規化鍵（大寫），不用原值：原值排序在 SQLite 區分大小寫、SQL Server 不區分，兩個後端順序會不同；
+        // 鍵上也有 (host_name_key, detected_at) 索引
         return (sortKey, ascending) switch
         {
-            ("hostname", true) => query.OrderBy(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
-            ("hostname", false) => query.OrderByDescending(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+            ("hostname", true) => query.OrderBy(r => r.HostNameKey).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("hostname", false) => query.OrderByDescending(r => r.HostNameKey).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
 
             ("category", true) => query.OrderBy(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
             ("category", false) => query.OrderByDescending(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),

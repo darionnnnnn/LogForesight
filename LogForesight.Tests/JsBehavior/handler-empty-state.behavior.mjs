@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installDom } from './mini-dom.mjs';
+import { loadButton, loadElements } from './load-elements.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -146,6 +147,34 @@ const cases = {
             assert.equal(spy.empties[0].title, '目前沒有符合條件的交辦單');
             assert.equal(spy.gets.length, 0);
         }
+    },
+
+    // 第 81 輪 B4：兩個空狀態（沒有處理能力、只能看自己）的圖示是 icons.svg 有的 slash-circle，不是不存在的 lock
+    emptyStatesUseSlashCircleIcon() {
+        const icons = [];
+        const renderEmpty = (container, opts) => icons.push(opts.icon);
+        const body = `${extract('function renderNoHandleCapability')}\n${extract('function renderSelfOnly')}\nreturn { renderNoHandleCapability, renderSelfOnly };`;
+        const fns = new Function('renderEmpty', 'linkButton', 'appUrl', body)(renderEmpty, () => dom.newElement('a'), p => p);
+        fns.renderNoHandleCapability({});
+        fns.renderSelfOnly({}, null);
+        assert.deepEqual(icons, ['slash-circle', 'slash-circle']);
+    },
+
+    // 第 81 輪 B4：「只看」橫幅的「清除」鈕沒有圖示（x-lg 不存在於 icons.svg），文字與提示不變
+    clearFlagButtonHasNoIcon() {
+        const { roleText } = loadElements(dom);
+        const button = loadButton(dom);
+        const flagBannerEl = dom.newElement('div');
+        const body = `${extract('function flagBannerText')}\n${extract('function renderFlagBanner')}\nreturn renderFlagBanner;`;
+        const render = new Function('flagBannerEl', 'activeFlag', 'ORDER_FLAGS', 'roleText', 'button', 'applyFlag', body)(
+            flagBannerEl, 'overdue', { overdue: '已逾期' }, roleText, button, () => {});
+        render();
+        const all = n => [n, ...n.children.flatMap(all)];
+        const clear = all(flagBannerEl).find(n => n.tagName === 'BUTTON');
+        assert(clear, '找不到清除鈕');
+        assert.equal(clear.textContent, '清除');
+        assert.equal(clear.title, '清除「只看」條件，回到完整清單');
+        assert.equal(all(clear).filter(n => n.tagName === 'SVG' || n.getAttribute?.('data-icon')).length, 0, '清除鈕不該有圖示子元素');
     },
 
     // 期間沿用儀表板的設定（safeStorage lf.dashboard.days）

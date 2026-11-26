@@ -4,8 +4,12 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>一次 node 執行的結果。逾時時 <see cref="TimedOut"/> 為 true，輸出仍是逾時前已讀到的內容。</summary>
-public sealed record NodeRunResult(int ExitCode, string Stdout, string Stderr, bool TimedOut);
+/// <summary>
+/// 一次 node 執行的結果。逾時時 <see cref="TimedOut"/> 為 true，輸出仍是逾時前已讀到的內容。
+/// <see cref="PipesIncomplete"/> 為 true 表示程序結束後 stdout／stderr 沒在等待時間內讀完（例如孫程序抓著管線），
+/// 此時對應的輸出是空字串、不代表腳本真的沒輸出。
+/// </summary>
+public sealed record NodeRunResult(int ExitCode, string Stdout, string Stderr, bool TimedOut, bool PipesIncomplete = false);
 
 /// <summary>
 /// 前端行為測試需要的 Node.js 執行環境偵測與共用執行器（回饋第 45 輪 B7、第 61 輪 M-12）。
@@ -117,7 +121,7 @@ public static class NodeRuntime
     }
 
     /// <summary>
-    /// 同 <see cref="Run"/>，但逾時直接讓測試失敗（訊息含已讀到的 stdout／stderr）。所有測試呼叫端都走這支，
+    /// 同 <see cref="Run"/>，但逾時或輸出管線沒讀完（<see cref="NodeRunResult.PipesIncomplete"/>）直接讓測試失敗（訊息含已讀到的 stdout／stderr）。所有測試呼叫端都走這支，
     /// 逾時處理因此一致。<paramref name="label"/> 用來說明是哪個案例逾時。
     /// </summary>
     public static NodeRunResult RunOrFail(
@@ -128,6 +132,11 @@ public static class NodeRuntime
         if (result.TimedOut)
         {
             Assert.Fail($"node 執行逾時（{(timeout ?? TimeSpan.FromSeconds(60)).TotalSeconds:0} 秒）：{label}" +
+                        $"{Environment.NewLine}{result.Stdout}{result.Stderr}");
+        }
+        if (result.PipesIncomplete)
+        {
+            Assert.Fail($"node 輸出管線逾時（程序已結束，但 stdout／stderr 在等待時間內沒讀完，輸出不完整）：{label}" +
                         $"{Environment.NewLine}{result.Stdout}{result.Stderr}");
         }
         return result;
@@ -171,10 +180,10 @@ public static class NodeRuntime
         }
 
         // 程序結束後管線很快就讀完；有孫程序抓著管線時最多多等 5 秒，不無限卡住
-        Task.WaitAll(new Task[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+        var pipesDrained = Task.WaitAll(new Task[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
         var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : string.Empty;
         var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : string.Empty;
-        return new NodeRunResult(exited ? process.ExitCode : -1, stdout, stderr, TimedOut: !exited);
+        return new NodeRunResult(exited ? process.ExitCode : -1, stdout, stderr, TimedOut: !exited, PipesIncomplete: !pipesDrained);
     }
 
     private static string? Probe()

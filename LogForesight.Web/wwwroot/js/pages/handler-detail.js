@@ -174,7 +174,7 @@ function renderNoHandleCapability(container) {
     renderEmpty(container, {
         title: '你的角色沒有處理能力',
         hint: '交辦單只會派給有處理能力的人，所以這裡不會有內容。需要處理交辦時，請管理者調整你的群組角色。',
-        icon: 'lock'
+        icon: 'slash-circle'
     });
 }
 
@@ -183,7 +183,7 @@ function renderSelfOnly(container, user) {
     renderEmpty(container, {
         title: '只能檢視自己的交辦',
         hint: '其他處理人的交辦單只有管理者看得到。',
-        icon: 'lock'
+        icon: 'slash-circle'
     });
     if (user?.userId) {
         const link = linkButton('前往我的交辦', appUrl('/handlers/' + user.userId), { variant: 'outline-secondary' });
@@ -325,7 +325,7 @@ function renderFlagBanner() {
     row.className = 'd-flex flex-wrap align-items-center gap-2';
     row.append(
         roleText('lf-text-label', text),
-        button('清除', { icon: 'x-lg', title: '清除「只看」條件，回到完整清單', onClick: () => applyFlag(null) })
+        button('清除', { title: '清除「只看」條件，回到完整清單', onClick: () => applyFlag(null) })
     );
     flagBannerEl.appendChild(row);
 }

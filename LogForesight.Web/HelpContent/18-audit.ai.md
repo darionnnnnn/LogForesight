@@ -106,7 +106,7 @@
 - `button[type="submit"]`：「查詢」按鈕。
 - `#btn-denied`：「只看被拒的存取」快捷切換按鈕。
   - 點選時將 `#audit-result` 在 `Denied` 與全部（`""`）之間切換，並自動同步自身的 `.active` 樣式。
-  - 當從 URL 帶入參數（如儀表板登入失敗/被拒卡片下鑽 `/audit?result=Denied`）或手動變更下拉選單為 `Denied` 時，按鈕亦會自動呈現 active 狀態。
+  - 當從 URL 帶入 `result=Denied` 或手動變更下拉選單為 `Denied` 時，按鈕亦會自動呈現 active 狀態。儀表板登入失敗卡的下鑽 `/audit?actions=login_failed&from=…&to=…` 不帶結果，結果下拉維持全部、按鈕不亮。
 
 ### 2. 清單表格（`#audit-list`）
 - 總筆數提示（`#audit-count`）：顯示 `共 N 筆`。

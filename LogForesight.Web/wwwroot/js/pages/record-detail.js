@@ -2454,7 +2454,7 @@ function aiInterpretPanel(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-guidance';
 
-    const button = makeButton('AI 判讀');
+    const button = makeButton('產生判讀');
 
     const output = document.createElement('div');
     output.className = 'small mt-2';

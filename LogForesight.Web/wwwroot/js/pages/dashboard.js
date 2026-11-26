@@ -11,7 +11,7 @@ import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad, helpIcon } from '../core/ui.js';
 import { roleText } from '../core/elements.js';
 import { revealFirstRow } from '../core/reveal.js';
-import { categoryName, formatNumber, formatDateTime, latestStatusCell, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
+import { categoryName, formatNumber, toLocalDateString, formatDateTime, latestStatusCell, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
@@ -427,7 +427,8 @@ function renderKpi(data, user, displaySettings, myBadge) {
             label: '24 小時登入失敗',
             value: data.recentLoginFailures,
             variant: data.recentLoginFailures > 0 ? 'warning' : 'secondary',
-            url: '/audit?result=Denied'
+            hint: '明細含昨天全日',
+            url: loginFailuresUrl()
         });
     }
 
@@ -454,6 +455,17 @@ function renderKpi(data, user, displaySettings, myBadge) {
     const strip = kpiStrip(groups, { singleRow: true });
     container.replaceChildren(strip);
     mountKpiReveal(strip, container, new Set(cards.filter(c => c.variant === 'danger').map(c => c.label)));
+}
+
+/**
+ * 24 小時登入失敗卡的下鑽網址：稽核頁只能依日期篩選，所以帶「昨天～今天」（本地日期）涵蓋卡片的 24 小時窗。
+ * 登入失敗的結果有 Failed（密碼錯、AD 失敗、查無帳號）與 Denied（帳號停用）兩種，因此只指定動作、不帶結果。
+ * now 預設為現在，測試傳入固定時鐘。
+ */
+function loginFailuresUrl(now = new Date()) {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return `/audit?actions=login_failed&from=${toLocalDateString(yesterday)}&to=${toLocalDateString(now)}`;
 }
 
 /**

@@ -84,6 +84,39 @@ public sealed class NodeRuntimeTests
         Assert.Equal("2", result.Stdout.Trim());
     }
 
+    [NodeFact]
+    public void 孫程序抓住輸出管線讓管線讀不完時RunOrFail以管線逾時失敗而不是回空()
+    {
+        var pidFile = Path.Combine(Path.GetTempPath(), "lf-node-pipe-" + Guid.NewGuid().ToString("N") + ".pid");
+        // 孫程序繼承 stdout／stderr 並多活 8 秒（> 執行器的 5 秒等待），本身立刻結束 → 管線讀不完
+        var script =
+            "const { spawn } = require('child_process');" +
+            "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: 'inherit', detached: true });" +
+            "g.unref();" +
+            "require('fs').writeFileSync(" + System.Text.Json.JsonSerializer.Serialize(pidFile) + ", String(g.pid));" +
+            "console.log('before-exit');";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var ex = Assert.ThrowsAny<Exception>(() => NodeRuntime.RunOrFail(
+                new[] { "--eval", script }, timeout: TimeSpan.FromSeconds(20), label: "孫程序抓管線"));
+
+            Assert.Contains("node 輸出管線逾時", ex.Message, StringComparison.Ordinal);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"測試應在 10 秒內結束，實際 {watch.Elapsed.TotalSeconds:0.0} 秒");
+        }
+        finally
+        {
+            // 孫程序是 detached，不會隨 node 結束；確保被清掉
+            try
+            {
+                if (int.TryParse(File.ReadAllText(pidFile), out var pid))
+                    System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+            }
+            catch { /* 已自行結束或檔案不存在 */ }
+            try { File.Delete(pidFile); } catch { /* 暫存檔 */ }
+        }
+    }
+
     [Theory]
     [InlineData("1", false, true)]
     [InlineData("1", true, false)]

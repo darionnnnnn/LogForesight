@@ -34,7 +34,7 @@ async function init() {
     document.getElementById('audit-to').value = toLocalDateString(to);
 
     // 套用 URL 帶入的篩選條件（§8.4 下鑽）：儀表板的登入失敗卡會導向
-    // /audit?result=Denied，不讀 URL 的話下鑽連結等於壞的
+    // /audit?actions=login_failed&from=…&to=…，不讀 URL 的話下鑽連結等於壞的
     const params = new URLSearchParams(location.search);
     if (params.get('result')) document.getElementById('audit-result').value = params.get('result');
     if (params.get('from')) document.getElementById('audit-from').value = params.get('from');

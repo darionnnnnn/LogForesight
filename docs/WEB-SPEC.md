@@ -1157,6 +1157,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （沒事也要一眼確認是真的沒事）。
 - **頂部 KPI 卡列分三組**（`kpiStrip`，docs/DESIGN-SYSTEM.md §6b）：風險概況（高／中風險日、監控主機數、涵蓋率缺口天數）、
   待處理（未處理問題、待派工問題、我的交辦單、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。
+- **「24 小時登入失敗」卡下鑽**（`dashboard.js` 的 `loginFailuresUrl`）：連到 `/audit?actions=login_failed&from=昨天&to=今天`（本地日期），不帶 `result`——
+  登入失敗的結果有 `Failed`（密碼錯、AD 驗證失敗、查無帳號）與 `Denied`（帳號已停用）兩種。稽核頁只能依日期篩選、卡片依小時，
+  所以清單包含卡片計入的每一筆、另有昨天但超過 24 小時的紀錄，筆數大於等於卡片數字（不屬於下方「同口徑」契約）；卡片副標寫「明細含昨天全日」。
 - **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕（風險類型的放在卡片標頭右側，KPI 的放在指標列下方），依實際格線欄數藏起第一排以外的卡，
   按鈕寫出被藏幾項與其中幾項告警（KPI 以建卡時 `variant` 為 `danger` 的標籤集合判定、不看樣式類別，風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
   （`lf.collapse.dashboard-kpi`、`lf.collapse.dashboard-categories`），列印時一律全部顯示。風險類型的順序由後端排定（有高 > 有中 > 問題數）。
@@ -1469,7 +1472,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
        → 一行 `metaLine`（次數、時段、記錄檔、相異訊息數；時段的口徑「不是來源時間窗」放在 title）→ 狀態徽章（已抑制、靜音、殘留憑證）
        → 帳號／來源 IP 摘要（`keyDetailsBlock`：以「；」切段、每段在第一個冒號分成標籤與值，切不出這個形狀就整段原樣；
        一般文字色，不上紅字）→「原始訊息 N」。詳情已清除的日子以一行說明取代帳號與原始訊息。
-     - 佐證層（`evidencePanel`，`renderTable` 的 `rowDetail`）依序為處置參考（無知識庫但 AI 可用時為「AI 判讀」）、登入失敗明細、
+     - 佐證層（`evidencePanel`，`renderTable` 的 `rowDetail`）依序為處置參考（無知識庫但 AI 可用時為「AI 判讀」，區內按鈕寫「產生判讀」、結果徽章寫「AI 判讀」）、登入失敗明細、
        數值趨勢、殘留憑證判定、來源觀測；一區都沒有時不掛展開列。**來源觀測用白話與當地時間**：摘要一行說「N 筆事件：01:00、01:02、01:04」「N 筆時間區間：…」「N 筆沒有時間資訊」
        「N 筆缺少時間依據，看不出是否連續發生」（同一當地日省略日期、跨日每個時間帶月-日；時間點最多列 8 個、區間最多 4 個，超過以「…」收尾；清單本身 64 筆上限），
        逐筆的來源、範圍、主機、資源、UTC 時間與來源事件編號等原始欄位收進可展開的「技術細節」，每筆只印有值的行。文字分三層（區標題眉標＋分隔線、小標正文色粗體、處置參考內文一般字級，處置步驟用編號清單；規格見 DESIGN-SYSTEM §8.5），來源觀測的欄位名淡化、值用正文色。面板有其他區但沒有來源觀測時，來源觀測區寫「未保存可核對的來源觀測」（清單被截斷時加註），讓人分得出「沒有」與「漏顯示」。詳情已清除的日子只剩處置參考。內容 eager 建好，列印全顯示。
@@ -3866,7 +3869,7 @@ target 的 `Write` 依 scope 識別碼分派給對應的 recorder，**沒有識�
    依定案（auth/handling/perm_confirm/rule/admin/import 六類；交辦單 `work_order_*`、
    派工旗標 `group_dispatch_pool`／`user_dispatch_paused`、問題靜音 `issue_mute`／`issue_unmute` 歸 handling 與 admin；另有排程作業
    `schedule_*` 與 NetIQ 診斷 `netiq_probe_run`——後者雖是查詢，但屬對 Sentinel 的主動查詢
-   操作，比照寫入記錄；全站資料離站的匯出同樣記錄：`calibration_export`、`prtg_data_export`、`run_diagnostics_export`）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
+   操作，比照寫入記錄；全站資料離站的匯出同樣記錄：`calibration_export`、`prtg_data_export`、`run_diagnostics_export`；PRTG 診斷隔離匯入的完成與放棄記 `prtg_data_import`）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
    的中文對照表**必須同 commit 補上**——漏了不會壞，但稽核頁會顯示原始代碼字串。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。

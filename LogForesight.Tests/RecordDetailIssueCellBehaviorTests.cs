@@ -29,6 +29,7 @@ public sealed class RecordDetailIssueCellBehaviorTests
     [InlineData("sourceEvidenceKeysMuted")]
     [InlineData("evidencePanelAllSections")]
     [InlineData("evidencePanelSingleSection")]
+    [InlineData("aiInterpretButtonIsLabelledGenerate")]
     [InlineData("evidencePanelStatesMissingSourceObservations")]
     [InlineData("evidencePanelNoneReturnsNull")]
     [InlineData("evidencePanelPrunedKeepsGuidanceOnly")]

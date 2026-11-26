@@ -94,7 +94,13 @@ public sealed class PrtgTransferController : ControllerBase
     public IActionResult Abandon(Guid transferId)
     {
         var binding = CaptureBinding();
-        Store().AbandonOwned(transferId, binding, DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var status = Store().AbandonOwned(transferId, binding, now);
+        // 已是放棄狀態時 store 原樣回傳（冪等，放棄時間是先前那次）：只在這次真的放棄時寫稽核——與重複完成同一原則。
+        // 不先查狀態：查狀態要求完整身分綁定，而放棄刻意允許同一登入者在範圍變動後放棄舊工作
+        if (status.AbandonedAtUtc == now)
+            _audit.Record(AuditActions.PrtgDataImport, "放棄匯入", "prtg_transfer", transferId.ToString("D"),
+                detail: new { TransferId = transferId });
         return Ok(ApiResponse<object>.Ok(new { TransferId = transferId, State = PrtgTransferStates.Abandoned }));
     }
 
@@ -188,6 +194,16 @@ public sealed class PrtgTransferController : ControllerBase
             cancellationToken.ThrowIfCancellationRequested();
             var completed = store.CompleteValidation(lease, validation.PackageSha256,
                 validation.ResultManifestJson, finalBinding, DateTimeOffset.UtcNow);
+            // 隔離匯入：只留搬運編號、大小、分塊數與雜湊前綴，不放檔案內容、連線位址或例外原文
+            _audit.Record(AuditActions.PrtgDataImport, "匯入 PRTG 診斷資料（隔離儲存，未寫入正式資料）",
+                "prtg_transfer", transferId.ToString("D"),
+                detail: new
+                {
+                    TransferId = transferId,
+                    completed.DeclaredBytes,
+                    completed.ChunkCount,
+                    PackageSha256Prefix = completed.PackageSha256 is { Length: > 12 } hash ? hash[..12] : completed.PackageSha256
+                });
             return Ok(ApiResponse<PrtgTransferStatus>.Ok(completed));
         }
         catch (PrtgTransferStoreException ex)

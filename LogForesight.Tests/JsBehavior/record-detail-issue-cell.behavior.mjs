@@ -251,6 +251,20 @@ const cases = {
         ctx.aiAvailable = true;
         assert.deepEqual(labelsOf(fns.evidencePanel(baseIssue())), ['AI 判讀', '來源觀測'], '沒有知識庫但 AI 可用時提供 AI 判讀');
     },
+    // 第 81 輪 B5：區段標題與按鈕不同名——標題「AI 判讀」不動，按鈕是「產生判讀」，產生後的結果徽章維持「AI 判讀」
+    aiInterpretButtonIsLabelledGenerate() {
+        const real = new Function('document', 'makeButton', 'withBusy', 'api', 'renderAiText', 'collapsibleText',
+            `const hostId = 1, date = '2026-01-01';\n${extractFunction(recordDetail, 'function aiInterpretPanel(')}\nreturn aiInterpretPanel;`)(
+            document, button, () => () => {}, {}, () => {}, n => n);
+        const panel = real({ issueKey: 'k' });
+        const btn = panel.children[0];
+        assert.equal(btn.tagName, 'BUTTON');
+        assert.equal(btn.textContent, '產生判讀');
+        assert(recordDetail.includes("badge: 'AI 判讀'"), '結果徽章維持「AI 判讀」');
+        reset();
+        ctx.aiAvailable = true;
+        assert.deepEqual(labelsOf(fns.evidencePanel(baseIssue())), ['AI 判讀', '來源觀測'], '區段標題清單不變');
+    },
     evidencePanelStatesMissingSourceObservations() {
         // 面板有其他佐證但沒有來源觀測：要明講「未保存」（分得出「沒有」與「漏顯示」），截斷也要講
         reset();

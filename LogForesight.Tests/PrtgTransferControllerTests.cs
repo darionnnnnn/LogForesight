@@ -465,6 +465,101 @@ public sealed class PrtgTransferControllerTests
         Assert.Empty(db.PrtgStateChanges);
     }
 
+    // ── 稽核：隔離匯入完成與放棄各寫一筆 prtg_data_import ──
+
+    private static void SetChunkBody(TransferFixture fixture, byte[] bytes)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.ContentType = "application/octet-stream";
+        context.Request.ContentLength = bytes.Length;
+        context.Request.Body = new MemoryStream(bytes);
+        fixture.Controller.ControllerContext = new ControllerContext { HttpContext = context };
+    }
+
+    [Fact]
+    public async Task CompleteSuccessWritesOneImportAuditWithoutSensitiveContent()
+    {
+        using var fixture = new TransferFixture();
+        var bytes = LegacyV2Bytes(LegacyPackage(2));
+        var id = fixture.CreateTransfer(bytes);
+        SetChunkBody(fixture, bytes);
+        Assert.IsType<OkObjectResult>(await fixture.Controller.PutChunk(id, 0, CancellationToken.None));
+        Assert.Empty(fixture.Audit.Entries);
+
+        Assert.IsType<OkObjectResult>(await fixture.Controller.Complete(id, CancellationToken.None));
+
+        var entry = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(AuditActions.PrtgDataImport, entry.Action);
+        Assert.Equal("匯入 PRTG 診斷資料（隔離儲存，未寫入正式資料）", entry.Summary);
+        Assert.Equal(AuditResult.Ok, entry.Result);
+        using var detail = JsonDocument.Parse(entry.DetailJson!);
+        var root = detail.RootElement;
+        Assert.Equal(id, root.GetProperty("TransferId").GetGuid());
+        Assert.Equal(bytes.Length, root.GetProperty("DeclaredBytes").GetInt64());
+        Assert.Equal(1, root.GetProperty("ChunkCount").GetInt32());
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes))[..12], root.GetProperty("PackageSha256Prefix").GetString());
+        Assert.DoesNotContain("initial.example", entry.DetailJson!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompleteOnAlreadyCompletedTransferDoesNotWriteAnotherAudit()
+    {
+        using var fixture = new TransferFixture();
+        var bytes = LegacyV2Bytes(LegacyPackage(2));
+        var id = fixture.CreateTransfer(bytes);
+        SetChunkBody(fixture, bytes);
+        Assert.IsType<OkObjectResult>(await fixture.Controller.PutChunk(id, 0, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await fixture.Controller.Complete(id, CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await fixture.Controller.Complete(id, CancellationToken.None));
+
+        Assert.Single(fixture.Audit.Entries);
+    }
+
+    [Fact]
+    public void AbandonWritesOneImportAuditAndCreateWritesNone()
+    {
+        using var fixture = new TransferFixture();
+        var id = fixture.CreateTransfer();
+        Assert.Empty(fixture.Audit.Entries);
+
+        Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(id));
+
+        var entry = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(AuditActions.PrtgDataImport, entry.Action);
+        Assert.Contains("放棄", entry.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>重複按放棄（已是放棄狀態，store 原樣回傳）不重複寫稽核：與重複完成同一原則。</summary>
+    [Fact]
+    public void AbandonOnAlreadyAbandonedTransferDoesNotWriteAnotherAudit()
+    {
+        using var fixture = new TransferFixture();
+        var id = fixture.CreateTransfer();
+        Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(id));
+
+        Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(id));
+
+        Assert.Single(fixture.Audit.Entries);
+    }
+
+    [Fact]
+    public async Task CompleteWithHashMismatchWritesNoImportAudit()
+    {
+        using var fixture = new TransferFixture();
+        var bytes = LegacyV2Bytes(LegacyPackage(2));
+        var id = Guid.NewGuid();
+        Assert.IsType<OkObjectResult>(fixture.Controller.Create(new PrtgTransferCreateRequestDto(id,
+            bytes.Length, 1, Convert.ToHexString(SHA256.HashData("other"u8.ToArray())))));
+        SetChunkBody(fixture, bytes);
+        Assert.IsType<OkObjectResult>(await fixture.Controller.PutChunk(id, 0, CancellationToken.None));
+
+        var result = await fixture.Controller.Complete(id, CancellationToken.None);
+
+        Assert.IsAssignableFrom<ObjectResult>(result);
+        Assert.NotEqual(PrtgTransferStates.Complete, fixture.TransferRow(id).State);
+        Assert.Empty(fixture.Audit.Entries);
+    }
+
     private static async Task<Guid> CompleteTransfer(TransferFixture fixture, byte[] bytes)
     {
         var id = fixture.CreateTransfer(bytes);
@@ -602,6 +697,7 @@ public sealed class PrtgTransferControllerTests
         /// 容量探測本身的行為另有專屬測試。</summary>
         public IPrtgTransferCapacityProvider Capacity { get; } = new FixedTransferCapacity();
         public PrtgTransferController Controller { get; }
+        public RecordingAuditService Audit { get; } = new();
 
         public TransferFixture()
         {
@@ -619,7 +715,7 @@ public sealed class PrtgTransferControllerTests
                 value.SensorIds = [11];
             });
             Controller = new PrtgTransferController(Backend, Capacity, Hosts, new FixtureVisibility(Hosts), User, Settings,
-                new NoopAudit(), new PrtgLegacyJsonTransferValidator());
+                Audit, new PrtgLegacyJsonTransferValidator());
         }
 
         public Guid CreateTransfer(byte[]? payload = null)

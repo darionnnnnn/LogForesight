@@ -445,8 +445,9 @@ public sealed class EfPrtgTransferStore
     /// This reveals no old payload or manifest and never changes formal monitoring data.
     /// The HTTP consumer must freshly verify Maintain and full current visibility.
     /// </summary>
-    public void AbandonOwned(Guid transferId, PrtgTransferBinding currentBinding, DateTimeOffset nowUtc) =>
-        _ = AbandonCore(transferId, currentBinding, nowUtc, allowChangedContext: true);
+    /// <returns>放棄後的狀態；已是放棄狀態時原樣回傳（<see cref="PrtgTransferStatus.AbandonedAtUtc"/> 是先前那次的時間）。</returns>
+    public PrtgTransferStatus AbandonOwned(Guid transferId, PrtgTransferBinding currentBinding, DateTimeOffset nowUtc) =>
+        AbandonCore(transferId, currentBinding, nowUtc, allowChangedContext: true);
 
     private PrtgTransferStatus AbandonCore(Guid transferId, PrtgTransferBinding binding, DateTimeOffset nowUtc, bool allowChangedContext)
     {

@@ -22,6 +22,8 @@ public class HandlerEmptyStateBehaviorTests
     [InlineData("staleResponseIsDropped")]
     [InlineData("otherFiltersUseGenericTextAndDoNotFetch")]
     [InlineData("usesDashboardDaysSetting")]
+    [InlineData("emptyStatesUseSlashCircleIcon")]
+    [InlineData("clearFlagButtonHasNoIcon")]
     public void 我的交辦空狀態行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
