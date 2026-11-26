@@ -12,7 +12,7 @@ namespace LogForesight.Tests;
 ///    （<c>TextTruncation</c> 本體、<c>ColumnClamp.Clamp</c>、<c>AiInsightService</c> 的 Truncate 擴充、各處轉呼叫 <c>SafeCut</c> 的薄包裝）。
 /// 2. 落庫截斷呼叫：<c>ColumnClamp.Clamp(</c>／<c>ClampFor</c> 只能出現在核准檔案與次數；不得以數字字面值當長度。
 /// 3. 切片形狀：<c>Substring(0, …)</c> 與長度／上限／數字終點的範圍切片（<c>[..N]</c>）是「疑似截斷」。
-///    既有的 55 處由「檔案 → 次數」基準表記錄（非截斷用途的解析與雜湊前綴、翻譯成 SQL 的前綴投影、尚未收斂的顯示用截斷），
+///    既有的 56 處由「檔案 → 次數」基準表記錄（非截斷用途的解析與雜湊前綴、翻譯成 SQL 的前綴投影、尚未收斂的顯示用截斷），
 ///    新增一處或新檔案出現即紅；日後收斂時把基準數字調小。
 /// </summary>
 public class TruncationSourceGuardTests
@@ -96,7 +96,7 @@ public class TruncationSourceGuardTests
 
     /// <summary>
     /// 既有疑似截斷切片的基準（檔案 → 次數）。分類：
-    /// 非截斷＝CryptoHelper／StorageBackend／WebAiService／SettingsAuditProjection／BuildVersion（雜湊或版本前綴）、EfReportStore（檔名取日期）；
+    /// 非截斷＝CryptoHelper／StorageBackend／WebAiService／SettingsAuditProjection／BuildVersion／PrtgTransferController（雜湊或版本前綴）、EfReportStore（檔名取日期）；
     /// 翻譯成 SQL 的前綴投影＝EfPrtgStore／CalibrationService／NetiqSourceAttempt／EfAnalysisRecordStore／EfIssueAggregateQuery 的 Substring；
     /// 其餘為顯示、診斷輸出或不落庫的長度限制（尚未收斂進 TextTruncation，日後收斂時調小次數）。
     /// </summary>
@@ -128,6 +128,7 @@ public class TruncationSourceGuardTests
         ["LogForesight.Core/Service/PrtgProbeRunner.cs"] = 1,
         ["LogForesight.Core/Service/RiskReportService.cs"] = 1,
         ["LogForesight.Web/Controllers/Api/CspReportController.cs"] = 1,
+        ["LogForesight.Web/Controllers/Api/PrtgTransferController.cs"] = 1,   // 稽核明細的封包雜湊前 12 碼
         ["LogForesight.Web/Controllers/Api/QueryStringParsing.cs"] = 1,
         ["LogForesight.Web/Services/AiInsightService.cs"] = 1,
         ["LogForesight.Web/Services/HandlingNoteAiService.cs"] = 1,
