@@ -80,7 +80,7 @@
 | 位置｜動作｜內容｜證據 |
 |---|
 | 553 後｜新增｜立即派工／人工追加併入已過期舊單，新成員沿用單的過期期限（附觸發時機）｜`DefaultDueDays.cs:41 MemberDueDate`（夜間用，`WorkOrderCoordinator.cs:689`）；`WorkOrderCoordinator.cs:209 MembersInto`、`:241 DueDate = order.DueDate` |
-| 633 後｜新增｜儀表板摘要主體約 2～3 秒（最慢 3.05）＋啟動後第一次今日焦點等 3～4 秒（併入評估表第 3、4 條，附觸發時機）｜`DashboardService.cs:74 GetSummary`、`:146 BuildBody`；`AiController.cs:122 today-focus`。數字取自 `docs/drafts/BACKLOG-REVIEW.md` 第 3 節第 3、4 條（本批未重新量測）|
+| 633 後｜新增｜儀表板摘要主體約 2～3 秒（最慢 3.05）＋啟動後第一次今日焦點等 3～4 秒（併入評估表第 3、4 條，附觸發時機）｜`DashboardService.cs:74 GetSummary`、`:146 BuildBody`；`AiController.cs:122 today-focus`。數字取自 `docs/archive/FEEDBACK-81-3-BACKLOG-REVIEW.md` 第 3 節第 3、4 條（本批未重新量測）|
 | 633 後｜新增｜資料保留清除一次讀入全部「不處理 30 天解除」候選（附觸發時機）｜`EfIssueCaseStore.cs:677 ReleasedCaseIds`（`.ToList()` 後逐筆 `DismissalRelease.IsReleased`）、`:659 Prune` 呼叫 |
 | 763 後｜新增｜必填標示星號與文字兩種寫法並存（附觸發時機）｜`lf-required-mark` 於 Views 17 行（`Groups.cshtml:65` 等）；文字「（必填）」於 `core/ui.js:645`、`hide-triage-panel.js:185`、`issue-mute-modal.js:184`、`IssueOwners.cshtml:80` |
 | 632｜併入｜「問題鍵在資料庫端區分大小寫」併進既有定序條目，標題改為「…出現點分組與問題鍵比對」｜`EfIssueCaseStore.cs:94` 文件註解：問題鍵以字串全等比對、記憶體端 `IssueSignatureKeyComparer` 才視為同鍵 |
